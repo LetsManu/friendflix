@@ -13,6 +13,9 @@ export interface Session {
   csrf: string;
   deviceId?: string;
   deviceApproved: boolean;
+  /** absolute lifetime / idle timeout in seconds; defaults come from the config (TV sessions are longer) */
+  ttl?: number;
+  idle?: number;
 }
 
 export const COOKIE = 'ff_sid';
@@ -28,7 +31,7 @@ declare module 'fastify' {
 
 /** Stores a session with the idle ttl (it is refreshed on use, see `touch`). */
 export async function saveSession(ctx: Ctx, sid: string, s: Session) {
-  const ttl = Math.min(ctx.cfg.SESSION_IDLE_SECONDS, ctx.cfg.SESSION_TTL_SECONDS);
+  const ttl = Math.min(s.idle ?? ctx.cfg.SESSION_IDLE_SECONDS, s.ttl ?? ctx.cfg.SESSION_TTL_SECONDS);
   await ctx.kv.set(`sess:${sid}`, JSON.stringify(s), ttl);
 }
 
@@ -43,7 +46,7 @@ export async function loadSession(ctx: Ctx, sid: string | undefined): Promise<Se
   if (!raw) return null;
   const s = JSON.parse(raw) as Session;
   // absolute lifetime, independent of activity
-  if (s.createdAt && Date.now() - s.createdAt > ctx.cfg.SESSION_TTL_SECONDS * 1000) {
+  if (s.createdAt && Date.now() - s.createdAt > (s.ttl ?? ctx.cfg.SESSION_TTL_SECONDS) * 1000) {
     await ctx.kv.del(`sess:${sid}`);
     return null;
   }
