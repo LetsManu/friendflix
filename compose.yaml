@@ -13,6 +13,9 @@ networks:
     internal: true
   media:
     internal: true
+  # Plan B only (docs/operations.md): shared by NPM and Jellyfin so nginx can serve /media/ directly. Internal, no ports.
+  mediaedge:
+    internal: true
   egress: {} # outbound internet for Jellyfin/Seerr metadata only; nothing is published
 
 services:
@@ -148,7 +151,7 @@ services:
       - jellyfin-config:/config
       - jellyfin-cache:/cache
       - ${MEDIA_PATH:-./media}:/media:ro
-    networks: [media, egress] # no ports, no NPM host
+    networks: [media, mediaedge, egress] # no ports, no NPM host (mediaedge is only used for Plan B)
 
   seerr:
     profiles: [bundled]
