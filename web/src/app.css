@@ -17,7 +17,7 @@
   --line: #2f2f2f;
   --pad-x: clamp(1rem, 4vw, 3.6rem);
   --nav-h: 68px;
-  --radius: 6px;
+  --radius: 4px;
   --t-fast: 150ms;
   --t-med: 260ms;
   --ease: cubic-bezier(.2, .7, .2, 1);
