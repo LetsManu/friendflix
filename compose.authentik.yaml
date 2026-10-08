@@ -3,9 +3,7 @@
 # (Redis was removed in 2025.10; add it back if you pin an older tag.)
 name: friendflix-authentik
 networks:
-  npm:
-    name: ${NPM_NETWORK:-npm_proxy}
-    external: true
+  front: {}
   ak-db: { internal: true }
   egress: {}
 x-ak: &ak
@@ -36,7 +34,8 @@ services:
   ak-server:
     <<: *ak
     command: server
-    networks: [npm, ak-db, egress]
+    ports: ["${BIND_ADDR:-127.0.0.1}:${AUTHENTIK_PORT:-9000}:9000"]
+    networks: [front, ak-db, egress]
   ak-worker:
     <<: *ak
     command: worker
