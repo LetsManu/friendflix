@@ -23,9 +23,12 @@
       {:else}{#each items as it (it.tmdbId)}
         <article class="c">
           {#if it.poster}<img loading="lazy" src={it.poster} alt="" />{:else}<div class="noimg">{it.title}</div>{/if}
-          <div class="t"><b>{it.title}</b><span class="muted">{fmt(it.releaseDate)}</span>
-            {#if it.status === 'nicht_angefragt' || it.status === 'abgelehnt'}<button class="sec" on:click={() => wish(it)}>Wünschen</button>
-            {:else if it.status === 'verfuegbar'}<span class="ok">Verfügbar</span>{:else}<span class="warn">Gewünscht</span>{/if}</div>
+          <div class="t"><b class="name">{it.title}</b><span class="muted">{fmt(it.releaseDate)}</span>
+            <div class="act">
+              {#if it.status === 'nicht_angefragt' || it.status === 'abgelehnt'}<button class="sec" on:click={() => wish(it)}>Wünschen</button>
+              {:else if it.status === 'verfuegbar'}<span class="ok">Verfügbar</span>{:else}<span class="warn">Gewünscht</span>{/if}
+            </div>
+          </div>
         </article>{/each}{/if}
     </div>
     {#if msg}<p class="muted" role="status">{msg}</p>{/if}
@@ -39,5 +42,9 @@
   .c, .ph { flex: 0 0 150px; scroll-snap-align: start; } .ph { aspect-ratio: 2 / 3; }
   .c { background: var(--surface); border-radius: var(--radius); overflow: hidden; display: flex; flex-direction: column; }
   .c img, .noimg { width: 100%; aspect-ratio: 2 / 3; object-fit: cover; background: #222; display: grid; place-items: center; text-align: center; padding: .4rem; }
-  .t { padding: .5rem .6rem .7rem; display: flex; flex-direction: column; gap: .25rem; font-size: .85rem; } .t button { min-height: 36px; padding: .3rem .6rem; font-size: .85rem; }
+  /* Cards stretch to the tallest one; the text block fills the card and the action sits at the bottom, so all buttons line up */
+  .t { flex: 1; padding: .5rem .6rem .7rem; display: flex; flex-direction: column; gap: .25rem; font-size: .85rem; }
+  .name { display: -webkit-box; -webkit-line-clamp: 2; line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; min-height: 2.6em; line-height: 1.3; } /* always two lines of space */
+  .act { margin-top: auto; padding-top: .35rem; min-height: 44px; display: flex; align-items: center; }
+  .act button { width: 100%; min-height: 36px; padding: .3rem .6rem; font-size: .85rem; }
 </style>
