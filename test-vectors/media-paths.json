@@ -7,12 +7,16 @@
     "/Videos/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/stream",
     "/Videos/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/stream.mp4",
     "/Videos/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb/Subtitles/3/0/Stream.vtt",
+    "/Videos/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/Trickplay/320/0.jpg",
     "/Items/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/Images/Primary",
     "/Items/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/Images/Backdrop/0",
     "/Items/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/Images/Logo"
   ],
   "deny": [
     "/System/Info",
+    "/Videos/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/Trickplay/320/0.png",
+    "/Videos/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/Trickplay/../320/0.jpg",
+    "/Videos/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/Trickplay/32000/0.jpg",
     "/Users/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/Policy",
     "/Users/AuthenticateByName",
     "/Videos/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/%2e%2e/x",
