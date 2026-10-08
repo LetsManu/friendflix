@@ -15,7 +15,7 @@
     "qrcode-generator": "^1.5.2"
   },
   "devDependencies": {
-    "@sveltejs/adapter-node": "^5.2.11",
+    "@sveltejs/adapter-node": "^6.0.0",
     "@sveltejs/kit": "^2.15.0",
     "@sveltejs/vite-plugin-svelte": "^5.0.3",
     "svelte": "^5.16.0",
