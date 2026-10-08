@@ -22,5 +22,18 @@ Prüfung von außen: `nmap -p 8096,8920,5055 <öffentliche-IP>` → alle `filter
 `git pull && docker compose build --pull && docker compose up -d`. Migrationen laufen beim Start (Advisory-Lock, transaktional).
 Nach Jellyfin-Updates: `JELLYFIN_URL=… ./scripts/gen-jellyfin-client.sh` und Diff prüfen (Pfade ändern sich zwischen Versionen; der Client probiert alte/neue Pfade für Views/Resume/Item/Favoriten/Gesehen).
 
-## Plan B für den Medien-Pfad
-Wird das Gateway zum Engpass (CPU bei vielen parallelen Streams): `deploy/npm/plan-b-auth-request.conf`. NPM liefert `/media/` dann selbst per `auth_request` an das Backend. **Plan B ist dokumentiert, aber nicht gebaut:** es fehlen ein Backend-Endpunkt, der per Cookie `X-Jellyfin-Token`/`X-Jellyfin-Path` zurückgibt (nur für NPM erreichbar; `/internal/authz` ist POST+Secret und für das Gateway gedacht), und ein dediziertes Netz NPM↔Jellyfin. Nachteil: Bitrate-Clamp und Path-Allowlist müssen dann in Nginx nachgebaut werden. Erst messen (`friendflix_gateway_bytes_total`, CPU des gateway-Containers), dann umbauen.
+## Plan B: NPM liefert /media/ direkt (auth_request)
+Standard ist das Node-Gateway. Wird es bei vielen parallelen Streams zum Engpass (CPU des `gateway`-Containers, `rate(friendflix_gateway_bytes_total)`), kann NPM/nginx `/media/` selbst ausliefern. Jede Anfrage wird vorher vom Backend freigegeben (`GET /internal/authz-nginx`).
+
+**Ablauf je Request:** Browser → nginx → `auth_request` an Backend (Cookie + Original-URI + Shared Secret) → Backend prüft Session, Gerätefreigabe, Sperre und die Pfad-Allowlist, liefert nur Header zurück (`X-Jellyfin-Uri` = bereinigte URI mit Bitrate-Limit, `X-Jellyfin-Auth` = Jellyfin-Token des Nutzers) → nginx streamt von Jellyfin. Der Browser sieht nie ein Token.
+
+**Einrichten**
+1. Netz verbinden (Jellyfin hat weiterhin keine Ports): `docker network connect friendflix_mediaedge <npm-container>` und `docker network connect friendflix_mediaedge <jellyfin-container>` (gebündeltes Jellyfin ist schon drin).
+2. In NPM → Proxy Host → Advanced: den `location /media/`-Block aus `portal.advanced.conf` **ersetzen** durch den Inhalt von `deploy/npm/plan-b-auth-request.conf`; `__INTERNAL_SECRET__` durch den Wert aus `.env` ersetzen.
+3. Gateway-Container kann gestoppt werden (`docker compose stop gateway`).
+4. Testen: `curl -I https://portal.example.com/media/Videos/<id>/master.m3u8` ohne Cookie → **401**; im Browser abspielen → läuft.
+
+**Sicherheitsmerkmale (automatisiert geprüft mit `scripts/test-plan-b.sh` gegen echtes nginx):** 401 ohne/mit falscher Session, 403 außerhalb der Allowlist und bei Traversal, nur GET/HEAD, `/internal/` öffentlich 404, Client-`Authorization`/`X-Emby-*` erreichen Jellyfin nie, `api_key` wird entfernt, Bitrate wird auf das Rollenlimit gekappt, Token nur serverseitig, kein `Set-Cookie`/Token in Antworten, Range → 206.
+Backend-Tests prüfen dieselben Pfad-Vektoren wie das Gateway (`test-vectors/media-paths.json`), damit beide Allowlists nicht auseinanderlaufen. Entscheidungen werden als `friendflix_authz_nginx_total{result}` gezählt.
+
+**Grenzen:** Das Secret steht in der NPM-Konfiguration (es autorisiert nur den Auth-Endpunkt, der zusätzlich eine echte Session verlangt). Sperren/Abmelden wirken nach spätestens ~5 s (Memo im Backend). Durchsatz/Streams erscheinen nicht in den Gateway-Metriken, sondern in den NPM-/nginx-Logs. Bild-Caching setzt die Konfiguration selbst (`private, max-age=86400`).

@@ -4,6 +4,9 @@ import { z } from 'zod';
 import type { Ctx } from '../ctx.js';
 import { clearLive, setLive } from '../live.js';
 import { loadSession } from '../session.js';
+import { mediaBrowserHeader } from '../jellyfin/client.js';
+import { upstreamUri } from '../mediapath.js';
+import { authzNginx } from '../metrics.js';
 import { getUserById } from '../users.js';
 import type { UserRow } from '../types.js';
 
@@ -28,18 +31,75 @@ const jfWebhook = z.object({
   deviceName: z.string().optional(),
 });
 
+interface MediaAuth {
+  userId: string;
+  token: string;
+  deviceId: string;
+  maxBitrate: number;
+}
+
 export function internalRoutes(app: FastifyInstance, ctx: Ctx) {
+  /** Session -> Jellyfin credentials for media requests. Short memo (5 s) keeps per-segment auth cheap. */
+  const memo = new Map<string, { exp: number; v: MediaAuth | null }>();
+  async function mediaAuth(sid: string): Promise<MediaAuth | null> {
+    const hit = memo.get(sid);
+    if (hit && hit.exp > Date.now()) return hit.v;
+    let v: MediaAuth | null = null;
+    const s = await loadSession(ctx, sid);
+    if (s && s.deviceApproved) {
+      const user = await getUserById(ctx, s.userId);
+      if (user && !user.disabled) {
+        v = { userId: user.id, token: await ctx.jf.token(user), deviceId: ctx.jf.deviceId(user), maxBitrate: ctx.roles[user.role]!.maxBitrate };
+      }
+    }
+    memo.set(sid, { exp: Date.now() + (v ? 5_000 : 2_000), v });
+    if (memo.size > 5000) memo.clear();
+    return v;
+  }
+
   // Used by the gateway only (never routed by NPM). Returns the Jellyfin token of the session owner.
   app.post('/internal/authz', async (req, reply) => {
     if (!checkSecret(req, 'x-internal-secret', ctx.cfg.INTERNAL_SECRET)) return reply.code(403).send({ error: 'forbidden' });
     const sid = z.object({ sid: z.string().regex(/^[\w-]{20,80}$/) }).safeParse(req.body);
     if (!sid.success) return reply.code(400).send({ error: 'bad_request' });
-    const s = await loadSession(ctx, sid.data.sid);
-    if (!s || !s.deviceApproved) return reply.code(401).send({ error: 'unauthenticated' });
-    const user = await getUserById(ctx, s.userId);
-    if (!user || user.disabled) return reply.code(401).send({ error: 'unauthenticated' });
-    const role = ctx.roles[user.role]!;
-    return { userId: user.id, token: await ctx.jf.token(user), deviceId: ctx.jf.deviceId(user), maxBitrate: role.maxBitrate };
+    const a = await mediaAuth(sid.data.sid);
+    return a ?? reply.code(401).send({ error: 'unauthenticated' });
+  });
+
+  /**
+   * Plan B: nginx `auth_request` for /media/ (see deploy/npm/plan-b-auth-request.conf).
+   * nginx sends the browser cookie + original URI + the shared secret; we answer with headers only:
+   *   X-Jellyfin-Uri  = validated, sanitized upstream URI (nginx must use exactly this)
+   *   X-Jellyfin-Auth = Authorization header carrying the user's Jellyfin token (never sent to the browser)
+   * 401 = not logged in / device pending / disabled, 403 = bad secret or path not allowed.
+   */
+  app.get('/internal/authz-nginx', { config: { rateLimit: false } }, async (req, reply) => {
+    if (!checkSecret(req, 'x-internal-secret', ctx.cfg.INTERNAL_SECRET)) {
+      authzNginx.inc({ result: 'bad_secret' });
+      return reply.code(403).send();
+    }
+    const sid = req.cookies.ff_sid;
+    if (!sid || !/^[\w-]{20,80}$/.test(sid)) {
+      authzNginx.inc({ result: 'no_session' });
+      return reply.code(401).send();
+    }
+    const a = await mediaAuth(sid);
+    if (!a) {
+      authzNginx.inc({ result: 'unauthenticated' });
+      return reply.code(401).send();
+    }
+    const uri = upstreamUri(String(req.headers['x-original-uri'] ?? ''), a.maxBitrate);
+    if (!uri) {
+      authzNginx.inc({ result: 'path_denied' });
+      return reply.code(403).send();
+    }
+    authzNginx.inc({ result: 'ok' });
+    return reply
+      .header('X-Jellyfin-Uri', uri)
+      .header('X-Jellyfin-Auth', mediaBrowserHeader({ deviceId: a.deviceId, token: a.token }))
+      .header('Cache-Control', 'no-store')
+      .code(204)
+      .send();
   });
 
   app.post('/internal/webhook/jellyfin', async (req, reply) => {

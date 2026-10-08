@@ -32,6 +32,26 @@ describe('party engine', () => {
     expect(room.positionNow()).toBe(15);
   });
 
+  it('host can allow everybody to control playback and switch back', () => {
+    const { now } = clock();
+    const room = new Room('r', 'item', 'T', 'host', undefined, now);
+    const h = inbox(), g = inbox();
+    room.join('host', 'Host', h.send);
+    room.join('guest', 'Gast', g.send);
+    room.handle('host', { t: 'buffering', value: false });
+    room.handle('guest', { t: 'buffering', value: false });
+    expect(g.last('welcome')!.mode).toBe('host');
+    room.handle('guest', { t: 'mode', value: 'everyone' }); // guests cannot change the mode
+    expect(room.mode).toBe('host');
+    room.handle('host', { t: 'mode', value: 'everyone' });
+    expect(g.last('members')!.mode).toBe('everyone');
+    room.handle('guest', { t: 'state', playing: true, position: 42 });
+    expect(h.last('state')!.state).toMatchObject({ playing: true, position: 42 });
+    room.handle('host', { t: 'mode', value: 'host' });
+    room.handle('guest', { t: 'state', playing: false, position: 7 });
+    expect(room.state.position).toBe(42); // ignored again
+  });
+
   it('waits for the buffer of all participants (hold) and resumes without losing time', () => {
     const { c, now } = clock();
     const room = new Room('r', 'item', 'T', 'host', undefined, now);

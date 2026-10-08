@@ -1,0 +1,31 @@
+{
+  "_comment": "Shared by gateway and backend tests so both implementations of the /media allowlist can never drift apart.",
+  "allow": [
+    "/Videos/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/master.m3u8",
+    "/Videos/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/main.m3u8",
+    "/Videos/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/hls1/main/0.ts",
+    "/Videos/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/stream",
+    "/Videos/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/stream.mp4",
+    "/Videos/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb/Subtitles/3/0/Stream.vtt",
+    "/Items/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/Images/Primary",
+    "/Items/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/Images/Backdrop/0",
+    "/Items/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/Images/Logo"
+  ],
+  "deny": [
+    "/System/Info",
+    "/Users/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/Policy",
+    "/Users/AuthenticateByName",
+    "/Videos/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/%2e%2e/x",
+    "/Videos/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/hls1/main/..%2f..%2fetc",
+    "/Videos/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/hls1/main/../../../System/Info",
+    "//evil.example/Videos/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/master.m3u8",
+    "/Videos/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/master.m3u8/../../../Sessions",
+    "/Videos/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\\master.m3u8",
+    "/Videos/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/master.m3u8%00.png",
+    "/Videos/short/master.m3u8",
+    "/Items/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/Images/Primary/../../../../System/Logs",
+    "/Items/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/Download",
+    "/Videos/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/master.m3u8/extra",
+    ""
+  ]
+}

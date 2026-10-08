@@ -13,6 +13,7 @@ const usersTotal = new Gauge({ name: 'friendflix_users_total', help: 'Portal use
 const pendingDevices = new Gauge({ name: 'friendflix_pending_devices', help: 'Devices waiting for approval', registers: [registry] });
 const partyRooms = new Gauge({ name: 'friendflix_party_rooms', help: 'Open watch-party rooms', registers: [registry] });
 const pendingRequests = new Gauge({ name: 'friendflix_pending_polls', help: 'Polls waiting for admin approval', registers: [registry] });
+export const authzNginx = new Counter({ name: 'friendflix_authz_nginx_total', help: 'Plan B auth_request decisions', labelNames: ['result'], registers: [registry] });
 const up = new Gauge({ name: 'friendflix_dependency_up', help: '1 if dependency reachable', labelNames: ['dependency'], registers: [registry] });
 
 /** Prometheus endpoint for Icinga. Also blocked in NPM; protected by a bearer token when METRICS_TOKEN is set. */

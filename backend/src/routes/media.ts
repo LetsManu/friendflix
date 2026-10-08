@@ -77,6 +77,7 @@ export function mediaRoutes(app: FastifyInstance, ctx: Ctx) {
     const inWatchlist = (await ctx.db.query('select 1 from watchlist where user_id=$1 and item_id=$2', [req.user!.id, id])).rowCount! > 0;
     return { item, inWatchlist };
   }));
+  app.get('/api/items/:id/segments', pre, wrap(async (req) => ({ segments: await ctx.jf.segments(req.user!, itemId.parse((req.params as any).id)) })));
   app.get('/api/items/:id/seasons', pre, wrap(async (req) => ({ items: await ctx.jf.seasons(req.user!, itemId.parse((req.params as any).id)) })));
   app.get('/api/items/:id/episodes', pre, wrap(async (req) => {
     const seasonId = z.object({ seasonId: itemId.optional() }).parse(req.query).seasonId;
@@ -96,6 +97,10 @@ export function mediaRoutes(app: FastifyInstance, ctx: Ctx) {
     const r = await ctx.db.query<{ item_id: string }>('select item_id from watchlist where user_id=$1 order by added_at desc limit 200', [req.user!.id]);
     if (!r.rows.length) return { items: [] };
     return { items: (await ctx.jf.items(req.user!, { ids: r.rows.map((x) => x.item_id), types: 'Movie,Series,Episode', limit: 200 })).items };
+  }));
+  // Lightweight id list so cards can show the "Meine Liste" state without loading every item.
+  app.get('/api/watchlist/ids', pre, async (req) => ({
+    ids: (await ctx.db.query<{ item_id: string }>('select item_id from watchlist where user_id=$1', [req.user!.id])).rows.map((r) => r.item_id),
   }));
   app.post('/api/items/:id/watchlist', pre, wrap(async (req) => {
     await ctx.db.query('insert into watchlist(user_id,item_id) values ($1,$2) on conflict do nothing', [req.user!.id, itemId.parse((req.params as any).id)]);

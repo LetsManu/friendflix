@@ -1,5 +1,22 @@
 # Changelog
 ## [Unreleased]
+### Step 12 – Own player + watch party in the player, Plan B
+- Custom Netflix-style player: scrubbing timeline with buffer + hover time, ±10 s, volume, remaining time, audio/subtitle menu, speed, fullscreen of the whole stage (overlays stay visible), auto-hiding controls, touch gestures (double-tap ±10 s), spinner, toasts, keyboard shortcuts.
+- Watch party inside the player (Amazon-Watch-Party style): avatar stack with host crown and buffering state, chat side panel with unread badge + fading message bubbles, reaction picker with floating emoji, "waiting for X" banner, copy invite link, host switch "Nur Host / Alle dürfen steuern", guests see locked controls with hint.
+- Plan B implemented: `GET /internal/authz-nginx` + hardened nginx `auth_request` config, shared allowlist test vectors, query length/param limits (also in the gateway), `friendflix_authz_nginx_total`, `mediaedge` network, end-to-end test script against real nginx.
+### Step 11 – Polish
+- Gateway: images are browser-cacheable (`private, max-age=86400, stale-while-revalidate`, ETag/304 pass-through); upstream `public` is downgraded to `private`.
+- Title logos (transparent PNG) in billboard and detail popup, text fallback.
+- Detail popup over the current page (shallow routing, focus trap, Esc/back closes); "Mehr Infos" opens it.
+- "Top 10 nach Bewertung" row with large rank numbers; posters without backdrop shown contained on a blurred copy.
+- Player: "Intro/Abspann überspringen" from Jellyfin media segments (10.10+), keyboard shortcuts (Space/K, J/L/arrows, M, F).
+- Emoji removed from the UI (achievements use icons); notification texts without emoji.
+### Step 10 – Cinematic UI
+- New design system (OLED dark, Inter self-hosted, tokens, focus rings, reduced-motion, skeleton loading, 44 px touch targets) generated with the ui-ux-pro-max skill.
+- Home: full-bleed billboard, carousels with arrows + scroll-snap, hover preview cards (play, list, favorite, details), lazy-loaded genre rows.
+- Transparent-to-solid top navigation, expanding search, profile menu, mobile tab bar; Browse (Filme/Serien with genre/sort/filter), "Neu & beliebt", search with wish fallback.
+- Detail page with episode list + progress; immersive player page with auto-hiding chrome and "next episode" countdown; restyled invite page.
+- Backend: `GET /api/watchlist/ids` for the "Meine Liste" state on cards.
 ### Step 9 – Improvements
 - Feature: "Überrasch mich" – random unwatched movie/series, optional genre filter (`/api/library/random`, `/api/library/genres`).
 - Security: sliding idle timeout (default 2 h) plus absolute lifetime (8 h) for sessions; "log out other devices" for users; admins can end all sessions of a user (audited).

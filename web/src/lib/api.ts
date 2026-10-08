@@ -25,7 +25,8 @@ export async function api<T = any>(path: string, opts: { method?: string; body?:
 }
 
 export const img = (id: string, w = 300) => `/media/Items/${id}/Images/Primary?maxWidth=${w}&quality=85`;
-export const backdrop = (id: string) => `/media/Items/${id}/Images/Backdrop?maxWidth=1600&quality=80`;
+export const backdrop = (id: string, w = 1600) => `/media/Items/${id}/Images/Backdrop?maxWidth=${w}&quality=80`;
+export const logoUrl = (id: string) => `/media/Items/${id}/Images/Logo?maxWidth=700&quality=90`;
 export const ticksToSec = (t: number) => t / 10_000_000;
 export const secToTicks = (s: number) => Math.floor(s * 10_000_000);
 export const fmtMin = (ticks?: number) => (ticks ? `${Math.round(ticks / 600_000_000)} Min.` : '');
@@ -37,7 +38,7 @@ export const fmtClock = (s: number) => {
 export interface Item {
   id: string; name: string; type: string; year?: number; overview?: string; runtimeTicks?: number;
   seriesId?: string; seriesName?: string; seasonId?: string; indexNumber?: number; parentIndexNumber?: number;
-  genres: string[]; rating?: string; communityRating?: number; premiereDate?: string; image: boolean; backdrop: boolean;
+  genres: string[]; rating?: string; communityRating?: number; premiereDate?: string; image: boolean; backdrop: boolean; logo: boolean;
   played: boolean; favorite: boolean; positionTicks: number; playedPercentage?: number;
 }
 export interface Me { id: string; name: string; role: string; roleLabel: string; isAdmin: boolean; csrfToken: string; deviceApproved: boolean }

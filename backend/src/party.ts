@@ -10,8 +10,11 @@ export const clientMsg = z.discriminatedUnion('t', [
   z.object({ t: z.literal('chat'), text: z.string().trim().min(1).max(500) }),
   z.object({ t: z.literal('react'), emoji: z.enum(EMOJIS) }),
   z.object({ t: z.literal('host'), to: z.string() }),
+  z.object({ t: z.literal('mode'), value: z.enum(['host', 'everyone']) }),
 ]);
 export type ClientMsg = z.infer<typeof clientMsg>;
+
+export type ControlMode = 'host' | 'everyone';
 
 export interface PartyState {
   playing: boolean;
@@ -23,9 +26,9 @@ export interface PartyState {
 }
 
 export type ServerMsg =
-  | { t: 'welcome'; you: string; hostId: string; itemId: string; title: string; startAt?: number; members: MemberInfo[]; state: PartyState; serverNow: number }
+  | { t: 'welcome'; you: string; hostId: string; mode: ControlMode; itemId: string; title: string; startAt?: number; members: MemberInfo[]; state: PartyState; serverNow: number }
   | { t: 'state'; state: PartyState; serverNow: number }
-  | { t: 'members'; hostId: string; members: MemberInfo[] }
+  | { t: 'members'; hostId: string; mode: ControlMode; members: MemberInfo[] }
   | { t: 'chat'; from: string; name: string; text: string; at: number }
   | { t: 'react'; from: string; name: string; emoji: string }
   | { t: 'pong'; c: number; s: number };
@@ -44,6 +47,8 @@ export interface Member extends MemberInfo {
 export class Room {
   readonly members = new Map<string, Member>();
   state: PartyState;
+  /** who may play/pause/seek: only the host, or everybody (like Amazon Watch Party's "everyone can control") */
+  mode: ControlMode = 'host';
   started: boolean;
   emptySince?: number;
 
@@ -93,8 +98,8 @@ export class Room {
     m.buffering = true;
     this.members.set(id, m);
     this.emptySince = undefined;
-    send({ t: 'welcome', you: id, hostId: this.hostId, itemId: this.itemId, title: this.title, startAt: this.startAt, members: this.info(), state: this.state, serverNow: this.now() });
-    this.all({ t: 'members', hostId: this.hostId, members: this.info() });
+    send({ t: 'welcome', you: id, hostId: this.hostId, mode: this.mode, itemId: this.itemId, title: this.title, startAt: this.startAt, members: this.info(), state: this.state, serverNow: this.now() });
+    this.all({ t: 'members', hostId: this.hostId, mode: this.mode, members: this.info() });
     this.updateHold();
     return m;
   }
@@ -103,7 +108,7 @@ export class Room {
     if (!this.members.delete(id)) return;
     if (this.hostId === id) this.hostId = this.members.keys().next().value ?? this.hostId;
     if (!this.members.size) this.emptySince = this.now();
-    this.all({ t: 'members', hostId: this.hostId, members: this.info() });
+    this.all({ t: 'members', hostId: this.hostId, mode: this.mode, members: this.info() });
     this.updateHold();
   }
 
@@ -115,13 +120,13 @@ export class Room {
         m.send({ t: 'pong', c: msg.c, s: this.now() });
         break;
       case 'state':
-        if (id !== this.hostId) return; // only the host controls playback
+        if (id !== this.hostId && this.mode !== 'everyone') return; // only the host (or everyone, if enabled) controls playback
         this.state = { playing: msg.playing, position: msg.position, at: this.now(), hold: this.state.hold };
         this.pushState();
         break;
       case 'buffering':
         m.buffering = msg.value;
-        this.all({ t: 'members', hostId: this.hostId, members: this.info() });
+        this.all({ t: 'members', hostId: this.hostId, mode: this.mode, members: this.info() });
         this.updateHold();
         break;
       case 'chat': {
@@ -135,10 +140,15 @@ export class Room {
       case 'react':
         this.all({ t: 'react', from: id, name: m.name, emoji: msg.emoji });
         break;
+      case 'mode':
+        if (id !== this.hostId) return;
+        this.mode = msg.value;
+        this.all({ t: 'members', hostId: this.hostId, mode: this.mode, members: this.info() });
+        break;
       case 'host':
         if (id === this.hostId && this.members.has(msg.to)) {
           this.hostId = msg.to;
-          this.all({ t: 'members', hostId: this.hostId, members: this.info() });
+          this.all({ t: 'members', hostId: this.hostId, mode: this.mode, members: this.info() });
         }
         break;
     }

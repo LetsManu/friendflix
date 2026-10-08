@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { api } from '$lib/api';
+  import Icon from '$lib/Icon.svelte';
   let s: any = null, c: any = null, year = new Date().getFullYear();
   const months = ['Jan', 'Feb', 'Mär', 'Apr', 'Mai', 'Jun', 'Jul', 'Aug', 'Sep', 'Okt', 'Nov', 'Dez'];
   async function load() { s = await api(`/api/stats/me?year=${year}`); c = await api('/api/stats/community'); }
@@ -24,7 +25,7 @@
     </div></div>
   <h3>Achievements</h3>
   <div class="grid" style="grid-template-columns:repeat(auto-fill,minmax(200px,1fr))">
-    {#each s.achievements as a}<div class="panel" style="opacity:{a.earnedAt ? 1 : 0.4}"><span style="font-size:1.8rem">{a.icon}</span> <b>{a.title}</b><br /><small class="muted">{a.desc}</small></div>{/each}
+    {#each s.achievements as a}<div class="panel" style="opacity:{a.earnedAt ? 1 : 0.4}"><span class="ach"><Icon name={a.icon} size={26} /></span> <b>{a.title}</b><br /><small class="muted">{a.desc}</small></div>{/each}
   </div>
 {/if}
 {#if c}
@@ -34,3 +35,4 @@
     <div class="panel"><b>Meistgeschaut</b><ol>{#each c.topTitles as t}<li>{t.name} <span class="muted">· {t.viewers} Zuschauer</span></li>{/each}</ol></div>
   </div>
 {/if}
+<style>.ach { display: inline-grid; place-items: center; width: 42px; height: 42px; border-radius: 50%; background: var(--surface-2); color: var(--acc); vertical-align: middle; }</style>

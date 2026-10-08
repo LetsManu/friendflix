@@ -17,6 +17,8 @@ export interface ItemDto {
   premiereDate?: string;
   image: boolean;
   backdrop: boolean;
+  /** transparent title logo available (shown in the billboard) */
+  logo: boolean;
   played: boolean;
   favorite: boolean;
   positionTicks: number;
@@ -45,6 +47,7 @@ export function toItemDto(i: Record<string, any>): ItemDto {
     premiereDate: i.PremiereDate,
     image: Boolean(i.ImageTags?.Primary),
     backdrop: Array.isArray(i.BackdropImageTags) && i.BackdropImageTags.length > 0,
+    logo: Boolean(i.ImageTags?.Logo),
     played: Boolean(ud.Played),
     favorite: Boolean(ud.IsFavorite),
     positionTicks: Number(ud.PlaybackPositionTicks ?? 0),

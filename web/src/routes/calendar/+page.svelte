@@ -11,4 +11,4 @@
 <table><tbody>{#each items as e}<tr>
   <td>{e.premiereDate ? new Date(e.premiereDate).toLocaleDateString('de-DE', { weekday: 'short', day: '2-digit', month: '2-digit' }) : '?'}</td>
   <td><a href="/item/{e.seriesId}">{e.seriesName}</a> S{e.parentIndexNumber}E{e.indexNumber} – {e.name}</td>
-  <td><button class:sec={!e.followed} on:click={() => follow(e)}>{e.followed ? '🔔 Folge ich' : 'Folgen'}</button></td></tr>{/each}</tbody></table>
+  <td><button class:sec={!e.followed} on:click={() => follow(e)}>{e.followed ? 'Folge ich' : 'Folgen'}</button></td></tr>{/each}</tbody></table>

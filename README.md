@@ -87,6 +87,7 @@ Dev gegen http-Authentik: `OIDC_ALLOW_INSECURE=true` (nur Entwicklung).
 - Authentik-Einladungs-API und Enrollment-Flow sind versionsabhängig (optional; Portal funktioniert auch ohne).
 - Watch-Party-Räume und Rate-Limits liegen im Speicher → **ein** Backend-Replikat. Mehrere Replikate bräuchten Redis-Pub/Sub.
 - Bildbasierte Untertitel (PGS) werden nicht angeboten (nur Text-Untertitel als WebVTT).
+- Intro-Überspringen braucht Jellyfin ≥ 10.10 (Media Segments, z. B. per Intro-Skipper-Plugin befüllt); ältere Server liefern keine Segmente.
 - Direct Play umgeht den Bitrate-Clamp nur nicht, weil `directUrl` nur bei Quell-Bitrate ≤ Rollenlimit angeboten wird.
 - Now-Playing aktualisiert per Polling (5 s), nicht per WebSocket.
 

@@ -84,3 +84,31 @@ describe('surprise me', () => {
     expect((await call('GET', '/api/library/random?type=Song')).statusCode).toBe(400);
   });
 });
+
+describe('title logos, intro segments and emoji-free icons', () => {
+  it('maps the logo flag and exposes media segments (intro/outro/recap only), empty when unsupported', async () => {
+    const e = await makeEnv({
+      'GET /Items/[^/]+': () => ({ json: { Id: A, Name: 'X', Type: 'Movie', ImageTags: { Primary: 'p', Logo: 'l' }, BackdropImageTags: ['b'] } }),
+      'GET /Users/[^/]+/Items/[^/]+': () => ({ json: { Id: A, Name: 'X', Type: 'Movie', ImageTags: { Primary: 'p', Logo: 'l' }, BackdropImageTags: ['b'] } }),
+      'GET /MediaSegments/[^/]+': () => ({ json: { Items: [
+        { Type: 'Intro', StartTicks: 10e7, EndTicks: 95e7 }, { Type: 'Commercial', StartTicks: 0, EndTicks: 5e7 },
+        { Type: 'Outro', StartTicks: 3000e7, EndTicks: 3100e7 }, { Type: 'Recap', StartTicks: 5e7, EndTicks: 5e7 } ] } }),
+    });
+    const s = await e.login();
+    const get = (u: string) => e.app.inject({ url: u, cookies: s.cookies });
+    const it = (await get(`/api/items/${A}`)).json().item;
+    expect(it).toMatchObject({ logo: true, backdrop: true, image: true });
+    expect((await get(`/api/items/${A}/segments`)).json().segments).toEqual([
+      { type: 'intro', start: 10, end: 95 }, { type: 'outro', start: 3000, end: 3100 },
+    ]);
+    await e.close();
+    const e2 = await makeEnv({}); // no MediaSegments route -> 404 upstream
+    const s2 = await e2.login();
+    expect((await e2.app.inject({ url: `/api/items/${A}/segments`, cookies: s2.cookies })).json()).toEqual({ segments: [] });
+    await e2.close();
+  });
+  it('achievements use icon names, not emoji', async () => {
+    const { DEFS } = await import('../src/achievements.js');
+    expect(DEFS.every((d) => /^[a-z-]+$/.test(d.icon))).toBe(true);
+  });
+});
