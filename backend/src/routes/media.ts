@@ -78,6 +78,12 @@ export function mediaRoutes(app: FastifyInstance, ctx: Ctx) {
     return { item, inWatchlist };
   }));
   app.get('/api/items/:id/segments', pre, wrap(async (req) => ({ segments: await ctx.jf.segments(req.user!, itemId.parse((req.params as any).id)) })));
+  app.get('/api/items/:id/similar', pre, wrap(async (req) => ({ items: await ctx.jf.similar(req.user!, itemId.parse((req.params as any).id)) })));
+  app.get('/api/library/because', pre, wrap(async (req) => {
+    const seed = await ctx.jf.lastWatched(req.user!);
+    if (!seed) return { because: null, items: [] };
+    return { because: { id: seed.id, name: seed.name }, items: (await ctx.jf.similar(req.user!, seed.id)).filter((i) => i.id !== seed.id) };
+  }));
   app.get('/api/items/:id/seasons', pre, wrap(async (req) => ({ items: await ctx.jf.seasons(req.user!, itemId.parse((req.params as any).id)) })));
   app.get('/api/items/:id/episodes', pre, wrap(async (req) => {
     const seasonId = z.object({ seasonId: itemId.optional() }).parse(req.query).seasonId;
@@ -113,11 +119,15 @@ export function mediaRoutes(app: FastifyInstance, ctx: Ctx) {
 
   // ---- Playback ----
   app.post('/api/playback/info', pre, wrap(async (req, reply) => {
-    const b = z.object({ itemId, startTicks: z.number().int().min(0).optional(), audioIndex: z.number().int().min(0).optional() }).parse(req.body);
+    const b = z.object({ itemId, startTicks: z.number().int().min(0).optional(), audioIndex: z.number().int().min(0).optional(), maxBitrate: z.number().int().min(300_000).max(200_000_000).optional() }).parse(req.body);
     const role = ctx.roles[req.user!.role]!;
     if ((await countLive(ctx, req.user!.id)) >= role.maxStreams) return reply.code(429).send({ error: 'max_streams', max: role.maxStreams });
     const startTicks = b.startTicks ?? (await ctx.jf.item(req.user!, b.itemId)).positionTicks;
-    return ctx.jf.playbackInfo(req.user!, b.itemId, { maxBitrate: role.maxBitrate, startTicks, audioIndex: b.audioIndex });
+    const cap = Math.min(role.maxBitrate, b.maxBitrate ?? role.maxBitrate); // the viewer may lower the quality, never raise it above the role limit
+    const info = await ctx.jf.playbackInfo(req.user!, b.itemId, { maxBitrate: cap, startTicks, audioIndex: b.audioIndex });
+    info.roleMaxBitrate = role.maxBitrate;
+    info.trickplay = await ctx.jf.trickplay(req.user!, b.itemId, info.mediaSourceId);
+    return info;
   }));
 
   const report = (kind: 'Playing' | 'Playing/Progress' | 'Playing/Stopped') =>

@@ -65,7 +65,11 @@ export interface PlaybackDto {
   hlsUrl: string;
   runtimeTicks?: number;
   resumeTicks: number;
+  /** bitrate cap used for this session (<= role limit) */
   maxBitrate: number;
+  /** role limit, upper bound for the quality menu */
+  roleMaxBitrate?: number;
+  trickplay?: TrickplayDto;
   audioTracks: Array<{ index: number; language?: string; title: string; isDefault: boolean }>;
   subtitles: Array<{ index: number; language?: string; title: string; url: string; isDefault: boolean }>;
 }
@@ -122,5 +126,34 @@ export function toPlaybackDto(args: {
         isDefault: Boolean(s.IsDefault),
         url: `/media/Videos/${itemId}/${src.Id}/Subtitles/${s.Index}/0/Stream.vtt`,
       })),
+  };
+}
+
+/** Timeline preview thumbnails (Jellyfin >= 10.9 trickplay): tile sheets of tileWidth x tileHeight thumbnails. */
+export interface TrickplayDto {
+  width: number;
+  height: number;
+  tileWidth: number;
+  tileHeight: number;
+  count: number;
+  /** ms between thumbnails */
+  interval: number;
+  /** URL with {n} = sheet index */
+  url: string;
+}
+
+/** Picks the resolution closest to ~320 px from Jellyfin's `Trickplay[mediaSourceId][width]` map. */
+export function toTrickplayDto(itemId: string, mediaSourceId: string, raw: Record<string, any> | undefined): TrickplayDto | undefined {
+  const forSource = raw?.[mediaSourceId] ?? (raw ? Object.values(raw)[0] : undefined);
+  if (!forSource || typeof forSource !== 'object') return undefined;
+  const widths = Object.keys(forSource).map(Number).filter((w) => w >= 40 && w <= 2000);
+  if (!widths.length) return undefined;
+  const w = widths.reduce((a, b) => (Math.abs(b - 320) < Math.abs(a - 320) ? b : a));
+  const t = forSource[String(w)];
+  if (!t || !t.TileWidth || !t.TileHeight || !t.Interval || !t.ThumbnailCount) return undefined;
+  return {
+    width: Number(t.Width ?? w), height: Number(t.Height), tileWidth: Number(t.TileWidth), tileHeight: Number(t.TileHeight),
+    count: Number(t.ThumbnailCount), interval: Number(t.Interval),
+    url: `/media/Videos/${itemId}/Trickplay/${w}/{n}.jpg?MediaSourceId=${encodeURIComponent(mediaSourceId)}`,
   };
 }
