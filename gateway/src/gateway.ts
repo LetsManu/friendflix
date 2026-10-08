@@ -106,6 +106,10 @@ export function createGateway(opts: GatewayOptions): { server: Server; metrics: 
       count('403');
       return end(res, 403, 'forbidden');
     }
+    if ((url.search.length > 2049) || [...url.searchParams].length > 40) {
+      count('414');
+      return end(res, 414, 'query too long');
+    }
     const auth = await authorize(req.headers.cookie);
     if (!auth) {
       count('401');

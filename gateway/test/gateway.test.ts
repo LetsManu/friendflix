@@ -1,5 +1,6 @@
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
+import { readFileSync } from 'node:fs';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createGateway, normalizePath } from '../src/gateway.js';
 
@@ -45,6 +46,12 @@ afterAll(() => [jf, be, gw].forEach((s) => s.close()));
 
 const get = (path: string, headers: Record<string, string> = {}) =>
   fetch(`http://127.0.0.1:${gwPort}${path}`, { headers: { cookie: 'ff_sid=goodsid', ...headers } });
+
+const vectors = JSON.parse(readFileSync(new URL('../../test-vectors/media-paths.json', import.meta.url), 'utf8')) as { allow: string[]; deny: string[] };
+describe('shared allowlist vectors', () => {
+  it.each(vectors.allow)('allows %s', (p) => expect(normalizePath(p)).toBeTruthy());
+  it.each(vectors.deny)('denies %s', (p) => expect(normalizePath(p)).toBeNull());
+});
 
 describe('normalizePath', () => {
   it('accepts allowed paths and rejects traversal / others', () => {
@@ -98,6 +105,10 @@ describe('gateway', () => {
     expect(img.headers.get('vary')).toBe('Cookie');
     const pl = await get(`/media/Videos/${ID}/master.m3u8`);
     expect(pl.headers.get('cache-control')).toBe('no-store');
+  });
+  it('rejects oversized queries', async () => {
+    expect((await get(`/media/Videos/${ID}/master.m3u8?x=${'a'.repeat(3000)}`)).status).toBe(414);
+    expect((await get(`/media/Videos/${ID}/master.m3u8?${Array.from({ length: 45 }, (_, i) => `p${i}=1`).join('&')}`)).status).toBe(414);
   });
   it('exposes metrics', async () => {
     const t = await (await fetch(`http://127.0.0.1:${gwPort}/metrics`)).text();
