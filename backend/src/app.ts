@@ -8,9 +8,11 @@ import { metricsPlugin } from './metrics.js';
 import { adminRoutes, inviteRoutes } from './routes/admin.js';
 import { authRoutes } from './routes/auth.js';
 import { internalRoutes } from './routes/internal.js';
+import { discoverRoutes } from './routes/discover.js';
 import { partyRoutes } from './routes/party.js';
 import { prefsRoutes } from './routes/prefs.js';
 import { pollRoutes } from './routes/polls.js';
+import { sceneRoutes } from './routes/scenes.js';
 import { seerrRoutes } from './routes/seerr.js';
 import { statsRoutes } from './routes/stats.js';
 import { mediaRoutes } from './routes/media.js';
@@ -73,6 +75,8 @@ export async function buildApp(ctx: Ctx, extra: Extra = {}): Promise<FastifyInst
   pollRoutes(app, ctx);
   statsRoutes(app, ctx);
   prefsRoutes(app, ctx);
+  discoverRoutes(app, ctx);
+  sceneRoutes(app, ctx);
   for (const r of extra.register ?? []) await r(app, ctx);
   return app;
 }

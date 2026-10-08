@@ -154,6 +154,38 @@ export const MIGRATIONS: string[] = [
     updated_at timestamptz not null default now()
   );
   `,
+  // 7: scene bookmarks, friend recommendations, thumbs
+  `
+  create table bookmarks (
+    id uuid primary key,
+    user_id uuid not null references users(id) on delete cascade,
+    item_id text not null,
+    item_name text not null,
+    position_sec integer not null check (position_sec >= 0),
+    note text,
+    created_at timestamptz not null default now()
+  );
+  create index bookmarks_user_item on bookmarks(user_id, item_id);
+  create table recommendations (
+    id bigserial primary key,
+    from_user uuid not null references users(id) on delete cascade,
+    to_user uuid not null references users(id) on delete cascade,
+    item_id text not null,
+    item_name text not null,
+    note text,
+    seen boolean not null default false,
+    created_at timestamptz not null default now()
+  );
+  create index recommendations_to on recommendations(to_user, created_at desc);
+  create table thumbs (
+    user_id uuid not null references users(id) on delete cascade,
+    item_id text not null,
+    value smallint not null check (value in (-1, 1)),
+    item_name text not null,
+    created_at timestamptz not null default now(),
+    primary key (user_id, item_id)
+  );
+  `,
 ];
 
 export async function migrate(pool: pg.Pool): Promise<void> {

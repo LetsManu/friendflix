@@ -18,6 +18,7 @@ export interface ItemQuery {
   filter?: 'favorites' | 'unplayed' | 'played';
   ids?: string[];
   genre?: string;
+  studio?: string;
 }
 
 /**
@@ -102,6 +103,7 @@ export class JellyfinService {
     if (q.filter === 'played') p.set('filters', 'IsPlayed');
     if (q.ids?.length) p.set('ids', q.ids.join(','));
     if (q.genre) p.set('genres', q.genre);
+    if (q.studio) p.set('studios', q.studio);
     const r = await this.json<{ Items: any[]; TotalRecordCount: number }>(user, `/Items?${p}`);
     return { items: r.Items.map(toItemDto), total: r.TotalRecordCount ?? r.Items.length };
   }
@@ -167,6 +169,61 @@ export class JellyfinService {
     const i = r.Items[0];
     if (!i) return null;
     return i.Type === 'Episode' && i.SeriesId ? this.item(user, i.SeriesId) : toItemDto(i);
+  }
+
+  /** All unwatched ids of a user for the group matcher (paged, capped). */
+  async unplayedIds(user: UserRow, types: string, cap = 5000): Promise<Set<string>> {
+    const out = new Set<string>();
+    for (let start = 0; start < cap; start += 500) {
+      const p = new URLSearchParams({ userId: user.jellyfin_user_id, recursive: 'true', filters: 'IsUnplayed', includeItemTypes: types, limit: '500', startIndex: String(start), enableTotalRecordCount: 'false', enableImages: 'false', enableUserData: 'false' });
+      const r = await this.json<{ Items: Array<{ Id: string }> }>(user, `/Items?${p}`);
+      r.Items.forEach((i) => out.add(i.Id));
+      if (r.Items.length < 500) break;
+    }
+    return out;
+  }
+
+  /** Cast & crew for the X-Ray panel. */
+  async people(user: UserRow, id: string): Promise<Array<{ id: string; name: string; role?: string; type: string; image: boolean }>> {
+    const r = await this.json<{ Items: Array<{ People?: Array<{ Id: string; Name: string; Role?: string; Type: string; PrimaryImageTag?: string }> }> }>(user, `/Items?userId=${user.jellyfin_user_id}&ids=${id}&fields=People`);
+    return (r.Items[0]?.People ?? []).slice(0, 40).map((p) => ({ id: p.Id, name: p.Name, role: p.Role, type: p.Type, image: Boolean(p.PrimaryImageTag) }));
+  }
+
+  /** Bonus material (featurettes, behind the scenes). */
+  async extras(user: UserRow, id: string): Promise<ItemDto[]> {
+    const res = await this.call(user, `/Items/${id}/SpecialFeatures?userId=${user.jellyfin_user_id}`);
+    if (!res.ok) return [];
+    const list = (await res.json().catch(() => [])) as any[];
+    return (Array.isArray(list) ? list : []).map(toItemDto);
+  }
+
+  /** First local trailer (playable through the gateway). */
+  async trailer(user: UserRow, id: string): Promise<string | null> {
+    const res = await this.call(user, `/Items/${id}/LocalTrailers?userId=${user.jellyfin_user_id}`);
+    if (!res.ok) return null;
+    const list = (await res.json().catch(() => [])) as Array<{ Id: string }>;
+    return Array.isArray(list) && list[0]?.Id ? list[0].Id : null;
+  }
+
+  async collections(user: UserRow): Promise<ItemDto[]> {
+    const r = await this.json<{ Items: any[] }>(user, `/Items?userId=${user.jellyfin_user_id}&includeItemTypes=BoxSet&recursive=true&sortBy=SortName&fields=${FIELDS}&limit=100`);
+    return r.Items.map(toItemDto);
+  }
+
+  async studios(user: UserRow): Promise<string[]> {
+    const r = await this.json<{ Items: Array<{ Name: string }> }>(user, `/Studios?userId=${user.jellyfin_user_id}&includeItemTypes=Movie,Series&sortBy=SortName&limit=80&recursive=true`);
+    return r.Items.map((s) => s.Name);
+  }
+
+  /** Remote subtitle providers (e.g. OpenSubtitles plugin). Uses the admin key: the portal checks item access first. */
+  async searchSubtitles(id: string, lang: string): Promise<Array<{ id: string; name: string; provider: string; format?: string; downloads?: number; rating?: number }>> {
+    const r = await this.client.adminJson<Array<Record<string, any>>>(`/Items/${id}/RemoteSearch/Subtitles/${lang}`);
+    return r.slice(0, 25).map((s) => ({ id: String(s.Id), name: String(s.Name ?? ''), provider: String(s.ProviderName ?? ''), format: s.Format, downloads: s.DownloadCount, rating: s.CommunityRating }));
+  }
+  async downloadSubtitle(id: string, subtitleId: string) {
+    await this.client.adminFetch(`/Items/${id}/RemoteSearch/Subtitles/${encodeURIComponent(subtitleId)}`, { method: 'POST' }).then((r) => {
+      if (!r.ok) throw new JellyfinError(r.status, `subtitle download -> ${r.status}`);
+    });
   }
 
   async seasons(user: UserRow, seriesId: string): Promise<ItemDto[]> {

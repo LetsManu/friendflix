@@ -43,6 +43,9 @@ export class SeerrClient {
     // Seerr requires %20 (not +) for spaces
     return this.json<{ results: any[]; totalPages: number }>(`/search?query=${encodeURIComponent(query)}&page=${page}&language=de`);
   }
+  upcoming(mediaType: 'movie' | 'tv', page = 1) {
+    return this.json<{ results: any[]; totalPages: number }>(`/discover/${mediaType === 'movie' ? 'movies' : 'tv'}/upcoming?page=${page}&language=de`);
+  }
   details(mediaType: 'movie' | 'tv', id: number) {
     return this.json(`/${mediaType}/${id}?language=de`);
   }
