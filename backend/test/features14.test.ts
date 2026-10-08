@@ -26,6 +26,7 @@ beforeAll(async () => {
       return { json: { Items: [] } };
     },
     'GET /Shows/[^/]+/Episodes': () => ({ json: { Items: [ep(6), ep(7)] } }),
+    'POST /Items/[^/]+/PlaybackInfo': (u) => ({ json: { PlaySessionId: 'ps-12345678', MediaSources: [{ Id: u.pathname.split('/')[2], Container: 'mkv', Bitrate: 8_000_000, MediaStreams: [] }] } }),
     'GET /Studios': () => ({ json: { Items: [{ Name: 'Studio Eins' }, { Name: 'Studio Zwei' }] } }),
     'GET /Items/[^/]+/Similar': () => ({ json: { Items: [CATALOG[D!], CATALOG[E!], CATALOG[B!]] } }),
     'GET /Items/[^/]+/LocalTrailers': (u) => ({ json: u.pathname.includes(A!) ? [{ Id: '5'.repeat(32) }] : [] }),
@@ -170,7 +171,9 @@ describe('language picker and clip preview', () => {
     await call('PUT', '/api/prefs', { hoverTrailers: true, hoverClip: true });
     const t = (await call('GET', `/api/items/${B}/trailer`)).json();
     expect(t.url).toContain(`/media/Videos/${B}/master.m3u8`);
-    expect(t.url).toContain('StartTimeTicks=' + Math.floor((150 * 600_000_000) / 3));
+    expect(t.url).not.toContain('StartTimeTicks'); // the client seeks via hls.js startPosition
+    expect(t.url).toContain('PlaySessionId=ps-12345678');
+    expect(t.start).toBe(Math.floor(150 * 60 / 3));
     expect(t.url).toContain('MaxStreamingBitrate=1500000');
   });
 });
