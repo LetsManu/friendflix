@@ -12,6 +12,8 @@ RUN npm run build -w gateway
 FROM node:26-alpine
 ENV NODE_ENV=production
 WORKDIR /app
+# Runtime needs only node; the npm/yarn bundled in the base image only adds CVEs.
+RUN rm -rf /usr/local/lib/node_modules/npm /usr/local/bin/npm /usr/local/bin/npx /opt/yarn-* /usr/local/bin/yarn /usr/local/bin/yarnpkg
 COPY --from=build --chown=node:node /app/gateway/dist gateway/dist
 COPY --chown=node:node gateway/package.json gateway/
 USER node
