@@ -55,7 +55,7 @@
   $: shown = scrubbing ? scrubTime : current;
   $: pct = duration ? Math.min(100, (shown / duration) * 100) : 0;
   $: bufPct = duration ? Math.min(100, (buffered / duration) * 100) : 0;
-  $: nowPlaying.set({ itemId, title, position: current, duration, paused }); // what the phone remote shows
+  $: nowPlaying.set({ itemId, title, position: current, duration, paused, audio: info?.audioTracks.map((a) => ({ i: a.index, t: a.title })), audioSel: audioIndex ?? info?.audioTracks.find((a) => a.isDefault)?.index, subs: info?.subtitles.map((x) => ({ i: x.index, t: x.title })), subSel: subIndex }); // what the phone remote shows
   $: if (skip && skip.type === 'intro' && !partyMode && canControl && get(prefs).autoSkipIntro && !autoSkipped.has(skip.start)) { autoSkipped.add(skip.start); doSkip(); flash('Intro übersprungen', 1500); }
   const skipLabel: Record<string, string> = { intro: 'Intro überspringen', outro: 'Abspann überspringen', recap: 'Rückblick überspringen' };
 
@@ -146,6 +146,9 @@
     if (m.action === 'play') { if (allowed()) playSafe(); }
     else if (m.action === 'pause') { if (allowed()) video?.pause(); }
     else if (m.action === 'toggle') { if (video?.paused) { if (allowed()) playSafe(); } else if (allowed()) video?.pause(); }
+    else if (m.action === 'audio' && typeof m.value === 'number') { if (info?.audioTracks.some((a) => a.index === m.value)) changeAudio(m.value); }
+    else if (m.action === 'sub' && typeof m.value === 'number') { if (m.value === -1 || info?.subtitles.some((x) => x.index === m.value)) setSubtitle(m.value); }
+    else if (m.action === 'next') { if (hasNext && allowed()) dispatch('next'); else flash('Keine weitere Folge'); }
     else if (m.action === 'seekBy' && typeof m.value === 'number') seekBy(m.value);
   }
 

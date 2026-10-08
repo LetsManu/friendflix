@@ -105,11 +105,13 @@ describe('remote control hub', () => {
       ws.on('open', () => resolve({ ws, msgs, closed }));
       ws.on('error', () => resolve({ ws, msgs, closed }));
     });
+  // only sessions of a paired television may register as the TV
+  const tvSid = async () => { const c = (await post('/api/tv/code')).json(); await post('/api/tv/pair', { code: c.code }, me); return (await post('/api/tv/claim', { code: c.code, pollToken: c.pollToken })).cookies.find((q) => q.name === 'ff_sid')!.value; };
   const wait = (ms = 120) => new Promise((r) => setTimeout(r, ms));
   const ITEM = 'a'.repeat(32);
 
   it('forwards cast and control from the phone to the TV of the same user and status back', async () => {
-    const tv = await open(me.cookies.ff_sid!, 'tv');
+    const tv = await open(await tvSid(), 'tv');
     const phone = await open(me.cookies.ff_sid!, 'remote');
     await wait();
     expect(phone.msgs.find((m) => m.t === 'hello')).toMatchObject({ role: 'remote', tvOnline: true });
@@ -117,17 +119,41 @@ describe('remote control hub', () => {
 
     phone.ws.send(JSON.stringify({ t: 'cast', itemId: ITEM, startSec: 90 }));
     phone.ws.send(JSON.stringify({ t: 'ctl', action: 'seekBy', value: -10 }));
+    phone.ws.send(JSON.stringify({ t: 'ctl', action: 'next' }));
     phone.ws.send(JSON.stringify({ t: 'ctl', action: 'format-disk' })); // not in the whitelist
     phone.ws.send(JSON.stringify({ t: 'cast', itemId: '../../etc/passwd' })); // invalid id
     phone.ws.send('garbage');
     tv.ws.send(JSON.stringify({ t: 'status', itemId: ITEM, title: 'Film', position: 12.5, duration: 5400, paused: false }));
     await wait(200);
-    expect(tv.msgs.filter((m) => m.t === 'cast' || m.t === 'ctl')).toEqual([{ t: 'cast', itemId: ITEM, startSec: 90 }, { t: 'ctl', action: 'seekBy', value: -10 }]);
+    expect(tv.msgs.filter((m) => m.t === 'cast' || m.t === 'ctl')).toEqual([{ t: 'cast', itemId: ITEM, startSec: 90 }, { t: 'ctl', action: 'seekBy', value: -10 }, { t: 'ctl', action: 'next' }]);
     expect(phone.msgs.find((m) => m.t === 'status')).toMatchObject({ title: 'Film', position: 12.5, paused: false });
 
     tv.ws.close(); await tv.closed; await wait();
     expect(phone.msgs.at(-1)).toMatchObject({ t: 'peers', tvOnline: false });
     phone.ws.close();
+  });
+
+  it('track lists travel TV -> phone and audio/sub commands phone -> TV, oversize lists are dropped', async () => {
+    const tv = await open(await tvSid(), 'tv'); const phone = await open(me.cookies.ff_sid!, 'remote'); await wait();
+    tv.ws.send(JSON.stringify({ t: 'status', itemId: ITEM, audio: [{ i: 1, t: 'Deutsch' }, { i: 2, t: 'English' }], audioSel: 1, subs: [{ i: 3, t: 'Deutsch' }], subSel: -1 }));
+    tv.ws.send(JSON.stringify({ t: 'status', itemId: ITEM, audio: Array.from({ length: 11 }, (_, i) => ({ i, t: 'x' })) })); // too many: rejected
+    phone.ws.send(JSON.stringify({ t: 'ctl', action: 'audio', value: 2 }));
+    phone.ws.send(JSON.stringify({ t: 'ctl', action: 'sub', value: -1 }));
+    await wait(200);
+    const st = phone.msgs.filter((m) => m.t === 'status');
+    expect(st).toHaveLength(1);
+    expect(st[0]).toMatchObject({ audioSel: 1, subs: [{ i: 3, t: 'Deutsch' }] });
+    expect(tv.msgs.filter((m) => m.t === 'ctl')).toEqual([{ t: 'ctl', action: 'audio', value: 2 }, { t: 'ctl', action: 'sub', value: -1 }]);
+    tv.ws.close(); phone.ws.close();
+  });
+
+  it('a laptop or phone cannot register as the TV (and so cannot evict the real one)', async () => {
+    const tv = await open(await tvSid(), 'tv');
+    const fake = await open(me.cookies.ff_sid!, 'tv');
+    expect(await fake.closed).toBe(4403);
+    await wait();
+    expect((await env.app.inject({ url: '/api/tv/status', cookies: me.cookies })).json()).toEqual({ tvOnline: true });
+    tv.ws.close();
   });
 
   it('a revoked TV is disconnected immediately (device removed in the UI)', async () => {
@@ -145,7 +171,7 @@ describe('remote control hub', () => {
 
   it('a TV cannot send commands to phones and never reaches another user\'s devices', async () => {
     const lea = await makeLea();
-    const tvMe = await open(me.cookies.ff_sid!, 'tv');
+    const tvMe = await open(await tvSid(), 'tv');
     const phoneLea = await open(lea, 'remote');
     const phoneMe = await open(me.cookies.ff_sid!, 'remote');
     await wait();
@@ -161,8 +187,8 @@ describe('remote control hub', () => {
   it('requires session and matching Origin; a second TV replaces the first', async () => {
     expect(await (await open('x'.repeat(30), 'remote')).closed).toBe(4401);
     expect(await (await open(me.cookies.ff_sid!, 'remote', 'https://evil.example')).closed).toBe(4401);
-    const a = await open(me.cookies.ff_sid!, 'tv');
-    const b = await open(me.cookies.ff_sid!, 'tv');
+    const a = await open(await tvSid(), 'tv');
+    const b = await open(await tvSid(), 'tv');
     expect(await a.closed).toBe(4000);
     b.ws.close();
   });

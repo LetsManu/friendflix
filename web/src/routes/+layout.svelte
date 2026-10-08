@@ -12,7 +12,7 @@
 
   let me: Me | null = null;
   /** TV mode: big UI, D-pad navigation. On for paired televisions; `?tv=1` previews it in any browser (`?tv=0` ends the preview). */
-  let tv = false;
+  let tv = false, replaced = false;
   let pending = false;
   let notes: Array<{ id: number; title: string; link?: string; read: boolean }> = [];
   let scrolled = false, menu = false, bell = false, searchOpen = false, more = false, q = '';
@@ -110,10 +110,11 @@
         if (!pending) { loadNotes(); loadList(); loadPrefs(); setInterval(loadNotes, 60_000); }
         if (me.tv) localStorage.setItem('ff_tv_device', '1'); // an expired TV session goes back to the pairing screen, not to a login form
         if (tv) {
+          { let t: ReturnType<typeof setTimeout>; const wake = () => { document.documentElement.classList.remove('idle-cursor'); clearTimeout(t); t = setTimeout(() => document.documentElement.classList.add('idle-cursor'), 4000); }; wake(); window.addEventListener('mousemove', wake); stops.push(() => { window.removeEventListener('mousemove', wake); clearTimeout(t); }); }
           stops.push(startSpatial(() => !watchPage || Boolean(document.activeElement?.closest('[data-nav]'))));
           if (!watchPage) void settleFocus();
         }
-        if (me.tv && !pending) stops.push(startTvLink(onTvCommand, (code) => { if (code === 4401) location.href = '/tv'; }));
+        if (me.tv && !pending) stops.push(startTvLink(onTvCommand, (code) => { if (code === 4401) location.href = '/tv'; else if (code === 4000) replaced = true; }));
       } catch { /* api() redirects to login on 401 */ }
     }
   }
@@ -175,6 +176,7 @@
     {/if}
   {/if}
 
+  {#if replaced}<div class="panel" role="alert" style="position:fixed;z-index:90;top:5rem;left:50%;transform:translateX(-50%)"><b>Der Fernseher wurde auf einem anderen Gerät übernommen.</b> <button on:click={() => location.reload()}>Hier wieder verbinden</button></div>{/if}
   {#if $page.state.modalId}<ItemModal id={$page.state.modalId} />{/if}
   <main id="main" class:page={!heroPage && !watchPage}>
     {#if pending}

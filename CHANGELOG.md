@@ -1,5 +1,8 @@
 # Changelog
 ## [Unreleased]
+### Step 16 – Review fixes + remote audio/subtitles
+- Review: only a paired TV session may register as the TV (a laptop could evict the real one); pair/claim are serialised per code; max 8 phones per user, socket errors handled; LG Magic Remote pointer is kept (cursor hides after 4 s idle); the TV shows a notice when another device took over.
+- Phone remote: "Nächste Folge" button and audio/subtitle pickers (track lists reported by the TV, bounded by the schema).
 ### Step 15 – TV mode, phone remote, local ports
 - **TV mode** for smart TVs / sticks / consoles: pairing screen `/tv` (code + QR), TV gets its own 30-day session (7 days idle), listed under *Geräte*; 10-foot UI (big type, strong focus rings), geometric D-pad navigation (`lib/spatial.ts`), Back key support for Tizen/webOS/Android TV, focus memory when going back, control bar reachable with up/down in the player, media keys. `?tv=1` previews it in any browser.
 - **Phone as remote** (`/remote`, menu "Fernbedienung"): play/pause, ±10/±60 s, stop, home, "continue watching" and search with *Auf TV*, "Auf Fernseher" button on detail pages. WebSocket hub `/ws/remote` (same user only, command whitelist, flood limit, revoked sessions are disconnected immediately).
