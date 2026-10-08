@@ -64,7 +64,7 @@ export function discoverRoutes(app: FastifyInstance, ctx: Ctx) {
     const types = b.type === 'Both' ? 'Movie,Series' : b.type;
     const everyone = [req.user!, ...others];
     const sets = await Promise.all(everyone.map((u) => ctx.jf.unplayedIds(u, types)));
-    let common = [...sets[0]!].filter((id) => sets.every((s) => s.has(id)));
+    const common = [...sets[0]!].filter((id) => sets.every((s) => s.has(id)));
     const total = common.length;
     // details + filters with the requester's token; sort by rating
     const details = await itemsByIds(ctx, req.user!, common.slice(0, 400));
@@ -72,7 +72,6 @@ export function discoverRoutes(app: FastifyInstance, ctx: Ctx) {
     if (b.maxMinutes) items = items.filter((i) => !i.runtimeTicks || i.runtimeTicks <= b.maxMinutes! * 600_000_000);
     if (b.genre) items = items.filter((i) => i.genres.includes(b.genre!));
     items.sort((a, c) => (c.communityRating ?? 0) - (a.communityRating ?? 0) || a.name.localeCompare(c.name));
-    common = [];
     return { participants: everyone.map((u) => u.name), total, items: items.slice(0, 40) };
   }));
 
