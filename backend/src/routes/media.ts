@@ -77,6 +77,7 @@ export function mediaRoutes(app: FastifyInstance, ctx: Ctx) {
     const inWatchlist = (await ctx.db.query('select 1 from watchlist where user_id=$1 and item_id=$2', [req.user!.id, id])).rowCount! > 0;
     return { item, inWatchlist };
   }));
+  app.get('/api/items/:id/segments', pre, wrap(async (req) => ({ segments: await ctx.jf.segments(req.user!, itemId.parse((req.params as any).id)) })));
   app.get('/api/items/:id/seasons', pre, wrap(async (req) => ({ items: await ctx.jf.seasons(req.user!, itemId.parse((req.params as any).id)) })));
   app.get('/api/items/:id/episodes', pre, wrap(async (req) => {
     const seasonId = z.object({ seasonId: itemId.optional() }).parse(req.query).seasonId;

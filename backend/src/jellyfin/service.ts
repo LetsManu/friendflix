@@ -131,6 +131,19 @@ export class JellyfinService {
     return r.Items.map((g) => g.Name);
   }
 
+  /**
+   * Intro/outro/recap segments (Jellyfin >= 10.10 media segments API). Older servers answer 404 -> empty list,
+   * the "Intro überspringen" button then simply never shows.
+   */
+  async segments(user: UserRow, id: string): Promise<Array<{ type: string; start: number; end: number }>> {
+    const res = await this.call(user, `/MediaSegments/${id}`);
+    if (!res.ok) return [];
+    const r = (await res.json().catch(() => null)) as { Items?: Array<{ Type: string; StartTicks: number; EndTicks: number }> } | null;
+    return (r?.Items ?? [])
+      .filter((s) => ['Intro', 'Outro', 'Recap'].includes(s.Type) && s.EndTicks > s.StartTicks)
+      .map((s) => ({ type: s.Type.toLowerCase(), start: s.StartTicks / 1e7, end: s.EndTicks / 1e7 }));
+  }
+
   async seasons(user: UserRow, seriesId: string): Promise<ItemDto[]> {
     const r = await this.json<{ Items: any[] }>(user, `/Shows/${seriesId}/Seasons?userId=${user.jellyfin_user_id}&fields=${FIELDS}`);
     return r.Items.map(toItemDto);
