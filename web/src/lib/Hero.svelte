@@ -1,9 +1,11 @@
 <script lang="ts">
+  import { onDestroy, onMount } from 'svelte';
   import { backdrop, fmtMin, logoUrl, type Item } from '$lib/api';
   import Icon from '$lib/Icon.svelte';
   import Logo from '$lib/Logo.svelte';
   import { openModal } from '$lib/modal';
-  import { listIds, toggleList } from '$lib/stores';
+  import { listIds, prefs, toggleList } from '$lib/stores';
+  import { playPreview, previewOwner, stopPreview, toggleSound } from '$lib/preview';
 
   /** Billboard at the top of the home page / detail page. */
   export let item: Item | null;
@@ -14,6 +16,35 @@
   export let rank = 0;
   export let rankLabel = 'in den Top 10 nach Bewertung';
   let loaded = false, logoFailed = false;
+
+  // ---- billboard preview: after a short pause the still image fades into the trailer (clip), like Netflix ----
+  const DELAY = 2500;
+  let hv: HTMLVideoElement, playing = false, vmuted = true, timer: ReturnType<typeof setTimeout>, scheduledFor = '';
+  $: heroOwner = item ? 'hero:' + item.id : '';
+  $: if (item && loaded && item.id !== scheduledFor) schedule(item.id);
+  $: if (playing && $previewOwner !== heroOwner) playing = false; // a hover card took over (or the preview failed)
+  function eligible() {
+    const nav = navigator as Navigator & { connection?: { saveData?: boolean } };
+    return $prefs.hoverTrailers && !document.hidden && !matchMedia('(prefers-reduced-motion: reduce)').matches && !document.documentElement.classList.contains('tv') && !nav.connection?.saveData;
+  }
+  function schedule(id: string) {
+    scheduledFor = id;
+    clearTimeout(timer);
+    stopHero();
+    timer = setTimeout(() => void startHero(id), DELAY);
+  }
+  async function startHero(id: string) {
+    if (!item || item.id !== id || !eligible() || scrollY > innerHeight * 0.5 || $previewOwner) return; // not while something else previews
+    playing = true; // mounts nothing new: the <video> always exists, this only fades it in once frames arrive (see on:playing)
+    const ok = await playPreview(id, () => hv, 'hero:' + id);
+    if (!ok) playing = false;
+  }
+  function stopHero() { clearTimeout(timer); if (heroOwner) stopPreview(heroOwner); playing = false; }
+  function onScroll() { if (playing && scrollY > innerHeight * 0.55) stopHero(); }
+  function onVisibility() { if (document.hidden) stopHero(); }
+  onMount(() => { addEventListener('scroll', onScroll, { passive: true }); document.addEventListener('visibilitychange', onVisibility); });
+  onDestroy(() => { if (typeof window === 'undefined') return; removeEventListener('scroll', onScroll); document.removeEventListener('visibilitychange', onVisibility); stopHero(); });
+  function ended() { stopHero(); } // trailer finished: back to the still image
   $: item, (logoFailed = false);
   $: listId = item ? (item.seriesId ?? item.id) : '';
   $: inList = listId ? $listIds.has(listId) : false;
@@ -24,6 +55,8 @@
 <section class="hero" aria-label="Empfehlung">
   {#if item}
     {#if item.backdrop}<img class="bg" class:loaded src={backdrop(item.id)} alt="" fetchpriority="high" on:load={() => (loaded = true)} />{/if}
+    <!-- svelte-ignore a11y_media_has_caption -->
+    <video bind:this={hv} class="hv" class:on={playing} playsinline aria-hidden="true" tabindex="-1" on:ended={ended} on:volumechange={() => (vmuted = hv.muted)} on:playing={() => (vmuted = hv.muted)}></video>
     <div class="shade"></div>
     <div class="content">
       <p class="eyebrow"><Logo size={22} label="" /><span>{kind}</span></p>
@@ -45,7 +78,10 @@
         {#if more}<a class="btn grey round" href="/item/{item.id}" aria-label="Mehr Infos" title="Mehr Infos" on:click={(e) => openModal(e, `/item/${item.id}`)}><Icon name="info" size={24} /></a>{/if}
       </div>
     </div>
-    {#if item.rating}<div class="agebox" aria-label="Altersfreigabe {item.rating}"><span>{item.rating}</span></div>{/if}
+    <div class="side">
+      {#if playing}<button class="snd" aria-label={vmuted ? 'Ton einschalten' : 'Ton ausschalten'} aria-pressed={!vmuted} on:click={() => toggleSound(hv)}><Icon name={vmuted ? 'volume-off' : 'volume'} size={22} /></button>{/if}
+      {#if item.rating}<div class="agebox" aria-label="Altersfreigabe {item.rating}"><span>{item.rating}</span></div>{/if}
+    </div>
   {:else}
     <div class="skeleton fill"></div>
   {/if}
@@ -56,6 +92,8 @@
   .bg { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; object-position: center 22%; opacity: 0; transition: opacity .8s var(--ease); }
   .bg.loaded { opacity: 1; }
   .fill { position: absolute; inset: 0; border-radius: 0; }
+  .hv { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; object-position: center 22%; opacity: 0; transition: opacity 1s var(--ease); pointer-events: none; background: transparent; }
+  .hv.on { opacity: 1; }
   .shade { position: absolute; inset: 0; background:
       linear-gradient(77deg, rgba(0,0,0,.82) 0%, rgba(0,0,0,.5) 30%, transparent 62%),
       linear-gradient(to top, var(--bg) 0%, rgba(20,20,20,.9) 9%, transparent 42%),
@@ -78,7 +116,10 @@
   .btn.round { width: 52px; padding: 0; border-radius: 50%; background: rgba(42,42,42,.6); border: 2px solid rgba(255,255,255,.55); }
   .btn.round:hover { background: rgba(42,42,42,.9); border-color: #fff; }
   /* age rating box on the right edge, like a TV network bug */
-  .agebox { position: absolute; right: 0; bottom: calc(25% + .35rem); z-index: 2; display: flex; align-items: center; min-height: 52px; padding: 0 var(--pad-x) 0 1.1rem; background: rgba(51,51,51,.6); border-left: 3px solid #dcdcdc; font-size: 1.1rem; font-weight: 600; letter-spacing: .02em; backdrop-filter: blur(4px); }
+  .side { position: absolute; right: 0; bottom: calc(25% + .35rem); z-index: 2; display: flex; align-items: center; gap: .9rem; }
+  .snd { width: 46px; min-height: 46px; height: 46px; padding: 0; border-radius: 50%; background: rgba(42,42,42,.6); border: 2px solid rgba(255,255,255,.55); color: #fff; }
+  .snd:hover:not(:disabled) { background: rgba(42,42,42,.9); border-color: #fff; }
+  .agebox { display: flex; align-items: center; min-height: 52px; padding: 0 var(--pad-x) 0 1.1rem; background: rgba(51,51,51,.6); border-left: 3px solid #dcdcdc; font-size: 1.1rem; font-weight: 600; letter-spacing: .02em; backdrop-filter: blur(4px); }
   @media (max-width: 460px) { .btn.round { display: none; } }
-  @media (max-width: 700px) { .hero { height: 68vh; margin-bottom: -5vh; } .content { bottom: 17%; } .btns .btn { padding: .5rem 1.1rem; font-size: 1rem; min-height: 46px; } .btn.round { width: 46px; } .agebox { display: none; } .eyebrow { letter-spacing: .3em; } }
+  @media (max-width: 700px) { .hero { height: 68vh; margin-bottom: -5vh; } .content { bottom: 17%; } .btns .btn { padding: .5rem 1.1rem; font-size: 1rem; min-height: 46px; } .btn.round { width: 46px; } .agebox { display: none; } .side { right: var(--pad-x); } .eyebrow { letter-spacing: .3em; } }
 </style>

@@ -6,7 +6,7 @@
   import { openModal } from '$lib/modal';
   import { onDestroy } from 'svelte';
   import { prefs } from '$lib/stores';
-  import { playPreview, stopPreview, previewOwner } from '$lib/preview';
+  import { playPreview, stopPreview, previewOwner, toggleSound } from '$lib/preview';
 
   export let item: Item;
   let fav = item.favorite;
@@ -20,8 +20,8 @@
   $: inList = $listIds.has(item.seriesId ?? item.id);
   $: score = item.communityRating ? Math.round(item.communityRating * 10) : 0;
 
-  // Muted trailer preview after hovering ~1.2 s (only titles with a local trailer, only real pointers, one at a time)
-  let pv: HTMLVideoElement, hoverT: ReturnType<typeof setTimeout>, previewing = false;
+  // Trailer preview (with sound once the browser allows it, toggle button on the video) after hovering ~1.2 s (only titles with a local trailer, only real pointers, one at a time)
+  let pv: HTMLVideoElement, hoverT: ReturnType<typeof setTimeout>, previewing = false, vmuted = true;
   const canHover = typeof matchMedia !== 'undefined' && matchMedia('(hover: hover) and (pointer: fine)').matches;
   function enter() {
     clearTimeout(hoverT); // mouseenter + focusin both call this: never keep two timers (two previews) alive
@@ -40,14 +40,17 @@
 </script>
 
 <article class="card" on:mouseenter={enter} on:mouseleave={leave} on:focusin={onFocusIn} on:focusout={leave}>
+  <div class="media">
   <a class="thumb" {href} aria-label={item.name + (sub ? ', ' + sub : '')}>
     {#if posterOnly}<img class="blur" loading="lazy" {src} alt="" aria-hidden="true" />{/if}
     {#if src}<img class:contain={posterOnly} loading="lazy" decoding="async" {src} alt="" width="320" height="180" />{/if}
     <span class="brand" aria-hidden="true"><Logo size={18} label="" /></span>
-    {#if previewing}<!-- svelte-ignore a11y_media_has_caption --><video bind:this={pv} class="pv" muted loop playsinline></video>{/if}
+    {#if previewing}<!-- svelte-ignore a11y_media_has_caption --><video bind:this={pv} class="pv" loop playsinline on:volumechange={() => (vmuted = pv.muted)} on:playing={() => (vmuted = pv.muted)}></video>{/if}
     <span class="cap" class:big={!src}>{item.type === 'Episode' ? item.name : item.name}</span>
     {#if pct}<span class="progress"><i style="width:{pct}%"></i></span>{/if}
   </a>
+  {#if previewing}<button class="snd" aria-label={vmuted ? 'Ton einschalten' : 'Ton ausschalten'} aria-pressed={!vmuted} on:click={(e) => { release(e); toggleSound(pv); }}><Icon name={vmuted ? 'volume-off' : 'volume'} size={16} /></button>{/if}
+  </div>
   <div class="pop">
     <div class="acts">
       <a class="round play" href={href} aria-label="Abspielen"><Icon name="play" size={18} /></a>
@@ -71,6 +74,9 @@
   .thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
   .pv { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; z-index: 1; background: #000; }
   .cap2 { color: #f5c518; }
+  .media { position: relative; }
+  .snd { position: absolute; right: .5rem; bottom: .5rem; z-index: 3; width: 30px; min-height: 30px; height: 30px; padding: 0; border-radius: 50%; background: rgba(20,20,20,.7); border: 1.5px solid rgba(255,255,255,.6); color: #fff; }
+  .snd:hover:not(:disabled) { background: rgba(20,20,20,.9); border-color: #fff; }
   .brand { position: absolute; left: .45rem; top: .4rem; z-index: 2; pointer-events: none; opacity: .95; }
   .blur { position: absolute; inset: -10%; width: 120%; height: 120%; object-fit: cover; filter: blur(18px) brightness(.55); }
   .thumb img.contain { position: relative; object-fit: contain; }
