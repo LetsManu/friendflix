@@ -1,12 +1,12 @@
 # Monitoring (Icinga / Prometheus)
 
-Endpunkte (nur intern, NPM antwortet für `/metrics` und `/health/ready` mit 404):
+Endpunkte (nur lokal auf dem Docker-Host erreichbar: Ports sind an `127.0.0.1` gebunden; NPM antwortet für `/metrics` und `/health/ready` mit 404):
 | URL | Zweck |
 |---|---|
-| `http://backend:3000/health` | Liveness |
-| `http://backend:3000/health/ready` | Readiness: Redis, Postgres, Jellyfin (503 bei Problem) |
-| `http://backend:3000/metrics` | Prometheus (Bearer `METRICS_TOKEN`, falls gesetzt) |
-| `http://gateway:4000/metrics` | Gateway-Durchsatz |
+| `http://127.0.0.1:3081/health` | Liveness |
+| `http://127.0.0.1:3081/health/ready` | Readiness: Redis, Postgres, Jellyfin (503 bei Problem) |
+| `http://127.0.0.1:3081/metrics` | Prometheus (Bearer `METRICS_TOKEN`, falls gesetzt) |
+| `http://127.0.0.1:3082/metrics` | Gateway-Durchsatz |
 
 Wichtige Metriken: `friendflix_active_streams`, `friendflix_gateway_bytes_total` (Durchsatz = `rate()`), `friendflix_gateway_active_streams`, `friendflix_gateway_requests_total{code}`, `friendflix_dependency_up{dependency}`, `friendflix_users_total`, `friendflix_pending_devices`, `friendflix_pending_polls`, `friendflix_party_rooms`.
 
@@ -22,7 +22,7 @@ object Service "friendflix-ui" { host_name = "docker-host"; check_command = "htt
 
 # Interne Readiness (vom Docker-Host aus; Container-IP oder `docker exec`)
 object Service "friendflix-ready" { host_name = "docker-host"; check_command = "http"
-  vars.http_address = "172.20.0.5"; vars.http_port = 3000; vars.http_uri = "/health/ready"; vars.http_expect = "200" }
+  vars.http_address = "127.0.0.1"; vars.http_port = 3081; vars.http_uri = "/health/ready"; vars.http_expect = "200" }
 
 # Aktive Streams / Gateway-Durchsatz: check_prometheus_query o. ä. (Prometheus) oder check_http mit -r auf /metrics
 #   friendflix_active_streams > 8  -> WARNING (je nach Upstream-Bandbreite)
@@ -32,5 +32,5 @@ Prometheus-Scrape:
 ```yaml
 - job_name: friendflix
   authorization: { credentials: "<METRICS_TOKEN>" }
-  static_configs: [{ targets: ["backend:3000", "gateway:4000"] }]
+  static_configs: [{ targets: ["127.0.0.1:3081", "127.0.0.1:3082"] }]
 ```

@@ -1,6 +1,6 @@
 # Integrations (Jellyfin, Seerr, Authentik, ntfy/Discord)
 
-All webhook URLs use the **internal Docker network** (`http://backend:3000`), never the public host. NPM answers `/internal/*` with 404.
+Webhook URLs use the **internal Docker network** (`http://backend:3000`, Jellyfin/Seerr share the `media` network with the backend), never the public host. NPM answers `/internal/*` with 404.
 `WEBHOOK_SECRET` is the shared secret (`.env`).
 
 ## Jellyfin webhook plugin (optional, polling `/Sessions` every 10 s is the fallback)
