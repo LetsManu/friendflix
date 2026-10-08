@@ -12,6 +12,8 @@ RUN npm run build -w web
 FROM node:22-alpine
 ENV NODE_ENV=production PORT=3000 HOST=0.0.0.0
 WORKDIR /app
+# Runtime needs only node; the npm/yarn bundled in the base image only adds CVEs.
+RUN rm -rf /usr/local/lib/node_modules/npm /usr/local/bin/npm /usr/local/bin/npx /opt/yarn-* /usr/local/bin/yarn /usr/local/bin/yarnpkg
 COPY --from=build --chown=node:node /app/web/build build
 COPY --chown=node:node web/package.json package.json
 USER node
