@@ -16,7 +16,7 @@ backend ─► Postgres, Redis (Netz `db`, intern)       Login: Authentik (OIDC 
 
 | Netz | Typ | Mitglieder |
 |---|---|---|
-| `npm` | extern (existiert schon) | NPM, web, backend, gateway |
+| `front` | normal (Bridge) | web, backend, gateway – nur dafür, dass Docker Ports an `127.0.0.1` veröffentlichen kann |
 | `db` | internal | postgres, redis, backend, backup |
 | `media` | internal | backend, gateway, jellyfin, seerr |
 | `egress` | normal (nur ausgehend) | backend (OIDC/ntfy), jellyfin/seerr (Metadaten) |
@@ -32,7 +32,7 @@ git clone git@github.com:LetsManu/friendflix.git && cd friendflix
 cp .env.example .env
 openssl rand -base64 32   # -> APP_ENC_KEY      openssl rand -hex 24  # -> INTERNAL_SECRET, WEBHOOK_SECRET, METRICS_TOKEN
 $EDITOR .env
-docker network ls | grep npm                 # Name des NPM-Netzes -> NPM_NETWORK
+# NPM erreicht das Portal über 127.0.0.1:3080/3081/3082 (nur lokal gebunden) – kein gemeinsames Docker-Netz nötig
 docker compose up -d --build                 # Jellyfin/Seerr laufen schon.   Gebündelt: --profile bundled
 docker compose --profile backup up -d backup # optional: tägliche DB-Backups
 docker compose ps                            # alle "healthy"
@@ -41,7 +41,7 @@ Läuft Jellyfin/Seerr bereits als eigener Stack: `docker network connect friendf
 
 Dann:
 1. **Authentik** einrichten, **MFA erzwingen** → `docs/integrations.md`
-2. **NPM**: ein Proxy Host `portal.<domain>` → `web:3000`, Websockets an, Force SSL/HTTP2/HSTS; Advanced-Tab: `deploy/npm/portal.advanced.conf`. Optional Authentik-Forward-Auth für Admin-Pfade: `deploy/npm/admin-auth-request.conf`.
+2. **NPM**: ein Proxy Host `portal.<domain>` → `127.0.0.1` Port `3080` (http), Websockets an, Force SSL/HTTP2/HSTS; Advanced-Tab: `deploy/npm/portal.advanced.conf` (leitet `/api /auth /ws` an `:3081`, `/media/` an `:3082`). Läuft NPM selbst in einem Bridge-Container, statt `127.0.0.1` die Docker-Host-IP eintragen und `BIND_ADDR` in `.env` darauf setzen. Optional Authentik-Forward-Auth für Admin-Pfade: `deploy/npm/admin-auth-request.conf`.
 3. **Jellyfin**: Admin-API-Key anlegen (Dashboard → API-Schlüssel); optional Webhook-Plugin → `docs/integrations.md`
 4. **Seerr**: API-Key + Webhook → `docs/integrations.md`
 5. Erster Login mit einem Mitglied der Authentik-Gruppe `friendflix-admins` → wird Portal-Admin. Danach Einladungen unter *Admin → Einladungen*.
@@ -68,6 +68,8 @@ Secrets alternativ als Docker Secrets: `compose.secrets.yaml` (`VAR_FILE`).
 - **Wünsche** (Seerr) im Namen des Nutzers, Status, Admin-Freigabe, Webhook → Benachrichtigung (in-App, ntfy, Discord).
 - **Watch-Party**: eigener WebSocket-Sync (Host steuert, Drift-Korrektur ab 300 ms, Raum wartet auf Puffer aller), Chat, Emoji-Reaktionen.
 - **Filmabend-Voting** mit Countdown und Auto-Start; Titel außerhalb der Bibliothek → Admin-Freigabe → Seerr-Request → automatisch geplant, sobald verfügbar.
+- **Entdecken & Gruppe**: Netflix-ähnliche Oberfläche (Billboard, Reihen, Hover-Karten, Top 10), Gruppen-Matcher („Was hat noch keiner von uns gesehen?“), Empfehlungen an Freunde, „Demnächst“ aus Seerr, Sammlungen/Studios, Szenen teilen, Lesezeichen, X-Ray.
+- **Fernseher**: TV-Modus mit Pfeiltasten-Navigation, Kopplung per Code/QR, Handy als Fernbedienung → `docs/tv-mode.md`.
 - **Wrapped, Achievements, Läuft gerade**, Bewertungen mit Kurzreview, Serien-Kalender mit Benachrichtigung.
 - **Admin**: Status, Nutzer/Rollen, Einladungen, Wünsche, Abstimmungen, Geräte, Audit-Log.
 
@@ -90,10 +92,11 @@ Dev gegen http-Authentik: `OIDC_ALLOW_INSECURE=true` (nur Entwicklung).
 - Intro-Überspringen braucht Jellyfin ≥ 10.10 (Media Segments, z. B. per Intro-Skipper-Plugin befüllt); ältere Server liefern keine Segmente.
 - Direct Play umgeht den Bitrate-Clamp nur nicht, weil `directUrl` nur bei Quell-Bitrate ≤ Rollenlimit angeboten wird.
 - Now-Playing aktualisiert per Polling (5 s), nicht per WebSocket.
+- Fernbedienung/Kopplung: Räume und Verbindungen liegen im Speicher (ein Backend-Replikat); TV-Modus auf echten Fernsehern je Modell prüfen (`docs/tv-mode.md`).
 
 ## Checkliste
 - [x] 0 Repo-Grundstruktur · [x] 1 Compose/Netze/Health/NPM/OIDC/Jellyfin-Client · [x] 2 Gateway + Player · [x] 3 Einladungen/Rollen/Mapping
 - [x] 4 Seerr · [x] 5 Watch-Party · [x] 6 Voting/Benachrichtigungen · [x] 7 Statistiken/Achievements/Now-Playing · [x] 8 Admin/Metrics/Backups/Härtung
 
-Weitere Doku: `docs/integrations.md`, `docs/operations.md`, `docs/monitoring.md`, `CHANGELOG.md`.
+Weitere Doku: `docs/integrations.md`, `docs/operations.md`, `docs/monitoring.md`, `docs/tv-mode.md`, `CHANGELOG.md`.
 GitHub manuell aktivieren: Secret scanning + Push protection, Dependabot alerts; Repo auf **Private**.

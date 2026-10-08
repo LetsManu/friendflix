@@ -1,20 +1,19 @@
 # FriendFlix portal stack.
-# - Only `backend` and `gateway` join the NPM network (single public entry point).
+# - NPM runs OUTSIDE Docker (or in its own stack) and reaches the portal through three ports that are bound to
+#   127.0.0.1 only (BIND_ADDR): web, backend (API/auth/WebSocket) and gateway (/media). Nothing else is published.
 # - Jellyfin/Seerr have NO ports and are only reachable via the internal `media` network.
 # - `db` network is internal (no egress, no host access).
+# NPM proxy host -> 127.0.0.1:${WEB_PORT}; locations /api,/auth,/ws -> :${BACKEND_PORT}, /media -> :${GATEWAY_PORT}
+# (ready-made config: deploy/npm/portal.advanced.conf).
 
 name: friendflix
 
 networks:
-  npm:
-    name: ${NPM_NETWORK:-npm_proxy}
-    external: true
+  # `front` is a normal bridge: Docker can only publish ports for containers that sit on a non-internal network
+  front: {}
   db:
     internal: true
   media:
-    internal: true
-  # Plan B only (docs/operations.md): shared by NPM and Jellyfin so nginx can serve /media/ directly. Internal, no ports.
-  mediaedge:
     internal: true
   egress: {} # outbound internet for Jellyfin/Seerr metadata only; nothing is published
 
@@ -82,7 +81,8 @@ services:
     depends_on:
       postgres: { condition: service_healthy }
       redis: { condition: service_healthy }
-    networks: [npm, db, media, egress] # egress: OIDC discovery + ntfy/Discord
+    ports: ["${BIND_ADDR:-127.0.0.1}:${BACKEND_PORT:-3081}:3000"]
+    networks: [front, db, media, egress] # egress: OIDC discovery + ntfy/Discord
 
   gateway:
     build: { context: ., dockerfile: gateway/Dockerfile }
@@ -98,7 +98,8 @@ services:
       INTERNAL_SECRET: ${INTERNAL_SECRET:-}
       METRICS_TOKEN: ${METRICS_TOKEN:-}
     depends_on: [backend]
-    networks: [npm, media]
+    ports: ["${BIND_ADDR:-127.0.0.1}:${GATEWAY_PORT:-3082}:4000"]
+    networks: [front, media]
 
   web:
     build: { context: ., dockerfile: web/Dockerfile }
@@ -110,7 +111,8 @@ services:
     security_opt: ["no-new-privileges:true"]
     environment:
       ORIGIN: ${PUBLIC_URL:?}
-    networks: [npm]
+    ports: ["${BIND_ADDR:-127.0.0.1}:${WEB_PORT:-3080}:3000"]
+    networks: [front]
 
   # Daily pg_dump sidecar: `docker compose --profile backup up -d backup`
   # Host dir must be writable by uid 70:  mkdir -p backups && chown 70 backups
@@ -151,7 +153,7 @@ services:
       - jellyfin-config:/config
       - jellyfin-cache:/cache
       - ${MEDIA_PATH:-./media}:/media:ro
-    networks: [media, mediaedge, egress] # no ports, no NPM host (mediaedge is only used for Plan B)
+    networks: [media, egress] # no ports, no NPM host (Plan B: see compose.planb.yaml)
 
   seerr:
     profiles: [bundled]

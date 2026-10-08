@@ -72,14 +72,14 @@ describe('similar titles and "Weil du ... gesehen hast"', () => {
   it('seeds from the last finished item, maps episodes to their series and removes the seed from the list', async () => {
     const r = (await call('GET', '/api/library/because')).json();
     expect(itemsQuery).toContain('sortBy=DatePlayed');
-    expect(r.because).toEqual({ id: SER, name: 'Serie' });
+    expect(r.because).toEqual({ id: SER, name: 'Serie', liked: false });
     expect(r.items.length).toBeGreaterThan(0);
   });
 });
 
 describe('viewing preferences', () => {
   it('has safe defaults, validates and persists per user', async () => {
-    expect((await call('GET', '/api/prefs')).json().prefs).toEqual({ autoplayNext: true, autoSkipIntro: false, audioLang: '', subtitleLang: '', quality: 0 });
+    expect((await call('GET', '/api/prefs')).json().prefs).toEqual({ autoplayNext: true, autoSkipIntro: false, shareHistory: false, shareRatings: true, hoverTrailers: true, audioLang: '', subtitleLang: '', quality: 0 });
     const put = await call('PUT', '/api/prefs', { autoplayNext: false, autoSkipIntro: true, audioLang: 'ger', subtitleLang: 'eng', quality: 4_000_000 });
     expect(put.statusCode).toBe(200);
     expect((await call('GET', '/api/prefs')).json().prefs).toMatchObject({ autoplayNext: false, autoSkipIntro: true, audioLang: 'ger', subtitleLang: 'eng', quality: 4_000_000 });

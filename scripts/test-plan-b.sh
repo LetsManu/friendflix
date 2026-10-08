@@ -9,9 +9,9 @@ JF_ECHO_PORT="${JF_ECHO_PORT:-9100}"
 HERE="$(cd "$(dirname "$0")/.." && pwd)"
 CONF="$(mktemp -d)"
 sed -e "s#__INTERNAL_SECRET__#${INTERNAL_SECRET}#" \
-    -e "s#http://backend:3000#${BACKEND_URL}#" \
-    -e "s#http://jellyfin:8096#http://127.0.0.1:${JF_ECHO_PORT}#" \
-    -e "s#resolver 127.0.0.11 valid=10s ipv6=off;##" \
+    -e "s#http://127.0.0.1:3081#${BACKEND_URL}#" \
+    -e "s#http://127.0.0.1:8096#http://127.0.0.1:${JF_ECHO_PORT}#" \
+    -e "s#Host 127.0.0.1:8096#Host 127.0.0.1:${JF_ECHO_PORT}#" \
     "$HERE/deploy/npm/plan-b-auth-request.conf" > "$CONF/plan-b.conf"
 cat > "$CONF/nginx.conf" <<N
 events {}
@@ -39,4 +39,5 @@ echo "$BODY" | grep -q 'Token="tok-' && echo "ok   user token injected server-si
 echo "$BODY" | sed -n '1,/^\r$/p' | grep -qi 'set-cookie\|x-jellyfin\|authorization' && { echo "FAIL sensitive header leaked to browser"; fail=1; } || echo "ok   no Set-Cookie/token headers in response"
 R=$(curl -s -D - -o /dev/null -H "Cookie: ff_sid=$SID" -H 'Range: bytes=0-9' "$B/media/Videos/$ID/stream?static=true")
 echo "$R" | grep -q '206' && echo "ok   HTTP Range passthrough (206)" || { echo "FAIL range"; fail=1; }
+[ "$fail" = 0 ] || { echo '--- nginx log:'; docker logs "$NAME" 2>&1 | tail -8; }
 exit $fail

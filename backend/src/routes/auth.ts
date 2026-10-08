@@ -70,6 +70,8 @@ export function authRoutes(app: FastifyInstance, ctx: Ctx) {
       isAdmin: u.role === 'admin',
       csrfToken: req.session!.csrf,
       deviceApproved: req.session!.deviceApproved,
+      /** this session belongs to a paired television (device ids of paired TVs start with "tv-") */
+      tv: Boolean(req.session!.deviceId?.startsWith('tv-')),
       limits: ctx.roles[u.role],
     };
   });

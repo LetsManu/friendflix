@@ -23,6 +23,8 @@
   {:else if name === 'x'}<path d="M6 6l12 12M18 6L6 18" />
   {:else if name === 'users'}<circle cx="9" cy="8" r="3" /><path d="M3 20c0-3 3-5 6-5s6 2 6 5M16 5a3 3 0 010 6M18 15c2 .5 3 2 3 5" />
   {:else if name === 'user'}<circle cx="12" cy="8" r="4" /><path d="M4 21c0-4 4-6 8-6s8 2 8 6" />
+  {:else if name === 'tv'}<rect x="3" y="6" width="18" height="12" rx="2" /><path d="M8 3l4 3 4-3M9 21h6" />
+  {:else if name === 'stop'}<rect x="6" y="6" width="12" height="12" rx="1.5" fill="currentColor" stroke="none" />
   {:else if name === 'monitor'}<path d="M3 5h18v11H3zM8 21h8M12 16v5" />
   {:else if name === 'log-out'}<path d="M9 21H5V3h4M16 17l5-5-5-5M21 12H9" />
   {:else if name === 'bar-chart'}<path d="M5 20V10M12 20V4M19 20v-7" />
@@ -52,6 +54,12 @@
   {:else if name === 'crown'}<path d="M3 8l4.500 4L12 5l4.500 7L21 8l-2 11H5z" />
   {:else if name === 'settings'}<circle cx="12" cy="12" r="3" /><path d="M19.400 15a1.700 1.700 0 00.340 1.870l.06.06a2 2 0 11-2.830 2.830l-.06-.06a1.700 1.700 0 00-1.870-.340 1.700 1.700 0 00-1 1.550V21a2 2 0 11-4 0v-.090A1.700 1.700 0 008.900 19.400a1.700 1.700 0 00-1.870.340l-.06.06a2 2 0 11-2.830-2.830l.06-.06a1.700 1.700 0 00.340-1.870 1.700 1.700 0 00-1.550-1H3a2 2 0 110-4h.090A1.700 1.700 0 004.600 8.900a1.700 1.700 0 00-.340-1.870l-.06-.06a2 2 0 112.830-2.830l.06.06a1.700 1.700 0 001.870.340H9a1.700 1.700 0 001-1.550V3a2 2 0 114 0v.090a1.700 1.700 0 001 1.550 1.700 1.700 0 001.870-.340l.06-.06a2 2 0 112.830 2.830l-.06.06a1.700 1.700 0 00-.340 1.870V9a1.700 1.700 0 001.550 1H21a2 2 0 110 4h-.090a1.700 1.700 0 00-1.550 1z" />
   {:else if name === 'pip'}<path d="M3 5h18v14H3zM12 12h7v5h-7z" />
+  {:else if name === 'bookmark'}<path d="M6 3h12v18l-6-4.500L6 21z" />
+  {:else if name === 'share'}<circle cx="18" cy="5" r="3" /><circle cx="6" cy="12" r="3" /><circle cx="18" cy="19" r="3" /><path d="M8.600 13.500l6.800 4M15.400 6.500l-6.800 4" />
+  {:else if name === 'thumb-up'}<path d="M7 11v9H3v-9zM7 11l4-8a2 2 0 012 2v4h6a2 2 0 012 2.300l-1.300 7A2 2 0 0117.700 20H7" />
+  {:else if name === 'thumb-down'}<path d="M7 13V4H3v9zM7 13l4 8a2 2 0 002-2v-4h6a2 2 0 002-2.300l-1.300-7A2 2 0 0017.700 4H7" />
+  {:else if name === 'send'}<path d="M21 3L3 10.500l7 3L13 21zM10 13.500L21 3" />
+  {:else if name === 'download'}<path d="M12 3v12M7 10l5 5 5-5M4 21h16" />
   {:else if name === 'copy'}<path d="M9 9h11v11H9zM5 15V4h11" />
   {/if}
 </svg>

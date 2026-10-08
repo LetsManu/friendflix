@@ -74,3 +74,25 @@ video { width: 100%; background: #000; }
   html { scroll-behavior: auto; }
   *, *::before, *::after { animation-duration: .001ms !important; animation-iteration-count: 1 !important; transition-duration: .001ms !important; transition-delay: 0ms !important; }
 }
+
+/* ---- TV mode (paired televisions, or ?tv=1 preview): 10-foot UI, D-pad focus, no pointer ---- */
+html.tv { --nav-h: 76px; --pad-x: 3rem; }
+/* Many TVs report 960x540 or 1280x720 CSS pixels on a 4K panel (already scaled up): only a real 1080p viewport needs bigger type */
+@media (min-width: 1200px) { html.tv { font-size: 112.5%; --nav-h: 80px; --pad-x: 3.6rem; } }
+@media (min-width: 1700px) { html.tv { font-size: 125%; --nav-h: 84px; --pad-x: 4.2rem; } }
+html.tv, html.tv * { cursor: none !important; }
+html.tv :focus-visible { outline: 4px solid #fff; outline-offset: 4px; box-shadow: 0 0 0 9px rgba(229, 15, 42, .6); border-radius: 8px; }
+html.tv .card:focus-within { transform: scale(1.1) !important; z-index: 6; transition-delay: 0s !important; }
+html.tv .card .thumb:focus-visible { box-shadow: 0 0 0 5px #fff, 0 12px 34px rgba(0, 0, 0, .7); outline: none; border-radius: var(--radius); }
+html.tv .pop, html.tv .arrow, html.tv .tabbar, html.tv .sheet { display: none !important; }
+html.tv .track { scroll-snap-type: none; }
+html.tv main { padding-bottom: 0; }
+html.tv button, html.tv .btn { min-height: 56px; font-size: 1.05rem; padding-inline: 1.5rem; }
+html.tv .icon-btn { width: 56px; min-height: 56px; }
+html.tv .nav .links a { font-size: 1.05rem; padding: .9rem .5rem; }
+html.tv .hide-s { display: none; }
+html.tv .nav .links { display: flex !important; } /* TV viewports can be narrow in CSS pixels (960x540 on 4K panels) */
+html.tv input, html.tv select { min-height: 56px; font-size: 1.05rem; }
+html.tv .ring { width: 60px; min-height: 60px; height: 60px; }
+html.tv .drop a, html.tv .drop .plain { min-height: 56px; font-size: 1.05rem; }
+@media (prefers-reduced-motion: no-preference) { html.tv { scroll-behavior: smooth; } }

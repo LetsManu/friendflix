@@ -1,6 +1,7 @@
 import type { FastifyReply, FastifyRequest } from 'fastify';
 import { randomBytes } from 'node:crypto';
 import type { Ctx } from './ctx.js';
+import { dropRemotePeers } from './routes/tv.js';
 
 export const DEVICE_COOKIE = 'ff_dev';
 
@@ -29,6 +30,7 @@ export async function registerDevice(ctx: Ctx, req: FastifyRequest, reply: Fasti
 /** Deletes sessions of a user (optionally only one device, optionally keeping the current session). Returns the count. */
 export async function revokeSessions(ctx: Ctx, userId: string, deviceId?: string, exceptSid?: string): Promise<number> {
   let n = 0;
+  const gone = new Set<string>();
   for (const k of await ctx.kv.keys('sess:')) {
     if (exceptSid && k === `sess:${exceptSid}`) continue;
     const raw = await ctx.kv.get(k);
@@ -36,8 +38,10 @@ export async function revokeSessions(ctx: Ctx, userId: string, deviceId?: string
     const s = JSON.parse(raw) as { userId: string; deviceId?: string };
     if (s.userId === userId && (!deviceId || s.deviceId === deviceId)) {
       await ctx.kv.del(k);
+      gone.add(k.slice('sess:'.length));
       n++;
     }
   }
+  if (gone.size) dropRemotePeers(userId, gone);
   return n;
 }

@@ -10,10 +10,22 @@ export const prefsSchema = z.object({
   audioLang: z.string().regex(/^[a-z]{0,3}$/).default(''),
   /** '' = subtitles off by default */
   subtitleLang: z.string().regex(/^[a-z]{0,3}$/).default(''),
+  /** friends may include my unwatched list in the group matcher (opt-in, default off) */
+  shareHistory: z.boolean().default(false),
+  /** my ratings may appear in "Freunde haben bewertet" (default on) */
+  shareRatings: z.boolean().default(true),
+  /** short muted trailer preview when hovering a card (only local trailers) */
+  hoverTrailers: z.boolean().default(true),
   /** 0 = automatic, else a bitrate in bit/s (capped by the role limit on the server) */
   quality: z.number().int().min(0).max(200_000_000).default(0),
 });
 export type Prefs = z.infer<typeof prefsSchema>;
+
+export async function loadPrefs(ctx: Pick<Ctx, 'db'>, userId: string): Promise<Prefs> {
+  const r = await ctx.db.query<{ data: unknown }>('select data from user_prefs where user_id=$1', [userId]);
+  const parsed = prefsSchema.safeParse(r.rows[0]?.data ?? {});
+  return parsed.success ? parsed.data : prefsSchema.parse({});
+}
 
 export function prefsRoutes(app: FastifyInstance, ctx: Ctx) {
   const pre = { preHandler: requireUser(ctx) };

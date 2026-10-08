@@ -8,11 +8,14 @@ import { metricsPlugin } from './metrics.js';
 import { adminRoutes, inviteRoutes } from './routes/admin.js';
 import { authRoutes } from './routes/auth.js';
 import { internalRoutes } from './routes/internal.js';
+import { discoverRoutes } from './routes/discover.js';
 import { partyRoutes } from './routes/party.js';
 import { prefsRoutes } from './routes/prefs.js';
 import { pollRoutes } from './routes/polls.js';
+import { sceneRoutes } from './routes/scenes.js';
 import { seerrRoutes } from './routes/seerr.js';
 import { statsRoutes } from './routes/stats.js';
+import { tvRoutes } from './routes/tv.js';
 import { mediaRoutes } from './routes/media.js';
 
 export interface Extra {
@@ -44,6 +47,7 @@ export async function buildApp(ctx: Ctx, extra: Extra = {}): Promise<FastifyInst
   app.addHook('preHandler', async (req, reply) => {
     if (!['POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method) || !req.url.startsWith('/api/')) return;
     if (req.url.startsWith('/api/invite/')) return; // anonymous, token-protected
+    if (req.url.startsWith('/api/tv/code') || req.url.startsWith('/api/tv/claim')) return; // anonymous, protected by the TV's own poll secret (no ambient authority)
     const sid = req.cookies.ff_sid;
     const raw = sid ? await ctx.kv.get(`sess:${sid}`) : null;
     if (!raw) return; // unauthenticated -> route handler answers 401
@@ -73,6 +77,9 @@ export async function buildApp(ctx: Ctx, extra: Extra = {}): Promise<FastifyInst
   pollRoutes(app, ctx);
   statsRoutes(app, ctx);
   prefsRoutes(app, ctx);
+  discoverRoutes(app, ctx);
+  sceneRoutes(app, ctx);
+  tvRoutes(app, ctx);
   for (const r of extra.register ?? []) await r(app, ctx);
   return app;
 }

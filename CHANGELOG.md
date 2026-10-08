@@ -1,5 +1,19 @@
 # Changelog
 ## [Unreleased]
+### Step 15 – TV mode, phone remote, local ports
+- **TV mode** for smart TVs / sticks / consoles: pairing screen `/tv` (code + QR), TV gets its own 30-day session (7 days idle), listed under *Geräte*; 10-foot UI (big type, strong focus rings), geometric D-pad navigation (`lib/spatial.ts`), Back key support for Tizen/webOS/Android TV, focus memory when going back, control bar reachable with up/down in the player, media keys. `?tv=1` previews it in any browser.
+- **Phone as remote** (`/remote`, menu "Fernbedienung"): play/pause, ±10/±60 s, stop, home, "continue watching" and search with *Auf TV*, "Auf Fernseher" button on detail pages. WebSocket hub `/ws/remote` (same user only, command whitelist, flood limit, revoked sessions are disconnected immediately).
+- Security: pairing needs a logged-in user, one-time 10-minute code with secret poll token, phishing warning, notification + audit entry on every pairing; anonymous `/api/tv/code|claim` are exempt from CSRF (no ambient authority).
+- Player: **starts automatically** now (falls back to muted start with a hint if the browser refuses sound; the first key unmutes), publishes its state for the remote.
+- **Fix:** the watch page re-requested `/api/items/:id` in an endless loop (Svelte 5 dependency tracking of an inline async block), so the title never showed and the API was hammered; the loader is a function now.
+- Ops: no shared Docker network with NPM needed any more – web/backend/gateway are published on `127.0.0.1:3080/3081/3082` only (`BIND_ADDR`, `*_PORT`); NPM configs and `scripts/test-plan-b.sh` updated; Plan B uses `compose.planb.yaml` (Jellyfin on `127.0.0.1:8096`); `mediaedge` network removed.
+### Step 14 – Social & discovery
+- Group matcher ("Was hat noch keiner von uns gesehen?"): opt-in per participant, intersection of unwatched lists with each user's own token, filters (length/genre), one click to a film-night poll.
+- Scenes: share links with timestamp (`/watch/<id>?t=`), bookmarks with notes and timeline markers.
+- X-Ray cast panel on pause; find subtitles via Jellyfin remote providers; picture of title mood (dynamic tint on the detail page).
+- Recommend to friends, "Von Freunden empfohlen" and "Freunde haben bewertet" rows (rating sharing opt-out), thumbs up/down feeding "Weil du ... gesehen hast".
+- "Demnächst" from Seerr with one-click wish; extras/bonus material, collections and studio hubs.
+- Muted hover trailer previews (local trailers only), shareable Wrapped card (PNG, rendered in the browser).
 ### Step 13 – Streaming features
 - Timeline preview thumbnails (Jellyfin trickplay) through the gateway/auth_request allowlist.
 - Quality selector (Auto/1080p/720p/480p/360p, never above the role limit); "Einstellungen" menu with quality, speed and sleep timer ("nach 15/30/45/60 Min." or "nach dieser Folge").

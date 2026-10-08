@@ -14,8 +14,8 @@ export async function api<T = any>(path: string, opts: { method?: string; body?:
     headers: { 'content-type': 'application/json', 'x-csrf-token': csrf },
     body: opts.body === undefined ? undefined : JSON.stringify(opts.body),
   });
-  if (res.status === 401 && !location.pathname.startsWith('/invite/')) {
-    location.href = '/auth/login';
+  if (res.status === 401 && !location.pathname.startsWith('/invite/') && location.pathname !== '/tv') {
+    location.href = localStorage.getItem('ff_tv_device') ? '/tv' : '/auth/login'; // a TV re-pairs instead of typing a login
     await new Promise(() => undefined);
   }
   const text = await res.text();
@@ -38,7 +38,7 @@ export const fmtClock = (s: number) => {
 export interface Item {
   id: string; name: string; type: string; year?: number; overview?: string; runtimeTicks?: number;
   seriesId?: string; seriesName?: string; seasonId?: string; indexNumber?: number; parentIndexNumber?: number;
-  genres: string[]; rating?: string; communityRating?: number; premiereDate?: string; image: boolean; backdrop: boolean; logo: boolean;
+  genres: string[]; rating?: string; communityRating?: number; premiereDate?: string; image: boolean; backdrop: boolean; logo: boolean; trailers?: number; caption?: string;
   played: boolean; favorite: boolean; positionTicks: number; playedPercentage?: number;
 }
-export interface Me { id: string; name: string; role: string; roleLabel: string; isAdmin: boolean; csrfToken: string; deviceApproved: boolean }
+export interface Me { id: string; name: string; role: string; roleLabel: string; isAdmin: boolean; csrfToken: string; deviceApproved: boolean; tv: boolean }

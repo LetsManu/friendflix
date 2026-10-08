@@ -3,10 +3,13 @@
   import { listIds, toggleList } from '$lib/stores';
   import Icon from '$lib/Icon.svelte';
   import { openModal } from '$lib/modal';
+  import { onDestroy } from 'svelte';
+  import { prefs } from '$lib/stores';
+  import { playPreview, stopPreview, previewOwner } from '$lib/preview';
 
   export let item: Item;
   let fav = item.favorite;
-  $: href = item.type === 'Episode' ? `/watch/${item.id}` : `/item/${item.id}`;
+  $: href = item.type === 'Episode' ? `/watch/${item.id}` : item.type === 'BoxSet' ? `/library/${item.id}` : `/item/${item.id}`;
   $: detail = item.type === 'Episode' && item.seriesId ? `/item/${item.seriesId}` : `/item/${item.id}`;
   $: src = item.backdrop ? backdrop(item.id, 520) : item.image ? img(item.id, 520) : '';
   $: posterOnly = !item.backdrop && item.image; // poster (2:3) in a 16:9 slot: show it contained on a blurred copy
@@ -15,13 +18,22 @@
   $: inList = $listIds.has(item.seriesId ?? item.id);
   $: score = item.communityRating ? Math.round(item.communityRating * 10) : 0;
 
+  // Muted trailer preview after hovering ~1.2 s (only titles with a local trailer, only real pointers, one at a time)
+  let pv: HTMLVideoElement, hoverT: ReturnType<typeof setTimeout>, previewing = false;
+  const canHover = typeof matchMedia !== 'undefined' && matchMedia('(hover: hover) and (pointer: fine)').matches;
+  function enter() { if (!canHover || !item.trailers || !$prefs.hoverTrailers) return; hoverT = setTimeout(async () => { previewing = true; if (!(await playPreview(item.id, () => pv))) previewing = false; }, 1200); }
+  function leave() { clearTimeout(hoverT); if (previewing) { stopPreview(item.id); previewing = false; } }
+  $: if ($previewOwner !== item.id && previewing) previewing = false;
+  onDestroy(leave);
+
   async function toggleFav() { fav = !fav; try { await api(`/api/items/${item.id}/favorite`, { method: fav ? 'POST' : 'DELETE' }); } catch { fav = !fav; } }
 </script>
 
-<article class="card">
+<article class="card" on:mouseenter={enter} on:mouseleave={leave} on:focusin={enter} on:focusout={leave}>
   <a class="thumb" {href} aria-label={item.name + (sub ? ', ' + sub : '')}>
     {#if posterOnly}<img class="blur" loading="lazy" {src} alt="" aria-hidden="true" />{/if}
     {#if src}<img class:contain={posterOnly} loading="lazy" decoding="async" {src} alt="" width="320" height="180" />{/if}
+    {#if previewing}<!-- svelte-ignore a11y_media_has_caption --><video bind:this={pv} class="pv" muted loop playsinline></video>{/if}
     <span class="cap" class:big={!src}>{item.type === 'Episode' ? item.name : item.name}</span>
     {#if pct}<span class="progress"><i style="width:{pct}%"></i></span>{/if}
   </a>
@@ -38,7 +50,7 @@
       {#if item.runtimeTicks && item.type !== 'Series'}<span>{fmtMin(item.runtimeTicks)}</span>{/if}
       {#if item.type === 'Series'}<span>Serie</span>{/if}
     </div>
-    {#if sub}<div class="sub">{sub}</div>{:else if item.genres.length}<div class="sub">{item.genres.slice(0, 3).join(' • ')}</div>{/if}
+    {#if item.caption}<div class="sub cap2">{item.caption}</div>{:else if sub}<div class="sub">{sub}</div>{:else if item.genres.length}<div class="sub">{item.genres.slice(0, 3).join(' • ')}</div>{/if}
   </div>
 </article>
 
@@ -46,6 +58,8 @@
   .card { position: relative; width: 100%; transform-origin: center; transition: transform var(--t-med) var(--ease) 0s; }
   .thumb { display: block; position: relative; aspect-ratio: 16 / 9; border-radius: var(--radius); overflow: hidden; background: linear-gradient(135deg, #2b2b2b, #1a1a1a); }
   .thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .pv { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; z-index: 1; background: #000; }
+  .cap2 { color: #f5c518; }
   .blur { position: absolute; inset: -10%; width: 120%; height: 120%; object-fit: cover; filter: blur(18px) brightness(.55); }
   .thumb img.contain { position: relative; object-fit: contain; }
   .cap { position: absolute; left: .6rem; bottom: .5rem; right: .6rem; font-weight: 700; font-size: .85rem; text-shadow: 0 1px 6px #000, 0 0 2px #000; line-height: 1.2; }

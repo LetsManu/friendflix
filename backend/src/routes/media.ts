@@ -19,6 +19,7 @@ const listQuery = z.object({
   start: z.coerce.number().int().min(0).optional(),
   filter: z.enum(['favorites', 'unplayed', 'played']).optional(),
   genre: z.string().max(60).optional(),
+  studio: z.string().max(80).optional(),
 });
 
 const reportBody = z.object({
@@ -75,14 +76,18 @@ export function mediaRoutes(app: FastifyInstance, ctx: Ctx) {
     const id = itemId.parse((req.params as any).id);
     const item = await ctx.jf.item(req.user!, id);
     const inWatchlist = (await ctx.db.query('select 1 from watchlist where user_id=$1 and item_id=$2', [req.user!.id, id])).rowCount! > 0;
-    return { item, inWatchlist };
+    const th = await ctx.db.query<{ value: number }>('select value from thumbs where user_id=$1 and item_id=$2', [req.user!.id, id]);
+    return { item, inWatchlist, thumb: th.rows[0]?.value ?? 0 };
   }));
   app.get('/api/items/:id/segments', pre, wrap(async (req) => ({ segments: await ctx.jf.segments(req.user!, itemId.parse((req.params as any).id)) })));
   app.get('/api/items/:id/similar', pre, wrap(async (req) => ({ items: await ctx.jf.similar(req.user!, itemId.parse((req.params as any).id)) })));
   app.get('/api/library/because', pre, wrap(async (req) => {
-    const seed = await ctx.jf.lastWatched(req.user!);
-    if (!seed) return { because: null, items: [] };
-    return { because: { id: seed.id, name: seed.name }, items: (await ctx.jf.similar(req.user!, seed.id)).filter((i) => i.id !== seed.id) };
+    const up = (await ctx.db.query<{ item_id: string }>('select item_id from thumbs where user_id=$1 and value=1 order by created_at desc limit 1', [req.user!.id])).rows[0];
+    const seed = up ? await ctx.jf.item(req.user!, up.item_id).catch(() => null) : null;
+    const base = seed ?? (await ctx.jf.lastWatched(req.user!));
+    if (!base) return { because: null, items: [] };
+    const down = new Set((await ctx.db.query<{ item_id: string }>('select item_id from thumbs where user_id=$1 and value=-1', [req.user!.id])).rows.map((r) => r.item_id));
+    return { because: { id: base.id, name: base.name, liked: Boolean(seed) }, items: (await ctx.jf.similar(req.user!, base.id)).filter((i) => i.id !== base.id && !down.has(i.id)) };
   }));
   app.get('/api/items/:id/seasons', pre, wrap(async (req) => ({ items: await ctx.jf.seasons(req.user!, itemId.parse((req.params as any).id)) })));
   app.get('/api/items/:id/episodes', pre, wrap(async (req) => {

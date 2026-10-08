@@ -19,6 +19,8 @@ export interface ItemDto {
   backdrop: boolean;
   /** transparent title logo available (shown in the billboard) */
   logo: boolean;
+  /** number of local (playable) trailers */
+  trailers: number;
   played: boolean;
   favorite: boolean;
   positionTicks: number;
@@ -48,6 +50,7 @@ export function toItemDto(i: Record<string, any>): ItemDto {
     image: Boolean(i.ImageTags?.Primary),
     backdrop: Array.isArray(i.BackdropImageTags) && i.BackdropImageTags.length > 0,
     logo: Boolean(i.ImageTags?.Logo),
+    trailers: Number(i.LocalTrailerCount ?? 0),
     played: Boolean(ud.Played),
     favorite: Boolean(ud.IsFavorite),
     positionTicks: Number(ud.PlaybackPositionTicks ?? 0),

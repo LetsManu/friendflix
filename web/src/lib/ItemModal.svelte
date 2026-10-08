@@ -15,6 +15,8 @@
     try {
       item = (await api(`/api/items/${id}`)).item;
       if (item?.type === 'Series') next = (await api('/api/library/nextup')).items.find((e: Item) => e.seriesId === id) ?? null;
+      // TV: the play button is the natural first stop (the close button is reached with Back)
+      if (document.documentElement.classList.contains('tv')) tick().then(() => box?.querySelector<HTMLElement>('[data-autofocus]')?.focus());
     } catch { failed = true; }
   }
   $: inList = item ? $listIds.has(item.id) : false;
@@ -52,7 +54,7 @@
       <div class="cap">
         {#if item.logo && !logoFailed}<img class="tlogo" src={logoUrl(item.id)} alt={item.name} on:error={() => (logoFailed = true)} />{:else}<h2>{item.name}</h2>{/if}
         <div class="btns">
-          <a class="btn light" href={play}><Icon name="play" size={22} />{item.type === 'Series' && next ? `S${next.parentIndexNumber}:E${next.indexNumber}` : 'Abspielen'}</a>
+          <a class="btn light" data-autofocus href={play}><Icon name="play" size={22} />{item.type === 'Series' && next ? `S${next.parentIndexNumber}:E${next.indexNumber}` : 'Abspielen'}</a>
           <button class="round" aria-pressed={inList} aria-label={inList ? 'Von Meine Liste entfernen' : 'Zu Meine Liste hinzufügen'} on:click={() => toggleList(item!.id, inList)}><Icon name={inList ? 'check' : 'plus'} size={20} /></button>
         </div>
       </div>

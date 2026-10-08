@@ -8,6 +8,7 @@
   const PAGE = 60;
   $: kind = $page.params.kind === 'series' ? 'Series' : 'Movie';
   $: genre = $page.url.searchParams.get('genre') ?? '';
+  $: studio = $page.url.searchParams.get('studio') ?? '';
   $: sort = $page.url.searchParams.get('sort') ?? 'SortName';
   $: filter = $page.url.searchParams.get('filter') ?? '';
 
@@ -17,6 +18,7 @@
     const p = new URLSearchParams({ types: kind, sort, limit: String(PAGE), start: String(start) });
     if (sort === 'DateCreated' || sort === 'CommunityRating') p.set('desc', 'true');
     if (genre) p.set('genre', genre);
+    if (studio) p.set('studio', studio);
     if (filter) p.set('filter', filter);
     try {
       const r = await api(`/api/library/items?${p}`);
@@ -24,7 +26,7 @@
     } catch { items = items ?? []; }
     busy = false;
   }
-  $: kind, genre, sort, filter, load(true);
+  $: kind, genre, studio, sort, filter, load(true);
   $: if (!genres.length) api('/api/library/genres').then((r) => (genres = r.genres)).catch(() => undefined);
 
   function set(key: string, value: string) {
@@ -36,7 +38,7 @@
 
 <svelte:head><title>{kind === 'Series' ? 'Serien' : 'Filme'} – FriendFlix</title></svelte:head>
 <div class="flex head">
-  <h1>{kind === 'Series' ? 'Serien' : 'Filme'}</h1>
+  <h1>{kind === 'Series' ? 'Serien' : 'Filme'}{#if studio} · {studio}{/if}</h1>
   <label class="sr-only" for="g">Genre</label>
   <select id="g" value={genre} on:change={(e) => set('genre', e.currentTarget.value)}><option value="">Alle Genres</option>{#each genres as g}<option>{g}</option>{/each}</select>
   <label class="sr-only" for="s">Sortierung</label>
