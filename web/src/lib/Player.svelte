@@ -5,8 +5,12 @@
   import Icon from '$lib/Icon.svelte';
   import { get } from 'svelte/store';
   import { prefs } from '$lib/stores';
+  import { nowPlaying } from '$lib/remote';
+  import { isBackKey } from '$lib/spatial';
 
   export let itemId: string;
+  /** shown on the phone's remote while this plays */
+  export let title = '';
   export let video: HTMLVideoElement | null = null;
   /** the element that goes fullscreen (so overlays/chat stay visible) */
   export let stage: HTMLDivElement | null = null;
@@ -51,6 +55,7 @@
   $: shown = scrubbing ? scrubTime : current;
   $: pct = duration ? Math.min(100, (shown / duration) * 100) : 0;
   $: bufPct = duration ? Math.min(100, (buffered / duration) * 100) : 0;
+  $: nowPlaying.set({ itemId, title, position: current, duration, paused }); // what the phone remote shows
   $: if (skip && skip.type === 'intro' && !partyMode && canControl && get(prefs).autoSkipIntro && !autoSkipped.has(skip.start)) { autoSkipped.add(skip.start); doSkip(); flash('Intro übersprungen', 1500); }
   const skipLabel: Record<string, string> = { intro: 'Intro überspringen', outro: 'Abspann überspringen', recap: 'Rückblick überspringen' };
 
@@ -117,6 +122,31 @@
   function setSubtitle(i: number) {
     subIndex = i;
     [...(video?.textTracks ?? [])].forEach((t) => (t.mode = t.id === `sub-${i}` ? 'showing' : 'disabled'));
+  }
+
+  // ---- start playback: browsers may refuse sound without a prior key press (a TV that was only cast to) -> start muted, first key unmutes ----
+  let wantAutoplay = !partyMode, needsSound = false;
+  async function playSafe() {
+    if (!video) return;
+    try { await video.play(); return; } catch { /* blocked: try muted */ }
+    try { video.muted = true; muted = true; await video.play(); needsSound = true; flash('Ton aus – beliebige Taste drücken für Ton', 7000); }
+    catch { video.muted = false; muted = false; } // still blocked: the big play button stays
+  }
+  function unmuteOnGesture(e: Event) {
+    if (!needsSound || !video) return;
+    needsSound = false; video.muted = false; muted = false; toast = '';
+    e.stopPropagation(); e.preventDefault(); // this first key/tap only switches the sound on
+  }
+  const tvMode = () => document.documentElement.classList.contains('tv');
+  const focusControls = () => { wake(); tickDom().then(() => stage?.querySelector<HTMLElement>('.ctl .ic')?.focus()); };
+  /** commands from the phone remote (dispatched by the layout on a paired TV) */
+  function onRemote(e: Event) {
+    const m = (e as CustomEvent<{ action: string; value?: number }>).detail;
+    wake();
+    if (m.action === 'play') { if (allowed()) playSafe(); }
+    else if (m.action === 'pause') { if (allowed()) video?.pause(); }
+    else if (m.action === 'toggle') { if (video?.paused) { if (allowed()) playSafe(); } else if (allowed()) video?.pause(); }
+    else if (m.action === 'seekBy' && typeof m.value === 'number') seekBy(m.value);
   }
 
   // ---- gated controls (party guests are not allowed to change playback) ----
@@ -222,15 +252,42 @@
     if (!video || e.ctrlKey || e.metaKey || e.altKey || ['INPUT', 'SELECT', 'TEXTAREA'].includes(t.tagName)) return;
     const k = e.key.toLowerCase();
     wake();
-    if (k === ' ' || k === 'k') { e.preventDefault(); togglePlay(); }
+    const onBody = t === document.body || t === stage;
+    if (k === 'enter' && onBody && skip && tvMode()) { e.preventDefault(); doSkip(); } // TV: OK skips the intro while its button is showing
+    else if (k === ' ' || k === 'k' || k === 'mediaplaypause' || (k === 'enter' && onBody)) { e.preventDefault(); togglePlay(); }
+    else if (k === 'mediaplay') { e.preventDefault(); if (allowed()) playSafe(); }
+    else if (k === 'mediapause') { e.preventDefault(); if (allowed()) video.pause(); }
+    else if (k === 'mediafastforward') { e.preventDefault(); seekBy(30); }
+    else if (k === 'mediarewind') { e.preventDefault(); seekBy(-30); }
+    else if (k === 'mediatracknext' && hasNext) { e.preventDefault(); dispatch('next'); }
     else if (k === 'arrowleft' || k === 'j') { e.preventDefault(); seekBy(-10); }
     else if (k === 'arrowright' || k === 'l') { e.preventDefault(); seekBy(10); }
-    else if (k === 'arrowup') { e.preventDefault(); setVolume(Math.min(1, volume + 0.1)); flash(`Lautstärke ${Math.round(Math.min(1, volume + 0.1) * 100)} %`, 600); }
-    else if (k === 'arrowdown') { e.preventDefault(); setVolume(Math.max(0, volume - 0.1)); }
+    else if (k === 'arrowup' || k === 'arrowdown') {
+      e.preventDefault();
+      if (tvMode()) focusControls(); // D-pad: up/down open the control bar (the TV has its own volume keys)
+      else if (k === 'arrowup') { setVolume(Math.min(1, volume + 0.1)); flash(`Lautstärke ${Math.round(Math.min(1, volume + 0.1) * 100)} %`, 600); }
+      else setVolume(Math.max(0, volume - 0.1));
+    }
     else if (k === 'm') { toggleMute(); flash(muted ? 'Stumm' : 'Ton an', 700); }
     else if (k === 'f') toggleFullscreen();
     else if (k === 'escape' && menu) menu = '';
   }
+  /** Back / Escape (capture phase: the control bar swallows key events): close the open menu, then leave the control bar */
+  function onBackCapture(e: KeyboardEvent) {
+    if (!(e.key === 'Escape' || (tvMode() && isBackKey(e)))) return;
+    const opener = stage?.querySelector<HTMLElement>('.ctl [aria-expanded="true"]');
+    if (menu || subDlg) {
+      e.preventDefault(); e.stopImmediatePropagation();
+      menu = ''; subDlg = false;
+      if (tvMode()) tickDom().then(() => opener?.focus());
+    } else if (tvMode() && stage?.querySelector('.ctl')?.contains(document.activeElement)) {
+      e.preventDefault(); e.stopImmediatePropagation();
+      (document.activeElement as HTMLElement).blur(); lastActive = 0; // hide the bar, the next Back leaves the player
+    }
+  }
+  /** keys typed on a control belong to the control (Space = click, arrows = slider) - except Escape, which still leaves the player */
+  const ctlKey = (e: KeyboardEvent) => { if (e.key !== 'Escape') e.stopPropagation(); };
+  $: if (menu && typeof document !== 'undefined' && tvMode()) tickDom().then(() => stage?.querySelector<HTMLElement>('.menu .mi')?.focus());
   let lastTap = 0;
   function onSurfaceClick(e: MouseEvent) {
     if ((e.target as HTMLElement).closest('.ui, .skipbtn, .ovl')) return;
@@ -270,23 +327,29 @@
     const fs = () => (fullscreen = Boolean(document.fullscreenElement));
     window.addEventListener('pagehide', bye);
     document.addEventListener('fullscreenchange', fs);
-    return () => { window.removeEventListener('pagehide', bye); document.removeEventListener('fullscreenchange', fs); };
+    window.addEventListener('ff-remote', onRemote);
+    window.addEventListener('keydown', unmuteOnGesture, true);
+    window.addEventListener('pointerdown', unmuteOnGesture, true);
+    return () => {
+      window.removeEventListener('pagehide', bye); document.removeEventListener('fullscreenchange', fs);
+      window.removeEventListener('ff-remote', onRemote); window.removeEventListener('keydown', unmuteOnGesture, true); window.removeEventListener('pointerdown', unmuteOnGesture, true);
+    };
   });
   onDestroy(() => {
-    clearInterval(progressTimer); clearInterval(activityTimer); clearTimeout(toastTimer);
+    clearInterval(progressTimer); clearInterval(activityTimer); clearTimeout(toastTimer); nowPlaying.set(null);
     if (started && !stopped) { stopped = true; send('stop'); }
     hls?.destroy();
   });
 </script>
 
-<svelte:window on:keydown={onKey} />
+<svelte:window on:keydown={onKey} on:keydown|capture={onBackCapture} />
 <div class="stage" class:idle={!showUi} style="--inset:{inset}px" bind:this={stage} on:mousemove={wake} on:click={onSurfaceClick} on:keydown={() => {}} role="presentation">
   <!-- svelte-ignore a11y_media_has_caption -->
   <video bind:this={video} playsinline crossorigin="use-credentials"
     on:play={onPlay} on:pause={() => { paused = true; send('progress'); }} on:seeked={() => started && send('progress')}
     on:ended={() => { stopped = true; paused = true; send('stop'); }}
     on:timeupdate={syncTime} on:progress={syncTime} on:loadedmetadata={syncTime}
-    on:waiting={() => (waiting = true)} on:playing={() => (waiting = false)} on:canplay={() => (waiting = false)}
+    on:waiting={() => (waiting = true)} on:playing={() => (waiting = false)} on:canplay={() => { waiting = false; if (wantAutoplay) { wantAutoplay = false; playSafe(); } }}
     on:volumechange={() => { if (video) { muted = video.muted; } }}
     on:play on:pause on:seeked on:seeking on:waiting on:playing on:canplay on:timeupdate on:ended>
     {#if info}{#each info.subtitles as s}<track id="sub-{s.index}" kind="subtitles" src={s.url} srclang={s.language?.slice(0, 2) ?? 'xx'} label={s.title} />{/each}{/if}
@@ -303,7 +366,7 @@
   <div class="ovl" class:hide={!showUi}><slot name="top" /></div>
   <slot />
 
-  {#if skip}<button class="skipbtn light" on:click|stopPropagation={doSkip}>{skipLabel[skip.type]}</button>{/if}
+  {#if skip}<button class="skipbtn light" on:click|stopPropagation={doSkip}>{skipLabel[skip.type]}{tvMode() ? ' (OK)' : ''}</button>{/if}
 
   {#if showXray && people}
     <aside class="xray ui" class:hide={!showUi && !xray} aria-label="Besetzung">
@@ -313,7 +376,7 @@
     </aside>
   {/if}
   {#if subDlg}
-    <div class="dlg ui" role="dialog" aria-modal="true" aria-label="Untertitel suchen" on:click|stopPropagation on:keydown|stopPropagation>
+    <div class="dlg ui" data-nav data-scope role="dialog" aria-modal="true" aria-label="Untertitel suchen" on:click|stopPropagation on:keydown|stopPropagation>
       <header><b>Untertitel suchen</b><button class="icx" aria-label="Schließen" on:click={() => (subDlg = false)}><Icon name="x" size={20} /></button></header>
       <div class="flex"><select bind:value={subLang} aria-label="Sprache"><option value="ger">Deutsch</option><option value="eng">Englisch</option><option value="fre">Französisch</option><option value="spa">Spanisch</option><option value="ita">Italienisch</option></select><button disabled={subBusy} on:click={searchSubs}>Suchen</button></div>
       {#if subMsg}<p class="muted">{subMsg}</p>{/if}
@@ -321,7 +384,7 @@
     </div>
   {/if}
 
-  <div class="ui ctl" class:hide={!showUi} on:click|stopPropagation on:keydown|stopPropagation role="toolbar" tabindex="-1" aria-label="Wiedergabesteuerung">
+  <div class="ui ctl" data-nav class:hide={!showUi} on:click|stopPropagation on:keydown={ctlKey} role="toolbar" tabindex="-1" aria-label="Wiedergabesteuerung">
     <div class="timeline">
       <div class="track" bind:this={trackEl} class:locked={!canControl} role="slider" tabindex="0" aria-label="Position" aria-valuemin="0" aria-valuemax={Math.round(duration)} aria-valuenow={Math.round(shown)}
         aria-valuetext="{fmtClock(shown)} von {fmtClock(duration)}"
@@ -357,7 +420,7 @@
           <div class="mwrap">
             <button class="ic" aria-label="Audio und Untertitel" aria-expanded={menu === 'tracks'} on:click={() => (menu = menu === 'tracks' ? '' : 'tracks')}><Icon name="subtitles" size={28} /></button>
             {#if menu === 'tracks'}
-              <div class="menu tracks" role="dialog" aria-label="Audio und Untertitel">
+              <div class="menu tracks" data-nav data-scope role="dialog" aria-label="Audio und Untertitel">
                 {#if info.audioTracks.length > 1}
                   <div><h3>Audio</h3>
                     {#each info.audioTracks as a}<button class="mi" class:on={audioIndex === a.index || (audioIndex === undefined && a.isDefault)} on:click={() => { menu = ''; changeAudio(a.index); }}>{#if audioIndex === a.index || (audioIndex === undefined && a.isDefault)}<Icon name="check" size={16} />{:else}<span class="sp"></span>{/if}{a.title}</button>{/each}
@@ -375,7 +438,7 @@
         <div class="mwrap">
           <button class="ic" aria-label="Szenen und Lesezeichen" aria-expanded={menu === 'scenes'} on:click={() => (menu = menu === 'scenes' ? '' : 'scenes')}><Icon name="bookmark" size={26} /></button>
           {#if menu === 'scenes'}
-            <div class="menu scenes" role="dialog" aria-label="Szenen und Lesezeichen">
+            <div class="menu scenes" data-nav data-scope role="dialog" aria-label="Szenen und Lesezeichen">
               <h3>Szenen</h3>
               <button class="mi" on:click={shareScene}><Icon name="share" size={18} />Szene teilen ({fmtClock(shown)})</button>
               <form class="addnote" on:submit|preventDefault={addBookmark}><input bind:value={noteText} maxlength="140" placeholder="Notiz (optional)" aria-label="Notiz zum Lesezeichen" /><button aria-label="Lesezeichen setzen"><Icon name="bookmark" size={18} /></button></form>
@@ -390,7 +453,7 @@
         <div class="mwrap">
           <button class="ic" aria-label="Einstellungen" aria-expanded={menu === 'settings'} on:click={() => (menu = menu === 'settings' ? '' : 'settings')}><Icon name="settings" size={27} />{#if sleepAt}<span class="sleepdot" title="Schlaf-Timer {sleepLeft}"></span>{/if}</button>
           {#if menu === 'settings'}
-            <div class="menu tracks" role="dialog" aria-label="Einstellungen">
+            <div class="menu tracks" data-nav data-scope role="dialog" aria-label="Einstellungen">
               <div><h3>Qualität</h3>
                 <button class="mi" class:on={quality === 0} on:click={() => changeQuality(0)}>{#if quality === 0}<Icon name="check" size={16} />{:else}<span class="sp"></span>{/if}Automatisch</button>
                 {#each qualityOptions as [label, bps]}<button class="mi" class:on={quality === bps} on:click={() => changeQuality(bps)}>{#if quality === bps}<Icon name="check" size={16} />{:else}<span class="sp"></span>{/if}{label}</button>{/each}
@@ -478,5 +541,13 @@
   .mi { display: flex; width: 100%; justify-content: flex-start; align-items: center; gap: .5rem; background: transparent; color: #d2d2d2; font-weight: 400; padding: .35rem .6rem; min-height: 40px; text-align: left; border-radius: 4px; }
   .mi:hover:not(:disabled) { background: rgba(255,255,255,.1); color: #fff; } .mi.on { color: #fff; font-weight: 700; }
   .sp { width: 16px; flex: none; }
+  /* TV: bigger targets, strong focus, no volume slider (the TV has its own volume) */
+  :global(html.tv) .ic { width: 64px; min-height: 64px; }
+  :global(html.tv) .ic:focus-visible { background: rgba(255, 255, 255, .22); transform: scale(1.12); }
+  :global(html.tv) .vol, :global(html.tv) .badge { display: none; }
+  :global(html.tv) .clock { font-size: 1.1rem; }
+  :global(html.tv) .track:focus-visible { height: 12px; outline: none; box-shadow: 0 0 0 4px #fff; }
+  :global(html.tv) .mi { min-height: 56px; font-size: 1.05rem; }
+  :global(html.tv) .skipbtn { font-size: 1.15rem; }
   @media (max-width: 720px) { .clock, .badge, .vol .vslider { display: none; } .menu.tracks { flex-direction: column; min-width: 240px; } .ic { width: 44px; } .bigplay { width: 76px; height: 76px; } }
 </style>

@@ -1,11 +1,12 @@
 <script lang="ts">
-  import { onDestroy } from 'svelte';
+  import { onDestroy, tick } from 'svelte';
   import { page } from '$app/stores';
   import { goto } from '$app/navigation';
   import { api, type Item } from '$lib/api';
   import Icon from '$lib/Icon.svelte';
   import Player from '$lib/Player.svelte';
   import { prefs } from '$lib/stores';
+  import { isBackKey } from '$lib/spatial';
 
   let video: HTMLVideoElement | null = null;
   let item: Item | null = null, nextEp: Item | null = null;
@@ -14,24 +15,35 @@
   $: id = $page.params.id!;
   $: startAt = (() => { const t = Number($page.url.searchParams.get('t')); return Number.isFinite(t) && t > 0 && t < 86_400 ? Math.floor(t) : undefined; })();
 
-  $: id, (async () => {
+  // A function call keeps `id` the only dependency. (An inline async block that also reads `item` made Svelte re-run it
+  // whenever `item` changed, i.e. an endless request loop and a title that never showed.)
+  async function loadItem(wanted: string) {
     item = null; nextEp = null; stopCountdown(); showNext = false;
     try {
-      item = (await api(`/api/items/${id}`)).item;
-      if (item?.type === 'Episode' && item.seriesId) nextEp = (await api('/api/library/nextup')).items.find((e: Item) => e.seriesId === item!.seriesId && e.id !== id) ?? null;
+      const it = (await api(`/api/items/${wanted}`)).item as Item;
+      if (wanted !== id) return; // navigated on in the meantime
+      item = it;
+      if (it.type === 'Episode' && it.seriesId) {
+        const up = (await api('/api/library/nextup')).items.find((e: Item) => e.seriesId === it.seriesId && e.id !== wanted) ?? null;
+        if (wanted === id) nextEp = up;
+      }
     } catch { /* player shows its own error */ }
-  })();
+  }
+  $: loadItem(id);
 
   const back = () => (history.length > 1 ? history.back() : goto('/'));
   function stopCountdown() { clearInterval(cd); countdown = 0; }
   function startCountdown() {
     if (!nextEp) return;
+    if (tvMode()) tick().then(() => document.querySelector<HTMLElement>('.next a')?.focus()); // TV: after the end OK starts the next episode
     if (sleepAfterEpisode || !$prefs.autoplayNext) { showNext = true; countdown = 0; return; } // wait for the viewer's click
     showNext = true; countdown = 8; clearInterval(cd);
     cd = setInterval(() => { countdown -= 1; if (countdown <= 0) { stopCountdown(); goto(`/watch/${nextEp!.id}`); } }, 1000);
   }
   function onTime() { if (video && nextEp && !showNext && video.duration && video.duration - video.currentTime < 25) showNext = true; }
-  function onKey(e: KeyboardEvent) { if (e.key === 'Escape' && !document.fullscreenElement) back(); }
+  const tvMode = () => document.documentElement.classList.contains('tv');
+  function onKey(e: KeyboardEvent) { if ((e.key === 'Escape' || (tvMode() && isBackKey(e))) && !document.fullscreenElement) { e.preventDefault(); back(); } }
+  const label = (i: Item | null) => (i ? (i.seriesName ? `${i.seriesName} · S${i.parentIndexNumber}:E${i.indexNumber} ${i.name}` : i.name) : '');
   onDestroy(stopCountdown);
 </script>
 
@@ -39,13 +51,13 @@
 <svelte:head><title>{item?.name ?? 'Wiedergabe'} – FriendFlix</title></svelte:head>
 <div class="wrap">
   {#key id}
-    <Player itemId={id} {startAt} bind:video bind:sleepAfterEpisode hasNext={Boolean(nextEp)} on:next={() => nextEp && goto(`/watch/${nextEp.id}`)} on:timeupdate={onTime} on:ended={startCountdown}>
+    <Player itemId={id} title={label(item)} {startAt} bind:video bind:sleepAfterEpisode hasNext={Boolean(nextEp)} on:next={() => nextEp && goto(`/watch/${nextEp.id}`)} on:timeupdate={onTime} on:ended={startCountdown}>
       <div slot="top" class="top">
         <button class="icon-btn" aria-label="Zurück" on:click={back}><Icon name="arrow-left" size={30} /></button>
         {#if item}<div class="ttl"><b>{item.seriesName ?? item.name}</b>{#if item.seriesName}<span>S{item.parentIndexNumber}:E{item.indexNumber} „{item.name}“</span>{/if}</div>{/if}
       </div>
       {#if showNext && nextEp}
-        <div class="next" role="dialog" aria-label="Nächste Folge">
+        <div class="next" data-nav role="dialog" aria-label="Nächste Folge">
           <div class="nt"><span class="muted">Nächste Folge</span><b>S{nextEp.parentIndexNumber}:E{nextEp.indexNumber} · {nextEp.name}</b>{#if countdown}<span class="muted">Start in {countdown} s</span>{/if}</div>
           <div class="flex"><a class="btn light" href="/watch/{nextEp.id}"><Icon name="play" size={20} />Jetzt ansehen</a>{#if countdown}<button class="sec" on:click={() => { stopCountdown(); showNext = false; }}>Abbrechen</button>{/if}</div>
         </div>

@@ -1,5 +1,7 @@
 <script lang="ts">
+  import { onMount } from 'svelte';
   import { page } from '$app/stores';
+  import { castToTv, refreshTvOnline, tvOnline } from '$lib/remote';
   import { api, backdrop, fmtMin, img, type Item } from '$lib/api';
   import Hero from '$lib/Hero.svelte';
   import { dominantColor } from '$lib/tint';
@@ -34,6 +36,14 @@
   $: playHref = item ? (item.type === 'Series' ? (next ? `/watch/${next.id}` : episodes?.[0] ? `/watch/${episodes[0].id}` : '') : `/watch/${item.id}`) : '';
   $: playLabel = item ? (item.type === 'Series' ? (next ? `Weiter: S${next.parentIndexNumber}:E${next.indexNumber}` : 'Abspielen') : item.positionTicks ? 'Fortsetzen' : 'Abspielen') : 'Abspielen';
 
+  let castMsg = '', castT: ReturnType<typeof setTimeout>;
+  onMount(() => { void refreshTvOnline(); return () => clearTimeout(castT); });
+  async function castHere() {
+    const id = playHref.split('/').pop();
+    if (!id) return;
+    castMsg = (await castToTv(id)) ? 'Wird auf dem Fernseher gestartet …' : 'Der Fernseher ist nicht erreichbar.';
+    clearTimeout(castT); castT = setTimeout(() => (castMsg = ''), 3500);
+  }
   async function toggleFav() { if (!item) return; const on = item.favorite; await api(`/api/items/${item.id}/favorite`, { method: on ? 'DELETE' : 'POST' }); item.favorite = !on; }
   async function togglePlayed() { if (!item) return; const on = item.played; await api(`/api/items/${item.id}/played`, { method: on ? 'DELETE' : 'POST' }); item.played = !on; }
   async function setThumb(v: 1 | -1) { if (!item) return; const next = thumb === v ? 0 : v; thumb = next; await api(`/api/items/${item.id}/thumb`, { method: 'PUT', body: { value: next } }).catch(() => (thumb = 0)); }
@@ -69,9 +79,11 @@
         <button class="icon-btn ring" class:on={thumb === 1} aria-pressed={thumb === 1} aria-label="Gefällt mir" title="Gefällt mir" on:click={() => setThumb(1)}><Icon name="thumb-up" size={21} /></button>
         <button class="icon-btn ring" class:on={thumb === -1} aria-pressed={thumb === -1} aria-label="Gefällt mir nicht" title="Nicht für mich" on:click={() => setThumb(-1)}><Icon name="thumb-down" size={21} /></button>
         <button class="icon-btn ring" aria-label="Einem Freund empfehlen" title="Empfehlen" on:click={openRec}><Icon name="send" size={20} /></button>
+        {#if $tvOnline && playHref}<button class="sec" on:click={castHere}><Icon name="tv" size={20} />Auf Fernseher</button>{/if}
         {#if item.type !== 'Series'}<a class="btn sec" href="/party?item={item.id}"><Icon name="users" size={20} />Watch-Party</a>{/if}
         {#if item.type === 'Series'}<button class="sec" aria-pressed={followed} on:click={toggleFollow}><Icon name="bell" size={20} />{followed ? 'Du folgst dieser Serie' : 'Neue Folgen melden'}</button>{/if}
       </div>
+      {#if castMsg}<p class="muted" role="status">{castMsg}</p>{/if}
       {#if recOpen}
         <div class="panel rec" role="dialog" aria-label="Empfehlen">
           <b>„{item.name}“ empfehlen an:</b>

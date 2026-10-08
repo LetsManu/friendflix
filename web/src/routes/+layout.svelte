@@ -1,30 +1,35 @@
 <script lang="ts">
   import '../app.css';
   import { onMount } from 'svelte';
-  import { goto } from '$app/navigation';
+  import { afterNavigate, beforeNavigate, goto } from '$app/navigation';
   import { page } from '$app/stores';
   import { api, setCsrf, type Me } from '$lib/api';
   import Icon from '$lib/Icon.svelte';
   import { loadList, loadPrefs } from '$lib/stores';
   import ItemModal from '$lib/ItemModal.svelte';
+  import { startTvLink, type ToTv } from '$lib/remote';
+  import { focusEl, focusFirst, isBackKey, isEditable, startSpatial } from '$lib/spatial';
 
   let me: Me | null = null;
+  /** TV mode: big UI, D-pad navigation. On for paired televisions; `?tv=1` previews it in any browser (`?tv=0` ends the preview). */
+  let tv = false;
   let pending = false;
   let notes: Array<{ id: number; title: string; link?: string; read: boolean }> = [];
   let scrolled = false, menu = false, bell = false, searchOpen = false, more = false, q = '';
   let searchEl: HTMLInputElement;
 
   $: path = $page.url.pathname;
-  $: publicPage = path.startsWith('/invite/');
+  $: publicPage = path.startsWith('/invite/') || path === '/tv';
   $: watchPage = path.startsWith('/watch/') || /^\/party\/[^/]+/.test(path); // immersive player pages: no navigation
   $: heroPage = path === '/' || path.startsWith('/item/');
   $: unread = notes.filter((n) => !n.read).length;
   $: if (path) { menu = false; bell = false; more = false; }
+  $: if (!publicPage) document.documentElement.classList.toggle('tv', tv);
 
   const tabs: Array<[string, string, string]> = [['/', 'Start', 'home'], ['/browse/series', 'Serien', 'film'], ['/browse/movies', 'Filme', 'film'], ['/new', 'Neu & beliebt', 'star'], ['/watchlist', 'Meine Liste', 'plus']];
   const menuLinks: Array<[string, string, string]> = [
     ['/favorites', 'Favoriten', 'heart'], ['/match', 'Gruppen-Matcher', 'users'], ['/collections', 'Sammlungen', 'film'], ['/upcoming', 'Demnächst', 'calendar'], ['/requests', 'Wünsche', 'gift'], ['/party', 'Watch-Party', 'users'], ['/vote', 'Filmabend', 'vote'],
-    ['/now', 'Läuft gerade', 'monitor'], ['/calendar', 'Kalender', 'calendar'], ['/stats', 'Wrapped', 'bar-chart'], ['/settings', 'Einstellungen', 'settings'], ['/devices', 'Geräte', 'monitor'],
+    ['/now', 'Läuft gerade', 'monitor'], ['/calendar', 'Kalender', 'calendar'], ['/stats', 'Wrapped', 'bar-chart'], ['/remote', 'Fernbedienung', 'tv'], ['/settings', 'Einstellungen', 'settings'], ['/devices', 'Geräte', 'monitor'],
   ];
 
   async function loadNotes() { try { notes = (await api('/api/notifications')).notifications; } catch { /* ignore */ } }
@@ -32,21 +37,67 @@
     bell = !bell; menu = false;
     if (bell && unread) { await api('/api/notifications/read', { method: 'POST' }); setTimeout(loadNotes, 1500); }
   }
-  async function logout() { await api('/auth/logout', { method: 'POST' }); location.href = '/auth/login'; }
+  async function logout() { await api('/auth/logout', { method: 'POST' }); location.href = me?.tv ? '/tv' : '/auth/login'; }
   async function surprise() {
     try { goto(`/item/${(await api('/api/library/random?type=Movie')).item.id}`); } catch { goto('/browse/movies'); }
   }
   function openSearch() { searchOpen = true; setTimeout(() => searchEl?.focus(), 30); }
   function submitSearch() { if (q.trim()) goto(`/search?q=${encodeURIComponent(q.trim())}`); }
-  function onKey(e: KeyboardEvent) { if (e.key === 'Escape') { menu = bell = more = false; if (!q) searchOpen = false; } }
+  function onKey(e: KeyboardEvent) {
+    const back = e.key === 'Escape' || (tv && isBackKey(e));
+    if (!back) return;
+    if (menu || bell || more) { menu = bell = more = false; if (tv) e.preventDefault(); return; } // dropdowns close first
+    if (e.key === 'Escape' && !q) searchOpen = false;
+    // TV: Back/Escape walks one step back (the detail popup closes itself on Escape; the player handles its own keys)
+    if (tv && !watchPage && !(e.key === 'Escape' && $page.state.modalId) && !isEditable(e.target as Element)) {
+      e.preventDefault();
+      if (path !== '/' || $page.state.modalId) history.back();
+    }
+  }
+
+  // ---- commands from the phone (only on a paired TV) ----
+  function onTvCommand(m: ToTv) {
+    if (m.t === 'cast') goto(`/watch/${m.itemId}${m.startSec ? `?t=${m.startSec}` : ''}`);
+    else if (m.action === 'home' || m.action === 'stop') goto('/');
+    else window.dispatchEvent(new CustomEvent('ff-remote', { detail: m })); // the player listens
+  }
+
+  // ---- TV focus memory: coming back (Back key) puts the focus on the card you left, a new page focuses its first element ----
+  const memo = new Map<string, { href: string; nth: number }>();
+  beforeNavigate(({ from }) => {
+    const el = document.activeElement as HTMLElement | null, href = el?.getAttribute?.('href');
+    if (!tv || !from || !href) return;
+    // the same title can appear in several rows: remember which occurrence it was
+    const nth = [...document.querySelectorAll(`main a[href="${CSS.escape(href)}"]`)].indexOf(el!);
+    if (nth >= 0) memo.set(from.url.pathname + from.url.search, { href, nth });
+  });
+  /** waits for the page content (lazy rows, fetched lists), then focuses the remembered link, [data-autofocus] or the first element */
+  async function settleFocus(want?: { href: string; nth: number }) {
+    for (let i = 0; i < 16; i++) {
+      await new Promise((r) => setTimeout(r, i ? 150 : 30));
+      const main = document.querySelector('main');
+      if (want) {
+        const el = main?.querySelectorAll<HTMLElement>(`a[href="${CSS.escape(want.href)}"]`)[want.nth];
+        if (el) return focusEl(el);
+      } else if (main?.querySelector('[data-autofocus]') ? focusFirst(main, false) : i >= 4 && focusFirst(main, false)) return;
+    }
+  }
+  afterNavigate(({ to, type }) => {
+    if (!tv || !to || /^\/(watch|party)\//.test(to.url.pathname)) return;
+    void settleFocus(type === 'popstate' ? memo.get(to.url.pathname + to.url.search) : undefined);
+  });
+
   function outside(e: MouseEvent) { if (!(e.target as HTMLElement).closest('.pop-anchor')) { menu = false; bell = false; } }
 
+  let stops: Array<() => void> = [];
   onMount(() => {
     const onScroll = () => (scrolled = window.scrollY > 10);
     onScroll();
     window.addEventListener('scroll', onScroll, { passive: true });
+    const flag = new URLSearchParams(location.search).get('tv');
+    if (flag === '1') sessionStorage.setItem('ff_tv', '1'); else if (flag === '0') sessionStorage.removeItem('ff_tv');
     void boot();
-    return () => window.removeEventListener('scroll', onScroll);
+    return () => { window.removeEventListener('scroll', onScroll); stops.forEach((f) => f()); };
   });
 
   async function boot() {
@@ -55,7 +106,14 @@
         me = await api<Me>('/api/me');
         setCsrf(me.csrfToken);
         pending = !me.deviceApproved;
+        tv = me.tv || sessionStorage.getItem('ff_tv') === '1';
         if (!pending) { loadNotes(); loadList(); loadPrefs(); setInterval(loadNotes, 60_000); }
+        if (me.tv) localStorage.setItem('ff_tv_device', '1'); // an expired TV session goes back to the pairing screen, not to a login form
+        if (tv) {
+          stops.push(startSpatial(() => !watchPage || Boolean(document.activeElement?.closest('[data-nav]'))));
+          if (!watchPage) void settleFocus();
+        }
+        if (me.tv && !pending) stops.push(startTvLink(onTvCommand, (code) => { if (code === 4401) location.href = '/tv'; }));
       } catch { /* api() redirects to login on 401 */ }
     }
   }

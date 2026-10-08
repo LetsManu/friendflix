@@ -29,7 +29,7 @@
       </p>
       {#if item.overview}<p class="ov">{item.overview}</p>{/if}
       <div class="btns">
-        <a class="btn light" href={playHref || (item.type === 'Series' ? `/item/${item.id}` : `/watch/${item.id}`)}><Icon name="play" size={22} />{playLabel}</a>
+        <a class="btn light" data-autofocus href={playHref || (item.type === 'Series' ? `/item/${item.id}` : `/watch/${item.id}`)}><Icon name="play" size={22} />{playLabel}</a>
         {#if more}<a class="btn sec" href="/item/{item.id}" on:click={(e) => openModal(e, `/item/${item.id}`)}><Icon name="info" size={22} />Mehr Infos</a>{/if}
       </div>
     </div>
