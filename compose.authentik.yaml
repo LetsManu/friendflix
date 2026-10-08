@@ -1,0 +1,45 @@
+# Authentik. Use the tag matching the official release notes and compare with
+# https://docs.goauthentik.io/docs/install-config/install/docker-compose
+# (Redis was removed in 2025.10; add it back if you pin an older tag.)
+name: friendflix-authentik
+networks:
+  npm:
+    name: ${NPM_NETWORK:-npm_proxy}
+    external: true
+  ak-db: { internal: true }
+  egress: {}
+x-ak: &ak
+  image: ghcr.io/goauthentik/server:${AUTHENTIK_TAG:?pin a tag}
+  restart: unless-stopped
+  environment:
+    AUTHENTIK_POSTGRESQL__HOST: ak-postgres
+    AUTHENTIK_POSTGRESQL__USER: authentik
+    AUTHENTIK_POSTGRESQL__NAME: authentik
+    AUTHENTIK_POSTGRESQL__PASSWORD: ${AUTHENTIK_PG_PASSWORD:?}
+    AUTHENTIK_SECRET_KEY: ${AUTHENTIK_SECRET_KEY:?}
+  depends_on:
+    ak-postgres: { condition: service_healthy }
+services:
+  ak-postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: authentik
+      POSTGRES_DB: authentik
+      POSTGRES_PASSWORD: ${AUTHENTIK_PG_PASSWORD:?}
+    volumes: [ak-pg:/var/lib/postgresql/data]
+    networks: [ak-db]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U authentik"]
+      interval: 10s
+      retries: 5
+  ak-server:
+    <<: *ak
+    command: server
+    networks: [npm, ak-db, egress]
+  ak-worker:
+    <<: *ak
+    command: worker
+    networks: [ak-db, egress]
+volumes:
+  ak-pg:
