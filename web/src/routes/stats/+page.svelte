@@ -2,6 +2,7 @@
   import { onMount } from 'svelte';
   import { api } from '$lib/api';
   import Icon from '$lib/Icon.svelte';
+  import { shareCard } from '$lib/wrapped';
   let s: any = null, c: any = null, year = new Date().getFullYear();
   const months = ['Jan', 'Feb', 'Mär', 'Apr', 'Mai', 'Jun', 'Jul', 'Aug', 'Sep', 'Okt', 'Nov', 'Dez'];
   async function load() { s = await api(`/api/stats/me?year=${year}`); c = await api('/api/stats/community'); }
@@ -11,6 +12,7 @@
 
 <h1>Dein Wrapped <select bind:value={year} on:change={load}>{#each [0, 1, 2] as d}<option>{new Date().getFullYear() - d}</option>{/each}</select></h1>
 {#if s}
+  <p><button on:click={() => shareCard(s)}><Icon name="share" size={18} />Als Bild teilen</button></p>
   <div class="grid" style="grid-template-columns:repeat(auto-fit,minmax(180px,1fr))">
     <div class="panel"><h2>{Math.floor(s.totalMinutes / 60)} h {s.totalMinutes % 60} min</h2><span class="muted">geschaut</span></div>
     <div class="panel"><h2>{s.titles}</h2><span class="muted">verschiedene Titel</span></div>

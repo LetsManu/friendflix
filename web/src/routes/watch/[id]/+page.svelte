@@ -12,6 +12,7 @@
   let sleepAfterEpisode = false;
   let showNext = false, countdown = 0, cd: ReturnType<typeof setInterval>;
   $: id = $page.params.id!;
+  $: startAt = (() => { const t = Number($page.url.searchParams.get('t')); return Number.isFinite(t) && t > 0 && t < 86_400 ? Math.floor(t) : undefined; })();
 
   $: id, (async () => {
     item = null; nextEp = null; stopCountdown(); showNext = false;
@@ -38,7 +39,7 @@
 <svelte:head><title>{item?.name ?? 'Wiedergabe'} – FriendFlix</title></svelte:head>
 <div class="wrap">
   {#key id}
-    <Player itemId={id} bind:video bind:sleepAfterEpisode hasNext={Boolean(nextEp)} on:next={() => nextEp && goto(`/watch/${nextEp.id}`)} on:timeupdate={onTime} on:ended={startCountdown}>
+    <Player itemId={id} {startAt} bind:video bind:sleepAfterEpisode hasNext={Boolean(nextEp)} on:next={() => nextEp && goto(`/watch/${nextEp.id}`)} on:timeupdate={onTime} on:ended={startCountdown}>
       <div slot="top" class="top">
         <button class="icon-btn" aria-label="Zurück" on:click={back}><Icon name="arrow-left" size={30} /></button>
         {#if item}<div class="ttl"><b>{item.seriesName ?? item.name}</b>{#if item.seriesName}<span>S{item.parentIndexNumber}:E{item.indexNumber} „{item.name}“</span>{/if}</div>{/if}

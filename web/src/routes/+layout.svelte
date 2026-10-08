@@ -23,7 +23,7 @@
 
   const tabs: Array<[string, string, string]> = [['/', 'Start', 'home'], ['/browse/series', 'Serien', 'film'], ['/browse/movies', 'Filme', 'film'], ['/new', 'Neu & beliebt', 'star'], ['/watchlist', 'Meine Liste', 'plus']];
   const menuLinks: Array<[string, string, string]> = [
-    ['/favorites', 'Favoriten', 'heart'], ['/requests', 'Wünsche', 'gift'], ['/party', 'Watch-Party', 'users'], ['/vote', 'Filmabend', 'vote'],
+    ['/favorites', 'Favoriten', 'heart'], ['/match', 'Gruppen-Matcher', 'users'], ['/collections', 'Sammlungen', 'film'], ['/upcoming', 'Demnächst', 'calendar'], ['/requests', 'Wünsche', 'gift'], ['/party', 'Watch-Party', 'users'], ['/vote', 'Filmabend', 'vote'],
     ['/now', 'Läuft gerade', 'monitor'], ['/calendar', 'Kalender', 'calendar'], ['/stats', 'Wrapped', 'bar-chart'], ['/settings', 'Einstellungen', 'settings'], ['/devices', 'Geräte', 'monitor'],
   ];
 

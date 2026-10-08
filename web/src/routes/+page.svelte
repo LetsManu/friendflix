@@ -4,9 +4,11 @@
   import Hero from '$lib/Hero.svelte';
   import LazyRow from '$lib/LazyRow.svelte';
   import Row from '$lib/Row.svelte';
+  import UpcomingRow from '$lib/UpcomingRow.svelte';
 
   let hero: Item | null = null, heroPlay = '';
   let resume: Item[] | null = null, next: Item[] | null = null, latest: Item[] | null = null, mine: Item[] | null = null;
+  let recs: Item[] | null = null, friendsRated: Item[] | null = null;
   let top: Item[] | null = null, because: { name: string } | null = null, becauseItems: Item[] | null = null;
   let views: Item[] = [], genres: string[] = [], error = '';
   const q = (p: Record<string, string>) => new URLSearchParams(p).toString();
@@ -17,6 +19,8 @@
     api('/api/library/nextup').then((r) => (next = r.items)).catch(() => (next = []));
     items({ types: 'Movie,Series', sort: 'DateCreated', desc: 'true', limit: '24' }).then((r) => (latest = r)).catch(() => (latest = []));
     api('/api/library/because').then((r) => { because = r.because; becauseItems = r.items; }).catch(() => (becauseItems = []));
+    api('/api/recommendations').then((r) => (recs = r.items)).catch(() => (recs = []));
+    api('/api/library/friends-rated').then((r) => (friendsRated = r.items)).catch(() => (friendsRated = []));
     items({ types: 'Movie,Series', sort: 'CommunityRating', desc: 'true', limit: '10' }).then((r) => (top = r)).catch(() => (top = []));
     api('/api/watchlist').then((r) => (mine = r.items)).catch(() => (mine = []));
     api('/api/library/views').then((r) => (views = r.items)).catch(() => (error = 'Bibliothek konnte nicht geladen werden.'));
@@ -35,10 +39,13 @@
   {#if error}<p class="err" style="margin:1rem var(--pad-x)">{error}</p>{/if}
   <Row title="Weiterschauen" items={resume} />
   <Row title="Nächste Folge" items={next} />
+  <Row title="Von Freunden empfohlen" items={recs} />
+  <Row title="Freunde haben bewertet" items={friendsRated} />
   {#if because}<Row title="Weil du „{because.name}“ gesehen hast" items={becauseItems} />{/if}
   <Row title="Neu hinzugefügt" items={latest} href="/new" />
   <Row title="Top 10 nach Bewertung" items={top} ranked />
   <Row title="Meine Liste" items={mine} href="/watchlist" />
+  <UpcomingRow type="movie" title="Demnächst – jetzt wünschen" />
   {#each views as v (v.id)}
     <LazyRow title={v.name} href="/library/{v.id}" load={() => items({ parentId: v.id, sort: 'DateCreated', desc: 'true', limit: '24' })} />
   {/each}

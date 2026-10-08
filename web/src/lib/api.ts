@@ -38,7 +38,7 @@ export const fmtClock = (s: number) => {
 export interface Item {
   id: string; name: string; type: string; year?: number; overview?: string; runtimeTicks?: number;
   seriesId?: string; seriesName?: string; seasonId?: string; indexNumber?: number; parentIndexNumber?: number;
-  genres: string[]; rating?: string; communityRating?: number; premiereDate?: string; image: boolean; backdrop: boolean; logo: boolean;
+  genres: string[]; rating?: string; communityRating?: number; premiereDate?: string; image: boolean; backdrop: boolean; logo: boolean; trailers?: number; caption?: string;
   played: boolean; favorite: boolean; positionTicks: number; playedPercentage?: number;
 }
 export interface Me { id: string; name: string; role: string; roleLabel: string; isAdmin: boolean; csrfToken: string; deviceApproved: boolean }
