@@ -33,8 +33,9 @@ services:
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U friendflix"]
       interval: 10s
-      timeout: 3s
-      retries: 5
+      timeout: 5s
+      retries: 30
+      start_period: 60s   # first initialisation is slow on NAS disks
 
   redis:
     image: redis:7-alpine
@@ -45,8 +46,9 @@ services:
     healthcheck:
       test: ["CMD-SHELL", "redis-cli -a \"$$REDIS_PASSWORD\" ping | grep PONG"]
       interval: 10s
-      timeout: 3s
-      retries: 5
+      timeout: 5s
+      retries: 30
+      start_period: 20s
     environment:
       REDIS_PASSWORD: ${REDIS_PASSWORD}
 
