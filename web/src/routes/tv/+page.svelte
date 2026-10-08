@@ -1,4 +1,5 @@
 <script lang="ts">
+  import Logo from '$lib/Logo.svelte';
   import { onDestroy, onMount } from 'svelte';
   import { api } from '$lib/api';
   import { qrPath } from '$lib/qr';
@@ -38,7 +39,7 @@
 <svelte:head><title>Fernseher verbinden – FriendFlix</title></svelte:head>
 <main class="pair">
   <div class="txt">
-    <span class="logo">FRIENDFLIX</span>
+    <span class="logo"><Logo wordmark size={52} /></span>
     <h1>Fernseher verbinden</h1>
     <ol>
       <li>Öffne FriendFlix auf deinem Handy und tippe auf <b>Menü › Fernbedienung</b> – oder scanne den QR-Code.</li>
@@ -65,7 +66,7 @@
 <style>
   .pair { min-height: 100vh; display: flex; align-items: center; justify-content: center; gap: clamp(2rem, 7vw, 7rem); padding: 3rem var(--pad-x); background: radial-gradient(900px 500px at 20% 10%, rgba(229, 15, 42, .16), transparent 70%), var(--bg); flex-wrap: wrap; }
   .txt { max-width: 38rem; }
-  .logo { font-weight: 900; letter-spacing: .06em; font-size: 1.6rem; color: var(--acc); }
+  .logo { display: inline-flex; }
   h1 { font-size: clamp(2rem, 4.5vw, 3.2rem); margin: 1.2rem 0 1rem; }
   ol { color: #e5e5e5; font-size: 1.15rem; padding-left: 1.3rem; display: grid; gap: .5rem; }
   .code { font-size: clamp(2.6rem, 7vw, 5rem); font-weight: 800; letter-spacing: .14em; font-variant-numeric: tabular-nums; margin: 1.2rem 0 .8rem; padding: .3rem 1.2rem; background: var(--surface); border: 2px solid var(--line); border-radius: 12px; display: inline-block; font-family: ui-monospace, 'SF Mono', 'Cascadia Mono', Consolas, monospace; }

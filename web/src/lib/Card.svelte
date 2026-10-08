@@ -2,6 +2,7 @@
   import { api, backdrop, img, fmtMin, type Item } from '$lib/api';
   import { listIds, toggleList } from '$lib/stores';
   import Icon from '$lib/Icon.svelte';
+  import Logo from '$lib/Logo.svelte';
   import { openModal } from '$lib/modal';
   import { onDestroy } from 'svelte';
   import { prefs } from '$lib/stores';
@@ -42,6 +43,7 @@
   <a class="thumb" {href} aria-label={item.name + (sub ? ', ' + sub : '')}>
     {#if posterOnly}<img class="blur" loading="lazy" {src} alt="" aria-hidden="true" />{/if}
     {#if src}<img class:contain={posterOnly} loading="lazy" decoding="async" {src} alt="" width="320" height="180" />{/if}
+    <span class="brand" aria-hidden="true"><Logo size={18} label="" /></span>
     {#if previewing}<!-- svelte-ignore a11y_media_has_caption --><video bind:this={pv} class="pv" muted loop playsinline></video>{/if}
     <span class="cap" class:big={!src}>{item.type === 'Episode' ? item.name : item.name}</span>
     {#if pct}<span class="progress"><i style="width:{pct}%"></i></span>{/if}
@@ -69,6 +71,7 @@
   .thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
   .pv { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; z-index: 1; background: #000; }
   .cap2 { color: #f5c518; }
+  .brand { position: absolute; left: .45rem; top: .4rem; z-index: 2; pointer-events: none; opacity: .95; }
   .blur { position: absolute; inset: -10%; width: 120%; height: 120%; object-fit: cover; filter: blur(18px) brightness(.55); }
   .thumb img.contain { position: relative; object-fit: contain; }
   .cap { position: absolute; left: .6rem; bottom: .5rem; right: .6rem; font-weight: 700; font-size: .85rem; text-shadow: 0 1px 6px #000, 0 0 2px #000; line-height: 1.2; }

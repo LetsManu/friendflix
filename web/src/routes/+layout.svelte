@@ -5,6 +5,7 @@
   import { page } from '$app/stores';
   import { api, setCsrf, type Me } from '$lib/api';
   import Icon from '$lib/Icon.svelte';
+  import Logo from '$lib/Logo.svelte';
   import { loadList, loadPrefs } from '$lib/stores';
   import ItemModal from '$lib/ItemModal.svelte';
   import { startTvLink, type ToTv } from '$lib/remote';
@@ -127,7 +128,7 @@
 {:else if me}
   {#if !watchPage}
     <header class="nav" class:solid={scrolled || !heroPage}>
-      <a class="logo" href="/" aria-label="FriendFlix Startseite">FRIENDFLIX</a>
+      <a class="logo" href="/" aria-label="FriendFlix Startseite"><Logo wordmark size={34} /></a>
       <nav class="links" aria-label="Hauptnavigation">
         {#each tabs as [href, label]}<a {href} class:active={href === '/' ? path === '/' : path.startsWith(href)} aria-current={href === '/' ? (path === '/' ? 'page' : undefined) : path.startsWith(href) ? 'page' : undefined}>{label}</a>{/each}
       </nav>
@@ -148,7 +149,7 @@
         {/if}
       </div>
       <div class="pop-anchor">
-        <button class="avatar" aria-label="Profilmenü" aria-expanded={menu} on:click={() => { menu = !menu; bell = false; }}>{me.name.slice(0, 1).toUpperCase()}</button>
+        <button class="avatar" aria-label="Profilmenü" aria-expanded={menu} on:click={() => { menu = !menu; bell = false; }}><span class="face">{me.name.slice(0, 1).toUpperCase()}</span><i class="caret" class:up={menu}></i></button>
         {#if menu}
           <div class="drop" role="menu">
             <div class="who"><b>{me.name}</b><span class="muted">{me.roleLabel}</span></div>
@@ -184,15 +185,15 @@
     {/if}
   </main>
 {:else}
-  <main id="main" class="boot"><span class="logo">FRIENDFLIX</span><div class="spin" aria-label="Lade …" role="status"></div></main>
+  <main id="main" class="boot"><span class="logo"><Logo wordmark size={44} /></span><div class="spin" aria-label="Lade …" role="status"></div></main>
 {/if}
 
 <style>
-  .logo { font-weight: 900; letter-spacing: .06em; font-size: clamp(1.15rem, 2.4vw, 1.7rem); color: var(--acc); text-shadow: 0 1px 0 rgba(0,0,0,.4); }
-  .nav { position: fixed; top: 0; left: 0; right: 0; height: var(--nav-h); z-index: 50; display: flex; align-items: center; gap: .5rem; padding: 0 var(--pad-x); background: linear-gradient(to bottom, rgba(0,0,0,.8), transparent); transition: background var(--t-med); }
+  .logo { display: inline-flex; align-items: center; }
+  .nav { position: fixed; top: 0; left: 0; right: 0; height: var(--nav-h); z-index: 50; display: flex; align-items: center; gap: .5rem; padding: 0 var(--pad-x); background: linear-gradient(to bottom, rgba(0,0,0,.9), rgba(0,0,0,.55) 55%, transparent); transition: background var(--t-med); }
   .nav.solid { background: var(--bg); }
-  .links { display: flex; gap: 1.2rem; margin-left: 1.6rem; }
-  .links a { font-size: .9rem; color: #e5e5e5; transition: color var(--t-fast); white-space: nowrap; padding: .6rem 0; }
+  .links { display: flex; gap: 1.5rem; margin-left: 2.2rem; }
+  .links a { font-size: .95rem; font-weight: 500; color: #e5e5e5; transition: color var(--t-fast); white-space: nowrap; padding: .6rem 0; }
   .links a:hover { color: #b3b3b3; } .links a.active { color: #fff; font-weight: 700; }
   .sp { flex: 1; }
   .search { display: flex; align-items: center; border: 1px solid transparent; transition: border-color var(--t-fast), background var(--t-fast); border-radius: 4px; }
@@ -202,7 +203,11 @@
   .search input:focus-visible { outline: none; }
   .pop-anchor { position: relative; }
   .dot { position: absolute; top: 4px; right: 2px; background: var(--acc); font-size: .65rem; min-width: 1.1rem; height: 1.1rem; border-radius: 99px; display: grid; place-items: center; font-weight: 700; }
-  .avatar { width: 36px; min-height: 36px; height: 36px; border-radius: 4px; padding: 0; background: linear-gradient(135deg, #e50f2a, #7a0a17); font-weight: 800; }
+  .avatar { width: auto; min-height: 44px; height: 44px; padding: 0 .1rem; background: transparent; gap: .45rem; border-radius: 4px; }
+  .avatar:hover:not(:disabled) { background: transparent; }
+  .face { width: 34px; height: 34px; border-radius: 4px; display: grid; place-items: center; background: linear-gradient(135deg, #ff3b52, #7a0a17); font-weight: 800; box-shadow: 0 0 0 1px rgba(255,255,255,.12); }
+  .caret { width: 0; height: 0; border: 5px solid transparent; border-top-color: #fff; border-bottom: 0; transition: transform var(--t-fast); }
+  .caret.up { transform: rotate(180deg); }
   .drop { position: absolute; right: 0; top: calc(100% + 6px); background: rgba(0,0,0,.94); border: 1px solid #333; border-radius: 4px; min-width: 220px; padding: .4rem 0; display: flex; flex-direction: column; box-shadow: 0 12px 30px rgba(0,0,0,.7); }
   .drop.wide { width: min(340px, 90vw); }
   .drop a, .drop .plain { display: flex; gap: .7rem; align-items: center; padding: .55rem 1rem; font-size: .9rem; color: #e5e5e5; min-height: 44px; }
