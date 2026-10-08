@@ -72,7 +72,7 @@ Secrets alternativ als Docker Secrets: `compose.secrets.yaml` (`VAR_FILE`).
 - **Admin**: Status, Nutzer/Rollen, Einladungen, Wünsche, Abstimmungen, Geräte, Audit-Log.
 
 ## Sicherheit
-OIDC + PKCE, MFA über Authentik-Flow · Sessions 8 h, httpOnly/Secure/SameSite=Lax · CSRF-Token für alle schreibenden `/api`-Aufrufe · WebSocket: Origin- + Session-Prüfung · zod-Validierung überall · Rate-Limiting (global + strenger auf `/auth`, Einladungen) · Audit-Log · Geräte-Freigabe · Jellyfin-Passwörter AES-GCM-verschlüsselt, Tokens nie im Browser · Gateway: Allowlist, kein Redirect-Follow, Header-Whitelist · Container: non-root, `read_only`, `cap_drop: ALL`, `no-new-privileges`, Healthchecks · strikte CSP (UI), Security-Header (API) · CI: Lint, Tests, gitleaks, Trivy, Dependabot.
+OIDC + PKCE, MFA über Authentik-Flow · Sessions max. 8 h und 2 h Inaktivität (`SESSION_IDLE_SECONDS`), httpOnly/Secure/SameSite=Lax · CSRF-Token für alle schreibenden `/api`-Aufrufe · WebSocket: Origin- + Session-Prüfung · zod-Validierung überall · Rate-Limiting (global + strenger auf `/auth`, Einladungen) · Audit-Log · Geräte-Freigabe · Jellyfin-Passwörter AES-GCM-verschlüsselt, Tokens nie im Browser · Gateway: Allowlist, kein Redirect-Follow, Header-Whitelist · Container: non-root, `read_only`, `cap_drop: ALL`, `no-new-privileges`, Healthchecks · strikte CSP (UI), Security-Header (API) · CI: Lint, Tests, gitleaks, Trivy, Dependabot.
 
 ## Entwicklung
 ```bash
