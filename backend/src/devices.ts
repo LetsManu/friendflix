@@ -1,6 +1,7 @@
 import type { FastifyReply, FastifyRequest } from 'fastify';
 import { randomBytes } from 'node:crypto';
 import type { Ctx } from './ctx.js';
+import { notify } from './notify.js';
 import { dropRemotePeers } from './routes/tv.js';
 
 export const DEVICE_COOKIE = 'ff_dev';
@@ -23,7 +24,10 @@ export async function registerDevice(ctx: Ctx, req: FastifyRequest, reply: Fasti
   }
   const n = await ctx.db.query<{ c: string }>('select count(*) c from devices where user_id=$1 and approved', [userId]);
   const approved = Number(n.rows[0]!.c) === 0;
-  await ctx.db.query('insert into devices(user_id, device_id, label, approved) values ($1,$2,$3,$4)', [userId, dev, label(String(req.headers['user-agent'] ?? '')), approved]);
+  const name = label(String(req.headers['user-agent'] ?? ''));
+  await ctx.db.query('insert into devices(user_id, device_id, label, approved) values ($1,$2,$3,$4)', [userId, dev, name, approved]);
+  // tell the user's already approved devices (bell + push) that a new one is waiting, with a link to the approval list
+  if (!approved) await notify(ctx, { userId, kind: 'device_pending', title: 'Ein neues Gerät wartet auf deine Freigabe', body: `${name} – unter „Geräte“ freigeben. Warst du das nicht, lass es einfach stehen.`, link: '/devices' }).catch(() => false);
   return { deviceId: dev, approved };
 }
 

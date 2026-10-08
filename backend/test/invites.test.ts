@@ -96,6 +96,10 @@ describe('devices', () => {
     const authz = await env.app.inject({ method: 'POST', url: '/internal/authz', headers: { 'x-internal-secret': cfg.INTERNAL_SECRET }, payload: { sid: c2.ff_sid } });
     expect(authz.statusCode).toBe(401);
 
+    // the user is told about the waiting device (bell notification linking to the approval list)
+    const note = (await env.pool.query("select link, title from notifications where kind='device_pending' order by id desc limit 1")).rows[0];
+    expect(note).toMatchObject({ link: '/devices' });
+
     // approve from the first device
     const me1 = (await env.app.inject({ url: '/api/me', cookies: c1 })).json();
     const list = (await env.app.inject({ url: '/api/devices', cookies: c1 })).json().devices;

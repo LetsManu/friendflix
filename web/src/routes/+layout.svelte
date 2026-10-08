@@ -14,7 +14,7 @@
   let me: Me | null = null;
   /** TV mode: big UI, D-pad navigation. On for paired televisions; `?tv=1` previews it in any browser (`?tv=0` ends the preview). */
   let tv = false;
-  let pending = false;
+  let pending = false, checking = false;
   let notes: Array<{ id: number; title: string; link?: string; read: boolean }> = [];
   let scrolled = false, menu = false, bell = false, searchOpen = false, more = false, q = '';
   let searchEl: HTMLInputElement;
@@ -101,12 +101,21 @@
     return () => { window.removeEventListener('scroll', onScroll); stops.forEach((f) => f()); };
   });
 
+  /** A pending device checks every few seconds whether it was approved and then reloads into the real app. */
+  async function checkApproval() {
+    checking = true;
+    try { const m = await api<Me>('/api/me'); if (m.deviceApproved) { location.reload(); return true; } } catch { /* retry on the next tick */ } finally { checking = false; }
+    return false;
+  }
+  function watchApproval() { const t = setInterval(checkApproval, 4000); return () => clearInterval(t); }
+
   async function boot() {
     if (!publicPage) {
       try {
         me = await api<Me>('/api/me');
         setCsrf(me.csrfToken);
         pending = !me.deviceApproved;
+        if (pending) stops.push(watchApproval());
         tv = me.tv || sessionStorage.getItem('ff_tv') === '1';
         if (!pending) { loadNotes(); loadList(); loadPrefs(); setInterval(loadNotes, 60_000); }
         if (me.tv) localStorage.setItem('ff_tv_device', '1'); // an expired TV session goes back to the pairing screen, not to a login form
@@ -179,7 +188,17 @@
   {#if $page.state.modalId}<ItemModal id={$page.state.modalId} />{/if}
   <main id="main" class:page={!heroPage && !watchPage}>
     {#if pending}
-      <div class="page"><div class="panel"><b class="warn">Dieses Gerät ist noch nicht freigegeben.</b><p class="muted">Bestätige es auf einem bereits freigegebenen Gerät unter „Geräte“ oder frage den Admin.</p><a class="btn sec" href="/devices">Geräte ansehen</a></div></div>
+      <div class="page"><div class="panel pendp">
+        <b class="warn">Dieses Gerät wartet auf Freigabe</b>
+        <p class="muted">Aus Sicherheitsgründen muss jedes neue Gerät einmal bestätigt werden. So geht’s:</p>
+        <ol class="muted">
+          <li>Öffne FriendFlix auf einem Gerät, auf dem du schon angemeldet bist.</li>
+          <li>Tippe oben auf die Glocke (dort steht „Ein neues Gerät wartet auf deine Freigabe“) oder wähle im Profilmenü <b>Geräte</b>.</li>
+          <li>Drücke bei diesem Gerät auf <b>Freigeben</b>. Diese Seite öffnet sich danach von selbst.</li>
+        </ol>
+        <p class="muted">Kein anderes Gerät zur Hand? Ein Admin kann es unter <b>Admin → Geräte</b> freigeben.</p>
+        <div class="flex"><button class="sec" disabled={checking} on:click={checkApproval}>{checking ? 'Prüfe …' : 'Jetzt prüfen'}</button><a class="btn sec" href="/devices">Geräte ansehen</a></div>
+      </div></div>
     {:else}
       <slot />
     {/if}
