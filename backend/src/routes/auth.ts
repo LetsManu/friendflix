@@ -2,7 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import { timingSafeEqual } from 'node:crypto';
 import { audit } from '../audit.js';
 import type { Ctx } from '../ctx.js';
-import { COOKIE, loadSession, rand, requireUser, type Session } from '../session.js';
+import { COOKIE, loadSession, newSession, rand, requireUser, saveSession } from '../session.js';
 import { registerDevice } from '../devices.js';
 import { claimInvite, lookupInvite, releaseInvite, type InviteRow } from '../invites.js';
 import { applyRole, getUserBySub, provisionUser } from '../users.js';
@@ -49,8 +49,7 @@ export function authRoutes(app: FastifyInstance, ctx: Ctx) {
       if (user.disabled) return reply.code(403).send({ error: 'disabled' });
       const sid = rand();
       const dev = await registerDevice(ctx, req, reply, user.id, secure);
-      const session: Session = { userId: user.id, csrf: rand(), deviceId: dev.deviceId, deviceApproved: dev.approved };
-      await ctx.kv.set(`sess:${sid}`, JSON.stringify(session), ctx.cfg.SESSION_TTL_SECONDS);
+      await saveSession(ctx, sid, newSession({ userId: user.id, csrf: rand(), deviceId: dev.deviceId, deviceApproved: dev.approved }));
       reply.setCookie(COOKIE, sid, { httpOnly: true, secure, sameSite: 'lax', path: '/', maxAge: ctx.cfg.SESSION_TTL_SECONDS });
       await audit(ctx, user.id, 'login', user.id, { ip: req.ip });
       return reply.redirect('/');

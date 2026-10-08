@@ -85,7 +85,7 @@ export function createGateway(opts: GatewayOptions): { server: Server; metrics: 
     } catch {
       v = null;
     }
-    authCache.set(sid, { exp: Date.now() + (v ? 15_000 : 3_000), v });
+    authCache.set(sid, { exp: Date.now() + (v ? 5_000 : 2_000), v });
     if (authCache.size > 5000) authCache.clear();
     return v;
   }

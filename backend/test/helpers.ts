@@ -15,7 +15,7 @@ export const TEST_DB = process.env.TEST_DATABASE_URL ?? 'postgres://postgres@loc
 export const ENC_KEY = Buffer.alloc(32, 7).toString('base64');
 
 export const cfg: Config = {
-  PORT: 3000, PUBLIC_URL: 'https://portal.example.com', DATABASE_URL: TEST_DB, REDIS_URL: 'redis://x', SESSION_TTL_SECONDS: 600,
+  PORT: 3000, PUBLIC_URL: 'https://portal.example.com', DATABASE_URL: TEST_DB, REDIS_URL: 'redis://x', SESSION_TTL_SECONDS: 600, SESSION_IDLE_SECONDS: 300,
   APP_ENC_KEY: ENC_KEY, INTERNAL_SECRET: 'internal-secret-123456', WEBHOOK_SECRET: 'webhook-secret-123456', ADMIN_GROUP: 'friendflix-admins',
   OIDC_ISSUER: 'https://auth.example.com/', OIDC_CLIENT_ID: 'c', OIDC_CLIENT_SECRET: 's',
   JELLYFIN_URL: 'http://jellyfin:8096', JELLYFIN_ADMIN_API_KEY: 'adminkey', SEERR_URL: 'http://seerr:5055', SEERR_API_KEY: 'seerrkey',
@@ -96,13 +96,15 @@ export async function makeEnv(extraJf: Record<string, Handler> = {}, extra: Extr
   };
   extra.ctxPatch?.(ctx);
   const app = await buildApp(ctx, extra);
+  const dev: { v?: string } = {};
   const login = async (c: OidcClaims = claims.current) => {
     claims.current = c;
     const l = await app.inject('/auth/login');
     const state = new URL(String(l.headers.location)).searchParams.get('state') ?? '';
     // state is embedded in the fake url? it is not: read it back from kv
     const key = (await kv.keys('oidc:'))[0]!;
-    const cb = await app.inject(`/auth/callback?state=${key.slice(5)}&code=c`);
+    const cb = await app.inject({ url: `/auth/callback?state=${key.slice(5)}&code=c`, cookies: dev.v ? { ff_dev: dev.v } : {} });
+    dev.v = cb.cookies.find((x) => x.name === 'ff_dev')?.value ?? dev.v; // same browser -> same device
     void state;
     if (cb.statusCode !== 302) throw new Error(`login failed ${cb.statusCode} ${cb.body}`);
     const sid = cb.cookies.find((x) => x.name === 'ff_sid')!.value;

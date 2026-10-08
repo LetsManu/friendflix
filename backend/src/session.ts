@@ -6,6 +6,10 @@ import type { UserRow } from './types.js';
 
 export interface Session {
   userId: string;
+  /** epoch ms; absolute lifetime is enforced from here (older sessions without it fall back to the kv ttl) */
+  createdAt?: number;
+  /** epoch ms of the last ttl refresh (sliding idle timeout) */
+  touchedAt?: number;
   csrf: string;
   deviceId?: string;
   deviceApproved: boolean;
@@ -22,10 +26,36 @@ declare module 'fastify' {
   }
 }
 
+/** Stores a session with the idle ttl (it is refreshed on use, see `touch`). */
+export async function saveSession(ctx: Ctx, sid: string, s: Session) {
+  const ttl = Math.min(ctx.cfg.SESSION_IDLE_SECONDS, ctx.cfg.SESSION_TTL_SECONDS);
+  await ctx.kv.set(`sess:${sid}`, JSON.stringify(s), ttl);
+}
+
+export function newSession(s: Omit<Session, 'createdAt' | 'touchedAt'>): Session {
+  const now = Date.now();
+  return { ...s, createdAt: now, touchedAt: now };
+}
+
 export async function loadSession(ctx: Ctx, sid: string | undefined): Promise<Session | null> {
   if (!sid) return null;
   const raw = await ctx.kv.get(`sess:${sid}`);
-  return raw ? (JSON.parse(raw) as Session) : null;
+  if (!raw) return null;
+  const s = JSON.parse(raw) as Session;
+  // absolute lifetime, independent of activity
+  if (s.createdAt && Date.now() - s.createdAt > ctx.cfg.SESSION_TTL_SECONDS * 1000) {
+    await ctx.kv.del(`sess:${sid}`);
+    return null;
+  }
+  return s;
+}
+
+/** Sliding idle timeout: refreshes the kv ttl at most once a minute. */
+async function touch(ctx: Ctx, sid: string, s: Session) {
+  const now = Date.now();
+  if (s.touchedAt && now - s.touchedAt < 60_000) return;
+  s.touchedAt = now;
+  await saveSession(ctx, sid, s);
 }
 
 /** Resolves cookie -> session -> (fresh, non-disabled) user row. */
@@ -38,6 +68,7 @@ export async function authenticate(ctx: Ctx, req: FastifyRequest): Promise<boole
   req.sid = sid;
   req.session = s;
   req.user = user;
+  await touch(ctx, sid, s);
   return true;
 }
 
@@ -67,6 +98,6 @@ export async function refreshDevice(ctx: Ctx, req: FastifyRequest): Promise<bool
   const r = await ctx.db.query<{ approved: boolean }>('select approved from devices where user_id=$1 and device_id=$2', [s.userId, s.deviceId]);
   if (!r.rows[0]?.approved) return false;
   s.deviceApproved = true;
-  await ctx.kv.set(`sess:${req.sid}`, JSON.stringify(s), ctx.cfg.SESSION_TTL_SECONDS);
+  await saveSession(ctx, req.sid!, s);
   return true;
 }

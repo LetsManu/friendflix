@@ -19,7 +19,10 @@ const schema = z.object({
   PUBLIC_URL: z.string().url(),
   DATABASE_URL: z.string().min(1),
   REDIS_URL: z.string().min(1),
+  /** absolute session lifetime */
   SESSION_TTL_SECONDS: z.coerce.number().int().positive().default(8 * 3600),
+  /** sessions without any authenticated request for this long expire (sliding) */
+  SESSION_IDLE_SECONDS: z.coerce.number().int().positive().default(2 * 3600),
   /** base64 of 32 random bytes: encrypts Jellyfin passwords/tokens at rest. */
   APP_ENC_KEY: z.string().min(43),
   /** Shared secret between backend and gateway (never reaches browsers). */

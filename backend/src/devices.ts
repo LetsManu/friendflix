@@ -26,12 +26,18 @@ export async function registerDevice(ctx: Ctx, req: FastifyRequest, reply: Fasti
   return { deviceId: dev, approved };
 }
 
-/** Deletes sessions of a user (optionally only for one device). */
-export async function revokeSessions(ctx: Ctx, userId: string, deviceId?: string) {
+/** Deletes sessions of a user (optionally only one device, optionally keeping the current session). Returns the count. */
+export async function revokeSessions(ctx: Ctx, userId: string, deviceId?: string, exceptSid?: string): Promise<number> {
+  let n = 0;
   for (const k of await ctx.kv.keys('sess:')) {
+    if (exceptSid && k === `sess:${exceptSid}`) continue;
     const raw = await ctx.kv.get(k);
     if (!raw) continue;
     const s = JSON.parse(raw) as { userId: string; deviceId?: string };
-    if (s.userId === userId && (!deviceId || s.deviceId === deviceId)) await ctx.kv.del(k);
+    if (s.userId === userId && (!deviceId || s.deviceId === deviceId)) {
+      await ctx.kv.del(k);
+      n++;
+    }
   }
+  return n;
 }

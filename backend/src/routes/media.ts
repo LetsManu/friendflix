@@ -55,6 +55,19 @@ export function mediaRoutes(app: FastifyInstance, ctx: Ctx) {
     return ctx.jf.items(req.user!, { ...q, desc: q.desc === 'true' });
   }));
 
+  app.get('/api/library/genres', pre, wrap(async (req) => ({ genres: await ctx.jf.genres(req.user!) })));
+
+  // "Überrasch mich": one random title, optionally by type/genre, unwatched by default.
+  app.get('/api/library/random', pre, wrap(async (req, reply) => {
+    const q = z.object({
+      type: z.enum(['Movie', 'Series']).default('Movie'),
+      genre: z.string().max(60).optional(),
+      unplayed: z.enum(['true', 'false']).default('true'),
+    }).parse(req.query);
+    const r = await ctx.jf.items(req.user!, { types: q.type, genre: q.genre, sort: 'Random', limit: 1, filter: q.unplayed === 'true' ? 'unplayed' : undefined });
+    return r.items[0] ? { item: r.items[0] } : reply.code(404).send({ error: 'nothing_found' });
+  }));
+
   app.get('/api/library/resume', pre, wrap(async (req) => ({ items: await ctx.jf.resume(req.user!) })));
   app.get('/api/library/nextup', pre, wrap(async (req) => ({ items: await ctx.jf.nextUp(req.user!) })));
 

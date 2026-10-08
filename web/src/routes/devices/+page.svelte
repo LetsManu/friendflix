@@ -5,10 +5,13 @@
   const load = async () => (devices = (await api('/api/devices')).devices);
   onMount(load);
   async function approve(id: string) { await api(`/api/devices/${id}/approve`, { method: 'POST' }).catch(() => alert('Bitte auf einem freigegebenen Gerät bestätigen.')); load(); }
+  let revokedMsg = '';
+  async function revokeOthers() { const r = await api('/api/sessions/revoke-others', { method: 'POST' }); revokedMsg = `${r.revoked} andere Sitzung(en) beendet.`; }
   async function remove(id: string) { await api(`/api/devices/${id}`, { method: 'DELETE' }); load(); }
 </script>
 <h1>Geräte</h1>
 <p class="muted">Neue Geräte müssen einmalig von einem bereits freigegebenen Gerät bestätigt werden.</p>
+<p><button class="sec" on:click={revokeOthers}>Auf allen anderen Geräten abmelden</button> <span class="muted">{revokedMsg}</span></p>
 <table>
   <thead><tr><th>Gerät</th><th>Zuletzt gesehen</th><th>Status</th><th></th></tr></thead>
   <tbody>
