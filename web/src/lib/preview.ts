@@ -11,7 +11,7 @@ export async function playPreview(itemId: string, getVideo: () => HTMLVideoEleme
     previewOwner.set(itemId);
     await new Promise((r) => setTimeout(r, 0)); // wait for the <video> to render
     const v = getVideo();
-    if (!v) return false;
+    if (!v) { console.warn('[preview] <video> not rendered for', itemId); return false; }
     const { default: Hls } = await import('hls.js'); // loaded only when a preview is actually needed
     hls?.destroy();
     if (Hls.isSupported()) {
@@ -23,7 +23,8 @@ export async function playPreview(itemId: string, getVideo: () => HTMLVideoEleme
     } else v.src = url;
     await v.play();
     return true;
-  } catch {
+  } catch (e) {
+    console.warn('[preview] failed', itemId, e);
     return false;
   }
 }

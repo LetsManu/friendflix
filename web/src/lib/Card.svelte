@@ -23,7 +23,7 @@
   const canHover = typeof matchMedia !== 'undefined' && matchMedia('(hover: hover) and (pointer: fine)').matches;
   function enter() { if (!canHover || !$prefs.hoverTrailers || !(item.trailers || ($prefs.hoverClip && item.type === 'Movie'))) return; hoverT = setTimeout(async () => { previewing = true; if (!(await playPreview(item.id, () => pv))) previewing = false; }, 1200); }
   function leave() { clearTimeout(hoverT); if (previewing) { stopPreview(item.id); previewing = false; } }
-  $: if ($previewOwner !== item.id && previewing) previewing = false;
+  $: if ($previewOwner && $previewOwner !== item.id && previewing) previewing = false;
   onDestroy(leave);
 
   async function toggleFav() { fav = !fav; try { await api(`/api/items/${item.id}/favorite`, { method: fav ? 'POST' : 'DELETE' }); } catch { fav = !fav; } }
