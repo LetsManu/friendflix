@@ -97,6 +97,10 @@ export function mediaRoutes(app: FastifyInstance, ctx: Ctx) {
     if (!r.rows.length) return { items: [] };
     return { items: (await ctx.jf.items(req.user!, { ids: r.rows.map((x) => x.item_id), types: 'Movie,Series,Episode', limit: 200 })).items };
   }));
+  // Lightweight id list so cards can show the "Meine Liste" state without loading every item.
+  app.get('/api/watchlist/ids', pre, async (req) => ({
+    ids: (await ctx.db.query<{ item_id: string }>('select item_id from watchlist where user_id=$1', [req.user!.id])).rows.map((r) => r.item_id),
+  }));
   app.post('/api/items/:id/watchlist', pre, wrap(async (req) => {
     await ctx.db.query('insert into watchlist(user_id,item_id) values ($1,$2) on conflict do nothing', [req.user!.id, itemId.parse((req.params as any).id)]);
     return { ok: true };

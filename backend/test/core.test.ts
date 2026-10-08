@@ -95,7 +95,9 @@ describe('library (legacy jellyfin paths)', () => {
   it('watchlist roundtrip', async () => {
     await call('POST', `/api/items/${ID}/watchlist`);
     expect((await call('GET', `/api/items/${ID}`)).json().inWatchlist).toBe(true);
+    expect((await call('GET', '/api/watchlist/ids')).json().ids).toEqual([ID]);
     await call('DELETE', `/api/items/${ID}/watchlist`);
+    expect((await call('GET', '/api/watchlist/ids')).json().ids).toEqual([]);
     expect((await call('GET', `/api/items/${ID}`)).json().inWatchlist).toBe(false);
   });
 });
