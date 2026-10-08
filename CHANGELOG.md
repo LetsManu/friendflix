@@ -1,5 +1,12 @@
 # Changelog
 ## [Unreleased]
+### Step 11 – Polish
+- Gateway: images are browser-cacheable (`private, max-age=86400, stale-while-revalidate`, ETag/304 pass-through); upstream `public` is downgraded to `private`.
+- Title logos (transparent PNG) in billboard and detail popup, text fallback.
+- Detail popup over the current page (shallow routing, focus trap, Esc/back closes); "Mehr Infos" opens it.
+- "Top 10 nach Bewertung" row with large rank numbers; posters without backdrop shown contained on a blurred copy.
+- Player: "Intro/Abspann überspringen" from Jellyfin media segments (10.10+), keyboard shortcuts (Space/K, J/L/arrows, M, F).
+- Emoji removed from the UI (achievements use icons); notification texts without emoji.
 ### Step 10 – Cinematic UI
 - New design system (OLED dark, Inter self-hosted, tokens, focus rings, reduced-motion, skeleton loading, 44 px touch targets) generated with the ui-ux-pro-max skill.
 - Home: full-bleed billboard, carousels with arrows + scroll-snap, hover preview cards (play, list, favorite, details), lazy-loaded genre rows.
