@@ -1,5 +1,11 @@
 # Changelog
 ## [Unreleased]
+### Step 21 � Languages, simpler party, preview clips, "Heute Abend"
+- Language picker on the detail page (audio + subtitles, remembered per title/series, carried to the next episode).
+- Hover preview: optional clip from the film itself when there is no local trailer (setting, off by default).
+- Watch party: one tap "Gemeinsam schauen", invitation dialog in the room (notification or link).
+- "Heute Abend" (/tonight): mood, time, film/series -> three suggestions.
+- Fix: next-episode row duplicated "Weiterschauen"; next-episode button missing for an episode in progress.
 ### Step 15 – TV mode, phone remote, local ports
 - **TV mode** for smart TVs / sticks / consoles: pairing screen `/tv` (code + QR), TV gets its own 30-day session (7 days idle), listed under *Geräte*; 10-foot UI (big type, strong focus rings), geometric D-pad navigation (`lib/spatial.ts`), Back key support for Tizen/webOS/Android TV, focus memory when going back, control bar reachable with up/down in the player, media keys. `?tv=1` previews it in any browser.
 - **Phone as remote** (`/remote`, menu "Fernbedienung"): play/pause, ±10/±60 s, stop, home, "continue watching" and search with *Auf TV*, "Auf Fernseher" button on detail pages. WebSocket hub `/ws/remote` (same user only, command whitelist, flood limit, revoked sessions are disconnected immediately).

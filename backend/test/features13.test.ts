@@ -79,7 +79,7 @@ describe('similar titles and "Weil du ... gesehen hast"', () => {
 
 describe('viewing preferences', () => {
   it('has safe defaults, validates and persists per user', async () => {
-    expect((await call('GET', '/api/prefs')).json().prefs).toEqual({ autoplayNext: true, autoSkipIntro: false, shareHistory: false, shareRatings: true, hoverTrailers: true, audioLang: '', subtitleLang: '', quality: 0 });
+    expect((await call('GET', '/api/prefs')).json().prefs).toEqual({ autoplayNext: true, autoSkipIntro: false, shareHistory: false, shareRatings: true, hoverTrailers: true, hoverClip: false, audioLang: '', subtitleLang: '', quality: 0 });
     const put = await call('PUT', '/api/prefs', { autoplayNext: false, autoSkipIntro: true, audioLang: 'ger', subtitleLang: 'eng', quality: 4_000_000 });
     expect(put.statusCode).toBe(200);
     expect((await call('GET', '/api/prefs')).json().prefs).toMatchObject({ autoplayNext: false, autoSkipIntro: true, audioLang: 'ger', subtitleLang: 'eng', quality: 4_000_000 });

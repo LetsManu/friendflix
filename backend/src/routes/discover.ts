@@ -139,13 +139,28 @@ export function discoverRoutes(app: FastifyInstance, ctx: Ctx) {
   // ---- X-Ray (cast), extras, hover trailer, collections, studios ----
   app.get('/api/items/:id/people', pre, wrap(async (req) => ({ people: await ctx.jf.people(req.user!, id32.parse((req.params as { id: string }).id)) })));
   app.get('/api/items/:id/extras', pre, wrap(async (req) => ({ items: await ctx.jf.extras(req.user!, id32.parse((req.params as { id: string }).id)) })));
+  app.get('/api/items/:id/next', pre, wrap(async (req) => {
+    const id = id32.parse((req.params as { id: string }).id);
+    const cur = await ctx.jf.item(req.user!, id);
+    return { item: cur.type === 'Episode' && cur.seriesId ? await ctx.jf.nextEpisode(req.user!, cur.seriesId, id) : null };
+  }));
+  app.get('/api/items/:id/tracks', pre, wrap(async (req) => ctx.jf.tracks(req.user!, id32.parse((req.params as { id: string }).id))));
   app.get('/api/items/:id/trailer', pre, wrap(async (req, reply) => {
     if (!(await loadPrefs(ctx, req.user!.id)).hoverTrailers) return reply.code(404).send({ error: 'disabled' });
     const id = id32.parse((req.params as { id: string }).id);
-    const t = await ctx.jf.trailer(req.user!, id);
-    if (!t) return reply.code(404).send({ error: 'no_trailer' });
+    let t = await ctx.jf.trailer(req.user!, id);
+    let start = '';
+    if (!t) {
+      // no local trailer: optionally a short clip from the film itself (Netflix-style), one third in
+      if (!(await loadPrefs(ctx, req.user!.id)).hoverClip) return reply.code(404).send({ error: 'no_trailer' });
+      const tr = await ctx.jf.tracks(req.user!, id);
+      if (tr.type !== 'Movie' || !tr.runtimeTicks) return reply.code(404).send({ error: 'no_trailer' });
+      t = id;
+      start = String(Math.floor(tr.runtimeTicks / 3));
+    }
     // low-bitrate HLS: always playable in browsers, capped by the gateway; no playback reporting, not counted as a stream
     const p = new URLSearchParams({ MediaSourceId: t, DeviceId: ctx.jf.deviceId(req.user!), VideoCodec: 'h264', AudioCodec: 'aac', SegmentContainer: 'ts', MinSegments: '1', BreakOnNonKeyFrames: 'true', TranscodingMaxAudioChannels: '2', MaxStreamingBitrate: '1500000' });
+    if (start) p.set('StartTimeTicks', start);
     return { url: `/media/Videos/${t}/master.m3u8?${p}` };
   }));
   app.get('/api/library/collections', pre, wrap(async (req) => ({ items: await ctx.jf.collections(req.user!), studios: await ctx.jf.studios(req.user!).catch(() => []) })));

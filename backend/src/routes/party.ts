@@ -7,6 +7,7 @@ import type { Ctx } from '../ctx.js';
 import { clientMsg, PartyRegistry } from '../party.js';
 import { randomToken } from '../crypto.js';
 import { requireUser, authenticate } from '../session.js';
+import { notify } from '../notify.js';
 
 export const parties = new PartyRegistry();
 
@@ -35,6 +36,17 @@ export async function partyRoutes(app: FastifyInstance, ctx: Ctx) {
   });
 
   app.get('/api/party', pre, async () => ({ rooms: [...parties.rooms.values()].map(roomInfo) }));
+  // One tap invitation: friends get an in-app notification (and ntfy/Discord if configured) that opens the room.
+  app.post('/api/party/:id/invite', { ...pre, config: { rateLimit: { max: 10, timeWindow: '1 minute' } } }, async (req, reply) => {
+    const r = parties.get((req.params as { id: string }).id);
+    if (!r) return reply.code(404).send({ error: 'not_found' });
+    if (!r.members.has(req.user!.id)) return reply.code(403).send({ error: 'not_in_room' });
+    const b = z.object({ userIds: z.array(z.string().uuid()).min(1).max(15) }).parse(req.body);
+    const targets = (await ctx.db.query<{ id: string }>('select id from users where id = any($1) and id <> $2 and not disabled', [b.userIds, req.user!.id])).rows;
+    let sent = 0;
+    for (const t of targets) if (await notify(ctx, { userId: t.id, kind: 'party_invite', title: `${req.user!.name} lädt dich zur Watch-Party ein: ${r.title}`, link: `/party/${r.id}`, dedupe: `party-${r.id}-${t.id}`, external: true })) sent++;
+    return { sent };
+  });
   app.get('/api/party/:id', pre, async (req, reply) => {
     const r = parties.get((req.params as { id: string }).id);
     return r ? roomInfo(r) : reply.code(404).send({ error: 'not_found' });

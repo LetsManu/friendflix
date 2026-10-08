@@ -16,6 +16,8 @@ export const prefsSchema = z.object({
   shareRatings: z.boolean().default(true),
   /** short muted trailer preview when hovering a card (only local trailers) */
   hoverTrailers: z.boolean().default(true),
+  /** no local trailer? preview a short clip of the film itself (transcodes, so opt-in) */
+  hoverClip: z.boolean().default(false),
   /** 0 = automatic, else a bitrate in bit/s (capped by the role limit on the server) */
   quality: z.number().int().min(0).max(200_000_000).default(0),
 });

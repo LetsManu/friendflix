@@ -11,6 +11,9 @@
   export let itemId: string;
   /** shown on the phone's remote while this plays */
   export let title = '';
+  /** language picked on the detail page: audio language code, subtitles code or 'off' (empty = my defaults) */
+  export let wantAudio = '';
+  export let wantSub = '';
   export let video: HTMLVideoElement | null = null;
   /** the element that goes fullscreen (so overlays/chat stay visible) */
   export let stage: HTMLDivElement | null = null;
@@ -77,10 +80,10 @@
     if (!prefsApplied && !partyMode) {
       prefsApplied = true;
       const pf = get(prefs);
-      const wantAudio = pf.audioLang ? info.audioTracks.find((a) => a.language === pf.audioLang) : undefined;
+      const wantTrack = (wantAudio || pf.audioLang) ? info.audioTracks.find((a) => a.language === (wantAudio || pf.audioLang)) : undefined;
       const needQuality = pf.quality > 0 && pf.quality < info.maxBitrate;
-      if ((wantAudio && !wantAudio.isDefault) || needQuality) {
-        if (wantAudio && !wantAudio.isDefault) audioIndex = wantAudio.index;
+      if ((wantTrack && !wantTrack.isDefault) || needQuality) {
+        if (wantTrack && !wantTrack.isDefault) audioIndex = wantTrack.index;
         if (needQuality) quality = pf.quality;
         return load(startSec);
       }
@@ -108,7 +111,7 @@
     }
     stopped = false; started = false;
     dispatch('ready', { info });
-    const want = get(prefs).subtitleLang;
+    const want = wantSub === 'off' ? '' : wantSub || get(prefs).subtitleLang;
     if (want && !partyMode) tickDom().then(() => { const sub = info?.subtitles.find((x) => (x as { language?: string }).language === want); if (sub) setSubtitle(sub.index); });
   }
 
