@@ -5,9 +5,11 @@
   import { api, type Item } from '$lib/api';
   import Icon from '$lib/Icon.svelte';
   import Player from '$lib/Player.svelte';
+  import { prefs } from '$lib/stores';
 
   let video: HTMLVideoElement | null = null;
   let item: Item | null = null, nextEp: Item | null = null;
+  let sleepAfterEpisode = false;
   let showNext = false, countdown = 0, cd: ReturnType<typeof setInterval>;
   $: id = $page.params.id!;
 
@@ -23,6 +25,7 @@
   function stopCountdown() { clearInterval(cd); countdown = 0; }
   function startCountdown() {
     if (!nextEp) return;
+    if (sleepAfterEpisode || !$prefs.autoplayNext) { showNext = true; countdown = 0; return; } // wait for the viewer's click
     showNext = true; countdown = 8; clearInterval(cd);
     cd = setInterval(() => { countdown -= 1; if (countdown <= 0) { stopCountdown(); goto(`/watch/${nextEp!.id}`); } }, 1000);
   }
@@ -35,7 +38,7 @@
 <svelte:head><title>{item?.name ?? 'Wiedergabe'} – FriendFlix</title></svelte:head>
 <div class="wrap">
   {#key id}
-    <Player itemId={id} bind:video hasNext={Boolean(nextEp)} on:next={() => nextEp && goto(`/watch/${nextEp.id}`)} on:timeupdate={onTime} on:ended={startCountdown}>
+    <Player itemId={id} bind:video bind:sleepAfterEpisode hasNext={Boolean(nextEp)} on:next={() => nextEp && goto(`/watch/${nextEp.id}`)} on:timeupdate={onTime} on:ended={startCountdown}>
       <div slot="top" class="top">
         <button class="icon-btn" aria-label="Zurück" on:click={back}><Icon name="arrow-left" size={30} /></button>
         {#if item}<div class="ttl"><b>{item.seriesName ?? item.name}</b>{#if item.seriesName}<span>S{item.parentIndexNumber}:E{item.indexNumber} „{item.name}“</span>{/if}</div>{/if}

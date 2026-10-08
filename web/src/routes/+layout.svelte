@@ -5,7 +5,7 @@
   import { page } from '$app/stores';
   import { api, setCsrf, type Me } from '$lib/api';
   import Icon from '$lib/Icon.svelte';
-  import { loadList } from '$lib/stores';
+  import { loadList, loadPrefs } from '$lib/stores';
   import ItemModal from '$lib/ItemModal.svelte';
 
   let me: Me | null = null;
@@ -24,7 +24,7 @@
   const tabs: Array<[string, string, string]> = [['/', 'Start', 'home'], ['/browse/series', 'Serien', 'film'], ['/browse/movies', 'Filme', 'film'], ['/new', 'Neu & beliebt', 'star'], ['/watchlist', 'Meine Liste', 'plus']];
   const menuLinks: Array<[string, string, string]> = [
     ['/favorites', 'Favoriten', 'heart'], ['/requests', 'Wünsche', 'gift'], ['/party', 'Watch-Party', 'users'], ['/vote', 'Filmabend', 'vote'],
-    ['/now', 'Läuft gerade', 'monitor'], ['/calendar', 'Kalender', 'calendar'], ['/stats', 'Wrapped', 'bar-chart'], ['/devices', 'Geräte', 'monitor'],
+    ['/now', 'Läuft gerade', 'monitor'], ['/calendar', 'Kalender', 'calendar'], ['/stats', 'Wrapped', 'bar-chart'], ['/settings', 'Einstellungen', 'settings'], ['/devices', 'Geräte', 'monitor'],
   ];
 
   async function loadNotes() { try { notes = (await api('/api/notifications')).notifications; } catch { /* ignore */ } }
@@ -55,7 +55,7 @@
         me = await api<Me>('/api/me');
         setCsrf(me.csrfToken);
         pending = !me.deviceApproved;
-        if (!pending) { loadNotes(); loadList(); setInterval(loadNotes, 60_000); }
+        if (!pending) { loadNotes(); loadList(); loadPrefs(); setInterval(loadNotes, 60_000); }
       } catch { /* api() redirects to login on 401 */ }
     }
   }

@@ -28,3 +28,15 @@ export async function toggleList(id: string, on: boolean) {
     });
   }
 }
+
+export interface Prefs { autoplayNext: boolean; autoSkipIntro: boolean; audioLang: string; subtitleLang: string; quality: number }
+export const DEFAULT_PREFS: Prefs = { autoplayNext: true, autoSkipIntro: false, audioLang: '', subtitleLang: '', quality: 0 };
+/** Viewing preferences (server-side, follow the user across devices). */
+export const prefs = writable<Prefs>({ ...DEFAULT_PREFS });
+export async function loadPrefs() {
+  try { prefs.set({ ...DEFAULT_PREFS, ...(await api('/api/prefs')).prefs }); } catch { /* defaults */ }
+}
+export async function savePrefs(p: Prefs) {
+  prefs.set(p);
+  await api('/api/prefs', { method: 'PUT', body: p });
+}
