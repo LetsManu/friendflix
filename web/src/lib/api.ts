@@ -25,7 +25,7 @@ export async function api<T = any>(path: string, opts: { method?: string; body?:
 }
 
 export const img = (id: string, w = 300) => `/media/Items/${id}/Images/Primary?maxWidth=${w}&quality=85`;
-export const backdrop = (id: string) => `/media/Items/${id}/Images/Backdrop?maxWidth=1600&quality=80`;
+export const backdrop = (id: string, w = 1600) => `/media/Items/${id}/Images/Backdrop?maxWidth=${w}&quality=80`;
 export const ticksToSec = (t: number) => t / 10_000_000;
 export const secToTicks = (s: number) => Math.floor(s * 10_000_000);
 export const fmtMin = (ticks?: number) => (ticks ? `${Math.round(ticks / 600_000_000)} Min.` : '');

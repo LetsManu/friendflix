@@ -92,7 +92,7 @@
   {#if info}{#each info.subtitles as s}<track id="sub-{s.index}" kind="subtitles" src={s.url} srclang={s.language?.slice(0, 2) ?? 'xx'} label={s.title} />{/each}{/if}
 </video>
 {#if info && controls}
-  <div class="flex" style="margin-top:.6rem">
+  <div class="flex pbar" style="margin-top:.6rem">
     {#if info.audioTracks.length > 1}
       <label>Tonspur
         <select on:change={(e) => changeAudio(Number(e.currentTarget.value))}>
