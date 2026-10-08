@@ -126,6 +126,11 @@ export class JellyfinService {
     return toItemDto(i);
   }
 
+  async genres(user: UserRow, types = 'Movie,Series'): Promise<string[]> {
+    const r = await this.json<{ Items: Array<{ Name: string }> }>(user, `/Genres?userId=${user.jellyfin_user_id}&includeItemTypes=${types}&sortBy=SortName`);
+    return r.Items.map((g) => g.Name);
+  }
+
   async seasons(user: UserRow, seriesId: string): Promise<ItemDto[]> {
     const r = await this.json<{ Items: any[] }>(user, `/Shows/${seriesId}/Seasons?userId=${user.jellyfin_user_id}&fields=${FIELDS}`);
     return r.Items.map(toItemDto);

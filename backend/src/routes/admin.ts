@@ -60,6 +60,13 @@ export function adminRoutes(app: FastifyInstance, ctx: Ctx) {
     return { ok: true };
   });
 
+  app.post('/api/admin/users/:id/revoke-sessions', admin, async (req) => {
+    const id = uuid.parse((req.params as { id: string }).id);
+    const n = await revokeSessions(ctx, id);
+    await audit(ctx, req.user!.id, 'user.revoke_sessions', id, { sessions: n });
+    return { revoked: n };
+  });
+
   app.post('/api/admin/invites', admin, async (req) => {
     const b = z.object({ role: z.enum(INVITABLE_ROLES), ttlHours: z.number().int().min(1).max(24 * 14).default(48), note: z.string().max(100).optional() }).parse(req.body);
     const inv = await createInvite(ctx, req.user!.id, b);
@@ -103,6 +110,11 @@ export function adminRoutes(app: FastifyInstance, ctx: Ctx) {
   });
 
   // ---- own devices ----
+  app.post('/api/sessions/revoke-others', { preHandler: requireUser(ctx) }, async (req) => {
+    const n = await revokeSessions(ctx, req.user!.id, undefined, req.sid);
+    await audit(ctx, req.user!.id, 'session.revoke_others', req.user!.id, { sessions: n });
+    return { revoked: n };
+  });
   app.get('/api/devices', { preHandler: requireUser(ctx, { allowPendingDevice: true }) }, async (req) => {
     const r = await ctx.db.query('select device_id, label, approved, created_at, last_seen from devices where user_id=$1 order by created_at', [req.user!.id]);
     return { devices: r.rows.map((d) => ({ ...d, id: d.device_id, current: d.device_id === req.session!.deviceId })) };
