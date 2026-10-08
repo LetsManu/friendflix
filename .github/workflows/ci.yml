@@ -40,7 +40,7 @@ jobs:
           file: ${{ matrix.service }}/Dockerfile
           load: true
           tags: friendflix-${{ matrix.service }}:ci
-      - uses: aquasecurity/trivy-action@0.28.0
+      - uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: friendflix-${{ matrix.service }}:ci
           severity: CRITICAL,HIGH
