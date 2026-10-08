@@ -9,6 +9,7 @@
 
   export let item: Item;
   let fav = item.favorite;
+  $: fav = item.favorite; // follow the item when the list re-renders with fresh data
   $: href = item.type === 'Episode' ? `/watch/${item.id}` : item.type === 'BoxSet' ? `/library/${item.id}` : `/item/${item.id}`;
   $: detail = item.type === 'Episode' && item.seriesId ? `/item/${item.seriesId}` : `/item/${item.id}`;
   $: src = item.backdrop ? backdrop(item.id, 520) : item.image ? img(item.id, 520) : '';
@@ -21,7 +22,15 @@
   // Muted trailer preview after hovering ~1.2 s (only titles with a local trailer, only real pointers, one at a time)
   let pv: HTMLVideoElement, hoverT: ReturnType<typeof setTimeout>, previewing = false;
   const canHover = typeof matchMedia !== 'undefined' && matchMedia('(hover: hover) and (pointer: fine)').matches;
-  function enter() { if (!canHover || !$prefs.hoverTrailers || !(item.trailers || ($prefs.hoverClip && (item.type === 'Movie' || item.type === 'Series')))) return; hoverT = setTimeout(async () => { previewing = true; if (!(await playPreview(item.id, () => pv))) previewing = false; }, 1200); }
+  function enter() {
+    clearTimeout(hoverT); // mouseenter + focusin both call this: never keep two timers (two previews) alive
+    if (previewing || !canHover || !$prefs.hoverTrailers || !(item.trailers || ($prefs.hoverClip && (item.type === 'Movie' || item.type === 'Series')))) return;
+    hoverT = setTimeout(async () => { previewing = true; if (!(await playPreview(item.id, () => pv))) previewing = false; }, 1200);
+  }
+  // keyboard focus only: a mouse click on the heart/plus must not start (or pin) a preview
+  function onFocusIn(e: FocusEvent) { if ((e.target as HTMLElement).matches(':focus-visible')) enter(); }
+  // after a mouse click drop the focus again, otherwise :focus-within keeps the card scaled and the pop-up open forever
+  function release(e: MouseEvent) { if (e.detail > 0) (e.currentTarget as HTMLElement).blur(); }
   function leave() { clearTimeout(hoverT); if (previewing) { stopPreview(item.id); previewing = false; } }
   $: if ($previewOwner !== item.id && previewing) previewing = false; // owner is claimed synchronously in playPreview()
   onDestroy(leave);
@@ -29,7 +38,7 @@
   async function toggleFav() { fav = !fav; try { await api(`/api/items/${item.id}/favorite`, { method: fav ? 'POST' : 'DELETE' }); } catch { fav = !fav; } }
 </script>
 
-<article class="card" on:mouseenter={enter} on:mouseleave={leave} on:focusin={enter} on:focusout={leave}>
+<article class="card" on:mouseenter={enter} on:mouseleave={leave} on:focusin={onFocusIn} on:focusout={leave}>
   <a class="thumb" {href} aria-label={item.name + (sub ? ', ' + sub : '')}>
     {#if posterOnly}<img class="blur" loading="lazy" {src} alt="" aria-hidden="true" />{/if}
     {#if src}<img class:contain={posterOnly} loading="lazy" decoding="async" {src} alt="" width="320" height="180" />{/if}
@@ -40,8 +49,8 @@
   <div class="pop">
     <div class="acts">
       <a class="round play" href={href} aria-label="Abspielen"><Icon name="play" size={18} /></a>
-      <button class="round" aria-label={inList ? 'Von Meine Liste entfernen' : 'Zu Meine Liste hinzufügen'} on:click={() => toggleList(item.seriesId ?? item.id, inList)}><Icon name={inList ? 'check' : 'plus'} size={18} /></button>
-      <button class="round" class:on={fav} aria-label={fav ? 'Favorit entfernen' : 'Als Favorit markieren'} aria-pressed={fav} on:click={toggleFav}><Icon name="heart" size={17} fill={fav} /></button>
+      <button class="round" aria-label={inList ? 'Von Meine Liste entfernen' : 'Zu Meine Liste hinzufügen'} on:click={(e) => { release(e); toggleList(item.seriesId ?? item.id, inList); }}><Icon name={inList ? 'check' : 'plus'} size={18} /></button>
+      <button class="round" class:on={fav} aria-label={fav ? 'Favorit entfernen' : 'Als Favorit markieren'} aria-pressed={fav} on:click={(e) => { release(e); toggleFav(); }}><Icon name="heart" size={17} fill={fav} /></button>
       <a class="round more" href={detail} aria-label="Mehr Infos" on:click={(e) => openModal(e, detail)}><Icon name="chevron-down" size={18} /></a>
     </div>
     <div class="meta">
@@ -83,10 +92,10 @@
 
   /* Hover preview only for real pointers; touch devices simply tap through to the detail page. */
   @media (hover: hover) and (pointer: fine) {
-    .card:hover, .card:focus-within { z-index: 6; transform: scale(1.32); transition-delay: .35s; }
+    .card:hover, .card:has(:focus-visible) { z-index: 6; transform: scale(1.32); transition-delay: .35s; }
     :global(.slot:first-child) .card { transform-origin: left center; }
     :global(.slot:last-child) .card { transform-origin: right center; }
-    .card:hover .pop, .card:focus-within .pop { opacity: 1; visibility: visible; pointer-events: auto; transition-delay: .35s; }
+    .card:hover .pop, .card:has(:focus-visible) .pop { opacity: 1; visibility: visible; pointer-events: auto; transition-delay: .35s; }
   }
   @media (hover: none), (pointer: coarse) { .pop { display: none; } }
 </style>
