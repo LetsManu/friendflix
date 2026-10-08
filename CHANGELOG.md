@@ -1,5 +1,12 @@
 # Changelog
 ## [Unreleased]
+### Step 14 – Social & discovery
+- Group matcher ("Was hat noch keiner von uns gesehen?"): opt-in per participant, intersection of unwatched lists with each user's own token, filters (length/genre), one click to a film-night poll.
+- Scenes: share links with timestamp (`/watch/<id>?t=`), bookmarks with notes and timeline markers.
+- X-Ray cast panel on pause; find subtitles via Jellyfin remote providers; picture of title mood (dynamic tint on the detail page).
+- Recommend to friends, "Von Freunden empfohlen" and "Freunde haben bewertet" rows (rating sharing opt-out), thumbs up/down feeding "Weil du ... gesehen hast".
+- "Demnächst" from Seerr with one-click wish; extras/bonus material, collections and studio hubs.
+- Muted hover trailer previews (local trailers only), shareable Wrapped card (PNG, rendered in the browser).
 ### Step 13 – Streaming features
 - Timeline preview thumbnails (Jellyfin trickplay) through the gateway/auth_request allowlist.
 - Quality selector (Auto/1080p/720p/480p/360p, never above the role limit); "Einstellungen" menu with quality, speed and sleep timer ("nach 15/30/45/60 Min." or "nach dieser Folge").
