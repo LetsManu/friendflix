@@ -6,6 +6,7 @@
   import { api, setCsrf, type Me } from '$lib/api';
   import Icon from '$lib/Icon.svelte';
   import { loadList } from '$lib/stores';
+  import ItemModal from '$lib/ItemModal.svelte';
 
   let me: Me | null = null;
   let pending = false;
@@ -116,6 +117,7 @@
     {/if}
   {/if}
 
+  {#if $page.state.modalId}<ItemModal id={$page.state.modalId} />{/if}
   <main id="main" class:page={!heroPage && !watchPage}>
     {#if pending}
       <div class="page"><div class="panel"><b class="warn">Dieses Gerät ist noch nicht freigegeben.</b><p class="muted">Bestätige es auf einem bereits freigegebenen Gerät unter „Geräte“ oder frage den Admin.</p><a class="btn sec" href="/devices">Geräte ansehen</a></div></div>

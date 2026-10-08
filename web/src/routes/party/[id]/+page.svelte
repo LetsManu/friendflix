@@ -78,13 +78,13 @@
     <h2>{title || 'Watch-Party'} {#if countdown}<span class="badge">{countdown}</span>{/if}</h2>
     {#if itemId}<Player {itemId} bind:video on:ready={onReady} />{/if}
     {#if needClick}<p class="warn">Dein Browser blockiert Autoplay. <button on:click={() => { needClick = false; apply(); }}>Mitschauen</button></p>{/if}
-    {#if state.hold}<p class="warn">⏳ Warte auf alle Teilnehmer (Puffer) …</p>{/if}
+    {#if state.hold}<p class="warn">Warte auf alle Teilnehmer (Puffer) …</p>{/if}
     <div style="pointer-events:none;position:absolute;inset:0;overflow:hidden">{#each floating as f (f.id)}<span style="position:absolute;bottom:10%;left:{f.left}%;font-size:2rem;animation:up 2.5s ease-out forwards">{f.emoji}</span>{/each}</div>
     <div class="flex" style="margin-top:.6rem">{#each EMOJIS as e}<button class="sec" on:click={() => send({ t: 'react', emoji: e })}>{e}</button>{/each}</div>
   </div>
   <div class="panel" style="display:flex;flex-direction:column;height:70vh">
     <b>Dabei ({members.length})</b>
-    <div class="muted" style="font-size:.85rem">{#each members as m}<span>{m.name}{m.id === hostId ? ' 👑' : ''}{m.buffering ? ' ⏳' : ''} </span>{/each}</div>
+    <div class="muted" style="font-size:.85rem">{#each members as m}<span>{m.name}{m.id === hostId ? ' (Host)' : ''}{m.buffering ? ' (lädt …)' : ''} </span>{/each}</div>
     <div style="flex:1;overflow:auto;margin:.6rem 0">{#each chat as c}<div><b>{c.name}:</b> {c.text}</div>{/each}</div>
     <form class="flex" on:submit|preventDefault={sendChat}><input bind:value={text} maxlength="500" placeholder="Nachricht …" style="flex:1" /><button>↵</button></form>
     <small class="muted">{isHost ? 'Du bist Host: deine Steuerung gilt für alle.' : 'Nur der Host steuert Play/Pause/Spulen.'}</small>

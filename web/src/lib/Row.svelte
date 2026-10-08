@@ -8,6 +8,8 @@
   /** null = loading (skeleton) */
   export let items: Item[] | null;
   export let href = '';
+  /** big rank numbers (Top 10 style) */
+  export let ranked = false;
   let track: HTMLDivElement;
   let canLeft = false, canRight = true;
 
@@ -33,7 +35,7 @@
         {#if items === null}
           {#each Array(8) as _}<div class="slot"><div class="skeleton ph"></div></div>{/each}
         {:else}
-          {#each items as it (it.id)}<div class="slot" role="listitem"><Card item={it} /></div>{/each}
+          {#each items as it, idx (it.id)}<div class="slot" class:ranked role="listitem">{#if ranked}<span class="rank" aria-label="Platz {idx + 1}">{idx + 1}</span>{/if}<Card item={it} /></div>{/each}
         {/if}
       </div>
       <button class="arrow right" class:hide={!canRight} aria-label="Weiterblättern" on:click={() => go(1)}><Icon name="chevron-right" size={34} /></button>
@@ -57,6 +59,9 @@
   .track { display: flex; gap: var(--gap); overflow-x: auto; overflow-y: hidden; scroll-snap-type: x proximity; scrollbar-width: none; padding: 2.6rem var(--pad-x) 6.5rem; margin: -2.2rem 0 -6rem; scroll-padding: 0 var(--pad-x); }
   .track::-webkit-scrollbar { display: none; }
   .slot { flex: 0 0 calc((100% - 2 * var(--pad-x) - (var(--n) - 1) * var(--gap)) / var(--n)); scroll-snap-align: start; min-width: 0; }
+  .slot.ranked { display: flex; align-items: flex-end; flex-basis: calc((100% - 2 * var(--pad-x) - (var(--n) - 1) * var(--gap)) / var(--n) * 1.25); }
+  .slot.ranked :global(.card) { width: 66%; flex: none; }
+  .rank { font-size: clamp(5rem, 11vw, 9.5rem); font-weight: 900; line-height: .8; color: #141414; -webkit-text-stroke: 3px #777; width: 34%; text-align: right; padding-right: .15rem; letter-spacing: -.08em; overflow: hidden; user-select: none; }
   .ph { aspect-ratio: 16 / 9; width: 100%; }
   .arrow { position: absolute; top: 2.4rem; bottom: 6.5rem; width: var(--pad-x); min-width: 44px; border-radius: 0; background: rgba(20, 20, 20, .55); opacity: 0; z-index: 7; padding: 0; }
   .arrow:hover:not(:disabled) { background: rgba(20, 20, 20, .8); }

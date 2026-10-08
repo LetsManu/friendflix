@@ -7,6 +7,7 @@
 
   let hero: Item | null = null, heroPlay = '';
   let resume: Item[] | null = null, next: Item[] | null = null, latest: Item[] | null = null, mine: Item[] | null = null;
+  let top: Item[] | null = null;
   let views: Item[] = [], genres: string[] = [], error = '';
   const q = (p: Record<string, string>) => new URLSearchParams(p).toString();
   const items = (p: Record<string, string>) => api(`/api/library/items?${q(p)}`).then((r) => r.items as Item[]);
@@ -15,6 +16,7 @@
     api('/api/library/resume').then((r) => (resume = r.items)).catch(() => (resume = []));
     api('/api/library/nextup').then((r) => (next = r.items)).catch(() => (next = []));
     items({ types: 'Movie,Series', sort: 'DateCreated', desc: 'true', limit: '24' }).then((r) => (latest = r)).catch(() => (latest = []));
+    items({ types: 'Movie,Series', sort: 'CommunityRating', desc: 'true', limit: '10' }).then((r) => (top = r)).catch(() => (top = []));
     api('/api/watchlist').then((r) => (mine = r.items)).catch(() => (mine = []));
     api('/api/library/views').then((r) => (views = r.items)).catch(() => (error = 'Bibliothek konnte nicht geladen werden.'));
     api('/api/library/genres').then((r) => (genres = r.genres.slice(0, 8))).catch(() => undefined);
@@ -33,6 +35,7 @@
   <Row title="Weiterschauen" items={resume} />
   <Row title="Nächste Folge" items={next} />
   <Row title="Neu hinzugefügt" items={latest} href="/new" />
+  <Row title="Top 10 nach Bewertung" items={top} ranked />
   <Row title="Meine Liste" items={mine} href="/watchlist" />
   {#each views as v (v.id)}
     <LazyRow title={v.name} href="/library/{v.id}" load={() => items({ parentId: v.id, sort: 'DateCreated', desc: 'true', limit: '24' })} />

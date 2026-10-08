@@ -15,6 +15,9 @@
     subtitles: Array<{ index: number; title: string; url: string; language?: string; isDefault: boolean }>;
   }
   let info: Info | null = null, hls: Hls | null = null, error = '', mode = '', audioIndex: number | undefined, subIndex = -1;
+  let segments: Array<{ type: string; start: number; end: number }> = [], now = 0, toast = '';
+  $: skip = segments.find((x) => x.type !== 'recap' && now >= x.start && now < x.end - 1) ?? null;
+  const skipLabel: Record<string, string> = { intro: 'Intro überspringen', outro: 'Abspann überspringen', recap: 'Rückblick überspringen' };
   let progressTimer: ReturnType<typeof setInterval>, started = false, stopped = false;
 
   const body = (extra = {}) => ({
@@ -69,9 +72,24 @@
     [...(video?.textTracks ?? [])].forEach((t) => (t.mode = t.id === `sub-${i}` ? 'showing' : 'disabled'));
   }
 
+  function doSkip() { if (video && skip) video.currentTime = skip.end; }
+  function flash(t: string) { toast = t; setTimeout(() => (toast = ''), 900); }
+  /** Keyboard: Space/K play-pause, J/L or arrows +-10 s, M mute, F fullscreen. Ignored while typing. */
+  function onKey(e: KeyboardEvent) {
+    const t = e.target as HTMLElement;
+    if (!video || e.ctrlKey || e.metaKey || e.altKey || ['INPUT', 'SELECT', 'TEXTAREA'].includes(t.tagName)) return;
+    const k = e.key.toLowerCase();
+    if (k === ' ' || k === 'k') { e.preventDefault(); video.paused ? video.play() : video.pause(); }
+    else if (k === 'arrowleft' || k === 'j') { e.preventDefault(); video.currentTime = Math.max(0, video.currentTime - 10); flash('−10 s'); }
+    else if (k === 'arrowright' || k === 'l') { e.preventDefault(); video.currentTime += 10; flash('+10 s'); }
+    else if (k === 'm') { video.muted = !video.muted; flash(video.muted ? 'Stumm' : 'Ton an'); }
+    else if (k === 'f') { document.fullscreenElement ? document.exitFullscreen() : video.parentElement?.requestFullscreen?.(); }
+  }
+
   function onPlay() { if (!started) { started = true; send('start'); } else send('progress'); }
   onMount(() => {
     load();
+    api(`/api/items/${itemId}/segments`).then((r) => (segments = r.segments)).catch(() => undefined);
     progressTimer = setInterval(() => { if (started && !stopped) send('progress'); }, 10_000);
     const bye = () => { if (!stopped) { stopped = true; send('stop'); } };
     window.addEventListener('pagehide', bye);
@@ -85,12 +103,23 @@
 </script>
 
 {#if error}<p class="err">{error}</p>{/if}
+<svelte:window on:keydown={onKey} />
+<div class="vwrap">
 <!-- svelte-ignore a11y_media_has_caption -->
 <video bind:this={video} {controls} playsinline crossorigin="use-credentials"
   on:play={onPlay} on:pause={() => send('progress')} on:seeked={() => started && send('progress')} on:ended={() => { stopped = true; send('stop'); }}
+  on:timeupdate={() => (now = video?.currentTime ?? 0)}
   on:play on:pause on:seeked on:seeking on:waiting on:playing on:canplay on:timeupdate on:ended>
   {#if info}{#each info.subtitles as s}<track id="sub-{s.index}" kind="subtitles" src={s.url} srclang={s.language?.slice(0, 2) ?? 'xx'} label={s.title} />{/each}{/if}
 </video>
+{#if skip}<button class="skipbtn light" on:click={doSkip}>{skipLabel[skip.type]}</button>{/if}
+{#if toast}<div class="toast" role="status">{toast}</div>{/if}
+</div>
+<style>
+  .vwrap { position: relative; display: contents; }
+  .skipbtn { position: absolute; right: var(--pad-x); bottom: 6.5rem; z-index: 6; border: 1px solid #fff; padding: .7rem 1.4rem; }
+  .toast { position: absolute; left: 50%; top: 45%; transform: translateX(-50%); background: rgba(0,0,0,.7); padding: .5rem 1.1rem; border-radius: 999px; z-index: 6; font-weight: 600; }
+</style>
 {#if info && controls}
   <div class="flex pbar" style="margin-top:.6rem">
     {#if info.audioTracks.length > 1}

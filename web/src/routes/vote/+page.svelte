@@ -35,10 +35,10 @@
     <form class="flex" style="margin:.8rem 0" on:submit|preventDefault={search}><input placeholder="Titel suchen (Bibliothek &amp; Wunschliste)" bind:value={q} /><button>Suchen</button></form>
     <div class="flex">
       {#each libResults as i}<button class="sec" on:click={() => add(i.id, i.name, { jfItemId: i.id })}>+ {i.name}</button>{/each}
-      {#each wishResults as r}<button class="sec" on:click={() => add(`t${r.tmdbId}`, `${r.title} (noch nicht da)`, { tmdbId: r.tmdbId, mediaType: r.mediaType })}>+ {r.title} 📥</button>{/each}
+      {#each wishResults as r}<button class="sec" on:click={() => add(`t${r.tmdbId}`, `${r.title}  (noch nicht da)`, { tmdbId: r.tmdbId, mediaType: r.mediaType })}>+ {r.title} (Wunsch)</button>{/each}
     </div>
-    <p class="muted">Titel, die noch nicht in der Bibliothek sind (📥), werden nach einer Admin-Freigabe automatisch angefragt.</p>
-    <b>Auswahl ({options.length}/10, mind. 2):</b> {#each options as o}<span class="badge">{o.label} <a href="#x" on:click|preventDefault={() => (options = options.filter((x) => x !== o))}>✕</a></span> {/each}
+    <p class="muted">Titel, die noch nicht in der Bibliothek sind (Wunsch), werden nach einer Admin-Freigabe automatisch angefragt.</p>
+    <b>Auswahl ({options.length}/10, mind. 2):</b> {#each options as o}<span class="badge">{o.label} <a href="#x" on:click|preventDefault={() => (options = options.filter((x) => x !== o))}>×</a></span> {/each}
     <p><button disabled={options.length < 2} on:click={create}>Abstimmung starten</button></p>
   </div>
 {/if}
@@ -52,7 +52,7 @@
     {#each p.options as o}
       {@const total = p.options.reduce((a: number, x: any) => a + x.votes, 0) || 1}
       <div class="flex" style="margin:.3rem 0">
-        <button class:sec={p.myVote !== o.id} disabled={p.status !== 'open'} on:click={() => vote(p, o.id)} style="min-width:14rem;text-align:left">{o.title}{o.inLibrary ? '' : ' 📥'}{p.winnerOptionId === o.id ? ' 🏆' : ''}</button>
+        <button class:sec={p.myVote !== o.id} disabled={p.status !== 'open'} on:click={() => vote(p, o.id)} style="min-width:14rem;text-align:left">{o.title}{o.inLibrary ? '' : ' (Wunsch)'}{p.winnerOptionId === o.id ? ' – Gewinner' : ''}</button>
         <div class="bar" style="flex:1;min-width:80px"><i style="width:{(o.votes / total) * 100}%"></i></div><span>{o.votes}</span>
       </div>
     {/each}

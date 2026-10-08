@@ -1,13 +1,15 @@
 <script lang="ts">
-  import { backdrop, fmtMin, type Item } from '$lib/api';
+  import { backdrop, fmtMin, logoUrl, type Item } from '$lib/api';
   import Icon from '$lib/Icon.svelte';
+  import { openModal } from '$lib/modal';
 
   /** Billboard at the top of the home page / detail page. */
   export let item: Item | null;
   export let playHref = '';
   export let playLabel = 'Abspielen';
   export let more = true;
-  let loaded = false;
+  let loaded = false, logoFailed = false;
+  $: item, (logoFailed = false);
 </script>
 
 <section class="hero" aria-label="Empfehlung">
@@ -15,7 +17,9 @@
     {#if item.backdrop}<img class="bg" class:loaded src={backdrop(item.id)} alt="" fetchpriority="high" on:load={() => (loaded = true)} />{/if}
     <div class="shade"></div>
     <div class="content">
-      <h1>{item.name}</h1>
+      {#if item.logo && !logoFailed}
+        <h1 class="logoh"><img class="tlogo" src={logoUrl(item.id)} alt={item.name} on:error={() => (logoFailed = true)} /></h1>
+      {:else}<h1>{item.name}</h1>{/if}
       <p class="meta">
         {#if item.communityRating}<span class="match">{Math.round(item.communityRating * 10)}% Match</span>{/if}
         {#if item.year}<span>{item.year}</span>{/if}
@@ -26,7 +30,7 @@
       {#if item.overview}<p class="ov">{item.overview}</p>{/if}
       <div class="btns">
         <a class="btn light" href={playHref || (item.type === 'Series' ? `/item/${item.id}` : `/watch/${item.id}`)}><Icon name="play" size={22} />{playLabel}</a>
-        {#if more}<a class="btn sec" href="/item/{item.id}"><Icon name="info" size={22} />Mehr Infos</a>{/if}
+        {#if more}<a class="btn sec" href="/item/{item.id}" on:click={(e) => openModal(e, `/item/${item.id}`)}><Icon name="info" size={22} />Mehr Infos</a>{/if}
       </div>
     </div>
   {:else}
@@ -45,6 +49,8 @@
       linear-gradient(to bottom, rgba(0,0,0,.55), transparent 22%); }
   .content { position: absolute; left: var(--pad-x); bottom: 22%; max-width: min(40rem, 88vw); z-index: 2; }
   h1 { font-size: clamp(2rem, 5.2vw, 4.4rem); font-weight: 800; margin: 0 0 .6rem; text-shadow: 0 2px 18px rgba(0,0,0,.6); letter-spacing: -.02em; }
+  .logoh { margin: 0 0 1rem; }
+  .tlogo { display: block; max-width: min(100%, 26rem); max-height: 9.5rem; object-fit: contain; object-position: left bottom; filter: drop-shadow(0 4px 18px rgba(0,0,0,.6)); }
   .meta { display: flex; flex-wrap: wrap; gap: .8rem; align-items: center; color: #d2d2d2; margin: 0 0 .8rem; font-weight: 500; }
   .match { color: var(--ok); font-weight: 700; }
   .age { border: 1px solid rgba(255,255,255,.5); padding: 0 .4rem; font-size: .85rem; }

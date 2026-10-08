@@ -2,12 +2,14 @@
   import { api, backdrop, img, fmtMin, type Item } from '$lib/api';
   import { listIds, toggleList } from '$lib/stores';
   import Icon from '$lib/Icon.svelte';
+  import { openModal } from '$lib/modal';
 
   export let item: Item;
   let fav = item.favorite;
   $: href = item.type === 'Episode' ? `/watch/${item.id}` : `/item/${item.id}`;
   $: detail = item.type === 'Episode' && item.seriesId ? `/item/${item.seriesId}` : `/item/${item.id}`;
   $: src = item.backdrop ? backdrop(item.id, 520) : item.image ? img(item.id, 520) : '';
+  $: posterOnly = !item.backdrop && item.image; // poster (2:3) in a 16:9 slot: show it contained on a blurred copy
   $: sub = item.type === 'Episode' ? `${item.seriesName ?? ''} · S${item.parentIndexNumber ?? '?'}:E${item.indexNumber ?? '?'}` : '';
   $: pct = item.positionTicks && item.runtimeTicks ? Math.min(100, (item.positionTicks / item.runtimeTicks) * 100) : 0;
   $: inList = $listIds.has(item.seriesId ?? item.id);
@@ -18,7 +20,8 @@
 
 <article class="card">
   <a class="thumb" {href} aria-label={item.name + (sub ? ', ' + sub : '')}>
-    {#if src}<img loading="lazy" decoding="async" {src} alt="" width="320" height="180" />{/if}
+    {#if posterOnly}<img class="blur" loading="lazy" {src} alt="" aria-hidden="true" />{/if}
+    {#if src}<img class:contain={posterOnly} loading="lazy" decoding="async" {src} alt="" width="320" height="180" />{/if}
     <span class="cap" class:big={!src}>{item.type === 'Episode' ? item.name : item.name}</span>
     {#if pct}<span class="progress"><i style="width:{pct}%"></i></span>{/if}
   </a>
@@ -27,7 +30,7 @@
       <a class="round play" href={href} aria-label="Abspielen"><Icon name="play" size={18} /></a>
       <button class="round" aria-label={inList ? 'Von Meine Liste entfernen' : 'Zu Meine Liste hinzufügen'} on:click={() => toggleList(item.seriesId ?? item.id, inList)}><Icon name={inList ? 'check' : 'plus'} size={18} /></button>
       <button class="round" class:on={fav} aria-label={fav ? 'Favorit entfernen' : 'Als Favorit markieren'} aria-pressed={fav} on:click={toggleFav}><Icon name="heart" size={17} fill={fav} /></button>
-      <a class="round more" href={detail} aria-label="Mehr Infos"><Icon name="chevron-down" size={18} /></a>
+      <a class="round more" href={detail} aria-label="Mehr Infos" on:click={(e) => openModal(e, detail)}><Icon name="chevron-down" size={18} /></a>
     </div>
     <div class="meta">
       {#if score}<span class="match">{score}% Match</span>{/if}
@@ -43,6 +46,8 @@
   .card { position: relative; width: 100%; transform-origin: center; transition: transform var(--t-med) var(--ease) 0s; }
   .thumb { display: block; position: relative; aspect-ratio: 16 / 9; border-radius: var(--radius); overflow: hidden; background: linear-gradient(135deg, #2b2b2b, #1a1a1a); }
   .thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .blur { position: absolute; inset: -10%; width: 120%; height: 120%; object-fit: cover; filter: blur(18px) brightness(.55); }
+  .thumb img.contain { position: relative; object-fit: contain; }
   .cap { position: absolute; left: .6rem; bottom: .5rem; right: .6rem; font-weight: 700; font-size: .85rem; text-shadow: 0 1px 6px #000, 0 0 2px #000; line-height: 1.2; }
   .cap.big { top: 0; display: grid; place-items: center; text-align: center; font-size: 1rem; padding: .5rem; }
   .thumb::after { content: ''; position: absolute; inset: 0; background: linear-gradient(transparent 55%, rgba(0,0,0,.65)); pointer-events: none; }
