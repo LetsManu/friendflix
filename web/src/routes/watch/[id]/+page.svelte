@@ -13,6 +13,9 @@
   let sleepAfterEpisode = false;
   let showNext = false, countdown = 0, cd: ReturnType<typeof setInterval>;
   $: id = $page.params.id!;
+  $: wantAudio = $page.url.searchParams.get('audio') ?? '';
+  $: wantSub = $page.url.searchParams.get('sub') ?? '';
+  $: langQ = [wantAudio && `audio=${encodeURIComponent(wantAudio)}`, wantSub && `sub=${encodeURIComponent(wantSub)}`].filter(Boolean).join('&');
   $: startAt = (() => { const t = Number($page.url.searchParams.get('t')); return Number.isFinite(t) && t > 0 && t < 86_400 ? Math.floor(t) : undefined; })();
 
   // A function call keeps `id` the only dependency. (An inline async block that also reads `item` made Svelte re-run it
@@ -24,8 +27,8 @@
       if (wanted !== id) return; // navigated on in the meantime
       item = it;
       if (it.type === 'Episode' && it.seriesId) {
-        const up = (await api('/api/library/nextup')).items.find((e: Item) => e.seriesId === it.seriesId && e.id !== wanted) ?? null;
-        if (wanted === id) nextEp = up;
+        const nx = (await api(`/api/items/${wanted}/next`)).item as Item | null; // the episode AFTER this one, also across seasons
+        if (wanted === id) nextEp = nx;
       }
     } catch { /* player shows its own error */ }
   }
@@ -38,7 +41,7 @@
     if (tvMode()) tick().then(() => document.querySelector<HTMLElement>('.next a')?.focus()); // TV: after the end OK starts the next episode
     if (sleepAfterEpisode || !$prefs.autoplayNext) { showNext = true; countdown = 0; return; } // wait for the viewer's click
     showNext = true; countdown = 8; clearInterval(cd);
-    cd = setInterval(() => { countdown -= 1; if (countdown <= 0) { stopCountdown(); goto(`/watch/${nextEp!.id}`); } }, 1000);
+    cd = setInterval(() => { countdown -= 1; if (countdown <= 0) { stopCountdown(); goto(`/watch/${nextEp!.id}${langQ ? '?' + langQ : ''}`); } }, 1000);
   }
   function onTime() { if (video && nextEp && !showNext && video.duration && video.duration - video.currentTime < 25) showNext = true; }
   const tvMode = () => document.documentElement.classList.contains('tv');
@@ -51,7 +54,7 @@
 <svelte:head><title>{item?.name ?? 'Wiedergabe'} – FriendFlix</title></svelte:head>
 <div class="wrap">
   {#key id}
-    <Player itemId={id} title={label(item)} {startAt} bind:video bind:sleepAfterEpisode hasNext={Boolean(nextEp)} on:next={() => nextEp && goto(`/watch/${nextEp.id}`)} on:timeupdate={onTime} on:ended={startCountdown}>
+    <Player itemId={id} title={label(item)} {startAt} {wantAudio} {wantSub} bind:video bind:sleepAfterEpisode hasNext={Boolean(nextEp)} on:next={() => nextEp && goto(`/watch/${nextEp.id}${langQ ? '?' + langQ : ''}`)} on:timeupdate={onTime} on:ended={startCountdown}>
       <div slot="top" class="top">
         <button class="icon-btn" aria-label="Zurück" on:click={back}><Icon name="arrow-left" size={30} /></button>
         {#if item}<div class="ttl"><b>{item.seriesName ?? item.name}</b>{#if item.seriesName}<span>S{item.parentIndexNumber}:E{item.indexNumber} „{item.name}“</span>{/if}</div>{/if}
@@ -59,7 +62,7 @@
       {#if showNext && nextEp}
         <div class="next" data-nav role="dialog" aria-label="Nächste Folge">
           <div class="nt"><span class="muted">Nächste Folge</span><b>S{nextEp.parentIndexNumber}:E{nextEp.indexNumber} · {nextEp.name}</b>{#if countdown}<span class="muted">Start in {countdown} s</span>{/if}</div>
-          <div class="flex"><a class="btn light" href="/watch/{nextEp.id}"><Icon name="play" size={20} />Jetzt ansehen</a>{#if countdown}<button class="sec" on:click={() => { stopCountdown(); showNext = false; }}>Abbrechen</button>{/if}</div>
+          <div class="flex"><a class="btn light" href="/watch/{nextEp.id}{langQ ? '?' + langQ : ''}"><Icon name="play" size={20} />Jetzt ansehen</a>{#if countdown}<button class="sec" on:click={() => { stopCountdown(); showNext = false; }}>Abbrechen</button>{/if}</div>
         </div>
       {/if}
     </Player>

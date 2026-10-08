@@ -29,8 +29,8 @@ export async function toggleList(id: string, on: boolean) {
   }
 }
 
-export interface Prefs { autoplayNext: boolean; autoSkipIntro: boolean; shareHistory: boolean; shareRatings: boolean; hoverTrailers: boolean; audioLang: string; subtitleLang: string; quality: number }
-export const DEFAULT_PREFS: Prefs = { autoplayNext: true, autoSkipIntro: false, shareHistory: false, shareRatings: true, hoverTrailers: true, audioLang: '', subtitleLang: '', quality: 0 };
+export interface Prefs { autoplayNext: boolean; autoSkipIntro: boolean; shareHistory: boolean; shareRatings: boolean; hoverTrailers: boolean; hoverClip: boolean; audioLang: string; subtitleLang: string; quality: number }
+export const DEFAULT_PREFS: Prefs = { autoplayNext: true, autoSkipIntro: false, shareHistory: false, shareRatings: true, hoverTrailers: true, hoverClip: false, audioLang: '', subtitleLang: '', quality: 0 };
 /** Viewing preferences (server-side, follow the user across devices). */
 export const prefs = writable<Prefs>({ ...DEFAULT_PREFS });
 export async function loadPrefs() {

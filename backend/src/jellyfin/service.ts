@@ -122,10 +122,33 @@ export class JellyfinService {
     return r.Items.map(toItemDto);
   }
 
+  /** The episode that follows `episodeId` (same series, across seasons), or null for the last one. */
+  async nextEpisode(user: UserRow, seriesId: string, episodeId: string): Promise<ItemDto | null> {
+    const p = new URLSearchParams({ userId: user.jellyfin_user_id, startItemId: episodeId, limit: '2', fields: FIELDS });
+    const r = await this.json<{ Items: any[] }>(user, `/Shows/${seriesId}/Episodes?${p}`);
+    const list = r.Items.map(toItemDto);
+    const i = list.findIndex((e) => e.id === episodeId);
+    return list[i + 1] ?? null;
+  }
+
   async item(user: UserRow, id: string): Promise<ItemDto> {
     const uid = user.jellyfin_user_id;
     const i = await this.compat<any>(user, 'item', [`/Items/${id}?userId=${uid}`, `/Users/${uid}/Items/${id}`]);
     return toItemDto(i);
+  }
+
+  /** Audio languages and text subtitles of the first media source (for the language picker before playing). */
+  async tracks(user: UserRow, id: string): Promise<{ audio: Array<{ language: string; title: string; isDefault: boolean }>; subtitles: Array<{ language: string; title: string }>; runtimeTicks?: number; type: string }> {
+    const uid = user.jellyfin_user_id;
+    const i = await this.compat<any>(user, 'item', [`/Items/${id}?userId=${uid}`, `/Users/${uid}/Items/${id}`]);
+    const streams: Array<Record<string, any>> = (i.MediaSources ?? [])[0]?.MediaStreams ?? i.MediaStreams ?? [];
+    const seen = new Set<string>();
+    const audio = streams.filter((s) => s.Type === 'Audio').map((s) => ({ language: String(s.Language ?? 'und'), title: String(s.DisplayTitle ?? s.Language ?? 'Spur'), isDefault: Boolean(s.IsDefault) }))
+      .filter((a) => !seen.has(a.language) && seen.add(a.language));
+    const seenS = new Set<string>();
+    const subtitles = streams.filter((s) => s.Type === 'Subtitle').map((s) => ({ language: String(s.Language ?? 'und'), title: String(s.DisplayTitle ?? s.Language ?? 'Untertitel') }))
+      .filter((a) => !seenS.has(a.language) && seenS.add(a.language));
+    return { audio, subtitles, runtimeTicks: i.RunTimeTicks, type: String(i.Type ?? '') };
   }
 
   async genres(user: UserRow, types = 'Movie,Series'): Promise<string[]> {

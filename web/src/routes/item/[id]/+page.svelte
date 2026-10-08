@@ -7,6 +7,8 @@
   import { dominantColor } from '$lib/tint';
   import Icon from '$lib/Icon.svelte';
   import LazyRow from '$lib/LazyRow.svelte';
+  import LangPick from '$lib/LangPick.svelte';
+  import { goto } from '$app/navigation';
   import { listIds, toggleList } from '$lib/stores';
 
   let thumb = 0, extras: Item[] = [], tint = '', friends: Array<{ id: string; name: string }> = [], recOpen = false, recTo = new Set<string>(), recNote = '', recMsg = '';
@@ -33,13 +35,18 @@
   $: if (item?.type === 'Series' && season) { episodes = null; api(`/api/items/${item.id}/episodes?seasonId=${season}`).then((r) => (episodes = r.items)).catch(() => (episodes = [])); }
 
   $: inList = item ? $listIds.has(item.id) : false;
-  $: playHref = item ? (item.type === 'Series' ? (next ? `/watch/${next.id}` : episodes?.[0] ? `/watch/${episodes[0].id}` : '') : `/watch/${item.id}`) : '';
+  let lgA = '', lgS = '';
+  $: qs = [lgA && `audio=${encodeURIComponent(lgA)}`, lgS && `sub=${encodeURIComponent(lgS)}`].filter(Boolean).join('&');
+  $: playBase = item ? (item.type === 'Series' ? (next ? `/watch/${next.id}` : episodes?.[0] ? `/watch/${episodes[0].id}` : '') : `/watch/${item.id}`) : '';
+  $: playHref = playBase && qs ? `${playBase}?${qs}` : playBase;
+  $: playTarget = playBase.split('/').pop() ?? '';
+  async function startParty() { try { goto(`/party/${(await api('/api/party', { method: 'POST', body: { itemId: item!.id } })).id}`); } catch { castMsg = 'Party konnte nicht erstellt werden.'; } }
   $: playLabel = item ? (item.type === 'Series' ? (next ? `Weiter: S${next.parentIndexNumber}:E${next.indexNumber}` : 'Abspielen') : item.positionTicks ? 'Fortsetzen' : 'Abspielen') : 'Abspielen';
 
   let castMsg = '', castT: ReturnType<typeof setTimeout>;
   onMount(() => { void refreshTvOnline(); return () => clearTimeout(castT); });
   async function castHere() {
-    const id = playHref.split('/').pop();
+    const id = playTarget;
     if (!id) return;
     castMsg = (await castToTv(id)) ? 'Wird auf dem Fernseher gestartet …' : 'Der Fernseher ist nicht erreichbar.';
     clearTimeout(castT); castT = setTimeout(() => (castMsg = ''), 3500);
@@ -80,9 +87,10 @@
         <button class="icon-btn ring" class:on={thumb === -1} aria-pressed={thumb === -1} aria-label="Gefällt mir nicht" title="Nicht für mich" on:click={() => setThumb(-1)}><Icon name="thumb-down" size={21} /></button>
         <button class="icon-btn ring" aria-label="Einem Freund empfehlen" title="Empfehlen" on:click={openRec}><Icon name="send" size={20} /></button>
         {#if $tvOnline && playHref}<button class="sec" on:click={castHere}><Icon name="tv" size={20} />Auf Fernseher</button>{/if}
-        {#if item.type !== 'Series'}<a class="btn sec" href="/party?item={item.id}"><Icon name="users" size={20} />Watch-Party</a>{/if}
+        {#if item.type !== 'Series'}<button class="sec" on:click={startParty}><Icon name="users" size={20} />Gemeinsam schauen</button>{/if}
         {#if item.type === 'Series'}<button class="sec" aria-pressed={followed} on:click={toggleFollow}><Icon name="bell" size={20} />{followed ? 'Du folgst dieser Serie' : 'Neue Folgen melden'}</button>{/if}
       </div>
+      {#if playTarget}<LangPick targetId={playTarget} storeKey={item.type === 'Series' ? item.id : item.id} bind:audio={lgA} bind:sub={lgS} />{/if}
       {#if castMsg}<p class="muted" role="status">{castMsg}</p>{/if}
       {#if recOpen}
         <div class="panel rec" role="dialog" aria-label="Empfehlen">
@@ -103,7 +111,7 @@
         <ol class="eps">
           {#if episodes === null}{#each Array(5) as _}<li><div class="skeleton" style="height:90px"></div></li>{/each}
           {:else}{#each episodes as e (e.id)}
-            <li><a class="ep" href="/watch/{e.id}">
+            <li><a class="ep" href="/watch/{e.id}{qs ? '?' + qs : ''}">
               <span class="n">{e.indexNumber ?? ''}</span>
               <span class="th">{#if e.image}<img loading="lazy" src={img(e.id, 320)} alt="" />{/if}{#if e.positionTicks && e.runtimeTicks}<span class="bar"><i style="width:{Math.min(100, (e.positionTicks / e.runtimeTicks) * 100)}%"></i></span>{/if}<span class="pl"><Icon name="play" size={22} /></span></span>
               <span class="tx"><span class="t"><b>{e.name}</b><span class="muted">{fmtMin(e.runtimeTicks)}</span></span><span class="muted ov">{e.overview ?? ''}</span></span>

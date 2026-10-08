@@ -4,8 +4,10 @@ import { ENC_KEY, makeEnv, type TestEnv } from './helpers.js';
 
 const [A, B, C, D, E] = ['a', 'b', 'c', 'd', 'e'].map((c) => c.repeat(32));
 const LEA_JF = '1'.repeat(32);
-const movie = (id: string, name: string, rating: number, mins: number, genres = ['Drama']) => ({ Id: id, Name: name, Type: 'Movie', CommunityRating: rating, RunTimeTicks: mins * 600_000_000, Genres: genres, LocalTrailerCount: id === A ? 1 : 0, UserData: {} });
+const movie = (id: string, name: string, rating: number, mins: number, genres = ['Drama']) => ({ Id: id, Name: name, Type: 'Movie', CommunityRating: rating, RunTimeTicks: mins * 600_000_000, Genres: genres, LocalTrailerCount: id === A ? 1 : 0, UserData: {},
+  MediaSources: [{ MediaStreams: [{ Type: 'Audio', Language: 'ger', DisplayTitle: 'Deutsch (AC3)', IsDefault: true }, { Type: 'Audio', Language: 'eng', DisplayTitle: 'English (AAC)' }, { Type: 'Audio', Language: 'eng', DisplayTitle: 'English commentary' }, { Type: 'Subtitle', Language: 'ger', DisplayTitle: 'Deutsch' }] }] });
 const CATALOG: Record<string, any> = { [A!]: movie(A!, 'Alpha', 7.1, 95), [B!]: movie(B!, 'Beta', 8.4, 150, ['Action']), [C!]: movie(C!, 'Gamma', 6.2, 100), [D!]: movie(D!, 'Delta', 9.0, 90), [E!]: movie(E!, 'Epsilon', 7.7, 100) };
+const ep = (n: number) => ({ Id: String(n).repeat(32), Name: `E${n}`, Type: 'Episode', SeriesId: 'e'.repeat(32), IndexNumber: n, UserData: {} });
 const UNPLAYED: Record<string, string[]> = { admin: [A!, B!, C!], lea: [B!, C!, D!] };
 
 let env: TestEnv;
@@ -23,6 +25,7 @@ beforeAll(async () => {
       if (q.get('ids')) return { json: { Items: q.get('ids')!.split(',').map((i) => CATALOG[i]).filter(Boolean), TotalRecordCount: 9 } };
       return { json: { Items: [] } };
     },
+    'GET /Shows/[^/]+/Episodes': () => ({ json: { Items: [ep(6), ep(7)] } }),
     'GET /Studios': () => ({ json: { Items: [{ Name: 'Studio Eins' }, { Name: 'Studio Zwei' }] } }),
     'GET /Items/[^/]+/Similar': () => ({ json: { Items: [CATALOG[D!], CATALOG[E!], CATALOG[B!]] } }),
     'GET /Items/[^/]+/LocalTrailers': (u) => ({ json: u.pathname.includes(A!) ? [{ Id: '5'.repeat(32) }] : [] }),
@@ -146,6 +149,29 @@ describe('scenes, X-Ray, extras, trailers, collections', () => {
     expect((await call('GET', `/api/items/${A}`)).json().item.trailers).toBe(1);
     await call('PUT', '/api/prefs', { shareHistory: true, hoverTrailers: false });
     expect((await call('GET', `/api/items/${A}/trailer`)).json()).toEqual({ error: 'disabled' });
+  });
+});
+
+describe('language picker and clip preview', () => {
+  it('next episode: the one after the given episode, not the in-progress one itself', async () => {
+    CATALOG[ep(6).Id] = ep(6);
+    const r = (await call('GET', `/api/items/${ep(6).Id}/next`)).json();
+    expect(r.item?.name).toBe('E7');
+    expect((await call('GET', `/api/items/${B}/next`)).json()).toEqual({ item: null }); // a movie has none
+  });
+  it('tracks: one entry per audio language and subtitle language', async () => {
+    const r = (await call('GET', `/api/items/${B}/tracks`)).json();
+    expect(r.audio).toEqual([{ language: 'ger', title: 'Deutsch (AC3)', isDefault: true }, { language: 'eng', title: 'English (AAC)', isDefault: false }]);
+    expect(r.subtitles).toEqual([{ language: 'ger', title: 'Deutsch' }]);
+  });
+  it('without a local trailer: 404 unless the clip preview is enabled, then a low bitrate HLS clip one third into the film', async () => {
+    await call('PUT', '/api/prefs', { hoverTrailers: true, hoverClip: false });
+    expect((await call('GET', `/api/items/${B}/trailer`)).statusCode).toBe(404);
+    await call('PUT', '/api/prefs', { hoverTrailers: true, hoverClip: true });
+    const t = (await call('GET', `/api/items/${B}/trailer`)).json();
+    expect(t.url).toContain(`/media/Videos/${B}/master.m3u8`);
+    expect(t.url).toContain('StartTimeTicks=' + Math.floor((150 * 600_000_000) / 3));
+    expect(t.url).toContain('MaxStreamingBitrate=1500000');
   });
 });
 

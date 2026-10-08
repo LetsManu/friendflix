@@ -18,7 +18,7 @@ const listQuery = z.object({
   limit: z.coerce.number().int().min(1).max(200).optional(),
   start: z.coerce.number().int().min(0).optional(),
   filter: z.enum(['favorites', 'unplayed', 'played']).optional(),
-  genre: z.string().max(60).optional(),
+  genre: z.string().max(300).optional(), // several genres separated by | (Jellyfin: any of)
   studio: z.string().max(80).optional(),
 });
 
@@ -62,7 +62,7 @@ export function mediaRoutes(app: FastifyInstance, ctx: Ctx) {
   app.get('/api/library/random', pre, wrap(async (req, reply) => {
     const q = z.object({
       type: z.enum(['Movie', 'Series']).default('Movie'),
-      genre: z.string().max(60).optional(),
+      genre: z.string().max(300).optional(), // several genres separated by | (Jellyfin: any of)
       unplayed: z.enum(['true', 'false']).default('true'),
     }).parse(req.query);
     const r = await ctx.jf.items(req.user!, { types: q.type, genre: q.genre, sort: 'Random', limit: 1, filter: q.unplayed === 'true' ? 'unplayed' : undefined });

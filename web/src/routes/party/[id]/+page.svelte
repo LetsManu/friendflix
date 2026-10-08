@@ -4,6 +4,7 @@
   import { page } from '$app/stores';
   import { goto } from '$app/navigation';
   import Icon from '$lib/Icon.svelte';
+  import { api } from '$lib/api';
   import Player from '$lib/Player.svelte';
 
   const EMOJIS = ['😂', '😮', '😢', '❤️', '👏', '🔥', '👍', '🍿'];
@@ -78,6 +79,17 @@
   const setMode = (v: 'host' | 'everyone') => send({ t: 'mode', value: v });
   function togglePanel() { panel = !panel; picker = settings = false; if (panel) { unread = 0; tick().then(() => chatEl && (chatEl.scrollTop = chatEl.scrollHeight)); } }
   async function copyLink() { try { await navigator.clipboard.writeText(location.href); copied = true; setTimeout(() => (copied = false), 1800); } catch { /* ignore */ } }
+  // ---- one tap invitation: pick friends (they get a notification) or share the link ----
+  let invite = false, friends: Array<{ id: string; name: string }> = [], picked = new Set<string>(), inviteMsg = '', autoShown = false;
+  async function openInvite() { invite = true; inviteMsg = ''; if (!friends.length) friends = (await api('/api/friends').catch(() => ({ friends: [] }))).friends; }
+  const pick = (id: string) => { const s = new Set(picked); if (s.has(id)) s.delete(id); else s.add(id); picked = s; };
+  async function sendInvite() {
+    try { const r = await api(`/api/party/${$page.params.id}/invite`, { method: 'POST', body: { userIds: [...picked] } }); inviteMsg = r.sent ? `${r.sent} Einladung(en) gesendet.` : 'Alle sind schon eingeladen.'; picked = new Set(); }
+    catch { inviteMsg = 'Einladen fehlgeschlagen.'; }
+  }
+  async function shareLink() { if (navigator.share) { try { await navigator.share({ title: `Watch-Party: ${title}`, url: location.href }); return; } catch { /* cancelled */ } } copyLink(); }
+  // alone in a fresh room: show the invitation right away (that is what you want to do next)
+  $: if (ready && isHost && members.length === 1 && !autoShown) { autoShown = true; openInvite(); }
   const back = () => (history.length > 1 ? history.back() : goto('/party'));
   const initial = (s: string) => s.slice(0, 1).toUpperCase();
 
@@ -107,8 +119,17 @@
             </li>
           {/each}
         </ul>
+        <button class="icon-btn" aria-label="Freunde einladen" title="Freunde einladen" on:click={openInvite}><Icon name="users" size={24} /></button>
         <button class="icon-btn" aria-label="Einladungslink kopieren" title="Einladungslink kopieren" on:click={copyLink}><Icon name={copied ? 'check' : 'link'} size={24} /></button>
       </div>
+      {#if invite}
+        <div class="invite ui" role="dialog" aria-label="Freunde einladen" on:click|stopPropagation on:keydown|stopPropagation>
+          <header><b>Freunde zur Party einladen</b><button class="icon-btn" aria-label="Schließen" on:click={() => (invite = false)}><Icon name="x" size={20} /></button></header>
+          <div class="flex">{#each friends as f}<label class="chk"><input type="checkbox" checked={picked.has(f.id)} on:change={() => pick(f.id)} />{f.name}</label>{:else}<span class="muted">Noch keine anderen Nutzer.</span>{/each}</div>
+          <div class="flex"><button disabled={!picked.size} on:click={sendInvite}>Einladen</button><button class="sec" on:click={shareLink}><Icon name={copied ? 'check' : 'share'} size={18} />Link teilen</button></div>
+          {#if inviteMsg}<span class="muted" role="status">{inviteMsg}</span>{/if}
+        </div>
+      {/if}
 
       {#if state.hold && waitingFor.length}<div class="hold" role="status"><div class="spin"></div>Warte auf {waitingFor.join(', ')} …</div>{/if}
       {#if needClick}<div class="hold"><button on:click|stopPropagation={() => { needClick = false; apply(); }}><Icon name="play" size={20} />Mitschauen</button></div>{/if}
@@ -195,4 +216,5 @@
   .sp2 { width: 16px; flex: none; }
   .dot { position: absolute; top: 6px; right: 4px; background: var(--acc); font-size: .65rem; min-width: 1.1rem; height: 1.1rem; border-radius: 99px; display: grid; place-items: center; font-weight: 700; }
   @media (max-width: 720px) { .avatars { display: none; } .bubbles { bottom: 8rem; } }
+.invite { position: absolute; top: 4.6rem; right: 1rem; z-index: 12; background: rgba(20,20,20,.97); border: 1px solid #3a3a3a; border-radius: 10px; padding: 1rem 1.2rem; width: min(380px, 92vw); display: grid; gap: .8rem; } .invite header { display: flex; justify-content: space-between; align-items: center; } .chk { display: inline-flex; gap: .45rem; align-items: center; color: var(--fg); min-height: 40px; }
 </style>

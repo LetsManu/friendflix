@@ -31,6 +31,8 @@
       hero = pool.find((i) => i.backdrop) ?? pool[0] ?? null;
     } catch { hero = null; }
   });
+  // Jellyfin's next-up also lists the episode you are in the middle of: that one is already under "Weiterschauen"
+  $: nextOnly = next && resume ? next.filter((e) => !resume!.some((r) => r.id === e.id)) : next;
 </script>
 
 <svelte:head><title>FriendFlix</title></svelte:head>
@@ -38,7 +40,7 @@
 <div class="rows">
   {#if error}<p class="err" style="margin:1rem var(--pad-x)">{error}</p>{/if}
   <Row title="Weiterschauen" items={resume} />
-  <Row title="Nächste Folge" items={next} />
+  <Row title="Nächste Folge" items={nextOnly} />
   <Row title="Von Freunden empfohlen" items={recs} />
   <Row title="Freunde haben bewertet" items={friendsRated} />
   {#if because}<Row title="Weil du „{because.name}“ gesehen hast" items={becauseItems} />{/if}
