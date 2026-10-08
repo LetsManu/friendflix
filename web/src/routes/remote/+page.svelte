@@ -29,7 +29,7 @@
   }
 
   const confirmed = (t: string) => { sent = t; clearTimeout(sentT); sentT = setTimeout(() => (sent = ''), 2500); };
-  async function ctl(action: 'play' | 'pause' | 'toggle' | 'seekBy' | 'stop' | 'home', value?: number) {
+  async function ctl(action: 'play' | 'pause' | 'toggle' | 'seekBy' | 'stop' | 'home' | 'next' | 'audio' | 'sub', value?: number) {
     if (!(await sendToTv({ t: 'ctl', action, value }))) confirmed('Keine Verbindung zum Fernseher');
   }
   async function cast(id: string, name: string) {
@@ -85,8 +85,17 @@
       </div>
       <div class="flex keys2">
         <button class="sec" on:click={() => ctl('stop')} disabled={!playing}><Icon name="stop" size={18} />Beenden</button>
+        <button class="sec" on:click={() => ctl('next')} disabled={!playing}><Icon name="skip-next" size={20} />Nächste Folge</button>
         <button class="sec" on:click={() => ctl('home')}><Icon name="home" size={20} />Startseite</button>
       </div>
+      {#if st?.audio && st.audio.length > 1}
+        <label class="tl" for="aud">Ton</label>
+        <select id="aud" value={st.audioSel} on:change={(e) => ctl('audio', Number(e.currentTarget.value))}>{#each st.audio as a}<option value={a.i}>{a.t}</option>{/each}</select>
+      {/if}
+      {#if st?.subs && st.subs.length}
+        <label class="tl" for="sbt">Untertitel</label>
+        <select id="sbt" value={st.subSel ?? -1} on:change={(e) => ctl('sub', Number(e.currentTarget.value))}><option value={-1}>Aus</option>{#each st.subs as a}<option value={a.i}>{a.t}</option>{/each}</select>
+      {/if}
     </section>
 
     {#if resume.length}
@@ -148,6 +157,7 @@
   .keys button { min-height: 64px; font-size: 1.05rem; padding: 0; min-width: 0; }
   .keys .main { min-height: 78px; border-radius: 14px; }
   .keys2 { margin-top: .8rem; }
+  .tl { display: block; margin: .9rem 0 .2rem; } select { width: 100%; }
   .pad { padding: 1.1rem; }
   .list { list-style: none; padding: 0; margin: 0 0 1.2rem; display: grid; gap: .5rem; }
   .list li { display: grid; grid-template-columns: 92px 1fr auto; gap: .8rem; align-items: center; background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: .5rem .7rem .5rem .5rem; }
