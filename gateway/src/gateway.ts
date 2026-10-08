@@ -29,6 +29,7 @@ export const ALLOWED_PATHS: RegExp[] = [
   new RegExp(`^/Items/${ID}/Images/(Primary|Backdrop|Logo|Thumb|Banner)(/\\d{1,3})?$`),
 ];
 
+const IMAGE_PATH = /^\/Items\/[0-9a-fA-F]{32}\/Images\//;
 const STRIP_QUERY = new Set(['api_key', 'apikey', 'x-emby-token', 'x-mediabrowser-token', 'token']);
 const CLAMP_QUERY = ['maxstreamingbitrate', 'videobitrate'];
 const PASS_RESPONSE_HEADERS = ['content-type', 'content-length', 'content-range', 'accept-ranges', 'etag', 'last-modified', 'cache-control', 'content-disposition'];
@@ -148,7 +149,14 @@ export function createGateway(opts: GatewayOptions): { server: Server; metrics: 
       if (v) out[h] = v;
     }
     out['x-content-type-options'] = 'nosniff';
-    out['cache-control'] ??= 'private, no-store';
+    // Images are static per `tag`: let the browser cache them (private: never in shared caches such as NPM).
+    // Everything else (playlists, segments, streams) stays uncacheable unless Jellyfin says otherwise.
+    if (IMAGE_PATH.test(path) && up.status < 400) {
+      out['cache-control'] = 'private, max-age=86400, stale-while-revalidate=604800';
+      out['vary'] = 'Cookie';
+    } else {
+      out['cache-control'] = (out['cache-control'] ?? 'no-store').replace(/\bpublic\b/i, 'private');
+    }
     res.writeHead(up.status, out);
     if (!up.body || req.method === 'HEAD') return void res.end();
 

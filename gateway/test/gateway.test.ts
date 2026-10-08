@@ -13,6 +13,8 @@ const listen = (s: Server) => new Promise<number>((r) => s.listen(0, '127.0.0.1'
 beforeAll(async () => {
   jf = createServer((req, res) => {
     seen.push({ url: req.url!, auth: req.headers.authorization, range: req.headers.range });
+    if (req.url!.includes('/Images/')) return void res.writeHead(200, { 'content-type': 'image/jpeg', 'cache-control': 'public, max-age=60', etag: '"abc"' }).end('img');
+    if (req.url!.includes('/stream')) { /* falls through to range handling below */ }
     if (req.url!.includes('redirect')) return void res.writeHead(302, { location: 'http://evil.example/' }).end();
     const payload = Buffer.alloc(1_000_000, 1);
     if (req.headers.range) {
@@ -87,6 +89,15 @@ describe('gateway', () => {
   });
   it('never follows upstream redirects', async () => {
     expect((await get(`/media/Videos/${ID}/master.m3u8?redirect=1`)).status).toBe(502);
+  });
+  it('makes images browser-cacheable but private; media stays uncacheable', async () => {
+    const img = await get(`/media/Items/${ID}/Images/Backdrop?maxWidth=480&tag=t1`);
+    expect(img.status).toBe(200);
+    expect(img.headers.get('cache-control')).toBe('private, max-age=86400, stale-while-revalidate=604800');
+    expect(img.headers.get('etag')).toBe('"abc"');
+    expect(img.headers.get('vary')).toBe('Cookie');
+    const pl = await get(`/media/Videos/${ID}/master.m3u8`);
+    expect(pl.headers.get('cache-control')).toBe('no-store');
   });
   it('exposes metrics', async () => {
     const t = await (await fetch(`http://127.0.0.1:${gwPort}/metrics`)).text();
