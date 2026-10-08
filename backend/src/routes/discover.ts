@@ -151,12 +151,19 @@ export function discoverRoutes(app: FastifyInstance, ctx: Ctx) {
     let t = await ctx.jf.trailer(req.user!, id);
     let start = '';
     if (!t) {
-      // no local trailer: optionally a short clip from the film itself (Netflix-style), one third in
+      // no local trailer: optionally a short clip from the film itself (Netflix-style), one third in (series: first episode)
       if (!(await loadPrefs(ctx, req.user!.id)).hoverClip) return reply.code(404).send({ error: 'no_trailer' });
       const tr = await ctx.jf.tracks(req.user!, id);
-      if (tr.type !== 'Movie' || !tr.runtimeTicks) return reply.code(404).send({ error: 'no_trailer' });
-      t = id;
-      start = String(Math.floor(tr.runtimeTicks / 3));
+      if (tr.type === 'Series') {
+        // series: clip from the first episode, a quarter in (skips the intro/recap)
+        const ep = await ctx.jf.firstEpisode(req.user!, id);
+        if (!ep?.runtimeTicks) return reply.code(404).send({ error: 'no_trailer' });
+        t = ep.id;
+        start = String(Math.floor(ep.runtimeTicks / 4));
+      } else if (tr.type === 'Movie' && tr.runtimeTicks) {
+        t = id;
+        start = String(Math.floor(tr.runtimeTicks / 3));
+      } else return reply.code(404).send({ error: 'no_trailer' });
     }
     // low-bitrate HLS: always playable in browsers, capped by the gateway; no playback reporting, not counted as a stream
     const p = new URLSearchParams({ MediaSourceId: t, DeviceId: ctx.jf.deviceId(req.user!), VideoCodec: 'h264', AudioCodec: 'aac', SegmentContainer: 'ts', MinSegments: '1', BreakOnNonKeyFrames: 'true', TranscodingMaxAudioChannels: '2', MaxStreamingBitrate: '1500000' });

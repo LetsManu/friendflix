@@ -249,6 +249,16 @@ export class JellyfinService {
     });
   }
 
+  /** First regular episode of a series (used for the hover preview clip). */
+  async firstEpisode(user: UserRow, seriesId: string): Promise<{ id: string; runtimeTicks?: number } | null> {
+    const p = new URLSearchParams({ userId: user.jellyfin_user_id, limit: '1', fields: 'RunTimeTicks' });
+    const res = await this.call(user, `/Shows/${seriesId}/Episodes?${p}`);
+    if (!res.ok) return null;
+    const r = (await res.json().catch(() => ({ Items: [] }))) as { Items?: Array<{ Id: string; RunTimeTicks?: number }> };
+    const e = r.Items?.[0];
+    return e?.Id ? { id: e.Id, runtimeTicks: e.RunTimeTicks } : null;
+  }
+
   async seasons(user: UserRow, seriesId: string): Promise<ItemDto[]> {
     const r = await this.json<{ Items: any[] }>(user, `/Shows/${seriesId}/Seasons?userId=${user.jellyfin_user_id}&fields=${FIELDS}`);
     return r.Items.map(toItemDto);
