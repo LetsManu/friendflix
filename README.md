@@ -37,6 +37,7 @@ docker compose up -d --build                 # Jellyfin/Seerr laufen schon.   Ge
 docker compose --profile backup up -d backup # optional: tägliche DB-Backups
 docker compose ps                            # alle "healthy"
 ```
+**Fertige Images statt Build auf dem Server:** GitHub Actions (`publish.yml`) veröffentlicht bei jedem Push auf `main` nach `ghcr.io/letsmanu/friendflix-{backend,gateway,web}` (Tags `latest`, Kurz-SHA, `vX.Y.Z`). Auf dem Server: `docker login ghcr.io -u <user>` (PAT mit `read:packages`, oder Paket auf *Public* stellen), dann `docker compose -f compose.prod.yaml pull && docker compose -f compose.prod.yaml up -d`. Version festnageln: `FF_TAG=<sha>` in `.env`.
 Läuft Jellyfin/Seerr bereits als eigener Stack: `docker network connect friendflix_media <container>`, vom NPM-/Host-Netz trennen, Ports aus deren Compose entfernen, `JELLYFIN_URL`/`SEERR_URL` anpassen.
 
 Dann:
