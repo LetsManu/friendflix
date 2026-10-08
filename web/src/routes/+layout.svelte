@@ -16,7 +16,7 @@
 
   $: path = $page.url.pathname;
   $: publicPage = path.startsWith('/invite/');
-  $: watchPage = path.startsWith('/watch/');
+  $: watchPage = path.startsWith('/watch/') || /^\/party\/[^/]+/.test(path); // immersive player pages: no navigation
   $: heroPage = path === '/' || path.startsWith('/item/');
   $: unread = notes.filter((n) => !n.read).length;
   $: if (path) { menu = false; bell = false; more = false; }

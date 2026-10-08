@@ -34,6 +34,23 @@
   {:else if name === 'menu'}<path d="M4 7h16M4 12h16M4 17h16" />
   {:else if name === 'vote'}<path d="M4 8h16v12H4zM8 8V4h8v4M9 13l2 2 4-4" />
   {:else if name === 'gift'}<path d="M4 9h16v4H4zM6 13v7h12v-7M12 9v11M12 9S9 9 9 6.500 12 5 12 9zM12 9s3 0 3-2.500S12 5 12 9z" />
+  {:else if name === 'pause'}<path d="M8 4.500h-1.500a1 1 0 00-1 1v13a1 1 0 001 1H8a1 1 0 001-1v-13a1 1 0 00-1-1zM17.500 4.500H16a1 1 0 00-1 1v13a1 1 0 001 1h1.500a1 1 0 001-1v-13a1 1 0 00-1-1z" fill="currentColor" stroke="none" />
+  {:else if name === 'rewind10'}<path d="M3.500 12a8.500 8.500 0 102.600-6.100M3.500 4v4.500H8" /><path d="M9.500 15.500v-5l-1.300 1M13 10.500a1.400 2.500 0 011.400 2.500 1.400 2.500 0 01-1.400 2.500 1.400 2.500 0 01-1.400-2.500 1.400 2.500 0 011.400-2.500z" stroke-width="1.600" />
+  {:else if name === 'forward10'}<path d="M20.500 12a8.500 8.500 0 11-2.600-6.100M20.500 4v4.500H16" /><path d="M9.500 15.500v-5l-1.300 1M13 10.500a1.400 2.500 0 011.400 2.500 1.400 2.500 0 01-1.400 2.500 1.400 2.500 0 01-1.400-2.500 1.400 2.500 0 011.400-2.500z" stroke-width="1.600" />
+  {:else if name === 'volume'}<path d="M4 9.500v5h3.500L12 18.500v-13L7.500 9.500zM15.500 9a4 4 0 010 6M18 6.500a8 8 0 010 11" />
+  {:else if name === 'volume-low'}<path d="M4 9.500v5h3.500L12 18.500v-13L7.500 9.500zM15.500 9a4 4 0 010 6" />
+  {:else if name === 'volume-off'}<path d="M4 9.500v5h3.500L12 18.500v-13L7.500 9.500zM16 9.500l5 5M21 9.500l-5 5" />
+  {:else if name === 'subtitles'}<path d="M3 5h18v14H3zM7 11h3M13 11h4M7 15h5M15 15h2" />
+  {:else if name === 'fullscreen'}<path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5" />
+  {:else if name === 'fullscreen-exit'}<path d="M9 4v5H4M15 4v5h5M9 20v-5H4M15 20v-5h5" />
+  {:else if name === 'gauge'}<path d="M4 17a8 8 0 1116 0M12 13l4-4" /><circle cx="12" cy="13" r="1" />
+  {:else if name === 'message'}<path d="M4 5h16v11H9l-5 4z" />
+  {:else if name === 'smile'}<circle cx="12" cy="12" r="9" /><path d="M8 14c1 1.500 2.300 2 4 2s3-.5 4-2M9 9.500h.01M15 9.500h.01" />
+  {:else if name === 'link'}<path d="M10 14a4 4 0 005.600 0l3-3a4 4 0 00-5.600-5.600l-1 1M14 10a4 4 0 00-5.600 0l-3 3a4 4 0 005.600 5.600l1-1" />
+  {:else if name === 'lock'}<path d="M5 11h14v10H5zM8 11V7a4 4 0 018 0v4" />
+  {:else if name === 'skip-next'}<path d="M6 5l10 7-10 7zM19 5v14" />
+  {:else if name === 'crown'}<path d="M3 8l4.500 4L12 5l4.500 7L21 8l-2 11H5z" />
+  {:else if name === 'copy'}<path d="M9 9h11v11H9zM5 15V4h11" />
   {/if}
 </svg>
 
