@@ -2,7 +2,7 @@ import { decrypt, encrypt } from '../crypto.js';
 import type { KV } from '../kv.js';
 import type { UserRow } from '../types.js';
 import { JellyfinClient, JellyfinError } from './client.js';
-import { toItemDto, toPlaybackDto, type ItemDto, type PlaybackDto } from './dto.js';
+import { toItemDto, toPlaybackDto, toTrickplayDto, type ItemDto, type PlaybackDto, type TrickplayDto } from './dto.js';
 
 const TOKEN_TTL = 6 * 3600;
 const FIELDS = 'Overview,Genres,OfficialRating,CommunityRating,PremiereDate,ProductionYear,ChildCount,RunTimeTicks';
@@ -142,6 +142,31 @@ export class JellyfinService {
     return (r?.Items ?? [])
       .filter((s) => ['Intro', 'Outro', 'Recap'].includes(s.Type) && s.EndTicks > s.StartTicks)
       .map((s) => ({ type: s.Type.toLowerCase(), start: s.StartTicks / 1e7, end: s.EndTicks / 1e7 }));
+  }
+
+  /** Timeline thumbnails; undefined when the server has none (older Jellyfin or trickplay not generated). */
+  async trickplay(user: UserRow, itemId: string, mediaSourceId: string): Promise<TrickplayDto | undefined> {
+    try {
+      const r = await this.json<{ Items: Array<{ Trickplay?: Record<string, any> }> }>(user, `/Items?userId=${user.jellyfin_user_id}&ids=${itemId}&fields=Trickplay`);
+      return toTrickplayDto(itemId, mediaSourceId, r.Items[0]?.Trickplay);
+    } catch {
+      return undefined;
+    }
+  }
+
+  /** "Ähnliche Titel" from Jellyfin's own similarity (genres/people/tags). */
+  async similar(user: UserRow, id: string, limit = 24): Promise<ItemDto[]> {
+    const r = await this.json<{ Items: any[] }>(user, `/Items/${id}/Similar?userId=${user.jellyfin_user_id}&limit=${limit}&fields=${FIELDS}`);
+    return r.Items.map(toItemDto);
+  }
+
+  /** Last finished movie/series (episodes are mapped to their series) as seed for "Weil du ... gesehen hast". */
+  async lastWatched(user: UserRow): Promise<ItemDto | null> {
+    const p = new URLSearchParams({ userId: user.jellyfin_user_id, recursive: 'true', filters: 'IsPlayed', sortBy: 'DatePlayed', sortOrder: 'Descending', limit: '1', includeItemTypes: 'Movie,Episode', fields: FIELDS });
+    const r = await this.json<{ Items: any[] }>(user, `/Items?${p}`);
+    const i = r.Items[0];
+    if (!i) return null;
+    return i.Type === 'Episode' && i.SeriesId ? this.item(user, i.SeriesId) : toItemDto(i);
   }
 
   async seasons(user: UserRow, seriesId: string): Promise<ItemDto[]> {

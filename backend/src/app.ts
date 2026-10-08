@@ -9,6 +9,7 @@ import { adminRoutes, inviteRoutes } from './routes/admin.js';
 import { authRoutes } from './routes/auth.js';
 import { internalRoutes } from './routes/internal.js';
 import { partyRoutes } from './routes/party.js';
+import { prefsRoutes } from './routes/prefs.js';
 import { pollRoutes } from './routes/polls.js';
 import { seerrRoutes } from './routes/seerr.js';
 import { statsRoutes } from './routes/stats.js';
@@ -71,6 +72,7 @@ export async function buildApp(ctx: Ctx, extra: Extra = {}): Promise<FastifyInst
   await partyRoutes(app, ctx);
   pollRoutes(app, ctx);
   statsRoutes(app, ctx);
+  prefsRoutes(app, ctx);
   for (const r of extra.register ?? []) await r(app, ctx);
   return app;
 }

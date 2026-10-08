@@ -40,7 +40,8 @@
     await api(`/api/items/${item.id}/rating`, { method: 'PUT', body: { stars, review: review || undefined } });
     const rr = await api(`/api/items/${item.id}/ratings`); ratings = rr.ratings; avg = rr.average;
   }
-  const loadSimilar = () => item!.genres.length
+  const loadSimilar = () => api(`/api/items/${item!.id}/similar`).then((r) => r.items as Item[]).then((l) => (l.length ? l : loadGenre())).catch(() => loadGenre());
+  const loadGenre = () => item!.genres.length
     ? api(`/api/library/items?types=${item!.type}&genre=${encodeURIComponent(item!.genres[0]!)}&sort=Random&limit=24`).then((r) => (r.items as Item[]).filter((i) => i.id !== item!.id))
     : Promise.resolve([] as Item[]);
 </script>

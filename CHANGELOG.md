@@ -1,5 +1,12 @@
 # Changelog
 ## [Unreleased]
+### Step 13 – Streaming features
+- Timeline preview thumbnails (Jellyfin trickplay) through the gateway/auth_request allowlist.
+- Quality selector (Auto/1080p/720p/480p/360p, never above the role limit); "Einstellungen" menu with quality, speed and sleep timer ("nach 15/30/45/60 Min." or "nach dieser Folge").
+- Picture-in-picture button.
+- Viewing preferences (autoplay next, auto-skip intro, preferred audio/subtitle language, default quality) stored server-side, settings page.
+- "Weil du ... gesehen hast" row and Jellyfin-based "Ähnliche Titel".
+- Fix: CSS class collision made the player menus invisible (`.bar` clipped them).
 ### Step 12 – Own player + watch party in the player, Plan B
 - Custom Netflix-style player: scrubbing timeline with buffer + hover time, ±10 s, volume, remaining time, audio/subtitle menu, speed, fullscreen of the whole stage (overlays stay visible), auto-hiding controls, touch gestures (double-tap ±10 s), spinner, toasts, keyboard shortcuts.
 - Watch party inside the player (Amazon-Watch-Party style): avatar stack with host crown and buffering state, chat side panel with unread badge + fading message bubbles, reaction picker with floating emoji, "waiting for X" banner, copy invite link, host switch "Nur Host / Alle dürfen steuern", guests see locked controls with hint.

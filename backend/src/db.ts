@@ -146,6 +146,14 @@ export const MIGRATIONS: string[] = [
     primary key (user_id, key)
   );
   `,
+  // 6: viewing preferences
+  `
+  create table user_prefs (
+    user_id uuid primary key references users(id) on delete cascade,
+    data jsonb not null default '{}',
+    updated_at timestamptz not null default now()
+  );
+  `,
 ];
 
 export async function migrate(pool: pg.Pool): Promise<void> {
