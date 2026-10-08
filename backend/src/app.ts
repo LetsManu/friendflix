@@ -25,6 +25,15 @@ export interface Extra {
 
 export async function buildApp(ctx: Ctx, extra: Extra = {}): Promise<FastifyInstance> {
   const app = Fastify({ logger: process.env.NODE_ENV !== 'test', trustProxy: true, bodyLimit: 256 * 1024 });
+  // Browsers send `content-type: application/json` with an empty body on body-less POST/DELETE (favorite, played,
+  // watchlist ...). Fastify rejects that with 400 FST_ERR_CTP_EMPTY_JSON_BODY; treat it as "no body". Everything else
+  // still goes through Fastify's own parser (prototype-poisoning protection included).
+  const defaultJson = app.getDefaultJsonParser('error', 'error');
+  app.removeContentTypeParser('application/json');
+  app.addContentTypeParser('application/json', { parseAs: 'string' }, (req, body, done) => {
+    if (body === '' || body === undefined) return done(null, undefined);
+    defaultJson(req, body as string, done);
+  });
   app.setErrorHandler((err, req, reply) => {
     if (err instanceof ZodError) return reply.code(400).send({ error: 'bad_request', issues: err.issues.map((i) => i.path.join('.')) });
     const status = (err as { statusCode?: number }).statusCode;

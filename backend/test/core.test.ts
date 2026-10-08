@@ -33,6 +33,7 @@ beforeAll(async () => {
     'POST /Sessions/Playing/Progress': () => ({ status: 204 }),
     'POST /Sessions/Playing/Stopped': () => ({ status: 204 }),
     'POST /Users/[^/]+/FavoriteItems/[^/]+': () => ({ json: {} }),
+    'DELETE /Users/[^/]+/FavoriteItems/[^/]+': () => ({ json: {} }),
     'GET /Sessions': () => ({ json: [{ Id: 's9', UserId: 'jf' + '0'.repeat(30) + '01ab', DeviceId: 'tv', NowPlayingItem: { Id: ID, Name: 'TV-Film', Type: 'Movie' }, PlayState: { PositionTicks: 7, IsPaused: true } }] }),
   });
   s = await env.login();
@@ -93,6 +94,13 @@ describe('library (legacy jellyfin paths)', () => {
   it('favorite uses the legacy fallback and validates ids', async () => {
     expect((await call('POST', `/api/items/${ID}/favorite`)).statusCode).toBe(200);
     expect((await call('GET', '/api/items/not-an-id')).statusCode).toBe(400);
+  });
+  it('empty-body POST/DELETE with a JSON content-type (what the web client sends) is accepted', async () => {
+    const browser = (method: string, url: string) => env.app.inject({ method: method as 'POST', url, cookies: s.cookies, headers: { 'x-csrf-token': s.csrf, 'content-type': 'application/json', 'content-length': '0' }, payload: '' });
+    expect((await browser('POST', `/api/items/${ID}/favorite`)).statusCode).toBe(200);
+    expect((await browser('DELETE', `/api/items/${ID}/favorite`)).statusCode).toBe(200);
+    expect((await browser('POST', `/api/items/${ID}/watchlist`)).statusCode).toBe(200);
+    expect((await browser('DELETE', `/api/items/${ID}/watchlist`)).statusCode).toBe(200);
   });
   it('watchlist roundtrip', async () => {
     await call('POST', `/api/items/${ID}/watchlist`);

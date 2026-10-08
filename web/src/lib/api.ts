@@ -11,7 +11,7 @@ export async function api<T = any>(path: string, opts: { method?: string; body?:
   const res = await fetch(path, {
     method: opts.method ?? 'GET',
     credentials: 'same-origin',
-    headers: { 'content-type': 'application/json', 'x-csrf-token': csrf },
+    headers: { ...(opts.body === undefined ? {} : { 'content-type': 'application/json' }), 'x-csrf-token': csrf },
     body: opts.body === undefined ? undefined : JSON.stringify(opts.body),
   });
   if (res.status === 401 && !location.pathname.startsWith('/invite/') && location.pathname !== '/tv') {
