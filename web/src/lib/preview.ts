@@ -1,4 +1,4 @@
-﻿import { get, writable } from 'svelte/store';
+import { get, writable } from 'svelte/store';
 import { api, ApiError } from '$lib/api';
 
 /** Owner of the preview that is running right now (a card's item id, or `hero:<id>`) - only one at a time. */
@@ -71,4 +71,3 @@ export function stopPreview(owner: string) {
   if (get(previewOwner) === owner) { hls?.destroy(); hls = null; }
   previewOwner.update((o) => (o === owner ? '' : o));
 }
-
