@@ -36,11 +36,21 @@ export async function playPreview(itemId: string, getVideo: () => HTMLVideoEleme
     if (get(previewOwner) !== owner) return false;
     hls?.destroy();
     if (Hls.isSupported()) {
-      const h = new Hls({ maxBufferLength: 8, startLevel: 0, startPosition: start > 0 ? start : -1 });
+      const h = new Hls({ maxBufferLength: 8, startLevel: 0, startPosition: Math.max(0, start) });
       hls = h;
       h.loadSource(url);
       h.attachMedia(v);
-      h.on(Hls.Events.ERROR, (_e, d) => { if (d.fatal) { console.warn('[preview] hls fatal', d.type, d.details, d.response?.code); stopPreview(owner); } });
+      let retried = false;
+      h.on(Hls.Events.ERROR, (_e, d) => {
+        if (!d.fatal) return;
+        if (!retried && d.type === Hls.ErrorTypes.NETWORK_ERROR) {
+          retried = true;
+          h.startLoad(0);
+          return;
+        }
+        console.warn('[preview] hls fatal', d.type, d.details, d.response?.code);
+        stopPreview(owner);
+      });
     } else { v.src = url; if (start > 0) v.addEventListener('loadedmetadata', () => { v.currentTime = start; }, { once: true }); }
     // sound as chosen; browsers only allow it after the visitor has interacted with the page, otherwise fall back to muted
     v.muted = !get(previewSound);
