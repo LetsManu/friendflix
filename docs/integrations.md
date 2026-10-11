@@ -72,3 +72,11 @@ Troubleshooting (`no_invite`, or no "Konto anlegen" button):
 
 ## ntfy / Discord
 `NTFY_URL=https://ntfy.example.com/friendflix` and/or `DISCORD_WEBHOOK_URL=...` for "now available", pending wishes, voting events.
+
+## Web Push (browser notifications)
+Set `VAPID_PUBLIC_KEY` and `VAPID_PRIVATE_KEY` (both required; `VAPID_SUBJECT` optional, default `PUBLIC_URL`) to enable per-device browser push. Generate a key pair with `node scripts/gen-vapid.mjs` (prints ready-to-paste env lines) or `npx web-push generate-vapid-keys`. The private key can be supplied as a Docker secret (`VAPID_PRIVATE_KEY_FILE`, see `compose.secrets.yaml`). Keep the pair stable: changing it invalidates all existing subscriptions.
+
+- Users enable it under *Einstellungen → Benachrichtigungen* (per device). Personal notices go to that user's subscriptions; announcements (movie night, "now available") only to devices that opted in. Non-owner profiles only ever see a generic "Neue Benachrichtigung" text.
+- The portal must be served over HTTPS. On iOS (16.4+) the site has to be installed first (Share -> "Zum Home-Bildschirm").
+- The backend only posts to the browsers' push services (FCM, Mozilla, Windows, Apple); other endpoints are rejected. Outbound HTTPS to those hosts must be allowed.
+- Subscriptions are removed automatically when the push service reports them gone (404/410), after a device or session revoke, or after repeated failures for over 7 days.

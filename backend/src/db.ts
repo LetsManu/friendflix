@@ -372,6 +372,24 @@ export const MIGRATIONS: string[] = [
   create unique index reminders_ep on reminders(user_id, jf_item_id) where kind='episode';
   create index reminders_open on reminders(kind) where fired_at is null;
   `,
+  // 19: Web Push subscriptions (one per browser/device)
+  `
+  create table push_subscriptions (
+    id bigserial primary key,
+    user_id uuid not null,
+    device_id text not null,
+    profile_id uuid not null references profiles(id) on delete cascade,
+    endpoint text not null unique check (char_length(endpoint) <= 1024),
+    p256dh text not null check (char_length(p256dh) <= 200),
+    auth text not null check (char_length(auth) <= 64),
+    broadcast boolean not null default false,
+    created_at timestamptz not null default now(),
+    last_ok_at timestamptz,
+    fail_count int not null default 0,
+    foreign key (user_id, device_id) references devices(user_id, device_id) on delete cascade
+  );
+  create index push_subscriptions_user on push_subscriptions(user_id);
+  `,
 ];
 
 export async function migrate(pool: pg.Pool): Promise<void> {

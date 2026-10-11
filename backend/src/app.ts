@@ -7,12 +7,14 @@ import type { Ctx } from './ctx.js';
 import { metricsPlugin } from './metrics.js';
 import { adminRoutes, inviteRoutes } from './routes/admin.js';
 import { authRoutes } from './routes/auth.js';
+import { castRoutes } from './routes/cast.js';
 import { internalRoutes } from './routes/internal.js';
 import { discoverRoutes } from './routes/discover.js';
 import { digestRoutes } from './routes/digest.js';
 import { listRoutes } from './routes/lists.js';
 import { partyRoutes } from './routes/party.js';
 import { profileRoutes } from './routes/profiles.js';
+import { pushRoutes } from './routes/push.js';
 import { prefsRoutes } from './routes/prefs.js';
 import { pollRoutes } from './routes/polls.js';
 import { reminderRoutes } from './routes/reminders.js';
@@ -84,6 +86,7 @@ export async function buildApp(ctx: Ctx, extra: Extra = {}): Promise<FastifyInst
 
   authRoutes(app, ctx);
   mediaRoutes(app, ctx);
+  castRoutes(app, ctx);
   internalRoutes(app, ctx);
   adminRoutes(app, ctx);
   inviteRoutes(app, ctx);
@@ -99,6 +102,7 @@ export async function buildApp(ctx: Ctx, extra: Extra = {}): Promise<FastifyInst
   tvRoutes(app, ctx);
   reminderRoutes(app, ctx);
   listRoutes(app, ctx);
+  pushRoutes(app, ctx);
   for (const r of extra.register ?? []) await r(app, ctx);
   return app;
 }

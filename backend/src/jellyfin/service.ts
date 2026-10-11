@@ -300,7 +300,7 @@ export class JellyfinService {
     await this.compat(user, 'played' + on, [`/UserPlayedItems/${id}?userId=${uid}`, `/Users/${uid}/PlayedItems/${id}`], { method: on ? 'POST' : 'DELETE' });
   }
 
-  async playbackInfo(user: JfUser, itemId: string, opts: { maxBitrate: number; maxHeight?: number | null; startTicks?: number; audioIndex?: number }): Promise<PlaybackDto> {
+  async playbackInfo(user: JfUser, itemId: string, opts: { maxBitrate: number; maxHeight?: number | null; startTicks?: number; audioIndex?: number; cast?: boolean }): Promise<PlaybackDto> {
     const p = new URLSearchParams({ UserId: user.jellyfin_user_id, MaxStreamingBitrate: String(opts.maxBitrate), AutoOpenLiveStream: 'false' });
     if (opts.startTicks) p.set('StartTimeTicks', String(opts.startTicks));
     if (opts.audioIndex !== undefined) p.set('AudioStreamIndex', String(opts.audioIndex));
@@ -308,13 +308,25 @@ export class JellyfinService {
       p.set('MaxHeight', String(opts.maxHeight));
       p.set('MaxWidth', String(maxWidthFor(opts.maxHeight)));
     }
+    const heightCond = opts.maxHeight ? [{ Condition: 'LessThanEqual', Property: 'Height', Value: String(opts.maxHeight), IsRequired: true }] : [];
+    const castCond = opts.cast
+      ? [
+          { Condition: 'LessThanEqual', Property: 'VideoLevel', Value: '41', IsRequired: true },
+          { Condition: 'LessThanEqual', Property: 'VideoBitDepth', Value: '8', IsRequired: true },
+        ]
+      : [];
+    if (opts.cast) {
+      p.set('EnableDirectPlay', 'false');
+      p.set('EnableDirectStream', 'false');
+    }
     const profile = {
-      Name: 'FriendFlix Web',
+      Name: opts.cast ? 'FriendFlix Cast' : 'FriendFlix Web',
       MaxStreamingBitrate: opts.maxBitrate,
-      CodecProfiles: opts.maxHeight ? [{ Type: 'Video', Conditions: [{ Condition: 'LessThanEqual', Property: 'Height', Value: String(opts.maxHeight), IsRequired: true }] }] : [],
-      DirectPlayProfiles: [{ Container: 'mp4,m4v,webm', Type: 'Video', VideoCodec: 'h264,vp9,av1', AudioCodec: 'aac,mp3,opus,flac' }],
+      CodecProfiles: heightCond.length || castCond.length ? [{ Type: 'Video', Codec: opts.cast ? 'h264' : undefined, Conditions: [...heightCond, ...castCond] }] : [],
+      // Chromecast: never direct play; always HLS/TS with H.264 + stereo AAC
+      DirectPlayProfiles: opts.cast ? [] : [{ Container: 'mp4,m4v,webm', Type: 'Video', VideoCodec: 'h264,vp9,av1', AudioCodec: 'aac,mp3,opus,flac' }],
       TranscodingProfiles: [
-        { Container: 'ts', Type: 'Video', AudioCodec: 'aac,mp3', VideoCodec: 'h264', Protocol: 'hls', Context: 'Streaming', MaxAudioChannels: '2', MinSegments: 1, BreakOnNonKeyFrames: true },
+        { Container: 'ts', Type: 'Video', AudioCodec: opts.cast ? 'aac' : 'aac,mp3', VideoCodec: 'h264', Protocol: 'hls', Context: 'Streaming', MaxAudioChannels: '2', MinSegments: 1, BreakOnNonKeyFrames: true },
       ],
       SubtitleProfiles: [
         { Format: 'vtt', Method: 'External' },
@@ -327,7 +339,7 @@ export class JellyfinService {
       body: JSON.stringify({ DeviceProfile: profile }),
     });
     if (info.ErrorCode) throw new JellyfinError(403, `playback blocked: ${info.ErrorCode}`);
-    return toPlaybackDto({ itemId, info, deviceId: this.deviceId(user), maxBitrate: opts.maxBitrate, resumeTicks: opts.startTicks ?? 0, audioIndex: opts.audioIndex, maxHeight: opts.maxHeight });
+    return toPlaybackDto({ itemId, info, deviceId: this.deviceId(user), maxBitrate: opts.maxBitrate, resumeTicks: opts.startTicks ?? 0, audioIndex: opts.audioIndex, maxHeight: opts.maxHeight, cast: opts.cast });
   }
 
   /** Playing / Progress / Stopped reports (powers "Weiterschauen" and Jellyfin statistics). */

@@ -3,6 +3,7 @@
   import { SIZE_LABELS, COLOR_LABELS, BG_LABELS, FONT_LABELS, subClasses } from '#lib/substyle';
   import { api } from '#lib/api';
   import { prefs, savePrefs, DEFAULT_PREFS, type Prefs } from '#lib/stores';
+  import { pushState, enablePush, disablePush, updateBroadcast, testPush, syncPush, type PushState } from '#lib/push';
 
   const LANGS: Array<[string, string]> = [['', 'Standard der Datei'], ['ger', 'Deutsch'], ['eng', 'Englisch'], ['fre', 'Französisch'], ['spa', 'Spanisch'], ['ita', 'Italienisch'], ['jpn', 'Japanisch']];
   const QUALITIES: Array<[number, string]> = [[0, 'Automatisch (beste für deine Verbindung)'], [8_000_000, '1080p (ca. 8 Mbit/s)'], [4_000_000, '720p (ca. 4 Mbit/s)'], [1_500_000, '480p (ca. 1,5 Mbit/s)'], [800_000, '360p (ca. 0,8 Mbit/s)']];
@@ -12,6 +13,22 @@
     api('/api/me').then((m) => (owner = Boolean(m.profile?.isOwner))).catch(() => undefined);
     const unsub = prefs.subscribe((p) => (form = { ...p, subtitleStyle: { ...p.subtitleStyle } })); return unsub;
   });
+  let ps: PushState = 'off', pushOn = false, pushBroadcast = false, pushBusy = false, pushMsg = '';
+  async function refreshPush() { ps = await pushState().catch(() => 'unsupported' as PushState); pushOn = ps === 'on'; }
+  onMount(() => { void refreshPush().then(async () => { if (ps === 'on') { const b = await syncPush(); if (b !== null) pushBroadcast = b; } }); });
+  async function togglePush() {
+    pushBusy = true; pushMsg = '';
+    try {
+      if (pushOn) ps = await enablePush(pushBroadcast); else { await disablePush(); ps = 'off'; }
+    } catch { pushMsg = 'Das hat nicht geklappt.'; ps = await pushState().catch(() => 'off' as PushState); }
+    pushOn = ps === 'on'; pushBusy = false;
+  }
+  async function toggleBroadcast() { try { await updateBroadcast(pushBroadcast); } catch { pushMsg = 'Speichern fehlgeschlagen.'; } }
+  async function sendTest() {
+    pushBusy = true; pushMsg = '';
+    try { const r = await testPush(); pushMsg = r.sent ? 'Test gesendet.' : 'Der Push-Dienst hat den Test nicht angenommen.'; } catch { pushMsg = 'Test fehlgeschlagen.'; }
+    pushBusy = false;
+  }
   async function save() {
     busy = true; error = ''; saved = false;
     try { await savePrefs({ ...form, quality: Number(form.quality) }); saved = true; setTimeout(() => (saved = false), 2500); } catch { error = 'Speichern fehlgeschlagen.'; }
@@ -58,7 +75,23 @@
   </fieldset>
   <div class="flex"><button disabled={busy}>Speichern</button>{#if saved}<span class="ok" role="status">Gespeichert</span>{/if}{#if error}<span class="err" role="alert">{error}</span>{/if}</div>
 </form>
+<section class="panel form push" aria-labelledby="pushh">
+  <h2 id="pushh">Benachrichtigungen</h2>
+  {#if ps === 'unsupported'}<p class="muted">Dieser Browser unterstützt keine Push-Benachrichtigungen.</p>
+  {:else if ps === 'ios-install'}<p class="muted">Unter iOS (ab 16.4) zuerst über Teilen → „Zum Home-Bildschirm“ installieren und die App von dort öffnen, dann lassen sich Push-Benachrichtigungen aktivieren.</p>
+  {:else if ps === 'server-off'}<p class="muted">Push-Benachrichtigungen sind auf diesem Server nicht eingerichtet.</p>
+  {:else}
+    {#if ps === 'denied'}<p class="muted" role="alert">Benachrichtigungen sind für diese Seite blockiert. Bitte im Browser erlauben (Schloss-Symbol in der Adressleiste) und die Seite neu laden.</p>{/if}
+    <label class="row"><input type="checkbox" bind:checked={pushOn} disabled={pushBusy || ps === 'denied'} on:change={togglePush} /><span><b>Push-Benachrichtigungen auf diesem Gerät</b><small class="muted">Persönliche Hinweise erscheinen auch, wenn FriendFlix geschlossen ist. Gilt nur für dieses Gerät.</small></span></label>
+    {#if pushOn}
+      <label class="row"><input type="checkbox" bind:checked={pushBroadcast} disabled={pushBusy} on:change={toggleBroadcast} /><span><b>Auch allgemeine Ankündigungen (Filmabend, Neu verfügbar)</b></span></label>
+      <div class="flex"><button type="button" disabled={pushBusy} on:click={sendTest}>Test senden</button></div>
+    {/if}
+    {#if pushMsg}<span role="status" class="muted">{pushMsg}</span>{/if}
+  {/if}
+</section>
 <style>
+  .push { margin-top: 1.5rem; } .push h2 { margin: 0; font-size: 1.15rem; }
   .form { max-width: 640px; display: grid; gap: 1.2rem; }
   .row { display: flex; gap: .9rem; align-items: flex-start; color: var(--fg); font-size: 1rem; } .row span { display: grid; gap: .1rem; }
   .field { display: grid; gap: .35rem; } .field select, .field input { max-width: 360px; }

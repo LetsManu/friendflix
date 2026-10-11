@@ -31,5 +31,32 @@
     "/Items/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/Download",
     "/Videos/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/master.m3u8/extra",
     ""
-  ]
+  ],
+  "cast": {
+    "_comment": "Stricter subset used on the cookie-less Chromecast route /media/c/<token>/...: tested by the gateway (the backend's Plan B auth_request does not support cast).",
+    "allow": [
+      "/Videos/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/master.m3u8",
+      "/Videos/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/main.m3u8",
+      "/Videos/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/hls1/main/0.ts",
+      "/Videos/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb/Subtitles/3/0/Stream.vtt",
+      "/Items/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/Images/Primary",
+      "/Items/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/Images/Backdrop"
+    ],
+    "deny": [
+      "/Videos/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/stream",
+      "/Videos/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/stream.mp4",
+      "/Videos/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/Trickplay/320/0.jpg",
+      "/Videos/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb/Subtitles/3/0/Stream.srt",
+      "/Items/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/Images/Logo",
+      "/Items/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/Images/Primary/0",
+      "/Items/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/Images/Thumb",
+      "/System/Info",
+      "/Items/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/Download",
+      "/Videos/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/hls1/main/..%2f..%2fetc",
+      "/Videos/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/hls1/main/../../../System/Info",
+      "//evil.example/Videos/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/master.m3u8",
+      "/Users/AuthenticateByName",
+      ""
+    ]
+  }
 }

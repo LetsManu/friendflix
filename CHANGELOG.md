@@ -1,5 +1,9 @@
 # Changelog
 ## [Unreleased]
+### Block 4 – PWA, push, Chromecast
+- Installable app (manifest, iOS meta, service worker caching only static assets; never /api, /media, HTML or Range requests) with an offline page.
+- Web push per device (Einstellungen → Benachrichtigungen, "Test senden"): VAPID keys via `VAPID_PUBLIC_KEY`/`VAPID_PRIVATE_KEY` (`node scripts/gen-vapid.mjs`), endpoint allowlist, generic text on devices enabled by non-owner profiles, revoked with the device.
+- Chromecast (Default Media Receiver) from Chrome/Android: short-lived, item-scoped, revocable cast tokens under `/media/c/<token>/…` checked by the gateway (CORS only there, playlist sanitizer, failed-auth limit); NPM should log nothing for `/media/c/` (see `deploy/npm/portal.advanced.conf`, `docs/cast.md`). CSP allows `https://www.gstatic.com` scripts for the Cast SDK.
 ### Block 3 – Digest, shared lists, reminders
 - Weekly digest ("Wochenrückblick"): new films/episodes, new episodes of followed series, fulfilled wishes, friends' tips; `/digest` page, schedule via `DIGEST_DAY`/`DIGEST_HOUR` or Admin → Wochenrückblick, opt-out in settings. Personal ntfy topic per account (never the shared ntfy/Discord channel).
 - Shared lists: owner invites editors/viewers, "Zu Liste hinzufügen" on cards/detail page, only titles visible to the viewer's profile are shown.
