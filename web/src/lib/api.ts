@@ -10,10 +10,11 @@ export const setCsrf = (t: string) => (csrf = t);
 let activeProfile = '';
 export const setActiveProfile = (id: string | null | undefined) => (activeProfile = id ?? '');
 
-export async function api<T = any>(path: string, opts: { method?: string; body?: unknown } = {}): Promise<T> {
+export async function api<T = any>(path: string, opts: { method?: string; body?: unknown; signal?: AbortSignal } = {}): Promise<T> {
   const res = await fetch(path, {
     method: opts.method ?? 'GET',
     credentials: 'same-origin',
+    signal: opts.signal,
     headers: { ...(opts.body === undefined ? {} : { 'content-type': 'application/json' }), 'x-csrf-token': csrf, ...(activeProfile ? { 'x-ff-profile': activeProfile } : {}) },
     body: opts.body === undefined ? undefined : JSON.stringify(opts.body),
   });

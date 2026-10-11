@@ -14,29 +14,50 @@
   import ListMenu from '#lib/ListMenu.svelte';
   import { isSpoiler } from '#lib/spoiler';
   import DownloadButton from '#lib/DownloadButton.svelte';
+  import CastRow from '#lib/CastRow.svelte';
 
   let thumb = 0, extras: Item[] = [], tint = '', friends: Array<{ id: string; name: string }> = [], recOpen = false, recTo = new Set<string>(), recNote = '', recMsg = '';
   let item: Item | null = null, seasons: Item[] = [], episodes: Item[] | null = null, season = '', next: Item | null = null;
   let ratings: any[] = [], avg: number | null = null, stars = 0, review = '', followed = false, notFound = false;
 
+  let loadSeq = 0, epSeq = 0, saveMsg = '', saveT: ReturnType<typeof setTimeout>;
   async function load(id: string) {
-    item = null; episodes = null; notFound = false; next = null; seasons = [];
+    const my = ++loadSeq;
+    item = null; episodes = null; notFound = false; next = null; seasons = []; ratings = []; avg = null; stars = 0; review = ''; followed = false; season = '';
+    let it: Item;
+    try { it = (await api(`/api/items/${id}`)).item; } catch { if (my === loadSeq) notFound = true; return; }
+    if (my !== loadSeq) return;
+    item = it;
+    // every secondary request fails on its own: the page works without ratings, follow state, seasons or next-up
     try {
-      const r = await api(`/api/items/${id}`);
-      item = r.item;
-      const rr = await api(`/api/items/${id}/ratings`); ratings = rr.ratings; avg = rr.average;
+      const rr = await api(`/api/items/${id}/ratings`);
+      if (my !== loadSeq) return;
+      ratings = rr.ratings; avg = rr.average;
       const mine = ratings.find((x) => x.mine); stars = mine?.stars ?? 0; review = mine?.review ?? '';
-      if (item!.type === 'Series') {
-        followed = (await api(`/api/series/${id}/follow`)).followed;
-        seasons = (await api(`/api/items/${id}/seasons`)).items;
-        season = seasons[0]?.id ?? '';
-        next = (await api('/api/library/nextup')).items.find((e: Item) => e.seriesId === id) ?? null;
-        if (next?.seasonId && seasons.some((s) => s.id === next!.seasonId)) season = next.seasonId;
-      }
-    } catch { notFound = true; }
+    } catch { /* optional */ }
+    if (it.type !== 'Series') return;
+    try { const f = (await api(`/api/series/${id}/follow`)).followed; if (my === loadSeq) followed = f; } catch { /* optional */ }
+    let list: Item[] = [];
+    try { list = (await api(`/api/items/${id}/seasons`)).items; } catch { /* optional */ }
+    if (my !== loadSeq) return;
+    seasons = list;
+    let first = list[0]?.id ?? '';
+    try {
+      const n = ((await api('/api/library/nextup')).items as Item[]).find((e) => e.seriesId === id) ?? null;
+      if (my !== loadSeq) return;
+      next = n;
+      if (n?.seasonId && list.some((x) => x.id === n.seasonId)) first = n.seasonId;
+    } catch { /* optional */ }
+    season = first;
   }
   $: if ($page.params.id) load($page.params.id);
-  $: if (item?.type === 'Series' && season) { episodes = null; api(`/api/items/${item.id}/episodes?seasonId=${season}`).then((r) => (episodes = r.items)).catch(() => (episodes = [])); }
+  $: if (item?.type === 'Series' && season) loadEpisodes(item.id, season);
+  function loadEpisodes(id: string, seasonId: string) {
+    const my = ++epSeq;
+    episodes = null;
+    api(`/api/items/${id}/episodes?seasonId=${seasonId}`).then((r) => { if (my === epSeq) episodes = r.items; }).catch(() => { if (my === epSeq) episodes = []; });
+  }
+  function failSave() { saveMsg = 'Konnte nicht gespeichert werden.'; clearTimeout(saveT); saveT = setTimeout(() => (saveMsg = ''), 5000); }
 
   let revealed = new Set<string>();
   const reveal = (e: MouseEvent, id: string) => { e.preventDefault(); e.stopPropagation(); revealed = new Set([...revealed, id]); };
@@ -50,15 +71,15 @@
   $: playLabel = item ? (item.type === 'Series' ? (next ? `Weiter: S${next.parentIndexNumber}:E${next.indexNumber}` : 'Abspielen') : item.positionTicks ? 'Fortsetzen' : 'Abspielen') : 'Abspielen';
 
   let castMsg = '', castT: ReturnType<typeof setTimeout>;
-  onMount(() => { void refreshTvOnline(); return () => clearTimeout(castT); });
+  onMount(() => { void refreshTvOnline(); return () => { clearTimeout(castT); clearTimeout(saveT); }; });
   async function castHere() {
     const id = playTarget;
     if (!id) return;
     castMsg = (await castToTv(id)) ? 'Wird auf dem Fernseher gestartet …' : 'Der Fernseher ist nicht erreichbar.';
     clearTimeout(castT); castT = setTimeout(() => (castMsg = ''), 3500);
   }
-  async function toggleFav() { if (!item) return; const on = item.favorite; await api(`/api/items/${item.id}/favorite`, { method: on ? 'DELETE' : 'POST' }); item.favorite = !on; }
-  async function togglePlayed() { if (!item) return; const on = item.played; await api(`/api/items/${item.id}/played`, { method: on ? 'DELETE' : 'POST' }); item.played = !on; }
+  async function toggleFav() { if (!item) return; const on = item.favorite; try { await api(`/api/items/${item.id}/favorite`, { method: on ? 'DELETE' : 'POST' }); item.favorite = !on; } catch { failSave(); } }
+  async function togglePlayed() { if (!item) return; const on = item.played; try { await api(`/api/items/${item.id}/played`, { method: on ? 'DELETE' : 'POST' }); item.played = !on; } catch { failSave(); } }
   async function setThumb(v: 1 | -1) { if (!item) return; const next = thumb === v ? 0 : v; thumb = next; await api(`/api/items/${item.id}/thumb`, { method: 'PUT', body: { value: next } }).catch(() => (thumb = 0)); }
   async function openRec() { recOpen = true; recMsg = ''; if (!friends.length) friends = (await api('/api/friends').catch(() => ({ friends: [] }))).friends; }
   async function sendRec() {
@@ -66,11 +87,13 @@
     catch (e: any) { recMsg = e?.body?.error === 'already_recommended' ? 'Diesen Titel hast du ihnen diese Woche schon empfohlen.' : 'Senden fehlgeschlagen.'; }
   }
   function toggleTo(id: string) { const n = new Set(recTo); if (n.has(id)) n.delete(id); else n.add(id); recTo = n; }
-  async function toggleFollow() { await api(`/api/series/${item!.id}/follow`, { method: followed ? 'DELETE' : 'POST' }); followed = !followed; }
+  async function toggleFollow() { try { await api(`/api/series/${item!.id}/follow`, { method: followed ? 'DELETE' : 'POST' }); followed = !followed; } catch { failSave(); } }
   async function rate() {
     if (!item || !stars) return;
-    await api(`/api/items/${item.id}/rating`, { method: 'PUT', body: { stars, review: review || undefined } });
-    const rr = await api(`/api/items/${item.id}/ratings`); ratings = rr.ratings; avg = rr.average;
+    try {
+      await api(`/api/items/${item.id}/rating`, { method: 'PUT', body: { stars, review: review || undefined } });
+      const rr = await api(`/api/items/${item.id}/ratings`); ratings = rr.ratings; avg = rr.average;
+    } catch { failSave(); }
   }
   const loadSimilar = () => api(`/api/items/${item!.id}/similar`).then((r) => r.items as Item[]).then((l) => (l.length ? l : loadGenre())).catch(() => loadGenre());
   const loadGenre = () => item!.genres.length
@@ -100,6 +123,7 @@
       </div>
       {#if playTarget}<LangPick targetId={playTarget} storeKey={item.type === 'Series' ? item.id : item.id} bind:audio={lgA} bind:sub={lgS} />{/if}
       {#if castMsg}<p class="muted" role="status">{castMsg}</p>{/if}
+      <div role="status">{#if saveMsg}<p class="err">{saveMsg}</p>{/if}</div>
       {#if recOpen}
         <div class="panel rec" role="dialog" aria-label="Empfehlen">
           <b>„{item.name}“ empfehlen an:</b>
@@ -133,6 +157,8 @@
           <ul>{#each extras as x (x.id)}<li><a href="/watch/{x.id}"><span class="pl2"><Icon name="play" size={18} /></span><span>{x.name}</span><span class="muted">{fmtMin(x.runtimeTicks)}</span></a></li>{/each}</ul>
         </section>
       {/if}
+
+      <CastRow id={item.id} />
 
       <section class="rate panel">
         <h2>Bewertungen {#if avg}<span class="badge">Ø {avg.toFixed(1)} von 5</span>{/if}</h2>
