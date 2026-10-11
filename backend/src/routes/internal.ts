@@ -48,8 +48,10 @@ export function internalRoutes(app: FastifyInstance, ctx: Ctx) {
     const s = await loadSession(ctx, sid);
     if (s && s.deviceApproved) {
       const user = await getUserById(ctx, s.userId);
-      if (user && !user.disabled) {
-        v = { userId: user.id, token: await ctx.jf.token(user), deviceId: ctx.jf.deviceId(user), maxBitrate: ctx.roles[user.role]!.maxBitrate };
+      // unknown (removed) role: fall back to the least privileged template ('guest'); none -> deny
+      const role = ctx.roles[user?.role ?? ''] ?? ctx.roles.guest;
+      if (user && !user.disabled && role) {
+        v = { userId: user.id, token: await ctx.jf.token(user), deviceId: ctx.jf.deviceId(user), maxBitrate: role.maxBitrate };
       }
     }
     memo.set(sid, { exp: Date.now() + (v ? 5_000 : 2_000), v });

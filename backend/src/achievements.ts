@@ -74,8 +74,8 @@ export function wireStats(ctx: Ctx) {
       await evaluate(c, e.user.id);
     }
   });
-  bus.onT('party.join', ({ userId }) => void grant(ctx, userId, 'party_goer'));
-  bus.onT('rating.created', ({ userId }) => void evaluate(ctx, userId));
+  bus.onT('party.join', ({ userId }) => void grant(ctx, userId, 'party_goer').catch(() => undefined));
+  bus.onT('rating.created', ({ userId }) => void evaluate(ctx, userId).catch(() => undefined));
   seerrHooks.add(async (c, e) => {
     if (e.type === 'requested') await evaluate(c, e.user.id);
   });
