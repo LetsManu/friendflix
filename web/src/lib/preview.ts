@@ -4,6 +4,9 @@ import { api, ApiError } from '#lib/api';
 /** Owner of the preview that is running right now (a card's item id, or `hero:<id>`) - only one at a time. */
 export const previewOwner = writable<string>('');
 let hls: { destroy(): void } | null = null;
+/** Titles whose preview failed (or that have none) during this page visit: never retried, so hovering one again cannot start a new Jellyfin session every second. */
+const failed = new Set<string>();
+export const previewFailed = (itemId: string) => failed.has(itemId);
 
 /** Sound for previews (hover cards + billboard). Remembered per browser; on by default like on Netflix. */
 const KEY = 'ff_sound';
@@ -25,6 +28,7 @@ export function toggleSound(v?: HTMLVideoElement) {
  * `owner` identifies who plays it (defaults to the item id) so the billboard and the hover cards never play together.
  */
 export async function playPreview(itemId: string, getVideo: () => HTMLVideoElement | undefined, owner = itemId): Promise<boolean> {
+  if (failed.has(itemId)) return false;
   previewOwner.set(owner); // claim synchronously so the card's guard keeps the <video> mounted
   try {
     const { url, start = 0 } = await api<{ url: string; start?: number }>(`/api/items/${itemId}/trailer`);
@@ -49,6 +53,7 @@ export async function playPreview(itemId: string, getVideo: () => HTMLVideoEleme
           return;
         }
         console.warn('[preview] hls fatal', d.type, d.details, d.response?.code);
+        failed.add(itemId);
         stopPreview(owner);
       });
     } else { v.src = url; if (start > 0) v.addEventListener('loadedmetadata', () => { v.currentTime = start; }, { once: true }); }
@@ -62,6 +67,7 @@ export async function playPreview(itemId: string, getVideo: () => HTMLVideoEleme
     return true;
   } catch (e) {
     if (!(e instanceof ApiError && e.status === 404)) console.warn('[preview] failed', itemId, e); // 404 = this title simply has no preview
+    if (get(previewOwner) === owner) failed.add(itemId); // not when we were merely superseded by another preview
     stopPreview(owner);
     return false;
   }

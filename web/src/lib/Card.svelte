@@ -6,7 +6,7 @@
   import { openModal } from '#lib/modal';
   import { onDestroy } from 'svelte';
   import { prefs } from '#lib/stores';
-  import { playPreview, stopPreview, previewOwner, toggleSound } from '#lib/preview';
+  import { playPreview, previewFailed, stopPreview, previewOwner, toggleSound } from '#lib/preview';
 
   export let item: Item;
   let fav = item.favorite;
@@ -25,7 +25,7 @@
   const canHover = typeof matchMedia !== 'undefined' && matchMedia('(hover: hover) and (pointer: fine)').matches;
   function enter() {
     clearTimeout(hoverT); // mouseenter + focusin both call this: never keep two timers (two previews) alive
-    if (previewing || !canHover || !$prefs.hoverTrailers || !(item.trailers || ($prefs.hoverClip && (item.type === 'Movie' || item.type === 'Series')))) return;
+    if (previewing || !canHover || previewFailed(item.id) || !$prefs.hoverTrailers || !(item.trailers || ($prefs.hoverClip && (item.type === 'Movie' || item.type === 'Series')))) return;
     hoverT = setTimeout(async () => { previewing = true; if (!(await playPreview(item.id, () => pv))) previewing = false; }, 1200);
   }
   // keyboard focus only: a mouse click on the heart/plus must not start (or pin) a preview
