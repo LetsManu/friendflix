@@ -37,7 +37,7 @@ docker compose up -d --build                 # Jellyfin/Seerr laufen schon.   Ge
 docker compose --profile backup up -d backup # optional: tägliche DB-Backups
 docker compose ps                            # alle "healthy"
 ```
-**Fertige Images statt Build auf dem Server:** GitHub Actions (`publish.yml`, aufgerufen von `ci.yml` erst nachdem Tests, Secret- und Image-Scan grün sind) veröffentlicht bei jedem Push auf `main` und jedem `v*`-Tag nach `ghcr.io/letsmanu/friendflix-{backend,gateway,web}` (Tags `latest`, Kurz-SHA, `vX.Y.Z`). Auf dem Server: `docker login ghcr.io -u <user>` (PAT mit `read:packages`, oder Paket auf *Public* stellen), dann `docker compose -f compose.prod.yaml pull && docker compose -f compose.prod.yaml up -d`. Version festnageln: `FF_TAG=<sha>` in `.env`.
+**Fertige Images statt Build auf dem Server:** GitHub Actions (`publish.yml`, aufgerufen von `ci.yml` erst nachdem Tests, Secret- und Image-Scan grün sind) veröffentlicht bei jedem Push auf `main` und jedem `v*`-Tag nach `ghcr.io/letsmanu/friendflix-{backend,gateway,web}` (Tags `latest`, Kurz-SHA, `vX.Y.Z`). Auf dem Server: `docker login ghcr.io -u <user>` (PAT mit `read:packages`, oder Paket auf *Public* stellen), dann `docker compose -f compose.prod.yaml pull && docker compose -f compose.prod.yaml up -d`. Das `up -d` legt auch das neue Volume `previews` an (Vorschau-Clips). Version festnageln: `FF_TAG=<sha>` in `.env`.
 Läuft Jellyfin/Seerr bereits als eigener Stack: `docker network connect friendflix_media <container>`, vom NPM-/Host-Netz trennen, Ports aus deren Compose entfernen, `JELLYFIN_URL`/`SEERR_URL` anpassen.
 
 Dann:
@@ -59,6 +59,8 @@ Dann:
 | `SEERR_URL`, `SEERR_API_KEY` | Seerr (intern) |
 | `NTFY_URL`, `DISCORD_WEBHOOK_URL` | Push bei „verfügbar“, Freigaben, Filmabend |
 | `METRICS_TOKEN` | Bearer für `/metrics` |
+| `PREVIEW_DIR` | Ablage der Vorschau-Clips (Default `/data/previews`, Volume `previews`) |
+| `PREVIEW_WARM` | Hintergrundjob, der Vorschau-Clips vorab erzeugt (Default `true`; `false` schaltet ihn ab) |
 | `AUTHENTIK_URL/API_TOKEN/ENROLL_FLOW` | Einladung legt auch das Authentik-Konto an (siehe `docs/integrations.md`) |
 | `ROLE_TEMPLATES` | JSON-Override der Rollenvorlagen (`backend/src/roles.ts`) |
 Secrets alternativ als Docker Secrets: `compose.secrets.yaml` (`VAR_FILE`).
@@ -71,8 +73,10 @@ Secrets alternativ als Docker Secrets: `compose.secrets.yaml` (`VAR_FILE`).
 - **Filmabend-Voting** mit Countdown und Auto-Start; Titel außerhalb der Bibliothek → Admin-Freigabe → Seerr-Request → automatisch geplant, sobald verfügbar.
 - **Entdecken & Gruppe**: Netflix-ähnliche Oberfläche (Billboard, Reihen, Hover-Karten, Top 10), Gruppen-Matcher („Was hat noch keiner von uns gesehen?“), Empfehlungen an Freunde, „Demnächst“ aus Seerr, Sammlungen/Studios, Szenen teilen, Lesezeichen, X-Ray.
 - **Fernseher**: TV-Modus mit Pfeiltasten-Navigation, Kopplung per Code/QR, Handy als Fernbedienung → `docs/tv-mode.md`.
+- **Vorschau-Clips**: Beim Hover über eine Karte oder das Billboard läuft ein ca. 30 Sekunden langer Clip. Jellyfin erzeugt jeden Clip einmal (960p H.264/AAC; Start bei einem Drittel des Films, bei Serien bei einem Viertel der ersten Folge, bei vorhandenem lokalem Trailer ab dessen Anfang). Das Backend legt ihn als MP4 im Volume `previews` (`/data/previews`) ab und liefert ihn danach allen Nutzern inklusive Gästen als Datei aus, ohne neues Transkodieren pro Hover. Ein Hintergrundjob füllt den Cache mit einem Titel pro Minute; fehlgeschlagene Titel werden nach 7 Tagen erneut versucht oder sofort über die Admin-Seite. Die Nutzer-Einstellung „Ohne Trailer: Ausschnitt“ ist standardmäßig an.
+- **Trailer für anfragbare Titel**: Titel, die über Seerr angefragt werden können, aber nicht in der Bibliothek sind, bekommen einen Button „Trailer“. Er spielt den TMDB-Trailer im datenschutzfreundlichen `youtube-nocookie.com`-Player; zu YouTube wird erst nach dem Klick geladen.
 - **Wrapped, Achievements, Läuft gerade**, Bewertungen mit Kurzreview, Serien-Kalender mit Benachrichtigung.
-- **Admin**: Status, Nutzer/Rollen, Einladungen, Wünsche, Abstimmungen, Geräte, Audit-Log.
+- **Admin**: Status, Nutzer/Rollen, Einladungen, Wünsche, Abstimmungen, Geräte, Audit-Log. `/admin/previews` zeigt den Clip-Status (bereit / fehlgeschlagen / fehlt / in Arbeit) mit „Neu erzeugen“ je Titel und einem Knopf für alle fehlgeschlagenen. `/admin/playback` prüft die Wiedergabe, indem es von jedem Titel einige Sekunden testweise transkodiert, und listet die Fehler auf (Details im FFmpeg-Log in Jellyfin).
 
 ## Sicherheit
 OIDC + PKCE, MFA über Authentik-Flow · Sessions max. 8 h und 2 h Inaktivität (`SESSION_IDLE_SECONDS`), httpOnly/Secure/SameSite=Lax · CSRF-Token für alle schreibenden `/api`-Aufrufe · WebSocket: Origin- + Session-Prüfung · zod-Validierung überall · Rate-Limiting (global + strenger auf `/auth`, Einladungen) · Audit-Log · Geräte-Freigabe · Jellyfin-Passwörter AES-GCM-verschlüsselt, Tokens nie im Browser · Gateway: Allowlist, kein Redirect-Follow, Header-Whitelist · Container: non-root, `read_only`, `cap_drop: ALL`, `no-new-privileges`, Healthchecks · strikte CSP (UI), Security-Header (API) · CI: Lint, Tests, gitleaks, Trivy, Dependabot.
@@ -94,6 +98,9 @@ Dev gegen http-Authentik: `OIDC_ALLOW_INSECURE=true` (nur Entwicklung).
 - Direct Play umgeht den Bitrate-Clamp nur nicht, weil `directUrl` nur bei Quell-Bitrate ≤ Rollenlimit angeboten wird.
 - Now-Playing aktualisiert per Polling (5 s), nicht per WebSocket.
 - Fernbedienung/Kopplung: Räume und Verbindungen liegen im Speicher (ein Backend-Replikat); TV-Modus auf echten Fernsehern je Modell prüfen (`docs/tv-mode.md`).
+- **Jellyfin-Einstellungen** (Dashboard → Wiedergabe → Transkodierung):
+  - Mit Intel QSV/VAAPI muss „VPP Tone mapping“ aus sein, wenn der Treiber kein HDR unterstützt. Sonst schlägt jeder 4K-HDR-Film fehl (FFmpeg: `tonemap_vaapi … VAAPI driver doesn't support HDR`). „Tone mapping“ (OpenCL) bleibt an.
+  - Die Gast-Rolle (`transcoding: false`) kann 4K-HEVC/AC-3/DTS-Quellen in Chrome und Firefox nicht abspielen; Jellyfin reicht dann das Original unverändert durch.
 
 ## Checkliste
 - [x] 0 Repo-Grundstruktur · [x] 1 Compose/Netze/Health/NPM/OIDC/Jellyfin-Client · [x] 2 Gateway + Player · [x] 3 Einladungen/Rollen/Mapping
