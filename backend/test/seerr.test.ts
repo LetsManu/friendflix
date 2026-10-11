@@ -7,6 +7,7 @@ let admin: { cookies: Record<string, string>; csrf: string };
 const sent: Array<{ url: string; body: string }> = [];
 let movieStatus = 1;
 let imported: string | null = null;
+let videos: any[] = [];
 
 beforeAll(async () => {
   env = await makeEnv({}, {
@@ -22,7 +23,8 @@ beforeAll(async () => {
       ], q: u.search } }),
       'GET /api/v1/user': () => ({ json: { results: [{ id: 7, jellyfinUserId: 'x' }, ...(imported ? [{ id: 9, jellyfinUserId: imported.toUpperCase() }] : [])] } }),
       'POST /api/v1/user/import-from-jellyfin': (_u, _i, b) => { imported = b.jellyfinUserIds[0]; return { json: [{ id: 9 }] }; },
-      'GET /api/v1/movie/\\d+': () => ({ json: { title: 'Dune', posterPath: '/dune.jpg', mediaInfo: movieStatus === 1 ? undefined : { status: movieStatus } } }),
+      'GET /api/v1/movie/\\d+': () => ({ json: { title: 'Dune', posterPath: '/dune.jpg', relatedVideos: videos, mediaInfo: movieStatus === 1 ? undefined : { status: movieStatus } } }),
+      'GET /api/v1/tv/\\d+': () => ({ json: { name: 'Show', relatedVideos: videos } }),
       'POST /api/v1/request': (_u, _i, b) => ({ json: { id: 42, status: 1, media: { status: 2 }, echo: b } }),
       'GET /api/v1/request/42': () => ({ json: { id: 42, status: 2, media: { status: 3 } } }),
       'GET /api/v1/request': () => ({ json: { results: [{ id: 42, type: 'movie', status: 1, media: { status: 2, tmdbId: 438631, mediaType: 'movie' }, requestedBy: { displayName: 'x' }, createdAt: '2026-01-01' }], pageInfo: {} } }),
@@ -92,5 +94,35 @@ describe('seerr integration', () => {
     expect(n.some((x: any) => x.kind === 'available' && x.title.includes('Dune'))).toBe(true);
     await call('POST', '/api/notifications/read');
     expect((await call('GET', '/api/notifications')).json().notifications.filter((x: any) => x.kind === 'available')[0].read).toBe(true);
+  });
+});
+
+describe('trailer', () => {
+  let tmdb = 1000;
+  const vid = (site: string, type: string, key: string) => ({ site, type, key, name: 'x', url: `https://x/${key}` });
+  async function withVideos(v: any[], t = 'movie') {
+    videos = v; tmdb++;
+    return call('GET', `/api/seerr/${t}/${tmdb}/trailer`);
+  }
+  it('prefers Trailer over Teaser and ignores non-YouTube', async () => {
+    const r = await withVideos([vid('Vimeo', 'Trailer', 'vimeo123456'), vid('YouTube', 'Teaser', 'teaser_1234'), vid('YouTube', 'Trailer', 'trailer-5678')]);
+    expect(r.statusCode).toBe(200);
+    expect(r.json()).toEqual({ key: 'trailer-5678' });
+    expect((await withVideos([vid('YouTube', 'Teaser', 'teaser_1234')], 'tv')).json()).toEqual({ key: 'teaser_1234' });
+  });
+  it('404s without usable videos and rejects malformed keys', async () => {
+    expect((await withVideos([])).statusCode).toBe(404);
+    expect((await withVideos([vid('Vimeo', 'Trailer', 'abcdefgh')])).json()).toEqual({ error: 'no_trailer' });
+    expect((await withVideos([vid('YouTube', 'Trailer', '"><script>')])).statusCode).toBe(404);
+    expect((await call('GET', '/api/seerr/book/5/trailer')).statusCode).toBe(400);
+  });
+  it('caches for repeated calls and requires login', async () => {
+    videos = [vid('YouTube', 'Trailer', 'cached_key1')]; tmdb++;
+    const url = `/api/seerr/movie/${tmdb}/trailer`;
+    await call('GET', url);
+    const n = env.seerrCalls.length;
+    expect((await call('GET', url)).json()).toEqual({ key: 'cached_key1' });
+    expect(env.seerrCalls.length).toBe(n);
+    expect((await env.app.inject({ method: 'GET', url })).statusCode).toBe(401);
   });
 });

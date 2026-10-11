@@ -62,6 +62,22 @@ export function seerrRoutes(app: FastifyInstance, ctx: Ctx) {
     return { status: portalStatus(d.mediaInfo?.status, d.mediaInfo?.requests?.[0]?.status) };
   }));
 
+  // Official trailer key from TMDB (via Seerr); only the validated YouTube key leaves the backend.
+  app.get('/api/seerr/:type/:id/trailer', pre, wrap(async (req, reply) => {
+    const p = z.object({ type: mediaType, id: z.coerce.number().int().positive() }).parse(req.params);
+    const ck = `trailer:${p.type}:${p.id}`;
+    const cached = await ctx.kv.get(ck); // '' = cached "no trailer"
+    let key = cached ?? '';
+    if (cached === null) {
+      const vids: any[] = ((await ctx.seerr.details(p.type, p.id)) as any).relatedVideos ?? [];
+      const yt = Array.isArray(vids) ? vids.filter((v) => v?.site === 'YouTube' && typeof v.key === 'string' && /^[A-Za-z0-9_-]{6,20}$/.test(v.key)) : [];
+      key = (yt.find((v) => v.type === 'Trailer') ?? yt.find((v) => v.type === 'Teaser'))?.key ?? '';
+      await ctx.kv.set(ck, key, 24 * 3600);
+    }
+    if (!key) return reply.code(404).send({ error: 'no_trailer' });
+    return { key };
+  }));
+
   app.post('/api/requests', pre, wrap(async (req, reply) => {
     const b = z.object({ mediaType, tmdbId: z.number().int().positive(), seasons: z.array(z.number().int().min(0).max(100)).optional() }).parse(req.body);
     const d = await ctx.seerr.details(b.mediaType, b.tmdbId);

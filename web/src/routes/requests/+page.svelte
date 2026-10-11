@@ -3,6 +3,7 @@
   import { pageStore } from '#lib/page';
   const page = pageStore();
   import { api, ApiError } from '#lib/api';
+  import TrailerButton from '#lib/TrailerButton.svelte';
 
   let q = $page.url.searchParams.get('q') ?? '', results: any[] = [], mine: any[] = [], msg = '', busy = false;
   const label: Record<string, string> = { nicht_angefragt: '', angefragt: 'Angefragt', in_arbeit: 'In Arbeit', teilweise: 'Teilweise verfügbar', verfuegbar: 'Verfügbar', abgelehnt: 'Abgelehnt', entfernt: 'Entfernt' };
@@ -37,6 +38,7 @@
       <div class="t">{r.title}<small>{r.year ?? ''} · {r.mediaType === 'tv' ? 'Serie' : 'Film'}</small>
         {#if r.status === 'nicht_angefragt' || r.status === 'abgelehnt'}<button style="margin-top:.4rem;width:100%" on:click={() => request(r)}>Wünschen</button>
         {:else}<span class={cls[r.status]}>{label[r.status]}</span>{/if}
+        {#if r.status !== 'verfuegbar'}<div style="margin-top:.4rem"><TrailerButton mediaType={r.mediaType} tmdbId={r.tmdbId} title={r.title} /></div>{/if}
       </div>
     </div>
   {/each}

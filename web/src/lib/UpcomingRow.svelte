@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { api, ApiError } from '#lib/api';
+  import TrailerButton from '#lib/TrailerButton.svelte';
 
   /** "Demnächst": upcoming releases from Seerr with a one-click wish. */
   export let type: 'movie' | 'tv' = 'movie';
@@ -28,6 +29,7 @@
               {#if it.status === 'nicht_angefragt' || it.status === 'abgelehnt'}<button class="sec" on:click={() => wish(it)}>Wünschen</button>
               {:else if it.status === 'verfuegbar'}<span class="ok">Verfügbar</span>{:else}<span class="warn">Gewünscht</span>{/if}
             </div>
+            {#if it.status !== 'verfuegbar'}<div class="act tr"><TrailerButton mediaType={it.mediaType} tmdbId={it.tmdbId} title={it.title} /></div>{/if}
           </div>
         </article>{/each}{/if}
     </div>
@@ -46,5 +48,6 @@
   .t { flex: 1; padding: .5rem .6rem .7rem; display: flex; flex-direction: column; gap: .25rem; font-size: .85rem; }
   .name { display: -webkit-box; -webkit-line-clamp: 2; line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; min-height: 2.6em; line-height: 1.3; } /* always two lines of space */
   .act { margin-top: auto; padding-top: .35rem; min-height: 44px; display: flex; align-items: center; }
-  .act button { width: 100%; min-height: 36px; padding: .3rem .6rem; font-size: .85rem; }
+  .act.tr { margin-top: 0; padding-top: 0; min-height: 0; }
+  .act button, .act :global(button) { width: 100%; min-height: 36px; padding: .3rem .6rem; font-size: .85rem; }
 </style>
