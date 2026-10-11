@@ -1,9 +1,10 @@
 <script lang="ts">
   import { onDestroy, onMount } from 'svelte';
-  import { page } from '$app/stores';
-  import { api, fmtClock, img, type Item } from '$lib/api';
-  import Icon from '$lib/Icon.svelte';
-  import { castToTv, holdRemote, sendToTv, tvOnline, tvStatus } from '$lib/remote';
+  import { pageStore } from '#lib/page';
+  const page = pageStore();
+  import { api, fmtClock, img, type Item } from '#lib/api';
+  import Icon from '#lib/Icon.svelte';
+  import { castToTv, holdRemote, sendToTv, tvOnline, tvStatus } from '#lib/remote';
 
   let release: (() => void) | undefined;
   let codeIn = '', fromLink = false, msg = '', busy = false, pairOpen = true;

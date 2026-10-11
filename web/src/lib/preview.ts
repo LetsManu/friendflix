@@ -1,5 +1,5 @@
 import { get, writable } from 'svelte/store';
-import { api, ApiError } from '$lib/api';
+import { api, ApiError } from '#lib/api';
 
 /** Owner of the preview that is running right now (a card's item id, or `hero:<id>`) - only one at a time. */
 export const previewOwner = writable<string>('');

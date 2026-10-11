@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onDestroy, onMount } from 'svelte';
-  import { api, img } from '$lib/api';
+  import { api, img } from '#lib/api';
   let items: any[] = [], t: ReturnType<typeof setInterval>;
   const load = async () => (items = (await api('/api/nowplaying')).items);
   onMount(() => { load(); t = setInterval(load, 5000); });

@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { api } from '$lib/api';
+  import { api } from '#lib/api';
   let invites: any[] = [], role = 'friend', ttl = 48, note = '', created: { link: string } | null = null;
   const load = async () => (invites = (await api('/api/admin/invites')).invites);
   onMount(load);

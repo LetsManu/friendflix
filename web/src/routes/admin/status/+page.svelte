@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { api } from '$lib/api';
+  import { api } from '#lib/api';
   let s: any = null;
   onMount(async () => (s = await api('/api/admin/status')));
 </script>

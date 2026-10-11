@@ -1,5 +1,6 @@
 <script lang="ts">
-  import { page } from '$app/stores';
+  import { pageStore } from '#lib/page';
+  const page = pageStore();
   const tabs: Array<[string, string]> = [['/admin', 'Nutzer'], ['/admin/status', 'Status'], ['/admin/invites', 'Einladungen'], ['/admin/requests', 'Wünsche'], ['/admin/polls', 'Abstimmungen'], ['/admin/devices', 'Geräte'], ['/admin/audit', 'Audit-Log']];
 </script>
 <h1>Admin</h1>

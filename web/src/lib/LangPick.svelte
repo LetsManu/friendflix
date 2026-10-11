@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { api } from '$lib/api';
+  import { api } from '#lib/api';
   /** movie or episode that would be played (for a series: the next episode) */
   export let targetId: string;
   /** remembers the choice per title/series on this device */

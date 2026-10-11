@@ -1,12 +1,12 @@
 <script lang="ts">
   import Hls from 'hls.js';
   import { createEventDispatcher, onDestroy, onMount, tick as tickDom } from 'svelte';
-  import { api, fmtClock, secToTicks } from '$lib/api';
-  import Icon from '$lib/Icon.svelte';
+  import { api, fmtClock, secToTicks } from '#lib/api';
+  import Icon from '#lib/Icon.svelte';
   import { get } from 'svelte/store';
-  import { prefs } from '$lib/stores';
-  import { nowPlaying } from '$lib/remote';
-  import { isBackKey } from '$lib/spatial';
+  import { prefs } from '#lib/stores';
+  import { nowPlaying } from '#lib/remote';
+  import { isBackKey } from '#lib/spatial';
 
   export let itemId: string;
   /** shown on the phone's remote while this plays */

@@ -1,8 +1,8 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { api } from '$lib/api';
-  import Icon from '$lib/Icon.svelte';
-  import { shareCard } from '$lib/wrapped';
+  import { api } from '#lib/api';
+  import Icon from '#lib/Icon.svelte';
+  import { shareCard } from '#lib/wrapped';
   let s: any = null, c: any = null, year = new Date().getFullYear();
   const months = ['Jan', 'Feb', 'Mär', 'Apr', 'Mai', 'Jun', 'Jul', 'Aug', 'Sep', 'Okt', 'Nov', 'Dez'];
   async function load() { s = await api(`/api/stats/me?year=${year}`); c = await api('/api/stats/community'); }

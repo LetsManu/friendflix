@@ -1,11 +1,12 @@
 <script lang="ts">
   let innerWidth = 1200;
   import { onDestroy, onMount, tick } from 'svelte';
-  import { page } from '$app/stores';
+  import { pageStore } from '#lib/page';
+  const page = pageStore();
   import { goto } from '$app/navigation';
-  import Icon from '$lib/Icon.svelte';
-  import { api } from '$lib/api';
-  import Player from '$lib/Player.svelte';
+  import Icon from '#lib/Icon.svelte';
+  import { api } from '#lib/api';
+  import Player from '#lib/Player.svelte';
 
   const EMOJIS = ['😂', '😮', '😢', '❤️', '👏', '🔥', '👍', '🍿'];
   const DRIFT = 0.3; // seconds: seek when further apart than ~300 ms

@@ -1,12 +1,13 @@
 <script lang="ts">
   import { onDestroy, tick } from 'svelte';
-  import { page } from '$app/stores';
+  import { pageStore } from '#lib/page';
+  const page = pageStore();
   import { goto } from '$app/navigation';
-  import { api, type Item } from '$lib/api';
-  import Icon from '$lib/Icon.svelte';
-  import Player from '$lib/Player.svelte';
-  import { prefs } from '$lib/stores';
-  import { isBackKey } from '$lib/spatial';
+  import { api, type Item } from '#lib/api';
+  import Icon from '#lib/Icon.svelte';
+  import Player from '#lib/Player.svelte';
+  import { prefs } from '#lib/stores';
+  import { isBackKey } from '#lib/spatial';
 
   let video: HTMLVideoElement | null = null;
   let item: Item | null = null, nextEp: Item | null = null;

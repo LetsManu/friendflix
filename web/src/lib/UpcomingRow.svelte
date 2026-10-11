@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { api, ApiError } from '$lib/api';
+  import { api, ApiError } from '#lib/api';
 
   /** "Demnächst": upcoming releases from Seerr with a one-click wish. */
   export let type: 'movie' | 'tv' = 'movie';

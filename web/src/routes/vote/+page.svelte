@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onDestroy, onMount } from 'svelte';
-  import { api, type Item } from '$lib/api';
+  import { api, type Item } from '#lib/api';
 
   let polls: any[] = [], now = Date.now(), timer: ReturnType<typeof setInterval>, msg = '';
   let creating = false, title = 'Filmabend', closes = 60, after = 10, options: Array<{ key: string; label: string; body: object }> = [];

@@ -1,8 +1,9 @@
 <script lang="ts">
-  import { page } from '$app/stores';
+  import { pageStore } from '#lib/page';
+  const page = pageStore();
   import { goto } from '$app/navigation';
-  import { api, type Item } from '$lib/api';
-  import Card from '$lib/Card.svelte';
+  import { api, type Item } from '#lib/api';
+  import Card from '#lib/Card.svelte';
 
   let items: Item[] | null = null, total = 0, start = 0, genres: string[] = [], busy = false;
   const PAGE = 60;
@@ -30,9 +31,9 @@
   $: if (!genres.length) api('/api/library/genres').then((r) => (genres = r.genres)).catch(() => undefined);
 
   function set(key: string, value: string) {
-    const u = new URL($page.url);
+    const u = new URL($page.url.href);
     if (value) u.searchParams.set(key, value); else u.searchParams.delete(key);
-    goto(u, { keepFocus: true, noScroll: true });
+    goto(u, { reset: false });
   }
 </script>
 

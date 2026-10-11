@@ -1,8 +1,9 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { page } from '$app/stores';
-  import { api, type Item } from '$lib/api';
-  import Card from '$lib/Card.svelte';
+  import { pageStore } from '#lib/page';
+  const page = pageStore();
+  import { api, type Item } from '#lib/api';
+  import Card from '#lib/Card.svelte';
 
   let rooms: any[] = [], pick: Item | null = null, results: Item[] = [], q = '', delay = 0, busy = false;
   const preItem = $page.url.searchParams.get('item');
