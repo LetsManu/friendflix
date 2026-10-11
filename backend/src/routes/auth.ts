@@ -4,7 +4,9 @@ import { dropRemotePeers } from './tv.js';
 import { audit } from '../audit.js';
 import type { Ctx } from '../ctx.js';
 import { COOKIE, loadSession, newSession, rand, requireUser, saveSession } from '../session.js';
-import { registerDevice } from '../devices.js';
+import { revokeCasts } from '../cast.js';
+import { deviceHasSession, registerDevice } from '../devices.js';
+import { deletePushSubscriptions } from '../push.js';
 import { claimInvite, deleteAuthentikInvitation, enrollFlowUrl, lookupInvite, releaseInvite, type InviteRow } from '../invites.js';
 import { accountJellyfinIds, listProfiles, publicProfile } from '../profiles.js';
 import { applyRole, getUserBySub, provisionUser } from '../users.js';
@@ -134,6 +136,11 @@ export function authRoutes(app: FastifyInstance, ctx: Ctx) {
     if (sent.length !== want.length || !timingSafeEqual(sent, want)) return reply.code(403).send({ error: 'csrf' });
     await ctx.kv.del(`sess:${sid}`);
     dropRemotePeers(s.userId, new Set([sid]));
+    // this device's push subscriptions and cast tokens must not outlive its login (unless another live session still uses the device)
+    if (s.deviceId && !(await deviceHasSession(ctx, s.userId, s.deviceId))) {
+      await revokeCasts(ctx, s.userId, s.deviceId);
+      await deletePushSubscriptions(ctx, s.userId, s.deviceId);
+    }
     reply.clearCookie(COOKIE, { path: '/' });
     return { status: 'ok' };
   });

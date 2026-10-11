@@ -1,6 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
-import { castEnabled, castTtlSeconds, createCast, revokeCast } from '../cast.js';
+import { CAST_MAX_BITRATE, CAST_MAX_HEIGHT, castEnabled, castTtlSeconds, createCast, revokeCast } from '../cast.js';
 import type { Ctx } from '../ctx.js';
 import { JellyfinError } from '../jellyfin/client.js';
 import { countLive } from '../live.js';
@@ -8,9 +8,6 @@ import { effectiveRole } from '../roles.js';
 import { requireUser } from '../session.js';
 
 const itemId = z.string().transform((s) => s.replace(/-/g, '').toLowerCase()).pipe(z.string().regex(/^[0-9a-f]{32}$/));
-/** the Chromecast stream is capped well below the role limit: the Default Media Receiver decodes H.264 up to level 4.1 */
-export const CAST_MAX_BITRATE = 20_000_000;
-export const CAST_MAX_HEIGHT = 1080;
 
 export function castRoutes(app: FastifyInstance, ctx: Ctx) {
   const pre = { preHandler: requireUser(ctx) };
@@ -37,11 +34,12 @@ export function castRoutes(app: FastifyInstance, ctx: Ctx) {
       const maxHeight = Math.min(role.maxHeight ?? CAST_MAX_HEIGHT, CAST_MAX_HEIGHT);
       const info = await ctx.jf.playbackInfo(req.jfUser!, b.itemId, { maxBitrate, maxHeight, startTicks, audioIndex: b.audioIndex, cast: true });
       const ttl = castTtlSeconds(info.runtimeTicks, startTicks);
-      const { ct, castId, expiresAt } = await createCast(ctx, {
-        userId: req.user!.id, profileId: req.profile!.id, deviceId, itemId: b.itemId, mediaSourceId: info.mediaSourceId, playSessionId: info.playSessionId, maxBitrate,
-      }, ttl);
+      const { ct, imgCt, castId, expiresAt } = await createCast(ctx, {
+        userId: req.user!.id, profileId: req.profile!.id, deviceId, itemId: b.itemId, mediaSourceId: info.mediaSourceId, playSessionId: info.playSessionId, maxBitrate, title: item.name,
+      }, ttl, Boolean(item.image));
       // Jellyfin returns /media/... URLs; the cast variant carries the token in the path: /media/c/<ct>/...
-      const abs = (u: string) => `${ctx.cfg.PUBLIC_URL.replace(/\/+$/, '')}/media/c/${ct}${u.slice('/media'.length)}`;
+      const absWith = (t: string, u: string) => `${ctx.cfg.PUBLIC_URL.replace(/\/+$/, '')}/media/c/${t}${u.slice('/media'.length)}`;
+      const abs = (u: string) => absWith(ct, u);
       reply.header('Cache-Control', 'no-store');
       return {
         castId,
@@ -55,7 +53,8 @@ export function castRoutes(app: FastifyInstance, ctx: Ctx) {
         hlsSegmentFormat: 'ts',
         title: item.name,
         seriesName: item.seriesName,
-        imageUrl: item.image ? abs(`/media/Items/${b.itemId}/Images/Primary?maxWidth=600`) : undefined,
+        // the poster gets its own image-only token: the media token must never appear in a URL the receiver shows or fetches as an image
+        imageUrl: imgCt ? absWith(imgCt, `/media/Items/${b.itemId}/Images/Primary?maxWidth=600`) : undefined,
         subtitles: info.subtitles.map((s) => ({ index: s.index, language: s.language, title: s.title, url: abs(s.url) })),
       };
     } catch (e) {

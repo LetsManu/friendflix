@@ -81,10 +81,11 @@ export function internalRoutes(app: FastifyInstance, ctx: Ctx) {
     if (!checkSecret(req, 'x-internal-secret', ctx.cfg.INTERNAL_SECRET)) return reply.code(403).send({ error: 'forbidden' });
     const body = z.union([
       z.object({ sid: z.string().regex(/^[\w-]{20,80}$/) }).strict(),
-      z.object({ ct: z.string().regex(CAST_TOKEN_RE) }).strict(),
+      // client = address the gateway derived for the caller (X-Real-IP / last XFF): the first one to use a token pins it
+      z.object({ ct: z.string().regex(CAST_TOKEN_RE), client: z.string().min(1).max(64) }).strict(),
     ]).safeParse(req.body);
     if (!body.success) return reply.code(400).send({ error: 'bad_request' });
-    const a = 'ct' in body.data ? await resolveCast(ctx, body.data.ct) : await mediaAuth(body.data.sid);
+    const a = 'ct' in body.data ? await resolveCast(ctx, body.data.ct, body.data.client) : await mediaAuth(body.data.sid);
     return a ?? reply.code(401).send({ error: 'unauthenticated' });
   });
 

@@ -13,8 +13,9 @@ export default defineConfig({
         mode: 'auto',
         directives: {
           'default-src': ['self'],
-          // gstatic: Google Cast sender SDK (loaded lazily by lib/cast.ts, only on Chromium when casting is enabled)
-          'script-src': ['self', 'https://www.gstatic.com'],
+          // gstatic: Google Cast sender SDK (loaded lazily by lib/cast.ts, only on Chromium when casting is enabled), path-scoped.
+          // TODO verify on hardware (Chrome + Chromecast): if the SDK loads further scripts from other gstatic paths, add only those paths.
+          'script-src': ['self', 'https://www.gstatic.com/cv/js/sender/', 'https://www.gstatic.com/cast/sdk/libs/'],
           'style-src': ['self', 'unsafe-inline'],
           'font-src': ['self', 'data:'],
           'img-src': ['self', 'data:', 'blob:'],

@@ -189,4 +189,12 @@ describe('config file secrets', () => {
     const c = loadConfig({ ...base, PIP_CONFIG_FILE: '/does/not/exist' });
     expect(c.OIDC_CLIENT_SECRET).toBe('from-file');
   });
+  it('an empty value or empty secret file counts as unset (push disabled with an empty vapid_private_key file)', async () => {
+    const { writeFileSync } = await import('node:fs');
+    writeFileSync('/tmp/ff-secret-empty', '\n');
+    const base = { PUBLIC_URL: 'https://p.example.com', DATABASE_URL: 'x', REDIS_URL: 'x', APP_ENC_KEY: 'k'.repeat(44), INTERNAL_SECRET: 'i'.repeat(20), OIDC_ISSUER: 'https://a.example.com', OIDC_CLIENT_ID: 'c', OIDC_CLIENT_SECRET: 's', JELLYFIN_URL: 'http://j', JELLYFIN_ADMIN_API_KEY: 'k', SEERR_URL: 'http://s', SEERR_API_KEY: 'k', WEBHOOK_SECRET: 'w'.repeat(20) };
+    const c = loadConfig({ ...base, VAPID_PUBLIC_KEY: 'pub', VAPID_PRIVATE_KEY: '', VAPID_PRIVATE_KEY_FILE: '/tmp/ff-secret-empty', PIP_CONFIG_FILE: '/does/not/exist' });
+    expect(c.VAPID_PRIVATE_KEY).toBeUndefined();
+    expect(loadConfig({ ...base, VAPID_PRIVATE_KEY: '', PIP_CONFIG_FILE: '/does/not/exist' }).VAPID_PRIVATE_KEY).toBeUndefined();
+  });
 });

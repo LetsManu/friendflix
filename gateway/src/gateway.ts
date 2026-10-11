@@ -17,6 +17,10 @@ interface Authz {
   maxBitrate: number;
   /** only present for Chromecast tokens: the one item / media source / play session the token may touch */
   scope?: { itemId: string; mediaSourceId: string; playSessionId: string };
+  /** cast only: 'img' tokens may fetch poster images and nothing else (default 'media') */
+  kind?: 'media' | 'img';
+  /** cast only: resolution cap for the token (role limit, at most 1080) */
+  maxHeight?: number;
 }
 
 const ID = '[0-9a-fA-F]{32}';
@@ -45,8 +49,11 @@ export const CAST_PATHS: RegExp[] = [
 ];
 const CAST_ROUTE = /^\/media\/c\/([A-Za-z0-9_-]{43})(\/.*)$/;
 const CAST_PREFIX = '/media/c/';
-const CAST_PLAYLIST_MAX = 1024 * 1024;
-const CAST_FAIL_LIMIT = 30; // failed token auths per minute and client address
+const CAST_PLAYLIST_MAX = 8 * 1024 * 1024; // very long films at short segment lengths reach several MB
+const CAST_DROP_QUERY = new Set(['livestreamid', 'deviceid']);
+const CAST_CLAMP_HEIGHT = ['maxheight', 'height'];
+const CAST_CLAMP_WIDTH = ['maxwidth', 'width'];
+const CAST_FAIL_LIMIT = 30; // DISTINCT failing tokens per minute and client address
 const CAST_BLOCK_MS = 5 * 60_000;
 const CAST_CORS: Record<string, string> = {
   'access-control-allow-origin': '*',
@@ -90,22 +97,36 @@ export function stripUriTokens(uri: string): string {
 }
 
 /**
- * Cast playlist hardening: strips api_key-like params from every URI and refuses (null) absolute URIs, which would make
- * the receiver fetch from a host/path outside /media/c/<token>/ (leaking the token's scope or bypassing the gateway).
+ * Cast playlist hardening: strips api_key-like params from every URI and refuses (null) any URI that does not stay inside
+ * /media/c/<token>/ on the same origin once resolved against the playlist's own URL (absolute URLs, //host, /abs paths,
+ * ../ escapes, backslash tricks): the receiver would otherwise fetch from another host/path and leak or bypass the gateway.
+ * `requestPath` is the public path the playlist was requested at (/media/c/<token>/Videos/<id>/main.m3u8).
  */
-export function sanitizePlaylist(text: string): string | null {
-  const absolute = (u: string) => u.startsWith('/') || /^[a-z][a-z0-9+.-]*:/i.test(u);
+export function sanitizePlaylist(text: string, requestPath: string): string | null {
+  const m = CAST_ROUTE.exec(requestPath);
+  if (!m) return null;
+  const prefix = `${CAST_PREFIX}${m[1]}/`;
+  const base = `https://h${requestPath.slice(0, requestPath.lastIndexOf('/') + 1)}`;
   let bad = false;
+  const check = (u: string) => {
+    if (u.includes('\\')) return void (bad = true);
+    try {
+      const r = new URL(u, base);
+      if (r.origin !== 'https://h' || !r.pathname.startsWith(prefix)) bad = true;
+    } catch {
+      bad = true;
+    }
+  };
   const out = text.split(/\r?\n/).map((line) => {
     if (line.startsWith('#')) {
-      return line.replace(/URI="([^"]*)"/gi, (_m, u: string) => {
-        if (absolute(u)) bad = true;
-        return `URI="${stripUriTokens(u)}"`;
+      return line.replace(/(URI\s*=\s*["']?)([^"',]*)/gi, (_m, pre: string, u: string) => {
+        check(u);
+        return `${pre}${stripUriTokens(u)}`;
       });
     }
     const t = line.trim();
     if (!t) return line;
-    if (absolute(t)) bad = true;
+    check(t);
     return stripUriTokens(t);
   });
   return bad ? null : out.join('\n');
@@ -121,7 +142,7 @@ export function createGateway(opts: GatewayOptions): { server: Server; metrics: 
   const base = new URL(opts.jellyfinUrl);
   const authCache = new Map<string, { exp: number; v: Authz | null }>();
   const castCache = new Map<string, { exp: number; v: Authz | null }>();
-  const castFails = new Map<string, { start: number; n: number; blockedUntil: number }>();
+  const castFails = new Map<string, { start: number; hashes: Set<string>; blockedUntil: number }>();
   const m = { bytes: 0, active: 0, req: new Map<string, number>(), cast: new Map<string, number>() };
   const count = (k: string) => m.req.set(k, (m.req.get(k) ?? 0) + 1);
 
@@ -199,19 +220,20 @@ export function createGateway(opts: GatewayOptions): { server: Server; metrics: 
     return (last || req.socket.remoteAddress || 'unknown').slice(0, 64);
   };
   const isBlocked = (ip: string) => (castFails.get(ip)?.blockedUntil ?? 0) > Date.now();
-  function noteFail(ip: string) {
+  /** counts DISTINCT failing token hashes per window: one stale/revoked token retried by a receiver is not an attack, guessing is */
+  function noteFail(ip: string, tokenHash: string) {
     const now = Date.now();
     let e = castFails.get(ip);
-    if (!e || now - e.start > 60_000) e = { start: now, n: 0, blockedUntil: e?.blockedUntil ?? 0 };
-    e.n++;
-    if (e.n > CAST_FAIL_LIMIT) e.blockedUntil = now + CAST_BLOCK_MS;
+    if (!e || now - e.start > 60_000) e = { start: now, hashes: new Set(), blockedUntil: e?.blockedUntil ?? 0 };
+    if (e.hashes.size <= CAST_FAIL_LIMIT) e.hashes.add(tokenHash); // bounded memory
+    if (e.hashes.size > CAST_FAIL_LIMIT) e.blockedUntil = now + CAST_BLOCK_MS;
     castFails.set(ip, e);
     if (castFails.size > 5000) castFails.clear();
   }
 
   /** 'error' = backend unreachable/failing (not the caller's fault: never counted as a failed auth). */
-  async function authorizeCast(ct: string): Promise<Authz | null | 'error'> {
-    const key = sha256(ct); // the raw token is never used as a cache key
+  async function authorizeCast(ct: string, client: string): Promise<Authz | null | 'error'> {
+    const key = `${sha256(ct)}|${client}`; // the raw token is never used as a cache key; the answer depends on the client (first client pins the token)
     const hit = castCache.get(key);
     if (hit && hit.exp > Date.now()) return hit.v;
     let v: Authz | null = null;
@@ -219,7 +241,7 @@ export function createGateway(opts: GatewayOptions): { server: Server; metrics: 
       const r = await f(new URL('/internal/authz', opts.backendUrl), {
         method: 'POST',
         headers: { 'x-internal-secret': opts.internalSecret, 'content-type': 'application/json' },
-        body: JSON.stringify({ ct }),
+        body: JSON.stringify({ ct, client }),
         signal: AbortSignal.timeout(5000),
       });
       if (r.ok) {
@@ -275,15 +297,20 @@ export function createGateway(opts: GatewayOptions): { server: Server; metrics: 
       castCount('414');
       return cors(414, 'query too long');
     }
-    const auth = await authorizeCast(mm[1]!);
+    const tokenHash = sha256(mm[1]!);
+    const auth = await authorizeCast(mm[1]!, ip);
     if (auth === 'error') {
       castCount('503');
       return cors(503, 'unavailable');
     }
     if (!auth || !auth.scope) {
-      noteFail(ip);
+      noteFail(ip, tokenHash);
       castCount('401');
       return cors(401, 'unauthorized');
+    }
+    if (auth.kind === 'img' && !IMAGE_PATH.test(path)) {
+      castCount('403'); // poster tokens may fetch images only
+      return cors(403, 'forbidden');
     }
     if (!inScope(path, url, auth.scope)) {
       castCount('403');
@@ -298,6 +325,14 @@ export function createGateway(opts: GatewayOptions): { server: Server; metrics: 
     for (const [k, v] of url.searchParams) {
       const lk = k.toLowerCase();
       if (STRIP_QUERY.has(lk)) continue;
+      if (cast && CAST_DROP_QUERY.has(lk)) continue; // stream/device identity comes from the token, never from the receiver's URL
+      if (cast && (CAST_CLAMP_HEIGHT.includes(lk) || CAST_CLAMP_WIDTH.includes(lk))) {
+        const cap = auth.maxHeight ?? 1080;
+        const lim = CAST_CLAMP_WIDTH.includes(lk) ? Math.ceil((cap * 16) / 9) : cap; // widths: 16:9 equivalent of the height cap
+        const n = Number(v);
+        target.searchParams.set(k, String(Number.isFinite(n) && n > 0 ? Math.min(n, lim) : lim));
+        continue;
+      }
       if (CLAMP_QUERY.includes(lk)) {
         const n = Number(v);
         target.searchParams.set(k, String(Number.isFinite(n) && n > 0 ? Math.min(n, auth.maxBitrate) : auth.maxBitrate));
@@ -351,7 +386,7 @@ export function createGateway(opts: GatewayOptions): { server: Server; metrics: 
     }
 
     if (playlist && up.status === 200) {
-      // buffered (<1 MB) so every URI can be checked: Jellyfin may emit api_key params or absolute URLs
+      // buffered (<8 MB) so every URI can be checked: Jellyfin may emit api_key params or absolute URLs
       const len = Number(up.headers.get('content-length') ?? 0);
       if (len > CAST_PLAYLIST_MAX) return end(res, 502, 'bad gateway', 'text/plain', extra);
       if (req.method === 'HEAD') {
@@ -360,7 +395,7 @@ export function createGateway(opts: GatewayOptions): { server: Server; metrics: 
         return void res.end();
       }
       const buf = Buffer.from(await up.arrayBuffer());
-      const clean = buf.length > CAST_PLAYLIST_MAX ? null : sanitizePlaylist(buf.toString('utf8'));
+      const clean = buf.length > CAST_PLAYLIST_MAX ? null : sanitizePlaylist(buf.toString('utf8'), url.pathname);
       if (clean === null) {
         countCode('502');
         return end(res, 502, 'bad gateway', 'text/plain', extra);
