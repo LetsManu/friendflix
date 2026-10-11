@@ -10,6 +10,9 @@ COPY web web
 RUN npm run build -w web
 
 FROM node:22-alpine
+ARG GIT_SHA=dev
+ARG BUILD_TIME=
+ENV GIT_SHA=$GIT_SHA BUILD_TIME=$BUILD_TIME
 ENV NODE_ENV=production PORT=3000 HOST=0.0.0.0
 WORKDIR /app
 # Runtime needs only node; the npm/yarn bundled in the base image only adds CVEs.

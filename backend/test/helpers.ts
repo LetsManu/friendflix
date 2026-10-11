@@ -22,6 +22,8 @@ export const cfg: Config = {
   NTFY_URL: undefined, DISCORD_WEBHOOK_URL: undefined, METRICS_TOKEN: undefined, AUTHENTIK_URL: undefined, AUTHENTIK_API_TOKEN: undefined,
   AUTHENTIK_ENROLL_FLOW: undefined, ROLE_TEMPLATES: undefined, OIDC_ALLOW_INSECURE: 'false', BACKGROUND_JOBS: 'false',
   PREVIEW_DIR: '/tmp/ff-test-previews', PREVIEW_WARM: 'false',
+  GIT_SHA: 'dev', BUILD_TIME: undefined, UPDATE_REPO: 'LetsManu/friendflix', GITHUB_TOKEN: undefined, PORTAINER_WEBHOOK_URL: undefined, PORTAINER_URL: undefined,
+  PORTAINER_API_KEY: undefined, PORTAINER_STACK_ID: undefined, PORTAINER_ENDPOINT_ID: 1,
 };
 
 export type Handler = (url: URL, init: RequestInit, body: any) => { status?: number; json?: unknown; raw?: string | Uint8Array } | undefined;

@@ -10,6 +10,7 @@ import { stat } from 'node:fs/promises';
 import { defaultLimit } from '../requestlimit.js';
 import { INVITABLE_ROLES } from '../roles.js';
 import { requireAdmin, requireUser } from '../session.js';
+import { portainerMode, triggerUpdate, updateInfo } from '../updates.js';
 import { applyRole, getUserById } from '../users.js';
 
 const uuid = z.guid();
@@ -58,6 +59,22 @@ export function adminRoutes(app: FastifyInstance, ctx: Ctx) {
       summary: { total: rows.length, ok: count('ok'), failed: count('failed'), missing: count('missing'), preparing: count('preparing'), totalBytes: rows.reduce((a, r) => a + (r.bytes ?? 0), 0) },
       items: rows,
     };
+  });
+
+  app.get('/api/admin/update', admin, async (req) => updateInfo(ctx, (req.query as { refresh?: string }).refresh === '1'));
+
+  // one redeploy per 2 minutes for the whole portal (not per IP): a double click or a second admin must not restart the stack twice
+  app.post('/api/admin/update', { ...admin, config: { rateLimit: { max: 1, timeWindow: '2 minutes', keyGenerator: () => 'update' } } }, async (req, reply) => {
+    const mode = portainerMode(ctx);
+    if (!mode) return reply.code(409).send({ error: 'not_configured' });
+    const info = await updateInfo(ctx);
+    await audit(ctx, req.user!.id, 'system.update', undefined, { from: info.current.sha, to: info.latest?.sha ?? null, mode });
+    const r = await triggerUpdate(ctx, mode);
+    if (!r.ok) {
+      req.log.error({ status: r.status, error: r.error }, 'portainer update failed');
+      return reply.code(502).send({ error: r.error, status: r.status });
+    }
+    return reply.code(202).send({ ok: true, mode });
   });
 
   app.post('/api/admin/playback-check', admin, async (_req, reply) => {

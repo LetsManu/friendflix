@@ -51,6 +51,18 @@ const schema = z.object({
   PREVIEW_DIR: z.string().default('/data/previews'),
   /** background warmer: pre-generates one missing clip per minute while idle */
   PREVIEW_WARM: z.enum(['true', 'false']).default('true'),
+  /** baked into the images at build time (Dockerfile ARG), 'dev' when built locally */
+  GIT_SHA: z.string().default('dev').transform((v) => v || 'dev'),
+  BUILD_TIME: opt,
+  /** GitHub repo checked for newer versions (Admin -> Update) */
+  UPDATE_REPO: z.string().regex(/^[\w.-]+\/[\w.-]+$/).default('LetsManu/friendflix'),
+  GITHUB_TOKEN: opt,
+  /** one-click update: Portainer stack webhook, or API (URL + key + stack id) */
+  PORTAINER_WEBHOOK_URL: opt,
+  PORTAINER_URL: opt,
+  PORTAINER_API_KEY: opt,
+  PORTAINER_STACK_ID: opt,
+  PORTAINER_ENDPOINT_ID: z.coerce.number().int().default(1),
   BACKGROUND_JOBS: z.enum(['true', 'false']).default('true'),
 });
 

@@ -10,6 +10,9 @@ COPY gateway gateway
 RUN npm run build -w gateway
 
 FROM node:26-alpine
+ARG GIT_SHA=dev
+ARG BUILD_TIME=
+ENV GIT_SHA=$GIT_SHA BUILD_TIME=$BUILD_TIME
 ENV NODE_ENV=production
 WORKDIR /app
 # Runtime needs only node; the npm/yarn bundled in the base image only adds CVEs.
