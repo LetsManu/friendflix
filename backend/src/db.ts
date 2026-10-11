@@ -213,6 +213,20 @@ export const MIGRATIONS: string[] = [
     created_at timestamptz not null default now()
   );
   `,
+  // playback health check: last finished report
+  `
+  create table playback_checks (
+    id serial primary key,
+    started_at timestamptz not null,
+    finished_at timestamptz not null,
+    results jsonb not null
+  );
+  `,
+  // preview clips: remember the audio language; drop clips built with random default tracks so the warmer rebuilds them
+  `
+  alter table preview_clips add column audio_lang text;
+  delete from preview_clips;
+  `,
 ];
 
 export async function migrate(pool: pg.Pool): Promise<void> {

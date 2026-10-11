@@ -41,13 +41,21 @@ async function pickSource(ctx: Ctx, user: UserRow, id: string): Promise<{ videoI
   return null;
 }
 
+const lang = (t: { language?: string }) => (t.language ?? '').toLowerCase();
+/** Clips are shared: German, else English, else the file's default track, else the first. */
+export function pickPreviewAudio<T extends { language?: string; isDefault: boolean }>(tracks: T[]): T | undefined {
+  return tracks.find((t) => ['ger', 'deu', 'de'].includes(lang(t))) ?? tracks.find((t) => ['eng', 'en'].includes(lang(t))) ?? tracks.find((t) => t.isDefault) ?? tracks[0];
+}
+
 /** Transcodes the clip once (init segment + 10 HLS segments from Jellyfin), rebases its timestamps, stores it atomically. */
-async function build(ctx: Ctx, user: UserRow, id: string): Promise<number> {
+async function build(ctx: Ctx, user: UserRow, id: string): Promise<{ bytes: number; audioLang: string | null }> {
   const src = await pickSource(ctx, user, id);
   if (!src) throw new Error('no source');
   const info = await ctx.jf.playbackInfo(user, src.videoId, { maxBitrate: 1_500_000 });
   const master = new URL(info.hlsUrl.replace(/^\/media/, ''), 'http://jf.invalid');
   const q = master.searchParams;
+  const audio = pickPreviewAudio(info.audioTracks);
+  if (audio) q.set('AudioStreamIndex', String(audio.index));
   for (const [k, v] of Object.entries({
     SegmentContainer: 'mp4', VideoCodec: 'h264', AudioCodec: 'aac', AllowVideoStreamCopy: 'false', AllowAudioStreamCopy: 'false',
     VideoBitrate: '1200000', AudioBitrate: '128000', MaxWidth: '1280', TranscodingMaxAudioChannels: '2', MaxStreamingBitrate: '1500000',
@@ -73,7 +81,7 @@ async function build(ctx: Ctx, user: UserRow, id: string): Promise<number> {
     const tmp = `${file}.${process.pid}.tmp`;
     await writeFile(tmp, out);
     await rename(tmp, file);
-    return out.length;
+    return { bytes: out.length, audioLang: audio ? lang(audio) || null : null };
   } finally {
     await ctx.jf.call(user, `/Videos/ActiveEncodings?${new URLSearchParams(encoding)}`, { method: 'DELETE' }).catch(() => undefined);
   }
@@ -85,7 +93,11 @@ class Previews {
   private warming = false;
   constructor(private readonly ctx: Ctx) {}
 
+  /** Set while a playback health check runs: the background warmer stays out of its way. */
+  paused = false;
   get idle() { return this.inflight.size === 0; }
+  /** Ids currently generating or waiting in the queue. */
+  queued(): string[] { return [...this.inflight.keys()]; }
   whenIdle() { return Promise.allSettled([...this.inflight.values()]).then(() => undefined); }
 
   async status(id: string): Promise<'ok' | 'failed' | 'none'> {
@@ -112,16 +124,17 @@ class Previews {
     const user = await serviceUser(ctx);
     if (!user) return; // nothing recorded: retried once an admin exists
     let bytes: number | null = null;
+    let audioLang: string | null = null;
     let error: string | null = null;
     try {
-      bytes = await build(ctx, user, id);
+      ({ bytes, audioLang } = await build(ctx, user, id));
     } catch (e) {
       error = (e instanceof Error ? e.message : String(e)).slice(0, 300);
     }
     await ctx.db.query(
-      `insert into preview_clips(item_id, status, bytes, error) values ($1,$2,$3,$4)
-       on conflict (item_id) do update set status = excluded.status, bytes = excluded.bytes, error = excluded.error, created_at = now()`,
-      [id, error ? 'failed' : 'ok', bytes, error],
+      `insert into preview_clips(item_id, status, bytes, error, audio_lang) values ($1,$2,$3,$4,$5)
+       on conflict (item_id) do update set status = excluded.status, bytes = excluded.bytes, error = excluded.error, audio_lang = excluded.audio_lang, created_at = now()`,
+      [id, error ? 'failed' : 'ok', bytes, error, audioLang],
     );
   }
 
@@ -131,9 +144,16 @@ class Previews {
     void this.enqueue(id).catch(() => undefined);
   }
 
+  /** Re-queues every failed item. */
+  async regenerateFailed(): Promise<number> {
+    const ids = (await this.ctx.db.query<{ item_id: string }>("select item_id from preview_clips where status = 'failed'")).rows.map((r) => r.item_id);
+    for (const id of ids) await this.regenerate(id);
+    return ids.length;
+  }
+
   /** Background warmer: if idle, generates the clip of ONE library title that has no row yet. */
   async warmTick(): Promise<void> {
-    if (this.warming || !this.idle) return;
+    if (this.warming || this.paused || !this.idle) return;
     this.warming = true;
     try {
       const { ctx } = this;
@@ -150,6 +170,16 @@ class Previews {
     } finally {
       this.warming = false;
     }
+  }
+}
+
+/** All library Movies + Series, listed as the service user. */
+export async function libraryItems(ctx: Ctx, user: UserRow): Promise<Array<{ id: string; name: string; type: string }>> {
+  const out: Array<{ id: string; name: string; type: string }> = [];
+  for (let start = 0; ; start += 200) {
+    const page = await ctx.jf.items(user, { types: 'Movie,Series', limit: 200, start });
+    for (const i of page.items) out.push({ id: i.id, name: i.name, type: i.type });
+    if (!page.items.length || start + 200 >= page.total) return out;
   }
 }
 
