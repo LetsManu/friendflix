@@ -19,6 +19,10 @@ export interface ItemQuery {
   ids?: string[];
   genre?: string;
   studio?: string;
+  decade?: number;
+  year?: number;
+  minRating?: number;
+  person?: string;
 }
 
 /**
@@ -104,6 +108,10 @@ export class JellyfinService {
     if (q.ids?.length) p.set('ids', q.ids.join(','));
     if (q.genre) p.set('genres', q.genre);
     if (q.studio) p.set('studios', q.studio);
+    if (q.year) p.set('years', String(q.year)); // year wins over decade
+    else if (q.decade) p.set('years', Array.from({ length: 10 }, (_, n) => q.decade! + n).join(','));
+    if (q.minRating) p.set('minCommunityRating', String(q.minRating));
+    if (q.person) p.set('personIds', q.person);
     const r = await this.json<{ Items: any[]; TotalRecordCount: number }>(user, `/Items?${p}`);
     return { items: r.Items.map(toItemDto), total: r.TotalRecordCount ?? r.Items.length };
   }
@@ -165,9 +173,37 @@ export class JellyfinService {
     return { audio, subtitles, runtimeTicks: i.RunTimeTicks, type: String(i.Type ?? '') };
   }
 
+  /** Genre names of the viewer's libraries; cached 10 min per Jellyfin user (library visibility is per user). */
   async genres(user: JfUser, types = 'Movie,Series'): Promise<string[]> {
+    const key = `genres:${user.jellyfin_user_id}:${types}`;
+    const hit = await this.kv.get(key).catch(() => null);
+    if (hit) {
+      try {
+        return JSON.parse(hit) as string[];
+      } catch {
+        // fall through to a fresh fetch
+      }
+    }
     const r = await this.json<{ Items: Array<{ Name: string }> }>(user, `/Genres?userId=${user.jellyfin_user_id}&includeItemTypes=${types}&sortBy=SortName`);
-    return r.Items.map((g) => g.Name);
+    const names = r.Items.map((g) => g.Name);
+    await this.kv.set(key, JSON.stringify(names), 600).catch(() => undefined);
+    return names;
+  }
+
+  /**
+   * People search. /Persons is library-global in older Jellyfin versions; passing userId scopes it to the user's libraries
+   * in 10.9+ (assumption - the people route additionally requires >= 1 visible title before revealing a person).
+   */
+  async searchPeople(user: JfUser, q: string, limit = 12): Promise<Array<{ id: string; name: string; image: boolean }>> {
+    const p = new URLSearchParams({ userId: user.jellyfin_user_id, searchTerm: q, limit: String(limit) });
+    const r = await this.json<{ Items: Array<{ Id: string; Name: string; ImageTags?: { Primary?: string } }> }>(user, `/Persons?${p}`);
+    return r.Items.map((i) => ({ id: i.Id, name: i.Name, image: Boolean(i.ImageTags?.Primary) }));
+  }
+
+  /** Raw Jellyfin item for a person page (caller checks Type === 'Person'). */
+  async person(user: JfUser, id: string): Promise<Record<string, any>> {
+    const uid = user.jellyfin_user_id;
+    return this.compat<Record<string, any>>(user, 'item', [`/Items/${id}?userId=${uid}`, `/Users/${uid}/Items/${id}`]);
   }
 
   /**

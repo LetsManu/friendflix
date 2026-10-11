@@ -15,6 +15,7 @@
       if (my === seq) people = ((r?.people ?? []) as Member[]).slice(0, 20);
     } catch { /* optional section */ }
   }
+  const ROLE: Record<string, string> = { Director: 'Regie', Writer: 'Drehbuch', Producer: 'Produktion', Composer: 'Musik' };
   const initials = (n: string) => n.split(/\s+/).filter(Boolean).slice(0, 2).map((w) => w[0]!.toUpperCase()).join('');
 </script>
 
@@ -26,7 +27,7 @@
         <li><a href="/person/{p.id}">
           <span class="av">{#if p.image}<img src={img(p.id, 160)} alt="" loading="lazy" width="72" height="72" />{:else}<span aria-hidden="true">{initials(p.name)}</span>{/if}</span>
           <span class="nm">{p.name}</span>
-          {#if p.role || p.type}<span class="muted rl">{p.role || p.type}</span>{/if}
+          {#if p.role || ROLE[p.type]}<span class="muted rl">{p.role || ROLE[p.type]}</span>{/if}
         </a></li>
       {/each}
     </ul>

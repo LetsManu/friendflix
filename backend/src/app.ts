@@ -20,6 +20,7 @@ import { prefsRoutes } from './routes/prefs.js';
 import { pollRoutes } from './routes/polls.js';
 import { reminderRoutes } from './routes/reminders.js';
 import { sceneRoutes } from './routes/scenes.js';
+import { searchRoutes } from './routes/search.js';
 import { seerrRoutes } from './routes/seerr.js';
 import { statsRoutes } from './routes/stats.js';
 import { tvRoutes } from './routes/tv.js';
@@ -105,6 +106,7 @@ export async function buildApp(ctx: Ctx, extra: Extra = {}): Promise<FastifyInst
   listRoutes(app, ctx);
   pushRoutes(app, ctx);
   downloadRoutes(app, ctx);
+  searchRoutes(app, ctx);
   for (const r of extra.register ?? []) await r(app, ctx);
   return app;
 }

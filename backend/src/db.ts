@@ -439,6 +439,11 @@ export const MIGRATIONS: string[] = [
   create unique index downloads_dev_item on downloads(user_id, device_id, profile_id, item_id) where status in ('pending','fetched');
   create index downloads_user_active on downloads(user_id) where status in ('pending','fetched');
   `,
+  // 21: indexes for per-item ratings and per-user thumbs lookups
+  `
+  create index if not exists ratings_item on ratings(item_id);
+  create index if not exists thumbs_user on thumbs(user_id);
+  `,
 ];
 
 export async function migrate(pool: pg.Pool): Promise<void> {
