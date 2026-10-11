@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { hashPin, verifyPin } from '../src/crypto.js';
 import { MemoryKV } from '../src/kv.js';
 import { reapplyRole } from '../src/users.js';
-import { makeEnv, type Handler, type TestEnv } from './helpers.js';
+import { cfg, makeEnv, type Handler, type TestEnv } from './helpers.js';
 
 type Sess = { cookies: Record<string, string>; csrf: string };
 const ITEM = 'a'.repeat(32);
@@ -172,7 +172,7 @@ describe('profiles', () => {
     const jfName = (await env.pool.query<{ jellyfin_username: string }>('select jellyfin_username from profiles where id=$1', [p.id])).rows[0]!.jellyfin_username;
     const owner = s;
     // owner first: the gateway memoises its token for the old sid
-    const authz = (sid: string) => env.app.inject({ method: 'POST', url: '/internal/authz', headers: { 'x-internal-secret': 'internal-secret-123456' }, payload: { sid } });
+    const authz = (sid: string) => env.app.inject({ method: 'POST', url: '/internal/authz', headers: { 'x-internal-secret': cfg.INTERNAL_SECRET }, payload: { sid } });
     const before = await authz(owner.cookies.ff_sid!);
     expect(before.json().token).toBe('tok-Admin');
     const n = sessOf(await call(s, 'POST', `/api/profiles/${p.id}/select`, {}), s);
@@ -217,7 +217,7 @@ describe('profiles', () => {
     expect((await call(s, 'GET', '/api/profiles')).json()).toMatchObject({ activeId: null });
     expect((await call(s, 'GET', '/api/devices')).statusCode).toBe(200);
     expect((await call(s, 'GET', '/api/notifications')).statusCode).toBe(200);
-    expect((await env.app.inject({ method: 'POST', url: '/internal/authz', headers: { 'x-internal-secret': 'internal-secret-123456' }, payload: { sid: s.cookies.ff_sid! } })).statusCode).toBe(401);
+    expect((await env.app.inject({ method: 'POST', url: '/internal/authz', headers: { 'x-internal-secret': cfg.INTERNAL_SECRET }, payload: { sid: s.cookies.ff_sid! } })).statusCode).toBe(401);
     expect((await call(s, 'POST', `/api/profiles/${uid}/select`, { pin: '9999' })).statusCode).toBe(200);
   });
 
