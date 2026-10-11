@@ -1,4 +1,4 @@
-import { createCipheriv, createDecipheriv, createHash, randomBytes } from 'node:crypto';
+import { createCipheriv, createDecipheriv, createHash, randomBytes, scryptSync, timingSafeEqual } from 'node:crypto';
 
 /** AES-256-GCM. Output: base64url(iv | tag | ciphertext). */
 export function encrypt(key: Buffer, plain: string): string {
@@ -24,3 +24,17 @@ export const keyFromBase64 = (b64: string): Buffer => {
 export const randomPassword = () => randomBytes(24).toString('base64url');
 export const randomToken = (bytes = 32) => randomBytes(bytes).toString('base64url');
 export const sha256 = (s: string) => createHash('sha256').update(s).digest('hex');
+
+/** Profile PIN: scrypt with a random 16-byte salt, stored as `scrypt$<salt>$<hash>` (base64url). */
+export function hashPin(pin: string): string {
+  const salt = randomBytes(16);
+  return `scrypt$${salt.toString('base64url')}$${scryptSync(pin, salt, 32).toString('base64url')}`;
+}
+
+export function verifyPin(pin: string, stored: string | null): boolean {
+  const [alg, salt, hash] = (stored ?? '').split('$');
+  if (alg !== 'scrypt' || !salt || !hash) return false;
+  const want = Buffer.from(hash, 'base64url');
+  const got = scryptSync(pin, Buffer.from(salt, 'base64url'), want.length);
+  return got.length === want.length && timingSafeEqual(got, want);
+}

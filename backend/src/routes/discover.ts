@@ -10,7 +10,7 @@ import { clipPath, previews } from '../previews.js';
 import { loadPrefs } from './prefs.js';
 import { requireUser } from '../session.js';
 import { SeerrError, portalStatus } from '../seerr/client.js';
-import type { UserRow } from '../types.js';
+import type { JfUser, UserRow } from '../types.js';
 
 const id32 = z.string().transform((s) => s.replace(/-/g, '').toLowerCase()).pipe(z.string().regex(/^[0-9a-f]{32}$/));
 
@@ -65,12 +65,12 @@ export function discoverRoutes(app: FastifyInstance, ctx: Ctx) {
     if (notShared.length) return reply.code(403).send({ error: 'history_not_shared', names: notShared });
 
     const types = b.type === 'Both' ? 'Movie,Series' : b.type;
-    const everyone = [req.user!, ...others];
+    const everyone = [req.jfUser!, ...others];
     const sets = await Promise.all(everyone.map((u) => ctx.jf.unplayedIds(u, types)));
     const common = [...sets[0]!].filter((id) => sets.every((s) => s.has(id)));
     const total = common.length;
     // details + filters with the requester's token; sort by rating
-    const details = await itemsByIds(ctx, req.user!, common.slice(0, 400));
+    const details = await itemsByIds(ctx, req.jfUser!, common.slice(0, 400));
     let items = details;
     if (b.maxMinutes) items = items.filter((i) => !i.runtimeTicks || i.runtimeTicks <= b.maxMinutes! * 600_000_000);
     if (b.genre) items = items.filter((i) => i.genres.includes(b.genre!));
@@ -81,7 +81,7 @@ export function discoverRoutes(app: FastifyInstance, ctx: Ctx) {
   // ---- Recommend to friends / "Von Freunden empfohlen" ----
   app.post('/api/recommend', pre, wrap(async (req, reply) => {
     const b = z.object({ itemId: id32, toUserIds: z.array(z.guid()).min(1).max(10), note: z.string().trim().max(140).optional() }).parse(req.body);
-    const item = await ctx.jf.item(req.user!, b.itemId); // proves the sender can see it
+    const item = await ctx.jf.item(req.jfUser!, b.itemId); // proves the sender can see it
     const targets = (await ctx.db.query<{ id: string }>('select id from users where id = any($1) and id <> $2 and not disabled', [b.toUserIds, req.user!.id])).rows;
     let sent = 0;
     for (const t of targets) {
@@ -99,7 +99,7 @@ export function discoverRoutes(app: FastifyInstance, ctx: Ctx) {
     const rows = (await ctx.db.query<{ item_id: string; note: string | null; from_name: string }>(
       `select r.item_id, r.note, u.name from_name from recommendations r join users u on u.id=r.from_user
         where r.to_user=$1 and r.created_at > now() - interval '60 days' order by r.seen, r.created_at desc limit 30`, [req.user!.id])).rows;
-    const items = await itemsByIds(ctx, req.user!, [...new Set(rows.map((r) => r.item_id))]);
+    const items = await itemsByIds(ctx, req.jfUser!, [...new Set(rows.map((r) => r.item_id))]);
     const meta = new Map(rows.map((r) => [r.item_id, `Von ${r.from_name}${r.note ? `: ${r.note}` : ''}`]));
     return { items: items.map((i) => ({ ...i, caption: meta.get(i.id) })) };
   }));
@@ -115,9 +115,9 @@ export function discoverRoutes(app: FastifyInstance, ctx: Ctx) {
         where r.user_id <> $1 and r.stars >= 4 and r.created_at > now() - interval '90 days' and not u.disabled
           and coalesce((p.data->>'shareRatings')::boolean, true)
           and r.item_id not in (select item_id from ratings where user_id = $1)
-          and r.item_id not in (select item_id from thumbs where user_id = $1 and value = -1)
-        group by r.item_id order by max(r.created_at) desc limit 24`, [req.user!.id])).rows;
-    const items = await itemsByIds(ctx, req.user!, rows.map((r) => r.item_id));
+          and r.item_id not in (select item_id from thumbs where profile_id = $2 and value = -1)
+        group by r.item_id order by max(r.created_at) desc limit 24`, [req.user!.id, req.profile!.id])).rows;
+    const items = await itemsByIds(ctx, req.jfUser!, rows.map((r) => r.item_id));
     const cap = new Map(rows.map((r) => [r.item_id, r.names.slice(0, 2).join(', ')]));
     return { items: items.filter((i) => !i.played).map((i) => ({ ...i, caption: cap.get(i.id) })) };
   }));
@@ -127,30 +127,30 @@ export function discoverRoutes(app: FastifyInstance, ctx: Ctx) {
     const id = id32.parse((req.params as { id: string }).id);
     const { value } = z.object({ value: z.union([z.literal(-1), z.literal(0), z.literal(1)]) }).parse(req.body);
     if (value === 0) {
-      await ctx.db.query('delete from thumbs where user_id=$1 and item_id=$2', [req.user!.id, id]);
+      await ctx.db.query('delete from thumbs where profile_id=$1 and item_id=$2', [req.profile!.id, id]);
       return { value: 0 };
     }
-    const item = await ctx.jf.item(req.user!, id);
+    const item = await ctx.jf.item(req.jfUser!, id);
     await ctx.db.query(
-      `insert into thumbs(user_id,item_id,value,item_name) values ($1,$2,$3,$4)
-       on conflict (user_id,item_id) do update set value = excluded.value, created_at = now()`,
-      [req.user!.id, id, value, item.name],
+      `insert into thumbs(profile_id,user_id,item_id,value,item_name) values ($1,$2,$3,$4,$5)
+       on conflict (profile_id,item_id) do update set value = excluded.value, created_at = now()`,
+      [req.profile!.id, req.user!.id, id, value, item.name],
     );
     return { value };
   }));
 
   // ---- X-Ray (cast), extras, hover trailer, collections, studios ----
-  app.get('/api/items/:id/people', pre, wrap(async (req) => ({ people: await ctx.jf.people(req.user!, id32.parse((req.params as { id: string }).id)) })));
-  app.get('/api/items/:id/extras', pre, wrap(async (req) => ({ items: await ctx.jf.extras(req.user!, id32.parse((req.params as { id: string }).id)) })));
+  app.get('/api/items/:id/people', pre, wrap(async (req) => ({ people: await ctx.jf.people(req.jfUser!, id32.parse((req.params as { id: string }).id)) })));
+  app.get('/api/items/:id/extras', pre, wrap(async (req) => ({ items: await ctx.jf.extras(req.jfUser!, id32.parse((req.params as { id: string }).id)) })));
   app.get('/api/items/:id/next', pre, wrap(async (req) => {
     const id = id32.parse((req.params as { id: string }).id);
-    const cur = await ctx.jf.item(req.user!, id);
-    return { item: cur.type === 'Episode' && cur.seriesId ? await ctx.jf.nextEpisode(req.user!, cur.seriesId, id) : null };
+    const cur = await ctx.jf.item(req.jfUser!, id);
+    return { item: cur.type === 'Episode' && cur.seriesId ? await ctx.jf.nextEpisode(req.jfUser!, cur.seriesId, id) : null };
   }));
-  app.get('/api/items/:id/tracks', pre, wrap(async (req) => ctx.jf.tracks(req.user!, id32.parse((req.params as { id: string }).id))));
+  app.get('/api/items/:id/tracks', pre, wrap(async (req) => ctx.jf.tracks(req.jfUser!, id32.parse((req.params as { id: string }).id))));
   // Hover/billboard preview: a short clip, transcoded once (service user, background queue) and then served as a plain MP4 file.
   // Route name kept for old clients; `mp4: true` tells the client to use the url as a plain <video src>.
-  const viewable = async (user: UserRow, id: string): Promise<ItemDto | null> => {
+  const viewable = async (user: JfUser, id: string): Promise<ItemDto | null> => {
     try {
       return await ctx.jf.item(user, id);
     } catch (e) {
@@ -159,9 +159,9 @@ export function discoverRoutes(app: FastifyInstance, ctx: Ctx) {
     }
   };
   app.get('/api/items/:id/trailer', pre, wrap(async (req, reply) => {
-    if (!(await loadPrefs(ctx, req.user!.id)).hoverTrailers) return reply.code(404).send({ error: 'disabled' });
+    if (!(await loadPrefs(ctx, req.user!.id, req.profile!.id)).hoverTrailers) return reply.code(404).send({ error: 'disabled' });
     const id = id32.parse((req.params as { id: string }).id);
-    const item = await viewable(req.user!, id);
+    const item = await viewable(req.jfUser!, id);
     if (!item) return reply.code(404).send({ error: 'not_found' });
     if (item.type !== 'Movie' && item.type !== 'Series') return reply.code(404).send({ error: 'no_preview' });
     const pv = previews(ctx);
@@ -173,7 +173,7 @@ export function discoverRoutes(app: FastifyInstance, ctx: Ctx) {
   }));
   app.get('/api/items/:id/preview.mp4', pre, wrap(async (req, reply) => {
     const id = id32.parse((req.params as { id: string }).id);
-    if (!(await viewable(req.user!, id))) return reply.code(404).send({ error: 'not_found' });
+    if (!(await viewable(req.jfUser!, id))) return reply.code(404).send({ error: 'not_found' });
     const size = await stat(clipPath(ctx, id)).then((s) => (s.isFile() ? s.size : -1), () => -1);
     if (size < 0) return reply.code(404).send({ error: 'no_preview' });
     reply.header('content-type', 'video/mp4').header('accept-ranges', 'bytes').header('cache-control', 'private, max-age=86400');
@@ -193,7 +193,7 @@ export function discoverRoutes(app: FastifyInstance, ctx: Ctx) {
     }
     return reply.header('content-length', end - start + 1).send(createReadStream(clipPath(ctx, id), { start, end }));
   }));
-  app.get('/api/library/collections', pre, wrap(async (req) => ({ items: await ctx.jf.collections(req.user!), studios: await ctx.jf.studios(req.user!).catch(() => []) })));
+  app.get('/api/library/collections', pre, wrap(async (req) => ({ items: await ctx.jf.collections(req.jfUser!), studios: await ctx.jf.studios(req.jfUser!).catch(() => []) })));
 
   // ---- Upcoming (Seerr discover) with wish status ----
   app.get('/api/seerr/upcoming', pre, wrap(async (req) => {

@@ -10,7 +10,8 @@
   import LazyRow from '#lib/LazyRow.svelte';
   import LangPick from '#lib/LangPick.svelte';
   import { goto } from '$app/navigation';
-  import { listIds, toggleList } from '#lib/stores';
+  import { listIds, toggleList, prefs } from '#lib/stores';
+  import { isSpoiler } from '#lib/spoiler';
 
   let thumb = 0, extras: Item[] = [], tint = '', friends: Array<{ id: string; name: string }> = [], recOpen = false, recTo = new Set<string>(), recNote = '', recMsg = '';
   let item: Item | null = null, seasons: Item[] = [], episodes: Item[] | null = null, season = '', next: Item | null = null;
@@ -35,6 +36,8 @@
   $: if ($page.params.id) load($page.params.id);
   $: if (item?.type === 'Series' && season) { episodes = null; api(`/api/items/${item.id}/episodes?seasonId=${season}`).then((r) => (episodes = r.items)).catch(() => (episodes = [])); }
 
+  let revealed = new Set<string>();
+  const reveal = (e: MouseEvent, id: string) => { e.preventDefault(); e.stopPropagation(); revealed = new Set([...revealed, id]); };
   $: inList = item ? $listIds.has(item.id) : false;
   let lgA = '', lgS = '';
   $: qs = [lgA && `audio=${encodeURIComponent(lgA)}`, lgS && `sub=${encodeURIComponent(lgS)}`].filter(Boolean).join('&');
@@ -114,8 +117,8 @@
           {:else}{#each episodes as e (e.id)}
             <li><a class="ep" href="/watch/{e.id}{qs ? '?' + qs : ''}">
               <span class="n">{e.indexNumber ?? ''}</span>
-              <span class="th">{#if e.image}<img loading="lazy" src={img(e.id, 320)} alt="" />{/if}{#if e.positionTicks && e.runtimeTicks}<span class="bar"><i style="width:{Math.min(100, (e.positionTicks / e.runtimeTicks) * 100)}%"></i></span>{/if}<span class="pl"><Icon name="play" size={22} /></span></span>
-              <span class="tx"><span class="t"><b>{e.name}</b><span class="muted">{fmtMin(e.runtimeTicks)}</span></span><span class="muted ov">{e.overview ?? ''}</span></span>
+              <span class="th">{#if e.image}<img class:spoil={isSpoiler(e, $prefs) && !revealed.has(e.id)} loading="lazy" src={img(e.id, 320)} alt="" />{/if}{#if e.positionTicks && e.runtimeTicks}<span class="bar"><i style="width:{Math.min(100, (e.positionTicks / e.runtimeTicks) * 100)}%"></i></span>{/if}<span class="pl"><Icon name="play" size={22} /></span></span>
+              <span class="tx"><span class="t"><b>{e.name}</b><span class="muted">{fmtMin(e.runtimeTicks)}</span></span>{#if isSpoiler(e, $prefs) && !revealed.has(e.id)}<span class="muted ov">Beschreibung ausgeblendet (Spoilerschutz) · <button type="button" class="lnk" on:click={(ev) => reveal(ev, e.id)}>anzeigen</button></span>{:else}<span class="muted ov">{e.overview ?? ''}</span>{/if}</span>
               {#if e.played}<span class="seen"><Icon name="check" size={18} label="Gesehen" /></span>{/if}
             </a></li>{/each}{/if}
         </ol>
@@ -159,6 +162,8 @@
   .n { font-size: 1.4rem; color: var(--mut); text-align: center; }
   .th { position: relative; aspect-ratio: 16 / 9; background: #222; border-radius: 4px; overflow: hidden; display: block; }
   .th img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .th img.spoil { filter: blur(14px); transform: scale(1.1); }
+  .lnk { background: none; border: 0; padding: 0; color: var(--fg); text-decoration: underline; cursor: pointer; font: inherit; }
   .th .bar { position: absolute; left: 0; right: 0; bottom: 0; }
   .pl { position: absolute; inset: 0; display: grid; place-items: center; opacity: 0; background: rgba(0,0,0,.45); transition: opacity var(--t-fast); } .ep:hover .pl, .ep:focus-visible .pl { opacity: 1; }
   .tx { display: flex; flex-direction: column; gap: .3rem; min-width: 0; } .t { display: flex; justify-content: space-between; gap: 1rem; }

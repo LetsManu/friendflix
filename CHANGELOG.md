@@ -1,5 +1,9 @@
 # Changelog
 ## [Unreleased]
+### Block 2 – Profiles & viewing comfort
+- Profiles per account (max 5, optional 4-digit PIN, "Wer schaut gerade?"): each extra profile is a hidden Jellyfin user with the account's role policy, so progress, favourites, watchlist and viewing prefs are per profile; stream limit, requests, ratings and admin rights stay per account (admin only from the owner profile). "PIN vergessen?" re-login clears the owner PIN. Turn off Seerr's automatic Jellyfin user import so profile users don't show up there.
+- Verlauf page (remove an episode or a whole series), tidier "Weiterschauen" (no near-finished/barely-started items, one entry per series, X to hide).
+- "Schaust du noch?" after N autoplayed episodes or 90 min without input; subtitle style (size, colour, background, font); spoiler protection for unwatched episodes.
 ### Reliability block 1
 - Guests: playback capped at 1080p, transcoding allowed in the role policy (re-applied once to existing users on start); watch progress no longer lost on early stop.
 - Nightly playback check (`PLAYBACK_CHECK_HOUR`, -1 = off) with admin alert; watch-party size limit; home page retries failed rows.

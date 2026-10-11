@@ -1,6 +1,6 @@
 import { decrypt, encrypt } from '../crypto.js';
 import type { KV } from '../kv.js';
-import type { UserRow } from '../types.js';
+import type { JfUser } from '../types.js';
 import { JellyfinClient, JellyfinError } from './client.js';
 import { maxWidthFor, toItemDto, toPlaybackDto, toTrickplayDto, type ItemDto, type PlaybackDto, type TrickplayDto } from './dto.js';
 
@@ -36,11 +36,11 @@ export class JellyfinService {
     private readonly encKey: Buffer,
   ) {}
 
-  deviceId(user: UserRow) {
+  deviceId(user: JfUser) {
     return `ff-${user.id}`;
   }
 
-  async token(user: UserRow, force = false): Promise<string> {
+  async token(user: JfUser, force = false): Promise<string> {
     const key = `jft:${user.id}`;
     if (!force) {
       const cached = await this.kv.get(key);
@@ -52,7 +52,7 @@ export class JellyfinService {
     return auth.AccessToken;
   }
 
-  async call(user: UserRow, path: string, init: RequestInit = {}): Promise<Response> {
+  async call(user: JfUser, path: string, init: RequestInit = {}): Promise<Response> {
     let res = await this.client.userFetch(await this.token(user), this.deviceId(user), path, init);
     if (res.status === 401) {
       res = await this.client.userFetch(await this.token(user, true), this.deviceId(user), path, init);
@@ -60,7 +60,7 @@ export class JellyfinService {
     return res;
   }
 
-  async json<T = any>(user: UserRow, path: string, init: RequestInit = {}): Promise<T> {
+  async json<T = any>(user: JfUser, path: string, init: RequestInit = {}): Promise<T> {
     const res = await this.call(user, path, init);
     if (!res.ok) throw new JellyfinError(res.status, `Jellyfin ${init.method ?? 'GET'} ${path.split('?')[0]} -> ${res.status}`);
     const t = await res.text();
@@ -68,7 +68,7 @@ export class JellyfinService {
   }
 
   /** Tries the current API path first, falls back to the legacy one (paths differ between Jellyfin versions). */
-  private async compat<T>(user: UserRow, name: string, paths: string[], init: RequestInit = {}): Promise<T> {
+  private async compat<T>(user: JfUser, name: string, paths: string[], init: RequestInit = {}): Promise<T> {
     const start = this.compatChoice.get(name) ?? 0;
     for (let n = 0; n < paths.length; n++) {
       const idx = (start + n) % paths.length;
@@ -82,13 +82,13 @@ export class JellyfinService {
     throw new JellyfinError(404, `Jellyfin ${name}: no supported path`);
   }
 
-  async views(user: UserRow): Promise<ItemDto[]> {
+  async views(user: JfUser): Promise<ItemDto[]> {
     const uid = user.jellyfin_user_id;
     const r = await this.compat<{ Items: any[] }>(user, 'views', [`/UserViews?userId=${uid}`, `/Users/${uid}/Views`]);
     return r.Items.map(toItemDto);
   }
 
-  async items(user: UserRow, q: ItemQuery): Promise<{ items: ItemDto[]; total: number }> {
+  async items(user: JfUser, q: ItemQuery): Promise<{ items: ItemDto[]; total: number }> {
     const uid = user.jellyfin_user_id;
     const p = new URLSearchParams({ userId: uid, recursive: 'true', fields: FIELDS, enableTotalRecordCount: 'true' });
     if (q.parentId) p.set('parentId', q.parentId);
@@ -108,14 +108,28 @@ export class JellyfinService {
     return { items: r.Items.map(toItemDto), total: r.TotalRecordCount ?? r.Items.length };
   }
 
-  async resume(user: UserRow): Promise<ItemDto[]> {
+  async resume(user: JfUser): Promise<ItemDto[]> {
     const uid = user.jellyfin_user_id;
-    const qs = `userId=${uid}&limit=20&mediaTypes=Video&fields=${FIELDS}&enableTotalRecordCount=false`;
+    const qs = `userId=${uid}&limit=40&mediaTypes=Video&fields=${FIELDS}&enableTotalRecordCount=false`;
     const r = await this.compat<{ Items: any[] }>(user, 'resume', [`/UserItems/Resume?${qs}`, `/Users/${uid}/Items/Resume?${qs}`]);
     return r.Items.map(toItemDto);
   }
 
-  async nextUp(user: UserRow, seriesId?: string): Promise<ItemDto[]> {
+  /** Played items (newest first) merged with in-progress ones, as shown in the viewing history. */
+  async history(user: JfUser, q: { start?: number; limit?: number } = {}): Promise<ItemDto[]> {
+    const p = new URLSearchParams({
+      userId: user.jellyfin_user_id, recursive: 'true', includeItemTypes: 'Movie,Episode', sortBy: 'DatePlayed', sortOrder: 'Descending',
+      filters: 'IsPlayed', fields: FIELDS, startIndex: String(q.start ?? 0), limit: String(Math.min(q.limit ?? 50, 200)), enableTotalRecordCount: 'false',
+    });
+    const r = await this.json<{ Items: any[] }>(user, `/Items?${p}`);
+    const played = r.Items.map(toItemDto);
+    const merged = new Map<string, ItemDto>();
+    for (const i of [...(q.start ? [] : await this.resume(user)), ...played]) if (!merged.has(i.id)) merged.set(i.id, i);
+    const ts = (i: ItemDto) => (i.lastPlayedDate ? Date.parse(i.lastPlayedDate) || 0 : 0);
+    return [...merged.values()].filter((i) => i.lastPlayedDate).sort((a, b) => ts(b) - ts(a)).slice(0, 200);
+  }
+
+  async nextUp(user: JfUser, seriesId?: string): Promise<ItemDto[]> {
     const p = new URLSearchParams({ userId: user.jellyfin_user_id, limit: '20', fields: FIELDS });
     if (seriesId) p.set('seriesId', seriesId);
     const r = await this.json<{ Items: any[] }>(user, `/Shows/NextUp?${p}`);
@@ -123,7 +137,7 @@ export class JellyfinService {
   }
 
   /** The episode that follows `episodeId` (same series, across seasons), or null for the last one. */
-  async nextEpisode(user: UserRow, seriesId: string, episodeId: string): Promise<ItemDto | null> {
+  async nextEpisode(user: JfUser, seriesId: string, episodeId: string): Promise<ItemDto | null> {
     const p = new URLSearchParams({ userId: user.jellyfin_user_id, startItemId: episodeId, limit: '2', fields: FIELDS });
     const r = await this.json<{ Items: any[] }>(user, `/Shows/${seriesId}/Episodes?${p}`);
     const list = r.Items.map(toItemDto);
@@ -131,14 +145,14 @@ export class JellyfinService {
     return list[i + 1] ?? null;
   }
 
-  async item(user: UserRow, id: string): Promise<ItemDto> {
+  async item(user: JfUser, id: string): Promise<ItemDto> {
     const uid = user.jellyfin_user_id;
     const i = await this.compat<any>(user, 'item', [`/Items/${id}?userId=${uid}`, `/Users/${uid}/Items/${id}`]);
     return toItemDto(i);
   }
 
   /** Audio languages and text subtitles of the first media source (for the language picker before playing). */
-  async tracks(user: UserRow, id: string): Promise<{ audio: Array<{ language: string; title: string; isDefault: boolean }>; subtitles: Array<{ language: string; title: string }>; runtimeTicks?: number; type: string }> {
+  async tracks(user: JfUser, id: string): Promise<{ audio: Array<{ language: string; title: string; isDefault: boolean }>; subtitles: Array<{ language: string; title: string }>; runtimeTicks?: number; type: string }> {
     const uid = user.jellyfin_user_id;
     const i = await this.compat<any>(user, 'item', [`/Items/${id}?userId=${uid}`, `/Users/${uid}/Items/${id}`]);
     const streams: Array<Record<string, any>> = (i.MediaSources ?? [])[0]?.MediaStreams ?? i.MediaStreams ?? [];
@@ -151,7 +165,7 @@ export class JellyfinService {
     return { audio, subtitles, runtimeTicks: i.RunTimeTicks, type: String(i.Type ?? '') };
   }
 
-  async genres(user: UserRow, types = 'Movie,Series'): Promise<string[]> {
+  async genres(user: JfUser, types = 'Movie,Series'): Promise<string[]> {
     const r = await this.json<{ Items: Array<{ Name: string }> }>(user, `/Genres?userId=${user.jellyfin_user_id}&includeItemTypes=${types}&sortBy=SortName`);
     return r.Items.map((g) => g.Name);
   }
@@ -160,7 +174,7 @@ export class JellyfinService {
    * Intro/outro/recap segments (Jellyfin >= 10.10 media segments API). Older servers answer 404 -> empty list,
    * the "Intro überspringen" button then simply never shows.
    */
-  async segments(user: UserRow, id: string): Promise<Array<{ type: string; start: number; end: number }>> {
+  async segments(user: JfUser, id: string): Promise<Array<{ type: string; start: number; end: number }>> {
     const res = await this.call(user, `/MediaSegments/${id}`);
     if (!res.ok) return [];
     const r = (await res.json().catch(() => null)) as { Items?: Array<{ Type: string; StartTicks: number; EndTicks: number }> } | null;
@@ -170,7 +184,7 @@ export class JellyfinService {
   }
 
   /** Timeline thumbnails; undefined when the server has none (older Jellyfin or trickplay not generated). */
-  async trickplay(user: UserRow, itemId: string, mediaSourceId: string): Promise<TrickplayDto | undefined> {
+  async trickplay(user: JfUser, itemId: string, mediaSourceId: string): Promise<TrickplayDto | undefined> {
     try {
       const r = await this.json<{ Items: Array<{ Trickplay?: Record<string, any> }> }>(user, `/Items?userId=${user.jellyfin_user_id}&ids=${itemId}&fields=Trickplay`);
       return toTrickplayDto(itemId, mediaSourceId, r.Items[0]?.Trickplay);
@@ -180,13 +194,13 @@ export class JellyfinService {
   }
 
   /** "Ähnliche Titel" from Jellyfin's own similarity (genres/people/tags). */
-  async similar(user: UserRow, id: string, limit = 24): Promise<ItemDto[]> {
+  async similar(user: JfUser, id: string, limit = 24): Promise<ItemDto[]> {
     const r = await this.json<{ Items: any[] }>(user, `/Items/${id}/Similar?userId=${user.jellyfin_user_id}&limit=${limit}&fields=${FIELDS}`);
     return r.Items.map(toItemDto);
   }
 
   /** Last finished movie/series (episodes are mapped to their series) as seed for "Weil du ... gesehen hast". */
-  async lastWatched(user: UserRow): Promise<ItemDto | null> {
+  async lastWatched(user: JfUser): Promise<ItemDto | null> {
     const p = new URLSearchParams({ userId: user.jellyfin_user_id, recursive: 'true', filters: 'IsPlayed', sortBy: 'DatePlayed', sortOrder: 'Descending', limit: '1', includeItemTypes: 'Movie,Episode', fields: FIELDS });
     const r = await this.json<{ Items: any[] }>(user, `/Items?${p}`);
     const i = r.Items[0];
@@ -195,7 +209,7 @@ export class JellyfinService {
   }
 
   /** All unwatched ids of a user for the group matcher (paged, capped). */
-  async unplayedIds(user: UserRow, types: string, cap = 5000): Promise<Set<string>> {
+  async unplayedIds(user: JfUser, types: string, cap = 5000): Promise<Set<string>> {
     const out = new Set<string>();
     for (let start = 0; start < cap; start += 500) {
       const p = new URLSearchParams({ userId: user.jellyfin_user_id, recursive: 'true', filters: 'IsUnplayed', includeItemTypes: types, limit: '500', startIndex: String(start), enableTotalRecordCount: 'false', enableImages: 'false', enableUserData: 'false' });
@@ -207,13 +221,13 @@ export class JellyfinService {
   }
 
   /** Cast & crew for the X-Ray panel. */
-  async people(user: UserRow, id: string): Promise<Array<{ id: string; name: string; role?: string; type: string; image: boolean }>> {
+  async people(user: JfUser, id: string): Promise<Array<{ id: string; name: string; role?: string; type: string; image: boolean }>> {
     const r = await this.json<{ Items: Array<{ People?: Array<{ Id: string; Name: string; Role?: string; Type: string; PrimaryImageTag?: string }> }> }>(user, `/Items?userId=${user.jellyfin_user_id}&ids=${id}&fields=People`);
     return (r.Items[0]?.People ?? []).slice(0, 40).map((p) => ({ id: p.Id, name: p.Name, role: p.Role, type: p.Type, image: Boolean(p.PrimaryImageTag) }));
   }
 
   /** Bonus material (featurettes, behind the scenes). */
-  async extras(user: UserRow, id: string): Promise<ItemDto[]> {
+  async extras(user: JfUser, id: string): Promise<ItemDto[]> {
     const res = await this.call(user, `/Items/${id}/SpecialFeatures?userId=${user.jellyfin_user_id}`);
     if (!res.ok) return [];
     const list = (await res.json().catch(() => [])) as any[];
@@ -221,19 +235,19 @@ export class JellyfinService {
   }
 
   /** First local trailer (playable through the gateway). */
-  async trailer(user: UserRow, id: string): Promise<string | null> {
+  async trailer(user: JfUser, id: string): Promise<string | null> {
     const res = await this.call(user, `/Items/${id}/LocalTrailers?userId=${user.jellyfin_user_id}`);
     if (!res.ok) return null;
     const list = (await res.json().catch(() => [])) as Array<{ Id: string }>;
     return Array.isArray(list) && list[0]?.Id ? list[0].Id : null;
   }
 
-  async collections(user: UserRow): Promise<ItemDto[]> {
+  async collections(user: JfUser): Promise<ItemDto[]> {
     const r = await this.json<{ Items: any[] }>(user, `/Items?userId=${user.jellyfin_user_id}&includeItemTypes=BoxSet&recursive=true&sortBy=SortName&fields=${FIELDS}&limit=100`);
     return r.Items.map(toItemDto);
   }
 
-  async studios(user: UserRow): Promise<string[]> {
+  async studios(user: JfUser): Promise<string[]> {
     const r = await this.json<{ Items: Array<{ Name: string }> }>(user, `/Studios?userId=${user.jellyfin_user_id}&includeItemTypes=Movie,Series&sortBy=SortName&limit=80&recursive=true`);
     return r.Items.map((s) => s.Name);
   }
@@ -250,7 +264,7 @@ export class JellyfinService {
   }
 
   /** First regular episode of a series (used for the hover preview clip). */
-  async firstEpisode(user: UserRow, seriesId: string): Promise<{ id: string; runtimeTicks?: number } | null> {
+  async firstEpisode(user: JfUser, seriesId: string): Promise<{ id: string; runtimeTicks?: number } | null> {
     const p = new URLSearchParams({ userId: user.jellyfin_user_id, limit: '1', fields: 'RunTimeTicks' });
     const res = await this.call(user, `/Shows/${seriesId}/Episodes?${p}`);
     if (!res.ok) return null;
@@ -259,34 +273,34 @@ export class JellyfinService {
     return e?.Id ? { id: e.Id, runtimeTicks: e.RunTimeTicks } : null;
   }
 
-  async seasons(user: UserRow, seriesId: string): Promise<ItemDto[]> {
+  async seasons(user: JfUser, seriesId: string): Promise<ItemDto[]> {
     const r = await this.json<{ Items: any[] }>(user, `/Shows/${seriesId}/Seasons?userId=${user.jellyfin_user_id}&fields=${FIELDS}`);
     return r.Items.map(toItemDto);
   }
 
-  async episodes(user: UserRow, seriesId: string, seasonId?: string): Promise<ItemDto[]> {
+  async episodes(user: JfUser, seriesId: string, seasonId?: string): Promise<ItemDto[]> {
     const p = new URLSearchParams({ userId: user.jellyfin_user_id, fields: FIELDS });
     if (seasonId) p.set('seasonId', seasonId);
     const r = await this.json<{ Items: any[] }>(user, `/Shows/${seriesId}/Episodes?${p}`);
     return r.Items.map(toItemDto);
   }
 
-  async upcoming(user: UserRow): Promise<ItemDto[]> {
+  async upcoming(user: JfUser): Promise<ItemDto[]> {
     const r = await this.json<{ Items: any[] }>(user, `/Shows/Upcoming?userId=${user.jellyfin_user_id}&limit=50&fields=${FIELDS}`);
     return r.Items.map(toItemDto);
   }
 
-  async setFavorite(user: UserRow, id: string, on: boolean) {
+  async setFavorite(user: JfUser, id: string, on: boolean) {
     const uid = user.jellyfin_user_id;
     await this.compat(user, 'favorite' + on, [`/UserFavoriteItems/${id}?userId=${uid}`, `/Users/${uid}/FavoriteItems/${id}`], { method: on ? 'POST' : 'DELETE' });
   }
 
-  async setPlayed(user: UserRow, id: string, on: boolean) {
+  async setPlayed(user: JfUser, id: string, on: boolean) {
     const uid = user.jellyfin_user_id;
     await this.compat(user, 'played' + on, [`/UserPlayedItems/${id}?userId=${uid}`, `/Users/${uid}/PlayedItems/${id}`], { method: on ? 'POST' : 'DELETE' });
   }
 
-  async playbackInfo(user: UserRow, itemId: string, opts: { maxBitrate: number; maxHeight?: number | null; startTicks?: number; audioIndex?: number }): Promise<PlaybackDto> {
+  async playbackInfo(user: JfUser, itemId: string, opts: { maxBitrate: number; maxHeight?: number | null; startTicks?: number; audioIndex?: number }): Promise<PlaybackDto> {
     const p = new URLSearchParams({ UserId: user.jellyfin_user_id, MaxStreamingBitrate: String(opts.maxBitrate), AutoOpenLiveStream: 'false' });
     if (opts.startTicks) p.set('StartTimeTicks', String(opts.startTicks));
     if (opts.audioIndex !== undefined) p.set('AudioStreamIndex', String(opts.audioIndex));
@@ -317,7 +331,7 @@ export class JellyfinService {
   }
 
   /** Playing / Progress / Stopped reports (powers "Weiterschauen" and Jellyfin statistics). */
-  async report(user: UserRow, kind: 'Playing' | 'Playing/Progress' | 'Playing/Stopped', body: Record<string, unknown>) {
+  async report(user: JfUser, kind: 'Playing' | 'Playing/Progress' | 'Playing/Stopped', body: Record<string, unknown>) {
     const res = await this.call(user, `/Sessions/${kind}`, { method: 'POST', body: JSON.stringify({ CanSeek: true, PlayMethod: 'DirectStream', ...body }) });
     if (!res.ok) throw new JellyfinError(res.status, `report ${kind} -> ${res.status}`);
   }

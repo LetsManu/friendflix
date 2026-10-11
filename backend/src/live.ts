@@ -4,6 +4,8 @@ import type { Ctx } from './ctx.js';
 export interface Live {
   userId: string;
   userName: string;
+  /** active profile of the account (the stream limit counts per account, this is display only) */
+  profileName?: string;
   itemId: string;
   title: string;
   seriesName?: string;

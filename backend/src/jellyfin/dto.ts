@@ -25,6 +25,8 @@ export interface ItemDto {
   favorite: boolean;
   positionTicks: number;
   playedPercentage?: number;
+  /** ISO timestamp of the viewer's last playback (UserData.LastPlayedDate) */
+  lastPlayedDate?: string;
   childCount?: number;
   unplayedCount?: number;
 }
@@ -55,6 +57,7 @@ export function toItemDto(i: Record<string, any>): ItemDto {
     favorite: Boolean(ud.IsFavorite),
     positionTicks: Number(ud.PlaybackPositionTicks ?? 0),
     playedPercentage: ud.PlayedPercentage,
+    lastPlayedDate: ud.LastPlayedDate,
     childCount: i.ChildCount,
     unplayedCount: ud.UnplayedItemCount,
   };

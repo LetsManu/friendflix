@@ -264,6 +264,50 @@ export const MIGRATIONS: string[] = [
   alter table role_settings add column max_height int check (max_height between 0 and 4320);
   create table app_flags (key text primary key, at timestamptz not null default now());
   `,
+  // profiles (Netflix style). The owner profile has the same id as its account, so existing progress/token cache/device ids keep working.
+  // Watchlist, thumbs and bookmarks become per profile (backfilled with the owner profile); profile_prefs holds per-profile viewing prefs.
+  `
+  create table profiles (
+    id uuid primary key,
+    user_id uuid not null references users(id) on delete cascade,
+    name text not null check (char_length(name) between 1 and 20),
+    avatar text not null default 'red',
+    is_owner boolean not null default false,
+    pin_hash text,
+    jellyfin_user_id text,
+    jellyfin_username text,
+    jellyfin_pw_enc text,
+    created_at timestamptz not null default now(),
+    check (is_owner or jellyfin_user_id is not null)
+  );
+  create unique index profiles_user_name on profiles(user_id, lower(name));
+  create unique index profiles_owner on profiles(user_id) where is_owner;
+  insert into profiles(id, user_id, name, is_owner) select id, id, coalesce(nullif(btrim(left(name, 20)), ''), 'Profil'), true from users;
+  alter table watchlist add column profile_id uuid references profiles(id) on delete cascade;
+  update watchlist set profile_id = user_id;
+  alter table watchlist alter column profile_id set not null;
+  alter table watchlist drop constraint watchlist_pkey, add primary key (profile_id, item_id);
+  alter table thumbs add column profile_id uuid references profiles(id) on delete cascade;
+  update thumbs set profile_id = user_id;
+  alter table thumbs alter column profile_id set not null;
+  alter table thumbs drop constraint thumbs_pkey, add primary key (profile_id, item_id);
+  alter table bookmarks add column profile_id uuid references profiles(id) on delete cascade;
+  update bookmarks set profile_id = user_id;
+  alter table bookmarks alter column profile_id set not null;
+  create index bookmarks_profile_item on bookmarks(profile_id, item_id);
+  create table profile_prefs (
+    profile_id uuid primary key references profiles(id) on delete cascade,
+    data jsonb not null default '{}',
+    updated_at timestamptz not null default now()
+  );
+  insert into profile_prefs(profile_id, data) select user_id, data from user_prefs;
+  create table resume_hidden (
+    profile_id uuid not null references profiles(id) on delete cascade,
+    item_id text not null,
+    hidden_at timestamptz not null default now(),
+    primary key (profile_id, item_id)
+  );
+  `,
 ];
 
 export async function migrate(pool: pg.Pool): Promise<void> {

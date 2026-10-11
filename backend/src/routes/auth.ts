@@ -6,6 +6,7 @@ import type { Ctx } from '../ctx.js';
 import { COOKIE, loadSession, newSession, rand, requireUser, saveSession } from '../session.js';
 import { registerDevice } from '../devices.js';
 import { claimInvite, deleteAuthentikInvitation, enrollFlowUrl, lookupInvite, releaseInvite, type InviteRow } from '../invites.js';
+import { accountJellyfinIds, listProfiles, publicProfile } from '../profiles.js';
 import { applyRole, getUserBySub, provisionUser } from '../users.js';
 
 const OIDC_COOKIE = 'ff_oidc';
@@ -16,17 +17,19 @@ export function authRoutes(app: FastifyInstance, ctx: Ctx) {
   const secure = ctx.cfg.PUBLIC_URL.startsWith('https://');
 
   /** Starts an OIDC login; the invite (if any) travels in the server-side state to /auth/callback. */
-  async function startLogin(reply: FastifyReply, invite: string | undefined, ttl: number) {
-    const s = await ctx.oidc.start();
-    await ctx.kv.set(`oidc:${s.state}`, JSON.stringify({ state: s.state, nonce: s.nonce, codeVerifier: s.codeVerifier, invite }), ttl);
+  async function startLogin(reply: FastifyReply, invite: string | undefined, ttl: number, resetPin = false) {
+    const s = await ctx.oidc.start({ forceLogin: resetPin });
+    await ctx.kv.set(`oidc:${s.state}`, JSON.stringify({ state: s.state, nonce: s.nonce, codeVerifier: s.codeVerifier, invite, ...(resetPin ? { resetPin: true } : {}) }), ttl);
     reply.setCookie(OIDC_COOKIE, s.state, { httpOnly: true, secure, sameSite: 'lax', path: '/auth', maxAge: ttl }); // binds the flow to this browser
     return s.url;
   }
 
   app.get('/auth/login', { config: { rateLimit: { max: 30, timeWindow: '1 minute' } } }, async (req, reply) => {
-    const invite = (req.query as Record<string, string | undefined>).invite;
+    const q = req.query as Record<string, string | undefined>;
+    const invite = q.invite;
     if (invite && !(await lookupInvite(ctx, invite))) return reply.code(410).send({ error: 'invite_invalid' });
-    return reply.redirect(await startLogin(reply, invite, 600));
+    // ?resetPin=1: forgotten owner PIN -> forced re-login at the IdP, the callback then clears the owner profile's PIN
+    return reply.redirect(await startLogin(reply, invite, 600, q.resetPin === '1'));
   });
 
   // Invite with Authentik enrollment: start the portal login first, then run the enrollment flow with
@@ -49,7 +52,7 @@ export function authRoutes(app: FastifyInstance, ctx: Ctx) {
     if (!state || !raw || !bound || bound.length !== state.length || !timingSafeEqual(Buffer.from(bound), Buffer.from(state))) return reply.code(400).send({ error: 'invalid_state' });
     await ctx.kv.del(`oidc:${state}`); // single use
     try {
-      const saved = JSON.parse(raw) as { state: string; nonce: string; codeVerifier: string; invite?: string };
+      const saved = JSON.parse(raw) as { state: string; nonce: string; codeVerifier: string; invite?: string; resetPin?: boolean };
       const claims = await ctx.oidc.finish(new URL(req.url, ctx.cfg.PUBLIC_URL), saved);
       let user = await getUserBySub(ctx, claims.sub);
       const isAdmin = claims.groups.includes(ctx.cfg.ADMIN_GROUP);
@@ -73,10 +76,18 @@ export function authRoutes(app: FastifyInstance, ctx: Ctx) {
         return reply.code(403).send({ error: 'disabled' });
       } else if (isAdmin && user.role !== 'admin') {
         await ctx.db.query("update users set role='admin' where id=$1", [user.id]);
-        await applyRole(ctx, user.jellyfin_user_id, 'admin');
+        const owned = await accountJellyfinIds(ctx, user.id);
+        for (const jid of owned) await applyRole(ctx, jid, 'admin', false, jid === user.jellyfin_user_id ? {} : { IsHidden: true });
         user.role = 'admin';
       }
       if (user.disabled) return reply.code(403).send({ error: 'disabled' });
+      if (saved.resetPin) {
+        // the person just re-authenticated at the IdP: the owner profile's forgotten PIN is cleared (and its lockout lifted)
+        const cleared = await ctx.db.query('update profiles set pin_hash=null where id=$1 and is_owner and pin_hash is not null', [user.id]);
+        await ctx.kv.del(`pinfail:${user.id}`);
+        await ctx.kv.del(`pinfail-acct:${user.id}`);
+        if (cleared.rowCount) await audit(ctx, user.id, 'profile.pin_reset', user.id);
+      }
       const sid = rand();
       const dev = await registerDevice(ctx, req, reply, user.id, secure);
       await saveSession(ctx, sid, newSession({ userId: user.id, csrf: rand(), deviceId: dev.deviceId, deviceApproved: dev.approved }));
@@ -89,8 +100,9 @@ export function authRoutes(app: FastifyInstance, ctx: Ctx) {
     }
   });
 
-  app.get('/api/me', { preHandler: requireUser(ctx, { allowPendingDevice: true }) }, async (req) => {
+  app.get('/api/me', { preHandler: requireUser(ctx, { allowPendingDevice: true, allowNoProfile: true, skipProfileHeader: true }) }, async (req) => {
     const u = req.user!;
+    const profileCount = (await listProfiles(ctx, u.id)).length;
     return {
       id: u.id,
       name: u.name,
@@ -103,6 +115,12 @@ export function authRoutes(app: FastifyInstance, ctx: Ctx) {
       /** this session belongs to a paired television (device ids of paired TVs start with "tv-") */
       tv: Boolean(req.session!.deviceId?.startsWith('tv-')),
       limits: ctx.roles[u.role],
+      profile: req.profile ? publicProfile(req.profile) : null,
+      /** true: the client must send the user to the profile picker first (owner profile has a PIN and none was chosen) */
+      profileRequired: !req.profile,
+      profileCount,
+      /** false: this session never picked a profile explicitly (cookie of an older session / owner fallback) */
+      profileChosen: Boolean(req.session!.profileId),
     };
   });
 

@@ -29,12 +29,14 @@ export async function toggleList(id: string, on: boolean) {
   }
 }
 
-export interface Prefs { autoplayNext: boolean; autoSkipIntro: boolean; shareHistory: boolean; shareRatings: boolean; hoverTrailers: boolean; hoverClip: boolean; audioLang: string; subtitleLang: string; quality: number }
-export const DEFAULT_PREFS: Prefs = { autoplayNext: true, autoSkipIntro: false, shareHistory: false, shareRatings: true, hoverTrailers: true, hoverClip: true, audioLang: '', subtitleLang: '', quality: 0 };
+export interface SubtitleStyle { size: 's' | 'm' | 'l' | 'xl'; color: 'white' | 'yellow' | 'cyan' | 'green'; background: 'none' | 'shadow' | 'semi' | 'solid'; font: 'sans' | 'serif' | 'mono' }
+export interface Prefs { autoplayNext: boolean; autoSkipIntro: boolean; shareHistory: boolean; shareRatings: boolean; hoverTrailers: boolean; hoverClip: boolean; audioLang: string; subtitleLang: string; quality: number; stillWatching: boolean; stillWatchingEpisodes: 2 | 3 | 4 | 5; subtitleStyle: SubtitleStyle; spoilerProtection: boolean }
+export const DEFAULT_PREFS: Prefs = { autoplayNext: true, autoSkipIntro: false, shareHistory: false, shareRatings: true, hoverTrailers: true, hoverClip: true, audioLang: '', subtitleLang: '', quality: 0, stillWatching: true, stillWatchingEpisodes: 3, subtitleStyle: { size: 'm', color: 'white', background: 'semi', font: 'sans' }, spoilerProtection: false };
 /** Viewing preferences (server-side, follow the user across devices). */
 export const prefs = writable<Prefs>({ ...DEFAULT_PREFS });
 export async function loadPrefs() {
-  try { prefs.set({ ...DEFAULT_PREFS, ...(await api('/api/prefs')).prefs }); } catch { /* defaults */ }
+  try { const p = (await api('/api/prefs')).prefs;
+    prefs.set({ ...DEFAULT_PREFS, ...p, subtitleStyle: { ...DEFAULT_PREFS.subtitleStyle, ...p?.subtitleStyle } }); } catch { /* defaults */ }
 }
 export async function savePrefs(p: Prefs) {
   prefs.set(p);

@@ -9,14 +9,14 @@ import { notify } from '../notify.js';
 import { JellyfinError } from '../jellyfin/client.js';
 import { SeerrError } from '../seerr/client.js';
 import { requireAdmin, requireUser } from '../session.js';
-import type { UserRow } from '../types.js';
+import type { JfUser } from '../types.js';
 
 const id32 = z.string().regex(/^[0-9a-f]{32}$/);
 const optionSchema = z.object({ jfItemId: id32.optional(), tmdbId: z.number().int().positive().optional(), mediaType: z.enum(['movie', 'tv']).optional() })
   .refine((o) => Boolean(o.jfItemId) !== Boolean(o.tmdbId && o.mediaType), 'jfItemId or tmdbId+mediaType');
 
 /** Maps Jellyfin lookup failures for a user-supplied item id to 404/403. */
-async function itemOr(ctx: Ctx, reply: FastifyReply, user: UserRow, id: string) {
+async function itemOr(ctx: Ctx, reply: FastifyReply, user: JfUser, id: string) {
   try {
     return await ctx.jf.item(user, id);
   } catch (e) {
@@ -111,7 +111,7 @@ export function pollRoutes(app: FastifyInstance, ctx: Ctx) {
   app.put('/api/items/:id/rating', pre, async (req, reply) => {
     const itemId = id32.parse((req.params as { id: string }).id);
     const b = z.object({ stars: z.number().int().min(1).max(5), review: z.string().trim().max(280).optional() }).parse(req.body);
-    const item = await itemOr(ctx, reply, req.user!, itemId);
+    const item = await itemOr(ctx, reply, req.jfUser!, itemId);
     if (!item) return reply;
     await ctx.db.query(
       `insert into ratings(user_id,item_id,item_name,stars,review) values ($1,$2,$3,$4,$5)
@@ -129,7 +129,7 @@ export function pollRoutes(app: FastifyInstance, ctx: Ctx) {
   // ---- series calendar ----
   app.get('/api/calendar', pre, async (req) => {
     const [up, follows] = await Promise.all([
-      ctx.jf.upcoming(req.user!),
+      ctx.jf.upcoming(req.jfUser!),
       ctx.db.query<{ series_id: string }>('select series_id from series_follows where user_id=$1', [req.user!.id]),
     ]);
     const f = new Set(follows.rows.map((r) => r.series_id));
@@ -137,7 +137,7 @@ export function pollRoutes(app: FastifyInstance, ctx: Ctx) {
   });
   app.post('/api/series/:id/follow', pre, async (req, reply) => {
     const id = id32.parse((req.params as { id: string }).id);
-    const s = await itemOr(ctx, reply, req.user!, id);
+    const s = await itemOr(ctx, reply, req.jfUser!, id);
     if (!s) return reply;
     await ctx.db.query('insert into series_follows(user_id,series_id,series_name) values ($1,$2,$3) on conflict do nothing', [req.user!.id, id, s.name]);
     return { ok: true };
