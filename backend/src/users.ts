@@ -19,7 +19,7 @@ export async function getUserBySub(ctx: Ctx, sub: string): Promise<UserRow | nul
 const safeName = (s: string) => s.replace(/[^A-Za-z0-9._-]/g, '').slice(0, 24) || 'freund';
 
 /** Resolves a role template's library names to Jellyfin media folder IDs and writes the Jellyfin policy. */
-export async function applyRole(ctx: Ctx, jellyfinUserId: string, role: string) {
+export async function applyRole(ctx: Ctx, jellyfinUserId: string, role: string, disabled = false) {
   const t = ctx.roles[role];
   if (!t) throw new Error(`unknown role ${role}`);
   let ids: string[] | null = null;
@@ -28,7 +28,7 @@ export async function applyRole(ctx: Ctx, jellyfinUserId: string, role: string) 
     const want = new Set(t.libraries.map((n) => n.toLowerCase()));
     ids = folders.filter((f) => want.has(f.Name.toLowerCase())).map((f) => f.Id);
   }
-  await ctx.jf.client.setPolicy(jellyfinUserId, policyFromTemplate(t, ids));
+  await ctx.jf.client.setPolicy(jellyfinUserId, { ...policyFromTemplate(t, ids), IsDisabled: disabled });
 }
 
 /**

@@ -46,8 +46,8 @@ export function adminRoutes(app: FastifyInstance, ctx: Ctx) {
     if (!user) return reply.code(404).send({ error: 'not_found' });
     if (id === req.user!.id && (b.disabled || (b.role && b.role !== 'admin'))) return reply.code(400).send({ error: 'cannot_lock_yourself_out' });
     if (b.role && b.role !== user.role) {
-      if (!ctx.roles[b.role]) return reply.code(400).send({ error: 'unknown_role' });
-      await applyRole(ctx, user.jellyfin_user_id, b.role); // re-apply template to the Jellyfin account
+      if (!Object.hasOwn(ctx.roles, b.role)) return reply.code(400).send({ error: 'unknown_role' });
+      await applyRole(ctx, user.jellyfin_user_id, b.role, b.disabled ?? user.disabled); // re-apply template to the Jellyfin account
       await ctx.db.query('update users set role=$1 where id=$2', [b.role, id]);
       await audit(ctx, req.user!.id, 'user.role', id, { from: user.role, to: b.role });
     }
@@ -102,9 +102,10 @@ export function adminRoutes(app: FastifyInstance, ctx: Ctx) {
     const r = await ctx.db.query('select d.user_id, d.device_id, d.label, d.approved, d.last_seen, u.name from devices d join users u on u.id=d.user_id order by d.approved, d.last_seen desc limit 300');
     return { devices: r.rows };
   });
-  app.post('/api/admin/devices/approve', admin, async (req) => {
+  app.post('/api/admin/devices/approve', admin, async (req, reply) => {
     const b = z.object({ userId: uuid, deviceId: z.string().min(10).max(80) }).parse(req.body);
-    await ctx.db.query('update devices set approved=true where user_id=$1 and device_id=$2', [b.userId, b.deviceId]);
+    const r = await ctx.db.query('update devices set approved=true where user_id=$1 and device_id=$2', [b.userId, b.deviceId]);
+    if (!r.rowCount) return reply.code(404).send({ error: 'not_found' });
     await audit(ctx, req.user!.id, 'device.approve', b.userId, { by: 'admin' });
     return { ok: true };
   });
@@ -119,9 +120,10 @@ export function adminRoutes(app: FastifyInstance, ctx: Ctx) {
     const r = await ctx.db.query('select device_id, label, approved, created_at, last_seen from devices where user_id=$1 order by created_at', [req.user!.id]);
     return { devices: r.rows.map((d) => ({ ...d, id: d.device_id, current: d.device_id === req.session!.deviceId })) };
   });
-  app.post('/api/devices/:id/approve', { preHandler: requireUser(ctx) }, async (req) => {
+  app.post('/api/devices/:id/approve', { preHandler: requireUser(ctx) }, async (req, reply) => {
     const id = z.string().min(10).max(80).parse((req.params as { id: string }).id);
-    await ctx.db.query('update devices set approved=true where user_id=$1 and device_id=$2', [req.user!.id, id]);
+    const r = await ctx.db.query('update devices set approved=true where user_id=$1 and device_id=$2', [req.user!.id, id]);
+    if (!r.rowCount) return reply.code(404).send({ error: 'not_found' });
     await audit(ctx, req.user!.id, 'device.approve', req.user!.id, { by: 'self' });
     return { ok: true };
   });
