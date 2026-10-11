@@ -8,10 +8,10 @@ import { checkState, startPlaybackCheck } from '../healthcheck.js';
 import { clipPath, libraryItems, previews, serviceUser } from '../previews.js';
 import { stat } from 'node:fs/promises';
 import { defaultLimit } from '../requestlimit.js';
-import { INVITABLE_ROLES } from '../roles.js';
+import { INVITABLE_ROLES, effectiveRole, invalidateRoles } from '../roles.js';
 import { requireAdmin, requireUser } from '../session.js';
 import { portainerMode, triggerUpdate, updateInfo } from '../updates.js';
-import { applyRole, getUserById } from '../users.js';
+import { applyRole, getUserById, reapplyRole } from '../users.js';
 
 const uuid = z.guid();
 
@@ -83,22 +83,39 @@ export function adminRoutes(app: FastifyInstance, ctx: Ctx) {
   });
   app.get('/api/admin/playback-check', admin, async () => checkState(ctx));
 
-  // `roles`/`invitable` feed the users page; `limits` is the per-role monthly Seerr wish limit (null = unlimited)
+  // `roles`/`invitable` feed the users page; `limits` is the per-role monthly Seerr wish limit (null = unlimited) plus playback settings (transcoding, maxHeight null = unlimited)
   app.get('/api/admin/roles', admin, async () => {
+    invalidateRoles(ctx);
     const set = new Map((await ctx.db.query<{ role: string; requests_per_month: number | null }>('select role, requests_per_month from role_settings')).rows.map((r) => [r.role, r.requests_per_month]));
-    const limits = Object.entries(ctx.roles).map(([role, t]) => ({ role, label: t.label, requestsPerMonth: set.has(role) ? set.get(role)! : defaultLimit(role), isDefault: !set.has(role) }));
-    return { roles: ctx.roles, invitable: INVITABLE_ROLES, limits };
+    const roles = Object.fromEntries(await Promise.all(Object.keys(ctx.roles).map(async (k) => [k, (await effectiveRole(ctx, k))!] as const)));
+    const limits = Object.entries(roles).map(([role, t]) => ({ role, label: t.label, requestsPerMonth: set.has(role) ? set.get(role)! : defaultLimit(role), isDefault: !set.has(role), transcoding: t.transcoding, maxHeight: t.maxHeight }));
+    return { roles, invitable: INVITABLE_ROLES, limits };
   });
 
   app.put('/api/admin/roles/:role', admin, async (req, reply) => {
     const role = (req.params as { role: string }).role;
     if (!Object.hasOwn(ctx.roles, role)) return reply.code(404).send({ error: 'not_found' });
-    const b = z.object({ requestsPerMonth: z.number().int().min(0).max(100).nullable() }).parse(req.body);
+    const b = z.object({
+      requestsPerMonth: z.number().int().min(0).max(100).nullable().optional(),
+      transcoding: z.boolean().optional(),
+      maxHeight: z.number().int().min(144).max(4320).nullable().optional(), // null = unlimited
+    }).parse(req.body);
+    const before = await effectiveRole(ctx, role);
+    const cur = (await ctx.db.query<{ requests_per_month: number | null }>('select requests_per_month from role_settings where role=$1', [role])).rows[0];
+    const limit = b.requestsPerMonth !== undefined ? b.requestsPerMonth : cur ? cur.requests_per_month : defaultLimit(role);
     await ctx.db.query(
-      'insert into role_settings(role, requests_per_month) values ($1,$2) on conflict (role) do update set requests_per_month=excluded.requests_per_month, updated_at=now()',
-      [role, b.requestsPerMonth],
+      `insert into role_settings(role, requests_per_month, transcoding, max_height) values ($1,$2,$3,$4)
+       on conflict (role) do update set requests_per_month=$2, transcoding=coalesce($3, role_settings.transcoding), max_height=coalesce($4, role_settings.max_height), updated_at=now()`,
+      [role, limit, b.transcoding ?? null, b.maxHeight === undefined ? null : (b.maxHeight ?? 0)],
     );
-    await audit(ctx, req.user!.id, 'role.request_limit', role, { requestsPerMonth: b.requestsPerMonth });
+    invalidateRoles(ctx);
+    const after = (await effectiveRole(ctx, role))!;
+    if (b.requestsPerMonth !== undefined) await audit(ctx, req.user!.id, 'role.request_limit', role, { requestsPerMonth: b.requestsPerMonth });
+    if (after.transcoding !== before?.transcoding || after.maxHeight !== before?.maxHeight) {
+      await audit(ctx, req.user!.id, 'role.playback', role, { transcoding: after.transcoding, maxHeight: after.maxHeight });
+      const failed = await reapplyRole(ctx, role); // push the new policy to existing Jellyfin accounts
+      if (failed) return reply.code(502).send({ error: 'policy_partial', failed });
+    }
     return { ok: true };
   });
 

@@ -11,6 +11,8 @@ import { authentikConfigProblem } from './invites.js';
 import { createAuthentikProvider } from './oidc.js';
 import { SeerrClient } from './seerr/client.js';
 import { loadRoles } from './roles.js';
+import { nightlyTick } from './healthcheck.js';
+import { reapplyPoliciesOnce } from './users.js';
 import { previews } from './previews.js';
 import { pollJellyfinSessions } from './routes/internal.js';
 import { parties } from './routes/party.js';
@@ -35,6 +37,8 @@ const ctx: Ctx = {
 
 const app = await buildApp(ctx);
 await app.listen({ port: cfg.PORT, host: '0.0.0.0' });
+// one-off: push the changed role policies (guest transcoding) to every existing Jellyfin user
+void reapplyPoliciesOnce(ctx).catch((e) => app.log.warn({ e }, 'role policy re-apply failed'));
 const akMissing = authentikConfigProblem(cfg);
 if (akMissing) app.log.warn({ missing: akMissing }, `Authentik invitations disabled: ${akMissing.join(', ')} not set (see docs/integrations.md)`);
 else if (!cfg.AUTHENTIK_URL) app.log.info('Authentik invitations off: invited people need an existing Authentik account');
@@ -52,6 +56,7 @@ timers.push(setInterval(() => void calendarNotifications(ctx).catch((e) => app.l
 if (cfg.PREVIEW_WARM === 'true') {
   timers.push(setInterval(() => void previews(ctx).warmTick().catch((e) => app.log.warn({ e }, 'preview warm failed')), 60_000));
 }
+timers.push(setInterval(() => void nightlyTick(ctx).catch((e) => app.log.warn({ e }, 'playback check failed')), 600_000));
 if (cfg.BACKGROUND_JOBS === 'true') {
   timers.push(setInterval(() => void pollJellyfinSessions(ctx).catch((e) => app.log.warn({ e }, 'session poll failed')), 10_000));
 }

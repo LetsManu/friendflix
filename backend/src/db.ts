@@ -257,6 +257,13 @@ export const MIGRATIONS: string[] = [
     return v;
   end $$;
   `,
+  // admin-editable guest playback: per-role transcoding / max height overrides (null = keep template; max_height 0 = unlimited);
+  // app_flags marks one-time startup jobs (reapplyPoliciesOnce).
+  `
+  alter table role_settings add column transcoding boolean;
+  alter table role_settings add column max_height int check (max_height between 0 and 4320);
+  create table app_flags (key text primary key, at timestamptz not null default now());
+  `,
 ];
 
 export async function migrate(pool: pg.Pool): Promise<void> {

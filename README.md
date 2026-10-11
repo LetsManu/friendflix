@@ -63,6 +63,7 @@ Dann:
 | `UPDATE_REPO`, `GITHUB_TOKEN` | Repo für die Versionsprüfung (Default `LetsManu/friendflix`); Token optional gegen das GitHub-Limit von 60 Anfragen/h |
 | `PREVIEW_DIR` | Ablage der Vorschau-Clips (Default `/data/previews`, Volume `previews`) |
 | `PREVIEW_WARM` | Hintergrundjob, der Vorschau-Clips vorab erzeugt (Default `true`; `false` schaltet ihn ab) |
+| `PLAYBACK_CHECK_HOUR` | Stunde (0-23, Serverzeit), zu der der Wiedergabe-Check nachts läuft und Admins bei neuen Fehlern benachrichtigt (Default `4`; `-1` schaltet ihn ab) |
 | `AUTHENTIK_URL/API_TOKEN/ENROLL_FLOW` | Einladung legt auch das Authentik-Konto an (siehe `docs/integrations.md`) |
 | `ROLE_TEMPLATES` | JSON-Override der Rollenvorlagen (`backend/src/roles.ts`) |
 Secrets alternativ als Docker Secrets: `compose.secrets.yaml` (`VAR_FILE`).
