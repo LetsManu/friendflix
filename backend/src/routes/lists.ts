@@ -67,7 +67,12 @@ export function listRoutes(app: FastifyInstance, ctx: Ctx) {
     const rows = (await ctx.db.query<{ item_id: string; note: string | null; added_at: Date; by_id: string | null; by_name: string | null }>(
       `select i.item_id, i.note, i.added_at, u.id as by_id, u.name as by_name from list_items i left join users u on u.id = i.added_by
         where i.list_id = $1 order by i.added_at desc`, [a.id])).rows;
-    const items = await itemsByIds(ctx, req.jfUser!, rows.map((r) => r.item_id));
+    let items;
+    try {
+      items = await itemsByIds(ctx, req.jfUser!, rows.map((r) => r.item_id), true);
+    } catch {
+      return reply.code(502).send({ error: 'jellyfin_unavailable' }); // not "everything hidden"
+    }
     const meta = new Map(rows.map((r) => [r.item_id, r]));
     return {
       list: { id: l.id, name: l.name, description: l.description, owner: { id: l.owner_id, name: l.owner_name }, role: a.role },
@@ -147,6 +152,7 @@ export function listRoutes(app: FastifyInstance, ctx: Ctx) {
       if (e instanceof JellyfinError) return reply.code(404).send({ error: 'not_found' });
       throw e;
     }
+    if (item.type !== 'Movie' && item.type !== 'Series') return reply.code(400).send({ error: 'bad_type' });
     const n = Number((await ctx.db.query<{ c: string }>('select count(*) c from list_items where list_id = $1', [a.id])).rows[0]!.c);
     if (n >= MAX_ITEMS) return reply.code(409).send({ error: 'list_full' });
     const r = await ctx.db.query(

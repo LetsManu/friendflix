@@ -4,41 +4,52 @@ import { audit } from '../audit.js';
 import type { Ctx } from '../ctx.js';
 import { digestSchedule, sendDigest, type DigestData } from '../digest.js';
 import { requireAdmin, requireUser } from '../session.js';
+import type { ItemDto } from '../jellyfin/dto.js';
 import type { JfUser } from '../types.js';
 
-/** Ids the viewer's own Jellyfin user may see (library permissions of the active profile apply). */
-async function visibleIds(ctx: Ctx, user: JfUser, ids: string[]): Promise<Set<string>> {
-  const ok = new Set<string>();
+/** Items the viewer's own Jellyfin user may see (library permissions of the active profile apply), by id. */
+async function visibleItems(ctx: Ctx, user: JfUser, ids: string[]): Promise<Map<string, ItemDto>> {
+  const ok = new Map<string, ItemDto>();
   const uniq = [...new Set(ids)];
   for (let i = 0; i < uniq.length; i += 40) {
-    const r = await ctx.jf.items(user, { ids: uniq.slice(i, i + 40), types: 'Movie,Series,Episode,BoxSet', limit: 40 }).catch(() => ({ items: [] }));
-    for (const it of r.items) ok.add(it.id);
+    const r = await ctx.jf.items(user, { ids: uniq.slice(i, i + 40), types: 'Movie,Series,Episode,BoxSet', limit: 40 }).catch(() => ({ items: [] as ItemDto[] }));
+    for (const it of r.items) ok.set(it.id, it);
   }
   return ok;
 }
 
-export async function filterDigest(ctx: Ctx, user: JfUser, d: DigestData): Promise<DigestData> {
+/** Drops everything the viewer may not see (names and counts) and returns the visible ItemDtos so the page needs no per-item requests. */
+export async function filterDigest(ctx: Ctx, user: JfUser, d: DigestData): Promise<{ data: DigestData; items: Record<string, ItemDto> }> {
   const ids = [
+    ...(d.movieIds ?? []),
     ...d.newMovies.map((m) => m.id),
+    ...Object.keys(d.seriesCounts ?? {}),
     ...d.newEpisodes.flatMap((g) => [g.seriesId, ...g.episodes.map((e) => e.id)]),
     ...d.available.flatMap((a) => (a.itemId ? [a.itemId] : [])),
     ...d.recommendations.map((r) => r.itemId),
   ];
-  const ok = await visibleIds(ctx, user, ids);
+  const ok = await visibleItems(ctx, user, ids);
   const movies = d.newMovies.filter((m) => ok.has(m.id));
+  // count only titles the viewer can see; movies beyond the stored id list are assumed visible
+  const stored = d.movieIds ?? d.newMovies.map((m) => m.id);
+  const newMovieCount = stored.filter((i) => ok.has(i)).length + Math.max(0, d.newMovieCount - stored.length);
+  let hiddenEps = 0;
   const newEpisodes = d.newEpisodes.filter((g) => ok.has(g.seriesId)).map((g) => {
     const episodes = g.episodes.filter((e) => ok.has(e.id));
-    return { ...g, episodes, count: Math.max(episodes.length, g.count - (g.episodes.length - episodes.length)) };
+    const gone = g.episodes.length - episodes.length;
+    hiddenEps += gone;
+    return { ...g, episodes, count: Math.max(episodes.length, g.count - gone) };
   });
-  return {
-    ...d,
-    newMovies: movies,
-    newMovieCount: Math.max(movies.length, d.newMovieCount - (d.newMovies.length - movies.length)),
-    newEpisodes,
-    newEpisodeCount: newEpisodes.reduce((n, g) => n + g.count, 0),
-    available: d.available.filter((a) => !a.itemId || ok.has(a.itemId)),
-    recommendations: d.recommendations.filter((r) => ok.has(r.itemId)),
-  };
+  const newEpisodeCount = d.seriesCounts
+    ? Object.entries(d.seriesCounts).reduce((n, [sid, c]) => n + (ok.has(sid) ? c : 0), 0) - hiddenEps
+    : newEpisodes.reduce((n, g) => n + g.count, 0);
+  const available = d.available.filter((a) => !a.itemId || ok.has(a.itemId));
+  const recommendations = d.recommendations.filter((r) => ok.has(r.itemId));
+  const data: DigestData = { ...d, newMovies: movies, newMovieCount, newEpisodes, newEpisodeCount: Math.max(0, newEpisodeCount), available, recommendations };
+  delete data.movieIds;
+  delete data.seriesCounts;
+  const shown = new Set([...movies.map((m) => m.id), ...newEpisodes.map((g) => g.seriesId), ...available.flatMap((a) => (a.itemId ? [a.itemId] : [])), ...recommendations.map((r) => r.itemId)]);
+  return { data, items: Object.fromEntries([...shown].flatMap((i) => (ok.has(i) ? [[i, ok.get(i)!] as const] : []))) };
 }
 
 const settingsSchema = z.object({ enabled: z.boolean(), day: z.number().int().min(0).max(6), hour: z.number().int().min(0).max(23) });
@@ -52,7 +63,7 @@ export function digestRoutes(app: FastifyInstance, ctx: Ctx) {
       'select to_char(week, \'YYYY-MM-DD\') as week, sent_at, data from digests where user_id=$1 order by week desc limit 1', [req.user!.id]);
     const row = r.rows[0];
     if (!row) return { digest: null };
-    return { digest: { week: row.week, sentAt: row.sent_at.toISOString(), data: await filterDigest(ctx, req.jfUser!, row.data) } };
+    return { digest: { week: row.week, sentAt: row.sent_at.toISOString(), ...(await filterDigest(ctx, req.jfUser!, row.data)) } };
   });
 
   const settings = async () => {

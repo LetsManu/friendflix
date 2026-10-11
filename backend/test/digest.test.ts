@@ -192,7 +192,44 @@ describe('personal push', () => {
   });
 });
 
+describe('privacy of the texts', () => {
+  it('in-app body has counts only; titles only in the personal push', async () => {
+    created = [movie('a', 'Geheimfilm'), episode('1', 'f', 'Geheimserie', 1), episode('2', 'f', 'Geheimserie', 2)];
+    await setPrefs(adminId, { ntfyTopic: 'privat' });
+    await digestTick(env.ctx, now);
+    const n = (await digestNotes(adminId))[0];
+    expect(`${n.title}\n${n.body}`).not.toMatch(/Geheim/);
+    expect(n.body).toMatch(/1 neuer Film/);
+    expect(n.body).toMatch(/2 neue Folgen in 1 Serie/);
+    expect(sent).toHaveLength(1);
+    expect(sent[0]!.body).toMatch(/Geheimfilm/);
+    expect(sent[0]!.body).toMatch(/Geheimserie/);
+  });
+  it('caps series groups at 20 but keeps the totals', async () => {
+    created = Array.from({ length: 25 }, (_, i) => episode(i.toString(16).padStart(2, '0')[0]!, String.fromCharCode(97 + (i % 6)), `S${i}`, i)).map((e, i) => ({ ...e, Id: String(i).padStart(2, '0').repeat(16), SeriesId: String(i + 10).padStart(2, '0').repeat(16), SeriesName: `S${i}` }));
+    await digestTick(env.ctx, now);
+    const d = (await env.pool.query('select data from digests where user_id=$1', [adminId])).rows[0].data;
+    expect(d.newEpisodes).toHaveLength(20);
+    expect(d.newEpisodeCount).toBe(25);
+    expect(Object.keys(d.seriesCounts)).toHaveLength(25);
+  });
+});
+
 describe('GET /api/digest/latest', () => {
+  it('returns full item DTOs and counts only visible movies beyond the 12 shown', async () => {
+    created = Array.from({ length: 15 }, (_, i) => movie(i.toString(16), `Film ${i}`));
+    created = created.map((m, i) => ({ ...m, Id: String(i).padStart(2, '0').repeat(16) }));
+    await digestTick(env.ctx, now);
+    hidden.add('13'.repeat(16)); // not among the 12 shown names
+    hidden.add('00'.repeat(16)); // shown
+    const r = (await call(admin, 'GET', '/api/digest/latest')).json().digest;
+    expect(r.data.newMovieCount).toBe(13);
+    expect(r.data.newMovies).toHaveLength(11);
+    expect(r.data.movieIds).toBeUndefined();
+    expect(r.items['01'.repeat(16)]).toMatchObject({ id: '01'.repeat(16), name: 'Film 1', type: 'Movie' });
+    expect(r.items['00'.repeat(16)]).toBeUndefined();
+  });
+
   it('null without a digest; drops items the profile cannot see', async () => {
     expect((await call(admin, 'GET', '/api/digest/latest')).json()).toEqual({ digest: null });
     created = [movie('a', 'Sichtbar'), movie('b', 'Versteckt'), episode('1', 'f', 'Serie', 1), episode('2', 'f', 'Serie', 2)];
@@ -249,6 +286,8 @@ describe('prefs', () => {
     expect(base).toMatchObject({ weeklyDigest: true, ntfyTopic: '' });
     expect((await call(admin, 'PUT', '/api/prefs', { ...base, ntfyTopic: 'bad topic!' })).statusCode).toBe(400);
     expect((await call(admin, 'PUT', '/api/prefs', { ...base, ntfyTopic: 'x'.repeat(65) })).statusCode).toBe(400);
+    // the global NTFY_URL topic (…/ff) is shared: refuse it as personal topic
+    expect((await call(admin, 'PUT', '/api/prefs', { ...base, ntfyTopic: 'ff' })).statusCode).toBe(400);
     const ok = await call(admin, 'PUT', '/api/prefs', { ...base, ntfyTopic: 'mein-topic', weeklyDigest: false, shareHistory: true });
     expect(ok.json().prefs).toMatchObject({ ntfyTopic: 'mein-topic', weeklyDigest: false, shareHistory: true });
     expect((await env.pool.query('select data from user_prefs where user_id=$1', [adminId])).rows[0].data).toMatchObject({ ntfyTopic: 'mein-topic', weeklyDigest: false, shareHistory: true });
@@ -258,9 +297,9 @@ describe('prefs', () => {
     const sel = await call(admin, 'POST', `/api/profiles/${pr.json().profile.id}/select`, {});
     const kid: Sess = { cookies: { ff_sid: sel.cookies.find((c) => c.name === 'ff_sid')!.value }, csrf: admin.csrf };
     const mine = (await call(kid, 'GET', '/api/prefs')).json().prefs;
-    expect(mine).toMatchObject({ ntfyTopic: 'mein-topic', weeklyDigest: false });
+    expect(mine).toMatchObject({ ntfyTopic: '', weeklyDigest: false }); // the account's topic is not shown to other profiles
     const put = await call(kid, 'PUT', '/api/prefs', { ...mine, ntfyTopic: 'kid-topic', weeklyDigest: true, autoplayNext: false });
-    expect(put.json().prefs).toMatchObject({ ntfyTopic: 'mein-topic', weeklyDigest: false, autoplayNext: false });
+    expect(put.json().prefs).toMatchObject({ ntfyTopic: '', weeklyDigest: false, autoplayNext: false });
     expect((await env.pool.query('select data from user_prefs where user_id=$1', [adminId])).rows[0].data).toMatchObject({ ntfyTopic: 'mein-topic', weeklyDigest: false });
   });
 });

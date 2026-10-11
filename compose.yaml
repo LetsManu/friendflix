@@ -77,6 +77,7 @@ services:
       NTFY_URL: ${NTFY_URL:-}
       DISCORD_WEBHOOK_URL: ${DISCORD_WEBHOOK_URL:-}
       NTFY_BASE_URL: ${NTFY_BASE_URL:-}
+      TZ: ${TZ:-Europe/Vienna}
       DIGEST_DAY: ${DIGEST_DAY:-0}
       DIGEST_HOUR: ${DIGEST_HOUR:-18}
       METRICS_TOKEN: ${METRICS_TOKEN:-}

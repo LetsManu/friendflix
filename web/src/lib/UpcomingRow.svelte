@@ -14,6 +14,7 @@
   let avail = new Set<number>();
   async function remind(it: NonNullable<typeof items>[number]) {
     const r = await toggleReminder(movieKey(it.mediaType, it.tmdbId), { mediaType: it.mediaType, tmdbId: it.tmdbId });
+    if (r === 'busy') return;
     if (r === 'available') { avail.add(it.tmdbId); avail = avail; msg = `„${it.title}“ ist schon verfügbar.`; }
     else if (r === 'error') msg = 'Erinnerung konnte nicht gespeichert werden.';
     else msg = r === 'on' ? `Du wirst erinnert, sobald „${it.title}“ verfügbar ist.` : 'Erinnerung entfernt.';

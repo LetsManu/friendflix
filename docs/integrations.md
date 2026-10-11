@@ -10,9 +10,9 @@ Plugin "Webhook" → Add Generic Destination:
 - Header: `X-Webhook-Secret: <WEBHOOK_SECRET>`
 - Template:
 ```json
-{"type":"{{NotificationType}}","user":"{{NotificationUsername}}","itemId":"{{ItemId}}","name":"{{Name}}","seriesName":"{{SeriesName}}","positionTicks":"{{PlaybackPositionTicks}}","runtimeTicks":"{{RunTimeTicks}}","isPaused":"{{IsPaused}}","deviceName":"{{DeviceName}}","itemType":"{{ItemType}}","provider_tmdb":"{{Provider_tmdb}}"}
+{"type":"{{NotificationType}}","user":"{{NotificationUsername}}","itemId":"{{ItemId}}","name":"{{Name}}","seriesName":"{{SeriesName}}","positionTicks":"{{PlaybackPositionTicks}}","runtimeTicks":"{{RunTimeTicks}}","isPaused":"{{IsPaused}}","deviceName":"{{DeviceName}}","itemType":"{{ItemType}}","provider_tmdb":"{{Provider_tmdb}}","seriesId":"{{SeriesId}}","seasonNumber":"{{SeasonNumber}}","episodeNumber":"{{EpisodeNumber}}"}
 ```
-`itemType` and `provider_tmdb` are only used for `ItemAdded`: when a Movie/Series with that TMDB id (or an Episode) arrives, the people who pressed "Erinnere mich" are notified at once. Without Item Added the portal checks every 30 minutes (and Seerr's MEDIA_AVAILABLE webhook fires reminders immediately). Reminders are personal: they only go to the in-app inbox and the user's own ntfy topic, never to the global ntfy/Discord channel.
+`itemType`, `provider_tmdb`, `seriesId`, `seasonNumber` and `episodeNumber` are only used for `ItemAdded`: when a Movie/Series with that TMDB id (or an Episode) arrives, the people who pressed "Erinnere mich" are notified at once. Jellyfin gives an announced (virtual) episode a new id when its file arrives, so episode reminders are matched on series + season + episode number as well as the id; a series reminder only fires once at least one real episode exists. Without Item Added the portal checks every 30 minutes (and Seerr's MEDIA_AVAILABLE webhook fires reminders immediately). Reminders are personal: they only go to the in-app inbox and the user's own ntfy topic, never to the global ntfy/Discord channel.
 Pause is derived from `isPaused` in progress events. Sessions started in the portal are tracked directly and need no webhook.
 
 ## Seerr

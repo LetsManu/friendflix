@@ -26,11 +26,11 @@ function wrap<T extends (...a: any[]) => Promise<any>>(fn: T): T {
   }) as T;
 }
 
-/** Fetches items by id in chunks (keeps URLs short) with the viewer's own token, so library permissions apply. */
-export async function itemsByIds(ctx: Ctx, user: JfUser, ids: string[]): Promise<ItemDto[]> {
+/** Fetches items by id in chunks (keeps URLs short) with the viewer's own token, so library permissions apply. Jellyfin errors count as "not visible" unless `strict` (then they throw). */
+export async function itemsByIds(ctx: Ctx, user: JfUser, ids: string[], strict = false): Promise<ItemDto[]> {
   const out: ItemDto[] = [];
   for (let i = 0; i < ids.length; i += 40) {
-    const r = await ctx.jf.items(user, { ids: ids.slice(i, i + 40), types: 'Movie,Series,Episode,BoxSet', limit: 40 }).catch(() => ({ items: [] as ItemDto[] }));
+    const r = await ctx.jf.items(user, { ids: ids.slice(i, i + 40), types: 'Movie,Series,Episode,BoxSet', limit: 40 }).catch((e) => { if (strict) throw e; return { items: [] as ItemDto[] }; });
     out.push(...r.items);
   }
   const byId = new Map(out.map((i) => [i.id, i]));

@@ -58,11 +58,24 @@ export async function loadPrefs(ctx: Pick<Ctx, 'db'>, userId: string, profileId:
   return parsed.success ? parsed.data : prefsSchema.parse({});
 }
 
+/** Topic (path) of the global NTFY_URL, or null. */
+export function globalNtfyTopic(cfg: Pick<Ctx['cfg'], 'NTFY_URL'>): string | null {
+  try {
+    if (!cfg.NTFY_URL) return null;
+    return decodeURIComponent(new URL(cfg.NTFY_URL).pathname).replace(/^\/+|\/+$/g, '') || null;
+  } catch { return null; }
+}
+
 export function prefsRoutes(app: FastifyInstance, ctx: Ctx) {
   const pre = { preHandler: requireUser(ctx) };
-  app.get('/api/prefs', pre, async (req) => ({ prefs: await loadPrefs(ctx, req.user!.id, req.profile!.id) }));
-  app.put('/api/prefs', pre, async (req) => {
+  /** Account-level ntfy topic is a secret of the account: other profiles neither see nor change it. */
+  const hideTopic = (req: { profile?: { is_owner: boolean } }, p: Prefs): Prefs => (req.profile!.is_owner ? p : { ...p, ntfyTopic: '' });
+  app.get('/api/prefs', pre, async (req) => ({ prefs: hideTopic(req, await loadPrefs(ctx, req.user!.id, req.profile!.id)) }));
+  app.put('/api/prefs', pre, async (req, reply) => {
     const input = prefsSchema.parse(req.body);
+    // the global NTFY_URL topic is shared by everybody: a personal push to it would leak to all subscribers
+    const g = globalNtfyTopic(ctx.cfg);
+    if (input.ntfyTopic && g && input.ntfyTopic === g) return reply.code(400).send({ error: 'ntfy_topic_reserved' });
     // account flags are shared by all profiles: only the owner profile may change them (others keep the stored values)
     const stored = req.profile!.is_owner ? null : await loadPrefs(ctx, req.user!.id, req.profile!.id);
     const prefs: Prefs = stored ? { ...input, ...pickAccount(stored) } : input;
@@ -78,6 +91,6 @@ export function prefsRoutes(app: FastifyInstance, ctx: Ctx) {
         [req.user!.id, JSON.stringify(pickAccount(prefs))],
       );
     }
-    return { prefs };
+    return { prefs: hideTopic(req, prefs) };
   });
 }

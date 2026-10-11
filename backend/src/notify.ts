@@ -13,6 +13,8 @@ export interface Notice {
   external?: boolean;
   /** also push to the recipient's own ntfy topic (never to the global ntfy / Discord) */
   personal?: boolean;
+  /** text of the personal ntfy push when it should differ from the in-app body (e.g. titles that must not sit in the inbox) */
+  pushBody?: string;
 }
 
 export async function notify(ctx: Pick<Ctx, 'db' | 'cfg' | 'fetchImpl'>, n: Notice): Promise<boolean> {
@@ -22,7 +24,7 @@ export async function notify(ctx: Pick<Ctx, 'db' | 'cfg' | 'fetchImpl'>, n: Noti
   );
   if (!r.rowCount) return false;
   if (n.external) await pushExternal(ctx, n).catch(() => undefined);
-  if (n.personal && n.userId) await pushPersonal(ctx, n.userId, n).catch(() => undefined);
+  if (n.personal && n.userId) await pushPersonal(ctx, n.userId, { title: n.title, body: n.pushBody ?? n.body, link: n.link }).catch(() => undefined);
   return true;
 }
 

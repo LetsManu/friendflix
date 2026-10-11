@@ -359,6 +359,8 @@ export const MIGRATIONS: string[] = [
     tmdb_id int,
     jf_item_id text,
     series_id text,
+    season int,
+    episode int,
     title text not null,
     poster text,
     release_date date,

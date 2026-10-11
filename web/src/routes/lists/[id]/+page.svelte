@@ -39,7 +39,7 @@
     try { await api(`/api/lists/${id}`, { method: 'DELETE' }); await goto('/lists'); } catch { err = 'Das hat nicht geklappt.'; }
   }
   async function leave(userId: string) {
-    if (!confirm('Liste verlassen?')) return;
+    if (!confirm(userId === me ? 'Liste verlassen?' : 'Mitglied entfernen?')) return;
     try { await removeMember(id, userId); if (userId === me) await goto('/lists'); else await load(); } catch { err = 'Das hat nicht geklappt.'; }
   }
   let me = '';

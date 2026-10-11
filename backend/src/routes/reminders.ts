@@ -22,11 +22,11 @@ export function reminderRoutes(app: FastifyInstance, ctx: Ctx) {
 
   app.get('/api/reminders', pre, async (req) => {
     const r = await ctx.db.query(
-      'select * from reminders where user_id = $1 and fired_at is null order by created_at desc limit 200', [req.user!.id]);
+      "select *, to_char(release_date, 'YYYY-MM-DD') as release_date from reminders where user_id = $1 and fired_at is null order by created_at desc limit 200", [req.user!.id]);
     return {
       reminders: r.rows.map((x) => ({
         id: Number(x.id), kind: x.kind, mediaType: x.media_type, tmdbId: x.tmdb_id, itemId: x.jf_item_id, seriesId: x.series_id, title: x.title,
-        poster: x.poster ? `/api/seerr/image${x.poster}` : null, releaseDate: x.release_date ? new Date(x.release_date).toISOString().slice(0, 10) : null, createdAt: x.created_at,
+        poster: x.poster ? `/api/seerr/image${x.poster}` : null, releaseDate: x.release_date ?? null, createdAt: x.created_at,
       })),
     };
   });
@@ -55,11 +55,12 @@ export function reminderRoutes(app: FastifyInstance, ctx: Ctx) {
       }
       if (ep.type !== 'Episode') return reply.code(400).send({ error: 'not_an_episode' });
       if ((await isAvailableEpisode(ctx, req.jfUser!, [ep.id])).has(ep.id)) return reply.code(409).send({ error: 'already_available', itemId: ep.id });
+      if (!ep.seriesId || ep.parentIndexNumber == null || ep.indexNumber == null) return reply.code(400).send({ error: 'not_trackable' });
       const title = `${ep.seriesName ?? ep.name}${ep.parentIndexNumber != null && ep.indexNumber != null ? ` S${ep.parentIndexNumber}E${ep.indexNumber}` : ''}`;
       await ctx.db.query(
-        `insert into reminders(user_id, profile_id, kind, jf_item_id, series_id, title, release_date)
-         values ($1,$2,'episode',$3,$4,$5,$6) on conflict (user_id, jf_item_id) where kind='episode' do nothing`,
-        [userId, profileId, ep.id, ep.seriesId ?? null, title, ep.premiereDate ? ep.premiereDate.slice(0, 10) : null],
+        `insert into reminders(user_id, profile_id, kind, jf_item_id, series_id, season, episode, title, release_date)
+         values ($1,$2,'episode',$3,$4,$5,$6,$7,$8) on conflict (user_id, jf_item_id) where kind='episode' do nothing`,
+        [userId, profileId, ep.id, ep.seriesId, ep.parentIndexNumber, ep.indexNumber, title, ep.premiereDate ? ep.premiereDate.slice(0, 10) : null],
       );
       const row = (await ctx.db.query("select id from reminders where user_id=$1 and kind='episode' and jf_item_id=$2", [userId, ep.id])).rows[0];
       const follow = ep.seriesId ? (await ctx.db.query('select 1 from series_follows where user_id=$1 and series_id=$2', [userId, ep.seriesId])).rowCount! > 0 : false;

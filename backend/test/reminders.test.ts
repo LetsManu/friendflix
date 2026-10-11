@@ -6,6 +6,8 @@ import { ADMIN, makeEnv, type TestEnv } from './helpers.js';
 const EP = 'e'.repeat(32);
 const EP2 = 'f'.repeat(32);
 const SERIES = 'a'.repeat(32);
+const REAL = '1'.repeat(32); // Jellyfin replaces the placeholder episode by an item with a NEW id
+const REAL2 = '2'.repeat(32);
 const MOVIE = 'b'.repeat(32);
 const secret = { 'x-webhook-secret': 'webhook-secret-123456' };
 
@@ -15,6 +17,9 @@ let b: { cookies: Record<string, string>; csrf: string };
 const mediaStatus: Record<string, number | undefined> = {};
 const library = new Map<string, string>(); // 'movie:603' -> jf id
 const episodes = new Map<string, { virtual: boolean }>();
+const realEps = new Map<string, Array<{ Id: string; IndexNumber: number; LocationType: string }>>(); // `${series}:${season}`
+let seriesHasFile = false;
+let upcomingId = EP;
 const ext: Array<{ url: string; body: string }> = [];
 
 const epJson = (id: string) => ({ Id: id, Name: 'Pilot', Type: 'Episode', SeriesId: SERIES, SeriesName: 'Show', IndexNumber: 1, ParentIndexNumber: 2, PremiereDate: '2030-01-01T00:00:00Z' });
@@ -28,8 +33,10 @@ beforeAll(async () => {
       if (id === MOVIE) return { json: { Id: MOVIE, Name: 'Film', Type: 'Movie' } };
       return { status: 404 };
     },
-    'GET /Shows/Upcoming': () => ({ json: { Items: [{ ...epJson(EP), PremiereDate: '2020-01-01T00:00:00Z' }] } }),
+    'GET /Shows/Upcoming': () => ({ json: { Items: [{ ...epJson(upcomingId), PremiereDate: '2020-01-01T00:00:00Z' }] } }),
+    'GET /Shows/[^/]+/Episodes': (u) => ({ json: { Items: realEps.get(`${u.pathname.split('/')[2]}:${u.searchParams.get('season')}`) ?? [] } }),
     'GET /Items': (u) => {
+      if (u.searchParams.get('parentId')) return { json: { Items: seriesHasFile ? [{ Id: 'c'.repeat(32), Type: 'Episode', LocationType: 'FileSystem' }] : [] } };
       const tmdb = u.searchParams.get('anyProviderIdEquals');
       if (tmdb) {
         const type = u.searchParams.get('includeItemTypes') === 'Series' ? 'tv' : 'movie';
@@ -100,7 +107,8 @@ describe('reminders', () => {
     expect((await hook()).statusCode).toBe(200);
     await hook();
     const rem = await notes('reminder');
-    expect(rem).toEqual([{ user_id: ua, dedupe: `remind-${ua}-movie-700` }]);
+    const rid = (await env.pool.query('select id from reminders where user_id=$1', [ua])).rows[0].id;
+    expect(rem).toEqual([{ user_id: ua, dedupe: `remind-${rid}` }]);
     expect((await notes('available')).map((n) => n.user_id)).toEqual([ub]);
     expect((await env.pool.query('select user_id from reminders where fired_at is not null')).rowCount).toBe(2);
     expect((await call(a, 'GET', '/api/reminders')).json().reminders).toEqual([]);
@@ -140,12 +148,21 @@ describe('reminders', () => {
     // virtual: nothing fires
     await reminderTick(env.ctx);
     expect(await notes('episode')).toHaveLength(0);
-    episodes.set(EP, { virtual: false });
+    expect((await env.pool.query('select season, episode from reminders')).rows[0]).toEqual({ season: 2, episode: 1 });
+    // announced episode still a placeholder in the season listing
+    realEps.set(`${SERIES}:2`, [{ Id: EP, IndexNumber: 1, LocationType: 'Virtual' }]);
     await reminderTick(env.ctx);
-    await calendarNotifications(env.ctx); // same dedupe key as the follow job
+    expect(await notes('episode')).toHaveLength(0);
+    // the file arrives: Jellyfin replaces the placeholder by an item with a NEW id
+    realEps.set(`${SERIES}:2`, [{ Id: 'f'.repeat(32), IndexNumber: 3, LocationType: 'FileSystem' }, { Id: REAL, IndexNumber: 1, LocationType: 'FileSystem' }]);
+    upcomingId = REAL;
+    await reminderTick(env.ctx);
+    await calendarNotifications(env.ctx); // same dedupe key (real id) as the follow job
     const ep = await notes('episode');
     expect(ep).toHaveLength(1);
-    expect(ep[0].dedupe).toMatch(/^cal-/);
+    expect(ep[0].dedupe).toBe(`cal-${await uid('Admin')}-${REAL}`);
+    expect((await env.pool.query("select link from notifications where kind='episode'")).rows[0].link).toBe(`/watch/${REAL}`);
+    upcomingId = EP;
     expect((await env.pool.query('select fired_at from reminders')).rows[0].fired_at).not.toBeNull();
   });
 
@@ -165,10 +182,64 @@ describe('reminders', () => {
     expect((await post({}, movie)).statusCode).toBe(403);
     expect(await notes('reminder')).toHaveLength(0);
     expect((await post(secret, movie)).statusCode).toBe(200);
-    expect((await post(secret, { type: 'ItemAdded', itemId: EP2, itemType: 'Episode' })).statusCode).toBe(200);
+    // the episode arrives under a new id (dashed + upper case as some plugin versions send it); matched on series + season + number
+    const dashed = `${REAL2.slice(0, 8)}-${REAL2.slice(8, 12)}-${REAL2.slice(12, 16)}-${REAL2.slice(16, 20)}-${REAL2.slice(20)}`.toUpperCase();
+    expect((await post(secret, { type: 'ItemAdded', itemId: dashed, itemType: 'Episode', seriesId: SERIES, seasonNumber: '1', episodeNumber: '1' })).statusCode).toBe(200);
+    expect(await notes('episode')).toHaveLength(0); // wrong season: no match
+    expect((await post(secret, { type: 'ItemAdded', itemId: dashed, itemType: 'Episode', seriesId: SERIES.toUpperCase(), seasonNumber: '2', episodeNumber: '1' })).statusCode).toBe(200);
+    expect((await env.pool.query("select link from notifications where kind='episode'")).rows[0].link).toBe(`/watch/${REAL2}`);
     await post(secret, movie);
     expect(await notes('reminder')).toHaveLength(1);
     expect(await notes('episode')).toHaveLength(1);
     expect((await env.pool.query('select link from notifications where kind=$1', ['reminder'])).rows[0].link).toBe(`/item/${MOVIE}`);
+  });
+
+  it('a re-armed reminder notifies again (dedupe per reminder id)', async () => {
+    await env.pool.query('truncate reminders');
+    await env.pool.query('truncate notifications');
+    library.set('movie:1000', MOVIE);
+    mediaStatus['movie:1000'] = undefined;
+    for (let i = 0; i < 2; i++) {
+      expect((await call(a, 'POST', '/api/reminders', { mediaType: 'movie', tmdbId: 1000 })).statusCode).toBe(200);
+      await reminderTick(env.ctx);
+    }
+    const n = await notes('reminder');
+    expect(n).toHaveLength(2);
+    expect(new Set(n.map((x) => x.dedupe)).size).toBe(2);
+  });
+
+  it('a requester is only skipped when the avail- notice really exists', async () => {
+    await env.pool.query('truncate reminders');
+    await env.pool.query('truncate notifications');
+    const ua = await uid('Admin');
+    await env.pool.query("insert into seerr_requests(seerr_request_id,user_id,media_type,tmdb_id,title) values (88,$1,'movie',1100,'Heat 2')", [ua]);
+    library.set('movie:1100', MOVIE);
+    expect((await call(a, 'POST', '/api/reminders', { mediaType: 'movie', tmdbId: 1100 })).statusCode).toBe(200);
+    await reminderTick(env.ctx); // no avail-88 notice was ever created -> the reminder must notify
+    expect(await notes('reminder')).toHaveLength(1);
+    await env.pool.query('truncate reminders');
+    await env.pool.query('truncate notifications');
+    await env.pool.query("insert into notifications(user_id, kind, title, dedupe) values ($1,'available','x','avail-88')", [ua]);
+    expect((await call(a, 'POST', '/api/reminders', { mediaType: 'movie', tmdbId: 1100 })).statusCode).toBe(200);
+    await reminderTick(env.ctx);
+    expect(await notes('reminder')).toHaveLength(0);
+  });
+
+  it('a series reminder needs at least one real episode', async () => {
+    await env.pool.query('truncate reminders');
+    await env.pool.query('truncate notifications');
+    library.set('tv:1396', SERIES);
+    seriesHasFile = false;
+    expect((await call(a, 'POST', '/api/reminders', { mediaType: 'tv', tmdbId: 1396 })).statusCode).toBe(200);
+    await reminderTick(env.ctx);
+    const post = (payload: object) => env.app.inject({ method: 'POST', url: '/internal/webhook/jellyfin', headers: secret, payload });
+    await post({ type: 'ItemAdded', itemId: SERIES, itemType: 'Series', provider_tmdb: '1396' });
+    expect(await notes('reminder')).toHaveLength(0);
+    expect((await env.pool.query('select fired_at from reminders')).rows[0].fired_at).toBeNull();
+    seriesHasFile = true;
+    await reminderTick(env.ctx);
+    expect(await notes('reminder')).toHaveLength(1);
+    expect((await env.pool.query("select link from notifications where kind='reminder'")).rows[0].link).toBe(`/item/${SERIES}`);
+    seriesHasFile = false;
   });
 });

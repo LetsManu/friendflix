@@ -59,6 +59,7 @@ Dann:
 | `SEERR_URL`, `SEERR_API_KEY` | Seerr (intern) |
 | `NTFY_URL`, `DISCORD_WEBHOOK_URL` | Push bei „verfügbar“, Freigaben, Filmabend |
 | `NTFY_BASE_URL` | Basis-URL des ntfy-Servers für persönliche Themen (Einstellungen → „ntfy-Thema“); ohne Angabe der Host von `NTFY_URL`. Persönliche Nachrichten (z. B. Wochenrückblick) gehen nie an den gemeinsamen Kanal oder Discord |
+| `TZ` | Zeitzone des Backends (Standard `Europe/Vienna`); bestimmt, wann die Stunden für Wochenrückblick (`DIGEST_HOUR`) und nächtlichen Wiedergabe-Check gelten |
 | `DIGEST_DAY`, `DIGEST_HOUR` | Wochenrückblick: Wochentag (0 = Sonntag … 6 = Samstag, Standard 0) und Serverstunde (0-23, Standard 18, `-1` = aus). Im Admin-Bereich „Wochenrückblick“ überschreibbar |
 | `METRICS_TOKEN` | Bearer für `/metrics` |
 | `PORTAINER_WEBHOOK_URL` oder `PORTAINER_URL`, `PORTAINER_API_KEY`, `PORTAINER_STACK_ID`, `PORTAINER_ENDPOINT_ID` | Update-Knopf unter *Admin → Update* (Webhook oder API, Default Endpoint `1`); Secrets, siehe `docs/operations.md` |

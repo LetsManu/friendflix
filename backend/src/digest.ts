@@ -9,8 +9,12 @@ export interface DigestData {
   until: string;
   newMovies: Array<{ id: string; name: string; year?: number }>;
   newMovieCount: number;
+  /** ids of (up to MAX_MOVIE_IDS of) all new movies: lets a restricted viewer count only the visible ones */
+  movieIds?: string[];
   newEpisodes: Array<{ seriesId: string; seriesName: string; count: number; followed: boolean; episodes: Array<{ id: string; name: string; season?: number; episode?: number }> }>;
   newEpisodeCount: number;
+  /** episode count per series for ALL series with new episodes (newEpisodes lists only the first MAX_SERIES) */
+  seriesCounts?: Record<string, number>;
   available: Array<{ title: string; link: string | null; itemId: string | null }>;
   recommendations: Array<{ itemId: string; name: string; from: string; note: string | null; kind: 'recommended' | 'friends' }>;
 }
@@ -18,6 +22,8 @@ export interface DigestData {
 const MAX_MOVIES = 12;
 const MAX_EPISODES_PER_SERIES = 5;
 const MAX_RECS = 5;
+const MAX_SERIES = 20;
+const MAX_MOVIE_IDS = 200;
 const SCAN_CAP = 600;
 const PAGE = 200;
 const DAY_MS = 24 * 3600_000;
@@ -89,7 +95,8 @@ export async function buildDigest(ctx: Ctx, user: UserRow, since: Date, until: D
     g.count++;
     if (g.episodes.length < MAX_EPISODES_PER_SERIES) g.episodes.push({ id: e.Id, name: e.Name, season: e.ParentIndexNumber, episode: e.IndexNumber });
   }
-  const newEpisodes = [...groups.values()].sort((a, b) => Number(b.followed) - Number(a.followed) || b.count - a.count || a.seriesName.localeCompare(b.seriesName));
+  const sorted = [...groups.values()].sort((a, b) => Number(b.followed) - Number(a.followed) || b.count - a.count || a.seriesName.localeCompare(b.seriesName));
+  const newEpisodes = sorted.slice(0, MAX_SERIES);
 
   const avail = (await ctx.db.query<{ title: string; link: string | null }>(
     "select title, link from notifications where user_id=$1 and kind in ('available','reminder') and created_at >= $2 and created_at <= $3 order by created_at desc limit 20",
@@ -125,8 +132,10 @@ export async function buildDigest(ctx: Ctx, user: UserRow, since: Date, until: D
     until: until.toISOString(),
     newMovies: movies.slice(0, MAX_MOVIES).map((m) => ({ id: m.Id, name: m.Name, year: m.ProductionYear })),
     newMovieCount: movies.length,
+    movieIds: movies.slice(0, MAX_MOVIE_IDS).map((m) => m.Id),
     newEpisodes,
     newEpisodeCount: eps.length,
+    seriesCounts: Object.fromEntries(sorted.map((g) => [g.seriesId, g.count])),
     available: avail.map((a) => ({ title: a.title, link: a.link, itemId: /^\/item\/([0-9a-f]{32})$/.exec(a.link ?? '')?.[1] ?? null })),
     recommendations,
   };
@@ -136,16 +145,34 @@ export async function buildDigest(ctx: Ctx, user: UserRow, since: Date, until: D
 
 const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
 
-export function digestText(d: DigestData): { title: string; body: string } {
+function headline(d: DigestData): string {
   const parts = [d.newMovieCount ? plural(d.newMovieCount, 'neuer Film', 'neue Filme') : '', d.newEpisodeCount ? plural(d.newEpisodeCount, 'neue Folge', 'neue Folgen') : ''].filter(Boolean);
+  return `Dein Wochenrückblick${parts.length ? `: ${parts.join(', ')}` : ''}`;
+}
+
+/** In-app text: counts only (titles may be hidden for restricted profiles, so none appear in the inbox). */
+export function digestText(d: DigestData): { title: string; body: string } {
   const lines: string[] = [];
-  if (d.newMovieCount) lines.push(`Filme: ${d.newMovies.slice(0, 3).map((m) => m.name).join(', ')}${d.newMovieCount > 3 ? ` und ${d.newMovieCount - 3} weitere` : ''}`);
-  const fol = d.newEpisodes.filter((g) => g.followed);
-  if (fol.length) lines.push(`Deine Serien: ${fol.slice(0, 3).map((g) => `${g.seriesName} (${g.count})`).join(', ')}${fol.length > 3 ? ` und ${fol.length - 3} weitere` : ''}`);
-  else if (d.newEpisodes.length) lines.push(`Serien: ${d.newEpisodes.slice(0, 3).map((g) => `${g.seriesName} (${g.count})`).join(', ')}${d.newEpisodes.length > 3 ? ` und ${d.newEpisodes.length - 3} weitere` : ''}`);
+  const nSeries = Object.keys(d.seriesCounts ?? {}).length || d.newEpisodes.length;
+  const fol = d.newEpisodes.filter((g) => g.followed).length;
+  if (d.newMovieCount) lines.push(plural(d.newMovieCount, 'neuer Film', 'neue Filme'));
+  if (d.newEpisodeCount) lines.push(`${plural(d.newEpisodeCount, 'neue Folge', 'neue Folgen')} in ${plural(nSeries, 'Serie', 'Serien')}${fol ? `, davon ${fol} von deinen Serien` : ''}`);
   if (d.available.length) lines.push(`${plural(d.available.length, 'Wunsch ist', 'Wünsche sind')} jetzt verfügbar`);
-  if (d.recommendations.length) lines.push(`${plural(d.recommendations.length, 'Empfehlung', 'Empfehlungen')} von Freunden`);
-  return { title: `Dein Wochenrückblick${parts.length ? `: ${parts.join(', ')}` : ''}`, body: lines.slice(0, 5).join('\n') };
+  if (d.recommendations.length) lines.push(plural(d.recommendations.length, 'Empfehlung', 'Empfehlungen') + ' von Freunden');
+  return { title: headline(d), body: lines.slice(0, 5).join('\n') };
+}
+
+/** Personal ntfy text only (own topic): may name titles. */
+export function digestPushText(d: DigestData): string {
+  const lines: string[] = [];
+  const more = (n: number, shown: number) => (n > shown ? ` und ${n - shown} weitere` : '');
+  if (d.newMovieCount) lines.push(`Filme: ${d.newMovies.slice(0, 3).map((m) => m.name).join(', ')}${more(d.newMovieCount, Math.min(3, d.newMovies.length))}`);
+  const fol = d.newEpisodes.filter((g) => g.followed);
+  const src = fol.length ? fol : d.newEpisodes;
+  if (src.length) lines.push(`${fol.length ? 'Deine Serien' : 'Serien'}: ${src.slice(0, 3).map((g) => `${g.seriesName} (${g.count})`).join(', ')}${more(src.length, Math.min(3, src.length))}`);
+  if (d.available.length) lines.push(`${plural(d.available.length, 'Wunsch ist', 'Wünsche sind')} jetzt verfügbar`);
+  if (d.recommendations.length) lines.push(plural(d.recommendations.length, 'Empfehlung', 'Empfehlungen') + ' von Freunden');
+  return lines.slice(0, 5).join('\n');
 }
 
 export interface DigestWindow { key: string; since: Date; until: Date }
@@ -160,7 +187,7 @@ export async function sendDigest(ctx: Ctx, user: UserRow, w: DigestWindow, test 
   }
   const { title, body } = digestText(data);
   const sent = await notify(ctx, {
-    userId: user.id, kind: 'digest', title, body, link: '/digest',
+    userId: user.id, kind: 'digest', title, body, pushBody: digestPushText(data), link: '/digest',
     dedupe: test ? `digest-test-${user.id}-${Date.now()}` : `digest-${user.id}-${w.key}`,
     personal: true, // own ntfy topic only, never the global channels
   });

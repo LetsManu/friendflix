@@ -10,24 +10,23 @@
     recommendations: Array<{ itemId: string; name: string; from: string; note: string | null; kind: 'recommended' | 'friends' }>;
   }
   let digest: { week: string; sentAt: string; data: Data } | null | undefined;
+  let byId: Record<string, Item> = {};
   let movies: Item[] | null = null, series: Item[] | null = null, avail: Item[] | null = null, recs: Item[] | null = null;
 
-  const fetchItems = async (ids: string[]): Promise<Item[]> => {
-    const r = await Promise.all(ids.map((id) => api(`/api/items/${id}`).then((x) => x.item as Item).catch(() => null))); // null = not visible any more
-    return r.filter((x): x is Item => Boolean(x));
-  };
+  const pick = (ids: string[]): Item[] => ids.flatMap((id) => (byId[id] ? [byId[id]!] : []));
+  const cap = (items: Item[], c: Map<string, string>) => items.map((i) => ({ ...i, caption: c.get(i.id) }));
   onMount(async () => {
-    try { digest = (await api('/api/digest/latest')).digest; } catch { digest = null; }
+    try {
+      const r = await api('/api/digest/latest');
+      digest = r.digest ? { week: r.digest.week, sentAt: r.digest.sentAt, data: r.digest.data } : null;
+      byId = r.digest?.items ?? {};
+    } catch { digest = null; }
     const d = digest?.data;
     if (!d) return;
-    const cap = (items: Item[], c: Map<string, string>) => items.map((i) => ({ ...i, caption: c.get(i.id) }));
-    fetchItems(d.newMovies.map((m) => m.id)).then((r) => (movies = r)).catch(() => (movies = []));
-    const sorted = d.newEpisodes;
-    const sc = new Map(sorted.map((g) => [g.seriesId, `${g.count} ${g.count === 1 ? 'neue Folge' : 'neue Folgen'}${g.followed ? ' · folgst du' : ''}`]));
-    fetchItems(sorted.map((g) => g.seriesId)).then((r) => (series = cap(r, sc))).catch(() => (series = []));
-    fetchItems(d.available.flatMap((a) => (a.itemId ? [a.itemId] : []))).then((r) => (avail = r)).catch(() => (avail = []));
-    const rc = new Map(d.recommendations.map((r) => [r.itemId, r.kind === 'friends' ? `Bewertet von ${r.from}` : `Von ${r.from}${r.note ? `: ${r.note}` : ''}`]));
-    fetchItems(d.recommendations.map((r) => r.itemId)).then((r) => (recs = cap(r, rc))).catch(() => (recs = []));
+    movies = pick(d.newMovies.map((m) => m.id));
+    series = cap(pick(d.newEpisodes.map((g) => g.seriesId)), new Map(d.newEpisodes.map((g) => [g.seriesId, `${g.count} ${g.count === 1 ? 'neue Folge' : 'neue Folgen'}${g.followed ? ' · folgst du' : ''}`])));
+    avail = pick(d.available.flatMap((a) => (a.itemId ? [a.itemId] : [])));
+    recs = cap(pick(d.recommendations.map((r) => r.itemId)), new Map(d.recommendations.map((r) => [r.itemId, r.kind === 'friends' ? `Bewertet von ${r.from}` : `Von ${r.from}${r.note ? `: ${r.note}` : ''}`])));
   });
   $: pending = digest?.data.available.filter((a) => !a.itemId) ?? [];
   const when = (iso: string) => new Date(iso).toLocaleDateString('de-DE', { day: '2-digit', month: 'long', year: 'numeric' });

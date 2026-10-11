@@ -2,25 +2,27 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { encrypt } from '../src/crypto.js';
 import { makeEnv, type TestEnv } from './helpers.js';
 
-const A = 'a'.repeat(32), B = 'b'.repeat(32), H = 'c'.repeat(32), SERIES = 'd'.repeat(32), EP = 'e'.repeat(32);
+const A = 'a'.repeat(32), B = 'b'.repeat(32), H = 'c'.repeat(32), SERIES = 'd'.repeat(32), EP = 'e'.repeat(32), BOX = '9'.repeat(32);
 const CATALOG: Record<string, Record<string, unknown>> = {
   [A]: { Id: A, Name: 'Alien', Type: 'Movie' },
   [B]: { Id: B, Name: 'Brazil', Type: 'Movie' },
   [H]: { Id: H, Name: 'Hidden', Type: 'Movie' },
   [SERIES]: { Id: SERIES, Name: 'Serie', Type: 'Series' },
+  [BOX]: { Id: BOX, Name: 'Box', Type: 'BoxSet' },
   [EP]: { Id: EP, Name: 'Pilot', Type: 'Episode', SeriesId: SERIES, SeriesName: 'Serie' },
 };
 let env: TestEnv;
 type Sess = { cookies: Record<string, string>; csrf: string };
 let alice: Sess, bea: Sess, cid: Sess;
 let aliceId = '', beaId = '', cidId = '';
+let jfDown = false;
 const hiddenFor = new Set<string>(); // jellyfin user ids that cannot see H
 
 beforeAll(async () => {
   const visible = (u: URL, id: string) => CATALOG[id] && !(id === H && hiddenFor.has(u.searchParams.get('userId') ?? ''));
   env = await makeEnv({
     'GET /Items/[^/]+': (u) => { const id = u.pathname.split('/').pop()!; return visible(u, id) ? { json: CATALOG[id] } : { status: 404 }; },
-    'GET /Items': (u) => ({ json: { Items: (u.searchParams.get('ids') ?? '').split(',').filter((id) => visible(u, id)).map((id) => CATALOG[id]) } }),
+    'GET /Items': (u) => jfDown ? { status: 500 } : ({ json: { Items: (u.searchParams.get('ids') ?? '').split(',').filter((id) => visible(u, id)).map((id) => CATALOG[id]) } }),
   });
   alice = await env.login();
   for (const [sub, name, jf] of [['sub-b', 'Bea', 'jfbea'], ['sub-c', 'Cid', 'jfcid']]) {
@@ -115,6 +117,24 @@ describe('shared lists', () => {
     expect((await call(bea, 'POST', `/api/lists/${id}/items`, { itemId: H })).statusCode).toBe(404);
     expect((await call(bea, 'POST', `/api/lists/${id}/items`, { itemId: 'f'.repeat(32) })).statusCode).toBe(404);
     expect((await call(bea, 'DELETE', `/api/lists/${id}/items/${B}`)).statusCode).toBe(200);
+  });
+
+  it('only movies and series can be added (400 bad_type)', async () => {
+    const r = await call(alice, 'POST', `/api/lists/${id}/items`, { itemId: BOX });
+    expect(r.statusCode).toBe(400);
+    expect(r.json().error).toBe('bad_type');
+  });
+
+  it('a Jellyfin outage is a 502, not "everything hidden"', async () => {
+    jfDown = true;
+    try {
+      const r = await call(alice, 'GET', `/api/lists/${id}`);
+      expect(r.statusCode).toBe(502);
+      expect(r.json()).not.toHaveProperty('hiddenCount');
+    } finally {
+      jfDown = false;
+    }
+    expect((await call(alice, 'GET', `/api/lists/${id}`)).statusCode).toBe(200);
   });
 
   it('CSRF is required on mutations', async () => {

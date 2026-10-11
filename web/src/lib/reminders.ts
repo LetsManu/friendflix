@@ -4,6 +4,7 @@ import { api, ApiError } from '#lib/api';
 /** 'movie:603' | 'tv:1396' | 'ep:<jellyfin id>' -> reminder id */
 export const remindKeys = writable<Record<string, number>>({});
 let loaded: Promise<void> | null = null;
+const pending = new Set<string>();
 
 export const movieKey = (mediaType: string, tmdbId: number) => `${mediaType}:${tmdbId}`;
 export const episodeKey = (id: string) => `ep:${id}`;
@@ -13,10 +14,16 @@ export function loadReminders(force = false): Promise<void> {
   return loaded;
 }
 
-export type ToggleResult = 'on' | 'off' | 'available' | 'error';
+export type ToggleResult = 'on' | 'off' | 'available' | 'busy' | 'error';
 
 /** Optimistic toggle; rolls back on failure. 409 already_available -> 'available'. */
 export async function toggleReminder(key: string, body: { mediaType: string; tmdbId: number } | { episodeId: string }): Promise<ToggleResult> {
+  if (pending.has(key)) return 'busy';
+  pending.add(key);
+  try { return await doToggle(key, body); } finally { pending.delete(key); }
+}
+
+async function doToggle(key: string, body: { mediaType: string; tmdbId: number } | { episodeId: string }): Promise<ToggleResult> {
   const before = get(remindKeys);
   const existing = before[key];
   if (existing !== undefined) {
