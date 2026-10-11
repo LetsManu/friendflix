@@ -70,7 +70,7 @@ export async function updateInfo(ctx: Ctx, refresh = false): Promise<UpdateInfo>
   }
 }
 
-export type TriggerResult = { ok: true; mode: 'webhook' | 'api' } | { ok: false; status: number | null; error: string; step: 'webhook' | 'stack' | 'stack_file' | 'redeploy' };
+export type TriggerResult = { ok: true; mode: 'webhook' | 'api' } | { ok: false; status: number | null; error: string; step: 'webhook' | 'stack' | 'stack_file' | 'redeploy'; code?: string };
 
 /**
  * Starts the redeploy. The final call is raced against a short grace window: Portainer may recreate (= kill) this very
@@ -119,7 +119,10 @@ export async function triggerUpdate(ctx: Ctx, mode: 'webhook' | 'api'): Promise<
       });
     }
     return r !== 'pending' && !r.ok ? fail(r.status, 'portainer', step) : { ok: true, mode };
-  } catch {
-    return fail(null, 'portainer_unreachable', step); // never include the error: node puts the request URL (webhook token) in it
+  } catch (e) {
+    // never include the message: node puts the request URL (webhook token) in it; the errno code alone is safe and tells DNS from firewall
+    const raw = (e as { cause?: { code?: unknown }; name?: unknown })?.cause?.code ?? ((e as { name?: unknown })?.name === 'TimeoutError' ? 'ETIMEDOUT' : undefined);
+    const code = typeof raw === 'string' && /^[A-Z_]{2,40}$/.test(raw) ? raw : undefined;
+    return { ...fail(null, 'portainer_unreachable', step), ...(code ? { code } : {}) } as TriggerResult;
   }
 }

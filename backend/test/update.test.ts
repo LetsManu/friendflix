@@ -118,6 +118,24 @@ describe('admin update', () => {
     expect(r.body).not.toContain('secret-token');
   });
 
+  it('unreachable portainer -> 502 with the errno code only, never the URL', async () => {
+    const { post } = await setup({ PORTAINER_WEBHOOK_URL: HOOK });
+    (env.ctx.fetchImpl as any) = vi.fn(async (url: string) => { throw Object.assign(new TypeError(`fetch failed ${url}`), { cause: { code: 'ENOTFOUND', hostname: url } }); });
+    const r = await post();
+    expect(r.statusCode).toBe(502);
+    expect(r.json()).toEqual({ error: 'portainer_unreachable', status: null, step: 'webhook', code: 'ENOTFOUND' });
+    expect(r.body).not.toContain('secret-token');
+  });
+
+  it('unreachable portainer -> 502 with the errno code only, never the URL', async () => {
+    const { post } = await setup({ PORTAINER_WEBHOOK_URL: HOOK });
+    (env.ctx.fetchImpl as any) = vi.fn(async (url: string) => { throw Object.assign(new TypeError(`fetch failed ${url}`), { cause: { code: 'ENOTFOUND', hostname: url } }); });
+    const r = await post();
+    expect(r.statusCode).toBe(502);
+    expect(r.json()).toEqual({ error: 'portainer_unreachable', status: null, step: 'webhook', code: 'ENOTFOUND' });
+    expect(r.body).not.toContain('secret-token');
+  });
+
   const api = { PORTAINER_URL: 'https://portainer.example.com/', PORTAINER_API_KEY: KEY, PORTAINER_STACK_ID: '7', PORTAINER_ENDPOINT_ID: 3 };
 
   it('api mode, git stack: git/redeploy with pullImage and preserved env', async () => {
