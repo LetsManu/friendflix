@@ -1,6 +1,7 @@
 <script lang="ts">
   import { createEventDispatcher, onMount } from 'svelte';
   import Icon from './Icon.svelte';
+  import { isBackKey } from '#lib/spatial';
   export let title = 'PIN eingeben';
   export let error = '';
   export let busy = false;
@@ -10,6 +11,9 @@
 
   /** clears the entry after a failed attempt (parent sets error) */
   $: if (error) pin = '';
+  // also clear when a request finishes (the same error text can repeat)
+  let wasBusy = false;
+  $: { if (wasBusy && !busy) pin = ''; wasBusy = busy; }
   function add(d: string) {
     if (busy || pin.length >= 4) return;
     pin += d;
@@ -21,7 +25,7 @@
   function onKey(e: KeyboardEvent) {
     if (/^\d$/.test(e.key)) { e.preventDefault(); e.stopPropagation(); add(e.key); }
     else if (e.key === 'Backspace') { e.preventDefault(); e.stopPropagation(); del(); }
-    else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); dispatch('cancel'); }
+    else if (e.key === 'Escape' || isBackKey(e)) { e.preventDefault(); e.stopPropagation(); dispatch('cancel'); }
   }
   onMount(() => {
     window.addEventListener('keydown', onKey, true);

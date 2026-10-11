@@ -56,17 +56,21 @@ export function prefsRoutes(app: FastifyInstance, ctx: Ctx) {
   const pre = { preHandler: requireUser(ctx) };
   app.get('/api/prefs', pre, async (req) => ({ prefs: await loadPrefs(ctx, req.user!.id, req.profile!.id) }));
   app.put('/api/prefs', pre, async (req) => {
-    const prefs = prefsSchema.parse(req.body);
-    const account = { shareHistory: prefs.shareHistory, shareRatings: prefs.shareRatings };
+    const input = prefsSchema.parse(req.body);
+    // share flags are account level: only the owner profile may change them (others keep the stored values)
+    const stored = req.profile!.is_owner ? null : await loadPrefs(ctx, req.user!.id, req.profile!.id);
+    const prefs = stored ? { ...input, shareHistory: stored.shareHistory, shareRatings: stored.shareRatings } : input;
     const { shareHistory: _h, shareRatings: _r, ...viewing } = prefs;
     await ctx.db.query(
       `insert into profile_prefs(profile_id, data) values ($1,$2) on conflict (profile_id) do update set data = excluded.data, updated_at = now()`,
       [req.profile!.id, JSON.stringify(viewing)],
     );
-    await ctx.db.query(
-      `insert into user_prefs(user_id, data) values ($1,$2) on conflict (user_id) do update set data = excluded.data, updated_at = now()`,
-      [req.user!.id, JSON.stringify(account)],
-    );
+    if (!stored) {
+      await ctx.db.query(
+        `insert into user_prefs(user_id, data) values ($1,$2) on conflict (user_id) do update set data = excluded.data, updated_at = now()`,
+        [req.user!.id, JSON.stringify({ shareHistory: prefs.shareHistory, shareRatings: prefs.shareRatings })],
+      );
+    }
     return { prefs };
   });
 }

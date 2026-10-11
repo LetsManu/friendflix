@@ -111,14 +111,22 @@ describe('profiles', () => {
     expect((await env.pool.query("select 1 from profiles where name='Boom'")).rowCount).toBe(0);
   });
 
-  it('select without PIN rotates the session id; the old sid is dead', async () => {
+  it('select without PIN rotates the session id; the old sid acts as the new profile for ~15 s, then expires', async () => {
     const s = await mk();
     const p = await mkProfile(s, 'Kind');
     const sel = await call(s, 'POST', `/api/profiles/${p.id}/select`, {});
     expect(sel.statusCode).toBe(200);
     const n = sessOf(sel, s);
     expect(n.cookies.ff_sid).not.toBe(s.cookies.ff_sid);
-    expect((await call(s, 'GET', '/api/me')).statusCode).toBe(401);
+    const old = (await call(s, 'GET', '/api/me')).json(); // in-flight request with the old sid: no 401, already the new profile
+    expect(old.profile).toMatchObject({ id: p.id, name: 'Kind' });
+    expect(old.profileChosen).toBe(true);
+    const realNow = Date.now;
+    Date.now = () => realNow() + 16_000;
+    try {
+      expect((await call(s, 'GET', '/api/me')).statusCode).toBe(401);
+      expect((await call(n, 'GET', '/api/me')).statusCode).toBe(200);
+    } finally { Date.now = realNow; }
     const me = (await call(n, 'GET', '/api/me')).json();
     expect(me.profile).toMatchObject({ id: p.id, isOwner: false, name: 'Kind' });
     expect(me.csrfToken).toBe(s.csrf);
@@ -168,7 +176,7 @@ describe('profiles', () => {
     const before = await authz(owner.cookies.ff_sid!);
     expect(before.json().token).toBe('tok-Admin');
     const n = sessOf(await call(s, 'POST', `/api/profiles/${p.id}/select`, {}), s);
-    expect((await authz(owner.cookies.ff_sid!)).statusCode).toBe(401); // old sid forgotten at once (no 5 s memo)
+    expect((await authz(owner.cookies.ff_sid!)).json().token).toBe(`tok-${jfName}`); // old sid: memo forgotten, now acts as the new profile (grace period)
     const after = (await authz(n.cookies.ff_sid!)).json();
     expect(after.token).toBe(`tok-${jfName}`);
     expect(after.deviceId).toBe(`ff-${p.id}`);
@@ -277,7 +285,9 @@ describe('profiles', () => {
     const o = sessOf(await call(kid, 'POST', `/api/profiles/${await ownerId()}/select`, {}), s);
     const op = (await call(o, 'GET', '/api/prefs')).json().prefs;
     expect(op.quality).toBe(5_000_000);
-    expect(op.shareHistory).toBe(false);
+    expect(op.shareHistory).toBe(true); // a non-owner profile cannot change account-level flags
+    expect((await call(o, 'PUT', '/api/prefs', { ...op, shareHistory: false })).statusCode).toBe(200);
+    expect((await call(o, 'GET', '/api/prefs')).json().prefs.shareHistory).toBe(false);
   });
 
   it('stream limit counts per account, not per profile', async () => {

@@ -28,12 +28,15 @@
   }
   onMount(load);
 
-  function done() { try { sessionStorage.setItem('ff_profile_picked', '1'); } catch { /* ignore */ } location.href = '/'; }
+  function done() {
+    const next = new URLSearchParams(location.search).get('next');
+    location.href = next && next.startsWith('/') && !next.startsWith('//') && !next.includes('\\') ? next : '/';
+  }
 
   async function choose(p: Profile, pin?: string) {
     if (manage) return openEdit(p);
     if (p.hasPin && pin === undefined) { pinFor = p; pinErr = ''; return; }
-    pinBusy = true;
+    pinBusy = true; pinErr = '';
     try {
       await api(`/api/profiles/${p.id}/select`, { method: 'POST', body: pin === undefined ? {} : { pin } });
       done();
@@ -129,6 +132,7 @@
     <div class="box">
       <span class="face sm" style="background:{avatarBg(pinFor.avatar)}">{initial(pinFor.name)}</span>
       <PinPad title="PIN für {pinFor.name}" error={pinErr} busy={pinBusy} on:submit={(e) => pinFor && choose(pinFor, e.detail)} on:cancel={() => (pinFor = null)} />
+      {#if pinFor.isOwner}<button type="button" class="sec forgot" on:click={() => (location.href = '/auth/login?resetPin=1')}>PIN vergessen?</button>{/if}
     </div>
   </div>
 {/if}

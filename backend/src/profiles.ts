@@ -29,14 +29,23 @@ export async function getProfile(ctx: Pick<Ctx, 'db'>, userId: string, profileId
 }
 
 export async function ownerProfile(ctx: Pick<Ctx, 'db'>, user: Pick<UserRow, 'id' | 'name'>): Promise<ProfileRow> {
+  const sel = async () => (await ctx.db.query<ProfileRow>('select * from profiles where id=$1', [user.id])).rows[0];
+  const found = await sel();
+  if (found) return found;
   // lazily heals a missing owner row (e.g. an account created between migration and deploy)
-  const r = await ctx.db.query<ProfileRow>(
-    `with ins as (
-       insert into profiles(id, user_id, name, is_owner) values ($1, $1, left($2, 20), true) on conflict do nothing returning *
-     ) select * from profiles where id = $1 union all select * from ins limit 1`,
-    [user.id, user.name || 'Profil'],
-  );
-  return r.rows[0]!;
+  const base = (user.name ?? '').slice(0, 20).trim() || 'Profil';
+  const candidates = [base, 'Profil', `${base.slice(0, 16)} (1)`, `${base.slice(0, 16)} (2)`];
+  for (const name of candidates) {
+    try {
+      await ctx.db.query('insert into profiles(id, user_id, name, is_owner) values ($1,$1,$2,true) on conflict (id) do nothing', [user.id, name]);
+      break;
+    } catch (e) {
+      if ((e as { code?: string }).code !== '23505') throw e; // (user_id, lower(name)) taken -> next candidate
+    }
+  }
+  const row = await sel();
+  if (!row) throw new Error('owner profile could not be created');
+  return row;
 }
 
 /** The Jellyfin identity of a profile: the owner profile acts as the account itself, others as their hidden Jellyfin user. */

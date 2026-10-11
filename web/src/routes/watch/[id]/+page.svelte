@@ -8,7 +8,7 @@
   import Player from '#lib/Player.svelte';
   import { prefs } from '#lib/stores';
   import { isBackKey } from '#lib/spatial';
-  import { noteAutoplay, noteInteraction, shouldAsk } from '#lib/stillwatching';
+  import { consumeAutoplay, noteAutoplay, noteInteraction, shouldAsk } from '#lib/stillwatching';
 
   let video: HTMLVideoElement | null = null;
   let item: Item | null = null, nextEp: Item | null = null;
@@ -50,6 +50,8 @@
     showNext = true; countdown = 8; clearInterval(cd);
     cd = setInterval(() => { countdown -= 1; if (countdown <= 0) { stopCountdown(); noteAutoplay(); goto(`/watch/${nextEp!.id}${langQ ? '?' + langQ : ''}`); } }, 1000);
   }
+  // each opened episode counts as viewer interaction, except one started by the autoplay countdown (the component is reused across episodes)
+  $: if (id) { if (!consumeAutoplay()) noteInteraction(); }
   function stillGo() { noteInteraction(); askStill = false; goto(`/watch/${nextEp!.id}${langQ ? '?' + langQ : ''}`); }
   function onTime() { if (video && nextEp && !showNext && video.duration && video.duration - video.currentTime < 25) showNext = true; }
   const tvMode = () => document.documentElement.classList.contains('tv');

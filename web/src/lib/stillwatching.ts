@@ -22,7 +22,11 @@ export function noteInteraction(now = Date.now()) {
   s.chain = 0; s.lastInteraction = now; persist();
 }
 /** The next episode started by itself (countdown ran out). */
+let autoplayed = false;
+/** True once if the page was opened by the autoplay countdown (consumed on read). */
+export function consumeAutoplay(): boolean { const a = autoplayed; autoplayed = false; return a; }
 export function noteAutoplay() {
+  autoplayed = true;
   const s = load();
   s.chain += 1; persist();
 }

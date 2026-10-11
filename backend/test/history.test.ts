@@ -24,6 +24,11 @@ describe('tidyResume', () => {
     expect(tidyResume([mk({ id: 'a', lastPlayedDate: '2026-01-01T00:00:00Z' })], hidden)).toHaveLength(0);
     expect(tidyResume([mk({ id: 'a', lastPlayedDate: '2026-03-01T00:00:00Z' })], hidden)).toHaveLength(1);
   });
+  it('hides by series id for episodes', () => {
+    const hidden = new Map([['s', new Date('2026-02-01T00:00:00Z')]]);
+    expect(tidyResume([mk({ id: 'e1', seriesId: 's', lastPlayedDate: '2026-01-01T00:00:00Z' })], hidden)).toHaveLength(0);
+    expect(tidyResume([mk({ id: 'e2', seriesId: 's', lastPlayedDate: '2026-03-01T00:00:00Z' })], hidden)).toHaveLength(1);
+  });
   it('dedupes per series keeping the newest, sorts newest first, caps at 20', () => {
     const r = tidyResume([
       mk({ id: 'e1', seriesId: 's', lastPlayedDate: '2026-01-01T00:00:00Z' }),
@@ -50,7 +55,7 @@ beforeAll(async () => {
       { Id: MOV, Name: 'Alt', Type: 'Movie', UserData: { Played: true, LastPlayedDate: '2026-01-01T10:00:00Z' } },
       { Id: EP, Name: 'Folge', Type: 'Episode', SeriesId: SER, UserData: { Played: true, LastPlayedDate: '2026-01-03T10:00:00Z' } },
     ] } }),
-    'GET /Users/[^/]+/Items/[^/]+': () => ({ json: { Id: EP, Name: 'Folge', Type: 'Episode', SeriesId: SER, UserData: {} } }),
+    'GET /Users/[^/]+/Items/[^/]+': (u) => ({ json: u.pathname.endsWith(MOV) ? { Id: MOV, Name: 'Film', Type: 'Movie', UserData: {} } : { Id: EP, Name: 'Folge', Type: 'Episode', SeriesId: SER, UserData: {} } }),
     'DELETE /UserPlayedItems/[^/]+': () => ({ status: 204 }),
   });
   s = await env.login();
@@ -85,6 +90,15 @@ describe('resume route', () => {
     expect((await req('DELETE', `/api/library/resume/${MOV}`)).statusCode).toBe(200);
     expect((await req('GET', '/api/library/resume')).json().items).toHaveLength(0);
     resumeItems = [item(new Date(Date.now() + 60_000).toISOString())];
+    expect((await req('GET', '/api/library/resume')).json().items).toHaveLength(1);
+  });
+  it('hiding an episode hides the whole series entry until a newer play', async () => {
+    const ep = (date: string) => ({ Id: EP, Name: 'Folge', Type: 'Episode', SeriesId: SER, RunTimeTicks: 100, UserData: { PlaybackPositionTicks: 40, LastPlayedDate: date } });
+    resumeItems = [ep('2026-01-01T00:00:00Z')];
+    expect((await req('DELETE', `/api/library/resume/${EP}`)).statusCode).toBe(200);
+    expect((await env.pool.query('select item_id from resume_hidden where item_id=$1', [SER])).rowCount).toBe(1);
+    expect((await req('GET', '/api/library/resume')).json().items).toHaveLength(0);
+    resumeItems = [{ ...ep(new Date(Date.now() + 60_000).toISOString()), Id: 'e'.repeat(32) }]; // another episode, played later
     expect((await req('GET', '/api/library/resume')).json().items).toHaveLength(1);
   });
 });

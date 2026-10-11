@@ -78,9 +78,12 @@ export function mediaRoutes(app: FastifyInstance, ctx: Ctx) {
   }));
   // "Remove from Weiterschauen": hides the item for this profile until it is played again (progress itself stays).
   app.delete('/api/library/resume/:id', pre, wrap(async (req) => {
+    const id = itemId.parse((req.params as any).id);
+    // tidyResume keeps one entry per series, so an episode is hidden by its series id
+    const it = await ctx.jf.item(req.jfUser!, id).catch(() => null);
     await ctx.db.query(
       'insert into resume_hidden(profile_id,item_id) values ($1,$2) on conflict (profile_id,item_id) do update set hidden_at=now()',
-      [req.profile!.id, itemId.parse((req.params as any).id)],
+      [req.profile!.id, it?.seriesId ?? id],
     );
     return { ok: true };
   }));

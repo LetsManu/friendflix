@@ -17,7 +17,8 @@ export interface LoginStart {
 
 /** Abstraction over the OIDC provider (Authentik) so routes are testable. */
 export interface OidcProvider {
-  start(): Promise<LoginStart>;
+  /** forceLogin: re-authentication (prompt=login, max_age=0), used by the forgotten-PIN reset */
+  start(opts?: { forceLogin?: boolean }): Promise<LoginStart>;
   finish(currentUrl: URL, saved: Omit<LoginStart, 'url'>): Promise<OidcClaims>;
 }
 
@@ -30,7 +31,7 @@ export async function createAuthentikProvider(cfg: Config): Promise<OidcProvider
   const redirect_uri = new URL('/auth/callback', cfg.PUBLIC_URL).toString();
 
   return {
-    async start() {
+    async start(opts) {
       const codeVerifier = client.randomPKCECodeVerifier();
       const state = client.randomState();
       const nonce = client.randomNonce();
@@ -41,6 +42,7 @@ export async function createAuthentikProvider(cfg: Config): Promise<OidcProvider
         code_challenge_method: 'S256',
         state,
         nonce,
+        ...(opts?.forceLogin ? { prompt: 'login', max_age: '0' } : {}),
       });
       return { url: url.toString(), state, nonce, codeVerifier };
     },

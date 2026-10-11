@@ -16,9 +16,9 @@ export function tidyResume(items: ItemDto[], hidden: Map<string, Date>, limit = 
   for (const i of items) {
     const p = pct(i);
     if (p !== undefined && (p < 2 || p > 95)) continue;
-    const h = hidden.get(i.id);
-    if (h && h.getTime() >= ts(i)) continue;
     const key = i.seriesId ?? i.id;
+    const h = hidden.get(key);
+    if (h && h.getTime() >= ts(i)) continue;
     const cur = best.get(key);
     if (!cur || ts(i) > ts(cur)) best.set(key, i);
   }

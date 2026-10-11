@@ -9,7 +9,7 @@ import { clipPath, libraryItems, previews, serviceUser } from '../previews.js';
 import { stat } from 'node:fs/promises';
 import { defaultLimit } from '../requestlimit.js';
 import { INVITABLE_ROLES, effectiveRole, invalidateRoles } from '../roles.js';
-import { requireAdmin, requireUser } from '../session.js';
+import { requireAdmin, requireOwner, requireUser } from '../session.js';
 import { portainerMode, triggerUpdate, updateInfo } from '../updates.js';
 import { accountJellyfinIds } from '../profiles.js';
 import { applyRole, getUserById, reapplyRole } from '../users.js';
@@ -210,7 +210,7 @@ export function adminRoutes(app: FastifyInstance, ctx: Ctx) {
   });
 
   // ---- own devices ----
-  app.post('/api/sessions/revoke-others', { preHandler: requireUser(ctx, { allowNoProfile: true }) }, async (req) => {
+  app.post('/api/sessions/revoke-others', { preHandler: requireOwner(ctx) }, async (req) => {
     const n = await revokeSessions(ctx, req.user!.id, undefined, req.sid);
     await audit(ctx, req.user!.id, 'session.revoke_others', req.user!.id, { sessions: n });
     return { revoked: n };
@@ -219,14 +219,14 @@ export function adminRoutes(app: FastifyInstance, ctx: Ctx) {
     const r = await ctx.db.query('select device_id, label, approved, created_at, last_seen from devices where user_id=$1 order by created_at', [req.user!.id]);
     return { devices: r.rows.map((d) => ({ ...d, id: d.device_id, current: d.device_id === req.session!.deviceId })) };
   });
-  app.post('/api/devices/:id/approve', { preHandler: requireUser(ctx, { allowNoProfile: true }) }, async (req, reply) => {
+  app.post('/api/devices/:id/approve', { preHandler: requireOwner(ctx) }, async (req, reply) => {
     const id = z.string().min(10).max(80).parse((req.params as { id: string }).id);
     const r = await ctx.db.query('update devices set approved=true where user_id=$1 and device_id=$2', [req.user!.id, id]);
     if (!r.rowCount) return reply.code(404).send({ error: 'not_found' });
     await audit(ctx, req.user!.id, 'device.approve', req.user!.id, { by: 'self' });
     return { ok: true };
   });
-  app.delete('/api/devices/:id', { preHandler: requireUser(ctx, { allowNoProfile: true }) }, async (req, reply) => {
+  app.delete('/api/devices/:id', { preHandler: requireOwner(ctx) }, async (req, reply) => {
     const id = z.string().min(10).max(80).parse((req.params as { id: string }).id);
     if (id === req.session!.deviceId) return reply.code(400).send({ error: 'current_device' });
     await ctx.db.query('delete from devices where user_id=$1 and device_id=$2', [req.user!.id, id]);

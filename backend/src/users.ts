@@ -1,3 +1,4 @@
+import type pg from 'pg';
 import { randomUUID } from 'node:crypto';
 import { audit } from './audit.js';
 import type { Ctx } from './ctx.js';
@@ -52,14 +53,27 @@ export async function provisionUser(ctx: Ctx, claims: OidcClaims, role: string):
   try {
     await applyRole(ctx, jf!.Id, role);
     const id = randomUUID();
-    const r = await ctx.db.query<UserRow>(
-      `insert into users(id, authentik_sub, email, name, role, jellyfin_user_id, jellyfin_username, jellyfin_pw_enc)
-       values ($1,$2,$3,$4,$5,$6,$7,$8) returning *`,
-      [id, claims.sub, claims.email ?? null, claims.name ?? jfName, role, jf!.Id, jfName, encrypt(ctx.encKey, password)],
-    );
-    await ctx.db.query('insert into profiles(id, user_id, name, is_owner) values ($1,$1,$2,true) on conflict do nothing', [id, r.rows[0]!.name.slice(0, 20) || 'Profil']);
+    const pool = ctx.db as pg.Pool;
+    const c = await pool.connect();
+    let row: UserRow;
+    try {
+      await c.query('begin');
+      const r = await c.query<UserRow>(
+        `insert into users(id, authentik_sub, email, name, role, jellyfin_user_id, jellyfin_username, jellyfin_pw_enc)
+         values ($1,$2,$3,$4,$5,$6,$7,$8) returning *`,
+        [id, claims.sub, claims.email ?? null, claims.name ?? jfName, role, jf!.Id, jfName, encrypt(ctx.encKey, password)],
+      );
+      row = r.rows[0]!;
+      await c.query('insert into profiles(id, user_id, name, is_owner) values ($1,$1,$2,true)', [id, row.name.slice(0, 20).trim() || 'Profil']);
+      await c.query('commit');
+    } catch (e) {
+      await c.query('rollback').catch(() => undefined);
+      throw e;
+    } finally {
+      c.release();
+    }
     await audit(ctx, id, 'user.provisioned', id, { role, jellyfin: jfName });
-    return r.rows[0]!;
+    return row;
   } catch (e) {
     await ctx.jf.client.deleteUser(jf!.Id).catch(() => undefined); // roll back the orphaned Jellyfin account
     throw e;

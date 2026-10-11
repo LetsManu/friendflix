@@ -4,7 +4,7 @@
   import { afterNavigate, beforeNavigate, goto } from '$app/navigation';
   import { pageStore } from '#lib/page';
   const page = pageStore();
-  import { api, setCsrf, type Me } from '#lib/api';
+  import { api, setActiveProfile, setCsrf, type Me } from '#lib/api';
   import Icon from '#lib/Icon.svelte';
   import Logo from '#lib/Logo.svelte';
   import { avatarBg, initial } from '#lib/avatars';
@@ -117,11 +117,12 @@
       try {
         me = await api<Me>('/api/me');
         setCsrf(me.csrfToken);
+        setActiveProfile(me.profile?.id);
         pending = !me.deviceApproved;
         if (!pending && path !== '/profiles') {
-          let picked = false;
-          try { picked = sessionStorage.getItem('ff_profile_picked') === '1'; } catch { /* ignore */ }
-          if (me.profileRequired || ((me.profileCount ?? 0) > 1 && !picked)) { await goto('/profiles', { replaceState: true }); }
+          if (me.profileRequired || ((me.profileCount ?? 0) > 1 && !me.profileChosen)) {
+            await goto(`/profiles?next=${encodeURIComponent(location.pathname + location.search)}`, { replaceState: true });
+          }
         }
         if (pending) stops.push(watchApproval());
         tv = me.tv || sessionStorage.getItem('ff_tv') === '1';
@@ -171,9 +172,9 @@
         {#if menu}
           <div class="drop" role="menu">
             <div class="who"><b>{me.profile?.name ?? me.name}</b><span class="muted">{me.roleLabel}</span></div>
-            <a href="/profiles" role="menuitem" on:click={() => { try { sessionStorage.removeItem('ff_profile_picked'); } catch { /* ignore */ } }}><Icon name="users" size={18} />Profil wechseln</a>
+            <a href="/profiles" role="menuitem"><Icon name="users" size={18} />Profil wechseln</a>
             {#each menuLinks as [href, label, icon]}<a {href} role="menuitem"><Icon name={icon} size={18} />{label}</a>{/each}
-            {#if me.isAdmin}<a href="/admin" role="menuitem"><Icon name="shield" size={18} />Admin</a>{/if}
+            {#if me.isAdmin && me.profile?.isOwner}<a href="/admin" role="menuitem"><Icon name="shield" size={18} />Admin</a>{/if}
             <button class="plain" role="menuitem" on:click={logout}><Icon name="log-out" size={18} />Abmelden</button>
           </div>
         {/if}
@@ -189,7 +190,7 @@
     {#if more}
       <div class="sheet" role="menu">
         {#each menuLinks as [href, label, icon]}<a {href} role="menuitem"><Icon name={icon} size={20} />{label}</a>{/each}
-        {#if me.isAdmin}<a href="/admin" role="menuitem"><Icon name="shield" size={20} />Admin</a>{/if}
+        {#if me.isAdmin && me.profile?.isOwner}<a href="/admin" role="menuitem"><Icon name="shield" size={20} />Admin</a>{/if}
         <button class="plain" on:click={logout}><Icon name="log-out" size={20} />Abmelden</button>
       </div>
     {/if}

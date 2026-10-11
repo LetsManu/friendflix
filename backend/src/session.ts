@@ -87,15 +87,32 @@ export async function authenticate(ctx: Ctx, req: FastifyRequest): Promise<boole
   return true;
 }
 
-/** allowNoProfile: routes usable before a profile is picked (/api/me, /api/profiles*, devices, notifications ...); all others answer 409 profile_required. */
-export function requireUser(ctx: Ctx, opts: { allowPendingDevice?: boolean; allowNoProfile?: boolean } = {}) {
+/**
+ * allowNoProfile: routes usable before a profile is picked (devices, notifications ...); all others answer 409 profile_required.
+ * skipProfileHeader: /api/me and /api/profiles* (they are how a stale tab recovers). Every other route answers 409 profile_changed
+ * when the request's `x-ff-profile` header (the profile the tab believes is active) differs from the session's active profile.
+ */
+export function requireUser(ctx: Ctx, opts: { allowPendingDevice?: boolean; allowNoProfile?: boolean; skipProfileHeader?: boolean } = {}) {
   return async (req: FastifyRequest, reply: FastifyReply) => {
     if (!(await authenticate(ctx, req))) return reply.code(401).send({ error: 'unauthenticated' });
     if (!req.session!.deviceApproved && !opts.allowPendingDevice) {
       // Re-check: the device may have been approved since the session was created.
       if (!(await refreshDevice(ctx, req))) return reply.code(403).send({ error: 'device_pending' });
     }
+    const claimed = req.headers['x-ff-profile'];
+    if (!opts.skipProfileHeader && typeof claimed === 'string' && claimed && claimed !== req.profile?.id) return reply.code(409).send({ error: 'profile_changed' });
     if (!req.profile && !opts.allowNoProfile) return reply.code(409).send({ error: 'profile_required' });
+  };
+}
+
+/** Account-level changes (devices, sessions) need the owner profile; no profile chosen yet -> 409 profile_required (the picker always offers the owner profile). */
+export function requireOwner(ctx: Ctx) {
+  const base = requireUser(ctx, { allowNoProfile: true });
+  return async (req: FastifyRequest, reply: FastifyReply) => {
+    const r = await base(req, reply);
+    if (reply.sent) return r;
+    if (!req.profile) return reply.code(409).send({ error: 'profile_required' });
+    if (!req.profile.is_owner) return reply.code(403).send({ error: 'owner_required' });
   };
 }
 
@@ -104,7 +121,7 @@ export function requireAdmin(ctx: Ctx) {
   return async (req: FastifyRequest, reply: FastifyReply) => {
     const r = await base(req, reply);
     if (reply.sent) return r;
-    if (req.user!.role !== 'admin') return reply.code(403).send({ error: 'forbidden' });
+    if (req.user!.role !== 'admin' || !req.profile?.is_owner) return reply.code(403).send({ error: 'forbidden' });
   };
 }
 

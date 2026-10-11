@@ -278,11 +278,11 @@ export const MIGRATIONS: string[] = [
     jellyfin_username text,
     jellyfin_pw_enc text,
     created_at timestamptz not null default now(),
-    check (is_owner or jellyfin_user_id is not null),
-    unique (user_id, name)
+    check (is_owner or jellyfin_user_id is not null)
   );
+  create unique index profiles_user_name on profiles(user_id, lower(name));
   create unique index profiles_owner on profiles(user_id) where is_owner;
-  insert into profiles(id, user_id, name, is_owner) select id, id, left(name, 20), true from users;
+  insert into profiles(id, user_id, name, is_owner) select id, id, coalesce(nullif(btrim(left(name, 20)), ''), 'Profil'), true from users;
   alter table watchlist add column profile_id uuid references profiles(id) on delete cascade;
   update watchlist set profile_id = user_id;
   alter table watchlist alter column profile_id set not null;

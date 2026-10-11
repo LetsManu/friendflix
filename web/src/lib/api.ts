@@ -6,12 +6,15 @@ export class ApiError extends Error {
 
 let csrf = '';
 export const setCsrf = (t: string) => (csrf = t);
+/** id of the profile the page loaded with; sent as x-ff-profile so the backend can detect a profile switch in another tab */
+let activeProfile = '';
+export const setActiveProfile = (id: string | null | undefined) => (activeProfile = id ?? '');
 
 export async function api<T = any>(path: string, opts: { method?: string; body?: unknown } = {}): Promise<T> {
   const res = await fetch(path, {
     method: opts.method ?? 'GET',
     credentials: 'same-origin',
-    headers: { ...(opts.body === undefined ? {} : { 'content-type': 'application/json' }), 'x-csrf-token': csrf },
+    headers: { ...(opts.body === undefined ? {} : { 'content-type': 'application/json' }), 'x-csrf-token': csrf, ...(activeProfile ? { 'x-ff-profile': activeProfile } : {}) },
     body: opts.body === undefined ? undefined : JSON.stringify(opts.body),
   });
   if (res.status === 401 && !location.pathname.startsWith('/invite/') && location.pathname !== '/tv') {
@@ -23,6 +26,12 @@ export async function api<T = any>(path: string, opts: { method?: string; body?:
   if (res.status === 409 && json?.error === 'profile_required' && !/^\/(profiles|invite\/|tv$)/.test(location.pathname)) {
     location.href = '/profiles'; // no profile chosen (yet) for this session
     await new Promise(() => undefined);
+  }
+  if (res.status === 409 && json?.error === 'profile_changed') {
+    // the profile was switched in another tab: reload once (the guard avoids reload loops)
+    let again = false;
+    try { again = sessionStorage.getItem('ff_profile_reload') === '1'; sessionStorage.setItem('ff_profile_reload', '1'); setTimeout(() => { try { sessionStorage.removeItem('ff_profile_reload'); } catch { /* ignore */ } }, 5000); } catch { /* ignore */ }
+    if (!again) { location.reload(); await new Promise(() => undefined); }
   }
   if (!res.ok) throw new ApiError(res.status, json);
   return json as T;
@@ -45,5 +54,5 @@ export interface Item {
   genres: string[]; rating?: string; communityRating?: number; premiereDate?: string; image: boolean; backdrop: boolean; logo: boolean; trailers?: number; caption?: string;
   played: boolean; favorite: boolean; positionTicks: number; playedPercentage?: number; lastPlayedDate?: string;
 }
-export interface Me { id: string; name: string; role: string; roleLabel: string; isAdmin: boolean; csrfToken: string; deviceApproved: boolean; tv: boolean; profile?: MeProfile | null; profileRequired?: boolean; profileCount?: number }
+export interface Me { id: string; name: string; role: string; roleLabel: string; isAdmin: boolean; csrfToken: string; deviceApproved: boolean; tv: boolean; profile?: MeProfile | null; profileRequired?: boolean; profileCount?: number; profileChosen?: boolean }
 export interface MeProfile { id: string; name: string; avatar: string; isOwner: boolean }
