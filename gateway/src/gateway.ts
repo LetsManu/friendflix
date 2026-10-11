@@ -129,6 +129,7 @@ export function createGateway(opts: GatewayOptions): { server: Server; metrics: 
       }
       target.searchParams.append(k, v);
     }
+    const requestUrl = `${base.origin}${target.pathname}${target.search}`;
 
     // identity: keep upstream bytes as-is so content-length matches the body we relay
     const headers: Record<string, string> = { Authorization: mediaBrowserHeader(auth.deviceId, auth.token), 'accept-encoding': 'identity' };
@@ -141,7 +142,7 @@ export function createGateway(opts: GatewayOptions): { server: Server; metrics: 
     res.on('close', () => ac.abort());
     let up: Response;
     try {
-      up = await f(target, { method: req.method, headers, signal: ac.signal, redirect: 'manual' });
+      up = await f(requestUrl, { method: req.method, headers, signal: ac.signal, redirect: 'manual' });
     } catch {
       count('502');
       return end(res, 502, 'bad gateway');
