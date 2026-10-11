@@ -11,18 +11,19 @@ interface Seen { method: string; url: string; headers: Record<string, string>; b
 let env: TestEnv;
 let seen: Seen[];
 let stack: any;
+const host = (u: string) => new URL(u).host;
 const json = (b: unknown, status = 200) => new Response(JSON.stringify(b), { status });
 const mockFetch = (gh: 'ok' | 'fail' = 'ok') => vi.fn(async (input: any, init: RequestInit = {}) => {
   const url = String(input);
   seen.push({ method: init.method ?? 'GET', url, headers: (init.headers ?? {}) as Record<string, string>, body: init.body ? JSON.parse(String(init.body)) : undefined });
-  if (url.startsWith('https://api.github.com')) {
+  if (host(url) === 'api.github.com') {
     if (gh === 'fail') return json({}, 500);
     if (url.includes('/actions/workflows/ci.yml/runs')) return json({ workflow_runs: [{ head_sha: NEW, updated_at: '2026-01-02T00:00:00Z', html_url: 'https://github.com/x/runs/1' }] });
     if (url.includes(`/compare/${CUR}...${NEW}`)) return json({ ahead_by: 2, commits: [1, 2].map((n) => ({ sha: `s${n}`, html_url: `https://github.com/c/${n}`, commit: { message: `msg ${n}\n\nbody`, author: { name: 'Ann', date: '2026-01-01T00:00:00Z' } } })) });
   }
   if (url.endsWith('/api/stacks/7/file')) return json({ StackFileContent: 'services: {}' });
   if (url.includes('/api/stacks/7') && (init.method ?? 'GET') === 'GET') return json(stack);
-  if (url.startsWith('https://portainer.example.com')) return new Response(null, { status: 204 });
+  if (host(url) === 'portainer.example.com') return new Response(null, { status: 204 });
   return json({}, 404);
 });
 
@@ -34,7 +35,7 @@ async function setup(cfg: Record<string, unknown> = {}, gh: 'ok' | 'fail' = 'ok'
   const get = (q = '') => env.app.inject({ url: `/api/admin/update${q}`, cookies: admin.cookies });
   return { admin, post, get };
 }
-const ghCalls = () => seen.filter((s) => s.url.startsWith('https://api.github.com')).length;
+const ghCalls = () => seen.filter((s) => host(s.url) === 'api.github.com').length;
 
 beforeEach(() => { seen = []; stack = { Env: [{ name: 'A', value: '1' }, { name: 'B', value: 'x y' }], GitConfig: null }; });
 afterEach(() => env?.close());
