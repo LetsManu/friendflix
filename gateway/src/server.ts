@@ -13,6 +13,7 @@ const { server } = createGateway({
   jellyfinUrl: need('JELLYFIN_URL'),
   backendUrl: need('BACKEND_URL'),
   internalSecret: need('INTERNAL_SECRET'),
+  downloadDir: process.env.DOWNLOAD_DIR || undefined,
   metricsToken: process.env.METRICS_TOKEN || undefined,
 });
 const port = Number(process.env.PORT ?? 4000);

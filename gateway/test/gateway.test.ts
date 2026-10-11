@@ -1,8 +1,10 @@
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { readFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, symlinkSync, truncateSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createGateway, normalizeCastPath, normalizePath, sanitizePlaylist } from '../src/gateway.js';
+import { createGateway, matchDownloadPath, normalizeCastPath, normalizePath, sanitizePlaylist } from '../src/gateway.js';
 
 const ID = 'a'.repeat(32);
 let jf: Server, be: Server, gw: Server;
@@ -17,6 +19,18 @@ const CT_IMG = 'I'.repeat(43); // poster-only token
 const CT_PIN = 'P'.repeat(43); // valid only for client PIN_CLIENT (the backend pins tokens to the first client)
 const CT_LOW = 'L'.repeat(43); // role limited to 720p
 const PIN_CLIENT = '198.51.100.50';
+const D_FILE = '11111111-1111-4111-8111-111111111111';
+const D_BADNAME = '22222222-2222-4222-8222-222222222222';
+const D_LINK = '33333333-3333-4333-8333-333333333333';
+const D_STATIC = '44444444-4444-4444-8444-444444444444';
+const D_STATIC_BAD = '55555555-5555-4555-8555-555555555555';
+const D_MISMATCH = '66666666-6666-4666-8666-666666666666';
+const D_BIG = '77777777-7777-4777-8777-777777777777';
+const D_MISSING = '88888888-8888-4888-8888-888888888888';
+const DL_SIZE = 1000;
+const dlDir = mkdtempSync(join(tmpdir(), 'ff-dl-'));
+const dlOutside = mkdtempSync(join(tmpdir(), 'ff-dl-out-'));
+const dlBody = Buffer.from(Array.from({ length: DL_SIZE }, (_, i) => i % 251));
 const castBase = `/media/c/${CT}`;
 
 const listen = (s: Server) => new Promise<number>((r) => s.listen(0, '127.0.0.1', () => r((s.address() as AddressInfo).port)));
@@ -63,6 +77,22 @@ beforeAll(async () => {
         res.writeHead(200, { 'content-type': 'application/json' });
         return void res.end(JSON.stringify({ userId: 'u1', token: 'CASTJF', deviceId: 'ff-u1', maxBitrate: 5_000_000, maxHeight: j.ct === CT_LOW ? 720 : 1080, kind: j.ct === CT_IMG ? 'img' : 'media', scope: { itemId: ID, mediaSourceId: MS, playSessionId: 'ps-1' } }));
       }
+      if (j.dl !== undefined) {
+        if (j.sid !== 'goodsid' && j.sid !== 'othersid') return void res.writeHead(401).end();
+        const target: Record<string, unknown> | undefined = {
+          [D_FILE]: { kind: 'file', file: `${D_FILE}.mp4`, size: DL_SIZE, etag: 'e1' },
+          [D_BADNAME]: { kind: 'file', file: '../../../etc/passwd', size: 1, etag: 'e2' },
+          [D_LINK]: { kind: 'file', file: `${D_LINK}.mp4`, size: DL_SIZE, etag: 'e3' },
+          [D_STATIC]: { kind: 'static', path: `/Videos/${ID}/stream`, query: { static: 'true', MediaSourceId: MS } },
+          [D_STATIC_BAD]: { kind: 'static', path: '/System/Info' },
+          [D_MISMATCH]: { kind: 'file', file: `${D_MISMATCH}.mp4`, size: 5, etag: 'e4' },
+          [D_BIG]: { kind: 'file', file: `${D_BIG}.mp4`, size: 32_000_000, etag: 'e5' },
+          [D_MISSING]: { kind: 'file', file: `${D_MISSING}.mp4`, size: 5, etag: 'e6' },
+        }[j.dl];
+        if (!target) return void res.writeHead(404).end();
+        res.writeHead(200, { 'content-type': 'application/json' });
+        return void res.end(JSON.stringify({ userId: j.sid === 'othersid' ? 'u2' : 'u1', token: 'JFTOKEN', deviceId: 'ff-u1', maxBitrate: 5_000_000, download: target }));
+      }
       const ok = j.sid === 'goodsid' || j.sid === 'guestsid';
       if (!ok) return void res.writeHead(401).end();
       res.writeHead(200, { 'content-type': 'application/json' });
@@ -71,11 +101,21 @@ beforeAll(async () => {
   });
   const jfp = await listen(jf);
   const bep = await listen(be);
-  const g = createGateway({ jellyfinUrl: `http://127.0.0.1:${jfp}`, backendUrl: `http://127.0.0.1:${bep}`, internalSecret: 's3cret-s3cret-s3cret' });
+  writeFileSync(join(dlDir, `${D_FILE}.mp4`), dlBody);
+  writeFileSync(join(dlOutside, 'secret.mp4'), dlBody);
+  symlinkSync(join(dlOutside, 'secret.mp4'), join(dlDir, `${D_LINK}.mp4`));
+  writeFileSync(join(dlDir, `${D_MISMATCH}.mp4`), dlBody);
+  writeFileSync(join(dlDir, `${D_BIG}.mp4`), '');
+  truncateSync(join(dlDir, `${D_BIG}.mp4`), 32_000_000);
+  const g = createGateway({ jellyfinUrl: `http://127.0.0.1:${jfp}`, backendUrl: `http://127.0.0.1:${bep}`, internalSecret: 's3cret-s3cret-s3cret', downloadDir: dlDir });
   gw = g.server;
   gwPort = await listen(gw);
 });
-afterAll(() => [jf, be, gw].forEach((s) => s.close()));
+afterAll(() => {
+  [jf, be, gw].forEach((s) => s.close());
+  rmSync(dlDir, { recursive: true, force: true });
+  rmSync(dlOutside, { recursive: true, force: true });
+});
 
 const get = (path: string, headers: Record<string, string> = {}) =>
   fetch(`http://127.0.0.1:${gwPort}${path}`, { headers: { cookie: 'ff_sid=goodsid', ...headers } });
@@ -358,5 +398,130 @@ describe('cast failed-auth rate limit', () => {
     expect(r.headers.get('access-control-allow-origin')).toBe('*');
     // other addresses are unaffected
     expect((await cget(`/Videos/${ID}/master.m3u8`, { 'x-real-ip': '198.51.100.8' })).status).toBe(200);
+  });
+});
+
+const dvectors = (JSON.parse(readFileSync(new URL('../../test-vectors/media-paths.json', import.meta.url), 'utf8')) as { download: { allow: string[]; deny: string[] } }).download;
+describe('download route vectors', () => {
+  it.each(dvectors.allow)('allows %s', (p) => expect(matchDownloadPath(p)).toBeTruthy());
+  it.each(dvectors.deny)('denies %s', (p) => expect(matchDownloadPath(p)).toBeNull());
+});
+
+describe('download route /media/d/<uuid>', () => {
+  const dget = (id: string, headers: Record<string, string> = {}, init: RequestInit = {}) =>
+    fetch(`http://127.0.0.1:${gwPort}/media/d/${id}`, { ...init, headers: { cookie: 'ff_sid=goodsid', ...headers } });
+
+  it('needs a session cookie and a licence, never caches', async () => {
+    const r = await fetch(`http://127.0.0.1:${gwPort}/media/d/${D_FILE}`);
+    expect(r.status).toBe(401);
+    expect(r.headers.get('cache-control')).toBe('no-store');
+    expect((await dget(D_FILE, { cookie: 'ff_sid=bad' })).status).toBe(401);
+    expect((await dget(D_MISSING.replace(/8/g, '9'))).status).toBe(404);
+  });
+  it('rejects query params, bad ids and other methods', async () => {
+    expect((await fetch(`http://127.0.0.1:${gwPort}/media/d/${D_FILE}?x=1`, { headers: { cookie: 'ff_sid=goodsid' } })).status).toBe(400);
+    expect((await fetch(`http://127.0.0.1:${gwPort}/media/d/${D_FILE}?`, { headers: { cookie: 'ff_sid=goodsid' } })).status).toBe(200);
+    expect((await dget('not-a-uuid')).status).toBe(404);
+    expect((await dget('-'.repeat(36))).status).toBe(404); // strict 8-4-4-4-12 lower-case hex, not just 36 chars of [0-9a-f-]
+    expect((await dget('1'.repeat(36))).status).toBe(404);
+    expect((await dget('11111111-1111-4111-8111-11111111111g')).status).toBe(404);
+    expect((await dget('AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA')).status).toBe(404);
+    expect((await dget(`..%2f${D_FILE}`)).status).toBe(404);
+    expect((await dget(D_FILE, {}, { method: 'POST' })).status).toBe(405);
+    expect((await dget(D_FILE, { origin: 'https://evil.example' })).headers.get('access-control-allow-origin')).toBeNull();
+  });
+  it('serves a file: 200 with full headers, then HEAD', async () => {
+    const r = await dget(D_FILE);
+    expect(r.status).toBe(200);
+    expect(r.headers.get('content-type')).toBe('video/mp4');
+    expect(r.headers.get('accept-ranges')).toBe('bytes');
+    expect(r.headers.get('cache-control')).toBe('no-store');
+    expect(r.headers.get('x-content-type-options')).toBe('nosniff');
+    expect(r.headers.get('etag')).toBe('"e1"');
+    expect(r.headers.get('set-cookie')).toBeNull();
+    expect(Buffer.from(await r.arrayBuffer()).equals(dlBody)).toBe(true);
+    const h = await dget(D_FILE, {}, { method: 'HEAD' });
+    expect(h.status).toBe(200);
+    expect(h.headers.get('content-length')).toBe(String(DL_SIZE));
+    expect((await h.arrayBuffer()).byteLength).toBe(0);
+  });
+  it('serves single ranges (206), open-ended and suffix ranges', async () => {
+    const r = await dget(D_FILE, { range: 'bytes=10-19' });
+    expect(r.status).toBe(206);
+    expect(r.headers.get('content-range')).toBe(`bytes 10-19/${DL_SIZE}`);
+    expect(Buffer.from(await r.arrayBuffer()).equals(dlBody.subarray(10, 20))).toBe(true);
+    const o = await dget(D_FILE, { range: 'bytes=990-' });
+    expect(o.headers.get('content-range')).toBe(`bytes 990-999/${DL_SIZE}`);
+    expect(Buffer.from(await o.arrayBuffer()).equals(dlBody.subarray(990))).toBe(true);
+    const sfx = await dget(D_FILE, { range: 'bytes=-5' });
+    expect(Buffer.from(await sfx.arrayBuffer()).equals(dlBody.subarray(995))).toBe(true);
+    const over = await dget(D_FILE, { range: 'bytes=990-5000' });
+    expect(over.headers.get('content-range')).toBe(`bytes 990-999/${DL_SIZE}`);
+  });
+  it('answers 416 for unsatisfiable, multiple or malformed ranges', async () => {
+    for (const range of [`bytes=${DL_SIZE}-`, 'bytes=5000-6000', 'bytes=0-1,5-6', 'bytes=-0', 'bytes=-', 'items=0-1', 'bytes=9-1', 'bytes=a-b']) {
+      const r = await dget(D_FILE, { range });
+      expect(r.status, range).toBe(416);
+      expect(r.headers.get('content-range'), range).toBe(`bytes */${DL_SIZE}`);
+      await r.arrayBuffer();
+    }
+  });
+  it('honours If-Range: matching ETag -> 206, other validator -> full 200', async () => {
+    expect((await dget(D_FILE, { range: 'bytes=0-9', 'if-range': '"e1"' })).status).toBe(206);
+    const stale = await dget(D_FILE, { range: 'bytes=0-9', 'if-range': '"old"' });
+    expect(stale.status).toBe(200);
+    expect((await stale.arrayBuffer()).byteLength).toBe(DL_SIZE);
+    expect((await dget(D_FILE, { range: 'bytes=0-9', 'if-range': 'Wed, 21 Oct 2015 07:28:00 GMT' })).status).toBe(200);
+  });
+  it('never serves a file name the backend should not have sent, symlinks, or size mismatches', async () => {
+    expect((await dget(D_BADNAME)).status).toBe(500);
+    expect((await dget(D_LINK)).status).toBe(404);
+    expect((await dget(D_MISSING)).status).toBe(404);
+    expect((await dget(D_MISMATCH)).status).toBe(503);
+  });
+  it('forwards static downloads through the allowlist with Range, no-store and no leaked credentials', async () => {
+    seen.length = 0;
+    const r = await dget(D_STATIC, { range: 'bytes=0-99' });
+    expect(r.status).toBe(206);
+    expect(r.headers.get('cache-control')).toBe('no-store');
+    expect(r.headers.get('set-cookie')).toBeNull();
+    expect(r.headers.get('access-control-allow-origin')).toBeNull();
+    await r.arrayBuffer();
+    const u = seen[0]!;
+    expect(u.url).toBe(`/Videos/${ID}/stream?static=true&MediaSourceId=${MS}`);
+    expect(u.range).toBe('bytes=0-99');
+    expect(u.auth).toContain('Token="JFTOKEN"');
+    expect(u.cookie).toBeUndefined();
+    expect((await dget(D_STATIC_BAD)).status).toBe(403);
+  });
+  it('allows at most 2 open responses per user (429), counted per user and freed on close', async () => {
+    const a = await dget(D_BIG);
+    const b = await dget(D_BIG);
+    expect([a.status, b.status]).toEqual([200, 200]);
+    const c = await dget(D_BIG);
+    expect(c.status).toBe(429);
+    await c.arrayBuffer();
+    expect((await dget(D_FILE, {}, { method: 'HEAD' })).status).toBe(200); // HEAD is not counted
+    const other = await fetch(`http://127.0.0.1:${gwPort}/media/d/${D_FILE}`, { headers: { cookie: 'ff_sid=othersid' } });
+    expect(other.status).toBe(200); // another user is unaffected
+    await other.arrayBuffer();
+    await a.body!.cancel();
+    let d: Response | undefined;
+    for (let i = 0; i < 20; i++) {
+      d = await dget(D_BIG);
+      if (d.status === 200) break;
+      await d.arrayBuffer();
+      await new Promise((r) => setTimeout(r, 50));
+    }
+    expect(d!.status).toBe(200);
+    await d!.body!.cancel();
+    await b.body!.cancel();
+  });
+  it('counts served bytes in friendflix_gateway_download_bytes_total', async () => {
+    const m = await (await fetch(`http://127.0.0.1:${gwPort}/metrics`)).text();
+    expect(m).toMatch(/friendflix_gateway_download_bytes_total [1-9]/);
+  });
+  it('does not treat /media/d/ as a Jellyfin path', async () => {
+    expect((await get('/media/d/Videos')).status).toBe(404);
   });
 });

@@ -6,6 +6,7 @@
   import { listIds, toggleList, prefs } from '#lib/stores';
   import ListMenu from '#lib/ListMenu.svelte';
   import { isSpoiler } from '#lib/spoiler';
+  import DownloadButton from '#lib/DownloadButton.svelte';
 
   export let id: string;
   let item: Item | null = null, next: Item | null = null, closeBtn: HTMLButtonElement, box: HTMLDivElement, failed = false, logoFailed = false;
@@ -59,6 +60,7 @@
           <a class="btn light" data-autofocus href={play}><Icon name="play" size={22} />{item.type === 'Series' && next ? `S${next.parentIndexNumber}:E${next.indexNumber}` : 'Abspielen'}</a>
           <button class="round" aria-pressed={inList} aria-label={inList ? 'Von Meine Liste entfernen' : 'Zu Meine Liste hinzufügen'} on:click={() => toggleList(item!.id, inList)}><Icon name={inList ? 'check' : 'plus'} size={20} /></button>
           <ListMenu itemId={item.id} variant="round" size={44} />
+          {#if item.type !== 'Series'}<DownloadButton itemId={item.id} compact />{/if}
         </div>
       </div>
     {:else if failed}<p class="err pad">Titel konnte nicht geladen werden.</p>{:else}<div class="skeleton fillsk"></div>{/if}

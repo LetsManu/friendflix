@@ -1,5 +1,7 @@
 # Changelog
 ## [Unreleased]
+### Block 5 – Offline-Downloads
+- Filme und Folgen aufs Gerät laden und offline ansehen (Menü → Downloads, `/offline`): Server bereitet MP4-Dateien vor (HLS → ffmpeg-Remux, wiederaufnehmbar), der Browser lädt sie per Range in OPFS; Lizenzen pro Gerät mit Ablauf, Online-Prüfung und Widerruf. Rollenfelder „Downloads erlauben“, „Max. Downloads“, „Max. Download-Qualität“, „Gültigkeit (Tage)“; Admin → Wiedergabe-Check zeigt Jobs und Speicher. Neue Variablen `DOWNLOADS_ENABLED`, `DOWNLOAD_DIR`, `DOWNLOAD_CACHE_MAX_GB` u. a., neues Volume `downloads`. Kein DRM, siehe `docs/downloads.md`.
 ### Block 4 – PWA, push, Chromecast
 - Installable app (manifest, iOS meta, service worker caching only static assets; never /api, /media, HTML or Range requests) with an offline page.
 - Web push per device (Einstellungen → Benachrichtigungen, "Test senden"): VAPID keys via `VAPID_PUBLIC_KEY`/`VAPID_PRIVATE_KEY` (`node scripts/gen-vapid.mjs`), endpoint allowlist, generic text on devices enabled by non-owner profiles, revoked with the device.

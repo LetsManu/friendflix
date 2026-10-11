@@ -13,6 +13,7 @@
   import { listIds, toggleList, prefs } from '#lib/stores';
   import ListMenu from '#lib/ListMenu.svelte';
   import { isSpoiler } from '#lib/spoiler';
+  import DownloadButton from '#lib/DownloadButton.svelte';
 
   let thumb = 0, extras: Item[] = [], tint = '', friends: Array<{ id: string; name: string }> = [], recOpen = false, recTo = new Set<string>(), recNote = '', recMsg = '';
   let item: Item | null = null, seasons: Item[] = [], episodes: Item[] | null = null, season = '', next: Item | null = null;
@@ -93,6 +94,7 @@
         <button class="icon-btn ring" class:on={thumb === -1} aria-pressed={thumb === -1} aria-label="Gefällt mir nicht" title="Nicht für mich" on:click={() => setThumb(-1)}><Icon name="thumb-down" size={21} /></button>
         <button class="icon-btn ring" aria-label="Einem Freund empfehlen" title="Empfehlen" on:click={openRec}><Icon name="send" size={20} /></button>
         {#if $tvOnline && playHref}<button class="sec" on:click={castHere}><Icon name="tv" size={20} />Auf Fernseher</button>{/if}
+        {#if item.type !== 'Series'}<DownloadButton itemId={item.id} />{/if}
         {#if item.type !== 'Series'}<button class="sec" on:click={startParty}><Icon name="users" size={20} />Gemeinsam schauen</button>{/if}
         {#if item.type === 'Series'}<button class="sec" aria-pressed={followed} on:click={toggleFollow}><Icon name="bell" size={20} />{followed ? 'Du folgst dieser Serie' : 'Neue Folgen melden'}</button>{/if}
       </div>
@@ -117,12 +119,12 @@
         <ol class="eps">
           {#if episodes === null}{#each Array(5) as _}<li><div class="skeleton" style="height:90px"></div></li>{/each}
           {:else}{#each episodes as e (e.id)}
-            <li><a class="ep" href="/watch/{e.id}{qs ? '?' + qs : ''}">
+            <li class="eprow"><a class="ep" href="/watch/{e.id}{qs ? '?' + qs : ''}">
               <span class="n">{e.indexNumber ?? ''}</span>
               <span class="th">{#if e.image}<img class:spoil={isSpoiler(e, $prefs) && !revealed.has(e.id)} loading="lazy" src={img(e.id, 320)} alt="" />{/if}{#if e.positionTicks && e.runtimeTicks}<span class="bar"><i style="width:{Math.min(100, (e.positionTicks / e.runtimeTicks) * 100)}%"></i></span>{/if}<span class="pl"><Icon name="play" size={22} /></span></span>
               <span class="tx"><span class="t"><b>{e.name}</b><span class="muted">{fmtMin(e.runtimeTicks)}</span></span>{#if isSpoiler(e, $prefs) && !revealed.has(e.id)}<span class="muted ov">Beschreibung ausgeblendet (Spoilerschutz) · <button type="button" class="lnk" on:click={(ev) => reveal(ev, e.id)}>anzeigen</button></span>{:else}<span class="muted ov">{e.overview ?? ''}</span>{/if}</span>
               {#if e.played}<span class="seen"><Icon name="check" size={18} label="Gesehen" /></span>{/if}
-            </a></li>{/each}{/if}
+            </a><span class="epdl"><DownloadButton itemId={e.id} seriesId={item.id} compact /></span></li>{/each}{/if}
         </ol>
       {/if}
 
@@ -159,6 +161,7 @@
   .ring:hover:not(:disabled) { border-color: #fff; } .ring.on { color: var(--acc); border-color: var(--acc); }
   .seasonbar { display: flex; align-items: center; justify-content: space-between; margin: 2rem 0 .5rem; }
   .eps { list-style: none; padding: 0; margin: 0; }
+  .eprow { position: relative; } .epdl { position: absolute; right: .8rem; bottom: .8rem; }
   .ep { display: grid; grid-template-columns: 2.2rem 160px 1fr auto; gap: 1rem; align-items: center; padding: 1rem .8rem; border-bottom: 1px solid var(--line); border-radius: 4px; transition: background var(--t-fast); }
   .ep:hover { background: #2a2a2a; }
   .n { font-size: 1.4rem; color: var(--mut); text-align: center; }

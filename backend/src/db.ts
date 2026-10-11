@@ -390,6 +390,55 @@ export const MIGRATIONS: string[] = [
   );
   create index push_subscriptions_user on push_subscriptions(user_id);
   `,
+  // 20: offline downloads (licenses per device + shared prepared files)
+  `
+  alter table role_settings
+    add column download boolean,
+    add column max_downloads int check (max_downloads between 0 and 200),
+    add column download_max_height int check (download_max_height between 0 and 2160),
+    add column download_days int check (download_days between 1 and 90);
+  create table download_jobs (
+    id uuid primary key,
+    item_id text not null,
+    quality text not null check (quality in ('sd','hd','fhd','original')),
+    audio_lang text not null default '',
+    -- effective caps the file was prepared with (role height/bitrate clamp); part of the job key so roles with different caps never share a file
+    max_height int not null default 0,
+    max_bitrate int not null default 0,
+    media_source_id text,
+    status text not null check (status in ('queued','preparing','ready','failed')),
+    seg_done int not null default 0,
+    seg_total int,
+    init_sha text,
+    bytes bigint,
+    error text,
+    play_session_id text,
+    created_at timestamptz not null default now(),
+    updated_at timestamptz not null default now(),
+    last_used_at timestamptz not null default now()
+  );
+  create unique index download_jobs_key on download_jobs(item_id, quality, audio_lang, max_height, max_bitrate) where status <> 'failed';
+  create table downloads (
+    id uuid primary key,
+    user_id uuid not null,
+    device_id text not null,
+    profile_id uuid not null references profiles(id) on delete cascade,
+    item_id text not null,
+    job_id uuid references download_jobs(id) on delete set null,
+    quality text not null,
+    status text not null check (status in ('pending','fetched','deleted','revoked')),
+    created_at timestamptz not null default now(),
+    fetched_at timestamptz,
+    expires_at timestamptz not null,
+    checked_at timestamptz not null default now(),
+    progress_at timestamptz,
+    subs jsonb not null default '[]',
+    meta jsonb not null default '{}',
+    foreign key (user_id, device_id) references devices(user_id, device_id) on delete cascade
+  );
+  create unique index downloads_dev_item on downloads(user_id, device_id, profile_id, item_id) where status in ('pending','fetched');
+  create index downloads_user_active on downloads(user_id) where status in ('pending','fetched');
+  `,
 ];
 
 export async function migrate(pool: pg.Pool): Promise<void> {

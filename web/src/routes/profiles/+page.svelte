@@ -5,6 +5,7 @@
   import { AVATARS, avatarBg, initial } from '#lib/avatars';
   import Icon from '#lib/Icon.svelte';
   import PinPad from '#lib/PinPad.svelte';
+  import { setMeta } from '#lib/offline/db';
 
   interface Profile { id: string; name: string; avatar: string; isOwner: boolean; hasPin: boolean; active: boolean }
   let profiles: Profile[] = [], max = 5, activeId: string | null = null, loaded = false;
@@ -39,6 +40,7 @@
     pinBusy = true; pinErr = '';
     try {
       await api(`/api/profiles/${p.id}/select`, { method: 'POST', body: pin === undefined ? {} : { pin } });
+      await setMeta('lastProfileId', p.id).catch(() => undefined); // offline hub: downloads of the last active profile
       done();
     } catch (e) {
       const code = e instanceof ApiError ? e.body?.error : '';

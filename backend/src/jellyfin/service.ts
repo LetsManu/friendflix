@@ -2,7 +2,7 @@ import { decrypt, encrypt } from '../crypto.js';
 import type { KV } from '../kv.js';
 import type { JfUser } from '../types.js';
 import { JellyfinClient, JellyfinError } from './client.js';
-import { maxWidthFor, toItemDto, toPlaybackDto, toTrickplayDto, type ItemDto, type PlaybackDto, type TrickplayDto } from './dto.js';
+import { maxWidthFor, toDownloadSource, toItemDto, toPlaybackDto, toTrickplayDto, type DownloadQuality, type DownloadSourceDto, type ItemDto, type PlaybackDto, type TrickplayDto } from './dto.js';
 
 const TOKEN_TTL = 6 * 3600;
 const FIELDS = 'Overview,Genres,OfficialRating,CommunityRating,PremiereDate,ProductionYear,ChildCount,RunTimeTicks';
@@ -340,6 +340,55 @@ export class JellyfinService {
     });
     if (info.ErrorCode) throw new JellyfinError(403, `playback blocked: ${info.ErrorCode}`);
     return toPlaybackDto({ itemId, info, deviceId: this.deviceId(user), maxBitrate: opts.maxBitrate, resumeTicks: opts.startTicks ?? 0, audioIndex: opts.audioIndex, maxHeight: opts.maxHeight, cast: opts.cast });
+  }
+
+  /** PlaybackInfo with the "FriendFlix Download" profile: source details + (unless 'original') the fMP4 HLS master the preparer pulls. */
+  async downloadSource(user: JfUser, itemId: string, opts: { quality: DownloadQuality; audioIndex?: number; maxHeight?: number | null; maxBitrate?: number | null }): Promise<DownloadSourceDto> {
+    const original = opts.quality === 'original';
+    const p = new URLSearchParams({ UserId: user.jellyfin_user_id, AutoOpenLiveStream: 'false' });
+    if (opts.maxBitrate) p.set('MaxStreamingBitrate', String(opts.maxBitrate));
+    if (opts.audioIndex !== undefined) p.set('AudioStreamIndex', String(opts.audioIndex));
+    if (opts.maxHeight) {
+      p.set('MaxHeight', String(opts.maxHeight));
+      p.set('MaxWidth', String(maxWidthFor(opts.maxHeight)));
+    }
+    if (!original) {
+      p.set('EnableDirectPlay', 'false');
+      p.set('EnableDirectStream', 'false');
+    }
+    const conditions = [
+      ...(opts.maxHeight ? [{ Condition: 'LessThanEqual', Property: 'Height', Value: String(opts.maxHeight), IsRequired: true }] : []),
+      { Condition: 'LessThanEqual', Property: 'VideoBitDepth', Value: '8', IsRequired: true },
+    ];
+    const profile = {
+      Name: 'FriendFlix Download',
+      MaxStreamingBitrate: opts.maxBitrate ?? 120_000_000,
+      CodecProfiles: [{ Type: 'Video', Codec: 'h264', Conditions: conditions }],
+      DirectPlayProfiles: original ? [{ Container: 'mp4,m4v', Type: 'Video', VideoCodec: 'h264', AudioCodec: 'aac,mp3' }] : [],
+      TranscodingProfiles: [
+        { Container: 'mp4', Type: 'Video', AudioCodec: 'aac', VideoCodec: 'h264', Protocol: 'hls', Context: 'Streaming', MaxAudioChannels: '2', MinSegments: 1, BreakOnNonKeyFrames: false },
+      ],
+      SubtitleProfiles: [{ Format: 'vtt', Method: 'External' }, { Format: 'srt', Method: 'External' }, { Format: 'ass', Method: 'External' }],
+    };
+    const info = await this.json<Record<string, any>>(user, `/Items/${itemId}/PlaybackInfo?${p}`, { method: 'POST', body: JSON.stringify({ DeviceProfile: profile }) });
+    if (info.ErrorCode) throw new JellyfinError(403, `download blocked: ${info.ErrorCode}`);
+    return toDownloadSource({ itemId, info, deviceId: this.deviceId(user), quality: opts.quality, audioIndex: opts.audioIndex, maxHeight: opts.maxHeight, maxBitrate: opts.maxBitrate });
+  }
+
+  /** Writes a user's resume position / played flag (offline progress sync). Current API first, legacy path as fallback. */
+  async setUserData(user: JfUser, id: string, d: { positionTicks: number; played: boolean; lastPlayedDate: Date | string }): Promise<void> {
+    const uid = user.jellyfin_user_id;
+    const body = JSON.stringify({
+      PlaybackPositionTicks: Math.max(0, Math.round(d.positionTicks)),
+      Played: d.played,
+      LastPlayedDate: (d.lastPlayedDate instanceof Date ? d.lastPlayedDate : new Date(d.lastPlayedDate)).toISOString(),
+    });
+    await this.compat(user, 'userdata', [`/UserItems/${id}/UserData?userId=${uid}`, `/Users/${uid}/Items/${id}/UserData`], { method: 'POST', body });
+  }
+
+  /** Stops the server-side transcode behind a PlaySessionId (Jellyfin keeps encoding otherwise). Never throws. */
+  async stopEncoding(user: JfUser, playSessionId: string): Promise<void> {
+    await this.call(user, `/Videos/ActiveEncodings?${new URLSearchParams({ deviceId: this.deviceId(user), playSessionId })}`, { method: 'DELETE' }).catch(() => undefined);
   }
 
   /** Playing / Progress / Stopped reports (powers "Weiterschauen" and Jellyfin statistics). */

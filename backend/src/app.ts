@@ -9,6 +9,7 @@ import { adminRoutes, inviteRoutes } from './routes/admin.js';
 import { authRoutes } from './routes/auth.js';
 import { castRoutes } from './routes/cast.js';
 import { internalRoutes } from './routes/internal.js';
+import { downloadRoutes } from './routes/downloads.js';
 import { discoverRoutes } from './routes/discover.js';
 import { digestRoutes } from './routes/digest.js';
 import { listRoutes } from './routes/lists.js';
@@ -103,6 +104,7 @@ export async function buildApp(ctx: Ctx, extra: Extra = {}): Promise<FastifyInst
   reminderRoutes(app, ctx);
   listRoutes(app, ctx);
   pushRoutes(app, ctx);
+  downloadRoutes(app, ctx);
   for (const r of extra.register ?? []) await r(app, ctx);
   return app;
 }
