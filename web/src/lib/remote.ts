@@ -1,11 +1,12 @@
 import { get, writable } from 'svelte/store';
 
 /** What the TV reports to the phone. */
-export interface TvStatus { itemId?: string; title?: string; position?: number; duration?: number; paused?: boolean }
+export interface TvStatus { itemId?: string; title?: string; position?: number; duration?: number; paused?: boolean; audio?: Track[]; subs?: Track[]; audioSel?: number; subSel?: number }
+export interface Track { i: number; t: string }
 /** Commands the phone sends to the TV (the server validates the same shapes). */
 export type ToTv =
   | { t: 'cast'; itemId: string; startSec?: number }
-  | { t: 'ctl'; action: 'play' | 'pause' | 'toggle' | 'seekBy' | 'stop' | 'home'; value?: number };
+  | { t: 'ctl'; action: 'play' | 'pause' | 'toggle' | 'seekBy' | 'stop' | 'home' | 'next' | 'audio' | 'sub'; value?: number };
 
 /** phone: is a TV of this user connected right now? */
 export const tvOnline = writable(false);
@@ -101,6 +102,9 @@ function clean(s: TvStatus | null): TvStatus {
   if (typeof s?.position === 'number' && Number.isFinite(s.position) && s.position >= 0) o.position = Math.floor(s.position);
   if (typeof s?.duration === 'number' && Number.isFinite(s.duration) && s.duration >= 0) o.duration = Math.floor(s.duration);
   if (typeof s?.paused === 'boolean') o.paused = s.paused;
+  const tr = (l?: Track[], n = 10) => (l ?? []).slice(0, n).map((x) => ({ i: x.i, t: String(x.t).slice(0, 40) }));
+  if (s?.audio?.length) { o.audio = tr(s.audio); if (s.audioSel !== undefined) o.audioSel = s.audioSel; }
+  if (s?.subs?.length) { o.subs = tr(s.subs, 16); if (s.subSel !== undefined) o.subSel = s.subSel; }
   return o;
 }
 
@@ -113,6 +117,6 @@ export function startTvLink(onCommand: (m: ToTv) => void, onFatal: (code: number
   const report = () => link.sendNow({ t: 'status', ...clean(get(nowPlaying)) });
   const timer = setInterval(report, 2000);
   let last = '';
-  const unsub = nowPlaying.subscribe((s) => { const k = `${s?.itemId}|${s?.paused}`; if (k !== last) { last = k; report(); } });
+  const unsub = nowPlaying.subscribe((s) => { const k = `${s?.itemId}|${s?.paused}|${s?.audioSel}|${s?.subSel}`; if (k !== last) { last = k; report(); } });
   return () => { clearInterval(timer); unsub(); link.close(); };
 }

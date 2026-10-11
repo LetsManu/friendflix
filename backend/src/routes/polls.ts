@@ -70,12 +70,12 @@ export function pollRoutes(app: FastifyInstance, ctx: Ctx) {
     return { polls: (await Promise.all(ids.map((r) => detail(r.id, req.user!.id)))).filter(Boolean) };
   });
   app.get('/api/polls/:id', pre, async (req, reply) => {
-    const d = await detail(z.string().uuid().parse((req.params as { id: string }).id), req.user!.id);
+    const d = await detail(z.guid().parse((req.params as { id: string }).id), req.user!.id);
     return d ?? reply.code(404).send({ error: 'not_found' });
   });
 
   app.post('/api/polls/:id/vote', pre, async (req, reply) => {
-    const pollId = z.string().uuid().parse((req.params as { id: string }).id);
+    const pollId = z.guid().parse((req.params as { id: string }).id);
     const { optionId } = z.object({ optionId: z.number().int() }).parse(req.body);
     const ok = await ctx.db.query(
       `select 1 from polls p join poll_options o on o.poll_id=p.id where p.id=$1 and o.id=$2 and p.status='open' and p.closes_at > now()`, [pollId, optionId]);
@@ -92,7 +92,7 @@ export function pollRoutes(app: FastifyInstance, ctx: Ctx) {
     app.post(`/api/admin/polls/:id/${action}`, admin, async (req, reply) => {
       let ok: boolean;
       try {
-        ok = await approvePoll(ctx, z.string().uuid().parse((req.params as { id: string }).id), req.user!.id, approve);
+        ok = await approvePoll(ctx, z.guid().parse((req.params as { id: string }).id), req.user!.id, approve);
       } catch (e) {
         if (e instanceof SeerrError) return reply.code(502).send({ error: 'seerr_failed' });
         throw e;

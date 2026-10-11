@@ -25,7 +25,7 @@ export const INVITABLE_ROLES = ['friend', 'family', 'guest'] as const;
 
 export function loadRoles(overrideJson?: string): Record<string, RoleTemplate> {
   if (!overrideJson) return DEFAULT_ROLES;
-  const o = z.record(roleTemplateSchema.partial()).parse(JSON.parse(overrideJson));
+  const o = z.record(z.string(), roleTemplateSchema.partial()).parse(JSON.parse(overrideJson));
   const out: Record<string, RoleTemplate> = { ...DEFAULT_ROLES };
   for (const [k, v] of Object.entries(o)) out[k] = { ...(DEFAULT_ROLES[k] ?? DEFAULT_ROLES.friend!), ...v } as RoleTemplate;
   return out;
