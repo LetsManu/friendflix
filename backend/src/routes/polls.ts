@@ -4,7 +4,7 @@ import { audit } from '../audit.js';
 import { bus } from '../bus.js';
 import type { Ctx } from '../ctx.js';
 import { seerrHooks } from '../hooks.js';
-import { approvePoll, createPoll, pollTick, resolveRequestedPolls } from '../polls.js';
+import { approvePoll, createPoll, InvalidOptions, pollTick, resolveRequestedPolls } from '../polls.js';
 import { notify } from '../notify.js';
 import { JellyfinError } from '../jellyfin/client.js';
 import { SeerrError } from '../seerr/client.js';
@@ -46,7 +46,7 @@ export function pollRoutes(app: FastifyInstance, ctx: Ctx) {
     try {
       return { id: await createPoll(ctx, req.user!.id, b) };
     } catch (e) {
-      if ((e instanceof JellyfinError && (e.status === 404 || e.status === 400 || e.status === 403)) || (e instanceof SeerrError && e.status === 404)) return reply.code(400).send({ error: 'invalid_options' });
+      if (e instanceof InvalidOptions || (e instanceof JellyfinError && (e.status === 404 || e.status === 400 || e.status === 403)) || (e instanceof SeerrError && e.status === 404)) return reply.code(400).send({ error: 'invalid_options' });
       throw e;
     }
   });

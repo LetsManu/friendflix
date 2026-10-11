@@ -13,6 +13,9 @@ export interface OptionInput {
   mediaType?: 'movie' | 'tv';
 }
 
+/** Fewer than two distinct options after resolution/dedupe. */
+export class InvalidOptions extends Error {}
+
 export async function createPoll(ctx: Ctx, creatorId: string, input: { title: string; options: OptionInput[]; closesInMinutes: number; startsAfterMinutes: number }) {
   const creator = (await getUserById(ctx, creatorId))!;
   const resolved: Array<{ jf?: string; tmdb?: number; type?: string; title: string; poster?: string }> = [];
@@ -32,6 +35,7 @@ export async function createPoll(ctx: Ctx, creatorId: string, input: { title: st
       else resolved.push({ tmdb: o.tmdbId, type: o.mediaType, title: String(d.title ?? d.name), poster: d.posterPath ?? undefined });
     }
   }
+  if (resolved.length < 2) throw new InvalidOptions('need two distinct options');
   const closes = new Date(Date.now() + input.closesInMinutes * 60_000);
   const starts = new Date(closes.getTime() + input.startsAfterMinutes * 60_000);
   const id = randomUUID();
@@ -99,16 +103,18 @@ export async function approvePoll(ctx: Ctx, pollId: string, adminId: string, app
   }
   let created: { id: number };
   let opt;
+  let creator;
   try {
     opt = (await ctx.db.query('select * from poll_options where id=$1', [p.winner_option_id])).rows[0];
-    const creator = (await getUserById(ctx, p.created_by))!;
+    creator = (await getUserById(ctx, p.created_by))!;
     const seerrUser = await ensureSeerrUser(ctx, creator);
     created = await ctx.seerr.createRequest({ mediaType: opt.media_type, mediaId: opt.tmdb_id, seasons: opt.media_type === 'tv' ? 'all' : undefined, userId: seerrUser });
-    await ctx.db.query('insert into seerr_requests(seerr_request_id,user_id,media_type,tmdb_id,title,poster) values ($1,$2,$3,$4,$5,$6) on conflict (seerr_request_id) do nothing', [created.id, creator.id, opt.media_type, opt.tmdb_id, opt.title, opt.poster]);
   } catch (e) {
     await ctx.db.query("update polls set status='needs_approval' where id=$1 and status='requested'", [pollId]).catch(() => undefined); // retryable; keep the original error
     throw e;
   }
+  // after the revert window: once Seerr has the request, a retry must not create a second one
+  await ctx.db.query('insert into seerr_requests(seerr_request_id,user_id,media_type,tmdb_id,title,poster) values ($1,$2,$3,$4,$5,$6) on conflict (seerr_request_id) do nothing', [created.id, creator.id, opt.media_type, opt.tmdb_id, opt.title, opt.poster]);
   await ctx.seerr.approve(created.id).catch(() => undefined); // admin approval of the poll = approval of the request
   await ctx.db.query('update polls set seerr_request_id=$1 where id=$2', [created.id, pollId]);
   await audit(ctx, adminId, 'poll.approve', pollId, { seerrRequest: created.id });
@@ -123,11 +129,11 @@ export async function resolveRequestedPolls(ctx: Ctx) {
     const found = await ctx.jf.findByTmdb(p.tmdb_id, p.media_type).catch(() => null);
     if (!found) continue;
     const startsAt = new Date(Math.max(Date.now() + 30 * 60_000, new Date(p.starts_at).getTime()));
+    await ctx.db.query('update poll_options set jf_item_id=$1 where id=$2', [found.id, p.winner_option_id]); // idempotent; before the claim so a restored room always has an item
     const room = randomToken(9);
     const claimed = await ctx.db.query("update polls set status='scheduled', room_id=$1, starts_at=$2 where id=$3 and status='requested' returning id", [room, startsAt, p.id]);
     if (!claimed.rowCount) continue;
     schedule(ctx, p.id, p.otitle, found.id, p.created_by, startsAt, room);
-    await ctx.db.query('update poll_options set jf_item_id=$1 where id=$2', [found.id, p.winner_option_id]);
     await notify(ctx, { userId: null, kind: 'poll_scheduled', title: `Filmabend steht fest: ${p.otitle}`, body: `Start ${startsAt.toLocaleString('de-DE')}`, link: `/party/${room}`, dedupe: `poll-sched-${p.id}`, external: true });
   }
 }

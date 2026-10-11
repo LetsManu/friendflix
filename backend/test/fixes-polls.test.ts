@@ -87,5 +87,8 @@ describe('item lookups and options', () => {
     expect((await call('GET', `/api/polls/${r.json().id}`)).json().options).toHaveLength(2);
     await env.pool.query("update polls set status='started'");
     expect((await call('POST', '/api/polls', { title: 'Bad', options: [{ jfItemId: MISSING }, { jfItemId: A }] })).statusCode).toBe(400);
+    const one = await call('POST', '/api/polls', { title: 'Same', options: [{ jfItemId: A }, { jfItemId: A }] });
+    expect(one.statusCode).toBe(400);
+    expect(one.json().error).toBe('invalid_options');
   });
 });
