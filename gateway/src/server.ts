@@ -17,4 +17,8 @@ const { server } = createGateway({
 });
 const port = Number(process.env.PORT ?? 4000);
 server.listen(port, '0.0.0.0', () => console.log(`gateway listening on :${port}`));
-process.on('SIGTERM', () => server.close(() => process.exit(0)));
+process.on('SIGTERM', () => {
+  server.close(() => process.exit(0));
+  server.closeIdleConnections(); // keep-alive sockets would otherwise hold close() open
+  setTimeout(() => process.exit(0), 8000).unref(); // hard fallback for in-flight streams
+});

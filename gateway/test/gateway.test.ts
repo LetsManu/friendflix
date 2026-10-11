@@ -7,13 +7,13 @@ import { createGateway, normalizePath } from '../src/gateway.js';
 const ID = 'a'.repeat(32);
 let jf: Server, be: Server, gw: Server;
 let gwPort: number;
-const seen: Array<{ url: string; auth?: string; range?: string }> = [];
+const seen: Array<{ url: string; auth?: string; range?: string; acceptEncoding?: string }> = [];
 
 const listen = (s: Server) => new Promise<number>((r) => s.listen(0, '127.0.0.1', () => r((s.address() as AddressInfo).port)));
 
 beforeAll(async () => {
   jf = createServer((req, res) => {
-    seen.push({ url: req.url!, auth: req.headers.authorization, range: req.headers.range });
+    seen.push({ url: req.url!, auth: req.headers.authorization, range: req.headers.range, acceptEncoding: req.headers['accept-encoding'] });
     if (req.url!.includes('/Images/')) return void res.writeHead(200, { 'content-type': 'image/jpeg', 'cache-control': 'public, max-age=60', etag: '"abc"' }).end('img');
     if (req.url!.includes('/stream')) { /* falls through to range handling below */ }
     if (req.url!.includes('redirect')) return void res.writeHead(302, { location: 'http://evil.example/' }).end();
@@ -93,6 +93,12 @@ describe('gateway', () => {
     expect(r.status).toBe(206);
     expect(r.headers.get('content-range')).toBe('bytes 0-99/1000000');
     expect(seen.at(-1)!.range).toBe('bytes=0-99');
+  });
+  it('asks upstream for identity encoding so relayed content-length matches the body', async () => {
+    seen.length = 0;
+    const r = await get(`/media/Videos/${ID}/master.m3u8`);
+    expect(r.status).toBe(200);
+    expect(seen.at(-1)!.acceptEncoding).toBe('identity');
   });
   it('never follows upstream redirects', async () => {
     expect((await get(`/media/Videos/${ID}/master.m3u8?redirect=1`)).status).toBe(502);

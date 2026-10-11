@@ -130,7 +130,8 @@ export function createGateway(opts: GatewayOptions): { server: Server; metrics: 
       target.searchParams.append(k, v);
     }
 
-    const headers: Record<string, string> = { Authorization: mediaBrowserHeader(auth.deviceId, auth.token) };
+    // identity: keep upstream bytes as-is so content-length matches the body we relay
+    const headers: Record<string, string> = { Authorization: mediaBrowserHeader(auth.deviceId, auth.token), 'accept-encoding': 'identity' };
     for (const h of ['range', 'if-range', 'if-none-match', 'if-modified-since', 'accept']) {
       const v = req.headers[h];
       if (typeof v === 'string') headers[h] = v;
@@ -150,6 +151,8 @@ export function createGateway(opts: GatewayOptions): { server: Server; metrics: 
 
     const out: Record<string, string> = {};
     for (const h of PASS_RESPONSE_HEADERS) {
+      // fetch decodes content-encoding transparently, so the upstream length no longer describes the body
+      if (h === 'content-length' && up.headers.get('content-encoding')) continue;
       const v = up.headers.get(h);
       if (v) out[h] = v;
     }
