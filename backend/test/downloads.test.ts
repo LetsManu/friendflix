@@ -3,13 +3,13 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vites
 import { MIGRATIONS } from '../src/db.js';
 import { qualityOptions } from '../src/downloads.js';
 import { DEFAULT_ROLES, invalidateRoles } from '../src/roles.js';
-import { makeEnv, type TestEnv } from './helpers.js';
+import { cfg, makeEnv, type TestEnv } from './helpers.js';
 
 const enqueued: string[] = [];
 vi.mock('../src/downloadprep.js', async (orig) => ({ ...(await orig<typeof import('../src/downloadprep.js')>()), enqueueJob: async (_c: unknown, id: string) => { enqueued.push(id); } }));
 
 type Sess = { cookies: Record<string, string>; csrf: string };
-const H = { 'x-internal-secret': 'internal-secret-123456' };
+const H = { 'x-internal-secret': cfg.INTERNAL_SECRET };
 const MOVIE = 'a'.repeat(32);
 const SERIES = 'b'.repeat(32);
 const EPS = [1, 2, 3, 4, 5].map((n) => `${String(n).repeat(1)}`.padEnd(32, 'e'));
