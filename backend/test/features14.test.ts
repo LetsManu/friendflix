@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { encrypt, keyFromBase64 } from '../src/crypto.js';
+import { previews } from '../src/previews.js';
 import { ENC_KEY, makeEnv, type TestEnv } from './helpers.js';
 
 const [A, B, C, D, E] = ['a', 'b', 'c', 'd', 'e'].map((c) => c.repeat(32));
@@ -142,11 +143,9 @@ describe('scenes, X-Ray, extras, trailers, collections', () => {
     await call('GET', '/api/library/items?studio=Studio%20Eins');
     expect(lastItems).toContain('studios=Studio+Eins');
   });
-  it('hover trailer: only for titles with a local trailer, low bitrate HLS through the gateway, can be disabled', async () => {
-    expect((await call('GET', `/api/items/${B}/trailer`)).statusCode).toBe(404);
-    const t = (await call('GET', `/api/items/${A}/trailer`)).json();
-    expect(t.url).toMatch(/^\/media\/Videos\/5{32}\/master\.m3u8\?/);
-    expect(t.url).toContain('MaxStreamingBitrate=1500000');
+  it('hover trailer: cached clip pipeline answers "preparing" first, can be disabled (see previews.test.ts)', async () => {
+    expect((await call('GET', `/api/items/${A}/trailer`)).json()).toEqual({ error: 'preparing' });
+    await previews(env.ctx).whenIdle();
     expect((await call('GET', `/api/items/${A}`)).json().item.trailers).toBe(1);
     await call('PUT', '/api/prefs', { shareHistory: true, hoverTrailers: false });
     expect((await call('GET', `/api/items/${A}/trailer`)).json()).toEqual({ error: 'disabled' });
@@ -165,16 +164,11 @@ describe('language picker and clip preview', () => {
     expect(r.audio).toEqual([{ language: 'ger', title: 'Deutsch (AC3)', isDefault: true }, { language: 'eng', title: 'English (AAC)', isDefault: false }]);
     expect(r.subtitles).toEqual([{ language: 'ger', title: 'Deutsch' }]);
   });
-  it('without a local trailer: 404 unless the clip preview is enabled, then a low bitrate HLS clip one third into the film', async () => {
-    await call('PUT', '/api/prefs', { hoverTrailers: true, hoverClip: false });
-    expect((await call('GET', `/api/items/${B}/trailer`)).statusCode).toBe(404);
-    await call('PUT', '/api/prefs', { hoverTrailers: true, hoverClip: true });
-    const t = (await call('GET', `/api/items/${B}/trailer`)).json();
-    expect(t.url).toContain(`/media/Videos/${B}/master.m3u8`);
-    expect(t.url).not.toContain('StartTimeTicks'); // the client seeks via hls.js startPosition
-    expect(t.url).toContain('PlaySessionId=ps-12345678');
-    expect(t.start).toBe(Math.floor(150 * 60 / 3));
-    expect(t.url).toContain('MaxStreamingBitrate=1500000');
+  it('clip preview defaults to on', async () => {
+    await call('PUT', '/api/prefs', { hoverTrailers: true });
+    expect((await call('GET', '/api/prefs')).json().prefs.hoverClip).toBe(true);
+    expect((await call('GET', `/api/items/${B}/trailer`)).json()).toEqual({ error: 'preparing' });
+    await previews(env.ctx).whenIdle();
   });
 });
 

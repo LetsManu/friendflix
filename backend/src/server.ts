@@ -11,6 +11,7 @@ import { authentikConfigProblem } from './invites.js';
 import { createAuthentikProvider } from './oidc.js';
 import { SeerrClient } from './seerr/client.js';
 import { loadRoles } from './roles.js';
+import { previews } from './previews.js';
 import { pollJellyfinSessions } from './routes/internal.js';
 import { parties } from './routes/party.js';
 import { calendarNotifications, pollTick } from './routes/polls.js';
@@ -48,6 +49,9 @@ timers.push(setInterval(() => {
 }, 5_000));
 timers.push(setInterval(() => void resolveRequestedPolls(ctx).catch((e) => app.log.warn({ e }, 'resolve failed')), 60_000));
 timers.push(setInterval(() => void calendarNotifications(ctx).catch((e) => app.log.warn({ e }, 'calendar job failed')), 3600_000));
+if (cfg.PREVIEW_WARM === 'true') {
+  timers.push(setInterval(() => void previews(ctx).warmTick().catch((e) => app.log.warn({ e }, 'preview warm failed')), 60_000));
+}
 if (cfg.BACKGROUND_JOBS === 'true') {
   timers.push(setInterval(() => void pollJellyfinSessions(ctx).catch((e) => app.log.warn({ e }, 'session poll failed')), 10_000));
 }

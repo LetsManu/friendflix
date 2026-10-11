@@ -1,9 +1,12 @@
+import { createReadStream } from 'node:fs';
+import { stat } from 'node:fs/promises';
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import type { Ctx } from '../ctx.js';
 import { JellyfinError } from '../jellyfin/client.js';
 import type { ItemDto } from '../jellyfin/dto.js';
 import { notify } from '../notify.js';
+import { clipPath, previews } from '../previews.js';
 import { loadPrefs } from './prefs.js';
 import { requireUser } from '../session.js';
 import { SeerrError, portalStatus } from '../seerr/client.js';
@@ -145,32 +148,50 @@ export function discoverRoutes(app: FastifyInstance, ctx: Ctx) {
     return { item: cur.type === 'Episode' && cur.seriesId ? await ctx.jf.nextEpisode(req.user!, cur.seriesId, id) : null };
   }));
   app.get('/api/items/:id/tracks', pre, wrap(async (req) => ctx.jf.tracks(req.user!, id32.parse((req.params as { id: string }).id))));
+  // Hover/billboard preview: a short clip, transcoded once (service user, background queue) and then served as a plain MP4 file.
+  // Route name kept for old clients; `mp4: true` tells the client to use the url as a plain <video src>.
+  const viewable = async (user: UserRow, id: string): Promise<ItemDto | null> => {
+    try {
+      return await ctx.jf.item(user, id);
+    } catch (e) {
+      if (e instanceof JellyfinError && (e.status === 404 || e.status === 403)) return null;
+      throw e;
+    }
+  };
   app.get('/api/items/:id/trailer', pre, wrap(async (req, reply) => {
     if (!(await loadPrefs(ctx, req.user!.id)).hoverTrailers) return reply.code(404).send({ error: 'disabled' });
     const id = id32.parse((req.params as { id: string }).id);
-    let t = await ctx.jf.trailer(req.user!, id);
-    let startTicks = 0;
-    if (!t) {
-      // no local trailer: optionally a short clip from the film itself (Netflix-style), one third in (series: first episode)
-      if (!(await loadPrefs(ctx, req.user!.id)).hoverClip) return reply.code(404).send({ error: 'no_trailer' });
-      const tr = await ctx.jf.tracks(req.user!, id);
-      if (tr.type === 'Series') {
-        // series: clip from the first episode, a quarter in (skips the intro/recap)
-        const ep = await ctx.jf.firstEpisode(req.user!, id);
-        if (!ep?.runtimeTicks) return reply.code(404).send({ error: 'no_trailer' });
-        t = ep.id;
-        startTicks = Math.floor(ep.runtimeTicks / 4);
-      } else if (tr.type === 'Movie' && tr.runtimeTicks) {
-        t = id;
-        startTicks = Math.floor(tr.runtimeTicks / 3);
-      } else return reply.code(404).send({ error: 'no_trailer' });
+    const item = await viewable(req.user!, id);
+    if (!item) return reply.code(404).send({ error: 'not_found' });
+    if (item.type !== 'Movie' && item.type !== 'Series') return reply.code(404).send({ error: 'no_preview' });
+    const pv = previews(ctx);
+    const st = await pv.status(id);
+    if (st === 'ok') return { url: `/api/items/${id}/preview.mp4`, start: 0, mp4: true };
+    if (st === 'failed') return reply.code(404).send({ error: 'no_preview' });
+    void pv.enqueue(id).catch((e) => req.log.warn({ e }, 'preview generation failed'));
+    return reply.code(404).send({ error: 'preparing' });
+  }));
+  app.get('/api/items/:id/preview.mp4', pre, wrap(async (req, reply) => {
+    const id = id32.parse((req.params as { id: string }).id);
+    if (!(await viewable(req.user!, id))) return reply.code(404).send({ error: 'not_found' });
+    const size = await stat(clipPath(ctx, id)).then((s) => (s.isFile() ? s.size : -1), () => -1);
+    if (size < 0) return reply.code(404).send({ error: 'no_preview' });
+    reply.header('content-type', 'video/mp4').header('accept-ranges', 'bytes').header('cache-control', 'private, max-age=86400');
+    let start = 0;
+    let end = size - 1;
+    const range = req.headers.range;
+    if (range) {
+      const m = /^bytes=(\d*)-(\d*)$/.exec(range.trim());
+      if (!m || (!m[1] && !m[2])) return reply.code(416).header('content-range', `bytes */${size}`).send();
+      if (!m[1]) start = Math.max(0, size - Number(m[2])); // suffix: last n bytes
+      else {
+        start = Number(m[1]);
+        if (m[2]) end = Math.min(end, Number(m[2]));
+      }
+      if (start > end || start >= size) return reply.code(416).header('content-range', `bytes */${size}`).send();
+      reply.code(206).header('content-range', `bytes ${start}-${end}/${size}`);
     }
-    // Same URL shape as the real player (PlaybackInfo -> PlaySessionId + real MediaSourceId), capped at 1.5 Mbit/s.
-    // No StartTimeTicks / hand-built query: the old URL made Jellyfin answer the first segment with 400
-    // "Error processing request.". The client seeks with hls.js `startPosition` instead, like Player.svelte does.
-    // Not reported as playing, so it never counts as a stream.
-    const info = await ctx.jf.playbackInfo(req.user!, t, { maxBitrate: 1_500_000 });
-    return { url: info.hlsUrl, start: Math.floor(startTicks / 10_000_000) };
+    return reply.header('content-length', end - start + 1).send(createReadStream(clipPath(ctx, id), { start, end }));
   }));
   app.get('/api/library/collections', pre, wrap(async (req) => ({ items: await ctx.jf.collections(req.user!), studios: await ctx.jf.studios(req.user!).catch(() => []) })));
 

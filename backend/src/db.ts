@@ -203,6 +203,16 @@ export const MIGRATIONS: string[] = [
     return v;
   end $$;
   `,
+  // preview clips: transcoded once, stored under PREVIEW_DIR
+  `
+  create table preview_clips (
+    item_id text primary key,
+    status text not null check (status in ('ok','failed')),
+    bytes int,
+    error text,
+    created_at timestamptz not null default now()
+  );
+  `,
 ];
 
 export async function migrate(pool: pg.Pool): Promise<void> {
