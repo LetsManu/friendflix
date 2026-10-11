@@ -2,7 +2,7 @@
   import { onDestroy, onMount } from 'svelte';
   import { api, type Item } from '$lib/api';
 
-  let polls: any[] = [], now = Date.now(), timer: ReturnType<typeof setInterval>, msg = '';
+  let polls: any[] = [], now = Date.now(), timer: ReturnType<typeof setInterval>, poll: ReturnType<typeof setInterval>, msg = '';
   let creating = false, title = 'Filmabend', closes = 60, after = 10, options: Array<{ key: string; label: string; body: object }> = [];
   let q = '', libResults: Item[] = [], wishResults: any[] = [];
   const statusLabel: Record<string, string> = { open: 'Läuft', scheduled: 'Steht fest', needs_approval: 'Wartet auf Admin', requested: 'Wurde angefragt', started: 'Gestartet', cancelled: 'Abgebrochen' };
@@ -22,8 +22,8 @@
       creating = false; options = []; load();
     } catch (e: any) { msg = e?.body?.error === 'poll_already_open' ? 'Du hast schon eine offene Abstimmung.' : 'Abstimmung konnte nicht erstellt werden.'; }
   }
-  onMount(() => { load(); timer = setInterval(() => { now = Date.now(); }, 1000); setInterval(load, 15000); });
-  onDestroy(() => clearInterval(timer));
+  onMount(() => { load(); timer = setInterval(() => { now = Date.now(); }, 1000); poll = setInterval(load, 15000); });
+  onDestroy(() => { clearInterval(timer); clearInterval(poll); });
 </script>
 
 <h1>Filmabend</h1>

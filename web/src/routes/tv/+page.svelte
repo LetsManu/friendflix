@@ -31,6 +31,7 @@
       if (r.ok && (await r.json()).tv) { location.replace('/'); return; }
     } catch { /* offline: show the code screen anyway */ }
     await newCode();
+    if (dead) return;
     timer = setInterval(tick, 2000);
   });
   onDestroy(() => { dead = true; clearInterval(timer); document.documentElement.classList.remove('tv'); });

@@ -310,7 +310,7 @@
     current = video.currentTime; duration = Number.isFinite(video.duration) ? video.duration : duration;
     const b = video.buffered; buffered = b.length ? b.end(b.length - 1) : 0;
   };
-  const onPlay = () => { paused = false; if (!started) { started = true; send('start'); } else send('progress'); };
+  const onPlay = () => { paused = false; if (stopped) { stopped = false; started = false; } if (!started) { started = true; send('start'); } else send('progress'); };
 
   onMount(() => {
     try { const v = Number(localStorage.getItem('ff_vol')); if (video && v >= 0 && v <= 1 && localStorage.getItem('ff_vol') !== null) { volume = v; video.volume = v; } } catch { /* ignore */ }
@@ -379,7 +379,7 @@
     </aside>
   {/if}
   {#if subDlg}
-    <div class="dlg ui" data-nav data-scope role="dialog" aria-modal="true" aria-label="Untertitel suchen" on:click|stopPropagation on:keydown|stopPropagation>
+    <div class="dlg ui" data-nav data-scope role="dialog" tabindex="-1" aria-modal="true" aria-label="Untertitel suchen" on:click|stopPropagation on:keydown|stopPropagation>
       <header><b>Untertitel suchen</b><button class="icx" aria-label="Schließen" on:click={() => (subDlg = false)}><Icon name="x" size={20} /></button></header>
       <div class="flex"><select bind:value={subLang} aria-label="Sprache"><option value="ger">Deutsch</option><option value="eng">Englisch</option><option value="fre">Französisch</option><option value="spa">Spanisch</option><option value="ita">Italienisch</option></select><button disabled={subBusy} on:click={searchSubs}>Suchen</button></div>
       {#if subMsg}<p class="muted">{subMsg}</p>{/if}

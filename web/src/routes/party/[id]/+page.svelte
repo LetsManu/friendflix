@@ -18,7 +18,7 @@
   let floating: Array<{ id: number; emoji: string; left: number; name: string }> = [];
   let state = { playing: false, position: 0, at: 0, hold: false };
   let offset = 0, bestRtt = Infinity, error = '', needClick = false, countdown = '', ready = false, n = 0, closing = false;
-  let timers: ReturnType<typeof setInterval>[] = [];
+  let timers: ReturnType<typeof setInterval>[] = [], reconnect: ReturnType<typeof setTimeout> | undefined, bound: HTMLVideoElement | null = null;
   let suppressUntil = 0, chatEl: HTMLDivElement;
 
   $: isHost = you !== '' && you === hostId;
@@ -28,24 +28,26 @@
   const expected = () => (state.playing && !state.hold ? state.position + (serverNow() - state.at) / 1000 : state.position);
   const send = (m: object) => ws?.readyState === 1 && ws.send(JSON.stringify(m));
 
+  // programmatic play/pause/seek must not be echoed back to the room: only mark right before a real mutation
+  const quiet = () => (suppressUntil = Date.now() + 450);
   async function apply() {
     if (!video || !ready) return;
-    suppressUntil = Date.now() + 450; // programmatic play/pause/seek must not be echoed back to the room
     const exp = expected();
     const drift = video.currentTime - exp;
     if (state.hold || !state.playing) {
-      if (!video.paused) video.pause();
-      if (Math.abs(drift) > 0.1) video.currentTime = exp;
+      if (!video.paused) { quiet(); video.pause(); }
+      if (Math.abs(drift) > 0.1) { quiet(); video.currentTime = exp; }
     } else {
-      if (Math.abs(drift) > DRIFT) video.currentTime = exp;
+      if (Math.abs(drift) > DRIFT) { quiet(); video.currentTime = exp; }
       video.playbackRate = Math.abs(drift) > 0.08 && Math.abs(drift) <= DRIFT ? (drift > 0 ? 0.95 : 1.05) : 1;
-      if (video.paused) await video.play().catch(() => (needClick = true));
+      if (video.paused) { quiet(); await video.play().catch(() => (needClick = true)); }
     }
   }
 
   function connect() {
+    if (closing) return;
     ws = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws/party/${$page.params.id}`);
-    ws.onclose = (e) => { if (closing) return; if (e.code === 4404) error = 'Raum nicht gefunden.'; else if (e.code === 4409) error = 'Der Raum ist voll.'; else if (e.code === 4401) error = 'Bitte neu anmelden.'; else setTimeout(connect, 2000); };
+    ws.onclose = (e) => { if (closing) return; if (e.code === 4404) error = 'Raum nicht gefunden.'; else if (e.code === 4409) error = 'Der Raum ist voll.'; else if (e.code === 4401) error = 'Bitte neu anmelden.'; else reconnect = setTimeout(connect, 2000); };
     ws.onmessage = (ev) => {
       const m = JSON.parse(ev.data);
       if (m.t === 'welcome') { ({ you, hostId, itemId, title, startAt } = m); mode = m.mode; members = m.members; state = m.state; offset = m.serverNow - Date.now(); }
@@ -64,7 +66,8 @@
   }
 
   function bindVideo() {
-    if (!video) return;
+    if (!video || video === bound) return;
+    bound = video;
     const control = (playing: boolean) => { if (canControl && Date.now() > suppressUntil) send({ t: 'state', playing, position: video!.currentTime }); };
     video.addEventListener('play', () => control(true));
     video.addEventListener('pause', () => control(false));
@@ -99,7 +102,7 @@
     timers.push(setInterval(apply, 1000)); // continuous drift correction
     timers.push(setInterval(() => { countdown = startAt && Date.now() < startAt ? `Start in ${Math.max(0, Math.ceil((startAt - serverNow()) / 1000))} s` : ''; }, 500));
   });
-  onDestroy(() => { closing = true; timers.forEach(clearInterval); ws?.close(); });
+  onDestroy(() => { closing = true; clearTimeout(reconnect); timers.forEach(clearInterval); ws?.close(); });
 </script>
 
 <svelte:window bind:innerWidth />
@@ -123,7 +126,7 @@
         <button class="icon-btn" aria-label="Einladungslink kopieren" title="Einladungslink kopieren" on:click={copyLink}><Icon name={copied ? 'check' : 'link'} size={24} /></button>
       </div>
       {#if invite}
-        <div class="invite ui" role="dialog" aria-label="Freunde einladen" on:click|stopPropagation on:keydown|stopPropagation>
+        <div class="invite ui" role="dialog" tabindex="-1" aria-label="Freunde einladen" on:click|stopPropagation on:keydown|stopPropagation>
           <header><b>Freunde zur Party einladen</b><button class="icon-btn" aria-label="Schließen" on:click={() => (invite = false)}><Icon name="x" size={20} /></button></header>
           <div class="flex">{#each friends as f}<label class="chk"><input type="checkbox" checked={picked.has(f.id)} on:change={() => pick(f.id)} />{f.name}</label>{:else}<span class="muted">Noch keine anderen Nutzer.</span>{/each}</div>
           <div class="flex"><button disabled={!picked.size} on:click={sendInvite}>Einladen</button><button class="sec" on:click={shareLink}><Icon name={copied ? 'check' : 'share'} size={18} />Link teilen</button></div>
@@ -141,7 +144,8 @@
       {/if}
 
       {#if panel}
-        <aside class="chat" aria-label="Chat" on:click|stopPropagation on:keydown|stopPropagation role="complementary">
+        <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+        <aside class="chat" aria-label="Chat" on:click|stopPropagation on:keydown|stopPropagation>
           <header><b>Chat</b><button class="icon-btn" aria-label="Chat schließen" on:click={togglePanel}><Icon name="x" size={22} /></button></header>
           <div class="msgs" bind:this={chatEl} role="log" aria-live="polite">
             {#each chat as c (c.id)}<p class:mine={c.mine}><b>{c.name}</b><span>{c.text}</span></p>{:else}<p class="muted">Noch keine Nachrichten. Sag Hallo!</p>{/each}
@@ -155,7 +159,7 @@
           <div class="mwrap">
             <button class="ic" aria-label="Party-Einstellungen" aria-expanded={settings} on:click|stopPropagation={() => { settings = !settings; picker = false; }}><Icon name={mode === 'everyone' ? 'users' : 'lock'} size={26} /></button>
             {#if settings}
-              <div class="menu" role="dialog" aria-label="Wer darf steuern?" on:click|stopPropagation on:keydown|stopPropagation>
+              <div class="menu" role="dialog" tabindex="-1" aria-label="Wer darf steuern?" on:click|stopPropagation on:keydown|stopPropagation>
                 <h3>Wer darf steuern?</h3>
                 <button class="mi" class:on={mode === 'host'} on:click={() => setMode('host')}>{#if mode === 'host'}<Icon name="check" size={16} />{:else}<span class="sp2"></span>{/if}Nur ich (Host)</button>
                 <button class="mi" class:on={mode === 'everyone'} on:click={() => setMode('everyone')}>{#if mode === 'everyone'}<Icon name="check" size={16} />{:else}<span class="sp2"></span>{/if}Alle Teilnehmer</button>
@@ -167,7 +171,7 @@
         {/if}
         <div class="mwrap">
           <button class="ic" aria-label="Reaktion senden" aria-expanded={picker} on:click|stopPropagation={() => { picker = !picker; settings = false; }}><Icon name="smile" size={28} /></button>
-          {#if picker}<div class="picker" role="menu" on:click|stopPropagation on:keydown|stopPropagation>{#each EMOJIS as e}<button class="em" role="menuitem" aria-label="Reaktion {e}" on:click={() => react(e)}>{e}</button>{/each}</div>{/if}
+          {#if picker}<div class="picker" role="menu" tabindex="-1" on:click|stopPropagation on:keydown|stopPropagation>{#each EMOJIS as e}<button class="em" role="menuitem" aria-label="Reaktion {e}" on:click={() => react(e)}>{e}</button>{/each}</div>{/if}
         </div>
         <button class="ic chatbtn" aria-label="Chat {panel ? 'schließen' : 'öffnen'}{unread ? `, ${unread} ungelesen` : ''}" aria-expanded={panel} on:click|stopPropagation={togglePanel}>
           <Icon name="message" size={27} />{#if unread}<span class="dot">{unread}</span>{/if}
