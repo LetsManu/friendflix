@@ -114,7 +114,7 @@ export async function approvePoll(ctx: Ctx, pollId: string, adminId: string, app
     throw e;
   }
   // after the revert window: once Seerr has the request, a retry must not create a second one
-  await ctx.db.query('insert into seerr_requests(seerr_request_id,user_id,media_type,tmdb_id,title,poster) values ($1,$2,$3,$4,$5,$6) on conflict (seerr_request_id) do nothing', [created.id, creator.id, opt.media_type, opt.tmdb_id, opt.title, opt.poster]);
+  await ctx.db.query('insert into seerr_requests(seerr_request_id,user_id,media_type,tmdb_id,title,poster,source) values ($1,$2,$3,$4,$5,$6,$7) on conflict (seerr_request_id) do nothing', [created.id, creator.id, opt.media_type, opt.tmdb_id, opt.title, opt.poster, 'poll']);
   await ctx.seerr.approve(created.id).catch(() => undefined); // admin approval of the poll = approval of the request
   await ctx.db.query('update polls set seerr_request_id=$1 where id=$2', [created.id, pollId]);
   await audit(ctx, adminId, 'poll.approve', pollId, { seerrRequest: created.id });

@@ -68,7 +68,7 @@ Secrets alternativ als Docker Secrets: `compose.secrets.yaml` (`VAR_FILE`).
 ## Funktionen
 - **Schauen**: Bibliothek, Suche, Weiterschauen (geräteübergreifend über Jellyfin), nächste Folge, Favoriten, Watchlist, Gesehen-Status, Untertitel + Tonspur wählbar. Direct Play als Standard, sonst HLS (hls.js). Das Portal meldet Playing/Progress/Stopped an Jellyfin.
 - **Konten**: Einmal-Einladungslinks (gehasht gespeichert, Ablauf, atomar einlösbar) → Authentik-Konto + MFA → Jellyfin-Konto mit Zufallspasswort + Rollenvorlage (Freund/Familie/Gast: Bibliotheken, Altersfreigabe, Bitrate, max. Streams, Transcoding/Download). Geräte-Freigabe für neue Geräte.
-- **Wünsche** (Seerr) im Namen des Nutzers, Status, Admin-Freigabe, Webhook → Benachrichtigung (in-App, ntfy, Discord).
+- **Wünsche** (Seerr) im Namen des Nutzers, Status, Admin-Freigabe, Webhook → Benachrichtigung (in-App, ntfy, Discord). Pro Rolle gibt es ein monatliches Wunsch-Limit (Standard 2, Admin unbegrenzt), einstellbar unter *Admin → Rollen*; über Abstimmungen freigegebene Titel zählen nicht mit.
 - **Watch-Party**: eigener WebSocket-Sync (Host steuert, Drift-Korrektur ab 300 ms, Raum wartet auf Puffer aller), Chat, Emoji-Reaktionen.
 - **Filmabend-Voting** mit Countdown und Auto-Start; Titel außerhalb der Bibliothek → Admin-Freigabe → Seerr-Request → automatisch geplant, sobald verfügbar.
 - **Entdecken & Gruppe**: Netflix-ähnliche Oberfläche (Billboard, Reihen, Hover-Karten, Top 10), Gruppen-Matcher („Was hat noch keiner von uns gesehen?“), Empfehlungen an Freunde, „Demnächst“ aus Seerr, Sammlungen/Studios, Szenen teilen, Lesezeichen, X-Ray.

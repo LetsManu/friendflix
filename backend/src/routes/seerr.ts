@@ -7,6 +7,7 @@ import { notify } from '../notify.js';
 import { portalStatus, SeerrError } from '../seerr/client.js';
 import { ensureSeerrUser } from '../seerr/service.js';
 import { requireAdmin, requireUser } from '../session.js';
+import { limitFor, quota, release, reserve, resetsAt, usage } from '../requestlimit.js';
 import { checkSecret } from './internal.js';
 import { seerrHooks } from '../hooks.js';
 
@@ -83,17 +84,27 @@ export function seerrRoutes(app: FastifyInstance, ctx: Ctx) {
     const d = await ctx.seerr.details(b.mediaType, b.tmdbId);
     const st = portalStatus(d.mediaInfo?.status, d.mediaInfo?.requests?.[0]?.status);
     if (st !== 'nicht_angefragt' && st !== 'abgelehnt') return reply.code(409).send({ error: 'already_requested', status: st });
-    const seerrUserId = await ensureSeerrUser(ctx, req.user!);
-    const created = await ctx.seerr.createRequest({ mediaType: b.mediaType, mediaId: b.tmdbId, seasons: b.mediaType === 'tv' ? (b.seasons ?? 'all') : undefined, userId: seerrUserId });
+    const limit = await limitFor(ctx, req.user!.role);
+    const slot = await reserve(ctx, req.user!.id, limit); // atomic check + hold; a failure below must not burn it
+    if (slot === null) return reply.code(429).send({ error: 'request_limit', limit, used: await usage(ctx, req.user!.id), resetsAt: await resetsAt(ctx) });
+    let created;
     const title = String(d.title ?? d.name ?? `#${b.tmdbId}`);
-    await ctx.db.query(
-      'insert into seerr_requests(seerr_request_id, user_id, media_type, tmdb_id, title, poster) values ($1,$2,$3,$4,$5,$6) on conflict (seerr_request_id) do nothing',
-      [created.id, req.user!.id, b.mediaType, b.tmdbId, title, d.posterPath ?? null],
-    );
+    try {
+      const seerrUserId = await ensureSeerrUser(ctx, req.user!);
+      created = await ctx.seerr.createRequest({ mediaType: b.mediaType, mediaId: b.tmdbId, seasons: b.mediaType === 'tv' ? (b.seasons ?? 'all') : undefined, userId: seerrUserId });
+      await ctx.db.query(
+        'insert into seerr_requests(seerr_request_id, user_id, media_type, tmdb_id, title, poster) values ($1,$2,$3,$4,$5,$6) on conflict (seerr_request_id) do nothing',
+        [created.id, req.user!.id, b.mediaType, b.tmdbId, title, d.posterPath ?? null],
+      );
+    } finally {
+      await release(ctx, slot);
+    }
     await audit(ctx, req.user!.id, 'request.create', String(created.id), { title });
     await seerrHooks.run(ctx, { type: 'requested', user: req.user!, tmdbId: b.tmdbId, mediaType: b.mediaType });
     return { id: created.id, status: portalStatus(created.media?.status, created.status) };
   }));
+
+  app.get('/api/requests/quota', pre, wrap(async (req) => quota(ctx, req.user!)));
 
   app.get('/api/requests/mine', pre, wrap(async (req) => {
     const rows = (await ctx.db.query('select * from seerr_requests where user_id=$1 order by created_at desc limit 50', [req.user!.id])).rows;

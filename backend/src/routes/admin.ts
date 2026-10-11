@@ -7,6 +7,7 @@ import { createInvite } from '../invites.js';
 import { checkState, startPlaybackCheck } from '../healthcheck.js';
 import { clipPath, libraryItems, previews, serviceUser } from '../previews.js';
 import { stat } from 'node:fs/promises';
+import { defaultLimit } from '../requestlimit.js';
 import { INVITABLE_ROLES } from '../roles.js';
 import { requireAdmin, requireUser } from '../session.js';
 import { applyRole, getUserById } from '../users.js';
@@ -65,7 +66,24 @@ export function adminRoutes(app: FastifyInstance, ctx: Ctx) {
   });
   app.get('/api/admin/playback-check', admin, async () => checkState(ctx));
 
-  app.get('/api/admin/roles', admin, async () => ({ roles: ctx.roles, invitable: INVITABLE_ROLES }));
+  // `roles`/`invitable` feed the users page; `limits` is the per-role monthly Seerr wish limit (null = unlimited)
+  app.get('/api/admin/roles', admin, async () => {
+    const set = new Map((await ctx.db.query<{ role: string; requests_per_month: number | null }>('select role, requests_per_month from role_settings')).rows.map((r) => [r.role, r.requests_per_month]));
+    const limits = Object.entries(ctx.roles).map(([role, t]) => ({ role, label: t.label, requestsPerMonth: set.has(role) ? set.get(role)! : defaultLimit(role), isDefault: !set.has(role) }));
+    return { roles: ctx.roles, invitable: INVITABLE_ROLES, limits };
+  });
+
+  app.put('/api/admin/roles/:role', admin, async (req, reply) => {
+    const role = (req.params as { role: string }).role;
+    if (!Object.hasOwn(ctx.roles, role)) return reply.code(404).send({ error: 'not_found' });
+    const b = z.object({ requestsPerMonth: z.number().int().min(0).max(100).nullable() }).parse(req.body);
+    await ctx.db.query(
+      'insert into role_settings(role, requests_per_month) values ($1,$2) on conflict (role) do update set requests_per_month=excluded.requests_per_month, updated_at=now()',
+      [role, b.requestsPerMonth],
+    );
+    await audit(ctx, req.user!.id, 'role.request_limit', role, { requestsPerMonth: b.requestsPerMonth });
+    return { ok: true };
+  });
 
   app.get('/api/admin/users', admin, async () => {
     const r = await ctx.db.query(
