@@ -49,7 +49,7 @@ describe('crypto / config / header', () => {
     const c = encrypt(k, 'secret');
     expect(decrypt(k, c)).toBe('secret');
     const raw = Buffer.from(c, 'base64url');
-    raw[raw.length - 1] ^= 0x01; // always changes the ciphertext, never a no-op
+    raw[raw.length - 1]! ^= 0x01; // always changes the ciphertext, never a no-op
     expect(() => decrypt(k, raw.toString('base64url'))).toThrow();
   });
   it('config fails on missing vars', () => expect(() => loadConfig({})).toThrow());
