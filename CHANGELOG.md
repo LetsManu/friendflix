@@ -1,5 +1,9 @@
 # Changelog
 ## [Unreleased]
+### Reliability block 1
+- Guests: playback capped at 1080p, transcoding allowed in the role policy (re-applied once to existing users on start); watch progress no longer lost on early stop.
+- Nightly playback check (`PLAYBACK_CHECK_HOUR`, -1 = off) with admin alert; watch-party size limit; home page retries failed rows.
+- Fix: `compose*.yaml` did not pass `PORTAINER_*`, `UPDATE_REPO`, `GITHUB_TOKEN`, `PLAYBACK_CHECK_HOUR`, `PREVIEW_WARM` to the backend, so the update page always showed "not configured".
 ### Maintenance – dev toolchain upgrade
 - Dev-only `npm audit` findings fixed (tinypool, @vitest/mocker, esbuild, cookie): vitest 5, Vite 8, SvelteKit 3, vite-plugin-svelte 7, adapter-node 6, TypeScript 6.
 - SvelteKit 3: config moved from `svelte.config.js` into `sveltekit({...})` in `web/vite.config.ts`; `$lib` replaced by `#lib` subpath imports (`web/package.json` `imports`); `$app/stores` replaced by `#lib/page` (`toStore` over `$app/state`); `goto` uses `replace`/`reset: false`; `web/tsconfig.json` extends `$app/tsconfig`.
