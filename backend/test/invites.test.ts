@@ -21,6 +21,7 @@ const akFetch = (async (input: string | URL | Request, init: RequestInit = {}) =
   if (method === 'POST' && url === 'https://auth.example.com/api/v3/stages/invitation/invitations/') {
     return ak.mode === 'forbidden' ? json({ detail: 'You do not have permission to perform this action.' }, 403) : json({ pk: 'ak-inv-1', name: 'x' }, 201);
   }
+  if (method === 'DELETE' && url.startsWith('https://auth.example.com/api/v3/stages/invitation/invitations/')) return new Response(null, { status: 204 });
   return json({ detail: 'not found' }, 404);
 }) as unknown as typeof fetch;
 
@@ -115,7 +116,7 @@ describe('invites', () => {
     ]);
     const post = ak.calls[1]!;
     expect(post.auth).toBe('Bearer t');
-    expect(post.body).toMatchObject({ single_use: true, flow: FLOW_PK, fixed_data: {} });
+    expect(post.body).toMatchObject({ single_use: false, flow: FLOW_PK, fixed_data: {} });
     expect(post.body.name).toMatch(/^ff-[a-z0-9]+$/); // Authentik validates the name as a slug
     expect(Math.abs(new Date(post.body.expires).getTime() - new Date(r.json().expiresAt).getTime())).toBeLessThan(1000);
   });
@@ -256,5 +257,21 @@ describe('admin user management', () => {
     const u = await inviteLogin(token, 'plain');
     const c = Object.fromEntries(u.cookies.map((x) => [x.name, x.value]));
     expect((await env.app.inject({ url: '/api/admin/users', cookies: c })).statusCode).toBe(403);
+  });
+
+  it('the Authentik invitation is reusable until the portal invite is redeemed, then deleted', async () => {
+    const inv = (await adm('POST', '/api/admin/invites', { role: 'friend', ttlHours: 24 })).json();
+    expect(ak.calls.find((c) => c.method === 'POST')!.body).toMatchObject({ single_use: false });
+    ak.calls.length = 0;
+    const token = inv.link.split('/').pop();
+    expect((await inviteLogin(token, 'reuse-1')).statusCode).toBe(302);
+    await new Promise((r) => setTimeout(r, 20)); // deletion is fire-and-forget
+    expect(ak.calls.filter((c) => c.method === 'DELETE').map((c) => c.url)).toEqual(['https://auth.example.com/api/v3/stages/invitation/invitations/ak-inv-1/']);
+  });
+  it('revoking an invite deletes its Authentik invitation', async () => {
+    const inv = (await adm('POST', '/api/admin/invites', { role: 'friend', ttlHours: 24 })).json();
+    ak.calls.length = 0;
+    expect((await adm('DELETE', `/api/admin/invites/${inv.id}`)).statusCode).toBe(200);
+    expect(ak.calls.filter((c) => c.method === 'DELETE')).toHaveLength(1);
   });
 });

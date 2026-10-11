@@ -44,7 +44,13 @@ export function enrollFlowUrl(cfg: Ctx['cfg'], akInvite: string, authorizeUrl?: 
 
 export type AuthentikInviteStatus = 'off' | 'skipped' | 'ok' | 'failed';
 
-/** Creates a single-use Authentik invitation bound to the enrollment flow. Never throws: failures are logged. */
+/**
+ * Creates an Authentik invitation bound to the enrollment flow. Never throws: failures are logged.
+ * Not single_use: Authentik deletes a single-use invitation as soon as its stage passes, i.e. when the link is
+ * merely *opened* - a friend who opens it on the phone and finishes on the laptop would be locked out. The portal
+ * invite stays single-use (that is what grants access); the Authentik invitation expires with it and is deleted
+ * by the portal once the invite is redeemed or revoked (deleteAuthentikInvitation).
+ */
 async function createAuthentikInvitation(ctx: Ctx, expiresAt: Date, log: WarnLogger): Promise<string | null> {
   const { AUTHENTIK_URL: url, AUTHENTIK_API_TOKEN: tok, AUTHENTIK_ENROLL_FLOW: flow } = ctx.cfg;
   if (!url || !tok || !flow) return null;
@@ -59,7 +65,7 @@ async function createAuthentikInvitation(ctx: Ctx, expiresAt: Date, log: WarnLog
     else if (f.status === 404) {
       log.warn({ flow }, `Authentik enrollment flow "${flow}" not found (AUTHENTIK_ENROLL_FLOW must be the flow slug); invite created without Authentik enrollment`);
       return null;
-    } else if (f.status === 401) {
+    } else if (f.status === 401 || /token invalid|expired/i.test(await f.clone().text().catch(() => ''))) {
       log.warn({ status: 401, body: await detail(f) }, 'Authentik API rejected AUTHENTIK_API_TOKEN (expired, wrong intent or not an API token); invite created without Authentik enrollment');
       return null;
     } else {
@@ -71,15 +77,16 @@ async function createAuthentikInvitation(ctx: Ctx, expiresAt: Date, log: WarnLog
       method: 'POST',
       body: JSON.stringify({
         name: `ff-${randomToken(6).toLowerCase().replace(/[^a-z0-9]/g, 'x')}`,
-        single_use: true,
+        single_use: false,
         expires: expiresAt.toISOString(),
         fixed_data: {},
         ...(flowPk ? { flow: flowPk } : {}),
       }),
     });
     if (!r.ok) {
-      const hint = r.status === 403 ? ' (the token user needs the "Can add Invitation" permission)' : '';
-      log.warn({ status: r.status, body: await detail(r) }, `Authentik invitation creation failed${hint}; invite created without Authentik enrollment`);
+      const body = await detail(r);
+      const hint = /token invalid|expired/i.test(body) ? ' (AUTHENTIK_API_TOKEN invalid or expired)' : r.status === 403 ? ' (the token user needs the "Can add Invitation" permission)' : '';
+      log.warn({ status: r.status, body }, `Authentik invitation creation failed${hint}; invite created without Authentik enrollment`);
       return null;
     }
     const pk = ((await r.json()) as { pk?: string }).pk;
@@ -88,6 +95,20 @@ async function createAuthentikInvitation(ctx: Ctx, expiresAt: Date, log: WarnLog
   } catch (err) {
     log.warn({ err: String(err) }, 'Authentik unreachable; invite created without Authentik enrollment');
     return null;
+  }
+}
+
+/** Best effort: removes the Authentik invitation once the portal invite is redeemed or revoked (it is reusable until then). */
+export async function deleteAuthentikInvitation(ctx: Ctx, pk: string | null | undefined, log: WarnLogger = consoleLog) {
+  const { AUTHENTIK_URL: url, AUTHENTIK_API_TOKEN: tok } = ctx.cfg;
+  if (!pk || !url || !tok || !/^[\w-]{1,64}$/.test(pk)) return;
+  try {
+    const r = await ctx.fetchImpl(new URL(`api/v3/stages/invitation/invitations/${pk}/`, akBase(url) + '/'), {
+      method: 'DELETE', headers: { authorization: `Bearer ${tok}`, accept: 'application/json' }, signal: AbortSignal.timeout(10_000),
+    });
+    if (!r.ok && r.status !== 404) log.warn({ status: r.status }, 'Authentik invitation could not be deleted (token user needs "Can delete Invitation"); it expires with the portal invite');
+  } catch (err) {
+    log.warn({ err: String(err) }, 'Authentik unreachable while deleting an invitation; it expires with the portal invite');
   }
 }
 
