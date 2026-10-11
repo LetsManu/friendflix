@@ -22,7 +22,7 @@
   let searchEl: HTMLInputElement;
 
   $: path = $page.url.pathname;
-  $: publicPage = path.startsWith('/invite/') || path === '/tv';
+  $: publicPage = path.startsWith('/invite/') || path === '/tv' || path === '/offline';
   $: watchPage = path.startsWith('/watch/') || /^\/party\/[^/]+/.test(path); // immersive player pages: no navigation
   $: profilesPage = path === '/profiles';
   $: heroPage = path === '/' || path.startsWith('/item/');
@@ -101,7 +101,13 @@
     const flag = new URLSearchParams(location.search).get('tv');
     if (flag === '1') sessionStorage.setItem('ff_tv', '1'); else if (flag === '0') sessionStorage.removeItem('ff_tv');
     void boot();
-    return () => { window.removeEventListener('scroll', onScroll); stops.forEach((f) => f()); };
+    // Notification clicks (service worker) ask an already open window to navigate in-app.
+    const onSwMessage = (e: MessageEvent) => {
+      const link = e.data?.type === 'ff-nav' ? e.data.link : null;
+      if (typeof link === 'string' && /^\/(?!\/)/.test(link)) void goto(link);
+    };
+    navigator.serviceWorker?.addEventListener('message', onSwMessage);
+    return () => { window.removeEventListener('scroll', onScroll); navigator.serviceWorker?.removeEventListener('message', onSwMessage); stops.forEach((f) => f()); };
   });
 
   /** A pending device checks every few seconds whether it was approved and then reloads into the real app. */

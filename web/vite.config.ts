@@ -13,7 +13,8 @@ export default defineConfig({
         mode: 'auto',
         directives: {
           'default-src': ['self'],
-          'script-src': ['self'],
+          // gstatic: Google Cast sender SDK (loaded lazily by lib/cast.ts, only on Chromium when casting is enabled)
+          'script-src': ['self', 'https://www.gstatic.com'],
           'style-src': ['self', 'unsafe-inline'],
           'font-src': ['self', 'data:'],
           'img-src': ['self', 'data:', 'blob:'],

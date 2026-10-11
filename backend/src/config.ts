@@ -44,6 +44,13 @@ const schema = z.object({
   /** weekly digest: day of week (0 = Sunday, Date.getDay) and local server hour 0-23, -1 = off. Admins can override both in the UI. */
   DIGEST_DAY: z.coerce.number().int().min(0).max(6).default(0),
   DIGEST_HOUR: z.coerce.number().int().min(-1).max(23).default(18),
+  /** Web Push (VAPID): enabled only when both keys are set. Generate with scripts/gen-vapid.mjs */
+  VAPID_PUBLIC_KEY: opt,
+  VAPID_PRIVATE_KEY: opt,
+  /** mailto: or https: contact for push services, default PUBLIC_URL */
+  VAPID_SUBJECT: opt,
+  /** Chromecast sender support (needs a PUBLIC_URL with a valid https certificate) */
+  CAST_ENABLED: z.enum(['true', 'false']).default('true'),
   METRICS_TOKEN: opt,
   AUTHENTIK_URL: opt,
   AUTHENTIK_API_TOKEN: opt,

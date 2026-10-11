@@ -80,6 +80,9 @@ services:
       NTFY_URL: ${NTFY_URL:-}
       DISCORD_WEBHOOK_URL: ${DISCORD_WEBHOOK_URL:-}
       NTFY_BASE_URL: ${NTFY_BASE_URL:-}
+      VAPID_PUBLIC_KEY: ${VAPID_PUBLIC_KEY:-}
+      VAPID_PRIVATE_KEY: ${VAPID_PRIVATE_KEY:-}
+      VAPID_SUBJECT: ${VAPID_SUBJECT:-}
       TZ: ${TZ:-Europe/Vienna}
       DIGEST_DAY: ${DIGEST_DAY:-0}
       DIGEST_HOUR: ${DIGEST_HOUR:-18}
@@ -96,6 +99,7 @@ services:
       PORTAINER_ENDPOINT_ID: ${PORTAINER_ENDPOINT_ID:-1}
       PLAYBACK_CHECK_HOUR: ${PLAYBACK_CHECK_HOUR:-4}
       PREVIEW_WARM: ${PREVIEW_WARM:-true}
+      CAST_ENABLED: ${CAST_ENABLED:-true}
     volumes: [previews:/data/previews] # cached hover/billboard clips (root fs is read-only)
     depends_on:
       postgres: { condition: service_healthy }

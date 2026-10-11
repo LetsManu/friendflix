@@ -1,4 +1,5 @@
 import type { Ctx } from './ctx.js';
+import { sendWebPush } from './push.js';
 
 export interface Notice {
   /** null = broadcast to everyone */
@@ -23,6 +24,8 @@ export async function notify(ctx: Pick<Ctx, 'db' | 'cfg' | 'fetchImpl'>, n: Noti
     [n.userId, n.kind, n.title, n.body ?? null, n.link ?? null, n.dedupe ?? null],
   );
   if (!r.rowCount) return false;
+  // Web Push: fire-and-forget, never blocks or fails the caller (tests await sendWebPush directly)
+  void sendWebPush(ctx, n).catch(() => undefined);
   if (n.external) await pushExternal(ctx, n).catch(() => undefined);
   if (n.personal && n.userId) await pushPersonal(ctx, n.userId, { title: n.title, body: n.pushBody ?? n.body, link: n.link }).catch(() => undefined);
   return true;

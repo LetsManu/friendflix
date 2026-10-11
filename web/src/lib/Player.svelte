@@ -9,6 +9,8 @@
   import { noteInteraction } from '#lib/stillwatching';
   import { nowPlaying } from '#lib/remote';
   import { isBackKey } from '#lib/spatial';
+  import CastButton from '#lib/CastButton.svelte';
+  import { castPause, castPlay, castPlayPause, castSeek, castSetSubtitle, castSetVolume, castState, castStop, castToggleMute, loadOnCast, onCastEvent, type CastInfo, type CastState } from '#lib/cast';
 
   export let itemId: string;
   /** shown on the phone's remote while this plays */
@@ -45,6 +47,9 @@
   let segments: Array<{ type: string; start: number; end: number }> = [];
   let progressTimer: ReturnType<typeof setInterval>, started = false, stopped = false;
 
+  // ---- Chromecast: while casting the local <video> stays paused and every control drives the receiver ----
+  let casting = false, castBusy = false, castInfo: CastInfo | null = null, castPos = 0, castPaused: boolean | null = null, castOff: (() => void) | null = null;
+
   // ---- UI state ----
   let paused = true, current = 0, duration = 0, buffered = 0, volume = 1, muted = false, rate = 1, waiting = true, fullscreen = false;
   let menu: '' | 'tracks' | 'settings' | 'scenes' = '', toast = '', toastTimer: ReturnType<typeof setTimeout>;
@@ -64,10 +69,12 @@
   $: if (skip && skip.type === 'intro' && !partyMode && canControl && get(prefs).autoSkipIntro && !autoSkipped.has(skip.start)) { autoSkipped.add(skip.start); doSkip(); flash('Intro übersprungen', 1500); }
   const skipLabel: Record<string, string> = { intro: 'Intro überspringen', outro: 'Abspann überspringen', recap: 'Rückblick überspringen' };
 
-  const body = () => ({
-    itemId, playSessionId: info!.playSessionId, mediaSourceId: info!.mediaSourceId,
-    positionTicks: secToTicks(video?.currentTime ?? 0), isPaused: video?.paused ?? false, audioIndex, playMethod: mode === 'direct' ? 'DirectPlay' : 'Transcode',
-  });
+  const body = () => casting && castInfo
+    ? { itemId, playSessionId: castInfo.playSessionId, mediaSourceId: castInfo.mediaSourceId, positionTicks: secToTicks(castPos), isPaused: $castState.paused, audioIndex, playMethod: 'Transcode' }
+    : {
+      itemId, playSessionId: info!.playSessionId, mediaSourceId: info!.mediaSourceId,
+      positionTicks: secToTicks(video?.currentTime ?? 0), isPaused: video?.paused ?? false, audioIndex, playMethod: mode === 'direct' ? 'DirectPlay' : 'Transcode',
+    };
   const send = (kind: 'start' | 'progress' | 'stop') => report && info && api(`/api/playback/${kind}`, { method: 'POST', body: body() }).catch(() => undefined);
 
   async function load(startSec?: number) {
@@ -117,7 +124,83 @@
     if (want && !partyMode) tickDom().then(() => { const sub = info?.subtitles.find((x) => (x as { language?: string }).language === want); if (sub) setSubtitle(sub.index); });
   }
 
+  // ---- Chromecast session lifecycle ----
+  const castErr = (e: any) => e?.body?.error === 'max_streams' ? `Maximal ${e.body.max} gleichzeitige Streams erlaubt.`
+    : e?.body?.error === 'transcoding_disabled' ? 'Chromecast braucht Transcoding – mit deiner Rolle nicht erlaubt.' : 'Übertragung auf Chromecast fehlgeschlagen.';
+  const castRequest = (pos: number) => api<CastInfo>('/api/cast/session', { method: 'POST', body: { itemId, startTicks: secToTicks(pos), audioIndex, maxBitrate: quality || undefined } });
+  const castRevoke = (ci: CastInfo | null) => { if (ci) api(`/api/cast/session/${ci.castId}`, { method: 'DELETE' }).catch(() => undefined); };
+
+  /** local playback -> receiver: reports the local stop, frees the stream slot, asks for a cast token and loads it */
+  async function startCast() {
+    if (partyMode || casting || castBusy || !$castState.connected) return;
+    castBusy = true;
+    const pos = video?.currentTime ?? 0;
+    if (started && !stopped) { stopped = true; await send('stop'); }
+    video?.pause(); hls?.destroy(); hls = null;
+    try {
+      const ci = await castRequest(pos);
+      castInfo = ci; castPos = pos; casting = true; started = false; stopped = false; castPaused = null; waiting = true;
+      if (!(await loadOnCast(ci, subIndex))) throw new Error('load');
+    } catch (e) {
+      await endCast(pos, castErr(e));
+    }
+    castBusy = false;
+  }
+  /** receiver -> local playback at the last known position (disconnect, user ended the session, receiver error) */
+  async function endCast(resumeAt: number, msg = '') {
+    const ci = castInfo;
+    if (casting && started && !stopped) { stopped = true; await send('stop'); }
+    casting = false; castInfo = null; started = false; stopped = false;
+    castRevoke(ci);
+    if (msg) flash(msg, 4000);
+    wantAutoplay = true;
+    await load(resumeAt);
+  }
+  /** new token + LOAD at the current position: token about to expire, other audio track or quality */
+  async function recast(pos: number) {
+    if (!casting || castBusy) return;
+    castBusy = true;
+    const old = castInfo;
+    try {
+      if (started && !stopped) { castPos = pos; stopped = true; await send('stop'); }
+      const ci = await castRequest(pos);
+      castInfo = ci; started = false; stopped = false; castPaused = null; castPos = pos;
+      castRevoke(old);
+      if (!(await loadOnCast(ci, subIndex))) throw new Error('load');
+    } catch {
+      await endCast(pos, 'Chromecast-Wiedergabe konnte nicht fortgesetzt werden.');
+    }
+    castBusy = false;
+  }
+  /** the film ended on the receiver: close the session, tell the page (next episode) */
+  async function finishCast() {
+    const ci = castInfo;
+    if (started && !stopped) { stopped = true; castPos = duration || castPos; await send('stop'); }
+    casting = false; castInfo = null; paused = true;
+    castRevoke(ci);
+    castStop();
+    dispatch('ended');
+  }
+  function handleCast(e: 'session-start' | 'session-end' | 'media-end') {
+    if (e === 'session-start') void startCast();
+    else if (e === 'session-end') { if (casting && !castBusy) void endCast(castPos); }
+    else if (casting && !castBusy) { if (duration > 0 && castPos >= duration - 20) void finishCast(); else void endCast(castPos, 'Chromecast konnte nicht weiterspielen – lokal fortgesetzt.'); }
+  }
+  /** mirrors the receiver into the player state and reports start/progress to the server */
+  function castTick(s: CastState) {
+    waiting = !s.loaded || s.state === 'buffering';
+    if (!s.loaded) return;
+    current = castPos = s.currentTime; if (s.duration) duration = s.duration;
+    paused = s.paused; volume = s.volume; muted = s.muted;
+    if (s.state === 'playing' && !started) { started = true; stopped = false; send('start'); }
+    else if (started && castPaused !== null && castPaused !== s.paused) send('progress');
+    castPaused = s.paused;
+  }
+  $: if (casting) castTick($castState);
+  const doPause = () => (casting ? castPause() : video?.pause());
+
   async function changeAudio(i: number) {
+    if (casting) { audioIndex = i; await recast(castPos); return; }
     const pos = video?.currentTime ?? 0;
     await send('stop');
     audioIndex = i;
@@ -126,12 +209,14 @@
   }
   function setSubtitle(i: number) {
     subIndex = i;
+    if (casting) castSetSubtitle(i);
     [...(video?.textTracks ?? [])].forEach((t) => (t.mode = t.id === `sub-${i}` ? 'showing' : 'disabled'));
   }
 
   // ---- start playback: browsers may refuse sound without a prior key press (a TV that was only cast to) -> start muted, first key unmutes ----
   let wantAutoplay = !partyMode, needsSound = false;
   async function playSafe() {
+    if (casting) { castPlay(); return; }
     if (!video) return;
     try { await video.play(); return; } catch { /* blocked: try muted */ }
     try { video.muted = true; muted = true; await video.play(); needsSound = true; flash('Ton aus – beliebige Taste drücken für Ton', 7000); }
@@ -149,8 +234,8 @@
     const m = (e as CustomEvent<{ action: string; value?: number }>).detail;
     wake();
     if (m.action === 'play') { if (allowed()) playSafe(); }
-    else if (m.action === 'pause') { if (allowed()) video?.pause(); }
-    else if (m.action === 'toggle') { if (video?.paused) { if (allowed()) playSafe(); } else if (allowed()) video?.pause(); }
+    else if (m.action === 'pause') { if (allowed()) doPause(); }
+    else if (m.action === 'toggle') { if (paused) { if (allowed()) playSafe(); } else if (allowed()) doPause(); }
     else if (m.action === 'audio' && typeof m.value === 'number') { if (info?.audioTracks.some((a) => a.index === m.value)) changeAudio(m.value); }
     else if (m.action === 'sub' && typeof m.value === 'number') { if (m.value === -1 || info?.subtitles.some((x) => x.index === m.value)) setSubtitle(m.value); }
     else if (m.action === 'next') { if (hasNext && allowed()) dispatch('next'); else flash('Keine weitere Folge'); }
@@ -160,15 +245,18 @@
   // ---- gated controls (party guests are not allowed to change playback) ----
   function flash(t: string, ms = 1100) { toast = t; clearTimeout(toastTimer); toastTimer = setTimeout(() => (toast = ''), ms); }
   function allowed(): boolean { if (canControl) return true; flash(denyHint, 1800); return false; }
-  function togglePlay() { if (!video || !allowed()) return; if (video.paused) video.play().catch(() => undefined); else video.pause(); }
-  function seekTo(t: number) { if (!video || !allowed()) return; video.currentTime = Math.max(0, Math.min(duration || t, t)); }
-  function seekBy(d: number) { if (!video || !allowed()) return; seekTo(video.currentTime + d); flash(d > 0 ? `+${d} s` : `−${-d} s`, 700); }
+  function togglePlay() { if (casting) { if (allowed()) castPlayPause(); return; } if (!video || !allowed()) return; if (video.paused) video.play().catch(() => undefined); else video.pause(); }
+  function seekTo(t: number) {
+    if (casting) { if (!allowed()) return; t = Math.max(0, Math.min(duration || t, t)); castSeek(t); current = castPos = t; setTimeout(() => { if (started && !stopped) send('progress'); }, 700); return; }
+    if (!video || !allowed()) return; video.currentTime = Math.max(0, Math.min(duration || t, t)); }
+  function seekBy(d: number) { if (!video || !allowed()) return; seekTo((casting ? castPos : video.currentTime) + d); flash(d > 0 ? `+${d} s` : `−${-d} s`, 700); }
   function doSkip() { if (skip) seekTo(skip.end); }
   const QUALITIES: Array<[string, number]> = [['1080p', 8_000_000], ['720p', 4_000_000], ['480p', 1_500_000], ['360p', 800_000]];
   $: qualityOptions = QUALITIES.filter(([, b]) => b < (info?.roleMaxBitrate ?? Infinity));
   async function changeQuality(bps: number) {
     menu = '';
     if (bps === quality) return;
+    if (casting) { quality = bps; await recast(castPos); flash(bps ? `Qualität: ${QUALITIES.find(([, b]) => b === bps)?.[0] ?? Math.round(bps / 1e6) + ' Mbit/s'}` : 'Qualität: Automatisch'); return; }
     const pos = video?.currentTime ?? 0, wasPlaying = !(video?.paused ?? true);
     await send('stop');
     quality = bps;
@@ -212,6 +300,7 @@
     subBusy = true;
     try {
       await api(`/api/items/${itemId}/subtitles/download`, { method: 'POST', body: { subtitleId: id } });
+      if (casting) { subDlg = false; await recast(castPos); flash('Untertitel hinzugefügt – im Menü auswählen', 2500); subBusy = false; return; }
       const pos = video?.currentTime ?? 0, was = !(video?.paused ?? true);
       subDlg = false; await send('stop'); await load(pos); if (was) video?.play().catch(() => undefined);
       flash('Untertitel hinzugefügt – im Menü auswählen', 2500);
@@ -219,8 +308,8 @@
     subBusy = false;
   }
   function setRate(r: number) { if (!video) return; rate = r; video.playbackRate = r; menu = ''; flash(`${r}×`); }
-  function setVolume(v: number) { if (!video) return; volume = v; video.volume = v; video.muted = v === 0; muted = v === 0; try { localStorage.setItem('ff_vol', String(v)); } catch { /* ignore */ } }
-  function toggleMute() { if (!video) return; video.muted = !video.muted; muted = video.muted; if (!muted && volume === 0) setVolume(0.5); }
+  function setVolume(v: number) { if (casting) { volume = v; muted = v === 0; castSetVolume(v); return; } if (!video) return; volume = v; video.volume = v; video.muted = v === 0; muted = v === 0; try { localStorage.setItem('ff_vol', String(v)); } catch { /* ignore */ } }
+  function toggleMute() { if (casting) { castToggleMute(); return; } if (!video) return; video.muted = !video.muted; muted = video.muted; if (!muted && volume === 0) setVolume(0.5); }
   function toggleFullscreen() {
     if (document.fullscreenElement) document.exitFullscreen();
     else (stage ?? video?.parentElement)?.requestFullscreen?.().catch(() => undefined);
@@ -264,7 +353,7 @@
     if (k === 'enter' && onBody && skip && tvMode()) { e.preventDefault(); doSkip(); } // TV: OK skips the intro while its button is showing
     else if (k === ' ' || k === 'k' || k === 'mediaplaypause' || (k === 'enter' && onBody)) { e.preventDefault(); togglePlay(); }
     else if (k === 'mediaplay') { e.preventDefault(); if (allowed()) playSafe(); }
-    else if (k === 'mediapause') { e.preventDefault(); if (allowed()) video.pause(); }
+    else if (k === 'mediapause') { e.preventDefault(); if (allowed()) doPause(); }
     else if (k === 'mediafastforward') { e.preventDefault(); seekBy(30); }
     else if (k === 'mediarewind') { e.preventDefault(); seekBy(-30); }
     else if (k === 'mediatracknext' && hasNext) { e.preventDefault(); dispatch('next'); }
@@ -320,18 +409,20 @@
   onMount(() => {
     try { const v = Number(localStorage.getItem('ff_vol')); if (video && v >= 0 && v <= 1 && localStorage.getItem('ff_vol') !== null) { volume = v; video.volume = v; } } catch { /* ignore */ }
     load(startAt);
+    castOff = onCastEvent(handleCast);
     loadBookmarks();
     api(`/api/items/${itemId}/segments`).then((r) => (segments = r.segments)).catch(() => undefined);
     progressTimer = setInterval(() => { if (started && !stopped) send('progress'); }, 10_000);
     pipOk = Boolean(document.pictureInPictureEnabled);
     activityTimer = setInterval(() => {
       tick = Date.now();
+      if (casting && castInfo && !castBusy && castInfo.expiresAt - tick < 10 * 60_000) void recast(castPos); // renew the token before it expires
       if (sleepAt) {
         if (tick >= sleepAt) { sleepAt = 0; sleepMin = 0; video?.pause(); flash('Schlaf-Timer: Wiedergabe pausiert', 3000); }
         else sleepLeft = fmtClock((sleepAt - tick) / 1000);
       }
     }, 500);
-    const bye = () => { if (!stopped) { stopped = true; send('stop'); } };
+    const bye = () => { if (!stopped) { stopped = true; send('stop'); } if (casting) { castRevoke(castInfo); castStop(); } };
     const fs = () => (fullscreen = Boolean(document.fullscreenElement));
     window.addEventListener('pagehide', bye);
     document.addEventListener('fullscreenchange', fs);
@@ -349,6 +440,8 @@
   onDestroy(() => {
     clearInterval(progressTimer); clearInterval(activityTimer); clearTimeout(toastTimer); nowPlaying.set(null);
     if (started && !stopped) { stopped = true; send('stop'); }
+    if (casting) { castRevoke(castInfo); castStop(); casting = false; } // leaving the page ends the cast session and revokes its token
+    castOff?.();
     hls?.destroy();
   });
 </script>
@@ -367,8 +460,11 @@
   </video>
 
   {#if error}<div class="center err" role="alert">{error}</div>{/if}
-  {#if waiting && !error}<div class="center" role="status" aria-label="Lädt"><div class="spin"></div></div>{/if}
-  {#if paused && !waiting && !error}
+  {#if waiting && !error && !casting}<div class="center" role="status" aria-label="Lädt"><div class="spin"></div></div>{/if}
+  {#if casting}
+    <div class="center castov" role="status"><div class="castbox"><Icon name="cast" size={56} /><b>Wird auf {$castState.deviceName || 'Chromecast'} abgespielt</b><button class="btn light ui" on:click|stopPropagation={() => castStop()}>Übertragung beenden</button></div></div>
+  {/if}
+  {#if paused && !waiting && !error && !casting}
     <button class="bigplay ui" aria-label="Abspielen" on:click|stopPropagation={togglePlay}><Icon name="play" size={44} /></button>
   {/if}
   {#if toast}<div class="toast" role="status">{toast}</div>{/if}
@@ -460,7 +556,8 @@
           {/if}
         </div>
         <button class="ic" class:on={xray} aria-pressed={xray} aria-label="Besetzung anzeigen" on:click={() => { xray = !xray; if (xray) ensurePeople(); }}><Icon name="users" size={26} /></button>
-        {#if pipOk}<button class="ic" aria-label="Bild-in-Bild" on:click={pip}><Icon name="pip" size={26} /></button>{/if}
+        {#if !partyMode}<CastButton active={casting} on:start={startCast} />{/if}
+        {#if pipOk && !casting}<button class="ic" aria-label="Bild-in-Bild" on:click={pip}><Icon name="pip" size={26} /></button>{/if}
         <div class="mwrap">
           <button class="ic" aria-label="Einstellungen" aria-expanded={menu === 'settings'} on:click={() => (menu = menu === 'settings' ? '' : 'settings')}><Icon name="settings" size={27} />{#if sleepAt}<span class="sleepdot" title="Schlaf-Timer {sleepLeft}"></span>{/if}</button>
           {#if menu === 'settings'}
@@ -482,7 +579,7 @@
             </div>
           {/if}
         </div>
-        <span class="badge" title="Wiedergabeart">{mode === 'direct' ? 'Direct Play' : mode ? 'HLS' : ''}</span>
+        <span class="badge" title="Wiedergabeart">{casting ? 'Chromecast' : mode === 'direct' ? 'Direct Play' : mode ? 'HLS' : ''}</span>
         <button class="ic" aria-label={fullscreen ? 'Vollbild verlassen' : 'Vollbild'} on:click={toggleFullscreen}><Icon name={fullscreen ? 'fullscreen-exit' : 'fullscreen'} size={28} /></button>
       </div>
     </div>
@@ -514,6 +611,9 @@
   @keyframes sp { to { transform: rotate(360deg); } }
   .bigplay { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); width: 96px; height: 96px; border-radius: 50%; background: rgba(0,0,0,.55); border: 3px solid #fff; z-index: 4; }
   .bigplay:hover:not(:disabled) { background: rgba(0,0,0,.75); }
+  .castov { background: #000; pointer-events: none; z-index: 2; }
+  .castbox { display: grid; justify-items: center; gap: .9rem; text-align: center; color: #fff; }
+  .castbox button { pointer-events: auto; border: 1px solid #fff; padding: .6rem 1.4rem; }
   .toast { position: absolute; left: 50%; top: 18%; transform: translateX(-50%); background: rgba(0,0,0,.75); padding: .55rem 1.2rem; border-radius: 999px; z-index: 9; font-weight: 600; max-width: 90%; text-align: center; }
   .skipbtn { position: absolute; right: calc(var(--pad-x) + var(--inset, 0px)); bottom: 7.5rem; z-index: 8; border: 1px solid #fff; padding: .7rem 1.5rem; }
   .ovl { position: absolute; inset: 0 var(--inset, 0px) auto 0; z-index: 7; pointer-events: none; transition: opacity var(--t-med); }

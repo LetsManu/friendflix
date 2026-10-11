@@ -1,7 +1,9 @@
 import type { FastifyReply, FastifyRequest } from 'fastify';
 import { randomBytes } from 'node:crypto';
+import { revokeCasts } from './cast.js';
 import type { Ctx } from './ctx.js';
 import { notify } from './notify.js';
+import { deletePushSubscriptions } from './push.js';
 import { dropRemotePeers } from './routes/tv.js';
 
 export const DEVICE_COOKIE = 'ff_dev';
@@ -47,5 +49,7 @@ export async function revokeSessions(ctx: Ctx, userId: string, deviceId?: string
     }
   }
   if (gone.size) dropRemotePeers(userId, gone);
+  await revokeCasts(ctx, userId, deviceId);
+  await deletePushSubscriptions(ctx, userId, deviceId);
   return n;
 }

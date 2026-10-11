@@ -1,6 +1,7 @@
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import { timingSafeEqual } from 'node:crypto';
 import { z } from 'zod';
+import { CAST_TOKEN_RE, resolveCast } from '../cast.js';
 import type { Ctx } from '../ctx.js';
 import { clearLive, setLive } from '../live.js';
 import { jfUserFor, resolveProfile } from '../profiles.js';
@@ -74,11 +75,16 @@ export function internalRoutes(app: FastifyInstance, ctx: Ctx) {
   }
 
   // Used by the gateway only (never routed by NPM). Returns the Jellyfin token of the session owner.
-  app.post('/internal/authz', async (req, reply) => {
+  // Accepts {sid} (browser session cookie) or {ct} (Chromecast token, scoped: the answer carries `scope`). The body is never logged;
+  // rate limiting is off (one call per gateway cache miss; the gateway rate-limits failed cast auth itself).
+  app.post('/internal/authz', { config: { rateLimit: false } }, async (req, reply) => {
     if (!checkSecret(req, 'x-internal-secret', ctx.cfg.INTERNAL_SECRET)) return reply.code(403).send({ error: 'forbidden' });
-    const sid = z.object({ sid: z.string().regex(/^[\w-]{20,80}$/) }).safeParse(req.body);
-    if (!sid.success) return reply.code(400).send({ error: 'bad_request' });
-    const a = await mediaAuth(sid.data.sid);
+    const body = z.union([
+      z.object({ sid: z.string().regex(/^[\w-]{20,80}$/) }).strict(),
+      z.object({ ct: z.string().regex(CAST_TOKEN_RE) }).strict(),
+    ]).safeParse(req.body);
+    if (!body.success) return reply.code(400).send({ error: 'bad_request' });
+    const a = 'ct' in body.data ? await resolveCast(ctx, body.data.ct) : await mediaAuth(body.data.sid);
     return a ?? reply.code(401).send({ error: 'unauthenticated' });
   });
 

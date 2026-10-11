@@ -59,8 +59,10 @@ Dann:
 | `SEERR_URL`, `SEERR_API_KEY` | Seerr (intern) |
 | `NTFY_URL`, `DISCORD_WEBHOOK_URL` | Push bei „verfügbar“, Freigaben, Filmabend |
 | `NTFY_BASE_URL` | Basis-URL des ntfy-Servers für persönliche Themen (Einstellungen → „ntfy-Thema“); ohne Angabe der Host von `NTFY_URL`. Persönliche Nachrichten (z. B. Wochenrückblick) gehen nie an den gemeinsamen Kanal oder Discord |
+| `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`, `VAPID_SUBJECT` | Web-Push (Browser-Benachrichtigungen pro Gerät, Einstellungen → Benachrichtigungen). Schlüssel mit `node scripts/gen-vapid.mjs` erzeugen; aktiv nur, wenn beide Schlüssel gesetzt sind. `VAPID_SUBJECT` (`mailto:` oder `https:`) ist standardmäßig `PUBLIC_URL`. Der private Schlüssel kann per `VAPID_PRIVATE_KEY_FILE` (Docker-Secret) kommen |
 | `TZ` | Zeitzone des Backends (Standard `Europe/Vienna`); bestimmt, wann die Stunden für Wochenrückblick (`DIGEST_HOUR`) und nächtlichen Wiedergabe-Check gelten |
 | `DIGEST_DAY`, `DIGEST_HOUR` | Wochenrückblick: Wochentag (0 = Sonntag … 6 = Samstag, Standard 0) und Serverstunde (0-23, Standard 18, `-1` = aus). Im Admin-Bereich „Wochenrückblick“ überschreibbar |
+| `CAST_ENABLED` | Chromecast-Senden im Player (Standard `true`; wirkt nur bei `PUBLIC_URL` mit `https://`). Braucht die Location `/media/c/` in NPM, siehe [docs/cast.md](docs/cast.md); bei Plan B auf `false` setzen |
 | `METRICS_TOKEN` | Bearer für `/metrics` |
 | `PORTAINER_WEBHOOK_URL` oder `PORTAINER_URL`, `PORTAINER_API_KEY`, `PORTAINER_STACK_ID`, `PORTAINER_ENDPOINT_ID` | Update-Knopf unter *Admin → Update* (Webhook oder API, Default Endpoint `1`); Secrets, siehe `docs/operations.md` |
 | `UPDATE_REPO`, `GITHUB_TOKEN` | Repo für die Versionsprüfung (Default `LetsManu/friendflix`); Token optional gegen das GitHub-Limit von 60 Anfragen/h |
