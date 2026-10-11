@@ -114,7 +114,7 @@ describe('admin update', () => {
     (env.ctx.fetchImpl as any) = vi.fn(async () => new Response(null, { status: 404 }));
     const r = await post();
     expect(r.statusCode).toBe(502);
-    expect(r.json()).toEqual({ error: 'portainer', status: 404 });
+    expect(r.json()).toEqual({ error: 'portainer', status: 404, step: 'webhook' });
     expect(r.body).not.toContain('secret-token');
   });
 
