@@ -1,15 +1,16 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { page } from '$app/stores';
-  import { castToTv, refreshTvOnline, tvOnline } from '$lib/remote';
-  import { api, backdrop, fmtMin, img, type Item } from '$lib/api';
-  import Hero from '$lib/Hero.svelte';
-  import { dominantColor } from '$lib/tint';
-  import Icon from '$lib/Icon.svelte';
-  import LazyRow from '$lib/LazyRow.svelte';
-  import LangPick from '$lib/LangPick.svelte';
+  import { pageStore } from '#lib/page';
+  const page = pageStore();
+  import { castToTv, refreshTvOnline, tvOnline } from '#lib/remote';
+  import { api, backdrop, fmtMin, img, type Item } from '#lib/api';
+  import Hero from '#lib/Hero.svelte';
+  import { dominantColor } from '#lib/tint';
+  import Icon from '#lib/Icon.svelte';
+  import LazyRow from '#lib/LazyRow.svelte';
+  import LangPick from '#lib/LangPick.svelte';
   import { goto } from '$app/navigation';
-  import { listIds, toggleList } from '$lib/stores';
+  import { listIds, toggleList } from '#lib/stores';
 
   let thumb = 0, extras: Item[] = [], tint = '', friends: Array<{ id: string; name: string }> = [], recOpen = false, recTo = new Set<string>(), recNote = '', recMsg = '';
   let item: Item | null = null, seasons: Item[] = [], episodes: Item[] | null = null, season = '', next: Item | null = null;

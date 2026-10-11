@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { api } from '$lib/api';
+  import { api } from '#lib/api';
   let entries: any[] = [];
   onMount(async () => (entries = (await api('/api/admin/audit?limit=200')).entries));
 </script>

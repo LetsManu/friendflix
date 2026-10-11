@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { api, ApiError } from '$lib/api';
+  import { api, ApiError } from '#lib/api';
   interface Dev { id: string; label: string; approved: boolean; current: boolean; last_seen: string }
   let devices: Dev[] = [], me: { deviceApproved: boolean } | null = null, msg = '', err = '', busy = '';
   const load = async () => { devices = (await api('/api/devices')).devices; };

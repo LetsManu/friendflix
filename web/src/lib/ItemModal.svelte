@@ -1,9 +1,9 @@
 <script lang="ts">
   import { onMount, tick } from 'svelte';
   import { goto } from '$app/navigation';
-  import { api, backdrop, fmtMin, logoUrl, type Item } from '$lib/api';
-  import Icon from '$lib/Icon.svelte';
-  import { listIds, toggleList } from '$lib/stores';
+  import { api, backdrop, fmtMin, logoUrl, type Item } from '#lib/api';
+  import Icon from '#lib/Icon.svelte';
+  import { listIds, toggleList } from '#lib/stores';
 
   export let id: string;
   let item: Item | null = null, next: Item | null = null, closeBtn: HTMLButtonElement, box: HTMLDivElement, failed = false, logoFailed = false;

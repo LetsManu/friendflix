@@ -1,8 +1,8 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { api, type Item } from '$lib/api';
-  import Card from '$lib/Card.svelte';
-  import Icon from '$lib/Icon.svelte';
+  import { api, type Item } from '#lib/api';
+  import Card from '#lib/Card.svelte';
+  import Icon from '#lib/Icon.svelte';
 
   // Mood -> genre names (matched case-insensitively against the library's own genre list, German or English metadata)
   const MOODS: Array<{ id: string; label: string; re: RegExp }> = [

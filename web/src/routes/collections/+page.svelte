@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { api, type Item } from '$lib/api';
-  import Card from '$lib/Card.svelte';
+  import { api, type Item } from '#lib/api';
+  import Card from '#lib/Card.svelte';
 
   let items: Item[] | null = null, studios: string[] = [];
   onMount(() => { api('/api/library/collections').then((r) => { items = r.items; studios = r.studios; }).catch(() => (items = [])); });

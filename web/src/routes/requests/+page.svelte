@@ -1,7 +1,8 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { page } from '$app/stores';
-  import { api, ApiError } from '$lib/api';
+  import { pageStore } from '#lib/page';
+  const page = pageStore();
+  import { api, ApiError } from '#lib/api';
 
   let q = $page.url.searchParams.get('q') ?? '', results: any[] = [], mine: any[] = [], msg = '', busy = false;
   const label: Record<string, string> = { nicht_angefragt: '', angefragt: 'Angefragt', in_arbeit: 'In Arbeit', teilweise: 'Teilweise verfügbar', verfuegbar: 'Verfügbar', abgelehnt: 'Abgelehnt', entfernt: 'Entfernt' };

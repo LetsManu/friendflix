@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { api } from '$lib/api';
+  import { api } from '#lib/api';
   let polls: any[] = [];
   const load = async () => (polls = (await api('/api/admin/polls')).polls);
   onMount(load);

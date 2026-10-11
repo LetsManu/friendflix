@@ -1,8 +1,9 @@
 <script lang="ts">
-  import { page } from '$app/stores';
+  import { pageStore } from '#lib/page';
+  const page = pageStore();
   import { goto } from '$app/navigation';
-  import { api, type Item } from '$lib/api';
-  import Card from '$lib/Card.svelte';
+  import { api, type Item } from '#lib/api';
+  import Card from '#lib/Card.svelte';
 
   let items: Item[] | null = null, input = '', t: ReturnType<typeof setTimeout>, seq = 0;
   $: q = ($page.url.searchParams.get('q') ?? '').trim();
@@ -17,7 +18,7 @@
       try { const r = (await api(`/api/library/items?q=${encodeURIComponent(term)}&types=Movie,Series,Episode&limit=60`)).items; if (my === seq) items = r; } catch { if (my === seq) items = []; }
     }, 250);
   }
-  const onInput = () => goto(`/search?q=${encodeURIComponent(input)}`, { replaceState: true, keepFocus: true, noScroll: true });
+  const onInput = () => goto(`/search?q=${encodeURIComponent(input)}`, { replace: true, reset: false });
 </script>
 
 <svelte:head><title>Suche – FriendFlix</title></svelte:head>

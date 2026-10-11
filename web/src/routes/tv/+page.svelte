@@ -1,8 +1,8 @@
 <script lang="ts">
-  import Logo from '$lib/Logo.svelte';
+  import Logo from '#lib/Logo.svelte';
   import { onDestroy, onMount } from 'svelte';
-  import { api } from '$lib/api';
-  import { qrPath } from '$lib/qr';
+  import { api } from '#lib/api';
+  import { qrPath } from '#lib/qr';
 
   let code = '', poll = '', expires = 0, error = '', qr: { size: number; d: string } | null = null;
   let timer: ReturnType<typeof setInterval>, dead = false, linking = false;

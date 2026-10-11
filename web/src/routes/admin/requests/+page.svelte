@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { api } from '$lib/api';
+  import { api } from '#lib/api';
   let list: any[] = [], filter = 'pending';
   const load = async () => (list = (await api(`/api/admin/requests?filter=${filter}`)).requests);
   onMount(load);

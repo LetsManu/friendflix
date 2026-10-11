@@ -1,11 +1,11 @@
 <script lang="ts">
   import { onDestroy, onMount } from 'svelte';
-  import { backdrop, fmtMin, logoUrl, type Item } from '$lib/api';
-  import Icon from '$lib/Icon.svelte';
-  import Logo from '$lib/Logo.svelte';
-  import { openModal } from '$lib/modal';
-  import { listIds, prefs, toggleList } from '$lib/stores';
-  import { playPreview, previewOwner, stopPreview, toggleSound } from '$lib/preview';
+  import { backdrop, fmtMin, logoUrl, type Item } from '#lib/api';
+  import Icon from '#lib/Icon.svelte';
+  import Logo from '#lib/Logo.svelte';
+  import { openModal } from '#lib/modal';
+  import { listIds, prefs, toggleList } from '#lib/stores';
+  import { playPreview, previewOwner, stopPreview, toggleSound } from '#lib/preview';
 
   /** Billboard at the top of the home page / detail page. */
   export let item: Item | null;
