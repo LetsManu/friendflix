@@ -2,6 +2,8 @@
   import { onMount } from 'svelte';
   import { api, ApiError } from '#lib/api';
   import TrailerButton from '#lib/TrailerButton.svelte';
+  import Icon from '#lib/Icon.svelte';
+  import { loadReminders, movieKey, remindKeys, toggleReminder } from '#lib/reminders';
 
   /** "Demnächst": upcoming releases from Seerr with a one-click wish. */
   export let type: 'movie' | 'tv' = 'movie';
@@ -9,7 +11,15 @@
   let items: Array<{ tmdbId: number; mediaType: string; title: string; releaseDate?: string; poster?: string; status: string }> | null = null;
   let msg = '';
   const fmt = (d?: string) => (d ? new Date(d).toLocaleDateString('de-DE', { day: '2-digit', month: 'short', year: 'numeric' }) : 'Termin offen');
-  onMount(() => { api(`/api/seerr/upcoming?type=${type}`).then((r) => (items = r.results)).catch(() => (items = [])); });
+  let avail = new Set<number>();
+  async function remind(it: NonNullable<typeof items>[number]) {
+    const r = await toggleReminder(movieKey(it.mediaType, it.tmdbId), { mediaType: it.mediaType, tmdbId: it.tmdbId });
+    if (r === 'busy') return;
+    if (r === 'available') { avail.add(it.tmdbId); avail = avail; msg = `„${it.title}“ ist schon verfügbar.`; }
+    else if (r === 'error') msg = 'Erinnerung konnte nicht gespeichert werden.';
+    else msg = r === 'on' ? `Du wirst erinnert, sobald „${it.title}“ verfügbar ist.` : 'Erinnerung entfernt.';
+  }
+  onMount(() => { void loadReminders(); api(`/api/seerr/upcoming?type=${type}`).then((r) => (items = r.results)).catch(() => (items = [])); });
   async function wish(it: NonNullable<typeof items>[number]) {
     try { await api('/api/requests', { method: 'POST', body: { mediaType: it.mediaType, tmdbId: it.tmdbId } }); it.status = 'angefragt'; items = items; msg = `„${it.title}“ wurde gewünscht.`; }
     catch (e) { msg = e instanceof ApiError && e.status === 409 ? 'Dafür gibt es schon einen Wunsch.' : 'Wunsch fehlgeschlagen.'; }
@@ -29,7 +39,12 @@
               {#if it.status === 'nicht_angefragt' || it.status === 'abgelehnt'}<button class="sec" on:click={() => wish(it)}>Wünschen</button>
               {:else if it.status === 'verfuegbar'}<span class="ok">Verfügbar</span>{:else}<span class="warn">Gewünscht</span>{/if}
             </div>
-            {#if it.status !== 'verfuegbar'}<div class="act tr"><TrailerButton mediaType={it.mediaType} tmdbId={it.tmdbId} title={it.title} /></div>{/if}
+            {#if it.status !== 'verfuegbar'}
+              <div class="act tr">
+                {#if avail.has(it.tmdbId)}<span class="ok">Schon verfügbar</span>
+                {:else}<button class="sec bell" aria-pressed={$remindKeys[movieKey(it.mediaType, it.tmdbId)] !== undefined} on:click={() => remind(it)}><Icon name="bell" size={16} /> {$remindKeys[movieKey(it.mediaType, it.tmdbId)] !== undefined ? 'Erinnerung aktiv' : 'Erinnere mich'}</button>{/if}
+              </div>
+              <div class="act tr"><TrailerButton mediaType={it.mediaType} tmdbId={it.tmdbId} title={it.title} /></div>{/if}
           </div>
         </article>{/each}{/if}
     </div>
@@ -48,6 +63,7 @@
   .t { flex: 1; padding: .5rem .6rem .7rem; display: flex; flex-direction: column; gap: .25rem; font-size: .85rem; }
   .name { display: -webkit-box; -webkit-line-clamp: 2; line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; min-height: 2.6em; line-height: 1.3; } /* always two lines of space */
   .act { margin-top: auto; padding-top: .35rem; min-height: 44px; display: flex; align-items: center; }
+  .bell { display: inline-flex; gap: .3rem; align-items: center; justify-content: center; } .bell[aria-pressed='true'] { color: var(--accent, inherit); }
   .act.tr { margin-top: 0; padding-top: 0; min-height: 0; }
   .act button, .act :global(button) { width: 100%; min-height: 36px; padding: .3rem .6rem; font-size: .85rem; }
 </style>

@@ -3,6 +3,7 @@
   import { listIds, toggleList } from '#lib/stores';
   import Icon from '#lib/Icon.svelte';
   import Logo from '#lib/Logo.svelte';
+  import ListMenu from '#lib/ListMenu.svelte';
   import { openModal } from '#lib/modal';
   import { createEventDispatcher, onDestroy } from 'svelte';
   import { prefs } from '#lib/stores';
@@ -61,6 +62,7 @@
       <a class="round play" href={href} aria-label="Abspielen"><Icon name="play" size={18} /></a>
       <button class="round" aria-label={inList ? 'Von Meine Liste entfernen' : 'Zu Meine Liste hinzufügen'} on:click={(e) => { release(e); toggleList(item.seriesId ?? item.id, inList); }}><Icon name={inList ? 'check' : 'plus'} size={18} /></button>
       <button class="round" class:on={fav} aria-label={fav ? 'Favorit entfernen' : 'Als Favorit markieren'} aria-pressed={fav} on:click={(e) => { release(e); toggleFav(); }}><Icon name="heart" size={17} fill={fav} /></button>
+      {#if item.type !== 'BoxSet'}<ListMenu itemId={item.seriesId ?? item.id} variant="round" />{/if}
       {#if removable}<button class="round" aria-label="Aus Weiterschauen entfernen" title="Aus Weiterschauen entfernen" on:click={(e) => { release(e); dispatch('remove', item); }}><Icon name="x" size={17} /></button>{/if}
       <a class="round more" href={detail} aria-label="Mehr Infos" on:click={(e) => openModal(e, detail)}><Icon name="chevron-down" size={18} /></a>
     </div>

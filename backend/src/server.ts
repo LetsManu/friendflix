@@ -12,12 +12,14 @@ import { createAuthentikProvider } from './oidc.js';
 import { SeerrClient } from './seerr/client.js';
 import { loadRoles } from './roles.js';
 import { nightlyTick } from './healthcheck.js';
+import { digestTick } from './digest.js';
 import { reapplyPoliciesOnce } from './users.js';
 import { previews } from './previews.js';
 import { pollJellyfinSessions } from './routes/internal.js';
 import { parties } from './routes/party.js';
 import { calendarNotifications, pollTick } from './routes/polls.js';
 import { resolveRequestedPolls } from './polls.js';
+import { reminderTick } from './reminders.js';
 import type { Ctx } from './ctx.js';
 
 const cfg = loadConfig();
@@ -56,7 +58,9 @@ timers.push(setInterval(() => void calendarNotifications(ctx).catch((e) => app.l
 if (cfg.PREVIEW_WARM === 'true') {
   timers.push(setInterval(() => void previews(ctx).warmTick().catch((e) => app.log.warn({ e }, 'preview warm failed')), 60_000));
 }
+timers.push(setInterval(() => void reminderTick(ctx).catch((e) => app.log.warn({ e }, 'reminder tick failed')), 1800_000));
 timers.push(setInterval(() => void nightlyTick(ctx).catch((e) => app.log.warn({ e }, 'playback check failed')), 600_000));
+timers.push(setInterval(() => void digestTick(ctx).catch((e) => app.log.warn({ e }, 'digest tick failed')), 600_000));
 if (cfg.BACKGROUND_JOBS === 'true') {
   timers.push(setInterval(() => void pollJellyfinSessions(ctx).catch((e) => app.log.warn({ e }, 'session poll failed')), 10_000));
 }

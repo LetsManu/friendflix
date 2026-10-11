@@ -39,6 +39,11 @@ const schema = z.object({
   SEERR_API_KEY: z.string().min(1),
   NTFY_URL: opt, // e.g. https://ntfy.example.com/friendflix
   DISCORD_WEBHOOK_URL: opt,
+  /** personal push (ntfy topics per user): base URL of the ntfy server; default = origin of NTFY_URL */
+  NTFY_BASE_URL: opt,
+  /** weekly digest: day of week (0 = Sunday, Date.getDay) and local server hour 0-23, -1 = off. Admins can override both in the UI. */
+  DIGEST_DAY: z.coerce.number().int().min(0).max(6).default(0),
+  DIGEST_HOUR: z.coerce.number().int().min(-1).max(23).default(18),
   METRICS_TOKEN: opt,
   AUTHENTIK_URL: opt,
   AUTHENTIK_API_TOKEN: opt,

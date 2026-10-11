@@ -308,6 +308,70 @@ export const MIGRATIONS: string[] = [
     primary key (profile_id, item_id)
   );
   `,
+  // 16: weekly digest
+  `
+  create table digests (
+    user_id uuid not null references users(id) on delete cascade,
+    week date not null,
+    sent_at timestamptz not null default now(),
+    data jsonb not null,
+    primary key (user_id, week)
+  );
+  create table app_settings (key text primary key, value jsonb not null, updated_at timestamptz not null default now());
+  `,
+  // 17: shared lists
+  `
+  create table lists (
+    id uuid primary key,
+    owner_id uuid not null references users(id) on delete cascade,
+    name text not null check (char_length(name) between 1 and 60),
+    description text check (char_length(description) <= 280),
+    created_at timestamptz not null default now(),
+    updated_at timestamptz not null default now()
+  );
+  create index lists_owner on lists(owner_id);
+  create table list_members (
+    list_id uuid not null references lists(id) on delete cascade,
+    user_id uuid not null references users(id) on delete cascade,
+    role text not null check (role in ('editor','viewer')),
+    added_at timestamptz not null default now(),
+    primary key (list_id, user_id)
+  );
+  create index list_members_user on list_members(user_id);
+  create table list_items (
+    list_id uuid not null references lists(id) on delete cascade,
+    item_id text not null,
+    item_name text not null,
+    note text check (char_length(note) <= 140),
+    added_by uuid references users(id) on delete set null,
+    added_at timestamptz not null default now(),
+    primary key (list_id, item_id)
+  );
+  `,
+  // 18: "Erinnere mich" reminders
+  `
+  create table reminders (
+    id bigserial primary key,
+    user_id uuid not null references users(id) on delete cascade,
+    profile_id uuid references profiles(id) on delete set null,
+    kind text not null check (kind in ('tmdb','episode')),
+    media_type text check (media_type in ('movie','tv')),
+    tmdb_id int,
+    jf_item_id text,
+    series_id text,
+    season int,
+    episode int,
+    title text not null,
+    poster text,
+    release_date date,
+    created_at timestamptz not null default now(),
+    fired_at timestamptz,
+    check ((kind='tmdb' and tmdb_id is not null and media_type is not null) or (kind='episode' and jf_item_id is not null))
+  );
+  create unique index reminders_tmdb on reminders(user_id, media_type, tmdb_id) where kind='tmdb';
+  create unique index reminders_ep on reminders(user_id, jf_item_id) where kind='episode';
+  create index reminders_open on reminders(kind) where fired_at is null;
+  `,
 ];
 
 export async function migrate(pool: pg.Pool): Promise<void> {

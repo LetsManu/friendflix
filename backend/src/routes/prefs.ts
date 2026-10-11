@@ -32,11 +32,17 @@ export const prefsSchema = z.object({
   }).default({ size: 'm', color: 'white', background: 'semi', font: 'sans' }),
   /** blur thumbnails and hide descriptions of unwatched episodes */
   spoilerProtection: z.boolean().default(false),
+  /** weekly "Wochenrückblick" (in-app + personal ntfy), account level */
+  weeklyDigest: z.boolean().default(true),
+  /** own ntfy topic for personal push messages ('' = off), account level */
+  ntfyTopic: z.string().regex(/^[A-Za-z0-9_-]{0,64}$/).default(''),
 });
 export type Prefs = z.infer<typeof prefsSchema>;
 
 /** Account-level flags (stay in user_prefs, shared by all profiles); everything else is per profile (profile_prefs). */
-const ACCOUNT_KEYS = ['shareHistory', 'shareRatings'] as const;
+const ACCOUNT_KEYS = ['shareHistory', 'shareRatings', 'weeklyDigest', 'ntfyTopic'] as const;
+
+const pickAccount = (p: Prefs) => Object.fromEntries(ACCOUNT_KEYS.map((k) => [k, p[k]]));
 
 /** Viewing prefs of a profile (default: the owner profile, whose id is the account id) merged with the account's share flags. */
 export async function loadPrefs(ctx: Pick<Ctx, 'db'>, userId: string, profileId: string = userId): Promise<Prefs> {
@@ -52,15 +58,29 @@ export async function loadPrefs(ctx: Pick<Ctx, 'db'>, userId: string, profileId:
   return parsed.success ? parsed.data : prefsSchema.parse({});
 }
 
+/** Topic (path) of the global NTFY_URL, or null. */
+export function globalNtfyTopic(cfg: Pick<Ctx['cfg'], 'NTFY_URL'>): string | null {
+  try {
+    if (!cfg.NTFY_URL) return null;
+    return decodeURIComponent(new URL(cfg.NTFY_URL).pathname).replace(/^\/+|\/+$/g, '') || null;
+  } catch { return null; }
+}
+
 export function prefsRoutes(app: FastifyInstance, ctx: Ctx) {
   const pre = { preHandler: requireUser(ctx) };
-  app.get('/api/prefs', pre, async (req) => ({ prefs: await loadPrefs(ctx, req.user!.id, req.profile!.id) }));
-  app.put('/api/prefs', pre, async (req) => {
+  /** Account-level ntfy topic is a secret of the account: other profiles neither see nor change it. */
+  const hideTopic = (req: { profile?: { is_owner: boolean } }, p: Prefs): Prefs => (req.profile!.is_owner ? p : { ...p, ntfyTopic: '' });
+  app.get('/api/prefs', pre, async (req) => ({ prefs: hideTopic(req, await loadPrefs(ctx, req.user!.id, req.profile!.id)) }));
+  app.put('/api/prefs', pre, async (req, reply) => {
     const input = prefsSchema.parse(req.body);
-    // share flags are account level: only the owner profile may change them (others keep the stored values)
+    // the global NTFY_URL topic is shared by everybody: a personal push to it would leak to all subscribers
+    const g = globalNtfyTopic(ctx.cfg);
+    if (input.ntfyTopic && g && input.ntfyTopic === g) return reply.code(400).send({ error: 'ntfy_topic_reserved' });
+    // account flags are shared by all profiles: only the owner profile may change them (others keep the stored values)
     const stored = req.profile!.is_owner ? null : await loadPrefs(ctx, req.user!.id, req.profile!.id);
-    const prefs = stored ? { ...input, shareHistory: stored.shareHistory, shareRatings: stored.shareRatings } : input;
-    const { shareHistory: _h, shareRatings: _r, ...viewing } = prefs;
+    const prefs: Prefs = stored ? { ...input, ...pickAccount(stored) } : input;
+    const viewing: Record<string, unknown> = { ...prefs };
+    for (const k of ACCOUNT_KEYS) delete viewing[k];
     await ctx.db.query(
       `insert into profile_prefs(profile_id, data) values ($1,$2) on conflict (profile_id) do update set data = excluded.data, updated_at = now()`,
       [req.profile!.id, JSON.stringify(viewing)],
@@ -68,9 +88,9 @@ export function prefsRoutes(app: FastifyInstance, ctx: Ctx) {
     if (!stored) {
       await ctx.db.query(
         `insert into user_prefs(user_id, data) values ($1,$2) on conflict (user_id) do update set data = excluded.data, updated_at = now()`,
-        [req.user!.id, JSON.stringify({ shareHistory: prefs.shareHistory, shareRatings: prefs.shareRatings })],
+        [req.user!.id, JSON.stringify(pickAccount(prefs))],
       );
     }
-    return { prefs };
+    return { prefs: hideTopic(req, prefs) };
   });
 }

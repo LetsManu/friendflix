@@ -11,6 +11,7 @@
   import LangPick from '#lib/LangPick.svelte';
   import { goto } from '$app/navigation';
   import { listIds, toggleList, prefs } from '#lib/stores';
+  import ListMenu from '#lib/ListMenu.svelte';
   import { isSpoiler } from '#lib/spoiler';
 
   let thumb = 0, extras: Item[] = [], tint = '', friends: Array<{ id: string; name: string }> = [], recOpen = false, recTo = new Set<string>(), recNote = '', recMsg = '';
@@ -85,6 +86,7 @@
     <div class="body" style={tint ? `--tint: ${tint}` : ''}>
       <div class="actions">
         <button class="icon-btn ring" class:on={inList} aria-pressed={inList} aria-label={inList ? 'Von Meine Liste entfernen' : 'Zu Meine Liste hinzufügen'} title="Meine Liste" on:click={() => toggleList(item!.id, inList)}><Icon name={inList ? 'check' : 'plus'} size={22} /></button>
+        <ListMenu itemId={item.id} />
         <button class="icon-btn ring" class:on={item.favorite} aria-pressed={item.favorite} aria-label="Favorit" title="Favorit" on:click={toggleFav}><Icon name="heart" size={21} fill={item.favorite} /></button>
         <button class="icon-btn ring" class:on={item.played} aria-pressed={item.played} aria-label="Als gesehen markieren" title="Gesehen" on:click={togglePlayed}><Icon name="check" size={22} /></button>
         <button class="icon-btn ring" class:on={thumb === 1} aria-pressed={thumb === 1} aria-label="Gefällt mir" title="Gefällt mir" on:click={() => setThumb(1)}><Icon name="thumb-up" size={21} /></button>

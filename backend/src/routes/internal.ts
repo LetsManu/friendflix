@@ -9,8 +9,10 @@ import { mediaBrowserHeader } from '../jellyfin/client.js';
 import { upstreamUri } from '../mediapath.js';
 import { authzNginx } from '../metrics.js';
 import { getUserById } from '../users.js';
+import { fireEpisode, fireTmdb } from '../reminders.js';
 import type { UserRow } from '../types.js';
 
+const normId = (s: string) => s.replace(/-/g, '').toLowerCase();
 const eq = (a: string, b: string) => {
   const x = Buffer.from(a);
   const y = Buffer.from(b);
@@ -23,13 +25,19 @@ export const checkSecret = (req: FastifyRequest, header: string, secret: string)
 const jfWebhook = z.object({
   type: z.string(),
   user: z.string().optional(),
-  itemId: z.string().optional(),
+  itemId: z.string().transform(normId).optional(),
   name: z.string().optional(),
   seriesName: z.string().optional(),
   positionTicks: z.coerce.number().optional(),
   runtimeTicks: z.coerce.number().optional(),
   isPaused: z.union([z.boolean(), z.string()]).optional(),
   deviceName: z.string().optional(),
+  itemType: z.string().optional(),
+  provider_tmdb: z.union([z.string(), z.number()]).optional(),
+  /** ItemAdded Episode: lets "Erinnere mich" match a replaced placeholder episode by series + season + number */
+  seriesId: z.string().transform(normId).optional(),
+  seasonNumber: z.union([z.string(), z.number()]).optional(),
+  episodeNumber: z.union([z.string(), z.number()]).optional(),
 });
 
 interface MediaAuth {
@@ -115,6 +123,17 @@ export function internalRoutes(app: FastifyInstance, ctx: Ctx) {
     const b = jfWebhook.safeParse(req.body);
     if (!b.success) return reply.code(400).send({ error: 'bad_request' });
     const e = b.data;
+    if (e.type === 'ItemAdded' && e.itemId) {
+      // "Erinnere mich": a title or episode just arrived in the library
+      const tmdb = Number(e.provider_tmdb);
+      if ((e.itemType === 'Movie' || e.itemType === 'Series') && Number.isInteger(tmdb) && tmdb > 0) await fireTmdb(ctx, e.itemType === 'Movie' ? 'movie' : 'tv', tmdb, e.itemId);
+      else if (e.itemType === 'Episode') {
+        const num = (v: string | number | undefined) => (v !== undefined && v !== '' && Number.isInteger(Number(v)) ? Number(v) : undefined);
+        const sid = e.seriesId && /^[0-9a-f]{32}$/.test(e.seriesId) ? e.seriesId : undefined;
+        await fireEpisode(ctx, { itemId: e.itemId, seriesId: sid, season: num(e.seasonNumber), episode: num(e.episodeNumber) });
+      }
+      return { ok: true };
+    }
     if (!e.user || !e.itemId) return { ok: true };
     const r = await ctx.db.query<UserRow>('select * from users where lower(jellyfin_username)=lower($1)', [e.user]);
     const user = r.rows[0];
