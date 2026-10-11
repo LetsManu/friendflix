@@ -68,10 +68,16 @@ export function adminRoutes(app: FastifyInstance, ctx: Ctx) {
   });
 
   app.post('/api/admin/invites', admin, async (req) => {
-    const b = z.object({ role: z.enum(INVITABLE_ROLES), ttlHours: z.number().int().min(1).max(24 * 14).default(48), note: z.string().max(100).optional() }).parse(req.body);
-    const inv = await createInvite(ctx, req.user!.id, b);
-    await audit(ctx, req.user!.id, 'invite.create', inv.id, { role: b.role });
-    return { id: inv.id, link: inv.link, enrollUrl: inv.enrollUrl, expiresAt: inv.expiresAt }; // token is shown exactly once
+    const b = z.object({
+      role: z.enum(INVITABLE_ROLES),
+      ttlHours: z.number().int().min(1).max(24 * 14).default(48),
+      note: z.string().max(100).optional(),
+      /** false: the person already has an Authentik account, skip enrollment */
+      enroll: z.boolean().default(true),
+    }).parse(req.body);
+    const inv = await createInvite(ctx, req.user!.id, b, req.log);
+    await audit(ctx, req.user!.id, 'invite.create', inv.id, { role: b.role, authentik: inv.authentik });
+    return { id: inv.id, link: inv.link, enrollUrl: inv.enrollUrl, authentik: inv.authentik, expiresAt: inv.expiresAt }; // token is shown exactly once
   });
 
   app.get('/api/admin/invites', admin, async () => {
@@ -141,11 +147,11 @@ export function adminRoutes(app: FastifyInstance, ctx: Ctx) {
 export function inviteRoutes(app: FastifyInstance, ctx: Ctx) {
   app.get('/api/invite/:token', { config: { rateLimit: { max: 20, timeWindow: '1 minute' } } }, async (req, reply) => {
     const { lookupInvite } = await import('../invites.js');
-    const inv = await lookupInvite(ctx, (req.params as { token: string }).token);
+    const token = (req.params as { token: string }).token;
+    const inv = await lookupInvite(ctx, token);
     if (!inv) return reply.code(404).send({ error: 'invalid_or_expired' });
-    const flow = ctx.cfg.AUTHENTIK_URL && inv.authentik_invite && ctx.cfg.AUTHENTIK_ENROLL_FLOW
-      ? `${ctx.cfg.AUTHENTIK_URL.replace(/\/$/, '')}/if/flow/${ctx.cfg.AUTHENTIK_ENROLL_FLOW}/?itoken=${inv.authentik_invite}`
-      : undefined;
-    return { role: inv.role, roleLabel: ctx.roles[inv.role]?.label ?? inv.role, expiresAt: inv.expires_at, enrollUrl: flow };
+    // Relative portal URL: /auth/enroll starts the OIDC login and hands over to the Authentik enrollment flow.
+    const enroll = Boolean(inv.authentik_invite && ctx.cfg.AUTHENTIK_URL && ctx.cfg.AUTHENTIK_ENROLL_FLOW);
+    return { role: inv.role, roleLabel: ctx.roles[inv.role]?.label ?? inv.role, expiresAt: inv.expires_at, enrollUrl: enroll ? `/auth/enroll?invite=${encodeURIComponent(token)}` : undefined };
   });
 }

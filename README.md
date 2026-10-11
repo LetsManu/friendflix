@@ -59,7 +59,7 @@ Dann:
 | `SEERR_URL`, `SEERR_API_KEY` | Seerr (intern) |
 | `NTFY_URL`, `DISCORD_WEBHOOK_URL` | Push bei „verfügbar“, Freigaben, Filmabend |
 | `METRICS_TOKEN` | Bearer für `/metrics` |
-| `AUTHENTIK_URL/API_TOKEN/ENROLL_FLOW` | optionale Authentik-Einladungen |
+| `AUTHENTIK_URL/API_TOKEN/ENROLL_FLOW` | Einladung legt auch das Authentik-Konto an (siehe `docs/integrations.md`) |
 | `ROLE_TEMPLATES` | JSON-Override der Rollenvorlagen (`backend/src/roles.ts`) |
 Secrets alternativ als Docker Secrets: `compose.secrets.yaml` (`VAR_FILE`).
 

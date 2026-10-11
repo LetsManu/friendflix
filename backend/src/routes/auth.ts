@@ -1,25 +1,44 @@
-import type { FastifyInstance } from 'fastify';
+import type { FastifyInstance, FastifyReply } from 'fastify';
 import { timingSafeEqual } from 'node:crypto';
 import { dropRemotePeers } from './tv.js';
 import { audit } from '../audit.js';
 import type { Ctx } from '../ctx.js';
 import { COOKIE, loadSession, newSession, rand, requireUser, saveSession } from '../session.js';
 import { registerDevice } from '../devices.js';
-import { claimInvite, lookupInvite, releaseInvite, type InviteRow } from '../invites.js';
+import { claimInvite, enrollFlowUrl, lookupInvite, releaseInvite, type InviteRow } from '../invites.js';
 import { applyRole, getUserBySub, provisionUser } from '../users.js';
 
 const OIDC_COOKIE = 'ff_oidc';
+/** sign-up incl. MFA setup takes longer than a plain login */
+const ENROLL_TTL = 1800;
 
 export function authRoutes(app: FastifyInstance, ctx: Ctx) {
   const secure = ctx.cfg.PUBLIC_URL.startsWith('https://');
 
+  /** Starts an OIDC login; the invite (if any) travels in the server-side state to /auth/callback. */
+  async function startLogin(reply: FastifyReply, invite: string | undefined, ttl: number) {
+    const s = await ctx.oidc.start();
+    await ctx.kv.set(`oidc:${s.state}`, JSON.stringify({ state: s.state, nonce: s.nonce, codeVerifier: s.codeVerifier, invite }), ttl);
+    reply.setCookie(OIDC_COOKIE, s.state, { httpOnly: true, secure, sameSite: 'lax', path: '/auth', maxAge: ttl }); // binds the flow to this browser
+    return s.url;
+  }
+
   app.get('/auth/login', { config: { rateLimit: { max: 30, timeWindow: '1 minute' } } }, async (req, reply) => {
     const invite = (req.query as Record<string, string | undefined>).invite;
     if (invite && !(await lookupInvite(ctx, invite))) return reply.code(410).send({ error: 'invite_invalid' });
-    const s = await ctx.oidc.start();
-    await ctx.kv.set(`oidc:${s.state}`, JSON.stringify({ state: s.state, nonce: s.nonce, codeVerifier: s.codeVerifier, invite }), 600);
-    reply.setCookie(OIDC_COOKIE, s.state, { httpOnly: true, secure, sameSite: 'lax', path: '/auth', maxAge: 600 }); // binds the flow to this browser
-    return reply.redirect(s.url);
+    return reply.redirect(await startLogin(reply, invite, 600));
+  });
+
+  // Invite with Authentik enrollment: start the portal login first, then run the enrollment flow with
+  // `next` = that authorize request. After sign-up (incl. MFA setup) Authentik continues the authorize
+  // request and lands on /auth/callback with the invite in the state: account + portal access in one pass.
+  app.get('/auth/enroll', { config: { rateLimit: { max: 30, timeWindow: '1 minute' } } }, async (req, reply) => {
+    const invite = (req.query as Record<string, string | undefined>).invite;
+    const inv = invite ? await lookupInvite(ctx, invite) : null;
+    if (!invite || !inv) return reply.code(410).send({ error: 'invite_invalid' });
+    if (!inv.authentik_invite || !enrollFlowUrl(ctx.cfg, inv.authentik_invite)) return reply.redirect(`/auth/login?invite=${encodeURIComponent(invite)}`);
+    const authorize = await startLogin(reply, invite, ENROLL_TTL);
+    return reply.redirect(enrollFlowUrl(ctx.cfg, inv.authentik_invite, authorize)!);
   });
 
   app.get('/auth/callback', { config: { rateLimit: { max: 30, timeWindow: '1 minute' } } }, async (req, reply) => {
