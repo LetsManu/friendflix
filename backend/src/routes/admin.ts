@@ -72,8 +72,8 @@ export function adminRoutes(app: FastifyInstance, ctx: Ctx) {
     await audit(ctx, req.user!.id, 'system.update', undefined, { from: info.current.sha, to: info.latest?.sha ?? null, mode });
     const r = await triggerUpdate(ctx, mode);
     if (!r.ok) {
-      req.log.error({ mode, step: r.step, status: r.status, error: r.error }, 'portainer update failed');
-      return reply.code(502).send({ error: r.error, status: r.status, step: r.step });
+      req.log.error({ mode, step: r.step, status: r.status, error: r.error, code: r.code }, 'portainer update failed');
+      return reply.code(502).send({ error: r.error, status: r.status, step: r.step, ...(r.code ? { code: r.code } : {}) });
     }
     return reply.code(202).send({ ok: true, mode });
   });
