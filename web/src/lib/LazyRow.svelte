@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import type { Item } from '$lib/api';
-  import Row from '$lib/Row.svelte';
+  import type { Item } from '#lib/api';
+  import Row from '#lib/Row.svelte';
 
   export let title: string;
   export let load: () => Promise<Item[]>;

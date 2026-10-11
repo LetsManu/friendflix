@@ -1,8 +1,8 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { api, type Item } from '$lib/api';
-  import Row from '$lib/Row.svelte';
-  import Card from '$lib/Card.svelte';
+  import { api, type Item } from '#lib/api';
+  import Row from '#lib/Row.svelte';
+  import Card from '#lib/Card.svelte';
 
   let movies: Item[] | null = null, series: Item[] | null = null, upcoming: Item[] | null = null;
   const items = (types: string) => api(`/api/library/items?types=${types}&sort=DateCreated&desc=true&limit=24`).then((r) => r.items as Item[]);

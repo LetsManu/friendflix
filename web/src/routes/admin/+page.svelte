@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { api } from '$lib/api';
+  import { api } from '#lib/api';
   let users: any[] = [], roles: Record<string, { label: string }> = {};
   const load = async () => { users = (await api('/api/admin/users')).users; roles = (await api('/api/admin/roles')).roles; };
   onMount(load);

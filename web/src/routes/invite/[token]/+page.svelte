@@ -1,7 +1,8 @@
 <script lang="ts">
-  import Logo from '$lib/Logo.svelte';
+  import Logo from '#lib/Logo.svelte';
   import { onMount } from 'svelte';
-  import { page } from '$app/stores';
+  import { pageStore } from '#lib/page';
+  const page = pageStore();
   let info: { roleLabel: string; expiresAt: string; enrollUrl?: string } | null = null, invalid = false;
   const token = $page.params.token!;
   onMount(async () => {

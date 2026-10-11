@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { api } from '$lib/api';
+  import { api } from '#lib/api';
   let devices: any[] = [];
   const load = async () => (devices = (await api('/api/admin/devices')).devices);
   onMount(load);

@@ -2,14 +2,15 @@
   import '../app.css';
   import { onMount } from 'svelte';
   import { afterNavigate, beforeNavigate, goto } from '$app/navigation';
-  import { page } from '$app/stores';
-  import { api, setCsrf, type Me } from '$lib/api';
-  import Icon from '$lib/Icon.svelte';
-  import Logo from '$lib/Logo.svelte';
-  import { loadList, loadPrefs } from '$lib/stores';
-  import ItemModal from '$lib/ItemModal.svelte';
-  import { startTvLink, type ToTv } from '$lib/remote';
-  import { focusEl, focusFirst, isBackKey, isEditable, startSpatial } from '$lib/spatial';
+  import { pageStore } from '#lib/page';
+  const page = pageStore();
+  import { api, setCsrf, type Me } from '#lib/api';
+  import Icon from '#lib/Icon.svelte';
+  import Logo from '#lib/Logo.svelte';
+  import { loadList, loadPrefs } from '#lib/stores';
+  import ItemModal from '#lib/ItemModal.svelte';
+  import { startTvLink, type ToTv } from '#lib/remote';
+  import { focusEl, focusFirst, isBackKey, isEditable, startSpatial } from '#lib/spatial';
 
   let me: Me | null = null;
   /** TV mode: big UI, D-pad navigation. On for paired televisions; `?tv=1` previews it in any browser (`?tv=0` ends the preview). */

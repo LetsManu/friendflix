@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { api } from '$lib/api';
+  import { api } from '#lib/api';
   let items: any[] = [];
   onMount(async () => (items = (await api('/api/calendar')).items));
   async function follow(e: any) { await api(`/api/series/${e.seriesId}/follow`, { method: e.followed ? 'DELETE' : 'POST' }); items = items.map((i) => (i.seriesId === e.seriesId ? { ...i, followed: !e.followed } : i)); }

@@ -1,5 +1,9 @@
 # Changelog
 ## [Unreleased]
+### Maintenance â€“ dev toolchain upgrade
+- Dev-only `npm audit` findings fixed (tinypool, @vitest/mocker, esbuild, cookie): vitest 5, Vite 8, SvelteKit 3, vite-plugin-svelte 7, adapter-node 6, TypeScript 6.
+- SvelteKit 3: config moved from `svelte.config.js` into `sveltekit({...})` in `web/vite.config.ts`; `$lib` replaced by `#lib` subpath imports (`web/package.json` `imports`); `$app/stores` replaced by `#lib/page` (`toStore` over `$app/state`); `goto` uses `replace`/`reset: false`; `web/tsconfig.json` extends `$app/tsconfig`.
+- TypeScript 6 no longer loads `@types/*` implicitly: `tsconfig.base.json` sets `types: ["node"]`.
 ### Step 21 – Languages, simpler party, preview clips, "Heute Abend"
 - Language picker on the detail page (audio + subtitles, remembered per title/series, carried to the next episode).
 - Hover preview: optional clip from the film itself when there is no local trailer (setting, off by default).

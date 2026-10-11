@@ -1,7 +1,8 @@
 <script lang="ts">
-  import { page } from '$app/stores';
-  import { api, type Item } from '$lib/api';
-  import Card from '$lib/Card.svelte';
+  import { pageStore } from '#lib/page';
+  const page = pageStore();
+  import { api, type Item } from '#lib/api';
+  import Card from '#lib/Card.svelte';
 
   let items: Item[] | null = null, total = 0, start = 0, sort = 'SortName', filter = '', q = '', busy = false;
   const PAGE = 60;

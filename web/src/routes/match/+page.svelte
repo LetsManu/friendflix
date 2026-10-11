@@ -1,9 +1,9 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { goto } from '$app/navigation';
-  import { api, type Item } from '$lib/api';
-  import Card from '$lib/Card.svelte';
-  import Icon from '$lib/Icon.svelte';
+  import { api, type Item } from '#lib/api';
+  import Card from '#lib/Card.svelte';
+  import Icon from '#lib/Icon.svelte';
 
   let friends: Array<{ id: string; name: string; sharesHistory: boolean }> = [], picked = new Set<string>();
   let type = 'Movie', maxMinutes = 0, genre = '', genres: string[] = [];

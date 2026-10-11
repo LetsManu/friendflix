@@ -1,5 +1,5 @@
 import { writable } from 'svelte/store';
-import { api } from '$lib/api';
+import { api } from '#lib/api';
 
 /** Ids on "Meine Liste" (watchlist). Loaded once, updated optimistically by cards and detail pages. */
 export const listIds = writable<Set<string>>(new Set());

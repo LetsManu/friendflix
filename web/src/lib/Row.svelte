@@ -1,8 +1,8 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import type { Item } from '$lib/api';
-  import Card from '$lib/Card.svelte';
-  import Icon from '$lib/Icon.svelte';
+  import type { Item } from '#lib/api';
+  import Card from '#lib/Card.svelte';
+  import Icon from '#lib/Icon.svelte';
 
   export let title: string;
   /** null = loading (skeleton) */

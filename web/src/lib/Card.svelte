@@ -1,12 +1,12 @@
 <script lang="ts">
-  import { api, backdrop, img, fmtMin, type Item } from '$lib/api';
-  import { listIds, toggleList } from '$lib/stores';
-  import Icon from '$lib/Icon.svelte';
-  import Logo from '$lib/Logo.svelte';
-  import { openModal } from '$lib/modal';
+  import { api, backdrop, img, fmtMin, type Item } from '#lib/api';
+  import { listIds, toggleList } from '#lib/stores';
+  import Icon from '#lib/Icon.svelte';
+  import Logo from '#lib/Logo.svelte';
+  import { openModal } from '#lib/modal';
   import { onDestroy } from 'svelte';
-  import { prefs } from '$lib/stores';
-  import { playPreview, stopPreview, previewOwner, toggleSound } from '$lib/preview';
+  import { prefs } from '#lib/stores';
+  import { playPreview, stopPreview, previewOwner, toggleSound } from '#lib/preview';
 
   export let item: Item;
   let fav = item.favorite;

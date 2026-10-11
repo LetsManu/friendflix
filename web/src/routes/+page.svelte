@@ -1,10 +1,10 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { api, type Item } from '$lib/api';
-  import Hero from '$lib/Hero.svelte';
-  import LazyRow from '$lib/LazyRow.svelte';
-  import Row from '$lib/Row.svelte';
-  import UpcomingRow from '$lib/UpcomingRow.svelte';
+  import { api, type Item } from '#lib/api';
+  import Hero from '#lib/Hero.svelte';
+  import LazyRow from '#lib/LazyRow.svelte';
+  import Row from '#lib/Row.svelte';
+  import UpcomingRow from '#lib/UpcomingRow.svelte';
 
   let hero: Item | null = null, heroPlay = '';
   let resume: Item[] | null = null, next: Item[] | null = null, latest: Item[] | null = null, mine: Item[] | null = null;

@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { api, type Item } from '$lib/api';
-  import Card from '$lib/Card.svelte';
+  import { api, type Item } from '#lib/api';
+  import Card from '#lib/Card.svelte';
   let items: Item[] | null = null;
   onMount(() => { api('/api/watchlist').then((r) => r.items).then((r: Item[]) => (items = r)).catch(() => (items = [])); });
 </script>
