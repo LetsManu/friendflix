@@ -1,4 +1,4 @@
-import type { FastifyInstance } from 'fastify';
+import type { FastifyInstance, FastifyReply } from 'fastify';
 import { z } from 'zod';
 import { audit } from '../audit.js';
 import { bus } from '../bus.js';
@@ -6,11 +6,25 @@ import type { Ctx } from '../ctx.js';
 import { seerrHooks } from '../hooks.js';
 import { approvePoll, createPoll, pollTick, resolveRequestedPolls } from '../polls.js';
 import { notify } from '../notify.js';
+import { JellyfinError } from '../jellyfin/client.js';
+import { SeerrError } from '../seerr/client.js';
 import { requireAdmin, requireUser } from '../session.js';
+import type { UserRow } from '../types.js';
 
 const id32 = z.string().regex(/^[0-9a-f]{32}$/);
 const optionSchema = z.object({ jfItemId: id32.optional(), tmdbId: z.number().int().positive().optional(), mediaType: z.enum(['movie', 'tv']).optional() })
   .refine((o) => Boolean(o.jfItemId) !== Boolean(o.tmdbId && o.mediaType), 'jfItemId or tmdbId+mediaType');
+
+/** Maps Jellyfin lookup failures for a user-supplied item id to 404/403. */
+async function itemOr(ctx: Ctx, reply: FastifyReply, user: UserRow, id: string) {
+  try {
+    return await ctx.jf.item(user, id);
+  } catch (e) {
+    if (e instanceof JellyfinError && (e.status === 404 || e.status === 400)) return void reply.code(404).send({ error: 'not_found' });
+    if (e instanceof JellyfinError && e.status === 403) return void reply.code(403).send({ error: 'forbidden' });
+    throw e;
+  }
+}
 
 export function pollRoutes(app: FastifyInstance, ctx: Ctx) {
   const pre = { preHandler: requireUser(ctx) };
@@ -31,8 +45,9 @@ export function pollRoutes(app: FastifyInstance, ctx: Ctx) {
     if (open.rowCount) return reply.code(409).send({ error: 'poll_already_open' });
     try {
       return { id: await createPoll(ctx, req.user!.id, b) };
-    } catch {
-      return reply.code(400).send({ error: 'invalid_options' });
+    } catch (e) {
+      if ((e instanceof JellyfinError && (e.status === 404 || e.status === 400 || e.status === 403)) || (e instanceof SeerrError && e.status === 404)) return reply.code(400).send({ error: 'invalid_options' });
+      throw e;
     }
   });
 
@@ -75,7 +90,13 @@ export function pollRoutes(app: FastifyInstance, ctx: Ctx) {
   });
   for (const [action, approve] of [['approve', true], ['reject', false]] as const) {
     app.post(`/api/admin/polls/:id/${action}`, admin, async (req, reply) => {
-      const ok = await approvePoll(ctx, z.string().uuid().parse((req.params as { id: string }).id), req.user!.id, approve);
+      let ok: boolean;
+      try {
+        ok = await approvePoll(ctx, z.string().uuid().parse((req.params as { id: string }).id), req.user!.id, approve);
+      } catch (e) {
+        if (e instanceof SeerrError) return reply.code(502).send({ error: 'seerr_failed' });
+        throw e;
+      }
       return ok ? { ok: true } : reply.code(409).send({ error: 'not_waiting_for_approval' });
     });
   }
@@ -87,10 +108,11 @@ export function pollRoutes(app: FastifyInstance, ctx: Ctx) {
     const avg = r.rows.length ? r.rows.reduce((a, x) => a + x.stars, 0) / r.rows.length : null;
     return { ratings: r.rows, average: avg };
   });
-  app.put('/api/items/:id/rating', pre, async (req) => {
+  app.put('/api/items/:id/rating', pre, async (req, reply) => {
     const itemId = id32.parse((req.params as { id: string }).id);
     const b = z.object({ stars: z.number().int().min(1).max(5), review: z.string().trim().max(280).optional() }).parse(req.body);
-    const item = await ctx.jf.item(req.user!, itemId);
+    const item = await itemOr(ctx, reply, req.user!, itemId);
+    if (!item) return reply;
     await ctx.db.query(
       `insert into ratings(user_id,item_id,item_name,stars,review) values ($1,$2,$3,$4,$5)
        on conflict (user_id,item_id) do update set stars=excluded.stars, review=excluded.review, created_at=now()`,
@@ -113,9 +135,10 @@ export function pollRoutes(app: FastifyInstance, ctx: Ctx) {
     const f = new Set(follows.rows.map((r) => r.series_id));
     return { items: up.map((e) => ({ ...e, followed: Boolean(e.seriesId && f.has(e.seriesId)) })) };
   });
-  app.post('/api/series/:id/follow', pre, async (req) => {
+  app.post('/api/series/:id/follow', pre, async (req, reply) => {
     const id = id32.parse((req.params as { id: string }).id);
-    const s = await ctx.jf.item(req.user!, id);
+    const s = await itemOr(ctx, reply, req.user!, id);
+    if (!s) return reply;
     await ctx.db.query('insert into series_follows(user_id,series_id,series_name) values ($1,$2,$3) on conflict do nothing', [req.user!.id, id, s.name]);
     return { ok: true };
   });
