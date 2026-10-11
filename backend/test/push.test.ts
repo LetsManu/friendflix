@@ -3,7 +3,7 @@ import webpush from 'web-push';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { notify } from '../src/notify.js';
 import { revokeSessions } from '../src/devices.js';
-import { endpointAllowed, sendWebPush } from '../src/push.js';
+import { endpointAllowed, pushEnabled, sendWebPush } from '../src/push.js';
 import { ADMIN, makeEnv, type TestEnv } from './helpers.js';
 
 type Sess = { cookies: Record<string, string>; csrf: string };
@@ -20,7 +20,7 @@ let a: Sess;
 let b: Sess;
 let aId: string;
 let bId: string;
-const sent: Array<{ url: string; status: number }> = [];
+const sent: Array<{ url: string; status: number; redirect?: string }> = [];
 const nextStatus = 201;
 const statusFor = new Map<string, number>();
 
@@ -41,9 +41,9 @@ beforeAll(async () => {
   env = await makeEnv({}, {
     ctxPatch: (c) => {
       c.cfg = { ...c.cfg, VAPID_PUBLIC_KEY: vapid.publicKey, VAPID_PRIVATE_KEY: vapid.privateKey };
-      c.fetchImpl = (async (url: string) => {
+      c.fetchImpl = (async (url: string, init?: RequestInit) => {
         const status = statusFor.get(String(url)) ?? nextStatus;
-        sent.push({ url: String(url), status });
+        sent.push({ url: String(url), status, redirect: init?.redirect });
         return new Response(null, { status });
       }) as unknown as typeof fetch;
     },
@@ -182,6 +182,54 @@ describe('web push', () => {
     expect(await count()).toBe(1);
     await revokeSessions(env.ctx, aId, dev);
     expect(await count()).toBe(0);
+  });
+
+  it('never follows redirects of the push service', async () => {
+    await sub(a, 'redir');
+    sent.length = 0;
+    await sendWebPush(env.ctx, { userId: aId, kind: 'k', title: 'T' });
+    expect(sent).toHaveLength(1);
+    expect(sent[0]!.redirect).toBe('error');
+    await env.pool.query('delete from push_subscriptions');
+  });
+
+  it('an invalid VAPID pair disables push (validated once) and never counts as a subscription failure', async () => {
+    await sub(a, 'badvapid');
+    const saved = env.ctx.cfg;
+    const warn = console.warn;
+    const warnings: string[] = [];
+    console.warn = (m: string) => { warnings.push(String(m)); };
+    env.ctx.cfg = { ...saved, VAPID_PUBLIC_KEY: 'not-a-key', VAPID_PRIVATE_KEY: 'also-not' };
+    try {
+      expect(pushEnabled(env.ctx.cfg)).toBe(false);
+      expect(pushEnabled(env.ctx.cfg)).toBe(false);
+      expect(warnings.filter((w) => w.includes('invalid VAPID'))).toHaveLength(1); // one warning, not one per call
+      expect((await call(b, 'GET', '/api/push/config')).json()).toEqual({ enabled: false });
+      sent.length = 0;
+      await sendWebPush(env.ctx, { userId: aId, kind: 'k', title: 'T' });
+      expect(sent).toHaveLength(0);
+      expect((await env.pool.query('select fail_count from push_subscriptions')).rows[0].fail_count).toBe(0);
+    } finally {
+      console.warn = warn;
+      env.ctx.cfg = saved;
+      await env.pool.query('delete from push_subscriptions');
+    }
+  });
+
+  it('a subscription whose request cannot be built is not counted as failed', async () => {
+    await sub(a, 'brokenkeys');
+    await env.pool.query("update push_subscriptions set p256dh='AAAA'");
+    const warn = console.warn;
+    console.warn = () => undefined;
+    try {
+      sent.length = 0;
+      await sendWebPush(env.ctx, { userId: aId, kind: 'k', title: 'T' });
+      expect(sent).toHaveLength(0);
+      expect((await env.pool.query('select fail_count from push_subscriptions')).rows[0].fail_count).toBe(0);
+    } finally {
+      console.warn = warn;
+      await env.pool.query('delete from push_subscriptions');
+    }
   });
 
   it('is disabled without VAPID keys', async () => {

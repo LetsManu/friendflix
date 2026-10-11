@@ -11,6 +11,7 @@
   import { loadList, loadPrefs } from '#lib/stores';
   import ItemModal from '#lib/ItemModal.svelte';
   import { startTvLink, type ToTv } from '#lib/remote';
+  import { disablePush } from '#lib/push';
   import { focusEl, focusFirst, isBackKey, isEditable, startSpatial } from '#lib/spatial';
 
   let me: Me | null = null;
@@ -41,7 +42,11 @@
     bell = !bell; menu = false;
     if (bell && unread) { await api('/api/notifications/read', { method: 'POST' }); setTimeout(loadNotes, 1500); }
   }
-  async function logout() { await api('/auth/logout', { method: 'POST' }); location.href = me?.tv ? '/tv' : '/auth/login'; }
+  async function logout() {
+    await Promise.race([disablePush().catch(() => undefined), new Promise((r) => setTimeout(r, 3000))]); // best effort: drop this device's push subscription before the session ends
+    await api('/auth/logout', { method: 'POST' });
+    location.href = me?.tv ? '/tv' : '/auth/login';
+  }
   async function surprise() {
     try { goto(`/item/${(await api('/api/library/random?type=Movie')).item.id}`); } catch { goto('/browse/movies'); }
   }

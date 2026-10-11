@@ -37,6 +37,13 @@ export async function registerDevice(ctx: Ctx, req: FastifyRequest, reply: Fasti
 export async function revokeSessions(ctx: Ctx, userId: string, deviceId?: string, exceptSid?: string): Promise<number> {
   let n = 0;
   const gone = new Set<string>();
+  // the session that stays logged in keeps its device's push subscriptions and cast tokens
+  let keepDevice: string | undefined;
+  if (exceptSid) {
+    const raw = await ctx.kv.get(`sess:${exceptSid}`);
+    const ks = raw ? (JSON.parse(raw) as { userId: string; deviceId?: string }) : null;
+    if (ks?.userId === userId) keepDevice = ks.deviceId;
+  }
   for (const k of await ctx.kv.keys('sess:')) {
     if (exceptSid && k === `sess:${exceptSid}`) continue;
     const raw = await ctx.kv.get(k);
@@ -49,7 +56,21 @@ export async function revokeSessions(ctx: Ctx, userId: string, deviceId?: string
     }
   }
   if (gone.size) dropRemotePeers(userId, gone);
-  await revokeCasts(ctx, userId, deviceId);
-  await deletePushSubscriptions(ctx, userId, deviceId);
+  if (!(deviceId && deviceId === keepDevice)) {
+    await revokeCasts(ctx, userId, deviceId, keepDevice);
+    await deletePushSubscriptions(ctx, userId, deviceId, keepDevice);
+  }
   return n;
+}
+
+/** True if a live session of the user (other than `exceptSid`) still belongs to this device. */
+export async function deviceHasSession(ctx: Ctx, userId: string, deviceId: string, exceptSid?: string): Promise<boolean> {
+  for (const k of await ctx.kv.keys('sess:')) {
+    if (exceptSid && k === `sess:${exceptSid}`) continue;
+    const raw = await ctx.kv.get(k);
+    if (!raw) continue;
+    const s = JSON.parse(raw) as { userId: string; deviceId?: string };
+    if (s.userId === userId && s.deviceId === deviceId) return true;
+  }
+  return false;
 }

@@ -4,7 +4,27 @@ import type { Notice } from './notify.js';
 
 type PushCtx = Pick<Ctx, 'db' | 'cfg' | 'fetchImpl'>;
 
-export const pushEnabled = (cfg: Pick<Ctx['cfg'], 'VAPID_PUBLIC_KEY' | 'VAPID_PRIVATE_KEY'>) => Boolean(cfg.VAPID_PUBLIC_KEY && cfg.VAPID_PRIVATE_KEY);
+type VapidCfg = Pick<Ctx['cfg'], 'VAPID_PUBLIC_KEY' | 'VAPID_PRIVATE_KEY' | 'VAPID_SUBJECT' | 'PUBLIC_URL'>;
+const vapidChecked = new Map<string, boolean>();
+
+/** Both keys set AND accepted by web-push (validated once per distinct config; an invalid pair logs one warning and disables push). */
+export function pushEnabled(cfg: VapidCfg): boolean {
+  if (!cfg.VAPID_PUBLIC_KEY || !cfg.VAPID_PRIVATE_KEY) return false;
+  const subject = cfg.VAPID_SUBJECT ?? cfg.PUBLIC_URL;
+  const key = `${subject}\n${cfg.VAPID_PUBLIC_KEY}\n${cfg.VAPID_PRIVATE_KEY}`;
+  let ok = vapidChecked.get(key);
+  if (ok === undefined) {
+    try {
+      webpush.setVapidDetails(subject, cfg.VAPID_PUBLIC_KEY, cfg.VAPID_PRIVATE_KEY);
+      ok = true;
+    } catch (e) {
+      ok = false;
+      console.warn(`web push disabled: invalid VAPID configuration (${e instanceof Error ? e.message : 'error'})`);
+    }
+    vapidChecked.set(key, ok);
+  }
+  return ok;
+}
 
 /** Push services we are willing to POST to (SSRF guard): https only, no IP literal, no port. */
 export function endpointAllowed(endpoint: string): boolean {
@@ -43,9 +63,17 @@ export async function sendWebPush(ctx: PushCtx, n: Notice, only?: { endpoint: st
 }
 
 async function deliver(ctx: PushCtx, s: SubRow, payload: string, vapidDetails: { subject: string; publicKey: string; privateKey: string }, urgency: 'high' | 'normal'): Promise<number | null> {
+  let d: ReturnType<typeof webpush.generateRequestDetails>;
   try {
-    const d = webpush.generateRequestDetails({ endpoint: s.endpoint, keys: { p256dh: s.p256dh, auth: s.auth } }, payload, { vapidDetails, TTL: 86400, urgency });
-    const res = await ctx.fetchImpl(d.endpoint, { method: d.method, headers: d.headers as Record<string, string>, body: d.body as unknown as BodyInit, signal: AbortSignal.timeout(8000) });
+    d = webpush.generateRequestDetails({ endpoint: s.endpoint, keys: { p256dh: s.p256dh, auth: s.auth } }, payload, { vapidDetails, TTL: 86400, urgency });
+  } catch (e) {
+    // our own side (bad keys / config) failed before any request: not the subscription's fault, never counts towards its removal
+    console.warn(`web push: could not build request (${e instanceof Error ? e.message : 'error'})`);
+    return null;
+  }
+  try {
+    // redirect: 'error' - a push service never legitimately redirects, and the endpoint allowlist must not be bypassable via 3xx
+    const res = await ctx.fetchImpl(d.endpoint, { method: d.method, headers: d.headers as Record<string, string>, body: d.body as unknown as BodyInit, signal: AbortSignal.timeout(8000), redirect: 'error' });
     if (res.status >= 200 && res.status < 300) {
       await ctx.db.query('update push_subscriptions set last_ok_at = now(), fail_count = 0 where id = $1', [s.id]);
     } else if (res.status === 404 || res.status === 410) {
@@ -67,7 +95,9 @@ async function fail(ctx: PushCtx, id: string) {
   await ctx.db.query("delete from push_subscriptions where id = $1 and fail_count >= 10 and coalesce(last_ok_at, created_at) < now() - interval '7 days'", [id]);
 }
 
-export async function deletePushSubscriptions(ctx: Pick<Ctx, 'db'>, userId: string, deviceId?: string): Promise<void> {
+/** Deletes a user's subscriptions: all, only one device, or all except `exceptDeviceId` (the device of a session that stays logged in). */
+export async function deletePushSubscriptions(ctx: Pick<Ctx, 'db'>, userId: string, deviceId?: string, exceptDeviceId?: string): Promise<void> {
   if (deviceId) await ctx.db.query('delete from push_subscriptions where user_id = $1 and device_id = $2', [userId, deviceId]);
+  else if (exceptDeviceId) await ctx.db.query('delete from push_subscriptions where user_id = $1 and device_id is distinct from $2', [userId, exceptDeviceId]);
   else await ctx.db.query('delete from push_subscriptions where user_id = $1', [userId]);
 }

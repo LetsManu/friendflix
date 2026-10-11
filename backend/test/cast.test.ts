@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { hashToken } from '../src/cast.js';
+import { CAST_IDLE_TTL, castKeyTtl, hashToken } from '../src/cast.js';
 import { revokeSessions } from '../src/devices.js';
-import { setLive } from '../src/live.js';
+import { countLive, getLive, setLive } from '../src/live.js';
 import { cfg, makeEnv, type TestEnv } from './helpers.js';
 
 const ID = 'a'.repeat(32);
@@ -31,7 +31,11 @@ let n = 0;
 // a fresh client address per request keeps the 10/min route limit out of the way (it has its own test)
 const call = (s: Sess, method: string, url: string, body?: unknown) =>
   env.app.inject({ method: method as 'GET', url, cookies: s.cookies, headers: { 'x-csrf-token': s.csrf, 'x-forwarded-for': `10.1.${Math.floor(++n / 250)}.${n % 250}` }, payload: body as object });
-const authz = (body: unknown, headers: Record<string, string> = H) => env.app.inject({ method: 'POST', url: '/internal/authz', headers, payload: body as object });
+// every cast authz carries the gateway's client key; default = one fixed address
+const authz = (body: unknown, headers: Record<string, string> = H) => {
+  const b = body as Record<string, unknown>;
+  return env.app.inject({ method: 'POST', url: '/internal/authz', headers, payload: (b.ct !== undefined && !('client' in b) ? { ...b, client: '198.51.100.1' } : b) as object });
+};
 const create = async (s: Sess = admin, body: Record<string, unknown> = {}) => {
   const r = await call(s, 'POST', '/api/cast/session', { itemId: ID, ...body });
   return { r, j: r.json(), ct: (/\/media\/c\/([\w-]{43})\//.exec(r.json().contentUrl ?? '')?.[1]) as string };
@@ -52,7 +56,10 @@ describe('cast session', () => {
     expect(j.contentUrl).toContain('MaxStreamingBitrate=20000000');
     expect(j.contentUrl).not.toMatch(/api_key|ApiKey/i);
     expect(j).toMatchObject({ contentType: 'application/x-mpegURL', hlsSegmentFormat: 'ts', startTime: 120, mediaSourceId: MS, playSessionId: 'ps-12345678', title: 'Film' });
-    expect(j.imageUrl).toBe(`https://portal.example.com/media/c/${ct}/Items/${ID}/Images/Primary?maxWidth=600`);
+    // the poster carries its OWN image-only token, never the media token
+    const imgCt = /\/media\/c\/([\w-]{43})\/Items\//.exec(j.imageUrl)![1]!;
+    expect(imgCt).not.toBe(ct);
+    expect(j.imageUrl).toBe(`https://portal.example.com/media/c/${imgCt}/Items/${ID}/Images/Primary?maxWidth=600`);
     expect(j.subtitles[0].url).toBe(`https://portal.example.com/media/c/${ct}/Videos/${ID}/${MS}/Subtitles/2/0/Stream.vtt`);
     expect(r.headers['cache-control']).toBe('no-store');
     // Jellyfin got the cast transcoding profile: no direct play, aac only, h264 level <= 4.1
@@ -70,6 +77,9 @@ describe('cast session', () => {
     expect(keys.some((k) => k.includes(ct))).toBe(false);
     for (const k of keys) expect(await env.kv.get(k)).not.toContain(ct);
     expect(keys).toContain(`cast:${hashToken(ct)}`);
+    // pins live in Redis as well, keyed by hash
+    await authz({ ct });
+    expect((await env.kv.keys('castpin:')).some((k) => k.includes(ct))).toBe(false);
   });
 
   it('is refused for an item the profile cannot see', async () => {
@@ -203,6 +213,159 @@ describe('POST /internal/authz with ct', () => {
     await revokeSessions(env.ctx, me, dev);
     expect((await authz({ ct })).statusCode).toBe(401);
     expect(await env.kv.keys(`castidx:${me}:`)).toEqual([]);
+    admin = await env.login();
+  });
+});
+
+describe('cast token hardening', () => {
+  it('pins the token to the first client: first ok, second 401, first still ok', async () => {
+    const { ct } = await create();
+    expect((await authz({ ct, client: '203.0.113.1' })).statusCode).toBe(200);
+    expect((await authz({ ct, client: '203.0.113.2' })).statusCode).toBe(401);
+    expect((await authz({ ct, client: '203.0.113.1' })).statusCode).toBe(200);
+    expect((await authz({ ct, client: '203.0.113.2' })).statusCode).toBe(401);
+  });
+
+  it('does not pin on a failed authz (revoked device) and needs a client in the body', async () => {
+    const { ct } = await create();
+    await env.pool.query('update devices set approved=false');
+    try {
+      expect((await authz({ ct, client: '203.0.113.5' })).statusCode).toBe(401);
+    } finally {
+      await env.pool.query('update devices set approved=true');
+    }
+    await new Promise((r) => setTimeout(r, 2100)); // negative memo (2 s)
+    expect((await authz({ ct, client: '203.0.113.6' })).statusCode).toBe(200); // first SUCCESSFUL client pins
+    expect((await authz({ ct, client: '203.0.113.5' })).statusCode).toBe(401);
+    expect((await env.app.inject({ method: 'POST', url: '/internal/authz', headers: H, payload: { ct } })).statusCode).toBe(400);
+  });
+
+  it('simultaneous first uses: exactly one client wins the pin', async () => {
+    const { ct } = await create();
+    const rs = await Promise.all(['203.0.113.10', '203.0.113.11', '203.0.113.12'].map((client) => authz({ ct, client })));
+    expect(rs.filter((r) => r.statusCode === 200)).toHaveLength(1);
+  });
+
+  it('sliding TTL: idle window capped by the absolute expiry; seen is refreshed (throttled)', async () => {
+    const now = Date.now();
+    expect(castKeyTtl(now + 6 * 3600_000, now)).toBe(CAST_IDLE_TTL);
+    expect(castKeyTtl(now + 600_000, now)).toBe(600);
+    expect(castKeyTtl(now - 1, now)).toBe(0);
+    const { ct } = await create();
+    const k = `cast:${hashToken(ct)}`;
+    const rec0 = JSON.parse((await env.kv.get(k))!);
+    expect(rec0.seen).toBeGreaterThan(0);
+    expect((await authz({ ct })).statusCode).toBe(200);
+    expect(JSON.parse((await env.kv.get(k))!).seen).toBe(rec0.seen); // within the throttle window: no write
+    await env.kv.set(k, JSON.stringify({ ...rec0, seen: Date.now() - 120_000 }), 60);
+    await new Promise((r) => setTimeout(r, 5100)); // 5 s memo
+    expect((await authz({ ct })).statusCode).toBe(200);
+    const rec1 = JSON.parse((await env.kv.get(k))!);
+    expect(rec1.seen).toBeGreaterThan(Date.now() - 5000);
+    expect(rec1.exp).toBe(rec0.exp); // the absolute cap never moves
+  }, 15_000);
+
+  it('image token: image-only kind, same item, no live record, revoked with the media token; media authz reports maxHeight', async () => {
+    const { ct, j } = await create();
+    const imgCt = /\/media\/c\/([\w-]{43})\//.exec(j.imageUrl)![1]!;
+    const m = (await authz({ ct })).json();
+    expect(m).toMatchObject({ kind: 'media', maxHeight: 1080 });
+    const i = (await authz({ ct: imgCt })).json();
+    expect(i).toMatchObject({ kind: 'img', scope: { itemId: ID } });
+    expect((await call(admin, 'DELETE', `/api/cast/session/${j.castId}`)).statusCode).toBe(200);
+    expect((await authz({ ct: imgCt })).statusCode).toBe(401);
+    expect((await authz({ ct })).statusCode).toBe(401);
+  });
+
+  it('an image token alone does not count as a live stream', async () => {
+    const me = (await call(admin, 'GET', '/api/me')).json().id as string;
+    await revokeSessions(env.ctx, me);
+    admin = await env.login();
+    const { j } = await create();
+    const imgCt = /\/media\/c\/([\w-]{43})\//.exec(j.imageUrl)![1]!;
+    await env.kv.del(`play:${me}:ps-12345678`);
+    expect((await authz({ ct: imgCt })).statusCode).toBe(200);
+    expect(await getLive(env.ctx, me, 'ps-12345678')).toBeNull();
+  });
+
+  it('a cast with no sender reports still counts as live (maxStreams), and keeps an existing live record', async () => {
+    const me = (await call(admin, 'GET', '/api/me')).json().id as string;
+    const { ct } = await create();
+    for (const k of await env.kv.keys(`play:${me}:`)) await env.kv.del(k);
+    expect(await countLive(env.ctx, me)).toBe(0);
+    await env.kv.set(`cast:${hashToken(ct)}`, JSON.stringify({ ...JSON.parse((await env.kv.get(`cast:${hashToken(ct)}`))!), seen: 0 }), 600);
+    expect((await authz({ ct })).statusCode).toBe(200);
+    expect(await countLive(env.ctx, me)).toBe(1);
+    expect(await getLive(env.ctx, me, 'ps-12345678')).toMatchObject({ itemId: ID, title: 'Film', playSessionId: 'ps-12345678', source: 'portal' });
+    // a sender report is kept, only refreshed
+    await setLive(env.ctx, { userId: me, userName: 'a', itemId: ID, title: 'Film', positionTicks: 5, isPaused: true, playSessionId: 'ps-12345678', updatedAt: 1, source: 'portal' });
+    await env.kv.set(`cast:${hashToken(ct)}`, JSON.stringify({ ...JSON.parse((await env.kv.get(`cast:${hashToken(ct)}`))!), seen: 0 }), 600);
+    await new Promise((r) => setTimeout(r, 5100));
+    expect((await authz({ ct })).statusCode).toBe(200);
+    const l = (await getLive(env.ctx, me, 'ps-12345678'))!;
+    expect(l.positionTicks).toBe(5);
+    expect(l.updatedAt).toBeGreaterThan(1);
+  }, 15_000);
+});
+
+describe('logout / revokeSessions device cleanup', () => {
+  const meId = async () => (await call(admin, 'GET', '/api/me')).json().id as string;
+  const subFor = async (uid: string, dev: string, id: string) => {
+    const prof = (await env.pool.query('select id from profiles where user_id=$1 and is_owner', [uid])).rows[0].id;
+    await env.pool.query("insert into devices(user_id, device_id, label, approved) values ($1,$2,'x',true) on conflict do nothing", [uid, dev]);
+    await env.pool.query("insert into push_subscriptions(user_id, device_id, profile_id, endpoint, p256dh, auth) values ($1,$2,$3,$4,'p','a')", [uid, dev, prof, `https://fcm.googleapis.com/fcm/send/${id}`]);
+  };
+  const subs = async (uid: string) => Number((await env.pool.query('select count(*) from push_subscriptions where user_id=$1', [uid])).rows[0].count);
+
+  it('logout deletes this device\'s push subscriptions and cast tokens when no other session uses the device', async () => {
+    const me = await meId();
+    await revokeSessions(env.ctx, me);
+    await env.pool.query('delete from push_subscriptions');
+    const s = await env.login();
+    admin = s;
+    const dev = (await env.pool.query<{ device_id: string }>('select device_id from devices where user_id=$1', [me])).rows[0]!.device_id;
+    await subFor(me, dev, 'a1');
+    await subFor(me, 'other-device', 'a2');
+    const { ct } = await create();
+    expect((await authz({ ct })).statusCode).toBe(200);
+    expect((await call(s, 'POST', '/auth/logout')).statusCode).toBe(200);
+    expect(await subs(me)).toBe(1); // only the other device's subscription is left
+    expect((await authz({ ct })).statusCode).toBe(401);
+    admin = await env.login();
+  });
+
+  it('logout keeps them while another live session still uses the same device', async () => {
+    const me = await meId();
+    await env.pool.query('delete from push_subscriptions');
+    const dev = (await env.pool.query<{ device_id: string }>('select device_id from devices where user_id=$1', [me])).rows[0]!.device_id;
+    await subFor(me, dev, 'b1');
+    const second = await env.login(); // same browser (device cookie), second session
+    const { ct } = await create();
+    expect((await call(second, 'POST', '/auth/logout')).statusCode).toBe(200);
+    expect(await subs(me)).toBe(1);
+    expect((await authz({ ct })).statusCode).toBe(200);
+  });
+
+  it('revokeSessions(exceptSid) spares the current session\'s device (push + cast) but clears other devices', async () => {
+    const me = await meId();
+    await env.pool.query('delete from push_subscriptions');
+    const dev = (await env.pool.query<{ device_id: string }>('select device_id from devices where user_id=$1', [me])).rows[0]!.device_id;
+    await subFor(me, dev, 'c1');
+    await subFor(me, 'other-device', 'c2');
+    const { ct } = await create();
+    expect((await authz({ ct })).statusCode).toBe(200);
+    // a cast token that belongs to another device
+    await env.kv.set(`castidx:${me}:${'f'.repeat(32)}`, JSON.stringify({ hash: 'f'.repeat(64), createdAt: 1, deviceId: 'other-device' }), 600);
+    await env.kv.set(`cast:${'f'.repeat(64)}`, '{}', 600);
+    await revokeSessions(env.ctx, me, undefined, admin.cookies.ff_sid);
+    expect(await subs(me)).toBe(1);
+    expect((await env.pool.query('select device_id from push_subscriptions where user_id=$1', [me])).rows[0].device_id).toBe(dev);
+    expect(await env.kv.get(`cast:${'f'.repeat(64)}`)).toBeNull();
+    expect((await authz({ ct })).statusCode).toBe(200);
+    // without exceptSid everything goes
+    await revokeSessions(env.ctx, me);
+    expect(await subs(me)).toBe(0);
+    expect((await authz({ ct })).statusCode).toBe(401);
     admin = await env.login();
   });
 });

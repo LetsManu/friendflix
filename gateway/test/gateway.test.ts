@@ -9,9 +9,14 @@ let jf: Server, be: Server, gw: Server;
 let gwPort: number;
 const seen: Array<{ url: string; auth?: string; range?: string; acceptEncoding?: string; cookie?: string }> = [];
 const authzBodies: string[] = [];
+const authzCalls: Array<{ ct: string; client?: string }> = [];
 const MS = 'b'.repeat(32);
 const CT = 'A'.repeat(43); // valid cast token of the fake backend
 const CT_BAD = 'B'.repeat(43);
+const CT_IMG = 'I'.repeat(43); // poster-only token
+const CT_PIN = 'P'.repeat(43); // valid only for client PIN_CLIENT (the backend pins tokens to the first client)
+const CT_LOW = 'L'.repeat(43); // role limited to 720p
+const PIN_CLIENT = '198.51.100.50';
 const castBase = `/media/c/${CT}`;
 
 const listen = (s: Server) => new Promise<number>((r) => s.listen(0, '127.0.0.1', () => r((s.address() as AddressInfo).port)));
@@ -20,6 +25,11 @@ beforeAll(async () => {
   jf = createServer((req, res) => {
     seen.push({ url: req.url!, auth: req.headers.authorization, range: req.headers.range, acceptEncoding: req.headers['accept-encoding'], cookie: req.headers.cookie });
     if (req.url!.includes('/main.m3u8')) {
+      if (req.url!.includes('big=1')) {
+        // ~3 MB playlist (far above the old 1 MB cap)
+        const seg = (i: number) => `#EXTINF:3,\nhls1/main/${i}.ts?MediaSourceId=${MS}&PlaySessionId=ps-1\n`;
+        return void res.writeHead(200, { 'content-type': 'application/vnd.apple.mpegurl' }).end('#EXTM3U\n' + Array.from({ length: 40_000 }, (_, i) => seg(i)).join(''));
+      }
       const body = req.url!.includes('evil=1')
         ? '#EXTM3U\nhttps://evil.example/seg.ts\n'
         : req.url!.includes('evil=2')
@@ -46,10 +56,12 @@ beforeAll(async () => {
       const j = JSON.parse(b);
       authzBodies.push(b);
       if (j.ct !== undefined) {
+        authzCalls.push({ ct: j.ct, client: j.client });
         if (j.ct === 'E'.repeat(43)) return void res.writeHead(500).end();
-        if (j.ct !== CT) return void res.writeHead(401).end();
+        if (![CT, CT_IMG, CT_PIN, CT_LOW].includes(j.ct)) return void res.writeHead(401).end();
+        if (j.ct === CT_PIN && j.client !== PIN_CLIENT) return void res.writeHead(401).end();
         res.writeHead(200, { 'content-type': 'application/json' });
-        return void res.end(JSON.stringify({ userId: 'u1', token: 'CASTJF', deviceId: 'ff-u1', maxBitrate: 5_000_000, scope: { itemId: ID, mediaSourceId: MS, playSessionId: 'ps-1' } }));
+        return void res.end(JSON.stringify({ userId: 'u1', token: 'CASTJF', deviceId: 'ff-u1', maxBitrate: 5_000_000, maxHeight: j.ct === CT_LOW ? 720 : 1080, kind: j.ct === CT_IMG ? 'img' : 'media', scope: { itemId: ID, mediaSourceId: MS, playSessionId: 'ps-1' } }));
       }
       const ok = j.sid === 'goodsid';
       if (!ok) return void res.writeHead(401).end();
@@ -152,13 +164,25 @@ describe('cast allowlist vectors', () => {
 });
 
 describe('sanitizePlaylist', () => {
-  it('strips token params and rejects absolute URIs', () => {
-    expect(sanitizePlaylist('#EXTM3U\nhls1/main/0.ts?a=1&api_key=X&ApiKey=Y\n')).toBe('#EXTM3U\nhls1/main/0.ts?a=1\n');
-    expect(sanitizePlaylist('#EXT-X-MAP:URI="i.mp4?api_key=X"')).toBe('#EXT-X-MAP:URI="i.mp4"');
-    expect(sanitizePlaylist('http://x/y.ts')).toBeNull();
-    expect(sanitizePlaylist('//x/y.ts')).toBeNull();
-    expect(sanitizePlaylist('/Videos/a/b.ts')).toBeNull();
-    expect(sanitizePlaylist('#EXT-X-MAP:URI="https://x/i.mp4"')).toBeNull();
+  const T = 'A'.repeat(43);
+  const P = `/media/c/${T}/Videos/${ID}/main.m3u8`;
+  const sp = (t: string) => sanitizePlaylist(t, P);
+  it('strips token params and keeps URIs that stay under /media/c/<token>/', () => {
+    expect(sp('#EXTM3U\nhls1/main/0.ts?a=1&api_key=X&ApiKey=Y\n')).toBe('#EXTM3U\nhls1/main/0.ts?a=1\n');
+    expect(sp('#EXT-X-MAP:URI="i.mp4?api_key=X"')).toBe('#EXT-X-MAP:URI="i.mp4"');
+    expect(sp("#EXT-X-KEY:METHOD=AES-128,URI = 'k.key?api_key=X',IV=0x1")).toBe("#EXT-X-KEY:METHOD=AES-128,URI = 'k.key',IV=0x1");
+    expect(sp('../other/seg.ts')).toBe('../other/seg.ts');
+    expect(sp(`/media/c/${T}/Videos/${ID}/hls1/main/0.ts`)).toBeTruthy(); // absolute path, but inside the token prefix
+  });
+  it('rejects absolute, protocol-relative, host-less-path and backslash URIs', () => {
+    for (const bad of [
+      'http://x/y.ts', '//x/y.ts', '/Videos/a/b.ts', 'https://evil.example/seg.ts', '\\\\evil', '\\evil/seg.ts', 'a\\b.ts',
+      '#EXT-X-MAP:URI="https://x/i.mp4"', '#EXT-X-MAP:URI = "//evil"', "#EXT-X-MAP:URI='https://evil'", '#EXT-X-KEY:METHOD=AES-128,URI=//evil/k', '#EXT-X-MAP:URI="\\\\evil"',
+      '/media/c/BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB/x.ts', '../../../../x.ts', 'data:text/plain,x', 'javascript:alert(1)',
+    ]) expect(sp(bad), bad).toBeNull();
+  });
+  it('rejects a request path that is not a cast path', () => {
+    expect(sanitizePlaylist('x.ts', '/media/Videos/a/main.m3u8')).toBeNull();
   });
 });
 
@@ -210,6 +234,52 @@ describe('cast route /media/c/<token>/', () => {
     expect((await cget(`/Videos/${ID}/${MS}/Subtitles/1/0/Stream.vtt`)).status).toBe(200);
     expect((await cget(`/Items/${ID}/Images/Primary?maxWidth=600`)).status).toBe(200);
   });
+  it('drops LiveStreamId/DeviceId and clamps resolution params to the token cap (720p token)', async () => {
+    seen.length = 0;
+    const low = `/media/c/${CT_LOW}`;
+    await (await cget(`/Videos/${ID}/master.m3u8?MaxHeight=2160&maxwidth=3840&Height=99999&Width=abc&DeviceId=x&livestreamid=y&Keep=1&MediaSourceId=${MS}`, {}, low)).arrayBuffer();
+    const u = new URL(seen[0]!.url, 'http://x').searchParams;
+    expect(u.get('MaxHeight')).toBe('720');
+    expect(u.get('maxwidth')).toBe('1280');
+    expect(u.get('Height')).toBe('720');
+    expect(u.get('Width')).toBe('1280');
+    expect(u.has('DeviceId')).toBe(false);
+    expect(u.has('livestreamid')).toBe(false);
+    expect(u.get('Keep')).toBe('1');
+    seen.length = 0;
+    await (await cget(`/Videos/${ID}/master.m3u8?MaxHeight=480`)).arrayBuffer(); // below the cap stays; default cap 1080
+    expect(new URL(seen[0]!.url, 'http://x').searchParams.get('MaxHeight')).toBe('480');
+  });
+  it('sends the client key with the authz call and caches per client', async () => {
+    authzCalls.length = 0;
+    await (await cget(`/Videos/${ID}/master.m3u8`, { 'x-real-ip': '192.0.2.77' })).arrayBuffer();
+    expect(authzCalls.at(-1)!.client).toBe('192.0.2.77');
+    await (await cget(`/Videos/${ID}/master.m3u8`, { 'x-forwarded-for': '1.2.3.4, 192.0.2.78' })).arrayBuffer();
+    expect(authzCalls.at(-1)!.client).toBe('192.0.2.78');
+  });
+  it('a pinned token only works for its client (backend answers 401 for others; no cross-client cache)', async () => {
+    const pin = `/media/c/${CT_PIN}`;
+    expect((await cget(`/Videos/${ID}/master.m3u8`, { 'x-real-ip': PIN_CLIENT }, pin)).status).toBe(200);
+    expect((await cget(`/Videos/${ID}/master.m3u8`, { 'x-real-ip': '192.0.2.99' }, pin)).status).toBe(401);
+    expect((await cget(`/Videos/${ID}/master.m3u8`, { 'x-real-ip': PIN_CLIENT }, pin)).status).toBe(200);
+  });
+  it('image token: images only (media paths 403), and a media token may fetch images too', async () => {
+    const img = `/media/c/${CT_IMG}`;
+    expect((await cget(`/Items/${ID}/Images/Primary?maxWidth=600`, {}, img)).status).toBe(200);
+    expect((await cget(`/Items/${ID}/Images/Backdrop`, {}, img)).status).toBe(200);
+    expect((await cget(`/Videos/${ID}/master.m3u8`, {}, img)).status).toBe(403);
+    expect((await cget(`/Videos/${ID}/hls1/main/0.ts`, {}, img)).status).toBe(403);
+    expect((await cget(`/Videos/${ID}/${MS}/Subtitles/1/0/Stream.vtt`, {}, img)).status).toBe(403);
+    expect((await cget(`/Items/${'c'.repeat(32)}/Images/Primary`, {}, img)).status).toBe(403); // other item
+    expect((await cget(`/Items/${ID}/Images/Primary`)).status).toBe(200);
+  });
+  it('passes a large (3 MB) playlist', async () => {
+    const r = await cget(`/Videos/${ID}/main.m3u8?big=1&MediaSourceId=${MS}`);
+    expect(r.status).toBe(200);
+    const t = await r.text();
+    expect(t.length).toBeGreaterThan(2_000_000);
+    expect(t).toContain('hls1/main/39999.ts');
+  });
   it('blocks /stream, Trickplay and other non-cast paths', async () => {
     expect((await cget(`/Videos/${ID}/stream?static=true`)).status).toBe(403);
     expect((await cget(`/Videos/${ID}/Trickplay/320/0.jpg`)).status).toBe(403);
@@ -255,12 +325,18 @@ describe('cast route /media/c/<token>/', () => {
 });
 
 describe('cast failed-auth rate limit', () => {
-  it('blocks a client address after >30 failures/min with 429 (even for a valid token)', async () => {
+  const bad = (i: number) => `/media/c/Q${String(i).padStart(42, '0')}`;
+  it('one revoked token retried 100x does not trigger 429', async () => {
+    const h = { 'x-real-ip': '198.51.100.20' };
+    for (let i = 0; i < 100; i++) expect((await cget(`/Videos/${ID}/master.m3u8`, h, `/media/c/${CT_BAD}`)).status).toBe(401);
+    expect((await cget(`/Videos/${ID}/master.m3u8`, h)).status).toBe(200); // the client is not blocked
+  });
+  it('blocks a client address after >30 DISTINCT failing tokens/min with 429 (even for a valid token)', async () => {
     const h = { 'x-real-ip': '198.51.100.7' };
-    const bad = `/media/c/${CT_BAD}`;
-    let last = 0;
-    for (let i = 0; i < 32; i++) last = (await cget(`/Videos/${ID}/master.m3u8`, h, bad)).status;
-    expect(last).toBe(429);
+    const codes: number[] = [];
+    for (let i = 0; i < 31; i++) codes.push((await cget(`/Videos/${ID}/master.m3u8`, h, bad(i))).status);
+    expect(codes.slice(0, 30).every((c) => c === 401)).toBe(true);
+    expect(codes[30]).toBe(401); // the 31st distinct failure trips the block
     const r = await cget(`/Videos/${ID}/master.m3u8`, h);
     expect(r.status).toBe(429);
     expect(r.headers.get('retry-after')).toBe('300');

@@ -450,7 +450,7 @@
 <div class="stage {subClasses($prefs.subtitleStyle)}" class:idle={!showUi} style="--inset:{inset}px" bind:this={stage} on:mousemove={wake} on:click={onSurfaceClick} on:keydown={() => {}} role="presentation">
   <!-- svelte-ignore a11y_media_has_caption -->
   <video bind:this={video} playsinline crossorigin="use-credentials"
-    on:play={onPlay} on:pause={() => { paused = true; send('progress'); }} on:seeked={() => started && send('progress')}
+    on:play={onPlay} on:pause={() => { paused = true; if (!castBusy && !casting && !stopped) send('progress'); }} on:seeked={() => started && send('progress')}
     on:ended={() => { stopped = true; paused = true; send('stop'); }}
     on:timeupdate={syncTime} on:progress={syncTime} on:loadedmetadata={syncTime}
     on:waiting={() => (waiting = true)} on:playing={() => (waiting = false)} on:canplay={() => { waiting = false; if (wantAutoplay) { wantAutoplay = false; playSafe(); } }}

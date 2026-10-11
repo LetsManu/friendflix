@@ -6,6 +6,8 @@ export interface KV {
   set(key: string, value: string, ttlSeconds: number): Promise<void>;
   /** Overwrites only if the key still exists (refreshing a loaded session must not resurrect a revoked one). True if written. */
   replace(key: string, value: string, ttlSeconds: number): Promise<boolean>;
+  /** Atomic set-if-absent (SET NX): true if this caller wrote the value. */
+  setnx(key: string, value: string, ttlSeconds: number): Promise<boolean>;
   /** Atomic get-and-delete: only one concurrent caller gets the value. */
   take(key: string): Promise<string | null>;
   del(key: string): Promise<void>;
@@ -26,6 +28,9 @@ export class RedisKV implements KV {
   }
   async replace(key: string, value: string, ttl: number) {
     return (await this.redis.set(key, value, 'EX', ttl, 'XX')) === 'OK';
+  }
+  async setnx(key: string, value: string, ttl: number) {
+    return (await this.redis.set(key, value, 'EX', ttl, 'NX')) === 'OK';
   }
   take(key: string) {
     return this.redis.getdel(key);
@@ -72,6 +77,11 @@ export class MemoryKV implements KV {
   }
   async replace(key: string, value: string, ttl: number) {
     if (this.live(key) === null) return false;
+    this.m.set(key, { v: value, exp: Date.now() + ttl * 1000 });
+    return true;
+  }
+  async setnx(key: string, value: string, ttl: number) {
+    if (this.live(key) !== null) return false;
     this.m.set(key, { v: value, exp: Date.now() + ttl * 1000 });
     return true;
   }
