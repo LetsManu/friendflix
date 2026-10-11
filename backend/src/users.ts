@@ -57,6 +57,7 @@ export async function provisionUser(ctx: Ctx, claims: OidcClaims, role: string):
        values ($1,$2,$3,$4,$5,$6,$7,$8) returning *`,
       [id, claims.sub, claims.email ?? null, claims.name ?? jfName, role, jf!.Id, jfName, encrypt(ctx.encKey, password)],
     );
+    await ctx.db.query('insert into profiles(id, user_id, name, is_owner) values ($1,$1,$2,true) on conflict do nothing', [id, r.rows[0]!.name.slice(0, 20) || 'Profil']);
     await audit(ctx, id, 'user.provisioned', id, { role, jellyfin: jfName });
     return r.rows[0]!;
   } catch (e) {

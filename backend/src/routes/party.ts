@@ -31,7 +31,7 @@ export async function partyRoutes(app: FastifyInstance, ctx: Ctx) {
     }
     let item;
     try {
-      item = await ctx.jf.item(req.user!, b.itemId); // also proves the creator may access it
+      item = await ctx.jf.item(req.jfUser!, b.itemId); // also proves the creator may access it
     } catch {
       return reply.code(404).send({ error: 'item_not_found' });
     }

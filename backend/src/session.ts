@@ -2,7 +2,7 @@ import { randomBytes } from 'node:crypto';
 import type { FastifyReply, FastifyRequest } from 'fastify';
 import type { Ctx } from './ctx.js';
 import { getUserById } from './users.js';
-import type { UserRow } from './types.js';
+import type { JfUser, ProfileRow, UserRow } from './types.js';
 
 export interface Session {
   userId: string;
@@ -16,6 +16,8 @@ export interface Session {
   /** absolute lifetime / idle timeout in seconds; defaults come from the config (TV sessions are longer) */
   ttl?: number;
   idle?: number;
+  /** active profile of the account (absent on older sessions = owner profile) */
+  profileId?: string;
 }
 
 export const COOKIE = 'ff_sid';
@@ -24,6 +26,10 @@ export const rand = () => randomBytes(32).toString('base64url');
 declare module 'fastify' {
   interface FastifyRequest {
     user?: UserRow;
+    /** active profile (watchlist/thumbs/bookmarks/viewing prefs are per profile) */
+    profile?: ProfileRow;
+    /** the Jellyfin identity to act as: the account's own row for the owner profile, else the profile's hidden Jellyfin user */
+    jfUser?: JfUser;
     session?: Session;
     sid?: string;
   }
@@ -73,6 +79,15 @@ export async function authenticate(ctx: Ctx, req: FastifyRequest): Promise<boole
   req.sid = sid;
   req.session = s;
   req.user = user;
+  // Phase 0: always the owner profile (id == account id); created lazily if the row is missing.
+  const prof = await ctx.db.query<ProfileRow>(
+    `with ins as (
+       insert into profiles(id, user_id, name, is_owner) values ($1, $1, left($2, 20), true) on conflict do nothing returning *
+     ) select * from profiles where id = $1 union all select * from ins limit 1`,
+    [user.id, user.name],
+  );
+  req.profile = prof.rows[0]!;
+  req.jfUser = user;
   await touch(ctx, sid, s);
   return true;
 }
