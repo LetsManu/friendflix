@@ -4,6 +4,7 @@ import { audit } from '../audit.js';
 import type { Ctx } from '../ctx.js';
 import { revokeSessions } from '../devices.js';
 import { createInvite } from '../invites.js';
+import { previews } from '../previews.js';
 import { INVITABLE_ROLES } from '../roles.js';
 import { requireAdmin, requireUser } from '../session.js';
 import { applyRole, getUserById } from '../users.js';
@@ -26,6 +27,12 @@ export function adminRoutes(app: FastifyInstance, ctx: Ctx) {
       partyRooms: parties.rooms.size,
       jellyfin: await ctx.jf.client.ping(),
     };
+  });
+
+  app.post('/api/admin/previews/regenerate', admin, async (req) => {
+    const { itemId } = z.object({ itemId: z.string().regex(/^[0-9a-f]{32}$/) }).parse(req.body);
+    await previews(ctx).regenerate(itemId);
+    return { ok: true };
   });
 
   app.get('/api/admin/roles', admin, async () => ({ roles: ctx.roles, invitable: INVITABLE_ROLES }));

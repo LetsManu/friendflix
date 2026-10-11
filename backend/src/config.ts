@@ -47,6 +47,10 @@ const schema = z.object({
   ROLE_TEMPLATES: opt,
   /** DEV ONLY: allow an http:// OIDC issuer (openid-client requires https otherwise). */
   OIDC_ALLOW_INSECURE: z.enum(['true', 'false']).default('false'),
+  /** where the cached hover/billboard preview clips (<itemId>.mp4) are stored */
+  PREVIEW_DIR: z.string().default('/data/previews'),
+  /** background warmer: pre-generates one missing clip per minute while idle */
+  PREVIEW_WARM: z.enum(['true', 'false']).default('true'),
   BACKGROUND_JOBS: z.enum(['true', 'false']).default('true'),
 });
 

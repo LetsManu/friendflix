@@ -25,6 +25,7 @@ RUN rm -rf /usr/local/lib/node_modules/npm /usr/local/bin/npm /usr/local/bin/npx
 COPY --from=deps --chown=node:node /app/node_modules node_modules
 COPY --from=build --chown=node:node /app/backend/dist backend/dist
 COPY --chown=node:node backend/package.json backend/
+RUN mkdir -p /data/previews && chown node:node /data/previews
 USER node
 EXPOSE 3000
 HEALTHCHECK --interval=15s --timeout=3s --retries=3 CMD wget -qO- http://127.0.0.1:3000/health || exit 1

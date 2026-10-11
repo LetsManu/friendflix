@@ -21,9 +21,10 @@ export const cfg: Config = {
   JELLYFIN_URL: 'http://jellyfin:8096', JELLYFIN_ADMIN_API_KEY: 'adminkey', SEERR_URL: 'http://seerr:5055', SEERR_API_KEY: 'seerrkey',
   NTFY_URL: undefined, DISCORD_WEBHOOK_URL: undefined, METRICS_TOKEN: undefined, AUTHENTIK_URL: undefined, AUTHENTIK_API_TOKEN: undefined,
   AUTHENTIK_ENROLL_FLOW: undefined, ROLE_TEMPLATES: undefined, OIDC_ALLOW_INSECURE: 'false', BACKGROUND_JOBS: 'false',
+  PREVIEW_DIR: '/tmp/ff-test-previews', PREVIEW_WARM: 'false',
 };
 
-export type Handler = (url: URL, init: RequestInit, body: any) => { status?: number; json?: unknown } | undefined;
+export type Handler = (url: URL, init: RequestInit, body: any) => { status?: number; json?: unknown; raw?: string | Uint8Array } | undefined;
 export interface Call { method: string; path: string; search: string; body: any; auth?: string }
 
 /** In-memory fake of the Jellyfin/Seerr HTTP APIs: routes are matched by "METHOD /path". */
@@ -39,6 +40,7 @@ export function fakeHttp(routes: Record<string, Handler>, calls: Call[] = []): t
     });
     const r = key ? routes[key]!(url, init, body) : undefined;
     const status = r?.status ?? (key ? 200 : 404);
+    if (r?.raw !== undefined) return new Response(r.raw as BodyInit, { status });
     return new Response(status === 204 || r?.json === undefined ? null : JSON.stringify(r.json), { status, headers: { 'content-type': 'application/json' } });
   }) as typeof fetch;
 }

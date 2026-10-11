@@ -83,6 +83,7 @@ services:
       AUTHENTIK_URL: ${AUTHENTIK_URL:-}
       AUTHENTIK_API_TOKEN: ${AUTHENTIK_API_TOKEN:-}
       AUTHENTIK_ENROLL_FLOW: ${AUTHENTIK_ENROLL_FLOW:-}
+    volumes: [previews:/data/previews] # cached hover/billboard clips (root fs is read-only)
     depends_on:
       postgres: { condition: service_healthy }
       redis: { condition: service_healthy }
@@ -169,6 +170,7 @@ services:
 
 volumes:
   pgdata:
+  previews:
   jellyfin-config:
   jellyfin-cache:
   seerr-config:
