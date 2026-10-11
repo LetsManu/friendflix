@@ -72,7 +72,8 @@ export function tvRoutes(app: FastifyInstance, ctx: Ctx) {
     const a = Buffer.from(hash(b.pollToken).toString('hex')), c = Buffer.from(rec.poll);
     if (a.length !== c.length || !timingSafeEqual(a, c)) return reply.code(403).send({ error: 'forbidden' });
     if (!rec.userId) return reply.code(202).send({ status: 'pending' });
-    await ctx.kv.del(key); // single use
+    // single use, atomically: of several concurrent valid claims only one takes the code (checked only after the pollToken matched, so a wrong token never burns it)
+    if (!(await ctx.kv.take(key))) return reply.code(404).send({ error: 'code_invalid_or_expired' });
     const user = (await ctx.db.query<{ id: string; disabled: boolean }>('select id, disabled from users where id=$1', [rec.userId])).rows[0];
     if (!user || user.disabled) return reply.code(403).send({ error: 'forbidden' });
     const deviceId = `tv-${randomBytes(18).toString('base64url')}`;

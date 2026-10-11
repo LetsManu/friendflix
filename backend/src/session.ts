@@ -30,9 +30,11 @@ declare module 'fastify' {
 }
 
 /** Stores a session with the idle ttl (it is refreshed on use, see `touch`). */
-export async function saveSession(ctx: Ctx, sid: string, s: Session) {
+export async function saveSession(ctx: Ctx, sid: string, s: Session, onlyIfExists = false): Promise<boolean> {
   const ttl = Math.min(s.idle ?? ctx.cfg.SESSION_IDLE_SECONDS, s.ttl ?? ctx.cfg.SESSION_TTL_SECONDS);
+  if (onlyIfExists) return ctx.kv.replace(`sess:${sid}`, JSON.stringify(s), ttl); // never resurrects a session revoked meanwhile
   await ctx.kv.set(`sess:${sid}`, JSON.stringify(s), ttl);
+  return true;
 }
 
 export function newSession(s: Omit<Session, 'createdAt' | 'touchedAt'>): Session {
@@ -58,7 +60,7 @@ async function touch(ctx: Ctx, sid: string, s: Session) {
   const now = Date.now();
   if (s.touchedAt && now - s.touchedAt < 60_000) return;
   s.touchedAt = now;
-  await saveSession(ctx, sid, s);
+  await saveSession(ctx, sid, s, true);
 }
 
 /** Resolves cookie -> session -> (fresh, non-disabled) user row. */
@@ -101,6 +103,5 @@ export async function refreshDevice(ctx: Ctx, req: FastifyRequest): Promise<bool
   const r = await ctx.db.query<{ approved: boolean }>('select approved from devices where user_id=$1 and device_id=$2', [s.userId, s.deviceId]);
   if (!r.rows[0]?.approved) return false;
   s.deviceApproved = true;
-  await saveSession(ctx, req.sid!, s);
-  return true;
+  return saveSession(ctx, req.sid!, s, true); // false: revoked meanwhile
 }

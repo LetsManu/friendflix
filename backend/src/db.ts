@@ -190,6 +190,19 @@ export const MIGRATIONS: string[] = [
   `
   alter table users add column notifications_read_at timestamptz;
   `,
+  // 9: atomic first-device auto-approval. Inside plpgsql every statement gets a fresh snapshot, so after the advisory lock
+  // (held until the calling statement's implicit transaction ends) the not-exists sees a competitor's committed row.
+  `
+  create function register_device(p_user uuid, p_dev text, p_label text) returns boolean language plpgsql as $$
+  declare v boolean;
+  begin
+    perform pg_advisory_xact_lock(hashtext(p_user::text));
+    insert into devices(user_id, device_id, label, approved)
+      select p_user, p_dev, p_label, not exists(select 1 from devices where user_id = p_user and approved)
+      on conflict do nothing returning approved into v;
+    return v;
+  end $$;
+  `,
 ];
 
 export async function migrate(pool: pg.Pool): Promise<void> {
