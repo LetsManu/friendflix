@@ -4,6 +4,7 @@
   const page = pageStore();
   import { api, ApiError } from '#lib/api';
   import TrailerButton from '#lib/TrailerButton.svelte';
+  import { episodeKey, loadReminders, movieKey, removeReminder } from '#lib/reminders';
 
   let q = $page.url.searchParams.get('q') ?? '', results: any[] = [], mine: any[] = [], msg = '', busy = false;
   let quota: { limit: number | null; used: number; remaining: number | null; resetsAt: string } | null = null;
@@ -14,6 +15,11 @@
   const label: Record<string, string> = { nicht_angefragt: '', angefragt: 'Angefragt', in_arbeit: 'In Arbeit', teilweise: 'Teilweise verfügbar', verfuegbar: 'Verfügbar', abgelehnt: 'Abgelehnt', entfernt: 'Entfernt' };
   const cls: Record<string, string> = { verfuegbar: 'ok', in_arbeit: 'warn', angefragt: 'warn', abgelehnt: 'err' };
 
+  let reminders: any[] = [];
+  const loadRem = async () => { try { reminders = (await api('/api/reminders')).reminders; } catch { reminders = []; } };
+  async function unremind(r: any) {
+    try { await removeReminder(r.kind === 'tmdb' ? movieKey(r.mediaType, r.tmdbId) : episodeKey(r.itemId), r.id); reminders = reminders.filter((x) => x.id !== r.id); } catch { msg = 'Erinnerung konnte nicht entfernt werden.'; }
+  }
   const loadMine = async () => (mine = (await api('/api/requests/mine')).requests);
   async function search() {
     if (q.trim().length < 2) return;
@@ -30,7 +36,7 @@
       else msg = e instanceof ApiError && e.status === 409 ? 'Dafür gibt es schon einen Wunsch.' : 'Wunsch konnte nicht gestellt werden.';
     }
   }
-  onMount(() => { loadMine(); loadQuota(); if (q) search(); });
+  onMount(() => { void loadReminders(); loadRem(); loadMine(); loadQuota(); if (q) search(); });
 </script>
 
 <h1>Wünsche</h1>
@@ -55,3 +61,6 @@
 <h2 style="margin-top:2rem">Meine Wünsche</h2>
 {#if !mine.length}<p class="muted">Noch nichts gewünscht.</p>{/if}
 <table><tbody>{#each mine as m}<tr><td>{m.title}</td><td>{m.mediaType === 'tv' ? 'Serie' : 'Film'}</td><td class={cls[m.status]}>{label[m.status] ?? m.status}</td><td class="muted">{new Date(m.createdAt).toLocaleDateString('de-DE')}</td></tr>{/each}</tbody></table>
+<h2 style="margin-top:2rem">Erinnerungen</h2>
+{#if !reminders.length}<p class="muted">Keine aktiven Erinnerungen. Mit „Erinnere mich“ erfährst du, sobald ein Titel verfügbar ist.</p>{/if}
+<table><tbody>{#each reminders as r (r.id)}<tr><td>{r.title}</td><td>{r.kind === 'episode' ? 'Folge' : r.mediaType === 'tv' ? 'Serie' : 'Film'}</td><td class="muted">{r.releaseDate ? new Date(r.releaseDate).toLocaleDateString('de-DE') : 'Termin offen'}</td><td><button class="sec" aria-label="Erinnerung für {r.title} entfernen" on:click={() => unremind(r)}>Entfernen</button></td></tr>{/each}</tbody></table>

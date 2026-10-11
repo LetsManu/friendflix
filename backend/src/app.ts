@@ -9,10 +9,13 @@ import { adminRoutes, inviteRoutes } from './routes/admin.js';
 import { authRoutes } from './routes/auth.js';
 import { internalRoutes } from './routes/internal.js';
 import { discoverRoutes } from './routes/discover.js';
+import { digestRoutes } from './routes/digest.js';
+import { listRoutes } from './routes/lists.js';
 import { partyRoutes } from './routes/party.js';
 import { profileRoutes } from './routes/profiles.js';
 import { prefsRoutes } from './routes/prefs.js';
 import { pollRoutes } from './routes/polls.js';
+import { reminderRoutes } from './routes/reminders.js';
 import { sceneRoutes } from './routes/scenes.js';
 import { seerrRoutes } from './routes/seerr.js';
 import { statsRoutes } from './routes/stats.js';
@@ -91,8 +94,11 @@ export async function buildApp(ctx: Ctx, extra: Extra = {}): Promise<FastifyInst
   prefsRoutes(app, ctx);
   profileRoutes(app, ctx);
   discoverRoutes(app, ctx);
+  digestRoutes(app, ctx);
   sceneRoutes(app, ctx);
   tvRoutes(app, ctx);
+  reminderRoutes(app, ctx);
+  listRoutes(app, ctx);
   for (const r of extra.register ?? []) await r(app, ctx);
   return app;
 }

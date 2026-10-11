@@ -62,6 +62,7 @@
   {:else if name === 'thumb-down'}<path d="M7 13V4H3v9zM7 13l4 8a2 2 0 002-2v-4h6a2 2 0 002-2.300l-1.300-7A2 2 0 0017.700 4H7" />
   {:else if name === 'send'}<path d="M21 3L3 10.500l7 3L13 21zM10 13.500L21 3" />
   {:else if name === 'download'}<path d="M12 3v12M7 10l5 5 5-5M4 21h16" />
+  {:else if name === 'list'}<path d="M9 6h12M9 12h12M9 18h12M4 6h.01M4 12h.01M4 18h.01" />
   {:else if name === 'copy'}<path d="M9 9h11v11H9zM5 15V4h11" />
   {/if}
 </svg>

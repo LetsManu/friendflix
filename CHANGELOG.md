@@ -1,5 +1,9 @@
 # Changelog
 ## [Unreleased]
+### Block 3 – Digest, shared lists, reminders
+- Weekly digest ("Wochenrückblick"): new films/episodes, new episodes of followed series, fulfilled wishes, friends' tips; `/digest` page, schedule via `DIGEST_DAY`/`DIGEST_HOUR` or Admin → Wochenrückblick, opt-out in settings. Personal ntfy topic per account (never the shared ntfy/Discord channel).
+- Shared lists: owner invites editors/viewers, "Zu Liste hinzufügen" on cards/detail page, only titles visible to the viewer's profile are shown.
+- "Erinnere mich" on Demnächst and future calendar episodes: notification when the title is in the library (Seerr webhook, optional Jellyfin `ItemAdded` webhook, 30-min fallback), deduplicated with series follows and own requests.
 ### Block 2 – Profiles & viewing comfort
 - Profiles per account (max 5, optional 4-digit PIN, "Wer schaut gerade?"): each extra profile is a hidden Jellyfin user with the account's role policy, so progress, favourites, watchlist and viewing prefs are per profile; stream limit, requests, ratings and admin rights stay per account (admin only from the owner profile). "PIN vergessen?" re-login clears the owner PIN. Turn off Seerr's automatic Jellyfin user import so profile users don't show up there.
 - Verlauf page (remove an episode or a whole series), tidier "Weiterschauen" (no near-finished/barely-started items, one entry per series, X to hide).

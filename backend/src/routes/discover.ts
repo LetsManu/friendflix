@@ -27,7 +27,7 @@ function wrap<T extends (...a: any[]) => Promise<any>>(fn: T): T {
 }
 
 /** Fetches items by id in chunks (keeps URLs short) with the viewer's own token, so library permissions apply. */
-async function itemsByIds(ctx: Ctx, user: UserRow, ids: string[]): Promise<ItemDto[]> {
+export async function itemsByIds(ctx: Ctx, user: JfUser, ids: string[]): Promise<ItemDto[]> {
   const out: ItemDto[] = [];
   for (let i = 0; i < ids.length; i += 40) {
     const r = await ctx.jf.items(user, { ids: ids.slice(i, i + 40), types: 'Movie,Series,Episode,BoxSet', limit: 40 }).catch(() => ({ items: [] as ItemDto[] }));

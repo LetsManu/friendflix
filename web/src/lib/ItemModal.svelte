@@ -4,6 +4,7 @@
   import { api, backdrop, fmtMin, logoUrl, type Item } from '#lib/api';
   import Icon from '#lib/Icon.svelte';
   import { listIds, toggleList, prefs } from '#lib/stores';
+  import ListMenu from '#lib/ListMenu.svelte';
   import { isSpoiler } from '#lib/spoiler';
 
   export let id: string;
@@ -57,6 +58,7 @@
         <div class="btns">
           <a class="btn light" data-autofocus href={play}><Icon name="play" size={22} />{item.type === 'Series' && next ? `S${next.parentIndexNumber}:E${next.indexNumber}` : 'Abspielen'}</a>
           <button class="round" aria-pressed={inList} aria-label={inList ? 'Von Meine Liste entfernen' : 'Zu Meine Liste hinzufügen'} on:click={() => toggleList(item!.id, inList)}><Icon name={inList ? 'check' : 'plus'} size={20} /></button>
+          <ListMenu itemId={item.id} variant="round" size={44} />
         </div>
       </div>
     {:else if failed}<p class="err pad">Titel konnte nicht geladen werden.</p>{:else}<div class="skeleton fillsk"></div>{/if}
