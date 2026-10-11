@@ -22,6 +22,9 @@ describe('upstreamUri', () => {
     expect(upstreamUri(`/media/Videos/${ID}/master.m3u8?VideoBitRate=abc`, 7)).toContain('VideoBitRate=7');
   });
   it('rejects bad input: wrong prefix, control chars, long/many params, traversal', () => {
+    const capped = new URL(upstreamUri(`/media/Videos/${ID}/master.m3u8?MaxHeight=2160&maxwidth=3840&Height=480`, 1, 720)!, 'http://x').searchParams;
+    expect([capped.get('MaxHeight'), capped.get('maxwidth'), capped.get('Height')]).toEqual(['720', '1280', '480']);
+    expect(upstreamUri(`/media/Videos/${ID}/master.m3u8?MaxHeight=2160`, 1)).toContain('MaxHeight=2160');
     expect(upstreamUri(`/api/me`, 1)).toBeNull();
     expect(upstreamUri(`/media/Videos/${ID}/master.m3u8\r\nX-Evil: 1`, 1)).toBeNull();
     expect(upstreamUri(`/media/Videos/${ID}/master.m3u8?x=${'a'.repeat(2100)}`, 1)).toBeNull();

@@ -63,10 +63,10 @@ beforeAll(async () => {
         res.writeHead(200, { 'content-type': 'application/json' });
         return void res.end(JSON.stringify({ userId: 'u1', token: 'CASTJF', deviceId: 'ff-u1', maxBitrate: 5_000_000, maxHeight: j.ct === CT_LOW ? 720 : 1080, kind: j.ct === CT_IMG ? 'img' : 'media', scope: { itemId: ID, mediaSourceId: MS, playSessionId: 'ps-1' } }));
       }
-      const ok = j.sid === 'goodsid';
+      const ok = j.sid === 'goodsid' || j.sid === 'guestsid';
       if (!ok) return void res.writeHead(401).end();
       res.writeHead(200, { 'content-type': 'application/json' });
-      res.end(JSON.stringify({ userId: 'u1', token: 'JFTOKEN', deviceId: 'ff-u1', maxBitrate: 5_000_000 }));
+      res.end(JSON.stringify({ userId: 'u1', token: 'JFTOKEN', deviceId: 'ff-u1', maxBitrate: 5_000_000, ...(j.sid === 'guestsid' ? { maxHeight: 720 } : {}) }));
     });
   });
   const jfp = await listen(jf);
@@ -120,6 +120,21 @@ describe('gateway', () => {
     expect(u.url).not.toContain('LEAK');
     expect(u.url).toContain('MaxStreamingBitrate=5000000');
     expect(u.url).toContain('MediaSourceId=x');
+  });
+  it('clamps resolution params to the role cap on the cookie path, and leaves them alone without a cap', async () => {
+    seen.length = 0;
+    await (await get(`/media/Videos/${ID}/master.m3u8?MaxHeight=2160&MaxWidth=3840&Height=4000&Width=9000&MediaSourceId=x`, { cookie: 'ff_sid=guestsid' })).arrayBuffer();
+    const u = new URL(seen[0]!.url, 'http://x');
+    expect(u.searchParams.get('MaxHeight')).toBe('720');
+    expect(u.searchParams.get('Height')).toBe('720');
+    expect(u.searchParams.get('MaxWidth')).toBe('1280');
+    expect(u.searchParams.get('Width')).toBe('1280');
+    seen.length = 0;
+    await (await get(`/media/Videos/${ID}/master.m3u8?MaxHeight=480&MediaSourceId=x`, { cookie: 'ff_sid=guestsid' })).arrayBuffer();
+    expect(new URL(seen[0]!.url, 'http://x').searchParams.get('MaxHeight')).toBe('480');
+    seen.length = 0;
+    await (await get(`/media/Videos/${ID}/master.m3u8?MaxHeight=2160&MediaSourceId=x`)).arrayBuffer();
+    expect(new URL(seen[0]!.url, 'http://x').searchParams.get('MaxHeight')).toBe('2160');
   });
   it('passes HTTP Range through (206)', async () => {
     const r = await get(`/media/Videos/${ID}/stream?static=true`, { range: 'bytes=0-99' });

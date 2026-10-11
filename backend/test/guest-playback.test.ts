@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { makeEnv, type TestEnv } from './helpers.js';
+import { cfg, makeEnv, type TestEnv } from './helpers.js';
 
 const ID = 'a'.repeat(32);
 type Sess = { cookies: Record<string, string>; csrf: string };
@@ -61,6 +61,8 @@ describe('guest playback', () => {
     expect(added[0]!.body).toMatchObject({ EnableVideoPlaybackTranscoding: false, IsDisabled: false, Keep: 'me' });
     const p = (await call(guest, 'POST', '/api/playback/info', { itemId: ID })).json();
     expect(p.hlsUrl).toContain('MaxHeight=720');
+    const authz = await env.app.inject({ method: 'POST', url: '/internal/authz', headers: { 'x-internal-secret': cfg.INTERNAL_SECRET }, payload: { sid: guest.cookies.ff_sid } });
+    expect(authz.json().maxHeight).toBe(720); // the gateway clamps resolution params to the admin-set cap
     const list = (await call(admin, 'GET', '/api/admin/roles')).json();
     expect(list.limits.find((x: any) => x.role === 'guest')).toMatchObject({ transcoding: false, maxHeight: 720, requestsPerMonth: 2 });
   });

@@ -14,6 +14,8 @@ export const ALLOWED_PATHS: RegExp[] = [
 
 const STRIP_QUERY = new Set(['api_key', 'apikey', 'x-emby-token', 'x-mediabrowser-token', 'token']);
 const CLAMP_QUERY = new Set(['maxstreamingbitrate', 'videobitrate']);
+const CLAMP_HEIGHT = new Set(['maxheight', 'height']);
+const CLAMP_WIDTH = new Set(['maxwidth', 'width']);
 export const MAX_QUERY_LENGTH = 2048;
 export const MAX_QUERY_PARAMS = 40;
 
@@ -34,7 +36,7 @@ export function normalizePath(raw: string): string | null {
  * validated path, token-like params removed, bitrate clamped to the role limit, query re-encoded.
  * Returns null for anything that is not allowed.
  */
-export function upstreamUri(originalUri: string, maxBitrate: number): string | null {
+export function upstreamUri(originalUri: string, maxBitrate: number, maxHeight?: number): string | null {
   if (typeof originalUri !== 'string' || originalUri.length > 4096 || /[\r\n\x00]/.test(originalUri)) return null;
   const q = originalUri.indexOf('?');
   const rawPath = q === -1 ? originalUri : originalUri.slice(0, q);
@@ -51,6 +53,12 @@ export function upstreamUri(originalUri: string, maxBitrate: number): string | n
     if (CLAMP_QUERY.has(lk)) {
       const n = Number(v);
       out.set(k, String(Number.isFinite(n) && n > 0 ? Math.min(n, maxBitrate) : maxBitrate));
+      continue;
+    }
+    if (maxHeight && (CLAMP_HEIGHT.has(lk) || CLAMP_WIDTH.has(lk))) {
+      const lim = CLAMP_WIDTH.has(lk) ? Math.ceil((maxHeight * 16) / 9) : maxHeight; // widths: 16:9 equivalent of the height cap
+      const n = Number(v);
+      out.set(k, String(Number.isFinite(n) && n > 0 ? Math.min(n, lim) : lim));
       continue;
     }
     out.append(k, v);

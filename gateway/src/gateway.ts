@@ -19,7 +19,7 @@ interface Authz {
   scope?: { itemId: string; mediaSourceId: string; playSessionId: string };
   /** cast only: 'img' tokens may fetch poster images and nothing else (default 'media') */
   kind?: 'media' | 'img';
-  /** cast only: resolution cap for the token (role limit, at most 1080) */
+  /** resolution cap: role limit (cookie path, when the role has one) or cast token cap (role limit, at most 1080) */
   maxHeight?: number;
 }
 
@@ -326,7 +326,8 @@ export function createGateway(opts: GatewayOptions): { server: Server; metrics: 
       const lk = k.toLowerCase();
       if (STRIP_QUERY.has(lk)) continue;
       if (cast && CAST_DROP_QUERY.has(lk)) continue; // stream/device identity comes from the token, never from the receiver's URL
-      if (cast && (CAST_CLAMP_HEIGHT.includes(lk) || CAST_CLAMP_WIDTH.includes(lk))) {
+      // resolution cap: always on the cast path (default 1080), on the cookie path when the role has one
+      if ((cast || auth.maxHeight) && (CAST_CLAMP_HEIGHT.includes(lk) || CAST_CLAMP_WIDTH.includes(lk))) {
         const cap = auth.maxHeight ?? 1080;
         const lim = CAST_CLAMP_WIDTH.includes(lk) ? Math.ceil((cap * 16) / 9) : cap; // widths: 16:9 equivalent of the height cap
         const n = Number(v);
