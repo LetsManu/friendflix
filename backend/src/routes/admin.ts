@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { audit } from '../audit.js';
 import type { Ctx } from '../ctx.js';
 import { revokeSessions } from '../devices.js';
-import { createInvite } from '../invites.js';
+import { createInvite, deleteAuthentikInvitation } from '../invites.js';
 import { checkState, startPlaybackCheck } from '../healthcheck.js';
 import { clipPath, libraryItems, previews, serviceUser } from '../previews.js';
 import { stat } from 'node:fs/promises';
@@ -162,7 +162,8 @@ export function adminRoutes(app: FastifyInstance, ctx: Ctx) {
 
   app.delete('/api/admin/invites/:id', admin, async (req) => {
     const id = uuid.parse((req.params as { id: string }).id);
-    await ctx.db.query('delete from invites where id=$1 and used_at is null', [id]);
+    const r = await ctx.db.query<{ authentik_invite: string | null }>('delete from invites where id=$1 and used_at is null returning authentik_invite', [id]);
+    await deleteAuthentikInvitation(ctx, r.rows[0]?.authentik_invite, req.log);
     await audit(ctx, req.user!.id, 'invite.revoke', id);
     return { ok: true };
   });

@@ -5,7 +5,7 @@ import { audit } from '../audit.js';
 import type { Ctx } from '../ctx.js';
 import { COOKIE, loadSession, newSession, rand, requireUser, saveSession } from '../session.js';
 import { registerDevice } from '../devices.js';
-import { claimInvite, enrollFlowUrl, lookupInvite, releaseInvite, type InviteRow } from '../invites.js';
+import { claimInvite, deleteAuthentikInvitation, enrollFlowUrl, lookupInvite, releaseInvite, type InviteRow } from '../invites.js';
 import { applyRole, getUserBySub, provisionUser } from '../users.js';
 
 const OIDC_COOKIE = 'ff_oidc';
@@ -65,7 +65,10 @@ export function authRoutes(app: FastifyInstance, ctx: Ctx) {
           if (claimed) await releaseInvite(ctx, claimed.id); // let the person retry
           throw e;
         }
-        if (claimed) await ctx.db.query('update invites set used_by=$1 where id=$2', [user.id, claimed.id]);
+        if (claimed) {
+          await ctx.db.query('update invites set used_by=$1 where id=$2', [user.id, claimed.id]);
+          void deleteAuthentikInvitation(ctx, claimed.authentik_invite, req.log); // redeemed: the enrollment link must not create more accounts
+        }
       } else if (user.disabled) {
         return reply.code(403).send({ error: 'disabled' });
       } else if (isAdmin && user.role !== 'admin') {
