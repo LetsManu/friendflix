@@ -1,11 +1,14 @@
 name: CI
 on:
-  push: { branches: [main] }
+  push: { branches: [main], tags: ["v*"] }
   pull_request:
 permissions: { contents: read }
 jobs:
   test:
     runs-on: ubuntu-latest
+    strategy:
+      # 22 = web image runtime, 26 = backend/gateway image runtime
+      matrix: { node: [22, 26] }
     services:
       postgres:
         image: postgres:17-alpine
@@ -15,7 +18,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v6
-        with: { node-version: 22, cache: npm }
+        with: { node-version: "${{ matrix.node }}", cache: npm }
       - run: npm ci
       - run: npm run lint
       - run: npm run typecheck
@@ -46,3 +49,9 @@ jobs:
           severity: CRITICAL,HIGH
           ignore-unfixed: true
           exit-code: "1"
+  # images are only published after every check above passed (main -> latest + sha, v* tags -> semver)
+  publish:
+    if: github.event_name == 'push'
+    needs: [test, secrets, docker]
+    permissions: { contents: read, packages: write }
+    uses: ./.github/workflows/publish.yml
