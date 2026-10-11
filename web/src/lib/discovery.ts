@@ -1,3 +1,5 @@
+import { langLabel } from './langs';
+
 /** Pure helpers for browse / search discovery (URL state, API query, removable filter chips, recent searches). */
 
 export const SORTS = ['SortName', 'DateCreated', 'PremiereDate', 'CommunityRating'] as const;
@@ -14,8 +16,11 @@ export interface BrowseState {
   year: number | null;
   minRating: number | null;
   person: string | null;
+  audio: string | null;
+  subs: string | null;
 }
 
+const langOf = (v: string | null): string | null => { const t = (v ?? '').trim().toLowerCase(); return /^[a-z]{3}$/.test(t) ? t : null; };
 const intOf = (v: string | null): number | null => (v !== null && /^\d{1,4}$/.test(v.trim()) ? Number(v) : null);
 
 export function isYear(q: string): boolean {
@@ -41,6 +46,8 @@ export function parseBrowse(sp: Pick<URLSearchParams, 'get'>): BrowseState {
     year,
     minRating: (RATINGS as readonly number[]).includes(r) ? r : null,
     person: /^[0-9a-f]{32}$/.test(person) ? person : null,
+    audio: langOf(sp.get('audio')),
+    subs: langOf(sp.get('subs')),
   };
 }
 
@@ -55,6 +62,8 @@ export function browseQuery(s: BrowseState, kind: string, start: number, limit: 
   else if (s.decade !== null) p.set('decade', String(s.decade));
   if (s.minRating !== null) p.set('minRating', String(s.minRating));
   if (s.person) p.set('person', s.person);
+  if (s.audio) p.set('audio', s.audio);
+  if (s.subs) p.set('subs', s.subs);
   return p;
 }
 
@@ -69,6 +78,8 @@ export function activeChips(s: BrowseState, labels: { person?: string } = {}): A
   if (s.decade !== null) out.push({ key: 'decade', label: `${s.decade}er` });
   if (s.minRating !== null) out.push({ key: 'minRating', label: `ab ${s.minRating} Sterne` });
   if (s.person) out.push({ key: 'person', label: labels.person || 'Person' });
+  if (s.audio) out.push({ key: 'audio', label: `Ton: ${langLabel(s.audio)}` });
+  if (s.subs) out.push({ key: 'subs', label: `UT: ${langLabel(s.subs)}` });
   if (s.filter) out.push({ key: 'filter', label: FILTER_LABEL[s.filter] ?? s.filter });
   return out;
 }

@@ -7,7 +7,7 @@
 
   let friends: Array<{ id: string; name: string; sharesHistory: boolean }> = [], picked = new Set<string>();
   let type = 'Movie', maxMinutes = 0, genre = '', genres: string[] = [];
-  let result: { participants: string[]; total: number; items: Item[] } | null = null, busy = false, error = '', chosen = new Set<string>();
+  let result: { participants: string[]; total: number; items: Array<Item & { planned?: number }> } | null = null, busy = false, error = '', chosen = new Set<string>();
   onMount(async () => {
     friends = (await api('/api/friends').catch(() => ({ friends: [] }))).friends;
     genres = (await api('/api/library/genres').catch(() => ({ genres: [] }))).genres;
@@ -46,11 +46,13 @@
 </div>
 {#if result}
   <h2>{result.items.length} Treffer <small class="muted">({result.total} insgesamt ungesehen von {result.participants.join(', ')})</small></h2>
+  {#if result.items.some((i) => (i.planned ?? 0) > 0)}<p class="muted">Titel auf euren Merklisten zuerst.</p>{/if}
   {#if !result.items.length}<p class="muted">Keine passenden Titel – lockere die Filter.</p>{/if}
   <div class="tiles">
     {#each result.items as i (i.id)}
       <div class="slot sel" class:on={chosen.has(i.id)}>
         <Card item={i} />
+        {#if (i.planned ?? 0) > 0}<span class="badge planned">{i.planned}× geplant</span>{/if}
         <button class="pickbtn" aria-pressed={chosen.has(i.id)} aria-label="Für Abstimmung vormerken" on:click={() => pick(i.id)}><Icon name={chosen.has(i.id) ? 'check' : 'vote'} size={18} /></button>
       </div>
     {/each}
@@ -60,6 +62,7 @@
 <style>
   .pill { display: inline-flex; align-items: center; gap: .5rem; background: var(--surface-2); padding: .4rem .9rem; border-radius: 99px; color: var(--fg); min-height: 44px; } .pill.off { opacity: .55; }
   .sel { position: relative; } .pickbtn { position: absolute; top: .4rem; right: .4rem; z-index: 3; width: 36px; min-height: 36px; padding: 0; border-radius: 50%; background: rgba(0,0,0,.7); border: 2px solid #fff; }
+  .planned { position: absolute; top: .4rem; left: .4rem; z-index: 3; background: rgba(0,0,0,.75); border: 1px solid #fff; }
   .sel.on .pickbtn { background: var(--acc); border-color: var(--acc); }
   .bar2 { position: fixed; left: 50%; bottom: 1.2rem; transform: translateX(-50%); background: rgba(20,20,20,.97); border: 1px solid #444; border-radius: 99px; padding: .5rem .8rem .5rem 1.4rem; display: flex; gap: 1rem; align-items: center; z-index: 30; }
 </style>

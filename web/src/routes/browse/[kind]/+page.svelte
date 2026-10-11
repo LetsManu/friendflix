@@ -5,8 +5,9 @@
   import { api, type Item } from '#lib/api';
   import Card from '#lib/Card.svelte';
   import { activeChips, browseQuery, parseBrowse } from '#lib/discovery';
+  import { langLabel } from '#lib/langs';
 
-  let items: Item[] | null = null, total = 0, start = 0, genres: string[] = [], busy = false, failed = false, seq = 0, lastKey = '';
+  let items: Item[] | null = null, total = 0, start = 0, genres: string[] = [], langs: { audio: Array<{ code: string }>; subs: Array<{ code: string }> } = { audio: [], subs: [] }, busy = false, failed = false, seq = 0, lastKey = '';
   let personName: Record<string, string> = {};
   const PAGE = 60;
   const DECADES = [2020, 2010, 2000, 1990, 1980, 1970, 1960, 1950];
@@ -42,6 +43,11 @@
   }
   $: if (!genres.length) api('/api/library/genres').then((r) => (genres = r.genres)).catch(() => undefined);
 
+  $: if (!langs.audio.length && !langs.subs.length) api('/api/library/languages').then((r) => (langs = { audio: r.audio ?? [], subs: r.subs ?? [] })).catch(() => undefined);
+  $: audioCodes = withCurrent(langs.audio.map((l) => l.code), s.audio);
+  $: subCodes = withCurrent(langs.subs.map((l) => l.code), s.subs);
+  const withCurrent = (codes: string[], cur: string | null) => (cur && !codes.includes(cur) ? [...codes, cur] : codes);
+
   function set(k: string, value: string) {
     const u = new URL($page.url.href);
     if (value) u.searchParams.set(k, value); else u.searchParams.delete(k);
@@ -73,6 +79,17 @@
   </select>
   <label class="sr-only" for="f">Filter</label>
   <select id="f" value={s.filter} on:change={(e) => set('filter', e.currentTarget.value)}><option value="">Alle</option><option value="unplayed">Ungesehen</option><option value="played">Gesehen</option><option value="favorites">Favoriten</option></select>
+  {#if audioCodes.length}
+    <label class="sr-only" for="au">Ton</label>
+    <select id="au" value={s.audio ?? ''} on:change={(e) => set('audio', e.currentTarget.value)}><option value="">Ton: alle</option>{#each audioCodes as c}<option value={c}>Ton: {langLabel(c)}</option>{/each}</select>
+  {/if}
+  {#if subCodes.length}
+    <label class="sr-only" for="ut">Untertitel</label>
+    <select id="ut" value={s.subs ?? ''} on:change={(e) => set('subs', e.currentTarget.value)}><option value="">Untertitel: alle</option>{#each subCodes as c}<option value={c}>Untertitel: {langLabel(c)}</option>{/each}</select>
+  {/if}
+  {#if audioCodes.includes('deu')}
+    <button type="button" class="chip quick" aria-pressed={s.audio === 'deu'} on:click={() => set('audio', s.audio === 'deu' ? '' : 'deu')}>Deutscher Ton</button>
+  {/if}
 </div>
 {#if chips.length}
   <ul class="flex chips" aria-label="Aktive Filter">
@@ -98,6 +115,7 @@
   .kinds a.on { background: #fff; color: #000; }
   .filters { margin-bottom: 1rem; }
   .filters select { min-height: 44px; max-width: 100%; }
+  .quick[aria-pressed='true'] { background: #fff; color: #000; }
   .chips { list-style: none; padding: 0; margin: 0 0 1.2rem; }
   .chip { background: var(--surface-2); border-radius: 99px; padding: 0 1rem; font-weight: 500; }
   .chip:hover:not(:disabled) { background: #3a3a3a; }
