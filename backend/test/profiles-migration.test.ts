@@ -8,7 +8,7 @@ describe('profiles migration', () => {
   afterAll(() => pool.end());
 
   it('creates owner profiles (id == user id) and backfills profile_id on watchlist, thumbs, bookmarks, prefs', async () => {
-    const last = MIGRATIONS.length - 1; // the profiles migration is the newest one
+    const last = MIGRATIONS.findIndex((m) => m.includes('create table profiles'));
     await pool.query('drop schema public cascade; create schema public;');
     for (const m of MIGRATIONS.slice(0, last)) await pool.query(m);
     const uid = '11111111-1111-4111-8111-111111111111';
