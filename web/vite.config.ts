@@ -19,6 +19,7 @@ export default defineConfig({
           'img-src': ['self', 'data:', 'blob:'],
           'media-src': ['self', 'blob:'],
           'connect-src': ['self', 'ws:', 'wss:'],
+          'frame-src': ['https://www.youtube-nocookie.com'],
           'worker-src': ['self', 'blob:'],
           'object-src': ['none'],
           'base-uri': ['self'],

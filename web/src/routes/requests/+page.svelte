@@ -3,8 +3,14 @@
   import { pageStore } from '#lib/page';
   const page = pageStore();
   import { api, ApiError } from '#lib/api';
+  import TrailerButton from '#lib/TrailerButton.svelte';
 
   let q = $page.url.searchParams.get('q') ?? '', results: any[] = [], mine: any[] = [], msg = '', busy = false;
+  let quota: { limit: number | null; used: number; remaining: number | null; resetsAt: string } | null = null;
+  $: full = quota !== null && quota.limit !== null && (quota.remaining ?? 0) <= 0;
+  const day = (iso: string) => new Date(iso).toLocaleDateString('de-DE');
+  const limitMsg = (resetsAt: string) => `Limit erreicht – neue Wünsche ab ${day(resetsAt)}`;
+  const loadQuota = async () => { try { quota = await api('/api/requests/quota'); } catch { /* optional */ } };
   const label: Record<string, string> = { nicht_angefragt: '', angefragt: 'Angefragt', in_arbeit: 'In Arbeit', teilweise: 'Teilweise verfügbar', verfuegbar: 'Verfügbar', abgelehnt: 'Abgelehnt', entfernt: 'Entfernt' };
   const cls: Record<string, string> = { verfuegbar: 'ok', in_arbeit: 'warn', angefragt: 'warn', abgelehnt: 'err' };
 
@@ -18,10 +24,13 @@
   async function request(r: any) {
     try {
       await api('/api/requests', { method: 'POST', body: { mediaType: r.mediaType, tmdbId: r.tmdbId } });
-      r.status = 'angefragt'; results = results; msg = `„${r.title}“ wurde gewünscht. Ein Admin gibt es frei.`; loadMine();
-    } catch (e) { msg = e instanceof ApiError && e.status === 409 ? 'Dafür gibt es schon einen Wunsch.' : 'Wunsch konnte nicht gestellt werden.'; }
+      r.status = 'angefragt'; results = results; msg = `„${r.title}“ wurde gewünscht. Ein Admin gibt es frei.`; loadMine(); loadQuota();
+    } catch (e) {
+      if (e instanceof ApiError && e.status === 429 && e.body?.error === 'request_limit') { msg = limitMsg(e.body.resetsAt); loadQuota(); }
+      else msg = e instanceof ApiError && e.status === 409 ? 'Dafür gibt es schon einen Wunsch.' : 'Wunsch konnte nicht gestellt werden.';
+    }
   }
-  onMount(() => { loadMine(); if (q) search(); });
+  onMount(() => { loadMine(); loadQuota(); if (q) search(); });
 </script>
 
 <h1>Wünsche</h1>
@@ -29,14 +38,16 @@
   <input placeholder="Film oder Serie suchen …" bind:value={q} style="width:100%;max-width:480px" />
   <button disabled={busy}>Suchen</button>
 </form>
-{#if msg}<p class="warn">{msg}</p>{/if}
+{#if quota && quota.limit !== null}<p class:warn={full} class:muted={!full}>{#if full}{limitMsg(quota.resetsAt)}{:else}Noch {quota.remaining} von {quota.limit} Wünschen diesen Monat{/if}</p>{/if}
+{#if msg && !(full && msg.startsWith('Limit erreicht'))}<p class="warn">{msg}</p>{/if}
 <div class="grid" style="margin-top:1rem">
   {#each results as r}
     <div class="card">
       {#if r.poster}<img loading="lazy" src={r.poster} alt={r.title} />{:else}<img alt="" src="data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw==" />{/if}
       <div class="t">{r.title}<small>{r.year ?? ''} · {r.mediaType === 'tv' ? 'Serie' : 'Film'}</small>
-        {#if r.status === 'nicht_angefragt' || r.status === 'abgelehnt'}<button style="margin-top:.4rem;width:100%" on:click={() => request(r)}>Wünschen</button>
+        {#if r.status === 'nicht_angefragt' || r.status === 'abgelehnt'}<button style="margin-top:.4rem;width:100%" disabled={full} on:click={() => request(r)}>Wünschen</button>
         {:else}<span class={cls[r.status]}>{label[r.status]}</span>{/if}
+        {#if r.status !== 'verfuegbar'}<div style="margin-top:.4rem"><TrailerButton mediaType={r.mediaType} tmdbId={r.tmdbId} title={r.title} /></div>{/if}
       </div>
     </div>
   {/each}

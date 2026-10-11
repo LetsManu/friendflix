@@ -213,6 +213,50 @@ export const MIGRATIONS: string[] = [
     created_at timestamptz not null default now()
   );
   `,
+  // playback health check: last finished report
+  `
+  create table playback_checks (
+    id serial primary key,
+    started_at timestamptz not null,
+    finished_at timestamptz not null,
+    results jsonb not null
+  );
+  `,
+  // preview clips: remember the audio language; drop clips built with random default tracks so the warmer rebuilds them
+  `
+  alter table preview_clips add column audio_lang text;
+  delete from preview_clips;
+  `,
+  // monthly Seerr request limit per role. seerr_requests.source tells user wishes from admin-approved poll requests (those are not counted);
+  // request_reservations holds a slot while Seerr is being called, reserve_request_slot takes it atomically (advisory lock per user).
+  `
+  create table role_settings (
+    role text primary key,
+    requests_per_month int check (requests_per_month between 0 and 100),
+    updated_at timestamptz not null default now()
+  );
+  alter table seerr_requests add column source text not null default 'user' check (source in ('user','poll'));
+  update seerr_requests set source='poll' where seerr_request_id in (select seerr_request_id from polls where seerr_request_id is not null);
+  create index seerr_requests_user_month on seerr_requests(user_id, created_at) where source = 'user';
+  create table request_reservations (
+    id bigserial primary key,
+    user_id uuid not null references users(id) on delete cascade,
+    created_at timestamptz not null default now()
+  );
+  create function reserve_request_slot(p_user uuid, p_limit int) returns bigint language plpgsql as $$
+  declare v bigint; n int;
+  begin
+    perform pg_advisory_xact_lock(hashtext('reqslot:' || p_user::text));
+    delete from request_reservations where created_at < now() - interval '5 minutes';
+    if p_limit is not null then
+      select (select count(*) from seerr_requests where user_id = p_user and source = 'user' and created_at >= date_trunc('month', now()))
+           + (select count(*) from request_reservations where user_id = p_user) into n;
+      if n >= p_limit then return null; end if;
+    end if;
+    insert into request_reservations(user_id) values (p_user) returning id into v;
+    return v;
+  end $$;
+  `,
 ];
 
 export async function migrate(pool: pg.Pool): Promise<void> {

@@ -4,7 +4,10 @@ import { audit } from '../audit.js';
 import type { Ctx } from '../ctx.js';
 import { revokeSessions } from '../devices.js';
 import { createInvite } from '../invites.js';
-import { previews } from '../previews.js';
+import { checkState, startPlaybackCheck } from '../healthcheck.js';
+import { clipPath, libraryItems, previews, serviceUser } from '../previews.js';
+import { stat } from 'node:fs/promises';
+import { defaultLimit } from '../requestlimit.js';
 import { INVITABLE_ROLES } from '../roles.js';
 import { requireAdmin, requireUser } from '../session.js';
 import { applyRole, getUserById } from '../users.js';
@@ -35,7 +38,52 @@ export function adminRoutes(app: FastifyInstance, ctx: Ctx) {
     return { ok: true };
   });
 
-  app.get('/api/admin/roles', admin, async () => ({ roles: ctx.roles, invitable: INVITABLE_ROLES }));
+  app.post('/api/admin/previews/regenerate-failed', admin, async () => ({ ok: true, count: await previews(ctx).regenerateFailed() }));
+
+  app.get('/api/admin/previews', admin, async () => {
+    const user = await serviceUser(ctx);
+    const lib = user ? await libraryItems(ctx, user) : [];
+    const clips = new Map((await ctx.db.query<{ item_id: string; status: string; bytes: number | null; error: string | null; audio_lang: string | null; created_at: Date }>('select * from preview_clips')).rows.map((r) => [r.item_id, r]));
+    const queued = new Set(previews(ctx).queued());
+    const rows = await Promise.all(lib.map(async (i) => {
+      const c = clips.get(i.id);
+      let status: 'ok' | 'failed' | 'missing' | 'preparing' = 'missing';
+      if (queued.has(i.id)) status = 'preparing';
+      else if (c?.status === 'failed') status = 'failed';
+      else if (c?.status === 'ok' && (await stat(clipPath(ctx, i.id)).then((s) => s.isFile(), () => false))) status = 'ok';
+      return { itemId: i.id, name: i.name, type: i.type, status, bytes: status === 'ok' ? c?.bytes ?? null : null, audioLang: status === 'ok' ? c?.audio_lang ?? null : null, error: status === 'failed' ? c?.error ?? null : null, createdAt: c?.created_at ?? null };
+    }));
+    const count = (s: string) => rows.filter((r) => r.status === s).length;
+    return {
+      summary: { total: rows.length, ok: count('ok'), failed: count('failed'), missing: count('missing'), preparing: count('preparing'), totalBytes: rows.reduce((a, r) => a + (r.bytes ?? 0), 0) },
+      items: rows,
+    };
+  });
+
+  app.post('/api/admin/playback-check', admin, async (_req, reply) => {
+    if (!(await startPlaybackCheck(ctx))) return reply.code(409).send({ error: 'already_running' });
+    return { ok: true };
+  });
+  app.get('/api/admin/playback-check', admin, async () => checkState(ctx));
+
+  // `roles`/`invitable` feed the users page; `limits` is the per-role monthly Seerr wish limit (null = unlimited)
+  app.get('/api/admin/roles', admin, async () => {
+    const set = new Map((await ctx.db.query<{ role: string; requests_per_month: number | null }>('select role, requests_per_month from role_settings')).rows.map((r) => [r.role, r.requests_per_month]));
+    const limits = Object.entries(ctx.roles).map(([role, t]) => ({ role, label: t.label, requestsPerMonth: set.has(role) ? set.get(role)! : defaultLimit(role), isDefault: !set.has(role) }));
+    return { roles: ctx.roles, invitable: INVITABLE_ROLES, limits };
+  });
+
+  app.put('/api/admin/roles/:role', admin, async (req, reply) => {
+    const role = (req.params as { role: string }).role;
+    if (!Object.hasOwn(ctx.roles, role)) return reply.code(404).send({ error: 'not_found' });
+    const b = z.object({ requestsPerMonth: z.number().int().min(0).max(100).nullable() }).parse(req.body);
+    await ctx.db.query(
+      'insert into role_settings(role, requests_per_month) values ($1,$2) on conflict (role) do update set requests_per_month=excluded.requests_per_month, updated_at=now()',
+      [role, b.requestsPerMonth],
+    );
+    await audit(ctx, req.user!.id, 'role.request_limit', role, { requestsPerMonth: b.requestsPerMonth });
+    return { ok: true };
+  });
 
   app.get('/api/admin/users', admin, async () => {
     const r = await ctx.db.query(
