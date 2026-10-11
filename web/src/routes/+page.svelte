@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { api, type Item } from '#lib/api';
+  import { api, ApiError, type Item } from '#lib/api';
   import Hero from '#lib/Hero.svelte';
   import LazyRow from '#lib/LazyRow.svelte';
   import Row from '#lib/Row.svelte';
@@ -12,19 +12,30 @@
   let top: Item[] | null = null, because: { name: string } | null = null, becauseItems: Item[] | null = null;
   let views: Item[] = [], genres: string[] = [], error = '';
   const q = (p: Record<string, string>) => new URLSearchParams(p).toString();
-  const items = (p: Record<string, string>) => api(`/api/library/items?${q(p)}`).then((r) => r.items as Item[]);
+  // Jellyfin can answer 5xx/network errors right after a fresh sign-up: retry (not on 401/403) before giving up
+  const retry = async <T,>(fn: () => Promise<T>, tries = 3, delayMs = 1500): Promise<T> => {
+    for (let i = 1; ; i++) {
+      try { return await fn(); }
+      catch (e) {
+        if (i >= tries || (e instanceof ApiError && (e.status === 401 || e.status === 403))) throw e;
+        await new Promise((r) => setTimeout(r, delayMs));
+      }
+    }
+  };
+  const load = (path: string) => retry(() => api(path));
+  const items = (p: Record<string, string>) => load(`/api/library/items?${q(p)}`).then((r) => r.items as Item[]);
 
   onMount(async () => {
-    api('/api/library/resume').then((r) => (resume = r.items)).catch(() => (resume = []));
-    api('/api/library/nextup').then((r) => (next = r.items)).catch(() => (next = []));
+    load('/api/library/resume').then((r) => (resume = r.items)).catch(() => (resume = []));
+    load('/api/library/nextup').then((r) => (next = r.items)).catch(() => (next = []));
     items({ types: 'Movie,Series', sort: 'DateCreated', desc: 'true', limit: '24' }).then((r) => (latest = r)).catch(() => (latest = []));
-    api('/api/library/because').then((r) => { because = r.because; becauseItems = r.items; }).catch(() => (becauseItems = []));
-    api('/api/recommendations').then((r) => (recs = r.items)).catch(() => (recs = []));
-    api('/api/library/friends-rated').then((r) => (friendsRated = r.items)).catch(() => (friendsRated = []));
+    load('/api/library/because').then((r) => { because = r.because; becauseItems = r.items; }).catch(() => (becauseItems = []));
+    load('/api/recommendations').then((r) => (recs = r.items)).catch(() => (recs = []));
+    load('/api/library/friends-rated').then((r) => (friendsRated = r.items)).catch(() => (friendsRated = []));
     items({ types: 'Movie,Series', sort: 'CommunityRating', desc: 'true', limit: '10' }).then((r) => (top = r)).catch(() => (top = []));
-    api('/api/watchlist').then((r) => (mine = r.items)).catch(() => (mine = []));
-    api('/api/library/views').then((r) => (views = r.items)).catch(() => (error = 'Bibliothek konnte nicht geladen werden.'));
-    api('/api/library/genres').then((r) => (genres = r.genres.slice(0, 8))).catch(() => undefined);
+    load('/api/watchlist').then((r) => (mine = r.items)).catch(() => (mine = []));
+    load('/api/library/views').then((r) => (views = r.items)).catch(() => (error = 'Bibliothek konnte nicht geladen werden.'));
+    load('/api/library/genres').then((r) => (genres = r.genres.slice(0, 8))).catch(() => undefined);
     // Billboard: random title that has a backdrop (falls back to the newest one)
     try {
       const pool = await items({ types: 'Movie,Series', sort: 'Random', limit: '15' });

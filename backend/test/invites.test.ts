@@ -83,7 +83,7 @@ describe('invites', () => {
     const u = (await env.pool.query("select * from users where authentik_sub='guest1'")).rows[0];
     expect(u.role).toBe('guest');
     const pol = env.jfCalls.filter((c) => c.path.endsWith('/Policy')).at(-1)!.body;
-    expect(pol).toMatchObject({ MaxParentalRating: 12, EnableVideoPlaybackTranscoding: false, MaxActiveSessions: 1, RemoteClientBitrateLimit: 8_000_000, EnableContentDownloading: false });
+    expect(pol).toMatchObject({ MaxParentalRating: 12, EnableVideoPlaybackTranscoding: true, MaxActiveSessions: 1, RemoteClientBitrateLimit: 8_000_000, EnableContentDownloading: false });
     // second use fails
     expect((await inviteLogin(token, 'guest2')).statusCode).toBe(410);
     expect((await env.pool.query("select 1 from users where authentik_sub='guest2'")).rowCount).toBe(0);

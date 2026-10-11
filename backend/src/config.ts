@@ -63,6 +63,8 @@ const schema = z.object({
   PORTAINER_API_KEY: opt,
   PORTAINER_STACK_ID: opt,
   PORTAINER_ENDPOINT_ID: z.coerce.number().int().default(1),
+  /** nightly playback check: local server hour 0-23, -1 = off */
+  PLAYBACK_CHECK_HOUR: z.coerce.number().int().min(-1).max(23).default(4),
   BACKGROUND_JOBS: z.enum(['true', 'false']).default('true'),
 });
 

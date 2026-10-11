@@ -21,8 +21,14 @@ export async function partyRoutes(app: FastifyInstance, ctx: Ctx) {
     hostName: r.members.get(r.hostId)?.name,
   });
 
-  app.post('/api/party', pre, async (req, reply) => {
+  app.post('/api/party', { ...pre, config: { rateLimit: { max: 10, timeWindow: '1 hour' } } }, async (req, reply) => {
     const b = z.object({ itemId: z.string().regex(/^[0-9a-f]{32}$/), startInMinutes: z.number().int().min(1).max(24 * 60).optional() }).parse(req.body);
+    // Scheduled rooms (not yet started) per host are capped; admins are exempt. Instant rooms start at once and do not count.
+    if (b.startInMinutes && req.user!.role !== 'admin') {
+      const now = Date.now();
+      const pending = [...parties.rooms.values()].filter((r) => r.hostId === req.user!.id && !r.started && r.startAt !== undefined && r.startAt > now).length;
+      if (pending >= 3) return reply.code(429).send({ error: 'too_many_parties', max: 3 });
+    }
     let item;
     try {
       item = await ctx.jf.item(req.user!, b.itemId); // also proves the creator may access it

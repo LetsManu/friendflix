@@ -3,6 +3,7 @@ import { audit } from './audit.js';
 import type { Ctx } from './ctx.js';
 import { encrypt, randomPassword } from './crypto.js';
 import { policyFromTemplate } from './jellyfin/client.js';
+import { effectiveRole } from './roles.js';
 import type { OidcClaims } from './oidc.js';
 import type { UserRow } from './types.js';
 
@@ -20,7 +21,7 @@ const safeName = (s: string) => s.replace(/[^A-Za-z0-9._-]/g, '').slice(0, 24) |
 
 /** Resolves a role template's library names to Jellyfin media folder IDs and writes the Jellyfin policy. */
 export async function applyRole(ctx: Ctx, jellyfinUserId: string, role: string, disabled = false) {
-  const t = ctx.roles[role];
+  const t = await effectiveRole(ctx, role);
   if (!t) throw new Error(`unknown role ${role}`);
   let ids: string[] | null = null;
   if (t.libraries !== 'all') {
@@ -62,4 +63,21 @@ export async function provisionUser(ctx: Ctx, claims: OidcClaims, role: string):
     await ctx.jf.client.deleteUser(jf!.Id).catch(() => undefined); // roll back the orphaned Jellyfin account
     throw e;
   }
+}
+
+/** Re-applies the effective role policy to all non-disabled users of a role. Returns the number of failures. */
+export async function reapplyRole(ctx: Ctx, role: string): Promise<number> {
+  const r = await ctx.db.query<{ jellyfin_user_id: string }>('select jellyfin_user_id from users where role=$1 and not disabled', [role]);
+  let failed = 0;
+  for (const u of r.rows) await applyRole(ctx, u.jellyfin_user_id, role, false).catch(() => { failed++; });
+  return failed;
+}
+
+/** One-time startup job (flag in app_flags): old accounts still carry the pre-maxHeight policies (e.g. guests without transcoding). Call after migrate. */
+export async function reapplyPoliciesOnce(ctx: Ctx, flag = 'reapply_roles_v1'): Promise<void> {
+  const got = await ctx.db.query('insert into app_flags(key) values ($1) on conflict do nothing returning key', [flag]);
+  if (!got.rowCount) return;
+  let failed = 0;
+  for (const role of Object.keys(ctx.roles)) failed += await reapplyRole(ctx, role);
+  if (failed) await ctx.db.query('delete from app_flags where key=$1', [flag]); // retry on next start
 }

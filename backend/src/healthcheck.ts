@@ -1,4 +1,5 @@
 import type { Ctx } from './ctx.js';
+import { notify } from './notify.js';
 import { libraryItems, previews, serviceUser } from './previews.js';
 import type { UserRow } from './types.js';
 
@@ -67,9 +68,32 @@ async function run(ctx: Ctx, st: CheckState, user: UserRow): Promise<void> {
   } finally {
     pv.paused = false;
     st.finishedAt = new Date().toISOString();
-    await ctx.db.query('insert into playback_checks(started_at, finished_at, results) values ($1,$2,$3)', [st.startedAt, st.finishedAt, JSON.stringify(st.results)]).catch(() => undefined);
+    const id = (await ctx.db.query<{ id: string }>('insert into playback_checks(started_at, finished_at, results) values ($1,$2,$3) returning id', [st.startedAt, st.finishedAt, JSON.stringify(st.results)]).catch(() => undefined))?.rows[0]?.id;
+    if (id) await notifyNewFailures(ctx, id, st.results).catch(() => undefined);
     st.running = false; // only after the report is stored
   }
+}
+
+/** Tells every admin about titles that fail now but did not in the previous stored report. */
+async function notifyNewFailures(ctx: Ctx, id: string, results: CheckResult[]): Promise<void> {
+  const prev = (await ctx.db.query<{ results: CheckResult[] }>('select results from playback_checks where id < $1 order by id desc limit 1', [id])).rows[0];
+  const was = new Set((prev?.results ?? []).filter((r) => !r.ok).map((r) => r.itemId));
+  const fresh = results.filter((r) => !r.ok && r.itemId && !was.has(r.itemId));
+  if (!fresh.length) return;
+  const names = fresh.slice(0, 5).map((r) => r.name).join(', ') + (fresh.length > 5 ? ` und ${fresh.length - 5} weitere` : '');
+  const admins = (await ctx.db.query<{ id: string }>("select id from users where role='admin' and not disabled")).rows;
+  for (const a of admins) {
+    await notify(ctx, { userId: a.id, kind: 'playback_check', title: `Wiedergabe-Check: ${fresh.length} Titel neu fehlerhaft`, body: names, link: '/admin/playback', dedupe: `playback-check-${id}-${a.id}`, external: true });
+  }
+}
+
+/** Timer tick: starts the nightly run at PLAYBACK_CHECK_HOUR (local time) unless one ran today or is running. */
+export async function nightlyTick(ctx: Ctx, now = new Date()): Promise<boolean> {
+  const hour = ctx.cfg.PLAYBACK_CHECK_HOUR;
+  if (hour < 0 || now.getHours() !== hour || jobs.get(ctx)?.running) return false;
+  const midnight = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  if ((await ctx.db.query('select 1 from playback_checks where started_at >= $1 limit 1', [midnight])).rowCount) return false;
+  return startPlaybackCheck(ctx);
 }
 
 /** Starts the background job; false when one is already running (one per process). */

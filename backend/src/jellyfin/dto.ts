@@ -77,6 +77,9 @@ export interface PlaybackDto {
   subtitles: Array<{ index: number; language?: string; title: string; url: string; isDefault: boolean }>;
 }
 
+/** 16:9 width for a height cap (1080 -> 1920) */
+export const maxWidthFor = (h: number) => Math.round((h * 16) / 9 / 2) * 2;
+
 const TEXT_SUBS = new Set(['srt', 'subrip', 'ass', 'ssa', 'vtt', 'webvtt', 'mov_text', 'subviewer']);
 
 export function toPlaybackDto(args: {
@@ -86,8 +89,10 @@ export function toPlaybackDto(args: {
   maxBitrate: number;
   resumeTicks: number;
   audioIndex?: number;
+  /** role resolution cap (px); null/undefined = none */
+  maxHeight?: number | null;
 }): PlaybackDto {
-  const { itemId, info, deviceId, maxBitrate, resumeTicks, audioIndex } = args;
+  const { itemId, info, deviceId, maxBitrate, resumeTicks, audioIndex, maxHeight } = args;
   const src = (info.MediaSources ?? [])[0];
   if (!src) throw new Error('no media source');
   const streams: Array<Record<string, any>> = src.MediaStreams ?? [];
@@ -102,9 +107,15 @@ export function toPlaybackDto(args: {
   hls.set('TranscodingMaxAudioChannels', '2');
   hls.set('MaxStreamingBitrate', String(maxBitrate));
   if (audioIndex !== undefined) hls.set('AudioStreamIndex', String(audioIndex));
+  if (maxHeight) {
+    hls.set('MaxHeight', String(maxHeight));
+    hls.set('MaxWidth', String(maxWidthFor(maxHeight)));
+  }
+  const srcHeight = Number(streams.find((s) => s.Type === 'Video')?.Height ?? 0);
+  const withinCap = !maxHeight || (srcHeight > 0 && srcHeight <= maxHeight); // direct play must not bypass the cap (unknown height = no direct)
 
   const browserContainer = /(^|,)(mp4|m4v|webm|mov)(,|$)/i.test(String(src.Container ?? ''));
-  const directOk = Boolean(src.SupportsDirectPlay) && browserContainer && Number(src.Bitrate ?? 0) <= maxBitrate && audioIndex === undefined;
+  const directOk = Boolean(src.SupportsDirectPlay) && browserContainer && Number(src.Bitrate ?? 0) <= maxBitrate && audioIndex === undefined && withinCap;
   const direct = new URLSearchParams(common);
   direct.set('static', 'true');
 

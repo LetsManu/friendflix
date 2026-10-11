@@ -3,6 +3,7 @@ import { z } from 'zod';
 import type { Ctx } from '../ctx.js';
 import { JellyfinError } from '../jellyfin/client.js';
 import { clearLive, countLive, getLive, listLive, setLive } from '../live.js';
+import { effectiveRole } from '../roles.js';
 import { requireUser } from '../session.js';
 import { playbackHooks } from '../hooks.js';
 
@@ -125,11 +126,11 @@ export function mediaRoutes(app: FastifyInstance, ctx: Ctx) {
   // ---- Playback ----
   app.post('/api/playback/info', pre, wrap(async (req, reply) => {
     const b = z.object({ itemId, startTicks: z.number().int().min(0).optional(), audioIndex: z.number().int().min(0).optional(), maxBitrate: z.number().int().min(300_000).max(200_000_000).optional() }).parse(req.body);
-    const role = ctx.roles[req.user!.role]!;
+    const role = (await effectiveRole(ctx, req.user!.role))!;
     if ((await countLive(ctx, req.user!.id)) >= role.maxStreams) return reply.code(429).send({ error: 'max_streams', max: role.maxStreams });
     const startTicks = b.startTicks ?? (await ctx.jf.item(req.user!, b.itemId)).positionTicks;
     const cap = Math.min(role.maxBitrate, b.maxBitrate ?? role.maxBitrate); // the viewer may lower the quality, never raise it above the role limit
-    const info = await ctx.jf.playbackInfo(req.user!, b.itemId, { maxBitrate: cap, startTicks, audioIndex: b.audioIndex });
+    const info = await ctx.jf.playbackInfo(req.user!, b.itemId, { maxBitrate: cap, maxHeight: role.maxHeight, startTicks, audioIndex: b.audioIndex });
     info.roleMaxBitrate = role.maxBitrate;
     info.trickplay = await ctx.jf.trickplay(req.user!, b.itemId, info.mediaSourceId);
     return info;
@@ -141,11 +142,16 @@ export function mediaRoutes(app: FastifyInstance, ctx: Ctx) {
       const user = req.user!;
       const ticks = Math.floor(b.positionTicks);
       let live = await getLive(ctx, user.id, b.playSessionId);
+      let elapsed = true;
       if (!live) {
-        if (kind !== 'Playing') return reply.code(204).send(); // stale report after TTL/stop
-        const role = ctx.roles[user.role]!;
-        if ((await countLive(ctx, user.id)) >= role.maxStreams) return reply.code(429).send({ error: 'max_streams', max: role.maxStreams });
-        const item = await ctx.jf.item(user, b.itemId);
+        // Start takes a stream slot. Progress/Stopped after TTL expiry are still forwarded (a sleeping tab must not lose its position)
+        // and rebuild the live record without counting against maxStreams.
+        if (kind === 'Playing') {
+          const role = (await effectiveRole(ctx, user.role))!;
+          if ((await countLive(ctx, user.id)) >= role.maxStreams) return reply.code(429).send({ error: 'max_streams', max: role.maxStreams });
+        }
+        const item = await ctx.jf.item(user, b.itemId); // access check: the user must be able to see the item
+        elapsed = false;
         live = {
           userId: user.id, userName: user.name, itemId: b.itemId, title: item.name, seriesName: item.seriesName, type: item.type,
           positionTicks: ticks, runtimeTicks: item.runtimeTicks, isPaused: false, playSessionId: b.playSessionId, updatedAt: Date.now(), source: 'portal',
@@ -159,7 +165,7 @@ export function mediaRoutes(app: FastifyInstance, ctx: Ctx) {
       });
       if (kind === 'Playing/Stopped') await clearLive(ctx, user.id, b.playSessionId);
       else await setLive(ctx, live);
-      await playbackHooks.run(ctx, { kind, user, live, elapsedMs: Math.min(Date.now() - prev, 30_000) });
+      await playbackHooks.run(ctx, { kind, user, live, elapsedMs: elapsed ? Math.min(Date.now() - prev, 30_000) : 0 });
       return { ok: true };
     });
   app.post('/api/playback/start', pre, report('Playing'));

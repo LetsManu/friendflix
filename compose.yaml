@@ -80,6 +80,15 @@ services:
       AUTHENTIK_URL: ${AUTHENTIK_URL:-}
       AUTHENTIK_API_TOKEN: ${AUTHENTIK_API_TOKEN:-}
       AUTHENTIK_ENROLL_FLOW: ${AUTHENTIK_ENROLL_FLOW:-}
+      UPDATE_REPO: ${UPDATE_REPO:-LetsManu/friendflix}
+      GITHUB_TOKEN: ${GITHUB_TOKEN:-}
+      PORTAINER_WEBHOOK_URL: ${PORTAINER_WEBHOOK_URL:-}
+      PORTAINER_URL: ${PORTAINER_URL:-}
+      PORTAINER_API_KEY: ${PORTAINER_API_KEY:-}
+      PORTAINER_STACK_ID: ${PORTAINER_STACK_ID:-}
+      PORTAINER_ENDPOINT_ID: ${PORTAINER_ENDPOINT_ID:-1}
+      PLAYBACK_CHECK_HOUR: ${PLAYBACK_CHECK_HOUR:-4}
+      PREVIEW_WARM: ${PREVIEW_WARM:-true}
     volumes: [previews:/data/previews] # cached hover/billboard clips (root fs is read-only)
     depends_on:
       postgres: { condition: service_healthy }

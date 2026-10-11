@@ -2,7 +2,7 @@ import { decrypt, encrypt } from '../crypto.js';
 import type { KV } from '../kv.js';
 import type { UserRow } from '../types.js';
 import { JellyfinClient, JellyfinError } from './client.js';
-import { toItemDto, toPlaybackDto, toTrickplayDto, type ItemDto, type PlaybackDto, type TrickplayDto } from './dto.js';
+import { maxWidthFor, toItemDto, toPlaybackDto, toTrickplayDto, type ItemDto, type PlaybackDto, type TrickplayDto } from './dto.js';
 
 const TOKEN_TTL = 6 * 3600;
 const FIELDS = 'Overview,Genres,OfficialRating,CommunityRating,PremiereDate,ProductionYear,ChildCount,RunTimeTicks';
@@ -286,13 +286,18 @@ export class JellyfinService {
     await this.compat(user, 'played' + on, [`/UserPlayedItems/${id}?userId=${uid}`, `/Users/${uid}/PlayedItems/${id}`], { method: on ? 'POST' : 'DELETE' });
   }
 
-  async playbackInfo(user: UserRow, itemId: string, opts: { maxBitrate: number; startTicks?: number; audioIndex?: number }): Promise<PlaybackDto> {
+  async playbackInfo(user: UserRow, itemId: string, opts: { maxBitrate: number; maxHeight?: number | null; startTicks?: number; audioIndex?: number }): Promise<PlaybackDto> {
     const p = new URLSearchParams({ UserId: user.jellyfin_user_id, MaxStreamingBitrate: String(opts.maxBitrate), AutoOpenLiveStream: 'false' });
     if (opts.startTicks) p.set('StartTimeTicks', String(opts.startTicks));
     if (opts.audioIndex !== undefined) p.set('AudioStreamIndex', String(opts.audioIndex));
+    if (opts.maxHeight) {
+      p.set('MaxHeight', String(opts.maxHeight));
+      p.set('MaxWidth', String(maxWidthFor(opts.maxHeight)));
+    }
     const profile = {
       Name: 'FriendFlix Web',
       MaxStreamingBitrate: opts.maxBitrate,
+      CodecProfiles: opts.maxHeight ? [{ Type: 'Video', Conditions: [{ Condition: 'LessThanEqual', Property: 'Height', Value: String(opts.maxHeight), IsRequired: true }] }] : [],
       DirectPlayProfiles: [{ Container: 'mp4,m4v,webm', Type: 'Video', VideoCodec: 'h264,vp9,av1', AudioCodec: 'aac,mp3,opus,flac' }],
       TranscodingProfiles: [
         { Container: 'ts', Type: 'Video', AudioCodec: 'aac,mp3', VideoCodec: 'h264', Protocol: 'hls', Context: 'Streaming', MaxAudioChannels: '2', MinSegments: 1, BreakOnNonKeyFrames: true },
@@ -308,7 +313,7 @@ export class JellyfinService {
       body: JSON.stringify({ DeviceProfile: profile }),
     });
     if (info.ErrorCode) throw new JellyfinError(403, `playback blocked: ${info.ErrorCode}`);
-    return toPlaybackDto({ itemId, info, deviceId: this.deviceId(user), maxBitrate: opts.maxBitrate, resumeTicks: opts.startTicks ?? 0, audioIndex: opts.audioIndex });
+    return toPlaybackDto({ itemId, info, deviceId: this.deviceId(user), maxBitrate: opts.maxBitrate, resumeTicks: opts.startTicks ?? 0, audioIndex: opts.audioIndex, maxHeight: opts.maxHeight });
   }
 
   /** Playing / Progress / Stopped reports (powers "Weiterschauen" and Jellyfin statistics). */
