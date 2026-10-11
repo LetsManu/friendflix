@@ -9,6 +9,8 @@ export interface KV {
   /** Atomic get-and-delete: only one concurrent caller gets the value. */
   take(key: string): Promise<string | null>;
   del(key: string): Promise<void>;
+  /** Atomic counter: increments (creating it at 1 with the ttl on first use) and returns the new value. */
+  incr(key: string, ttlSeconds: number): Promise<number>;
   /** Keys starting with prefix. */
   keys(prefix: string): Promise<string[]>;
   ping(): Promise<boolean>;
@@ -30,6 +32,11 @@ export class RedisKV implements KV {
   }
   async del(key: string) {
     await this.redis.del(key);
+  }
+  async incr(key: string, ttl: number) {
+    const n = await this.redis.incr(key);
+    if (n === 1) await this.redis.expire(key, ttl);
+    return n;
   }
   async keys(prefix: string) {
     const out: string[] = [];
@@ -75,6 +82,13 @@ export class MemoryKV implements KV {
   }
   async del(key: string) {
     this.m.delete(key);
+  }
+  async incr(key: string, ttl: number) {
+    const cur = this.live(key);
+    const n = (cur === null ? 0 : Number(cur)) + 1;
+    const e = this.m.get(key);
+    this.m.set(key, { v: String(n), exp: cur === null || !e ? Date.now() + ttl * 1000 : e.exp });
+    return n;
   }
   async keys(prefix: string) {
     return [...this.m.keys()].filter((k) => k.startsWith(prefix) && this.live(k) !== null);

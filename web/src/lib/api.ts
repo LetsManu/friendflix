@@ -20,6 +20,10 @@ export async function api<T = any>(path: string, opts: { method?: string; body?:
   }
   const text = await res.text();
   const json = text ? JSON.parse(text) : null;
+  if (res.status === 409 && json?.error === 'profile_required' && !/^\/(profiles|invite\/|tv$)/.test(location.pathname)) {
+    location.href = '/profiles'; // no profile chosen (yet) for this session
+    await new Promise(() => undefined);
+  }
   if (!res.ok) throw new ApiError(res.status, json);
   return json as T;
 }
@@ -41,4 +45,5 @@ export interface Item {
   genres: string[]; rating?: string; communityRating?: number; premiereDate?: string; image: boolean; backdrop: boolean; logo: boolean; trailers?: number; caption?: string;
   played: boolean; favorite: boolean; positionTicks: number; playedPercentage?: number; lastPlayedDate?: string;
 }
-export interface Me { id: string; name: string; role: string; roleLabel: string; isAdmin: boolean; csrfToken: string; deviceApproved: boolean; tv: boolean }
+export interface Me { id: string; name: string; role: string; roleLabel: string; isAdmin: boolean; csrfToken: string; deviceApproved: boolean; tv: boolean; profile?: MeProfile | null; profileRequired?: boolean; profileCount?: number }
+export interface MeProfile { id: string; name: string; avatar: string; isOwner: boolean }

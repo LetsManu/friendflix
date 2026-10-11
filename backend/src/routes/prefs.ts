@@ -35,25 +35,37 @@ export const prefsSchema = z.object({
 });
 export type Prefs = z.infer<typeof prefsSchema>;
 
-export async function loadPrefs(ctx: Pick<Ctx, 'db'>, userId: string): Promise<Prefs> {
-  const r = await ctx.db.query<{ data: unknown }>('select data from user_prefs where user_id=$1', [userId]);
-  const parsed = prefsSchema.safeParse(r.rows[0]?.data ?? {});
+/** Account-level flags (stay in user_prefs, shared by all profiles); everything else is per profile (profile_prefs). */
+const ACCOUNT_KEYS = ['shareHistory', 'shareRatings'] as const;
+
+/** Viewing prefs of a profile (default: the owner profile, whose id is the account id) merged with the account's share flags. */
+export async function loadPrefs(ctx: Pick<Ctx, 'db'>, userId: string, profileId: string = userId): Promise<Prefs> {
+  const r = await ctx.db.query<{ acc: Record<string, unknown> | null; prof: Record<string, unknown> | null }>(
+    `select (select data from user_prefs where user_id=$1) acc,
+            (select data from profile_prefs where profile_id=$2 and exists (select 1 from profiles where id=$2 and user_id=$1)) prof`,
+    [userId, profileId],
+  );
+  const row = r.rows[0];
+  const merged: Record<string, unknown> = { ...(row?.prof ?? {}) };
+  for (const k of ACCOUNT_KEYS) if (row?.acc && k in row.acc) merged[k] = row.acc[k];
+  const parsed = prefsSchema.safeParse(merged);
   return parsed.success ? parsed.data : prefsSchema.parse({});
 }
 
 export function prefsRoutes(app: FastifyInstance, ctx: Ctx) {
   const pre = { preHandler: requireUser(ctx) };
-  const load = async (userId: string): Promise<Prefs> => {
-    const r = await ctx.db.query<{ data: unknown }>('select data from user_prefs where user_id=$1', [userId]);
-    const parsed = prefsSchema.safeParse(r.rows[0]?.data ?? {});
-    return parsed.success ? parsed.data : prefsSchema.parse({});
-  };
-  app.get('/api/prefs', pre, async (req) => ({ prefs: await load(req.user!.id) }));
+  app.get('/api/prefs', pre, async (req) => ({ prefs: await loadPrefs(ctx, req.user!.id, req.profile!.id) }));
   app.put('/api/prefs', pre, async (req) => {
     const prefs = prefsSchema.parse(req.body);
+    const account = { shareHistory: prefs.shareHistory, shareRatings: prefs.shareRatings };
+    const { shareHistory: _h, shareRatings: _r, ...viewing } = prefs;
+    await ctx.db.query(
+      `insert into profile_prefs(profile_id, data) values ($1,$2) on conflict (profile_id) do update set data = excluded.data, updated_at = now()`,
+      [req.profile!.id, JSON.stringify(viewing)],
+    );
     await ctx.db.query(
       `insert into user_prefs(user_id, data) values ($1,$2) on conflict (user_id) do update set data = excluded.data, updated_at = now()`,
-      [req.user!.id, JSON.stringify(prefs)],
+      [req.user!.id, JSON.stringify(account)],
     );
     return { prefs };
   });

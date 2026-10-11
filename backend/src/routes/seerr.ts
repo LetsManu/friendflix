@@ -39,6 +39,7 @@ function wrap<T extends (...a: any[]) => Promise<any>>(fn: T): T {
 
 export function seerrRoutes(app: FastifyInstance, ctx: Ctx) {
   const pre = { preHandler: requireUser(ctx) };
+  const npre = { preHandler: requireUser(ctx, { allowNoProfile: true }) };
   const admin = { preHandler: requireAdmin(ctx) };
 
   app.get('/api/seerr/search', pre, wrap(async (req) => {
@@ -192,7 +193,7 @@ export function seerrRoutes(app: FastifyInstance, ctx: Ctx) {
   });
 
   // ---- notifications (in-app) ----
-  app.get('/api/notifications', pre, async (req) => {
+  app.get('/api/notifications', npre, async (req) => {
     const r = await ctx.db.query(
       `select n.id, n.kind, n.title, n.body, n.link, n.created_at,
               (case when n.user_id is null then coalesce(n.created_at <= u.notifications_read_at, false) else n.read_at is not null end) as read
@@ -202,7 +203,7 @@ export function seerrRoutes(app: FastifyInstance, ctx: Ctx) {
     );
     return { notifications: r.rows };
   });
-  app.post('/api/notifications/read', pre, async (req) => {
+  app.post('/api/notifications/read', npre, async (req) => {
     await ctx.db.query('update notifications set read_at = now() where user_id = $1 and read_at is null', [req.user!.id]);
     await ctx.db.query('update users set notifications_read_at = now() where id = $1', [req.user!.id]);
     return { ok: true };

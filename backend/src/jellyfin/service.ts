@@ -110,9 +110,23 @@ export class JellyfinService {
 
   async resume(user: JfUser): Promise<ItemDto[]> {
     const uid = user.jellyfin_user_id;
-    const qs = `userId=${uid}&limit=20&mediaTypes=Video&fields=${FIELDS}&enableTotalRecordCount=false`;
+    const qs = `userId=${uid}&limit=40&mediaTypes=Video&fields=${FIELDS}&enableTotalRecordCount=false`;
     const r = await this.compat<{ Items: any[] }>(user, 'resume', [`/UserItems/Resume?${qs}`, `/Users/${uid}/Items/Resume?${qs}`]);
     return r.Items.map(toItemDto);
+  }
+
+  /** Played items (newest first) merged with in-progress ones, as shown in the viewing history. */
+  async history(user: JfUser, q: { start?: number; limit?: number } = {}): Promise<ItemDto[]> {
+    const p = new URLSearchParams({
+      userId: user.jellyfin_user_id, recursive: 'true', includeItemTypes: 'Movie,Episode', sortBy: 'DatePlayed', sortOrder: 'Descending',
+      filters: 'IsPlayed', fields: FIELDS, startIndex: String(q.start ?? 0), limit: String(Math.min(q.limit ?? 50, 200)), enableTotalRecordCount: 'false',
+    });
+    const r = await this.json<{ Items: any[] }>(user, `/Items?${p}`);
+    const played = r.Items.map(toItemDto);
+    const merged = new Map<string, ItemDto>();
+    for (const i of [...(q.start ? [] : await this.resume(user)), ...played]) if (!merged.has(i.id)) merged.set(i.id, i);
+    const ts = (i: ItemDto) => (i.lastPlayedDate ? Date.parse(i.lastPlayedDate) || 0 : 0);
+    return [...merged.values()].filter((i) => i.lastPlayedDate).sort((a, b) => ts(b) - ts(a)).slice(0, 200);
   }
 
   async nextUp(user: JfUser, seriesId?: string): Promise<ItemDto[]> {

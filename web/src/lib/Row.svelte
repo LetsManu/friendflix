@@ -10,6 +10,8 @@
   export let href = '';
   /** big rank numbers (Top 10 style) */
   export let ranked = false;
+  /** cards get an X button; the parent handles `remove` */
+  export let removable = false;
   let track: HTMLDivElement;
   let canLeft = false, canRight = true;
 
@@ -35,7 +37,7 @@
         {#if items === null}
           {#each Array(8) as _}<div class="slot"><div class="skeleton ph"></div></div>{/each}
         {:else}
-          {#each items as it, idx (it.id)}<div class="slot" class:ranked role="listitem">{#if ranked}<span class="rank" aria-label="Platz {idx + 1}">{idx + 1}</span>{/if}<Card item={it} /></div>{/each}
+          {#each items as it, idx (it.id)}<div class="slot" class:ranked role="listitem">{#if ranked}<span class="rank" aria-label="Platz {idx + 1}">{idx + 1}</span>{/if}<Card item={it} {removable} on:remove /></div>{/each}
         {/if}
       </div>
       <button class="arrow right" class:hide={!canRight} aria-label="Weiterblättern" on:click={() => go(1)}><Icon name="chevron-right" size={34} /></button>

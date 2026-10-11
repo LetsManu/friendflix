@@ -3,7 +3,8 @@
   import { goto } from '$app/navigation';
   import { api, backdrop, fmtMin, logoUrl, type Item } from '#lib/api';
   import Icon from '#lib/Icon.svelte';
-  import { listIds, toggleList } from '#lib/stores';
+  import { listIds, toggleList, prefs } from '#lib/stores';
+  import { isSpoiler } from '#lib/spoiler';
 
   export let id: string;
   let item: Item | null = null, next: Item | null = null, closeBtn: HTMLButtonElement, box: HTMLDivElement, failed = false, logoFailed = false;
@@ -64,7 +65,7 @@
     <div class="info">
       <div>
         <p class="meta">{#if item.communityRating}<span class="match">{Math.round(item.communityRating * 10)}% Match</span>{/if}{#if item.year}<span>{item.year}</span>{/if}{#if item.rating}<span class="age">{item.rating}</span>{/if}{#if item.type !== 'Series' && item.runtimeTicks}<span>{fmtMin(item.runtimeTicks)}</span>{/if}</p>
-        <p>{item.overview ?? 'Keine Beschreibung vorhanden.'}</p>
+        <p>{isSpoiler(item, $prefs) ? 'Beschreibung ausgeblendet (Spoilerschutz).' : (item.overview ?? 'Keine Beschreibung vorhanden.')}</p>
       </div>
       <div class="side">
         {#if item.genres.length}<p><span class="muted">Genres:</span> {item.genres.join(', ')}</p>{/if}

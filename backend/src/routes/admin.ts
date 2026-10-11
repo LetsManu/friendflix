@@ -11,6 +11,7 @@ import { defaultLimit } from '../requestlimit.js';
 import { INVITABLE_ROLES, effectiveRole, invalidateRoles } from '../roles.js';
 import { requireAdmin, requireUser } from '../session.js';
 import { portainerMode, triggerUpdate, updateInfo } from '../updates.js';
+import { accountJellyfinIds } from '../profiles.js';
 import { applyRole, getUserById, reapplyRole } from '../users.js';
 
 const uuid = z.guid();
@@ -136,12 +137,14 @@ export function adminRoutes(app: FastifyInstance, ctx: Ctx) {
     if (id === req.user!.id && (b.disabled || (b.role && b.role !== 'admin'))) return reply.code(400).send({ error: 'cannot_lock_yourself_out' });
     if (b.role && b.role !== user.role) {
       if (!Object.hasOwn(ctx.roles, b.role)) return reply.code(400).send({ error: 'unknown_role' });
-      await applyRole(ctx, user.jellyfin_user_id, b.role, b.disabled ?? user.disabled); // re-apply template to the Jellyfin account
+      const ids = await accountJellyfinIds(ctx, id);
+      const hidden = new Set(ids.filter((x) => x !== user.jellyfin_user_id));
+      for (const jid of ids) await applyRole(ctx, jid, b.role, b.disabled ?? user.disabled, hidden.has(jid) ? { IsHidden: true } : {}); // re-apply template to the Jellyfin account and all its profile users
       await ctx.db.query('update users set role=$1 where id=$2', [b.role, id]);
       await audit(ctx, req.user!.id, 'user.role', id, { from: user.role, to: b.role });
     }
     if (b.disabled !== undefined && b.disabled !== user.disabled) {
-      await ctx.jf.client.setPolicy(user.jellyfin_user_id, { IsDisabled: b.disabled });
+      for (const jid of await accountJellyfinIds(ctx, id)) await ctx.jf.client.setPolicy(jid, { IsDisabled: b.disabled });
       await ctx.db.query('update users set disabled=$1 where id=$2', [b.disabled, id]);
       if (b.disabled) await revokeSessions(ctx, id);
       await audit(ctx, req.user!.id, b.disabled ? 'user.disable' : 'user.enable', id);
@@ -207,23 +210,23 @@ export function adminRoutes(app: FastifyInstance, ctx: Ctx) {
   });
 
   // ---- own devices ----
-  app.post('/api/sessions/revoke-others', { preHandler: requireUser(ctx) }, async (req) => {
+  app.post('/api/sessions/revoke-others', { preHandler: requireUser(ctx, { allowNoProfile: true }) }, async (req) => {
     const n = await revokeSessions(ctx, req.user!.id, undefined, req.sid);
     await audit(ctx, req.user!.id, 'session.revoke_others', req.user!.id, { sessions: n });
     return { revoked: n };
   });
-  app.get('/api/devices', { preHandler: requireUser(ctx, { allowPendingDevice: true }) }, async (req) => {
+  app.get('/api/devices', { preHandler: requireUser(ctx, { allowPendingDevice: true, allowNoProfile: true }) }, async (req) => {
     const r = await ctx.db.query('select device_id, label, approved, created_at, last_seen from devices where user_id=$1 order by created_at', [req.user!.id]);
     return { devices: r.rows.map((d) => ({ ...d, id: d.device_id, current: d.device_id === req.session!.deviceId })) };
   });
-  app.post('/api/devices/:id/approve', { preHandler: requireUser(ctx) }, async (req, reply) => {
+  app.post('/api/devices/:id/approve', { preHandler: requireUser(ctx, { allowNoProfile: true }) }, async (req, reply) => {
     const id = z.string().min(10).max(80).parse((req.params as { id: string }).id);
     const r = await ctx.db.query('update devices set approved=true where user_id=$1 and device_id=$2', [req.user!.id, id]);
     if (!r.rowCount) return reply.code(404).send({ error: 'not_found' });
     await audit(ctx, req.user!.id, 'device.approve', req.user!.id, { by: 'self' });
     return { ok: true };
   });
-  app.delete('/api/devices/:id', { preHandler: requireUser(ctx) }, async (req, reply) => {
+  app.delete('/api/devices/:id', { preHandler: requireUser(ctx, { allowNoProfile: true }) }, async (req, reply) => {
     const id = z.string().min(10).max(80).parse((req.params as { id: string }).id);
     if (id === req.session!.deviceId) return reply.code(400).send({ error: 'current_device' });
     await ctx.db.query('delete from devices where user_id=$1 and device_id=$2', [req.user!.id, id]);

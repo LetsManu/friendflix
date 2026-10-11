@@ -4,11 +4,15 @@
   import Icon from '#lib/Icon.svelte';
   import Logo from '#lib/Logo.svelte';
   import { openModal } from '#lib/modal';
-  import { onDestroy } from 'svelte';
+  import { createEventDispatcher, onDestroy } from 'svelte';
   import { prefs } from '#lib/stores';
+  import { isSpoiler } from '#lib/spoiler';
   import { playPreview, previewFailed, stopPreview, previewOwner, toggleSound } from '#lib/preview';
 
   export let item: Item;
+  /** shows a remove (X) button and emits `remove` (used for Weiterschauen) */
+  export let removable = false;
+  const dispatch = createEventDispatcher<{ remove: Item }>();
   let fav = item.favorite;
   $: fav = item.favorite; // follow the item when the list re-renders with fresh data
   $: href = item.type === 'Episode' ? `/watch/${item.id}` : item.type === 'BoxSet' ? `/library/${item.id}` : `/item/${item.id}`;
@@ -43,12 +47,13 @@
   <div class="media">
   <a class="thumb" {href} aria-label={item.name + (sub ? ', ' + sub : '')}>
     {#if posterOnly}<img class="blur" loading="lazy" {src} alt="" aria-hidden="true" />{/if}
-    {#if src}<img class:contain={posterOnly} loading="lazy" decoding="async" {src} alt="" width="320" height="180" />{/if}
+    {#if src}<img class:contain={posterOnly} class:spoil={isSpoiler(item, $prefs)} loading="lazy" decoding="async" {src} alt="" width="320" height="180" />{/if}
     <span class="brand" aria-hidden="true"><Logo size={18} label="" /></span>
     {#if previewing}<!-- svelte-ignore a11y_media_has_caption --><video bind:this={pv} class="pv" loop playsinline on:volumechange={() => (vmuted = pv.muted)} on:playing={() => (vmuted = pv.muted)}></video>{/if}
     <span class="cap" class:big={!src}>{item.type === 'Episode' ? item.name : item.name}</span>
     {#if pct}<span class="progress"><i style="width:{pct}%"></i></span>{/if}
   </a>
+  {#if removable}<button class="rm" aria-label="Aus Weiterschauen entfernen" on:click={() => dispatch('remove', item)}><Icon name="x" size={14} /></button>{/if}
   {#if previewing}<button class="snd" aria-label={vmuted ? 'Ton einschalten' : 'Ton ausschalten'} aria-pressed={!vmuted} on:click={(e) => { release(e); toggleSound(pv); }}><Icon name={vmuted ? 'volume-off' : 'volume'} size={16} /></button>{/if}
   </div>
   <div class="pop">
@@ -56,6 +61,7 @@
       <a class="round play" href={href} aria-label="Abspielen"><Icon name="play" size={18} /></a>
       <button class="round" aria-label={inList ? 'Von Meine Liste entfernen' : 'Zu Meine Liste hinzufügen'} on:click={(e) => { release(e); toggleList(item.seriesId ?? item.id, inList); }}><Icon name={inList ? 'check' : 'plus'} size={18} /></button>
       <button class="round" class:on={fav} aria-label={fav ? 'Favorit entfernen' : 'Als Favorit markieren'} aria-pressed={fav} on:click={(e) => { release(e); toggleFav(); }}><Icon name="heart" size={17} fill={fav} /></button>
+      {#if removable}<button class="round" aria-label="Aus Weiterschauen entfernen" title="Aus Weiterschauen entfernen" on:click={(e) => { release(e); dispatch('remove', item); }}><Icon name="x" size={17} /></button>{/if}
       <a class="round more" href={detail} aria-label="Mehr Infos" on:click={(e) => openModal(e, detail)}><Icon name="chevron-down" size={18} /></a>
     </div>
     <div class="meta">
@@ -79,6 +85,7 @@
   .snd:hover:not(:disabled) { background: rgba(20,20,20,.9); border-color: #fff; }
   .brand { position: absolute; left: .45rem; top: .4rem; z-index: 2; pointer-events: none; opacity: .95; }
   .blur { position: absolute; inset: -10%; width: 120%; height: 120%; object-fit: cover; filter: blur(18px) brightness(.55); }
+  .thumb img.spoil { filter: blur(14px); transform: scale(1.1); }
   .thumb img.contain { position: relative; object-fit: contain; }
   .cap { position: absolute; left: .6rem; bottom: .5rem; right: .6rem; font-weight: 700; font-size: .85rem; text-shadow: 0 1px 6px #000, 0 0 2px #000; line-height: 1.2; }
   .cap.big { top: 0; display: grid; place-items: center; text-align: center; font-size: 1rem; padding: .5rem; }
@@ -94,6 +101,7 @@
   .round.play:hover { background: rgba(255,255,255,.8); }
   .round.on { color: var(--acc); border-color: var(--acc); }
   .more { margin-left: auto; }
+  .rm { display: none; position: absolute; right: .4rem; top: .4rem; z-index: 3; width: 28px; min-height: 28px; height: 28px; padding: 0; border-radius: 50%; background: rgba(20,20,20,.7); border: 1.5px solid rgba(255,255,255,.6); color: #fff; place-items: center; }
   .meta { display: flex; gap: .6rem; align-items: center; margin-top: .55rem; font-size: .78rem; color: var(--mut); flex-wrap: wrap; }
   .match { color: var(--ok); font-weight: 700; }
   .age { border: 1px solid rgba(255,255,255,.4); padding: 0 .35rem; }
@@ -106,5 +114,5 @@
     :global(.slot:last-child) .card { transform-origin: right center; }
     .card:hover .pop, .card:has(:focus-visible) .pop { opacity: 1; visibility: visible; pointer-events: auto; transition-delay: .35s; }
   }
-  @media (hover: none), (pointer: coarse) { .pop { display: none; } }
+  @media (hover: none), (pointer: coarse) { .pop { display: none; } .rm { display: grid; } }
 </style>

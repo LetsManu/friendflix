@@ -159,7 +159,7 @@ export function discoverRoutes(app: FastifyInstance, ctx: Ctx) {
     }
   };
   app.get('/api/items/:id/trailer', pre, wrap(async (req, reply) => {
-    if (!(await loadPrefs(ctx, req.user!.id)).hoverTrailers) return reply.code(404).send({ error: 'disabled' });
+    if (!(await loadPrefs(ctx, req.user!.id, req.profile!.id)).hoverTrailers) return reply.code(404).send({ error: 'disabled' });
     const id = id32.parse((req.params as { id: string }).id);
     const item = await viewable(req.jfUser!, id);
     if (!item) return reply.code(404).send({ error: 'not_found' });

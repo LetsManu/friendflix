@@ -3,6 +3,7 @@ import { timingSafeEqual } from 'node:crypto';
 import { z } from 'zod';
 import type { Ctx } from '../ctx.js';
 import { clearLive, setLive } from '../live.js';
+import { jfUserFor, resolveProfile } from '../profiles.js';
 import { loadSession } from '../session.js';
 import { mediaBrowserHeader } from '../jellyfin/client.js';
 import { upstreamUri } from '../mediapath.js';
@@ -38,9 +39,12 @@ interface MediaAuth {
   maxBitrate: number;
 }
 
+/** Session -> Jellyfin credentials for media requests. Short memo (5 s) keeps per-segment auth cheap. */
+const memo = new Map<string, { exp: number; v: MediaAuth | null }>();
+/** Drops the memoised credentials of a session (profile switch / revoke) so the gateway never serves the previous profile's token. */
+export const forgetAuth = (sid: string) => { memo.delete(sid); };
+
 export function internalRoutes(app: FastifyInstance, ctx: Ctx) {
-  /** Session -> Jellyfin credentials for media requests. Short memo (5 s) keeps per-segment auth cheap. */
-  const memo = new Map<string, { exp: number; v: MediaAuth | null }>();
   async function mediaAuth(sid: string): Promise<MediaAuth | null> {
     const hit = memo.get(sid);
     if (hit && hit.exp > Date.now()) return hit.v;
@@ -50,8 +54,10 @@ export function internalRoutes(app: FastifyInstance, ctx: Ctx) {
       const user = await getUserById(ctx, s.userId);
       // unknown (removed) role: fall back to the least privileged template ('guest'); none -> deny
       const role = ctx.roles[user?.role ?? ''] ?? ctx.roles.guest;
-      if (user && !user.disabled && role) {
-        v = { userId: user.id, token: await ctx.jf.token(user), deviceId: ctx.jf.deviceId(user), maxBitrate: role.maxBitrate };
+      const prof = user && !user.disabled ? await resolveProfile(ctx, user, s) : null; // no profile chosen yet (owner PIN) -> deny
+      if (user && prof && role) {
+        const jfUser = jfUserFor(user, prof);
+        v = { userId: user.id, token: await ctx.jf.token(jfUser), deviceId: ctx.jf.deviceId(jfUser), maxBitrate: role.maxBitrate };
       }
     }
     memo.set(sid, { exp: Date.now() + (v ? 5_000 : 2_000), v });

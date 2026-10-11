@@ -2,6 +2,7 @@ import { randomBytes } from 'node:crypto';
 import type { FastifyReply, FastifyRequest } from 'fastify';
 import type { Ctx } from './ctx.js';
 import { getUserById } from './users.js';
+import { jfUserFor, resolveProfile } from './profiles.js';
 import type { JfUser, ProfileRow, UserRow } from './types.js';
 
 export interface Session {
@@ -79,26 +80,22 @@ export async function authenticate(ctx: Ctx, req: FastifyRequest): Promise<boole
   req.sid = sid;
   req.session = s;
   req.user = user;
-  // Phase 0: always the owner profile (id == account id); created lazily if the row is missing.
-  const prof = await ctx.db.query<ProfileRow>(
-    `with ins as (
-       insert into profiles(id, user_id, name, is_owner) values ($1, $1, left($2, 20), true) on conflict do nothing returning *
-     ) select * from profiles where id = $1 union all select * from ins limit 1`,
-    [user.id, user.name],
-  );
-  req.profile = prof.rows[0]!;
-  req.jfUser = user;
+  const prof = await resolveProfile(ctx, user, s);
+  req.profile = prof ?? undefined;
+  req.jfUser = prof ? jfUserFor(user, prof) : undefined;
   await touch(ctx, sid, s);
   return true;
 }
 
-export function requireUser(ctx: Ctx, opts: { allowPendingDevice?: boolean } = {}) {
+/** allowNoProfile: routes usable before a profile is picked (/api/me, /api/profiles*, devices, notifications ...); all others answer 409 profile_required. */
+export function requireUser(ctx: Ctx, opts: { allowPendingDevice?: boolean; allowNoProfile?: boolean } = {}) {
   return async (req: FastifyRequest, reply: FastifyReply) => {
     if (!(await authenticate(ctx, req))) return reply.code(401).send({ error: 'unauthenticated' });
     if (!req.session!.deviceApproved && !opts.allowPendingDevice) {
       // Re-check: the device may have been approved since the session was created.
       if (!(await refreshDevice(ctx, req))) return reply.code(403).send({ error: 'device_pending' });
     }
+    if (!req.profile && !opts.allowNoProfile) return reply.code(409).send({ error: 'profile_required' });
   };
 }
 

@@ -41,6 +41,11 @@ export function dropRemotePeers(userId: string, sids: Set<string>) {
   for (const p of [...(peers.get(userId) ?? [])]) if (sids.has(p.sid)) p.ws.close(4401, 'revoked');
 }
 
+/** A profile switch rotates the session id: keep the already connected sockets of the old sid alive under the new one. */
+export function renamePeerSid(userId: string, oldSid: string, newSid: string) {
+  for (const p of peers.get(userId) ?? []) if (p.sid === oldSid) p.sid = newSid;
+}
+
 export const tvOnline = (userId: string) => [...(peers.get(userId) ?? [])].some((p) => p.role === 'tv');
 
 export function tvRoutes(app: FastifyInstance, ctx: Ctx) {

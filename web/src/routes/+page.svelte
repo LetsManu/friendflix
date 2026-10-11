@@ -42,6 +42,11 @@
       hero = pool.find((i) => i.backdrop) ?? pool[0] ?? null;
     } catch { hero = null; }
   });
+  async function removeResume(id: string) {
+    const prev = resume;
+    resume = resume ? resume.filter((i) => i.id !== id) : resume; // optimistic
+    try { await api(`/api/library/resume/${id}`, { method: 'DELETE' }); } catch { resume = prev; }
+  }
   $: heroRank = hero && top ? top.findIndex((i) => i.id === hero!.id) + 1 : 0;
   // Jellyfin's next-up also lists the episode you are in the middle of: that one is already under "Weiterschauen"
   $: nextOnly = next && resume ? next.filter((e) => !resume!.some((r) => r.id === e.id)) : next;
@@ -51,7 +56,7 @@
 <Hero item={hero} rank={heroRank} />
 <div class="rows">
   {#if error}<p class="err" style="margin:1rem var(--pad-x)">{error}</p>{/if}
-  <Row title="Weiterschauen" items={resume} />
+  <Row title="Weiterschauen" items={resume} removable on:remove={(e) => removeResume(e.detail.id)} />
   <Row title="Nächste Folge" items={nextOnly} />
   <Row title="Von Freunden empfohlen" items={recs} />
   <Row title="Freunde haben bewertet" items={friendsRated} />

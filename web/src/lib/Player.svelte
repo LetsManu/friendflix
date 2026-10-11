@@ -5,6 +5,8 @@
   import Icon from '#lib/Icon.svelte';
   import { get } from 'svelte/store';
   import { prefs } from '#lib/stores';
+  import { subClasses } from '#lib/substyle';
+  import { noteInteraction } from '#lib/stillwatching';
   import { nowPlaying } from '#lib/remote';
   import { isBackKey } from '#lib/spatial';
 
@@ -334,9 +336,12 @@
     window.addEventListener('pagehide', bye);
     document.addEventListener('fullscreenchange', fs);
     window.addEventListener('ff-remote', onRemote);
+    const touched = () => noteInteraction();
+    window.addEventListener('pointerdown', touched, true); window.addEventListener('keydown', touched, true); window.addEventListener('ff-remote', touched);
     window.addEventListener('keydown', unmuteOnGesture, true);
     window.addEventListener('pointerdown', unmuteOnGesture, true);
     return () => {
+      window.removeEventListener('pointerdown', touched, true); window.removeEventListener('keydown', touched, true); window.removeEventListener('ff-remote', touched);
       window.removeEventListener('pagehide', bye); document.removeEventListener('fullscreenchange', fs);
       window.removeEventListener('ff-remote', onRemote); window.removeEventListener('keydown', unmuteOnGesture, true); window.removeEventListener('pointerdown', unmuteOnGesture, true);
     };
@@ -349,7 +354,7 @@
 </script>
 
 <svelte:window on:keydown={onKey} on:keydown|capture={onBackCapture} />
-<div class="stage" class:idle={!showUi} style="--inset:{inset}px" bind:this={stage} on:mousemove={wake} on:click={onSurfaceClick} on:keydown={() => {}} role="presentation">
+<div class="stage {subClasses($prefs.subtitleStyle)}" class:idle={!showUi} style="--inset:{inset}px" bind:this={stage} on:mousemove={wake} on:click={onSurfaceClick} on:keydown={() => {}} role="presentation">
   <!-- svelte-ignore a11y_media_has_caption -->
   <video bind:this={video} playsinline crossorigin="use-credentials"
     on:play={onPlay} on:pause={() => { paused = true; send('progress'); }} on:seeked={() => started && send('progress')}
@@ -488,7 +493,22 @@
   .stage { position: relative; width: 100%; background: #000; color: #fff; overflow: hidden; user-select: none; -webkit-user-select: none; }
   .stage.idle { cursor: none; }
   .stage :global(video) { display: block; width: 100%; height: 100%; max-height: 100%; object-fit: contain; background: #000; }
-  .stage :global(video::cue) { background: rgba(0,0,0,.65); font-size: 1.15em; }
+  .stage :global(video::cue) { background: rgba(0,0,0,.65); font-size: 1.15em; color: #fff; font-family: sans-serif; }
+  .stage.sub-size-s :global(video::cue) { font-size: .9em; }
+  .stage.sub-size-m :global(video::cue) { font-size: 1.15em; }
+  .stage.sub-size-l :global(video::cue) { font-size: 1.5em; }
+  .stage.sub-size-xl :global(video::cue) { font-size: 1.9em; }
+  .stage.sub-color-white :global(video::cue) { color: #fff; }
+  .stage.sub-color-yellow :global(video::cue) { color: #ffe14d; }
+  .stage.sub-color-cyan :global(video::cue) { color: #4de8ff; }
+  .stage.sub-color-green :global(video::cue) { color: #6dff7a; }
+  .stage.sub-bg-none :global(video::cue) { background: transparent; text-shadow: none; }
+  .stage.sub-bg-shadow :global(video::cue) { background: transparent; text-shadow: 0 0 4px #000, 0 0 4px #000, 1px 1px 3px #000; }
+  .stage.sub-bg-semi :global(video::cue) { background: rgba(0,0,0,.65); text-shadow: none; }
+  .stage.sub-bg-solid :global(video::cue) { background: #000; text-shadow: none; }
+  .stage.sub-font-sans :global(video::cue) { font-family: system-ui, sans-serif; }
+  .stage.sub-font-serif :global(video::cue) { font-family: Georgia, 'Times New Roman', serif; }
+  .stage.sub-font-mono :global(video::cue) { font-family: ui-monospace, Menlo, Consolas, monospace; }
   .center { position: absolute; inset: 0; display: grid; place-items: center; pointer-events: none; z-index: 3; }
   .spin { width: 62px; height: 62px; border: 5px solid rgba(255,255,255,.25); border-top-color: var(--acc); border-radius: 50%; animation: sp .9s linear infinite; }
   @keyframes sp { to { transform: rotate(360deg); } }

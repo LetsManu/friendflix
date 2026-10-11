@@ -87,7 +87,7 @@ describe('viewing preferences', () => {
     expect((await call('PUT', '/api/prefs', { quality: -5 })).statusCode).toBe(400);
   });
   it('parses older stored prefs (without the newer fields) to defaults', async () => {
-    await env.pool.query("update user_prefs set data = '{\"autoplayNext\":false,\"subtitleStyle\":{\"size\":\"xl\"}}'");
+    await env.pool.query("update profile_prefs set data = '{\"autoplayNext\":false,\"subtitleStyle\":{\"size\":\"xl\"}}'");
     expect((await call('GET', '/api/prefs')).json().prefs).toMatchObject({ autoplayNext: false, stillWatching: true, stillWatchingEpisodes: 3, spoilerProtection: false, subtitleStyle: { size: 'xl', color: 'white', background: 'semi', font: 'sans' } });
   });
   it('requires CSRF and a session', async () => {

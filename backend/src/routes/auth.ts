@@ -6,6 +6,7 @@ import type { Ctx } from '../ctx.js';
 import { COOKIE, loadSession, newSession, rand, requireUser, saveSession } from '../session.js';
 import { registerDevice } from '../devices.js';
 import { claimInvite, deleteAuthentikInvitation, enrollFlowUrl, lookupInvite, releaseInvite, type InviteRow } from '../invites.js';
+import { accountJellyfinIds, listProfiles, publicProfile } from '../profiles.js';
 import { applyRole, getUserBySub, provisionUser } from '../users.js';
 
 const OIDC_COOKIE = 'ff_oidc';
@@ -73,7 +74,8 @@ export function authRoutes(app: FastifyInstance, ctx: Ctx) {
         return reply.code(403).send({ error: 'disabled' });
       } else if (isAdmin && user.role !== 'admin') {
         await ctx.db.query("update users set role='admin' where id=$1", [user.id]);
-        await applyRole(ctx, user.jellyfin_user_id, 'admin');
+        const owned = await accountJellyfinIds(ctx, user.id);
+        for (const jid of owned) await applyRole(ctx, jid, 'admin', false, jid === user.jellyfin_user_id ? {} : { IsHidden: true });
         user.role = 'admin';
       }
       if (user.disabled) return reply.code(403).send({ error: 'disabled' });
@@ -89,8 +91,9 @@ export function authRoutes(app: FastifyInstance, ctx: Ctx) {
     }
   });
 
-  app.get('/api/me', { preHandler: requireUser(ctx, { allowPendingDevice: true }) }, async (req) => {
+  app.get('/api/me', { preHandler: requireUser(ctx, { allowPendingDevice: true, allowNoProfile: true }) }, async (req) => {
     const u = req.user!;
+    const profileCount = (await listProfiles(ctx, u.id)).length;
     return {
       id: u.id,
       name: u.name,
@@ -103,6 +106,10 @@ export function authRoutes(app: FastifyInstance, ctx: Ctx) {
       /** this session belongs to a paired television (device ids of paired TVs start with "tv-") */
       tv: Boolean(req.session!.deviceId?.startsWith('tv-')),
       limits: ctx.roles[u.role],
+      profile: req.profile ? publicProfile(req.profile) : null,
+      /** true: the client must send the user to the profile picker first (owner profile has a PIN and none was chosen) */
+      profileRequired: !req.profile,
+      profileCount,
     };
   });
 

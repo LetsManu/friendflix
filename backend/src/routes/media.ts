@@ -6,6 +6,7 @@ import { clearLive, countLive, getLive, listLive, setLive } from '../live.js';
 import { effectiveRole } from '../roles.js';
 import { requireUser } from '../session.js';
 import { playbackHooks } from '../hooks.js';
+import { tidyResume } from '../resume.js';
 
 const itemId = z.string().transform((s) => s.replace(/-/g, '').toLowerCase()).pipe(z.string().regex(/^[0-9a-f]{32}$/));
 const psId = z.string().regex(/^[\w-]{8,64}$/);
@@ -70,7 +71,37 @@ export function mediaRoutes(app: FastifyInstance, ctx: Ctx) {
     return r.items[0] ? { item: r.items[0] } : reply.code(404).send({ error: 'nothing_found' });
   }));
 
-  app.get('/api/library/resume', pre, wrap(async (req) => ({ items: await ctx.jf.resume(req.jfUser!) })));
+  app.get('/api/library/resume', pre, wrap(async (req) => {
+    const items = await ctx.jf.resume(req.jfUser!);
+    const h = await ctx.db.query<{ item_id: string; hidden_at: Date }>('select item_id, hidden_at from resume_hidden where profile_id=$1', [req.profile!.id]);
+    return { items: tidyResume(items, new Map(h.rows.map((r) => [r.item_id, r.hidden_at]))) };
+  }));
+  // "Remove from Weiterschauen": hides the item for this profile until it is played again (progress itself stays).
+  app.delete('/api/library/resume/:id', pre, wrap(async (req) => {
+    await ctx.db.query(
+      'insert into resume_hidden(profile_id,item_id) values ($1,$2) on conflict (profile_id,item_id) do update set hidden_at=now()',
+      [req.profile!.id, itemId.parse((req.params as any).id)],
+    );
+    return { ok: true };
+  }));
+
+  // Viewing history (Jellyfin played items + in-progress), removal marks unplayed.
+  app.get('/api/history', pre, wrap(async (req) => {
+    const q = z.object({ start: z.coerce.number().int().min(0).optional(), limit: z.coerce.number().int().min(1).max(200).optional() }).parse(req.query);
+    return { items: await ctx.jf.history(req.jfUser!, q) };
+  }));
+  app.delete('/api/history/:id', pre, wrap(async (req) => {
+    const id = itemId.parse((req.params as any).id);
+    const { scope } = z.object({ scope: z.enum(['item', 'series']).default('item') }).parse(req.query);
+    let target = id;
+    if (scope === 'series') {
+      const it = await ctx.jf.item(req.jfUser!, id);
+      if (it.seriesId) target = it.seriesId;
+    }
+    await ctx.jf.setPlayed(req.jfUser!, target, false); // Jellyfin cascades unplayed to a series' episodes
+    await ctx.db.query('delete from resume_hidden where profile_id=$1 and item_id in ($2,$3)', [req.profile!.id, id, target]);
+    return { ok: true };
+  }));
   app.get('/api/library/nextup', pre, wrap(async (req) => ({ items: await ctx.jf.nextUp(req.jfUser!) })));
 
   app.get('/api/items/:id', pre, wrap(async (req) => {
@@ -153,7 +184,7 @@ export function mediaRoutes(app: FastifyInstance, ctx: Ctx) {
         const item = await ctx.jf.item(req.jfUser!, b.itemId); // access check: the user must be able to see the item
         elapsed = false;
         live = {
-          userId: user.id, userName: user.name, itemId: b.itemId, title: item.name, seriesName: item.seriesName, type: item.type,
+          userId: user.id, userName: user.name, profileName: req.profile?.is_owner ? undefined : req.profile?.name, itemId: b.itemId, title: item.name, seriesName: item.seriesName, type: item.type,
           positionTicks: ticks, runtimeTicks: item.runtimeTicks, isPaused: false, playSessionId: b.playSessionId, updatedAt: Date.now(), source: 'portal',
         };
       }

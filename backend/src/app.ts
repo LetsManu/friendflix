@@ -10,6 +10,7 @@ import { authRoutes } from './routes/auth.js';
 import { internalRoutes } from './routes/internal.js';
 import { discoverRoutes } from './routes/discover.js';
 import { partyRoutes } from './routes/party.js';
+import { profileRoutes } from './routes/profiles.js';
 import { prefsRoutes } from './routes/prefs.js';
 import { pollRoutes } from './routes/polls.js';
 import { sceneRoutes } from './routes/scenes.js';
@@ -88,6 +89,7 @@ export async function buildApp(ctx: Ctx, extra: Extra = {}): Promise<FastifyInst
   pollRoutes(app, ctx);
   statsRoutes(app, ctx);
   prefsRoutes(app, ctx);
+  profileRoutes(app, ctx);
   discoverRoutes(app, ctx);
   sceneRoutes(app, ctx);
   tvRoutes(app, ctx);

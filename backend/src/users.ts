@@ -20,7 +20,7 @@ export async function getUserBySub(ctx: Ctx, sub: string): Promise<UserRow | nul
 const safeName = (s: string) => s.replace(/[^A-Za-z0-9._-]/g, '').slice(0, 24) || 'freund';
 
 /** Resolves a role template's library names to Jellyfin media folder IDs and writes the Jellyfin policy. */
-export async function applyRole(ctx: Ctx, jellyfinUserId: string, role: string, disabled = false) {
+export async function applyRole(ctx: Ctx, jellyfinUserId: string, role: string, disabled = false, extra: Record<string, unknown> = {}) {
   const t = await effectiveRole(ctx, role);
   if (!t) throw new Error(`unknown role ${role}`);
   let ids: string[] | null = null;
@@ -29,7 +29,7 @@ export async function applyRole(ctx: Ctx, jellyfinUserId: string, role: string, 
     const want = new Set(t.libraries.map((n) => n.toLowerCase()));
     ids = folders.filter((f) => want.has(f.Name.toLowerCase())).map((f) => f.Id);
   }
-  await ctx.jf.client.setPolicy(jellyfinUserId, { ...policyFromTemplate(t, ids), IsDisabled: disabled });
+  await ctx.jf.client.setPolicy(jellyfinUserId, { ...policyFromTemplate(t, ids), IsDisabled: disabled, ...extra });
 }
 
 /**
@@ -68,9 +68,14 @@ export async function provisionUser(ctx: Ctx, claims: OidcClaims, role: string):
 
 /** Re-applies the effective role policy to all non-disabled users of a role. Returns the number of failures. */
 export async function reapplyRole(ctx: Ctx, role: string): Promise<number> {
-  const r = await ctx.db.query<{ jellyfin_user_id: string }>('select jellyfin_user_id from users where role=$1 and not disabled', [role]);
+  const r = await ctx.db.query<{ jellyfin_user_id: string; hidden: boolean }>(
+    `select jellyfin_user_id, false hidden from users where role=$1 and not disabled
+     union all select p.jellyfin_user_id, true from profiles p join users u on u.id=p.user_id
+      where u.role=$1 and not u.disabled and p.jellyfin_user_id is not null`,
+    [role],
+  );
   let failed = 0;
-  for (const u of r.rows) await applyRole(ctx, u.jellyfin_user_id, role, false).catch(() => { failed++; });
+  for (const u of r.rows) await applyRole(ctx, u.jellyfin_user_id, role, false, u.hidden ? { IsHidden: true } : {}).catch(() => { failed++; });
   return failed;
 }
 

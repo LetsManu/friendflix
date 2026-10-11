@@ -7,6 +7,7 @@
   import { api, setCsrf, type Me } from '#lib/api';
   import Icon from '#lib/Icon.svelte';
   import Logo from '#lib/Logo.svelte';
+  import { avatarBg, initial } from '#lib/avatars';
   import { loadList, loadPrefs } from '#lib/stores';
   import ItemModal from '#lib/ItemModal.svelte';
   import { startTvLink, type ToTv } from '#lib/remote';
@@ -23,6 +24,7 @@
   $: path = $page.url.pathname;
   $: publicPage = path.startsWith('/invite/') || path === '/tv';
   $: watchPage = path.startsWith('/watch/') || /^\/party\/[^/]+/.test(path); // immersive player pages: no navigation
+  $: profilesPage = path === '/profiles';
   $: heroPage = path === '/' || path.startsWith('/item/');
   $: unread = notes.filter((n) => !n.read).length;
   $: if (path) { menu = false; bell = false; more = false; }
@@ -30,7 +32,7 @@
 
   const tabs: Array<[string, string, string]> = [['/', 'Start', 'home'], ['/browse/series', 'Serien', 'film'], ['/browse/movies', 'Filme', 'film'], ['/new', 'Neu & beliebt', 'star'], ['/watchlist', 'Meine Liste', 'plus']];
   const menuLinks: Array<[string, string, string]> = [
-    ['/tonight', 'Heute Abend', 'star'], ['/favorites', 'Favoriten', 'heart'], ['/match', 'Gruppen-Matcher', 'users'], ['/collections', 'Sammlungen', 'film'], ['/upcoming', 'Demnächst', 'calendar'], ['/requests', 'Wünsche', 'gift'], ['/party', 'Watch-Party', 'users'], ['/vote', 'Filmabend', 'vote'],
+    ['/tonight', 'Heute Abend', 'star'], ['/favorites', 'Favoriten', 'heart'], ['/history', 'Verlauf', 'calendar'], ['/match', 'Gruppen-Matcher', 'users'], ['/collections', 'Sammlungen', 'film'], ['/upcoming', 'Demnächst', 'calendar'], ['/requests', 'Wünsche', 'gift'], ['/party', 'Watch-Party', 'users'], ['/vote', 'Filmabend', 'vote'],
     ['/now', 'Läuft gerade', 'monitor'], ['/calendar', 'Kalender', 'calendar'], ['/stats', 'Wrapped', 'bar-chart'], ['/remote', 'Fernbedienung', 'tv'], ['/settings', 'Einstellungen', 'settings'], ['/devices', 'Geräte', 'monitor'],
   ];
 
@@ -116,6 +118,11 @@
         me = await api<Me>('/api/me');
         setCsrf(me.csrfToken);
         pending = !me.deviceApproved;
+        if (!pending && path !== '/profiles') {
+          let picked = false;
+          try { picked = sessionStorage.getItem('ff_profile_picked') === '1'; } catch { /* ignore */ }
+          if (me.profileRequired || ((me.profileCount ?? 0) > 1 && !picked)) { await goto('/profiles', { replaceState: true }); }
+        }
         if (pending) stops.push(watchApproval());
         tv = me.tv || sessionStorage.getItem('ff_tv') === '1';
         if (!pending) { loadNotes(); loadList(); loadPrefs(); const notesTimer = setInterval(loadNotes, 60_000); stops.push(() => clearInterval(notesTimer)); }
@@ -137,7 +144,7 @@
 {#if publicPage}
   <slot />
 {:else if me}
-  {#if !watchPage}
+  {#if !watchPage && !profilesPage}
     <header class="nav" class:solid={scrolled || !heroPage}>
       <a class="logo" href="/" aria-label="FriendFlix Startseite"><Logo wordmark size={34} /></a>
       <nav class="links" aria-label="Hauptnavigation">
@@ -160,10 +167,11 @@
         {/if}
       </div>
       <div class="pop-anchor">
-        <button class="avatar" aria-label="Profilmenü" aria-expanded={menu} on:click={() => { menu = !menu; bell = false; }}><span class="face">{me.name.slice(0, 1).toUpperCase()}</span><i class="caret" class:up={menu}></i></button>
+        <button class="avatar" aria-label="Profilmenü" aria-expanded={menu} on:click={() => { menu = !menu; bell = false; }}><span class="face" style={me.profile ? `background:${avatarBg(me.profile.avatar)}` : undefined}>{initial(me.profile?.name ?? me.name)}</span><i class="caret" class:up={menu}></i></button>
         {#if menu}
           <div class="drop" role="menu">
-            <div class="who"><b>{me.name}</b><span class="muted">{me.roleLabel}</span></div>
+            <div class="who"><b>{me.profile?.name ?? me.name}</b><span class="muted">{me.roleLabel}</span></div>
+            <a href="/profiles" role="menuitem" on:click={() => { try { sessionStorage.removeItem('ff_profile_picked'); } catch { /* ignore */ } }}><Icon name="users" size={18} />Profil wechseln</a>
             {#each menuLinks as [href, label, icon]}<a {href} role="menuitem"><Icon name={icon} size={18} />{label}</a>{/each}
             {#if me.isAdmin}<a href="/admin" role="menuitem"><Icon name="shield" size={18} />Admin</a>{/if}
             <button class="plain" role="menuitem" on:click={logout}><Icon name="log-out" size={18} />Abmelden</button>
@@ -189,7 +197,7 @@
 
   {#if replaced}<div class="panel" role="alert" style="position:fixed;z-index:90;top:5rem;left:50%;transform:translateX(-50%)"><b>Der Fernseher wurde auf einem anderen Gerät übernommen.</b> <button on:click={() => location.reload()}>Hier wieder verbinden</button></div>{/if}
   {#if $page.state.modalId}<ItemModal id={$page.state.modalId} />{/if}
-  <main id="main" class:page={!heroPage && !watchPage}>
+  <main id="main" class:page={!heroPage && !watchPage && !profilesPage}>
     {#if pending}
       <div class="page"><div class="panel pendp">
         <b class="warn">Dieses Gerät wartet auf Freigabe</b>
