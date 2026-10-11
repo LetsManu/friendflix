@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onDestroy, onMount } from 'svelte';
   import { api } from '#lib/api';
+  const STEP: Record<string, string> = { webhook: 'Webhook-Aufruf (URL prüfen)', stack: 'Stack-Abfrage (Stack-ID / API-Key prüfen)', stack_file: 'Stack-Datei lesen', redeploy: 'Redeploy (Endpoint-ID prüfen)' };
   let u: any = null;
   let busy = false;
   let force = false;
@@ -18,7 +19,7 @@
     if (!confirm('Portal jetzt aktualisieren? Alle Dienste starten kurz neu, laufende Streams brechen ab.')) return;
     err = '';
     try { await api('/api/admin/update', { method: 'POST' }); } catch (e: any) {
-      err = e.status === 429 ? 'Es wurde gerade erst ein Update angestoßen. Bitte zwei Minuten warten.' : e.status === 409 ? 'Portainer ist nicht konfiguriert.' : `Portainer-Fehler${e.body?.status ? ` (HTTP ${e.body.status})` : ''}. Details im Backend-Log.`;
+      err = e.status === 429 ? 'Es wurde gerade erst ein Update angestoßen. Bitte zwei Minuten warten.' : e.status === 409 ? 'Portainer ist nicht konfiguriert.' : `Portainer-Fehler${e.body?.status ? ` (HTTP ${e.body.status})` : ''}${e.body?.step ? ` bei ${STEP[e.body.step] ?? e.body.step}` : ''}. Details im Backend-Log.`;
       return;
     }
     phase = 'started';

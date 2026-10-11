@@ -70,7 +70,7 @@ export async function updateInfo(ctx: Ctx, refresh = false): Promise<UpdateInfo>
   }
 }
 
-export type TriggerResult = { ok: true; mode: 'webhook' | 'api' } | { ok: false; status: number | null; error: string };
+export type TriggerResult = { ok: true; mode: 'webhook' | 'api' } | { ok: false; status: number | null; error: string; step: 'webhook' | 'stack' | 'stack_file' | 'redeploy' };
 
 /**
  * Starts the redeploy. The final call is raced against a short grace window: Portainer may recreate (= kill) this very
@@ -83,11 +83,12 @@ export async function triggerUpdate(ctx: Ctx, mode: 'webhook' | 'api'): Promise<
     p.catch(() => undefined); // a late failure after we returned must not become an unhandled rejection
     return Promise.race([p, new Promise<'pending'>((res) => setTimeout(res, 5000, 'pending').unref())]);
   };
-  const fail = (status: number | null, error: string): TriggerResult => ({ ok: false, status, error });
+  const fail = (status: number | null, error: string, step: 'webhook' | 'stack' | 'stack_file' | 'redeploy'): TriggerResult => ({ ok: false, status, error, step });
+  let step: 'webhook' | 'stack' | 'stack_file' | 'redeploy' = mode === 'webhook' ? 'webhook' : 'stack';
   try {
     if (mode === 'webhook') {
       const r = await send(ctx.cfg.PORTAINER_WEBHOOK_URL!, { method: 'POST' });
-      return r !== 'pending' && !r.ok ? fail(r.status, 'portainer') : { ok: true, mode };
+      return r !== 'pending' && !r.ok ? fail(r.status, 'portainer', step) : { ok: true, mode };
     }
     const base = ctx.cfg.PORTAINER_URL!.replace(/\/+$/, '');
     const id = encodeURIComponent(ctx.cfg.PORTAINER_STACK_ID!);
@@ -98,24 +99,27 @@ export async function triggerUpdate(ctx: Ctx, mode: 'webhook' | 'api'): Promise<
       return r.ok ? ((await r.json()) as T) : r.status;
     };
     const stack = await getJson<{ Env?: unknown[] | null; GitConfig?: { ReferenceName?: string } | null }>(`/api/stacks/${id}`);
-    if (typeof stack === 'number') return fail(stack, 'portainer');
+    if (typeof stack === 'number') return fail(stack, 'portainer', step);
     const env = stack.Env ?? []; // passed back unchanged: Portainer replaces the stack env with what we send
     let r: Response | 'pending';
+    step = 'redeploy';
     if (stack.GitConfig) {
       r = await send(`${base}/api/stacks/${id}/git/redeploy?${eid}`, {
         method: 'PUT', headers: { ...headers, 'content-type': 'application/json' },
         body: JSON.stringify({ repositoryReferenceName: stack.GitConfig.ReferenceName, env, prune: false, pullImage: true, repullImageAndRedeploy: true }),
       });
     } else {
+      step = 'stack_file';
       const file = await getJson<{ StackFileContent?: string }>(`/api/stacks/${id}/file`);
-      if (typeof file === 'number') return fail(file, 'portainer');
+      if (typeof file === 'number') return fail(file, 'portainer', step);
+      step = 'redeploy';
       r = await send(`${base}/api/stacks/${id}?${eid}`, {
         method: 'PUT', headers: { ...headers, 'content-type': 'application/json' },
         body: JSON.stringify({ stackFileContent: file.StackFileContent, env, prune: false, pullImage: true, repullImageAndRedeploy: true }),
       });
     }
-    return r !== 'pending' && !r.ok ? fail(r.status, 'portainer') : { ok: true, mode };
+    return r !== 'pending' && !r.ok ? fail(r.status, 'portainer', step) : { ok: true, mode };
   } catch {
-    return fail(null, 'portainer_unreachable'); // never include the error: node puts the request URL (webhook token) in it
+    return fail(null, 'portainer_unreachable', step); // never include the error: node puts the request URL (webhook token) in it
   }
 }
