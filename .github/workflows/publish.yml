@@ -1,10 +1,9 @@
 name: Publish images
 # Builds the three images and pushes them to GitHub Container Registry (ghcr.io/<owner>/friendflix-<service>).
 # Tags: latest + short sha on main, vX.Y.Z on version tags.
+# Called by CI after tests, secret scan and image scan pass; workflow_dispatch is the manual escape hatch.
 on:
-  push:
-    branches: [main]
-    tags: ["v*"]
+  workflow_call:
   workflow_dispatch:
 permissions: { contents: read, packages: write }
 jobs:
