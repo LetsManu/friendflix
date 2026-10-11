@@ -7,6 +7,7 @@ import { migrate } from './db.js';
 import { JellyfinClient } from './jellyfin/client.js';
 import { JellyfinService } from './jellyfin/service.js';
 import { RedisKV } from './kv.js';
+import { authentikConfigProblem } from './invites.js';
 import { createAuthentikProvider } from './oidc.js';
 import { SeerrClient } from './seerr/client.js';
 import { loadRoles } from './roles.js';
@@ -33,6 +34,9 @@ const ctx: Ctx = {
 
 const app = await buildApp(ctx);
 await app.listen({ port: cfg.PORT, host: '0.0.0.0' });
+const akMissing = authentikConfigProblem(cfg);
+if (akMissing) app.log.warn({ missing: akMissing }, `Authentik invitations disabled: ${akMissing.join(', ')} not set (see docs/integrations.md)`);
+else if (!cfg.AUTHENTIK_URL) app.log.info('Authentik invitations off: invited people need an existing Authentik account');
 
 const timers: NodeJS.Timeout[] = [];
 timers.push(setInterval(() => parties.tick(), 1000));
