@@ -186,6 +186,10 @@ export const MIGRATIONS: string[] = [
     primary key (user_id, item_id)
   );
   `,
+  // 8: per-user read marker for broadcast notifications
+  `
+  alter table users add column notifications_read_at timestamptz;
+  `,
 ];
 
 export async function migrate(pool: pg.Pool): Promise<void> {
