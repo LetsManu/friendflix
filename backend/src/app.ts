@@ -65,7 +65,9 @@ export async function buildApp(ctx: Ctx, extra: Extra = {}): Promise<FastifyInst
     if (sent.length !== want.length || !timingSafeEqual(sent, want)) return reply.code(403).send({ error: 'csrf' });
   });
 
-  app.get('/health', async () => ({ status: 'ok' }));
+  app.get('/health', async () => ({ status: 'ok', version: ctx.cfg.GIT_SHA.slice(0, 7) }));
+  // unauthenticated: the update page polls it while the backend restarts
+  app.get('/api/version', async () => ({ sha: ctx.cfg.GIT_SHA }));
   app.get('/health/ready', async (_req, reply) => {
     const checks: Record<string, boolean> = {
       redis: await ctx.kv.ping().catch(() => false),
