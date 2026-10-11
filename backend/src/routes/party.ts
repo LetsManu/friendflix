@@ -41,7 +41,7 @@ export async function partyRoutes(app: FastifyInstance, ctx: Ctx) {
     const r = parties.get((req.params as { id: string }).id);
     if (!r) return reply.code(404).send({ error: 'not_found' });
     if (!r.members.has(req.user!.id)) return reply.code(403).send({ error: 'not_in_room' });
-    const b = z.object({ userIds: z.array(z.string().uuid()).min(1).max(15) }).parse(req.body);
+    const b = z.object({ userIds: z.array(z.guid()).min(1).max(15) }).parse(req.body);
     const targets = (await ctx.db.query<{ id: string }>('select id from users where id = any($1) and id <> $2 and not disabled', [b.userIds, req.user!.id])).rows;
     let sent = 0;
     for (const t of targets) if (await notify(ctx, { userId: t.id, kind: 'party_invite', title: `${req.user!.name} lädt dich zur Watch-Party ein: ${r.title}`, link: `/party/${r.id}`, dedupe: `party-${r.id}-${t.id}`, external: true })) sent++;

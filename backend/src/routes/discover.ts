@@ -48,7 +48,7 @@ export function discoverRoutes(app: FastifyInstance, ctx: Ctx) {
 
   app.post('/api/match', { ...pre, config: { rateLimit: { max: 20, timeWindow: '1 minute' } } }, wrap(async (req, reply) => {
     const b = z.object({
-      userIds: z.array(z.string().uuid()).min(1).max(7),
+      userIds: z.array(z.guid()).min(1).max(7),
       type: z.enum(['Movie', 'Series', 'Both']).default('Movie'),
       maxMinutes: z.number().int().min(20).max(400).optional(),
       genre: z.string().max(60).optional(),
@@ -77,7 +77,7 @@ export function discoverRoutes(app: FastifyInstance, ctx: Ctx) {
 
   // ---- Recommend to friends / "Von Freunden empfohlen" ----
   app.post('/api/recommend', pre, wrap(async (req, reply) => {
-    const b = z.object({ itemId: id32, toUserIds: z.array(z.string().uuid()).min(1).max(10), note: z.string().trim().max(140).optional() }).parse(req.body);
+    const b = z.object({ itemId: id32, toUserIds: z.array(z.guid()).min(1).max(10), note: z.string().trim().max(140).optional() }).parse(req.body);
     const item = await ctx.jf.item(req.user!, b.itemId); // proves the sender can see it
     const targets = (await ctx.db.query<{ id: string }>('select id from users where id = any($1) and id <> $2 and not disabled', [b.toUserIds, req.user!.id])).rows;
     let sent = 0;

@@ -8,7 +8,7 @@ import { INVITABLE_ROLES } from '../roles.js';
 import { requireAdmin, requireUser } from '../session.js';
 import { applyRole, getUserById } from '../users.js';
 
-const uuid = z.string().uuid();
+const uuid = z.guid();
 
 export function adminRoutes(app: FastifyInstance, ctx: Ctx) {
   const admin = { preHandler: requireAdmin(ctx) };

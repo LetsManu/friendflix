@@ -32,7 +32,7 @@ export function sceneRoutes(app: FastifyInstance, ctx: Ctx) {
     return { id };
   });
   app.delete('/api/bookmarks/:id', pre, async (req) => {
-    await ctx.db.query('delete from bookmarks where id=$1 and user_id=$2', [z.string().uuid().parse((req.params as { id: string }).id), req.user!.id]);
+    await ctx.db.query('delete from bookmarks where id=$1 and user_id=$2', [z.guid().parse((req.params as { id: string }).id), req.user!.id]);
     return { ok: true };
   });
 
