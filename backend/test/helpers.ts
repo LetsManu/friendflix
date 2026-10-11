@@ -100,12 +100,9 @@ export async function makeEnv(extraJf: Record<string, Handler> = {}, extra: Extr
   const login = async (c: OidcClaims = claims.current) => {
     claims.current = c;
     const l = await app.inject('/auth/login');
-    const state = new URL(String(l.headers.location)).searchParams.get('state') ?? '';
-    // state is embedded in the fake url? it is not: read it back from kv
-    const key = (await kv.keys('oidc:'))[0]!;
-    const cb = await app.inject({ url: `/auth/callback?state=${key.slice(5)}&code=c`, cookies: dev.v ? { ff_dev: dev.v } : {} });
+    const state = l.cookies.find((x) => x.name === 'ff_oidc')!.value; // the login cookie carries the state
+    const cb = await app.inject({ url: `/auth/callback?state=${state}&code=c`, cookies: { ...(dev.v ? { ff_dev: dev.v } : {}), ff_oidc: state } });
     dev.v = cb.cookies.find((x) => x.name === 'ff_dev')?.value ?? dev.v; // same browser -> same device
-    void state;
     if (cb.statusCode !== 302) throw new Error(`login failed ${cb.statusCode} ${cb.body}`);
     const sid = cb.cookies.find((x) => x.name === 'ff_sid')!.value;
     const me = await app.inject({ url: '/api/me', cookies: { ff_sid: sid } });

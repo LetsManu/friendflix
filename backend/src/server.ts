@@ -36,7 +36,12 @@ await app.listen({ port: cfg.PORT, host: '0.0.0.0' });
 
 const timers: NodeJS.Timeout[] = [];
 timers.push(setInterval(() => parties.tick(), 1000));
-timers.push(setInterval(() => void pollTick(ctx).catch((e) => app.log.warn({ e }, 'poll tick failed')), 5_000));
+let pollTickBusy = false;
+timers.push(setInterval(() => {
+  if (pollTickBusy) return;
+  pollTickBusy = true;
+  void pollTick(ctx).catch((e) => app.log.warn({ e }, 'poll tick failed')).finally(() => { pollTickBusy = false; });
+}, 5_000));
 timers.push(setInterval(() => void resolveRequestedPolls(ctx).catch((e) => app.log.warn({ e }, 'resolve failed')), 60_000));
 timers.push(setInterval(() => void calendarNotifications(ctx).catch((e) => app.log.warn({ e }, 'calendar job failed')), 3600_000));
 if (cfg.BACKGROUND_JOBS === 'true') {

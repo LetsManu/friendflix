@@ -72,8 +72,8 @@ describe('auth', () => {
     env.claims.current = { sub: 'x', name: 'X', groups: [] };
     const l = await env.app.inject('/auth/login');
     expect(l.statusCode).toBe(302);
-    const key = (await env.kv.keys('oidc:')).at(-1)!;
-    expect((await env.app.inject(`/auth/callback?state=${key.slice(5)}&code=c`)).statusCode).toBe(403);
+    const st = l.cookies.find((x) => x.name === 'ff_oidc')!.value;
+    expect((await env.app.inject({ url: `/auth/callback?state=${st}&code=c`, cookies: { ff_oidc: st } })).statusCode).toBe(403);
     env.claims.current = ADMIN;
   });
   it('requires CSRF for state-changing /api calls', async () => {

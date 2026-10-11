@@ -25,7 +25,7 @@ export async function metricsPlugin(app: FastifyInstance, opts: { ctx: Ctx }) {
     const t = opts.ctx.cfg.METRICS_TOKEN;
     if (t && req.headers.authorization !== `Bearer ${t}`) return reply.code(401).send('unauthorized');
     const c = opts.ctx;
-    activeStreams.set((await listLive(c)).length);
+    activeStreams.set((await listLive(c).catch(() => [])).length);
     partyRooms.set(parties.rooms.size);
     const one = async (sql: string) => Number((await c.db.query<{ n: string }>(sql)).rows[0]?.n ?? 0);
     usersTotal.set(await one('select count(*) n from users where not disabled').catch(() => 0));
@@ -33,7 +33,7 @@ export async function metricsPlugin(app: FastifyInstance, opts: { ctx: Ctx }) {
     pendingRequests.set(await one("select count(*) n from polls where status='needs_approval'").catch(() => 0));
     up.set({ dependency: 'postgres' }, (await c.db.query('select 1').then(() => 1, () => 0)));
     up.set({ dependency: 'redis' }, (await c.kv.ping().catch(() => false)) ? 1 : 0);
-    up.set({ dependency: 'jellyfin' }, (await c.jf.client.ping()) ? 1 : 0);
+    up.set({ dependency: 'jellyfin' }, (await c.jf.client.ping().catch(() => false)) ? 1 : 0);
     reply.header('content-type', registry.contentType);
     return registry.metrics();
   });

@@ -1,11 +1,14 @@
 import type { FastifyInstance } from 'fastify';
 import { timingSafeEqual } from 'node:crypto';
+import { dropRemotePeers } from './tv.js';
 import { audit } from '../audit.js';
 import type { Ctx } from '../ctx.js';
 import { COOKIE, loadSession, newSession, rand, requireUser, saveSession } from '../session.js';
 import { registerDevice } from '../devices.js';
 import { claimInvite, lookupInvite, releaseInvite, type InviteRow } from '../invites.js';
 import { applyRole, getUserBySub, provisionUser } from '../users.js';
+
+const OIDC_COOKIE = 'ff_oidc';
 
 export function authRoutes(app: FastifyInstance, ctx: Ctx) {
   const secure = ctx.cfg.PUBLIC_URL.startsWith('https://');
@@ -15,13 +18,16 @@ export function authRoutes(app: FastifyInstance, ctx: Ctx) {
     if (invite && !(await lookupInvite(ctx, invite))) return reply.code(410).send({ error: 'invite_invalid' });
     const s = await ctx.oidc.start();
     await ctx.kv.set(`oidc:${s.state}`, JSON.stringify({ state: s.state, nonce: s.nonce, codeVerifier: s.codeVerifier, invite }), 600);
+    reply.setCookie(OIDC_COOKIE, s.state, { httpOnly: true, secure, sameSite: 'lax', path: '/auth', maxAge: 600 }); // binds the flow to this browser
     return reply.redirect(s.url);
   });
 
   app.get('/auth/callback', { config: { rateLimit: { max: 30, timeWindow: '1 minute' } } }, async (req, reply) => {
     const state = (req.query as Record<string, string | undefined>).state;
     const raw = state ? await ctx.kv.get(`oidc:${state}`) : null;
-    if (!state || !raw) return reply.code(400).send({ error: 'invalid_state' });
+    const bound = req.cookies[OIDC_COOKIE];
+    reply.clearCookie(OIDC_COOKIE, { path: '/auth' });
+    if (!state || !raw || !bound || bound.length !== state.length || !timingSafeEqual(Buffer.from(bound), Buffer.from(state))) return reply.code(400).send({ error: 'invalid_state' });
     await ctx.kv.del(`oidc:${state}`); // single use
     try {
       const saved = JSON.parse(raw) as { state: string; nonce: string; codeVerifier: string; invite?: string };
@@ -41,6 +47,8 @@ export function authRoutes(app: FastifyInstance, ctx: Ctx) {
           throw e;
         }
         if (claimed) await ctx.db.query('update invites set used_by=$1 where id=$2', [user.id, claimed.id]);
+      } else if (user.disabled) {
+        return reply.code(403).send({ error: 'disabled' });
       } else if (isAdmin && user.role !== 'admin') {
         await ctx.db.query("update users set role='admin' where id=$1", [user.id]);
         await applyRole(ctx, user.jellyfin_user_id, 'admin');
@@ -85,6 +93,7 @@ export function authRoutes(app: FastifyInstance, ctx: Ctx) {
     const want = Buffer.from(s.csrf);
     if (sent.length !== want.length || !timingSafeEqual(sent, want)) return reply.code(403).send({ error: 'csrf' });
     await ctx.kv.del(`sess:${sid}`);
+    dropRemotePeers(s.userId, new Set([sid]));
     reply.clearCookie(COOKIE, { path: '/' });
     return { status: 'ok' };
   });

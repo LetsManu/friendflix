@@ -144,9 +144,12 @@ export function seerrRoutes(app: FastifyInstance, ctx: Ctx) {
     const rid = request?.request_id ? Number(request.request_id) : undefined;
     const tmdbId = media?.tmdbId ? Number(media.tmdbId) : undefined;
     const mt = media?.media_type;
+    // the tmdb fallback is only right for "available" (everyone who wanted the title); approve/decline are per request
     const rows = (await ctx.db.query(
-      'select * from seerr_requests where seerr_request_id = $1 or (tmdb_id = $2 and media_type = $3)',
-      [rid ?? -1, tmdbId ?? -1, mt ?? ''],
+      type === 'MEDIA_AVAILABLE'
+        ? 'select * from seerr_requests where seerr_request_id = $1 or (tmdb_id = $2 and media_type = $3)'
+        : 'select * from seerr_requests where seerr_request_id = $1',
+      type === 'MEDIA_AVAILABLE' ? [rid ?? -1, tmdbId ?? -1, mt ?? ''] : [rid ?? -1],
     )).rows;
     const title = subject ?? rows[0]?.title ?? 'Titel';
     if (type === 'MEDIA_AVAILABLE') {
@@ -164,14 +167,17 @@ export function seerrRoutes(app: FastifyInstance, ctx: Ctx) {
   // ---- notifications (in-app) ----
   app.get('/api/notifications', pre, async (req) => {
     const r = await ctx.db.query(
-      `select id, kind, title, body, link, created_at, (read_at is not null) as read from notifications
-        where user_id = $1 or user_id is null order by created_at desc limit 30`,
+      `select n.id, n.kind, n.title, n.body, n.link, n.created_at,
+              (case when n.user_id is null then coalesce(n.created_at <= u.notifications_read_at, false) else n.read_at is not null end) as read
+         from notifications n, users u
+        where u.id = $1 and (n.user_id = $1 or n.user_id is null) order by n.created_at desc limit 30`,
       [req.user!.id],
     );
     return { notifications: r.rows };
   });
   app.post('/api/notifications/read', pre, async (req) => {
     await ctx.db.query('update notifications set read_at = now() where user_id = $1 and read_at is null', [req.user!.id]);
+    await ctx.db.query('update users set notifications_read_at = now() where id = $1', [req.user!.id]);
     return { ok: true };
   });
 }

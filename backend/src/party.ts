@@ -179,8 +179,11 @@ export class PartyRegistry {
   tick() {
     for (const [id, r] of this.rooms) {
       r.tick();
-      const idle = r.emptySince !== undefined && this.now() - r.emptySince > 10 * 60_000;
-      const neverJoined = !r.members.size && r.emptySince === undefined && this.now() - r.state.at > 6 * 3600_000;
+      const t = this.now();
+      // scheduled rooms (startAt up to 24h ahead) live until startAt + 6h, even when nobody is in them yet
+      const scheduled = !r.started && r.startAt !== undefined && t < r.startAt + 6 * 3600_000;
+      const idle = !scheduled && r.emptySince !== undefined && t - r.emptySince > 10 * 60_000;
+      const neverJoined = !scheduled && !r.members.size && r.emptySince === undefined && t - Math.max(r.state.at, r.startAt ?? 0) > 6 * 3600_000;
       if (idle || neverJoined) this.rooms.delete(id);
     }
   }
