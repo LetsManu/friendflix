@@ -121,6 +121,8 @@ class Previews {
 
   private async run(id: string): Promise<void> {
     const { ctx } = this;
+    // a request that saw "none" may enqueue after an identical job already finished: never transcode the same clip twice
+    if ((await this.status(id)) === 'ok') return;
     const user = await serviceUser(ctx);
     if (!user) return; // nothing recorded: retried once an admin exists
     let bytes: number | null = null;
