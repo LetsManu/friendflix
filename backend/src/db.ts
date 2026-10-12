@@ -462,6 +462,18 @@ export const MIGRATIONS: string[] = [
     primary key (profile_id, item_id)
   );
   `,
+  // 23: spoiler-gated reactions to watched movies/episodes
+  `
+  create table reactions (
+    user_id uuid not null references users(id) on delete cascade,
+    item_id text not null,
+    emoji text not null check (emoji in ('like','funny','wow','sad','love')),
+    comment text check (char_length(comment) <= 280),
+    created_at timestamptz not null default now(),
+    primary key (user_id, item_id)
+  );
+  create index reactions_item on reactions(item_id);
+  `,
 ];
 
 export async function migrate(pool: pg.Pool): Promise<void> {
