@@ -1,7 +1,7 @@
 <script lang="ts">
   import Hls from 'hls.js';
   import { createEventDispatcher, onDestroy, onMount, tick as tickDom } from 'svelte';
-  import { api, fmtClock, secToTicks } from '#lib/api';
+  import { api, ApiError, fmtClock, secToTicks } from '#lib/api';
   import Icon from '#lib/Icon.svelte';
   import { get } from 'svelte/store';
   import { prefs } from '#lib/stores';
@@ -9,6 +9,11 @@
   import { noteInteraction } from '#lib/stillwatching';
   import { nowPlaying } from '#lib/remote';
   import { isBackKey } from '#lib/spatial';
+  import { isTypingTarget, nextSubtitle, resolveKey, SHORTCUTS, type KeyAction } from '#lib/player/keymap';
+  import { BRIGHTNESS_MIN, brightnessPct, classifyMove, levelFromDrag, registerTap, scrubTarget, TAP_WINDOW, volumeSettable, zoneOf, type Axis, type TapState, type Zone } from '#lib/player/gestures';
+  import { creditsStart } from '#lib/player/nextup';
+  import { decideRecovery, freshRecovery, kindOfMediaError, lowerQuality, MAX_NETWORK_TRIES, type ErrorKind } from '#lib/player/retry';
+  import { parseVolume, stepVolume } from '#lib/player/volume';
   import CastButton from '#lib/CastButton.svelte';
   import { castPause, castPlay, castPlayPause, castSeek, castSetSubtitle, castSetVolume, castState, castStop, castToggleMute, loadOnCast, onCastEvent, type CastInfo, type CastState } from '#lib/cast';
 
@@ -34,6 +39,8 @@
   export let sleepAfterEpisode = false;
   /** start position in seconds (shared scene link); overrides the resume position */
   export let startAt: number | undefined = undefined;
+  /** second at which the end credits begin (outro segment or the last 25 s); Infinity while unknown. Read by the page for its "next episode" card. */
+  export let creditsAt = Infinity;
   const dispatch = createEventDispatcher();
 
   interface Info {
@@ -58,15 +65,26 @@
   type Person = { id: string; name: string; role?: string; type: string; image: boolean };
   let bookmarks: Bookmark[] = [], noteText = '', people: Person[] | null = null, xray = false, pausedLong = false, pauseT: ReturnType<typeof setTimeout>;
   let subDlg = false, subLang = 'ger', subResults: Array<{ id: string; name: string; provider: string; downloads?: number }> | null = null, subMsg = '', subBusy = false;
-  let quality = 0, sleepMin = 0, sleepAt = 0, sleepLeft = '', prefsApplied = false, autoSkipped = new Set<number>(), pipOk = false;
+  let quality = 0, sleepMin = 0, sleepAt = 0, sleepLeft = '', prefsApplied = false, autoSkipped = new Set<number>(), pipOk = false, inPip = false;
   let scrubbing = false, scrubTime = 0, hoverX = -1, hoverTime = 0, trackEl: HTMLDivElement;
-  $: showUi = paused || menu !== '' || scrubbing || tick - lastActive < 3000;
+  // ---- robustness: stall spinner (only after 500 ms), reconnect overlay, recovery bookkeeping ----
+  let spin = false, spinT: ReturnType<typeof setTimeout>, reconnecting = 0, retryT: ReturnType<typeof setTimeout>, rec = freshRecovery(), lastPos = 0, errPos = 0, errTitle = 'Wiedergabe nicht möglich', errNote = '';
+  function setSpin(on: boolean) { clearTimeout(spinT); if (!on) { spin = false; return; } spinT = setTimeout(() => (spin = true), 500); }
+  $: setSpin(waiting && !error && !casting && !reconnecting);
+  // ---- touch gestures ----
+  let locked = false, lockHint = false, lockT: ReturnType<typeof setTimeout>, lockHold = false, coarse = false, volOk = true, brightness = 1;
+  let hud: { icon: string; text: string; pct: number } | null = null, hudT: ReturnType<typeof setTimeout>;
+  let ripple: { zone: Zone; total: number; n: number } | null = null, rippleT: ReturnType<typeof setTimeout>;
+  let help = false, live = '', liveN = 0;
+  $: showUi = !locked && (paused || menu !== '' || scrubbing || tick - lastActive < 3000);
+  $: creditsAt = creditsStart(segments, duration);
   $: skip = segments.find((x) => x.type !== 'recap' && current >= x.start && current < x.end - 1) ?? null;
   $: shown = scrubbing ? scrubTime : current;
   $: pct = duration ? Math.min(100, (shown / duration) * 100) : 0;
   $: bufPct = duration ? Math.min(100, (buffered / duration) * 100) : 0;
   $: nowPlaying.set({ itemId, title, position: current, duration, paused, audio: info?.audioTracks.map((a) => ({ i: a.index, t: a.title })), audioSel: audioIndex ?? info?.audioTracks.find((a) => a.isDefault)?.index, subs: info?.subtitles.map((x) => ({ i: x.index, t: x.title })), subSel: subIndex }); // what the phone remote shows
   $: if (skip && skip.type === 'intro' && !partyMode && canControl && get(prefs).autoSkipIntro && !autoSkipped.has(skip.start)) { autoSkipped.add(skip.start); doSkip(); flash('Intro übersprungen', 1500); }
+  const segLabel: Record<string, string> = { intro: 'Intro', outro: 'Abspann', recap: 'Rückblick' };
   const skipLabel: Record<string, string> = { intro: 'Intro überspringen', outro: 'Abspann überspringen', recap: 'Rückblick überspringen' };
 
   const body = () => casting && castInfo
@@ -75,14 +93,19 @@
       itemId, playSessionId: info!.playSessionId, mediaSourceId: info!.mediaSourceId,
       positionTicks: secToTicks(video?.currentTime ?? 0), isPaused: video?.paused ?? false, audioIndex, playMethod: mode === 'direct' ? 'DirectPlay' : 'Transcode',
     };
-  const send = (kind: 'start' | 'progress' | 'stop') => report && info && api(`/api/playback/${kind}`, { method: 'POST', body: body() }).catch(() => undefined);
+  let lastSent = 0;
+  const send = (kind: 'start' | 'progress' | 'stop', keepalive = false) => { lastSent = Date.now(); return report && info && api(`/api/playback/${kind}`, { method: 'POST', body: body(), keepalive }).catch(() => undefined); };
 
   async function load(startSec?: number) {
-    error = '';
+    error = ''; errNote = '';
+    if (startSec !== undefined) lastPos = startSec;
     try {
       info = await api<Info>('/api/playback/info', { method: 'POST', body: { itemId, startTicks: startSec !== undefined ? secToTicks(startSec) : undefined, audioIndex, maxBitrate: quality || undefined } });
     } catch (e: any) {
-      error = e?.body?.error === 'max_streams' ? `Maximal ${e.body.max} gleichzeitige Streams erlaubt.` : 'Wiedergabe nicht möglich.';
+      if (!(e instanceof ApiError) || e.status >= 500) { recover('network', true); return; } // server/network hiccup: retry with backoff
+      reconnecting = 0;
+      errNote = e?.body?.error === 'max_streams' ? `Maximal ${e.body.max} gleichzeitige Streams erlaubt.` : '';
+      error = 'Wiedergabe nicht möglich.';
       return;
     }
     // first start only: apply the viewer's saved defaults (quality, audio language) before playback begins
@@ -103,7 +126,7 @@
   function attach(startSec: number) {
     if (!video || !info) return;
     hls?.destroy(); hls = null;
-    const useDirect = info.directUrl && audioIndex === undefined && video.canPlayType('video/mp4');
+    const useDirect = info.directUrl && audioIndex === undefined && !rec.forcedHls && video.canPlayType('video/mp4');
     mode = useDirect ? 'direct' : 'hls';
     const seek = () => { if (startSec > 1) video!.currentTime = startSec; };
     if (useDirect) {
@@ -113,7 +136,10 @@
       hls = new Hls({ startPosition: startSec > 1 ? startSec : -1, maxBufferLength: 30 });
       hls.loadSource(info.hlsUrl);
       hls.attachMedia(video);
-      hls.on(Hls.Events.ERROR, (_e, d) => { if (d.fatal) error = 'Wiedergabefehler. Bitte Seite neu laden.'; });
+      hls.on(Hls.Events.ERROR, (_e, d) => {
+        if (!d.fatal) return;
+        recover(d.type === Hls.ErrorTypes.NETWORK_ERROR ? 'network' : d.type === Hls.ErrorTypes.MEDIA_ERROR ? 'media' : 'other');
+      });
     } else {
       video.src = info.hlsUrl; // Safari: native HLS
       video.addEventListener('loadedmetadata', seek, { once: true });
@@ -122,6 +148,44 @@
     dispatch('ready', { info });
     const want = wantSub === 'off' ? '' : wantSub || get(prefs).subtitleLang;
     if (want && !partyMode) tickDom().then(() => { const sub = info?.subtitles.find((x) => (x as { language?: string }).language === want); if (sub) setSubtitle(sub.index); });
+  }
+
+  // ---- error recovery: network = 3 retries with backoff at the last position; decode error = recoverMediaError once, then transcode / lower quality ----
+  const resumePos = () => Math.max(lastPos, video && video.currentTime > 0 ? video.currentTime : 0);
+  const lowerStep = () => lowerQuality(QUALITIES.map(([, b]) => b).filter((b) => b < (info?.roleMaxBitrate ?? Infinity)), quality, info?.maxBitrate ?? 0);
+  let retryViaLoad = false;
+  function recover(kind: ErrorKind, viaLoad = false) {
+    if (casting) return;
+    retryViaLoad = viaLoad;
+    const pos = resumePos();
+    const d = decideRecovery(kind, rec, { isHls: Boolean(hls), canLowerQuality: lowerStep() !== null });
+    if (d.do === 'retry') {
+      rec.networkTries = d.attempt; reconnecting = d.attempt; errPos = pos; waiting = true;
+      clearTimeout(retryT); retryT = setTimeout(() => retryNow(pos), d.delay);
+    } else if (d.do === 'recover-media') { rec.mediaRecovered = true; errPos = pos; hls?.recoverMediaError(); }
+    else if (d.do === 'force-hls') { rec.forcedHls = true; errPos = pos; flash('Wechsle auf Transcoding …', 2500); wantAutoplay = !paused; load(pos); }
+    else if (d.do === 'lower-quality') { rec.loweredQuality = true; errPos = pos; const q = lowerStep(); if (q) { wantAutoplay = !paused; changeQuality(q); } else giveUp(); }
+    else giveUp();
+  }
+  function giveUp() { clearTimeout(retryT); reconnecting = 0; waiting = false; errTitle = 'Wiedergabe nicht möglich'; error = errNote || 'Die Verbindung zum Server wurde unterbrochen oder das Video ist beschädigt.'; hls?.stopLoad(); }
+  function retryNow(pos: number) {
+    clearTimeout(retryT);
+    if (!reconnecting) return;
+    wantAutoplay = !paused || wantAutoplay;
+    if (hls && !retryViaLoad && reconnecting < MAX_NETWORK_TRIES) { if (hls.levels.length) hls.startLoad(pos); else if (info) hls.loadSource(info.hlsUrl); } // 1st/2nd retry: restart loading (or the manifest request)
+    else void load(pos); // last retry (or direct play): new playback session, the old token may be dead
+  }
+  function retryManually() { rec = freshRecovery(); reconnecting = 0; error = ''; errNote = ''; waiting = true; wantAutoplay = true; void load(resumePos()); }
+  function leave() { if (history.length > 1) history.back(); else location.href = '/'; }
+  function onVideoError() {
+    if (hls || casting || !video?.error || !info) return; // hls.js reports its own errors
+    const kind = kindOfMediaError(video.error.code);
+    if (video.error.code === 1) return; // aborted by us
+    recover(kind);
+  }
+  function onPlaying() {
+    waiting = false;
+    if (reconnecting) { reconnecting = 0; flash('Verbindung wiederhergestellt', 1500); }
   }
 
   // ---- Chromecast session lifecycle ----
@@ -243,14 +307,15 @@
   }
 
   // ---- gated controls (party guests are not allowed to change playback) ----
-  function flash(t: string, ms = 1100) { toast = t; clearTimeout(toastTimer); toastTimer = setTimeout(() => (toast = ''), ms); }
+  function announce(t: string) { live = t + (liveN++ % 2 ? '\u200b' : ''); }
+  function flash(t: string, ms = 1100) { toast = t; announce(t); clearTimeout(toastTimer); toastTimer = setTimeout(() => (toast = ''), ms); }
   function allowed(): boolean { if (canControl) return true; flash(denyHint, 1800); return false; }
   function togglePlay() { if (casting) { if (allowed()) castPlayPause(); return; } if (!video || !allowed()) return; if (video.paused) video.play().catch(() => undefined); else video.pause(); }
   function seekTo(t: number) {
     if (casting) { if (!allowed()) return; t = Math.max(0, Math.min(duration || t, t)); castSeek(t); current = castPos = t; setTimeout(() => { if (started && !stopped) send('progress'); }, 700); return; }
     if (!video || !allowed()) return; video.currentTime = Math.max(0, Math.min(duration || t, t)); }
-  function seekBy(d: number) { if (!video || !allowed()) return; seekTo((casting ? castPos : video.currentTime) + d); flash(d > 0 ? `+${d} s` : `−${-d} s`, 700); }
-  function doSkip() { if (skip) seekTo(skip.end); }
+  function seekBy(d: number, quiet = false) { if (!video || !allowed()) return; seekTo((casting ? castPos : video.currentTime) + d); if (quiet) announce(d > 0 ? `${d} Sekunden vor` : `${-d} Sekunden zurück`); else flash(d > 0 ? `+${d} s` : `−${-d} s`, 700); }
+  function doSkip() { if (skip) { const lbl = skipLabel[skip.type]?.replace(' überspringen', ' übersprungen'); seekTo(skip.end); if (lbl) announce(lbl); } }
   const QUALITIES: Array<[string, number]> = [['1080p', 8_000_000], ['720p', 4_000_000], ['480p', 1_500_000], ['360p', 800_000]];
   $: qualityOptions = QUALITIES.filter(([, b]) => b < (info?.roleMaxBitrate ?? Infinity));
   async function changeQuality(bps: number) {
@@ -309,6 +374,7 @@
   }
   function setRate(r: number) { if (!video) return; rate = r; video.playbackRate = r; menu = ''; flash(`${r}×`); }
   function setVolume(v: number) { if (casting) { volume = v; muted = v === 0; castSetVolume(v); return; } if (!video) return; volume = v; video.volume = v; video.muted = v === 0; muted = v === 0; try { localStorage.setItem('ff_vol', String(v)); } catch { /* ignore */ } }
+  function volumeBy(delta: number) { const v = stepVolume(muted ? 0 : volume, delta); setVolume(v); flash(`Lautstärke ${Math.round(v * 100)} %`, 600); }
   function toggleMute() { if (casting) { castToggleMute(); return; } if (!video) return; video.muted = !video.muted; muted = video.muted; if (!muted && volume === 0) setVolume(0.5); }
   function toggleFullscreen() {
     if (document.fullscreenElement) document.exitFullscreen();
@@ -344,76 +410,161 @@
 
   // ---- activity / keyboard / touch ----
   function wake() { lastActive = Date.now(); tick = lastActive; }
+  const overlayOpen = () => Boolean(menu || subDlg || help);
+  function act(a: KeyAction) {
+    switch (a.type) {
+      case 'toggle': togglePlay(); break;
+      case 'play': if (allowed()) playSafe(); break;
+      case 'pause': if (allowed()) doPause(); break;
+      case 'seek': seekBy(a.by); break;
+      case 'seekPct': if (duration > 0 && allowed()) { seekTo((duration * a.pct) / 100); flash(`${a.pct} %`, 700); } break;
+      case 'volume': volumeBy(a.delta); break;
+      case 'mute': toggleMute(); flash(muted ? 'Stumm' : 'Ton an', 700); break;
+      case 'fullscreen': toggleFullscreen(); break;
+      case 'subtitles': cycleSubtitles(); break;
+      case 'skip': if (skip && allowed()) doSkip(); break;
+      case 'next': if (hasNext && allowed()) dispatch('next'); else flash('Keine weitere Folge'); break;
+      case 'help': help = !help; break;
+      case 'pip': if (pipOk && !casting) void pip(); break;
+      case 'tvControls': focusControls(); break;
+      case 'escape': menu = ''; subDlg = false; help = false; break;
+    }
+  }
+  function cycleSubtitles() {
+    if (!info?.subtitles.length) { flash('Keine Untertitel verfügbar'); return; }
+    const i = nextSubtitle(subIndex, info.subtitles.map((x) => x.index));
+    setSubtitle(i);
+    flash(i === -1 ? 'Untertitel: Aus' : `Untertitel: ${info.subtitles.find((x) => x.index === i)?.title ?? ''}`, 1500);
+  }
   function onKey(e: KeyboardEvent) {
     const t = e.target as HTMLElement;
-    if (!video || e.ctrlKey || e.metaKey || e.altKey || ['INPUT', 'SELECT', 'TEXTAREA'].includes(t.tagName)) return;
-    const k = e.key.toLowerCase();
+    if (!video || isTypingTarget(t)) return;
+    if ((t.tagName === 'BUTTON' || t.tagName === 'A') && (e.key === ' ' || e.key === 'Enter')) return; // the focused control keeps Space/Enter
+    const a = resolveKey(e, { tv: tvMode(), onBody: t === document.body || t === stage, hasSkip: Boolean(skip), hasNext, overlayOpen: overlayOpen() });
     wake();
-    const onBody = t === document.body || t === stage;
-    if (k === 'enter' && onBody && skip && tvMode()) { e.preventDefault(); doSkip(); } // TV: OK skips the intro while its button is showing
-    else if (k === ' ' || k === 'k' || k === 'mediaplaypause' || (k === 'enter' && onBody)) { e.preventDefault(); togglePlay(); }
-    else if (k === 'mediaplay') { e.preventDefault(); if (allowed()) playSafe(); }
-    else if (k === 'mediapause') { e.preventDefault(); if (allowed()) doPause(); }
-    else if (k === 'mediafastforward') { e.preventDefault(); seekBy(30); }
-    else if (k === 'mediarewind') { e.preventDefault(); seekBy(-30); }
-    else if (k === 'mediatracknext' && hasNext) { e.preventDefault(); dispatch('next'); }
-    else if (k === 'arrowleft' || k === 'j') { e.preventDefault(); seekBy(-10); }
-    else if (k === 'arrowright' || k === 'l') { e.preventDefault(); seekBy(10); }
-    else if (k === 'arrowup' || k === 'arrowdown') {
-      e.preventDefault();
-      if (tvMode()) focusControls(); // D-pad: up/down open the control bar (the TV has its own volume keys)
-      else if (k === 'arrowup') { setVolume(Math.min(1, volume + 0.1)); flash(`Lautstärke ${Math.round(Math.min(1, volume + 0.1) * 100)} %`, 600); }
-      else setVolume(Math.max(0, volume - 0.1));
-    }
-    else if (k === 'm') { toggleMute(); flash(muted ? 'Stumm' : 'Ton an', 700); }
-    else if (k === 'f') toggleFullscreen();
-    else if (k === 'escape' && menu) menu = '';
+    if (!a) return;
+    e.preventDefault();
+    act(a);
   }
-  /** Back / Escape (capture phase: the control bar swallows key events): close the open menu, then leave the control bar */
+  /** Back / Escape (capture phase: the control bar swallows key events): close the shortcut overlay / open menu, then leave the control bar */
   function onBackCapture(e: KeyboardEvent) {
     if (!(e.key === 'Escape' || (tvMode() && isBackKey(e)))) return;
     const opener = stage?.querySelector<HTMLElement>('.ctl [aria-expanded="true"]');
-    if (menu || subDlg) {
+    if (menu || subDlg || help) {
       e.preventDefault(); e.stopImmediatePropagation();
-      menu = ''; subDlg = false;
+      menu = ''; subDlg = false; help = false;
       if (tvMode()) tickDom().then(() => opener?.focus());
     } else if (tvMode() && stage?.querySelector('.ctl')?.contains(document.activeElement)) {
       e.preventDefault(); e.stopImmediatePropagation();
       (document.activeElement as HTMLElement).blur(); lastActive = 0; // hide the bar, the next Back leaves the player
     }
   }
-  /** keys typed on a control belong to the control (Space = click, arrows = slider) - except Escape, which still leaves the player */
-  const ctlKey = (e: KeyboardEvent) => { if (e.key !== 'Escape') e.stopPropagation(); };
+  /** keys typed on a control belong to the control (Space/Enter = click, arrows = slider) - everything else (F, M, C, digits ...) still reaches the player; Escape leaves */
+  const ctlKey = (e: KeyboardEvent) => {
+    if (e.key === 'Escape') return;
+    const t = e.target as HTMLElement;
+    if (tvMode()) { e.stopPropagation(); return; } // D-pad: the focus belongs to the control bar
+    const native = (t.tagName === 'BUTTON' && (e.key === ' ' || e.key === 'Enter')) || (t.tagName === 'INPUT' && (t as HTMLInputElement).type === 'range' && e.key.startsWith('Arrow'));
+    if (native) e.stopPropagation();
+  };
+  $: if (help || error) tickDom().then(() => stage?.querySelector<HTMLElement>('.help [data-autofocus], .errbox [data-autofocus]')?.focus());
   $: if (menu && typeof document !== 'undefined' && tvMode()) tickDom().then(() => stage?.querySelector<HTMLElement>('.menu .mi')?.focus());
-  let lastTap = 0;
+
+  // ---- mouse: click = play/pause (deferred to tell a double click = fullscreen); touch is handled by the pointer gestures below ----
+  let lastTap = 0, lastTouch = 0;
+  const NO_GESTURE = '.ui, .skipbtn, .ovl, .dlg, .help, .lockbtn, [data-nav], button, a, input, select';
   function onSurfaceClick(e: MouseEvent) {
-    if ((e.target as HTMLElement).closest('.ui, .skipbtn, .ovl')) return;
-    const coarse = matchMedia('(pointer: coarse)').matches;
+    if ((e.target as HTMLElement).closest(NO_GESTURE)) return;
+    if (Date.now() - lastTouch < 800) return; // the click that follows a touch was already handled
     const now = Date.now();
     if (menu) { menu = ''; return; }
-    if (coarse) { // touch: tap = show/hide controls, double tap on left/right third = -/+10 s
-      const x = e.clientX / (stage?.clientWidth ?? window.innerWidth);
-      if (now - lastTap < 320 && (x < 0.33 || x > 0.66)) seekBy(x < 0.33 ? -10 : 10);
-      else if (tick - lastActive < 3000 && !paused) lastActive = 0; else wake();
-      lastTap = now;
-    } else if (now - lastTap < 280) { toggleFullscreen(); lastTap = 0; } else { lastTap = now; setTimeout(() => { if (lastTap === now) { togglePlay(); lastTap = 0; } }, 285); }
+    if (now - lastTap < 280) { toggleFullscreen(); lastTap = 0; } else { lastTap = now; setTimeout(() => { if (lastTap === now) { togglePlay(); lastTap = 0; } }, 285); }
   }
+  function toggleControls() { if (tick - lastActive < 3000 && !paused) lastActive = 0; else wake(); }
+
+  // ---- touch gestures: double-tap thirds = seek, swipe = volume / brightness / scrub, lock ----
+  type G = { id: number; x: number; y: number; t: number; w: number; h: number; left: number; axis: Axis; moved: boolean; startTime: number; startVol: number; startBri: number; target: number };
+  let g: G | null = null, tapState: TapState | null = null, pendingTap: ReturnType<typeof setTimeout>;
+  function showHud(h: { icon: string; text: string; pct: number } | null, hideAfter = 0) { hud = h; clearTimeout(hudT); if (h && hideAfter) hudT = setTimeout(() => (hud = null), hideAfter); }
+  function showRipple(zone: Zone, total: number) { ripple = { zone, total, n: (ripple?.n ?? 0) + 1 }; clearTimeout(rippleT); rippleT = setTimeout(() => (ripple = null), 750); }
+  function gDown(e: PointerEvent) {
+    if (e.pointerType !== 'touch' || tvMode()) return;
+    lastTouch = Date.now();
+    if (g) { g = null; showHud(null); return; } // second finger: not ours (pinch)
+    if ((e.target as HTMLElement).closest(NO_GESTURE)) return;
+    const r = (stage ?? (e.currentTarget as HTMLElement)).getBoundingClientRect();
+    g = { id: e.pointerId, x: e.clientX, y: e.clientY, t: Date.now(), w: r.width - inset, h: r.height, left: r.left, axis: null, moved: false, startTime: casting ? castPos : video?.currentTime ?? 0, startVol: muted ? 0 : volume, startBri: brightness, target: 0 };
+  }
+  function gMove(e: PointerEvent) {
+    if (!g || e.pointerId !== g.id || locked) return;
+    const dx = e.clientX - g.x, dy = e.clientY - g.y;
+    if (!g.axis) {
+      g.axis = classifyMove(dx, dy, g.x - g.left, g.w, { volumeOk: volOk });
+      if (!g.axis) return;
+      if (g.axis === 'scrub' && (!duration || !canControl)) { if (!canControl) allowed(); g.axis = null; g.moved = true; return; }
+      if (g.axis === 'brightness' && casting) { g.axis = null; g.moved = true; return; }
+      g.moved = true; clearTimeout(pendingTap); tapState = null;
+    }
+    if (g.axis === 'scrub') {
+      g.target = scrubTarget(g.startTime, dx, g.w, duration);
+      const d = g.target - g.startTime;
+      showHud({ icon: d < 0 ? 'rewind10' : 'forward10', text: `${fmtClock(g.target)}  (${d < 0 ? '−' : '+'}${fmtClock(Math.abs(d))})`, pct: duration ? (g.target / duration) * 100 : 0 });
+    } else if (g.axis === 'volume') {
+      const v = Math.round(levelFromDrag(g.startVol, dy, g.h) * 20) / 20;
+      setVolume(v); showHud({ icon: v === 0 ? 'volume-off' : v < 0.5 ? 'volume-low' : 'volume', text: `Lautstärke ${Math.round(v * 100)} %`, pct: v * 100 });
+    } else if (g.axis === 'brightness') {
+      brightness = levelFromDrag(g.startBri, dy, g.h, BRIGHTNESS_MIN, 1);
+      showHud({ icon: 'sun', text: `Helligkeit ${brightnessPct(brightness)} %`, pct: ((brightness - BRIGHTNESS_MIN) / (1 - BRIGHTNESS_MIN)) * 100 });
+    }
+  }
+  function gUp(e: PointerEvent) {
+    if (!g || e.pointerId !== g.id) return;
+    const cur = g; g = null; lastTouch = Date.now();
+    if (cur.axis === 'scrub') { seekTo(cur.target); announce(`Position ${fmtClock(cur.target)}`); showHud(hud, 500); return; }
+    if (cur.axis) { announce(hud?.text ?? ''); showHud(hud, 700); return; }
+    if (cur.moved || Math.hypot(e.clientX - cur.x, e.clientY - cur.y) > 12) { showHud(null); return; }
+    handleTap(e.clientX - cur.left, cur.w);
+  }
+  function gCancel(e: PointerEvent) { if (g && e.pointerId === g.id) { g = null; showHud(null); } }
+  function handleTap(x: number, w: number) {
+    if (locked) { showLockBtn(); return; }
+    if (menu || help) { menu = ''; help = false; return; }
+    const zone = zoneOf(x, w), r = registerTap(tapState, Date.now(), zone);
+    tapState = r.state;
+    clearTimeout(pendingTap);
+    if (r.kind === 'seek') { seekBy(r.by, true); showRipple(zone, r.total); wake(); }
+    else if (zone === 'center') toggleControls();
+    else pendingTap = setTimeout(toggleControls, TAP_WINDOW + 20); // maybe the first half of a double tap
+  }
+  // lock: hides all controls and turns gestures off until the lock icon is held for 0.6 s
+  function showLockBtn() { lockHint = true; clearTimeout(lockT); lockT = setTimeout(() => (lockHint = false), 3000); }
+  function lockNow() { locked = true; menu = ''; flash('Gesperrt – zum Entsperren Schloss gedrückt halten', 2500); showLockBtn(); }
+  let unlockT: ReturnType<typeof setTimeout>, unlockedAt = 0;
+  function unlockDown() { lockHold = true; clearTimeout(unlockT); unlockT = setTimeout(() => { lockHold = false; locked = false; lockHint = false; unlockedAt = Date.now(); wake(); flash('Entsperrt', 900); }, 600); }
+  function unlockUp() { if (lockHold) { lockHold = false; clearTimeout(unlockT); flash('Zum Entsperren gedrückt halten', 1500); showLockBtn(); } }
+  function lockKey(e: KeyboardEvent) { if (locked && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); e.stopPropagation(); locked = false; lockHint = false; unlockedAt = Date.now(); wake(); flash('Entsperrt', 900); } }
 
   const syncTime = () => {
     if (!video) return;
     current = video.currentTime; duration = Number.isFinite(video.duration) ? video.duration : duration;
+    if (current > 0 && !reconnecting && !error) lastPos = current;
+    if ((rec.networkTries || rec.mediaRecovered) && current > errPos + 8) rec = freshRecovery(); // stable again: new error budget
     const b = video.buffered; buffered = b.length ? b.end(b.length - 1) : 0;
   };
+  /** progress report that does not depend on timers (those are throttled in background tabs / Picture-in-Picture) */
+  const reportTick = () => { if (started && !stopped && !casting && Date.now() - lastSent >= 10_000) send('progress'); };
   const onPlay = () => { paused = false; if (stopped) { stopped = false; started = false; } if (!started) { started = true; send('start'); } else send('progress'); };
 
   onMount(() => {
-    try { const v = Number(localStorage.getItem('ff_vol')); if (video && v >= 0 && v <= 1 && localStorage.getItem('ff_vol') !== null) { volume = v; video.volume = v; } } catch { /* ignore */ }
+    if (video) volOk = volumeSettable(video); // iOS cannot set the volume: no volume swipe there
+    coarse = matchMedia('(pointer: coarse)').matches;
+    try { const v = parseVolume(localStorage.getItem('ff_vol')); if (video && v !== null) { volume = v; video.volume = v; } } catch { /* ignore */ }
     load(startAt);
     castOff = onCastEvent(handleCast);
     loadBookmarks();
     api(`/api/items/${itemId}/segments`).then((r) => (segments = r.segments)).catch(() => undefined);
     progressTimer = setInterval(() => { if (started && !stopped) send('progress'); }, 10_000);
-    pipOk = Boolean(document.pictureInPictureEnabled);
+    pipOk = Boolean(document.pictureInPictureEnabled) && !video?.disablePictureInPicture;
     activityTimer = setInterval(() => {
       tick = Date.now();
       if (casting && castInfo && !castBusy && castInfo.expiresAt - tick < 10 * 60_000) void recast(castPos); // renew the token before it expires
@@ -422,7 +573,14 @@
         else sleepLeft = fmtClock((sleepAt - tick) / 1000);
       }
     }, 500);
-    const bye = () => { if (!stopped) { stopped = true; send('stop'); } if (casting) { castRevoke(castInfo); castStop(); } };
+    const bye = () => { if (!stopped) { stopped = true; send('stop', true); } if (casting) { castRevoke(castInfo); castStop(); } };
+    // keep the resume position safe when the tab is hidden / the phone locks (Picture-in-Picture keeps playing: only a progress report, no stop)
+    const vis = () => { if (document.visibilityState === 'hidden' && started && !stopped && !casting) send('progress', true); };
+    const online = () => { if (reconnecting) retryNow(resumePos()); };
+    const pipOn = () => { inPip = true; }, pipOff = () => { inPip = false; };
+    window.addEventListener('online', online);
+    document.addEventListener('visibilitychange', vis);
+    video?.addEventListener('enterpictureinpicture', pipOn); video?.addEventListener('leavepictureinpicture', pipOff);
     const fs = () => (fullscreen = Boolean(document.fullscreenElement));
     window.addEventListener('pagehide', bye);
     document.addEventListener('fullscreenchange', fs);
@@ -434,11 +592,13 @@
     return () => {
       window.removeEventListener('pointerdown', touched, true); window.removeEventListener('keydown', touched, true); window.removeEventListener('ff-remote', touched);
       window.removeEventListener('pagehide', bye); document.removeEventListener('fullscreenchange', fs);
+      window.removeEventListener('online', online); document.removeEventListener('visibilitychange', vis);
+      video?.removeEventListener('enterpictureinpicture', pipOn); video?.removeEventListener('leavepictureinpicture', pipOff);
       window.removeEventListener('ff-remote', onRemote); window.removeEventListener('keydown', unmuteOnGesture, true); window.removeEventListener('pointerdown', unmuteOnGesture, true);
     };
   });
   onDestroy(() => {
-    clearInterval(progressTimer); clearInterval(activityTimer); clearTimeout(toastTimer); nowPlaying.set(null);
+    clearInterval(progressTimer); clearInterval(activityTimer); clearTimeout(toastTimer); clearTimeout(retryT); clearTimeout(spinT); clearTimeout(pendingTap); clearTimeout(hudT); clearTimeout(rippleT); clearTimeout(lockT); clearTimeout(unlockT); nowPlaying.set(null);
     if (started && !stopped) { stopped = true; send('stop'); }
     if (casting) { castRevoke(castInfo); castStop(); casting = false; } // leaving the page ends the cast session and revokes its token
     castOff?.();
@@ -447,33 +607,66 @@
 </script>
 
 <svelte:window on:keydown={onKey} on:keydown|capture={onBackCapture} />
-<div class="stage {subClasses($prefs.subtitleStyle)}" class:idle={!showUi} style="--inset:{inset}px" bind:this={stage} on:mousemove={wake} on:click={onSurfaceClick} on:keydown={() => {}} role="presentation">
+<div class="stage {subClasses($prefs.subtitleStyle)}" class:idle={!showUi} class:locked style="--inset:{inset}px" bind:this={stage} on:mousemove={() => { if (Date.now() - lastTouch > 800) wake(); }} on:click={onSurfaceClick} on:keydown={() => {}}
+  on:pointerdown={gDown} on:pointermove={gMove} on:pointerup={gUp} on:pointercancel={gCancel} role="presentation">
   <!-- svelte-ignore a11y_media_has_caption -->
-  <video bind:this={video} playsinline crossorigin="use-credentials"
+  <video bind:this={video} playsinline crossorigin="use-credentials" style:filter={brightness < 1 ? `brightness(${brightness})` : null}
+    on:error={onVideoError}
     on:play={onPlay} on:pause={() => { paused = true; if (!castBusy && !casting && !stopped) send('progress'); }} on:seeked={() => started && send('progress')}
     on:ended={() => { stopped = true; paused = true; send('stop'); }}
-    on:timeupdate={syncTime} on:progress={syncTime} on:loadedmetadata={syncTime}
-    on:waiting={() => (waiting = true)} on:playing={() => (waiting = false)} on:canplay={() => { waiting = false; if (wantAutoplay) { wantAutoplay = false; playSafe(); } }}
+    on:timeupdate={() => { syncTime(); reportTick(); }} on:progress={syncTime} on:loadedmetadata={syncTime}
+    on:waiting={() => (waiting = true)} on:playing={onPlaying} on:canplay={() => { waiting = false; if (wantAutoplay) { wantAutoplay = false; playSafe(); } }}
     on:volumechange={() => { if (video) { muted = video.muted; } }}
     on:play on:pause on:seeked on:seeking on:waiting on:playing on:canplay on:timeupdate on:ended>
     {#if info}{#each info.subtitles as s}<track id="sub-{s.index}" kind="subtitles" src={s.url} srclang={s.language?.slice(0, 2) ?? 'xx'} label={s.title} />{/each}{/if}
   </video>
 
-  {#if error}<div class="center err" role="alert">{error}</div>{/if}
-  {#if waiting && !error && !casting}<div class="center" role="status" aria-label="Lädt"><div class="spin"></div></div>{/if}
+  <div class="sr" aria-live="polite" aria-atomic="true">{live}</div>
+  {#if error}
+    <div class="center errov" role="alertdialog" aria-labelledby="perr-t" aria-describedby="perr-d">
+      <div class="errbox ui" on:click|stopPropagation on:keydown|stopPropagation role="presentation">
+        <b id="perr-t">{errTitle}</b><p id="perr-d">{error}</p>
+        <div class="flex"><button class="btn light go" data-autofocus on:click={retryManually}>Erneut versuchen</button><button class="sec" on:click={leave}>Zurück</button></div>
+      </div>
+    </div>
+  {:else if reconnecting}
+    <div class="center" role="status"><div class="reco ui"><div class="spin sm"></div><span>Verbindung unterbrochen – neuer Versuch …</span><small>Versuch {reconnecting} von {MAX_NETWORK_TRIES}</small></div></div>
+  {:else if spin && waiting && !casting}<div class="center" role="status" aria-label="Lädt"><div class="spin"></div></div>{/if}
   {#if casting}
     <div class="center castov" role="status"><div class="castbox"><Icon name="cast" size={56} /><b>Wird auf {$castState.deviceName || 'Chromecast'} abgespielt</b><button class="btn light ui" on:click|stopPropagation={() => castStop()}>Übertragung beenden</button></div></div>
   {/if}
-  {#if paused && !waiting && !error && !casting}
+  {#if paused && !waiting && !error && !casting && !locked && !reconnecting}
     <button class="bigplay ui" aria-label="Abspielen" on:click|stopPropagation={togglePlay}><Icon name="play" size={44} /></button>
   {/if}
-  {#if toast}<div class="toast" role="status">{toast}</div>{/if}
+  {#if toast}<div class="toast" aria-hidden="true">{toast}</div>{/if}
+  {#if ripple}
+    {#key ripple.n}<div class="rip {ripple.zone}" aria-hidden="true"></div>{/key}
+    <div class="riplbl {ripple.zone}" aria-hidden="true"><Icon name={ripple.zone === 'left' ? 'rewind10' : 'forward10'} size={34} /><b>{ripple.total} Sek.</b></div>
+  {/if}
+  {#if hud}
+    <div class="hud" aria-hidden="true"><Icon name={hud.icon} size={26} /><span>{hud.text}</span><i style="--p:{Math.max(0, Math.min(100, hud.pct))}%"></i></div>
+  {/if}
+  {#if coarse && !tvMode() && !casting && (locked ? lockHint : showUi)}
+    <button class="lockbtn ic" class:holding={lockHold} aria-label={locked ? 'Entsperren (gedrückt halten)' : 'Bedienung sperren'}
+      on:pointerdown|stopPropagation={() => (locked ? unlockDown() : undefined)} on:pointerup|stopPropagation={unlockUp} on:pointercancel={unlockUp} on:pointerleave={unlockUp}
+      on:keydown={lockKey} on:click|stopPropagation={() => { if (!locked && Date.now() - unlockedAt > 1000) lockNow(); }} on:contextmenu|preventDefault>
+      <Icon name={locked ? 'lock' : 'unlock'} size={26} />
+    </button>
+  {/if}
+  {#if help}
+    <div class="help ui" role="dialog" aria-modal="true" aria-label="Tastenkürzel" tabindex="-1" on:click|stopPropagation={() => (help = false)} on:keydown|stopPropagation>
+      <div class="hbox" on:click|stopPropagation on:keydown|stopPropagation role="presentation">
+        <header><b>Tastenkürzel</b><button class="icx" data-autofocus aria-label="Schließen" on:click={() => (help = false)}><Icon name="x" size={20} /></button></header>
+        <dl>{#each SHORTCUTS as [k, d]}<dt><kbd>{k}</kbd></dt><dd>{d}</dd>{/each}</dl>
+      </div>
+    </div>
+  {/if}
 
   <!-- overlays from the page (back button, next episode card, party chat/reactions) -->
   <div class="ovl" class:hide={!showUi}><slot name="top" /></div>
   <slot />
 
-  {#if skip}<button class="skipbtn light" on:click|stopPropagation={doSkip}>{skipLabel[skip.type]}{tvMode() ? ' (OK)' : ''}</button>{/if}
+  {#if skip && !locked}<button class="skipbtn light" aria-keyshortcuts="S" on:click|stopPropagation={doSkip}>{skipLabel[skip.type]}{tvMode() ? ' (OK)' : ''}</button>{/if}
 
   {#if showXray && people}
     <aside class="xray ui" class:hide={!showUi && !xray} aria-label="Besetzung">
@@ -497,6 +690,7 @@
         aria-valuetext="{fmtClock(shown)} von {fmtClock(duration)}"
         on:pointermove={onTrackMove} on:pointerleave={() => (hoverX = -1)} on:pointerdown={onTrackDown} on:pointerup={onTrackUp} on:pointercancel={onTrackUp} on:keydown={onTrackKey}>
         <div class="buf" style="width:{bufPct}%"></div>
+        {#each segments as sg}{#if duration && sg.end > sg.start}<span class="seg {sg.type}" style="left:{(sg.start / duration) * 100}%;width:{((sg.end - sg.start) / duration) * 100}%" title={segLabel[sg.type] ?? sg.type} aria-hidden="true"></span>{/if}{/each}
         <div class="played" style="width:{pct}%"></div>
         {#each bookmarks as bm}{#if duration}<span class="mark" style="left:{(bm.position / duration) * 100}%" title="{fmtClock(bm.position)}{bm.note ? ' – ' + bm.note : ''}"></span>{/if}{/each}
         <div class="knob" style="left:{pct}%"></div>
@@ -557,7 +751,7 @@
         </div>
         <button class="ic" class:on={xray} aria-pressed={xray} aria-label="Besetzung anzeigen" on:click={() => { xray = !xray; if (xray) ensurePeople(); }}><Icon name="users" size={26} /></button>
         {#if !partyMode}<CastButton active={casting} on:start={startCast} />{/if}
-        {#if pipOk && !casting}<button class="ic" aria-label="Bild-in-Bild" on:click={pip}><Icon name="pip" size={26} /></button>{/if}
+        {#if pipOk && !casting}<button class="ic" class:on={inPip} aria-pressed={inPip} aria-keyshortcuts="P" aria-label="Bild-in-Bild" title="Bild-in-Bild (P)" on:click={pip}><Icon name="pip" size={26} /></button>{/if}
         <div class="mwrap">
           <button class="ic" aria-label="Einstellungen" aria-expanded={menu === 'settings'} on:click={() => (menu = menu === 'settings' ? '' : 'settings')}><Icon name="settings" size={27} />{#if sleepAt}<span class="sleepdot" title="Schlaf-Timer {sleepLeft}"></span>{/if}</button>
           {#if menu === 'settings'}
@@ -576,6 +770,7 @@
                   <button class="mi" class:on={sleepAfterEpisode} on:click={() => setSleep('end')}>{#if sleepAfterEpisode}<Icon name="check" size={16} />{:else}<span class="sp"></span>{/if}Nach dieser Folge</button>
                 </div>
               {/if}
+ {#if !coarse}<div><h3>Hilfe</h3><button class="mi" on:click={() => { menu = ''; help = true; }}><Icon name="keyboard" size={16} />Tastenkürzel (?)</button></div>{/if}
             </div>
           {/if}
         </div>
@@ -587,7 +782,9 @@
 </div>
 
 <style>
-  .stage { position: relative; width: 100%; background: #000; color: #fff; overflow: hidden; user-select: none; -webkit-user-select: none; }
+  .stage { position: relative; width: 100%; background: #000; color: #fff; overflow: hidden; user-select: none; -webkit-user-select: none; touch-action: none; -webkit-touch-callout: none; }
+  .sr { position: absolute; width: 1px; height: 1px; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+  .stage :global(button:focus-visible), .stage :global(a:focus-visible), .stage :global([role=slider]:focus-visible) { outline: 3px solid #fff; outline-offset: 2px; }
   .stage.idle { cursor: none; }
   .stage :global(video) { display: block; width: 100%; height: 100%; max-height: 100%; object-fit: contain; background: #000; }
   .stage :global(video::cue) { background: rgba(0,0,0,.65); font-size: 1.15em; color: #fff; font-family: sans-serif; }
@@ -609,6 +806,28 @@
   .center { position: absolute; inset: 0; display: grid; place-items: center; pointer-events: none; z-index: 3; }
   .spin { width: 62px; height: 62px; border: 5px solid rgba(255,255,255,.25); border-top-color: var(--acc); border-radius: 50%; animation: sp .9s linear infinite; }
   @keyframes sp { to { transform: rotate(360deg); } }
+  .spin.sm { width: 34px; height: 34px; border-width: 4px; }
+  .errov { background: rgba(0,0,0,.82); pointer-events: auto; z-index: 11; }
+  .errbox, .reco { display: grid; justify-items: center; gap: .8rem; text-align: center; max-width: min(460px, 90%); padding: 1.4rem 1.6rem; background: rgba(20,20,20,.92); border: 1px solid #3a3a3a; border-radius: 10px; }
+  .errbox b { font-size: 1.3rem; } .errbox p { margin: 0; color: #cfcfcf; } .errbox .flex { display: flex; gap: .6rem; flex-wrap: wrap; justify-content: center; }
+  .reco { pointer-events: none; font-weight: 600; } .reco small { color: var(--mut); font-weight: 400; }
+  .rip { position: absolute; top: 0; bottom: 0; width: 38%; z-index: 5; pointer-events: none; background: rgba(255,255,255,.2); animation: rip .7s ease-out forwards; }
+  .rip.left { left: 0; border-radius: 0 100% 100% 0 / 0 50% 50% 0; } .rip.right { right: 0; border-radius: 100% 0 0 100% / 50% 0 0 50%; }
+  @keyframes rip { from { opacity: 1; transform: scale(.7); } to { opacity: 0; transform: scale(1); } }
+  .riplbl { position: absolute; top: 50%; transform: translateY(-50%); z-index: 6; pointer-events: none; display: grid; justify-items: center; gap: .1rem; text-shadow: 0 1px 6px #000; }
+  .riplbl.left { left: 12%; } .riplbl.right { right: 12%; }
+  .hud { position: absolute; top: 12%; left: 50%; transform: translateX(-50%); z-index: 9; display: flex; align-items: center; gap: .6rem; padding: .55rem 1.1rem; border-radius: 999px; background: rgba(0,0,0,.72); font-weight: 600; pointer-events: none; font-variant-numeric: tabular-nums; position: absolute; overflow: hidden; }
+  .hud i { position: absolute; left: 0; bottom: 0; height: 3px; width: var(--p); background: var(--acc); }
+  .lockbtn { position: absolute; left: max(.8rem, env(safe-area-inset-left)); bottom: 8rem; z-index: 10; width: 48px; min-height: 48px; background: rgba(0,0,0,.55); border: 1px solid rgba(255,255,255,.5); }
+  .lockbtn.holding { background: var(--acc); }
+  .stage.locked { cursor: none; }
+  .help { position: absolute; inset: 0; z-index: 13; display: grid; place-items: center; background: rgba(0,0,0,.7); }
+  .hbox { width: min(520px, 92vw); max-height: 86%; overflow: auto; background: rgba(20,20,20,.98); border: 1px solid #3a3a3a; border-radius: 10px; padding: 1rem 1.2rem; }
+  .hbox header { display: flex; justify-content: space-between; align-items: center; margin-bottom: .6rem; }
+  .hbox dl { display: grid; grid-template-columns: max-content 1fr; gap: .45rem 1.2rem; margin: 0; align-items: center; } .hbox dt, .hbox dd { margin: 0; }
+  kbd { font: inherit; font-size: .85rem; background: #333; border: 1px solid #555; border-bottom-width: 2px; border-radius: 4px; padding: .1rem .5rem; white-space: nowrap; }
+  .seg { position: absolute; top: 0; bottom: 0; background: rgba(255,255,255,.38); pointer-events: none; border-left: 2px solid rgba(255,255,255,.9); border-radius: 2px; }
+  .seg.outro { background: rgba(245,197,24,.45); border-left-color: #f5c518; } .seg.recap { background: rgba(120,170,255,.4); border-left-color: #78aaff; }
   .bigplay { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); width: 96px; height: 96px; border-radius: 50%; background: rgba(0,0,0,.55); border: 3px solid #fff; z-index: 4; }
   .bigplay:hover:not(:disabled) { background: rgba(0,0,0,.75); }
   .castov { background: #000; pointer-events: none; z-index: 2; }
@@ -624,7 +843,7 @@
   .ctl.hide { opacity: 0; pointer-events: none; }
   .timeline { display: flex; align-items: center; gap: 1rem; }
   .track { position: relative; flex: 1; height: 5px; background: rgba(255,255,255,.28); border-radius: 3px; cursor: pointer; touch-action: none; transition: height var(--t-fast); margin: 10px 0; }
-  .track::before { content: ''; position: absolute; left: 0; right: 0; top: -12px; bottom: -12px; } /* bigger hit area */
+  .track::before { content: ''; position: absolute; left: 0; right: 0; top: -20px; bottom: -20px; } /* bigger hit area */
   .track:hover, .track:focus-visible { height: 9px; }
   .track.locked { cursor: not-allowed; }
   .buf { position: absolute; inset: 0 auto 0 0; background: rgba(255,255,255,.35); border-radius: 3px; }
@@ -637,7 +856,7 @@
   .ic.on { color: var(--acc); }
   .menu.scenes { min-width: 280px; max-width: 92vw; } .menu.scenes .addnote { display: flex; gap: .4rem; padding: .3rem .6rem .6rem; } .menu.scenes .addnote input { flex: 1; min-width: 0; min-height: 38px; }
   .bm { display: flex; align-items: center; } .bm .mi { flex: 1; } .bm .mi .muted { min-width: 3rem; }
-  .icx { background: transparent; padding: 0; width: 34px; min-height: 34px; color: var(--mut); } .icx:hover:not(:disabled) { background: rgba(255,255,255,.12); color: #fff; }
+  .icx { background: transparent; padding: 0; width: 44px; min-height: 44px; color: var(--mut); } .icx:hover:not(:disabled) { background: rgba(255,255,255,.12); color: #fff; }
   .pad { padding: .3rem .8rem; }
   .xray { position: absolute; left: clamp(.6rem, 2.4vw, 2.4rem); right: clamp(.6rem, 2.4vw, 2.4rem); bottom: 8.4rem; z-index: 7; background: linear-gradient(90deg, rgba(0,0,0,.82), rgba(0,0,0,.55)); border-radius: 8px; padding: .7rem 1rem; transition: opacity var(--t-med); max-width: calc(100% - var(--inset, 0px) - 2rem); }
   .xray.hide { opacity: 0; pointer-events: none; } .xray h3 { font-size: .9rem; margin: 0 0 .5rem; color: var(--mut); text-transform: uppercase; letter-spacing: .06em; }
@@ -664,7 +883,7 @@
   .menu.tracks > div { flex: 1; min-width: 118px; }
   .mi { white-space: nowrap; }
   .menu h3 { font-size: 1rem; margin: 0 .6rem .4rem; }
-  .mi { display: flex; width: 100%; justify-content: flex-start; align-items: center; gap: .5rem; background: transparent; color: #d2d2d2; font-weight: 400; padding: .35rem .6rem; min-height: 40px; text-align: left; border-radius: 4px; }
+  .mi { display: flex; width: 100%; justify-content: flex-start; align-items: center; gap: .5rem; background: transparent; color: #d2d2d2; font-weight: 400; padding: .35rem .6rem; min-height: 44px; text-align: left; border-radius: 4px; }
   .mi:hover:not(:disabled) { background: rgba(255,255,255,.1); color: #fff; } .mi.on { color: #fff; font-weight: 700; }
   .sp { width: 16px; flex: none; }
   /* TV: bigger targets, strong focus, no volume slider (the TV has its own volume) */

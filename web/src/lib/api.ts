@@ -11,11 +11,12 @@ let activeProfile = '';
 export const setActiveProfile = (id: string | null | undefined) => (activeProfile = id ?? '');
 export const getActiveProfile = () => activeProfile;
 
-export async function api<T = any>(path: string, opts: { method?: string; body?: unknown; signal?: AbortSignal } = {}): Promise<T> {
+export async function api<T = any>(path: string, opts: { method?: string; body?: unknown; signal?: AbortSignal; /** survive page unload (progress/stop reports) */ keepalive?: boolean } = {}): Promise<T> {
   const res = await fetch(path, {
     method: opts.method ?? 'GET',
     credentials: 'same-origin',
     signal: opts.signal,
+    keepalive: opts.keepalive,
     headers: { ...(opts.body === undefined ? {} : { 'content-type': 'application/json' }), 'x-csrf-token': csrf, ...(activeProfile ? { 'x-ff-profile': activeProfile } : {}) },
     body: opts.body === undefined ? undefined : JSON.stringify(opts.body),
   });
