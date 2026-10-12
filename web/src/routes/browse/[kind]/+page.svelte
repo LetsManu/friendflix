@@ -4,7 +4,9 @@
   import { goto } from '$app/navigation';
   import { api, type Item } from '#lib/api';
   import Card from '#lib/Card.svelte';
-  import { activeChips, browseQuery, parseBrowse } from '#lib/discovery';
+  import { activeChips, applyDraft, browseQuery, draftOf, filterCount, parseBrowse, type FilterDraft } from '#lib/discovery';
+  import { dialogKeys } from '#lib/actions';
+  import { onDestroy, tick } from 'svelte';
   import { langLabel } from '#lib/langs';
 
   let items: Item[] | null = null, total = 0, start = 0, genres: string[] = [], langs: { audio: Array<{ code: string }>; subs: Array<{ code: string }> } = { audio: [], subs: [] }, busy = false, failed = false, seq = 0, lastKey = '';
@@ -56,6 +58,21 @@
     goto(u, { reset: false });
   }
   const reset = () => goto($page.url.pathname, { reset: false });
+
+  // ---- phones: the row of selects becomes one "Filter" button + bottom sheet (same pattern as the "Mehr" sheet in +layout) ----
+  let fsheet = false, draft: FilterDraft = { genre: '', decade: '', minRating: '', sort: 'SortName', filter: '', audio: '', subs: '' }, fbtn: HTMLButtonElement, dragY = 0, dragging = false, dragStart = 0;
+  $: fcount = filterCount(s);
+  const portal = (node: HTMLElement) => { document.body.appendChild(node); return { destroy() { node.remove(); } }; };
+  $: if (typeof document !== 'undefined') document.documentElement.style.overflow = fsheet ? 'hidden' : ''; // no page scroll behind the sheet
+  onDestroy(() => { if (typeof document !== 'undefined') document.documentElement.style.overflow = ''; });
+  function openFilters() { draft = draftOf(s); dragY = 0; fsheet = true; }
+  async function closeFilters(refocus = true) { fsheet = false; dragY = 0; dragging = false; if (refocus) { await tick(); fbtn?.focus(); } }
+  async function applyFilters() { await goto(applyDraft(new URL($page.url.href), draft), { reset: false }); void closeFilters(); }
+  async function resetFilters() { await reset(); void closeFilters(); }
+  // swipe down on the grab zone closes the sheet (threshold 80 px)
+  function dragDown(e: PointerEvent) { dragging = true; dragStart = e.clientY; dragY = 0; (e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId); }
+  function dragMove(e: PointerEvent) { if (dragging) dragY = Math.max(0, e.clientY - dragStart); }
+  function dragEnd() { if (!dragging) return; const far = dragY > 80; dragging = false; dragY = 0; if (far) void closeFilters(); }
 </script>
 
 <svelte:head><title>{kind === 'Series' ? 'Serien' : 'Filme'} – FriendFlix</title></svelte:head>
@@ -66,7 +83,10 @@
     <a href="/browse/series{search}" class:on={kind === 'Series'} aria-current={kind === 'Series' ? 'page' : undefined}>Serien</a>
   </nav>
 </div>
+<svelte:window on:resize={() => { if (fsheet && window.innerWidth > 720) void closeFilters(false); }} />
 <div class="flex filters">
+  <button type="button" class="fbtn" bind:this={fbtn} aria-haspopup="dialog" aria-expanded={fsheet} on:click={openFilters}>Filter{#if fcount}<span class="cnt" aria-hidden="true">{fcount}</span><span class="sr-only"> ({fcount} aktiv)</span>{/if}</button>
+  <div class="desk">
   <label class="sr-only" for="g">Genre</label>
   <select id="g" value={s.genre} on:change={(e) => set('genre', e.currentTarget.value)}><option value="">Alle Genres</option>{#each genres as g}<option>{g}</option>{/each}{#if s.genre && !genres.includes(s.genre)}<option>{s.genre}</option>{/if}</select>
   <label class="sr-only" for="dc">Jahrzehnt</label>
@@ -77,8 +97,8 @@
   <select id="s" value={s.sort} on:change={(e) => set('sort', e.currentTarget.value === 'SortName' ? '' : e.currentTarget.value)}>
     <option value="SortName">A–Z</option><option value="DateCreated">Zuletzt hinzugefügt</option><option value="PremiereDate">Erscheinungsdatum</option><option value="CommunityRating">Beliebtheit</option>
   </select>
-  <label class="sr-only" for="f">Filter</label>
-  <select id="f" value={s.filter} on:change={(e) => set('filter', e.currentTarget.value)}><option value="">Alle</option><option value="unplayed">Ungesehen</option><option value="played">Gesehen</option><option value="favorites">Favoriten</option></select>
+  <label class="sr-only" for="f">Status</label>
+  <select id="f" value={s.filter} on:change={(e) => set('filter', e.currentTarget.value)}><option value="">Status: alle</option><option value="unplayed">Ungesehen</option><option value="played">Gesehen</option><option value="favorites">Favoriten</option></select>
   {#if audioCodes.length}
     <label class="sr-only" for="au">Ton</label>
     <select id="au" value={s.audio ?? ''} on:change={(e) => set('audio', e.currentTarget.value)}><option value="">Ton: alle</option>{#each audioCodes as c}<option value={c}>Ton: {langLabel(c)}</option>{/each}</select>
@@ -87,10 +107,32 @@
     <label class="sr-only" for="ut">Untertitel</label>
     <select id="ut" value={s.subs ?? ''} on:change={(e) => set('subs', e.currentTarget.value)}><option value="">Untertitel: alle</option>{#each subCodes as c}<option value={c}>Untertitel: {langLabel(c)}</option>{/each}</select>
   {/if}
+  </div>
   {#if audioCodes.includes('deu')}
     <button type="button" class="chip quick" aria-pressed={s.audio === 'deu'} on:click={() => set('audio', s.audio === 'deu' ? '' : 'deu')}>Deutscher Ton</button>
   {/if}
 </div>
+{#if fsheet}
+  <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
+  <div class="backdrop" use:portal on:click={() => closeFilters()}></div>
+  <div class="sheet" class:dragging use:portal role="dialog" aria-modal="true" aria-label="Filter" use:dialogKeys={{ close: closeFilters, focusFirst: true }} style={dragY ? `transform:translateY(${dragY}px)` : undefined}>
+    <!-- svelte-ignore a11y_no_static_element_interactions -->
+    <div class="grab" on:pointerdown={dragDown} on:pointermove={dragMove} on:pointerup={dragEnd} on:pointercancel={dragEnd}>
+      <span class="handle" aria-hidden="true"></span>
+      <h2 class="sht">Filter</h2>
+    </div>
+    <form on:submit|preventDefault={applyFilters}>
+      <label class="fl"><span>Genre</span><select bind:value={draft.genre}><option value="">Alle Genres</option>{#each genres as g}<option value={g}>{g}</option>{/each}{#if draft.genre && !genres.includes(draft.genre)}<option value={draft.genre}>{draft.genre}</option>{/if}</select></label>
+      <label class="fl"><span>Jahrzehnt</span><select bind:value={draft.decade}><option value="">Alle Jahrzehnte</option>{#each decades as d}<option value={String(d)}>{d}er</option>{/each}</select></label>
+      <label class="fl"><span>Bewertung</span><select bind:value={draft.minRating}><option value="">Alle Bewertungen</option><option value="6">ab 6 Sterne</option><option value="7">ab 7 Sterne</option><option value="8">ab 8 Sterne</option></select></label>
+      <label class="fl"><span>Sortierung</span><select bind:value={draft.sort}><option value="SortName">A–Z</option><option value="DateCreated">Zuletzt hinzugefügt</option><option value="PremiereDate">Erscheinungsdatum</option><option value="CommunityRating">Beliebtheit</option></select></label>
+      <label class="fl"><span>Status</span><select bind:value={draft.filter}><option value="">Alle</option><option value="unplayed">Ungesehen</option><option value="played">Gesehen</option><option value="favorites">Favoriten</option></select></label>
+      {#if audioCodes.length}<label class="fl"><span>Ton</span><select bind:value={draft.audio}><option value="">Alle</option>{#each audioCodes as c}<option value={c}>{langLabel(c)}</option>{/each}</select></label>{/if}
+      {#if subCodes.length}<label class="fl"><span>Untertitel</span><select bind:value={draft.subs}><option value="">Alle</option>{#each subCodes as c}<option value={c}>{langLabel(c)}</option>{/each}</select></label>{/if}
+      <div class="sacts"><button type="submit">Anwenden</button><button type="button" class="sec" on:click={resetFilters}>Zurücksetzen</button></div>
+    </form>
+  </div>
+{/if}
 {#if chips.length}
   <ul class="flex chips" aria-label="Aktive Filter">
     {#each chips as c (c.key)}<li><button type="button" class="chip" aria-label="Filter {c.label} entfernen" on:click={() => set(c.key, '')}>{c.label}<span aria-hidden="true"> ✕</span></button></li>{/each}
@@ -114,10 +156,30 @@
   .kinds a { display: inline-flex; align-items: center; min-height: 44px; padding: 0 1rem; border-radius: 99px; background: var(--surface-2); font-weight: 500; }
   .kinds a.on { background: #fff; color: #000; }
   .filters { margin-bottom: 1rem; }
+  .desk { display: contents; }
+  .fbtn { display: none; align-items: center; gap: .5rem; min-height: 44px; padding: 0 1.1rem; border-radius: 99px; background: var(--surface-2); font-weight: 600; }
+  .cnt { display: inline-grid; place-items: center; min-width: 1.4rem; height: 1.4rem; padding: 0 .3rem; border-radius: 99px; background: #fff; color: #000; font-size: .78rem; font-weight: 800; }
+  .backdrop, .sheet { display: none; }
+  @media (max-width: 720px) { .desk { display: none; } .fbtn { display: inline-flex; } .backdrop, .sheet { display: block; } .sheet { display: flex; } }
   .filters select { min-height: 44px; max-width: 100%; }
   .quick[aria-pressed='true'] { background: #fff; color: #000; }
   .chips { list-style: none; padding: 0; margin: 0 0 1.2rem; }
   .chip { background: var(--surface-2); border-radius: 99px; padding: 0 1rem; font-weight: 500; }
   .chip:hover:not(:disabled) { background: #3a3a3a; }
   .state { text-align: center; padding: 1rem 0 3rem; }
+  .backdrop { position: fixed; inset: 0; z-index: 70; background: rgba(0,0,0,.6); animation: fade .2s ease-out; }
+  .sheet { position: fixed; left: 0; right: 0; bottom: 0; z-index: 71; flex-direction: column; max-height: 85vh; max-height: 85dvh; overflow-y: auto; overscroll-behavior: contain; background: #121212; border-top: 1px solid #333; border-radius: 16px 16px 0 0; padding: 0 1rem calc(1rem + env(safe-area-inset-bottom)); animation: rise .26s var(--ease, ease-out); }
+  .sheet.dragging { transition: none; }
+  .grab { touch-action: none; cursor: grab; position: sticky; top: 0; background: #121212; z-index: 1; padding: 0 0 .4rem; margin: 0 -1rem; }
+  .handle { display: block; width: 40px; height: 4px; border-radius: 99px; background: #555; margin: 10px auto 8px; }
+  .sht { margin: 0 1rem; font-size: 1.1rem; }
+  .sheet form { display: grid; gap: .9rem; margin-top: .6rem; }
+  .fl { display: grid; gap: .3rem; color: var(--mut); font-size: .82rem; font-weight: 600; }
+  .fl select { width: 100%; min-height: 48px; color: var(--fg); font-size: 1rem; font-weight: 400; }
+  .sheet form { gap: .7rem; }
+  .sacts { display: flex; gap: .6rem; position: sticky; bottom: calc(-1rem - env(safe-area-inset-bottom)); margin: .2rem -1rem calc(-1rem - env(safe-area-inset-bottom)); padding: .7rem 1rem calc(1rem + env(safe-area-inset-bottom)); background: #121212; border-top: 1px solid #262626; }
+  .sacts button { flex: 1; min-height: 48px; }
+  @keyframes rise { from { transform: translateY(100%); } to { transform: none; } }
+  @keyframes fade { from { opacity: 0; } to { opacity: 1; } }
+  @media (prefers-reduced-motion: reduce) { .sheet, .backdrop { animation: none; } }
 </style>

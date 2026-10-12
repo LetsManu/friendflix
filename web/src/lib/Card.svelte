@@ -1,6 +1,6 @@
 <script lang="ts">
   import { api, backdrop, img, srcset, CARD_SIZES, CARD_WIDTHS, fmtMin, type Item } from '#lib/api';
-  import { listIds, toggleList } from '#lib/stores';
+  import { listIds, toggleList, SAVE_FAILED } from '#lib/stores';
   import Icon from '#lib/Icon.svelte';
   import Logo from '#lib/Logo.svelte';
   import ListMenu from '#lib/ListMenu.svelte';
@@ -14,7 +14,15 @@
   export let item: Item;
   /** shows a remove (X) button and emits `remove` (used for Weiterschauen) */
   export let removable = false;
-  const dispatch = createEventDispatcher<{ remove: Item }>();
+  const dispatch = createEventDispatcher<{
+    remove: Item;
+    /** "Meine Liste" was toggled for this card (after the server accepted it) */
+    listtoggle: { item: Item; inList: boolean };
+    /** favourite was toggled (after the server accepted it) */
+    favchange: { item: Item; favorite: boolean };
+    /** a list from the ListMenu picker was changed */
+    listchanged: { listId: string; contains: boolean };
+  }>();
   let fav = item.favorite;
   $: fav = item.favorite; // follow the item when the list re-renders with fresh data
   $: href = item.type === 'Episode' ? `/watch/${item.id}` : item.type === 'BoxSet' ? `/library/${item.id}` : `/item/${item.id}`;
@@ -61,10 +69,28 @@
     else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
   }
 
-  async function toggleFav() { fav = !fav; try { await api(`/api/items/${item.id}/favorite`, { method: fav ? 'POST' : 'DELETE' }); } catch { fav = !fav; } }
+  // ---- feedback for failed saves (heart / Meine Liste); role="status" region over the thumbnail ----
+  let fb = '', fbT: ReturnType<typeof setTimeout>, favBusy = false, menu: ListMenu | undefined;
+  function flash() { fb = SAVE_FAILED; clearTimeout(fbT); fbT = setTimeout(() => (fb = ''), 4500); }
+  onDestroy(() => clearTimeout(fbT));
+  async function toggleFav() {
+    if (favBusy) return;
+    favBusy = true;
+    const want = !fav;
+    fav = want;
+    try { await api(`/api/items/${item.id}/favorite`, { method: want ? 'POST' : 'DELETE' }); dispatch('favchange', { item, favorite: want }); }
+    catch { fav = !want; flash(); }
+    favBusy = false;
+  }
+  async function toggleInList() {
+    const was = inList;
+    if (await toggleList(item.seriesId ?? item.id, was)) { if (inList !== was) dispatch('listtoggle', { item, inList: !was }); } else flash();
+  }
+  /** the hover card lets go of its list picker when the pointer leaves (unless it moves onto the picker itself) */
+  function cardLeave(e: MouseEvent) { leave(); if (!(e.relatedTarget as Element | null)?.closest?.('.lm-pop')) menu?.close(); }
 </script>
 
-<article class="card" on:mouseenter={enter} on:mouseleave={leave} on:focusin={onFocusIn} on:focusout={leave}>
+<article class="card" on:mouseenter={enter} on:mouseleave={cardLeave} on:focusin={onFocusIn} on:focusout={leave}>
   <div class="media">
   <a class="thumb" {href} aria-label={item.name + (sub ? ', ' + sub : '')}>
     {#if posterOnly}<img class="blur" loading="lazy" decoding="async" {src} srcset={srcs} sizes={CARD_SIZES} alt="" aria-hidden="true" />{/if}
@@ -76,15 +102,16 @@
     {#if pct}<span class="progress"><i style="width:{pct}%"></i></span>{/if}
   </a>
   {#if removable}<button class="rm" aria-label="Aus Weiterschauen entfernen" on:click={() => dispatch('remove', item)}><Icon name="x" size={14} /></button>{/if}
+  <div class="fb" role="status">{#if fb}<span>{fb}</span>{/if}</div>
   <button type="button" class="mb" bind:this={moreBtn} aria-label="Aktionen für {item.name}" aria-haspopup="dialog" aria-expanded={sheet} on:click={openSheet}><span aria-hidden="true">⋯</span></button>
   {#if previewing}<button class="snd" aria-label={vmuted ? 'Ton einschalten' : 'Ton ausschalten'} aria-pressed={!vmuted} on:click={(e) => { release(e); toggleSound(pv); }}><Icon name={vmuted ? 'volume-off' : 'volume'} size={16} /></button>{/if}
   </div>
   <div class="pop">
     <div class="acts">
       <a class="round play" href={href} aria-label="Abspielen"><Icon name="play" size={18} /></a>
-      <button class="round" aria-label={inList ? 'Von Meine Liste entfernen' : 'Zu Meine Liste hinzufügen'} on:click={(e) => { release(e); toggleList(item.seriesId ?? item.id, inList); }}><Icon name={inList ? 'check' : 'plus'} size={18} /></button>
+      <button class="round" aria-label={inList ? 'Von Meine Liste entfernen' : 'Zu Meine Liste hinzufügen'} on:click={(e) => { release(e); void toggleInList(); }}><Icon name={inList ? 'check' : 'plus'} size={18} /></button>
       <button class="round" class:on={fav} aria-label={fav ? 'Favorit entfernen' : 'Als Favorit markieren'} aria-pressed={fav} on:click={(e) => { release(e); toggleFav(); }}><Icon name="heart" size={17} fill={fav} /></button>
-      {#if item.type !== 'BoxSet'}<ListMenu itemId={item.seriesId ?? item.id} variant="round" />{/if}
+      {#if item.type !== 'BoxSet'}<ListMenu bind:this={menu} itemId={item.seriesId ?? item.id} variant="round" on:changed={(e) => dispatch('listchanged', e.detail)} />{/if}
       {#if removable}<button class="round" aria-label="Aus Weiterschauen entfernen" title="Aus Weiterschauen entfernen" on:click={(e) => { release(e); dispatch('remove', item); }}><Icon name="x" size={17} /></button>{/if}
       <a class="round more" href={detail} aria-label="Mehr Infos" aria-haspopup="dialog" on:click={(e) => openModal(e, detail)}><Icon name="chevron-down" size={18} /></a>
     </div>
@@ -105,9 +132,9 @@
     <p class="st">{item.name}</p>
     <a class="act" href={href} on:click={() => closeSheet(false)}><Icon name="play" size={20} />Abspielen</a>
     <button type="button" class="act" aria-haspopup="dialog" on:click={(e) => { moreBtn?.focus(); openModal(e, detail); closeSheet(false); }}><Icon name="chevron-down" size={20} />Mehr Infos</button>
-    <button type="button" class="act" on:click={() => { toggleList(item.seriesId ?? item.id, inList); closeSheet(); }}><Icon name={inList ? 'check' : 'plus'} size={20} />{inList ? 'Von Meine Liste entfernen' : 'Zu Meine Liste'}</button>
+    <button type="button" class="act" on:click={() => { void toggleInList(); closeSheet(); }}><Icon name={inList ? 'check' : 'plus'} size={20} />{inList ? 'Von Meine Liste entfernen' : 'Zu Meine Liste'}</button>
     <button type="button" class="act" aria-pressed={fav} on:click={() => { toggleFav(); closeSheet(); }}><Icon name="heart" size={20} fill={fav} />{fav ? 'Favorit entfernen' : 'Als Favorit markieren'}</button>
-    {#if item.type !== 'BoxSet'}<ListMenu itemId={item.seriesId ?? item.id} variant="row" up />{/if}
+    {#if item.type !== 'BoxSet'}<ListMenu itemId={item.seriesId ?? item.id} variant="row" up on:changed={(e) => dispatch('listchanged', e.detail)} />{/if}
     {#if removable}<button type="button" class="act" on:click={() => { dispatch('remove', item); closeSheet(false); }}><Icon name="x" size={20} />Aus Weiterschauen entfernen</button>{/if}
     <button type="button" class="act cancel" on:click={() => closeSheet()}>Schließen</button>
   </div>
@@ -124,6 +151,8 @@
   .cap.big { align-content: center; }
   .cap2 { color: #f5c518; }
   .media { position: relative; }
+  .fb { position: absolute; left: .5rem; right: .5rem; top: 2.2rem; z-index: 4; pointer-events: none; }
+  .fb span { display: inline-block; padding: .25rem .6rem; border-radius: 6px; background: rgba(20,20,20,.92); border: 1px solid var(--err, #e5646e); color: #fff; font-size: .78rem; font-weight: 600; }
   .snd::after, .rm::after { content: ''; position: absolute; inset: -8px; } /* >=44px hit area, visual size unchanged */
   .snd { position: absolute; right: .5rem; bottom: .5rem; z-index: 3; width: 30px; min-height: 30px; height: 30px; padding: 0; border-radius: 50%; background: rgba(20,20,20,.7); border: 1.5px solid rgba(255,255,255,.6); color: #fff; }
   .snd:hover:not(:disabled) { background: rgba(20,20,20,.9); border-color: #fff; }

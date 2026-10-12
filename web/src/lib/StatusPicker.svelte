@@ -1,16 +1,25 @@
 <script lang="ts">
+  import { get } from 'svelte/store';
   import { api } from '#lib/api';
-  import { loadList } from '#lib/stores';
+  import { listIds, loadList } from '#lib/stores';
+  import { statusAfterListChange, type Status } from '#lib/status';
 
-  type Status = 'none' | 'planned' | 'watching' | 'watched' | 'dropped';
   /** movie or series id whose per-profile watch status is shown; hidden while loading or when the request fails */
   export let id: string;
-  let status: Status | null = null, msg = '', busy = false, seq = 0, msgT: ReturnType<typeof setTimeout>;
+  let status: Status | null = null, msg = '', busy = false, seq = 0, msgT: ReturnType<typeof setTimeout>, lastIn = false;
+  $: inList = $listIds.has(id);
 
   $: void load(id);
+  // "Meine Liste" toggled elsewhere (card, modal, detail page): planned <-> none, dropped -> planned when added
+  $: syncList(inList);
+  function syncList(now: boolean) {
+    if (now === lastIn) return;
+    lastIn = now;
+    if (status !== null && !busy) status = statusAfterListChange(status, now);
+  }
   async function load(itemId: string) {
     const my = ++seq;
-    status = null; msg = '';
+    status = null; msg = ''; lastIn = get(listIds).has(itemId);
     try {
       const r = await api(`/api/items/${itemId}/status`);
       if (my === seq) status = r.status as Status;

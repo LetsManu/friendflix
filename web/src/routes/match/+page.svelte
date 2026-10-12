@@ -7,7 +7,7 @@
 
   let friends: Array<{ id: string; name: string; sharesHistory: boolean }> = [], picked = new Set<string>();
   let type = 'Movie', maxMinutes = 0, genre = '', genres: string[] = [];
-  let result: { participants: string[]; total: number; items: Array<Item & { planned?: number }> } | null = null, busy = false, error = '', chosen = new Set<string>();
+  let result: { participants: string[]; total: number; items: Array<Item & { planned?: number }> } | null = null, busy = false, polling = false, error = '', chosen = new Set<string>();
   onMount(async () => {
     friends = (await api('/api/friends').catch(() => ({ friends: [] }))).friends;
     genres = (await api('/api/library/genres').catch(() => ({ genres: [] }))).genres;
@@ -21,8 +21,11 @@
   }
   const pick = (id: string) => { const n = new Set(chosen); if (n.has(id)) n.delete(id); else if (n.size < 10) n.add(id); chosen = n; };
   async function poll() {
+    if (polling) return;
+    polling = true; error = '';
     const r = await api('/api/polls', { method: 'POST', body: { title: 'Filmabend – das hat noch keiner gesehen', options: [...chosen].map((jfItemId) => ({ jfItemId })), closesInMinutes: 60, startsAfterMinutes: 10 } }).catch((e: any) => { error = e?.body?.error === 'poll_already_open' ? 'Du hast schon eine offene Abstimmung.' : 'Abstimmung konnte nicht erstellt werden.'; return null; });
-    if (r) goto('/vote');
+    if (r) await goto('/vote');
+    polling = false;
   }
 </script>
 
@@ -42,7 +45,7 @@
     <select bind:value={genre} aria-label="Genre"><option value="">Alle Genres</option>{#each genres as g}<option>{g}</option>{/each}</select>
     <button disabled={!picked.size || busy} on:click={run}>Abgleichen</button>
   </div>
-  {#if error}<p class="err" role="alert">{error}</p>{/if}
+  {#if error && !result}<p class="err" role="alert">{error}</p>{/if}
 </div>
 {#if result}
   <h2>{result.items.length} Treffer <small class="muted">({result.total} insgesamt ungesehen von {result.participants.join(', ')})</small></h2>
@@ -57,12 +60,15 @@
       </div>
     {/each}
   </div>
-  {#if chosen.size >= 2}<div class="bar2"><span>{chosen.size} Titel gewählt</span><button on:click={poll}><Icon name="vote" size={18} />Abstimmung starten</button></div>{/if}
+  {#if error && result}<p class="err" role="alert">{error}</p>{/if}
+  {#if chosen.size >= 2}<div class="bar2"><span>{chosen.size} Titel gewählt</span><button disabled={polling} on:click={poll}><Icon name="vote" size={18} />Abstimmung starten</button></div>{/if}
 {/if}
 <style>
   .pill { display: inline-flex; align-items: center; gap: .5rem; background: var(--surface-2); padding: .4rem .9rem; border-radius: 99px; color: var(--fg); min-height: 44px; } .pill.off { opacity: .55; }
-  .sel { position: relative; } .pickbtn { position: absolute; top: .4rem; right: .4rem; z-index: 3; width: 36px; min-height: 36px; padding: 0; border-radius: 50%; background: rgba(0,0,0,.7); border: 2px solid #fff; }
+  .sel { position: relative; } .pickbtn { position: absolute; top: .4rem; right: .4rem; z-index: 3; width: 44px; min-height: 44px; height: 44px; padding: 0; border-radius: 50%; display: grid; place-items: center; background: rgba(0,0,0,.7); border: 2px solid #fff; }
   .planned { position: absolute; top: .4rem; left: .4rem; z-index: 3; background: rgba(0,0,0,.75); border: 1px solid #fff; }
   .sel.on .pickbtn { background: var(--acc); border-color: var(--acc); }
   .bar2 { position: fixed; left: 50%; bottom: 1.2rem; transform: translateX(-50%); background: rgba(20,20,20,.97); border: 1px solid #444; border-radius: 99px; padding: .5rem .8rem .5rem 1.4rem; display: flex; gap: 1rem; align-items: center; z-index: 30; }
+  /* phones: sit above the fixed tab bar (56px + safe area) */
+  @media (max-width: 720px) { .bar2 { bottom: calc(56px + env(safe-area-inset-bottom) + .6rem); z-index: 61; max-width: calc(100vw - 1.5rem); gap: .6rem; padding-left: 1rem; } .bar2 span, .bar2 button { white-space: nowrap; } }
 </style>

@@ -2,9 +2,11 @@
   import { onMount } from 'svelte';
   import { api, img, backdrop, type Item } from '#lib/api';
   import Icon from '#lib/Icon.svelte';
+  import { dialogKeys } from '#lib/actions';
+  import { removeFromHistory, restoreRemoved } from '#lib/historyOps';
 
   let items: Item[] | null = null;
-  let asking: Item | null = null, error = '';
+  let asking: Item | null = null, error = '', opener: HTMLElement | null = null;
   onMount(() => { api('/api/history?limit=200').then((r) => (items = r.items)).catch(() => (items = [])); });
 
   const day = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
@@ -24,13 +26,19 @@
   const time = (iso?: string) => (iso ? new Date(iso).toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' }) : '');
 
   async function remove(i: Item, scope: 'item' | 'series') {
-    asking = null; error = '';
-    const prev = items;
-    items = (items ?? []).filter((x) => (scope === 'series' && i.seriesId ? x.seriesId !== i.seriesId && x.id !== i.seriesId : x.id !== i.id));
+    closeAsk(false); error = '';
+    const before = items ?? [], { kept, removed } = removeFromHistory(before, i, scope);
+    items = kept;
     try { await api(`/api/history/${i.id}?scope=${scope}`, { method: 'DELETE' }); }
-    catch { items = prev; error = 'Entfernen fehlgeschlagen.'; }
+    catch { items = restoreRemoved(items ?? [], removed, before); error = 'Entfernen fehlgeschlagen.'; } // only this removal is undone, concurrent ones stay
   }
-  function ask(i: Item) { if (i.type === 'Episode' && i.seriesId) asking = i; else remove(i, 'item'); }
+  function ask(i: Item, e: Event) { if (i.type === 'Episode' && i.seriesId) { opener = e.currentTarget as HTMLElement; asking = i; } else void remove(i, 'item'); }
+  /** closes the dialog; focus goes back to the button that opened it (it may be gone after a removal) */
+  function closeAsk(restore = true) {
+    asking = null;
+    if (restore) opener?.focus();
+    opener = null;
+  }
 </script>
 
 <svelte:head><title>Verlauf – FriendFlix</title></svelte:head>
@@ -53,7 +61,7 @@
               <span class="muted">{sub(i)}</span>
               <span class="muted">{time(i.lastPlayedDate)}{i.positionTicks && !i.played ? ' · angefangen' : ''}</span>
             </div>
-            <button class="rm" aria-label="Aus Verlauf entfernen" title="Aus Verlauf entfernen" on:click={() => ask(i)}><Icon name="x" size={18} /></button>
+            <button class="rm" aria-label="Aus Verlauf entfernen" title="Aus Verlauf entfernen" on:click={(e) => ask(i, e)}><Icon name="x" size={18} /></button>
           </li>
         {/each}
       </ul>
@@ -63,13 +71,14 @@
 
 {#if asking}
   {@const a = asking}
-  <div class="dlg" role="dialog" aria-modal="true" aria-label="Aus Verlauf entfernen">
-    <div class="box">
-      <p>„{a.name}“ aus dem Verlauf entfernen?</p>
+  <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
+  <div class="dlg" on:click|self={() => closeAsk()}>
+    <div class="box" role="dialog" aria-modal="true" aria-labelledby="ask-t" use:dialogKeys={{ close: closeAsk, focusFirst: true }}>
+      <p id="ask-t">„{a.name}“ aus dem Verlauf entfernen?</p>
       <div class="btns">
         <button on:click={() => remove(a, 'item')}>Nur diese Folge</button>
         <button on:click={() => remove(a, 'series')}>Ganze Serie</button>
-        <button class="ghost" on:click={() => (asking = null)}>Abbrechen</button>
+        <button class="ghost" on:click={() => closeAsk()}>Abbrechen</button>
       </div>
     </div>
   </div>
@@ -83,7 +92,7 @@
   .thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
   .txt { flex: 1; min-width: 0; display: grid; gap: .1rem; }
   .txt strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .rm { width: 40px; height: 40px; min-height: 40px; padding: 0; border-radius: 50%; display: grid; place-items: center; background: transparent; border: 1.5px solid rgba(255,255,255,.4); color: #fff; }
+  .rm { width: 44px; height: 44px; min-height: 44px; flex: none; padding: 0; border-radius: 50%; display: grid; place-items: center; background: transparent; border: 1.5px solid rgba(255,255,255,.4); color: #fff; }
   .err { color: var(--err, #e5484d); }
   .dlg { position: fixed; inset: 0; background: rgba(0,0,0,.7); display: grid; place-items: center; z-index: 100; padding: 1rem; }
   .box { background: var(--surface); border-radius: var(--radius); padding: 1.2rem; max-width: 26rem; width: 100%; }
