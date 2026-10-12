@@ -1,9 +1,9 @@
 <script lang="ts">
-  import { onMount, tick } from 'svelte';
+  import { onDestroy, onMount, tick } from 'svelte';
   import { goto } from '$app/navigation';
   import { api, backdrop, srcset, MODAL_SIZES, MODAL_WIDTHS, fmtMin, logoUrl, type Item } from '#lib/api';
   import Icon from '#lib/Icon.svelte';
-  import { listIds, toggleList, prefs } from '#lib/stores';
+  import { listIds, toggleList, prefs, SAVE_FAILED } from '#lib/stores';
   import ListMenu from '#lib/ListMenu.svelte';
   import { isSpoiler } from '#lib/spoiler';
   import DownloadButton from '#lib/DownloadButton.svelte';
@@ -32,6 +32,12 @@
   $: inList = item ? $listIds.has(item.id) : false;
   $: play = item ? (item.type === 'Series' ? (next ? `/watch/${next.id}` : `/item/${item.id}`) : `/watch/${item.id}`) : '';
 
+  let fb = '', fbT: ReturnType<typeof setTimeout>;
+  onDestroy(() => clearTimeout(fbT));
+  async function toggleMine() {
+    if (!item) return;
+    if (!(await toggleList(item.id, inList))) { fb = SAVE_FAILED; clearTimeout(fbT); fbT = setTimeout(() => (fb = ''), 4500); }
+  }
   const close = () => history.back();
   function key(e: KeyboardEvent) {
     if (e.key === 'Escape') { e.stopPropagation(); close(); }
@@ -71,10 +77,11 @@
         {#if item.logo && !logoFailed}<img class="tlogo" src={logoUrl(item.id)} alt="" on:error={() => (logoFailed = true)} /><h2 id="modal-title" class="sr">{item.name}</h2>{:else}<h2 id="modal-title">{item.name}</h2>{/if}
         <div class="btns">
           <a class="btn light" data-autofocus href={play}><Icon name="play" size={22} />{item.type === 'Series' && next ? `S${next.parentIndexNumber}:E${next.indexNumber}` : 'Abspielen'}</a>
-          <button class="round" aria-pressed={inList} aria-label={inList ? 'Von Meine Liste entfernen' : 'Zu Meine Liste hinzufügen'} on:click={() => toggleList(item!.id, inList)}><Icon name={inList ? 'check' : 'plus'} size={20} /></button>
-          <ListMenu itemId={item.id} variant="round" size={44} />
+          <button class="round" aria-pressed={inList} aria-label={inList ? 'Von Meine Liste entfernen' : 'Zu Meine Liste hinzufügen'} on:click={toggleMine}><Icon name={inList ? 'check' : 'plus'} size={20} /></button>
+          <ListMenu itemId={item.id} variant="round" size={44} up />
           {#if item.type !== 'Series'}<DownloadButton itemId={item.id} compact />{/if}
         </div>
+        <div class="fb" role="status">{#if fb}<span>{fb}</span>{/if}</div>
       </div>
     {:else if failed}<p class="err pad">Titel konnte nicht geladen werden.</p>{:else}<div class="skeleton fillsk"></div>{/if}
   </div>
@@ -104,6 +111,8 @@
   .cap { position: absolute; left: 2.2rem; right: 2rem; bottom: 1.6rem; z-index: 2; display: flex; flex-direction: column; gap: 1rem; }
   h2 { margin: 0; font-size: clamp(1.6rem, 4vw, 2.6rem); text-shadow: 0 2px 14px rgba(0,0,0,.7); }
   .tlogo { max-width: min(70%, 22rem); max-height: 7rem; object-fit: contain; object-position: left bottom; filter: drop-shadow(0 4px 14px rgba(0,0,0,.7)); }
+  .fb { margin: -.4rem 0 0; min-height: 0; }
+  .fb span { display: inline-block; padding: .25rem .6rem; border-radius: 6px; background: rgba(20,20,20,.92); border: 1px solid var(--err, #e5646e); font-size: .85rem; font-weight: 600; }
   .btns { display: flex; gap: .7rem; align-items: center; }
   .round { width: 44px; min-height: 44px; height: 44px; padding: 0; border-radius: 50%; background: rgba(42,42,42,.7); border: 2px solid rgba(255,255,255,.55); }
   .round:hover:not(:disabled) { border-color: #fff; }

@@ -84,6 +84,25 @@ export function activeChips(s: BrowseState, labels: { person?: string } = {}): A
   return out;
 }
 
+/** Number shown on the mobile "Filter" button: the active filters, i.e. exactly the chips above the grid (sorting is not a filter). */
+export function filterCount(s: BrowseState): number {
+  return activeChips(s).length;
+}
+
+export interface FilterDraft { genre: string; decade: string; minRating: string; sort: string; filter: string; audio: string; subs: string }
+export const draftOf = (s: BrowseState): FilterDraft => ({ genre: s.genre, decade: s.decade !== null ? String(s.decade) : '', minRating: s.minRating !== null ? String(s.minRating) : '', sort: s.sort, filter: s.filter, audio: s.audio ?? '', subs: s.subs ?? '' });
+
+/** URL for "Anwenden" in the mobile filter sheet: writes the whole draft at once (same URL rules as the single selects). */
+export function applyDraft(base: URL, d: FilterDraft): URL {
+  const u = new URL(base.href);
+  const put = (k: string, v: string) => { if (v) u.searchParams.set(k, v); else u.searchParams.delete(k); };
+  put('genre', d.genre); put('minRating', d.minRating); put('filter', d.filter); put('audio', d.audio); put('subs', d.subs);
+  put('sort', d.sort === 'SortName' ? '' : d.sort);
+  put('decade', d.decade);
+  if (d.decade) u.searchParams.delete('year');
+  return u;
+}
+
 // ---- recent searches (per browser; storage may be unavailable) ----
 const RECENT_KEY = 'ff-recent-search';
 const RECENT_MAX = 8;

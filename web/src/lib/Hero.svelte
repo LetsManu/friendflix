@@ -91,6 +91,10 @@
   .hero { position: relative; height: clamp(460px, 88vh, 940px); margin-bottom: -9vw; overflow: hidden; background: var(--bg); }
   .bg { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; object-position: center 22%; opacity: 0; transition: opacity .8s var(--ease); }
   .bg.loaded { opacity: 1; }
+  /* the billboard does not rotate, so the still gets a very slow push-in instead */
+  .bg, .hv { transform-origin: 62% 30%; will-change: transform; animation: ff-kenburns 12s ease-out both; }
+  @keyframes ff-kenburns { from { transform: scale(1); } to { transform: scale(1.06); } }
+  @media (prefers-reduced-motion: reduce) { .bg, .hv { animation: none; will-change: auto; } }
   .fill { position: absolute; inset: 0; border-radius: 0; }
   .hv { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; object-position: center 22%; opacity: 0; transition: opacity 1s var(--ease); pointer-events: none; background: transparent; }
   .hv.on { opacity: 1; }

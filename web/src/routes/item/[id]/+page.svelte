@@ -27,11 +27,11 @@
   let loadSeq = 0, epSeq = 0, saveMsg = '', saveT: ReturnType<typeof setTimeout>;
   async function load(id: string) {
     const my = ++loadSeq;
-    item = null; episodes = null; notFound = false; next = null; seasons = []; ratings = []; avg = null; stars = 0; review = ''; followed = false; season = '';
-    let it: Item;
-    try { it = (await api(`/api/items/${id}`)).item; } catch { if (my === loadSeq) notFound = true; return; }
+    item = null; episodes = null; thumb = 0; notFound = false; next = null; seasons = []; ratings = []; avg = null; stars = 0; review = ''; followed = false; season = '';
+    let it: Item, th = 0;
+    try { const r = await api(`/api/items/${id}`); it = r.item; th = r.thumb === 1 || r.thumb === -1 ? r.thumb : 0; } catch { if (my === loadSeq) notFound = true; return; }
     if (my !== loadSeq) return;
-    item = it;
+    item = it; thumb = th;
     // every secondary request fails on its own: the page works without ratings, follow state, seasons or next-up
     try {
       const rr = await api(`/api/items/${id}/ratings`);
@@ -86,7 +86,16 @@
   }
   async function toggleFav() { if (!item) return; const on = item.favorite; try { await api(`/api/items/${item.id}/favorite`, { method: on ? 'DELETE' : 'POST' }); item.favorite = !on; } catch { failSave(); } }
   async function togglePlayed() { if (!item) return; const on = item.played; try { await api(`/api/items/${item.id}/played`, { method: on ? 'DELETE' : 'POST' }); item.played = !on; } catch { failSave(); } }
-  async function setThumb(v: 1 | -1) { if (!item) return; const next = thumb === v ? 0 : v; thumb = next; await api(`/api/items/${item.id}/thumb`, { method: 'PUT', body: { value: next } }).catch(() => (thumb = 0)); }
+  let thumbBusy = false;
+  async function setThumb(v: 1 | -1) {
+    if (!item || thumbBusy) return;
+    const prev = thumb, next = thumb === v ? 0 : v, itemId = item.id;
+    thumb = next; thumbBusy = true;
+    try { await api(`/api/items/${itemId}/thumb`, { method: 'PUT', body: { value: next } }); }
+    catch { if (item?.id === itemId) thumb = prev; failSave(); }
+    thumbBusy = false;
+  }
+  async function toggleMine() { if (item && !(await toggleList(item.id, inList))) failSave(); }
   async function openRec() { recOpen = true; recMsg = ''; if (!friends.length) friends = (await api('/api/friends').catch(() => ({ friends: [] }))).friends; }
   async function sendRec() {
     try { const r = await api('/api/recommend', { method: 'POST', body: { itemId: item!.id, toUserIds: [...recTo], note: recNote || undefined } }); recMsg = `An ${r.sent} Freund(e) gesendet.`; recTo = new Set(); recNote = ''; setTimeout(() => (recOpen = false), 1200); }
@@ -115,7 +124,7 @@
   {#if item}
     <div class="body" style={tint ? `--tint: ${tint}` : ''}>
       <div class="actions">
-        <button class="icon-btn ring" class:on={inList} aria-pressed={inList} aria-label={inList ? 'Von Meine Liste entfernen' : 'Zu Meine Liste hinzufügen'} title="Meine Liste" on:click={() => toggleList(item!.id, inList)}><Icon name={inList ? 'check' : 'plus'} size={22} /></button>
+        <button class="icon-btn ring" class:on={inList} aria-pressed={inList} aria-label={inList ? 'Von Meine Liste entfernen' : 'Zu Meine Liste hinzufügen'} title="Meine Liste" on:click={toggleMine}><Icon name={inList ? 'check' : 'plus'} size={22} /></button>
         <ListMenu itemId={item.id} />
         <button class="icon-btn ring" class:on={item.favorite} aria-pressed={item.favorite} aria-label="Favorit" title="Favorit" on:click={toggleFav}><Icon name="heart" size={21} fill={item.favorite} /></button>
         <button class="icon-btn ring" class:on={item.played} aria-pressed={item.played} aria-label="Als gesehen markieren" title="Gesehen" on:click={togglePlayed}><Icon name="check" size={22} /></button>
