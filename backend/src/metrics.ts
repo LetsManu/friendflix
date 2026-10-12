@@ -14,6 +14,7 @@ const pendingDevices = new Gauge({ name: 'friendflix_pending_devices', help: 'De
 const partyRooms = new Gauge({ name: 'friendflix_party_rooms', help: 'Open watch-party rooms', registers: [registry] });
 const pendingRequests = new Gauge({ name: 'friendflix_pending_polls', help: 'Polls waiting for admin approval', registers: [registry] });
 export const authzNginx = new Counter({ name: 'friendflix_authz_nginx_total', help: 'Plan B auth_request decisions', labelNames: ['result'], registers: [registry] });
+export const clientErrorsTotal = new Counter({ name: 'friendflix_client_errors_total', help: 'Browser errors reported via POST /api/client-errors', labelNames: ['kind'], registers: [registry] });
 const downloadJobs = new Gauge({ name: 'friendflix_download_jobs', help: 'Offline download jobs by status', labelNames: ['status'], registers: [registry] });
 const downloadDisk = new Gauge({ name: 'friendflix_download_disk_bytes', help: 'Bytes of prepared download files', registers: [registry] });
 const up = new Gauge({ name: 'friendflix_dependency_up', help: '1 if dependency reachable', labelNames: ['dependency'], registers: [registry] });
