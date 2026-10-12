@@ -16,10 +16,12 @@ export interface ServerCaps {
   webhooks: boolean;
   changeFeed: boolean;
   planB: boolean;
+  /** subtitles come from FriendFlix itself (their URLs in the playback answer already point there; informational) */
+  subtitleExtract: boolean;
 }
 
 export const ALL_CAPS: ServerCaps = {
-  segments: ['intro', 'outro', 'recap', 'preview'], trickplay: true, upcoming: true, subtitleSearch: true, webhooks: true, changeFeed: false, planB: true,
+  segments: ['intro', 'outro', 'recap', 'preview'], trickplay: true, upcoming: true, subtitleSearch: true, webhooks: true, changeFeed: false, planB: true, subtitleExtract: false,
 };
 
 /** Lenient parse: a missing or malformed field keeps its "supported" default. */
@@ -30,6 +32,7 @@ export function capsFrom(raw: unknown): ServerCaps {
   return {
     segments: Array.isArray(r.segments) ? r.segments.filter((s): s is string => typeof s === 'string').map((s) => s.toLowerCase()) : [...ALL_CAPS.segments],
     trickplay: flag('trickplay'), upcoming: flag('upcoming'), subtitleSearch: flag('subtitleSearch'), webhooks: flag('webhooks'), changeFeed: flag('changeFeed'), planB: flag('planB'),
+    subtitleExtract: flag('subtitleExtract'),
   };
 }
 

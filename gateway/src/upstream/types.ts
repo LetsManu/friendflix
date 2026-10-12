@@ -5,6 +5,20 @@
  */
 export interface UpstreamCredentials { token: string; deviceId: string }
 
+/** What an authorize() hook sees for one request (after the allowlist, session and direct-stream checks passed). */
+export interface AuthorizeContext {
+  /** normalized upstream path (public shape, before rewrite) and the request query */
+  path: string;
+  query: URLSearchParams;
+  /** true on the Chromecast route (token-scoped to one item; checkItem compares with that scope) */
+  cast: boolean;
+  /**
+   * May the session see this item? Cookie path: POST /internal/authz/item {sid, itemId, kind} on the backend (memoised 5 s here),
+   * which answers with the visibility of the session's active profile. Cast path: the token's item scope.
+   */
+  checkItem(itemId: string, kind: 'media' | 'image' | 'subtitle'): Promise<boolean>;
+}
+
 export interface Upstream {
   readonly kind: string;
   /** env var holding the upstream base URL (e.g. JELLYFIN_URL) */
@@ -27,4 +41,14 @@ export interface Upstream {
   readonly clampBitrate: readonly string[];
   /** headers that authenticate an upstream request as the user */
   authHeaders(cred: UpstreamCredentials): Record<string, string>;
+  /**
+   * Optional per-request access check, for servers where the gateway authenticates with one server-wide token (so the server
+   * itself cannot enforce per-profile visibility). false = 403. Jellyfin: absent (the user's own token enforces access).
+   */
+  authorize?(c: AuthorizeContext): Promise<boolean>;
+  /**
+   * Optional mapping of the public path shape (/media/<path>?<query>, what the web and the backend's DTOs use) to the upstream
+   * request, after query filtering/clamping. Must stay server-relative. Jellyfin: absent (identity).
+   */
+  rewrite?(path: string, query: URLSearchParams): { path: string; query: URLSearchParams };
 }

@@ -25,7 +25,7 @@ export async function probe(ctx: Ctx, user: UserRow, item: { id: string; type: s
       videoId = ep.id;
     }
     const info = await ctx.jf.playbackInfo(user, videoId, { maxBitrate: 1_500_000 });
-    const clip = ctx.jf.clipTranscode(info, { videoBitrate: 1_200_000, audioBitrate: 128_000, maxWidth: 1280 });
+    const clip = await ctx.jf.clipTranscode(user, info, { videoBitrate: 1_200_000, audioBitrate: 128_000, maxWidth: 1280 });
     const masterPath = clip.path;
     playSessionId = clip.playSessionId;
     const get = async (path: string) => {

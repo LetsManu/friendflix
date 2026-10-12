@@ -178,6 +178,28 @@ export function createGateway(opts: GatewayOptions): { server: Server; metrics: 
    * after the memo expired share ONE backend call. Backend failures (network, 5xx) are not memoised, so the next request retries.
    */
   const authInflight = new Map<string, Promise<Authz | null>>();
+
+  /** Upstream.authorize helper: item visibility of the session's active profile (backend /internal/authz/item), memoised 5 s. */
+  const itemCache = new Map<string, { exp: number; v: boolean }>();
+  async function checkItem(sid: string, itemId: string, kind: 'media' | 'image' | 'subtitle'): Promise<boolean> {
+    const id = lc(itemId);
+    if (!/^[0-9a-f]{32}$/.test(id)) return false;
+    const key = `${sha256(sid)}|${id}`; // never keep the raw session id as a key; visibility does not depend on the kind
+    const hit = itemCache.get(key);
+    if (hit && hit.exp > Date.now()) return hit.v;
+    const r = await f(new URL('/internal/authz/item', opts.backendUrl), {
+      method: 'POST',
+      headers: { 'x-internal-secret': opts.internalSecret, 'content-type': 'application/json' },
+      body: JSON.stringify({ sid, itemId: id, kind }),
+      signal: AbortSignal.timeout(5000),
+    });
+    if (r.status === 401) return false;
+    if (!r.ok) throw new Error(`authz/item ${r.status}`); // backend trouble: 503, not cached
+    const v = ((await r.json()) as { allow?: unknown }).allow === true;
+    itemCache.set(key, { exp: Date.now() + 5_000, v });
+    if (itemCache.size > 5000) itemCache.clear();
+    return v;
+  }
   async function authorize(cookie: string | undefined): Promise<Authz | null> {
     const sid = /(?:^|;\s*)ff_sid=([\w-]+)/.exec(cookie ?? '')?.[1];
     if (!sid) return null;
@@ -242,6 +264,14 @@ export function createGateway(opts: GatewayOptions): { server: Server; metrics: 
     if (blocksDirectStream(path, auth, up)) {
       count('403');
       return end(res, 403, 'forbidden');
+    }
+    if (up.authorize) {
+      const sid = /(?:^|;\s*)ff_sid=([\w-]+)/.exec(req.headers.cookie ?? '')![1]!;
+      const ok = await up.authorize({ path, query: url.searchParams, cast: false, checkItem: (id, kind) => checkItem(sid, id, kind) }).catch(() => 'error' as const);
+      if (ok !== true) {
+        count(ok === 'error' ? '503' : '403');
+        return ok === 'error' ? end(res, 503, 'unavailable') : end(res, 403, 'forbidden');
+      }
     }
     return forward(req, res, url, path, auth, count, false, false, authzMs);
   }
@@ -502,11 +532,19 @@ export function createGateway(opts: GatewayOptions): { server: Server; metrics: 
       castCount('403');
       return cors(403, 'forbidden');
     }
+    if (up.authorize) {
+      const scope = auth.scope;
+      const ok = await up.authorize({ path, query: url.searchParams, cast: true, checkItem: async (id) => lc(id) === lc(scope.itemId) }).catch(() => 'error' as const);
+      if (ok !== true) {
+        castCount(ok === 'error' ? '503' : '403');
+        return cors(ok === 'error' ? 503 : 403, ok === 'error' ? 'unavailable' : 'forbidden');
+      }
+    }
     return forward(req, res, url, path, auth, castCount, true, false, authzMs);
   }
 
   async function forward(req: IncomingMessage, res: ServerResponse, url: URL, path: string, auth: Authz, countCode: (k: string) => void, cast = false, download = false, authzMs = 0) {
-    const target = new URL(path, base);
+    let target = new URL(path, base);
     if (target.origin !== base.origin) return end(res, 403, 'forbidden'); // SSRF guard (defence in depth)
     for (const [k, v] of url.searchParams) {
       const lk = k.toLowerCase();
@@ -526,6 +564,13 @@ export function createGateway(opts: GatewayOptions): { server: Server; metrics: 
         continue;
       }
       target.searchParams.append(k, v);
+    }
+    if (up.rewrite) {
+      const r = up.rewrite(target.pathname, target.searchParams);
+      const q = r.query.toString();
+      if (!r.path.startsWith('/') || r.path.startsWith('//') || r.path.includes('\\')) return end(res, 502, 'bad gateway');
+      target = new URL(`${r.path}${q ? `?${q}` : ''}`, base);
+      if (target.origin !== base.origin) return end(res, 502, 'bad gateway');
     }
     const requestUrl = `${base.origin}${target.pathname}${target.search}`;
     const playlist = cast && /\.m3u8$/.test(path);
@@ -589,7 +634,7 @@ export function createGateway(opts: GatewayOptions): { server: Server; metrics: 
         return void res.end();
       }
       const buf = Buffer.from(await upRes.arrayBuffer());
-      const clean = buf.length > CAST_PLAYLIST_MAX ? null : sanitizePlaylist(buf.toString('utf8'), url.pathname);
+      const clean = buf.length > CAST_PLAYLIST_MAX ? null : sanitizePlaylist(buf.toString('utf8'), url.pathname, up.stripQuery);
       if (clean === null) {
         countCode('502');
         return end(res, 502, 'bad gateway', 'text/plain', extra);

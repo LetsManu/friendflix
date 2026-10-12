@@ -85,7 +85,7 @@ describe('capabilities exposure', () => {
   beforeAll(async () => { env = await makeEnv(); });
   afterAll(() => env.close());
 
-  const ALL = { segments: ['intro', 'outro', 'recap', 'preview'], trickplay: true, upcoming: true, subtitleSearch: true, webhooks: true, changeFeed: false, planB: true };
+  const ALL = { segments: ['intro', 'outro', 'recap', 'preview'], trickplay: true, upcoming: true, subtitleSearch: true, webhooks: true, changeFeed: false, planB: true, subtitleExtract: false };
 
   it('Jellyfin reports everything supported in /api/me and /api/server', async () => {
     const s = await env.login();
@@ -99,8 +99,8 @@ describe('capabilities exposure', () => {
     expect((await env.app.inject({ url: '/api/server' })).statusCode).toBe(401);
   });
   it('whatever the implementation reports is what the client gets (sets become ordered arrays)', async () => {
-    const caps: MediaCapabilities = { segments: new Set(['outro', 'intro']), trickplay: true, upcoming: false, subtitleSearch: false, webhooks: false, changeFeed: true, planB: false };
-    expect(publicCapabilities(caps)).toEqual({ segments: ['intro', 'outro'], trickplay: true, upcoming: false, subtitleSearch: false, webhooks: false, changeFeed: true, planB: false });
+    const caps: MediaCapabilities = { segments: new Set(['outro', 'intro']), trickplay: true, upcoming: false, subtitleSearch: false, webhooks: false, changeFeed: true, planB: false, subtitleExtract: true };
+    expect(publicCapabilities(caps)).toEqual({ segments: ['intro', 'outro'], trickplay: true, upcoming: false, subtitleSearch: false, webhooks: false, changeFeed: true, planB: false, subtitleExtract: true });
     const prev = env.ctx.jf.capabilities;
     (env.ctx.jf as { capabilities: MediaCapabilities }).capabilities = caps;
     try {
@@ -108,6 +108,24 @@ describe('capabilities exposure', () => {
       expect((await env.app.inject({ url: '/api/me', cookies: s.cookies })).json().server.capabilities).toMatchObject({ segments: ['intro', 'outro'], upcoming: false, subtitleSearch: false });
     } finally {
       (env.ctx.jf as { capabilities: MediaCapabilities }).capabilities = prev;
+    }
+  });
+});
+
+describe('repository hygiene', () => {
+  const repo = new URL('../../', import.meta.url).pathname;
+  it('.gitignore never ignores source directories named media/ (only the bundled library folder at the root)', () => {
+    const rules = readFileSync(join(repo, '.gitignore'), 'utf8').split(/\r?\n/).map((l) => l.trim());
+    expect(rules).not.toContain('media/');
+    expect(rules).not.toContain('media');
+    expect(rules).toContain('/media/');
+  });
+  it('git does not ignore the seam sources (when git is available)', async () => {
+    const { spawnSync } = await import('node:child_process');
+    for (const f of ['backend/src/media/types.ts', 'backend/src/media/index.ts', 'backend/src/media/events.ts', 'gateway/src/upstream/index.ts']) {
+      const r = spawnSync('git', ['check-ignore', '-q', '--no-index', f], { cwd: repo });
+      if (r.error || r.status === 128) return; // no git / not a checkout (e.g. a Docker build context): the .gitignore check above still runs
+      expect(r.status, `${f} is git-ignored`).toBe(1); // 1 = not ignored
     }
   });
 });

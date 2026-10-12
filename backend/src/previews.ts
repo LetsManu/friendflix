@@ -53,7 +53,7 @@ async function build(ctx: Ctx, user: UserRow, id: string): Promise<{ bytes: numb
   if (!src) throw new Error('no source');
   const info = await ctx.jf.playbackInfo(user, src.videoId, { maxBitrate: 1_500_000 });
   const audio = pickPreviewAudio(info.audioTracks);
-  const { path: masterPath, playSessionId } = ctx.jf.clipTranscode(info, {
+  const { path: masterPath, playSessionId } = await ctx.jf.clipTranscode(user, info, {
     audioIndex: audio?.index, fmp4: true, videoBitrate: 1_200_000, audioBitrate: 128_000, maxWidth: 1280, stereo: true, maxBitrate: 1_500_000,
   });
   try {

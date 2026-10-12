@@ -31,7 +31,9 @@ export function castRoutes(app: FastifyInstance, ctx: Ctx) {
       const startTicks = b.startTicks ?? item.positionTicks;
       const maxBitrate = Math.min(role.maxBitrate, CAST_MAX_BITRATE, b.maxBitrate ?? CAST_MAX_BITRATE);
       const maxHeight = Math.min(role.maxHeight ?? CAST_MAX_HEIGHT, CAST_MAX_HEIGHT);
-      const info = await ctx.jf.playbackInfo(req.jfUser!, b.itemId, { maxBitrate, maxHeight, startTicks, audioIndex: b.audioIndex, cast: true });
+      const opts = { maxBitrate, maxHeight, startTicks, audioIndex: b.audioIndex, cast: true };
+      let info = await ctx.jf.playbackInfo(req.jfUser!, b.itemId, opts);
+      if (ctx.jf.preparePlayback) info = await ctx.jf.preparePlayback(req.jfUser!, info, opts);
       const ttl = castTtlSeconds(info.runtimeTicks, startTicks);
       const { ct, imgCt, castId, expiresAt } = await createCast(ctx, {
         userId: req.user!.id, profileId: req.profile!.id, deviceId, itemId: b.itemId, mediaSourceId: info.mediaSourceId, playSessionId: info.playSessionId, maxBitrate, title: item.name,

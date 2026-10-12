@@ -294,8 +294,7 @@ class Preparer {
     }
     const src = await ctx.jf.downloadSource(user, job.item_id, { quality: job.quality, audioIndex, maxHeight, maxBitrate });
     if (!src.masterPath) throw new Error('no master playlist');
-    const q = new URL(src.masterPath, 'http://jf.invalid').searchParams;
-    const playSessionId = q.get('PlaySessionId') ?? src.playSessionId;
+    const playSessionId = src.playSessionId; // the session the master playlist belongs to (stopEncoding / resume bookkeeping)
     try {
       const variant = lines(await (await this.fetchOk(user, src.masterPath)).text()).find((l) => l && !l.startsWith('#'));
       if (!variant) throw new Error('no variant');

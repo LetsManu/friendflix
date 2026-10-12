@@ -2,10 +2,11 @@ import { decrypt, encrypt } from '../crypto.js';
 import type { KV } from '../kv.js';
 import type {
   ClipTranscode, ExternalSession, IdentityPolicy, ItemDto, ItemQuery, ItemStreams, ItemTraits, MediaAdmin, MediaCapabilities, MediaCredentials, MediaServer,
-  PersonDto, PlaybackDto, SegmentType,
+  MediaEvent, PersonDto, PlaybackDto, PlaybackReport, SegmentType,
 } from '../media/types.js';
 import type { JfUser } from '../types.js';
 import { JellyfinClient, JellyfinError, mediaBrowserHeader, policyFromTemplate } from './client.js';
+import { jellyfinWebhookEvents } from './webhook.js';
 import { maxWidthFor, toDownloadSource, toItemDto, toPlaybackDto, toTrickplayDto, type DownloadQuality, type DownloadSourceDto } from './dto.js';
 
 const TOKEN_TTL = 6 * 3600;
@@ -25,8 +26,10 @@ const traitsOf = (i: Record<string, any>): ItemTraits => ({
 /** Jellyfin (>= 10.10) can do everything FriendFlix offers. */
 export const JELLYFIN_CAPABILITIES: MediaCapabilities = {
   segments: new Set<SegmentType>(['intro', 'outro', 'recap', 'preview']),
-  trickplay: true, upcoming: true, subtitleSearch: true, webhooks: true, changeFeed: false, planB: true,
+  trickplay: true, upcoming: true, subtitleSearch: true, webhooks: true, changeFeed: false, planB: true, subtitleExtract: false,
 };
+
+const REPORT_KIND = { start: 'Playing', progress: 'Playing/Progress', stop: 'Playing/Stopped' } as const;
 
 /**
  * Per-user Jellyfin access. The portal logs in server-side (AuthenticateByName) with the
@@ -86,7 +89,7 @@ export class JellyfinService implements MediaServer {
   }
 
   /** The PlaybackInfo HLS master with forced re-encoding at the given limits (same session / device as `info`). */
-  clipTranscode(info: PlaybackDto, o: ClipTranscode): { path: string; playSessionId: string } {
+  async clipTranscode(_user: JfUser, info: PlaybackDto, o: ClipTranscode): Promise<{ path: string; playSessionId: string }> {
     const master = new URL(info.hlsUrl.replace(/^\/media/, ''), 'http://jf.invalid');
     const q = master.searchParams;
     if (o.audioIndex !== undefined) q.set('AudioStreamIndex', String(o.audioIndex));
@@ -600,14 +603,28 @@ export class JellyfinService implements MediaServer {
     await this.mutate(user, () => this.compat(user, 'userdata', [`/UserItems/${id}/UserData?userId=${uid}`, `/Users/${uid}/Items/${id}/UserData`], { method: 'POST', body }));
   }
 
+  /** Jellyfin converts text subtitles to WebVTT itself (the same stream the gateway serves at the DTO's subtitle URL). */
+  subtitleStream(user: JfUser, itemId: string, mediaSourceId: string, streamIndex: number, format: 'vtt'): Promise<Response> {
+    return this.call(user, `/Videos/${itemId}/${encodeURIComponent(mediaSourceId)}/Subtitles/${streamIndex}/0/Stream.${format}`);
+  }
+
+  webhookEvents(body: unknown): MediaEvent[] | null {
+    return jellyfinWebhookEvents(body);
+  }
+
   /** Stops the server-side transcode behind a PlaySessionId (Jellyfin keeps encoding otherwise). Never throws. */
   async stopEncoding(user: JfUser, playSessionId: string): Promise<void> {
     await this.call(user, `/Videos/ActiveEncodings?${new URLSearchParams({ deviceId: this.deviceId(user), playSessionId })}`, { method: 'DELETE' }).catch(() => undefined);
   }
 
   /** Playing / Progress / Stopped reports (powers "Weiterschauen" and Jellyfin statistics). */
-  async report(user: JfUser, kind: 'Playing' | 'Playing/Progress' | 'Playing/Stopped', body: Record<string, unknown>) {
-    const res = await this.mutate(user, () => this.call(user, `/Sessions/${kind}`, { method: 'POST', body: JSON.stringify({ CanSeek: true, PlayMethod: 'DirectStream', ...body }) }));
+  async report(user: JfUser, r: PlaybackReport) {
+    const kind = REPORT_KIND[r.event];
+    const { PlayMethod, ...rest } = {
+      ItemId: r.itemId, MediaSourceId: r.mediaSourceId, PlaySessionId: r.playSessionId, PositionTicks: r.positionTicks, IsPaused: r.paused,
+      AudioStreamIndex: r.audioIndex, SubtitleStreamIndex: r.subtitleIndex, PlayMethod: r.playMethod ?? 'DirectStream',
+    };
+    const res = await this.mutate(user, () => this.call(user, `/Sessions/${kind}`, { method: 'POST', body: JSON.stringify({ CanSeek: true, PlayMethod, ...rest }) }));
     if (!res.ok) throw new JellyfinError(res.status, `report ${kind} -> ${res.status}`);
   }
 

@@ -5,6 +5,7 @@ import { loadConfig } from './config.js';
 import { keyFromBase64 } from './crypto.js';
 import { migrate } from './db.js';
 import { createMediaServer, mediaConfigProblems } from './media/index.js';
+import { dispatchMediaEvent } from './media/events.js';
 import { RedisKV } from './kv.js';
 import { authentikConfigProblem } from './invites.js';
 import { createAuthentikProvider } from './oidc.js';
@@ -43,6 +44,8 @@ const ctx: Ctx = {
 
 const app = await buildApp(ctx);
 await app.listen({ port: cfg.PORT, host: '0.0.0.0' });
+// the media server's own change feed (websocket, sync job …), if it has one; Jellyfin pushes webhooks instead
+await ctx.jf.start?.({ dispatch: (e) => dispatchMediaEvent(ctx, e), log: app.log });
 // one-off: push the changed role policies (guest transcoding) to every existing Jellyfin user
 void reapplyPoliciesOnce(ctx).catch((e) => app.log.warn({ e }, 'role policy re-apply failed'));
 pushEnabled(cfg); // validates the VAPID pair once (warns and disables push when invalid)
@@ -79,6 +82,6 @@ if (cfg.BACKGROUND_JOBS === 'true') {
 for (const sig of ['SIGTERM', 'SIGINT'] as const) {
   process.on(sig, () => {
     timers.forEach(clearInterval);
-    void app.close().then(() => process.exit(0));
+    void Promise.resolve(ctx.jf.stop?.()).catch(() => undefined).then(() => app.close()).then(() => process.exit(0));
   });
 }

@@ -12,7 +12,7 @@ describe('server capabilities', () => {
     expect(linkShown(ALL_CAPS, '/calendar')).toBe(true);
   });
   it('the Jellyfin answer changes nothing', () => {
-    const jf = { segments: ['intro', 'outro', 'recap', 'preview'], trickplay: true, upcoming: true, subtitleSearch: true, webhooks: true, changeFeed: false, planB: true };
+    const jf = { segments: ['intro', 'outro', 'recap', 'preview'], trickplay: true, upcoming: true, subtitleSearch: true, webhooks: true, changeFeed: false, planB: true, subtitleExtract: false };
     expect(capsFrom(jf)).toEqual(ALL_CAPS);
   });
   it('a reduced server hides exactly what it lacks', () => {
