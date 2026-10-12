@@ -23,7 +23,13 @@ Profil-Einstellung `calm` (`PUT /api/prefs`, Einstellungen → „Ruhiger Modus�
 - `autoStartAllowed()` (`detail/autostart.ts`) kennt `calm`.
 - `html.calm` (gesetzt in `web/src/lib/stores.ts`) dämpft alle CSS-Animationen und Übergänge, wie `prefers-reduced-motion`; das System-Setting wird zusätzlich über `motionAllowed()` beachtet.
 
+- Das Marken-Intro beim Kaltstart entfällt im ruhigen Modus (wie bei `prefers-reduced-motion`). Weil `/api/prefs` erst danach antwortet, merkt sich der Browser den Wert je Profil (`localStorage` `ff_calm:<profil>`, `cachedCalm()` in `stores.ts`, bei jedem Laden/Speichern aktualisiert); ohne diese Kopie (erster Besuch auf dem Gerät) wird ein laufendes Intro abgebrochen, sobald die Einstellungen `calm` melden. Das Intro nach der Profilwahl zeigt dann nur die ruhige Überblendung.
+
 Neue Dinge, die von selbst abspielen oder sich bewegen, müssen `autoplayAllowed()` bzw. `motionAllowed()` fragen.
+
+## Klang im Player („Klare Stimmen“ / „Nachtmodus“)
+
+Profil-Einstellung `audioFx` (`'off' | 'voices' | 'night' | 'both'`, beide Modi lassen sich kombinieren). Sie hat einen eigenen Endpunkt `PUT /api/prefs/audiofx` (der Schalter im Audio-Menü des Players); ein volles `PUT /api/prefs` (Einstellungsseite) ändert sie nie. Der Browser hält eine Kopie je Profil (`localStorage` `ff_audiofx:<profil>`), damit der Player schon vor `/api/prefs` im richtigen Modus startet; danach gilt der Serverwert, solange im Player nicht umgeschaltet wurde.
 
 ## Handy: Verknüpfungen, Symbol-Badge, Widgets
 

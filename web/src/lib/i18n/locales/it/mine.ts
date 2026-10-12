@@ -20,6 +20,7 @@ const dict: Translation<typeof de> = {
     pin: 'Mostra nella home',
     unpin: 'Rimuovi dalla home',
     pinnedHint: 'Questa lista a tema è fissata nella home.',
+    unfeatured: 'Questa lista era in evidenza. Poiché è cambiato il tipo (lista a tema), non lo è più: un admin può rimetterla in evidenza.',
     tooManyPinned: 'Non si possono fissare più di {max} liste.',
     manageTitle: 'Liste a tema nella home',
     manageHint: 'Le liste a tema fissate compaiono nella home di tutti, in quest\'ordine (al massimo {max}, insieme alle liste in evidenza).',

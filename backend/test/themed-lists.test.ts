@@ -129,6 +129,29 @@ describe('themed lists', () => {
     expect((await call(admin, 'GET', '/api/lists/themed')).json().lists.map((l: { id: string }) => l.id)).not.toContain(second);
   });
 
+  it('changing `themed` on a featured list unfeatures it (no kids-readable home row without an admin decision)', async () => {
+    // Bea owns a plain list an admin featured
+    const own = (await call(bea, 'POST', '/api/lists', { name: 'Beas Liste' })).json().id;
+    await call(bea, 'POST', `/api/lists/${own}/items`, { itemId: A });
+    expect((await call(admin, 'PUT', `/api/admin/lists/${own}/featured`, { featured: true })).statusCode).toBe(200);
+    // same value: nothing changes
+    expect((await call(bea, 'PATCH', `/api/lists/${own}`, { themed: false })).json()).toEqual({ ok: true });
+    expect((await env.pool.query('select featured_at is not null as f from lists where id = $1', [own])).rows[0].f).toBe(true);
+    const r = await call(bea, 'PATCH', `/api/lists/${own}`, { themed: true, emoji: '🎈' });
+    expect(r.statusCode).toBe(200);
+    expect(r.json()).toEqual({ ok: true, unfeatured: true });
+    expect((await env.pool.query('select themed, featured_at, featured_pos from lists where id = $1', [own])).rows[0]).toEqual({ themed: true, featured_at: null, featured_pos: null });
+    expect((await call(kid, 'GET', '/api/lists/themed')).json().lists.map((l: { id: string }) => l.id)).not.toContain(own);
+    expect((await call(kid, 'GET', `/api/lists/${own}`)).statusCode).toBe(403);
+    // a pinned themed list turned plain does not stay a featured (social) list either
+    const pinned = (await call(admin, 'POST', '/api/lists', { name: 'Gepinnt', themed: true })).json().id;
+    await call(admin, 'POST', `/api/lists/${pinned}/items`, { itemId: A });
+    await call(admin, 'PUT', `/api/lists/${id}/pin`, { pinned: false }); // room under the pin limit
+    expect((await call(admin, 'PUT', `/api/lists/${pinned}/pin`, { pinned: true })).statusCode).toBe(200);
+    expect((await call(admin, 'PATCH', `/api/lists/${pinned}`, { themed: false })).json()).toEqual({ ok: true, unfeatured: true });
+    expect((await call(bea, 'GET', '/api/lists/featured')).json().lists.map((l: { id: string }) => l.id)).not.toContain(pinned);
+  });
+
   it('kids and plain users: unauthenticated requests are 401', async () => {
     expect((await env.app.inject({ method: 'GET', url: '/api/lists/themed' })).statusCode).toBe(401);
   });
@@ -143,5 +166,19 @@ describe('calm mode pref', () => {
     expect((await call(admin, 'GET', '/api/prefs')).json().prefs.calm).toBe(false); // other profile unaffected
     expect((await call(kid, 'GET', '/api/prefs')).json().prefs.calm).toBe(false);
     expect((await call(kid, 'PUT', '/api/prefs', { calm: true })).json().prefs.calm).toBe(true); // kids profiles may use it too
+  });
+  it('audioFx (player sound): own endpoint, validated, per profile, kept by a full PUT', async () => {
+    expect((await call(bea, 'GET', '/api/prefs')).json().prefs.audioFx).toBe('off');
+    expect((await call(bea, 'PUT', '/api/prefs/audiofx', { audioFx: 'loud' })).statusCode).toBe(400);
+    expect((await call(bea, 'PUT', '/api/prefs/audiofx', {})).statusCode).toBe(400);
+    expect((await call(bea, 'PUT', '/api/prefs/audiofx', { audioFx: 'night' })).json()).toEqual({ audioFx: 'night' });
+    expect((await call(bea, 'GET', '/api/prefs')).json().prefs.audioFx).toBe('night');
+    expect((await call(admin, 'GET', '/api/prefs')).json().prefs.audioFx).toBe('off'); // other profile unaffected
+    // a settings form (full PUT, stale or without the field) never reverts it
+    expect((await call(bea, 'PUT', '/api/prefs', { calm: true, audioFx: 'off' })).json().prefs.audioFx).toBe('night');
+    expect((await call(bea, 'PUT', '/api/prefs', { calm: true })).json().prefs).toMatchObject({ audioFx: 'night', calm: true });
+    expect((await call(bea, 'PUT', '/api/prefs/audiofx', { audioFx: 'both' })).statusCode).toBe(200);
+    expect((await call(bea, 'GET', '/api/prefs')).json().prefs.audioFx).toBe('both');
+    expect((await env.app.inject({ method: 'PUT', url: '/api/prefs/audiofx', payload: { audioFx: 'off' } })).statusCode).toBe(401);
   });
 });

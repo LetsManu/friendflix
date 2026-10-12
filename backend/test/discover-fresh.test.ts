@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { episodeFacts, movieLabel, qualityIndexTick, seriesLabel, leavingTick, type EpisodeFacts } from '../src/fresh.js';
+import { episodeFacts, instanceToday, movieLabel, qualityIndexTick, seriesLabel, leavingTick, SERIES_LABELS_PER_REQUEST, type EpisodeFacts } from '../src/fresh.js';
 import { bestTraits, toMediaTraits } from '../src/jellyfin/dto.js';
 import { ADMIN, makeEnv, type Handler, type TestEnv } from './helpers.js';
 
@@ -63,6 +63,16 @@ describe('fresh label rules', () => {
   });
 });
 
+describe('leaving-soon days count in the instance time zone', () => {
+  it('uses TZ (Europe/Vienna is already tomorrow at 23:30 UTC), UTC when unset or unknown', () => {
+    const late = new Date('2026-10-12T23:30:00Z');
+    expect(instanceToday(late, 'Europe/Vienna')).toBe('2026-10-13');
+    expect(instanceToday(late, 'UTC')).toBe('2026-10-12');
+    expect(instanceToday(late, '')).toBe('2026-10-12');
+    expect(instanceToday(late, 'Mars/Olympus')).toBe('2026-10-12');
+  });
+});
+
 describe('media traits mapping', () => {
   const video = (o: Record<string, unknown>) => ({ Type: 'Video', Width: 1920, Height: 1080, VideoRangeType: 'SDR', ...o });
   it('resolution classes (cropped scope films count by width)', () => {
@@ -109,6 +119,8 @@ let adm: { cookies: Record<string, string>; csrf: string };
 let fri: { cookies: Record<string, string>; csrf: string };
 /** usernames (Jellyfin side) that must not see an item */
 const blocked = new Map<string, Set<string>>();
+/** continuing series as the ADMIN key lists them (library-wide); empty = the test series has ended */
+let continuingAdmin: string[] = [];
 const tokenUser = (init: RequestInit) => /Token="tok-([^"]+)"/.exec(String((init.headers as Record<string, string>)?.Authorization ?? ''))?.[1];
 const LIB: Record<string, any> = {
   [NEW_MOVIE]: { Id: NEW_MOVIE, Name: 'Frisch', Type: 'Movie', DateCreated: agoReal(2), ProductionYear: 2026 },
@@ -135,7 +147,11 @@ const visible = (init: RequestInit, id: string) => !blocked.get(tokenUser(init) 
 const jelly: Record<string, Handler> = {
   'GET /Items': (u, init) => {
     const ids = u.searchParams.get('ids')?.split(',');
-    if (u.searchParams.get('seriesStatus')) return { json: { Items: [] } }; // nothing continuing: the series is ended
+    if (u.searchParams.get('seriesStatus')) { // nothing continuing for viewers; the admin-level listing is paged (see continuingAdmin)
+      if (tokenUser(init)) return { json: { Items: [] } };
+      const st = Number(u.searchParams.get('startIndex') ?? 0), lim = Number(u.searchParams.get('limit') ?? 100);
+      return { json: { Items: continuingAdmin.slice(st, st + lim).map((Id) => ({ Id, Type: 'Series' })) } };
+    }
     if (u.searchParams.get('includeItemTypes') === 'Episode' && u.searchParams.get('isMissing') === 'false') {
       return { json: { Items: (ids ?? []).filter((i) => EPISODES.some((e) => e.Id === i)).map((Id) => ({ Id, LocationType: 'FileSystem' })) } };
     }
@@ -243,6 +259,21 @@ describe('badges and facts', () => {
     env.ctx.jf.forgetItems();
   });
 
+  it('the continuing set is library-wide (admin key) and paged through completely: no false finale beyond the first page', async () => {
+    // the viewer-level listing knows nothing (restricted viewer / limit) - the admin listing has the series on its second page
+    continuingAdmin = [...Array.from({ length: 700 }, (_, i) => `${i}`.padStart(32, 'c')), SERIES];
+    await env.kv.del(`fresh:s:${SERIES}`); await env.kv.del('fresh:continuing:lib');
+    const before = env.jfCalls.length;
+    const b = (await post(fri, '/api/discover/badges', { ids: [SERIES] })).json().badges as Record<string, { fresh?: string }>;
+    expect(b[SERIES]).toEqual({ fresh: 'newEpisode' }); // continuing: never "Staffelfinale"
+    const pages = env.jfCalls.slice(before).filter((c) => c.search.includes('seriesStatus=Continuing'));
+    expect(pages.map((c) => new URLSearchParams(c.search).get('startIndex'))).toEqual(['0', '500']);
+    expect(pages.every((c) => !c.auth?.includes('tok-') && new URLSearchParams(c.search).get('sortBy') === 'SortName,Id')).toBe(true);
+    continuingAdmin = [];
+    await env.kv.del(`fresh:s:${SERIES}`); await env.kv.del('fresh:continuing:lib');
+    expect((await post(fri, '/api/discover/badges', { ids: [SERIES] })).json().badges[SERIES]).toEqual({ fresh: 'finale' });
+  });
+
   it('series labels are cached (one episode lookup per 15 minutes)', async () => {
     const before = env.jfCalls.filter((c) => c.path === `/Shows/${SERIES}/Episodes`).length;
     await post(fri, '/api/discover/badges', { ids: [SERIES] });
@@ -335,7 +366,12 @@ describe('leaving soon: notifications and clean-up', () => {
 
 describe('browse filter 4K / HDR', () => {
   it('index + route: 4K, HDR and both, visibility from the media server, filters combine', async () => {
+    const before = env.jfCalls.length;
     await qualityIndexTick(env.ctx, { force: true });
+    // the paged admin scan has a stable order (else pages taken while the library changes skip / repeat titles)
+    const scans = env.jfCalls.slice(before).filter((c) => c.search.includes('MediaStreams'));
+    expect(scans.length).toBeGreaterThan(0);
+    expect(scans.every((c) => new URLSearchParams(c.search).get('sortBy') === 'SortName,Id')).toBe(true);
     expect((await env.pool.query('select item_id, res, hdr, audio from item_quality order by item_id')).rows.map((r) => `${r.item_id.slice(0, 1)}:${r.res}:${r.hdr}:${r.audio}`)).toEqual([
       '1:4k:null:null', '2:sd:null:null', '3:sd:null:null', '5:4k:dolbyvision:atmos', '6:hd:hdr10:surround', '7:hd:null:stereo',
     ]);
@@ -360,6 +396,58 @@ describe('browse filter 4K / HDR', () => {
     expect((await get(fri, '/api/library/quality?quality=8k')).statusCode).toBe(400);
     expect((await get(fri, '/api/library/quality')).statusCode).toBe(400);
     expect((await get(fri, '/api/library/quality?quality=4k&types=Episode')).statusCode).toBe(400);
+  });
+});
+
+describe('browse filter 4K / HDR: kids profile, cached list, parallel chunks', () => {
+  it('a kids profile gets only what ITS media-server identity may see, even right after the owner warmed the cache', async () => {
+    await qualityIndexTick(env.ctx, { force: true });
+    const kid = (await post(fri, '/api/profiles', { name: 'Kino-Kind', kids: true, maxRating: 6 })).json().profile.id as string;
+    const kidJf = (await env.pool.query<{ u: string }>('select jellyfin_username u from profiles where id = $1', [kid])).rows[0]!.u;
+    blocked.set(kidJf, new Set([UHD]));
+    const ids = async (s: typeof fri, q: string) => ((await get(s, `/api/library/quality?${q}`)).json().items as Array<{ id: string }>).map((i) => i.id).sort();
+    expect(await ids(fri, 'quality=4k&sort=DateCreated')).toEqual([NEW_MOVIE, UHD].sort());
+    const sel = await post(fri, `/api/profiles/${kid}/select`, {});
+    expect(sel.statusCode, sel.body).toBe(200);
+    const kidSess = { cookies: { ff_sid: sel.cookies.find((c) => c.name === 'ff_sid')!.value }, csrf: fri.csrf };
+    const r = await get(kidSess, '/api/library/quality?quality=4k&sort=DateCreated');
+    expect(r.statusCode, r.body).toBe(200);
+    expect(r.json().items.map((i: { id: string }) => i.id)).toEqual([NEW_MOVIE]);
+    expect(r.json().total).toBe(1);
+    expect(r.body).not.toContain('Ultra');
+    blocked.clear();
+  });
+
+  it('paging re-uses the viewer\'s cached id list (one lookup per page, no re-scan of every chunk)', async () => {
+    await get(fri, '/api/library/quality?quality=hdr&sort=CommunityRating&limit=1');
+    const before = env.jfCalls.length;
+    const p2 = (await get(fri, '/api/library/quality?quality=hdr&sort=CommunityRating&limit=1&start=1')).json();
+    expect(p2).toMatchObject({ total: 2 });
+    expect(p2.items).toHaveLength(1);
+    const calls = env.jfCalls.slice(before).filter((c) => c.path === '/Items');
+    expect(calls).toHaveLength(1);
+    expect(new URLSearchParams(calls[0]!.search).get('ids')!.split(',')).toHaveLength(1);
+  });
+
+  it('chunks run in parallel (capped at 4 in flight)', async () => {
+    // 300 4K candidates = 4 chunks of 80; a slow media server must see them overlap
+    const extra = Array.from({ length: 300 }, (_, i) => `${i}`.padStart(32, 'a'));
+    await env.pool.query("insert into item_quality(item_id, type, res, indexed_at) select x, 'Movie', '4k', now() from unnest($1::text[]) x on conflict do nothing", [extra]);
+    let inFlight = 0, peak = 0;
+    const orig = env.ctx.jf.items.bind(env.ctx.jf);
+    env.ctx.jf.items = (async (u: Parameters<typeof orig>[0], q: Parameters<typeof orig>[1]) => {
+      inFlight++; peak = Math.max(peak, inFlight);
+      await new Promise((r) => setTimeout(r, 15));
+      try { return await orig(u, q); } finally { inFlight--; }
+    }) as typeof orig;
+    try {
+      expect((await get(adm, '/api/library/quality?quality=4k&sort=PremiereDate')).statusCode).toBe(200);
+    } finally {
+      env.ctx.jf.items = orig;
+      await env.pool.query('delete from item_quality where item_id = any($1)', [extra]);
+    }
+    expect(peak).toBeGreaterThan(1);
+    expect(peak).toBeLessThanOrEqual(4);
   });
 });
 
@@ -388,5 +476,30 @@ describe('Story so far', () => {
     EPISODES.slice(0, 8).forEach((e) => { e.UserData = { Played: true, LastPlayedDate: agoReal(1) }; });
     expect((await get(fri, `/api/items/${SERIES}/story`)).json().story).toMatchObject({ reason: 'newSeason', season: { number: 1 } });
     EPISODES.slice(0, 8).forEach((e, i) => { e.UserData = saved[i]!; });
+  });
+});
+
+describe('rate limits and per-request work of the Block 17 batch routes', () => {
+  it('badges label at most SERIES_LABELS_PER_REQUEST uncached series per request', async () => {
+    const many = Array.from({ length: 30 }, (_, i) => `${i}`.padStart(32, 'b'));
+    for (const id of many) LIB[id] = { Id: id, Name: `Serie ${id.slice(-2)}`, Type: 'Series', DateCreated: agoReal(500), DateLastMediaAdded: agoReal(1) };
+    const before = env.jfCalls.length;
+    expect((await post(fri, '/api/discover/badges', { ids: many })).statusCode).toBe(200);
+    const lookups = env.jfCalls.slice(before).filter((c) => /^\/Shows\/[^/]+\/Episodes$/.test(c.path)).length;
+    expect(lookups).toBe(SERIES_LABELS_PER_REQUEST);
+    for (const id of many) delete LIB[id];
+  });
+
+  it('badges and the quality browse answer 429 after 60 requests a minute per session (other sessions unaffected)', async () => {
+    const s = await env.login(ADMIN);
+    for (const [method, url] of [['POST', '/api/discover/badges'], ['GET', '/api/library/quality?quality=4k']] as const) {
+      const codes: number[] = [];
+      for (let i = 0; i < 61; i++) {
+        codes.push((await env.app.inject({ method, url, cookies: s.cookies, headers: { 'x-csrf-token': s.csrf }, ...(method === 'POST' ? { payload: { ids: [OLD_MOVIE] } } : {}) })).statusCode);
+      }
+      expect(codes.slice(0, 60).every((c) => c === 200)).toBe(true);
+      expect(codes[60]).toBe(429);
+    }
+    expect((await post(fri, '/api/discover/badges', { ids: [OLD_MOVIE] })).statusCode).toBe(200);
   });
 });

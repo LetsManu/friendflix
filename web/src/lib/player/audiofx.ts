@@ -56,7 +56,10 @@ export function fxBlocked(o: { casting: boolean; nativeHls: boolean; src: string
   return null;
 }
 
-// ---- remembered per profile (localStorage; the server prefs are another area's file, see the Block 17 report) ----
+// ---- remembered per profile: the server pref `audioFx` (follows the profile) + this localStorage copy for a fast start ----
+export type FxPref = 'off' | 'voices' | 'night' | 'both';
+export const fxFromPref = (p: unknown): AudioFx => ({ voice: p === 'voices' || p === 'both', night: p === 'night' || p === 'both' });
+export const fxToPref = (fx: AudioFx): FxPref => (fx.voice && fx.night ? 'both' : fx.voice ? 'voices' : fx.night ? 'night' : 'off');
 const KEY = 'ff_audiofx';
 const keyFor = (profile: string | null | undefined) => `${KEY}:${profile || 'default'}`;
 export function loadFx(profile: string | null | undefined): AudioFx {
@@ -83,18 +86,37 @@ export class AudioFxEngine {
   /** the element's sound already runs through Web Audio (it stays that way for the element's lifetime) */
   get routed() { return Boolean(this.src); }
 
-  async apply(fx: AudioFx): Promise<FxResult> {
+  /**
+   * Calls are serialised through one in-flight promise: two overlapping calls (a tap gesture + the play event) would otherwise both
+   * pass the `!this.src` check while awaiting resume() and the second createMediaElementSource() would throw InvalidStateError.
+   */
+  apply(fx: AudioFx): Promise<FxResult> {
+    const run = this.queue.then(() => this.applyNow(fx));
+    this.queue = run.catch(() => undefined);
+    return run;
+  }
+  private queue: Promise<unknown> = Promise.resolve();
+
+  private async applyNow(fx: AudioFx): Promise<FxResult> {
     if (this.dead) return 'unsupported';
     if (!fxActive(fx) && !this.src) return 'off'; // nothing to do, and no reason to take the sound over
     if (!this.src) {
       if (!this.AC) return 'unsupported';
       try { this.ctx ??= new this.AC(); } catch { return 'unsupported'; }
       if (this.ctx.state !== 'running') { try { await this.ctx.resume(); } catch { /* stays suspended */ } }
+      if (this.dead || !this.ctx) return 'unsupported'; // destroyed while waiting
       if (this.ctx.state !== 'running') return 'suspended'; // no user gesture yet: routing now would mute the film
-      try { this.src = this.ctx.createMediaElementSource(this.video); } catch { this.dead = true; return 'unsupported'; }
+      if (!this.src) { // re-check after the await: belt and braces next to the queue
+        try { this.src = this.ctx.createMediaElementSource(this.video); } catch {
+          // the element is already captured: only "dead" when WE do not own a source (another engine / browser refuses);
+          // with a source in hand the graph is live and must stay switchable (else FX could never be turned off again)
+          if (!this.src) { this.dead = true; return 'unsupported'; }
+        }
+      }
     } else if (this.ctx && this.ctx.state !== 'running') {
       try { await this.ctx.resume(); } catch { /* tried */ }
     }
+    if (this.dead || !this.ctx || !this.src) return 'unsupported';
     this.rebuild(fx);
     return fxActive(fx) ? 'ok' : 'off';
   }

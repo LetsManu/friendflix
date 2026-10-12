@@ -128,7 +128,7 @@ export function sceneRoutes(app: FastifyInstance, ctx: Ctx) {
   app.get('/api/items/:id/chapters', pre, wrap(async (req) => {
     const id = id32.parse((req.params as { id: string }).id);
     const user = req.jfUser!;
-    if (!ctx.jf.capabilities.chapters || !ctx.jf.chapters) {
+    if (!(ctx.jf.capabilities.chapters ?? false) || !ctx.jf.chapters) {
       await ctx.jf.item(user, id); // same answer for invisible items whatever the server supports
       return { supported: false, chapters: [] };
     }

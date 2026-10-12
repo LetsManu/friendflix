@@ -5,7 +5,7 @@ import { z } from 'zod';
 import type { Ctx } from '../ctx.js';
 import { MediaError, type ItemDto, type MediaTraits } from '../media/types.js';
 import { audit } from '../audit.js';
-import { badgesFor, leavingFor, LEAVING_ROW_DAYS, storySoFar } from '../fresh.js';
+import { badgesFor, instanceToday, leavingFor, LEAVING_ROW_DAYS, storySoFar } from '../fresh.js';
 import { m } from '../i18n.js';
 import { notify } from '../notify.js';
 import { clipPath, previews } from '../previews.js';
@@ -26,16 +26,23 @@ const wrap = <T extends (...a: any[]) => Promise<any>>(fn: T): T => sharedWrap(f
 export async function itemsByIds(ctx: Ctx, user: JfUser, ids: string[], strict = false): Promise<ItemDto[]> {
   const chunks: string[][] = [];
   for (let i = 0; i < ids.length; i += 40) chunks.push(ids.slice(i, i + 40));
-  const parts: ItemDto[][] = new Array(chunks.length);
-  let next = 0;
-  await Promise.all(Array.from({ length: Math.min(4, chunks.length) }, async () => {
-    while (next < chunks.length) {
-      const n = next++;
-      parts[n] = (await ctx.jf.items(user, { ids: chunks[n], types: 'Movie,Series,Episode,BoxSet', limit: 40 }).catch((e) => { if (strict) throw e; return { items: [] as ItemDto[] }; })).items;
-    }
-  }));
+  const parts = await inPool(chunks, 4, async (c) =>
+    (await ctx.jf.items(user, { ids: c, types: 'Movie,Series,Episode,BoxSet', limit: 40 }).catch((e) => { if (strict) throw e; return { items: [] as ItemDto[] }; })).items);
   const byId = new Map(parts.flat().map((i) => [i.id, i]));
   return ids.map((i) => byId.get(i)).filter((x): x is ItemDto => Boolean(x));
+}
+
+/** Runs `fn` over `xs` with at most `n` calls in flight; results keep the input order. The first error rejects. */
+export async function inPool<T, R>(xs: T[], n: number, fn: (x: T, i: number) => Promise<R>): Promise<R[]> {
+  const out: R[] = new Array(xs.length);
+  let next = 0;
+  await Promise.all(Array.from({ length: Math.min(n, xs.length) }, async () => {
+    while (next < xs.length) {
+      const i = next++;
+      out[i] = await fn(xs[i]!, i);
+    }
+  }));
+  return out;
 }
 
 /** "Weil du ... gesehen hast" cache lifetime (seconds). */
@@ -342,6 +349,12 @@ export function discoverRoutes(app: FastifyInstance, ctx: Ctx) {
 const TRAITS_TTL = 6 * 3600;
 const QUALITY_CAP = 5000;
 const QUALITY_CHUNK = 80;
+/** chunks of the quality browse in flight at once (5000 candidates = 63 chunks) */
+const QUALITY_PARALLEL = 4;
+/** the viewer's visible, sorted id list of one quality browse is kept this long (seconds): paging does not re-scan */
+const QUALITY_LIST_TTL = 180;
+/** per session (cookie) limits of the two heavier Block 17 routes; IP as the fallback for cookie-less callers (they get 401 anyway) */
+const perSession = (max: number) => ({ rateLimit: { max, timeWindow: '1 minute', keyGenerator: (req: { cookies?: Record<string, string | undefined>; ip: string }) => `s:${req.cookies?.ff_sid ?? req.ip}` } });
 const dateOnly = z.string().regex(/^\d{4}-\d{2}-\d{2}$/).refine((v) => {
   const t = Date.parse(`${v}T00:00:00Z`);
   return Number.isFinite(t) && new Date(t).toISOString().startsWith(v); // 2026-02-30 rolls over: refused
@@ -372,7 +385,7 @@ function freshRoutes(app: FastifyInstance, ctx: Ctx) {
   const subject = (i: ItemDto) => (i.type === 'Episode' && i.seriesId ? i.seriesId : i.id);
 
   // ---- card badges: fresh label + "Nur noch N Tage" for a batch of ids. Only ids the viewer can see come back (itemsByIds uses the viewer's token). ----
-  app.post('/api/discover/badges', pre, wrap(async (req) => {
+  app.post('/api/discover/badges', { ...pre, config: perSession(60) }, wrap(async (req) => {
     const { ids } = z.object({ ids: z.array(id32).min(1).max(80) }).parse(req.body);
     const items = await itemsByIds(ctx, req.jfUser!, [...new Set(ids)]);
     return { badges: await badgesFor(ctx, req.jfUser!, items) };
@@ -385,7 +398,7 @@ function freshRoutes(app: FastifyInstance, ctx: Ctx) {
     const [badges, leaving, traits] = await Promise.all([
       badgesFor(ctx, req.jfUser!, [item]),
       ctx.db.query<{ leaves_at: string; days: number; note: string | null }>(
-        'select leaves_at::text, (leaves_at - current_date)::int as days, note from leaving_soon where item_id = $1 and leaves_at >= current_date', [subject(item)]),
+        'select leaves_at::text, (leaves_at - $2::date)::int as days, note from leaving_soon where item_id = $1 and leaves_at >= $2::date', [subject(item), instanceToday()]),
       (async () => {
         if (!ctx.jf.mediaTraits || (item.type !== 'Movie' && item.type !== 'Series' && item.type !== 'Episode')) return null;
         const key = `traits:${id}`;
@@ -407,7 +420,7 @@ function freshRoutes(app: FastifyInstance, ctx: Ctx) {
 
   // ---- home row "Bald nicht mehr verfügbar": only titles the viewer can see ----
   app.get('/api/library/leaving', pre, wrap(async (req) => {
-    const days = await leavingFor(ctx, (await ctx.db.query<{ item_id: string }>('select item_id from leaving_soon where leaves_at >= current_date and leaves_at - current_date <= $1 order by leaves_at limit 60', [LEAVING_ROW_DAYS])).rows.map((r) => r.item_id), LEAVING_ROW_DAYS);
+    const days = await leavingFor(ctx, (await ctx.db.query<{ item_id: string }>('select item_id from leaving_soon where leaves_at >= $2::date and leaves_at - $2::date <= $1 order by leaves_at limit 60', [LEAVING_ROW_DAYS, instanceToday()])).rows.map((r) => r.item_id), LEAVING_ROW_DAYS);
     const items = await itemsByIds(ctx, req.jfUser!, [...days.keys()]);
     return { items: items.map((i) => ({ ...i, daysLeft: days.get(i.id) ?? 0 })).sort((a, b) => a.daysLeft - b.daysLeft || a.name.localeCompare(b.name, 'de')).slice(0, 30) };
   }));
@@ -415,8 +428,8 @@ function freshRoutes(app: FastifyInstance, ctx: Ctx) {
   // ---- admin: list / set / clear removal dates (nothing is deleted on the media server) ----
   app.get('/api/admin/leaving', admin, wrap(async (req) => {
     const rows = (await ctx.db.query<{ item_id: string; leaves_at: string; days: number; note: string | null; by: string | null }>(
-      `select l.item_id, l.leaves_at::text, (l.leaves_at - current_date)::int as days, l.note, u.name as by
-         from leaving_soon l left join users u on u.id = l.set_by where l.leaves_at >= current_date order by l.leaves_at, l.item_id`)).rows;
+      `select l.item_id, l.leaves_at::text, (l.leaves_at - $1::date)::int as days, l.note, u.name as by
+         from leaving_soon l left join users u on u.id = l.set_by where l.leaves_at >= $1::date order by l.leaves_at, l.item_id`, [instanceToday()])).rows;
     const items = new Map((await itemsByIds(ctx, req.jfUser!, rows.map((r) => r.item_id))).map((i) => [i.id, i]));
     return { items: rows.map((r) => ({ itemId: r.item_id, name: items.get(r.item_id)?.name ?? null, type: items.get(r.item_id)?.type ?? null, year: items.get(r.item_id)?.year ?? null, leavesAt: r.leaves_at, days: r.days, note: r.note, setBy: r.by })) };
   }));
@@ -425,7 +438,7 @@ function freshRoutes(app: FastifyInstance, ctx: Ctx) {
     const b = z.object({ leavesAt: dateOnly, note: z.string().trim().max(200).nullish() }).parse(req.body);
     const item = await ctx.jf.item(req.jfUser!, id);
     if (item.type !== 'Movie' && item.type !== 'Series' && item.type !== 'BoxSet') return reply.code(400).send({ error: 'not_a_title' });
-    const ok = await ctx.db.query<{ ok: boolean }>('select ($1::date >= current_date and $1::date <= current_date + 730) as ok', [b.leavesAt]);
+    const ok = await ctx.db.query<{ ok: boolean }>('select ($1::date >= $2::date and $1::date <= $2::date + 730) as ok', [b.leavesAt, instanceToday()]);
     if (!ok.rows[0]?.ok) return reply.code(400).send({ error: 'date_out_of_range' });
     await ctx.db.query(
       `insert into leaving_soon(item_id, leaves_at, note, set_by) values ($1, $2, $3, $4)
@@ -443,9 +456,21 @@ function freshRoutes(app: FastifyInstance, ctx: Ctx) {
   });
 
   // ---- browse filter 4K / HDR: candidate ids from the quality index, details (visibility, every other filter) from the media server ----
-  app.get('/api/library/quality', pre, wrap(async (req) => {
+  app.get('/api/library/quality', { ...pre, config: perSession(60) }, wrap(async (req) => {
     const q = qualityQuery.parse(req.query);
     if (!ctx.jf.libraryMediaTraits) return { items: [], total: 0, unsupported: true };
+    const { quality: _q, audio: _a, subs: _s, start, limit, desc: d, types, ...rest } = q;
+    // The sorted list of ids THIS viewer can see is cached briefly per media-server identity (a kids profile has its own, so its
+    // parental limits apply) + every filter; played / favourite filters also carry the user-data version (a new play re-scans).
+    const { start: _st, limit: _l, ...shape } = q;
+    const ver = q.filter ? await ctx.jf.userDataVersion(req.jfUser!).catch(() => String(Date.now())) : '';
+    const key = `qlist:${req.jfUser!.jellyfin_user_id}:${ver}:${JSON.stringify(Object.entries(shape).sort(([a], [b]) => a.localeCompare(b)))}`;
+    let cached: { ids: string[]; capped: boolean } | null = null;
+    try { cached = JSON.parse((await ctx.kv.get(key).catch(() => null)) ?? 'null'); } catch { /* broken entry: recompute */ }
+    if (cached && Array.isArray(cached.ids)) { // a page = one or a few id lookups, still with the viewer's own identity
+      const page = await itemsByIds(ctx, req.jfUser!, cached.ids.slice(start, start + limit), true);
+      return { items: page, total: cached.ids.length, ...(cached.capped ? { capped: true } : {}) };
+    }
     const want = q.quality.split(',');
     const where = ['q.type = $1'];
     const params: unknown[] = [q.types];
@@ -458,11 +483,10 @@ function freshRoutes(app: FastifyInstance, ctx: Ctx) {
       if (q.subs) { params.push([q.subs]); where.push(`l.subs @> $${params.length}::text[]`); }
     }
     const ids = (await ctx.db.query<{ item_id: string }>(`select q.item_id from ${from} where ${where.join(' and ')} order by q.item_id limit ${QUALITY_CAP}`, params)).rows.map((r) => r.item_id);
-    const { quality: _q, audio: _a, subs: _s, start, limit, desc: d, types, ...rest } = q;
-    const parts: ItemDto[][] = [];
-    for (let i = 0; i < ids.length; i += QUALITY_CHUNK) {
-      parts.push((await ctx.jf.items(req.jfUser!, { ...rest, types, desc: false, ids: ids.slice(i, i + QUALITY_CHUNK), limit: QUALITY_CHUNK, start: 0 })).items);
-    }
+    const chunks: string[][] = [];
+    for (let i = 0; i < ids.length; i += QUALITY_CHUNK) chunks.push(ids.slice(i, i + QUALITY_CHUNK));
+    const parts = await inPool(chunks, QUALITY_PARALLEL, async (c) =>
+      (await ctx.jf.items(req.jfUser!, { ...rest, types, desc: false, ids: c, limit: QUALITY_CHUNK, start: 0 })).items);
     const items = parts.flat();
     const date = (v?: string) => (v ? Date.parse(v) || 0 : 0);
     const desc = d === 'true';
@@ -471,7 +495,9 @@ function freshRoutes(app: FastifyInstance, ctx: Ctx) {
       : q.sort === 'PremiereDate' ? (a: ItemDto, b: ItemDto) => date(a.premiereDate) - date(b.premiereDate)
       : (a: ItemDto, b: ItemDto) => a.name.localeCompare(b.name, 'de');
     items.sort((a, b) => (desc ? -1 : 1) * (cmp(a, b) || a.name.localeCompare(b.name, 'de')));
-    return { items: items.slice(start, start + limit), total: items.length, ...(ids.length >= QUALITY_CAP ? { capped: true } : {}) };
+    const capped = ids.length >= QUALITY_CAP;
+    await ctx.kv.set(key, JSON.stringify({ ids: items.map((i) => i.id), capped }), QUALITY_LIST_TTL).catch(() => undefined);
+    return { items: items.slice(start, start + limit), total: items.length, ...(capped ? { capped: true } : {}) };
   }));
 
   // ---- "Story so far" for a series: metadata only; null when nothing applies ----

@@ -18,6 +18,8 @@ export interface MockState {
   unmocked: Set<string>;
   /** payloads POSTed to /api/client-errors */
   clientErrors: unknown[];
+  /** the profile's player sound pref (PUT /api/prefs/audiofx), echoed by GET /api/prefs */
+  audioFx?: string;
 }
 
 export function freshState(): MockState {
@@ -62,7 +64,8 @@ export async function installApi(ctx: BrowserContext, st: MockState): Promise<vo
     if (p === '/api/me') return J(ME);
     if (p === '/api/notifications') return J({ notifications: [{ id: 'n1', title: 'Anna hat dich zur Liste „Annas Klassiker“ eingeladen', link: '/lists/' + st.lists[1]!.id, read: false }] });
     if (p === '/api/notifications/read') return J({ ok: true });
-    if (p === '/api/prefs') return J({ prefs: {} });
+    if (p === '/api/prefs') return J({ prefs: st.audioFx ? { audioFx: st.audioFx } : {} });
+    if (p === '/api/prefs/audiofx' && m === 'PUT') { st.audioFx = body().audioFx; return J({ audioFx: st.audioFx }); }
     if (p === '/api/push/config') return J({ enabled: false }); // settings page: push not set up on the mock server
     // UI language (block 14): profile language + admin instance default
     if (p === '/api/prefs/language' && m === 'PUT') return J({ language: body().language });

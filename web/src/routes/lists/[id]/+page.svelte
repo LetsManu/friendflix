@@ -11,7 +11,7 @@
 
   const page = pageStore();
   $: id = $page.params.id!;
-  let data: ListDetail | null = null, missing = false, loadFailed = false, err = '';
+  let data: ListDetail | null = null, missing = false, loadFailed = false, err = '', unfeatured = false;
   let editing = false, name = '', desc = '', renameBtn: HTMLButtonElement | undefined;
   let themed = false, emoji = '', color = '', isAdmin = false;
   let friends: Array<{ id: string; name: string }> = [], friendsLoaded = false, pick = '', pickRole: 'editor' | 'viewer' = 'viewer';
@@ -61,7 +61,8 @@
     if (!name.trim()) return;
     if (await run('save', async () => {
       await api(`/api/lists/${id}`, { method: 'PATCH', body: { name: name.trim(), description: desc.trim() || null } });
-      await saveLook(id, { themed, emoji: themed ? emoji.trim() || null : null, coverColor: themed ? color || null : null });
+      const r = await saveLook(id, { themed, emoji: themed ? emoji.trim() || null : null, coverColor: themed ? color || null : null });
+      unfeatured = Boolean(r?.unfeatured); // changing the kind of a featured list takes it off the home page until an admin re-features it
     })) await closeEdit();
   }
   function startEdit() { name = data!.list.name; desc = data!.list.description ?? ''; themed = Boolean(data!.list.themed); emoji = data!.list.emoji ?? ''; color = data!.list.coverColor ?? ''; err = ''; editing = true; }
@@ -133,6 +134,7 @@
     </div>
   </div>
   {#if err}<p class="err" role="alert">{err}</p>{/if}
+  {#if unfeatured}<p class="muted" role="status">{$t('mine.themed.unfeatured')}</p>{/if}
   {#if isAdmin && data.list.themed && data.list.pinned}<p class="muted">{$t('mine.themed.pinnedHint')}</p>{/if}
   {#if data.hiddenCount}<p class="muted">{$t('social.lists.hidden', { n: data.hiddenCount })}</p>{/if}
 

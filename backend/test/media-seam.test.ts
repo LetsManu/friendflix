@@ -117,6 +117,19 @@ describe('capabilities exposure', () => {
       (env.ctx.jf as { capabilities: MediaCapabilities }).capabilities = prev;
     }
   });
+  it('an implementation that predates `chapters` (optional flag) reports it as unsupported, and the chapters route says so', async () => {
+    const { chapters: _c, ...old }: MediaCapabilities = { segments: new Set(), trickplay: false, upcoming: false, subtitleSearch: false, webhooks: false, changeFeed: false, planB: false, subtitleExtract: false, chapters: true };
+    const legacy: MediaCapabilities = old; // compiles without the field
+    expect(publicCapabilities(legacy)).toMatchObject({ chapters: false });
+    const prev = env.ctx.jf.capabilities;
+    (env.ctx.jf as { capabilities: MediaCapabilities }).capabilities = { ...prev, chapters: undefined };
+    try {
+      const s = await env.login();
+      expect((await env.app.inject({ url: '/api/me', cookies: s.cookies })).json().server.capabilities.chapters).toBe(false);
+    } finally {
+      (env.ctx.jf as { capabilities: MediaCapabilities }).capabilities = prev;
+    }
+  });
 });
 
 describe('repository hygiene', () => {

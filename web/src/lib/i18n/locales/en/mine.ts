@@ -20,6 +20,7 @@ const dict: Translation<typeof de> = {
     pin: 'Show on the home page',
     unpin: 'Remove from the home page',
     pinnedHint: 'This themed list is pinned to the home page.',
+    unfeatured: 'This list was featured. Because its kind (themed list) changed, it no longer is – an admin can feature it again.',
     tooManyPinned: 'No more than {max} lists can be pinned.',
     manageTitle: 'Themed lists on the home page',
     manageHint: 'Pinned themed lists appear on everyone\'s home page in this order (at most {max}, shared with the featured lists).',

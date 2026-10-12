@@ -45,8 +45,11 @@ export interface MediaCapabilities {
    * the server cannot deliver them as WebVTT; PlaybackDto subtitle URLs then point there. false: the gateway path of the DTO.
    */
   subtitleExtract: boolean;
-  /** Block 17 P1: chapter marks (names, optional stills) via chapters(): seek bar marks + the player's "Szenen" panel */
-  chapters: boolean;
+  /**
+   * Block 17 P1: chapter marks (names, optional stills) via chapters(): seek bar marks + the player's "Szenen" panel.
+   * Optional so implementations written before Block 17 (a Plex fork) still compile; absent = false.
+   */
+  chapters?: boolean;
   /**
    * How FriendFlix accounts become Seerr users for wishes (backend only, not sent to the web). 'jellyfin-import': find the
    * account's Jellyfin user in Seerr (import it via /user/import-from-jellyfin). 'local' (also when absent): a local Seerr user
@@ -59,7 +62,7 @@ export interface MediaCapabilities {
 export const publicCapabilities = (c: MediaCapabilities) => ({
   segments: SEGMENT_TYPES.filter((s) => c.segments.has(s)),
   trickplay: c.trickplay, upcoming: c.upcoming, subtitleSearch: c.subtitleSearch, webhooks: c.webhooks, changeFeed: c.changeFeed, planB: c.planB,
-  subtitleExtract: c.subtitleExtract, chapters: c.chapters,
+  subtitleExtract: c.subtitleExtract, chapters: c.chapters ?? false,
 });
 
 // ---------------------------------------------------------------- DTOs
@@ -358,6 +361,11 @@ export interface MediaServer {
   mediaTraits?(user: MediaUser, id: string): Promise<MediaTraits | null>;
   /** one page of the whole library's traits (admin key, quality index); a short page = the end */
   libraryMediaTraits?(type: 'Movie' | 'Episode', start: number, limit: number): Promise<ItemMediaTraits[]>;
+  /**
+   * one page of the ids of ALL continuing series (admin key, library-wide; fresh label "Staffelfinale" needs to know a series is NOT
+   * continuing). Short page = the end. Absent = fresh.ts falls back to continuingSeries(viewer), cached per viewer.
+   */
+  libraryContinuingSeriesIds?(start: number, limit: number): Promise<string[]>;
 
   // ---- Block 17 P1 (optional): player depth. Absent = fallbacks (credits: people() + itemTraits(); chapters: none).
   /** chapter marks of a video the viewer can see, sorted by start ([] = none); only called when capabilities.chapters */

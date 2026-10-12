@@ -20,6 +20,7 @@ const dict: Translation<typeof de> = {
     pin: 'Pokaż na stronie głównej',
     unpin: 'Zdejmij ze strony głównej',
     pinnedHint: 'Ta lista tematyczna jest przypięta do strony głównej.',
+    unfeatured: 'Ta lista była wyróżniona. Ponieważ zmienił się jej rodzaj (lista tematyczna), już nie jest – administrator może ją wyróżnić ponownie.',
     tooManyPinned: 'Można przypiąć najwyżej {max} list.',
     manageTitle: 'Listy tematyczne na stronie głównej',
     manageHint: 'Przypięte listy tematyczne pojawiają się wszystkim na stronie głównej w tej kolejności (najwyżej {max}, razem z listami wyróżnionymi).',

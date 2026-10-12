@@ -67,12 +67,16 @@ export const episodeFacts = (eps: ItemDto[]): EpisodeFacts[] =>
   eps.filter((e) => e.indexNumber != null).map((e) => ({ season: e.parentIndexNumber ?? 1, index: e.indexNumber!, addedAt: ms(e.dateCreated), premiere: ms(e.premiereDate) }));
 
 const SERIES_TTL = 900;
+/** at most this many uncached series (2 media-server calls each) are labelled per badges request; cached ones are free */
+export const SERIES_LABELS_PER_REQUEST = 12;
 
 /** Label of one series, cached for 15 min (the label depends on the library only, never on the viewer). */
-async function labelForSeries(ctx: Ctx, user: JfUser, item: ItemDto, continuing: Set<string> | null, now: number): Promise<FreshLabel | null> {
+async function labelForSeries(ctx: Ctx, user: JfUser, item: ItemDto, continuing: Set<string> | null, now: number, budget: { left: number }): Promise<FreshLabel | null> {
   const key = `fresh:s:${item.id}`;
   const hit = await ctx.kv.get(key).catch(() => null);
   if (hit !== null && hit !== undefined) return hit === '' ? null : (hit as FreshLabel);
+  if (budget.left <= 0) return null; // over this request's budget: no label now (a later request computes and caches it)
+  budget.left--;
   const all = await ctx.jf.episodes(user, item.id);
   const real = all.length ? await ctx.jf.availableEpisodes(user, all.map((e) => e.id)) : new Set<string>();
   const have = all.filter((e) => real.has(e.id));
@@ -85,19 +89,39 @@ async function labelForSeries(ctx: Ctx, user: JfUser, item: ItemDto, continuing:
   return label;
 }
 
-/** Ids of continuing series (cached 15 min, library-wide: the status is not viewer specific). */
+const CONT_PAGE = 500;
+const CONT_MAX = 50_000;
+
+/**
+ * Ids of continuing series, cached 15 min. Library-wide via the admin-level `libraryContinuingSeriesIds` (paged through ALL of them:
+ * a series missing from the set would be "ended" and could be called a finale). Servers without it fall back to the viewer's own
+ * continuingSeries(), cached PER VIEWER (a restricted viewer's partial list must never decide for everybody else).
+ * null = unknown (then a finale is never claimed).
+ */
 async function continuingIds(ctx: Ctx, user: JfUser): Promise<Set<string> | null> {
-  const key = 'fresh:continuing';
+  const lib = ctx.jf.libraryContinuingSeriesIds?.bind(ctx.jf);
+  const key = lib ? 'fresh:continuing:lib' : `fresh:continuing:u:${user.jellyfin_user_id}`;
   const hit = await ctx.kv.get(key).catch(() => null);
   if (hit) {
     try { return new Set(JSON.parse(hit) as string[]); } catch { /* recompute */ }
   }
   try {
-    const ids = (await ctx.jf.continuingSeries(user)).map((s) => s.item.id);
+    let ids: string[] = [];
+    if (lib) {
+      let complete = false;
+      for (let start = 0; start < CONT_MAX; start += CONT_PAGE) {
+        const page = await lib(start, CONT_PAGE);
+        ids.push(...page);
+        if (page.length < CONT_PAGE) { complete = true; break; }
+      }
+      if (!complete) return null; // absurdly large: better no finale than a wrong one
+    } else {
+      ids = (await ctx.jf.continuingSeries(user)).map((s) => s.item.id);
+    }
     await ctx.kv.set(key, JSON.stringify(ids), SERIES_TTL).catch(() => undefined);
     return new Set(ids);
   } catch {
-    return null; // unknown: a finale is never claimed
+    return null;
   }
 }
 
@@ -109,14 +133,27 @@ export const LEAVING_ROW_DAYS = 30;
 /** notified this many days before (and on the last day / the day before) */
 export const LEAVING_WEEK_DAYS = 7;
 
+/**
+ * "Today" of the instance as YYYY-MM-DD in the backend's time zone (`TZ`, compose default Europe/Vienna; UTC when unset). All
+ * leaving-soon day counts use it instead of Postgres' current_date (the database container usually runs in UTC, which would
+ * flip the count at 01:00/02:00 local time).
+ */
+export function instanceToday(now = new Date(), tz = process.env.TZ): string {
+  try {
+    return new Intl.DateTimeFormat('en-CA', { timeZone: tz || 'UTC', year: 'numeric', month: '2-digit', day: '2-digit' }).format(now);
+  } catch {
+    return now.toISOString().slice(0, 10); // unknown zone name: UTC
+  }
+}
+
 export interface LeavingRow { item_id: string; leaves_at: string; note: string | null; days: number }
 
 /** Days left (0 = last day) for each id that has a not yet expired date within `within` days. */
 export async function leavingFor(ctx: Pick<Ctx, 'db'>, ids: string[], withinDays = LEAVING_BADGE_DAYS): Promise<Map<string, number>> {
   if (!ids.length) return new Map();
   const r = await ctx.db.query<{ item_id: string; days: number }>(
-    'select item_id, (leaves_at - current_date)::int as days from leaving_soon where item_id = any($1) and leaves_at >= current_date and leaves_at - current_date <= $2',
-    [ids, withinDays],
+    'select item_id, (leaves_at - $3::date)::int as days from leaving_soon where item_id = any($1) and leaves_at >= $3::date and leaves_at - $3::date <= $2',
+    [ids, withinDays, instanceToday()],
   );
   return new Map(r.rows.map((x) => [x.item_id, x.days]));
 }
@@ -147,12 +184,13 @@ export async function badgesFor(ctx: Ctx, user: JfUser, items: ItemDto[], now = 
   }
   if (seriesTodo.length) {
     const continuing = await continuingIds(ctx, user);
+    const budget = { left: SERIES_LABELS_PER_REQUEST };
     let next = 0;
     await Promise.all(Array.from({ length: Math.min(4, seriesTodo.length) }, async () => {
       while (next < seriesTodo.length) {
         const s = seriesTodo[next++]!;
         try {
-          const l = await labelForSeries(ctx, user, s, continuing, now);
+          const l = await labelForSeries(ctx, user, s, continuing, now, budget);
           if (l) out[s.id] = { ...out[s.id], fresh: l };
         } catch { /* no label this time */ }
       }
@@ -176,10 +214,11 @@ export async function leavingTick(ctx: Db): Promise<number> {
   leavingBusy = true;
   let sent = 0;
   try {
-    await ctx.db.query('delete from leaving_soon where leaves_at < current_date');
+    const today = instanceToday();
+    await ctx.db.query('delete from leaving_soon where leaves_at < $1::date', [today]);
     const due = (await ctx.db.query<LeavingRow>(
-      `select item_id, leaves_at::text, note, (leaves_at - current_date)::int as days from leaving_soon where leaves_at - current_date <= $1 order by leaves_at`,
-      [LEAVING_WEEK_DAYS],
+      `select item_id, leaves_at::text, note, (leaves_at - $2::date)::int as days from leaving_soon where leaves_at - $2::date <= $1 order by leaves_at`,
+      [LEAVING_WEEK_DAYS, today],
     )).rows;
     if (!due.length) return 0;
     const users = (await ctx.db.query<UserRow>('select * from users where not disabled')).rows;

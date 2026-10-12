@@ -1,10 +1,10 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { AudioFxEngine, fxBlocked, fxPlan, loadFx, saveFx } from './audiofx';
+import { AudioFxEngine, fxBlocked, fxFromPref, fxPlan, fxToPref, loadFx, saveFx } from './audiofx';
 
 /** minimal fake of the Web Audio API: records connections */
-function fakeAC(opts: { startState?: AudioContextState; resumeWorks?: boolean; sourceThrows?: boolean } = {}) {
+function fakeAC(opts: { startState?: AudioContextState; resumeWorks?: boolean; sourceThrows?: boolean; secondSourceThrows?: boolean } = {}) {
   const log: string[] = [];
-  let made = 0;
+  let made = 0, sources = 0;
   class Node { constructor(public name: string) {} connect(n: Node) { log.push(`${this.name}->${n.name}`); return n; } disconnect() { log.push(`x ${this.name}`); } }
   const param = () => ({ value: 0 });
   class Ctx {
@@ -13,12 +13,12 @@ function fakeAC(opts: { startState?: AudioContextState; resumeWorks?: boolean; s
     constructor() { made++; }
     async resume() { if (opts.resumeWorks !== false) this.state = 'running'; }
     async close() { this.state = 'closed'; }
-    createMediaElementSource() { if (opts.sourceThrows) throw new Error('InvalidStateError'); return new Node('src'); }
+    createMediaElementSource() { sources++; if (opts.sourceThrows || (opts.secondSourceThrows && sources > 1)) throw new Error('InvalidStateError'); return new Node('src'); }
     createBiquadFilter() { return Object.assign(new Node('bq'), { type: '', frequency: param(), Q: param(), gain: param() }); }
     createDynamicsCompressor() { return Object.assign(new Node('comp'), { threshold: param(), knee: param(), ratio: param(), attack: param(), release: param() }); }
     createGain() { return Object.assign(new Node('gain'), { gain: param() }); }
   }
-  return { AC: Ctx as unknown as new () => AudioContext, log, made: () => made };
+  return { AC: Ctx as unknown as new () => AudioContext, log, made: () => made, sources: () => sources };
 }
 const video = {} as HTMLMediaElement;
 
@@ -84,9 +84,27 @@ describe('AudioFxEngine', () => {
     expect(await e.apply({ voice: true, night: false })).toBe('unsupported');
     expect(await e.apply({ voice: true, night: false })).toBe('unsupported'); // and stays so
   });
+  it('overlapping calls (tap gesture + play event) capture the element once and FX can still be switched off', async () => {
+    // a suspended context: the first call awaits resume(), the second one would race past the `!src` check
+    const f = fakeAC({ startState: 'suspended', secondSourceThrows: true });
+    const e = new AudioFxEngine(video, f.AC);
+    const [a, b] = await Promise.all([e.apply({ voice: true, night: false }), e.apply({ voice: true, night: false })]);
+    expect([a, b]).toEqual(['ok', 'ok']);
+    expect(f.sources()).toBe(1);
+    expect(e.routed).toBe(true);
+    f.log.length = 0;
+    expect(await e.apply({ voice: false, night: false })).toBe('off');
+    expect(f.log.filter((l) => l.includes('->'))).toEqual(['src->out']); // bypassed, not stuck on the chain
+  });
 });
 
 describe('remembered per profile', () => {
+  it('server pref <-> toggles round-trip; unknown values are off', () => {
+    for (const p of ['off', 'voices', 'night', 'both'] as const) expect(fxToPref(fxFromPref(p))).toBe(p);
+    expect(fxFromPref('both')).toEqual({ voice: true, night: true });
+    expect(fxFromPref(undefined)).toEqual({ voice: false, night: false });
+    expect(fxFromPref('loud')).toEqual({ voice: false, night: false });
+  });
   afterEach(() => { vi.unstubAllGlobals(); });
   it('stores per profile and survives a broken storage', () => {
     const m = new Map<string, string>();

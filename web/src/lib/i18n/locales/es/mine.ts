@@ -20,6 +20,7 @@ const dict: Translation<typeof de> = {
     pin: 'Mostrar en el inicio',
     unpin: 'Quitar del inicio',
     pinnedHint: 'Esta lista temática está fijada en el inicio.',
+    unfeatured: 'Esta lista estaba destacada. Como cambió su tipo (lista temática), ya no lo está; un admin puede volver a destacarla.',
     tooManyPinned: 'No se pueden fijar más de {max} listas.',
     manageTitle: 'Listas temáticas en el inicio',
     manageHint: 'Las listas temáticas fijadas aparecen en el inicio de todos, en este orden (como máximo {max}, junto con las listas destacadas).',

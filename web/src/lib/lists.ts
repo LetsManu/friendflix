@@ -44,7 +44,7 @@ export interface ManagedThemed { id: string; name: string; emoji: string | null;
 export const loadManagedThemed = () => api<{ lists: ManagedThemed[]; max: number }>('/api/lists/themed/manage');
 export const pinThemed = (id: string, pinned: boolean) => api(`/api/lists/${id}/pin`, { method: 'PUT', body: { pinned } });
 export const orderThemed = (ids: string[]) => api('/api/lists/themed/order', { method: 'PUT', body: { ids } });
-export const saveLook = (id: string, look: { themed?: boolean; emoji?: string | null; coverColor?: string | null }) => api(`/api/lists/${id}`, { method: 'PATCH', body: look });
+export const saveLook = (id: string, look: { themed?: boolean; emoji?: string | null; coverColor?: string | null }) => api<{ ok: boolean; unfeatured?: boolean }>(`/api/lists/${id}`, { method: 'PATCH', body: look });
 
 /** Cover palette offered for themed lists (dark enough for white text). */
 export const COVER_COLORS = ['#7a1f3d', '#a33b20', '#9a6a00', '#2f6b3a', '#1f5f7a', '#3a3a8c', '#6a2c91', '#3d4450'] as const;

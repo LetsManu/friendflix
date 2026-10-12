@@ -196,13 +196,21 @@ export function listRoutes(app: FastifyInstance, ctx: Ctx) {
       name: z.string().trim().min(1).max(60).optional(), description: z.string().trim().max(280).nullable().optional(),
       themed: z.boolean().optional(), emoji: emojiSchema.nullable().optional(), coverColor: colorSchema.nullable().optional(),
     }).parse(req.body);
+    const before = (await ctx.db.query<{ themed: boolean; featured: boolean }>('select themed, featured_at is not null as featured from lists where id = $1', [a.id])).rows[0];
     await ctx.db.query(
       `update lists set name = coalesce($2, name), description = case when $3::boolean then $4 else description end,
               themed = coalesce($5, themed), emoji = case when $6::boolean then $7 else emoji end, cover_color = case when $8::boolean then $9 else cover_color end,
               updated_at = now() where id = $1`,
       [a.id, b.name ?? null, b.description !== undefined, b.description || null, b.themed ?? null, b.emoji !== undefined, b.emoji || null, b.coverColor !== undefined, b.coverColor || null],
     );
-    // no longer themed: it cannot stay pinned as a themed row (a plain featured list is the admin's own switch)
+    // Featuring is an admin decision about THIS kind of list: a featured plain list turned themed would become a kids-readable home
+    // row, a pinned themed list turned plain a featured social list - neither without an admin. Changing `themed` on a featured list
+    // therefore unfeatures it (the admin can pin it again); the owner learns it from `unfeatured`.
+    if (before && b.themed !== undefined && b.themed !== before.themed && before.featured) {
+      await ctx.db.query('update lists set featured_at = null, featured_pos = null where id = $1', [a.id]);
+      await audit(ctx, req.user!.id, 'list.unfeature', a.id);
+      return { ok: true, unfeatured: true };
+    }
     if (b.themed === false) await ctx.db.query('update lists set featured_pos = null where id = $1', [a.id]);
     return { ok: true };
   });

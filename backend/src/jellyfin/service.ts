@@ -679,7 +679,8 @@ export class JellyfinService implements MediaServer {
   async libraryMediaTraits(type: 'Movie' | 'Episode', start: number, limit: number): Promise<ItemMediaTraits[]> {
     const fields = type === 'Episode' ? 'MediaStreams,SeriesId' : 'MediaStreams';
     const r = await this.client.adminJson<{ Items?: any[] }>(
-      `/Items?recursive=true&includeItemTypes=${type}&fields=${fields}&enableImages=false&enableUserData=false&startIndex=${start}&limit=${limit}`,
+      // stable order (SortName, then Id as tie-breaker): pages taken while the library changes must not skip / repeat items
+      `/Items?recursive=true&includeItemTypes=${type}&fields=${fields}&enableImages=false&enableUserData=false&sortBy=SortName,Id&sortOrder=Ascending&startIndex=${start}&limit=${limit}`,
     );
     const out: ItemMediaTraits[] = [];
     for (const item of r?.Items ?? []) {
@@ -688,6 +689,16 @@ export class JellyfinService implements MediaServer {
       else if (item?.Id) out.push({ id: item.Id, seriesId: item.SeriesId, traits: { resolution: 'sd', hdr: null, audio: null } }); // keeps page lengths honest (short page = end)
     }
     return out;
+  }
+
+  /** One page of ALL continuing series ids (admin key: library-wide, independent of any viewer's parental limits); short page = end. */
+  async libraryContinuingSeriesIds(start: number, limit: number): Promise<string[]> {
+    const p = new URLSearchParams({
+      recursive: 'true', includeItemTypes: 'Series', seriesStatus: 'Continuing', sortBy: 'SortName,Id', sortOrder: 'Ascending',
+      startIndex: String(start), limit: String(limit), enableImages: 'false', enableUserData: 'false', enableTotalRecordCount: 'false',
+    });
+    const r = await this.client.adminJson<{ Items?: Array<{ Id?: string }> }>(`/Items?${p}`);
+    return (r?.Items ?? []).flatMap((i) => (i?.Id ? [nid(i.Id)] : []));
   }
 
   // ---- Block 17 P1: chapters + credits (player "Szenen" panel, "Besetzung & Infos") ----

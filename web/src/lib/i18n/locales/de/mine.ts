@@ -18,6 +18,7 @@ export default {
     pin: 'Auf der Startseite zeigen',
     unpin: 'Von der Startseite nehmen',
     pinnedHint: 'Diese Themenliste ist auf der Startseite angeheftet.',
+    unfeatured: 'Die Liste war hervorgehoben. Weil sich die Art (Themenliste) geändert hat, ist sie es nicht mehr – ein Admin kann sie erneut hervorheben.',
     tooManyPinned: 'Es können höchstens {max} Listen angeheftet werden.',
     manageTitle: 'Themenlisten auf der Startseite',
     manageHint: 'Angeheftete Themenlisten erscheinen für alle auf der Startseite, in dieser Reihenfolge (höchstens {max}, gemeinsam mit den hervorgehobenen Listen).',

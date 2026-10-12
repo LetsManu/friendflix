@@ -4,7 +4,7 @@
   import { api, ApiError, fmtClock, getActiveProfile, secToTicks } from '#lib/api';
   import Icon from '#lib/Icon.svelte';
   import { get } from 'svelte/store';
-  import { prefs } from '#lib/stores';
+  import { prefs, prefsLoaded, saveAudioFx } from '#lib/stores';
   import { segmentShown, serverCaps } from '#lib/capabilities';
   import { subClasses } from '#lib/substyle';
   import { noteInteraction } from '#lib/stillwatching';
@@ -23,7 +23,7 @@
   import ScenesPanel from '#lib/player/ScenesPanel.svelte';
   import { hasPeople, loadCastInfo, type CastInfoData } from '#lib/player/castinfo';
   import { chapterIndexAt, chapterLabel, chapterMarks, normalizeChapters, trickFrame, usefulChapters, type Chapter } from '#lib/player/chapters';
-  import { AudioFxEngine, fxActive, fxBlocked, loadFx, saveFx, type AudioFx } from '#lib/player/audiofx';
+  import { AudioFxEngine, fxActive, fxBlocked, fxFromPref, fxToPref, loadFx, saveFx, type AudioFx } from '#lib/player/audiofx';
   import { fmtDuration, getLocale, t, tr, type TFn, type TKey } from '#lib/i18n';
   import { animeAudio, animeDefaultApplies, animeSubtitle } from '#lib/player/anime';
   import { castPause, castPlay, castPlayPause, castSeek, castSetSubtitle, castSetVolume, castState, castStop, castToggleMute, initCast, loadOnCast, onCastEvent, requestCastSession, type CastInfo, type CastState } from '#lib/cast';
@@ -467,7 +467,8 @@
   const chapterAt = (sec: number) => { const i = chapterIndexAt(chapters, sec); return chapters.length > 1 && i >= 0 ? chapterLabel(chapters[i]!, i) : ''; };
   function closeScenes() { menu = ''; void tickDom().then(() => scBtn?.focus()); }
 
-  // ---- sound: "Klare Stimmen" / "Nachtmodus" (Web Audio on the local <video>; remembered per profile in this browser) ----
+  // ---- sound: "Klare Stimmen" / "Nachtmodus" (Web Audio on the local <video>; the profile's server pref `audioFx`, with a
+  //      localStorage copy so the player starts with the right mode before /api/prefs answered) ----
   let fx: AudioFx = loadFx(getActiveProfile()), fxEngine: AudioFxEngine | null = null, fxNote: '' | 'unsupported' | 'suspended' = '';
   const fxBlockFor = (isCasting: boolean, m: string, h: Hls | null) => video ? fxBlocked({
     casting: isCasting, nativeHls: m === 'hls' && !h, src: video.currentSrc || video.src || '', crossOrigin: video.crossOrigin, origin: location.origin,
@@ -487,9 +488,21 @@
     { k: 'voice', label: 'scenes.audio.voice', hint: 'scenes.audio.voiceHint' },
     { k: 'night', label: 'scenes.audio.night', hint: 'scenes.audio.nightHint' },
   ] as const;
+  /** the server pref wins once it is known (another device may have changed it); never after a toggle made here */
+  let fxTouched = false;
+  $: if ($prefsLoaded && !fxTouched) adoptFxPref($prefs.audioFx);
+  function adoptFxPref(p: unknown) {
+    const n = fxFromPref(p);
+    if (n.voice === fx.voice && n.night === fx.night) return;
+    fx = n;
+    saveFx(getActiveProfile(), fx);
+    void applyFx(true);
+  }
   function toggleFx(k: keyof AudioFx) {
+    fxTouched = true;
     fx = { ...fx, [k]: !fx[k] };
     saveFx(getActiveProfile(), fx);
+    saveAudioFx(fxToPref(fx)).catch(() => undefined); // offline / failed: still remembered in this browser
     const name = tr(k === 'voice' ? 'scenes.audio.voice' : 'scenes.audio.night');
     flash(tr(fx[k] ? 'scenes.audio.on' : 'scenes.audio.off', { name }), 1400);
     void applyFx();
@@ -722,7 +735,7 @@
     castOff = onCastEvent(handleCast);
     if (!partyMode) void initCast();
     loadBookmarks();
-    api(`/api/items/${itemId}/chapters`).then((r) => (chapters = r?.supported ? normalizeChapters(r.chapters) : [])).catch(() => undefined);
+    if ($serverCaps.chapters) api(`/api/items/${itemId}/chapters`).then((r) => (chapters = r?.supported ? normalizeChapters(r.chapters) : [])).catch(() => undefined);
     if ($serverCaps.segments.length) api(`/api/items/${itemId}/segments`).then((r) => (segments = (r.segments as typeof segments).map((x) => ({ ...x, type: String(x.type).toLowerCase() })).filter((x) => segmentShown($serverCaps, x.type)))).catch(() => undefined);
     progressTimer = setInterval(() => { if (started && !stopped) send('progress'); }, 10_000);
     pipOk = Boolean(document.pictureInPictureEnabled) && !video?.disablePictureInPicture;

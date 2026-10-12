@@ -95,7 +95,7 @@ test.describe('player: scenes, cast & info, sound', () => {
     await expect(ci).toHaveCount(0);
   });
 
-  test('sound: clear voices / night mode toggle in the audio menu, remembered per profile, playback keeps running', async ({ page }) => {
+  test('sound: clear voices / night mode toggle in the audio menu, remembered per profile, playback keeps running', async ({ page, api }) => {
     await page.goto('/watch/' + MOVIE.id);
     await videoReady(page);
     await page.evaluate(() => document.querySelector('video')!.play().catch(() => undefined));
@@ -109,6 +109,7 @@ test.describe('player: scenes, cast & info, sound', () => {
     expect(await page.evaluate(() => localStorage.getItem('ff_audiofx:p1'))).toBe(JSON.stringify({ voice: true, night: false }));
     await menu.getByRole('switch', { name: /Nachtmodus/ }).click(); // the menu stays open for the second switch
     await expect(menu.getByRole('switch', { name: /Nachtmodus/ })).toHaveAttribute('aria-checked', 'true');
+    await expect.poll(() => api.audioFx).toBe('both'); // the profile's server pref (follows it to other devices)
     await shot(page, 'desktop-sound');
     const t0 = await page.evaluate(() => document.querySelector('video')!.currentTime);
     await expect.poll(() => page.evaluate(() => document.querySelector('video')!.currentTime), { timeout: 5000 }).toBeGreaterThan(t0 + 0.5);
@@ -117,6 +118,16 @@ test.describe('player: scenes, cast & info, sound', () => {
     await videoReady(page);
     await page.getByRole('button', { name: 'Audio und Untertitel' }).click();
     await expect(page.getByRole('switch', { name: /Nachtmodus/ })).toHaveAttribute('aria-checked', 'true');
+  });
+
+  test('sound: the server pref wins over this browser\'s copy (changed on another device)', async ({ page, api }) => {
+    api.audioFx = 'night';
+    await page.addInitScript(() => localStorage.setItem('ff_audiofx:p1', JSON.stringify({ voice: true, night: false })));
+    await page.goto('/watch/' + MOVIE.id);
+    await videoReady(page);
+    await page.getByRole('button', { name: 'Audio und Untertitel' }).click();
+    await expect(page.getByRole('switch', { name: /Nachtmodus/ })).toHaveAttribute('aria-checked', 'true');
+    await expect(page.getByRole('switch', { name: /Klare Stimmen/ })).toHaveAttribute('aria-checked', 'false');
   });
 
   test('sound modes are off and explained where Web Audio is missing', async ({ page }) => {

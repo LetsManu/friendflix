@@ -20,6 +20,7 @@ const dict: Translation<typeof de> = {
     pin: 'Afficher sur l\'accueil',
     unpin: 'Retirer de l\'accueil',
     pinnedHint: 'Cette liste thématique est épinglée sur l\'accueil.',
+    unfeatured: 'Cette liste était mise en avant. Son type (liste thématique) ayant changé, elle ne l\'est plus – un admin peut la remettre en avant.',
     tooManyPinned: 'Vous ne pouvez pas épingler plus de {max} listes.',
     manageTitle: 'Listes thématiques sur l\'accueil',
     manageHint: 'Les listes thématiques épinglées apparaissent sur l\'accueil de tout le monde, dans cet ordre ({max} au maximum, en comptant les listes mises en avant).',

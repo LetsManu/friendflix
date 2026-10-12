@@ -20,6 +20,7 @@ const dict: Translation<typeof de> = {
     pin: 'Ana sayfada göster',
     unpin: 'Ana sayfadan kaldır',
     pinnedHint: 'Bu tema listesi ana sayfaya sabitlendi.',
+    unfeatured: 'Bu liste öne çıkarılmıştı. Türü (tema listesi) değiştiği için artık öne çıkarılmıyor – bir yönetici yeniden öne çıkarabilir.',
     tooManyPinned: 'En fazla {max} liste sabitlenebilir.',
     manageTitle: 'Ana sayfadaki tema listeleri',
     manageHint: 'Sabitlenen tema listeleri herkesin ana sayfasında bu sırayla görünür (öne çıkan listelerle birlikte en fazla {max}).',
