@@ -23,9 +23,9 @@
 - Step-up: at most once per 60 s, and only if the estimate has been ≥ the next rung ÷ 0.6 for 30 s and the buffer is ≥ 20 s.
 - hls.js: `maxBufferLength 60`, `maxMaxBufferLength 120`, `backBufferLength 90`, plus explicit fragment and manifest load policies with more retries.
 - Bandwidth estimate: stored in `localStorage` key `ff_bw` with a timestamp and ignored after 7 days.
-- Remote cap: `remoteMaxBitrate` per role, default 4 Mbit/s for friend and family (owner upload ≈ 11 Mbit/s). Defaults for the other roles:
+- Remote cap: `remoteMaxBitrate` per role, default 8 Mbit/s for friend and family (owner upload 33 Mbit/s). Defaults for the other roles:
   - guest: 4 Mbit/s
-  - admin: 8 Mbit/s
+  - admin: 12 Mbit/s
 
   `HOME_NETWORKS` is a CIDR list defaulting to RFC1918 + loopback + fc00::/7 + fe80::/10. Ambiguous or unknown IPs count as remote.
 - `/api/home`:
