@@ -8,6 +8,7 @@
   import { dialogKeys } from '#lib/actions';
   import { openPreview } from '#lib/previewSheet';
   import { itemPath, playPath } from '#lib/mobile';
+  import { t, tr } from '#lib/i18n';
 
   /** Phone card: 2:3 poster (tap opens the preview sheet) or, with `landscape`, a 16:9 "Weiterschauen" card with ⓘ and ⋯ bar. */
   export let item: Item;
@@ -48,19 +49,19 @@
 </script>
 
 <article class="pc" class:landscape>
-  <a class="thumb" href={landscape ? playPath(item) : itemPath(item)} aria-label={landscape ? `${label} abspielen` : `${label}, Vorschau öffnen`} aria-haspopup={landscape ? undefined : 'dialog'} on:click={landscape ? undefined : open}>
+  <a class="thumb" href={landscape ? playPath(item) : itemPath(item)} aria-label={landscape ? $t('home.card.playName', { name: label }) : $t('home.card.openPreview', { name: label })} aria-haspopup={landscape ? undefined : 'dialog'} on:click={landscape ? undefined : open}>
     {#if src}
       <img class:spoil={isSpoiler(item, $prefs)} loading="lazy" decoding="async" {src} srcset={srcs} sizes={landscape ? '45vw' : '32vw'} alt="" width={landscape ? 320 : 200} height={landscape ? 180 : 300} />
     {:else}<span class="noimg">{item.name}</span>{/if}
-    {#if fresh}<span class="newep">Neue Folgen</span>{/if}
+    {#if fresh}<span class="newep">{$t('home.card.newEpisodes')}</span>{/if}
     {#if landscape}<span class="playi" aria-hidden="true"><Icon name="play" size={20} /></span>{/if}
     {#if pct}<span class="progress"><i style="width:{pct}%"></i></span>{/if}
   </a>
   {#if landscape}
     <div class="pbar">
       <span class="t"><b>{item.type === 'Episode' ? item.seriesName ?? item.name : item.name}</b>{#if sub}<small>S{item.parentIndexNumber ?? '?'}:E{item.indexNumber ?? '?'}</small>{/if}</span>
-      <button type="button" class="ib" aria-label="Details zu {item.name}" aria-haspopup="dialog" on:click={(e) => openPreview(item, e.currentTarget)}><Icon name="info" size={22} /></button>
-      <button type="button" class="ib" bind:this={moreBtn} aria-label="Aktionen für {item.name}" aria-haspopup="dialog" aria-expanded={acts} on:click={openActs}><span aria-hidden="true" class="dots">⋯</span></button>
+      <button type="button" class="ib" aria-label={$t('home.card.detailsFor', { name: item.name })} aria-haspopup="dialog" on:click={(e) => openPreview(item, e.currentTarget)}><Icon name="info" size={22} /></button>
+      <button type="button" class="ib" bind:this={moreBtn} aria-label={$t('home.card.actionsFor', { name: item.name })} aria-haspopup="dialog" aria-expanded={acts} on:click={openActs}><span aria-hidden="true" class="dots">⋯</span></button>
     </div>
   {/if}
 </article>
@@ -68,15 +69,15 @@
 {#if acts}
   <!-- svelte-ignore a11y_click_events_have_key_events -->
   <div class="scrim" use:portal on:click={() => closeActs()} role="presentation"></div>
-  <div class="sheet" tabindex="-1" use:portal use:dialogKeys={{ close: () => closeActs() }} bind:this={actsEl} role="dialog" aria-modal="true" aria-label="Aktionen für {item.name}">
+  <div class="sheet" tabindex="-1" use:portal use:dialogKeys={{ close: () => closeActs() }} bind:this={actsEl} role="dialog" aria-modal="true" aria-label={$t('home.card.actionsFor', { name: item.name })}>
     <p class="st">{item.name}</p>
-    <a class="act" href={playPath(item)} on:click={() => closeActs(false)}><Icon name="play" size={20} />Abspielen</a>
-    <a class="act" href={itemPath(item)} on:click={() => closeActs(false)}><Icon name="info" size={20} />Details &amp; mehr</a>
-    <button type="button" class="act" on:click={async () => { const ok = await toggleList(item.seriesId ?? item.id, inList); if (!ok) note = 'Konnte nicht gespeichert werden.'; else closeActs(); }}><Icon name={inList ? 'check' : 'plus'} size={20} />{inList ? 'Von Meine Liste entfernen' : 'Zu Meine Liste'}</button>
-    <button type="button" class="act" aria-pressed={fav} on:click={() => { void toggleFav(); closeActs(); }}><Icon name="heart" size={20} fill={fav} />{fav ? 'Favorit entfernen' : 'Als Favorit markieren'}</button>
-    {#if removable}<button type="button" class="act" on:click={() => { dispatch('remove', item); closeActs(false); }}><Icon name="x" size={20} />Aus Weiterschauen entfernen</button>{/if}
+    <a class="act" href={playPath(item)} on:click={() => closeActs(false)}><Icon name="play" size={20} />{$t('home.card.play')}</a>
+    <a class="act" href={itemPath(item)} on:click={() => closeActs(false)}><Icon name="info" size={20} />{$t('home.card.detailsMore')}</a>
+    <button type="button" class="act" on:click={async () => { const ok = await toggleList(item.seriesId ?? item.id, inList); if (!ok) note = tr('home.card.saveFailed'); else closeActs(); }}><Icon name={inList ? 'check' : 'plus'} size={20} />{inList ? $t('home.card.removeFromList') : $t('home.card.addToList')}</button>
+    <button type="button" class="act" aria-pressed={fav} on:click={() => { void toggleFav(); closeActs(); }}><Icon name="heart" size={20} fill={fav} />{fav ? $t('home.card.favRemove') : $t('home.card.favAdd')}</button>
+    {#if removable}<button type="button" class="act" on:click={() => { dispatch('remove', item); closeActs(false); }}><Icon name="x" size={20} />{$t('home.card.removeResume')}</button>{/if}
     {#if note}<p class="err pad" role="status">{note}</p>{/if}
-    <button type="button" class="act cancel" on:click={() => closeActs()}>Schließen</button>
+    <button type="button" class="act cancel" on:click={() => closeActs()}>{$t('common.close')}</button>
   </div>
 {/if}
 

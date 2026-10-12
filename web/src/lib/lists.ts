@@ -1,4 +1,5 @@
 import { api, ApiError, type Item } from '#lib/api';
+import { tr } from '#lib/i18n';
 
 export type ListRole = 'owner' | 'editor' | 'viewer' | 'guest';
 export interface ListSummary { id: string; name: string; description: string | null; owner: { id: string; name: string }; role: ListRole; itemCount: number; memberCount: number; updatedAt: string; coverIds: string[] }
@@ -10,7 +11,13 @@ export interface PickerList { id: string; name: string; contains: boolean; canEd
 export interface FeaturedList { id: string; name: string; description: string | null; owner: { name: string }; items: Item[] }
 export const loadFeatured = () => api<{ lists: FeaturedList[] }>('/api/lists/featured').then((r) => r.lists);
 
-export const roleLabel: Record<ListRole, string> = { owner: 'Besitzer', editor: 'Bearbeiter', viewer: 'Leser', guest: 'Gast' };
+/** role names in the current UI language (getters: translated when read, so the object can be used like a plain map) */
+export const roleLabel: Record<ListRole, string> = {
+  get owner() { return tr('detail.lists.role.owner'); },
+  get editor() { return tr('detail.lists.role.editor'); },
+  get viewer() { return tr('detail.lists.role.viewer'); },
+  get guest() { return tr('detail.lists.role.guest'); },
+};
 
 export const loadLists = () => api<{ lists: ListSummary[] }>('/api/lists').then((r) => r.lists);
 export const loadList = (id: string) => api<ListDetail>(`/api/lists/${id}`);

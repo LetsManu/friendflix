@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { intlLocale } from '#lib/i18n';
+  import { fmtDate, t, tr } from '#lib/i18n';
   import { onMount } from 'svelte';
   import { api, ApiError } from '#lib/api';
   import TrailerButton from '#lib/TrailerButton.svelte';
@@ -8,28 +8,30 @@
 
   /** "Demnächst": upcoming releases from Seerr with a one-click wish. */
   export let type: 'movie' | 'tv' = 'movie';
-  export let title = 'Demnächst im Kino';
+  /** '' = "Demnächst im Kino" in the UI language */
+  export let title = '';
+  $: heading = title || $t('home.upcoming.title');
   let items: Array<{ tmdbId: number; mediaType: string; title: string; releaseDate?: string; poster?: string; status: string }> | null = null;
   let msg = '';
-  const fmt = (d?: string) => (d ? new Date(d).toLocaleDateString(intlLocale(), { day: '2-digit', month: 'short', year: 'numeric' }) : 'Termin offen');
+  const fmt = (d?: string) => (d ? fmtDate(d, { day: '2-digit', month: 'short', year: 'numeric' }) : tr('home.meta.dateOpen'));
   let avail = new Set<number>();
   async function remind(it: NonNullable<typeof items>[number]) {
     const r = await toggleReminder(movieKey(it.mediaType, it.tmdbId), { mediaType: it.mediaType, tmdbId: it.tmdbId });
     if (r === 'busy') return;
-    if (r === 'available') { avail.add(it.tmdbId); avail = avail; msg = `„${it.title}“ ist schon verfügbar.`; }
-    else if (r === 'error') msg = 'Erinnerung konnte nicht gespeichert werden.';
-    else msg = r === 'on' ? `Du wirst erinnert, sobald „${it.title}“ verfügbar ist.` : 'Erinnerung entfernt.';
+    if (r === 'available') { avail.add(it.tmdbId); avail = avail; msg = tr('home.upcoming.isAvailable', { title: it.title }); }
+    else if (r === 'error') msg = tr('home.upcoming.remindFailed');
+    else msg = r === 'on' ? tr('home.upcoming.remindSet', { title: it.title }) : tr('home.upcoming.remindRemoved');
   }
   onMount(() => { void loadReminders(); api(`/api/seerr/upcoming?type=${type}`).then((r) => (items = r.results)).catch(() => (items = [])); });
   async function wish(it: NonNullable<typeof items>[number]) {
-    try { await api('/api/requests', { method: 'POST', body: { mediaType: it.mediaType, tmdbId: it.tmdbId } }); it.status = 'angefragt'; items = items; msg = `„${it.title}“ wurde gewünscht.`; }
-    catch (e) { msg = e instanceof ApiError && e.status === 409 ? 'Dafür gibt es schon einen Wunsch.' : 'Wunsch fehlgeschlagen.'; }
+    try { await api('/api/requests', { method: 'POST', body: { mediaType: it.mediaType, tmdbId: it.tmdbId } }); it.status = 'angefragt'; items = items; msg = tr('home.upcoming.wishSent', { title: it.title }); }
+    catch (e) { msg = e instanceof ApiError && e.status === 409 ? tr('home.upcoming.wishExists') : tr('home.upcoming.wishFailed'); }
   }
 </script>
 
 {#if items === null || items.length}
-  <section class="up" aria-label={title} aria-busy={items === null}>
-    <h2>{title}</h2>
+  <section class="up" aria-label={heading} aria-busy={items === null}>
+    <h2>{heading}</h2>
     <div class="track">
       {#if items === null}{#each Array(7) as _}<div class="skeleton ph"></div>{/each}
       {:else}{#each items as it (it.tmdbId)}
@@ -37,13 +39,13 @@
           {#if it.poster}<img loading="lazy" src={it.poster} alt="" />{:else}<div class="noimg">{it.title}</div>{/if}
           <div class="t"><b class="name">{it.title}</b><span class="muted">{fmt(it.releaseDate)}</span>
             <div class="act">
-              {#if it.status === 'nicht_angefragt' || it.status === 'abgelehnt'}<button class="sec" on:click={() => wish(it)}>Wünschen</button>
-              {:else if it.status === 'verfuegbar'}<span class="ok">Verfügbar</span>{:else}<span class="warn">Gewünscht</span>{/if}
+              {#if it.status === 'nicht_angefragt' || it.status === 'abgelehnt'}<button class="sec" on:click={() => wish(it)}>{$t('home.upcoming.wish')}</button>
+              {:else if it.status === 'verfuegbar'}<span class="ok">{$t('home.upcoming.available')}</span>{:else}<span class="warn">{$t('home.upcoming.wished')}</span>{/if}
             </div>
             {#if it.status !== 'verfuegbar'}
               <div class="act tr">
-                {#if avail.has(it.tmdbId)}<span class="ok">Schon verfügbar</span>
-                {:else}<button class="sec bell" aria-pressed={$remindKeys[movieKey(it.mediaType, it.tmdbId)] !== undefined} on:click={() => remind(it)}><Icon name="bell" size={16} /> {$remindKeys[movieKey(it.mediaType, it.tmdbId)] !== undefined ? 'Erinnerung aktiv' : 'Erinnere mich'}</button>{/if}
+                {#if avail.has(it.tmdbId)}<span class="ok">{$t('home.upcoming.alreadyAvailable')}</span>
+                {:else}<button class="sec bell" aria-pressed={$remindKeys[movieKey(it.mediaType, it.tmdbId)] !== undefined} on:click={() => remind(it)}><Icon name="bell" size={16} /> {$remindKeys[movieKey(it.mediaType, it.tmdbId)] !== undefined ? $t('home.upcoming.reminderOn') : $t('home.upcoming.remind')}</button>{/if}
               </div>
               <div class="act tr"><TrailerButton mediaType={it.mediaType} tmdbId={it.tmdbId} title={it.title} /></div>{/if}
           </div>

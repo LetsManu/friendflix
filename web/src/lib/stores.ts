@@ -1,6 +1,6 @@
 import { writable } from 'svelte/store';
 import { api } from '#lib/api';
-import { setLocale, type Locale } from '#lib/i18n';
+import { locale, setLocale, tr, type Locale } from '#lib/i18n';
 
 /** Ids on "Meine Liste" (watchlist). Loaded once, updated optimistically by cards and detail pages. */
 export const listIds = writable<Set<string>>(new Set());
@@ -14,8 +14,12 @@ export async function loadList() {
 }
 
 const listBusy = new Set<string>();
-/** Message callers show (role="status") when saving "Meine Liste" / a favourite failed. */
-export const SAVE_FAILED = 'Konnte nicht gespeichert werden.';
+/**
+ * Message callers show (role="status") when saving "Meine Liste" / a favourite failed. A live binding that follows the
+ * UI language (read it when the message is shown); components may also use `$t('account.listSaveFailed')` directly.
+ */
+export let SAVE_FAILED = tr('account.listSaveFailed');
+locale.subscribe(() => { SAVE_FAILED = tr('account.listSaveFailed'); });
 
 /**
  * Adds/removes an item on "Meine Liste" optimistically. `on` is the current state (true = remove).

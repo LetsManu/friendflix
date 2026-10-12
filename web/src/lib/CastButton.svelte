@@ -2,6 +2,7 @@
   import { createEventDispatcher, onMount } from 'svelte';
   import Icon from '#lib/Icon.svelte';
   import { castState, castStop, initCast, requestCastSession } from '#lib/cast';
+  import { t } from '#lib/i18n';
 
   export let size = 28;
   /** true while the Player is casting to the receiver */
@@ -19,8 +20,8 @@
 
 {#if $castState.available || $castState.connected}
   <button class="ic" class:on={active} aria-pressed={active}
-    aria-label={active ? `Übertragung auf ${$castState.deviceName || 'Chromecast'} beenden` : $castState.connected ? `Auf ${$castState.deviceName || 'Chromecast'} abspielen` : 'Auf Chromecast übertragen'}
-    title={active ? `Verbunden mit ${$castState.deviceName}` : 'Auf Chromecast übertragen'} on:click={click}>
+    aria-label={active ? $t('player.cast.stopOn', { name: $castState.deviceName || 'Chromecast' }) : $castState.connected ? $t('player.cast.playOn', { name: $castState.deviceName || 'Chromecast' }) : $t('player.cast.castTo')}
+    title={active ? $t('player.cast.connectedTo', { name: $castState.deviceName || 'Chromecast' }) : $t('player.cast.castTo')} on:click={click}>
     <Icon name="cast" {size} />
   </button>
 {/if}

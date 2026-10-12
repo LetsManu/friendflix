@@ -3,6 +3,7 @@
   import Icon from '#lib/Icon.svelte';
   import { addToList, createList, itemLists, removeFromList, type PickerList } from '#lib/lists';
   import { placePopover, placedStyle } from '#lib/popover';
+  import { t, tr } from '#lib/i18n';
 
   /** Jellyfin id of the movie / series to add (episodes are normalised server-side). */
   export let itemId: string;
@@ -20,7 +21,7 @@
 
   async function load() {
     err = '';
-    try { lists = await itemLists(itemId); } catch { lists = []; err = 'Listen konnten nicht geladen werden.'; }
+    try { lists = await itemLists(itemId); } catch { lists = []; err = tr('detail.lists.loadFailed'); }
   }
   function place() {
     if (!btn) return;
@@ -45,7 +46,7 @@
       if (!was && e?.status === 409 && e.body?.error === 'exists') { dispatch('changed', { listId: l.id, contains: true }); } // already in there
       else {
         l.contains = was; lists = lists;
-        err = e?.body?.error === 'list_full' ? 'Die Liste ist voll.' : 'Das hat nicht geklappt.';
+        err = e?.body?.error === 'list_full' ? tr('detail.lists.full') : tr('detail.lists.failed');
       }
     }
     busyIds.delete(l.id); busyIds = busyIds;
@@ -60,7 +61,7 @@
       newName = ''; creating = false;
       dispatch('changed', { listId: id, contains: true });
       await load();
-    } catch (e: any) { err = e?.body?.error === 'too_many_lists' ? 'Du hast schon 20 Listen.' : 'Das hat nicht geklappt.'; }
+    } catch (e: any) { err = e?.body?.error === 'too_many_lists' ? tr('detail.lists.tooMany') : tr('detail.lists.failed'); }
     busy = false;
   }
   export function close(refocus = false) { if (!open) return; open = false; if (refocus) btn?.focus(); }
@@ -91,16 +92,16 @@
 
 <svelte:window on:resize={() => open && place()} on:scroll|capture={() => open && place()} />
 <span class="lm" class:blk={variant === 'row'} bind:this={root} on:focusout={onFocusOut}>
-  <button bind:this={btn} class={variant === 'ring' ? 'icon-btn ring' : variant === 'row' ? 'rowbtn' : 'round'} class:on={open} aria-haspopup="dialog" aria-expanded={open} style={variant === 'round' ? `width:${size}px;height:${size}px;min-height:${size}px` : undefined} aria-label="Zu Liste hinzufügen" title="Zu Liste hinzufügen" on:click|stopPropagation={toggleOpen}>
-    <Icon name="list" size={variant === 'ring' ? 21 : 18} />{#if variant === 'row'}<span>Zu Liste hinzufügen …</span>{/if}
+  <button bind:this={btn} class={variant === 'ring' ? 'icon-btn ring' : variant === 'row' ? 'rowbtn' : 'round'} class:on={open} aria-haspopup="dialog" aria-expanded={open} style={variant === 'round' ? `width:${size}px;height:${size}px;min-height:${size}px` : undefined} aria-label={$t('detail.lists.add')} title={$t('detail.lists.add')} on:click|stopPropagation={toggleOpen}>
+    <Icon name="list" size={variant === 'ring' ? 21 : 18} />{#if variant === 'row'}<span>{$t('detail.lists.addMore')}</span>{/if}
   </button>
 </span>
 {#if open}
   <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
-  <div class="pop lm-pop" class:up bind:this={pop} use:portal {style} tabindex="-1" role="dialog" aria-label="Zu Liste hinzufügen" on:keydown={popKey} on:focusout={onFocusOut} on:mouseleave={popLeave}>
-    {#if lists === null}<p class="muted">Lade …</p>
+  <div class="pop lm-pop" class:up bind:this={pop} use:portal {style} tabindex="-1" role="dialog" aria-label={$t('detail.lists.add')} on:keydown={popKey} on:focusout={onFocusOut} on:mouseleave={popLeave}>
+    {#if lists === null}<p class="muted">{$t('detail.lists.loading')}</p>
     {:else}
-      {#if !lists.length}<p class="muted">Noch keine Liste, in die du etwas legen darfst.</p>{/if}
+      {#if !lists.length}<p class="muted">{$t('detail.lists.none')}</p>{/if}
       <ul>
         {#each lists as l (l.id)}
           <li><label><input type="checkbox" checked={l.contains} disabled={busyIds.has(l.id)} on:change={() => toggle(l)} /><span>{l.name}</span></label></li>
@@ -109,10 +110,10 @@
       {#if creating}
         <form on:submit|preventDefault={create}>
           <!-- svelte-ignore a11y_autofocus -->
-          <input type="text" maxlength="60" placeholder="Name der neuen Liste" aria-label="Name der neuen Liste" bind:value={newName} autofocus />
-          <button class="sec" type="submit" disabled={busy || !newName.trim()}>Anlegen</button>
+          <input type="text" maxlength="60" placeholder={$t('detail.lists.newName')} aria-label={$t('detail.lists.newName')} bind:value={newName} autofocus />
+          <button class="sec" type="submit" disabled={busy || !newName.trim()}>{$t('detail.lists.create')}</button>
         </form>
-      {:else}<button class="new" type="button" on:click={() => (creating = true)}><Icon name="plus" size={16} />Neue Liste …</button>{/if}
+      {:else}<button class="new" type="button" on:click={() => (creating = true)}><Icon name="plus" size={16} />{$t('detail.lists.newList')}</button>{/if}
       {#if err}<p class="err" role="alert">{err}</p>{/if}
     {/if}
   </div>

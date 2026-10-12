@@ -2,7 +2,8 @@
   import { createEventDispatcher, onDestroy, onMount } from 'svelte';
   import { getDownload, getMeta, putDownload, queueProgress, type DownloadRecord } from '#lib/offline/db';
   import { getFile } from '#lib/offline/opfs';
-  import { REASON_TEXT, isPlayable } from '#lib/offline/license';
+  import { REASON_KEY, isPlayable } from '#lib/offline/license';
+  import { t, tr } from '#lib/i18n';
   import { subClasses } from '#lib/substyle';
   import { DEFAULT_PREFS, prefs } from '#lib/stores';
 
@@ -26,9 +27,9 @@
     try {
       const meta = { maxSeenTime: Number((await getMeta<number>('maxSeenTime')) ?? 0) };
       const verdict = isPlayable(dl, Date.now(), meta);
-      if (!verdict.ok) { error = REASON_TEXT[verdict.reason ?? 'not_done']; return; }
+      if (!verdict.ok) { error = tr(REASON_KEY[verdict.reason ?? 'not_done']); return; }
       const file = await getFile(dl.id, 'video.mp4');
-      if (!file || file.size === 0) { error = 'Die Datei wurde auf diesem Gerät nicht gefunden.'; return; }
+      if (!file || file.size === 0) { error = tr('account.offline.fileMissing'); return; }
       if (webkit && 'serviceWorker' in navigator && navigator.serviceWorker.controller) src = `/__dl/${dl.id}/video.mp4`;
       else { src = URL.createObjectURL(file); blobs.push(src); }
       for (const s of dl.subs) {
@@ -36,7 +37,7 @@
         if (f) { const url = URL.createObjectURL(f); blobs.push(url); tracks = [...tracks, { lang: s.lang, title: s.title, url }]; }
       }
       ready = true;
-    } catch { error = 'Wiedergabe nicht möglich.'; }
+    } catch { error = tr('account.offline.playFailed'); }
   });
 
   function onLoaded() {
@@ -72,7 +73,7 @@
 
 <div class="op {style}" role="dialog" aria-label={dl.title}>
   <div class="bar">
-    <button type="button" class="back" on:click={close} aria-label="Zurück">‹ Zurück</button>
+    <button type="button" class="back" on:click={close} aria-label={$t('account.offline.back')}>{$t('account.offline.backButton')}</button>
     <span class="t">{dl.seriesName ? `${dl.seriesName} · ` : ''}{dl.s != null && dl.e != null ? `S${dl.s} E${dl.e} · ` : ''}{dl.title}</span>
   </div>
   {#if error}
@@ -83,7 +84,7 @@
       {#each tracks as t}<track kind="subtitles" src={t.url} srclang={t.lang.slice(0, 2) || 'xx'} label={t.title} />{/each}
     </video>
   {:else}
-    <div class="msg" role="status">Lade …</div>
+    <div class="msg" role="status">{$t('account.offline.loading')}</div>
   {/if}
 </div>
 

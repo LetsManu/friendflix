@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { intlLocale } from '#lib/i18n';
+  import { fmtDateTime, t } from '#lib/i18n';
   import Logo from '#lib/Logo.svelte';
   import { onMount } from 'svelte';
   import { pageStore } from '#lib/page';
@@ -12,25 +12,25 @@
   });
 </script>
 
-<svelte:head><title>Einladung – FriendFlix</title></svelte:head>
+<svelte:head><title>{$t('common.pageTitle', { page: $t('account.invite.pageTitle') })}</title></svelte:head>
 <div class="auth">
   <a class="logo" href="/"><Logo wordmark size={40} /></a>
   <main class="card" id="main">
     {#if invalid}
-      <h1>Einladung ungültig</h1><p class="muted">Der Link ist abgelaufen oder wurde bereits benutzt. Bitte frag nach einem neuen Link.</p>
+      <h1>{$t('account.invite.invalidTitle')}</h1><p class="muted">{$t('account.invite.invalidText')}</p>
     {:else if info}
-      <h1>Du wurdest eingeladen</h1>
-      <p>Konto-Typ: <b>{info.roleLabel}</b><br /><span class="muted">Gültig bis {new Date(info.expiresAt).toLocaleString(intlLocale())}</span></p>
+      <h1>{$t('account.invite.title')}</h1>
+      <p>{$t('account.invite.accountType')} <b>{info.roleLabel}</b><br /><span class="muted">{$t('account.invite.validUntil', { when: fmtDateTime(info.expiresAt) })}</span></p>
       {#if info.enrollUrl}
-        <p>Lege dein Konto an und richte die Zwei-Faktor-Anmeldung ein (Authenticator-App oder Sicherheitsschlüssel). Danach bist du direkt angemeldet und freigeschaltet.</p>
-        <p><a class="btn" href={info.enrollUrl}>Konto anlegen &amp; loslegen</a></p>
-        <p class="muted small">Du hast schon ein Konto? <a href="/auth/login?invite={token}">Anmelden &amp; freischalten</a></p>
+        <p>{$t('account.invite.enrollText')}</p>
+        <p><a class="btn" href={info.enrollUrl}>{$t('account.invite.enroll')}</a></p>
+        <p class="muted small">{$t('account.invite.haveAccount')} <a href="/auth/login?invite={token}">{$t('account.invite.signIn')}</a></p>
       {:else}
-        <p>Melde dich mit deinem bestehenden Konto an – dein Zugang wird automatisch freigeschaltet.</p>
-        <p><a class="btn" href="/auth/login?invite={token}">Anmelden &amp; freischalten</a></p>
+        <p>{$t('account.invite.existingText')}</p>
+        <p><a class="btn" href="/auth/login?invite={token}">{$t('account.invite.signIn')}</a></p>
       {/if}
-      <p class="muted small">Die Zwei-Faktor-Anmeldung (TOTP oder WebAuthn) ist für alle Pflicht.</p>
-    {:else}<p class="muted" role="status">Prüfe Einladung …</p>{/if}
+      <p class="muted small">{$t('account.invite.twoFactor')}</p>
+    {:else}<p class="muted" role="status">{$t('account.invite.checking')}</p>{/if}
   </main>
 </div>
 

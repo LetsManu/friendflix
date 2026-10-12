@@ -3,6 +3,7 @@
   import { api } from '#lib/api';
   import { listIds, loadList } from '#lib/stores';
   import { statusAfterListChange, type Status } from '#lib/status';
+  import { t, tr } from '#lib/i18n';
 
   /** movie or series id whose per-profile watch status is shown; hidden while loading or when the request fails */
   export let id: string;
@@ -36,7 +37,7 @@
       void loadList(); // keeps the "Meine Liste" button in sync
     } catch {
       if (my === seq) status = before;
-      msg = 'Status konnte nicht gespeichert werden.';
+      msg = tr('detail.status.saveFailed');
       clearTimeout(msgT); msgT = setTimeout(() => (msg = ''), 5000);
     }
     busy = false;
@@ -44,12 +45,12 @@
 </script>
 
 {#if status !== null}
-  <div class="status" role="group" aria-label="Status">
+  <div class="status" role="group" aria-label={$t('detail.status.label')}>
     <div class="seg">
-      <button type="button" class="sec" class:on={status === 'planned'} aria-pressed={status === 'planned'} disabled={busy} on:click={() => pick('planned')}>Geplant</button>
-      <button type="button" class="sec" class:on={status === 'dropped'} aria-pressed={status === 'dropped'} disabled={busy} on:click={() => pick('dropped')}>Abgebrochen</button>
+      <button type="button" class="sec" class:on={status === 'planned'} aria-pressed={status === 'planned'} disabled={busy} on:click={() => pick('planned')}>{$t('detail.status.planned')}</button>
+      <button type="button" class="sec" class:on={status === 'dropped'} aria-pressed={status === 'dropped'} disabled={busy} on:click={() => pick('dropped')}>{$t('detail.status.dropped')}</button>
     </div>
-    {#if status === 'watching'}<span class="badge">Schaue ich gerade</span>{:else if status === 'watched'}<span class="badge">Gesehen</span>{/if}
+    {#if status === 'watching'}<span class="badge">{$t('detail.status.watching')}</span>{:else if status === 'watched'}<span class="badge">{$t('detail.status.watched')}</span>{/if}
   </div>
 {/if}
 <div role="status">{#if msg}<p class="err">{msg}</p>{/if}</div>

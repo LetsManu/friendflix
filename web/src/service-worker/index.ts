@@ -57,7 +57,7 @@ async function serveDownload(id: string, req: Request): Promise<Response> {
     if (start >= size || start > end) return new Response(null, { status: 416, headers: { ...headers, 'content-range': `bytes */${size}` } });
     return new Response(file.slice(start, end + 1), { status: 206, headers: { ...headers, 'content-range': `bytes ${start}-${end}/${size}`, 'content-length': String(end - start + 1) } });
   } catch {
-    return new Response('Nicht gefunden', { status: 404, headers: { 'cache-control': 'no-store' } });
+    return new Response('Not found', { status: 404, headers: { 'cache-control': 'no-store' } });
   }
 }
 

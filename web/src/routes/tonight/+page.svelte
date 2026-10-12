@@ -3,18 +3,19 @@
   import { api, type Item } from '#lib/api';
   import Card from '#lib/Card.svelte';
   import Icon from '#lib/Icon.svelte';
+  import { t, type TKey } from '#lib/i18n';
 
   // Mood -> genre names (matched case-insensitively against the library's own genre list, German or English metadata)
-  const MOODS: Array<{ id: string; label: string; re: RegExp }> = [
-    { id: 'laugh', label: 'Lachen', re: /kom(ö|oe)die|comedy/i },
-    { id: 'tension', label: 'Spannung', re: /thriller|krimi|crime|mystery|horror/i },
-    { id: 'action', label: 'Action & Abenteuer', re: /action|abenteuer|adventure|science|sci-?fi|fantasy/i },
-    { id: 'heart', label: 'Gefühl', re: /drama|romanz|romance|liebe/i },
-    { id: 'family', label: 'Für alle', re: /familie|family|animation|kinder/i },
-    { id: 'know', label: 'Etwas lernen', re: /dokumentation|documentary|geschichte|history|biograf/i },
+  const MOODS: Array<{ id: string; label: TKey; re: RegExp }> = [
+    { id: 'laugh', label: 'social.tonight.moods.laugh', re: /kom(ö|oe)die|comedy/i },
+    { id: 'tension', label: 'social.tonight.moods.tension', re: /thriller|krimi|crime|mystery|horror/i },
+    { id: 'action', label: 'social.tonight.moods.action', re: /action|abenteuer|adventure|science|sci-?fi|fantasy/i },
+    { id: 'heart', label: 'social.tonight.moods.heart', re: /drama|romanz|romance|liebe/i },
+    { id: 'family', label: 'social.tonight.moods.family', re: /familie|family|animation|kinder/i },
+    { id: 'know', label: 'social.tonight.moods.know', re: /dokumentation|documentary|geschichte|history|biograf/i },
   ];
-  const TIMES: Array<[string, string, number]> = [['short', 'Kurz (bis 90 Min.)', 90], ['normal', 'Normal (bis 2 Std.)', 120], ['long', 'Egal, ich hab Zeit', 0]];
-  const KINDS: Array<[string, string]> = [['Movie', 'Film'], ['Series', 'Serie'], ['Movie,Series', 'Egal']];
+  const TIMES: Array<[string, TKey, number]> = [['short', 'social.tonight.times.short', 90], ['normal', 'social.tonight.times.normal', 120], ['long', 'social.tonight.times.long', 0]];
+  const KINDS: Array<[string, TKey]> = [['Movie', 'social.tonight.kinds.movie'], ['Series', 'social.tonight.kinds.series'], ['Movie,Series', 'social.tonight.kinds.any']];
 
   let genres: string[] = [], mood = new Set<string>(), time = 'normal', kind = 'Movie,Series', picks: Item[] | null = null, busy = false, tried = false, seen = new Set<string>();
   onMount(async () => { genres = (await api('/api/library/genres').catch(() => ({ genres: [] }))).genres; });
@@ -24,7 +25,7 @@
     busy = true; tried = true;
     if (!again) seen = new Set();
     const names = MOODS.filter((m) => mood.has(m.id)).flatMap((m) => genres.filter((g) => m.re.test(g)));
-    const maxMin = TIMES.find((t) => t[0] === time)![2];
+    const maxMin = TIMES.find((x) => x[0] === time)![2];
     try {
       const q = new URLSearchParams({ types: kind, filter: 'unplayed', sort: 'Random', limit: '60' });
       if (names.length) q.set('genre', [...new Set(names)].join('|'));
@@ -38,29 +39,29 @@
   }
 </script>
 
-<svelte:head><title>Heute Abend – FriendFlix</title></svelte:head>
-<h1>Was passt heute Abend?</h1>
-<p class="muted">Drei Fragen, drei Vorschläge – nur Titel, die du noch nicht gesehen hast.</p>
+<svelte:head><title>{$t('common.pageTitle', { page: $t('social.tonight.pageTitle') })}</title></svelte:head>
+<h1>{$t('social.tonight.title')}</h1>
+<p class="muted">{$t('social.tonight.intro')}</p>
 
-<section class="panel q" aria-label="Stimmung">
-  <h2>Worauf hast du Lust?</h2>
-  <div class="chips" role="group" aria-label="Stimmung, mehrere möglich">{#each MOODS as m}<button class="chip" class:on={mood.has(m.id)} aria-pressed={mood.has(m.id)} on:click={() => toggle(m.id)}>{m.label}</button>{/each}</div>
-  <small class="muted">Nichts gewählt = alles.</small>
+<section class="panel q" aria-label={$t('social.tonight.mood')}>
+  <h2>{$t('social.tonight.moodQ')}</h2>
+  <div class="chips" role="group" aria-label={$t('social.tonight.moodGroup')}>{#each MOODS as m}<button class="chip" class:on={mood.has(m.id)} aria-pressed={mood.has(m.id)} on:click={() => toggle(m.id)}>{$t(m.label)}</button>{/each}</div>
+  <small class="muted">{$t('social.tonight.nothingIsAll')}</small>
 </section>
-<section class="panel q" aria-label="Zeit">
-  <h2>Wie viel Zeit hast du?</h2>
-  <div class="chips" role="radiogroup">{#each TIMES as [v, l]}<button class="chip" class:on={time === v} role="radio" aria-checked={time === v} on:click={() => (time = v)}>{l}</button>{/each}</div>
+<section class="panel q" aria-label={$t('social.tonight.time')}>
+  <h2>{$t('social.tonight.timeQ')}</h2>
+  <div class="chips" role="radiogroup">{#each TIMES as [v, l]}<button class="chip" class:on={time === v} role="radio" aria-checked={time === v} on:click={() => (time = v)}>{$t(l)}</button>{/each}</div>
 </section>
-<section class="panel q" aria-label="Art">
-  <h2>Film oder Serie?</h2>
-  <div class="chips" role="radiogroup">{#each KINDS as [v, l]}<button class="chip" class:on={kind === v} role="radio" aria-checked={kind === v} on:click={() => (kind = v)}>{l}</button>{/each}</div>
+<section class="panel q" aria-label={$t('social.tonight.kind')}>
+  <h2>{$t('social.tonight.kindQ')}</h2>
+  <div class="chips" role="radiogroup">{#each KINDS as [v, l]}<button class="chip" class:on={kind === v} role="radio" aria-checked={kind === v} on:click={() => (kind = v)}>{$t(l)}</button>{/each}</div>
 </section>
 
-<div class="flex"><button on:click={() => find(false)} disabled={busy}><Icon name="shuffle" size={20} />Vorschläge zeigen</button>{#if picks?.length}<button class="sec" on:click={() => find(true)} disabled={busy}>Andere Vorschläge</button>{/if}</div>
+<div class="flex"><button on:click={() => find(false)} disabled={busy}><Icon name="shuffle" size={20} />{$t('social.tonight.show')}</button>{#if picks?.length}<button class="sec" on:click={() => find(true)} disabled={busy}>{$t('social.tonight.again')}</button>{/if}</div>
 
 {#if picks}
   {#if picks.length}<div class="tiles picks">{#each picks as i (i.id)}<div class="slot"><Card item={i} /></div>{/each}</div>
-  {:else if tried}<p class="muted" style="margin-top:1.5rem">Dazu habe ich nichts Ungesehenes gefunden. Wähle weniger Filter oder mehr Zeit.</p>{/if}
+  {:else if tried}<p class="muted" style="margin-top:1.5rem">{$t('social.tonight.nothing')}</p>{/if}
 {/if}
 
 <style>

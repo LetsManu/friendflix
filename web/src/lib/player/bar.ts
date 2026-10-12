@@ -1,3 +1,4 @@
+import { tr, type TFn } from '#lib/i18n';
 /** Pure helpers for the player's control bar (Netflix layout). */
 
 /** Saved defaults sent with the FIRST playback/info request: quality cap and preferred audio language (detail-page pick wins). */
@@ -17,4 +18,5 @@ export function barTitles(it: { name: string; type?: string; seriesName?: string
 }
 
 export const SPEEDS = [0.5, 0.75, 1, 1.25, 1.5, 2] as const;
-export const speedLabel = (r: number) => (r === 1 ? '1× (Normal)' : `${String(r).replace('.', ',')}×`);
+/** "1× (Normal)", "1,25×" / "1.25×" (pass `$t` in components so the label follows a language switch) */
+export const speedLabel = (r: number, tf: TFn = tr) => (r === 1 ? tf('player.speed.normal') : tf('player.speed.rate', { r }));

@@ -6,6 +6,7 @@
   import { api, cachedItem, img, primeItem, type Item } from '#lib/api';
   import Icon from '#lib/Icon.svelte';
   import Player from '#lib/Player.svelte';
+  import { t } from '#lib/i18n';
   import { prefs } from '#lib/stores';
   import { isBackKey } from '#lib/spatial';
   import { consumeAutoplay, noteAutoplay, noteInteraction, shouldAsk } from '#lib/stillwatching';
@@ -94,21 +95,21 @@
 </script>
 
 <svelte:window on:keydown={onKey} />
-<svelte:head><title>{item?.name ?? 'Wiedergabe'} – FriendFlix</title></svelte:head>
+<svelte:head><title>{$t('common.pageTitle', { page: item?.name ?? $t('player.pageTitle') })}</title></svelte:head>
 <div class="wrap">
   {#key id}
     <Player itemId={id} title={label(item)} barTitle={bt.title} barSub={bt.sub} seriesId={item?.seriesId ?? ''} seasonId={item?.seasonId ?? ''} on:episode={playEpisode} {startAt} {wantAudio} {wantSub} bind:video bind:sleepAfterEpisode bind:creditsAt hasNext={Boolean(nextEp)} on:next={() => nextEp && goto(nextHref())} on:timeupdate={onTime} on:ended={onEnded}>
       <div slot="top" class="top">
-        <button class="icon-btn" aria-label="Zurück" on:click={back}><Icon name="arrow-left" size={30} /></button>
+        <button class="icon-btn" aria-label={$t('player.watch.back')} on:click={back}><Icon name="arrow-left" size={30} /></button>
         {#if item}<div class="ttl phone"><b>{item.seriesName ?? item.name}</b>{#if item.seriesName}<span>S{item.parentIndexNumber}:E{item.indexNumber} · {item.name}</span>{/if}</div>{/if}
       </div>
       {#if visible && askStill && nextEp}
-        <div class="next still ui" data-nav role="dialog" aria-label="Schaust du noch?">
-          <div class="nt"><b>Schaust du noch?</b><span class="muted">Die automatische Wiedergabe ist pausiert. Als Nächstes: S{nextEp.parentIndexNumber}:E{nextEp.indexNumber} · {nextEp.name}</span></div>
-          <div class="flex"><button class="btn light go" on:click={stillGo}><Icon name="play" size={20} />Weiter ansehen</button><button class="sec" on:click={back}>Zurück</button></div>
+        <div class="next still ui" data-nav role="dialog" aria-label={$t('player.watch.stillTitle')}>
+          <div class="nt"><b>{$t('player.watch.stillTitle')}</b><span class="muted">{$t('player.watch.stillText', { ep: `S${nextEp.parentIndexNumber}:E${nextEp.indexNumber} · ${nextEp.name}` })}</span></div>
+          <div class="flex"><button class="btn light go" on:click={stillGo}><Icon name="play" size={20} />{$t('player.watch.keepWatching')}</button><button class="sec" on:click={back}>{$t('player.watch.back')}</button></div>
         </div>
       {:else if visible && kind === 'episode' && nextEp}
-        <div class="next ui" data-nav role="dialog" aria-label="Nächste Folge">
+        <div class="next ui" data-nav role="dialog" aria-label={$t('player.watch.next')}>
           <div class="nrow">
             <div class="nthumb">
               {#if nextEp.image}<img src={img(nextEp.id, 320)} alt="" loading="lazy" />{:else}<span class="nph"><Icon name="film" size={28} /></span>{/if}
@@ -117,14 +118,14 @@
                 <b class="rn" aria-hidden="true">{secondsLeft(elapsed)}</b>
               {/if}
             </div>
-            <div class="nt"><span class="muted">Nächste Folge{#if counting}{' · in '}{secondsLeft(elapsed)} s{:else if sleepAfterEpisode}{' · Pause nach dieser Folge'}{/if}</span><b>S{nextEp.parentIndexNumber}:E{nextEp.indexNumber} · {nextEp.name}</b></div>
+            <div class="nt"><span class="muted">{$t('player.watch.next')}{#if counting}{$t('player.watch.inSeconds', { n: secondsLeft(elapsed) })}{:else if sleepAfterEpisode}{$t('player.watch.pauseAfter')}{/if}</span><b>S{nextEp.parentIndexNumber}:E{nextEp.indexNumber} · {nextEp.name}</b></div>
           </div>
-          <div class="flex"><button class="btn light go" on:click={go}><Icon name="play" size={20} />Nächste Folge</button><button class="sec" on:click={watchCredits}>Abspann ansehen</button></div>
-          <span class="sr" role="status">{counting ? `Nächste Folge startet in ${secondsLeft(elapsed)} Sekunden` : ''}</span>
+          <div class="flex"><button class="btn light go" on:click={go}><Icon name="play" size={20} />{$t('player.watch.next')}</button><button class="sec" on:click={watchCredits}>{$t('player.watch.watchCredits')}</button></div>
+          <span class="sr" role="status">{counting ? $t('player.watch.startsIn', { n: secondsLeft(elapsed) }) : ''}</span>
         </div>
       {:else if visible && kind === 'movie' && similar.length}
-        <div class="next more ui" data-nav role="dialog" aria-label="Mehr davon">
-          <div class="mhead"><b>Mehr davon</b><button class="icon-btn" aria-label="Schließen" on:click={watchCredits}><Icon name="x" size={20} /></button></div>
+        <div class="next more ui" data-nav role="dialog" aria-label={$t('player.watch.more')}>
+          <div class="mhead"><b>{$t('player.watch.more')}</b><button class="icon-btn" aria-label={$t('common.close')} on:click={watchCredits}><Icon name="x" size={20} /></button></div>
           <ul>{#each similar as m (m.id)}
             <li><a href="/item/{m.id}">{#if m.image}<img src={img(m.id, 240)} alt="" loading="lazy" />{:else}<span class="nph"><Icon name="film" size={26} /></span>{/if}<span class="mt">{m.name}</span></a></li>{/each}</ul>
         </div>

@@ -1,5 +1,7 @@
 // Size helpers (pure, unit-tested). Server estimates (estBytes) win; these are fallbacks and formatting.
 
+import { fmtNumber } from '#lib/i18n';
+
 export type QualityId = 'sd' | 'hd' | 'fhd' | 'original';
 
 /** video+audio bit rate per preset in bit/s (plan section 1) */
@@ -27,13 +29,13 @@ export function fitsQuota(needed: number, quota: number | undefined, usage: numb
   return withMargin(needed) <= quota - (usage ?? 0);
 }
 
-/** German size text: "4,2 GB", "850 MB", "12 KB" */
+/** size text in the UI language: "4,2 GB" / "4.2 GB", "850 MB", "12 KB" */
 export function fmtBytes(n: number): string {
   if (!Number.isFinite(n) || n <= 0) return '0 MB';
   const u = [['GB', 1e9], ['MB', 1e6], ['KB', 1e3]] as const;
   for (const [name, f] of u) if (n >= f) {
     const v = n / f;
-    return `${(v >= 100 || name !== 'GB' && v >= 10 ? Math.round(v) : Math.round(v * 10) / 10).toString().replace('.', ',')} ${name}`;
+    return `${fmtNumber(v >= 100 || name !== 'GB' && v >= 10 ? Math.round(v) : Math.round(v * 10) / 10)} ${name}`;
   }
   return `${n} B`;
 }

@@ -10,6 +10,7 @@
   import { langLabel } from '#lib/langs';
   import LazyRow from '#lib/LazyRow.svelte';
   import Icon from '#lib/Icon.svelte';
+  import { t } from '#lib/i18n';
 
   let items: Item[] | null = null, total = 0, start = 0, genres: string[] = [], langs: { audio: Array<{ code: string }>; subs: Array<{ code: string }> } = { audio: [], subs: [] }, busy = false, failed = false, seq = 0, lastKey = '';
   let personName: Record<string, string> = {};
@@ -84,53 +85,53 @@
   function dragEnd() { if (!dragging) return; const far = dragY > 80; dragging = false; dragY = 0; if (far) void closeFilters(); }
 </script>
 
-<svelte:head><title>{kind === 'Series' ? 'Serien' : 'Filme'} – FriendFlix</title></svelte:head>
+<svelte:head><title>{$t('common.pageTitle', { page: kind === 'Series' ? $t('common.series') : $t('common.movies') })}</title></svelte:head>
 <div class="head">
-  <h1>{kind === 'Series' ? 'Serien' : 'Filme'}{#if s.studio} · {s.studio}{/if}</h1>
-  <label class="sr-only" for="g">Genre</label>
-  <select id="g" class="genres" value={s.genre} on:change={(e) => set('genre', e.currentTarget.value)}><option value="">Genres</option>{#each genres as g}<option>{g}</option>{/each}{#if s.genre && !genres.includes(s.genre)}<option>{s.genre}</option>{/if}</select>
-  <div class="views" role="group" aria-label="Ansicht">
-    <button type="button" class="vbtn" aria-pressed={!showGrid} disabled={!plain} title={plain ? 'Reihen' : 'Reihen (nur ohne Filter)'} aria-label="Reihen" on:click={() => setView('rows')}><Icon name="menu" size={20} /></button>
-    <button type="button" class="vbtn" aria-pressed={showGrid} title="Raster" aria-label="Raster" on:click={() => setView('grid')}><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true" focusable="false"><path d="M4 4h6v6H4zM14 4h6v6h-6zM4 14h6v6H4zM14 14h6v6h-6z" /></svg></button>
+  <h1>{kind === 'Series' ? $t('common.series') : $t('common.movies')}{#if s.studio} · {s.studio}{/if}</h1>
+  <label class="sr-only" for="g">{$t('home.browse.genre')}</label>
+  <select id="g" class="genres" value={s.genre} on:change={(e) => set('genre', e.currentTarget.value)}><option value="">{$t('home.browse.genres')}</option>{#each genres as g}<option>{g}</option>{/each}{#if s.genre && !genres.includes(s.genre)}<option>{s.genre}</option>{/if}</select>
+  <div class="views" role="group" aria-label={$t('home.browse.view')}>
+    <button type="button" class="vbtn" aria-pressed={!showGrid} disabled={!plain} title={plain ? $t('home.browse.rows') : $t('home.browse.rowsOnlyPlain')} aria-label={$t('home.browse.rows')} on:click={() => setView('rows')}><Icon name="menu" size={20} /></button>
+    <button type="button" class="vbtn" aria-pressed={showGrid} title={$t('home.browse.grid')} aria-label={$t('home.browse.grid')} on:click={() => setView('grid')}><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true" focusable="false"><path d="M4 4h6v6H4zM14 4h6v6h-6zM4 14h6v6H4zM14 14h6v6h-6z" /></svg></button>
   </div>
 </div>
 <div class="flex filters">
-  <button type="button" class="fbtn" bind:this={fbtn} aria-haspopup="dialog" aria-expanded={fsheet} on:click={openFilters}>Filter{#if fcount}<span class="cnt" aria-hidden="true">{fcount}</span><span class="sr-only"> ({fcount} aktiv)</span>{/if}</button>
+  <button type="button" class="fbtn" bind:this={fbtn} aria-haspopup="dialog" aria-expanded={fsheet} on:click={openFilters}>{$t('home.browse.filter')}{#if fcount}<span class="cnt" aria-hidden="true">{fcount}</span><span class="sr-only"> {$t('home.browse.activeCount', { n: fcount })}</span>{/if}</button>
   {#if audioCodes.includes('deu')}
-    <button type="button" class="chip quick" aria-pressed={s.audio === 'deu'} on:click={() => set('audio', s.audio === 'deu' ? '' : 'deu')}>Deutscher Ton</button>
+    <button type="button" class="chip quick" aria-pressed={s.audio === 'deu'} on:click={() => set('audio', s.audio === 'deu' ? '' : 'deu')}>{$t('home.browse.germanAudio')}</button>
   {/if}
 </div>
 {#if fsheet}
   <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
   <div class="backdrop" use:portal on:click={() => closeFilters()}></div>
-  <div class="sheet" class:dragging use:portal role="dialog" aria-modal="true" aria-label="Filter" use:dialogKeys={{ close: closeFilters, focusFirst: true }} style={dragY ? `transform:translateY(${dragY}px)` : undefined}>
+  <div class="sheet" class:dragging use:portal role="dialog" aria-modal="true" aria-label={$t('home.browse.filter')} use:dialogKeys={{ close: closeFilters, focusFirst: true }} style={dragY ? `transform:translateY(${dragY}px)` : undefined}>
     <!-- svelte-ignore a11y_no_static_element_interactions -->
     <div class="grab" on:pointerdown={dragDown} on:pointermove={dragMove} on:pointerup={dragEnd} on:pointercancel={dragEnd}>
       <span class="handle" aria-hidden="true"></span>
-      <h2 class="sht">Filter</h2>
+      <h2 class="sht">{$t('home.browse.filter')}</h2>
     </div>
     <form on:submit|preventDefault={applyFilters}>
-      <label class="fl"><span>Genre</span><select bind:value={draft.genre}><option value="">Alle Genres</option>{#each genres as g}<option value={g}>{g}</option>{/each}{#if draft.genre && !genres.includes(draft.genre)}<option value={draft.genre}>{draft.genre}</option>{/if}</select></label>
-      <label class="fl"><span>Jahrzehnt</span><select bind:value={draft.decade}><option value="">Alle Jahrzehnte</option>{#each decades as d}<option value={String(d)}>{d}er</option>{/each}</select></label>
-      <label class="fl"><span>Bewertung</span><select bind:value={draft.minRating}><option value="">Alle Bewertungen</option><option value="6">ab 6 Sterne</option><option value="7">ab 7 Sterne</option><option value="8">ab 8 Sterne</option></select></label>
-      <label class="fl"><span>Sortierung</span><select bind:value={draft.sort}><option value="SortName">A–Z</option><option value="DateCreated">Zuletzt hinzugefügt</option><option value="PremiereDate">Erscheinungsdatum</option><option value="CommunityRating">Beliebtheit</option></select></label>
-      <label class="fl"><span>Status</span><select bind:value={draft.filter}><option value="">Alle</option><option value="unplayed">Ungesehen</option><option value="played">Gesehen</option><option value="favorites">Favoriten</option></select></label>
-      {#if audioCodes.length}<label class="fl"><span>Ton</span><select bind:value={draft.audio}><option value="">Alle</option>{#each audioCodes as c}<option value={c}>{langLabel(c)}</option>{/each}</select></label>{/if}
-      {#if subCodes.length}<label class="fl"><span>Untertitel</span><select bind:value={draft.subs}><option value="">Alle</option>{#each subCodes as c}<option value={c}>{langLabel(c)}</option>{/each}</select></label>{/if}
-      <div class="sacts"><button type="submit">Anwenden</button><button type="button" class="sec" on:click={resetFilters}>Zurücksetzen</button></div>
+      <label class="fl"><span>{$t('home.browse.genre')}</span><select bind:value={draft.genre}><option value="">{$t('home.browse.allGenres')}</option>{#each genres as g}<option value={g}>{g}</option>{/each}{#if draft.genre && !genres.includes(draft.genre)}<option value={draft.genre}>{draft.genre}</option>{/if}</select></label>
+      <label class="fl"><span>{$t('home.browse.decade')}</span><select bind:value={draft.decade}><option value="">{$t('home.browse.allDecades')}</option>{#each decades as d}<option value={String(d)}>{$t('home.browse.decadeLabel', { d: String(d) })}</option>{/each}</select></label>
+      <label class="fl"><span>{$t('home.browse.rating')}</span><select bind:value={draft.minRating}><option value="">{$t('home.browse.allRatings')}</option>{#each [6, 7, 8] as n}<option value={String(n)}>{$t('home.browse.minRating', { n })}</option>{/each}</select></label>
+      <label class="fl"><span>{$t('home.sort.label')}</span><select bind:value={draft.sort}><option value="SortName">{$t('home.sort.name')}</option><option value="DateCreated">{$t('home.sort.added')}</option><option value="PremiereDate">{$t('home.sort.premiere')}</option><option value="CommunityRating">{$t('home.sort.rating')}</option></select></label>
+      <label class="fl"><span>{$t('home.status.label')}</span><select bind:value={draft.filter}><option value="">{$t('home.status.all')}</option><option value="unplayed">{$t('home.status.unplayed')}</option><option value="played">{$t('home.status.played')}</option><option value="favorites">{$t('home.status.favorites')}</option></select></label>
+      {#if audioCodes.length}<label class="fl"><span>{$t('home.browse.audio')}</span><select bind:value={draft.audio}><option value="">{$t('home.browse.all')}</option>{#each audioCodes as c}<option value={c}>{langLabel(c)}</option>{/each}</select></label>{/if}
+      {#if subCodes.length}<label class="fl"><span>{$t('home.browse.subtitles')}</span><select bind:value={draft.subs}><option value="">{$t('home.browse.all')}</option>{#each subCodes as c}<option value={c}>{langLabel(c)}</option>{/each}</select></label>{/if}
+      <div class="sacts"><button type="submit">{$t('home.browse.apply')}</button><button type="button" class="sec" on:click={resetFilters}>{$t('home.browse.reset')}</button></div>
     </form>
   </div>
 {/if}
 {#if chips.length}
-  <ul class="flex chips" aria-label="Aktive Filter">
-    {#each chips as c (c.key)}<li><button type="button" class="chip" aria-label="Filter {c.label} entfernen" on:click={() => set(c.key, '')}>{c.label}<span aria-hidden="true"> ✕</span></button></li>{/each}
-    <li><button type="button" class="sec" on:click={reset}>Alle zurücksetzen</button></li>
+  <ul class="flex chips" aria-label={$t('home.browse.activeFilters')}>
+    {#each chips as c (c.key)}<li><button type="button" class="chip" aria-label={$t('home.browse.removeFilter', { label: c.label })} on:click={() => set(c.key, '')}>{c.label}<span aria-hidden="true"> ✕</span></button></li>{/each}
+    <li><button type="button" class="sec" on:click={reset}>{$t('home.browse.resetAll')}</button></li>
   </ul>
 {/if}
 {#if !showGrid}
   <div class="rowsv">
-    <LazyRow title="Neu hinzugefügt" cacheKey="browse:{kind}:new" load={rowsQ({ sort: 'DateCreated', desc: 'true' })} />
-    <LazyRow title="Beliebt bei uns" cacheKey="browse:{kind}:top" load={rowsQ({ sort: 'CommunityRating', desc: 'true' })} />
+    <LazyRow title={$t('home.browse.newRow')} cacheKey="browse:{kind}:new" load={rowsQ({ sort: 'DateCreated', desc: 'true' })} />
+    <LazyRow title={$t('home.browse.popularRow')} cacheKey="browse:{kind}:top" load={rowsQ({ sort: 'CommunityRating', desc: 'true' })} />
     {#each genres.slice(0, 12) as g (g)}
       <LazyRow title={g} href="?genre={encodeURIComponent(g)}" cacheKey="browse:{kind}:g:{g}" load={rowsQ({ genre: g, sort: 'Random' })} />
     {/each}
@@ -141,11 +142,11 @@
   {:else}{#each items as i (i.id)}<div class="slot"><Card item={i} /></div>{/each}{/if}
 </div>
 {#if failed}
-  <div class="state" role="alert"><p class="err">Titel konnten nicht geladen werden.</p><button type="button" on:click={() => load(!items?.length)}>Erneut versuchen</button></div>
+  <div class="state" role="alert"><p class="err">{$t('home.browse.loadFailed')}</p><button type="button" on:click={() => load(!items?.length)}>{$t('home.browse.retry')}</button></div>
 {:else if items && !items.length}
-  <div class="state"><p class="muted">Nichts gefunden – probiere andere Filter.</p>{#if chips.length || s.sort !== 'SortName'}<button type="button" class="sec" on:click={reset}>Filter zurücksetzen</button>{/if}</div>
+  <div class="state"><p class="muted">{$t('home.browse.empty')}</p>{#if chips.length || s.sort !== 'SortName'}<button type="button" class="sec" on:click={reset}>{$t('home.browse.resetFilters')}</button>{/if}</div>
 {/if}
-{#if items && items.length < total && !failed}<p style="text-align:center"><button class="sec" disabled={busy} on:click={() => load(false)}>Mehr laden</button></p>{/if}
+{#if items && items.length < total && !failed}<p style="text-align:center"><button class="sec" disabled={busy} on:click={() => load(false)}>{$t('home.browse.loadMore')}</button></p>{/if}
 {/if}
 
 <style>

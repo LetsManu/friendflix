@@ -1,9 +1,10 @@
 <script lang="ts">
   import { createEventDispatcher, onDestroy, onMount, tick } from 'svelte';
   import { goto } from '$app/navigation';
-  import { api, backdrop, cachedDetail, cachedItem, primeDetail, primeItem, srcset, HERO_WIDTHS, MODAL_WIDTHS, logoUrl, fmtMin, type Item, type ItemDetail } from '#lib/api';
+  import { api, backdrop, cachedDetail, cachedItem, primeDetail, primeItem, srcset, HERO_WIDTHS, MODAL_WIDTHS, logoUrl, type Item, type ItemDetail } from '#lib/api';
   import { castToTv, refreshTvOnline, tvOnline } from '#lib/remote';
-  import { listIds, toggleList, prefs, SAVE_FAILED } from '#lib/stores';
+  import { listIds, toggleList, prefs } from '#lib/stores';
+  import { fmtNumber, t, tr } from '#lib/i18n';
   import { playPreview, previewFailed, previewOwner, stopPreview, toggleSound } from '#lib/preview';
   import { isSpoiler } from '#lib/spoiler';
   import { langLine } from '#lib/langs';
@@ -121,28 +122,28 @@
   $: playTarget = playBase.split('/').pop() ?? '';
   $: resumeFrom = item ? (item.type === 'Series' ? next : item) : null;
   $: remaining = resumeFrom ? remainingLabel(resumeFrom.positionTicks, resumeFrom.runtimeTicks) : '';
-  $: playLabel = item ? (item.type === 'Series' ? (next ? (next.positionTicks ? 'Fortsetzen' : 'Weiter') : 'Abspielen') : item.positionTicks ? 'Fortsetzen' : 'Abspielen') : 'Abspielen';
-  $: resumeLine = item?.type === 'Series' && next ? [`S${next.parentIndexNumber ?? '?'}:F${next.indexNumber ?? '?'}`, remaining].filter(Boolean).join(' · ') : remaining;
+  $: playLabel = $t(item ? (item.type === 'Series' ? (next ? (next.positionTicks ? 'detail.view.resume' : 'detail.view.continue') : 'detail.view.play') : item.positionTicks ? 'detail.view.resume' : 'detail.view.play') : 'detail.view.play');
+  $: resumeLine = item?.type === 'Series' && next ? [$t('detail.view.episodeCode', { s: String(next.parentIndexNumber ?? '?'), e: String(next.indexNumber ?? '?') }), remaining].filter(Boolean).join(' · ') : remaining;
   $: actors = byType(people, 'Actor', 'GuestStar');
   $: castList = actors.length ? actors : people.filter((p) => p.type !== 'Director' && p.type !== 'Writer');
   $: moods = item ? moodTags(item.genres) : [];
   $: len = item ? lengthLabel(item) : '';
   $: badge = item ? ratingBadge(item, Date.now()) : '';
-  $: overview = item ? (isSpoiler(item, $prefs) ? 'Beschreibung ausgeblendet (Spoilerschutz).' : (item.overview ?? '')) : '';
+  $: overview = item ? (isSpoiler(item, $prefs) ? $t('detail.view.spoiler') : (item.overview ?? '')) : '';
   $: langs = item ? langLine(item.langs) : '';
   $: heroOwner = item ? 'detail:' + item.id : '';
 
-  function failSave() { saveMsg = SAVE_FAILED; clearTimeout(saveT); saveT = setTimeout(() => (saveMsg = ''), 5000); }
+  function failSave() { saveMsg = tr('detail.view.saveFailed'); clearTimeout(saveT); saveT = setTimeout(() => (saveMsg = ''), 5000); }
   async function toggleMine() { if (item && !(await toggleList(item.id, inList))) failSave(); }
   async function toggleFav() { if (!item) return; const on = item.favorite; try { await api(`/api/items/${item.id}/favorite`, { method: on ? 'DELETE' : 'POST' }); item.favorite = !on; primeItem(item); } catch { failSave(); } }
   async function togglePlayed() { if (!item) return; const on = item.played; try { await api(`/api/items/${item.id}/played`, { method: on ? 'DELETE' : 'POST' }); item.played = !on; primeItem(item); } catch { failSave(); } }
   function onThumb(e: CustomEvent<{ value: Thumb }>) { if (item) primeDetail({ item, thumb: e.detail.value }); }
   async function toggleFollow() { try { await api(`/api/series/${item!.id}/follow`, { method: followed ? 'DELETE' : 'POST' }); followed = !followed; } catch { failSave(); } }
-  async function startParty() { try { void goto(`/party/${(await api('/api/party', { method: 'POST', body: { itemId: item!.id } })).id}`); } catch { castMsg = 'Party konnte nicht erstellt werden.'; } }
+  async function startParty() { try { void goto(`/party/${(await api('/api/party', { method: 'POST', body: { itemId: item!.id } })).id}`); } catch { castMsg = tr('detail.view.partyFailed'); } }
   async function castHere() {
-    const t = playTarget;
-    if (!t) return;
-    castMsg = (await castToTv(t)) ? 'Wird auf dem Fernseher gestartet …' : 'Der Fernseher ist nicht erreichbar.';
+    const target = playTarget;
+    if (!target) return;
+    castMsg = (await castToTv(target)) ? tr('detail.view.tvStarting') : tr('detail.view.tvOffline');
     clearTimeout(castT); castT = setTimeout(() => (castMsg = ''), 3500);
   }
   async function share() {
@@ -150,7 +151,7 @@
     const url = `${location.origin}/item/${item.id}`;
     try {
       if (navigator.share) { await navigator.share({ title: item.name, url }); return; }
-      await navigator.clipboard.writeText(url); castMsg = 'Link kopiert.';
+      await navigator.clipboard.writeText(url); castMsg = tr('detail.view.linkCopied');
     } catch (e) { if ((e as DOMException)?.name === 'AbortError') return; castMsg = url; }
     clearTimeout(castT); castT = setTimeout(() => (castMsg = ''), 3500);
   }
@@ -162,8 +163,8 @@
     recEl?.querySelector<HTMLElement>('input, button')?.focus({ preventScroll: true });
   }
   async function sendRec() {
-    try { const r = await api('/api/recommend', { method: 'POST', body: { itemId: item!.id, toUserIds: [...recTo], note: recNote || undefined } }); recMsg = `An ${r.sent} Freund(e) gesendet.`; recTo = new Set(); recNote = ''; setTimeout(() => (recOpen = false), 1200); }
-    catch (e: any) { recMsg = e?.body?.error === 'already_recommended' ? 'Diesen Titel hast du ihnen diese Woche schon empfohlen.' : 'Senden fehlgeschlagen.'; }
+    try { const r = await api('/api/recommend', { method: 'POST', body: { itemId: item!.id, toUserIds: [...recTo], note: recNote || undefined } }); recMsg = tr('detail.recommend.sent', { n: r.sent }); recTo = new Set(); recNote = ''; setTimeout(() => (recOpen = false), 1200); }
+    catch (e: any) { recMsg = e?.body?.error === 'already_recommended' ? tr('detail.recommend.already') : tr('detail.recommend.failed'); }
   }
   function toggleTo(uid: string) { const n = new Set(recTo); if (n.has(uid)) n.delete(uid); else n.add(uid); recTo = n; }
   async function rate() {
@@ -182,15 +183,15 @@
 
   // ---- "⋯ Mehr": every secondary action in one menu (desktop popover / touch sheet) ----
   $: moreActions = item ? ([
-    { id: 'fav', label: 'Favorit', icon: 'heart', pressed: item.favorite, run: toggleFav },
-    { id: 'played', label: 'Gesehen', icon: 'check', pressed: item.played, run: togglePlayed },
-    ...(item.type === 'Series' ? [{ id: 'follow', label: followed ? 'Du folgst dieser Serie' : 'Neue Folgen melden', icon: 'bell', pressed: followed, run: toggleFollow }] : []),
-    { id: 'rec', label: 'Empfehlen', icon: 'send', run: openRec },
-    { id: 'share', label: 'Teilen', icon: 'share', run: share },
-    ...(item.type !== 'Series' ? [{ id: 'party', label: 'Gemeinsam schauen', icon: 'users', run: startParty }] : []),
-    ...($tvOnline && playTarget ? [{ id: 'tv', label: 'Auf Fernseher', icon: 'tv', run: castHere }] : []),
-    ...(canPreview && !heroPlaying ? [{ id: 'trailer', label: 'Trailer abspielen', icon: 'film', run: () => startHero(true) }] : []),
-    ...(item.type !== 'Series' && dlAvail && !phone ? [{ id: 'dl', label: dlState ? `Download: ${dlState}` : 'Herunterladen', icon: 'download', run: () => dl?.activate() }] : []),
+    { id: 'fav', label: $t('detail.actions.fav'), icon: 'heart', pressed: item.favorite, run: toggleFav },
+    { id: 'played', label: $t('detail.actions.played'), icon: 'check', pressed: item.played, run: togglePlayed },
+    ...(item.type === 'Series' ? [{ id: 'follow', label: followed ? $t('detail.actions.following') : $t('detail.actions.follow'), icon: 'bell', pressed: followed, run: toggleFollow }] : []),
+    { id: 'rec', label: $t('detail.actions.recommend'), icon: 'send', run: openRec },
+    { id: 'share', label: $t('detail.actions.share'), icon: 'share', run: share },
+    ...(item.type !== 'Series' ? [{ id: 'party', label: $t('detail.actions.party'), icon: 'users', run: startParty }] : []),
+    ...($tvOnline && playTarget ? [{ id: 'tv', label: $t('detail.actions.tv'), icon: 'tv', run: castHere }] : []),
+    ...(canPreview && !heroPlaying ? [{ id: 'trailer', label: $t('detail.actions.trailer'), icon: 'film', run: () => startHero(true) }] : []),
+    ...(item.type !== 'Series' && dlAvail && !phone ? [{ id: 'dl', label: dlState ? $t('detail.actions.downloadState', { state: dlState }) : $t('detail.actions.download'), icon: 'download', run: () => dl?.activate() }] : []),
   ] as MoreAction[]) : [];
 
   // ---- hero trailer: the still image fades into a muted preview clip (like the billboard) ----
@@ -297,7 +298,7 @@
           {#if item.logo && !logoFailed}<img class="tlogo" src={logoUrl(item.id)} alt="" on:error={() => (logoFailed = true)} />{/if}
           <div class="btns">
             <a class="btn light play" data-autofocus href={playHref} on:pointerenter={prefetchPlayer} on:focus={prefetchPlayer}><Icon name="play" size={24} />{playLabel}</a>
-            <button type="button" class="rb" class:on={inList} aria-pressed={inList} aria-label={inList ? 'Von Meine Liste entfernen' : 'Zu Meine Liste hinzufügen'} title="Meine Liste" on:click={toggleMine}><Icon name={inList ? 'check' : 'plus'} size={22} /></button>
+            <button type="button" class="rb" class:on={inList} aria-pressed={inList} aria-label={inList ? $t('detail.view.removeFromList') : $t('detail.view.addToList')} title={$t('detail.view.myList')} on:click={toggleMine}><Icon name={inList ? 'check' : 'plus'} size={22} /></button>
             <RatingButton itemId={item.id} bind:value={thumb} size={44} on:change={onThumb} />
             <MoreActions actions={moreActions} variant="ring" title={item.name} up={variant === 'modal'}>
               <div class="mslot">
@@ -310,17 +311,17 @@
           {#if resumeLine}<p class="resume">{resumeLine}</p>{/if}
         </div>
       {/if}
-      {#if heroPlaying}<button type="button" class="snd" aria-label={hmuted ? 'Ton einschalten' : 'Ton ausschalten'} aria-pressed={!hmuted} on:click={() => toggleSound(hv)}><Icon name={hmuted ? 'volume-off' : 'volume'} size={20} /></button>{/if}
+      {#if heroPlaying}<button type="button" class="snd" aria-label={hmuted ? $t('detail.view.soundOn') : $t('detail.view.soundOff')} aria-pressed={!hmuted} on:click={() => toggleSound(hv)}><Icon name={hmuted ? 'volume-off' : 'volume'} size={20} /></button>{/if}
       {#if counting}
         <div class="auto" role="status" bind:this={autoEl}>
           <svg viewBox="0 0 36 36" aria-hidden="true"><circle cx="18" cy="18" r="15" class="tr" /><circle cx="18" cy="18" r="15" class="pr" style="stroke-dashoffset:{(autoLeft / AUTOSTART_COUNTDOWN_S) * 94.25}" /></svg>
           <span>{countdownLabel(item.type === 'Series' ? 'episode' : 'movie', autoLeft)}</span>
-          <button type="button" class="sec" on:click={() => cancelAuto(true)}>Abbrechen</button>
+          <button type="button" class="sec" on:click={() => cancelAuto(true)}>{$t('detail.view.cancel')}</button>
         </div>
       {/if}
     {:else if failed}
-      <p class="err pad" role="alert">{variant === 'modal' ? 'Titel konnte nicht geladen werden.' : 'Titel nicht gefunden.'}</p>
-      {#if variant === 'page'}<p class="pad"><a class="btn" href="/">Zur Startseite</a></p>{/if}
+      <p class="err pad" role="alert">{variant === 'modal' ? $t('detail.view.loadFailed') : $t('detail.view.notFound')}</p>
+      {#if variant === 'page'}<p class="pad"><a class="btn" href="/">{$t('detail.view.toHome')}</a></p>{/if}
     {:else}
       <div class="skeleton fillsk" aria-hidden="true"></div>
     {/if}
@@ -332,20 +333,20 @@
       <svelte:element this={heroTitleTag()} id={titleId} class:sr-only={item.logo && !logoFailed} class="ttl">{item.name}</svelte:element>
       {#if item.logo && !logoFailed}<img class="tlogo" src={logoUrl(item.id)} alt="" on:error={() => (logoFailed = true)} />{/if}
       <p class="meta">
-        {#if badge}<span class:match={badge.startsWith('★')} class:fresh={badge === 'Neu'}>{badge}</span>{/if}
+        {#if badge}<span class:match={badge.startsWith('★')} class:fresh={badge === $t('home.card.new')}>{badge}</span>{/if}
         {#if item.year}<span>{item.year}</span>{/if}
-        {#if item.rating}<span class="age" title="Altersfreigabe">{item.rating}</span>{/if}
+        {#if item.rating}<span class="age" title={$t('detail.view.ageRating')}>{item.rating}</span>{/if}
         {#if len}<span>{len}</span>{/if}
       </p>
       <a class="btn light play wide" data-autofocus href={playHref} on:touchstart|passive={prefetchPlayer} on:focus={prefetchPlayer}><Icon name="play" size={24} />{playLabel}</a>
       {#if item.type !== 'Series'}<DownloadButton itemId={item.id} block />{:else if playTarget}<DownloadButton itemId={playTarget} seriesId={item.id} block />{/if}
       {#if resumeLine}<p class="resume">{resumeLine}</p>{/if}
-      <p class="ov">{overview || 'Keine Beschreibung vorhanden.'}</p>
+      <p class="ov">{overview || $t('detail.view.noOverview')}</p>
       {#if langs}<p class="muted small">{langs}</p>{/if}
       <div class="icons">
-        <button type="button" class="lab" class:on={inList} aria-pressed={inList} on:click={toggleMine}><Icon name={inList ? 'check' : 'plus'} size={24} /><span>Meine Liste</span></button>
+        <button type="button" class="lab" class:on={inList} aria-pressed={inList} on:click={toggleMine}><Icon name={inList ? 'check' : 'plus'} size={24} /><span>{$t('detail.view.myList')}</span></button>
         <RatingButton itemId={item.id} bind:value={thumb} size={48} showLabel up on:change={onThumb} />
-        <button type="button" class="lab" on:click={share}><Icon name="share" size={24} /><span>Teilen</span></button>
+        <button type="button" class="lab" on:click={share}><Icon name="share" size={24} /><span>{$t('detail.view.share')}</span></button>
         <MoreActions actions={moreActions} variant="labelled" title={item.name}>
           <div class="mslot">
             <ListMenu itemId={item.id} variant="row" />
@@ -364,32 +365,32 @@
         <div class="left">
           {#if !phone}
             <p class="meta">
-              {#if badge}<span class:match={badge.startsWith('★')} class:fresh={badge === 'Neu'}>{badge}</span>{/if}
+              {#if badge}<span class:match={badge.startsWith('★')} class:fresh={badge === $t('home.card.new')}>{badge}</span>{/if}
               {#if item.year}<span>{item.year}</span>{/if}
-              {#if item.rating}<span class="age" title="Altersfreigabe">{item.rating}</span>{/if}
+              {#if item.rating}<span class="age" title={$t('detail.view.ageRating')}>{item.rating}</span>{/if}
               {#if len}<span>{len}</span>{/if}
             </p>
             {#if langs}<p class="muted small">{langs}</p>{/if}
-            <p class="ov">{overview || 'Keine Beschreibung vorhanden.'}</p>
+            <p class="ov">{overview || $t('detail.view.noOverview')}</p>
           {/if}
           <FriendsStrip id={item.id} />
           {#if castMsg}<p class="muted" role="status">{castMsg}</p>{/if}
           <div role="status">{#if saveMsg}<p class="err">{saveMsg}</p>{/if}</div>
           {#if recOpen}
-            <div class="panel rec" role="group" aria-label="Empfehlen" bind:this={recEl}>
-              <b>„{item.name}“ empfehlen an:</b>
-              <div class="flex">{#each friends as f (f.id)}<label class="chk"><input type="checkbox" checked={recTo.has(f.id)} on:change={() => toggleTo(f.id)} />{f.name}</label>{:else}<span class="muted">Noch keine anderen Nutzer.</span>{/each}</div>
-              <div class="flex"><input bind:value={recNote} maxlength="140" placeholder="Nachricht (optional)" aria-label="Nachricht" style="flex:1;min-width:200px" /><button type="button" disabled={!recTo.size} on:click={sendRec}>Senden</button><button type="button" class="sec" on:click={() => (recOpen = false)}>Abbrechen</button></div>
+            <div class="panel rec" role="group" aria-label={$t('detail.recommend.label')} bind:this={recEl}>
+              <b>{$t('detail.recommend.to', { name: item.name })}</b>
+              <div class="flex">{#each friends as f (f.id)}<label class="chk"><input type="checkbox" checked={recTo.has(f.id)} on:change={() => toggleTo(f.id)} />{f.name}</label>{:else}<span class="muted">{$t('detail.recommend.noUsers')}</span>{/each}</div>
+              <div class="flex"><input bind:value={recNote} maxlength="140" placeholder={$t('detail.recommend.note')} aria-label={$t('detail.recommend.noteLabel')} style="flex:1;min-width:200px" /><button type="button" disabled={!recTo.size} on:click={sendRec}>{$t('detail.recommend.send')}</button><button type="button" class="sec" on:click={() => (recOpen = false)}>{$t('detail.view.cancel')}</button></div>
               {#if recMsg}<span class="muted" role="status">{recMsg}</span>{/if}
             </div>
           {/if}
         </div>
         <dl class="right">
           {#if castList.length}
-            <div><dt>Besetzung:</dt><dd>{#each castList.slice(0, 3) as p, n (p.id + n)}{#if n}{', '}{/if}<a href="/person/{p.id}">{p.name}</a>{/each}{#if castList.length > 3}{', '}<button type="button" class="lnk" on:click={toInfo}>mehr</button>{/if}</dd></div>
+            <div><dt>{$t('detail.view.cast')}</dt><dd>{#each castList.slice(0, 3) as p, n (p.id + n)}{#if n}{', '}{/if}<a href="/person/{p.id}">{p.name}</a>{/each}{#if castList.length > 3}{', '}<button type="button" class="lnk" on:click={toInfo}>{$t('detail.view.more')}</button>{/if}</dd></div>
           {/if}
-          {#if item.genres?.length}<div><dt>Genres:</dt><dd>{item.genres.join(', ')}</dd></div>{/if}
-          {#if moods.length}<div><dt>Dieser Titel ist:</dt><dd>{moods.join(', ')}</dd></div>{/if}
+          {#if item.genres?.length}<div><dt>{$t('detail.view.genres')}</dt><dd>{item.genres.join(', ')}</dd></div>{/if}
+          {#if moods.length}<div><dt>{$t('detail.view.moods')}</dt><dd>{moods.join(', ')}</dd></div>{/if}
         </dl>
       </div>
 
@@ -398,8 +399,8 @@
       {/if}
 
       {#if extras.length}
-        <section class="extras" aria-labelledby="ex-h"><h2 id="ex-h">Bonusmaterial</h2>
-          <ul>{#each extras as x (x.id)}<li><a href="/watch/{x.id}"><span class="pl2"><Icon name="play" size={18} /></span><span>{x.name}</span><span class="muted">{fmtMin(x.runtimeTicks)}</span></a></li>{/each}</ul>
+        <section class="extras" aria-labelledby="ex-h"><h2 id="ex-h">{$t('detail.view.extras')}</h2>
+          <ul>{#each extras as x (x.id)}<li><a href="/watch/{x.id}"><span class="pl2"><Icon name="play" size={18} /></span><span>{x.name}</span><span class="muted">{x.runtimeTicks ? $t('common.duration.m', { m: Math.round(x.runtimeTicks / 600_000_000) }) : ''}</span></a></li>{/each}</ul>
         </section>
       {/if}
 
@@ -408,11 +409,11 @@
       {#if item.type === 'Movie' || item.type === 'Episode'}<Reactions id={item.id} />{/if}
 
       <section class="rate panel" aria-labelledby="rt-h">
-        <h2 id="rt-h">Bewertungen {#if avg}<span class="badge">Ø {avg.toFixed(1)} von 5</span>{/if}</h2>
-        <div class="flex" role="group" aria-label="Sterne vergeben">
-          {#each [1, 2, 3, 4, 5] as n}<button type="button" class="icon-btn star" class:on={stars >= n} aria-pressed={stars >= n} aria-label="{n} {n === 1 ? 'Stern' : 'Sterne'}" on:click={() => (stars = n)}><Icon name="star" size={24} fill={stars >= n} /></button>{/each}
-          <input placeholder="Kurzreview (max. 280 Zeichen)" maxlength="280" bind:value={review} aria-label="Kurzreview" style="flex:1;min-width:200px" />
-          <button type="button" disabled={!stars} on:click={rate}>Speichern</button>
+        <h2 id="rt-h">{$t('detail.ratings.title')} {#if avg}<span class="badge">{$t('detail.ratings.average', { avg: fmtNumber(avg, { minimumFractionDigits: 1, maximumFractionDigits: 1 }) })}</span>{/if}</h2>
+        <div class="flex" role="group" aria-label={$t('detail.ratings.stars')}>
+          {#each [1, 2, 3, 4, 5] as n}<button type="button" class="icon-btn star" class:on={stars >= n} aria-pressed={stars >= n} aria-label={$t('detail.ratings.star', { n })} on:click={() => (stars = n)}><Icon name="star" size={24} fill={stars >= n} /></button>{/each}
+          <input placeholder={$t('detail.ratings.review')} maxlength="280" bind:value={review} aria-label={$t('detail.ratings.reviewLabel')} style="flex:1;min-width:200px" />
+          <button type="button" disabled={!stars} on:click={rate}>{$t('detail.ratings.save')}</button>
         </div>
         {#each ratings as r}<p><b>{r.name}</b> <span class="warn">{'★'.repeat(r.stars)}</span> <span class="muted">{r.review ?? ''}</span></p>{/each}
       </section>

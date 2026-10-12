@@ -4,7 +4,8 @@
   import { api, backdrop, cachedDetail, img, primeDetail, primeItem, setCachedThumb, srcset, type Item, type ItemDetail } from '#lib/api';
   import { prefetchPlayer } from '#lib/player/prefetch';
   import { prefetchModal } from '#lib/lazy';
-  import { listIds, toggleList, prefs, SAVE_FAILED } from '#lib/stores';
+  import { listIds, toggleList, prefs } from '#lib/stores';
+  import { t, tr } from '#lib/i18n';
   import Icon from '#lib/Icon.svelte';
   import ListMenu from '#lib/ListMenu.svelte';
   import RatingButton from '#lib/RatingButton.svelte';
@@ -105,7 +106,7 @@
     } catch { /* optional */ }
   }
   function onThumb(e: CustomEvent<{ value: Thumb }>) { thumbTouched = true; setCachedThumb(listId, e.detail.value); }
-  function flash() { fb = SAVE_FAILED; clearTimeout(fbT); fbT = setTimeout(() => (fb = ''), 4500); }
+  function flash() { fb = tr('home.card.saveFailed'); clearTimeout(fbT); fbT = setTimeout(() => (fb = ''), 4500); }
   // after a mouse click drop the focus again (keyboard users keep it)
   const release = (e: MouseEvent) => { if (e.detail > 0) (e.currentTarget as HTMLElement).blur(); };
   async function toggleInList(e: MouseEvent) {
@@ -125,9 +126,9 @@
   // everything that is not Play / Meine Liste / Bewerten / Details lives in "⋯ Mehr"
   let actions: MoreAction[] = [];
   $: actions = [
-    { id: 'fav', label: fav ? 'Favorit entfernen' : 'Als Favorit markieren', icon: 'heart', pressed: fav, run: toggleFav },
-    ...(removable ? [{ id: 'remove', label: 'Aus Weiterschauen entfernen', icon: 'x', run: () => { dispatch('remove', item); } }] : []),
-    { id: 'details', label: 'Detailseite öffnen', icon: 'info', href: detail },
+    { id: 'fav', label: fav ? $t('home.card.favRemove') : $t('home.card.favAdd'), icon: 'heart', pressed: fav, run: toggleFav },
+    ...(removable ? [{ id: 'remove', label: $t('home.card.removeResume'), icon: 'x', run: () => { dispatch('remove', item); } }] : []),
+    { id: 'details', label: $t('home.card.openDetail'), icon: 'info', href: detail },
   ];
   function more(e: MouseEvent) { if (item.type !== 'Episode') primeItem(item); dispatch('close', { refocus: false }); openModal(e, detail); }
 
@@ -160,7 +161,7 @@
 
 <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
 <div
-  class="hp" class:ready use:portal bind:this={el} role="group" aria-label="Vorschau: {item.name}"
+  class="hp" class:ready use:portal bind:this={el} role="group" aria-label={$t('home.card.preview', { name: item.name })}
   style={box ? `left:${box.left}px;top:${box.top}px;width:${box.width}px;` : 'left:0;top:0;width:300px;'}
   on:mouseenter={() => (over = true)} on:mouseleave={() => (over = false)}
   on:focusin={() => (focused = true)} on:focusout={leaveFocus} on:keydown={tabKey}
@@ -171,26 +172,26 @@
     {#if src}<img class="hi" class:on={hiLoaded || !startSrc} class:contain={posterOnly} class:spoil={isSpoiler(item, $prefs)} {src} srcset={srcs} sizes="{box?.width ?? 360}px" alt="" on:load={() => (hiLoaded = true)} />{/if}
     {#if playing}<!-- svelte-ignore a11y_media_has_caption --><video bind:this={pv} class="pv" loop playsinline on:volumechange={() => pv && (vmuted = pv.muted)} on:playing={() => pv && (vmuted = pv.muted)}></video>{/if}
     <span class="shade"></span>
-    {#if fresh}<span class="newep">Neue Folgen</span>{/if}
+    {#if fresh}<span class="newep">{$t('home.card.newEpisodes')}</span>{/if}
     <span class="cap">{item.type === 'Episode' && item.seriesName ? item.seriesName : item.name}</span>
-    {#if playing}<button type="button" class="snd" aria-label={vmuted ? 'Ton einschalten' : 'Ton ausschalten'} aria-pressed={!vmuted} on:click={(e) => { release(e); toggleSound(pv); }}><Icon name={vmuted ? 'volume-off' : 'volume'} size={16} /></button>{/if}
+    {#if playing}<button type="button" class="snd" aria-label={vmuted ? $t('home.card.soundOn') : $t('home.card.soundOff')} aria-pressed={!vmuted} on:click={(e) => { release(e); toggleSound(pv); }}><Icon name={vmuted ? 'volume-off' : 'volume'} size={16} /></button>{/if}
     {#if pct}<span class="progress"><i style="width:{pct}%"></i></span>{/if}
   </div>
   <div class="info">
     <div class="acts">
-      <a class="round play" {href} on:pointerenter={prefetchPlayer} on:focus={prefetchPlayer} aria-label="Abspielen: {item.name}" title="Abspielen"><Icon name="play" size={18} /></a>
-      <button type="button" class="round" aria-label={inList ? 'Von Meine Liste entfernen' : 'Zu Meine Liste hinzufügen'} title="Meine Liste" on:click={toggleInList}><Icon name={inList ? 'check' : 'plus'} size={18} /></button>
+      <a class="round play" {href} on:pointerenter={prefetchPlayer} on:focus={prefetchPlayer} aria-label={$t('home.card.playName', { name: item.name })} title={$t('home.card.play')}><Icon name="play" size={18} /></a>
+      <button type="button" class="round" aria-label={inList ? $t('home.card.removeFromList') : $t('home.card.addToListLong')} title={$t('home.card.myList')} on:click={toggleInList}><Icon name={inList ? 'check' : 'plus'} size={18} /></button>
       {#if item.type !== 'BoxSet'}<RatingButton itemId={listId} bind:value={thumb} on:change={onThumb} on:error={flash} />{/if}
       <span class="right">
-        <MoreActions {actions} title={item.name} label="Mehr Aktionen für {item.name}">
+        <MoreActions {actions} title={item.name} label={$t('home.card.moreActionsFor', { name: item.name })}>
           {#if item.type !== 'BoxSet'}<ListMenu itemId={listId} variant="row" on:changed={(e) => dispatch('listchanged', e.detail)} />{/if}
         </MoreActions>
-        <a class="round" href={detail} aria-label="Mehr Infos zu {item.name}" aria-haspopup="dialog" title="Mehr Infos" on:pointerenter={prefetchModal} on:focus={prefetchModal} on:click={more}><Icon name="chevron-down" size={18} /></a>
+        <a class="round" href={detail} aria-label={$t('home.card.moreInfoFor', { name: item.name })} aria-haspopup="dialog" title={$t('home.card.moreInfo')} on:pointerenter={prefetchModal} on:focus={prefetchModal} on:click={more}><Icon name="chevron-down" size={18} /></a>
       </span>
     </div>
     <div class="fb" role="status">{#if fb}<span>{fb}</span>{/if}</div>
     <div class="meta">
-      {#if rate}<span class:match={rate.startsWith('★')} class:fresh={rate === 'Neu'}>{rate}</span>{/if}
+      {#if rate}<span class:match={rate.startsWith('★')} class:fresh={rate === $t('home.card.new')}>{rate}</span>{/if}
       {#if item.rating}<span class="age">{item.rating}</span>{/if}
       {#if len}<span>{len}</span>{/if}
     </div>

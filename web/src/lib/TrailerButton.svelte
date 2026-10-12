@@ -2,6 +2,7 @@
   import { tick } from 'svelte';
   import { api } from '#lib/api';
   import Icon from '#lib/Icon.svelte';
+  import { t } from '#lib/i18n';
 
   /** Trailer for a title that is not in the library. Nothing from YouTube loads before the click; the key is fetched on click. */
   export let mediaType: string;
@@ -34,14 +35,14 @@
 </script>
 
 <svelte:window on:keydown|capture={onkey} />
-{#if none}<span class="muted" role="status">Kein Trailer verfügbar</span>
-{:else}<button class="sec" data-nav disabled={busy} aria-label={`Trailer ansehen: ${title}`} on:click={show}><Icon name="play" size={14} /> Trailer</button>{/if}
+{#if none}<span class="muted" role="status">{$t('home.trailer.none')}</span>
+{:else}<button class="sec" data-nav disabled={busy} aria-label={$t('home.trailer.watch', { title })} on:click={show}><Icon name="play" size={14} /> {$t('home.trailer.button')}</button>{/if}
 {#if open}
   <div use:portal>
     <div class="scrim" on:click={close} role="presentation"></div>
-    <div class="dlg" role="dialog" aria-modal="true" aria-label={`Trailer: ${title}`} bind:this={box}>
-      <button class="x" data-nav bind:this={closeBtn} aria-label="Trailer schließen" on:click={close}><Icon name="x" size={22} /></button>
-      <iframe src={`https://www.youtube-nocookie.com/embed/${key}?autoplay=1&rel=0&modestbranding=1`} allow="autoplay; encrypted-media; picture-in-picture" allowfullscreen referrerpolicy="strict-origin-when-cross-origin" title={`Trailer: ${title}`}></iframe>
+    <div class="dlg" role="dialog" aria-modal="true" aria-label={$t('home.trailer.dialog', { title })} bind:this={box}>
+      <button class="x" data-nav bind:this={closeBtn} aria-label={$t('home.trailer.close')} on:click={close}><Icon name="x" size={22} /></button>
+      <iframe src={`https://www.youtube-nocookie.com/embed/${key}?autoplay=1&rel=0&modestbranding=1`} allow="autoplay; encrypted-media; picture-in-picture" allowfullscreen referrerpolicy="strict-origin-when-cross-origin" title={$t('home.trailer.dialog', { title })}></iframe>
     </div>
   </div>
 {/if}

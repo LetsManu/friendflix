@@ -17,6 +17,7 @@
   import { hlsConfig, loadHls } from '#lib/player/hls';
   import { firstInfoBody, speedLabel, SPEEDS } from '#lib/player/bar';
   import EpisodesPanel from '#lib/player/EpisodesPanel.svelte';
+  import { fmtDuration, t, tr, type TFn, type TKey } from '#lib/i18n';
   import { castPause, castPlay, castPlayPause, castSeek, castSetSubtitle, castSetVolume, castState, castStop, castToggleMute, initCast, loadOnCast, onCastEvent, requestCastSession, type CastInfo, type CastState } from '#lib/cast';
 
   export let itemId: string;
@@ -37,7 +38,7 @@
   export let report = true;
   /** false = viewer may not play/pause/seek (watch party guest): controls are shown disabled and a hint appears */
   export let canControl = true;
-  export let denyHint = 'Nur der Host steuert die Wiedergabe.';
+  export let denyHint = tr('player.denyHint');
   /** watch party: no speed control (it would fight the drift correction) */
   export let partyMode = false;
   export let hasNext = false;
@@ -74,11 +75,12 @@
   type Bookmark = { id: string; position: number; note: string | null };
   type Person = { id: string; name: string; role?: string; type: string; image: boolean };
   let bookmarks: Bookmark[] = [], noteText = '', people: Person[] | null = null, xray = false, pausedLong = false, pauseT: ReturnType<typeof setTimeout>;
+  const SUB_LANGS = ['ger', 'eng', 'fre', 'spa', 'ita'] as const;
   let subDlg = false, subLang = 'ger', subResults: Array<{ id: string; name: string; provider: string; downloads?: number }> | null = null, subMsg = '', subBusy = false;
   let quality = 0, sleepMin = 0, sleepAt = 0, sleepLeft = '', prefsApplied = false, autoSkipped = new Set<number>(), pipOk = false, inPip = false;
   let scrubbing = false, scrubTime = 0, hoverX = -1, hoverTime = 0, trackEl: HTMLDivElement;
   // ---- robustness: stall spinner (only after 500 ms), reconnect overlay, recovery bookkeeping ----
-  let spin = false, spinT: ReturnType<typeof setTimeout>, reconnecting = 0, retryT: ReturnType<typeof setTimeout>, rec = freshRecovery(), lastPos = 0, posKnown = false, errPos = 0, errTitle = 'Wiedergabe nicht möglich', errNote = '';
+  let spin = false, spinT: ReturnType<typeof setTimeout>, reconnecting = 0, retryT: ReturnType<typeof setTimeout>, rec = freshRecovery(), lastPos = 0, posKnown = false, errPos = 0, errTitle = '', errNote = '';
   function setSpin(on: boolean) { clearTimeout(spinT); if (!on) { spin = false; return; } spinT = setTimeout(() => (spin = true), 500); }
   $: setSpin(waiting && !error && !casting && !reconnecting);
   // ---- touch gestures ----
@@ -93,9 +95,11 @@
   $: pct = duration ? Math.min(100, (shown / duration) * 100) : 0;
   $: bufPct = duration ? Math.min(100, (buffered / duration) * 100) : 0;
   $: nowPlaying.set({ itemId, title, position: current, duration, paused, audio: info?.audioTracks.map((a) => ({ i: a.index, t: a.title })), audioSel: audioIndex ?? info?.audioTracks.find((a) => a.isDefault)?.index, subs: info?.subtitles.map((x) => ({ i: x.index, t: x.title })), subSel: subIndex }); // what the phone remote shows
-  $: if (skip && skip.type === 'intro' && !partyMode && canControl && get(prefs).autoSkipIntro && !autoSkipped.has(skip.start)) { autoSkipped.add(skip.start); doSkip(); flash('Intro übersprungen', 1500); }
-  const segLabel: Record<string, string> = { intro: 'Intro', outro: 'Abspann', recap: 'Rückblick' };
-  const skipLabel: Record<string, string> = { intro: 'Intro überspringen', outro: 'Abspann überspringen', recap: 'Rückblick überspringen' };
+  $: if (skip && skip.type === 'intro' && !partyMode && canControl && get(prefs).autoSkipIntro && !autoSkipped.has(skip.start)) { autoSkipped.add(skip.start); doSkip(); flash(tr('player.skipped.intro'), 1500); }
+  type Seg = 'intro' | 'outro' | 'recap';
+  const isSeg = (k: string): k is Seg => k === 'intro' || k === 'outro' || k === 'recap';
+  const segKey = (k: string, kind: 'segment' | 'skip' | 'skipped'): TKey | null => (isSeg(k) ? `player.${kind}.${k}` : null);
+  const segText = (tf: TFn, k: string, kind: 'segment' | 'skip' | 'skipped'): string => { const key = segKey(k, kind); return key ? tf(key) : k; };
 
   const body = () => casting && castInfo
     ? { itemId, playSessionId: castInfo.playSessionId, mediaSourceId: castInfo.mediaSourceId, positionTicks: secToTicks(castPos), isPaused: $castState.paused, audioIndex, playMethod: 'Transcode' }
@@ -119,8 +123,8 @@
     } catch (e: any) {
       if (!(e instanceof ApiError) || e.status >= 500) { recover('network', true); return; } // server/network hiccup: retry with backoff
       reconnecting = 0;
-      errNote = e?.body?.error === 'max_streams' ? `Maximal ${e.body.max} gleichzeitige Streams erlaubt.` : '';
-      error = 'Wiedergabe nicht möglich.';
+      errNote = e?.body?.error === 'max_streams' ? tr('player.error.maxStreams', { n: Number(e.body.max) }) : '';
+      errTitle = tr('player.error.title'); error = tr('player.error.generic');
       return;
     }
     if (startSec === undefined) { lastPos = info.resumeTicks / 10_000_000; posKnown = true; } // a retry must not restart at 0 before playback ran
@@ -187,11 +191,11 @@
       rec.networkTries = d.attempt; reconnecting = d.attempt; errPos = pos; waiting = true;
       clearTimeout(retryT); retryT = setTimeout(() => retryNow(pos), d.delay);
     } else if (d.do === 'recover-media') { rec.mediaRecovered = true; errPos = pos; hls?.recoverMediaError(); }
-    else if (d.do === 'force-hls') { rec.forcedHls = true; errPos = pos; flash('Wechsle auf Transcoding …', 2500); wantAutoplay = !paused; load(pos); }
+    else if (d.do === 'force-hls') { rec.forcedHls = true; errPos = pos; flash(tr('player.switchingTranscode'), 2500); wantAutoplay = !paused; load(pos); }
     else if (d.do === 'lower-quality') { rec.loweredQuality = true; errPos = pos; const q = lowerStep(); if (q) { wantAutoplay = !paused; changeQuality(q); } else giveUp(); }
     else giveUp();
   }
-  function giveUp() { clearTimeout(retryT); reconnecting = 0; waiting = false; errTitle = 'Wiedergabe nicht möglich'; error = errNote || 'Die Verbindung zum Server wurde unterbrochen oder das Video ist beschädigt.'; hls?.stopLoad(); }
+  function giveUp() { clearTimeout(retryT); reconnecting = 0; waiting = false; errTitle = tr('player.error.title'); error = errNote || tr('player.error.connection'); hls?.stopLoad(); }
   function retryNow(pos: number) {
     clearTimeout(retryT);
     if (!reconnecting) return;
@@ -209,12 +213,12 @@
   }
   function onPlaying() {
     waiting = false;
-    if (reconnecting) { reconnecting = 0; flash('Verbindung wiederhergestellt', 1500); }
+    if (reconnecting) { reconnecting = 0; flash(tr('player.reconnected'), 1500); }
   }
 
   // ---- Chromecast session lifecycle ----
-  const castErr = (e: any) => e?.body?.error === 'max_streams' ? `Maximal ${e.body.max} gleichzeitige Streams erlaubt.`
-    : e?.body?.error === 'transcoding_disabled' ? 'Chromecast braucht Transcoding – mit deiner Rolle nicht erlaubt.' : 'Übertragung auf Chromecast fehlgeschlagen.';
+  const castErr = (e: any) => e?.body?.error === 'max_streams' ? tr('player.error.maxStreams', { n: Number(e.body.max) })
+    : e?.body?.error === 'transcoding_disabled' ? tr('player.cast.needsTranscode') : tr('player.cast.failed');
   const castRequest = (pos: number) => api<CastInfo>('/api/cast/session', { method: 'POST', body: { itemId, startTicks: secToTicks(pos), audioIndex, maxBitrate: quality || undefined } });
   const castRevoke = (ci: CastInfo | null) => { if (ci) api(`/api/cast/session/${ci.castId}`, { method: 'DELETE' }).catch(() => undefined); };
 
@@ -256,7 +260,7 @@
       castRevoke(old);
       if (!(await loadOnCast(ci, subIndex))) throw new Error('load');
     } catch {
-      await endCast(pos, 'Chromecast-Wiedergabe konnte nicht fortgesetzt werden.');
+      await endCast(pos, tr('player.cast.resumeFailed'));
     }
     castBusy = false;
   }
@@ -272,7 +276,7 @@
   function handleCast(e: 'session-start' | 'session-end' | 'media-end') {
     if (e === 'session-start') void startCast();
     else if (e === 'session-end') { if (casting && !castBusy) void endCast(castPos); }
-    else if (casting && !castBusy) { if (duration > 0 && castPos >= duration - 20) void finishCast(); else void endCast(castPos, 'Chromecast konnte nicht weiterspielen – lokal fortgesetzt.'); }
+    else if (casting && !castBusy) { if (duration > 0 && castPos >= duration - 20) void finishCast(); else void endCast(castPos, tr('player.cast.continuedLocally')); }
   }
   /** mirrors the receiver into the player state and reports start/progress to the server */
   function castTick(s: CastState) {
@@ -307,7 +311,7 @@
     if (casting) { castPlay(); return; }
     if (!video) return;
     try { await video.play(); return; } catch { /* blocked: try muted */ }
-    try { video.muted = true; muted = true; await video.play(); needsSound = true; flash('Ton aus – beliebige Taste drücken für Ton', 7000); }
+    try { video.muted = true; muted = true; await video.play(); needsSound = true; flash(tr('player.soundOff'), 7000); }
     catch { video.muted = false; muted = false; } // still blocked: the big play button stays
   }
   function unmuteOnGesture(e: Event) {
@@ -326,7 +330,7 @@
     else if (m.action === 'toggle') { if (paused) { if (allowed()) playSafe(); } else if (allowed()) doPause(); }
     else if (m.action === 'audio' && typeof m.value === 'number') { if (info?.audioTracks.some((a) => a.index === m.value)) changeAudio(m.value); }
     else if (m.action === 'sub' && typeof m.value === 'number') { if (m.value === -1 || info?.subtitles.some((x) => x.index === m.value)) setSubtitle(m.value); }
-    else if (m.action === 'next') { if (hasNext && allowed()) dispatch('next'); else flash('Keine weitere Folge'); }
+    else if (m.action === 'next') { if (hasNext && allowed()) dispatch('next'); else flash(tr('player.noNext')); }
     else if (m.action === 'seekBy' && typeof m.value === 'number') seekBy(m.value);
   }
 
@@ -338,39 +342,40 @@
   function seekTo(t: number) {
     if (casting) { if (!allowed()) return; t = Math.max(0, Math.min(duration || t, t)); castSeek(t); current = castPos = t; setTimeout(() => { if (started && !stopped) send('progress'); }, 700); return; }
     if (!video || !allowed()) return; video.currentTime = Math.max(0, Math.min(duration || t, t)); }
-  function seekBy(d: number, quiet = false) { if (!video || !allowed()) return; seekTo((casting ? castPos : video.currentTime) + d); if (quiet) announce(d > 0 ? `${d} Sekunden vor` : `${-d} Sekunden zurück`); else flash(d > 0 ? `+${d} s` : `−${-d} s`, 700); }
-  function doSkip() { if (skip) { const lbl = skipLabel[skip.type]?.replace(' überspringen', ' übersprungen'); seekTo(skip.end); if (lbl) announce(lbl); } }
+  function seekBy(d: number, quiet = false) { if (!video || !allowed()) return; seekTo((casting ? castPos : video.currentTime) + d); if (quiet) announce(d > 0 ? tr('player.secondsForward', { n: d }) : tr('player.secondsBack', { n: -d })); else flash(d > 0 ? `+${d} s` : `−${-d} s`, 700); }
+  function doSkip() { if (skip) { const key = segKey(skip.type, 'skipped'); seekTo(skip.end); if (key) announce(tr(key)); } }
   const QUALITIES: Array<[string, number]> = [['1080p', 8_000_000], ['720p', 4_000_000], ['480p', 1_500_000], ['360p', 800_000]];
   $: qualityOptions = QUALITIES.filter(([, b]) => b < (info?.roleMaxBitrate ?? Infinity));
+  const qualityToast = (bps: number) => tr('player.quality.changed', { q: bps ? QUALITIES.find(([, b]) => b === bps)?.[0] ?? tr('player.quality.mbit', { n: Math.round(bps / 1e6) }) : tr('player.quality.auto') });
   async function changeQuality(bps: number) {
     menu = '';
     if (bps === quality) return;
-    if (casting) { quality = bps; await recast(castPos); flash(bps ? `Qualität: ${QUALITIES.find(([, b]) => b === bps)?.[0] ?? Math.round(bps / 1e6) + ' Mbit/s'}` : 'Qualität: Automatisch'); return; }
+    if (casting) { quality = bps; await recast(castPos); flash(qualityToast(bps)); return; }
     const pos = video?.currentTime ?? 0, wasPlaying = !(video?.paused ?? true);
     await send('stop');
     quality = bps;
     await load(pos);
     if (wasPlaying) video?.play().catch(() => undefined);
-    flash(bps ? `Qualität: ${QUALITIES.find(([, b]) => b === bps)?.[0] ?? Math.round(bps / 1e6) + ' Mbit/s'}` : 'Qualität: Automatisch');
+    flash(qualityToast(bps));
   }
   function setSleep(min: number | 'end') {
     menu = '';
     sleepAfterEpisode = min === 'end';
     sleepMin = typeof min === 'number' ? min : 0;
     sleepAt = typeof min === 'number' && min > 0 ? Date.now() + min * 60_000 : 0;
-    flash(min === 0 ? 'Schlaf-Timer aus' : min === 'end' ? 'Pause nach dieser Folge' : `Schlaf-Timer: ${min} Min.`);
+    flash(min === 0 ? tr('player.sleep.off') : min === 'end' ? tr('player.sleep.afterEpisode') : tr('player.sleep.set', { d: fmtDuration(min * 60) }));
   }
-  async function pip() { try { if (document.pictureInPictureElement) await document.exitPictureInPicture(); else await video?.requestPictureInPicture(); } catch { flash('Bild-in-Bild nicht verfügbar'); } }
+  async function pip() { try { if (document.pictureInPictureElement) await document.exitPictureInPicture(); else await video?.requestPictureInPicture(); } catch { flash(tr('player.pipUnavailable')); } }
   // ---- scenes: bookmarks + share link ----
   const loadBookmarks = () => api(`/api/bookmarks?itemId=${itemId}`).then((r) => (bookmarks = r.bookmarks)).catch(() => undefined);
   async function addBookmark() {
-    try { await api('/api/bookmarks', { method: 'POST', body: { itemId, position: Math.floor(video?.currentTime ?? 0), note: noteText || undefined } }); noteText = ''; await loadBookmarks(); flash('Lesezeichen gesetzt'); }
-    catch { flash('Lesezeichen konnte nicht gespeichert werden'); }
+    try { await api('/api/bookmarks', { method: 'POST', body: { itemId, position: Math.floor(video?.currentTime ?? 0), note: noteText || undefined } }); noteText = ''; await loadBookmarks(); flash(tr('player.bookmark.set')); }
+    catch { flash(tr('player.bookmark.failed')); }
   }
   async function removeBookmark(id: string) { await api(`/api/bookmarks/${id}`, { method: 'DELETE' }).catch(() => undefined); loadBookmarks(); }
   async function shareScene() {
     const url = `${location.origin}/watch/${itemId}?t=${Math.floor(video?.currentTime ?? 0)}`;
-    try { await navigator.clipboard.writeText(url); flash(`Link zu ${fmtClock(video?.currentTime ?? 0)} kopiert`, 1800); } catch { flash(url, 4000); }
+    try { await navigator.clipboard.writeText(url); flash(tr('player.bookmark.linkCopied', { t: fmtClock(video?.currentTime ?? 0) }), 1800); } catch { flash(url, 4000); }
   }
 
   // ---- X-Ray: cast & crew while paused ----
@@ -381,26 +386,26 @@
   // ---- find subtitles (Jellyfin remote providers) ----
   async function searchSubs() {
     subBusy = true; subMsg = ''; subResults = null;
-    try { subResults = (await api(`/api/items/${itemId}/subtitles/search?lang=${subLang}`)).results; if (!subResults?.length) subMsg = 'Keine Untertitel gefunden.'; }
-    catch (e: any) { subMsg = e?.status === 403 ? 'Mit deiner Rolle nicht erlaubt.' : 'Untertitel-Anbieter nicht erreichbar (Plugin in Jellyfin aktiv?).'; }
+    try { subResults = (await api(`/api/items/${itemId}/subtitles/search?lang=${subLang}`)).results; if (!subResults?.length) subMsg = tr('player.subs.notFound'); }
+    catch (e: any) { subMsg = e?.status === 403 ? tr('player.subs.notAllowed') : tr('player.subs.providerDown'); }
     subBusy = false;
   }
   async function pickSub(id: string) {
     subBusy = true;
     try {
       await api(`/api/items/${itemId}/subtitles/download`, { method: 'POST', body: { subtitleId: id } });
-      if (casting) { subDlg = false; await recast(castPos); flash('Untertitel hinzugefügt – im Menü auswählen', 2500); subBusy = false; return; }
+      if (casting) { subDlg = false; await recast(castPos); flash(tr('player.subs.added'), 2500); subBusy = false; return; }
       const pos = video?.currentTime ?? 0, was = !(video?.paused ?? true);
       subDlg = false; await send('stop'); await load(pos); if (was) video?.play().catch(() => undefined);
-      flash('Untertitel hinzugefügt – im Menü auswählen', 2500);
-    } catch { subMsg = 'Download fehlgeschlagen.'; }
+      flash(tr('player.subs.added'), 2500);
+    } catch { subMsg = tr('player.subs.downloadFailed'); }
     subBusy = false;
   }
-  function setRate(r: number) { if (!video) return; rate = r; video.playbackRate = r; menu = ''; flash(r === 1 ? 'Tempo: Normal' : `${String(r).replace('.', ',')}×`); }
+  function setRate(r: number) { if (!video) return; rate = r; video.playbackRate = r; menu = ''; flash(r === 1 ? tr('player.speed.normalToast') : tr('player.speed.rate', { r })); }
   // ---- Chromecast entry in the "Mehr" menu (the SDK loads lazily, Chromium only) ----
   function castClick() { menu = ''; if (!$castState.connected) void requestCastSession(); else if (casting) castStop(); else void startCast(); }
-  $: castLabel = casting ? `Übertragung auf ${$castState.deviceName || 'Chromecast'} beenden` : $castState.connected ? `Auf ${$castState.deviceName || 'Chromecast'} abspielen` : 'Auf Chromecast übertragen';
-  $: modeLabel = casting ? 'Chromecast' : mode === 'direct' ? 'Direct Play (Originaldatei)' : mode ? 'HLS (Transcoding)' : '';
+  $: castLabel = casting ? $t('player.cast.stopOn', { name: $castState.deviceName || 'Chromecast' }) : $castState.connected ? $t('player.cast.playOn', { name: $castState.deviceName || 'Chromecast' }) : $t('player.cast.castTo');
+  $: modeLabel = casting ? 'Chromecast' : mode === 'direct' ? $t('player.mode.direct') : mode ? $t('player.mode.hls') : '';
   const toggleMenu = (m: typeof menu) => (menu = menu === m ? '' : m);
   /** Netflix-size control icons (~40px); smaller on phones */
   let ICON = 36;
@@ -409,7 +414,7 @@
   let epBtn: HTMLButtonElement | undefined;
   function closeEpisodes() { menu = ''; void tickDom().then(() => epBtn?.focus()); }
   function setVolume(v: number) { if (casting) { volume = v; muted = v === 0; castSetVolume(v); return; } if (!video) return; volume = v; video.volume = v; video.muted = v === 0; muted = v === 0; try { localStorage.setItem('ff_vol', String(v)); } catch { /* ignore */ } }
-  function volumeBy(delta: number) { const v = stepVolume(muted ? 0 : volume, delta); setVolume(v); flash(`Lautstärke ${Math.round(v * 100)} %`, 600); }
+  function volumeBy(delta: number) { const v = stepVolume(muted ? 0 : volume, delta); setVolume(v); flash(tr('player.volume.level', { n: Math.round(v * 100) }), 600); }
   function toggleMute() { if (casting) { castToggleMute(); return; } if (!video) return; video.muted = !video.muted; muted = video.muted; if (!muted && volume === 0) setVolume(0.5); }
   function toggleFullscreen() {
     if (document.fullscreenElement) document.exitFullscreen();
@@ -452,13 +457,13 @@
       case 'play': if (allowed()) playSafe(); break;
       case 'pause': if (allowed()) doPause(); break;
       case 'seek': seekBy(a.by); break;
-      case 'seekPct': if (duration > 0 && allowed()) { seekTo((duration * a.pct) / 100); flash(`${a.pct} %`, 700); } break;
+      case 'seekPct': if (duration > 0 && allowed()) { seekTo((duration * a.pct) / 100); flash(tr('player.percent', { n: a.pct }), 700); } break;
       case 'volume': volumeBy(a.delta); break;
-      case 'mute': toggleMute(); flash(muted ? 'Stumm' : 'Ton an', 700); break;
+      case 'mute': toggleMute(); flash(muted ? tr('player.mute') : tr('player.unmute'), 700); break;
       case 'fullscreen': toggleFullscreen(); break;
       case 'subtitles': cycleSubtitles(); break;
       case 'skip': if (skip && allowed()) doSkip(); break;
-      case 'next': if (hasNext && allowed()) dispatch('next'); else flash('Keine weitere Folge'); break;
+      case 'next': if (hasNext && allowed()) dispatch('next'); else flash(tr('player.noNext')); break;
       case 'help': help = !help; break;
       case 'pip': if (pipOk && !casting) void pip(); break;
       case 'tvControls': focusControls(); break;
@@ -466,10 +471,10 @@
     }
   }
   function cycleSubtitles() {
-    if (!info?.subtitles.length) { flash('Keine Untertitel verfügbar'); return; }
+    if (!info?.subtitles.length) { flash(tr('player.subs.none')); return; }
     const i = nextSubtitle(subIndex, info.subtitles.map((x) => x.index));
     setSubtitle(i);
-    flash(i === -1 ? 'Untertitel: Aus' : `Untertitel: ${info.subtitles.find((x) => x.index === i)?.title ?? ''}`, 1500);
+    flash(i === -1 ? tr('player.subs.off') : tr('player.subs.on', { name: info.subtitles.find((x) => x.index === i)?.title ?? '' }), 1500);
   }
   function onKey(e: KeyboardEvent) {
     const t = e.target as HTMLElement;
@@ -547,16 +552,16 @@
       showHud({ icon: d < 0 ? 'rewind10' : 'forward10', text: `${fmtClock(g.target)}  (${d < 0 ? '−' : '+'}${fmtClock(Math.abs(d))})`, pct: duration ? (g.target / duration) * 100 : 0 });
     } else if (g.axis === 'volume') {
       const v = Math.round(levelFromDrag(g.startVol, dy, g.h) * 20) / 20;
-      setVolume(v); showHud({ icon: v === 0 ? 'volume-off' : v < 0.5 ? 'volume-low' : 'volume', text: `Lautstärke ${Math.round(v * 100)} %`, pct: v * 100 });
+      setVolume(v); showHud({ icon: v === 0 ? 'volume-off' : v < 0.5 ? 'volume-low' : 'volume', text: tr('player.volume.level', { n: Math.round(v * 100) }), pct: v * 100 });
     } else if (g.axis === 'brightness') {
       brightness = levelFromDrag(g.startBri, dy, g.h, BRIGHTNESS_MIN, 1);
-      showHud({ icon: 'sun', text: `Helligkeit ${brightnessPct(brightness)} %`, pct: ((brightness - BRIGHTNESS_MIN) / (1 - BRIGHTNESS_MIN)) * 100 });
+      showHud({ icon: 'sun', text: tr('player.brightness', { n: brightnessPct(brightness) }), pct: ((brightness - BRIGHTNESS_MIN) / (1 - BRIGHTNESS_MIN)) * 100 });
     }
   }
   function gUp(e: PointerEvent) {
     if (!g || e.pointerId !== g.id) return;
     const cur = g; g = null; lastTouch = Date.now();
-    if (cur.axis === 'scrub') { seekTo(cur.target); announce(`Position ${fmtClock(cur.target)}`); showHud(hud, 500); return; }
+    if (cur.axis === 'scrub') { seekTo(cur.target); announce(tr('player.position', { t: fmtClock(cur.target) })); showHud(hud, 500); return; }
     if (cur.axis) { announce(hud?.text ?? ''); showHud(hud, 700); return; }
     if (cur.moved || Math.hypot(e.clientX - cur.x, e.clientY - cur.y) > 12) { showHud(null); return; }
     handleTap(e.clientX - cur.left, cur.w);
@@ -574,11 +579,11 @@
   }
   // lock: hides all controls and turns gestures off until the lock icon is held for 0.6 s
   function showLockBtn() { lockHint = true; clearTimeout(lockT); lockT = setTimeout(() => (lockHint = false), 3000); }
-  function lockNow() { locked = true; menu = ''; flash('Gesperrt – zum Entsperren Schloss gedrückt halten', 2500); showLockBtn(); }
+  function lockNow() { locked = true; menu = ''; flash(tr('player.lock.locked'), 2500); showLockBtn(); }
   let unlockT: ReturnType<typeof setTimeout>, unlockedAt = 0;
-  function unlockDown() { lockHold = true; clearTimeout(unlockT); unlockT = setTimeout(() => { lockHold = false; locked = false; lockHint = false; unlockedAt = Date.now(); wake(); flash('Entsperrt', 900); }, 600); }
-  function unlockUp() { if (lockHold) { lockHold = false; clearTimeout(unlockT); flash('Zum Entsperren gedrückt halten', 1500); showLockBtn(); } }
-  function lockKey(e: KeyboardEvent) { if (locked && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); e.stopPropagation(); locked = false; lockHint = false; unlockedAt = Date.now(); wake(); flash('Entsperrt', 900); } }
+  function unlockDown() { lockHold = true; clearTimeout(unlockT); unlockT = setTimeout(() => { lockHold = false; locked = false; lockHint = false; unlockedAt = Date.now(); wake(); flash(tr('player.lock.unlocked'), 900); }, 600); }
+  function unlockUp() { if (lockHold) { lockHold = false; clearTimeout(unlockT); flash(tr('player.lock.hold'), 1500); showLockBtn(); } }
+  function lockKey(e: KeyboardEvent) { if (locked && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); e.stopPropagation(); locked = false; lockHint = false; unlockedAt = Date.now(); wake(); flash(tr('player.lock.unlocked'), 900); } }
 
   const syncTime = () => {
     if (!video) return;
@@ -608,7 +613,7 @@
       tick = Date.now();
       if (casting && castInfo && !castBusy && castInfo.expiresAt - tick < 10 * 60_000) void recast(castPos); // renew the token before it expires
       if (sleepAt) {
-        if (tick >= sleepAt) { sleepAt = 0; sleepMin = 0; video?.pause(); flash('Schlaf-Timer: Wiedergabe pausiert', 3000); }
+        if (tick >= sleepAt) { sleepAt = 0; sleepMin = 0; video?.pause(); flash(tr('player.sleep.paused'), 3000); }
         else sleepLeft = fmtClock((sleepAt - tick) / 1000);
       }
     }, 500);
@@ -666,38 +671,38 @@
     <div class="center errov" role="alertdialog" aria-labelledby="perr-t" aria-describedby="perr-d">
       <div class="errbox ui" on:click|stopPropagation on:keydown|stopPropagation role="presentation">
         <b id="perr-t">{errTitle}</b><p id="perr-d">{error}</p>
-        <div class="flex"><button class="btn light go" data-autofocus on:click={retryManually}>Erneut versuchen</button><button class="sec" on:click={leave}>Zurück</button></div>
+        <div class="flex"><button class="btn light go" data-autofocus on:click={retryManually}>{$t('player.error.retry')}</button><button class="sec" on:click={leave}>{$t('player.error.back')}</button></div>
       </div>
     </div>
   {:else if reconnecting}
-    <div class="center" role="status"><div class="reco ui"><div class="spin sm"></div><span>Verbindung unterbrochen – neuer Versuch …</span><small>Versuch {reconnecting} von {MAX_NETWORK_TRIES}</small></div></div>
-  {:else if spin && waiting && !casting}<div class="center" role="status" aria-label="Lädt"><div class="spin"></div></div>{/if}
+    <div class="center" role="status"><div class="reco ui"><div class="spin sm"></div><span>{$t('player.reconnecting')}</span><small>{$t('player.attempt', { n: reconnecting, max: MAX_NETWORK_TRIES })}</small></div></div>
+  {:else if spin && waiting && !casting}<div class="center" role="status" aria-label={$t('player.loading')}><div class="spin"></div></div>{/if}
   {#if casting}
-    <div class="center castov" role="status"><div class="castbox"><Icon name="cast" size={56} /><b>Wird auf {$castState.deviceName || 'Chromecast'} abgespielt</b><button class="btn light ui" on:click|stopPropagation={() => castStop()}>Übertragung beenden</button></div></div>
+    <div class="center castov" role="status"><div class="castbox"><Icon name="cast" size={56} /><b>{$t('player.cast.playingOn', { name: $castState.deviceName || 'Chromecast' })}</b><button class="btn light ui" on:click|stopPropagation={() => castStop()}>{$t('player.cast.stop')}</button></div></div>
   {/if}
   {#if paused && !waiting && !error && !casting && !locked && !reconnecting}
-    <button class="bigplay ui" aria-label="Abspielen" on:click|stopPropagation={togglePlay}><Icon name="play" size={44} /></button>
+    <button class="bigplay ui" aria-label={$t('player.controls.play')} on:click|stopPropagation={togglePlay}><Icon name="play" size={44} /></button>
   {/if}
   {#if toast}<div class="toast" aria-hidden="true">{toast}</div>{/if}
   {#if ripple}
     {#key ripple.n}<div class="rip {ripple.zone}" aria-hidden="true"></div>{/key}
-    <div class="riplbl {ripple.zone}" aria-hidden="true"><Icon name={ripple.zone === 'left' ? 'rewind10' : 'forward10'} size={34} /><b>{ripple.total} Sek.</b></div>
+    <div class="riplbl {ripple.zone}" aria-hidden="true"><Icon name={ripple.zone === 'left' ? 'rewind10' : 'forward10'} size={34} /><b>{$t('common.duration.s', { s: ripple.total })}</b></div>
   {/if}
   {#if hud}
     <div class="hud" aria-hidden="true"><Icon name={hud.icon} size={26} /><span>{hud.text}</span><i style="--p:{Math.max(0, Math.min(100, hud.pct))}%"></i></div>
   {/if}
   {#if coarse && !tvMode() && !casting && (locked ? lockHint : showUi)}
-    <button class="lockbtn ic" class:holding={lockHold} aria-label={locked ? 'Entsperren (gedrückt halten)' : 'Bedienung sperren'}
+    <button class="lockbtn ic" class:holding={lockHold} aria-label={locked ? $t('player.lock.unlockAria') : $t('player.lock.lockAria')}
       on:pointerdown|stopPropagation={() => (locked ? unlockDown() : undefined)} on:pointerup|stopPropagation={unlockUp} on:pointercancel={unlockUp} on:pointerleave={unlockUp}
       on:keydown={lockKey} on:click|stopPropagation={() => { if (!locked && Date.now() - unlockedAt > 1000) lockNow(); }} on:contextmenu|preventDefault>
       <Icon name={locked ? 'lock' : 'unlock'} size={26} />
     </button>
   {/if}
   {#if help}
-    <div class="help ui" role="dialog" aria-modal="true" aria-label="Tastenkürzel" tabindex="-1" on:click|stopPropagation={() => (help = false)} on:keydown|stopPropagation>
+    <div class="help ui" role="dialog" aria-modal="true" aria-label={$t('player.shortcuts.title')} tabindex="-1" on:click|stopPropagation={() => (help = false)} on:keydown|stopPropagation>
       <div class="hbox" on:click|stopPropagation on:keydown|stopPropagation role="presentation">
-        <header><b>Tastenkürzel</b><button class="icx" data-autofocus aria-label="Schließen" on:click={() => (help = false)}><Icon name="x" size={20} /></button></header>
-        <dl>{#each SHORTCUTS as [k, d]}<dt><kbd>{k}</kbd></dt><dd>{d}</dd>{/each}</dl>
+        <header><b>{$t('player.shortcuts.title')}</b><button class="icx" data-autofocus aria-label={$t('common.close')} on:click={() => (help = false)}><Icon name="x" size={20} /></button></header>
+        <dl>{#each SHORTCUTS as s}<dt><kbd>{s.kKey ? $t(s.kKey) : s.k}</kbd></dt><dd>{$t(s.d)}</dd>{/each}</dl>
       </div>
     </div>
   {/if}
@@ -706,31 +711,31 @@
   <div class="ovl" class:hide={!showUi}><slot name="top" /></div>
   <slot />
 
-  {#if skip && !locked}<button class="skipbtn light" aria-keyshortcuts="S" on:click|stopPropagation={doSkip}>{skipLabel[skip.type]}{tvMode() ? ' (OK)' : ''}</button>{/if}
+  {#if skip && !locked}<button class="skipbtn light" aria-keyshortcuts="S" on:click|stopPropagation={doSkip}>{segText($t, skip.type, 'skip')}{tvMode() ? $t('player.skipOk') : ''}</button>{/if}
 
   {#if showXray && people}
-    <aside class="xray ui" class:hide={!showUi && !xray} aria-label="Besetzung">
-      <h3>Besetzung &amp; Crew</h3>
+    <aside class="xray ui" class:hide={!showUi && !xray} aria-label={$t('player.controls.cast')}>
+      <h3>{$t('player.controls.castCrew')}</h3>
       <ul>{#each people.slice(0, 14) as pr (pr.id)}
         <li>{#if pr.image}<img loading="lazy" src="/media/Items/{pr.id}/Images/Primary?maxWidth=160&quality=85" alt="" />{:else}<span class="ph2"><Icon name="user" size={28} /></span>{/if}<b>{pr.name}</b><span class="muted">{pr.role || (pr.type === 'Actor' ? '' : pr.type)}</span></li>{/each}</ul>
     </aside>
   {/if}
   {#if subDlg}
-    <div class="dlg ui" data-nav data-scope role="dialog" tabindex="-1" aria-modal="true" aria-label="Untertitel suchen" on:click|stopPropagation on:keydown|stopPropagation>
-      <header><b>Untertitel suchen</b><button class="icx" aria-label="Schließen" on:click={() => (subDlg = false)}><Icon name="x" size={20} /></button></header>
-      <div class="flex"><select bind:value={subLang} aria-label="Sprache"><option value="ger">Deutsch</option><option value="eng">Englisch</option><option value="fre">Französisch</option><option value="spa">Spanisch</option><option value="ita">Italienisch</option></select><button disabled={subBusy} on:click={searchSubs}>Suchen</button></div>
+    <div class="dlg ui" data-nav data-scope role="dialog" tabindex="-1" aria-modal="true" aria-label={$t('player.subs.search')} on:click|stopPropagation on:keydown|stopPropagation>
+      <header><b>{$t('player.subs.search')}</b><button class="icx" aria-label={$t('common.close')} on:click={() => (subDlg = false)}><Icon name="x" size={20} /></button></header>
+      <div class="flex"><select bind:value={subLang} aria-label={$t('player.subs.language')}>{#each SUB_LANGS as l}<option value={l}>{$t(`player.subs.langs.${l}`)}</option>{/each}</select><button disabled={subBusy} on:click={searchSubs}>{$t('player.subs.searchButton')}</button></div>
       {#if subMsg}<p class="muted">{subMsg}</p>{/if}
       {#if subResults?.length}<ul>{#each subResults as r}<li><button class="mi" disabled={subBusy} on:click={() => pickSub(r.id)}><Icon name="download" size={16} /><span class="grow">{r.name}</span><span class="muted">{r.provider}{r.downloads ? ` · ${r.downloads}×` : ''}</span></button></li>{/each}</ul>{/if}
     </div>
   {/if}
 
-  <div class="ui ctl" data-nav class:hide={!showUi} on:click|stopPropagation on:keydown={ctlKey} role="toolbar" tabindex="-1" aria-label="Wiedergabesteuerung">
+  <div class="ui ctl" data-nav class:hide={!showUi} on:click|stopPropagation on:keydown={ctlKey} role="toolbar" tabindex="-1" aria-label={$t('player.controls.toolbar')}>
     <div class="timeline">
-      <div class="track" bind:this={trackEl} class:locked={!canControl} role="slider" tabindex="0" aria-label="Position" aria-valuemin="0" aria-valuemax={Math.round(duration)} aria-valuenow={Math.round(shown)}
-        aria-valuetext="{fmtClock(shown)} von {fmtClock(duration)}"
+      <div class="track" bind:this={trackEl} class:locked={!canControl} role="slider" tabindex="0" aria-label={$t('player.positionLabel')} aria-valuemin="0" aria-valuemax={Math.round(duration)} aria-valuenow={Math.round(shown)}
+        aria-valuetext={$t('player.valueText', { a: fmtClock(shown), b: fmtClock(duration) })}
         on:pointermove={onTrackMove} on:pointerleave={() => (hoverX = -1)} on:pointerdown={onTrackDown} on:pointerup={onTrackUp} on:pointercancel={onTrackUp} on:keydown={onTrackKey}>
         <div class="buf" style="width:{bufPct}%"></div>
-        {#each segments as sg}{#if duration && sg.end > sg.start}<span class="seg {sg.type}" style="left:{(sg.start / duration) * 100}%;width:{((sg.end - sg.start) / duration) * 100}%" title={segLabel[sg.type] ?? sg.type} aria-hidden="true"></span>{/if}{/each}
+        {#each segments as sg}{#if duration && sg.end > sg.start}<span class="seg {sg.type}" style="left:{(sg.start / duration) * 100}%;width:{((sg.end - sg.start) / duration) * 100}%" title={segText($t, sg.type, 'segment')} aria-hidden="true"></span>{/if}{/each}
         <div class="played" style="width:{pct}%"></div>
         {#each bookmarks as bm}{#if duration}<span class="mark" style="left:{(bm.position / duration) * 100}%" title="{fmtClock(bm.position)}{bm.note ? ' – ' + bm.note : ''}"></span>{/if}{/each}
         <div class="knob" style="left:{pct}%"></div>
@@ -745,38 +750,38 @@
     </div>
     <div class="row">
       <div class="grp">
-        <button class="ic" class:locked={!canControl} aria-label={paused ? 'Abspielen' : 'Pause'} on:click={togglePlay}><Icon name={paused ? 'play' : 'pause'} size={ICON} /></button>
-        <button class="ic" class:locked={!canControl} aria-label="10 Sekunden zurück" on:click={() => seekBy(-10)}><Icon name="rewind10" size={ICON} /></button>
-        <button class="ic" class:locked={!canControl} aria-label="10 Sekunden vor" on:click={() => seekBy(10)}><Icon name="forward10" size={ICON} /></button>
+        <button class="ic" class:locked={!canControl} aria-label={paused ? $t('player.controls.play') : $t('player.controls.pause')} on:click={togglePlay}><Icon name={paused ? 'play' : 'pause'} size={ICON} /></button>
+        <button class="ic" class:locked={!canControl} aria-label={$t('player.controls.back10')} on:click={() => seekBy(-10)}><Icon name="rewind10" size={ICON} /></button>
+        <button class="ic" class:locked={!canControl} aria-label={$t('player.controls.forward10')} on:click={() => seekBy(10)}><Icon name="forward10" size={ICON} /></button>
         <div class="vol">
-          <button class="ic" aria-label={muted ? 'Ton an' : 'Stumm'} on:click={toggleMute}><Icon name={muted || volume === 0 ? 'volume-off' : volume < 0.5 ? 'volume-low' : 'volume'} size={ICON} /></button>
-          <input class="vslider" type="range" min="0" max="1" step="0.05" value={muted ? 0 : volume} aria-label="Lautstärke" on:input={(e) => setVolume(Number(e.currentTarget.value))} />
+          <button class="ic" aria-label={muted ? $t('player.unmute') : $t('player.mute')} on:click={toggleMute}><Icon name={muted || volume === 0 ? 'volume-off' : volume < 0.5 ? 'volume-low' : 'volume'} size={ICON} /></button>
+          <input class="vslider" type="range" min="0" max="1" step="0.05" value={muted ? 0 : volume} aria-label={$t('player.volume.label')} on:input={(e) => setVolume(Number(e.currentTarget.value))} />
         </div>
         <span class="clock">{fmtClock(shown)} / {fmtClock(duration)}</span>
       </div>
       <div class="mid" title={barSub ? `${barTitle} · ${barSub}` : barTitle}>{#if barTitle}<b>{barTitle}</b>{#if barSub}<span>{barSub}</span>{/if}{/if}</div>
       <div class="grp right">
         <slot name="extra" />
-        {#if hasNext}<button class="ic" aria-label="Nächste Folge" title="Nächste Folge (N)" on:click={() => dispatch('next')}><Icon name="skip-next" size={ICON} /></button>{/if}
+        {#if hasNext}<button class="ic" aria-label={$t('player.controls.next')} title={$t('player.controls.nextKey')} on:click={() => dispatch('next')}><Icon name="skip-next" size={ICON} /></button>{/if}
         {#if seriesId}
           <div class="mwrap">
-            <button class="ic" bind:this={epBtn} aria-label="Folgen" title="Folgen" aria-expanded={menu === 'episodes'} on:click={() => toggleMenu('episodes')}><Icon name="list" size={ICON} /></button>
+            <button class="ic" bind:this={epBtn} aria-label={$t('player.controls.episodes')} title={$t('player.controls.episodes')} aria-expanded={menu === 'episodes'} on:click={() => toggleMenu('episodes')}><Icon name="list" size={ICON} /></button>
             {#if menu === 'episodes'}<div class="menu bare"><EpisodesPanel {seriesId} {seasonId} currentId={itemId} on:pick={pickEpisode} on:close={closeEpisodes} /></div>{/if}
           </div>
         {/if}
         {#if info}
           <div class="mwrap">
-            <button class="ic" aria-label="Audio und Untertitel" title="Audio und Untertitel (C)" aria-expanded={menu === 'tracks'} on:click={() => toggleMenu('tracks')}><Icon name="subtitles" size={ICON} /></button>
+            <button class="ic" aria-label={$t('player.controls.tracks')} title={$t('player.controls.tracksKey')} aria-expanded={menu === 'tracks'} on:click={() => toggleMenu('tracks')}><Icon name="subtitles" size={ICON} /></button>
             {#if menu === 'tracks'}
-              <div class="menu tracks" data-nav data-scope role="dialog" aria-label="Audio und Untertitel">
+              <div class="menu tracks" data-nav data-scope role="dialog" aria-label={$t('player.controls.tracks')}>
                 {#if info.audioTracks.length > 1}
-                  <div><h3>Audio</h3>
+                  <div><h3>{$t('player.controls.audio')}</h3>
                     {#each info.audioTracks as a}<button class="mi" class:on={audioIndex === a.index || (audioIndex === undefined && a.isDefault)} on:click={() => { menu = ''; changeAudio(a.index); }}>{#if audioIndex === a.index || (audioIndex === undefined && a.isDefault)}<Icon name="check" size={16} />{:else}<span class="sp"></span>{/if}{a.title}</button>{/each}
                   </div>
                 {/if}
-                <div><h3>Untertitel</h3>
-                  <button class="mi" class:on={subIndex === -1} on:click={() => { setSubtitle(-1); menu = ''; }}>{#if subIndex === -1}<Icon name="check" size={16} />{:else}<span class="sp"></span>{/if}Aus</button>
-                  <button class="mi" on:click={() => { menu = ''; subDlg = true; subResults = null; subMsg = ''; }}><Icon name="search" size={16} />Untertitel suchen …</button>
+                <div><h3>{$t('player.subs.title')}</h3>
+                  <button class="mi" class:on={subIndex === -1} on:click={() => { setSubtitle(-1); menu = ''; }}>{#if subIndex === -1}<Icon name="check" size={16} />{:else}<span class="sp"></span>{/if}{$t('common.off')}</button>
+                  <button class="mi" on:click={() => { menu = ''; subDlg = true; subResults = null; subMsg = ''; }}><Icon name="search" size={16} />{$t('player.subs.searchMenu')}</button>
                   {#each info.subtitles as s}<button class="mi" class:on={subIndex === s.index} on:click={() => { setSubtitle(s.index); menu = ''; }}>{#if subIndex === s.index}<Icon name="check" size={16} />{:else}<span class="sp"></span>{/if}{s.title}</button>{/each}
                 </div>
               </div>
@@ -785,58 +790,58 @@
         {/if}
         {#if !partyMode}
           <div class="mwrap">
-            <button class="ic" aria-label="Wiedergabetempo: {speedLabel(rate)}" title="Tempo" aria-expanded={menu === 'speed'} on:click={() => toggleMenu('speed')}><Icon name="gauge" size={ICON} />{#if rate !== 1}<span class="ratebadge" aria-hidden="true">{String(rate).replace('.', ',')}×</span>{/if}</button>
+            <button class="ic" aria-label={$t('player.speed.aria', { r: speedLabel(rate, $t) })} title={$t('player.speed.short')} aria-expanded={menu === 'speed'} on:click={() => toggleMenu('speed')}><Icon name="gauge" size={ICON} />{#if rate !== 1}<span class="ratebadge" aria-hidden="true">{$t('player.speed.rate', { r: rate })}</span>{/if}</button>
             {#if menu === 'speed'}
-              <div class="menu speed" data-nav data-scope role="dialog" aria-label="Wiedergabetempo">
-                <h3>Wiedergabetempo</h3>
-                <div class="speeds" role="group" aria-label="Tempo">
-                  {#each SPEEDS as r}<button class="sp-opt" class:on={rate === r} aria-pressed={rate === r} on:click={() => setRate(r)}><span class="dot" aria-hidden="true"></span>{speedLabel(r)}</button>{/each}
+              <div class="menu speed" data-nav data-scope role="dialog" aria-label={$t('player.speed.title')}>
+                <h3>{$t('player.speed.title')}</h3>
+                <div class="speeds" role="group" aria-label={$t('player.speed.short')}>
+                  {#each SPEEDS as r}<button class="sp-opt" class:on={rate === r} aria-pressed={rate === r} on:click={() => setRate(r)}><span class="dot" aria-hidden="true"></span>{speedLabel(r, $t)}</button>{/each}
                 </div>
               </div>
             {/if}
           </div>
         {/if}
         <div class="mwrap">
-          <button class="ic" aria-label="Mehr" title="Mehr" aria-expanded={menu === 'more' || menu === 'scenes' || menu === 'settings'} on:click={() => (menu = menu === '' || (menu !== 'more' && menu !== 'scenes' && menu !== 'settings') ? 'more' : '')}>
+          <button class="ic" aria-label={$t('player.controls.more')} title={$t('player.controls.more')} aria-expanded={menu === 'more' || menu === 'scenes' || menu === 'settings'} on:click={() => (menu = menu === '' || (menu !== 'more' && menu !== 'scenes' && menu !== 'settings') ? 'more' : '')}>
             <svg width={ICON} height={ICON} viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" focusable="false"><circle cx="5" cy="12" r="2" /><circle cx="12" cy="12" r="2" /><circle cx="19" cy="12" r="2" /></svg>
-            {#if sleepAt}<span class="sleepdot" title="Schlaf-Timer {sleepLeft}"></span>{/if}
+            {#if sleepAt}<span class="sleepdot" title={$t('player.sleep.left', { t: sleepLeft })}></span>{/if}
           </button>
           {#if menu === 'more'}
-            <div class="menu more" data-nav data-scope role="dialog" aria-label="Mehr">
-              <button class="mi" on:click={() => (menu = 'scenes')}><Icon name="bookmark" size={20} />Lesezeichen &amp; Szenen<span class="chev" aria-hidden="true">›</span></button>
-              <button class="mi" class:on={xray} aria-pressed={xray} on:click={() => { xray = !xray; if (xray) ensurePeople(); menu = ''; }}><Icon name="users" size={20} />Besetzung anzeigen</button>
+            <div class="menu more" data-nav data-scope role="dialog" aria-label={$t('player.controls.more')}>
+              <button class="mi" on:click={() => (menu = 'scenes')}><Icon name="bookmark" size={20} />{$t('player.bookmark.menu')}<span class="chev" aria-hidden="true">›</span></button>
+              <button class="mi" class:on={xray} aria-pressed={xray} on:click={() => { xray = !xray; if (xray) ensurePeople(); menu = ''; }}><Icon name="users" size={20} />{$t('player.controls.showCast')}</button>
               {#if !partyMode && ($castState.available || $castState.connected)}<button class="mi" class:on={casting} aria-pressed={casting} on:click={castClick}><Icon name="cast" size={20} />{castLabel}</button>{/if}
-              {#if pipOk && !casting}<button class="mi" class:on={inPip} aria-pressed={inPip} aria-keyshortcuts="P" on:click={() => { menu = ''; void pip(); }}><Icon name="pip" size={20} />Bild-in-Bild</button>{/if}
-              <button class="mi" on:click={() => (menu = 'settings')}><Icon name="settings" size={20} />Einstellungen{#if sleepAt}<span class="muted"> · Schlaf-Timer {sleepLeft}</span>{/if}<span class="chev" aria-hidden="true">›</span></button>
-              {#if modeLabel}<p class="modeinfo"><Icon name="info" size={16} /><span>Wiedergabe: {modeLabel}</span></p>{/if}
+              {#if pipOk && !casting}<button class="mi" class:on={inPip} aria-pressed={inPip} aria-keyshortcuts="P" on:click={() => { menu = ''; void pip(); }}><Icon name="pip" size={20} />{$t('player.controls.pip')}</button>{/if}
+              <button class="mi" on:click={() => (menu = 'settings')}><Icon name="settings" size={20} />{$t('player.controls.settings')}{#if sleepAt}<span class="muted"> · {$t('player.sleep.left', { t: sleepLeft })}</span>{/if}<span class="chev" aria-hidden="true">›</span></button>
+              {#if modeLabel}<p class="modeinfo"><Icon name="info" size={16} /><span>{$t('player.mode.label', { mode: modeLabel })}</span></p>{/if}
             </div>
           {:else if menu === 'scenes'}
-            <div class="menu scenes" data-nav data-scope role="dialog" aria-label="Szenen und Lesezeichen">
-              <h3><button class="back" aria-label="Zurück zu Mehr" on:click={() => (menu = 'more')}>‹</button>Szenen</h3>
-              <button class="mi" on:click={shareScene}><Icon name="share" size={18} />Szene teilen ({fmtClock(shown)})</button>
-              <form class="addnote" on:submit|preventDefault={addBookmark}><input bind:value={noteText} maxlength="140" placeholder="Notiz (optional)" aria-label="Notiz zum Lesezeichen" /><button aria-label="Lesezeichen setzen"><Icon name="bookmark" size={18} /></button></form>
+            <div class="menu scenes" data-nav data-scope role="dialog" aria-label={$t('player.bookmark.scenesAria')}>
+              <h3><button class="back" aria-label={$t('player.controls.backToMore')} on:click={() => (menu = 'more')}>‹</button>{$t('player.bookmark.scenes')}</h3>
+              <button class="mi" on:click={shareScene}><Icon name="share" size={18} />{$t('player.bookmark.share', { t: fmtClock(shown) })}</button>
+              <form class="addnote" on:submit|preventDefault={addBookmark}><input bind:value={noteText} maxlength="140" placeholder={$t('player.bookmark.note')} aria-label={$t('player.bookmark.noteAria')} /><button aria-label={$t('player.bookmark.add')}><Icon name="bookmark" size={18} /></button></form>
               {#each bookmarks as bm (bm.id)}
-                <div class="bm"><button class="mi" on:click={() => { seekTo(bm.position); menu = ''; }}><span class="muted">{fmtClock(bm.position)}</span>{bm.note || 'Lesezeichen'}</button><button class="icx" aria-label="Lesezeichen löschen" on:click={() => removeBookmark(bm.id)}><Icon name="x" size={16} /></button></div>
-              {:else}<p class="muted pad">Noch keine Lesezeichen.</p>{/each}
+                <div class="bm"><button class="mi" on:click={() => { seekTo(bm.position); menu = ''; }}><span class="muted">{fmtClock(bm.position)}</span>{bm.note || $t('player.bookmark.title')}</button><button class="icx" aria-label={$t('player.bookmark.remove')} on:click={() => removeBookmark(bm.id)}><Icon name="x" size={16} /></button></div>
+              {:else}<p class="muted pad">{$t('player.bookmark.none')}</p>{/each}
             </div>
           {:else if menu === 'settings'}
-            <div class="menu tracks" data-nav data-scope role="dialog" aria-label="Einstellungen">
-              <div><h3><button class="back" aria-label="Zurück zu Mehr" on:click={() => (menu = 'more')}>‹</button>Qualität</h3>
-                <button class="mi" class:on={quality === 0} on:click={() => changeQuality(0)}>{#if quality === 0}<Icon name="check" size={16} />{:else}<span class="sp"></span>{/if}Automatisch</button>
+            <div class="menu tracks" data-nav data-scope role="dialog" aria-label={$t('player.controls.settings')}>
+              <div><h3><button class="back" aria-label={$t('player.controls.backToMore')} on:click={() => (menu = 'more')}>‹</button>{$t('player.quality.title')}</h3>
+                <button class="mi" class:on={quality === 0} on:click={() => changeQuality(0)}>{#if quality === 0}<Icon name="check" size={16} />{:else}<span class="sp"></span>{/if}{$t('player.quality.auto')}</button>
                 {#each qualityOptions as [label, bps]}<button class="mi" class:on={quality === bps} on:click={() => changeQuality(bps)}>{#if quality === bps}<Icon name="check" size={16} />{:else}<span class="sp"></span>{/if}{label}</button>{/each}
               </div>
               {#if !partyMode}
-                <div><h3>Schlaf-Timer</h3>
-                  <button class="mi" class:on={!sleepAt && !sleepAfterEpisode} on:click={() => setSleep(0)}>{#if !sleepAt && !sleepAfterEpisode}<Icon name="check" size={16} />{:else}<span class="sp"></span>{/if}Aus</button>
-                  {#each [15, 30, 45, 60] as m}<button class="mi" class:on={sleepMin === m && sleepAt > 0} on:click={() => setSleep(m)}>{#if sleepMin === m && sleepAt > 0}<Icon name="check" size={16} />{:else}<span class="sp"></span>{/if}{m} Min.{#if sleepMin === m && sleepAt > 0}<span class="muted"> ({sleepLeft})</span>{/if}</button>{/each}
-                  <button class="mi" class:on={sleepAfterEpisode} on:click={() => setSleep('end')}>{#if sleepAfterEpisode}<Icon name="check" size={16} />{:else}<span class="sp"></span>{/if}Nach dieser Folge</button>
+                <div><h3>{$t('player.sleep.title')}</h3>
+                  <button class="mi" class:on={!sleepAt && !sleepAfterEpisode} on:click={() => setSleep(0)}>{#if !sleepAt && !sleepAfterEpisode}<Icon name="check" size={16} />{:else}<span class="sp"></span>{/if}{$t('common.off')}</button>
+                  {#each [15, 30, 45, 60] as m}<button class="mi" class:on={sleepMin === m && sleepAt > 0} on:click={() => setSleep(m)}>{#if sleepMin === m && sleepAt > 0}<Icon name="check" size={16} />{:else}<span class="sp"></span>{/if}{$t('common.duration.m', { m })}{#if sleepMin === m && sleepAt > 0}<span class="muted"> ({sleepLeft})</span>{/if}</button>{/each}
+                  <button class="mi" class:on={sleepAfterEpisode} on:click={() => setSleep('end')}>{#if sleepAfterEpisode}<Icon name="check" size={16} />{:else}<span class="sp"></span>{/if}{$t('player.sleep.afterEpisodeOption')}</button>
                 </div>
               {/if}
-              {#if !coarse}<div><h3>Hilfe</h3><button class="mi" on:click={() => { menu = ''; help = true; }}><Icon name="keyboard" size={16} />Tastenkürzel (?)</button></div>{/if}
+              {#if !coarse}<div><h3>{$t('player.controls.help')}</h3><button class="mi" on:click={() => { menu = ''; help = true; }}><Icon name="keyboard" size={16} />{$t('player.shortcuts.menu')}</button></div>{/if}
             </div>
           {/if}
         </div>
-        <button class="ic" aria-label={fullscreen ? 'Vollbild verlassen' : 'Vollbild'} title="Vollbild (F)" on:click={toggleFullscreen}><Icon name={fullscreen ? 'fullscreen-exit' : 'fullscreen'} size={ICON} /></button>
+        <button class="ic" aria-label={fullscreen ? $t('player.controls.exitFullscreen') : $t('player.controls.fullscreen')} title={$t('player.controls.fullscreenKey')} on:click={toggleFullscreen}><Icon name={fullscreen ? 'fullscreen-exit' : 'fullscreen'} size={ICON} /></button>
       </div>
     </div>
   </div>

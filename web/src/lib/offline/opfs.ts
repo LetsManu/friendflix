@@ -1,16 +1,18 @@
 // Origin Private File System layout: ff-dl/<downloadId>/{video.mp4, sub-<lang>.vtt, poster.jpg, backdrop.jpg}
 // Writes happen in fetch-worker.ts via createSyncAccessHandle; this module covers detection, reads, deletion and quota.
+import { tr } from '#lib/i18n';
 
 export const ROOT = 'ff-dl';
 
 export type Unsupported = 'insecure' | 'no-opfs' | 'ios-install' | 'tv';
 export interface Support { ok: boolean; reason?: Unsupported }
 
-export const SUPPORT_HINT: Record<Unsupported, string> = {
-  insecure: 'Downloads brauchen eine sichere Verbindung (HTTPS).',
-  'no-opfs': 'Auf diesem Gerät nicht verfügbar.',
-  'ios-install': 'Auf dem iPhone/iPad zuerst zum Home-Bildschirm hinzufügen, dann sind Downloads verfügbar.',
-  tv: 'Auf dem Fernseher nicht verfügbar.',
+/** hint per reason, translated on every read (getters), so `SUPPORT_HINT[reason]` follows the UI language */
+export const SUPPORT_HINT: Readonly<Record<Unsupported, string>> = {
+  get insecure() { return tr('account.downloads.support.insecure'); },
+  get 'no-opfs'() { return tr('account.downloads.support.noOpfs'); },
+  get 'ios-install'() { return tr('account.downloads.support.iosInstall'); },
+  get tv() { return tr('account.downloads.support.tv'); },
 };
 
 const isIos = () => /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);

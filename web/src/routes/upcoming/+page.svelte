@@ -1,8 +1,9 @@
 <script lang="ts">
   import UpcomingRow from '#lib/UpcomingRow.svelte';
+  import { t } from '#lib/i18n';
 </script>
-<svelte:head><title>Demnächst – FriendFlix</title></svelte:head>
-<h1>Demnächst</h1>
-<p class="muted">Kommende Titel. Mit einem Klick auf „Wünschen“ landen sie bei den Admins zur Freigabe.</p>
-<div class="bleed"><UpcomingRow type="movie" title="Kommende Filme" /><UpcomingRow type="tv" title="Kommende Serien" /></div>
+<svelte:head><title>{$t('common.pageTitle', { page: $t('social.upcoming.title') })}</title></svelte:head>
+<h1>{$t('social.upcoming.title')}</h1>
+<p class="muted">{$t('social.upcoming.intro')}</p>
+<div class="bleed"><UpcomingRow type="movie" title={$t('social.upcoming.movies')} /><UpcomingRow type="tv" title={$t('social.upcoming.series')} /></div>
 <style>.bleed { margin: 0 calc(var(--pad-x) * -1); }</style>

@@ -6,6 +6,7 @@
   import { SUPPORT_HINT, persist, type Support } from '#lib/offline/opfs';
   import { daysLeft } from '#lib/offline/license';
   import { fmtBytes } from '#lib/offline/size';
+  import { intlLocale, t, tr } from '#lib/i18n';
 
   let support: Support = { ok: false };
   let me: Me | null = null, ready = false;
@@ -19,15 +20,15 @@
     ready = true;
   });
   function setQuality(q: string) { quality = q; try { localStorage.setItem('ff_dl_quality', q); } catch { /* ignore */ } }
-  async function askPersist() { persistMsg = (await persist()) ? 'Speicher wird geschützt.' : 'Der Browser hat den Schutz nicht erteilt; Downloads können bei Platzmangel gelöscht werden.'; void refreshStorage(); }
+  async function askPersist() { persistMsg = (await persist()) ? tr('account.downloads.persisted') : tr('account.downloads.persistDenied'); void refreshStorage(); }
 
   $: list = [...$downloads.values()].filter((v) => v.profileId === (me?.profile?.id ?? v.profileId));
   $: groups = Object.values(list.reduce<Record<string, { name: string; items: DlView[] }>>((acc, v) => {
     const k = v.seriesName ?? '\u0000Filme';
-    (acc[k] ??= { name: v.seriesName ?? 'Filme', items: [] }).items.push(v);
+    (acc[k] ??= { name: v.seriesName ?? tr('account.downloads.movies'), items: [] }).items.push(v);
     return acc;
-  }, {})).map((g) => ({ ...g, items: g.items.sort((a, b) => (a.s ?? 0) - (b.s ?? 0) || (a.e ?? 0) - (b.e ?? 0) || a.title.localeCompare(b.title)) }))
-    .sort((a, b) => a.name.localeCompare(b.name, 'de'));
+  }, {})).map((g) => ({ ...g, items: g.items.sort((a, b) => (a.s ?? 0) - (b.s ?? 0) || (a.e ?? 0) - (b.e ?? 0) || a.title.localeCompare(b.title, intlLocale())) }))
+    .sort((a, b) => a.name.localeCompare(b.name, intlLocale()));
   $: used = list.reduce((n, v) => n + v.bytesHave, 0);
   $: total = $storageInfo.quota;
   $: barPct = total ? Math.min(100, (used / total) * 100) : 0;
@@ -37,13 +38,13 @@
   async function wipe() { confirmAll = false; await Promise.all(list.map((v) => removeDownload(v.id))); }
 </script>
 
-<svelte:head><title>Downloads – FriendFlix</title></svelte:head>
-<h1>Downloads</h1>
+<svelte:head><title>{$t('common.pageTitle', { page: $t('account.downloads.pageTitle') })}</title></svelte:head>
+<h1>{$t('account.downloads.title')}</h1>
 {#if !ready}<div class="skeleton" style="height:10rem"></div>
 {:else if !support.ok}
   <p class="muted">{SUPPORT_HINT[support.reason ?? 'no-opfs']}</p>
 {:else if me && !me.downloads?.allowed}
-  <p class="muted">Downloads sind für dein Konto nicht freigeschaltet.</p>
+  <p class="muted">{$t('account.downloads.notAllowed')}</p>
 {:else}
   {#if !list.length}
     <div class="empty">
@@ -55,24 +56,24 @@
         <circle cx="112" cy="104" r="22" fill="var(--acc)" />
         <path d="M112 93v18m-8-8 8 8 8-8" fill="none" stroke="#fff" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round" />
       </svg>
-      <h2>Filme und Serien für unterwegs</h2>
-      <p class="muted">Lade Titel herunter und schau sie ohne Internet, im Zug, im Flugzeug oder wo das WLAN schwach ist. Auf jeder Titelseite findest du „Herunterladen“.</p>
-      <a class="btn light find" href="/browse/movies">Etwas zum Herunterladen finden</a>
+      <h2>{$t('account.downloads.emptyTitle')}</h2>
+      <p class="muted">{$t('account.downloads.emptyText')}</p>
+      <a class="btn light find" href="/browse/movies">{$t('account.downloads.emptyFind')}</a>
     </div>
   {/if}
   <section class="panel store">
-    <div class="bar" role="progressbar" aria-label="Belegter Speicher" aria-valuenow={Math.round(barPct)} aria-valuemin="0" aria-valuemax="100"><i style="width:{barPct}%"></i></div>
-    <p>{fmtBytes(used)} von {fmtBytes(total)} Gerätespeicher belegt{#if me?.downloads?.max} · bis zu {me.downloads.max} Downloads{/if}</p>
+    <div class="bar" role="progressbar" aria-label={$t('account.downloads.storageAria')} aria-valuenow={Math.round(barPct)} aria-valuemin="0" aria-valuemax="100"><i style="width:{barPct}%"></i></div>
+    <p>{$t('account.downloads.storageUsed', { used: fmtBytes(used), total: fmtBytes(total) })}{#if me?.downloads?.max}{$t('account.downloads.maxDownloads', { n: me.downloads.max })}{/if}</p>
     <div class="flex">
-      <label>Standard-Qualität
+      <label>{$t('account.downloads.defaultQuality')}
         <select value={quality} on:change={(e) => setQuality(e.currentTarget.value)}>
-          <option value="sd">Niedrig (480p)</option><option value="hd">Mittel (720p)</option><option value="fhd">Hoch (1080p)</option><option value="original">Original</option>
+          <option value="sd">{$t('account.downloads.qualities.sd')}</option><option value="hd">{$t('account.downloads.qualities.hd')}</option><option value="fhd">{$t('account.downloads.qualities.fhd')}</option><option value="original">{$t('account.downloads.qualities.original')}</option>
         </select>
       </label>
-      {#if !$storageInfo.persisted}<button class="sec" on:click={askPersist}>Speicher schützen</button>{/if}
+      {#if !$storageInfo.persisted}<button class="sec" on:click={askPersist}>{$t('account.downloads.persist')}</button>{/if}
     </div>
     {#if persistMsg}<p class="muted" role="status">{persistMsg}</p>{/if}
-    <p class="muted small">Downloads funktionieren ohne Internet, solange die Lizenz gültig ist. Ein Kopierschutz besteht nicht; Ablauf und Sperrung werden beim nächsten Online-Kontakt durchgesetzt. Beim Herunterladen muss dieser Tab geöffnet bleiben.</p>
+    <p class="muted small">{$t('account.downloads.note')}</p>
   </section>
 
   {#if list.length}
@@ -83,22 +84,22 @@
           <li class="item">
             <div class="tx">
               <b>{label(v)}</b>
-              <span class="muted small">{stateLabel(v)}{#if v.state === 'done'} · {fmtBytes(v.bytesTotal)} · noch {daysLeft(v.expiresAt, Date.now())} Tage{/if}{#if v.state === 'error' && v.msg} · {v.msg}{/if}</span>
-              {#if busy(v) || v.state === 'paused'}<div class="bar slim" role="progressbar" aria-label="Fortschritt" aria-valuenow={v.state === 'preparing' ? v.prep ?? 0 : progressPct(v)} aria-valuemin="0" aria-valuemax="100"><i style="width:{v.state === 'preparing' ? v.prep ?? 0 : progressPct(v)}%"></i></div>{/if}
+              <span class="muted small">{stateLabel(v)}{#if v.state === 'done'} · {fmtBytes(v.bytesTotal)} · {$t('account.downloads.daysLeft', { n: daysLeft(v.expiresAt, Date.now()) })}{/if}{#if v.state === 'error' && v.msg} · {v.msg}{/if}</span>
+              {#if busy(v) || v.state === 'paused'}<div class="bar slim" role="progressbar" aria-label={$t('account.downloads.progress')} aria-valuenow={v.state === 'preparing' ? v.prep ?? 0 : progressPct(v)} aria-valuemin="0" aria-valuemax="100"><i style="width:{v.state === 'preparing' ? v.prep ?? 0 : progressPct(v)}%"></i></div>{/if}
             </div>
             <div class="acts">
-              {#if v.state === 'done'}<a class="btn" href="/offline?play={v.id}"><Icon name="play" size={18} />Abspielen</a>{/if}
-              {#if v.state === 'downloading'}<button class="sec" on:click={() => pause(v.id)}><Icon name="pause" size={18} />Pausieren</button>{/if}
-              {#if v.state === 'paused' || v.state === 'error'}<button class="sec" on:click={() => resume(v.id)}><Icon name="play" size={18} />Fortsetzen</button>{/if}
-              <button class="icon-btn" aria-label="{v.state === 'done' ? 'Löschen' : 'Abbrechen'}: {label(v)}" title={v.state === 'done' ? 'Löschen' : 'Abbrechen'} on:click={() => removeDownload(v.id)}><Icon name="x" size={20} /></button>
+              {#if v.state === 'done'}<a class="btn" href="/offline?play={v.id}"><Icon name="play" size={18} />{$t('account.downloads.play')}</a>{/if}
+              {#if v.state === 'downloading'}<button class="sec" on:click={() => pause(v.id)}><Icon name="pause" size={18} />{$t('account.downloads.pause')}</button>{/if}
+              {#if v.state === 'paused' || v.state === 'error'}<button class="sec" on:click={() => resume(v.id)}><Icon name="play" size={18} />{$t('account.downloads.resume')}</button>{/if}
+              <button class="icon-btn" aria-label={$t('account.downloads.removeAria', { action: v.state === 'done' ? $t('account.downloads.delete') : $t('account.downloads.cancel'), title: label(v) })} title={v.state === 'done' ? $t('account.downloads.delete') : $t('account.downloads.cancel')} on:click={() => removeDownload(v.id)}><Icon name="x" size={20} /></button>
             </div>
           </li>
         {/each}
       </ul>
     {/each}
     {#if confirmAll}
-      <p class="flex"><span>Alle Downloads auf diesem Gerät löschen?</span><button on:click={wipe}>Ja, alle löschen</button><button class="sec" on:click={() => (confirmAll = false)}>Abbrechen</button></p>
-    {:else}<button class="sec" on:click={() => (confirmAll = true)}>Alle löschen</button>{/if}
+      <p class="flex"><span>{$t('account.downloads.confirmAll')}</span><button on:click={wipe}>{$t('account.downloads.confirmAllYes')}</button><button class="sec" on:click={() => (confirmAll = false)}>{$t('account.downloads.cancel')}</button></p>
+    {:else}<button class="sec" on:click={() => (confirmAll = true)}>{$t('account.downloads.deleteAll')}</button>{/if}
   {/if}
 {/if}
 

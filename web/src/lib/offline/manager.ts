@@ -8,6 +8,7 @@ import {
 } from './db';
 import { deleteDownloadFiles, deleteOrphans, detectSupport, persist, storageEstimate, type Support } from './opfs';
 import { bumpMaxSeen, toMs } from './license';
+import { tr, type TKey } from '../i18n';
 import { fitsQuota, estimateBytes, pct, type QualityId } from './size';
 import type { StartMsg, WorkerOut } from './fetch-worker';
 
@@ -114,7 +115,7 @@ function applyServer(l: ServerLicense) {
   if (l.validUntil) v.validUntil = toMs(l.validUntil);
   if (l.bytes && v.state !== 'done') v.bytesTotal = l.bytes;
   if (v.state === 'queued' || v.state === 'preparing') {
-    if (ps === 'failed') { v.state = 'error'; v.msg = 'Vorbereitung auf dem Server fehlgeschlagen.'; }
+    if (ps === 'failed') { v.state = 'error'; v.msg = tr('account.downloads.msg.prepFailed'); }
     else if (ps === 'preparing') { v.state = 'preparing'; v.prep = prepOf(l); }
     else if (ps === 'queued') { v.state = 'queued'; v.prep = 0; }
   }
@@ -178,7 +179,7 @@ export async function poll(): Promise<void> {
 }
 
 function markAuth() {
-  for (const v of recs.values()) if (v.state === 'queued' || v.state === 'preparing') v.msg = 'Anmelden zum Fortsetzen';
+  for (const v of recs.values()) if (v.state === 'queued' || v.state === 'preparing') v.msg = tr('account.downloads.msg.signIn');
   publish();
 }
 
@@ -216,7 +217,7 @@ async function pump(): Promise<void> {
   if (!next) return;
   const info = await storageEstimate();
   const need = (next.bytesTotal || estimateBytes(next.quality, next.runtimeTicks)) - next.bytesHave;
-  if (!fitsQuota(need, info.quota, info.usage)) { await save(next, { state: 'error', msg: 'Nicht genug Speicherplatz auf diesem Gerät.' }); return pump(); }
+  if (!fitsQuota(need, info.quota, info.usage)) { await save(next, { state: 'error', msg: tr('account.downloads.msg.noSpace') }); return pump(); }
   startWorker(next);
 }
 
@@ -225,7 +226,7 @@ function startWorker(v: DlView) {
   const s = srv.get(v.id)!;
   worker = new Worker(new URL('./fetch-worker.ts', import.meta.url), { type: 'module' });
   worker.onmessage = (ev: MessageEvent<WorkerOut>) => { void onWorker(ev.data); };
-  worker.onerror = () => { void onWorker({ type: 'error', id: v.id, code: 'network', message: 'Worker-Fehler' }); };
+  worker.onerror = () => { void onWorker({ type: 'error', id: v.id, code: 'network', message: 'worker error' }); };
   const extras = [
     ...s.subs.map((x) => ({ url: x.url, name: `sub-${x.lang}.vtt` })),
     ...(s.poster ? [{ url: s.poster, name: 'poster.jpg' }] : []),
@@ -261,12 +262,12 @@ async function onWorker(m: WorkerOut) {
     await save(v, { state: 'paused', bytesHave: m.have });
   } else {
     const back = (ms: number) => retryAt.set(v.id, Date.now() + ms);
-    if (m.code === 'auth') { await save(v, { state: 'paused', msg: 'Anmelden zum Fortsetzen' }); }
-    else if (m.code === 'busy') { back(30_000); await save(v, { state: 'queued', msg: 'Server ausgelastet, neuer Versuch folgt' }); }
-    else if (m.code === 'network') { back(15_000); await save(v, { state: 'queued', msg: 'Verbindung unterbrochen, neuer Versuch folgt' }); }
-    else if (m.code === 'size') { await deleteDownloadFiles(v.id).catch(() => undefined); back(5_000); await save(v, { state: 'queued', bytesHave: 0, etag: '', msg: 'Datei wird neu geladen' }); }
-    else if (m.code === 'gone') { await save(v, { state: 'error', msg: m.message }); }
-    else { await save(v, { state: 'error', msg: m.message || 'Speichern fehlgeschlagen (Speicher voll?)' }); }
+    if (m.code === 'auth') { await save(v, { state: 'paused', msg: tr('account.downloads.msg.signIn') }); }
+    else if (m.code === 'busy') { back(30_000); await save(v, { state: 'queued', msg: tr('account.downloads.msg.busy') }); }
+    else if (m.code === 'network') { back(15_000); await save(v, { state: 'queued', msg: tr('account.downloads.msg.network') }); }
+    else if (m.code === 'size') { await deleteDownloadFiles(v.id).catch(() => undefined); back(5_000); await save(v, { state: 'queued', bytesHave: 0, etag: '', msg: tr('account.downloads.msg.reload') }); }
+    else if (m.code === 'gone') { await save(v, { state: 'error', msg: tr('account.downloads.msg.gone') }); }
+    else { await save(v, { state: 'error', msg: tr('account.downloads.msg.io') }); }
   }
   setTimeout(() => { void pump(); }, 50);
   setTimeout(() => { void pump(); }, 15_500);
@@ -378,15 +379,16 @@ export const viewFor = (m: Map<string, DlView>, itemId: string): DlView | undefi
   [...m.values()].find((v) => v.itemId === itemId && v.state !== 'expired');
 export const progressPct = (v: DlView): number => pct(v.bytesHave, v.bytesTotal);
 export const stateLabel = (v: DlView): string => {
-  const L: Record<DownloadState, string> = {
-    queued: 'Warteschlange',
-    preparing: `Wird vorbereitet · ${v.prep ?? 0} %`,
-    downloading: `Lädt ${progressPct(v)} %`,
-    paused: v.msg ?? 'Pausiert',
-    done: 'Heruntergeladen',
-    error: 'Fehler',
-    expired: 'Abgelaufen',
+  const L: Record<DownloadState, TKey> = {
+    queued: 'account.downloads.state.queued',
+    preparing: 'account.downloads.state.preparing',
+    downloading: 'account.downloads.state.downloading',
+    paused: 'account.downloads.state.paused',
+    done: 'account.downloads.state.done',
+    error: 'account.downloads.state.error',
+    expired: 'account.downloads.state.expired',
   };
-  return L[v.state];
+  if (v.state === 'paused' && v.msg) return v.msg;
+  return tr(L[v.state], { n: v.state === 'preparing' ? v.prep ?? 0 : progressPct(v) });
 };
 export const snapshot = (): Map<string, DlView> => get(downloads);

@@ -11,6 +11,7 @@
   import PosterCard from '#lib/PosterCard.svelte';
   import { mobile } from '#lib/viewport';
   import { pageCount, pageIndex, INITIAL_EXTRA } from '#lib/home';
+  import { t } from '#lib/i18n';
 
   export let title: string;
   /** null = loading (skeleton) */
@@ -103,19 +104,19 @@
 {#if items === null || items.length}
   <section class="row" class:m={$mobile} class:land={landscape} class:near class:rk={ranked} bind:this={section} aria-label={title} aria-busy={items === null} on:pointerenter={() => !full && showAll()} on:focusin={() => !full && showAll()}>
     <div class="hd">
-      <h2>{#if href}<a {href}>{title}<span class="more"> Alle anzeigen</span><Icon name="chevron-right" size={18} /></a>{:else}{title}{/if}</h2>
+      <h2>{#if href}<a {href}>{title}<span class="more"> {$t('home.row.showAll')}</span><Icon name="chevron-right" size={18} /></a>{:else}{title}{/if}</h2>
       {#if pages > 1 && !$mobile}<ol class="dots" aria-hidden="true">{#each Array(pages) as _, i}<li class:on={i === current}></li>{/each}</ol>{/if}
     </div>
     <div class="wrap">
-      <button class="arrow left" class:hide={!canLeft} aria-label="Zurückblättern" on:click={() => go(-1)}><Icon name="chevron-left" size={34} /></button>
+      <button class="arrow left" class:hide={!canLeft} aria-label={$t('home.row.prev')} on:click={() => go(-1)}><Icon name="chevron-left" size={34} /></button>
       <div class="track" use:trackAction on:scroll={onScroll} role="list">
         {#if items === null}
           {#each Array(8) as _}<div class="slot"><div class="skeleton ph" class:poster={($mobile && !landscape) || ranked}></div></div>{/each}
         {:else}
-          {#each items as it, idx (it.id)}{#if idx < limit}<div class="slot" class:ranked role="listitem">{#if ranked}<span class="rank" aria-label="Platz {idx + 1}">{idx + 1}</span>{/if}{#if $mobile}<PosterCard item={it} {landscape} {removable} on:remove />{:else}<Card item={it} {removable} poster={ranked} on:remove />{/if}</div>{/if}{/each}
+          {#each items as it, idx (it.id)}{#if idx < limit}<div class="slot" class:ranked role="listitem">{#if ranked}<span class="rank" aria-label={$t('home.row.rank', { n: idx + 1 })}>{idx + 1}</span>{/if}{#if $mobile}<PosterCard item={it} {landscape} {removable} on:remove />{:else}<Card item={it} {removable} poster={ranked} on:remove />{/if}</div>{/if}{/each}
         {/if}
       </div>
-      <button class="arrow right" class:hide={!canRight} aria-label="Weiterblättern" on:click={() => go(1)}><Icon name="chevron-right" size={34} /></button>
+      <button class="arrow right" class:hide={!canRight} aria-label={$t('home.row.next')} on:click={() => go(1)}><Icon name="chevron-right" size={34} /></button>
     </div>
   </section>
 {/if}

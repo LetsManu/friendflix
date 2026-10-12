@@ -5,7 +5,8 @@
   import { api } from '#lib/api';
   import Card from '#lib/Card.svelte';
   import { autofocus } from '#lib/actions';
-  import { isNotFound, loadList, removeFromList, removeMember, roleLabel, setMember, type ListDetail } from '#lib/lists';
+  import { isNotFound, loadList, removeFromList, removeMember, setMember, type ListDetail } from '#lib/lists';
+  import { t, tr, hasKey, type TKey } from '#lib/i18n';
 
   const page = pageStore();
   $: id = $page.params.id!;
@@ -22,7 +23,7 @@
     try { data = await loadList(id); missing = false; loadFailed = false; }
     catch (e) {
       if (isNotFound(e)) missing = true;
-      else if (data) err = err || 'Die Liste konnte nicht aktualisiert werden.';
+      else if (data) err = err || tr('social.lists.updateFailed');
       else loadFailed = true;
     }
   }
@@ -36,7 +37,9 @@
   $: candidates = friends.filter((f) => !data?.members.some((m) => m.id === f.id));
   $: if (owner && !friendsLoaded) { friendsLoaded = true; api('/api/friends').then((r) => (friends = r.friends)).catch(() => (friendsLoaded = false)); }
 
-  const errText = (e: any) => ({ too_many_members: 'Die Liste hat schon 20 Personen.', bad_member: 'Diese Person kann nicht eingeladen werden.' } as Record<string, string>)[e?.body?.error] ?? 'Das hat nicht geklappt.';
+  const errText = (e: any) => e?.body?.error === 'too_many_members' ? tr('social.lists.tooManyMembers') : e?.body?.error === 'bad_member' ? tr('social.lists.badMember') : tr('common.failed');
+  /** role name for a list role ('owner', 'editor' …); unknown roles are shown as they are */
+  const roleName = (role: string | undefined, fallback: string) => (role && hasKey(`social.lists.roles.${role}`) ? $t(`social.lists.roles.${role}` as TKey) : fallback);
   /** runs a mutation, then always re-syncs with the server (also after a failure); resolves true when the mutation succeeded */
   async function run(key: string, fn: () => Promise<unknown>): Promise<boolean> {
     if (isBusy(key)) return false;
@@ -59,27 +62,27 @@
   function startEdit() { name = data!.list.name; desc = data!.list.description ?? ''; err = ''; editing = true; }
   async function closeEdit() { editing = false; err = ''; await tick(); renameBtn?.focus(); }
   async function del() {
-    if (isBusy('del') || !confirm(`Liste „${data!.list.name}“ für alle löschen?`)) return;
+    if (isBusy('del') || !confirm(tr('social.lists.confirmDelete', { name: data!.list.name }))) return;
     err = ''; setBusy('del', true);
-    try { await api(`/api/lists/${id}`, { method: 'DELETE' }); await goto('/lists'); } catch { err = 'Das hat nicht geklappt.'; }
+    try { await api(`/api/lists/${id}`, { method: 'DELETE' }); await goto('/lists'); } catch { err = tr('common.failed'); }
     setBusy('del', false);
   }
   async function leave(userId: string) {
-    if (isBusy('mem:' + userId) || !confirm(userId === me ? 'Liste verlassen?' : 'Mitglied entfernen?')) return;
+    if (isBusy('mem:' + userId) || !confirm(userId === me ? tr('social.lists.confirmLeave') : tr('social.lists.confirmRemoveMember'))) return;
     err = ''; setBusy('mem:' + userId, true);
-    try { await removeMember(id, userId); if (userId === me) await goto('/lists'); else await load(); } catch { err = 'Das hat nicht geklappt.'; }
+    try { await removeMember(id, userId); if (userId === me) await goto('/lists'); else await load(); } catch { err = tr('common.failed'); }
     setBusy('mem:' + userId, false);
   }
   let me = '';
 </script>
 
-<svelte:head><title>{data?.list.name ?? 'Liste'} – FriendFlix</title></svelte:head>
+<svelte:head><title>{$t('common.pageTitle', { page: data?.list.name ?? $t('social.lists.fallbackTitle') })}</title></svelte:head>
 {#if missing}
-  <h1>Liste nicht gefunden</h1><a class="btn" href="/lists">Zu den Listen</a>
+  <h1>{$t('social.lists.notFound')}</h1><a class="btn" href="/lists">{$t('social.lists.toLists')}</a>
 {:else if loadFailed}
-  <h1>Konnte nicht geladen werden</h1>
-  <p class="err" role="alert">Die Liste ist gerade nicht erreichbar.</p>
-  <button type="button" on:click={retry}>Erneut versuchen</button> <a class="btn sec" href="/lists">Zu den Listen</a>
+  <h1>{$t('social.lists.loadFailedTitle')}</h1>
+  <p class="err" role="alert">{$t('social.lists.unreachable')}</p>
+  <button type="button" on:click={retry}>{$t('social.tryAgain')}</button> <a class="btn sec" href="/lists">{$t('social.lists.toLists')}</a>
 {:else if !data}
   <div class="tiles">{#each Array(6) as _}<div class="skeleton" style="aspect-ratio:16/9"></div>{/each}</div>
 {:else}
@@ -88,56 +91,56 @@
       {#if editing}
         <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
         <form on:submit|preventDefault={save} on:keydown={(e) => { if (e.key === 'Escape') { e.stopPropagation(); void closeEdit(); } }}>
-          <input type="text" maxlength="60" aria-label="Name" bind:value={name} use:autofocus />
-          <input type="text" maxlength="280" aria-label="Beschreibung" placeholder="Beschreibung (optional)" bind:value={desc} />
-          <button type="submit" disabled={!name.trim() || isBusy('save')}>Speichern</button>
-          <button type="button" class="sec" disabled={isBusy('save')} on:click={closeEdit}>Abbrechen</button>
+          <input type="text" maxlength="60" aria-label={$t('social.lists.nameAria')} bind:value={name} use:autofocus />
+          <input type="text" maxlength="280" aria-label={$t('social.lists.description')} placeholder={$t('social.lists.descriptionPlaceholder')} bind:value={desc} />
+          <button type="submit" disabled={!name.trim() || isBusy('save')}>{$t('common.save')}</button>
+          <button type="button" class="sec" disabled={isBusy('save')} on:click={closeEdit}>{$t('common.cancel')}</button>
         </form>
       {:else}
         <h1>{data.list.name}</h1>
         {#if data.list.description}<p class="muted">{data.list.description}</p>{/if}
-        <p class="muted">{roleLabel[data.list.role] ?? 'Gast'} · von {data.list.owner.name}</p>
+        <p class="muted">{roleName(data.list.role, $t('social.lists.roles.guest'))} · {$t('social.by', { name: data.list.owner.name })}</p>
       {/if}
     </div>
     <div class="acts">
-      {#if owner && !editing}<button class="sec" bind:this={renameBtn} on:click={startEdit}>Umbenennen</button><button class="sec" disabled={isBusy('del')} on:click={del}>Liste löschen</button>{/if}
-      {#if member && !owner}<button class="sec" on:click={() => leave(me)} disabled={!me || isBusy('mem:' + me)}>Liste verlassen</button>{/if}
+      {#if owner && !editing}<button class="sec" bind:this={renameBtn} on:click={startEdit}>{$t('social.lists.rename')}</button><button class="sec" disabled={isBusy('del')} on:click={del}>{$t('social.lists.delete')}</button>{/if}
+      {#if member && !owner}<button class="sec" on:click={() => leave(me)} disabled={!me || isBusy('mem:' + me)}>{$t('social.lists.leave')}</button>{/if}
     </div>
   </div>
   {#if err}<p class="err" role="alert">{err}</p>{/if}
-  {#if data.hiddenCount}<p class="muted">{data.hiddenCount} {data.hiddenCount === 1 ? 'Titel ist' : 'Titel sind'} für dieses Profil nicht sichtbar.</p>{/if}
+  {#if data.hiddenCount}<p class="muted">{$t('social.lists.hidden', { n: data.hiddenCount })}</p>{/if}
 
-  {#if !data.items.length}<p class="muted">{member ? 'Noch keine Titel. Füge welche über das Listen-Symbol bei einem Titel hinzu.' : 'Noch keine Titel.'}</p>
+  {#if !data.items.length}<p class="muted">{member ? $t('social.lists.emptyMember') : $t('social.lists.emptyGuest')}</p>
   {:else}
     <div class="tiles">
       {#each data.items as i (i.id)}
         <div class="slot">
-          <Card item={{ ...i, caption: (i.addedBy ? `von ${i.addedBy.name}` : '') + (i.note ? (i.addedBy ? ' · ' : '') + i.note : '') || undefined }} on:listchanged={refresh} />
-          {#if canEdit}<button class="sec rm" disabled={isBusy('rm:' + i.id)} on:click={() => remove(i.id)} aria-label={`${i.name} aus der Liste entfernen`}>Entfernen</button>{/if}
+          <Card item={{ ...i, caption: (i.addedBy ? $t('social.by', { name: i.addedBy.name }) : '') + (i.note ? (i.addedBy ? ' · ' : '') + i.note : '') || undefined }} on:listchanged={refresh} />
+          {#if canEdit}<button class="sec rm" disabled={isBusy('rm:' + i.id)} on:click={() => remove(i.id)} aria-label={$t('social.lists.removeItem', { name: i.name })}>{$t('social.remove')}</button>{/if}
         </div>
       {/each}
     </div>
   {/if}
 
   {#if member}<section class="members">
-    <h2>Mitglieder</h2>
+    <h2>{$t('social.lists.members')}</h2>
     <ul>
       {#each data.members as m (m.id)}
-        <li><span>{m.name}</span><span class="badge">{roleLabel[m.role] ?? m.role}</span>
+        <li><span>{m.name}</span><span class="badge">{roleName(m.role, m.role)}</span>
           {#if owner && m.role !== 'owner'}
-            <select aria-label={`Rolle von ${m.name}`} value={m.role} disabled={isBusy('role:' + m.id)} on:change={(e) => changeRole(e, m)}>
-              <option value="editor">Bearbeiter</option><option value="viewer">Leser</option>
+            <select aria-label={$t('social.lists.roleOf', { name: m.name })} value={m.role} disabled={isBusy('role:' + m.id)} on:change={(e) => changeRole(e, m)}>
+              <option value="editor">{$t('social.lists.roles.editor')}</option><option value="viewer">{$t('social.lists.roles.viewer')}</option>
             </select>
-            <button class="sec" disabled={isBusy('mem:' + m.id)} on:click={() => leave(m.id)}>Entfernen</button>
+            <button class="sec" disabled={isBusy('mem:' + m.id)} on:click={() => leave(m.id)}>{$t('social.remove')}</button>
           {/if}
         </li>
       {/each}
     </ul>
     {#if owner}
       <form class="invite" on:submit|preventDefault={invite}>
-        <select aria-label="Person einladen" bind:value={pick}><option value="">Person einladen …</option>{#each candidates as f}<option value={f.id}>{f.name}</option>{/each}</select>
-        <select aria-label="Rolle" bind:value={pickRole}><option value="viewer">Leser</option><option value="editor">Bearbeiter</option></select>
-        <button type="submit" disabled={!pick || isBusy('invite')}>Einladen</button>
+        <select aria-label={$t('social.lists.invitePerson')} bind:value={pick}><option value="">{$t('social.lists.invitePlaceholder')}</option>{#each candidates as f}<option value={f.id}>{f.name}</option>{/each}</select>
+        <select aria-label={$t('social.lists.role')} bind:value={pickRole}><option value="viewer">{$t('social.lists.roles.viewer')}</option><option value="editor">{$t('social.lists.roles.editor')}</option></select>
+        <button type="submit" disabled={!pick || isBusy('invite')}>{$t('social.invite')}</button>
       </form>
     {/if}
   </section>{/if}

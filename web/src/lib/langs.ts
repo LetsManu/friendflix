@@ -1,4 +1,4 @@
-import { getLocale, intlLocale } from '#lib/i18n';
+import { getLocale, intlLocale, tr } from '#lib/i18n';
 
 /** ISO 639-2/T language codes (as indexed by the backend) -> German labels. */
 const LABEL: Record<string, string> = {
@@ -29,10 +29,16 @@ export function langLabel(code: string): string {
   return LABEL[c] ?? c.toUpperCase();
 }
 
+/** true when the code is a language we have a name for (else langLabel() returns the upper-case code) */
+export function isKnownLang(code: string): boolean {
+  const raw = code.trim().toLowerCase();
+  return (B2T[raw] ?? raw) in LABEL;
+}
+
 /** "Ton: Deutsch, Englisch · Untertitel: Deutsch" (empty string when nothing is known). */
 export function langLine(langs: { audio?: string[]; subs?: string[] } | undefined | null): string {
   const parts: string[] = [];
-  if (langs?.audio?.length) parts.push(`Ton: ${langs.audio.map(langLabel).join(', ')}`);
-  if (langs?.subs?.length) parts.push(`Untertitel: ${langs.subs.map(langLabel).join(', ')}`);
+  if (langs?.audio?.length) parts.push(tr('detail.langs.audio', { list: langs.audio.map(langLabel).join(', ') }));
+  if (langs?.subs?.length) parts.push(tr('detail.langs.subs', { list: langs.subs.map(langLabel).join(', ') }));
   return parts.join(' · ');
 }

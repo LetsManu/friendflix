@@ -1,5 +1,6 @@
 import { writable } from 'svelte/store';
 import type { Item } from '#lib/api';
+import { fmtDuration, fmtNumber, tr } from '#lib/i18n';
 
 /** uid of the card whose pop-out preview is open (only one at a time) */
 export const hoverOwner = writable<string>('');
@@ -44,8 +45,7 @@ export const fmtRuntime = (ticks?: number): string => {
   if (!ticks || ticks <= 0) return '';
   const min = Math.round(ticks / 600_000_000);
   if (min < 1) return '';
-  const h = Math.floor(min / 60), m = min % 60;
-  return h ? (m ? `${h} Std. ${m} Min.` : `${h} Std.`) : `${m} Min.`;
+  return fmtDuration(min * 60);
 };
 
 const YEAR = 365 * 86_400_000;
@@ -60,19 +60,19 @@ export function isNewRelease(item: Pick<Item, 'premiereDate' | 'year'>, now: num
 export function lengthLabel(item: Pick<Item, 'type' | 'runtimeTicks' | 'childCount'>): string {
   if (item.type === 'Series') {
     const n = item.childCount ?? 0;
-    return n > 0 ? `${n} ${n === 1 ? 'Staffel' : 'Staffeln'}` : '';
+    return n > 0 ? tr('home.meta.seasons', { n }) : '';
   }
   if (item.type === 'BoxSet') {
     const n = item.childCount ?? 0;
-    return n > 0 ? `${n} Titel` : '';
+    return n > 0 ? tr('home.meta.titles', { n }) : '';
   }
   return fmtRuntime(item.runtimeTicks);
 }
 
 /** Community rating "★ 8.8", else "Neu" for fresh releases, else nothing. */
 export function ratingBadge(item: Pick<Item, 'communityRating' | 'premiereDate' | 'year'>, now: number): string {
-  if (item.communityRating && item.communityRating > 0) return `★ ${item.communityRating.toFixed(1).replace('.', ',')}`;
-  return isNewRelease(item, now) ? 'Neu' : '';
+  if (item.communityRating && item.communityRating > 0) return `★ ${fmtNumber(item.communityRating, { minimumFractionDigits: 1, maximumFractionDigits: 1 })}`;
+  return isNewRelease(item, now) ? tr('home.card.new') : '';
 }
 
 /** "Thriller • Drama • Krimi" (max 3). */

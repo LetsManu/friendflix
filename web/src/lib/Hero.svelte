@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onDestroy, onMount } from 'svelte';
-  import { backdrop, HERO_WIDTHS, img, primeItem, srcset, fmtMin, logoUrl, type Item } from '#lib/api';
+  import { backdrop, HERO_WIDTHS, img, primeItem, srcset, logoUrl, type Item } from '#lib/api';
   import { prefetchPlayer } from '#lib/player/prefetch';
   import { prefetchModal } from '#lib/lazy';
   import Icon from '#lib/Icon.svelte';
@@ -12,15 +12,18 @@
   import { openPreview, previewSheet } from '#lib/previewSheet';
   import { genreLine } from '#lib/mobile';
   import { pageStore } from '#lib/page';
+  import { t } from '#lib/i18n';
 
   /** Billboard at the top of the home page. */
   export let item: Item | null;
   export let playHref = '';
-  export let playLabel = 'Abspielen';
+  /** '' = "Abspielen" in the UI language */
+  export let playLabel = '';
   export let more = true;
   /** position in a ranking (1-10); shows the "#n" line like a Top-10 billboard. 0 = none */
   export let rank = 0;
-  export let rankLabel = 'in den Top 10 nach Bewertung';
+  /** '' = "in den Top 10 nach Bewertung" in the UI language */
+  export let rankLabel = '';
   /** phone layout: centered poster card instead of the wide backdrop (home page only) */
   export let portrait = false;
   const page = pageStore();
@@ -86,16 +89,17 @@
   $: item, (logoFailed = false);
   $: listId = item ? (item.seriesId ?? item.id) : '';
   $: inList = listId ? $listIds.has(listId) : false;
-  $: kind = item?.type === 'Series' ? 'Serie' : item?.type === 'Episode' ? 'Folge' : 'Film';
+  $: kind = $t(item?.type === 'Series' ? 'home.meta.series' : item?.type === 'Episode' ? 'home.meta.episode' : 'home.meta.movie');
+  $: playText = playLabel || $t('home.card.play');
   $: tagline = item ? item.genres.slice(0, 3).join(' · ') : '';
 </script>
 
 {#if portrait && $mobile}
-  <section class="mh" aria-label="Empfehlung">
+  <section class="mh" aria-label={$t('home.hero.label')}>
     {#if item}
       {#if item.image || item.backdrop}<img class="blurbg" src={item.image ? img(item.id, 120) : backdrop(item.id, 320)} alt="" aria-hidden="true" />{/if}
       <div class="mshade"></div>
-      <a class="pcard" href="/item/{item.id}" aria-label="{item.name}, Vorschau öffnen" aria-haspopup="dialog" on:click={(e) => { if (e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return; e.preventDefault(); openPreview(item, e.currentTarget); }}>
+      <a class="pcard" href="/item/{item.id}" aria-label={$t('home.card.openPreview', { name: item.name })} aria-haspopup="dialog" on:click={(e) => { if (e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return; e.preventDefault(); openPreview(item, e.currentTarget); }}>
         {#if item.image || item.backdrop}<img class="pimg" src={item.image ? img(item.id, 520) : backdrop(item.id, 520)} srcset={item.image ? srcset('Primary', item.id, [320, 520, 780]) : srcset('Backdrop', item.id, [320, 520, 780])} sizes="(max-width: 450px) 80vw, 360px" alt="" fetchpriority="high" width="360" height="540" />{/if}
         <span class="pfade"></span>
         <span class="pinfo">
@@ -104,8 +108,8 @@
         </span>
       </a>
       <div class="pbtns">
-        <a class="pplay" data-autofocus href={playHref || (item.type === 'Series' ? `/item/${item.id}` : `/watch/${item.id}`)}><Icon name="play" size={22} />{playLabel}</a>
-        <button type="button" class="plist" aria-pressed={inList} on:click={() => toggleList(listId, inList)}><Icon name={inList ? 'check' : 'plus'} size={22} />Meine Liste</button>
+        <a class="pplay" data-autofocus href={playHref || (item.type === 'Series' ? `/item/${item.id}` : `/watch/${item.id}`)}><Icon name="play" size={22} />{playText}</a>
+        <button type="button" class="plist" aria-pressed={inList} on:click={() => toggleList(listId, inList)}><Icon name={inList ? 'check' : 'plus'} size={22} />{$t('home.card.myList')}</button>
       </div>
     {:else}
       <div class="skeleton pcard ph"></div>
@@ -113,7 +117,7 @@
     {/if}
   </section>
 {:else}
-<section class="hero" class:quiet bind:this={section} aria-label="Empfehlung">
+<section class="hero" class:quiet bind:this={section} aria-label={$t('home.hero.label')}>
   {#if item}
     {#if item.backdrop}<img class="bg" class:loaded src={backdrop(item.id, 1280)} srcset={srcset('Backdrop', item.id, HERO_WIDTHS)} sizes="100vw" alt="" fetchpriority="high" on:load={() => (loaded = true)} />{/if}
     <!-- svelte-ignore a11y_media_has_caption -->
@@ -126,24 +130,24 @@
       {:else}<h1>{item.name}</h1>{/if}
       <div class="fadebox">
         {#if rank > 0}
-          <p class="rankline"><span class="top10" aria-hidden="true"><small>TOP</small>10</span>#{rank} {rankLabel}</p>
+          <p class="rankline"><span class="top10" aria-hidden="true"><small>TOP</small>10</span>#{rank} {rankLabel || $t('home.hero.rankTop10')}</p>
         {:else if tagline}<p class="rankline plain">{tagline}</p>{/if}
         <p class="meta">
-          {#if item.communityRating}<span class="match">{Math.round(item.communityRating * 10)}% Match</span>{/if}
+          {#if item.communityRating}<span class="match">{$t('home.hero.match', { pct: Math.round(item.communityRating * 10) })}</span>{/if}
           {#if item.year}<span>{item.year}</span>{/if}
-          {#if item.runtimeTicks && item.type !== 'Series'}<span>{fmtMin(item.runtimeTicks)}</span>{/if}
+          {#if item.runtimeTicks && item.type !== 'Series'}<span>{$t('common.duration.m', { m: Math.round(item.runtimeTicks / 600_000_000) })}</span>{/if}
         </p>
         {#if item.overview}<p class="ov">{item.overview}</p>{/if}
       </div>
       <div class="btns">
-        <a class="btn light" data-autofocus href={playHref || (item.type === 'Series' ? `/item/${item.id}` : `/watch/${item.id}`)} on:pointerenter={prefetchPlayer} on:focus={prefetchPlayer}><Icon name="play" size={26} />{playLabel}</a>
-        {#if more}<a class="btn grey" href="/item/{item.id}" aria-haspopup="dialog" on:pointerenter={prefetchModal} on:focus={prefetchModal} on:click={(e) => { if (item) primeItem(item); openModal(e, `/item/${item!.id}`); }}><Icon name="info" size={26} />Weitere Infos</a>{/if}
+        <a class="btn light" data-autofocus href={playHref || (item.type === 'Series' ? `/item/${item.id}` : `/watch/${item.id}`)} on:pointerenter={prefetchPlayer} on:focus={prefetchPlayer}><Icon name="play" size={26} />{playText}</a>
+        {#if more}<a class="btn grey" href="/item/{item.id}" aria-haspopup="dialog" on:pointerenter={prefetchModal} on:focus={prefetchModal} on:click={(e) => { if (item) primeItem(item); openModal(e, `/item/${item!.id}`); }}><Icon name="info" size={26} />{$t('home.hero.moreInfo')}</a>{/if}
       </div>
     </div>
     <div class="side">
-      {#if playing}<button class="snd" aria-label={vmuted ? 'Ton einschalten' : 'Ton ausschalten'} aria-pressed={!vmuted} on:click={() => toggleSound(hv)}><Icon name={vmuted ? 'volume-off' : 'volume'} size={22} /></button>
-      {:else if ended}<button class="snd" aria-label="Vorschau erneut abspielen" title="Erneut abspielen" on:click={replay}><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M3.5 12a8.5 8.5 0 102.6-6.1M3.5 4v4.5H8" /></svg></button>{/if}
-      {#if item.rating}<div class="agebox" aria-label="Altersfreigabe {item.rating}"><span>{item.rating}</span></div>{/if}
+      {#if playing}<button class="snd" aria-label={vmuted ? $t('home.card.soundOn') : $t('home.card.soundOff')} aria-pressed={!vmuted} on:click={() => toggleSound(hv)}><Icon name={vmuted ? 'volume-off' : 'volume'} size={22} /></button>
+      {:else if ended}<button class="snd" aria-label={$t('home.hero.replay')} title={$t('home.hero.replayTitle')} on:click={replay}><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M3.5 12a8.5 8.5 0 102.6-6.1M3.5 4v4.5H8" /></svg></button>{/if}
+      {#if item.rating}<div class="agebox" aria-label={$t('home.card.ageRating', { rating: item.rating })}><span>{item.rating}</span></div>{/if}
     </div>
   {:else}
     <div class="skeleton fill"></div>

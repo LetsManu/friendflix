@@ -8,6 +8,7 @@
   import { listIds, prefs, toggleList } from '#lib/stores';
   import { closePreview, previewSheet } from '#lib/previewSheet';
   import { genreLine, itemPath, playPath, runtimeLabel, shareData } from '#lib/mobile';
+  import { t, tr } from '#lib/i18n';
 
   /** Bottom sheet that opens when a poster is tapped (phone layout). Mounted once in +layout.svelte; state in `previewSheet`. */
   $: item = $previewSheet?.item;
@@ -34,12 +35,12 @@
     try {
       if (navigator.share) { await navigator.share(d); return; }
     } catch (e) { if ((e as DOMException)?.name === 'AbortError') return; }
-    try { await navigator.clipboard.writeText(d.url); say('Link kopiert'); }
+    try { await navigator.clipboard.writeText(d.url); say(tr('home.card.linkCopied')); }
     catch { say(d.url); }
   }
   async function list() {
     if (!item) return;
-    if (!(await toggleList(item.seriesId ?? item.id, inList))) say('Konnte nicht gespeichert werden.');
+    if (!(await toggleList(item.seriesId ?? item.id, inList))) say(tr('home.card.saveFailed'));
   }
   // swipe down on the grab zone closes the sheet (threshold 80 px)
   function dragDown(e: PointerEvent) { dragging = true; dragStart = e.clientY; dragY = 0; (e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId); }
@@ -50,31 +51,31 @@
 {#if item}
   <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
   <div class="backdrop" on:click={() => close()}></div>
-  <div class="sheet" class:dragging role="dialog" aria-modal="true" aria-label="Vorschau: {item.name}" tabindex="-1" bind:this={sheetEl} use:dialogKeys={{ close: () => close() }} style={dragY ? `transform:translateY(${dragY}px)` : undefined}>
+  <div class="sheet" class:dragging role="dialog" aria-modal="true" aria-label={$t('home.card.preview', { name: item.name })} tabindex="-1" bind:this={sheetEl} use:dialogKeys={{ close: () => close() }} style={dragY ? `transform:translateY(${dragY}px)` : undefined}>
     <!-- svelte-ignore a11y_no_static_element_interactions -->
     <div class="grab" on:pointerdown={dragDown} on:pointermove={dragMove} on:pointerup={dragEnd} on:pointercancel={dragEnd}><span class="handle" aria-hidden="true"></span></div>
-    <button type="button" class="close" aria-label="Schließen" on:click={() => close()}><Icon name="x" size={18} /></button>
+    <button type="button" class="close" aria-label={$t('common.close')} on:click={() => close()}><Icon name="x" size={18} /></button>
     <div class="top">
       {#if hasPoster}<img class="poster" src={img(posterId, 240)} alt="" width="84" height="126" />{:else}<span class="poster none" aria-hidden="true"></span>{/if}
       <div class="info">
         <h2>{item.type === 'Episode' && item.seriesName ? item.seriesName : item.name}</h2>
         <p class="meta">
           {#each meta as m, i}{#if i}<span class="dot" aria-hidden="true">•</span>{/if}<span>{m}</span>{/each}
-          {#if item.rating}<span class="age" aria-label="Altersfreigabe {item.rating}">{item.rating}</span>{/if}
+          {#if item.rating}<span class="age" aria-label={$t('home.card.ageRating', { rating: item.rating })}>{item.rating}</span>{/if}
         </p>
         {#if genreLine(item.genres)}<p class="genres">{genreLine(item.genres)}</p>{/if}
         {#if item.type === 'Episode'}<p class="genres">S{item.parentIndexNumber ?? '?'}:E{item.indexNumber ?? '?'} · {item.name}</p>{/if}
       </div>
     </div>
-    {#if item.overview}<p class="ov">{hidden ? 'Beschreibung wegen Spoilerschutz ausgeblendet.' : item.overview}</p>{/if}
+    {#if item.overview}<p class="ov">{hidden ? $t('home.card.spoilerHidden') : item.overview}</p>{/if}
     <div class="btns">
-      <a class="play" href={playPath(item)} on:click={() => close(false)}><Icon name="play" size={22} />{item.positionTicks ? 'Fortsetzen' : 'Abspielen'}</a>
-      {#if downloadable}<span class="ic dl"><DownloadButton itemId={item.id} seriesId={item.seriesId ?? ''} compact /><small>Laden</small></span>{/if}
-      <button type="button" class="ic" aria-pressed={inList} on:click={list}><span class="circ"><Icon name={inList ? 'check' : 'plus'} size={22} /></span><small>Meine Liste</small></button>
-      <button type="button" class="ic" on:click={share}><span class="circ"><Icon name="share" size={20} /></span><small>Teilen</small></button>
+      <a class="play" href={playPath(item)} on:click={() => close(false)}><Icon name="play" size={22} />{item.positionTicks ? $t('home.card.resume') : $t('home.card.play')}</a>
+      {#if downloadable}<span class="ic dl"><DownloadButton itemId={item.id} seriesId={item.seriesId ?? ''} compact /><small>{$t('home.card.download')}</small></span>{/if}
+      <button type="button" class="ic" aria-pressed={inList} on:click={list}><span class="circ"><Icon name={inList ? 'check' : 'plus'} size={22} /></span><small>{$t('home.card.myList')}</small></button>
+      <button type="button" class="ic" on:click={share}><span class="circ"><Icon name="share" size={20} /></span><small>{$t('home.card.share')}</small></button>
     </div>
     <p class="note" role="status">{note}</p>
-    <a class="details" href={itemPath(item)} on:click={() => close(false)}><Icon name="info" size={20} />Details &amp; mehr<Icon name="chevron-right" size={18} /></a>
+    <a class="details" href={itemPath(item)} on:click={() => close(false)}><Icon name="info" size={20} />{$t('home.card.detailsMore')}<Icon name="chevron-right" size={18} /></a>
   </div>
 {/if}
 
