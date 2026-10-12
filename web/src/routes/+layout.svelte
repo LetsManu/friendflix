@@ -11,26 +11,31 @@
   import { loadList, loadPrefs } from '#lib/stores';
   import ItemModal from '#lib/ItemModal.svelte';
   import { startTvLink, type ToTv } from '#lib/remote';
-  import { disablePush } from '#lib/push';
-  import { getAllDownloads, setMeta } from '#lib/offline/db';
+  import { logout as doLogout } from '#lib/session';
+  import { setMeta } from '#lib/offline/db';
   import { focusEl, focusFirst, isBackKey, isEditable, startSpatial } from '#lib/spatial';
   import Intro from '#lib/Intro.svelte';
   import { loadIntroSettings, markSessionSeen, readSessionSeen, shouldPlayIntro } from '#lib/intro';
+  import { mobile } from '#lib/viewport';
+  import { linksFor } from '#lib/menu';
+  import { categoryHref, kindFromPath, showsChips, type Kind } from '#lib/mobile';
+  import { dialogKeys } from '#lib/actions';
+  import MobilePreviewSheet from '#lib/MobilePreviewSheet.svelte';
+  import { closePreview, previewSheet } from '#lib/previewSheet';
 
   let me: Me | null = null;
   /** TV mode: big UI, D-pad navigation. On for paired televisions; `?tv=1` previews it in any browser (`?tv=0` ends the preview). */
   let tv = false, replaced = false;
   let pending = false, checking = false;
   let notes: Array<{ id: number; title: string; link?: string; read: boolean }> = [];
-  let scrolled = false, menu = false, bell = false, searchOpen = false, more = false, q = '';
+  let scrolled = false, menu = false, bell = false, searchOpen = false, q = '';
   let searchEl: HTMLInputElement;
   let online = true;
   let intro = false;
-  /** phone layout (same breakpoint as the tab bar): the avatar opens the "Mehr" sheet instead of the desktop dropdown */
-  let mobile = false;
-  let sheetEl: HTMLElement | undefined, moreTrigger: HTMLElement | null = null, dragY = 0, dragging = false, dragStart = 0;
   $: canDownload = Boolean(me?.downloads?.allowed);
-  $: links = canDownload ? [...menuLinks.slice(0, 3), ['/downloads', 'Downloads', 'download'] as [string, string, string], ...menuLinks.slice(3)] : menuLinks;
+  $: links = linksFor(canDownload);
+  // ---- phone: chip bar + "Kategorien" overlay ----
+  let catOpen = false, catGenres: string[] | null = null, catKind: Kind = 'movies', catBtn: HTMLElement | null = null;
 
   $: path = $page.url.pathname;
   $: publicPage = path.startsWith('/invite/') || path === '/tv' || path === '/offline';
@@ -38,65 +43,36 @@
   $: profilesPage = path === '/profiles';
   $: heroPage = path === '/' || path.startsWith('/item/');
   $: unread = notes.filter((n) => !n.read).length;
-  $: if (path) { menu = false; bell = false; more = false; }
-  $: if (typeof document !== 'undefined') document.documentElement.style.overflow = more ? 'hidden' : ''; // no page scroll behind the sheet
-  const sheetGroups: Array<{ title: string; hrefs: string[] }> = [
-    { title: 'Entdecken', hrefs: ['/tonight', '/collections', '/upcoming', '/match', '/party', '/vote', '/now', '/calendar'] },
-    { title: 'Meine Sachen', hrefs: ['/favorites', '/lists', '/history', '/downloads', '/requests', '/stats'] },
-    { title: 'Konto & Einstellungen', hrefs: ['/remote', '/settings', '/devices'] },
-  ];
-  /** every entry of `links` lands in exactly one group (unknown ones fall back to "Meine Sachen") */
-  $: sections = (() => {
-    const groups = sheetGroups.map((g) => ({ title: g.title, items: [] as Array<[string, string, string]> }));
-    for (const l of links) (groups.find((g, i) => sheetGroups[i].hrefs.includes(l[0])) ?? groups[1]).items.push(l);
-    for (const g of groups) { const order = sheetGroups.find((x) => x.title === g.title)!.hrefs; g.items.sort((a, b) => (order.indexOf(a[0]) + 99) % 99 - (order.indexOf(b[0]) + 99) % 99); }
-    return groups;
-  })();
+  $: if (path) { menu = false; bell = false; catOpen = false; closePreview(); }
+  $: chips = $mobile && showsChips(path);
+  $: if (typeof document !== 'undefined') {
+    document.documentElement.classList.toggle('m-chips', chips && !watchPage && !profilesPage);
+    document.documentElement.style.overflow = catOpen ? 'hidden' : ($previewSheet ? 'hidden' : ''); // no page scroll behind the overlay / sheet
+  }
+  $: if (!$mobile) { catOpen = false; closePreview(); }
   const isActive = (href: string) => path === href || path.startsWith(href + '/');
   $: if (!publicPage) document.documentElement.classList.toggle('tv', tv);
 
   const tabs: Array<[string, string, string]> = [['/', 'Start', 'home'], ['/browse/series', 'Serien', 'film'], ['/browse/movies', 'Filme', 'film'], ['/new', 'Neu & beliebt', 'star'], ['/watchlist', 'Meine Liste', 'plus']];
-  const menuLinks: Array<[string, string, string]> = [
-    ['/tonight', 'Heute Abend', 'star'], ['/favorites', 'Favoriten', 'heart'], ['/lists', 'Listen', 'list'], ['/history', 'Verlauf', 'calendar'], ['/match', 'Gruppen-Matcher', 'users'], ['/collections', 'Sammlungen', 'film'], ['/upcoming', 'Demnächst', 'calendar'], ['/requests', 'Wünsche', 'gift'], ['/party', 'Watch-Party', 'users'], ['/vote', 'Filmabend', 'vote'],
-    ['/now', 'Läuft gerade', 'monitor'], ['/calendar', 'Kalender', 'calendar'], ['/stats', 'Wrapped', 'bar-chart'], ['/remote', 'Fernbedienung', 'tv'], ['/settings', 'Einstellungen', 'settings'], ['/devices', 'Geräte', 'monitor'],
-  ];
 
   async function loadNotes() { try { notes = (await api('/api/notifications')).notifications; } catch { /* ignore */ } }
   async function toggleBell() {
-    bell = !bell; menu = false; more = false;
+    bell = !bell; menu = false;
     if (bell && unread) { await api('/api/notifications/read', { method: 'POST' }); setTimeout(loadNotes, 1500); }
   }
-  async function logout() {
-    let hasDl = false;
-    try { hasDl = (await getAllDownloads()).length > 0; } catch { /* no IndexedDB */ }
-    if (hasDl && confirm('Auch die Downloads auf diesem Gerät löschen?\n\nOK: löschen (empfohlen, z. B. auf geteilten Geräten). Abbrechen: behalten.')) await (await import('#lib/offline/manager')).removeAll().catch(() => undefined);
-    await Promise.race([disablePush().catch(() => undefined), new Promise((r) => setTimeout(r, 3000))]); // best effort: drop this device's push subscription before the session ends
-    await api('/auth/logout', { method: 'POST' });
-    location.href = me?.tv ? '/tv' : '/auth/login';
-  }
+  const logout = () => doLogout(me?.tv);
   async function surprise() {
     try { goto(`/item/${(await api('/api/library/random?type=Movie')).item.id}`); } catch { goto('/browse/movies'); }
   }
-  function openSearch() { if (mobile) { void goto('/search'); return; } searchOpen = true; setTimeout(() => searchEl?.focus(), 30); }
-  function openMore(e: Event) {
-    moreTrigger = e.currentTarget as HTMLElement; menu = false; bell = false;
-    if (more) { closeMore(true); return; }
-    more = true; dragY = 0; dragging = false;
-    void tick().then(() => sheetEl?.querySelector<HTMLElement>('a[href], button')?.focus());
+  function openSearch() { if ($mobile) { void goto('/search'); return; } searchOpen = true; setTimeout(() => searchEl?.focus(), 30); }
+  async function openCats(e: Event) {
+    catBtn = e.currentTarget as HTMLElement; catKind = kindFromPath(path); catOpen = true;
+    await tick();
+    document.querySelector<HTMLElement>('.cats .close')?.focus();
+    if (!catGenres) { try { catGenres = ((await api('/api/library/genres')).genres as string[]) ?? []; } catch { catGenres = []; } }
   }
-  function closeMore(refocus = false) { more = false; dragY = 0; dragging = false; if (refocus) moreTrigger?.focus(); }
-  function trapTab(e: KeyboardEvent) {
-    const els = [...(sheetEl?.querySelectorAll<HTMLElement>('a[href], button:not([disabled])') ?? [])];
-    if (!els.length) return;
-    const first = els[0], last = els[els.length - 1], a = document.activeElement;
-    if (!sheetEl?.contains(a)) { e.preventDefault(); first.focus(); }
-    else if (e.shiftKey && a === first) { e.preventDefault(); last.focus(); }
-    else if (!e.shiftKey && a === last) { e.preventDefault(); first.focus(); }
-  }
-  // swipe down on the grab zone closes the sheet (threshold 80 px)
-  function dragDown(e: PointerEvent) { dragging = true; dragStart = e.clientY; dragY = 0; (e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId); }
-  function dragMove(e: PointerEvent) { if (dragging) dragY = Math.max(0, e.clientY - dragStart); }
-  function dragEnd() { if (!dragging) return; const far = dragY > 80; dragging = false; dragY = 0; if (far) closeMore(true); }
+  function closeCats(refocus = true) { catOpen = false; if (refocus) catBtn?.focus(); }
+  function pickCat(href: string) { catOpen = false; void goto(href); }
   function submitSearch() { if (q.trim()) goto(`/search?q=${encodeURIComponent(q.trim())}`); }
   function onKey(e: KeyboardEvent) {
     // "/" and Ctrl/Cmd+K jump to the search field (not while typing somewhere else)
@@ -105,10 +81,9 @@
       const typing = el && (isEditable(el) || el.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName));
       if (!typing || e.key !== '/') { e.preventDefault(); openSearch(); return; }
     }
-    if (e.key === 'Tab' && more) trapTab(e);
     const back = e.key === 'Escape' || (tv && isBackKey(e));
     if (!back) return;
-    if (menu || bell || more) { const wasMore = more; menu = bell = more = false; if (wasMore) moreTrigger?.focus(); if (tv || wasMore) e.preventDefault(); return; } // dropdowns close first
+    if (menu || bell) { menu = bell = false; if (tv) e.preventDefault(); return; } // dropdowns close first
     if (e.key === 'Escape' && !q) searchOpen = false;
     // TV: Back/Escape walks one step back (the detail popup closes itself on Escape; the player handles its own keys)
     if (tv && !watchPage && !(e.key === 'Escape' && $page.state.modalId) && !isEditable(e.target as Element)) {
@@ -176,11 +151,9 @@
 
   let stops: Array<() => void> = [];
   onMount(() => {
-    const mq = matchMedia('(max-width: 720px)');
-    mobile = mq.matches;
-    const onMq = () => { mobile = mq.matches; menu = bell = more = false; searchOpen = false; }; // never leave a stray dropdown across the breakpoint
-    mq.addEventListener('change', onMq);
-    stops.push(() => mq.removeEventListener('change', onMq));
+    const onNotes = () => void loadNotes();
+    window.addEventListener('ff-notes', onNotes);
+    stops.push(() => window.removeEventListener('ff-notes', onNotes));
     const onScroll = () => (scrolled = window.scrollY > 10);
     onScroll();
     window.addEventListener('scroll', onScroll, { passive: true });
@@ -245,6 +218,24 @@
   <slot />
 {:else if me}
   {#if !watchPage && !profilesPage}
+    {#if $mobile}
+      <header class="nav m" class:solid={scrolled || !heroPage} class:chips>
+        <div class="mrow">
+          <a class="mlogo" href="/profiles" aria-label="Profil wechseln, aktuell {me.profile?.name ?? me.name}"><Logo size={30} label="" /><span class="for">Für {me.profile?.name ?? me.name}</span></a>
+          <span class="sp"></span>
+          <a class="icon-btn" href="/search" aria-label="Suche" aria-current={path.startsWith('/search') ? 'page' : undefined}><Icon name="search" size={24} /></a>
+          <a class="icon-btn" href="/downloads" aria-label="Downloads" aria-current={path.startsWith('/downloads') ? 'page' : undefined}><Icon name="download" size={24} /></a>
+          <a class="avatar" href="/me" aria-label="Mein FriendFlix{unread ? `, ${unread} neue Benachrichtigungen` : ''}"><span class="face" style={me.profile ? `background:${avatarBg(me.profile.avatar)}` : undefined}>{initial(me.profile?.name ?? me.name)}</span>{#if unread}<span class="dot" aria-hidden="true">{unread}</span>{/if}</a>
+        </div>
+        {#if chips}
+          <nav class="chipbar" aria-label="Kategorien">
+            <a class="chip" href="/browse/series" class:on={path.startsWith('/browse/series')} aria-current={path.startsWith('/browse/series') ? 'page' : undefined}>Serien</a>
+            <a class="chip" href="/browse/movies" class:on={path.startsWith('/browse/movies')} aria-current={path.startsWith('/browse/movies') ? 'page' : undefined}>Filme</a>
+            <button type="button" class="chip" aria-haspopup="dialog" aria-expanded={catOpen} on:click={openCats}>Kategorien<Icon name="chevron-down" size={16} /></button>
+          </nav>
+        {/if}
+      </header>
+    {:else}
     <header class="nav" class:solid={scrolled || !heroPage}>
       <a class="logo" href="/" aria-label="FriendFlix Startseite"><Logo wordmark size={34} /></a>
       <nav class="links" aria-label="Hauptnavigation">
@@ -252,7 +243,7 @@
       </nav>
       <span class="sp"></span>
       <form class="search" class:open={searchOpen} on:submit|preventDefault={submitSearch} role="search">
-        <button type="button" class="icon-btn" aria-label="Suche öffnen" on:click={() => (searchOpen && !mobile ? submitSearch() : openSearch())}><Icon name="search" size={22} /></button>
+        <button type="button" class="icon-btn" aria-label="Suche öffnen" on:click={() => (searchOpen ? submitSearch() : openSearch())}><Icon name="search" size={22} /></button>
         <input bind:this={searchEl} bind:value={q} placeholder="Titel, Person, Genre, Jahr …" aria-label="Suche" on:blur={() => { if (!q) searchOpen = false; }} />
       </form>
       <button class="icon-btn hide-s" aria-label="Überrasch mich" title="Überrasch mich" on:click={surprise}><Icon name="shuffle" size={21} /></button>
@@ -267,10 +258,11 @@
         {/if}
       </div>
       <div class="pop-anchor">
-        <button class="avatar" aria-label="Profilmenü" aria-haspopup={mobile ? 'dialog' : 'menu'} aria-expanded={mobile ? more : menu} on:click={(e) => { if (mobile) openMore(e); else { menu = !menu; bell = false; more = false; } }}><span class="face" style={me.profile ? `background:${avatarBg(me.profile.avatar)}` : undefined}>{initial(me.profile?.name ?? me.name)}</span><i class="caret" class:up={menu}></i></button>
-        {#if menu && !mobile}
+        <button class="avatar" aria-label="Profilmenü" aria-haspopup="menu" aria-expanded={menu} on:click={() => { menu = !menu; bell = false; }}><span class="face" style={me.profile ? `background:${avatarBg(me.profile.avatar)}` : undefined}>{initial(me.profile?.name ?? me.name)}</span><i class="caret" class:up={menu}></i></button>
+        {#if menu}
           <div class="drop" role="menu">
             <div class="who"><b>{me.profile?.name ?? me.name}</b><span class="muted">{me.roleLabel}</span></div>
+            <a href="/me" role="menuitem"><Icon name="user" size={18} />Mein FriendFlix</a>
             <a href="/profiles" role="menuitem"><Icon name="users" size={18} />Profil wechseln</a>
             {#each links as [href, label, icon]}<a {href} role="menuitem"><Icon name={icon} size={18} />{label}</a>{/each}
             {#if me.isAdmin && me.profile?.isOwner}<a href="/admin" role="menuitem"><Icon name="shield" size={18} />Admin</a>{/if}
@@ -279,37 +271,31 @@
         {/if}
       </div>
     </header>
+    {/if}
     <nav class="tabbar" aria-label="Mobile Navigation">
-      <a href="/" class:active={path === '/'}><Icon name="home" size={22} /><span>Start</span></a>
-      <a href="/browse/series" class:active={path.startsWith('/browse')}><Icon name="film" size={22} /><span>Entdecken</span></a>
-      <a href="/search" class:active={path.startsWith('/search')}><Icon name="search" size={22} /><span>Suche</span></a>
-      <a href="/watchlist" class:active={path.startsWith('/watchlist')}><Icon name="plus" size={22} /><span>Liste</span></a>
-      <button class="tab" class:active={more} aria-haspopup="dialog" aria-expanded={more} on:click|stopPropagation={openMore}><Icon name="menu" size={22} /><span>Mehr</span></button>
+      <a href="/" class:active={path === '/'} aria-current={path === '/' ? 'page' : undefined}><Icon name="home" size={22} /><span>Start</span></a>
+      <a href="/new" class:active={path.startsWith('/new')} aria-current={path.startsWith('/new') ? 'page' : undefined}><Icon name="star" size={22} /><span>Neu &amp; beliebt</span></a>
+      <a href="/downloads" class:active={path.startsWith('/downloads')} aria-current={path.startsWith('/downloads') ? 'page' : undefined}><Icon name="download" size={22} /><span>Downloads</span></a>
+      <a href="/me" class:active={path.startsWith('/me')} aria-current={path.startsWith('/me') ? 'page' : undefined}><span class="face sm" aria-hidden="true" style={me.profile ? `background:${avatarBg(me.profile.avatar)}` : undefined}>{initial(me.profile?.name ?? me.name)}</span><span>Mein FriendFlix</span></a>
     </nav>
-    {#if more && mobile}
-      <!-- svelte-ignore a11y-click-events-have-key-events a11y-no-static-element-interactions -->
-      <div class="backdrop" on:click={() => closeMore(true)}></div>
-      <div class="sheet" class:dragging role="dialog" aria-modal="true" aria-label="Mehr" bind:this={sheetEl} style={dragY ? `transform:translateY(${dragY}px)` : undefined}>
-        <!-- svelte-ignore a11y-no-static-element-interactions -->
-        <div class="grab" on:pointerdown={dragDown} on:pointermove={dragMove} on:pointerup={dragEnd} on:pointercancel={dragEnd}>
-          <span class="handle" aria-hidden="true"></span>
-          <div class="prof">
-            <span class="face" style={me.profile ? `background:${avatarBg(me.profile.avatar)}` : undefined}>{initial(me.profile?.name ?? me.name)}</span>
-            <span class="who2"><b>{me.profile?.name ?? me.name}</b><span class="muted">{me.roleLabel}</span></span>
+    {#if catOpen && $mobile}
+      <div class="cats" role="dialog" aria-modal="true" aria-label="Kategorien" use:dialogKeys={{ close: () => closeCats() }}>
+        <div class="chead">
+          <div class="seg" role="group" aria-label="Art">
+            <button type="button" class:on={catKind === 'movies'} aria-pressed={catKind === 'movies'} on:click={() => (catKind = 'movies')}>Filme</button>
+            <button type="button" class:on={catKind === 'series'} aria-pressed={catKind === 'series'} on:click={() => (catKind = 'series')}>Serien</button>
           </div>
+          <button type="button" class="close" aria-label="Schließen" on:click={() => closeCats()}><Icon name="x" size={24} /></button>
         </div>
-        <a class="row" href="/profiles"><Icon name="users" size={20} />Profil wechseln</a>
-        {#each sections as g (g.title)}
-          {@const admin = g.title === 'Konto & Einstellungen' && me.isAdmin && me.profile?.isOwner}
-          {#if g.items.length || admin}
-            <h2 class="sh">{g.title}</h2>
-            {#each g.items as [href, label, icon] (href)}<a class="row" {href} class:active={isActive(href)} aria-current={isActive(href) ? 'page' : undefined}><Icon name={icon} size={20} />{label}</a>{/each}
-            {#if admin}<a class="row" href="/admin" class:active={isActive('/admin')} aria-current={isActive('/admin') ? 'page' : undefined}><Icon name="shield" size={20} />Admin</a>{/if}
-          {/if}
-        {/each}
-        <button class="row plain out" on:click={logout}><Icon name="log-out" size={20} />Abmelden</button>
+        <ul class="clist">
+          <li><a href="/watchlist" on:click|preventDefault={() => pickCat('/watchlist')}>Meine Liste</a></li>
+          <li><a href="/collections" on:click|preventDefault={() => pickCat('/collections')}>Sammlungen</a></li>
+          {#if catGenres === null}<li class="muted" role="status">Lade Kategorien …</li>
+          {:else}{#each catGenres as g (g)}<li><a href={categoryHref(catKind, g)} on:click|preventDefault={() => pickCat(categoryHref(catKind, g))}>{g}</a></li>{/each}{/if}
+        </ul>
       </div>
     {/if}
+    {#if $mobile && $previewSheet}<MobilePreviewSheet />{/if}
   {/if}
 
   {#if !online}<div class="offbar" role="status">Du bist offline. <a href="/offline" data-sveltekit-reload>Zu den Downloads</a></div>{/if}
@@ -374,32 +360,49 @@
   @keyframes sp { to { transform: rotate(360deg); } }
   @media (max-width: 900px) { .links { display: none; } .hide-s { display: none; } }
   @media (max-width: 720px) {
-    .tabbar { display: flex; position: fixed; bottom: 0; left: 0; right: 0; z-index: 60; background: rgba(10,10,10,.97); border-top: 1px solid #262626; padding-bottom: env(safe-area-inset-bottom); }
-    .tabbar a, .tabbar .tab { flex: 1 1 0; min-width: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: .1rem; min-height: 56px; padding: 0 2px; font-size: .68rem; color: var(--mut); background: transparent; border-radius: 0; font-weight: 500; }
-    .tabbar span { max-width: 100%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-    .tabbar a.active, .tabbar .tab.active { color: #fff; }
-    .tabbar .tab.active { font-weight: 700; }
-    .backdrop { position: fixed; inset: 0; z-index: 70; background: rgba(0,0,0,.6); animation: fade .2s ease-out; }
-    .sheet { position: fixed; left: 0; right: 0; bottom: 0; z-index: 71; max-height: 80vh; max-height: 80dvh; overflow-y: auto; overscroll-behavior: contain; background: #121212; border-top: 1px solid #333; border-radius: 16px 16px 0 0; padding: 0 .5rem calc(.5rem + env(safe-area-inset-bottom)); display: flex; flex-direction: column; animation: rise .26s var(--ease, ease-out); }
-    .sheet.dragging { transition: none; }
-    .grab { touch-action: none; cursor: grab; position: sticky; top: 0; background: #121212; z-index: 1; padding: 0 .5rem .4rem; margin: 0 -.5rem; }
-    .handle { display: block; width: 40px; height: 4px; border-radius: 99px; background: #555; margin: 10px auto 12px; }
-    .prof { display: flex; align-items: center; gap: .8rem; }
-    .who2 { display: flex; flex-direction: column; min-width: 0; }
-    .who2 b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .sh { margin: 1rem .6rem .2rem; font-size: .72rem; text-transform: uppercase; letter-spacing: .08em; color: var(--mut); font-weight: 700; }
-    .row { display: flex; gap: .8rem; align-items: center; padding: .6rem .6rem; min-height: 48px; color: #e5e5e5; border-radius: 8px; font-size: .95rem; }
-    .row.active { background: rgba(255,255,255,.1); color: #fff; font-weight: 700; }
-    .row.out { margin-top: .8rem; border-top: 1px solid #2a2a2a; border-radius: 0 0 8px 8px; }
-    .caret { display: none; }
-    .search input, .search.open input { display: none; }
-    .drop.wide { position: fixed; left: 0; right: 0; top: var(--nav-h); width: auto; max-height: calc(100dvh - var(--nav-h) - 72px); overflow-y: auto; border-radius: 0 0 8px 8px; border-left: 0; border-right: 0; }
-    .drop.wide a, .drop.wide .pad { min-height: 48px; }
-    @keyframes rise { from { transform: translateY(100%); } to { transform: none; } }
-    @keyframes fade { from { opacity: 0; } to { opacity: 1; } }
-    @media (prefers-reduced-motion: reduce) { .sheet, .backdrop { animation: none; } }
+    .tabbar { display: flex; position: fixed; bottom: 0; left: 0; right: 0; z-index: 60; background: rgba(12,12,12,.97); border-top: 1px solid #262626; padding-bottom: env(safe-area-inset-bottom); }
+    .tabbar a { flex: 1 1 0; min-width: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: .15rem; min-height: 56px; padding: 0 2px; font-size: .68rem; color: var(--mut); font-weight: 500; }
+    .tabbar span:not(.face) { max-width: 100%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .tabbar a.active { color: #fff; font-weight: 700; }
+    .tabbar .face.sm { width: 24px; height: 24px; font-size: .72rem; border-radius: 4px; }
+    .tabbar a.active .face.sm { box-shadow: 0 0 0 2px #fff; }
     main { padding-bottom: 70px; }
-    .nav { background: linear-gradient(to bottom, rgba(0,0,0,.85), transparent); }
   }
-  @media (min-width: 721px) { .sheet, .backdrop { display: none; } }
+
+  /* ---- phone header: transparent over the hero, solid + blurred once scrolled; sticky chip bar below ---- */
+  .nav.m { height: auto; flex-direction: column; align-items: stretch; gap: 0; padding: 0; background: linear-gradient(to bottom, rgba(0,0,0,.7), transparent); transition: background var(--t-med), backdrop-filter var(--t-med); }
+  .nav.m.solid { background: rgba(20,20,20,.95); -webkit-backdrop-filter: blur(14px); backdrop-filter: blur(14px); }
+  .mrow { display: flex; align-items: center; gap: .1rem; height: 56px; padding: 0 calc(var(--pad-x) - 8px) 0 var(--pad-x); }
+  .mlogo { display: inline-flex; align-items: center; gap: .6rem; min-height: 44px; min-width: 0; }
+  .for { font-size: 1.1rem; font-weight: 800; letter-spacing: -.01em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 46vw; text-shadow: 0 1px 8px rgba(0,0,0,.6); }
+  .nav.m .icon-btn { display: inline-flex; align-items: center; justify-content: center; }
+  .nav.m .avatar { position: relative; display: inline-flex; align-items: center; justify-content: center; width: 44px; height: 44px; border-radius: 4px; }
+  .nav.m .face { width: 30px; height: 30px; font-size: .9rem; }
+  .nav.m .dot { top: 2px; right: 0; }
+  .chipbar { display: flex; gap: .5rem; align-items: center; height: 48px; padding: 0 var(--pad-x); overflow-x: auto; scrollbar-width: none; }
+  .chipbar::-webkit-scrollbar { display: none; }
+  .chip::after, .seg button::after { content: ''; position: absolute; inset: -4px 0; }
+  .chip { position: relative; flex: none; display: inline-flex; align-items: center; gap: .3rem; min-height: 36px; padding: 0 .95rem; border-radius: 99px; border: 1px solid rgba(255,255,255,.5); background: rgba(0,0,0,.25); color: #fff; font: inherit; font-size: .9rem; font-weight: 500; }
+  .chip:hover:not(:disabled) { background: rgba(255,255,255,.12); }
+  .chip.on, .chip.on:hover:not(:disabled) { background: #fff; color: #000; border-color: #fff; font-weight: 700; }
+  :global(html.m-chips) { --nav-h: 104px; }
+  @media (max-width: 720px) { :global(html:not(.m-chips)) { --nav-h: 56px; } }
+
+  /* ---- categories overlay ---- */
+  .cats { position: fixed; inset: 0; z-index: 95; background: rgba(10,10,10,.97); -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px); overflow-y: auto; overscroll-behavior: contain; padding: 0 var(--pad-x) calc(2rem + env(safe-area-inset-bottom)); animation: fade .2s ease-out; }
+  .chead { position: sticky; top: 0; display: flex; align-items: center; justify-content: space-between; padding: .7rem 0; background: linear-gradient(rgba(10,10,10,1) 70%, transparent); z-index: 1; }
+  .seg { display: inline-flex; border: 1px solid #555; border-radius: 99px; overflow: hidden; }
+  .seg button { position: relative; background: transparent; border-radius: 0; min-height: 40px; padding: 0 1.1rem; color: #ddd; font-weight: 600; }
+  .seg button:hover:not(:disabled) { background: rgba(255,255,255,.1); }
+  .seg button.on, .seg button.on:hover:not(:disabled) { background: #fff; color: #000; }
+  .cats .close { width: 48px; height: 48px; padding: 0; border-radius: 50%; background: #fff; color: #000; }
+  .cats .close:hover:not(:disabled) { background: rgba(255,255,255,.8); }
+  .clist { list-style: none; margin: .6rem 0 0; padding: 0; text-align: center; }
+  .clist li { padding: 0; }
+  .clist a { display: block; padding: .72rem 0; font-size: 1.2rem; color: #b8b8b8; }
+  .clist li:first-child a, .clist li:nth-child(2) a { font-weight: 700; color: #fff; }
+  .clist a:active, .clist a:hover { color: #fff; }
+  .clist .muted { padding: 1rem 0; }
+  @keyframes fade { from { opacity: 0; } to { opacity: 1; } }
+  @media (prefers-reduced-motion: reduce) { .cats { animation: none; } }
 </style>
