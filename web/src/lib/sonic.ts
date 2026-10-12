@@ -1,18 +1,17 @@
 /**
  * FriendFlix sonic logo, synthesized at runtime with the Web Audio API (no audio files).
  *
- * Shape (about 4.3 s, in step with Intro.svelte): a slow, deep "bloom" swell (E1 sub sine with E2/B2 overtones so small
+ * Shape (about 3.4 s, in step with Intro.svelte): a slow, deep "bloom" swell (E1 sub sine with E2/B2 overtones so small
  * speakers still carry it, plus a breath of low-passed noise), a legato four-note minor climb E3 -> G3 -> B3 -> E4 on warm
- * detuned pads, one deep hit (falling sub + low thump) under a low open chord when the logo lands, then a long cinematic
- * swell (E minor add9 saw stack under an opening filter, plus an airy rising whoosh) while the intro dives into the light
- * ribbons, fading out with them. A single hit, no two-note pattern. Everything runs through a feedback-delay "room" and a
- * limiter.
+ * detuned pads, a low open chord when the logo lands, then a short closing swell (E minor add9 saw stack under an opening
+ * filter) that rises while the soft ring expands and fades out with the overlay. No separate hit, no whoosh, no two-note
+ * pattern. Everything runs through a feedback-delay "room" and a limiter.
  */
 
 const NOTE = { E1: 41.2, E2: 82.41, B2: 123.47, E3: 164.81, G3: 196.0, B3: 246.94, E4: 329.63, Fs4: 369.99, G4: 392.0, B4: 493.88 } as const;
 const MASTER_LEVEL = 0.38;
 /** seconds from the start until the last sound has faded */
-export const SONIC_LENGTH = 4.3;
+export const SONIC_LENGTH = 3.4;
 
 interface Running { master: GainNode; stops: OscillatorNode[]; endTimer: ReturnType<typeof setTimeout> }
 
@@ -204,41 +203,21 @@ function build(c: AudioContext): Running {
     }
   }
 
-  // 4. one deep hit under the chord: a falling sub sine and a short low-passed noise thump
-  {
-    const at = t0 + 1.2;
-    const g = env(0.9, at, 0.012, 1.1);
-    const boom = osc('sine', 62);
-    boom.frequency.setValueAtTime(62, at);
-    boom.frequency.exponentialRampToValueAtTime(34, at + 0.9);
-    boom.connect(g); g.connect(bus);
-    boom.start(at); boom.stop(at + 1.2);
-
-    const src = c.createBufferSource();
-    src.buffer = noiseBuffer(c, 0.5);
-    const lp = c.createBiquadFilter();
-    lp.type = 'lowpass';
-    lp.frequency.value = 220;
-    const ng = env(0.5, at, 0.006, 0.35);
-    src.connect(lp); lp.connect(ng); ng.connect(bus); ng.connect(room);
-    src.start(at); src.stop(at + 0.5);
-  }
-
-  // 5. cinematic swell during the dive: E minor add9 saw stack, slow crescendo under an opening filter, then a long fade
+  // 4. closing swell while the ring expands: E minor add9 saw stack, a short crescendo under an opening filter, then it fades with the overlay
   {
     const at = t0 + 1.5;
-    const peakAt = t0 + 3.15;
+    const peakAt = t0 + 2.45;
     const end = t0 + SONIC_LENGTH;
     const swell = c.createGain();
     swell.gain.setValueAtTime(0.0001, at);
-    swell.gain.exponentialRampToValueAtTime(0.5, at + 0.6);
+    swell.gain.exponentialRampToValueAtTime(0.5, at + 0.5);
     swell.gain.exponentialRampToValueAtTime(1, peakAt);
     swell.gain.exponentialRampToValueAtTime(0.0001, end);
     const tone = c.createBiquadFilter();
     tone.type = 'lowpass';
     tone.Q.value = 1.1;
     tone.frequency.setValueAtTime(240, at);
-    tone.frequency.exponentialRampToValueAtTime(3400, peakAt);
+    tone.frequency.exponentialRampToValueAtTime(2600, peakAt);
     tone.frequency.exponentialRampToValueAtTime(700, end);
     swell.connect(tone);
     tone.connect(bus);
@@ -257,21 +236,6 @@ function build(c: AudioContext): Running {
         o.start(at); o.stop(end + 0.05);
       }
     }
-
-    // airy whoosh rising with the ribbons
-    const src = c.createBufferSource();
-    src.buffer = noiseBuffer(c, end - at + 0.1);
-    const bp = c.createBiquadFilter();
-    bp.type = 'bandpass';
-    bp.Q.value = 1.4;
-    bp.frequency.setValueAtTime(260, at + 0.3);
-    bp.frequency.exponentialRampToValueAtTime(3800, peakAt);
-    const wg = c.createGain();
-    wg.gain.setValueAtTime(0.0001, at + 0.3);
-    wg.gain.exponentialRampToValueAtTime(0.16, peakAt);
-    wg.gain.exponentialRampToValueAtTime(0.0001, end);
-    src.connect(bp); bp.connect(wg); wg.connect(bus); wg.connect(room);
-    src.start(at + 0.3); src.stop(end + 0.05);
   }
 
   const endTimer = setTimeout(() => { if (running?.master === master) cleanup(); }, (SONIC_LENGTH + 0.3) * 1000);
