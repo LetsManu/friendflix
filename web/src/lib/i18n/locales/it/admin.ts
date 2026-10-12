@@ -343,6 +343,7 @@ const it: Translation<typeof de> = {
     },
     device: {
       approve: '{actor} ha approvato un dispositivo di {target}',
+      unapprove: '{actor} ha revocato l’approvazione di un dispositivo di {target}',
       remove: '{actor} ha rimosso un dispositivo',
     },
     invite: {

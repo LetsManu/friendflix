@@ -9,6 +9,8 @@
   export let checked = false;
   export let disabled = false;
   export let hint = '';
+  /** the label stays the accessible name but is not shown (e.g. a switch inside a table row) */
+  export let hideLabel = false;
   /** shows a spinner and blocks input while a save runs */
   export let pending = false;
   export let id = uid('tgl');
@@ -25,7 +27,7 @@
     aria-labelledby="{id}-l" aria-describedby={hint ? `${id}-h` : undefined} on:click={flip}>
     <span class="knob">{#if pending}<span class="spinner" aria-hidden="true"></span>{/if}</span>
   </button>
-  <span class="txt"><label id="{id}-l" for={id}>{label}</label>{#if hint}<span class="hint" id="{id}-h">{hint}</span>{/if}</span>
+  <span class="txt"><label id="{id}-l" for={id} class:sr-only={hideLabel}>{label}</label>{#if hint}<span class="hint" id="{id}-h">{hint}</span>{/if}</span>
 </div>
 
 <style>

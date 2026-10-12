@@ -14,6 +14,7 @@ export interface AdminUser { id: string; name: string; email: string | null; rol
 export interface AdminDevice { user_id: string; device_id: string; label: string; approved: boolean; last_seen: string; name: string }
 export interface AdminRequest { id: number; title: string; mediaType: 'movie' | 'tv'; requestedBy: string; status: string; createdAt: string }
 export interface AdminInvite { id: string; role: string; note: string | null; expires_at: string; used_at: string | null; used_by_name: string | null }
+export interface PreviewRow { itemId: string; name: string; type: string; status: 'ok' | 'failed' | 'missing' | 'preparing'; bytes: number | null; audioLang: string | null; error: string | null; createdAt: string | null }
 export interface AuditRow { id: number; at: string; action: string; target: string | null; meta: Record<string, unknown>; actor: string | null; target_name: string | null }
 
 export const ROLES = {
@@ -28,14 +29,20 @@ export interface AdminState {
   requests: AdminRequest[];
   invites: AdminInvite[];
   audit: AuditRow[];
-  polls: Array<{ id: string; title: string; creator: string; winnerOptionId: string; options: Array<{ id: string; title: string }> }>;
+  polls: Array<{ id: string; title: string; creator: string; winnerOptionId: string; closesAt?: string; options: Array<{ id: string; title: string; votes?: number; inLibrary?: boolean }> }>;
   lists: Array<{ id: string; name: string; owner: { id: string; name: string }; itemCount: number; featured: boolean }>;
   hubs: Array<{ id: string; name: string; source: string; sourceValue: string; accent?: string | null; imageItemId?: string | null; enabled: boolean }>;
+  /** hover-preview clips of the library (content pages) */
+  previews: PreviewRow[];
+  /** streams running right now (/api/admin/live) */
+  live: Array<{ userId: string; userName: string; profileName: string | null; playSessionId: string; itemId: string; title: string; seriesName: string | null; type: string | null; positionTicks: number; runtimeTicks: number | null; isPaused: boolean; updatedAt: string; source: string }>;
   /** Seerr reachable (summary.services.seerr, request counts) */
   seerrUp: boolean;
   /** make GET /api/admin/summary fail (500) */
   summaryFails: boolean;
 }
+
+const previewItems: PreviewRow[] = Array.from({ length: 60 }, (_, i) => ({ itemId: 'it' + i, name: 'Titel Nummer ' + i, type: i % 3 ? 'Movie' : 'Series', status: (['ok', 'ok', 'ok', 'failed', 'missing', 'preparing'] as const)[i % 6]!, bytes: i % 6 < 3 ? 3_400_000 + i * 1000 : null, audioLang: i % 6 < 3 ? 'deu' : null, error: i % 6 === 3 ? 'ffmpeg exited with code 1' : null, createdAt: ago(i) }));
 
 export function adminState(): AdminState {
   const users: AdminUser[] = [
@@ -69,7 +76,7 @@ export function adminState(): AdminState {
       { id: 43, at: ago(49), action: 'user.provisioned', target: auid(13), meta: {}, actor: null, target_name: 'Leon Richter' },
       { id: 42, at: ago(60), action: 'system.update', target: null, meta: { from: 'a', to: 'b' }, actor: 'Tester', target_name: null },
     ],
-    polls: [{ id: 'p1', title: 'Filmabend Freitag', creator: 'Anna Beispiel', winnerOptionId: 'o2', options: [{ id: 'o1', title: 'Heat' }, { id: 'o2', title: 'Dune: Part Two' }] }],
+    polls: [{ id: 'p1', title: 'Filmabend Freitag', creator: 'Anna Beispiel', winnerOptionId: 'o2', closesAt: ago(2), options: [{ id: 'o1', title: 'Heat', votes: 2, inLibrary: true }, { id: 'o2', title: 'Dune: Part Two', votes: 5, inLibrary: false }] }],
     lists: [
       { id: '11111111-1111-4111-8111-111111111111', name: 'Filmabend', owner: { id: auid(2), name: 'Anna' }, itemCount: 12, featured: true },
       { id: '22222222-2222-4222-8222-222222222222', name: 'Annas Klassiker', owner: { id: auid(3), name: 'Ben' }, itemCount: 4, featured: false },
@@ -78,15 +85,68 @@ export function adminState(): AdminState {
       { id: 'h1', name: 'Marvel', source: 'studio', sourceValue: 'Marvel Studios', enabled: true },
       { id: 'h2', name: 'Pixar', source: 'studio', sourceValue: 'Pixar', accent: '#3a7bd5', enabled: false },
     ],
+    previews: previewItems.map((p) => ({ ...p })),
+    live: [
+      { userId: auid(2), userName: 'Anna Beispiel', profileName: 'Anna', playSessionId: 'ps-anna', itemId: 'it1', title: 'Heat', seriesName: null, type: 'Movie', positionTicks: 30 * 6e8, runtimeTicks: 170 * 6e8, isPaused: false, updatedAt: ago(0), source: 'portal' },
+      { userId: auid(3), userName: 'Ben Test', profileName: null, playSessionId: 'ps-ben', itemId: 'it2', title: 'Pilot', seriesName: 'Severance', type: 'Episode', positionTicks: 10 * 6e8, runtimeTicks: 55 * 6e8, isPaused: true, updatedAt: ago(0), source: 'portal' },
+    ],
     seerrUp: true,
     summaryFails: false,
   };
 }
 
 const PENDING = 'angefragt';
+const STATE_KEY: Record<string, string> = { angefragt: 'pending', genehmigt: 'approved', 'in Arbeit': 'processing', 'verfügbar': 'available', abgelehnt: 'declined' };
 const reqFilter: Record<string, (r: AdminRequest) => boolean> = {
   pending: (r) => r.status === PENDING, approved: (r) => r.status === 'genehmigt', processing: (r) => r.status === 'in Arbeit', available: (r) => r.status === 'verfügbar', all: () => true,
 };
+
+// ---- People list endpoints (users, devices, invites, audit): search / filter / sort / paging like the backend ----
+const norm = (v: string): string => v.toLowerCase();
+function paged<T>(rows: T[], sp: URLSearchParams, def: number): { slice: T[]; total: number } {
+  const limit = Number(sp.get('limit') ?? def), offset = Number(sp.get('offset') ?? 0);
+  return { slice: rows.slice(offset, offset + limit), total: rows.length };
+}
+function sorted<T>(rows: T[], sp: URLSearchParams, keys: Record<string, (r: T) => string | number>): T[] {
+  const k = keys[sp.get('sort') ?? ''];
+  if (!k) return rows;
+  const dir = sp.get('dir') === 'desc' ? -1 : 1;
+  return [...rows].sort((a, b) => { const x = k(a), y = k(b); return (typeof x === 'number' && typeof y === 'number' ? x - y : String(x).localeCompare(String(y))) * dir; });
+}
+function usersList(st: AdminState, sp: URLSearchParams) {
+  const q = norm(sp.get('q') ?? '');
+  let rows = st.users.filter((u) => (!q || norm(`${u.name} ${u.email ?? ''} ${u.jellyfin_username}`).includes(q)) && (!sp.get('role') || u.role === sp.get('role')) && (!sp.get('status') || (sp.get('status') === 'locked') === u.disabled));
+  rows = sorted(rows, sp, { name: (u) => u.name, email: (u) => u.email ?? '', role: (u) => u.role, status: (u) => Number(u.disabled), lastSeen: (u) => u.last_seen ?? '' });
+  const { slice, total } = paged(rows, sp, 1000);
+  return { users: slice, total };
+}
+function devicesList(st: AdminState, sp: URLSearchParams) {
+  const q = norm(sp.get('q') ?? '');
+  let rows = [...st.devices].sort((a, b) => Number(a.approved) - Number(b.approved) || b.last_seen.localeCompare(a.last_seen));
+  rows = rows.filter((d) => (!q || norm(`${d.name} ${d.label}`).includes(q)) && (!sp.get('status') || (sp.get('status') === 'approved') === d.approved));
+  rows = sorted(rows, sp, { user: (d) => d.name, device: (d) => d.label, lastSeen: (d) => d.last_seen, status: (d) => Number(d.approved) });
+  const { slice, total } = paged(rows, sp, 300);
+  return { devices: slice, total, pending: st.devices.filter((d) => !d.approved).length };
+}
+function invitesList(st: AdminState, sp: URLSearchParams) {
+  const q = norm(sp.get('q') ?? ''), now = new Date().toISOString();
+  const status = (i: AdminInvite) => (i.used_at ? 'used' : i.expires_at < now ? 'expired' : 'open');
+  let rows = st.invites.filter((i) => (!q || norm(`${i.note ?? ''} ${i.role} ${i.used_by_name ?? ''}`).includes(q)) && (!sp.get('status') || status(i) === sp.get('status')));
+  rows = sorted(rows, sp, { role: (i) => i.role, note: (i) => i.note ?? '', validUntil: (i) => i.expires_at, status: (i) => status(i) });
+  const { slice, total } = paged(rows, sp, 100);
+  return { invites: slice.map((i) => ({ ...i, created_at: i.expires_at })), total };
+}
+const AUDIT_ACTOR = 'Tester';
+function auditList(st: AdminState, sp: URLSearchParams) {
+  const q = norm(sp.get('q') ?? ''), action = sp.get('action'), actor = sp.get('actor'), from = sp.get('from'), to = sp.get('to');
+  let rows = st.audit.filter((e) => (!q || norm(`${e.action} ${e.actor ?? ''} ${e.target_name ?? ''}`).includes(q))
+    && (!action || e.action === action || e.action.startsWith(`${action}.`))
+    && (!actor || (actor === 'system' ? e.actor === null : e.actor === AUDIT_ACTOR))
+    && (!from || e.at >= from) && (!to || e.at <= to));
+  if (sp.get('dir') === 'asc') rows = [...rows].reverse();
+  const { slice, total } = paged(rows, sp, 100);
+  return { entries: slice.map((e) => ({ ...e, actor_id: e.actor ? 'u1' : null })), total };
+}
 
 export function adminSummary(st: AdminState) {
   const pendingReq = st.requests.filter((r) => r.status === PENDING).length;
@@ -102,7 +162,6 @@ export function adminSummary(st: AdminState) {
   };
 }
 
-const previewItems = Array.from({ length: 60 }, (_, i) => ({ itemId: 'it' + i, name: 'Titel Nummer ' + i, type: i % 3 ? 'Movie' : 'Series', status: (['ok', 'ok', 'ok', 'failed', 'missing', 'preparing'] as const)[i % 6], bytes: i % 6 < 3 ? 3_400_000 + i * 1000 : null, audioLang: i % 6 < 3 ? 'deu' : null, error: i % 6 === 3 ? 'ffmpeg exited with code 1' : null, createdAt: ago(i) }));
 
 type Reply = (body: unknown, status?: number) => Promise<void>;
 
@@ -123,7 +182,7 @@ export function adminRoute(st: AdminState, m: string, p: string, sp: URLSearchPa
   }
 
   // ---- people ----
-  if (p === '/api/admin/users') return J({ users: st.users });
+  if (p === '/api/admin/users') return J(usersList(st, sp));
   if ((mm = p.match(/^\/api\/admin\/users\/([^/]+)$/)) && m === 'PATCH') {
     const u = st.users.find((x) => x.id === mm![1]);
     if (!u) return J({ error: 'not_found' }, 404);
@@ -137,14 +196,20 @@ export function adminRoute(st: AdminState, m: string, p: string, sp: URLSearchPa
     return J({ roles: ROLES, invitable: ['friend', 'family', 'guest'], limits: Object.entries(ROLES).map(([role, r], i) => ({ role, label: r.label, builtinLabel: true, requestsPerMonth: i === 0 ? null : 3, isDefault: i === 2, transcoding: i !== 3, maxHeight: i === 1 ? 1080 : null, download: i < 2, maxDownloads: 5, downloadMaxHeight: 720, downloadDays: 30 })) });
   }
   if (/^\/api\/admin\/roles\/[^/]+$/.test(p) && m === 'PUT') return ok();
-  if (p === '/api/admin/devices') return J({ devices: [...st.devices].sort((a, b) => Number(a.approved) - Number(b.approved)) });
+  if (p === '/api/admin/devices') return J(devicesList(st, sp));
   if (p === '/api/admin/devices/approve' && m === 'POST') {
     const d = st.devices.find((x) => x.user_id === body.userId && x.device_id === body.deviceId);
     if (!d) return J({ error: 'not_found' }, 404);
     d.approved = true; log('device.approve', d.user_id, { by: 'admin' }, d.name);
     return ok();
   }
-  if (p === '/api/admin/invites' && m === 'GET') return J({ invites: st.invites });
+  if ((p === '/api/admin/devices/unapprove' || p === '/api/admin/devices/remove') && m === 'POST') {
+    const d = st.devices.find((x) => x.user_id === body.userId && x.device_id === body.deviceId);
+    if (!d) return J({ error: 'not_found' }, 404);
+    if (p.endsWith('/remove')) { st.devices = st.devices.filter((x) => x !== d); log('device.remove', d.user_id, { by: 'admin' }, d.name); } else { d.approved = false; log('device.unapprove', d.user_id, { by: 'admin' }, d.name); }
+    return ok();
+  }
+  if (p === '/api/admin/invites' && m === 'GET') return J(invitesList(st, sp));
   if (p === '/api/admin/invites' && m === 'POST') {
     const id = auid(300 + st.invites.length);
     st.invites.unshift({ id, role: body.role, note: body.note ?? null, expires_at: fut(body.ttlHours ?? 48), used_at: null, used_by_name: null });
@@ -152,12 +217,15 @@ export function adminRoute(st: AdminState, m: string, p: string, sp: URLSearchPa
     return J({ id, link: `https://portal.example.com/invite/${'t'.repeat(32)}`, authentik: 'ok', expiresAt: fut(body.ttlHours ?? 48) });
   }
   if ((mm = p.match(/^\/api\/admin\/invites\/([^/]+)$/)) && m === 'DELETE') { st.invites = st.invites.filter((i) => i.id !== mm![1] || i.used_at); log('invite.revoke', mm[1]!); return ok(); }
-  if (p === '/api/admin/audit') return J({ entries: st.audit.slice(0, Number(sp.get('limit') ?? 100)) });
+  if (p === '/api/admin/audit') return J(auditList(st, sp));
+  if (p === '/api/admin/audit/filters') return J({ actors: [{ id: 'u1', name: AUDIT_ACTOR }], system: st.audit.some((e) => e.actor === null), categories: [...new Set(st.audit.map((e) => e.action.split('.')[0]!))].sort() });
 
   // ---- content ----
   if (p === '/api/admin/requests') {
     if (!st.seerrUp) return J({ error: 'seerr_unreachable' }, 502);
-    return J({ requests: st.requests.filter(reqFilter[sp.get('filter') ?? 'pending'] ?? reqFilter.pending!) });
+    const all = st.requests.filter(reqFilter[sp.get('filter') ?? 'pending'] ?? reqFilter.pending!);
+    const skip = Number(sp.get('skip') ?? 0), take = Number(sp.get('take') ?? 50);
+    return J({ requests: all.slice(skip, skip + take).map((r) => ({ ...r, statusKey: STATE_KEY[r.status] ?? 'unknown' })), total: all.length });
   }
   if ((mm = p.match(/^\/api\/admin\/requests\/(\d+)\/(approve|decline)$/)) && m === 'POST') {
     const r = st.requests.find((x) => x.id === Number(mm![1]));
@@ -168,7 +236,12 @@ export function adminRoute(st: AdminState, m: string, p: string, sp: URLSearchPa
   }
   if (p === '/api/admin/polls') return J({ polls: st.polls });
   if ((mm = p.match(/^\/api\/admin\/polls\/([^/]+)\/(approve|reject)$/)) && m === 'POST') { st.polls = st.polls.filter((x) => x.id !== mm![1]); log(`poll.${mm[2]}`, mm[1]!); return ok(); }
-  if (p === '/api/admin/lists') return J({ lists: st.lists });
+  if (p === '/api/admin/lists') {
+    const q = (sp.get('q') ?? '').toLowerCase();
+    const hit = st.lists.filter((l) => (!q || l.name.toLowerCase().includes(q) || l.owner.name.toLowerCase().includes(q)) && (sp.get('featured') === null || l.featured === (sp.get('featured') === '1')));
+    const off = Number(sp.get('offset') ?? 0), lim = Number(sp.get('limit') ?? 200);
+    return J({ lists: hit.slice(off, off + lim), total: hit.length, featuredCount: st.lists.filter((l) => l.featured).length, max: 5 });
+  }
   if ((mm = p.match(/^\/api\/admin\/lists\/([^/]+)\/featured$/)) && m === 'PUT') {
     const l = st.lists.find((x) => x.id === mm![1]);
     if (!l) return J({ error: 'not_found' }, 404);
@@ -183,16 +256,51 @@ export function adminRoute(st: AdminState, m: string, p: string, sp: URLSearchPa
     if (m === 'DELETE') { st.hubs = st.hubs.filter((h) => h.id !== mm![1]); return ok(); }
     if (m === 'PUT') { const h = st.hubs.find((x) => x.id === mm![1]); if (h) Object.assign(h, body); return J({ hub: h }); }
   }
-  if (p === '/api/admin/previews') return J({ summary: { total: 60, ok: 30, failed: 10, missing: 10, preparing: 10, totalBytes: 99e6 }, items: previewItems });
-  if (p === '/api/admin/previews/regenerate' && m === 'POST') return ok();
-  if (p === '/api/admin/previews/regenerate-failed' && m === 'POST') return J({ ok: true, count: 10 });
+  if (p === '/api/admin/previews' && m === 'GET') {
+    const rows = st.previews;
+    const n = (x: string) => rows.filter((r) => r.status === x).length;
+    const summary = { total: rows.length, ok: n('ok'), failed: n('failed'), missing: n('missing'), preparing: n('preparing'), totalBytes: rows.reduce((a, r) => a + (r.bytes ?? 0), 0) };
+    const ORDER = { failed: 0, preparing: 1, missing: 2, ok: 3 };
+    if (!sp.has('limit') && !sp.has('ids') && !sp.has('status') && !sp.has('q')) return J({ summary, items: [...rows].sort((a, b) => ORDER[a.status] - ORDER[b.status]) });
+    let list = rows;
+    if (sp.has('ids')) { const want = new Set((sp.get('ids') ?? '').split(',').filter(Boolean)); list = list.filter((r) => want.has(r.itemId)); }
+    if (sp.get('status')) list = list.filter((r) => r.status === sp.get('status'));
+    if (sp.get('q')) list = list.filter((r) => r.name.toLowerCase().includes(sp.get('q')!.toLowerCase()));
+    const sign = sp.get('dir') === 'desc' ? -1 : 1, key = sp.get('sort') ?? 'status';
+    list = [...list].sort((a, b) => key === 'name' ? sign * a.name.localeCompare(b.name, 'de', { numeric: true }) : key === 'size' ? sign * ((a.bytes ?? -1) - (b.bytes ?? -1)) : sign * (ORDER[a.status] - ORDER[b.status]) || a.name.localeCompare(b.name, 'de', { numeric: true }));
+    const off = Number(sp.get('offset') ?? 0), lim = sp.has('limit') ? Number(sp.get('limit')) : undefined;
+    return J({ summary, items: list.slice(off, lim === undefined ? undefined : off + lim), total: list.length });
+  }
+  if ((mm = p.match(/^\/api\/admin\/previews\/([0-9a-z]+)$/)) && m === 'DELETE') {
+    const r = st.previews.find((x) => x.itemId === mm![1]);
+    if (r) Object.assign(r, { status: 'missing', bytes: null, audioLang: null, error: null });
+    return ok();
+  }
+  if (p === '/api/admin/previews/regenerate' && m === 'POST') {
+    const r = st.previews.find((x) => x.itemId === body.itemId);
+    if (r) Object.assign(r, { status: 'preparing', error: null });
+    return ok();
+  }
+  if (p === '/api/admin/previews/regenerate-failed' && m === 'POST') {
+    const failed = st.previews.filter((x) => x.status === 'failed');
+    failed.forEach((x) => Object.assign(x, { status: 'preparing', error: null }));
+    return J({ ok: true, count: failed.length });
+  }
+  if (p === '/api/admin/live' && m === 'GET') return J({ sessions: st.live });
+  if (p === '/api/admin/live/stop' && m === 'POST') {
+    const i = st.live.findIndex((l) => l.userId === body.userId && l.playSessionId === body.playSessionId);
+    if (i < 0) return J({ error: 'not_found' }, 404);
+    st.live.splice(i, 1);
+    log('live.stop', body.userId);
+    return ok();
+  }
 
   // ---- operations ----
   if (p === '/api/admin/playback-check') {
     if (m === 'POST') return ok();
     return J({ running: false, done: 6, total: 6, startedAt: ago(3), finishedAt: ago(2), results: [{ itemId: 'a'.repeat(32), name: 'Kaputter Film', type: 'Movie', ok: false, status: 500, ms: 900, bytes: 0, error: 'HTTP 500 transcoder failed' }, ...Array.from({ length: 5 }, (_, i) => ({ itemId: String(i).repeat(32), name: 'Film ' + i, type: 'Movie', ok: true, status: 200, ms: 800 + i * 90, bytes: 1, error: null }))] });
   }
-  if (p === '/api/admin/downloads') return J({ enabled: true, maxBytes: 50 * 1024 ** 3, diskBytes: 12.4 * 1024 ** 3, jobCounts: { ready: 3, preparing: 1 }, jobs: [{ id: auid(400), item_id: 'abcdef0123456789abcdef0123456789', quality: '720p', audio_lang: 'deu', status: 'preparing', seg_done: 40, seg_total: 100, bytes: 1e9, error: null, created_at: ago(2), updated_at: ago(1), licenses: 2 }], licenses: [{ id: auid(401), user_name: 'Anna', device_label: 'iPhone', item_id: 'x', title: 'Inception', series_name: null, quality: '720p', status: 'fetched', created_at: ago(30), expires_at: fut(500) }] });
+  if (p === '/api/admin/downloads') return J({ enabled: true, maxBytes: 50 * 1024 ** 3, diskBytes: 12.4 * 1024 ** 3, jobCounts: { ready: 3, preparing: 1 }, jobs: [{ id: auid(400), item_id: 'abcdef0123456789abcdef0123456789', title: 'Inception', series_name: null, quality: 'hd', audio_lang: 'deu', status: 'preparing', seg_done: 40, seg_total: 100, bytes: 1e9, error: null, created_at: ago(2), updated_at: ago(1), licenses: 2 }], licenses: [{ id: auid(401), user_name: 'Anna', device_label: 'iPhone', item_id: 'x', title: 'Inception', series_name: null, quality: 'hd', status: 'fetched', created_at: ago(30), expires_at: fut(500) }] });
   if ((mm = p.match(/^\/api\/admin\/downloads\/([^/]+)$/)) && m === 'DELETE') return ok();
   if (p === '/api/admin/digest') {
     if (m === 'PUT') return J({ enabled: body.enabled, day: body.day, hour: body.hour, source: 'admin', lastRun: null });

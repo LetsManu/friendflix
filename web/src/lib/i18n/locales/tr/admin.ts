@@ -334,6 +334,7 @@ const tr: Translation<typeof de> = {
     },
     device: {
       approve: '{actor}, {target} kullanıcısının bir cihazını onayladı',
+      unapprove: '{actor}, {target} kullanıcısının bir cihaz onayını geri aldı',
       remove: '{actor} bir cihazı kaldırdı',
     },
     invite: {

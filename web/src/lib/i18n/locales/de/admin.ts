@@ -291,7 +291,7 @@ export default {
       revoke_sessions: '{actor} hat {target} überall abgemeldet',
       provisioned: 'Konto für {target} angelegt',
     },
-    device: { approve: '{actor} hat ein Gerät von {target} freigegeben', remove: '{actor} hat ein Gerät entfernt' },
+    device: { approve: '{actor} hat ein Gerät von {target} freigegeben', unapprove: '{actor} hat die Freigabe eines Geräts von {target} zurückgenommen', remove: '{actor} hat ein Gerät entfernt' },
     invite: { create: '{actor} hat eine Einladung erstellt ({role})', revoke: '{actor} hat eine Einladung widerrufen' },
     request: { create: '{actor} hat sich einen Titel gewünscht', approve: '{actor} hat Wunsch {target} freigegeben', decline: '{actor} hat Wunsch {target} abgelehnt' },
     poll: { create: '{actor} hat eine Abstimmung gestartet', approve: '{actor} hat einen Abstimmungs-Gewinner freigegeben', reject: '{actor} hat einen Abstimmungs-Gewinner abgelehnt' },

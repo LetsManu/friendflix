@@ -112,12 +112,14 @@ test.describe('toast + confirm replace alert()/confirm()', () => {
     expect(dialogs).toBe(0); // no native dialogs
   });
 
-  test('users moved to /admin/users; sign-out feedback is a toast, not alert()', async ({ page }) => {
+  test('users moved to /admin/users; sign-out asks first and the feedback is a toast, not alert()', async ({ page }) => {
     let dialogs = 0;
     page.on('dialog', (d) => { dialogs++; void d.dismiss(); });
     await page.goto('/admin/users');
-    await page.getByRole('row', { name: /Anna Beispiel/ }).getByRole('button', { name: 'Abmelden' }).click();
-    const t = page.getByRole('region', { name: 'Hinweise' }).getByRole('listitem').filter({ hasText: '2 Sitzungen beendet.' });
+    await page.getByRole('button', { name: 'Aktionen für Anna Beispiel' }).click();
+    await page.getByRole('dialog', { name: 'Anna Beispiel' }).getByRole('button', { name: 'Überall abmelden' }).click();
+    await page.getByRole('alertdialog', { name: 'Anna Beispiel überall abmelden?' }).getByRole('button', { name: 'Überall abmelden' }).click();
+    const t = page.getByRole('region', { name: 'Hinweise' }).getByRole('listitem').filter({ hasText: '2 Sitzungen beendet' });
     await expect(t).toBeVisible();
     await t.getByRole('button', { name: 'Hinweis schließen' }).click();
     await expect(t).toBeHidden();

@@ -167,7 +167,7 @@
 
 <style>
   .dt { min-width: 0; scroll-margin-top: calc(var(--nav-h) + 1rem); }
-  .bar { display: flex; flex-wrap: wrap; gap: .6rem; align-items: center; margin-bottom: .8rem; }
+  .bar { height: auto; background: none; overflow: visible; display: flex; flex-wrap: wrap; gap: .6rem; align-items: center; margin-bottom: .8rem; }
   .search { position: relative; display: flex; align-items: center; flex: 1 1 240px; max-width: 420px; color: var(--mut); }
   .search :global(svg) { position: absolute; left: .75rem; pointer-events: none; }
   .search input { width: 100%; padding-left: 2.4rem; }

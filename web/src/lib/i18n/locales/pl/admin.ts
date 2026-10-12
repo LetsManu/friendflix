@@ -377,6 +377,7 @@ const pl: Translation<typeof de> = {
     },
     device: {
       approve: '{actor} zatwierdził(a) urządzenie użytkownika {target}',
+      unapprove: '{actor} cofnął(-ęła) zatwierdzenie urządzenia użytkownika {target}',
       remove: '{actor} usunął(-ęła) urządzenie',
     },
     invite: {
