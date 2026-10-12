@@ -10,12 +10,13 @@
   interface Person { id: string; name: string; image: boolean }
   interface Result { q: string; titles: Item[]; episodes: Item[]; people: Person[]; genres: string[]; partial: boolean }
 
-  let input = '', term = '', pushed: string | null = null, status: 'idle' | 'loading' | 'error' | 'done' = 'idle';
+  let input = '', term = '', pushed: string | null = null, seenUrl: string | null = null, status: 'idle' | 'loading' | 'error' | 'done' = 'idle';
   let res: Result | null = null, recent: string[] = [], t: ReturnType<typeof setTimeout>, seq = 0, ctl: AbortController | undefined, inputEl: HTMLInputElement;
 
   $: urlQ = ($page.url.searchParams.get('q') ?? '').trim();
-  // initial value, back/forward and header-search submits come in through the URL; our own replaceState calls are skipped
-  $: if (urlQ !== pushed) { pushed = urlQ; clearTimeout(t); input = urlQ; term = urlQ; }
+  // initial value, back/forward and header-search submits come in through the URL; our own replaceState calls are skipped.
+  // React to URL changes only: commit() updates `pushed` before $page catches up, and comparing against it then reset the input.
+  $: if (urlQ !== seenUrl) { seenUrl = urlQ; if (urlQ !== pushed) { pushed = urlQ; clearTimeout(t); input = urlQ; term = urlQ; } }
   $: void search(term);
 
   async function search(q: string) {
