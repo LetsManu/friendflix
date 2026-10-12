@@ -110,6 +110,8 @@ export interface PlaybackDto {
   maxBitrate: number;
   /** role limit, upper bound for the quality menu */
   roleMaxBitrate?: number;
+  /** audio track baked into hlsUrl (explicit audioIndex or the matched audioLang); undefined = source default */
+  audioIndex?: number;
   trickplay?: TrickplayDto;
   audioTracks: Array<{ index: number; language?: string; title: string; isDefault: boolean }>;
   subtitles: Array<{ index: number; language?: string; title: string; url: string; isDefault: boolean }>;
@@ -176,6 +178,7 @@ export function toPlaybackDto(args: {
     runtimeTicks: src.RunTimeTicks,
     resumeTicks,
     maxBitrate,
+    ...(audioIndex !== undefined ? { audioIndex } : {}),
     audioTracks: streams
       .filter((s) => s.Type === 'Audio')
       .map((s) => ({ index: s.Index, language: s.Language, title: s.DisplayTitle ?? s.Title ?? s.Language ?? `Spur ${s.Index}`, isDefault: Boolean(s.IsDefault) })),

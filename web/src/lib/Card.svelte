@@ -1,5 +1,6 @@
 <script lang="ts">
-  import { api, backdrop, img, srcset, CARD_SIZES, CARD_WIDTHS, type Item } from '#lib/api';
+  import { api, backdrop, img, primeItem, srcset, CARD_SIZES, CARD_WIDTHS, type Item } from '#lib/api';
+  import { prefetchModal } from '#lib/lazy';
   import { listIds, toggleList, SAVE_FAILED } from '#lib/stores';
   import Icon from '#lib/Icon.svelte';
   import Logo from '#lib/Logo.svelte';
@@ -8,13 +9,15 @@
   import { createEventDispatcher, onDestroy, tick } from 'svelte';
   import { prefs } from '#lib/stores';
   import { isSpoiler } from '#lib/spoiler';
-  import { hasNewEpisodes } from '#lib/badges';
+  import { hasNewEpisodes, isNewTitle } from '#lib/badges';
   import HoverPreview from '#lib/HoverPreview.svelte';
   import { hoverOwner, nextHoverUid } from '#lib/hover';
 
   export let item: Item;
   /** shows a remove (X) button and emits `remove` (used for Weiterschauen) */
   export let removable = false;
+  /** portrait 2:3 poster instead of the 16:9 thumbnail (Top-10 rows) */
+  export let poster = false;
   const dispatch = createEventDispatcher<{
     remove: Item;
     /** "Meine Liste" was toggled for this card (after the server accepted it) */
@@ -28,15 +31,20 @@
   $: fav = item.favorite; // follow the item when the list re-renders with fresh data
   $: href = item.type === 'Episode' ? `/watch/${item.id}` : item.type === 'BoxSet' ? `/library/${item.id}` : `/item/${item.id}`;
   $: detail = item.type === 'Episode' && item.seriesId ? `/item/${item.seriesId}` : `/item/${item.id}`;
-  $: src = item.backdrop ? backdrop(item.id, 520) : item.image ? img(item.id, 520) : '';
+  $: posterId = item.type === 'Episode' && item.seriesId ? item.seriesId : item.id;
+  $: posterSrc = poster && (item.image || item.type === 'Episode') ? img(posterId, 320) : '';
+  $: src = posterSrc || (item.backdrop ? backdrop(item.id, 520) : item.image ? img(item.id, 520) : '');
   // one URL for blur + main image (identical strings: a single request); the srcset widths are the same for both
-  $: srcs = item.backdrop ? srcset('Backdrop', item.id, CARD_WIDTHS) : item.image ? srcset('Primary', item.id, CARD_WIDTHS) : '';
+  $: srcs = posterSrc ? srcset('Primary', posterId, [200, 320, 480]) : item.backdrop ? srcset('Backdrop', item.id, CARD_WIDTHS) : item.image ? srcset('Primary', item.id, CARD_WIDTHS) : '';
+  $: sizes = posterSrc ? '(min-width: 1400px) 9vw, (min-width: 1100px) 11vw, 14vw' : CARD_SIZES;
   $: epSub = item.type === 'Episode' && item.seriesName ? `S${item.parentIndexNumber ?? '?'}·E${item.indexNumber ?? '?'} ${item.name}` : '';
-  $: posterOnly = !item.backdrop && item.image; // poster (2:3) in a 16:9 slot: show it contained on a blurred copy
+  $: posterOnly = !posterSrc && !item.backdrop && item.image; // poster (2:3) in a 16:9 slot: show it contained on a blurred copy
   $: sub = item.type === 'Episode' ? `${item.seriesName ?? ''} · S${item.parentIndexNumber ?? '?'}:E${item.indexNumber ?? '?'}` : '';
   $: pct = item.positionTicks && item.runtimeTicks ? Math.min(100, (item.positionTicks / item.runtimeTicks) * 100) : 0;
   $: inList = $listIds.has(item.seriesId ?? item.id);
   $: fresh = hasNewEpisodes(item, Date.now());
+  $: isNew = !fresh && isNewTitle(item, Date.now());
+  let imgEl: HTMLImageElement | undefined;
 
   // ---- desktop pop-out preview (HoverPreview, portal): opens after ~450 ms hover / 600 ms keyboard focus ----
   const canHover = typeof matchMedia !== 'undefined' && matchMedia('(hover: hover) and (pointer: fine)').matches;
@@ -63,7 +71,7 @@
     clearTimeout(closeT);
     if (!open || h) return;
     // grace period so the pointer can travel from the card onto the pop-out; stay open while a list picker is open
-    const check = () => { if (held) return; if (document.querySelector('.lm-pop')) { closeT = setTimeout(check, 400); return; } closePreview(); };
+    const check = () => { if (held) return; if (document.querySelector('.lm-pop, .ma-pop')) { closeT = setTimeout(check, 400); return; } closePreview(); };
     closeT = setTimeout(check, 120);
   }
   $: if ($hoverOwner !== uid && hp) { hp = false; overPrev = false; focusPrev = false; }
@@ -120,12 +128,12 @@
 </script>
 
 <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
-<article class="card" on:mouseenter={cardEnter} on:mouseleave={cardLeave} on:focusin={onFocusIn} on:focusout={onFocusOut} on:keydown={onKey}>
+<article class="card" class:poster={!!posterSrc} on:mouseenter={cardEnter} on:mouseleave={cardLeave} on:focusin={onFocusIn} on:focusout={onFocusOut} on:keydown={onKey}>
   <div class="media">
   <a class="thumb" {href} bind:this={thumbEl} aria-label={item.name + (sub ? ', ' + sub : '')}>
-    {#if posterOnly}<img class="blur" loading="lazy" decoding="async" {src} srcset={srcs} sizes={CARD_SIZES} alt="" aria-hidden="true" />{/if}
-    {#if src}<img class:contain={posterOnly} class:spoil={isSpoiler(item, $prefs)} loading="lazy" decoding="async" {src} srcset={srcs} sizes={CARD_SIZES} alt="" width="320" height="180" />{/if}
-    <span class="brand" aria-hidden="true"><Logo size={18} label="" /></span>
+    {#if posterOnly}<img class="blur" loading="lazy" decoding="async" {src} srcset={srcs} {sizes} alt="" aria-hidden="true" />{/if}
+    {#if src}<img bind:this={imgEl} class:contain={posterOnly} class:spoil={isSpoiler(item, $prefs)} loading="lazy" decoding="async" {src} srcset={srcs} {sizes} alt="" width={posterSrc ? 200 : 320} height={posterSrc ? 300 : 180} />{/if}
+    {#if isNew}<span class="brand"><Logo size={16} label="" /><span class="neu">Neu</span></span>{/if}
     {#if fresh}<span class="newep">Neue Folgen</span>{/if}
     <span class="cap" class:big={!src}>{#if epSub}<span class="l1">{item.seriesName}</span><span class="l2">{epSub}</span>{:else}{item.name}{/if}</span>
     {#if pct}<span class="progress"><i style="width:{pct}%"></i></span>{/if}
@@ -137,7 +145,7 @@
 </article>
 {#if hp}
   <HoverPreview
-    bind:this={hpComp} {item} anchor={thumbEl} {href} {detail} {removable} {fav}
+    bind:this={hpComp} {item} anchor={thumbEl} {href} {detail} {removable} {fav} startSrc={!posterSrc && imgEl?.complete ? imgEl.currentSrc : ''}
     bind:over={overPrev} bind:focused={focusPrev}
     on:close={(e) => closePreview(e.detail.refocus)} on:exit={(e) => exitPreview(e.detail.dir)}
     on:remove={(e) => { closePreview(); dispatch('remove', e.detail); }}
@@ -153,7 +161,7 @@
   <div class="sheet" tabindex="-1" use:portal bind:this={sheetEl} role="dialog" aria-modal="true" aria-label="Aktionen für {item.name}" on:keydown={sheetKey}>
     <p class="st">{item.name}</p>
     <a class="act" href={href} on:click={() => closeSheet(false)}><Icon name="play" size={20} />Abspielen</a>
-    <button type="button" class="act" aria-haspopup="dialog" on:click={(e) => { moreBtn?.focus(); openModal(e, detail); closeSheet(false); }}><Icon name="chevron-down" size={20} />Mehr Infos</button>
+    <button type="button" class="act" aria-haspopup="dialog" on:pointerenter={prefetchModal} on:click={(e) => { if (item.type !== 'Episode') primeItem(item); moreBtn?.focus(); openModal(e, detail); closeSheet(false); }}><Icon name="chevron-down" size={20} />Mehr Infos</button>
     <button type="button" class="act" on:click={() => { void toggleInList(); closeSheet(); }}><Icon name={inList ? 'check' : 'plus'} size={20} />{inList ? 'Von Meine Liste entfernen' : 'Zu Meine Liste'}</button>
     <button type="button" class="act" aria-pressed={fav} on:click={() => { toggleFav(); closeSheet(); }}><Icon name="heart" size={20} fill={fav} />{fav ? 'Favorit entfernen' : 'Als Favorit markieren'}</button>
     {#if item.type !== 'BoxSet'}<ListMenu itemId={item.seriesId ?? item.id} variant="row" up on:changed={(e) => dispatch('listchanged', e.detail)} />{/if}
@@ -171,11 +179,15 @@
   .l1 { display: block; } .l2 { display: block; font-weight: 500; font-size: .75rem; opacity: .9; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .cap.big { align-content: center; }
   .media { position: relative; }
+  .poster .thumb { aspect-ratio: 2 / 3; }
+  .poster .thumb::after { background: linear-gradient(transparent 70%, rgba(0,0,0,.6)); }
+  .poster .cap { font-size: .8rem; }
   .fb { position: absolute; left: .5rem; right: .5rem; top: 2.2rem; z-index: 4; pointer-events: none; }
   .fb span { display: inline-block; padding: .25rem .6rem; border-radius: 6px; background: rgba(20,20,20,.92); border: 1px solid var(--err, #e5646e); color: #fff; font-size: .78rem; font-weight: 600; }
   .rm::after { content: ''; position: absolute; inset: -8px; } /* >=44px hit area, visual size unchanged */
-  .brand { position: absolute; left: .45rem; top: .4rem; z-index: 2; pointer-events: none; opacity: .95; }
-  .newep { position: absolute; left: .45rem; top: 1.9rem; z-index: 2; pointer-events: none; padding: .1rem .45rem; border-radius: 3px; background: var(--acc); color: #fff; font-size: .68rem; font-weight: 800; letter-spacing: .02em; text-transform: uppercase; }
+  .brand { position: absolute; left: .45rem; top: .4rem; z-index: 2; pointer-events: none; display: flex; align-items: center; gap: .3rem; }
+  .neu { padding: .05rem .4rem; border-radius: 3px; background: rgba(20,20,20,.78); color: #fff; font-size: .66rem; font-weight: 800; letter-spacing: .06em; text-transform: uppercase; }
+  .newep { position: absolute; left: .45rem; top: .45rem; z-index: 2; pointer-events: none; padding: .1rem .45rem; border-radius: 3px; background: var(--acc); color: #fff; font-size: .68rem; font-weight: 800; letter-spacing: .02em; text-transform: uppercase; }
   .blur { position: absolute; inset: -10%; width: 120%; height: 120%; object-fit: cover; filter: blur(18px) brightness(.55); }
   .thumb img.spoil { filter: blur(14px); transform: scale(1.1); }
   .thumb img.contain { position: relative; object-fit: contain; }

@@ -6,17 +6,29 @@ import { version } from '$app/env';
 const sw = self as unknown as ServiceWorkerGlobalScope;
 const CACHE = `ff-${version}`;
 
-// Only small static assets are precached; never HTML (the app shell is always fetched fresh).
+import { basePrecache, shellUrls } from './precache';
+
+// Never HTML besides the prerendered /offline hub (the app shell is always fetched fresh).
 const abs = (p: string) => (p.startsWith('/') ? p : `/${p}`);
 const staticFiles = assets.map((a) => abs(a.path)).filter((f) => /^\/(icon-.*\.png|apple-touch-icon\.png|favicon\.(svg|ico)|logo-icon\.svg|manifest\.webmanifest)$/.test(f));
-const PRECACHE = [...new Set([...immutable.map((a) => abs(a.path)), ...prerendered.map((a) => abs(a.path)), ...staticFiles])];
-const ASSETS = new Set(PRECACHE.filter((p) => p !== '/offline'));
+const IMMUTABLE = immutable.map((a) => abs(a.path));
+const PRERENDERED = prerendered.map((a) => abs(a.path));
+/** cache-first (filled on first use): every immutable file of this version and the icons */
+const ASSETS = new Set([...IMMUTABLE, ...staticFiles]);
 const BYPASS = ['/api/', '/media/', '/auth/', '/ws/', '/internal/', '/health', '/metrics'];
 
+/** Precache only what the offline hub needs to start: /offline, its modules/styles (read from its HTML), the latin font, the icons. */
+async function precache() {
+  const c = await caches.open(CACHE);
+  await c.addAll(basePrecache({ immutable: IMMUTABLE, prerendered: PRERENDERED, statics: staticFiles }));
+  const page = await c.match('/offline');
+  if (!page) return;
+  const shell = shellUrls(await page.text()).filter((u) => ASSETS.has(u));
+  await c.addAll(shell);
+}
+
 sw.addEventListener('install', (event) => {
-  event.waitUntil(
-    caches.open(CACHE).then((c) => c.addAll(PRECACHE)).then(() => sw.skipWaiting())
-  );
+  event.waitUntil(precache().then(() => sw.skipWaiting()));
 });
 
 sw.addEventListener('activate', (event) => {

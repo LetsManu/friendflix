@@ -1,3 +1,5 @@
+import { clearHint } from '#lib/gate';
+
 export class ApiError extends Error {
   constructor(public status: number, public body: any) {
     super(`API ${status}`);
@@ -21,6 +23,7 @@ export async function api<T = any>(path: string, opts: { method?: string; body?:
     body: opts.body === undefined ? undefined : JSON.stringify(opts.body),
   });
   if (res.status === 401 && !location.pathname.startsWith('/invite/') && location.pathname !== '/tv') {
+    clearHint(); // the session is gone: the next start must not render early with this account's hint/profile
     location.href = localStorage.getItem('ff_tv_device') ? '/tv' : '/auth/login'; // a TV re-pairs instead of typing a login
     await new Promise(() => undefined);
   }
@@ -48,9 +51,9 @@ export function srcset(kind: ImageKind, id: string, widths: readonly number[]): 
   const ws = [...new Set(widths.filter((w) => Number.isFinite(w) && w > 0).map(Math.round))].sort((a, b) => a - b);
   return ws.map((w) => `${kind === 'Primary' ? img(id, w) : backdrop(id, w)} ${w}w`).join(', ');
 }
-/** Row card thumbs; `CARD_SIZES` mirrors the slot widths of Row.svelte (--n = 2.4 / 3 / 4 / 5 / 6 at 0 / 560 / 800 / 1100 / 1500px, minus padding and gaps). */
+/** Row card thumbs; `CARD_SIZES` mirrors the slot widths of Row.svelte (--n = 2.4 / 3 / 4 / 5 / 6 at 0 / 560 / 800 / 1100 / 1400px, minus padding and gaps). */
 export const CARD_WIDTHS = [320, 520, 780] as const;
-export const CARD_SIZES = '(min-width: 1500px) 16vw, (min-width: 1100px) 19vw, (min-width: 800px) 24vw, (min-width: 560px) 31vw, 40vw';
+export const CARD_SIZES = '(min-width: 1400px) 16vw, (min-width: 1100px) 19vw, (min-width: 800px) 24vw, (min-width: 560px) 31vw, 40vw';
 /** full-bleed hero backdrop */
 export const HERO_WIDTHS = [800, 1280, 1920] as const;
 /** ItemModal backdrop (dialog is min(880px, 96vw) wide) */
@@ -78,3 +81,49 @@ export interface Item {
 }
 export interface Me { id: string; name: string; role: string; roleLabel: string; isAdmin: boolean; csrfToken: string; deviceApproved: boolean; tv: boolean; profile?: MeProfile | null; profileRequired?: boolean; profileCount?: number; profileChosen?: boolean; downloads?: { allowed: boolean; max: number } }
 export interface MeProfile { id: string; name: string; avatar: string; isOwner: boolean }
+
+// ---- shared item cache: the modal / item page render instantly from what a card already had, then revalidate ----
+/** detail response of GET /api/items/:id (the item plus per-profile state) */
+export interface ItemDetail { item: Item; inWatchlist?: boolean; thumb?: number; langs?: { audio: string[]; subs: string[] } }
+type Cached = { item: Item; detail?: ItemDetail; at: number };
+const ITEM_TTL = 10 * 60_000, ITEM_MAX = 400;
+const itemCache = new Map<string, Cached>();
+function putCached(id: string, c: Cached) {
+  itemCache.delete(id); // re-insert = most recently used
+  itemCache.set(id, c);
+  if (itemCache.size > ITEM_MAX) itemCache.delete(itemCache.keys().next().value!);
+}
+/**
+ * Remember an item a card/row already has (call on hover/focus/click of a card). Never downgrades a fuller cached detail:
+ * the card's copy only refreshes the item fields. Ignores anything without an id.
+ */
+export function primeItem(item: Item | null | undefined, now = Date.now()): void {
+  if (!item || typeof item.id !== 'string' || !item.id || typeof item.name !== 'string') return;
+  const old = itemCache.get(item.id);
+  putCached(item.id, { item: old?.detail ? { ...old.detail.item, ...item, langs: item.langs ?? old.detail.item.langs } : item, detail: old?.detail, at: now });
+}
+/** Store a full detail response (DetailView after GET /api/items/:id). */
+export function primeDetail(d: ItemDetail | null | undefined, now = Date.now()): void {
+  if (!d?.item?.id) return;
+  putCached(d.item.id, { item: d.item, detail: d, at: now });
+}
+/** Cached item for an id (fresh within 10 min), or undefined. Render it immediately, then revalidate with the API. */
+export function cachedItem(id: string, now = Date.now()): Item | undefined {
+  const c = itemCache.get(id);
+  if (!c) return undefined;
+  if (now - c.at > ITEM_TTL) { itemCache.delete(id); return undefined; }
+  return c.item;
+}
+/** Cached full detail (watchlist/thumb/langs included) when one was loaded recently, else undefined. */
+export function cachedDetail(id: string, now = Date.now()): ItemDetail | undefined {
+  const c = itemCache.get(id);
+  if (!c?.detail || now - c.at > ITEM_TTL) return undefined;
+  return { ...c.detail, item: c.item };
+}
+/** The viewer rated a title somewhere (hover card, detail view): patch the cached detail so the next render shows it (freshness unchanged). */
+export function setCachedThumb(id: string, thumb: number): void {
+  const c = itemCache.get(id);
+  if (c?.detail) itemCache.set(id, { ...c, detail: { ...c.detail, thumb } });
+}
+/** Drop cached entries (tests, profile switch). */
+export function clearItemCache(): void { itemCache.clear(); }

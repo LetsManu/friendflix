@@ -6,6 +6,7 @@
   import { avatarBg, initial } from '#lib/avatars';
   import { groupLinks, linksFor } from '#lib/menu';
   import { logout } from '#lib/session';
+  import { goto } from '$app/navigation';
 
   type Note = { id: number; title: string; link?: string; read: boolean };
   let me: Me | null = null, notes: Note[] | null = null, resume: Item[] | null = null, allNotes = false;
@@ -24,11 +25,14 @@
     resume = resume ? resume.filter((i) => i.id !== id) : resume;
     try { await api(`/api/library/resume/${id}`, { method: 'DELETE' }); } catch { resume = prev; }
   }
+  async function surprise() {
+    try { await goto(`/item/${(await api('/api/library/random?type=Movie')).item.id}`); } catch { await goto('/browse/movies'); }
+  }
   $: canDownload = Boolean(me?.downloads?.allowed);
   $: groups = groupLinks(linksFor(canDownload));
   $: admin = Boolean(me?.isAdmin && me?.profile?.isOwner);
   $: shown = notes ? (allNotes ? notes : notes.slice(0, 5)) : [];
-  $: tiles = [['/watchlist', 'Meine Liste', 'plus'], ['/lists', 'Listen', 'list'], ...(canDownload ? [['/downloads', 'Downloads', 'download']] : []), ['/history', 'Verlauf', 'calendar']] as Array<[string, string, string]>;
+  $: tiles = [['/watchlist', 'Meine Liste', 'plus'], ...(canDownload ? [['/downloads', 'Downloads', 'download']] : []), ['/lists', 'Listen', 'list'], ['/history', 'Verlauf', 'calendar']] as Array<[string, string, string]>;
 </script>
 
 <svelte:head><title>Mein FriendFlix – FriendFlix</title></svelte:head>
@@ -38,12 +42,12 @@
     <span class="face" style={me?.profile ? `background:${avatarBg(me.profile.avatar)}` : undefined} aria-hidden="true">{me ? initial(me.profile?.name ?? me.name) : ''}</span>
     <div class="who">
       {#if me}<b>{me.profile?.name ?? me.name}</b><span class="muted">{me.roleLabel}</span>{:else}<span class="skeleton sk"></span>{/if}
-      <a class="swap" href="/profiles"><Icon name="users" size={16} />Profil wechseln</a>
+      <span class="pl"><a class="swap" href="/profiles"><Icon name="users" size={16} />Profil wechseln</a><a class="swap" href="/profiles?manage=1">Profile verwalten</a></span>
     </div>
   </header>
 
   <ul class="tiles2" aria-label="Schnellzugriff">
-    {#each tiles as [href, label, icon] (href)}<li><a {href}><span class="ti"><Icon name={icon} size={24} /></span>{label}</a></li>{/each}
+    {#each tiles as [href, label, icon] (href)}<li><a {href}><span class="ti"><Icon name={icon} size={24} /></span><span class="tl">{label}</span></a></li>{/each}
   </ul>
 
   <section aria-labelledby="h-notes">
@@ -66,11 +70,13 @@
   <div class="groups">
     {#each groups as g (g.title)}
       {@const isAcc = g.title === 'Konto & Einstellungen'}
-      {#if g.items.length || (isAcc && admin)}
+      {#if g.items.length || isAcc}
         <section class="grp" aria-label={g.title}>
           <h2 class="gh">{g.title}</h2>
           <ul class="lst">
+            {#if g.title === 'Entdecken'}<li><button type="button" class="rowbtn" on:click={surprise}><Icon name="shuffle" size={20} />Überrasch mich<Icon name="chevron-right" size={18} /></button></li>{/if}
             {#each g.items as [href, label, icon] (href)}<li><a {href}><Icon name={icon} size={20} />{label}<Icon name="chevron-right" size={18} /></a></li>{/each}
+            {#if isAcc}<li><button type="button" class="rowbtn" on:click={() => window.dispatchEvent(new Event('ff-help'))}><Icon name="info" size={20} />Hilfe<Icon name="chevron-right" size={18} /></button></li>{/if}
             {#if isAcc && admin}<li><a href="/admin"><Icon name="shield" size={20} />Admin<Icon name="chevron-right" size={18} /></a></li>{/if}
           </ul>
         </section>
@@ -90,8 +96,15 @@
   .sk { width: 9rem; height: 1.6rem; }
   .swap { display: inline-flex; align-items: center; gap: .4rem; min-height: 44px; color: #54b9c5; font-weight: 600; }
   .swap:hover { text-decoration: underline; }
-  .tiles2 { list-style: none; margin: 0 0 1.6rem; padding: 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(76px, 1fr)); gap: .6rem; }
-  .tiles2 a { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: .45rem; min-height: 86px; padding: .5rem .3rem; background: var(--surface-2); border-radius: 8px; font-size: .85rem; font-weight: 600; text-align: center; transition: background var(--t-fast); }
+  .tiles2 { list-style: none; margin: 0 0 1.6rem; padding: 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(78px, 1fr)); gap: .5rem; }
+  @media (min-width: 721px) { .tiles2 { grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); } }
+  .tiles2 a { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: .45rem; min-height: 86px; padding: .5rem .25rem; background: var(--surface-2); border-radius: 8px; font-size: .8rem; font-weight: 600; text-align: center; white-space: nowrap; transition: background var(--t-fast); }
+  .tiles2 li { min-width: 0; }
+  .tiles2 .tl { max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
+  .pl { display: flex; flex-wrap: wrap; column-gap: 1.2rem; }
+  .rowbtn { width: 100%; display: flex; align-items: center; justify-content: flex-start; gap: .8rem; min-height: 48px; padding: .5rem 1rem; background: transparent; border-radius: 0; font-weight: 400; color: inherit; }
+  .rowbtn:hover:not(:disabled) { background: rgba(255,255,255,.05); }
+  .rowbtn :global(svg:last-child) { margin-left: auto; color: var(--mut); }
   .tiles2 a:hover { background: #363636; }
   .ti { display: grid; place-items: center; width: 40px; height: 40px; border-radius: 50%; background: rgba(255,255,255,.08); }
   section { margin-bottom: 1.4rem; }

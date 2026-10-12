@@ -3,12 +3,13 @@
   import { pageStore } from '#lib/page';
   const page = pageStore();
   import { goto } from '$app/navigation';
-  import { api, img, type Item } from '#lib/api';
+  import { api, cachedItem, img, primeItem, type Item } from '#lib/api';
   import Icon from '#lib/Icon.svelte';
   import Player from '#lib/Player.svelte';
   import { prefs } from '#lib/stores';
   import { isBackKey } from '#lib/spatial';
   import { consumeAutoplay, noteAutoplay, noteInteraction, shouldAsk } from '#lib/stillwatching';
+  import { barTitles } from '#lib/player/bar';
   import { advanceCountdown, cardVisible, COUNTDOWN_SECONDS, mayAutoplay, nextKind, ringOffset, secondsLeft } from '#lib/player/nextup';
 
   let video: HTMLVideoElement | null = null;
@@ -29,14 +30,17 @@
   // A function call keeps `id` the only dependency. (An inline async block that also reads `item` made Svelte re-run it
   // whenever `item` changed, i.e. an endless request loop and a title that never showed.)
   async function loadItem(wanted: string) {
-    item = null; nextEp = null; similar = []; stopCountdown(); dismissed = false; entered = false; askStill = false; curTime = 0; creditsAt = Infinity;
+    item = cachedItem(wanted) ?? null; // title right away when a card/detail view had it
+    nextEp = null; similar = []; stopCountdown(); dismissed = false; entered = false; askStill = false; curTime = 0; creditsAt = Infinity;
+    // item and "next episode" in parallel (/next answers null for films)
+    const nx = api(`/api/items/${wanted}/next`).then((r) => r.item as Item | null).catch(() => null);
     try {
       const it = (await api(`/api/items/${wanted}`)).item as Item;
       if (wanted !== id) return; // navigated on in the meantime
-      item = it;
+      item = it; primeItem(it);
       if (it.type === 'Episode' && it.seriesId) {
-        const nx = (await api(`/api/items/${wanted}/next`)).item as Item | null; // the episode AFTER this one, also across seasons
-        if (wanted === id) nextEp = nx;
+        const n = await nx; // the episode AFTER this one, also across seasons
+        if (wanted === id) nextEp = n;
       }
     } catch { /* player shows its own error */ }
   }
@@ -83,6 +87,8 @@
   }
   const tvMode = () => document.documentElement.classList.contains('tv');
   function onKey(e: KeyboardEvent) { if ((e.key === 'Escape' || (tvMode() && isBackKey(e))) && !document.fullscreenElement) { e.preventDefault(); back(); } }
+  $: bt = barTitles(item);
+  const playEpisode = (e: CustomEvent<{ id: string }>) => goto(`/watch/${e.detail.id}${langQ ? '?' + langQ : ''}`);
   const label = (i: Item | null) => (i ? (i.seriesName ? `${i.seriesName} · S${i.parentIndexNumber}:E${i.indexNumber} ${i.name}` : i.name) : '');
   onDestroy(stopCountdown);
 </script>
@@ -91,10 +97,10 @@
 <svelte:head><title>{item?.name ?? 'Wiedergabe'} – FriendFlix</title></svelte:head>
 <div class="wrap">
   {#key id}
-    <Player itemId={id} title={label(item)} {startAt} {wantAudio} {wantSub} bind:video bind:sleepAfterEpisode bind:creditsAt hasNext={Boolean(nextEp)} on:next={() => nextEp && goto(nextHref())} on:timeupdate={onTime} on:ended={onEnded}>
+    <Player itemId={id} title={label(item)} barTitle={bt.title} barSub={bt.sub} seriesId={item?.seriesId ?? ''} seasonId={item?.seasonId ?? ''} on:episode={playEpisode} {startAt} {wantAudio} {wantSub} bind:video bind:sleepAfterEpisode bind:creditsAt hasNext={Boolean(nextEp)} on:next={() => nextEp && goto(nextHref())} on:timeupdate={onTime} on:ended={onEnded}>
       <div slot="top" class="top">
         <button class="icon-btn" aria-label="Zurück" on:click={back}><Icon name="arrow-left" size={30} /></button>
-        {#if item}<div class="ttl"><b>{item.seriesName ?? item.name}</b>{#if item.seriesName}<span>S{item.parentIndexNumber}:E{item.indexNumber} · {item.name}</span>{/if}</div>{/if}
+        {#if item}<div class="ttl phone"><b>{item.seriesName ?? item.name}</b>{#if item.seriesName}<span>S{item.parentIndexNumber}:E{item.indexNumber} · {item.name}</span>{/if}</div>{/if}
       </div>
       {#if visible && askStill && nextEp}
         <div class="next still ui" data-nav role="dialog" aria-label="Schaust du noch?">
@@ -132,6 +138,8 @@
   .wrap :global(.stage) { height: 100%; }
   .top { padding: .8rem 1rem; display: flex; align-items: center; gap: .6rem; background: linear-gradient(rgba(0,0,0,.8), transparent); }
   .ttl { display: flex; flex-direction: column; line-height: 1.2; } .ttl span { color: var(--mut); font-size: .9rem; }
+  /* desktop: the title sits centred in the control bar (Netflix); phones keep it at the top */
+  @media (min-width: 721px) { .ttl.phone { display: none; } }
   .next { position: absolute; right: var(--pad-x); bottom: 8.5rem; z-index: 9; background: rgba(20,20,20,.94); border: 1px solid #444; border-radius: 8px; padding: 1rem 1.2rem; display: flex; flex-direction: column; gap: .8rem; max-width: min(380px, 92vw); }
   .nt { display: flex; flex-direction: column; gap: .15rem; }
   .next { width: min(400px, calc(100vw - 2rem)); } .next.more { width: min(440px, calc(100vw - 2rem)); }

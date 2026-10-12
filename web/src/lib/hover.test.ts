@@ -12,14 +12,17 @@ describe('previewRect', () => {
     expect(r.mediaH).toBe(Math.round((360 * 9) / 16));
     expect(previewRect(card(600, 300, 150), vp).width).toBe(300);
   });
-  it('anchors to the left edge for the first visible card', () => {
-    const r = previewRect(card(20), vp);
-    expect(r.left).toBe(12);
-    expect(r.from.dx).toBe(20 - 12);
+  it('grows from the left edge of the first visible card (no shift past it)', () => {
+    const r = previewRect(card(58), vp);
+    expect(r.left).toBe(58);
+    expect(r.from.dx).toBe(0);
+    expect(previewRect(card(20), vp).left).toBe(20);
+    expect(previewRect(card(-60), vp).left).toBe(12); // partly scrolled out: viewport margin
   });
-  it('anchors to the right edge for the last visible card', () => {
-    const r = previewRect(card(1440 - 20 - 220), vp);
-    expect(r.left + r.width).toBe(1440 - 12);
+  it('grows from the right edge of the last visible card', () => {
+    const r = previewRect(card(1440 - 58 - 220), vp);
+    expect(r.left + r.width).toBe(1440 - 58);
+    expect(previewRect(card(1440 - 220), vp).left + previewRect(card(1440 - 220), vp).width).toBe(1440 - 12);
   });
   it('moves up when there is no room below and down when there is none above', () => {
     const low = previewRect(card(600, 780), vp);

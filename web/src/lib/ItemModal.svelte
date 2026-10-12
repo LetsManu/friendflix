@@ -3,6 +3,7 @@
   import type { Item } from '#lib/api';
   import Icon from '#lib/Icon.svelte';
   import DetailView from '#lib/detail/DetailView.svelte';
+  import { holdBillboard } from '#lib/preview';
 
   export let id: string;
   let item: Item | null = null, failed = false;
@@ -32,6 +33,7 @@
 
   onMount(() => {
     opener = document.activeElement;
+    const release = holdBillboard(); // the billboard behind the dialog pauses while it is open
     document.body.style.overflow = 'hidden';
     // everything behind the dialog (siblings of the overlay in the app root) becomes inert
     const inerted: HTMLElement[] = [];
@@ -40,7 +42,7 @@
       el.setAttribute('inert', ''); inerted.push(el);
     }
     tick().then(() => closeBtn?.focus());
-    return () => { document.body.style.overflow = ''; for (const el of inerted) el.removeAttribute('inert'); (opener as HTMLElement | null)?.focus?.(); };
+    return () => { release(); document.body.style.overflow = ''; for (const el of inerted) el.removeAttribute('inert'); (opener as HTMLElement | null)?.focus?.(); };
   });
 </script>
 

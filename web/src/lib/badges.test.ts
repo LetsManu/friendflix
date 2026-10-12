@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { hasNewEpisodes } from './badges';
+import { hasNewEpisodes, isNewTitle } from './badges';
 
 const now = Date.parse('2026-10-12T12:00:00Z');
 const ago = (d: number) => new Date(now - d * 86_400_000).toISOString();
@@ -23,4 +23,22 @@ describe('hasNewEpisodes', () => {
   });
   it('false when not started', () => expect(hasNewEpisodes({ ...base, unplayedCount: 10 }, now)).toBe(false));
   it('false for far-future dates', () => expect(hasNewEpisodes({ ...base, lastAdded: ago(-5) }, now)).toBe(false));
+});
+
+describe('isNewTitle', () => {
+  it('true for a movie added or premiered within 30 days', () => {
+    expect(isNewTitle({ type: 'Movie', lastAdded: ago(5) }, now)).toBe(true);
+    expect(isNewTitle({ type: 'Movie', premiereDate: ago(29) }, now)).toBe(true);
+  });
+  it('false for older titles, garbage and future dates', () => {
+    expect(isNewTitle({ type: 'Movie', lastAdded: ago(31), premiereDate: ago(400) }, now)).toBe(false);
+    expect(isNewTitle({ type: 'Movie', lastAdded: 'x' }, now)).toBe(false);
+    expect(isNewTitle({ type: 'Movie', premiereDate: ago(-60) }, now)).toBe(false);
+    expect(isNewTitle({ type: 'Movie' }, now)).toBe(false);
+  });
+  it('episodes never, series with new episodes get the other badge', () => {
+    expect(isNewTitle({ type: 'Episode', lastAdded: ago(1) }, now)).toBe(false);
+    expect(isNewTitle(base, now)).toBe(false);
+    expect(isNewTitle({ type: 'Series', lastAdded: ago(2), unplayedCount: 8, childCount: 8 }, now)).toBe(true);
+  });
 });

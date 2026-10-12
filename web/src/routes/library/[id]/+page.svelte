@@ -71,6 +71,7 @@
 
 <style>
   .bar { margin-bottom: 1.2rem; }
+  .tiles { row-gap: .5rem; }
   .bar input { flex: 1; min-width: 200px; max-width: 420px; }
   .state { text-align: center; padding: 1rem 0 3rem; }
 </style>

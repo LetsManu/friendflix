@@ -19,7 +19,8 @@ test.describe('item page', () => {
 
     await expect(page.getByText('Ton: Deutsch, Englisch · Untertitel: Deutsch')).toBeVisible();
 
-    // status picker: "Inception" is planned (on the watchlist); switching to "Abgebrochen" persists
+    // status picker lives in "⋯ Mehr": "Inception" is planned (on the watchlist); switching to "Abgebrochen" persists
+    await page.getByRole('button', { name: 'Mehr', exact: true }).click();
     const status = page.getByRole('group', { name: 'Status' });
     const planned = status.getByRole('button', { name: 'Geplant' });
     const dropped = status.getByRole('button', { name: 'Abgebrochen' });
@@ -28,6 +29,7 @@ test.describe('item page', () => {
     await expect(dropped).toHaveAttribute('aria-pressed', 'true');
     await expect(planned).toHaveAttribute('aria-pressed', 'false');
     expect(api.log.some((l) => l.startsWith(`PUT /api/items/${LOCKED_ID}/status`) || l.startsWith(`POST /api/items/${LOCKED_ID}/status`))).toBe(true);
+    await page.keyboard.press('Escape');
     await expect.poll(() => noHorizontalOverflow(page)).toBe(true);
   });
 
@@ -73,8 +75,28 @@ test.describe('item page', () => {
   });
 
   test('a series lists its episodes', async ({ page }) => {
+    const urls: string[] = [];
+    page.on('request', (r) => urls.push(r.url()));
     await page.goto('/item/' + SERIES.id);
     await expect(page.getByRole('heading', { level: 1, name: 'Breaking Bad' })).toBeVisible();
     await expect(page.getByText('Folge 1', { exact: false }).first()).toBeVisible();
+    // next-up is asked for this series only (not filtered from the global top 20)
+    expect(urls.some((u) => u.includes(`/api/library/nextup?seriesId=${SERIES.id}`))).toBe(true);
+  });
+
+  test('one rating button expands into three options and saves "Super" (2)', async ({ page }) => {
+    await page.goto('/item/' + LOCKED_ID);
+    await expect(page.getByRole('heading', { level: 1, name: 'Inception' })).toBeVisible();
+    await page.getByRole('button', { name: 'Bewerten', exact: true }).first().hover(); // desktop: the options grow out of the button on hover
+    const put = page.waitForRequest((r) => r.method() === 'PUT' && r.url().includes(`/api/items/${LOCKED_ID}/thumb`));
+    await page.getByRole('button', { name: 'Super', exact: true }).click();
+    expect((await put).postDataJSON()).toEqual({ value: 2 });
+  });
+
+  test('"⋯ Mehr" holds the secondary actions', async ({ page }) => {
+    await page.goto('/item/' + LOCKED_ID);
+    await page.getByRole('button', { name: 'Mehr', exact: true }).click();
+    for (const name of ['Favorit', 'Gesehen', 'Empfehlen', 'Teilen', 'Gemeinsam schauen']) await expect(page.getByRole('button', { name, exact: true })).toBeVisible();
+    await expect(page.getByRole('button', { name: /Zu Liste hinzufügen/ })).toBeVisible();
   });
 });

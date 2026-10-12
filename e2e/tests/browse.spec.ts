@@ -21,9 +21,31 @@ test.describe('browse (desktop)', () => {
   test('changing a select adds a chip', async ({ page }) => {
     await page.goto('/browse/movies');
     await expect(page.getByRole('list', { name: 'Aktive Filter' })).toHaveCount(0);
-    await expect(page.locator('.fbtn')).toBeHidden();
+    // desktop: title + "Genres" dropdown + view toggle, the other filters behind the "Filter" button (drawer)
+    await expect(page.locator('.fbtn')).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Reihen' })).toHaveAttribute('aria-pressed', 'true');
     await page.locator('#g').selectOption('Krimi');
     await expect(page).toHaveURL(/genre=Krimi/);
     await expect(page.getByRole('button', { name: /^Filter Krimi entfernen/ })).toBeVisible();
+    // a filter always shows the grid
+    await expect(page.getByRole('button', { name: 'Raster' })).toHaveAttribute('aria-pressed', 'true');
+  });
+
+  test('filter drawer applies decade + sort, grid toggle is remembered', async ({ page }) => {
+    await page.goto('/browse/movies');
+    await page.locator('.fbtn').click();
+    const sheet = page.getByRole('dialog', { name: 'Filter' });
+    await expect(sheet).toBeVisible();
+    await sheet.getByLabel('Jahrzehnt').selectOption('1990');
+    await sheet.getByRole('button', { name: 'Anwenden' }).click();
+    await expect(sheet).toBeHidden();
+    await expect(page).toHaveURL(/decade=1990/);
+    await expect(page.getByRole('button', { name: /^Filter 1990er entfernen/ })).toBeVisible();
+
+    await page.goto('/browse/movies');
+    await page.getByRole('button', { name: 'Raster' }).click();
+    await expect(page.locator('.tiles article.card').first()).toBeVisible();
+    await page.reload();
+    await expect(page.getByRole('button', { name: 'Raster' })).toHaveAttribute('aria-pressed', 'true');
   });
 });

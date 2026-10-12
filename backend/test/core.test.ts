@@ -29,6 +29,7 @@ beforeAll(async () => {
         ] }],
       },
     }),
+    'GET /Shows/NextUp': () => ({ json: { Items: [] } }),
     'POST /Sessions/Playing': () => ({ status: 204 }),
     'POST /Sessions/Playing/Progress': () => ({ status: 204 }),
     'POST /Sessions/Playing/Stopped': () => ({ status: 204 }),
@@ -125,6 +126,39 @@ describe('playback', () => {
     expect(p.subtitles).toHaveLength(1); // image subtitle (pgs) is filtered out
     expect(p.subtitles[0].url).toBe(`/media/Videos/${ID}/ms1/Subtitles/3/0/Stream.vtt`);
     expect(p.resumeTicks).toBe(5_000_000);
+  });
+  it('playback info: one /Items lookup (resume + trickplay) next to PlaybackInfo, no per-item fetch', async () => {
+    const n = env.jfCalls.length;
+    const p = (await call('POST', '/api/playback/info', { itemId: ID })).json();
+    const calls = env.jfCalls.slice(n);
+    expect(calls.map((c) => c.path).sort()).toEqual(['/Items', `/Items/${ID}/PlaybackInfo`]);
+    expect(calls.find((c) => c.path === '/Items')!.search).toContain('fields=Trickplay');
+    expect(p.resumeTicks).toBe(5_000_000);
+    // an explicit start position wins over the saved one
+    expect((await call('POST', '/api/playback/info', { itemId: ID, startTicks: 70 })).json().resumeTicks).toBe(70);
+  });
+  it('playback info: audioLang picks a non-default track in the first request (HLS only), the default track changes nothing', async () => {
+    const n = env.jfCalls.filter((c) => c.path.endsWith('/PlaybackInfo')).length;
+    const en = (await call('POST', '/api/playback/info', { itemId: ID, audioLang: 'eng' })).json();
+    expect(en.audioIndex).toBe(2);
+    expect(en.hlsUrl).toContain('AudioStreamIndex=2');
+    expect(en.directUrl).toBeUndefined();
+    expect(env.jfCalls.filter((c) => c.path.endsWith('/PlaybackInfo')).length).toBe(n + 1);
+    const de = (await call('POST', '/api/playback/info', { itemId: ID, audioLang: 'ger' })).json();
+    expect(de.audioIndex).toBeUndefined();
+    expect(de.directUrl).toBeTruthy();
+    const none = (await call('POST', '/api/playback/info', { itemId: ID, audioLang: 'jpn' })).json();
+    expect(none.audioIndex).toBeUndefined();
+    const explicit = (await call('POST', '/api/playback/info', { itemId: ID, audioLang: 'eng', audioIndex: 1 })).json();
+    expect(explicit.audioIndex).toBe(1);
+  });
+  it('next up: ?seriesId= is passed to Jellyfin (not filtered from the global top 20)', async () => {
+    const SER = 'c'.repeat(32);
+    expect((await call('GET', `/api/library/nextup?seriesId=${SER}`)).json()).toEqual({ items: [] });
+    expect(env.jfCalls.filter((c) => c.path === '/Shows/NextUp').at(-1)!.search).toContain(`seriesId=${SER}`);
+    await call('GET', '/api/library/nextup');
+    expect(env.jfCalls.filter((c) => c.path === '/Shows/NextUp').at(-1)!.search).not.toContain('seriesId=');
+    expect((await call('GET', '/api/library/nextup?seriesId=../x')).statusCode).toBe(400);
   });
   it('uses the per-user token for playback info and reports', async () => {
     const base = { itemId: ID, playSessionId: 'ps-12345678', mediaSourceId: 'ms1', positionTicks: 1000, isPaused: false };

@@ -7,9 +7,11 @@
   import { api, setActiveProfile, setCsrf, type Me } from '#lib/api';
   import Icon from '#lib/Icon.svelte';
   import Logo from '#lib/Logo.svelte';
+  import Footer from '#lib/Footer.svelte';
   import { avatarBg, initial } from '#lib/avatars';
   import { loadList, loadPrefs } from '#lib/stores';
-  import ItemModal from '#lib/ItemModal.svelte';
+  import type ItemModalType from '#lib/ItemModal.svelte';
+  import { loadModal, prefetchModal } from '#lib/lazy';
   import { startTvLink, type ToTv } from '#lib/remote';
   import { logout as doLogout } from '#lib/session';
   import { setMeta } from '#lib/offline/db';
@@ -17,25 +19,35 @@
   import Intro from '#lib/Intro.svelte';
   import { loadIntroSettings, markSessionSeen, readSessionSeen, shouldPlayIntro } from '#lib/intro';
   import { mobile } from '#lib/viewport';
-  import { linksFor } from '#lib/menu';
+  import { HEADER_TABS, isTabActive } from '#lib/menu';
   import { categoryHref, kindFromPath, showsChips, type Kind } from '#lib/mobile';
   import { dialogKeys } from '#lib/actions';
+  import { langLabel } from '#lib/langs';
+  import { canRenderEarly, clearReloadFlag, earlyProfile, gateHref, hintOf, needsProfileGate, readActive, readHint, readPicked, readReloading, writeActive, writeHint } from '#lib/gate';
   import MobilePreviewSheet from '#lib/MobilePreviewSheet.svelte';
   import { closePreview, previewSheet } from '#lib/previewSheet';
 
   let me: Me | null = null;
+  /** The page renders before /api/me returns when the last answer allows it (see lib/gate.ts): its data requests start right away. */
+  const bootHint = typeof location !== 'undefined' ? readHint() : null, bootProfile = earlyProfile(bootHint, typeof location !== 'undefined' ? readActive() : null);
+  const early = typeof location !== 'undefined' && canRenderEarly(bootHint, readPicked(), location.pathname, bootProfile, readReloading());
+  if (early) setActiveProfile(bootProfile); // early requests carry the profile this tab ran with (a switch elsewhere answers 409 → reload without early render)
   /** TV mode: big UI, D-pad navigation. On for paired televisions; `?tv=1` previews it in any browser (`?tv=0` ends the preview). */
   let tv = false, replaced = false;
   let pending = false, checking = false;
   let notes: Array<{ id: number; title: string; link?: string; read: boolean }> = [];
-  let scrolled = false, menu = false, bell = false, searchOpen = false, q = '';
-  let searchEl: HTMLInputElement;
+  let scrolled = false, menu = false, bell = false, cats = false, help = false;
+  let sentinel: HTMLElement;
   let online = true;
   let intro = false;
   $: canDownload = Boolean(me?.downloads?.allowed);
-  $: links = linksFor(canDownload);
-  // ---- phone: chip bar + "Kategorien" overlay ----
+  $: multi = (me?.profileCount ?? 0) > 1;
+  $: who = me ? (me.profile?.name ?? me.name) : '';
+  $: faceStyle = me?.profile ? `background:${avatarBg(me.profile.avatar)}` : undefined;
+  $: admin = Boolean(me?.isAdmin && me?.profile?.isOwner);
+  // ---- phone: chip bar + "Kategorien" overlay; desktop: "Kategorien" dropdown (genres, languages, collections) ----
   let catOpen = false, catGenres: string[] | null = null, catKind: Kind = 'movies', catBtn: HTMLElement | null = null;
+  let catLangs: string[] | null = null;
 
   $: path = $page.url.pathname;
   $: publicPage = path.startsWith('/invite/') || path === '/tv' || path === '/offline';
@@ -43,37 +55,91 @@
   $: profilesPage = path === '/profiles';
   $: heroPage = path === '/' || path.startsWith('/item/');
   $: unread = notes.filter((n) => !n.read).length;
-  $: if (path) { menu = false; bell = false; catOpen = false; closePreview(); }
+  $: if (path) { menu = false; bell = false; cats = false; catOpen = false; closePreview(); }
   $: chips = $mobile && showsChips(path);
   $: if (typeof document !== 'undefined') {
     document.documentElement.classList.toggle('m-chips', chips && !watchPage && !profilesPage);
     document.documentElement.style.overflow = catOpen ? 'hidden' : ($previewSheet ? 'hidden' : ''); // no page scroll behind the overlay / sheet
   }
   $: if (!$mobile) { catOpen = false; closePreview(); }
-  const isActive = (href: string) => path === href || path.startsWith(href + '/');
+  $: if ($mobile) cats = false;
   $: if (!publicPage) document.documentElement.classList.toggle('tv', tv);
 
-  const tabs: Array<[string, string, string]> = [['/', 'Start', 'home'], ['/browse/series', 'Serien', 'film'], ['/browse/movies', 'Filme', 'film'], ['/new', 'Neu & beliebt', 'star'], ['/watchlist', 'Meine Liste', 'plus']];
+  // ---- detail popup: loaded on first use (or prefetched on hover/focus/touch of a card), not part of the layout chunk ----
+  let Modal: typeof ItemModalType | null = null;
+  $: modalId = $page.state.modalId;
+  $: if (modalId && !Modal) {
+    const id = modalId;
+    loadModal().then((m) => (Modal = m.default)).catch(() => { location.href = `/item/${id}`; }); // chunk gone (new deploy/offline): open the full page
+  }
 
   async function loadNotes() { try { notes = (await api('/api/notifications')).notifications; } catch { /* ignore */ } }
   async function toggleBell() {
-    bell = !bell; menu = false;
+    bell = !bell; menu = false; cats = false;
     if (bell && unread) { await api('/api/notifications/read', { method: 'POST' }); setTimeout(loadNotes, 1500); }
   }
   const logout = () => doLogout(me?.tv);
   async function surprise() {
+    menu = false;
     try { goto(`/item/${(await api('/api/library/random?type=Movie')).item.id}`); } catch { goto('/browse/movies'); }
   }
-  function openSearch() { if ($mobile) { void goto('/search'); return; } searchOpen = true; setTimeout(() => searchEl?.focus(), 30); }
+
+  // ---- avatar menu: other profiles to switch to (loaded when the menu opens) ----
+  let others: Array<{ id: string; name: string; avatar: string; hasPin: boolean }> | null = null;
+  async function toggleMenu() {
+    menu = !menu; bell = false; cats = false;
+    if (menu && multi && others === null) {
+      try { others = ((await api('/api/profiles')).profiles as Array<{ id: string; name: string; avatar: string; hasPin: boolean; active: boolean }>).filter((p) => !p.active && p.id !== me?.profile?.id).slice(0, 4); }
+      catch { others = []; }
+    }
+  }
+  $: here = publicPage ? path : path + $page.url.search; // (the prerendered /offline page has no search params)
+  const switchHref = (id: string) => `/profiles?pick=${encodeURIComponent(id)}&next=${encodeURIComponent(here)}`;
+  function openHelp() { menu = false; help = true; }
+
+  // ---- header search (desktop): the icon expands into the input; typing drives /search?q= (the page itself has no second input on desktop) ----
+  let searchOpen = false, q = '', searchEl: HTMLInputElement, st: ReturnType<typeof setTimeout>;
+  let hSeen: string | null = null, hPushed: string | null = null;
+  $: urlQ = path === '/search' ? ($page.url.searchParams.get('q') ?? '').trim() : null;
+  // same guard as routes/search: react to URL changes only, and never overwrite what is being typed with our own (older) URL
+  $: if (urlQ !== hSeen) {
+    hSeen = urlQ;
+    if (urlQ === null) { hPushed = null; clearTimeout(st); q = ''; if (document.activeElement !== searchEl) searchOpen = false; }
+    else { searchOpen = true; if (urlQ !== hPushed) { hPushed = urlQ; clearTimeout(st); q = urlQ; } }
+  }
+  function commitSearch(v: string) {
+    clearTimeout(st);
+    const t = v.trim();
+    const href = t ? `/search?q=${encodeURIComponent(t)}` : '/search';
+    if (path === '/search') { if (t === hPushed) return; hPushed = t; void goto(href, { replace: true, reset: false }); }
+    else if (t) { hPushed = t; void goto(href, { reset: false }).then(() => scrollTo({ top: 0, behavior: 'instant' })); } // keep the focus in the field
+  }
+  function onSearchInput() { clearTimeout(st); st = setTimeout(() => commitSearch(q), 220); }
+  function onSearchKey(e: KeyboardEvent) {
+    if (e.key !== 'Escape') return;
+    e.preventDefault(); e.stopPropagation();
+    if (q) { q = ''; commitSearch(''); } else { searchOpen = false; searchEl?.blur(); }
+  }
+  function openSearch() {
+    if ($mobile) { void goto('/search'); return; }
+    searchOpen = true; void tick().then(() => searchEl?.focus());
+  }
   async function openCats(e: Event) {
     catBtn = e.currentTarget as HTMLElement; catKind = kindFromPath(path); catOpen = true;
     await tick();
     document.querySelector<HTMLElement>('.cats .close')?.focus();
-    if (!catGenres) { try { catGenres = ((await api('/api/library/genres')).genres as string[]) ?? []; } catch { catGenres = []; } }
+    void fetchGenres();
+  }
+  async function fetchGenres() { if (!catGenres) { try { catGenres = ((await api('/api/library/genres')).genres as string[]) ?? []; } catch { catGenres = []; } } }
+  async function toggleCats() {
+    cats = !cats; menu = false; bell = false;
+    if (!cats) return;
+    catKind = kindFromPath(path);
+    void fetchGenres();
+    if (!catLangs) { try { catLangs = (((await api('/api/library/languages')).audio ?? []) as Array<{ code: string }>).map((l) => l.code).slice(0, 12); } catch { catLangs = []; } }
   }
   function closeCats(refocus = true) { catOpen = false; if (refocus) catBtn?.focus(); }
   function pickCat(href: string) { catOpen = false; void goto(href); }
-  function submitSearch() { if (q.trim()) goto(`/search?q=${encodeURIComponent(q.trim())}`); }
   function onKey(e: KeyboardEvent) {
     // "/" and Ctrl/Cmd+K jump to the search field (not while typing somewhere else)
     if (!watchPage && !tv && ((e.key === '/' && !e.ctrlKey && !e.metaKey && !e.altKey) || ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k'))) {
@@ -83,8 +149,7 @@
     }
     const back = e.key === 'Escape' || (tv && isBackKey(e));
     if (!back) return;
-    if (menu || bell) { menu = bell = false; if (tv) e.preventDefault(); return; } // dropdowns close first
-    if (e.key === 'Escape' && !q) searchOpen = false;
+    if (menu || bell || cats) { menu = bell = cats = false; if (tv) e.preventDefault(); return; } // dropdowns close first
     // TV: Back/Escape walks one step back (the detail popup closes itself on Escape; the player handles its own keys)
     if (tv && !watchPage && !(e.key === 'Escape' && $page.state.modalId) && !isEditable(e.target as Element)) {
       e.preventDefault();
@@ -130,7 +195,8 @@
     const start = (document as Document & { startViewTransition?: (cb: () => Promise<void>) => { finished: Promise<unknown> } }).startViewTransition;
     if (typeof start !== 'function' || tv || matchMedia('(prefers-reduced-motion: reduce)').matches) return;
     const from = nav.from?.url.pathname ?? '', to = nav.to?.url.pathname ?? '';
-    if (!nav.to || from === to || immersive(from) || immersive(to) || intro) return;
+    // typing in the header search must not freeze the screen for a crossfade
+    if (!nav.to || from === to || to === '/search' || immersive(from) || immersive(to) || intro) return;
     const root = document.documentElement;
     return new Promise<void>((resolve) => {
       root.classList.add('ff-vt'); // names <main> only for the duration of the transition
@@ -147,16 +213,30 @@
     if (ok) { markSessionSeen(); intro = true; }
   }
 
-  function outside(e: MouseEvent) { if (!(e.target as HTMLElement).closest('.pop-anchor')) { menu = false; bell = false; } }
+  function outside(e: MouseEvent) { if (!(e.target as HTMLElement).closest('.pop-anchor')) { menu = false; bell = false; cats = false; } }
 
   let stops: Array<() => void> = [];
   onMount(() => {
     const onNotes = () => void loadNotes();
     window.addEventListener('ff-notes', onNotes);
-    stops.push(() => window.removeEventListener('ff-notes', onNotes));
-    const onScroll = () => (scrolled = window.scrollY > 10);
-    onScroll();
-    window.addEventListener('scroll', onScroll, { passive: true });
+    const onHelp = () => (help = true); // "Hilfe" on /me
+    window.addEventListener('ff-help', onHelp);
+    stops.push(() => { window.removeEventListener('ff-notes', onNotes); window.removeEventListener('ff-help', onHelp); });
+    // header background: a 10 px sentinel at the top of the document instead of reading scrollY on every scroll event
+    if (typeof IntersectionObserver === 'function' && sentinel) {
+      const io = new IntersectionObserver(([e]) => { scrolled = !e!.isIntersecting; });
+      io.observe(sentinel);
+      stops.push(() => io.disconnect());
+    }
+    // the detail popup chunk loads as soon as the pointer/focus/finger gets near a card or an info button
+    const warm = (e: Event) => {
+      if (!(e.target as Element | null)?.closest?.('.card, .pc, a[href^="/item/"], [data-modal]')) return;
+      prefetchModal(); unwarm();
+    };
+    const evs = ['pointerover', 'focusin', 'touchstart'] as const;
+    const unwarm = () => evs.forEach((t) => document.removeEventListener(t, warm));
+    evs.forEach((t) => document.addEventListener(t, warm, { passive: true }));
+    stops.push(unwarm);
     const flag = new URLSearchParams(location.search).get('tv');
     if (flag === '1') sessionStorage.setItem('ff_tv', '1'); else if (flag === '0') sessionStorage.removeItem('ff_tv');
     online = navigator.onLine;
@@ -170,7 +250,7 @@
       if (typeof link === 'string' && /^\/(?!\/)/.test(link)) void goto(link);
     };
     navigator.serviceWorker?.addEventListener('message', onSwMessage);
-    return () => { window.removeEventListener('scroll', onScroll); navigator.serviceWorker?.removeEventListener('message', onSwMessage); stops.forEach((f) => f()); };
+    return () => { clearTimeout(st); navigator.serviceWorker?.removeEventListener('message', onSwMessage); stops.forEach((f) => f()); };
   });
 
   /** A pending device checks every few seconds whether it was approved and then reloads into the real app. */
@@ -184,48 +264,51 @@
   async function boot() {
     if (!publicPage) {
       try {
-        me = await api<Me>('/api/me');
-        setCsrf(me.csrfToken);
-        setActiveProfile(me.profile?.id);
-        if (me.profile?.id) void setMeta('lastProfileId', me.profile.id).catch(() => undefined); // the offline hub shows the last active profile's downloads
-        pending = !me.deviceApproved;
-        if (!pending && path !== '/profiles') {
-          if (me.profileRequired || ((me.profileCount ?? 0) > 1 && !me.profileChosen)) {
-            await goto(`/profiles?next=${encodeURIComponent(location.pathname + location.search)}`, { replaceState: true });
-          }
+        const m = await api<Me>('/api/me');
+        setCsrf(m.csrfToken);
+        setActiveProfile(m.profile?.id);
+        writeHint(hintOf(m)); writeActive(m.profile?.id); clearReloadFlag(); // the profile-switch reload is done: a later reload may render early again
+        if (m.profile?.id) void setMeta('lastProfileId', m.profile.id).catch(() => undefined); // the offline hub shows the last active profile's downloads
+        pending = !m.deviceApproved;
+        // "Wer schaut gerade?": when no profile is chosen, and once per browser session for accounts with several profiles
+        if (!pending && needsProfileGate(m, location.pathname, readPicked())) {
+          await goto(gateHref(location.pathname + location.search), { replaceState: true });
         }
+        me = m;
+        if (early) window.dispatchEvent(new Event('ff-me')); // pages that rendered early can now read the active profile
         if (pending) stops.push(watchApproval());
-        tv = me.tv || sessionStorage.getItem('ff_tv') === '1';
-        if (!pending) maybeColdIntro(me.profile?.id);
+        tv = m.tv || sessionStorage.getItem('ff_tv') === '1';
+        if (!pending) maybeColdIntro(m.profile?.id);
         if (!pending) { loadNotes(); loadList(); loadPrefs(); const notesTimer = setInterval(loadNotes, 60_000); stops.push(() => clearInterval(notesTimer)); }
-        if (me.tv) localStorage.setItem('ff_tv_device', '1'); // an expired TV session goes back to the pairing screen, not to a login form
+        if (m.tv) localStorage.setItem('ff_tv_device', '1'); // an expired TV session goes back to the pairing screen, not to a login form
         if (tv) {
           { let t: ReturnType<typeof setTimeout>; const wake = () => { document.documentElement.classList.remove('idle-cursor'); clearTimeout(t); t = setTimeout(() => document.documentElement.classList.add('idle-cursor'), 4000); }; wake(); window.addEventListener('mousemove', wake); stops.push(() => { window.removeEventListener('mousemove', wake); clearTimeout(t); }); }
           stops.push(startSpatial(() => !watchPage || Boolean(document.activeElement?.closest('[data-nav]'))));
           if (!watchPage) void settleFocus();
         }
-        if (me.tv && !pending) stops.push(startTvLink(onTvCommand, (code) => { if (code === 4401) location.href = '/tv'; else if (code === 4000) replaced = true; }));
+        if (m.tv && !pending) stops.push(startTvLink(onTvCommand, (code) => { if (code === 4401) location.href = '/tv'; else if (code === 4000) replaced = true; }));
       } catch { /* api() redirects to login on 401 */ }
     }
   }
 </script>
 
 <svelte:window on:keydown={onKey} on:click={outside} />
+<div class="top-sentinel" aria-hidden="true" bind:this={sentinel}></div>
 <a class="skip" href="#main">Zum Inhalt springen</a>
 {#if intro}<Intro on:done={() => (intro = false)} />{/if}
 
 {#if publicPage}
   <slot />
-{:else if me}
+{:else if me || early}
   {#if !watchPage && !profilesPage}
     {#if $mobile}
       <header class="nav m" class:solid={scrolled || !heroPage} class:chips>
         <div class="mrow">
-          <a class="mlogo" href="/profiles" aria-label="Profil wechseln, aktuell {me.profile?.name ?? me.name}"><Logo size={30} label="" /><span class="for">Für {me.profile?.name ?? me.name}</span></a>
+          <a class="mlogo" href="/profiles" aria-label="Profil wechseln{who ? `, aktuell ${who}` : ''}"><Logo size={30} label="" /><span class="for">{who ? `Für ${who}` : ''}</span></a>
           <span class="sp"></span>
           <a class="icon-btn" href="/search" aria-label="Suche" aria-current={path.startsWith('/search') ? 'page' : undefined}><Icon name="search" size={24} /></a>
           <a class="icon-btn" href="/downloads" aria-label="Downloads" aria-current={path.startsWith('/downloads') ? 'page' : undefined}><Icon name="download" size={24} /></a>
-          <a class="avatar" href="/me" aria-label="Mein FriendFlix{unread ? `, ${unread} neue Benachrichtigungen` : ''}"><span class="face" style={me.profile ? `background:${avatarBg(me.profile.avatar)}` : undefined}>{initial(me.profile?.name ?? me.name)}</span>{#if unread}<span class="dot" aria-hidden="true">{unread}</span>{/if}</a>
+          <a class="avatar" href="/me" aria-label="Mein FriendFlix{unread ? `, ${unread} neue Benachrichtigungen` : ''}"><span class="face" style={faceStyle}>{initial(who)}</span>{#if unread}<span class="dot" aria-hidden="true">{unread}</span>{/if}</a>
         </div>
         {#if chips}
           <nav class="chipbar" aria-label="Kategorien">
@@ -239,14 +322,39 @@
     <header class="nav" class:solid={scrolled || !heroPage}>
       <a class="logo" href="/" aria-label="FriendFlix Startseite"><Logo wordmark size={34} /></a>
       <nav class="links" aria-label="Hauptnavigation">
-        {#each tabs as [href, label]}<a {href} class:active={href === '/' ? path === '/' : path.startsWith(href)} aria-current={href === '/' ? (path === '/' ? 'page' : undefined) : path.startsWith(href) ? 'page' : undefined}>{label}</a>{/each}
+        {#each HEADER_TABS as [href, label] (href)}<a {href} class:active={isTabActive(href, path)} aria-current={isTabActive(href, path) ? 'page' : undefined}>{label}</a>{/each}
+        <div class="pop-anchor">
+          <button type="button" class="linkbtn" aria-haspopup="true" aria-expanded={cats} on:click={toggleCats}>Kategorien<i class="caret" class:up={cats}></i></button>
+          {#if cats}
+            <div class="drop catdrop" role="region" aria-label="Kategorien">
+              <div class="cseg">
+                <div class="seg" role="group" aria-label="Art">
+                  <button type="button" class:on={catKind === 'movies'} aria-pressed={catKind === 'movies'} on:click={() => (catKind = 'movies')}>Filme</button>
+                  <button type="button" class:on={catKind === 'series'} aria-pressed={catKind === 'series'} on:click={() => (catKind = 'series')}>Serien</button>
+                </div>
+                <a class="coll" href="/collections">Sammlungen</a>
+              </div>
+              <div class="ccols">
+                <section aria-labelledby="cg-h"><h2 id="cg-h" class="ch">Genres</h2>
+                  {#if catGenres === null}<p class="muted pad" role="status">Lade …</p>
+                  {:else}<ul class="glist">{#each catGenres as g (g)}<li><a href={categoryHref(catKind, g)}>{g}</a></li>{/each}</ul>{/if}
+                </section>
+                <section aria-labelledby="cl-h"><h2 id="cl-h" class="ch">Nach Sprache</h2>
+                  {#if catLangs === null}<p class="muted pad" role="status">Lade …</p>
+                  {:else if !catLangs.length}<p class="muted pad">Keine Angaben</p>
+                  {:else}<ul class="glist">{#each catLangs as c (c)}<li><a href="/browse/{catKind}?audio={encodeURIComponent(c)}">{langLabel(c)}</a></li>{/each}</ul>{/if}
+                </section>
+              </div>
+            </div>
+          {/if}
+        </div>
       </nav>
       <span class="sp"></span>
-      <form class="search" class:open={searchOpen} on:submit|preventDefault={submitSearch} role="search">
-        <button type="button" class="icon-btn" aria-label="Suche öffnen" on:click={() => (searchOpen ? submitSearch() : openSearch())}><Icon name="search" size={22} /></button>
-        <input bind:this={searchEl} bind:value={q} placeholder="Titel, Person, Genre, Jahr …" aria-label="Suche" on:blur={() => { if (!q) searchOpen = false; }} />
+      <form class="search" class:open={searchOpen} on:submit|preventDefault={() => commitSearch(q)} role="search">
+        <button type="button" class="icon-btn" aria-label={searchOpen ? 'Suchen' : 'Suche öffnen'} on:click={() => (searchOpen ? commitSearch(q) : openSearch())}><Icon name="search" size={22} /></button>
+        <input id="hq" type="search" bind:this={searchEl} bind:value={q} autocomplete="off" enterkeyhint="search" placeholder="Titel, Person, Genre, Jahr …" aria-label="Suche" tabindex={searchOpen ? 0 : -1}
+          on:input={onSearchInput} on:keydown={onSearchKey} on:blur={() => { if (!q && path !== '/search') searchOpen = false; }} />
       </form>
-      <button class="icon-btn hide-s" aria-label="Überrasch mich" title="Überrasch mich" on:click={surprise}><Icon name="shuffle" size={21} /></button>
       <div class="pop-anchor">
         <button class="icon-btn" aria-label="Benachrichtigungen{unread ? `, ${unread} neu` : ''}" aria-expanded={bell} on:click={toggleBell}>
           <Icon name="bell" size={22} />{#if unread}<span class="dot">{unread}</span>{/if}
@@ -258,15 +366,24 @@
         {/if}
       </div>
       <div class="pop-anchor">
-        <button class="avatar" aria-label="Profilmenü" aria-haspopup="menu" aria-expanded={menu} on:click={() => { menu = !menu; bell = false; }}><span class="face" style={me.profile ? `background:${avatarBg(me.profile.avatar)}` : undefined}>{initial(me.profile?.name ?? me.name)}</span><i class="caret" class:up={menu}></i></button>
-        {#if menu}
-          <div class="drop" role="menu">
-            <div class="who"><b>{me.profile?.name ?? me.name}</b><span class="muted">{me.roleLabel}</span></div>
+        <button class="avatar" aria-label="Profilmenü{who ? ` (${who})` : ''}" aria-haspopup="menu" aria-expanded={menu} disabled={!me} on:click={toggleMenu}><span class="face" style={faceStyle}>{initial(who)}</span><i class="caret" class:up={menu}></i></button>
+        {#if menu && me}
+          <div class="drop acct" role="menu" aria-label="Profilmenü">
+            {#if multi}
+              {#if others === null}<span class="muted pad" role="status">Lade Profile …</span>{/if}
+              {#each others ?? [] as p (p.id)}<a class="prof" href={switchHref(p.id)} role="menuitem" data-sveltekit-reload><span class="face xs" style="background:{avatarBg(p.avatar)}" aria-hidden="true">{initial(p.name)}</span>{p.name}{#if p.hasPin}<Icon name="lock" size={14} label="mit PIN" />{/if}</a>{/each}
+            {/if}
+            <a href="/profiles?manage=1" role="menuitem"><Icon name="users" size={18} />Profile verwalten</a>
+            <hr />
             <a href="/me" role="menuitem"><Icon name="user" size={18} />Mein FriendFlix</a>
-            <a href="/profiles" role="menuitem"><Icon name="users" size={18} />Profil wechseln</a>
-            {#each links as [href, label, icon]}<a {href} role="menuitem"><Icon name={icon} size={18} />{label}</a>{/each}
-            {#if me.isAdmin && me.profile?.isOwner}<a href="/admin" role="menuitem"><Icon name="shield" size={18} />Admin</a>{/if}
-            <button class="plain" role="menuitem" on:click={logout}><Icon name="log-out" size={18} />Abmelden</button>
+            <a href="/settings" role="menuitem"><Icon name="settings" size={18} />Konto &amp; Einstellungen</a>
+            <a href="/devices" role="menuitem"><Icon name="monitor" size={18} />Geräte</a>
+            {#if canDownload}<a href="/downloads" role="menuitem"><Icon name="download" size={18} />Downloads</a>{/if}
+            <button class="plain" role="menuitem" on:click={surprise}><Icon name="shuffle" size={18} />Überrasch mich</button>
+            <button class="plain" role="menuitem" on:click={openHelp}><Icon name="info" size={18} />Hilfe</button>
+            {#if admin}<a href="/admin" role="menuitem"><Icon name="shield" size={18} />Admin</a>{/if}
+            <hr />
+            <button class="plain out" role="menuitem" on:click={logout}>Von FriendFlix abmelden</button>
           </div>
         {/if}
       </div>
@@ -275,8 +392,7 @@
     <nav class="tabbar" aria-label="Mobile Navigation">
       <a href="/" class:active={path === '/'} aria-current={path === '/' ? 'page' : undefined}><Icon name="home" size={22} /><span>Start</span></a>
       <a href="/new" class:active={path.startsWith('/new')} aria-current={path.startsWith('/new') ? 'page' : undefined}><Icon name="star" size={22} /><span>Neu &amp; beliebt</span></a>
-      <a href="/downloads" class:active={path.startsWith('/downloads')} aria-current={path.startsWith('/downloads') ? 'page' : undefined}><Icon name="download" size={22} /><span>Downloads</span></a>
-      <a href="/me" class:active={path.startsWith('/me')} aria-current={path.startsWith('/me') ? 'page' : undefined}><span class="face sm" aria-hidden="true" style={me.profile ? `background:${avatarBg(me.profile.avatar)}` : undefined}>{initial(me.profile?.name ?? me.name)}</span><span>Mein FriendFlix</span></a>
+      <a href="/me" class:active={path.startsWith('/me')} aria-current={path.startsWith('/me') ? 'page' : undefined}><span class="face sm" aria-hidden="true" style={faceStyle}>{initial(who)}</span><span>Mein FriendFlix</span></a>
     </nav>
     {#if catOpen && $mobile}
       <div class="cats" role="dialog" aria-modal="true" aria-label="Kategorien" use:dialogKeys={{ close: () => closeCats() }}>
@@ -300,7 +416,7 @@
 
   {#if !online}<div class="offbar" role="status">Du bist offline. <a href="/offline" data-sveltekit-reload>Zu den Downloads</a></div>{/if}
   {#if replaced}<div class="panel" role="alert" style="position:fixed;z-index:90;top:5rem;left:50%;transform:translateX(-50%)"><b>Der Fernseher wurde auf einem anderen Gerät übernommen.</b> <button on:click={() => location.reload()}>Hier wieder verbinden</button></div>{/if}
-  {#if $page.state.modalId}<ItemModal id={$page.state.modalId} />{/if}
+  {#if modalId && Modal}<svelte:component this={Modal} id={modalId} />{/if}
   <main id="main" class:page={!heroPage && !watchPage && !profilesPage}>
     {#if pending}
       <div class="page"><div class="panel pendp">
@@ -318,6 +434,22 @@
       <slot />
     {/if}
   </main>
+  {#if !watchPage && !profilesPage && !tv && !pending && !$mobile}<Footer onHelp={() => (help = true)} />{/if}
+  {#if help}
+    <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
+    <div class="hov" on:click|self={() => (help = false)}>
+      <div class="hbox" role="dialog" aria-modal="true" aria-labelledby="help-h" use:dialogKeys={{ close: () => (help = false) }}>
+        <div class="hhead"><h2 id="help-h">Hilfe</h2><button type="button" class="icon-btn" aria-label="Schließen" on:click={() => (help = false)} data-autofocus><Icon name="x" size={22} /></button></div>
+        <dl>
+          <dt>Suchen</dt><dd>Taste <kbd>/</kbd> oder <kbd>Strg</kbd>+<kbd>K</kbd> öffnet die Suche, <kbd>Esc</kbd> leert und schließt sie.</dd>
+          <dt>Im Player</dt><dd><kbd>Leertaste</kbd> Pause, <kbd>←</kbd>/<kbd>→</kbd> spulen, <kbd>F</kbd> Vollbild, <kbd>M</kbd> Ton. <kbd>?</kbd> zeigt alle Tastenkürzel.</dd>
+          <dt>Neues Gerät</dt><dd>Jedes neue Gerät wird einmal freigegeben: unter <a href="/devices" on:click={() => (help = false)}>Geräte</a> oder über die Glocke.</dd>
+          <dt>Fernseher</dt><dd>Fernseher koppeln und vom Handy steuern: <a href="/remote" on:click={() => (help = false)}>Fernbedienung</a>.</dd>
+          <dt>Alles Weitere</dt><dd>Listen, Watch-Party, Filmabend, Kalender, Wünsche und Einstellungen findest du unter <a href="/me" on:click={() => (help = false)}>Mein FriendFlix</a>.</dd>
+        </dl>
+      </div>
+    </div>
+  {/if}
 {:else}
   <main id="main" class="boot"><span class="logo"><Logo wordmark size={44} /></span><div class="spin" aria-label="Lade …" role="status"></div></main>
 {/if}
@@ -345,20 +477,51 @@
   .face { width: 34px; height: 34px; border-radius: 4px; display: grid; place-items: center; background: linear-gradient(135deg, #ff3b52, #7a0a17); font-weight: 800; box-shadow: 0 0 0 1px rgba(255,255,255,.12); }
   .caret { width: 0; height: 0; border: 5px solid transparent; border-top-color: #fff; border-bottom: 0; transition: transform var(--t-fast); }
   .caret.up { transform: rotate(180deg); }
-  .drop { position: absolute; right: 0; top: calc(100% + 6px); background: rgba(0,0,0,.94); border: 1px solid #333; border-radius: 4px; min-width: 220px; padding: .4rem 0; display: flex; flex-direction: column; box-shadow: 0 12px 30px rgba(0,0,0,.7); }
+  .top-sentinel { position: absolute; top: 0; left: 0; width: 1px; height: 10px; pointer-events: none; visibility: hidden; }
+  .drop { position: absolute; right: 0; top: calc(100% + 6px); background: rgba(0,0,0,.94); border: 1px solid #333; border-radius: 4px; min-width: 220px; padding: .4rem 0; display: flex; flex-direction: column; box-shadow: 0 12px 30px rgba(0,0,0,.7); max-height: calc(100vh - var(--nav-h) - 16px); max-height: calc(100dvh - var(--nav-h) - 16px); overflow-y: auto; overscroll-behavior: contain; animation: drop-in .16s var(--ease); }
+  @keyframes drop-in { from { opacity: 0; transform: translateY(-4px); } }
+  .drop hr { border: 0; border-top: 1px solid #333; margin: .3rem 0; width: 100%; }
+  .acct { min-width: 240px; }
+  .acct .prof { font-weight: 500; }
+  .face.xs { width: 32px; height: 32px; font-size: .85rem; flex: none; }
+  .acct .out { justify-content: center; }
+  .linkbtn { background: transparent; padding: .6rem 0; min-height: 44px; font-size: .95rem; font-weight: 500; color: #e5e5e5; gap: .4rem; border-radius: 0; }
+  .linkbtn:hover:not(:disabled) { background: transparent; color: #b3b3b3; }
+  .links .pop-anchor { display: flex; }
+  .catdrop { left: -1rem; right: auto; width: min(560px, 80vw); padding: 1rem 1.2rem 1.1rem; }
+  .cseg { display: flex; align-items: center; justify-content: space-between; gap: 1rem; margin-bottom: .6rem; }
+  .catdrop .seg button { min-height: 36px; }
+  .catdrop .coll { font-weight: 700; color: #fff; padding: .4rem 0; min-height: 44px; display: inline-flex; align-items: center; }
+  .catdrop .coll:hover { text-decoration: underline; }
+  .ccols { display: grid; grid-template-columns: 2fr 1fr; gap: 1.2rem; }
+  .ch { font-size: .75rem; text-transform: uppercase; letter-spacing: .08em; color: var(--mut); margin: 0 0 .3rem; font-weight: 600; }
+  .glist { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); column-gap: 1rem; }
+  .ccols section:last-child .glist { grid-template-columns: 1fr; }
+  .catdrop .glist a { display: flex; align-items: center; min-height: 44px; padding: 0; font-size: .9rem; color: #e5e5e5; }
+  .catdrop .glist a:hover { text-decoration: underline; background: transparent; }
+  .hov { position: fixed; inset: 0; z-index: 96; background: rgba(0,0,0,.7); display: grid; place-items: center; padding: 1rem; animation: fade .2s ease-out; }
+  .hbox { background: #181818; border: 1px solid #333; border-radius: 8px; width: min(560px, 100%); max-height: 90dvh; overflow-y: auto; padding: 1.2rem 1.4rem 1.4rem; box-shadow: 0 20px 60px rgba(0,0,0,.8); }
+  .hhead { display: flex; align-items: center; justify-content: space-between; }
+  .hhead h2 { margin: 0; font-size: 1.3rem; }
+  .hbox dl { margin: .6rem 0 0; display: grid; gap: .25rem; }
+  .hbox dt { font-weight: 700; margin-top: .6rem; }
+  .hbox dd { margin: 0; color: #cfcfcf; font-size: .93rem; line-height: 1.5; }
+  .hbox a { text-decoration: underline; }
+  kbd { display: inline-block; min-width: 1.4em; padding: 0 .35em; border: 1px solid #555; border-bottom-width: 2px; border-radius: 4px; font: inherit; font-size: .82em; text-align: center; background: #222; }
   .drop.wide { width: min(340px, 90vw); }
   .drop .note { display: block; padding: .55rem 1rem; font-size: .9rem; color: #e5e5e5; }
   .drop .note.muted { color: var(--mut); }
   .drop a, .drop .plain { display: flex; gap: .7rem; align-items: center; padding: .55rem 1rem; font-size: .9rem; color: #e5e5e5; min-height: 44px; }
   .drop a:hover, .drop .plain:hover { text-decoration: underline; background: transparent; }
   .plain { background: transparent; border-radius: 0; justify-content: flex-start; font-weight: 400; width: 100%; }
-  .who { padding: .5rem 1rem; display: flex; flex-direction: column; border-bottom: 1px solid #333; margin-bottom: .3rem; }
   .pad { padding: .8rem 1rem; }
   .tabbar { display: none; }
+  @media (min-width: 721px) { main:not(.boot) { min-height: 100vh; } } /* the footer starts below the fold on short pages */
   .boot { min-height: 100vh; display: grid; place-content: center; gap: 1.2rem; justify-items: center; }
   .spin { width: 34px; height: 34px; border: 3px solid #333; border-top-color: var(--acc); border-radius: 50%; animation: sp .8s linear infinite; }
   @keyframes sp { to { transform: rotate(360deg); } }
-  @media (max-width: 900px) { .links { display: none; } .hide-s { display: none; } }
+  @media (max-width: 900px) { .links { display: none; } }
+  @media (max-width: 1100px) { .links { gap: 1.1rem; margin-left: 1.4rem; } }
   @media (max-width: 720px) {
     .tabbar { display: flex; position: fixed; bottom: 0; left: 0; right: 0; z-index: 60; background: rgba(12,12,12,.97); border-top: 1px solid #262626; padding-bottom: env(safe-area-inset-bottom); }
     .tabbar a { flex: 1 1 0; min-width: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: .15rem; min-height: 56px; padding: 0 2px; font-size: .68rem; color: var(--mut); font-weight: 500; }
@@ -404,5 +567,5 @@
   .clist a:active, .clist a:hover { color: #fff; }
   .clist .muted { padding: 1rem 0; }
   @keyframes fade { from { opacity: 0; } to { opacity: 1; } }
-  @media (prefers-reduced-motion: reduce) { .cats { animation: none; } }
+  @media (prefers-reduced-motion: reduce) { .cats, .drop, .hov { animation: none; } }
 </style>

@@ -487,6 +487,19 @@ export const MIGRATIONS: string[] = [
   alter table reactions drop constraint reactions_pkey;
   alter table reactions add primary key (profile_id, item_id);
   `,
+  // 26: thumbs get a third value 2 ("Super"); the inline check was auto-named thumbs_value_check, but drop whatever check guards value
+  `
+  do $$
+  declare c record;
+  begin
+    for c in select conname from pg_constraint
+              where conrelid = 'thumbs'::regclass and contype = 'c' and pg_get_constraintdef(oid) ilike '%value%'
+    loop
+      execute format('alter table thumbs drop constraint %I', c.conname);
+    end loop;
+  end $$;
+  alter table thumbs add constraint thumbs_value_check check (value in (-1, 1, 2));
+  `,
 ];
 
 export async function migrate(pool: pg.Pool): Promise<void> {

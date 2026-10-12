@@ -18,6 +18,8 @@ export const prefsSchema = z.object({
   hoverTrailers: z.boolean().default(true),
   /** no local trailer? preview a short clip of the film itself (pre-generated once and cached as a plain MP4, so cheap) */
   hoverClip: z.boolean().default(true),
+  /** detail view: once the preview has played long enough, start the title itself (countdown, desktop only) */
+  autoStartPreview: z.boolean().default(true),
   /** 0 = automatic, else a bitrate in bit/s (capped by the role limit on the server) */
   quality: z.number().int().min(0).max(200_000_000).default(0),
   /** "Schaust du noch?" check before autoplaying further episodes */

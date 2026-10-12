@@ -2,7 +2,7 @@ import { decrypt, encrypt } from '../crypto.js';
 import type { KV } from '../kv.js';
 import type { JfUser } from '../types.js';
 import { JellyfinClient, JellyfinError } from './client.js';
-import { maxWidthFor, toDownloadSource, toItemDto, toPlaybackDto, toTrickplayDto, type DownloadQuality, type DownloadSourceDto, type ItemDto, type PlaybackDto, type TrickplayDto } from './dto.js';
+import { maxWidthFor, toDownloadSource, toItemDto, toPlaybackDto, type DownloadQuality, type DownloadSourceDto, type ItemDto, type PlaybackDto } from './dto.js';
 
 const TOKEN_TTL = 6 * 3600;
 /** item() memo: one detail page fires ~8 parallel requests that each load the same item (access check / data). */
@@ -278,13 +278,16 @@ export class JellyfinService {
       .map((s) => ({ type: s.Type.toLowerCase(), start: s.StartTicks / 1e7, end: s.EndTicks / 1e7 }));
   }
 
-  /** Timeline thumbnails; undefined when the server has none (older Jellyfin or trickplay not generated). */
-  async trickplay(user: JfUser, itemId: string, mediaSourceId: string): Promise<TrickplayDto | undefined> {
+  /** Resume position + raw trickplay info in ONE lookup (runs in parallel with PlaybackInfo); null when the lookup fails. */
+  async playMeta(user: JfUser, itemId: string): Promise<{ positionTicks: number; trickplay?: Record<string, any> } | null> {
     try {
-      const r = await this.json<{ Items: Array<{ Trickplay?: Record<string, any> }> }>(user, `/Items?userId=${user.jellyfin_user_id}&ids=${itemId}&fields=Trickplay`);
-      return toTrickplayDto(itemId, mediaSourceId, r.Items[0]?.Trickplay);
+      const r = await this.json<{ Items: Array<{ Trickplay?: Record<string, any>; UserData?: { PlaybackPositionTicks?: number } }> }>(
+        user, `/Items?userId=${user.jellyfin_user_id}&ids=${itemId}&fields=Trickplay&enableUserData=true`);
+      const it = r.Items[0];
+      if (!it) return null;
+      return { positionTicks: Number(it.UserData?.PlaybackPositionTicks ?? 0), trickplay: it.Trickplay };
     } catch {
-      return undefined;
+      return null;
     }
   }
 
@@ -395,7 +398,7 @@ export class JellyfinService {
     await this.mutate(user, () => this.compat(user, 'played' + on, [`/UserPlayedItems/${id}?userId=${uid}`, `/Users/${uid}/PlayedItems/${id}`], { method: on ? 'POST' : 'DELETE' }));
   }
 
-  async playbackInfo(user: JfUser, itemId: string, opts: { maxBitrate: number; maxHeight?: number | null; startTicks?: number; audioIndex?: number; cast?: boolean; noDirect?: boolean }): Promise<PlaybackDto> {
+  async playbackInfo(user: JfUser, itemId: string, opts: { maxBitrate: number; maxHeight?: number | null; startTicks?: number; audioIndex?: number; audioLang?: string; cast?: boolean; noDirect?: boolean }): Promise<PlaybackDto> {
     const p = new URLSearchParams({ UserId: user.jellyfin_user_id, MaxStreamingBitrate: String(opts.maxBitrate), AutoOpenLiveStream: 'false' });
     if (opts.startTicks) p.set('StartTimeTicks', String(opts.startTicks));
     if (opts.audioIndex !== undefined) p.set('AudioStreamIndex', String(opts.audioIndex));
@@ -434,7 +437,14 @@ export class JellyfinService {
       body: JSON.stringify({ DeviceProfile: profile }),
     });
     if (info.ErrorCode) throw new JellyfinError(403, `playback blocked: ${info.ErrorCode}`);
-    return toPlaybackDto({ itemId, info, deviceId: this.deviceId(user), maxBitrate: opts.maxBitrate, resumeTicks: opts.startTicks ?? 0, audioIndex: opts.audioIndex, maxHeight: opts.maxHeight, cast: opts.cast, noDirect: opts.noDirect });
+    // preferred audio language: our HLS URL carries AudioStreamIndex itself, so a non-default track needs no second PlaybackInfo
+    let audioIndex = opts.audioIndex;
+    if (audioIndex === undefined && opts.audioLang) {
+      const streams: Array<Record<string, any>> = info.MediaSources?.[0]?.MediaStreams ?? [];
+      const want = streams.find((s) => s.Type === 'Audio' && s.Language === opts.audioLang);
+      if (want && !want.IsDefault && typeof want.Index === 'number') audioIndex = want.Index;
+    }
+    return toPlaybackDto({ itemId, info, deviceId: this.deviceId(user), maxBitrate: opts.maxBitrate, resumeTicks: opts.startTicks ?? 0, audioIndex, maxHeight: opts.maxHeight, cast: opts.cast, noDirect: opts.noDirect });
   }
 
   /** PlaybackInfo with the "FriendFlix Download" profile: source details + (unless 'original') the fMP4 HLS master the preparer pulls. */

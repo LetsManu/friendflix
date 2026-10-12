@@ -116,6 +116,13 @@ describe('recommendations, friends rated, thumbs', () => {
     expect((await call('PUT', `/api/items/${A}/thumb`, { value: 0 })).json()).toEqual({ value: 0 });
     expect((await call('PUT', `/api/items/${A}/thumb`, { value: 5 })).statusCode).toBe(400);
   });
+  it('thumbs: 2 ("Super") is stored, read back and also seeds "because"', async () => {
+    expect((await call('PUT', `/api/items/${A}/thumb`, { value: 2 })).json()).toEqual({ value: 2 });
+    expect((await call('GET', `/api/items/${A}`)).json().thumb).toBe(2);
+    const b = (await call('GET', '/api/library/because')).json();
+    expect(b.because).toMatchObject({ id: A, liked: true });
+    expect((await call('PUT', `/api/items/${A}/thumb`, { value: 0 })).json()).toEqual({ value: 0 });
+  });
 });
 
 describe('scenes, X-Ray, extras, trailers, collections', () => {

@@ -4,26 +4,29 @@
   interface Member { id: string; name: string; role?: string; type: string; image: boolean }
   /** item whose cast & crew is shown; the section stays hidden while loading, on failure or when empty */
   export let id: string;
-  let people: Member[] = [], seq = 0;
+  /** already loaded by the parent (DetailView): no second /people request; undefined = fetch here */
+  export let people: Member[] | undefined = undefined;
+  let fetched: Member[] = [], seq = 0;
+  $: shown = (people ?? fetched).slice(0, 20);
 
-  $: void load(id);
+  $: if (people === undefined) void load(id);
   async function load(itemId: string) {
     const my = ++seq;
-    people = [];
+    fetched = [];
     try {
       const r = await api(`/api/items/${itemId}/people`);
-      if (my === seq) people = ((r?.people ?? []) as Member[]).slice(0, 20);
+      if (my === seq) fetched = ((r?.people ?? []) as Member[]).slice(0, 20);
     } catch { /* optional section */ }
   }
   const ROLE: Record<string, string> = { Director: 'Regie', Writer: 'Drehbuch', Producer: 'Produktion', Composer: 'Musik' };
   const initials = (n: string) => n.split(/\s+/).filter(Boolean).slice(0, 2).map((w) => w[0]!.toUpperCase()).join('');
 </script>
 
-{#if people.length}
+{#if shown.length}
   <section class="cast" aria-labelledby="cast-h">
     <h2 id="cast-h">Besetzung &amp; Crew</h2>
     <ul>
-      {#each people as p, n (p.id + ':' + n)}
+      {#each shown as p, n (p.id + ':' + n)}
         <li><a href="/person/{p.id}">
           <span class="av">{#if p.image}<img src={img(p.id, 160)} alt="" loading="lazy" width="72" height="72" />{:else}<span aria-hidden="true">{initials(p.name)}</span>{/if}</span>
           <span class="nm">{p.name}</span>

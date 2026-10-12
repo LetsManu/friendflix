@@ -1,11 +1,12 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { api, ApiError, type Item } from '#lib/api';
+  import { api, ApiError, getActiveProfile, type Item } from '#lib/api';
   import Hero from '#lib/Hero.svelte';
   import LazyRow from '#lib/LazyRow.svelte';
   import Row from '#lib/Row.svelte';
   import { loadFeatured, type FeaturedList } from '#lib/lists';
   import UpcomingRow from '#lib/UpcomingRow.svelte';
+  import { homeCache, swrLoad } from '#lib/home';
 
   let hero: Item | null = null, heroPlay = '';
   let resume: Item[] | null = null, next: Item[] | null = null, latest: Item[] | null = null, mine: Item[] | null = null;
@@ -26,34 +27,50 @@
   };
   const load = (path: string) => retry(() => api(path));
   const items = (p: Record<string, string>) => load(`/api/library/items?${q(p)}`).then((r) => r.items as Item[]);
+  /**
+   * Cached per profile (module scope in #lib/home): back to home renders at once from memory. Personal rows
+   * (Weiterschauen, Nächste Folge, Meine Liste) always revalidate in the background, the catalogue rows after 5 minutes.
+   */
+  const cached = <T,>(key: string, fetcher: () => Promise<T>, apply: (v: T) => void, onError: () => void, ttl?: number) =>
+    swrLoad(homeCache, `${getActiveProfile()}|${key}`, fetcher, apply, ttl, onError).catch(() => undefined); // onError only when nothing cached was shown
+  const ALWAYS = 0;
+  const idle = (fn: () => void) => {
+    const w = window as Window & { requestIdleCallback?: (cb: () => void, o?: { timeout: number }) => number };
+    if (w.requestIdleCallback) w.requestIdleCallback(fn, { timeout: 900 }); else setTimeout(fn, 300);
+  };
 
-  onMount(async () => {
-    load('/api/library/resume').then((r) => (resume = r.items)).catch(() => (resume = []));
-    load('/api/library/nextup').then((r) => (next = r.items)).catch(() => (next = []));
-    items({ types: 'Movie,Series', sort: 'DateCreated', desc: 'true', limit: '24' }).then((r) => (latest = r)).catch(() => (latest = []));
-    load('/api/library/because').then((r) => { because = r.because; becauseItems = r.items; }).catch(() => (becauseItems = []));
-    load('/api/library/trending').then((r) => (trending = (r.items as Item[]).map((i) => ({ ...i, caption: i.viewers ? (i.viewers === 1 ? '1 Person schaut' : `${i.viewers} Personen schauen`) : i.caption })))).catch(() => (trending = []));
-    load('/api/recommendations').then((r) => (recs = r.items)).catch(() => (recs = []));
-    load('/api/library/friends-rated').then((r) => (friendsRated = r.items)).catch(() => (friendsRated = []));
-    items({ types: 'Movie,Series', sort: 'CommunityRating', desc: 'true', limit: '10' }).then((r) => (top = r)).catch(() => (top = []));
-    load('/api/watchlist').then((r) => (mine = r.items)).catch(() => (mine = []));
-    loadFeatured().then((l) => (featured = l)).catch(() => (featured = []));
-    load('/api/library/views').then((r) => (views = r.items)).catch(() => (error = 'Bibliothek konnte nicht geladen werden.'));
-    load('/api/library/genres').then((r) => (genres = r.genres.slice(0, 8))).catch(() => undefined);
-    // Billboard: random title that has a backdrop (falls back to the newest one)
-    try {
-      const pool = await items({ types: 'Movie,Series', sort: 'Random', limit: '15' });
-      hero = pool.find((i) => i.backdrop) ?? pool[0] ?? null;
-    } catch { hero = null; }
+  onMount(() => {
+    // 1. billboard first (does not wait for the rows) – a random pick stays the same while it is cached
+    void cached('hero', async () => { const pool = await items({ types: 'Movie,Series', sort: 'Random', limit: '15' }); return pool.find((i) => i.backdrop) ?? pool[0] ?? null; }, (v) => (hero = v), () => (hero = null));
+    // 2. the rows on the first screen
+    void cached('resume', () => load('/api/library/resume').then((r) => r.items as Item[]), (v) => (resume = v), () => (resume = []), ALWAYS);
+    void cached('nextup', () => load('/api/library/nextup').then((r) => r.items as Item[]), (v) => (next = v), () => (next = []), ALWAYS);
+    void cached('recs', () => load('/api/recommendations').then((r) => r.items as Item[]), (v) => (recs = v), () => (recs = []));
+    void cached('friends', () => load('/api/library/friends-rated').then((r) => r.items as Item[]), (v) => (friendsRated = v), () => (friendsRated = []));
+    void cached('because', () => load('/api/library/because'), (r: { because: { name: string } | null; items: Item[] }) => { because = r.because; becauseItems = r.items; }, () => (becauseItems = []));
+    // 3. below the fold: once the browser is idle (keeps the network free for the billboard image);
+    //    from the cache at once (back navigation: same page height, so the scroll position restores exactly)
+    const warm = Boolean(homeCache.get(`${getActiveProfile()}|latest`));
+    (warm ? (fn: () => void) => fn() : idle)(() => {
+      void cached('latest', () => items({ types: 'Movie,Series', sort: 'DateCreated', desc: 'true', limit: '24' }), (v) => (latest = v), () => (latest = []));
+      void cached('trending', () => load('/api/library/trending').then((r) => (r.items as Item[]).map((i) => ({ ...i, caption: i.viewers ? (i.viewers === 1 ? '1 Person schaut' : `${i.viewers} Personen schauen`) : i.caption }))), (v) => (trending = v), () => (trending = []));
+      void cached('top', () => items({ types: 'Movie,Series', sort: 'CommunityRating', desc: 'true', limit: '10' }), (v) => (top = v), () => (top = []));
+      void cached('mine', () => load('/api/watchlist').then((r) => r.items as Item[]), (v) => (mine = v), () => (mine = []), ALWAYS);
+      void cached('featured', () => loadFeatured(), (v) => (featured = v), () => (featured = []));
+      void cached('views', () => load('/api/library/views').then((r) => r.items as Item[]), (v) => (views = v), () => (error = 'Bibliothek konnte nicht geladen werden.'));
+      void cached('genres', () => load('/api/library/genres').then((r) => (r.genres as string[]).slice(0, 8)), (v) => (genres = v), () => undefined);
+    });
   });
   async function removeResume(id: string) {
     const prev = resume;
     resume = resume ? resume.filter((i) => i.id !== id) : resume; // optimistic
-    try { await api(`/api/library/resume/${id}`, { method: 'DELETE' }); } catch { resume = prev; }
+    try { await api(`/api/library/resume/${id}`, { method: 'DELETE' }); homeCache.set(`${getActiveProfile()}|resume`, resume); } catch { resume = prev; }
   }
   $: heroRank = hero && top ? top.findIndex((i) => i.id === hero!.id) + 1 : 0;
   // Jellyfin's next-up also lists the episode you are in the middle of: that one is already under "Weiterschauen"
   $: nextOnly = next && resume ? next.filter((e) => !resume!.some((r) => r.id === e.id)) : next;
+  const viewLoader = (id: string) => () => items({ parentId: id, sort: 'DateCreated', desc: 'true', limit: '24' });
+  const genreLoader = (g: string) => () => items({ types: 'Movie,Series', genre: g, sort: 'Random', limit: '24' });
 </script>
 
 <svelte:head><title>FriendFlix</title></svelte:head>
@@ -68,14 +85,16 @@
   <Row title="Neu hinzugefügt" items={latest} href="/new" />
   <Row title="Diese Woche bei uns" items={trending} ranked />
   {#each featured as f (f.id)}<Row title="{f.name} · Empfohlen von {f.owner.name}" items={f.items} href="/lists/{f.id}" />{/each}
-  <Row title="Top 10 nach Bewertung" items={top} ranked />
   <Row title="Meine Liste" items={mine} href="/watchlist" />
   <UpcomingRow type="movie" title="Demnächst – jetzt wünschen" />
-  {#each views as v (v.id)}
-    <LazyRow title={v.name} href="/library/{v.id}" load={() => items({ parentId: v.id, sort: 'DateCreated', desc: 'true', limit: '24' })} />
+  <!-- the second ranked row never directly follows the first one -->
+  {#each views as v, i (v.id)}
+    <LazyRow title={v.name} href="/library/{v.id}" cacheKey="view:{v.id}" load={viewLoader(v.id)} />
+    {#if i === 0}<Row title="Top 10 nach Bewertung" items={top} ranked />{/if}
   {/each}
+  {#if !views.length}<Row title="Top 10 nach Bewertung" items={top} ranked />{/if}
   {#each genres as g (g)}
-    <LazyRow title={g} href="/browse/movies?genre={encodeURIComponent(g)}" load={() => items({ types: 'Movie,Series', genre: g, sort: 'Random', limit: '24' })} />
+    <LazyRow title={g} href="/browse/movies?genre={encodeURIComponent(g)}" cacheKey="genre:{g}" load={genreLoader(g)} />
   {/each}
 </div>
 

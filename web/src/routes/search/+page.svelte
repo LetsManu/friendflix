@@ -3,8 +3,11 @@
   import { pageStore } from '#lib/page';
   const page = pageStore();
   import { replaceState } from '$app/navigation';
-  import { api, ApiError, getActiveProfile, img, type Item } from '#lib/api';
+  import { api, ApiError, backdrop, getActiveProfile, img, type Item } from '#lib/api';
+  import Icon from '#lib/Icon.svelte';
+  import { itemPath } from '#lib/mobile';
   import Card from '#lib/Card.svelte';
+  import { mobile } from '#lib/viewport';
   import { alreadyWished, clearRecent, isYear, loadRecent, pushRecent, wishCandidates, type SeerrHit } from '#lib/discovery';
 
   interface Person { id: string; name: string; image: boolean }
@@ -81,11 +84,26 @@
   function onKeydown(e: KeyboardEvent) {
     if (e.key === 'Escape' && input) { e.preventDefault(); e.stopPropagation(); input = ''; commit(''); }
   }
-  function pick(q: string) { input = q; commit(q); inputEl?.focus(); }
+  // desktop: the search field lives in the header (#hq, same URL contract); phones keep the big field on this page
+  function pick(q: string) {
+    const header = inputEl ? null : document.querySelector<HTMLInputElement>('#hq');
+    if (header) { header.value = q; header.dispatchEvent(new Event('input', { bubbles: true })); header.focus(); return; } // the header field drives the URL
+    input = q; commit(q); inputEl?.focus();
+  }
   function forget() { clearRecent(getActiveProfile()); recent = []; }
   const initials = (n: string) => n.split(/\s+/).filter(Boolean).slice(0, 2).map((w) => w[0]!.toUpperCase()).join('');
 
-  onMount(() => { recent = loadRecent(getActiveProfile()); });
+  // empty state: what friends watch this week ("Beliebte Suchen")
+  let popular: Item[] | null = null;
+  onMount(() => {
+    recent = loadRecent(getActiveProfile());
+    // the layout may render this page before /api/me answered: re-read the recent searches of the real profile then
+    const onMe = () => { if (!term) recent = loadRecent(getActiveProfile()); };
+    window.addEventListener('ff-me', onMe, { once: true });
+    api('/api/library/trending').then((r) => (popular = (r.items as Item[]).slice(0, 12))).catch(() => (popular = []));
+    if ($mobile && !input) inputEl?.focus();
+    return () => window.removeEventListener('ff-me', onMe);
+  });
   onDestroy(() => { clearTimeout(t); ctl?.abort(); });
 
   $: count = res ? res.titles.length + res.episodes.length + res.people.length + res.genres.length : 0;
@@ -95,22 +113,38 @@
 
 <svelte:head><title>Suche – FriendFlix</title></svelte:head>
 <h1 class="sr-only">Suche</h1>
-<form role="search" on:submit|preventDefault={() => commit(input)}>
-  <label class="sr-only" for="q">Suche</label>
-  <input id="q" class="big" type="search" autocomplete="off" enterkeyhint="search" placeholder="Titel, Person, Genre, Jahr …" bind:this={inputEl} bind:value={input} on:input={onInput} on:keydown={onKeydown} />
-</form>
+{#if $mobile}
+  <form role="search" on:submit|preventDefault={() => commit(input)}>
+    <label class="sr-only" for="q">Suche</label>
+    <input id="q" class="big" type="search" autocomplete="off" enterkeyhint="search" placeholder="Titel, Person, Genre, Jahr …" bind:this={inputEl} bind:value={input} on:input={onInput} on:keydown={onKeydown} />
+  </form>
+{:else}<div class="gap" aria-hidden="true"></div>{/if}
 
 <p class="sr-only" role="status" aria-live="polite">{#if status === 'done' && res}{count} Treffer{/if}</p>
 <p class="wishmsg" role="status" aria-live="polite">{wishMsg}</p>
 
 
 {#if status === 'idle'}
+  {#if term.length === 1}<p class="muted">Gib mindestens zwei Zeichen ein.</p>{/if}
   {#if term.length === 0 && recent.length}
     <section aria-labelledby="rc">
       <div class="flex rhead"><h2 id="rc" class="muted">Zuletzt gesucht</h2><button type="button" class="sec small" on:click={forget}>Verlauf löschen</button></div>
       <ul class="chips">{#each recent as r (r)}<li><button type="button" class="chip" on:click={() => pick(r)}>{r}</button></li>{/each}</ul>
     </section>
-  {:else}<p class="muted">Gib mindestens zwei Zeichen ein.</p>{/if}
+  {/if}
+  {#if term.length === 0}
+    {#if !$mobile && !recent.length}<p class="muted hint">Suche oben nach Titeln, Personen, Genres oder einem Jahr.</p>{/if}
+    <section aria-labelledby="pop">
+      <h2 id="pop" class="sh">Beliebte Suchen</h2>
+      {#if popular === null}<div class="tiles" aria-busy="true">{#each Array(6) as _}<div class="skeleton" style="aspect-ratio:16/9"></div>{/each}</div>
+      {:else if popular.length && $mobile}
+        <ul class="top">{#each popular as i (i.id)}
+          <li><a href={itemPath(i)}><img src={i.backdrop ? backdrop(i.id, 400) : img(i.id, 300)} alt="" loading="lazy" width="146" height="82" /><span class="tt">{i.name}</span><span class="pl" aria-hidden="true"><Icon name="play" size={18} /></span></a></li>
+        {/each}</ul>
+      {:else if popular.length}<div class="tiles">{#each popular as i (i.id)}<div class="slot"><Card item={i} /></div>{/each}</div>
+      {:else}<p class="muted">Gib mindestens zwei Zeichen ein.</p>{/if}
+    </section>
+  {/if}
 {:else if status === 'loading'}
   <div class="tiles" aria-busy="true"><span class="sr-only">Suche läuft …</span>{#each Array(12) as _}<div class="skeleton" style="aspect-ratio:16/9"></div>{/each}</div>
 {:else if status === 'error'}
@@ -161,6 +195,14 @@
 {/if}
 
 <style>
+  .gap { height: .5rem; }
+  .top { display: grid; gap: .25rem; margin: 0 calc(var(--pad-x) * -1); }
+  .top a { display: flex; align-items: center; gap: .9rem; min-height: 72px; padding: 0 var(--pad-x) 0 0; background: #1c1c1c; }
+  .top a:active { background: #262626; }
+  .top img { width: 146px; height: 82px; flex: none; object-fit: cover; background: #2a2a2a; }
+  .tt { flex: 1; min-width: 0; font-weight: 600; font-size: .95rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .pl { flex: none; display: grid; place-items: center; width: 36px; height: 36px; border-radius: 50%; border: 2px solid #fff; padding-left: 2px; }
+  .hint { margin: 0 0 .5rem; }
   .big { width: 100%; max-width: 640px; font-size: 1.2rem; min-height: 54px; margin-bottom: 1.5rem; }
   .empty { text-align: center; padding: 4rem 0; }
   .wishmsg { min-height: 1.4em; margin: 0 0 .5rem; color: var(--mut); }

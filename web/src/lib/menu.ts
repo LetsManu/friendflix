@@ -27,3 +27,17 @@ export function groupLinks(links: MenuLink[]): Array<{ title: string; items: Men
   });
   return groups;
 }
+
+/** Small desktop footer (links in four columns; everything also lives on /me). */
+export const FOOTER_COLUMNS: MenuLink[][] = [
+  [['/me', 'Mein FriendFlix', 'user'], ['/watchlist', 'Meine Liste', 'plus'], ['/lists', 'Listen', 'list'], ['/history', 'Verlauf', 'calendar']],
+  [['/party', 'Watch-Party', 'users'], ['/vote', 'Filmabend', 'vote'], ['/match', 'Gruppen-Matcher', 'users'], ['/tonight', 'Heute Abend', 'star']],
+  [['/calendar', 'Kalender', 'calendar'], ['/upcoming', 'Demnächst', 'calendar'], ['/requests', 'Wünsche', 'gift'], ['/stats', 'Wrapped', 'bar-chart']],
+  [['/settings', 'Konto & Einstellungen', 'settings'], ['/devices', 'Geräte', 'monitor'], ['/remote', 'Fernbedienung', 'tv'], ['/collections', 'Sammlungen', 'film']],
+];
+
+/** Slim desktop header (Netflix-like): everything else sits in the avatar menu, the footer and on /me. */
+export const HEADER_TABS: Array<[href: string, label: string]> = [['/', 'Start'], ['/browse/series', 'Serien'], ['/browse/movies', 'Filme'], ['/new', 'Neu & beliebt'], ['/watchlist', 'Meine Liste']];
+
+/** true when `href` is the current section (Start only on "/") */
+export const isTabActive = (href: string, path: string) => (href === '/' ? path === '/' : path === href || path.startsWith(href + '/') || path.startsWith(href + '?'));

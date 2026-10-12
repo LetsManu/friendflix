@@ -8,6 +8,8 @@
   import { setMeta } from '#lib/offline/db';
   import Intro from '#lib/Intro.svelte';
   import { stopSonicLogo } from '#lib/sonic';
+  import Logo from '#lib/Logo.svelte';
+  import { markPicked } from '#lib/gate';
   import { loadIntroSettings, markSessionSeen, shouldPlayIntro, shouldPlayIntroSound } from '#lib/intro';
 
   interface Profile { id: string; name: string; avatar: string; isOwner: boolean; hasPin: boolean; active: boolean }
@@ -30,7 +32,14 @@
       loadErr = '';
     } catch { loadErr = 'Die Profile konnten nicht geladen werden.'; } finally { loaded = true; }
   }
-  onMount(load);
+  onMount(async () => {
+    const sp = new URLSearchParams(location.search);
+    if (sp.get('manage') === '1') manage = true;
+    await load();
+    // avatar menu "switch to …": pick that profile right away (asks for the PIN when it has one)
+    const pick = sp.get('pick'), p = pick ? profiles.find((x) => x.id === pick) : undefined;
+    if (p && !manage) void choose(p);
+  });
 
   function target() {
     const next = new URLSearchParams(location.search).get('next');
@@ -58,6 +67,7 @@
     try {
       await api(`/api/profiles/${p.id}/select`, { method: 'POST', body: pin === undefined ? {} : { pin } });
       await setMeta('lastProfileId', p.id).catch(() => undefined); // offline hub: downloads of the last active profile
+      markPicked(p.id); // "Wer schaut gerade?" was answered for this browser session
       await playIntro(p.id).catch(() => undefined);
       done();
     } catch (e) {
@@ -120,6 +130,7 @@
 
 <svelte:window on:keydown|capture={onKey} />
 
+<span class="brand" aria-hidden="true"><Logo wordmark size={30} /></span>
 <div class="wrap" inert={!!pinFor || !!ed}>
   <h1>{manage ? 'Profile verwalten' : 'Wer schaut gerade?'}</h1>
   {#if loadErr}<p class="err" role="alert">{loadErr} <button class="sec" on:click={load}>Erneut laden</button></p>{/if}
@@ -136,14 +147,14 @@
           <span class="nm">{p.name}</span>
         </button>
       {/each}
-      {#if manage && canCreate}
-        <button class="prof" aria-label="Profil hinzufügen" on:click={() => openEdit()}>
+      {#if canCreate}
+        <button class="prof addp" aria-label="Profil hinzufügen" on:click={() => openEdit()}>
           <span class="face add"><Icon name="plus" size={52} /></span><span class="nm">Profil hinzufügen</span>
         </button>
       {/if}
     </div>
     {#if manage && !ownerActive}<p class="muted">Neue Profile anlegen und löschen kann nur das Hauptprofil.</p>{/if}
-    <p><button class="sec" on:click={() => (manage = !manage)}>{manage ? 'Fertig' : 'Profile verwalten'}</button></p>
+    <p><button class={manage ? 'light done' : 'outline'} on:click={() => (manage = !manage)}>{manage ? 'Fertig' : 'Profile verwalten'}</button></p>
   {/if}
 </div>
 
@@ -193,14 +204,21 @@
 {/if}
 
 <style>
-  .wrap { min-height: 100vh; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; padding: 2rem var(--pad-x); gap: 1rem; }
+  .brand { position: absolute; top: 1.2rem; left: var(--pad-x); display: inline-flex; z-index: 1; }
+  .outline { background: transparent; color: var(--mut); border: 1px solid var(--mut); border-radius: 0; padding: .55rem 1.6rem; font-weight: 500; letter-spacing: .14em; text-transform: uppercase; font-size: .95rem; }
+  .outline:hover:not(:disabled), .outline:focus-visible { background: transparent; color: #fff; border-color: #fff; }
+  .done { border-radius: 0; padding: .55rem 1.8rem; letter-spacing: .1em; text-transform: uppercase; }
+  .face.add { border: 2px solid transparent; }
+  .prof:hover .face.add, .prof:focus-visible .face.add { background: #3a3a3a; color: #fff; }
+  .wrap { min-height: 100vh; min-height: 100dvh; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; padding: 2rem var(--pad-x); gap: 1rem; }
   h1 { font-size: clamp(1.8rem, 4vw, 3rem); font-weight: 500; margin: 0 0 1rem; }
-  .grid2 { display: flex; flex-wrap: wrap; justify-content: center; gap: clamp(.8rem, 2.5vw, 2rem); }
-  .prof { flex-direction: column; background: transparent; color: var(--mut); width: clamp(96px, 20vw, 160px); padding: .4rem; gap: .6rem; height: auto; font-weight: 400; }
+  .grid2 { display: flex; flex-wrap: wrap; justify-content: center; align-items: flex-start; gap: clamp(.8rem, 2.5vw, 2rem); }
+  .prof { flex-direction: column; justify-content: flex-start; background: transparent; color: var(--mut); width: clamp(96px, 20vw, 160px); padding: .4rem; gap: .6rem; height: auto; font-weight: 400; }
   .prof:hover:not(:disabled), .prof:focus-visible { background: transparent; color: #fff; }
   .prof:hover .face, .prof:focus-visible .face { box-shadow: 0 0 0 4px #fff; }
   .prof.cur .nm { color: #fff; }
-  .nm { font-size: 1.05rem; overflow-wrap: anywhere; }
+  .nm { font-size: 1.05rem; overflow-wrap: break-word; hyphens: auto; max-width: 100%; }
+  .prof.addp .nm { font-size: .92rem; }
   .face { position: relative; width: 100%; aspect-ratio: 1; border-radius: 8px; display: grid; place-items: center; font-size: clamp(2.2rem, 6vw, 4rem); font-weight: 800; color: #fff; transition: box-shadow var(--t-fast); }
   .face.sm { width: 72px; font-size: 2rem; margin: 0 auto .5rem; }
   .face.add { background: var(--surface-2); color: var(--mut); }

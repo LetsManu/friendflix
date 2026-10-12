@@ -6,13 +6,14 @@ test.describe('lists (desktop)', () => {
   test('overview lists the lists with item counts', async ({ page }) => {
     await page.goto('/lists');
     await expect(page.locator('a.list')).toHaveCount(3);
-    await expect(page.getByRole('link', { name: /Filmabend/ })).toBeVisible();
+    await expect(page.locator('main').getByRole('link', { name: /Filmabend/ })).toBeVisible(); // (the footer links to the Filmabend vote page too)
     await expect(page.getByRole('link', { name: /Annas Klassiker/ })).toBeVisible();
   });
 
   test('ListMenu on the item page adds the title to a list', async ({ page, api }) => {
     await page.goto('/item/' + MOVIE2.id);
     await expect(page.getByRole('heading', { level: 1, name: 'Interstellar' })).toBeVisible();
+    await page.getByRole('button', { name: 'Mehr', exact: true }).click(); // the list menu lives in "⋯ Mehr" on the detail view
     await page.getByRole('button', { name: 'Zu Liste hinzufügen', exact: true }).click();
     const pop = page.getByRole('dialog', { name: 'Zu Liste hinzufügen' });
     // only lists the viewer can edit are offered (the viewer-only list is hidden)
@@ -38,7 +39,9 @@ test.describe('lists (desktop)', () => {
     await expect(slots).toHaveCount(2);
 
     const hp = await openPopout(page, slots.first().locator('article.card'));
-    await hp.getByRole('button', { name: 'Zu Liste hinzufügen', exact: true }).click();
+    // the list picker lives in the "⋯ Mehr" menu of the pop-out
+    await hp.getByRole('button', { name: /^Mehr Aktionen für / }).click();
+    await page.locator('.ma-pop').getByRole('button', { name: 'Zu Liste hinzufügen', exact: true }).click();
     const pop = page.getByRole('dialog', { name: 'Zu Liste hinzufügen' });
     const entry = pop.getByRole('checkbox', { name: 'Filmabend' });
     await expect(entry).toBeChecked();
