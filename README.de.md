@@ -17,7 +17,7 @@
 
 <p align="center"><img src="docs/images/de/hero.jpg" alt="FriendFlix-Startseite mit großem Billboard und Titelreihen" width="900"></p>
 
-FriendFlix ist ein privates Streaming-Portal vor **Jellyfin** (deine Medien) und **Seerr** (Wünsche). Deine Freunde bekommen ein schickes, vertrautes Streaming-Erlebnis auf Laptop, Handy und Fernseher – mit Profilen, Downloads, Watch-Partys und Empfehlungen untereinander. Jellyfin und Seerr sehen sie nie direkt, und du bestimmst, wer hineinkommt.
+FriendFlix ist ein privates Streaming-Portal vor **Jellyfin** (deine Medien) und einem optionalen Wunsch-Dienst. Deine Freunde bekommen ein schickes, vertrautes Streaming-Erlebnis auf Laptop, Handy und Fernseher – mit Profilen, Downloads, Watch-Partys und Empfehlungen untereinander. Jellyfin und den Wunsch-Dienst sehen sie nie direkt, und du bestimmst, wer hineinkommt.
 
 > Alle Titel und Bilder in diesen Screenshots sind erfunden und für die Demo generiert.
 
@@ -96,7 +96,7 @@ Die Oberfläche spricht **Deutsch, Englisch, Französisch, Spanisch, Italienisch
 | **Offline-Downloads** | Lizenzen pro Gerät mit Ablaufdatum; funktioniert in Chrome, Edge, Firefox, Safari 17+ und als Home-Bildschirm-App auf iOS 17+. |
 | **Gemeinsam schauen** | Watch-Partys mit synchroner Wiedergabe, Chat und Live-Emoji-Reaktionen, die für alle in der Party über das Bild schweben. **Filmabend-Abstimmung** mit Countdown und automatischem Start. „Was hat noch keiner von uns gesehen?“ – der Gruppen-Matcher findet Titel für alle. „Heute Abend“ schlägt drei Titel nach Stimmung und Zeit vor. |
 | **Empfehlungen** | Titel an Freunde empfehlen, sehen, was Freunde bewertet und diese Woche geschaut haben, „Weil du … gesehen hast“, geteilte Listen mit Editoren und Lesern, kuratierte Reihen vom Admin. |
-| **Wünsche** | Fehlt etwas? Direkt aus der Suche wünschen (über Seerr) und benachrichtigt werden, sobald es da ist – mit einem monatlichen Limit pro Rolle. „Erinnere mich“ für kommende Titel. |
+| **Wünsche** | Fehlt etwas? Direkt aus der Suche wünschen und benachrichtigt werden, sobald es da ist – mit einem monatlichen Limit pro Rolle. „Erinnere mich“ für kommende Titel. |
 | **Immer auf dem Laufenden** | Benachrichtigungen in der App, als Web-Push auf jedem Gerät, über ntfy oder Discord und ein optionaler Wochenrückblick. |
 | **Die Extras** | Reaktionen und Kurzkritiken (erst sichtbar, wenn du den Titel gesehen hast), Bewertungen, Statistik, Achievements und eine teilbare „Wrapped“-Karte mit deinen Zahlen. |
 | **Sieben Sprachen** | Deutsch, Englisch, Französisch, Spanisch, Italienisch, Türkisch, Polnisch – pro Profil. |
@@ -105,7 +105,7 @@ Die Oberfläche spricht **Deutsch, Englisch, Französisch, Spanisch, Italienisch
 
 - **Selbst gehostet.** Alles läuft auf deinem eigenen Server. FriendFlix hat keine Werbung und keine Analyse-Dienste von Dritten.
 - **Nur mit Einladung.** Neue Leute kommen über Einmal-Einladungslinks dazu. Die Anmeldung läuft über dein Authentik mit **verpflichtender Zwei-Faktor-Authentifizierung**, neue Geräte können eine Freigabe brauchen.
-- **Jellyfin und Seerr bleiben unsichtbar.** Freunde sprechen nur mit dem Portal. Medien-Tokens bleiben auf dem Server; Videos laufen über ein Gateway, das jede Anfrage prüft.
+- **Jellyfin und der Wunsch-Dienst bleiben unsichtbar.** Freunde sprechen nur mit dem Portal. Medien-Tokens bleiben auf dem Server; Videos laufen über ein Gateway, das jede Anfrage prüft.
 - **Du bestimmst, was Freunde sehen.** „Verlauf teilen“ (standardmäßig aus) und „Bewertungen teilen“ stellt jede Person in den Einstellungen ein; „Diese Woche bei uns“ zeigt nur Zahlen, nie wer geschaut hat. Reaktionen zu einem Titel erscheinen erst, wenn du ihn gesehen hast, und der optionale Spoilerschutz blendet Bilder und Beschreibungen ungesehener Folgen aus.
 - **Trailer ohne Tracking.** Trailer für Titel, die noch nicht in der Bibliothek sind, laufen im datenschutzfreundlichen `youtube-nocookie.com`-Player und laden erst nach einem Klick.
 - **Fehlerberichte bleiben bei dir.** Stürzt die App im Browser von jemandem ab, landet eine bereinigte Fehlermeldung (ohne Query-Strings, Tokens oder E-Mail-Adressen) im Log *deines* Servers – und nirgendwo sonst.
@@ -122,7 +122,7 @@ Ab hier wird es technisch. Die ausführliche Betriebsdoku steht unter [Dokumenta
 ### Voraussetzungen
 
 - Ein Linux-Server mit **Docker** und **Docker Compose**.
-- **Jellyfin** (deine Bibliothek) und **Seerr** (Wünsche) – schon vorhanden oder über das Profil `bundled` mitgestartet.
+- **Jellyfin** (deine Bibliothek) und optional einem Wunsch-Dienst (Wünsche) – schon vorhanden oder über das Profil `bundled` mitgestartet.
 - **Authentik** als Login (OIDC mit PKCE; MFA dort erzwingen).
 - Ein Reverse Proxy mit TLS, z. B. **Nginx Proxy Manager**, mit einem Proxy-Host für das Portal.
 - Optional: ntfy, ein Discord-Webhook, Portainer (Updates per Knopfdruck).
@@ -138,7 +138,7 @@ openssl rand -base64 32    # -> APP_ENC_KEY
 openssl rand -hex 24       # -> INTERNAL_SECRET, WEBHOOK_SECRET, METRICS_TOKEN (je ein Wert)
 $EDITOR .env               # PUBLIC_URL, Passwörter, OIDC_*, JELLYFIN_*, SEERR_*
 docker login ghcr.io -u <user>                                 # nur bei privaten Paketen (PAT mit read:packages)
-docker compose -f compose.prod.yaml up -d                      # mit --profile bundled auch Jellyfin + Seerr
+docker compose -f compose.prod.yaml up -d                      # mit --profile bundled auch Jellyfin + den Wunsch-Dienst
 docker compose -f compose.prod.yaml --profile backup up -d backup   # optional: nächtliche Datenbank-Backups
 docker compose -f compose.prod.yaml ps                         # alles "healthy"
 ```
@@ -148,11 +148,11 @@ Danach:
 1. **Authentik:** OIDC-Provider anlegen (Redirect-URI `${PUBLIC_URL}/auth/callback`) und MFA erzwingen – [docs/de/authentik.md](docs/de/authentik.md).
 2. **Nginx Proxy Manager:** ein Proxy-Host `portal.<domain>` → `127.0.0.1:3080`, Websockets an, Force SSL/HTTP2/HSTS; [deploy/npm/portal.advanced.conf](deploy/npm/portal.advanced.conf) in den Reiter *Advanced* einfügen (leitet `/api`, `/auth`, `/ws` an `:3081` und `/media/` an `:3082`). Den Block `/media/c/` nicht entfernen: Er verhindert, dass Cast-Tokens in Logs landen.
 3. **Jellyfin:** Admin-API-Key anlegen. Optional das Webhook-Plugin für sofortige „läuft gerade“- und „neu in der Bibliothek“-Ereignisse – [docs/integrations.md](docs/integrations.md).
-4. **Seerr:** API-Key und Webhook – [docs/integrations.md](docs/integrations.md).
+4. **Wünsche (optional):** API-Key und Webhook – [docs/integrations.md](docs/integrations.md).
 5. **Web-Push (optional):** `node scripts/gen-vapid.mjs`, beide Schlüssel in `.env`, neu starten.
 6. **Erster Login** mit einem Mitglied der Authentik-Gruppe `friendflix-admins`: Du wirst Portal-Admin, wählst die Sprache der Instanz und lädst deine Freunde unter *Admin → Einladungen* ein.
 
-Laufen Jellyfin/Seerr schon in einem eigenen Stack: `docker network connect friendflix_media <container>`, deren öffentliche Ports entfernen und `JELLYFIN_URL`/`SEERR_URL` setzen.
+Laufen Jellyfin/Wunsch-Dienst schon in einem eigenen Stack: `docker network connect friendflix_media <container>`, deren öffentliche Ports entfernen und `JELLYFIN_URL`/`SEERR_URL` setzen.
 
 ### Konfiguration
 
@@ -163,10 +163,10 @@ Vorlage: [.env.example](.env.example). Jede Variable kann mit der Endung `_FILE`
 | `PUBLIC_URL` | – (Pflicht) | Öffentliche https-URL des Portals |
 | `POSTGRES_PASSWORD`, `REDIS_PASSWORD` | – (Pflicht) | Passwörter für Datenbank und Redis |
 | `APP_ENC_KEY` | – (Pflicht) | 32 Byte base64; verschlüsselt gespeicherte Jellyfin-Zugangsdaten. **Getrennt sichern.** |
-| `INTERNAL_SECRET`, `WEBHOOK_SECRET` | – (Pflicht, ≥ 16 Zeichen) | Backend ↔ Gateway; Jellyfin-/Seerr-Webhooks |
+| `INTERNAL_SECRET`, `WEBHOOK_SECRET` | – (Pflicht, ≥ 16 Zeichen) | Backend ↔ Gateway; Jellyfin-/Wunsch-Dienst-Webhooks |
 | `OIDC_ISSUER`, `OIDC_CLIENT_ID`, `OIDC_CLIENT_SECRET` | – (Pflicht) | Authentik-OIDC-Provider |
 | `JELLYFIN_URL`, `JELLYFIN_ADMIN_API_KEY` | – (Pflicht) | Interne Jellyfin-URL, z. B. `http://jellyfin:8096`, und Admin-API-Key |
-| `SEERR_URL`, `SEERR_API_KEY` | – (Pflicht) | Interne Seerr-URL und API-Key |
+| `SEERR_URL`, `SEERR_API_KEY` | – (Pflicht) | Interne URL und API-Key des Wunsch-Dienstes |
 | `ADMIN_GROUP` | `friendflix-admins` | Authentik-Gruppe, deren Mitglieder Portal-Admins werden |
 | `BIND_ADDR` | `127.0.0.1` | Host-Adresse für die drei Ports – nie eine öffentliche Schnittstelle |
 | `WEB_PORT`, `BACKEND_PORT`, `GATEWAY_PORT` | `3080`, `3081`, `3082` | Host-Ports für den Reverse Proxy |
@@ -207,13 +207,13 @@ flowchart LR
   gateway -->|"authz"| backend
   gateway --> jellyfin["Jellyfin"]
   backend --> jellyfin
-  backend --> seerr["Seerr"]
+  backend --> seerr["Wunsch-Dienst"]
   backend --> postgres[("Postgres")]
   backend --> redis[("Redis")]
   backend -.->|"OIDC"| authentik["Authentik"]
 ```
 
-- Öffentlich ist nur der Proxy. `web`, `backend` und `gateway` sind nur auf `127.0.0.1` veröffentlicht; Jellyfin und Seerr haben gar keine Ports und hängen im internen Netz `media`, Postgres und Redis im internen Netz `db`.
+- Öffentlich ist nur der Proxy. `web`, `backend` und `gateway` sind nur auf `127.0.0.1` veröffentlicht; Jellyfin und der Wunsch-Dienst haben gar keine Ports und hängen im internen Netz `media`, Postgres und Redis im internen Netz `db`.
 - Alle Videodaten (Playlists, Segmente, Direct Play, Bilder, Untertitel, Downloads, Chromecast) laufen durch das Gateway: ohne Pufferung, mit HTTP-Range, Jellyfin-Tokens nur serverseitig, Pfad-Allowlist, fester Upstream, Bitrate-Grenze pro Rolle.
 - Container laufen ohne Root, mit schreibgeschütztem Dateisystem, `cap_drop: ALL` und `no-new-privileges`. Strikte CSP, CSRF-Tokens, Rate-Limits, Audit-Log.
 - Alternative „Plan B“: nginx liefert `/media/` selbst über `auth_request` aus – [docs/operations.md](docs/operations.md).
@@ -249,7 +249,7 @@ npm run e2e                                     # Playwright: baut die Web-App u
 |---|---|
 | Installation Schritt für Schritt | [docs/de/setup.md](docs/de/setup.md) |
 | Authentik: Installation, Provider, Flows, Einladungen | [docs/de/authentik.md](docs/de/authentik.md) |
-| Jellyfin, Seerr, ntfy/Discord, Web-Push | [docs/integrations.md](docs/integrations.md) |
+| Jellyfin, Wunsch-Dienst, ntfy/Discord, Web-Push | [docs/integrations.md](docs/integrations.md) |
 | Backups, Wiederherstellung, Firewall, Updates, Plan B | [docs/operations.md](docs/operations.md) |
 | Monitoring, Metriken, Server-Timing, Browser-Fehler | [docs/monitoring.md](docs/monitoring.md) |
 | Offline-Downloads (Plattformen, Speicher, Grenzen) | [docs/downloads.md](docs/downloads.md) |
@@ -264,8 +264,8 @@ npm run e2e                                     # Playwright: baut die Web-App u
 - Ein Backend-Replikat: Watch-Party-Räume, Rate-Limits und Fernbedienungs-Räume liegen im Speicher.
 - Bildbasierte Untertitel (PGS) werden nicht angeboten; Text-Untertitel kommen als WebVTT.
 - Intro überspringen braucht Jellyfin ≥ 10.10 mit Media Segments (z. B. vom Intro-Skipper-Plugin).
-- Die APIs von Jellyfin, Seerr und Authentik unterscheiden sich je Version – nach Upgrades siehe [docs/operations.md](docs/operations.md) und [docs/integrations.md](docs/integrations.md).
-- Profile sind versteckte Jellyfin-Nutzer: den automatischen Jellyfin-Nutzerimport in Seerr ausschalten, damit sie dort nicht auftauchen.
+- Die APIs von Jellyfin, Wunsch-Dienst und Authentik unterscheiden sich je Version – nach Upgrades siehe [docs/operations.md](docs/operations.md) und [docs/integrations.md](docs/integrations.md).
+- Optional: ein Seerr-kompatibler Wunsch-Dienst für Wünsche – siehe [docs/integrations.md](docs/integrations.md). Profile sind versteckte Jellyfin-Nutzer: den automatischen Jellyfin-Nutzerimport dort ausschalten, damit sie nicht auftauchen.
 - Mit Intel QSV/VAAPI in Jellyfin „VPP Tone mapping“ ausschalten, wenn der Treiber kein HDR kann; sonst scheitern 4K-HDR-Titel.
 - Kinderprofile sind ein Jugendschutz, kein Schloss gegen jemanden, der den Konto-Login kennt. Die PIN des Hauptprofils setzt „PIN vergessen?“ (`/auth/login?resetPin=1`) zurück: Das verlangt eine frische Anmeldung bei Authentik (geprüft über `auth_time` im Token) und wird auf jedem Gerät abgelehnt, das an ein Kinderprofil gebunden ist – der Inhaber setzt sie auf seinem eigenen Gerät zurück. Den Authentik-Login (samt zweitem Faktor) also nicht den Kindern überlassen. Ist gar keine PIN gesetzt, lässt sich ein Kinderprofil frei verlassen; der Inhaber bekommt dann einen Hinweis, eine PIN zu setzen.
 
