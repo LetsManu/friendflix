@@ -18,3 +18,5 @@ data/
 volumes/
 media/
 .DS_Store
+e2e/test-results/
+e2e/playwright-report/
