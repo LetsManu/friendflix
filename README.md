@@ -222,7 +222,7 @@ flowchart LR
 
 - **Backups:** the opt-in `backup` sidecar runs `pg_dump` daily at `BACKUP_HOUR`, verifies each dump with `pg_restore --list`, keeps `BACKUP_KEEP_DAYS` days and turns `unhealthy` if a run fails. Restore steps and a monthly restore test (`scripts/restore-test.sh`) are in [docs/operations.md](docs/operations.md). Keep `APP_ENC_KEY` in a password manager, separate from the dumps.
 - **Updates:** *Admin → Update* shows the installed and latest version with the change list and redeploys the stack through Portainer (webhook or API). Manually: `docker compose -f compose.prod.yaml pull && docker compose -f compose.prod.yaml up -d`. Database migrations run on start.
-- **Monitoring:** `/health` (liveness) and `/health/ready` (Redis, Postgres, Jellyfin) on `127.0.0.1:3081`; Prometheus metrics on `:3081/metrics` and `:3082/metrics` (Bearer `METRICS_TOKEN`). Icinga and Prometheus examples: [docs/monitoring.md](docs/monitoring.md).
+- **Monitoring:** `/health` (liveness) and `/health/ready` (Redis, Postgres, Jellyfin) on `127.0.0.1:3081`; Prometheus metrics on `:3081/metrics` and `:3082/metrics` (Bearer `METRICS_TOKEN`). Icinga and Prometheus examples and an optional Prometheus + Grafana stack with dashboard (`compose.monitoring.yaml`): [docs/monitoring.md](docs/monitoring.md).
 - **Performance:** every API response carries a `Server-Timing` header (`jf` = Jellyfin, `db` = Postgres, `kv` = Redis, `app` = total), the gateway adds `authz` and `upstream`; see them in the browser DevTools under *Network → Timing*. Requests ≥ 500 ms are logged as `slow request`. Browser errors are reported to the backend log and counted in `friendflix_client_errors_total`.
 
 ### Development
@@ -240,7 +240,8 @@ npm run e2e                                     # Playwright: builds the web app
 - `E2E_SKIP_BUILD=1` reuses an existing build; `PW_CHROMIUM=/path/to/chrome` uses a locally installed Chromium.
 - `./scripts/setup-hooks.sh` installs the gitleaks pre-commit hook.
 - Development against an http Authentik: `OIDC_ALLOW_INSECURE=true` (never in production).
-- CI ([.github/workflows/ci.yml](.github/workflows/ci.yml)): lint, typecheck, tests, `npm audit`, e2e, gitleaks and Trivy; images are published by [publish.yml](.github/workflows/publish.yml) only after everything is green.
+- CI ([.github/workflows/ci.yml](.github/workflows/ci.yml)): lint, typecheck, tests, `npm audit`, e2e, OWASP ZAP baseline scan (DAST, rules in `.zap/rules.tsv`), gitleaks and Trivy (results also in code scanning); images are published by [publish.yml](.github/workflows/publish.yml) only after everything is green, with SBOM + provenance attestations and a keyless cosign signature – verification and recommended branch protection: [docs/operations.md](docs/operations.md).
+- Supply-chain checks: OpenSSF Scorecard ([scorecard.yml](.github/workflows/scorecard.yml)), weekly and on every push to `main`. [![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/LetsManu/friendflix/badge)](https://scorecard.dev/viewer/?uri=github.com/LetsManu/friendflix)
 - Translations: German is the source, all other languages live next to it – how to fix or add a language: [docs/i18n.md](docs/i18n.md).
 
 ### Documentation
@@ -250,8 +251,8 @@ npm run e2e                                     # Playwright: builds the web app
 | Installation step by step | [docs/setup.md](docs/setup.md) |
 | Authentik: installation, provider, flows, invitations | [docs/authentik.md](docs/authentik.md) |
 | Jellyfin, request service, ntfy/Discord, web push | [docs/integrations.md](docs/integrations.md) |
-| Backups, restore, firewall, updates, Plan B | [docs/operations.md](docs/operations.md) |
-| Monitoring, metrics, Server-Timing, browser errors | [docs/monitoring.md](docs/monitoring.md) |
+| Backups, restore, firewall, updates, image verification, branch protection, Plan B | [docs/operations.md](docs/operations.md) |
+| Monitoring, metrics, Grafana dashboard, Server-Timing, browser errors | [docs/monitoring.md](docs/monitoring.md) |
 | Offline downloads (platforms, storage, limits) | [docs/downloads.md](docs/downloads.md) |
 | TV mode and phone remote | [docs/tv-mode.md](docs/tv-mode.md) |
 | Chromecast | [docs/cast.md](docs/cast.md) |
