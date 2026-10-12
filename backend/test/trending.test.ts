@@ -8,11 +8,12 @@ let env: TestEnv;
 let s: { cookies: Record<string, string>; csrf: string };
 const uid: Record<string, string> = {};
 
-async function mk(name: string, n: number, disabled = false) {
+async function mk(name: string, n: number, disabled = false, share = true) {
   uid[name] = (await env.pool.query(
     `insert into users(id, authentik_sub, email, name, role, jellyfin_user_id, jellyfin_username, jellyfin_pw_enc, disabled) values (gen_random_uuid(), $1, $2, $1, 'friend', $3, $1, $4, $5) returning id`,
     [name, `${name}@x.de`, hex(100 + n), encrypt(env.ctx.encKey, 'pw'), disabled],
   )).rows[0].id;
+  if (share) await env.pool.query(`insert into user_prefs(user_id, data) values ($1, '{"shareHistory": true}')`, [uid[name]]);
 }
 const play = (name: string, item: string, seconds: number, daysAgo = 0) =>
   env.pool.query("insert into play_seconds(user_id,item_id,day,seconds,item_name) values ($1,$2,current_date - $3::int,$4,'x')", [uid[name], item, daysAgo, seconds]);
@@ -32,12 +33,14 @@ beforeAll(async () => {
   await mk('Tom', 2);
   await mk('Ida', 3);
   await mk('Gone', 4, true);
+  await mk('Nia', 5, false, false); // did not opt in to sharing her history
   // Series A: two episodes, three viewers (Lea twice, only counted once)
   await play('Lea', EP_A1, 600); await play('Lea', EP_A2, 600); await play('Tom', EP_A1, 400); await play('Ida', EP_A2, 400);
   // Movie B: two viewers, more seconds than A's single ones
   await play('Lea', MOV_B, 5000); await play('Tom', MOV_B, 5000);
   // Movie C: single viewer (not me) -> hidden
   await play('Lea', MOV_C, 9000);
+  await play('Nia', MOV_C, 9000); // Nia does not share -> still a single counted viewer
   // Movie D: Lea + disabled user -> single counted viewer -> hidden
   await play('Lea', MOV_D, 900); await play('Gone', MOV_D, 900);
   // too old / too short

@@ -38,7 +38,8 @@ export function reactionRoutes(app: FastifyInstance, ctx: Ctx) {
   const view = async (userId: string, item: ItemDto) => {
     const count = Number((await ctx.db.query<{ n: string }>(
       'select count(*) n from reactions r join users u on u.id = r.user_id where r.item_id = $1 and not u.disabled', [item.id])).rows[0]!.n);
-    if (!isWatched(item)) return { locked: true, count };
+    // a single reaction would reveal that one friend watched it; below 2 the count stays hidden
+    if (!isWatched(item)) return { locked: true, ...(count >= 2 ? { count } : {}) };
     const rows = (await ctx.db.query<{ user_id: string; name: string; emoji: Emoji; comment: string | null; created_at: Date }>(
       `select r.user_id, u.name, r.emoji, r.comment, r.created_at from reactions r join users u on u.id = r.user_id
         where r.item_id = $1 and not u.disabled order by r.created_at desc limit 100`, [item.id])).rows;

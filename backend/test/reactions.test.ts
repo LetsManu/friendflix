@@ -48,7 +48,7 @@ describe('reactions', () => {
   it('locked while unwatched: only the count, nothing else leaks', async () => {
     const r = await get(MOVIE);
     expect(r.statusCode).toBe(200);
-    expect(r.json()).toEqual({ locked: true, count: 1 });
+    expect(r.json()).toEqual({ locked: true }); // a single reaction would reveal who watched it
     expect(r.body).not.toContain('Lea');
     expect(r.body).not.toContain('Spoiler');
   });

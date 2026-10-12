@@ -4,7 +4,7 @@
 
   type Emoji = 'like' | 'funny' | 'wow' | 'sad' | 'love';
   interface Reaction { name: string; emoji: Emoji; comment?: string; mine: boolean; createdAt: string }
-  type Data = { locked: true; count: number } | { locked: false; count: number; summary: Partial<Record<Emoji, number>>; reactions: Reaction[] };
+  type Data = { locked: true; count?: number } | { locked: false; count: number; summary: Partial<Record<Emoji, number>>; reactions: Reaction[] };
 
   /** movie or episode id */
   export let id: string;
@@ -68,7 +68,7 @@
   <section class="reactions panel" aria-labelledby="rx-h">
     <h2 id="rx-h">Reaktionen</h2>
     {#if data.locked}
-      <p class="lock"><Icon name="lock" size={20} /><span>Reaktionen deiner Freunde siehst du, sobald du das gesehen hast ({data.count}).</span></p>
+      <p class="lock"><Icon name="lock" size={20} /><span>Reaktionen deiner Freunde siehst du, sobald du das gesehen hast{#if data.count} ({data.count}){/if}.</span></p>
     {:else}
       <div class="chips" role="group" aria-label="Deine Reaktion">
         {#each EMOJIS as e (e.key)}
