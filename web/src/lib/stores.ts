@@ -1,5 +1,6 @@
 import { writable } from 'svelte/store';
 import { api } from '#lib/api';
+import { syncBadge } from '#lib/badge';
 import { getLocale, locale, remountPage, setLocale, tr, type Locale } from '#lib/i18n';
 
 /** Ids on "Meine Liste" (watchlist). Loaded once, updated optimistically by cards and detail pages. */
@@ -47,16 +48,33 @@ export async function toggleList(id: string, on: boolean): Promise<boolean> {
 }
 
 export interface SubtitleStyle { size: 's' | 'm' | 'l' | 'xl'; color: 'white' | 'yellow' | 'cyan' | 'green'; background: 'none' | 'shadow' | 'semi' | 'solid'; font: 'sans' | 'serif' | 'mono' }
-export interface Prefs { autoplayNext: boolean; autoSkipIntro: boolean; shareHistory: boolean; shareRatings: boolean; hoverTrailers: boolean; hoverClip: boolean; /** detail view: start the title after the preview ran long enough */ autoStartPreview: boolean; audioLang: string; subtitleLang: string; quality: number; stillWatching: boolean; stillWatchingEpisodes: 2 | 3 | 4 | 5; subtitleStyle: SubtitleStyle; spoilerProtection: boolean; /** anime without a series pref: original audio + subtitles in the UI language */ animeOriginal: boolean; weeklyDigest: boolean; ntfyTopic: string; /** UI language of the profile ('' = never chosen, instance default applies) */ language: Locale | '' }
-export const DEFAULT_PREFS: Prefs = { autoplayNext: true, autoSkipIntro: false, shareHistory: false, shareRatings: true, hoverTrailers: true, hoverClip: true, autoStartPreview: true, audioLang: '', subtitleLang: '', quality: 0, stillWatching: true, stillWatchingEpisodes: 3, subtitleStyle: { size: 'm', color: 'white', background: 'semi', font: 'sans' }, spoilerProtection: false, animeOriginal: false, weeklyDigest: true, ntfyTopic: '', language: '' };
+export interface Prefs { autoplayNext: boolean; autoSkipIntro: boolean; shareHistory: boolean; shareRatings: boolean; hoverTrailers: boolean; hoverClip: boolean; /** detail view: start the title after the preview ran long enough */ autoStartPreview: boolean; audioLang: string; subtitleLang: string; quality: number; stillWatching: boolean; stillWatchingEpisodes: 2 | 3 | 4 | 5; subtitleStyle: SubtitleStyle; spoilerProtection: boolean; /** anime without a series pref: original audio + subtitles in the UI language */ animeOriginal: boolean; weeklyDigest: boolean; ntfyTopic: string; /** calm mode: nothing autoplays (billboard, hover previews, detail preview), less motion */ calm: boolean; /** UI language of the profile ('' = never chosen, instance default applies) */ language: Locale | '' }
+export const DEFAULT_PREFS: Prefs = { autoplayNext: true, autoSkipIntro: false, shareHistory: false, shareRatings: true, hoverTrailers: true, hoverClip: true, autoStartPreview: true, audioLang: '', subtitleLang: '', quality: 0, stillWatching: true, stillWatchingEpisodes: 3, subtitleStyle: { size: 'm', color: 'white', background: 'semi', font: 'sans' }, spoilerProtection: false, animeOriginal: false, weeklyDigest: true, ntfyTopic: '', calm: false, language: '' };
 /** Viewing preferences (server-side, follow the user across devices). */
 export const prefs = writable<Prefs>({ ...DEFAULT_PREFS });
+
+/**
+ * Calm mode on the document: `html.calm` plus one injected rule that flattens CSS animations/transitions (the same effect
+ * as prefers-reduced-motion). Autoplay itself is stopped by `calmMode()` in #lib/preview.
+ */
+function applyCalm(on: boolean) {
+  if (typeof document === 'undefined') return;
+  document.documentElement.classList.toggle('calm', on);
+  if (on && !document.getElementById('ff-calm-style')) {
+    const st = document.createElement('style');
+    st.id = 'ff-calm-style';
+    st.textContent = 'html.calm *, html.calm *::before, html.calm *::after { animation-duration: .001ms !important; animation-iteration-count: 1 !important; animation-delay: 0s !important; transition-duration: .001ms !important; scroll-behavior: auto !important; }';
+    document.head.append(st);
+  }
+}
+prefs.subscribe((p) => applyCalm(p.calm === true));
 /** counts saveLanguage calls: a /api/prefs answer that was requested before a language switch must not undo it */
 let langSaves = 0;
 export async function loadPrefs() {
   const before = langSaves;
   try { const p = (await api('/api/prefs')).prefs;
     prefs.update((cur) => ({ ...DEFAULT_PREFS, ...p, subtitleStyle: { ...DEFAULT_PREFS.subtitleStyle, ...p?.subtitleStyle }, ...(langSaves !== before ? { language: cur.language } : {}) })); } catch { /* defaults */ }
+  void syncBadge(); // signed in and on the profile: show the unread count on the app icon (no-op where unsupported)
 }
 /**
  * Saves the viewing preferences. `language` is never sent: it has its own endpoint (saveLanguage), and a full PUT from

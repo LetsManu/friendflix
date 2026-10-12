@@ -92,7 +92,7 @@ describe('capabilities exposure', () => {
   beforeAll(async () => { env = await makeEnv(); });
   afterAll(() => env.close());
 
-  const ALL = { segments: ['intro', 'outro', 'recap', 'preview'], trickplay: true, upcoming: true, subtitleSearch: true, webhooks: true, changeFeed: false, planB: true, subtitleExtract: false };
+  const ALL = { segments: ['intro', 'outro', 'recap', 'preview'], trickplay: true, upcoming: true, subtitleSearch: true, webhooks: true, changeFeed: false, planB: true, subtitleExtract: false, chapters: true };
 
   it('Jellyfin reports everything supported in /api/me and /api/server', async () => {
     const s = await env.login();
@@ -106,8 +106,8 @@ describe('capabilities exposure', () => {
     expect((await env.app.inject({ url: '/api/server' })).statusCode).toBe(401);
   });
   it('whatever the implementation reports is what the client gets (sets become ordered arrays)', async () => {
-    const caps: MediaCapabilities = { segments: new Set(['outro', 'intro']), trickplay: true, upcoming: false, subtitleSearch: false, webhooks: false, changeFeed: true, planB: false, subtitleExtract: true };
-    expect(publicCapabilities(caps)).toEqual({ segments: ['intro', 'outro'], trickplay: true, upcoming: false, subtitleSearch: false, webhooks: false, changeFeed: true, planB: false, subtitleExtract: true });
+    const caps: MediaCapabilities = { segments: new Set(['outro', 'intro']), trickplay: true, upcoming: false, subtitleSearch: false, webhooks: false, changeFeed: true, planB: false, subtitleExtract: true, chapters: false };
+    expect(publicCapabilities(caps)).toEqual({ segments: ['intro', 'outro'], trickplay: true, upcoming: false, subtitleSearch: false, webhooks: false, changeFeed: true, planB: false, subtitleExtract: true, chapters: false });
     const prev = env.ctx.jf.capabilities;
     (env.ctx.jf as { capabilities: MediaCapabilities }).capabilities = caps;
     try {

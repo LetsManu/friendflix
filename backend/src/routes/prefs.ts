@@ -44,6 +44,11 @@ export const prefsSchema = z.object({
   weeklyDigest: z.boolean().default(true),
   /** own ntfy topic for personal push messages ('' = off), account level */
   ntfyTopic: z.string().regex(/^[A-Za-z0-9_-]{0,64}$/).default(''),
+  /**
+   * Calm mode (per profile): nothing plays or moves by itself – no billboard trailer, hover-card preview or detail auto-start
+   * preview (and no sound with them), no animation; the web app checks one shared helper (`calmMode()` in lib/preview.ts).
+   */
+  calm: z.boolean().default(false),
   /** UI language of the profile ('' = never chosen: instance default applies and the first-login picker is shown) */
   language: z.enum(['', ...LANGUAGES]).default(''),
 });

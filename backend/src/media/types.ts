@@ -45,13 +45,15 @@ export interface MediaCapabilities {
    * the server cannot deliver them as WebVTT; PlaybackDto subtitle URLs then point there. false: the gateway path of the DTO.
    */
   subtitleExtract: boolean;
+  /** Block 17 P1: chapter marks (names, optional stills) via chapters(): seek bar marks + the player's "Szenen" panel */
+  chapters: boolean;
 }
 
 /** JSON form of the capabilities (sets as arrays), as sent to the web in /api/me and /api/server. */
 export const publicCapabilities = (c: MediaCapabilities) => ({
   segments: SEGMENT_TYPES.filter((s) => c.segments.has(s)),
   trickplay: c.trickplay, upcoming: c.upcoming, subtitleSearch: c.subtitleSearch, webhooks: c.webhooks, changeFeed: c.changeFeed, planB: c.planB,
-  subtitleExtract: c.subtitleExtract,
+  subtitleExtract: c.subtitleExtract, chapters: c.chapters,
 });
 
 // ---------------------------------------------------------------- DTOs
@@ -181,6 +183,34 @@ export interface ItemQuery {
   minRating?: number;
   person?: string;
 }
+
+// ---- Block 17 D1: media traits (quality chips, browse filter 4K / HDR) -------------------------------------------------------
+/**
+ * What the video / audio of a title looks like (chips "4K", "HDR", "Dolby Vision", "Atmos" ...). Server-neutral summary of the best
+ * video stream and the best audio stream; a series reports its best episode. Optional on the interface: an implementation without
+ * stream details leaves `mediaTraits` / `libraryMediaTraits` out and the web simply shows no chips and no 4K / HDR filter.
+ */
+export interface MediaTraits {
+  /** '4k' (>= 2160p class), 'hd' (>= 720p) or 'sd' */
+  resolution: '4k' | 'hd' | 'sd';
+  /** high dynamic range flavour of the video, null = SDR / unknown */
+  hdr: 'dolbyvision' | 'hdr10plus' | 'hdr10' | 'hlg' | null;
+  /** best audio layout, null = unknown */
+  audio: 'atmos' | 'surround' | 'stereo' | 'mono' | null;
+}
+/** One library item (movie, or episode with its `seriesId`) with its traits: input of the quality index behind the browse filter. */
+export interface ItemMediaTraits { id: string; seriesId?: string; traits: MediaTraits }
+
+// ---- Block 17 P1: chapters + credits (player "Szenen" panel, "Besetzung & Infos") ----------------------------------------------
+/** One chapter mark of a video. `start` in seconds; `name` may be '' (the web then says "Kapitel 3"); `image` = a still (gateway URL). */
+export interface ChapterDto { start: number; name: string; image?: string }
+/**
+ * One credited person of an item. `type` keeps the vocabulary 'Actor' | 'GuestStar' | 'Director' | 'Writer' | 'Producer' | 'Composer' …
+ * (an implementation maps its own roles onto it); `role` is the character name for actors / guest stars.
+ */
+export interface CreditDto { id: string; name: string; role?: string; type: string; image: boolean }
+/** Credits plus the background facts an ItemDto does not carry. Episodes report their own credits (guest stars, director, writer). */
+export interface ItemCreditsDto { people: CreditDto[]; studios: string[]; tags: string[] }
 
 /** Metadata FriendFlix classifies on (e.g. "is this an anime"): genres, tags, production countries. */
 export interface ItemTraits { genres: string[]; tags: string[]; countries: string[] }
@@ -316,6 +346,18 @@ export interface MediaServer {
   availableEpisodes(user: MediaUser, ids: string[]): Promise<Set<string>>;
   /** episode number -> id of the real episodes of one season */
   seasonEpisodeIds(user: MediaUser, seriesId: string, season: number): Promise<Map<number, string>>;
+
+  // ---- Block 17 D1 (optional): stream details. Absent = not supported (no quality chips / 4K + HDR filter).
+  /** traits of one title the viewer can see (series: best episode); null when not visible or unknown */
+  mediaTraits?(user: MediaUser, id: string): Promise<MediaTraits | null>;
+  /** one page of the whole library's traits (admin key, quality index); a short page = the end */
+  libraryMediaTraits?(type: 'Movie' | 'Episode', start: number, limit: number): Promise<ItemMediaTraits[]>;
+
+  // ---- Block 17 P1 (optional): player depth. Absent = fallbacks (credits: people() + itemTraits(); chapters: none).
+  /** chapter marks of a video the viewer can see, sorted by start ([] = none); only called when capabilities.chapters */
+  chapters?(user: MediaUser, id: string): Promise<ChapterDto[]>;
+  /** all credits (incl. guest stars) + studios + tags of an item the viewer can see ("Besetzung & Infos") */
+  credits?(user: MediaUser, id: string): Promise<ItemCreditsDto>;
 
   // ---- user data
   forgetItems(serverUserId?: string): void;
