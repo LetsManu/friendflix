@@ -1,5 +1,11 @@
 # Changelog
 ## [Unreleased]
+### Block 7 – Sprache, Watch-Status, Freunde
+- Audio/subtitle language filter in Filme/Serien ("Ton", "Untertitel", quick toggle "Deutscher Ton"), backed by a background index of all MediaStreams (`item_langs`, every 12 h); the item page lists audio and subtitle languages.
+- Watch status per profile: "Geplant" (Meine Liste) and "Abgebrochen" (leaves Weiterschauen and Nächste Folge), plus derived "Schaue ich gerade"/"Gesehen"; Meine Liste has tabs Geplant | Abgebrochen.
+- Friends strip on the item page: who recommended it to you, friends' stars (only with "Bewertungen teilen") and who watched it (only with "Verlauf teilen").
+- Gemeinsam schauen: titles on participants' lists first ("2× geplant", never who), titles someone dropped or thumbed down are left out.
+- Migration 22: `item_langs`, `dropped`.
 ### Discovery upgrade – Suche, Personen, Filter
 - Search finds people, genres, titles and episodes in grouped sections (`GET /api/search`), a 4-digit query lists titles of that year; loading/error/empty states, recent searches, `/` or Ctrl/Cmd+K focuses the search.
 - Person pages (`/person/<id>`, `GET /api/people/:id`) with the filmography limited to the viewer's library; the item page shows a linked "Besetzung & Crew" row.
