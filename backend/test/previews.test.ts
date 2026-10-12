@@ -28,7 +28,7 @@ const requested: string[] = [];
 const item = (id: string) => ({ Id: id, Name: 'T', Type: 'Movie', RunTimeTicks: 90 * 600_000_000, UserData: {} });
 const itemHandler = (u: URL) => {
   const id = u.pathname.split('/').pop()!;
-  if (id === SECRET && u.searchParams.get('userId') === LEA_JF) return { status: 404 };
+  if (id === SECRET && (u.searchParams.get('userId') === LEA_JF || u.pathname.startsWith(`/Users/${LEA_JF}/`))) return { status: 404 }; // both item paths (compat fallback)
   return { json: item(id) };
 };
 
