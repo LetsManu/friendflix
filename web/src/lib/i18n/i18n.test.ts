@@ -76,8 +76,11 @@ describe('i18n core', () => {
   });
 
   it('missing key → German → key, with a dev warning', async () => {
-    await setLocale('fr'); // French is still empty: German shows through
-    expect(tr('shell.nav.myList')).toBe('Meine Liste');
+    const fr = (await loadLocale('fr')) as { shell: { nav: Record<string, unknown> } };
+    const saved = fr.shell.nav.myList;
+    delete fr.shell.nav.myList; // simulate a key the French file does not have yet: German shows through
+    await setLocale('fr');
+    try { expect(tr('shell.nav.myList')).toBe('Meine Liste'); } finally { fr.shell.nav.myList = saved; }
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
     expect(trDynamic('shell.nav.doesNotExist')).toBe('shell.nav.doesNotExist');
     expect(trDynamic('shell.nav')).toBe('shell.nav'); // a group is not a message
