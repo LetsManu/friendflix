@@ -3,7 +3,8 @@ import { z } from 'zod';
 import type { Ctx } from '../ctx.js';
 import { MediaError, type ItemDto } from '../media/types.js';
 import { clearLive, countLive, getLive, listLive, setLive } from '../live.js';
-import { effectiveRole } from '../roles.js';
+import { isHomeRequest } from '../netaddr.js';
+import { effectiveRole, remoteBitrateCap } from '../roles.js';
 import { requireGrownUp } from '../kids.js';
 import { requireUser } from '../session.js';
 import { playbackHooks } from '../hooks.js';
@@ -277,7 +278,8 @@ export function mediaRoutes(app: FastifyInstance, ctx: Ctx) {
     }).parse(req.body);
     const role = (await effectiveRole(ctx, req.user!.role))!;
     if ((await countLive(ctx, req.user!.id)) >= role.maxStreams) return reply.code(429).send({ error: 'max_streams', max: role.maxStreams });
-    const cap = Math.min(role.maxBitrate, b.maxBitrate ?? role.maxBitrate); // the viewer may lower the quality, never raise it above the role limit
+    // outside the home networks the role's remote cap applies on top; the viewer may lower the quality, never raise it above the limit
+    const cap = Math.min(role.maxBitrate, isHomeRequest(req, ctx.cfg.HOME_NETWORKS) ? Infinity : remoteBitrateCap(role), b.maxBitrate ?? role.maxBitrate);
     // PlaybackInfo and the resume-position/trickplay lookup run in parallel (one Jellyfin /Items call instead of two sequential ones)
     const opts = { maxBitrate: cap, maxHeight: role.maxHeight, startTicks: b.startTicks, audioIndex: b.audioIndex, audioLang: b.audioLang, noDirect: Boolean(role.maxHeight) || (!role.download && ctx.cfg.DIRECT_PLAY_REQUIRES_DOWNLOAD === 'true') };
     const [first, meta] = await Promise.all([ctx.jf.playbackInfo(req.jfUser!, b.itemId, opts), ctx.jf.playMeta(req.jfUser!, b.itemId)]);

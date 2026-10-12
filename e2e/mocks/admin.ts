@@ -207,7 +207,7 @@ export function adminRoute(st: AdminState, m: string, p: string, sp: URLSearchPa
   }
   if ((mm = p.match(/^\/api\/admin\/users\/([^/]+)\/revoke-sessions$/)) && m === 'POST') return J({ revoked: 2 });
   if (p === '/api/admin/roles' && m === 'GET') {
-    return J({ roles: ROLES, invitable: ['friend', 'family', 'guest'], limits: Object.entries(ROLES).map(([role, r], i) => ({ role, label: r.label, builtinLabel: true, requestsPerMonth: i === 0 ? null : 3, isDefault: i === 2, transcoding: i !== 3, maxHeight: i === 1 ? 1080 : null, download: i < 2, maxDownloads: 5, downloadMaxHeight: 720, downloadDays: 30 })) });
+    return J({ roles: ROLES, invitable: ['friend', 'family', 'guest'], limits: Object.entries(ROLES).map(([role, r], i) => ({ role, label: r.label, builtinLabel: true, requestsPerMonth: i === 0 ? null : 3, isDefault: i === 2, transcoding: i !== 3, maxHeight: i === 1 ? 1080 : null, download: i < 2, maxDownloads: 5, downloadMaxHeight: 720, downloadDays: 30, remoteMaxBitrate: role === 'family' ? 8_000_000 : 4_000_000 })) });
   }
   if (/^\/api\/admin\/roles\/[^/]+$/.test(p) && m === 'PUT') return ok();
   if (p === '/api/admin/devices') return J(devicesList(st, sp));

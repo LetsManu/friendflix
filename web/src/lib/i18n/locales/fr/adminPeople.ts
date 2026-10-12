@@ -45,6 +45,8 @@ const dict: Translation<typeof de> = {
     maxHeight: 'Résolution max.',
     heightUnlimited: 'Illimitée',
     heightHint: 'Les originaux 4K sont réduits à cette résolution.',
+    remoteCap: 'Limite hors domicile',
+    remoteCapHint: "Débit maximal lorsque la personne n'est pas sur le réseau domestique (par exemple en mobilité ou chez des amis).",
     allowDownloads: 'Autoriser les téléchargements',
     allowDownloadsHint: "Copies hors ligne sur l'appareil.",
     maxDownloads: 'Téléchargements simultanés',

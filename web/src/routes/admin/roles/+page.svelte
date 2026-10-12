@@ -15,18 +15,19 @@
   import StatusPill from '#lib/ui/StatusPill.svelte';
   import Toggle from '#lib/ui/Toggle.svelte';
 
-  interface Form { perMonth: number | null; unlimited: boolean; transcoding: boolean; maxHeight: string; download: boolean; maxDownloads: number | null; dlHeight: string; days: number | null }
+  interface Form { perMonth: number | null; unlimited: boolean; transcoding: boolean; maxHeight: string; download: boolean; maxDownloads: number | null; dlHeight: string; days: number | null; remoteCap: string }
   interface Card { role: string; label: string; builtinLabel: boolean; isDefault: boolean; form: Form; base: Form }
-  interface Limit { role: string; label: string; builtinLabel?: boolean; requestsPerMonth: number | null; isDefault: boolean; transcoding: boolean; maxHeight: number | null; download?: boolean; maxDownloads?: number | null; downloadMaxHeight?: number | null; downloadDays?: number | null }
+  interface Limit { role: string; label: string; builtinLabel?: boolean; requestsPerMonth: number | null; isDefault: boolean; transcoding: boolean; maxHeight: number | null; download?: boolean; maxDownloads?: number | null; downloadMaxHeight?: number | null; downloadDays?: number | null; remoteMaxBitrate?: number }
 
   const HEIGHTS = [720, 1080, 1440, 2160];
   const DL_HEIGHTS = [480, 720, 1080];
+  const REMOTE_CAPS = [2, 4, 8, 12, 20, 40]; // Mbit/s
   const LIKE_PLAYBACK = 2160; // no extra cap for downloads
   let cards: Card[] | null = null, error: string | null = null;
 
   const toForm = (l: Limit): Form => ({
     perMonth: l.requestsPerMonth ?? 2, unlimited: l.requestsPerMonth === null, transcoding: l.transcoding, maxHeight: l.maxHeight ? String(l.maxHeight) : '',
-    download: Boolean(l.download), maxDownloads: l.maxDownloads ?? 0, dlHeight: l.downloadMaxHeight && DL_HEIGHTS.includes(l.downloadMaxHeight) ? String(l.downloadMaxHeight) : '', days: l.downloadDays ?? 30,
+    download: Boolean(l.download), maxDownloads: l.maxDownloads ?? 0, dlHeight: l.downloadMaxHeight && DL_HEIGHTS.includes(l.downloadMaxHeight) ? String(l.downloadMaxHeight) : '', days: l.downloadDays ?? 30, remoteCap: String(l.remoteMaxBitrate ?? 4_000_000),
   });
   async function load() {
     error = null;
@@ -56,6 +57,7 @@
     if (f.download && int(f.maxDownloads) !== int(b.maxDownloads)) body.maxDownloads = int(f.maxDownloads);
     if (f.dlHeight !== b.dlHeight) body.downloadMaxHeight = f.dlHeight ? Number(f.dlHeight) : LIKE_PLAYBACK;
     if (f.download && int(f.days) !== int(b.days)) body.downloadDays = int(f.days);
+    if (f.remoteCap !== b.remoteCap) body.remoteMaxBitrate = Number(f.remoteCap);
     return body;
   }
   const dirty = (c: Card): boolean => Object.keys(diff(c)).length > 0;
@@ -93,6 +95,12 @@
   });
 
   $: heightOptions = [...HEIGHTS.map((h) => ({ value: String(h), label: `${h}p` })), { value: '', label: $t('adminPeople.roles.heightUnlimited') }];
+  /** the stored value is always selectable, even when it is not one of the presets (set via the API) */
+  const capOptions = (cur: string) => {
+    const vals = REMOTE_CAPS.map((m) => m * 1_000_000);
+    if (cur && !vals.includes(Number(cur))) vals.push(Number(cur));
+    return vals.sort((a, b) => a - b).map((v) => ({ value: String(v), label: `${v / 1_000_000} Mbit/s` }));
+  };
   $: dlOptions = [...DL_HEIGHTS.map((h) => ({ value: String(h), label: `${h}p` })), { value: '', label: $t('adminPeople.roles.likePlayback') }];
 </script>
 
@@ -133,6 +141,7 @@
           <h3 id="g-{c.role}-pb">{$t('adminPeople.roles.playback')}</h3>
           <Toggle label={$t('adminPeople.roles.transcoding')} hint={$t('adminPeople.roles.transcodingHint')} bind:checked={c.form.transcoding} on:change={() => (cards = cards)} />
           <Select label={$t('adminPeople.roles.maxHeight')} options={heightOptions} bind:value={c.form.maxHeight} hint={$t('adminPeople.roles.heightHint')} />
+          <Select label={$t('adminPeople.roles.remoteCap')} options={capOptions(c.form.remoteCap)} bind:value={c.form.remoteCap} hint={$t('adminPeople.roles.remoteCapHint')} />
         </section>
 
         <section aria-labelledby="g-{c.role}-dl">

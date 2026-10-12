@@ -143,6 +143,13 @@ GitHub → *Settings* → *Rules* → *Rulesets* (oder *Branches* → *Branch pr
 - Optional: den Check der CodeQL-Standardeinrichtung (Name erscheint nach dem ersten Lauf) bzw. unter Rulesets **Require code scanning results** für CodeQL.
 - Nicht als Pflicht-Check eintragen: `publish / …` und `Scorecard analysis` (laufen nur bei Push bzw. zeitgesteuert, nie in einem PR – der PR würde ewig warten).
 
+## Bitrate-Limit unterwegs (`HOME_NETWORKS`)
+Jede Rolle hat zusätzlich zur normalen Bitrate-Grenze ein **Limit unterwegs** (Admin → Rollen, Feld „Limit unterwegs“; Standard 4 Mbit/s für Freund, Familie und Gast, 8 Mbit/s für Admin, nie höher als das Rollenlimit). Es gilt, wenn jemand **nicht** im Heimnetz schaut: Der Upload des Servers ist begrenzt, ein Stream über der Leitung ruckelt für alle. Backend (`POST /api/playback/info`) und Gateway (`MaxStreamingBitrate` der Medien-Anfragen) kappen die Bitrate, der Player kann sie nicht erhöhen. Chromecast-Token behalten ihr eigenes Limit; Plan B (`/internal/authz-nginx`) kennt die Client-Adresse nicht und wendet nur das normale Rollenlimit an.
+
+**`HOME_NETWORKS`** (Env, kommagetrennte CIDRs) legt fest, was als Heimnetz gilt. Standard: `10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,127.0.0.0/8,::1/128,fc00::/7,fe80::/10` (RFC1918, Loopback, IPv6 ULA/Link-Local; IPv4-mapped IPv6 wird erkannt). Unbekannte oder nicht auswertbare Adressen zählen als **unterwegs**.
+
+**Client-Adresse:** zuerst `X-Real-IP`, sonst der **letzte** `X-Forwarded-For`-Eintrag (den hängt der eigene Proxy an), sonst der Socket-Peer. Der linkeste Eintrag wird bewusst ignoriert, weil ihn der Client selbst setzt. Ohne beide Header zählt im Backend nur Loopback als Heimnetz; ein Docker-Bridge-Peer gilt als unterwegs. Der Reverse Proxy (NPM) muss deshalb `X-Real-IP` bzw. `X-Forwarded-For` setzen, sonst werden alle Zuschauer gleich behandelt.
+
 ## Plan B: NPM liefert /media/ direkt (auth_request)
 Standard ist das Node-Gateway. Wird es bei vielen parallelen Streams zum Engpass (CPU des `gateway`-Containers, `rate(friendflix_gateway_bytes_total)`), kann NPM/nginx `/media/` selbst ausliefern. Jede Anfrage wird vorher vom Backend freigegeben (`GET /internal/authz-nginx`).
 

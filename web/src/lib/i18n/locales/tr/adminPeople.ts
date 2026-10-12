@@ -45,6 +45,8 @@ const dict: Translation<typeof de> = {
     maxHeight: 'Azami çözünürlük',
     heightUnlimited: 'Sınırsız',
     heightHint: '4K orijinaller bu çözünürlüğe düşürülür.',
+    remoteCap: 'Evin dışındayken sınır',
+    remoteCapHint: 'Kişi ev ağında olmadığında (örneğin mobilde veya arkadaşlarda) azami bit hızı.',
     allowDownloads: 'İndirmelere izin ver',
     allowDownloadsHint: 'Cihazda çevrimdışı kopyalar.',
     maxDownloads: 'Eşzamanlı indirme',

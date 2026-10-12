@@ -150,6 +150,20 @@ test.describe('admin people (desktop)', () => {
       await expect(card.getByText('Nicht gespeichert')).toHaveCount(0);
     });
 
+    test('remote bitrate limit: shows the stored value and saves only that field', async ({ page, api }) => {
+      await page.goto('/admin/roles');
+      const card = page.getByRole('form', { name: 'Freund' });
+      const cap = card.getByRole('combobox', { name: 'Limit unterwegs' });
+      await expect(cap).toHaveValue('4000000');
+      await expect(page.getByRole('form', { name: 'Familie' }).getByRole('combobox', { name: 'Limit unterwegs' })).toHaveValue('8000000');
+      await cap.selectOption('12000000');
+      await card.getByRole('button', { name: 'Speichern' }).click();
+      await expect(toasts(page).getByText('Rolle „Freund“ gespeichert.')).toBeVisible();
+      const put = api.log.find((l) => l.startsWith('PUT /api/admin/roles/friend'))!;
+      expect(put).toContain('"remoteMaxBitrate":12000000');
+      expect(put).not.toContain('requestsPerMonth');
+    });
+
     test('download fields appear with the switch; save failure keeps the edit', async ({ page }) => {
       await page.route('**/api/admin/roles/guest', (r) => r.request().method() === 'PUT' ? r.fulfill({ status: 500, contentType: 'application/json', body: '{"error":"x"}' }) : r.fallback());
       const sent: string[] = [];
