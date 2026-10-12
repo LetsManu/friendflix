@@ -444,6 +444,24 @@ export const MIGRATIONS: string[] = [
   create index if not exists ratings_item on ratings(item_id);
   create index if not exists thumbs_user on thumbs(user_id);
   `,
+  // 22: library audio/subtitle language index (filled by langindex.ts) and per-profile "dropped" titles
+  `
+  create table item_langs (
+    item_id text primary key,
+    type text not null,
+    audio text[] not null default '{}',
+    subs text[] not null default '{}',
+    indexed_at timestamptz not null default now()
+  );
+  create index item_langs_audio on item_langs using gin(audio);
+  create index item_langs_subs on item_langs using gin(subs);
+  create table dropped (
+    profile_id uuid not null references profiles(id) on delete cascade,
+    item_id text not null,
+    dropped_at timestamptz not null default now(),
+    primary key (profile_id, item_id)
+  );
+  `,
 ];
 
 export async function migrate(pool: pg.Pool): Promise<void> {

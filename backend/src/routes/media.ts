@@ -7,6 +7,8 @@ import { effectiveRole } from '../roles.js';
 import { requireUser } from '../session.js';
 import { playbackHooks } from '../hooks.js';
 import { tidyResume } from '../resume.js';
+import type { ItemDto } from '../jellyfin/dto.js';
+import { createHash } from 'node:crypto';
 
 const itemId = z.string().transform((s) => s.replace(/-/g, '').toLowerCase()).pipe(z.string().regex(/^[0-9a-f]{32}$/));
 const psId = z.string().regex(/^[\w-]{8,64}$/);
@@ -26,6 +28,8 @@ const listQuery = z.object({
   year: z.coerce.number().int().min(1900).max(2100).optional(),
   minRating: z.coerce.number().min(0).max(10).optional(),
   person: itemId.optional(),
+  audio: z.string().regex(/^[a-z]{3}$/).optional(), // audio language (ISO 639-2/T), answered from the item_langs index
+  subs: z.string().regex(/^[a-z]{3}$/).optional(),
 });
 
 const reportBody = z.object({
@@ -52,14 +56,101 @@ function wrap<T extends (...a: any[]) => Promise<any>>(fn: T): T {
   }) as T;
 }
 
+/** Items of this profile's "dropped" list (movie or series ids) are hidden from Weiterschauen / Als Nächstes. */
+async function droppedSet(ctx: Ctx, profileId: string): Promise<Set<string>> {
+  return new Set((await ctx.db.query<{ item_id: string }>('select item_id from dropped where profile_id=$1', [profileId])).rows.map((r) => r.item_id));
+}
+const notDropped = (items: ItemDto[], dropped: Set<string>) => (dropped.size ? items.filter((i) => !dropped.has(i.seriesId ?? i.id) && !dropped.has(i.id)) : items);
+
+function shuffle<T>(a: T[]): T[] {
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [a[i], a[j]] = [a[j]!, a[i]!];
+  }
+  return a;
+}
+
+const LANG_CAP = 5000;
+
 export function mediaRoutes(app: FastifyInstance, ctx: Ctx) {
   const pre = { preHandler: requireUser(ctx) };
+
+  /**
+   * Language path of /api/library/items: candidate ids come from the item_langs index, details (and with them visibility and every
+   * other filter) from Jellyfin with the viewer's token, then sorted/paginated here. The merged id order is cached briefly.
+   */
+  async function itemsByLanguage(req: any, q: z.infer<typeof listQuery>): Promise<{ items: ItemDto[]; total: number }> {
+    const start = q.start ?? 0;
+    const limit = Math.min(q.limit ?? 60, 200);
+    const desc = q.desc === 'true';
+    const { audio, subs, start: _s, limit: _l, ...rest } = q;
+    const jfUser = req.jfUser!;
+    const key = `langitems:${jfUser.jellyfin_user_id}:${createHash('sha1').update(JSON.stringify(Object.entries({ ...rest, audio, subs }).sort())).digest('hex')}`;
+    const hit = await ctx.kv.get(key).catch(() => null);
+    if (hit) {
+      try {
+        const ids = JSON.parse(hit) as string[];
+        const page = ids.slice(start, start + limit);
+        const got: ItemDto[] = [];
+        for (let i = 0; i < page.length; i += 200) got.push(...(await ctx.jf.items(jfUser, { ids: page.slice(i, i + 200), types: q.types ?? 'Movie,Series', limit: 200 })).items);
+        const byId = new Map(got.map((i) => [i.id, i]));
+        return { items: page.map((id) => byId.get(id)).filter((x): x is ItemDto => Boolean(x)), total: ids.length };
+      } catch (e) {
+        if (e instanceof JellyfinError) throw e;
+        // corrupt cache entry: recompute
+      }
+    }
+    const wanted = (q.types ?? 'Movie,Series').split(',').filter((t) => t === 'Movie' || t === 'Series');
+    let ids: string[] = [];
+    if (wanted.length) {
+      const where: string[] = ['type = any($1)'];
+      const params: unknown[] = [wanted];
+      if (audio) { params.push([audio]); where.push(`audio @> $${params.length}::text[]`); }
+      if (subs) { params.push([subs]); where.push(`subs @> $${params.length}::text[]`); }
+      ids = (await ctx.db.query<{ item_id: string }>(`select item_id from item_langs where ${where.join(' and ')} order by item_id limit ${LANG_CAP}`, params)).rows.map((r) => r.item_id);
+    }
+    const chunks: string[][] = [];
+    for (let i = 0; i < ids.length; i += 200) chunks.push(ids.slice(i, i + 200));
+    const parts: ItemDto[][] = new Array(chunks.length);
+    let next = 0;
+    await Promise.all(Array.from({ length: Math.min(4, chunks.length) }, async () => {
+      while (next < chunks.length) {
+        const n = next++;
+        parts[n] = (await ctx.jf.items(jfUser, { ...rest, desc: false, ids: chunks[n], limit: 200, start: 0, parentId: rest.parentId })).items;
+      }
+    }));
+    const items = parts.flat();
+    const ts = (i: ItemDto) => (i.premiereDate ? Date.parse(i.premiereDate) || 0 : 0);
+    const sort = q.sort ?? 'SortName';
+    if (sort === 'Random') shuffle(items);
+    else {
+      const cmp = sort === 'CommunityRating' ? (a: ItemDto, b: ItemDto) => (a.communityRating ?? 0) - (b.communityRating ?? 0)
+        : sort === 'PremiereDate' || sort === 'DateCreated' ? (a: ItemDto, b: ItemDto) => ts(a) - ts(b)
+        : (a: ItemDto, b: ItemDto) => a.name.localeCompare(b.name, 'de');
+      items.sort((a, b) => (desc ? -1 : 1) * (cmp(a, b) || a.name.localeCompare(b.name, 'de')));
+    }
+    await ctx.kv.set(key, JSON.stringify(items.map((i) => i.id)), 120).catch(() => undefined);
+    return { items: items.slice(start, start + limit), total: items.length };
+  }
+
+  // Audio/subtitle languages present in the library (codes + counts only, no titles -> nothing visibility-dependent leaks).
+  app.get('/api/library/languages', pre, async () => {
+    const hit = await ctx.kv.get('langs:summary').catch(() => null);
+    if (hit) return JSON.parse(hit) as { audio: Array<{ code: string; count: number }>; subs: Array<{ code: string; count: number }> };
+    const top = async (col: 'audio' | 'subs') =>
+      (await ctx.db.query<{ code: string; count: number }>(`select c as code, count(*)::int as count from item_langs, unnest(${col}) c group by c order by count desc, code limit 20`)).rows;
+    const out = { audio: await top('audio'), subs: await top('subs') };
+    await ctx.kv.set('langs:summary', JSON.stringify(out), 600).catch(() => undefined);
+    return out;
+  });
 
   app.get('/api/library/views', pre, wrap(async (req) => ({ items: await ctx.jf.views(req.jfUser!) })));
 
   app.get('/api/library/items', pre, wrap(async (req) => {
     const q = listQuery.parse(req.query);
-    return ctx.jf.items(req.jfUser!, { ...q, desc: q.desc === 'true' });
+    if (q.audio || q.subs) return itemsByLanguage(req, q);
+    const { audio: _a, subs: _b, ...plain } = q;
+    return ctx.jf.items(req.jfUser!, { ...plain, desc: q.desc === 'true' });
   }));
 
   app.get('/api/library/genres', pre, wrap(async (req) => ({ genres: await ctx.jf.genres(req.jfUser!) })));
@@ -78,7 +169,7 @@ export function mediaRoutes(app: FastifyInstance, ctx: Ctx) {
   app.get('/api/library/resume', pre, wrap(async (req) => {
     const items = await ctx.jf.resume(req.jfUser!);
     const h = await ctx.db.query<{ item_id: string; hidden_at: Date }>('select item_id, hidden_at from resume_hidden where profile_id=$1', [req.profile!.id]);
-    return { items: tidyResume(items, new Map(h.rows.map((r) => [r.item_id, r.hidden_at]))) };
+    return { items: notDropped(tidyResume(items, new Map(h.rows.map((r) => [r.item_id, r.hidden_at]))), await droppedSet(ctx, req.profile!.id)) };
   }));
   // "Remove from Weiterschauen": hides the item for this profile until it is played again (progress itself stays).
   app.delete('/api/library/resume/:id', pre, wrap(async (req) => {
@@ -109,14 +200,15 @@ export function mediaRoutes(app: FastifyInstance, ctx: Ctx) {
     await ctx.db.query('delete from resume_hidden where profile_id=$1 and item_id in ($2,$3)', [req.profile!.id, id, target]);
     return { ok: true };
   }));
-  app.get('/api/library/nextup', pre, wrap(async (req) => ({ items: await ctx.jf.nextUp(req.jfUser!) })));
+  app.get('/api/library/nextup', pre, wrap(async (req) => ({ items: notDropped(await ctx.jf.nextUp(req.jfUser!), await droppedSet(ctx, req.profile!.id)) })));
 
   app.get('/api/items/:id', pre, wrap(async (req) => {
     const id = itemId.parse((req.params as any).id);
     const item = await ctx.jf.item(req.jfUser!, id);
     const inWatchlist = (await ctx.db.query('select 1 from watchlist where profile_id=$1 and item_id=$2', [req.profile!.id, id])).rowCount! > 0;
     const th = await ctx.db.query<{ value: number }>('select value from thumbs where profile_id=$1 and item_id=$2', [req.profile!.id, id]);
-    return { item, inWatchlist, thumb: th.rows[0]?.value ?? 0 };
+    const lr = (await ctx.db.query<{ audio: string[]; subs: string[] }>('select audio, subs from item_langs where item_id=$1', [item.type === 'Episode' && item.seriesId ? item.seriesId : id])).rows[0];
+    return { item, inWatchlist, thumb: th.rows[0]?.value ?? 0, ...(lr ? { langs: { audio: lr.audio, subs: lr.subs } } : {}) };
   }));
   app.get('/api/items/:id/segments', pre, wrap(async (req) => ({ segments: await ctx.jf.segments(req.jfUser!, itemId.parse((req.params as any).id)) })));
   app.get('/api/items/:id/similar', pre, wrap(async (req) => ({ items: await ctx.jf.similar(req.jfUser!, itemId.parse((req.params as any).id)) })));
@@ -153,7 +245,9 @@ export function mediaRoutes(app: FastifyInstance, ctx: Ctx) {
     ids: (await ctx.db.query<{ item_id: string }>('select item_id from watchlist where profile_id=$1', [req.profile!.id])).rows.map((r) => r.item_id),
   }));
   app.post('/api/items/:id/watchlist', pre, wrap(async (req) => {
-    await ctx.db.query('insert into watchlist(profile_id,user_id,item_id) values ($1,$2,$3) on conflict do nothing', [req.profile!.id, req.user!.id, itemId.parse((req.params as any).id)]);
+    const id = itemId.parse((req.params as any).id);
+    await ctx.db.query('insert into watchlist(profile_id,user_id,item_id) values ($1,$2,$3) on conflict do nothing', [req.profile!.id, req.user!.id, id]);
+    await ctx.db.query('delete from dropped where profile_id=$1 and item_id=$2', [req.profile!.id, id]); // planning a title again ends "abgebrochen"
     return { ok: true };
   }));
   app.delete('/api/items/:id/watchlist', pre, wrap(async (req) => {
