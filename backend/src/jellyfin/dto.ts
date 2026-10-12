@@ -33,6 +33,34 @@ export interface ItemDto {
   unplayedCount?: number;
   /** ISO timestamp when media was last added (new episodes for a series) */
   lastAdded?: string;
+  /**
+   * Jellyfin image tags (change whenever the image changes). Sent as `&tag=<tag>` on /media/Items/<id>/Images/<Kind> URLs, they
+   * let the gateway mark the image immutable. Keys are only present when the image exists; `seriesPrimary` is the series poster
+   * of an episode (/media/Items/<seriesId>/Images/Primary). The booleans above stay for older clients.
+   */
+  imageTags?: ImageTags;
+}
+
+export interface ImageTags {
+  primary?: string;
+  backdrop?: string;
+  logo?: string;
+  thumb?: string;
+  seriesPrimary?: string;
+}
+
+const tagStr = (v: unknown) => (typeof v === 'string' && /^[\w-]{1,64}$/.test(v) ? v : undefined);
+
+function imageTags(i: Record<string, any>): ImageTags | undefined {
+  const t: ImageTags = {
+    primary: tagStr(i.ImageTags?.Primary),
+    backdrop: Array.isArray(i.BackdropImageTags) ? tagStr(i.BackdropImageTags[0]) : undefined,
+    logo: tagStr(i.ImageTags?.Logo),
+    thumb: tagStr(i.ImageTags?.Thumb),
+    seriesPrimary: tagStr(i.SeriesPrimaryImageTag),
+  };
+  for (const k of Object.keys(t) as Array<keyof ImageTags>) if (t[k] === undefined) delete t[k];
+  return Object.keys(t).length ? t : undefined;
 }
 
 export function toItemDto(i: Record<string, any>): ItemDto {
@@ -66,6 +94,7 @@ export function toItemDto(i: Record<string, any>): ItemDto {
     childCount: i.ChildCount,
     unplayedCount: ud.UnplayedItemCount,
     lastAdded: i.DateLastMediaAdded,
+    imageTags: imageTags(i),
   };
 }
 

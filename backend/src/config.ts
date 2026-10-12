@@ -93,6 +93,8 @@ const schema = z.object({
   /** POST /api/downloads: license creations per hour and session (rate limit) */
   DOWNLOAD_CREATE_PER_HOUR: z.coerce.number().int().positive().default(20),
   BACKGROUND_JOBS: z.enum(['true', 'false']).default('true'),
+  /** gzip/brotli for JSON API responses >= 1 KB (off when a reverse proxy already compresses) */
+  API_COMPRESSION: z.enum(['true', 'false']).default('true'),
 });
 
 export type Config = z.infer<typeof schema>;

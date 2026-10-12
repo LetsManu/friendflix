@@ -190,26 +190,42 @@ export function createGateway(opts: GatewayOptions): { server: Server; metrics: 
       ...[...m.cast].map(([k, v]) => `friendflix_gateway_cast_requests_total{code="${k}"} ${v}`),
     ].join('\n') + '\n';
 
+  /**
+   * Session -> media credentials, memoised 5 s (denials 2 s). Single flight: the ~30 image/segment requests a page fires right
+   * after the memo expired share ONE backend call. Backend failures (network, 5xx) are not memoised, so the next request retries.
+   */
+  const authInflight = new Map<string, Promise<Authz | null>>();
   async function authorize(cookie: string | undefined): Promise<Authz | null> {
     const sid = /(?:^|;\s*)ff_sid=([\w-]+)/.exec(cookie ?? '')?.[1];
     if (!sid) return null;
     const hit = authCache.get(sid);
     if (hit && hit.exp > Date.now()) return hit.v;
-    let v: Authz | null = null;
-    try {
-      const r = await f(new URL('/internal/authz', opts.backendUrl), {
-        method: 'POST',
-        headers: { 'x-internal-secret': opts.internalSecret, 'content-type': 'application/json' },
-        body: JSON.stringify({ sid }),
-        signal: AbortSignal.timeout(5000),
-      });
-      if (r.ok) v = (await r.json()) as Authz;
-    } catch {
-      v = null;
-    }
-    authCache.set(sid, { exp: Date.now() + (v ? 5_000 : 2_000), v });
-    if (authCache.size > 5000) authCache.clear();
-    return v;
+    const running = authInflight.get(sid);
+    if (running) return running;
+    const p = (async () => {
+      let v: Authz | null = null;
+      let cacheable = true;
+      try {
+        const r = await f(new URL('/internal/authz', opts.backendUrl), {
+          method: 'POST',
+          headers: { 'x-internal-secret': opts.internalSecret, 'content-type': 'application/json' },
+          body: JSON.stringify({ sid }),
+          signal: AbortSignal.timeout(5000),
+        });
+        if (r.ok) v = (await r.json()) as Authz;
+        else if (r.status >= 500) cacheable = false;
+      } catch {
+        v = null;
+        cacheable = false;
+      }
+      if (cacheable) {
+        authCache.set(sid, { exp: Date.now() + (v ? 5_000 : 2_000), v });
+        if (authCache.size > 5000) authCache.clear();
+      }
+      return v;
+    })().finally(() => authInflight.delete(sid));
+    authInflight.set(sid, p);
+    return p;
   }
 
   async function handle(req: IncomingMessage, res: ServerResponse) {
@@ -233,7 +249,9 @@ export function createGateway(opts: GatewayOptions): { server: Server; metrics: 
       count('414');
       return end(res, 414, 'query too long');
     }
+    const t0 = performance.now();
     const auth = await authorize(req.headers.cookie);
+    const authzMs = performance.now() - t0;
     if (!auth) {
       count('401');
       return end(res, 401, 'unauthorized');
@@ -242,7 +260,7 @@ export function createGateway(opts: GatewayOptions): { server: Server; metrics: 
       count('403');
       return end(res, 403, 'forbidden');
     }
-    return forward(req, res, url, path, auth, count);
+    return forward(req, res, url, path, auth, count, false, false, authzMs);
   }
 
   /** 'error' = backend failing (not cached, 503). null = unknown/invalid session or licence. */
@@ -284,7 +302,9 @@ export function createGateway(opts: GatewayOptions): { server: Server; metrics: 
     if (url.search !== '') return fail(400, 'bad request'); // nothing in the query may influence what is served
     const sid = /(?:^|;\s*)ff_sid=([\w-]+)/.exec(req.headers.cookie ?? '')?.[1];
     if (!sid) return fail(401, 'unauthorized');
+    const t0 = performance.now();
     const auth = await authorizeDownload(sid, mm[1]!);
+    const authzMs = performance.now() - t0;
     if (auth === 'error') return fail(503, 'unavailable');
     if (auth === 401) return fail(401, 'unauthorized');
     if (auth === 404) return fail(404, 'not found');
@@ -310,7 +330,7 @@ export function createGateway(opts: GatewayOptions): { server: Server; metrics: 
       if (!path) return fail(403, 'forbidden');
       const target = new URL(path, 'http://x');
       for (const [k, v] of Object.entries(t.query ?? {})) target.searchParams.set(k, v);
-      return forward(req, res, target, path, auth, count, false, true);
+      return forward(req, res, target, path, auth, count, false, true, authzMs);
     }
     return serveFile(req, res, t);
   }
@@ -479,7 +499,9 @@ export function createGateway(opts: GatewayOptions): { server: Server; metrics: 
       return cors(414, 'query too long');
     }
     const tokenHash = sha256(mm[1]!);
+    const t0 = performance.now();
     const auth = await authorizeCast(mm[1]!, ip);
+    const authzMs = performance.now() - t0;
     if (auth === 'error') {
       castCount('503');
       return cors(503, 'unavailable');
@@ -497,10 +519,10 @@ export function createGateway(opts: GatewayOptions): { server: Server; metrics: 
       castCount('403');
       return cors(403, 'forbidden');
     }
-    return forward(req, res, url, path, auth, castCount, true);
+    return forward(req, res, url, path, auth, castCount, true, false, authzMs);
   }
 
-  async function forward(req: IncomingMessage, res: ServerResponse, url: URL, path: string, auth: Authz, countCode: (k: string) => void, cast = false, download = false) {
+  async function forward(req: IncomingMessage, res: ServerResponse, url: URL, path: string, auth: Authz, countCode: (k: string) => void, cast = false, download = false, authzMs = 0) {
     const target = new URL(path, base);
     if (target.origin !== base.origin) return end(res, 403, 'forbidden'); // SSRF guard (defence in depth)
     for (const [k, v] of url.searchParams) {
@@ -537,6 +559,7 @@ export function createGateway(opts: GatewayOptions): { server: Server; metrics: 
     const ac = new AbortController();
     res.on('close', () => ac.abort());
     let up: Response;
+    const tUp = performance.now();
     try {
       up = await f(requestUrl, { method: req.method, headers, signal: ac.signal, redirect: 'manual' });
     } catch {
@@ -554,6 +577,8 @@ export function createGateway(opts: GatewayOptions): { server: Server; metrics: 
       if (v) out[h] = v;
     }
     out['x-content-type-options'] = 'nosniff';
+    // authz = session check (memo hit ~0 ms), upstream = time until Jellyfin's response headers (transcoder start, image resize)
+    out['server-timing'] = `authz;dur=${ms(authzMs)}, upstream;dur=${ms(performance.now() - tUp)}`;
     if (cast) {
       // the URL carries a credential: nothing may be cached (browser or shared), and CORS is open (the receiver has another origin)
       out['cache-control'] = 'no-store';
@@ -562,9 +587,10 @@ export function createGateway(opts: GatewayOptions): { server: Server; metrics: 
       out['cache-control'] = 'no-store'; // licensed content behind a cookie: never stored by a cache, no CORS headers
       out['vary'] = 'Cookie';
     } else if (IMAGE_PATH.test(path) && up.status < 400) {
-      // Images are static per `tag`: let the browser cache them (private: never in shared caches such as NPM).
+      // Images are static per `tag` (Jellyfin's image tag changes with the image): with a tag the URL is immutable, without one
+      // the browser revalidates after a day. Always private: never in shared caches such as NPM (access is per user).
       // Everything else (playlists, segments, streams) stays uncacheable unless Jellyfin says otherwise.
-      out['cache-control'] = 'private, max-age=86400, stale-while-revalidate=604800';
+      out['cache-control'] = hasImageTag(url) ? 'private, max-age=31536000, immutable' : 'private, max-age=86400, stale-while-revalidate=604800';
       out['vary'] = 'Cookie';
     } else {
       out['cache-control'] = (out['cache-control'] ?? 'no-store').replace(/\bpublic\b/i, 'private');
@@ -616,6 +642,10 @@ export function createGateway(opts: GatewayOptions): { server: Server; metrics: 
   server.keepAliveTimeout = 65_000;
   return { server, metrics };
 }
+
+const ms = (v: number) => (Math.round(v * 10) / 10).toString();
+/** a non-empty `tag` query parameter (Jellyfin image tag, hex) marks a versioned image URL */
+const hasImageTag = (url: URL) => /^[\w-]{1,64}$/.test(url.searchParams.get('tag') ?? '');
 
 function end(res: ServerResponse, code: number, body: string, type = 'text/plain', extra: Record<string, string> = {}) {
   res.writeHead(code, { 'content-type': type, ...extra });

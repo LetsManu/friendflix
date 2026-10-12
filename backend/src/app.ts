@@ -4,6 +4,8 @@ import Fastify, { type FastifyInstance } from 'fastify';
 import { ZodError } from 'zod';
 import { timingSafeEqual } from 'node:crypto';
 import type { Ctx } from './ctx.js';
+import { compressJson } from './compress.js';
+import { newTimingStore, serverTimingHeader, timedDb, timedKv, timingStorage, timingSummary, type TimingStore } from './timing.js';
 import { metricsPlugin } from './metrics.js';
 import { adminRoutes, inviteRoutes } from './routes/admin.js';
 import { authRoutes } from './routes/auth.js';
@@ -35,8 +37,26 @@ export interface Extra {
   register?: Array<(app: FastifyInstance, ctx: Ctx) => void | Promise<void>>;
 }
 
+/** requests slower than this are logged (info) with their jf/db/kv breakdown */
+const SLOW_REQUEST_MS = 500;
+
 export async function buildApp(ctx: Ctx, extra: Extra = {}): Promise<FastifyInstance> {
   const app = Fastify({ logger: process.env.NODE_ENV !== 'test', trustProxy: true, bodyLimit: 256 * 1024 });
+  // Server-Timing: Postgres and Redis calls are booked on the current request (Jellyfin: JellyfinClient). Same objects underneath.
+  ctx.db = timedDb(ctx.db);
+  ctx.kv = timedKv(ctx.kv);
+  const timings = new WeakMap<object, TimingStore>();
+  app.addHook('onRequest', (req, _reply, done) => {
+    const store = newTimingStore();
+    timings.set(req, store);
+    timingStorage.run(store, done);
+  });
+  // body parsing may leave the async context of onRequest: re-enter it before the handler runs
+  app.addHook('preValidation', (req, _reply, done) => {
+    const store = timings.get(req);
+    if (store) timingStorage.run(store, done);
+    else done();
+  });
   // Browsers send `content-type: application/json` with an empty body on body-less POST/DELETE (favorite, played,
   // watchlist ...). Fastify rejects that with 400 FST_ERR_CTP_EMPTY_JSON_BODY; treat it as "no body". Everything else
   // still goes through Fastify's own parser (prototype-poisoning protection included).
@@ -59,6 +79,15 @@ export async function buildApp(ctx: Ctx, extra: Extra = {}): Promise<FastifyInst
     reply.header('X-Content-Type-Options', 'nosniff').header('Referrer-Policy', 'same-origin').header('X-Frame-Options', 'DENY')
       .header('Cross-Origin-Resource-Policy', 'same-origin');
     if (reply.getHeader('cache-control') === undefined) reply.header('Cache-Control', 'no-store');
+  });
+  app.addHook('onSend', async (req, reply, payload) => {
+    const store = timings.get(req);
+    if (store) {
+      reply.header('Server-Timing', serverTimingHeader(store));
+      const sum = timingSummary(store);
+      if (sum.totalMs >= SLOW_REQUEST_MS) req.log.info({ url: req.routeOptions.url ?? req.url.split('?')[0], method: req.method, status: reply.statusCode, ...sum }, 'slow request');
+    }
+    return ctx.cfg.API_COMPRESSION === 'false' ? payload : compressJson(req, reply, payload);
   });
   await app.register(cookie);
   await app.register(rateLimit, { global: true, max: 600, timeWindow: '1 minute' });
