@@ -99,11 +99,20 @@ test.describe('kids profile', () => {
     const dlg = page.getByRole('dialog');
     await expect(dlg.getByRole('heading', { name: 'PIN von Tester eingeben' })).toBeVisible();
     await expect(dlg.getByText('Zum Verlassen des Kinderprofils ist die PIN des Hauptprofils nötig.')).toBeVisible();
+    await expect(page.getByRole('button', { name: 'PIN vergessen?' })).toHaveCount(0); // no reset from a kids profile
     await page.keyboard.type('2222');
     await expect(dlg.getByRole('alert')).toHaveText('Falsche PIN. Bitte noch einmal versuchen.');
     await page.keyboard.type('1111');
     await expect(page).toHaveURL(/\/search$/);
     expect(tries).toBe(2);
+  });
+
+  test('a refused PIN reset is explained on the profile picker', async ({ page }) => {
+    await page.addInitScript(noIntro);
+    await page.goto('/profiles?pinReset=kids');
+    await expect(page.getByRole('alert')).toContainText('an ein Kinderprofil gebunden');
+    await page.goto('/profiles?pinReset=stale');
+    await expect(page.getByRole('alert')).toContainText('nicht frisch genug');
   });
 
   test('owner creates a kids profile with an age rating; hint when no PIN guards it', async ({ page, api }) => {

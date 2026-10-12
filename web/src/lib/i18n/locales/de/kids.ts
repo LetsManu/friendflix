@@ -32,6 +32,8 @@ export default {
     back: 'Zurück zu Kids',
   },
   profiles: {
+    resetBlocked: 'Auf einem Gerät, das an ein Kinderprofil gebunden ist, lässt sich die PIN nicht zurücksetzen. Melde dich dafür auf einem anderen Gerät neu an.',
+    resetStale: 'Die PIN wurde nicht zurückgesetzt: Die Anmeldung war nicht frisch genug. Bitte melde dich über „PIN vergessen?“ erneut an.',
     toggle: 'Kinderprofil',
     toggleHint: 'Nur Titel bis zur gewählten Altersfreigabe, eine eigene Kinder-Startseite, keine Freunde, Partys, Kommentare oder Anfragen.',
     rating: 'Altersfreigabe',

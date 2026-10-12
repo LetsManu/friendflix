@@ -34,6 +34,8 @@ const dict: Translation<typeof de> = {
     back: 'Retour à Kids',
   },
   profiles: {
+    resetBlocked: 'Le code PIN ne peut pas être réinitialisé sur un appareil lié à un profil enfant. Reconnecte-toi sur un autre appareil pour le faire.',
+    resetStale: 'Le code PIN n’a pas été réinitialisé : la connexion n’était pas assez récente. Reconnecte-toi via « Code PIN oublié ? ».',
     toggle: 'Profil enfant',
     toggleHint: 'Uniquement les titres jusqu’à la classification choisie, une page d’accueil enfant, pas d’amis, de soirées, de commentaires ni de demandes.',
     rating: 'Classification par âge',

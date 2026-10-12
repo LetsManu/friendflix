@@ -106,8 +106,11 @@ export function prefsRoutes(app: FastifyInstance, ctx: Ctx) {
     for (const k of ACCOUNT_KEYS) delete viewing[k];
     // `onboarded` (stored next to the viewing prefs, not part of them) survives a full save: a settings form never brings /welcome back
     if (await profileOnboarded(ctx, req.profile!.id)) viewing.onboarded = true;
+    // merged in SQL as well: a PUT /api/prefs/onboarded that lands between the read above and this write must not be lost
     await ctx.db.query(
-      `insert into profile_prefs(profile_id, data) values ($1,$2) on conflict (profile_id) do update set data = excluded.data, updated_at = now()`,
+      `insert into profile_prefs(profile_id, data) values ($1,$2) on conflict (profile_id) do update
+         set data = excluded.data || case when profile_prefs.data->'onboarded' = 'true'::jsonb then '{"onboarded": true}'::jsonb else '{}'::jsonb end,
+             updated_at = now()`,
       [req.profile!.id, JSON.stringify(viewing)],
     );
     if (!stored) {

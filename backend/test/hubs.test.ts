@@ -150,6 +150,18 @@ describe('brand hubs: viewer', () => {
     await call(admin, 'PUT', `/api/admin/hubs/${ids.anime}`, { name: 'Anime & Co', source: 'genre', sourceValue: 'Anime', enabled: true });
   });
 
+  it('tile artwork only for viewers who may see the image item (else the gradient tile)', async () => {
+    const before = (await env.pool.query('select image_item_id, image_kind from brand_hubs where id=$1', [ids.anime])).rows[0];
+    await env.pool.query("update brand_hubs set image_item_id=$2, image_kind='Primary' where id=$1", [ids.anime, SECRET]); // Bea may not open SECRET
+    const tile = async (s: Sess) => (await call(s, 'GET', '/api/hubs')).json().hubs.find((h: any) => h.id === ids.anime);
+    expect((await tile(admin)).imageUrl).toContain(`/${SECRET}/Images/Primary`);
+    expect(await tile(bea)).toMatchObject({ name: 'Anime & Co' });
+    expect((await tile(bea)).imageUrl).toBeUndefined();
+    expect((await call(bea, 'GET', `/api/hubs/${ids.anime}`)).json().hub.imageUrl).toBeUndefined();
+    expect((await call(admin, 'GET', `/api/hubs/${ids.anime}`)).json().hub.imageUrl).toContain(SECRET);
+    await env.pool.query('update brand_hubs set image_item_id=$2, image_kind=$3 where id=$1', [ids.anime, before.image_item_id, before.image_kind]);
+  });
+
   it('hub page: header and rows, filtered by the user access', async () => {
     const a = (await call(admin, 'GET', `/api/hubs/${ids.anime}`)).json();
     expect(a.hub.name).toBe('Anime & Co');

@@ -6,6 +6,7 @@ import { hashPin, verifyPin } from '../crypto.js';
 import { MAX_PROFILES, ProfileError, createProfile, deleteProfile, getProfile, listProfiles, publicProfile, setDeviceKids } from '../profiles.js';
 import { COOKIE, rand, requireUser, saveSession, type Session } from '../session.js';
 import type { ProfileRow } from '../types.js';
+import { policyChanged } from '../hooks.js';
 import { applyRole } from '../users.js';
 import { forgetAuth } from './internal.js';
 import { renamePeerSid } from './tv.js';
@@ -118,6 +119,7 @@ export function profileRoutes(app: FastifyInstance, ctx: Ctx) {
           await ctx.db.query('update profiles set kids=$2, kids_max_rating=$3 where id=$1', [p.id, p.kids, p.kids_max_rating]);
           return reply.code(502).send({ error: 'jellyfin' });
         }
+        await policyChanged(ctx, u.jellyfin_user_id!); // cached rows / hubs / items of the old policy must not be served again
         await audit(ctx, req.user!.id, 'profile.kids', p.id, { kids: u.kids, maxRating: u.kids_max_rating });
       }
       return { profile: { ...publicProfile(u), hasPin: Boolean(u.pin_hash), active: u.id === req.profile?.id } };

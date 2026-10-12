@@ -4,6 +4,7 @@ import { audit } from '../audit.js';
 import type { Ctx } from '../ctx.js';
 import { JellyfinError } from '../jellyfin/client.js';
 import { toItemDto, type ItemDto } from '../jellyfin/dto.js';
+import { onPolicyChange } from '../hooks.js';
 import { requireAdmin, requireUser } from '../session.js';
 import type { JfUser } from '../types.js';
 import { id32, wrap, type WrapOptions } from './_shared.js';
@@ -85,6 +86,17 @@ export function hubRoutes(app: FastifyInstance, ctx: Ctx) {
     return p;
   }
 
+  /**
+   * The hub as a viewer sees it: the tile image only when the viewer may see the image's item (a kids profile or a capped role
+   * must not get the artwork of a title it cannot open); otherwise the client draws the gradient tile. ctx.jf.item is memoized.
+   */
+  async function viewerHub(user: JfUser, h: HubRow) {
+    const pub = publicHub(h);
+    if (!pub.imageUrl || !h.image_item_id) return pub;
+    const ok = await ctx.jf.item(user, h.image_item_id).then(() => true, () => false);
+    return ok ? pub : { ...pub, imageUrl: undefined };
+  }
+
   const loadHub = async (id: string, onlyEnabled = true): Promise<HubRow | undefined> =>
     (await ctx.db.query<HubRow>(`select ${hubCols} from brand_hubs where id = $1 ${onlyEnabled ? 'and enabled' : ''}`, [id])).rows[0];
   const uuid = z.string().uuid();
@@ -93,7 +105,7 @@ export function hubRoutes(app: FastifyInstance, ctx: Ctx) {
   app.get('/api/hubs', pre, wrap(async (req) => {
     const hubs = (await ctx.db.query<HubRow>(`select ${hubCols} from brand_hubs where enabled order by sort_order, created_at limit ${MAX_HUBS}`)).rows;
     const ok = await Promise.all(hubs.map((h) => hasItems(req.jfUser!, h).catch(() => false)));
-    return { hubs: hubs.filter((_, i) => ok[i]).map(publicHub) };
+    return { hubs: await Promise.all(hubs.filter((_, i) => ok[i]).map((h) => viewerHub(req.jfUser!, h))) };
   }));
 
   app.get('/api/hubs/:id', pre, wrap(async (req, reply) => {
@@ -119,7 +131,7 @@ export function hubRoutes(app: FastifyInstance, ctx: Ctx) {
     ].filter((r) => r.items.length);
     // the header billboard: a title with a backdrop (newest first)
     const featured = [...news.items, ...popular!.items].find((i) => i.backdrop) ?? news.items[0];
-    return { hub: publicHub(hub), total: news.total, featured, rows };
+    return { hub: await viewerHub(user, hub), total: news.total, featured, rows };
   }, guard));
 
   /** A–Z paging */
@@ -137,6 +149,10 @@ export function hubRoutes(app: FastifyInstance, ctx: Ctx) {
 
   // ---- Extras tab: special features + local trailers (visibility = the user can open the item) ----
   const extrasMemo = new Map<string, { exp: number; p: Promise<Array<ItemDto & { kind: 'trailer' | 'extra' }>> }>();
+  // a kids flag / age cap change: what this Jellyfin user may see is different now
+  onPolicyChange(ctx, (jfId) => {
+    for (const m of [visible, extrasMemo] as Array<Map<string, unknown>>) for (const k of [...m.keys()]) if (k.startsWith(`${jfId}|`)) m.delete(k);
+  });
   app.get('/api/items/:id/extras/all', pre, wrap(async (req) => {
     const id = id32.parse((req.params as { id: string }).id);
     const user = req.jfUser!;

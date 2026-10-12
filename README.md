@@ -263,7 +263,7 @@ npm run e2e                                     # Playwright: builds the web app
 - Jellyfin, Seerr and Authentik APIs differ between versions – after upgrades see [docs/operations.md](docs/operations.md) and [docs/integrations.md](docs/integrations.md).
 - Profiles are hidden Jellyfin users: turn off Seerr's automatic Jellyfin user import so they do not show up there.
 - With Intel QSV/VAAPI, switch off "VPP Tone mapping" in Jellyfin if the driver has no HDR support; otherwise 4K HDR titles fail.
-- Kids profiles are a parental guard, not a lock against someone who knows the account login: signing in again via "Forgot PIN?" (`/auth/login?resetPin=1`) resets the owner PIN. Keep the Authentik login (and its second factor) away from the kids. If no PIN is set at all, leaving a kids profile is allowed and the owner sees a hint to set one.
+- Kids profiles are a parental guard, not a lock against someone who knows the account login. The owner PIN is reset with "Forgot PIN?" (`/auth/login?resetPin=1`): it needs a fresh sign-in at Authentik (checked via the token's `auth_time`) and is refused on any device that is tied to a kids profile – the owner resets it from their own device. Keep the Authentik login (and its second factor) away from the kids. If no PIN is set at all, leaving a kids profile is allowed and the owner sees a hint to set one.
 
 ### License
 

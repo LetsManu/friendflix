@@ -34,6 +34,8 @@ const dict: Translation<typeof de> = {
     back: 'Wróć do Kids',
   },
   profiles: {
+    resetBlocked: 'Na urządzeniu powiązanym z profilem dziecka nie można zresetować PIN-u. Zaloguj się ponownie na innym urządzeniu.',
+    resetStale: 'PIN nie został zresetowany: logowanie nie było wystarczająco świeże. Zaloguj się ponownie przez „Nie pamiętasz PIN-u?”.',
     toggle: 'Profil dziecka',
     toggleHint: 'Tylko tytuły do wybranej kategorii wiekowej, własna strona startowa dla dzieci, bez znajomych, imprez, komentarzy i próśb.',
     rating: 'Kategoria wiekowa',

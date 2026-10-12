@@ -20,6 +20,8 @@
   let manage = false, loadErr = '';
   /** kids profile this session is locked to (switching away needs a PIN); account has a kids profile but no owner PIN */
   let kidsLock: string | null = null, kidsUnguarded = false;
+  /** /auth/login?resetPin=1 was refused: 'kids' = this device is locked to a kids profile, 'stale' = the IdP did not ask for the login again */
+  let resetNote: 'kids' | 'stale' | null = null;
   let pinFor: Profile | null = null, pinErr = '', pinBusy = false, pinOwner = false;
   const KIDS_RATINGS = [0, 6, 12] as const;
   const ratingKey = (n: number) => `kids.profiles.rating${n}` as TKey;
@@ -43,6 +45,8 @@
   onMount(async () => {
     const sp = new URLSearchParams(location.search);
     if (sp.get('manage') === '1') manage = true;
+    const pr = sp.get('pinReset');
+    if (pr === 'kids' || pr === 'stale') resetNote = pr;
     await load();
     // avatar menu "switch to …": pick that profile right away (asks for the PIN when it has one)
     const pick = sp.get('pick'), p = pick ? profiles.find((x) => x.id === pick) : undefined;
@@ -147,6 +151,7 @@
 <span class="brand" aria-hidden="true"><Logo wordmark size={30} /></span>
 <div class="wrap" inert={!!pinFor || !!ed}>
   <h1>{manage ? $t('account.profiles.manage') : $t('account.profiles.who')}</h1>
+  {#if resetNote}<p class="err" role="alert">{resetNote === 'kids' ? $t('kids.profiles.resetBlocked') : $t('kids.profiles.resetStale')}</p>{/if}
   {#if loadErr}<p class="err" role="alert">{loadErr} <button class="sec" on:click={load}>{$t('common.retry')}</button></p>{/if}
   {#if !loaded}
     <div class="grid2"><div class="skeleton sk"></div><div class="skeleton sk"></div></div>
@@ -184,7 +189,8 @@
     <div class="box">
       <span class="face sm" style="background:{avatarBg(pinFor.avatar)}">{initial(pinFor.name)}</span>
       <PinPad title={pinOwner ? $t('kids.profiles.ownerPinTitle', { name: owner?.name ?? '' }) : $t('account.profiles.pinFor', { name: pinFor.name })} hint={pinOwner ? $t('kids.profiles.ownerPinHint') : ''} error={pinErr} busy={pinBusy} on:submit={(e) => pinFor && choose(pinFor, e.detail)} on:cancel={() => (pinFor = null)} />
-      {#if pinFor.isOwner || pinOwner}<button type="button" class="sec forgot" on:click={() => (location.href = '/auth/login?resetPin=1')}>{$t('account.profiles.forgotPin')}</button>{/if}
+      <!-- never offered while leaving a kids profile (the server refuses the reset on a kid-locked device anyway) -->
+      {#if pinFor.isOwner && !pinOwner && !kidsLock}<button type="button" class="sec forgot" on:click={() => (location.href = '/auth/login?resetPin=1')}>{$t('account.profiles.forgotPin')}</button>{/if}
     </div>
   </div>
 {/if}

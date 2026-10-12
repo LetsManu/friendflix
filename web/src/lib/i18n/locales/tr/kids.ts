@@ -34,6 +34,8 @@ const dict: Translation<typeof de> = {
     back: 'Kids’e dön',
   },
   profiles: {
+    resetBlocked: 'Çocuk profiline bağlı bir cihazda PIN sıfırlanamaz. Bunun için başka bir cihazda yeniden oturum aç.',
+    resetStale: 'PIN sıfırlanmadı: oturum açma yeterince yeni değildi. Lütfen “PIN’i mi unuttun?” ile yeniden oturum aç.',
     toggle: 'Çocuk profili',
     toggleHint: 'Yalnızca seçilen yaş sınırına kadar olan içerikler, ayrı bir çocuk ana sayfası; arkadaşlar, partiler, yorumlar veya istekler yok.',
     rating: 'Yaş sınırı',

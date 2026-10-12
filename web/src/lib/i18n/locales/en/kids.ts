@@ -34,6 +34,8 @@ const dict: Translation<typeof de> = {
     back: 'Back to Kids',
   },
   profiles: {
+    resetBlocked: 'The PIN cannot be reset on a device that is tied to a kids profile. Sign in again on another device to do that.',
+    resetStale: 'The PIN was not reset: the sign-in was not fresh enough. Please sign in again via “Forgot PIN?”.',
     toggle: 'Kids profile',
     toggleHint: 'Only titles up to the chosen age rating, a kids home page of its own, no friends, parties, comments or requests.',
     rating: 'Age rating',

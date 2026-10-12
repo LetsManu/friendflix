@@ -34,6 +34,8 @@ const dict: Translation<typeof de> = {
     back: 'Volver a Kids',
   },
   profiles: {
+    resetBlocked: 'El PIN no se puede restablecer en un dispositivo vinculado a un perfil infantil. Inicia sesión de nuevo en otro dispositivo para hacerlo.',
+    resetStale: 'El PIN no se ha restablecido: el inicio de sesión no era lo bastante reciente. Vuelve a iniciar sesión con «¿Has olvidado el PIN?».',
     toggle: 'Perfil infantil',
     toggleHint: 'Solo títulos hasta la clasificación por edad elegida, una página de inicio infantil propia, sin amigos, fiestas, comentarios ni solicitudes.',
     rating: 'Clasificación por edad',

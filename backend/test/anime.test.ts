@@ -143,20 +143,22 @@ describe('episode comments', () => {
     expect(f.json().spoiler).toBe(false); // own comments are never hidden
     expect((await env.pool.query('select spoiler from episode_comments where id=$1', [f.json().id])).rows[0].spoiler).toBe(true);
   });
-  it('unwatched reader: other people\'s spoiler comments come without body until revealed', async () => {
-    // admin comment was not flagged; flag it like an unwatched author's would be
-    await env.pool.query('update episode_comments set spoiler = true where id=$1', [cid]);
+  it('unwatched reader: every comment of others comes without body until revealed, also one by an author who watched it', async () => {
+    // the admin watched EP1 when writing (stored spoiler flag false): exactly the comment that spoils, so it is hidden all the same
+    expect((await env.pool.query('select spoiler from episode_comments where id=$1', [cid])).rows[0].spoiler).toBe(false);
     const l = (await req(friend, 'GET', url())).json();
     expect(l.watched).toBe(false);
     const c = l.comments.find((x: any) => x.id === cid);
     expect(c).toMatchObject({ spoiler: true, name: 'Admin', mine: false, canDelete: false });
     expect(c.body).toBeUndefined();
     expect(JSON.stringify(l)).not.toContain('Plot twist');
+    expect(l.comments.find((x: any) => x.mine)).toMatchObject({ spoiler: false, body: 'Ich habe es noch nicht gesehen' }); // own: never hidden
     const rev = (await req(friend, 'GET', url() + '?reveal=1')).json();
     expect(rev.comments.find((x: any) => x.id === cid).body).toContain('Plot twist');
-    // the author (who watched) sees everything
+    // a reader who watched it sees everything, also comments of people who had not watched it
     const a = (await req(admin, 'GET', url())).json();
     expect(a.watched).toBe(true);
+    expect(a.comments).toHaveLength(2);
     expect(a.comments.every((x: any) => !x.spoiler && x.body)).toBe(true);
   });
   it('only author or admin may delete; deleted comments vanish', async () => {
@@ -166,7 +168,17 @@ describe('episode comments', () => {
     expect((await req(friend, 'DELETE', `/api/comments/${mine.id}`)).json()).toEqual({ ok: true });
     expect((await req(admin, 'GET', url())).json().comments.some((x: any) => x.id === mine.id)).toBe(false);
     const f2 = await req(friend, 'POST', url(), { body: 'noch eins' });
-    expect((await req(admin, 'DELETE', `/api/comments/${f2.json().id}`)).statusCode).toBe(200); // admin
+    // another profile of the admin account is no moderator: no delete button, 403
+    const pr = await req(admin, 'POST', '/api/profiles', { name: 'Gast2' });
+    expect(pr.statusCode, pr.body).toBe(201);
+    const sw = await req(admin, 'POST', `/api/profiles/${pr.json().profile.id}/select`, {});
+    const other = { cookies: { ff_sid: sw.cookies.find((c) => c.name === 'ff_sid')!.value }, csrf: admin.csrf };
+    expect((await req(other, 'GET', url())).json().comments.find((x: any) => x.id === f2.json().id).canDelete).toBe(false);
+    expect((await req(other, 'DELETE', `/api/comments/${f2.json().id}`)).statusCode).toBe(403);
+    const back = await req(other, 'POST', `/api/profiles/${(await env.pool.query("select id from users where name='Admin'")).rows[0].id}/select`, {});
+    admin = { cookies: { ff_sid: back.cookies.find((c) => c.name === 'ff_sid')!.value }, csrf: admin.csrf };
+    expect((await req(admin, 'GET', url())).json().comments.find((x: any) => x.id === f2.json().id).canDelete).toBe(true);
+    expect((await req(admin, 'DELETE', `/api/comments/${f2.json().id}`)).statusCode).toBe(200); // admin on the owner profile
     expect((await req(admin, 'DELETE', `/api/comments/${f2.json().id}`)).statusCode).toBe(404);
   });
   it('disabled users and guests are not part of the friend circle', async () => {

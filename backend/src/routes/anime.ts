@@ -223,15 +223,20 @@ export function animeRoutes(app: FastifyInstance, ctx: Ctx) {
       from episode_comments c join users u on u.id = c.user_id join profiles p on p.id = c.profile_id
      where c.item_id = $1 and c.deleted_at is null and not u.disabled and u.role <> 'guest'`;
 
-  /** A spoiler comment of someone else is hidden for a reader who has not watched the title (own comments are never hidden). */
+  /** moderation: an admin account acting as its owner profile (another profile of an admin's account is a normal reader) */
+  const moderator = (req: any) => req.user!.role === 'admin' && Boolean(req.profile?.is_owner);
+  /**
+   * Every comment of somebody else is hidden from a reader who has not watched the title – whatever the author's own watched
+   * state was (a comment written after watching is exactly the one that spoils). Own comments are never hidden.
+   */
   const view = (row: CommentRow, req: any, watched: boolean, reveal: boolean) => {
     const mine = row.profile_id === req.profile!.id;
-    const hidden = !mine && !watched && row.spoiler;
+    const hidden = !mine && !watched;
     return {
       id: row.id, name: row.name, mine, spoiler: hidden, createdAt: row.created_at.toISOString(),
       // a hidden body only leaves the server when the reader asks for it ("Spoiler – trotzdem zeigen")
       ...(hidden && !reveal ? {} : { body: row.body }),
-      canDelete: mine || req.user!.role === 'admin',
+      canDelete: mine || moderator(req),
     };
   };
 
@@ -268,8 +273,8 @@ export function animeRoutes(app: FastifyInstance, ctx: Ctx) {
     if (!cid.success) return reply.code(404).send({ error: 'not_found' });
     const row = (await ctx.db.query<{ profile_id: string }>('select profile_id from episode_comments where id=$1 and deleted_at is null', [cid.data])).rows[0];
     if (!row) return reply.code(404).send({ error: 'not_found' });
-    // author (the profile that wrote it) or an admin
-    if (row.profile_id !== req.profile!.id && req.user!.role !== 'admin') return reply.code(403).send({ error: 'forbidden' });
+    // author (the profile that wrote it) or an admin on the owner profile
+    if (row.profile_id !== req.profile!.id && !moderator(req)) return reply.code(403).send({ error: 'forbidden' });
     await ctx.db.query('update episode_comments set deleted_at = now() where id=$1', [cid.data]);
     return { ok: true };
   });

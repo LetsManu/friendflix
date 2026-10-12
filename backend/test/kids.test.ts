@@ -144,6 +144,31 @@ describe('kids profiles', () => {
     expect(jf.policy.get(await jfIdOf(tom.id))).toMatchObject({ MaxParentalRating: null, BlockUnratedItems: [] });
   });
 
+  it('turning kids mode on drops the caches of the old policy (item memo, because rows, trending, simulcast, hub artwork)', async () => {
+    const jf = parentalJellyfin();
+    env = envRef = await makeEnv(jf.routes);
+    const s = await env.login();
+    const ownerId = (await call(s, 'GET', '/api/me')).json().profile.id;
+    const tom = await mkProfile(s, { name: 'Tom' });
+    const jfid = await jfIdOf(tom.id);
+    await env.pool.query("insert into brand_hubs(name, source_kind, source_value, image_item_id, image_kind, sort_order, enabled) values ('Nacht','genre','Horror',$1,'Primary',0,true)", [hex('c')]);
+    let t = await switchTo(s, tom.id);
+    // Tom (no cap yet) loads the FSK 16 title and the hub with its artwork: both memoised
+    expect((await call(t, 'GET', `/api/items/${hex('c')}`)).statusCode).toBe(200);
+    expect((await call(t, 'GET', '/api/hubs')).json().hubs[0].imageUrl).toContain(hex('c'));
+    await env.kv.set(`trend:${jfid}:x`, '[]', 600);
+    await env.kv.set(`simulcast:${jfid}`, '[]', 600);
+    const ver = await env.kv.get(`jfud:${jfid}`);
+    const o = await switchTo(t, ownerId);
+    expect((await call(o, 'PATCH', `/api/profiles/${tom.id}`, { kids: true, maxRating: 6 })).statusCode).toBe(200);
+    expect(await env.kv.get(`trend:${jfid}:x`)).toBeNull();
+    expect(await env.kv.get(`simulcast:${jfid}`)).toBeNull();
+    expect(await env.kv.get(`jfud:${jfid}`)).not.toBe(ver); // "Weil du …" rows key on this version
+    t = await switchTo(o, tom.id);
+    expect((await call(t, 'GET', `/api/items/${hex('c')}`)).statusCode).toBe(404); // not the memoised 200 of a second ago
+    expect((await call(t, 'GET', '/api/hubs')).json().hubs[0].imageUrl).toBeUndefined();
+  });
+
   it('a failing Jellyfin policy write rolls the kids flag back (502)', async () => {
     const jf = parentalJellyfin();
     let fail = false;
@@ -320,6 +345,19 @@ describe('kids profiles', () => {
     expect((await env.app.inject({ method: 'POST', url: '/api/tv/claim', payload: { code: c.code, pollToken: c.pollToken } })).statusCode).toBe(403);
   });
 
+  it('a settings save racing the end of /welcome never drops the onboarded flag', async () => {
+    env = envRef = await makeEnv(parentalJellyfin().routes);
+    const s = await env.login();
+    const kid = await mkProfile(s, { name: 'Mia', kids: true });
+    const k = await switchTo(s, kid.id);
+    for (let i = 0; i < 15; i++) {
+      await env.pool.query("update profile_prefs set data = data - 'onboarded' where profile_id=$1", [kid.id]);
+      const [a, b] = await Promise.all([call(k, 'PUT', '/api/prefs', { autoplayNext: i % 2 === 0 }), call(k, 'PUT', '/api/prefs/onboarded', { onboarded: true })]);
+      expect([a.statusCode, b.statusCode]).toEqual([200, 200]);
+      expect((await env.pool.query("select data->>'onboarded' v, data->>'autoplayNext' a from profile_prefs where profile_id=$1", [kid.id])).rows[0]).toEqual({ v: 'true', a: String(i % 2 === 0) });
+    }
+  });
+
   it('requires a login for the new endpoint', async () => {
     env = envRef = await makeEnv(parentalJellyfin().routes);
     expect((await env.app.inject({ method: 'PUT', url: '/api/prefs/onboarded', payload: { onboarded: true } })).statusCode).toBe(401);
@@ -346,6 +384,7 @@ describe('kids guard on social, Seerr, stats and account routes', () => {
       ['GET', '/api/nowplaying'], ['GET', '/api/friends'], ['POST', '/api/match', {}], ['POST', '/api/recommend', {}], ['GET', '/api/recommendations'],
       ['POST', '/api/recommendations/seen', {}], ['GET', '/api/library/friends-rated'], ['GET', '/api/notifications'], ['POST', '/api/notifications/read'],
       ['GET', '/api/devices'], ['POST', '/api/push/subscribe', {}], ['POST', '/api/push/test', {}],
+      ['GET', '/api/reminders'], ['GET', '/api/reminders/keys'], ['POST', '/api/reminders', {}], ['DELETE', '/api/reminders/1'], ['GET', '/api/library/trending'],
     ];
     for (const [m, u, b] of blocked) {
       const r = await call(k, m, u, b);
