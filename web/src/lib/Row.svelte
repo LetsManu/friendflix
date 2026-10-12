@@ -70,8 +70,7 @@
   .more { font-size: .8rem; color: #54b9c5; max-width: 0; overflow: hidden; white-space: nowrap; opacity: 0; transition: max-width var(--t-med), opacity var(--t-med), margin var(--t-med); }
   h2 a:hover .more, h2 a:focus-visible .more { max-width: 10rem; opacity: 1; margin-left: .6rem; }
   .wrap { position: relative; }
-  /* vertical padding leaves room for the scaled hover card (overflow-x forces clipping on y) */
-  .track { display: flex; gap: var(--gap); overflow-x: auto; overflow-y: hidden; scroll-snap-type: x proximity; scrollbar-width: none; padding: 2.6rem var(--pad-x) 10.4rem; margin: -2.2rem 0 -9.9rem; scroll-padding: 0 var(--pad-x); }
+  .track { display: flex; gap: var(--gap); overflow-x: auto; overflow-y: hidden; scroll-snap-type: x proximity; scrollbar-width: none; padding: .4rem var(--pad-x) .6rem; margin: -.4rem 0 -.6rem; /* small room for focus rings; the hover pop-out lives in <body> */ scroll-padding: 0 var(--pad-x); }
   .track::-webkit-scrollbar { display: none; }
   .slot { flex: 0 0 calc((100% - 2 * var(--pad-x) - (var(--n) - 1) * var(--gap)) / var(--n)); scroll-snap-align: start; min-width: 0; }
   .slot.ranked { display: flex; align-items: flex-end; flex-basis: calc((100% - 2 * var(--pad-x) - (var(--n) - 1) * var(--gap)) / var(--n) * 1.25); }
@@ -84,7 +83,7 @@
   }
   .ph { aspect-ratio: 16 / 9; width: 100%; }
   .ph.poster { aspect-ratio: 2 / 3; }
-  .arrow { position: absolute; top: 2.4rem; bottom: 10.4rem; width: var(--pad-x); min-width: 44px; border-radius: 0; background: rgba(20, 20, 20, .55); opacity: 0; z-index: 7; padding: 0; }
+  .arrow { position: absolute; top: .4rem; bottom: .6rem; width: var(--pad-x); min-width: 44px; border-radius: 0; background: rgba(20, 20, 20, .55); opacity: 0; z-index: 7; padding: 0; }
   .arrow:hover:not(:disabled) { background: rgba(20, 20, 20, .8); }
   .arrow.left { left: 0; } .arrow.right { right: 0; }
   .arrow.hide { display: none; }
