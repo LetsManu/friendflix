@@ -66,6 +66,8 @@ const dict: Translation<typeof de> = {
     leaveConfirm: 'Odrzuć',
   },
   devices: {
+    thisDevice: 'To urządzenie',
+    ownDevice: 'To urządzenie, na którym jesteś zalogowany(-a) – zablokował(a)byś sam(a) siebie.',
     searchPlaceholder: 'Szukaj osoby lub urządzenia …',
     col: { user: 'Osoba', device: 'Urządzenie', lastSeen: 'Ostatnio widziane', status: 'Status' },
     filterStatus: 'Status',
@@ -147,7 +149,7 @@ const dict: Translation<typeof de> = {
     areas: {
       user: 'Użytkownicy', device: 'Urządzenia', invite: 'Zaproszenia', request: 'Prośby', poll: 'Głosowania', list: 'Listy', hub: 'Kafelki marek',
       role: 'Role', profile: 'Profile', download: 'Pobrania', digest: 'Podsumowanie tygodnia', settings: 'Ustawienia', system: 'System',
-      session: 'Sesje', tv: 'Telewizory', party: 'Wspólne oglądanie', subtitle: 'Napisy', login: 'Logowania', leaving: 'Wkrótce zniknie',
+      session: 'Sesje', tv: 'Telewizory', party: 'Wspólne oglądanie', subtitle: 'Napisy', login: 'Logowania', leaving: 'Wkrótce zniknie', preview: 'Podglądy',
     },
     keys: {
       role: 'Rola', from: 'Przedtem', to: 'Potem', requestsPerMonth: 'Próśb miesięcznie', transcoding: 'Konwersja dozwolona', maxHeight: 'Maks. rozdzielczość',

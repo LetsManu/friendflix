@@ -368,6 +368,7 @@ const pl: Translation<typeof de> = {
     party: {
       create: '{actor} rozpoczął(-ęła) wspólne oglądanie',
     },
+    preview: { clear: '{actor} usunął(-ęła) klip podglądu', regenerate: '{actor} zlecił(a) ponowne utworzenie klipu podglądu' },
     leaving: { set: '{actor} ustawił(a) datę usunięcia', clear: '{actor} usunął(-ęła) datę usunięcia' },
     subtitle: {
       download: '{actor} pobrał(a) napisy',

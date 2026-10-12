@@ -241,6 +241,16 @@ test.describe('admin people (desktop)', () => {
       await expect(target).toHaveCount(0);
     });
 
+    test('the device the admin is using is marked and cannot be revoked here', async ({ page, api }) => {
+      api.admin.devices.push({ user_id: 'u1', device_id: 'dev-own-0123456789ab', label: 'Chrome auf Linux', approved: true, last_seen: new Date().toISOString(), name: 'Tester', current: true });
+      await page.goto('/admin/devices');
+      const own = page.getByRole('table', { name: 'Geräte' }).getByRole('row').filter({ hasText: 'Tester' });
+      await expect(own.getByText('Dieses Gerät')).toBeVisible();
+      await expect(own.getByRole('button', { name: /Aktionen für/ })).toHaveCount(0);
+      // other approved devices keep their menu
+      await expect(page.getByRole('table', { name: 'Geräte' }).getByRole('row').filter({ hasText: 'Emma Schneider' }).getByRole('button', { name: /Aktionen für/ })).toHaveCount(1);
+    });
+
     test('empty state', async ({ page, api }) => {
       api.admin.devices = [];
       await page.goto('/admin/devices');

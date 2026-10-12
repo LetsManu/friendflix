@@ -1,4 +1,4 @@
-import type { FastifyInstance } from 'fastify';
+import type { FastifyInstance, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import { audit } from '../audit.js';
 import { Where, likePattern, orderBy, pageQuery } from '../adminlist.js';
@@ -83,6 +83,7 @@ export function adminRoutes(app: FastifyInstance, ctx: Ctx) {
   app.post('/api/admin/previews/regenerate', admin, async (req) => {
     const { itemId } = z.object({ itemId: z.string().regex(/^[0-9a-f]{32}$/) }).parse(req.body);
     await previews(ctx).regenerate(itemId);
+    await audit(ctx, req.user!.id, 'preview.regenerate', itemId);
     return { ok: true };
   });
 
@@ -146,6 +147,7 @@ export function adminRoutes(app: FastifyInstance, ctx: Ctx) {
     if (!itemId.success) return reply.code(404).send({ error: 'not_found' });
     await previews(ctx).clear(itemId.data);
     libMemo.at = 0;
+    await audit(ctx, req.user!.id, 'preview.clear', itemId.data);
     return { ok: true };
   });
 
@@ -437,8 +439,11 @@ export function adminRoutes(app: FastifyInstance, ctx: Ctx) {
     const total = Number((await ctx.db.query<{ c: string }>(`select count(*) c ${from} ${w.sql}`, w.params)).rows[0]!.c);
     const pending = Number((await ctx.db.query<{ c: string }>('select count(*) c from devices where not approved')).rows[0]!.c);
     const r = await ctx.db.query(`select d.user_id, d.device_id, d.label, d.approved, d.last_seen, u.name ${from} ${w.sql} ${order} limit ${p.limit ?? 300} offset ${p.offset ?? 0}`, w.params);
-    return { devices: r.rows, total, pending };
+    // `current`: the device this admin is using right now (the page offers no revoke for it)
+    return { devices: r.rows.map((d) => ({ ...d, current: d.user_id === req.user!.id && d.device_id === req.session!.deviceId })), total, pending };
   });
+  /** the device this admin request comes from: unapproving/removing it would sign the admin out */
+  const ownDevice = (req: FastifyRequest, b: { userId: string; deviceId: string }) => b.userId === req.user!.id && b.deviceId === req.session!.deviceId;
   app.post('/api/admin/devices/approve', admin, async (req, reply) => {
     const b = z.object({ userId: uuid, deviceId: z.string().min(10).max(80) }).parse(req.body);
     const r = await ctx.db.query('update devices set approved=true where user_id=$1 and device_id=$2', [b.userId, b.deviceId]);
@@ -449,14 +454,18 @@ export function adminRoutes(app: FastifyInstance, ctx: Ctx) {
   // inverse of approve (the Undo of the toast): the device waits for approval again
   app.post('/api/admin/devices/unapprove', admin, async (req, reply) => {
     const b = z.object({ userId: uuid, deviceId: z.string().min(10).max(80) }).parse(req.body);
+    if (ownDevice(req, b)) return reply.code(400).send({ error: 'cannot_lock_yourself_out' });
     const r = await ctx.db.query('update devices set approved=false where user_id=$1 and device_id=$2', [b.userId, b.deviceId]);
     if (!r.rowCount) return reply.code(404).send({ error: 'not_found' });
+    // sessions cached deviceApproved=true (refreshDevice): sign them out, the device has to wait for approval after the next login
+    await revokeSessions(ctx, b.userId, b.deviceId);
     await audit(ctx, req.user!.id, 'device.unapprove', b.userId, { by: 'admin' });
     return { ok: true };
   });
   // decline a waiting device / revoke an approved one: forget the device and sign out its sessions (it can register again)
   app.post('/api/admin/devices/remove', admin, async (req, reply) => {
     const b = z.object({ userId: uuid, deviceId: z.string().min(10).max(80) }).parse(req.body);
+    if (ownDevice(req, b)) return reply.code(400).send({ error: 'cannot_lock_yourself_out' });
     const r = await ctx.db.query('delete from devices where user_id=$1 and device_id=$2', [b.userId, b.deviceId]);
     if (!r.rowCount) return reply.code(404).send({ error: 'not_found' });
     await revokeSessions(ctx, b.userId, b.deviceId);

@@ -251,6 +251,7 @@ export default {
     session: { revoke_others: '{actor} hat sich auf anderen Geräten abgemeldet' },
     tv: { pair: '{actor} hat einen Fernseher gekoppelt', claim: '{actor} hat einen Fernseher verbunden' },
     party: { create: '{actor} hat eine Watch-Party gestartet' },
+    preview: { clear: '{actor} hat einen Vorschau-Clip gelöscht', regenerate: '{actor} hat einen Vorschau-Clip neu erzeugen lassen' },
     leaving: { set: '{actor} hat ein Entfernungsdatum gesetzt', clear: '{actor} hat ein Entfernungsdatum entfernt' },
     subtitle: { download: '{actor} hat Untertitel heruntergeladen' },
   },

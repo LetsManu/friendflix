@@ -1,12 +1,12 @@
 <script lang="ts">
   /** Admin: devices – waiting devices first with approve / decline (undo), approved ones can be revoked (confirm). */
   import { onMount } from 'svelte';
-  import { api } from '#lib/api';
+  import { api, ApiError } from '#lib/api';
   import Icon from '#lib/Icon.svelte';
   import { fmtDateTime, fmtRelative, t, tr } from '#lib/i18n';
   import { bumpPending, refreshSummary } from '#lib/admin/summary';
   import { deviceKind } from '#lib/admin/people';
-  import { busyKeys, runAction } from '#lib/ui/action';
+  import { busyKeys, errorText, runAction } from '#lib/ui/action';
   import Button from '#lib/ui/Button.svelte';
   import { confirm } from '#lib/ui/confirm';
   import DataTable from '#lib/ui/DataTable.svelte';
@@ -15,7 +15,8 @@
   import type { Column, Query, SortState } from '#lib/ui/table';
   import type { MoreAction } from '#lib/MoreActions.svelte';
 
-  interface D { user_id: string; device_id: string; label: string | null; approved: boolean; last_seen: string | null; name: string }
+  /** current: the device this admin is using right now (cannot be revoked here – that would lock them out) */
+  interface D { user_id: string; device_id: string; label: string | null; approved: boolean; last_seen: string | null; name: string; current?: boolean }
   const PAGE = 25;
   let rows: D[] | null = null, total = 0, pending = 0, error: string | null = null;
   let q = '', sort: SortState | null = null, page = 0, statusFilter = '';
@@ -44,7 +45,6 @@
   function refilter() { page = 0; cur = { ...cur, offset: 0 }; void load(); }
   onMount(load);
 
-  // a new function whenever a running action starts/ends, so the table re-renders the row state
   $: statusOptions = [{ value: '', label: $t('adminPeople.devices.all') }, { value: 'pending', label: $t('adminPeople.devices.pending') }, { value: 'approved', label: $t('adminPeople.devices.approved') }];
   $: columns = [
     { key: 'user', sortable: true, label: $t('adminPeople.devices.col.user'), primary: true },
@@ -53,6 +53,7 @@
     { key: 'status', sortable: true, label: $t('adminPeople.devices.col.status') },
   ] satisfies Column<D>[];
 
+  const lockoutError = (e: unknown) => (e instanceof ApiError && e.body?.error === 'cannot_lock_yourself_out' ? tr('adminPeople.devices.ownDevice') : errorText(e));
   const body = (d: D) => ({ method: 'POST', body: { userId: d.user_id, deviceId: d.device_id } });
   /** takes the row out of the list (decline / revoke / filtered approve); the returned rollback puts everything back */
   function withdraw(d: D, wasPending: boolean): () => void {
@@ -96,10 +97,11 @@
       apply: () => withdraw(d, false),
       run: () => api('/api/admin/devices/remove', body(d)),
       success: tr('adminPeople.devices.revokedToast', { device: dname(d), name: d.name }),
+      error: lockoutError,
     });
   }
 
-  $: actions = (d: D): MoreAction[] => d.approved
+  $: actions = (d: D): MoreAction[] => d.current ? [] : d.approved
     ? [{ id: 'revoke', label: $t('adminPeople.devices.revoke'), icon: 'x', danger: true, run: () => revoke(d) }]
     : [{ id: 'approve', label: $t('adminPeople.devices.approve'), icon: 'check', run: () => approve(d) }, { id: 'decline', label: $t('adminPeople.devices.decline'), icon: 'x', danger: true, run: () => decline(d) }];
 </script>
@@ -125,7 +127,9 @@
     {:else if col.key === 'lastSeen'}
       {#if row.last_seen}<time datetime={row.last_seen} title={fmtDateTime(row.last_seen)}>{fmtRelative(row.last_seen)}</time>{:else}<span class="sub">{$t('adminPeople.never')}</span>{/if}
     {:else if col.key === 'status'}
-      {#if row.approved}
+      {#if row.current}
+        <span class="st"><StatusPill tone="ok" label={$t('adminPeople.devices.approved')} /><StatusPill tone="info" icon="monitor" label={$t('adminPeople.devices.thisDevice')} /></span>
+      {:else if row.approved}
         <StatusPill tone="ok" label={$t('adminPeople.devices.approved')} />
       {:else}
         <span class="st">

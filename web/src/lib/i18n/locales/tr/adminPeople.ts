@@ -66,6 +66,8 @@ const dict: Translation<typeof de> = {
     leaveConfirm: 'Sil',
   },
   devices: {
+    thisDevice: 'Bu cihaz',
+    ownDevice: 'Şu anda oturum açtığın cihaz bu – kendini dışarıda bırakırsın.',
     searchPlaceholder: 'Kişi veya cihaz ara …',
     col: { user: 'Kişi', device: 'Cihaz', lastSeen: 'Son görülme', status: 'Durum' },
     filterStatus: 'Durum',
@@ -147,7 +149,7 @@ const dict: Translation<typeof de> = {
     areas: {
       user: 'Kullanıcılar', device: 'Cihazlar', invite: 'Davetler', request: 'İstekler', poll: 'Oylamalar', list: 'Listeler', hub: 'Marka kutuları',
       role: 'Roller', profile: 'Profiller', download: 'İndirmeler', digest: 'Haftalık özet', settings: 'Ayarlar', system: 'Sistem',
-      session: 'Oturumlar', tv: 'Televizyonlar', party: 'Birlikte izleme', subtitle: 'Altyazılar', login: 'Girişler', leaving: 'Yakında kalkıyor',
+      session: 'Oturumlar', tv: 'Televizyonlar', party: 'Birlikte izleme', subtitle: 'Altyazılar', login: 'Girişler', leaving: 'Yakında kalkıyor', preview: 'Önizlemeler',
     },
     keys: {
       role: 'Rol', from: 'Önce', to: 'Sonra', requestsPerMonth: 'Aylık istek', transcoding: 'Dönüştürmeye izin', maxHeight: 'Azami çözünürlük',

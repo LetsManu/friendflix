@@ -63,6 +63,8 @@ export default {
     leaveConfirm: 'Verwerfen',
   },
   devices: {
+    thisDevice: 'Dieses Gerät',
+    ownDevice: 'Das ist das Gerät, mit dem du gerade angemeldet bist – du würdest dich selbst aussperren.',
     searchPlaceholder: 'Person oder Gerät suchen …',
     col: { user: 'Person', device: 'Gerät', lastSeen: 'Zuletzt gesehen', status: 'Status' },
     filterStatus: 'Status',
@@ -144,7 +146,7 @@ export default {
     areas: {
       user: 'Nutzer', device: 'Geräte', invite: 'Einladungen', request: 'Wünsche', poll: 'Abstimmungen', list: 'Listen', hub: 'Marken-Kacheln',
       role: 'Rollen', profile: 'Profile', download: 'Downloads', digest: 'Wochenrückblick', settings: 'Einstellungen', system: 'System',
-      session: 'Sitzungen', tv: 'Fernseher', party: 'Watch-Party', subtitle: 'Untertitel', login: 'Anmeldungen', leaving: 'Bald weg',
+      session: 'Sitzungen', tv: 'Fernseher', party: 'Watch-Party', subtitle: 'Untertitel', login: 'Anmeldungen', leaving: 'Bald weg', preview: 'Vorschauen',
     },
     keys: {
       role: 'Rolle', from: 'Vorher', to: 'Nachher', requestsPerMonth: 'Wünsche pro Monat', transcoding: 'Umwandeln erlaubt', maxHeight: 'Max. Auflösung',

@@ -339,6 +339,7 @@ const fr: Translation<typeof de> = {
     party: {
       create: '{actor} a lancé une soirée de visionnage',
     },
+    preview: { clear: '{actor} a supprimé un extrait d’aperçu', regenerate: '{actor} a fait régénérer un extrait d’aperçu' },
     leaving: { set: '{actor} a fixé une date de retrait', clear: '{actor} a supprimé une date de retrait' },
     subtitle: {
       download: '{actor} a téléchargé des sous-titres',

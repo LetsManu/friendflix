@@ -330,6 +330,7 @@ const en: Translation<typeof de> = {
     party: {
       create: '{actor} started a watch party',
     },
+    preview: { clear: '{actor} deleted a preview clip', regenerate: '{actor} had a preview clip regenerated' },
     leaving: { set: '{actor} set a removal date', clear: '{actor} removed a removal date' },
     subtitle: {
       download: '{actor} downloaded subtitles',

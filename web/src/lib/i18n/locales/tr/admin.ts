@@ -330,6 +330,7 @@ const tr: Translation<typeof de> = {
     party: {
       create: '{actor} bir izleme partisi başlattı',
     },
+    preview: { clear: '{actor} bir önizleme klibini sildi', regenerate: '{actor} bir önizleme klibini yeniden oluşturttu' },
     leaving: { set: '{actor} bir kaldırılma tarihi belirledi', clear: '{actor} bir kaldırılma tarihini kaldırdı' },
     subtitle: {
       download: '{actor} altyazı indirdi',

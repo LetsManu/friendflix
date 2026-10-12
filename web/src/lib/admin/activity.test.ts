@@ -12,6 +12,13 @@ describe('describeActivity', () => {
     expect(describeActivity({ id: 3, at: '', action: 'request.decline', target: '17', actor: null }).text).toBe('System hat Wunsch #17 abgelehnt');
     expect(describeActivity({ id: 4, at: '', action: 'role.playback', target: 'family', actor: 'Tester' }).text).toContain('Familie');
   });
+  it('describes preview clip and removal-date actions', async () => {
+    expect(describeActivity({ id: 6, at: '', action: 'preview.clear', target: 'ab'.repeat(16), actor: 'Tester' })).toEqual({ text: 'Tester hat einen Vorschau-Clip gelöscht', icon: 'film' });
+    expect(describeActivity({ id: 7, at: '', action: 'preview.regenerate', actor: 'Tester' }).text).toBe('Tester hat einen Vorschau-Clip neu erzeugen lassen');
+    expect(describeActivity({ id: 8, at: '', action: 'leaving.set', actor: 'Tester' })).toEqual({ text: 'Tester hat ein Entfernungsdatum gesetzt', icon: 'calendar' });
+    await setLocale('en');
+    expect(describeActivity({ id: 6, at: '', action: 'preview.clear', actor: 'Tester' }).text).toBe('Tester deleted a preview clip');
+  });
   it('never shows raw keys or JSON for unknown actions', async () => {
     const d = describeActivity({ id: 5, at: '', action: 'weird.thing', actor: 'Tester', meta: { a: 1 } });
     expect(d.text).not.toContain('weird');

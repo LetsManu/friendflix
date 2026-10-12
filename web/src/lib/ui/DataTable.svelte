@@ -141,7 +141,8 @@
                 </td>
               {/each}
               {#if hasActions && actions}
-                <td class="act"><ActionMenu items={actions(row)} busy={b} label={rowLabel ? $t('ui.table.actionsFor', { name: rowLabel(row) }) : $t('ui.table.actions')} title={rowLabel?.(row) ?? ''} /></td>
+                {@const items = actions(row)}
+                <td class="act">{#if items.length}<ActionMenu {items} busy={b} label={rowLabel ? $t('ui.table.actionsFor', { name: rowLabel(row) }) : $t('ui.table.actions')} title={rowLabel?.(row) ?? ''} />{/if}</td>
               {/if}
             </tr>
           {/each}
