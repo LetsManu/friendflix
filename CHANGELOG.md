@@ -1,5 +1,7 @@
 # Changelog
 ## [Unreleased]
+### Wishes on other media servers
+- Seerr wishes no longer depend on Jellyfin users: a new backend capability `requestUsers` (`'jellyfin-import'` for Jellyfin, unchanged; `'local'` for every other server and the default) maps each FriendFlix account to a local Seerr user: stored id (checked to still exist), else a Seerr user with the same email, else a new one with only the Request permission (placeholder `<account id>@friendflix.invalid` without email; re-created once when deleted in Seerr; one user under parallel wishes). No migration (uses `users.seerr_user_id`). See docs/integrations.md, "Seerr".
 ### Security: download visibility
 - Offline downloads: `/internal/authz {sid, dl}` now re-checks that the licence's profile can still see the item (`ctx.jf.item` as that profile, memoised 5 s) and revokes the licence when it cannot. Matters for media servers that use one shared token; Jellyfin already enforced this upstream.
 - `compose.yaml` / `compose.prod.yaml`: `JELLYFIN_URL` is no longer forced with `:?`, so another media server's override needs no placeholder. The backend still refuses to start for `MEDIA_SERVER=jellyfin` without `JELLYFIN_URL` / `JELLYFIN_ADMIN_API_KEY` (an empty `JELLYFIN_URL` gives the same "is required" message), the gateway with `missing env JELLYFIN_URL`.
