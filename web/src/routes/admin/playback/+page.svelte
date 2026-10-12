@@ -162,7 +162,7 @@
 <AdminCard title={$t('adminContent.playback.liveCard')} description={$t('adminContent.playback.liveIntro')}>
   <DataTable
     caption={$t('adminContent.playback.liveCard')} rows={live} columns={liveCols} key={liveKey} error={liveErr} pageSize={0} skeletonRows={2}
-    emptyText={$t('adminContent.playback.liveEmpty')} busy={(l) => $busyKeys.has(`live:${liveKey(l)}`)} rowLabel={liveTitle} on:retry={loadLive}
+    emptyText={$t('adminContent.playback.liveEmpty')} busyKey={(l) => `live:${liveKey(l)}`} rowLabel={liveTitle} on:retry={loadLive}
     actions={(l) => [{ id: 'stop', label: $t('adminContent.playback.stop'), icon: 'stop', danger: true, run: () => stopLive(l) }]}>
     <svelte:fragment slot="cell" let:row let:col>
       {#if col.key === 'pos'}
@@ -200,7 +200,7 @@
   <h3>{$t('admin.playback.licenses', { n: dl?.licenses.length ?? 0 })}</h3>
   <DataTable
     caption={$t('admin.playback.licenses', { n: dl?.licenses.length ?? 0 })} rows={dl && !dlErr ? dl.licenses : dlErr ? [] : null} columns={licCols} key={(l) => l.id} pageSize={10} skeletonRows={3} emptyText={$t('admin.playback.noLicenses')}
-    busy={(l) => $busyKeys.has(`lic:${l.id}`)} rowLabel={(l) => named(l.title, l.series_name)}
+    busyKey={(l) => `lic:${l.id}`} rowLabel={(l) => named(l.title, l.series_name)}
     actions={(l) => [{ id: 'revoke', label: $t('admin.revoke'), icon: 'x', danger: true, run: () => revoke(l) }]}>
     <svelte:fragment slot="cell" let:row let:col>
       {#if col.key === 'until'}

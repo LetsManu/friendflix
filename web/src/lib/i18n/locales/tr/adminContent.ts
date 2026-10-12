@@ -120,5 +120,23 @@ const dict: Translation<typeof de> = {
     numbers: 'Sayılar',
     pendingRequests: 'Bekleyen istekler',
   },
+  leaving: {
+    left: 'Kalan',
+    edit: 'Tarihi değiştir',
+    editTitle: '“{name}”: tarihi değiştir',
+    cancel: 'İptal',
+    picked: 'Seçildi: “{name}”',
+    searchHint: 'En az iki harf.',
+    searching: 'Aranıyor …',
+    filter: 'Başlık, not veya kişi ara …',
+    savedName: '“{name}” için tarih kaydedildi.',
+    clearedName: '“{name}” için tarih kaldırıldı.',
+    replaceTitle: '“{name}” için zaten bir tarih var ({date}). Değiştirilsin mi?',
+    replace: 'Tarihi değiştir',
+    notATitle: 'Yalnızca filmler, diziler ve koleksiyonlar tarih alabilir.',
+    dateRequired: 'Lütfen bir tarih seç.',
+    unknownTitle: 'Bilinmeyen başlık',
+    noNote: 'Not yok',
+  },
 };
 export default dict;

@@ -147,12 +147,12 @@ const dict: Translation<typeof de> = {
     areas: {
       user: 'Użytkownicy', device: 'Urządzenia', invite: 'Zaproszenia', request: 'Prośby', poll: 'Głosowania', list: 'Listy', hub: 'Kafelki marek',
       role: 'Role', profile: 'Profile', download: 'Pobrania', digest: 'Podsumowanie tygodnia', settings: 'Ustawienia', system: 'System',
-      session: 'Sesje', tv: 'Telewizory', party: 'Wspólne oglądanie', subtitle: 'Napisy', login: 'Logowania',
+      session: 'Sesje', tv: 'Telewizory', party: 'Wspólne oglądanie', subtitle: 'Napisy', login: 'Logowania', leaving: 'Wkrótce zniknie',
     },
     keys: {
       role: 'Rola', from: 'Przedtem', to: 'Potem', requestsPerMonth: 'Próśb miesięcznie', transcoding: 'Konwersja dozwolona', maxHeight: 'Maks. rozdzielczość',
       download: 'Pobieranie dozwolone', maxDownloads: 'Jednoczesne pobrania', downloadMaxHeight: 'Maks. jakość pobierania', downloadDays: 'Ważność (dni)',
-      authentik: 'Authentik', by: 'Zatwierdzone', sessions: 'Zakończone sesje', language: 'Język', count: 'Liczba',
+      authentik: 'Authentik', by: 'Zatwierdzone', sessions: 'Zakończone sesje', language: 'Język', count: 'Liczba', name: 'Tytuł', leavesAt: 'Zniknie',
     },
     values: { yes: 'Tak', no: 'Nie', unlimited: 'Bez limitu', ok: 'OK', failed: 'Nie powiodło się', off: 'Wyłączone', skipped: 'Pominięto', admin: 'Admin', self: 'Samodzielnie' },
   },

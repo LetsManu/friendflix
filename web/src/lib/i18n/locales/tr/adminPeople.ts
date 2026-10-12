@@ -147,12 +147,12 @@ const dict: Translation<typeof de> = {
     areas: {
       user: 'Kullanıcılar', device: 'Cihazlar', invite: 'Davetler', request: 'İstekler', poll: 'Oylamalar', list: 'Listeler', hub: 'Marka kutuları',
       role: 'Roller', profile: 'Profiller', download: 'İndirmeler', digest: 'Haftalık özet', settings: 'Ayarlar', system: 'Sistem',
-      session: 'Oturumlar', tv: 'Televizyonlar', party: 'Birlikte izleme', subtitle: 'Altyazılar', login: 'Girişler',
+      session: 'Oturumlar', tv: 'Televizyonlar', party: 'Birlikte izleme', subtitle: 'Altyazılar', login: 'Girişler', leaving: 'Yakında kalkıyor',
     },
     keys: {
       role: 'Rol', from: 'Önce', to: 'Sonra', requestsPerMonth: 'Aylık istek', transcoding: 'Dönüştürmeye izin', maxHeight: 'Azami çözünürlük',
       download: 'İndirmelere izin', maxDownloads: 'Eşzamanlı indirme', downloadMaxHeight: 'Azami indirme kalitesi', downloadDays: 'Geçerlilik (gün)',
-      authentik: 'Authentik', by: 'Onaylayan', sessions: 'Sonlandırılan oturumlar', language: 'Dil', count: 'Sayı',
+      authentik: 'Authentik', by: 'Onaylayan', sessions: 'Sonlandırılan oturumlar', language: 'Dil', count: 'Sayı', name: 'Başlık', leavesAt: 'Kalkış tarihi',
     },
     values: { yes: 'Evet', no: 'Hayır', unlimited: 'Sınırsız', ok: 'Tamam', failed: 'Başarısız', off: 'Kapalı', skipped: 'Atlandı', admin: 'Yönetici', self: 'Kendisi' },
   },

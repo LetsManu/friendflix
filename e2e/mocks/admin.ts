@@ -40,7 +40,20 @@ export interface AdminState {
   seerrUp: boolean;
   /** make GET /api/admin/summary fail (500) */
   summaryFails: boolean;
+  /** removal dates ("Bald weg", /api/admin/leaving) */
+  leaving: LeavingRow[];
 }
+export interface LeavingRow { itemId: string; name: string | null; type: string | null; year: number | null; leavesAt: string; days: number; note: string | null; setBy: string | null }
+/** local calendar day `offset` days from today (YYYY-MM-DD) */
+export const leaveDay = (offset: number): string => { const d = new Date(); d.setDate(d.getDate() + offset); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
+const LEAVING_TITLES: Record<string, [string, string, number]> = {
+  '00000000000000000000000000000001': ['Inception', 'Movie', 2010], '00000000000000000000000000000002': ['Interstellar', 'Movie', 2014],
+  '00000000000000000000000000000003': ['The Dark Knight', 'Movie', 2008], '00000000000000000000000000000004': ['Dunkirk', 'Movie', 2017],
+};
+const leavingRow = (itemId: string, days: number, note: string | null): LeavingRow => {
+  const t = LEAVING_TITLES[itemId];
+  return { itemId, name: t?.[0] ?? null, type: t?.[1] ?? null, year: t?.[2] ?? null, leavesAt: leaveDay(days), days, note, setBy: 'Tester' };
+};
 
 const previewItems: PreviewRow[] = Array.from({ length: 60 }, (_, i) => ({ itemId: 'it' + i, name: 'Titel Nummer ' + i, type: i % 3 ? 'Movie' : 'Series', status: (['ok', 'ok', 'ok', 'failed', 'missing', 'preparing'] as const)[i % 6]!, bytes: i % 6 < 3 ? 3_400_000 + i * 1000 : null, audioLang: i % 6 < 3 ? 'deu' : null, error: i % 6 === 3 ? 'ffmpeg exited with code 1' : null, createdAt: ago(i) }));
 
@@ -92,6 +105,7 @@ export function adminState(): AdminState {
     ],
     seerrUp: true,
     summaryFails: false,
+    leaving: [leavingRow('00000000000000000000000000000001', 1, 'Lizenz endet'), leavingRow('00000000000000000000000000000002', 5, null), leavingRow('00000000000000000000000000000003', 20, 'Rechte laufen aus')],
   };
 }
 
@@ -307,6 +321,18 @@ export function adminRoute(st: AdminState, m: string, p: string, sp: URLSearchPa
     return J({ enabled: true, day: 5, hour: 18, source: 'admin', lastRun: { week: '2026-W40', sentAt: ago(100), count: 9 } });
   }
   if (p === '/api/admin/digest/test' && m === 'POST') return J({ sent: 1 });
+  if (p === '/api/admin/leaving' && m === 'GET') return J({ items: [...st.leaving].sort((a, b) => a.leavesAt.localeCompare(b.leavesAt)) });
+  if ((mm = p.match(/^\/api\/admin\/leaving\/([0-9a-f]{32})$/))) {
+    const id = mm[1]!;
+    if (m === 'DELETE') { st.leaving = st.leaving.filter((r) => r.itemId !== id); log('leaving.clear', id); return ok(); }
+    if (m === 'PUT') {
+      if (body.leavesAt < leaveDay(0)) return J({ error: 'date_out_of_range' }, 400);
+      const days = Math.round((new Date(body.leavesAt + 'T00:00').getTime() - new Date(leaveDay(0) + 'T00:00').getTime()) / 864e5);
+      st.leaving = [...st.leaving.filter((r) => r.itemId !== id), { ...leavingRow(id, days, body.note ?? null), leavesAt: body.leavesAt }];
+      log('leaving.set', id, { leavesAt: body.leavesAt });
+      return J({ itemId: id, leavesAt: body.leavesAt, note: body.note ?? null });
+    }
+  }
   if (p === '/api/admin/update') {
     if (m === 'POST') return J({ ok: true, mode: 'webhook' }, 202);
     return J({ current: { sha: 'c0be6c5deadbeef', builtAt: ago(70) }, latest: { sha: 'ff00aa1deadbeef', date: ago(5), runUrl: 'https://example.org/run' }, behind: 3, portainer: { configured: true, mode: 'webhook' }, autoUpdateNote: true, commits: [{ sha: 'ff00aa1', url: 'https://example.org/c/1', message: 'feat(wishes): local request-service users', author: 'Manu', date: ago(5) }, { sha: 'ee11bb2', url: 'https://example.org/c/2', message: 'ci: signing', author: 'Manu', date: ago(9) }] });

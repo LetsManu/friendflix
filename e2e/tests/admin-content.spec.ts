@@ -35,6 +35,25 @@ test.describe('admin content pages (desktop)', () => {
       await expect.poll(() => api.log.some((l) => l.startsWith('POST /api/admin/requests/102/decline'))).toBe(true);
     });
 
+    test('a waiting decline is committed at once when the page is left (other admin page, reload)', async ({ page, api }) => {
+      await page.goto('/admin/requests');
+      const table = page.getByRole('table', { name: 'Wünsche' });
+      await table.getByRole('button', { name: '„Severance“ ablehnen' }).click();
+      await expect(toasts(page).getByRole('button', { name: 'Rückgängig' })).toBeVisible();
+      await page.getByRole('navigation', { name: 'Admin-Bereiche' }).getByRole('link', { name: /Abstimmungen/ }).click();
+      // well inside the 6 s undo window: the navigation flushed it
+      await expect.poll(() => api.log.some((l) => l.startsWith('POST /api/admin/requests/102/decline')), { timeout: 2500 }).toBe(true);
+      await expect(toasts(page).getByRole('button', { name: 'Rückgängig' })).toHaveCount(0);
+
+      await page.goto('/admin/requests');
+      await table.getByRole('button', { name: '„Past Lives“ ablehnen' }).click();
+      await expect(table.getByRole('row', { name: /Past Lives/ })).toHaveCount(0);
+      await page.reload();
+      await expect.poll(() => api.log.some((l) => l.startsWith('POST /api/admin/requests/103/decline')), { timeout: 2500 }).toBe(true);
+      await expect(table.getByRole('row', { name: /Dune: Part Two/ })).toBeVisible();
+      await expect(table.getByRole('row', { name: /Past Lives/ })).toHaveCount(0);
+    });
+
     test('server paging and the status filter (deep-linkable)', async ({ page, api }) => {
       for (let i = 0; i < 30; i++) api.admin.requests.push({ id: 200 + i, title: `Zusatz ${String(i).padStart(2, '0')}`, mediaType: 'movie', requestedBy: 'Ben Test', status: 'angefragt', createdAt: new Date().toISOString() } as AdminRequest);
       await page.goto('/admin/requests');

@@ -127,7 +127,7 @@
 
 <DataTable
   caption={$t('admin.tabs.previews')} {rows} {columns} key={(r) => r.itemId} {error} pageSize={PAGE} bind:page bind:q bind:sort total={rows === null ? null : total}
-  filterable filterPlaceholder={$t('adminContent.previews.search')} emptyText={$t('adminContent.previews.empty')} busy={(r) => $busyKeys.has(`prev:${r.itemId}`)}
+  filterable filterPlaceholder={$t('adminContent.previews.search')} emptyText={$t('adminContent.previews.empty')} busyKey={(r) => `prev:${r.itemId}`}
   rowLabel={(r) => r.name} on:query={onQuery} on:retry={() => load(0)}
   actions={(r) => [
     { id: 'retry', label: $t('admin.previews.regen'), icon: 'refresh', disabled: r.status === 'preparing', run: () => retry(r) },

@@ -54,7 +54,7 @@
 
 <DataTable
   caption={$t('admin.tabs.lists')} {rows} {columns} key={(l) => l.id} {error} pageSize={PAGE} bind:page bind:q total={rows === null ? null : total}
-  filterable filterPlaceholder={$t('adminContent.lists.search')} emptyText={$t('admin.lists.empty')} busy={(l) => $busyKeys.has(`list:${l.id}`)}
+  filterable filterPlaceholder={$t('adminContent.lists.search')} emptyText={$t('admin.lists.empty')} busyKey={(l) => `list:${l.id}`}
   on:query={onQuery} on:retry={() => load(0)}>
   <svelte:fragment slot="cell" let:row let:col>
     {#if col.key === 'name'}

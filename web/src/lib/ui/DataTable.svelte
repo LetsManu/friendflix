@@ -6,7 +6,7 @@
    *
    *   <DataTable caption={$t('admin.tabs.users')} rows={users} key={(u) => u.id} filterable
    *     columns={[{ key: 'name', label: $t('admin.users.name'), value: (u) => u.name, primary: true }, …]}
-   *     actions={(u) => [{ id: 'lock', label: …, run: () => lock(u), danger: true }]} busy={(u) => $busyKeys.has('user:' + u.id)}
+   *     actions={(u) => [{ id: 'lock', label: …, run: () => lock(u), danger: true }]} busyKey={(u) => 'user:' + u.id}
    *     error={loadErr} on:retry={load}>
    *     <svelte:fragment slot="cell" let:row let:col>{#if col.key === 'status'}<StatusPill …/>{:else}{col.value?.(row) ?? ''}{/if}</svelte:fragment>
    *   </DataTable>
@@ -23,6 +23,7 @@
   import Skeleton from './Skeleton.svelte';
   import { cellText, filterRows, nextSort, pageInfo, sortRows, type Column, type Query, type SortState } from './table';
   import { uid } from './ids';
+  import { busyKeys } from './action';
 
   /** null = loading (skeleton rows) */
   export let rows: T[] | null;
@@ -49,6 +50,9 @@
   export let actions: ((row: T) => MoreAction[]) | undefined = undefined;
   /** name of the row for the actions button ("Aktionen für Anna") */
   export let rowLabel: ((row: T) => string) | undefined = undefined;
+  /** runAction key of a row: the table follows $busyKeys itself (row dimmed, actions disabled while it runs) */
+  export let busyKey: ((row: T) => string) | undefined = undefined;
+  /** custom busy test (when the busy state is not a runAction key) */
   export let busy: ((row: T) => boolean) | undefined = undefined;
   export let skeletonRows = 5;
 
@@ -129,7 +133,7 @@
           {/each}
         {:else}
           {#each shown as row (key(row))}
-            {@const b = busy?.(row) ?? false}
+            {@const b = (busyKey ? $busyKeys.has(busyKey(row)) : false) || (busy?.(row) ?? false)}
             <tr class:busy={b} aria-busy={b ? 'true' : undefined}>
               {#each columns as c (c.key)}
                 <td data-label={c.label} class="al-{c.align ?? 'start'}" class:primary={c.primary} class:nocard={c.hideOnCard}>

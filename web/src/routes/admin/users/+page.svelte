@@ -49,7 +49,6 @@
 
   $: rname = (k: string): string => roleName(k, roles[k]);
   // a new function whenever a running action starts/ends, so the table re-renders the row state
-  $: isBusy = ((keys: ReadonlySet<string>) => (u: U) => keys.has(`user:${u.id}`))($busyKeys);
   $: roleOptions = Object.keys(roles).map((k) => ({ value: k, label: rname(k) }));
   $: roleFilterOptions = [{ value: '', label: $t('adminPeople.users.allRoles') }, ...roleOptions];
   $: statusOptions = [{ value: '', label: $t('adminPeople.users.allStatus') }, { value: 'active', label: $t('adminPeople.users.active') }, { value: 'locked', label: $t('adminPeople.users.locked') }];
@@ -118,7 +117,7 @@
   caption={$t('admin.tabs.users')} {rows} {columns} key={(u) => u.id} {total} {error} pageSize={PAGE}
   filterable filterPlaceholder={$t('adminPeople.users.searchPlaceholder')}
   bind:q bind:sort bind:page emptyText={roleFilter || statusFilter ? $t('adminPeople.users.emptyFiltered') : $t('adminPeople.users.empty')}
-  {actions} rowLabel={(u) => u.name} busy={isBusy}
+  {actions} rowLabel={(u) => u.name} busyKey={(u) => `user:${u.id}`}
   on:query={onQuery} on:retry={retry}
 >
   <svelte:fragment slot="toolbar">

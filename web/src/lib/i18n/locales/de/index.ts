@@ -14,5 +14,8 @@ import kids from './kids';
 import ui from './ui';
 import adminPeople from './adminPeople';
 import adminContent from './adminContent';
+import scenes from './scenes';
+import fresh from './fresh';
+import mine from './mine';
 
-export default { common, shell, home, detail, player, account, social, admin, hubs, anime, together, kids, ui, adminPeople, adminContent } as const;
+export default { common, shell, home, detail, player, account, social, admin, hubs, anime, together, kids, scenes, fresh, mine, ui, adminPeople, adminContent } as const;

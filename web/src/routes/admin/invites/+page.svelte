@@ -7,7 +7,7 @@
   import { refreshSummary } from '#lib/admin/summary';
   import { EXPIRY_PRESETS, inviteStatus, type InviteStatus } from '#lib/admin/people';
   import { roleName, type RoleInfo } from '#lib/roles';
-  import { busyKeys, runAction, errorText } from '#lib/ui/action';
+  import { runAction, errorText } from '#lib/ui/action';
   import { toast } from '#lib/ui/toast';
   import Button from '#lib/ui/Button.svelte';
   import { confirm } from '#lib/ui/confirm';
@@ -59,7 +59,6 @@
 
   $: rname = (k: string): string => roleName(k, roles[k]);
   // a new function whenever a running action starts/ends, so the table re-renders the row state
-  $: isBusy = ((keys: ReadonlySet<string>) => (i: I) => keys.has(`inv:${i.id}`))($busyKeys);
   $: roleOptions = invitable.map((k) => ({ value: k, label: rname(k) }));
   $: expiryOptions = EXPIRY_PRESETS.map((p) => ({ value: p.id, label: trDynamic(`adminPeople.invites.expiryOptions.${p.id}`) }));
   $: statusOptions = [{ value: '', label: $t('adminPeople.invites.all') }, { value: 'open', label: $t('adminPeople.invites.open') }, { value: 'used', label: $t('adminPeople.invites.used') }, { value: 'expired', label: $t('adminPeople.invites.expired') }];
@@ -144,7 +143,7 @@
   caption={$t('admin.tabs.invites')} {rows} {columns} key={(i) => i.id} {total} {error} pageSize={PAGE}
   filterable filterPlaceholder={$t('adminPeople.invites.searchPlaceholder')}
   bind:q bind:sort bind:page emptyText={statusFilter ? $t('adminPeople.invites.emptyFiltered') : $t('adminPeople.invites.empty')}
-  {actions} rowLabel={(i) => tr('adminPeople.invites.inviteOf', { role: rname(i.role) })} busy={isBusy}
+  {actions} rowLabel={(i) => tr('adminPeople.invites.inviteOf', { role: rname(i.role) })} busyKey={(i) => `inv:${i.id}`}
   on:query={onQuery} on:retry={retry}
 >
   <svelte:fragment slot="toolbar">

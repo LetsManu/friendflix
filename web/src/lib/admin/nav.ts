@@ -19,6 +19,7 @@ export const GROUPS: NavGroup[] = [
     { href: '/admin/polls', label: 'admin.tabs.polls', icon: 'vote', badge: 'polls' },
     { href: '/admin/lists', label: 'admin.tabs.lists', icon: 'list' },
     { href: '/admin/hubs', label: 'hubs.admin.tab', icon: 'star' },
+    { href: '/admin/leaving', label: 'fresh.admin.tab', icon: 'calendar' },
     { href: '/admin/previews', label: 'admin.tabs.previews', icon: 'film', badge: 'previews' },
   ] },
   { id: 'operations', label: 'admin.nav.groups.operations', items: [

@@ -120,5 +120,23 @@ const dict: Translation<typeof de> = {
     numbers: 'Numeri',
     pendingRequests: 'Richieste in attesa',
   },
+  leaving: {
+    left: 'Rimanente',
+    edit: 'Cambia data',
+    editTitle: '«{name}»: cambia data',
+    cancel: 'Annulla',
+    picked: 'Selezionato: «{name}»',
+    searchHint: 'Almeno due lettere.',
+    searching: 'Ricerca in corso …',
+    filter: 'Cerca titolo, nota o persona …',
+    savedName: 'Data per «{name}» salvata.',
+    clearedName: 'Data per «{name}» rimossa.',
+    replaceTitle: '«{name}» ha già una data ({date}). Cambiarla?',
+    replace: 'Cambia data',
+    notATitle: 'Solo film, serie e raccolte possono avere una data.',
+    dateRequired: 'Scegli una data.',
+    unknownTitle: 'Titolo sconosciuto',
+    noNote: 'Nessuna nota',
+  },
 };
 export default dict;

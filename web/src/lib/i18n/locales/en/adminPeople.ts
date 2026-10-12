@@ -147,12 +147,12 @@ const dict: Translation<typeof de> = {
     areas: {
       user: 'Users', device: 'Devices', invite: 'Invitations', request: 'Requests', poll: 'Polls', list: 'Lists', hub: 'Brand tiles',
       role: 'Roles', profile: 'Profiles', download: 'Downloads', digest: 'Weekly recap', settings: 'Settings', system: 'System',
-      session: 'Sessions', tv: 'TVs', party: 'Watch party', subtitle: 'Subtitles', login: 'Sign-ins',
+      session: 'Sessions', tv: 'TVs', party: 'Watch party', subtitle: 'Subtitles', login: 'Sign-ins', leaving: 'Leaving soon',
     },
     keys: {
       role: 'Role', from: 'Before', to: 'After', requestsPerMonth: 'Requests per month', transcoding: 'Transcoding allowed', maxHeight: 'Max. resolution',
       download: 'Downloads allowed', maxDownloads: 'Simultaneous downloads', downloadMaxHeight: 'Max. download quality', downloadDays: 'Validity (days)',
-      authentik: 'Authentik', by: 'Approved', sessions: 'Sessions ended', language: 'Language', count: 'Count',
+      authentik: 'Authentik', by: 'Approved', sessions: 'Sessions ended', language: 'Language', count: 'Count', name: 'Title', leavesAt: 'Leaves on',
     },
     values: { yes: 'Yes', no: 'No', unlimited: 'Unlimited', ok: 'OK', failed: 'Failed', off: 'Off', skipped: 'Skipped', admin: 'Admin', self: 'Self' },
   },

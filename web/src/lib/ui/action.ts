@@ -12,9 +12,11 @@
  * Order: busy on → apply() (optimistic) → run() → success toast | rollback + error toast → busy off.
  * `defer: true` (delay-commit): apply() → toast with Undo → run() only after the toast is gone; Undo just rolls back.
  * Use it for one-way actions that are cheap to postpone (decline a request, revoke an invite).
+ * Waiting deferred actions are never lost: leaving the page (other route, reload, tab close → `flushDeferred()` from the
+ * root layout's beforeNavigate and a `pagehide` listener) commits them at once, with keepalive requests on unload.
  */
 import { writable, type Readable } from 'svelte/store';
-import { ApiError } from '#lib/api';
+import { ApiError, keepaliveDuring } from '#lib/api';
 import { tr } from '#lib/i18n';
 import { ACTION_DURATION, toast } from './toast';
 
@@ -73,6 +75,29 @@ export function errorText(e: unknown): string {
   return tr('ui.error.generic');
 }
 
+/** deferred actions whose toast is still up; commit(unloading) runs them now */
+const waiting = new Set<{ commit: (unloading: boolean) => void }>();
+let hooked = false;
+function hookPagehide() {
+  if (hooked || typeof window === 'undefined') return;
+  hooked = true;
+  window.addEventListener('pagehide', () => flushDeferred(true));
+}
+/**
+ * Commits every waiting deferred action immediately (their Undo toasts close). `unloading`: the document goes away,
+ * so requests are sent with keepalive. Returns how many were committed.
+ */
+export function flushDeferred(unloading = false): number {
+  const all = [...waiting];
+  for (const w of all) w.commit(unloading);
+  return all.length;
+}
+/** pending deferred actions (tests, diagnostics) */
+export const deferredCount = (): number => waiting.size;
+
+/** calls fn now (synchronously, so keepalive applies) and turns a throw into a rejection */
+const start = <T>(fn: () => Promise<T>): Promise<T> => { try { return Promise.resolve(fn()); } catch (e) { return Promise.reject(e); } };
+
 const text = <A>(v: string | ((a: A) => string) | undefined, a: A): string | undefined => (typeof v === 'function' ? v(a) : v);
 
 export async function runAction<T>(o: ActionOptions<T>): Promise<ActionResult<T>> {
@@ -85,16 +110,31 @@ export async function runAction<T>(o: ActionOptions<T>): Promise<ActionResult<T>
 
   if (o.defer) {
     setBusy(o.key, true);
+    hookPagehide();
     const rollback = o.apply?.();
-    const answer = await new Promise<'undo' | 'commit'>((resolve) => {
-      toast.info(text(o.success, undefined) ?? tr('ui.done'), {
+    const outcome = await new Promise<{ undo: true } | { undo: false; running: Promise<T> }>((resolve) => {
+      let settled = false, id = 0;
+      const w = {
+        commit: (unloading: boolean) => {
+          if (settled) return;
+          settled = true;
+          waiting.delete(w);
+          resolve({ undo: false, running: unloading ? keepaliveDuring(() => start(o.run)) : start(o.run) });
+          toast.close(id);
+        },
+      };
+      waiting.add(w);
+      id = toast.info(text(o.success, undefined) ?? tr('ui.done'), {
         duration: typeof o.defer === 'number' ? o.defer : ACTION_DURATION,
         action: { label: o.undo?.label ?? tr('ui.undo'), run: () => undefined },
-        onClose: (reason) => resolve(reason === 'action' ? 'undo' : 'commit'),
+        onClose: (reason) => {
+          if (settled) return;
+          if (reason === 'action') { settled = true; waiting.delete(w); resolve({ undo: true }); } else w.commit(false);
+        },
       });
     });
-    if (answer === 'undo') { try { rollback?.(); } catch { /* ignore */ } setBusy(o.key, false); return { ok: false, undone: true }; }
-    try { const value = await o.run(); return { ok: true, value }; } catch (e) { return fail(e, rollback); } finally { setBusy(o.key, false); }
+    if (outcome.undo) { try { rollback?.(); } catch { /* ignore */ } setBusy(o.key, false); return { ok: false, undone: true }; }
+    try { const value = await outcome.running; return { ok: true, value }; } catch (e) { return fail(e, rollback); } finally { setBusy(o.key, false); }
   }
 
   setBusy(o.key, true);

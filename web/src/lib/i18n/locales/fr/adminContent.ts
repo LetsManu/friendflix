@@ -120,5 +120,23 @@ const dict: Translation<typeof de> = {
     numbers: 'Chiffres',
     pendingRequests: 'Demandes en attente',
   },
+  leaving: {
+    left: 'Restant',
+    edit: 'Modifier la date',
+    editTitle: '« {name} » : modifier la date',
+    cancel: 'Annuler',
+    picked: 'Sélectionné : « {name} »',
+    searchHint: 'Au moins deux lettres.',
+    searching: 'Recherche …',
+    filter: 'Chercher un titre, une note ou une personne …',
+    savedName: 'Date de « {name} » enregistrée.',
+    clearedName: 'Date de « {name} » supprimée.',
+    replaceTitle: '« {name} » a déjà une date ({date}). La modifier ?',
+    replace: 'Modifier la date',
+    notATitle: 'Seuls les films, séries et collections peuvent recevoir une date.',
+    dateRequired: 'Choisis une date.',
+    unknownTitle: 'Titre inconnu',
+    noNote: 'Pas de note',
+  },
 };
 export default dict;

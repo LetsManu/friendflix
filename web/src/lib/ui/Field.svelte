@@ -15,8 +15,9 @@
   export let required = false;
   export let disabled = false;
   export let placeholder = '';
-  export let min: number | undefined = undefined;
-  export let max: number | undefined = undefined;
+  /** number, or an ISO date (YYYY-MM-DD) for type="date" */
+  export let min: number | string | undefined = undefined;
+  export let max: number | string | undefined = undefined;
   export let step: number | undefined = undefined;
   export let maxlength: number | undefined = undefined;
   /** visually hidden label (still the accessible name) */

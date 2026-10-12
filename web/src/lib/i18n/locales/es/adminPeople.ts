@@ -147,12 +147,12 @@ const dict: Translation<typeof de> = {
     areas: {
       user: 'Usuarios', device: 'Dispositivos', invite: 'Invitaciones', request: 'Peticiones', poll: 'Votaciones', list: 'Listas', hub: 'Mosaicos de marca',
       role: 'Roles', profile: 'Perfiles', download: 'Descargas', digest: 'Resumen semanal', settings: 'Ajustes', system: 'Sistema',
-      session: 'Sesiones', tv: 'Televisores', party: 'Watch party', subtitle: 'Subtítulos', login: 'Inicios de sesión',
+      session: 'Sesiones', tv: 'Televisores', party: 'Watch party', subtitle: 'Subtítulos', login: 'Inicios de sesión', leaving: 'Se va pronto',
     },
     keys: {
       role: 'Rol', from: 'Antes', to: 'Después', requestsPerMonth: 'Peticiones al mes', transcoding: 'Transcodificación permitida', maxHeight: 'Resolución máx.',
       download: 'Descargas permitidas', maxDownloads: 'Descargas simultáneas', downloadMaxHeight: 'Calidad máx. de descarga', downloadDays: 'Validez (días)',
-      authentik: 'Authentik', by: 'Aprobado', sessions: 'Sesiones terminadas', language: 'Idioma', count: 'Cantidad',
+      authentik: 'Authentik', by: 'Aprobado', sessions: 'Sesiones terminadas', language: 'Idioma', count: 'Cantidad', name: 'Título', leavesAt: 'Se va el',
     },
     values: { yes: 'Sí', no: 'No', unlimited: 'Ilimitado', ok: 'Correcto', failed: 'Fallido', off: 'Desactivado', skipped: 'Omitido', admin: 'Admin', self: 'Él mismo' },
   },

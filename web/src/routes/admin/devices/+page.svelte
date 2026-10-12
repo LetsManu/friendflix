@@ -45,7 +45,6 @@
   onMount(load);
 
   // a new function whenever a running action starts/ends, so the table re-renders the row state
-  $: isBusy = ((keys: ReadonlySet<string>) => (d: D) => keys.has(`dev:${rkey(d)}`))($busyKeys);
   $: statusOptions = [{ value: '', label: $t('adminPeople.devices.all') }, { value: 'pending', label: $t('adminPeople.devices.pending') }, { value: 'approved', label: $t('adminPeople.devices.approved') }];
   $: columns = [
     { key: 'user', sortable: true, label: $t('adminPeople.devices.col.user'), primary: true },
@@ -113,7 +112,7 @@
   caption={$t('admin.tabs.devices')} {rows} {columns} key={rkey} {total} {error} pageSize={PAGE}
   filterable filterPlaceholder={$t('adminPeople.devices.searchPlaceholder')}
   bind:q bind:sort bind:page emptyText={statusFilter ? $t('adminPeople.devices.emptyFiltered') : $t('adminPeople.devices.empty')}
-  {actions} rowLabel={(d) => `${dname(d)} · ${d.name}`} busy={isBusy}
+  {actions} rowLabel={(d) => `${dname(d)} · ${d.name}`} busyKey={(d) => `dev:${rkey(d)}`}
   on:query={onQuery} on:retry={retry}
 >
   <svelte:fragment slot="toolbar">

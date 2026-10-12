@@ -147,12 +147,12 @@ const dict: Translation<typeof de> = {
     areas: {
       user: 'Utenti', device: 'Dispositivi', invite: 'Inviti', request: 'Richieste', poll: 'Sondaggi', list: 'Liste', hub: 'Riquadri dei marchi',
       role: 'Ruoli', profile: 'Profili', download: 'Download', digest: 'Riepilogo settimanale', settings: 'Impostazioni', system: 'Sistema',
-      session: 'Sessioni', tv: 'Televisori', party: 'Watch party', subtitle: 'Sottotitoli', login: 'Accessi',
+      session: 'Sessioni', tv: 'Televisori', party: 'Watch party', subtitle: 'Sottotitoli', login: 'Accessi', leaving: 'In uscita',
     },
     keys: {
       role: 'Ruolo', from: 'Prima', to: 'Dopo', requestsPerMonth: 'Richieste al mese', transcoding: 'Transcodifica consentita', maxHeight: 'Risoluzione max.',
       download: 'Download consentiti', maxDownloads: 'Download simultanei', downloadMaxHeight: 'Qualità max. di download', downloadDays: 'Validità (giorni)',
-      authentik: 'Authentik', by: 'Approvato', sessions: 'Sessioni terminate', language: 'Lingua', count: 'Numero',
+      authentik: 'Authentik', by: 'Approvato', sessions: 'Sessioni terminate', language: 'Lingua', count: 'Numero', name: 'Titolo', leavesAt: 'Esce il',
     },
     values: { yes: 'Sì', no: 'No', unlimited: 'Illimitato', ok: 'OK', failed: 'Non riuscito', off: 'Disattivato', skipped: 'Saltato', admin: 'Admin', self: 'Sé stesso' },
   },
