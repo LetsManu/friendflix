@@ -66,7 +66,7 @@ behaviour (it must keep working and is tested).
 
 ### Remote limit (backend, enforced server-side)
 - A new per-role setting, `remoteMaxBitrate`, holds the bitrate for requests from outside the home network.
-  Default for friend and family is 8 Mbit/s; it is tuned with the owner's upload measurement.
+  Default 4 Mbit/s for friend, family and guest, 8 Mbit/s for admin (owner upload measured ≈ 11 Mbit/s, so two remote viewers fit).
 - A new setting holds the home-network ranges (`HOME_NETWORKS`, CIDR list).
   - Default: RFC1918 + loopback + IPv6 ULA.
   - It is evaluated on the real client IP (trusted proxy headers, as for existing rate limits).
