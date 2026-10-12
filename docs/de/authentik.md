@@ -94,28 +94,12 @@ docker compose -f compose.authentik.yaml --env-file .env.authentik logs -f ak-se
 
 `AUTHENTIK_SECRET_KEY` signiert Sitzungen und Tokens. Nach dem ersten Start nie mehr ändern und eine Kopie im Passwort-Manager ablegen.
 
-> **Dateiablage (Branding-Uploads).** Seit 2025.12 legt Authentik hochgeladene Dateien (Logos, Icons, Hintergründe) unter `/data` ab, nicht mehr unter `/media` ([Release Notes 2025.12](https://docs.goauthentik.io/releases/2025.12/)). `compose.authentik.yaml` bindet noch `/media` ein, Uploads gingen beim Neuerstellen des Containers also verloren. Wer Dateien hochlädt, ergänzt das Override unten. *(Alles, was FriendFlix braucht, funktioniert ohne Uploads.)*
+**Authentik-Einstellungen (`.env.authentik`).** Authentik liest seine Konfiguration aus `AUTHENTIK_*`-Umgebungsvariablen. `compose.authentik.yaml` lädt `.env.authentik` (neben der Compose-Datei) automatisch in die Server- und Worker-Container; die Datei ist optional. Dieselbe Datei erfüllt also zwei Aufgaben:
 
-**Lokales Override für E-Mail und Dateiablage.** Authentik liest seine Einstellungen aus `AUTHENTIK_*`-Umgebungsvariablen. `compose.authentik.yaml` hat kein `env_file`, daher daneben ein kleines Override anlegen (nicht ins Git, z. B. `authentik.override.yaml` nennen und in `.git/info/exclude` eintragen):
+- `--env-file .env.authentik` liefert die `${…}`-Ersetzungen von Compose (`AUTHENTIK_PG_PASSWORD`, `AUTHENTIK_SECRET_KEY`, `AUTHENTIK_TAG`, `AUTHENTIK_PORT`, `BIND_ADDR`). Bei jedem Befehl wie oben mitgeben.
+- Alle anderen `AUTHENTIK_*`-Einstellungen darin, z. B. SMTP ([§2.5](#25-e-mail-smtp)) oder `AUTHENTIK_LISTEN__TRUSTED_PROXY_CIDRS`, kommen direkt bei Authentik an. Nach Änderungen die Container mit `… up -d` neu erstellen.
 
-```yaml
-# authentik.override.yaml - lokale Ergänzungen zu compose.authentik.yaml
-services:
-  ak-server:
-    env_file: [.env.authentik]
-    volumes: [ak-data:/data]
-  ak-worker:
-    env_file: [.env.authentik]
-    volumes: [ak-data:/data]
-volumes:
-  ak-data:
-```
-
-```bash
-docker compose -f compose.authentik.yaml -f authentik.override.yaml --env-file .env.authentik up -d
-```
-
-Dieselben `-f … -f … --env-file …` für alle weiteren Befehle verwenden (oder als Shell-Alias ablegen).
+**Dateiablage.** Seit 2025.12 legt Authentik hochgeladene Dateien (Logos, Icons, Hintergründe) unter `/data` ab ([Release Notes 2025.12](https://docs.goauthentik.io/releases/2025.12/)). `compose.authentik.yaml` sichert das im Volume `ak-data`; `ak-media` (`/media`) bleibt für ältere Versionen eingebunden.
 
 ### 2.2 Variante B: die offizielle Docker-Compose-Datei
 
@@ -152,7 +136,7 @@ Gleich danach empfohlen:
 
 ### 2.5 E-Mail (SMTP)
 
-Nötig für die Passwort-Wiederherstellung ([§10](#10-passwort-wiederherstellung-per-e-mail)) und Admin-Benachrichtigungen. Einstellungen in `.env.authentik` eintragen (bei Variante A mit dem Override aus 2.1):
+Nötig für die Passwort-Wiederherstellung ([§10](#10-passwort-wiederherstellung-per-e-mail)) und Admin-Benachrichtigungen. Einstellungen in `.env.authentik` eintragen (Variante A übernimmt sie automatisch, siehe 2.1; Variante B: deren `.env`):
 
 ```bash
 AUTHENTIK_EMAIL__HOST=smtp.example.com
@@ -168,7 +152,7 @@ AUTHENTIK_EMAIL__FROM=FriendFlix <authentik@example.com>
 Container neu erstellen (`… up -d`) und eine Test-Mail schicken:
 
 ```bash
-docker compose -f compose.authentik.yaml -f authentik.override.yaml --env-file .env.authentik exec ak-worker ak test_email du@example.com
+docker compose -f compose.authentik.yaml --env-file .env.authentik exec ak-worker ak test_email du@example.com
 ```
 
 ### 2.6 Backups und Updates
@@ -181,7 +165,7 @@ docker compose -f compose.authentik.yaml --env-file .env.authentik exec -T ak-po
   pg_dump -U authentik -Fc authentik > backups/authentik-$(date +%Y%m%d).dump
 ```
 
-Außerdem `.env.authentik` (vor allem `AUTHENTIK_SECRET_KEY`) und, falls genutzt, die Volumes `ak-data`, `ak-certs` und `ak-templates` sichern. Wiederherstellen: `ak-server`/`ak-worker` stoppen, `pg_restore --clean --if-exists -U authentik -d authentik < dump`, wieder starten.
+Außerdem `.env.authentik` (vor allem `AUTHENTIK_SECRET_KEY`) und die Volumes `ak-data` (Uploads), `ak-certs` und `ak-templates` sichern. Wiederherstellen: `ak-server`/`ak-worker` stoppen, `pg_restore --clean --if-exists -U authentik -d authentik < dump`, wieder starten.
 
 Updates: die Release Notes aller Versionen dazwischen lesen, `AUTHENTIK_TAG` anheben (immer nur ein Release-Schritt, z. B. `2026.5` → `2026.8`), dann `… pull && … up -d`. Nach dem Update die Prüfung aus [§14](#14-prüfen) laufen lassen; am ehesten ändert sich die Einladungs-API.
 
@@ -522,7 +506,7 @@ Logs: `docker compose -f compose.prod.yaml logs backend | grep -i -E "oidc|authe
 | Nach der Registrierung landet der Freund in der Authentik-Oberfläche | Redirect-Stage oder Redirect-Policy im Registrierungs-Flow, oder die User-Login-Stage fehlt. |
 | Nach der Registrierung *Permission denied* für FriendFlix | Die Anwendung ist an Gruppen gebunden, aber die User-Write-Stage nimmt neue Nutzer nicht in `friendflix-users` auf. |
 | Nach Änderung des *Subject mode* kann sich niemand mehr anmelden (`no_invite`) | Zurückstellen. FriendFlix erkennt Nutzer am `sub`. |
-| Branding-Uploads verschwinden nach einem Update | `/data` wird nicht gesichert, siehe Override in [§2.1](#21-variante-a-der-stack-in-diesem-repository-composeauthentikyaml). |
+| Branding-Uploads verschwinden nach einem Update | `/data` wird nicht gesichert: bei Variante A die aktuelle `compose.authentik.yaml` verwenden (Volume `ak-data`, [§2.1](#21-variante-a-der-stack-in-diesem-repository-composeauthentikyaml)); bei Variante B den Mount `./data` behalten. |
 
 ## 16. Referenz: was der FriendFlix-Code macht
 
