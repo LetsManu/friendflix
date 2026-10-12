@@ -1,5 +1,7 @@
 # Betrieb: Backup, Restore, Firewall, Updates
 
+Erstinstallation: [de/setup.md](de/setup.md) ([English](setup.md)). Authentik einrichten, sichern und aktualisieren: [de/authentik.md](de/authentik.md) ([English](authentik.md)).
+
 ## Backups & Wiederherstellung
 **Aktivieren** (opt-in, Compose-Profil `backup`; gilt für `compose.yaml` und `compose.prod.yaml`):
 ```bash
@@ -25,7 +27,7 @@ Bei einer leeren/neuen Datenbank zuerst den Stack mit `postgres` starten (`docke
 Startet einen Wegwerf-Postgres ohne Port-Mapping, spielt den neuesten Dump ein und prüft Migrationen und Tabellen. Schnellprüfung einer einzelnen Datei: `docker compose exec -T postgres pg_restore --list < backups/<datei>.dump | head`.
 
 - **APP_ENC_KEY sichern!** (Passwort-Manager, getrennt vom Dump). Ohne ihn sind die gespeicherten Jellyfin-Passwörter der Nutzer unlesbar.
-- Nicht im Dump: Jellyfin-/Seerr-/Authentik-Daten (eigene Backups dieser Dienste).
+- Nicht im Dump: Jellyfin-/Seerr-/Authentik-Daten (eigene Backups dieser Dienste; Authentik: [de/authentik.md §2.6](de/authentik.md#26-backups-und-updates)).
 
 ## Host-Firewall (zusätzlich zum fehlenden Port-Mapping)
 Jellyfin/Seerr haben keine `ports:` und hängen nur im internen Netz. Falls sie auf dem Host zusätzlich laufen (nicht gebündelt):

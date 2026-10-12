@@ -113,6 +113,8 @@ The interface speaks **English, German, French, Spanish, Italian, Turkish and Po
 
 Everything below is technical. The detailed operating docs are in German (see [Documentation](#documentation)).
 
+**Setup guide:** step-by-step installation from an empty server to the first invited friend – [docs/setup.md](docs/setup.md); Authentik (installation, provider, flows, invitations) – [docs/authentik.md](docs/authentik.md).
+
 ### Requirements
 
 - A Linux server with **Docker** and **Docker Compose**.
@@ -139,7 +141,7 @@ docker compose -f compose.prod.yaml ps                         # everything "hea
 
 Then:
 
-1. **Authentik:** create the OIDC provider (redirect URI `${PUBLIC_URL}/auth/callback`) and enforce MFA – [docs/integrations.md](docs/integrations.md).
+1. **Authentik:** create the OIDC provider (redirect URI `${PUBLIC_URL}/auth/callback`) and enforce MFA – [docs/authentik.md](docs/authentik.md).
 2. **Nginx Proxy Manager:** one proxy host `portal.<domain>` → `127.0.0.1:3080`, WebSockets on, Force SSL/HTTP2/HSTS; paste [deploy/npm/portal.advanced.conf](deploy/npm/portal.advanced.conf) into the *Advanced* tab (routes `/api`, `/auth`, `/ws` to `:3081` and `/media/` to `:3082`). Keep its `/media/c/` block: it stops cast tokens from being logged.
 3. **Jellyfin:** create an admin API key. Optional webhook plugin for instant "now playing" and "new in library" events – [docs/integrations.md](docs/integrations.md).
 4. **Seerr:** API key and webhook – [docs/integrations.md](docs/integrations.md).
@@ -241,7 +243,9 @@ npm run e2e                                     # Playwright: builds the web app
 
 | Topic | File |
 |---|---|
-| Jellyfin, Seerr, Authentik, ntfy/Discord, web push | [docs/integrations.md](docs/integrations.md) |
+| Installation step by step | [docs/setup.md](docs/setup.md) |
+| Authentik: installation, provider, flows, invitations | [docs/authentik.md](docs/authentik.md) |
+| Jellyfin, Seerr, ntfy/Discord, web push | [docs/integrations.md](docs/integrations.md) |
 | Backups, restore, firewall, updates, Plan B | [docs/operations.md](docs/operations.md) |
 | Monitoring, metrics, Server-Timing, browser errors | [docs/monitoring.md](docs/monitoring.md) |
 | Offline downloads (platforms, storage, limits) | [docs/downloads.md](docs/downloads.md) |

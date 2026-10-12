@@ -113,6 +113,8 @@ Die Oberfläche spricht **Deutsch, Englisch, Französisch, Spanisch, Italienisch
 
 Ab hier wird es technisch. Die ausführliche Betriebsdoku steht unter [Dokumentation](#dokumentation).
 
+**Installationsanleitung:** Schritt für Schritt vom leeren Server bis zum ersten eingeladenen Freund – [docs/de/setup.md](docs/de/setup.md); Authentik (Installation, Provider, Flows, Einladungen) – [docs/de/authentik.md](docs/de/authentik.md).
+
 ### Voraussetzungen
 
 - Ein Linux-Server mit **Docker** und **Docker Compose**.
@@ -139,7 +141,7 @@ docker compose -f compose.prod.yaml ps                         # alles "healthy"
 
 Danach:
 
-1. **Authentik:** OIDC-Provider anlegen (Redirect-URI `${PUBLIC_URL}/auth/callback`) und MFA erzwingen – [docs/integrations.md](docs/integrations.md).
+1. **Authentik:** OIDC-Provider anlegen (Redirect-URI `${PUBLIC_URL}/auth/callback`) und MFA erzwingen – [docs/de/authentik.md](docs/de/authentik.md).
 2. **Nginx Proxy Manager:** ein Proxy-Host `portal.<domain>` → `127.0.0.1:3080`, Websockets an, Force SSL/HTTP2/HSTS; [deploy/npm/portal.advanced.conf](deploy/npm/portal.advanced.conf) in den Reiter *Advanced* einfügen (leitet `/api`, `/auth`, `/ws` an `:3081` und `/media/` an `:3082`). Den Block `/media/c/` nicht entfernen: Er verhindert, dass Cast-Tokens in Logs landen.
 3. **Jellyfin:** Admin-API-Key anlegen. Optional das Webhook-Plugin für sofortige „läuft gerade“- und „neu in der Bibliothek“-Ereignisse – [docs/integrations.md](docs/integrations.md).
 4. **Seerr:** API-Key und Webhook – [docs/integrations.md](docs/integrations.md).
@@ -241,7 +243,9 @@ npm run e2e                                     # Playwright: baut die Web-App u
 
 | Thema | Datei |
 |---|---|
-| Jellyfin, Seerr, Authentik, ntfy/Discord, Web-Push | [docs/integrations.md](docs/integrations.md) |
+| Installation Schritt für Schritt | [docs/de/setup.md](docs/de/setup.md) |
+| Authentik: Installation, Provider, Flows, Einladungen | [docs/de/authentik.md](docs/de/authentik.md) |
+| Jellyfin, Seerr, ntfy/Discord, Web-Push | [docs/integrations.md](docs/integrations.md) |
 | Backups, Wiederherstellung, Firewall, Updates, Plan B | [docs/operations.md](docs/operations.md) |
 | Monitoring, Metriken, Server-Timing, Browser-Fehler | [docs/monitoring.md](docs/monitoring.md) |
 | Offline-Downloads (Plattformen, Speicher, Grenzen) | [docs/downloads.md](docs/downloads.md) |
