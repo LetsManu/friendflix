@@ -9,7 +9,7 @@ import { playbackHooks } from '../hooks.js';
 import { tidyResume } from '../resume.js';
 import type { ItemDto } from '../jellyfin/dto.js';
 import { createHash } from 'node:crypto';
-import { itemsByIds } from './discover.js';
+import { itemsByIds, libraryBecause } from './discover.js';
 import { id32 as itemId, wrap as sharedWrap } from './_shared.js';
 
 const psId = z.string().regex(/^[\w-]{8,64}$/);
@@ -216,14 +216,7 @@ export function mediaRoutes(app: FastifyInstance, ctx: Ctx) {
   }));
   app.get('/api/items/:id/segments', pre, wrap(async (req) => ({ segments: await ctx.jf.segments(req.jfUser!, itemId.parse((req.params as any).id)) })));
   app.get('/api/items/:id/similar', pre, wrap(async (req) => ({ items: await ctx.jf.similar(req.jfUser!, itemId.parse((req.params as any).id)) })));
-  app.get('/api/library/because', pre, wrap(async (req) => {
-    const up = (await ctx.db.query<{ item_id: string }>('select item_id from thumbs where profile_id=$1 and value=1 order by created_at desc limit 1', [req.profile!.id])).rows[0];
-    const seed = up ? await ctx.jf.item(req.jfUser!, up.item_id).catch(() => null) : null;
-    const base = seed ?? (await ctx.jf.lastWatched(req.jfUser!));
-    if (!base) return { because: null, items: [] };
-    const down = new Set((await ctx.db.query<{ item_id: string }>('select item_id from thumbs where profile_id=$1 and value=-1', [req.profile!.id])).rows.map((r) => r.item_id));
-    return { because: { id: base.id, name: base.name, liked: Boolean(seed) }, items: (await ctx.jf.similar(req.jfUser!, base.id)).filter((i) => i.id !== base.id && !down.has(i.id)) };
-  }));
+  app.get('/api/library/because', pre, wrap(async (req) => libraryBecause(ctx, req.jfUser!, req.profile!.id)));
   app.get('/api/items/:id/seasons', pre, wrap(async (req) => ({ items: await ctx.jf.seasons(req.jfUser!, itemId.parse((req.params as any).id)) })));
   app.get('/api/items/:id/episodes', pre, wrap(async (req) => {
     const seasonId = z.object({ seasonId: itemId.optional() }).parse(req.query).seasonId;

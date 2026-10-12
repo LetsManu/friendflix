@@ -92,6 +92,7 @@ beforeEach(async () => {
   original = false;
   lastPlayed = undefined;
   failInfoFor = '';
+  env.ctx.jf.forgetItems(); // item() is memoised for 10 s: every test starts from the fake library's current state
 });
 
 const create = async (s: Sess, body: Record<string, unknown>) => { const r = await call(s, 'POST', '/api/downloads', { quality: 'hd', ...body }); if (process.env.DBG && r.statusCode !== 200) console.log(r.statusCode, r.body); return r; };
@@ -398,6 +399,7 @@ describe('offline progress', () => {
   it('skips events that are not newer than Jellyfin LastPlayedDate', async () => {
     const l = (await create(family, { itemId: MOVIE })).json().licenses[0];
     lastPlayed = new Date(Date.now() + 1000).toISOString();
+    env.ctx.jf.forgetItems(); // item() is memoised for 10 s; the fake Jellyfin state just changed underneath it
     const n = posts().length;
     const r = await post([ev(l)]);
     expect(r.json()).toMatchObject({ applied: [], skipped: [MOVIE] });

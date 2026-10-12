@@ -56,28 +56,44 @@ interface MediaAuth {
 
 /** Session -> Jellyfin credentials for media requests. Short memo (5 s) keeps per-segment auth cheap. */
 const memo = new Map<string, { exp: number; v: MediaAuth | null }>();
+/** Single flight: concurrent lookups of one session (a burst of image requests after the memo expired) share one DB/Redis pass. */
+const inflight = new Map<string, Promise<MediaAuth | null>>();
 /** Drops the memoised credentials of a session (profile switch / revoke) so the gateway never serves the previous profile's token. */
-export const forgetAuth = (sid: string) => { memo.delete(sid); };
+export const forgetAuth = (sid: string) => {
+  memo.delete(sid);
+  inflight.delete(sid); // a lookup still running for the old profile must neither be joined nor stored
+};
 
 export function internalRoutes(app: FastifyInstance, ctx: Ctx) {
+  async function lookup(sid: string): Promise<MediaAuth | null> {
+    const s = await loadSession(ctx, sid);
+    if (!s || !s.deviceApproved) return null;
+    const user = await getUserById(ctx, s.userId);
+    // unknown (removed) role: fall back to the least privileged template ('guest'); none -> deny
+    const role = (user ? await effectiveRole(ctx, user.role) : undefined) ?? (await effectiveRole(ctx, 'guest')); // admin overrides (Admin → Rollen) apply to media too
+    const prof = user && !user.disabled ? await resolveProfile(ctx, user, s) : null; // no profile chosen yet (owner PIN) -> deny
+    if (!user || !prof || !role) return null;
+    const jfUser = jfUserFor(user, prof);
+    return { userId: user.id, token: await ctx.jf.token(jfUser), deviceId: ctx.jf.deviceId(jfUser), maxBitrate: role.maxBitrate, canDownload: role.download || ctx.cfg.DIRECT_PLAY_REQUIRES_DOWNLOAD !== 'true', ...(role.maxHeight ? { maxHeight: role.maxHeight } : {}) };
+  }
+
+  /** Errors (DB/Redis/Jellyfin down) propagate and are never memoised: the next request retries. */
   async function mediaAuth(sid: string): Promise<MediaAuth | null> {
     const hit = memo.get(sid);
     if (hit && hit.exp > Date.now()) return hit.v;
-    let v: MediaAuth | null = null;
-    const s = await loadSession(ctx, sid);
-    if (s && s.deviceApproved) {
-      const user = await getUserById(ctx, s.userId);
-      // unknown (removed) role: fall back to the least privileged template ('guest'); none -> deny
-      const role = (user ? await effectiveRole(ctx, user.role) : undefined) ?? (await effectiveRole(ctx, 'guest')); // admin overrides (Admin → Rollen) apply to media too
-      const prof = user && !user.disabled ? await resolveProfile(ctx, user, s) : null; // no profile chosen yet (owner PIN) -> deny
-      if (user && prof && role) {
-        const jfUser = jfUserFor(user, prof);
-        v = { userId: user.id, token: await ctx.jf.token(jfUser), deviceId: ctx.jf.deviceId(jfUser), maxBitrate: role.maxBitrate, canDownload: role.download || ctx.cfg.DIRECT_PLAY_REQUIRES_DOWNLOAD !== 'true', ...(role.maxHeight ? { maxHeight: role.maxHeight } : {}) };
+    const running = inflight.get(sid);
+    if (running) return running;
+    const p: Promise<MediaAuth | null> = lookup(sid).then((v) => {
+      if (inflight.get(sid) === p) { // not forgotten (profile switch / logout) meanwhile
+        memo.set(sid, { exp: Date.now() + (v ? 5_000 : 2_000), v });
+        if (memo.size > 5000) memo.clear();
       }
-    }
-    memo.set(sid, { exp: Date.now() + (v ? 5_000 : 2_000), v });
-    if (memo.size > 5000) memo.clear();
-    return v;
+      return v;
+    }).finally(() => {
+      if (inflight.get(sid) === p) inflight.delete(sid);
+    });
+    inflight.set(sid, p);
+    return p;
   }
 
   // Used by the gateway only (never routed by NPM). Returns the Jellyfin token of the session owner.
@@ -165,6 +181,8 @@ export function internalRoutes(app: FastifyInstance, ctx: Ctx) {
     const r = await ctx.db.query<UserRow>('select * from users where lower(jellyfin_username)=lower($1)', [e.user]);
     const user = r.rows[0];
     if (!user) return { ok: true };
+    // played state / resume position changed outside the portal: drop memoised items and dependent caches of that Jellyfin user
+    if (e.type === 'PlaybackStop' || e.type === 'PlaybackStart' || e.type === 'PlaybackProgress') await ctx.jf.touchUserData(user.jellyfin_user_id);
     const ps = `wh-${(e.deviceName ?? 'dev').replace(/[^\w]/g, '').slice(0, 24)}`;
     if (e.type === 'PlaybackStop') await clearLive(ctx, user.id, ps);
     else if (e.type === 'PlaybackStart' || e.type === 'PlaybackProgress') {

@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import type { RoleTemplate } from '../roles.js';
+import { timed } from '../timing.js';
 
 /**
  * Jellyfin authorization header, e.g.
@@ -69,8 +70,13 @@ export class JellyfinClient {
     };
   }
 
+  /** Every Jellyfin request goes through here: booked as `jf` in the request's Server-Timing (time to response headers). */
+  private send(url: string, init: RequestInit) {
+    return timed('jf', () => this.fetchImpl(url, init));
+  }
+
   adminFetch(path: string, init: RequestInit = {}) {
-    return this.fetchImpl(this.url(path), {
+    return this.send(this.url(path), {
       ...init,
       headers: { ...this.adminHeaders(), ...(init.headers as Record<string, string> | undefined) },
       signal: init.signal ?? AbortSignal.timeout(15000),
@@ -85,7 +91,7 @@ export class JellyfinClient {
   }
 
   userFetch(token: string, deviceId: string, path: string, init: RequestInit = {}) {
-    return this.fetchImpl(this.url(path), {
+    return this.send(this.url(path), {
       ...init,
       headers: {
         'content-type': 'application/json',
@@ -97,7 +103,7 @@ export class JellyfinClient {
   }
 
   async authenticateByName(username: string, password: string, deviceId: string = randomUUID()): Promise<AuthResult> {
-    const res = await this.fetchImpl(this.url('/Users/AuthenticateByName'), {
+    const res = await this.send(this.url('/Users/AuthenticateByName'), {
       method: 'POST',
       headers: { Authorization: mediaBrowserHeader({ deviceId }), 'content-type': 'application/json' },
       body: JSON.stringify({ Username: username, Pw: password }),

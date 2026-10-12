@@ -87,6 +87,7 @@ describe('cast session', () => {
 
   it('is refused for an item the profile cannot see', async () => {
     visible = false;
+    env.ctx.jf.forgetItems(); // item() is memoised for 10 s; the fake library just changed underneath it
     const before = (await env.kv.keys('cast:')).length;
     const r = await call(admin, 'POST', '/api/cast/session', { itemId: ID });
     visible = true;
