@@ -586,7 +586,7 @@ describe('licenses are scoped per profile', () => {
 
 describe('creation is atomic and never waits', () => {
   it('a Jellyfin error mid-batch inserts nothing (jobs and licenses) and leaks no detail', async () => {
-    failInfoFor = EPS[1]; // 2nd episode of the batch
+    failInfoFor = EPS[1]!; // 2nd episode of the batch
     const r = await create(family, { seriesId: SERIES, fromEpisodeId: EPS[0], count: 2 });
     expect(r.statusCode).toBe(502);
     expect(r.body).not.toContain('secret');
