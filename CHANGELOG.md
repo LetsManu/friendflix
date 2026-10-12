@@ -1,5 +1,14 @@
 # Changelog
 ## [Unreleased]
+### Discovery upgrade – Suche, Personen, Filter
+- Search finds people, genres, titles and episodes in grouped sections (`GET /api/search`), a 4-digit query lists titles of that year; loading/error/empty states, recent searches, `/` or Ctrl/Cmd+K focuses the search.
+- Person pages (`/person/<id>`, `GET /api/people/:id`) with the filmography limited to the viewer's library; the item page shows a linked "Besetzung & Crew" row.
+- Browse: decade, minimum rating and person filters (`decade`, `year`, `minRating`, `person` on `/api/library/items`), removable filter chips, Filme/Serien switch keeps filters, stale responses are dropped; library pages keep search/sort/filter in the URL.
+- Item page and quick view: a failing side request (ratings, seasons, next up) no longer shows "Titel nicht gefunden"; favourite/watched/follow/rating report failures.
+- Privacy: `GET /api/items/:id/ratings` requires the viewer to see the title and hides ratings of users who turned off "Bewertungen teilen".
+- "Gemeinsam schauen" applies genre/runtime filters to the whole common set (up to 2000 titles) instead of the first 400.
+- Migration 21: indexes `ratings(item_id)`, `thumbs(user_id)`; genre lists cached 10 min per Jellyfin user.
+- Research notes: `docs/research/streaming-product-upgrade.md`.
 ### Block 5 – Offline-Downloads
 - Filme und Folgen aufs Gerät laden und offline ansehen (Menü → Downloads, `/offline`): Server bereitet MP4-Dateien vor (HLS → ffmpeg-Remux, wiederaufnehmbar), der Browser lädt sie per Range in OPFS; Lizenzen pro Gerät mit Ablauf, Online-Prüfung und Widerruf. Rollenfelder „Downloads erlauben“, „Max. Downloads“, „Max. Download-Qualität“, „Gültigkeit (Tage)“; Admin → Wiedergabe-Check zeigt Jobs und Speicher. Neue Variablen `DOWNLOADS_ENABLED`, `DOWNLOAD_DIR`, `DOWNLOAD_CACHE_MAX_GB` u. a., neues Volume `downloads`. Kein DRM, siehe `docs/downloads.md`.
 ### Block 4 – PWA, push, Chromecast

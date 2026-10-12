@@ -60,6 +60,12 @@
   function openSearch() { searchOpen = true; setTimeout(() => searchEl?.focus(), 30); }
   function submitSearch() { if (q.trim()) goto(`/search?q=${encodeURIComponent(q.trim())}`); }
   function onKey(e: KeyboardEvent) {
+    // "/" and Ctrl/Cmd+K jump to the search field (not while typing somewhere else)
+    if (!watchPage && !tv && ((e.key === '/' && !e.ctrlKey && !e.metaKey && !e.altKey) || ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k'))) {
+      const el = e.target as HTMLElement | null;
+      const typing = el && (isEditable(el) || el.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName));
+      if (!typing || e.key !== '/') { e.preventDefault(); openSearch(); return; }
+    }
     const back = e.key === 'Escape' || (tv && isBackKey(e));
     if (!back) return;
     if (menu || bell || more) { menu = bell = more = false; if (tv) e.preventDefault(); return; } // dropdowns close first
@@ -177,7 +183,7 @@
       <span class="sp"></span>
       <form class="search" class:open={searchOpen} on:submit|preventDefault={submitSearch} role="search">
         <button type="button" class="icon-btn" aria-label="Suche öffnen" on:click={() => (searchOpen ? submitSearch() : openSearch())}><Icon name="search" size={22} /></button>
-        <input bind:this={searchEl} bind:value={q} placeholder="Titel, Genre …" aria-label="Suche" on:blur={() => { if (!q) searchOpen = false; }} />
+        <input bind:this={searchEl} bind:value={q} placeholder="Titel, Person, Genre, Jahr …" aria-label="Suche" on:blur={() => { if (!q) searchOpen = false; }} />
       </form>
       <button class="icon-btn hide-s" aria-label="Überrasch mich" title="Überrasch mich" on:click={surprise}><Icon name="shuffle" size={21} /></button>
       <div class="pop-anchor">

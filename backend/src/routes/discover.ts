@@ -70,8 +70,19 @@ export function discoverRoutes(app: FastifyInstance, ctx: Ctx) {
     const common = [...sets[0]!].filter((id) => sets.every((s) => s.has(id)));
     const total = common.length;
     // details + filters with the requester's token; sort by rating
-    const details = await itemsByIds(ctx, req.jfUser!, common.slice(0, 400));
-    let items = details;
+    // genre/type are filtered by Jellyfin so they apply to the whole common set (capped), not just a prefix
+    const pool = common.slice(0, 2000);
+    const chunks: string[][] = [];
+    for (let i = 0; i < pool.length; i += 200) chunks.push(pool.slice(i, i + 200));
+    const parts: ItemDto[][] = new Array(chunks.length);
+    let next = 0;
+    await Promise.all(Array.from({ length: Math.min(4, chunks.length) }, async () => {
+      while (next < chunks.length) {
+        const n = next++;
+        parts[n] = (await ctx.jf.items(req.jfUser!, { ids: chunks[n], types, genre: b.genre, limit: 200 })).items;
+      }
+    }));
+    let items = parts.flat();
     if (b.maxMinutes) items = items.filter((i) => !i.runtimeTicks || i.runtimeTicks <= b.maxMinutes! * 600_000_000);
     if (b.genre) items = items.filter((i) => i.genres.includes(b.genre!));
     items.sort((a, c) => (c.communityRating ?? 0) - (a.communityRating ?? 0) || a.name.localeCompare(c.name));

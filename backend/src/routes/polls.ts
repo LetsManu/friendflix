@@ -102,9 +102,13 @@ export function pollRoutes(app: FastifyInstance, ctx: Ctx) {
   }
 
   // ---- ratings / reviews ----
-  app.get('/api/items/:id/ratings', pre, async (req) => {
+  app.get('/api/items/:id/ratings', pre, async (req, reply) => {
     const itemId = id32.parse((req.params as { id: string }).id);
-    const r = await ctx.db.query('select u.name, r.stars, r.review, r.created_at, r.user_id = $2 mine from ratings r join users u on u.id=r.user_id where r.item_id=$1 order by r.created_at desc limit 50', [itemId, req.user!.id]);
+    if (!(await itemOr(ctx, reply, req.jfUser!, itemId))) return reply; // viewer must be able to see the item
+    // other users' ratings are hidden when they switched shareRatings off; the viewer's own row always stays
+    const r = await ctx.db.query(
+      `select u.name, r.stars, r.review, r.created_at, r.user_id = $2 mine from ratings r join users u on u.id=r.user_id left join user_prefs p on p.user_id=r.user_id
+        where r.item_id=$1 and (r.user_id = $2 or coalesce(p.data->>'shareRatings', 'true') <> 'false') order by r.created_at desc limit 50`, [itemId, req.user!.id]);
     const avg = r.rows.length ? r.rows.reduce((a, x) => a + x.stars, 0) / r.rows.length : null;
     return { ratings: r.rows, average: avg };
   });

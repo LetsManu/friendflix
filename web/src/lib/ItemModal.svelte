@@ -13,14 +13,21 @@
   let opener: Element | null = null;
 
   $: id, load();
+  let seq = 0;
   async function load() {
-    item = null; failed = false; logoFailed = false;
-    try {
-      item = (await api(`/api/items/${id}`)).item;
-      if (item?.type === 'Series') next = (await api('/api/library/nextup')).items.find((e: Item) => e.seriesId === id) ?? null;
-      // TV: the play button is the natural first stop (the close button is reached with Back)
-      if (document.documentElement.classList.contains('tv')) tick().then(() => box?.querySelector<HTMLElement>('[data-autofocus]')?.focus());
-    } catch { failed = true; }
+    const my = ++seq, want = id;
+    item = null; next = null; failed = false; logoFailed = false;
+    let it: Item;
+    try { it = (await api(`/api/items/${want}`)).item; } catch { if (my === seq) failed = true; return; }
+    if (my !== seq) return;
+    item = it;
+    if (it.type === 'Series') {
+      // next-up is a nicety: without it the play button just opens the detail page
+      try { const n = ((await api('/api/library/nextup')).items as Item[]).find((e) => e.seriesId === want) ?? null; if (my === seq) next = n; } catch { /* optional */ }
+      if (my !== seq) return;
+    }
+    // TV: the play button is the natural first stop (the close button is reached with Back)
+    if (document.documentElement.classList.contains('tv')) tick().then(() => box?.querySelector<HTMLElement>('[data-autofocus]')?.focus());
   }
   $: inList = item ? $listIds.has(item.id) : false;
   $: play = item ? (item.type === 'Series' ? (next ? `/watch/${next.id}` : `/item/${item.id}`) : `/watch/${item.id}`) : '';

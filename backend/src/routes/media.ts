@@ -22,6 +22,10 @@ const listQuery = z.object({
   filter: z.enum(['favorites', 'unplayed', 'played']).optional(),
   genre: z.string().max(300).optional(), // several genres separated by | (Jellyfin: any of)
   studio: z.string().max(80).optional(),
+  decade: z.coerce.number().int().min(1900).max(2090).refine((n) => n % 10 === 0).optional(),
+  year: z.coerce.number().int().min(1900).max(2100).optional(),
+  minRating: z.coerce.number().min(0).max(10).optional(),
+  person: itemId.optional(),
 });
 
 const reportBody = z.object({

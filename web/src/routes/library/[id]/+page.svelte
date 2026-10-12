@@ -1,29 +1,76 @@
 <script lang="ts">
   import { pageStore } from '#lib/page';
   const page = pageStore();
+  import { goto } from '$app/navigation';
   import { api, type Item } from '#lib/api';
   import Card from '#lib/Card.svelte';
+  import { parseBrowse } from '#lib/discovery';
 
-  let items: Item[] | null = null, total = 0, start = 0, sort = 'SortName', filter = '', q = '', busy = false;
+  let items: Item[] | null = null, total = 0, start = 0, busy = false, failed = false, seq = 0, lastKey = '', qInput = '', lastQ = '*', names: Record<string, string> = {};
   const PAGE = 60;
-  async function load(reset = true) {
-    busy = true;
-    if (reset) { start = 0; items = null; }
-    const p = new URLSearchParams({ parentId: $page.params.id!, sort, limit: String(PAGE), start: String(start) });
-    if (sort === 'DateCreated' || sort === 'CommunityRating') p.set('desc', 'true');
+
+  $: id = $page.params.id ?? '';
+  $: sp = $page.url.searchParams;
+  $: q = (sp.get('q') ?? '').trim();
+  $: sort = parseBrowse(sp).sort;
+  $: filter = parseBrowse(sp).filter;
+  $: if (q !== lastQ) { lastQ = q; qInput = q; } // URL is the source of truth (also for back/forward)
+  $: key = [id, sort, filter, q].join('|');
+  $: if (id && key !== lastKey) { lastKey = key; void load(true); }
+  $: name = names[id] ?? '';
+  $: if (id && names[id] === undefined) void loadName(id);
+
+  async function loadName(lib: string) {
+    names[lib] = '';
+    try { names[lib] = ((await api('/api/library/views')).items as Item[]).find((v) => v.id === lib)?.name ?? ''; } catch { /* generic title */ }
+    names = names;
+  }
+
+  async function load(reset: boolean) {
+    const my = reset ? ++seq : seq;
+    busy = true; failed = false;
+    if (reset) { start = 0; items = null; total = 0; }
+    const p = new URLSearchParams({ parentId: id, sort, limit: String(PAGE), start: String(start) });
+    if (sort === 'DateCreated' || sort === 'CommunityRating' || sort === 'PremiereDate') p.set('desc', 'true');
     if (filter) p.set('filter', filter);
     if (q) p.set('q', q);
-    try { const r = await api(`/api/library/items?${p}`); items = [...(items ?? []), ...r.items]; total = r.total; start += PAGE; } catch { items = items ?? []; }
-    busy = false;
+    try {
+      const r = await api(`/api/library/items?${p}`);
+      if (my !== seq) return;
+      items = [...(reset ? [] : items ?? []), ...r.items]; total = r.total; start += PAGE;
+    } catch {
+      if (my !== seq) return;
+      failed = true; items = items ?? [];
+    }
+    if (my === seq) busy = false;
   }
-  $: if ($page.params.id) load();
+
+  function set(k: string, value: string) {
+    const u = new URL($page.url.href);
+    if (value) u.searchParams.set(k, value); else u.searchParams.delete(k);
+    goto(u, { replace: true, reset: false });
+  }
 </script>
-<div class="flex" style="margin-bottom:1.2rem">
-  <input aria-label="In dieser Bibliothek suchen" placeholder="In dieser Bibliothek suchen" bind:value={q} on:change={() => load()} />
-  <select aria-label="Sortierung" bind:value={sort} on:change={() => load()}><option value="SortName">A–Z</option><option value="DateCreated">Zuletzt hinzugefügt</option><option value="PremiereDate">Erscheinungsdatum</option><option value="CommunityRating">Beliebtheit</option></select>
-  <select aria-label="Filter" bind:value={filter} on:change={() => load()}><option value="">Alle</option><option value="unplayed">Ungesehen</option><option value="played">Gesehen</option><option value="favorites">Favoriten</option></select>
-</div>
-<div class="tiles">
+
+<svelte:head><title>{name || 'Bibliothek'} – FriendFlix</title></svelte:head>
+<h1>{name || 'Bibliothek'}</h1>
+<form class="flex bar" role="search" on:submit|preventDefault={() => set('q', qInput.trim())}>
+  <input type="search" aria-label="In dieser Bibliothek suchen" placeholder="In dieser Bibliothek suchen" bind:value={qInput} on:change={() => set('q', qInput.trim())} />
+  <select aria-label="Sortierung" value={sort} on:change={(e) => set('sort', e.currentTarget.value === 'SortName' ? '' : e.currentTarget.value)}><option value="SortName">A–Z</option><option value="DateCreated">Zuletzt hinzugefügt</option><option value="PremiereDate">Erscheinungsdatum</option><option value="CommunityRating">Beliebtheit</option></select>
+  <select aria-label="Filter" value={filter} on:change={(e) => set('filter', e.currentTarget.value)}><option value="">Alle</option><option value="unplayed">Ungesehen</option><option value="played">Gesehen</option><option value="favorites">Favoriten</option></select>
+</form>
+<div class="tiles" aria-busy={items === null}>
   {#if items === null}{#each Array(12) as _}<div class="skeleton" style="aspect-ratio:16/9"></div>{/each}{:else}{#each items as i (i.id)}<div class="slot"><Card item={i} /></div>{/each}{/if}
 </div>
-{#if items && items.length < total}<p style="text-align:center"><button class="sec" disabled={busy} on:click={() => load(false)}>Mehr laden</button></p>{/if}
+{#if failed}
+  <div class="state" role="alert"><p class="err">Titel konnten nicht geladen werden.</p><button type="button" on:click={() => load(!items?.length)}>Erneut versuchen</button></div>
+{:else if items && !items.length}
+  <p class="muted state">{q || filter ? 'Nichts gefunden – probiere andere Suchbegriffe oder Filter.' : 'Diese Bibliothek ist leer.'}</p>
+{/if}
+{#if items && items.length < total && !failed}<p style="text-align:center"><button class="sec" disabled={busy} on:click={() => load(false)}>Mehr laden</button></p>{/if}
+
+<style>
+  .bar { margin-bottom: 1.2rem; }
+  .bar input { flex: 1; min-width: 200px; max-width: 420px; }
+  .state { text-align: center; padding: 1rem 0 3rem; }
+</style>
