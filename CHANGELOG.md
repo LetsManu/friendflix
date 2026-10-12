@@ -1,5 +1,7 @@
 # Changelog
 ## [Unreleased]
+### Wishes on other media servers
+- Seerr wishes no longer depend on Jellyfin users: a new backend capability `requestUsers` (`'jellyfin-import'` for Jellyfin, unchanged; `'local'` for every other server and the default) maps each FriendFlix account to a local Seerr user: stored id (checked to still exist), else a Seerr user with the same email, else a new one with only the Request permission (placeholder `<account id>@friendflix.invalid` without email; re-created once when deleted in Seerr; one user under parallel wishes). No migration (uses `users.seerr_user_id`). See docs/integrations.md, "Seerr".
 ### DevSecOps: supply chain, DAST, monitoring
 - CI push builds carry BuildKit SBOM (SPDX) + provenance (`mode=max`); Trivy findings (CRITICAL/HIGH/MEDIUM, fixable) are uploaded to code scanning as SARIF before the existing CRITICAL/HIGH gate.
 - `publish.yml` signs each promoted digest with cosign keyless (GitHub OIDC, no keys) and adds GitHub artifact attestations (SLSA provenance + SBOM, pushed to GHCR). Identities derive from the repo, so forks sign as themselves. Verification: docs/operations.md.
