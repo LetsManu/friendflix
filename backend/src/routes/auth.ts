@@ -12,6 +12,7 @@ import { deletePushSubscriptions } from '../push.js';
 import { claimInvite, deleteAuthentikInvitation, enrollFlowUrl, lookupInvite, releaseInvite, type InviteRow } from '../invites.js';
 import { accountJellyfinIds, listProfiles, publicProfile } from '../profiles.js';
 import { applyRole, getUserBySub, provisionUser } from '../users.js';
+import { profileOnboarded } from './prefs.js';
 import { FALLBACK_LANGUAGE, instanceLanguage, languageFromAcceptLanguage, profileLanguage, roleLabel } from '../i18n.js';
 
 const OIDC_COOKIE = 'ff_oidc';
@@ -109,7 +110,7 @@ export function authRoutes(app: FastifyInstance, ctx: Ctx) {
     const u = req.user!;
     const profileCount = (await listProfiles(ctx, u.id)).length;
     const dlRole = await effectiveRole(ctx, u.role);
-    const [instLang, profLang] = await Promise.all([instanceLanguage(ctx), profileLanguage(ctx, req.profile?.id)]);
+    const [instLang, profLang, onboarded] = await Promise.all([instanceLanguage(ctx), profileLanguage(ctx, req.profile?.id), profileOnboarded(ctx, req.profile?.id)]);
     return {
       id: u.id,
       name: u.name,
@@ -131,6 +132,10 @@ export function authRoutes(app: FastifyInstance, ctx: Ctx) {
       profileCount,
       /** false: this session never picked a profile explicitly (cookie of an older session / owner fallback) */
       profileChosen: Boolean(req.session!.profileId),
+      /** the active profile is a kids profile: kids home, no social features (the server answers 403 kids_profile there) */
+      kids: Boolean(req.profile?.kids),
+      /** false: the active profile was created after onboarding existed and never finished /welcome */
+      onboarded,
       /** effective UI language: the active profile's choice → instance default → 'de' (see docs/i18n.md) */
       language: profLang ?? instLang ?? FALLBACK_LANGUAGE,
       /** false: the active profile never chose a language → the client shows the first-login language picker */

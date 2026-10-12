@@ -73,6 +73,7 @@ export async function installApi(ctx: BrowserContext, st: MockState): Promise<vo
     if (p === '/api/library/resume') return J({ items: [episodes[0], items[2]] });
     if (p === '/api/library/nextup') return J({ items: [episodes[1]] });
     if (p === '/api/library/because') return J({ because: { name: 'Inception' }, items: items.slice(1, 12) });
+    if (p === '/api/library/because-more') return J({ rows: [] }); // specs that need the extra "Weil du ..." rows mock it themselves
     if (p === '/api/recommendations') return J({ items: items.slice(5, 10) });
     if (p === '/api/library/friends-rated') return J({ items: items.slice(2, 8) });
     if (p === '/api/library/trending') {
@@ -161,6 +162,8 @@ export async function installApi(ctx: BrowserContext, st: MockState): Promise<vo
     }
     if ((mm = p.match(/^\/api\/items\/([^/]+)\/favorite$/))) { if (m === 'POST') st.fav.add(mm[1]!); else st.fav.delete(mm[1]!); return J({ ok: true }); }
     if ((mm = p.match(/^\/api\/items\/([^/]+)\/(played|thumb)$/))) return J({ ok: true });
+    if (/^\/api\/items\/[^/]+\/extras\/all$/.test(p)) return J({ items: [] }); // Extras tab (block 15): specs with extras mock it themselves
+    if (p === '/api/hubs') return J({ hubs: [] }); // brand hub tiles (block 15): specs with hubs mock it themselves
     if ((mm = p.match(/^\/api\/items\/([^/]+)\/reactions$/))) {
       if (mm[1] === LOCKED_ID && m === 'GET') return J({ locked: true, count: 3 });
       const now = new Date().toISOString();

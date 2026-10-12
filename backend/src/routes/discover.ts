@@ -79,6 +79,62 @@ export async function libraryBecause(ctx: Ctx, jfUser: JfUser, profileId: string
   return { because: entry.because, items: entry.items.filter((i) => !down.has(i.id)) };
 }
 
+/** Extra "Weil du X geschaut hast" rows: how many, items per row and the smallest row worth showing. */
+export const BECAUSE_MORE_ROWS = 3;
+const BECAUSE_MORE_ITEMS = 20;
+const BECAUSE_MORE_MIN = 4;
+
+/**
+ * Data of GET /api/library/because-more: up to 3 more rows seeded by the profile's most recent DISTINCT watched titles
+ * (episodes count as their series), skipping the seed of the main "because" row. Per row Jellyfin's similar titles minus what the
+ * profile already finished, thumbed down, or shows in an earlier row (rows never repeat a title or show a seed). The Jellyfin part is
+ * cached like libraryBecause (key carries the user-data version); played / thumbs filtering always uses fresh data. The seed lookups run in parallel.
+ */
+export async function libraryBecauseMore(ctx: Ctx, jfUser: JfUser, profileId: string): Promise<{ rows: Array<{ because: { id: string; name: string }; items: ItemDto[] }> }> {
+  const [main, downRows, ver] = await Promise.all([
+    libraryBecause(ctx, jfUser, profileId).catch(() => null),
+    ctx.db.query<{ item_id: string }>('select item_id from thumbs where profile_id=$1 and value=-1', [profileId]).then((r) => r.rows),
+    ctx.jf.userDataVersion(jfUser),
+  ]);
+  const key = `becausemore:${jfUser.jellyfin_user_id}:${profileId}:${ver}`;
+  type Entry = { mainId: string | null; rows: Array<{ because: { id: string; name: string }; items: ItemDto[] }> };
+  let entry: Entry | null = null;
+  const hit = await ctx.kv.get(key).catch(() => null);
+  if (hit) {
+    try {
+      const e = JSON.parse(hit) as Entry;
+      if (e.mainId === (main?.because?.id ?? null)) entry = e;
+    } catch {
+      // corrupt entry: recompute
+    }
+  }
+  if (!entry) {
+    const mainId = main?.because?.id ?? null;
+    const seen = new Set<string>();
+    const seeds: Array<{ id: string; name: string }> = [];
+    for (const i of await ctx.jf.history(jfUser, { limit: 60 })) {
+      const id = i.type === 'Episode' && i.seriesId ? i.seriesId : i.id;
+      if (seen.has(id) || id === mainId) continue;
+      seen.add(id);
+      seeds.push({ id, name: i.type === 'Episode' && i.seriesName ? i.seriesName : i.name });
+      if (seeds.length >= BECAUSE_MORE_ROWS + 2) break; // a little spare: a seed can end up with too few titles
+    }
+    const similar = await Promise.all(seeds.map((s) => ctx.jf.similar(jfUser, s.id, 30).catch(() => [] as ItemDto[])));
+    entry = { mainId, rows: seeds.map((s, n) => ({ because: s, items: similar[n]!.filter((i) => i.id !== s.id) })) };
+    await ctx.kv.set(key, JSON.stringify(entry), BECAUSE_TTL).catch(() => undefined);
+  }
+  const skip = new Set([...downRows.map((r) => r.item_id), ...entry.rows.map((r) => r.because.id), ...(main?.items ?? []).map((i) => i.id)]);
+  const rows: Array<{ because: { id: string; name: string }; items: ItemDto[] }> = [];
+  for (const r of entry.rows) {
+    const items = r.items.filter((i) => !i.played && !skip.has(i.id)).slice(0, BECAUSE_MORE_ITEMS);
+    if (items.length < BECAUSE_MORE_MIN) continue;
+    items.forEach((i) => skip.add(i.id));
+    rows.push({ because: r.because, items });
+    if (rows.length >= BECAUSE_MORE_ROWS) break;
+  }
+  return { rows };
+}
+
 export function discoverRoutes(app: FastifyInstance, ctx: Ctx) {
   const pre = { preHandler: requireUser(ctx) };
 
@@ -172,6 +228,9 @@ export function discoverRoutes(app: FastifyInstance, ctx: Ctx) {
     return { ok: true };
   });
 
+  // more "Weil du ... geschaut hast" rows for the home page (2-3 recent distinct titles)
+  app.get('/api/library/because-more', pre, wrap(async (req) => libraryBecauseMore(ctx, req.jfUser!, req.profile!.id)));
+
   app.get('/api/library/friends-rated', pre, wrap(async (req) => {
     const rows = (await ctx.db.query<{ item_id: string; names: string[]; avg: string }>(
       `select r.item_id, array_agg(u.name || ' ' || r.stars || '★' order by r.created_at desc) names, avg(r.stars) avg
@@ -203,9 +262,8 @@ export function discoverRoutes(app: FastifyInstance, ctx: Ctx) {
     return { value };
   }));
 
-  // ---- X-Ray (cast), extras, hover trailer, collections, studios ----
+  // ---- X-Ray (cast), hover trailer, collections, studios ----
   app.get('/api/items/:id/people', pre, wrap(async (req) => ({ people: await ctx.jf.people(req.jfUser!, id32.parse((req.params as { id: string }).id)) })));
-  app.get('/api/items/:id/extras', pre, wrap(async (req) => ({ items: await ctx.jf.extras(req.jfUser!, id32.parse((req.params as { id: string }).id)) })));
   app.get('/api/items/:id/next', pre, wrap(async (req) => {
     const id = id32.parse((req.params as { id: string }).id);
     const cur = await ctx.jf.item(req.jfUser!, id);

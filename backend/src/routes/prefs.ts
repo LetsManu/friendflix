@@ -63,6 +63,16 @@ export async function loadPrefs(ctx: Pick<Ctx, 'db'>, userId: string, profileId:
   return parsed.success ? parsed.data : prefsSchema.parse({});
 }
 
+/**
+ * Onboarding flag `onboarded` in profile_prefs.data (set only by PUT /api/prefs/onboarded, kept by PUT /api/prefs; profiles older
+ * than migration 31 have it). false: the profile never went through /welcome.
+ */
+export async function profileOnboarded(ctx: Pick<Ctx, 'db'>, profileId: string | undefined): Promise<boolean> {
+  if (!profileId) return true;
+  const r = await ctx.db.query<{ v: string | null }>("select data->>'onboarded' v from profile_prefs where profile_id=$1", [profileId]);
+  return r.rows[0]?.v === 'true';
+}
+
 /** Topic (path) of the global NTFY_URL, or null. */
 export function globalNtfyTopic(cfg: Pick<Ctx['cfg'], 'NTFY_URL'>): string | null {
   try {
@@ -89,6 +99,8 @@ export function prefsRoutes(app: FastifyInstance, ctx: Ctx) {
     if (!input.language) prefs = { ...prefs, language: (stored ?? await loadPrefs(ctx, req.user!.id, req.profile!.id)).language };
     const viewing: Record<string, unknown> = { ...prefs };
     for (const k of ACCOUNT_KEYS) delete viewing[k];
+    // `onboarded` (stored next to the viewing prefs, not part of them) survives a full save: a settings form never brings /welcome back
+    if (await profileOnboarded(ctx, req.profile!.id)) viewing.onboarded = true;
     await ctx.db.query(
       `insert into profile_prefs(profile_id, data) values ($1,$2) on conflict (profile_id) do update set data = excluded.data, updated_at = now()`,
       [req.profile!.id, JSON.stringify(viewing)],
@@ -110,5 +122,15 @@ export function prefsRoutes(app: FastifyInstance, ctx: Ctx) {
       [req.profile!.id, language],
     );
     return { language };
+  });
+  /** /welcome finished or skipped: the onboarding never shows again for this profile (kids profiles included). */
+  app.put('/api/prefs/onboarded', { ...pre, config: { rateLimit: { max: 20, timeWindow: '1 minute' } } }, async (req) => {
+    z.object({ onboarded: z.literal(true) }).parse(req.body);
+    await ctx.db.query(
+      `insert into profile_prefs(profile_id, data) values ($1, '{"onboarded": true}'::jsonb)
+       on conflict (profile_id) do update set data = profile_prefs.data || '{"onboarded": true}'::jsonb, updated_at = now()`,
+      [req.profile!.id],
+    );
+    return { onboarded: true };
   });
 }
