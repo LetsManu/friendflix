@@ -69,6 +69,7 @@ services:
       WEBHOOK_SECRET: ${WEBHOOK_SECRET:-}
       ADMIN_GROUP: ${ADMIN_GROUP:-friendflix-admins}
       SESSION_IDLE_SECONDS: ${SESSION_IDLE_SECONDS:-7200}
+      SESSION_TTL_SECONDS: ${SESSION_TTL_SECONDS:-28800}
       OIDC_ISSUER: ${OIDC_ISSUER:?}
       OIDC_CLIENT_ID: ${OIDC_CLIENT_ID:?}
       OIDC_CLIENT_SECRET: ${OIDC_CLIENT_SECRET:-}
@@ -99,6 +100,8 @@ services:
       PORTAINER_ENDPOINT_ID: ${PORTAINER_ENDPOINT_ID:-1}
       PLAYBACK_CHECK_HOUR: ${PLAYBACK_CHECK_HOUR:-4}
       PREVIEW_WARM: ${PREVIEW_WARM:-true}
+      # download preparation + cleanup, audio/subtitle language index, Jellyfin session polling; false only for extra replicas
+      BACKGROUND_JOBS: ${BACKGROUND_JOBS:-true}
       CAST_ENABLED: ${CAST_ENABLED:-true}
       DOWNLOADS_ENABLED: ${DOWNLOADS_ENABLED:-true}
       DIRECT_PLAY_REQUIRES_DOWNLOAD: ${DIRECT_PLAY_REQUIRES_DOWNLOAD:-false}
@@ -110,9 +113,11 @@ services:
       DOWNLOAD_PAUSE_STREAMS: ${DOWNLOAD_PAUSE_STREAMS:-2}
       DOWNLOAD_FILE_TTL_HOURS: ${DOWNLOAD_FILE_TTL_HOURS:-48}
       DOWNLOAD_OFFLINE_GRACE_DAYS: ${DOWNLOAD_OFFLINE_GRACE_DAYS:-7}
-    volumes: # root fs is read-only
-      - previews:/data/previews # cached hover/billboard clips
-      - downloads:/data/downloads # prepared offline-download MP4s (rw here, ro in the gateway)
+    # root fs is read-only. PREVIEWS_PATH / DOWNLOADS_PATH: named volume by default, or a host folder
+    # (e.g. /mnt/data/friendflix/downloads, must be writable by uid 1000) - see docs/downloads.md "Speicherort"
+    volumes:
+      - ${PREVIEWS_PATH:-previews}:/data/previews # cached hover/billboard clips
+      - ${DOWNLOADS_PATH:-downloads}:/data/downloads # prepared offline-download MP4s (rw here, ro in the gateway)
     depends_on:
       postgres: { condition: service_healthy }
       redis: { condition: service_healthy }
@@ -133,7 +138,7 @@ services:
       INTERNAL_SECRET: ${INTERNAL_SECRET:-}
       METRICS_TOKEN: ${METRICS_TOKEN:-}
       DOWNLOAD_DIR: /data/downloads
-    volumes: [downloads:/data/downloads:ro]
+    volumes: ["${DOWNLOADS_PATH:-downloads}:/data/downloads:ro"] # same folder as the backend, read-only
     depends_on: [backend]
     ports: ["${BIND_ADDR:-127.0.0.1}:${GATEWAY_PORT:-3082}:4000"]
     networks: [front, media]
