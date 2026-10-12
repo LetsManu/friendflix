@@ -47,6 +47,12 @@ export interface MediaCapabilities {
   subtitleExtract: boolean;
   /** Block 17 P1: chapter marks (names, optional stills) via chapters(): seek bar marks + the player's "Szenen" panel */
   chapters: boolean;
+  /**
+   * How FriendFlix accounts become Seerr users for wishes (backend only, not sent to the web). 'jellyfin-import': find the
+   * account's Jellyfin user in Seerr (import it via /user/import-from-jellyfin). 'local' (also when absent): a local Seerr user
+   * per account, found by the stored id or by email, else created with the REQUEST permission (seerr/service.ts).
+   */
+  requestUsers?: 'jellyfin-import' | 'local';
 }
 
 /** JSON form of the capabilities (sets as arrays), as sent to the web in /api/me and /api/server. */

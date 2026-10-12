@@ -30,6 +30,7 @@ export const JELLYFIN_CAPABILITIES: MediaCapabilities = {
   segments: new Set<SegmentType>(['intro', 'outro', 'recap', 'preview']),
   trickplay: true, upcoming: true, subtitleSearch: true, webhooks: true, changeFeed: false, planB: true, subtitleExtract: false,
   chapters: true, // Block 17 P1
+  requestUsers: 'jellyfin-import',
 };
 
 const REPORT_KIND = { start: 'Playing', progress: 'Playing/Progress', stop: 'Playing/Stopped' } as const;
