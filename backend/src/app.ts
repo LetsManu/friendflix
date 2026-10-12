@@ -26,6 +26,8 @@ import { statsRoutes } from './routes/stats.js';
 import { tvRoutes } from './routes/tv.js';
 import { mediaRoutes } from './routes/media.js';
 import { socialRoutes } from './routes/social.js';
+import { reactionRoutes } from './routes/reactions.js';
+import { trendingRoutes } from './routes/trending.js';
 
 export interface Extra {
   /** Additional route registrars for later steps. */
@@ -109,6 +111,8 @@ export async function buildApp(ctx: Ctx, extra: Extra = {}): Promise<FastifyInst
   downloadRoutes(app, ctx);
   searchRoutes(app, ctx);
   socialRoutes(app, ctx);
+  reactionRoutes(app, ctx);
+  trendingRoutes(app, ctx);
   for (const r of extra.register ?? []) await r(app, ctx);
   return app;
 }

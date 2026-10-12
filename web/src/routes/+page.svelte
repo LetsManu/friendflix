@@ -8,7 +8,7 @@
 
   let hero: Item | null = null, heroPlay = '';
   let resume: Item[] | null = null, next: Item[] | null = null, latest: Item[] | null = null, mine: Item[] | null = null;
-  let recs: Item[] | null = null, friendsRated: Item[] | null = null;
+  let trending: Item[] | null = null, recs: Item[] | null = null, friendsRated: Item[] | null = null;
   let top: Item[] | null = null, because: { name: string } | null = null, becauseItems: Item[] | null = null;
   let views: Item[] = [], genres: string[] = [], error = '';
   const q = (p: Record<string, string>) => new URLSearchParams(p).toString();
@@ -30,6 +30,7 @@
     load('/api/library/nextup').then((r) => (next = r.items)).catch(() => (next = []));
     items({ types: 'Movie,Series', sort: 'DateCreated', desc: 'true', limit: '24' }).then((r) => (latest = r)).catch(() => (latest = []));
     load('/api/library/because').then((r) => { because = r.because; becauseItems = r.items; }).catch(() => (becauseItems = []));
+    load('/api/library/trending').then((r) => (trending = (r.items as Item[]).map((i) => ({ ...i, caption: i.viewers ? (i.viewers === 1 ? '1 Person schaut' : `${i.viewers} Personen schauen`) : i.caption })))).catch(() => (trending = []));
     load('/api/recommendations').then((r) => (recs = r.items)).catch(() => (recs = []));
     load('/api/library/friends-rated').then((r) => (friendsRated = r.items)).catch(() => (friendsRated = []));
     items({ types: 'Movie,Series', sort: 'CommunityRating', desc: 'true', limit: '10' }).then((r) => (top = r)).catch(() => (top = []));
@@ -62,6 +63,7 @@
   <Row title="Freunde haben bewertet" items={friendsRated} />
   {#if because}<Row title="Weil du „{because.name}“ gesehen hast" items={becauseItems} />{/if}
   <Row title="Neu hinzugefügt" items={latest} href="/new" />
+  <Row title="Diese Woche bei uns" items={trending} ranked />
   <Row title="Top 10 nach Bewertung" items={top} ranked />
   <Row title="Meine Liste" items={mine} href="/watchlist" />
   <UpcomingRow type="movie" title="Demnächst – jetzt wünschen" />

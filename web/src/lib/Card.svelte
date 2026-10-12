@@ -8,6 +8,7 @@
   import { createEventDispatcher, onDestroy, tick } from 'svelte';
   import { prefs } from '#lib/stores';
   import { isSpoiler } from '#lib/spoiler';
+  import { hasNewEpisodes } from '#lib/badges';
   import { playPreview, previewFailed, stopPreview, previewOwner, toggleSound } from '#lib/preview';
 
   export let item: Item;
@@ -26,6 +27,7 @@
   $: sub = item.type === 'Episode' ? `${item.seriesName ?? ''} · S${item.parentIndexNumber ?? '?'}:E${item.indexNumber ?? '?'}` : '';
   $: pct = item.positionTicks && item.runtimeTicks ? Math.min(100, (item.positionTicks / item.runtimeTicks) * 100) : 0;
   $: inList = $listIds.has(item.seriesId ?? item.id);
+  $: fresh = hasNewEpisodes(item, Date.now());
   $: score = item.communityRating ? Math.round(item.communityRating * 10) : 0;
 
   // Trailer preview (with sound once the browser allows it, toggle button on the video) after hovering ~1.2 s (only titles with a local trailer, only real pointers, one at a time)
@@ -68,6 +70,7 @@
     {#if posterOnly}<img class="blur" loading="lazy" decoding="async" {src} srcset={srcs} sizes={CARD_SIZES} alt="" aria-hidden="true" />{/if}
     {#if src}<img class:contain={posterOnly} class:spoil={isSpoiler(item, $prefs)} loading="lazy" decoding="async" {src} srcset={srcs} sizes={CARD_SIZES} alt="" width="320" height="180" />{/if}
     <span class="brand" aria-hidden="true"><Logo size={18} label="" /></span>
+    {#if fresh}<span class="newep">Neue Folgen</span>{/if}
     {#if previewing}<!-- svelte-ignore a11y_media_has_caption --><video bind:this={pv} class="pv" loop playsinline on:volumechange={() => (vmuted = pv.muted)} on:playing={() => (vmuted = pv.muted)}></video>{/if}
     <span class="cap" class:big={!src}>{#if epSub}<span class="l1">{item.seriesName}</span><span class="l2">{epSub}</span>{:else}{item.name}{/if}</span>
     {#if pct}<span class="progress"><i style="width:{pct}%"></i></span>{/if}
@@ -123,6 +126,7 @@
   .snd { position: absolute; right: .5rem; bottom: .5rem; z-index: 3; width: 30px; min-height: 30px; height: 30px; padding: 0; border-radius: 50%; background: rgba(20,20,20,.7); border: 1.5px solid rgba(255,255,255,.6); color: #fff; }
   .snd:hover:not(:disabled) { background: rgba(20,20,20,.9); border-color: #fff; }
   .brand { position: absolute; left: .45rem; top: .4rem; z-index: 2; pointer-events: none; opacity: .95; }
+  .newep { position: absolute; left: .45rem; top: 1.9rem; z-index: 2; pointer-events: none; padding: .1rem .45rem; border-radius: 3px; background: var(--acc); color: #fff; font-size: .68rem; font-weight: 800; letter-spacing: .02em; text-transform: uppercase; }
   .blur { position: absolute; inset: -10%; width: 120%; height: 120%; object-fit: cover; filter: blur(18px) brightness(.55); }
   .thumb img.spoil { filter: blur(14px); transform: scale(1.1); }
   .thumb img.contain { position: relative; object-fit: contain; }

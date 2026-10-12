@@ -31,6 +31,8 @@ export interface ItemDto {
   lastPlayedDate?: string;
   childCount?: number;
   unplayedCount?: number;
+  /** ISO timestamp when media was last added (new episodes for a series) */
+  lastAdded?: string;
 }
 
 export function toItemDto(i: Record<string, any>): ItemDto {
@@ -63,6 +65,7 @@ export function toItemDto(i: Record<string, any>): ItemDto {
     lastPlayedDate: ud.LastPlayedDate,
     childCount: i.ChildCount,
     unplayedCount: ud.UnplayedItemCount,
+    lastAdded: i.DateLastMediaAdded,
   };
 }
 
