@@ -113,3 +113,24 @@ export function clearRecent(profileId: string | null | undefined): void {
   if (!key) return;
   try { localStorage.removeItem(key); } catch { /* storage unavailable */ }
 }
+
+// ---- "Noch nicht in der Bibliothek": Seerr hits worth wishing for ----
+export interface SeerrHit { tmdbId: number; mediaType: string; title: string; year?: number | string | null; overview?: string; poster?: string | null; status: string }
+
+/** Seerr search hits that are not in the library yet (status != verfuegbar), valid, de-duplicated, at most `max`. */
+export function wishCandidates<T extends SeerrHit>(results: readonly T[] | null | undefined, max = 8): T[] {
+  const seen = new Set<string>();
+  const out: T[] = [];
+  for (const r of results ?? []) {
+    if (out.length >= max) break;
+    if (!r || r.status === 'verfuegbar' || !Number.isFinite(r.tmdbId) || (r.mediaType !== 'movie' && r.mediaType !== 'tv')) continue;
+    const key = `${r.mediaType}:${r.tmdbId}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(r);
+  }
+  return out;
+}
+
+/** Hits that already have a wish (or are being processed): shown as a disabled badge instead of a button. */
+export const alreadyWished = (status: string): boolean => status === 'angefragt' || status === 'in_arbeit' || status === 'teilweise';

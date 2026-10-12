@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { activeChips, browseQuery, clearRecent, isYear, loadRecent, parseBrowse, pushRecent } from './discovery';
+import { activeChips, browseQuery, clearRecent, alreadyWished, isYear, loadRecent, parseBrowse, pushRecent, wishCandidates } from './discovery';
 
 const P = (s: string) => parseBrowse(new URLSearchParams(s));
 const ID = 'a'.repeat(32);
@@ -123,5 +123,22 @@ describe('recent searches', () => {
     vi.stubGlobal('localStorage', { getItem: () => '{oops', setItem: () => { throw new Error('quota'); }, removeItem: () => { throw new Error('x'); } });
     expect(loadRecent(PID)).toEqual([]);
     expect(() => { pushRecent(PID, 'abc'); clearRecent(PID); }).not.toThrow();
+  });
+});
+
+describe('wishCandidates', () => {
+  const h = (tmdbId: number, status: string, mediaType = 'movie') => ({ tmdbId, mediaType, title: `T${tmdbId}`, status });
+  it('drops available, invalid and duplicate hits and caps the list', () => {
+    const r = [h(1, 'verfuegbar'), h(2, 'nicht_angefragt'), h(2, 'nicht_angefragt'), h(2, 'nicht_angefragt', 'tv'), h(3, 'angefragt'), h(4, 'x', 'person'), h(Number.NaN, 'nicht_angefragt'), h(5, 'abgelehnt')];
+    expect(wishCandidates(r, 3).map((x) => `${x.mediaType}${x.tmdbId}`)).toEqual(['movie2', 'tv2', 'movie3']);
+    expect(wishCandidates(r, 8).map((x) => x.tmdbId)).toEqual([2, 2, 3, 5]);
+  });
+  it('handles empty input and defaults to 8', () => {
+    expect(wishCandidates(null)).toEqual([]);
+    expect(wishCandidates(Array.from({ length: 20 }, (_, i) => h(i + 1, 'nicht_angefragt')))).toHaveLength(8);
+  });
+  it('flags already wished statuses', () => {
+    expect(['angefragt', 'in_arbeit', 'teilweise'].every(alreadyWished)).toBe(true);
+    expect(alreadyWished('nicht_angefragt') || alreadyWished('abgelehnt')).toBe(false);
   });
 });

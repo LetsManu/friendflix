@@ -4,12 +4,14 @@
   import Hero from '#lib/Hero.svelte';
   import LazyRow from '#lib/LazyRow.svelte';
   import Row from '#lib/Row.svelte';
+  import { loadFeatured, type FeaturedList } from '#lib/lists';
   import UpcomingRow from '#lib/UpcomingRow.svelte';
 
   let hero: Item | null = null, heroPlay = '';
   let resume: Item[] | null = null, next: Item[] | null = null, latest: Item[] | null = null, mine: Item[] | null = null;
   let trending: Item[] | null = null, recs: Item[] | null = null, friendsRated: Item[] | null = null;
   let top: Item[] | null = null, because: { name: string } | null = null, becauseItems: Item[] | null = null;
+  let featured: FeaturedList[] = [];
   let views: Item[] = [], genres: string[] = [], error = '';
   const q = (p: Record<string, string>) => new URLSearchParams(p).toString();
   // Jellyfin can answer 5xx/network errors right after a fresh sign-up: retry (not on 401/403) before giving up
@@ -35,6 +37,7 @@
     load('/api/library/friends-rated').then((r) => (friendsRated = r.items)).catch(() => (friendsRated = []));
     items({ types: 'Movie,Series', sort: 'CommunityRating', desc: 'true', limit: '10' }).then((r) => (top = r)).catch(() => (top = []));
     load('/api/watchlist').then((r) => (mine = r.items)).catch(() => (mine = []));
+    loadFeatured().then((l) => (featured = l)).catch(() => (featured = []));
     load('/api/library/views').then((r) => (views = r.items)).catch(() => (error = 'Bibliothek konnte nicht geladen werden.'));
     load('/api/library/genres').then((r) => (genres = r.genres.slice(0, 8))).catch(() => undefined);
     // Billboard: random title that has a backdrop (falls back to the newest one)
@@ -64,6 +67,7 @@
   {#if because}<Row title="Weil du „{because.name}“ gesehen hast" items={becauseItems} />{/if}
   <Row title="Neu hinzugefügt" items={latest} href="/new" />
   <Row title="Diese Woche bei uns" items={trending} ranked />
+  {#each featured as f (f.id)}<Row title="{f.name} · Empfohlen von {f.owner.name}" items={f.items} href="/lists/{f.id}" />{/each}
   <Row title="Top 10 nach Bewertung" items={top} ranked />
   <Row title="Meine Liste" items={mine} href="/watchlist" />
   <UpcomingRow type="movie" title="Demnächst – jetzt wünschen" />

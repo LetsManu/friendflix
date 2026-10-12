@@ -20,6 +20,7 @@
     if (data?.list.role === 'owner') api('/api/friends').then((r) => (friends = r.friends)).catch(() => undefined);
   });
   $: owner = data?.list.role === 'owner';
+  $: member = data?.list.role === 'owner' || data?.list.role === 'editor' || data?.list.role === 'viewer'; // anything else (guest of a featured list) is read-only
   $: canEdit = data?.list.role === 'owner' || data?.list.role === 'editor';
   $: candidates = friends.filter((f) => !data?.members.some((m) => m.id === f.id));
 
@@ -64,18 +65,18 @@
       {:else}
         <h1>{data.list.name}</h1>
         {#if data.list.description}<p class="muted">{data.list.description}</p>{/if}
-        <p class="muted">{roleLabel[data.list.role]} · von {data.list.owner.name}</p>
+        <p class="muted">{roleLabel[data.list.role] ?? 'Gast'} · von {data.list.owner.name}</p>
       {/if}
     </div>
     <div class="acts">
       {#if owner && !editing}<button class="sec" on:click={startEdit}>Umbenennen</button><button class="sec" on:click={del}>Liste löschen</button>{/if}
-      {#if !owner}<button class="sec" on:click={() => leave(me)} disabled={!me}>Liste verlassen</button>{/if}
+      {#if member && !owner}<button class="sec" on:click={() => leave(me)} disabled={!me}>Liste verlassen</button>{/if}
     </div>
   </div>
   {#if err}<p class="err" role="alert">{err}</p>{/if}
   {#if data.hiddenCount}<p class="muted">{data.hiddenCount} {data.hiddenCount === 1 ? 'Titel ist' : 'Titel sind'} für dieses Profil nicht sichtbar.</p>{/if}
 
-  {#if !data.items.length}<p class="muted">Noch keine Titel. Füge welche über das Listen-Symbol bei einem Titel hinzu.</p>
+  {#if !data.items.length}<p class="muted">{member ? 'Noch keine Titel. Füge welche über das Listen-Symbol bei einem Titel hinzu.' : 'Noch keine Titel.'}</p>
   {:else}
     <div class="tiles">
       {#each data.items as i (i.id)}
@@ -87,11 +88,11 @@
     </div>
   {/if}
 
-  <section class="members">
+  {#if member}<section class="members">
     <h2>Mitglieder</h2>
     <ul>
       {#each data.members as m (m.id)}
-        <li><span>{m.name}</span><span class="badge">{roleLabel[m.role]}</span>
+        <li><span>{m.name}</span><span class="badge">{roleLabel[m.role] ?? m.role}</span>
           {#if owner && m.role !== 'owner'}
             <select aria-label={`Rolle von ${m.name}`} value={m.role} on:change={(e) => run(() => setMember(id, m.id, e.currentTarget.value as 'editor' | 'viewer'))}>
               <option value="editor">Bearbeiter</option><option value="viewer">Leser</option>
@@ -108,7 +109,7 @@
         <button type="submit" disabled={!pick}>Einladen</button>
       </form>
     {/if}
-  </section>
+  </section>{/if}
 {/if}
 
 <style>
