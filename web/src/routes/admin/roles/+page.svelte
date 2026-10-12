@@ -2,6 +2,7 @@
   import { onMount } from 'svelte';
   import { api } from '#lib/api';
   import { t, tr } from '#lib/i18n';
+  import { toast } from '#lib/ui/toast';
   import { roleName as nameOf } from '#lib/roles';
   type Row = { role: string; label: string; builtinLabel?: boolean; requestsPerMonth: number | null; isDefault: boolean; value: number; unlimited: boolean; transcoding: boolean; maxHeight: number | null; download?: boolean; maxDownloads?: number | null; downloadMaxHeight?: number | null; downloadDays?: number | null };
   const HEIGHTS = [720, 1080, 1440, 2160];
@@ -11,11 +12,11 @@
   onMount(load);
   async function save(r: Row) {
     const v = Math.round(Number(r.value));
-    if (!r.unlimited && !(v >= 0 && v <= 100)) return alert(tr('admin.roles.numberRange'));
+    if (!r.unlimited && !(v >= 0 && v <= 100)) return void toast.error(tr('admin.roles.numberRange'));
     const md = Math.round(Number(r.maxDownloads ?? 0)), dd = Math.round(Number(r.downloadDays ?? 30));
-    if (!(md >= 0 && md <= 200)) return alert(tr('admin.roles.downloadsRange'));
-    if (!(dd >= 1 && dd <= 90)) return alert(tr('admin.roles.daysRange'));
-    try { await api(`/api/admin/roles/${encodeURIComponent(r.role)}`, { method: 'PUT', body: { requestsPerMonth: r.unlimited ? null : v, transcoding: r.transcoding, maxHeight: r.maxHeight, download: Boolean(r.download), maxDownloads: Math.round(Number(r.maxDownloads ?? 0)), downloadMaxHeight: r.downloadMaxHeight, downloadDays: Math.round(Number(r.downloadDays ?? 30)) } }); } catch { alert(tr('admin.roles.saveFailed')); }
+    if (!(md >= 0 && md <= 200)) return void toast.error(tr('admin.roles.downloadsRange'));
+    if (!(dd >= 1 && dd <= 90)) return void toast.error(tr('admin.roles.daysRange'));
+    try { await api(`/api/admin/roles/${encodeURIComponent(r.role)}`, { method: 'PUT', body: { requestsPerMonth: r.unlimited ? null : v, transcoding: r.transcoding, maxHeight: r.maxHeight, download: Boolean(r.download), maxDownloads: Math.round(Number(r.maxDownloads ?? 0)), downloadMaxHeight: r.downloadMaxHeight, downloadDays: Math.round(Number(r.downloadDays ?? 30)) } }); } catch { toast.error(tr('admin.roles.saveFailed')); }
     load();
   }
   /** role name in the UI language; labels renamed via ROLES_JSON stay as configured */

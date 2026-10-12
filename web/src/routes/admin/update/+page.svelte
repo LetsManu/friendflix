@@ -1,5 +1,6 @@
 <script lang="ts">
   import { t, tr, fmtDateTime, hasKey, trDynamic } from '#lib/i18n';
+  import { confirm } from '#lib/ui/confirm';
   import Rich from '#lib/i18n/Rich.svelte';
   import { onDestroy, onMount } from 'svelte';
   import { api } from '#lib/api';
@@ -30,7 +31,7 @@
   }
   $: upToDate = u?.behind === 0;
   async function start() {
-    if (!confirm(tr('admin.update.confirm'))) return;
+    if (!(await confirm({ title: tr('admin.update.confirm'), confirmLabel: tr('admin.update.updateNow') }))) return;
     err = '';
     try { await api('/api/admin/update', { method: 'POST' }); } catch (e: any) {
       err = updateError(e);

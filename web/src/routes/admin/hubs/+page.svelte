@@ -3,6 +3,7 @@
   import { api, ApiError, img, type Item } from '#lib/api';
   import { hubGradient } from '#lib/hubs';
   import { t, tr, type TKey } from '#lib/i18n';
+  import { confirm } from '#lib/ui/confirm';
 
   type Source = 'studio' | 'collection' | 'tag' | 'genre';
   interface AdminHub { id: string; name: string; source: Source; sourceValue: string; accent?: string; imageUrl?: string; imageItemId?: string; enabled: boolean }
@@ -62,7 +63,7 @@
     busy = '';
   }
   async function remove(h: AdminHub) {
-    if (busy || !confirm(tr('hubs.admin.confirmRemove', { name: h.name }))) return;
+    if (busy || !(await confirm({ title: tr('hubs.admin.confirmRemove', { name: h.name }), danger: true, confirmLabel: tr('hubs.admin.remove') }))) return;
     busy = h.id; err = ''; msg = '';
     try { await api(`/api/admin/hubs/${h.id}`, { method: 'DELETE' }); msg = tr('hubs.admin.removed', { name: h.name }); await Promise.all([load(), loadSuggestions()]); } catch (e) { err = errText(e); }
     busy = '';

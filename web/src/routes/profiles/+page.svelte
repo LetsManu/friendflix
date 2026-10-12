@@ -12,6 +12,7 @@
   import { markPicked } from '#lib/gate';
   import { loadIntroSettings, markSessionSeen, shouldPlayIntro, shouldPlayIntroSound } from '#lib/intro';
   import { t, tr, type TKey } from '#lib/i18n';
+  import { confirm } from '#lib/ui/confirm';
   const colorKey = (key: string) => `account.profiles.colors.${key}` as TKey;
 
   /** unlock 'owner': leaving the active kids profile towards this profile needs the owner profile's PIN (it has none of its own) */
@@ -135,7 +136,7 @@
     } finally { edBusy = false; }
   }
   async function remove() {
-    if (!ed?.id || !confirm(tr('account.profiles.confirmDelete', { name: ed.name }))) return;
+    if (!ed?.id || !(await confirm({ title: tr('account.profiles.confirmDelete', { name: ed.name }), danger: true, confirmLabel: tr('account.profiles.delete') }))) return;
     edBusy = true; edErr = '';
     try { await api(`/api/profiles/${ed.id}`, { method: 'DELETE' }); ed = null; await load(); }
     catch (e) { edErr = e instanceof ApiError && e.body?.error === 'jellyfin' ? tr('account.profiles.jellyfinDelete') : tr('account.profiles.deleteFailed'); }

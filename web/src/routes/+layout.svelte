@@ -31,6 +31,8 @@
   import { isLocale, pageEpoch, pickLocale, ready, setLocale, t, type Locale } from '#lib/i18n';
   import Rich from '#lib/i18n/Rich.svelte';
   import LanguageGate from '#lib/LanguageGate.svelte';
+  import ToastHost from '#lib/ui/ToastHost.svelte';
+  import ConfirmHost from '#lib/ui/ConfirmHost.svelte';
   import { saveLanguage } from '#lib/stores';
 
   let me: Me | null = null;
@@ -522,6 +524,9 @@
 {:else}
   <main id="main" class="boot"><span class="logo"><Logo wordmark size={44} /></span><div class="spin" aria-label={$t('shell.booting')} role="status"></div></main>
 {/if}
+<!-- app-wide toasts + confirm dialog (lib/ui); mounted once, outside the page so they survive navigation -->
+<ToastHost />
+<ConfirmHost />
 
 <style>
   .offbar { position: fixed; z-index: 80; left: 0; right: 0; bottom: calc(56px + env(safe-area-inset-bottom)); background: #2a2a2a; padding: .6rem var(--pad-x); text-align: center; font-size: .9rem; }

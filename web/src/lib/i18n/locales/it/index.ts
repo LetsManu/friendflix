@@ -13,6 +13,9 @@ import hubs from './hubs';
 import anime from './anime';
 import together from './together';
 import kids from './kids';
+import ui from './ui';
+import adminPeople from './adminPeople';
+import adminContent from './adminContent';
 
-const dict: Translation<typeof de> = { common, shell, home, detail, player, account, social, admin, hubs, anime, together, kids };
+const dict: Translation<typeof de> = { common, shell, home, detail, player, account, social, admin, hubs, anime, together, kids, ui, adminPeople, adminContent };
 export default dict;

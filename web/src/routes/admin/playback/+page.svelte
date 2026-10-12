@@ -1,5 +1,6 @@
 <script lang="ts">
   import { t, tr, fmtDate, fmtDateTime, fmtNumber, hasKey, trDynamic } from '#lib/i18n';
+  import { confirm } from '#lib/ui/confirm';
   import Rich from '#lib/i18n/Rich.svelte';
   import { onDestroy, onMount } from 'svelte';
   import { api } from '#lib/api';
@@ -34,7 +35,7 @@
     try { const r = await api('/api/admin/downloads'); dl = { enabled: Boolean(r.enabled), maxBytes: r.maxBytes ?? 0, diskBytes: r.diskBytes ?? 0, jobs: r.jobs ?? [], licenses: r.licenses ?? [] }; dlErr = ''; } catch { dlErr = tr('admin.playback.dlLoadFailed'); }
   }
   async function revoke(id: string) {
-    if (!confirm(tr('admin.playback.dlConfirmRevoke'))) return;
+    if (!(await confirm({ title: tr('admin.playback.dlConfirmRevoke'), danger: true, confirmLabel: tr('admin.revoke') }))) return;
     try { await api(`/api/admin/downloads/${encodeURIComponent(id)}`, { method: 'DELETE' }); } catch { dlErr = tr('admin.playback.dlRevokeFailed'); }
     await loadDl();
   }

@@ -58,6 +58,10 @@ export class SeerrClient {
   listRequests(filter: string, take = 50, skip = 0) {
     return this.json<{ results: any[]; pageInfo: any }>(`/request?take=${take}&skip=${skip}&filter=${encodeURIComponent(filter)}&sort=added`);
   }
+  /** request totals by state (Seerr /request/count) */
+  requestCount() {
+    return this.json<{ total: number; movie: number; tv: number; pending: number; approved: number; declined: number; processing: number; available: number }>('/request/count');
+  }
   approve(id: number) {
     return this.json(`/request/${id}/approve`, { method: 'POST' });
   }

@@ -38,6 +38,47 @@ export function adminRoutes(app: FastifyInstance, ctx: Ctx) {
     };
   });
 
+  // one cheap call for the admin shell (pending badges) and the overview: counts only, every source optional
+  app.get('/api/admin/summary', admin, async () => {
+    const { listLive } = await import('../live.js');
+    const { parties } = await import('./party.js');
+    const one = async <T>(sql: string): Promise<T> => (await ctx.db.query(sql)).rows[0] as T;
+    const [users, devices, invites, polls, previews, downloads, check, seerr, jellyfin, live] = await Promise.all([
+      one<{ total: string; locked: string }>('select count(*) total, count(*) filter (where disabled) locked from users'),
+      one<{ n: string }>('select count(*) n from devices where not approved'),
+      one<{ n: string }>('select count(*) n from invites where used_at is null and expires_at > now()'),
+      one<{ n: string }>("select count(*) n from polls where status='needs_approval'"),
+      one<{ failed: string; ok: string; bytes: string }>("select count(*) filter (where status='failed') failed, count(*) filter (where status='ok') ok, coalesce(sum(bytes) filter (where status='ok'),0)::text bytes from preview_clips"),
+      one<{ bytes: string }>("select coalesce(sum(bytes),0)::text bytes from download_jobs where status='ready'"),
+      ctx.db.query<{ finished_at: Date; results: Array<{ ok: boolean }> }>('select finished_at, results from playback_checks order by id desc limit 1').then((r) => r.rows[0] ?? null),
+      ctx.seerr.requestCount().catch(() => null), // Seerr down or not configured: the UI shows "not reachable"
+      ctx.jf.admin.ping().catch(() => false),
+      listLive(ctx).then((l) => l.length).catch(() => 0),
+    ]);
+    const total = Number(users.total), locked = Number(users.locked);
+    return {
+      users: { total, active: total - locked, locked },
+      pending: {
+        requests: seerr ? seerr.pending : null,
+        devices: Number(devices.n),
+        polls: Number(polls.n),
+        invites: Number(invites.n),
+        previewsFailed: Number(previews.failed),
+      },
+      requests: seerr ? { pending: seerr.pending, approved: seerr.approved, processing: seerr.processing, available: seerr.available, declined: seerr.declined, total: seerr.total } : null,
+      storage: {
+        downloadsEnabled: ctx.cfg.DOWNLOADS_ENABLED === 'true',
+        downloadsBytes: Number(downloads.bytes),
+        downloadsMaxBytes: Math.round(ctx.cfg.DOWNLOAD_CACHE_MAX_GB * 1024 ** 3),
+        previewBytes: Number(previews.bytes),
+        previewClips: Number(previews.ok),
+      },
+      playbackCheck: check ? { finishedAt: check.finished_at.toISOString(), total: check.results.length, failed: check.results.filter((x) => !x.ok).length } : null,
+      services: { jellyfin: Boolean(jellyfin), seerr: seerr !== null },
+      live: { streams: live, partyRooms: parties.rooms.size },
+    };
+  });
+
   app.post('/api/admin/previews/regenerate', admin, async (req) => {
     const { itemId } = z.object({ itemId: z.string().regex(/^[0-9a-f]{32}$/) }).parse(req.body);
     await previews(ctx).regenerate(itemId);
@@ -252,7 +293,11 @@ export function adminRoutes(app: FastifyInstance, ctx: Ctx) {
   app.get('/api/admin/audit', admin, async (req) => {
     const limit = z.coerce.number().int().min(1).max(500).default(100).parse((req.query as { limit?: string }).limit);
     const r = await ctx.db.query(
-      'select a.id, a.at, a.action, a.target, a.meta, u.name actor from audit_log a left join users u on u.id = a.actor order by a.id desc limit $1',
+      // target_name: the user (or list) the target id points to, so the UI can say "… locked Anna" instead of a uuid
+      `select a.id, a.at, a.action, a.target, a.meta, u.name actor, coalesce(tu.name, tl.name) target_name
+         from audit_log a left join users u on u.id = a.actor
+         left join users tu on tu.id::text = a.target left join lists tl on tl.id::text = a.target
+        order by a.id desc limit $1`,
       [limit],
     );
     return { entries: r.rows };
