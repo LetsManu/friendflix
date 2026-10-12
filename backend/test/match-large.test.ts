@@ -41,7 +41,7 @@ describe('group matcher on large libraries', () => {
     const b = r.json();
     expect(b.total).toBe(1000);
     expect(b.items.map((i: any) => i.id)).toEqual([TARGET]);
-    expect(idCalls.length).toBe(5); // 1000 ids in chunks of 200
+    expect(idCalls.length).toBe(13); // 1000 ids in chunks of 80
     expect(idCalls.every((s) => s.includes('genres=Nische'))).toBe(true);
   });
   it('without a genre, the best rated title anywhere comes first', async () => {

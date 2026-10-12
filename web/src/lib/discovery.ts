@@ -87,22 +87,29 @@ export function activeChips(s: BrowseState, labels: { person?: string } = {}): A
 // ---- recent searches (per browser; storage may be unavailable) ----
 const RECENT_KEY = 'ff-recent-search';
 const RECENT_MAX = 8;
+/** Per-profile key; without a known profile id nothing is read or stored (a kid profile must not see an adult's searches). */
+const recentKey = (profileId: string | null | undefined): string | null => (profileId ? `${RECENT_KEY}:${profileId}` : null);
 
-export function loadRecent(): string[] {
+export function loadRecent(profileId: string | null | undefined): string[] {
+  const key = recentKey(profileId);
+  if (!key) return [];
   try {
-    const v = JSON.parse(localStorage.getItem(RECENT_KEY) ?? '[]');
+    const v = JSON.parse(localStorage.getItem(key) ?? '[]');
     return Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string').slice(0, RECENT_MAX) : [];
   } catch { return []; }
 }
 
-export function pushRecent(q: string): string[] {
+export function pushRecent(profileId: string | null | undefined, q: string): string[] {
+  const key = recentKey(profileId);
   const t = q.trim();
-  if (t.length < 2) return loadRecent();
-  const next = [t, ...loadRecent().filter((x) => x.toLowerCase() !== t.toLowerCase())].slice(0, RECENT_MAX);
-  try { localStorage.setItem(RECENT_KEY, JSON.stringify(next)); } catch { /* storage unavailable */ }
+  if (!key || t.length < 2) return loadRecent(profileId);
+  const next = [t, ...loadRecent(profileId).filter((x) => x.toLowerCase() !== t.toLowerCase())].slice(0, RECENT_MAX);
+  try { localStorage.setItem(key, JSON.stringify(next)); } catch { /* storage unavailable */ }
   return next;
 }
 
-export function clearRecent(): void {
-  try { localStorage.removeItem(RECENT_KEY); } catch { /* storage unavailable */ }
+export function clearRecent(profileId: string | null | undefined): void {
+  const key = recentKey(profileId);
+  if (!key) return;
+  try { localStorage.removeItem(key); } catch { /* storage unavailable */ }
 }
