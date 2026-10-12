@@ -6,7 +6,9 @@
   /** Jellyfin id of the movie / series to add (episodes are normalised server-side). */
   export let itemId: string;
   /** compact round button (Card / modal) or the larger detail-page icon button */
-  export let variant: 'round' | 'ring' = 'ring';
+  export let variant: 'round' | 'ring' | 'row' = 'ring';
+  /** open the picker above the button (used inside the bottom action sheet) */
+  export let up = false;
   /** diameter of the round variant in px */
   export let size = 34;
 
@@ -50,12 +52,12 @@
   onDestroy(() => { if (typeof document !== 'undefined') { document.removeEventListener('pointerdown', onDoc, true); document.removeEventListener('keydown', onKey, true); } });
 </script>
 
-<span class="lm" bind:this={root}>
-  <button bind:this={btn} class={variant === 'ring' ? 'icon-btn ring' : 'round'} class:on={open} aria-haspopup="true" aria-expanded={open} style={variant === 'round' ? `width:${size}px;height:${size}px;min-height:${size}px` : undefined} aria-label="Zu Liste hinzufügen" title="Zu Liste hinzufügen" on:click|stopPropagation={toggleOpen}>
-    <Icon name="list" size={variant === 'ring' ? 21 : 18} />
+<span class="lm" class:blk={variant === 'row'} bind:this={root}>
+  <button bind:this={btn} class={variant === 'ring' ? 'icon-btn ring' : variant === 'row' ? 'rowbtn' : 'round'} class:on={open} aria-haspopup="true" aria-expanded={open} style={variant === 'round' ? `width:${size}px;height:${size}px;min-height:${size}px` : undefined} aria-label="Zu Liste hinzufügen" title="Zu Liste hinzufügen" on:click|stopPropagation={toggleOpen}>
+    <Icon name="list" size={variant === 'ring' ? 21 : 18} />{#if variant === 'row'}<span>Zu Liste hinzufügen …</span>{/if}
   </button>
   {#if open}
-    <div class="pop" role="dialog" aria-label="Zu Liste hinzufügen">
+    <div class="pop" class:up class:wide={variant === 'row'} role="dialog" aria-label="Zu Liste hinzufügen">
       {#if lists === null}<p class="muted">Lade …</p>
       {:else}
         {#if !lists.length}<p class="muted">Noch keine Liste, in die du etwas legen darfst.</p>{/if}
@@ -79,6 +81,11 @@
 
 <style>
   .lm { position: relative; display: inline-block; }
+  .blk { display: block; }
+  .rowbtn { display: flex; gap: .8rem; align-items: center; width: 100%; min-height: 48px; padding: 0 1rem; border: 0; border-radius: 8px; background: transparent; color: inherit; font: inherit; text-align: left; }
+  .rowbtn:hover:not(:disabled), .rowbtn.on { background: rgba(255,255,255,.08); }
+  .pop.up { top: auto; bottom: calc(100% + .4rem); }
+  .pop.wide { left: 0; right: 0; max-width: none; }
   .round { width: 34px; min-height: 34px; height: 34px; padding: 0; border-radius: 50%; background: rgba(42,42,42,.6); border: 2px solid rgba(255,255,255,.5); color: #fff; display: grid; place-items: center; }
   .round:hover:not(:disabled) { border-color: #fff; background: rgba(42,42,42,.9); }
   .pop { position: absolute; z-index: 30; left: 0; top: calc(100% + .4rem); min-width: 230px; max-width: 80vw; background: var(--surface); color: var(--fg, #fff); border: 1px solid rgba(255,255,255,.18); border-radius: var(--radius); padding: .6rem .7rem; box-shadow: 0 14px 28px rgba(0,0,0,.6); text-align: left; font-size: .9rem; font-weight: 400; }

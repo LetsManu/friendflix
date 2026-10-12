@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onDestroy, onMount } from 'svelte';
-  import { backdrop, fmtMin, logoUrl, type Item } from '#lib/api';
+  import { backdrop, HERO_WIDTHS, srcset, fmtMin, logoUrl, type Item } from '#lib/api';
   import Icon from '#lib/Icon.svelte';
   import Logo from '#lib/Logo.svelte';
   import { openModal } from '#lib/modal';
@@ -54,7 +54,7 @@
 
 <section class="hero" aria-label="Empfehlung">
   {#if item}
-    {#if item.backdrop}<img class="bg" class:loaded src={backdrop(item.id)} alt="" fetchpriority="high" on:load={() => (loaded = true)} />{/if}
+    {#if item.backdrop}<img class="bg" class:loaded src={backdrop(item.id, 1280)} srcset={srcset('Backdrop', item.id, HERO_WIDTHS)} sizes="100vw" alt="" fetchpriority="high" on:load={() => (loaded = true)} />{/if}
     <!-- svelte-ignore a11y_media_has_caption -->
     <video bind:this={hv} class="hv" class:on={playing} playsinline aria-hidden="true" tabindex="-1" on:ended={ended} on:volumechange={() => (vmuted = hv.muted)} on:playing={() => (vmuted = hv.muted)}></video>
     <div class="shade"></div>
