@@ -1,5 +1,34 @@
 # Changelog
 ## [Unreleased]
+### Browser-Fehler & E2E
+- Browser error reporting: `POST /api/client-errors` (unauthenticated, rate limited, logged scrubbed, counted in `friendflix_client_errors_total`), `web/src/lib/telemetry.ts` + `hooks.client.ts` (dedupe 60 s, max 10 per page load, extension/ResizeObserver noise filtered). See docs/monitoring.md.
+- Playwright browser tests in `e2e/` (API fully mocked, run against the built web app; `npm run e2e`) and an `e2e` CI job.
+### Block 10 – Wünsche aus der Suche, kuratierte Reihen
+- Search shows "Noch nicht in der Bibliothek" with Seerr results and a "Wünschen" button (hidden when Seerr is unavailable).
+- Admins can feature up to 5 lists (Admin → Listen); they appear as rows on everyone's home page ("Empfohlen von …") and are readable by all, with titles filtered per profile. Migration 24: `lists.featured_at`.
+### Block 9 – Trending, Neue Folgen, Reaktionen
+- Home row "Diese Woche bei uns": what friends watched in the last 7 days (counts only; a title needs 2 viewers unless you are one of them).
+- "Neue Folgen" badge on series you started that got episodes in the last 14 days.
+- Reactions on films and episodes (Gefällt mir, Witzig, Wow, Traurig, Liebe + short comment), visible only after you watched it – spoiler protection like the TV Time pattern. Migration 23: `reactions`.
+### Touch & images
+- Touch action sheet on cards, series name on episode cards, srcset/sizes for card/hero/quick-view images, ItemModal accessibility (inert background, labelled dialog).
+### Block 7 – Sprache, Watch-Status, Freunde
+- Audio/subtitle language filter in Filme/Serien ("Ton", "Untertitel", quick toggle "Deutscher Ton"), backed by a background index of all MediaStreams (`item_langs`, every 12 h); the item page lists audio and subtitle languages.
+- Watch status per profile: "Geplant" (Meine Liste) and "Abgebrochen" (leaves Weiterschauen and Nächste Folge), plus derived "Schaue ich gerade"/"Gesehen"; Meine Liste has tabs Geplant | Abgebrochen.
+- Friends strip on the item page: who recommended it to you, friends' stars (only with "Bewertungen teilen") and who watched it (only with "Verlauf teilen").
+- Gemeinsam schauen: titles on participants' lists first ("2× geplant", never who), titles someone dropped or thumbed down are left out.
+- Migration 22: `item_langs`, `dropped`.
+### Discovery upgrade – Suche, Personen, Filter
+- Search finds people, genres, titles and episodes in grouped sections (`GET /api/search`), a 4-digit query lists titles of that year; loading/error/empty states, recent searches, `/` or Ctrl/Cmd+K focuses the search.
+- Person pages (`/person/<id>`, `GET /api/people/:id`) with the filmography limited to the viewer's library; the item page shows a linked "Besetzung & Crew" row.
+- Browse: decade, minimum rating and person filters (`decade`, `year`, `minRating`, `person` on `/api/library/items`), removable filter chips, Filme/Serien switch keeps filters, stale responses are dropped; library pages keep search/sort/filter in the URL.
+- Item page and quick view: a failing side request (ratings, seasons, next up) no longer shows "Titel nicht gefunden"; favourite/watched/follow/rating report failures.
+- Privacy: `GET /api/items/:id/ratings` requires the viewer to see the title and hides ratings of users who turned off "Bewertungen teilen".
+- "Gemeinsam schauen" applies genre/runtime filters to the whole common set (up to 2000 titles) instead of the first 400.
+- Migration 21: indexes `ratings(item_id)`, `thumbs(user_id)`; genre lists cached 10 min per Jellyfin user.
+- Research notes: `docs/research/streaming-product-upgrade.md`.
+### Block 5 – Offline-Downloads
+- Filme und Folgen aufs Gerät laden und offline ansehen (Menü → Downloads, `/offline`): Server bereitet MP4-Dateien vor (HLS → ffmpeg-Remux, wiederaufnehmbar), der Browser lädt sie per Range in OPFS; Lizenzen pro Gerät mit Ablauf, Online-Prüfung und Widerruf. Rollenfelder „Downloads erlauben“, „Max. Downloads“, „Max. Download-Qualität“, „Gültigkeit (Tage)“; Admin → Wiedergabe-Check zeigt Jobs und Speicher. Neue Variablen `DOWNLOADS_ENABLED`, `DOWNLOAD_DIR`, `DOWNLOAD_CACHE_MAX_GB` u. a., neues Volume `downloads`. Kein DRM, siehe `docs/downloads.md`.
 ### Block 4 – PWA, push, Chromecast
 - Installable app (manifest, iOS meta, service worker caching only static assets; never /api, /media, HTML or Range requests) with an offline page.
 - Web push per device (Einstellungen → Benachrichtigungen, "Test senden"): VAPID keys via `VAPID_PUBLIC_KEY`/`VAPID_PRIVATE_KEY` (`node scripts/gen-vapid.mjs`), endpoint allowlist, generic text on devices enabled by non-owner profiles, revoked with the device.

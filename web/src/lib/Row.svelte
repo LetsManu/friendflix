@@ -3,6 +3,8 @@
   import type { Item } from '#lib/api';
   import Card from '#lib/Card.svelte';
   import Icon from '#lib/Icon.svelte';
+  import PosterCard from '#lib/PosterCard.svelte';
+  import { mobile } from '#lib/viewport';
 
   export let title: string;
   /** null = loading (skeleton) */
@@ -12,6 +14,8 @@
   export let ranked = false;
   /** cards get an X button; the parent handles `remove` */
   export let removable = false;
+  /** phone layout: 16:9 cards with progress bar and ⓘ/⋯ bar instead of 2:3 posters (Weiterschauen, Nächste Folge) */
+  export let landscape = false;
   let track: HTMLDivElement;
   let canLeft = false, canRight = true;
 
@@ -25,19 +29,28 @@
     track.scrollBy({ left: dir * track.clientWidth * 0.9, behavior: reduce ? 'auto' : 'smooth' });
   }
   onMount(update);
+
+  // Cards fade/rise in once when the row first scrolls into view (stagger 40 ms, first 8 cards only).
+  let seen = false;
+  function reveal(node: HTMLElement) {
+    if (typeof IntersectionObserver === 'undefined' || matchMedia('(prefers-reduced-motion: reduce)').matches) { seen = true; return {}; }
+    const io = new IntersectionObserver((es) => { if (es.some((e) => e.isIntersecting)) { seen = true; io.disconnect(); } }, { rootMargin: '0px 0px -6% 0px' });
+    io.observe(node);
+    return { destroy: () => io.disconnect() };
+  }
   $: if (items) setTimeout(update, 50);
 </script>
 
 {#if items === null || items.length}
-  <section class="row" aria-label={title} aria-busy={items === null}>
+  <section class="row" class:m={$mobile} class:land={landscape} class:pre={!seen} class:seen aria-label={title} aria-busy={items === null} use:reveal>
     <h2>{#if href}<a {href}>{title}<span class="more"> Alle anzeigen</span><Icon name="chevron-right" size={18} /></a>{:else}{title}{/if}</h2>
     <div class="wrap">
       <button class="arrow left" class:hide={!canLeft} aria-label="Zurückblättern" on:click={() => go(-1)}><Icon name="chevron-left" size={34} /></button>
       <div class="track" bind:this={track} on:scroll={update} role="list">
         {#if items === null}
-          {#each Array(8) as _}<div class="slot"><div class="skeleton ph"></div></div>{/each}
+          {#each Array(8) as _}<div class="slot"><div class="skeleton ph" class:poster={$mobile && !landscape}></div></div>{/each}
         {:else}
-          {#each items as it, idx (it.id)}<div class="slot" class:ranked role="listitem">{#if ranked}<span class="rank" aria-label="Platz {idx + 1}">{idx + 1}</span>{/if}<Card item={it} {removable} on:remove /></div>{/each}
+          {#each items as it, idx (it.id)}<div class="slot rv" class:ranked role="listitem" style="--i:{Math.min(idx, 7)}">{#if ranked}<span class="rank" aria-label="Platz {idx + 1}">{idx + 1}</span>{/if}{#if $mobile}<PosterCard item={it} {landscape} {removable} on:remove />{:else}<Card item={it} {removable} on:remove />{/if}</div>{/each}
         {/if}
       </div>
       <button class="arrow right" class:hide={!canRight} aria-label="Weiterblättern" on:click={() => go(1)}><Icon name="chevron-right" size={34} /></button>
@@ -57,18 +70,35 @@
   .more { font-size: .8rem; color: #54b9c5; max-width: 0; overflow: hidden; white-space: nowrap; opacity: 0; transition: max-width var(--t-med), opacity var(--t-med), margin var(--t-med); }
   h2 a:hover .more, h2 a:focus-visible .more { max-width: 10rem; opacity: 1; margin-left: .6rem; }
   .wrap { position: relative; }
-  /* vertical padding leaves room for the scaled hover card (overflow-x forces clipping on y) */
-  .track { display: flex; gap: var(--gap); overflow-x: auto; overflow-y: hidden; scroll-snap-type: x proximity; scrollbar-width: none; padding: 2.6rem var(--pad-x) 10.4rem; margin: -2.2rem 0 -9.9rem; scroll-padding: 0 var(--pad-x); }
+  .track { display: flex; gap: var(--gap); overflow-x: auto; overflow-y: hidden; scroll-snap-type: x proximity; scrollbar-width: none; padding: .4rem var(--pad-x) .6rem; margin: -.4rem 0 -.6rem; /* small room for focus rings; the hover pop-out lives in <body> */ scroll-padding: 0 var(--pad-x); }
   .track::-webkit-scrollbar { display: none; }
   .slot { flex: 0 0 calc((100% - 2 * var(--pad-x) - (var(--n) - 1) * var(--gap)) / var(--n)); scroll-snap-align: start; min-width: 0; }
   .slot.ranked { display: flex; align-items: flex-end; flex-basis: calc((100% - 2 * var(--pad-x) - (var(--n) - 1) * var(--gap)) / var(--n) * 1.25); }
   .slot.ranked :global(.card) { width: 66%; flex: none; }
   .rank { font-size: clamp(5rem, 11vw, 9.5rem); font-weight: 900; line-height: .8; color: #141414; -webkit-text-stroke: 3px #777; width: 34%; text-align: right; padding-right: .15rem; letter-spacing: -.08em; overflow: hidden; user-select: none; }
+  .row.pre .slot.rv { opacity: 0; }
+  @media (prefers-reduced-motion: no-preference) {
+    .row.seen .slot.rv { animation: ff-rise .5s var(--ease) calc(var(--i) * 40ms) backwards; }
+    @keyframes ff-rise { from { opacity: 0; transform: translateY(14px); } }
+  }
   .ph { aspect-ratio: 16 / 9; width: 100%; }
-  .arrow { position: absolute; top: 2.4rem; bottom: 10.4rem; width: var(--pad-x); min-width: 44px; border-radius: 0; background: rgba(20, 20, 20, .55); opacity: 0; z-index: 7; padding: 0; }
+  .ph.poster { aspect-ratio: 2 / 3; }
+  .arrow { position: absolute; top: .4rem; bottom: .6rem; width: var(--pad-x); min-width: 44px; border-radius: 0; background: rgba(20, 20, 20, .55); opacity: 0; z-index: 7; padding: 0; }
   .arrow:hover:not(:disabled) { background: rgba(20, 20, 20, .8); }
   .arrow.left { left: 0; } .arrow.right { right: 0; }
   .arrow.hide { display: none; }
   .row:hover .arrow, .arrow:focus-visible { opacity: 1; }
   @media (hover: none), (pointer: coarse) { .arrow { display: none; } }
+
+  /* ---- phone: swipeable poster rows (3.2 posters visible), no hover room needed ---- */
+  .row.m { --gap: .4rem; --pw: calc((100vw - var(--pad-x) - 3 * var(--gap)) / 3.2); margin-top: 1.4rem; }
+  .row.m:hover, .row.m:focus-within { z-index: 1; }
+  .row.m h2 { font-size: 1.05rem; font-weight: 700; margin: 0 var(--pad-x) .5rem; }
+  .row.m .track { padding: 0 var(--pad-x); margin: 0; scroll-snap-type: x proximity; -webkit-overflow-scrolling: touch; overscroll-behavior-x: contain; }
+  .row.m .slot { flex: 0 0 var(--pw); }
+  .row.m .arrow { display: none; }
+  .row.m.land { --pw: calc((100vw - var(--pad-x)) / 2.15); }
+  .row.m .slot.ranked { flex-basis: calc(var(--pw) * 1.6); }
+  .row.m .slot.ranked :global(.pc) { width: 62.5%; flex: none; }
+  .row.m .rank { font-size: 5rem; width: 37.5%; -webkit-text-stroke: 2.5px #777; padding-right: .1rem; }
 </style>

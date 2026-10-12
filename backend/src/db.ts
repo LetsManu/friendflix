@@ -390,6 +390,103 @@ export const MIGRATIONS: string[] = [
   );
   create index push_subscriptions_user on push_subscriptions(user_id);
   `,
+  // 20: offline downloads (licenses per device + shared prepared files)
+  `
+  alter table role_settings
+    add column download boolean,
+    add column max_downloads int check (max_downloads between 0 and 200),
+    add column download_max_height int check (download_max_height between 0 and 2160),
+    add column download_days int check (download_days between 1 and 90);
+  create table download_jobs (
+    id uuid primary key,
+    item_id text not null,
+    quality text not null check (quality in ('sd','hd','fhd','original')),
+    audio_lang text not null default '',
+    -- effective caps the file was prepared with (role height/bitrate clamp); part of the job key so roles with different caps never share a file
+    max_height int not null default 0,
+    max_bitrate int not null default 0,
+    media_source_id text,
+    status text not null check (status in ('queued','preparing','ready','failed')),
+    seg_done int not null default 0,
+    seg_total int,
+    init_sha text,
+    bytes bigint,
+    error text,
+    play_session_id text,
+    created_at timestamptz not null default now(),
+    updated_at timestamptz not null default now(),
+    last_used_at timestamptz not null default now()
+  );
+  create unique index download_jobs_key on download_jobs(item_id, quality, audio_lang, max_height, max_bitrate) where status <> 'failed';
+  create table downloads (
+    id uuid primary key,
+    user_id uuid not null,
+    device_id text not null,
+    profile_id uuid not null references profiles(id) on delete cascade,
+    item_id text not null,
+    job_id uuid references download_jobs(id) on delete set null,
+    quality text not null,
+    status text not null check (status in ('pending','fetched','deleted','revoked')),
+    created_at timestamptz not null default now(),
+    fetched_at timestamptz,
+    expires_at timestamptz not null,
+    checked_at timestamptz not null default now(),
+    progress_at timestamptz,
+    subs jsonb not null default '[]',
+    meta jsonb not null default '{}',
+    foreign key (user_id, device_id) references devices(user_id, device_id) on delete cascade
+  );
+  create unique index downloads_dev_item on downloads(user_id, device_id, profile_id, item_id) where status in ('pending','fetched');
+  create index downloads_user_active on downloads(user_id) where status in ('pending','fetched');
+  `,
+  // 21: indexes for per-item ratings and per-user thumbs lookups
+  `
+  create index if not exists ratings_item on ratings(item_id);
+  create index if not exists thumbs_user on thumbs(user_id);
+  `,
+  // 22: library audio/subtitle language index (filled by langindex.ts) and per-profile "dropped" titles
+  `
+  create table item_langs (
+    item_id text primary key,
+    type text not null,
+    audio text[] not null default '{}',
+    subs text[] not null default '{}',
+    indexed_at timestamptz not null default now()
+  );
+  create index item_langs_audio on item_langs using gin(audio);
+  create index item_langs_subs on item_langs using gin(subs);
+  create table dropped (
+    profile_id uuid not null references profiles(id) on delete cascade,
+    item_id text not null,
+    dropped_at timestamptz not null default now(),
+    primary key (profile_id, item_id)
+  );
+  `,
+  // 23: spoiler-gated reactions to watched movies/episodes
+  `
+  create table reactions (
+    user_id uuid not null references users(id) on delete cascade,
+    item_id text not null,
+    emoji text not null check (emoji in ('like','funny','wow','sad','love')),
+    comment text check (char_length(comment) <= 280),
+    created_at timestamptz not null default now(),
+    primary key (user_id, item_id)
+  );
+  create index reactions_item on reactions(item_id);
+  `,
+  // 24: curated ("featured") lists shown on everyone's home page
+  `
+  alter table lists add column featured_at timestamptz;
+  create index lists_featured on lists(featured_at) where featured_at is not null;
+  `,
+  // 25: reactions belong to a profile (the "watched" gate is per profile); owner profile id = user id
+  `
+  alter table reactions add column profile_id uuid references profiles(id) on delete cascade;
+  update reactions set profile_id = user_id;
+  alter table reactions alter column profile_id set not null;
+  alter table reactions drop constraint reactions_pkey;
+  alter table reactions add primary key (profile_id, item_id);
+  `,
 ];
 
 export async function migrate(pool: pg.Pool): Promise<void> {

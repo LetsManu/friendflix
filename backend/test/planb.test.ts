@@ -1,14 +1,27 @@
 import { readFileSync } from 'node:fs';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { normalizePath, upstreamUri } from '../src/mediapath.js';
 import { cfg, makeEnv, type TestEnv } from './helpers.js';
 
-const vectors = JSON.parse(readFileSync(new URL('../../test-vectors/media-paths.json', import.meta.url), 'utf8')) as { allow: string[]; deny: string[] };
+const vectors = JSON.parse(readFileSync(new URL('../../test-vectors/media-paths.json', import.meta.url), 'utf8')) as { allow: string[]; deny: string[]; direct: string[] };
 const ID = 'a'.repeat(32);
 
 describe('shared allowlist vectors (same file as the gateway tests)', () => {
   it.each(vectors.allow)('allows %s', (p) => expect(normalizePath(p)).toBeTruthy());
   it.each(vectors.deny)('denies %s', (p) => expect(normalizePath(p)).toBeNull());
+});
+
+describe('upstreamUri: direct streams', () => {
+  it.each(vectors.direct)('%s is refused for height-capped roles and roles without download rights', (p) => {
+    const uri = `/media${p}?static=true`;
+    expect(upstreamUri(uri, 1, undefined, true)).toContain(p);
+    expect(upstreamUri(uri, 1, undefined)).toContain(p); // default: allowed
+    expect(upstreamUri(uri, 1, 1080, true)).toBeNull();
+    expect(upstreamUri(uri, 1, undefined, false)).toBeNull();
+  });
+  it('HLS stays available to restricted roles', () => {
+    expect(upstreamUri(`/media/Videos/${ID}/master.m3u8`, 1, 1080, false)).toBe(`/Videos/${ID}/master.m3u8`);
+  });
 });
 
 describe('upstreamUri', () => {
@@ -26,6 +39,7 @@ describe('upstreamUri', () => {
     expect([capped.get('MaxHeight'), capped.get('maxwidth'), capped.get('Height')]).toEqual(['720', '1280', '480']);
     expect(upstreamUri(`/media/Videos/${ID}/master.m3u8?MaxHeight=2160`, 1)).toContain('MaxHeight=2160');
     expect(upstreamUri(`/api/me`, 1)).toBeNull();
+    expect(upstreamUri('/media/d/123e4567-e89b-42d3-a456-426614174000', 1)).toBeNull(); // offline downloads are gateway-only (Plan B denies them)
     expect(upstreamUri(`/media/Videos/${ID}/master.m3u8\r\nX-Evil: 1`, 1)).toBeNull();
     expect(upstreamUri(`/media/Videos/${ID}/master.m3u8?x=${'a'.repeat(2100)}`, 1)).toBeNull();
     expect(upstreamUri(`/media/Videos/${ID}/master.m3u8?${Array.from({ length: 41 }, (_, i) => `p${i}=1`).join('&')}`, 1)).toBeNull();
@@ -36,6 +50,7 @@ describe('upstreamUri', () => {
 
 describe('GET /internal/authz-nginx', () => {
   let env: TestEnv;
+  afterEach(() => { vi.useRealTimers(); });
   let sid: string;
   const H = { 'x-internal-secret': cfg.INTERNAL_SECRET };
   const call = (headers: Record<string, string>, cookies: Record<string, string> | undefined, uri = `/media/Videos/${ID}/master.m3u8?MaxStreamingBitrate=999999999`) =>
@@ -71,10 +86,11 @@ describe('GET /internal/authz-nginx', () => {
   });
   it('a disabled user or removed session loses access within the memo window (<= 5 s)', async () => {
     await env.pool.query('update users set disabled = true');
-    await new Promise((r) => setTimeout(r, 5200));
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(Date.now() + 5200); // memo window (5 s) elapses
     expect((await call(H, { ff_sid: sid })).statusCode).toBe(401);
     await env.pool.query('update users set disabled = false');
-  }, 15_000);
+  });
   it('counts decisions for monitoring', async () => {
     const m = (await env.app.inject('/metrics')).body;
     expect(m).toMatch(/friendflix_authz_nginx_total\{result="ok"\} \d+/);

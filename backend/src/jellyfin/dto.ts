@@ -15,6 +15,8 @@ export interface ItemDto {
   rating?: string;
   communityRating?: number;
   premiereDate?: string;
+  /** when the item was added to the library (Jellyfin DateCreated) */
+  dateCreated?: string;
   image: boolean;
   backdrop: boolean;
   /** transparent title logo available (shown in the billboard) */
@@ -29,6 +31,8 @@ export interface ItemDto {
   lastPlayedDate?: string;
   childCount?: number;
   unplayedCount?: number;
+  /** ISO timestamp when media was last added (new episodes for a series) */
+  lastAdded?: string;
 }
 
 export function toItemDto(i: Record<string, any>): ItemDto {
@@ -49,6 +53,7 @@ export function toItemDto(i: Record<string, any>): ItemDto {
     rating: i.OfficialRating,
     communityRating: i.CommunityRating,
     premiereDate: i.PremiereDate,
+    dateCreated: i.DateCreated,
     image: Boolean(i.ImageTags?.Primary),
     backdrop: Array.isArray(i.BackdropImageTags) && i.BackdropImageTags.length > 0,
     logo: Boolean(i.ImageTags?.Logo),
@@ -60,6 +65,7 @@ export function toItemDto(i: Record<string, any>): ItemDto {
     lastPlayedDate: ud.LastPlayedDate,
     childCount: i.ChildCount,
     unplayedCount: ud.UnplayedItemCount,
+    lastAdded: i.DateLastMediaAdded,
   };
 }
 
@@ -96,8 +102,10 @@ export function toPlaybackDto(args: {
   maxHeight?: number | null;
   /** Chromecast: AAC-only stereo, H.264 <= level 4.1 / 8 bit, never direct play */
   cast?: boolean;
+  /** no direct URL (role with a height cap or without download rights: the gateway refuses direct streams for it) */
+  noDirect?: boolean;
 }): PlaybackDto {
-  const { itemId, info, deviceId, maxBitrate, resumeTicks, audioIndex, maxHeight, cast } = args;
+  const { itemId, info, deviceId, maxBitrate, resumeTicks, audioIndex, maxHeight, cast, noDirect } = args;
   const src = (info.MediaSources ?? [])[0];
   if (!src) throw new Error('no media source');
   const streams: Array<Record<string, any>> = src.MediaStreams ?? [];
@@ -126,7 +134,7 @@ export function toPlaybackDto(args: {
   const withinCap = !maxHeight || (srcHeight > 0 && srcHeight <= maxHeight); // direct play must not bypass the cap (unknown height = no direct)
 
   const browserContainer = /(^|,)(mp4|m4v|webm|mov)(,|$)/i.test(String(src.Container ?? ''));
-  const directOk = !cast && Boolean(src.SupportsDirectPlay) && browserContainer && Number(src.Bitrate ?? 0) <= maxBitrate && audioIndex === undefined && withinCap;
+  const directOk = !cast && !noDirect && Boolean(src.SupportsDirectPlay) && browserContainer && Number(src.Bitrate ?? 0) <= maxBitrate && audioIndex === undefined && withinCap;
   const direct = new URLSearchParams(common);
   direct.set('static', 'true');
 
@@ -180,5 +188,90 @@ export function toTrickplayDto(itemId: string, mediaSourceId: string, raw: Recor
     width: Number(t.Width ?? w), height: Number(t.Height), tileWidth: Number(t.TileWidth), tileHeight: Number(t.TileHeight),
     count: Number(t.ThumbnailCount), interval: Number(t.Interval),
     url: `/media/Videos/${itemId}/Trickplay/${w}/{n}.jpg?MediaSourceId=${encodeURIComponent(mediaSourceId)}`,
+  };
+}
+
+export type DownloadQuality = 'sd' | 'hd' | 'fhd' | 'original';
+/** Server-side preparation presets (video + audio bits per second); roles clamp height/bitrate on top. */
+export const DOWNLOAD_PRESETS: Record<Exclude<DownloadQuality, 'original'>, { height: number; videoBps: number; audioBps: number }> = {
+  sd: { height: 480, videoBps: 1_000_000, audioBps: 128_000 },
+  hd: { height: 720, videoBps: 2_500_000, audioBps: 128_000 },
+  fhd: { height: 1080, videoBps: 5_000_000, audioBps: 160_000 },
+};
+
+export interface DownloadSourceDto {
+  mediaSourceId: string;
+  /** mp4/m4v + 8-bit H.264 + AAC/MP3 within the caps: the gateway may proxy the file as is */
+  originalEligible: boolean;
+  sizeBytes: number;
+  runtimeTicks?: number;
+  audio: Array<{ index: number; lang: string; title: string; isDefault: boolean }>;
+  subtitles: Array<{ index: number; lang: string; title: string; url: string }>;
+  /** Jellyfin-relative HLS master (fMP4 segments, no /media prefix) for server-side preparation; absent for 'original' */
+  masterPath?: string;
+  playSessionId: string;
+}
+
+export function toDownloadSource(args: {
+  itemId: string;
+  info: Record<string, any>;
+  deviceId: string;
+  quality: DownloadQuality;
+  audioIndex?: number;
+  maxHeight?: number | null;
+  maxBitrate?: number | null;
+}): DownloadSourceDto {
+  const { itemId, info, deviceId, quality, audioIndex, maxHeight, maxBitrate } = args;
+  const src = (info.MediaSources ?? [])[0];
+  if (!src) throw new Error('no media source');
+  const streams: Array<Record<string, any>> = src.MediaStreams ?? [];
+  const audioStreams = streams.filter((s) => s.Type === 'Audio');
+  const video = streams.find((s) => s.Type === 'Video');
+  const defAudio = audioStreams.find((s) => s.IsDefault) ?? audioStreams[0];
+  const srcHeight = Number(video?.Height ?? 0);
+  const originalEligible =
+    /(^|,)(mp4|m4v)(,|$)/i.test(String(src.Container ?? '')) &&
+    String(video?.Codec ?? '').toLowerCase() === 'h264' &&
+    Number(video?.BitDepth ?? 8) <= 8 &&
+    Boolean(defAudio) && ['aac', 'mp3'].includes(String(defAudio?.Codec ?? '').toLowerCase()) &&
+    (audioIndex === undefined || audioIndex === defAudio?.Index) &&
+    (!maxHeight || (srcHeight > 0 && srcHeight <= maxHeight)) &&
+    (!maxBitrate || (Number(src.Bitrate ?? 0) > 0 && Number(src.Bitrate) <= maxBitrate)) &&
+    Number(src.Size ?? 0) > 0;
+
+  const runtimeSec = Number(src.RunTimeTicks ?? 0) / 1e7;
+  const preset = quality === 'original' ? undefined : DOWNLOAD_PRESETS[quality];
+  const audioBps = preset?.audioBps ?? 128_000;
+  const totalBps = maxBitrate ?? (preset ? preset.videoBps + preset.audioBps : 0);
+  const sizeBytes = quality === 'original' ? Number(src.Size ?? 0) : Math.round((runtimeSec * totalBps) / 8);
+
+  let masterPath: string | undefined;
+  if (quality !== 'original') {
+    const q = new URLSearchParams({ MediaSourceId: src.Id, PlaySessionId: info.PlaySessionId, DeviceId: deviceId });
+    const height = maxHeight ?? preset!.height;
+    const entries: Record<string, string> = {
+      VideoCodec: 'h264', AudioCodec: 'aac', SegmentContainer: 'mp4', TranscodingMaxAudioChannels: '2', MaxVideoBitDepth: '8',
+      RequireAvc: 'true', Level: '40', BreakOnNonKeyFrames: 'false', MaxHeight: String(height), MaxWidth: String(maxWidthFor(height)),
+      VideoBitrate: String(Math.max(totalBps - audioBps, 200_000)), AudioBitrate: String(audioBps), MaxStreamingBitrate: String(totalBps),
+      AllowVideoStreamCopy: 'false', AllowAudioStreamCopy: 'false',
+    };
+    for (const [k, v] of Object.entries(entries)) q.set(k, v);
+    if (audioIndex !== undefined) q.set('AudioStreamIndex', String(audioIndex));
+    masterPath = `/Videos/${itemId}/master.m3u8?${q}`;
+  }
+  return {
+    mediaSourceId: src.Id,
+    originalEligible,
+    sizeBytes,
+    runtimeTicks: src.RunTimeTicks,
+    playSessionId: info.PlaySessionId,
+    audio: audioStreams.map((s) => ({ index: s.Index, lang: String(s.Language ?? 'und'), title: s.DisplayTitle ?? s.Title ?? s.Language ?? `Spur ${s.Index}`, isDefault: Boolean(s.IsDefault) })),
+    subtitles: streams
+      .filter((s) => s.Type === 'Subtitle' && (s.IsTextSubtitleStream || TEXT_SUBS.has(String(s.Codec ?? '').toLowerCase())))
+      .map((s) => ({
+        index: s.Index, lang: String(s.Language ?? 'und'), title: s.DisplayTitle ?? s.Title ?? s.Language ?? `Untertitel ${s.Index}`,
+        url: `/media/Videos/${itemId}/${src.Id}/Subtitles/${s.Index}/0/Stream.vtt`,
+      })),
+    masterPath,
   };
 }

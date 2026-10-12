@@ -9,22 +9,12 @@ import { notify } from '../notify.js';
 import { clipPath, previews } from '../previews.js';
 import { loadPrefs } from './prefs.js';
 import { requireUser } from '../session.js';
-import { SeerrError, portalStatus } from '../seerr/client.js';
+import { portalStatus } from '../seerr/client.js';
 import type { JfUser, UserRow } from '../types.js';
+import { id32, wrap as sharedWrap } from './_shared.js';
 
-const id32 = z.string().transform((s) => s.replace(/-/g, '').toLowerCase()).pipe(z.string().regex(/^[0-9a-f]{32}$/));
 
-function wrap<T extends (...a: any[]) => Promise<any>>(fn: T): T {
-  return (async (req: any, reply: any) => {
-    try {
-      return await fn(req, reply);
-    } catch (e) {
-      if (e instanceof JellyfinError) return reply.code(e.status === 404 ? 404 : 502).send({ error: 'jellyfin', status: e.status });
-      if (e instanceof SeerrError) return reply.code(502).send({ error: 'seerr', status: e.status });
-      throw e;
-    }
-  }) as T;
-}
+const wrap = <T extends (...a: any[]) => Promise<any>>(fn: T): T => sharedWrap(fn, { seerr: true, passthrough: [404] });
 
 /** Fetches items by id in chunks (keeps URLs short) with the viewer's own token, so library permissions apply. Jellyfin errors count as "not visible" unless `strict` (then they throw). */
 export async function itemsByIds(ctx: Ctx, user: JfUser, ids: string[], strict = false): Promise<ItemDto[]> {
@@ -70,12 +60,31 @@ export function discoverRoutes(app: FastifyInstance, ctx: Ctx) {
     const common = [...sets[0]!].filter((id) => sets.every((s) => s.has(id)));
     const total = common.length;
     // details + filters with the requester's token; sort by rating
-    const details = await itemsByIds(ctx, req.jfUser!, common.slice(0, 400));
-    let items = details;
+    // genre/type are filtered by Jellyfin so they apply to the whole common set (capped), not just a prefix
+    // group-weighted: titles on more participants' watchlists first; anything dropped or thumbed down by a participant is out
+    const accounts = [req.user!.id, ...others.map((u) => u.id)]; // account ids (a non-owner profile's jfUser.id is the profile id)
+    const plannedBy = new Map((await ctx.db.query<{ item_id: string; n: number }>(
+      'select item_id, count(distinct user_id)::int n from watchlist where user_id = any($1) and item_id = any($2) group by item_id', [accounts, common])).rows.map((r) => [r.item_id, r.n]));
+    const vetoed = new Set((await ctx.db.query<{ item_id: string }>(
+      `select d.item_id from dropped d join profiles p on p.id = d.profile_id where p.user_id = any($1)
+       union select item_id from thumbs where user_id = any($1) and value = -1`, [accounts])).rows.map((r) => r.item_id));
+    const planned = (id: string) => plannedBy.get(id) ?? 0;
+    const pool = common.filter((id) => !vetoed.has(id)).sort((a, c) => planned(c) - planned(a)).slice(0, 2000);
+    const chunks: string[][] = [];
+    for (let i = 0; i < pool.length; i += 80) chunks.push(pool.slice(i, i + 80)); // 80 ids keep the Jellyfin request line short
+    const parts: ItemDto[][] = new Array(chunks.length);
+    let next = 0;
+    await Promise.all(Array.from({ length: Math.min(4, chunks.length) }, async () => {
+      while (next < chunks.length) {
+        const n = next++;
+        parts[n] = (await ctx.jf.items(req.jfUser!, { ids: chunks[n], types, genre: b.genre, limit: 80 })).items;
+      }
+    }));
+    let items = parts.flat();
     if (b.maxMinutes) items = items.filter((i) => !i.runtimeTicks || i.runtimeTicks <= b.maxMinutes! * 600_000_000);
     if (b.genre) items = items.filter((i) => i.genres.includes(b.genre!));
-    items.sort((a, c) => (c.communityRating ?? 0) - (a.communityRating ?? 0) || a.name.localeCompare(c.name));
-    return { participants: everyone.map((u) => u.name), total, items: items.slice(0, 40) };
+    items.sort((a, c) => planned(c.id) - planned(a.id) || (c.communityRating ?? 0) - (a.communityRating ?? 0) || a.name.localeCompare(c.name));
+    return { participants: everyone.map((u) => u.name), total, items: items.slice(0, 40).map((i) => ({ ...i, planned: planned(i.id) })) };
   }));
 
   // ---- Recommend to friends / "Von Freunden empfohlen" ----
@@ -96,15 +105,18 @@ export function discoverRoutes(app: FastifyInstance, ctx: Ctx) {
   }));
 
   app.get('/api/recommendations', pre, wrap(async (req) => {
-    const rows = (await ctx.db.query<{ item_id: string; note: string | null; from_name: string }>(
-      `select r.item_id, r.note, u.name from_name from recommendations r join users u on u.id=r.from_user
+    const rows = (await ctx.db.query<{ id: string; item_id: string; note: string | null; from_name: string }>(
+      `select r.id, r.item_id, r.note, u.name from_name from recommendations r join users u on u.id=r.from_user
         where r.to_user=$1 and r.created_at > now() - interval '60 days' order by r.seen, r.created_at desc limit 30`, [req.user!.id])).rows;
     const items = await itemsByIds(ctx, req.jfUser!, [...new Set(rows.map((r) => r.item_id))]);
     const meta = new Map(rows.map((r) => [r.item_id, `Von ${r.from_name}${r.note ? `: ${r.note}` : ''}`]));
-    return { items: items.map((i) => ({ ...i, caption: meta.get(i.id) })) };
+    const shown = new Set(items.map((i) => i.id));
+    return { items: items.map((i) => ({ ...i, caption: meta.get(i.id) })), recIds: rows.filter((r) => shown.has(r.item_id)).map((r) => Number(r.id)) }; // recIds: send back to /seen
   }));
   app.post('/api/recommendations/seen', pre, async (req) => {
-    await ctx.db.query('update recommendations set seen = true where to_user = $1', [req.user!.id]);
+    const b = z.object({ ids: z.array(z.union([z.number().int().positive(), z.string().regex(/^\d{1,15}$/)])).max(200).optional() }).nullish().parse(req.body);
+    if (b?.ids) await ctx.db.query('update recommendations set seen = true where to_user = $1 and id = any($2::bigint[])', [req.user!.id, b.ids.map(String)]);
+    else await ctx.db.query('update recommendations set seen = true where to_user = $1', [req.user!.id]); // legacy: no body marks everything
     return { ok: true };
   });
 

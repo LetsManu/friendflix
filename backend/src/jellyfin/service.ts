@@ -2,10 +2,10 @@ import { decrypt, encrypt } from '../crypto.js';
 import type { KV } from '../kv.js';
 import type { JfUser } from '../types.js';
 import { JellyfinClient, JellyfinError } from './client.js';
-import { maxWidthFor, toItemDto, toPlaybackDto, toTrickplayDto, type ItemDto, type PlaybackDto, type TrickplayDto } from './dto.js';
+import { maxWidthFor, toDownloadSource, toItemDto, toPlaybackDto, toTrickplayDto, type DownloadQuality, type DownloadSourceDto, type ItemDto, type PlaybackDto, type TrickplayDto } from './dto.js';
 
 const TOKEN_TTL = 6 * 3600;
-const FIELDS = 'Overview,Genres,OfficialRating,CommunityRating,PremiereDate,ProductionYear,ChildCount,RunTimeTicks';
+const FIELDS = 'Overview,Genres,OfficialRating,CommunityRating,PremiereDate,DateCreated,ProductionYear,ChildCount,RunTimeTicks,DateLastMediaAdded';
 
 export interface ItemQuery {
   parentId?: string;
@@ -19,6 +19,10 @@ export interface ItemQuery {
   ids?: string[];
   genre?: string;
   studio?: string;
+  decade?: number;
+  year?: number;
+  minRating?: number;
+  person?: string;
 }
 
 /**
@@ -104,6 +108,10 @@ export class JellyfinService {
     if (q.ids?.length) p.set('ids', q.ids.join(','));
     if (q.genre) p.set('genres', q.genre);
     if (q.studio) p.set('studios', q.studio);
+    if (q.year) p.set('years', String(q.year)); // year wins over decade
+    else if (q.decade) p.set('years', Array.from({ length: 10 }, (_, n) => q.decade! + n).join(','));
+    if (q.minRating) p.set('minCommunityRating', String(q.minRating));
+    if (q.person) p.set('personIds', q.person);
     const r = await this.json<{ Items: any[]; TotalRecordCount: number }>(user, `/Items?${p}`);
     return { items: r.Items.map(toItemDto), total: r.TotalRecordCount ?? r.Items.length };
   }
@@ -165,9 +173,37 @@ export class JellyfinService {
     return { audio, subtitles, runtimeTicks: i.RunTimeTicks, type: String(i.Type ?? '') };
   }
 
+  /** Genre names of the viewer's libraries; cached 10 min per Jellyfin user (library visibility is per user). */
   async genres(user: JfUser, types = 'Movie,Series'): Promise<string[]> {
+    const key = `genres:${user.jellyfin_user_id}:${types}`;
+    const hit = await this.kv.get(key).catch(() => null);
+    if (hit) {
+      try {
+        return JSON.parse(hit) as string[];
+      } catch {
+        // fall through to a fresh fetch
+      }
+    }
     const r = await this.json<{ Items: Array<{ Name: string }> }>(user, `/Genres?userId=${user.jellyfin_user_id}&includeItemTypes=${types}&sortBy=SortName`);
-    return r.Items.map((g) => g.Name);
+    const names = r.Items.map((g) => g.Name);
+    await this.kv.set(key, JSON.stringify(names), 600).catch(() => undefined);
+    return names;
+  }
+
+  /**
+   * People search. /Persons is library-global in older Jellyfin versions; passing userId scopes it to the user's libraries
+   * in 10.9+ (assumption - the people route additionally requires >= 1 visible title before revealing a person).
+   */
+  async searchPeople(user: JfUser, q: string, limit = 12): Promise<Array<{ id: string; name: string; image: boolean }>> {
+    const p = new URLSearchParams({ userId: user.jellyfin_user_id, searchTerm: q, limit: String(limit) });
+    const r = await this.json<{ Items: Array<{ Id: string; Name: string; ImageTags?: { Primary?: string } }> }>(user, `/Persons?${p}`);
+    return r.Items.map((i) => ({ id: i.Id, name: i.Name, image: Boolean(i.ImageTags?.Primary) }));
+  }
+
+  /** Raw Jellyfin item for a person page (caller checks Type === 'Person'). */
+  async person(user: JfUser, id: string): Promise<Record<string, any>> {
+    const uid = user.jellyfin_user_id;
+    return this.compat<Record<string, any>>(user, 'item', [`/Items/${id}?userId=${uid}`, `/Users/${uid}/Items/${id}`]);
   }
 
   /**
@@ -300,7 +336,7 @@ export class JellyfinService {
     await this.compat(user, 'played' + on, [`/UserPlayedItems/${id}?userId=${uid}`, `/Users/${uid}/PlayedItems/${id}`], { method: on ? 'POST' : 'DELETE' });
   }
 
-  async playbackInfo(user: JfUser, itemId: string, opts: { maxBitrate: number; maxHeight?: number | null; startTicks?: number; audioIndex?: number; cast?: boolean }): Promise<PlaybackDto> {
+  async playbackInfo(user: JfUser, itemId: string, opts: { maxBitrate: number; maxHeight?: number | null; startTicks?: number; audioIndex?: number; cast?: boolean; noDirect?: boolean }): Promise<PlaybackDto> {
     const p = new URLSearchParams({ UserId: user.jellyfin_user_id, MaxStreamingBitrate: String(opts.maxBitrate), AutoOpenLiveStream: 'false' });
     if (opts.startTicks) p.set('StartTimeTicks', String(opts.startTicks));
     if (opts.audioIndex !== undefined) p.set('AudioStreamIndex', String(opts.audioIndex));
@@ -315,7 +351,7 @@ export class JellyfinService {
           { Condition: 'LessThanEqual', Property: 'VideoBitDepth', Value: '8', IsRequired: true },
         ]
       : [];
-    if (opts.cast) {
+    if (opts.cast || opts.noDirect) {
       p.set('EnableDirectPlay', 'false');
       p.set('EnableDirectStream', 'false');
     }
@@ -324,7 +360,7 @@ export class JellyfinService {
       MaxStreamingBitrate: opts.maxBitrate,
       CodecProfiles: heightCond.length || castCond.length ? [{ Type: 'Video', Codec: opts.cast ? 'h264' : undefined, Conditions: [...heightCond, ...castCond] }] : [],
       // Chromecast: never direct play; always HLS/TS with H.264 + stereo AAC
-      DirectPlayProfiles: opts.cast ? [] : [{ Container: 'mp4,m4v,webm', Type: 'Video', VideoCodec: 'h264,vp9,av1', AudioCodec: 'aac,mp3,opus,flac' }],
+      DirectPlayProfiles: opts.cast || opts.noDirect ? [] : [{ Container: 'mp4,m4v,webm', Type: 'Video', VideoCodec: 'h264,vp9,av1', AudioCodec: 'aac,mp3,opus,flac' }],
       TranscodingProfiles: [
         { Container: 'ts', Type: 'Video', AudioCodec: opts.cast ? 'aac' : 'aac,mp3', VideoCodec: 'h264', Protocol: 'hls', Context: 'Streaming', MaxAudioChannels: '2', MinSegments: 1, BreakOnNonKeyFrames: true },
       ],
@@ -339,7 +375,56 @@ export class JellyfinService {
       body: JSON.stringify({ DeviceProfile: profile }),
     });
     if (info.ErrorCode) throw new JellyfinError(403, `playback blocked: ${info.ErrorCode}`);
-    return toPlaybackDto({ itemId, info, deviceId: this.deviceId(user), maxBitrate: opts.maxBitrate, resumeTicks: opts.startTicks ?? 0, audioIndex: opts.audioIndex, maxHeight: opts.maxHeight, cast: opts.cast });
+    return toPlaybackDto({ itemId, info, deviceId: this.deviceId(user), maxBitrate: opts.maxBitrate, resumeTicks: opts.startTicks ?? 0, audioIndex: opts.audioIndex, maxHeight: opts.maxHeight, cast: opts.cast, noDirect: opts.noDirect });
+  }
+
+  /** PlaybackInfo with the "FriendFlix Download" profile: source details + (unless 'original') the fMP4 HLS master the preparer pulls. */
+  async downloadSource(user: JfUser, itemId: string, opts: { quality: DownloadQuality; audioIndex?: number; maxHeight?: number | null; maxBitrate?: number | null }): Promise<DownloadSourceDto> {
+    const original = opts.quality === 'original';
+    const p = new URLSearchParams({ UserId: user.jellyfin_user_id, AutoOpenLiveStream: 'false' });
+    if (opts.maxBitrate) p.set('MaxStreamingBitrate', String(opts.maxBitrate));
+    if (opts.audioIndex !== undefined) p.set('AudioStreamIndex', String(opts.audioIndex));
+    if (opts.maxHeight) {
+      p.set('MaxHeight', String(opts.maxHeight));
+      p.set('MaxWidth', String(maxWidthFor(opts.maxHeight)));
+    }
+    if (!original) {
+      p.set('EnableDirectPlay', 'false');
+      p.set('EnableDirectStream', 'false');
+    }
+    const conditions = [
+      ...(opts.maxHeight ? [{ Condition: 'LessThanEqual', Property: 'Height', Value: String(opts.maxHeight), IsRequired: true }] : []),
+      { Condition: 'LessThanEqual', Property: 'VideoBitDepth', Value: '8', IsRequired: true },
+    ];
+    const profile = {
+      Name: 'FriendFlix Download',
+      MaxStreamingBitrate: opts.maxBitrate ?? 120_000_000,
+      CodecProfiles: [{ Type: 'Video', Codec: 'h264', Conditions: conditions }],
+      DirectPlayProfiles: original ? [{ Container: 'mp4,m4v', Type: 'Video', VideoCodec: 'h264', AudioCodec: 'aac,mp3' }] : [],
+      TranscodingProfiles: [
+        { Container: 'mp4', Type: 'Video', AudioCodec: 'aac', VideoCodec: 'h264', Protocol: 'hls', Context: 'Streaming', MaxAudioChannels: '2', MinSegments: 1, BreakOnNonKeyFrames: false },
+      ],
+      SubtitleProfiles: [{ Format: 'vtt', Method: 'External' }, { Format: 'srt', Method: 'External' }, { Format: 'ass', Method: 'External' }],
+    };
+    const info = await this.json<Record<string, any>>(user, `/Items/${itemId}/PlaybackInfo?${p}`, { method: 'POST', body: JSON.stringify({ DeviceProfile: profile }) });
+    if (info.ErrorCode) throw new JellyfinError(403, `download blocked: ${info.ErrorCode}`);
+    return toDownloadSource({ itemId, info, deviceId: this.deviceId(user), quality: opts.quality, audioIndex: opts.audioIndex, maxHeight: opts.maxHeight, maxBitrate: opts.maxBitrate });
+  }
+
+  /** Writes a user's resume position / played flag (offline progress sync). Current API first, legacy path as fallback. */
+  async setUserData(user: JfUser, id: string, d: { positionTicks: number; played: boolean; lastPlayedDate: Date | string }): Promise<void> {
+    const uid = user.jellyfin_user_id;
+    const body = JSON.stringify({
+      PlaybackPositionTicks: Math.max(0, Math.round(d.positionTicks)),
+      Played: d.played,
+      LastPlayedDate: (d.lastPlayedDate instanceof Date ? d.lastPlayedDate : new Date(d.lastPlayedDate)).toISOString(),
+    });
+    await this.compat(user, 'userdata', [`/UserItems/${id}/UserData?userId=${uid}`, `/Users/${uid}/Items/${id}/UserData`], { method: 'POST', body });
+  }
+
+  /** Stops the server-side transcode behind a PlaySessionId (Jellyfin keeps encoding otherwise). Never throws. */
+  async stopEncoding(user: JfUser, playSessionId: string): Promise<void> {
+    await this.call(user, `/Videos/ActiveEncodings?${new URLSearchParams({ deviceId: this.deviceId(user), playSessionId })}`, { method: 'DELETE' }).catch(() => undefined);
   }
 
   /** Playing / Progress / Stopped reports (powers "Weiterschauen" and Jellyfin statistics). */

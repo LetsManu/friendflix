@@ -12,6 +12,7 @@ export const ALLOWED_PATHS: RegExp[] = [
   new RegExp(`^/Items/${ID}/Images/(Primary|Backdrop|Logo|Thumb|Banner)(/\\d{1,3})?$`),
 ];
 
+const STREAM_PATH = new RegExp(`^/Videos/${ID}/stream(\\.\\w{2,5})?$`);
 const STRIP_QUERY = new Set(['api_key', 'apikey', 'x-emby-token', 'x-mediabrowser-token', 'token']);
 const CLAMP_QUERY = new Set(['maxstreamingbitrate', 'videobitrate']);
 const CLAMP_HEIGHT = new Set(['maxheight', 'height']);
@@ -36,7 +37,7 @@ export function normalizePath(raw: string): string | null {
  * validated path, token-like params removed, bitrate clamped to the role limit, query re-encoded.
  * Returns null for anything that is not allowed.
  */
-export function upstreamUri(originalUri: string, maxBitrate: number, maxHeight?: number): string | null {
+export function upstreamUri(originalUri: string, maxBitrate: number, maxHeight?: number, canDownload = true): string | null {
   if (typeof originalUri !== 'string' || originalUri.length > 4096 || /[\r\n\x00]/.test(originalUri)) return null;
   const q = originalUri.indexOf('?');
   const rawPath = q === -1 ? originalUri : originalUri.slice(0, q);
@@ -44,6 +45,8 @@ export function upstreamUri(originalUri: string, maxBitrate: number, maxHeight?:
   if (!rawPath.startsWith('/media/') || rawQuery.length > MAX_QUERY_LENGTH) return null;
   const path = normalizePath(rawPath.slice('/media'.length));
   if (!path) return null;
+  // direct streams skip the transcoder: refused for height-capped roles and roles without download rights (same rule as the gateway)
+  if (STREAM_PATH.test(path) && (maxHeight || !canDownload)) return null;
   const params = new URLSearchParams(rawQuery);
   if ([...params].length > MAX_QUERY_PARAMS) return null;
   const out = new URLSearchParams();

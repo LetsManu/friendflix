@@ -4,12 +4,14 @@
   import Hero from '#lib/Hero.svelte';
   import LazyRow from '#lib/LazyRow.svelte';
   import Row from '#lib/Row.svelte';
+  import { loadFeatured, type FeaturedList } from '#lib/lists';
   import UpcomingRow from '#lib/UpcomingRow.svelte';
 
   let hero: Item | null = null, heroPlay = '';
   let resume: Item[] | null = null, next: Item[] | null = null, latest: Item[] | null = null, mine: Item[] | null = null;
-  let recs: Item[] | null = null, friendsRated: Item[] | null = null;
+  let trending: Item[] | null = null, recs: Item[] | null = null, friendsRated: Item[] | null = null;
   let top: Item[] | null = null, because: { name: string } | null = null, becauseItems: Item[] | null = null;
+  let featured: FeaturedList[] = [];
   let views: Item[] = [], genres: string[] = [], error = '';
   const q = (p: Record<string, string>) => new URLSearchParams(p).toString();
   // Jellyfin can answer 5xx/network errors right after a fresh sign-up: retry (not on 401/403) before giving up
@@ -30,10 +32,12 @@
     load('/api/library/nextup').then((r) => (next = r.items)).catch(() => (next = []));
     items({ types: 'Movie,Series', sort: 'DateCreated', desc: 'true', limit: '24' }).then((r) => (latest = r)).catch(() => (latest = []));
     load('/api/library/because').then((r) => { because = r.because; becauseItems = r.items; }).catch(() => (becauseItems = []));
+    load('/api/library/trending').then((r) => (trending = (r.items as Item[]).map((i) => ({ ...i, caption: i.viewers ? (i.viewers === 1 ? '1 Person schaut' : `${i.viewers} Personen schauen`) : i.caption })))).catch(() => (trending = []));
     load('/api/recommendations').then((r) => (recs = r.items)).catch(() => (recs = []));
     load('/api/library/friends-rated').then((r) => (friendsRated = r.items)).catch(() => (friendsRated = []));
     items({ types: 'Movie,Series', sort: 'CommunityRating', desc: 'true', limit: '10' }).then((r) => (top = r)).catch(() => (top = []));
     load('/api/watchlist').then((r) => (mine = r.items)).catch(() => (mine = []));
+    loadFeatured().then((l) => (featured = l)).catch(() => (featured = []));
     load('/api/library/views').then((r) => (views = r.items)).catch(() => (error = 'Bibliothek konnte nicht geladen werden.'));
     load('/api/library/genres').then((r) => (genres = r.genres.slice(0, 8))).catch(() => undefined);
     // Billboard: random title that has a backdrop (falls back to the newest one)
@@ -53,15 +57,17 @@
 </script>
 
 <svelte:head><title>FriendFlix</title></svelte:head>
-<Hero item={hero} rank={heroRank} />
+<Hero item={hero} rank={heroRank} portrait />
 <div class="rows">
   {#if error}<p class="err" style="margin:1rem var(--pad-x)">{error}</p>{/if}
-  <Row title="Weiterschauen" items={resume} removable on:remove={(e) => removeResume(e.detail.id)} />
-  <Row title="Nächste Folge" items={nextOnly} />
+  <Row title="Weiterschauen" items={resume} landscape removable on:remove={(e) => removeResume(e.detail.id)} />
+  <Row title="Nächste Folge" items={nextOnly} landscape />
   <Row title="Von Freunden empfohlen" items={recs} />
   <Row title="Freunde haben bewertet" items={friendsRated} />
   {#if because}<Row title="Weil du „{because.name}“ gesehen hast" items={becauseItems} />{/if}
   <Row title="Neu hinzugefügt" items={latest} href="/new" />
+  <Row title="Diese Woche bei uns" items={trending} ranked />
+  {#each featured as f (f.id)}<Row title="{f.name} · Empfohlen von {f.owner.name}" items={f.items} href="/lists/{f.id}" />{/each}
   <Row title="Top 10 nach Bewertung" items={top} ranked />
   <Row title="Meine Liste" items={mine} href="/watchlist" />
   <UpcomingRow type="movie" title="Demnächst – jetzt wünschen" />
@@ -73,4 +79,5 @@
   {/each}
 </div>
 
-<style>.rows { position: relative; z-index: 2; padding-bottom: 5rem; }</style>
+<style>.rows { position: relative; z-index: 2; padding-bottom: 5rem; }
+  @media (max-width: 720px) { .rows { padding-top: .4rem; } }</style>

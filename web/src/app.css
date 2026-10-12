@@ -65,13 +65,16 @@ table { width: 100%; border-collapse: collapse; } td, th { text-align: left; pad
 .tiles > * { --card-w: 100%; }
 
 /* ---- Skeleton shimmer ---- */
-.skeleton { background: linear-gradient(100deg, #1f1f1f 30%, #2c2c2c 50%, #1f1f1f 70%); background-size: 200% 100%; animation: shimmer 1.4s linear infinite; border-radius: var(--radius); }
-@keyframes shimmer { to { background-position: -200% 0; } }
+.skeleton { position: relative; overflow: hidden; background: #1f1f1f; border-radius: var(--radius); }
+/* gradient sweep on its own layer: only transform animates (GPU) */
+.skeleton::after { content: ''; position: absolute; inset: 0; background: linear-gradient(100deg, transparent 30%, rgba(255, 255, 255, .075) 50%, transparent 70%); transform: translateX(-100%); animation: ff-shimmer 1.5s ease-in-out infinite; will-change: transform; }
+@keyframes ff-shimmer { to { transform: translateX(100%); } }
 
 video { width: 100%; background: #000; }
 
 @media (prefers-reduced-motion: reduce) {
   html { scroll-behavior: auto; }
+  .skeleton::after { animation: none; display: none; }
   *, *::before, *::after { animation-duration: .001ms !important; animation-iteration-count: 1 !important; transition-duration: .001ms !important; transition-delay: 0ms !important; }
 }
 
@@ -97,3 +100,14 @@ html.tv input, html.tv select { min-height: 56px; font-size: 1.05rem; }
 html.tv .ring { width: 60px; min-height: 60px; height: 60px; }
 html.tv .drop a, html.tv .drop .plain { min-height: 56px; font-size: 1.05rem; }
 @media (prefers-reduced-motion: no-preference) { html.tv { scroll-behavior: smooth; } }
+
+/* ---- Page transitions (View Transitions API, started from +layout.svelte; skipped for /watch and reduced motion) ---- */
+@media (prefers-reduced-motion: no-preference) {
+  html.ff-vt main { view-transition-name: ff-main; }
+  ::view-transition-group(root), ::view-transition-group(ff-main) { animation-duration: 180ms; }
+  ::view-transition-old(root), ::view-transition-new(root) { animation-duration: 180ms; animation-timing-function: ease; }
+  ::view-transition-old(ff-main) { animation: ff-vt-out 180ms ease both; }
+  ::view-transition-new(ff-main) { animation: ff-vt-in 180ms var(--ease) both; }
+  @keyframes ff-vt-out { to { opacity: 0; } }
+  @keyframes ff-vt-in { from { opacity: 0; transform: translateY(8px); } }
+}

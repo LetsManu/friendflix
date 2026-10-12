@@ -97,7 +97,19 @@ services:
       PLAYBACK_CHECK_HOUR: ${PLAYBACK_CHECK_HOUR:-4}
       PREVIEW_WARM: ${PREVIEW_WARM:-true}
       CAST_ENABLED: ${CAST_ENABLED:-true}
-    volumes: [previews:/data/previews] # cached hover/billboard clips (root fs is read-only)
+      DOWNLOADS_ENABLED: ${DOWNLOADS_ENABLED:-true}
+      DIRECT_PLAY_REQUIRES_DOWNLOAD: ${DIRECT_PLAY_REQUIRES_DOWNLOAD:-false}
+      DOWNLOAD_DIR: /data/downloads
+      DOWNLOAD_CACHE_MAX_GB: ${DOWNLOAD_CACHE_MAX_GB:-50}
+      DOWNLOAD_PREP_CONCURRENCY: ${DOWNLOAD_PREP_CONCURRENCY:-1}
+      DOWNLOAD_CREATE_PER_HOUR: ${DOWNLOAD_CREATE_PER_HOUR:-20}
+      DOWNLOAD_MIN_FREE_GB: ${DOWNLOAD_MIN_FREE_GB:-2}
+      DOWNLOAD_PAUSE_STREAMS: ${DOWNLOAD_PAUSE_STREAMS:-2}
+      DOWNLOAD_FILE_TTL_HOURS: ${DOWNLOAD_FILE_TTL_HOURS:-48}
+      DOWNLOAD_OFFLINE_GRACE_DAYS: ${DOWNLOAD_OFFLINE_GRACE_DAYS:-7}
+    volumes: # root fs is read-only
+      - previews:/data/previews # cached hover/billboard clips
+      - downloads:/data/downloads # prepared offline-download MP4s (rw here, ro in the gateway)
     depends_on:
       postgres: { condition: service_healthy }
       redis: { condition: service_healthy }
@@ -117,6 +129,8 @@ services:
       BACKEND_URL: http://backend:3000
       INTERNAL_SECRET: ${INTERNAL_SECRET:-}
       METRICS_TOKEN: ${METRICS_TOKEN:-}
+      DOWNLOAD_DIR: /data/downloads
+    volumes: [downloads:/data/downloads:ro]
     depends_on: [backend]
     ports: ["${BIND_ADDR:-127.0.0.1}:${GATEWAY_PORT:-3082}:4000"]
     networks: [front, media]
@@ -217,6 +231,7 @@ services:
 volumes:
   pgdata:
   previews:
+  downloads:
   jellyfin-config:
   jellyfin-cache:
   seerr-config:

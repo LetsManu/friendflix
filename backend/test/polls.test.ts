@@ -14,7 +14,7 @@ let imported = '';
 beforeAll(async () => {
   env = await makeEnv({
     'GET /Items/[^/]+': (u) => { const id = u.pathname.split('/').pop()!; return { json: { Id: id, Name: id === A ? 'Alien' : id === B ? 'Brazil' : 'Serie', Type: id === SERIES ? 'Series' : 'Movie' } }; },
-    'GET /Items': (u) => ({ json: { Items: libraryHasDune && u.search.includes('tmdb.438631') ? [{ Id: 'd'.repeat(32), Name: 'Dune' }] : [] } }),
+    'GET /Items': (u) => u.searchParams.get('ids') ? { json: { Items: u.searchParams.get('ids')!.split(',').map((Id) => ({ Id, Name: Id === A ? 'Alien' : 'Brazil', Type: 'Movie' })) } } : ({ json: { Items: libraryHasDune && u.search.includes('tmdb.438631') ? [{ Id: 'd'.repeat(32), Name: 'Dune' }] : [] } }),
     'GET /Shows/Upcoming': () => ({ json: { Items: [{ Id: 'e'.repeat(32), Name: 'Pilot', Type: 'Episode', SeriesId: SERIES, SeriesName: 'Serie', IndexNumber: 1, ParentIndexNumber: 1, PremiereDate: '2020-01-01T00:00:00Z' }, { Id: 'f'.repeat(32), Name: 'Later', Type: 'Episode', SeriesId: SERIES, SeriesName: 'Serie', PremiereDate: '2999-01-01T00:00:00Z' }] } }),
   }, {
     seerr: {
@@ -108,5 +108,14 @@ describe('ratings and calendar', () => {
     const n = (await call('GET', '/api/notifications')).json().notifications.filter((x: any) => x.kind === 'episode');
     expect(n).toHaveLength(1);
     expect(n[0].title).toContain('S1E1');
+  });
+  it('skips series any profile of the account dropped (calendar + notifications)', async () => {
+    await env.ctx.db.query("delete from notifications where kind='episode'");
+    await env.ctx.db.query("insert into dropped(profile_id,item_id) select id, $1 from profiles", [SERIES]);
+    expect((await call('GET', '/api/calendar')).json().items.filter((e: any) => e.seriesId === SERIES)).toHaveLength(0);
+    await calendarNotifications(env.ctx);
+    expect((await call('GET', '/api/notifications')).json().notifications.filter((x: any) => x.kind === 'episode')).toHaveLength(0);
+    await env.ctx.db.query('delete from dropped where item_id=$1', [SERIES]);
+    expect((await call('GET', '/api/calendar')).json().items.some((e: any) => e.seriesId === SERIES)).toBe(true);
   });
 });

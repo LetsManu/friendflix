@@ -1,6 +1,6 @@
 import { createECDH, randomBytes } from 'node:crypto';
 import webpush from 'web-push';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { notify } from '../src/notify.js';
 import { revokeSessions } from '../src/devices.js';
 import { endpointAllowed, pushEnabled, sendWebPush } from '../src/push.js';
@@ -117,8 +117,7 @@ describe('web push', () => {
     // notify() itself is fire-and-forget but does reach the sender
     sent.length = 0;
     await notify(env.ctx, { userId: bId, kind: 'x', title: 'T', body: 'B' });
-    await new Promise((r) => setTimeout(r, 300));
-    expect(sent.map((s) => s.url)).toEqual([FCM + 'ub']);
+    await vi.waitFor(() => expect(sent.map((s) => s.url)).toEqual([FCM + 'ub']));
     await env.pool.query('delete from push_subscriptions');
   });
 

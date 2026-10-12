@@ -6,13 +6,16 @@ import type { Live } from '../src/live.js';
 import { makeEnv, type TestEnv } from './helpers.js';
 import type { UserRow } from '../src/types.js';
 
+const HIDDEN = 'd'.repeat(32), SECRET = 's'.repeat(31) + '1';
 let env: TestEnv;
 let admin: { cookies: Record<string, string>; csrf: string };
 let user: UserRow;
 const live = (over: Partial<Live> = {}): Live => ({ userId: user.id, userName: 'Admin', itemId: 'a'.repeat(32), title: 'Film', type: 'Movie', positionTicks: 0, isPaused: false, playSessionId: 'ps-1', updatedAt: Date.now(), source: 'portal', ...over });
 
 beforeAll(async () => {
-  env = await makeEnv();
+  env = await makeEnv({
+    'GET /Items': (u) => ({ json: { Items: (u.searchParams.get('ids') ?? '').split(',').filter((i) => i && i !== HIDDEN).map((id) => ({ Id: id, Name: id, Type: 'Movie' })) } }),
+  });
   admin = await env.login();
   user = (await env.pool.query('select * from users')).rows[0];
 });
@@ -62,6 +65,22 @@ describe('statistics', () => {
     expect(c.leaderboard[0]).toMatchObject({ name: 'Admin' });
     expect(Object.keys(c.leaderboard[0]).sort()).toEqual(['minutes', 'name']);
     expect(c.topTitles.length).toBeGreaterThan(0);
+  });
+  it('top titles respect shareHistory and the viewer\'s Jellyfin visibility', async () => {
+    const other = (await env.pool.query(`insert into users(id, authentik_sub, email, name, role, jellyfin_user_id, jellyfin_username, jellyfin_pw_enc) values (gen_random_uuid(), 'o', 'o@x.de', 'Other', 'friend', 'jf-o', 'other', 'x') returning id`)).rows[0].id;
+    const ins = (uid: string, item: string, name: string) => env.pool.query(`insert into play_seconds(user_id,item_id,day,seconds,item_name) values ($1,$2,current_date,999999,$3)`, [uid, item, name]);
+    await ins(other, SECRET, 'Heimlich'); // other user did not opt in
+    await ins(other, HIDDEN, 'Unsichtbar'); await ins(user.id, HIDDEN, 'Unsichtbar'); // not visible to the viewer
+    let names = (await get('/api/stats/community')).json().topTitles.map((t: any) => t.name);
+    expect(names).not.toContain('Heimlich');
+    expect(names).not.toContain('Unsichtbar');
+    expect(names).toContain('Marathon');
+    await env.pool.query(`insert into user_prefs(user_id, data) values ($1, '{"shareHistory": true}')`, [other]);
+    names = (await get('/api/stats/community')).json().topTitles.map((t: any) => t.name);
+    expect(names[0]).toBe('Heimlich');
+    expect(names).not.toContain('Unsichtbar');
+    await env.pool.query('delete from users where id=$1', [other]);
+    await env.pool.query('delete from play_seconds where item_id=$1', [HIDDEN]);
   });
   it('validates year', async () => expect((await get('/api/stats/me?year=abc')).statusCode).toBe(400));
 });
