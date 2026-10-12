@@ -17,6 +17,7 @@
   import CastRow from '#lib/CastRow.svelte';
   import StatusPicker from '#lib/StatusPicker.svelte';
   import FriendsStrip from '#lib/FriendsStrip.svelte';
+  import Reactions from '#lib/Reactions.svelte';
   import { langLine } from '#lib/langs';
 
   let thumb = 0, extras: Item[] = [], tint = '', friends: Array<{ id: string; name: string }> = [], recOpen = false, recTo = new Set<string>(), recNote = '', recMsg = '';
@@ -165,6 +166,8 @@
       {/if}
 
       <CastRow id={item.id} />
+
+      {#if item.type === 'Movie' || item.type === 'Episode'}<Reactions id={item.id} />{/if}
 
       <section class="rate panel">
         <h2>Bewertungen {#if avg}<span class="badge">Ø {avg.toFixed(1)} von 5</span>{/if}</h2>

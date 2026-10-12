@@ -69,6 +69,10 @@ export interface Item {
   genres: string[]; rating?: string; communityRating?: number; premiereDate?: string; image: boolean; backdrop: boolean; logo: boolean; trailers?: number; caption?: string;
   played: boolean; favorite: boolean; positionTicks: number; playedPercentage?: number; lastPlayedDate?: string;
   langs?: { audio: string[]; subs: string[] };
+  /** Jellyfin DateLastMediaAdded (ISO) – newest child for series */
+  lastAdded?: string; childCount?: number; unplayedCount?: number;
+  /** only on /api/library/trending: number of distinct viewers this week */
+  viewers?: number;
 }
 export interface Me { id: string; name: string; role: string; roleLabel: string; isAdmin: boolean; csrfToken: string; deviceApproved: boolean; tv: boolean; profile?: MeProfile | null; profileRequired?: boolean; profileCount?: number; profileChosen?: boolean; downloads?: { allowed: boolean; max: number } }
 export interface MeProfile { id: string; name: string; avatar: string; isOwner: boolean }
