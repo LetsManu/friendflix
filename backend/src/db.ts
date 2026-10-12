@@ -504,6 +504,12 @@ export const MIGRATIONS: string[] = [
   `
   alter table notifications add column msg jsonb;
   `,
+  // 28: Block 15 Q1 (brand hubs) – placeholder, replaced by the Q1 worker
+  `select 1;`,
+  // 29: Block 15 A1 (series audio/subtitle preference) – placeholder, replaced by the A1 worker
+  `select 1;`,
+  // 30: Block 15 A1 (episode comments) – placeholder, replaced by the A1 worker
+  `select 1;`,
 ];
 
 export async function migrate(pool: pg.Pool): Promise<void> {
