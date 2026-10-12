@@ -6,6 +6,9 @@
   import Icon from '#lib/Icon.svelte';
   import PinPad from '#lib/PinPad.svelte';
   import { setMeta } from '#lib/offline/db';
+  import Intro from '#lib/Intro.svelte';
+  import { stopSonicLogo } from '#lib/sonic';
+  import { loadIntroSettings, markSessionSeen, shouldPlayIntro, shouldPlayIntroSound } from '#lib/intro';
 
   interface Profile { id: string; name: string; avatar: string; isOwner: boolean; hasPin: boolean; active: boolean }
   let profiles: Profile[] = [], max = 5, activeId: string | null = null, loaded = false;
@@ -29,9 +32,23 @@
   }
   onMount(load);
 
-  function done() {
+  function target() {
     const next = new URLSearchParams(location.search).get('next');
-    location.href = next && next.startsWith('/') && !next.startsWith('//') && !next.includes('\\') ? next : '/';
+    return next && next.startsWith('/') && !next.startsWith('//') && !next.includes('\\') ? next : '/';
+  }
+  function done() { location.href = target(); }
+
+  // ---- brand intro: the profile click is a user gesture, so the sonic logo may play ----
+  let intro: { sound: boolean } | null = null, introDone: (() => void) | null = null;
+  async function playIntro(profileId: string) {
+    const s = loadIntroSettings(profileId);
+    const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
+    const route = target().split(/[?#]/)[0];
+    markSessionSeen(); // the page reloads into the app next: no second (silent) intro on top of this one
+    if (!shouldPlayIntro({ setting: s.show, reducedMotion, route, sessionSeen: false, tv: document.documentElement.classList.contains('tv') })) return;
+    intro = { sound: shouldPlayIntroSound({ sound: s.sound, soundExplicit: s.soundExplicit, reducedMotion }) };
+    await new Promise<void>((r) => (introDone = r));
+    await stopSonicLogo(200); // the page reload would cut the chord's tail with a click
   }
 
   async function choose(p: Profile, pin?: string) {
@@ -41,6 +58,7 @@
     try {
       await api(`/api/profiles/${p.id}/select`, { method: 'POST', body: pin === undefined ? {} : { pin } });
       await setMeta('lastProfileId', p.id).catch(() => undefined); // offline hub: downloads of the last active profile
+      await playIntro(p.id).catch(() => undefined);
       done();
     } catch (e) {
       const code = e instanceof ApiError ? e.body?.error : '';
@@ -128,6 +146,8 @@
     <p><button class="sec" on:click={() => (manage = !manage)}>{manage ? 'Fertig' : 'Profile verwalten'}</button></p>
   {/if}
 </div>
+
+{#if intro}<Intro sound={intro.sound} on:done={() => introDone?.()} />{/if}
 
 {#if pinFor}
   <div class="ov" role="dialog" aria-modal="true" aria-label="PIN für {pinFor.name}">

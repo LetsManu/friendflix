@@ -115,7 +115,9 @@
 
 <style>
   .card { position: relative; width: 100%; transform-origin: center; transition: transform var(--t-med) var(--ease) 0s; }
-  .thumb { display: block; position: relative; aspect-ratio: 16 / 9; border-radius: var(--radius); overflow: hidden; background: linear-gradient(135deg, #2b2b2b, #1a1a1a); }
+  .thumb { display: block; position: relative; aspect-ratio: 16 / 9; border-radius: var(--radius); overflow: hidden; transition: transform var(--t-fast) var(--ease); background: linear-gradient(135deg, #2b2b2b, #1a1a1a); }
+  .thumb:active { transform: scale(.97); }
+  .thumb:focus-visible { outline: 2px solid #fff; outline-offset: 3px; border-radius: var(--radius); }
   .thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
   .pv { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; z-index: 1; background: #000; }
   .l1 { display: block; } .l2 { display: block; font-weight: 500; font-size: .75rem; opacity: .9; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }

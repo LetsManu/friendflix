@@ -1,7 +1,7 @@
 <script lang="ts">
   import '../app.css';
   import { onMount } from 'svelte';
-  import { afterNavigate, beforeNavigate, goto } from '$app/navigation';
+  import { afterNavigate, beforeNavigate, goto, onNavigate } from '$app/navigation';
   import { pageStore } from '#lib/page';
   const page = pageStore();
   import { api, setActiveProfile, setCsrf, type Me } from '#lib/api';
@@ -14,6 +14,8 @@
   import { disablePush } from '#lib/push';
   import { getAllDownloads, setMeta } from '#lib/offline/db';
   import { focusEl, focusFirst, isBackKey, isEditable, startSpatial } from '#lib/spatial';
+  import Intro from '#lib/Intro.svelte';
+  import { loadIntroSettings, markSessionSeen, readSessionSeen, shouldPlayIntro } from '#lib/intro';
 
   let me: Me | null = null;
   /** TV mode: big UI, D-pad navigation. On for paired televisions; `?tv=1` previews it in any browser (`?tv=0` ends the preview). */
@@ -23,6 +25,7 @@
   let scrolled = false, menu = false, bell = false, searchOpen = false, more = false, q = '';
   let searchEl: HTMLInputElement;
   let online = true;
+  let intro = false;
   $: canDownload = Boolean(me?.downloads?.allowed);
   $: links = canDownload ? [...menuLinks.slice(0, 3), ['/downloads', 'Downloads', 'download'] as [string, string, string], ...menuLinks.slice(3)] : menuLinks;
 
@@ -109,6 +112,29 @@
     void settleFocus(type === 'popstate' ? memo.get(to.url.pathname + to.url.search) : undefined);
   });
 
+  // ---- page transitions: View Transitions API where available (180 ms crossfade, main content rises 8 px; see app.css) ----
+  const immersive = (p: string) => /^\/(watch|party)\//.test(p);
+  onNavigate((nav) => {
+    const start = (document as Document & { startViewTransition?: (cb: () => Promise<void>) => { finished: Promise<unknown> } }).startViewTransition;
+    if (typeof start !== 'function' || tv || matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+    const from = nav.from?.url.pathname ?? '', to = nav.to?.url.pathname ?? '';
+    if (!nav.to || from === to || immersive(from) || immersive(to) || intro) return;
+    const root = document.documentElement;
+    return new Promise<void>((resolve) => {
+      root.classList.add('ff-vt'); // names <main> only for the duration of the transition
+      const t = start.call(document, async () => { resolve(); await nav.complete; });
+      void t.finished.catch(() => undefined).finally(() => root.classList.remove('ff-vt'));
+    });
+  });
+
+  /** First load in this browser session: the brand intro without sound (no user gesture yet). Honours the per-profile setting. */
+  function maybeColdIntro(profileId: string | undefined) {
+    if (location.pathname === '/profiles') return;
+    const s = loadIntroSettings(profileId);
+    const ok = shouldPlayIntro({ setting: s.show, reducedMotion: matchMedia('(prefers-reduced-motion: reduce)').matches, route: location.pathname, sessionSeen: readSessionSeen(), tv, cold: true });
+    if (ok) { markSessionSeen(); intro = true; }
+  }
+
   function outside(e: MouseEvent) { if (!(e.target as HTMLElement).closest('.pop-anchor')) { menu = false; bell = false; } }
 
   let stops: Array<() => void> = [];
@@ -155,6 +181,7 @@
         }
         if (pending) stops.push(watchApproval());
         tv = me.tv || sessionStorage.getItem('ff_tv') === '1';
+        if (!pending) maybeColdIntro(me.profile?.id);
         if (!pending) { loadNotes(); loadList(); loadPrefs(); const notesTimer = setInterval(loadNotes, 60_000); stops.push(() => clearInterval(notesTimer)); }
         if (me.tv) localStorage.setItem('ff_tv_device', '1'); // an expired TV session goes back to the pairing screen, not to a login form
         if (tv) {
@@ -170,6 +197,7 @@
 
 <svelte:window on:keydown={onKey} on:click={outside} />
 <a class="skip" href="#main">Zum Inhalt springen</a>
+{#if intro}<Intro on:done={() => (intro = false)} />{/if}
 
 {#if publicPage}
   <slot />

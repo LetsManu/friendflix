@@ -1,7 +1,9 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { SIZE_LABELS, COLOR_LABELS, BG_LABELS, FONT_LABELS, subClasses } from '#lib/substyle';
-  import { api } from '#lib/api';
+  import { api, getActiveProfile } from '#lib/api';
+  import Intro from '#lib/Intro.svelte';
+  import { loadIntroSettings, saveIntroSettings, shouldPlayIntroSound } from '#lib/intro';
   import { prefs, savePrefs, DEFAULT_PREFS, type Prefs } from '#lib/stores';
   import { pushState, enablePush, disablePush, updateBroadcast, testPush, syncPush, type PushState } from '#lib/push';
 
@@ -13,6 +15,15 @@
     api('/api/me').then((m) => (owner = Boolean(m.profile?.isOwner))).catch(() => undefined);
     const unsub = prefs.subscribe((p) => (form = { ...p, subtitleStyle: { ...p.subtitleStyle } })); return unsub;
   });
+  // ---- brand intro (stored per profile in localStorage, not on the server) ----
+  let introShow = true, introSound = true, previewing = false, previewSound = false;
+  onMount(() => { const s = loadIntroSettings(getActiveProfile()); introShow = s.show; introSound = s.sound; });
+  const saveIntro = () => saveIntroSettings(getActiveProfile(), { show: introShow, sound: introSound });
+  function previewIntro() {
+    // pressing the button is an explicit request, so the sound plays even with reduced motion if "Intro-Ton" is on
+    previewSound = shouldPlayIntroSound({ sound: introSound, soundExplicit: true, reducedMotion: false });
+    previewing = true;
+  }
   let ps: PushState = 'off', pushOn = false, pushBroadcast = false, pushBusy = false, pushMsg = '';
   async function refreshPush() { ps = await pushState().catch(() => 'unsupported' as PushState); pushOn = ps === 'on'; }
   onMount(() => { void refreshPush().then(async () => { if (ps === 'on') { const b = await syncPush(); if (b !== null) pushBroadcast = b; } }); });
@@ -75,6 +86,13 @@
   </fieldset>
   <div class="flex"><button disabled={busy}>Speichern</button>{#if saved}<span class="ok" role="status">Gespeichert</span>{/if}{#if error}<span class="err" role="alert">{error}</span>{/if}</div>
 </form>
+<section class="panel form push" aria-labelledby="introh">
+  <h2 id="introh">Intro</h2>
+  <label class="row"><input type="checkbox" bind:checked={introShow} on:change={saveIntro} /><span><b>Intro beim Start zeigen</b><small class="muted">Kurze Markenanimation nach der Profilwahl und beim ersten Start in dieser Browser-Sitzung. Bei „Bewegung reduzieren“ nur ein sanftes Einblenden.</small></span></label>
+  <label class="row"><input type="checkbox" bind:checked={introSound} on:change={saveIntro} /><span><b>Intro-Ton</b><small class="muted">Spielt nach der Profilwahl einen kurzen Klang. Beim automatischen Start ohne Klick bleibt es stumm.</small></span></label>
+  <div class="flex"><button type="button" class="sec" on:click={previewIntro}>Vorschau abspielen</button></div>
+</section>
+{#if previewing}<Intro sound={previewSound} on:done={() => (previewing = false)} />{/if}
 <section class="panel form push" aria-labelledby="pushh">
   <h2 id="pushh">Benachrichtigungen</h2>
   {#if ps === 'unsupported'}<p class="muted">Dieser Browser unterstützt keine Push-Benachrichtigungen.</p>
