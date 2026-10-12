@@ -1,11 +1,29 @@
 # Betrieb: Backup, Restore, Firewall, Updates
 
-## Backups
-- Sidecar: `docker compose --profile backup up -d backup` (täglich `pg_dump -Fc`, Aufbewahrung `KEEP_DAYS`, Verzeichnis `BACKUP_PATH`, vorher `chown 70 backups`).
+## Backups & Wiederherstellung
+**Aktivieren** (opt-in, Compose-Profil `backup`; gilt für `compose.yaml` und `compose.prod.yaml`):
+```bash
+mkdir -p backups && chown 70 backups          # Container läuft als postgres-User (uid 70)
+docker compose --profile backup up -d backup  # bzw. -f compose.yaml -f compose.prod.yaml --profile backup ...
+docker compose logs -f backup                 # eine Zeile pro Lauf: "backup: OK <datei> (<bytes>), kept N dumps" oder "FAIL exit=<rc>"
+```
+- Der Sidecar nutzt `postgres:17-alpine` (gleiche Major-Version wie `postgres`; beim Upgrade beide gemeinsam anheben) und läuft täglich um `BACKUP_HOUR` (Default 3, Zeitzone aus `TZ`). Optional `BACKUP_RUN_ON_START=true` für einen Sofort-Dump beim Start.
+- **Ablauf je Lauf:** `pg_dump -Fc` in eine `.tmp`-Datei, Prüfung mit `pg_restore --list`, erst dann Umbenennen nach `friendflix-YYYYmmdd-HHMM.dump`; danach werden Dumps älter als `BACKUP_KEEP_DAYS` (Default 14) gelöscht. Schlägt ein Schritt fehl, bleibt der letzte gute Dump unangetastet, die Logzeile zeigt `FAIL exit=<rc>` und der Container wird `unhealthy` (`docker compose ps`; für Alarme z. B. Portainer/Icinga auf den Health-Status).
+- **Ablageort:** Host-Verzeichnis `BACKUP_PATH` (Default `./backups`) → `/backups` im Container. Das Passwort kommt aus `POSTGRES_PASSWORD` (wie beim `postgres`-Dienst) oder aus einer gemounteten Datei (`BACKUP_PGPASSWORD_FILE`), nie aus dem Image oder dem Dump-Verzeichnis.
 - Alternativ per Cron auf dem Host: `0 3 * * * cd /opt/friendflix && ./scripts/backup.sh >> backups/backup.log 2>&1`
-- **Restore-Test** (monatlich per Cron, Exit-Code ≠ 0 bei Fehler → Icinga/Cron-Mail): `./scripts/restore-test.sh`
-  Startet einen Wegwerf-Postgres ohne Port-Mapping, spielt den neuesten Dump ein und prüft Migrationen und Tabellen.
-- Echter Restore: `docker compose stop backend && docker compose exec -T postgres pg_restore --clean --if-exists --no-owner -U friendflix -d friendflix < backups/friendflix-<ts>.dump && docker compose start backend`
+- **Off-site:** Dumps zusätzlich auf ein anderes Gerät kopieren, ein Backup auf derselben Platte schützt nicht vor Plattenausfall. Beispiel TerraMaster-NAS: `BACKUP_PATH` auf ein NAS-Share legen (NFS/SMB) und dort Snapshots aktivieren, oder per Cron `rsync -a --delete-after backups/ nas:/volume1/backups/friendflix/`. Den Schlüssel `APP_ENC_KEY` separat im Passwort-Manager sichern.
+
+**Wiederherstellung** (App gestoppt, damit keine Verbindungen offen sind):
+```bash
+docker compose stop backend gateway
+docker compose exec -T postgres pg_restore --clean --if-exists --no-owner -U friendflix -d friendflix < backups/friendflix-<ts>.dump
+docker compose start backend gateway
+```
+Bei einer leeren/neuen Datenbank zuerst den Stack mit `postgres` starten (`docker compose up -d postgres`) und dann wie oben einspielen. Migrationen laufen beim Start des Backends ggf. nach.
+
+**Restore-Test** (monatlich per Cron, Exit-Code ≠ 0 bei Fehler → Icinga/Cron-Mail): `./scripts/restore-test.sh`
+Startet einen Wegwerf-Postgres ohne Port-Mapping, spielt den neuesten Dump ein und prüft Migrationen und Tabellen. Schnellprüfung einer einzelnen Datei: `docker compose exec -T postgres pg_restore --list < backups/<datei>.dump | head`.
+
 - **APP_ENC_KEY sichern!** (Passwort-Manager, getrennt vom Dump). Ohne ihn sind die gespeicherten Jellyfin-Passwörter der Nutzer unlesbar.
 - Nicht im Dump: Jellyfin-/Seerr-/Authentik-Daten (eigene Backups dieser Dienste).
 

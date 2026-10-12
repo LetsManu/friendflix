@@ -134,11 +134,12 @@ services:
     ports: ["${BIND_ADDR:-127.0.0.1}:${WEB_PORT:-3080}:3000"]
     networks: [front]
 
-  # Daily pg_dump sidecar: `docker compose --profile backup up -d backup`
+  # Nightly pg_dump sidecar (opt-in): `docker compose --profile backup up -d backup`  (docs/operations.md "Backups & Wiederherstellung")
   # Host dir must be writable by uid 70:  mkdir -p backups && chown 70 backups
+  # Runs daily at BACKUP_HOUR (container TZ), dumps to a temp file, verifies with `pg_restore --list`, then renames and prunes.
   backup:
     profiles: [backup]
-    image: postgres:17-alpine
+    image: postgres:17-alpine # keep the same major version as `postgres`
     restart: unless-stopped
     read_only: true
     tmpfs: [/tmp]
@@ -147,18 +148,49 @@ services:
     security_opt: ["no-new-privileges:true"]
     environment:
       PGPASSWORD: ${POSTGRES_PASSWORD:?}
-      KEEP_DAYS: ${KEEP_DAYS:-14}
+      # alternative to PGPASSWORD: path of a mounted password file (e.g. a Docker secret)
+      PGPASSWORD_FILE: ${BACKUP_PGPASSWORD_FILE:-}
+      TZ: ${TZ:-Europe/Vienna}
+      BACKUP_HOUR: ${BACKUP_HOUR:-3}
+      BACKUP_KEEP_DAYS: ${BACKUP_KEEP_DAYS:-${KEEP_DAYS:-14}}
+      BACKUP_RUN_ON_START: ${BACKUP_RUN_ON_START:-false}
     volumes: ["${BACKUP_PATH:-./backups}:/backups"]
     entrypoint: ["/bin/sh", "-c"]
     command:
       - |
         umask 077
+        S=/tmp/backup.status
+        log() { echo "$$(date '+%Y-%m-%d %H:%M:%S') backup: $$*"; }
+        [ -n "$${PGPASSWORD_FILE:-}" ] && [ -r "$$PGPASSWORD_FILE" ] && PGPASSWORD=$$(cat "$$PGPASSWORD_FILE") && export PGPASSWORD
+        run() {
+          f=/backups/friendflix-$$(date +%Y%m%d-%H%M).dump
+          if pg_dump -h postgres -U friendflix -Fc -f "$$f.tmp" friendflix && [ -s "$$f.tmp" ] \
+             && pg_restore --list "$$f.tmp" > /dev/null && mv "$$f.tmp" "$$f"; then
+            find /backups -maxdepth 1 -name 'friendflix-*.dump' -mtime +"$$BACKUP_KEEP_DAYS" -delete
+            log "OK $$f ($$(wc -c < "$$f") bytes), kept $$(ls /backups/friendflix-*.dump | wc -l) dumps, retention $${BACKUP_KEEP_DAYS}d"
+            echo OK > $$S
+          else
+            rc=$$?
+            rm -f "$$f.tmp"
+            log "FAIL exit=$$rc ($$f)"
+            echo FAIL > $$S
+          fi
+        }
+        [ "$$BACKUP_RUN_ON_START" = true ] && run
         while true; do
-          f=/backups/friendflix-$$(date -u +%Y%m%dT%H%M%SZ).dump
-          pg_dump -h postgres -U friendflix -Fc friendflix > $$f.tmp && [ -s $$f.tmp ] && mv $$f.tmp $$f || rm -f $$f.tmp
-          find /backups -name 'friendflix-*.dump' -mtime +$${KEEP_DAYS} -delete
-          sleep 86400
+          h=$$(date +%H); m=$$(date +%M); s=$$(date +%S)
+          wait=$$(( ($${BACKUP_HOUR} - $${h#0}) * 3600 - $${m#0} * 60 - $${s#0} ))
+          [ $$wait -le 0 ] && wait=$$(( wait + 86400 ))
+          log "next run in $${wait}s (daily at $${BACKUP_HOUR}:00 $${TZ})"
+          sleep $$wait
+          run
         done
+    healthcheck:
+      # unhealthy when the last run failed (no status file yet = fine, the first run is up to 24 h away)
+      test: ["CMD-SHELL", "! grep -q FAIL /tmp/backup.status 2>/dev/null"]
+      interval: 5m
+      timeout: 5s
+      retries: 1
     depends_on:
       postgres: { condition: service_healthy }
     networks: [db]
