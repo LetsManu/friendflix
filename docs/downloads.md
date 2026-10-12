@@ -35,6 +35,24 @@ Es gibt **keinen Kopierschutz**. Die Datei auf dem Gerät ist ein gewöhnliches,
 - Rollen: *Admin → Rollen* (Downloads erlauben, Max. Downloads, Max. Download-Qualität, Gültigkeit in Tagen).
 - NPM: keine Änderung nötig, `/media/` deckt `/media/d/` ab. Bei Plan B (`auth_request`) bleibt `/media/d/` in `deploy/npm/plan-b-auth-request.conf` gesperrt bzw. wird wie `/media/` behandelt.
 
+### Speicherort
+
+Ohne weitere Einstellung liegen die vorbereiteten Dateien im Docker-Volume `downloads` und die Vorschau-Clips im Volume `previews`. Für eine eigene Platte (z. B. das große Datenlaufwerk der NAS) setzt man in `.env` einen Host-Ordner:
+
+```bash
+mkdir -p /mnt/data/friendflix/downloads /mnt/data/friendflix/previews
+chown 1000:1000 /mnt/data/friendflix/downloads /mnt/data/friendflix/previews   # Container laufen als uid 1000 (node)
+```
+
+```env
+DOWNLOADS_PATH=/mnt/data/friendflix/downloads
+PREVIEWS_PATH=/mnt/data/friendflix/previews
+```
+
+Das Backend schreibt in den Ordner, das Gateway liest ihn nur (`:ro`). Den Ordner unbedingt vorher anlegen und `chown` setzen: legt Docker ihn selbst an, gehört er root, und das Backend kann nicht hineinschreiben (`EACCES` im Backend-Log). Beim Wechsel des Speicherorts bleiben die alten Dateien im alten Volume liegen; bereits auf Geräten gespeicherte Downloads sind davon nicht betroffen.
+
+Alle Werte in diesem Abschnitt haben Standardwerte in `compose.yaml`/`compose.prod.yaml`; `.env` muss nur setzen, was abweichen soll.
+
 ### Plan B: Downloads abschalten
 
 `DOWNLOADS_ENABLED=false` in `.env` und Stack neu starten. Die Funktion verschwindet (Menü, Knöpfe, API); schon geladene Kopien werden bei der nächsten Prüfung widerrufen und gelöscht. Es sind keine Änderungen an NPM nötig.
