@@ -84,6 +84,15 @@ describe('series langpref', () => {
     expect((await req(admin, 'DELETE', url())).json()).toEqual({ audio: null, subtitle: null });
     expect((await req(admin, 'GET', url())).json()).toEqual({ audio: null, subtitle: null });
   });
+  it('?anime=1 also says whether the series is an anime (for the "original audio with subtitles" setting)', async () => {
+    expect((await req(admin, 'GET', `${url()}?anime=1`)).json()).toEqual({ audio: null, subtitle: null, anime: true });
+    expect((await req(admin, 'GET', `${url(EP1)}?anime=1`)).json()).toMatchObject({ anime: true }); // episode -> its series
+    expect((await req(admin, 'GET', `${url(SER2)}?anime=1`)).json()).toEqual({ audio: null, subtitle: null, anime: false });
+    expect((await req(admin, 'GET', `${url(MOVIE)}?anime=1`)).json()).toEqual({ audio: null, subtitle: null, anime: false });
+    expect((await req(admin, 'GET', `${url(HIDDEN)}?anime=1`)).statusCode).toBe(404);
+    expect((await req(admin, 'GET', `${url()}?anime=yes`)).statusCode).toBe(400);
+    expect((await req(admin, 'GET', url())).json()).not.toHaveProperty('anime'); // only when asked
+  });
   it('validates input, unsupported types, invisible items', async () => {
     expect((await req(admin, 'PUT', url(), { audio: '<script>' })).statusCode).toBe(400);
     expect((await req(admin, 'PUT', url(), {})).statusCode).toBe(400);

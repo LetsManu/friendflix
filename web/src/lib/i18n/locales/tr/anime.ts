@@ -15,6 +15,10 @@ const dict: Translation<typeof de> = {
     airsAt: 'saat {time}',
     link: 'Simulcast',
   },
+  settings: {
+    original: 'Anime: Altyazılı orijinal ses',
+    originalHint: 'Anime dizileri, o dizi için başka bir seçim yapmadıysan Japonca sesle ve kendi dilinde altyazıyla başlar. Japonca ses parçası yoksa normal ayarların geçerli olur.',
+  },
   comments: {
     show: 'Yorumlar',
     hide: 'Yorumları gizle',
@@ -30,7 +34,7 @@ const dict: Translation<typeof de> = {
     delete: 'Sil',
     deleteAria: '{name} kişisinin yorumunu sil',
     failed: 'Yorum kaydedilemedi.',
-    loadFailed: 'Simulcast yüklenemedi.',
+    loadFailed: 'Yorumlar yüklenemedi.',
     tooMany: 'Bugün çok fazla yorum yaptın. Yarın tekrar dene.',
     chars: '{n} / {max}',
     you: 'Sen',

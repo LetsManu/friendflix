@@ -15,6 +15,10 @@ const dict: Translation<typeof de> = {
     airsAt: 'à {time}',
     link: 'Simulcast',
   },
+  settings: {
+    original: 'Anime : version originale sous-titrée',
+    originalHint: 'Les séries d’animation japonaises démarrent en japonais avec des sous-titres dans ta langue, sauf si tu as choisi autre chose pour cette série. Sans piste audio japonaise, tes réglages habituels s’appliquent.',
+  },
   comments: {
     show: 'Commentaires',
     hide: 'Masquer les commentaires',
@@ -30,7 +34,7 @@ const dict: Translation<typeof de> = {
     delete: 'Supprimer',
     deleteAria: 'Supprimer le commentaire de {name}',
     failed: 'Le commentaire n’a pas pu être enregistré.',
-    loadFailed: 'Impossible de charger le simulcast.',
+    loadFailed: 'Impossible de charger les commentaires.',
     tooMany: 'Tu as beaucoup commenté aujourd’hui. Réessaie demain.',
     chars: '{n} / {max}',
     you: 'Toi',

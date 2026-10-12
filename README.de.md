@@ -34,11 +34,13 @@ FriendFlix ist ein privates Streaming-Portal vor **Jellyfin** (deine Medien) und
 
 Ein großes Billboard mit Titel-Logo, darunter Reihen wie *Weiterschauen*, *Nächste Folge*, *Von Freunden empfohlen*, *Freunde haben bewertet*, *Diese Woche bei uns*, *Weil du … gesehen hast*, *Top 10* und *Meine Liste*. Fährst du mit der Maus über eine Karte, klappt sie mit den wichtigsten Aktionen auf: abspielen, auf die Liste, bewerten, mehr Infos.
 
+Unter dem Billboard führen **Marken-Hubs** – breite Kacheln, die der Admin aus deinen eigenen Jellyfin-Studios, -Sammlungen, -Tags oder -Genres baut (etwa „Anime“ oder „Dokus“) – auf eine eigene Seite mit *Neu*, *Beliebt*, *Filme*, *Serien* und A–Z. Mehrere Reihen *Weil du … gesehen hast*, jede zu einem anderen zuletzt gesehenen Titel, sind zwischen die übrigen Reihen verteilt. Die **Simulcast**-Seite (verlinkt im Kalender) zeigt die gerade laufenden Serien nach Wochentag und Season, mit Filter „Nur Anime“.
+
 <p align="center"><img src="docs/images/de/popout.jpg" alt="Aufgeklappte Karte mit Abspielen, Liste und Bewertung" width="900"></p>
 
 ### Alles zu einem Titel an einem Ort
 
-Die Detailansicht zeigt Beschreibung, Ton- und Untertitelsprachen, Besetzung, welche Freunde den Titel empfohlen oder gesehen haben und – bei Serien – alle Staffeln und Folgen mit Fortschrittsbalken. Weiterschauen genau dort, wo du aufgehört hast.
+Die Detailansicht zeigt Beschreibung, Ton- und Untertitelsprachen, Besetzung, welche Freunde den Titel empfohlen oder gesehen haben und – bei Serien – alle Staffeln und Folgen mit Fortschrittsbalken. Weiterschauen genau dort, wo du aufgehört hast. Ein Tab **Extras** sammelt Trailer und Bonusmaterial aus Jellyfin, und jede Folge hat ihre eigenen **Kommentare** von Freunden: Kommentare zu einer Folge, die du noch nicht gesehen hast, bleiben verschwommen, bis du „Spoiler – trotzdem zeigen“ wählst.
 
 <table>
   <tr>
@@ -49,13 +51,15 @@ Die Detailansicht zeigt Beschreibung, Ton- und Untertitelsprachen, Besetzung, we
 
 ### Ein Player für Serienabende
 
-Intro überspringen, nächste Folge mit Countdown, Tonspur und Untertitel (mit eigenem Untertitel-Stil), Wiedergabegeschwindigkeit, Lesezeichen, Tastenkürzel und „Schaust du noch?“ nach mehreren automatisch gestarteten Folgen. Direct Play, wenn möglich, sonst adaptives Streaming (HLS).
+Intro überspringen, nächste Folge mit Countdown, Tonspur und Untertitel (mit eigenem Untertitel-Stil), Wiedergabegeschwindigkeit, Lesezeichen, Tastenkürzel und „Schaust du noch?“ nach mehreren automatisch gestarteten Folgen. Direct Play, wenn möglich, sonst adaptives Streaming (HLS). **Vorschau überspringen** springt über „Nächstes Mal bei …“-Abschnitte. Wechselst du einmal Tonspur oder Untertitel, merkt sich FriendFlix das **für die ganze Serie**; mit „Anime: Originalton mit Untertiteln“ starten Anime auf Japanisch mit Untertiteln in deiner Sprache, solange du für die Serie nichts anderes gewählt hast.
 
 <p align="center"><img src="docs/images/de/player.jpg" alt="Player mit Steuerleiste, Fortschrittsbalken und „Intro überspringen“" width="900"></p>
 
 ### „Wer schaut gerade?“
 
-Bis zu fünf Profile pro Konto, jedes mit eigenem Verlauf, eigener Liste, Favoriten, Sprache und Wiedergabe-Einstellungen. Profile lassen sich mit einer 4-stelligen PIN sperren.
+Bis zu fünf Profile pro Konto, jedes mit eigenem Verlauf, eigener Liste, Favoriten, Sprache und Wiedergabe-Einstellungen. Profile lassen sich mit einer 4-stelligen PIN sperren. Jedes neue Profil beginnt mit einem kurzen **Willkommen**: Name und Farbe bestätigen, dann drei Titel wählen, die dir gefallen – so wissen die Empfehlungen, wo sie anfangen sollen.
+
+**Kinderprofile** bekommen eine eigene, bunte Startseite mit großen Kacheln, eine einfache Suche und eine Altersgrenze (0, 6 oder 12), die der Server bei jeder Liste, Suche und jedem Titel durchsetzt. Soziales gibt es dort nicht – keine Freunde, Reaktionen, Bewertungen, Kommentare, Watch-Partys, geteilten Listen, Wünsche oder Statistiken –, und die Einstellungen bieten nur Sprache und Wiedergabesprachen. Ein Kinderprofil verlässt man nur mit der PIN des Zielprofils oder, wenn dieses keine hat, mit der PIN des Hauptprofils; ein Fernseher, der aus einem Kinderprofil gekoppelt wurde, bleibt auf diesem Kinderprofil.
 
 <p align="center"><img src="docs/images/de/profiles.jpg" alt="Profilauswahl mit vier Profilen, eines mit PIN gesperrt" width="900"></p>
 
@@ -90,7 +94,7 @@ Die Oberfläche spricht **Deutsch, Englisch, Französisch, Spanisch, Italienisch
 | **Profile für alle** | Bis zu 5 Profile pro Konto, optionale PIN, getrennter Verlauf, eigene Listen und Einstellungen. |
 | **Auf dem großen Bildschirm** | TV-Modus für Smart-TV-Browser, Sticks und Konsolen: große Schrift, Steuerung mit Pfeiltasten, Kopplung per Code oder QR-Code und das **Handy als Fernbedienung**. Chromecast aus Chrome, Edge und Android. |
 | **Offline-Downloads** | Lizenzen pro Gerät mit Ablaufdatum; funktioniert in Chrome, Edge, Firefox, Safari 17+ und als Home-Bildschirm-App auf iOS 17+. |
-| **Gemeinsam schauen** | Watch-Partys mit synchroner Wiedergabe, Chat und Emoji-Reaktionen. **Filmabend-Abstimmung** mit Countdown und automatischem Start. „Was hat noch keiner von uns gesehen?“ – der Gruppen-Matcher findet Titel für alle. „Heute Abend“ schlägt drei Titel nach Stimmung und Zeit vor. |
+| **Gemeinsam schauen** | Watch-Partys mit synchroner Wiedergabe, Chat und Live-Emoji-Reaktionen, die für alle in der Party über das Bild schweben. **Filmabend-Abstimmung** mit Countdown und automatischem Start. „Was hat noch keiner von uns gesehen?“ – der Gruppen-Matcher findet Titel für alle. „Heute Abend“ schlägt drei Titel nach Stimmung und Zeit vor. |
 | **Empfehlungen** | Titel an Freunde empfehlen, sehen, was Freunde bewertet und diese Woche geschaut haben, „Weil du … gesehen hast“, geteilte Listen mit Editoren und Lesern, kuratierte Reihen vom Admin. |
 | **Wünsche** | Fehlt etwas? Direkt aus der Suche wünschen (über Seerr) und benachrichtigt werden, sobald es da ist – mit einem monatlichen Limit pro Rolle. „Erinnere mich“ für kommende Titel. |
 | **Immer auf dem Laufenden** | Benachrichtigungen in der App, als Web-Push auf jedem Gerät, über ntfy oder Discord und ein optionaler Wochenrückblick. |
@@ -259,6 +263,7 @@ npm run e2e                                     # Playwright: baut die Web-App u
 - Die APIs von Jellyfin, Seerr und Authentik unterscheiden sich je Version – nach Upgrades siehe [docs/operations.md](docs/operations.md) und [docs/integrations.md](docs/integrations.md).
 - Profile sind versteckte Jellyfin-Nutzer: den automatischen Jellyfin-Nutzerimport in Seerr ausschalten, damit sie dort nicht auftauchen.
 - Mit Intel QSV/VAAPI in Jellyfin „VPP Tone mapping“ ausschalten, wenn der Treiber kein HDR kann; sonst scheitern 4K-HDR-Titel.
+- Kinderprofile sind ein Jugendschutz, kein Schloss gegen jemanden, der den Konto-Login kennt: Wer sich über „PIN vergessen?“ (`/auth/login?resetPin=1`) neu anmeldet, setzt die PIN des Hauptprofils zurück. Den Authentik-Login (samt zweitem Faktor) also nicht den Kindern überlassen. Ist gar keine PIN gesetzt, lässt sich ein Kinderprofil frei verlassen; der Inhaber bekommt dann einen Hinweis, eine PIN zu setzen.
 
 ### Lizenz
 

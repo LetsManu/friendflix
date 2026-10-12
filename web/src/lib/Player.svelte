@@ -17,7 +17,8 @@
   import { hlsConfig, loadHls } from '#lib/player/hls';
   import { firstInfoBody, speedLabel, SPEEDS } from '#lib/player/bar';
   import EpisodesPanel from '#lib/player/EpisodesPanel.svelte';
-  import { fmtDuration, t, tr, type TFn, type TKey } from '#lib/i18n';
+  import { fmtDuration, getLocale, t, tr, type TFn, type TKey } from '#lib/i18n';
+  import { animeAudio, animeDefaultApplies, animeSubtitle } from '#lib/player/anime';
   import { castPause, castPlay, castPlayPause, castSeek, castSetSubtitle, castSetVolume, castState, castStop, castToggleMute, initCast, loadOnCast, onCastEvent, requestCastSession, type CastInfo, type CastState } from '#lib/cast';
 
   export let itemId: string;
@@ -114,12 +115,17 @@
 
   // ---- per-series audio / subtitle choice ("anime pack"): remembered per profile, applied before the global defaults ----
   let serPref: { audio: string | null; subtitle: string | null } = { audio: null, subtitle: null }, serPrefDone = false;
+  /** "Anime: Originalton mit Untertiteln": this anime series has no own choice yet -> Japanese audio + subtitles in the UI language */
+  let animeDefault = false;
   /** first start of an episode: look the saved choice up (an episode id resolves to its series server-side); never delays playback for long */
   async function loadSerPref() {
     if (serPrefDone || partyMode || isMovie) return;
     serPrefDone = true;
     try {
-      serPref = await Promise.race([api<typeof serPref>(`/api/series/${seriesId || itemId}/langpref`), new Promise<never>((_, no) => setTimeout(no, 800))]);
+      const want = get(prefs).animeOriginal;
+      const r = await Promise.race([api<typeof serPref & { anime?: boolean }>(`/api/series/${seriesId || itemId}/langpref${want ? '?anime=1' : ''}`), new Promise<never>((_, no) => setTimeout(no, 800))]);
+      serPref = { audio: r.audio, subtitle: r.subtitle };
+      animeDefault = animeDefaultApplies(want, r.anime, serPref);
     } catch { /* no saved choice */ }
   }
   function rememberLang(p: { audio?: string; subtitle?: string }) {
@@ -128,17 +134,25 @@
     api(`/api/series/${seriesId}/langpref`, { method: 'PUT', body: p }).then(() => flash(tr('player.langSaved'), 1400)).catch(() => undefined);
   }
 
+  /** the fields every later step relies on (a 204 parses to null) */
+  const validInfo = (x: unknown): x is Info => {
+    const i = x as Partial<Info> | null;
+    return Boolean(i && typeof i.playSessionId === 'string' && typeof i.resumeTicks === 'number' && Array.isArray(i.audioTracks) && Array.isArray(i.subtitles) && (i.directUrl || i.hlsUrl));
+  };
   async function load(startSec?: number) {
     error = ''; errNote = '';
     if (startSec !== undefined) { lastPos = startSec; posKnown = true; }
     // first start: the saved quality + audio language go into this same request (no second round trip)
     const first = !prefsApplied && !partyMode;
     if (first) await loadSerPref();
-    const fb = first ? firstInfoBody(get(prefs), wantAudio || serPref.audio || '') : {};
+    const fb = first ? firstInfoBody(get(prefs), wantAudio || serPref.audio || animeAudio(animeDefault)) : {};
     if (fb.maxBitrate && !quality) quality = fb.maxBitrate;
     const audioLang = fb.audioLang;
     try {
-      info = await api<Info>('/api/playback/info', { method: 'POST', body: { itemId, startTicks: startSec !== undefined ? secToTicks(startSec) : undefined, audioIndex, maxBitrate: quality || undefined, audioLang } });
+      const got = await api<Info | null>('/api/playback/info', { method: 'POST', body: { itemId, startTicks: startSec !== undefined ? secToTicks(startSec) : undefined, audioIndex, maxBitrate: quality || undefined, audioLang } });
+      // an empty/foreign answer (204, proxy page ...) has no playback session: show the error instead of crashing on it
+      if (!validInfo(got)) throw new ApiError(502, null);
+      info = got;
     } catch (e: any) {
       if (!(e instanceof ApiError) || e.status >= 500) { recover('network', true); return; } // server/network hiccup: retry with backoff
       reconnecting = 0;
@@ -195,7 +209,10 @@
     dispatch('ready', { info });
     // detail-page pick > this series' saved choice (when the episode has that language) > my global default
     const sp = serPref.subtitle;
-    const want = wantSub === 'off' ? '' : wantSub || (sp === 'off' ? '' : sp && info.subtitles.some((x) => x.language === sp) ? sp : get(prefs).subtitleLang);
+    // anime default: subtitles in the UI language, but only while the Japanese track plays (a dub-only release keeps my defaults)
+    const playingAudio = info.audioTracks.find((a) => a.index === audioIndex) ?? info.audioTracks.find((a) => a.isDefault);
+    const anime = animeDefault && !wantAudio ? animeSubtitle(getLocale(), playingAudio?.language, info.subtitles) : null;
+    const want = wantSub === 'off' ? '' : wantSub || (sp === 'off' ? '' : sp && info.subtitles.some((x) => x.language === sp) ? sp : anime || get(prefs).subtitleLang);
     if (want && !partyMode) tickDom().then(() => { const sub = info?.subtitles.find((x) => (x as { language?: string }).language === want); if (sub) setSubtitle(sub.index, false); });
   }
 

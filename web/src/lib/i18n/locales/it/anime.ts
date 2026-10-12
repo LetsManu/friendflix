@@ -15,6 +15,10 @@ const dict: Translation<typeof de> = {
     airsAt: 'alle {time}',
     link: 'Simulcast',
   },
+  settings: {
+    original: 'Anime: audio originale con sottotitoli',
+    originalHint: 'Le serie anime partono in giapponese con i sottotitoli nella tua lingua, a meno che tu non abbia scelto altro per quella serie. Senza traccia audio giapponese valgono le tue impostazioni abituali.',
+  },
   comments: {
     show: 'Commenti',
     hide: 'Nascondi commenti',
@@ -30,7 +34,7 @@ const dict: Translation<typeof de> = {
     delete: 'Elimina',
     deleteAria: 'Elimina il commento di {name}',
     failed: 'Impossibile salvare il commento.',
-    loadFailed: 'Impossibile caricare il simulcast.',
+    loadFailed: 'Impossibile caricare i commenti.',
     tooMany: 'Oggi hai commentato molto. Riprova domani.',
     chars: '{n} / {max}',
     you: 'Tu',

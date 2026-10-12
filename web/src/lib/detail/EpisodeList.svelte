@@ -6,8 +6,8 @@
   import Icon from '#lib/Icon.svelte';
   import DownloadButton from '#lib/DownloadButton.svelte';
   import { seasonLabel } from '#lib/detail/format';
-  import EpisodeComments, { checkKids, commentsBlocked } from '#lib/detail/EpisodeComments.svelte';
-  import { onMount } from 'svelte';
+  import EpisodeComments from '#lib/detail/EpisodeComments.svelte';
+  import { kidsMode } from '#lib/kids';
 
   /** series id (for the per-episode download buttons) */
   export let seriesId: string;
@@ -27,7 +27,6 @@
   // friends-only comments per episode (expand); kids profiles never see them
   let openComments = new Set<string>(), counts: Record<string, number> = {};
   const toggleComments = (id: string) => { const n = new Set(openComments); if (n.has(id)) n.delete(id); else n.add(id); openComments = n; };
-  onMount(() => { void checkKids(); });
   $: current = (e: Item) => (next ? next.id === e.id : false);
 </script>
 
@@ -67,7 +66,7 @@
             {#if e.played}<span class="seen"><Icon name="check" size={18} label={$t('detail.episodes.watched')} /></span>{/if}
           </a>
           <span class="epdl">
-            {#if !$commentsBlocked}
+            {#if !$kidsMode}
               <button type="button" class="cmbtn" class:on={openComments.has(e.id)} aria-expanded={openComments.has(e.id)} aria-controls="cm-panel-{e.id}"
                 aria-label={openComments.has(e.id) ? $t('anime.comments.hide') : $t('anime.comments.show')} title={openComments.has(e.id) ? $t('anime.comments.hide') : $t('anime.comments.show')}
                 on:click={() => toggleComments(e.id)}><Icon name="message" size={18} />{#if counts[e.id]}<span class="n2">{counts[e.id]}</span>{/if}</button>
@@ -75,7 +74,7 @@
             <DownloadButton itemId={e.id} {seriesId} compact />
           </span>
           </div>
-          {#if openComments.has(e.id) && !$commentsBlocked}
+          {#if openComments.has(e.id) && !$kidsMode}
             <div id="cm-panel-{e.id}"><EpisodeComments itemId={e.id} onCount={(n) => (counts = { ...counts, [e.id]: n })} /></div>
           {/if}
         </li>

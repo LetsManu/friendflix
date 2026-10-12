@@ -4,6 +4,7 @@
   import { api, backdrop, cachedDetail, cachedItem, primeDetail, primeItem, srcset, HERO_WIDTHS, MODAL_WIDTHS, logoUrl, type Item, type ItemDetail } from '#lib/api';
   import { castToTv, refreshTvOnline, tvOnline } from '#lib/remote';
   import { listIds, toggleList, prefs } from '#lib/stores';
+  import { kidsMode } from '#lib/kids';
   import { fmtNumber, t, tr } from '#lib/i18n';
   import { playPreview, previewFailed, previewOwner, stopPreview, toggleSound } from '#lib/preview';
   import { isSpoiler } from '#lib/spoiler';
@@ -69,12 +70,12 @@
     // secondary requests start now; each one is optional (the view works without it)
     opt(api(`/api/items/${want}/people`), (r) => (people = (r.people as Person[]) ?? []), my);
     opt(api(`/api/items/${want}/extras/all`), (r) => (extras = (r.items as typeof extras) ?? []), my);
-    opt(api(`/api/items/${want}/ratings`), (rr) => { ratings = rr.ratings; avg = rr.average; const mine = ratings.find((x) => x.mine); stars = mine?.stars ?? 0; review = mine?.review ?? ''; }, my);
+    if (!$kidsMode) opt(api(`/api/items/${want}/ratings`), (rr) => { ratings = rr.ratings; avg = rr.average; const mine = ratings.find((x) => x.mine); stars = mine?.stars ?? 0; review = mine?.review ?? ''; }, my);
     let seriesFired = false;
     const fireSeries = () => {
       if (seriesFired) return;
       seriesFired = true;
-      opt(api(`/api/series/${want}/follow`), (r) => (followed = Boolean(r.followed)), my);
+      if (!$kidsMode) opt(api(`/api/series/${want}/follow`), (r) => (followed = Boolean(r.followed)), my);
       const pSeasons = api(`/api/items/${want}/seasons`).then((r) => (r.items as Item[]) ?? []).catch(() => [] as Item[]);
       const pNext = api(`/api/library/nextup?seriesId=${want}`).then((r) => ((r.items as Item[]) ?? []).find((e) => e.seriesId === want) ?? null).catch(() => null);
       void Promise.all([pSeasons, pNext]).then(([list, n]) => {
@@ -201,13 +202,14 @@
   }
 
   // ---- "⋯ Mehr": every secondary action in one menu (desktop popover / touch sheet) ----
+  // kids profiles: no social or account actions (recommend, share, party, follow); the server answers 403 kids_profile anyway
+  $: social = !$kidsMode;
   $: moreActions = item ? ([
     { id: 'fav', label: $t('detail.actions.fav'), icon: 'heart', pressed: item.favorite, run: toggleFav },
     { id: 'played', label: $t('detail.actions.played'), icon: 'check', pressed: item.played, run: togglePlayed },
-    ...(item.type === 'Series' ? [{ id: 'follow', label: followed ? $t('detail.actions.following') : $t('detail.actions.follow'), icon: 'bell', pressed: followed, run: toggleFollow }] : []),
-    { id: 'rec', label: $t('detail.actions.recommend'), icon: 'send', run: openRec },
-    { id: 'share', label: $t('detail.actions.share'), icon: 'share', run: share },
-    ...(item.type !== 'Series' ? [{ id: 'party', label: $t('detail.actions.party'), icon: 'users', run: startParty }] : []),
+    ...(item.type === 'Series' && social ? [{ id: 'follow', label: followed ? $t('detail.actions.following') : $t('detail.actions.follow'), icon: 'bell', pressed: followed, run: toggleFollow }] : []),
+    ...(social ? [{ id: 'rec', label: $t('detail.actions.recommend'), icon: 'send', run: openRec }, { id: 'share', label: $t('detail.actions.share'), icon: 'share', run: share }] : []),
+    ...(item.type !== 'Series' && social ? [{ id: 'party', label: $t('detail.actions.party'), icon: 'users', run: startParty }] : []),
     ...($tvOnline && playTarget ? [{ id: 'tv', label: $t('detail.actions.tv'), icon: 'tv', run: castHere }] : []),
     ...(canPreview && !heroPlaying ? [{ id: 'trailer', label: $t('detail.actions.trailer'), icon: 'film', run: () => startHero(true) }] : []),
     ...(item.type !== 'Series' && dlAvail && !phone ? [{ id: 'dl', label: dlState ? $t('detail.actions.downloadState', { state: dlState }) : $t('detail.actions.download'), icon: 'download', run: () => dl?.activate() }] : []),
@@ -321,7 +323,7 @@
             <RatingButton itemId={item.id} bind:value={thumb} size={44} on:change={onThumb} />
             <MoreActions actions={moreActions} variant="ring" title={item.name} up={variant === 'modal'}>
               <div class="mslot">
-                <ListMenu itemId={item.id} variant="row" />
+                {#if social}<ListMenu itemId={item.id} variant="row" />{/if}
                 <StatusPicker id={item.id} />
                 {#if playTarget}<LangPick targetId={playTarget} storeKey={item.id} bind:audio={lgA} bind:sub={lgS} />{/if}
               </div>
@@ -365,10 +367,10 @@
       <div class="icons">
         <button type="button" class="lab" class:on={inList} aria-pressed={inList} on:click={toggleMine}><Icon name={inList ? 'check' : 'plus'} size={24} /><span>{$t('detail.view.myList')}</span></button>
         <RatingButton itemId={item.id} bind:value={thumb} size={48} showLabel up on:change={onThumb} />
-        <button type="button" class="lab" on:click={share}><Icon name="share" size={24} /><span>{$t('detail.view.share')}</span></button>
+        {#if social}<button type="button" class="lab" on:click={share}><Icon name="share" size={24} /><span>{$t('detail.view.share')}</span></button>{/if}
         <MoreActions actions={moreActions} variant="labelled" title={item.name}>
           <div class="mslot">
-            <ListMenu itemId={item.id} variant="row" />
+            {#if social}<ListMenu itemId={item.id} variant="row" />{/if}
             <StatusPicker id={item.id} />
             {#if playTarget}<LangPick targetId={playTarget} storeKey={item.id} bind:audio={lgA} bind:sub={lgS} />{/if}
           </div>
@@ -392,10 +394,10 @@
             {#if langs}<p class="muted small">{langs}</p>{/if}
             <p class="ov">{overview || $t('detail.view.noOverview')}</p>
           {/if}
-          <FriendsStrip id={item.id} />
+          {#if social}<FriendsStrip id={item.id} />{/if}
           {#if castMsg}<p class="muted" role="status">{castMsg}</p>{/if}
           <div role="status">{#if saveMsg}<p class="err">{saveMsg}</p>{/if}</div>
-          {#if recOpen}
+          {#if recOpen && social}
             <div class="panel rec" role="group" aria-label={$t('detail.recommend.label')} bind:this={recEl}>
               <b>{$t('detail.recommend.to', { name: item.name })}</b>
               <div class="flex">{#each friends as f (f.id)}<label class="chk"><input type="checkbox" checked={recTo.has(f.id)} on:change={() => toggleTo(f.id)} />{f.name}</label>{:else}<span class="muted">{$t('detail.recommend.noUsers')}</span>{/each}</div>
@@ -438,6 +440,7 @@
         <MoreLikeThis items={more} {variant} />
       </div>
 
+      {#if social}
       {#if item.type === 'Movie' || item.type === 'Episode'}<Reactions id={item.id} />{/if}
 
       <section class="rate panel" aria-labelledby="rt-h">
@@ -449,6 +452,7 @@
         </div>
         {#each ratings as r}<p><b>{r.name}</b> <span class="warn">{'★'.repeat(r.stars)}</span> <span class="muted">{r.review ?? ''}</span></p>{/each}
       </section>
+      {/if}
 
       <CastRow id={item.id} {people} />
       <InfoBlock {item} {people} />

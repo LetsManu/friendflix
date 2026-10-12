@@ -9,6 +9,7 @@ import { m } from '../i18n.js';
 import { notify } from '../notify.js';
 import { clipPath, previews } from '../previews.js';
 import { loadPrefs } from './prefs.js';
+import { requireGrownUp } from '../kids.js';
 import { requireUser } from '../session.js';
 import { portalStatus } from '../seerr/client.js';
 import type { JfUser, UserRow } from '../types.js';
@@ -137,9 +138,10 @@ export async function libraryBecauseMore(ctx: Ctx, jfUser: JfUser, profileId: st
 
 export function discoverRoutes(app: FastifyInstance, ctx: Ctx) {
   const pre = { preHandler: requireUser(ctx) };
+  const grown = { preHandler: requireGrownUp(ctx) }; // friends, matching, recommendations, Seerr: not on kids profiles
 
   // ---- Group matcher: "what has none of us watched yet?" (opt-in per participant) ----
-  app.get('/api/friends', pre, async (req) => {
+  app.get('/api/friends', grown, async (req) => {
     const r = await ctx.db.query<{ id: string; name: string; share: boolean | null }>(
       `select u.id, u.name, (p.data->>'shareHistory')::boolean as share from users u left join user_prefs p on p.user_id = u.id where u.id <> $1 and not u.disabled order by u.name`,
       [req.user!.id],
@@ -147,7 +149,7 @@ export function discoverRoutes(app: FastifyInstance, ctx: Ctx) {
     return { friends: r.rows.map((f) => ({ id: f.id, name: f.name, sharesHistory: f.share === true })) };
   });
 
-  app.post('/api/match', { ...pre, config: { rateLimit: { max: 20, timeWindow: '1 minute' } } }, wrap(async (req, reply) => {
+  app.post('/api/match', { ...grown, config: { rateLimit: { max: 20, timeWindow: '1 minute' } } }, wrap(async (req, reply) => {
     const b = z.object({
       userIds: z.array(z.guid()).min(1).max(7),
       type: z.enum(['Movie', 'Series', 'Both']).default('Movie'),
@@ -196,7 +198,7 @@ export function discoverRoutes(app: FastifyInstance, ctx: Ctx) {
   }));
 
   // ---- Recommend to friends / "Von Freunden empfohlen" ----
-  app.post('/api/recommend', pre, wrap(async (req, reply) => {
+  app.post('/api/recommend', grown, wrap(async (req, reply) => {
     const b = z.object({ itemId: id32, toUserIds: z.array(z.guid()).min(1).max(10), note: z.string().trim().max(140).optional() }).parse(req.body);
     const item = await ctx.jf.item(req.jfUser!, b.itemId); // proves the sender can see it
     const targets = (await ctx.db.query<{ id: string }>('select id from users where id = any($1) and id <> $2 and not disabled', [b.toUserIds, req.user!.id])).rows;
@@ -212,7 +214,7 @@ export function discoverRoutes(app: FastifyInstance, ctx: Ctx) {
     return { sent };
   }));
 
-  app.get('/api/recommendations', pre, wrap(async (req) => {
+  app.get('/api/recommendations', grown, wrap(async (req) => {
     const rows = (await ctx.db.query<{ id: string; item_id: string; note: string | null; from_name: string }>(
       `select r.id, r.item_id, r.note, u.name from_name from recommendations r join users u on u.id=r.from_user
         where r.to_user=$1 and r.created_at > now() - interval '60 days' order by r.seen, r.created_at desc limit 30`, [req.user!.id])).rows;
@@ -221,7 +223,7 @@ export function discoverRoutes(app: FastifyInstance, ctx: Ctx) {
     const shown = new Set(items.map((i) => i.id));
     return { items: items.map((i) => ({ ...i, caption: meta.get(i.id) })), recIds: rows.filter((r) => shown.has(r.item_id)).map((r) => Number(r.id)) }; // recIds: send back to /seen
   }));
-  app.post('/api/recommendations/seen', pre, async (req) => {
+  app.post('/api/recommendations/seen', grown, async (req) => {
     const b = z.object({ ids: z.array(z.union([z.number().int().positive(), z.string().regex(/^\d{1,15}$/)])).max(200).optional() }).nullish().parse(req.body);
     if (b?.ids) await ctx.db.query('update recommendations set seen = true where to_user = $1 and id = any($2::bigint[])', [req.user!.id, b.ids.map(String)]);
     else await ctx.db.query('update recommendations set seen = true where to_user = $1', [req.user!.id]); // legacy: no body marks everything
@@ -231,7 +233,7 @@ export function discoverRoutes(app: FastifyInstance, ctx: Ctx) {
   // more "Weil du ... geschaut hast" rows for the home page (2-3 recent distinct titles)
   app.get('/api/library/because-more', pre, wrap(async (req) => libraryBecauseMore(ctx, req.jfUser!, req.profile!.id)));
 
-  app.get('/api/library/friends-rated', pre, wrap(async (req) => {
+  app.get('/api/library/friends-rated', grown, wrap(async (req) => {
     const rows = (await ctx.db.query<{ item_id: string; names: string[]; avg: string }>(
       `select r.item_id, array_agg(u.name || ' ' || r.stars || '★' order by r.created_at desc) names, avg(r.stars) avg
          from ratings r join users u on u.id = r.user_id left join user_prefs p on p.user_id = r.user_id
@@ -318,7 +320,7 @@ export function discoverRoutes(app: FastifyInstance, ctx: Ctx) {
   app.get('/api/library/collections', pre, wrap(async (req) => ({ items: await ctx.jf.collections(req.jfUser!), studios: await ctx.jf.studios(req.jfUser!).catch(() => []) })));
 
   // ---- Upcoming (Seerr discover) with wish status ----
-  app.get('/api/seerr/upcoming', pre, wrap(async (req) => {
+  app.get('/api/seerr/upcoming', grown, wrap(async (req) => {
     const type = z.enum(['movie', 'tv']).default('movie').parse((req.query as { type?: string }).type);
     const r = await ctx.seerr.upcoming(type);
     return {

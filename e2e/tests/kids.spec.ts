@@ -1,7 +1,7 @@
 import type { Page } from '@playwright/test';
 import { expect, test } from '../fixtures.js';
 import { ME } from '../mocks/fixtures.js';
-import { PROFILES } from '../mocks/api.js';
+import { LOCKED_ID, PROFILES } from '../mocks/api.js';
 
 /** Block 15 K1: kids profiles (kids home, route guard, PIN-gated switch) and the /welcome onboarding. */
 const KID = { ...ME, profileCount: 3, kids: true, onboarded: true, profile: { id: 'p3', name: 'Mia', avatar: 'pink', isOwner: false, kids: true, maxRating: 6 } };
@@ -53,6 +53,31 @@ test.describe('kids profile', () => {
     await expect(page.locator('.grid .tile').first()).toBeVisible();
     await field.fill('zzzz');
     await expect(page.getByText('Dazu haben wir leider nichts gefunden.')).toBeVisible();
+  });
+
+  test('detail page and settings: no social entry points, only language and playback languages', async ({ page }) => {
+    await asKid(page);
+    const social: string[] = [];
+    page.on('request', (r) => { if (/\/api\/(friends|party|notifications|items\/[^/]+\/(ratings|reactions|friends))/.test(r.url())) social.push(r.url()); });
+    await page.goto('/item/' + LOCKED_ID);
+    await expect(page.getByRole('heading', { level: 1, name: 'Inception' })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Bewerten', exact: true }).first()).toBeVisible(); // own thumbs stay (recommendations)
+    await expect(page.getByRole('heading', { name: /^Bewertungen/ })).toHaveCount(0);
+    await expect(page.getByRole('group', { name: 'Deine Reaktion' })).toHaveCount(0);
+    await expect(page.getByText('Anna Beispiel')).toHaveCount(0); // friends strip
+    await page.getByRole('button', { name: 'Mehr', exact: true }).click();
+    await expect(page.getByRole('button', { name: 'Favorit', exact: true })).toBeVisible();
+    for (const name of ['Empfehlen', 'Teilen', 'Gemeinsam schauen']) await expect(page.getByRole('button', { name, exact: true })).toHaveCount(0);
+    await expect(page.getByRole('button', { name: /Zu Liste hinzufügen/ })).toHaveCount(0);
+    expect(social).toEqual([]); // not even asked for (the server would answer 403 kids_profile)
+
+    await page.goto('/settings');
+    await expect(page.getByRole('heading', { name: 'Sprache', exact: true })).toBeVisible();
+    await expect(page.getByLabel('Bevorzugte Tonspur')).toBeVisible();
+    await expect(page.getByLabel('Untertitel standardmäßig')).toBeVisible();
+    await expect(page.getByText('Anime: Originalton mit Untertiteln')).toBeVisible();
+    await expect(page.getByText(/Gruppen-Matcher/)).toHaveCount(0);
+    await expect(page.getByRole('heading', { name: 'Benachrichtigungen' })).toHaveCount(0);
   });
 
   test('leaving the kids profile asks for the owner PIN when the target has none', async ({ page }) => {

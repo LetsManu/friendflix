@@ -10,6 +10,7 @@
   import Footer from '#lib/Footer.svelte';
   import { avatarBg, initial } from '#lib/avatars';
   import { loadList, loadPrefs } from '#lib/stores';
+  import { kidsMode } from '#lib/kids';
   import type ItemModalType from '#lib/ItemModal.svelte';
   import { loadModal, prefetchModal } from '#lib/lazy';
   import { startTvLink, type ToTv } from '#lib/remote';
@@ -78,6 +79,7 @@
   /** kids profile: kids header, no footer links / tab bar / bell; the last /api/me answer decides until the fresh one arrives */
   $: kidsUi = me ? Boolean(me.kids) : Boolean(bootHint?.kids);
   $: if (typeof document !== 'undefined') document.documentElement.classList.toggle('kids', kidsUi);
+  $: kidsMode.set(kidsUi); // shared flag for components (no social UI on kids profiles)
   // ---- phone: chip bar + "Kategorien" overlay; desktop: "Kategorien" dropdown (genres, languages, collections) ----
   let catOpen = false, catGenres: string[] | null = null, catKind: Kind = 'movies', catBtn: HTMLElement | null = null;
   let catLangs: string[] | null = null;
@@ -112,7 +114,7 @@
     loadModal().then((m) => (Modal = m.default)).catch(() => { location.href = `/item/${id}`; }); // chunk gone (new deploy/offline): open the full page
   }
 
-  async function loadNotes() { try { notes = (await api('/api/notifications')).notifications; } catch { /* ignore */ } }
+  async function loadNotes() { if (me?.kids) return; try { notes = (await api('/api/notifications')).notifications; } catch { /* ignore */ } } // kids: 403 kids_profile
   async function toggleBell() {
     bell = !bell; menu = false; cats = false;
     if (bell && unread) { await api('/api/notifications/read', { method: 'POST' }); setTimeout(loadNotes, 1500); }
@@ -333,7 +335,7 @@
         if (pending) stops.push(watchApproval());
         tv = m.tv || sessionStorage.getItem('ff_tv') === '1';
         if (!pending) maybeColdIntro(m.profile?.id);
-        if (!pending) { if (!m.kids) loadNotes(); loadList(); loadPrefs(); const notesTimer = setInterval(loadNotes, 60_000); stops.push(() => clearInterval(notesTimer)); }
+        if (!pending) { loadNotes(); loadList(); loadPrefs(); const notesTimer = setInterval(loadNotes, 60_000); stops.push(() => clearInterval(notesTimer)); }
         if (m.tv) localStorage.setItem('ff_tv_device', '1'); // an expired TV session goes back to the pairing screen, not to a login form
         if (tv) {
           { let t: ReturnType<typeof setTimeout>; const wake = () => { document.documentElement.classList.remove('idle-cursor'); clearTimeout(t); t = setTimeout(() => document.documentElement.classList.add('idle-cursor'), 4000); }; wake(); window.addEventListener('mousemove', wake); stops.push(() => { window.removeEventListener('mousemove', wake); clearTimeout(t); }); }

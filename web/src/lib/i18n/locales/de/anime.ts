@@ -13,6 +13,10 @@ export default {
     airsAt: 'um {time} Uhr',
     link: 'Simulcast',
   },
+  settings: {
+    original: 'Anime: Originalton mit Untertiteln',
+    originalHint: 'Anime-Serien starten auf Japanisch mit Untertiteln in deiner Sprache – solange du für die Serie nichts anderes gewählt hast. Gibt es keine japanische Tonspur, gelten deine normalen Einstellungen.',
+  },
   comments: {
     show: 'Kommentare',
     hide: 'Kommentare ausblenden',
@@ -28,7 +32,7 @@ export default {
     delete: 'Löschen',
     deleteAria: 'Kommentar von {name} löschen',
     failed: 'Der Kommentar konnte nicht gespeichert werden.',
-    loadFailed: 'Simulcast konnte nicht geladen werden.',
+    loadFailed: 'Kommentare konnten nicht geladen werden.',
     tooMany: 'Du hast heute schon sehr viel kommentiert. Versuch es morgen wieder.',
     chars: '{n} / {max}',
     you: 'Du',

@@ -33,6 +33,11 @@ export const prefsSchema = z.object({
     background: z.enum(['none', 'shadow', 'semi', 'solid']).default('semi'),
     font: z.enum(['sans', 'serif', 'mono']).default('sans'),
   }).default({ size: 'm', color: 'white', background: 'semi', font: 'sans' }),
+  /**
+   * Anime (series with genre "Anime"): original (Japanese) audio with subtitles in the UI language, unless the series has its own
+   * audio/subtitle preference (GET /api/series/:id/langpref). Per profile.
+   */
+  animeOriginal: z.boolean().default(false),
   /** blur thumbnails and hide descriptions of unwatched episodes */
   spoilerProtection: z.boolean().default(false),
   /** weekly "Wochenrückblick" (in-app + personal ntfy), account level */

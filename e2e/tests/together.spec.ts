@@ -27,8 +27,8 @@ test.describe('home: more "Weil du ... geschaut hast" rows', () => {
 });
 
 test.describe('watch party: live reactions', () => {
-  // the mocked video never loads; the player's source-error path then logs a harmless pageerror (see report)
-  test.use({ allowedConsole: /resumeTicks|Failed to load resource/ });
+  // the mocked video file does not exist: the browser logs the failed media request (the player retries, no page error)
+  test.use({ allowedConsole: /Failed to load resource/ });
   test('the bar sends a reaction and the emoji floats over the picture with the sender name', async ({ page, api: _api }) => {
     const sent: unknown[] = [];
     await page.routeWebSocket(/\/ws\/party\//, (ws) => {
@@ -40,8 +40,9 @@ test.describe('watch party: live reactions', () => {
       });
     });
     // the player behind the party page: just enough playback endpoints so that it mounts (the video itself never loads)
-    await page.route('**/api/playback/info', (r) => r.fulfill({ json: { directUrl: '/media/none.mp4', hlsUrl: '', resumeTicks: 0, mediaSourceId: 'ms1', playSessionId: 'ps1', maxBitrate: 60_000_000, roleMaxBitrate: 60_000_000, subtitles: [], audio: [] } }));
+    // (Playwright tries the most recently added route first: the catch-all goes first so that /info gets its own answer)
     await page.route('**/api/playback/**', (r) => r.fulfill({ status: 204 }));
+    await page.route('**/api/playback/info', (r) => r.fulfill({ json: { directUrl: '/media/none.mp4', hlsUrl: '', resumeTicks: 0, mediaSourceId: 'ms1', playSessionId: 'ps1', maxBitrate: 60_000_000, roleMaxBitrate: 60_000_000, subtitles: [], audioTracks: [] } }));
     await page.route('**/api/bookmarks?*', (r) => r.fulfill({ json: { bookmarks: [] } }));
     await page.route('**/api/items/*/segments', (r) => r.fulfill({ json: { segments: [] } }));
     await page.goto('/party/room1');

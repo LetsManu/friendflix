@@ -1,5 +1,6 @@
 import pg from 'pg';
 import { afterAll, afterEach, describe, expect, it } from 'vitest';
+import WebSocket from 'ws';
 import { MIGRATIONS } from '../src/db.js';
 import { kidsPolicy } from '../src/profiles.js';
 import { reapplyRole } from '../src/users.js';
@@ -276,9 +277,103 @@ describe('kids profiles', () => {
     expect((await env.pool.query("select data->>'onboarded' v from profile_prefs where profile_id<>$1", [kid.id])).rows.every((r) => r.v !== 'true')).toBe(true);
   });
 
+  it('a TV paired from a kids profile is locked to that kids profile (never the owner profile)', async () => {
+    env = envRef = await makeEnv(parentalJellyfin().routes);
+    const s = await env.login();
+    const ownerId = (await call(s, 'GET', '/api/me')).json().profile.id;
+    const kid = await mkProfile(s, { name: 'Mia', kids: true });
+    expect((await call(s, 'PUT', `/api/profiles/${ownerId}/pin`, { pin: '1111' })).statusCode).toBe(200);
+    const k = await switchTo(s, kid.id);
+    const pairTv = async (who: Sess) => {
+      const c = (await env.app.inject({ method: 'POST', url: '/api/tv/code' })).json();
+      expect((await call(who, 'POST', '/api/tv/pair', { code: c.code })).statusCode).toBe(200);
+      const claim = await env.app.inject({ method: 'POST', url: '/api/tv/claim', payload: { code: c.code, pollToken: c.pollToken } });
+      return { claim, c };
+    };
+    const { claim } = await pairTv(k);
+    expect(claim.statusCode).toBe(200);
+    const tv: Sess = { cookies: { ff_sid: claim.cookies.find((x) => x.name === 'ff_sid')!.value }, csrf: '' };
+    const sid = tv.cookies.ff_sid!;
+    tv.csrf = JSON.parse((await env.kv.get(`sess:${sid}`))!).csrf;
+    expect((await call(tv, 'GET', '/api/me')).json()).toMatchObject({ kids: true, tv: true, profile: { id: kid.id } });
+    expect((await env.pool.query("select kids_profile_id from devices where device_id like 'tv-%'")).rows).toEqual([{ kids_profile_id: kid.id }]);
+    // social stays closed on the TV, leaving the kids profile needs the owner PIN
+    expect((await call(tv, 'GET', '/api/lists')).json().error).toBe('kids_profile');
+    expect((await select(tv, ownerId)).json().error).toBe('pin_required');
+    // a session without a chosen profile (e.g. a dropped profileId) still resolves to the kids profile via the device lock
+    const raw = JSON.parse((await env.kv.get(`sess:${sid}`))!);
+    delete raw.profileId;
+    await env.kv.set(`sess:${sid}`, JSON.stringify(raw), 3600);
+    expect((await call(tv, 'GET', '/api/me')).json()).toMatchObject({ kids: true, profile: { id: kid.id } });
+
+    // pairing from a grown-up profile gives a normal TV
+    const o = await switchTo(k, ownerId, '1111');
+    const grown = await pairTv(o);
+    expect(grown.claim.statusCode).toBe(200);
+    expect((await env.pool.query("select count(*)::int n from devices where device_id like 'tv-%' and kids_profile_id is null")).rows[0].n).toBe(1);
+
+    // the kids flag removed between pair and claim: the pairing is void instead of silently giving a grown-up TV
+    const k2 = await switchTo(o, kid.id);
+    const c = (await env.app.inject({ method: 'POST', url: '/api/tv/code' })).json();
+    expect((await call(k2, 'POST', '/api/tv/pair', { code: c.code })).statusCode).toBe(200);
+    await env.pool.query('update profiles set kids=false where id=$1', [kid.id]);
+    expect((await env.app.inject({ method: 'POST', url: '/api/tv/claim', payload: { code: c.code, pollToken: c.pollToken } })).statusCode).toBe(403);
+  });
+
   it('requires a login for the new endpoint', async () => {
     env = envRef = await makeEnv(parentalJellyfin().routes);
     expect((await env.app.inject({ method: 'PUT', url: '/api/prefs/onboarded', payload: { onboarded: true } })).statusCode).toBe(401);
+  });
+});
+
+describe('kids guard on social, Seerr, stats and account routes', () => {
+  it('party (create/join/emoji socket), comments and every other social route answer 403 kids_profile; content routes stay open', async () => {
+    env = envRef = await makeEnv(parentalJellyfin().routes);
+    const s = await env.login();
+    const ownerId = (await call(s, 'GET', '/api/me')).json().profile.id;
+    const kid = await mkProfile(s, { name: 'Mia', kids: true });
+    const A = hex('a');
+    // a grown-up party and comment exist, the kid must reach neither
+    const party = await call(s, 'POST', '/api/party', { itemId: A });
+    expect(party.statusCode, party.body).toBe(200);
+    expect((await call(s, 'POST', `/api/items/${A}/comments`, { body: 'Toll!' })).statusCode).toBe(200);
+    const k = await switchTo(s, kid.id);
+    const blocked: Array<[string, string, unknown?]> = [
+      ['POST', '/api/party', { itemId: A }], ['GET', '/api/party'], ['GET', `/api/party/${party.json().id}`], ['POST', `/api/party/${party.json().id}/invite`, { userIds: [] }],
+      ['GET', `/api/items/${A}/comments`], ['POST', `/api/items/${A}/comments`, { body: 'Hallo' }], ['DELETE', '/api/comments/1'],
+      ['GET', '/api/seerr/search?q=x'], ['GET', '/api/seerr/movie/1/status'], ['POST', '/api/requests', { mediaType: 'movie', mediaId: 1 }], ['GET', '/api/requests/quota'], ['GET', '/api/requests/mine'],
+      ['GET', '/api/seerr/upcoming'], ['GET', '/api/stats/me'], ['GET', '/api/achievements'], ['GET', '/api/stats/community'], ['GET', '/api/digest/latest'],
+      ['GET', '/api/nowplaying'], ['GET', '/api/friends'], ['POST', '/api/match', {}], ['POST', '/api/recommend', {}], ['GET', '/api/recommendations'],
+      ['POST', '/api/recommendations/seen', {}], ['GET', '/api/library/friends-rated'], ['GET', '/api/notifications'], ['POST', '/api/notifications/read'],
+      ['GET', '/api/devices'], ['POST', '/api/push/subscribe', {}], ['POST', '/api/push/test', {}],
+    ];
+    for (const [m, u, b] of blocked) {
+      const r = await call(k, m, u, b);
+      expect([r.statusCode, r.json().error], `${m} ${u}`).toEqual([403, 'kids_profile']);
+    }
+    // content and personal routes stay open (the fake Jellyfin does not serve all of them: only the guard matters here)
+    for (const u of [`/api/items/${A}`, '/api/library/items?types=Movie', '/api/search?q=an', `/api/items/${A}/similar`, '/api/hubs', `/api/items/${A}/extras/all`,
+      `/api/series/${A}/langpref`, '/api/simulcast', '/api/library/because-more', '/api/downloads', '/api/calendar'])
+      expect((await call(k, 'GET', u)).statusCode, u).not.toBe(403);
+    expect((await call(k, 'GET', `/api/items/${A}`)).statusCode).toBe(200);
+
+    // the party socket closes with 4403 for the kid (no join, no emojis)
+    await env.app.listen({ port: 0, host: '127.0.0.1' });
+    const port = (env.app.server.address() as { port: number }).port;
+    const connect = (cookie: string) => new Promise<{ code: number; msgs: any[] }>((resolve) => {
+      const ws = new WebSocket(`ws://127.0.0.1:${port}/ws/party/${party.json().id}`, { headers: { cookie: `ff_sid=${cookie}`, origin: 'https://portal.example.com' } });
+      const msgs: any[] = [];
+      ws.on('message', (d) => { msgs.push(JSON.parse(d.toString())); ws.send(JSON.stringify({ t: 'react', emoji: '🔥' })); ws.close(); });
+      ws.on('close', (code) => resolve({ code, msgs }));
+    });
+    const kidWs = await connect(k.cookies.ff_sid!);
+    expect(kidWs).toEqual({ code: 4403, msgs: [] });
+    // the same room is fine for the owner profile
+    const o = await switchTo(k, ownerId);
+    const ownerWs = await connect(o.cookies.ff_sid!);
+    expect(ownerWs.msgs[0]).toMatchObject({ t: 'welcome' });
+    for (const u of ['/api/friends', '/api/stats/me', '/api/nowplaying', '/api/notifications', `/api/items/${A}/comments`])
+      expect((await call(o, 'GET', u)).statusCode, u).toBe(200);
   });
 });
 

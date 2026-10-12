@@ -64,11 +64,26 @@ export function animeRoutes(app: FastifyInstance, ctx: Ctx) {
   };
   const prefView = (r?: { audio: string | null; subtitle: string | null }) => ({ audio: r?.audio ?? null, subtitle: r?.subtitle ?? null });
 
+  /** isAnime() of a (visible) series; the genres/tags of a series rarely change: cached for an hour */
+  const seriesIsAnime = async (req: any, sid: string): Promise<boolean> => {
+    const key = `isanime:${sid}`;
+    const hit = await ctx.kv.get(key);
+    if (hit) return hit === '1';
+    const qs = new URLSearchParams({ userId: req.jfUser!.jellyfin_user_id, ids: sid, includeItemTypes: 'Series', recursive: 'true', fields: 'Genres,Tags,ProductionLocations', enableImages: 'false', enableUserData: 'false' });
+    const r = await ctx.jf.json<{ Items?: any[] }>(req.jfUser!, `/Items?${qs}`);
+    const s = (r.Items ?? []).find((x) => String(x.Id).replace(/-/g, '').toLowerCase() === sid);
+    const anime = Boolean(s && isAnime(s));
+    await ctx.kv.set(key, anime ? '1' : '0', 3600);
+    return anime;
+  };
+
+  // `?anime=1`: also tell whether the series is an anime (the player's "Anime: Originalton mit Untertiteln" setting needs it)
   app.get('/api/series/:id/langpref', pre, wrap(async (req) => {
     const sid = await seriesIdOf(req, id32.parse((req.params as { id: string }).id));
-    if (!sid) return prefView();
+    const withAnime = z.object({ anime: z.enum(['0', '1']).optional() }).parse(req.query).anime === '1';
+    if (!sid) return withAnime ? { ...prefView(), anime: false } : prefView();
     const r = await ctx.db.query<{ audio: string | null; subtitle: string | null }>('select audio, subtitle from series_langprefs where profile_id=$1 and series_id=$2', [req.profile!.id, sid]);
-    return prefView(r.rows[0]);
+    return withAnime ? { ...prefView(r.rows[0]), anime: await seriesIsAnime(req, sid) } : prefView(r.rows[0]);
   }));
 
   app.put('/api/series/:id/langpref', { ...pre, config: writeLimit(60) }, wrap(async (req, reply) => {

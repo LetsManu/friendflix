@@ -1,19 +1,7 @@
-<script context="module" lang="ts">
-  import { writable } from 'svelte/store';
-  import { api } from '#lib/api';
-  /** true once the server (or /api/me) said this profile is a kids profile: no comments UI at all */
-  export const commentsBlocked = writable(false);
-  let meChecked: Promise<void> | null = null;
-  /** one /api/me lookup per page session (the layout owns the real `me`; this only reads the kids flag) */
-  export function checkKids(): Promise<void> {
-    meChecked ??= api<{ kids?: boolean; profile?: { kids?: boolean } | null }>('/api/me').then((m) => { if (m.kids || m.profile?.kids) commentsBlocked.set(true); }).catch(() => undefined);
-    return meChecked;
-  }
-</script>
-
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { ApiError } from '#lib/api';
+  import { api, ApiError } from '#lib/api';
+  import { kidsMode } from '#lib/kids';
   import { fmtRelative, t } from '#lib/i18n';
 
   /** episode (or movie) id */
@@ -31,7 +19,7 @@
       comments = r.comments; watched = r.watched; failed = false;
       onCount(comments.length);
     } catch (e) {
-      if (e instanceof ApiError && e.body?.error === 'kids_profile') commentsBlocked.set(true);
+      if (e instanceof ApiError && e.body?.error === 'kids_profile') kidsMode.set(true); // stale flag: the server knows better
       else failed = true;
     }
   }
