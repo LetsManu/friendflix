@@ -2,7 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { CAST_MAX_BITRATE, CAST_MAX_HEIGHT, castEnabled, castTtlSeconds, createCast, revokeCast } from '../cast.js';
 import type { Ctx } from '../ctx.js';
-import { JellyfinError } from '../jellyfin/client.js';
+import { MediaError } from '../media/types.js';
 import { countLive } from '../live.js';
 import { effectiveRole } from '../roles.js';
 import { requireUser } from '../session.js';
@@ -57,7 +57,7 @@ export function castRoutes(app: FastifyInstance, ctx: Ctx) {
         subtitles: info.subtitles.map((s) => ({ index: s.index, language: s.language, title: s.title, url: abs(s.url) })),
       };
     } catch (e) {
-      if (e instanceof JellyfinError) return reply.code(e.status === 404 ? 404 : e.status === 403 ? 403 : 502).send({ error: 'jellyfin', status: e.status });
+      if (e instanceof MediaError) return reply.code(e.status === 404 ? 404 : e.status === 403 ? 403 : 502).send({ error: 'jellyfin', status: e.status });
       throw e;
     }
   });

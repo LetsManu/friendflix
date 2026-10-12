@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { MediaError } from '../media/types.js';
 import type { RoleTemplate } from '../roles.js';
 import { timed } from '../timing.js';
 
@@ -24,11 +25,8 @@ export interface AuthResult {
   User: { Id: string; Name: string };
 }
 
-export class JellyfinError extends Error {
-  constructor(public status: number, message: string) {
-    super(message);
-  }
-}
+/** Jellyfin HTTP failure; routes only check the server-neutral MediaError base class. */
+export class JellyfinError extends MediaError {}
 
 /** Maps a role template to the Jellyfin UserPolicy fields we manage. */
 export function policyFromTemplate(t: RoleTemplate, folderIds: string[] | null): Record<string, unknown> {

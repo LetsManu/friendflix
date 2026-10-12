@@ -4,8 +4,7 @@ import { buildApp } from './app.js';
 import { loadConfig } from './config.js';
 import { keyFromBase64 } from './crypto.js';
 import { migrate } from './db.js';
-import { JellyfinClient } from './jellyfin/client.js';
-import { JellyfinService } from './jellyfin/service.js';
+import { createMediaServer, mediaConfigProblems } from './media/index.js';
 import { RedisKV } from './kv.js';
 import { authentikConfigProblem } from './invites.js';
 import { createAuthentikProvider } from './oidc.js';
@@ -31,12 +30,13 @@ const pool = new pg.Pool({ connectionString: cfg.DATABASE_URL, max: 10 });
 await migrate(pool);
 const kv = new RedisKV(new Redis(cfg.REDIS_URL));
 const encKey = keyFromBase64(cfg.APP_ENC_KEY);
-const client = new JellyfinClient(cfg.JELLYFIN_URL, cfg.JELLYFIN_ADMIN_API_KEY);
+const mediaProblems = mediaConfigProblems(cfg);
+if (mediaProblems.length) throw new Error(`MEDIA_SERVER=${cfg.MEDIA_SERVER}: ${mediaProblems.join('; ')}`);
 
 const ctx: Ctx = {
   cfg, kv, db: pool, encKey, fetchImpl: fetch,
   oidc: await createAuthentikProvider(cfg),
-  jf: new JellyfinService(client, kv, encKey),
+  jf: createMediaServer({ cfg, kv, encKey }),
   seerr: new SeerrClient(cfg.SEERR_URL, cfg.SEERR_API_KEY),
   roles: loadRoles(cfg.ROLE_TEMPLATES),
 };

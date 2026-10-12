@@ -8,7 +8,6 @@ import { clearLive, setLive } from '../live.js';
 import { jfUserFor, resolveProfile } from '../profiles.js';
 import { effectiveRole } from '../roles.js';
 import { loadSession } from '../session.js';
-import { mediaBrowserHeader } from '../jellyfin/client.js';
 import { upstreamUri } from '../mediapath.js';
 import { authzNginx } from '../metrics.js';
 import { getUserById } from '../users.js';
@@ -74,7 +73,7 @@ export function internalRoutes(app: FastifyInstance, ctx: Ctx) {
     const prof = user && !user.disabled ? await resolveProfile(ctx, user, s) : null; // no profile chosen yet (owner PIN) -> deny
     if (!user || !prof || !role) return null;
     const jfUser = jfUserFor(user, prof);
-    return { userId: user.id, token: await ctx.jf.token(jfUser), deviceId: ctx.jf.deviceId(jfUser), maxBitrate: role.maxBitrate, canDownload: role.download || ctx.cfg.DIRECT_PLAY_REQUIRES_DOWNLOAD !== 'true', ...(role.maxHeight ? { maxHeight: role.maxHeight } : {}) };
+    return { userId: user.id, ...(await ctx.jf.mediaAuth(jfUser)), maxBitrate: role.maxBitrate, canDownload: role.download || ctx.cfg.DIRECT_PLAY_REQUIRES_DOWNLOAD !== 'true', ...(role.maxHeight ? { maxHeight: role.maxHeight } : {}) };
   }
 
   /** Errors (DB/Redis/Jellyfin down) propagate and are never memoised: the next request retries. */
@@ -155,7 +154,7 @@ export function internalRoutes(app: FastifyInstance, ctx: Ctx) {
     authzNginx.inc({ result: 'ok' });
     return reply
       .header('X-Jellyfin-Uri', uri)
-      .header('X-Jellyfin-Auth', mediaBrowserHeader({ deviceId: a.deviceId, token: a.token }))
+      .header('X-Jellyfin-Auth', ctx.jf.planBAuthHeader(a))
       .header('Cache-Control', 'no-store')
       .code(204)
       .send();
@@ -198,19 +197,18 @@ export function internalRoutes(app: FastifyInstance, ctx: Ctx) {
 
 /** Fallback when the webhook plugin is not installed: poll GET /Sessions (every 10 s). */
 export async function pollJellyfinSessions(ctx: Ctx) {
-  const sessions = await ctx.jf.client.sessions();
-  const active = sessions.filter((s) => s.NowPlayingItem && !String(s.DeviceId ?? '').startsWith('ff-'));
+  const active = await ctx.jf.admin.externalSessions();
   if (!active.length) return;
-  const r = await ctx.db.query<UserRow>('select * from users where jellyfin_user_id = any($1)', [active.map((s) => s.UserId)]);
+  const r = await ctx.db.query<UserRow>('select * from users where jellyfin_user_id = any($1)', [active.map((s) => s.serverUserId)]);
   const byJf = new Map(r.rows.map((u) => [u.jellyfin_user_id.replace(/-/g, ''), u]));
   for (const s of active) {
-    const u = byJf.get(String(s.UserId).replace(/-/g, ''));
+    const u = byJf.get(s.serverUserId.replace(/-/g, ''));
     if (!u) continue;
-    const it = s.NowPlayingItem;
+    const it = s.item;
     await setLive(ctx, {
-      userId: u.id, userName: u.name, itemId: it.Id, title: it.Name, seriesName: it.SeriesName, type: it.Type,
-      positionTicks: s.PlayState?.PositionTicks ?? 0, runtimeTicks: it.RunTimeTicks, isPaused: Boolean(s.PlayState?.IsPaused),
-      playSessionId: `jf-${s.Id}`, updatedAt: Date.now(), source: 'jellyfin',
+      userId: u.id, userName: u.name, itemId: it.id, title: it.name, seriesName: it.seriesName, type: it.type,
+      positionTicks: s.positionTicks, runtimeTicks: it.runtimeTicks, isPaused: s.isPaused,
+      playSessionId: `jf-${s.sessionId}`, updatedAt: Date.now(), source: 'jellyfin',
     }, 25);
   }
 }

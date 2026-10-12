@@ -1,14 +1,13 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import type { Ctx } from '../ctx.js';
-import { JellyfinError } from '../jellyfin/client.js';
+import { MediaError, type ItemDto } from '../media/types.js';
 import { clearLive, countLive, getLive, listLive, setLive } from '../live.js';
 import { effectiveRole } from '../roles.js';
 import { requireGrownUp } from '../kids.js';
 import { requireUser } from '../session.js';
 import { playbackHooks } from '../hooks.js';
 import { tidyResume } from '../resume.js';
-import { toTrickplayDto, type ItemDto } from '../jellyfin/dto.js';
 import { createHash } from 'node:crypto';
 import { itemsByIds, libraryBecause } from './discover.js';
 import { id32 as itemId, wrap as sharedWrap } from './_shared.js';
@@ -95,7 +94,7 @@ export function mediaRoutes(app: FastifyInstance, ctx: Ctx) {
         const byId = new Map(got.map((i) => [i.id, i]));
         return { items: page.map((id) => byId.get(id)).filter((x): x is ItemDto => Boolean(x)), total: ids.length, ...(capped ? { capped: true as const } : {}) };
       } catch (e) {
-        if (e instanceof JellyfinError) throw e;
+        if (e instanceof MediaError) throw e;
         // corrupt cache entry: recompute
       }
     }
@@ -282,7 +281,7 @@ export function mediaRoutes(app: FastifyInstance, ctx: Ctx) {
       if (resume === undefined) return reply.code(502).send({ error: 'jellyfin', reason: 'resume_unknown' });
     }
     info.resumeTicks = resume;
-    info.trickplay = toTrickplayDto(b.itemId, info.mediaSourceId, meta?.trickplay);
+    info.trickplay = meta?.trickplay(info.mediaSourceId);
     return info;
   }));
 

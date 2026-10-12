@@ -3,7 +3,7 @@ import { createHash } from 'node:crypto';
 import { appendFile, mkdir, readdir, rename, rm, stat, statfs, truncate, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { Ctx } from './ctx.js';
-import { DOWNLOAD_PRESETS, type DownloadQuality } from './jellyfin/dto.js';
+import { DOWNLOAD_PRESETS, type DownloadQuality } from './media/types.js';
 import { listLive } from './live.js';
 import { m, type Text } from './i18n.js';
 import { notify } from './notify.js';
@@ -201,7 +201,7 @@ class Preparer {
   }
 
   private async fetchOk(user: JfUser, path: string): Promise<Response> {
-    const res = await this.ctx.jf.call(user, path);
+    const res = await this.ctx.jf.mediaFetch(user, path);
     if (!res.ok) throw new Error(`Jellyfin ${path.split('?')[0]} -> ${res.status}`);
     return res;
   }
