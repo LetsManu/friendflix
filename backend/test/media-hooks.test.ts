@@ -136,8 +136,9 @@ describe('backend: item authz endpoint, webhook dispatch, subtitle route, exact 
   afterAll(() => env.close());
   afterEach(() => { policies.length = 0; });
 
-  const sec = { 'x-internal-secret': 'internal-secret-123456' };
-  const authzItem = (payload: object, headers: Record<string, string> = sec) => env.app.inject({ method: 'POST', url: '/internal/authz/item', headers, payload });
+  // the test config's internal secret (helpers.ts), read at call time so no secret-looking literal lives here
+  const sec = () => ({ 'x-internal-secret': env.ctx.cfg.INTERNAL_SECRET });
+  const authzItem = (payload: object, headers: Record<string, string> = sec()) => env.app.inject({ method: 'POST', url: '/internal/authz/item', headers, payload });
   const call = (s: { cookies: Record<string, string>; csrf: string }, method: string, url: string, body?: unknown) =>
     env.app.inject({ method: method as 'GET', url, cookies: s.cookies, headers: { 'x-csrf-token': s.csrf }, payload: body as object });
   const itemCalls = () => env.jfCalls.filter((c) => c.path.startsWith('/Items/')).length;
@@ -216,7 +217,7 @@ describe('backend: item authz endpoint, webhook dispatch, subtitle route, exact 
     expect((await authzItem({ sid: 'x'.repeat(30), itemId: A })).statusCode).toBe(401);
     expect((await authzItem({ sid, itemId: 'nothex' })).statusCode).toBe(400);
     expect((await authzItem({ sid, itemId: A, extra: 1 })).statusCode).toBe(400);
-    expect((await authzItem({ sid, itemId: A }, { 'x-internal-secret': 'wrong-secret-123456789' })).statusCode).toBe(403);
+    expect((await authzItem({ sid, itemId: A }, { 'x-internal-secret': `${env.ctx.cfg.INTERNAL_SECRET}-wrong` })).statusCode).toBe(403);
 
     // kids profile: same account, the profile's own visibility applies (a profile switch drops the memo of the session)
     const kid = (await call(s, 'POST', '/api/profiles', { name: 'Mia', kids: true, maxRating: 6 })).json().profile;
