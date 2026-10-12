@@ -510,6 +510,8 @@ export const MIGRATIONS: string[] = [
   `select 1;`,
   // 30: Block 15 A1 (episode comments) – placeholder, replaced by the A1 worker
   `select 1;`,
+  // 31: Block 15 K1 (kids profiles + onboarding) – placeholder, replaced by the K1 worker
+  `select 1;`,
 ];
 
 export async function migrate(pool: pg.Pool): Promise<void> {
