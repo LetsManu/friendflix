@@ -4,7 +4,7 @@ import { mkdtempSync, readFileSync, rmSync, symlinkSync, truncateSync, writeFile
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createGateway, matchDownloadPath, normalizeCastPath, normalizePath, sanitizePlaylist } from '../src/gateway.js';
+import { blocksDirectStream, createGateway, matchDownloadPath, normalizeCastPath, normalizePath, sanitizePlaylist } from '../src/gateway.js';
 
 const ID = 'a'.repeat(32);
 let jf: Server, be: Server, gw: Server;
@@ -93,10 +93,14 @@ beforeAll(async () => {
         res.writeHead(200, { 'content-type': 'application/json' });
         return void res.end(JSON.stringify({ userId: j.sid === 'othersid' ? 'u2' : 'u1', token: 'JFTOKEN', deviceId: 'ff-u1', maxBitrate: 5_000_000, download: target }));
       }
-      const ok = j.sid === 'goodsid' || j.sid === 'guestsid';
+      const ok = ['goodsid', 'guestsid', 'nodlsid', 'legacysid'].includes(j.sid);
       if (!ok) return void res.writeHead(401).end();
       res.writeHead(200, { 'content-type': 'application/json' });
-      res.end(JSON.stringify({ userId: 'u1', token: 'JFTOKEN', deviceId: 'ff-u1', maxBitrate: 5_000_000, ...(j.sid === 'guestsid' ? { maxHeight: 720 } : {}) }));
+      res.end(JSON.stringify({
+        userId: 'u1', token: 'JFTOKEN', deviceId: 'ff-u1', maxBitrate: 5_000_000,
+        ...(j.sid === 'legacysid' ? {} : { canDownload: j.sid === 'goodsid' }), // legacysid: answer of a backend that does not know the flag yet
+        ...(j.sid === 'guestsid' ? { maxHeight: 720 } : {}),
+      }));
     });
   });
   const jfp = await listen(jf);
@@ -120,8 +124,15 @@ afterAll(() => {
 const get = (path: string, headers: Record<string, string> = {}) =>
   fetch(`http://127.0.0.1:${gwPort}${path}`, { headers: { cookie: 'ff_sid=goodsid', ...headers } });
 
-const vectors = JSON.parse(readFileSync(new URL('../../test-vectors/media-paths.json', import.meta.url), 'utf8')) as { allow: string[]; deny: string[] };
+const vectors = JSON.parse(readFileSync(new URL('../../test-vectors/media-paths.json', import.meta.url), 'utf8')) as { allow: string[]; deny: string[]; direct: string[] };
 describe('shared allowlist vectors', () => {
+  it.each(vectors.direct)('direct stream %s: blocked for capped / non-download roles only', (p) => {
+    expect(blocksDirectStream(p, { maxHeight: 1080, canDownload: true })).toBe(true);
+    expect(blocksDirectStream(p, { canDownload: false })).toBe(true);
+    expect(blocksDirectStream(p, {})).toBe(true);
+    expect(blocksDirectStream(p, { canDownload: true })).toBe(false);
+  });
+  it.each(vectors.allow.filter((p) => !vectors.direct.includes(p)))('%s is never a direct stream', (p) => expect(blocksDirectStream(p, { maxHeight: 720, canDownload: false })).toBe(false));
   it.each(vectors.allow)('allows %s', (p) => expect(normalizePath(p)).toBeTruthy());
   it.each(vectors.deny)('denies %s', (p) => expect(normalizePath(p)).toBeNull());
 });
@@ -523,5 +534,40 @@ describe('download route /media/d/<uuid>', () => {
   });
   it('does not treat /media/d/ as a Jellyfin path', async () => {
     expect((await get('/media/d/Videos')).status).toBe(404);
+  });
+});
+
+describe('direct (static) streams vs. role limits', () => {
+  const paths = [`/media/Videos/${ID}/stream?static=true`, `/media/Videos/${ID}/stream.mp4?static=true&MediaSourceId=${MS}`, `/media/Videos/${ID}/stream?Static=TRUE`, `/media/Videos/${ID}/stream`];
+  const as = (path: string, sid: string) => fetch(`http://127.0.0.1:${gwPort}${path}`, { headers: { cookie: `ff_sid=${sid}` } });
+
+  it('role without cap that may download keeps direct play', async () => {
+    for (const p of paths) expect((await as(p, 'goodsid')).status, p).toBe(200);
+  });
+  it('height-capped role gets 403 for every /stream form and nothing reaches Jellyfin', async () => {
+    seen.length = 0;
+    for (const p of paths) expect((await as(p, 'guestsid')).status, p).toBe(403);
+    expect(seen).toHaveLength(0);
+  });
+  it('role without download rights gets 403 even without a height cap', async () => {
+    for (const p of paths) expect((await as(p, 'nodlsid')).status, p).toBe(403);
+  });
+  it('fails closed when the backend does not report the download flag', async () => {
+    expect((await as(paths[0]!, 'legacysid')).status).toBe(403);
+  });
+  it('HLS, subtitles and images stay available to restricted roles', async () => {
+    for (const sid of ['guestsid', 'nodlsid']) {
+      expect((await as(`/media/Videos/${ID}/main.m3u8?MediaSourceId=${MS}`, sid)).status).toBe(200);
+      expect((await as(`/media/Videos/${ID}/hls1/main/0.ts`, sid)).status).toBe(200);
+      expect((await as(`/media/Items/${ID}/Images/Primary`, sid)).status).toBe(200);
+    }
+  });
+  it('the offline download path (own licence check) is unaffected', async () => {
+    const r = await fetch(`http://127.0.0.1:${gwPort}/media/d/${D_STATIC}`, { headers: { cookie: 'ff_sid=goodsid' } });
+    expect(r.status).toBe(200);
+    await r.arrayBuffer();
+  });
+  it('/Items/<id>/Download is not in the allowlist at all', async () => {
+    expect((await as(`/media/Items/${ID}/Download`, 'goodsid')).status).toBe(403);
   });
 });

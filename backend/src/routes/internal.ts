@@ -50,6 +50,8 @@ interface MediaAuth {
   maxBitrate: number;
   /** role resolution cap; the gateway clamps MaxHeight/MaxWidth/Height/Width query params to it */
   maxHeight?: number;
+  /** role may download: without it (or with a height cap) the gateway refuses direct /stream requests */
+  canDownload: boolean;
 }
 
 /** Session -> Jellyfin credentials for media requests. Short memo (5 s) keeps per-segment auth cheap. */
@@ -70,7 +72,7 @@ export function internalRoutes(app: FastifyInstance, ctx: Ctx) {
       const prof = user && !user.disabled ? await resolveProfile(ctx, user, s) : null; // no profile chosen yet (owner PIN) -> deny
       if (user && prof && role) {
         const jfUser = jfUserFor(user, prof);
-        v = { userId: user.id, token: await ctx.jf.token(jfUser), deviceId: ctx.jf.deviceId(jfUser), maxBitrate: role.maxBitrate, ...(role.maxHeight ? { maxHeight: role.maxHeight } : {}) };
+        v = { userId: user.id, token: await ctx.jf.token(jfUser), deviceId: ctx.jf.deviceId(jfUser), maxBitrate: role.maxBitrate, canDownload: role.download || ctx.cfg.DIRECT_PLAY_REQUIRES_DOWNLOAD !== 'true', ...(role.maxHeight ? { maxHeight: role.maxHeight } : {}) };
       }
     }
     memo.set(sid, { exp: Date.now() + (v ? 5_000 : 2_000), v });
@@ -129,7 +131,7 @@ export function internalRoutes(app: FastifyInstance, ctx: Ctx) {
       authzNginx.inc({ result: 'unauthenticated' });
       return reply.code(401).send();
     }
-    const uri = upstreamUri(String(req.headers['x-original-uri'] ?? ''), a.maxBitrate, a.maxHeight);
+    const uri = upstreamUri(String(req.headers['x-original-uri'] ?? ''), a.maxBitrate, a.maxHeight, a.canDownload);
     if (!uri) {
       authzNginx.inc({ result: 'path_denied' });
       return reply.code(403).send();

@@ -7,7 +7,7 @@
   onDestroy(() => clearInterval(t));
 </script>
 <h1>Läuft gerade</h1>
-{#if !items.length}<p class="muted">Gerade schaut niemand etwas.</p>{/if}
+{#if !items.length}<p class="muted">Gerade schaut niemand etwas. Hier erscheinen Freunde, die „Verlauf teilen“ aktiviert haben.</p>{/if}
 <div class="grid" style="grid-template-columns:repeat(auto-fill,minmax(260px,1fr))">
   {#each items as i}
     <div class="panel"><div class="flex"><img src={img(i.itemId, 120)} alt="" style="width:60px;border-radius:4px" />

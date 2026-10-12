@@ -56,5 +56,7 @@ Es gibt **keinen Kopierschutz**. Die Datei auf dem Gerät ist ein gewöhnliches,
 
 ## Grenzen
 
-- `/media/Videos/<id>/stream?static=true` ist für Streaming-Rollen erreichbar. Das Download-Recht ist deshalb keine harte Sperre gegen das Speichern von Originaldateien (bestand schon vorher, durch Downloads nicht neu entstanden).
+- Originalstreams (`/media/Videos/<id>/stream` und `stream.<ext>`, auch mit `static=true`) umgehen den Transcoder und damit Auflösungs- und Bitratenlimit der Rolle. Das Gateway (und bei Plan B `/internal/authz-nginx`) antwortet deshalb mit 403, wenn die Rolle eine **Höhenbegrenzung** hat; die Wiedergabe-Info (`/api/playback/info`) bietet diesen Rollen dann keinen Direct Play an, sie sehen nur HLS.
+- Rollen **ohne** Download-Recht, aber ohne Höhenbegrenzung (Standard: „Freund“) behalten Direct Play – sonst müsste der Server für sie jeden Film transkodieren. Über einen Originalstream könnten sie die Datei theoretisch speichern. Wer das ausschließen will, setzt `DIRECT_PLAY_REQUIRES_DOWNLOAD=true`: dann verlieren auch diese Rollen Direct Play (mehr Transcoding-Last auf dem Server).
+- Nicht betroffen sind der Cast-Pfad (kennt `/stream` ohnehin nicht) und `/media/d/<id>` (eigene Lizenzprüfung). `/Items/<id>/Download` steht nicht in der Pfad-Allowlist. Restrisiko: Das Bitratenlimit allein sperrt Direct Play nicht (die Quelle wird beim Anbieten gegen das Limit geprüft, das Gateway kennt die Quellbitrate nicht); es gibt keinen Kopierschutz (siehe oben).
 - Fehlerdetails von Jellyfin/ffmpeg sehen nur Admins (*Offline-Downloads*-Übersicht) und das Server-Log; Mitglieder sehen „Vorbereitung fehlgeschlagen“.

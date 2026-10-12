@@ -39,6 +39,8 @@ interface Authz {
   kind?: 'media' | 'img';
   /** resolution cap: role limit (cookie path, when the role has one) or cast token cap (role limit, at most 1080) */
   maxHeight?: number;
+  /** role may download originals; anything but `true` (missing, older backend) counts as no, so direct streams fail closed */
+  canDownload?: boolean;
 }
 
 const ID = '[0-9a-fA-F]{32}';
@@ -78,6 +80,14 @@ const CAST_CORS: Record<string, string> = {
   'access-control-expose-headers': 'Content-Length, Content-Range, Accept-Ranges',
   'cross-origin-resource-policy': 'cross-origin',
 };
+
+const STREAM_PATH = /^\/Videos\/[0-9a-fA-F]{32}\/stream(\.\w{2,5})?$/;
+/**
+ * Direct (original) streams bypass the transcoder, so the resolution cap and the download flag cannot be enforced on them.
+ * Roles with a height cap or without download rights get HLS only; every /stream request (static or not: Jellyfin can stream-copy) is refused.
+ */
+export const blocksDirectStream = (path: string, auth: Pick<Authz, 'maxHeight' | 'canDownload'>) =>
+  STREAM_PATH.test(path) && (Boolean(auth.maxHeight) || auth.canDownload !== true);
 
 const IMAGE_PATH = /^\/Items\/[0-9a-fA-F]{32}\/Images\//;
 const STRIP_QUERY = new Set(['api_key', 'apikey', 'x-emby-token', 'x-mediabrowser-token', 'token']);
@@ -227,6 +237,10 @@ export function createGateway(opts: GatewayOptions): { server: Server; metrics: 
     if (!auth) {
       count('401');
       return end(res, 401, 'unauthorized');
+    }
+    if (blocksDirectStream(path, auth)) {
+      count('403');
+      return end(res, 403, 'forbidden');
     }
     return forward(req, res, url, path, auth, count);
   }

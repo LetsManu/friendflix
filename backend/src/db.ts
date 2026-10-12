@@ -479,6 +479,14 @@ export const MIGRATIONS: string[] = [
   alter table lists add column featured_at timestamptz;
   create index lists_featured on lists(featured_at) where featured_at is not null;
   `,
+  // 25: reactions belong to a profile (the "watched" gate is per profile); owner profile id = user id
+  `
+  alter table reactions add column profile_id uuid references profiles(id) on delete cascade;
+  update reactions set profile_id = user_id;
+  alter table reactions alter column profile_id set not null;
+  alter table reactions drop constraint reactions_pkey;
+  alter table reactions add primary key (profile_id, item_id);
+  `,
 ];
 
 export async function migrate(pool: pg.Pool): Promise<void> {
