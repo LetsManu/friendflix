@@ -55,7 +55,7 @@ export class AbrController {
     this.now = o.now;
     this.cap = o.cap;
     this.pinned = o.pinned !== undefined;
-    this.cur = o.pinned !== undefined ? o.pinned : pickRung(null, o.cap);
+    this.cur = o.pinned !== undefined ? Math.max(FLOOR, Math.min(o.pinned, o.cap)) : pickRung(null, o.cap);
   }
 
   get current(): number {
@@ -66,12 +66,12 @@ export class AbrController {
     const t = this.now();
     this.stalls.push(t);
     this.stalls = this.stalls.filter((s) => t - s <= STALL_WINDOW_MS);
-    if (ms > STALL_MS || this.stalls.length >= STALL_COUNT) return this.down('stall', true);
+    if (ms > STALL_MS || this.stalls.length >= STALL_COUNT) return this.down('stall');
     return { do: 'none' };
   }
 
   onNetworkError(): Decision {
-    return this.down('network', false);
+    return this.down('network');
   }
 
   onTick(s: { estimate: number | null; bufferSec: number }): Decision {
@@ -100,11 +100,11 @@ export class AbrController {
     return null;
   }
 
-  private down(reason: 'stall' | 'network', cooldown: boolean): Decision {
-    if (this.cur <= FLOOR) return { do: 'fail' };
+  private down(reason: 'stall' | 'network'): Decision {
     const t = this.now();
-    if (cooldown && t - this.lastDown < DOWN_COOLDOWN_MS) return { do: 'none' };
-    const next = LADDER.map((r) => r.bps).find((b) => b < this.cur) ?? FLOOR;
+    if (t - this.lastDown < DOWN_COOLDOWN_MS) return { do: 'none' };
+    if (this.cur <= FLOOR) return { do: 'fail' };
+    const next = LADDER.map((r) => r.bps).find((b) => b < this.cur && b <= this.cap) ?? FLOOR;
     this.cur = next;
     this.lastDown = t;
     this.stalls = [];

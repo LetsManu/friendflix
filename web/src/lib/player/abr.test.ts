@@ -85,11 +85,45 @@ describe('AbrController stalls', () => {
   });
 });
 
+describe('AbrController floor and cooldown', () => {
+  it('a stall at the floor is none during the cooldown, fail after it', () => {
+    const c = clock();
+    const a = new AbrController({ now: c.now, cap: 20e6, pinned: 1.5e6 });
+    expect(a.onStall(3000).do).toBe('switch'); // now 360p
+    c.adv(1000);
+    expect(a.onStall(3000)).toEqual({ do: 'none' });
+    c.adv(9000);
+    expect(a.onStall(3000)).toEqual({ do: 'fail' });
+  });
+  it('a step-down never lands above the cap; pinned is clamped to it', () => {
+    const a = new AbrController({ now: clock().now, cap: 4e6, pinned: Infinity });
+    expect(a.current).toBe(4e6);
+    expect(a.onStall(3000)).toEqual({ do: 'switch', bps: 1.5e6, reason: 'stall' });
+  });
+  it('a step-down resets the step-up window', () => {
+    const c = clock();
+    const a = new AbrController({ now: c.now, cap: 20e6 });
+    a.onTick({ estimate: 14e6, bufferSec: 30 });
+    c.adv(20_000);
+    a.onStall(3000); // down to 480p, window must restart
+    c.adv(11_000); // 31 s since first qualifying tick
+    expect(a.onTick({ estimate: 14e6, bufferSec: 30 })).toEqual({ do: 'none' });
+    c.adv(29_000);
+    expect(a.onTick({ estimate: 14e6, bufferSec: 30 })).toEqual({ do: 'none' });
+    c.adv(1000);
+    expect(a.onTick({ estimate: 14e6, bufferSec: 30 }).do).toBe('switch');
+  });
+});
+
 describe('AbrController network errors', () => {
-  it('steps down, then fails at the floor', () => {
+  it('steps down; the cooldown holds the same rung; then fails at the floor', () => {
     const c = clock();
     const a = new AbrController({ now: c.now, cap: 20e6, pinned: 1.5e6 });
     expect(a.onNetworkError()).toEqual({ do: 'switch', bps: 0.8e6, reason: 'network' });
+    c.adv(1000);
+    expect(a.onNetworkError()).toEqual({ do: 'none' });
+    expect(a.current).toBe(0.8e6);
+    c.adv(9000);
     expect(a.onNetworkError()).toEqual({ do: 'fail' });
   });
 });
@@ -130,7 +164,7 @@ describe('AbrController step-up', () => {
   });
   it('steps up at most once per 60 s', () => {
     const c = clock();
-    const a = new AbrController({ now: c.now, cap: 20e6, pinned: undefined });
+    const a = new AbrController({ now: c.now, cap: 20e6 });
     // start lower: stall to 480p, wait out cooldown, then climb
     a.onStall(3000);
     expect(a.current).toBe(1.5e6); // next 720p needs 6.67e6
@@ -153,7 +187,7 @@ describe('AbrController step-up', () => {
     tick(a, 100e6);
     c.adv(60_000);
     expect(tick(a, 100e6)).toEqual({ do: 'none' });
-    const b = new AbrController({ now: c.now, cap: 20e6, pinned: undefined });
+    const b = new AbrController({ now: c.now, cap: 20e6 });
     tick(b, null);
     c.adv(60_000);
     expect(tick(b, null)).toEqual({ do: 'none' });
