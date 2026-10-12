@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import type { Ctx } from './ctx.js';
 import { DOWNLOAD_PRESETS, type DownloadQuality } from './jellyfin/dto.js';
 import { listLive } from './live.js';
+import { m, type Text } from './i18n.js';
 import { notify } from './notify.js';
 import { previews, serviceUser } from './previews.js';
 import { getProfile, jfUserFor } from './profiles.js';
@@ -361,10 +362,10 @@ class Preparer {
 
   private async notifyReady(user: JfUser, job: JobRow): Promise<void> {
     const { ctx } = this;
-    const name = await ctx.jf.item(user, job.item_id).then((i) => i.name, () => 'Dein Titel');
+    const name = await ctx.jf.item(user, job.item_id).then((i): Text => i.name, (): Text => m('download.yourTitle'));
     const holders = (await ctx.db.query<{ user_id: string }>("select distinct user_id from downloads where job_id = $1 and status = 'pending'", [job.id])).rows;
     for (const h of holders) {
-      await notify(ctx, { userId: h.user_id, kind: 'download_ready', title: 'Download bereit', body: `${name} kann jetzt heruntergeladen werden.`, link: '/downloads', dedupe: `download-ready-${job.id}-${h.user_id}` }).catch(() => false);
+      await notify(ctx, { userId: h.user_id, kind: 'download_ready', title: m('download.ready.title'), body: m('download.ready.body', { title: name }), link: '/downloads', dedupe: `download-ready-${job.id}-${h.user_id}` }).catch(() => false);
     }
   }
 }

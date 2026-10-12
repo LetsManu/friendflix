@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { fmtDateTime, t } from '#lib/i18n';
+  import { fmtDateTime, getLocale, t } from '#lib/i18n';
   import Logo from '#lib/Logo.svelte';
   import { onMount } from 'svelte';
   import { pageStore } from '#lib/page';
@@ -7,7 +7,8 @@
   let info: { roleLabel: string; expiresAt: string; enrollUrl?: string } | null = null, invalid = false;
   const token = $page.params.token!;
   onMount(async () => {
-    const r = await fetch(`/api/invite/${token}`);
+    // ?lang: the account type is named in the language this page shows
+    const r = await fetch(`/api/invite/${token}?lang=${getLocale()}`);
     if (r.ok) info = await r.json(); else invalid = true;
   });
 </script>

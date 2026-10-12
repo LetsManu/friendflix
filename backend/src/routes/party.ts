@@ -7,6 +7,7 @@ import type { Ctx } from '../ctx.js';
 import { clientMsg, PartyRegistry } from '../party.js';
 import { randomToken } from '../crypto.js';
 import { requireUser, authenticate } from '../session.js';
+import { m } from '../i18n.js';
 import { notify } from '../notify.js';
 import type { JfUser } from '../types.js';
 import { itemsByIds } from './discover.js';
@@ -65,7 +66,7 @@ export async function partyRoutes(app: FastifyInstance, ctx: Ctx) {
       // The notification text carries the title, so only invite users whose own Jellyfin account can see the item (fail closed).
       const canSee = (await itemsByIds(ctx, t, [r.itemId]).catch(() => [])).some((i) => i.id === r.itemId);
       if (!canSee) continue;
-      if (await notify(ctx, { userId: t.id, kind: 'party_invite', title: `${req.user!.name} lädt dich zur Watch-Party ein: ${r.title}`, link: `/party/${r.id}`, dedupe: `party-${r.id}-${t.id}`, external: true })) sent++;
+      if (await notify(ctx, { userId: t.id, kind: 'party_invite', title: m('party.invite', { name: req.user!.name, title: r.title }), link: `/party/${r.id}`, dedupe: `party-${r.id}-${t.id}`, external: true })) sent++;
     }
     return { sent };
   });

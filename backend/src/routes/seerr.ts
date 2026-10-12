@@ -3,7 +3,8 @@ import { Readable } from 'node:stream';
 import { z } from 'zod';
 import { audit } from '../audit.js';
 import type { Ctx } from '../ctx.js';
-import { notify } from '../notify.js';
+import { effectiveLanguage, m } from '../i18n.js';
+import { localizeStored, notify } from '../notify.js';
 import { portalStatus, SeerrError } from '../seerr/client.js';
 import { ensureSeerrUser } from '../seerr/service.js';
 import { requireAdmin, requireUser } from '../session.js';
@@ -142,8 +143,8 @@ export function seerrRoutes(app: FastifyInstance, ctx: Ctx) {
       const id = z.coerce.number().int().positive().parse((req.params as { id: string }).id);
       await ctx.seerr[action](id);
       await audit(ctx, req.user!.id, `request.${action}`, String(id));
-      const m = (await ctx.db.query('select user_id, title from seerr_requests where seerr_request_id=$1', [id])).rows[0];
-      if (m) await notify(ctx, { userId: m.user_id, kind: `request_${action}`, title: action === 'approve' ? `Dein Wunsch „${m.title}“ wurde freigegeben` : `Dein Wunsch „${m.title}“ wurde abgelehnt`, link: '/requests', dedupe: `req-${action}-${id}` });
+      const row = (await ctx.db.query('select user_id, title from seerr_requests where seerr_request_id=$1', [id])).rows[0];
+      if (row) await notify(ctx, { userId: row.user_id, kind: `request_${action}`, title: m(action === 'approve' ? 'request.approved' : 'request.declined', { title: row.title }), link: '/requests', dedupe: `req-${action}-${id}` });
       return { ok: true };
     }));
   }
@@ -170,15 +171,17 @@ export function seerrRoutes(app: FastifyInstance, ctx: Ctx) {
         : 'select * from seerr_requests where seerr_request_id = $1',
       type === 'MEDIA_AVAILABLE' ? [rid ?? -1, tmdbId ?? -1, mt ?? ''] : [rid ?? -1],
     )).rows;
-    const title = subject ?? rows[0]?.title ?? 'Titel';
+    const named: string | undefined = subject ?? rows[0]?.title;
+    const title = named ?? m('title.fallback');
+    const dedupeTitle = named ?? 'Titel';
     if (type === 'MEDIA_AVAILABLE') {
-      for (const r of rows) await notify(ctx, { userId: r.user_id, kind: 'available', title: `„${r.title}“ ist jetzt verfügbar`, link: '/requests', dedupe: `avail-${r.seerr_request_id}` });
-      await notify(ctx, { userId: null, kind: 'available_all', title: `Neu verfügbar: ${title}`, link: '/', dedupe: `availall-${mt}-${tmdbId ?? title}`, external: true });
+      for (const r of rows) await notify(ctx, { userId: r.user_id, kind: 'available', title: m('title.available', { title: r.title }), link: '/requests', dedupe: `avail-${r.seerr_request_id}` });
+      await notify(ctx, { userId: null, kind: 'available_all', title: m('title.availableAll', { title }), link: '/', dedupe: `availall-${mt}-${tmdbId ?? dedupeTitle}`, external: true });
       if (tmdbId && mt) await seerrHooks.run(ctx, { type: 'available', tmdbId, mediaType: mt });
     } else if (type === 'MEDIA_PENDING') {
-      await notify(ctx, { userId: null, kind: 'request_pending', title: `Neuer Wunsch wartet auf Freigabe: ${title}`, link: '/admin/requests', dedupe: `pending-${rid ?? title}`, external: true });
+      await notify(ctx, { userId: null, kind: 'request_pending', title: m('request.pending', { title }), link: '/admin/requests', dedupe: `pending-${rid ?? dedupeTitle}`, external: true });
     } else if (type === 'MEDIA_DECLINED' || type === 'MEDIA_APPROVED' || type === 'MEDIA_AUTO_APPROVED') {
-      for (const r of rows) await notify(ctx, { userId: r.user_id, kind: type.toLowerCase(), title: type === 'MEDIA_DECLINED' ? `Wunsch abgelehnt: ${r.title}` : `Wunsch freigegeben: ${r.title}`, link: '/requests', dedupe: `${type}-${r.seerr_request_id}` });
+      for (const r of rows) await notify(ctx, { userId: r.user_id, kind: type.toLowerCase(), title: m(type === 'MEDIA_DECLINED' ? 'request.declinedShort' : 'request.approvedShort', { title: r.title }), link: '/requests', dedupe: `${type}-${r.seerr_request_id}` });
     }
     return { ok: true };
   });
@@ -186,13 +189,14 @@ export function seerrRoutes(app: FastifyInstance, ctx: Ctx) {
   // ---- notifications (in-app) ----
   app.get('/api/notifications', npre, async (req) => {
     const r = await ctx.db.query(
-      `select n.id, n.kind, n.title, n.body, n.link, n.created_at,
+      `select n.id, n.kind, n.title, n.body, n.link, n.created_at, n.msg,
               (case when n.user_id is null then coalesce(n.created_at <= u.notifications_read_at, false) else n.read_at is not null end) as read
          from notifications n, users u
         where u.id = $1 and (n.user_id = $1 or n.user_id is null) order by n.created_at desc limit 30`,
       [req.user!.id],
     );
-    return { notifications: r.rows };
+    const lang = await effectiveLanguage(ctx, req.profile?.id ?? req.user!.id);
+    return { notifications: r.rows.map((row) => localizeStored(row as { title: string; body: string | null; msg: unknown }, lang)) };
   });
   app.post('/api/notifications/read', npre, async (req) => {
     await ctx.db.query('update notifications set read_at = now() where user_id = $1 and read_at is null', [req.user!.id]);

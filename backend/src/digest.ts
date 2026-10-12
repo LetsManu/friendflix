@@ -1,5 +1,6 @@
 import type { Ctx } from './ctx.js';
-import { notify } from './notify.js';
+import { m, userLanguage, type Text } from './i18n.js';
+import { localizeStored, notify } from './notify.js';
 import type { UserRow } from './types.js';
 
 export interface DigestSchedule { enabled: boolean; day: number; hour: number; source: 'config' | 'admin' }
@@ -98,8 +99,8 @@ export async function buildDigest(ctx: Ctx, user: UserRow, since: Date, until: D
   const sorted = [...groups.values()].sort((a, b) => Number(b.followed) - Number(a.followed) || b.count - a.count || a.seriesName.localeCompare(b.seriesName));
   const newEpisodes = sorted.slice(0, MAX_SERIES);
 
-  const avail = (await ctx.db.query<{ title: string; link: string | null }>(
-    "select title, link from notifications where user_id=$1 and kind in ('available','reminder') and created_at >= $2 and created_at <= $3 order by created_at desc limit 20",
+  const avail = (await ctx.db.query<{ title: string; body: string | null; link: string | null; msg: unknown }>(
+    "select title, body, link, msg from notifications where user_id=$1 and kind in ('available','reminder') and created_at >= $2 and created_at <= $3 order by created_at desc limit 20",
     [user.id, since, until],
   )).rows;
 
@@ -127,6 +128,7 @@ export async function buildDigest(ctx: Ctx, user: UserRow, since: Date, until: D
     }
   }
 
+  const lang = await userLanguage(ctx, user.id);
   const data: DigestData = {
     since: since.toISOString(),
     until: until.toISOString(),
@@ -136,43 +138,50 @@ export async function buildDigest(ctx: Ctx, user: UserRow, since: Date, until: D
     newEpisodes,
     newEpisodeCount: eps.length,
     seriesCounts: Object.fromEntries(sorted.map((g) => [g.seriesId, g.count])),
-    available: avail.map((a) => ({ title: a.title, link: a.link, itemId: /^\/item\/([0-9a-f]{32})$/.exec(a.link ?? '')?.[1] ?? null })),
+    available: avail.map((a) => ({ title: localizeStored(a, lang).title, link: a.link, itemId: /^\/item\/([0-9a-f]{32})$/.exec(a.link ?? '')?.[1] ?? null })),
     recommendations,
   };
   if (!data.newMovieCount && !data.newEpisodeCount && !data.available.length && !data.recommendations.length) return null;
   return data;
 }
 
-const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
-
-function headline(d: DigestData): string {
-  const parts = [d.newMovieCount ? plural(d.newMovieCount, 'neuer Film', 'neue Filme') : '', d.newEpisodeCount ? plural(d.newEpisodeCount, 'neue Folge', 'neue Folgen') : ''].filter(Boolean);
-  return `Dein Wochenrückblick${parts.length ? `: ${parts.join(', ')}` : ''}`;
+/** "3 neue Filme, 5 neue Folgen" part of the headline */
+function headline(d: DigestData): Text {
+  const parts: Text[] = [];
+  if (d.newMovieCount) parts.push(m('digest.movies', { n: d.newMovieCount }));
+  if (d.newEpisodeCount) parts.push(m('digest.episodes', { n: d.newEpisodeCount }));
+  return parts.length ? m('digest.titleWith', { parts: { join: parts, sep: ', ' } }) : m('digest.title');
 }
 
-/** In-app text: counts only (titles may be hidden for restricted profiles, so none appear in the inbox). */
-export function digestText(d: DigestData): { title: string; body: string } {
-  const lines: string[] = [];
+const wishesAndRecs = (d: DigestData): Text[] => [
+  ...(d.available.length ? [m('digest.wishes', { n: d.available.length })] : []),
+  ...(d.recommendations.length ? [m('digest.recs', { n: d.recommendations.length })] : []),
+];
+
+/** In-app text: counts only (titles may be hidden for restricted profiles, so none appear in the inbox). Rendered per reader (i18n.ts). */
+export function digestText(d: DigestData): { title: Text; body: Text } {
+  const lines: Text[] = [];
   const nSeries = Object.keys(d.seriesCounts ?? {}).length || d.newEpisodes.length;
   const fol = d.newEpisodes.filter((g) => g.followed).length;
-  if (d.newMovieCount) lines.push(plural(d.newMovieCount, 'neuer Film', 'neue Filme'));
-  if (d.newEpisodeCount) lines.push(`${plural(d.newEpisodeCount, 'neue Folge', 'neue Folgen')} in ${plural(nSeries, 'Serie', 'Serien')}${fol ? `, davon ${fol} von deinen Serien` : ''}`);
-  if (d.available.length) lines.push(`${plural(d.available.length, 'Wunsch ist', 'Wünsche sind')} jetzt verfügbar`);
-  if (d.recommendations.length) lines.push(plural(d.recommendations.length, 'Empfehlung', 'Empfehlungen') + ' von Freunden');
-  return { title: headline(d), body: lines.slice(0, 5).join('\n') };
+  if (d.newMovieCount) lines.push(m('digest.movies', { n: d.newMovieCount }));
+  if (d.newEpisodeCount) {
+    const eps = m('digest.episodesIn', { episodes: m('digest.episodes', { n: d.newEpisodeCount }), series: m('digest.series', { n: nSeries }) });
+    lines.push(fol ? m('digest.ofYours', { text: eps, n: fol }) : eps);
+  }
+  lines.push(...wishesAndRecs(d));
+  return { title: headline(d), body: { join: lines.slice(0, 5) } };
 }
 
 /** Personal ntfy text only (own topic): may name titles. */
-export function digestPushText(d: DigestData): string {
-  const lines: string[] = [];
-  const more = (n: number, shown: number) => (n > shown ? ` und ${n - shown} weitere` : '');
-  if (d.newMovieCount) lines.push(`Filme: ${d.newMovies.slice(0, 3).map((m) => m.name).join(', ')}${more(d.newMovieCount, Math.min(3, d.newMovies.length))}`);
+export function digestPushText(d: DigestData): Text {
+  const lines: Text[] = [];
+  const names = (shown: string[], total: number): Text => (total > shown.length ? m('more', { list: shown.join(', '), n: total - shown.length }) : shown.join(', '));
+  if (d.newMovieCount) lines.push(m('digest.pushMovies', { list: names(d.newMovies.slice(0, 3).map((x) => x.name), d.newMovieCount) }));
   const fol = d.newEpisodes.filter((g) => g.followed);
   const src = fol.length ? fol : d.newEpisodes;
-  if (src.length) lines.push(`${fol.length ? 'Deine Serien' : 'Serien'}: ${src.slice(0, 3).map((g) => `${g.seriesName} (${g.count})`).join(', ')}${more(src.length, Math.min(3, src.length))}`);
-  if (d.available.length) lines.push(`${plural(d.available.length, 'Wunsch ist', 'Wünsche sind')} jetzt verfügbar`);
-  if (d.recommendations.length) lines.push(plural(d.recommendations.length, 'Empfehlung', 'Empfehlungen') + ' von Freunden');
-  return lines.slice(0, 5).join('\n');
+  if (src.length) lines.push(m(fol.length ? 'digest.pushYourSeries' : 'digest.pushSeries', { list: names(src.slice(0, 3).map((g) => `${g.seriesName} (${g.count})`), src.length) }));
+  lines.push(...wishesAndRecs(d));
+  return { join: lines.slice(0, 5) };
 }
 
 export interface DigestWindow { key: string; since: Date; until: Date }

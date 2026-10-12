@@ -6,13 +6,13 @@ import type { Ctx } from '../ctx.js';
 import { COOKIE, loadSession, newSession, rand, requireUser, saveSession } from '../session.js';
 import { revokeCasts } from '../cast.js';
 import { roleAllowsDownloads } from '../downloads.js';
-import { effectiveRole } from '../roles.js';
+import { DEFAULT_ROLES, effectiveRole } from '../roles.js';
 import { deviceHasSession, registerDevice } from '../devices.js';
 import { deletePushSubscriptions } from '../push.js';
 import { claimInvite, deleteAuthentikInvitation, enrollFlowUrl, lookupInvite, releaseInvite, type InviteRow } from '../invites.js';
 import { accountJellyfinIds, listProfiles, publicProfile } from '../profiles.js';
 import { applyRole, getUserBySub, provisionUser } from '../users.js';
-import { FALLBACK_LANGUAGE, instanceLanguage, languageFromAcceptLanguage, profileLanguage } from '../i18n.js';
+import { FALLBACK_LANGUAGE, instanceLanguage, languageFromAcceptLanguage, profileLanguage, roleLabel } from '../i18n.js';
 
 const OIDC_COOKIE = 'ff_oidc';
 /** sign-up incl. MFA setup takes longer than a plain login */
@@ -115,7 +115,8 @@ export function authRoutes(app: FastifyInstance, ctx: Ctx) {
       name: u.name,
       email: u.email,
       role: u.role,
-      roleLabel: ctx.roles[u.role]?.label ?? u.role,
+      /** role name in the UI language (a label customised via ROLES_JSON is shown as configured) */
+      roleLabel: roleLabel(profLang ?? instLang ?? FALLBACK_LANGUAGE, u.role, ctx.roles[u.role]?.label, DEFAULT_ROLES[u.role]?.label),
       isAdmin: u.role === 'admin',
       csrfToken: req.session!.csrf,
       deviceApproved: req.session!.deviceApproved,

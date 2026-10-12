@@ -500,6 +500,10 @@ export const MIGRATIONS: string[] = [
   end $$;
   alter table thumbs add constraint thumbs_value_check check (value in (-1, 1, 2));
   `,
+  // 27: notifications keep their message keys + params (i18n.ts Text) so the inbox renders them in the reader's language
+  `
+  alter table notifications add column msg jsonb;
+  `,
 ];
 
 export async function migrate(pool: pg.Pool): Promise<void> {

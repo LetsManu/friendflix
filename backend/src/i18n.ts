@@ -1,4 +1,6 @@
 import type { Ctx } from './ctx.js';
+import { CATALOGS, type Message, type MsgKey } from './messages.js';
+export type { MsgKey } from './messages.js';
 
 /**
  * UI languages of FriendFlix (codes as used by the web app, see web/src/lib/i18n and docs/i18n.md).
@@ -53,4 +55,93 @@ export function languageFromAcceptLanguage(header: string | string[] | undefined
     return { base: tag.trim().toLowerCase().split('-')[0] ?? '', q: Number.isFinite(weight) ? weight : 0, i };
   }).filter((x) => x.q > 0).sort((a, b) => b.q - a.q || a.i - b.i);
   return tags.map((x) => x.base).find(isLanguage) ?? null;
+}
+
+// ---- user-facing backend texts (notifications, push, ntfy/Discord, digest, labels) ----
+
+/** BCP 47 tags used for number/date formatting (same as the web app's LOCALES). */
+export const LANGUAGE_TAGS: Record<Language, string> = { de: 'de-DE', en: 'en-GB', fr: 'fr-FR', es: 'es-ES', it: 'it-IT', tr: 'tr-TR', pl: 'pl-PL' };
+
+/**
+ * A text that is rendered in the recipient's language. Stored as JSON next to a notification (notifications.msg), so the
+ * inbox can show it in the language of whoever reads it.
+ * - a plain string is shown as is (names, titles, notes written by people)
+ * - `{ key, params }` is a message of backend/src/messages.ts; params may be texts themselves (e.g. an achievement name)
+ * - `{ join, sep }` joins several texts (default separator: newline)
+ * - `{ date }` (only as a param) is an ISO timestamp formatted as date + time
+ */
+export type Text = string | { key: MsgKey; params?: Record<string, Param> } | { join: Text[]; sep?: string };
+export type Param = Text | number | { date: string };
+
+/** Shorthand for a message reference. */
+export const m = (key: MsgKey, params?: Record<string, Param>): Text => (params ? { key, params } : { key });
+
+const pluralCache = new Map<Language, Intl.PluralRules>();
+const numberCache = new Map<Language, Intl.NumberFormat>();
+const dateCache = new Map<Language, Intl.DateTimeFormat>();
+const cached = <T>(map: Map<Language, T>, lang: Language, make: () => T): T => {
+  let v = map.get(lang);
+  if (!v) { v = make(); map.set(lang, v); }
+  return v;
+};
+
+function pick(msg: Message, lang: Language, n: unknown): string {
+  if (typeof msg === 'string') return msg;
+  if (typeof n !== 'number') return msg.other;
+  if (n === 0 && msg.zero !== undefined) return msg.zero;
+  const cat = cached(pluralCache, lang, () => new Intl.PluralRules(LANGUAGE_TAGS[lang])).select(n) as keyof typeof msg;
+  return msg[cat] ?? msg.other;
+}
+
+function renderParam(lang: Language, p: Param): string {
+  if (typeof p === 'number') return cached(numberCache, lang, () => new Intl.NumberFormat(LANGUAGE_TAGS[lang])).format(p);
+  if (p && typeof p === 'object' && 'date' in p) {
+    const d = new Date(p.date);
+    return Number.isNaN(d.getTime()) ? '' : cached(dateCache, lang, () => new Intl.DateTimeFormat(LANGUAGE_TAGS[lang], { dateStyle: 'medium', timeStyle: 'short' })).format(d);
+  }
+  return render(lang, p);
+}
+
+/** Message text of `key` in `lang` (missing → German → the key itself). Plural forms are chosen by the param `n`. */
+export function msg(lang: Language, key: MsgKey | string, params?: Record<string, Param>): string {
+  const cat = (CATALOGS[lang] ?? CATALOGS.de) as Record<string, Message | undefined>;
+  const raw = cat[key] ?? (CATALOGS.de as Record<string, Message | undefined>)[key];
+  if (raw === undefined) return key;
+  const s = pick(raw, lang, params?.n);
+  if (!params) return s;
+  return s.replace(/\{(\w+)\}/g, (all, name: string) => (name in params ? renderParam(lang, params[name]!) : all));
+}
+
+/** Renders a Text in `lang`. Unknown shapes (e.g. corrupted JSON) render as an empty string. */
+export function render(lang: Language, t: Text | null | undefined): string {
+  if (t == null) return '';
+  if (typeof t === 'string') return t;
+  if (typeof t !== 'object') return '';
+  if ('key' in t && typeof t.key === 'string') return msg(lang, t.key, t.params);
+  if ('join' in t && Array.isArray(t.join)) return t.join.map((x) => render(lang, x)).filter(Boolean).join(typeof t.sep === 'string' ? t.sep : '\n');
+  return '';
+}
+
+/** A notice rendered in one language (what ntfy / Discord / Web Push send). */
+export interface Rendered { title: string; body?: string; link?: string; pushBody?: string }
+
+export function renderNotice(n: { title: Text; body?: Text | null; link?: string; pushBody?: Text }, lang: Language): Rendered {
+  const body = n.body == null ? undefined : render(lang, n.body) || undefined;
+  const pushBody = n.pushBody == null ? undefined : render(lang, n.pushBody);
+  return { title: render(lang, n.title), ...(body !== undefined ? { body } : {}), ...(n.link ? { link: n.link } : {}), ...(pushBody !== undefined ? { pushBody } : {}) };
+}
+
+/** true when the text needs the catalog (anything but a plain string). */
+export const isMsg = (t: Text | null | undefined): boolean => t != null && typeof t !== 'string';
+
+/** Language of an account's own messages (inbox, personal ntfy): the owner profile's choice → instance default → German. */
+export const userLanguage = (ctx: Pick<Ctx, 'db'>, userId: string): Promise<Language> => effectiveLanguage(ctx, userId); // owner profile id = user id
+
+/** Language for everyone at once (broadcasts, the global ntfy topic, Discord): instance default → German. */
+export const broadcastLanguage = async (ctx: Pick<Ctx, 'db'>): Promise<Language> => (await instanceLanguage(ctx)) ?? FALLBACK_LANGUAGE;
+
+/** Label of a built-in role in `lang`; a label changed via ROLES_JSON is shown as configured. */
+export function roleLabel(lang: Language, role: string, configured: string | undefined, builtinGerman: string | undefined): string {
+  if (configured && builtinGerman && configured === builtinGerman) return msg(lang, `role.${role}`);
+  return configured ?? role;
 }

@@ -9,13 +9,13 @@ import { checkState, startPlaybackCheck } from '../healthcheck.js';
 import { clipPath, libraryItems, previews, serviceUser } from '../previews.js';
 import { stat } from 'node:fs/promises';
 import { defaultLimit } from '../requestlimit.js';
-import { INVITABLE_ROLES, effectiveRole, invalidateRoles } from '../roles.js';
+import { DEFAULT_ROLES, INVITABLE_ROLES, effectiveRole, invalidateRoles } from '../roles.js';
 import { requireAdmin, requireOwner, requireUser } from '../session.js';
 import { portainerMode, triggerUpdate, updateInfo } from '../updates.js';
 import { MAX_FEATURED } from '../lists.js';
 import { accountJellyfinIds } from '../profiles.js';
 import { applyRole, getUserById, reapplyRole } from '../users.js';
-import { FALLBACK_LANGUAGE, LANGUAGES, instanceLanguage, setInstanceLanguage } from '../i18n.js';
+import { FALLBACK_LANGUAGE, LANGUAGES, instanceLanguage, isLanguage, roleLabel, setInstanceLanguage } from '../i18n.js';
 
 const uuid = z.guid();
 
@@ -302,6 +302,9 @@ export function inviteRoutes(app: FastifyInstance, ctx: Ctx) {
     if (!inv) return reply.code(404).send({ error: 'invalid_or_expired' });
     // Relative portal URL: /auth/enroll starts the OIDC login and hands over to the Authentik enrollment flow.
     const enroll = Boolean(inv.authentik_invite && ctx.cfg.AUTHENTIK_URL && ctx.cfg.AUTHENTIK_ENROLL_FLOW);
-    return { role: inv.role, roleLabel: ctx.roles[inv.role]?.label ?? inv.role, expiresAt: inv.expires_at, enrollUrl: enroll ? `/auth/enroll?invite=${encodeURIComponent(token)}` : undefined };
+    // anonymous page: the language the page shows (?lang=, from the browser's stored UI language) → instance default → German
+    const q = (req.query as { lang?: unknown } | undefined)?.lang;
+    const lang = isLanguage(q) ? q : (await instanceLanguage(ctx)) ?? FALLBACK_LANGUAGE;
+    return { role: inv.role, roleLabel: roleLabel(lang, inv.role, ctx.roles[inv.role]?.label, DEFAULT_ROLES[inv.role]?.label), expiresAt: inv.expires_at, enrollUrl: enroll ? `/auth/enroll?invite=${encodeURIComponent(token)}` : undefined };
   });
 }

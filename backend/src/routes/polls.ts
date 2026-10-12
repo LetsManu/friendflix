@@ -5,6 +5,7 @@ import { bus } from '../bus.js';
 import type { Ctx } from '../ctx.js';
 import { seerrHooks } from '../hooks.js';
 import { approvePoll, createPoll, InvalidOptions, pollTick, resolveRequestedPolls } from '../polls.js';
+import { m } from '../i18n.js';
 import { notify } from '../notify.js';
 import { JellyfinError } from '../jellyfin/client.js';
 import { SeerrError } from '../seerr/client.js';
@@ -183,7 +184,7 @@ export async function calendarNotifications(ctx: Ctx) {
     const up = await ctx.jf.upcoming(u).catch(() => []);
     for (const e of up) {
       if (!e.seriesId || !follows.has(e.seriesId) || dropped.has(e.seriesId) || !e.premiereDate || new Date(e.premiereDate).getTime() > Date.now()) continue;
-      await notify(ctx, { userId: u.id, kind: 'episode', title: `Neue Folge: ${e.seriesName} S${e.parentIndexNumber}E${e.indexNumber}`, body: e.name, link: `/watch/${e.id}`, dedupe: `cal-${u.id}-${e.id}` });
+      await notify(ctx, { userId: u.id, kind: 'episode', title: m('episode.newCode', { series: e.seriesName ?? '', season: String(e.parentIndexNumber), episode: String(e.indexNumber) }), body: e.name, link: `/watch/${e.id}`, dedupe: `cal-${u.id}-${e.id}` });
     }
   }
 }

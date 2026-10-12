@@ -3,6 +3,7 @@ import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import { z } from 'zod';
 import { audit } from '../audit.js';
 import type { Ctx } from '../ctx.js';
+import { m, msg, userLanguage } from '../i18n.js';
 import { notify } from '../notify.js';
 import { COOKIE, newSession, rand, requireUser, saveSession, authenticate } from '../session.js';
 
@@ -92,13 +93,13 @@ export function tvRoutes(app: FastifyInstance, ctx: Ctx) {
     const user = (await ctx.db.query<{ id: string; disabled: boolean }>('select id, disabled from users where id=$1', [rec.userId])).rows[0];
     if (!user || user.disabled) return reply.code(403).send({ error: 'forbidden' });
     const deviceId = `tv-${randomBytes(18).toString('base64url')}`;
-    await ctx.db.query('insert into devices(user_id, device_id, label, approved) values ($1,$2,$3,true)', [user.id, deviceId, 'Fernseher (TV-Modus)']);
+    await ctx.db.query('insert into devices(user_id, device_id, label, approved) values ($1,$2,$3,true)', [user.id, deviceId, msg(await userLanguage(ctx, user.id), 'device.tv')]);
     const sid = rand();
     await saveSession(ctx, sid, newSession({ userId: user.id, csrf: rand(), deviceId, deviceApproved: true, ttl: TV_SESSION_SECONDS, idle: TV_IDLE_SECONDS }));
     reply.setCookie(COOKIE, sid, { httpOnly: true, secure, sameSite: 'lax', path: '/', maxAge: TV_SESSION_SECONDS });
     await audit(ctx, user.id, 'tv.claim', user.id, { deviceId });
     // somebody could have talked the user into confirming a stranger's code: make a new TV visible and easy to revoke
-    await notify(ctx, { userId: user.id, kind: 'tv_paired', title: 'Ein Fernseher wurde mit deinem Konto verbunden', body: 'Warst du das nicht? Sperre das Gerät unter „Geräte“.', link: '/devices' });
+    await notify(ctx, { userId: user.id, kind: 'tv_paired', title: m('tv.paired.title'), body: m('tv.paired.body'), link: '/devices' });
     return { status: 'ok' };
   });
 

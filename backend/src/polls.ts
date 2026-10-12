@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { audit } from './audit.js';
 import { randomToken } from './crypto.js';
 import type { Ctx } from './ctx.js';
+import { m } from './i18n.js';
 import { notify } from './notify.js';
 import { parties } from './routes/party.js';
 import { ensureSeerrUser } from './seerr/service.js';
@@ -47,7 +48,7 @@ export async function createPoll(ctx: Ctx, creatorId: string, input: { title: st
     [id, input.title, creatorId, closes, starts, resolved.map((r) => r.jf ?? null), resolved.map((r) => r.tmdb ?? null), resolved.map((r) => r.type ?? null), resolved.map((r) => r.title), resolved.map((r) => r.poster ?? null)],
   );
   await audit(ctx, creatorId, 'poll.create', id, { title: input.title });
-  await notify(ctx, { userId: null, kind: 'poll_open', title: `Filmabend-Abstimmung: ${input.title}`, link: `/vote`, dedupe: `poll-open-${id}`, external: true });
+  await notify(ctx, { userId: null, kind: 'poll_open', title: m('poll.open', { title: input.title }), link: `/vote`, dedupe: `poll-open-${id}`, external: true });
   return id;
 }
 
@@ -74,7 +75,7 @@ export async function closeDuePolls(ctx: Ctx) {
     )).rows[0];
     if (!win || Number(win.votes) === 0) {
       if (!(await ctx.db.query("update polls set status='cancelled' where id=$1 and status='open' returning id", [p.id])).rowCount) continue;
-      await notify(ctx, { userId: null, kind: 'poll_cancelled', title: `Abstimmung ohne Stimmen beendet: ${p.title}`, dedupe: `poll-cancel-${p.id}` });
+      await notify(ctx, { userId: null, kind: 'poll_cancelled', title: m('poll.cancelled', { title: p.title }), dedupe: `poll-cancel-${p.id}` });
       continue;
     }
     if (win.jf_item_id) {
@@ -82,12 +83,12 @@ export async function closeDuePolls(ctx: Ctx) {
       const claimed = await ctx.db.query("update polls set status='scheduled', winner_option_id=$1, room_id=$2 where id=$3 and status='open' returning id", [win.id, room, p.id]);
       if (!claimed.rowCount) continue;
       schedule(ctx, p.id, win.title, win.jf_item_id, p.created_by, p.starts_at, room);
-      await notify(ctx, { userId: null, kind: 'poll_scheduled', title: `Filmabend steht fest: ${win.title}`, body: `Start ${new Date(p.starts_at).toLocaleString('de-DE')}`, link: `/party/${room}`, dedupe: `poll-sched-${p.id}`, external: true });
+      await notify(ctx, { userId: null, kind: 'poll_scheduled', title: m('poll.scheduled', { title: win.title }), body: m('poll.start', { when: { date: new Date(p.starts_at).toISOString() } }), link: `/party/${room}`, dedupe: `poll-sched-${p.id}`, external: true });
     } else {
       const claimed = await ctx.db.query("update polls set status='needs_approval', winner_option_id=$1 where id=$2 and status='open' returning id", [win.id, p.id]);
       if (!claimed.rowCount) continue;
       for (const a of await adminIds(ctx)) {
-        await notify(ctx, { userId: a, kind: 'poll_needs_approval', title: `Freigabe nötig: „${win.title}“ hat die Abstimmung gewonnen`, link: '/admin/polls', dedupe: `poll-appr-${p.id}-${a}`, external: true });
+        await notify(ctx, { userId: a, kind: 'poll_needs_approval', title: m('poll.needsApproval', { title: win.title }), link: '/admin/polls', dedupe: `poll-appr-${p.id}-${a}`, external: true });
       }
     }
   }
@@ -118,7 +119,7 @@ export async function approvePoll(ctx: Ctx, pollId: string, adminId: string, app
   await ctx.seerr.approve(created.id).catch(() => undefined); // admin approval of the poll = approval of the request
   await ctx.db.query('update polls set seerr_request_id=$1 where id=$2', [created.id, pollId]);
   await audit(ctx, adminId, 'poll.approve', pollId, { seerrRequest: created.id });
-  await notify(ctx, { userId: null, kind: 'poll_requested', title: `„${opt.title}“ wurde angefragt – Filmabend startet, sobald es verfügbar ist`, link: '/vote', dedupe: `poll-req-${pollId}`, external: true });
+  await notify(ctx, { userId: null, kind: 'poll_requested', title: m('poll.requested', { title: opt.title }), link: '/vote', dedupe: `poll-req-${pollId}`, external: true });
   return true;
 }
 
@@ -134,7 +135,7 @@ export async function resolveRequestedPolls(ctx: Ctx) {
     const claimed = await ctx.db.query("update polls set status='scheduled', room_id=$1, starts_at=$2 where id=$3 and status='requested' returning id", [room, startsAt, p.id]);
     if (!claimed.rowCount) continue;
     schedule(ctx, p.id, p.otitle, found.id, p.created_by, startsAt, room);
-    await notify(ctx, { userId: null, kind: 'poll_scheduled', title: `Filmabend steht fest: ${p.otitle}`, body: `Start ${startsAt.toLocaleString('de-DE')}`, link: `/party/${room}`, dedupe: `poll-sched-${p.id}`, external: true });
+    await notify(ctx, { userId: null, kind: 'poll_scheduled', title: m('poll.scheduled', { title: p.otitle }), body: m('poll.start', { when: { date: startsAt.toISOString() } }), link: `/party/${room}`, dedupe: `poll-sched-${p.id}`, external: true });
   }
 }
 

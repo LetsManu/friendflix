@@ -1,6 +1,8 @@
 import { bus } from './bus.js';
 import type { Ctx } from './ctx.js';
 import { playbackHooks, seerrHooks } from './hooks.js';
+import { m, type MsgKey, type Text } from './i18n.js';
+import { CATALOGS } from './messages.js';
 import { notify } from './notify.js';
 
 interface Def {
@@ -29,12 +31,18 @@ export const DEFS: Def[] = [
   { key: 'night_owl', icon: 'calendar', title: 'Nachteule', desc: 'Zwischen 1 und 4 Uhr nachts geschaut', check: async () => false },
 ];
 
+/** Achievement name/description as a message (built-in keys) or the plain German text (unknown keys). */
+const achText = (d: Def, part: 'title' | 'desc'): Text => {
+  const key = `ach.${d.key}.${part}`;
+  return key in CATALOGS.de ? m(key as MsgKey) : d[part];
+};
+
 export async function grant(ctx: Ctx, userId: string, key: string): Promise<boolean> {
   const d = DEFS.find((x) => x.key === key);
   if (!d) return false;
   const r = await ctx.db.query('insert into achievements(user_id,key) values ($1,$2) on conflict do nothing returning key', [userId, key]);
   if (!r.rowCount) return false;
-  await notify(ctx, { userId, kind: 'achievement', title: `Achievement freigeschaltet: ${d.title}`, body: d.desc, link: '/stats', dedupe: `ach-${userId}-${key}` });
+  await notify(ctx, { userId, kind: 'achievement', title: m('achievement.unlocked', { name: achText(d, 'title') }), body: achText(d, 'desc'), link: '/stats', dedupe: `ach-${userId}-${key}` });
   return true;
 }
 

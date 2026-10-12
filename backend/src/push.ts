@@ -1,5 +1,6 @@
 import webpush from 'web-push';
 import type { Ctx } from './ctx.js';
+import { broadcastLanguage, isLanguage, msg, renderNotice, type Language } from './i18n.js';
 import type { Notice } from './notify.js';
 
 type PushCtx = Pick<Ctx, 'db' | 'cfg' | 'fetchImpl'>;
@@ -40,25 +41,32 @@ export interface PushPayload { title: string; body: string; link?: string; tag: 
 
 const SAFE_LINK = /^\/(?!\/)[^\s\\]{0,300}$/;
 
-export function buildPayload(n: Pick<Notice, 'kind' | 'title' | 'body' | 'link' | 'pushBody'>, isOwner: boolean): PushPayload {
-  if (!isOwner) return { title: 'FriendFlix', body: 'Neue Benachrichtigung', link: '/', tag: n.kind, ts: Date.now() };
-  const p: PushPayload = { title: n.title.slice(0, 120), body: (n.pushBody ?? n.body ?? '').slice(0, 300), tag: n.kind, ts: Date.now() };
+/** Payload in `lang` (the subscribing profile's language). Non-owner profiles only get a neutral text (the lock screen is shared). */
+export function buildPayload(n: Pick<Notice, 'kind' | 'title' | 'body' | 'link' | 'pushBody'>, isOwner: boolean, lang: Language = 'de'): PushPayload {
+  if (!isOwner) return { title: 'FriendFlix', body: msg(lang, 'push.generic'), link: '/', tag: n.kind, ts: Date.now() };
+  const r = renderNotice(n, lang);
+  const p: PushPayload = { title: r.title.slice(0, 120), body: (r.pushBody ?? r.body ?? '').slice(0, 300), tag: n.kind, ts: Date.now() };
   if (n.link && SAFE_LINK.test(n.link)) p.link = n.link;
   return p;
 }
 
-interface SubRow { id: string; endpoint: string; p256dh: string; auth: string; is_owner: boolean; fail_count: number }
+interface SubRow { id: string; endpoint: string; p256dh: string; auth: string; is_owner: boolean; fail_count: number; lang: string | null }
+const SUB_COLS = "s.id, s.endpoint, s.p256dh, s.auth, s.fail_count, p.is_owner, pp.data->>'language' as lang";
+const SUB_FROM = 'push_subscriptions s join profiles p on p.id = s.profile_id left join profile_prefs pp on pp.profile_id = s.profile_id';
 
 /** Sends a notice to the matching subscriptions (user's own; or all broadcast=true ones when userId is null). Awaitable; never throws. */
 export async function sendWebPush(ctx: PushCtx, n: Notice, only?: { endpoint: string }): Promise<Array<number | null>> {
   if (!pushEnabled(ctx.cfg)) return [];
   const vapidDetails = { subject: ctx.cfg.VAPID_SUBJECT ?? ctx.cfg.PUBLIC_URL, publicKey: ctx.cfg.VAPID_PUBLIC_KEY!, privateKey: ctx.cfg.VAPID_PRIVATE_KEY! };
   const rows = only && n.userId
-    ? await ctx.db.query<SubRow>('select s.id, s.endpoint, s.p256dh, s.auth, s.fail_count, p.is_owner from push_subscriptions s join profiles p on p.id = s.profile_id where s.user_id = $1 and s.endpoint = $2', [n.userId, only.endpoint])
+    ? await ctx.db.query<SubRow>(`select ${SUB_COLS} from ${SUB_FROM} where s.user_id = $1 and s.endpoint = $2`, [n.userId, only.endpoint])
     : n.userId
-    ? await ctx.db.query<SubRow>('select s.id, s.endpoint, s.p256dh, s.auth, s.fail_count, p.is_owner from push_subscriptions s join profiles p on p.id = s.profile_id where s.user_id = $1', [n.userId])
-    : await ctx.db.query<SubRow>('select s.id, s.endpoint, s.p256dh, s.auth, s.fail_count, p.is_owner from push_subscriptions s join profiles p on p.id = s.profile_id where s.broadcast', []);
-  const out = await Promise.allSettled(rows.rows.map((s) => deliver(ctx, s, JSON.stringify(buildPayload(n, s.is_owner)), vapidDetails, n.userId ? 'high' : 'normal')));
+    ? await ctx.db.query<SubRow>(`select ${SUB_COLS} from ${SUB_FROM} where s.user_id = $1`, [n.userId])
+    : await ctx.db.query<SubRow>(`select ${SUB_COLS} from ${SUB_FROM} where s.broadcast`, []);
+  if (!rows.rows.length) return [];
+  // each subscription in its profile's language; profiles without a choice get the instance default
+  const fallback = await broadcastLanguage(ctx);
+  const out = await Promise.allSettled(rows.rows.map((s) => deliver(ctx, s, JSON.stringify(buildPayload(n, s.is_owner, isLanguage(s.lang) ? s.lang : fallback)), vapidDetails, n.userId ? 'high' : 'normal')));
   return out.map((o) => (o.status === 'fulfilled' ? o.value : null));
 }
 

@@ -6,7 +6,8 @@ import { version } from '$app/env';
 const sw = self as unknown as ServiceWorkerGlobalScope;
 const CACHE = `ff-${version}`;
 
-import { basePrecache, shellUrls } from './precache';
+import { basePrecache, LOCALE_MANIFEST, localeUrls, shellUrls } from './precache';
+import { META_CACHE, offlineLocale } from '#lib/sw/locale';
 
 // Never HTML besides the prerendered /offline hub (the app shell is always fetched fresh).
 const abs = (p: string) => (p.startsWith('/') ? p : `/${p}`);
@@ -25,6 +26,17 @@ async function precache() {
   if (!page) return;
   const shell = shellUrls(await page.text()).filter((u) => ASSETS.has(u));
   await c.addAll(shell);
+  await precacheLocale(c).catch(() => undefined); // best effort: never fails the install
+}
+
+/** The chunks of the language the page last used (German is in the shell already), so /offline renders in it without network. */
+async function precacheLocale(c: Cache) {
+  const lang = await offlineLocale();
+  if (!lang || lang === 'de') return;
+  const res = await fetch(LOCALE_MANIFEST, { cache: 'no-cache' });
+  if (!res.ok) return;
+  const urls = localeUrls(await res.json(), lang, ASSETS);
+  if (urls.length) await c.addAll(urls);
 }
 
 sw.addEventListener('install', (event) => {
@@ -34,7 +46,7 @@ sw.addEventListener('install', (event) => {
 sw.addEventListener('activate', (event) => {
   event.waitUntil(
     caches.keys()
-      .then((keys) => Promise.all(keys.filter((k) => k.startsWith('ff-') && k !== CACHE).map((k) => caches.delete(k))))
+      .then((keys) => Promise.all(keys.filter((k) => k.startsWith('ff-') && k !== CACHE && k !== META_CACHE).map((k) => caches.delete(k))))
       .then(() => sw.clients.claim())
   );
 });

@@ -1,10 +1,22 @@
 import adapter from '@sveltejs/adapter-node';
 import { sveltekit } from '@sveltejs/kit/vite';
 import { vitePreprocess } from '@sveltejs/vite-plugin-svelte';
-import { defineConfig } from 'vite';
+import { defineConfig, type Plugin } from 'vite';
+import { localeManifest } from './src/service-worker/precache.ts';
+
+/** Writes /_app/locales.json (language → its chunk files) for the service worker's offline language precache. */
+const localeChunks = (): Plugin => ({
+  name: 'ff-locale-manifest',
+  apply: 'build',
+  generateBundle(_opts, bundle) {
+    const m = localeManifest(bundle as unknown as Parameters<typeof localeManifest>[0]);
+    if (m) this.emitFile({ type: 'asset', fileName: '_app/locales.json', source: JSON.stringify(m) });
+  },
+});
 
 export default defineConfig({
   plugins: [
+    localeChunks(),
     sveltekit({
       preprocess: vitePreprocess(),
       adapter: adapter(),

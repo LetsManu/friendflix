@@ -9,6 +9,7 @@
  */
 import { derived, writable, type Readable } from 'svelte/store';
 import de from './locales/de/index';
+import { rememberOfflineLocale } from '../sw/locale';
 import type { KeysOf, Message, PluralForms, TParams, Translation } from './types';
 
 export type { PluralForms, TParams, Translation } from './types';
@@ -104,6 +105,7 @@ export async function setLocale(code: string | null | undefined): Promise<Locale
   loadingStore.set(false);
   if (typeof document !== 'undefined') document.documentElement.lang = l;
   try { localStorage.setItem(LOCALE_KEY, l); } catch { /* private mode */ }
+  void rememberOfflineLocale(l); // the service worker precaches this language for /offline on its next install
   return l;
 }
 

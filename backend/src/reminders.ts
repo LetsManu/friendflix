@@ -1,4 +1,5 @@
 import type { Ctx } from './ctx.js';
+import { m } from './i18n.js';
 import { notify } from './notify.js';
 import type { JfUser, UserRow } from './types.js';
 
@@ -70,7 +71,7 @@ export async function fireTmdb(ctx: Db & Pick<Ctx, 'jf'>, mediaType: string, tmd
         where s.user_id = $1 and s.tmdb_id = $2 and s.media_type = $3`, [r.user_id, tmdbId, mediaType]);
     if (req.rowCount) continue;
     const ok = await notify(ctx, {
-      userId: r.user_id, kind: 'reminder', title: `„${r.title}“ ist jetzt verfügbar`, link: itemId ? `/item/${itemId}` : '/',
+      userId: r.user_id, kind: 'reminder', title: m('title.available', { title: r.title }), link: itemId ? `/item/${itemId}` : '/',
       dedupe: `remind-${r.id}`, personal: true,
     });
     if (ok) sent++;
@@ -81,7 +82,7 @@ export async function fireTmdb(ctx: Db & Pick<Ctx, 'jf'>, mediaType: string, tmd
 async function fireEpisodeRow(ctx: Db, r: ReminderRow, realId: string): Promise<boolean> {
   if (!(await claim(ctx, r.id))) return false;
   // same key as the follow job (calendarNotifications, keyed on the real episode id): followers get exactly one notification
-  return notify(ctx, { userId: r.user_id, kind: 'episode', title: `Neue Folge: ${r.title}`, link: `/watch/${realId}`, dedupe: `cal-${r.user_id}-${realId}`, personal: true });
+  return notify(ctx, { userId: r.user_id, kind: 'episode', title: m('episode.new', { title: r.title }), link: `/watch/${realId}`, dedupe: `cal-${r.user_id}-${realId}`, personal: true });
 }
 
 /** Jellyfin webhook ItemAdded for an episode: fires the reminders of every user waiting for it (by id, or series + season + number). */
