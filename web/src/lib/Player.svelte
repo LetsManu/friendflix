@@ -637,7 +637,9 @@
     if (native) e.stopPropagation();
   };
   $: if (help || error) tickDom().then(() => stage?.querySelector<HTMLElement>('.help [data-autofocus], .errbox [data-autofocus]')?.focus());
-  $: if (menu && typeof document !== 'undefined' && tvMode()) tickDom().then(() => stage?.querySelector<HTMLElement>('.menu .mi')?.focus());
+  $: if (menu && typeof document !== 'undefined' && tvMode()) tickDom().then(() => stage?.querySelector<HTMLElement>('.menu .mi.on, .menu .mi')?.focus());
+  // long lists scroll inside the menu: open each column at the current choice, not at the top
+  $: if (menu && typeof document !== 'undefined') tickDom().then(() => stage?.querySelectorAll<HTMLElement>('.menu .mi.on').forEach((el) => el.scrollIntoView?.({ block: 'nearest' })));
 
   // ---- mouse: click = play/pause (deferred to tell a double click = fullscreen); touch is handled by the pointer gestures below ----
   let lastTap = 0, lastTouch = 0;
@@ -1114,6 +1116,12 @@
   .menu { position: absolute; right: 0; bottom: 64px; background: rgba(16,20,24,.97); border: 1px solid #323a43; border-radius: 6px; padding: .6rem .3rem; min-width: 190px; box-shadow: 0 12px 30px #000; z-index: 20; }
   .menu.tracks { display: flex; gap: 1rem; padding: .8rem; min-width: 360px; max-width: min(94vw, 720px); }
   .menu.tracks > div { flex: 1; min-width: 118px; }
+  /* long track lists (many audio / subtitle languages) never grow past the top of the window: the menu is capped to the
+     space above the control bar and each column scrolls on its own, its heading staying in view */
+  .menu:not(.bare) { max-height: calc(100dvh - var(--menu-gap, 10rem)); overflow-y: auto; overscroll-behavior: contain; }
+  .menu.tracks { overflow: hidden; }
+  .menu.tracks > div { max-height: calc(100dvh - var(--menu-gap, 10rem) - 1.6rem); overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; }
+  .menu.tracks h3 { position: sticky; top: 0; z-index: 1; background: rgba(16,20,24,.97); padding: .2rem 0; }
   .mi { white-space: nowrap; }
   .menu h3 { font-size: 1rem; margin: 0 .6rem .4rem; }
   .mi { display: flex; width: 100%; justify-content: flex-start; align-items: center; gap: .5rem; background: transparent; color: #d2d2d2; font-weight: 400; padding: .35rem .6rem; min-height: 44px; text-align: left; border-radius: 4px; }
@@ -1132,6 +1140,7 @@
     .row { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 0; }
     .grp { gap: 0; }
     .menu.tracks { flex-direction: column; }
+    .menu.tracks > div { max-height: none; overflow: visible; }
     .ic { width: 44px; min-height: 44px; }
     .bigplay { width: 76px; height: 76px; }
     /* phones: panels sit above the control bar across the full width instead of hanging off a button */
