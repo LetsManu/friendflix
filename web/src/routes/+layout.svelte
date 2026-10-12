@@ -9,7 +9,7 @@
   import Logo from '#lib/Logo.svelte';
   import Footer from '#lib/Footer.svelte';
   import { avatarBg, initial } from '#lib/avatars';
-  import { loadList, loadPrefs } from '#lib/stores';
+  import { cachedCalm, loadList, loadPrefs, prefs } from '#lib/stores';
   import { kidsMode } from '#lib/kids';
   import type ItemModalType from '#lib/ItemModal.svelte';
   import { loadModal, prefetchModal } from '#lib/lazy';
@@ -28,7 +28,7 @@
   import { canRenderEarly, clearReloadFlag, earlyProfile, gateHref, hintOf, kidsRedirect, needsProfileGate, needsWelcome, readActive, readHint, readPicked, readReloading, welcomeHref, writeActive, writeHint } from '#lib/gate';
   import MobilePreviewSheet from '#lib/MobilePreviewSheet.svelte';
   import { closePreview, previewSheet } from '#lib/previewSheet';
-  import { isLocale, pageEpoch, pickLocale, ready, setLocale, t, type Locale } from '#lib/i18n';
+  import { isLocale, locale, pageEpoch, pickLocale, ready, setLocale, t, type Locale } from '#lib/i18n';
   import Rich from '#lib/i18n/Rich.svelte';
   import LanguageGate from '#lib/LanguageGate.svelte';
   import { saveLanguage } from '#lib/stores';
@@ -103,6 +103,8 @@
     document.documentElement.classList.toggle('m-chips', chips && !watchPage && !profilesPage);
     document.documentElement.style.overflow = catOpen ? 'hidden' : ($previewSheet ? 'hidden' : ''); // no page scroll behind the overlay / sheet
   }
+  // the web app manifest (name, shortcuts) follows the UI language
+  $: if (typeof document !== 'undefined') document.querySelector('link[rel="manifest"]')?.setAttribute('href', `/manifest.webmanifest?lang=${$locale}`);
   $: if (!$mobile) { catOpen = false; closePreview(); }
   $: if ($mobile) cats = false;
   $: if (!publicPage) document.documentElement.classList.toggle('tv', tv);
@@ -249,10 +251,13 @@
   });
 
   /** First load in this browser session: the brand intro without sound (no user gesture yet). Honours the per-profile setting. */
+  // no copy yet (first visit on this device) and the loaded prefs say calm: stop the running intro at once
+  $: if (intro && $prefs.calm) intro = false;
   function maybeColdIntro(profileId: string | undefined) {
     if (location.pathname === '/profiles') return;
     const s = loadIntroSettings(profileId);
-    const ok = shouldPlayIntro({ setting: s.show, reducedMotion: matchMedia('(prefers-reduced-motion: reduce)').matches, route: location.pathname, sessionSeen: readSessionSeen(), tv, cold: true });
+    // calm mode: the server prefs arrive later, so the fast-start copy of this profile's flag decides (see cachedCalm)
+    const ok = shouldPlayIntro({ setting: s.show, reducedMotion: matchMedia('(prefers-reduced-motion: reduce)').matches, route: location.pathname, sessionSeen: readSessionSeen(), tv, cold: true, calm: cachedCalm(profileId) });
     if (ok) { markSessionSeen(); intro = true; }
   }
 
