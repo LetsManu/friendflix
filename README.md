@@ -17,7 +17,7 @@
 
 <p align="center"><img src="docs/images/en/hero.jpg" alt="FriendFlix home page with a large billboard and rows of titles" width="900"></p>
 
-FriendFlix is a private streaming portal that sits in front of **Jellyfin** (your media) and **Seerr** (wishes and requests). Your friends get a polished, familiar streaming experience on their laptop, phone and TV – with profiles, downloads, watch parties and recommendations from each other. They never see Jellyfin or Seerr directly, and you stay in control of who gets in.
+FriendFlix is a private streaming portal that sits in front of **Jellyfin** (your media) and an optional request service. Your friends get a polished, familiar streaming experience on their laptop, phone and TV – with profiles, downloads, watch parties and recommendations from each other. They never see Jellyfin or the request service directly, and you stay in control of who gets in.
 
 > All titles and artwork in these screenshots are invented and generated for the demo.
 
@@ -96,7 +96,7 @@ The interface speaks **English, German, French, Spanish, Italian, Turkish and Po
 | **Offline downloads** | Per-device licences with expiry; works in Chrome, Edge, Firefox, Safari 17+ and as a home-screen app on iOS 17+. |
 | **Watch together** | Watch parties with synchronised playback, chat and live emoji reactions that float over the picture for everyone in the party. **Movie-night voting** with countdown and automatic start. "What has none of us seen yet?" – the group matcher finds titles for everyone. "Tonight" suggests three titles by mood and time. |
 | **Recommendations** | Recommend titles to friends, see what friends rated and watched this week, "Because you watched …", shared lists with editors and readers, curated rows from the admin. |
-| **Wishes** | Missing something? Request it right from the search (via Seerr) and get notified when it arrives – with a monthly limit per role. "Remind me" for upcoming titles. |
+| **Wishes** | Missing something? Wish for it right from the search and get notified when it arrives – with a monthly limit per role. "Remind me" for upcoming titles. |
 | **Stay in the loop** | Notifications in the app, as web push on every device, via ntfy or Discord, and an optional weekly digest. |
 | **The fun extras** | Reactions and short reviews (visible only after you watched it), ratings, stats, achievements and a shareable "Wrapped" card of your viewing stats. |
 | **Seven languages** | English, German, French, Spanish, Italian, Turkish, Polish – per profile. |
@@ -105,7 +105,7 @@ The interface speaks **English, German, French, Spanish, Italian, Turkish and Po
 
 - **Self-hosted.** Everything runs on your own server. FriendFlix has no ads and no third-party analytics.
 - **Invite only.** New people join with one-time invitation links. Sign-in goes through your Authentik with **mandatory multi-factor authentication**, and new devices can require approval.
-- **Jellyfin and Seerr stay hidden.** Friends only ever talk to the portal. Media tokens stay on the server; video is streamed through a gateway that checks every request.
+- **Jellyfin and the request service stay hidden.** Friends only ever talk to the portal. Media tokens stay on the server; video is streamed through a gateway that checks every request.
 - **You decide what friends see.** "Share history" (off by default) and "Share ratings" are switched in each person's settings; "Popular this week" only shows counts, never who watched. Reactions to a title only appear once you have watched it, and optional spoiler protection hides thumbnails and descriptions of unwatched episodes.
 - **Trailers without tracking.** Trailers for titles that are not in the library play in the privacy-friendly `youtube-nocookie.com` player and only load after a click.
 - **Error reports stay with you.** If the app crashes in someone's browser, a scrubbed error message (no query strings, tokens or e-mail addresses) is written to *your* server's log – and goes nowhere else.
@@ -122,7 +122,7 @@ Everything below is technical. The detailed operating docs are in German (see [D
 ### Requirements
 
 - A Linux server with **Docker** and **Docker Compose**.
-- **Jellyfin** (your library) and **Seerr** (requests) – either already running or started with the bundled profile.
+- **Jellyfin** (your library) and, optionally, a request service (wishes) – either already running or started with the bundled profile.
 - **Authentik** as the login provider (OIDC with PKCE; enforce MFA there).
 - A reverse proxy with TLS, e.g. **Nginx Proxy Manager**, with one proxy host for the portal.
 - Optional: ntfy, a Discord webhook, Portainer (one-click updates).
@@ -138,7 +138,7 @@ openssl rand -base64 32    # -> APP_ENC_KEY
 openssl rand -hex 24       # -> INTERNAL_SECRET, WEBHOOK_SECRET, METRICS_TOKEN (one value each)
 $EDITOR .env               # PUBLIC_URL, passwords, OIDC_*, JELLYFIN_*, SEERR_*
 docker login ghcr.io -u <user>                                 # only if the packages are private (PAT with read:packages)
-docker compose -f compose.prod.yaml up -d                      # add --profile bundled to also start Jellyfin + Seerr
+docker compose -f compose.prod.yaml up -d                      # add --profile bundled to also start Jellyfin + the request service
 docker compose -f compose.prod.yaml --profile backup up -d backup   # optional: nightly database backups
 docker compose -f compose.prod.yaml ps                         # everything "healthy"
 ```
@@ -148,11 +148,11 @@ Then:
 1. **Authentik:** create the OIDC provider (redirect URI `${PUBLIC_URL}/auth/callback`) and enforce MFA – [docs/authentik.md](docs/authentik.md).
 2. **Nginx Proxy Manager:** one proxy host `portal.<domain>` → `127.0.0.1:3080`, WebSockets on, Force SSL/HTTP2/HSTS; paste [deploy/npm/portal.advanced.conf](deploy/npm/portal.advanced.conf) into the *Advanced* tab (routes `/api`, `/auth`, `/ws` to `:3081` and `/media/` to `:3082`). Keep its `/media/c/` block: it stops cast tokens from being logged.
 3. **Jellyfin:** create an admin API key. Optional webhook plugin for instant "now playing" and "new in library" events – [docs/integrations.md](docs/integrations.md).
-4. **Seerr:** API key and webhook – [docs/integrations.md](docs/integrations.md).
+4. **Requests (optional):** API key and webhook – [docs/integrations.md](docs/integrations.md).
 5. **Web push (optional):** `node scripts/gen-vapid.mjs`, put both keys into `.env`, restart.
 6. **First login** with a member of the Authentik group `friendflix-admins`: you become the portal admin, choose the instance language, and invite your friends under *Admin → Invitations*.
 
-If Jellyfin/Seerr already run in their own stack: `docker network connect friendflix_media <container>`, remove their public ports and set `JELLYFIN_URL`/`SEERR_URL`.
+If Jellyfin/the request service already run in their own stack: `docker network connect friendflix_media <container>`, remove their public ports and set `JELLYFIN_URL`/`SEERR_URL`.
 
 ### Configuration
 
@@ -163,10 +163,10 @@ Template: [.env.example](.env.example). Every variable can also be read from a f
 | `PUBLIC_URL` | – (required) | Public https URL of the portal |
 | `POSTGRES_PASSWORD`, `REDIS_PASSWORD` | – (required) | Database and Redis passwords |
 | `APP_ENC_KEY` | – (required) | 32 bytes base64; encrypts stored Jellyfin credentials. **Back it up separately.** |
-| `INTERNAL_SECRET`, `WEBHOOK_SECRET` | – (required, ≥ 16 chars) | Backend ↔ gateway secret; Jellyfin/Seerr webhooks |
+| `INTERNAL_SECRET`, `WEBHOOK_SECRET` | – (required, ≥ 16 chars) | Backend ↔ gateway secret; Jellyfin/request-service webhooks |
 | `OIDC_ISSUER`, `OIDC_CLIENT_ID`, `OIDC_CLIENT_SECRET` | – (required) | Authentik OIDC provider |
 | `JELLYFIN_URL`, `JELLYFIN_ADMIN_API_KEY` | – (required) | Internal Jellyfin URL, e.g. `http://jellyfin:8096`, and admin API key |
-| `SEERR_URL`, `SEERR_API_KEY` | – (required) | Internal Seerr URL and API key |
+| `SEERR_URL`, `SEERR_API_KEY` | – (required) | Internal URL and API key of the request service |
 | `ADMIN_GROUP` | `friendflix-admins` | Authentik group whose members become portal admins |
 | `BIND_ADDR` | `127.0.0.1` | Host address the three ports are published on – never a public interface |
 | `WEB_PORT`, `BACKEND_PORT`, `GATEWAY_PORT` | `3080`, `3081`, `3082` | Host ports for the reverse proxy |
@@ -207,13 +207,13 @@ flowchart LR
   gateway -->|"authz"| backend
   gateway --> jellyfin["Jellyfin"]
   backend --> jellyfin
-  backend --> seerr["Seerr"]
+  backend --> seerr["Request service"]
   backend --> postgres[("Postgres")]
   backend --> redis[("Redis")]
   backend -.->|"OIDC"| authentik["Authentik"]
 ```
 
-- Only the proxy is public. `web`, `backend` and `gateway` are published on `127.0.0.1` only; Jellyfin and Seerr have no ports at all and live on the internal `media` network, Postgres and Redis on the internal `db` network.
+- Only the proxy is public. `web`, `backend` and `gateway` are published on `127.0.0.1` only; Jellyfin and the request service have no ports at all and live on the internal `media` network, Postgres and Redis on the internal `db` network.
 - All video data (playlists, segments, direct play, images, subtitles, downloads, Chromecast) flows through the gateway: no buffering, HTTP range, Jellyfin tokens only server-side, path allowlist, fixed upstream, bitrate cap per role.
 - Containers run non-root with a read-only root filesystem, `cap_drop: ALL` and `no-new-privileges`. Strict CSP, CSRF tokens, rate limits, audit log.
 - Alternative "Plan B": nginx serves `/media/` itself via `auth_request` – [docs/operations.md](docs/operations.md).
@@ -249,7 +249,7 @@ npm run e2e                                     # Playwright: builds the web app
 |---|---|
 | Installation step by step | [docs/setup.md](docs/setup.md) |
 | Authentik: installation, provider, flows, invitations | [docs/authentik.md](docs/authentik.md) |
-| Jellyfin, Seerr, ntfy/Discord, web push | [docs/integrations.md](docs/integrations.md) |
+| Jellyfin, request service, ntfy/Discord, web push | [docs/integrations.md](docs/integrations.md) |
 | Backups, restore, firewall, updates, Plan B | [docs/operations.md](docs/operations.md) |
 | Monitoring, metrics, Server-Timing, browser errors | [docs/monitoring.md](docs/monitoring.md) |
 | Offline downloads (platforms, storage, limits) | [docs/downloads.md](docs/downloads.md) |
@@ -264,8 +264,8 @@ npm run e2e                                     # Playwright: builds the web app
 - One backend replica: watch-party rooms, rate limits and remote-control rooms live in memory.
 - Image-based subtitles (PGS) are not offered; text subtitles are delivered as WebVTT.
 - Skip intro needs Jellyfin ≥ 10.10 with media segments (e.g. from the Intro Skipper plugin).
-- Jellyfin, Seerr and Authentik APIs differ between versions – after upgrades see [docs/operations.md](docs/operations.md) and [docs/integrations.md](docs/integrations.md).
-- Profiles are hidden Jellyfin users: turn off Seerr's automatic Jellyfin user import so they do not show up there.
+- Jellyfin, request service and Authentik APIs differ between versions – after upgrades see [docs/operations.md](docs/operations.md) and [docs/integrations.md](docs/integrations.md).
+- Optional: a Seerr-compatible request service for wishes – see [docs/integrations.md](docs/integrations.md). Profiles are hidden Jellyfin users: turn off the automatic Jellyfin user import there so they do not show up.
 - With Intel QSV/VAAPI, switch off "VPP Tone mapping" in Jellyfin if the driver has no HDR support; otherwise 4K HDR titles fail.
 - Kids profiles are a parental guard, not a lock against someone who knows the account login. The owner PIN is reset with "Forgot PIN?" (`/auth/login?resetPin=1`): it needs a fresh sign-in at Authentik (checked via the token's `auth_time`) and is refused on any device that is tied to a kids profile – the owner resets it from their own device. Keep the Authentik login (and its second factor) away from the kids. If no PIN is set at all, leaving a kids profile is allowed and the owner sees a hint to set one.
 
