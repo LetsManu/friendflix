@@ -222,7 +222,7 @@ flowchart LR
 
 - **Backups:** Der optionale Sidecar `backup` macht täglich um `BACKUP_HOUR` einen `pg_dump`, prüft jeden Dump mit `pg_restore --list`, behält `BACKUP_KEEP_DAYS` Tage und wird `unhealthy`, wenn ein Lauf fehlschlägt. Wiederherstellung und monatlicher Restore-Test (`scripts/restore-test.sh`): [docs/operations.md](docs/operations.md). `APP_ENC_KEY` getrennt von den Dumps im Passwort-Manager aufbewahren.
 - **Updates:** *Admin → Update* zeigt installierte und neueste Version samt Änderungsliste und stößt über Portainer (Webhook oder API) ein Redeploy an. Von Hand: `docker compose -f compose.prod.yaml pull && docker compose -f compose.prod.yaml up -d`. Datenbank-Migrationen laufen beim Start.
-- **Monitoring:** `/health` (Liveness) und `/health/ready` (Redis, Postgres, Jellyfin) auf `127.0.0.1:3081`; Prometheus-Metriken unter `:3081/metrics` und `:3082/metrics` (Bearer `METRICS_TOKEN`). Beispiele für Icinga und Prometheus: [docs/monitoring.md](docs/monitoring.md).
+- **Monitoring:** `/health` (Liveness) und `/health/ready` (Redis, Postgres, Jellyfin) auf `127.0.0.1:3081`; Prometheus-Metriken unter `:3081/metrics` und `:3082/metrics` (Bearer `METRICS_TOKEN`). Beispiele für Icinga und Prometheus sowie ein optionaler Prometheus-+-Grafana-Stack mit Dashboard (`compose.monitoring.yaml`): [docs/monitoring.md](docs/monitoring.md).
 - **Ladezeiten:** Jede API-Antwort trägt einen `Server-Timing`-Header (`jf` = Jellyfin, `db` = Postgres, `kv` = Redis, `app` = gesamt), das Gateway ergänzt `authz` und `upstream`; sichtbar in den Browser-DevTools unter *Network → Timing*. Anfragen ab 500 ms erscheinen als `slow request` im Log. Browser-Fehler landen im Backend-Log und in `friendflix_client_errors_total`.
 
 ### Entwicklung
@@ -240,7 +240,8 @@ npm run e2e                                     # Playwright: baut die Web-App u
 - `E2E_SKIP_BUILD=1` nutzt einen vorhandenen Build; `PW_CHROMIUM=/pfad/zu/chrome` nimmt ein lokal installiertes Chromium.
 - `./scripts/setup-hooks.sh` installiert den gitleaks-Pre-Commit-Hook.
 - Entwicklung gegen ein http-Authentik: `OIDC_ALLOW_INSECURE=true` (nie in Produktion).
-- CI ([.github/workflows/ci.yml](.github/workflows/ci.yml)): Lint, Typecheck, Tests, `npm audit`, E2E, gitleaks und Trivy; Images veröffentlicht [publish.yml](.github/workflows/publish.yml) erst, wenn alles grün ist.
+- CI ([.github/workflows/ci.yml](.github/workflows/ci.yml)): Lint, Typecheck, Tests, `npm audit`, E2E, OWASP-ZAP-Baseline-Scan (DAST, Regeln in `.zap/rules.tsv`), gitleaks und Trivy (Ergebnisse auch im Code-Scanning); Images veröffentlicht [publish.yml](.github/workflows/publish.yml) erst, wenn alles grün ist, mit SBOM- und Provenienz-Attestations und keyless cosign-Signatur – Prüfung und empfohlener Branch-Schutz: [docs/operations.md](docs/operations.md).
+- Lieferketten-Prüfung: OpenSSF Scorecard ([scorecard.yml](.github/workflows/scorecard.yml)), wöchentlich und bei jedem Push auf `main`. [![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/LetsManu/friendflix/badge)](https://scorecard.dev/viewer/?uri=github.com/LetsManu/friendflix)
 - Übersetzungen: Deutsch ist die Quelle, alle anderen Sprachen liegen daneben – wie man eine Sprache korrigiert oder hinzufügt: [docs/i18n.md](docs/i18n.md).
 
 ### Dokumentation
@@ -250,8 +251,8 @@ npm run e2e                                     # Playwright: baut die Web-App u
 | Installation Schritt für Schritt | [docs/de/setup.md](docs/de/setup.md) |
 | Authentik: Installation, Provider, Flows, Einladungen | [docs/de/authentik.md](docs/de/authentik.md) |
 | Jellyfin, Wunsch-Dienst, ntfy/Discord, Web-Push | [docs/integrations.md](docs/integrations.md) |
-| Backups, Wiederherstellung, Firewall, Updates, Plan B | [docs/operations.md](docs/operations.md) |
-| Monitoring, Metriken, Server-Timing, Browser-Fehler | [docs/monitoring.md](docs/monitoring.md) |
+| Backups, Wiederherstellung, Firewall, Updates, Image-Prüfung, Branch-Schutz, Plan B | [docs/operations.md](docs/operations.md) |
+| Monitoring, Metriken, Grafana-Dashboard, Server-Timing, Browser-Fehler | [docs/monitoring.md](docs/monitoring.md) |
 | Offline-Downloads (Plattformen, Speicher, Grenzen) | [docs/downloads.md](docs/downloads.md) |
 | TV-Modus und Handy als Fernbedienung | [docs/tv-mode.md](docs/tv-mode.md) |
 | Chromecast | [docs/cast.md](docs/cast.md) |
