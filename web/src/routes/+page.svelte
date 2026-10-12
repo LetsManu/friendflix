@@ -57,11 +57,11 @@
 </script>
 
 <svelte:head><title>FriendFlix</title></svelte:head>
-<Hero item={hero} rank={heroRank} />
+<Hero item={hero} rank={heroRank} portrait />
 <div class="rows">
   {#if error}<p class="err" style="margin:1rem var(--pad-x)">{error}</p>{/if}
-  <Row title="Weiterschauen" items={resume} removable on:remove={(e) => removeResume(e.detail.id)} />
-  <Row title="Nächste Folge" items={nextOnly} />
+  <Row title="Weiterschauen" items={resume} landscape removable on:remove={(e) => removeResume(e.detail.id)} />
+  <Row title="Nächste Folge" items={nextOnly} landscape />
   <Row title="Von Freunden empfohlen" items={recs} />
   <Row title="Freunde haben bewertet" items={friendsRated} />
   {#if because}<Row title="Weil du „{because.name}“ gesehen hast" items={becauseItems} />{/if}
@@ -79,4 +79,5 @@
   {/each}
 </div>
 
-<style>.rows { position: relative; z-index: 2; padding-bottom: 5rem; }</style>
+<style>.rows { position: relative; z-index: 2; padding-bottom: 5rem; }
+  @media (max-width: 720px) { .rows { padding-top: .4rem; } }</style>

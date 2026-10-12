@@ -1,11 +1,14 @@
 <script lang="ts">
   import { onDestroy, onMount } from 'svelte';
-  import { backdrop, HERO_WIDTHS, srcset, fmtMin, logoUrl, type Item } from '#lib/api';
+  import { backdrop, HERO_WIDTHS, img, srcset, fmtMin, logoUrl, type Item } from '#lib/api';
   import Icon from '#lib/Icon.svelte';
   import Logo from '#lib/Logo.svelte';
   import { openModal } from '#lib/modal';
   import { listIds, prefs, toggleList } from '#lib/stores';
   import { playPreview, previewOwner, stopPreview, toggleSound } from '#lib/preview';
+  import { mobile } from '#lib/viewport';
+  import { openPreview } from '#lib/previewSheet';
+  import { genreLine } from '#lib/mobile';
 
   /** Billboard at the top of the home page / detail page. */
   export let item: Item | null;
@@ -15,6 +18,8 @@
   /** position in a ranking (1-10); shows the "#n" line like a Top-10 billboard. 0 = none */
   export let rank = 0;
   export let rankLabel = 'in den Top 10 nach Bewertung';
+  /** phone layout: centered poster card instead of the wide backdrop (home page only) */
+  export let portrait = false;
   let loaded = false, logoFailed = false;
 
   // ---- billboard preview: after a short pause the still image fades into the trailer (clip), like Netflix ----
@@ -52,6 +57,29 @@
   $: tagline = item ? item.genres.slice(0, 3).join(' · ') : '';
 </script>
 
+{#if portrait && $mobile}
+  <section class="mh" aria-label="Empfehlung">
+    {#if item}
+      {#if item.image || item.backdrop}<img class="blurbg" src={item.image ? img(item.id, 120) : backdrop(item.id, 320)} alt="" aria-hidden="true" />{/if}
+      <div class="mshade"></div>
+      <a class="pcard" href="/item/{item.id}" aria-label="{item.name}, Vorschau öffnen" aria-haspopup="dialog" on:click={(e) => { if (e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return; e.preventDefault(); openPreview(item, e.currentTarget); }}>
+        {#if item.image || item.backdrop}<img class="pimg" src={item.image ? img(item.id, 520) : backdrop(item.id, 520)} srcset={item.image ? srcset('Primary', item.id, [320, 520, 780]) : srcset('Backdrop', item.id, [320, 520, 780])} sizes="(max-width: 450px) 80vw, 360px" alt="" fetchpriority="high" width="360" height="540" />{/if}
+        <span class="pfade"></span>
+        <span class="pinfo">
+          {#if item.logo && !logoFailed}<img class="plogo" src={logoUrl(item.id)} alt={item.name} on:error={() => (logoFailed = true)} />{:else}<span class="ptitle">{item.name}</span>{/if}
+          {#if genreLine(item.genres)}<span class="pgenres">{genreLine(item.genres)}</span>{/if}
+        </span>
+      </a>
+      <div class="pbtns">
+        <a class="pplay" data-autofocus href={playHref || (item.type === 'Series' ? `/item/${item.id}` : `/watch/${item.id}`)}><Icon name="play" size={22} />{playLabel}</a>
+        <button type="button" class="plist" aria-pressed={inList} on:click={() => toggleList(listId, inList)}><Icon name={inList ? 'check' : 'plus'} size={22} />Meine Liste</button>
+      </div>
+    {:else}
+      <div class="skeleton pcard ph"></div>
+      <div class="pbtns"><div class="skeleton pph"></div><div class="skeleton pph"></div></div>
+    {/if}
+  </section>
+{:else}
 <section class="hero" aria-label="Empfehlung">
   {#if item}
     {#if item.backdrop}<img class="bg" class:loaded src={backdrop(item.id, 1280)} srcset={srcset('Backdrop', item.id, HERO_WIDTHS)} sizes="100vw" alt="" fetchpriority="high" on:load={() => (loaded = true)} />{/if}
@@ -86,6 +114,7 @@
     <div class="skeleton fill"></div>
   {/if}
 </section>
+{/if}
 
 <style>
   .hero { position: relative; height: clamp(460px, 88vh, 940px); margin-bottom: -9vw; overflow: hidden; background: var(--bg); }
@@ -126,4 +155,24 @@
   .agebox { display: flex; align-items: center; min-height: 52px; padding: 0 var(--pad-x) 0 1.1rem; background: rgba(51,51,51,.6); border-left: 3px solid #dcdcdc; font-size: 1.1rem; font-weight: 600; letter-spacing: .02em; backdrop-filter: blur(4px); }
   @media (max-width: 460px) { .btn.round { display: none; } }
   @media (max-width: 700px) { .hero { height: 68vh; margin-bottom: -5vh; } .content { bottom: 17%; } .btns .btn { padding: .5rem 1.1rem; font-size: 1rem; min-height: 46px; } .btn.round { width: 46px; } .agebox { display: none; } .side { right: var(--pad-x); } .eyebrow { letter-spacing: .3em; } }
+
+  /* ---- phone billboard: centered poster card on a blurred copy of the poster ---- */
+  .mh { position: relative; overflow: hidden; padding: calc(var(--nav-h) + .6rem) 0 1.4rem; background: var(--bg); }
+  .blurbg { position: absolute; left: -10%; top: -6%; width: 120%; height: 78%; object-fit: cover; filter: blur(34px) saturate(1.5); opacity: .55; transform: translateZ(0); pointer-events: none; }
+  .mshade { position: absolute; inset: 0; background: linear-gradient(to bottom, rgba(20,20,20,.25), rgba(20,20,20,.55) 45%, var(--bg) 92%); pointer-events: none; }
+  .pcard { position: relative; display: block; width: min(80vw, 360px); aspect-ratio: 2 / 3; margin: 0 auto; border-radius: 8px; overflow: hidden; background: #222; box-shadow: 0 14px 40px rgba(0,0,0,.65); z-index: 1; }
+  .pimg { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .pfade { position: absolute; inset: 0; background: linear-gradient(to top, rgba(0,0,0,.92) 0%, rgba(0,0,0,.55) 24%, transparent 52%); }
+  .pinfo { position: absolute; left: 0; right: 0; bottom: 0; padding: 1rem .9rem .9rem; display: flex; flex-direction: column; align-items: center; gap: .45rem; text-align: center; }
+  .plogo { max-width: 72%; max-height: 4.6rem; object-fit: contain; filter: drop-shadow(0 3px 10px rgba(0,0,0,.7)); }
+  .ptitle { font-size: 1.6rem; font-weight: 800; line-height: 1.1; letter-spacing: -.02em; text-shadow: 0 2px 12px rgba(0,0,0,.7); }
+  .pgenres { font-size: .85rem; font-weight: 600; color: #e6e6e6; text-shadow: 0 1px 6px rgba(0,0,0,.8); }
+  .pbtns { position: relative; z-index: 1; display: grid; grid-template-columns: 1fr 1fr; gap: .6rem; width: min(80vw, 360px); margin: .8rem auto 0; }
+  .pbtns > * { min-height: 46px; border-radius: 4px; font-weight: 700; font-size: 1rem; display: inline-flex; align-items: center; justify-content: center; gap: .45rem; padding: 0 .6rem; white-space: nowrap; }
+  .pplay { background: #fff; color: #000; }
+  .pplay:hover { background: rgba(255,255,255,.8); }
+  .plist { background: rgba(42,42,42,.92); color: #fff; }
+  .plist:hover:not(:disabled) { background: #3a3a3a; }
+  .pcard.ph { background: #1f1f1f; }
+  .pph { height: 46px; }
 </style>
