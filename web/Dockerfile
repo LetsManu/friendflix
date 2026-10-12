@@ -1,5 +1,5 @@
 # syntax=docker/dockerfile:1
-FROM node:22-alpine AS build
+FROM node:26-alpine AS build
 WORKDIR /app
 COPY package.json package-lock.json tsconfig.base.json ./
 COPY backend/package.json backend/
@@ -9,7 +9,7 @@ RUN npm ci
 COPY web web
 RUN npm run build -w web
 
-FROM node:22-alpine
+FROM node:26-alpine
 ARG GIT_SHA=dev
 ARG BUILD_TIME=
 ENV GIT_SHA=$GIT_SHA BUILD_TIME=$BUILD_TIME
