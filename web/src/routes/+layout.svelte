@@ -31,6 +31,9 @@
   import { isLocale, locale, pageEpoch, pickLocale, ready, setLocale, t, type Locale } from '#lib/i18n';
   import Rich from '#lib/i18n/Rich.svelte';
   import LanguageGate from '#lib/LanguageGate.svelte';
+  import ToastHost from '#lib/ui/ToastHost.svelte';
+  import { flushDeferred } from '#lib/ui/action';
+  import ConfirmHost from '#lib/ui/ConfirmHost.svelte';
   import { saveLanguage } from '#lib/stores';
 
   let me: Me | null = null;
@@ -208,6 +211,12 @@
     else if (m.action === 'home' || m.action === 'stop') goto('/');
     else window.dispatchEvent(new CustomEvent('ff-remote', { detail: m })); // the player listens
   }
+
+  // deferred actions (decline/revoke with an Undo window) commit right away when the person leaves the page (other route,
+  // reload, closing the tab: willUnload sends keepalive requests); a pagehide listener in lib/ui/action.ts covers the rest
+  beforeNavigate(({ from, to, willUnload }) => {
+    if (willUnload || from?.url.pathname !== to?.url.pathname) flushDeferred(willUnload);
+  });
 
   // ---- TV focus memory: coming back (Back key) puts the focus on the card you left, a new page focuses its first element ----
   const memo = new Map<string, { href: string; nth: number }>();
@@ -527,6 +536,9 @@
 {:else}
   <main id="main" class="boot"><span class="logo"><Logo wordmark size={44} /></span><div class="spin" aria-label={$t('shell.booting')} role="status"></div></main>
 {/if}
+<!-- app-wide toasts + confirm dialog (lib/ui); mounted once, outside the page so they survive navigation -->
+<ToastHost />
+<ConfirmHost />
 
 <style>
   .offbar { position: fixed; z-index: 80; left: 0; right: 0; bottom: calc(56px + env(safe-area-inset-bottom)); background: #2a2a2a; padding: .6rem var(--pad-x); text-align: center; font-size: .9rem; }

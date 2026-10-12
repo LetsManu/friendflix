@@ -180,56 +180,7 @@ test.describe('browse filter 4K / HDR (desktop)', () => {
   });
 });
 
-test.describe('admin page: Bald nicht mehr verfügbar (desktop)', () => {
-  test('lists dates, edits and clears them, adds a title found by search', async ({ page }) => {
-    await page.route('**/api/me', (r) => r.fulfill({ json: ADMIN }));
-    let rows = [{ itemId: inception.id, name: 'Inception', type: 'Movie', year: 2010, leavesAt: day(5), days: 5, note: 'Lizenz endet', setBy: 'Tester' }];
-    const log: string[] = [];
-    await page.route('**/api/admin/leaving**', async (r) => {
-      const req = r.request();
-      const id = new URL(req.url()).pathname.split('/')[4];
-      if (req.method() === 'GET') return r.fulfill({ json: { items: rows } });
-      log.push(`${req.method()} ${id} ${req.postData() ?? ''}`);
-      if (req.method() === 'PUT') {
-        const b = JSON.parse(req.postData()!);
-        const it = items.find((i) => i.id === id)!;
-        rows = [...rows.filter((x) => x.itemId !== id), { itemId: id!, name: it.name, type: it.type, year: it.year ?? 0, leavesAt: b.leavesAt, days: 9, note: b.note, setBy: 'Tester' }];
-      } else rows = rows.filter((x) => x.itemId !== id);
-      return r.fulfill({ json: { ok: true } });
-    });
-    await page.route('**/api/library/items?q=**', (r) => r.fulfill({ json: { items: [interstellar], total: 1 } }));
-    await page.goto('/admin/leaving');
-    await expect(page.getByRole('link', { name: 'Bald weg' })).toBeVisible();
-    await expect(page.getByRole('heading', { level: 2, name: 'Bald nicht mehr verfügbar' })).toBeVisible();
-    const table = page.getByRole('table');
-    await expect(table.getByRole('link', { name: 'Inception' })).toBeVisible();
-    await expect(table.getByText('Nur noch 5 Tage')).toBeVisible();
-    await expect(table.getByRole('button', { name: 'Speichern' })).toBeDisabled(); // nothing changed
-    await page.screenshot({ path: `${SHOTS}/admin-desktop.png` });
-    // change the date of the first row
-    await table.getByLabel('Verlässt uns am').fill(day(7));
-    await table.getByRole('button', { name: 'Speichern' }).click();
-    await expect.poll(() => log[0]).toBe(`PUT ${inception.id} ${JSON.stringify({ leavesAt: day(7), note: 'Lizenz endet' })}`);
-    // add a title via search
-    await page.getByLabel('Titel suchen').fill('Inter');
-    await page.getByRole('button', { name: /Interstellar/ }).click();
-    await page.getByLabel('Verlässt uns am').first().fill(day(9));
-    await page.getByRole('button', { name: 'Speichern' }).first().click();
-    await expect.poll(() => log.some((l) => l.startsWith(`PUT ${interstellar.id} `))).toBe(true);
-    await expect(table.getByRole('link', { name: 'Interstellar' })).toBeVisible();
-    // clear one
-    await table.getByRole('row', { name: /Inception/ }).getByRole('button', { name: 'Datum entfernen' }).click();
-    await expect.poll(() => log.some((l) => l === `DELETE ${inception.id} `)).toBe(true);
-    await expect(table.getByRole('link', { name: 'Inception' })).toHaveCount(0);
-  });
-
-  test('an empty list says so', async ({ page }) => {
-    await page.route('**/api/me', (r) => r.fulfill({ json: ADMIN }));
-    await page.route('**/api/admin/leaving', (r) => r.fulfill({ json: { items: [] } }));
-    await page.goto('/admin/leaving');
-    await expect(page.getByText('Aktuell ist für keinen Titel ein Datum gesetzt.')).toBeVisible();
-  });
-});
+// the admin page /admin/leaving is covered by admin-leaving.spec.ts
 
 test.describe('language', () => {
   test('labels follow the UI language', async ({ page }) => {

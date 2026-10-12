@@ -71,3 +71,7 @@ Shared lines to touch:
 - `gateway/src/upstream/index.ts`: one entry in `UPSTREAMS` (plus its import).
 
 Everything else (routes, jobs, the web, the gateway core) works through the interface.
+
+## Web UI kit and admin shell
+
+Shared components live in `web/src/lib/ui` (toasts, confirm dialog, data table, buttons, form fields, pills, progress, copy field, `runAction`); the admin frame (sidebar, phone list, badges, overview data) lives in `web/src/lib/admin`. Usage and rules: [ui-kit.md](ui-kit.md).

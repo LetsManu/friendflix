@@ -8,6 +8,7 @@
   import { COVER_COLORS, coverGradient, isNotFound, loadList, pinThemed, removeFromList, removeMember, saveLook, setMember, type ListDetail } from '#lib/lists';
   import { kidsMode } from '#lib/kids';
   import { t, tr, hasKey, type TKey } from '#lib/i18n';
+  import { confirm } from '#lib/ui/confirm';
 
   const page = pageStore();
   $: id = $page.params.id!;
@@ -70,13 +71,13 @@
   const togglePin = () => run('pin', () => pinThemed(id, !data!.list.pinned));
   async function closeEdit() { editing = false; err = ''; await tick(); renameBtn?.focus(); }
   async function del() {
-    if (isBusy('del') || !confirm(tr('social.lists.confirmDelete', { name: data!.list.name }))) return;
+    if (isBusy('del') || !(await confirm({ title: tr('social.lists.confirmDelete', { name: data!.list.name }), danger: true, confirmLabel: tr('social.lists.delete') }))) return;
     err = ''; setBusy('del', true);
     try { await api(`/api/lists/${id}`, { method: 'DELETE' }); await goto('/lists'); } catch { err = tr('common.failed'); }
     setBusy('del', false);
   }
   async function leave(userId: string) {
-    if (isBusy('mem:' + userId) || !confirm(userId === me ? tr('social.lists.confirmLeave') : tr('social.lists.confirmRemoveMember'))) return;
+    if (isBusy('mem:' + userId) || !(await confirm({ title: userId === me ? tr('social.lists.confirmLeave') : tr('social.lists.confirmRemoveMember'), danger: true, confirmLabel: userId === me ? tr('social.lists.leave') : tr('social.remove') }))) return;
     err = ''; setBusy('mem:' + userId, true);
     try { await removeMember(id, userId); if (userId === me) await goto('/lists'); else await load(); } catch { err = tr('common.failed'); }
     setBusy('mem:' + userId, false);

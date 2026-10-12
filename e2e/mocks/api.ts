@@ -1,6 +1,7 @@
 import type { BrowserContext, Route } from '@playwright/test';
 import { ME, byName, episodes, hex, items, nolan, people, seedLists, type MockItem, type MockList, MOVIE, MOVIE2, SERIES } from './fixtures.js';
 import { pngFor } from './png.js';
+import { adminRoute, adminState, type AdminState } from './admin.js';
 
 /** Item whose reactions are locked (viewer has not seen it) / unlocked and contain an XSS probe. */
 export const LOCKED_ID = MOVIE.id;
@@ -18,6 +19,10 @@ export interface MockState {
   unmocked: Set<string>;
   /** payloads POSTed to /api/client-errors */
   clientErrors: unknown[];
+  /** admin endpoints (mocks/admin.ts) */
+  admin: AdminState;
+  /** /api/me reports an admin owner profile (admin pages, admin menu) */
+  asAdmin: boolean;
   /** the profile's player sound pref (PUT /api/prefs/audiofx), echoed by GET /api/prefs */
   audioFx?: string;
 }
@@ -31,6 +36,8 @@ export function freshState(): MockState {
     log: [],
     unmocked: new Set(),
     clientErrors: [],
+    admin: adminState(),
+    asAdmin: false,
   };
 }
 
@@ -61,7 +68,7 @@ export async function installApi(ctx: BrowserContext, st: MockState): Promise<vo
     let mm: RegExpMatchArray | null;
 
     if (p === '/api/client-errors') { st.clientErrors.push(body()); return route.fulfill({ status: 204 }); }
-    if (p === '/api/me') return J(ME);
+    if (p === '/api/me') return J(st.asAdmin ? { ...ME, role: 'admin', roleLabel: 'Admin', isAdmin: true } : ME);
     if (p === '/api/notifications') return J({ notifications: [{ id: 'n1', title: 'Anna hat dich zur Liste „Annas Klassiker“ eingeladen', link: '/lists/' + st.lists[1]!.id, read: false }] });
     if (p === '/api/notifications/read') return J({ ok: true });
     if (p === '/api/prefs') return J({ prefs: st.audioFx ? { audioFx: st.audioFx } : {} });
@@ -237,6 +244,8 @@ export async function installApi(ctx: BrowserContext, st: MockState): Promise<vo
     // profiles (gate "Wer schaut gerade?" and the avatar menu)
     if (p === '/api/profiles') return J({ profiles: PROFILES, max: 5, activeId: 'p1' });
     if ((mm = p.match(/^\/api\/profiles\/([^/]+)\/select$/)) && m === 'POST') return J({ ok: true });
+
+    if (p.startsWith('/api/admin/')) { const r = adminRoute(st.admin, m, p, sp, body(), J); if (r) return r; }
 
     st.unmocked.add(`${m} ${p}${u.search ? '?…' : ''}`);
     return J({ items: [] });

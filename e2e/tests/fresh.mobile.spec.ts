@@ -1,6 +1,6 @@
 import { expect, test } from '../fixtures.js';
 import { noHorizontalOverflow, row } from '../helpers.js';
-import { ME, items, SERIES } from '../mocks/fixtures.js';
+import { items, SERIES } from '../mocks/fixtures.js';
 
 // Block 17 D1 on the phone (390x844): poster tags, detail facts, story card, quality chips in the filter row.
 const SHOTS = '/tmp/claude-0/-home-user-friendflix/65bf3c9c-0207-5176-a7cc-9841c5a17402/scratchpad/block17/d1';
@@ -50,12 +50,4 @@ test.describe('discovery (phone)', () => {
     await page.screenshot({ path: `${SHOTS}/browse-phone.png` });
   });
 
-  test('admin page works on the phone', async ({ page }) => {
-    await page.route('**/api/me', (r) => r.fulfill({ json: { ...ME, isAdmin: true, profile: { id: 'p1', name: 'Tester', avatar: 'a1', isOwner: true } } }));
-    await page.route('**/api/admin/leaving', (r) => r.fulfill({ json: { items: [{ itemId: inception.id, name: 'Inception', type: 'Movie', year: 2010, leavesAt: day(5), days: 5, note: null, setBy: 'Tester' }] } }));
-    await page.goto('/admin/leaving');
-    await expect(page.getByRole('heading', { level: 2, name: 'Bald nicht mehr verfügbar' })).toBeVisible();
-    await expect(page.getByRole('link', { name: 'Inception' })).toBeVisible();
-    await page.screenshot({ path: `${SHOTS}/admin-phone.png` });
-  });
 });
