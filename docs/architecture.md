@@ -1,8 +1,187 @@
 # Architecture notes
 
+## Containers and networks
+
+Who talks to whom, and on which Docker network. Only the reverse proxy is public; every published port is bound to `127.0.0.1`.
+
+```mermaid
+---
+config:
+  flowchart:
+    curve: basis
+    nodeSpacing: 50
+    rankSpacing: 65
+    padding: 14
+  themeVariables:
+    edgeLabelBackground: 'rgba(150,150,150,0.12)'
+  themeCSS: '.labelBkg { background-color: rgba(127,127,127,0.12) !important; }'
+---
+flowchart TB
+  accTitle: FriendFlix containers and networks
+  accDescr: Viewers reach Nginx Proxy Manager, which routes to web, backend and gateway on the front network. The backend alone also reaches Postgres and Redis on the internal db network and the media services on the internal media network. Authentik is reached through the proxy.
+  V("📺 <b>Viewers</b>"):::ext
+  NPM("🛡️ <b>Nginx Proxy Manager</b><br/><small>:443 · TLS</small>"):::edge
+  AK("🔑 <b>Authentik</b><br/><small>:9000 · own stack</small>"):::svc
+  subgraph HOST["Docker host · ports on 127.0.0.1 only"]
+    subgraph FRONT["front network"]
+      WEB("🖥️ <b>web</b><br/><small>:3080</small>"):::app
+      GW("📡 <b>gateway</b><br/><small>:3082 · front + media</small>"):::app
+      BE("⚙️ <b>backend</b><br/><small>:3081 · front + db + media + egress</small>"):::app
+    end
+    subgraph MEDIA["media network · internal"]
+      S("🎬 <b>jellyfin</b><br/><small>:8096</small>"):::media
+      SE("🔔 <b>seerr</b><br/><small>:5055</small>"):::svc
+    end
+    subgraph DB["db network · internal"]
+      PG[("🗄️ <b>postgres</b>")]:::store
+      RD[("⚡ <b>redis</b>")]:::store
+    end
+  end
+
+  V -->|HTTPS| NPM
+  NPM -->|"/"| WEB
+  NPM -->|"/media/*"| GW
+  NPM -->|"/api /auth /ws"| BE
+  NPM -->|"auth.example.com"| AK
+  GW -->|"/internal/authz"| BE
+  GW ==>|"user token"| S
+  BE -->|"admin key + user token"| S
+  BE -->|"REST · API key"| SE
+  BE -->|SQL| PG
+  BE -->|"RESP · password"| RD
+  BE -.->|"OIDC, via public URL"| NPM
+  classDef ext fill:#30363d,stroke:#8b949e,stroke-width:1px,color:#f0f6fc
+  classDef edge fill:#2d2a4a,stroke:#9d8cf0,stroke-width:1px,color:#f0f6fc
+  classDef app fill:#4a1418,stroke:#e50914,stroke-width:1px,color:#fff5f5
+  classDef store fill:#4a3a14,stroke:#d4a72c,stroke-width:1px,color:#fff8e6
+  classDef media fill:#173f30,stroke:#3fb68b,stroke-width:1px,color:#eafff6
+  classDef svc fill:#163e4c,stroke:#56b6d6,stroke-width:1px,color:#eaf9ff
+  classDef fork fill:#4a1d3c,stroke:#e070b0,stroke-width:1px,stroke-dasharray:4 3,color:#fff0f8
+  linkStyle default stroke:#8b949e,stroke-width:1.4px
+  style HOST fill:none,stroke:#8b949e,stroke-width:1px,stroke-dasharray:4 4
+  style FRONT fill:none,stroke:#8b949e,stroke-width:1px,stroke-dasharray:4 4
+  style DB fill:none,stroke:#8b949e,stroke-width:1px,stroke-dasharray:4 4
+  style MEDIA fill:none,stroke:#8b949e,stroke-width:1px,stroke-dasharray:4 4
+```
+
+> 🟥 FriendFlix · 🟩 media server · 🟦 other service · 🟪 reverse proxy · 🟨 data store · ⬛ viewers / outside · dashed frame = network or boundary · thick line = video stream · dotted = optional / via public URL
+
+| Service | Networks | Host port (127.0.0.1) | Holds |
+|---|---|---|---|
+| web | front | 3080 | nothing secret |
+| backend | front, db, media, egress | 3081 | `APP_ENC_KEY`, `INTERNAL_SECRET`, Jellyfin admin API key, OIDC client secret; sessions (cookie `ff_sid`) in Redis; per-user Jellyfin credentials encrypted in Postgres |
+| gateway | front, media | 3082 | `INTERNAL_SECRET`; gets the user's media token per request from the backend (cached 5 s), never stores it |
+| postgres, redis | db (internal) | none | accounts, profiles, sessions |
+| jellyfin, seerr (profile `bundled`) | media (+egress) | none | media, request data |
+| Authentik (`compose.authentik.yaml`) | front, ak-db, egress | 9000 | identities |
+
+The browser only ever sees a session cookie and `/media/...` URLs, never a Jellyfin token.
+
+Media tokens never leave the server: the browser holds a session cookie and plays `/media/...` URLs that only the gateway can resolve. Alternative setups (Plan B, bundled Jellyfin, Authentik in its own stack): [operations.md](operations.md), [setup.md](setup.md).
+
+## Press play
+
+What happens between the play button and the first picture. Every playlist and every segment passes the gateway, which asks the backend what this session may do (`/internal/authz`: token and limits, cached for 5 seconds) before it clamps height and bitrate and fetches from the media server with the user's token.
+
+```mermaid
+---
+config:
+  sequence:
+    mirrorActors: false
+    messageMargin: 34
+    boxMargin: 10
+    noteMargin: 12
+---
+sequenceDiagram
+  accTitle: Press play
+  accDescr: Browser asks the backend for playback info, then streams HLS through the gateway, which authorises every request with the backend before talking to the media server.
+  autonumber
+  box rgba(139,148,158,0.10) Viewer
+    actor browser as 📺 Browser
+    participant web as 🖥️ web
+  end
+  box rgba(229,9,20,0.07) FriendFlix
+    participant backend as ⚙️ backend
+    participant gateway as 📡 gateway
+  end
+  box rgba(63,182,139,0.09) Media server
+    participant Jellyfin as 🎬 Jellyfin
+  end
+  browser->>web: GET /watch/:id
+  web-->>browser: app shell
+  browser->>+backend: POST /api/playback/info · ff_sid
+  Note over backend: session · profile · role limits
+  backend->>+Jellyfin: PlaybackInfo · user token
+  Jellyfin-->>-backend: streams
+  backend-->>-browser: HLS URL /media/… (no token)
+  loop playlist + every segment
+    browser->>+gateway: GET /media/….m3u8 · ff_sid
+    gateway->>+backend: POST /internal/authz · INTERNAL_SECRET
+    backend-->>-gateway: token + limits (cached 5 s)
+    Note over gateway: allowlist · clamp height / bitrate
+    gateway->>Jellyfin: GET HLS · user token
+    Jellyfin-->>gateway: playlist / segment
+    gateway-->>-browser: stream
+  end
+  browser->>backend: POST /api/playback/start · progress · stop
+  backend->>Jellyfin: report position
+```
+
 ## Media server seam
 
 FriendFlix talks to its media server through one neutral interface. Today the only implementation is Jellyfin; the seam exists so that another server (a fork adds Plex, for example) can be added mostly by **adding** files instead of editing shared ones.
+
+How the pieces line up: backend routes and jobs only know the `MediaServer` interface, the gateway core only the `Upstream` adapter; each media server kind provides one of each, and `MEDIA_SERVER` picks them.
+
+```mermaid
+---
+config:
+  flowchart:
+    curve: basis
+    nodeSpacing: 50
+    rankSpacing: 65
+    padding: 14
+  themeVariables:
+    edgeLabelBackground: 'rgba(150,150,150,0.12)'
+  themeCSS: '.labelBkg { background-color: rgba(127,127,127,0.12) !important; }'
+---
+flowchart TB
+  accTitle: The media server seam
+  accDescr: Backend routes call the MediaServer interface and the gateway core calls the Upstream adapter interface. Each media server kind provides one implementation of each, selected by MEDIA_SERVER.
+  subgraph BEL["backend"]
+    RT("🧭 <b>routes + jobs</b><br/><small>ctx.jf</small>"):::app
+    IF("📐 <b>MediaServer</b><br/><small>media/types.ts · createMediaServer()</small>"):::app
+    NI("➕ <b>another server</b><br/><small>backend/src/&lt;kind&gt;/*</small>"):::fork
+    JFI("🧩 <b>JellyfinService</b><br/><small>backend/src/jellyfin/*<br/>admin key + user tokens</small>"):::app
+  end
+  subgraph GWL["gateway"]
+    CORE("📡 <b>gateway core</b><br/><small>authz · clamp · sanitise</small>"):::app
+    UP("📐 <b>Upstream</b><br/><small>upstream/types.ts · selectUpstream()</small>"):::app
+    JFU("🔌 <b>jellyfinUpstream</b><br/><small>upstream/jellyfin.ts<br/>user token</small>"):::app
+    NU("➕ <b>another adapter</b><br/><small>upstream/&lt;kind&gt;.ts</small>"):::fork
+  end
+  RT -->|calls| IF
+  CORE -->|uses| UP
+  IF -.->|"implements"| JFI
+  IF -.->|"implements"| NI
+  JFI ==>|API| JF
+  UP -.->|"implements"| JFU
+  UP -.->|"implements"| NU
+  JFU ==>|"video"| JF
+  JF("🎬 <b>Jellyfin</b>"):::media
+  classDef ext fill:#30363d,stroke:#8b949e,stroke-width:1px,color:#f0f6fc
+  classDef edge fill:#2d2a4a,stroke:#9d8cf0,stroke-width:1px,color:#f0f6fc
+  classDef app fill:#4a1418,stroke:#e50914,stroke-width:1px,color:#fff5f5
+  classDef store fill:#4a3a14,stroke:#d4a72c,stroke-width:1px,color:#fff8e6
+  classDef media fill:#173f30,stroke:#3fb68b,stroke-width:1px,color:#eafff6
+  classDef svc fill:#163e4c,stroke:#56b6d6,stroke-width:1px,color:#eaf9ff
+  classDef fork fill:#4a1d3c,stroke:#e070b0,stroke-width:1px,stroke-dasharray:4 3,color:#fff0f8
+  linkStyle default stroke:#8b949e,stroke-width:1.4px
+  style BEL fill:none,stroke:#e50914,stroke-width:1px,stroke-dasharray:4 4
+  style GWL fill:none,stroke:#e50914,stroke-width:1px,stroke-dasharray:4 4
+```
+
+> 🟥 FriendFlix · 🟩 media server · 🟦 other service · 🟪 reverse proxy · 🟨 data store · ⬛ viewers / outside · 🟫 dashed pink = room for another media server · dashed frame = network or boundary · thick line = video stream · dotted = optional / via public URL
 
 ### Backend
 
