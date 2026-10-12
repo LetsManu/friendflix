@@ -1,6 +1,7 @@
 <script lang="ts">
   import { createEventDispatcher, onMount } from 'svelte';
   import { playSonicLogo, stopSonicLogo } from '#lib/sonic';
+  import { t } from '#lib/i18n';
 
   /** Play the sonic logo along with the animation (only sensible after a user gesture). */
   export let sound = false;
@@ -65,7 +66,7 @@
 </script>
 
 <div class="intro" class:rm={reduced} class:leaving={skipping} bind:this={root} role="presentation" on:animationend={onEnd}>
-  <p class="sr" role="status">FriendFlix wird geladen</p>
+  <p class="sr" role="status">{$t('home.intro.loading')}</p>
   <div class="stage" aria-hidden="true">
     <div class="tilewrap">
       <div class="glow"></div>

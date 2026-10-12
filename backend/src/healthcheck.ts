@@ -1,4 +1,5 @@
 import type { Ctx } from './ctx.js';
+import { broadcastLanguage, m, msg, type Text } from './i18n.js';
 import { notify } from './notify.js';
 import { libraryItems, previews, serviceUser } from './previews.js';
 import type { UserRow } from './types.js';
@@ -64,7 +65,7 @@ async function run(ctx: Ctx, st: CheckState, user: UserRow): Promise<void> {
       st.done++;
     }
   } catch (e) {
-    st.results.push({ itemId: '', name: 'Prüfung abgebrochen', type: '', ok: false, status: null, ms: 0, bytes: 0, error: String(e).slice(0, 200) });
+    st.results.push({ itemId: '', name: msg(await broadcastLanguage(ctx).catch(() => 'de' as const), 'check.aborted'), type: '', ok: false, status: null, ms: 0, bytes: 0, error: String(e).slice(0, 200) });
   } finally {
     pv.paused = false;
     st.finishedAt = new Date().toISOString();
@@ -80,10 +81,11 @@ async function notifyNewFailures(ctx: Ctx, id: string, results: CheckResult[]): 
   const was = new Set((prev?.results ?? []).filter((r) => !r.ok).map((r) => r.itemId));
   const fresh = results.filter((r) => !r.ok && r.itemId && !was.has(r.itemId));
   if (!fresh.length) return;
-  const names = fresh.slice(0, 5).map((r) => r.name).join(', ') + (fresh.length > 5 ? ` und ${fresh.length - 5} weitere` : '');
+  const shown = fresh.slice(0, 5).map((r) => r.name).join(', ');
+  const names: Text = fresh.length > 5 ? m('more', { list: shown, n: fresh.length - 5 }) : shown;
   const admins = (await ctx.db.query<{ id: string }>("select id from users where role='admin' and not disabled")).rows;
   for (const a of admins) {
-    await notify(ctx, { userId: a.id, kind: 'playback_check', title: `Wiedergabe-Check: ${fresh.length} Titel neu fehlerhaft`, body: names, link: '/admin/playback', dedupe: `playback-check-${id}-${a.id}`, external: true });
+    await notify(ctx, { userId: a.id, kind: 'playback_check', title: m('check.failed', { n: fresh.length }), body: names, link: '/admin/playback', dedupe: `playback-check-${id}-${a.id}`, external: true });
   }
 }
 

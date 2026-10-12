@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { fmtDateTime, t, tr } from '#lib/i18n';
+  import Rich from '#lib/i18n/Rich.svelte';
   import { onMount } from 'svelte';
   import { api, ApiError } from '#lib/api';
   interface Dev { id: string; label: string; approved: boolean; current: boolean; last_seen: string }
@@ -14,58 +16,59 @@
   $: others = devices.filter((d) => d.approved || d.current);
   async function approve(d: Dev) {
     busy = d.id; err = ''; msg = '';
-    try { await api(`/api/devices/${d.id}/approve`, { method: 'POST' }); msg = `„${d.label}“ ist jetzt freigegeben und öffnet sich in wenigen Sekunden.`; }
+    try { await api(`/api/devices/${d.id}/approve`, { method: 'POST' }); msg = tr('account.devices.approved', { name: d.label }); }
     catch (e) {
       err = e instanceof ApiError && e.status === 403
-        ? 'Dieses Gerät ist selbst noch nicht freigegeben. Bitte auf einem bereits freigegebenen Gerät bestätigen – oder ein Admin gibt es unter Admin → Geräte frei.'
-        : 'Freigeben hat nicht geklappt. Bitte neu laden und noch einmal versuchen.';
+        ? tr('account.devices.approveForbidden')
+        : tr('account.devices.approveFailed');
     } finally { busy = ''; await load(); }
   }
-  async function revokeOthers() { const r = await api('/api/sessions/revoke-others', { method: 'POST' }); msg = `${r.revoked} andere Sitzung(en) beendet.`; }
-  async function remove(d: Dev) { if (!confirm(`„${d.label}“ wirklich entfernen? Das Gerät wird abgemeldet.`)) return; await api(`/api/devices/${d.id}`, { method: 'DELETE' }); await load(); }
+  async function revokeOthers() { const r = await api('/api/sessions/revoke-others', { method: 'POST' }); msg = tr('account.devices.revoked', { n: Number(r.revoked) }); }
+  async function remove(d: Dev) { if (!confirm(tr('account.devices.confirmRemove', { name: d.label }))) return; await api(`/api/devices/${d.id}`, { method: 'DELETE' }); await load(); }
 </script>
 
-<h1>Geräte</h1>
+<svelte:head><title>{$t('common.pageTitle', { page: $t('account.devices.pageTitle') })}</title></svelte:head>
+<h1>{$t('account.devices.title')}</h1>
 
-<section class="panel how" aria-label="Neues Gerät hinzufügen">
-  <h2>Neues Gerät hinzufügen</h2>
+<section class="panel how" aria-label={$t('account.devices.addAria')}>
+  <h2>{$t('account.devices.addTitle')}</h2>
   <ol>
-    <li>Öffne FriendFlix auf dem neuen Gerät und melde dich an.</li>
-    <li>Das Gerät erscheint hier <b>automatisch</b> unter „Wartet auf Freigabe“ (die Liste aktualisiert sich alle paar Sekunden).</li>
-    <li>Prüfe, ob der Name stimmt, und tippe auf <b>Freigeben</b>. Das neue Gerät öffnet sich danach von selbst.</li>
+    <li>{$t('account.devices.step1')}</li>
+    <li><Rich text={$t('account.devices.step2')} /></li>
+    <li><Rich text={$t('account.devices.step3')} /></li>
   </ol>
-  {#if me && !me.deviceApproved}<p class="warn">Achtung: Dieses Gerät ist selbst noch nicht freigegeben – freigeben kannst du nur auf einem bereits freigegebenen Gerät (oder ein Admin unter Admin → Geräte).</p>{/if}
+  {#if me && !me.deviceApproved}<p class="warn">{$t('account.devices.notApprovedSelf')}</p>{/if}
 </section>
 
 {#if msg}<p class="ok" role="status">{msg}</p>{/if}
 {#if err}<p class="err" role="alert">{err}</p>{/if}
 
 {#if pending.length}
-  <section class="panel waiting" aria-label="Wartet auf Freigabe">
-    <h2>Wartet auf Freigabe ({pending.length})</h2>
+  <section class="panel waiting" aria-label={$t('account.devices.waitingAria')}>
+    <h2>{$t('account.devices.waiting', { n: pending.length })}</h2>
     {#each pending as d (d.id)}
       <div class="flex row">
-        <div><b>{d.label}</b><div class="muted">zuletzt gesehen {new Date(d.last_seen).toLocaleString('de-DE')}</div></div>
+        <div><b>{d.label}</b><div class="muted">{$t('account.devices.lastSeenAt', { when: fmtDateTime(d.last_seen) })}</div></div>
         <span class="sp"></span>
-        <button disabled={busy === d.id} on:click={() => approve(d)}>{busy === d.id ? 'Gebe frei …' : 'Freigeben'}</button>
-        <button class="sec" on:click={() => remove(d)}>Ablehnen</button>
+        <button disabled={busy === d.id} on:click={() => approve(d)}>{busy === d.id ? $t('account.devices.approving') : $t('account.devices.approve')}</button>
+        <button class="sec" on:click={() => remove(d)}>{$t('account.devices.reject')}</button>
       </div>
     {/each}
   </section>
 {:else}
-  <p class="muted">Gerade wartet kein Gerät auf Freigabe.</p>
+  <p class="muted">{$t('account.devices.noneWaiting')}</p>
 {/if}
 
-<h2>Freigegebene Geräte</h2>
-<p><button class="sec" on:click={revokeOthers}>Auf allen anderen Geräten abmelden</button></p>
+<h2>{$t('account.devices.approvedTitle')}</h2>
+<p><button class="sec" on:click={revokeOthers}>{$t('account.devices.revokeOthers')}</button></p>
 <table>
-  <thead><tr><th>Gerät</th><th>Zuletzt gesehen</th><th></th></tr></thead>
+  <thead><tr><th>{$t('account.devices.device')}</th><th>{$t('account.devices.lastSeen')}</th><th></th></tr></thead>
   <tbody>
     {#each others as d (d.id)}
       <tr>
-        <td>{d.label} {#if d.current}<span class="badge">dieses Gerät</span>{/if}</td>
-        <td>{new Date(d.last_seen).toLocaleString('de-DE')}</td>
-        <td>{#if !d.current}<button class="sec" on:click={() => remove(d)}>Entfernen</button>{/if}</td>
+        <td>{d.label} {#if d.current}<span class="badge">{$t('account.devices.thisDevice')}</span>{/if}</td>
+        <td>{fmtDateTime(d.last_seen)}</td>
+        <td>{#if !d.current}<button class="sec" on:click={() => remove(d)}>{$t('account.devices.remove')}</button>{/if}</td>
       </tr>
     {/each}
   </tbody>

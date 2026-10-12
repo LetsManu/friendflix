@@ -6,6 +6,7 @@ import {
   roleAllowsDownloads, syncProgress, type DownloadSourceInfo,
 } from '../downloads.js';
 import { effectiveRole } from '../roles.js';
+import { effectiveLanguage, msg } from '../i18n.js';
 import { requireUser } from '../session.js';
 
 const itemId = z.string().regex(/^[0-9a-f]{32}$/);
@@ -44,9 +45,10 @@ export function downloadRoutes(app: FastifyInstance, ctx: Ctx) {
       return xs.filter((x) => !seen.has(x.lang.toLowerCase()) && seen.add(x.lang.toLowerCase())).map((x) => ({ lang: x.lang, title: x.title }));
     };
     const existing = (await ctx.db.query<{ id: string }>("select id from downloads where user_id=$1 and device_id=$2 and profile_id=$3 and item_id=$4 and status in ('pending','fetched')", [req.user!.id, req.session!.deviceId, req.profile!.id, id])).rows[0];
+    const lang = await effectiveLanguage(ctx, req.profile!.id);
     return {
       allowed: true,
-      qualities: qualityOptions(role, src).map((q) => ({ id: q.id, label: q.label, height: q.height, estBytes: q.estBytes })),
+      qualities: qualityOptions(role, src).map((q) => ({ id: q.id, label: msg(lang, `download.quality.${q.id}`), height: q.height, estBytes: q.estBytes })),
       audio: dedupe(src.audio),
       subtitles: dedupe(src.subtitles),
       quota: { used, max },

@@ -3,17 +3,23 @@
   import { onDestroy, onMount } from 'svelte';
   import { api } from '#lib/api';
   import { qrPath } from '#lib/qr';
+  import { publicLocale, setLocale, t, tr } from '#lib/i18n';
+  import Rich from '#lib/i18n/Rich.svelte';
 
   let code = '', poll = '', expires = 0, error = '', qr: { size: number; d: string } | null = null;
   let timer: ReturnType<typeof setInterval>, dead = false, linking = false;
+  /** This page never calls /api/me: language = remembered → browser → instance default (from the first code answer). */
+  let langSet = false, shown = false;
 
   async function newCode() {
     error = '';
     try {
-      const r = await api<{ code: string; pollToken: string; expiresIn: number }>('/api/tv/code', { method: 'POST' });
+      const r = await api<{ code: string; pollToken: string; expiresIn: number; defaultLanguage?: string }>('/api/tv/code', { method: 'POST' });
+      if (!langSet) { langSet = true; await setLocale(r.defaultLanguage); }
       code = r.code; poll = r.pollToken; expires = Date.now() + r.expiresIn * 1000 - 5000;
       qr = qrPath(`${location.origin}/remote?code=${r.code}`);
-    } catch { error = 'Der Server ist gerade nicht erreichbar – neuer Versuch …'; code = ''; }
+    } catch { error = tr('player.tv.serverDown'); code = ''; }
+    shown = true;
   }
   async function tick() {
     if (dead) return;
@@ -30,6 +36,8 @@
       const r = await fetch('/api/me', { credentials: 'same-origin' });
       if (r.ok && (await r.json()).tv) { location.replace('/'); return; }
     } catch { /* offline: show the code screen anyway */ }
+    const pre = publicLocale();
+    if (pre) { langSet = true; await setLocale(pre); }
     await newCode();
     if (dead) return;
     timer = setInterval(tick, 2000);
@@ -37,32 +45,34 @@
   onDestroy(() => { dead = true; clearInterval(timer); document.documentElement.classList.remove('tv'); });
 </script>
 
-<svelte:head><title>Fernseher verbinden – FriendFlix</title></svelte:head>
+<svelte:head><title>{$t('common.pageTitle', { page: $t('player.tv.pageTitle') })}</title></svelte:head>
+{#if shown}
 <main class="pair">
   <div class="txt">
     <span class="logo"><Logo wordmark size={52} /></span>
-    <h1>Fernseher verbinden</h1>
+    <h1>{$t('player.tv.title')}</h1>
     <ol>
-      <li>Öffne FriendFlix auf deinem Handy und tippe auf <b>Menü › Fernbedienung</b> – oder scanne den QR-Code.</li>
-      <li>Gib dort diesen Code ein und bestätige:</li>
+      <li><Rich text={$t('player.tv.step1')} /></li>
+      <li>{$t('player.tv.step2')}</li>
     </ol>
     {#if linking}
-      <p class="code" role="status">Verbunden …</p>
+      <p class="code" role="status">{$t('player.tv.connected')}</p>
     {:else if code}
-      <p class="code" aria-live="polite" aria-label="Kopplungscode {code.split('').join(' ')}">{code}</p>
+      <p class="code" aria-live="polite" aria-label={$t('player.tv.codeAria', { code: code.split('').join(' ') })}>{code}</p>
     {:else}
       <p class="code dim" role="status">…</p>
     {/if}
-    <p class="muted small">Der Code ist 10 Minuten gültig, gilt nur einmal und wird automatisch erneuert.</p>
+    <p class="muted small">{$t('player.tv.validity')}</p>
     {#if error}<p class="err" role="alert">{error}</p>{/if}
   </div>
   {#if qr}
     <figure class="qr">
-      <svg viewBox="-2 -2 {qr.size + 4} {qr.size + 4}" shape-rendering="crispEdges" role="img" aria-label="QR-Code zum Koppeln"><rect x="-2" y="-2" width={qr.size + 4} height={qr.size + 4} fill="#fff" /><path d={qr.d} fill="#000" /></svg>
-      <figcaption class="muted">Mit der Handy-Kamera scannen</figcaption>
+      <svg viewBox="-2 -2 {qr.size + 4} {qr.size + 4}" shape-rendering="crispEdges" role="img" aria-label={$t('player.tv.qrAria')}><rect x="-2" y="-2" width={qr.size + 4} height={qr.size + 4} fill="#fff" /><path d={qr.d} fill="#000" /></svg>
+      <figcaption class="muted">{$t('player.tv.qrCaption')}</figcaption>
     </figure>
   {/if}
 </main>
+{/if}
 
 <style>
   .pair { min-height: 100vh; display: flex; align-items: center; justify-content: center; gap: clamp(2rem, 7vw, 7rem); padding: 3rem var(--pad-x); background: radial-gradient(900px 500px at 20% 10%, rgba(229, 15, 42, .16), transparent 70%), var(--bg); flex-wrap: wrap; }

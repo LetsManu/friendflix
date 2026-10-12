@@ -1,7 +1,8 @@
 <script lang="ts">
   import { api, backdrop, img, primeItem, srcset, CARD_SIZES, CARD_WIDTHS, type Item } from '#lib/api';
   import { prefetchModal } from '#lib/lazy';
-  import { listIds, toggleList, SAVE_FAILED } from '#lib/stores';
+  import { listIds, toggleList } from '#lib/stores';
+  import { t, tr } from '#lib/i18n';
   import Icon from '#lib/Icon.svelte';
   import Logo from '#lib/Logo.svelte';
   import ListMenu from '#lib/ListMenu.svelte';
@@ -110,7 +111,7 @@
 
   // ---- feedback for failed saves (heart / Meine Liste); role="status" region over the thumbnail ----
   let fb = '', fbT: ReturnType<typeof setTimeout>, favBusy = false;
-  function flash() { fb = SAVE_FAILED; clearTimeout(fbT); fbT = setTimeout(() => (fb = ''), 4500); }
+  function flash() { fb = tr('home.card.saveFailed'); clearTimeout(fbT); fbT = setTimeout(() => (fb = ''), 4500); }
   onDestroy(() => clearTimeout(fbT));
   async function toggleFav() {
     if (favBusy) return;
@@ -133,14 +134,14 @@
   <a class="thumb" {href} bind:this={thumbEl} aria-label={item.name + (sub ? ', ' + sub : '')}>
     {#if posterOnly}<img class="blur" loading="lazy" decoding="async" {src} srcset={srcs} {sizes} alt="" aria-hidden="true" />{/if}
     {#if src}<img bind:this={imgEl} class:contain={posterOnly} class:spoil={isSpoiler(item, $prefs)} loading="lazy" decoding="async" {src} srcset={srcs} {sizes} alt="" width={posterSrc ? 200 : 320} height={posterSrc ? 300 : 180} />{/if}
-    {#if isNew}<span class="brand"><Logo size={16} label="" /><span class="neu">Neu</span></span>{/if}
-    {#if fresh}<span class="newep">Neue Folgen</span>{/if}
+    {#if isNew}<span class="brand"><Logo size={16} label="" /><span class="neu">{$t('home.card.new')}</span></span>{/if}
+    {#if fresh}<span class="newep">{$t('home.card.newEpisodes')}</span>{/if}
     <span class="cap" class:big={!src}>{#if epSub}<span class="l1">{item.seriesName}</span><span class="l2">{epSub}</span>{:else}{item.name}{/if}</span>
     {#if pct}<span class="progress"><i style="width:{pct}%"></i></span>{/if}
   </a>
-  {#if removable}<button class="rm" aria-label="Aus Weiterschauen entfernen" on:click={() => dispatch('remove', item)}><Icon name="x" size={14} /></button>{/if}
+  {#if removable}<button class="rm" aria-label={$t('home.card.removeResume')} on:click={() => dispatch('remove', item)}><Icon name="x" size={14} /></button>{/if}
   <div class="fb" role="status">{#if fb}<span>{fb}</span>{/if}</div>
-  <button type="button" class="mb" bind:this={moreBtn} aria-label="Aktionen für {item.name}" aria-haspopup="dialog" aria-expanded={sheet} on:click={openSheet}><span aria-hidden="true">⋯</span></button>
+  <button type="button" class="mb" bind:this={moreBtn} aria-label={$t('home.card.actionsFor', { name: item.name })} aria-haspopup="dialog" aria-expanded={sheet} on:click={openSheet}><span aria-hidden="true">⋯</span></button>
   </div>
 </article>
 {#if hp}
@@ -158,15 +159,15 @@
 {#if sheet}
   <!-- svelte-ignore a11y_click_events_have_key_events -->
   <div class="scrim" use:portal on:click={() => closeSheet()} role="presentation"></div>
-  <div class="sheet" tabindex="-1" use:portal bind:this={sheetEl} role="dialog" aria-modal="true" aria-label="Aktionen für {item.name}" on:keydown={sheetKey}>
+  <div class="sheet" tabindex="-1" use:portal bind:this={sheetEl} role="dialog" aria-modal="true" aria-label={$t('home.card.actionsFor', { name: item.name })} on:keydown={sheetKey}>
     <p class="st">{item.name}</p>
-    <a class="act" href={href} on:click={() => closeSheet(false)}><Icon name="play" size={20} />Abspielen</a>
-    <button type="button" class="act" aria-haspopup="dialog" on:pointerenter={prefetchModal} on:click={(e) => { if (item.type !== 'Episode') primeItem(item); moreBtn?.focus(); openModal(e, detail); closeSheet(false); }}><Icon name="chevron-down" size={20} />Mehr Infos</button>
-    <button type="button" class="act" on:click={() => { void toggleInList(); closeSheet(); }}><Icon name={inList ? 'check' : 'plus'} size={20} />{inList ? 'Von Meine Liste entfernen' : 'Zu Meine Liste'}</button>
-    <button type="button" class="act" aria-pressed={fav} on:click={() => { toggleFav(); closeSheet(); }}><Icon name="heart" size={20} fill={fav} />{fav ? 'Favorit entfernen' : 'Als Favorit markieren'}</button>
+    <a class="act" href={href} on:click={() => closeSheet(false)}><Icon name="play" size={20} />{$t('home.card.play')}</a>
+    <button type="button" class="act" aria-haspopup="dialog" on:pointerenter={prefetchModal} on:click={(e) => { if (item.type !== 'Episode') primeItem(item); moreBtn?.focus(); openModal(e, detail); closeSheet(false); }}><Icon name="chevron-down" size={20} />{$t('home.card.moreInfo')}</button>
+    <button type="button" class="act" on:click={() => { void toggleInList(); closeSheet(); }}><Icon name={inList ? 'check' : 'plus'} size={20} />{inList ? $t('home.card.removeFromList') : $t('home.card.addToList')}</button>
+    <button type="button" class="act" aria-pressed={fav} on:click={() => { toggleFav(); closeSheet(); }}><Icon name="heart" size={20} fill={fav} />{fav ? $t('home.card.favRemove') : $t('home.card.favAdd')}</button>
     {#if item.type !== 'BoxSet'}<ListMenu itemId={item.seriesId ?? item.id} variant="row" up on:changed={(e) => dispatch('listchanged', e.detail)} />{/if}
-    {#if removable}<button type="button" class="act" on:click={() => { dispatch('remove', item); closeSheet(false); }}><Icon name="x" size={20} />Aus Weiterschauen entfernen</button>{/if}
-    <button type="button" class="act cancel" on:click={() => closeSheet()}>Schließen</button>
+    {#if removable}<button type="button" class="act" on:click={() => { dispatch('remove', item); closeSheet(false); }}><Icon name="x" size={20} />{$t('home.card.removeResume')}</button>{/if}
+    <button type="button" class="act cancel" on:click={() => closeSheet()}>{$t('common.close')}</button>
   </div>
 {/if}
 

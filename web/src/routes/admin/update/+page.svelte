@@ -1,8 +1,21 @@
 <script lang="ts">
+  import { t, tr, fmtDateTime, hasKey, trDynamic } from '#lib/i18n';
+  import Rich from '#lib/i18n/Rich.svelte';
   import { onDestroy, onMount } from 'svelte';
   import { api } from '#lib/api';
-  const HINT: Record<string, string> = { ENOTFOUND: 'Hostname nicht auflösbar, IP statt nas.local verwenden', EAI_AGAIN: 'DNS-Fehler, IP verwenden', ECONNREFUSED: 'Port geschlossen, Adresse/Port prüfen', EHOSTUNREACH: 'Host nicht erreichbar, Netzwerk/Firewall prüfen', ETIMEDOUT: 'Zeitüberschreitung, Firewall prüfen', ECONNRESET: 'Verbindung abgebrochen' };
-  const STEP: Record<string, string> = { webhook: 'Webhook-Aufruf (URL prüfen)', stack: 'Stack-Abfrage (Stack-ID / API-Key prüfen)', stack_file: 'Stack-Datei lesen', redeploy: 'Redeploy (Endpoint-ID prüfen)' };
+  /** hint for a network error code / name of the failed Portainer step (undefined when unknown) */
+  const hint = (code: string) => (hasKey(`admin.update.hint.${code}`) ? trDynamic(`admin.update.hint.${code}`) : undefined);
+  const step = (s: string) => (hasKey(`admin.update.step.${s}`) ? trDynamic(`admin.update.step.${s}`) : s);
+  /** error text for a failed update request */
+  function updateError(e: any): string {
+    if (e.status === 429) return tr('admin.update.tooSoon');
+    if (e.status === 409) return tr('admin.update.notConfigured');
+    if (e.body?.error === 'portainer_unreachable') {
+      const code = e.body?.code, h = code ? hint(code) : undefined;
+      return tr('admin.update.unreachable', { detail: code ? ` (${code}${h ? `: ${h}` : ''})` : '' });
+    }
+    return tr('admin.update.portainerError', { detail: (e.body?.status ? tr('admin.update.httpDetail', { status: String(e.body.status) }) : '') + (e.body?.step ? tr('admin.update.atStep', { step: step(e.body.step) }) : '') });
+  }
   let u: any = null;
   let busy = false;
   let force = false;
@@ -10,17 +23,17 @@
   let phase: '' | 'started' | 'restarting' | 'done' | 'timeout' = '';
   let timer: ReturnType<typeof setInterval> | undefined;
   const sha7 = (s: string) => s.slice(0, 7);
-  const dt = (d?: string | null) => (d ? new Date(d).toLocaleString('de-DE') : 'unbekannt');
+  const dt = (d?: string | null) => (d ? fmtDateTime(d) : tr('admin.update.unknown'));
   async function load(refresh = false) {
     busy = true;
     try { u = await api('/api/admin/update' + (refresh ? '?refresh=1' : '')); } finally { busy = false; }
   }
   $: upToDate = u?.behind === 0;
   async function start() {
-    if (!confirm('Portal jetzt aktualisieren? Alle Dienste starten kurz neu, laufende Streams brechen ab.')) return;
+    if (!confirm(tr('admin.update.confirm'))) return;
     err = '';
     try { await api('/api/admin/update', { method: 'POST' }); } catch (e: any) {
-      err = e.status === 429 ? 'Es wurde gerade erst ein Update angestoßen. Bitte zwei Minuten warten.' : e.status === 409 ? 'Portainer ist nicht konfiguriert.' : e.body?.error === 'portainer_unreachable' ? `Portainer nicht erreichbar${e.body?.code ? ` (${e.body.code}${HINT[e.body.code] ? `: ${HINT[e.body.code]}` : ''})` : ''}. Details im Backend-Log.` : `Portainer-Fehler${e.body?.status ? ` (HTTP ${e.body.status})` : ''}${e.body?.step ? ` bei ${STEP[e.body.step] ?? e.body.step}` : ''}. Details im Backend-Log.`;
+      err = updateError(e);
       return;
     }
     phase = 'started';
@@ -41,39 +54,39 @@
   onMount(() => load());
   onDestroy(stop);
 </script>
-<p class="muted">Portainer aktualisiert automatisch alle 12 Stunden. Mit dem Knopf geht es sofort.</p>
+<p class="muted">{$t('admin.update.intro')}</p>
 {#if u}
   <div class="panel">
     <div class="flex">
-      <span>Installiert: <b>{sha7(u.current.sha)}</b> vom {dt(u.current.builtAt)}</span>
+      <span>{$t('admin.update.installed')} <b>{sha7(u.current.sha)}</b> {$t('admin.update.builtAt', { date: dt(u.current.builtAt) })}</span>
       {#if u.latest}
-        <span class={upToDate ? 'ok' : 'warn'}>{upToDate ? 'Aktuell' : u.behind ? `${u.behind} Updates verfügbar` : 'Unbekannter Stand'}</span>
+        <span class={upToDate ? 'ok' : 'warn'}>{upToDate ? $t('admin.update.upToDate') : u.behind ? $t('admin.update.behind', { n: u.behind }) : $t('admin.update.unknownState')}</span>
       {/if}
-      <button class="sec" style="margin-left:auto" disabled={busy || !!phase} on:click={() => load(true)}>Neu prüfen</button>
+      <button class="sec" style="margin-left:auto" disabled={busy || !!phase} on:click={() => load(true)}>{$t('admin.update.check')}</button>
     </div>
     {#if u.latest}
-      <div>Neueste Version: <b>{sha7(u.latest.sha)}</b> vom {dt(u.latest.date)} · <a href={u.latest.runUrl} target="_blank" rel="noopener">CI-Lauf</a></div>
+      <div>{$t('admin.update.latest')} <b>{sha7(u.latest.sha)}</b> {$t('admin.update.builtAt', { date: dt(u.latest.date) })} · <a href={u.latest.runUrl} target="_blank" rel="noopener">{$t('admin.update.ciRun')}</a></div>
     {:else}
-      <div class="err">Neueste Version nicht abrufbar ({u.error ?? 'unbekannt'}).</div>
+      <div class="err">{$t('admin.update.latestFailed', { error: u.error ?? $t('admin.update.unknown') })}</div>
     {/if}
-    {#if u.current.sha === 'dev'}<div class="muted">Lokaler Entwicklungs-Build: kein Versionsvergleich möglich.</div>{/if}
+    {#if u.current.sha === 'dev'}<div class="muted">{$t('admin.update.devBuild')}</div>{/if}
   </div>
   <div class="panel">
     <div class="flex">
-      <button disabled={!u.portainer.configured || !!phase || busy || (upToDate && !force)} on:click={start}>Jetzt aktualisieren</button>
-      {#if upToDate}<label class="flex"><input type="checkbox" bind:checked={force} /> trotzdem neu laden</label>{/if}
+      <button disabled={!u.portainer.configured || !!phase || busy || (upToDate && !force)} on:click={start}>{$t('admin.update.updateNow')}</button>
+      {#if upToDate}<label class="flex"><input type="checkbox" bind:checked={force} /> {$t('admin.update.force')}</label>{/if}
     </div>
     {#if !u.portainer.configured}
-      <p class="muted">Nicht eingerichtet. In der <code>.env</code> setzen: <code>PORTAINER_WEBHOOK_URL</code> oder <code>PORTAINER_URL</code>, <code>PORTAINER_API_KEY</code>, <code>PORTAINER_STACK_ID</code> (optional <code>PORTAINER_ENDPOINT_ID</code>).</p>
+      <p class="muted"><Rich text={$t('admin.update.setup')} /></p>
     {/if}
     {#if err}<p class="err">{err}</p>{/if}
-    {#if phase === 'started'}<p class="warn">Update angestoßen … warte auf neue Version</p>{/if}
-    {#if phase === 'restarting'}<p class="warn">Server startet neu …</p>{/if}
-    {#if phase === 'done'}<p class="ok">Update fertig</p>{/if}
-    {#if phase === 'timeout'}<p class="err">Zeitüberschreitung – bitte in Portainer prüfen</p>{/if}
+    {#if phase === 'started'}<p class="warn">{$t('admin.update.started')}</p>{/if}
+    {#if phase === 'restarting'}<p class="warn">{$t('admin.update.restarting')}</p>{/if}
+    {#if phase === 'done'}<p class="ok">{$t('admin.update.done')}</p>{/if}
+    {#if phase === 'timeout'}<p class="err">{$t('admin.update.timeout')}</p>{/if}
   </div>
   {#if u.commits.length}
-    <h2>Änderungen</h2>
+    <h2>{$t('admin.update.changes')}</h2>
     {#each u.commits as c (c.sha)}
       <div class="panel flex">
         <a href={c.url} target="_blank" rel="noopener">{c.message}</a>

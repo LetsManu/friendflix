@@ -7,6 +7,7 @@
   import Icon from '#lib/Icon.svelte';
   import { api } from '#lib/api';
   import Player from '#lib/Player.svelte';
+  import { t, tr, fmtList } from '#lib/i18n';
 
   const EMOJIS = ['😂', '😮', '😢', '❤️', '👏', '🔥', '👍', '🍿'];
   const DRIFT = 0.3; // seconds: seek when further apart than ~300 ms
@@ -48,7 +49,7 @@
   function connect() {
     if (closing) return;
     ws = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws/party/${$page.params.id}`);
-    ws.onclose = (e) => { if (closing) return; if (e.code === 4404) error = 'Raum nicht gefunden.'; else if (e.code === 4409) error = 'Der Raum ist voll.'; else if (e.code === 4401) error = 'Bitte neu anmelden.'; else reconnect = setTimeout(connect, 2000); };
+    ws.onclose = (e) => { if (closing) return; if (e.code === 4404) error = tr('social.party.notFound'); else if (e.code === 4409) error = tr('social.party.full'); else if (e.code === 4401) error = tr('social.party.relogin'); else reconnect = setTimeout(connect, 2000); };
     ws.onmessage = (ev) => {
       const m = JSON.parse(ev.data);
       if (m.t === 'welcome') { ({ you, hostId, itemId, title, startAt } = m); mode = m.mode; members = m.members; state = m.state; offset = m.serverNow - Date.now(); }
@@ -88,10 +89,10 @@
   async function openInvite() { invite = true; inviteMsg = ''; if (!friends.length) friends = (await api('/api/friends').catch(() => ({ friends: [] }))).friends; }
   const pick = (id: string) => { const s = new Set(picked); if (s.has(id)) s.delete(id); else s.add(id); picked = s; };
   async function sendInvite() {
-    try { const r = await api(`/api/party/${$page.params.id}/invite`, { method: 'POST', body: { userIds: [...picked] } }); inviteMsg = r.sent ? `${r.sent} Einladung(en) gesendet.` : 'Alle sind schon eingeladen.'; picked = new Set(); }
-    catch { inviteMsg = 'Einladen fehlgeschlagen.'; }
+    try { const r = await api(`/api/party/${$page.params.id}/invite`, { method: 'POST', body: { userIds: [...picked] } }); inviteMsg = r.sent ? tr('social.party.invitesSent', { n: r.sent }) : tr('social.party.allInvited'); picked = new Set(); }
+    catch { inviteMsg = tr('social.party.inviteFailed'); }
   }
-  async function shareLink() { if (navigator.share) { try { await navigator.share({ title: `Watch-Party: ${title}`, url: location.href }); return; } catch { /* cancelled */ } } copyLink(); }
+  async function shareLink() { if (navigator.share) { try { await navigator.share({ title: tr('social.party.shareTitle', { title }), url: location.href }); return; } catch { /* cancelled */ } } copyLink(); }
   // alone in a fresh room: show the invitation right away (that is what you want to do next)
   $: if (ready && isHost && members.length === 1 && !autoShown) { autoShown = true; openInvite(); }
   const back = () => (history.length > 1 ? history.back() : goto('/party'));
@@ -101,42 +102,42 @@
     connect();
     timers.push(setInterval(() => send({ t: 'ping', c: Date.now() }), 3000));
     timers.push(setInterval(apply, 1000)); // continuous drift correction
-    timers.push(setInterval(() => { countdown = startAt && Date.now() < startAt ? `Start in ${Math.max(0, Math.ceil((startAt - serverNow()) / 1000))} s` : ''; }, 500));
+    timers.push(setInterval(() => { countdown = startAt && Date.now() < startAt ? tr('social.party.countdown', { s: Math.max(0, Math.ceil((startAt - serverNow()) / 1000)) }) : ''; }, 500));
   });
   onDestroy(() => { closing = true; clearTimeout(reconnect); timers.forEach(clearInterval); ws?.close(); });
 </script>
 
 <svelte:window bind:innerWidth />
-<svelte:head><title>{title || 'Watch-Party'} – FriendFlix</title></svelte:head>
+<svelte:head><title>{$t('common.pageTitle', { page: title || $t('social.party.title') })}</title></svelte:head>
 <div class="wrap">
-  {#if error}<div class="fatal"><p class="err">{error}</p><a class="btn" href="/party">Zur Übersicht</a></div>{/if}
+  {#if error}<div class="fatal"><p class="err">{error}</p><a class="btn" href="/party">{$t('social.party.backToList')}</a></div>{/if}
   {#if itemId}
-    <Player itemId={itemId} bind:video partyMode {canControl} inset={panel && innerWidth > 720 ? 340 : 0} denyHint="Nur der Host steuert die Wiedergabe." on:ready={onReady}>
+    <Player itemId={itemId} bind:video partyMode {canControl} inset={panel && innerWidth > 720 ? 340 : 0} denyHint={$t('social.party.denyHint')} on:ready={onReady}>
       <div slot="top" class="top">
-        <button class="icon-btn" aria-label="Party verlassen" on:click={back}><Icon name="arrow-left" size={30} /></button>
-        <div class="ttl"><b>{title}</b><span>Watch-Party{#if countdown} · {countdown}{/if}</span></div>
+        <button class="icon-btn" aria-label={$t('social.party.leave')} on:click={back}><Icon name="arrow-left" size={30} /></button>
+        <div class="ttl"><b>{title}</b><span>{$t('social.party.title')}{#if countdown}{' · '}{countdown}{/if}</span></div>
         <span class="sp"></span>
-        <ul class="avatars" aria-label="Teilnehmer ({members.length})">
+        <ul class="avatars" aria-label={$t('social.party.participants', { n: members.length })}>
           {#each members as m (m.id)}
-            <li class:buf={m.buffering} title="{m.name}{m.id === hostId ? ' (Host)' : ''}{m.buffering ? ' – lädt' : ''}">
+            <li class:buf={m.buffering} title="{m.name}{m.id === hostId ? ' ' + $t('social.party.hostSuffix') : ''}{m.buffering ? ' – ' + $t('social.party.loadingSuffix') : ''}">
               <span class="av">{initial(m.name)}</span>{#if m.id === hostId}<span class="crown"><Icon name="crown" size={12} fill /></span>{/if}
             </li>
           {/each}
         </ul>
-        <button class="icon-btn" aria-label="Freunde einladen" title="Freunde einladen" on:click={openInvite}><Icon name="users" size={24} /></button>
-        <button class="icon-btn" aria-label="Einladungslink kopieren" title="Einladungslink kopieren" on:click={copyLink}><Icon name={copied ? 'check' : 'link'} size={24} /></button>
+        <button class="icon-btn" aria-label={$t('social.party.inviteFriends')} title={$t('social.party.inviteFriends')} on:click={openInvite}><Icon name="users" size={24} /></button>
+        <button class="icon-btn" aria-label={$t('social.party.copyLink')} title={$t('social.party.copyLink')} on:click={copyLink}><Icon name={copied ? 'check' : 'link'} size={24} /></button>
       </div>
       {#if invite}
-        <div class="invite ui" role="dialog" tabindex="-1" aria-label="Freunde einladen" on:click|stopPropagation on:keydown|stopPropagation>
-          <header><b>Freunde zur Party einladen</b><button class="icon-btn" aria-label="Schließen" on:click={() => (invite = false)}><Icon name="x" size={20} /></button></header>
-          <div class="flex">{#each friends as f}<label class="chk"><input type="checkbox" checked={picked.has(f.id)} on:change={() => pick(f.id)} />{f.name}</label>{:else}<span class="muted">Noch keine anderen Nutzer.</span>{/each}</div>
-          <div class="flex"><button disabled={!picked.size} on:click={sendInvite}>Einladen</button><button class="sec" on:click={shareLink}><Icon name={copied ? 'check' : 'share'} size={18} />Link teilen</button></div>
+        <div class="invite ui" role="dialog" tabindex="-1" aria-label={$t('social.party.inviteFriends')} on:click|stopPropagation on:keydown|stopPropagation>
+          <header><b>{$t('social.party.inviteTitle')}</b><button class="icon-btn" aria-label={$t('common.close')} on:click={() => (invite = false)}><Icon name="x" size={20} /></button></header>
+          <div class="flex">{#each friends as f}<label class="chk"><input type="checkbox" checked={picked.has(f.id)} on:change={() => pick(f.id)} />{f.name}</label>{:else}<span class="muted">{$t('social.noOtherUsers')}</span>{/each}</div>
+          <div class="flex"><button disabled={!picked.size} on:click={sendInvite}>{$t('social.invite')}</button><button class="sec" on:click={shareLink}><Icon name={copied ? 'check' : 'share'} size={18} />{$t('social.party.shareLink')}</button></div>
           {#if inviteMsg}<span class="muted" role="status">{inviteMsg}</span>{/if}
         </div>
       {/if}
 
-      {#if state.hold && waitingFor.length}<div class="hold" role="status"><div class="spin"></div>Warte auf {waitingFor.join(', ')} …</div>{/if}
-      {#if needClick}<div class="hold"><button on:click|stopPropagation={() => { needClick = false; apply(); }}><Icon name="play" size={20} />Mitschauen</button></div>{/if}
+      {#if state.hold && waitingFor.length}<div class="hold" role="status"><div class="spin"></div>{$t('social.party.waitingFor', { names: fmtList(waitingFor) })}</div>{/if}
+      {#if needClick}<div class="hold"><button on:click|stopPropagation={() => { needClick = false; apply(); }}><Icon name="play" size={20} />{$t('social.party.watchAlong')}</button></div>{/if}
 
       <div class="floats" aria-hidden="true">{#each floating as f (f.id)}<span class="fl" style="left:{f.left}%"><b>{f.emoji}</b><i>{f.name}</i></span>{/each}</div>
 
@@ -146,40 +147,40 @@
 
       {#if panel}
         <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
-        <aside class="chat" aria-label="Chat" on:click|stopPropagation on:keydown|stopPropagation>
-          <header><b>Chat</b><button class="icon-btn" aria-label="Chat schließen" on:click={togglePanel}><Icon name="x" size={22} /></button></header>
+        <aside class="chat" aria-label={$t('social.party.chat')} on:click|stopPropagation on:keydown|stopPropagation>
+          <header><b>{$t('social.party.chat')}</b><button class="icon-btn" aria-label={$t('social.party.closeChat')} on:click={togglePanel}><Icon name="x" size={22} /></button></header>
           <div class="msgs" bind:this={chatEl} role="log" aria-live="polite">
-            {#each chat as c (c.id)}<p class:mine={c.mine}><b>{c.name}</b><span>{c.text}</span></p>{:else}<p class="muted">Noch keine Nachrichten. Sag Hallo!</p>{/each}
+            {#each chat as c (c.id)}<p class:mine={c.mine}><b>{c.name}</b><span>{c.text}</span></p>{:else}<p class="muted">{$t('social.party.noMessages')}</p>{/each}
           </div>
-          <form on:submit|preventDefault={sendChat}><input bind:value={text} maxlength="500" placeholder="Nachricht …" aria-label="Nachricht" /><button aria-label="Senden"><Icon name="chevron-right" size={20} /></button></form>
+          <form on:submit|preventDefault={sendChat}><input bind:value={text} maxlength="500" placeholder={$t('social.party.messagePlaceholder')} aria-label={$t('social.party.message')} /><button aria-label={$t('social.party.send')}><Icon name="chevron-right" size={20} /></button></form>
         </aside>
       {/if}
 
       <svelte:fragment slot="extra">
         {#if isHost}
           <div class="mwrap">
-            <button class="ic" aria-label="Party-Einstellungen" aria-expanded={settings} on:click|stopPropagation={() => { settings = !settings; picker = false; }}><Icon name={mode === 'everyone' ? 'users' : 'lock'} size={26} /></button>
+            <button class="ic" aria-label={$t('social.party.settings')} aria-expanded={settings} on:click|stopPropagation={() => { settings = !settings; picker = false; }}><Icon name={mode === 'everyone' ? 'users' : 'lock'} size={26} /></button>
             {#if settings}
-              <div class="menu" role="dialog" tabindex="-1" aria-label="Wer darf steuern?" on:click|stopPropagation on:keydown|stopPropagation>
-                <h3>Wer darf steuern?</h3>
-                <button class="mi" class:on={mode === 'host'} on:click={() => setMode('host')}>{#if mode === 'host'}<Icon name="check" size={16} />{:else}<span class="sp2"></span>{/if}Nur ich (Host)</button>
-                <button class="mi" class:on={mode === 'everyone'} on:click={() => setMode('everyone')}>{#if mode === 'everyone'}<Icon name="check" size={16} />{:else}<span class="sp2"></span>{/if}Alle Teilnehmer</button>
+              <div class="menu" role="dialog" tabindex="-1" aria-label={$t('social.party.whoControls')} on:click|stopPropagation on:keydown|stopPropagation>
+                <h3>{$t('social.party.whoControls')}</h3>
+                <button class="mi" class:on={mode === 'host'} on:click={() => setMode('host')}>{#if mode === 'host'}<Icon name="check" size={16} />{:else}<span class="sp2"></span>{/if}{$t('social.party.onlyMe')}</button>
+                <button class="mi" class:on={mode === 'everyone'} on:click={() => setMode('everyone')}>{#if mode === 'everyone'}<Icon name="check" size={16} />{:else}<span class="sp2"></span>{/if}{$t('social.party.everyone')}</button>
               </div>
             {/if}
           </div>
         {:else}
-          <span class="roleinfo" title={mode === 'everyone' ? 'Alle dürfen steuern' : 'Nur der Host steuert'}><Icon name={mode === 'everyone' ? 'users' : 'lock'} size={22} /></span>
+          <span class="roleinfo" title={mode === 'everyone' ? $t('social.party.everyoneControls') : $t('social.party.hostControls')}><Icon name={mode === 'everyone' ? 'users' : 'lock'} size={22} /></span>
         {/if}
         <div class="mwrap">
-          <button class="ic" aria-label="Reaktion senden" aria-expanded={picker} on:click|stopPropagation={() => { picker = !picker; settings = false; }}><Icon name="smile" size={28} /></button>
-          {#if picker}<div class="picker" role="menu" tabindex="-1" on:click|stopPropagation on:keydown|stopPropagation>{#each EMOJIS as e}<button class="em" role="menuitem" aria-label="Reaktion {e}" on:click={() => react(e)}>{e}</button>{/each}</div>{/if}
+          <button class="ic" aria-label={$t('social.party.sendReaction')} aria-expanded={picker} on:click|stopPropagation={() => { picker = !picker; settings = false; }}><Icon name="smile" size={28} /></button>
+          {#if picker}<div class="picker" role="menu" tabindex="-1" on:click|stopPropagation on:keydown|stopPropagation>{#each EMOJIS as e}<button class="em" role="menuitem" aria-label={$t('social.party.reaction', { emoji: e })} on:click={() => react(e)}>{e}</button>{/each}</div>{/if}
         </div>
-        <button class="ic chatbtn" aria-label="Chat {panel ? 'schließen' : 'öffnen'}{unread ? `, ${unread} ungelesen` : ''}" aria-expanded={panel} on:click|stopPropagation={togglePanel}>
+        <button class="ic chatbtn" aria-label={unread ? $t('social.party.chatUnread', { label: panel ? $t('social.party.closeChat') : $t('social.party.openChat'), n: unread }) : panel ? $t('social.party.closeChat') : $t('social.party.openChat')} aria-expanded={panel} on:click|stopPropagation={togglePanel}>
           <Icon name="message" size={27} />{#if unread}<span class="dot">{unread}</span>{/if}
         </button>
       </svelte:fragment>
     </Player>
-  {:else if !error}<div class="fatal"><div class="spin"></div><p class="muted">Verbinde mit der Party …</p></div>{/if}
+  {:else if !error}<div class="fatal"><div class="spin"></div><p class="muted">{$t('social.party.connecting')}</p></div>{/if}
 </div>
 
 <style>

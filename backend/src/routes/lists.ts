@@ -4,6 +4,7 @@ import { z } from 'zod';
 import type { Ctx } from '../ctx.js';
 import { JellyfinError } from '../jellyfin/client.js';
 import { MAX_FEATURED, MAX_FEATURED_ITEMS, MAX_ITEMS, MAX_MEMBERS, MAX_OWNED, canEdit, isFeatured, listRole, type ListAccess, type ListRole } from '../lists.js';
+import { m } from '../i18n.js';
 import { notify } from '../notify.js';
 import { requireUser } from '../session.js';
 import { itemsByIds } from './discover.js';
@@ -144,7 +145,7 @@ export function listRoutes(app: FastifyInstance, ctx: Ctx) {
       [a.id, target.data, role],
     );
     const name = (await ctx.db.query<{ name: string }>('select name from lists where id = $1', [a.id])).rows[0]!.name;
-    await notify(ctx, { userId: target.data, kind: 'list_invite', title: `${req.user!.name} hat dich zur Liste „${name}“ eingeladen`, link: `/lists/${a.id}`, dedupe: `list-inv-${a.id}-${target.data}` });
+    await notify(ctx, { userId: target.data, kind: 'list_invite', title: m('list.invite', { name: req.user!.name, list: name }), link: `/lists/${a.id}`, dedupe: `list-inv-${a.id}-${target.data}` });
     return { ok: true };
   });
 

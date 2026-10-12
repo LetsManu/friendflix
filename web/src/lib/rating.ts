@@ -1,10 +1,14 @@
+import { tr, type TKey } from '#lib/i18n';
+
 /** Netflix-style three-step rating: -1 "Nicht mein Fall", 1 "Gefällt mir", 2 "Super", 0 = no rating. */
 export type Thumb = -1 | 0 | 1 | 2;
 
-export const RATING_OPTIONS: ReadonlyArray<{ value: Exclude<Thumb, 0>; label: string; icon: 'down' | 'up' | 'double' }> = [
-  { value: -1, label: 'Nicht mein Fall', icon: 'down' },
-  { value: 1, label: 'Gefällt mir', icon: 'up' },
-  { value: 2, label: 'Super', icon: 'double' },
+interface RatingOption { value: Exclude<Thumb, 0>; key: TKey; icon: 'down' | 'up' | 'double'; /** translated label (current language) */ readonly label: string }
+const opt = (value: Exclude<Thumb, 0>, key: TKey, icon: RatingOption['icon']): RatingOption => ({ value, key, icon, get label() { return tr(key); } });
+export const RATING_OPTIONS: ReadonlyArray<RatingOption> = [
+  opt(-1, 'common.rating.notForMe', 'down'),
+  opt(1, 'common.rating.like', 'up'),
+  opt(2, 'common.rating.love', 'double'),
 ];
 
 /** normalises whatever the API returned (null, '1', 3 …) to a known value */
@@ -19,7 +23,7 @@ export const nextThumb = (current: Thumb, picked: Exclude<Thumb, 0>): Thumb => (
 /** accessible name of the collapsed button */
 export function thumbLabel(v: Thumb): string {
   const o = RATING_OPTIONS.find((x) => x.value === v);
-  return o ? `Bewertet: ${o.label} – Bewertung ändern` : 'Bewerten';
+  return o ? tr('common.rating.rated', { label: o.label }) : tr('common.rating.rate');
 }
 
 /** index of the option keyboard focus starts on when the picker opens (the active one, else "Gefällt mir") */

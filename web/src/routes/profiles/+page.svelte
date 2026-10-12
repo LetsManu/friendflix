@@ -1,4 +1,4 @@
-<svelte:head><title>Profile – FriendFlix</title></svelte:head>
+<svelte:head><title>{$t('common.pageTitle', { page: $t('account.profiles.pageTitle') })}</title></svelte:head>
 <script lang="ts">
   import { onMount } from 'svelte';
   import { api, ApiError } from '#lib/api';
@@ -11,6 +11,8 @@
   import Logo from '#lib/Logo.svelte';
   import { markPicked } from '#lib/gate';
   import { loadIntroSettings, markSessionSeen, shouldPlayIntro, shouldPlayIntroSound } from '#lib/intro';
+  import { t, tr, type TKey } from '#lib/i18n';
+  const colorKey = (key: string) => `account.profiles.colors.${key}` as TKey;
 
   interface Profile { id: string; name: string; avatar: string; isOwner: boolean; hasPin: boolean; active: boolean }
   let profiles: Profile[] = [], max = 5, activeId: string | null = null, loaded = false;
@@ -30,7 +32,7 @@
       profiles = r.profiles; max = r.max ?? 5; activeId = r.activeId ?? null;
       // a session without a chosen profile has no "active" owner: the owner (when unlocked) manages, otherwise nothing to manage
       loadErr = '';
-    } catch { loadErr = 'Die Profile konnten nicht geladen werden.'; } finally { loaded = true; }
+    } catch { loadErr = tr('account.profiles.loadFailed'); } finally { loaded = true; }
   }
   onMount(async () => {
     const sp = new URLSearchParams(location.search);
@@ -73,9 +75,9 @@
     } catch (e) {
       const code = e instanceof ApiError ? e.body?.error : '';
       if (code === 'pin_required') { pinFor = p; pinErr = ''; }
-      else if (code === 'pin_wrong') { pinFor = p; pinErr = 'Falsche PIN. Bitte noch einmal versuchen.'; }
-      else if (code === 'pin_locked') { pinFor = p; pinErr = 'Zu viele Fehlversuche. Bitte in 15 Minuten erneut probieren.'; }
-      else { pinFor = p; pinErr = 'Auswählen hat nicht geklappt. Bitte erneut versuchen.'; }
+      else if (code === 'pin_wrong') { pinFor = p; pinErr = tr('account.profiles.pinWrong'); }
+      else if (code === 'pin_locked') { pinFor = p; pinErr = tr('account.profiles.pinLocked'); }
+      else { pinFor = p; pinErr = tr('account.profiles.selectFailed'); }
     } finally { pinBusy = false; }
   }
 
@@ -90,8 +92,8 @@
   async function save() {
     if (!ed) return;
     const name = ed.name.trim();
-    if (!name || name.length > 20) { edErr = 'Der Name muss 1 bis 20 Zeichen lang sein.'; return; }
-    if (bad(ed.pin) || bad(ed.currentPin)) { edErr = 'Eine PIN besteht aus genau 4 Ziffern.'; return; }
+    if (!name || name.length > 20) { edErr = tr('account.profiles.nameLength'); return; }
+    if (bad(ed.pin) || bad(ed.currentPin)) { edErr = tr('account.profiles.pinFormat'); return; }
     edBusy = true; edErr = '';
     try {
       let id = ed.id;
@@ -108,19 +110,19 @@
       ed = null; await load();
     } catch (e) {
       const code = e instanceof ApiError ? e.body?.error : '';
-      edErr = code === 'max_profiles' ? `Es sind höchstens ${max} Profile möglich.`
-        : code === 'jellyfin' ? 'Der Medienserver hat das Profil nicht angelegt. Bitte später erneut versuchen.'
-        : e instanceof ApiError && e.status === 409 ? 'Dieser Name ist schon vergeben.'
-        : code === 'pin_wrong' || (e instanceof ApiError && e.status === 403) ? 'Die aktuelle PIN stimmt nicht.'
-        : code === 'pin_locked' ? 'Zu viele Fehlversuche. Bitte später erneut probieren.'
-        : 'Speichern hat nicht geklappt.';
+      edErr = code === 'max_profiles' ? tr('account.profiles.maxProfiles', { n: max })
+        : code === 'jellyfin' ? tr('account.profiles.jellyfinCreate')
+        : e instanceof ApiError && e.status === 409 ? tr('account.profiles.nameTaken')
+        : code === 'pin_wrong' || (e instanceof ApiError && e.status === 403) ? tr('account.profiles.currentPinWrong')
+        : code === 'pin_locked' ? tr('account.profiles.pinLockedLater')
+        : tr('account.profiles.saveFailed');
     } finally { edBusy = false; }
   }
   async function remove() {
-    if (!ed?.id || !confirm(`Profil „${ed.name}“ wirklich löschen? Verlauf, Merkliste und Fortschritt dieses Profils gehen verloren.`)) return;
+    if (!ed?.id || !confirm(tr('account.profiles.confirmDelete', { name: ed.name }))) return;
     edBusy = true; edErr = '';
     try { await api(`/api/profiles/${ed.id}`, { method: 'DELETE' }); ed = null; await load(); }
-    catch (e) { edErr = e instanceof ApiError && e.body?.error === 'jellyfin' ? 'Der Medienserver hat das Löschen abgelehnt. Bitte später erneut versuchen.' : 'Löschen hat nicht geklappt.'; }
+    catch (e) { edErr = e instanceof ApiError && e.body?.error === 'jellyfin' ? tr('account.profiles.jellyfinDelete') : tr('account.profiles.deleteFailed'); }
     finally { edBusy = false; }
   }
   function onKey(e: KeyboardEvent) {
@@ -132,72 +134,72 @@
 
 <span class="brand" aria-hidden="true"><Logo wordmark size={30} /></span>
 <div class="wrap" inert={!!pinFor || !!ed}>
-  <h1>{manage ? 'Profile verwalten' : 'Wer schaut gerade?'}</h1>
-  {#if loadErr}<p class="err" role="alert">{loadErr} <button class="sec" on:click={load}>Erneut laden</button></p>{/if}
+  <h1>{manage ? $t('account.profiles.manage') : $t('account.profiles.who')}</h1>
+  {#if loadErr}<p class="err" role="alert">{loadErr} <button class="sec" on:click={load}>{$t('common.retry')}</button></p>{/if}
   {#if !loaded}
     <div class="grid2"><div class="skeleton sk"></div><div class="skeleton sk"></div></div>
   {:else}
     <div class="grid2" data-nav>
       {#each profiles as p (p.id)}
-        <button class="prof" class:cur={p.id === activeId} data-autofocus={p === profiles[0] ? '' : undefined} aria-label="{p.name}{p.hasPin ? ', mit PIN geschützt' : ''}{manage ? ' bearbeiten' : ''}" disabled={pinBusy} on:click={() => choose(p)}>
+        <button class="prof" class:cur={p.id === activeId} data-autofocus={p === profiles[0] ? '' : undefined} aria-label={p.hasPin ? (manage ? $t('account.profiles.ariaPinEdit', { name: p.name }) : $t('account.profiles.ariaPin', { name: p.name })) : manage ? $t('account.profiles.ariaEdit', { name: p.name }) : p.name} disabled={pinBusy} on:click={() => choose(p)}>
           <span class="face" style="background:{avatarBg(p.avatar)}">{initial(p.name)}
             {#if p.hasPin}<span class="lock"><Icon name="lock" size={18} /></span>{/if}
-            {#if manage && canEdit(p)}<span class="edit">Bearbeiten</span>{/if}
+            {#if manage && canEdit(p)}<span class="edit">{$t('account.profiles.edit')}</span>{/if}
           </span>
           <span class="nm">{p.name}</span>
         </button>
       {/each}
       {#if canCreate}
-        <button class="prof addp" aria-label="Profil hinzufügen" on:click={() => openEdit()}>
-          <span class="face add"><Icon name="plus" size={52} /></span><span class="nm">Profil hinzufügen</span>
+        <button class="prof addp" aria-label={$t('account.profiles.add')} on:click={() => openEdit()}>
+          <span class="face add"><Icon name="plus" size={52} /></span><span class="nm">{$t('account.profiles.add')}</span>
         </button>
       {/if}
     </div>
-    {#if manage && !ownerActive}<p class="muted">Neue Profile anlegen und löschen kann nur das Hauptprofil.</p>{/if}
-    <p><button class={manage ? 'light done' : 'outline'} on:click={() => (manage = !manage)}>{manage ? 'Fertig' : 'Profile verwalten'}</button></p>
+    {#if manage && !ownerActive}<p class="muted">{$t('account.profiles.ownerOnly')}</p>{/if}
+    <p><button class={manage ? 'light done' : 'outline'} on:click={() => (manage = !manage)}>{manage ? $t('account.profiles.done') : $t('account.profiles.manage')}</button></p>
   {/if}
 </div>
 
 {#if intro}<Intro sound={intro.sound} on:done={() => introDone?.()} />{/if}
 
 {#if pinFor}
-  <div class="ov" role="dialog" aria-modal="true" aria-label="PIN für {pinFor.name}">
+  <div class="ov" role="dialog" aria-modal="true" aria-label={$t('account.profiles.pinFor', { name: pinFor.name })}>
     <div class="box">
       <span class="face sm" style="background:{avatarBg(pinFor.avatar)}">{initial(pinFor.name)}</span>
-      <PinPad title="PIN für {pinFor.name}" error={pinErr} busy={pinBusy} on:submit={(e) => pinFor && choose(pinFor, e.detail)} on:cancel={() => (pinFor = null)} />
-      {#if pinFor.isOwner}<button type="button" class="sec forgot" on:click={() => (location.href = '/auth/login?resetPin=1')}>PIN vergessen?</button>{/if}
+      <PinPad title={$t('account.profiles.pinFor', { name: pinFor.name })} error={pinErr} busy={pinBusy} on:submit={(e) => pinFor && choose(pinFor, e.detail)} on:cancel={() => (pinFor = null)} />
+      {#if pinFor.isOwner}<button type="button" class="sec forgot" on:click={() => (location.href = '/auth/login?resetPin=1')}>{$t('account.profiles.forgotPin')}</button>{/if}
     </div>
   </div>
 {/if}
 
 {#if ed}
-  <div class="ov" role="dialog" aria-modal="true" aria-label={ed.id ? 'Profil bearbeiten' : 'Profil hinzufügen'}>
+  <div class="ov" role="dialog" aria-modal="true" aria-label={ed.id ? $t('account.profiles.editTitle') : $t('account.profiles.add')}>
     <form class="box ed" on:submit|preventDefault={save}>
-      <h2>{ed.id ? 'Profil bearbeiten' : 'Profil hinzufügen'}</h2>
+      <h2>{ed.id ? $t('account.profiles.editTitle') : $t('account.profiles.add')}</h2>
       <span class="face sm" style="background:{avatarBg(ed.avatar)}">{initial(ed.name)}</span>
-      <label>Name<input bind:value={ed.name} maxlength="20" autocomplete="off" data-autofocus required /></label>
+      <label>{$t('account.profiles.name')}<input bind:value={ed.name} maxlength="20" autocomplete="off" data-autofocus required /></label>
       <fieldset data-nav>
-        <legend>Farbe</legend>
+        <legend>{$t('account.profiles.color')}</legend>
         <div class="cols">
-          {#each AVATARS as [key, label, css]}
-            <button type="button" class="sw" class:sel={ed.avatar === key} style="background:{css}" aria-label={label} aria-pressed={ed.avatar === key} on:click={() => ed && (ed.avatar = key)}>{#if ed.avatar === key}<Icon name="check" size={20} />{/if}</button>
+          {#each AVATARS as [key, , css]}
+            <button type="button" class="sw" class:sel={ed.avatar === key} style="background:{css}" aria-label={$t(colorKey(key))} aria-pressed={ed.avatar === key} on:click={() => ed && (ed.avatar = key)}>{#if ed.avatar === key}<Icon name="check" size={20} />{/if}</button>
           {/each}
         </div>
       </fieldset>
       <fieldset>
-        <legend>PIN (optional)</legend>
+        <legend>{$t('account.profiles.pinOptional')}</legend>
         {#if ed.hasPin}
-          <label>Aktuelle PIN<input bind:value={ed.currentPin} inputmode="numeric" pattern="[0-9]*" maxlength="4" autocomplete="off" /></label>
-          <label class="chk"><input type="checkbox" bind:checked={ed.removePin} /> PIN entfernen</label>
+          <label>{$t('account.profiles.currentPin')}<input bind:value={ed.currentPin} inputmode="numeric" pattern="[0-9]*" maxlength="4" autocomplete="off" /></label>
+          <label class="chk"><input type="checkbox" bind:checked={ed.removePin} /> {$t('account.profiles.removePin')}</label>
         {/if}
-        {#if !ed.removePin}<label>{ed.hasPin ? 'Neue PIN (4 Ziffern)' : 'PIN (4 Ziffern)'}<input bind:value={ed.pin} inputmode="numeric" pattern="[0-9]*" maxlength="4" autocomplete="off" /></label>{/if}
+        {#if !ed.removePin}<label>{ed.hasPin ? $t('account.profiles.newPin') : $t('account.profiles.pin')}<input bind:value={ed.pin} inputmode="numeric" pattern="[0-9]*" maxlength="4" autocomplete="off" /></label>{/if}
       </fieldset>
       {#if edErr}<p class="err" role="alert">{edErr}</p>{/if}
       <div class="flex">
-        <button type="submit" disabled={edBusy}>{edBusy ? 'Speichere …' : 'Speichern'}</button>
-        <button type="button" class="sec" on:click={() => (ed = null)}>Abbrechen</button>
+        <button type="submit" disabled={edBusy}>{edBusy ? $t('common.saving') : $t('common.save')}</button>
+        <button type="button" class="sec" on:click={() => (ed = null)}>{$t('common.cancel')}</button>
         <span class="sp"></span>
-        {#if ed.id && ownerActive && !ed.isOwner}<button type="button" class="sec" disabled={edBusy} on:click={remove}>Profil löschen</button>{/if}
+        {#if ed.id && ownerActive && !ed.isOwner}<button type="button" class="sec" disabled={edBusy} on:click={remove}>{$t('account.profiles.delete')}</button>{/if}
       </div>
     </form>
   </div>

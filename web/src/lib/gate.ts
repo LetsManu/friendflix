@@ -13,7 +13,7 @@ export const ACTIVE_KEY = 'ff-active-profile';
 const RELOAD_KEY = 'ff_profile_reload';
 
 export interface GateMe { profileRequired?: boolean; profileCount?: number; profileChosen?: boolean; tv?: boolean }
-export interface BootHint { approved: boolean; multi: boolean; tv: boolean; /** single-profile accounts only: that profile never changes */ profile?: string }
+export interface BootHint { approved: boolean; multi: boolean; tv: boolean; /** single-profile accounts only: that profile never changes */ profile?: string; /** UI language of the last answer: an early-rendered page waits until it is active */ lang?: string }
 
 /** paths that never show the per-session gate (the profile page itself, the phone remote control) */
 const NO_SESSION_GATE = /^\/(profiles|remote)(\/|$)/;
@@ -30,9 +30,9 @@ export function needsProfileGate(me: GateMe, path: string, sessionPicked: boolea
 /** `/profiles?next=…` for the current location (deep links continue after the pick) */
 export const gateHref = (pathAndSearch: string) => `/profiles?next=${encodeURIComponent(pathAndSearch)}`;
 
-export function hintOf(me: GateMe & { deviceApproved?: boolean; profile?: { id: string } | null }): BootHint {
+export function hintOf(me: GateMe & { deviceApproved?: boolean; profile?: { id: string } | null; language?: string }): BootHint {
   const multi = (me.profileCount ?? 0) > 1;
-  return { approved: Boolean(me.deviceApproved), multi, tv: Boolean(me.tv), ...(!multi && me.profile?.id ? { profile: me.profile.id } : {}) };
+  return { approved: Boolean(me.deviceApproved), multi, tv: Boolean(me.tv), ...(!multi && me.profile?.id ? { profile: me.profile.id } : {}), ...(me.language ? { lang: me.language } : {}) };
 }
 
 /** profile id early requests of this tab use: the one this tab ran with, else the only profile of a single-profile account */
@@ -43,7 +43,7 @@ export function parseHint(raw: string | null | undefined): BootHint | null {
   try {
     const h = JSON.parse(raw);
     if (!(h && typeof h === 'object' && typeof h.approved === 'boolean' && typeof h.multi === 'boolean' && typeof h.tv === 'boolean')) return null;
-    return { approved: h.approved, multi: h.multi, tv: h.tv, ...(typeof h.profile === 'string' && h.profile ? { profile: h.profile } : {}) };
+    return { approved: h.approved, multi: h.multi, tv: h.tv, ...(typeof h.profile === 'string' && h.profile ? { profile: h.profile } : {}), ...(typeof h.lang === 'string' && /^[a-z]{2}$/.test(h.lang) ? { lang: h.lang } : {}) };
   } catch { return null; }
 }
 

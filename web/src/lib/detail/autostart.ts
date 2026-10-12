@@ -1,3 +1,5 @@
+import { tr } from '#lib/i18n';
+
 /**
  * Detail view "Vorschau startet Titel automatisch": once the hero preview has run long enough (it ended, or ~25 s),
  * a 5 s countdown starts the title (resume point / next-up episode). Never on touch/phones, on TV, in a hidden tab,
@@ -58,5 +60,5 @@ export const previewDone = (ended: boolean, time: number) => ended || (Number.is
 /** "Folge startet in 5 …" / "Film startet in 5 …" */
 export function countdownLabel(kind: 'episode' | 'movie', left: number): string {
   const n = Math.max(0, Math.ceil(left));
-  return `${kind === 'episode' ? 'Folge' : 'Film'} startet in ${n} …`;
+  return tr(kind === 'episode' ? 'detail.autostart.episode' : 'detail.autostart.movie', { n });
 }

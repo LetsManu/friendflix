@@ -7,7 +7,8 @@
 
 <script lang="ts">
   import { createEventDispatcher, onMount, tick } from 'svelte';
-  import { api, img, fmtMin } from '#lib/api';
+  import { api, img } from '#lib/api';
+  import { fmtDuration, t } from '#lib/i18n';
   import Icon from '#lib/Icon.svelte';
 
   /** Player "Folgen" panel: season picker + episode list; the playing episode is highlighted, a click plays another one. */
@@ -47,24 +48,26 @@
     if (root?.contains(document.activeElement)) return;
     (cur ?? list?.querySelector<HTMLElement>('button'))?.focus({ preventScroll: true });
   }
+  /** run time in the UI language ("52 Min.", "1 Std. 5 Min."); `$locale` re-renders the page, so a plain call is enough */
+  const mins = (ticks: number) => fmtDuration(Math.round(ticks / 600_000_000) * 60);
   const pct = (e: Item) => (e.played ? 100 : e.runtimeTicks && e.positionTicks ? Math.min(100, (e.positionTicks / e.runtimeTicks) * 100) : 0);
 </script>
 
-<div class="eps" role="dialog" aria-label="Folgen" data-nav data-scope bind:this={root}>
+<div class="eps" role="dialog" aria-label={$t('player.episodes.title')} data-nav data-scope bind:this={root}>
   <header>
     {#if seasons.length > 1}
-      <label class="sel"><span class="sr">Staffel</span>
-        <select bind:value={season} aria-label="Staffel">{#each seasons as s (s.id)}<option value={s.id}>{s.name}</option>{/each}</select>
+      <label class="sel"><span class="sr">{$t('player.episodes.season')}</span>
+        <select bind:value={season} aria-label={$t('player.episodes.season')}>{#each seasons as s (s.id)}<option value={s.id}>{s.name}</option>{/each}</select>
       </label>
     {:else}
-      <b>{seasons[0]?.name ?? 'Folgen'}</b>
+      <b>{seasons[0]?.name ?? $t('player.episodes.title')}</b>
     {/if}
-    <button type="button" class="icx" aria-label="Folgen schließen" on:click={() => dispatch('close')}><Icon name="x" size={20} /></button>
+    <button type="button" class="icx" aria-label={$t('player.episodes.close')} on:click={() => dispatch('close')}><Icon name="x" size={20} /></button>
   </header>
   {#if episodes === null}
-    <p class="muted pad" role="status">Folgen werden geladen …</p>
+    <p class="muted pad" role="status">{$t('player.episodes.loading')}</p>
   {:else if !episodes.length}
-    <p class="muted pad" role="status">{failed ? 'Folgen konnten nicht geladen werden.' : 'Keine Folgen.'}</p>
+    <p class="muted pad" role="status">{failed ? $t('player.episodes.failed') : $t('player.episodes.none')}</p>
   {:else}
     <ul bind:this={list}>
       {#each episodes as e (e.id)}
@@ -77,7 +80,7 @@
             {/if}
             <span class="tx">
               <b>{e.name}</b>
-              {#if cur}<small class="now">Läuft gerade{e.runtimeTicks ? ' · ' + fmtMin(e.runtimeTicks) : ''}</small>{#if e.overview}<small class="ov">{e.overview}</small>{/if}{:else if e.runtimeTicks}<small>{fmtMin(e.runtimeTicks)}</small>{/if}
+              {#if cur}<small class="now">{$t('player.episodes.playing')}{e.runtimeTicks ? ' · ' + mins(e.runtimeTicks) : ''}</small>{#if e.overview}<small class="ov">{e.overview}</small>{/if}{:else if e.runtimeTicks}<small>{mins(e.runtimeTicks)}</small>{/if}
             </span>
             {#if !cur && pct(e)}<span class="bar" aria-hidden="true"><i style="width:{pct(e)}%"></i></span>{/if}
           </button>

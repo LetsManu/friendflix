@@ -128,8 +128,13 @@ export interface JobRow {
   last_used_at: Date;
 }
 
-/** What users see for a failed preparation; the raw error stays in logs and the admin overview. */
-const PREP_FAILED = 'Vorbereitung fehlgeschlagen';
+/**
+ * Error codes of a preparation in API answers (`prep.error`), never sentences: the web app shows its own texts.
+ * The raw error stays in logs and the admin overview.
+ */
+export const PREP_FAILED = 'prep_failed';
+/** the preparation job of a license no longer exists (cleaned up) */
+export const PREP_GONE = 'prep_gone';
 const ACTIVE = "status in ('pending','fetched')";
 const graceMs = (ctx: Pick<Ctx, 'cfg'>) => ctx.cfg.DOWNLOAD_OFFLINE_GRACE_DAYS * 86_400_000;
 export const validUntil = (ctx: Pick<Ctx, 'cfg'>, expiresAt: Date, from = Date.now()) => new Date(Math.min(expiresAt.getTime(), from + graceMs(ctx)));
@@ -354,7 +359,7 @@ export interface LicenseView {
   status: 'pending' | 'fetched' | 'deleted' | 'revoked';
   /** pending licenses: is the file downloadable yet */
   ready: boolean;
-  prep: { status: 'queued' | 'preparing' | 'ready' | 'failed'; percent: number; error: string | null };
+  prep: { status: 'queued' | 'preparing' | 'ready' | 'failed'; percent: number; /** code, never a sentence */ error: typeof PREP_FAILED | typeof PREP_GONE | null };
   fileUrl: string;
   bytes: number | null;
   quality: Quality;
@@ -386,7 +391,7 @@ export async function viewLicenses(ctx: Ctx, rows: LicenseRow[]): Promise<Licens
     const job = r.job_id ? jobs.get(r.job_id) : undefined;
     let prep: LicenseView['prep'];
     if (r.quality === 'original') prep = { status: 'ready', percent: 100, error: null };
-    else if (!job) prep = { status: 'failed', percent: 0, error: 'Vorbereitung nicht mehr verfügbar' };
+    else if (!job) prep = { status: 'failed', percent: 0, error: PREP_GONE };
     else prep = { status: job.status, percent: job.status === 'ready' ? 100 : Math.max(0, Math.min(100, Math.round(jobProgress(job)))), error: job.status === 'failed' ? PREP_FAILED : null };
     const m = r.meta ?? {};
     const bytes = job?.bytes != null ? Number(job.bytes) : m.bytes ?? null;

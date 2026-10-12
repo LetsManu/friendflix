@@ -4,10 +4,12 @@
   const page = pageStore();
   import { api, fmtClock, img, type Item } from '#lib/api';
   import Icon from '#lib/Icon.svelte';
+  import { t, tr } from '#lib/i18n';
+  import Rich from '#lib/i18n/Rich.svelte';
   import { castToTv, holdRemote, sendToTv, tvOnline, tvStatus } from '#lib/remote';
 
   let release: (() => void) | undefined;
-  let codeIn = '', fromLink = false, msg = '', busy = false, pairOpen = true;
+  let codeIn = '', fromLink = false, msg = '', msgOk = false, busy = false, pairOpen = true;
   let resume: Item[] = [], nextUp = new Map<string, Item>(), q = '', results: Item[] | null = null, sent = '', sentT: ReturnType<typeof setTimeout>, seq = 0, searchT: ReturnType<typeof setTimeout>;
 
   $: st = $tvStatus;
@@ -19,22 +21,22 @@
   const onCode = () => (codeIn = fmtCode(codeIn));
 
   async function pair() {
-    busy = true; msg = '';
+    busy = true; msg = ''; msgOk = false;
     try {
       await api('/api/tv/pair', { method: 'POST', body: { code: codeIn } });
-      msg = 'Gekoppelt – der Fernseher meldet sich in wenigen Sekunden an.'; codeIn = ''; fromLink = false;
+      msg = tr('player.remote.paired'); msgOk = true; codeIn = ''; fromLink = false;
     } catch (e: any) {
-      msg = e?.status === 404 ? 'Code unbekannt oder abgelaufen. Prüfe den Code auf dem Fernseher.' : e?.status === 409 ? 'Dieser Code wurde schon verwendet.' : 'Koppeln fehlgeschlagen.';
+      msg = e?.status === 404 ? tr('player.remote.unknownCode') : e?.status === 409 ? tr('player.remote.codeUsed') : tr('player.remote.pairFailed');
     }
     busy = false;
   }
 
   const confirmed = (t: string) => { sent = t; clearTimeout(sentT); sentT = setTimeout(() => (sent = ''), 2500); };
   async function ctl(action: 'play' | 'pause' | 'toggle' | 'seekBy' | 'stop' | 'home' | 'next' | 'audio' | 'sub', value?: number) {
-    if (!(await sendToTv({ t: 'ctl', action, value }))) confirmed('Keine Verbindung zum Fernseher');
+    if (!(await sendToTv({ t: 'ctl', action, value }))) confirmed(tr('player.remote.noConnection'));
   }
   async function cast(id: string, name: string) {
-    confirmed((await castToTv(id)) ? `„${name}“ wird auf dem Fernseher gestartet …` : 'Keine Verbindung zum Fernseher');
+    confirmed((await castToTv(id)) ? tr('player.remote.starting', { name }) : tr('player.remote.noConnection'));
   }
   /** what a click on "play on TV" starts: movies/episodes directly, series via their next-up episode */
   const target = (i: Item): Item | null => (i.type === 'Series' ? nextUp.get(i.id) ?? null : i);
@@ -59,90 +61,90 @@
   onDestroy(() => { release?.(); clearTimeout(sentT); clearTimeout(searchT); });
 </script>
 
-<svelte:head><title>Fernbedienung – FriendFlix</title></svelte:head>
+<svelte:head><title>{$t('common.pageTitle', { page: $t('player.remote.title') })}</title></svelte:head>
 <div class="remote">
-  <h1><Icon name="tv" size={30} /> Fernbedienung</h1>
+  <h1><Icon name="tv" size={30} /> {$t('player.remote.title')}</h1>
 
   <section class="panel status" aria-live="polite">
-    <div class="state"><span class="led" class:on={$tvOnline} aria-hidden="true"></span><b>{$tvOnline ? 'Fernseher verbunden' : 'Kein Fernseher verbunden'}</b></div>
+    <div class="state"><span class="led" class:on={$tvOnline} aria-hidden="true"></span><b>{$tvOnline ? $t('player.remote.tvConnected') : $t('player.remote.noTv')}</b></div>
     {#if $tvOnline}
       {#if playing}
-        <p class="now"><b>{st?.title ?? 'Wiedergabe'}</b><span class="muted">{st?.paused ? 'Pausiert' : 'Läuft'}{st?.duration ? ` · ${fmtClock(st.position ?? 0)} / ${fmtClock(st.duration)}` : ''}</span></p>
+        <p class="now"><b>{st?.title ?? $t('player.remote.playback')}</b><span class="muted">{st?.paused ? $t('player.remote.paused') : $t('player.remote.playing')}{st?.duration ? ` · ${fmtClock(st.position ?? 0)} / ${fmtClock(st.duration)}` : ''}</span></p>
         <div class="bar" aria-hidden="true"><i style="width:{pct}%"></i></div>
-      {:else}<p class="muted">Der Fernseher zeigt gerade die Startseite. Wähle unten einen Titel.</p>{/if}
+      {:else}<p class="muted">{$t('player.remote.tvHome')}</p>{/if}
     {:else}
-      <p class="muted">Schalte den Fernseher ein und öffne dort <b>{location.host}/tv</b> im Browser. Sobald er verbunden ist, erscheint hier die Fernbedienung.</p>
+      <p class="muted"><Rich key="player.remote.howTo" params={{ host: location.host }} /></p>
     {/if}
   </section>
 
   {#if $tvOnline}
-    <section class="panel pad" aria-label="Steuerung">
+    <section class="panel pad" aria-label={$t('player.remote.controls')}>
       <div class="keys">
-        <button class="sec" aria-label="60 Sekunden zurück" on:click={() => ctl('seekBy', -60)}>−60</button>
-        <button class="sec" aria-label="10 Sekunden zurück" on:click={() => ctl('seekBy', -10)}><Icon name="rewind10" size={30} /></button>
-        <button class="main light" aria-label={st?.paused === false ? 'Pause' : 'Abspielen'} on:click={() => ctl('toggle')}><Icon name={st?.paused === false ? 'pause' : 'play'} size={38} /></button>
-        <button class="sec" aria-label="10 Sekunden vor" on:click={() => ctl('seekBy', 10)}><Icon name="forward10" size={30} /></button>
-        <button class="sec" aria-label="60 Sekunden vor" on:click={() => ctl('seekBy', 60)}>+60</button>
+        <button class="sec" aria-label={$t('player.remote.back60')} on:click={() => ctl('seekBy', -60)}>−60</button>
+        <button class="sec" aria-label={$t('player.remote.back10')} on:click={() => ctl('seekBy', -10)}><Icon name="rewind10" size={30} /></button>
+        <button class="main light" aria-label={st?.paused === false ? $t('player.remote.pause') : $t('player.remote.play')} on:click={() => ctl('toggle')}><Icon name={st?.paused === false ? 'pause' : 'play'} size={38} /></button>
+        <button class="sec" aria-label={$t('player.remote.forward10')} on:click={() => ctl('seekBy', 10)}><Icon name="forward10" size={30} /></button>
+        <button class="sec" aria-label={$t('player.remote.forward60')} on:click={() => ctl('seekBy', 60)}>+60</button>
       </div>
       <div class="flex keys2">
-        <button class="sec" on:click={() => ctl('stop')} disabled={!playing}><Icon name="stop" size={18} />Beenden</button>
-        <button class="sec" on:click={() => ctl('next')} disabled={!playing}><Icon name="skip-next" size={20} />Nächste Folge</button>
-        <button class="sec" on:click={() => ctl('home')}><Icon name="home" size={20} />Startseite</button>
+        <button class="sec" on:click={() => ctl('stop')} disabled={!playing}><Icon name="stop" size={18} />{$t('player.remote.stop')}</button>
+        <button class="sec" on:click={() => ctl('next')} disabled={!playing}><Icon name="skip-next" size={20} />{$t('player.remote.next')}</button>
+        <button class="sec" on:click={() => ctl('home')}><Icon name="home" size={20} />{$t('player.remote.home')}</button>
       </div>
       {#if st?.audio && st.audio.length > 1}
-        <label class="tl" for="aud">Ton</label>
+        <label class="tl" for="aud">{$t('player.remote.audio')}</label>
         <select id="aud" value={st.audioSel} on:change={(e) => ctl('audio', Number(e.currentTarget.value))}>{#each st.audio as a}<option value={a.i}>{a.t}</option>{/each}</select>
       {/if}
       {#if st?.subs && st.subs.length}
-        <label class="tl" for="sbt">Untertitel</label>
-        <select id="sbt" value={st.subSel ?? -1} on:change={(e) => ctl('sub', Number(e.currentTarget.value))}><option value={-1}>Aus</option>{#each st.subs as a}<option value={a.i}>{a.t}</option>{/each}</select>
+        <label class="tl" for="sbt">{$t('player.remote.subtitles')}</label>
+        <select id="sbt" value={st.subSel ?? -1} on:change={(e) => ctl('sub', Number(e.currentTarget.value))}><option value={-1}>{$t('player.remote.off')}</option>{#each st.subs as a}<option value={a.i}>{a.t}</option>{/each}</select>
       {/if}
     </section>
 
     {#if resume.length}
-      <h2>Weiter schauen</h2>
+      <h2>{$t('player.remote.continueWatching')}</h2>
       <ul class="list">
         {#each resume.slice(0, 10) as i (i.id)}
           <li>
             <span class="th">{#if i.image}<img loading="lazy" src={img(i.id, 200)} alt="" />{/if}</span>
             <span class="tx"><b>{i.seriesName ?? i.name}</b><span class="muted">{i.type === 'Episode' ? `S${i.parentIndexNumber}:E${i.indexNumber} · ${i.name}` : i.year ?? ''}</span></span>
-            <button class="light" on:click={() => cast(i.id, i.seriesName ?? i.name)}><Icon name="play" size={18} />Auf TV</button>
+            <button class="light" on:click={() => cast(i.id, i.seriesName ?? i.name)}><Icon name="play" size={18} />{$t('player.remote.onTv')}</button>
           </li>
         {/each}
       </ul>
     {/if}
 
-    <h2>Titel suchen</h2>
+    <h2>{$t('player.remote.search')}</h2>
     <form role="search" on:submit|preventDefault={search}>
-      <label class="sr-only" for="rq">Titel suchen</label>
-      <input id="rq" class="wide" type="search" placeholder="Film oder Serie …" bind:value={q} on:input={search} />
+      <label class="sr-only" for="rq">{$t('player.remote.search')}</label>
+      <input id="rq" class="wide" type="search" placeholder={$t('player.remote.searchPlaceholder')} bind:value={q} on:input={search} />
     </form>
     {#if results}
       <ul class="list">
         {#each results as i (i.id)}
-          {@const t = target(i)}
+          {@const tg = target(i)}
           <li>
             <span class="th">{#if i.image}<img loading="lazy" src={img(i.id, 200)} alt="" />{/if}</span>
-            <span class="tx"><b>{i.name}</b><span class="muted">{i.type === 'Series' ? 'Serie' : i.year ?? ''}</span></span>
-            {#if t}<button class="light" on:click={() => cast(t.id, i.name)}><Icon name="play" size={18} />{i.type === 'Series' ? `S${t.parentIndexNumber}:E${t.indexNumber}` : 'Auf TV'}</button>
-            {:else}<a class="btn sec" href="/item/{i.id}">Folgen</a>{/if}
+            <span class="tx"><b>{i.name}</b><span class="muted">{i.type === 'Series' ? $t('player.remote.series') : i.year ?? ''}</span></span>
+            {#if tg}<button class="light" on:click={() => cast(tg.id, i.name)}><Icon name="play" size={18} />{i.type === 'Series' ? `S${tg.parentIndexNumber}:E${tg.indexNumber}` : $t('player.remote.onTv')}</button>
+            {:else}<a class="btn sec" href="/item/{i.id}">{$t('player.remote.episodes')}</a>{/if}
           </li>
-        {:else}<li class="muted">Keine Treffer.</li>{/each}
+        {:else}<li class="muted">{$t('player.remote.noResults')}</li>{/each}
       </ul>
     {/if}
   {/if}
 
   <details class="panel pair" bind:open={pairOpen}>
-    <summary><b>{$tvOnline ? 'Weiteren Fernseher koppeln' : 'Fernseher koppeln'}</b></summary>
-    <p class="muted">Öffne auf dem Fernseher im Browser <b>{location.host}/tv</b>. Dort erscheint ein Code (oder ein QR-Code zum Scannen). Gib ihn hier ein:</p>
-    {#if fromLink}<p class="warn" role="note">Dieser Code kam über einen Link. Koppel nur, wenn <b>{codeIn}</b> genau so jetzt auf deinem Fernseher steht – sonst könnte jemand anderes Zugriff auf dein Konto bekommen.</p>{/if}
+    <summary><b>{$tvOnline ? $t('player.remote.pairAnother') : $t('player.remote.pair')}</b></summary>
+    <p class="muted"><Rich key="player.remote.pairHow" params={{ host: location.host }} /></p>
+    {#if fromLink}<p class="warn" role="note"><Rich key="player.remote.linkWarn" params={{ code: codeIn }} /></p>{/if}
     <form class="flex" on:submit|preventDefault={pair}>
-      <label class="sr-only" for="code">Code vom Fernseher</label>
+      <label class="sr-only" for="code">{$t('player.remote.codeLabel')}</label>
       <input id="code" class="code" bind:value={codeIn} on:input={onCode} placeholder="ABCD-EFGH" autocapitalize="characters" autocomplete="off" spellcheck="false" maxlength="9" />
-      <button disabled={busy || codeIn.replace('-', '').length < 8}>Koppeln</button>
+      <button disabled={busy || codeIn.replace('-', '').length < 8}>{$t('player.remote.pairButton')}</button>
     </form>
-    {#if msg}<p role="status" class:ok={msg.startsWith('Gekoppelt')} class:err={!msg.startsWith('Gekoppelt')}>{msg}</p>{/if}
-    <p class="muted small">Der Fernseher bleibt 30 Tage angemeldet (7 Tage ohne Nutzung) und erscheint unter „Geräte“ – dort kannst du ihn jederzeit sperren.</p>
+    {#if msg}<p role="status" class:ok={msgOk} class:err={!msgOk}>{msg}</p>{/if}
+    <p class="muted small">{$t('player.remote.pairNote')}</p>
   </details>
 
   {#if sent}<div class="toast" role="status">{sent}</div>{/if}

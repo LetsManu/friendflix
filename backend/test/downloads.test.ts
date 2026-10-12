@@ -695,8 +695,11 @@ describe('errors are not leaked to users', () => {
     const l = (await create(family, { itemId: MOVIE })).json().licenses[0];
     await env.pool.query("update download_jobs set status='failed', error='Jellyfin /Videos/x/master.m3u8 -> 500'");
     const v = (await call(family, 'GET', `/api/downloads/${l.id}`)).json();
-    expect(v.prep).toEqual({ status: 'failed', percent: 0, error: 'Vorbereitung fehlgeschlagen' });
+    expect(v.prep).toEqual({ status: 'failed', percent: 0, error: 'prep_failed' }); // a code, never a (German) sentence
     expect(JSON.stringify((await call(family, 'GET', '/api/downloads')).json())).not.toContain('master.m3u8');
     expect((await call(admin, 'GET', '/api/admin/downloads')).json().jobs[0].error).toContain('master.m3u8');
+    // the job was cleaned up: still a code
+    await env.pool.query('delete from download_jobs');
+    expect((await call(family, 'GET', `/api/downloads/${l.id}`)).json().prep).toEqual({ status: 'failed', percent: 0, error: 'prep_gone' });
   });
 });

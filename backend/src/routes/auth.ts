@@ -6,12 +6,13 @@ import type { Ctx } from '../ctx.js';
 import { COOKIE, loadSession, newSession, rand, requireUser, saveSession } from '../session.js';
 import { revokeCasts } from '../cast.js';
 import { roleAllowsDownloads } from '../downloads.js';
-import { effectiveRole } from '../roles.js';
+import { DEFAULT_ROLES, effectiveRole } from '../roles.js';
 import { deviceHasSession, registerDevice } from '../devices.js';
 import { deletePushSubscriptions } from '../push.js';
 import { claimInvite, deleteAuthentikInvitation, enrollFlowUrl, lookupInvite, releaseInvite, type InviteRow } from '../invites.js';
 import { accountJellyfinIds, listProfiles, publicProfile } from '../profiles.js';
 import { applyRole, getUserBySub, provisionUser } from '../users.js';
+import { FALLBACK_LANGUAGE, instanceLanguage, languageFromAcceptLanguage, profileLanguage, roleLabel } from '../i18n.js';
 
 const OIDC_COOKIE = 'ff_oidc';
 /** sign-up incl. MFA setup takes longer than a plain login */
@@ -108,12 +109,14 @@ export function authRoutes(app: FastifyInstance, ctx: Ctx) {
     const u = req.user!;
     const profileCount = (await listProfiles(ctx, u.id)).length;
     const dlRole = await effectiveRole(ctx, u.role);
+    const [instLang, profLang] = await Promise.all([instanceLanguage(ctx), profileLanguage(ctx, req.profile?.id)]);
     return {
       id: u.id,
       name: u.name,
       email: u.email,
       role: u.role,
-      roleLabel: ctx.roles[u.role]?.label ?? u.role,
+      /** role name in the UI language (a label customised via ROLES_JSON is shown as configured) */
+      roleLabel: roleLabel(profLang ?? instLang ?? FALLBACK_LANGUAGE, u.role, ctx.roles[u.role]?.label, DEFAULT_ROLES[u.role]?.label),
       isAdmin: u.role === 'admin',
       csrfToken: req.session!.csrf,
       deviceApproved: req.session!.deviceApproved,
@@ -128,6 +131,16 @@ export function authRoutes(app: FastifyInstance, ctx: Ctx) {
       profileCount,
       /** false: this session never picked a profile explicitly (cookie of an older session / owner fallback) */
       profileChosen: Boolean(req.session!.profileId),
+      /** effective UI language: the active profile's choice → instance default → 'de' (see docs/i18n.md) */
+      language: profLang ?? instLang ?? FALLBACK_LANGUAGE,
+      /** false: the active profile never chose a language → the client shows the first-login language picker */
+      languageChosen: profLang !== null,
+      /** instance default language (admin setting; 'de' until one is stored) */
+      defaultLanguage: instLang ?? FALLBACK_LANGUAGE,
+      /** false: no admin picked the instance language yet → the client asks the admin (owner profile) once */
+      defaultLanguageSet: instLang !== null,
+      /** best supported match of the browser's Accept-Language, or null (only a suggestion for the picker) */
+      suggestedLanguage: languageFromAcceptLanguage(req.headers['accept-language']),
     };
   });
 

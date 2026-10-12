@@ -12,6 +12,7 @@
   import { mobile } from '#lib/viewport';
   import { firstNonEmptyTab } from '#lib/home';
   import { genreLine, NEW_TABS, dateBlock, releaseLabel, runtimeLabel, sortUpcoming, type NewTab } from '#lib/mobile';
+  import { t, tr } from '#lib/i18n';
 
   type Up = { tmdbId: number; mediaType: string; title: string; releaseDate?: string; overview?: string; poster?: string; status: string };
   let upcoming: Up[] | null = null, week: Item[] | null = null, added: Item[] | null = null, msg = '';
@@ -38,16 +39,16 @@
       api('/api/seerr/upcoming?type=movie').then((r) => r.results as Up[]).catch(() => [] as Up[]),
       api('/api/seerr/upcoming?type=tv').then((r) => r.results as Up[]).catch(() => [] as Up[]),
     ]).then(([m, t]) => (upcoming = sortUpcoming([...m, ...t]).slice(0, 40)));
-    api('/api/library/trending').then((r) => (week = (r.items as Item[]).map((i) => ({ ...i, caption: i.viewers ? (i.viewers === 1 ? '1 Person schaut' : `${i.viewers} Personen schauen`) : i.caption })))).catch(() => (week = []));
+    api('/api/library/trending').then((r) => (week = (r.items as Item[]).map((i) => ({ ...i, caption: i.viewers ? tr('home.meta.watching', { n: i.viewers }) : i.caption })))).catch(() => (week = []));
     api('/api/library/items?types=Movie,Series&sort=DateCreated&desc=true&limit=30').then((r) => (added = r.items)).catch(() => (added = []));
   });
 
   async function remind(it: Up) {
     const r = await toggleReminder(movieKey(it.mediaType, it.tmdbId), { mediaType: it.mediaType, tmdbId: it.tmdbId });
     if (r === 'busy') return;
-    if (r === 'available') { availNow.add(it.tmdbId); availNow = availNow; msg = `„${it.title}“ ist schon verfügbar.`; }
-    else if (r === 'error') msg = 'Erinnerung konnte nicht gespeichert werden.';
-    else msg = r === 'on' ? `Du wirst erinnert, sobald „${it.title}“ verfügbar ist.` : 'Erinnerung entfernt.';
+    if (r === 'available') { availNow.add(it.tmdbId); availNow = availNow; msg = tr('home.upcoming.isAvailable', { title: it.title }); }
+    else if (r === 'error') msg = tr('home.upcoming.remindFailed');
+    else msg = r === 'on' ? tr('home.upcoming.remindSet', { title: it.title }) : tr('home.upcoming.remindRemoved');
   }
   function open(e: MouseEvent, it: Item) {
     if (e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return;
@@ -56,11 +57,11 @@
   $: list = tab === 'week' ? week : added;
 </script>
 
-<svelte:head><title>Neu &amp; beliebt – FriendFlix</title></svelte:head>
-<h1 class="ph1">Neu &amp; beliebt</h1>
-<div class="chips" role="tablist" aria-label="Bereich" tabindex="-1">
+<svelte:head><title>{$t('common.pageTitle', { page: $t('home.new.title') })}</title></svelte:head>
+<h1 class="ph1">{$t('home.new.title')}</h1>
+<div class="chips" role="tablist" aria-label={$t('home.new.tabs')} tabindex="-1">
   {#each NEW_TABS as [id, label] (id)}
-    <button type="button" role="tab" id="nt-{id}" class="chip" class:on={tab === id} aria-selected={tab === id} aria-controls="np" tabindex={tab === id ? 0 : -1} on:click={() => select(id)} on:keydown={chipKey}>{label}</button>
+    <button type="button" role="tab" id="nt-{id}" class="chip" class:on={tab === id} aria-selected={tab === id} aria-controls="np" tabindex={tab === id ? 0 : -1} on:click={() => select(id)} on:keydown={chipKey}>{$t(label)}</button>
   {/each}
 </div>
 
@@ -71,7 +72,7 @@
     {#if upcoming === null}
       {#each Array(3) as _}<div class="entry"><div class="skeleton dsk"></div><div class="body"><div class="skeleton img"></div></div></div>{/each}
     {:else if !upcoming.length}
-      <p class="muted">Aktuell sind keine kommenden Titel bekannt.</p>
+      <p class="muted">{$t('home.new.noUpcoming')}</p>
     {:else}
       <ul class="elist">
         {#each upcoming as it (it.mediaType + it.tmdbId)}
@@ -83,13 +84,13 @@
                 {#if it.poster}<img class="bl" loading="lazy" src={it.poster} alt="" aria-hidden="true" /><img class="pp" loading="lazy" src={it.poster} alt="" />{:else}<span class="noimg">{it.title}</span>{/if}
               </div>
               <h2>{it.title}</h2>
-              <p class="rel">{releaseLabel(it.releaseDate)} · {it.mediaType === 'tv' ? 'Serie' : 'Film'}</p>
+              <p class="rel">{releaseLabel(it.releaseDate)} · {it.mediaType === 'tv' ? $t('home.meta.series') : $t('home.meta.movie')}</p>
               {#if it.overview}<p class="ov">{it.overview}</p>{/if}
-              {#if it.status === 'verfuegbar'}<p class="ok">Verfügbar</p>
+              {#if it.status === 'verfuegbar'}<p class="ok">{$t('home.upcoming.available')}</p>
               {:else}
                 <div class="btns">
-                  {#if availNow.has(it.tmdbId)}<span class="ok">Schon verfügbar</span>
-                  {:else}<button type="button" class="sec" aria-pressed={$remindKeys[movieKey(it.mediaType, it.tmdbId)] !== undefined} on:click={() => remind(it)}><Icon name="bell" size={18} />{$remindKeys[movieKey(it.mediaType, it.tmdbId)] !== undefined ? 'Erinnerung aktiv' : 'Erinnere mich'}</button>{/if}
+                  {#if availNow.has(it.tmdbId)}<span class="ok">{$t('home.upcoming.alreadyAvailable')}</span>
+                  {:else}<button type="button" class="sec" aria-pressed={$remindKeys[movieKey(it.mediaType, it.tmdbId)] !== undefined} on:click={() => remind(it)}><Icon name="bell" size={18} />{$remindKeys[movieKey(it.mediaType, it.tmdbId)] !== undefined ? $t('home.upcoming.reminderOn') : $t('home.upcoming.remind')}</button>{/if}
                   <TrailerButton mediaType={it.mediaType} tmdbId={it.tmdbId} title={it.title} />
                 </div>
               {/if}
@@ -98,19 +99,19 @@
         {/each}
       </ul>
       {#if msg}<p class="muted" role="status">{msg}</p>{/if}
-      <p><a class="btn sec" href="/calendar">Zum Kalender</a></p>
+      <p><a class="btn sec" href="/calendar">{$t('home.new.toCalendar')}</a></p>
     {/if}
   {:else if list === null}
     {#each Array(3) as _}<div class="entry plain"><div class="body"><div class="skeleton img"></div></div></div>{/each}
   {:else if !list.length}
-    <p class="muted">Noch nichts da.</p>
+    <p class="muted">{$t('home.new.nothing')}</p>
   {:else}
     <ol class="elist" class:ranked={tab === 'week'}>
       {#each list as it, i (it.id)}
         <li class="entry plain">
-          {#if tab === 'week'}<span class="rank" aria-label="Platz {i + 1}">{i + 1}</span>{/if}
+          {#if tab === 'week'}<span class="rank" aria-label={$t('home.row.rank', { n: i + 1 })}>{i + 1}</span>{/if}
           <div class="body">
-            <a class="img" href="/item/{it.id}" aria-label="{it.name}, Details" on:click={(e) => open(e, it)}>
+            <a class="img" href="/item/{it.id}" aria-label={$t('home.new.details', { name: it.name })} on:click={(e) => open(e, it)}>
               {#if it.backdrop}<img loading="lazy" src={backdrop(it.id, 780)} alt="" />{:else if it.image}<img class="bl" loading="lazy" src={img(it.id, 320)} alt="" aria-hidden="true" /><img class="pp" loading="lazy" src={img(it.id, 320)} alt="" />{:else}<span class="noimg">{it.name}</span>{/if}
               <span class="playi" aria-hidden="true"><Icon name="play" size={20} /></span>
             </a>

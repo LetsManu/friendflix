@@ -1,5 +1,7 @@
 <script lang="ts">
   import { api } from '#lib/api';
+  import { t } from '#lib/i18n';
+  import { isKnownLang, langLabel } from '#lib/langs';
   /** movie or episode that would be played (for a series: the next episode) */
   export let targetId: string;
   /** remembers the choice per title/series on this device */
@@ -9,8 +11,8 @@
   export let sub = '';
   type Tr = { audio: Array<{ language: string; title: string }>; subtitles: Array<{ language: string; title: string }> };
   let tr: Tr | null = null, loadedFor = '';
-  const NAMES: Record<string, string> = { ger: 'Deutsch', deu: 'Deutsch', eng: 'Englisch', fre: 'Französisch', fra: 'Französisch', spa: 'Spanisch', ita: 'Italienisch', jpn: 'Japanisch', kor: 'Koreanisch', tur: 'Türkisch', rus: 'Russisch', por: 'Portugiesisch', pol: 'Polnisch', dut: 'Niederländisch', nld: 'Niederländisch', zho: 'Chinesisch', chi: 'Chinesisch', und: 'Unbekannt' };
-  const name = (l: { language: string; title: string }) => NAMES[l.language] ?? l.title;
+  /** language name in the UI language; unknown codes keep the track title from Jellyfin */
+  const name = (l: { language: string; title: string }, unknown: string) => (l.language === 'und' ? unknown : isKnownLang(l.language) ? langLabel(l.language) : l.title);
 
   async function load(id: string) {
     if (!id || id === loadedFor) return;
@@ -25,12 +27,12 @@
 {#if tr && (tr.audio.length > 1 || tr.subtitles.length)}
   <div class="lang flex">
     {#if tr.audio.length > 1}
-      <label for="lg-a">Sprache</label>
-      <select id="lg-a" bind:value={audio} on:change={save}><option value="">Standard</option>{#each tr.audio as a}<option value={a.language}>{name(a)}</option>{/each}</select>
+      <label for="lg-a">{$t('detail.langPick.audio')}</label>
+      <select id="lg-a" bind:value={audio} on:change={save}><option value="">{$t('detail.langPick.standard')}</option>{#each tr.audio as a}<option value={a.language}>{name(a, $t('detail.langPick.unknown'))}</option>{/each}</select>
     {/if}
     {#if tr.subtitles.length}
-      <label for="lg-s">Untertitel</label>
-      <select id="lg-s" bind:value={sub} on:change={save}><option value="">Standard</option><option value="off">Aus</option>{#each tr.subtitles as a}<option value={a.language}>{name(a)}</option>{/each}</select>
+      <label for="lg-s">{$t('detail.langPick.subs')}</label>
+      <select id="lg-s" bind:value={sub} on:change={save}><option value="">{$t('detail.langPick.standard')}</option><option value="off">{$t('detail.langPick.off')}</option>{#each tr.subtitles as a}<option value={a.language}>{name(a, $t('detail.langPick.unknown'))}</option>{/each}</select>
     {/if}
   </div>
 {/if}

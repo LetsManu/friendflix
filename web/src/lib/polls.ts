@@ -1,3 +1,5 @@
+import { tr } from './i18n';
+
 export const POLL_MS = 15_000;
 export const POLL_MAX_FAILURES = 5;
 
@@ -9,6 +11,6 @@ export function pollDelay(failures: number): number | null {
 
 export function voteError(e: unknown): string {
   const x = e as { status?: number; body?: { error?: string } } | null;
-  if (x?.status === 409 && x.body?.error === 'poll_closed_or_option_invalid') return 'Abstimmung ist beendet.';
-  return 'Stimme konnte nicht gespeichert werden.';
+  if (x?.status === 409 && x.body?.error === 'poll_closed_or_option_invalid') return tr('social.vote.closed');
+  return tr('social.vote.voteFailed');
 }

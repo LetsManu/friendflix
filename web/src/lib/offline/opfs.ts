@@ -1,29 +1,76 @@
 // Origin Private File System layout: ff-dl/<downloadId>/{video.mp4, sub-<lang>.vtt, poster.jpg, backdrop.jpg}
 // Writes happen in fetch-worker.ts via createSyncAccessHandle; this module covers detection, reads, deletion and quota.
+import { tr } from '#lib/i18n';
 
 export const ROOT = 'ff-dl';
 
 export type Unsupported = 'insecure' | 'no-opfs' | 'ios-install' | 'tv';
 export interface Support { ok: boolean; reason?: Unsupported }
 
-export const SUPPORT_HINT: Record<Unsupported, string> = {
-  insecure: 'Downloads brauchen eine sichere Verbindung (HTTPS).',
-  'no-opfs': 'Auf diesem Gerät nicht verfügbar.',
-  'ios-install': 'Auf dem iPhone/iPad zuerst zum Home-Bildschirm hinzufügen, dann sind Downloads verfügbar.',
-  tv: 'Auf dem Fernseher nicht verfügbar.',
+/** hint per reason, translated on every read (getters), so `SUPPORT_HINT[reason]` follows the UI language */
+export const SUPPORT_HINT: Readonly<Record<Unsupported, string>> = {
+  get insecure() { return tr('account.downloads.support.insecure'); },
+  get 'no-opfs'() { return tr('account.downloads.support.noOpfs'); },
+  get 'ios-install'() { return tr('account.downloads.support.iosInstall'); },
+  get tv() { return tr('account.downloads.support.tv'); },
 };
 
 const isIos = () => /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
 const isStandalone = () => (navigator as any).standalone === true || matchMedia('(display-mode: standalone)').matches;
 
+/**
+ * Synchronous checks on the main thread: TV, secure context, OPFS directory API, workers, IndexedDB, iOS install.
+ * `createSyncAccessHandle` (used by the fetch worker) only exists inside dedicated workers, so it is not tested here:
+ * checkSupport() adds the worker probe.
+ */
 export function detectSupport(): Support {
   if (typeof window === 'undefined') return { ok: false, reason: 'no-opfs' };
   if (document.documentElement.classList.contains('tv') || sessionStorage.getItem('ff_tv') === '1') return { ok: false, reason: 'tv' };
   if (!window.isSecureContext) return { ok: false, reason: 'insecure' };
   const h = (globalThis as any).FileSystemFileHandle;
-  if (!navigator.storage?.getDirectory || !h || !('createSyncAccessHandle' in h.prototype) || typeof Worker === 'undefined' || !('indexedDB' in window)) return { ok: false, reason: 'no-opfs' };
+  if (!navigator.storage?.getDirectory || !h || typeof Worker === 'undefined' || !('indexedDB' in window)) return { ok: false, reason: 'no-opfs' };
   if (isIos() && !isStandalone()) return { ok: false, reason: 'ios-install' }; // non-installed sites are evicted after 7 days on WebKit
   return { ok: true };
+}
+
+/** sessionStorage key of the worker probe result ('1' / '0') */
+export const PROBE_KEY = 'ff_opfs_sync';
+let probed: boolean | null = null;
+let probing: Promise<boolean> | null = null;
+const makeProbeWorker = () => new Worker(new URL('./probe-worker.ts', import.meta.url), { type: 'module' });
+
+/**
+ * Whether OPFS sync access handles work in a dedicated worker (where the fetch worker writes). Asked once per tab
+ * (cached in memory and sessionStorage); no answer within `timeoutMs` counts as unsupported (not cached).
+ */
+export function probeSyncAccess(make: () => Worker = makeProbeWorker, timeoutMs = 2000): Promise<boolean> {
+  if (probed !== null) return Promise.resolve(probed);
+  try { const c = sessionStorage.getItem(PROBE_KEY); if (c === '1' || c === '0') return Promise.resolve((probed = c === '1')); } catch { /* blocked storage */ }
+  return (probing ??= new Promise<boolean>((resolve) => {
+    let w: Worker | null = null, timer: ReturnType<typeof setTimeout> | undefined;
+    const finish = (ok: boolean, cache: boolean) => {
+      clearTimeout(timer);
+      try { w?.terminate(); } catch { /* ignore */ }
+      probing = null;
+      if (cache) { probed = ok; try { sessionStorage.setItem(PROBE_KEY, ok ? '1' : '0'); } catch { /* ignore */ } }
+      resolve(ok);
+    };
+    try {
+      w = make();
+      w.onmessage = (e: MessageEvent) => finish(Boolean(e.data?.type === 'opfs-probe' && e.data.sync), true);
+      w.onerror = () => finish(false, true);
+      timer = setTimeout(() => finish(false, false), timeoutMs);
+    } catch { finish(false, true); }
+  }));
+}
+/** test hook: forget the probe result */
+export function resetProbe(): void { probed = null; probing = null; }
+
+/** Full check: the main-thread conditions, then the worker probe (only when everything else is fine). */
+export async function checkSupport(make?: () => Worker, timeoutMs?: number): Promise<Support> {
+  const s = detectSupport();
+  if (!s.ok) return s;
+  return (await probeSyncAccess(make, timeoutMs)) ? s : { ok: false, reason: 'no-opfs' };
 }
 
 export async function rootDir(create = true): Promise<FileSystemDirectoryHandle> {

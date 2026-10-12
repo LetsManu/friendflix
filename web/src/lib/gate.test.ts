@@ -34,6 +34,12 @@ describe('boot hint', () => {
     expect(parseHint('nope')).toBeNull();
     expect(parseHint(null)).toBeNull();
   });
+  it('carries the UI language of the last answer (an early-rendered page waits for it)', () => {
+    const h = hintOf({ deviceApproved: true, profileCount: 1, profile: { id: 'p1' }, language: 'en' });
+    expect(h.lang).toBe('en');
+    expect(parseHint(JSON.stringify(h))).toEqual(h);
+    expect(parseHint(JSON.stringify({ ...h, lang: '<script>' }))?.lang).toBeUndefined();
+  });
   it('renders early only when nothing has to happen first', () => {
     const ok = { approved: true, multi: false, tv: false };
     expect(canRenderEarly(ok, false, '/')).toBe(true);

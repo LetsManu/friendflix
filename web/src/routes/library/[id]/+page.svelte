@@ -5,6 +5,7 @@
   import { api, type Item } from '#lib/api';
   import Card from '#lib/Card.svelte';
   import { parseBrowse } from '#lib/discovery';
+  import { t } from '#lib/i18n';
 
   let items: Item[] | null = null, total = 0, start = 0, busy = false, failed = false, seq = 0, lastKey = '', qInput = '', lastQ = '*', names: Record<string, string> = {};
   const PAGE = 60;
@@ -52,22 +53,22 @@
   }
 </script>
 
-<svelte:head><title>{name || 'Bibliothek'} – FriendFlix</title></svelte:head>
-<h1>{name || 'Bibliothek'}</h1>
+<svelte:head><title>{$t('common.pageTitle', { page: name || $t('home.library.title') })}</title></svelte:head>
+<h1>{name || $t('home.library.title')}</h1>
 <form class="flex bar" role="search" on:submit|preventDefault={() => set('q', qInput.trim())}>
-  <input type="search" aria-label="In dieser Bibliothek suchen" placeholder="In dieser Bibliothek suchen" bind:value={qInput} on:change={() => set('q', qInput.trim())} />
-  <select aria-label="Sortierung" value={sort} on:change={(e) => set('sort', e.currentTarget.value === 'SortName' ? '' : e.currentTarget.value)}><option value="SortName">A–Z</option><option value="DateCreated">Zuletzt hinzugefügt</option><option value="PremiereDate">Erscheinungsdatum</option><option value="CommunityRating">Beliebtheit</option></select>
-  <select aria-label="Filter" value={filter} on:change={(e) => set('filter', e.currentTarget.value)}><option value="">Alle</option><option value="unplayed">Ungesehen</option><option value="played">Gesehen</option><option value="favorites">Favoriten</option></select>
+  <input type="search" aria-label={$t('home.library.search')} placeholder={$t('home.library.search')} bind:value={qInput} on:change={() => set('q', qInput.trim())} />
+  <select aria-label={$t('home.sort.label')} value={sort} on:change={(e) => set('sort', e.currentTarget.value === 'SortName' ? '' : e.currentTarget.value)}><option value="SortName">{$t('home.sort.name')}</option><option value="DateCreated">{$t('home.sort.added')}</option><option value="PremiereDate">{$t('home.sort.premiere')}</option><option value="CommunityRating">{$t('home.sort.rating')}</option></select>
+  <select aria-label={$t('home.browse.filter')} value={filter} on:change={(e) => set('filter', e.currentTarget.value)}><option value="">{$t('home.status.all')}</option><option value="unplayed">{$t('home.status.unplayed')}</option><option value="played">{$t('home.status.played')}</option><option value="favorites">{$t('home.status.favorites')}</option></select>
 </form>
 <div class="tiles" aria-busy={items === null}>
   {#if items === null}{#each Array(12) as _}<div class="skeleton" style="aspect-ratio:16/9"></div>{/each}{:else}{#each items as i (i.id)}<div class="slot"><Card item={i} /></div>{/each}{/if}
 </div>
 {#if failed}
-  <div class="state" role="alert"><p class="err">Titel konnten nicht geladen werden.</p><button type="button" on:click={() => load(!items?.length)}>Erneut versuchen</button></div>
+  <div class="state" role="alert"><p class="err">{$t('home.browse.loadFailed')}</p><button type="button" on:click={() => load(!items?.length)}>{$t('home.browse.retry')}</button></div>
 {:else if items && !items.length}
-  <p class="muted state">{q || filter ? 'Nichts gefunden – probiere andere Suchbegriffe oder Filter.' : 'Diese Bibliothek ist leer.'}</p>
+  <p class="muted state">{q || filter ? $t('home.library.emptySearch') : $t('home.library.empty')}</p>
 {/if}
-{#if items && items.length < total && !failed}<p style="text-align:center"><button class="sec" disabled={busy} on:click={() => load(false)}>Mehr laden</button></p>{/if}
+{#if items && items.length < total && !failed}<p style="text-align:center"><button class="sec" disabled={busy} on:click={() => load(false)}>{$t('home.browse.loadMore')}</button></p>{/if}
 
 <style>
   .bar { margin-bottom: 1.2rem; }

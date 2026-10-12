@@ -3,7 +3,8 @@
   import { goto } from '$app/navigation';
   import { img } from '#lib/api';
   import { autofocus } from '#lib/actions';
-  import { createList, loadLists, roleLabel, type ListSummary } from '#lib/lists';
+  import { createList, loadLists, type ListSummary } from '#lib/lists';
+  import { t, tr, type TKey } from '#lib/i18n';
   let lists: ListSummary[] | null = null, creating = false, name = '', err = '', busy = false, loadFailed = false, newBtn: HTMLButtonElement | undefined;
   async function load() {
     loadFailed = false;
@@ -15,26 +16,26 @@
     if (!name.trim() || busy) return;
     busy = true; err = '';
     try { const { id } = await createList(name.trim()); await goto(`/lists/${id}`); }
-    catch (e: any) { err = e?.body?.error === 'too_many_lists' ? 'Du hast schon 20 Listen.' : 'Das hat nicht geklappt.'; }
+    catch (e: any) { err = e?.body?.error === 'too_many_lists' ? tr('social.lists.tooMany') : tr('common.failed'); }
     busy = false;
   }
 </script>
-<svelte:head><title>Listen – FriendFlix</title></svelte:head>
-<div class="head"><h1>Listen</h1>
+<svelte:head><title>{$t('common.pageTitle', { page: $t('social.lists.title') })}</title></svelte:head>
+<div class="head"><h1>{$t('social.lists.title')}</h1>
   {#if creating}
     <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
     <form on:submit|preventDefault={create} on:keydown={(e) => { if (e.key === 'Escape') { e.stopPropagation(); void cancel(); } }}>
-      <input type="text" maxlength="60" placeholder="Name der Liste" aria-label="Name der Liste" bind:value={name} use:autofocus />
-      <button type="submit" disabled={busy || !name.trim()}>Anlegen</button>
-      <button type="button" class="sec" on:click={cancel}>Abbrechen</button>
+      <input type="text" maxlength="60" placeholder={$t('social.lists.name')} aria-label={$t('social.lists.name')} bind:value={name} use:autofocus />
+      <button type="submit" disabled={busy || !name.trim()}>{$t('social.lists.create')}</button>
+      <button type="button" class="sec" on:click={cancel}>{$t('common.cancel')}</button>
     </form>
-  {:else}<button bind:this={newBtn} on:click={() => { err = ''; creating = true; }}>Neue Liste</button>{/if}
+  {:else}<button bind:this={newBtn} on:click={() => { err = ''; creating = true; }}>{$t('social.lists.newList')}</button>{/if}
 </div>
 {#if err}<p class="err" role="alert">{err}</p>{/if}
-<p class="muted">Gemeinsame Listen für dich und deine Freunde. Wer eingeladen ist, sieht nur die Titel, die sein Profil sehen darf.</p>
-{#if loadFailed}<div class="state" role="alert"><p class="err">Listen konnten nicht geladen werden.</p><button type="button" on:click={load}>Erneut versuchen</button></div>
+<p class="muted">{$t('social.lists.intro')}</p>
+{#if loadFailed}<div class="state" role="alert"><p class="err">{$t('social.lists.loadFailed')}</p><button type="button" on:click={load}>{$t('social.tryAgain')}</button></div>
 {:else if lists === null}<div class="grid">{#each Array(4) as _}<div class="skeleton" style="aspect-ratio:16/9"></div>{/each}</div>
-{:else if !lists.length}<p class="muted">Noch keine Listen. Lege eine neue an oder füge einen Titel über das Listen-Symbol hinzu.</p>
+{:else if !lists.length}<p class="muted">{$t('social.lists.empty')}</p>
 {:else}
   <div class="grid">
     {#each lists as l (l.id)}
@@ -46,8 +47,8 @@
         </div>
         <div class="info">
           <strong>{l.name}</strong>
-          <span class="badge">{roleLabel[l.role]}</span>
-          <div class="muted">{l.itemCount} Titel · {l.memberCount} {l.memberCount === 1 ? 'Person' : 'Personen'}{l.role !== 'owner' ? ` · von ${l.owner.name}` : ''}</div>
+          <span class="badge">{$t(`social.lists.roles.${l.role}` as TKey)}</span>
+          <div class="muted">{$t('social.lists.itemCount', { n: l.itemCount })} · {$t('social.lists.memberCount', { n: l.memberCount })}{l.role !== 'owner' ? ' · ' + $t('social.by', { name: l.owner.name }) : ''}</div>
         </div>
       </a>
     {/each}

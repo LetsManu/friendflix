@@ -1,5 +1,6 @@
 <script lang="ts">
   import { api, img } from '#lib/api';
+  import { t, type TKey } from '#lib/i18n';
 
   interface Member { id: string; name: string; role?: string; type: string; image: boolean }
   /** item whose cast & crew is shown; the section stays hidden while loading, on failure or when empty */
@@ -18,19 +19,19 @@
       if (my === seq) fetched = ((r?.people ?? []) as Member[]).slice(0, 20);
     } catch { /* optional section */ }
   }
-  const ROLE: Record<string, string> = { Director: 'Regie', Writer: 'Drehbuch', Producer: 'Produktion', Composer: 'Musik' };
+  const ROLE: Record<string, TKey> = { Director: 'detail.cast.role.director', Writer: 'detail.cast.role.writer', Producer: 'detail.cast.role.producer', Composer: 'detail.cast.role.composer' };
   const initials = (n: string) => n.split(/\s+/).filter(Boolean).slice(0, 2).map((w) => w[0]!.toUpperCase()).join('');
 </script>
 
 {#if shown.length}
   <section class="cast" aria-labelledby="cast-h">
-    <h2 id="cast-h">Besetzung &amp; Crew</h2>
+    <h2 id="cast-h">{$t('detail.cast.title')}</h2>
     <ul>
       {#each shown as p, n (p.id + ':' + n)}
         <li><a href="/person/{p.id}">
           <span class="av">{#if p.image}<img src={img(p.id, 160)} alt="" loading="lazy" width="72" height="72" />{:else}<span aria-hidden="true">{initials(p.name)}</span>{/if}</span>
           <span class="nm">{p.name}</span>
-          {#if p.role || ROLE[p.type]}<span class="muted rl">{p.role || ROLE[p.type]}</span>{/if}
+          {#if p.role || ROLE[p.type]}<span class="muted rl">{p.role || $t(ROLE[p.type]!)}</span>{/if}
         </a></li>
       {/each}
     </ul>

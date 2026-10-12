@@ -45,11 +45,11 @@ describe('menu groups', () => {
   it('puts every link into exactly one group', () => {
     const g = groupLinks(linksFor(true));
     expect(g.flatMap((x) => x.items).length).toBe(MENU_LINKS.length + 1);
-    expect(g.find((x) => x.title === 'Meine Sachen')!.items.map((i) => i[0])).toContain('/downloads');
+    expect(g.find((x) => x.title === 'shell.menu.groups.mine')!.items.map((i) => i[0])).toContain('/downloads');
   });
   it('omits downloads when not allowed and falls back for unknown links', () => {
     expect(linksFor(false)).not.toContainEqual(DOWNLOADS_LINK);
-    const g = groupLinks([['/zzz', 'Z', 'star'], ['/settings', 'S', 'settings']]);
+    const g = groupLinks([['/zzz', 'shell.menu.tonight', 'star'], ['/settings', 'shell.menu.settings', 'settings']]);
     expect(g[1]!.items[0]![0]).toBe('/zzz');
     expect(g[2]!.items[0]![0]).toBe('/settings');
   });

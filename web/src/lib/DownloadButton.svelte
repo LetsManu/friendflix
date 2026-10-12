@@ -5,6 +5,7 @@
   import { downloads, fetchOptions, getMe, getSupport, initManager, pause, progressPct, removeDownload, requestDownload, resume, stateLabel, viewFor, type DownloadOptions } from '#lib/offline/manager';
   import { SUPPORT_HINT, type Support } from '#lib/offline/opfs';
   import { fmtBytes, type QualityId } from '#lib/offline/size';
+  import { t, tr } from '#lib/i18n';
 
   /** movie or episode id */
   export let itemId: string;
@@ -27,7 +28,7 @@
   let quality: QualityId = 'hd', audioLang = '', subs = new Set<string>(), count = 1;
 
   onMount(async () => {
-    support = getSupport();
+    support = await getSupport();
     if (support.ok) {
       const me = await getMe();
       allowed = Boolean(me?.downloads?.allowed);
@@ -56,7 +57,7 @@
       audioLang = '';
       subs = new Set();
       count = 1;
-    } catch (e: any) { err = e?.body?.error === 'downloads_disabled' || e?.status === 404 ? 'Downloads sind nicht verfügbar.' : 'Optionen konnten nicht geladen werden.'; }
+    } catch (e: any) { err = e?.body?.error === 'downloads_disabled' || e?.status === 404 ? tr('detail.download.unavailable') : tr('detail.download.optionsFailed'); }
     loading = false;
   }
   $: est = opts?.qualities.find((q) => q.id === quality)?.estBytes ?? 0;
@@ -75,7 +76,7 @@
       open = false;
     } catch (e: any) {
       const code = e?.body?.error;
-      err = code === 'quota_exceeded' ? 'Du hast die maximale Anzahl an Downloads erreicht.' : e?.status === 429 ? 'Zu viele Anfragen. Bitte später erneut versuchen.' : 'Download konnte nicht gestartet werden.';
+      err = code === 'quota_exceeded' ? tr('detail.download.maxReached') : e?.status === 429 ? tr('detail.download.tooMany') : tr('detail.download.startFailed');
     }
     busy = false;
   }
@@ -96,17 +97,17 @@
   <!-- trigger lives elsewhere -->
 {:else if ready && support.ok && allowed}
   <span class="dl" class:compact class:block>
-    <button type="button" class="dlb" class:sec={!compact} class:on={v?.state === 'done'} aria-haspopup="dialog" aria-label={v ? `Download: ${stateLabel(v)}` : 'Herunterladen'} title={v ? stateLabel(v) : 'Herunterladen'} on:click={main}>
+    <button type="button" class="dlb" class:sec={!compact} class:on={v?.state === 'done'} aria-haspopup="dialog" aria-label={v ? $t('detail.download.state', { state: stateLabel(v) }) : $t('detail.download.title')} title={v ? stateLabel(v) : $t('detail.download.title')} on:click={main}>
       <Icon name={v?.state === 'done' ? 'check' : 'download'} size={compact ? 20 : 20} />
-      {#if !compact}{v ? stateLabel(v) : 'Herunterladen'}{:else if v && v.state !== 'done'}<span class="mini">{v.state === 'preparing' ? v.prep ?? 0 : v.state === 'downloading' ? pctNow : ''}</span>{/if}
+      {#if !compact}{v ? stateLabel(v) : $t('detail.download.title')}{:else if v && v.state !== 'done'}<span class="mini">{v.state === 'preparing' ? v.prep ?? 0 : v.state === 'downloading' ? pctNow : ''}</span>{/if}
     </button>
     {#if v && menu}
       <span class="menu" role="menu">
-        <span class="st">{stateLabel(v)}{#if v.state === 'downloading'} · {fmtBytes(v.bytesHave)} von {fmtBytes(v.bytesTotal)}{/if}</span>
-        {#if v.state === 'downloading'}<button type="button" role="menuitem" on:click={() => { pause(v.id); menu = false; }}><Icon name="pause" size={16} />Pausieren</button>{/if}
-        {#if v.state === 'paused' || v.state === 'error'}<button type="button" role="menuitem" on:click={() => { resume(v.id); menu = false; }}><Icon name="play" size={16} />Fortsetzen</button>{/if}
-        {#if v.state === 'done'}<a role="menuitem" href="/downloads">Zu den Downloads</a>{/if}
-        <button type="button" role="menuitem" on:click={() => { void removeDownload(v.id); menu = false; }}><Icon name="x" size={16} />{v.state === 'done' ? 'Download löschen' : 'Abbrechen'}</button>
+        <span class="st">{stateLabel(v)}{#if v.state === 'downloading'}{' · '}{$t('detail.download.progress', { have: fmtBytes(v.bytesHave), total: fmtBytes(v.bytesTotal) })}{/if}</span>
+        {#if v.state === 'downloading'}<button type="button" role="menuitem" on:click={() => { pause(v.id); menu = false; }}><Icon name="pause" size={16} />{$t('detail.download.pause')}</button>{/if}
+        {#if v.state === 'paused' || v.state === 'error'}<button type="button" role="menuitem" on:click={() => { resume(v.id); menu = false; }}><Icon name="play" size={16} />{$t('detail.download.resume')}</button>{/if}
+        {#if v.state === 'done'}<a role="menuitem" href="/downloads">{$t('detail.download.toDownloads')}</a>{/if}
+        <button type="button" role="menuitem" on:click={() => { void removeDownload(v.id); menu = false; }}><Icon name="x" size={16} />{v.state === 'done' ? $t('detail.download.delete') : $t('detail.download.cancel')}</button>
       </span>
     {/if}
     {#if v && v.msg && !compact && v.state !== 'paused'}<span class="muted msg" role="status">{v.msg}</span>{/if}
@@ -117,42 +118,42 @@
 
 {#if open}
   <div class="scrim" on:click={() => (open = false)} role="presentation"></div>
-  <div class="sheet" role="dialog" aria-modal="true" aria-label="Herunterladen">
-    <h3>Herunterladen</h3>
+  <div class="sheet" role="dialog" aria-modal="true" aria-label={$t('detail.download.title')}>
+    <h3>{$t('detail.download.title')}</h3>
     {#if loading}<div class="skeleton" style="height:8rem"></div>
     {:else if opts}
       <fieldset>
-        <legend>Qualität</legend>
+        <legend>{$t('detail.download.quality')}</legend>
         {#each opts.qualities as q}
-          <label class="opt"><input type="radio" name="q-{itemId}" value={q.id} bind:group={quality} /><span>{q.label}</span>{#if q.estBytes}<span class="muted">ca. {fmtBytes(q.estBytes * (count > 1 ? eff : 1))}</span>{/if}</label>
+          <label class="opt"><input type="radio" name="q-{itemId}" value={q.id} bind:group={quality} /><span>{q.label}</span>{#if q.estBytes}<span class="muted">{$t('detail.download.approx', { size: fmtBytes(q.estBytes * (count > 1 ? eff : 1)) })}</span>{/if}</label>
         {/each}
       </fieldset>
       {#if seriesId}
-        <label class="row">Folgen
+        <label class="row">{$t('detail.download.episodes')}
           <select bind:value={count}>
-            <option value={1}>Nur diese Folge</option>
-            {#each [3, 5, 10] as n}<option value={n}>Diese + nächste {n - 1} Folgen</option>{/each}
+            <option value={1}>{$t('detail.download.onlyThis')}</option>
+            {#each [3, 5, 10] as n}<option value={n}>{$t('detail.download.thisAndNext', { n: n - 1 })}</option>{/each}
           </select>
         </label>
       {/if}
       {#if opts.audio.length > 1}
-        <label class="row">Sprache
-          <select bind:value={audioLang}><option value="">Standard</option>{#each opts.audio as a}<option value={a.lang}>{a.title || a.lang}</option>{/each}</select>
+        <label class="row">{$t('detail.download.audio')}
+          <select bind:value={audioLang}><option value="">{$t('detail.download.standard')}</option>{#each opts.audio as a}<option value={a.lang}>{a.title || a.lang}</option>{/each}</select>
         </label>
       {/if}
       {#if opts.subtitles.length}
-        <fieldset><legend>Untertitel</legend>
+        <fieldset><legend>{$t('detail.download.subtitles')}</legend>
           <div class="subs">{#each opts.subtitles as s}<label class="chk"><input type="checkbox" checked={subs.has(s.lang)} on:change={() => toggleSub(s.lang)} />{s.title || s.lang}</label>{/each}</div>
         </fieldset>
       {/if}
-      <p class="muted small">{opts.quota.used} von {opts.quota.max} Downloads belegt · gültig {opts.days} Tage{#if est} · ca. {fmtBytes(est * eff)} insgesamt{/if}</p>
-      {#if left <= 0}<p class="err" role="alert">Du hast die maximale Anzahl an Downloads erreicht. Lösche einen Download unter „Downloads“.</p>{/if}
-      <p class="muted small">Der Server bereitet die Datei zuerst vor, das kann etwas dauern. Der Tab muss während des Ladens geöffnet bleiben.</p>
+      <p class="muted small">{est ? $t('detail.download.quotaTotal', { used: opts.quota.used, max: opts.quota.max, days: opts.days, size: fmtBytes(est * eff) }) : $t('detail.download.quota', { used: opts.quota.used, max: opts.quota.max, days: opts.days })}</p>
+      {#if left <= 0}<p class="err" role="alert">{$t('detail.download.quotaFull')}</p>{/if}
+      <p class="muted small">{$t('detail.download.prepNote')}</p>
     {/if}
     {#if err}<p class="err" role="alert">{err}</p>{/if}
     <div class="flex">
-      <button type="button" disabled={!opts || busy || left <= 0} on:click={start}><Icon name="download" size={18} />{busy ? 'Starte …' : 'Herunterladen'}</button>
-      <button type="button" class="sec" on:click={() => (open = false)}>Abbrechen</button>
+      <button type="button" disabled={!opts || busy || left <= 0} on:click={start}><Icon name="download" size={18} />{busy ? $t('detail.download.starting') : $t('detail.download.title')}</button>
+      <button type="button" class="sec" on:click={() => (open = false)}>{$t('detail.download.cancel')}</button>
     </div>
   </div>
 {/if}

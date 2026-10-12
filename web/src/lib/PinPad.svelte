@@ -1,8 +1,10 @@
 <script lang="ts">
+  import { t } from '#lib/i18n';
   import { createEventDispatcher, onMount } from 'svelte';
   import Icon from './Icon.svelte';
   import { isBackKey } from '#lib/spatial';
-  export let title = 'PIN eingeben';
+  /** heading; default: "PIN eingeben" in the current language */
+  export let title = '';
   export let error = '';
   export let busy = false;
   const dispatch = createEventDispatcher<{ submit: string; cancel: void }>();
@@ -34,9 +36,9 @@
   });
 </script>
 
-<div class="pad" bind:this={box} role="group" aria-label={title}>
-  <h2>{title}</h2>
-  <div class="boxes" aria-live="polite" aria-label="{pin.length} von 4 Ziffern">
+<div class="pad" bind:this={box} role="group" aria-label={title || $t('account.pin.enter')}>
+  <h2>{title || $t('account.pin.enter')}</h2>
+  <div class="boxes" aria-live="polite" aria-label={$t('account.pin.progress', { n: pin.length })}>
     {#each [0, 1, 2, 3] as i}<span class="b" class:on={i < pin.length} class:cur={i === pin.length}>{i < pin.length ? '●' : ''}</span>{/each}
   </div>
   <p class="err msg" role="alert">{error}</p>
@@ -44,9 +46,9 @@
     {#each ['1', '2', '3', '4', '5', '6', '7', '8', '9'] as d, i}
       <button class="sec k" disabled={busy} data-autofocus={i === 0 ? '' : undefined} on:click={() => add(d)}>{d}</button>
     {/each}
-    <button class="sec k" aria-label="Abbrechen" on:click={() => dispatch('cancel')}><Icon name="x" size={22} /></button>
+    <button class="sec k" aria-label={$t('account.pin.cancel')} on:click={() => dispatch('cancel')}><Icon name="x" size={22} /></button>
     <button class="sec k" disabled={busy} on:click={() => add('0')}>0</button>
-    <button class="sec k" aria-label="Löschen" disabled={busy} on:click={del}>⌫</button>
+    <button class="sec k" aria-label={$t('account.pin.delete')} disabled={busy} on:click={del}>⌫</button>
   </div>
 </div>
 

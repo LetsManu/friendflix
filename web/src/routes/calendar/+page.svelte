@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { t, tr, fmtDate } from '#lib/i18n';
   import { onMount } from 'svelte';
   import { api } from '#lib/api';
   import Icon from '#lib/Icon.svelte';
@@ -10,18 +11,19 @@
   const future = (e: any) => !e.premiereDate || new Date(e.premiereDate).getTime() > Date.now();
   async function remind(e: any) {
     const r = await toggleReminder(episodeKey(e.id), { episodeId: e.id });
-    msg = r === 'available' ? 'Schon verfügbar' : r === 'error' ? 'Erinnerung konnte nicht gespeichert werden.' : '';
+    msg = r === 'available' ? tr('social.calendar.alreadyAvailable') : r === 'error' ? tr('social.calendar.reminderFailed') : '';
   }
 </script>
-<h1>Serien-Kalender</h1>
-<p class="muted">Folge Serien, um bei neuen Folgen benachrichtigt zu werden.</p>
+<svelte:head><title>{$t('common.pageTitle', { page: $t('social.calendar.title') })}</title></svelte:head>
+<h1>{$t('social.calendar.title')}</h1>
+<p class="muted">{$t('social.calendar.intro')}</p>
 {#if msg}<p class="warn" role="status">{msg}</p>{/if}
-{#if !items.length}<p class="muted">Keine kommenden Folgen.</p>{/if}
+{#if !items.length}<p class="muted">{$t('social.calendar.none')}</p>{/if}
 <table><tbody>{#each items as e}<tr>
-  <td>{e.premiereDate ? new Date(e.premiereDate).toLocaleDateString('de-DE', { weekday: 'short', day: '2-digit', month: '2-digit' }) : '?'}</td>
-  <td><a href="/item/{e.seriesId}">{e.seriesName}</a> S{e.parentIndexNumber}E{e.indexNumber} – {e.name}</td>
-  <td><button class:sec={!e.followed} on:click={() => follow(e)}>{e.followed ? 'Folge ich' : 'Folgen'}</button>
+  <td>{e.premiereDate ? fmtDate(e.premiereDate, { weekday: 'short', day: '2-digit', month: '2-digit' }) : '?'}</td>
+  <td><a href="/item/{e.seriesId}">{e.seriesName}</a> {$t('social.calendar.episodeCode', { s: e.parentIndexNumber, e: e.indexNumber })} – {e.name}</td>
+  <td><button class:sec={!e.followed} on:click={() => follow(e)}>{e.followed ? $t('social.calendar.following') : $t('social.calendar.follow')}</button>
     {#if future(e)}
-      {#if e.followed}<span class="muted">via Folgen</span>
-      {:else}<button class="sec" aria-pressed={$remindKeys[episodeKey(e.id)] !== undefined} aria-label="Erinnere mich an diese Folge" on:click={() => remind(e)}><Icon name="bell" size={16} /> {$remindKeys[episodeKey(e.id)] !== undefined ? 'Erinnerung aktiv' : 'Erinnere mich'}</button>{/if}
+      {#if e.followed}<span class="muted">{$t('social.calendar.viaFollow')}</span>
+      {:else}<button class="sec" aria-pressed={$remindKeys[episodeKey(e.id)] !== undefined} aria-label={$t('social.calendar.remindAria')} on:click={() => remind(e)}><Icon name="bell" size={16} /> {$remindKeys[episodeKey(e.id)] !== undefined ? $t('social.calendar.reminderActive') : $t('social.calendar.remindMe')}</button>{/if}
     {/if}</td></tr>{/each}</tbody></table>

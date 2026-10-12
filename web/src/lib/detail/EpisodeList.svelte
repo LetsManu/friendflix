@@ -1,5 +1,6 @@
 <script lang="ts">
-  import { fmtMin, img, type Item } from '#lib/api';
+  import { img, type Item } from '#lib/api';
+  import { t } from '#lib/i18n';
   import { prefs } from '#lib/stores';
   import { isSpoiler } from '#lib/spoiler';
   import Icon from '#lib/Icon.svelte';
@@ -26,10 +27,10 @@
 
 <section class="eps" aria-labelledby="eps-h">
   <div class="seasonbar">
-    <h2 id="eps-h">Folgen</h2>
+    <h2 id="eps-h">{$t('detail.episodes.title')}</h2>
     {#if seasons.length}
       <span class="sel">
-        <label class="sr-only" for="dv-season">Staffel</label>
+        <label class="sr-only" for="dv-season">{$t('detail.episodes.season')}</label>
         <select id="dv-season" bind:value={season}>{#each seasons as s (s.id)}<option value={s.id}>{seasonLabel(s)}</option>{/each}</select>
         <span class="chev" aria-hidden="true"><Icon name="chevron-down" size={16} /></span>
       </span>
@@ -39,7 +40,7 @@
     {#if episodes === null}
       {#each Array(4) as _}<li><div class="skeleton sk"></div></li>{/each}
     {:else if !episodes.length}
-      <li class="muted none">Keine Folgen gefunden.</li>
+      <li class="muted none">{$t('detail.episodes.none')}</li>
     {:else}
       {#each episodes as e (e.id)}
         {@const pct = e.positionTicks && e.runtimeTicks ? Math.min(100, (e.positionTicks / e.runtimeTicks) * 100) : 0}
@@ -52,11 +53,11 @@
               <span class="pl"><Icon name="play" size={22} /></span>
             </span>
             <span class="tx">
-              <span class="t"><b>{#if e.indexNumber !== undefined}<span class="sr-only">Folge {e.indexNumber}: </span>{/if}{e.name}</b><span class="muted dur">{fmtMin(e.runtimeTicks)}</span></span>
-              {#if hidden(e, revealed)}<span class="muted ov">Beschreibung ausgeblendet (Spoilerschutz) · <button type="button" class="lnk" on:click={(ev) => reveal(ev, e.id)}>anzeigen</button></span>
+              <span class="t"><b>{#if e.indexNumber !== undefined}<span class="sr-only">{$t('detail.episodes.episodeN', { n: e.indexNumber })}</span>{/if}{e.name}</b><span class="muted dur">{e.runtimeTicks ? $t('common.duration.m', { m: Math.round(e.runtimeTicks / 600_000_000) }) : ''}</span></span>
+              {#if hidden(e, revealed)}<span class="muted ov">{$t('detail.episodes.spoiler')} · <button type="button" class="lnk" on:click={(ev) => reveal(ev, e.id)}>{$t('detail.episodes.reveal')}</button></span>
               {:else}<span class="muted ov">{e.overview ?? ''}</span>{/if}
             </span>
-            {#if e.played}<span class="seen"><Icon name="check" size={18} label="Gesehen" /></span>{/if}
+            {#if e.played}<span class="seen"><Icon name="check" size={18} label={$t('detail.episodes.watched')} /></span>{/if}
           </a>
           <span class="epdl"><DownloadButton itemId={e.id} {seriesId} compact /></span>
         </li>

@@ -9,12 +9,13 @@ import { checkState, startPlaybackCheck } from '../healthcheck.js';
 import { clipPath, libraryItems, previews, serviceUser } from '../previews.js';
 import { stat } from 'node:fs/promises';
 import { defaultLimit } from '../requestlimit.js';
-import { INVITABLE_ROLES, effectiveRole, invalidateRoles } from '../roles.js';
+import { DEFAULT_ROLES, INVITABLE_ROLES, effectiveRole, invalidateRoles } from '../roles.js';
 import { requireAdmin, requireOwner, requireUser } from '../session.js';
 import { portainerMode, triggerUpdate, updateInfo } from '../updates.js';
 import { MAX_FEATURED } from '../lists.js';
 import { accountJellyfinIds } from '../profiles.js';
 import { applyRole, getUserById, reapplyRole } from '../users.js';
+import { FALLBACK_LANGUAGE, LANGUAGES, instanceLanguage, isLanguage, roleLabel, setInstanceLanguage } from '../i18n.js';
 
 const uuid = z.guid();
 
@@ -64,6 +65,19 @@ export function adminRoutes(app: FastifyInstance, ctx: Ctx) {
     };
   });
 
+  // ---- instance default UI language (asked once on the first admin visit; profiles may override it) ----
+  app.get('/api/admin/settings/language', admin, async () => {
+    const l = await instanceLanguage(ctx);
+    return { language: l ?? FALLBACK_LANGUAGE, set: l !== null, languages: LANGUAGES };
+  });
+  app.put('/api/admin/settings/language', admin, async (req) => {
+    const { language } = z.object({ language: z.enum(LANGUAGES) }).parse(req.body);
+    const before = await instanceLanguage(ctx);
+    await setInstanceLanguage(ctx, language);
+    if (before !== language) await audit(ctx, req.user!.id, 'settings.language', undefined, { from: before, to: language });
+    return { language, set: true };
+  });
+
   app.get('/api/admin/update', admin, async (req) => updateInfo(ctx, (req.query as { refresh?: string }).refresh === '1'));
 
   // one redeploy per 2 minutes for the whole portal (not per IP): a double click or a second admin must not restart the stack twice
@@ -90,8 +104,11 @@ export function adminRoutes(app: FastifyInstance, ctx: Ctx) {
   app.get('/api/admin/roles', admin, async () => {
     invalidateRoles(ctx);
     const set = new Map((await ctx.db.query<{ role: string; requests_per_month: number | null }>('select role, requests_per_month from role_settings')).rows.map((r) => [r.role, r.requests_per_month]));
-    const roles = Object.fromEntries(await Promise.all(Object.keys(ctx.roles).map(async (k) => [k, (await effectiveRole(ctx, k))!] as const)));
-    const limits = Object.entries(roles).map(([role, t]) => ({ role, label: t.label, requestsPerMonth: set.has(role) ? set.get(role)! : defaultLimit(role), isDefault: !set.has(role), transcoding: t.transcoding, maxHeight: t.maxHeight, download: t.download, maxDownloads: t.maxDownloads, downloadMaxHeight: t.downloadMaxHeight, downloadDays: t.downloadDays }));
+    // builtinLabel: the label is the built-in (German) default of that role → the web app shows its translation; a label
+    // renamed via ROLES_JSON is shown as configured (same rule as roleLabel() in /api/me and /api/invite)
+    const builtin = (k: string, label: string) => Boolean(DEFAULT_ROLES[k] && DEFAULT_ROLES[k]!.label === label);
+    const roles = Object.fromEntries(await Promise.all(Object.keys(ctx.roles).map(async (k) => { const r = (await effectiveRole(ctx, k))!; return [k, { ...r, builtinLabel: builtin(k, r.label) }] as const; })));
+    const limits = Object.entries(roles).map(([role, t]) => ({ role, label: t.label, builtinLabel: t.builtinLabel, requestsPerMonth: set.has(role) ? set.get(role)! : defaultLimit(role), isDefault: !set.has(role), transcoding: t.transcoding, maxHeight: t.maxHeight, download: t.download, maxDownloads: t.maxDownloads, downloadMaxHeight: t.downloadMaxHeight, downloadDays: t.downloadDays }));
     return { roles, invitable: INVITABLE_ROLES, limits };
   });
 
@@ -288,6 +305,11 @@ export function inviteRoutes(app: FastifyInstance, ctx: Ctx) {
     if (!inv) return reply.code(404).send({ error: 'invalid_or_expired' });
     // Relative portal URL: /auth/enroll starts the OIDC login and hands over to the Authentik enrollment flow.
     const enroll = Boolean(inv.authentik_invite && ctx.cfg.AUTHENTIK_URL && ctx.cfg.AUTHENTIK_ENROLL_FLOW);
-    return { role: inv.role, roleLabel: ctx.roles[inv.role]?.label ?? inv.role, expiresAt: inv.expires_at, enrollUrl: enroll ? `/auth/enroll?invite=${encodeURIComponent(token)}` : undefined };
+    // anonymous page: the language the page shows (?lang=, from the browser's stored UI language) → instance default → German
+    const q = (req.query as { lang?: unknown } | undefined)?.lang;
+    const defaultLanguage = (await instanceLanguage(ctx)) ?? FALLBACK_LANGUAGE;
+    const lang = isLanguage(q) ? q : defaultLanguage;
+    // defaultLanguage: a new invitee without a stored UI language sees the page in the instance language (or the browser's)
+    return { defaultLanguage, role: inv.role, roleLabel: roleLabel(lang, inv.role, ctx.roles[inv.role]?.label, DEFAULT_ROLES[inv.role]?.label), expiresAt: inv.expires_at, enrollUrl: enroll ? `/auth/enroll?invite=${encodeURIComponent(token)}` : undefined };
   });
 }

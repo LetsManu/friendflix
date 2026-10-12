@@ -1,7 +1,8 @@
 <script lang="ts">
+  import { fmtNumber, intlLocale, t } from '#lib/i18n';
   import { onMount } from 'svelte';
   import OfflinePlayer from '#lib/OfflinePlayer.svelte';
-  import { bumpMaxSeen, daysLeft, isPlayable, REASON_TEXT } from '#lib/offline/license';
+  import { bumpMaxSeen, daysLeft, isPlayable, REASON_KEY } from '#lib/offline/license';
   import { getAllDownloads, getMeta, setMeta, type DownloadRecord } from '#lib/offline/db';
 
   // Prerendered hub: never calls /api (the session may be gone, the network is). Reads IndexedDB only.
@@ -9,12 +10,12 @@
   let loaded = false, maxSeen = 0, profileName = '';
   let playing: DownloadRecord | null = null;
 
-  const fmtSize = (b: number) => (b / 1e9 >= 1 ? `${(b / 1e9).toLocaleString('de-DE', { maximumFractionDigits: 1 })} GB` : `${Math.round(b / 1e6)} MB`);
+  const fmtSize = (b: number) => (b / 1e9 >= 1 ? `${fmtNumber(b / 1e9, { maximumFractionDigits: 1 })} GB` : `${fmtNumber(Math.round(b / 1e6))} MB`);
   $: groups = group(items);
   function group(list: DownloadRecord[]) {
     const m = new Map<string, DownloadRecord[]>();
     for (const d of list) { const k = d.seriesName ?? ''; m.set(k, [...(m.get(k) ?? []), d]); }
-    return [...m.entries()].map(([series, eps]) => ({ series, eps: eps.sort((a, b) => (a.s ?? 0) - (b.s ?? 0) || (a.e ?? 0) - (b.e ?? 0) || a.title.localeCompare(b.title, 'de')) })).sort((a, b) => a.series.localeCompare(b.series, 'de'));
+    return [...m.entries()].map(([series, eps]) => ({ series, eps: eps.sort((a, b) => (a.s ?? 0) - (b.s ?? 0) || (a.e ?? 0) - (b.e ?? 0) || a.title.localeCompare(b.title, intlLocale())) })).sort((a, b) => a.series.localeCompare(b.series, intlLocale()));
   }
   const verdict = (d: DownloadRecord) => isPlayable(d, Date.now(), { maxSeenTime: maxSeen });
 
@@ -45,19 +46,19 @@
   async function closePlayer() { playing = null; await load(); }
 </script>
 
-<svelte:head><title>Offline</title></svelte:head>
+<svelte:head><title>{$t('account.offline.pageTitle')}</title></svelte:head>
 
 <section class="offline" id="main">
-  <h1>Offline{profileName ? ` · ${profileName}` : ''}</h1>
-  <p class="muted">Keine Verbindung zu FriendFlix. Deine heruntergeladenen Titel kannst du trotzdem ansehen.</p>
+  <h1>{profileName ? $t('account.offline.titleFor', { name: profileName }) : $t('account.offline.title')}</h1>
+  <p class="muted">{$t('account.offline.lead')}</p>
   <div class="flex">
-    <button class="btn" type="button" on:click={() => location.assign('/')}>Erneut verbinden</button>
+    <button class="btn" type="button" on:click={() => location.assign('/')}>{$t('account.offline.reconnect')}</button>
   </div>
 
   {#if !loaded}
-    <p class="muted" role="status">Lade …</p>
+    <p class="muted" role="status">{$t('account.offline.loading')}</p>
   {:else if !items.length}
-    <p class="muted">Auf diesem Gerät sind keine Downloads vorhanden.</p>
+    <p class="muted">{$t('account.offline.none')}</p>
   {:else}
     {#each groups as g (g.series)}
       <div class="grp">
@@ -67,10 +68,10 @@
           <div class="row">
             <div class="meta">
               <b>{d.s != null && d.e != null ? `S${d.s} E${d.e} · ` : ''}{d.title}</b>
-              <span class="muted">{fmtSize(d.bytesTotal)} · noch {daysLeft(d.expiresAt, Date.now())} Tage{d.state !== 'done' ? ' · nicht fertig' : ''}</span>
-              {#if !v.ok && v.reason}<span class="warn">{REASON_TEXT[v.reason]}</span>{/if}
+              <span class="muted">{fmtSize(d.bytesTotal)} · {$t('account.downloads.daysLeft', { n: daysLeft(d.expiresAt, Date.now()) })}{d.state !== 'done' ? $t('account.offline.notFinished') : ''}</span>
+              {#if !v.ok && v.reason}<span class="warn">{$t(REASON_KEY[v.reason])}</span>{/if}
             </div>
-            <button type="button" disabled={!v.ok} on:click={() => (playing = d)}>Abspielen</button>
+            <button type="button" disabled={!v.ok} on:click={() => (playing = d)}>{$t('account.offline.play')}</button>
           </div>
         {/each}
       </div>

@@ -7,6 +7,7 @@
   import { loadFeatured, type FeaturedList } from '#lib/lists';
   import UpcomingRow from '#lib/UpcomingRow.svelte';
   import { homeCache, swrLoad } from '#lib/home';
+  import { t, tr } from '#lib/i18n';
 
   let hero: Item | null = null, heroPlay = '';
   let resume: Item[] | null = null, next: Item[] | null = null, latest: Item[] | null = null, mine: Item[] | null = null;
@@ -53,11 +54,11 @@
     const warm = Boolean(homeCache.get(`${getActiveProfile()}|latest`));
     (warm ? (fn: () => void) => fn() : idle)(() => {
       void cached('latest', () => items({ types: 'Movie,Series', sort: 'DateCreated', desc: 'true', limit: '24' }), (v) => (latest = v), () => (latest = []));
-      void cached('trending', () => load('/api/library/trending').then((r) => (r.items as Item[]).map((i) => ({ ...i, caption: i.viewers ? (i.viewers === 1 ? '1 Person schaut' : `${i.viewers} Personen schauen`) : i.caption }))), (v) => (trending = v), () => (trending = []));
+      void cached('trending', () => load('/api/library/trending').then((r) => (r.items as Item[]).map((i) => ({ ...i, caption: i.viewers ? tr('home.meta.watching', { n: i.viewers }) : i.caption }))), (v) => (trending = v), () => (trending = []));
       void cached('top', () => items({ types: 'Movie,Series', sort: 'CommunityRating', desc: 'true', limit: '10' }), (v) => (top = v), () => (top = []));
       void cached('mine', () => load('/api/watchlist').then((r) => r.items as Item[]), (v) => (mine = v), () => (mine = []), ALWAYS);
       void cached('featured', () => loadFeatured(), (v) => (featured = v), () => (featured = []));
-      void cached('views', () => load('/api/library/views').then((r) => r.items as Item[]), (v) => (views = v), () => (error = 'Bibliothek konnte nicht geladen werden.'));
+      void cached('views', () => load('/api/library/views').then((r) => r.items as Item[]), (v) => (views = v), () => (error = tr('home.rows.libraryFailed')));
       void cached('genres', () => load('/api/library/genres').then((r) => (r.genres as string[]).slice(0, 8)), (v) => (genres = v), () => undefined);
     });
   });
@@ -73,26 +74,26 @@
   const genreLoader = (g: string) => () => items({ types: 'Movie,Series', genre: g, sort: 'Random', limit: '24' });
 </script>
 
-<svelte:head><title>FriendFlix</title></svelte:head>
+<svelte:head><title>{$t('common.appName')}</title></svelte:head>
 <Hero item={hero} rank={heroRank} portrait />
 <div class="rows">
   {#if error}<p class="err" style="margin:1rem var(--pad-x)">{error}</p>{/if}
-  <Row title="Weiterschauen" items={resume} landscape removable on:remove={(e) => removeResume(e.detail.id)} />
-  <Row title="Nächste Folge" items={nextOnly} landscape />
-  <Row title="Von Freunden empfohlen" items={recs} />
-  <Row title="Freunde haben bewertet" items={friendsRated} />
-  {#if because}<Row title="Weil du „{because.name}“ gesehen hast" items={becauseItems} />{/if}
-  <Row title="Neu hinzugefügt" items={latest} href="/new" />
-  <Row title="Diese Woche bei uns" items={trending} ranked />
-  {#each featured as f (f.id)}<Row title="{f.name} · Empfohlen von {f.owner.name}" items={f.items} href="/lists/{f.id}" />{/each}
-  <Row title="Meine Liste" items={mine} href="/watchlist" />
-  <UpcomingRow type="movie" title="Demnächst – jetzt wünschen" />
+  <Row title={$t('home.rows.resume')} items={resume} landscape removable on:remove={(e) => removeResume(e.detail.id)} />
+  <Row title={$t('home.rows.nextUp')} items={nextOnly} landscape />
+  <Row title={$t('home.rows.recs')} items={recs} />
+  <Row title={$t('home.rows.friendsRated')} items={friendsRated} />
+  {#if because}<Row title={$t('home.rows.because', { name: because.name })} items={becauseItems} />{/if}
+  <Row title={$t('home.rows.latest')} items={latest} href="/new" />
+  <Row title={$t('home.rows.trending')} items={trending} ranked />
+  {#each featured as f (f.id)}<Row title={$t('home.rows.featured', { name: f.name, owner: f.owner.name })} items={f.items} href="/lists/{f.id}" />{/each}
+  <Row title={$t('home.rows.myList')} items={mine} href="/watchlist" />
+  <UpcomingRow type="movie" title={$t('home.rows.upcomingWish')} />
   <!-- the second ranked row never directly follows the first one -->
   {#each views as v, i (v.id)}
     <LazyRow title={v.name} href="/library/{v.id}" cacheKey="view:{v.id}" load={viewLoader(v.id)} />
-    {#if i === 0}<Row title="Top 10 nach Bewertung" items={top} ranked />{/if}
+    {#if i === 0}<Row title={$t('home.rows.top10')} items={top} ranked />{/if}
   {/each}
-  {#if !views.length}<Row title="Top 10 nach Bewertung" items={top} ranked />{/if}
+  {#if !views.length}<Row title={$t('home.rows.top10')} items={top} ranked />{/if}
   {#each genres as g (g)}
     <LazyRow title={g} href="/browse/movies?genre={encodeURIComponent(g)}" cacheKey="genre:{g}" load={genreLoader(g)} />
   {/each}

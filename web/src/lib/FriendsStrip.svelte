@@ -1,5 +1,6 @@
 <script lang="ts">
   import { api } from '#lib/api';
+  import { t } from '#lib/i18n';
 
   interface Friend { id: string; name: string; stars?: number; watched?: boolean; recommended?: boolean }
   /** item whose friend activity is shown; the section stays hidden while loading, on failure or when empty */
@@ -16,18 +17,18 @@
     } catch { /* optional section */ }
   }
   const initials = (n: string) => n.split(/\s+/).filter(Boolean).slice(0, 2).map((w) => w[0]!.toUpperCase()).join('');
-  const facts = (f: Friend) => [f.recommended && 'empfiehlt dir das', f.stars && `★${f.stars}`, f.watched && 'gesehen'].filter(Boolean) as string[];
+  const facts = (f: Friend, recommends: string, watched: string) => [f.recommended && recommends, f.stars && `★${f.stars}`, f.watched && watched].filter(Boolean) as string[];
 </script>
 
 {#if friends.length}
   <section class="fr" aria-labelledby="fr-h">
-    <h2 id="fr-h">Freunde</h2>
+    <h2 id="fr-h">{$t('detail.friends.title')}</h2>
     <ul>
       {#each friends as f (f.id)}
         <li>
           <span class="av" aria-hidden="true">{initials(f.name)}</span>
           <span class="tx"><b>{f.name}</b>
-            <span class="muted">{#each facts(f) as t, n}{n ? ' · ' : ''}{t}{/each}</span></span>
+            <span class="muted">{#each facts(f, $t('detail.friends.recommends'), $t('detail.friends.watched')) as fact, n}{n ? ' · ' : ''}{fact}{/each}</span></span>
         </li>
       {/each}
     </ul>

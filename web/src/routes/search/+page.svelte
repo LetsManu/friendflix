@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { fmtDate, t, tr } from '#lib/i18n';
   import { onDestroy, onMount } from 'svelte';
   import { pageStore } from '#lib/page';
   const page = pageStore();
@@ -14,7 +15,7 @@
   interface Result { q: string; titles: Item[]; episodes: Item[]; people: Person[]; genres: string[]; partial: boolean }
 
   let input = '', term = '', pushed: string | null = null, seenUrl: string | null = null, status: 'idle' | 'loading' | 'error' | 'done' = 'idle';
-  let res: Result | null = null, recent: string[] = [], t: ReturnType<typeof setTimeout>, seq = 0, ctl: AbortController | undefined, inputEl: HTMLInputElement;
+  let res: Result | null = null, recent: string[] = [], timer: ReturnType<typeof setTimeout>, seq = 0, ctl: AbortController | undefined, inputEl: HTMLInputElement;
 
   // "Noch nicht in der Bibliothek": Seerr hits, loaded independently so they never block the library results
   let wishes: SeerrHit[] = [], wishMsg = '', wishSeq = 0, wishCtl: AbortController | undefined, sent = new Set<string>(), sending = '';
@@ -37,13 +38,13 @@
     try {
       await api('/api/requests', { method: 'POST', body: { mediaType: w.mediaType, tmdbId: w.tmdbId } });
       sent.add(wkey(w)); sent = sent;
-      wishMsg = `„${w.title}“ wurde gewünscht. Ein Admin gibt es frei.`;
+      wishMsg = tr('home.search.wishSent', { title: w.title });
     } catch (e) {
       if (e instanceof ApiError && e.status === 429 && e.body?.error === 'request_limit') {
-        const d = e.body.resetsAt ? new Date(e.body.resetsAt).toLocaleDateString('de-DE') : '';
-        quotaFull = wishMsg = d ? `Limit erreicht – neue Wünsche ab ${d}` : 'Limit erreicht – derzeit keine neuen Wünsche möglich.';
-      } else if (e instanceof ApiError && e.status === 409) { sent.add(wkey(w)); sent = sent; wishMsg = 'Schon gewünscht'; }
-      else wishMsg = 'Wunsch konnte nicht gestellt werden.';
+        const d = e.body.resetsAt ? fmtDate(e.body.resetsAt, { dateStyle: 'medium' }) : '';
+        quotaFull = wishMsg = d ? tr('home.search.limitUntil', { date: d }) : tr('home.search.limit');
+      } else if (e instanceof ApiError && e.status === 409) { sent.add(wkey(w)); sent = sent; wishMsg = tr('home.search.already'); }
+      else wishMsg = tr('home.search.wishFailed');
     }
     sending = '';
   }
@@ -51,7 +52,7 @@
   $: urlQ = ($page.url.searchParams.get('q') ?? '').trim();
   // initial value, back/forward and header-search submits come in through the URL; our own replaceState calls are skipped.
   // React to URL changes only: commit() updates `pushed` before $page catches up, and comparing against it then reset the input.
-  $: if (urlQ !== seenUrl) { seenUrl = urlQ; if (urlQ !== pushed) { pushed = urlQ; clearTimeout(t); input = urlQ; term = urlQ; } }
+  $: if (urlQ !== seenUrl) { seenUrl = urlQ; if (urlQ !== pushed) { pushed = urlQ; clearTimeout(timer); input = urlQ; term = urlQ; } }
   $: void search(term);
   $: if (status === 'done') void loadWishes(term); else if (status === 'idle') void loadWishes('');
 
@@ -72,7 +73,7 @@
   }
 
   function commit(v: string) {
-    clearTimeout(t);
+    clearTimeout(timer);
     const q = v.trim();
     if (q !== pushed) {
       pushed = q;
@@ -80,7 +81,7 @@
     }
     term = q;
   }
-  function onInput() { clearTimeout(t); t = setTimeout(() => commit(input), 250); }
+  function onInput() { clearTimeout(timer); timer = setTimeout(() => commit(input), 250); }
   function onKeydown(e: KeyboardEvent) {
     if (e.key === 'Escape' && input) { e.preventDefault(); e.stopPropagation(); input = ''; commit(''); }
   }
@@ -104,75 +105,75 @@
     if ($mobile && !input) inputEl?.focus();
     return () => window.removeEventListener('ff-me', onMe);
   });
-  onDestroy(() => { clearTimeout(t); ctl?.abort(); });
+  onDestroy(() => { clearTimeout(timer); ctl?.abort(); });
 
   $: count = res ? res.titles.length + res.episodes.length + res.people.length + res.genres.length : 0;
   $: empty = status === 'done' && res !== null && count === 0;
   $: year = isYear(term);
 </script>
 
-<svelte:head><title>Suche – FriendFlix</title></svelte:head>
-<h1 class="sr-only">Suche</h1>
+<svelte:head><title>{$t('common.pageTitle', { page: $t('home.search.title') })}</title></svelte:head>
+<h1 class="sr-only">{$t('home.search.title')}</h1>
 {#if $mobile}
   <form role="search" on:submit|preventDefault={() => commit(input)}>
-    <label class="sr-only" for="q">Suche</label>
-    <input id="q" class="big" type="search" autocomplete="off" enterkeyhint="search" placeholder="Titel, Person, Genre, Jahr …" bind:this={inputEl} bind:value={input} on:input={onInput} on:keydown={onKeydown} />
+    <label class="sr-only" for="q">{$t('home.search.title')}</label>
+    <input id="q" class="big" type="search" autocomplete="off" enterkeyhint="search" placeholder={$t('home.search.placeholder')} bind:this={inputEl} bind:value={input} on:input={onInput} on:keydown={onKeydown} />
   </form>
 {:else}<div class="gap" aria-hidden="true"></div>{/if}
 
-<p class="sr-only" role="status" aria-live="polite">{#if status === 'done' && res}{count} Treffer{/if}</p>
+<p class="sr-only" role="status" aria-live="polite">{#if status === 'done' && res}{$t('home.search.hits', { n: count })}{/if}</p>
 <p class="wishmsg" role="status" aria-live="polite">{wishMsg}</p>
 
 
 {#if status === 'idle'}
-  {#if term.length === 1}<p class="muted">Gib mindestens zwei Zeichen ein.</p>{/if}
+  {#if term.length === 1}<p class="muted">{$t('home.search.minChars')}</p>{/if}
   {#if term.length === 0 && recent.length}
     <section aria-labelledby="rc">
-      <div class="flex rhead"><h2 id="rc" class="muted">Zuletzt gesucht</h2><button type="button" class="sec small" on:click={forget}>Verlauf löschen</button></div>
+      <div class="flex rhead"><h2 id="rc" class="muted">{$t('home.search.recent')}</h2><button type="button" class="sec small" on:click={forget}>{$t('home.search.clearRecent')}</button></div>
       <ul class="chips">{#each recent as r (r)}<li><button type="button" class="chip" on:click={() => pick(r)}>{r}</button></li>{/each}</ul>
     </section>
   {/if}
   {#if term.length === 0}
-    {#if !$mobile && !recent.length}<p class="muted hint">Suche oben nach Titeln, Personen, Genres oder einem Jahr.</p>{/if}
+    {#if !$mobile && !recent.length}<p class="muted hint">{$t('home.search.hint')}</p>{/if}
     <section aria-labelledby="pop">
-      <h2 id="pop" class="sh">Beliebte Suchen</h2>
+      <h2 id="pop" class="sh">{$t('home.search.popular')}</h2>
       {#if popular === null}<div class="tiles" aria-busy="true">{#each Array(6) as _}<div class="skeleton" style="aspect-ratio:16/9"></div>{/each}</div>
       {:else if popular.length && $mobile}
         <ul class="top">{#each popular as i (i.id)}
           <li><a href={itemPath(i)}><img src={i.backdrop ? backdrop(i.id, 400) : img(i.id, 300)} alt="" loading="lazy" width="146" height="82" /><span class="tt">{i.name}</span><span class="pl" aria-hidden="true"><Icon name="play" size={18} /></span></a></li>
         {/each}</ul>
       {:else if popular.length}<div class="tiles">{#each popular as i (i.id)}<div class="slot"><Card item={i} /></div>{/each}</div>
-      {:else}<p class="muted">Gib mindestens zwei Zeichen ein.</p>{/if}
+      {:else}<p class="muted">{$t('home.search.minChars')}</p>{/if}
     </section>
   {/if}
 {:else if status === 'loading'}
-  <div class="tiles" aria-busy="true"><span class="sr-only">Suche läuft …</span>{#each Array(12) as _}<div class="skeleton" style="aspect-ratio:16/9"></div>{/each}</div>
+  <div class="tiles" aria-busy="true"><span class="sr-only">{$t('home.search.running')}</span>{#each Array(12) as _}<div class="skeleton" style="aspect-ratio:16/9"></div>{/each}</div>
 {:else if status === 'error'}
-  <div class="empty" role="alert"><h2>Suche gerade nicht möglich</h2><p class="muted">Bitte versuche es in einem Moment noch einmal.</p><button type="button" on:click={() => search(term)}>Erneut versuchen</button></div>
+  <div class="empty" role="alert"><h2>{$t('home.search.errorTitle')}</h2><p class="muted">{$t('home.search.errorText')}</p><button type="button" on:click={() => search(term)}>{$t('home.search.retry')}</button></div>
 {:else if res}
-  {#if res.partial}<p class="muted note">Einige Ergebnisse konnten nicht geladen werden.</p>{/if}
+  {#if res.partial}<p class="muted note">{$t('home.search.partial')}</p>{/if}
   {#if empty}
-    <div class="empty"><h2>Keine Treffer für „{term}“</h2><p class="muted">Der Titel ist (noch) nicht in der Bibliothek.</p>{#if !wishes.length}<a class="btn" href="/requests?q={encodeURIComponent(term)}">Als Wunsch eintragen</a>{/if}</div>
+    <div class="empty"><h2>{$t('home.search.noHits', { term })}</h2><p class="muted">{$t('home.search.notInLibrary')}</p>{#if !wishes.length}<a class="btn" href="/requests?q={encodeURIComponent(term)}">{$t('home.search.addWish')}</a>{/if}</div>
   {:else}
     {#if res.people.length}
-      <section aria-labelledby="sp"><h2 id="sp" class="sh">Personen</h2>
+      <section aria-labelledby="sp"><h2 id="sp" class="sh">{$t('home.search.people')}</h2>
         <ul class="people">{#each res.people as p (p.id)}
           <li><a href="/person/{p.id}"><span class="av">{#if p.image}<img src={img(p.id, 160)} alt="" loading="lazy" width="80" height="80" />{:else}<span aria-hidden="true">{initials(p.name)}</span>{/if}</span><span class="nm">{p.name}</span></a></li>
         {/each}</ul>
       </section>
     {/if}
     {#if res.genres.length}
-      <section aria-labelledby="sg"><h2 id="sg" class="sh">Genres</h2>
+      <section aria-labelledby="sg"><h2 id="sg" class="sh">{$t('home.search.genres')}</h2>
         <ul class="chips">{#each res.genres as g (g)}<li><a class="chip" href="/browse/movies?genre={encodeURIComponent(g)}">{g}</a></li>{/each}</ul>
       </section>
     {/if}
     {#if res.titles.length}
-      <section aria-labelledby="st"><h2 id="st" class="sh">{year ? `Titel aus ${term}` : 'Filme & Serien'}</h2>
+      <section aria-labelledby="st"><h2 id="st" class="sh">{year ? $t('home.search.titlesFrom', { year: term }) : $t('home.search.titles')}</h2>
         <div class="tiles">{#each res.titles as i (i.id)}<div class="slot"><Card item={i} /></div>{/each}</div>
       </section>
     {/if}
     {#if res.episodes.length}
-      <section aria-labelledby="se"><h2 id="se" class="sh">Folgen</h2>
+      <section aria-labelledby="se"><h2 id="se" class="sh">{$t('home.search.episodes')}</h2>
         <div class="tiles">{#each res.episodes as i (i.id)}<div class="slot"><Card item={i} /></div>{/each}</div>
       </section>
     {/if}
@@ -180,17 +181,17 @@
 {/if}
 
 {#if status === 'done' && wishes.length}
-  <section class="wishes" aria-labelledby="sw"><h2 id="sw" class="sh">Noch nicht in der Bibliothek</h2>
+  <section class="wishes" aria-labelledby="sw"><h2 id="sw" class="sh">{$t('home.search.notYet')}</h2>
     <ul class="wl">{#each wishes as w (wkey(w))}
       <li>
         {#if w.poster}<img src={w.poster} alt="" loading="lazy" width="56" height="84" />{:else}<span class="ph" aria-hidden="true"></span>{/if}
-        <div class="wi"><b>{w.title}</b><span class="muted">{w.year ?? ''}{w.year ? ' · ' : ''}{w.mediaType === 'tv' ? 'Serie' : 'Film'}</span></div>
-        {#if sent.has(wkey(w))}<button type="button" disabled>Gewünscht</button>
-        {:else if alreadyWished(w.status)}<span class="badge">Bereits gewünscht</span>
-        {:else}<button type="button" disabled={sending !== '' || quotaFull !== ''} aria-label="{w.title} wünschen" on:click={() => wish(w)}>Wünschen</button>{/if}
+        <div class="wi"><b>{w.title}</b><span class="muted">{w.year ?? ''}{w.year ? ' · ' : ''}{w.mediaType === 'tv' ? $t('home.meta.series') : $t('home.meta.movie')}</span></div>
+        {#if sent.has(wkey(w))}<button type="button" disabled>{$t('home.search.wished')}</button>
+        {:else if alreadyWished(w.status)}<span class="badge">{$t('home.search.alreadyWished')}</span>
+        {:else}<button type="button" disabled={sending !== '' || quotaFull !== ''} aria-label={$t('home.search.wishName', { title: w.title })} on:click={() => wish(w)}>{$t('home.search.wish')}</button>{/if}
       </li>
     {/each}</ul>
-    <p class="muted note"><a href="/requests?q={encodeURIComponent(term)}">Mehr auf der Wunschseite</a></p>
+    <p class="muted note"><a href="/requests?q={encodeURIComponent(term)}">{$t('home.search.moreWishes')}</a></p>
   </section>
 {/if}
 

@@ -4,16 +4,44 @@
   import { api, getActiveProfile } from '#lib/api';
   import Intro from '#lib/Intro.svelte';
   import { loadIntroSettings, saveIntroSettings, shouldPlayIntroSound } from '#lib/intro';
-  import { prefs, savePrefs, DEFAULT_PREFS, type Prefs } from '#lib/stores';
+  import { prefs, savePrefs, saveLanguage, mergePrefsInto, DEFAULT_PREFS, type Prefs } from '#lib/stores';
   import { pushState, enablePush, disablePush, updateBroadcast, testPush, syncPush, type PushState } from '#lib/push';
+  import { LOCALES, isLocale, keepPageOnSwitch, locale, localeName, t, tr, type Locale, type TKey } from '#lib/i18n';
+  import { langLabel } from '#lib/langs';
+  import type { Me } from '#lib/api';
 
-  const LANGS: Array<[string, string]> = [['', 'Standard der Datei'], ['ger', 'Deutsch'], ['eng', 'Englisch'], ['fre', 'Französisch'], ['spa', 'Spanisch'], ['ita', 'Italienisch'], ['jpn', 'Japanisch']];
-  const QUALITIES: Array<[number, string]> = [[0, 'Automatisch (beste für deine Verbindung)'], [8_000_000, '1080p (ca. 8 Mbit/s)'], [4_000_000, '720p (ca. 4 Mbit/s)'], [1_500_000, '480p (ca. 1,5 Mbit/s)'], [800_000, '360p (ca. 0,8 Mbit/s)']];
+  /** audio/subtitle track languages (ISO 639-2 as Jellyfin reports them; names in the UI language) */
+  const LANGS = ['ger', 'eng', 'fre', 'spa', 'ita', 'jpn'];
+  const QUALITIES: Array<[number, TKey]> = [[0, 'account.settings.qualityAuto'], [8_000_000, 'account.settings.quality1080'], [4_000_000, 'account.settings.quality720'], [1_500_000, 'account.settings.quality480'], [800_000, 'account.settings.quality360']];
+  /** track language names in the UI language; re-evaluated on a switch (the page is not rebuilt, see below) */
+  $: trackName = $locale ? (v: string) => langLabel(v) : langLabel;
+  type BoolPref = { [K in keyof Prefs]: Prefs[K] extends boolean ? K : never }[keyof Prefs];
   let form: Prefs = { ...DEFAULT_PREFS }, saved = false, error = '', busy = false;
-  let owner = false;
+  let owner = false, me: Me | null = null;
+  // ---- UI language (own section, saved right away). This page is not rebuilt on a switch (keepPageOnSwitch): all its
+  // texts are reactive, and unsaved edits in the form below survive the switch. ----
+  let langBusy = false, langErr = '', instLang: Locale = 'de', instBusy = false, instMsg = '';
+  $: admin = Boolean(me?.isAdmin && me?.profile?.isOwner);
+  $: defaultName = localeName(isLocale(me?.defaultLanguage) ? me!.defaultLanguage! : 'de');
+  async function pickLanguage(e: Event) {
+    const sel = e.currentTarget as HTMLSelectElement;
+    langBusy = true; langErr = '';
+    try { await saveLanguage(sel.value as Locale); } catch { langErr = tr('account.language.saveFailed'); sel.value = $locale; }
+    langBusy = false;
+  }
+  async function saveInstance() {
+    instBusy = true; instMsg = '';
+    try { await api('/api/admin/settings/language', { method: 'PUT', body: { language: instLang } }); if (me) me = { ...me, defaultLanguage: instLang, defaultLanguageSet: true }; instMsg = tr('account.language.savedTo'); }
+    catch { instMsg = tr('account.language.saveFailed'); }
+    instBusy = false;
+  }
   onMount(() => {
-    api('/api/me').then((m) => (owner = Boolean(m.profile?.isOwner))).catch(() => undefined);
-    const unsub = prefs.subscribe((p) => (form = { ...p, subtitleStyle: { ...p.subtitleStyle } })); return unsub;
+    api<Me>('/api/me').then((m) => { me = m; owner = Boolean(m.profile?.isOwner); if (isLocale(m.defaultLanguage)) instLang = m.defaultLanguage; }).catch(() => undefined);
+    // only fields that changed in the store are taken over (a language switch must not discard unsaved edits)
+    let prev: Prefs | null = null;
+    const unsub = prefs.subscribe((p) => { form = mergePrefsInto(form, prev, p); prev = p; });
+    const keep = keepPageOnSwitch();
+    return () => { unsub(); keep(); };
   });
   // ---- brand intro (stored per profile in localStorage, not on the server) ----
   let introShow = true, introSound = true, previewing = false, previewSound = false;
@@ -31,85 +59,103 @@
     pushBusy = true; pushMsg = '';
     try {
       if (pushOn) ps = await enablePush(pushBroadcast); else { await disablePush(); ps = 'off'; }
-    } catch { pushMsg = 'Das hat nicht geklappt.'; ps = await pushState().catch(() => 'off' as PushState); }
+    } catch { pushMsg = tr('common.failed'); ps = await pushState().catch(() => 'off' as PushState); }
     pushOn = ps === 'on'; pushBusy = false;
   }
-  async function toggleBroadcast() { try { await updateBroadcast(pushBroadcast); } catch { pushMsg = 'Speichern fehlgeschlagen.'; } }
+  async function toggleBroadcast() { try { await updateBroadcast(pushBroadcast); } catch { pushMsg = tr('common.saveFailed'); } }
   async function sendTest() {
     pushBusy = true; pushMsg = '';
-    try { const r = await testPush(); pushMsg = r.sent ? 'Test gesendet.' : 'Der Push-Dienst hat den Test nicht angenommen.'; } catch { pushMsg = 'Test fehlgeschlagen.'; }
+    try { const r = await testPush(); pushMsg = r.sent ? tr('account.settings.push.testSent') : tr('account.settings.push.testRejected'); } catch { pushMsg = tr('account.settings.push.testFailed'); }
     pushBusy = false;
   }
   async function save() {
     busy = true; error = ''; saved = false;
-    try { await savePrefs({ ...form, quality: Number(form.quality) }); saved = true; setTimeout(() => (saved = false), 2500); } catch { error = 'Speichern fehlgeschlagen.'; }
+    try { await savePrefs({ ...form, quality: Number(form.quality) }); saved = true; setTimeout(() => (saved = false), 2500); } catch { error = tr('common.saveFailed'); }
     busy = false;
   }
 </script>
 
-<svelte:head><title>Einstellungen – FriendFlix</title></svelte:head>
-<h1>Wiedergabe-Einstellungen</h1>
-<p class="muted">Gelten auf allen deinen Geräten. Sie betreffen nur dich.</p>
-<form class="panel form" on:submit|preventDefault={save}>
-  <label class="row"><input type="checkbox" bind:checked={form.autoplayNext} /><span><b>Nächste Folge automatisch starten</b><small class="muted">Mit 8-Sekunden-Countdown, jederzeit abbrechbar.</small></span></label>
-  <label class="row"><input type="checkbox" bind:checked={form.stillWatching} /><span><b>„Schaust du noch?“ nachfragen</b><small class="muted">Nach mehreren Folgen am Stück ohne Eingabe (oder nach langer Pause) wird nicht automatisch weitergespielt, sondern kurz nachgefragt.</small></span></label>
-  {#if form.stillWatching}<div class="field"><label for="swe">Nachfragen nach … Folgen ohne Eingabe</label>
-    <select id="swe" bind:value={form.stillWatchingEpisodes}>{#each [2, 3, 4, 5] as n}<option value={n}>{n}</option>{/each}</select></div>{/if}
-  <label class="row"><input type="checkbox" bind:checked={form.spoilerProtection} /><span><b>Spoilerschutz</b><small class="muted">Blendet Vorschaubilder und Beschreibungen ungesehener Folgen aus. Einzelne Folgen lassen sich per „anzeigen“ aufdecken.</small></span></label>
-  <label class="row"><input type="checkbox" bind:checked={form.autoSkipIntro} /><span><b>Intros automatisch überspringen</b><small class="muted">Funktioniert, wenn Jellyfin Intro-Marken kennt. In der Watch-Party deaktiviert.</small></span></label>
-  <label class="row"><input type="checkbox" bind:checked={form.hoverTrailers} /><span><b>Trailer-Vorschau beim Überfahren</b><small class="muted">Kurzer, stummer Trailer, wenn die Maus auf einer Karte verweilt (nur lokale Trailer in Jellyfin).</small></span></label>
-  <label class="row"><input type="checkbox" bind:checked={form.hoverClip} /><span><b>Ohne Trailer: Ausschnitt aus dem Film zeigen</b><small class="muted">Spielt beim Überfahren einen kurzen, vorab erzeugten Clip aus dem Film selbst (niedrige Qualität). Der Clip wird einmal pro Titel im Hintergrund erstellt und danach nur noch als Datei ausgeliefert.</small></span></label>
-  <label class="row"><input type="checkbox" bind:checked={form.autoStartPreview} /><span><b>Vorschau startet Titel automatisch</b><small class="muted">Läuft die Vorschau in der Detailansicht lange genug, startet der Titel (oder die nächste Folge) nach einem kurzen Countdown, der sich abbrechen lässt. Nur am Computer, nicht auf Touch-Geräten.</small></span></label>
-  <label class="row"><input type="checkbox" bind:checked={form.shareHistory} /><span><b>Gruppen-Matcher: Meine ungesehenen Titel dürfen abgeglichen werden</b><small class="muted">Freunde sehen nur das Ergebnis („niemand von uns hat X gesehen“), nie deine Historie. Standard: aus.</small></span></label>
-  <label class="row"><input type="checkbox" bind:checked={form.shareRatings} /><span><b>Meine guten Bewertungen dürfen Freunden vorgeschlagen werden</b><small class="muted">Erscheint als „Freunde haben bewertet“ bei anderen.</small></span></label>
-  {#if owner}
-    <label class="row"><input type="checkbox" bind:checked={form.weeklyDigest} /><span><b>Wöchentlicher Rückblick</b><small class="muted">Einmal pro Woche eine Zusammenfassung: neue Filme, neue Folgen deiner Serien, erfüllte Wünsche und Empfehlungen. Gilt für das ganze Konto.</small></span></label>
-    <div class="field"><label for="nt">ntfy-Thema für persönliche Push-Nachrichten</label>
-      <input id="nt" bind:value={form.ntfyTopic} maxlength="64" pattern="[A-Za-z0-9_\-]*" autocomplete="off" spellcheck="false" placeholder="z. B. mein-geheimes-thema" />
-      <small class="muted">Leer = keine Push-Nachrichten. Erlaubt sind Buchstaben, Ziffern, „-“ und „_“. Wähle einen schwer zu erratenden Namen, denn jeder, der ihn kennt, kann mitlesen. Wirkt für Rückblick und persönliche Hinweise, nie für den gemeinsamen Kanal.</small></div>
+<svelte:head><title>{$t('common.pageTitle', { page: $t('account.settings.pageTitle') })}</title></svelte:head>
+<section class="panel form langsec" id="language" aria-labelledby="langh">
+  <h2 id="langh">{$t('account.language.settingsTitle')}</h2>
+  <div class="field"><label for="ui-lang" class="sr-only">{$t('account.language.settingsTitle')}</label>
+    <select id="ui-lang" value={$locale} disabled={langBusy} on:change={pickLanguage}>{#each LOCALES as l (l.code)}<option value={l.code} lang={l.code}>{l.name}</option>{/each}</select>
+    <small class="muted">{$t('account.language.settingsHint', { name: defaultName })}</small>
+    {#if langErr}<span class="err" role="alert">{langErr}</span>{/if}</div>
+  {#if admin}
+    <div class="field"><label for="inst-lang">{$t('account.language.instanceSetting')}</label>
+      <div class="flex"><select id="inst-lang" bind:value={instLang} disabled={instBusy}>{#each LOCALES as l (l.code)}<option value={l.code} lang={l.code}>{l.name}</option>{/each}</select>
+        <button type="button" class="sec" disabled={instBusy} on:click={saveInstance}>{$t('common.save')}</button>{#if instMsg}<span role="status" class="muted">{instMsg}</span>{/if}</div>
+      <small class="muted">{$t('account.language.instanceSettingHint')}</small></div>
   {/if}
-  <div class="field"><label for="al">Bevorzugte Tonspur</label>
-    <select id="al" bind:value={form.audioLang}>{#each LANGS as [v, l]}<option value={v}>{l}</option>{/each}</select></div>
-  <div class="field"><label for="sl">Untertitel standardmäßig</label>
-    <select id="sl" bind:value={form.subtitleLang}><option value="">Aus</option>{#each LANGS.slice(1) as [v, l]}<option value={v}>{l}</option>{/each}</select></div>
-  <div class="field"><label for="q">Streaming-Qualität</label>
-    <select id="q" bind:value={form.quality}>{#each QUALITIES as [v, l]}<option value={v}>{l}</option>{/each}</select>
-    <small class="muted">Niedrigere Qualität spart Datenvolumen. Dein Konto-Limit kann nicht überschritten werden.</small></div>
-  <fieldset class="field sub"><legend>Untertitel-Darstellung</legend>
+</section>
+<h1>{$t('account.settings.title')}</h1>
+<p class="muted">{$t('account.settings.lead')}</p>
+<form class="panel form" on:submit|preventDefault={save}>
+  {@render check('autoplayNext', 'account.settings.autoplayNext', 'account.settings.autoplayNextHint')}
+  {@render check('stillWatching', 'account.settings.stillWatching', 'account.settings.stillWatchingHint')}
+  {#if form.stillWatching}<div class="field"><label for="swe">{$t('account.settings.stillWatchingEpisodes')}</label>
+    <select id="swe" bind:value={form.stillWatchingEpisodes}>{#each [2, 3, 4, 5] as n}<option value={n}>{n}</option>{/each}</select></div>{/if}
+  {@render check('spoilerProtection', 'account.settings.spoiler', 'account.settings.spoilerHint')}
+  {@render check('autoSkipIntro', 'account.settings.skipIntro', 'account.settings.skipIntroHint')}
+  {@render check('hoverTrailers', 'account.settings.hoverTrailers', 'account.settings.hoverTrailersHint')}
+  {@render check('hoverClip', 'account.settings.hoverClip', 'account.settings.hoverClipHint')}
+  {@render check('autoStartPreview', 'account.settings.autoStart', 'account.settings.autoStartHint')}
+  {@render check('shareHistory', 'account.settings.shareHistory', 'account.settings.shareHistoryHint')}
+  {@render check('shareRatings', 'account.settings.shareRatings', 'account.settings.shareRatingsHint')}
+  {#if owner}
+    {@render check('weeklyDigest', 'account.settings.digest', 'account.settings.digestHint')}
+    <div class="field"><label for="nt">{$t('account.settings.ntfy')}</label>
+      <input id="nt" bind:value={form.ntfyTopic} maxlength="64" pattern="[A-Za-z0-9_\-]*" autocomplete="off" spellcheck="false" placeholder={$t('account.settings.ntfyPlaceholder')} />
+      <small class="muted">{$t('account.settings.ntfyHint')}</small></div>
+  {/if}
+  <div class="field"><label for="al">{$t('account.settings.audio')}</label>
+    <select id="al" bind:value={form.audioLang}><option value="">{$t('account.settings.audioDefault')}</option>{#each LANGS as v}<option value={v}>{trackName(v)}</option>{/each}</select></div>
+  <div class="field"><label for="sl">{$t('account.settings.subtitles')}</label>
+    <select id="sl" bind:value={form.subtitleLang}><option value="">{$t('common.off')}</option>{#each LANGS as v}<option value={v}>{trackName(v)}</option>{/each}</select></div>
+  <div class="field"><label for="q">{$t('account.settings.quality')}</label>
+    <select id="q" bind:value={form.quality}>{#each QUALITIES as [v, l]}<option value={v}>{$t(l)}</option>{/each}</select>
+    <small class="muted">{$t('account.settings.qualityHint')}</small></div>
+  <fieldset class="field sub"><legend>{$t('account.settings.subStyle')}</legend>
     <div class="grid">
-      <label>Größe<select bind:value={form.subtitleStyle.size}>{#each Object.entries(SIZE_LABELS) as [v, l]}<option value={v}>{l}</option>{/each}</select></label>
-      <label>Farbe<select bind:value={form.subtitleStyle.color}>{#each Object.entries(COLOR_LABELS) as [v, l]}<option value={v}>{l}</option>{/each}</select></label>
-      <label>Hintergrund<select bind:value={form.subtitleStyle.background}>{#each Object.entries(BG_LABELS) as [v, l]}<option value={v}>{l}</option>{/each}</select></label>
-      <label>Schrift<select bind:value={form.subtitleStyle.font}>{#each Object.entries(FONT_LABELS) as [v, l]}<option value={v}>{l}</option>{/each}</select></label>
+      <label>{$t('account.settings.subSize')}<select bind:value={form.subtitleStyle.size}>{#each Object.entries(SIZE_LABELS) as [v, l]}<option value={v}>{$t(l)}</option>{/each}</select></label>
+      <label>{$t('account.settings.subColor')}<select bind:value={form.subtitleStyle.color}>{#each Object.entries(COLOR_LABELS) as [v, l]}<option value={v}>{$t(l)}</option>{/each}</select></label>
+      <label>{$t('account.settings.subBackground')}<select bind:value={form.subtitleStyle.background}>{#each Object.entries(BG_LABELS) as [v, l]}<option value={v}>{$t(l)}</option>{/each}</select></label>
+      <label>{$t('account.settings.subFont')}<select bind:value={form.subtitleStyle.font}>{#each Object.entries(FONT_LABELS) as [v, l]}<option value={v}>{$t(l)}</option>{/each}</select></label>
     </div>
-    <div class="preview {subClasses(form.subtitleStyle)}" aria-label="Vorschau"><span>So sehen deine Untertitel aus.</span></div>
-    <small class="muted">Auf iPhone und iPad nutzt der Vollbildmodus die Untertitel-Einstellungen des Systems (Einstellungen → Bedienungshilfen → Untertitel).</small>
+    <div class="preview {subClasses(form.subtitleStyle)}" aria-label={$t('common.preview')}><span>{$t('account.settings.subPreview')}</span></div>
+    <small class="muted">{$t('account.settings.subIosHint')}</small>
   </fieldset>
-  <div class="flex"><button disabled={busy}>Speichern</button>{#if saved}<span class="ok" role="status">Gespeichert</span>{/if}{#if error}<span class="err" role="alert">{error}</span>{/if}</div>
+  <div class="flex"><button disabled={busy}>{$t('common.save')}</button>{#if saved}<span class="ok" role="status">{$t('common.saved')}</span>{/if}{#if error}<span class="err" role="alert">{error}</span>{/if}</div>
 </form>
 <section class="panel form push" aria-labelledby="introh">
-  <h2 id="introh">Intro</h2>
-  <label class="row"><input type="checkbox" bind:checked={introShow} on:change={saveIntro} /><span><b>Intro beim Start zeigen</b><small class="muted">Kurze Markenanimation nach der Profilwahl und beim ersten Start in dieser Browser-Sitzung. Bei „Bewegung reduzieren“ nur ein sanftes Einblenden.</small></span></label>
-  <label class="row"><input type="checkbox" bind:checked={introSound} on:change={saveIntro} /><span><b>Intro-Ton</b><small class="muted">Spielt nach der Profilwahl einen kurzen Klang. Beim automatischen Start ohne Klick bleibt es stumm.</small></span></label>
-  <div class="flex"><button type="button" class="sec" on:click={previewIntro}>Vorschau abspielen</button></div>
+  <h2 id="introh">{$t('account.settings.intro.title')}</h2>
+  <label class="row"><input type="checkbox" bind:checked={introShow} on:change={saveIntro} /><span><b>{$t('account.settings.intro.show')}</b><small class="muted">{$t('account.settings.intro.showHint')}</small></span></label>
+  <label class="row"><input type="checkbox" bind:checked={introSound} on:change={saveIntro} /><span><b>{$t('account.settings.intro.sound')}</b><small class="muted">{$t('account.settings.intro.soundHint')}</small></span></label>
+  <div class="flex"><button type="button" class="sec" on:click={previewIntro}>{$t('account.settings.intro.preview')}</button></div>
 </section>
 {#if previewing}<Intro sound={previewSound} on:done={() => (previewing = false)} />{/if}
 <section class="panel form push" aria-labelledby="pushh">
-  <h2 id="pushh">Benachrichtigungen</h2>
-  {#if ps === 'unsupported'}<p class="muted">Dieser Browser unterstützt keine Push-Benachrichtigungen.</p>
-  {:else if ps === 'ios-install'}<p class="muted">Unter iOS (ab 16.4) zuerst über Teilen → „Zum Home-Bildschirm“ installieren und die App von dort öffnen, dann lassen sich Push-Benachrichtigungen aktivieren.</p>
-  {:else if ps === 'server-off'}<p class="muted">Push-Benachrichtigungen sind auf diesem Server nicht eingerichtet.</p>
+  <h2 id="pushh">{$t('account.settings.push.title')}</h2>
+  {#if ps === 'unsupported'}<p class="muted">{$t('account.settings.push.unsupported')}</p>
+  {:else if ps === 'ios-install'}<p class="muted">{$t('account.settings.push.iosInstall')}</p>
+  {:else if ps === 'server-off'}<p class="muted">{$t('account.settings.push.serverOff')}</p>
   {:else}
-    {#if ps === 'denied'}<p class="muted" role="alert">Benachrichtigungen sind für diese Seite blockiert. Bitte im Browser erlauben (Schloss-Symbol in der Adressleiste) und die Seite neu laden.</p>{/if}
-    <label class="row"><input type="checkbox" bind:checked={pushOn} disabled={pushBusy || ps === 'denied'} on:change={togglePush} /><span><b>Push-Benachrichtigungen auf diesem Gerät</b><small class="muted">Persönliche Hinweise erscheinen auch, wenn FriendFlix geschlossen ist. Gilt nur für dieses Gerät.</small></span></label>
+    {#if ps === 'denied'}<p class="muted" role="alert">{$t('account.settings.push.denied')}</p>{/if}
+    <label class="row"><input type="checkbox" bind:checked={pushOn} disabled={pushBusy || ps === 'denied'} on:change={togglePush} /><span><b>{$t('account.settings.push.device')}</b><small class="muted">{$t('account.settings.push.deviceHint')}</small></span></label>
     {#if pushOn}
-      <label class="row"><input type="checkbox" bind:checked={pushBroadcast} disabled={pushBusy} on:change={toggleBroadcast} /><span><b>Auch allgemeine Ankündigungen (Filmabend, Neu verfügbar)</b></span></label>
-      <div class="flex"><button type="button" disabled={pushBusy} on:click={sendTest}>Test senden</button></div>
+      <label class="row"><input type="checkbox" bind:checked={pushBroadcast} disabled={pushBusy} on:change={toggleBroadcast} /><span><b>{$t('account.settings.push.broadcast')}</b></span></label>
+      <div class="flex"><button type="button" disabled={pushBusy} on:click={sendTest}>{$t('account.settings.push.test')}</button></div>
     {/if}
     {#if pushMsg}<span role="status" class="muted">{pushMsg}</span>{/if}
   {/if}
 </section>
+
+{#snippet check(k: BoolPref, label: TKey, hint: TKey)}
+  <label class="row"><input type="checkbox" bind:checked={form[k]} /><span><b>{$t(label)}</b><small class="muted">{$t(hint)}</small></span></label>
+{/snippet}
 <style>
+  .langsec { margin-bottom: 1.5rem; } .langsec h2 { margin: 0; font-size: 1.15rem; } .langsec .flex { align-items: center; }
   .push { margin-top: 1.5rem; } .push h2 { margin: 0; font-size: 1.15rem; }
   .form { max-width: 640px; display: grid; gap: 1.2rem; }
   .row { display: flex; gap: .9rem; align-items: flex-start; color: var(--fg); font-size: 1rem; } .row span { display: grid; gap: .1rem; }

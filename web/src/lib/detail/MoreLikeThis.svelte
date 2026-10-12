@@ -4,6 +4,7 @@
   import Icon from '#lib/Icon.svelte';
   import { openModal, swapModal } from '#lib/modal';
   import { lengthLabel } from '#lib/hover';
+  import { t } from '#lib/i18n';
 
   /** null = loading */
   export let items: Item[] | null;
@@ -24,7 +25,7 @@
 
 {#if items === null || items.length}
   <section class="more" aria-labelledby="more-h" aria-busy={items === null}>
-    <h2 id="more-h">Mehr davon</h2>
+    <h2 id="more-h">{$t('detail.more.title')}</h2>
     <ul class="grid3" class:modal={variant === 'modal'}>
       {#if items === null}
         {#each Array(6) as _}<li><div class="skeleton sk"></div></li>{/each}
@@ -41,10 +42,10 @@
             <div class="bd">
               <div class="row1">
                 <span class="meta">{#if i.rating}<span class="age">{i.rating}</span>{/if}{#if i.year}<span>{i.year}</span>{/if}</span>
-                <button type="button" class="add" aria-pressed={inList} aria-label={inList ? `${i.name} von Meine Liste entfernen` : `${i.name} zu Meine Liste hinzufügen`} on:click={() => add(i)}><Icon name={inList ? 'check' : 'plus'} size={18} /></button>
+                <button type="button" class="add" aria-pressed={inList} aria-label={inList ? $t('detail.more.remove', { name: i.name }) : $t('detail.more.add', { name: i.name })} on:click={() => add(i)}><Icon name={inList ? 'check' : 'plus'} size={18} /></button>
               </div>
               <h3 class="nm"><a href={href(i)} on:click={(e) => go(e, i)}>{i.name}</a></h3>
-              {#if failId === i.id}<p class="err small" role="status">Konnte nicht gespeichert werden.</p>{/if}
+              {#if failId === i.id}<p class="err small" role="status">{$t('detail.more.saveFailed')}</p>{/if}
               {#if i.overview}<p class="ov">{i.overview}</p>{/if}
             </div>
           </li>

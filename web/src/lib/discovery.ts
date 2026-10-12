@@ -1,3 +1,4 @@
+import { tr, type TKey } from '#lib/i18n';
 import { langLabel } from './langs';
 
 /** Pure helpers for browse / search discovery (URL state, API query, removable filter chips, recent searches). */
@@ -67,7 +68,7 @@ export function browseQuery(s: BrowseState, kind: string, start: number, limit: 
   return p;
 }
 
-const FILTER_LABEL: Record<string, string> = { unplayed: 'Ungesehen', played: 'Gesehen', favorites: 'Favoriten' };
+const FILTER_LABEL: Record<string, TKey> = { unplayed: 'home.status.unplayed', played: 'home.status.played', favorites: 'home.status.favorites' };
 
 /** Removable filter chips; `key` is the URL parameter to drop. `labels.person` overrides the person label. */
 export function activeChips(s: BrowseState, labels: { person?: string } = {}): Array<{ key: string; label: string }> {
@@ -75,12 +76,12 @@ export function activeChips(s: BrowseState, labels: { person?: string } = {}): A
   if (s.genre) out.push({ key: 'genre', label: s.genre });
   if (s.studio) out.push({ key: 'studio', label: s.studio });
   if (s.year !== null) out.push({ key: 'year', label: String(s.year) });
-  if (s.decade !== null) out.push({ key: 'decade', label: `${s.decade}er` });
-  if (s.minRating !== null) out.push({ key: 'minRating', label: `ab ${s.minRating} Sterne` });
-  if (s.person) out.push({ key: 'person', label: labels.person || 'Person' });
-  if (s.audio) out.push({ key: 'audio', label: `Ton: ${langLabel(s.audio)}` });
-  if (s.subs) out.push({ key: 'subs', label: `UT: ${langLabel(s.subs)}` });
-  if (s.filter) out.push({ key: 'filter', label: FILTER_LABEL[s.filter] ?? s.filter });
+  if (s.decade !== null) out.push({ key: 'decade', label: tr('home.browse.decadeLabel', { d: String(s.decade) }) });
+  if (s.minRating !== null) out.push({ key: 'minRating', label: tr('home.browse.minRating', { n: s.minRating }) });
+  if (s.person) out.push({ key: 'person', label: labels.person || tr('home.browse.chip.person') });
+  if (s.audio) out.push({ key: 'audio', label: tr('home.browse.chip.audio', { lang: langLabel(s.audio) }) });
+  if (s.subs) out.push({ key: 'subs', label: tr('home.browse.chip.subs', { lang: langLabel(s.subs) }) });
+  if (s.filter) out.push({ key: 'filter', label: FILTER_LABEL[s.filter] ? tr(FILTER_LABEL[s.filter]!) : s.filter });
   return out;
 }
 

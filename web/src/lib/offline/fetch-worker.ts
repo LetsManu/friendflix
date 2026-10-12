@@ -3,6 +3,7 @@
 // Protocol (main -> worker): {cmd:'start', id, url, have, etag, total, extras:[{url,name}]} | {cmd:'pause'}
 // (worker -> main): {type:'progress', id, have, total, etag} | {type:'done', id, bytes, etag}
 //                   | {type:'paused', id, have} | {type:'error', id, code, message}
+// messages are technical (logs); the manager shows translated texts per code
 // error codes: auth (401, sign in again) | busy (429) | gone (403/404/410) | network | size | io
 
 export interface StartMsg { cmd: 'start'; id: string; url: string; have: number; etag: string; total: number; extras: Array<{ url: string; name: string }> }
@@ -58,9 +59,9 @@ async function run(m: StartMsg) {
       let res: Response;
       try { res = await fetch(m.url, { credentials: 'same-origin', headers, signal }); }
       catch (e: any) { if (signal.aborted) { h.flush(); post({ type: 'paused', id: m.id, have }); return; } throw new Fail('network', String(e?.message ?? e)); }
-      if (res.status === 401) throw new Fail('auth', 'Anmelden zum Fortsetzen');
-      if (res.status === 429) throw new Fail('busy', 'Server ausgelastet');
-      if (res.status === 403 || res.status === 404 || res.status === 410) throw new Fail('gone', 'Download nicht mehr verfügbar');
+      if (res.status === 401) throw new Fail('auth', 'unauthorized');
+      if (res.status === 429) throw new Fail('busy', 'server busy');
+      if (res.status === 403 || res.status === 404 || res.status === 410) throw new Fail('gone', `gone (${res.status})`);
       if (res.status === 416) {
         // our offset is beyond the file: complete already, or the file changed -> from scratch
         const cr = /\/(\d+)$/.exec(res.headers.get('content-range') ?? '');
@@ -82,7 +83,7 @@ async function run(m: StartMsg) {
           const { done, value } = await reader.read();
           if (done) break;
           const w = h.write(value, { at: have });
-          if (w !== value.byteLength) throw new Fail('io', 'Speichern fehlgeschlagen (Speicher voll?)');
+          if (w !== value.byteLength) throw new Fail('io', 'short write (storage full?)');
           have += w; sinceFlush += w;
           if (sinceFlush >= FLUSH_EVERY) { h.flush(); sinceFlush = 0; }
           const now = performance.now();
@@ -97,7 +98,7 @@ async function run(m: StartMsg) {
       break;
     }
     h.flush();
-    if (total > 0 && have !== total) throw new Fail('size', `Größe stimmt nicht (${have} von ${total})`);
+    if (total > 0 && have !== total) throw new Fail('size', `size mismatch (${have} of ${total})`);
     post({ type: 'done', id: m.id, bytes: have, etag });
   } finally {
     h.close();

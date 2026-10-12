@@ -1,6 +1,8 @@
 <script lang="ts">
   import type { Item } from '#lib/api';
   import { ageText, byType, moodTags, type Person } from '#lib/detail/format';
+  import { t } from '#lib/i18n';
+  import Rich from '#lib/i18n/Rich.svelte';
 
   export let item: Item;
   export let people: Person[] = [];
@@ -13,21 +15,21 @@
 </script>
 
 <section class="info" id="dv-info" aria-labelledby="info-h">
-  <h2 id="info-h">Infos zu <b>{item.name}</b></h2>
+  <h2 id="info-h"><Rich key="detail.info.title" params={{ name: item.name }} /></h2>
   <dl>
-    {#if directors.length}<div><dt>Regie:</dt><dd>{#each directors as p, n (p.id + n)}{#if n}{', '}{/if}<a href="/person/{p.id}">{p.name}</a>{/each}</dd></div>{/if}
-    {#if actors.length}<div><dt>Besetzung:</dt><dd>{#each actors as p, n (p.id + n)}{#if n}{', '}{/if}<a href="/person/{p.id}">{p.name}</a>{/each}</dd></div>{/if}
-    {#if writers.length}<div><dt>Drehbuch:</dt><dd>{#each writers as p, n (p.id + n)}{#if n}{', '}{/if}<a href="/person/{p.id}">{p.name}</a>{/each}</dd></div>{/if}
-    {#if item.genres.length}<div><dt>Genres:</dt><dd>{item.genres.join(', ')}</dd></div>{/if}
-    {#if moods.length}<div><dt>Dieser Titel ist:</dt><dd>{moods.join(', ')}</dd></div>{/if}
-    {#if item.rating}<div><dt>Altersfreigabe:</dt><dd><span class="age">{item.rating}</span>{#if age} <span>{age}</span>{/if}</dd></div>{/if}
+    {#if directors.length}<div><dt>{$t('detail.info.director')}</dt><dd>{#each directors as p, n (p.id + n)}{#if n}{', '}{/if}<a href="/person/{p.id}">{p.name}</a>{/each}</dd></div>{/if}
+    {#if actors.length}<div><dt>{$t('detail.info.cast')}</dt><dd>{#each actors as p, n (p.id + n)}{#if n}{', '}{/if}<a href="/person/{p.id}">{p.name}</a>{/each}</dd></div>{/if}
+    {#if writers.length}<div><dt>{$t('detail.info.writer')}</dt><dd>{#each writers as p, n (p.id + n)}{#if n}{', '}{/if}<a href="/person/{p.id}">{p.name}</a>{/each}</dd></div>{/if}
+    {#if item.genres.length}<div><dt>{$t('detail.info.genres')}</dt><dd>{item.genres.join(', ')}</dd></div>{/if}
+    {#if moods.length}<div><dt>{$t('detail.info.moods')}</dt><dd>{moods.join(', ')}</dd></div>{/if}
+    {#if item.rating}<div><dt>{$t('detail.info.age')}</dt><dd><span class="age">{item.rating}</span>{#if age} <span>{age}</span>{/if}</dd></div>{/if}
   </dl>
 </section>
 
 <style>
   .info { margin-top: 2.4rem; }
   h2 { font-size: 1.4rem; margin: 0 0 .8rem; font-weight: 400; }
-  h2 b { font-weight: 700; }
+  h2 :global(b) { font-weight: 700; }
   dl { margin: 0; display: grid; gap: .55rem; font-size: .95rem; }
   dl > div { display: grid; grid-template-columns: minmax(8.5rem, 11rem) 1fr; gap: .8rem; }
   dt { color: var(--mut); }

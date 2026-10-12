@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { fmtDate as fmtD, t, tr, type TKey } from '#lib/i18n';
   import { api, ApiError } from '#lib/api';
   import Icon from '#lib/Icon.svelte';
 
@@ -8,15 +9,15 @@
 
   /** movie or episode id */
   export let id: string;
-  const EMOJIS: Array<{ key: Emoji; icon: string; label: string }> = [
-    { key: 'like', icon: '👍', label: 'Gefällt mir' },
-    { key: 'funny', icon: '😂', label: 'Witzig' },
-    { key: 'wow', icon: '😮', label: 'Wow' },
-    { key: 'sad', icon: '😢', label: 'Traurig' },
-    { key: 'love', icon: '❤️', label: 'Liebe' },
+  const EMOJIS: Array<{ key: Emoji; icon: string; label: TKey }> = [
+    { key: 'like', icon: '👍', label: 'detail.reactions.emoji.like' },
+    { key: 'funny', icon: '😂', label: 'detail.reactions.emoji.funny' },
+    { key: 'wow', icon: '😮', label: 'detail.reactions.emoji.wow' },
+    { key: 'sad', icon: '😢', label: 'detail.reactions.emoji.sad' },
+    { key: 'love', icon: '❤️', label: 'detail.reactions.emoji.love' },
   ];
   const MAX = 280;
-  let data: Data | null = null, msg = '', busy = false, seq = 0, msgT: ReturnType<typeof setTimeout>;
+  let data: Data | null = null, msg = '', msgOk = false, busy = false, seq = 0, msgT: ReturnType<typeof setTimeout>;
   let emoji: Emoji | null = null, comment = '';
 
   $: void load(id);
@@ -36,7 +37,7 @@
     } catch { /* optional: section stays hidden (unsupported type, offline, ...) */ }
   }
   function fail(e: unknown, fallback: string) {
-    msg = e instanceof ApiError && e.body?.error === 'watch_first' ? 'Erst ansehen, dann reagieren.' : fallback;
+    msg = e instanceof ApiError && e.body?.error === 'watch_first' ? tr('detail.reactions.watchFirst') : fallback; msgOk = false;
     clearTimeout(msgT); msgT = setTimeout(() => (msg = ''), 6000);
   }
   async function save() {
@@ -45,8 +46,8 @@
     const my = ++seq;
     try {
       const d = await api<Data>(`/api/items/${id}/reactions`, { method: 'PUT', body: { emoji, comment: comment.trim() || undefined } });
-      if (my === seq) { adopt(d); msg = 'Gespeichert.'; clearTimeout(msgT); msgT = setTimeout(() => (msg = ''), 3000); }
-    } catch (e) { fail(e, 'Reaktion konnte nicht gespeichert werden.'); }
+      if (my === seq) { adopt(d); msg = tr('detail.reactions.saved'); msgOk = true; clearTimeout(msgT); msgT = setTimeout(() => (msg = ''), 3000); }
+    } catch (e) { fail(e, tr('detail.reactions.saveFailed')); }
     busy = false;
   }
   async function remove() {
@@ -55,36 +56,36 @@
     const my = ++seq;
     try {
       const d = await api<Data>(`/api/items/${id}/reactions`, { method: 'DELETE' });
-      if (my === seq) { adopt(d); emoji = null; comment = ''; msg = 'Reaktion gelöscht.'; clearTimeout(msgT); msgT = setTimeout(() => (msg = ''), 3000); }
-    } catch (e) { fail(e, 'Reaktion konnte nicht gelöscht werden.'); }
+      if (my === seq) { adopt(d); emoji = null; comment = ''; msg = tr('detail.reactions.deleted'); msgOk = true; clearTimeout(msgT); msgT = setTimeout(() => (msg = ''), 3000); }
+    } catch (e) { fail(e, tr('detail.reactions.deleteFailed')); }
     busy = false;
   }
   const label = (k: Emoji) => EMOJIS.find((e) => e.key === k);
-  const fmtDate = (s: string) => { const d = new Date(s); return Number.isNaN(+d) ? '' : d.toLocaleDateString('de-DE', { day: 'numeric', month: 'short' }); };
+  const fmtDate = (s: string) => fmtD(s, { day: 'numeric', month: 'short' });
   $: mineExists = !!(data && !data.locked && data.reactions.some((r) => r.mine));
 </script>
 
 {#if data}
   <section class="reactions panel" aria-labelledby="rx-h">
-    <h2 id="rx-h">Reaktionen</h2>
+    <h2 id="rx-h">{$t('detail.reactions.title')}</h2>
     {#if data.locked}
-      <p class="lock"><Icon name="lock" size={20} /><span>Reaktionen deiner Freunde siehst du, sobald du das gesehen hast{#if data.count} ({data.count}){/if}.</span></p>
+      <p class="lock"><Icon name="lock" size={20} /><span>{data.count ? $t('detail.reactions.lockedCount', { n: data.count }) : $t('detail.reactions.locked')}</span></p>
     {:else}
-      <div class="chips" role="group" aria-label="Deine Reaktion">
+      <div class="chips" role="group" aria-label={$t('detail.reactions.yours')}>
         {#each EMOJIS as e (e.key)}
           <button type="button" class="chip sec" class:on={emoji === e.key} aria-pressed={emoji === e.key} disabled={busy} on:click={() => (emoji = emoji === e.key ? null : e.key)}>
-            <span aria-hidden="true">{e.icon}</span><span>{e.label}</span><span class="n">{data.summary[e.key] ?? 0}</span>
+            <span aria-hidden="true">{e.icon}</span><span>{$t(e.label)}</span><span class="n">{data.summary[e.key] ?? 0}</span>
           </button>
         {/each}
       </div>
       <form class="form" on:submit|preventDefault={save}>
-        <label for="rx-c" class="muted">Kommentar (optional)</label>
-        <textarea id="rx-c" bind:value={comment} maxlength={MAX} rows="3" aria-describedby="rx-n" placeholder="Was meinst du dazu?"></textarea>
+        <label for="rx-c" class="muted">{$t('detail.reactions.comment')}</label>
+        <textarea id="rx-c" bind:value={comment} maxlength={MAX} rows="3" aria-describedby="rx-n" placeholder={$t('detail.reactions.placeholder')}></textarea>
         <div class="foot">
           <span id="rx-n" class="muted">{comment.length}/{MAX}</span>
           <span class="btns">
-            {#if mineExists}<button type="button" class="sec" disabled={busy} on:click={remove}>Löschen</button>{/if}
-            <button type="submit" disabled={busy || !emoji}>Speichern</button>
+            {#if mineExists}<button type="button" class="sec" disabled={busy} on:click={remove}>{$t('detail.reactions.delete')}</button>{/if}
+            <button type="submit" disabled={busy || !emoji}>{$t('detail.reactions.save')}</button>
           </span>
         </div>
       </form>
@@ -92,19 +93,19 @@
         <ul class="list">
           {#each data.reactions as r}
             <li class:mine={r.mine}>
-              <span class="em" role="img" aria-label={label(r.emoji)?.label ?? r.emoji}>{label(r.emoji)?.icon ?? ''}</span>
+              <span class="em" role="img" aria-label={label(r.emoji) ? $t(label(r.emoji)!.label) : r.emoji}>{label(r.emoji)?.icon ?? ''}</span>
               <div class="txt">
-                <b>{r.mine ? 'Du' : r.name}</b> <span class="muted">{fmtDate(r.createdAt)}</span>
+                <b>{r.mine ? $t('detail.reactions.you') : r.name}</b> <span class="muted">{fmtDate(r.createdAt)}</span>
                 {#if r.comment}<p>{r.comment}</p>{/if}
               </div>
             </li>
           {/each}
         </ul>
       {:else}
-        <p class="muted">Noch keine Reaktionen – sei die erste Person.</p>
+        <p class="muted">{$t('detail.reactions.none')}</p>
       {/if}
     {/if}
-    <div role="status">{#if msg}<p class={msg.startsWith('Gespeichert') || msg.startsWith('Reaktion gelöscht') ? 'muted' : 'err'}>{msg}</p>{/if}</div>
+    <div role="status">{#if msg}<p class={msgOk ? 'muted' : 'err'}>{msg}</p>{/if}</div>
   </section>
 {/if}
 

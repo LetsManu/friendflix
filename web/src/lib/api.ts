@@ -79,7 +79,12 @@ export interface Item {
   /** only on /api/library/trending: number of distinct viewers this week */
   viewers?: number;
 }
-export interface Me { id: string; name: string; role: string; roleLabel: string; isAdmin: boolean; csrfToken: string; deviceApproved: boolean; tv: boolean; profile?: MeProfile | null; profileRequired?: boolean; profileCount?: number; profileChosen?: boolean; downloads?: { allowed: boolean; max: number } }
+export interface Me { id: string; name: string; role: string; roleLabel: string; isAdmin: boolean; csrfToken: string; deviceApproved: boolean; tv: boolean; profile?: MeProfile | null; profileRequired?: boolean; profileCount?: number; profileChosen?: boolean; downloads?: { allowed: boolean; max: number };
+  /** effective UI language (profile → instance default → 'de'); see docs/i18n.md */ language?: string;
+  /** false = the active profile never chose a language (first-login picker); absent on older servers */ languageChosen?: boolean;
+  /** instance default language */ defaultLanguage?: string;
+  /** false = no admin stored the instance language yet (asked once) */ defaultLanguageSet?: boolean;
+  /** browser language from Accept-Language when supported, else null */ suggestedLanguage?: string | null }
 export interface MeProfile { id: string; name: string; avatar: string; isOwner: boolean }
 
 // ---- shared item cache: the modal / item page render instantly from what a card already had, then revalidate ----

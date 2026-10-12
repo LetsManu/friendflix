@@ -5,6 +5,7 @@ import { z } from 'zod';
 import type { Ctx } from '../ctx.js';
 import { JellyfinError } from '../jellyfin/client.js';
 import type { ItemDto } from '../jellyfin/dto.js';
+import { m } from '../i18n.js';
 import { notify } from '../notify.js';
 import { clipPath, previews } from '../previews.js';
 import { loadPrefs } from './prefs.js';
@@ -148,7 +149,7 @@ export function discoverRoutes(app: FastifyInstance, ctx: Ctx) {
       const dup = await ctx.db.query("select 1 from recommendations where from_user=$1 and to_user=$2 and item_id=$3 and created_at > now() - interval '7 days'", [req.user!.id, t.id, item.id]);
       if (dup.rowCount) continue;
       await ctx.db.query('insert into recommendations(from_user,to_user,item_id,item_name,note) values ($1,$2,$3,$4,$5)', [req.user!.id, t.id, item.id, item.name, b.note || null]);
-      await notify(ctx, { userId: t.id, kind: 'recommend', title: `${req.user!.name} empfiehlt dir „${item.name}“`, body: b.note, link: `/item/${item.id}` });
+      await notify(ctx, { userId: t.id, kind: 'recommend', title: m('recommend', { name: req.user!.name, title: item.name }), body: b.note, link: `/item/${item.id}` });
       sent++;
     }
     if (!sent && targets.length) return reply.code(409).send({ error: 'already_recommended' });

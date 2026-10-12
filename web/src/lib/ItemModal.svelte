@@ -4,6 +4,7 @@
   import Icon from '#lib/Icon.svelte';
   import DetailView from '#lib/detail/DetailView.svelte';
   import { holdBillboard } from '#lib/preview';
+  import { t } from '#lib/i18n';
 
   export let id: string;
   let item: Item | null = null, failed = false;
@@ -49,8 +50,8 @@
 <svelte:window on:keydown={key} />
 <!-- the overlay is the scroll container: the page behind is locked, long dialogs scroll inside it -->
 <div class="overlay" bind:this={overlay} on:click={scrimClick} role="presentation">
-  <div class="modal" role="dialog" aria-modal="true" aria-label={item ? undefined : 'Details'} aria-labelledby={item ? 'modal-title' : undefined} bind:this={box}>
-    <button type="button" class="x" bind:this={closeBtn} aria-label="Schließen" on:click={close}><Icon name="x" size={22} /></button>
+  <div class="modal" role="dialog" aria-modal="true" aria-label={item ? undefined : $t('detail.view.details')} aria-labelledby={item ? 'modal-title' : undefined} bind:this={box}>
+    <button type="button" class="x" bind:this={closeBtn} aria-label={$t('common.close')} on:click={close}><Icon name="x" size={22} /></button>
     <DetailView {id} variant="modal" titleId="modal-title" bind:item bind:failed on:loaded={loaded} />
   </div>
 </div>

@@ -3,16 +3,18 @@ import { randomBytes } from 'node:crypto';
 import { revokeCasts } from './cast.js';
 import type { Ctx } from './ctx.js';
 import { revokeDownloads } from './downloads.js';
+import { m, msg, userLanguage, type Language } from './i18n.js';
 import { notify } from './notify.js';
 import { deletePushSubscriptions } from './push.js';
 import { dropRemotePeers } from './routes/tv.js';
 
 export const DEVICE_COOKIE = 'ff_dev';
 
-const label = (ua: string) => {
-  const os = /Windows|Android|iPhone|iPad|Mac OS X|Linux/.exec(ua)?.[0] ?? 'Gerät';
-  const br = /Edg|Firefox|Chrome|Safari/.exec(ua)?.[0] ?? 'Browser';
-  return `${br} auf ${os}`.slice(0, 60);
+/** Device name from the user agent, in the account's language (stored once, when the device registers). */
+export const deviceLabel = (ua: string, lang: Language = 'de') => {
+  const os = /Windows|Android|iPhone|iPad|Mac OS X|Linux/.exec(ua)?.[0] ?? msg(lang, 'device.unknownOs');
+  const browser = /Edg|Firefox|Chrome|Safari/.exec(ua)?.[0] ?? 'Browser';
+  return msg(lang, 'device.label', { browser, os }).slice(0, 60);
 };
 
 /** First device of a user is trusted automatically; every further device needs approval. */
@@ -25,12 +27,12 @@ export async function registerDevice(ctx: Ctx, req: FastifyRequest, reply: Fasti
     await ctx.db.query('update devices set last_seen=now() where user_id=$1 and device_id=$2', [userId, dev]);
     return { deviceId: dev, approved: existing.rows[0].approved };
   }
-  const name = label(String(req.headers['user-agent'] ?? ''));
+  const name = deviceLabel(String(req.headers['user-agent'] ?? ''), await userLanguage(ctx, userId));
   // atomic (advisory lock inside the sql function): two simultaneous first logins cannot both be auto-approved; null = lost an insert race for the same device
   const ins = await ctx.db.query<{ a: boolean | null }>('select register_device($1,$2,$3) a', [userId, dev, name]);
   const approved = ins.rows[0]!.a ?? (await ctx.db.query<{ approved: boolean }>('select approved from devices where user_id=$1 and device_id=$2', [userId, dev])).rows[0]?.approved ?? false;
   // tell the user's already approved devices (bell + push) that a new one is waiting, with a link to the approval list
-  if (!approved) await notify(ctx, { userId, kind: 'device_pending', title: 'Ein neues Gerät wartet auf deine Freigabe', body: `${name} – unter „Geräte“ freigeben. Warst du das nicht, lass es einfach stehen.`, link: '/devices' }).catch(() => false);
+  if (!approved) await notify(ctx, { userId, kind: 'device_pending', title: m('device.pending.title'), body: m('device.pending.body', { name }), link: '/devices' }).catch(() => false);
   return { deviceId: dev, approved };
 }
 

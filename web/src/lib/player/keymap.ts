@@ -1,3 +1,4 @@
+import type { TKey } from '#lib/i18n';
 /** Pure keyboard map of the player: key event + context in, abstract action out (the component executes it). */
 export type KeyAction =
   | { type: 'toggle' } | { type: 'play' } | { type: 'pause' }
@@ -60,19 +61,19 @@ export function nextSubtitle(current: number, indices: number[]): number {
 
 export const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v));
 
-/** shortcut list for the "?" overlay */
-export const SHORTCUTS: Array<[string, string]> = [
-  ['Leertaste / K', 'Wiedergabe / Pause'],
-  ['← / J', '10 Sekunden zurück'],
-  ['→ / L', '10 Sekunden vor'],
-  ['↑ / ↓', 'Lauter / leiser'],
-  ['M', 'Stumm'],
-  ['F', 'Vollbild'],
-  ['C', 'Untertitel wechseln'],
-  ['S', 'Intro / Abspann überspringen'],
-  ['N', 'Nächste Folge'],
-  ['P', 'Bild-in-Bild'],
-  ['0 – 9', 'Zu 0 – 90 % springen'],
-  ['Esc', 'Menü schließen / Vollbild verlassen'],
-  ['?', 'Diese Übersicht'],
+/** shortcut list for the "?" overlay: key caption (`k`, or the message `kKey` when the caption is a word) and the message key of the description */
+export const SHORTCUTS: Array<{ k: string; kKey?: TKey; d: TKey }> = [
+  { k: 'Space / K', kKey: 'player.shortcuts.space', d: 'player.shortcuts.playPause' },
+  { k: '← / J', d: 'player.shortcuts.back10' },
+  { k: '→ / L', d: 'player.shortcuts.forward10' },
+  { k: '↑ / ↓', d: 'player.shortcuts.volume' },
+  { k: 'M', d: 'player.shortcuts.mute' },
+  { k: 'F', d: 'player.shortcuts.fullscreen' },
+  { k: 'C', d: 'player.shortcuts.subtitles' },
+  { k: 'S', d: 'player.shortcuts.skip' },
+  { k: 'N', d: 'player.shortcuts.next' },
+  { k: 'P', d: 'player.shortcuts.pip' },
+  { k: '0 – 9', d: 'player.shortcuts.jump' },
+  { k: 'Esc', d: 'player.shortcuts.escape' },
+  { k: '?', d: 'player.shortcuts.help' },
 ];

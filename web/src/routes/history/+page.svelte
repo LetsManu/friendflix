@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { t, tr, fmtDate, fmtTime } from '#lib/i18n';
   import { onMount } from 'svelte';
   import { api, img, backdrop, type Item } from '#lib/api';
   import Icon from '#lib/Icon.svelte';
@@ -11,26 +12,26 @@
 
   const day = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
   function label(iso?: string) {
-    if (!iso) return 'Früher';
+    if (!iso) return tr('social.history.earlier');
     const d = new Date(iso), diff = Math.round((day(new Date()) - day(d)) / 86_400_000);
-    if (diff <= 0) return 'Heute';
-    if (diff === 1) return 'Gestern';
-    return d.toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit', year: 'numeric' });
+    if (diff <= 0) return tr('social.history.today');
+    if (diff === 1) return tr('social.history.yesterday');
+    return fmtDate(d, { day: '2-digit', month: '2-digit', year: 'numeric' });
   }
   $: groups = (items ?? []).reduce<Array<{ label: string; items: Item[] }>>((acc, i) => {
     const l = label(i.lastPlayedDate), g = acc[acc.length - 1];
     if (g && g.label === l) g.items.push(i); else acc.push({ label: l, items: [i] });
     return acc;
   }, []);
-  const sub = (i: Item) => (i.type === 'Episode' ? `${i.seriesName ?? ''} · S${i.parentIndexNumber ?? '?'}:E${i.indexNumber ?? '?'}` : i.year ? String(i.year) : '');
-  const time = (iso?: string) => (iso ? new Date(iso).toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' }) : '');
+  const sub = (i: Item) => (i.type === 'Episode' ? `${i.seriesName ?? ''} · ${tr('social.episodeCode', { s: i.parentIndexNumber ?? '?', e: i.indexNumber ?? '?' })}` : i.year ? String(i.year) : '');
+  const time = (iso?: string) => fmtTime(iso);
 
   async function remove(i: Item, scope: 'item' | 'series') {
     closeAsk(false); error = '';
     const before = items ?? [], { kept, removed } = removeFromHistory(before, i, scope);
     items = kept;
     try { await api(`/api/history/${i.id}?scope=${scope}`, { method: 'DELETE' }); }
-    catch { items = restoreRemoved(items ?? [], removed, before); error = 'Entfernen fehlgeschlagen.'; } // only this removal is undone, concurrent ones stay
+    catch { items = restoreRemoved(items ?? [], removed, before); error = tr('social.history.removeFailed'); } // only this removal is undone, concurrent ones stay
   }
   function ask(i: Item, e: Event) { if (i.type === 'Episode' && i.seriesId) { opener = e.currentTarget as HTMLElement; asking = i; } else void remove(i, 'item'); }
   /** closes the dialog; focus goes back to the button that opened it (it may be gone after a removal) */
@@ -41,11 +42,11 @@
   }
 </script>
 
-<svelte:head><title>Verlauf – FriendFlix</title></svelte:head>
-<h1>Verlauf</h1>
+<svelte:head><title>{$t('common.pageTitle', { page: $t('social.history.title') })}</title></svelte:head>
+<h1>{$t('social.history.title')}</h1>
 {#if error}<p class="err" role="alert">{error}</p>{/if}
 {#if items === null}<div class="skeleton" style="height:12rem"></div>
-{:else if !items.length}<p class="muted">Noch nichts angesehen.</p>
+{:else if !items.length}<p class="muted">{$t('social.history.empty')}</p>
 {:else}
   {#each groups as g (g.label)}
     <section>
@@ -59,9 +60,9 @@
             <div class="txt">
               <strong>{i.name}</strong>
               <span class="muted">{sub(i)}</span>
-              <span class="muted">{time(i.lastPlayedDate)}{i.positionTicks && !i.played ? ' · angefangen' : ''}</span>
+              <span class="muted">{time(i.lastPlayedDate)}{i.positionTicks && !i.played ? ' · ' + $t('social.history.started') : ''}</span>
             </div>
-            <button class="rm" aria-label="Aus Verlauf entfernen" title="Aus Verlauf entfernen" on:click={(e) => ask(i, e)}><Icon name="x" size={18} /></button>
+            <button class="rm" aria-label={$t('social.history.remove')} title={$t('social.history.remove')} on:click={(e) => ask(i, e)}><Icon name="x" size={18} /></button>
           </li>
         {/each}
       </ul>
@@ -74,11 +75,11 @@
   <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
   <div class="dlg" on:click|self={() => closeAsk()}>
     <div class="box" role="dialog" aria-modal="true" aria-labelledby="ask-t" use:dialogKeys={{ close: closeAsk, focusFirst: true }}>
-      <p id="ask-t">„{a.name}“ aus dem Verlauf entfernen?</p>
+      <p id="ask-t">{$t('social.history.confirm', { name: a.name })}</p>
       <div class="btns">
-        <button on:click={() => remove(a, 'item')}>Nur diese Folge</button>
-        <button on:click={() => remove(a, 'series')}>Ganze Serie</button>
-        <button class="ghost" on:click={() => closeAsk()}>Abbrechen</button>
+        <button on:click={() => remove(a, 'item')}>{$t('social.history.onlyEpisode')}</button>
+        <button on:click={() => remove(a, 'series')}>{$t('social.history.wholeSeries')}</button>
+        <button class="ghost" on:click={() => closeAsk()}>{$t('common.cancel')}</button>
       </div>
     </div>
   </div>

@@ -1,6 +1,8 @@
 // Pure offline-licence logic (no browser APIs, unit-tested). Used by the download manager and the offline player.
 // Honest limits: there is no DRM; expiry/revocation is enforced by the app, on the next online check-in.
 
+import type { TKey } from '#lib/i18n';
+
 export type TimeValue = number | string; // epoch ms or ISO string (server sends ISO, IndexedDB stores whatever the manager normalised to)
 
 export interface LicenseFields {
@@ -38,11 +40,12 @@ export function isPlayable(dl: LicenseFields, now: number, meta: LicenseMeta | n
   return { ok: true };
 }
 
-export const REASON_TEXT: Record<BlockReason, string> = {
-  not_done: 'Noch nicht vollständig heruntergeladen.',
-  expired: 'Dieser Download ist abgelaufen.',
-  checkin: 'Bitte kurz online gehen, um den Download zu bestätigen.',
-  clock: 'Die Uhrzeit des Geräts stimmt nicht. Bitte online gehen, um fortzufahren.',
+/** message key per block reason (account.downloads.reason.*) */
+export const REASON_KEY: Record<BlockReason, TKey> = {
+  not_done: 'account.downloads.reason.notDone',
+  expired: 'account.downloads.reason.expired',
+  checkin: 'account.downloads.reason.checkin',
+  clock: 'account.downloads.reason.clock',
 };
 
 /** whole days left until expiresAt (0 when expired) */

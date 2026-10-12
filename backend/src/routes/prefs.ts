@@ -2,6 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import type { Ctx } from '../ctx.js';
 import { requireUser } from '../session.js';
+import { LANGUAGES } from '../i18n.js';
 
 export const prefsSchema = z.object({
   autoplayNext: z.boolean().default(true),
@@ -38,6 +39,8 @@ export const prefsSchema = z.object({
   weeklyDigest: z.boolean().default(true),
   /** own ntfy topic for personal push messages ('' = off), account level */
   ntfyTopic: z.string().regex(/^[A-Za-z0-9_-]{0,64}$/).default(''),
+  /** UI language of the profile ('' = never chosen: instance default applies and the first-login picker is shown) */
+  language: z.enum(['', ...LANGUAGES]).default(''),
 });
 export type Prefs = z.infer<typeof prefsSchema>;
 
@@ -80,7 +83,10 @@ export function prefsRoutes(app: FastifyInstance, ctx: Ctx) {
     if (input.ntfyTopic && g && input.ntfyTopic === g) return reply.code(400).send({ error: 'ntfy_topic_reserved' });
     // account flags are shared by all profiles: only the owner profile may change them (others keep the stored values)
     const stored = req.profile!.is_owner ? null : await loadPrefs(ctx, req.user!.id, req.profile!.id);
-    const prefs: Prefs = stored ? { ...input, ...pickAccount(stored) } : input;
+    let prefs: Prefs = stored ? { ...input, ...pickAccount(stored) } : input;
+    // the language has its own endpoint (PUT /api/prefs/language): a full PUT without it (the web app never sends it) or
+    // with '' must not reset or revert a choice made elsewhere (other tab/device, footer, first-login picker)
+    if (!input.language) prefs = { ...prefs, language: (stored ?? await loadPrefs(ctx, req.user!.id, req.profile!.id)).language };
     const viewing: Record<string, unknown> = { ...prefs };
     for (const k of ACCOUNT_KEYS) delete viewing[k];
     await ctx.db.query(
@@ -94,5 +100,15 @@ export function prefsRoutes(app: FastifyInstance, ctx: Ctx) {
       );
     }
     return { prefs: hideTopic(req, prefs) };
+  });
+  /** Sets only the UI language of the active profile (first-login picker, footer, settings); every profile may set its own. */
+  app.put('/api/prefs/language', pre, async (req) => {
+    const { language } = z.object({ language: z.enum(LANGUAGES) }).parse(req.body);
+    await ctx.db.query(
+      `insert into profile_prefs(profile_id, data) values ($1, jsonb_build_object('language', $2::text))
+       on conflict (profile_id) do update set data = profile_prefs.data || jsonb_build_object('language', $2::text), updated_at = now()`,
+      [req.profile!.id, language],
+    );
+    return { language };
   });
 }
