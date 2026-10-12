@@ -1,11 +1,11 @@
 <script lang="ts">
-  import { api, backdrop, img, fmtMin, type Item } from '#lib/api';
+  import { api, backdrop, img, srcset, CARD_SIZES, CARD_WIDTHS, fmtMin, type Item } from '#lib/api';
   import { listIds, toggleList } from '#lib/stores';
   import Icon from '#lib/Icon.svelte';
   import Logo from '#lib/Logo.svelte';
   import ListMenu from '#lib/ListMenu.svelte';
   import { openModal } from '#lib/modal';
-  import { createEventDispatcher, onDestroy } from 'svelte';
+  import { createEventDispatcher, onDestroy, tick } from 'svelte';
   import { prefs } from '#lib/stores';
   import { isSpoiler } from '#lib/spoiler';
   import { playPreview, previewFailed, stopPreview, previewOwner, toggleSound } from '#lib/preview';
@@ -19,6 +19,9 @@
   $: href = item.type === 'Episode' ? `/watch/${item.id}` : item.type === 'BoxSet' ? `/library/${item.id}` : `/item/${item.id}`;
   $: detail = item.type === 'Episode' && item.seriesId ? `/item/${item.seriesId}` : `/item/${item.id}`;
   $: src = item.backdrop ? backdrop(item.id, 520) : item.image ? img(item.id, 520) : '';
+  // one URL for blur + main image (identical strings: a single request); the srcset widths are the same for both
+  $: srcs = item.backdrop ? srcset('Backdrop', item.id, CARD_WIDTHS) : item.image ? srcset('Primary', item.id, CARD_WIDTHS) : '';
+  $: epSub = item.type === 'Episode' && item.seriesName ? `S${item.parentIndexNumber ?? '?'}·E${item.indexNumber ?? '?'} ${item.name}` : '';
   $: posterOnly = !item.backdrop && item.image; // poster (2:3) in a 16:9 slot: show it contained on a blurred copy
   $: sub = item.type === 'Episode' ? `${item.seriesName ?? ''} · S${item.parentIndexNumber ?? '?'}:E${item.indexNumber ?? '?'}` : '';
   $: pct = item.positionTicks && item.runtimeTicks ? Math.min(100, (item.positionTicks / item.runtimeTicks) * 100) : 0;
@@ -41,20 +44,36 @@
   $: if ($previewOwner !== item.id && previewing) previewing = false; // owner is claimed synchronously in playPreview()
   onDestroy(leave);
 
+  // ---- touch action sheet (the hover pop-up is not reachable without a pointer) ----
+  let sheet = false, sheetEl: HTMLDivElement, moreBtn: HTMLButtonElement;
+  function portal(node: HTMLElement) { document.body.appendChild(node); return { destroy() { node.remove(); } }; }
+  async function openSheet() { sheet = true; await tick(); sheetEl?.querySelector<HTMLElement>('a[href],button')?.focus(); }
+  function closeSheet(refocus = true) { sheet = false; if (refocus) moreBtn?.focus(); }
+  function sheetKey(e: KeyboardEvent) {
+    if (e.key === 'Escape') { e.stopPropagation(); closeSheet(); return; }
+    if (e.key !== 'Tab') return;
+    const f = [...sheetEl.querySelectorAll<HTMLElement>('a[href],button:not([disabled]),input,select,textarea,[tabindex]:not([tabindex="-1"])')];
+    if (!f.length) return;
+    const first = f[0]!, last = f[f.length - 1]!;
+    if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+    else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+  }
+
   async function toggleFav() { fav = !fav; try { await api(`/api/items/${item.id}/favorite`, { method: fav ? 'POST' : 'DELETE' }); } catch { fav = !fav; } }
 </script>
 
 <article class="card" on:mouseenter={enter} on:mouseleave={leave} on:focusin={onFocusIn} on:focusout={leave}>
   <div class="media">
   <a class="thumb" {href} aria-label={item.name + (sub ? ', ' + sub : '')}>
-    {#if posterOnly}<img class="blur" loading="lazy" {src} alt="" aria-hidden="true" />{/if}
-    {#if src}<img class:contain={posterOnly} class:spoil={isSpoiler(item, $prefs)} loading="lazy" decoding="async" {src} alt="" width="320" height="180" />{/if}
+    {#if posterOnly}<img class="blur" loading="lazy" decoding="async" {src} srcset={srcs} sizes={CARD_SIZES} alt="" aria-hidden="true" />{/if}
+    {#if src}<img class:contain={posterOnly} class:spoil={isSpoiler(item, $prefs)} loading="lazy" decoding="async" {src} srcset={srcs} sizes={CARD_SIZES} alt="" width="320" height="180" />{/if}
     <span class="brand" aria-hidden="true"><Logo size={18} label="" /></span>
     {#if previewing}<!-- svelte-ignore a11y_media_has_caption --><video bind:this={pv} class="pv" loop playsinline on:volumechange={() => (vmuted = pv.muted)} on:playing={() => (vmuted = pv.muted)}></video>{/if}
-    <span class="cap" class:big={!src}>{item.type === 'Episode' ? item.name : item.name}</span>
+    <span class="cap" class:big={!src}>{#if epSub}<span class="l1">{item.seriesName}</span><span class="l2">{epSub}</span>{:else}{item.name}{/if}</span>
     {#if pct}<span class="progress"><i style="width:{pct}%"></i></span>{/if}
   </a>
   {#if removable}<button class="rm" aria-label="Aus Weiterschauen entfernen" on:click={() => dispatch('remove', item)}><Icon name="x" size={14} /></button>{/if}
+  <button type="button" class="mb" bind:this={moreBtn} aria-label="Aktionen für {item.name}" aria-haspopup="dialog" aria-expanded={sheet} on:click={openSheet}><span aria-hidden="true">⋯</span></button>
   {#if previewing}<button class="snd" aria-label={vmuted ? 'Ton einschalten' : 'Ton ausschalten'} aria-pressed={!vmuted} on:click={(e) => { release(e); toggleSound(pv); }}><Icon name={vmuted ? 'volume-off' : 'volume'} size={16} /></button>{/if}
   </div>
   <div class="pop">
@@ -64,7 +83,7 @@
       <button class="round" class:on={fav} aria-label={fav ? 'Favorit entfernen' : 'Als Favorit markieren'} aria-pressed={fav} on:click={(e) => { release(e); toggleFav(); }}><Icon name="heart" size={17} fill={fav} /></button>
       {#if item.type !== 'BoxSet'}<ListMenu itemId={item.seriesId ?? item.id} variant="round" />{/if}
       {#if removable}<button class="round" aria-label="Aus Weiterschauen entfernen" title="Aus Weiterschauen entfernen" on:click={(e) => { release(e); dispatch('remove', item); }}><Icon name="x" size={17} /></button>{/if}
-      <a class="round more" href={detail} aria-label="Mehr Infos" on:click={(e) => openModal(e, detail)}><Icon name="chevron-down" size={18} /></a>
+      <a class="round more" href={detail} aria-label="Mehr Infos" aria-haspopup="dialog" on:click={(e) => openModal(e, detail)}><Icon name="chevron-down" size={18} /></a>
     </div>
     <div class="meta">
       {#if score}<span class="match">{score}% Match</span>{/if}
@@ -76,13 +95,31 @@
   </div>
 </article>
 
+{#if sheet}
+  <!-- svelte-ignore a11y_click_events_have_key_events -->
+  <div class="scrim" use:portal on:click={() => closeSheet()} role="presentation"></div>
+  <div class="sheet" tabindex="-1" use:portal bind:this={sheetEl} role="dialog" aria-modal="true" aria-label="Aktionen für {item.name}" on:keydown={sheetKey}>
+    <p class="st">{item.name}</p>
+    <a class="act" href={href} on:click={() => closeSheet(false)}><Icon name="play" size={20} />Abspielen</a>
+    <button type="button" class="act" aria-haspopup="dialog" on:click={(e) => { moreBtn?.focus(); openModal(e, detail); closeSheet(false); }}><Icon name="chevron-down" size={20} />Mehr Infos</button>
+    <button type="button" class="act" on:click={() => { toggleList(item.seriesId ?? item.id, inList); closeSheet(); }}><Icon name={inList ? 'check' : 'plus'} size={20} />{inList ? 'Von Meine Liste entfernen' : 'Zu Meine Liste'}</button>
+    <button type="button" class="act" aria-pressed={fav} on:click={() => { toggleFav(); closeSheet(); }}><Icon name="heart" size={20} fill={fav} />{fav ? 'Favorit entfernen' : 'Als Favorit markieren'}</button>
+    {#if item.type !== 'BoxSet'}<ListMenu itemId={item.seriesId ?? item.id} variant="row" up />{/if}
+    {#if removable}<button type="button" class="act" on:click={() => { dispatch('remove', item); closeSheet(false); }}><Icon name="x" size={20} />Aus Weiterschauen entfernen</button>{/if}
+    <button type="button" class="act cancel" on:click={() => closeSheet()}>Schließen</button>
+  </div>
+{/if}
+
 <style>
   .card { position: relative; width: 100%; transform-origin: center; transition: transform var(--t-med) var(--ease) 0s; }
   .thumb { display: block; position: relative; aspect-ratio: 16 / 9; border-radius: var(--radius); overflow: hidden; background: linear-gradient(135deg, #2b2b2b, #1a1a1a); }
   .thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
   .pv { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; z-index: 1; background: #000; }
+  .l1 { display: block; } .l2 { display: block; font-weight: 500; font-size: .75rem; opacity: .9; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .cap.big { align-content: center; }
   .cap2 { color: #f5c518; }
   .media { position: relative; }
+  .snd::after, .rm::after { content: ''; position: absolute; inset: -8px; } /* >=44px hit area, visual size unchanged */
   .snd { position: absolute; right: .5rem; bottom: .5rem; z-index: 3; width: 30px; min-height: 30px; height: 30px; padding: 0; border-radius: 50%; background: rgba(20,20,20,.7); border: 1.5px solid rgba(255,255,255,.6); color: #fff; }
   .snd:hover:not(:disabled) { background: rgba(20,20,20,.9); border-color: #fff; }
   .brand { position: absolute; left: .45rem; top: .4rem; z-index: 2; pointer-events: none; opacity: .95; }
@@ -116,5 +153,13 @@
     :global(.slot:last-child) .card { transform-origin: right center; }
     .card:hover .pop, .card:has(:focus-visible) .pop { opacity: 1; visibility: visible; pointer-events: auto; transition-delay: .35s; }
   }
-  @media (hover: none), (pointer: coarse) { .pop { display: none; } .rm { display: grid; } }
+  .mb { display: none; position: absolute; right: 0; bottom: 0; z-index: 3; width: 44px; min-height: 44px; height: 44px; padding: 0; background: none; border: 0; color: #fff; place-items: center; }
+  .mb span { display: grid; place-items: center; width: 26px; height: 26px; border-radius: 50%; background: rgba(20,20,20,.7); border: 1.5px solid rgba(255,255,255,.6); font-size: 1rem; line-height: 1; padding-bottom: .3rem; }
+  @media (hover: none), (pointer: coarse) { .pop { display: none; } .rm { display: grid; } .mb { display: grid; } .cap { right: 2.8rem; } }
+  .scrim { position: fixed; inset: 0; background: rgba(0,0,0,.6); z-index: 84; }
+  .sheet { outline: none; position: fixed; z-index: 85; left: 0; right: 0; bottom: 0; max-width: 560px; margin: 0 auto; background: var(--surface); border-radius: 14px 14px 0 0; padding: .6rem .6rem calc(.6rem + env(safe-area-inset-bottom)); box-shadow: 0 -10px 40px rgba(0,0,0,.7); display: flex; flex-direction: column; gap: .1rem; }
+  .st { margin: .2rem 1rem .5rem; font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .act { display: flex; gap: .8rem; align-items: center; min-height: 48px; padding: 0 1rem; border: 0; border-radius: 8px; background: transparent; color: inherit; font: inherit; text-align: left; width: 100%; text-decoration: none; }
+  .act:hover, .act:focus-visible { background: rgba(255,255,255,.08); }
+  .cancel { justify-content: center; color: var(--mut); margin-top: .2rem; }
 </style>
