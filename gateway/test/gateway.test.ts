@@ -79,7 +79,7 @@ beforeAll(async () => {
       }
       if (j.dl !== undefined) {
         if (j.sid !== 'goodsid' && j.sid !== 'othersid') return void res.writeHead(401).end();
-        const target: Record<string, unknown> | undefined = {
+        const targets: Record<string, unknown> = {
           [D_FILE]: { kind: 'file', file: `${D_FILE}.mp4`, size: DL_SIZE, etag: 'e1' },
           [D_BADNAME]: { kind: 'file', file: '../../../etc/passwd', size: 1, etag: 'e2' },
           [D_LINK]: { kind: 'file', file: `${D_LINK}.mp4`, size: DL_SIZE, etag: 'e3' },
@@ -88,7 +88,8 @@ beforeAll(async () => {
           [D_MISMATCH]: { kind: 'file', file: `${D_MISMATCH}.mp4`, size: 5, etag: 'e4' },
           [D_BIG]: { kind: 'file', file: `${D_BIG}.mp4`, size: 32_000_000, etag: 'e5' },
           [D_MISSING]: { kind: 'file', file: `${D_MISSING}.mp4`, size: 5, etag: 'e6' },
-        }[j.dl];
+        };
+        const target = targets[String(j.dl)];
         if (!target) return void res.writeHead(404).end();
         res.writeHead(200, { 'content-type': 'application/json' });
         return void res.end(JSON.stringify({ userId: j.sid === 'othersid' ? 'u2' : 'u1', token: 'JFTOKEN', deviceId: 'ff-u1', maxBitrate: 5_000_000, download: target }));
