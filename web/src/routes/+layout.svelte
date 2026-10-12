@@ -262,7 +262,7 @@
         </button>
         {#if bell}
           <div class="drop wide" role="menu">
-            {#each notes as n}<a href={n.link ?? '#'} class:muted={n.read} role="menuitem">{n.title}</a>{:else}<span class="muted pad">Keine Benachrichtigungen</span>{/each}
+            {#each notes as n}{#if n.link}<a href={n.link} class:muted={n.read} role="menuitem">{n.title}</a>{:else}<span class="note" class:muted={n.read} role="none">{n.title}</span>{/if}{:else}<span class="muted pad">Keine Benachrichtigungen</span>{/each}
           </div>
         {/if}
       </div>
@@ -361,6 +361,8 @@
   .caret.up { transform: rotate(180deg); }
   .drop { position: absolute; right: 0; top: calc(100% + 6px); background: rgba(0,0,0,.94); border: 1px solid #333; border-radius: 4px; min-width: 220px; padding: .4rem 0; display: flex; flex-direction: column; box-shadow: 0 12px 30px rgba(0,0,0,.7); }
   .drop.wide { width: min(340px, 90vw); }
+  .drop .note { display: block; padding: .55rem 1rem; font-size: .9rem; color: #e5e5e5; }
+  .drop .note.muted { color: var(--mut); }
   .drop a, .drop .plain { display: flex; gap: .7rem; align-items: center; padding: .55rem 1rem; font-size: .9rem; color: #e5e5e5; min-height: 44px; }
   .drop a:hover, .drop .plain:hover { text-decoration: underline; background: transparent; }
   .plain { background: transparent; border-radius: 0; justify-content: flex-start; font-weight: 400; width: 100%; }
