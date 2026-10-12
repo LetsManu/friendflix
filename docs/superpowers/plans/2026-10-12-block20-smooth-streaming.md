@@ -249,6 +249,52 @@ Double-tap seek, swipe volume/brightness/scrub and lock already exist (`gestures
 - [ ] **Step 3:** Run the backend suite, then a locked build plus the full e2e → PASS.
 - [ ] **Step 4:** `git commit -m "feat: aggregated /api/home for the first screen"`
 
+### Task 9: Smooth transition into the player (runs after Task 6, before Task 8)
+
+Owner request, approved in chat on 2026-10-12. What exists today:
+- `web/src/lib/player/prefetch.ts` (`prefetchPlayer()`) warms only the /watch route code and hls.js.
+- `web/src/routes/+layout.svelte:247-260` runs a 180 ms crossfade view transition but skips it for /watch and /party (`immersive`).
+
+**Files:**
+- Modify:
+  - `web/src/lib/player/prefetch.ts`: add `prefetchPlayback(itemId: string): void`. On hover, focus or touchstart of a play control it POSTs `/api/playback/info` with the same body the player would send (Task 5 auto maxBitrate and reasonHint) and keeps the promise in a module map for 30 s.
+    - Add `takePrefetched(itemId: string, body: object): Promise<PlaybackDto> | null`, which returns it once and only if the body matches.
+    - On a 429 or any error the entry is dropped silently; the player then fetches normally.
+    - At most one item is in flight. A new hover replaces the old entry.
+  - Every play control that already calls `prefetchPlayer` also calls `prefetchPlayback(id)`. Grep the call sites (Hero, DetailView, Card/HoverPreview, EpisodeList and others).
+  - `web/src/lib/Player.svelte`:
+    - Consume `takePrefetched` before calling the API.
+    - Show the item's backdrop (or primary image) as a full-bleed, dimmed poster with the title and a thin progress bar from the first frame of the route.
+    - Crossfade the poster out over 300 ms on the first `playing`/`loadeddata` event.
+    - Keep the control bar hidden until playback starts.
+    - Never flash white or black. The stage background is the poster colour (`--bg`).
+  - `web/src/routes/+layout.svelte`:
+    - Enable a dedicated transition into and out of `/watch/` instead of skipping it. The clicked artwork carries `view-transition-name: ff-play-art`, set on the clicked element only, just for the transition. It morphs into the player poster, which has the same name.
+    - Fallback, when the API is missing or the element is gone: a 200 ms fade.
+    - Reduced motion: an instant cut plus a 120 ms fade.
+    - TV: unchanged (no transition).
+    - Leaving the player restores the previous page's scroll position. This is the SvelteKit default; verify it, and fix it if the immersive route breaks it.
+  - `app.css`: the `::view-transition-*` rules for `ff-play-art`, with no layout shift and the header hidden during the transition.
+- Test:
+  - `web/src/lib/player/prefetch.test.ts`:
+    - `takePrefetched returns the promise once`
+    - `expired after 30 s`
+    - `body mismatch → null`
+    - `error drops the entry`
+  - e2e `e2e/tests/player-transition.spec.ts`:
+    - `hover on Abspielen triggers one /api/playback/info before the click`
+    - `the click navigates without a second playback/info call (the prefetch is used)`
+    - `the player shows the backdrop poster with the title before the first frame (no blank stage: screenshot pixel check on the stage is not uniform black or white)`
+    - `the poster fades out once playing`
+    - `back restores the scroll position of the home page`
+    - `reduced motion: no view transition class is set`
+  - Measure the time from the click to the first frame, before and after; report it in the PR.
+
+- [ ] **Step 1:** Write the unit and e2e tests → FAIL.
+- [ ] **Step 2:** Implement.
+- [ ] **Step 3:** Locked build, then run the new specs plus `player-*`, `home-*` and the TV specs → PASS.
+- [ ] **Step 4:** `git commit -m "feat(player): smooth transition into the player (prefetched playback info, poster, view transition)"`
+
 ### Task 8: Final verification and docs
 
 - [ ] Run lint, typecheck, web, gateway and the full backend suite, then the locked web build and the full e2e. Everything must be green; record the counts.

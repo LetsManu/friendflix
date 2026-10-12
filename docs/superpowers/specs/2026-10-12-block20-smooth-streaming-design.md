@@ -151,6 +151,14 @@ Layout and orientation:
 - Measurement: an e2e check counts API requests before first paint (target ≤ 5), and the PR reports
   before/after timing from a local measurement.
 
+## 4. Smooth transition into the player (added 2026-10-12, approved in chat)
+
+- **Poster instead of an empty stage:** from the first frame of the player route, it shows the title's backdrop, dimmed, with the title and a thin progress bar, then crossfades over 300 ms to the video when the first frame arrives.
+- **Shared-element view transition:** the clicked artwork (card, billboard or detail) grows into the player poster. Without the View Transitions API there is a 200 ms fade. Reduced motion gets a short fade only. TV mode is unchanged.
+- **Prefetch:** hovering, focusing or touching a play control starts `/api/playback/info` early; the player reuses the result for up to 30 s. The route code and hls.js are already prefetched today.
+- **Calm build-up:** no header, control-bar, white or black flash; the controls appear once playback runs.
+- **Back:** leaving the player returns to the previous page at the same scroll position.
+
 ## Error handling
 
 - ABR never loops. A step-down cooldown of 10 s and a floor at 360p apply; at the floor the existing error
