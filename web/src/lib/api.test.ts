@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { backdrop, cachedDetail, cachedItem, CARD_WIDTHS, clearItemCache, img, primeDetail, primeItem, srcset, type Item } from './api';
+import { backdrop, cachedDetail, cachedItem, CARD_WIDTHS, clearItemCache, img, primeDetail, primeItem, setCachedThumb, srcset, type Item } from './api';
 
 const ID = 'a'.repeat(32);
 
@@ -40,6 +40,18 @@ describe('item cache', () => {
     expect(d.item.positionTicks).toBe(50); // fresher card fields win
     expect(d.item.langs).toEqual({ audio: ['deu'], subs: [] }); // detail-only fields survive
     expect(d.item.overview).toBe('lang');
+  });
+  it('setCachedThumb patches a cached detail without extending its lifetime', () => {
+    clearItemCache();
+    setCachedThumb('x', 1); // nothing cached: no-op
+    expect(cachedDetail('x', 0)).toBeUndefined();
+    primeDetail({ item: it0('c'), thumb: 0 }, 0);
+    setCachedThumb('c', 2);
+    expect(cachedDetail('c', 1000)?.thumb).toBe(2);
+    expect(cachedDetail('c', 11 * 60_000)).toBeUndefined();
+    primeItem(it0('d'), 0);
+    setCachedThumb('d', 1); // card-only entry stays without detail
+    expect(cachedDetail('d', 0)).toBeUndefined();
   });
   it('is bounded (LRU)', () => {
     clearItemCache();

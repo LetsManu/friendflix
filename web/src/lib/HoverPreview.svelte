@@ -1,7 +1,7 @@
 <script lang="ts">
   import { createEventDispatcher, onDestroy, onMount, tick } from 'svelte';
   import { beforeNavigate } from '$app/navigation';
-  import { api, backdrop, cachedDetail, img, primeDetail, primeItem, srcset, type Item, type ItemDetail } from '#lib/api';
+  import { api, backdrop, cachedDetail, img, primeDetail, primeItem, setCachedThumb, srcset, type Item, type ItemDetail } from '#lib/api';
   import { prefetchPlayer } from '#lib/player/prefetch';
   import { prefetchModal } from '#lib/lazy';
   import { listIds, toggleList, prefs, SAVE_FAILED } from '#lib/stores';
@@ -93,12 +93,18 @@
     if (!(await playPreview(item.id, () => pv))) playing = false;
   }
 
+  let thumbTouched = false;
   async function loadThumb() {
     // the same response feeds the detail popup (rendered from cache when the chevron is clicked)
     const hit = cachedDetail(listId);
-    if (hit) { thumb = toThumb(hit.thumb); return; }
-    try { const r = await api<ItemDetail>(`/api/items/${listId}`); thumb = toThumb(r?.thumb); primeDetail(r); } catch { /* optional */ }
+    if (hit) thumb = toThumb(hit.thumb); // show at once, then revalidate: the rating may have changed on another device/tab
+    try {
+      const r = await api<ItemDetail>(`/api/items/${listId}`);
+      if (!thumbTouched) thumb = toThumb(r?.thumb); // never overwrite a rating the viewer set meanwhile
+      primeDetail(thumbTouched ? { ...r, thumb } : r);
+    } catch { /* optional */ }
   }
+  function onThumb(e: CustomEvent<{ value: Thumb }>) { thumbTouched = true; setCachedThumb(listId, e.detail.value); }
   function flash() { fb = SAVE_FAILED; clearTimeout(fbT); fbT = setTimeout(() => (fb = ''), 4500); }
   // after a mouse click drop the focus again (keyboard users keep it)
   const release = (e: MouseEvent) => { if (e.detail > 0) (e.currentTarget as HTMLElement).blur(); };
@@ -174,7 +180,7 @@
     <div class="acts">
       <a class="round play" {href} on:pointerenter={prefetchPlayer} on:focus={prefetchPlayer} aria-label="Abspielen: {item.name}" title="Abspielen"><Icon name="play" size={18} /></a>
       <button type="button" class="round" aria-label={inList ? 'Von Meine Liste entfernen' : 'Zu Meine Liste hinzufügen'} title="Meine Liste" on:click={toggleInList}><Icon name={inList ? 'check' : 'plus'} size={18} /></button>
-      {#if item.type !== 'BoxSet'}<RatingButton itemId={listId} bind:value={thumb} on:error={flash} />{/if}
+      {#if item.type !== 'BoxSet'}<RatingButton itemId={listId} bind:value={thumb} on:change={onThumb} on:error={flash} />{/if}
       <span class="right">
         <MoreActions {actions} title={item.name} label="Mehr Aktionen für {item.name}">
           {#if item.type !== 'BoxSet'}<ListMenu itemId={listId} variant="row" on:changed={(e) => dispatch('listchanged', e.detail)} />{/if}

@@ -34,12 +34,19 @@ export function createSwr<T>(ttl: number, now: () => number = Date.now): Swr<T> 
 /**
  * Loads `key` through the cache: calls `apply` with a cached value at once (if any) and fetches when the entry
  * is missing or stale (`ttl` overrides the cache's max age, 0 = always revalidate). Resolves when the network value (or the fresh cached one) was applied.
+ * Without `onError` a failed fetch rejects. With it, `onError` runs only when nothing was applied from the cache:
+ * a failed BACKGROUND refresh keeps the stale content on screen instead of wiping it.
  */
-export async function swrLoad<T>(cache: Swr<unknown>, key: string, fetcher: () => Promise<T>, apply: (v: T) => void, ttl?: number): Promise<void> {
+export async function swrLoad<T>(cache: Swr<unknown>, key: string, fetcher: () => Promise<T>, apply: (v: T) => void, ttl?: number, onError?: (e: unknown) => void): Promise<void> {
   const hit = cache.get(key, ttl);
   if (hit) apply(hit.value as T);
   if (hit?.fresh) return;
-  const v = await fetcher();
+  let v: T;
+  try { v = await fetcher(); } catch (e) {
+    if (!onError) throw e;
+    if (!hit) onError(e);
+    return;
+  }
   cache.set(key, v);
   apply(v);
 }

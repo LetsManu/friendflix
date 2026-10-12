@@ -45,6 +45,19 @@ describe('swr cache', () => {
     await expect(swrLoad(c, 'k', () => Promise.reject(new Error('x')), (v) => seen.push(v))).rejects.toThrow();
     expect(seen).toEqual([7]);
   });
+  it('onError only fires when nothing was applied from the cache (a failed background refresh keeps stale content)', async () => {
+    const c = createSwr<unknown>(0);
+    const seen: unknown[] = [];
+    let errors = 0;
+    const fail = () => Promise.reject(new Error('x'));
+    await swrLoad(c, 'empty', fail, (v) => seen.push(v), undefined, () => errors++); // nothing cached: onError
+    expect(errors).toBe(1);
+    c.set('k', 7);
+    await swrLoad(c, 'k', fail, (v) => seen.push(v), 0, () => errors++); // stale value shown: keep it, no onError
+    expect(errors).toBe(1);
+    expect(seen).toEqual([7]);
+    await expect(swrLoad(c, 'k', fail, (v) => seen.push(v), 0, () => errors++)).resolves.toBeUndefined();
+  });
 });
 
 describe('firstNonEmptyTab', () => {

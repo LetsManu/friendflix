@@ -1,3 +1,5 @@
+import { clearHint } from '#lib/gate';
+
 export class ApiError extends Error {
   constructor(public status: number, public body: any) {
     super(`API ${status}`);
@@ -21,6 +23,7 @@ export async function api<T = any>(path: string, opts: { method?: string; body?:
     body: opts.body === undefined ? undefined : JSON.stringify(opts.body),
   });
   if (res.status === 401 && !location.pathname.startsWith('/invite/') && location.pathname !== '/tv') {
+    clearHint(); // the session is gone: the next start must not render early with this account's hint/profile
     location.href = localStorage.getItem('ff_tv_device') ? '/tv' : '/auth/login'; // a TV re-pairs instead of typing a login
     await new Promise(() => undefined);
   }
@@ -116,6 +119,11 @@ export function cachedDetail(id: string, now = Date.now()): ItemDetail | undefin
   const c = itemCache.get(id);
   if (!c?.detail || now - c.at > ITEM_TTL) return undefined;
   return { ...c.detail, item: c.item };
+}
+/** The viewer rated a title somewhere (hover card, detail view): patch the cached detail so the next render shows it (freshness unchanged). */
+export function setCachedThumb(id: string, thumb: number): void {
+  const c = itemCache.get(id);
+  if (c?.detail) itemCache.set(id, { ...c, detail: { ...c.detail, thumb } });
 }
 /** Drop cached entries (tests, profile switch). */
 export function clearItemCache(): void { itemCache.clear(); }

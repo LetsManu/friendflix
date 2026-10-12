@@ -32,7 +32,7 @@
    * (Weiterschauen, Nächste Folge, Meine Liste) always revalidate in the background, the catalogue rows after 5 minutes.
    */
   const cached = <T,>(key: string, fetcher: () => Promise<T>, apply: (v: T) => void, onError: () => void, ttl?: number) =>
-    swrLoad(homeCache, `${getActiveProfile()}|${key}`, fetcher, apply, ttl).catch(onError);
+    swrLoad(homeCache, `${getActiveProfile()}|${key}`, fetcher, apply, ttl, onError).catch(() => undefined); // onError only when nothing cached was shown
   const ALWAYS = 0;
   const idle = (fn: () => void) => {
     const w = window as Window & { requestIdleCallback?: (cb: () => void, o?: { timeout: number }) => number };

@@ -1,5 +1,5 @@
-import { describe, expect, it } from 'vitest';
-import { canRenderEarly, earlyProfile, gateHref, hintOf, needsProfileGate, parseHint } from './gate';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { canRenderEarly, clearHint, clearReloadFlag, earlyProfile, gateHref, hintOf, markPicked, needsProfileGate, parseHint, readActive, readHint, readPicked, readReloading, writeHint } from './gate';
 
 describe('needsProfileGate', () => {
   const multi = { profileCount: 3, profileChosen: true };
@@ -58,5 +58,37 @@ describe('boot hint', () => {
   });
   it('gate link keeps the deep link', () => {
     expect(gateHref('/watch/1?t=30')).toBe('/profiles?next=%2Fwatch%2F1%3Ft%3D30');
+  });
+});
+
+describe('hint lifetime (storage)', () => {
+  const store = () => { const m = new Map<string, string>(); return { getItem: (k: string) => m.get(k) ?? null, setItem: (k: string, v: string) => void m.set(k, String(v)), removeItem: (k: string) => void m.delete(k), m }; };
+  afterEach(() => vi.unstubAllGlobals());
+  it('clearReloadFlag ends the profile-switch reload guard; clearHint drops hint, pick and tab profile', () => {
+    const ls = store(), ss = store();
+    vi.stubGlobal('localStorage', ls); vi.stubGlobal('sessionStorage', ss);
+    ss.setItem('ff_profile_reload', '1');
+    expect(readReloading()).toBe(true);
+    clearReloadFlag();
+    expect(readReloading()).toBe(false);
+    writeHint({ approved: true, multi: false, tv: false, profile: 'p1' }); markPicked('p1');
+    expect(readHint()?.profile).toBe('p1');
+    clearHint();
+    expect(readHint()).toBeNull();
+    expect(readPicked()).toBe(false);
+    expect(readActive()).toBeNull();
+  });
+  it('api() clears the hint when the session is gone (401) before redirecting to the login', async () => {
+    const ls = store(), ss = store();
+    vi.stubGlobal('localStorage', ls); vi.stubGlobal('sessionStorage', ss);
+    const loc = { pathname: '/', href: '' };
+    vi.stubGlobal('location', loc);
+    vi.stubGlobal('fetch', async () => new Response(null, { status: 401 }));
+    writeHint({ approved: true, multi: false, tv: false, profile: 'p1' });
+    const { api } = await import('./api');
+    void api('/api/library/resume'); // never settles: the page navigates away
+    await new Promise((r) => setTimeout(r, 0));
+    expect(readHint()).toBeNull();
+    expect(loc.href).toBe('/auth/login');
   });
 });

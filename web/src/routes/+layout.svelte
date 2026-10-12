@@ -23,7 +23,7 @@
   import { categoryHref, kindFromPath, showsChips, type Kind } from '#lib/mobile';
   import { dialogKeys } from '#lib/actions';
   import { langLabel } from '#lib/langs';
-  import { canRenderEarly, earlyProfile, gateHref, hintOf, needsProfileGate, readActive, readHint, readPicked, readReloading, writeActive, writeHint } from '#lib/gate';
+  import { canRenderEarly, clearReloadFlag, earlyProfile, gateHref, hintOf, needsProfileGate, readActive, readHint, readPicked, readReloading, writeActive, writeHint } from '#lib/gate';
   import MobilePreviewSheet from '#lib/MobilePreviewSheet.svelte';
   import { closePreview, previewSheet } from '#lib/previewSheet';
 
@@ -267,7 +267,7 @@
         const m = await api<Me>('/api/me');
         setCsrf(m.csrfToken);
         setActiveProfile(m.profile?.id);
-        writeHint(hintOf(m)); writeActive(m.profile?.id);
+        writeHint(hintOf(m)); writeActive(m.profile?.id); clearReloadFlag(); // the profile-switch reload is done: a later reload may render early again
         if (m.profile?.id) void setMeta('lastProfileId', m.profile.id).catch(() => undefined); // the offline hub shows the last active profile's downloads
         pending = !m.deviceApproved;
         // "Wer schaut gerade?": when no profile is chosen, and once per browser session for accounts with several profiles

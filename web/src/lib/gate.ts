@@ -61,6 +61,8 @@ export function readPicked(): boolean { try { return ss()?.getItem(PICKED_KEY) =
 export function markPicked(profileId?: string): void { try { ss()?.setItem(PICKED_KEY, '1'); if (profileId) ss()?.setItem(ACTIVE_KEY, profileId); } catch { /* private mode */ } }
 export function readActive(): string | null { try { return ss()?.getItem(ACTIVE_KEY) || null; } catch { return null; } }
 export function writeActive(id: string | null | undefined): void { try { if (id) ss()?.setItem(ACTIVE_KEY, id); else ss()?.removeItem(ACTIVE_KEY); } catch { /* ignore */ } }
+/** /api/me answered after a profile-switch reload: the reload guard has done its job (early render is allowed again) */
+export function clearReloadFlag(): void { try { ss()?.removeItem(RELOAD_KEY); } catch { /* ignore */ } }
 export function readReloading(): boolean { try { return ss()?.getItem(RELOAD_KEY) === '1'; } catch { return false; } }
 export function readHint(): BootHint | null { try { return parseHint(ls()?.getItem(HINT_KEY)); } catch { return null; } }
 export function writeHint(h: BootHint): void { try { ls()?.setItem(HINT_KEY, JSON.stringify(h)); } catch { /* ignore */ } }

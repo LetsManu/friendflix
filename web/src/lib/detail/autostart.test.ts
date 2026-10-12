@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { autoStartAllowed, countdownLabel, previewDone, type AutoStartEnv } from './autostart';
+import { autoStartAllowed, countdownLabel, interactionCancels, isTextEntry, previewDone, type AutoStartEnv } from './autostart';
 
 const base: AutoStartEnv = { pref: true, touch: false, tv: false, hidden: false, reducedMotion: false, previewing: true, hasTarget: true, cancelled: false };
 
@@ -17,6 +17,36 @@ describe('autoStartAllowed', () => {
     expect(autoStartAllowed({ ...base, tv: true })).toBe(false);
     expect(autoStartAllowed({ ...base, reducedMotion: true })).toBe(false);
     expect(autoStartAllowed({ ...base, cancelled: true })).toBe(false);
+  });
+});
+
+describe('never interrupts active use', () => {
+  it('does not arm with an open popover, a focused text field or a trailer the viewer started', () => {
+    expect(autoStartAllowed({ ...base, popoverOpen: false, typing: false, userStartedPreview: false })).toBe(true);
+    expect(autoStartAllowed({ ...base, popoverOpen: true })).toBe(false);
+    expect(autoStartAllowed({ ...base, typing: true })).toBe(false);
+    expect(autoStartAllowed({ ...base, userStartedPreview: true })).toBe(false);
+  });
+  it('pointer, key and wheel always cancel; focus only during the countdown; the overlay never', () => {
+    for (const t of ['pointerdown', 'keydown', 'wheel']) {
+      expect(interactionCancels(t, false, false)).toBe(true);
+      expect(interactionCancels(t, false, true)).toBe(true);
+      expect(interactionCancels(t, true, true)).toBe(false);
+    }
+    expect(interactionCancels('focusin', false, false)).toBe(false); // initial autofocus of the dialog
+    expect(interactionCancels('focusin', false, true)).toBe(true);
+    expect(interactionCancels('focusin', true, true)).toBe(false);
+    expect(interactionCancels('pointermove', false, true)).toBe(false);
+  });
+  it('recognises text entry elements', () => {
+    expect(isTextEntry({ tagName: 'TEXTAREA' })).toBe(true);
+    expect(isTextEntry({ tagName: 'INPUT' })).toBe(true);
+    expect(isTextEntry({ tagName: 'INPUT', type: 'search' })).toBe(true);
+    expect(isTextEntry({ tagName: 'INPUT', type: 'checkbox' })).toBe(false);
+    expect(isTextEntry({ tagName: 'SELECT' })).toBe(true);
+    expect(isTextEntry({ tagName: 'DIV', isContentEditable: true })).toBe(true);
+    expect(isTextEntry({ tagName: 'BUTTON' })).toBe(false);
+    expect(isTextEntry(null)).toBe(false);
   });
 });
 

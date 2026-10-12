@@ -78,7 +78,7 @@
   let quality = 0, sleepMin = 0, sleepAt = 0, sleepLeft = '', prefsApplied = false, autoSkipped = new Set<number>(), pipOk = false, inPip = false;
   let scrubbing = false, scrubTime = 0, hoverX = -1, hoverTime = 0, trackEl: HTMLDivElement;
   // ---- robustness: stall spinner (only after 500 ms), reconnect overlay, recovery bookkeeping ----
-  let spin = false, spinT: ReturnType<typeof setTimeout>, reconnecting = 0, retryT: ReturnType<typeof setTimeout>, rec = freshRecovery(), lastPos = 0, errPos = 0, errTitle = 'Wiedergabe nicht möglich', errNote = '';
+  let spin = false, spinT: ReturnType<typeof setTimeout>, reconnecting = 0, retryT: ReturnType<typeof setTimeout>, rec = freshRecovery(), lastPos = 0, posKnown = false, errPos = 0, errTitle = 'Wiedergabe nicht möglich', errNote = '';
   function setSpin(on: boolean) { clearTimeout(spinT); if (!on) { spin = false; return; } spinT = setTimeout(() => (spin = true), 500); }
   $: setSpin(waiting && !error && !casting && !reconnecting);
   // ---- touch gestures ----
@@ -108,7 +108,7 @@
 
   async function load(startSec?: number) {
     error = ''; errNote = '';
-    if (startSec !== undefined) lastPos = startSec;
+    if (startSec !== undefined) { lastPos = startSec; posKnown = true; }
     // first start: the saved quality + audio language go into this same request (no second round trip)
     const first = !prefsApplied && !partyMode;
     const fb = first ? firstInfoBody(get(prefs), wantAudio) : {};
@@ -123,6 +123,7 @@
       error = 'Wiedergabe nicht möglich.';
       return;
     }
+    if (startSec === undefined) { lastPos = info.resumeTicks / 10_000_000; posKnown = true; } // a retry must not restart at 0 before playback ran
     if (info.audioIndex !== undefined) audioIndex = info.audioIndex;
     if (first && quality && info.roleMaxBitrate && quality >= info.roleMaxBitrate) quality = 0; // saved quality above the role limit = "Automatisch"
     // first start only: an older server ignores audioLang -> pick the track here (one extra request, as before)
@@ -196,9 +197,9 @@
     if (!reconnecting) return;
     wantAutoplay = !paused || wantAutoplay;
     if (hls && !retryViaLoad && reconnecting < MAX_NETWORK_TRIES) { if (hls.levels.length) hls.startLoad(pos); else if (info) hls.loadSource(info.hlsUrl); } // 1st/2nd retry: restart loading (or the manifest request)
-    else void load(pos); // last retry (or direct play): new playback session, the old token may be dead
+    else void load(posKnown ? pos : undefined); // last retry (or direct play): new playback session, the old token may be dead
   }
-  function retryManually() { rec = freshRecovery(); reconnecting = 0; error = ''; errNote = ''; waiting = true; wantAutoplay = true; void load(resumePos()); }
+  function retryManually() { rec = freshRecovery(); reconnecting = 0; error = ''; errNote = ''; waiting = true; wantAutoplay = true; void load(posKnown ? resumePos() : undefined); }
   function leave() { if (history.length > 1) history.back(); else location.href = '/'; }
   function onVideoError() {
     if (hls || casting || !video?.error || !info) return; // hls.js reports its own errors
@@ -404,6 +405,9 @@
   /** Netflix-size control icons (~40px); smaller on phones */
   let ICON = 36;
   function pickEpisode(e: CustomEvent<{ id: string }>) { menu = ''; dispatch('episode', e.detail); }
+  /** "Folgen" panel closed (✕ or the playing episode): focus goes back to its trigger */
+  let epBtn: HTMLButtonElement | undefined;
+  function closeEpisodes() { menu = ''; void tickDom().then(() => epBtn?.focus()); }
   function setVolume(v: number) { if (casting) { volume = v; muted = v === 0; castSetVolume(v); return; } if (!video) return; volume = v; video.volume = v; video.muted = v === 0; muted = v === 0; try { localStorage.setItem('ff_vol', String(v)); } catch { /* ignore */ } }
   function volumeBy(delta: number) { const v = stepVolume(muted ? 0 : volume, delta); setVolume(v); flash(`Lautstärke ${Math.round(v * 100)} %`, 600); }
   function toggleMute() { if (casting) { castToggleMute(); return; } if (!video) return; video.muted = !video.muted; muted = video.muted; if (!muted && volume === 0) setVolume(0.5); }
@@ -483,8 +487,9 @@
     const opener = stage?.querySelector<HTMLElement>('.ctl [aria-expanded="true"]');
     if (menu || subDlg || help) {
       e.preventDefault(); e.stopImmediatePropagation();
+      const wasEpisodes = menu === 'episodes';
       menu = ''; subDlg = false; help = false;
-      if (tvMode()) tickDom().then(() => opener?.focus());
+      if (tvMode() || wasEpisodes) tickDom().then(() => (wasEpisodes ? epBtn : opener)?.focus());
     } else if (tvMode() && stage?.querySelector('.ctl')?.contains(document.activeElement)) {
       e.preventDefault(); e.stopImmediatePropagation();
       (document.activeElement as HTMLElement).blur(); lastActive = 0; // hide the bar, the next Back leaves the player
@@ -755,8 +760,8 @@
         {#if hasNext}<button class="ic" aria-label="Nächste Folge" title="Nächste Folge (N)" on:click={() => dispatch('next')}><Icon name="skip-next" size={ICON} /></button>{/if}
         {#if seriesId}
           <div class="mwrap">
-            <button class="ic" aria-label="Folgen" title="Folgen" aria-expanded={menu === 'episodes'} on:click={() => toggleMenu('episodes')}><Icon name="list" size={ICON} /></button>
-            {#if menu === 'episodes'}<div class="menu bare"><EpisodesPanel {seriesId} {seasonId} currentId={itemId} on:pick={pickEpisode} on:close={() => (menu = '')} /></div>{/if}
+            <button class="ic" bind:this={epBtn} aria-label="Folgen" title="Folgen" aria-expanded={menu === 'episodes'} on:click={() => toggleMenu('episodes')}><Icon name="list" size={ICON} /></button>
+            {#if menu === 'episodes'}<div class="menu bare"><EpisodesPanel {seriesId} {seasonId} currentId={itemId} on:pick={pickEpisode} on:close={closeEpisodes} /></div>{/if}
           </div>
         {/if}
         {#if info}

@@ -10,7 +10,7 @@
   import { lengthLabel, ratingBadge } from '#lib/hover';
   import { toThumb, type Thumb } from '#lib/rating';
   import { byType, moodTags, remainingLabel, type Person } from '#lib/detail/format';
-  import { autoStartAllowed, AUTOSTART_COUNTDOWN_S, countdownLabel, previewDone } from '#lib/detail/autostart';
+  import { autoStartAllowed, AUTOSTART_COUNTDOWN_S, countdownLabel, interactionCancels, isTextEntry, previewDone } from '#lib/detail/autostart';
   import { prefetchPlayer } from '#lib/player/prefetch';
   import Icon from '#lib/Icon.svelte';
   import ListMenu from '#lib/ListMenu.svelte';
@@ -52,7 +52,7 @@
   }
   async function load(want: string) {
     const my = ++loadSeq;
-    stopHero(); cancelAuto(); autoCancelled = false;
+    stopHero(); cancelAuto(); autoCancelled = false; heroByUser = false;
     failed = false; episodes = null; next = null; seasons = []; ratings = []; avg = null; stars = 0; review = ''; followed = false; season = ''; epKey = '';
     extras = []; more = null; people = []; logoFailed = false; heroLoaded = false; heroTried = ''; recOpen = false; castMsg = ''; saveMsg = '';
     savedLang(want);
@@ -210,23 +210,28 @@
   async function startHero(forced = false) {
     if (!item || (!forced && !eligible())) return;
     heroPlaying = true; previewEnded = false;
+    if (forced) { heroByUser = true; cancelAuto(); } // "Trailer abspielen": the viewer watches the trailer, no autostart afterwards
     if (!(await playPreview(item.id, () => hv, heroOwner))) heroPlaying = false;
   }
   function stopHero() { clearTimeout(heroT); if (heroOwner && $previewOwner === heroOwner) stopPreview(heroOwner); heroPlaying = false; }
   const tvMode = () => document.documentElement.classList.contains('tv');
 
   // ---- auto start: the preview ran long enough -> "Film/Folge startet in 5 …" -> /watch (desktop only, pref "Vorschau startet Titel automatisch") ----
-  let touch = false, previewEnded = false, autoLeft = 0, autoT: ReturnType<typeof setInterval> | undefined, autoCancelled = false;
+  let touch = false, previewEnded = false, autoLeft = 0, autoT: ReturnType<typeof setInterval> | undefined, autoCancelled = false, heroByUser = false;
+  let dvEl: HTMLDivElement | undefined, autoEl: HTMLDivElement | undefined;
   $: autoOn = autoStartAllowed({
     pref: ($prefs as { autoStartPreview?: boolean }).autoStartPreview, touch, tv: typeof document !== 'undefined' && tvMode(), hidden: false, reducedMotion: false,
-    previewing: heroPlaying, hasTarget: Boolean(playBase), cancelled: autoCancelled,
+    previewing: heroPlaying, hasTarget: Boolean(playBase), cancelled: autoCancelled, userStartedPreview: heroByUser,
   });
   $: counting = autoT !== undefined;
+  /** the viewer is busy right now: a popover (MoreActions / RatingButton / ListMenu) is open or a text field has focus */
+  const busy = () => Boolean(dvEl?.querySelector('[aria-haspopup][aria-expanded="true"]')) || isTextEntry(document.activeElement as HTMLElement | null);
   function maybeAuto() {
-    if (!autoOn || counting || document.hidden || !previewDone(previewEnded, hv?.currentTime ?? 0)) return;
+    if (!autoOn || counting || document.hidden || busy() || !previewDone(previewEnded, hv?.currentTime ?? 0)) return;
     autoLeft = AUTOSTART_COUNTDOWN_S;
     autoT = setInterval(() => {
       if (document.hidden || (!heroPlaying && !previewEnded)) { cancelAuto(); return; }
+      if (busy()) { cancelAuto(true); return; } // e.g. the rating pill opened on hover during the countdown
       autoLeft -= 1;
       if (autoLeft <= 0) { const to = playHref; cancelAuto(); stopHero(); if (to) void goto(to); }
     }, 1000);
@@ -236,7 +241,12 @@
     autoT = undefined; autoLeft = 0;
     if (byUser) autoCancelled = true;
   }
-  function onHeroEnded() { previewEnded = true; if (autoOn) maybeAuto(); else void hv?.play().catch(() => undefined); }
+  /** any pointer/key/wheel use of the view (focus moves only during the countdown) cancels autostart for this view instance */
+  function onUse(e: Event) {
+    if (autoCancelled) return;
+    if (interactionCancels(e.type, Boolean(autoEl && e.target instanceof Node && autoEl.contains(e.target)), counting)) cancelAuto(true);
+  }
+  function onHeroEnded() { previewEnded = true; if (autoOn && !busy()) maybeAuto(); else void hv?.play().catch(() => undefined); }
   $: if (!autoOn && counting) cancelAuto();
 
   // ---- the hero only plays while it is (mostly) on screen: IntersectionObserver instead of a scroll listener (no forced layout) ----
@@ -270,7 +280,9 @@
   const heroTitleTag = () => (variant === 'modal' ? 'h2' : 'h1');
 </script>
 
-<div class="dv" class:vm={variant === 'modal'} class:vp={variant === 'page'} class:phone>
+<!-- svelte-ignore a11y_no_static_element_interactions -->
+<div class="dv" class:vm={variant === 'modal'} class:vp={variant === 'page'} class:phone bind:this={dvEl}
+  on:pointerdown|capture={onUse} on:keydown|capture={onUse} on:focusin={onUse} on:wheel|capture|passive={onUse}>
   <!-- ================= hero ================= -->
   <div class="hero" bind:this={heroEl}>
     {#if item}
@@ -300,7 +312,7 @@
       {/if}
       {#if heroPlaying}<button type="button" class="snd" aria-label={hmuted ? 'Ton einschalten' : 'Ton ausschalten'} aria-pressed={!hmuted} on:click={() => toggleSound(hv)}><Icon name={hmuted ? 'volume-off' : 'volume'} size={20} /></button>{/if}
       {#if counting}
-        <div class="auto" role="status">
+        <div class="auto" role="status" bind:this={autoEl}>
           <svg viewBox="0 0 36 36" aria-hidden="true"><circle cx="18" cy="18" r="15" class="tr" /><circle cx="18" cy="18" r="15" class="pr" style="stroke-dashoffset:{(autoLeft / AUTOSTART_COUNTDOWN_S) * 94.25}" /></svg>
           <span>{countdownLabel(item.type === 'Series' ? 'episode' : 'movie', autoLeft)}</span>
           <button type="button" class="sec" on:click={() => cancelAuto(true)}>Abbrechen</button>

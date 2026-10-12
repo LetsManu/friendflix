@@ -36,18 +36,21 @@
     } catch { if (my === epSeq) { episodes = []; failed = true; } }
   }
   $: if (season) void loadEpisodes(season);
-  onMount(async () => {
-    await loadSeasons();
-    await tick();
-    // the playing episode is in view and focused (keyboard users continue from there)
+  onMount(() => { void loadSeasons(); });
+  // once the episodes are rendered (cache hit or after the request): the playing episode is in view and focused
+  // (keyboard users continue from there). Only the first time, and never stealing focus the viewer already moved inside the panel.
+  let placed = false, root: HTMLDivElement;
+  $: if (!placed && list && episodes?.length) { placed = true; void tick().then(placeCurrent); }
+  function placeCurrent() {
     const cur = list?.querySelector<HTMLElement>('[aria-current="true"]');
     cur?.scrollIntoView({ block: 'center' });
+    if (root?.contains(document.activeElement)) return;
     (cur ?? list?.querySelector<HTMLElement>('button'))?.focus({ preventScroll: true });
-  });
+  }
   const pct = (e: Item) => (e.played ? 100 : e.runtimeTicks && e.positionTicks ? Math.min(100, (e.positionTicks / e.runtimeTicks) * 100) : 0);
 </script>
 
-<div class="eps" role="dialog" aria-label="Folgen" data-nav data-scope>
+<div class="eps" role="dialog" aria-label="Folgen" data-nav data-scope bind:this={root}>
   <header>
     {#if seasons.length > 1}
       <label class="sel"><span class="sr">Staffel</span>

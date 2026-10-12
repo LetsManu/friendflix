@@ -279,7 +279,14 @@ export function mediaRoutes(app: FastifyInstance, ctx: Ctx) {
       ctx.jf.playMeta(req.jfUser!, b.itemId),
     ]);
     info.roleMaxBitrate = role.maxBitrate;
-    info.resumeTicks = b.startTicks ?? meta?.positionTicks ?? 0;
+    let resume = b.startTicks ?? meta?.positionTicks;
+    if (resume === undefined) {
+      // The /Items lookup failed or came back empty: a silent 0 would let the first progress report overwrite the saved
+      // Jellyfin position, so ask the single-item endpoint instead and make the player retry (502) when that fails too.
+      resume = await ctx.jf.item(req.jfUser!, b.itemId).then((i) => i.positionTicks, () => undefined);
+      if (resume === undefined) return reply.code(502).send({ error: 'jellyfin', reason: 'resume_unknown' });
+    }
+    info.resumeTicks = resume;
     info.trickplay = toTrickplayDto(b.itemId, info.mediaSourceId, meta?.trickplay);
     return info;
   }));
