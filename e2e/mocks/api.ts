@@ -67,6 +67,34 @@ export async function installApi(ctx: BrowserContext, st: MockState): Promise<vo
     const withFav = (i: MockItem) => ({ ...i, favorite: st.fav.has(i.id) });
     let mm: RegExpMatchArray | null;
 
+    // Task 7 (Block 20): GET /api/home. The mock composes it from the single-endpoint mocks by fetching them inside the page (header
+    // x-mock-sub, so specs can tell them from the app's own calls): every spec that mocks one of those endpoints keeps working.
+    if (p === '/api/home' && m === 'GET') {
+      const urls = {
+        hero: '/api/library/items?types=Movie,Series&sort=Random&limit=15', resume: '/api/library/resume', nextup: '/api/library/nextup', leaving: '/api/library/leaving',
+        recs: '/api/recommendations', friends: '/api/library/friends-rated', because: '/api/library/because', more: '/api/library/because-more', hubs: '/api/hubs', themed: '/api/lists/themed',
+      };
+      let got: Record<string, any> = {};
+      try {
+        got = await req.frame().evaluate(async (u) => Object.fromEntries(await Promise.all(Object.entries(u).map(async ([k, url]) => {
+          try { const r = await fetch(url, { headers: { 'x-mock-sub': '1' } }); return [k, r.ok ? await r.json() : null]; } catch { return [k, null]; }
+        }))), urls);
+      } catch { /* page gone: everything counts as failed */ }
+      const failed = new Set<string>();
+      const need = (part: string, ...v: unknown[]) => { if (v.some((x) => !x)) failed.add(part); };
+      need('hero', got.hero); need('resume', got.resume); need('nextup', got.nextup); need('leaving', got.leaving); need('recs', got.recs, got.friends);
+      need('because', got.because, got.more); need('hubs', got.hubs); need('themed', got.themed);
+      const pool: MockItem[] = got.hero?.items ?? [];
+      return J({
+        parts: {
+          hero: pool.find((i) => i.backdrop) ?? pool[0] ?? null, resume: got.resume?.items ?? [], nextup: got.nextup?.items ?? [], leaving: got.leaving?.items ?? [],
+          recs: { items: got.recs?.items ?? [], recIds: got.recs?.recIds ?? [], friends: got.friends?.items ?? [] },
+          because: { because: got.because?.because ?? null, items: got.because?.items ?? [], more: got.more?.rows ?? [] },
+          hubs: got.hubs?.hubs ?? [], themed: got.themed?.lists ?? [],
+        },
+        failed: [...failed].sort(),
+      });
+    }
     if (p === '/api/client-errors') { st.clientErrors.push(body()); return route.fulfill({ status: 204 }); }
     if (p === '/api/me') return J(st.asAdmin ? { ...ME, role: 'admin', roleLabel: 'Admin', isAdmin: true } : ME);
     if (p === '/api/notifications') return J({ notifications: [{ id: 'n1', title: 'Anna hat dich zur Liste „Annas Klassiker“ eingeladen', link: '/lists/' + st.lists[1]!.id, read: false }] });

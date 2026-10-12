@@ -47,6 +47,7 @@ const hubBody = z.object({
   enabled: z.boolean().optional(),
 });
 
+/** Registers the hub routes; returns the viewer-side lookup GET /api/home reuses (same memo, same visibility rules). */
 export function hubRoutes(app: FastifyInstance, ctx: Ctx) {
   const pre = { preHandler: requireUser(ctx) };
   const admin = { preHandler: requireAdmin(ctx) };
@@ -92,11 +93,13 @@ export function hubRoutes(app: FastifyInstance, ctx: Ctx) {
   const uuid = z.string().uuid();
 
   // ---- viewer ----
-  app.get('/api/hubs', pre, wrap(async (req) => {
+  /** Data of GET /api/hubs (also part of GET /api/home). */
+  const viewerHubs = async (user: JfUser) => {
     const hubs = (await ctx.db.query<HubRow>(`select ${hubCols} from brand_hubs where enabled order by sort_order, created_at limit ${MAX_HUBS}`)).rows;
-    const ok = await Promise.all(hubs.map((h) => hasItems(req.jfUser!, h).catch(() => false)));
-    return { hubs: await Promise.all(hubs.filter((_, i) => ok[i]).map((h) => viewerHub(req.jfUser!, h))) };
-  }));
+    const ok = await Promise.all(hubs.map((h) => hasItems(user, h).catch(() => false)));
+    return { hubs: await Promise.all(hubs.filter((_, i) => ok[i]).map((h) => viewerHub(user, h))) };
+  };
+  app.get('/api/hubs', pre, wrap(async (req) => viewerHubs(req.jfUser!)));
 
   app.get('/api/hubs/:id', pre, wrap(async (req, reply) => {
     const id = uuid.safeParse((req.params as { id: string }).id);
@@ -249,4 +252,6 @@ export function hubRoutes(app: FastifyInstance, ctx: Ctx) {
     await audit(ctx, req.user!.id, 'hub.delete', id.success ? id.data : undefined);
     return { ok: true };
   });
+
+  return { viewerHubs };
 }

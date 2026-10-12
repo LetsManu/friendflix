@@ -10,6 +10,7 @@ import { isKidsProfile, requireGrownUp } from '../kids.js';
 import { requireAdmin, requireUser } from '../session.js';
 import { audit } from '../audit.js';
 import { itemsByIds } from './discover.js';
+import type { JfUser } from '../types.js';
 import { id32 } from './_shared.js';
 
 const uuid = z.string().uuid();
@@ -21,6 +22,23 @@ interface ThemedRow { id: string; name: string; description: string | null; emoj
 
 async function isFeaturedThemed(ctx: Pick<Ctx, 'db'>, listId: string): Promise<boolean> {
   return Boolean((await ctx.db.query('select 1 from lists where id = $1 and themed and featured_at is not null', [listId])).rowCount);
+}
+
+/** Data of GET /api/lists/themed (also part of GET /api/home): featured themed lists with the items this viewer may see. */
+export async function themedLists(ctx: Ctx, jfUser: JfUser, kids: boolean) {
+  const ls = (await ctx.db.query<ThemedRow>(
+    `select l.id, l.name, l.description, l.emoji, l.cover_color, o.name as owner_name from lists l join users o on o.id = l.owner_id
+      where l.featured_at is not null and l.themed order by l.featured_pos asc nulls last, l.featured_at desc limit $1`, [MAX_FEATURED])).rows;
+  const ids = new Map<string, string[]>();
+  for (const l of ls) {
+    ids.set(l.id, (await ctx.db.query<{ item_id: string }>('select item_id from list_items where list_id = $1 order by added_at desc limit 80', [l.id])).rows.map((x) => x.item_id));
+  }
+  const byId = new Map((await itemsByIds(ctx, jfUser, [...new Set([...ids.values()].flat())]).catch(() => [])).map((i) => [i.id, i]));
+  const lists = ls.map((l) => ({
+    id: l.id, name: l.name, description: l.description, emoji: l.emoji, coverColor: l.cover_color, ...(kids ? {} : { owner: { name: l.owner_name } }),
+    items: ids.get(l.id)!.map((i) => byId.get(i)).filter((x): x is NonNullable<typeof x> => Boolean(x)).slice(0, MAX_FEATURED_ITEMS),
+  })).filter((l) => l.items.length > 0);
+  return { lists };
 }
 
 export function listRoutes(app: FastifyInstance, ctx: Ctx) {
@@ -57,22 +75,7 @@ export function listRoutes(app: FastifyInstance, ctx: Ctx) {
    * Featured themed lists for the home page (ThemedListRows), pinned order first. Open to kids profiles: the items come through
    * the viewer's own Jellyfin user (parental cap applies), lists without a visible item are dropped, and kids get no owner name.
    */
-  app.get('/api/lists/themed', open, async (req) => {
-    const ls = (await ctx.db.query<ThemedRow>(
-      `select l.id, l.name, l.description, l.emoji, l.cover_color, o.name as owner_name from lists l join users o on o.id = l.owner_id
-        where l.featured_at is not null and l.themed order by l.featured_pos asc nulls last, l.featured_at desc limit $1`, [MAX_FEATURED])).rows;
-    const kids = isKidsProfile(req);
-    const ids = new Map<string, string[]>();
-    for (const l of ls) {
-      ids.set(l.id, (await ctx.db.query<{ item_id: string }>('select item_id from list_items where list_id = $1 order by added_at desc limit 80', [l.id])).rows.map((x) => x.item_id));
-    }
-    const byId = new Map((await itemsByIds(ctx, req.jfUser!, [...new Set([...ids.values()].flat())]).catch(() => [])).map((i) => [i.id, i]));
-    const lists = ls.map((l) => ({
-      id: l.id, name: l.name, description: l.description, emoji: l.emoji, coverColor: l.cover_color, ...(kids ? {} : { owner: { name: l.owner_name } }),
-      items: ids.get(l.id)!.map((i) => byId.get(i)).filter((x): x is NonNullable<typeof x> => Boolean(x)).slice(0, MAX_FEATURED_ITEMS),
-    })).filter((l) => l.items.length > 0);
-    return { lists };
-  });
+  app.get('/api/lists/themed', open, async (req) => themedLists(ctx, req.jfUser!, isKidsProfile(req)));
 
   /** Admin: every themed list with its home-page state (pinned = featured, `position` = order among the pinned ones). */
   app.get('/api/lists/themed/manage', admin, async () => {
