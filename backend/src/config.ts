@@ -77,6 +77,19 @@ const schema = z.object({
   PORTAINER_ENDPOINT_ID: z.coerce.number().int().default(1),
   /** nightly playback check: local server hour 0-23, -1 = off */
   PLAYBACK_CHECK_HOUR: z.coerce.number().int().min(-1).max(23).default(4),
+  /** offline downloads ("Herunterladen"); false = off (Plan B) */
+  DOWNLOADS_ENABLED: z.enum(['true', 'false']).default('true'),
+  DOWNLOAD_DIR: z.string().default('/data/downloads'),
+  DOWNLOAD_CACHE_MAX_GB: z.coerce.number().positive().default(50),
+  /** a preparation only starts while the download volume keeps at least this much free (GB) */
+  DOWNLOAD_MIN_FREE_GB: z.coerce.number().min(0).default(2),
+  DOWNLOAD_PREP_CONCURRENCY: z.coerce.number().int().min(1).max(4).default(1),
+  /** preparation pauses between segments while at least this many live streams run (0 = never pause) */
+  DOWNLOAD_PAUSE_STREAMS: z.coerce.number().int().min(0).default(2),
+  DOWNLOAD_FILE_TTL_HOURS: z.coerce.number().positive().default(48),
+  DOWNLOAD_OFFLINE_GRACE_DAYS: z.coerce.number().positive().default(7),
+  /** POST /api/downloads: license creations per hour and session (rate limit) */
+  DOWNLOAD_CREATE_PER_HOUR: z.coerce.number().int().positive().default(20),
   BACKGROUND_JOBS: z.enum(['true', 'false']).default('true'),
 });
 

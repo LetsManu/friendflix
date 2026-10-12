@@ -3,6 +3,7 @@ import { timingSafeEqual } from 'node:crypto';
 import { z } from 'zod';
 import { CAST_TOKEN_RE, resolveCast } from '../cast.js';
 import type { Ctx } from '../ctx.js';
+import { authorizeDownload } from '../downloads.js';
 import { clearLive, setLive } from '../live.js';
 import { jfUserFor, resolveProfile } from '../profiles.js';
 import { effectiveRole } from '../roles.js';
@@ -86,8 +87,22 @@ export function internalRoutes(app: FastifyInstance, ctx: Ctx) {
       z.object({ sid: z.string().regex(/^[\w-]{20,80}$/) }).strict(),
       // client = address the gateway derived for the caller (X-Real-IP / last XFF): the first one to use a token pins it
       z.object({ ct: z.string().regex(CAST_TOKEN_RE), client: z.string().min(1).max(64) }).strict(),
+      // offline download licence (gateway /media/d/<uuid>): same session checks as {sid}, plus the licence itself
+      z.object({ sid: z.string().regex(/^[\w-]{20,80}$/), dl: z.string().uuid() }).strict(),
     ]).safeParse(req.body);
     if (!body.success) return reply.code(400).send({ error: 'bad_request' });
+    if ('dl' in body.data) {
+      // 401 = no valid session / device / profile, 404 = licence not usable by this session (unknown, other device, expired, revoked, role)
+      const a = await mediaAuth(body.data.sid);
+      if (!a) return reply.code(401).send({ error: 'unauthenticated' });
+      const session = await loadSession(ctx, body.data.sid);
+      const user = session ? await getUserById(ctx, session.userId) : undefined;
+      if (!session || !user || user.disabled) return reply.code(401).send({ error: 'unauthenticated' });
+      const prof = await resolveProfile(ctx, user, session); // licenses belong to a profile: only that profile's session may fetch them
+      if (!prof) return reply.code(401).send({ error: 'unauthenticated' });
+      const download = await authorizeDownload(ctx, session, user, prof.id, body.data.dl.toLowerCase());
+      return download ? { ...a, download } : reply.code(404).send({ error: 'not_found' });
+    }
     const a = 'ct' in body.data ? await resolveCast(ctx, body.data.ct, body.data.client) : await mediaAuth(body.data.sid);
     return a ?? reply.code(401).send({ error: 'unauthenticated' });
   });

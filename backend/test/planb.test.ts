@@ -26,6 +26,7 @@ describe('upstreamUri', () => {
     expect([capped.get('MaxHeight'), capped.get('maxwidth'), capped.get('Height')]).toEqual(['720', '1280', '480']);
     expect(upstreamUri(`/media/Videos/${ID}/master.m3u8?MaxHeight=2160`, 1)).toContain('MaxHeight=2160');
     expect(upstreamUri(`/api/me`, 1)).toBeNull();
+    expect(upstreamUri('/media/d/123e4567-e89b-42d3-a456-426614174000', 1)).toBeNull(); // offline downloads are gateway-only (Plan B denies them)
     expect(upstreamUri(`/media/Videos/${ID}/master.m3u8\r\nX-Evil: 1`, 1)).toBeNull();
     expect(upstreamUri(`/media/Videos/${ID}/master.m3u8?x=${'a'.repeat(2100)}`, 1)).toBeNull();
     expect(upstreamUri(`/media/Videos/${ID}/master.m3u8?${Array.from({ length: 41 }, (_, i) => `p${i}=1`).join('&')}`, 1)).toBeNull();

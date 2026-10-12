@@ -12,6 +12,7 @@
   import ItemModal from '#lib/ItemModal.svelte';
   import { startTvLink, type ToTv } from '#lib/remote';
   import { disablePush } from '#lib/push';
+  import { getAllDownloads, setMeta } from '#lib/offline/db';
   import { focusEl, focusFirst, isBackKey, isEditable, startSpatial } from '#lib/spatial';
 
   let me: Me | null = null;
@@ -21,6 +22,9 @@
   let notes: Array<{ id: number; title: string; link?: string; read: boolean }> = [];
   let scrolled = false, menu = false, bell = false, searchOpen = false, more = false, q = '';
   let searchEl: HTMLInputElement;
+  let online = true;
+  $: canDownload = Boolean(me?.downloads?.allowed);
+  $: links = canDownload ? [...menuLinks.slice(0, 3), ['/downloads', 'Downloads', 'download'] as [string, string, string], ...menuLinks.slice(3)] : menuLinks;
 
   $: path = $page.url.pathname;
   $: publicPage = path.startsWith('/invite/') || path === '/tv' || path === '/offline';
@@ -43,6 +47,9 @@
     if (bell && unread) { await api('/api/notifications/read', { method: 'POST' }); setTimeout(loadNotes, 1500); }
   }
   async function logout() {
+    let hasDl = false;
+    try { hasDl = (await getAllDownloads()).length > 0; } catch { /* no IndexedDB */ }
+    if (hasDl && confirm('Auch die Downloads auf diesem Gerät löschen?\n\nOK: löschen (empfohlen, z. B. auf geteilten Geräten). Abbrechen: behalten.')) await (await import('#lib/offline/manager')).removeAll().catch(() => undefined);
     await Promise.race([disablePush().catch(() => undefined), new Promise((r) => setTimeout(r, 3000))]); // best effort: drop this device's push subscription before the session ends
     await api('/auth/logout', { method: 'POST' });
     location.href = me?.tv ? '/tv' : '/auth/login';
@@ -105,6 +112,10 @@
     window.addEventListener('scroll', onScroll, { passive: true });
     const flag = new URLSearchParams(location.search).get('tv');
     if (flag === '1') sessionStorage.setItem('ff_tv', '1'); else if (flag === '0') sessionStorage.removeItem('ff_tv');
+    online = navigator.onLine;
+    const setOnline = () => (online = navigator.onLine);
+    window.addEventListener('online', setOnline); window.addEventListener('offline', setOnline);
+    stops.push(() => { window.removeEventListener('online', setOnline); window.removeEventListener('offline', setOnline); });
     void boot();
     // Notification clicks (service worker) ask an already open window to navigate in-app.
     const onSwMessage = (e: MessageEvent) => {
@@ -129,6 +140,7 @@
         me = await api<Me>('/api/me');
         setCsrf(me.csrfToken);
         setActiveProfile(me.profile?.id);
+        if (me.profile?.id) void setMeta('lastProfileId', me.profile.id).catch(() => undefined); // the offline hub shows the last active profile's downloads
         pending = !me.deviceApproved;
         if (!pending && path !== '/profiles') {
           if (me.profileRequired || ((me.profileCount ?? 0) > 1 && !me.profileChosen)) {
@@ -184,7 +196,7 @@
           <div class="drop" role="menu">
             <div class="who"><b>{me.profile?.name ?? me.name}</b><span class="muted">{me.roleLabel}</span></div>
             <a href="/profiles" role="menuitem"><Icon name="users" size={18} />Profil wechseln</a>
-            {#each menuLinks as [href, label, icon]}<a {href} role="menuitem"><Icon name={icon} size={18} />{label}</a>{/each}
+            {#each links as [href, label, icon]}<a {href} role="menuitem"><Icon name={icon} size={18} />{label}</a>{/each}
             {#if me.isAdmin && me.profile?.isOwner}<a href="/admin" role="menuitem"><Icon name="shield" size={18} />Admin</a>{/if}
             <button class="plain" role="menuitem" on:click={logout}><Icon name="log-out" size={18} />Abmelden</button>
           </div>
@@ -200,13 +212,14 @@
     </nav>
     {#if more}
       <div class="sheet" role="menu">
-        {#each menuLinks as [href, label, icon]}<a {href} role="menuitem"><Icon name={icon} size={20} />{label}</a>{/each}
+        {#each links as [href, label, icon]}<a {href} role="menuitem"><Icon name={icon} size={20} />{label}</a>{/each}
         {#if me.isAdmin && me.profile?.isOwner}<a href="/admin" role="menuitem"><Icon name="shield" size={20} />Admin</a>{/if}
         <button class="plain" on:click={logout}><Icon name="log-out" size={20} />Abmelden</button>
       </div>
     {/if}
   {/if}
 
+  {#if !online}<div class="offbar" role="status">Du bist offline. <a href="/offline" data-sveltekit-reload>Zu den Downloads</a></div>{/if}
   {#if replaced}<div class="panel" role="alert" style="position:fixed;z-index:90;top:5rem;left:50%;transform:translateX(-50%)"><b>Der Fernseher wurde auf einem anderen Gerät übernommen.</b> <button on:click={() => location.reload()}>Hier wieder verbinden</button></div>{/if}
   {#if $page.state.modalId}<ItemModal id={$page.state.modalId} />{/if}
   <main id="main" class:page={!heroPage && !watchPage && !profilesPage}>
@@ -231,6 +244,9 @@
 {/if}
 
 <style>
+  .offbar { position: fixed; z-index: 80; left: 0; right: 0; bottom: calc(56px + env(safe-area-inset-bottom)); background: #2a2a2a; padding: .6rem var(--pad-x); text-align: center; font-size: .9rem; }
+  .offbar a { text-decoration: underline; font-weight: 600; }
+  @media (min-width: 721px) { .offbar { bottom: 0; } }
   .logo { display: inline-flex; align-items: center; }
   .nav { position: fixed; top: 0; left: 0; right: 0; height: var(--nav-h); z-index: 50; display: flex; align-items: center; gap: .5rem; padding: 0 var(--pad-x); background: linear-gradient(to bottom, rgba(0,0,0,.9), rgba(0,0,0,.55) 55%, transparent); transition: background var(--t-med); }
   .nav.solid { background: var(--bg); }
