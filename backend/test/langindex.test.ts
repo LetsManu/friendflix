@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { langIndexTick, normLang } from '../src/langindex.js';
 import { makeEnv, type TestEnv } from './helpers.js';
 
@@ -11,6 +11,7 @@ let movies: any[] = [];
 let episodes: any[] = [];
 let failEpisodes = false;
 const adminAuth: string[] = [];
+const idCalls: number[] = [];
 
 beforeAll(async () => {
   env = await makeEnv({
@@ -28,12 +29,14 @@ beforeAll(async () => {
       const ids = (u.searchParams.get('ids') ?? '').split(',').filter(Boolean);
       const g = u.searchParams.get('genres');
       const lib: Record<string, any> = {
-        [M1]: { Id: M1, Name: 'Zorro', Type: 'Movie', Genres: ['Action'], CommunityRating: 6, PremiereDate: '2001-01-01T00:00:00Z' },
+        [M1]: { Id: M1, Name: 'Zorro', Type: 'Movie', Genres: ['Action'], CommunityRating: 6, PremiereDate: '2001-01-01T00:00:00Z', DateCreated: '2024-05-01T00:00:00Z' },
         [M2]: { Id: M2, Name: 'Anna', Type: 'Movie', Genres: ['Drama'], CommunityRating: 8, PremiereDate: '1999-01-01T00:00:00Z' },
-        [M3]: { Id: M3, Name: 'Mitte', Type: 'Movie', Genres: ['Action'], CommunityRating: 7, PremiereDate: '2010-01-01T00:00:00Z' },
+        [M3]: { Id: M3, Name: 'Mitte', Type: 'Movie', Genres: ['Action'], CommunityRating: 7, PremiereDate: '2010-01-01T00:00:00Z', DateCreated: '2020-05-01T00:00:00Z' },
         [S1]: { Id: S1, Name: 'Serie', Type: 'Series', Genres: ['Action'], CommunityRating: 9 },
         [HID]: { Id: HID, Name: 'Versteckt', Type: 'Movie', Genres: ['Action'] },
       };
+      for (const i of ids) if (i.startsWith('ffff')) lib[i] = { Id: i, Name: `Bulk ${i.slice(-4)}`, Type: 'Movie', Genres: [] };
+      idCalls.push(ids.length);
       return { json: { Items: ids.filter((i) => i !== HID && lib[i]).map((i) => lib[i]).filter((i) => !g || i.Genres.includes(g)) } };
     },
     'GET /Items/[^/]+': (u) => {
@@ -140,6 +143,13 @@ describe('GET /api/library/items with audio/subs', () => {
     const d = (await get('/api/library/items?audio=deu&sort=PremiereDate&types=Movie')).json();
     expect(d.items.map((i: any) => i.name)).toEqual(['Zorro', 'Mitte']);
   });
+  it('sorts DateCreated by the library-added date, not the premiere date', async () => {
+    const asc = (await get('/api/library/items?audio=deu&sort=DateCreated&types=Movie')).json();
+    expect(asc.items.map((i: any) => i.name)).toEqual(['Mitte', 'Zorro']); // added 2020 / 2024 (premiere order would be Zorro, Mitte)
+    expect(asc.items[0].dateCreated).toBe('2020-05-01T00:00:00Z');
+    const desc = (await get('/api/library/items?audio=deu&sort=DateCreated&desc=true&types=Movie')).json();
+    expect(desc.items.map((i: any) => i.name)).toEqual(['Zorro', 'Mitte']);
+  });
   it('paginates with start/limit and serves later pages from the cached id list', async () => {
     const p1 = (await get('/api/library/items?audio=deu&limit=2')).json();
     expect(p1.items.map((i: any) => i.name)).toEqual(['Mitte', 'Serie']);
@@ -155,6 +165,80 @@ describe('GET /api/library/items with audio/subs', () => {
     expect((await get('/api/library/items?audio=de')).statusCode).toBe(400);
     expect((await get('/api/library/items?subs=DEU')).statusCode).toBe(400);
     expect((await get('/api/library/items?audio=deu1')).statusCode).toBe(400);
+  });
+});
+
+const bulk = (n: number, lang: string) => env.pool.query(
+  `insert into item_langs(item_id,type,audio) select 'ffff' || lpad(g::text, 28, '0'), 'Movie', array[$2] from generate_series(1, $1::int) g`, [n, lang]);
+
+describe('language path limits', () => {
+  it('requests details in chunks of at most 80 ids', async () => {
+    await bulk(170, 'qqq');
+    idCalls.length = 0;
+    const b = (await get('/api/library/items?audio=qqq&limit=200')).json();
+    expect(b.total).toBe(170);
+    expect(b.capped).toBeUndefined();
+    expect(idCalls.sort((a, c) => c - a)).toEqual([80, 80, 10]);
+    idCalls.length = 0;
+    await get('/api/library/items?audio=qqq&limit=200&start=0'); // cached order: page fetched in chunks too
+    expect(Math.max(...idCalls)).toBeLessThanOrEqual(80);
+    await env.pool.query("delete from item_langs where item_id like 'ffff%'");
+  });
+  it('flags capped when more than 5000 candidates match, and keeps the flag on cached pages', async () => {
+    await bulk(5001, 'zzz');
+    const a = (await get('/api/library/items?audio=zzz&limit=5')).json();
+    expect(a.capped).toBe(true);
+    expect(a.total).toBe(5000);
+    const again = (await get('/api/library/items?audio=zzz&limit=5&start=5')).json();
+    expect(again.capped).toBe(true);
+    await env.pool.query("delete from item_langs where item_id like 'ffff%'");
+    expect((await get('/api/library/items?audio=deu&types=Movie')).json().capped).toBeUndefined();
+  });
+  it('extends the cached order on every page hit', async () => {
+    await get('/api/library/items?audio=deu&limit=1');
+    const set = vi.spyOn(env.kv, 'set');
+    await get('/api/library/items?audio=deu&limit=1&start=1');
+    const re = set.mock.calls.filter((c) => String(c[0]).startsWith('langitems:'));
+    set.mockRestore();
+    expect(re).toHaveLength(1);
+    expect(re[0]![2]).toBe(120);
+  });
+  it('answers 429 rate_limited after 30 language queries a minute, but only for audio/subs', async () => {
+    const uid = (await get('/api/me')).json().id as string;
+    await env.kv.del(`ratelimit:langitems:${uid}`);
+    await env.kv.set(`ratelimit:langitems:${uid}`, '30', 60);
+    const r = await get('/api/library/items?audio=deu');
+    expect(r.statusCode).toBe(429);
+    expect(r.json()).toEqual({ error: 'rate_limited' });
+    expect((await get('/api/library/items')).statusCode).toBe(200);
+    await env.kv.del(`ratelimit:langitems:${uid}`);
+    expect((await get('/api/library/items?audio=deu')).statusCode).toBe(200);
+  });
+});
+
+describe('langIndexTick on process start', () => {
+  const fresh = async () => { vi.resetModules(); return (await import('../src/langindex.js')).langIndexTick; };
+  it('skips the first run when the index has rows and the last run is recent', async () => {
+    await env.kv.set('langidx:last', String(Date.now() - 3600_000), 3600);
+    const tick = await fresh();
+    const before = env.jfCalls.length;
+    await tick(env.ctx);
+    expect(env.jfCalls.length).toBe(before);
+  });
+  it('runs on start when the index is empty or the last run is older than 12 h', async () => {
+    const tick = await fresh();
+    const before = env.jfCalls.length;
+    await env.kv.set('langidx:last', String(Date.now() - 13 * 3600_000), 3600);
+    await tick(env.ctx);
+    expect(env.jfCalls.length).toBeGreaterThan(before);
+    const rows = (await env.pool.query('select * from item_langs')).rows;
+    await env.pool.query('delete from item_langs');
+    await env.kv.set('langidx:last', String(Date.now()), 3600);
+    const tick2 = await fresh();
+    const mid = env.jfCalls.length;
+    await tick2(env.ctx); // recent stamp but empty table
+    expect(env.jfCalls.length).toBeGreaterThan(mid);
+    expect(rows.length).toBeGreaterThan(0);
   });
 });
 

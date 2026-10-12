@@ -71,6 +71,9 @@ function shuffle<T>(a: T[]): T[] {
 }
 
 const LANG_CAP = 5000;
+const LANG_CHUNK = 80; // ids per Jellyfin call: keeps the request line well under 8 KB
+const LANG_CACHE_TTL = 120;
+const LANG_RATE_MAX = 30; // language-path queries per user and minute
 
 export function mediaRoutes(app: FastifyInstance, ctx: Ctx) {
   const pre = { preHandler: requireUser(ctx) };
@@ -79,7 +82,7 @@ export function mediaRoutes(app: FastifyInstance, ctx: Ctx) {
    * Language path of /api/library/items: candidate ids come from the item_langs index, details (and with them visibility and every
    * other filter) from Jellyfin with the viewer's token, then sorted/paginated here. The merged id order is cached briefly.
    */
-  async function itemsByLanguage(req: any, q: z.infer<typeof listQuery>): Promise<{ items: ItemDto[]; total: number }> {
+  async function itemsByLanguage(req: any, q: z.infer<typeof listQuery>): Promise<{ items: ItemDto[]; total: number; capped?: true }> {
     const start = q.start ?? 0;
     const limit = Math.min(q.limit ?? 60, 200);
     const desc = q.desc === 'true';
@@ -89,12 +92,15 @@ export function mediaRoutes(app: FastifyInstance, ctx: Ctx) {
     const hit = await ctx.kv.get(key).catch(() => null);
     if (hit) {
       try {
-        const ids = JSON.parse(hit) as string[];
+        const parsed = JSON.parse(hit) as string[] | { ids: string[]; capped?: boolean };
+        const ids = Array.isArray(parsed) ? parsed : parsed.ids;
+        const capped = !Array.isArray(parsed) && parsed.capped === true;
         const page = ids.slice(start, start + limit);
         const got: ItemDto[] = [];
-        for (let i = 0; i < page.length; i += 200) got.push(...(await ctx.jf.items(jfUser, { ids: page.slice(i, i + 200), types: q.types ?? 'Movie,Series', limit: 200 })).items);
+        for (let i = 0; i < page.length; i += LANG_CHUNK) got.push(...(await ctx.jf.items(jfUser, { ids: page.slice(i, i + LANG_CHUNK), types: q.types ?? 'Movie,Series', limit: LANG_CHUNK })).items);
+        await ctx.kv.set(key, hit, LANG_CACHE_TTL).catch(() => undefined); // paging extends the lifetime so "Mehr laden" never reshuffles mid-scroll
         const byId = new Map(got.map((i) => [i.id, i]));
-        return { items: page.map((id) => byId.get(id)).filter((x): x is ItemDto => Boolean(x)), total: ids.length };
+        return { items: page.map((id) => byId.get(id)).filter((x): x is ItemDto => Boolean(x)), total: ids.length, ...(capped ? { capped: true as const } : {}) };
       } catch (e) {
         if (e instanceof JellyfinError) throw e;
         // corrupt cache entry: recompute
@@ -102,26 +108,29 @@ export function mediaRoutes(app: FastifyInstance, ctx: Ctx) {
     }
     const wanted = (q.types ?? 'Movie,Series').split(',').filter((t) => t === 'Movie' || t === 'Series');
     let ids: string[] = [];
+    let capped = false;
     if (wanted.length) {
       const where: string[] = ['type = any($1)'];
       const params: unknown[] = [wanted];
       if (audio) { params.push([audio]); where.push(`audio @> $${params.length}::text[]`); }
       if (subs) { params.push([subs]); where.push(`subs @> $${params.length}::text[]`); }
-      ids = (await ctx.db.query<{ item_id: string }>(`select item_id from item_langs where ${where.join(' and ')} order by item_id limit ${LANG_CAP}`, params)).rows.map((r) => r.item_id);
+      ids = (await ctx.db.query<{ item_id: string }>(`select item_id from item_langs where ${where.join(' and ')} order by item_id limit ${LANG_CAP + 1}`, params)).rows.map((r) => r.item_id);
+      if (ids.length > LANG_CAP) { capped = true; ids = ids.slice(0, LANG_CAP); }
     }
     const chunks: string[][] = [];
-    for (let i = 0; i < ids.length; i += 200) chunks.push(ids.slice(i, i + 200));
+    for (let i = 0; i < ids.length; i += LANG_CHUNK) chunks.push(ids.slice(i, i + LANG_CHUNK));
     const parts: ItemDto[][] = new Array(chunks.length);
     let next = 0;
     await Promise.all(Array.from({ length: Math.min(4, chunks.length) }, async () => {
       while (next < chunks.length) {
         const n = next++;
-        parts[n] = (await ctx.jf.items(jfUser, { ...rest, desc: false, ids: chunks[n], limit: 200, start: 0, parentId: rest.parentId })).items;
+        parts[n] = (await ctx.jf.items(jfUser, { ...rest, desc: false, ids: chunks[n], limit: LANG_CHUNK, start: 0, parentId: rest.parentId })).items;
       }
     }));
     const items = parts.flat();
-    const ts = (i: ItemDto) => (i.premiereDate ? Date.parse(i.premiereDate) || 0 : 0);
+    const date = (s?: string) => (s ? Date.parse(s) || 0 : 0);
     const sort = q.sort ?? 'SortName';
+    const ts = (i: ItemDto) => (sort === 'DateCreated' ? date(i.dateCreated) || date(i.premiereDate) : date(i.premiereDate));
     if (sort === 'Random') shuffle(items);
     else {
       const cmp = sort === 'CommunityRating' ? (a: ItemDto, b: ItemDto) => (a.communityRating ?? 0) - (b.communityRating ?? 0)
@@ -129,8 +138,8 @@ export function mediaRoutes(app: FastifyInstance, ctx: Ctx) {
         : (a: ItemDto, b: ItemDto) => a.name.localeCompare(b.name, 'de');
       items.sort((a, b) => (desc ? -1 : 1) * (cmp(a, b) || a.name.localeCompare(b.name, 'de')));
     }
-    await ctx.kv.set(key, JSON.stringify(items.map((i) => i.id)), 120).catch(() => undefined);
-    return { items: items.slice(start, start + limit), total: items.length };
+    await ctx.kv.set(key, JSON.stringify({ ids: items.map((i) => i.id), capped }), LANG_CACHE_TTL).catch(() => undefined);
+    return { items: items.slice(start, start + limit), total: items.length, ...(capped ? { capped: true as const } : {}) };
   }
 
   // Audio/subtitle languages present in the library (codes + counts only, no titles -> nothing visibility-dependent leaks).
@@ -146,9 +155,13 @@ export function mediaRoutes(app: FastifyInstance, ctx: Ctx) {
 
   app.get('/api/library/views', pre, wrap(async (req) => ({ items: await ctx.jf.views(req.jfUser!) })));
 
-  app.get('/api/library/items', pre, wrap(async (req) => {
+  app.get('/api/library/items', pre, wrap(async (req, reply) => {
     const q = listQuery.parse(req.query);
-    if (q.audio || q.subs) return itemsByLanguage(req, q);
+    if (q.audio || q.subs) {
+      // the language path fans out to many Jellyfin calls: cap it per user (Fastify's per-route limit cannot be conditional)
+      if ((await ctx.kv.incr(`ratelimit:langitems:${req.user!.id}`, 60).catch(() => 0)) > LANG_RATE_MAX) return reply.code(429).send({ error: 'rate_limited' });
+      return itemsByLanguage(req, q);
+    }
     const { audio: _a, subs: _b, ...plain } = q;
     return ctx.jf.items(req.jfUser!, { ...plain, desc: q.desc === 'true' });
   }));
