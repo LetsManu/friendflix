@@ -72,6 +72,7 @@ describe('isYear', () => {
 });
 
 describe('recent searches', () => {
+  const PID = 'prof-1';
   afterEach(() => vi.unstubAllGlobals());
   const store = () => {
     const m = new Map<string, string>();
@@ -79,23 +80,33 @@ describe('recent searches', () => {
   };
   it('dedupes case-insensitively, newest first, max 8', () => {
     store();
-    for (const q of ['aa', 'bb', 'cc', 'dd', 'ee', 'ff', 'gg', 'hh', 'ii']) pushRecent(q);
-    expect(loadRecent()).toHaveLength(8);
-    expect(pushRecent('EE')[0]).toBe('EE');
-    expect(loadRecent().filter((x) => x.toLowerCase() === 'ee')).toHaveLength(1);
+    for (const q of ['aa', 'bb', 'cc', 'dd', 'ee', 'ff', 'gg', 'hh', 'ii']) pushRecent(PID, q);
+    expect(loadRecent(PID)).toHaveLength(8);
+    expect(pushRecent(PID, 'EE')[0]).toBe('EE');
+    expect(loadRecent(PID).filter((x) => x.toLowerCase() === 'ee')).toHaveLength(1);
   });
   it('ignores short queries and clears', () => {
     store();
-    pushRecent('a');
-    expect(loadRecent()).toEqual([]);
-    pushRecent('abc'); clearRecent();
-    expect(loadRecent()).toEqual([]);
+    pushRecent(PID, 'a');
+    expect(loadRecent(PID)).toEqual([]);
+    pushRecent(PID, 'abc'); clearRecent(PID);
+    expect(loadRecent(PID)).toEqual([]);
+  });
+  it('scopes recent searches per profile and stores nothing without one', () => {
+    store();
+    pushRecent('p1', 'abc');
+    expect(loadRecent('p2')).toEqual([]);
+    expect(loadRecent('p1')).toEqual(['abc']);
+    pushRecent('', 'xyz'); pushRecent(null, 'xyz');
+    expect(loadRecent('')).toEqual([]);
+    clearRecent('p2');
+    expect(loadRecent('p1')).toEqual(['abc']);
   });
   it('survives missing or throwing storage and bad JSON', () => {
-    expect(loadRecent()).toEqual([]);
-    expect(() => { pushRecent('abc'); clearRecent(); }).not.toThrow();
+    expect(loadRecent(PID)).toEqual([]);
+    expect(() => { pushRecent(PID, 'abc'); clearRecent(PID); }).not.toThrow();
     vi.stubGlobal('localStorage', { getItem: () => '{oops', setItem: () => { throw new Error('quota'); }, removeItem: () => { throw new Error('x'); } });
-    expect(loadRecent()).toEqual([]);
-    expect(() => { pushRecent('abc'); clearRecent(); }).not.toThrow();
+    expect(loadRecent(PID)).toEqual([]);
+    expect(() => { pushRecent(PID, 'abc'); clearRecent(PID); }).not.toThrow();
   });
 });
