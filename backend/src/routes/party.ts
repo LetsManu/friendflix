@@ -8,6 +8,8 @@ import { clientMsg, PartyRegistry } from '../party.js';
 import { randomToken } from '../crypto.js';
 import { requireUser, authenticate } from '../session.js';
 import { notify } from '../notify.js';
+import type { JfUser } from '../types.js';
+import { itemsByIds } from './discover.js';
 
 export const parties = new PartyRegistry();
 
@@ -41,7 +43,16 @@ export async function partyRoutes(app: FastifyInstance, ctx: Ctx) {
     return { id: room.id };
   });
 
-  app.get('/api/party', pre, async () => ({ rooms: [...parties.rooms.values()].map(roomInfo) }));
+  type Room = NonNullable<ReturnType<PartyRegistry['get']>>;
+  const involved = (r: Room, userId: string) => r.hostId === userId || r.members.has(userId);
+  /** Item visibility is always checked with the viewer's own token; host/members always keep access to their room. */
+  const visibleRooms = async (jfUser: JfUser, userId: string, rooms: Room[]) => {
+    const need = [...new Set(rooms.filter((r) => !involved(r, userId)).map((r) => r.itemId))];
+    const seen = new Set((need.length ? await itemsByIds(ctx, jfUser, need) : []).map((i) => i.id));
+    return rooms.filter((r) => involved(r, userId) || seen.has(r.itemId));
+  };
+
+  app.get('/api/party', pre, async (req) => ({ rooms: (await visibleRooms(req.jfUser!, req.user!.id, [...parties.rooms.values()])).map(roomInfo) }));
   // One tap invitation: friends get an in-app notification (and ntfy/Discord if configured) that opens the room.
   app.post('/api/party/:id/invite', { ...pre, config: { rateLimit: { max: 10, timeWindow: '1 minute' } } }, async (req, reply) => {
     const r = parties.get((req.params as { id: string }).id);
@@ -55,7 +66,8 @@ export async function partyRoutes(app: FastifyInstance, ctx: Ctx) {
   });
   app.get('/api/party/:id', pre, async (req, reply) => {
     const r = parties.get((req.params as { id: string }).id);
-    return r ? roomInfo(r) : reply.code(404).send({ error: 'not_found' });
+    if (!r || !(await visibleRooms(req.jfUser!, req.user!.id, [r])).length) return reply.code(404).send({ error: 'not_found' });
+    return roomInfo(r);
   });
 
   app.get('/ws/party/:id', { websocket: true, config: { rateLimit: { max: 30, timeWindow: '1 minute' } } }, async (socket, req) => {
@@ -65,6 +77,7 @@ export async function partyRoutes(app: FastifyInstance, ctx: Ctx) {
     if (!room) return socket.close(4404, 'room not found');
     if (room.members.size >= 20 && !room.members.has(req.user!.id)) return socket.close(4409, 'room full');
     const user = req.user!;
+    if (!req.jfUser || !(await visibleRooms(req.jfUser, user.id, [room])).length) return socket.close(4404, 'room not found'); // joiner must be able to see the item
     const send = (m: unknown) => socket.readyState === 1 && socket.send(JSON.stringify(m));
     room.join(user.id, user.name, send);
     bus.emitT('party.join', { userId: user.id, roomId: room.id });

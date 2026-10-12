@@ -14,7 +14,7 @@ let imported = '';
 beforeAll(async () => {
   env = await makeEnv({
     'GET /Items/[^/]+': (u) => { const id = u.pathname.split('/').pop()!; return { json: { Id: id, Name: id === A ? 'Alien' : id === B ? 'Brazil' : 'Serie', Type: id === SERIES ? 'Series' : 'Movie' } }; },
-    'GET /Items': (u) => ({ json: { Items: libraryHasDune && u.search.includes('tmdb.438631') ? [{ Id: 'd'.repeat(32), Name: 'Dune' }] : [] } }),
+    'GET /Items': (u) => u.searchParams.get('ids') ? { json: { Items: u.searchParams.get('ids')!.split(',').map((Id) => ({ Id, Name: Id === A ? 'Alien' : 'Brazil', Type: 'Movie' })) } } : ({ json: { Items: libraryHasDune && u.search.includes('tmdb.438631') ? [{ Id: 'd'.repeat(32), Name: 'Dune' }] : [] } }),
     'GET /Shows/Upcoming': () => ({ json: { Items: [{ Id: 'e'.repeat(32), Name: 'Pilot', Type: 'Episode', SeriesId: SERIES, SeriesName: 'Serie', IndexNumber: 1, ParentIndexNumber: 1, PremiereDate: '2020-01-01T00:00:00Z' }, { Id: 'f'.repeat(32), Name: 'Later', Type: 'Episode', SeriesId: SERIES, SeriesName: 'Serie', PremiereDate: '2999-01-01T00:00:00Z' }] } }),
   }, {
     seerr: {
