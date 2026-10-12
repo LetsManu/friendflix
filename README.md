@@ -34,11 +34,13 @@ FriendFlix is a private streaming portal that sits in front of **Jellyfin** (you
 
 A large billboard with the title logo, then rows such as *Continue Watching*, *Next Episode*, *Recommended by friends*, *Rated by friends*, *Popular this week*, *Because you watched …*, *Top 10* and *My List*. Hover over a card and it pops out with the most important actions: play, add to your list, rate, more info.
 
+Below the billboard, **brand hubs** – wide tiles the admin builds from your own Jellyfin studios, collections, tags or genres (say "Anime" or "Documentaries") – open a page of their own with *New*, *Popular*, *Movies*, *Series* and A–Z. Several *Because you watched …* rows, each based on a different recent title, are spread between the other rows. The **Simulcast** page (linked from the calendar) lists the series that are airing right now, grouped by weekday and season, with an "Anime only" filter.
+
 <p align="center"><img src="docs/images/en/popout.jpg" alt="A card pops out on hover with play, list and rating buttons" width="900"></p>
 
 ### Everything about a title in one place
 
-The detail view shows the description, audio and subtitle languages, cast, which friends recommended or watched it, and – for shows – every season and episode with progress bars. Pick up exactly where you left off.
+The detail view shows the description, audio and subtitle languages, cast, which friends recommended or watched it, and – for shows – every season and episode with progress bars. Pick up exactly where you left off. An **Extras** tab collects trailers and special features from Jellyfin, and every episode has its own **comments** from your friends: comments on an episode you have not seen yet stay blurred until you choose "Spoiler – show anyway".
 
 <table>
   <tr>
@@ -49,13 +51,15 @@ The detail view shows the description, audio and subtitle languages, cast, which
 
 ### A player made for binge nights
 
-Skip intro, next episode with countdown, audio track and subtitles (with your own subtitle style), playback speed, bookmarks, keyboard shortcuts and "Are you still watching?" after several autoplayed episodes. Direct play when possible, adaptive streaming (HLS) otherwise.
+Skip intro, next episode with countdown, audio track and subtitles (with your own subtitle style), playback speed, bookmarks, keyboard shortcuts and "Are you still watching?" after several autoplayed episodes. Direct play when possible, adaptive streaming (HLS) otherwise. **Skip preview** jumps over "next time on …" segments. Change the audio track or subtitles once and FriendFlix remembers it **for the whole series**; with "Anime: original audio with subtitles" turned on, anime starts in Japanese with subtitles in your language unless you picked something else for that series.
 
 <p align="center"><img src="docs/images/en/player.jpg" alt="Player with controls, progress bar and Skip intro button" width="900"></p>
 
 ### "Who's watching?"
 
-Up to five profiles per account, each with its own history, list, favourites, language and playback settings. Profiles can be locked with a 4-digit PIN.
+Up to five profiles per account, each with its own history, list, favourites, language and playback settings. Profiles can be locked with a 4-digit PIN. Every new profile starts with a short **welcome**: confirm name and colour, then pick three titles you like so the recommendations know where to start.
+
+**Kids profiles** get a bright home of their own with big tiles, a simple search and an age limit (0, 6 or 12) that the server enforces on every list, search and title. Nothing social is shown – no friends, reactions, ratings, comments, watch parties, shared lists, requests or stats – and the settings only offer language and playback languages. Leaving a kids profile needs the PIN of the target profile, or the owner's PIN if the target has none; a TV paired from a kids profile stays on that kids profile.
 
 <p align="center"><img src="docs/images/en/profiles.jpg" alt="Profile picker with four profiles, one locked with a PIN" width="900"></p>
 
@@ -90,7 +94,7 @@ The interface speaks **English, German, French, Spanish, Italian, Turkish and Po
 | **Profiles for everyone** | Up to 5 profiles per account, optional PIN, separate history, lists and settings. |
 | **On the big screen** | TV mode for smart-TV browsers, sticks and consoles: big type, arrow-key navigation, pairing with a code or QR code, and your **phone as the remote**. Chromecast from Chrome, Edge and Android. |
 | **Offline downloads** | Per-device licences with expiry; works in Chrome, Edge, Firefox, Safari 17+ and as a home-screen app on iOS 17+. |
-| **Watch together** | Watch parties with synchronised playback, chat and emoji reactions. **Movie-night voting** with countdown and automatic start. "What has none of us seen yet?" – the group matcher finds titles for everyone. "Tonight" suggests three titles by mood and time. |
+| **Watch together** | Watch parties with synchronised playback, chat and live emoji reactions that float over the picture for everyone in the party. **Movie-night voting** with countdown and automatic start. "What has none of us seen yet?" – the group matcher finds titles for everyone. "Tonight" suggests three titles by mood and time. |
 | **Recommendations** | Recommend titles to friends, see what friends rated and watched this week, "Because you watched …", shared lists with editors and readers, curated rows from the admin. |
 | **Wishes** | Missing something? Request it right from the search (via Seerr) and get notified when it arrives – with a monthly limit per role. "Remind me" for upcoming titles. |
 | **Stay in the loop** | Notifications in the app, as web push on every device, via ntfy or Discord, and an optional weekly digest. |
@@ -263,6 +267,7 @@ npm run e2e                                     # Playwright: builds the web app
 - Jellyfin, Seerr and Authentik APIs differ between versions – after upgrades see [docs/operations.md](docs/operations.md) and [docs/integrations.md](docs/integrations.md).
 - Profiles are hidden Jellyfin users: turn off Seerr's automatic Jellyfin user import so they do not show up there.
 - With Intel QSV/VAAPI, switch off "VPP Tone mapping" in Jellyfin if the driver has no HDR support; otherwise 4K HDR titles fail.
+- Kids profiles are a parental guard, not a lock against someone who knows the account login. The owner PIN is reset with "Forgot PIN?" (`/auth/login?resetPin=1`): it needs a fresh sign-in at Authentik (checked via the token's `auth_time`) and is refused on any device that is tied to a kids profile – the owner resets it from their own device. Keep the Authentik login (and its second factor) away from the kids. If no PIN is set at all, leaving a kids profile is allowed and the owner sees a hint to set one.
 
 ### License
 
