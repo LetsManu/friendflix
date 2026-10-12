@@ -26,6 +26,13 @@ describe('BandwidthEstimator', () => {
     expect(e.estimate).not.toBeNull();
   });
 
+  it('ignores NaN bytes', () => {
+    const e = new BandwidthEstimator();
+    e.add(NaN, 100);
+    expect(e.samples).toBe(0);
+    expect(e.estimate).toBeNull();
+  });
+
   it('honours a custom minBytes and ignores samples that took no time', () => {
     const e = new BandwidthEstimator({ minBytes: 1000 });
     e.add(999, 10);
@@ -64,11 +71,19 @@ describe('BandwidthEstimator', () => {
     expect(Math.abs(e.estimate! - before) / before).toBeLessThan(0.3);
   });
 
-  it('caps an optimistic sample at 3x the current estimate', () => {
+  it('caps an optimistic sample at 1.5x the current estimate', () => {
     const e = new BandwidthEstimator();
     e.add(1_000_000, 1000); // 8 Mbit/s
-    e.add(1_000_000, 10); // 800 Mbit/s, capped to 24 Mbit/s: 8 + 0.3 * (24 - 8) = 12.8 Mbit/s
-    expect(e.estimate).toBeCloseTo(12_800_000, -3);
+    e.add(1_000_000, 10); // 800 Mbit/s, capped to 12 Mbit/s: 8 + 0.3 * (12 - 8) = 9.2 Mbit/s
+    expect(e.estimate).toBeCloseTo(9_200_000, -3);
+  });
+
+  it('fast 10x outlier moves the estimate < 30 %', () => {
+    const e = new BandwidthEstimator();
+    e.add(1_000_000, 1000); // 8 Mbit/s
+    e.add(1_000_000, 100); // 80 Mbit/s, capped to 12 Mbit/s: 0.7 * 8 + 0.3 * 12 = 9.2 Mbit/s
+    expect(e.estimate).toBeCloseTo(9_200_000, -3);
+    expect(Math.abs(e.estimate! - 8_000_000) / 8_000_000).toBeLessThan(0.3);
   });
 });
 
