@@ -19,8 +19,9 @@ export const HOVER_MARGIN = 12;
 const MIN_W = 300, MAX_W = 480;
 
 /**
- * Geometry of the desktop pop-out preview: ~1.5x the card width (at least 300px), centred over the card,
- * clamped horizontally to the viewport (first/last visible cards anchor to the edge) and vertically
+ * Geometry of the desktop pop-out preview: ~1.5x the card width (at least 300px), centred over the card.
+ * When the centred box would leave the viewport (first/last visible card of a row) it grows from the card's own
+ * outer edge instead (left edge stays on the card's left edge, resp. right on right), clamped to the viewport; vertically
  * (when the bottom would overflow the box moves up, i.e. "flips" over the card).
  */
 export function previewRect(card: Rect, vp: { w: number; h: number }, infoH = 170, margin = HOVER_MARGIN): PreviewBox {
@@ -28,7 +29,11 @@ export function previewRect(card: Rect, vp: { w: number; h: number }, infoH = 17
   const mediaH = Math.round((width * 9) / 16);
   const height = mediaH + Math.max(0, Math.round(infoH));
   const cx = card.left + card.width / 2;
-  const left = Math.round(Math.max(margin, Math.min(cx - width / 2, vp.w - margin - width)));
+  const minL = margin, maxL = vp.w - margin - width;
+  let l = cx - width / 2;
+  if (l < minL) l = card.left; // first card: align to its left edge instead of shifting past it
+  else if (l > maxL) l = card.left + card.width - width; // last card: align to its right edge
+  const left = Math.round(Math.max(minL, Math.min(l, maxL)));
   const idealTop = card.top + card.height / 2 - mediaH / 2;
   const maxTop = vp.h - margin - height;
   const top = Math.round(maxTop < margin ? margin : Math.max(margin, Math.min(idealTop, maxTop)));

@@ -1,16 +1,19 @@
 <script lang="ts">
   import { onDestroy, onMount } from 'svelte';
-  import { backdrop, HERO_WIDTHS, img, srcset, fmtMin, logoUrl, type Item } from '#lib/api';
+  import { backdrop, HERO_WIDTHS, img, primeItem, srcset, fmtMin, logoUrl, type Item } from '#lib/api';
+  import { prefetchPlayer } from '#lib/player/prefetch';
+  import { prefetchModal } from '#lib/lazy';
   import Icon from '#lib/Icon.svelte';
   import Logo from '#lib/Logo.svelte';
   import { openModal } from '#lib/modal';
   import { listIds, prefs, toggleList } from '#lib/stores';
-  import { playPreview, previewOwner, stopPreview, toggleSound } from '#lib/preview';
+  import { billboardHeld, playPreview, previewOwner, stopPreview, toggleSound } from '#lib/preview';
   import { mobile } from '#lib/viewport';
-  import { openPreview } from '#lib/previewSheet';
+  import { openPreview, previewSheet } from '#lib/previewSheet';
   import { genreLine } from '#lib/mobile';
+  import { pageStore } from '#lib/page';
 
-  /** Billboard at the top of the home page / detail page. */
+  /** Billboard at the top of the home page. */
   export let item: Item | null;
   export let playHref = '';
   export let playLabel = 'Abspielen';
@@ -20,14 +23,23 @@
   export let rankLabel = 'in den Top 10 nach Bewertung';
   /** phone layout: centered poster card instead of the wide backdrop (home page only) */
   export let portrait = false;
-  let loaded = false, logoFailed = false;
+  const page = pageStore();
+  let loaded = false, logoFailed = false, section: HTMLElement | undefined;
 
-  // ---- billboard preview: after a short pause the still image fades into the trailer (clip), like Netflix ----
-  const DELAY = 2500;
-  let hv: HTMLVideoElement, playing = false, vmuted = true, timer: ReturnType<typeof setTimeout>, scheduledFor = '';
+  // ---- billboard preview: after a short pause the still image fades into the (muted) trailer, like Netflix ----
+  const DELAY = 2500, QUIET_AFTER = 4000;
+  let hv: HTMLVideoElement, playing = false, vmuted = true, ended = false, quiet = false, inView = true, paused = false;
+  let timer: ReturnType<typeof setTimeout>, quietT: ReturnType<typeof setTimeout>, scheduledFor = '';
   $: heroOwner = item ? 'hero:' + item.id : '';
+  /** something covers the billboard: quick-view modal (shallow route), phone preview sheet, any overlay holding it */
+  $: covered = Boolean(($page.state as { modalId?: string } | undefined)?.modalId) || $previewSheet !== null || $billboardHeld;
+  $: hold = covered || !inView;
   $: if (item && loaded && item.id !== scheduledFor) schedule(item.id);
-  $: if (playing && $previewOwner !== heroOwner) playing = false; // a hover card took over (or the preview failed)
+  let interrupted = false;
+  $: if (playing && $previewOwner !== heroOwner) { playing = false; quiet = false; interrupted = $previewOwner !== ''; } // a hover card took over (or the preview failed)
+  // the hover preview is over: the billboard trailer comes back (from the start, like Netflix)
+  $: if (interrupted && $previewOwner === '' && item) { interrupted = false; clearTimeout(timer); const id = item.id; timer = setTimeout(() => void startHero(id), 1500); }
+  $: syncHold(hold);
   function eligible() {
     const nav = navigator as Navigator & { connection?: { saveData?: boolean } };
     return $prefs.hoverTrailers && !document.hidden && !matchMedia('(prefers-reduced-motion: reduce)').matches && !document.documentElement.classList.contains('tv') && !nav.connection?.saveData;
@@ -36,20 +48,41 @@
     scheduledFor = id;
     clearTimeout(timer);
     stopHero();
+    ended = false;
     timer = setTimeout(() => void startHero(id), DELAY);
   }
   async function startHero(id: string) {
-    if (!item || item.id !== id || !eligible() || scrollY > innerHeight * 0.5 || $previewOwner) return; // not while something else previews
-    playing = true; // mounts nothing new: the <video> always exists, this only fades it in once frames arrive (see on:playing)
+    if (!item || item.id !== id || !eligible() || $previewOwner) return; // not while something else previews
+    if (hold) { paused = true; return; } // starts when the overlay closes / the billboard is back in view
+    playing = true; ended = false; // the <video> always exists, this only fades it in once frames arrive
     const ok = await playPreview(id, () => hv, 'hero:' + id);
-    if (!ok) playing = false;
+    if (!ok) { playing = false; return; }
+    if (hold && hv && !hv.paused) { hv.pause(); paused = true; }
+    clearTimeout(quietT);
+    quietT = setTimeout(() => { if (playing) quiet = true; }, QUIET_AFTER);
   }
-  function stopHero() { clearTimeout(timer); if (heroOwner) stopPreview(heroOwner); playing = false; }
-  function onScroll() { if (playing && scrollY > innerHeight * 0.55) stopHero(); }
-  function onVisibility() { if (document.hidden) stopHero(); }
-  onMount(() => { addEventListener('scroll', onScroll, { passive: true }); document.addEventListener('visibilitychange', onVisibility); });
-  onDestroy(() => { if (typeof window === 'undefined') return; removeEventListener('scroll', onScroll); document.removeEventListener('visibilitychange', onVisibility); stopHero(); });
-  function ended() { stopHero(); } // trailer finished: back to the still image
+  function syncHold(h: boolean) {
+    if (typeof window === 'undefined') return;
+    if (h) {
+      if (playing && hv && !hv.paused) { hv.pause(); paused = true; }
+    } else if (paused) {
+      paused = false;
+      if (playing && hv) void hv.play().catch(() => undefined);
+      else if (item && !ended && !playing) { clearTimeout(timer); timer = setTimeout(() => void startHero(item!.id), 600); }
+    }
+  }
+  function stopHero() { clearTimeout(timer); clearTimeout(quietT); if (heroOwner) stopPreview(heroOwner); playing = false; quiet = false; paused = false; }
+  function onEnded() { stopHero(); ended = true; } // trailer finished: back to the still image, replay button
+  function replay() { if (!item) return; ended = false; scheduledFor = item.id; void startHero(item.id); }
+  function onVisibility() { if (document.hidden) { if (playing && hv && !hv.paused) { hv.pause(); paused = true; } } else syncHold(hold); }
+  let io: IntersectionObserver | undefined;
+  // in-view via IntersectionObserver instead of reading scrollY in a scroll handler (no forced layout while scrolling)
+  $: if (section && typeof IntersectionObserver !== 'undefined' && !io) {
+    io = new IntersectionObserver((es) => { const e = es[es.length - 1]; if (e) inView = e.intersectionRatio > 0.45; }, { threshold: [0, 0.45, 0.6] });
+    io.observe(section);
+  }
+  onMount(() => { document.addEventListener('visibilitychange', onVisibility); });
+  onDestroy(() => { if (typeof window === 'undefined') return; io?.disconnect(); document.removeEventListener('visibilitychange', onVisibility); stopHero(); });
   $: item, (logoFailed = false);
   $: listId = item ? (item.seriesId ?? item.id) : '';
   $: inList = listId ? $listIds.has(listId) : false;
@@ -80,34 +113,36 @@
     {/if}
   </section>
 {:else}
-<section class="hero" aria-label="Empfehlung">
+<section class="hero" class:quiet bind:this={section} aria-label="Empfehlung">
   {#if item}
     {#if item.backdrop}<img class="bg" class:loaded src={backdrop(item.id, 1280)} srcset={srcset('Backdrop', item.id, HERO_WIDTHS)} sizes="100vw" alt="" fetchpriority="high" on:load={() => (loaded = true)} />{/if}
     <!-- svelte-ignore a11y_media_has_caption -->
-    <video bind:this={hv} class="hv" class:on={playing} playsinline aria-hidden="true" tabindex="-1" on:ended={ended} on:volumechange={() => (vmuted = hv.muted)} on:playing={() => (vmuted = hv.muted)}></video>
+    <video bind:this={hv} class="hv" class:on={playing} playsinline aria-hidden="true" tabindex="-1" on:ended={onEnded} on:volumechange={() => (vmuted = hv.muted)} on:playing={() => (vmuted = hv.muted)}></video>
     <div class="shade"></div>
     <div class="content">
-      <p class="eyebrow"><Logo size={22} label="" /><span>{kind}</span></p>
+      <p class="eyebrow"><Logo size={22} label="" shadow /><span>{kind}</span></p>
       {#if item.logo && !logoFailed}
         <h1 class="logoh"><img class="tlogo" src={logoUrl(item.id)} alt={item.name} on:error={() => (logoFailed = true)} /></h1>
       {:else}<h1>{item.name}</h1>{/if}
-      {#if rank > 0}
-        <p class="rankline"><span class="top10" aria-hidden="true"><small>TOP</small>10</span>#{rank} {rankLabel}</p>
-      {:else if tagline}<p class="rankline plain">{tagline}</p>{/if}
-      <p class="meta">
-        {#if item.communityRating}<span class="match">{Math.round(item.communityRating * 10)}% Match</span>{/if}
-        {#if item.year}<span>{item.year}</span>{/if}
-        {#if item.runtimeTicks && item.type !== 'Series'}<span>{fmtMin(item.runtimeTicks)}</span>{/if}
-      </p>
-      {#if item.overview}<p class="ov">{item.overview}</p>{/if}
+      <div class="fadebox">
+        {#if rank > 0}
+          <p class="rankline"><span class="top10" aria-hidden="true"><small>TOP</small>10</span>#{rank} {rankLabel}</p>
+        {:else if tagline}<p class="rankline plain">{tagline}</p>{/if}
+        <p class="meta">
+          {#if item.communityRating}<span class="match">{Math.round(item.communityRating * 10)}% Match</span>{/if}
+          {#if item.year}<span>{item.year}</span>{/if}
+          {#if item.runtimeTicks && item.type !== 'Series'}<span>{fmtMin(item.runtimeTicks)}</span>{/if}
+        </p>
+        {#if item.overview}<p class="ov">{item.overview}</p>{/if}
+      </div>
       <div class="btns">
-        <a class="btn light" data-autofocus href={playHref || (item.type === 'Series' ? `/item/${item.id}` : `/watch/${item.id}`)}><Icon name="play" size={24} />{playLabel}</a>
-        <button class="btn grey" aria-pressed={inList} on:click={() => toggleList(listId, inList)}><Icon name={inList ? 'check' : 'plus'} size={24} />Meine Liste</button>
-        {#if more}<a class="btn grey round" href="/item/{item.id}" aria-label="Mehr Infos" title="Mehr Infos" on:click={(e) => openModal(e, `/item/${item.id}`)}><Icon name="info" size={24} /></a>{/if}
+        <a class="btn light" data-autofocus href={playHref || (item.type === 'Series' ? `/item/${item.id}` : `/watch/${item.id}`)} on:pointerenter={prefetchPlayer} on:focus={prefetchPlayer}><Icon name="play" size={26} />{playLabel}</a>
+        {#if more}<a class="btn grey" href="/item/{item.id}" aria-haspopup="dialog" on:pointerenter={prefetchModal} on:focus={prefetchModal} on:click={(e) => { if (item) primeItem(item); openModal(e, `/item/${item!.id}`); }}><Icon name="info" size={26} />Weitere Infos</a>{/if}
       </div>
     </div>
     <div class="side">
-      {#if playing}<button class="snd" aria-label={vmuted ? 'Ton einschalten' : 'Ton ausschalten'} aria-pressed={!vmuted} on:click={() => toggleSound(hv)}><Icon name={vmuted ? 'volume-off' : 'volume'} size={22} /></button>{/if}
+      {#if playing}<button class="snd" aria-label={vmuted ? 'Ton einschalten' : 'Ton ausschalten'} aria-pressed={!vmuted} on:click={() => toggleSound(hv)}><Icon name={vmuted ? 'volume-off' : 'volume'} size={22} /></button>
+      {:else if ended}<button class="snd" aria-label="Vorschau erneut abspielen" title="Erneut abspielen" on:click={replay}><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M3.5 12a8.5 8.5 0 102.6-6.1M3.5 4v4.5H8" /></svg></button>{/if}
       {#if item.rating}<div class="agebox" aria-label="Altersfreigabe {item.rating}"><span>{item.rating}</span></div>{/if}
     </div>
   {:else}
@@ -118,18 +153,19 @@
 
 <style>
   .hero { position: relative; height: clamp(460px, 88vh, 940px); margin-bottom: -9vw; overflow: hidden; background: var(--bg); }
-  .bg { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; object-position: center 22%; opacity: 0; transition: opacity .8s var(--ease); }
+  .bg { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; object-position: center 22%; opacity: 0; transition: opacity .18s linear; }
   .bg.loaded { opacity: 1; }
   /* the billboard does not rotate, so the still gets a very slow push-in instead */
   .bg, .hv { transform-origin: 62% 30%; will-change: transform; animation: ff-kenburns 12s ease-out both; }
   @keyframes ff-kenburns { from { transform: scale(1); } to { transform: scale(1.06); } }
-  @media (prefers-reduced-motion: reduce) { .bg, .hv { animation: none; will-change: auto; } }
+  @media (prefers-reduced-motion: reduce) { .bg, .hv { animation: none; will-change: auto; } .bg { transition: none; } }
   .fill { position: absolute; inset: 0; border-radius: 0; }
   .hv { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; object-position: center 22%; opacity: 0; transition: opacity 1s var(--ease); pointer-events: none; background: transparent; }
   .hv.on { opacity: 1; }
+  /* first layer paints on top: the bottom fade must end in exactly var(--bg), otherwise the side vignette leaves a seam */
   .shade { position: absolute; inset: 0; background:
+      linear-gradient(to top, var(--bg) 0%, var(--bg) 3%, rgba(20,20,20,.9) 11%, transparent 42%),
       linear-gradient(77deg, rgba(0,0,0,.82) 0%, rgba(0,0,0,.5) 30%, transparent 62%),
-      linear-gradient(to top, var(--bg) 0%, rgba(20,20,20,.9) 9%, transparent 42%),
       linear-gradient(to bottom, rgba(0,0,0,.65), transparent 24%); }
   .content { position: absolute; left: var(--pad-x); bottom: 25%; max-width: min(42rem, 88vw); z-index: 2; }
   .eyebrow { display: flex; align-items: center; gap: .55rem; margin: 0 0 .5rem; font-size: .78rem; font-weight: 700; letter-spacing: .4em; text-transform: uppercase; color: #d9d9d9; text-shadow: 0 1px 6px rgba(0,0,0,.7); }
@@ -141,20 +177,24 @@
   .top10 { display: inline-grid; place-items: center; width: 1.9rem; height: 1.9rem; background: var(--acc); border-radius: 4px; font-size: 1rem; font-weight: 900; line-height: .85; padding-top: .1rem; } .top10 small { font-size: .5rem; letter-spacing: .08em; display: block; }
   .meta { display: flex; flex-wrap: wrap; gap: .8rem; align-items: center; color: #d2d2d2; margin: 0 0 .7rem; font-weight: 500; }
   .match { color: var(--ok); font-weight: 700; }
-  .ov { font-size: clamp(1rem, 1.45vw, 1.28rem); line-height: 1.5; margin: 0 0 1.4rem; max-width: 38rem; display: -webkit-box; -webkit-line-clamp: 3; line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; text-shadow: 0 1px 8px rgba(0,0,0,.8); }
+  .ov { font-size: clamp(1rem, 1.45vw, 1.28rem); line-height: 1.5; margin: 0; max-width: 38rem; display: -webkit-box; -webkit-line-clamp: 3; line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; text-shadow: 0 1px 8px rgba(0,0,0,.8); }
   .btns { display: flex; gap: .8rem; flex-wrap: wrap; align-items: center; }
   .btns .btn { font-size: 1.15rem; font-weight: 600; padding: .55rem 1.9rem .55rem 1.5rem; min-height: 52px; border-radius: 4px; }
   .btn.grey { background: rgba(109,109,110,.7); color: #fff; padding-left: 1.4rem; }
   .btn.grey:hover:not(:disabled) { background: rgba(109,109,110,.45); }
-  .btn.round { width: 52px; padding: 0; border-radius: 50%; background: rgba(42,42,42,.6); border: 2px solid rgba(255,255,255,.55); }
-  .btn.round:hover { background: rgba(42,42,42,.9); border-color: #fff; }
+  /* trailer running: synopsis + meta fade out, the title shrinks towards the buttons (Netflix billboard) */
+  .fadebox { overflow: hidden; max-height: 24rem; transition: max-height .9s var(--ease), opacity .6s ease; }
+  .fadebox > :last-child { margin-bottom: 1.4rem; }
+  .hero.quiet .fadebox { max-height: 0; opacity: 0; }
+  h1, .logoh { transform-origin: left bottom; transition: transform .9s var(--ease); }
+  .hero.quiet h1, .hero.quiet .logoh { transform: scale(.72); }
+  @media (prefers-reduced-motion: reduce) { .fadebox, h1, .logoh { transition: none; } }
   /* age rating box on the right edge, like a TV network bug */
   .side { position: absolute; right: 0; bottom: calc(25% + .35rem); z-index: 2; display: flex; align-items: center; gap: .9rem; }
   .snd { width: 46px; min-height: 46px; height: 46px; padding: 0; border-radius: 50%; background: rgba(42,42,42,.6); border: 2px solid rgba(255,255,255,.55); color: #fff; }
   .snd:hover:not(:disabled) { background: rgba(42,42,42,.9); border-color: #fff; }
   .agebox { display: flex; align-items: center; min-height: 52px; padding: 0 var(--pad-x) 0 1.1rem; background: rgba(51,51,51,.6); border-left: 3px solid #dcdcdc; font-size: 1.1rem; font-weight: 600; letter-spacing: .02em; backdrop-filter: blur(4px); }
-  @media (max-width: 460px) { .btn.round { display: none; } }
-  @media (max-width: 700px) { .hero { height: 68vh; margin-bottom: -5vh; } .content { bottom: 17%; } .btns .btn { padding: .5rem 1.1rem; font-size: 1rem; min-height: 46px; } .btn.round { width: 46px; } .agebox { display: none; } .side { right: var(--pad-x); } .eyebrow { letter-spacing: .3em; } }
+  @media (max-width: 700px) { .hero { height: 68vh; margin-bottom: -5vh; } .content { bottom: 17%; } .btns .btn { padding: .5rem 1.1rem; font-size: 1rem; min-height: 46px; } .agebox { display: none; } .side { right: var(--pad-x); } .eyebrow { letter-spacing: .3em; } }
 
   /* ---- phone billboard: centered poster card on a blurred copy of the poster ---- */
   .mh { position: relative; overflow: hidden; padding: calc(var(--nav-h) + .6rem) 0 1.4rem; background: var(--bg); }

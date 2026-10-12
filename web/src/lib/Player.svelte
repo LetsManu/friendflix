@@ -1,5 +1,5 @@
 <script lang="ts">
-  import Hls from 'hls.js';
+  import type Hls from 'hls.js';
   import { createEventDispatcher, onDestroy, onMount, tick as tickDom } from 'svelte';
   import { api, ApiError, fmtClock, secToTicks } from '#lib/api';
   import Icon from '#lib/Icon.svelte';
@@ -14,12 +14,20 @@
   import { creditsStart } from '#lib/player/nextup';
   import { decideRecovery, freshRecovery, kindOfMediaError, lowerQuality, MAX_NETWORK_TRIES, type ErrorKind } from '#lib/player/retry';
   import { parseVolume, stepVolume } from '#lib/player/volume';
-  import CastButton from '#lib/CastButton.svelte';
-  import { castPause, castPlay, castPlayPause, castSeek, castSetSubtitle, castSetVolume, castState, castStop, castToggleMute, loadOnCast, onCastEvent, type CastInfo, type CastState } from '#lib/cast';
+  import { hlsConfig, loadHls } from '#lib/player/hls';
+  import { firstInfoBody, speedLabel, SPEEDS } from '#lib/player/bar';
+  import EpisodesPanel from '#lib/player/EpisodesPanel.svelte';
+  import { castPause, castPlay, castPlayPause, castSeek, castSetSubtitle, castSetVolume, castState, castStop, castToggleMute, initCast, loadOnCast, onCastEvent, requestCastSession, type CastInfo, type CastState } from '#lib/cast';
 
   export let itemId: string;
   /** shown on the phone's remote while this plays */
   export let title = '';
+  /** centred in the control bar (Netflix): series / film name and, for episodes, "F3 Folgentitel" */
+  export let barTitle = '';
+  export let barSub = '';
+  /** series of the playing episode: shows the episodes panel button */
+  export let seriesId = '';
+  export let seasonId = '';
   /** language picked on the detail page: audio language code, subtitles code or 'off' (empty = my defaults) */
   export let wantAudio = '';
   export let wantSub = '';
@@ -47,6 +55,8 @@
     playSessionId: string; mediaSourceId: string; directUrl?: string; hlsUrl: string; resumeTicks: number; maxBitrate: number;
     roleMaxBitrate?: number;
     trickplay?: { width: number; height: number; tileWidth: number; tileHeight: number; count: number; interval: number; url: string };
+    /** audio track the server baked into hlsUrl (audioLang matched a non-default track) */
+    audioIndex?: number;
     audioTracks: Array<{ index: number; title: string; isDefault: boolean; language?: string }>;
     subtitles: Array<{ index: number; title: string; url: string; language?: string; isDefault: boolean }>;
   }
@@ -59,7 +69,7 @@
 
   // ---- UI state ----
   let paused = true, current = 0, duration = 0, buffered = 0, volume = 1, muted = false, rate = 1, waiting = true, fullscreen = false;
-  let menu: '' | 'tracks' | 'settings' | 'scenes' = '', toast = '', toastTimer: ReturnType<typeof setTimeout>;
+  let menu: '' | 'tracks' | 'settings' | 'scenes' | 'more' | 'speed' | 'episodes' = '', toast = '', toastTimer: ReturnType<typeof setTimeout>;
   let lastActive = Date.now(), tick = Date.now(), activityTimer: ReturnType<typeof setInterval>;
   type Bookmark = { id: string; position: number; note: string | null };
   type Person = { id: string; name: string; role?: string; type: string; image: boolean };
@@ -99,8 +109,13 @@
   async function load(startSec?: number) {
     error = ''; errNote = '';
     if (startSec !== undefined) lastPos = startSec;
+    // first start: the saved quality + audio language go into this same request (no second round trip)
+    const first = !prefsApplied && !partyMode;
+    const fb = first ? firstInfoBody(get(prefs), wantAudio) : {};
+    if (fb.maxBitrate && !quality) quality = fb.maxBitrate;
+    const audioLang = fb.audioLang;
     try {
-      info = await api<Info>('/api/playback/info', { method: 'POST', body: { itemId, startTicks: startSec !== undefined ? secToTicks(startSec) : undefined, audioIndex, maxBitrate: quality || undefined } });
+      info = await api<Info>('/api/playback/info', { method: 'POST', body: { itemId, startTicks: startSec !== undefined ? secToTicks(startSec) : undefined, audioIndex, maxBitrate: quality || undefined, audioLang } });
     } catch (e: any) {
       if (!(e instanceof ApiError) || e.status >= 500) { recover('network', true); return; } // server/network hiccup: retry with backoff
       reconnecting = 0;
@@ -108,38 +123,46 @@
       error = 'Wiedergabe nicht möglich.';
       return;
     }
-    // first start only: apply the viewer's saved defaults (quality, audio language) before playback begins
-    if (!prefsApplied && !partyMode) {
+    if (info.audioIndex !== undefined) audioIndex = info.audioIndex;
+    if (first && quality && info.roleMaxBitrate && quality >= info.roleMaxBitrate) quality = 0; // saved quality above the role limit = "Automatisch"
+    // first start only: an older server ignores audioLang -> pick the track here (one extra request, as before)
+    if (first) {
       prefsApplied = true;
-      const pf = get(prefs);
-      const wantTrack = (wantAudio || pf.audioLang) ? info.audioTracks.find((a) => a.language === (wantAudio || pf.audioLang)) : undefined;
-      const needQuality = pf.quality > 0 && pf.quality < info.maxBitrate;
-      if ((wantTrack && !wantTrack.isDefault) || needQuality) {
-        if (wantTrack && !wantTrack.isDefault) audioIndex = wantTrack.index;
-        if (needQuality) quality = pf.quality;
-        return load(startSec);
-      }
+      const wantTrack = audioLang ? info.audioTracks.find((a) => a.language === audioLang) : undefined;
+      if (wantTrack && !wantTrack.isDefault && audioIndex === undefined) { audioIndex = wantTrack.index; return load(startSec); }
     }
-    attach(startSec ?? info.resumeTicks / 10_000_000);
+    void attach(startSec ?? info.resumeTicks / 10_000_000);
   }
 
-  function attach(startSec: number) {
+  let attachSeq = 0;
+  async function attach(startSec: number) {
     if (!video || !info) return;
+    const my = ++attachSeq, cur = info;
     hls?.destroy(); hls = null;
     const useDirect = info.directUrl && audioIndex === undefined && !rec.forcedHls && video.canPlayType('video/mp4');
     mode = useDirect ? 'direct' : 'hls';
     const seek = () => { if (startSec > 1) video!.currentTime = startSec; };
+    // hls.js is loaded lazily, only on this path (and usually already prefetched by the play button)
+    let H: typeof Hls | null = null;
+    if (!useDirect) {
+      try { H = await loadHls(); } catch { H = null; }
+      if (my !== attachSeq || info !== cur || !video) return; // superseded while loading
+    }
     if (useDirect) {
       video.src = info.directUrl!;
       video.addEventListener('loadedmetadata', seek, { once: true });
-    } else if (Hls.isSupported()) {
-      hls = new Hls({ startPosition: startSec > 1 ? startSec : -1, maxBufferLength: 30 });
+    } else if (H?.isSupported()) {
+      const HC = H;
+      hls = new HC(hlsConfig(startSec));
       hls.loadSource(info.hlsUrl);
       hls.attachMedia(video);
-      hls.on(Hls.Events.ERROR, (_e, d) => {
+      hls.on(HC.Events.ERROR, (_e, d) => {
         if (!d.fatal) return;
-        recover(d.type === Hls.ErrorTypes.NETWORK_ERROR ? 'network' : d.type === Hls.ErrorTypes.MEDIA_ERROR ? 'media' : 'other');
+        recover(d.type === HC.ErrorTypes.NETWORK_ERROR ? 'network' : d.type === HC.ErrorTypes.MEDIA_ERROR ? 'media' : 'other');
       });
+    } else if (!H && !video.canPlayType('application/vnd.apple.mpegurl')) {
+      recover('network', true); // hls.js could not be loaded (offline): retry like a network error
+      return;
     } else {
       video.src = info.hlsUrl; // Safari: native HLS
       video.addEventListener('loadedmetadata', seek, { once: true });
@@ -372,7 +395,15 @@
     } catch { subMsg = 'Download fehlgeschlagen.'; }
     subBusy = false;
   }
-  function setRate(r: number) { if (!video) return; rate = r; video.playbackRate = r; menu = ''; flash(`${r}×`); }
+  function setRate(r: number) { if (!video) return; rate = r; video.playbackRate = r; menu = ''; flash(r === 1 ? 'Tempo: Normal' : `${String(r).replace('.', ',')}×`); }
+  // ---- Chromecast entry in the "Mehr" menu (the SDK loads lazily, Chromium only) ----
+  function castClick() { menu = ''; if (!$castState.connected) void requestCastSession(); else if (casting) castStop(); else void startCast(); }
+  $: castLabel = casting ? `Übertragung auf ${$castState.deviceName || 'Chromecast'} beenden` : $castState.connected ? `Auf ${$castState.deviceName || 'Chromecast'} abspielen` : 'Auf Chromecast übertragen';
+  $: modeLabel = casting ? 'Chromecast' : mode === 'direct' ? 'Direct Play (Originaldatei)' : mode ? 'HLS (Transcoding)' : '';
+  const toggleMenu = (m: typeof menu) => (menu = menu === m ? '' : m);
+  /** Netflix-size control icons (~40px); smaller on phones */
+  let ICON = 36;
+  function pickEpisode(e: CustomEvent<{ id: string }>) { menu = ''; dispatch('episode', e.detail); }
   function setVolume(v: number) { if (casting) { volume = v; muted = v === 0; castSetVolume(v); return; } if (!video) return; volume = v; video.volume = v; video.muted = v === 0; muted = v === 0; try { localStorage.setItem('ff_vol', String(v)); } catch { /* ignore */ } }
   function volumeBy(delta: number) { const v = stepVolume(muted ? 0 : volume, delta); setVolume(v); flash(`Lautstärke ${Math.round(v * 100)} %`, 600); }
   function toggleMute() { if (casting) { castToggleMute(); return; } if (!video) return; video.muted = !video.muted; muted = video.muted; if (!muted && volume === 0) setVolume(0.5); }
@@ -558,11 +589,14 @@
   onMount(() => {
     if (video) volOk = volumeSettable(video); // iOS cannot set the volume: no volume swipe there
     coarse = matchMedia('(pointer: coarse)').matches;
+    const narrow = matchMedia('(max-width: 720px)'), setIcon = () => (ICON = narrow.matches ? 28 : 36);
+    setIcon(); narrow.addEventListener?.('change', setIcon);
     try { const v = parseVolume(localStorage.getItem('ff_vol')); if (video && v !== null) { volume = v; video.volume = v; } } catch { /* ignore */ }
     load(startAt);
     castOff = onCastEvent(handleCast);
+    if (!partyMode) void initCast();
     loadBookmarks();
-    api(`/api/items/${itemId}/segments`).then((r) => (segments = r.segments)).catch(() => undefined);
+    api(`/api/items/${itemId}/segments`).then((r) => (segments = (r.segments as typeof segments).map((x) => ({ ...x, type: String(x.type).toLowerCase() })))).catch(() => undefined);
     progressTimer = setInterval(() => { if (started && !stopped) send('progress'); }, 10_000);
     pipOk = Boolean(document.pictureInPictureEnabled) && !video?.disablePictureInPicture;
     activityTimer = setInterval(() => {
@@ -594,6 +628,7 @@
       window.removeEventListener('pagehide', bye); document.removeEventListener('fullscreenchange', fs);
       window.removeEventListener('online', online); document.removeEventListener('visibilitychange', vis);
       video?.removeEventListener('enterpictureinpicture', pipOn); video?.removeEventListener('leavepictureinpicture', pipOff);
+      narrow.removeEventListener?.('change', setIcon);
       window.removeEventListener('ff-remote', onRemote); window.removeEventListener('keydown', unmuteOnGesture, true); window.removeEventListener('pointerdown', unmuteOnGesture, true);
     };
   });
@@ -705,21 +740,28 @@
     </div>
     <div class="row">
       <div class="grp">
-        <button class="ic" class:locked={!canControl} aria-label={paused ? 'Abspielen' : 'Pause'} on:click={togglePlay}><Icon name={paused ? 'play' : 'pause'} size={30} /></button>
-        <button class="ic" class:locked={!canControl} aria-label="10 Sekunden zurück" on:click={() => seekBy(-10)}><Icon name="rewind10" size={30} /></button>
-        <button class="ic" class:locked={!canControl} aria-label="10 Sekunden vor" on:click={() => seekBy(10)}><Icon name="forward10" size={30} /></button>
+        <button class="ic" class:locked={!canControl} aria-label={paused ? 'Abspielen' : 'Pause'} on:click={togglePlay}><Icon name={paused ? 'play' : 'pause'} size={ICON} /></button>
+        <button class="ic" class:locked={!canControl} aria-label="10 Sekunden zurück" on:click={() => seekBy(-10)}><Icon name="rewind10" size={ICON} /></button>
+        <button class="ic" class:locked={!canControl} aria-label="10 Sekunden vor" on:click={() => seekBy(10)}><Icon name="forward10" size={ICON} /></button>
         <div class="vol">
-          <button class="ic" aria-label={muted ? 'Ton an' : 'Stumm'} on:click={toggleMute}><Icon name={muted || volume === 0 ? 'volume-off' : volume < 0.5 ? 'volume-low' : 'volume'} size={28} /></button>
+          <button class="ic" aria-label={muted ? 'Ton an' : 'Stumm'} on:click={toggleMute}><Icon name={muted || volume === 0 ? 'volume-off' : volume < 0.5 ? 'volume-low' : 'volume'} size={ICON} /></button>
           <input class="vslider" type="range" min="0" max="1" step="0.05" value={muted ? 0 : volume} aria-label="Lautstärke" on:input={(e) => setVolume(Number(e.currentTarget.value))} />
         </div>
         <span class="clock">{fmtClock(shown)} / {fmtClock(duration)}</span>
       </div>
+      <div class="mid" title={barSub ? `${barTitle} · ${barSub}` : barTitle}>{#if barTitle}<b>{barTitle}</b>{#if barSub}<span>{barSub}</span>{/if}{/if}</div>
       <div class="grp right">
         <slot name="extra" />
-        {#if hasNext}<button class="ic" aria-label="Nächste Folge" on:click={() => dispatch('next')}><Icon name="skip-next" size={28} /></button>{/if}
+        {#if hasNext}<button class="ic" aria-label="Nächste Folge" title="Nächste Folge (N)" on:click={() => dispatch('next')}><Icon name="skip-next" size={ICON} /></button>{/if}
+        {#if seriesId}
+          <div class="mwrap">
+            <button class="ic" aria-label="Folgen" title="Folgen" aria-expanded={menu === 'episodes'} on:click={() => toggleMenu('episodes')}><Icon name="list" size={ICON} /></button>
+            {#if menu === 'episodes'}<div class="menu bare"><EpisodesPanel {seriesId} {seasonId} currentId={itemId} on:pick={pickEpisode} on:close={() => (menu = '')} /></div>{/if}
+          </div>
+        {/if}
         {#if info}
           <div class="mwrap">
-            <button class="ic" aria-label="Audio und Untertitel" aria-expanded={menu === 'tracks'} on:click={() => (menu = menu === 'tracks' ? '' : 'tracks')}><Icon name="subtitles" size={28} /></button>
+            <button class="ic" aria-label="Audio und Untertitel" title="Audio und Untertitel (C)" aria-expanded={menu === 'tracks'} on:click={() => toggleMenu('tracks')}><Icon name="subtitles" size={ICON} /></button>
             {#if menu === 'tracks'}
               <div class="menu tracks" data-nav data-scope role="dialog" aria-label="Audio und Untertitel">
                 {#if info.audioTracks.length > 1}
@@ -736,46 +778,60 @@
             {/if}
           </div>
         {/if}
+        {#if !partyMode}
+          <div class="mwrap">
+            <button class="ic" aria-label="Wiedergabetempo: {speedLabel(rate)}" title="Tempo" aria-expanded={menu === 'speed'} on:click={() => toggleMenu('speed')}><Icon name="gauge" size={ICON} />{#if rate !== 1}<span class="ratebadge" aria-hidden="true">{String(rate).replace('.', ',')}×</span>{/if}</button>
+            {#if menu === 'speed'}
+              <div class="menu speed" data-nav data-scope role="dialog" aria-label="Wiedergabetempo">
+                <h3>Wiedergabetempo</h3>
+                <div class="speeds" role="group" aria-label="Tempo">
+                  {#each SPEEDS as r}<button class="sp-opt" class:on={rate === r} aria-pressed={rate === r} on:click={() => setRate(r)}><span class="dot" aria-hidden="true"></span>{speedLabel(r)}</button>{/each}
+                </div>
+              </div>
+            {/if}
+          </div>
+        {/if}
         <div class="mwrap">
-          <button class="ic" aria-label="Szenen und Lesezeichen" aria-expanded={menu === 'scenes'} on:click={() => (menu = menu === 'scenes' ? '' : 'scenes')}><Icon name="bookmark" size={26} /></button>
-          {#if menu === 'scenes'}
+          <button class="ic" aria-label="Mehr" title="Mehr" aria-expanded={menu === 'more' || menu === 'scenes' || menu === 'settings'} on:click={() => (menu = menu === '' || (menu !== 'more' && menu !== 'scenes' && menu !== 'settings') ? 'more' : '')}>
+            <svg width={ICON} height={ICON} viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" focusable="false"><circle cx="5" cy="12" r="2" /><circle cx="12" cy="12" r="2" /><circle cx="19" cy="12" r="2" /></svg>
+            {#if sleepAt}<span class="sleepdot" title="Schlaf-Timer {sleepLeft}"></span>{/if}
+          </button>
+          {#if menu === 'more'}
+            <div class="menu more" data-nav data-scope role="dialog" aria-label="Mehr">
+              <button class="mi" on:click={() => (menu = 'scenes')}><Icon name="bookmark" size={20} />Lesezeichen &amp; Szenen<span class="chev" aria-hidden="true">›</span></button>
+              <button class="mi" class:on={xray} aria-pressed={xray} on:click={() => { xray = !xray; if (xray) ensurePeople(); menu = ''; }}><Icon name="users" size={20} />Besetzung anzeigen</button>
+              {#if !partyMode && ($castState.available || $castState.connected)}<button class="mi" class:on={casting} aria-pressed={casting} on:click={castClick}><Icon name="cast" size={20} />{castLabel}</button>{/if}
+              {#if pipOk && !casting}<button class="mi" class:on={inPip} aria-pressed={inPip} aria-keyshortcuts="P" on:click={() => { menu = ''; void pip(); }}><Icon name="pip" size={20} />Bild-in-Bild</button>{/if}
+              <button class="mi" on:click={() => (menu = 'settings')}><Icon name="settings" size={20} />Einstellungen{#if sleepAt}<span class="muted"> · Schlaf-Timer {sleepLeft}</span>{/if}<span class="chev" aria-hidden="true">›</span></button>
+              {#if modeLabel}<p class="modeinfo"><Icon name="info" size={16} /><span>Wiedergabe: {modeLabel}</span></p>{/if}
+            </div>
+          {:else if menu === 'scenes'}
             <div class="menu scenes" data-nav data-scope role="dialog" aria-label="Szenen und Lesezeichen">
-              <h3>Szenen</h3>
+              <h3><button class="back" aria-label="Zurück zu Mehr" on:click={() => (menu = 'more')}>‹</button>Szenen</h3>
               <button class="mi" on:click={shareScene}><Icon name="share" size={18} />Szene teilen ({fmtClock(shown)})</button>
               <form class="addnote" on:submit|preventDefault={addBookmark}><input bind:value={noteText} maxlength="140" placeholder="Notiz (optional)" aria-label="Notiz zum Lesezeichen" /><button aria-label="Lesezeichen setzen"><Icon name="bookmark" size={18} /></button></form>
               {#each bookmarks as bm (bm.id)}
                 <div class="bm"><button class="mi" on:click={() => { seekTo(bm.position); menu = ''; }}><span class="muted">{fmtClock(bm.position)}</span>{bm.note || 'Lesezeichen'}</button><button class="icx" aria-label="Lesezeichen löschen" on:click={() => removeBookmark(bm.id)}><Icon name="x" size={16} /></button></div>
               {:else}<p class="muted pad">Noch keine Lesezeichen.</p>{/each}
             </div>
-          {/if}
-        </div>
-        <button class="ic" class:on={xray} aria-pressed={xray} aria-label="Besetzung anzeigen" on:click={() => { xray = !xray; if (xray) ensurePeople(); }}><Icon name="users" size={26} /></button>
-        {#if !partyMode}<CastButton active={casting} on:start={startCast} />{/if}
-        {#if pipOk && !casting}<button class="ic" class:on={inPip} aria-pressed={inPip} aria-keyshortcuts="P" aria-label="Bild-in-Bild" title="Bild-in-Bild (P)" on:click={pip}><Icon name="pip" size={26} /></button>{/if}
-        <div class="mwrap">
-          <button class="ic" aria-label="Einstellungen" aria-expanded={menu === 'settings'} on:click={() => (menu = menu === 'settings' ? '' : 'settings')}><Icon name="settings" size={27} />{#if sleepAt}<span class="sleepdot" title="Schlaf-Timer {sleepLeft}"></span>{/if}</button>
-          {#if menu === 'settings'}
+          {:else if menu === 'settings'}
             <div class="menu tracks" data-nav data-scope role="dialog" aria-label="Einstellungen">
-              <div><h3>Qualität</h3>
+              <div><h3><button class="back" aria-label="Zurück zu Mehr" on:click={() => (menu = 'more')}>‹</button>Qualität</h3>
                 <button class="mi" class:on={quality === 0} on:click={() => changeQuality(0)}>{#if quality === 0}<Icon name="check" size={16} />{:else}<span class="sp"></span>{/if}Automatisch</button>
                 {#each qualityOptions as [label, bps]}<button class="mi" class:on={quality === bps} on:click={() => changeQuality(bps)}>{#if quality === bps}<Icon name="check" size={16} />{:else}<span class="sp"></span>{/if}{label}</button>{/each}
               </div>
               {#if !partyMode}
-                <div><h3>Tempo</h3>
-                  {#each [0.5, 0.75, 1, 1.25, 1.5, 2] as r}<button class="mi" class:on={rate === r} on:click={() => { setRate(r); menu = ''; }}>{#if rate === r}<Icon name="check" size={16} />{:else}<span class="sp"></span>{/if}{r === 1 ? 'Normal' : r + '×'}</button>{/each}
-                </div>
                 <div><h3>Schlaf-Timer</h3>
                   <button class="mi" class:on={!sleepAt && !sleepAfterEpisode} on:click={() => setSleep(0)}>{#if !sleepAt && !sleepAfterEpisode}<Icon name="check" size={16} />{:else}<span class="sp"></span>{/if}Aus</button>
                   {#each [15, 30, 45, 60] as m}<button class="mi" class:on={sleepMin === m && sleepAt > 0} on:click={() => setSleep(m)}>{#if sleepMin === m && sleepAt > 0}<Icon name="check" size={16} />{:else}<span class="sp"></span>{/if}{m} Min.{#if sleepMin === m && sleepAt > 0}<span class="muted"> ({sleepLeft})</span>{/if}</button>{/each}
                   <button class="mi" class:on={sleepAfterEpisode} on:click={() => setSleep('end')}>{#if sleepAfterEpisode}<Icon name="check" size={16} />{:else}<span class="sp"></span>{/if}Nach dieser Folge</button>
                 </div>
               {/if}
- {#if !coarse}<div><h3>Hilfe</h3><button class="mi" on:click={() => { menu = ''; help = true; }}><Icon name="keyboard" size={16} />Tastenkürzel (?)</button></div>{/if}
+              {#if !coarse}<div><h3>Hilfe</h3><button class="mi" on:click={() => { menu = ''; help = true; }}><Icon name="keyboard" size={16} />Tastenkürzel (?)</button></div>{/if}
             </div>
           {/if}
         </div>
-        <span class="badge" title="Wiedergabeart">{casting ? 'Chromecast' : mode === 'direct' ? 'Direct Play' : mode ? 'HLS' : ''}</span>
-        <button class="ic" aria-label={fullscreen ? 'Vollbild verlassen' : 'Vollbild'} on:click={toggleFullscreen}><Icon name={fullscreen ? 'fullscreen-exit' : 'fullscreen'} size={28} /></button>
+        <button class="ic" aria-label={fullscreen ? 'Vollbild verlassen' : 'Vollbild'} title="Vollbild (F)" on:click={toggleFullscreen}><Icon name={fullscreen ? 'fullscreen-exit' : 'fullscreen'} size={ICON} /></button>
       </div>
     </div>
   </div>
@@ -867,18 +923,39 @@
   .dlg header { display: flex; justify-content: space-between; align-items: center; } .dlg ul { list-style: none; padding: 0; margin: 0; } .grow { flex: 1; text-align: left; overflow: hidden; text-overflow: ellipsis; }
   .sleepdot { position: absolute; top: 10px; right: 10px; width: 9px; height: 9px; border-radius: 50%; background: var(--acc); }
   .rem { min-width: 3.4rem; text-align: right; font-variant-numeric: tabular-nums; }
-  .row { display: flex; justify-content: space-between; align-items: center; gap: .4rem; flex-wrap: wrap; }
-  .grp { display: flex; align-items: center; gap: .1rem; flex-wrap: wrap; }
-  .ic { background: transparent; padding: 0; width: 48px; min-height: 48px; border-radius: 50%; color: #fff; }
+  /* Netflix bar: controls left, title centred, extras right */
+  .row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, auto) minmax(0, 1fr); align-items: center; gap: .6rem; }
+  .grp { display: flex; align-items: center; gap: .3rem; flex-wrap: wrap; }
+  .grp.right { justify-content: flex-end; }
+  .mid { min-width: 0; max-width: 40vw; display: flex; align-items: baseline; justify-content: center; gap: .6rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 1.05rem; }
+  .mid b { font-weight: 700; overflow: hidden; text-overflow: ellipsis; flex: 0 1 auto; }
+  .mid span { color: #d8d8d8; font-weight: 400; overflow: hidden; text-overflow: ellipsis; flex: 0 1 auto; }
+  .ic { position: relative; background: transparent; padding: 0; width: 56px; min-height: 56px; border-radius: 50%; color: #fff; display: inline-grid; place-items: center; }
   .ic:hover:not(:disabled) { background: rgba(255,255,255,.14); transform: scale(1.08); }
   .ic.locked { opacity: .4; }
   .vol { display: flex; align-items: center; }
   .vslider { width: 0; opacity: 0; transition: width var(--t-med) var(--ease), opacity var(--t-med); padding: 0; min-height: 0; accent-color: var(--acc); background: transparent; border: 0; }
   .vol:hover .vslider, .vol:focus-within .vslider { width: 92px; opacity: 1; margin-right: .6rem; }
   .clock { margin-left: .8rem; font-size: .9rem; color: #e0e0e0; font-variant-numeric: tabular-nums; }
-  .badge { align-self: center; margin: 0 .4rem; background: rgba(255,255,255,.14); font-size: .72rem; }
+  .ratebadge { position: absolute; right: 2px; bottom: 4px; font-size: .62rem; font-weight: 700; background: var(--acc); color: #fff; border-radius: 3px; padding: 0 .2rem; line-height: 1.3; }
+  .menu.bare { padding: 0; background: none; border: 0; box-shadow: none; min-width: 0; }
+  .menu.more { min-width: 270px; padding: .4rem .3rem; }
+  .menu.more .mi { min-height: 48px; font-size: .98rem; gap: .8rem; }
+  .chev { margin-left: auto; font-size: 1.3rem; color: var(--mut); padding-left: .8rem; }
+  .modeinfo { display: flex; gap: .5rem; align-items: center; margin: .3rem .6rem .2rem; padding-top: .5rem; border-top: 1px solid #333; color: var(--mut); font-size: .82rem; }
+  .menu h3 .back { background: transparent; padding: 0; width: 32px; min-height: 32px; margin-right: .3rem; font-size: 1.4rem; line-height: 1; color: #fff; border-radius: 50%; }
+  .menu h3 .back:hover:not(:disabled) { background: rgba(255,255,255,.12); }
+  .menu.speed { padding: 1rem 1.2rem 1.1rem; min-width: 0; }
+  .menu.speed h3 { margin: 0 0 .9rem; }
+  .speeds { display: flex; gap: .2rem; position: relative; }
+  .speeds::before { content: ''; position: absolute; left: 2.2rem; right: 2.2rem; top: 21px; height: 2px; background: #5a5a5a; }
+  .sp-opt { position: relative; display: grid; justify-items: center; gap: .45rem; min-width: 72px; min-height: 64px; padding: .2rem .3rem; background: transparent; color: #bdbdbd; font-weight: 400; font-size: .85rem; white-space: nowrap; border-radius: 4px; }
+  .sp-opt .dot { width: 14px; height: 14px; margin-top: 8px; border-radius: 50%; background: #8a8a8a; }
+  .sp-opt.on { color: #fff; font-weight: 700; }
+  .sp-opt.on .dot { width: 24px; height: 24px; margin-top: 3px; background: #fff; box-shadow: 0 0 0 4px rgba(255,255,255,.25); }
+  .sp-opt:hover:not(:disabled) { background: rgba(255,255,255,.08); color: #fff; }
   .mwrap { position: relative; }
-  .menu { position: absolute; right: 0; bottom: 58px; background: rgba(20,20,20,.97); border: 1px solid #3a3a3a; border-radius: 6px; padding: .6rem .3rem; min-width: 190px; box-shadow: 0 12px 30px #000; z-index: 20; }
+  .menu { position: absolute; right: 0; bottom: 64px; background: rgba(20,20,20,.97); border: 1px solid #3a3a3a; border-radius: 6px; padding: .6rem .3rem; min-width: 190px; box-shadow: 0 12px 30px #000; z-index: 20; }
   .menu.tracks { display: flex; gap: 1rem; padding: .8rem; min-width: 360px; max-width: min(94vw, 720px); }
   .menu.tracks > div { flex: 1; min-width: 118px; }
   .mi { white-space: nowrap; }
@@ -889,10 +966,23 @@
   /* TV: bigger targets, strong focus, no volume slider (the TV has its own volume) */
   :global(html.tv) .ic { width: 64px; min-height: 64px; }
   :global(html.tv) .ic:focus-visible { background: rgba(255, 255, 255, .22); transform: scale(1.12); }
-  :global(html.tv) .vol, :global(html.tv) .badge { display: none; }
+  :global(html.tv) .vol { display: none; }
   :global(html.tv) .clock { font-size: 1.1rem; }
   :global(html.tv) .track:focus-visible { height: 12px; outline: none; box-shadow: 0 0 0 4px #fff; }
   :global(html.tv) .mi { min-height: 56px; font-size: 1.05rem; }
   :global(html.tv) .skipbtn { font-size: 1.15rem; }
-  @media (max-width: 720px) { .clock, .badge, .vol .vslider { display: none; } .menu.tracks { flex-direction: column; min-width: 240px; } .ic { width: 44px; } .bigplay { width: 76px; height: 76px; } }
+  @media (max-width: 720px) {
+    .clock, .vol .vslider, .mid { display: none; }
+    .row { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 0; }
+    .grp { gap: 0; }
+    .menu.tracks { flex-direction: column; }
+    .ic { width: 44px; min-height: 44px; }
+    .bigplay { width: 76px; height: 76px; }
+    /* phones: panels sit above the control bar across the full width instead of hanging off a button */
+    .menu, .menu.tracks, .menu.more, .menu.scenes, .menu.speed, .menu.bare { position: fixed; left: .5rem; right: .5rem; bottom: 8.6rem; min-width: 0; max-width: none; max-height: 60vh; overflow-y: auto; }
+    .menu.bare { overflow: visible; }
+    .menu.bare :global(.eps) { width: 100%; max-height: 60vh; }
+    .lockbtn { bottom: auto; top: 5.5rem; } /* the two-row bar is taller on phones: keep the lock clear of the timeline */
+    .speeds { flex-wrap: wrap; justify-content: center; } .speeds::before { display: none; } .sp-opt { min-width: 64px; }
+  }
 </style>

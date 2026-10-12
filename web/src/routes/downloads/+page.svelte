@@ -45,6 +45,21 @@
 {:else if me && !me.downloads?.allowed}
   <p class="muted">Downloads sind für dein Konto nicht freigeschaltet.</p>
 {:else}
+  {#if !list.length}
+    <div class="empty">
+      <svg class="ill" viewBox="0 0 160 160" width="160" height="160" aria-hidden="true" focusable="false">
+        <circle cx="80" cy="80" r="76" fill="#2a2a2a" />
+        <rect x="52" y="38" width="56" height="84" rx="8" fill="#1a1a1a" stroke="#5a5a5a" stroke-width="3" />
+        <rect x="60" y="48" width="40" height="56" rx="3" fill="#333" />
+        <circle cx="80" cy="112" r="3.5" fill="#5a5a5a" />
+        <circle cx="112" cy="104" r="22" fill="var(--acc)" />
+        <path d="M112 93v18m-8-8 8 8 8-8" fill="none" stroke="#fff" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round" />
+      </svg>
+      <h2>Filme und Serien für unterwegs</h2>
+      <p class="muted">Lade Titel herunter und schau sie ohne Internet, im Zug, im Flugzeug oder wo das WLAN schwach ist. Auf jeder Titelseite findest du „Herunterladen“.</p>
+      <a class="btn light find" href="/browse/movies">Etwas zum Herunterladen finden</a>
+    </div>
+  {/if}
   <section class="panel store">
     <div class="bar" role="progressbar" aria-label="Belegter Speicher" aria-valuenow={Math.round(barPct)} aria-valuemin="0" aria-valuemax="100"><i style="width:{barPct}%"></i></div>
     <p>{fmtBytes(used)} von {fmtBytes(total)} Gerätespeicher belegt{#if me?.downloads?.max} · bis zu {me.downloads.max} Downloads{/if}</p>
@@ -60,9 +75,7 @@
     <p class="muted small">Downloads funktionieren ohne Internet, solange die Lizenz gültig ist. Ein Kopierschutz besteht nicht; Ablauf und Sperrung werden beim nächsten Online-Kontakt durchgesetzt. Beim Herunterladen muss dieser Tab geöffnet bleiben.</p>
   </section>
 
-  {#if !list.length}
-    <p class="muted">Noch keine Downloads. Auf einer Titelseite findest du „Herunterladen“.</p>
-  {:else}
+  {#if list.length}
     {#each groups as g (g.name)}
       <h2>{g.name}</h2>
       <ul class="list">
@@ -91,6 +104,7 @@
 
 <style>
   .store { display: grid; gap: .8rem; max-width: 720px; margin-bottom: 1.5rem; }
+  .empty + .store { margin: 0 auto 1.5rem; }
   .bar { height: 8px; border-radius: 4px; background: var(--surface-2, #2a2a2a); overflow: hidden; } .bar i { display: block; height: 100%; background: var(--acc); transition: width .3s; }
   .bar.slim { height: 4px; margin-top: .3rem; }
   .small { font-size: .85rem; } .store p { margin: 0; }
@@ -98,4 +112,9 @@
   .item { display: flex; gap: 1rem; align-items: center; justify-content: space-between; padding: .8rem 1rem; background: var(--surface); border-radius: 8px; flex-wrap: wrap; }
   .tx { display: flex; flex-direction: column; gap: .15rem; min-width: 0; flex: 1 1 240px; }
   .acts { display: flex; gap: .5rem; align-items: center; }
+  .empty { display: flex; flex-direction: column; align-items: center; text-align: center; gap: .6rem; padding: 2rem 0 3rem; max-width: 520px; margin: 0 auto; }
+  .empty h2 { margin: .6rem 0 0; font-size: 1.3rem; }
+  .empty p { margin: 0 0 .6rem; line-height: 1.5; }
+  .ill { width: 140px; height: 140px; }
+  .find { min-height: 48px; padding: .6rem 1.4rem; }
 </style>

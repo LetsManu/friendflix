@@ -134,10 +134,10 @@ export function discoverRoutes(app: FastifyInstance, ctx: Ctx) {
     return { items: items.filter((i) => !i.played).map((i) => ({ ...i, caption: cap.get(i.id) })) };
   }));
 
-  // ---- Thumbs up / down (feeds "Weil du ... gesehen hast") ----
+  // ---- Thumbs: -1 Nicht mein Fall, 1 Gefällt mir, 2 Super (>= 1 feeds "Weil du ... gesehen hast") ----
   app.put('/api/items/:id/thumb', pre, wrap(async (req) => {
     const id = id32.parse((req.params as { id: string }).id);
-    const { value } = z.object({ value: z.union([z.literal(-1), z.literal(0), z.literal(1)]) }).parse(req.body);
+    const { value } = z.object({ value: z.union([z.literal(-1), z.literal(0), z.literal(1), z.literal(2)]) }).parse(req.body);
     if (value === 0) {
       await ctx.db.query('delete from thumbs where profile_id=$1 and item_id=$2', [req.profile!.id, id]);
       return { value: 0 };

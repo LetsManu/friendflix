@@ -32,6 +32,13 @@ export function freshState(): MockState {
   };
 }
 
+/** profile list for tests that switch /api/me to several profiles (profileCount: 3) */
+export const PROFILES = [
+  { id: 'p1', name: 'Tester', avatar: 'a1', isOwner: true, hasPin: false, active: true },
+  { id: 'p2', name: 'Anna', avatar: 'a2', isOwner: false, hasPin: false, active: false },
+  { id: 'p3', name: 'Ben', avatar: 'a3', isOwner: false, hasPin: false, active: false },
+];
+
 const find = (id: string): MockItem | undefined => [...items, ...episodes].find((i) => i.id === id);
 
 /** Fully mocks `/api/**` and `/media/**` for a browser context. The web app is a pure SPA (ssr = false), so nothing else is needed. */
@@ -167,6 +174,10 @@ export async function installApi(ctx: BrowserContext, st: MockState): Promise<vo
       const it = find(mm[1]!) ?? byName('Inception');
       return J({ item: withFav(it), inWatchlist: st.watch.has(it.id), thumb: 0, langs: { audio: ['deu', 'eng'], subs: ['deu'] } });
     }
+
+    // profiles (gate "Wer schaut gerade?" and the avatar menu)
+    if (p === '/api/profiles') return J({ profiles: PROFILES, max: 5, activeId: 'p1' });
+    if ((mm = p.match(/^\/api\/profiles\/([^/]+)\/select$/)) && m === 'POST') return J({ ok: true });
 
     st.unmocked.add(`${m} ${p}${u.search ? '?…' : ''}`);
     return J({ items: [] });

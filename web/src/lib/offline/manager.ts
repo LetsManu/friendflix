@@ -41,14 +41,20 @@ export const getSupport = (): Support => detectSupport();
 
 // ---- tiny raw API (no 401 -> login redirect: this also runs on the offline hub) ----
 let meCache: { at: number; me: any } | null = null;
+let meInflight: Promise<any | null> | null = null;
 export async function getMe(force = false): Promise<any | null> {
   if (!force && meCache && Date.now() - meCache.at < 300_000) return meCache.me;
-  try {
-    const r = await fetch('/api/me', { credentials: 'same-origin' });
-    if (!r.ok) return null;
-    meCache = { at: Date.now(), me: await r.json() };
-    return meCache.me;
-  } catch { return null; }
+  // many callers (e.g. one DownloadButton per episode row) ask at once: share a single request
+  if (meInflight) return meInflight;
+  meInflight = (async () => {
+    try {
+      const r = await fetch('/api/me', { credentials: 'same-origin' });
+      if (!r.ok) return null;
+      meCache = { at: Date.now(), me: await r.json() };
+      return meCache.me;
+    } catch { return null; } finally { meInflight = null; }
+  })();
+  return meInflight;
 }
 async function raw(path: string, method: string, body?: unknown): Promise<{ status: number; json: any } | null> {
   const me = await getMe();

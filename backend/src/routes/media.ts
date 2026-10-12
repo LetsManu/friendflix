@@ -7,7 +7,7 @@ import { effectiveRole } from '../roles.js';
 import { requireUser } from '../session.js';
 import { playbackHooks } from '../hooks.js';
 import { tidyResume } from '../resume.js';
-import type { ItemDto } from '../jellyfin/dto.js';
+import { toTrickplayDto, type ItemDto } from '../jellyfin/dto.js';
 import { createHash } from 'node:crypto';
 import { itemsByIds } from './discover.js';
 import { id32 as itemId, wrap as sharedWrap } from './_shared.js';
@@ -204,7 +204,11 @@ export function mediaRoutes(app: FastifyInstance, ctx: Ctx) {
     await ctx.db.query('delete from resume_hidden where profile_id=$1 and item_id in ($2,$3)', [req.profile!.id, id, target]);
     return { ok: true };
   }));
-  app.get('/api/library/nextup', pre, wrap(async (req) => ({ items: notDropped(await ctx.jf.nextUp(req.jfUser!), await droppedSet(ctx, req.profile!.id)) })));
+  // ?seriesId= asks Jellyfin for that series' next episode directly (the global list is capped at 20, so a client-side filter can miss it)
+  app.get('/api/library/nextup', pre, wrap(async (req) => {
+    const { seriesId } = z.object({ seriesId: itemId.optional() }).parse(req.query);
+    return { items: notDropped(await ctx.jf.nextUp(req.jfUser!, seriesId), await droppedSet(ctx, req.profile!.id)) };
+  }));
 
   app.get('/api/items/:id', pre, wrap(async (req) => {
     const id = itemId.parse((req.params as any).id);
@@ -217,7 +221,7 @@ export function mediaRoutes(app: FastifyInstance, ctx: Ctx) {
   app.get('/api/items/:id/segments', pre, wrap(async (req) => ({ segments: await ctx.jf.segments(req.jfUser!, itemId.parse((req.params as any).id)) })));
   app.get('/api/items/:id/similar', pre, wrap(async (req) => ({ items: await ctx.jf.similar(req.jfUser!, itemId.parse((req.params as any).id)) })));
   app.get('/api/library/because', pre, wrap(async (req) => {
-    const up = (await ctx.db.query<{ item_id: string }>('select item_id from thumbs where profile_id=$1 and value=1 order by created_at desc limit 1', [req.profile!.id])).rows[0];
+    const up = (await ctx.db.query<{ item_id: string }>('select item_id from thumbs where profile_id=$1 and value>=1 order by created_at desc limit 1', [req.profile!.id])).rows[0];
     const seed = up ? await ctx.jf.item(req.jfUser!, up.item_id).catch(() => null) : null;
     const base = seed ?? (await ctx.jf.lastWatched(req.jfUser!));
     if (!base) return { because: null, items: [] };
@@ -261,14 +265,22 @@ export function mediaRoutes(app: FastifyInstance, ctx: Ctx) {
 
   // ---- Playback ----
   app.post('/api/playback/info', pre, wrap(async (req, reply) => {
-    const b = z.object({ itemId, startTicks: z.number().int().min(0).optional(), audioIndex: z.number().int().min(0).optional(), maxBitrate: z.number().int().min(300_000).max(200_000_000).optional() }).parse(req.body);
+    const b = z.object({
+      itemId, startTicks: z.number().int().min(0).optional(), audioIndex: z.number().int().min(0).optional(), maxBitrate: z.number().int().min(300_000).max(200_000_000).optional(),
+      /** preferred audio language (saved pref / detail-page pick): applied in this same request, so the player needs no second round trip */
+      audioLang: z.string().max(16).optional(),
+    }).parse(req.body);
     const role = (await effectiveRole(ctx, req.user!.role))!;
     if ((await countLive(ctx, req.user!.id)) >= role.maxStreams) return reply.code(429).send({ error: 'max_streams', max: role.maxStreams });
-    const startTicks = b.startTicks ?? (await ctx.jf.item(req.jfUser!, b.itemId)).positionTicks;
     const cap = Math.min(role.maxBitrate, b.maxBitrate ?? role.maxBitrate); // the viewer may lower the quality, never raise it above the role limit
-    const info = await ctx.jf.playbackInfo(req.jfUser!, b.itemId, { maxBitrate: cap, maxHeight: role.maxHeight, startTicks, audioIndex: b.audioIndex, noDirect: Boolean(role.maxHeight) || (!role.download && ctx.cfg.DIRECT_PLAY_REQUIRES_DOWNLOAD === 'true') });
+    // PlaybackInfo and the resume-position/trickplay lookup run in parallel (one Jellyfin /Items call instead of two sequential ones)
+    const [info, meta] = await Promise.all([
+      ctx.jf.playbackInfo(req.jfUser!, b.itemId, { maxBitrate: cap, maxHeight: role.maxHeight, startTicks: b.startTicks, audioIndex: b.audioIndex, audioLang: b.audioLang, noDirect: Boolean(role.maxHeight) || (!role.download && ctx.cfg.DIRECT_PLAY_REQUIRES_DOWNLOAD === 'true') }),
+      ctx.jf.playMeta(req.jfUser!, b.itemId),
+    ]);
     info.roleMaxBitrate = role.maxBitrate;
-    info.trickplay = await ctx.jf.trickplay(req.jfUser!, b.itemId, info.mediaSourceId);
+    info.resumeTicks = b.startTicks ?? meta?.positionTicks ?? 0;
+    info.trickplay = toTrickplayDto(b.itemId, info.mediaSourceId, meta?.trickplay);
     return info;
   }));
 

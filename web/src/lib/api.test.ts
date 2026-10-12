@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { backdrop, CARD_WIDTHS, img, srcset } from './api';
+import { backdrop, cachedDetail, cachedItem, CARD_WIDTHS, clearItemCache, img, primeDetail, primeItem, srcset, type Item } from './api';
 
 const ID = 'a'.repeat(32);
 
@@ -15,5 +15,36 @@ describe('srcset', () => {
   it('card default src (520) is one of the srcset candidates', () => {
     expect(srcset('Backdrop', ID, CARD_WIDTHS)).toContain(backdrop(ID, 520) + ' 520w');
     expect(srcset('Primary', ID, CARD_WIDTHS)).toContain(img(ID, 520) + ' 520w');
+  });
+});
+
+describe('item cache', () => {
+  const it0 = (id: string, extra: Partial<Item> = {}): Item => ({ id, name: 'T ' + id, type: 'Movie', genres: [], image: true, backdrop: true, logo: false, played: false, favorite: false, positionTicks: 0, ...extra });
+  it('primes from card data and expires after 10 minutes', () => {
+    clearItemCache();
+    primeItem(it0('a'), 1000);
+    expect(cachedItem('a', 1000 + 60_000)?.name).toBe('T a');
+    expect(cachedDetail('a', 1000)).toBeUndefined(); // card data only, no detail
+    expect(cachedItem('a', 1000 + 11 * 60_000)).toBeUndefined();
+    expect(cachedItem('a', 1000)).toBeUndefined(); // expired entries are dropped
+  });
+  it('ignores junk and keeps a fuller detail when a card primes again', () => {
+    clearItemCache();
+    primeItem(null); primeItem(undefined); primeItem({} as Item); primeItem({ id: '', name: 'x' } as Item);
+    expect(cachedItem('')).toBeUndefined();
+    primeDetail({ item: it0('b', { langs: { audio: ['deu'], subs: [] }, overview: 'lang' }), inWatchlist: true, thumb: 2 }, 0);
+    primeItem(it0('b', { positionTicks: 50 }), 10);
+    const d = cachedDetail('b', 20)!;
+    expect(d.thumb).toBe(2);
+    expect(d.inWatchlist).toBe(true);
+    expect(d.item.positionTicks).toBe(50); // fresher card fields win
+    expect(d.item.langs).toEqual({ audio: ['deu'], subs: [] }); // detail-only fields survive
+    expect(d.item.overview).toBe('lang');
+  });
+  it('is bounded (LRU)', () => {
+    clearItemCache();
+    for (let i = 0; i < 450; i++) primeItem(it0('i' + i), 0);
+    expect(cachedItem('i0', 0)).toBeUndefined();
+    expect(cachedItem('i449', 0)).toBeDefined();
   });
 });

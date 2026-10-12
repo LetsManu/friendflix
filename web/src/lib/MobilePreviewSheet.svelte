@@ -53,7 +53,7 @@
   <div class="sheet" class:dragging role="dialog" aria-modal="true" aria-label="Vorschau: {item.name}" tabindex="-1" bind:this={sheetEl} use:dialogKeys={{ close: () => close() }} style={dragY ? `transform:translateY(${dragY}px)` : undefined}>
     <!-- svelte-ignore a11y_no_static_element_interactions -->
     <div class="grab" on:pointerdown={dragDown} on:pointermove={dragMove} on:pointerup={dragEnd} on:pointercancel={dragEnd}><span class="handle" aria-hidden="true"></span></div>
-    <button type="button" class="close" aria-label="Schließen" on:click={() => close()}><Icon name="x" size={20} /></button>
+    <button type="button" class="close" aria-label="Schließen" on:click={() => close()}><Icon name="x" size={18} /></button>
     <div class="top">
       {#if hasPoster}<img class="poster" src={img(posterId, 240)} alt="" width="84" height="126" />{:else}<span class="poster none" aria-hidden="true"></span>{/if}
       <div class="info">
@@ -84,7 +84,11 @@
   .sheet.dragging { transition: none; }
   .grab { touch-action: none; cursor: grab; padding: 0 0 .2rem; margin: 0 calc(var(--pad-x) * -1); }
   .handle { display: block; width: 40px; height: 4px; border-radius: 99px; background: #666; margin: 10px auto 8px; }
-  .close { position: absolute; top: 8px; right: 8px; width: 44px; min-height: 44px; height: 44px; padding: 0; border-radius: 50%; background: rgba(255,255,255,.12); z-index: 2; }
+  /* sits inside the sheet's padding box (aligned with the content edge), 44px hit area around a 34px circle */
+  .close { position: absolute; top: 14px; right: calc(var(--pad-x) - 5px); width: 44px; min-height: 44px; height: 44px; padding: 0; border-radius: 50%; background: transparent; z-index: 2; }
+  .close::before { content: ''; position: absolute; inset: 5px; border-radius: 50%; background: #3a3a3a; z-index: -1; }
+  .close:hover:not(:disabled) { background: transparent; }
+  .close:hover:not(:disabled)::before { background: #4a4a4a; }
   .top { display: flex; gap: .9rem; padding-top: .5rem; padding-right: 2.6rem; }
   .poster { flex: none; width: 84px; height: 126px; border-radius: 4px; object-fit: cover; background: #2a2a2a; }
   .info { min-width: 0; }

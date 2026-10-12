@@ -8,6 +8,8 @@
   import { dialogKeys } from '#lib/actions';
   import { onDestroy, tick } from 'svelte';
   import { langLabel } from '#lib/langs';
+  import LazyRow from '#lib/LazyRow.svelte';
+  import Icon from '#lib/Icon.svelte';
 
   let items: Item[] | null = null, total = 0, start = 0, genres: string[] = [], langs: { audio: Array<{ code: string }>; subs: Array<{ code: string }> } = { audio: [], subs: [] }, busy = false, failed = false, seq = 0, lastKey = '';
   let personName: Record<string, string> = {};
@@ -17,12 +19,19 @@
   $: kind = $page.params.kind === 'series' ? 'Series' : 'Movie';
   $: s = parseBrowse($page.url.searchParams);
   $: key = kind + '?' + browseQuery(s, kind, 0, PAGE).toString();
-  $: if (key !== lastKey) { lastKey = key; void load(true); }
+  // Netflix-like: rows per genre while nothing is filtered (or the grid when the viewer prefers it); filters always show the grid
+  const VIEW_KEY = 'ff_browse_view';
+  let view: 'rows' | 'grid' = 'rows';
+  try { if (typeof localStorage !== 'undefined' && localStorage.getItem(VIEW_KEY) === 'grid') view = 'grid'; } catch { /* storage blocked */ }
+  function setView(v: 'rows' | 'grid') { view = v; try { localStorage.setItem(VIEW_KEY, v); } catch { /* storage blocked */ } }
+  $: plain = !activeChips(s).length && !s.person && s.sort === 'SortName';
+  $: showGrid = view === 'grid' || !plain;
+  $: if (showGrid && key !== lastKey) { lastKey = key; void load(true); }
+  $: if (!showGrid) lastKey = '';
+  $: rowsQ = (extra: Record<string, string>) => () => api(`/api/library/items?${new URLSearchParams({ types: kind, limit: '24', ...extra })}`).then((r) => r.items as Item[]);
   $: decades = s.decade !== null && !DECADES.includes(s.decade) ? [...DECADES, s.decade].sort((a, b) => b - a) : DECADES;
   $: chips = activeChips(s, { person: s.person ? personName[s.person] : undefined });
   $: if (s.person && personName[s.person] === undefined) void fetchPerson(s.person);
-  $: otherKind = kind === 'Series' ? 'movies' : 'series';
-  $: search = $page.url.search;
 
   async function load(reset: boolean) {
     const my = reset ? ++seq : seq; // a newer query invalidates everything still in flight
@@ -76,38 +85,17 @@
 </script>
 
 <svelte:head><title>{kind === 'Series' ? 'Serien' : 'Filme'} – FriendFlix</title></svelte:head>
-<div class="flex head">
+<div class="head">
   <h1>{kind === 'Series' ? 'Serien' : 'Filme'}{#if s.studio} · {s.studio}{/if}</h1>
-  <nav class="kinds" aria-label="Typ">
-    <a href="/browse/movies{search}" class:on={kind === 'Movie'} aria-current={kind === 'Movie' ? 'page' : undefined}>Filme</a>
-    <a href="/browse/series{search}" class:on={kind === 'Series'} aria-current={kind === 'Series' ? 'page' : undefined}>Serien</a>
-  </nav>
+  <label class="sr-only" for="g">Genre</label>
+  <select id="g" class="genres" value={s.genre} on:change={(e) => set('genre', e.currentTarget.value)}><option value="">Genres</option>{#each genres as g}<option>{g}</option>{/each}{#if s.genre && !genres.includes(s.genre)}<option>{s.genre}</option>{/if}</select>
+  <div class="views" role="group" aria-label="Ansicht">
+    <button type="button" class="vbtn" aria-pressed={!showGrid} disabled={!plain} title={plain ? 'Reihen' : 'Reihen (nur ohne Filter)'} aria-label="Reihen" on:click={() => setView('rows')}><Icon name="menu" size={20} /></button>
+    <button type="button" class="vbtn" aria-pressed={showGrid} title="Raster" aria-label="Raster" on:click={() => setView('grid')}><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true" focusable="false"><path d="M4 4h6v6H4zM14 4h6v6h-6zM4 14h6v6H4zM14 14h6v6h-6z" /></svg></button>
+  </div>
 </div>
-<svelte:window on:resize={() => { if (fsheet && window.innerWidth > 720) void closeFilters(false); }} />
 <div class="flex filters">
   <button type="button" class="fbtn" bind:this={fbtn} aria-haspopup="dialog" aria-expanded={fsheet} on:click={openFilters}>Filter{#if fcount}<span class="cnt" aria-hidden="true">{fcount}</span><span class="sr-only"> ({fcount} aktiv)</span>{/if}</button>
-  <div class="desk">
-  <label class="sr-only" for="g">Genre</label>
-  <select id="g" value={s.genre} on:change={(e) => set('genre', e.currentTarget.value)}><option value="">Alle Genres</option>{#each genres as g}<option>{g}</option>{/each}{#if s.genre && !genres.includes(s.genre)}<option>{s.genre}</option>{/if}</select>
-  <label class="sr-only" for="dc">Jahrzehnt</label>
-  <select id="dc" value={s.decade !== null ? String(s.decade) : ''} on:change={(e) => set('decade', e.currentTarget.value)}><option value="">Alle Jahrzehnte</option>{#each decades as d}<option value={String(d)}>{d}er</option>{/each}</select>
-  <label class="sr-only" for="mr">Bewertung</label>
-  <select id="mr" value={s.minRating !== null ? String(s.minRating) : ''} on:change={(e) => set('minRating', e.currentTarget.value)}><option value="">Alle Bewertungen</option><option value="6">ab 6 Sterne</option><option value="7">ab 7 Sterne</option><option value="8">ab 8 Sterne</option></select>
-  <label class="sr-only" for="s">Sortierung</label>
-  <select id="s" value={s.sort} on:change={(e) => set('sort', e.currentTarget.value === 'SortName' ? '' : e.currentTarget.value)}>
-    <option value="SortName">A–Z</option><option value="DateCreated">Zuletzt hinzugefügt</option><option value="PremiereDate">Erscheinungsdatum</option><option value="CommunityRating">Beliebtheit</option>
-  </select>
-  <label class="sr-only" for="f">Status</label>
-  <select id="f" value={s.filter} on:change={(e) => set('filter', e.currentTarget.value)}><option value="">Status: alle</option><option value="unplayed">Ungesehen</option><option value="played">Gesehen</option><option value="favorites">Favoriten</option></select>
-  {#if audioCodes.length}
-    <label class="sr-only" for="au">Ton</label>
-    <select id="au" value={s.audio ?? ''} on:change={(e) => set('audio', e.currentTarget.value)}><option value="">Ton: alle</option>{#each audioCodes as c}<option value={c}>Ton: {langLabel(c)}</option>{/each}</select>
-  {/if}
-  {#if subCodes.length}
-    <label class="sr-only" for="ut">Untertitel</label>
-    <select id="ut" value={s.subs ?? ''} on:change={(e) => set('subs', e.currentTarget.value)}><option value="">Untertitel: alle</option>{#each subCodes as c}<option value={c}>Untertitel: {langLabel(c)}</option>{/each}</select>
-  {/if}
-  </div>
   {#if audioCodes.includes('deu')}
     <button type="button" class="chip quick" aria-pressed={s.audio === 'deu'} on:click={() => set('audio', s.audio === 'deu' ? '' : 'deu')}>Deutscher Ton</button>
   {/if}
@@ -139,6 +127,15 @@
     <li><button type="button" class="sec" on:click={reset}>Alle zurücksetzen</button></li>
   </ul>
 {/if}
+{#if !showGrid}
+  <div class="rowsv">
+    <LazyRow title="Neu hinzugefügt" cacheKey="browse:{kind}:new" load={rowsQ({ sort: 'DateCreated', desc: 'true' })} />
+    <LazyRow title="Beliebt bei uns" cacheKey="browse:{kind}:top" load={rowsQ({ sort: 'CommunityRating', desc: 'true' })} />
+    {#each genres.slice(0, 12) as g (g)}
+      <LazyRow title={g} href="?genre={encodeURIComponent(g)}" cacheKey="browse:{kind}:g:{g}" load={rowsQ({ genre: g, sort: 'Random' })} />
+    {/each}
+  </div>
+{:else}
 <div class="tiles" aria-busy={items === null}>
   {#if items === null}{#each Array(18) as _}<div class="skeleton" style="aspect-ratio:16/9"></div>{/each}
   {:else}{#each items as i (i.id)}<div class="slot"><Card item={i} /></div>{/each}{/if}
@@ -149,19 +146,24 @@
   <div class="state"><p class="muted">Nichts gefunden – probiere andere Filter.</p>{#if chips.length || s.sort !== 'SortName'}<button type="button" class="sec" on:click={reset}>Filter zurücksetzen</button>{/if}</div>
 {/if}
 {#if items && items.length < total && !failed}<p style="text-align:center"><button class="sec" disabled={busy} on:click={() => load(false)}>Mehr laden</button></p>{/if}
+{/if}
 
 <style>
-  .head { margin-bottom: .8rem; } .head h1 { margin: 0 1rem 0 0; }
-  .kinds { display: inline-flex; gap: .3rem; }
-  .kinds a { display: inline-flex; align-items: center; min-height: 44px; padding: 0 1rem; border-radius: 99px; background: var(--surface-2); font-weight: 500; }
-  .kinds a.on { background: #fff; color: #000; }
+  .head { display: flex; align-items: center; flex-wrap: wrap; gap: .6rem 1.4rem; margin-bottom: .9rem; } .head h1 { margin: 0; }
+  .genres { min-height: 38px; padding: .2rem 2.2rem .2rem .8rem; background-color: #000; border: 1px solid rgba(255,255,255,.85); border-radius: 2px; font-weight: 600; font-size: .95rem; cursor: pointer; }
+  .genres:hover { background-color: rgba(255,255,255,.1); }
+  .views { margin-left: auto; display: inline-flex; border: 1px solid rgba(255,255,255,.6); border-radius: 2px; }
+  .vbtn { min-height: 38px; width: 44px; padding: 0; border-radius: 0; background: transparent; color: #fff; }
+  .vbtn[aria-pressed='true'] { background: rgba(255,255,255,.18); }
+  .vbtn:hover:not(:disabled) { background: rgba(255,255,255,.12); }
   .filters { margin-bottom: 1rem; }
-  .desk { display: contents; }
-  .fbtn { display: none; align-items: center; gap: .5rem; min-height: 44px; padding: 0 1.1rem; border-radius: 99px; background: var(--surface-2); font-weight: 600; }
+  .rowsv { margin: 0 calc(var(--pad-x) * -1); padding-bottom: 4rem; }
+  .rowsv :global(.row:first-child) { margin-top: .4rem; }
+  .tiles { row-gap: .5rem; }
+  .fbtn { display: inline-flex; align-items: center; gap: .5rem; min-height: 44px; padding: 0 1.1rem; border-radius: 99px; background: var(--surface-2); font-weight: 600; }
   .cnt { display: inline-grid; place-items: center; min-width: 1.4rem; height: 1.4rem; padding: 0 .3rem; border-radius: 99px; background: #fff; color: #000; font-size: .78rem; font-weight: 800; }
-  .backdrop, .sheet { display: none; }
-  @media (max-width: 720px) { .desk { display: none; } .fbtn { display: inline-flex; } .backdrop, .sheet { display: block; } .sheet { display: flex; } }
-  .filters select { min-height: 44px; max-width: 100%; }
+  .sheet { display: flex; }
+  @media (max-width: 720px) { .genres, .views { display: none; } }
   .quick[aria-pressed='true'] { background: #fff; color: #000; }
   .chips { list-style: none; padding: 0; margin: 0 0 1.2rem; }
   .chip { background: var(--surface-2); border-radius: 99px; padding: 0 1rem; font-weight: 500; }
@@ -182,4 +184,11 @@
   @keyframes rise { from { transform: translateY(100%); } to { transform: none; } }
   @keyframes fade { from { opacity: 0; } to { opacity: 1; } }
   @media (prefers-reduced-motion: reduce) { .sheet, .backdrop { animation: none; } }
+  /* desktop: the same filter panel as a drawer on the right */
+  @media (min-width: 721px) {
+    .sheet { left: auto; top: 0; width: min(400px, 92vw); max-height: none; border-radius: 0; border-top: 0; border-left: 1px solid #333; animation-name: slidein; }
+    .grab { cursor: default; } .handle { visibility: hidden; height: 0; margin: 14px 0 0; }
+  }
+  @keyframes slidein { from { transform: translateX(100%); } to { transform: none; } }
+  @media (prefers-reduced-motion: reduce) { .sheet { animation: none; } }
 </style>

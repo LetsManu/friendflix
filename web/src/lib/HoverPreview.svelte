@@ -1,10 +1,15 @@
 <script lang="ts">
   import { createEventDispatcher, onDestroy, onMount, tick } from 'svelte';
   import { beforeNavigate } from '$app/navigation';
-  import { api, backdrop, img, srcset, type Item } from '#lib/api';
+  import { api, backdrop, cachedDetail, img, primeDetail, primeItem, srcset, type Item, type ItemDetail } from '#lib/api';
+  import { prefetchPlayer } from '#lib/player/prefetch';
+  import { prefetchModal } from '#lib/lazy';
   import { listIds, toggleList, prefs, SAVE_FAILED } from '#lib/stores';
   import Icon from '#lib/Icon.svelte';
   import ListMenu from '#lib/ListMenu.svelte';
+  import RatingButton from '#lib/RatingButton.svelte';
+  import MoreActions, { type MoreAction } from '#lib/MoreActions.svelte';
+  import { toThumb, type Thumb } from '#lib/rating';
   import { openModal } from '#lib/modal';
   import { isSpoiler } from '#lib/spoiler';
   import { hasNewEpisodes } from '#lib/badges';
@@ -19,6 +24,8 @@
   export let detail: string;
   export let removable = false;
   export let fav = false;
+  /** the image the card already shows (currentSrc): painted at once, the sharper srcset image fades in over it */
+  export let startSrc = '';
   /** pointer is over the pop-out / focus is inside it (the card keeps it open while true) */
   export let over = false;
   export let focused = false;
@@ -32,9 +39,9 @@
     listchanged: { listId: string; contains: boolean };
   }>();
 
-  let el: HTMLDivElement, pv: HTMLVideoElement | undefined, menu: ListMenu | undefined;
-  let box: PreviewBox | null = null, ready = false, playing = false, vmuted = true;
-  let thumb = 0, thumbBusy = false, fb = '', fbT: ReturnType<typeof setTimeout>, favBusy = false;
+  let el: HTMLDivElement, pv: HTMLVideoElement | undefined;
+  let box: PreviewBox | null = null, ready = false, playing = false, vmuted = true, hiLoaded = false;
+  let thumb: Thumb = 0, fb = '', fbT: ReturnType<typeof setTimeout>, favBusy = false;
   let startT: ReturnType<typeof setTimeout>;
   const reduce = typeof matchMedia !== 'undefined' && matchMedia('(prefers-reduced-motion: reduce)').matches;
 
@@ -72,6 +79,8 @@
     });
     // sound-on preview after 1 s, only titles that have a clip and only when the viewer allows it
     startT = setTimeout(startVideo, 1000);
+    if (item.type !== 'Episode') primeItem(item);
+    prefetchModal();
     void loadThumb();
   });
   onDestroy(() => { clearTimeout(startT); clearTimeout(fbT); if (playing || $previewOwner === item.id) stopPreview(item.id); });
@@ -85,7 +94,10 @@
   }
 
   async function loadThumb() {
-    try { const r = await api(`/api/items/${listId}`); if (r?.thumb === 1 || r?.thumb === -1) thumb = r.thumb; } catch { /* optional */ }
+    // the same response feeds the detail popup (rendered from cache when the chevron is clicked)
+    const hit = cachedDetail(listId);
+    if (hit) { thumb = toThumb(hit.thumb); return; }
+    try { const r = await api<ItemDetail>(`/api/items/${listId}`); thumb = toThumb(r?.thumb); primeDetail(r); } catch { /* optional */ }
   }
   function flash() { fb = SAVE_FAILED; clearTimeout(fbT); fbT = setTimeout(() => (fb = ''), 4500); }
   // after a mouse click drop the focus again (keyboard users keep it)
@@ -95,8 +107,7 @@
     const was = inList;
     if (await toggleList(listId, was)) { if (inList !== was) dispatch('listtoggle', { item, inList: !was }); } else flash();
   }
-  async function toggleFav(e: MouseEvent) {
-    release(e);
+  async function toggleFav() {
     if (favBusy) return;
     favBusy = true;
     const want = !fav;
@@ -105,23 +116,22 @@
     catch { fav = !want; flash(); }
     favBusy = false;
   }
-  async function setThumb(e: MouseEvent, v: 1 | -1) {
-    release(e);
-    if (thumbBusy) return;
-    const prev = thumb, next = thumb === v ? 0 : v;
-    thumb = next; thumbBusy = true;
-    try { await api(`/api/items/${listId}/thumb`, { method: 'PUT', body: { value: next } }); } catch { thumb = prev; flash(); }
-    thumbBusy = false;
-  }
-  function more(e: MouseEvent) { dispatch('close', { refocus: false }); openModal(e, detail); }
+  // everything that is not Play / Meine Liste / Bewerten / Details lives in "⋯ Mehr"
+  let actions: MoreAction[] = [];
+  $: actions = [
+    { id: 'fav', label: fav ? 'Favorit entfernen' : 'Als Favorit markieren', icon: 'heart', pressed: fav, run: toggleFav },
+    ...(removable ? [{ id: 'remove', label: 'Aus Weiterschauen entfernen', icon: 'x', run: () => { dispatch('remove', item); } }] : []),
+    { id: 'details', label: 'Detailseite öffnen', icon: 'info', href: detail },
+  ];
+  function more(e: MouseEvent) { if (item.type !== 'Episode') primeItem(item); dispatch('close', { refocus: false }); openModal(e, detail); }
 
   // ---- closing: Escape, scroll, navigation ----
   function onKey(e: KeyboardEvent) {
-    if (e.key === 'Escape' && !document.querySelector('.lm-pop')) { dispatch('close', { refocus: true }); }
+    if (e.key === 'Escape' && !document.querySelector('.lm-pop, .ma-pop')) { dispatch('close', { refocus: true }); }
   }
   function onScroll(e: Event) {
     const t = e.target as Node | null;
-    if (t && t instanceof Element && (el?.contains(t) || t.closest?.('.lm-pop'))) return;
+    if (t && t instanceof Element && (el?.contains(t) || t.closest?.('.lm-pop, .ma-pop'))) return;
     dispatch('close', { refocus: false });
   }
   beforeNavigate(() => dispatch('close', { refocus: false }));
@@ -150,8 +160,9 @@
   on:focusin={() => (focused = true)} on:focusout={leaveFocus} on:keydown={tabKey}
 >
   <div class="media" style={box ? `height:${box.mediaH}px` : ''}>
-    {#if posterOnly}<img class="blur" {src} srcset={srcs} sizes="420px" alt="" aria-hidden="true" />{/if}
-    {#if src}<img class:contain={posterOnly} class:spoil={isSpoiler(item, $prefs)} {src} srcset={srcs} sizes="{box?.width ?? 360}px" alt="" />{/if}
+    {#if posterOnly}<img class="blur" src={startSrc || src} alt="" aria-hidden="true" />{/if}
+    {#if startSrc}<img class:contain={posterOnly} class:spoil={isSpoiler(item, $prefs)} src={startSrc} alt="" />{/if}
+    {#if src}<img class="hi" class:on={hiLoaded || !startSrc} class:contain={posterOnly} class:spoil={isSpoiler(item, $prefs)} {src} srcset={srcs} sizes="{box?.width ?? 360}px" alt="" on:load={() => (hiLoaded = true)} />{/if}
     {#if playing}<!-- svelte-ignore a11y_media_has_caption --><video bind:this={pv} class="pv" loop playsinline on:volumechange={() => pv && (vmuted = pv.muted)} on:playing={() => pv && (vmuted = pv.muted)}></video>{/if}
     <span class="shade"></span>
     {#if fresh}<span class="newep">Neue Folgen</span>{/if}
@@ -161,13 +172,15 @@
   </div>
   <div class="info">
     <div class="acts">
-      <a class="round play" {href} aria-label="Abspielen: {item.name}" title="Abspielen"><Icon name="play" size={18} /></a>
+      <a class="round play" {href} on:pointerenter={prefetchPlayer} on:focus={prefetchPlayer} aria-label="Abspielen: {item.name}" title="Abspielen"><Icon name="play" size={18} /></a>
       <button type="button" class="round" aria-label={inList ? 'Von Meine Liste entfernen' : 'Zu Meine Liste hinzufügen'} title="Meine Liste" on:click={toggleInList}><Icon name={inList ? 'check' : 'plus'} size={18} /></button>
-      <button type="button" class="round" class:on={thumb === 1} aria-pressed={thumb === 1} aria-label="Gefällt mir" title="Gefällt mir" on:click={(e) => setThumb(e, 1)}><Icon name="thumb-up" size={17} /></button>
-      <button type="button" class="round" class:on={fav} aria-pressed={fav} aria-label={fav ? 'Favorit entfernen' : 'Als Favorit markieren'} title="Favorit" on:click={toggleFav}><Icon name="heart" size={17} fill={fav} /></button>
-      {#if item.type !== 'BoxSet'}<ListMenu bind:this={menu} itemId={listId} variant="round" on:changed={(e) => dispatch('listchanged', e.detail)} />{/if}
-      {#if removable}<button type="button" class="round" aria-label="Aus Weiterschauen entfernen" title="Aus Weiterschauen entfernen" on:click={(e) => { release(e); dispatch('remove', item); }}><Icon name="x" size={17} /></button>{/if}
-      <a class="round more" href={detail} aria-label="Mehr Infos zu {item.name}" aria-haspopup="dialog" title="Mehr Infos" on:click={more}><Icon name="chevron-down" size={18} /></a>
+      {#if item.type !== 'BoxSet'}<RatingButton itemId={listId} bind:value={thumb} on:error={flash} />{/if}
+      <span class="right">
+        <MoreActions {actions} title={item.name} label="Mehr Aktionen für {item.name}">
+          {#if item.type !== 'BoxSet'}<ListMenu itemId={listId} variant="row" on:changed={(e) => dispatch('listchanged', e.detail)} />{/if}
+        </MoreActions>
+        <a class="round" href={detail} aria-label="Mehr Infos zu {item.name}" aria-haspopup="dialog" title="Mehr Infos" on:pointerenter={prefetchModal} on:focus={prefetchModal} on:click={more}><Icon name="chevron-down" size={18} /></a>
+      </span>
     </div>
     <div class="fb" role="status">{#if fb}<span>{fb}</span>{/if}</div>
     <div class="meta">
@@ -204,8 +217,9 @@
   .round:hover:not(:disabled) { border-color: #fff; background: rgba(42,42,42,.9); }
   .round.play { background: #fff; color: #000; border-color: #fff; }
   .round.play:hover { background: rgba(255,255,255,.8); }
-  .round.on { color: var(--acc); border-color: var(--acc); }
-  .more { margin-left: auto; }
+  .right { margin-left: auto; display: flex; gap: .4rem; align-items: center; }
+  .media img.hi { opacity: 0; transition: opacity .15s linear; }
+  .media img.hi.on { opacity: 1; }
   .fb { min-height: 0; }
   .fb span { display: inline-block; margin-top: .4rem; padding: .2rem .55rem; border-radius: 6px; background: rgba(20,20,20,.92); border: 1px solid var(--err, #e5646e); font-size: .78rem; font-weight: 600; }
   .meta { display: flex; gap: .6rem; align-items: center; margin-top: .7rem; font-size: .8rem; color: #d2d2d2; flex-wrap: wrap; }

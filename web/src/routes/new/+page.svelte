@@ -10,13 +10,18 @@
   import { openModal } from '#lib/modal';
   import { openPreview } from '#lib/previewSheet';
   import { mobile } from '#lib/viewport';
+  import { firstNonEmptyTab } from '#lib/home';
   import { genreLine, NEW_TABS, dateBlock, releaseLabel, runtimeLabel, sortUpcoming, type NewTab } from '#lib/mobile';
 
   type Up = { tmdbId: number; mediaType: string; title: string; releaseDate?: string; overview?: string; poster?: string; status: string };
   let upcoming: Up[] | null = null, week: Item[] | null = null, added: Item[] | null = null, msg = '';
   let availNow = new Set<number>();
 
-  $: tab = ((t) => (NEW_TABS.some(([id]) => id === t) ? (t as NewTab) : 'soon'))($page.url.searchParams.get('tab'));
+  // without ?tab the page opens on the first tab that has something to show (e.g. "Diese Woche" when nothing is upcoming)
+  $: explicit = ((t) => (NEW_TABS.some(([id]) => id === t) ? (t as NewTab) : null))($page.url.searchParams.get('tab'));
+  $: auto = firstNonEmptyTab(NEW_TABS.map(([id]) => id), { soon: upcoming, week, added });
+  $: tab = explicit ?? auto ?? 'soon';
+  $: deciding = !explicit && auto === null;
   const select = (t: NewTab) => goto(`?tab=${t}`, { replaceState: true, reset: false });
   // roving arrow keys on the chip row
   function chipKey(e: KeyboardEvent) {
@@ -59,8 +64,10 @@
   {/each}
 </div>
 
-<div id="np" role="tabpanel" aria-labelledby="nt-{tab}" class="panel2">
-  {#if tab === 'soon'}
+<div id="np" role="tabpanel" aria-labelledby="nt-{tab}" class="panel2" aria-busy={deciding}>
+  {#if deciding}
+    {#each Array(3) as _}<div class="entry plain"><div class="body"><div class="skeleton img"></div></div></div>{/each}
+  {:else if tab === 'soon'}
     {#if upcoming === null}
       {#each Array(3) as _}<div class="entry"><div class="skeleton dsk"></div><div class="body"><div class="skeleton img"></div></div></div>{/each}
     {:else if !upcoming.length}

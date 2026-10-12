@@ -6,7 +6,7 @@ test.describe('browser error reporting', () => {
 
   test('reports uncaught errors and rejections once, with the path only', async ({ page, api }) => {
     await page.goto('/search?q=geheim');
-    await expect(page.locator('#q')).toHaveValue('geheim');
+    await expect(page.locator('#hq')).toHaveValue('geheim');
 
     await page.evaluate(() => {
       setTimeout(() => { throw new Error('e2e-boom'); });
@@ -27,7 +27,7 @@ test.describe('browser error reporting', () => {
 
   test('ignores errors thrown by browser extensions', async ({ page, api }) => {
     await page.goto('/search');
-    await expect(page.locator('#q')).toBeVisible();
+    await expect(page.locator('#hq')).toBeVisible();
     await page.evaluate(() => {
       const ext = new Error('e2e-extension');
       ext.stack = 'Error: e2e-extension\n    at chrome-extension://abcdef/content.js:1:1';

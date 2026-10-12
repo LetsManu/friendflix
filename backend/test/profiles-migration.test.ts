@@ -37,4 +37,21 @@ describe('profiles migration', () => {
     // names are unique per account case-insensitively
     await expect(pool.query("insert into profiles(id,user_id,name,jellyfin_user_id) values ('55555555-5555-4555-8555-555555555555',$1,'KIND','jf3')", [uid])).rejects.toThrow();
   });
+
+  it('migration 26 lets thumbs hold 2 ("Super") and keeps existing rows', async () => {
+    await pool.query('drop schema public cascade; create schema public;');
+    for (const m of MIGRATIONS.slice(0, 25)) await pool.query(m);
+    const uid = '11111111-1111-4111-8111-111111111111';
+    await pool.query("insert into users(id,authentik_sub,name,role,jellyfin_user_id,jellyfin_username,jellyfin_pw_enc) values ($1,'s','A','member','jf','jfname','enc')", [uid]);
+    await pool.query("insert into profiles(id,user_id,name,jellyfin_user_id,is_owner) values ($1,$1,'A','jf',true)", [uid]);
+    await pool.query("insert into thumbs(profile_id,user_id,item_id,value,item_name) values ($1,$1,'a',1,'A'),($1,$1,'b',-1,'B')", [uid]);
+    await expect(pool.query("insert into thumbs(profile_id,user_id,item_id,value,item_name) values ($1,$1,'c',2,'C')", [uid])).rejects.toThrow();
+    await pool.query(MIGRATIONS[25]!);
+    await pool.query("insert into thumbs(profile_id,user_id,item_id,value,item_name) values ($1,$1,'c',2,'C')", [uid]);
+    await expect(pool.query("insert into thumbs(profile_id,user_id,item_id,value,item_name) values ($1,$1,'d',3,'D')", [uid])).rejects.toThrow();
+    await expect(pool.query("insert into thumbs(profile_id,user_id,item_id,value,item_name) values ($1,$1,'e',0,'E')", [uid])).rejects.toThrow();
+    expect((await pool.query('select item_id, value from thumbs order by item_id')).rows).toEqual([{ item_id: 'a', value: 1 }, { item_id: 'b', value: -1 }, { item_id: 'c', value: 2 }]);
+    const checks = (await pool.query("select conname from pg_constraint where conrelid = 'thumbs'::regclass and contype = 'c'")).rows.map((r) => r.conname);
+    expect(checks).toEqual(['thumbs_value_check']);
+  });
 });

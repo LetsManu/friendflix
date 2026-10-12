@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
+  import { goto } from '$app/navigation';
   import Icon from '#lib/Icon.svelte';
   import { downloads, fetchOptions, getMe, getSupport, initManager, pause, progressPct, removeDownload, requestDownload, resume, stateLabel, viewFor, type DownloadOptions } from '#lib/offline/manager';
   import { SUPPORT_HINT, type Support } from '#lib/offline/opfs';
@@ -11,6 +12,14 @@
   export let seriesId = '';
   /** small icon-only variant for episode rows */
   export let compact = false;
+  /** full-width grey button (phone detail view, Netflix app style) */
+  export let block = false;
+  /** no trigger of its own: the parent opens it with `activate()` (e.g. from the "⋯ Mehr" menu) */
+  export let headless = false;
+  /** read-only (bind): downloads are possible for this viewer/browser */
+  export let available = false;
+  /** read-only (bind): state of an existing download ('' = none) */
+  export let stateText = '';
 
   let support: Support = { ok: false };
   let allowed = false, ready = false;
@@ -31,6 +40,10 @@
 
   $: v = viewFor($downloads, itemId);
   $: pctNow = v ? progressPct(v) : 0;
+  $: available = ready && support.ok && allowed;
+  $: stateText = v ? stateLabel(v) : '';
+  /** headless use: a new download opens the options sheet, an existing one leads to the downloads page */
+  export function activate() { if (v) void goto('/downloads'); else void openSheet(); }
 
   async function openSheet() {
     open = true; err = ''; opts = null; loading = true;
@@ -79,8 +92,10 @@
 </script>
 
 <svelte:window on:keydown={key} />
-{#if ready && support.ok && allowed}
-  <span class="dl" class:compact>
+{#if headless}
+  <!-- trigger lives elsewhere -->
+{:else if ready && support.ok && allowed}
+  <span class="dl" class:compact class:block>
     <button type="button" class="dlb" class:sec={!compact} class:on={v?.state === 'done'} aria-haspopup="dialog" aria-label={v ? `Download: ${stateLabel(v)}` : 'Herunterladen'} title={v ? stateLabel(v) : 'Herunterladen'} on:click={main}>
       <Icon name={v?.state === 'done' ? 'check' : 'download'} size={compact ? 20 : 20} />
       {#if !compact}{v ? stateLabel(v) : 'Herunterladen'}{:else if v && v.state !== 'done'}<span class="mini">{v.state === 'preparing' ? v.prep ?? 0 : v.state === 'downloading' ? pctNow : ''}</span>{/if}
@@ -96,7 +111,7 @@
     {/if}
     {#if v && v.msg && !compact && v.state !== 'paused'}<span class="muted msg" role="status">{v.msg}</span>{/if}
   </span>
-{:else if ready && !support.ok && allowed && support.reason && support.reason !== 'tv' && !compact}
+{:else if ready && !support.ok && allowed && support.reason && support.reason !== 'tv' && !compact && !block}
   <span class="muted hint" role="note">{SUPPORT_HINT[support.reason]}</span>
 {/if}
 
@@ -147,6 +162,10 @@
   .dlb { display: inline-flex; align-items: center; gap: .5rem; }
   .dlb.on { color: var(--ok); }
   .compact .dlb { width: 40px; min-height: 40px; height: 40px; padding: 0; justify-content: center; border-radius: 50%; background: rgba(42,42,42,.7); border: 1px solid rgba(255,255,255,.35); position: relative; }
+  .block { display: flex; width: 100%; align-items: stretch; }
+  .block .dlb { width: 100%; justify-content: center; min-height: 44px; font-size: 1rem; font-weight: 700; background: rgba(109,109,110,.45); color: #fff; border: 0; border-radius: 4px; }
+  .block .dlb:hover:not(:disabled) { background: rgba(109,109,110,.65); }
+  .block .dlb.on { color: #fff; }
   .mini { position: absolute; right: -2px; top: -4px; font-size: .62rem; background: var(--acc); color: #fff; border-radius: 8px; padding: 0 .25rem; line-height: 1.2; }
   .mini:empty { display: none; }
   .menu { position: absolute; top: 100%; left: 0; z-index: 30; min-width: 14rem; margin-top: .3rem; display: flex; flex-direction: column; background: var(--surface-2, #2a2a2a); border-radius: 8px; box-shadow: 0 8px 28px #000a; padding: .3rem; }
