@@ -65,6 +65,9 @@
   {:else if name === 'list'}<path d="M9 6h12M9 12h12M9 18h12M4 6h.01M4 12h.01M4 18h.01" />
   {:else if name === 'cast'}<path d="M2 8V6a2 2 0 012-2h16a2 2 0 012 2v12a2 2 0 01-2 2h-6M2 12a9 9 0 019 9M2 16a5 5 0 015 5M2 20h.01" />
   {:else if name === 'copy'}<path d="M9 9h11v11H9zM5 15V4h11" />
+  {:else if name === 'sun'}<circle cx="12" cy="12" r="4" /><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4" />
+  {:else if name === 'unlock'}<path d="M5 11h14v10H5zM8 11V7a4 4 0 017.5-2" />
+  {:else if name === 'keyboard'}<path d="M3 6h18v12H3zM7 10h.01M11 10h.01M15 10h.01M7 14h10" />
   {/if}
 </svg>
 
