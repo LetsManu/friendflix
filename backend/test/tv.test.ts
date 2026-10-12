@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import WebSocket from 'ws';
 import { encrypt, keyFromBase64 } from '../src/crypto.js';
 import { ENC_KEY, makeEnv, type TestEnv } from './helpers.js';
@@ -113,7 +113,7 @@ describe('remote control hub', () => {
   it('forwards cast and control from the phone to the TV of the same user and status back', async () => {
     const tv = await open(await tvSid(), 'tv');
     const phone = await open(me.cookies.ff_sid!, 'remote');
-    await wait();
+    await vi.waitFor(() => expect(phone.msgs.find((m) => m.t === 'hello')).toBeTruthy());
     expect(phone.msgs.find((m) => m.t === 'hello')).toMatchObject({ role: 'remote', tvOnline: true });
     expect((await env.app.inject({ url: '/api/tv/status', cookies: me.cookies })).json()).toEqual({ tvOnline: true });
 
@@ -124,17 +124,18 @@ describe('remote control hub', () => {
     phone.ws.send(JSON.stringify({ t: 'cast', itemId: '../../etc/passwd' })); // invalid id
     phone.ws.send('garbage');
     tv.ws.send(JSON.stringify({ t: 'status', itemId: ITEM, title: 'Film', position: 12.5, duration: 5400, paused: false }));
-    await wait(200);
+    await vi.waitFor(() => { expect(tv.msgs.filter((m) => m.t === 'cast' || m.t === 'ctl')).toHaveLength(3); expect(phone.msgs.find((m) => m.t === 'status')).toBeTruthy(); });
     expect(tv.msgs.filter((m) => m.t === 'cast' || m.t === 'ctl')).toEqual([{ t: 'cast', itemId: ITEM, startSec: 90 }, { t: 'ctl', action: 'seekBy', value: -10 }, { t: 'ctl', action: 'next' }]);
     expect(phone.msgs.find((m) => m.t === 'status')).toMatchObject({ title: 'Film', position: 12.5, paused: false });
 
-    tv.ws.close(); await tv.closed; await wait();
-    expect(phone.msgs.at(-1)).toMatchObject({ t: 'peers', tvOnline: false });
+    tv.ws.close(); await tv.closed;
+    await vi.waitFor(() => expect(phone.msgs.at(-1)).toMatchObject({ t: 'peers', tvOnline: false }));
     phone.ws.close();
   });
 
   it('track lists travel TV -> phone and audio/sub commands phone -> TV, oversize lists are dropped', async () => {
-    const tv = await open(await tvSid(), 'tv'); const phone = await open(me.cookies.ff_sid!, 'remote'); await wait();
+    const tv = await open(await tvSid(), 'tv'); const phone = await open(me.cookies.ff_sid!, 'remote');
+    await vi.waitFor(() => expect(phone.msgs.find((m) => m.t === 'hello')).toBeTruthy());
     tv.ws.send(JSON.stringify({ t: 'status', itemId: ITEM, audio: [{ i: 1, t: 'Deutsch' }, { i: 2, t: 'English' }], audioSel: 1, subs: [{ i: 3, t: 'Deutsch' }], subSel: -1 }));
     tv.ws.send(JSON.stringify({ t: 'status', itemId: ITEM, audio: Array.from({ length: 11 }, (_, i) => ({ i, t: 'x' })) })); // too many: rejected
     phone.ws.send(JSON.stringify({ t: 'ctl', action: 'audio', value: 2 }));

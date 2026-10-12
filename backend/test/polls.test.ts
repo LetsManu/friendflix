@@ -109,4 +109,13 @@ describe('ratings and calendar', () => {
     expect(n).toHaveLength(1);
     expect(n[0].title).toContain('S1E1');
   });
+  it('skips series any profile of the account dropped (calendar + notifications)', async () => {
+    await env.ctx.db.query("delete from notifications where kind='episode'");
+    await env.ctx.db.query("insert into dropped(profile_id,item_id) select id, $1 from profiles", [SERIES]);
+    expect((await call('GET', '/api/calendar')).json().items.filter((e: any) => e.seriesId === SERIES)).toHaveLength(0);
+    await calendarNotifications(env.ctx);
+    expect((await call('GET', '/api/notifications')).json().notifications.filter((x: any) => x.kind === 'episode')).toHaveLength(0);
+    await env.ctx.db.query('delete from dropped where item_id=$1', [SERIES]);
+    expect((await call('GET', '/api/calendar')).json().items.some((e: any) => e.seriesId === SERIES)).toBe(true);
+  });
 });

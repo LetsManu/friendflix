@@ -1,5 +1,5 @@
 import { readFileSync } from 'node:fs';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { normalizePath, upstreamUri } from '../src/mediapath.js';
 import { cfg, makeEnv, type TestEnv } from './helpers.js';
 
@@ -37,6 +37,7 @@ describe('upstreamUri', () => {
 
 describe('GET /internal/authz-nginx', () => {
   let env: TestEnv;
+  afterEach(() => { vi.useRealTimers(); });
   let sid: string;
   const H = { 'x-internal-secret': cfg.INTERNAL_SECRET };
   const call = (headers: Record<string, string>, cookies: Record<string, string> | undefined, uri = `/media/Videos/${ID}/master.m3u8?MaxStreamingBitrate=999999999`) =>
@@ -72,10 +73,11 @@ describe('GET /internal/authz-nginx', () => {
   });
   it('a disabled user or removed session loses access within the memo window (<= 5 s)', async () => {
     await env.pool.query('update users set disabled = true');
-    await new Promise((r) => setTimeout(r, 5200));
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(Date.now() + 5200); // memo window (5 s) elapses
     expect((await call(H, { ff_sid: sid })).statusCode).toBe(401);
     await env.pool.query('update users set disabled = false');
-  }, 15_000);
+  });
   it('counts decisions for monitoring', async () => {
     const m = (await env.app.inject('/metrics')).body;
     expect(m).toMatch(/friendflix_authz_nginx_total\{result="ok"\} \d+/);

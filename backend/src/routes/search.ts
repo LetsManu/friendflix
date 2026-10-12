@@ -4,19 +4,10 @@ import type { Ctx } from '../ctx.js';
 import { JellyfinError } from '../jellyfin/client.js';
 import type { ItemDto } from '../jellyfin/dto.js';
 import { requireUser } from '../session.js';
+import { id32, wrap as sharedWrap } from './_shared.js';
 
-const id32 = z.string().transform((s) => s.replace(/-/g, '').toLowerCase()).pipe(z.string().regex(/^[0-9a-f]{32}$/));
 
-function wrap<T extends (...a: any[]) => Promise<any>>(fn: T): T {
-  return (async (req: any, reply: any) => {
-    try {
-      return await fn(req, reply);
-    } catch (e) {
-      if (e instanceof JellyfinError) return reply.code(e.status === 404 || e.status === 400 ? 404 : 502).send({ error: e.status === 404 || e.status === 400 ? 'not_found' : 'jellyfin', status: e.status });
-      throw e;
-    }
-  }) as T;
-}
+const wrap = <T extends (...a: any[]) => Promise<any>>(fn: T): T => sharedWrap(fn, { notFound: [404, 400] });
 
 export function searchRoutes(app: FastifyInstance, ctx: Ctx) {
   const pre = { preHandler: requireUser(ctx) };

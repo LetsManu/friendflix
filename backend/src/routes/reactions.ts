@@ -4,8 +4,8 @@ import type { Ctx } from '../ctx.js';
 import { JellyfinError } from '../jellyfin/client.js';
 import type { ItemDto } from '../jellyfin/dto.js';
 import { requireUser } from '../session.js';
+import { id32 } from './_shared.js';
 
-const id32 = z.string().transform((s) => s.replace(/-/g, '').toLowerCase()).pipe(z.string().regex(/^[0-9a-f]{32}$/));
 const EMOJIS = ['like', 'funny', 'wow', 'sad', 'love'] as const;
 type Emoji = (typeof EMOJIS)[number];
 

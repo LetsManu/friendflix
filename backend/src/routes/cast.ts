@@ -6,8 +6,7 @@ import { JellyfinError } from '../jellyfin/client.js';
 import { countLive } from '../live.js';
 import { effectiveRole } from '../roles.js';
 import { requireUser } from '../session.js';
-
-const itemId = z.string().transform((s) => s.replace(/-/g, '').toLowerCase()).pipe(z.string().regex(/^[0-9a-f]{32}$/));
+import { id32 as itemId } from './_shared.js';
 
 export function castRoutes(app: FastifyInstance, ctx: Ctx) {
   const pre = { preHandler: requireUser(ctx) };

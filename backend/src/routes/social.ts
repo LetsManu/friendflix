@@ -1,26 +1,16 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import type { Ctx } from '../ctx.js';
-import { JellyfinError } from '../jellyfin/client.js';
 import type { ItemDto } from '../jellyfin/dto.js';
 import { requireUser } from '../session.js';
 import type { UserRow } from '../types.js';
 import { itemsByIds } from './discover.js';
+import { id32, wrap as sharedWrap } from './_shared.js';
 
-const id32 = z.string().transform((s) => s.replace(/-/g, '').toLowerCase()).pipe(z.string().regex(/^[0-9a-f]{32}$/));
 
 export type WatchStatus = 'none' | 'planned' | 'watching' | 'watched' | 'dropped';
 
-function wrap<T extends (...a: any[]) => Promise<any>>(fn: T): T {
-  return (async (req: any, reply: any) => {
-    try {
-      return await fn(req, reply);
-    } catch (e) {
-      if (e instanceof JellyfinError) return reply.code(e.status === 404 || e.status === 403 || e.status === 400 ? 404 : 502).send({ error: e.status === 404 || e.status === 403 || e.status === 400 ? 'not_found' : 'jellyfin', status: e.status });
-      throw e;
-    }
-  }) as T;
-}
+const wrap = <T extends (...a: any[]) => Promise<any>>(fn: T): T => sharedWrap(fn, { notFound: [404, 403, 400] });
 
 /** Status derived from Jellyfin's user data (what "watching"/"watched" mean when nothing is stored). */
 export function derivedStatus(i: ItemDto): WatchStatus {
