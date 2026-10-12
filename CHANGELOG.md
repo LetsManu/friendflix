@@ -4,9 +4,8 @@
 - Home row "Diese Woche bei uns": what friends watched in the last 7 days (counts only; a title needs 2 viewers unless you are one of them).
 - "Neue Folgen" badge on series you started that got episodes in the last 14 days.
 - Reactions on films and episodes (Gefällt mir, Witzig, Wow, Traurig, Liebe + short comment), visible only after you watched it – spoiler protection like the TV Time pattern. Migration 23: `reactions`.
-### Touch & images, security
+### Touch & images
 - Touch action sheet on cards, series name on episode cards, srcset/sizes for card/hero/quick-view images, ItemModal accessibility (inert background, labelled dialog).
-- Watch parties and poll options are hidden when the viewer cannot see the title; `/api/recommendations/seen` can mark selected rows only.
 ### Block 7 – Sprache, Watch-Status, Freunde
 - Audio/subtitle language filter in Filme/Serien ("Ton", "Untertitel", quick toggle "Deutscher Ton"), backed by a background index of all MediaStreams (`item_langs`, every 12 h); the item page lists audio and subtitle languages.
 - Watch status per profile: "Geplant" (Meine Liste) and "Abgebrochen" (leaves Weiterschauen and Nächste Folge), plus derived "Schaue ich gerade"/"Gesehen"; Meine Liste has tabs Geplant | Abgebrochen.
