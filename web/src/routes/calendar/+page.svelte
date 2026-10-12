@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { intlLocale } from '#lib/i18n';
   import { onMount } from 'svelte';
   import { api } from '#lib/api';
   import Icon from '#lib/Icon.svelte';
@@ -18,7 +19,7 @@
 {#if msg}<p class="warn" role="status">{msg}</p>{/if}
 {#if !items.length}<p class="muted">Keine kommenden Folgen.</p>{/if}
 <table><tbody>{#each items as e}<tr>
-  <td>{e.premiereDate ? new Date(e.premiereDate).toLocaleDateString('de-DE', { weekday: 'short', day: '2-digit', month: '2-digit' }) : '?'}</td>
+  <td>{e.premiereDate ? new Date(e.premiereDate).toLocaleDateString(intlLocale(), { weekday: 'short', day: '2-digit', month: '2-digit' }) : '?'}</td>
   <td><a href="/item/{e.seriesId}">{e.seriesName}</a> S{e.parentIndexNumber}E{e.indexNumber} – {e.name}</td>
   <td><button class:sec={!e.followed} on:click={() => follow(e)}>{e.followed ? 'Folge ich' : 'Folgen'}</button>
     {#if future(e)}

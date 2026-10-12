@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { intlLocale } from '#lib/i18n';
   import { onDestroy, onMount } from 'svelte';
   import { pageStore } from '#lib/page';
   const page = pageStore();
@@ -40,7 +41,7 @@
       wishMsg = `„${w.title}“ wurde gewünscht. Ein Admin gibt es frei.`;
     } catch (e) {
       if (e instanceof ApiError && e.status === 429 && e.body?.error === 'request_limit') {
-        const d = e.body.resetsAt ? new Date(e.body.resetsAt).toLocaleDateString('de-DE') : '';
+        const d = e.body.resetsAt ? new Date(e.body.resetsAt).toLocaleDateString(intlLocale()) : '';
         quotaFull = wishMsg = d ? `Limit erreicht – neue Wünsche ab ${d}` : 'Limit erreicht – derzeit keine neuen Wünsche möglich.';
       } else if (e instanceof ApiError && e.status === 409) { sent.add(wkey(w)); sent = sent; wishMsg = 'Schon gewünscht'; }
       else wishMsg = 'Wunsch konnte nicht gestellt werden.';

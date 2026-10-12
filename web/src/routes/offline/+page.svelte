@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { intlLocale } from '#lib/i18n';
   import { onMount } from 'svelte';
   import OfflinePlayer from '#lib/OfflinePlayer.svelte';
   import { bumpMaxSeen, daysLeft, isPlayable, REASON_TEXT } from '#lib/offline/license';
@@ -9,7 +10,7 @@
   let loaded = false, maxSeen = 0, profileName = '';
   let playing: DownloadRecord | null = null;
 
-  const fmtSize = (b: number) => (b / 1e9 >= 1 ? `${(b / 1e9).toLocaleString('de-DE', { maximumFractionDigits: 1 })} GB` : `${Math.round(b / 1e6)} MB`);
+  const fmtSize = (b: number) => (b / 1e9 >= 1 ? `${(b / 1e9).toLocaleString(intlLocale(), { maximumFractionDigits: 1 })} GB` : `${Math.round(b / 1e6)} MB`);
   $: groups = group(items);
   function group(list: DownloadRecord[]) {
     const m = new Map<string, DownloadRecord[]>();

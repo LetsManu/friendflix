@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { intlLocale } from '#lib/i18n';
   import { onMount } from 'svelte';
   import { api, ApiError } from '#lib/api';
   interface Dev { id: string; label: string; approved: boolean; current: boolean; last_seen: string }
@@ -45,7 +46,7 @@
     <h2>Wartet auf Freigabe ({pending.length})</h2>
     {#each pending as d (d.id)}
       <div class="flex row">
-        <div><b>{d.label}</b><div class="muted">zuletzt gesehen {new Date(d.last_seen).toLocaleString('de-DE')}</div></div>
+        <div><b>{d.label}</b><div class="muted">zuletzt gesehen {new Date(d.last_seen).toLocaleString(intlLocale())}</div></div>
         <span class="sp"></span>
         <button disabled={busy === d.id} on:click={() => approve(d)}>{busy === d.id ? 'Gebe frei …' : 'Freigeben'}</button>
         <button class="sec" on:click={() => remove(d)}>Ablehnen</button>
@@ -64,7 +65,7 @@
     {#each others as d (d.id)}
       <tr>
         <td>{d.label} {#if d.current}<span class="badge">dieses Gerät</span>{/if}</td>
-        <td>{new Date(d.last_seen).toLocaleString('de-DE')}</td>
+        <td>{new Date(d.last_seen).toLocaleString(intlLocale())}</td>
         <td>{#if !d.current}<button class="sec" on:click={() => remove(d)}>Entfernen</button>{/if}</td>
       </tr>
     {/each}

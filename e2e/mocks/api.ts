@@ -63,6 +63,10 @@ export async function installApi(ctx: BrowserContext, st: MockState): Promise<vo
     if (p === '/api/notifications') return J({ notifications: [{ id: 'n1', title: 'Anna hat dich zur Liste „Annas Klassiker“ eingeladen', link: '/lists/' + st.lists[1]!.id, read: false }] });
     if (p === '/api/notifications/read') return J({ ok: true });
     if (p === '/api/prefs') return J({ prefs: {} });
+    if (p === '/api/push/config') return J({ enabled: false }); // settings page: push not set up on the mock server
+    // UI language (block 14): profile language + admin instance default
+    if (p === '/api/prefs/language' && m === 'PUT') return J({ language: body().language });
+    if (p === '/api/admin/settings/language') return J(m === 'PUT' ? { language: body().language, set: true } : { language: 'de', set: true, languages: ['de', 'en', 'fr', 'es', 'it', 'tr', 'pl'] });
     if (p === '/api/watchlist/ids') return J({ ids: [...st.watch] });
     if (p === '/api/watchlist') return J({ items: [...st.watch].map(find).filter(Boolean).map((i) => withFav(i!)) });
     if (p === '/api/dropped') return J({ items: [...st.dropped].map(find).filter(Boolean) });

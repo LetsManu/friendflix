@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { intlLocale } from '#lib/i18n';
   import { api, ApiError } from '#lib/api';
   import Icon from '#lib/Icon.svelte';
 
@@ -60,7 +61,7 @@
     busy = false;
   }
   const label = (k: Emoji) => EMOJIS.find((e) => e.key === k);
-  const fmtDate = (s: string) => { const d = new Date(s); return Number.isNaN(+d) ? '' : d.toLocaleDateString('de-DE', { day: 'numeric', month: 'short' }); };
+  const fmtDate = (s: string) => { const d = new Date(s); return Number.isNaN(+d) ? '' : d.toLocaleDateString(intlLocale(), { day: 'numeric', month: 'short' }); };
   $: mineExists = !!(data && !data.locked && data.reactions.some((r) => r.mine));
 </script>
 

@@ -1,7 +1,8 @@
 <script lang="ts">
   import { createEventDispatcher, onDestroy, tick } from 'svelte';
   import { api } from '#lib/api';
-  import { focusIndex, nextThumb, RATING_OPTIONS, thumbLabel, toThumb, type Thumb } from '#lib/rating';
+  import { focusIndex, nextThumb, RATING_OPTIONS, toThumb, type Thumb } from '#lib/rating';
+  import { t } from '#lib/i18n';
 
   /**
    * Netflix-style rating: one round thumb button that expands (hover / click / keyboard focus / tap) into
@@ -55,7 +56,7 @@
       dispatch('change', { value: next, previous });
     } catch {
       value = previous;
-      msg = 'Bewertung konnte nicht gespeichert werden.';
+      msg = $t('common.rating.saveFailed');
       clearTimeout(msgT); msgT = setTimeout(() => (msg = ''), 4500);
       dispatch('error', { value: next });
     }
@@ -104,24 +105,24 @@
 <span class="rb" class:lab={showLabel} bind:this={root} style="--rb:{size}px" on:mouseenter={onEnter} on:mouseleave={onLeave} on:focusout={onFocusOut} on:keydown={onKey}>
   <button
     bind:this={trigger} type="button" class="trig" class:on={v !== 0} class:hid={open}
-    tabindex={open ? -1 : 0} aria-label={thumbLabel(v)} aria-haspopup="true" aria-expanded={open}
-    title={current ? current.label : 'Bewerten'} on:click={onTriggerClick} on:focus={onTriggerFocus}
+    tabindex={open ? -1 : 0} aria-label={current ? $t('common.rating.rated', { label: $t(current.key) }) : $t('common.rating.rate')} aria-haspopup="true" aria-expanded={open}
+    title={current ? $t(current.key) : $t('common.rating.rate')} on:click={onTriggerClick} on:focus={onTriggerFocus}
   >
     <span class="ic">
       {#if v === -1}{@render down(iconSize, true)}{:else if v === 2}{@render double(iconSize, true)}{:else}{@render upIc(iconSize, v === 1)}{/if}
     </span>
-    {#if showLabel}<span class="tx">{current ? current.label : 'Bewerten'}</span>{/if}
+    {#if showLabel}<span class="tx">{current ? $t(current.key) : $t('common.rating.rate')}</span>{/if}
   </button>
   {#if open}
-    <span class="pill" class:up role="group" aria-label="Bewerten">
+    <span class="pill" class:up role="group" aria-label={$t('common.rating.rate')}>
       {#each RATING_OPTIONS as o, i (o.value)}
         <button
           bind:this={opts[i]} type="button" class="opt" class:on={v === o.value} aria-pressed={v === o.value}
-          aria-label={v === o.value ? `${o.label} (Bewertung entfernen)` : o.label} disabled={busy}
+          aria-label={v === o.value ? $t('common.rating.remove', { label: $t(o.key) }) : $t(o.key)} disabled={busy}
           on:click|stopPropagation={(e) => pick(o.value, e)}
         >
           {#if o.icon === 'down'}{@render down(iconSize, v === o.value)}{:else if o.icon === 'up'}{@render upIc(iconSize, v === o.value)}{:else}{@render double(iconSize, v === o.value)}{/if}
-          <span class="tip" aria-hidden="true">{o.label}</span>
+          <span class="tip" aria-hidden="true">{$t(o.key)}</span>
         </button>
       {/each}
     </span>

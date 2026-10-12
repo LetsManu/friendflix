@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { intlLocale } from '#lib/i18n';
   import { onMount } from 'svelte';
   import { api, type Item } from '#lib/api';
   import Row from '#lib/Row.svelte';
@@ -29,7 +30,7 @@
     recs = cap(pick(d.recommendations.map((r) => r.itemId)), new Map(d.recommendations.map((r) => [r.itemId, r.kind === 'friends' ? `Bewertet von ${r.from}` : `Von ${r.from}${r.note ? `: ${r.note}` : ''}`])));
   });
   $: pending = digest?.data.available.filter((a) => !a.itemId) ?? [];
-  const when = (iso: string) => new Date(iso).toLocaleDateString('de-DE', { day: '2-digit', month: 'long', year: 'numeric' });
+  const when = (iso: string) => new Date(iso).toLocaleDateString(intlLocale(), { day: '2-digit', month: 'long', year: 'numeric' });
 </script>
 <svelte:head><title>Wochenrückblick – FriendFlix</title></svelte:head>
 <h1>Wochenrückblick</h1>

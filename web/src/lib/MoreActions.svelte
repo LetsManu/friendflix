@@ -21,14 +21,16 @@
   import Icon from '#lib/Icon.svelte';
   import { placePopover, placedStyle } from '#lib/popover';
   import { holdBillboard } from '#lib/preview';
+  import { t } from '#lib/i18n';
 
   /**
    * "⋯ Mehr": one trigger that opens a menu (desktop popover) or a bottom sheet (touch / narrow screens).
    * Pass `actions` and/or custom content in the default slot (`let:close` closes the menu), e.g. ListMenu variant="row".
    */
   export let actions: MoreAction[] = [];
-  /** accessible name + visible text of the trigger (labelled variants) */
-  export let label = 'Mehr';
+  /** accessible name + visible text of the trigger (labelled variants); default: "Mehr" in the current language */
+  export let label = '';
+  $: shown = label || $t('common.more');
   /** heading of the sheet / popover (e.g. the title name) */
   export let title = '';
   /** round = pop-out card (34px), ring = detail view icon button, labelled = icon + text under it (phone icon row), pill = grey button with text */
@@ -109,11 +111,11 @@
 <svelte:window on:resize={() => open && place()} on:scroll|capture={(e) => { if (open && !asSheet && !panel?.contains(e.target as Node)) place(); }} />
 
 <button
-  bind:this={btn} type="button" class="ma {variant}" class:on={open} aria-haspopup="dialog" aria-expanded={open} aria-label={variant === 'labelled' || variant === 'pill' ? undefined : label} title={variant === 'round' || variant === 'ring' ? label : undefined}
+  bind:this={btn} type="button" class="ma {variant}" class:on={open} aria-haspopup="dialog" aria-expanded={open} aria-label={variant === 'labelled' || variant === 'pill' ? undefined : shown} title={variant === 'round' || variant === 'ring' ? shown : undefined}
   style={variant === 'round' ? `--ma:${size}px` : undefined} on:click|stopPropagation={toggle}
 >
   <svg class="dots" width={variant === 'round' ? Math.round(size * 0.52) : 22} height={variant === 'round' ? Math.round(size * 0.52) : 22} viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" focusable="false"><circle cx="5" cy="12" r="2" /><circle cx="12" cy="12" r="2" /><circle cx="19" cy="12" r="2" /></svg>
-  {#if variant === 'labelled' || variant === 'pill'}<span class="tx">{label}</span>{/if}
+  {#if variant === 'labelled' || variant === 'pill'}<span class="tx">{shown}</span>{/if}
 </button>
 
 {#if open}
@@ -121,7 +123,7 @@
   <div class="ma-wrap" class:modal={asSheet} use:portal role="presentation">
     {#if asSheet}<div class="scrim" role="presentation" on:click={() => close()}></div>{/if}
     <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
-    <div class={asSheet ? 'sheet ma-pop' : 'pop ma-pop'} bind:this={panel} style={asSheet ? undefined : style} tabindex="-1" role="dialog" aria-modal={asSheet ? 'true' : undefined} aria-label={title || label} on:keydown={onKey} on:focusout={onFocusOut}>
+    <div class={asSheet ? 'sheet ma-pop' : 'pop ma-pop'} bind:this={panel} style={asSheet ? undefined : style} tabindex="-1" role="dialog" aria-modal={asSheet ? 'true' : undefined} aria-label={title || shown} on:keydown={onKey} on:focusout={onFocusOut}>
       {#if asSheet}<span class="grab" aria-hidden="true"></span>{/if}
       {#if title}<p class="ttl">{title}</p>{/if}
       {#if actions.length}
@@ -138,7 +140,7 @@
         </ul>
       {/if}
       {#if $$slots.default}<div class="slot"><slot {close} /></div>{/if}
-      {#if asSheet}<button type="button" class="mi cancel" on:click={() => close()}>Schließen</button>{/if}
+      {#if asSheet}<button type="button" class="mi cancel" on:click={() => close()}>{$t('common.close')}</button>{/if}
     </div>
   </div>
 {/if}

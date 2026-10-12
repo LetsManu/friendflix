@@ -15,6 +15,7 @@ import { portainerMode, triggerUpdate, updateInfo } from '../updates.js';
 import { MAX_FEATURED } from '../lists.js';
 import { accountJellyfinIds } from '../profiles.js';
 import { applyRole, getUserById, reapplyRole } from '../users.js';
+import { FALLBACK_LANGUAGE, LANGUAGES, instanceLanguage, setInstanceLanguage } from '../i18n.js';
 
 const uuid = z.guid();
 
@@ -62,6 +63,19 @@ export function adminRoutes(app: FastifyInstance, ctx: Ctx) {
       summary: { total: rows.length, ok: count('ok'), failed: count('failed'), missing: count('missing'), preparing: count('preparing'), totalBytes: rows.reduce((a, r) => a + (r.bytes ?? 0), 0) },
       items: rows,
     };
+  });
+
+  // ---- instance default UI language (asked once on the first admin visit; profiles may override it) ----
+  app.get('/api/admin/settings/language', admin, async () => {
+    const l = await instanceLanguage(ctx);
+    return { language: l ?? FALLBACK_LANGUAGE, set: l !== null, languages: LANGUAGES };
+  });
+  app.put('/api/admin/settings/language', admin, async (req) => {
+    const { language } = z.object({ language: z.enum(LANGUAGES) }).parse(req.body);
+    const before = await instanceLanguage(ctx);
+    await setInstanceLanguage(ctx, language);
+    if (before !== language) await audit(ctx, req.user!.id, 'settings.language', undefined, { from: before, to: language });
+    return { language, set: true };
   });
 
   app.get('/api/admin/update', admin, async (req) => updateInfo(ctx, (req.query as { refresh?: string }).refresh === '1'));

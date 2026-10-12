@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { intlLocale } from '#lib/i18n';
   import { onMount } from 'svelte';
   import { pageStore } from '#lib/page';
   const page = pageStore();
@@ -38,4 +39,4 @@
 </div>
 <h3>Offene Räume</h3>
 {#if !rooms.length}<p class="muted">Gerade läuft keine Party.</p>{/if}
-<table><tbody>{#each rooms as r}<tr><td>{r.title}</td><td class="muted">{r.hostName ?? ''} · {r.members} dabei</td><td>{#if r.startAt}<span class="badge">Start {new Date(r.startAt).toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' })}</span>{/if}</td><td><a class="btn" href="/party/{r.id}">Beitreten</a></td></tr>{/each}</tbody></table>
+<table><tbody>{#each rooms as r}<tr><td>{r.title}</td><td class="muted">{r.hostName ?? ''} · {r.members} dabei</td><td>{#if r.startAt}<span class="badge">Start {new Date(r.startAt).toLocaleTimeString(intlLocale(), { hour: '2-digit', minute: '2-digit' })}</span>{/if}</td><td><a class="btn" href="/party/{r.id}">Beitreten</a></td></tr>{/each}</tbody></table>

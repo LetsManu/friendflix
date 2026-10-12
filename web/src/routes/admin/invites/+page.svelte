@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { intlLocale } from '#lib/i18n';
   import { onMount } from 'svelte';
   import { api } from '#lib/api';
   let invites: any[] = [], role = 'friend', ttl = 48, note = '', existing = false, created: { link: string; authentik?: 'off' | 'skipped' | 'ok' | 'failed' } | null = null;
@@ -23,7 +24,7 @@
   <thead><tr><th>Rolle</th><th>Notiz</th><th>Gültig bis</th><th>Status</th><th></th></tr></thead>
   <tbody>
     {#each invites as i}
-      <tr><td>{i.role}</td><td>{i.note ?? ''}</td><td>{new Date(i.expires_at).toLocaleString('de-DE')}</td>
+      <tr><td>{i.role}</td><td>{i.note ?? ''}</td><td>{new Date(i.expires_at).toLocaleString(intlLocale())}</td>
         <td>{#if i.used_at}<span class="ok">eingelöst von {i.used_by_name ?? '?'}</span>{:else if new Date(i.expires_at) < new Date()}<span class="muted">abgelaufen</span>{:else}<span class="warn">offen</span>{/if}</td>
         <td>{#if !i.used_at}<button class="sec" on:click={() => revoke(i.id)}>Widerrufen</button>{/if}</td></tr>
     {/each}

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { intlLocale } from '#lib/i18n';
   import { onDestroy, onMount } from 'svelte';
   import { api } from '#lib/api';
   type Res = { itemId: string; name: string; type: string; ok: boolean; status: number | null; ms: number; bytes: number; error: string | null };
@@ -26,7 +27,7 @@
   type DlLic = { id: string; item_id: string; title: string | null; series_name: string | null; user_name: string; device_label: string | null; quality: string; status: string; expires_at: string };
   let dl: { enabled: boolean; maxBytes: number; diskBytes: number; jobs: DlJob[]; licenses: DlLic[] } | null = null;
   let dlErr = '';
-  const gb = (b: number | string | null | undefined) => (Number(b ?? 0) / 1e9).toLocaleString('de-DE', { maximumFractionDigits: 1 }) + ' GB';
+  const gb = (b: number | string | null | undefined) => (Number(b ?? 0) / 1e9).toLocaleString(intlLocale(), { maximumFractionDigits: 1 }) + ' GB';
   const STATUS: Record<string, string> = { queued: 'wartet', preparing: 'wird vorbereitet', ready: 'bereit', failed: 'fehlgeschlagen', pending: 'ausstehend', fetched: 'geladen' };
   async function loadDl() {
     try { const r = await api('/api/admin/downloads'); dl = { enabled: Boolean(r.enabled), maxBytes: r.maxBytes ?? 0, diskBytes: r.diskBytes ?? 0, jobs: r.jobs ?? [], licenses: r.licenses ?? [] }; dlErr = ''; } catch { dlErr = 'Downloads konnten nicht geladen werden.'; }
@@ -41,7 +42,7 @@
 <div class="flex" style="margin-bottom:1rem">
   <button disabled={s?.running} on:click={start}>Prüfung starten</button>
   {#if s?.running}<span class="muted">{s.done} / {s.total || '…'}</span>{/if}
-  {#if s && !s.running && s.finishedAt}<span class="muted">Letzte Prüfung: {new Date(s.finishedAt).toLocaleString('de-DE')}</span>{/if}
+  {#if s && !s.running && s.finishedAt}<span class="muted">Letzte Prüfung: {new Date(s.finishedAt).toLocaleString(intlLocale())}</span>{/if}
   {#if err}<span class="err">{err}</span>{/if}
 </div>
 {#if s?.running}<progress style="width:100%;margin-bottom:1rem" max={s.total || 1} value={s.done}></progress>{/if}
@@ -77,7 +78,7 @@
   <h3>Aktive Lizenzen ({dl.licenses.length})</h3>
   {#each dl.licenses as l (l.id)}
     <div class="panel flex">
-      <span><b>{l.series_name ? `${l.series_name} · ` : ''}{l.title ?? l.item_id}</b> <span class="muted">{l.user_name}{l.device_label ? ` · ${l.device_label}` : ''} · {l.quality} · {STATUS[l.status] ?? l.status} · bis {new Date(l.expires_at).toLocaleDateString('de-DE')}</span></span>
+      <span><b>{l.series_name ? `${l.series_name} · ` : ''}{l.title ?? l.item_id}</b> <span class="muted">{l.user_name}{l.device_label ? ` · ${l.device_label}` : ''} · {l.quality} · {STATUS[l.status] ?? l.status} · bis {new Date(l.expires_at).toLocaleDateString(intlLocale())}</span></span>
       <button class="sec" on:click={() => revoke(l.id)}>Widerrufen</button>
     </div>
   {:else}<p class="muted">Keine aktiven Lizenzen.</p>{/each}

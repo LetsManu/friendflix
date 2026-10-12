@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { intlLocale } from '#lib/i18n';
   import { onMount } from 'svelte';
   import { pageStore } from '#lib/page';
   const page = pageStore();
@@ -9,7 +10,7 @@
   let q = $page.url.searchParams.get('q') ?? '', results: any[] = [], mine: any[] = [], msg = '', busy = false, mineErr = '', requesting = new Set<string>();
   let quota: { limit: number | null; used: number; remaining: number | null; resetsAt: string } | null = null;
   $: full = quota !== null && quota.limit !== null && (quota.remaining ?? 0) <= 0;
-  const day = (iso: string) => new Date(iso).toLocaleDateString('de-DE');
+  const day = (iso: string) => new Date(iso).toLocaleDateString(intlLocale());
   const limitMsg = (resetsAt: string) => `Limit erreicht – neue Wünsche ab ${day(resetsAt)}`;
   const loadQuota = async () => { try { quota = await api('/api/requests/quota'); } catch { /* optional */ } };
   const label: Record<string, string> = { nicht_angefragt: '', angefragt: 'Angefragt', in_arbeit: 'In Arbeit', teilweise: 'Teilweise verfügbar', verfuegbar: 'Verfügbar', abgelehnt: 'Abgelehnt', entfernt: 'Entfernt' };
@@ -66,7 +67,7 @@
 </div>
 <h2 style="margin-top:2rem">Meine Wünsche</h2>
 {#if mineErr}<p class="err" role="alert">{mineErr} <button type="button" class="sec" on:click={loadMine}>Erneut versuchen</button></p>{:else if !mine.length}<p class="muted">Noch nichts gewünscht.</p>{/if}
-<table><tbody>{#each mine as m}<tr><td>{m.title}</td><td>{m.mediaType === 'tv' ? 'Serie' : 'Film'}</td><td class={cls[m.status]}>{label[m.status] ?? m.status}</td><td class="muted">{new Date(m.createdAt).toLocaleDateString('de-DE')}</td></tr>{/each}</tbody></table>
+<table><tbody>{#each mine as m}<tr><td>{m.title}</td><td>{m.mediaType === 'tv' ? 'Serie' : 'Film'}</td><td class={cls[m.status]}>{label[m.status] ?? m.status}</td><td class="muted">{new Date(m.createdAt).toLocaleDateString(intlLocale())}</td></tr>{/each}</tbody></table>
 <h2 style="margin-top:2rem">Erinnerungen</h2>
 {#if !reminders.length}<p class="muted">Keine aktiven Erinnerungen. Mit „Erinnere mich“ erfährst du, sobald ein Titel verfügbar ist.</p>{/if}
-<table><tbody>{#each reminders as r (r.id)}<tr><td>{r.title}</td><td>{r.kind === 'episode' ? 'Folge' : r.mediaType === 'tv' ? 'Serie' : 'Film'}</td><td class="muted">{r.releaseDate ? new Date(r.releaseDate).toLocaleDateString('de-DE') : 'Termin offen'}</td><td><button class="sec" aria-label="Erinnerung für {r.title} entfernen" on:click={() => unremind(r)}>Entfernen</button></td></tr>{/each}</tbody></table>
+<table><tbody>{#each reminders as r (r.id)}<tr><td>{r.title}</td><td>{r.kind === 'episode' ? 'Folge' : r.mediaType === 'tv' ? 'Serie' : 'Film'}</td><td class="muted">{r.releaseDate ? new Date(r.releaseDate).toLocaleDateString(intlLocale()) : 'Termin offen'}</td><td><button class="sec" aria-label="Erinnerung für {r.title} entfernen" on:click={() => unremind(r)}>Entfernen</button></td></tr>{/each}</tbody></table>

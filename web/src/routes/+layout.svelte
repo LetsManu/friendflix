@@ -26,6 +26,10 @@
   import { canRenderEarly, clearReloadFlag, earlyProfile, gateHref, hintOf, needsProfileGate, readActive, readHint, readPicked, readReloading, writeActive, writeHint } from '#lib/gate';
   import MobilePreviewSheet from '#lib/MobilePreviewSheet.svelte';
   import { closePreview, previewSheet } from '#lib/previewSheet';
+  import { isLocale, locale, pickLocale, ready, setLocale, t, type Locale } from '#lib/i18n';
+  import Rich from '#lib/i18n/Rich.svelte';
+  import LanguageGate from '#lib/LanguageGate.svelte';
+  import { saveLanguage } from '#lib/stores';
 
   let me: Me | null = null;
   /** The page renders before /api/me returns when the last answer allows it (see lib/gate.ts): its data requests start right away. */
@@ -40,6 +44,23 @@
   let sentinel: HTMLElement;
   let online = true;
   let intro = false;
+  // ---- UI language: the shell waits for the remembered language once; first admin visit / first login ask for a language ----
+  let booted = false;
+  $: if ($ready) booted = true;
+  let langAsk: 'instance' | 'profile' | null = null, langPre: Locale = 'de';
+  async function chooseInstance(l: Locale) {
+    await api('/api/admin/settings/language', { method: 'PUT', body: { language: l } });
+    if (me?.languageChosen === false) await saveLanguage(l); // the admin is not asked a second time for their own profile
+    if (me) me = { ...me, defaultLanguage: l, defaultLanguageSet: true, languageChosen: true };
+    langAsk = null;
+  }
+  /** "Später": keep the instance default, but store it so the question does not come back */
+  const skipLanguage = () => chooseProfile(isLocale(me?.defaultLanguage) ? me!.defaultLanguage as Locale : 'de');
+  async function chooseProfile(l: Locale) {
+    await saveLanguage(l);
+    if (me) me = { ...me, language: l, languageChosen: true };
+    langAsk = null;
+  }
   $: canDownload = Boolean(me?.downloads?.allowed);
   $: multi = (me?.profileCount ?? 0) > 1;
   $: who = me ? (me.profile?.name ?? me.name) : '';
@@ -96,6 +117,7 @@
   $: here = publicPage ? path : path + $page.url.search; // (the prerendered /offline page has no search params)
   const switchHref = (id: string) => `/profiles?pick=${encodeURIComponent(id)}&next=${encodeURIComponent(here)}`;
   function openHelp() { menu = false; help = true; }
+  const HELP = [['shell.help.searchT', 'shell.help.searchD'], ['shell.help.playerT', 'shell.help.playerD'], ['shell.help.deviceT', 'shell.help.deviceD'], ['shell.help.tvT', 'shell.help.tvD'], ['shell.help.languageT', 'shell.help.languageD'], ['shell.help.moreT', 'shell.help.moreD']] as const;
 
   // ---- header search (desktop): the icon expands into the input; typing drives /search?q= (the page itself has no second input on desktop) ----
   let searchOpen = false, q = '', searchEl: HTMLInputElement, st: ReturnType<typeof setTimeout>;
@@ -275,6 +297,12 @@
           await goto(gateHref(location.pathname + location.search), { replaceState: true });
         }
         me = m;
+        if (m.language) void setLocale(m.language); // older servers send no language: keep the remembered one
+        if (!pending && m.isAdmin && m.profile?.isOwner && m.defaultLanguageSet === false) { langAsk = 'instance'; langPre = 'de'; }
+        else if (!pending && m.profile && m.languageChosen === false) {
+          langAsk = 'profile';
+          langPre = pickLocale([m.suggestedLanguage, typeof navigator !== 'undefined' ? navigator.language : null]) ?? (isLocale(m.defaultLanguage) ? m.defaultLanguage : 'de');
+        }
         if (early) window.dispatchEvent(new Event('ff-me')); // pages that rendered early can now read the active profile
         if (pending) stops.push(watchApproval());
         tv = m.tv || sessionStorage.getItem('ff_tv') === '1';
@@ -294,54 +322,54 @@
 
 <svelte:window on:keydown={onKey} on:click={outside} />
 <div class="top-sentinel" aria-hidden="true" bind:this={sentinel}></div>
-<a class="skip" href="#main">Zum Inhalt springen</a>
+<a class="skip" href="#main">{$t('shell.skipToContent')}</a>
 {#if intro}<Intro on:done={() => (intro = false)} />{/if}
 
 {#if publicPage}
   <slot />
-{:else if me || early}
+{:else if (me || early) && booted}
   {#if !watchPage && !profilesPage}
     {#if $mobile}
       <header class="nav m" class:solid={scrolled || !heroPage} class:chips>
         <div class="mrow">
-          <a class="mlogo" href="/profiles" aria-label="Profil wechseln{who ? `, aktuell ${who}` : ''}"><Logo size={30} label="" /><span class="for">{who ? `Für ${who}` : ''}</span></a>
+          <a class="mlogo" href="/profiles" aria-label={who ? $t('shell.mobile.switchProfileCurrent', { name: who }) : $t('shell.mobile.switchProfile')}><Logo size={30} label="" /><span class="for">{who ? $t('shell.mobile.forName', { name: who }) : ''}</span></a>
           <span class="sp"></span>
-          <a class="icon-btn" href="/search" aria-label="Suche" aria-current={path.startsWith('/search') ? 'page' : undefined}><Icon name="search" size={24} /></a>
-          <a class="icon-btn" href="/downloads" aria-label="Downloads" aria-current={path.startsWith('/downloads') ? 'page' : undefined}><Icon name="download" size={24} /></a>
-          <a class="avatar" href="/me" aria-label="Mein FriendFlix{unread ? `, ${unread} neue Benachrichtigungen` : ''}"><span class="face" style={faceStyle}>{initial(who)}</span>{#if unread}<span class="dot" aria-hidden="true">{unread}</span>{/if}</a>
+          <a class="icon-btn" href="/search" aria-label={$t('shell.mobile.search')} aria-current={path.startsWith('/search') ? 'page' : undefined}><Icon name="search" size={24} /></a>
+          <a class="icon-btn" href="/downloads" aria-label={$t('shell.mobile.downloads')} aria-current={path.startsWith('/downloads') ? 'page' : undefined}><Icon name="download" size={24} /></a>
+          <a class="avatar" href="/me" aria-label={unread ? $t('shell.mobile.meUnread', { n: unread }) : $t('shell.mobile.me')}><span class="face" style={faceStyle}>{initial(who)}</span>{#if unread}<span class="dot" aria-hidden="true">{unread}</span>{/if}</a>
         </div>
         {#if chips}
-          <nav class="chipbar" aria-label="Kategorien">
-            <a class="chip" href="/browse/series" class:on={path.startsWith('/browse/series')} aria-current={path.startsWith('/browse/series') ? 'page' : undefined}>Serien</a>
-            <a class="chip" href="/browse/movies" class:on={path.startsWith('/browse/movies')} aria-current={path.startsWith('/browse/movies') ? 'page' : undefined}>Filme</a>
-            <button type="button" class="chip" aria-haspopup="dialog" aria-expanded={catOpen} on:click={openCats}>Kategorien<Icon name="chevron-down" size={16} /></button>
+          <nav class="chipbar" aria-label={$t('shell.cats.title')}>
+            <a class="chip" href="/browse/series" class:on={path.startsWith('/browse/series')} aria-current={path.startsWith('/browse/series') ? 'page' : undefined}>{$t('shell.nav.series')}</a>
+            <a class="chip" href="/browse/movies" class:on={path.startsWith('/browse/movies')} aria-current={path.startsWith('/browse/movies') ? 'page' : undefined}>{$t('shell.nav.movies')}</a>
+            <button type="button" class="chip" aria-haspopup="dialog" aria-expanded={catOpen} on:click={openCats}>{$t('shell.nav.categories')}<Icon name="chevron-down" size={16} /></button>
           </nav>
         {/if}
       </header>
     {:else}
     <header class="nav" class:solid={scrolled || !heroPage}>
-      <a class="logo" href="/" aria-label="FriendFlix Startseite"><Logo wordmark size={34} /></a>
-      <nav class="links" aria-label="Hauptnavigation">
-        {#each HEADER_TABS as [href, label] (href)}<a {href} class:active={isTabActive(href, path)} aria-current={isTabActive(href, path) ? 'page' : undefined}>{label}</a>{/each}
+      <a class="logo" href="/" aria-label={$t('shell.nav.homeLink')}><Logo wordmark size={34} /></a>
+      <nav class="links" aria-label={$t('shell.nav.main')}>
+        {#each HEADER_TABS as [href, label] (href)}<a {href} class:active={isTabActive(href, path)} aria-current={isTabActive(href, path) ? 'page' : undefined}>{$t(label)}</a>{/each}
         <div class="pop-anchor">
-          <button type="button" class="linkbtn" aria-haspopup="true" aria-expanded={cats} on:click={toggleCats}>Kategorien<i class="caret" class:up={cats}></i></button>
+          <button type="button" class="linkbtn" aria-haspopup="true" aria-expanded={cats} on:click={toggleCats}>{$t('shell.nav.categories')}<i class="caret" class:up={cats}></i></button>
           {#if cats}
-            <div class="drop catdrop" role="region" aria-label="Kategorien">
+            <div class="drop catdrop" role="region" aria-label={$t('shell.cats.title')}>
               <div class="cseg">
-                <div class="seg" role="group" aria-label="Art">
-                  <button type="button" class:on={catKind === 'movies'} aria-pressed={catKind === 'movies'} on:click={() => (catKind = 'movies')}>Filme</button>
-                  <button type="button" class:on={catKind === 'series'} aria-pressed={catKind === 'series'} on:click={() => (catKind = 'series')}>Serien</button>
+                <div class="seg" role="group" aria-label={$t('shell.cats.kind')}>
+                  <button type="button" class:on={catKind === 'movies'} aria-pressed={catKind === 'movies'} on:click={() => (catKind = 'movies')}>{$t('common.movies')}</button>
+                  <button type="button" class:on={catKind === 'series'} aria-pressed={catKind === 'series'} on:click={() => (catKind = 'series')}>{$t('common.series')}</button>
                 </div>
-                <a class="coll" href="/collections">Sammlungen</a>
+                <a class="coll" href="/collections">{$t('shell.cats.collections')}</a>
               </div>
               <div class="ccols">
-                <section aria-labelledby="cg-h"><h2 id="cg-h" class="ch">Genres</h2>
-                  {#if catGenres === null}<p class="muted pad" role="status">Lade …</p>
+                <section aria-labelledby="cg-h"><h2 id="cg-h" class="ch">{$t('shell.cats.genres')}</h2>
+                  {#if catGenres === null}<p class="muted pad" role="status">{$t('common.loading')}</p>
                   {:else}<ul class="glist">{#each catGenres as g (g)}<li><a href={categoryHref(catKind, g)}>{g}</a></li>{/each}</ul>{/if}
                 </section>
-                <section aria-labelledby="cl-h"><h2 id="cl-h" class="ch">Nach Sprache</h2>
-                  {#if catLangs === null}<p class="muted pad" role="status">Lade …</p>
-                  {:else if !catLangs.length}<p class="muted pad">Keine Angaben</p>
+                <section aria-labelledby="cl-h"><h2 id="cl-h" class="ch">{$t('shell.cats.byLanguage')}</h2>
+                  {#if catLangs === null}<p class="muted pad" role="status">{$t('common.loading')}</p>
+                  {:else if !catLangs.length}<p class="muted pad">{$t('shell.cats.none')}</p>
                   {:else}<ul class="glist">{#each catLangs as c (c)}<li><a href="/browse/{catKind}?audio={encodeURIComponent(c)}">{langLabel(c)}</a></li>{/each}</ul>{/if}
                 </section>
               </div>
@@ -351,62 +379,62 @@
       </nav>
       <span class="sp"></span>
       <form class="search" class:open={searchOpen} on:submit|preventDefault={() => commitSearch(q)} role="search">
-        <button type="button" class="icon-btn" aria-label={searchOpen ? 'Suchen' : 'Suche öffnen'} on:click={() => (searchOpen ? commitSearch(q) : openSearch())}><Icon name="search" size={22} /></button>
-        <input id="hq" type="search" bind:this={searchEl} bind:value={q} autocomplete="off" enterkeyhint="search" placeholder="Titel, Person, Genre, Jahr …" aria-label="Suche" tabindex={searchOpen ? 0 : -1}
+        <button type="button" class="icon-btn" aria-label={searchOpen ? $t('shell.search.submit') : $t('shell.search.open')} on:click={() => (searchOpen ? commitSearch(q) : openSearch())}><Icon name="search" size={22} /></button>
+        <input id="hq" type="search" bind:this={searchEl} bind:value={q} autocomplete="off" enterkeyhint="search" placeholder={$t('shell.search.placeholder')} aria-label={$t('shell.search.label')} tabindex={searchOpen ? 0 : -1}
           on:input={onSearchInput} on:keydown={onSearchKey} on:blur={() => { if (!q && path !== '/search') searchOpen = false; }} />
       </form>
       <div class="pop-anchor">
-        <button class="icon-btn" aria-label="Benachrichtigungen{unread ? `, ${unread} neu` : ''}" aria-expanded={bell} on:click={toggleBell}>
+        <button class="icon-btn" aria-label={unread ? $t('shell.bell.unread', { n: unread }) : $t('shell.bell.label')} aria-expanded={bell} on:click={toggleBell}>
           <Icon name="bell" size={22} />{#if unread}<span class="dot">{unread}</span>{/if}
         </button>
         {#if bell}
           <div class="drop wide" role="menu">
-            {#each notes as n}{#if n.link}<a href={n.link} class:muted={n.read} role="menuitem">{n.title}</a>{:else}<span class="note" class:muted={n.read} role="none">{n.title}</span>{/if}{:else}<span class="muted pad">Keine Benachrichtigungen</span>{/each}
+            {#each notes as n}{#if n.link}<a href={n.link} class:muted={n.read} role="menuitem">{n.title}</a>{:else}<span class="note" class:muted={n.read} role="none">{n.title}</span>{/if}{:else}<span class="muted pad">{$t('shell.bell.empty')}</span>{/each}
           </div>
         {/if}
       </div>
       <div class="pop-anchor">
-        <button class="avatar" aria-label="Profilmenü{who ? ` (${who})` : ''}" aria-haspopup="menu" aria-expanded={menu} disabled={!me} on:click={toggleMenu}><span class="face" style={faceStyle}>{initial(who)}</span><i class="caret" class:up={menu}></i></button>
+        <button class="avatar" aria-label={who ? $t('shell.account.labelWho', { name: who }) : $t('shell.account.label')} aria-haspopup="menu" aria-expanded={menu} disabled={!me} on:click={toggleMenu}><span class="face" style={faceStyle}>{initial(who)}</span><i class="caret" class:up={menu}></i></button>
         {#if menu && me}
-          <div class="drop acct" role="menu" aria-label="Profilmenü">
+          <div class="drop acct" role="menu" aria-label={$t('shell.account.label')}>
             {#if multi}
-              {#if others === null}<span class="muted pad" role="status">Lade Profile …</span>{/if}
-              {#each others ?? [] as p (p.id)}<a class="prof" href={switchHref(p.id)} role="menuitem" data-sveltekit-reload><span class="face xs" style="background:{avatarBg(p.avatar)}" aria-hidden="true">{initial(p.name)}</span>{p.name}{#if p.hasPin}<Icon name="lock" size={14} label="mit PIN" />{/if}</a>{/each}
+              {#if others === null}<span class="muted pad" role="status">{$t('shell.account.loadingProfiles')}</span>{/if}
+              {#each others ?? [] as p (p.id)}<a class="prof" href={switchHref(p.id)} role="menuitem" data-sveltekit-reload><span class="face xs" style="background:{avatarBg(p.avatar)}" aria-hidden="true">{initial(p.name)}</span>{p.name}{#if p.hasPin}<Icon name="lock" size={14} label={$t('shell.account.withPin')} />{/if}</a>{/each}
             {/if}
-            <a href="/profiles?manage=1" role="menuitem"><Icon name="users" size={18} />Profile verwalten</a>
+            <a href="/profiles?manage=1" role="menuitem"><Icon name="users" size={18} />{$t('shell.account.manageProfiles')}</a>
             <hr />
-            <a href="/me" role="menuitem"><Icon name="user" size={18} />Mein FriendFlix</a>
-            <a href="/settings" role="menuitem"><Icon name="settings" size={18} />Konto &amp; Einstellungen</a>
-            <a href="/devices" role="menuitem"><Icon name="monitor" size={18} />Geräte</a>
-            {#if canDownload}<a href="/downloads" role="menuitem"><Icon name="download" size={18} />Downloads</a>{/if}
-            <button class="plain" role="menuitem" on:click={surprise}><Icon name="shuffle" size={18} />Überrasch mich</button>
-            <button class="plain" role="menuitem" on:click={openHelp}><Icon name="info" size={18} />Hilfe</button>
-            {#if admin}<a href="/admin" role="menuitem"><Icon name="shield" size={18} />Admin</a>{/if}
+            <a href="/me" role="menuitem"><Icon name="user" size={18} />{$t('shell.menu.me')}</a>
+            <a href="/settings" role="menuitem"><Icon name="settings" size={18} />{$t('shell.menu.accountSettings')}</a>
+            <a href="/devices" role="menuitem"><Icon name="monitor" size={18} />{$t('shell.menu.devices')}</a>
+            {#if canDownload}<a href="/downloads" role="menuitem"><Icon name="download" size={18} />{$t('shell.menu.downloads')}</a>{/if}
+            <button class="plain" role="menuitem" on:click={surprise}><Icon name="shuffle" size={18} />{$t('shell.menu.surprise')}</button>
+            <button class="plain" role="menuitem" on:click={openHelp}><Icon name="info" size={18} />{$t('shell.menu.help')}</button>
+            {#if admin}<a href="/admin" role="menuitem"><Icon name="shield" size={18} />{$t('shell.menu.admin')}</a>{/if}
             <hr />
-            <button class="plain out" role="menuitem" on:click={logout}>Von FriendFlix abmelden</button>
+            <button class="plain out" role="menuitem" on:click={logout}>{$t('shell.account.logout')}</button>
           </div>
         {/if}
       </div>
     </header>
     {/if}
-    <nav class="tabbar" aria-label="Mobile Navigation">
-      <a href="/" class:active={path === '/'} aria-current={path === '/' ? 'page' : undefined}><Icon name="home" size={22} /><span>Start</span></a>
-      <a href="/new" class:active={path.startsWith('/new')} aria-current={path.startsWith('/new') ? 'page' : undefined}><Icon name="star" size={22} /><span>Neu &amp; beliebt</span></a>
-      <a href="/me" class:active={path.startsWith('/me')} aria-current={path.startsWith('/me') ? 'page' : undefined}><span class="face sm" aria-hidden="true" style={faceStyle}>{initial(who)}</span><span>Mein FriendFlix</span></a>
+    <nav class="tabbar" aria-label={$t('shell.mobile.tabbar')}>
+      <a href="/" class:active={path === '/'} aria-current={path === '/' ? 'page' : undefined}><Icon name="home" size={22} /><span>{$t('shell.tabs.home')}</span></a>
+      <a href="/new" class:active={path.startsWith('/new')} aria-current={path.startsWith('/new') ? 'page' : undefined}><Icon name="star" size={22} /><span>{$t('shell.tabs.new')}</span></a>
+      <a href="/me" class:active={path.startsWith('/me')} aria-current={path.startsWith('/me') ? 'page' : undefined}><span class="face sm" aria-hidden="true" style={faceStyle}>{initial(who)}</span><span>{$t('shell.tabs.me')}</span></a>
     </nav>
     {#if catOpen && $mobile}
-      <div class="cats" role="dialog" aria-modal="true" aria-label="Kategorien" use:dialogKeys={{ close: () => closeCats() }}>
+      <div class="cats" role="dialog" aria-modal="true" aria-label={$t('shell.cats.title')} use:dialogKeys={{ close: () => closeCats() }}>
         <div class="chead">
-          <div class="seg" role="group" aria-label="Art">
-            <button type="button" class:on={catKind === 'movies'} aria-pressed={catKind === 'movies'} on:click={() => (catKind = 'movies')}>Filme</button>
-            <button type="button" class:on={catKind === 'series'} aria-pressed={catKind === 'series'} on:click={() => (catKind = 'series')}>Serien</button>
+          <div class="seg" role="group" aria-label={$t('shell.cats.kind')}>
+            <button type="button" class:on={catKind === 'movies'} aria-pressed={catKind === 'movies'} on:click={() => (catKind = 'movies')}>{$t('common.movies')}</button>
+            <button type="button" class:on={catKind === 'series'} aria-pressed={catKind === 'series'} on:click={() => (catKind = 'series')}>{$t('common.series')}</button>
           </div>
-          <button type="button" class="close" aria-label="Schließen" on:click={() => closeCats()}><Icon name="x" size={24} /></button>
+          <button type="button" class="close" aria-label={$t('common.close')} on:click={() => closeCats()}><Icon name="x" size={24} /></button>
         </div>
         <ul class="clist">
-          <li><a href="/watchlist" on:click|preventDefault={() => pickCat('/watchlist')}>Meine Liste</a></li>
-          <li><a href="/collections" on:click|preventDefault={() => pickCat('/collections')}>Sammlungen</a></li>
-          {#if catGenres === null}<li class="muted" role="status">Lade Kategorien …</li>
+          <li><a href="/watchlist" on:click|preventDefault={() => pickCat('/watchlist')}>{$t('shell.nav.myList')}</a></li>
+          <li><a href="/collections" on:click|preventDefault={() => pickCat('/collections')}>{$t('shell.cats.collections')}</a></li>
+          {#if catGenres === null}<li class="muted" role="status">{$t('shell.cats.loadingCats')}</li>
           {:else}{#each catGenres as g (g)}<li><a href={categoryHref(catKind, g)} on:click|preventDefault={() => pickCat(categoryHref(catKind, g))}>{g}</a></li>{/each}{/if}
         </ul>
       </div>
@@ -414,44 +442,45 @@
     {#if $mobile && $previewSheet}<MobilePreviewSheet />{/if}
   {/if}
 
-  {#if !online}<div class="offbar" role="status">Du bist offline. <a href="/offline" data-sveltekit-reload>Zu den Downloads</a></div>{/if}
-  {#if replaced}<div class="panel" role="alert" style="position:fixed;z-index:90;top:5rem;left:50%;transform:translateX(-50%)"><b>Der Fernseher wurde auf einem anderen Gerät übernommen.</b> <button on:click={() => location.reload()}>Hier wieder verbinden</button></div>{/if}
+  {#if !online}<div class="offbar" role="status">{$t('shell.offline.bar')} <a href="/offline" data-sveltekit-reload>{$t('shell.offline.toDownloads')}</a></div>{/if}
+  {#if replaced}<div class="panel" role="alert" style="position:fixed;z-index:90;top:5rem;left:50%;transform:translateX(-50%)"><b>{$t('shell.tvReplaced.text')}</b> <button on:click={() => location.reload()}>{$t('shell.tvReplaced.reconnect')}</button></div>{/if}
   {#if modalId && Modal}<svelte:component this={Modal} id={modalId} />{/if}
   <main id="main" class:page={!heroPage && !watchPage && !profilesPage}>
     {#if pending}
       <div class="page"><div class="panel pendp">
-        <b class="warn">Dieses Gerät wartet auf Freigabe</b>
-        <p class="muted">Aus Sicherheitsgründen muss jedes neue Gerät einmal bestätigt werden. So geht’s:</p>
+        <b class="warn">{$t('shell.pending.title')}</b>
+        <p class="muted">{$t('shell.pending.intro')}</p>
         <ol class="muted">
-          <li>Öffne FriendFlix auf einem Gerät, auf dem du schon angemeldet bist.</li>
-          <li>Tippe oben auf die Glocke (dort steht „Ein neues Gerät wartet auf deine Freigabe“) oder wähle im Profilmenü <b>Geräte</b>.</li>
-          <li>Drücke bei diesem Gerät auf <b>Freigeben</b>. Diese Seite öffnet sich danach von selbst.</li>
+          <li>{$t('shell.pending.step1')}</li>
+          <li><Rich text={$t('shell.pending.step2')} /></li>
+          <li><Rich text={$t('shell.pending.step3')} /></li>
         </ol>
-        <p class="muted">Kein anderes Gerät zur Hand? Ein Admin kann es unter <b>Admin → Geräte</b> freigeben.</p>
-        <div class="flex"><button class="sec" disabled={checking} on:click={checkApproval}>{checking ? 'Prüfe …' : 'Jetzt prüfen'}</button><a class="btn sec" href="/devices">Geräte ansehen</a></div>
+        <p class="muted"><Rich text={$t('shell.pending.admin')} /></p>
+        <div class="flex"><button class="sec" disabled={checking} on:click={checkApproval}>{checking ? $t('shell.pending.checking') : $t('shell.pending.check')}</button><a class="btn sec" href="/devices">{$t('shell.pending.devices')}</a></div>
       </div></div>
     {:else}
-      <slot />
+      <!-- a language switch re-renders the page, so texts computed in scripts (tr(), fmtDate() …) follow it too -->
+      {#key $locale}<slot />{/key}
     {/if}
   </main>
   {#if !watchPage && !profilesPage && !tv && !pending && !$mobile}<Footer onHelp={() => (help = true)} />{/if}
+  {#if langAsk && !profilesPage}
+    <LanguageGate mode={langAsk} preselect={langPre} onChoose={langAsk === 'instance' ? chooseInstance : chooseProfile}
+      onSkip={langAsk === 'profile' ? skipLanguage : null} />
+  {/if}
   {#if help}
     <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
     <div class="hov" on:click|self={() => (help = false)}>
       <div class="hbox" role="dialog" aria-modal="true" aria-labelledby="help-h" use:dialogKeys={{ close: () => (help = false) }}>
-        <div class="hhead"><h2 id="help-h">Hilfe</h2><button type="button" class="icon-btn" aria-label="Schließen" on:click={() => (help = false)} data-autofocus><Icon name="x" size={22} /></button></div>
+        <div class="hhead"><h2 id="help-h">{$t('shell.help.title')}</h2><button type="button" class="icon-btn" aria-label={$t('common.close')} on:click={() => (help = false)} data-autofocus><Icon name="x" size={22} /></button></div>
         <dl>
-          <dt>Suchen</dt><dd>Taste <kbd>/</kbd> oder <kbd>Strg</kbd>+<kbd>K</kbd> öffnet die Suche, <kbd>Esc</kbd> leert und schließt sie.</dd>
-          <dt>Im Player</dt><dd><kbd>Leertaste</kbd> Pause, <kbd>←</kbd>/<kbd>→</kbd> spulen, <kbd>F</kbd> Vollbild, <kbd>M</kbd> Ton. <kbd>?</kbd> zeigt alle Tastenkürzel.</dd>
-          <dt>Neues Gerät</dt><dd>Jedes neue Gerät wird einmal freigegeben: unter <a href="/devices" on:click={() => (help = false)}>Geräte</a> oder über die Glocke.</dd>
-          <dt>Fernseher</dt><dd>Fernseher koppeln und vom Handy steuern: <a href="/remote" on:click={() => (help = false)}>Fernbedienung</a>.</dd>
-          <dt>Alles Weitere</dt><dd>Listen, Watch-Party, Filmabend, Kalender, Wünsche und Einstellungen findest du unter <a href="/me" on:click={() => (help = false)}>Mein FriendFlix</a>.</dd>
+          {#each HELP as [dt, dd] (dt)}<dt>{$t(dt)}</dt><dd><Rich text={$t(dd)} onLink={() => (help = false)} /></dd>{/each}
         </dl>
       </div>
     </div>
   {/if}
 {:else}
-  <main id="main" class="boot"><span class="logo"><Logo wordmark size={44} /></span><div class="spin" aria-label="Lade …" role="status"></div></main>
+  <main id="main" class="boot"><span class="logo"><Logo wordmark size={44} /></span><div class="spin" aria-label={$t('shell.booting')} role="status"></div></main>
 {/if}
 
 <style>
@@ -506,8 +535,8 @@
   .hbox dl { margin: .6rem 0 0; display: grid; gap: .25rem; }
   .hbox dt { font-weight: 700; margin-top: .6rem; }
   .hbox dd { margin: 0; color: #cfcfcf; font-size: .93rem; line-height: 1.5; }
-  .hbox a { text-decoration: underline; }
-  kbd { display: inline-block; min-width: 1.4em; padding: 0 .35em; border: 1px solid #555; border-bottom-width: 2px; border-radius: 4px; font: inherit; font-size: .82em; text-align: center; background: #222; }
+  .hbox :global(a) { text-decoration: underline; }
+  .hbox :global(kbd), .pendp :global(kbd) { display: inline-block; min-width: 1.4em; padding: 0 .35em; border: 1px solid #555; border-bottom-width: 2px; border-radius: 4px; font: inherit; font-size: .82em; text-align: center; background: #222; }
   .drop.wide { width: min(340px, 90vw); }
   .drop .note { display: block; padding: .55rem 1rem; font-size: .9rem; color: #e5e5e5; }
   .drop .note.muted { color: var(--mut); }

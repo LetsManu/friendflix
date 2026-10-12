@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { intlLocale } from '#lib/i18n';
   import { onMount } from 'svelte';
   import { api } from '#lib/api';
   const DAYS = ['Sonntag', 'Montag', 'Dienstag', 'Mittwoch', 'Donnerstag', 'Freitag', 'Samstag'];
@@ -31,7 +32,7 @@
       <label>Uhrzeit<select bind:value={s.hour}>{#each Array(24) as _, h}<option value={h}>{String(h).padStart(2, '0')}:00</option>{/each}</select></label>
     </div>
     <small class="muted">Quelle: {s.source === 'admin' ? 'hier gespeichert' : 'Voreinstellung aus der Konfiguration (DIGEST_DAY / DIGEST_HOUR)'}.
-      {#if s.lastRun}Letzter Versand: Woche {s.lastRun.week}, {s.lastRun.count} Konten ({new Date(s.lastRun.sentAt).toLocaleString('de-DE')}).{:else}Noch nichts versendet.{/if}</small>
+      {#if s.lastRun}Letzter Versand: Woche {s.lastRun.week}, {s.lastRun.count} Konten ({new Date(s.lastRun.sentAt).toLocaleString(intlLocale())}).{:else}Noch nichts versendet.{/if}</small>
     <div class="flex">
       <button disabled={busy}>Speichern</button>
       <button type="button" class="sec" disabled={busy} on:click={test}>Test an mich senden</button>

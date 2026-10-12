@@ -32,6 +32,7 @@
   {:else if name === 'star'}<path d="M12 3l2.8 5.7 6.2.9-4.5 4.4 1 6.2L12 17.3l-5.5 2.9 1-6.2L3 9.6l6.2-.9z" />
   {:else if name === 'shield'}<path d="M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6z" />
   {:else if name === 'film'}<path d="M4 4h16v16H4zM8 4v16M16 4v16M4 9h4M16 9h4M4 15h4M16 15h4" />
+  {:else if name === 'globe'}<circle cx="12" cy="12" r="9" /><path d="M3 12h18M12 3c2.500 2.700 3.700 5.700 3.700 9s-1.200 6.300-3.700 9c-2.500-2.700-3.700-5.700-3.700-9S9.500 5.700 12 3z" />
   {:else if name === 'home'}<path d="M3 11l9-8 9 8M5 10v10h5v-6h4v6h5V10" />
   {:else if name === 'menu'}<path d="M4 7h16M4 12h16M4 17h16" />
   {:else if name === 'vote'}<path d="M4 8h16v12H4zM8 8V4h8v4M9 13l2 2 4-4" />

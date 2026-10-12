@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { intlLocale } from '#lib/i18n';
   import { onDestroy, onMount } from 'svelte';
   import { api } from '#lib/api';
   const HINT: Record<string, string> = { ENOTFOUND: 'Hostname nicht auflösbar, IP statt nas.local verwenden', EAI_AGAIN: 'DNS-Fehler, IP verwenden', ECONNREFUSED: 'Port geschlossen, Adresse/Port prüfen', EHOSTUNREACH: 'Host nicht erreichbar, Netzwerk/Firewall prüfen', ETIMEDOUT: 'Zeitüberschreitung, Firewall prüfen', ECONNRESET: 'Verbindung abgebrochen' };
@@ -10,7 +11,7 @@
   let phase: '' | 'started' | 'restarting' | 'done' | 'timeout' = '';
   let timer: ReturnType<typeof setInterval> | undefined;
   const sha7 = (s: string) => s.slice(0, 7);
-  const dt = (d?: string | null) => (d ? new Date(d).toLocaleString('de-DE') : 'unbekannt');
+  const dt = (d?: string | null) => (d ? new Date(d).toLocaleString(intlLocale()) : 'unbekannt');
   async function load(refresh = false) {
     busy = true;
     try { u = await api('/api/admin/update' + (refresh ? '?refresh=1' : '')); } finally { busy = false; }

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { intlLocale } from '#lib/i18n';
   import Logo from '#lib/Logo.svelte';
   import { onMount } from 'svelte';
   import { pageStore } from '#lib/page';
@@ -19,7 +20,7 @@
       <h1>Einladung ungültig</h1><p class="muted">Der Link ist abgelaufen oder wurde bereits benutzt. Bitte frag nach einem neuen Link.</p>
     {:else if info}
       <h1>Du wurdest eingeladen</h1>
-      <p>Konto-Typ: <b>{info.roleLabel}</b><br /><span class="muted">Gültig bis {new Date(info.expiresAt).toLocaleString('de-DE')}</span></p>
+      <p>Konto-Typ: <b>{info.roleLabel}</b><br /><span class="muted">Gültig bis {new Date(info.expiresAt).toLocaleString(intlLocale())}</span></p>
       {#if info.enrollUrl}
         <p>Lege dein Konto an und richte die Zwei-Faktor-Anmeldung ein (Authenticator-App oder Sicherheitsschlüssel). Danach bist du direkt angemeldet und freigeschaltet.</p>
         <p><a class="btn" href={info.enrollUrl}>Konto anlegen &amp; loslegen</a></p>

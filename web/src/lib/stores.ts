@@ -1,5 +1,6 @@
 import { writable } from 'svelte/store';
 import { api } from '#lib/api';
+import { setLocale, type Locale } from '#lib/i18n';
 
 /** Ids on "Meine Liste" (watchlist). Loaded once, updated optimistically by cards and detail pages. */
 export const listIds = writable<Set<string>>(new Set());
@@ -42,8 +43,8 @@ export async function toggleList(id: string, on: boolean): Promise<boolean> {
 }
 
 export interface SubtitleStyle { size: 's' | 'm' | 'l' | 'xl'; color: 'white' | 'yellow' | 'cyan' | 'green'; background: 'none' | 'shadow' | 'semi' | 'solid'; font: 'sans' | 'serif' | 'mono' }
-export interface Prefs { autoplayNext: boolean; autoSkipIntro: boolean; shareHistory: boolean; shareRatings: boolean; hoverTrailers: boolean; hoverClip: boolean; /** detail view: start the title after the preview ran long enough */ autoStartPreview: boolean; audioLang: string; subtitleLang: string; quality: number; stillWatching: boolean; stillWatchingEpisodes: 2 | 3 | 4 | 5; subtitleStyle: SubtitleStyle; spoilerProtection: boolean; weeklyDigest: boolean; ntfyTopic: string }
-export const DEFAULT_PREFS: Prefs = { autoplayNext: true, autoSkipIntro: false, shareHistory: false, shareRatings: true, hoverTrailers: true, hoverClip: true, autoStartPreview: true, audioLang: '', subtitleLang: '', quality: 0, stillWatching: true, stillWatchingEpisodes: 3, subtitleStyle: { size: 'm', color: 'white', background: 'semi', font: 'sans' }, spoilerProtection: false, weeklyDigest: true, ntfyTopic: '' };
+export interface Prefs { autoplayNext: boolean; autoSkipIntro: boolean; shareHistory: boolean; shareRatings: boolean; hoverTrailers: boolean; hoverClip: boolean; /** detail view: start the title after the preview ran long enough */ autoStartPreview: boolean; audioLang: string; subtitleLang: string; quality: number; stillWatching: boolean; stillWatchingEpisodes: 2 | 3 | 4 | 5; subtitleStyle: SubtitleStyle; spoilerProtection: boolean; weeklyDigest: boolean; ntfyTopic: string; /** UI language of the profile ('' = never chosen, instance default applies) */ language: Locale | '' }
+export const DEFAULT_PREFS: Prefs = { autoplayNext: true, autoSkipIntro: false, shareHistory: false, shareRatings: true, hoverTrailers: true, hoverClip: true, autoStartPreview: true, audioLang: '', subtitleLang: '', quality: 0, stillWatching: true, stillWatchingEpisodes: 3, subtitleStyle: { size: 'm', color: 'white', background: 'semi', font: 'sans' }, spoilerProtection: false, weeklyDigest: true, ntfyTopic: '', language: '' };
 /** Viewing preferences (server-side, follow the user across devices). */
 export const prefs = writable<Prefs>({ ...DEFAULT_PREFS });
 export async function loadPrefs() {
@@ -53,4 +54,14 @@ export async function loadPrefs() {
 export async function savePrefs(p: Prefs) {
   prefs.set(p);
   await api('/api/prefs', { method: 'PUT', body: p });
+}
+
+/**
+ * Stores the UI language of the active profile (PUT /api/prefs/language), then switches the app to it
+ * (pages re-render in the new language). Rejects when saving failed; nothing changes then.
+ */
+export async function saveLanguage(l: Locale): Promise<void> {
+  await api('/api/prefs/language', { method: 'PUT', body: { language: l } });
+  prefs.update((p) => ({ ...p, language: l }));
+  await setLocale(l);
 }

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { intlLocale } from '#lib/i18n';
   import { onMount } from 'svelte';
   import { api, img, backdrop, type Item } from '#lib/api';
   import Icon from '#lib/Icon.svelte';
@@ -15,7 +16,7 @@
     const d = new Date(iso), diff = Math.round((day(new Date()) - day(d)) / 86_400_000);
     if (diff <= 0) return 'Heute';
     if (diff === 1) return 'Gestern';
-    return d.toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit', year: 'numeric' });
+    return d.toLocaleDateString(intlLocale(), { day: '2-digit', month: '2-digit', year: 'numeric' });
   }
   $: groups = (items ?? []).reduce<Array<{ label: string; items: Item[] }>>((acc, i) => {
     const l = label(i.lastPlayedDate), g = acc[acc.length - 1];
@@ -23,7 +24,7 @@
     return acc;
   }, []);
   const sub = (i: Item) => (i.type === 'Episode' ? `${i.seriesName ?? ''} · S${i.parentIndexNumber ?? '?'}:E${i.indexNumber ?? '?'}` : i.year ? String(i.year) : '');
-  const time = (iso?: string) => (iso ? new Date(iso).toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' }) : '');
+  const time = (iso?: string) => (iso ? new Date(iso).toLocaleTimeString(intlLocale(), { hour: '2-digit', minute: '2-digit' }) : '');
 
   async function remove(i: Item, scope: 'item' | 'series') {
     closeAsk(false); error = '';

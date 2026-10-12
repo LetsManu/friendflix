@@ -7,6 +7,7 @@
   import { groupLinks, linksFor } from '#lib/menu';
   import { logout } from '#lib/session';
   import { goto } from '$app/navigation';
+  import { locale, localeName, t, type TKey } from '#lib/i18n';
 
   type Note = { id: number; title: string; link?: string; read: boolean };
   let me: Me | null = null, notes: Note[] | null = null, resume: Item[] | null = null, allNotes = false;
@@ -32,28 +33,28 @@
   $: groups = groupLinks(linksFor(canDownload));
   $: admin = Boolean(me?.isAdmin && me?.profile?.isOwner);
   $: shown = notes ? (allNotes ? notes : notes.slice(0, 5)) : [];
-  $: tiles = [['/watchlist', 'Meine Liste', 'plus'], ...(canDownload ? [['/downloads', 'Downloads', 'download']] : []), ['/lists', 'Listen', 'list'], ['/history', 'Verlauf', 'calendar']] as Array<[string, string, string]>;
+  $: tiles = [['/watchlist', 'shell.menu.myList', 'plus'], ...(canDownload ? [['/downloads', 'shell.menu.downloads', 'download']] : []), ['/lists', 'shell.menu.lists', 'list'], ['/history', 'shell.menu.history', 'calendar']] as Array<[string, TKey, string]>;
 </script>
 
-<svelte:head><title>Mein FriendFlix – FriendFlix</title></svelte:head>
-<h1 class="sr-only">Mein FriendFlix</h1>
+<svelte:head><title>{$t('common.pageTitle', { page: $t('account.me.title') })}</title></svelte:head>
+<h1 class="sr-only">{$t('account.me.title')}</h1>
 <div class="me">
   <header class="prof">
     <span class="face" style={me?.profile ? `background:${avatarBg(me.profile.avatar)}` : undefined} aria-hidden="true">{me ? initial(me.profile?.name ?? me.name) : ''}</span>
     <div class="who">
       {#if me}<b>{me.profile?.name ?? me.name}</b><span class="muted">{me.roleLabel}</span>{:else}<span class="skeleton sk"></span>{/if}
-      <span class="pl"><a class="swap" href="/profiles"><Icon name="users" size={16} />Profil wechseln</a><a class="swap" href="/profiles?manage=1">Profile verwalten</a></span>
+      <span class="pl"><a class="swap" href="/profiles"><Icon name="users" size={16} />{$t('account.me.switchProfile')}</a><a class="swap" href="/profiles?manage=1">{$t('account.me.manageProfiles')}</a></span>
     </div>
   </header>
 
-  <ul class="tiles2" aria-label="Schnellzugriff">
-    {#each tiles as [href, label, icon] (href)}<li><a {href}><span class="ti"><Icon name={icon} size={24} /></span><span class="tl">{label}</span></a></li>{/each}
+  <ul class="tiles2" aria-label={$t('account.me.quick')}>
+    {#each tiles as [href, label, icon] (href)}<li><a {href}><span class="ti"><Icon name={icon} size={24} /></span><span class="tl">{$t(label)}</span></a></li>{/each}
   </ul>
 
   <section aria-labelledby="h-notes">
-    <div class="sech"><h2 id="h-notes">Benachrichtigungen</h2>{#if notes && notes.length > 5}<button type="button" class="lnk" aria-expanded={allNotes} on:click={() => (allNotes = !allNotes)}>{allNotes ? 'Weniger' : `Alle (${notes.length})`}</button>{/if}</div>
+    <div class="sech"><h2 id="h-notes">{$t('account.me.notifications')}</h2>{#if notes && notes.length > 5}<button type="button" class="lnk" aria-expanded={allNotes} on:click={() => (allNotes = !allNotes)}>{allNotes ? $t('account.me.less') : $t('account.me.all', { n: notes.length })}</button>{/if}</div>
     {#if notes === null}<div class="skeleton nsk"></div>
-    {:else if !notes.length}<p class="muted pad">Keine Benachrichtigungen</p>
+    {:else if !notes.length}<p class="muted pad">{$t('account.me.noNotifications')}</p>
     {:else}
       <ul class="notes">
         {#each shown as n (n.id)}
@@ -64,27 +65,28 @@
   </section>
 
   {#if resume === null || resume.length}
-    <div class="bleed"><Row title="Weiterschauen" items={resume} landscape removable on:remove={(e) => removeResume(e.detail.id)} /></div>
+    <div class="bleed"><Row title={$t('account.me.continueWatching')} items={resume} landscape removable on:remove={(e) => removeResume(e.detail.id)} /></div>
   {/if}
 
   <div class="groups">
     {#each groups as g (g.title)}
-      {@const isAcc = g.title === 'Konto & Einstellungen'}
+      {@const isAcc = g.title === 'shell.menu.groups.account'}
       {#if g.items.length || isAcc}
-        <section class="grp" aria-label={g.title}>
-          <h2 class="gh">{g.title}</h2>
+        <section class="grp" aria-label={$t(g.title)}>
+          <h2 class="gh">{$t(g.title)}</h2>
           <ul class="lst">
-            {#if g.title === 'Entdecken'}<li><button type="button" class="rowbtn" on:click={surprise}><Icon name="shuffle" size={20} />Überrasch mich<Icon name="chevron-right" size={18} /></button></li>{/if}
-            {#each g.items as [href, label, icon] (href)}<li><a {href}><Icon name={icon} size={20} />{label}<Icon name="chevron-right" size={18} /></a></li>{/each}
-            {#if isAcc}<li><button type="button" class="rowbtn" on:click={() => window.dispatchEvent(new Event('ff-help'))}><Icon name="info" size={20} />Hilfe<Icon name="chevron-right" size={18} /></button></li>{/if}
-            {#if isAcc && admin}<li><a href="/admin"><Icon name="shield" size={20} />Admin<Icon name="chevron-right" size={18} /></a></li>{/if}
+            {#if g.title === 'shell.menu.groups.discover'}<li><button type="button" class="rowbtn" on:click={surprise}><Icon name="shuffle" size={20} />{$t('shell.menu.surprise')}<Icon name="chevron-right" size={18} /></button></li>{/if}
+            {#each g.items as [href, label, icon] (href)}<li><a {href}><Icon name={icon} size={20} />{$t(label)}<Icon name="chevron-right" size={18} /></a></li>{/each}
+            {#if isAcc}<li><a href="/settings#language"><Icon name="globe" size={20} />{$t('account.me.language', { name: localeName($locale) })}<Icon name="chevron-right" size={18} /></a></li>{/if}
+            {#if isAcc}<li><button type="button" class="rowbtn" on:click={() => window.dispatchEvent(new Event('ff-help'))}><Icon name="info" size={20} />{$t('shell.menu.help')}<Icon name="chevron-right" size={18} /></button></li>{/if}
+            {#if isAcc && admin}<li><a href="/admin"><Icon name="shield" size={20} />{$t('shell.menu.admin')}<Icon name="chevron-right" size={18} /></a></li>{/if}
           </ul>
         </section>
       {/if}
     {/each}
   </div>
 
-  <button type="button" class="out" on:click={() => logout(me?.tv)}><Icon name="log-out" size={20} />Abmelden</button>
+  <button type="button" class="out" on:click={() => logout(me?.tv)}><Icon name="log-out" size={20} />{$t('account.me.logout')}</button>
 </div>
 
 <style>

@@ -1,3 +1,4 @@
+import { intlLocale } from '#lib/i18n';
 import type { Item } from '#lib/api';
 
 /** "Spannend • Krimi • Drama" (max 3 genres) */
@@ -33,12 +34,12 @@ export function dateBlock(iso: string | undefined): { month: string; day: string
   if (!iso) return null;
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return null;
-  return { month: d.toLocaleDateString('de-DE', { month: 'short', timeZone: 'UTC' }).replace('.', '').toUpperCase(), day: String(d.getUTCDate()) };
+  return { month: d.toLocaleDateString(intlLocale(), { month: 'short', timeZone: 'UTC' }).replace('.', '').toUpperCase(), day: String(d.getUTCDate()) };
 }
 export function releaseLabel(iso: string | undefined): string {
   if (!iso) return 'Termin offen';
   const d = new Date(iso);
-  return Number.isNaN(d.getTime()) ? 'Termin offen' : `Erscheint am ${d.toLocaleDateString('de-DE', { day: 'numeric', month: 'long', year: 'numeric', timeZone: 'UTC' })}`;
+  return Number.isNaN(d.getTime()) ? 'Termin offen' : `Erscheint am ${d.toLocaleDateString(intlLocale(), { day: 'numeric', month: 'long', year: 'numeric', timeZone: 'UTC' })}`;
 }
 /** upcoming releases sorted by date (undated last) */
 export const sortUpcoming = <T extends { releaseDate?: string }>(l: T[]): T[] => [...l].sort((a, b) => (a.releaseDate ? Date.parse(a.releaseDate) : Infinity) - (b.releaseDate ? Date.parse(b.releaseDate) : Infinity));
