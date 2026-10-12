@@ -61,6 +61,13 @@ Fokus auf **Finden und Entdecken**: höchster Nutzerwert bei mittlerem Aufwand, 
    - „Gemeinsam schauen“ filtert vor dem Kürzen.
    - Neuer Index, gecachte Genreliste.
 
+## Nachtrag Block 7 (umgesetzt)
+
+- Audio-/Untertitel-Sprachfilter (Crunchyroll-Muster) über einen eigenen Stream-Index, siehe `docs/discovery.md`.
+- Watch-Status geplant/abgebrochen, abgeleitet „schaue gerade“/„gesehen“ (Trakt-Muster „Drop show“).
+- Freunde-Leiste auf der Detailseite mit Privatsphäre je Kategorie (Plex-Muster).
+- „Gemeinsam schauen“ gewichtet nach Merklisten der Teilnehmer (Letterboxd-Vergleich).
+
 ## Bewusst nicht umgesetzt (Follow-ups)
 
 - **Audio-/Untertitel-Sprachfilter (Crunchyroll-Muster):** Braucht einen eigenen Index der Mediastreams, also einen Hintergrundjob und eine Tabelle, weil Jellyfin `/Items` das nicht zuverlässig filtert. Lohnt sich als eigener Block.

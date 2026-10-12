@@ -15,6 +15,9 @@
   import { isSpoiler } from '#lib/spoiler';
   import DownloadButton from '#lib/DownloadButton.svelte';
   import CastRow from '#lib/CastRow.svelte';
+  import StatusPicker from '#lib/StatusPicker.svelte';
+  import FriendsStrip from '#lib/FriendsStrip.svelte';
+  import { langLine } from '#lib/langs';
 
   let thumb = 0, extras: Item[] = [], tint = '', friends: Array<{ id: string; name: string }> = [], recOpen = false, recTo = new Set<string>(), recNote = '', recMsg = '';
   let item: Item | null = null, seasons: Item[] = [], episodes: Item[] | null = null, season = '', next: Item | null = null;
@@ -123,6 +126,8 @@
         {#if item.type !== 'Series'}<button class="sec" on:click={startParty}><Icon name="users" size={20} />Gemeinsam schauen</button>{/if}
         {#if item.type === 'Series'}<button class="sec" aria-pressed={followed} on:click={toggleFollow}><Icon name="bell" size={20} />{followed ? 'Du folgst dieser Serie' : 'Neue Folgen melden'}</button>{/if}
       </div>
+      <StatusPicker id={item.id} />
+      <FriendsStrip id={item.id} />
       {#if playTarget}<LangPick targetId={playTarget} storeKey={item.type === 'Series' ? item.id : item.id} bind:audio={lgA} bind:sub={lgS} />{/if}
       {#if castMsg}<p class="muted" role="status">{castMsg}</p>{/if}
       <div role="status">{#if saveMsg}<p class="err">{saveMsg}</p>{/if}</div>
@@ -134,6 +139,7 @@
           {#if recMsg}<span class="muted" role="status">{recMsg}</span>{/if}
         </div>
       {/if}
+      {#if langLine(item.langs)}<p class="muted">{langLine(item.langs)}</p>{/if}
       {#if item.genres.length}<p class="muted">Genres: <span style="color:#fff">{item.genres.join(', ')}</span></p>{/if}
 
       {#if item.type === 'Series'}

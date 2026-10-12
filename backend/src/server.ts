@@ -23,6 +23,7 @@ import { parties } from './routes/party.js';
 import { calendarNotifications, pollTick } from './routes/polls.js';
 import { resolveRequestedPolls } from './polls.js';
 import { reminderTick } from './reminders.js';
+import { langIndexTick } from './langindex.js';
 import type { Ctx } from './ctx.js';
 
 const cfg = loadConfig();
@@ -71,6 +72,8 @@ if (cfg.BACKGROUND_JOBS === 'true') {
     timers.push(setInterval(() => void gcDownloads(ctx).then(() => gcLicenses(ctx)).catch((e) => app.log.warn({ e }, 'download gc failed')), 600_000));
     void startPreparerTick(ctx).catch((e) => app.log.warn({ e }, 'download prep start failed'));
   }
+  timers.push(setInterval(() => void langIndexTick(ctx), 1800_000)); // self-limits to every 12 h, never throws
+  void langIndexTick(ctx);
   timers.push(setInterval(() => void pollJellyfinSessions(ctx).catch((e) => app.log.warn({ e }, 'session poll failed')), 10_000));
 }
 for (const sig of ['SIGTERM', 'SIGINT'] as const) {

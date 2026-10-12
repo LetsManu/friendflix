@@ -5,7 +5,11 @@ const P = (s: string) => parseBrowse(new URLSearchParams(s));
 const ID = 'a'.repeat(32);
 
 describe('parseBrowse', () => {
-  it('defaults', () => expect(P('')).toEqual({ genre: '', studio: '', sort: 'SortName', filter: '', decade: null, year: null, minRating: null, person: null }));
+  it('defaults', () => expect(P('')).toEqual({ genre: '', studio: '', sort: 'SortName', filter: '', decade: null, year: null, minRating: null, person: null, audio: null, subs: null }));
+  it('validates audio/subs codes', () => {
+    expect(P('audio=deu&subs=ENG')).toMatchObject({ audio: 'deu', subs: 'eng' });
+    expect(P('audio=de&subs=english')).toMatchObject({ audio: null, subs: null });
+  });
   it('allowlists sort and filter', () => {
     expect(P('sort=Evil&filter=x').sort).toBe('SortName');
     expect(P('sort=CommunityRating&filter=played')).toMatchObject({ sort: 'CommunityRating', filter: 'played' });
@@ -39,6 +43,12 @@ describe('browseQuery', () => {
     const q = browseQuery(P(`sort=PremiereDate&genre=Drama&decade=2010&minRating=8&person=${ID}&filter=unplayed`), 'Movie', 60, 30);
     expect(Object.fromEntries(q)).toEqual({ types: 'Movie', sort: 'PremiereDate', limit: '30', start: '60', desc: 'true', genre: 'Drama', decade: '2010', minRating: '8', person: ID, filter: 'unplayed' });
   });
+  it('passes language params', () => {
+    const q = browseQuery(P('audio=deu&subs=eng'), 'Movie', 0, 60);
+    expect(q.get('audio')).toBe('deu');
+    expect(q.get('subs')).toBe('eng');
+    expect(browseQuery(P(''), 'Movie', 0, 60).has('audio')).toBe(false);
+  });
   it('no desc for SortName, sends year not decade', () => {
     const q = browseQuery(P('year=2001&decade=2000'), 'Series', 0, 60);
     expect(q.has('desc')).toBe(false);
@@ -53,6 +63,11 @@ describe('activeChips', () => {
     expect(chips.map((c) => c.key)).toEqual(['genre', 'decade', 'minRating', 'person', 'filter']);
     expect(chips.find((c) => c.key === 'person')?.label).toBe('Tom');
     expect(chips.find((c) => c.key === 'decade')?.label).toBe('1990er');
+  });
+  it('labels language chips in German', () => {
+    const chips = activeChips(P('audio=deu&subs=eng'));
+    expect(chips.map((c) => [c.key, c.label])).toEqual([['audio', 'Ton: Deutsch'], ['subs', 'UT: Englisch']]);
+    expect(activeChips(P('audio=xyz'))[0]?.label).toBe('Ton: XYZ');
   });
   it('person falls back and nothing for defaults', () => {
     expect(activeChips(P(`person=${ID}`))[0]?.label).toBe('Person');
