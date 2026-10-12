@@ -72,7 +72,7 @@ export function discoverRoutes(app: FastifyInstance, ctx: Ctx) {
     // details + filters with the requester's token; sort by rating
     // genre/type are filtered by Jellyfin so they apply to the whole common set (capped), not just a prefix
     // group-weighted: titles on more participants' watchlists first; anything dropped or thumbed down by a participant is out
-    const accounts = everyone.map((u) => u.id);
+    const accounts = [req.user!.id, ...others.map((u) => u.id)]; // account ids (a non-owner profile's jfUser.id is the profile id)
     const plannedBy = new Map((await ctx.db.query<{ item_id: string; n: number }>(
       'select item_id, count(distinct user_id)::int n from watchlist where user_id = any($1) and item_id = any($2) group by item_id', [accounts, common])).rows.map((r) => [r.item_id, r.n]));
     const vetoed = new Set((await ctx.db.query<{ item_id: string }>(
@@ -81,13 +81,13 @@ export function discoverRoutes(app: FastifyInstance, ctx: Ctx) {
     const planned = (id: string) => plannedBy.get(id) ?? 0;
     const pool = common.filter((id) => !vetoed.has(id)).sort((a, c) => planned(c) - planned(a)).slice(0, 2000);
     const chunks: string[][] = [];
-    for (let i = 0; i < pool.length; i += 200) chunks.push(pool.slice(i, i + 200));
+    for (let i = 0; i < pool.length; i += 80) chunks.push(pool.slice(i, i + 80)); // 80 ids keep the Jellyfin request line short
     const parts: ItemDto[][] = new Array(chunks.length);
     let next = 0;
     await Promise.all(Array.from({ length: Math.min(4, chunks.length) }, async () => {
       while (next < chunks.length) {
         const n = next++;
-        parts[n] = (await ctx.jf.items(req.jfUser!, { ids: chunks[n], types, genre: b.genre, limit: 200 })).items;
+        parts[n] = (await ctx.jf.items(req.jfUser!, { ids: chunks[n], types, genre: b.genre, limit: 80 })).items;
       }
     }));
     let items = parts.flat();

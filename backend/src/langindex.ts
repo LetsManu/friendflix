@@ -59,7 +59,10 @@ export async function langIndexTick(ctx: Ctx, opts: { force?: boolean } = {}): P
   busy = true;
   try {
     const last = Number(await ctx.kv.get(KEY).catch(() => null)) || 0;
-    if (!opts.force && startedOnce && Date.now() - last < INTERVAL_MS) return;
+    if (!opts.force && Date.now() - last < INTERVAL_MS) {
+      // first run after a process start: still honour the last-run stamp, but rebuild when the index table is empty
+      if (startedOnce || (await ctx.db.query('select 1 from item_langs limit 1')).rowCount) return;
+    }
     startedOnce = true;
     const runStart = new Date();
     const agg = new Map<string, Agg>();
