@@ -9,6 +9,7 @@ import { playbackHooks } from '../hooks.js';
 import { tidyResume } from '../resume.js';
 import type { ItemDto } from '../jellyfin/dto.js';
 import { createHash } from 'node:crypto';
+import { itemsByIds } from './discover.js';
 import { id32 as itemId, wrap as sharedWrap } from './_shared.js';
 
 const psId = z.string().regex(/^[\w-]{8,64}$/);
@@ -265,7 +266,7 @@ export function mediaRoutes(app: FastifyInstance, ctx: Ctx) {
     if ((await countLive(ctx, req.user!.id)) >= role.maxStreams) return reply.code(429).send({ error: 'max_streams', max: role.maxStreams });
     const startTicks = b.startTicks ?? (await ctx.jf.item(req.jfUser!, b.itemId)).positionTicks;
     const cap = Math.min(role.maxBitrate, b.maxBitrate ?? role.maxBitrate); // the viewer may lower the quality, never raise it above the role limit
-    const info = await ctx.jf.playbackInfo(req.jfUser!, b.itemId, { maxBitrate: cap, maxHeight: role.maxHeight, startTicks, audioIndex: b.audioIndex });
+    const info = await ctx.jf.playbackInfo(req.jfUser!, b.itemId, { maxBitrate: cap, maxHeight: role.maxHeight, startTicks, audioIndex: b.audioIndex, noDirect: Boolean(role.maxHeight) || (!role.download && ctx.cfg.DIRECT_PLAY_REQUIRES_DOWNLOAD === 'true') });
     info.roleMaxBitrate = role.maxBitrate;
     info.trickplay = await ctx.jf.trickplay(req.jfUser!, b.itemId, info.mediaSourceId);
     return info;
@@ -307,10 +308,25 @@ export function mediaRoutes(app: FastifyInstance, ctx: Ctx) {
   app.post('/api/playback/progress', pre, report('Playing/Progress'));
   app.post('/api/playback/stop', pre, report('Playing/Stopped'));
 
-  app.get('/api/nowplaying', pre, async () => ({
-    items: (await listLive(ctx)).map((l) => ({
-      user: l.userName, itemId: l.itemId, title: l.title, seriesName: l.seriesName,
-      positionTicks: l.positionTicks, runtimeTicks: l.runtimeTicks, isPaused: l.isPaused,
-    })),
-  }));
+  // Own sessions plus those of accounts that opted in via "Verlauf teilen"; only titles the viewer may see. Admins use the admin endpoints.
+  app.get('/api/nowplaying', pre, async (req) => {
+    const me = req.user!.id;
+    const live = await listLive(ctx);
+    const others = [...new Set(live.filter((l) => l.userId !== me).map((l) => l.userId))];
+    const sharing = new Set(others.length
+      ? (await ctx.db.query<{ id: string }>(
+          `select u.id from users u join user_prefs p on p.user_id = u.id
+            where u.id = any($1::uuid[]) and not u.disabled and p.data->>'shareHistory' = 'true'`, [others])).rows.map((r) => r.id)
+      : []);
+    const shown = live.filter((l) => l.userId === me || sharing.has(l.userId));
+    if (!shown.length) return { items: [] };
+    const norm = (id: string) => id.replace(/-/g, '').toLowerCase(); // the Jellyfin webhook may send dashed ids
+    const visible = new Set((await itemsByIds(ctx, req.jfUser!, [...new Set(shown.map((l) => norm(l.itemId)))])).map((i) => norm(i.id)));
+    return {
+      items: shown.filter((l) => visible.has(norm(l.itemId))).map((l) => ({
+        user: l.userName, itemId: l.itemId, title: l.title, seriesName: l.seriesName,
+        positionTicks: l.positionTicks, runtimeTicks: l.runtimeTicks, isPaused: l.isPaused,
+      })),
+    };
+  });
 }

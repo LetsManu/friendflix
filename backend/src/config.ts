@@ -79,6 +79,8 @@ const schema = z.object({
   PLAYBACK_CHECK_HOUR: z.coerce.number().int().min(-1).max(23).default(4),
   /** offline downloads ("Herunterladen"); false = off (Plan B) */
   DOWNLOADS_ENABLED: z.enum(['true', 'false']).default('true'),
+  // 'true': roles without download permission also lose Direct Play (the original file could be saved); costs transcoding
+  DIRECT_PLAY_REQUIRES_DOWNLOAD: z.enum(['true', 'false']).default('false'),
   DOWNLOAD_DIR: z.string().default('/data/downloads'),
   DOWNLOAD_CACHE_MAX_GB: z.coerce.number().positive().default(50),
   /** a preparation only starts while the download volume keeps at least this much free (GB) */

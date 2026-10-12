@@ -102,8 +102,10 @@ export function toPlaybackDto(args: {
   maxHeight?: number | null;
   /** Chromecast: AAC-only stereo, H.264 <= level 4.1 / 8 bit, never direct play */
   cast?: boolean;
+  /** no direct URL (role with a height cap or without download rights: the gateway refuses direct streams for it) */
+  noDirect?: boolean;
 }): PlaybackDto {
-  const { itemId, info, deviceId, maxBitrate, resumeTicks, audioIndex, maxHeight, cast } = args;
+  const { itemId, info, deviceId, maxBitrate, resumeTicks, audioIndex, maxHeight, cast, noDirect } = args;
   const src = (info.MediaSources ?? [])[0];
   if (!src) throw new Error('no media source');
   const streams: Array<Record<string, any>> = src.MediaStreams ?? [];
@@ -132,7 +134,7 @@ export function toPlaybackDto(args: {
   const withinCap = !maxHeight || (srcHeight > 0 && srcHeight <= maxHeight); // direct play must not bypass the cap (unknown height = no direct)
 
   const browserContainer = /(^|,)(mp4|m4v|webm|mov)(,|$)/i.test(String(src.Container ?? ''));
-  const directOk = !cast && Boolean(src.SupportsDirectPlay) && browserContainer && Number(src.Bitrate ?? 0) <= maxBitrate && audioIndex === undefined && withinCap;
+  const directOk = !cast && !noDirect && Boolean(src.SupportsDirectPlay) && browserContainer && Number(src.Bitrate ?? 0) <= maxBitrate && audioIndex === undefined && withinCap;
   const direct = new URLSearchParams(common);
   direct.set('static', 'true');
 

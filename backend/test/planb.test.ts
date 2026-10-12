@@ -3,12 +3,25 @@ import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest
 import { normalizePath, upstreamUri } from '../src/mediapath.js';
 import { cfg, makeEnv, type TestEnv } from './helpers.js';
 
-const vectors = JSON.parse(readFileSync(new URL('../../test-vectors/media-paths.json', import.meta.url), 'utf8')) as { allow: string[]; deny: string[] };
+const vectors = JSON.parse(readFileSync(new URL('../../test-vectors/media-paths.json', import.meta.url), 'utf8')) as { allow: string[]; deny: string[]; direct: string[] };
 const ID = 'a'.repeat(32);
 
 describe('shared allowlist vectors (same file as the gateway tests)', () => {
   it.each(vectors.allow)('allows %s', (p) => expect(normalizePath(p)).toBeTruthy());
   it.each(vectors.deny)('denies %s', (p) => expect(normalizePath(p)).toBeNull());
+});
+
+describe('upstreamUri: direct streams', () => {
+  it.each(vectors.direct)('%s is refused for height-capped roles and roles without download rights', (p) => {
+    const uri = `/media${p}?static=true`;
+    expect(upstreamUri(uri, 1, undefined, true)).toContain(p);
+    expect(upstreamUri(uri, 1, undefined)).toContain(p); // default: allowed
+    expect(upstreamUri(uri, 1, 1080, true)).toBeNull();
+    expect(upstreamUri(uri, 1, undefined, false)).toBeNull();
+  });
+  it('HLS stays available to restricted roles', () => {
+    expect(upstreamUri(`/media/Videos/${ID}/master.m3u8`, 1, 1080, false)).toBe(`/Videos/${ID}/master.m3u8`);
+  });
 });
 
 describe('upstreamUri', () => {

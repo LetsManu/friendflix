@@ -1,5 +1,5 @@
 {
-  "_comment": "Shared by gateway and backend tests so both implementations of the /media allowlist can never drift apart.",
+  "_comment": "Shared by gateway and backend tests so both implementations of the /media allowlist can never drift apart. 'direct' = allowed paths that are original (untranscoded) streams: refused for height-capped roles and roles without download rights.",
   "allow": [
     "/Videos/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/master.m3u8",
     "/Videos/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/main.m3u8",
@@ -11,6 +11,10 @@
     "/Items/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/Images/Primary",
     "/Items/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/Images/Backdrop/0",
     "/Items/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/Images/Logo"
+  ],
+  "direct": [
+    "/Videos/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/stream",
+    "/Videos/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/stream.mp4"
   ],
   "deny": [
     "/System/Info",
