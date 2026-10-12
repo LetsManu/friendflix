@@ -59,9 +59,14 @@ export async function partyRoutes(app: FastifyInstance, ctx: Ctx) {
     if (!r) return reply.code(404).send({ error: 'not_found' });
     if (!r.members.has(req.user!.id)) return reply.code(403).send({ error: 'not_in_room' });
     const b = z.object({ userIds: z.array(z.guid()).min(1).max(15) }).parse(req.body);
-    const targets = (await ctx.db.query<{ id: string }>('select id from users where id = any($1) and id <> $2 and not disabled', [b.userIds, req.user!.id])).rows;
+    const targets = (await ctx.db.query<JfUser>('select id, jellyfin_user_id, jellyfin_username, jellyfin_pw_enc from users where id = any($1) and id <> $2 and not disabled', [b.userIds, req.user!.id])).rows;
     let sent = 0;
-    for (const t of targets) if (await notify(ctx, { userId: t.id, kind: 'party_invite', title: `${req.user!.name} lädt dich zur Watch-Party ein: ${r.title}`, link: `/party/${r.id}`, dedupe: `party-${r.id}-${t.id}`, external: true })) sent++;
+    for (const t of targets) {
+      // The notification text carries the title, so only invite users whose own Jellyfin account can see the item (fail closed).
+      const canSee = (await itemsByIds(ctx, t, [r.itemId]).catch(() => [])).some((i) => i.id === r.itemId);
+      if (!canSee) continue;
+      if (await notify(ctx, { userId: t.id, kind: 'party_invite', title: `${req.user!.name} lädt dich zur Watch-Party ein: ${r.title}`, link: `/party/${r.id}`, dedupe: `party-${r.id}-${t.id}`, external: true })) sent++;
+    }
     return { sent };
   });
   app.get('/api/party/:id', pre, async (req, reply) => {

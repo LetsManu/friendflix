@@ -74,6 +74,25 @@ describe('party visibility', () => {
   });
 });
 
+describe('party invite visibility', () => {
+  it('only notifies invitees who can see the item', async () => {
+    const uid = (await env.pool.query('select id from users where email=$1', [U2.email])).rows[0].id;
+    const notes = async () => (await env.pool.query("select * from notifications where kind='party_invite' and user_id=$1", [uid])).rows;
+    await env.pool.query('delete from notifications');
+    const secret = (await as(admin, 'POST', '/api/party', { itemId: SECRET })).json().id;
+    const open = (await as(admin, 'POST', '/api/party', { itemId: OPEN })).json().id;
+    const adminId = (await env.pool.query("select id from users where email='admin@example.com'")).rows[0].id;
+    for (const id of [secret, open]) parties.get(id)!.join(adminId, 'Admin', () => undefined);
+    const r1 = await as(admin, 'POST', `/api/party/${secret}/invite`, { userIds: [uid] });
+    expect(r1.statusCode).toBe(200);
+    expect(r1.json().sent).toBe(0);
+    expect(await notes()).toHaveLength(0);
+    const r2 = await as(admin, 'POST', `/api/party/${open}/invite`, { userIds: [uid] });
+    expect(r2.json().sent).toBe(1);
+    expect(await notes()).toHaveLength(1);
+  });
+});
+
 describe('poll visibility', () => {
   let pollId = '', hiddenOpt = 0, openOpt = 0;
   it('masks options the viewer cannot see but keeps vote counts', async () => {
