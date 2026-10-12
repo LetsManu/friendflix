@@ -52,7 +52,7 @@
     {#each p.options as o}
       {@const total = p.options.reduce((a: number, x: any) => a + x.votes, 0) || 1}
       <div class="flex" style="margin:.3rem 0">
-        <button class:sec={p.myVote !== o.id} disabled={p.status !== 'open'} on:click={() => vote(p, o.id)} style="min-width:14rem;text-align:left">{o.title}{o.inLibrary ? '' : ' (Wunsch)'}{p.winnerOptionId === o.id ? ' – Gewinner' : ''}</button>
+        <button class:sec={p.myVote !== o.id} disabled={p.status !== 'open' || o.hidden} on:click={() => vote(p, o.id)} style="min-width:14rem;text-align:left">{o.hidden ? 'Titel nicht verfügbar' : o.title}{o.hidden || o.inLibrary ? '' : ' (Wunsch)'}{p.winnerOptionId === o.id ? ' – Gewinner' : ''}</button>
         <div class="bar" style="flex:1;min-width:80px"><i style="width:{(o.votes / total) * 100}%"></i></div><span>{o.votes}</span>
       </div>
     {/each}
