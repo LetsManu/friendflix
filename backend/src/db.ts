@@ -555,6 +555,10 @@ export const MIGRATIONS: string[] = [
   insert into profile_prefs(profile_id, data) select id, '{"onboarded": true}'::jsonb from profiles
     on conflict (profile_id) do update set data = profile_prefs.data || '{"onboarded": true}'::jsonb;
   `,
+  // 32: Block 17 D1 (leaving soon) – placeholder, replaced by the D1 worker
+  `select 1;`,
+  // 33: Block 17 S1 (themed lists / calm mode) – placeholder, replaced by the S1 worker
+  `select 1;`,
 ];
 
 export async function migrate(pool: pg.Pool): Promise<void> {

@@ -11,5 +11,8 @@ import hubs from './hubs';
 import anime from './anime';
 import together from './together';
 import kids from './kids';
+import scenes from './scenes';
+import fresh from './fresh';
+import mine from './mine';
 
-export default { common, shell, home, detail, player, account, social, admin, hubs, anime, together, kids } as const;
+export default { common, shell, home, detail, player, account, social, admin, hubs, anime, together, kids, scenes, fresh, mine } as const;
