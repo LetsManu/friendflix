@@ -2,3 +2,6 @@
 12220615f4b663e80fdeae36682cb20d3f41aa8c:backend/test/profiles.test.ts:generic-api-key:167
 12220615f4b663e80fdeae36682cb20d3f41aa8c:backend/test/profiles.test.ts:generic-api-key:212
 102d59e96ce1f44708b80fe032baf79b788d3baf:backend/test/downloads.test.ts:generic-api-key:12
+# test placeholders (backend/test/helpers.ts INTERNAL_SECRET and a wrong value) in media-hooks.test.ts, replaced in the next commit
+96752d696ea6f3e31a61c384b8469cd26f790413:backend/test/media-hooks.test.ts:generic-api-key:139
+96752d696ea6f3e31a61c384b8469cd26f790413:backend/test/media-hooks.test.ts:generic-api-key:219
