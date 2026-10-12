@@ -24,92 +24,124 @@ FriendFlix is a private streaming portal that sits in front of **Jellyfin** (you
 ## Contents
 
 - [What you get](#what-you-get)
-- [Made for friends and family](#made-for-friends-and-family)
 - [Privacy and safety](#privacy-and-safety)
 - [For admins: setup and operation](#for-admins-setup-and-operation)
 
 ## What you get
 
-### A home page that feels like a real streaming service
+Watching · Discovering · Together · Family and kids · Phone and TV · Admin
+
+### Watching
+
+#### A home page that feels like a real streaming service
 
 A large billboard with the title logo, then rows such as *Continue Watching*, *Next Episode*, *Recommended by friends*, *Rated by friends*, *Popular this week*, *Because you watched …*, *Top 10* and *My List*. Hover over a card and it pops out with the most important actions: play, add to your list, rate, more info.
 
-Below the billboard, **brand hubs** – wide tiles the admin builds from your own Jellyfin studios, collections, tags or genres (say "Anime" or "Documentaries") – open a page of their own with *New*, *Popular*, *Movies*, *Series* and A–Z. Several *Because you watched …* rows, each based on a different recent title, are spread between the other rows. The **Simulcast** page (linked from the calendar) lists the series that are airing right now, grouped by weekday and season, with an "Anime only" filter.
+Small **labels** on the cards tell you what is new – *New*, *New episode*, *New season*, *Season finale*, *New series*. When the admin knows that a title is about to leave the library, its card says "Only 6 days left" and a **Leaving soon** row collects those titles; everyone who has one on their list or in *Continue Watching* gets a reminder a week and a day before. Nothing is deleted – the date is only an announcement.
 
-<p align="center"><img src="docs/images/en/popout.jpg" alt="A card pops out on hover with play, list and rating buttons" width="900"></p>
+<p align="center"><img src="docs/images/en/home.jpg" alt="Home page rows with a themed list, new and leaving-soon labels and a Leaving soon row" width="900"></p>
 
-### Everything about a title in one place
+<p align="center"><img src="docs/images/en/popout.jpg" alt="A card pops out on hover with play, list and rating buttons and picture and sound chips" width="900"></p>
 
-The detail view shows the description, audio and subtitle languages, cast, which friends recommended or watched it, and – for shows – every season and episode with progress bars. Pick up exactly where you left off. An **Extras** tab collects trailers and special features from Jellyfin, and every episode has its own **comments** from your friends: comments on an episode you have not seen yet stay blurred until you choose "Spoiler – show anyway".
+#### Everything about a title in one place
+
+The detail view shows the description, audio and subtitle languages, cast, which friends recommended or watched it, and – for shows – every season and episode with progress bars. Pick up exactly where you left off. Small chips tell you the **picture and sound** before you press play (4K, HDR, Dolby Vision, Dolby Atmos, 5.1 surround). When a new season is about to start, or you have been away for a few weeks, **The story so far** gives a short recap and where you stopped – and you can hide the card. An **Extras** tab collects trailers and special features from Jellyfin, and every episode has its own **comments** from your friends: comments on an episode you have not seen yet stay blurred until you choose "Spoiler – show anyway".
 
 <table>
   <tr>
-    <td><img src="docs/images/en/detail.jpg" alt="Detail view of a series with Continue button and friends" width="440"></td>
-    <td><img src="docs/images/en/detail-episodes.jpg" alt="Episode list with progress and descriptions" width="440"></td>
+    <td><img src="docs/images/en/detail.jpg" alt="Detail view of a series with a new-season label, quality chips and the story so far card" width="440"></td>
+    <td><img src="docs/images/en/detail-episodes.jpg" alt="Story so far card and the episode list with progress and descriptions" width="440"></td>
   </tr>
 </table>
 
-### A player made for binge nights
+#### A player made for binge nights
 
 Skip intro, next episode with countdown, audio track and subtitles (with your own subtitle style), playback speed, bookmarks, keyboard shortcuts and "Are you still watching?" after several autoplayed episodes. Direct play when possible, adaptive streaming (HLS) otherwise. **Skip preview** jumps over "next time on …" segments. Change the audio track or subtitles once and FriendFlix remembers it **for the whole series**; with "Anime: original audio with subtitles" turned on, anime starts in Japanese with subtitles in your language unless you picked something else for that series.
 
-<p align="center"><img src="docs/images/en/player.jpg" alt="Player with controls, progress bar and Skip intro button" width="900"></p>
+- **Cast & info** (press <kbd>I</kbd> for a quick look, then "All info"): who plays whom, the guest stars of this episode, director, writers, studio and tags – tap a person to see their other titles in your library.
+- **Scenes**: chapter marks on the timeline and a panel with a thumbnail for every scene – jump straight to the good part.
+- **Clear voices** and **Night mode** in the sound menu: bring dialogue forward, or keep loud scenes from waking the house.
 
-### "Who's watching?"
+<p align="center"><img src="docs/images/en/player.jpg" alt="Player with the Cast and info panel open next to the picture" width="900"></p>
+
+<p align="center"><img src="docs/images/en/player-scenes.jpg" alt="Player with the Scenes panel showing a thumbnail for every chapter" width="900"></p>
+
+### Discovering
+
+- **Brand hubs** – wide tiles the admin builds from your own Jellyfin studios, collections, tags or genres (say "Anime" or "Documentaries") – open a page of their own with *New*, *Popular*, *Movies*, *Series* and A–Z.
+- **Themed lists** – any list can become an editorial page with a title, a colour and an emoji; the admin pins a few of them as rows on everyone's home page ("Friday movie night", "Cosy autumn").
+- **Because you watched …** – several rows, each based on a different recent title, spread between the other rows.
+- **Search and browse** find people, genres, titles and episodes; filter by decade, rating, language and **picture quality** (4K, HDR, Dolby Vision, Atmos). "Tonight" suggests three titles by mood and time.
+- **Simulcast** (linked from the calendar) lists the series that are airing right now, grouped by weekday and season, with an "Anime only" filter.
+
+### Together
+
+- **Watch parties** with synchronised playback, chat and live emoji reactions that float over the picture for everyone in the party. **Movie-night voting** with countdown and automatic start. "What has none of us seen yet?" – the group matcher finds titles for everyone.
+- **Recommendations**: recommend titles to friends, see what friends rated and watched this week, shared lists with editors and readers, curated rows from the admin.
+- **Wishes**: missing something? Wish for it right from the search and get notified when it arrives – with a monthly limit per role. "Remind me" for upcoming titles.
+- **Stay in the loop**: notifications in the app, as web push on every device, via ntfy or Discord, and an optional weekly digest.
+- **The fun extras**: reactions and short reviews (visible only after you watched it), ratings, stats, achievements and a shareable "Wrapped" card of your viewing stats.
+
+### Family and kids
 
 Up to five profiles per account, each with its own history, list, favourites, language and playback settings. Profiles can be locked with a 4-digit PIN. Every new profile starts with a short **welcome**: confirm name and colour, then pick three titles you like so the recommendations know where to start.
 
-**Kids profiles** get a bright home of their own with big tiles, a simple search and an age limit (0, 6 or 12) that the server enforces on every list, search and title. Nothing social is shown – no friends, reactions, ratings, comments, watch parties, shared lists, requests or stats – and the settings only offer language and playback languages. Leaving a kids profile needs the PIN of the target profile, or the owner's PIN if the target has none; a TV paired from a kids profile stays on that kids profile.
+**Kids profiles** get a bright home of their own with big tiles, a simple search and an age limit (0, 6 or 12) that the server enforces on every list, search and title. Nothing social is shown – no friends, reactions, ratings, comments, watch parties, shared lists, requests or stats – and the settings only offer language and playback languages. Leaving a kids profile needs the PIN of the target profile, or the owner's PIN if the target has none; a TV paired from a kids profile stays on that kids profile. Pinned themed lists (a "Cosy autumn" for the little ones) show up there too.
 
-<p align="center"><img src="docs/images/en/profiles.jpg" alt="Profile picker with four profiles, one locked with a PIN" width="900"></p>
+**Calm mode** (per profile, also for kids) keeps everything quiet: no trailer in the billboard, no preview on hover, no sound, and less motion across the whole app.
 
-### Great on the phone
+<table>
+  <tr>
+    <td><img src="docs/images/en/profiles.jpg" alt="Profile picker with four profiles, one locked with a PIN" width="440"></td>
+    <td><img src="docs/images/en/kids.jpg" alt="Kids home with big tiles and a friendly greeting" width="440"></td>
+  </tr>
+</table>
 
-An app-like layout with a bottom tab bar, a preview sheet when you tap a poster, and full details one swipe away. FriendFlix can be installed to the home screen (PWA).
+### Phone and TV
+
+An app-like layout with a bottom tab bar, a preview sheet when you tap a poster, and full details one swipe away. FriendFlix can be installed to the home screen (PWA) – with long-press **shortcuts** (Continue Watching, My List, Search, Downloads), an icon **badge** with your unread notifications and the app name and description in your language.
 
 <table>
   <tr>
     <td><img src="docs/images/en/phone-home.jpg" alt="Phone home page" width="260"></td>
     <td><img src="docs/images/en/phone-preview.jpg" alt="Phone preview sheet" width="260"></td>
-    <td><img src="docs/images/en/phone-detail.jpg" alt="Phone detail page" width="260"></td>
+    <td><img src="docs/images/en/phone-detail.jpg" alt="Phone detail page with quality chips" width="260"></td>
   </tr>
 </table>
 
-### Downloads for the train and the plane
+**On the big screen:** TV mode for smart-TV browsers, sticks and consoles – big type, arrow-key navigation, pairing with a code or QR code, and your **phone as the remote**. Chromecast from Chrome, Edge and Android.
 
-Download movies and episodes (or the next few episodes of a show in one go) and watch them offline in the browser. Progress syncs back the next time you are online.
+**Downloads for the train and the plane:** download movies and episodes (or the next few episodes of a show in one go) and watch them offline in the browser. Progress syncs back the next time you are online. Per-device licences with expiry; works in Chrome, Edge, Firefox, Safari 17+ and as a home-screen app on iOS 17+.
 
 <p align="center"><img src="docs/images/en/downloads.jpg" alt="Downloads page with finished, paused and preparing downloads" width="700"></p>
 
-### Seven languages
-
-The interface speaks **English, German, French, Spanish, Italian, Turkish and Polish**. Every profile picks its own language; on first login FriendFlix asks once and suggests the browser language. The admin sets the default language for the whole instance.
+**Seven languages:** the interface speaks **English, German, French, Spanish, Italian, Turkish and Polish**. Every profile picks its own language; on first login FriendFlix asks once and suggests the browser language. The admin sets the default language for the whole instance.
 
 <p align="center"><img src="docs/images/en/language.jpg" alt="Choose your language screen on first login" width="700"></p>
 
-## Made for friends and family
+### Admin
 
-| | |
-|---|---|
-| **Profiles for everyone** | Up to 5 profiles per account, optional PIN, separate history, lists and settings. |
-| **On the big screen** | TV mode for smart-TV browsers, sticks and consoles: big type, arrow-key navigation, pairing with a code or QR code, and your **phone as the remote**. Chromecast from Chrome, Edge and Android. |
-| **Offline downloads** | Per-device licences with expiry; works in Chrome, Edge, Firefox, Safari 17+ and as a home-screen app on iOS 17+. |
-| **Watch together** | Watch parties with synchronised playback, chat and live emoji reactions that float over the picture for everyone in the party. **Movie-night voting** with countdown and automatic start. "What has none of us seen yet?" – the group matcher finds titles for everyone. "Tonight" suggests three titles by mood and time. |
-| **Recommendations** | Recommend titles to friends, see what friends rated and watched this week, "Because you watched …", shared lists with editors and readers, curated rows from the admin. |
-| **Wishes** | Missing something? Wish for it right from the search and get notified when it arrives – with a monthly limit per role. "Remind me" for upcoming titles. |
-| **Stay in the loop** | Notifications in the app, as web push on every device, via ntfy or Discord, and an optional weekly digest. |
-| **The fun extras** | Reactions and short reviews (visible only after you watched it), ratings, stats, achievements and a shareable "Wrapped" card of your viewing stats. |
-| **Seven languages** | English, German, French, Spanish, Italian, Turkish, Polish – per profile. |
+A tidy admin area with a sidebar (People, Content, Operations) and an **overview** that shows system health, what is waiting for you – approve or decline a wish or a new device right there –, recent activity in plain sentences, counts and storage. Everything gives feedback: no pop-up boxes, risky actions ask first, small ones offer **Undo**. On the phone the same area is a simple list with big touch targets.
+
+Also in the admin area: invitations and roles, **brand hubs**, featured and themed lists, **leaving-soon** dates, hover-preview clips, the nightly playback check, the weekly digest, an audit log and one-click updates.
+
+<table>
+  <tr>
+    <td><img src="docs/images/en/admin.jpg" alt="Admin overview with system health, requests and devices waiting for approval and recent activity" width="600"></td>
+    <td><img src="docs/images/en/phone-admin.jpg" alt="Admin area on the phone as a grouped list" width="260"></td>
+  </tr>
+</table>
 
 ## Privacy and safety
 
 - **Self-hosted.** Everything runs on your own server. FriendFlix has no ads and no third-party analytics.
 - **Invite only.** New people join with one-time invitation links. Sign-in goes through your Authentik with **mandatory multi-factor authentication**, and new devices can require approval.
-- **Jellyfin and the request service stay hidden.** Friends only ever talk to the portal. Media tokens stay on the server; video is streamed through a gateway that checks every request.
+- **Jellyfin and the request service stay hidden.** Friends only ever talk to the portal. Media tokens stay on the server; video and images are streamed through a gateway that checks every request.
 - **You decide what friends see.** "Share history" (off by default) and "Share ratings" are switched in each person's settings; "Popular this week" only shows counts, never who watched. Reactions to a title only appear once you have watched it, and optional spoiler protection hides thumbnails and descriptions of unwatched episodes.
 - **Trailers without tracking.** Trailers for titles that are not in the library play in the privacy-friendly `youtube-nocookie.com` player and only load after a click.
 - **Error reports stay with you.** If the app crashes in someone's browser, a scrubbed error message (no query strings, tokens or e-mail addresses) is written to *your* server's log – and goes nowhere else.
 - **Honest about downloads.** Downloads are for trusted friends and family: there is no copy protection (no DRM); expiry and revocation are enforced by the app.
+- **Checked before it ships.** Every image is scanned, signed and published with a software bill of materials; the pipeline also runs a web security scan and the supply chain is scored publicly (see below).
 
 ---
 
@@ -165,7 +197,8 @@ Template: [.env.example](.env.example). Every variable can also be read from a f
 | `APP_ENC_KEY` | – (required) | 32 bytes base64; encrypts stored Jellyfin credentials. **Back it up separately.** |
 | `INTERNAL_SECRET`, `WEBHOOK_SECRET` | – (required, ≥ 16 chars) | Backend ↔ gateway secret; Jellyfin/request-service webhooks |
 | `OIDC_ISSUER`, `OIDC_CLIENT_ID`, `OIDC_CLIENT_SECRET` | – (required) | Authentik OIDC provider |
-| `JELLYFIN_URL`, `JELLYFIN_ADMIN_API_KEY` | – (required) | Internal Jellyfin URL, e.g. `http://jellyfin:8096`, and admin API key |
+| `MEDIA_SERVER` | `jellyfin` | Media server kind; Jellyfin is the only one in this repository (a fork can add others, see [docs/architecture.md](docs/architecture.md)) |
+| `JELLYFIN_URL`, `JELLYFIN_ADMIN_API_KEY` | – (required for `jellyfin`) | Internal Jellyfin URL, e.g. `http://jellyfin:8096`, and admin API key |
 | `SEERR_URL`, `SEERR_API_KEY` | – (required) | Internal URL and API key of the request service |
 | `ADMIN_GROUP` | `friendflix-admins` | Authentik group whose members become portal admins |
 | `BIND_ADDR` | `127.0.0.1` | Host address the three ports are published on – never a public interface |
@@ -186,11 +219,12 @@ Template: [.env.example](.env.example). Every variable can also be read from a f
 | `DIRECT_PLAY_REQUIRES_DOWNLOAD` | `false` | `true`: roles without download permission also lose direct play |
 | `PREVIEW_WARM` | `true` | Background job that pre-generates hover/billboard preview clips |
 | `PLAYBACK_CHECK_HOUR` | `4` | Nightly playback check with admin alert; `-1` = off |
-| `BACKGROUND_JOBS` | `true` | Download preparation/cleanup, language index, Jellyfin session polling (keep `true` on the single backend) |
+| `BACKGROUND_JOBS` | `true` | Download preparation/cleanup, language and picture-quality index, leaving-soon reminders, Jellyfin session polling (keep `true` on the single backend) |
 | `API_COMPRESSION` | `true` | gzip/brotli for JSON responses ≥ 1 KB; `false` if the proxy already compresses `/api` |
 | `METRICS_TOKEN` | empty | Bearer token for `/metrics` |
 | `PORTAINER_WEBHOOK_URL` or `PORTAINER_URL` + `PORTAINER_API_KEY` + `PORTAINER_STACK_ID` | empty | One-click updates from *Admin → Update* (`PORTAINER_ENDPOINT_ID` default `1`) |
 | `UPDATE_REPO`, `GITHUB_TOKEN` | `LetsManu/friendflix`, empty | Version check; the token only raises the GitHub rate limit |
+| `GRAFANA_ADMIN_PASSWORD`, `GRAFANA_PORT`, `PROMETHEUS_RETENTION` | – (required for the monitoring stack), `3083`, `30d` | Optional Prometheus + Grafana (`compose.monitoring.yaml`); no default password |
 | `BACKUP_PATH`, `BACKUP_HOUR`, `BACKUP_KEEP_DAYS`, `BACKUP_RUN_ON_START` | `./backups`, `3`, `14`, `false` | Backup sidecar (profile `backup`) |
 | `MEDIA_PATH` | `./media` | Media folder for the bundled Jellyfin (profile `bundled`) |
 
@@ -199,30 +233,65 @@ The full list with explanations is in [.env.example](.env.example).
 ### Architecture
 
 ```mermaid
-flowchart LR
-  user["Browser · phone · TV"] -->|HTTPS| npm["Nginx Proxy Manager<br/>(TLS, single public entry)"]
-  npm -->|"/"| web["web<br/>SvelteKit PWA"]
-  npm -->|"/api /auth /ws"| backend["backend<br/>Fastify API + WebSocket"]
-  npm -->|"/media/"| gateway["gateway<br/>streaming pipe"]
-  gateway -->|"authz"| backend
-  gateway --> jellyfin["Jellyfin"]
-  backend --> jellyfin
-  backend --> seerr["Request service"]
-  backend --> postgres[("Postgres")]
-  backend --> redis[("Redis")]
-  backend -.->|"OIDC"| authentik["Authentik"]
+---
+config:
+  flowchart:
+    curve: basis
+    nodeSpacing: 50
+    rankSpacing: 65
+    padding: 14
+  themeVariables:
+    edgeLabelBackground: 'rgba(150,150,150,0.12)'
+  themeCSS: '.labelBkg { background-color: rgba(127,127,127,0.12) !important; }'
+---
+flowchart TB
+  accTitle: How FriendFlix fits together
+  accDescr: Viewers reach one reverse proxy over HTTPS. It routes to the FriendFlix web, backend and gateway. The backend and gateway talk to Jellyfin; the backend also uses Authentik, a request service and notifications.
+  V("📺 <b>Viewers</b><br/><small>browser · phone · TV</small>"):::ext
+  P("🛡️ <b>Reverse proxy</b><br/><small>Nginx Proxy Manager · TLS</small>"):::edge
+  subgraph FF["FriendFlix"]
+    W("🖥️ <b>web</b><br/><small>the app you see</small>"):::app
+    B("⚙️ <b>backend</b><br/><small>login · API · rules</small>"):::app
+    G("📡 <b>gateway</b><br/><small>video + image pipe</small>"):::app
+  end
+  S("🎬 <b>Jellyfin</b><br/><small>media server</small>"):::media
+  RQ("🔔 <b>Requests</b><br/><small>request service · ntfy · Discord</small>"):::svc
+  AK("🔑 <b>Authentik</b><br/><small>login · invites</small>"):::svc
+  V -->|HTTPS| P
+  P -->|"/"| W
+  P -->|"/media/*"| G
+  P -->|"/api /auth /ws"| B
+  G -->|"may play?"| B
+  G ==>|"video"| S
+  B -->|"library API"| S
+  B -->|REST| RQ
+  B -.->|OIDC| AK
+  P -.->|"auth.example.com"| AK
+  classDef ext fill:#30363d,stroke:#8b949e,stroke-width:1px,color:#f0f6fc
+  classDef edge fill:#2d2a4a,stroke:#9d8cf0,stroke-width:1px,color:#f0f6fc
+  classDef app fill:#4a1418,stroke:#e50914,stroke-width:1px,color:#fff5f5
+  classDef store fill:#4a3a14,stroke:#d4a72c,stroke-width:1px,color:#fff8e6
+  classDef media fill:#173f30,stroke:#3fb68b,stroke-width:1px,color:#eafff6
+  classDef svc fill:#163e4c,stroke:#56b6d6,stroke-width:1px,color:#eaf9ff
+  classDef fork fill:#4a1d3c,stroke:#e070b0,stroke-width:1px,stroke-dasharray:4 3,color:#fff0f8
+  linkStyle default stroke:#8b949e,stroke-width:1.4px
+  style FF fill:none,stroke:#e50914,stroke-width:1px,stroke-dasharray:4 4
 ```
+
+> 🟥 FriendFlix · 🟩 media server · 🟦 other service · 🟪 reverse proxy · 🟨 data store · ⬛ viewers / outside · dashed frame = network or boundary · thick line = video stream · dotted = optional / via public URL
 
 - Only the proxy is public. `web`, `backend` and `gateway` are published on `127.0.0.1` only; Jellyfin and the request service have no ports at all and live on the internal `media` network, Postgres and Redis on the internal `db` network.
 - All video data (playlists, segments, direct play, images, subtitles, downloads, Chromecast) flows through the gateway: no buffering, HTTP range, Jellyfin tokens only server-side, path allowlist, fixed upstream, bitrate cap per role.
 - Containers run non-root with a read-only root filesystem, `cap_drop: ALL` and `no-new-privileges`. Strict CSP, CSRF tokens, rate limits, audit log.
+- The media server sits behind a neutral interface (`MediaServer` in the backend, an `Upstream` adapter in the gateway, chosen with `MEDIA_SERVER`). Jellyfin is the only implementation here; another server is added mostly with new files – containers, networks, the "press play" walk-through and the seam are in [docs/architecture.md](docs/architecture.md).
 - Alternative "Plan B": nginx serves `/media/` itself via `auth_request` – [docs/operations.md](docs/operations.md).
 
 ### Operations
 
 - **Backups:** the opt-in `backup` sidecar runs `pg_dump` daily at `BACKUP_HOUR`, verifies each dump with `pg_restore --list`, keeps `BACKUP_KEEP_DAYS` days and turns `unhealthy` if a run fails. Restore steps and a monthly restore test (`scripts/restore-test.sh`) are in [docs/operations.md](docs/operations.md). Keep `APP_ENC_KEY` in a password manager, separate from the dumps.
 - **Updates:** *Admin → Update* shows the installed and latest version with the change list and redeploys the stack through Portainer (webhook or API). Manually: `docker compose -f compose.prod.yaml pull && docker compose -f compose.prod.yaml up -d`. Database migrations run on start.
-- **Monitoring:** `/health` (liveness) and `/health/ready` (Redis, Postgres, Jellyfin) on `127.0.0.1:3081`; Prometheus metrics on `:3081/metrics` and `:3082/metrics` (Bearer `METRICS_TOKEN`). Icinga and Prometheus examples and an optional Prometheus + Grafana stack with dashboard (`compose.monitoring.yaml`): [docs/monitoring.md](docs/monitoring.md).
+- **Monitoring:** `/health` (liveness) and `/health/ready` (Redis, Postgres, Jellyfin) on `127.0.0.1:3081`; Prometheus metrics on `:3081/metrics` and `:3082/metrics` (Bearer `METRICS_TOKEN`). Icinga and Prometheus examples and an optional Prometheus + Grafana stack with a provisioned dashboard (`compose.monitoring.yaml`, internal network, no default password): [docs/monitoring.md](docs/monitoring.md).
+- **Supply chain:** images are scanned (Trivy), signed with cosign (keyless) and published with SBOM and provenance attestations; verify them before you deploy – [docs/operations.md](docs/operations.md).
 - **Performance:** every API response carries a `Server-Timing` header (`jf` = Jellyfin, `db` = Postgres, `kv` = Redis, `app` = total), the gateway adds `authz` and `upstream`; see them in the browser DevTools under *Network → Timing*. Requests ≥ 500 ms are logged as `slow request`. Browser errors are reported to the backend log and counted in `friendflix_client_errors_total`.
 
 ### Development
@@ -249,6 +318,7 @@ npm run e2e                                     # Playwright: builds the web app
 | Topic | File |
 |---|---|
 | Installation step by step | [docs/setup.md](docs/setup.md) |
+| Architecture: containers and networks, press play, media server seam | [docs/architecture.md](docs/architecture.md) |
 | Authentik: installation, provider, flows, invitations | [docs/authentik.md](docs/authentik.md) |
 | Jellyfin, request service, ntfy/Discord, web push | [docs/integrations.md](docs/integrations.md) |
 | Backups, restore, firewall, updates, image verification, branch protection, Plan B | [docs/operations.md](docs/operations.md) |
@@ -256,7 +326,9 @@ npm run e2e                                     # Playwright: builds the web app
 | Offline downloads (platforms, storage, limits) | [docs/downloads.md](docs/downloads.md) |
 | TV mode and phone remote | [docs/tv-mode.md](docs/tv-mode.md) |
 | Chromecast | [docs/cast.md](docs/cast.md) |
-| Search and discovery API | [docs/discovery.md](docs/discovery.md) |
+| Search and discovery API, labels, leaving soon, quality, kids rules | [docs/discovery.md](docs/discovery.md) |
+| Themed lists, calm mode, sound in the player, phone shortcuts and badge | [docs/personal.md](docs/personal.md) |
+| UI kit and admin shell | [docs/ui-kit.md](docs/ui-kit.md) |
 | Languages and translations | [docs/i18n.md](docs/i18n.md) |
 | Changes | [CHANGELOG.md](CHANGELOG.md) |
 
@@ -266,7 +338,10 @@ npm run e2e                                     # Playwright: builds the web app
 - Image-based subtitles (PGS) are not offered; text subtitles are delivered as WebVTT.
 - Skip intro needs Jellyfin ≥ 10.10 with media segments (e.g. from the Intro Skipper plugin).
 - Jellyfin, request service and Authentik APIs differ between versions – after upgrades see [docs/operations.md](docs/operations.md) and [docs/integrations.md](docs/integrations.md).
-- Optional: a Seerr-compatible request service for wishes – see [docs/integrations.md](docs/integrations.md). Profiles are hidden Jellyfin users: turn off the automatic Jellyfin user import there so they do not show up.
+- Optional: a Seerr-compatible request service for wishes – see [docs/integrations.md](docs/integrations.md). With Jellyfin, profiles are hidden Jellyfin users: turn off the automatic Jellyfin user import in the request service so they do not show up. A media server without Jellyfin accounts gets one local request-service user per FriendFlix account instead.
+- Only Jellyfin is implemented in this repository. Cast & info, scenes and the picture-quality chips need the media server to report credits, chapters and stream details; where it cannot, the UI hides the feature (`capabilities` in `/api/me`).
+- "Leaving soon" is an announcement set by an admin; FriendFlix never deletes media. The "Season finale" label is a heuristic (last episode of the newest season is new, the series is no longer continuing). The picture-quality filter reads a background index (`BACKGROUND_JOBS=true`) that fills a little after the first start.
+- Clear voices and Night mode use the browser's audio processing: not available on every device and not while casting. PWA home-screen widgets exist only on Windows 11; shortcuts and the icon badge (not on every iOS version) are what the phone gets instead.
 - With Intel QSV/VAAPI, switch off "VPP Tone mapping" in Jellyfin if the driver has no HDR support; otherwise 4K HDR titles fail.
 - Kids profiles are a parental guard, not a lock against someone who knows the account login. The owner PIN is reset with "Forgot PIN?" (`/auth/login?resetPin=1`): it needs a fresh sign-in at Authentik (checked via the token's `auth_time`) and is refused on any device that is tied to a kids profile – the owner resets it from their own device. Keep the Authentik login (and its second factor) away from the kids. If no PIN is set at all, leaving a kids profile is allowed and the owner sees a hint to set one.
 
