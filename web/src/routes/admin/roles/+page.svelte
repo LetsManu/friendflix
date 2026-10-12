@@ -1,8 +1,9 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { api } from '#lib/api';
-  import { t, tr, hasKey, trDynamic } from '#lib/i18n';
-  type Row = { role: string; label: string; requestsPerMonth: number | null; isDefault: boolean; value: number; unlimited: boolean; transcoding: boolean; maxHeight: number | null; download?: boolean; maxDownloads?: number | null; downloadMaxHeight?: number | null; downloadDays?: number | null };
+  import { t, tr } from '#lib/i18n';
+  import { roleName as nameOf } from '#lib/roles';
+  type Row = { role: string; label: string; builtinLabel?: boolean; requestsPerMonth: number | null; isDefault: boolean; value: number; unlimited: boolean; transcoding: boolean; maxHeight: number | null; download?: boolean; maxDownloads?: number | null; downloadMaxHeight?: number | null; downloadDays?: number | null };
   const HEIGHTS = [720, 1080, 1440, 2160];
   const DL_HEIGHTS = [480, 720, 1080];
   let rows: Row[] = [];
@@ -17,8 +18,8 @@
     try { await api(`/api/admin/roles/${encodeURIComponent(r.role)}`, { method: 'PUT', body: { requestsPerMonth: r.unlimited ? null : v, transcoding: r.transcoding, maxHeight: r.maxHeight, download: Boolean(r.download), maxDownloads: Math.round(Number(r.maxDownloads ?? 0)), downloadMaxHeight: r.downloadMaxHeight, downloadDays: Math.round(Number(r.downloadDays ?? 30)) } }); } catch { alert(tr('admin.roles.saveFailed')); }
     load();
   }
-  /** role name in the UI language; unknown roles keep the server label */
-  const roleName = (r: Row) => (hasKey(`admin.roleNames.${r.role}`) ? trDynamic(`admin.roleNames.${r.role}`) : r.label);
+  /** role name in the UI language; labels renamed via ROLES_JSON stay as configured */
+  const roleName = (r: Row) => nameOf(r.role, r);
 </script>
 <p class="muted">{$t('admin.roles.intro')}</p>
 <table>

@@ -108,6 +108,14 @@ export async function installApi(ctx: BrowserContext, st: MockState): Promise<vo
     if (p === '/api/requests/mine') return J({ requests: [] });
     if (p === '/api/reminders' || p === '/api/reminders/keys') return J(p.endsWith('keys') ? { keys: {} } : { reminders: [] });
     if (p === '/api/tv/status') return J({ tvOnline: false });
+    // public pages (block 14 fixes): invite landing page and TV pairing carry the instance default language
+    if ((mm = p.match(/^\/api\/invite\/([^/]+)$/))) {
+      if (mm[1] === 'expired') return J({ error: 'invalid_or_expired' }, 404);
+      const lang = sp.get('lang') || 'en';
+      return J({ defaultLanguage: 'en', role: 'guest', roleLabel: ({ de: 'Gast', en: 'Guest', fr: 'Invité' } as Record<string, string>)[lang] ?? 'Gast', expiresAt: '2026-12-01T18:00:00Z' });
+    }
+    if (p === '/api/tv/code') return J({ code: 'ABCD-EFGH', pollToken: 'p'.repeat(32), expiresIn: 600, defaultLanguage: 'en' });
+    if (p === '/api/tv/claim') return J({ status: 'pending' }, 202);
     if (p.startsWith('/api/series/')) return J({ followed: false });
 
     // ----- lists -----

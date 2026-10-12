@@ -73,6 +73,7 @@ const tr: Translation<typeof de> = {
     on: 'Altyazı: {name}',
     langs: { ger: 'Almanca', eng: 'İngilizce', fre: 'Fransızca', spa: 'İspanyolca', ita: 'İtalyanca' },
   },
+  episodeOnly: 'B{e}',
   speed: {
     title: 'Oynatma hızı',
     aria: 'Oynatma hızı: {r}',

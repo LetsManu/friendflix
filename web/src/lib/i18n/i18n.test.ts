@@ -2,9 +2,9 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { get } from 'svelte/store';
 import {
   LOCALES, fmtDate, fmtDateTime, fmtDuration, fmtList, fmtNumber, fmtRelative, fmtTime, getLocale, hasKey, intlLocale, isLocale, loadLocale,
-  locale, localeName, pickLocale, ready, setLocale, t, tr, trDynamic,
+  keepPageOnSwitch, locale, localeName, pageEpoch, pickLocale, publicLocale, ready, remountPage, setLocale, storedLocale, t, tr, trDynamic,
 } from './index';
-import { richParts } from './rich';
+import { markParams, richParts } from './rich';
 import de from './locales/de/index';
 import en from './locales/en/index';
 
@@ -145,5 +145,66 @@ describe('rich text', () => {
       { kind: 'text', text: ': ' }, { kind: 'a', href: '/devices', text: 'hier' }, { kind: 'text', text: '.' },
     ]);
     expect(richParts('<img src=x onerror=alert(1)> <a href="//evil.example">x</a> <a href="javascript:x">y</a>').every((p) => p.kind === 'text')).toBe(true);
+  });
+
+  it('links must stay app-internal: no "//", "/\\", javascript:, whitespace or control characters', () => {
+    const bad = ['/\\evil.com', '//evil.com', 'javascript:alert(1)', '/\tevil', '/\t/evil.com', '/\n/evil.com', '/ /evil.com', '/x\\y', '/\u0000/evil.com', 'https://evil.com', ' /x'];
+    for (const href of bad) {
+      const parts = richParts(`<a href="${href}">x</a>`);
+      expect(parts.every((p) => p.kind === 'text'), JSON.stringify(href)).toBe(true);
+    }
+    expect(richParts('<a href="/settings#language">x</a>')).toEqual([{ kind: 'a', href: '/settings#language', text: 'x' }]);
+    expect(richParts('<a href="/item/1?x=2">x</a>')[0]).toMatchObject({ kind: 'a', href: '/item/1?x=2' });
+  });
+
+  it('interpolated values never become markup', () => {
+    const evil = '<a href="/x">click</a><b>bold</b>';
+    // markParams: markers in place of string values; numbers stay numbers (plural + formatting)
+    const marked = markParams({ name: evil, n: 3, gone: null });
+    expect(marked.n).toBe(3);
+    expect('gone' in marked).toBe(false);
+    const parts = richParts(`Mehr zu <b>${String(marked.name)}</b> und ${String(marked.name)}`, { name: evil });
+    expect(parts).toEqual([
+      { kind: 'text', text: 'Mehr zu ' }, { kind: 'b', text: evil }, { kind: 'text', text: ` und ${evil}` },
+    ]);
+    // the real message: a title with markup stays one text part inside the <b>
+    const msg = tr('detail.info.title', markParams({ name: evil }));
+    const real = richParts(msg, { name: evil });
+    expect(real.filter((p) => p.kind === 'a')).toEqual([]);
+    expect(real.map((p) => p.text).join('')).toContain(evil);
+    // a value cannot smuggle markers either
+    expect(richParts(String(markParams({ a: 'x' }).a), { a: '\uE000a\uE001<b>x</b>' })).toEqual([{ kind: 'text', text: 'a<b>x</b>' }]);
+  });
+});
+
+describe('page rebuild on a language switch', () => {
+  it('only remountPage bumps the epoch, and not while a page opted out', async () => {
+    const e0 = get(pageEpoch);
+    await setLocale('en'); // applying a language (e.g. from /api/me) never rebuilds the page
+    expect(get(pageEpoch)).toBe(e0);
+    remountPage();
+    expect(get(pageEpoch)).toBe(e0 + 1);
+    const done = keepPageOnSwitch();
+    remountPage();
+    expect(get(pageEpoch)).toBe(e0 + 1);
+    done(); done(); // idempotent
+    remountPage();
+    expect(get(pageEpoch)).toBe(e0 + 2);
+  });
+});
+
+describe('language of public pages (invite, TV pairing)', () => {
+  afterEach(() => { vi.unstubAllGlobals(); });
+  it('remembered → browser languages → null (then the instance default from the API answer)', () => {
+    const mem = new Map<string, string>();
+    vi.stubGlobal('localStorage', { getItem: (k: string) => mem.get(k) ?? null, setItem: (k: string, v: string) => mem.set(k, v), removeItem: (k: string) => mem.delete(k) });
+    expect(storedLocale()).toBeNull();
+    expect(publicLocale(['ja-JP', 'en-US'])).toBe('en');
+    expect(publicLocale(['ja-JP'])).toBeNull();
+    mem.set('ff-locale', 'xx');
+    expect(storedLocale()).toBeNull();
+    mem.set('ff-locale', 'pl');
+    expect(storedLocale()).toBe('pl');
+    expect(publicLocale(['en-US'])).toBe('pl');
   });
 });

@@ -88,7 +88,7 @@
   }
   const tvMode = () => document.documentElement.classList.contains('tv');
   function onKey(e: KeyboardEvent) { if ((e.key === 'Escape' || (tvMode() && isBackKey(e))) && !document.fullscreenElement) { e.preventDefault(); back(); } }
-  $: bt = barTitles(item);
+  $: bt = barTitles(item, $t);
   const playEpisode = (e: CustomEvent<{ id: string }>) => goto(`/watch/${e.detail.id}${langQ ? '?' + langQ : ''}`);
   const label = (i: Item | null) => (i ? (i.seriesName ? `${i.seriesName} · S${i.parentIndexNumber}:E${i.indexNumber} ${i.name}` : i.name) : '');
   onDestroy(stopCountdown);

@@ -115,7 +115,7 @@
     <Player itemId={itemId} bind:video partyMode {canControl} inset={panel && innerWidth > 720 ? 340 : 0} denyHint={$t('social.party.denyHint')} on:ready={onReady}>
       <div slot="top" class="top">
         <button class="icon-btn" aria-label={$t('social.party.leave')} on:click={back}><Icon name="arrow-left" size={30} /></button>
-        <div class="ttl"><b>{title}</b><span>{$t('social.party.title')}{#if countdown} · {countdown}{/if}</span></div>
+        <div class="ttl"><b>{title}</b><span>{$t('social.party.title')}{#if countdown}{' · '}{countdown}{/if}</span></div>
         <span class="sp"></span>
         <ul class="avatars" aria-label={$t('social.party.participants', { n: members.length })}>
           {#each members as m (m.id)}

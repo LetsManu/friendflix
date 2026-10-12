@@ -109,6 +109,40 @@ export async function setLocale(code: string | null | undefined): Promise<Locale
   return l;
 }
 
+// ---- page re-render on a language switch ----
+/**
+ * The layout wraps the page in `{#key $pageEpoch}`: the page is rebuilt only when the person switches the language
+ * (saveLanguage → remountPage), so texts computed in scripts (tr(), fmtDate() …) follow the switch. Applying the
+ * language /api/me reports never rebuilds the page: the layout applies it before the page mounts (a rebuild would
+ * start a second player / run every page request twice). Only `$t` texts follow such a late correction.
+ */
+const epoch = writable(0);
+export const pageEpoch: Readable<number> = { subscribe: epoch.subscribe };
+let keepers = 0;
+/**
+ * A page whose texts are all reactive (`$t`) can opt out of the rebuild, e.g. to keep unsaved form input
+ * (settings). Call in onMount; returns the function that ends the opt-out (return it from onMount).
+ */
+export function keepPageOnSwitch(): () => void {
+  keepers++;
+  let done = false;
+  return () => { if (!done) { done = true; keepers--; } };
+}
+/** rebuilds the page after a language switch the person made (no-op while a page opted out) */
+export function remountPage(): void { if (!keepers) epoch.update((n) => n + 1); }
+
+/** the language remembered in this browser (`ff-locale`), or null */
+export function storedLocale(): Locale | null {
+  try { const v = localStorage.getItem(LOCALE_KEY); return isLocale(v) ? v : null; } catch { return null; }
+}
+/**
+ * Language of a public page that never calls /api/me (invite, TV pairing): the remembered one → the browser's languages
+ * → null (then the page uses the instance default its own API answer carries).
+ */
+export function publicLocale(langs: ReadonlyArray<string> | undefined = typeof navigator !== 'undefined' ? (navigator.languages?.length ? navigator.languages : [navigator.language]) : []): Locale | null {
+  return storedLocale() ?? pickLocale(langs ?? []);
+}
+
 // ---- lookup + formatting ----
 const warned = new Set<string>();
 const DEV = Boolean(import.meta.env.DEV);

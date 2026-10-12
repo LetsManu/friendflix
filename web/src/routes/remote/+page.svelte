@@ -73,7 +73,7 @@
         <div class="bar" aria-hidden="true"><i style="width:{pct}%"></i></div>
       {:else}<p class="muted">{$t('player.remote.tvHome')}</p>{/if}
     {:else}
-      <p class="muted"><Rich text={$t('player.remote.howTo', { host: location.host })} /></p>
+      <p class="muted"><Rich key="player.remote.howTo" params={{ host: location.host }} /></p>
     {/if}
   </section>
 
@@ -136,8 +136,8 @@
 
   <details class="panel pair" bind:open={pairOpen}>
     <summary><b>{$tvOnline ? $t('player.remote.pairAnother') : $t('player.remote.pair')}</b></summary>
-    <p class="muted"><Rich text={$t('player.remote.pairHow', { host: location.host })} /></p>
-    {#if fromLink}<p class="warn" role="note"><Rich text={$t('player.remote.linkWarn', { code: codeIn })} /></p>{/if}
+    <p class="muted"><Rich key="player.remote.pairHow" params={{ host: location.host }} /></p>
+    {#if fromLink}<p class="warn" role="note"><Rich key="player.remote.linkWarn" params={{ code: codeIn }} /></p>{/if}
     <form class="flex" on:submit|preventDefault={pair}>
       <label class="sr-only" for="code">{$t('player.remote.codeLabel')}</label>
       <input id="code" class="code" bind:value={codeIn} on:input={onCode} placeholder="ABCD-EFGH" autocapitalize="characters" autocomplete="off" spellcheck="false" maxlength="9" />

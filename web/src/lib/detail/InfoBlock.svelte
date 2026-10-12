@@ -15,7 +15,7 @@
 </script>
 
 <section class="info" id="dv-info" aria-labelledby="info-h">
-  <h2 id="info-h"><Rich text={$t('detail.info.title', { name: item.name })} /></h2>
+  <h2 id="info-h"><Rich key="detail.info.title" params={{ name: item.name }} /></h2>
   <dl>
     {#if directors.length}<div><dt>{$t('detail.info.director')}</dt><dd>{#each directors as p, n (p.id + n)}{#if n}{', '}{/if}<a href="/person/{p.id}">{p.name}</a>{/each}</dd></div>{/if}
     {#if actors.length}<div><dt>{$t('detail.info.cast')}</dt><dd>{#each actors as p, n (p.id + n)}{#if n}{', '}{/if}<a href="/person/{p.id}">{p.name}</a>{/each}</dd></div>{/if}

@@ -87,7 +87,7 @@
 
 <svelte:head><title>{$t('common.pageTitle', { page: kind === 'Series' ? $t('common.series') : $t('common.movies') })}</title></svelte:head>
 <div class="head">
-  <h1>{kind === 'Series' ? $t('common.series') : $t('common.movies')}{#if s.studio} · {s.studio}{/if}</h1>
+  <h1>{kind === 'Series' ? $t('common.series') : $t('common.movies')}{#if s.studio}{' · '}{s.studio}{/if}</h1>
   <label class="sr-only" for="g">{$t('home.browse.genre')}</label>
   <select id="g" class="genres" value={s.genre} on:change={(e) => set('genre', e.currentTarget.value)}><option value="">{$t('home.browse.genres')}</option>{#each genres as g}<option>{g}</option>{/each}{#if s.genre && !genres.includes(s.genre)}<option>{s.genre}</option>{/if}</select>
   <div class="views" role="group" aria-label={$t('home.browse.view')}>

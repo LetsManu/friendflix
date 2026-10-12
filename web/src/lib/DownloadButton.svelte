@@ -28,7 +28,7 @@
   let quality: QualityId = 'hd', audioLang = '', subs = new Set<string>(), count = 1;
 
   onMount(async () => {
-    support = getSupport();
+    support = await getSupport();
     if (support.ok) {
       const me = await getMe();
       allowed = Boolean(me?.downloads?.allowed);
@@ -103,7 +103,7 @@
     </button>
     {#if v && menu}
       <span class="menu" role="menu">
-        <span class="st">{stateLabel(v)}{#if v.state === 'downloading'} · {$t('detail.download.progress', { have: fmtBytes(v.bytesHave), total: fmtBytes(v.bytesTotal) })}{/if}</span>
+        <span class="st">{stateLabel(v)}{#if v.state === 'downloading'}{' · '}{$t('detail.download.progress', { have: fmtBytes(v.bytesHave), total: fmtBytes(v.bytesTotal) })}{/if}</span>
         {#if v.state === 'downloading'}<button type="button" role="menuitem" on:click={() => { pause(v.id); menu = false; }}><Icon name="pause" size={16} />{$t('detail.download.pause')}</button>{/if}
         {#if v.state === 'paused' || v.state === 'error'}<button type="button" role="menuitem" on:click={() => { resume(v.id); menu = false; }}><Icon name="play" size={16} />{$t('detail.download.resume')}</button>{/if}
         {#if v.state === 'done'}<a role="menuitem" href="/downloads">{$t('detail.download.toDownloads')}</a>{/if}

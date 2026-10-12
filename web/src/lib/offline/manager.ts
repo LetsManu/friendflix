@@ -6,7 +6,7 @@ import {
   deleteDownloadRecord, getAllDownloads, getMeta, getQueuedProgress, putDownload, queueProgress, removeQueuedProgress, setMeta,
   coalesceProgress, type DownloadRecord, type DownloadState, type QueuedProgress,
 } from './db';
-import { deleteDownloadFiles, deleteOrphans, detectSupport, persist, storageEstimate, type Support } from './opfs';
+import { checkSupport, deleteDownloadFiles, deleteOrphans, persist, storageEstimate, type Support } from './opfs';
 import { bumpMaxSeen, toMs } from './license';
 import { tr, type TKey } from '../i18n';
 import { fitsQuota, estimateBytes, pct, type QualityId } from './size';
@@ -21,7 +21,7 @@ export interface ServerSub { lang: string; title: string; url: string }
 /** one licence as returned by GET /api/downloads and POST /api/downloads (backend LicenseView) */
 export interface ServerLicense {
   id: string; itemId: string; status: 'pending' | 'fetched' | 'deleted' | 'revoked'; ready: boolean;
-  prep: { status: 'queued' | 'preparing' | 'ready' | 'failed'; percent: number; error: string | null };
+  prep: { status: 'queued' | 'preparing' | 'ready' | 'failed'; percent: number; /** error code ('prep_failed' | 'prep_gone'), not shown */ error: string | null };
   fileUrl: string; bytes: number | null; quality: QualityId; audioLang: string;
   subtitles: ServerSub[]; poster: string | null; backdrop: string | null;
   title: string; seriesName: string | null; seriesId: string | null; season: number | null; episode: number | null; runtimeTicks: number | null;
@@ -38,7 +38,8 @@ export interface DownloadOptions {
 }
 export interface DownloadRequest { itemId?: string; seriesId?: string; fromEpisodeId?: string; count?: number; quality: QualityId; audioLang?: string; subLangs: string[] }
 
-export const getSupport = (): Support => detectSupport();
+/** whether downloads work in this browser (async: OPFS sync access is probed inside a worker once per tab) */
+export const getSupport = (): Promise<Support> => checkSupport();
 
 // ---- tiny raw API (no 401 -> login redirect: this also runs on the offline hub) ----
 let meCache: { at: number; me: any } | null = null;
@@ -125,7 +126,7 @@ function applyServer(l: ServerLicense) {
 let initP: Promise<void> | null = null;
 export const initManager = (): Promise<void> => (initP ??= doInit());
 async function doInit(): Promise<void> {
-  if (!getSupport().ok) return;
+  if (!(await getSupport()).ok) return;
   started = true;
   try {
     for (const r of await getAllDownloads()) {
@@ -189,7 +190,7 @@ export async function fetchOptions(itemId: string): Promise<DownloadOptions> {
 }
 
 export async function requestDownload(req: DownloadRequest): Promise<DlView[]> {
-  if (!getSupport().ok) throw new Error('unsupported');
+  if (!(await getSupport()).ok) throw new Error('unsupported');
   await initManager();
   void persist();
   const me = await getMe(true);

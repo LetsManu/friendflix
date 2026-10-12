@@ -84,8 +84,9 @@ export function prefsRoutes(app: FastifyInstance, ctx: Ctx) {
     // account flags are shared by all profiles: only the owner profile may change them (others keep the stored values)
     const stored = req.profile!.is_owner ? null : await loadPrefs(ctx, req.user!.id, req.profile!.id);
     let prefs: Prefs = stored ? { ...input, ...pickAccount(stored) } : input;
-    // clients that do not know `language` (older tabs) must not reset the stored choice
-    if (!(req.body && typeof req.body === 'object' && 'language' in req.body)) prefs = { ...prefs, language: (stored ?? await loadPrefs(ctx, req.user!.id, req.profile!.id)).language };
+    // the language has its own endpoint (PUT /api/prefs/language): a full PUT without it (the web app never sends it) or
+    // with '' must not reset or revert a choice made elsewhere (other tab/device, footer, first-login picker)
+    if (!input.language) prefs = { ...prefs, language: (stored ?? await loadPrefs(ctx, req.user!.id, req.profile!.id)).language };
     const viewing: Record<string, unknown> = { ...prefs };
     for (const k of ACCOUNT_KEYS) delete viewing[k];
     await ctx.db.query(

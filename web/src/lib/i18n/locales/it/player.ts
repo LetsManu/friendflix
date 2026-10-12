@@ -73,6 +73,7 @@ const it: Translation<typeof de> = {
     on: 'Sottotitoli: {name}',
     langs: { ger: 'Tedesco', eng: 'Inglese', fre: 'Francese', spa: 'Spagnolo', ita: 'Italiano' },
   },
+  episodeOnly: 'E{e}',
   speed: {
     title: 'Velocità di riproduzione',
     aria: 'Velocità di riproduzione: {r}',

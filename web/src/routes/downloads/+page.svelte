@@ -13,7 +13,7 @@
   let quality = 'hd', persistMsg = '';
 
   onMount(async () => {
-    support = getSupport();
+    support = await getSupport();
     me = await api<Me>('/api/me').catch(() => null);
     try { quality = localStorage.getItem('ff_dl_quality') ?? 'hd'; } catch { /* ignore */ }
     if (support.ok) { await initManager(); void refreshStorage(); void checkIn(); }
@@ -84,7 +84,7 @@
           <li class="item">
             <div class="tx">
               <b>{label(v)}</b>
-              <span class="muted small">{stateLabel(v)}{#if v.state === 'done'} · {fmtBytes(v.bytesTotal)} · {$t('account.downloads.daysLeft', { n: daysLeft(v.expiresAt, Date.now()) })}{/if}{#if v.state === 'error' && v.msg} · {v.msg}{/if}</span>
+              <span class="muted small">{stateLabel(v)}{#if v.state === 'done'}{' · '}{fmtBytes(v.bytesTotal)}{' · '}{$t('account.downloads.daysLeft', { n: daysLeft(v.expiresAt, Date.now()) })}{/if}{#if v.state === 'error' && v.msg}{' · '}{v.msg}{/if}</span>
               {#if busy(v) || v.state === 'paused'}<div class="bar slim" role="progressbar" aria-label={$t('account.downloads.progress')} aria-valuenow={v.state === 'preparing' ? v.prep ?? 0 : progressPct(v)} aria-valuemin="0" aria-valuemax="100"><i style="width:{v.state === 'preparing' ? v.prep ?? 0 : progressPct(v)}%"></i></div>{/if}
             </div>
             <div class="acts">

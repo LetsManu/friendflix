@@ -26,7 +26,7 @@
   import { canRenderEarly, clearReloadFlag, earlyProfile, gateHref, hintOf, needsProfileGate, readActive, readHint, readPicked, readReloading, writeActive, writeHint } from '#lib/gate';
   import MobilePreviewSheet from '#lib/MobilePreviewSheet.svelte';
   import { closePreview, previewSheet } from '#lib/previewSheet';
-  import { isLocale, locale, pickLocale, ready, setLocale, t, type Locale } from '#lib/i18n';
+  import { isLocale, pageEpoch, pickLocale, ready, setLocale, t, type Locale } from '#lib/i18n';
   import Rich from '#lib/i18n/Rich.svelte';
   import LanguageGate from '#lib/LanguageGate.svelte';
   import { saveLanguage } from '#lib/stores';
@@ -47,6 +47,15 @@
   // ---- UI language: the shell waits for the remembered language once; first admin visit / first login ask for a language ----
   let booted = false;
   $: if ($ready) booted = true;
+  /**
+   * Early render (before /api/me): the page may only mount once the language of the last /api/me answer (boot hint) is
+   * active. Without /api/me the page mounts after the server language was applied (boot() awaits setLocale before `me`).
+   * Either way the page mounts once in the right language; nothing re-creates it later (see pageEpoch in lib/i18n).
+   */
+  let earlyLang = !(early && bootHint?.lang);
+  if (early && bootHint?.lang) void setLocale(bootHint.lang).finally(() => (earlyLang = true));
+  let pageReady = false; // sticky: a later language load (ready = false for a moment) must not unmount the page
+  $: if (!pageReady && booted && (me || (early && earlyLang && $ready))) pageReady = true;
   let langAsk: 'instance' | 'profile' | null = null, langPre: Locale = 'de';
   async function chooseInstance(l: Locale) {
     await api('/api/admin/settings/language', { method: 'PUT', body: { language: l } });
@@ -296,8 +305,10 @@
         if (!pending && needsProfileGate(m, location.pathname, readPicked())) {
           await goto(gateHref(location.pathname + location.search), { replaceState: true });
         }
+        // the server language is active before the page mounts (an early-rendered page only gets the $t texts updated;
+        // older servers send no language: keep the remembered one)
+        if (m.language) await setLocale(m.language);
         me = m;
-        if (m.language) void setLocale(m.language); // older servers send no language: keep the remembered one
         if (!pending && m.isAdmin && m.profile?.isOwner && m.defaultLanguageSet === false) { langAsk = 'instance'; langPre = 'de'; }
         else if (!pending && m.profile && m.languageChosen === false) {
           langAsk = 'profile';
@@ -327,7 +338,7 @@
 
 {#if publicPage}
   <slot />
-{:else if (me || early) && booted}
+{:else if pageReady}
   {#if !watchPage && !profilesPage}
     {#if $mobile}
       <header class="nav m" class:solid={scrolled || !heroPage} class:chips>
@@ -459,8 +470,9 @@
         <div class="flex"><button class="sec" disabled={checking} on:click={checkApproval}>{checking ? $t('shell.pending.checking') : $t('shell.pending.check')}</button><a class="btn sec" href="/devices">{$t('shell.pending.devices')}</a></div>
       </div></div>
     {:else}
-      <!-- a language switch re-renders the page, so texts computed in scripts (tr(), fmtDate() …) follow it too -->
-      {#key $locale}<slot />{/key}
+      <!-- a language switch made by the person re-renders the page once, so texts computed in scripts (tr(), fmtDate() …)
+           follow it too; the language /api/me reports is applied before the page mounts and never re-renders it -->
+      {#key $pageEpoch}<slot />{/key}
     {/if}
   </main>
   {#if !watchPage && !profilesPage && !tv && !pending && !$mobile}<Footer onHelp={() => (help = true)} />{/if}

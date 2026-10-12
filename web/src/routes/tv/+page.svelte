@@ -3,19 +3,23 @@
   import { onDestroy, onMount } from 'svelte';
   import { api } from '#lib/api';
   import { qrPath } from '#lib/qr';
-  import { t, tr } from '#lib/i18n';
+  import { publicLocale, setLocale, t, tr } from '#lib/i18n';
   import Rich from '#lib/i18n/Rich.svelte';
 
   let code = '', poll = '', expires = 0, error = '', qr: { size: number; d: string } | null = null;
   let timer: ReturnType<typeof setInterval>, dead = false, linking = false;
+  /** This page never calls /api/me: language = remembered → browser → instance default (from the first code answer). */
+  let langSet = false, shown = false;
 
   async function newCode() {
     error = '';
     try {
-      const r = await api<{ code: string; pollToken: string; expiresIn: number }>('/api/tv/code', { method: 'POST' });
+      const r = await api<{ code: string; pollToken: string; expiresIn: number; defaultLanguage?: string }>('/api/tv/code', { method: 'POST' });
+      if (!langSet) { langSet = true; await setLocale(r.defaultLanguage); }
       code = r.code; poll = r.pollToken; expires = Date.now() + r.expiresIn * 1000 - 5000;
       qr = qrPath(`${location.origin}/remote?code=${r.code}`);
     } catch { error = tr('player.tv.serverDown'); code = ''; }
+    shown = true;
   }
   async function tick() {
     if (dead) return;
@@ -32,6 +36,8 @@
       const r = await fetch('/api/me', { credentials: 'same-origin' });
       if (r.ok && (await r.json()).tv) { location.replace('/'); return; }
     } catch { /* offline: show the code screen anyway */ }
+    const pre = publicLocale();
+    if (pre) { langSet = true; await setLocale(pre); }
     await newCode();
     if (dead) return;
     timer = setInterval(tick, 2000);
@@ -40,6 +46,7 @@
 </script>
 
 <svelte:head><title>{$t('common.pageTitle', { page: $t('player.tv.pageTitle') })}</title></svelte:head>
+{#if shown}
 <main class="pair">
   <div class="txt">
     <span class="logo"><Logo wordmark size={52} /></span>
@@ -65,6 +72,7 @@
     </figure>
   {/if}
 </main>
+{/if}
 
 <style>
   .pair { min-height: 100vh; display: flex; align-items: center; justify-content: center; gap: clamp(2rem, 7vw, 7rem); padding: 3rem var(--pad-x); background: radial-gradient(900px 500px at 20% 10%, rgba(229, 15, 42, .16), transparent 70%), var(--bg); flex-wrap: wrap; }

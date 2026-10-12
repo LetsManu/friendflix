@@ -3,7 +3,7 @@ import webpush from 'web-push';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { digestPushText, digestText, type DigestData } from '../src/digest.js';
 import { deviceLabel } from '../src/devices.js';
-import { LANGUAGES, LANGUAGE_TAGS, m, msg, render, roleLabel } from '../src/i18n.js';
+import { LANGUAGES, LANGUAGE_TAGS, knownText, m, msg, render, renderKnown, roleLabel } from '../src/i18n.js';
 import { CATALOGS, type Message } from '../src/messages.js';
 import { localizeStored, notify } from '../src/notify.js';
 import { buildPayload, sendWebPush } from '../src/push.js';
@@ -62,6 +62,20 @@ describe('rendering', () => {
     const row = { id: 1, title: 'Download bereit', body: null, msg: { title: m('download.ready.title'), body: m('download.ready.body', { title: 'Dune' }) } };
     expect(localizeStored(row, 'es')).toEqual({ id: 1, title: 'Descarga lista', body: 'Dune ya se puede descargar.' });
     expect(localizeStored({ id: 2, title: 'alt', body: 'text', msg: null }, 'en')).toEqual({ id: 2, title: 'alt', body: 'text' });
+  });
+
+  it('inbox rows that refer to renamed/removed keys keep the stored text instead of showing the raw key', () => {
+    const gone = { key: 'download.renamed.title' } as unknown as ReturnType<typeof m>;
+    const nested = m('download.ready.body', { title: { key: 'old.removed.key' } as unknown as ReturnType<typeof m> });
+    const row = { id: 3, title: 'Download bereit', body: 'Dune kann jetzt geladen werden.', msg: { title: gone, body: nested } };
+    expect(localizeStored(row, 'en')).toEqual({ id: 3, title: 'Download bereit', body: 'Dune kann jetzt geladen werden.' });
+    expect(knownText(gone)).toBe(false);
+    expect(knownText(nested)).toBe(false);
+    expect(knownText({ join: [m('download.ready.title'), 'plain'] })).toBe(true);
+    expect(renderKnown('en', m('download.ready.title'))).toBe('Download ready');
+    expect(renderKnown('en', { join: [gone] })).toBeNull();
+    // a known title next to an unknown body: only the body falls back
+    expect(localizeStored({ ...row, msg: { title: m('download.ready.title'), body: gone } }, 'en')).toEqual({ id: 3, title: 'Download ready', body: 'Dune kann jetzt geladen werden.' });
   });
 
   it('weekly digest texts', () => {
@@ -162,7 +176,24 @@ describe('notifications in the recipient language', () => {
     expect((await env.app.inject(`/api/invite/${token}`)).json().roleLabel).toBe('Gast');
     expect((await env.app.inject(`/api/invite/${token}?lang=tr`)).json().roleLabel).toBe('Misafir');
     expect((await env.app.inject(`/api/invite/${token}?lang=xx`)).json().roleLabel).toBe('Gast');
+    // the anonymous page also learns the instance default (a new invitee without a stored language sees it in that one)
+    expect((await env.app.inject(`/api/invite/${token}?lang=tr`)).json().defaultLanguage).toBe('de');
     await call(admin, 'PUT', '/api/admin/settings/language', { language: 'fr' });
-    expect((await env.app.inject(`/api/invite/${token}`)).json().roleLabel).toBe('Invité');
+    expect((await env.app.inject(`/api/invite/${token}`)).json()).toMatchObject({ roleLabel: 'Invité', defaultLanguage: 'fr' });
+    // a fresh TV (no stored UI language) learns the instance default from its pairing code answer
+    expect((await env.app.inject({ method: 'POST', url: '/api/tv/code' })).json()).toMatchObject({ defaultLanguage: 'fr' });
+  });
+
+  it('admin roles: builtinLabel only for labels equal to the built-in default (ROLES_JSON renames stay as configured)', async () => {
+    const orig = env.ctx.roles;
+    env.ctx.roles = { ...orig, guest: { ...orig.guest!, label: 'Besucher' }, vip: { ...orig.friend!, label: 'VIP' } };
+    try {
+      const r = (await call(admin, 'GET', '/api/admin/roles')).json();
+      expect(r.roles.friend).toMatchObject({ label: 'Freund', builtinLabel: true });
+      expect(r.roles.guest).toMatchObject({ label: 'Besucher', builtinLabel: false });
+      expect(r.roles.vip).toMatchObject({ label: 'VIP', builtinLabel: false });
+      const lim = Object.fromEntries((r.limits as Array<{ role: string; builtinLabel: boolean }>).map((x) => [x.role, x.builtinLabel]));
+      expect(lim).toMatchObject({ friend: true, family: true, admin: true, guest: false, vip: false });
+    } finally { env.ctx.roles = orig; }
   });
 });

@@ -88,6 +88,7 @@ const pl: Translation<typeof de> = {
     on: 'Napisy: {name}',
     langs: { ger: 'Niemiecki', eng: 'Angielski', fre: 'Francuski', spa: 'Hiszpański', ita: 'Włoski' },
   },
+  episodeOnly: 'O{e}',
   speed: {
     title: 'Prędkość odtwarzania',
     aria: 'Prędkość odtwarzania: {r}',

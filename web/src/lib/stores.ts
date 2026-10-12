@@ -1,6 +1,6 @@
 import { writable } from 'svelte/store';
 import { api } from '#lib/api';
-import { locale, setLocale, tr, type Locale } from '#lib/i18n';
+import { getLocale, locale, remountPage, setLocale, tr, type Locale } from '#lib/i18n';
 
 /** Ids on "Meine Liste" (watchlist). Loaded once, updated optimistically by cards and detail pages. */
 export const listIds = writable<Set<string>>(new Set());
@@ -51,13 +51,38 @@ export interface Prefs { autoplayNext: boolean; autoSkipIntro: boolean; shareHis
 export const DEFAULT_PREFS: Prefs = { autoplayNext: true, autoSkipIntro: false, shareHistory: false, shareRatings: true, hoverTrailers: true, hoverClip: true, autoStartPreview: true, audioLang: '', subtitleLang: '', quality: 0, stillWatching: true, stillWatchingEpisodes: 3, subtitleStyle: { size: 'm', color: 'white', background: 'semi', font: 'sans' }, spoilerProtection: false, weeklyDigest: true, ntfyTopic: '', language: '' };
 /** Viewing preferences (server-side, follow the user across devices). */
 export const prefs = writable<Prefs>({ ...DEFAULT_PREFS });
+/** counts saveLanguage calls: a /api/prefs answer that was requested before a language switch must not undo it */
+let langSaves = 0;
 export async function loadPrefs() {
+  const before = langSaves;
   try { const p = (await api('/api/prefs')).prefs;
-    prefs.set({ ...DEFAULT_PREFS, ...p, subtitleStyle: { ...DEFAULT_PREFS.subtitleStyle, ...p?.subtitleStyle } }); } catch { /* defaults */ }
+    prefs.update((cur) => ({ ...DEFAULT_PREFS, ...p, subtitleStyle: { ...DEFAULT_PREFS.subtitleStyle, ...p?.subtitleStyle }, ...(langSaves !== before ? { language: cur.language } : {}) })); } catch { /* defaults */ }
 }
+/**
+ * Saves the viewing preferences. `language` is never sent: it has its own endpoint (saveLanguage), and a full PUT from
+ * a form that was loaded before a switch (here or in another tab/device) would revert it. The server keeps the stored one.
+ */
 export async function savePrefs(p: Prefs) {
-  prefs.set(p);
-  await api('/api/prefs', { method: 'PUT', body: p });
+  const { language: _language, ...body } = p;
+  prefs.update((cur) => ({ ...p, language: cur.language }));
+  await api('/api/prefs', { method: 'PUT', body });
+}
+
+/**
+ * Applies a new prefs value to a form without discarding unsaved edits: only fields that changed between the previous
+ * and the new store value are taken over (e.g. `language` after a switch, or the server values after loadPrefs).
+ */
+export function mergePrefsInto(form: Prefs, prev: Prefs | null, next: Prefs): Prefs {
+  if (!prev) return { ...next, subtitleStyle: { ...next.subtitleStyle } };
+  const out: Record<string, unknown> = { ...form, subtitleStyle: { ...form.subtitleStyle } };
+  for (const k of Object.keys(next) as Array<keyof Prefs>) {
+    if (k === 'subtitleStyle') {
+      for (const s of Object.keys(next.subtitleStyle) as Array<keyof SubtitleStyle>) {
+        if (prev.subtitleStyle?.[s] !== next.subtitleStyle[s]) (out.subtitleStyle as Record<string, unknown>)[s] = next.subtitleStyle[s];
+      }
+    } else if (prev[k] !== next[k]) out[k] = next[k];
+  }
+  return out as unknown as Prefs;
 }
 
 /**
@@ -66,6 +91,9 @@ export async function savePrefs(p: Prefs) {
  */
 export async function saveLanguage(l: Locale): Promise<void> {
   await api('/api/prefs/language', { method: 'PUT', body: { language: l } });
+  langSaves++;
   prefs.update((p) => ({ ...p, language: l }));
-  await setLocale(l);
+  const was = getLocale();
+  const now = await setLocale(l);
+  if (now !== was) remountPage(); // a switch the person made: rebuild the page once (see pageEpoch)
 }

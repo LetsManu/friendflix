@@ -3,7 +3,7 @@ import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import { z } from 'zod';
 import { audit } from '../audit.js';
 import type { Ctx } from '../ctx.js';
-import { m, msg, userLanguage } from '../i18n.js';
+import { FALLBACK_LANGUAGE, instanceLanguage, m, msg, userLanguage } from '../i18n.js';
 import { notify } from '../notify.js';
 import { COOKIE, newSession, rand, requireUser, saveSession, authenticate } from '../session.js';
 
@@ -58,7 +58,8 @@ export function tvRoutes(app: FastifyInstance, ctx: Ctx) {
     const code = newCode();
     const pollToken = rand();
     await ctx.kv.set(`tvpair:${code}`, JSON.stringify({ poll: hash(pollToken).toString('hex'), userId: null }), TTL);
-    return { code: show(code), pollToken, expiresIn: TTL };
+    // defaultLanguage: a fresh TV without a stored UI language shows the pairing screen in the instance language (or the browser's)
+    return { code: show(code), pollToken, expiresIn: TTL, defaultLanguage: (await instanceLanguage(ctx)) ?? FALLBACK_LANGUAGE };
   });
 
   // 2) A logged-in user confirms the code shown on the TV.

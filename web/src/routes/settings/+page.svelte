@@ -4,19 +4,22 @@
   import { api, getActiveProfile } from '#lib/api';
   import Intro from '#lib/Intro.svelte';
   import { loadIntroSettings, saveIntroSettings, shouldPlayIntroSound } from '#lib/intro';
-  import { prefs, savePrefs, saveLanguage, DEFAULT_PREFS, type Prefs } from '#lib/stores';
+  import { prefs, savePrefs, saveLanguage, mergePrefsInto, DEFAULT_PREFS, type Prefs } from '#lib/stores';
   import { pushState, enablePush, disablePush, updateBroadcast, testPush, syncPush, type PushState } from '#lib/push';
-  import { LOCALES, isLocale, locale, localeName, t, tr, type Locale, type TKey } from '#lib/i18n';
+  import { LOCALES, isLocale, keepPageOnSwitch, locale, localeName, t, tr, type Locale, type TKey } from '#lib/i18n';
   import { langLabel } from '#lib/langs';
   import type { Me } from '#lib/api';
 
   /** audio/subtitle track languages (ISO 639-2 as Jellyfin reports them; names in the UI language) */
   const LANGS = ['ger', 'eng', 'fre', 'spa', 'ita', 'jpn'];
   const QUALITIES: Array<[number, TKey]> = [[0, 'account.settings.qualityAuto'], [8_000_000, 'account.settings.quality1080'], [4_000_000, 'account.settings.quality720'], [1_500_000, 'account.settings.quality480'], [800_000, 'account.settings.quality360']];
+  /** track language names in the UI language; re-evaluated on a switch (the page is not rebuilt, see below) */
+  $: trackName = $locale ? (v: string) => langLabel(v) : langLabel;
   type BoolPref = { [K in keyof Prefs]: Prefs[K] extends boolean ? K : never }[keyof Prefs];
   let form: Prefs = { ...DEFAULT_PREFS }, saved = false, error = '', busy = false;
   let owner = false, me: Me | null = null;
-  // ---- UI language (own section, saved right away; the page re-renders in the new language) ----
+  // ---- UI language (own section, saved right away). This page is not rebuilt on a switch (keepPageOnSwitch): all its
+  // texts are reactive, and unsaved edits in the form below survive the switch. ----
   let langBusy = false, langErr = '', instLang: Locale = 'de', instBusy = false, instMsg = '';
   $: admin = Boolean(me?.isAdmin && me?.profile?.isOwner);
   $: defaultName = localeName(isLocale(me?.defaultLanguage) ? me!.defaultLanguage! : 'de');
@@ -34,7 +37,11 @@
   }
   onMount(() => {
     api<Me>('/api/me').then((m) => { me = m; owner = Boolean(m.profile?.isOwner); if (isLocale(m.defaultLanguage)) instLang = m.defaultLanguage; }).catch(() => undefined);
-    const unsub = prefs.subscribe((p) => (form = { ...p, subtitleStyle: { ...p.subtitleStyle } })); return unsub;
+    // only fields that changed in the store are taken over (a language switch must not discard unsaved edits)
+    let prev: Prefs | null = null;
+    const unsub = prefs.subscribe((p) => { form = mergePrefsInto(form, prev, p); prev = p; });
+    const keep = keepPageOnSwitch();
+    return () => { unsub(); keep(); };
   });
   // ---- brand intro (stored per profile in localStorage, not on the server) ----
   let introShow = true, introSound = true, previewing = false, previewSound = false;
@@ -103,9 +110,9 @@
       <small class="muted">{$t('account.settings.ntfyHint')}</small></div>
   {/if}
   <div class="field"><label for="al">{$t('account.settings.audio')}</label>
-    <select id="al" bind:value={form.audioLang}><option value="">{$t('account.settings.audioDefault')}</option>{#each LANGS as v}<option value={v}>{langLabel(v)}</option>{/each}</select></div>
+    <select id="al" bind:value={form.audioLang}><option value="">{$t('account.settings.audioDefault')}</option>{#each LANGS as v}<option value={v}>{trackName(v)}</option>{/each}</select></div>
   <div class="field"><label for="sl">{$t('account.settings.subtitles')}</label>
-    <select id="sl" bind:value={form.subtitleLang}><option value="">{$t('common.off')}</option>{#each LANGS as v}<option value={v}>{langLabel(v)}</option>{/each}</select></div>
+    <select id="sl" bind:value={form.subtitleLang}><option value="">{$t('common.off')}</option>{#each LANGS as v}<option value={v}>{trackName(v)}</option>{/each}</select></div>
   <div class="field"><label for="q">{$t('account.settings.quality')}</label>
     <select id="q" bind:value={form.quality}>{#each QUALITIES as [v, l]}<option value={v}>{$t(l)}</option>{/each}</select>
     <small class="muted">{$t('account.settings.qualityHint')}</small></div>

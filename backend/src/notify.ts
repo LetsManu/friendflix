@@ -1,5 +1,5 @@
 import type { Ctx } from './ctx.js';
-import { broadcastLanguage, isMsg, render, renderNotice, userLanguage, type Language, type Rendered, type Text } from './i18n.js';
+import { broadcastLanguage, isMsg, renderKnown, renderNotice, userLanguage, type Language, type Rendered, type Text } from './i18n.js';
 export { renderNotice, type Rendered } from './i18n.js';
 import { sendWebPush } from './push.js';
 
@@ -29,8 +29,10 @@ export function localizeStored<T extends { title: string; body: string | null; m
   const { msg: raw, ...rest } = row;
   const o = raw && typeof raw === 'object' ? (raw as { title?: Text; body?: Text }) : null;
   if (!o) return rest;
-  const title = o.title != null ? render(lang, o.title) : '';
-  return { ...rest, title: title || rest.title, body: o.body != null ? render(lang, o.body) || rest.body : rest.body };
+  // renderKnown: null when a key was renamed/removed since the row was stored (msg() would show the raw key) → stored text
+  const title = o.title != null ? renderKnown(lang, o.title) : null;
+  const body = o.body != null ? renderKnown(lang, o.body) : null;
+  return { ...rest, title: title || rest.title, body: body || rest.body };
 }
 
 /**

@@ -76,6 +76,9 @@ describe('UI language', () => {
     const r = await call(owner, 'PUT', '/api/prefs', { ...old, autoplayNext: false }); // an older tab without `language`
     expect(r.json().prefs).toMatchObject({ autoplayNext: false, language: 'it' });
     expect((await me(owner)).language).toBe('it');
+    // '' (a form loaded before any choice) must not clear a language chosen elsewhere meanwhile
+    expect((await call(owner, 'PUT', '/api/prefs', { ...old, autoplayNext: false, language: '' })).json().prefs.language).toBe('it');
+    expect(await me(owner)).toMatchObject({ language: 'it', languageChosen: true });
     // other viewing prefs survive the language-only route
     await call(owner, 'PUT', '/api/prefs/language', { language: 'es' });
     expect((await call(owner, 'GET', '/api/prefs')).json().prefs).toMatchObject({ autoplayNext: false, language: 'es' });

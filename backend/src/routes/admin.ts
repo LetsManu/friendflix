@@ -104,8 +104,11 @@ export function adminRoutes(app: FastifyInstance, ctx: Ctx) {
   app.get('/api/admin/roles', admin, async () => {
     invalidateRoles(ctx);
     const set = new Map((await ctx.db.query<{ role: string; requests_per_month: number | null }>('select role, requests_per_month from role_settings')).rows.map((r) => [r.role, r.requests_per_month]));
-    const roles = Object.fromEntries(await Promise.all(Object.keys(ctx.roles).map(async (k) => [k, (await effectiveRole(ctx, k))!] as const)));
-    const limits = Object.entries(roles).map(([role, t]) => ({ role, label: t.label, requestsPerMonth: set.has(role) ? set.get(role)! : defaultLimit(role), isDefault: !set.has(role), transcoding: t.transcoding, maxHeight: t.maxHeight, download: t.download, maxDownloads: t.maxDownloads, downloadMaxHeight: t.downloadMaxHeight, downloadDays: t.downloadDays }));
+    // builtinLabel: the label is the built-in (German) default of that role → the web app shows its translation; a label
+    // renamed via ROLES_JSON is shown as configured (same rule as roleLabel() in /api/me and /api/invite)
+    const builtin = (k: string, label: string) => Boolean(DEFAULT_ROLES[k] && DEFAULT_ROLES[k]!.label === label);
+    const roles = Object.fromEntries(await Promise.all(Object.keys(ctx.roles).map(async (k) => { const r = (await effectiveRole(ctx, k))!; return [k, { ...r, builtinLabel: builtin(k, r.label) }] as const; })));
+    const limits = Object.entries(roles).map(([role, t]) => ({ role, label: t.label, builtinLabel: t.builtinLabel, requestsPerMonth: set.has(role) ? set.get(role)! : defaultLimit(role), isDefault: !set.has(role), transcoding: t.transcoding, maxHeight: t.maxHeight, download: t.download, maxDownloads: t.maxDownloads, downloadMaxHeight: t.downloadMaxHeight, downloadDays: t.downloadDays }));
     return { roles, invitable: INVITABLE_ROLES, limits };
   });
 
@@ -304,7 +307,9 @@ export function inviteRoutes(app: FastifyInstance, ctx: Ctx) {
     const enroll = Boolean(inv.authentik_invite && ctx.cfg.AUTHENTIK_URL && ctx.cfg.AUTHENTIK_ENROLL_FLOW);
     // anonymous page: the language the page shows (?lang=, from the browser's stored UI language) → instance default → German
     const q = (req.query as { lang?: unknown } | undefined)?.lang;
-    const lang = isLanguage(q) ? q : (await instanceLanguage(ctx)) ?? FALLBACK_LANGUAGE;
-    return { role: inv.role, roleLabel: roleLabel(lang, inv.role, ctx.roles[inv.role]?.label, DEFAULT_ROLES[inv.role]?.label), expiresAt: inv.expires_at, enrollUrl: enroll ? `/auth/enroll?invite=${encodeURIComponent(token)}` : undefined };
+    const defaultLanguage = (await instanceLanguage(ctx)) ?? FALLBACK_LANGUAGE;
+    const lang = isLanguage(q) ? q : defaultLanguage;
+    // defaultLanguage: a new invitee without a stored UI language sees the page in the instance language (or the browser's)
+    return { defaultLanguage, role: inv.role, roleLabel: roleLabel(lang, inv.role, ctx.roles[inv.role]?.label, DEFAULT_ROLES[inv.role]?.label), expiresAt: inv.expires_at, enrollUrl: enroll ? `/auth/enroll?invite=${encodeURIComponent(token)}` : undefined };
   });
 }

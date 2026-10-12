@@ -74,6 +74,8 @@ export default {
     /** languages offered in the subtitle search (ISO 639-2 codes of the providers) */
     langs: { ger: 'Deutsch', eng: 'Englisch', fre: 'Französisch', spa: 'Spanisch', ita: 'Italienisch' },
   },
+  /** episode number in the control bar when the season is unknown ("F3 Titel"); with a season: detail.view.episodeCode */
+  episodeOnly: 'F{e}',
   speed: {
     title: 'Wiedergabetempo',
     aria: 'Wiedergabetempo: {r}',

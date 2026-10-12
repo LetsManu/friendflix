@@ -1,13 +1,16 @@
 <script lang="ts">
-  import { t, fmtDateTime, hasKey, trDynamic } from '#lib/i18n';
+  import { t, fmtDateTime } from '#lib/i18n';
+  import { roleName as nameOf, type RoleInfo } from '#lib/roles';
   import { onMount } from 'svelte';
   import { api } from '#lib/api';
   let invites: any[] = [], role = 'friend', ttl = 48, note = '', existing = false, created: { link: string; authentik?: 'off' | 'skipped' | 'ok' | 'failed' } | null = null;
+  let roles: Record<string, RoleInfo> = {};
   const load = async () => (invites = (await api('/api/admin/invites')).invites);
-  onMount(load);
+  onMount(() => { void load(); api('/api/admin/roles').then((r) => (roles = r.roles)).catch(() => undefined); });
   async function create() { created = await api('/api/admin/invites', { method: 'POST', body: { role, ttlHours: ttl, note: note || undefined, enroll: !existing } }); note = ''; load(); }
   async function revoke(id: string) { await api(`/api/admin/invites/${id}`, { method: 'DELETE' }); load(); }
-  const roleName = (role: string) => (hasKey(`admin.roleNames.${role}`) ? trDynamic(`admin.roleNames.${role}`) : role);
+  /** role name in the UI language; labels renamed via ROLES_JSON stay as configured */
+  $: roleName = (role: string) => nameOf(role, roles[role]);
 </script>
 <div class="panel flex">
   <select bind:value={role} aria-label={$t('admin.invites.role')}>{#each ['friend', 'family', 'guest'] as r}<option value={r}>{roleName(r)}</option>{/each}</select>

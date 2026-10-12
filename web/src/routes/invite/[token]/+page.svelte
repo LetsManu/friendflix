@@ -1,15 +1,26 @@
 <script lang="ts">
-  import { fmtDateTime, getLocale, t } from '#lib/i18n';
+  import { fmtDateTime, publicLocale, setLocale, t } from '#lib/i18n';
   import Logo from '#lib/Logo.svelte';
   import { onMount } from 'svelte';
   import { pageStore } from '#lib/page';
   const page = pageStore();
-  let info: { roleLabel: string; expiresAt: string; enrollUrl?: string } | null = null, invalid = false;
+  type Info = { roleLabel: string; expiresAt: string; enrollUrl?: string; defaultLanguage?: string };
+  let info: Info | null = null, invalid = false;
   const token = $page.params.token!;
+  const get = (lang: string | null) => fetch(`/api/invite/${encodeURIComponent(token)}${lang ? `?lang=${lang}` : ''}`);
   onMount(async () => {
-    // ?lang: the account type is named in the language this page shows
-    const r = await fetch(`/api/invite/${token}?lang=${getLocale()}`);
-    if (r.ok) info = await r.json(); else invalid = true;
+    // This page never calls /api/me: language = remembered → browser → instance default (from the answer). The language
+    // is active (chunk loaded) before the account type is fetched, and ?lang names it in exactly that language.
+    const pre = publicLocale();
+    let lang: string | null = pre ? await setLocale(pre) : null;
+    let r = await get(lang);
+    if (!r.ok) { invalid = true; return; }
+    let d = (await r.json()) as Info;
+    if (!lang) {
+      lang = await setLocale(d.defaultLanguage);
+      if (lang !== (d.defaultLanguage ?? 'de')) { r = await get(lang); if (r.ok) d = await r.json(); } // chunk not loadable: stay consistent
+    }
+    info = d;
   });
 </script>
 

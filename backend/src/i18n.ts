@@ -122,6 +122,25 @@ export function render(lang: Language, t: Text | null | undefined): string {
   return '';
 }
 
+/** true when every message key inside `t` (also in params and joins) exists in the catalog (German is complete). */
+export function knownText(t: Text | Param | null | undefined): boolean {
+  if (t == null || typeof t !== 'object') return true;
+  if ('key' in t) {
+    if (typeof t.key !== 'string' || !(t.key in CATALOGS.de)) return false;
+    return !t.params || typeof t.params !== 'object' || Object.values(t.params).every((p) => knownText(p));
+  }
+  if ('join' in t) return !Array.isArray(t.join) || t.join.every((x) => knownText(x));
+  return true;
+}
+
+/**
+ * Like render(), but null when the text refers to a message key that no longer exists (renamed/removed after it was
+ * stored): msg() would show the raw key name then. Callers fall back to the text stored at creation time.
+ */
+export function renderKnown(lang: Language, t: Text | null | undefined): string | null {
+  return knownText(t) ? render(lang, t) : null;
+}
+
 /** A notice rendered in one language (what ntfy / Discord / Web Push send). */
 export interface Rendered { title: string; body?: string; link?: string; pushBody?: string }
 
