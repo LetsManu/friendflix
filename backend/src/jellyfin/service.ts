@@ -5,6 +5,11 @@ import { JellyfinClient, JellyfinError } from './client.js';
 import { maxWidthFor, toDownloadSource, toItemDto, toPlaybackDto, type DownloadQuality, type DownloadSourceDto, type ItemDto, type PlaybackDto } from './dto.js';
 
 const TOKEN_TTL = 6 * 3600;
+/** item() memo: one detail page fires ~8 parallel requests that each load the same item (access check / data). */
+export const ITEM_MEMO_TTL_MS = 10_000;
+export const ITEM_MEMO_MAX = 2000;
+const normId = (s: string) => s.replace(/-/g, '').toLowerCase();
+const cloneItem = (i: ItemDto): ItemDto => ({ ...i, genres: [...i.genres], ...(i.imageTags ? { imageTags: { ...i.imageTags } } : {}) });
 const FIELDS = 'Overview,Genres,OfficialRating,CommunityRating,PremiereDate,DateCreated,ProductionYear,ChildCount,RunTimeTicks,DateLastMediaAdded';
 
 export interface ItemQuery {
@@ -33,6 +38,14 @@ export interface ItemQuery {
 export class JellyfinService {
   /** Remembers which of two possible API paths a given Jellyfin version supports. */
   private readonly compatChoice = new Map<string, number>();
+  /**
+   * Short-lived item() memo, keyed by portal user/profile id + Jellyfin user id + item id (UserData and visibility are per Jellyfin
+   * user, so one user can never get another user's entry). Holds the promise, so concurrent callers share one Jellyfin call;
+   * failures are dropped at once. Insertion order = LRU order (hits are re-inserted). Any write through this service
+   * (played, favorite, user data, playback reports) drops every entry of that Jellyfin user: Jellyfin cascades played state
+   * to episodes and series counts, so a per-item drop would not be enough.
+   */
+  private readonly itemMemo = new Map<string, { exp: number; p: Promise<ItemDto> }>();
 
   constructor(
     readonly client: JellyfinClient,
@@ -154,9 +167,55 @@ export class JellyfinService {
   }
 
   async item(user: JfUser, id: string): Promise<ItemDto> {
+    const key = `${normId(user.jellyfin_user_id)}|${user.id}|${normId(id)}`;
+    const now = Date.now();
+    const hit = this.itemMemo.get(key);
+    if (hit && hit.exp > now) {
+      this.itemMemo.delete(key); // LRU: move to the end
+      this.itemMemo.set(key, hit);
+      return cloneItem(await hit.p);
+    }
     const uid = user.jellyfin_user_id;
-    const i = await this.compat<any>(user, 'item', [`/Items/${id}?userId=${uid}`, `/Users/${uid}/Items/${id}`]);
-    return toItemDto(i);
+    const p = this.compat<any>(user, 'item', [`/Items/${id}?userId=${uid}`, `/Users/${uid}/Items/${id}`]).then(toItemDto);
+    const entry = { exp: now + ITEM_MEMO_TTL_MS, p };
+    this.itemMemo.delete(key);
+    this.itemMemo.set(key, entry);
+    while (this.itemMemo.size > ITEM_MEMO_MAX) this.itemMemo.delete(this.itemMemo.keys().next().value!);
+    p.catch(() => {
+      if (this.itemMemo.get(key) === entry) this.itemMemo.delete(key); // never cache a failure (404, 5xx, timeout)
+    });
+    return cloneItem(await p);
+  }
+
+  /** Drops the memoised items of one Jellyfin user (after a write, or a webhook about playback elsewhere); no argument: all. */
+  forgetItems(jellyfinUserId?: string) {
+    if (jellyfinUserId === undefined) return this.itemMemo.clear();
+    const prefix = `${normId(jellyfinUserId)}|`;
+    for (const k of [...this.itemMemo.keys()]) if (k.startsWith(prefix)) this.itemMemo.delete(k);
+  }
+
+  /**
+   * The user's played/favorite/progress state changed (a write here, or a Jellyfin webhook): drops the item memo and bumps the
+   * shared user-data version that longer caches (e.g. "Weil du ... gesehen hast") put into their keys. Never throws.
+   */
+  async touchUserData(jellyfinUserId: string): Promise<void> {
+    this.forgetItems(jellyfinUserId);
+    await this.kv.incr(`jfud:${normId(jellyfinUserId)}`, 7 * 86400).catch(() => undefined);
+  }
+
+  /** Current user-data version of a Jellyfin user (see touchUserData); '0' when unknown or Redis fails. */
+  async userDataVersion(user: JfUser): Promise<string> {
+    return (await this.kv.get(`jfud:${normId(user.jellyfin_user_id)}`).catch(() => null)) ?? '0';
+  }
+
+  /** Runs a write for `user` and invalidates its item memo before and after (a read racing the write must not survive it). */
+  private async mutate<T>(user: JfUser, fn: () => Promise<T>): Promise<T> {
+    this.forgetItems(user.jellyfin_user_id);
+    try {
+      return await fn();
+    } finally {
+      await this.touchUserData(user.jellyfin_user_id);
+    }
   }
 
   /** Audio languages and text subtitles of the first media source (for the language picker before playing). */
@@ -331,12 +390,12 @@ export class JellyfinService {
 
   async setFavorite(user: JfUser, id: string, on: boolean) {
     const uid = user.jellyfin_user_id;
-    await this.compat(user, 'favorite' + on, [`/UserFavoriteItems/${id}?userId=${uid}`, `/Users/${uid}/FavoriteItems/${id}`], { method: on ? 'POST' : 'DELETE' });
+    await this.mutate(user, () => this.compat(user, 'favorite' + on, [`/UserFavoriteItems/${id}?userId=${uid}`, `/Users/${uid}/FavoriteItems/${id}`], { method: on ? 'POST' : 'DELETE' }));
   }
 
   async setPlayed(user: JfUser, id: string, on: boolean) {
     const uid = user.jellyfin_user_id;
-    await this.compat(user, 'played' + on, [`/UserPlayedItems/${id}?userId=${uid}`, `/Users/${uid}/PlayedItems/${id}`], { method: on ? 'POST' : 'DELETE' });
+    await this.mutate(user, () => this.compat(user, 'played' + on, [`/UserPlayedItems/${id}?userId=${uid}`, `/Users/${uid}/PlayedItems/${id}`], { method: on ? 'POST' : 'DELETE' }));
   }
 
   async playbackInfo(user: JfUser, itemId: string, opts: { maxBitrate: number; maxHeight?: number | null; startTicks?: number; audioIndex?: number; audioLang?: string; cast?: boolean; noDirect?: boolean }): Promise<PlaybackDto> {
@@ -429,7 +488,7 @@ export class JellyfinService {
       Played: d.played,
       LastPlayedDate: (d.lastPlayedDate instanceof Date ? d.lastPlayedDate : new Date(d.lastPlayedDate)).toISOString(),
     });
-    await this.compat(user, 'userdata', [`/UserItems/${id}/UserData?userId=${uid}`, `/Users/${uid}/Items/${id}/UserData`], { method: 'POST', body });
+    await this.mutate(user, () => this.compat(user, 'userdata', [`/UserItems/${id}/UserData?userId=${uid}`, `/Users/${uid}/Items/${id}/UserData`], { method: 'POST', body }));
   }
 
   /** Stops the server-side transcode behind a PlaySessionId (Jellyfin keeps encoding otherwise). Never throws. */
@@ -439,7 +498,7 @@ export class JellyfinService {
 
   /** Playing / Progress / Stopped reports (powers "Weiterschauen" and Jellyfin statistics). */
   async report(user: JfUser, kind: 'Playing' | 'Playing/Progress' | 'Playing/Stopped', body: Record<string, unknown>) {
-    const res = await this.call(user, `/Sessions/${kind}`, { method: 'POST', body: JSON.stringify({ CanSeek: true, PlayMethod: 'DirectStream', ...body }) });
+    const res = await this.mutate(user, () => this.call(user, `/Sessions/${kind}`, { method: 'POST', body: JSON.stringify({ CanSeek: true, PlayMethod: 'DirectStream', ...body }) }));
     if (!res.ok) throw new JellyfinError(res.status, `report ${kind} -> ${res.status}`);
   }
 

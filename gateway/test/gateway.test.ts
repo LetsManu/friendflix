@@ -206,7 +206,9 @@ describe('gateway', () => {
   it('makes images browser-cacheable but private; media stays uncacheable', async () => {
     const img = await get(`/media/Items/${ID}/Images/Backdrop?maxWidth=480&tag=t1`);
     expect(img.status).toBe(200);
-    expect(img.headers.get('cache-control')).toBe('private, max-age=86400, stale-while-revalidate=604800');
+    expect(img.headers.get('cache-control')).toBe('private, max-age=31536000, immutable'); // tagged URL: versioned
+    const untagged = await get(`/media/Items/${ID}/Images/Backdrop?maxWidth=480`);
+    expect(untagged.headers.get('cache-control')).toBe('private, max-age=86400, stale-while-revalidate=604800');
     expect(img.headers.get('etag')).toBe('"abc"');
     expect(img.headers.get('vary')).toBe('Cookie');
     const pl = await get(`/media/Videos/${ID}/master.m3u8`);

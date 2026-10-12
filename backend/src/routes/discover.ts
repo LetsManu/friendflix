@@ -16,15 +16,66 @@ import { id32, wrap as sharedWrap } from './_shared.js';
 
 const wrap = <T extends (...a: any[]) => Promise<any>>(fn: T): T => sharedWrap(fn, { seerr: true, passthrough: [404] });
 
-/** Fetches items by id in chunks (keeps URLs short) with the viewer's own token, so library permissions apply. Jellyfin errors count as "not visible" unless `strict` (then they throw). */
+/**
+ * Fetches items by id in chunks of 40 (keeps URLs short), up to 4 chunks in parallel, with the viewer's own token, so library
+ * permissions apply. Jellyfin errors count as "not visible" unless `strict` (then they throw). Keeps the requested order.
+ */
 export async function itemsByIds(ctx: Ctx, user: JfUser, ids: string[], strict = false): Promise<ItemDto[]> {
-  const out: ItemDto[] = [];
-  for (let i = 0; i < ids.length; i += 40) {
-    const r = await ctx.jf.items(user, { ids: ids.slice(i, i + 40), types: 'Movie,Series,Episode,BoxSet', limit: 40 }).catch((e) => { if (strict) throw e; return { items: [] as ItemDto[] }; });
-    out.push(...r.items);
+  const chunks: string[][] = [];
+  for (let i = 0; i < ids.length; i += 40) chunks.push(ids.slice(i, i + 40));
+  const parts: ItemDto[][] = new Array(chunks.length);
+  let next = 0;
+  await Promise.all(Array.from({ length: Math.min(4, chunks.length) }, async () => {
+    while (next < chunks.length) {
+      const n = next++;
+      parts[n] = (await ctx.jf.items(user, { ids: chunks[n], types: 'Movie,Series,Episode,BoxSet', limit: 40 }).catch((e) => { if (strict) throw e; return { items: [] as ItemDto[] }; })).items;
+    }
+  }));
+  const byId = new Map(parts.flat().map((i) => [i.id, i]));
+  return ids.map((i) => byId.get(i)).filter((x): x is ItemDto => Boolean(x));
+}
+
+/** "Weil du ... gesehen hast" cache lifetime (seconds). */
+export const BECAUSE_TTL = 600;
+
+/**
+ * Data of GET /api/library/because: seed = the profile's latest thumbs-up item, else the last finished title; then Jellyfin's
+ * similar titles minus the profile's thumbs-down. The Jellyfin part (seed details, last watched, similar list) is cached in Redis
+ * for 10 min per Jellyfin user + profile. The key carries the Jellyfin user's user-data version (bumped by every played / favorite /
+ * progress write and by the Jellyfin webhook, see JellyfinService.touchUserData) and the cache entry remembers its seed, so a new
+ * thumbs-up re-seeds at once and thumbs-down filtering always uses fresh rows. Plays made outside the portal without the webhook
+ * plugin show up after the TTL.
+ */
+export async function libraryBecause(ctx: Ctx, jfUser: JfUser, profileId: string): Promise<{ because: { id: string; name: string; liked: boolean } | null; items: ItemDto[] }> {
+  const [upRow, downRows, ver] = await Promise.all([
+    ctx.db.query<{ item_id: string }>('select item_id from thumbs where profile_id=$1 and value>=1 order by created_at desc limit 1', [profileId]).then((r) => r.rows[0]),
+    ctx.db.query<{ item_id: string }>('select item_id from thumbs where profile_id=$1 and value=-1', [profileId]).then((r) => r.rows),
+    ctx.jf.userDataVersion(jfUser),
+  ]);
+  const seedId = upRow?.item_id ?? null;
+  const key = `because:${jfUser.jellyfin_user_id}:${profileId}:${ver}`;
+  type Entry = { seedId: string | null; because: { id: string; name: string; liked: boolean } | null; items: ItemDto[] };
+  let entry: Entry | null = null;
+  const hit = await ctx.kv.get(key).catch(() => null);
+  if (hit) {
+    try {
+      const e = JSON.parse(hit) as Entry;
+      if (e.seedId === seedId) entry = e;
+    } catch {
+      // corrupt entry: recompute
+    }
   }
-  const byId = new Map(out.map((i) => [i.id, i]));
-  return ids.map((i) => byId.get(i)).filter((x): x is ItemDto => Boolean(x)); // keep the requested order
+  if (!entry) {
+    const seed = seedId ? await ctx.jf.item(jfUser, seedId).catch(() => null) : null;
+    const base = seed ?? (await ctx.jf.lastWatched(jfUser));
+    entry = base
+      ? { seedId, because: { id: base.id, name: base.name, liked: Boolean(seed) }, items: (await ctx.jf.similar(jfUser, base.id)).filter((i) => i.id !== base.id) }
+      : { seedId, because: null, items: [] };
+    await ctx.kv.set(key, JSON.stringify(entry), BECAUSE_TTL).catch(() => undefined);
+  }
+  if (!entry.because) return { because: null, items: [] };
+  const down = new Set(downRows.map((r) => r.item_id));
+  return { because: entry.because, items: entry.items.filter((i) => !down.has(i.id)) };
 }
 
 export function discoverRoutes(app: FastifyInstance, ctx: Ctx) {

@@ -38,6 +38,7 @@ describe('playback/info resume position', () => {
   });
   it('answers 502 (player retries) instead of resuming at 0 when both lookups fail', async () => {
     itemsMode = 'fail'; itemMode = 'fail';
+    env.ctx.jf.forgetItems(); // the earlier test filled the 10 s item memo
     const r = await info({});
     expect(r.statusCode).toBe(502);
     expect(r.json().resumeTicks).toBeUndefined();
