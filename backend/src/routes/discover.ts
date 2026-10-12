@@ -9,22 +9,12 @@ import { notify } from '../notify.js';
 import { clipPath, previews } from '../previews.js';
 import { loadPrefs } from './prefs.js';
 import { requireUser } from '../session.js';
-import { SeerrError, portalStatus } from '../seerr/client.js';
+import { portalStatus } from '../seerr/client.js';
 import type { JfUser, UserRow } from '../types.js';
+import { id32, wrap as sharedWrap } from './_shared.js';
 
-const id32 = z.string().transform((s) => s.replace(/-/g, '').toLowerCase()).pipe(z.string().regex(/^[0-9a-f]{32}$/));
 
-function wrap<T extends (...a: any[]) => Promise<any>>(fn: T): T {
-  return (async (req: any, reply: any) => {
-    try {
-      return await fn(req, reply);
-    } catch (e) {
-      if (e instanceof JellyfinError) return reply.code(e.status === 404 ? 404 : 502).send({ error: 'jellyfin', status: e.status });
-      if (e instanceof SeerrError) return reply.code(502).send({ error: 'seerr', status: e.status });
-      throw e;
-    }
-  }) as T;
-}
+const wrap = <T extends (...a: any[]) => Promise<any>>(fn: T): T => sharedWrap(fn, { seerr: true, passthrough: [404] });
 
 /** Fetches items by id in chunks (keeps URLs short) with the viewer's own token, so library permissions apply. Jellyfin errors count as "not visible" unless `strict` (then they throw). */
 export async function itemsByIds(ctx: Ctx, user: JfUser, ids: string[], strict = false): Promise<ItemDto[]> {

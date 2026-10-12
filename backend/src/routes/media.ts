@@ -9,8 +9,8 @@ import { playbackHooks } from '../hooks.js';
 import { tidyResume } from '../resume.js';
 import type { ItemDto } from '../jellyfin/dto.js';
 import { createHash } from 'node:crypto';
+import { id32 as itemId, wrap as sharedWrap } from './_shared.js';
 
-const itemId = z.string().transform((s) => s.replace(/-/g, '').toLowerCase()).pipe(z.string().regex(/^[0-9a-f]{32}$/));
 const psId = z.string().regex(/^[\w-]{8,64}$/);
 
 const listQuery = z.object({
@@ -44,17 +44,7 @@ const reportBody = z.object({
 });
 
 /** Maps upstream errors to a clean 502/4xx without leaking details. */
-function wrap<T extends (...a: any[]) => Promise<any>>(fn: T): T {
-  return (async (req: any, reply: any) => {
-    try {
-      return await fn(req, reply);
-    } catch (e) {
-      if (e instanceof z.ZodError) return reply.code(400).send({ error: 'bad_request', issues: e.issues.map((i) => i.path.join('.')) });
-      if (e instanceof JellyfinError) return reply.code(e.status === 404 ? 404 : e.status === 403 ? 403 : 502).send({ error: 'jellyfin', status: e.status });
-      throw e;
-    }
-  }) as T;
-}
+const wrap = <T extends (...a: any[]) => Promise<any>>(fn: T): T => sharedWrap(fn, { zod: 'issues', passthrough: [404, 403] });
 
 /** Items of this profile's "dropped" list (movie or series ids) are hidden from Weiterschauen / Als Nächstes. */
 async function droppedSet(ctx: Ctx, profileId: string): Promise<Set<string>> {

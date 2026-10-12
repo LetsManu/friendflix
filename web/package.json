@@ -11,7 +11,7 @@
     "dev": "vite dev",
     "build": "vite build",
     "start": "node build",
-    "typecheck": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --threshold error",
+    "typecheck": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --threshold error && svelte-check --tsconfig ./src/service-worker/tsconfig.json --threshold error",
     "test": "vitest run"
   },
   "dependencies": {

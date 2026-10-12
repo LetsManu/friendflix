@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { CAST_IDLE_TTL, castKeyTtl, hashToken } from '../src/cast.js';
 import { revokeSessions } from '../src/devices.js';
 import { countLive, getLive, setLive } from '../src/live.js';
@@ -8,6 +8,9 @@ const ID = 'a'.repeat(32);
 const MS = 'b'.repeat(32);
 const H = { 'x-internal-secret': cfg.INTERNAL_SECRET };
 type Sess = { cookies: Record<string, string>; csrf: string };
+/** Jumps the wall clock forward (only Date is faked) so memo windows elapse without real waiting. */
+const skipClock = (ms: number) => { vi.useFakeTimers({ toFake: ['Date'] }); vi.setSystemTime(Date.now() + ms); };
+afterEach(() => { vi.useRealTimers(); });
 let env: TestEnv;
 let admin: Sess;
 let visible = true;
@@ -234,7 +237,7 @@ describe('cast token hardening', () => {
     } finally {
       await env.pool.query('update devices set approved=true');
     }
-    await new Promise((r) => setTimeout(r, 2100)); // negative memo (2 s)
+    skipClock(2100); // negative memo (2 s)
     expect((await authz({ ct, client: '203.0.113.6' })).statusCode).toBe(200); // first SUCCESSFUL client pins
     expect((await authz({ ct, client: '203.0.113.5' })).statusCode).toBe(401);
     expect((await env.app.inject({ method: 'POST', url: '/internal/authz', headers: H, payload: { ct } })).statusCode).toBe(400);
@@ -258,12 +261,12 @@ describe('cast token hardening', () => {
     expect((await authz({ ct })).statusCode).toBe(200);
     expect(JSON.parse((await env.kv.get(k))!).seen).toBe(rec0.seen); // within the throttle window: no write
     await env.kv.set(k, JSON.stringify({ ...rec0, seen: Date.now() - 120_000 }), 60);
-    await new Promise((r) => setTimeout(r, 5100)); // 5 s memo
+    skipClock(5100); // 5 s memo
     expect((await authz({ ct })).statusCode).toBe(200);
     const rec1 = JSON.parse((await env.kv.get(k))!);
     expect(rec1.seen).toBeGreaterThan(Date.now() - 5000);
     expect(rec1.exp).toBe(rec0.exp); // the absolute cap never moves
-  }, 15_000);
+  });
 
   it('image token: image-only kind, same item, no live record, revoked with the media token; media authz reports maxHeight', async () => {
     const { ct, j } = await create();
@@ -300,12 +303,12 @@ describe('cast token hardening', () => {
     // a sender report is kept, only refreshed
     await setLive(env.ctx, { userId: me, userName: 'a', itemId: ID, title: 'Film', positionTicks: 5, isPaused: true, playSessionId: 'ps-12345678', updatedAt: 1, source: 'portal' });
     await env.kv.set(`cast:${hashToken(ct)}`, JSON.stringify({ ...JSON.parse((await env.kv.get(`cast:${hashToken(ct)}`))!), seen: 0 }), 600);
-    await new Promise((r) => setTimeout(r, 5100));
+    skipClock(5100);
     expect((await authz({ ct })).statusCode).toBe(200);
     const l = (await getLive(env.ctx, me, 'ps-12345678'))!;
     expect(l.positionTicks).toBe(5);
     expect(l.updatedAt).toBeGreaterThan(1);
-  }, 15_000);
+  });
 });
 
 describe('logout / revokeSessions device cleanup', () => {

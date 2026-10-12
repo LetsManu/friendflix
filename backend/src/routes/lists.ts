@@ -7,8 +7,8 @@ import { MAX_FEATURED, MAX_FEATURED_ITEMS, MAX_ITEMS, MAX_MEMBERS, MAX_OWNED, ca
 import { notify } from '../notify.js';
 import { requireUser } from '../session.js';
 import { itemsByIds } from './discover.js';
+import { id32 } from './_shared.js';
 
-const id32 = z.string().transform((s) => s.replace(/-/g, '').toLowerCase()).pipe(z.string().regex(/^[0-9a-f]{32}$/));
 const uuid = z.string().uuid();
 
 export function listRoutes(app: FastifyInstance, ctx: Ctx) {

@@ -10,6 +10,7 @@ import { requireAdmin, requireUser } from '../session.js';
 import { limitFor, quota, release, reserve, resetsAt, usage } from '../requestlimit.js';
 import { checkSecret } from './internal.js';
 import { seerrHooks } from '../hooks.js';
+import { wrap as sharedWrap } from './_shared.js';
 
 const mediaType = z.enum(['movie', 'tv']);
 
@@ -25,17 +26,7 @@ function mapResult(r: any) {
   };
 }
 
-function wrap<T extends (...a: any[]) => Promise<any>>(fn: T): T {
-  return (async (req: any, reply: any) => {
-    try {
-      return await fn(req, reply);
-    } catch (e) {
-      if (e instanceof z.ZodError) return reply.code(400).send({ error: 'bad_request' });
-      if (e instanceof SeerrError) return reply.code(502).send({ error: 'seerr', status: e.status });
-      throw e;
-    }
-  }) as T;
-}
+const wrap = <T extends (...a: any[]) => Promise<any>>(fn: T): T => sharedWrap(fn, { zod: 'plain', jellyfin: false, seerr: true });
 
 export function seerrRoutes(app: FastifyInstance, ctx: Ctx) {
   const pre = { preHandler: requireUser(ctx) };

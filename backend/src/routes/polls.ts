@@ -10,9 +10,9 @@ import { JellyfinError } from '../jellyfin/client.js';
 import { SeerrError } from '../seerr/client.js';
 import { requireAdmin, requireUser } from '../session.js';
 import type { JfUser } from '../types.js';
+import { id32 } from './_shared.js';
 import { itemsByIds } from './discover.js';
 
-const id32 = z.string().regex(/^[0-9a-f]{32}$/);
 const optionSchema = z.object({ jfItemId: id32.optional(), tmdbId: z.number().int().positive().optional(), mediaType: z.enum(['movie', 'tv']).optional() })
   .refine((o) => Boolean(o.jfItemId) !== Boolean(o.tmdbId && o.mediaType), 'jfItemId or tmdbId+mediaType');
 
@@ -144,12 +144,13 @@ export function pollRoutes(app: FastifyInstance, ctx: Ctx) {
 
   // ---- series calendar ----
   app.get('/api/calendar', pre, async (req) => {
-    const [up, follows] = await Promise.all([
+    const [up, follows, dropped] = await Promise.all([
       ctx.jf.upcoming(req.jfUser!),
       ctx.db.query<{ series_id: string }>('select series_id from series_follows where user_id=$1', [req.user!.id]),
+      droppedSeries(ctx, req.user!.id),
     ]);
     const f = new Set(follows.rows.map((r) => r.series_id));
-    return { items: up.map((e) => ({ ...e, followed: Boolean(e.seriesId && f.has(e.seriesId)) })) };
+    return { items: up.filter((e) => !(e.seriesId && dropped.has(e.seriesId))).map((e) => ({ ...e, followed: Boolean(e.seriesId && f.has(e.seriesId)) })) };
   });
   app.post('/api/series/:id/follow', pre, async (req, reply) => {
     const id = id32.parse((req.params as { id: string }).id);
@@ -168,14 +169,20 @@ export function pollRoutes(app: FastifyInstance, ctx: Ctx) {
   void audit;
 }
 
+/** Series any profile of this account marked as "dropped" (no calendar entries / new-episode notifications). */
+async function droppedSeries(ctx: Ctx, userId: string): Promise<Set<string>> {
+  return new Set((await ctx.db.query<{ item_id: string }>('select d.item_id from dropped d join profiles p on p.id=d.profile_id where p.user_id=$1', [userId])).rows.map((r) => r.item_id));
+}
+
 /** Hourly: notify followers about episodes that aired (deduped per episode). */
 export async function calendarNotifications(ctx: Ctx) {
   const users = (await ctx.db.query('select distinct u.* from users u join series_follows f on f.user_id=u.id where not u.disabled')).rows;
   for (const u of users) {
     const follows = new Set((await ctx.db.query('select series_id from series_follows where user_id=$1', [u.id])).rows.map((r) => r.series_id));
+    const dropped = await droppedSeries(ctx, u.id);
     const up = await ctx.jf.upcoming(u).catch(() => []);
     for (const e of up) {
-      if (!e.seriesId || !follows.has(e.seriesId) || !e.premiereDate || new Date(e.premiereDate).getTime() > Date.now()) continue;
+      if (!e.seriesId || !follows.has(e.seriesId) || dropped.has(e.seriesId) || !e.premiereDate || new Date(e.premiereDate).getTime() > Date.now()) continue;
       await notify(ctx, { userId: u.id, kind: 'episode', title: `Neue Folge: ${e.seriesName} S${e.parentIndexNumber}E${e.indexNumber}`, body: e.name, link: `/watch/${e.id}`, dedupe: `cal-${u.id}-${e.id}` });
     }
   }

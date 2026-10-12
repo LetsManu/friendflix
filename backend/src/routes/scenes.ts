@@ -5,8 +5,7 @@ import { audit } from '../audit.js';
 import type { Ctx } from '../ctx.js';
 import { JellyfinError } from '../jellyfin/client.js';
 import { requireUser } from '../session.js';
-
-const id32 = z.string().transform((s) => s.replace(/-/g, '').toLowerCase()).pipe(z.string().regex(/^[0-9a-f]{32}$/));
+import { id32 } from './_shared.js';
 
 export function sceneRoutes(app: FastifyInstance, ctx: Ctx) {
   const pre = { preHandler: requireUser(ctx) };
