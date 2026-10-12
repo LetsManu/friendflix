@@ -39,6 +39,7 @@
       ratings = rr.ratings; avg = rr.average;
       const mine = ratings.find((x) => x.mine); stars = mine?.stars ?? 0; review = mine?.review ?? '';
     } catch { /* optional */ }
+    if (my !== loadSeq) return;
     if (it.type !== 'Series') return;
     try { const f = (await api(`/api/series/${id}/follow`)).followed; if (my === loadSeq) followed = f; } catch { /* optional */ }
     let list: Item[] = [];
@@ -52,6 +53,7 @@
       next = n;
       if (n?.seasonId && list.some((x) => x.id === n.seasonId)) first = n.seasonId;
     } catch { /* optional */ }
+    if (my !== loadSeq) return;
     season = first;
   }
   $: if ($page.params.id) load($page.params.id);

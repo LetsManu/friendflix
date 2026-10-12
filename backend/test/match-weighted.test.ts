@@ -73,3 +73,18 @@ describe('group matcher weighting', () => {
     expect(b.items.map((i: any) => i.id)).toEqual([C, A, D, E, G]);
   });
 });
+
+describe('group matcher on a non-owner profile', () => {
+  it('still applies the requester\'s own account drops (profile id differs from account id)', async () => {
+    const prof = (await env.pool.query(
+      `insert into profiles(id,user_id,name,is_owner,jellyfin_user_id,jellyfin_username,jellyfin_pw_enc) values (gen_random_uuid(),$1,'Teen',false,$2,'teen',$3) returning id`,
+      [me, hex(951), encrypt(env.ctx.encKey, 'pw')])).rows[0].id;
+    await env.pool.query('insert into dropped(profile_id,item_id) values ($1,$2)', [me, E]); // dropped on the owner profile
+    const { csrf, cookies } = await env.login();
+    const sel = await env.app.inject({ method: 'POST', url: `/api/profiles/${prof}/select`, cookies, headers: { 'x-csrf-token': csrf }, payload: {} });
+    expect(sel.statusCode).toBe(200);
+    const r = await env.app.inject({ method: 'POST', url: '/api/match', cookies: { ff_sid: sel.cookies.find((c) => c.name === 'ff_sid')!.value }, headers: { 'x-csrf-token': sel.json().csrfToken }, payload: { userIds: [lea, tom] } });
+    expect(r.statusCode).toBe(200);
+    expect(r.json().items.map((i: any) => i.id)).toEqual([C, A, D, G]); // E gone
+  });
+});

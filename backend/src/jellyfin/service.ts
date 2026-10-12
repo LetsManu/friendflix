@@ -5,7 +5,7 @@ import { JellyfinClient, JellyfinError } from './client.js';
 import { maxWidthFor, toDownloadSource, toItemDto, toPlaybackDto, toTrickplayDto, type DownloadQuality, type DownloadSourceDto, type ItemDto, type PlaybackDto, type TrickplayDto } from './dto.js';
 
 const TOKEN_TTL = 6 * 3600;
-const FIELDS = 'Overview,Genres,OfficialRating,CommunityRating,PremiereDate,ProductionYear,ChildCount,RunTimeTicks,DateLastMediaAdded';
+const FIELDS = 'Overview,Genres,OfficialRating,CommunityRating,PremiereDate,DateCreated,ProductionYear,ChildCount,RunTimeTicks,DateLastMediaAdded';
 
 export interface ItemQuery {
   parentId?: string;

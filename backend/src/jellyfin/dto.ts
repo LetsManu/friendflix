@@ -15,6 +15,8 @@ export interface ItemDto {
   rating?: string;
   communityRating?: number;
   premiereDate?: string;
+  /** when the item was added to the library (Jellyfin DateCreated) */
+  dateCreated?: string;
   image: boolean;
   backdrop: boolean;
   /** transparent title logo available (shown in the billboard) */
@@ -51,6 +53,7 @@ export function toItemDto(i: Record<string, any>): ItemDto {
     rating: i.OfficialRating,
     communityRating: i.CommunityRating,
     premiereDate: i.PremiereDate,
+    dateCreated: i.DateCreated,
     image: Boolean(i.ImageTags?.Primary),
     backdrop: Array.isArray(i.BackdropImageTags) && i.BackdropImageTags.length > 0,
     logo: Boolean(i.ImageTags?.Logo),

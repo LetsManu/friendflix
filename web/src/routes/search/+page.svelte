@@ -3,7 +3,7 @@
   import { pageStore } from '#lib/page';
   const page = pageStore();
   import { replaceState } from '$app/navigation';
-  import { api, img, type Item } from '#lib/api';
+  import { api, getActiveProfile, img, type Item } from '#lib/api';
   import Card from '#lib/Card.svelte';
   import { clearRecent, isYear, loadRecent, pushRecent } from '#lib/discovery';
 
@@ -28,7 +28,7 @@
     try {
       const r: Result = await api(`/api/search?q=${encodeURIComponent(q)}`, { signal: ctl.signal });
       if (my !== seq) return;
-      res = r; status = 'done'; recent = pushRecent(q);
+      res = r; status = 'done'; recent = pushRecent(getActiveProfile(), q);
     } catch (e: any) {
       if (my !== seq || e?.name === 'AbortError') return;
       status = 'error';
@@ -49,10 +49,10 @@
     if (e.key === 'Escape' && input) { e.preventDefault(); e.stopPropagation(); input = ''; commit(''); }
   }
   function pick(q: string) { input = q; commit(q); inputEl?.focus(); }
-  function forget() { clearRecent(); recent = []; }
+  function forget() { clearRecent(getActiveProfile()); recent = []; }
   const initials = (n: string) => n.split(/\s+/).filter(Boolean).slice(0, 2).map((w) => w[0]!.toUpperCase()).join('');
 
-  onMount(() => { recent = loadRecent(); });
+  onMount(() => { recent = loadRecent(getActiveProfile()); });
   onDestroy(() => { clearTimeout(t); ctl?.abort(); });
 
   $: count = res ? res.titles.length + res.episodes.length + res.people.length + res.genres.length : 0;
