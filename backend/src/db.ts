@@ -474,6 +474,11 @@ export const MIGRATIONS: string[] = [
   );
   create index reactions_item on reactions(item_id);
   `,
+  // 24: curated ("featured") lists shown on everyone's home page
+  `
+  alter table lists add column featured_at timestamptz;
+  create index lists_featured on lists(featured_at) where featured_at is not null;
+  `,
 ];
 
 export async function migrate(pool: pg.Pool): Promise<void> {
