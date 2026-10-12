@@ -25,10 +25,10 @@ export const roleTemplateSchema = z.object({
 export type RoleTemplate = z.infer<typeof roleTemplateSchema>;
 
 export const DEFAULT_ROLES: Record<string, RoleTemplate> = {
-  friend: { label: 'Freund', libraries: 'all', maxParentalRating: null, maxBitrate: 20_000_000, remoteMaxBitrate: 4_000_000, maxStreams: 2, transcoding: true, maxHeight: null, download: false, maxDownloads: 15, downloadMaxHeight: 720, downloadDays: 30 },
-  family: { label: 'Familie', libraries: 'all', maxParentalRating: null, maxBitrate: 40_000_000, remoteMaxBitrate: 4_000_000, maxStreams: 4, transcoding: true, maxHeight: null, download: true, maxDownloads: 25, downloadMaxHeight: 1080, downloadDays: 30 },
+  friend: { label: 'Freund', libraries: 'all', maxParentalRating: null, maxBitrate: 20_000_000, remoteMaxBitrate: 8_000_000, maxStreams: 2, transcoding: true, maxHeight: null, download: false, maxDownloads: 15, downloadMaxHeight: 720, downloadDays: 30 },
+  family: { label: 'Familie', libraries: 'all', maxParentalRating: null, maxBitrate: 40_000_000, remoteMaxBitrate: 8_000_000, maxStreams: 4, transcoding: true, maxHeight: null, download: true, maxDownloads: 25, downloadMaxHeight: 1080, downloadDays: 30 },
   guest: { label: 'Gast', libraries: 'all', maxParentalRating: 12, maxBitrate: 8_000_000, remoteMaxBitrate: 4_000_000, maxStreams: 1, transcoding: true, maxHeight: 1080, download: false, maxDownloads: 0, downloadMaxHeight: 0, downloadDays: 30 },
-  admin: { label: 'Admin', libraries: 'all', maxParentalRating: null, maxBitrate: 60_000_000, remoteMaxBitrate: 8_000_000, maxStreams: 6, transcoding: true, maxHeight: null, download: true, maxDownloads: 50, downloadMaxHeight: 1080, downloadDays: 30 },
+  admin: { label: 'Admin', libraries: 'all', maxParentalRating: null, maxBitrate: 60_000_000, remoteMaxBitrate: 12_000_000, maxStreams: 6, transcoding: true, maxHeight: null, download: true, maxDownloads: 50, downloadMaxHeight: 1080, downloadDays: 30 },
 };
 
 export const INVITABLE_ROLES = ['friend', 'family', 'guest'] as const;

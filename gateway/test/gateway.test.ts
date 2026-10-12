@@ -4,7 +4,7 @@ import { mkdtempSync, readFileSync, rmSync, symlinkSync, truncateSync, writeFile
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { blocksDirectStream, createGateway, matchDownloadPath, normalizeCastPath, normalizePath, sanitizePlaylist } from '../src/gateway.js';
+import { authClientIp, blocksDirectStream, createGateway, matchDownloadPath, normalizeCastPath, normalizePath, sanitizePlaylist } from '../src/gateway.js';
 
 const ID = 'a'.repeat(32);
 let jf: Server, be: Server, gw: Server;
@@ -149,6 +149,22 @@ describe('remote bitrate cap', () => {
     expect(seen.at(-1)!.url).toContain('MaxStreamingBitrate=2000000');
     await (await rget({ 'x-real-ip': '192.168.1.10' })).arrayBuffer();
     expect(seen.at(-1)!.url).toContain('MaxStreamingBitrate=5000000');
+  });
+});
+
+describe('authClientIp', () => {
+  it('uses x-real-ip, else the last x-forwarded-for entry', () => {
+    expect(authClientIp({ 'x-real-ip': '203.0.113.1', 'x-forwarded-for': '1.1.1.1, 2.2.2.2' }, '172.18.0.2')).toBe('203.0.113.1');
+    expect(authClientIp({ 'x-forwarded-for': '192.168.1.10, 203.0.113.9' }, '172.18.0.2')).toBe('203.0.113.9');
+  });
+  it('without a usable forwarding header only a loopback peer is passed on; others are unknown (remote)', () => {
+    expect(authClientIp({}, '127.0.0.1')).toBe('127.0.0.1');
+    expect(authClientIp({}, '::1')).toBe('::1');
+    expect(authClientIp({}, '::ffff:127.0.0.1')).toBe('::ffff:127.0.0.1');
+    expect(authClientIp({}, '172.18.0.2')).toBe('unknown');
+    expect(authClientIp({}, '192.168.1.5')).toBe('unknown');
+    expect(authClientIp({}, undefined)).toBe('unknown');
+    expect(authClientIp({ 'x-forwarded-for': ',' }, '172.18.0.2')).toBe('unknown');
   });
 });
 

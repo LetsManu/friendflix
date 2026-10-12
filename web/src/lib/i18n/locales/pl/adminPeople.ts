@@ -47,6 +47,7 @@ const dict: Translation<typeof de> = {
     heightHint: 'Oryginały 4K są zmniejszane do tej rozdzielczości.',
     remoteCap: 'Limit poza domem',
     remoteCapHint: 'Maksymalny bitrate, gdy osoba nie korzysta z sieci domowej (np. w telefonie lub u znajomych).',
+    remoteCapDefault: 'Domyślnie ({n} Mbit/s)',
     allowDownloads: 'Zezwól na pobieranie',
     allowDownloadsHint: 'Kopie offline na urządzeniu.',
     maxDownloads: 'Jednoczesne pobrania',

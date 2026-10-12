@@ -46,6 +46,16 @@ function inCidr(ip: Uint8Array, cidr: string): boolean {
   return true;
 }
 
+/** true for a parseable address or CIDR (IPv4 /0-32, IPv6 /0-128); used to fail fast on a bad HOME_NETWORKS entry */
+export function isValidCidr(cidr: string): boolean {
+  const [base, lenRaw, extra] = cidr.trim().split('/');
+  if (extra !== undefined || !base) return false;
+  const v = isIP(base.trim());
+  if (!v) return false;
+  if (lenRaw === undefined) return true;
+  return /^\d{1,3}$/.test(lenRaw) && Number(lenRaw) <= (v === 4 ? 32 : 128);
+}
+
 /** true when ip lies in one of the CIDRs (IPv4, IPv6, IPv4-mapped IPv6). Unparseable or unknown addresses and broken CIDRs never match: ambiguous = remote. */
 export function isHomeAddress(ip: string, cidrs: string[]): boolean {
   const b = toBytes(ip);
@@ -63,14 +73,18 @@ const hdr = (req: AddrReq, k: string) => {
  * else the socket peer. Never req.ip: Fastify's trustProxy takes the leftmost (client-controlled) entry.
  */
 export function clientAddress(req: AddrReq): string {
-  const real = hdr(req, 'x-real-ip').trim();
-  if (real) return real.slice(0, 64);
-  const last = hdr(req, 'x-forwarded-for').split(',').pop()?.trim();
-  return (last || req.socket?.remoteAddress || 'unknown').slice(0, 64);
+  return (forwardedAddress(req) || req.socket?.remoteAddress || 'unknown').slice(0, 64);
 }
 
-/** Home network check for a request: without any forwarding header only a loopback peer is home (a docker bridge peer is not). */
+/** The address a proxy header names (X-Real-IP, else the last X-Forwarded-For entry); '' when neither carries a usable value (e.g. "X-Forwarded-For: ,"). */
+function forwardedAddress(req: AddrReq): string {
+  const real = hdr(req, 'x-real-ip').trim();
+  if (real) return real;
+  return hdr(req, 'x-forwarded-for').split(',').pop()?.trim() ?? '';
+}
+
+/** Home network check for a request: without a usable forwarding header only a loopback peer is home (a docker bridge peer is not). */
 export function isHomeRequest(req: AddrReq, cidrs: string[]): boolean {
-  if (!hdr(req, 'x-real-ip').trim() && !hdr(req, 'x-forwarded-for').trim()) return isHomeAddress(req.socket?.remoteAddress ?? '', ['127.0.0.0/8', '::1/128']);
+  if (!forwardedAddress(req)) return isHomeAddress(req.socket?.remoteAddress ?? '', ['127.0.0.0/8', '::1/128']);
   return isHomeAddress(clientAddress(req), cidrs);
 }

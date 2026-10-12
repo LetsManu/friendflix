@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { clientAddress, isHomeAddress, isHomeRequest } from '../src/netaddr.js';
+import { clientAddress, isHomeAddress, isHomeRequest, isValidCidr } from '../src/netaddr.js';
+import { loadConfig } from '../src/config.js';
 
 const HOME = ['10.0.0.0/8', '172.16.0.0/12', '192.168.0.0/16', '127.0.0.0/8', '::1/128', 'fc00::/7', 'fe80::/10'];
 const req = (headers: Record<string, string>, peer?: string) => ({ headers, socket: { remoteAddress: peer } });
@@ -36,5 +37,33 @@ describe('isHomeRequest', () => {
   it('with a forwarding header the derived address decides', () => {
     expect(isHomeRequest(req({ 'x-real-ip': '192.168.1.10' }, '203.0.113.1'), HOME)).toBe(true);
     expect(isHomeRequest(req({ 'x-forwarded-for': '192.168.1.10, 203.0.113.9' }, '127.0.0.1'), HOME)).toBe(false);
+  });
+});
+
+describe('unusable forwarding headers', () => {
+  it('a header without a usable value is the no-header case: loopback only', () => {
+    expect(isHomeRequest(req({ 'x-forwarded-for': ',' }, '192.168.1.5'), HOME)).toBe(false);
+    expect(isHomeRequest(req({ 'x-forwarded-for': ' , ' }, '172.18.0.5'), HOME)).toBe(false);
+    expect(isHomeRequest(req({ 'x-real-ip': '  ' }, '10.0.0.7'), HOME)).toBe(false);
+    expect(isHomeRequest(req({ 'x-forwarded-for': ',' }, '127.0.0.1'), HOME)).toBe(true);
+  });
+});
+
+describe('HOME_NETWORKS config', () => {
+  const BASE = {
+    PUBLIC_URL: 'https://p.example.com', DATABASE_URL: 'x', REDIS_URL: 'x', APP_ENC_KEY: 'k'.repeat(44), INTERNAL_SECRET: 'i'.repeat(20), OIDC_ISSUER: 'https://a.example.com',
+    OIDC_CLIENT_ID: 'c', OIDC_CLIENT_SECRET: 's', JELLYFIN_URL: 'http://j', JELLYFIN_ADMIN_API_KEY: 'k', SEERR_URL: 'http://s', SEERR_API_KEY: 'k', WEBHOOK_SECRET: 'w'.repeat(20),
+  };
+  it('defaults to RFC1918 + loopback + ULA + link-local', () => {
+    expect(loadConfig(BASE).HOME_NETWORKS).toEqual(['10.0.0.0/8', '172.16.0.0/12', '192.168.0.0/16', '127.0.0.0/8', '::1/128', 'fc00::/7', 'fe80::/10']);
+  });
+  it('accepts a custom list and fails at startup on an invalid entry', () => {
+    expect(loadConfig({ ...BASE, HOME_NETWORKS: ' 203.0.113.0/24 , 2001:db8::/32 ' }).HOME_NETWORKS).toEqual(['203.0.113.0/24', '2001:db8::/32']);
+    expect(() => loadConfig({ ...BASE, HOME_NETWORKS: '10.0.0.0/8,192.168.0.0/33' })).toThrow(/HOME_NETWORKS: invalid CIDR '192\.168\.0\.0\/33'/);
+    expect(() => loadConfig({ ...BASE, HOME_NETWORKS: 'lan' })).toThrow(/invalid CIDR 'lan'/);
+  });
+  it('isValidCidr', () => {
+    for (const c of ['10.0.0.0/8', '1.2.3.4', 'fc00::/7', '::1/128']) expect(isValidCidr(c)).toBe(true);
+    for (const c of ['10.0.0.0/33', 'fc00::/129', '10.0.0.0/8/1', 'x', '', '10.0.0.0/-1']) expect(isValidCidr(c)).toBe(false);
   });
 });

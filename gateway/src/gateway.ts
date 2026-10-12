@@ -92,6 +92,18 @@ export function normalizePath(raw: string, allow: RegExp[] = ALLOWED_PATHS): str
   return allow.some((re) => re.test(p)) ? p : null;
 }
 
+/**
+ * Address sent as `ip` to /internal/authz (decides the remote bitrate cap): X-Real-IP, else the LAST X-Forwarded-For entry (clientKey rule).
+ * Without a usable forwarding header only a loopback peer is passed on; any other peer (a docker bridge, say) is 'unknown' = remote.
+ */
+export function authClientIp(headers: IncomingMessage['headers'], peer: string | undefined): string {
+  const real = headers['x-real-ip'];
+  const xff = headers['x-forwarded-for'];
+  const fwd = (typeof real === 'string' ? real.trim() : '') || (typeof xff === 'string' ? xff : '').split(',').pop()?.trim() || '';
+  if (fwd) return fwd.slice(0, 64);
+  return peer && (peer === '::1' || /^(::ffff:)?127\./.test(peer)) ? peer.slice(0, 64) : 'unknown';
+}
+
 export const normalizeCastPath = (raw: string, up: Upstream = jellyfinUpstream) => normalizePath(raw, up.castPaths);
 
 const sha256 = (v: string) => createHash('sha256').update(v).digest('hex');
@@ -257,7 +269,7 @@ export function createGateway(opts: GatewayOptions): { server: Server; metrics: 
       return end(res, 414, 'query too long');
     }
     const t0 = performance.now();
-    const auth = await authorize(req.headers.cookie, clientKey(req));
+    const auth = await authorize(req.headers.cookie, authClientIp(req.headers, req.socket.remoteAddress));
     const authzMs = performance.now() - t0;
     if (!auth) {
       count('401');

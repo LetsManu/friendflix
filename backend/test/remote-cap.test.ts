@@ -31,35 +31,35 @@ const info = (s: Sess, headers: Record<string, string> = {}, remoteAddress?: str
 const authz = (sid: string, ip?: string) => env.app.inject({ method: 'POST', url: '/internal/authz', headers: H, payload: ip === undefined ? { sid } : { sid, ip } });
 
 describe('POST /api/playback/info remote cap', () => {
-  it('caps a friend at 4 Mbit/s from a public address, 20 Mbit/s from a home address', async () => {
-    expect((await info(friend, { 'x-real-ip': '203.0.113.9' })).json().maxBitrate).toBe(4_000_000);
+  it('caps a friend at 8 Mbit/s from a public address, 20 Mbit/s from a home address', async () => {
+    expect((await info(friend, { 'x-real-ip': '203.0.113.9' })).json().maxBitrate).toBe(8_000_000);
     expect((await info(friend, { 'x-real-ip': '192.168.1.10' })).json().maxBitrate).toBe(20_000_000);
   });
   it('loopback peer without headers is home; any other peer without headers is remote (even RFC1918)', async () => {
     expect((await info(friend, {}, '127.0.0.1')).json().maxBitrate).toBe(20_000_000);
-    expect((await info(friend, {}, '172.18.0.5')).json().maxBitrate).toBe(4_000_000);
+    expect((await info(friend, {}, '172.18.0.5')).json().maxBitrate).toBe(8_000_000);
   });
   it('a spoofed leftmost X-Forwarded-For entry is ignored (the proxy-appended last entry counts)', async () => {
-    expect((await info(friend, { 'x-forwarded-for': '192.168.1.10, 203.0.113.9' })).json().maxBitrate).toBe(4_000_000);
+    expect((await info(friend, { 'x-forwarded-for': '192.168.1.10, 203.0.113.9' })).json().maxBitrate).toBe(8_000_000);
     expect((await info(friend, { 'x-forwarded-for': '203.0.113.9, 192.168.1.10' })).json().maxBitrate).toBe(20_000_000);
   });
   it('the client may lower the cap further, never raise it', async () => {
     expect((await info(friend, { 'x-real-ip': '203.0.113.9' }, undefined, { maxBitrate: 2_000_000 })).json().maxBitrate).toBe(2_000_000);
-    expect((await info(friend, { 'x-real-ip': '203.0.113.9' }, undefined, { maxBitrate: 15_000_000 })).json().maxBitrate).toBe(4_000_000);
+    expect((await info(friend, { 'x-real-ip': '203.0.113.9' }, undefined, { maxBitrate: 15_000_000 })).json().maxBitrate).toBe(8_000_000);
   });
   it('role_settings.remote_max_bitrate overrides the default and is clamped by the role maxBitrate', async () => {
-    await env.pool.query("insert into role_settings(role, remote_max_bitrate) values ('friend', 8000000) on conflict (role) do update set remote_max_bitrate=8000000");
+    await env.pool.query("insert into role_settings(role, remote_max_bitrate) values ('friend', 12000000) on conflict (role) do update set remote_max_bitrate=12000000");
     invalidateRoles(env.ctx);
-    expect((await info(friend, { 'x-real-ip': '203.0.113.9' })).json().maxBitrate).toBe(8_000_000);
+    expect((await info(friend, { 'x-real-ip': '203.0.113.9' })).json().maxBitrate).toBe(12_000_000);
     await env.pool.query("update role_settings set remote_max_bitrate=100000000 where role='friend'");
     invalidateRoles(env.ctx);
     expect((await info(friend, { 'x-real-ip': '203.0.113.9' })).json().maxBitrate).toBe(20_000_000);
     await env.pool.query("update role_settings set remote_max_bitrate=null where role='friend'");
     invalidateRoles(env.ctx);
-    expect((await info(friend, { 'x-real-ip': '203.0.113.9' })).json().maxBitrate).toBe(4_000_000);
+    expect((await info(friend, { 'x-real-ip': '203.0.113.9' })).json().maxBitrate).toBe(8_000_000);
   });
-  it('admin defaults to 8 Mbit/s remote', async () => {
-    expect((await info(admin, { 'x-real-ip': '203.0.113.9' })).json().maxBitrate).toBe(8_000_000);
+  it('admin defaults to 12 Mbit/s remote', async () => {
+    expect((await info(admin, { 'x-real-ip': '203.0.113.9' })).json().maxBitrate).toBe(12_000_000);
   });
 });
 
@@ -67,10 +67,16 @@ describe('POST /internal/authz {sid, ip}', () => {
   it('lowers maxBitrate for remote IPs only', async () => {
     const sid = friend.cookies.ff_sid!;
     forgetAuth(sid);
-    expect((await authz(sid, '203.0.113.9')).json().maxBitrate).toBe(4_000_000);
+    expect((await authz(sid, '203.0.113.9')).json().maxBitrate).toBe(8_000_000);
     expect((await authz(sid, '192.168.1.10')).json().maxBitrate).toBe(20_000_000);
     expect((await authz(sid, '::ffff:192.168.1.10')).json().maxBitrate).toBe(20_000_000);
-    expect((await authz(sid, 'unknown')).json().maxBitrate).toBe(4_000_000);
+    expect((await authz(sid, 'unknown')).json().maxBitrate).toBe(8_000_000);
+  });
+  it("ip 'unknown' (what the gateway sends for a non-loopback peer without forwarding headers) gets the remote cap", async () => {
+    const sid = friend.cookies.ff_sid!;
+    forgetAuth(sid);
+    expect((await authz(sid, 'unknown')).json().maxBitrate).toBe(8_000_000);
+    expect((await authz(sid, '127.0.0.1')).json().maxBitrate).toBe(20_000_000);
   });
   it('without ip the role limit is unchanged, and the response carries no internal fields', async () => {
     const r = (await authz(friend.cookies.ff_sid!)).json();
@@ -89,6 +95,17 @@ describe('admin roles API', () => {
     const g = (await env.app.inject({ url: '/api/admin/roles', cookies: admin.cookies })).json();
     expect(g.limits.find((l: any) => l.role === 'family').remoteMaxBitrate).toBe(12_000_000);
     expect(g.limits.find((l: any) => l.role === 'guest').remoteMaxBitrate).toBe(4_000_000);
+    expect(g.limits.find((l: any) => l.role === 'family')).toMatchObject({ maxBitrate: 40_000_000, remoteDefault: 8_000_000, remoteIsDefault: false });
+    expect(g.limits.find((l: any) => l.role === 'guest')).toMatchObject({ remoteDefault: 4_000_000, remoteIsDefault: true });
+    // null resets to the role default
+    const reset = await env.app.inject({ method: 'PUT', url: '/api/admin/roles/family', cookies: admin.cookies, headers: { 'x-csrf-token': admin.csrf }, payload: { remoteMaxBitrate: null } });
+    expect(reset.statusCode).toBe(200);
+    const g2 = (await env.app.inject({ url: '/api/admin/roles', cookies: admin.cookies })).json();
+    expect(g2.limits.find((l: any) => l.role === 'family')).toMatchObject({ remoteMaxBitrate: 8_000_000, remoteIsDefault: true });
+    // an unrelated update leaves the cap alone
+    await env.app.inject({ method: 'PUT', url: '/api/admin/roles/family', cookies: admin.cookies, headers: { 'x-csrf-token': admin.csrf }, payload: { remoteMaxBitrate: 12_000_000 } });
+    await env.app.inject({ method: 'PUT', url: '/api/admin/roles/family', cookies: admin.cookies, headers: { 'x-csrf-token': admin.csrf }, payload: { downloadDays: 20 } });
+    expect((await env.app.inject({ url: '/api/admin/roles', cookies: admin.cookies })).json().limits.find((l: any) => l.role === 'family').remoteMaxBitrate).toBe(12_000_000);
     const bad = await env.app.inject({ method: 'PUT', url: '/api/admin/roles/family', cookies: admin.cookies, headers: { 'x-csrf-token': admin.csrf }, payload: { remoteMaxBitrate: 100 } });
     expect(bad.statusCode).toBe(400);
   });
