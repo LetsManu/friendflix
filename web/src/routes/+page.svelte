@@ -24,11 +24,11 @@
   let views: Item[] = [], genres: string[] = [], error = '';
   const q = (p: Record<string, string>) => new URLSearchParams(p).toString();
   // Jellyfin can answer 5xx/network errors right after a fresh sign-up: retry (not on 401/403) before giving up
-  const retry = async <T,>(fn: () => Promise<T>, tries = 3, delayMs = 1500): Promise<T> => {
+  const retry = async <T,>(fn: () => Promise<T>, tries = 3, delayMs = 1500, giveUp: (e: unknown) => boolean = (e) => e instanceof ApiError && (e.status === 401 || e.status === 403)): Promise<T> => {
     for (let i = 1; ; i++) {
       try { return await fn(); }
       catch (e) {
-        if (i >= tries || (e instanceof ApiError && (e.status === 401 || e.status === 403))) throw e;
+        if (i >= tries || giveUp(e)) throw e;
         await new Promise((r) => setTimeout(r, delayMs));
       }
     }
@@ -47,6 +47,7 @@
     if (w.requestIdleCallback) w.requestIdleCallback(fn, { timeout: 900 }); else setTimeout(fn, 300);
   };
 
+  // (GET /api/home: a 4xx is final, e.g. a server without the endpoint: straight to the old loaders)
   // The old per-row loaders: the fallback for every part GET /api/home could not deliver (named in `failed`, or the whole call failed).
   const loaders: Record<HomePart, () => void> = {
     // billboard: a random pick stays the same while it is cached
@@ -84,7 +85,7 @@
   onMount(() => {
     // 1. the whole first screen (billboard, rows, hubs, themed lists) in ONE request; stale data from the last visit shows at once.
     //    Parts the server could not build are loaded the old way, one request each.
-    const firstScreen = swrLoad(homeCache, HOME_KEY(), () => retry(() => api('/api/home') as Promise<HomeResponse<Item>>, 2, 800), applyHome, ALWAYS, () => { for (const n of Object.keys(loaders) as HomePart[]) loaders[n](); })
+    const firstScreen = swrLoad(homeCache, HOME_KEY(), () => retry(() => api('/api/home') as Promise<HomeResponse<Item>>, 2, 800, (e) => e instanceof ApiError && e.status >= 400 && e.status < 500), applyHome, ALWAYS, () => { for (const n of Object.keys(loaders) as HomePart[]) loaders[n](); })
       .catch(() => undefined);
     // 3. below the fold: once the browser is idle (keeps the network free for the billboard image);
     //    from the cache at once (back navigation: same page height, so the scroll position restores exactly)

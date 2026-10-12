@@ -9,6 +9,7 @@ import { notify } from '../notify.js';
 import { isKidsProfile, requireGrownUp } from '../kids.js';
 import { requireAdmin, requireUser } from '../session.js';
 import { audit } from '../audit.js';
+import { bumpHomeAll } from '../homegen.js';
 import { itemsByIds } from './discover.js';
 import type { JfUser } from '../types.js';
 import { id32 } from './_shared.js';
@@ -94,6 +95,7 @@ export function listRoutes(app: FastifyInstance, ctx: Ctx) {
     order.push(...pinned.filter((i) => !order.includes(i)));
     for (let i = 0; i < order.length; i++) await ctx.db.query('update lists set featured_pos = $2 where id = $1', [order[i], i]);
     await audit(ctx, req.user!.id, 'list.themed_order', undefined, { ids: order });
+    await bumpHomeAll(ctx);
     return { ok: true };
   });
 
@@ -114,6 +116,7 @@ export function listRoutes(app: FastifyInstance, ctx: Ctx) {
         `update lists set featured_at = case when $2::boolean then now() else null end,
                 featured_pos = case when $2::boolean then coalesce((select max(featured_pos) from lists), -1) + 1 else null end where id = $1`, [id.data, pinned]);
       await audit(ctx, req.user!.id, pinned ? 'list.feature' : 'list.unfeature', id.data);
+      await bumpHomeAll(ctx);
     }
     return { ok: true, pinned };
   });
@@ -206,6 +209,7 @@ export function listRoutes(app: FastifyInstance, ctx: Ctx) {
               updated_at = now() where id = $1`,
       [a.id, b.name ?? null, b.description !== undefined, b.description || null, b.themed ?? null, b.emoji !== undefined, b.emoji || null, b.coverColor !== undefined, b.coverColor || null],
     );
+    if (before?.featured) await bumpHomeAll(ctx); // look / name / kind of a pinned themed list is on every home page
     // Featuring is an admin decision about THIS kind of list: a featured plain list turned themed would become a kids-readable home
     // row, a pinned themed list turned plain a featured social list - neither without an admin. Changing `themed` on a featured list
     // therefore unfeatures it (the admin can pin it again); the owner learns it from `unfeatured`.
@@ -222,7 +226,9 @@ export function listRoutes(app: FastifyInstance, ctx: Ctx) {
     const a = await access(req, reply);
     if (!a) return;
     if (a.role !== 'owner') return reply.code(403).send({ error: 'forbidden' });
+    const pinned = await isFeaturedThemed(ctx, a.id);
     await ctx.db.query('delete from lists where id = $1', [a.id]);
+    if (pinned) await bumpHomeAll(ctx);
     return { ok: true };
   });
 
@@ -282,6 +288,7 @@ export function listRoutes(app: FastifyInstance, ctx: Ctx) {
     );
     if (!r.rowCount) return reply.code(409).send({ error: 'exists' });
     await ctx.db.query('update lists set updated_at = now() where id = $1', [a.id]);
+    if (await isFeaturedThemed(ctx, a.id)) await bumpHomeAll(ctx);
     return { ok: true, itemId: item.id };
   });
 
@@ -291,7 +298,10 @@ export function listRoutes(app: FastifyInstance, ctx: Ctx) {
     if (!canEdit(a.role)) return reply.code(403).send({ error: 'forbidden' });
     const itemId = id32.parse((req.params as { itemId: string }).itemId);
     const r = await ctx.db.query('delete from list_items where list_id = $1 and item_id = $2', [a.id, itemId]);
-    if (r.rowCount) await ctx.db.query('update lists set updated_at = now() where id = $1', [a.id]);
+    if (r.rowCount) {
+      await ctx.db.query('update lists set updated_at = now() where id = $1', [a.id]);
+      if (await isFeaturedThemed(ctx, a.id)) await bumpHomeAll(ctx);
+    }
     return { ok: true };
   });
 

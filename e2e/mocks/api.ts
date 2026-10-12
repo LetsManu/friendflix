@@ -23,6 +23,8 @@ export interface MockState {
   admin: AdminState;
   /** /api/me reports an admin owner profile (admin pages, admin menu) */
   asAdmin: boolean;
+  /** ids removed from Weiterschauen (DELETE /api/library/resume/:id), left out of GET /api/library/resume */
+  resumeGone: Set<string>;
   /** the profile's player sound pref (PUT /api/prefs/audiofx), echoed by GET /api/prefs */
   audioFx?: string;
 }
@@ -38,6 +40,7 @@ export function freshState(): MockState {
     clientErrors: [],
     admin: adminState(),
     asAdmin: false,
+    resumeGone: new Set(),
   };
 }
 
@@ -108,7 +111,8 @@ export async function installApi(ctx: BrowserContext, st: MockState): Promise<vo
     if (p === '/api/watchlist/ids') return J({ ids: [...st.watch] });
     if (p === '/api/watchlist') return J({ items: [...st.watch].map(find).filter(Boolean).map((i) => withFav(i!)) });
     if (p === '/api/dropped') return J({ items: [...st.dropped].map(find).filter(Boolean) });
-    if (p === '/api/library/resume') return J({ items: [episodes[0], items[2]] });
+    if (p === '/api/library/resume') return J({ items: [episodes[0], items[2]].filter((i) => !st.resumeGone.has(i!.id)) });
+    if ((mm = p.match(/^\/api\/library\/resume\/([^/]+)$/)) && m === 'DELETE') { st.resumeGone.add(mm[1]!); return J({ ok: true }); }
     if (p === '/api/library/nextup') return J({ items: [episodes[1]] });
     if (p === '/api/library/because') return J({ because: { name: 'Inkwell' }, items: items.slice(1, 12) });
     if (p === '/api/library/because-more') return J({ rows: [] }); // specs that need the extra "Weil du ..." rows mock it themselves

@@ -2,7 +2,8 @@ import type { FastifyInstance } from 'fastify';
 import type { Ctx } from '../ctx.js';
 import { isKidsProfile } from '../kids.js';
 import type { ItemDto } from '../media/types.js';
-import { tidyResume } from '../resume.js';
+import { homeGens } from '../homegen.js';
+import { nextUpItems, resumeItems } from '../resumeRows.js';
 import { requireUser } from '../session.js';
 import type { JfUser } from '../types.js';
 import { friendsRatedFor, leavingRow, libraryBecause, libraryBecauseMore, recommendationsFor } from './discover.js';
@@ -19,23 +20,6 @@ export const HOME_TTL = 60;
 
 /** Hero pool of the home page billboard: the same query the client used to send to /api/library/items. */
 const HERO_POOL = 15;
-
-async function droppedSet(ctx: Ctx, profileId: string): Promise<Set<string>> {
-  return new Set((await ctx.db.query<{ item_id: string }>('select item_id from dropped where profile_id=$1', [profileId])).rows.map((r) => r.item_id));
-}
-const notDropped = (items: ItemDto[], dropped: Set<string>) => (dropped.size ? items.filter((i) => !dropped.has(i.seriesId ?? i.id) && !dropped.has(i.id)) : items);
-
-/** Same as GET /api/library/resume. */
-export async function resumeItems(ctx: Ctx, jfUser: JfUser, profileId: string): Promise<ItemDto[]> {
-  const items = await ctx.jf.resume(jfUser);
-  const h = await ctx.db.query<{ item_id: string; hidden_at: Date }>('select item_id, hidden_at from resume_hidden where profile_id=$1', [profileId]);
-  return notDropped(tidyResume(items, new Map(h.rows.map((r) => [r.item_id, r.hidden_at]))), await droppedSet(ctx, profileId));
-}
-
-/** Same as GET /api/library/nextup (without ?seriesId). */
-export async function nextUpItems(ctx: Ctx, jfUser: JfUser, profileId: string): Promise<ItemDto[]> {
-  return notDropped(await ctx.jf.nextUp(jfUser), await droppedSet(ctx, profileId));
-}
 
 /** Billboard pick: the first of 15 random titles with a backdrop, else the first one (what the client chose before). */
 async function heroItem(ctx: Ctx, jfUser: JfUser): Promise<ItemDto | null> {
@@ -97,8 +81,11 @@ export function homeRoutes(app: FastifyInstance, ctx: Ctx, hubs: { viewerHubs: (
   }
 
   app.get('/api/home', pre, async (req) => {
-    // the key carries the user-data version (bumped by every played / favorite / progress write), so a watched change shows at once
-    const key = `home:${req.profile!.id}:${await ctx.jf.userDataVersion(req.jfUser!).catch(() => '0')}`;
+    // the key carries the user-data version (bumped by every played / favorite / progress write) and the generation counters (see
+    // homegen.ts: hidden resume entries, status, thumbs, ratings, admin edits), so those changes show at once
+    const pid = req.profile!.id;
+    const [ver, gens] = await Promise.all([ctx.jf.userDataVersion(req.jfUser!).catch(() => '0'), homeGens(ctx, pid)]);
+    const key = `home:${pid}:${ver}:${gens}`;
     const hit = await ctx.kv.get(key).catch(() => null);
     if (hit) {
       try { return JSON.parse(hit) as HomeResponse; } catch { /* corrupt entry: recompute */ }

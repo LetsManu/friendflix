@@ -20,9 +20,11 @@ const watchApi = (page: Page) => {
 test.describe('home first screen in one request', () => {
   test('at most 5 /api/ calls until the first row is visible, all rows come from /api/home', async ({ page }, info) => {
     const seen = watchApi(page);
+    let atHome = -1; // calls made when /api/home answered: the idle rows only start after that
+    page.on('response', (r) => { if (new URL(r.url()).pathname === '/api/home' && atHome < 0) atHome = seen.length; });
     await page.goto('/');
     await expect(row(page, 'Weiterschauen').locator('article.card').first()).toBeVisible();
-    const upTo = [...seen];
+    const upTo = seen.slice(0, atHome);
     info.annotations.push({ type: 'api calls until first row', description: upTo.join(' ') });
     expect(upTo.length, upTo.join(' ')).toBeLessThanOrEqual(5);
     expect(upTo.filter((p) => p === '/api/home')).toHaveLength(1);
@@ -35,6 +37,22 @@ test.describe('home first screen in one request', () => {
     // the first visible row's images load eagerly with high priority
     await expect(row(page, 'Weiterschauen').locator('article.card img[fetchpriority="high"]').first()).toBeAttached();
     await expect(row(page, 'Nächste Folge').locator('img[fetchpriority="high"]')).toHaveCount(0);
+  });
+
+  test('remove from Weiterschauen, open a title, go back: the item stays gone', async ({ page, api }) => {
+    await page.goto('/');
+    const resume = row(page, 'Weiterschauen');
+    await expect(resume.locator('article.card')).toHaveCount(2);
+    const gone = episodes[0]!;
+    await resume.locator('article.card').first().locator('button.rm').dispatchEvent('click'); // the X shows on hover only
+    await expect(resume.locator('article.card')).toHaveCount(1);
+    expect(api.resumeGone.has(gone.id)).toBe(true);
+    await resume.locator('article.card a').first().click(); // client-side navigation to the title
+    await expect(page).toHaveURL(/\/(item|watch)\//);
+    await page.goBack();
+    await expect(row(page, 'Weiterschauen').locator('article.card')).toHaveCount(1);
+    await page.waitForTimeout(600); // the background refresh of /api/home has landed
+    await expect(row(page, 'Weiterschauen').locator('article.card')).toHaveCount(1);
   });
 
   test('a part the server flagged as failed is loaded the old way, the rest still renders', async ({ page }) => {

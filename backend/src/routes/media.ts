@@ -8,7 +8,8 @@ import { effectiveRole, remoteBitrateCap } from '../roles.js';
 import { requireGrownUp } from '../kids.js';
 import { requireUser } from '../session.js';
 import { playbackHooks } from '../hooks.js';
-import { tidyResume } from '../resume.js';
+import { bumpHome } from '../homegen.js';
+import { nextUpItems, resumeItems } from '../resumeRows.js';
 import { createHash } from 'node:crypto';
 import { itemsByIds, libraryBecause } from './discover.js';
 import { id32 as itemId, wrap as sharedWrap } from './_shared.js';
@@ -47,12 +48,6 @@ const reportBody = z.object({
 
 /** Maps upstream errors to a clean 502/4xx without leaking details. */
 const wrap = <T extends (...a: any[]) => Promise<any>>(fn: T): T => sharedWrap(fn, { zod: 'issues', passthrough: [404, 403] });
-
-/** Items of this profile's "dropped" list (movie or series ids) are hidden from Weiterschauen / Als Nächstes. */
-async function droppedSet(ctx: Ctx, profileId: string): Promise<Set<string>> {
-  return new Set((await ctx.db.query<{ item_id: string }>('select item_id from dropped where profile_id=$1', [profileId])).rows.map((r) => r.item_id));
-}
-const notDropped = (items: ItemDto[], dropped: Set<string>) => (dropped.size ? items.filter((i) => !dropped.has(i.seriesId ?? i.id) && !dropped.has(i.id)) : items);
 
 function shuffle<T>(a: T[]): T[] {
   for (let i = a.length - 1; i > 0; i--) {
@@ -172,11 +167,7 @@ export function mediaRoutes(app: FastifyInstance, ctx: Ctx) {
     return r.items[0] ? { item: r.items[0] } : reply.code(404).send({ error: 'nothing_found' });
   }));
 
-  app.get('/api/library/resume', pre, wrap(async (req) => {
-    const items = await ctx.jf.resume(req.jfUser!);
-    const h = await ctx.db.query<{ item_id: string; hidden_at: Date }>('select item_id, hidden_at from resume_hidden where profile_id=$1', [req.profile!.id]);
-    return { items: notDropped(tidyResume(items, new Map(h.rows.map((r) => [r.item_id, r.hidden_at]))), await droppedSet(ctx, req.profile!.id)) };
-  }));
+  app.get('/api/library/resume', pre, wrap(async (req) => ({ items: await resumeItems(ctx, req.jfUser!, req.profile!.id) })));
   // "Remove from Weiterschauen": hides the item for this profile until it is played again (progress itself stays).
   app.delete('/api/library/resume/:id', pre, wrap(async (req) => {
     const id = itemId.parse((req.params as any).id);
@@ -186,6 +177,7 @@ export function mediaRoutes(app: FastifyInstance, ctx: Ctx) {
       'insert into resume_hidden(profile_id,item_id) values ($1,$2) on conflict (profile_id,item_id) do update set hidden_at=now()',
       [req.profile!.id, it?.seriesId ?? id],
     );
+    await bumpHome(ctx, req.profile!.id);
     return { ok: true };
   }));
 
@@ -204,12 +196,13 @@ export function mediaRoutes(app: FastifyInstance, ctx: Ctx) {
     }
     await ctx.jf.setPlayed(req.jfUser!, target, false); // Jellyfin cascades unplayed to a series' episodes
     await ctx.db.query('delete from resume_hidden where profile_id=$1 and item_id in ($2,$3)', [req.profile!.id, id, target]);
+    await bumpHome(ctx, req.profile!.id);
     return { ok: true };
   }));
   // ?seriesId= asks Jellyfin for that series' next episode directly (the global list is capped at 20, so a client-side filter can miss it)
   app.get('/api/library/nextup', pre, wrap(async (req) => {
     const { seriesId } = z.object({ seriesId: itemId.optional() }).parse(req.query);
-    return { items: notDropped(await ctx.jf.nextUp(req.jfUser!, seriesId), await droppedSet(ctx, req.profile!.id)) };
+    return { items: await nextUpItems(ctx, req.jfUser!, req.profile!.id, seriesId) };
   }));
 
   app.get('/api/items/:id', pre, wrap(async (req) => {

@@ -7,6 +7,7 @@ import { MediaError, type ItemDto, type MediaTraits } from '../media/types.js';
 import { audit } from '../audit.js';
 import { badgesFor, instanceToday, leavingFor, LEAVING_ROW_DAYS, storySoFar } from '../fresh.js';
 import { m } from '../i18n.js';
+import { bumpHomeAll, bumpHome } from '../homegen.js';
 import { notify } from '../notify.js';
 import { clipPath, previews } from '../previews.js';
 import { loadPrefs } from './prefs.js';
@@ -275,6 +276,7 @@ export function discoverRoutes(app: FastifyInstance, ctx: Ctx) {
     const { value } = z.object({ value: z.union([z.literal(-1), z.literal(0), z.literal(1), z.literal(2)]) }).parse(req.body);
     if (value === 0) {
       await ctx.db.query('delete from thumbs where profile_id=$1 and item_id=$2', [req.profile!.id, id]);
+      await bumpHome(ctx, req.profile!.id);
       return { value: 0 };
     }
     const item = await ctx.jf.item(req.jfUser!, id);
@@ -283,6 +285,7 @@ export function discoverRoutes(app: FastifyInstance, ctx: Ctx) {
        on conflict (profile_id,item_id) do update set value = excluded.value, created_at = now()`,
       [req.profile!.id, req.user!.id, id, value, item.name],
     );
+    await bumpHome(ctx, req.profile!.id);
     return { value };
   }));
 
@@ -455,12 +458,13 @@ function freshRoutes(app: FastifyInstance, ctx: Ctx) {
       [id, b.leavesAt, b.note || null, req.user!.id],
     );
     await audit(ctx, req.user!.id, 'leaving.set', id, { name: item.name, leavesAt: b.leavesAt });
+    await bumpHomeAll(ctx);
     return { itemId: id, leavesAt: b.leavesAt, note: b.note || null };
   }));
   app.delete('/api/admin/leaving/:id', admin, async (req) => {
     const id = id32.parse((req.params as { id: string }).id);
     const r = await ctx.db.query('delete from leaving_soon where item_id = $1', [id]);
-    if (r.rowCount) await audit(ctx, req.user!.id, 'leaving.clear', id);
+    if (r.rowCount) { await audit(ctx, req.user!.id, 'leaving.clear', id); await bumpHomeAll(ctx); }
     return { ok: true };
   });
 

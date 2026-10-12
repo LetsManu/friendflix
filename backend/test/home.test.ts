@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { encrypt } from '../src/crypto.js';
+import { bumpHome } from '../src/homegen.js';
 import { makeEnv, type Handler, type TestEnv } from './helpers.js';
 
 // Task 7 (Block 20): GET /api/home serves the first screen of the home page in one request
@@ -64,6 +65,9 @@ beforeAll(async () => {
   const id = (await call(admin, 'POST', '/api/lists', { name: 'Gruselabend', themed: true, emoji: '🎃' })).json().id;
   for (const i of [A, B, C]) await call(admin, 'POST', `/api/lists/${id}/items`, { itemId: i });
   await call(admin, 'PUT', `/api/lists/${id}/pin`, { pinned: true });
+  // Abenteuerinsel leaves in 5 days
+  const leavesAt = new Date(Date.now() + 5 * 864e5).toISOString().slice(0, 10);
+  expect((await call(admin, 'PUT', `/api/admin/leaving/${B}`, { leavesAt })).statusCode).toBe(200);
 });
 afterAll(() => env.close());
 
@@ -92,6 +96,12 @@ describe('GET /api/home', () => {
     expect(parts.because).toEqual({ ...(await call(admin, 'GET', '/api/library/because')).json(), more: (await call(admin, 'GET', '/api/library/because-more')).json().rows });
     expect(parts.hubs).toEqual((await call(admin, 'GET', '/api/hubs')).json().hubs);
     expect(parts.themed).toEqual((await call(admin, 'GET', '/api/lists/themed')).json().lists);
+    expect(parts.leaving.map((i: { id: string }) => i.id)).toEqual([B]);
+    expect(parts.leaving).toEqual((await call(admin, 'GET', '/api/library/leaving')).json().items);
+    // hero is random: check its shape and that it is a title this viewer may see
+    expect([A, B, C]).toContain(parts.hero.id);
+    expect(parts.hero).toMatchObject({ backdrop: true });
+    expect(parts.hero).toEqual((await call(admin, 'GET', '/api/library/items?types=Movie,Series&sort=Random&limit=15')).json().items.find((i: { id: string }) => i.id === parts.hero.id));
   });
 
   it('kids profile: no item above cap, no social/because-from-friends parts', async () => {
@@ -137,5 +147,67 @@ describe('GET /api/home', () => {
     expect((await home(admin)).json().parts.resume).toHaveLength(1); // still the cached answer
     expect((await call(admin, 'POST', `/api/items/${A}/played`)).statusCode).toBe(200); // bumps the user-data version
     expect((await home(admin)).json().parts.resume).toHaveLength(2);
+  });
+
+  describe('cache stays fresh within the TTL', () => {
+    const ids = (r: { json(): any }) => r.json().parts.resume.map((i: { id: string }) => i.id) as string[];
+    let pid = '';
+    /** baseline: both titles in resume; the media server then drops one (invisible to the cache); `write` must make the next /api/home fresh */
+    async function expectFresh(write: () => Promise<unknown>) {
+      pid = (await env.pool.query('select p.id from profiles p join users u on u.id = p.user_id where u.authentik_sub=$1 and p.is_owner', ['sub-admin'])).rows[0].id;
+      resumeIds = [A, B];
+      await bumpHome(env.ctx, pid);
+      expect(ids(await home(admin))).toEqual([A, B]);
+      resumeIds = [A];
+      expect(ids(await home(admin))).toEqual([A, B]); // cached
+      await write();
+      expect(ids(await home(admin))).toEqual([A]);
+    }
+
+    it('hiding a resume entry: the next /api/home no longer contains it', async () => {
+      resumeIds = [A, B];
+      pid = (await env.pool.query('select p.id from profiles p join users u on u.id = p.user_id where u.authentik_sub=$1 and p.is_owner', ['sub-admin'])).rows[0].id;
+      await bumpHome(env.ctx, pid);
+      expect(ids(await home(admin))).toEqual([A, B]);
+      expect((await call(admin, 'DELETE', `/api/library/resume/${B}`)).statusCode).toBe(200);
+      expect(ids(await home(admin))).toEqual([A]);
+      await env.pool.query('delete from resume_hidden');
+    });
+
+    it('thumb, rating and status writes show at once', async () => {
+      await expectFresh(async () => { expect((await call(admin, 'PUT', `/api/items/${A}/thumb`, { value: 1 })).statusCode).toBe(200); });
+      await expectFresh(async () => { expect((await call(admin, 'PUT', `/api/items/${A}/rating`, { stars: 4 })).statusCode).toBe(200); });
+      await expectFresh(async () => { expect((await call(admin, 'DELETE', `/api/items/${A}/rating`)).statusCode).toBe(200); });
+      await expectFresh(async () => { expect((await call(admin, 'PUT', `/api/items/${A}/status`, { status: 'planned' })).statusCode).toBe(200); });
+    });
+
+    it('an admin hub edit is fresh for everyone', async () => {
+      const hubsOf = async () => (await home(admin)).json().parts.hubs as unknown[];
+      expect(await hubsOf()).toEqual([]);
+      const mk = await call(admin, 'POST', '/api/admin/hubs', { name: 'Gruselmarke', source: 'genre', sourceValue: 'Horror' });
+      expect(mk.statusCode, mk.body).toBe(201);
+      expect(await hubsOf()).toHaveLength(1);
+      expect((await call(admin, 'PUT', `/api/admin/hubs/${mk.json().hub.id}`, { name: 'Gruselmarke', source: 'genre', sourceValue: 'Horror', enabled: false })).statusCode).toBe(200);
+      expect(await hubsOf()).toEqual([]);
+    });
+
+    it('a cache entry belongs to one profile: a kids profile never gets the owner answer (or the other way round)', async () => {
+      const mk = await call(admin, 'POST', '/api/profiles', { name: 'Leo', kids: true, maxRating: 6 });
+      expect(mk.statusCode, mk.body).toBe(201);
+      const sel = await call(admin, 'POST', `/api/profiles/${mk.json().profile.id}/select`, {});
+      const kid: Sess = { cookies: { ff_sid: sel.cookies.find((c) => c.name === 'ff_sid')!.value }, csrf: admin.csrf };
+      resumeIds = [A, B, C];
+      const kidTwice = [await home(kid), await home(kid)]; // the second one is served from the cache
+      const ownerId = (await env.pool.query('select id from profiles where is_owner and user_id=(select id from users where authentik_sub=$1)', ['sub-admin'])).rows[0].id;
+      expect((await call(admin, 'POST', `/api/profiles/${ownerId}/select`, {})).statusCode).toBe(200);
+      await bumpHome(env.ctx, ownerId); // the owner's own entry from the tests above is still cached
+      const owner = await home(admin);
+      resumeIds = [A];
+      for (const r of kidTwice) expect(JSON.stringify(r.json().parts)).not.toContain(B);
+      expect(ids(owner)).toContain(B);
+      expect(owner.json().parts.recs.items.length).toBeGreaterThan(0);
+      const keys = [...(env.kv as unknown as { m: Map<string, unknown> }).m.keys()].filter((k) => k.startsWith('home:'));
+      expect(new Set(keys.map((k) => k.split(':')[1])).size).toBeGreaterThanOrEqual(2);
+    });
   });
 });
