@@ -9,11 +9,13 @@ export const setCsrf = (t: string) => (csrf = t);
 /** id of the profile the page loaded with; sent as x-ff-profile so the backend can detect a profile switch in another tab */
 let activeProfile = '';
 export const setActiveProfile = (id: string | null | undefined) => (activeProfile = id ?? '');
+export const getActiveProfile = () => activeProfile;
 
-export async function api<T = any>(path: string, opts: { method?: string; body?: unknown } = {}): Promise<T> {
+export async function api<T = any>(path: string, opts: { method?: string; body?: unknown; signal?: AbortSignal } = {}): Promise<T> {
   const res = await fetch(path, {
     method: opts.method ?? 'GET',
     credentials: 'same-origin',
+    signal: opts.signal,
     headers: { ...(opts.body === undefined ? {} : { 'content-type': 'application/json' }), 'x-csrf-token': csrf, ...(activeProfile ? { 'x-ff-profile': activeProfile } : {}) },
     body: opts.body === undefined ? undefined : JSON.stringify(opts.body),
   });
@@ -39,6 +41,20 @@ export async function api<T = any>(path: string, opts: { method?: string; body?:
 
 export const img = (id: string, w = 300) => `/media/Items/${id}/Images/Primary?maxWidth=${w}&quality=85`;
 export const backdrop = (id: string, w = 1600) => `/media/Items/${id}/Images/Backdrop?maxWidth=${w}&quality=80`;
+export type ImageKind = 'Primary' | 'Backdrop';
+/** `srcset` value (`<url> <w>w, …`) for an item image; widths are de-duplicated and sorted, URLs are identical to img()/backdrop() so they share the cache. */
+export function srcset(kind: ImageKind, id: string, widths: readonly number[]): string {
+  const ws = [...new Set(widths.filter((w) => Number.isFinite(w) && w > 0).map(Math.round))].sort((a, b) => a - b);
+  return ws.map((w) => `${kind === 'Primary' ? img(id, w) : backdrop(id, w)} ${w}w`).join(', ');
+}
+/** Row card thumbs; `CARD_SIZES` mirrors the slot widths of Row.svelte (--n = 2.4 / 3 / 4 / 5 / 6 at 0 / 560 / 800 / 1100 / 1500px, minus padding and gaps). */
+export const CARD_WIDTHS = [320, 520, 780] as const;
+export const CARD_SIZES = '(min-width: 1500px) 16vw, (min-width: 1100px) 19vw, (min-width: 800px) 24vw, (min-width: 560px) 31vw, 40vw';
+/** full-bleed hero backdrop */
+export const HERO_WIDTHS = [800, 1280, 1920] as const;
+/** ItemModal backdrop (dialog is min(880px, 96vw) wide) */
+export const MODAL_WIDTHS = [640, 960, 1440] as const;
+export const MODAL_SIZES = '(min-width: 920px) 880px, 96vw';
 export const logoUrl = (id: string) => `/media/Items/${id}/Images/Logo?maxWidth=700&quality=90`;
 export const ticksToSec = (t: number) => t / 10_000_000;
 export const secToTicks = (s: number) => Math.floor(s * 10_000_000);
@@ -53,6 +69,11 @@ export interface Item {
   seriesId?: string; seriesName?: string; seasonId?: string; indexNumber?: number; parentIndexNumber?: number;
   genres: string[]; rating?: string; communityRating?: number; premiereDate?: string; image: boolean; backdrop: boolean; logo: boolean; trailers?: number; caption?: string;
   played: boolean; favorite: boolean; positionTicks: number; playedPercentage?: number; lastPlayedDate?: string;
+  langs?: { audio: string[]; subs: string[] };
+  /** Jellyfin DateLastMediaAdded (ISO) – newest child for series */
+  lastAdded?: string; childCount?: number; unplayedCount?: number;
+  /** only on /api/library/trending: number of distinct viewers this week */
+  viewers?: number;
 }
-export interface Me { id: string; name: string; role: string; roleLabel: string; isAdmin: boolean; csrfToken: string; deviceApproved: boolean; tv: boolean; profile?: MeProfile | null; profileRequired?: boolean; profileCount?: number; profileChosen?: boolean }
+export interface Me { id: string; name: string; role: string; roleLabel: string; isAdmin: boolean; csrfToken: string; deviceApproved: boolean; tv: boolean; profile?: MeProfile | null; profileRequired?: boolean; profileCount?: number; profileChosen?: boolean; downloads?: { allowed: boolean; max: number } }
 export interface MeProfile { id: string; name: string; avatar: string; isOwner: boolean }

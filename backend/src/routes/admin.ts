@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { audit } from '../audit.js';
 import type { Ctx } from '../ctx.js';
 import { revokeSessions } from '../devices.js';
+import { adminOverview, revokeLicense } from '../downloads.js';
 import { createInvite, deleteAuthentikInvitation } from '../invites.js';
 import { checkState, startPlaybackCheck } from '../healthcheck.js';
 import { clipPath, libraryItems, previews, serviceUser } from '../previews.js';
@@ -11,6 +12,7 @@ import { defaultLimit } from '../requestlimit.js';
 import { INVITABLE_ROLES, effectiveRole, invalidateRoles } from '../roles.js';
 import { requireAdmin, requireOwner, requireUser } from '../session.js';
 import { portainerMode, triggerUpdate, updateInfo } from '../updates.js';
+import { MAX_FEATURED } from '../lists.js';
 import { accountJellyfinIds } from '../profiles.js';
 import { applyRole, getUserById, reapplyRole } from '../users.js';
 
@@ -89,7 +91,7 @@ export function adminRoutes(app: FastifyInstance, ctx: Ctx) {
     invalidateRoles(ctx);
     const set = new Map((await ctx.db.query<{ role: string; requests_per_month: number | null }>('select role, requests_per_month from role_settings')).rows.map((r) => [r.role, r.requests_per_month]));
     const roles = Object.fromEntries(await Promise.all(Object.keys(ctx.roles).map(async (k) => [k, (await effectiveRole(ctx, k))!] as const)));
-    const limits = Object.entries(roles).map(([role, t]) => ({ role, label: t.label, requestsPerMonth: set.has(role) ? set.get(role)! : defaultLimit(role), isDefault: !set.has(role), transcoding: t.transcoding, maxHeight: t.maxHeight }));
+    const limits = Object.entries(roles).map(([role, t]) => ({ role, label: t.label, requestsPerMonth: set.has(role) ? set.get(role)! : defaultLimit(role), isDefault: !set.has(role), transcoding: t.transcoding, maxHeight: t.maxHeight, download: t.download, maxDownloads: t.maxDownloads, downloadMaxHeight: t.downloadMaxHeight, downloadDays: t.downloadDays }));
     return { roles, invitable: INVITABLE_ROLES, limits };
   });
 
@@ -100,20 +102,28 @@ export function adminRoutes(app: FastifyInstance, ctx: Ctx) {
       requestsPerMonth: z.number().int().min(0).max(100).nullable().optional(),
       transcoding: z.boolean().optional(),
       maxHeight: z.number().int().min(144).max(4320).nullable().optional(), // null = unlimited
+      download: z.boolean().optional(),
+      maxDownloads: z.number().int().min(0).max(200).optional(),
+      downloadMaxHeight: z.number().int().min(0).max(2160).optional(), // 0 = no downloads
+      downloadDays: z.number().int().min(1).max(90).optional(),
     }).parse(req.body);
     const before = await effectiveRole(ctx, role);
     const cur = (await ctx.db.query<{ requests_per_month: number | null }>('select requests_per_month from role_settings where role=$1', [role])).rows[0];
     const limit = b.requestsPerMonth !== undefined ? b.requestsPerMonth : cur ? cur.requests_per_month : defaultLimit(role);
     await ctx.db.query(
-      `insert into role_settings(role, requests_per_month, transcoding, max_height) values ($1,$2,$3,$4)
-       on conflict (role) do update set requests_per_month=$2, transcoding=coalesce($3, role_settings.transcoding), max_height=coalesce($4, role_settings.max_height), updated_at=now()`,
-      [role, limit, b.transcoding ?? null, b.maxHeight === undefined ? null : (b.maxHeight ?? 0)],
+      `insert into role_settings(role, requests_per_month, transcoding, max_height, download, max_downloads, download_max_height, download_days) values ($1,$2,$3,$4,$5,$6,$7,$8)
+       on conflict (role) do update set requests_per_month=$2, transcoding=coalesce($3, role_settings.transcoding), max_height=coalesce($4, role_settings.max_height),
+         download=coalesce($5, role_settings.download), max_downloads=coalesce($6, role_settings.max_downloads), download_max_height=coalesce($7, role_settings.download_max_height),
+         download_days=coalesce($8, role_settings.download_days), updated_at=now()`,
+      [role, limit, b.transcoding ?? null, b.maxHeight === undefined ? null : (b.maxHeight ?? 0), b.download ?? null, b.maxDownloads ?? null, b.downloadMaxHeight ?? null, b.downloadDays ?? null],
     );
     invalidateRoles(ctx);
     const after = (await effectiveRole(ctx, role))!;
     if (b.requestsPerMonth !== undefined) await audit(ctx, req.user!.id, 'role.request_limit', role, { requestsPerMonth: b.requestsPerMonth });
-    if (after.transcoding !== before?.transcoding || after.maxHeight !== before?.maxHeight) {
-      await audit(ctx, req.user!.id, 'role.playback', role, { transcoding: after.transcoding, maxHeight: after.maxHeight });
+    const dlChanged = after.download !== before?.download || after.maxDownloads !== before?.maxDownloads || after.downloadMaxHeight !== before?.downloadMaxHeight || after.downloadDays !== before?.downloadDays;
+    if (dlChanged) await audit(ctx, req.user!.id, 'role.downloads', role, { download: after.download, maxDownloads: after.maxDownloads, downloadMaxHeight: after.downloadMaxHeight, downloadDays: after.downloadDays });
+    if (after.transcoding !== before?.transcoding || after.maxHeight !== before?.maxHeight || after.download !== before?.download) {
+      if (after.transcoding !== before?.transcoding || after.maxHeight !== before?.maxHeight) await audit(ctx, req.user!.id, 'role.playback', role, { transcoding: after.transcoding, maxHeight: after.maxHeight });
       const failed = await reapplyRole(ctx, role); // push the new policy to existing Jellyfin accounts
       if (failed) return reply.code(502).send({ error: 'policy_partial', failed });
     }
@@ -146,7 +156,7 @@ export function adminRoutes(app: FastifyInstance, ctx: Ctx) {
     if (b.disabled !== undefined && b.disabled !== user.disabled) {
       for (const jid of await accountJellyfinIds(ctx, id)) await ctx.jf.client.setPolicy(jid, { IsDisabled: b.disabled });
       await ctx.db.query('update users set disabled=$1 where id=$2', [b.disabled, id]);
-      if (b.disabled) await revokeSessions(ctx, id);
+      if (b.disabled) await revokeSessions(ctx, id); // also revokes the account's offline licenses
       await audit(ctx, req.user!.id, b.disabled ? 'user.disable' : 'user.enable', id);
     }
     return { ok: true };
@@ -157,6 +167,15 @@ export function adminRoutes(app: FastifyInstance, ctx: Ctx) {
     const n = await revokeSessions(ctx, id);
     await audit(ctx, req.user!.id, 'user.revoke_sessions', id, { sessions: n });
     return { revoked: n };
+  });
+
+  // ---- offline downloads: prepared jobs, disk usage, active licenses ----
+  app.get('/api/admin/downloads', admin, async () => ({ enabled: ctx.cfg.DOWNLOADS_ENABLED === 'true', maxBytes: Math.round(ctx.cfg.DOWNLOAD_CACHE_MAX_GB * 1024 ** 3), ...(await adminOverview(ctx)) }));
+  app.delete('/api/admin/downloads/:id', admin, async (req, reply) => {
+    const id = uuid.parse((req.params as { id: string }).id);
+    if (!(await revokeLicense(ctx, id))) return reply.code(404).send({ error: 'not_found' });
+    await audit(ctx, req.user!.id, 'download.revoke', id);
+    return { ok: true };
   });
 
   app.post('/api/admin/invites', admin, async (req) => {
@@ -186,6 +205,30 @@ export function adminRoutes(app: FastifyInstance, ctx: Ctx) {
     await deleteAuthentikInvitation(ctx, r.rows[0]?.authentik_invite, req.log);
     await audit(ctx, req.user!.id, 'invite.revoke', id);
     return { ok: true };
+  });
+
+  app.get('/api/admin/lists', admin, async () => {
+    const r = await ctx.db.query<{ id: string; name: string; owner_id: string; owner_name: string; item_count: string; featured: boolean }>(
+      `select l.id, l.name, l.owner_id, o.name as owner_name, (select count(*) from list_items i where i.list_id = l.id) as item_count, l.featured_at is not null as featured
+         from lists l join users o on o.id = l.owner_id order by l.created_at desc limit 200`);
+    return { lists: r.rows.map((x) => ({ id: x.id, name: x.name, owner: { id: x.owner_id, name: x.owner_name }, itemCount: Number(x.item_count), featured: x.featured })) };
+  });
+
+  app.put('/api/admin/lists/:id/featured', admin, async (req, reply) => {
+    const id = uuid.safeParse((req.params as { id: string }).id);
+    const b = z.object({ featured: z.boolean() }).parse(req.body);
+    if (!id.success) return reply.code(404).send({ error: 'not_found' });
+    const cur = (await ctx.db.query<{ featured: boolean }>('select featured_at is not null as featured from lists where id = $1', [id.data])).rows[0];
+    if (!cur) return reply.code(404).send({ error: 'not_found' });
+    if (b.featured && !cur.featured) {
+      const n = Number((await ctx.db.query<{ c: string }>('select count(*) c from lists where featured_at is not null')).rows[0]!.c);
+      if (n >= MAX_FEATURED) return reply.code(409).send({ error: 'too_many_featured' });
+    }
+    if (b.featured !== cur.featured) {
+      await ctx.db.query('update lists set featured_at = case when $2::boolean then now() else null end where id = $1', [id.data, b.featured]);
+      await audit(ctx, req.user!.id, b.featured ? 'list.feature' : 'list.unfeature', id.data);
+    }
+    return { ok: true, featured: b.featured };
   });
 
   app.get('/api/admin/audit', admin, async (req) => {

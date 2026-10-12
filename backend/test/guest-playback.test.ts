@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { forgetAuth } from '../src/routes/internal.js';
 import { cfg, makeEnv, type TestEnv } from './helpers.js';
 
 const ID = 'a'.repeat(32);
@@ -44,12 +45,40 @@ describe('guest playback', () => {
     expect(JSON.stringify(info.body.DeviceProfile.CodecProfiles)).toContain('"Value":"1080"');
   });
 
-  it('allows direct play when the source is within the cap', async () => {
+  it('offers no direct play to a capped role even when the source is within the cap (the gateway refuses static streams for it)', async () => {
     height = 720;
     const p = (await call(guest, 'POST', '/api/playback/info', { itemId: ID })).json();
-    expect(p.directUrl).toBeDefined();
+    expect(p.directUrl).toBeUndefined();
     expect(p.hlsUrl).toContain('MaxHeight=1080');
+    const info = env.jfCalls.filter((c) => c.path.endsWith('/PlaybackInfo')).at(-1)!;
+    expect(info.search).toContain('EnableDirectPlay=false');
+    expect(info.body.DeviceProfile.DirectPlayProfiles).toEqual([]);
     height = 2160;
+  });
+
+  it('keeps direct play for a role without cap that may download', async () => {
+    height = 720;
+    const p = (await call(admin, 'POST', '/api/playback/info', { itemId: ID })).json();
+    expect(p.directUrl).toMatch(/\/stream\?/);
+    height = 2160;
+  });
+
+  it('without a height cap a role keeps direct play; DIRECT_PLAY_REQUIRES_DOWNLOAD=true also takes it from roles without download rights', async () => {
+    height = 720;
+    await env.pool.query("update users set role='friend' where authentik_sub='sub-guest'");
+    try {
+      expect((await call(guest, 'POST', '/api/playback/info', { itemId: ID })).json().directUrl).toMatch(/\/stream\?/);
+      const prev = env.ctx.cfg;
+      env.ctx.cfg = { ...prev, DIRECT_PLAY_REQUIRES_DOWNLOAD: 'true' };
+      try {
+        expect((await call(guest, 'POST', '/api/playback/info', { itemId: ID })).json().directUrl).toBeUndefined();
+      } finally {
+        env.ctx.cfg = prev;
+      }
+    } finally {
+      await env.pool.query("update users set role='guest' where authentik_sub='sub-guest'");
+      height = 2160;
+    }
   });
 
   it('admin changes maxHeight/transcoding, which re-applies the policy of the role users', async () => {
@@ -79,5 +108,20 @@ describe('guest playback', () => {
   it('non-admins get 403', async () => {
     expect((await call(guest, 'PUT', '/api/admin/roles/guest', { maxHeight: 2160 })).statusCode).toBe(403);
     expect((await call(guest, 'GET', '/api/admin/roles')).statusCode).toBe(403);
+  });
+
+  it('authz reports canDownload so the gateway can refuse direct streams', async () => {
+    const authz = async (s: Sess) => (await env.app.inject({ method: 'POST', url: '/internal/authz', headers: { 'x-internal-secret': cfg.INTERNAL_SECRET }, payload: { sid: s.cookies.ff_sid } })).json();
+    expect(await authz(admin)).toMatchObject({ canDownload: true });
+    forgetAuth(guest.cookies.ff_sid!);
+    expect(await authz(guest)).toMatchObject({ canDownload: true }); // guests may not download, but by default that alone keeps direct play (a height cap blocks it)
+    const prev = env.ctx.cfg;
+    env.ctx.cfg = { ...prev, DIRECT_PLAY_REQUIRES_DOWNLOAD: 'true' };
+    try {
+      forgetAuth(guest.cookies.ff_sid!); // drop the 5 s authz memo
+      expect(await authz(guest)).toMatchObject({ canDownload: false });
+    } finally {
+      env.ctx.cfg = prev;
+    }
   });
 });

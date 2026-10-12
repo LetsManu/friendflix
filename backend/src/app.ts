@@ -9,6 +9,7 @@ import { adminRoutes, inviteRoutes } from './routes/admin.js';
 import { authRoutes } from './routes/auth.js';
 import { castRoutes } from './routes/cast.js';
 import { internalRoutes } from './routes/internal.js';
+import { downloadRoutes } from './routes/downloads.js';
 import { discoverRoutes } from './routes/discover.js';
 import { digestRoutes } from './routes/digest.js';
 import { listRoutes } from './routes/lists.js';
@@ -19,10 +20,15 @@ import { prefsRoutes } from './routes/prefs.js';
 import { pollRoutes } from './routes/polls.js';
 import { reminderRoutes } from './routes/reminders.js';
 import { sceneRoutes } from './routes/scenes.js';
+import { searchRoutes } from './routes/search.js';
 import { seerrRoutes } from './routes/seerr.js';
 import { statsRoutes } from './routes/stats.js';
 import { tvRoutes } from './routes/tv.js';
+import { clientErrorRoutes } from './clientErrors.js';
 import { mediaRoutes } from './routes/media.js';
+import { socialRoutes } from './routes/social.js';
+import { reactionRoutes } from './routes/reactions.js';
+import { trendingRoutes } from './routes/trending.js';
 
 export interface Extra {
   /** Additional route registrars for later steps. */
@@ -62,6 +68,7 @@ export async function buildApp(ctx: Ctx, extra: Extra = {}): Promise<FastifyInst
   app.addHook('preHandler', async (req, reply) => {
     if (!['POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method) || !req.url.startsWith('/api/')) return;
     if (req.url.startsWith('/api/invite/')) return; // anonymous, token-protected
+    if (req.url.startsWith('/api/client-errors')) return; // browser error beacon: sendBeacon cannot send the csrf header; no ambient authority, rate limited
     if (req.url.startsWith('/api/tv/code') || req.url.startsWith('/api/tv/claim')) return; // anonymous, protected by the TV's own poll secret (no ambient authority)
     const sid = req.cookies.ff_sid;
     const raw = sid ? await ctx.kv.get(`sess:${sid}`) : null;
@@ -100,9 +107,15 @@ export async function buildApp(ctx: Ctx, extra: Extra = {}): Promise<FastifyInst
   digestRoutes(app, ctx);
   sceneRoutes(app, ctx);
   tvRoutes(app, ctx);
+  clientErrorRoutes(app, ctx);
   reminderRoutes(app, ctx);
   listRoutes(app, ctx);
   pushRoutes(app, ctx);
+  downloadRoutes(app, ctx);
+  searchRoutes(app, ctx);
+  socialRoutes(app, ctx);
+  reactionRoutes(app, ctx);
+  trendingRoutes(app, ctx);
   for (const r of extra.register ?? []) await r(app, ctx);
   return app;
 }

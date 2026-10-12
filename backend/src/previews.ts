@@ -95,6 +95,8 @@ class Previews {
 
   /** Set while a playback health check runs: the background warmer stays out of its way. */
   paused = false;
+  /** Set while a download is being prepared: the warmer yields (on-demand clips still run). */
+  downloadBusy = false;
   get idle() { return this.inflight.size === 0; }
   /** Ids currently generating or waiting in the queue. */
   queued(): string[] { return [...this.inflight.keys()]; }
@@ -155,7 +157,7 @@ class Previews {
 
   /** Background warmer: if idle, generates the clip of ONE library title that has no row yet. */
   async warmTick(): Promise<void> {
-    if (this.warming || this.paused || !this.idle) return;
+    if (this.warming || this.paused || this.downloadBusy || !this.idle) return;
     this.warming = true;
     try {
       const { ctx } = this;

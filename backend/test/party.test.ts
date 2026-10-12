@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import WebSocket from 'ws';
 import { PartyRegistry, Room, type ServerMsg } from '../src/party.js';
 import { makeEnv, type TestEnv } from './helpers.js';
@@ -145,7 +145,6 @@ describe('party websocket', () => {
       ws.on('error', () => resolve({ ws, msgs, closed }));
       ws.on('unexpected-response', () => resolve({ ws, msgs, closed }));
     });
-  const wait = (ms = 80) => new Promise((r) => setTimeout(r, ms));
 
   it('creates a room via REST, joins with auth + origin check, syncs and chats', async () => {
     const s = (env as unknown as { s: { csrf: string } }).s;
@@ -159,7 +158,7 @@ describe('party websocket', () => {
     expect(await anon.closed).toBe(4401);
 
     const ok = await connect(id, { cookie, origin: 'https://portal.example.com' });
-    await wait();
+    await vi.waitFor(() => expect(ok.msgs[0]).toMatchObject({ t: 'welcome' }));
     expect(ok.msgs[0]).toMatchObject({ t: 'welcome', itemId: ITEM, title: 'Film' });
     ok.ws.send(JSON.stringify({ t: 'buffering', value: false }));
     ok.ws.send(JSON.stringify({ t: 'state', playing: true, position: 5 }));
@@ -167,7 +166,7 @@ describe('party websocket', () => {
     ok.ws.send(JSON.stringify({ t: 'react', emoji: '🔥' }));
     ok.ws.send(JSON.stringify({ t: 'react', emoji: '<script>' })); // rejected by whitelist
     ok.ws.send('not json');
-    await wait();
+    await vi.waitFor(() => expect(ok.msgs.filter((m) => m.t === 'react')).toHaveLength(1));
     expect(ok.msgs.find((m) => m.t === 'state' && m.state.playing)).toBeTruthy();
     expect(ok.msgs.find((m) => m.t === 'chat').text).toBe('Hallo <b>Welt</b>'); // raw text; UI renders it as text only
     expect(ok.msgs.filter((m) => m.t === 'react')).toHaveLength(1);

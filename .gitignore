@@ -1,4 +1,4 @@
-node_modules/
+node_modules
 dist/
 build/
 .svelte-kit/
@@ -18,3 +18,5 @@ data/
 volumes/
 media/
 .DS_Store
+e2e/test-results/
+e2e/playwright-report/

@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cfg, makeEnv, type TestEnv } from './helpers.js';
 
 const AK = { AUTHENTIK_URL: 'https://auth.example.com', AUTHENTIK_API_TOKEN: 't', AUTHENTIK_ENROLL_FLOW: 'enroll' };
@@ -265,7 +265,7 @@ describe('admin user management', () => {
     ak.calls.length = 0;
     const token = inv.link.split('/').pop();
     expect((await inviteLogin(token, 'reuse-1')).statusCode).toBe(302);
-    await new Promise((r) => setTimeout(r, 20)); // deletion is fire-and-forget
+    await vi.waitFor(() => expect(ak.calls.filter((c) => c.method === 'DELETE')).toHaveLength(1)); // deletion is fire-and-forget
     expect(ak.calls.filter((c) => c.method === 'DELETE').map((c) => c.url)).toEqual(['https://auth.example.com/api/v3/stages/invitation/invitations/ak-inv-1/']);
   });
   it('revoking an invite deletes its Authentik invitation', async () => {

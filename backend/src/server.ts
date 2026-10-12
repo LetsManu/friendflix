@@ -16,11 +16,14 @@ import { digestTick } from './digest.js';
 import { reapplyPoliciesOnce } from './users.js';
 import { pushEnabled } from './push.js';
 import { previews } from './previews.js';
+import { gcDownloads, startPreparerTick } from './downloadprep.js';
+import { gcLicenses } from './downloads.js';
 import { pollJellyfinSessions } from './routes/internal.js';
 import { parties } from './routes/party.js';
 import { calendarNotifications, pollTick } from './routes/polls.js';
 import { resolveRequestedPolls } from './polls.js';
 import { reminderTick } from './reminders.js';
+import { langIndexTick } from './langindex.js';
 import type { Ctx } from './ctx.js';
 
 const cfg = loadConfig();
@@ -64,6 +67,13 @@ timers.push(setInterval(() => void reminderTick(ctx).catch((e) => app.log.warn({
 timers.push(setInterval(() => void nightlyTick(ctx).catch((e) => app.log.warn({ e }, 'playback check failed')), 600_000));
 timers.push(setInterval(() => void digestTick(ctx).catch((e) => app.log.warn({ e }, 'digest tick failed')), 600_000));
 if (cfg.BACKGROUND_JOBS === 'true') {
+  if (cfg.DOWNLOADS_ENABLED === 'true') {
+    timers.push(setInterval(() => void startPreparerTick(ctx).catch((e) => app.log.warn({ e }, 'download prep tick failed')), 15_000));
+    timers.push(setInterval(() => void gcDownloads(ctx).then(() => gcLicenses(ctx)).catch((e) => app.log.warn({ e }, 'download gc failed')), 600_000));
+    void startPreparerTick(ctx).catch((e) => app.log.warn({ e }, 'download prep start failed'));
+  }
+  timers.push(setInterval(() => void langIndexTick(ctx), 1800_000)); // self-limits to every 12 h, never throws
+  void langIndexTick(ctx);
   timers.push(setInterval(() => void pollJellyfinSessions(ctx).catch((e) => app.log.warn({ e }, 'session poll failed')), 10_000));
 }
 for (const sig of ['SIGTERM', 'SIGINT'] as const) {

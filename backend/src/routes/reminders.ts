@@ -6,8 +6,8 @@ import { JellyfinError } from '../jellyfin/client.js';
 import { fireTmdb, isAvailableEpisode } from '../reminders.js';
 import { portalStatus, SeerrError } from '../seerr/client.js';
 import { requireUser } from '../session.js';
+import { id32 } from './_shared.js';
 
-const id32 = z.string().regex(/^[0-9a-f]{32}$/);
 const body = z.union([
   z.object({ mediaType: z.enum(['movie', 'tv']), tmdbId: z.number().int().positive() }),
   z.object({ episodeId: id32 }),

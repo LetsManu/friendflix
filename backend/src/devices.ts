@@ -2,6 +2,7 @@ import type { FastifyReply, FastifyRequest } from 'fastify';
 import { randomBytes } from 'node:crypto';
 import { revokeCasts } from './cast.js';
 import type { Ctx } from './ctx.js';
+import { revokeDownloads } from './downloads.js';
 import { notify } from './notify.js';
 import { deletePushSubscriptions } from './push.js';
 import { dropRemotePeers } from './routes/tv.js';
@@ -59,6 +60,7 @@ export async function revokeSessions(ctx: Ctx, userId: string, deviceId?: string
   if (!(deviceId && deviceId === keepDevice)) {
     await revokeCasts(ctx, userId, deviceId, keepDevice);
     await deletePushSubscriptions(ctx, userId, deviceId, keepDevice);
+    await revokeDownloads(ctx, userId, deviceId, keepDevice);
   }
   return n;
 }
