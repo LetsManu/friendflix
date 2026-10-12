@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { activeChips, browseQuery, clearRecent, alreadyWished, isYear, loadRecent, parseBrowse, pushRecent, wishCandidates } from './discovery';
+import { activeChips, applyDraft, draftOf, filterCount, browseQuery, clearRecent, alreadyWished, isYear, loadRecent, parseBrowse, pushRecent, wishCandidates } from './discovery';
 
 const P = (s: string) => parseBrowse(new URLSearchParams(s));
 const ID = 'a'.repeat(32);
@@ -140,5 +140,27 @@ describe('wishCandidates', () => {
   it('flags already wished statuses', () => {
     expect(['angefragt', 'in_arbeit', 'teilweise'].every(alreadyWished)).toBe(true);
     expect(alreadyWished('nicht_angefragt') || alreadyWished('abgelehnt')).toBe(false);
+  });
+});
+
+describe('mobile filter sheet', () => {
+  it('counts the active filter chips (sorting excluded)', () => {
+    expect(filterCount(P(''))).toBe(0);
+    expect(filterCount(P('genre=Drama&decade=1990&sort=DateCreated'))).toBe(2);
+  });
+  it('applies a whole draft in one URL', () => {
+    const base = new URL('https://x.test/browse/movies?genre=Drama&year=1999&person=' + ID);
+    const d = { ...draftOf(P('genre=Drama')), genre: 'Krimi', decade: '1990', sort: 'CommunityRating', audio: 'deu' };
+    const u = applyDraft(base, d);
+    expect(u.searchParams.get('genre')).toBe('Krimi');
+    expect(u.searchParams.get('decade')).toBe('1990');
+    expect(u.searchParams.has('year')).toBe(false);
+    expect(u.searchParams.get('sort')).toBe('CommunityRating');
+    expect(u.searchParams.get('audio')).toBe('deu');
+    expect(u.searchParams.get('person')).toBe(ID); // untouched params survive
+  });
+  it('clears emptied fields and the default sort', () => {
+    const u = applyDraft(new URL('https://x.test/b?genre=Drama&sort=DateCreated&filter=played'), { genre: '', decade: '', minRating: '', sort: 'SortName', filter: '', audio: '', subs: '' });
+    expect(u.search).toBe('');
   });
 });

@@ -1,10 +1,16 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { onMount, tick } from 'svelte';
   import { goto } from '$app/navigation';
   import { img } from '#lib/api';
+  import { autofocus } from '#lib/actions';
   import { createList, loadLists, roleLabel, type ListSummary } from '#lib/lists';
-  let lists: ListSummary[] | null = null, creating = false, name = '', err = '', busy = false;
-  onMount(() => { loadLists().then((l) => (lists = l)).catch(() => (lists = [])); });
+  let lists: ListSummary[] | null = null, creating = false, name = '', err = '', busy = false, loadFailed = false, newBtn: HTMLButtonElement | undefined;
+  async function load() {
+    loadFailed = false;
+    try { lists = await loadLists(); } catch { lists = null; loadFailed = true; }
+  }
+  onMount(() => { void load(); });
+  async function cancel() { creating = false; name = ''; err = ''; await tick(); newBtn?.focus(); }
   async function create() {
     if (!name.trim() || busy) return;
     busy = true; err = '';
@@ -16,17 +22,18 @@
 <svelte:head><title>Listen – FriendFlix</title></svelte:head>
 <div class="head"><h1>Listen</h1>
   {#if creating}
-    <form on:submit|preventDefault={create}>
-      <!-- svelte-ignore a11y_autofocus -->
-      <input type="text" maxlength="60" placeholder="Name der Liste" aria-label="Name der Liste" bind:value={name} autofocus />
+    <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+    <form on:submit|preventDefault={create} on:keydown={(e) => { if (e.key === 'Escape') { e.stopPropagation(); void cancel(); } }}>
+      <input type="text" maxlength="60" placeholder="Name der Liste" aria-label="Name der Liste" bind:value={name} use:autofocus />
       <button type="submit" disabled={busy || !name.trim()}>Anlegen</button>
-      <button type="button" class="sec" on:click={() => { creating = false; name = ''; }}>Abbrechen</button>
+      <button type="button" class="sec" on:click={cancel}>Abbrechen</button>
     </form>
-  {:else}<button on:click={() => (creating = true)}>Neue Liste</button>{/if}
+  {:else}<button bind:this={newBtn} on:click={() => { err = ''; creating = true; }}>Neue Liste</button>{/if}
 </div>
 {#if err}<p class="err" role="alert">{err}</p>{/if}
 <p class="muted">Gemeinsame Listen für dich und deine Freunde. Wer eingeladen ist, sieht nur die Titel, die sein Profil sehen darf.</p>
-{#if lists === null}<div class="grid">{#each Array(4) as _}<div class="skeleton" style="aspect-ratio:16/9"></div>{/each}</div>
+{#if loadFailed}<div class="state" role="alert"><p class="err">Listen konnten nicht geladen werden.</p><button type="button" on:click={load}>Erneut versuchen</button></div>
+{:else if lists === null}<div class="grid">{#each Array(4) as _}<div class="skeleton" style="aspect-ratio:16/9"></div>{/each}</div>
 {:else if !lists.length}<p class="muted">Noch keine Listen. Lege eine neue an oder füge einen Titel über das Listen-Symbol hinzu.</p>
 {:else}
   <div class="grid">
@@ -40,7 +47,7 @@
         <div class="info">
           <strong>{l.name}</strong>
           <span class="badge">{roleLabel[l.role]}</span>
-          <div class="muted">{l.itemCount} {l.itemCount === 1 ? 'Titel' : 'Titel'} · {l.memberCount} {l.memberCount === 1 ? 'Person' : 'Personen'}{l.role !== 'owner' ? ` · von ${l.owner.name}` : ''}</div>
+          <div class="muted">{l.itemCount} Titel · {l.memberCount} {l.memberCount === 1 ? 'Person' : 'Personen'}{l.role !== 'owner' ? ` · von ${l.owner.name}` : ''}</div>
         </div>
       </a>
     {/each}
@@ -59,4 +66,5 @@
   .badge { margin-left: .4rem; font-size: .72rem; border: 1px solid rgba(255,255,255,.4); padding: 0 .4rem; border-radius: 3px; }
   .muted { color: var(--mut); font-size: .85rem; margin-top: .25rem; }
   .err { color: var(--err, #e5646e); }
+  .state { padding: 1rem 0 2rem; }
 </style>

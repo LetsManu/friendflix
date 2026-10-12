@@ -1,6 +1,6 @@
 <script lang="ts">
   import '../app.css';
-  import { onMount } from 'svelte';
+  import { onMount, tick } from 'svelte';
   import { afterNavigate, beforeNavigate, goto, onNavigate } from '$app/navigation';
   import { pageStore } from '#lib/page';
   const page = pageStore();
@@ -26,6 +26,9 @@
   let searchEl: HTMLInputElement;
   let online = true;
   let intro = false;
+  /** phone layout (same breakpoint as the tab bar): the avatar opens the "Mehr" sheet instead of the desktop dropdown */
+  let mobile = false;
+  let sheetEl: HTMLElement | undefined, moreTrigger: HTMLElement | null = null, dragY = 0, dragging = false, dragStart = 0;
   $: canDownload = Boolean(me?.downloads?.allowed);
   $: links = canDownload ? [...menuLinks.slice(0, 3), ['/downloads', 'Downloads', 'download'] as [string, string, string], ...menuLinks.slice(3)] : menuLinks;
 
@@ -36,6 +39,20 @@
   $: heroPage = path === '/' || path.startsWith('/item/');
   $: unread = notes.filter((n) => !n.read).length;
   $: if (path) { menu = false; bell = false; more = false; }
+  $: if (typeof document !== 'undefined') document.documentElement.style.overflow = more ? 'hidden' : ''; // no page scroll behind the sheet
+  const sheetGroups: Array<{ title: string; hrefs: string[] }> = [
+    { title: 'Entdecken', hrefs: ['/tonight', '/collections', '/upcoming', '/match', '/party', '/vote', '/now', '/calendar'] },
+    { title: 'Meine Sachen', hrefs: ['/favorites', '/lists', '/history', '/downloads', '/requests', '/stats'] },
+    { title: 'Konto & Einstellungen', hrefs: ['/remote', '/settings', '/devices'] },
+  ];
+  /** every entry of `links` lands in exactly one group (unknown ones fall back to "Meine Sachen") */
+  $: sections = (() => {
+    const groups = sheetGroups.map((g) => ({ title: g.title, items: [] as Array<[string, string, string]> }));
+    for (const l of links) (groups.find((g, i) => sheetGroups[i].hrefs.includes(l[0])) ?? groups[1]).items.push(l);
+    for (const g of groups) { const order = sheetGroups.find((x) => x.title === g.title)!.hrefs; g.items.sort((a, b) => (order.indexOf(a[0]) + 99) % 99 - (order.indexOf(b[0]) + 99) % 99); }
+    return groups;
+  })();
+  const isActive = (href: string) => path === href || path.startsWith(href + '/');
   $: if (!publicPage) document.documentElement.classList.toggle('tv', tv);
 
   const tabs: Array<[string, string, string]> = [['/', 'Start', 'home'], ['/browse/series', 'Serien', 'film'], ['/browse/movies', 'Filme', 'film'], ['/new', 'Neu & beliebt', 'star'], ['/watchlist', 'Meine Liste', 'plus']];
@@ -46,7 +63,7 @@
 
   async function loadNotes() { try { notes = (await api('/api/notifications')).notifications; } catch { /* ignore */ } }
   async function toggleBell() {
-    bell = !bell; menu = false;
+    bell = !bell; menu = false; more = false;
     if (bell && unread) { await api('/api/notifications/read', { method: 'POST' }); setTimeout(loadNotes, 1500); }
   }
   async function logout() {
@@ -60,7 +77,26 @@
   async function surprise() {
     try { goto(`/item/${(await api('/api/library/random?type=Movie')).item.id}`); } catch { goto('/browse/movies'); }
   }
-  function openSearch() { searchOpen = true; setTimeout(() => searchEl?.focus(), 30); }
+  function openSearch() { if (mobile) { void goto('/search'); return; } searchOpen = true; setTimeout(() => searchEl?.focus(), 30); }
+  function openMore(e: Event) {
+    moreTrigger = e.currentTarget as HTMLElement; menu = false; bell = false;
+    if (more) { closeMore(true); return; }
+    more = true; dragY = 0; dragging = false;
+    void tick().then(() => sheetEl?.querySelector<HTMLElement>('a[href], button')?.focus());
+  }
+  function closeMore(refocus = false) { more = false; dragY = 0; dragging = false; if (refocus) moreTrigger?.focus(); }
+  function trapTab(e: KeyboardEvent) {
+    const els = [...(sheetEl?.querySelectorAll<HTMLElement>('a[href], button:not([disabled])') ?? [])];
+    if (!els.length) return;
+    const first = els[0], last = els[els.length - 1], a = document.activeElement;
+    if (!sheetEl?.contains(a)) { e.preventDefault(); first.focus(); }
+    else if (e.shiftKey && a === first) { e.preventDefault(); last.focus(); }
+    else if (!e.shiftKey && a === last) { e.preventDefault(); first.focus(); }
+  }
+  // swipe down on the grab zone closes the sheet (threshold 80 px)
+  function dragDown(e: PointerEvent) { dragging = true; dragStart = e.clientY; dragY = 0; (e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId); }
+  function dragMove(e: PointerEvent) { if (dragging) dragY = Math.max(0, e.clientY - dragStart); }
+  function dragEnd() { if (!dragging) return; const far = dragY > 80; dragging = false; dragY = 0; if (far) closeMore(true); }
   function submitSearch() { if (q.trim()) goto(`/search?q=${encodeURIComponent(q.trim())}`); }
   function onKey(e: KeyboardEvent) {
     // "/" and Ctrl/Cmd+K jump to the search field (not while typing somewhere else)
@@ -69,9 +105,10 @@
       const typing = el && (isEditable(el) || el.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName));
       if (!typing || e.key !== '/') { e.preventDefault(); openSearch(); return; }
     }
+    if (e.key === 'Tab' && more) trapTab(e);
     const back = e.key === 'Escape' || (tv && isBackKey(e));
     if (!back) return;
-    if (menu || bell || more) { menu = bell = more = false; if (tv) e.preventDefault(); return; } // dropdowns close first
+    if (menu || bell || more) { const wasMore = more; menu = bell = more = false; if (wasMore) moreTrigger?.focus(); if (tv || wasMore) e.preventDefault(); return; } // dropdowns close first
     if (e.key === 'Escape' && !q) searchOpen = false;
     // TV: Back/Escape walks one step back (the detail popup closes itself on Escape; the player handles its own keys)
     if (tv && !watchPage && !(e.key === 'Escape' && $page.state.modalId) && !isEditable(e.target as Element)) {
@@ -139,6 +176,11 @@
 
   let stops: Array<() => void> = [];
   onMount(() => {
+    const mq = matchMedia('(max-width: 720px)');
+    mobile = mq.matches;
+    const onMq = () => { mobile = mq.matches; menu = bell = more = false; searchOpen = false; }; // never leave a stray dropdown across the breakpoint
+    mq.addEventListener('change', onMq);
+    stops.push(() => mq.removeEventListener('change', onMq));
     const onScroll = () => (scrolled = window.scrollY > 10);
     onScroll();
     window.addEventListener('scroll', onScroll, { passive: true });
@@ -210,7 +252,7 @@
       </nav>
       <span class="sp"></span>
       <form class="search" class:open={searchOpen} on:submit|preventDefault={submitSearch} role="search">
-        <button type="button" class="icon-btn" aria-label="Suche öffnen" on:click={() => (searchOpen ? submitSearch() : openSearch())}><Icon name="search" size={22} /></button>
+        <button type="button" class="icon-btn" aria-label="Suche öffnen" on:click={() => (searchOpen && !mobile ? submitSearch() : openSearch())}><Icon name="search" size={22} /></button>
         <input bind:this={searchEl} bind:value={q} placeholder="Titel, Person, Genre, Jahr …" aria-label="Suche" on:blur={() => { if (!q) searchOpen = false; }} />
       </form>
       <button class="icon-btn hide-s" aria-label="Überrasch mich" title="Überrasch mich" on:click={surprise}><Icon name="shuffle" size={21} /></button>
@@ -220,13 +262,13 @@
         </button>
         {#if bell}
           <div class="drop wide" role="menu">
-            {#each notes as n}<a href={n.link ?? '#'} class:muted={n.read} role="menuitem">{n.title}</a>{:else}<span class="muted pad">Keine Benachrichtigungen</span>{/each}
+            {#each notes as n}{#if n.link}<a href={n.link} class:muted={n.read} role="menuitem">{n.title}</a>{:else}<span class="note" class:muted={n.read} role="none">{n.title}</span>{/if}{:else}<span class="muted pad">Keine Benachrichtigungen</span>{/each}
           </div>
         {/if}
       </div>
       <div class="pop-anchor">
-        <button class="avatar" aria-label="Profilmenü" aria-expanded={menu} on:click={() => { menu = !menu; bell = false; }}><span class="face" style={me.profile ? `background:${avatarBg(me.profile.avatar)}` : undefined}>{initial(me.profile?.name ?? me.name)}</span><i class="caret" class:up={menu}></i></button>
-        {#if menu}
+        <button class="avatar" aria-label="Profilmenü" aria-haspopup={mobile ? 'dialog' : 'menu'} aria-expanded={mobile ? more : menu} on:click={(e) => { if (mobile) openMore(e); else { menu = !menu; bell = false; more = false; } }}><span class="face" style={me.profile ? `background:${avatarBg(me.profile.avatar)}` : undefined}>{initial(me.profile?.name ?? me.name)}</span><i class="caret" class:up={menu}></i></button>
+        {#if menu && !mobile}
           <div class="drop" role="menu">
             <div class="who"><b>{me.profile?.name ?? me.name}</b><span class="muted">{me.roleLabel}</span></div>
             <a href="/profiles" role="menuitem"><Icon name="users" size={18} />Profil wechseln</a>
@@ -242,13 +284,30 @@
       <a href="/browse/series" class:active={path.startsWith('/browse')}><Icon name="film" size={22} /><span>Entdecken</span></a>
       <a href="/search" class:active={path.startsWith('/search')}><Icon name="search" size={22} /><span>Suche</span></a>
       <a href="/watchlist" class:active={path.startsWith('/watchlist')}><Icon name="plus" size={22} /><span>Liste</span></a>
-      <button class="tab" aria-expanded={more} on:click|stopPropagation={() => (more = !more)}><Icon name="menu" size={22} /><span>Mehr</span></button>
+      <button class="tab" class:active={more} aria-haspopup="dialog" aria-expanded={more} on:click|stopPropagation={openMore}><Icon name="menu" size={22} /><span>Mehr</span></button>
     </nav>
-    {#if more}
-      <div class="sheet" role="menu">
-        {#each links as [href, label, icon]}<a {href} role="menuitem"><Icon name={icon} size={20} />{label}</a>{/each}
-        {#if me.isAdmin && me.profile?.isOwner}<a href="/admin" role="menuitem"><Icon name="shield" size={20} />Admin</a>{/if}
-        <button class="plain" on:click={logout}><Icon name="log-out" size={20} />Abmelden</button>
+    {#if more && mobile}
+      <!-- svelte-ignore a11y-click-events-have-key-events a11y-no-static-element-interactions -->
+      <div class="backdrop" on:click={() => closeMore(true)}></div>
+      <div class="sheet" class:dragging role="dialog" aria-modal="true" aria-label="Mehr" bind:this={sheetEl} style={dragY ? `transform:translateY(${dragY}px)` : undefined}>
+        <!-- svelte-ignore a11y-no-static-element-interactions -->
+        <div class="grab" on:pointerdown={dragDown} on:pointermove={dragMove} on:pointerup={dragEnd} on:pointercancel={dragEnd}>
+          <span class="handle" aria-hidden="true"></span>
+          <div class="prof">
+            <span class="face" style={me.profile ? `background:${avatarBg(me.profile.avatar)}` : undefined}>{initial(me.profile?.name ?? me.name)}</span>
+            <span class="who2"><b>{me.profile?.name ?? me.name}</b><span class="muted">{me.roleLabel}</span></span>
+          </div>
+        </div>
+        <a class="row" href="/profiles"><Icon name="users" size={20} />Profil wechseln</a>
+        {#each sections as g (g.title)}
+          {@const admin = g.title === 'Konto & Einstellungen' && me.isAdmin && me.profile?.isOwner}
+          {#if g.items.length || admin}
+            <h2 class="sh">{g.title}</h2>
+            {#each g.items as [href, label, icon] (href)}<a class="row" {href} class:active={isActive(href)} aria-current={isActive(href) ? 'page' : undefined}><Icon name={icon} size={20} />{label}</a>{/each}
+            {#if admin}<a class="row" href="/admin" class:active={isActive('/admin')} aria-current={isActive('/admin') ? 'page' : undefined}><Icon name="shield" size={20} />Admin</a>{/if}
+          {/if}
+        {/each}
+        <button class="row plain out" on:click={logout}><Icon name="log-out" size={20} />Abmelden</button>
       </div>
     {/if}
   {/if}
@@ -302,6 +361,8 @@
   .caret.up { transform: rotate(180deg); }
   .drop { position: absolute; right: 0; top: calc(100% + 6px); background: rgba(0,0,0,.94); border: 1px solid #333; border-radius: 4px; min-width: 220px; padding: .4rem 0; display: flex; flex-direction: column; box-shadow: 0 12px 30px rgba(0,0,0,.7); }
   .drop.wide { width: min(340px, 90vw); }
+  .drop .note { display: block; padding: .55rem 1rem; font-size: .9rem; color: #e5e5e5; }
+  .drop .note.muted { color: var(--mut); }
   .drop a, .drop .plain { display: flex; gap: .7rem; align-items: center; padding: .55rem 1rem; font-size: .9rem; color: #e5e5e5; min-height: 44px; }
   .drop a:hover, .drop .plain:hover { text-decoration: underline; background: transparent; }
   .plain { background: transparent; border-radius: 0; justify-content: flex-start; font-weight: 400; width: 100%; }
@@ -314,12 +375,31 @@
   @media (max-width: 900px) { .links { display: none; } .hide-s { display: none; } }
   @media (max-width: 720px) {
     .tabbar { display: flex; position: fixed; bottom: 0; left: 0; right: 0; z-index: 60; background: rgba(10,10,10,.97); border-top: 1px solid #262626; padding-bottom: env(safe-area-inset-bottom); }
-    .tabbar a, .tabbar .tab { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: .1rem; min-height: 56px; font-size: .68rem; color: var(--mut); background: transparent; border-radius: 0; font-weight: 500; }
-    .tabbar a.active { color: #fff; }
-    .sheet { position: fixed; left: 0; right: 0; bottom: calc(56px + env(safe-area-inset-bottom)); z-index: 59; background: #0d0d0d; border-top: 1px solid #333; display: grid; grid-template-columns: 1fr 1fr; padding: .4rem; }
-    .sheet a, .sheet .plain { display: flex; gap: .6rem; align-items: center; padding: .7rem; min-height: 48px; color: #e5e5e5; }
+    .tabbar a, .tabbar .tab { flex: 1 1 0; min-width: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: .1rem; min-height: 56px; padding: 0 2px; font-size: .68rem; color: var(--mut); background: transparent; border-radius: 0; font-weight: 500; }
+    .tabbar span { max-width: 100%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .tabbar a.active, .tabbar .tab.active { color: #fff; }
+    .tabbar .tab.active { font-weight: 700; }
+    .backdrop { position: fixed; inset: 0; z-index: 70; background: rgba(0,0,0,.6); animation: fade .2s ease-out; }
+    .sheet { position: fixed; left: 0; right: 0; bottom: 0; z-index: 71; max-height: 80vh; max-height: 80dvh; overflow-y: auto; overscroll-behavior: contain; background: #121212; border-top: 1px solid #333; border-radius: 16px 16px 0 0; padding: 0 .5rem calc(.5rem + env(safe-area-inset-bottom)); display: flex; flex-direction: column; animation: rise .26s var(--ease, ease-out); }
+    .sheet.dragging { transition: none; }
+    .grab { touch-action: none; cursor: grab; position: sticky; top: 0; background: #121212; z-index: 1; padding: 0 .5rem .4rem; margin: 0 -.5rem; }
+    .handle { display: block; width: 40px; height: 4px; border-radius: 99px; background: #555; margin: 10px auto 12px; }
+    .prof { display: flex; align-items: center; gap: .8rem; }
+    .who2 { display: flex; flex-direction: column; min-width: 0; }
+    .who2 b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .sh { margin: 1rem .6rem .2rem; font-size: .72rem; text-transform: uppercase; letter-spacing: .08em; color: var(--mut); font-weight: 700; }
+    .row { display: flex; gap: .8rem; align-items: center; padding: .6rem .6rem; min-height: 48px; color: #e5e5e5; border-radius: 8px; font-size: .95rem; }
+    .row.active { background: rgba(255,255,255,.1); color: #fff; font-weight: 700; }
+    .row.out { margin-top: .8rem; border-top: 1px solid #2a2a2a; border-radius: 0 0 8px 8px; }
+    .caret { display: none; }
+    .search input, .search.open input { display: none; }
+    .drop.wide { position: fixed; left: 0; right: 0; top: var(--nav-h); width: auto; max-height: calc(100dvh - var(--nav-h) - 72px); overflow-y: auto; border-radius: 0 0 8px 8px; border-left: 0; border-right: 0; }
+    .drop.wide a, .drop.wide .pad { min-height: 48px; }
+    @keyframes rise { from { transform: translateY(100%); } to { transform: none; } }
+    @keyframes fade { from { opacity: 0; } to { opacity: 1; } }
+    @media (prefers-reduced-motion: reduce) { .sheet, .backdrop { animation: none; } }
     main { padding-bottom: 70px; }
     .nav { background: linear-gradient(to bottom, rgba(0,0,0,.85), transparent); }
   }
-  @media (min-width: 721px) { .sheet { display: none; } }
+  @media (min-width: 721px) { .sheet, .backdrop { display: none; } }
 </style>

@@ -12,20 +12,32 @@ export async function loadList() {
   }
 }
 
-export async function toggleList(id: string, on: boolean) {
-  listIds.update((s) => {
+const listBusy = new Set<string>();
+/** Message callers show (role="status") when saving "Meine Liste" / a favourite failed. */
+export const SAVE_FAILED = 'Konnte nicht gespeichert werden.';
+
+/**
+ * Adds/removes an item on "Meine Liste" optimistically. `on` is the current state (true = remove).
+ * Resolves true when saved, false when it failed (state is rolled back). A second call for the same
+ * id while one is in flight is ignored and resolves true (nothing to report).
+ */
+export async function toggleList(id: string, on: boolean): Promise<boolean> {
+  if (listBusy.has(id)) return true;
+  listBusy.add(id);
+  const set = (present: boolean) => listIds.update((s) => {
     const n = new Set(s);
-    if (on) n.delete(id); else n.add(id);
+    if (present) n.add(id); else n.delete(id);
     return n;
   });
+  set(!on);
   try {
     await api(`/api/items/${id}/watchlist`, { method: on ? 'DELETE' : 'POST' });
+    return true;
   } catch {
-    listIds.update((s) => {
-      const n = new Set(s);
-      if (on) n.add(id); else n.delete(id);
-      return n;
-    });
+    set(on);
+    return false;
+  } finally {
+    listBusy.delete(id);
   }
 }
 
