@@ -3,9 +3,9 @@
   import { pageStore } from '#lib/page';
   const page = pageStore();
   import { replaceState } from '$app/navigation';
-  import { api, getActiveProfile, img, type Item } from '#lib/api';
+  import { api, ApiError, getActiveProfile, img, type Item } from '#lib/api';
   import Card from '#lib/Card.svelte';
-  import { clearRecent, isYear, loadRecent, pushRecent } from '#lib/discovery';
+  import { alreadyWished, clearRecent, isYear, loadRecent, pushRecent, wishCandidates, type SeerrHit } from '#lib/discovery';
 
   interface Person { id: string; name: string; image: boolean }
   interface Result { q: string; titles: Item[]; episodes: Item[]; people: Person[]; genres: string[]; partial: boolean }
@@ -13,11 +13,44 @@
   let input = '', term = '', pushed: string | null = null, seenUrl: string | null = null, status: 'idle' | 'loading' | 'error' | 'done' = 'idle';
   let res: Result | null = null, recent: string[] = [], t: ReturnType<typeof setTimeout>, seq = 0, ctl: AbortController | undefined, inputEl: HTMLInputElement;
 
+  // "Noch nicht in der Bibliothek": Seerr hits, loaded independently so they never block the library results
+  let wishes: SeerrHit[] = [], wishMsg = '', wishSeq = 0, wishCtl: AbortController | undefined, sent = new Set<string>(), sending = '';
+  let quotaFull = '';
+  const wkey = (w: SeerrHit) => `${w.mediaType}:${w.tmdbId}`;
+  async function loadWishes(q: string) {
+    wishCtl?.abort();
+    const my = ++wishSeq;
+    wishes = []; wishMsg = ''; sent = new Set(); quotaFull = '';
+    if (q.length < 2 || isYear(q)) return;
+    wishCtl = new AbortController();
+    try {
+      const r = await api<{ results: SeerrHit[] }>(`/api/seerr/search?q=${encodeURIComponent(q)}`, { signal: wishCtl.signal });
+      if (my === wishSeq) wishes = wishCandidates(r.results, 8);
+    } catch { /* Seerr may be off: hide the section */ }
+  }
+  async function wish(w: SeerrHit) {
+    if (sending) return;
+    sending = wkey(w); wishMsg = '';
+    try {
+      await api('/api/requests', { method: 'POST', body: { mediaType: w.mediaType, tmdbId: w.tmdbId } });
+      sent.add(wkey(w)); sent = sent;
+      wishMsg = `„${w.title}“ wurde gewünscht. Ein Admin gibt es frei.`;
+    } catch (e) {
+      if (e instanceof ApiError && e.status === 429 && e.body?.error === 'request_limit') {
+        const d = e.body.resetsAt ? new Date(e.body.resetsAt).toLocaleDateString('de-DE') : '';
+        quotaFull = wishMsg = d ? `Limit erreicht – neue Wünsche ab ${d}` : 'Limit erreicht – derzeit keine neuen Wünsche möglich.';
+      } else if (e instanceof ApiError && e.status === 409) { sent.add(wkey(w)); sent = sent; wishMsg = 'Schon gewünscht'; }
+      else wishMsg = 'Wunsch konnte nicht gestellt werden.';
+    }
+    sending = '';
+  }
+
   $: urlQ = ($page.url.searchParams.get('q') ?? '').trim();
   // initial value, back/forward and header-search submits come in through the URL; our own replaceState calls are skipped.
   // React to URL changes only: commit() updates `pushed` before $page catches up, and comparing against it then reset the input.
   $: if (urlQ !== seenUrl) { seenUrl = urlQ; if (urlQ !== pushed) { pushed = urlQ; clearTimeout(t); input = urlQ; term = urlQ; } }
   $: void search(term);
+  $: if (status === 'done') void loadWishes(term); else if (status === 'idle') void loadWishes('');
 
   async function search(q: string) {
     ctl?.abort();
@@ -68,6 +101,8 @@
 </form>
 
 <p class="sr-only" role="status" aria-live="polite">{#if status === 'done' && res}{count} Treffer{/if}</p>
+<p class="wishmsg" role="status" aria-live="polite">{wishMsg}</p>
+
 
 {#if status === 'idle'}
   {#if term.length === 0 && recent.length}
@@ -83,7 +118,7 @@
 {:else if res}
   {#if res.partial}<p class="muted note">Einige Ergebnisse konnten nicht geladen werden.</p>{/if}
   {#if empty}
-    <div class="empty"><h2>Keine Treffer für „{term}“</h2><p class="muted">Der Titel ist (noch) nicht in der Bibliothek.</p><a class="btn" href="/requests?q={encodeURIComponent(term)}">Als Wunsch eintragen</a></div>
+    <div class="empty"><h2>Keine Treffer für „{term}“</h2><p class="muted">Der Titel ist (noch) nicht in der Bibliothek.</p>{#if !wishes.length}<a class="btn" href="/requests?q={encodeURIComponent(term)}">Als Wunsch eintragen</a>{/if}</div>
   {:else}
     {#if res.people.length}
       <section aria-labelledby="sp"><h2 id="sp" class="sh">Personen</h2>
@@ -110,9 +145,32 @@
   {/if}
 {/if}
 
+{#if status === 'done' && wishes.length}
+  <section class="wishes" aria-labelledby="sw"><h2 id="sw" class="sh">Noch nicht in der Bibliothek</h2>
+    <ul class="wl">{#each wishes as w (wkey(w))}
+      <li>
+        {#if w.poster}<img src={w.poster} alt="" loading="lazy" width="56" height="84" />{:else}<span class="ph" aria-hidden="true"></span>{/if}
+        <div class="wi"><b>{w.title}</b><span class="muted">{w.year ?? ''}{w.year ? ' · ' : ''}{w.mediaType === 'tv' ? 'Serie' : 'Film'}</span></div>
+        {#if sent.has(wkey(w))}<button type="button" disabled>Gewünscht</button>
+        {:else if alreadyWished(w.status)}<span class="badge">Bereits gewünscht</span>
+        {:else}<button type="button" disabled={sending !== '' || quotaFull !== ''} aria-label="{w.title} wünschen" on:click={() => wish(w)}>Wünschen</button>{/if}
+      </li>
+    {/each}</ul>
+    <p class="muted note"><a href="/requests?q={encodeURIComponent(term)}">Mehr auf der Wunschseite</a></p>
+  </section>
+{/if}
+
 <style>
   .big { width: 100%; max-width: 640px; font-size: 1.2rem; min-height: 54px; margin-bottom: 1.5rem; }
   .empty { text-align: center; padding: 4rem 0; }
+  .wishmsg { min-height: 1.4em; margin: 0 0 .5rem; color: var(--mut); }
+  .wl { display: grid; gap: .6rem; max-width: 640px; }
+  .wl li { display: flex; align-items: center; gap: .8rem; background: var(--surface-2); border-radius: 6px; padding: .5rem; }
+  .wl img, .ph { width: 56px; height: 84px; flex: none; object-fit: cover; border-radius: 4px; background: #333; }
+  .wi { flex: 1; min-width: 0; display: flex; flex-direction: column; overflow-wrap: anywhere; }
+  .wl button, .badge { min-height: 44px; min-width: 44px; flex: none; }
+  .badge { display: inline-flex; align-items: center; padding: 0 .8rem; border: 1px solid rgba(255,255,255,.4); border-radius: 99px; font-size: .85rem; }
+  .wishes a { display: inline-flex; align-items: center; min-height: 44px; }
   .note { font-size: .88rem; margin: 0 0 1rem; }
   .sh { font-size: 1.15rem; margin: 1.2rem 0 .8rem; }
   .rhead { justify-content: space-between; max-width: 640px; } .rhead h2 { font-size: 1rem; margin: 0; }

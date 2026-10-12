@@ -12,6 +12,7 @@ import { defaultLimit } from '../requestlimit.js';
 import { INVITABLE_ROLES, effectiveRole, invalidateRoles } from '../roles.js';
 import { requireAdmin, requireOwner, requireUser } from '../session.js';
 import { portainerMode, triggerUpdate, updateInfo } from '../updates.js';
+import { MAX_FEATURED } from '../lists.js';
 import { accountJellyfinIds } from '../profiles.js';
 import { applyRole, getUserById, reapplyRole } from '../users.js';
 
@@ -204,6 +205,30 @@ export function adminRoutes(app: FastifyInstance, ctx: Ctx) {
     await deleteAuthentikInvitation(ctx, r.rows[0]?.authentik_invite, req.log);
     await audit(ctx, req.user!.id, 'invite.revoke', id);
     return { ok: true };
+  });
+
+  app.get('/api/admin/lists', admin, async () => {
+    const r = await ctx.db.query<{ id: string; name: string; owner_id: string; owner_name: string; item_count: string; featured: boolean }>(
+      `select l.id, l.name, l.owner_id, o.name as owner_name, (select count(*) from list_items i where i.list_id = l.id) as item_count, l.featured_at is not null as featured
+         from lists l join users o on o.id = l.owner_id order by l.created_at desc limit 200`);
+    return { lists: r.rows.map((x) => ({ id: x.id, name: x.name, owner: { id: x.owner_id, name: x.owner_name }, itemCount: Number(x.item_count), featured: x.featured })) };
+  });
+
+  app.put('/api/admin/lists/:id/featured', admin, async (req, reply) => {
+    const id = uuid.safeParse((req.params as { id: string }).id);
+    const b = z.object({ featured: z.boolean() }).parse(req.body);
+    if (!id.success) return reply.code(404).send({ error: 'not_found' });
+    const cur = (await ctx.db.query<{ featured: boolean }>('select featured_at is not null as featured from lists where id = $1', [id.data])).rows[0];
+    if (!cur) return reply.code(404).send({ error: 'not_found' });
+    if (b.featured && !cur.featured) {
+      const n = Number((await ctx.db.query<{ c: string }>('select count(*) c from lists where featured_at is not null')).rows[0]!.c);
+      if (n >= MAX_FEATURED) return reply.code(409).send({ error: 'too_many_featured' });
+    }
+    if (b.featured !== cur.featured) {
+      await ctx.db.query('update lists set featured_at = case when $2::boolean then now() else null end where id = $1', [id.data, b.featured]);
+      await audit(ctx, req.user!.id, b.featured ? 'list.feature' : 'list.unfeature', id.data);
+    }
+    return { ok: true, featured: b.featured };
   });
 
   app.get('/api/admin/audit', admin, async (req) => {

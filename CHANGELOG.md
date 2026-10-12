@@ -1,5 +1,8 @@
 # Changelog
 ## [Unreleased]
+### Block 10 – Wünsche aus der Suche, kuratierte Reihen
+- Search shows "Noch nicht in der Bibliothek" with Seerr results and a "Wünschen" button (hidden when Seerr is unavailable).
+- Admins can feature up to 5 lists (Admin → Listen); they appear as rows on everyone's home page ("Empfohlen von …") and are readable by all, with titles filtered per profile. Migration 24: `lists.featured_at`.
 ### Block 9 – Trending, Neue Folgen, Reaktionen
 - Home row "Diese Woche bei uns": what friends watched in the last 7 days (counts only; a title needs 2 viewers unless you are one of them).
 - "Neue Folgen" badge on series you started that got episodes in the last 14 days.

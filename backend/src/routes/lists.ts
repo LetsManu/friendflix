@@ -3,7 +3,7 @@ import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import type { Ctx } from '../ctx.js';
 import { JellyfinError } from '../jellyfin/client.js';
-import { MAX_ITEMS, MAX_MEMBERS, MAX_OWNED, canEdit, listRole, type ListRole } from '../lists.js';
+import { MAX_FEATURED, MAX_FEATURED_ITEMS, MAX_ITEMS, MAX_MEMBERS, MAX_OWNED, canEdit, isFeatured, listRole, type ListAccess, type ListRole } from '../lists.js';
 import { notify } from '../notify.js';
 import { requireUser } from '../session.js';
 import { itemsByIds } from './discover.js';
@@ -22,6 +22,22 @@ export function listRoutes(app: FastifyInstance, ctx: Ctx) {
     if (!parsed.success || !role) { reply.code(404).send({ error: 'not_found' }); return null; }
     return { id: parsed.data, role };
   }
+
+  app.get('/api/lists/featured', pre, async (req) => {
+    const ls = (await ctx.db.query<{ id: string; name: string; description: string | null; owner_name: string }>(
+      `select l.id, l.name, l.description, o.name as owner_name from lists l join users o on o.id = l.owner_id
+        where l.featured_at is not null order by l.featured_at desc limit $1`, [MAX_FEATURED])).rows;
+    const ids = new Map<string, string[]>();
+    for (const l of ls) {
+      ids.set(l.id, (await ctx.db.query<{ item_id: string }>('select item_id from list_items where list_id = $1 order by added_at desc limit 80', [l.id])).rows.map((x) => x.item_id));
+    }
+    const byId = new Map((await itemsByIds(ctx, req.jfUser!, [...new Set([...ids.values()].flat())]).catch(() => [])).map((i) => [i.id, i]));
+    const lists = ls.map((l) => ({
+      id: l.id, name: l.name, description: l.description, owner: { name: l.owner_name },
+      items: ids.get(l.id)!.map((i) => byId.get(i)).filter((x): x is NonNullable<typeof x> => Boolean(x)).slice(0, MAX_FEATURED_ITEMS),
+    })).filter((l) => l.items.length > 0);
+    return { lists };
+  });
 
   app.get('/api/lists', pre, async (req) => {
     const uid = req.user!.id;
@@ -58,8 +74,12 @@ export function listRoutes(app: FastifyInstance, ctx: Ctx) {
   });
 
   app.get('/api/lists/:id', pre, async (req, reply) => {
-    const a = await access(req, reply);
-    if (!a) return;
+    // members see everything; anyone else may read a featured list (read-only, 'guest'); otherwise 404
+    const parsed = uuid.safeParse((req.params as { id: string }).id);
+    if (!parsed.success) return reply.code(404).send({ error: 'not_found' });
+    const role: ListAccess | null = (await listRole(ctx, parsed.data, req.user!.id)) ?? ((await isFeatured(ctx, parsed.data)) ? 'guest' : null);
+    if (!role) return reply.code(404).send({ error: 'not_found' });
+    const a = { id: parsed.data, role };
     const l = (await ctx.db.query<{ id: string; name: string; description: string | null; owner_id: string; owner_name: string }>(
       'select l.id, l.name, l.description, l.owner_id, o.name as owner_name from lists l join users o on o.id = l.owner_id where l.id = $1', [a.id])).rows[0]!;
     const members = (await ctx.db.query<{ id: string; name: string; role: ListRole }>(
@@ -76,7 +96,7 @@ export function listRoutes(app: FastifyInstance, ctx: Ctx) {
     const meta = new Map(rows.map((r) => [r.item_id, r]));
     return {
       list: { id: l.id, name: l.name, description: l.description, owner: { id: l.owner_id, name: l.owner_name }, role: a.role },
-      members: [{ id: l.owner_id, name: l.owner_name, role: 'owner' }, ...members],
+      members: a.role === 'guest' ? [{ id: l.owner_id, name: l.owner_name, role: 'owner' }] : [{ id: l.owner_id, name: l.owner_name, role: 'owner' }, ...members],
       items: items.map((i) => {
         const m = meta.get(i.id)!;
         return { ...i, addedBy: m.by_id ? { id: m.by_id, name: m.by_name! } : null, addedAt: m.added_at, note: m.note };
