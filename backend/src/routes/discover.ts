@@ -105,15 +105,18 @@ export function discoverRoutes(app: FastifyInstance, ctx: Ctx) {
   }));
 
   app.get('/api/recommendations', pre, wrap(async (req) => {
-    const rows = (await ctx.db.query<{ item_id: string; note: string | null; from_name: string }>(
-      `select r.item_id, r.note, u.name from_name from recommendations r join users u on u.id=r.from_user
+    const rows = (await ctx.db.query<{ id: string; item_id: string; note: string | null; from_name: string }>(
+      `select r.id, r.item_id, r.note, u.name from_name from recommendations r join users u on u.id=r.from_user
         where r.to_user=$1 and r.created_at > now() - interval '60 days' order by r.seen, r.created_at desc limit 30`, [req.user!.id])).rows;
     const items = await itemsByIds(ctx, req.jfUser!, [...new Set(rows.map((r) => r.item_id))]);
     const meta = new Map(rows.map((r) => [r.item_id, `Von ${r.from_name}${r.note ? `: ${r.note}` : ''}`]));
-    return { items: items.map((i) => ({ ...i, caption: meta.get(i.id) })) };
+    const shown = new Set(items.map((i) => i.id));
+    return { items: items.map((i) => ({ ...i, caption: meta.get(i.id) })), recIds: rows.filter((r) => shown.has(r.item_id)).map((r) => Number(r.id)) }; // recIds: send back to /seen
   }));
   app.post('/api/recommendations/seen', pre, async (req) => {
-    await ctx.db.query('update recommendations set seen = true where to_user = $1', [req.user!.id]);
+    const b = z.object({ ids: z.array(z.union([z.number().int().positive(), z.string().regex(/^\d{1,15}$/)])).max(200).optional() }).nullish().parse(req.body);
+    if (b?.ids) await ctx.db.query('update recommendations set seen = true where to_user = $1 and id = any($2::bigint[])', [req.user!.id, b.ids.map(String)]);
+    else await ctx.db.query('update recommendations set seen = true where to_user = $1', [req.user!.id]); // legacy: no body marks everything
     return { ok: true };
   });
 
