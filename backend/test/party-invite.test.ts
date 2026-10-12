@@ -9,7 +9,7 @@ let s: { cookies: Record<string, string>; csrf: string };
 let leaId: string, meId: string;
 
 beforeAll(async () => {
-  env = await makeEnv({ 'GET /Items/[^/]+': () => ({ json: { Id: ITEM, Name: 'Alpha', Type: 'Movie' } }), 'GET /Users/[^/]+/Items/[^/]+': () => ({ json: { Id: ITEM, Name: 'Alpha', Type: 'Movie' } }) });
+  env = await makeEnv({ 'GET /Items': () => ({ json: { Items: [{ Id: ITEM, Name: 'Alpha', Type: 'Movie' }], TotalRecordCount: 1 } }), 'GET /Items/[^/]+': () => ({ json: { Id: ITEM, Name: 'Alpha', Type: 'Movie' } }), 'GET /Users/[^/]+/Items/[^/]+': () => ({ json: { Id: ITEM, Name: 'Alpha', Type: 'Movie' } }) });
   s = await env.login();
   meId = (await env.pool.query("select id from users order by created_at limit 1")).rows[0].id;
   leaId = (await env.pool.query(
