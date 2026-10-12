@@ -16,6 +16,9 @@
   import { decideRecovery, freshRecovery, kindOfMediaError, lowerQuality, MAX_NETWORK_TRIES, type ErrorKind } from '#lib/player/retry';
   import { parseVolume, stepVolume } from '#lib/player/volume';
   import { hlsConfig, loadHls } from '#lib/player/hls';
+  import { AbrController, LADDER, pickRung, type Decision } from '#lib/player/abr';
+  import { BandwidthEstimator, loadStoredEstimate, storeEstimate } from '#lib/player/bandwidth';
+  import QualityChip from '#lib/player/QualityChip.svelte';
   import { firstInfoBody, speedLabel, SPEEDS } from '#lib/player/bar';
   import EpisodesPanel from '#lib/player/EpisodesPanel.svelte';
   import CastInfoPanel from '#lib/player/CastInfoPanel.svelte';
@@ -65,6 +68,8 @@
   interface Info {
     playSessionId: string; mediaSourceId: string; directUrl?: string; hlsUrl: string; resumeTicks: number; maxBitrate: number;
     roleMaxBitrate?: number;
+    /** why the server transcodes (absent on direct play) */
+    transcodeReason?: string;
     trickplay?: { width: number; height: number; tileWidth: number; tileHeight: number; count: number; interval: number; url: string };
     /** audio track the server baked into hlsUrl (audioLang matched a non-default track) */
     audioIndex?: number;
@@ -92,6 +97,16 @@
   let spin = false, spinT: ReturnType<typeof setTimeout>, reconnecting = 0, retryT: ReturnType<typeof setTimeout>, rec = freshRecovery(), lastPos = 0, posKnown = false, errPos = 0, errTitle = '', errNote = '';
   function setSpin(on: boolean) { clearTimeout(spinT); if (!on) { spin = false; return; } spinT = setTimeout(() => (spin = true), 500); }
   $: setSpin(waiting && !error && !casting && !reconnecting);
+  // ---- adaptive quality (quality 0 = Auto): bandwidth estimate -> rung; stalls and network errors step down, a good link steps up ----
+  const est = new BandwidthEstimator();
+  let abr: AbrController | null = null, reqHint: 'network' | 'manual' = 'network', switching = false, waitSince = 0, stallHandled = false, stallT: ReturnType<typeof setTimeout>, abrTimer: ReturnType<typeof setInterval>, bwTimer: ReturnType<typeof setInterval>, directSeen = 0;
+  const STALL_NOW_MS = 2100; // a wait this long counts as a stall at once (the controller steps down on > 2 s), not only when playback resumes
+  const rungLabel = (bps: number) => LADDER.find((r) => r.bps === bps)?.key ?? tr('player.quality.mbit', { n: Math.round(bps / 1e6) });
+  const makeAbr = (start: number, pinned?: number) => new AbrController({ now: () => performance.now(), cap: info?.roleMaxBitrate ?? Infinity, start, pinned });
+  /** bit/s asked from the server: the pinned pick, the running controller's rung, or (first load) the rung for the remembered estimate. Infinity = original. */
+  const wantBps = () => (abr ? abr.current : quality || pickRung(loadStoredEstimate(), Infinity));
+  const persistEstimate = () => { if (est.estimate !== null) storeEstimate(est.estimate); };
+  $: chipDirect = mode === 'direct';
   // ---- touch gestures ----
   let locked = false, lockHint = false, lockT: ReturnType<typeof setTimeout>, lockHold = false, coarse = false, volOk = true, brightness = 1;
   let hud: { icon: string; text: string; pct: number } | null = null, hudT: ReturnType<typeof setTimeout>;
@@ -154,8 +169,10 @@
     const fb = first ? firstInfoBody(get(prefs), wantAudio || serPref.audio || animeAudio(animeDefault)) : {};
     if (fb.maxBitrate && !quality) quality = fb.maxBitrate;
     const audioLang = fb.audioLang;
+    if (first) reqHint = quality ? 'manual' : 'network'; // a saved quality is a pick, otherwise the network chooses
+    const sentBps = wantBps();
     try {
-      const got = await api<Info | null>('/api/playback/info', { method: 'POST', body: { itemId, startTicks: startSec !== undefined ? secToTicks(startSec) : undefined, audioIndex, maxBitrate: quality || undefined, audioLang } });
+      const got = await api<Info | null>('/api/playback/info', { method: 'POST', body: { itemId, startTicks: startSec !== undefined ? secToTicks(startSec) : undefined, audioIndex, maxBitrate: Number.isFinite(sentBps) ? sentBps : undefined, reasonHint: reqHint, audioLang } });
       // an empty/foreign answer (204, proxy page ...) has no playback session: show the error instead of crashing on it
       if (!validInfo(got)) throw new ApiError(502, null);
       info = got;
@@ -169,6 +186,7 @@
     if (startSec === undefined) { lastPos = info.resumeTicks / 10_000_000; posKnown = true; } // a retry must not restart at 0 before playback ran
     if (info.audioIndex !== undefined) audioIndex = info.audioIndex;
     if (first && quality && info.roleMaxBitrate && quality >= info.roleMaxBitrate) quality = 0; // saved quality above the role limit = "Automatisch"
+    abr ??= makeAbr(sentBps, quality || undefined);
     // first start only: an older server ignores audioLang -> pick the track here (one extra request, as before)
     if (first) {
       prefsApplied = true;
@@ -200,6 +218,7 @@
       hls = new HC(hlsConfig(startSec));
       hls.loadSource(info.hlsUrl);
       hls.attachMedia(video);
+      hls.on(HC.Events.FRAG_LOADED, (_e, d) => { const st = d.frag.stats; est.add(st.loaded, st.loading.end - st.loading.start); });
       hls.on(HC.Events.ERROR, (_e, d) => {
         if (!d.fatal) return;
         recover(d.type === HC.ErrorTypes.NETWORK_ERROR ? 'network' : d.type === HC.ErrorTypes.MEDIA_ERROR ? 'media' : 'other');
@@ -229,6 +248,8 @@
   function recover(kind: ErrorKind, viaLoad = false) {
     if (casting) return;
     retryViaLoad = viaLoad;
+    // the first retry already failed: the line is the problem, not a hiccup -> a lower rung (none = cooldown or 360p: the usual retries go on and end in giveUp)
+    if (kind === 'network' && !viaLoad && abr && !switching && rec.networkTries >= 1 && applyAbr(abr.onNetworkError())) return;
     const pos = resumePos();
     const d = decideRecovery(kind, rec, { isHls: Boolean(hls), canLowerQuality: lowerStep() !== null });
     if (d.do === 'retry') {
@@ -236,7 +257,7 @@
       clearTimeout(retryT); retryT = setTimeout(() => retryNow(pos), d.delay);
     } else if (d.do === 'recover-media') { rec.mediaRecovered = true; errPos = pos; hls?.recoverMediaError(); }
     else if (d.do === 'force-hls') { rec.forcedHls = true; errPos = pos; flash(tr('player.switchingTranscode'), 2500); wantAutoplay = !paused; load(pos); }
-    else if (d.do === 'lower-quality') { rec.loweredQuality = true; errPos = pos; const q = lowerStep(); if (q) { wantAutoplay = !paused; changeQuality(q); } else giveUp(); }
+    else if (d.do === 'lower-quality') { rec.loweredQuality = true; errPos = pos; const q = lowerStep(); if (q) { wantAutoplay = !paused; abr = makeAbr(q, quality ? q : undefined); void changeQuality(q, 'abr', 3000, tr('player.quality.stepDown', { q: rungLabel(q) })); } else giveUp(); }
     else giveUp();
   }
   function giveUp() { clearTimeout(retryT); reconnecting = 0; waiting = false; errTitle = tr('player.error.title'); error = errNote || tr('player.error.connection'); hls?.stopLoad(); }
@@ -255,8 +276,21 @@
     if (video.error.code === 1) return; // aborted by us
     recover(kind);
   }
+  /** waiting -> start timing; playing -> the stall is over. Seeks and the first buffering after a (re)start are no stalls. */
+  function onWaiting() {
+    waiting = true;
+    if (!video || casting || !started || stopped || video.seeking || waitSince) return;
+    waitSince = performance.now(); stallHandled = false;
+    clearTimeout(stallT); stallT = setTimeout(() => { if (waitSince) { stallHandled = true; onStall(performance.now() - waitSince); } }, STALL_NOW_MS);
+  }
+  function resetStall() { clearTimeout(stallT); waitSince = 0; stallHandled = false; }
+  function onStall(ms: number) {
+    if (!abr || casting || switching || reconnecting || error) return;
+    applyAbr(abr.onStall(ms)); // 'fail' needs nothing here: a stall at the lowest rung just keeps buffering
+  }
   function onPlaying() {
     waiting = false;
+    if (waitSince) { const ms = performance.now() - waitSince, done = stallHandled; resetStall(); if (!done && ms > 0) onStall(ms); }
     if (reconnecting) { reconnecting = 0; flash(tr('player.reconnected'), 1500); }
   }
 
@@ -400,17 +434,35 @@
   }
   const QUALITIES: Array<[string, number]> = [['1080p', 8_000_000], ['720p', 4_000_000], ['480p', 1_500_000], ['360p', 800_000]];
   $: qualityOptions = QUALITIES.filter(([, b]) => b < (info?.roleMaxBitrate ?? Infinity));
-  const qualityToast = (bps: number) => tr('player.quality.changed', { q: bps ? QUALITIES.find(([, b]) => b === bps)?.[0] ?? tr('player.quality.mbit', { n: Math.round(bps / 1e6) }) : tr('player.quality.auto') });
-  async function changeQuality(bps: number) {
+  const qualityToast = (bps: number) => bps ? tr('player.quality.pinned', { q: QUALITIES.find(([, b]) => b === bps)?.[0] ?? tr('player.quality.mbit', { n: Math.round(bps / 1e6) }) }) : tr('player.quality.changed', { q: tr('player.quality.auto') });
+  /** the controller picked a new rung (stall, network error, step-up): reload the stream there and tell the viewer */
+  function applyAbr(d: Decision): boolean {
+    if (d.do !== 'switch') return false;
+    wantAutoplay = false;
+    void changeQuality(d.bps, 'abr', 3000, tr(d.reason === 'up' ? 'player.quality.stepUp' : 'player.quality.stepDown', { q: rungLabel(d.bps) }));
+    return true;
+  }
+  /** 'manual' = the viewer's pick (0 = Auto; a rung is pinned: no step-up); 'abr' = the controller already moved to `bps` */
+  async function changeQuality(bps: number, how: 'manual' | 'abr' = 'manual', ms = 1100, msg = '') {
     menu = '';
-    if (bps === quality) return;
+    if (how === 'manual' && bps === quality) return;
     if (casting) { quality = bps; await recast(castPos); flash(qualityToast(bps)); return; }
+    if (switching) return;
+    switching = true;
+    if (how === 'manual') {
+      quality = bps; reqHint = 'manual';
+      abr = makeAbr(bps || pickRung(est.estimate ?? loadStoredEstimate(), info?.roleMaxBitrate ?? Infinity), bps || undefined);
+    } else {
+      reqHint = 'network'; rec.networkTries = 0; reconnecting = 0; clearTimeout(retryT);
+    }
+    resetStall();
     const pos = video?.currentTime ?? 0, wasPlaying = !(video?.paused ?? true);
-    await send('stop');
-    quality = bps;
-    await load(pos);
-    if (wasPlaying) video?.play().catch(() => undefined);
-    flash(qualityToast(bps));
+    try {
+      await send('stop');
+      await load(pos);
+      if (wasPlaying) video?.play().catch(() => undefined);
+      flash(msg || qualityToast(bps), ms);
+    } finally { switching = false; }
   }
   function setSleep(min: number | 'end') {
     menu = '';
@@ -727,6 +779,19 @@
   const reportTick = () => { if (started && !stopped && !casting && Date.now() - lastSent >= 10_000) send('progress'); };
   const onPlay = () => { fxEngine?.resume(); if (fxActive(fx) && !fxEngine?.routed) void applyFx(true); paused = false; if (stopped) { stopped = false; started = false; } if (!started) { started = true; send('start'); } else send('progress'); };
 
+  /**
+   * Direct play has no fragments: the bandwidth sample is the file's own transfers from the Resource Timing buffer
+   * (bytes of the response body over the time from first to last byte; transfers the browser throttled by itself make it a lower bound).
+   */
+  function sampleDirect() {
+    if (mode !== 'direct' || !info?.directUrl) return;
+    for (const e of performance.getEntriesByName(new URL(info.directUrl, location.href).href, 'resource') as PerformanceResourceTiming[]) {
+      if (e.startTime <= directSeen) continue;
+      directSeen = Math.max(directSeen, e.startTime);
+      est.add(e.encodedBodySize || e.transferSize, e.responseEnd - e.responseStart);
+    }
+  }
+
   onMount(() => {
     if (video) volOk = volumeSettable(video); // iOS cannot set the volume: no volume swipe there
     coarse = matchMedia('(pointer: coarse)').matches;
@@ -741,6 +806,13 @@
     if ($serverCaps.segments.length) api(`/api/items/${itemId}/segments`).then((r) => (segments = (r.segments as typeof segments).map((x) => ({ ...x, type: String(x.type).toLowerCase() })).filter((x) => segmentShown($serverCaps, x.type)))).catch(() => undefined);
     progressTimer = setInterval(() => { if (started && !stopped) send('progress'); }, 10_000);
     pipOk = Boolean(document.pictureInPictureEnabled) && !video?.disablePictureInPicture;
+    // every 5 s: direct-play bandwidth sample + step-up check; every 30 s the estimate is remembered
+    abrTimer = setInterval(() => {
+      sampleDirect();
+      if (!abr || casting || switching || !started || stopped || waiting || reconnecting || error) return;
+      applyAbr(abr.onTick({ estimate: est.estimate, bufferSec: Math.max(0, buffered - current) }));
+    }, 5000);
+    bwTimer = setInterval(persistEstimate, 30_000);
     activityTimer = setInterval(() => {
       tick = Date.now();
       if (casting && castInfo && !castBusy && castInfo.expiresAt - tick < 10 * 60_000) void recast(castPos); // renew the token before it expires
@@ -749,7 +821,7 @@
         else sleepLeft = fmtClock((sleepAt - tick) / 1000);
       }
     }, 500);
-    const bye = () => { if (!stopped) { stopped = true; send('stop', true); } if (casting) { castRevoke(castInfo); castStop(); } };
+    const bye = () => { persistEstimate(); if (!stopped) { stopped = true; send('stop', true); } if (casting) { castRevoke(castInfo); castStop(); } };
     // keep the resume position safe when the tab is hidden / the phone locks (Picture-in-Picture keeps playing: only a progress report, no stop)
     const vis = () => { if (document.visibilityState === 'hidden' && started && !stopped && !casting) send('progress', true); };
     const online = () => { if (reconnecting) retryNow(resumePos()); };
@@ -776,6 +848,7 @@
   });
   onDestroy(() => {
     clearTimeout(peekT); fxEngine?.destroy();
+    persistEstimate(); clearInterval(abrTimer); clearInterval(bwTimer); clearTimeout(stallT);
     clearInterval(progressTimer); clearInterval(activityTimer); clearTimeout(toastTimer); clearTimeout(retryT); clearTimeout(spinT); clearTimeout(pendingTap); clearTimeout(hudT); clearTimeout(rippleT); clearTimeout(lockT); clearTimeout(unlockT); nowPlaying.set(null);
     if (started && !stopped) { stopped = true; send('stop'); }
     if (casting) { castRevoke(castInfo); castStop(); casting = false; } // leaving the page ends the cast session and revokes its token
@@ -790,10 +863,10 @@
   <!-- svelte-ignore a11y_media_has_caption -->
   <video bind:this={video} playsinline crossorigin="use-credentials" style:filter={brightness < 1 ? `brightness(${brightness})` : null}
     on:error={onVideoError}
-    on:play={onPlay} on:pause={() => { paused = true; if (!castBusy && !casting && !stopped) send('progress'); }} on:seeked={() => started && send('progress')}
+    on:play={onPlay} on:pause={() => { paused = true; resetStall(); if (!castBusy && !casting && !stopped) send('progress'); }} on:seeked={() => started && send('progress')}
     on:ended={() => { stopped = true; paused = true; send('stop'); }}
     on:timeupdate={() => { syncTime(); reportTick(); }} on:progress={syncTime} on:loadedmetadata={syncTime}
-    on:waiting={() => (waiting = true)} on:playing={onPlaying} on:canplay={() => { waiting = false; if (wantAutoplay) { wantAutoplay = false; playSafe(); } }}
+    on:waiting={onWaiting} on:seeking={resetStall} on:playing={onPlaying} on:canplay={() => { waiting = false; if (wantAutoplay) { wantAutoplay = false; playSafe(); } }}
     on:volumechange={() => { if (video) { muted = video.muted; } }}
     on:play on:pause on:seeked on:seeking on:waiting on:playing on:canplay on:timeupdate on:ended>
     {#if info}{#each info.subtitles as s}<track id="sub-{s.index}" kind="subtitles" src={s.url} srclang={s.language?.slice(0, 2) ?? 'xx'} label={s.title} />{/each}{/if}
@@ -891,6 +964,7 @@
           <input class="vslider" type="range" min="0" max="1" step="0.05" value={muted ? 0 : volume} aria-label={$t('player.volume.label')} on:input={(e) => setVolume(Number(e.currentTarget.value))} />
         </div>
         <span class="clock">{fmtClock(shown)} / {fmtClock(duration)}</span>
+        {#if info && mode && !casting}<QualityChip direct={chipDirect} label={rungLabel(info.maxBitrate)} reason={info.transcodeReason ?? 'other'} />{/if}
       </div>
       <div class="mid" title={barSub ? `${barTitle} · ${barSub}` : barTitle}>{#if barTitle}<b>{barTitle}</b>{#if barSub}<span>{barSub}</span>{/if}{/if}</div>
       <div class="grp right">

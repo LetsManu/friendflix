@@ -51,11 +51,12 @@ export class AbrController {
   private lastUp = -Infinity;
   private upSince: number | null = null;
 
-  constructor(o: { now: () => number; cap: number; pinned?: number }) {
+  /** `start` = the rung the session was actually requested with (default: pickRung(null, cap)); Infinity = original */
+  constructor(o: { now: () => number; cap: number; pinned?: number; start?: number }) {
     this.now = o.now;
     this.cap = o.cap;
     this.pinned = o.pinned !== undefined;
-    this.cur = o.pinned !== undefined ? Math.max(FLOOR, Math.min(o.pinned, o.cap)) : pickRung(null, o.cap);
+    this.cur = o.pinned !== undefined ? Math.max(FLOOR, Math.min(o.pinned, o.cap)) : o.start !== undefined ? Math.max(FLOOR, Math.min(o.start, o.cap)) : pickRung(null, o.cap);
   }
 
   get current(): number {

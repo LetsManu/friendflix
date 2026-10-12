@@ -201,3 +201,12 @@ describe('AbrController step-up', () => {
     expect(a.onStall(3000)).toEqual({ do: 'switch', bps: 0.8e6, reason: 'stall' });
   });
 });
+
+describe('AbrController start rung', () => {
+  it('starts at the requested rung, clamped to the cap and the floor', () => {
+    expect(new AbrController({ now: () => 0, cap: 20e6, start: 8e6 }).current).toBe(8e6);
+    expect(new AbrController({ now: () => 0, cap: 4e6, start: Infinity }).current).toBe(4e6);
+    expect(new AbrController({ now: () => 0, cap: 20e6, start: 1 }).current).toBe(800_000);
+    expect(new AbrController({ now: () => 0, cap: 20e6 }).current).toBe(4e6);
+  });
+});
