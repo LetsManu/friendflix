@@ -9,6 +9,7 @@ import { createInvite, deleteAuthentikInvitation } from '../invites.js';
 import { checkState, startPlaybackCheck } from '../healthcheck.js';
 import { ERROR_SOURCES, listErrors } from '../errorlog.js';
 import { freshSnapshot } from '../health.js';
+import { activeStreams } from '../playstats.js';
 import { clipPath, libraryItems, previews, serviceUser } from '../previews.js';
 import { stat } from 'node:fs/promises';
 import { defaultLimit } from '../requestlimit.js';
@@ -175,6 +176,8 @@ export function adminRoutes(app: FastifyInstance, ctx: Ctx) {
       })),
     };
   });
+  // Block 22: active streams with play method / reason / codecs (+ other apps) and the failed playbacks of the last 24 h
+  app.get('/api/admin/streams', admin, async () => activeStreams(ctx));
   app.post('/api/admin/live/stop', admin, async (req, reply) => {
     const b = z.object({ userId: uuid, playSessionId: z.string().min(1).max(200) }).parse(req.body);
     const { getLive, clearLive } = await import('../live.js');

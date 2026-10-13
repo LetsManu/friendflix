@@ -1,6 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { DEFS, evaluate, wireStats } from '../achievements.js';
+import { wirePlayStats } from '../playstats.js';
 import type { Ctx } from '../ctx.js';
 import { requireGrownUp } from '../kids.js';
 import { itemsByIds } from './discover.js';
@@ -10,6 +11,7 @@ const MAX_CANDIDATES = 300;
 export function statsRoutes(app: FastifyInstance, ctx: Ctx) {
   const pre = { preHandler: requireGrownUp(ctx) }; // stats/achievements/community: not on kids profiles
   wireStats(ctx);
+  wirePlayStats(); // Block 22: streams / transcodes per day and device
 
   app.get('/api/stats/me', pre, async (req) => {
     const year = z.coerce.number().int().min(2020).max(2100).default(new Date().getFullYear()).parse((req.query as { year?: string }).year);

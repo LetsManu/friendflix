@@ -848,10 +848,14 @@ export class JellyfinService implements MediaServer {
       /** sessions of other apps: FriendFlix' own devices ("ff-<id>") are tracked by the portal itself */
       externalSessions: async (): Promise<ExternalSession[]> => (await client.sessions())
         .filter((s) => s.NowPlayingItem && !String(s.DeviceId ?? '').startsWith('ff-'))
-        .map((s) => ({
-          sessionId: String(s.Id), serverUserId: String(s.UserId), positionTicks: s.PlayState?.PositionTicks ?? 0, isPaused: Boolean(s.PlayState?.IsPaused),
-          item: { id: s.NowPlayingItem.Id, name: s.NowPlayingItem.Name, seriesName: s.NowPlayingItem.SeriesName, type: s.NowPlayingItem.Type, runtimeTicks: s.NowPlayingItem.RunTimeTicks },
-        })),
+        .map((s) => {
+          const d = toServerSession(s); // Block 22: client, play method, reasons (whitelisted fields only)
+          return {
+            sessionId: String(s.Id), serverUserId: String(s.UserId), positionTicks: s.PlayState?.PositionTicks ?? 0, isPaused: Boolean(s.PlayState?.IsPaused),
+            item: { id: s.NowPlayingItem.Id, name: s.NowPlayingItem.Name, seriesName: s.NowPlayingItem.SeriesName, type: s.NowPlayingItem.Type, runtimeTicks: s.NowPlayingItem.RunTimeTicks },
+            ...(d ? { client: d.client, playMethod: d.playMethod, reasons: d.reasons } : {}),
+          };
+        }),
       /** Block 22: every playing session (FriendFlix devices included) with play method, reasons, codecs and hardware flag */
       transcodeSessions: async (): Promise<ServerSession[]> => (await client.allSessions()).flatMap((s) => {
         const d = toServerSession(s);

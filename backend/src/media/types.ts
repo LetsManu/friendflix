@@ -257,6 +257,8 @@ export interface ItemStreams { id?: string; seriesId?: string; audio: string[]; 
 export interface ExternalSession {
   sessionId: string; serverUserId: string; positionTicks: number; isPaused: boolean;
   item: { id: string; name: string; seriesName?: string; type?: string; runtimeTicks?: number };
+  /** Block 22 (optional): the app's name, play method and transcode reasons (stream counting per app) */
+  client?: string; playMethod?: 'DirectPlay' | 'DirectStream' | 'Transcode'; reasons?: TranscodeReason[];
 }
 /** What the gateway (and Plan B) needs to act as the user upstream. Never sent to browsers. */
 export interface MediaCredentials { token: string; deviceId: string }
