@@ -56,6 +56,29 @@ Nach Jellyfin-Updates: `JELLYFIN_URL=… ./scripts/gen-jellyfin-client.sh` und D
 
 Sicherheit: Webhook-URL und Token können den Stack neu deployen. Am besten einen eigenen Portainer-Benutzer nur mit Zugriff auf dieses eine Stack verwenden (kein Admin) und das Token ausschließlich in der `.env`/den Docker-Secrets ablegen. Beide Werte erscheinen weder in Antworten noch in Logs. Pro 2 Minuten ist ein Update möglich; jeder Auslöser steht als `system.update` im Audit-Log. Optional senkt `GITHUB_TOKEN` (ohne Rechte) das GitHub-Limit-Risiko; Ergebnisse werden 10 Minuten gecacht.
 
+## Warnband und Status-Seite
+Admins sehen im Hauptprofil ein schmales **Warnband** unter der Kopfzeile, sobald auf der Status-Seite etwas gelb oder rot ist (Grenzwerte: [monitoring.md](monitoring.md#zustand-im-portal-admin--status)). Rot steht vor Gelb, jede Meldung ist ein ganzer Satz, „Ansehen“ führt zur Status-Seite. „Ausblenden“ gilt pro Admin und Meldung, bis sie sich ändert (andere Stufe oder anderer Grund; nur eine andere Zahl, etwa 86 statt 85 %, blendet sie nicht wieder ein); Ausblendungen werden nach 30 Tagen vergessen. Im Player, in der Watch-Party, im TV-Modus, auf öffentlichen Seiten, in Kinder- und Nebenprofilen erscheint das Band nie.
+
+| Meldung | Was tun |
+| --- | --- |
+| Medienserver nicht erreichbar | Läuft der Medienserver-Container? Stimmt `JELLYFIN_URL` (interne Adresse) und ist der API-Schlüssel noch gültig? Ohne Medienserver läuft keine Wiedergabe. |
+| Datenbank / Redis nicht erreichbar | `docker compose ps`, Logs von `postgres` / `redis`; voller Datenträger ist die häufigste Ursache. Das Backend meldet dann auch `/health/ready` als nicht bereit. |
+| Gateway nicht erreichbar | Gateway-Container und `GATEWAY_URL` prüfen (Standard `http://gateway:4000`); ohne Gateway laufen keine Streams und Downloads. |
+| Login nicht erreichbar / anderer Aussteller | Authentik erreichbar? `OIDC_ISSUER` muss genau dem `issuer` im Discovery-Dokument entsprechen (abschließender Schrägstrich egal). Bestehende Sitzungen laufen weiter, neue Anmeldungen scheitern. |
+| Langsam (gelb) | Einmalig harmlos; bleibt es, Last auf dem Host prüfen (Transcodes, Backups, Datenträger). |
+| Wunschdienst nicht erreichbar (gelb) | Betrifft nur Wünsche; Container und Schlüssel des Wunschdienstes prüfen. |
+| TMDB/OMDb: Schlüssel ungültig, pausiert oder Budget fast aufgebraucht | *Admin → Datenquellen*: Schlüssel testen oder ersetzen (siehe oben). Ohne Schlüssel fehlen nur Zusatzdaten. |
+| Wiedergabe-Check: Titel fehlgeschlagen | *Admin → Wiedergabe-Check* zeigt die Titel; meist fehlt die Datei oder sie lässt sich nicht umwandeln (Bibliothekspflege → Datei). |
+| Speicher fast voll / zu wenig frei | Downloads: `DOWNLOAD_CACHE_MAX_GB` senken oder alte Lizenzen löschen; Vorschauen: *Admin → Vorschauen* leeren; sonst Datenträger vergrößern. Rot heißt: Vorbereitungen bleiben in der Warteschlange. |
+| Download-Cache fast ausgeschöpft | ≥ 90 % von `DOWNLOAD_CACHE_MAX_GB`: alte Downloads laufen aus, oder die Grenze anheben, wenn Platz da ist. |
+| Datenbank groß | Über `HEALTH_DB_WARN_GB`: Backups prüfen (dauern länger), ggf. `VACUUM`; die Grenze passt man mit der Variable an. |
+| Viele Server-Fehler | Fehlerprotokoll auf der Status-Seite (Route und Status); Backend-Logs zur selben Zeit. |
+| Viele Browser-Fehler | Meist nach einem Update: Seite neu laden lassen; `resource` deutet auf ein fehlendes JS-/CSS-Asset (Cache des Proxys). |
+| Fehlgeschlagene Wiedergaben | Die Status-Seite listet die Titel der letzten 24 h mit Fehlercode; Datei und Codecs in der Bibliothekspflege prüfen. |
+
+## Bibliothekspflege (Scan)
+*Admin → Inhalte → Bibliothekspflege* liest die Bibliothek im Hintergrund (`BACKGROUND_JOBS=true`, nie während einer Anfrage) in Seiten zu 200 Titeln mit kurzer Pause dazwischen. Alle **30 Minuten** werden nur geänderte Titel gelesen (seit dem letzten erfolgreichen Lauf, 5 min Überlappung), beim ersten Start und danach alle **7 Tage** die ganze Bibliothek; nur ein vollständiger Durchlauf entfernt Einträge verschwundener Titel. Meldet der Medienserver neue Titel, läuft ein Scan etwa 2 Minuten später. **„Jetzt prüfen“** startet sofort einen Lauf (höchstens 2 pro 10 Minuten und Admin); die Seite zeigt den Fortschritt und lädt die Liste neu, wenn er fertig ist. „Metadaten neu laden“ bittet den Medienserver, Infos und Bilder eines Titels neu zu holen (höchstens 30 pro Minute). „Ignorieren“ blendet ein Problem für diesen Titel aus, bis man es wieder einblendet. Medienserver ohne die optionalen Methoden zeigen „nicht unterstützt“.
+
 ## Release erstellen
 Versionen folgen SemVer; die Quelle ist `version.json` im Repo-Wurzelverzeichnis (`{ "version": "1.0.0", "codename": "Arancini" }`). Jede **Hauptversion** bekommt den nächsten Codenamen aus `codenames.json` (Kino-Snacks von A bis Z: 1 Arancini, 2 Brezel, 3 Churros, …). Minor- und Patch-Releases behalten den Codenamen.
 
