@@ -151,6 +151,18 @@ test('AirPlay: tap -> cast token URL on the element FIRST, then the picker; TV -
   await expect.poll(() => deleted).toEqual(['c'.repeat(32)]);
   await expect.poll(() => src(page)).toMatch(/^blob:/); // hls.js again
   expect(await page.evaluate(() => document.querySelector('video')!.getAttribute('crossorigin'))).toBe('use-credentials');
+  expect(sessions).toHaveLength(1); // no automatic token request after the end either
+
+  // the AirPlay event log on /diagnose: the decisions, never a URL / token / cast id
+  await page.goto('/diagnose');
+  const log = page.getByTestId('airplay-log');
+  await expect(page.getByRole('heading', { name: 'AirPlay-Protokoll' })).toBeVisible();
+  await expect(log).toContainText('token-ok');
+  await expect(log).toContainText('sustained off -> stop');
+  const text = (await log.textContent()) ?? '';
+  for (const bad of ['p1test', '/media/', 'c'.repeat(32), '127.0.0.1', 'blob:']) expect(text).not.toContain(bad);
+  await page.getByRole('button', { name: 'Leeren' }).click();
+  await expect(page.getByTestId('airplay-log-empty')).toBeVisible();
 });
 
 test('AirPlay: picker did not lead to a TV yet -> prompt "Fernseher auswählen" opens it from a fresh tap; then TV -> active', async ({ page, api: _api }) => {

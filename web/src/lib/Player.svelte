@@ -318,8 +318,8 @@
   function retryManually() { rec = freshRecovery(); reconnecting = 0; error = ''; errNote = ''; waiting = true; wantAutoplay = true; void load(posKnown ? resumePos() : undefined); }
   function leave() { if (history.length > 1) history.back(); else location.href = '/'; }
   function onVideoError() {
-    if (airState.ready && !airOn) { if (video?.error && video.error.code !== 1) air?.videoError(); return; } // the phone plays the AirPlay token stream: back to normal
-    if (airOn) { if (video?.error && video.error.code !== 1) air?.videoError(); return; } // the TV's token stream failed: Retry, never the cookie URL
+    if (airState.ready && !airOn) { if (video?.error && video.error.code !== 1) air?.videoError(video.error.code); return; } // the phone plays the AirPlay token stream: back to normal
+    if (airOn) { if (video?.error && video.error.code !== 1) air?.videoError(video.error.code); return; } // the TV's token stream failed: Retry, never the cookie URL
     if (hls || casting || !video?.error || !info) return; // hls.js reports its own errors
     const kind = kindOfMediaError(video.error.code);
     if (video.error.code === 1) return; // aborted by us
@@ -1031,8 +1031,9 @@
   {:else if (posterOn && !posterOut && !casting) || (spin && waiting && !casting && !posterOn)}<div class="sr" role="status">{$t('player.loading')}</div>{/if}
   {#if casting}
     <div class="center castov" role="status"><div class="castbox"><Icon name="cast" size={56} /><b>{$t('player.cast.playingOn', { name: $castState.deviceName || 'Chromecast' })}</b><button class="btn light ui" on:click|stopPropagation={() => castStop()}>{$t('player.cast.stop')}</button></div></div>
-  {:else if airOn}
-    <!-- Safari does not tell which receiver was picked; ending AirPlay happens in its picker (choose this device) -->
+  {:else if airOn || airState.error}
+    <!-- Safari does not tell which receiver was picked; ending AirPlay happens in its picker (choose this device).
+         Also while `ready` (no TV yet) when a token request failed: Retry, the src stays as it is (no restore loop) -->
     <div class="center castov" role="status" data-testid="airplay-active"><div class="castbox">
       <Icon name="airplay" size={56} />
       {#if airState.error}
