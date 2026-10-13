@@ -13,6 +13,8 @@
   <a href="https://github.com/LetsManu/friendflix/actions/workflows/ci.yml"><img src="https://github.com/LetsManu/friendflix/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   <img src="https://img.shields.io/badge/self--hosted-Docker-2496ED" alt="Selbst gehostet mit Docker">
   <img src="https://img.shields.io/badge/Sprachen-7-ff4f6d" alt="7 Sprachen">
+  <a href="https://www.bestpractices.dev/projects/15445"><img src="https://www.bestpractices.dev/projects/15445/badge" alt="OpenSSF Best Practices"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/Lizenz-AGPL--3.0-blue" alt="Lizenz: AGPL-3.0"></a>
 </p>
 
 <p align="center"><img src="docs/images/de/hero.jpg" alt="FriendFlix-Startseite mit großem Billboard und Titelreihen" width="900"></p>
@@ -354,7 +356,9 @@ npm run e2e                                     # Playwright: baut die Web-App u
 
 ### Mitmachen
 
-Beiträge sind willkommen – die Anforderungen (Code-Standard, Tests, alle 7 Sprachen) stehen in [CONTRIBUTING.md](CONTRIBUTING.md), Sicherheitslücken bitte wie in [SECURITY.md](SECURITY.md) beschrieben melden. Es gilt der [Verhaltenskodex](CODE_OF_CONDUCT.md) (englisch); die Pläne für die nächsten Monate stehen in der [ROADMAP](ROADMAP.md) (englisch); das Sicherheitskonzept ist in [docs/security.md](docs/security.md) (englisch) beschrieben.
+
+Wie Entscheidungen getroffen werden, steht in [GOVERNANCE.md](GOVERNANCE.md). Beiträge sind willkommen – die Anforderungen (Code-Standard, Tests, alle 7 Sprachen) stehen in [CONTRIBUTING.md](CONTRIBUTING.md), Sicherheitslücken bitte wie in [SECURITY.md](SECURITY.md) beschrieben melden.
+
 
 ### Lizenz
 
