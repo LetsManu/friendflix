@@ -208,7 +208,7 @@ export function createCastEngine(deps: EngineDeps, out: Writable<CastSession | n
       end(s);
       void stopped.then(() => revoke(ci));
     } else if (e === 'media-end' && s.ci && !s.busy) {
-      patch(s, { state: 'ended', position: s.view.duration || s.view.position, buffering: false });
+      patch(s, { state: 'ended', position: s.view.duration || s.view.position, paused: true, buffering: false });
       const ci = s.ci, stopped = stopReport(s);
       s.ci = null;
       void stopped.then(() => revoke(ci));

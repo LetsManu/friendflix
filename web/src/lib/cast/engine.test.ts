@@ -442,7 +442,7 @@ describe('cast engine: session end, stop, pagehide (Chromecast)', () => {
     expect(env.reports()).toEqual(['stop']);
     expect(env.calls[0]!.init.body.positionTicks).toBe(secToTicks(1800));
     expect(env.deletes()).toEqual(['c1']);
-    expect(get(env.out)).toMatchObject({ state: 'ended', position: 1800 });
+    expect(get(env.out)).toMatchObject({ state: 'ended', position: 1800, paused: true });
     env.state.set(playing({ currentTime: 3 }));
     expect(env.reports()).toEqual(['stop']);
     await env.advance(ENDED_HIDE_MS - 1);
