@@ -9,7 +9,7 @@
 
   /** play / pause only drives a TV that plays (connecting / reconnect / failed / ended have no live token) */
   $: live = $castSession?.state === 'playing';
-  $: line2 = $castSession?.state === 'reconnect' ? $t('player.castBar.reconnect') : '';
+  $: line2 = $castSession?.state === 'reconnect' ? $t('player.castBar.reconnect') : $castSession?.subtitle ?? '';
 
   /**
    * `reconnect`: the engine reconnects inside this tap (AirPlay opens the system picker, which needs the gesture);

@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { MOVIE, MOVIE2 } from '../mocks/fixtures.js';
+import { episodes, MOVIE, MOVIE2 } from '../mocks/fixtures.js';
 import { castOn, castSessions, fakeCastSdk } from '../mocks/cast.js';
 import { mockPlayer, videoReady } from '../mocks/scenes.js';
 import { expect, test } from '../fixtures.js';
@@ -78,4 +78,16 @@ test.describe('token failure', () => {
     expect(sessions[2]!.itemId).toBe(MOVIE2.id);
     await expect(bar).not.toContainText('Verbindung verloren');
   });
+});
+
+test('switching episodes of one series changes the visible bar text', async ({ page, api: _api }) => {
+  await castAndLeave(page, { id: episodes[0]!.id });
+  const bar = castBar(page);
+  await expect(bar).toContainText(episodes[0]!.name);
+  await clientNav(page, '/watch/' + episodes[1]!.id);
+  await expect(page).toHaveURL(/\/watch\//);
+  await expect(page.locator('.castov')).toBeVisible();
+  await leaveWatch(page);
+  await expect(bar).toContainText(episodes[1]!.name);
+  await expect(bar).not.toContainText(episodes[0]!.name);
 });
