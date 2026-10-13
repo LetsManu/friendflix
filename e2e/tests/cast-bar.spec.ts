@@ -91,3 +91,42 @@ test('switching episodes of one series changes the visible bar text', async ({ p
   await expect(bar).toContainText(episodes[1]!.name);
   await expect(bar).not.toContainText(episodes[0]!.name);
 });
+
+/**
+ * scrolled to the bottom: the last focusable element of the page content (main, and on desktop the footer after it) lies fully
+ * above the bar. A button flush with the end of main stands for a page whose content ends without a margin.
+ */
+async function lastFocusableAboveBar(page: Page) {
+  await page.evaluate(() => {
+    if (document.querySelector('main > .e2e-last')) return;
+    const b = Object.assign(document.createElement('button'), { className: 'e2e-last', textContent: 'last' });
+    b.style.display = 'block';
+    document.querySelector('main')!.appendChild(b);
+  });
+  for (let i = 0; i < 3; i++) { // rows may load more content while scrolling
+    await page.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight));
+    await page.waitForTimeout(250);
+  }
+  await page.evaluate(() => {
+    const sel = 'a[href], button:not([disabled]), input:not([type=hidden]), select, textarea, [tabindex]:not([tabindex="-1"])';
+    const all = [...document.querySelectorAll<HTMLElement>(`main :is(${sel}), footer.foot :is(${sel})`)]
+      .filter((el) => { const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0 && getComputedStyle(el).visibility !== 'hidden'; });
+    document.querySelectorAll('[data-last-focusable]').forEach((el) => el.removeAttribute('data-last-focusable'));
+    all.at(-1)?.setAttribute('data-last-focusable', '');
+  });
+  const last = await page.locator('[data-last-focusable]').boundingBox();
+  const bar = await castBar(page).boundingBox();
+  expect(last).not.toBeNull();
+  expect(bar).not.toBeNull();
+  expect(last!.y + last!.height).toBeLessThanOrEqual(bar!.y);
+}
+
+test('the page content ends above the bar on desktop and phone', async ({ page, api: _api }) => {
+  await castAndLeave(page);
+  await expect(castBar(page)).toBeVisible();
+  await lastFocusableAboveBar(page);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(page.locator('nav.tabbar')).toBeVisible();
+  await expect(page.locator('footer.foot')).toHaveCount(0);
+  await lastFocusableAboveBar(page);
+});

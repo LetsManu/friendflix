@@ -91,6 +91,9 @@
   /** kids profile: kids header, no footer links / tab bar / bell; the last /api/me answer decides until the fresh one arrives */
   $: kidsUi = me ? Boolean(me.kids) : Boolean(bootHint?.kids);
   $: if (typeof document !== 'undefined') document.documentElement.classList.toggle('kids', kidsUi);
+  $: castBarOn = barVisible({ path, tv, session: $castSession });
+  /** `html.castbar`: the page content gets room for the bar at its end (main on phones, the page below the footer on desktop) */
+  $: if (typeof document !== 'undefined') document.documentElement.classList.toggle('castbar', castBarOn);
   $: kidsMode.set(kidsUi); // shared flag for components (no social UI on kids profiles)
   // ---- phone: chip bar + "Kategorien" overlay; desktop: "Kategorien" dropdown (genres, languages, collections) ----
   let catOpen = false, catGenres: string[] | null = null, catKind: Kind = 'movies', catBtn: HTMLElement | null = null;
@@ -523,7 +526,7 @@
     {#if $mobile && $previewSheet}<MobilePreviewSheet />{/if}
   {/if}
 
-  {#if barVisible({ path, tv, session: $castSession })}<CastBar />{/if}
+  {#if castBarOn}<CastBar />{/if}
   {#if !online}<div class="offbar" role="status">{$t('shell.offline.bar')} <a href="/offline" data-sveltekit-reload>{$t('shell.offline.toDownloads')}</a></div>{/if}
   {#if replaced}<div class="panel" role="alert" style="position:fixed;z-index:90;top:calc(5rem + var(--safe-top));left:50%;transform:translateX(-50%)"><b>{$t('shell.tvReplaced.text')}</b> <button on:click={() => location.reload()}>{$t('shell.tvReplaced.reconnect')}</button></div>{/if}
   {#if modalId && Modal}<svelte:component this={Modal} id={modalId} />{/if}
@@ -657,7 +660,10 @@
     .tabbar .face.sm { width: 24px; height: 24px; font-size: .72rem; border-radius: 4px; }
     .tabbar a.active .face.sm { box-shadow: 0 0 0 2px #fff; }
     main { padding-bottom: 70px; }
+    :global(html.castbar) main { padding-bottom: calc(70px + var(--safe-bottom) + var(--castbar-h)); }
   }
+  :global(html.castbar) { --castbar-h: 64px; }
+  @media (min-width: 721px) { :global(html.castbar body) { padding-bottom: var(--castbar-h); } }
 
   /* ---- phone header: transparent over the hero, solid + blurred once scrolled; sticky chip bar below ---- */
   /* padding-top keeps the rows below the status bar / Dynamic Island; the background (solid once scrolled) covers that strip too */
