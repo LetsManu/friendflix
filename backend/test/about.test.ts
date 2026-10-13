@@ -95,7 +95,7 @@ const extCalls: Call[] = [];
 const extFetch = fakeHttp(ext, extCalls);
 const fetchImpl = ((u: RequestInfo | URL, init?: RequestInit) => {
   const s = String(u);
-  if (s.includes('themoviedb.org')) {
+  if (new URL(s).hostname === 'api.themoviedb.org') {
     if (tmdbMode === 'timeout') { extCalls.push({ method: 'GET', path: new URL(s).pathname, search: '', body: undefined }); return Promise.reject(Object.assign(new Error('t'), { name: 'TimeoutError' })); }
     if (tmdbMode === '500') { extCalls.push({ method: 'GET', path: new URL(s).pathname, search: '', body: undefined }); return Promise.resolve(new Response('{}', { status: 500 })); }
   }
