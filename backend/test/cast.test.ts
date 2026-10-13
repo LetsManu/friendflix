@@ -56,6 +56,7 @@ describe('cast session', () => {
     expect(j.contentUrl).toMatch(new RegExp(`^https://portal\\.example\\.com/media/c/${ct}/Videos/${ID}/master\\.m3u8\\?`));
     expect(j.contentUrl).toContain('AudioCodec=aac&');
     expect(j.contentUrl).toContain('Level=41');
+    expect(j.contentUrl).toContain('EnableTrickplay=false'); // no trickplay image playlist line for AirPlay / cast receivers
     expect(j.contentUrl).toContain('MaxStreamingBitrate=20000000');
     expect(j.contentUrl).not.toMatch(/api_key|ApiKey/i);
     expect(j).toMatchObject({ contentType: 'application/x-mpegURL', hlsSegmentFormat: 'ts', startTime: 120, mediaSourceId: MS, playSessionId: 'ps-12345678', title: 'Film' });
