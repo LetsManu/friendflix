@@ -44,6 +44,15 @@ export interface AdminState {
   leaving: LeavingRow[];
   /** optional TMDB/OMDb keys (/api/admin/sources); the real API never returns more than last4 */
   sources: SourceRow[];
+  /** Block 22: health snapshot (/api/admin/health); `healthRefreshed` replaces it on ?refresh=1 */
+  health: Record<string, any>;
+  healthRefreshed: Record<string, any> | null;
+  /** query strings of /api/admin/health calls ('' or '?refresh=1') */
+  healthCalls: string[];
+  /** /api/admin/streams */
+  streams: Record<string, any>;
+  /** /api/admin/errors */
+  errors: { entries: Array<Record<string, any>>; overflow: number };
 }
 export interface SourceRow { name: 'tmdb' | 'omdb'; set: boolean; last4: string | null; from: 'db' | 'file' | null; invalid: boolean; usedToday?: number; budget?: number }
 export interface LeavingRow { itemId: string; name: string | null; type: string | null; year: number | null; leavesAt: string; days: number; note: string | null; setBy: string | null }
@@ -110,6 +119,31 @@ export function adminState(): AdminState {
     summaryFails: false,
     leaving: [leavingRow('00000000000000000000000000000001', 1, 'Lizenz endet'), leavingRow('00000000000000000000000000000002', 5, null), leavingRow('00000000000000000000000000000003', 20, 'Rechte laufen aus')],
     sources: [{ name: 'tmdb', set: false, last4: null, from: null, invalid: false }, { name: 'omdb', set: true, last4: 'k3y9', from: 'db', invalid: false, usedToday: 12, budget: 900 }],
+    health: healthOk(),
+    healthRefreshed: null,
+    healthCalls: [],
+    streams: { streams: [], totals: { direct: 0, remux: 0, transcode: 0 }, details: true, failed: [] },
+    errors: { entries: [], overflow: 0 },
+  };
+}
+
+const GiB = 1024 ** 3;
+/** Block 22: a healthy snapshot (shapes follow backend/src/health.ts) */
+export function healthOk(): Record<string, any> {
+  return {
+    at: new Date().toISOString(),
+    services: [
+      { id: 'media', level: 'ok', ms: 40 }, { id: 'postgres', level: 'ok', ms: 2 }, { id: 'redis', level: 'ok', ms: 1 }, { id: 'gateway', level: 'ok', ms: 12 },
+      { id: 'oidc', level: 'ok', ms: 80 }, { id: 'requests', level: 'ok', ms: 30 }, { id: 'tmdb', level: 'off', reason: 'not_set' }, { id: 'omdb', level: 'ok' }, { id: 'playbackCheck', level: 'ok' },
+    ],
+    disks: [
+      { id: 'downloads', level: 'ok', totalBytes: 500 * GiB, freeBytes: 300 * GiB, usedPct: 40, ownBytes: 12 * GiB, capBytes: 50 * GiB },
+      { id: 'previews', level: 'ok', totalBytes: 100 * GiB, freeBytes: 80 * GiB, usedPct: 20, ownBytes: 99e6 },
+      { id: 'database', level: 'ok', ownBytes: 300e6 },
+    ],
+    errors: { level: 'ok', server15: 0, client15: 0, playback60: 0 },
+    issues: [],
+    worst: 'ok',
   };
 }
 
@@ -314,6 +348,13 @@ export function adminRoute(st: AdminState, m: string, p: string, sp: URLSearchPa
   }
 
   // ---- operations ----
+  if (p === '/api/admin/health' && m === 'GET') {
+    st.healthCalls.push(sp.get('refresh') === '1' ? '?refresh=1' : '');
+    if (sp.get('refresh') === '1' && st.healthRefreshed) { st.health = st.healthRefreshed; st.healthRefreshed = null; }
+    return J(st.health);
+  }
+  if (p === '/api/admin/streams' && m === 'GET') return J(st.streams);
+  if (p === '/api/admin/errors' && m === 'GET') return J(st.errors);
   if (p === '/api/admin/playback-check') {
     if (m === 'POST') return ok();
     return J({ running: false, done: 6, total: 6, startedAt: ago(3), finishedAt: ago(2), results: [{ itemId: 'a'.repeat(32), name: 'Kaputter Film', type: 'Movie', ok: false, status: 500, ms: 900, bytes: 0, error: 'HTTP 500 transcoder failed' }, ...Array.from({ length: 5 }, (_, i) => ({ itemId: String(i).repeat(32), name: 'Film ' + i, type: 'Movie', ok: true, status: 200, ms: 800 + i * 90, bytes: 1, error: null }))] });

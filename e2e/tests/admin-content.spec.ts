@@ -379,11 +379,11 @@ test.describe('admin content pages (desktop)', () => {
       await expect(page.getByRole('heading', { level: 1, name: 'Status' })).toBeVisible();
       const health = page.getByRole('region', { name: 'Systemzustand' });
       await expect(health.getByRole('link', { name: /Medienserver.*Läuft/ })).toBeVisible();
-      await expect(health.getByRole('link', { name: /Vorschauen.*10 fehlgeschlagen/ })).toHaveAttribute('href', '/admin/previews');
       const nums = page.getByRole('region', { name: 'Zahlen' });
+      await expect(nums.getByRole('link', { name: /Vorschauen.*10 fehlgeschlagen/ })).toHaveAttribute('href', '/admin/previews');
       await expect(nums.getByRole('link', { name: /Geräte warten/ })).toHaveAttribute('href', '/admin/devices');
       await expect(nums.getByRole('link', { name: /Offene Wünsche/ })).toContainText('4');
-      await expect(page.getByRole('region', { name: 'Speicher' }).getByRole('progressbar')).toBeVisible();
+      await expect(page.getByRole('region', { name: 'Speicher' }).getByRole('progressbar')).toHaveCount(2);
     });
 
     test('a failing summary shows one error with retry, no dead space', async ({ page, api }) => {
