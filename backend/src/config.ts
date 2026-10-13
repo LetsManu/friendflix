@@ -5,6 +5,41 @@ import { z } from 'zod';
 import { MEDIA_SERVERS } from './media/index.js';
 import { isValidCidr } from './netaddr.js';
 
+/**
+ * Renamed settings: new name -> old name. The old name (and its _FILE variant) still works, but only while the new
+ * name is unset in both forms; using it logs a deprecation warning at startup (see deprecatedEnvNames).
+ */
+const RENAMED_ENV: Record<string, string> = {
+  REQUESTS_URL: 'SEERR_URL',
+  REQUESTS_API_KEY: 'SEERR_API_KEY',
+};
+
+/** Copies old setting names onto their new names when the new name is not set (neither VAR nor VAR_FILE). */
+function withRenamedEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  const out = { ...env };
+  for (const [now, old] of Object.entries(RENAMED_ENV)) {
+    if (env[now] || env[`${now}_FILE`]) continue; // the new name wins
+    if (env[old]) out[now] = env[old];
+    if (env[`${old}_FILE`]) out[`${now}_FILE`] = env[`${old}_FILE`];
+  }
+  return out;
+}
+
+/**
+ * Old setting names that are still set, as "OLD is deprecated, use NEW" messages (names only, never values).
+ * Compose passes the old name through next to the new one (which falls back to the old value), so an old name is
+ * reported whenever it is set.
+ */
+export function deprecatedEnvNames(env: NodeJS.ProcessEnv = process.env): string[] {
+  const out: string[] = [];
+  for (const [now, old] of Object.entries(RENAMED_ENV)) {
+    for (const suffix of ['', '_FILE']) {
+      if (env[`${old}${suffix}`]) out.push(`${old}${suffix} is deprecated, use ${now}${suffix}`);
+    }
+  }
+  return out;
+}
+
 /** Reads VAR, or the file referenced by VAR_FILE (Docker secrets). */
 function withFileSecrets(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   const out = { ...env };
@@ -31,7 +66,7 @@ const schema = z.object({
   APP_ENC_KEY: z.string().min(43),
   /** Shared secret between backend and gateway (never reaches browsers). */
   INTERNAL_SECRET: z.string().min(16),
-  /** Shared secret for Jellyfin/Seerr webhooks. */
+  /** Shared secret for Jellyfin/request service webhooks. */
   WEBHOOK_SECRET: z.string().min(16),
   ADMIN_GROUP: z.string().default('friendflix-admins'),
   OIDC_ISSUER: z.string().url(),
@@ -42,8 +77,9 @@ const schema = z.object({
   /** required when MEDIA_SERVER=jellyfin (see the check below) */
   JELLYFIN_URL: z.preprocess((v) => (v === '' ? undefined : v), z.string().url().optional()), // compose passes '' when unset
   JELLYFIN_ADMIN_API_KEY: opt,
-  SEERR_URL: z.string().url(),
-  SEERR_API_KEY: z.string().min(1),
+  /** the request service (old names SEERR_URL / SEERR_API_KEY still work, see RENAMED_ENV) */
+  REQUESTS_URL: z.string().url(),
+  REQUESTS_API_KEY: z.string().min(1),
   NTFY_URL: opt, // e.g. https://ntfy.example.com/friendflix
   DISCORD_WEBHOOK_URL: opt,
   /** personal push (ntfy topics per user): base URL of the ntfy server; default = origin of NTFY_URL */
@@ -138,5 +174,5 @@ const checked = schema.superRefine((c, ctx) => {
 export type Config = z.infer<typeof schema>;
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
-  return checked.parse(withFileSecrets(env));
+  return checked.parse(withFileSecrets(withRenamedEnv(env)));
 }
