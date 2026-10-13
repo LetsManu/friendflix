@@ -1,12 +1,12 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { episodes, MOVIE, MOVIE2 } from '../mocks/fixtures.js';
-import { castOn, castSessions, fakeCastSdk } from '../mocks/cast.js';
+import { available, castOn, castSessions, fakeCastSdk, mockHls, stubAirPlay } from '../mocks/cast.js';
 import { mockPlayer, videoReady } from '../mocks/scenes.js';
 import { expect, test } from '../fixtures.js';
 import type { Page } from '@playwright/test';
 
-/** The minimal cast bar: shown on every page except /watch/*, /party/* and TV mode while a title plays on a TV. */
+/** The cast bar: shown on every page except /watch/*, /party/* and TV mode while a title plays on a TV (desktop here, phone in cast-bar.mobile). */
 
 /** a client-side navigation by a link click (a full page load would fire pagehide and end the cast) */
 const clientNav = (page: Page, path: string) => page.evaluate((path) => { const a = document.createElement('a'); a.href = path; document.body.appendChild(a); a.click(); a.remove(); }, path);
@@ -44,7 +44,7 @@ test('bar appears after leaving the watch page and pauses the TV', async ({ page
 test('tapping the bar reopens the remote without a new session', async ({ page, api: _api }) => {
   const { sessions } = await castAndLeave(page);
   const bar = page.getByRole('region', { name: 'Jetzt auf dem Fernseher' });
-  await bar.locator('.title').click();
+  await bar.getByRole('button', { name: 'Fernbedienung öffnen' }).click();
   await expect(page).toHaveURL(new RegExp('/watch/' + MOVIE.id));
   await expect(page.locator('.castov')).toContainText('Wird auf Wohnzimmer-TV abgespielt');
   await expect(page.getByRole('region', { name: 'Jetzt auf dem Fernseher' })).toHaveCount(0);
@@ -68,9 +68,9 @@ test.describe('token failure', () => {
     const bar = castBar(page);
     await expect(bar).toContainText('Verbindung verloren – tippen, um am Fernseher fortzusetzen');
     await expect.poll(() => sessions.length).toBe(2);
-    await expect(bar.locator('.pp')).toHaveAttribute('aria-disabled', 'true');
+    await expect(bar.getByRole('button', { name: /^(Pause|Abspielen)$/ })).toHaveCount(0); // the whole bar reconnects
     fail = false;
-    await bar.locator('.title').click();
+    await bar.getByRole('button', { name: /Verbindung verloren/ }).click();
     await expect(page).toHaveURL(/\/$/); // a reconnect, not the remote
     await expect.poll(() => sessions.length).toBe(3);
     await page.waitForTimeout(400);
@@ -129,4 +129,93 @@ test('the page content ends above the bar on desktop and phone', async ({ page, 
   await expect(page.locator('nav.tabbar')).toBeVisible();
   await expect(page.locator('footer.foot')).toHaveCount(0);
   await lastFocusableAboveBar(page);
+});
+
+test('bar shows title, device and progress', async ({ page, api: _api }) => {
+  await castAndLeave(page);
+  const bar = castBar(page);
+  await expect(bar).toContainText(MOVIE.name);
+  await expect(bar).toContainText('auf Wohnzimmer-TV');
+  const progress = bar.getByRole('progressbar', { name: 'Fortschritt' });
+  await expect(progress).toHaveAttribute('aria-valuemin', '0');
+  await expect(progress).toHaveAttribute('aria-valuemax', '100');
+  await expect.poll(async () => Number(await progress.getAttribute('aria-valuenow')), { timeout: 10_000 }).toBeGreaterThan(0);
+});
+
+test('stop asks first and ends the session', async ({ page, api: _api }) => {
+  const { sdk, deleted } = await castAndLeave(page);
+  const bar = castBar(page);
+  await bar.getByRole('button', { name: 'Wiedergabe auf Wohnzimmer-TV beenden', exact: true }).click();
+  const dlg = page.getByRole('alertdialog', { name: 'Wiedergabe auf Wohnzimmer-TV beenden?' });
+  await expect(dlg).toBeVisible();
+  await dlg.getByRole('button', { name: 'Abbrechen' }).click();
+  await expect(bar).toBeVisible();
+  expect(deleted).toEqual([]);
+  await bar.getByRole('button', { name: 'Wiedergabe auf Wohnzimmer-TV beenden', exact: true }).click();
+  await dlg.getByRole('button', { name: 'Wiedergabe auf Wohnzimmer-TV beenden', exact: true }).click();
+  await expect(bar).toHaveCount(0);
+  await expect.poll(() => deleted).toEqual(['c'.repeat(32)]);
+  expect(await sdk.calls()).toContain('endCurrentSession');
+});
+
+test('buttons have names', async ({ page, api: _api }) => {
+  await castAndLeave(page);
+  const bar = castBar(page);
+  for (const name of ['Pause', 'Wiedergabe auf Wohnzimmer-TV beenden', 'Fernbedienung öffnen']) await expect(bar.getByRole('button', { name, exact: true })).toBeVisible();
+  // keyboard: remote, play / pause, stop in DOM order
+  await bar.getByRole('button', { name: 'Fernbedienung öffnen' }).focus();
+  await page.keyboard.press('Tab');
+  await expect(bar.getByRole('button', { name: 'Pause', exact: true })).toBeFocused();
+  await page.keyboard.press('Tab');
+  await expect(bar.getByRole('button', { name: 'Wiedergabe auf Wohnzimmer-TV beenden', exact: true })).toBeFocused();
+});
+
+test('no bar in TV mode', async ({ page, api: _api }) => {
+  // the TV-mode preview in a browser: Chromecast is off there, AirPlay is not
+  await stubAirPlay(page, { pickTv: true });
+  await mockPlayer(page);
+  await castOn(page);
+  await mockHls(page);
+  await castSessions(page);
+  await page.goto('/?tv=1');
+  await page.waitForLoadState('networkidle');
+  await expect(page.locator('html.tv')).toHaveCount(1);
+  await clientNav(page, '/watch/' + MOVIE.id);
+  await page.waitForFunction(() => (document.querySelector('video')?.duration ?? 0) > 20);
+  await page.evaluate(() => document.querySelector('video')!.play().catch(() => undefined));
+  await available(page);
+  await page.locator('.stage').hover();
+  await page.getByRole('button', { name: 'Auf AirPlay-Gerät abspielen' }).click();
+  await expect(page.getByTestId('airplay-active')).toContainText('Läuft über AirPlay');
+  await clientNav(page, '/');
+  await expect(page).toHaveURL(/\/$/);
+  await expect(page.locator('video[data-cast-engine]')).toHaveCount(1); // the cast runs on
+  await page.waitForTimeout(300);
+  await expect(castBar(page)).toHaveCount(0);
+  expect(await page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue('--castbar-h').trim())).toBe('0px');
+});
+
+test.describe('receiver failure', () => {
+  test('failed switch shows Play here', async ({ page, api: _api }) => {
+    const { sdk } = await castAndLeave(page);
+    // the switch's token request waits until the watch page is left (there the Player would play on locally)
+    let release!: () => void;
+    const gate = new Promise<void>((r) => { release = r; });
+    let held = false;
+    await page.route('**/api/cast/session', async (r) => { if (!held) { held = true; await gate; } return r.fallback(); });
+    await sdk.failLoads();
+    await clientNav(page, '/watch/' + MOVIE2.id);
+    await expect(page.locator('.castov')).toBeVisible();
+    await leaveWatch(page);
+    let infos = 0;
+    page.on('request', (r) => { if (r.url().endsWith('/api/playback/info')) infos++; });
+    release();
+    const bar = castBar(page);
+    const here = bar.getByRole('button', { name: 'Hier abspielen' });
+    await expect(here).toBeVisible();
+    expect(infos).toBe(0);
+    await here.click();
+    await expect(page).toHaveURL(new RegExp('/watch/' + MOVIE2.id));
+    await expect.poll(() => infos).toBeGreaterThan(0);
+  });
 });

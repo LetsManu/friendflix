@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { items, MOVIE, MOVIE2 } from '../mocks/fixtures.js';
-import { available, castOn, castSessions, fakeCastSdk, mockHls, stubAirPlay, wireless } from '../mocks/cast.js';
+import { available, castOn, castSessions, fakeCastSdk, mockHls, picks, stubAirPlay, wireless } from '../mocks/cast.js';
 import { mockPlayer, videoReady } from '../mocks/scenes.js';
 import { expect, test } from '../fixtures.js';
 import type { Page } from '@playwright/test';
@@ -249,6 +249,36 @@ test('airplay: reopening the cast title attaches to the engine element', async (
   expect(sessions).toHaveLength(1);
   expect(deleted).toEqual([]);
   expect(infos).toBe(0);
+});
+
+test('airplay: the reopened remote offers the session\'s tracks and "change device"', async ({ page, api: _api }) => {
+  await stubAirPlay(page, { pickTv: true });
+  await mockPlayer(page);
+  await castOn(page);
+  await mockHls(page);
+  await page.route('**/api/playback/info', (r) => r.fulfill({ json: {
+    resumeTicks: 0, mediaSourceId: 'ms1', playSessionId: 'ps1', roleMaxBitrate: 20_000_000, subtitles: [{ index: 3, title: 'Deutsch (SDH)', language: 'deu' }],
+    audioTracks: [{ index: 1, title: 'Deutsch', language: 'deu', isDefault: true }, { index: 2, title: 'English', language: 'eng', isDefault: false }],
+    hlsUrl: '/media/hls/4000000/out.m3u8', maxBitrate: 4_000_000, transcodeReason: 'network',
+  } }));
+  const { sessions } = await castSessions(page);
+  await openWatch(page);
+  await airPlayToTv(page);
+  await leaveWatch(page);
+  await clientNav(page, '/watch/' + MOVIE.id);
+  const box = page.getByTestId('airplay-active');
+  await expect(box).toContainText('Läuft über AirPlay');
+  const picks0 = await picks(page);
+  await box.getByRole('button', { name: 'AirPlay-Gerät wechseln' }).click();
+  expect(await picks(page)).toBe(picks0 + 1); // the engine's controller opened the picker inside the tap
+  await page.locator('.stage').hover();
+  await page.getByRole('button', { name: 'Audio und Untertitel', exact: true }).click();
+  const menu = page.getByRole('dialog', { name: 'Audio und Untertitel' });
+  await expect(menu.getByRole('button', { name: 'Deutsch', exact: true })).toBeVisible();
+  await expect(menu.getByRole('button', { name: 'Deutsch (SDH)' })).toBeVisible();
+  await menu.getByRole('button', { name: 'English' }).click();
+  await expect.poll(() => sessions.length).toBe(2); // a new token with that track for the TV
+  expect(sessions[1]).toMatchObject({ itemId: MOVIE.id, audioIndex: 2, via: 'airplay' });
 });
 
 test.describe('party', () => {

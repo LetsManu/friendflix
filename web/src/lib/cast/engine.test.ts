@@ -536,6 +536,45 @@ describe('cast engine: session end, stop, pagehide (Chromecast)', () => {
   });
 });
 
+describe('cast engine: tracks and device picker for an attached Player', () => {
+  const audio = [{ index: 1, title: 'Deutsch', language: 'deu', isDefault: true }, { index: 2, title: 'English', language: 'eng', isDefault: false }];
+  const subs = [{ index: 3, title: 'Deutsch (SDH)', language: 'deu' }];
+
+  it('the session keeps the hand-off\'s tracks; refresh and setSubtitle move the current indexes', async () => {
+    const env = setup();
+    await playingSession(env, { audioTracks: audio, subtitles: subs, audioIndex: 1, subIndex: -1 });
+    expect(get(env.out)).toMatchObject({ audioTracks: audio, subtitles: subs, audioIndex: 1, subIndex: -1 });
+    await env.engine.refresh({ audioIndex: 2 });
+    expect(get(env.out)).toMatchObject({ audioTracks: audio, audioIndex: 2 });
+    env.engine.setSubtitle(3);
+    expect(get(env.out)?.subIndex).toBe(3);
+  });
+
+  it('a hand-off without track lists has empty lists', async () => {
+    const env = setup();
+    await playingSession(env);
+    expect(get(env.out)).toMatchObject({ audioTracks: [], subtitles: [], audioIndex: 1, subIndex: -1 });
+  });
+
+  it('another title: no audio list (the default track), subtitles from its cast token, subtitle off', async () => {
+    const env = setup();
+    await playingSession(env, { audioTracks: audio, subtitles: subs, subIndex: 3 });
+    env.posts.push(async () => ci('n1', { subtitles: [{ index: 5, title: 'Français', language: 'fra', url: '/media/c/n1/sub5.vtt' }] }));
+    await env.engine.playOnTv('other', 0);
+    expect(get(env.out)).toMatchObject({ itemId: 'other', audioTracks: [], subtitles: [{ index: 5, title: 'Français', language: 'fra' }], audioIndex: undefined, subIndex: -1 });
+    expect(get(env.out)!.subtitles[0]).not.toHaveProperty('url');
+  });
+
+  it('pick() is a no-op for Chromecast and without a session', async () => {
+    const env = setup();
+    env.engine.pick();
+    await playingSession(env);
+    env.engine.pick();
+    expect(env.calls).toEqual([]);
+    expect(get(env.out)?.state).toBe('playing');
+  });
+});
+
 describe('cast engine: failures of fire-and-forget requests', () => {
   it('a rejected report or revoke is swallowed', async () => {
     const env = setup();

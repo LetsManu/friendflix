@@ -25,10 +25,14 @@ import { toast } from '#lib/ui/toast';
 
 export type CastKind = 'airplay' | 'chromecast';
 export type CastPhase = 'connecting' | 'playing' | 'reconnect' | 'ended' | 'failed';
+/** an audio or subtitle track the remote (an attached Player) offers */
+export interface CastTrack { index: number; title: string; language?: string; isDefault?: boolean }
 export interface CastSession {
   kind: CastKind; device: string; itemId: string; seriesId?: string;
   title: string; subtitle: string; posterId: string; isEpisode: boolean;
   position: number; duration: number; paused: boolean; buffering: boolean; state: CastPhase;
+  /** the title's tracks for the remote's tracks menu (another title: no audio list, its token's subtitles) and the current choice */
+  audioTracks: CastTrack[]; subtitles: CastTrack[]; audioIndex?: number; subIndex: number;
   /** set in `ended` when a next episode follows; startsAt = epoch ms of the autoplay (null = button only) */
   next?: { itemId: string; label: string; startsAt: number | null };
 }
@@ -37,6 +41,8 @@ export interface PlayerHandoff {
   position: number; duration: number; paused: boolean;
   cast: CastInfo; /** the Player already sent `start` for this cast session */ started: boolean;
   audioIndex?: number; subIndex: number; maxBitrate?: number; sleepAfterEpisode: boolean;
+  /** the title's tracks (from the playback info), so a Player that attaches later can offer them */
+  audioTracks?: CastTrack[]; subtitles?: CastTrack[];
   /** AirPlay only: the Player's element, its controller and the availability probe */
   video?: HTMLVideoElement; air?: AirPlayController; probe?: HTMLVideoElement | null;
 }
@@ -54,6 +60,8 @@ export interface CastEngine {
   setSubtitle(index: number): void;
   /** drops a `failed` session without touching the receiver ("Play here") */
   release(): void;
+  /** "change device" (from a tap): AirPlay opens the system picker of the engine's controller synchronously; Chromecast: no-op */
+  pick(): void;
   readonly airState: Readable<AirPlayState | null>;
 }
 export type CastFns = Pick<typeof import('#lib/cast'), 'castState' | 'onCastEvent' | 'loadOnCast' | 'castPlayPause' | 'castSeek' | 'castStop' | 'castSetSubtitle'>;
@@ -111,6 +119,9 @@ interface Live {
   loop?: unknown; hide?: unknown;
   air?: AirLive;
 }
+
+/** a cast token's subtitles as remote tracks (without their URLs) */
+const subsOf = (ci: CastInfo): CastTrack[] => ci.subtitles.map(({ index, title, language }) => ({ index, title, language }));
 
 /** the Player's texts for a failed token request */
 function castErr(e: unknown, kind: CastKind = 'chromecast'): string {
@@ -246,7 +257,7 @@ export function createCastEngine(deps: EngineDeps, out: Writable<CastSession | n
         s.ci = ci; s.started = false; s.lastPaused = null;
         // the server chose the start (resume position): the stream's timeline is absolute, seek there once it loaded
         if (w && w.at === undefined && ci.startTime > 1) a.video.addEventListener('loadedmetadata', () => { if (a.ctl.info === ci) a.video.currentTime = ci.startTime; }, { once: true });
-        patch(s, { position: w ? w.at ?? ci.startTime : s.view.position, ...(ci.runtimeTicks ? { duration: ticksToSec(ci.runtimeTicks) } : {}) });
+        patch(s, { position: w ? w.at ?? ci.startTime : s.view.position, ...(ci.runtimeTicks ? { duration: ticksToSec(ci.runtimeTicks) } : {}), ...(w ? { subtitles: subsOf(ci) } : {}) });
       },
       restore(pos) {
         // sustained route loss (or no TV chosen after a reconnect tap): never the cookie stream, wait for a tap
@@ -371,7 +382,8 @@ export function createCastEngine(deps: EngineDeps, out: Writable<CastSession | n
     const stopped = s.stopping; // also a stop an earlier, superseded switch still waits for
     s.ci = null; s.busy = true; s.retry = null; s.lastPaused = null;
     if (fresh) { s.audioIndex = undefined; s.subIndex = -1; }
-    patch(s, { itemId, state: 'connecting', position: startAt ?? 0, paused: false, buffering: true, next: undefined });
+    patch(s, { itemId, state: 'connecting', position: startAt ?? 0, paused: false, buffering: true, next: undefined,
+      ...(fresh ? { audioTracks: [], subtitles: [], audioIndex: undefined, subIndex: -1 } : {}) });
     const meta = fresh ? deps.item(itemId).catch(() => null) : Promise.resolve(null);
     const a = s.air;
     const [, it] = await Promise.all([stopped, meta, a?.op]);
@@ -395,6 +407,7 @@ export function createCastEngine(deps: EngineDeps, out: Writable<CastSession | n
     }
     if (my !== seq) { revoke(ci); return; }
     s.ci = ci;
+    if (fresh) patch(s, { subtitles: subsOf(ci) });
     if (fresh && !it) patch(s, { title: ci.seriesName ?? ci.title, subtitle: ci.seriesName ? ci.title : '', seriesId: undefined, posterId: itemId, isEpisode: Boolean(ci.seriesName) });
     patch(s, { position: startAt ?? ci.startTime, ...(ci.runtimeTicks ? { duration: ticksToSec(ci.runtimeTicks) } : {}) });
     const ok = await cast.loadOnCast(ci, s.subIndex);
@@ -433,7 +446,8 @@ export function createCastEngine(deps: EngineDeps, out: Writable<CastSession | n
       }
       const s: Live = {
         view: { kind: h.kind, device: h.kind === 'airplay' ? tr('player.castBar.airplayDevice') : 'Chromecast', itemId: h.itemId, seriesId: h.seriesId, title: h.title, subtitle: h.subtitle, posterId: h.itemId, isEpisode: h.isEpisode,
-          position: h.position, duration: h.duration, paused: h.paused, buffering: false, state: h.started ? 'playing' : 'connecting' },
+          position: h.position, duration: h.duration, paused: h.paused, buffering: false, state: h.started ? 'playing' : 'connecting',
+          audioTracks: h.audioTracks ?? [], subtitles: h.subtitles ?? [], audioIndex: h.audioIndex, subIndex: h.subIndex },
         ci: h.cast, started: h.started, busy: false, stopping: Promise.resolve(), lastPaused: null,
         audioIndex: h.audioIndex, subIndex: h.subIndex, maxBitrate: h.maxBitrate, sleepAfterEpisode: h.sleepAfterEpisode,
         retry: null, offs: [],
@@ -498,7 +512,7 @@ export function createCastEngine(deps: EngineDeps, out: Writable<CastSession | n
     async refresh(o) {
       const s = cur;
       if (!s?.ci) return;
-      if (o?.audioIndex !== undefined) s.audioIndex = o.audioIndex;
+      if (o?.audioIndex !== undefined) { s.audioIndex = o.audioIndex; patch(s, { audioIndex: o.audioIndex }); }
       if (o?.maxBitrate !== undefined) s.maxBitrate = o.maxBitrate;
       await swap(s, s.view.itemId, s.view.position, false);
     },
@@ -506,6 +520,7 @@ export function createCastEngine(deps: EngineDeps, out: Writable<CastSession | n
       const s = cur;
       if (!s) return;
       s.subIndex = index;
+      patch(s, { subIndex: index });
       if (s.ci && !s.air) cast.castSetSubtitle(index); // AirPlay: the receiver only shows tracks inside the stream
     },
     release() {
@@ -514,6 +529,7 @@ export function createCastEngine(deps: EngineDeps, out: Writable<CastSession | n
       end(s);
       if (s.air) dropAir(s.air);
     },
+    pick() { cur?.air?.ctl.pick(); },
   };
 }
 

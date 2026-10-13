@@ -215,6 +215,26 @@ describe('cast engine: AirPlay adopt', () => {
   });
 });
 
+describe('cast engine: AirPlay change device', () => {
+  it('pick() opens the picker of the controller the engine owns, synchronously', async () => {
+    const env = await setup();
+    await env.adopt({ audioTracks: [{ index: 1, title: 'Deutsch', isDefault: true }, { index: 2, title: 'English', isDefault: false }] });
+    const before = env.video.webkitShowPlaybackTargetPicker.mock.calls.length;
+    env.engine.pick();
+    expect(env.spy.pick).toHaveBeenCalledTimes(1);
+    expect(env.video.webkitShowPlaybackTargetPicker).toHaveBeenCalledTimes(before + 1);
+    expect(get(env.out)?.audioTracks.map((a) => a.index)).toEqual([1, 2]);
+  });
+
+  it('pick() after the session ended does nothing', async () => {
+    const env = await setup();
+    await env.adopt();
+    await env.engine.stop();
+    env.engine.pick();
+    expect(env.spy.pick).not.toHaveBeenCalled();
+  });
+});
+
 describe('cast engine: AirPlay title switch', () => {
   it('airplay: switch sends stop for the old title and asks a token for the new item', async () => {
     const env = await setup();
