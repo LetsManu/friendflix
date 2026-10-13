@@ -197,6 +197,25 @@ describe('disks', () => {
     expect(d).toMatchObject({ level: 'warn', reason: 'cap', ownBytes: Math.round(0.95 * GiB), capBytes: GiB });
   });
 
+  it('a hung statfs is not called again while it is still pending (disk unavailable), and is again once it returned', async () => {
+    let calls = 0;
+    let release: () => void = () => undefined;
+    const hung: DiskDeps['statfs'] = async (p) => {
+      calls++;
+      if (p === cfg.PREVIEW_DIR && calls <= 2) await new Promise<void>((res) => { release = res; }); // the first call hangs
+      return disk.statfs(p);
+    };
+    const d = { fetchImpl: http, stat: disk.stat, statfs: hung, timeoutMs: 50 };
+    expect(dsk(await buildSnapshot(env.ctx, d), 'previews')).toMatchObject({ level: 'off', reason: 'unavailable' });
+    expect(dsk(await buildSnapshot(env.ctx, d), 'previews')).toMatchObject({ level: 'off', reason: 'unavailable' });
+    expect(dsk(await buildSnapshot(env.ctx, d), 'downloads')!.level).toBe('ok');
+    expect(calls).toBe(4); // downloads 3×, previews only once
+    release();
+    await new Promise((res) => setTimeout(res, 10));
+    expect(dsk(await buildSnapshot(env.ctx, d), 'previews')!.level).toBe('ok');
+    expect(calls).toBe(6);
+  });
+
   it('same device → one entry with sharedWith; missing dir → off unavailable; downloads disabled → no downloads entry', async () => {
     await env.pool.query("insert into preview_clips(item_id, status, bytes) values ('p1', 'ok', 1000)");
     devs[cfg.PREVIEW_DIR] = 1;

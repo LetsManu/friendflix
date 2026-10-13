@@ -210,7 +210,7 @@ const dict: Translation<typeof de> = {
       loadFailed: 'The errors could not be loaded.',
       source: { server: 'Server', client: 'Browser', playback: 'Playback', job: 'Background' },
       release: 'Version {release}',
-      overflow: { one: '{n} more kind of error not counted', other: '{n} more kinds of errors not counted' },
+      overflow: { one: '{n} older kind of error no longer listed', other: '{n} older kinds of errors no longer listed' },
       recent: 'Server {server} · Browser {client} (15 min) · Playback {playback} (1 h)',
     },
   },

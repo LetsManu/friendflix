@@ -11,6 +11,7 @@
   import { poll } from '#lib/adminContent/poll';
   import { refreshSummary, summary, summaryFailed } from '#lib/admin/summary';
   import { loadErrors, loadHealth, loadStreams, type ErrorList, type HealthSnapshot, type StreamsView } from '#lib/admin/health';
+  import { refreshBanner } from '#lib/admin/banner';
   import ServiceLights from '#lib/admin/ServiceLights.svelte';
   import DiskCard from '#lib/admin/DiskCard.svelte';
   import StreamsCard from '#lib/admin/StreamsCard.svelte';
@@ -39,7 +40,10 @@
   async function checkNow() {
     if (checking) return;
     checking = true;
-    try { snap = await loadHealth(true); snapErr = null; toast.success(tr('adminContent.health.checked')); } catch (e) { toast.error(errorText(e)); }
+    try {
+      snap = await loadHealth(true); snapErr = null; toast.success(tr('adminContent.health.checked'));
+      void refreshBanner(); // the banner shows the new state now, not after its next 60 s poll
+    } catch (e) { toast.error(errorText(e)); }
     checking = false;
   }
   const reloadSummary = async () => { refreshing = true; await refreshSummary(); refreshing = false; };

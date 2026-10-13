@@ -215,7 +215,7 @@ const dict: Translation<typeof de> = {
       loadFailed: 'Nie udało się wczytać błędów.',
       source: { server: 'Serwer', client: 'Przeglądarka', playback: 'Odtwarzanie', job: 'W tle' },
       release: 'Wersja {release}',
-      overflow: { one: '{n} kolejny rodzaj błędu niezliczony', few: '{n} kolejne rodzaje błędów niezliczone', many: '{n} kolejnych rodzajów błędów niezliczonych', other: '{n} kolejnego rodzaju błędu niezliczone' },
+      overflow: { one: '{n} starszy rodzaj błędu nie jest już wymieniony', few: '{n} starsze rodzaje błędów nie są już wymienione', many: '{n} starszych rodzajów błędów nie jest już wymienionych', other: '{n} starszego rodzaju błędu nie jest już wymienione' },
       recent: 'Serwer {server} · Przeglądarka {client} (15 min) · Odtwarzanie {playback} (1 godz.)',
     },
   },

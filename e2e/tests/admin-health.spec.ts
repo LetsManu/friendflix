@@ -60,15 +60,17 @@ test.describe('admin health page', () => {
     }
   });
 
-  test('Jetzt prüfen calls ?refresh=1 once and shows the new state', async ({ page, api }) => {
+  test('Jetzt prüfen calls ?refresh=1 once, shows the new state and reloads the banner', async ({ page, api }) => {
     await page.goto('/admin/status');
     const health = page.getByRole('region', { name: 'Systemzustand' });
     await expect(health.getByRole('link', { name: /Medienserver/ })).toContainText('Nicht erreichbar');
     api.admin.healthRefreshed = healthOk();
+    const bannerCalls = api.admin.bannerCalls;
     await health.getByRole('button', { name: 'Jetzt prüfen' }).click();
     await expect(health.getByRole('link', { name: /Medienserver/ })).toContainText('Läuft');
     await expect(page.getByRole('region', { name: 'Hinweise' }).getByText('Neu geprüft.')).toBeVisible();
     expect(api.admin.healthCalls.filter((q) => q === '?refresh=1')).toHaveLength(1);
+    await expect.poll(() => api.admin.bannerCalls).toBeGreaterThan(bannerCalls);
   });
 
   test('disks: downloads 93 % warn with "davon FriendFlix", database size only; shared volume shown once', async ({ page }) => {

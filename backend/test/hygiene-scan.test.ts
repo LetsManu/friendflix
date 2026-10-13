@@ -182,6 +182,35 @@ describe('hygiene scan', () => {
     }
   });
 
+  it('the running flag has a short TTL while scanning and is cleared when the scan throws', async () => {
+    lib.Movie = [movie(1)];
+    let release!: () => void;
+    const gate = new Promise<void>((r) => { release = r; });
+    const slow = env.ctx.jf.libraryHygiene;
+    (env.ctx.jf as { libraryHygiene?: unknown }).libraryHygiene = async () => { await gate; throw new Error('boom'); };
+    try {
+      const run = tick();
+      await new Promise((r) => setTimeout(r, 10));
+      const exp = (env.kv as unknown as { m: Map<string, { exp: number }> }).m.get('hygiene:running')!.exp;
+      expect((exp - Date.now()) / 1000).toBeLessThanOrEqual(300);
+      release();
+      await run;
+      expect(await env.kv.get('hygiene:running')).toBeNull();
+      expect((await hygieneState(env.ctx)).running).toBe(false);
+    } finally {
+      (env.ctx.jf as { libraryHygiene?: unknown }).libraryHygiene = slow;
+    }
+  });
+
+  it('a scan running elsewhere (flag held by another replica) → no second scan, the flag stays', async () => {
+    lib.Movie = [movie(1)];
+    await env.kv.set('hygiene:running', 'other-replica', 300);
+    await tick({ full: true });
+    expect(calls).toEqual([]);
+    expect(await env.kv.get('hygiene:running')).toBe('other-replica');
+    expect(await rows()).toEqual([]);
+  });
+
   it('startHygieneScan starts one full sweep in the background; false while it runs', async () => {
     lib.Movie = [movie(1)];
     await tick();
