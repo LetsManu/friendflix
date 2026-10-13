@@ -141,7 +141,14 @@
       positionTicks: secToTicks(video?.currentTime ?? 0), isPaused: video?.paused ?? false, audioIndex, playMethod: mode === 'direct' ? 'DirectPlay' : 'Transcode',
     };
   let lastSent = 0;
-  const send = (kind: 'start' | 'progress' | 'stop', keepalive = false) => { lastSent = Date.now(); return report && info && api(`/api/playback/${kind}`, { method: 'POST', body: body(), keepalive }).catch(() => undefined); };
+  /** the latest stop report (also one sent earlier, e.g. at the end of the film): leaving the player holds prefetches on it */
+  let lastStop: unknown;
+  const send = (kind: 'start' | 'progress' | 'stop', keepalive = false) => {
+    lastSent = Date.now();
+    const r = report && info && api(`/api/playback/${kind}`, { method: 'POST', body: body(), keepalive }).catch(() => undefined);
+    if (kind === 'stop') lastStop = r;
+    return r;
+  };
 
   // ---- per-series audio / subtitle choice ("anime pack"): remembered per profile, applied before the global defaults ----
   let serPref: { audio: string | null; subtitle: string | null } = { audio: null, subtitle: null }, serPrefDone = false;
@@ -912,9 +919,8 @@
     clearTimeout(peekT); clearTimeout(posterT); fxEngine?.destroy();
     persistEstimate(); clearInterval(abrTimer); clearInterval(bwTimer); clearTimeout(stallT);
     clearInterval(progressTimer); clearInterval(activityTimer); clearTimeout(toastTimer); clearTimeout(retryT); clearTimeout(spinT); clearTimeout(pendingTap); clearTimeout(hudT); clearTimeout(rippleT); clearTimeout(lockT); clearTimeout(unlockT); nowPlaying.set(null);
-    let stopP: unknown;
-    if (started && !stopped) { stopped = true; stopP = send('stop'); }
-    holdPrefetch(Promise.resolve(stopP)); // no cached info survives the player; the next prefetch waits for this stop (resume position)
+    if (started && !stopped) { stopped = true; send('stop'); }
+    holdPrefetch(Promise.resolve(lastStop)); // no cached info survives the player; the next prefetch waits for this stop (resume position)
     if (casting) { castRevoke(castInfo); castStop(); casting = false; } // leaving the page ends the cast session and revokes its token
     castOff?.();
     hls?.destroy();

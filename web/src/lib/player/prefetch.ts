@@ -29,15 +29,21 @@ interface Entry { itemId: string; key: string; profile: string | null; at: numbe
 const entries = new Map<string, Entry>();
 /** the player's stop report while it is on its way: the resume position it writes must be in before a new info is asked for */
 let hold: Promise<void> | null = null;
+/** a stop that never answers releases the hold after this long (prefetch must not stay off until a reload) */
+export const HOLD_TIMEOUT_MS = 4000;
 
 /**
  * Called by the player when it goes away: drops any cached answer and holds new prefetches until `p` (the stop report)
  * settles. Otherwise a prefetch fired by autofocus or a quick hover could read the last progress report (up to 10 s old)
- * and a Play within 30 s would resume too early. Prefetches asked for meanwhile start after it settles.
+ * and a Play within 30 s would resume too early. Prefetches asked for meanwhile start after it settles, at the latest
+ * after HOLD_TIMEOUT_MS.
  */
 export function holdPrefetch(p: Promise<unknown>): void {
   entries.clear();
-  const h: Promise<void> = Promise.resolve(p).then(() => undefined, () => undefined).then(() => { if (hold === h) hold = null; });
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<void>((r) => { timer = setTimeout(r, HOLD_TIMEOUT_MS); });
+  const settled = Promise.resolve(p).then(() => undefined, () => undefined);
+  const h: Promise<void> = Promise.race([settled, timeout]).then(() => { clearTimeout(timer); if (hold === h) hold = null; });
   hold = h;
 }
 

@@ -12,7 +12,7 @@ vi.mock('$app/navigation', () => ({ preloadCode: () => Promise.resolve() }));
 vi.mock('./hls', () => ({ loadHls: () => Promise.resolve() }));
 const markPlayArt = vi.fn();
 vi.mock('./transition', async (orig) => ({ ...(await orig<typeof import('./transition')>()), markPlayArt: (...a: unknown[]) => markPlayArt(...a) }));
-const { holdPrefetch, playPrefetch, prefetchPlayback, takePrefetched, watchTarget, _resetPrefetch, PREFETCH_TTL_MS } = await import('./prefetch');
+const { HOLD_TIMEOUT_MS, holdPrefetch, playPrefetch, prefetchPlayback, takePrefetched, watchTarget, _resetPrefetch, PREFETCH_TTL_MS } = await import('./prefetch');
 const { firstPlaybackRequest, playbackInfoBody, bodyKey } = await import('./infobody');
 const { entryFadeMs, playTransition } = await import('./transition');
 const { prefs, DEFAULT_PREFS } = await import('#lib/stores');
@@ -113,6 +113,30 @@ describe('holdPrefetch (the leaving player\'s stop report)', () => {
     await flush();
     prefetchPlayback('m1');
     expect(api).toHaveBeenCalledTimes(2);
+  });
+
+  it('a stop that never settles releases the hold after 4 s', async () => {
+    vi.useFakeTimers();
+    api.mockResolvedValue({});
+    holdPrefetch(new Promise(() => undefined));
+    prefetchPlayback('m1');
+    await vi.advanceTimersByTimeAsync(HOLD_TIMEOUT_MS - 100);
+    expect(api).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(200);
+    expect(api).toHaveBeenCalledTimes(1);
+  });
+
+  it('a newer hold is not released by the timeout of an older one', async () => {
+    vi.useFakeTimers();
+    api.mockResolvedValue({});
+    holdPrefetch(new Promise(() => undefined));
+    await vi.advanceTimersByTimeAsync(3000);
+    holdPrefetch(new Promise(() => undefined)); // the next player left meanwhile
+    prefetchPlayback('m1');
+    await vi.advanceTimersByTimeAsync(1500); // the first hold timed out, the second still runs
+    expect(api).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(3000);
+    expect(api).toHaveBeenCalledTimes(1);
   });
 });
 
