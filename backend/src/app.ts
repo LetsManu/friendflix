@@ -38,6 +38,7 @@ import { animeRoutes } from './routes/anime.js';
 import { sourceRoutes } from './routes/sources.js';
 import { aboutRoutes } from './routes/about.js';
 import { healthRoutes } from './routes/health.js';
+import { hygieneRoutes } from './routes/hygiene.js';
 import { syncFileKeys } from './sources/keys.js';
 import { testSourceKey } from './sources/omdb.js';
 import { appVersion } from './version.js';
@@ -169,6 +170,7 @@ export async function buildApp(ctx: Ctx, extra: Extra = {}): Promise<FastifyInst
   sourceRoutes(app, ctx, testSourceKey);
   aboutRoutes(app, ctx);
   healthRoutes(app, ctx);
+  hygieneRoutes(app, ctx);
   for (const r of extra.register ?? []) await r(app, ctx);
   return app;
 }
