@@ -354,7 +354,7 @@ npm run e2e                                     # Playwright: baut die Web-App u
 
 ### Mitmachen
 
-Beiträge sind willkommen – die Anforderungen (Code-Standard, Tests, alle 7 Sprachen) stehen in [CONTRIBUTING.md](CONTRIBUTING.md), Sicherheitslücken bitte wie in [SECURITY.md](SECURITY.md) beschrieben melden.
+Beiträge sind willkommen – die Anforderungen (Code-Standard, Tests, alle 7 Sprachen) stehen in [CONTRIBUTING.md](CONTRIBUTING.md), Sicherheitslücken bitte wie in [SECURITY.md](SECURITY.md) beschrieben melden. Es gilt der [Verhaltenskodex](CODE_OF_CONDUCT.md) (englisch); die Pläne für die nächsten Monate stehen in der [ROADMAP](ROADMAP.md) (englisch); das Sicherheitskonzept ist in [docs/security.md](docs/security.md) (englisch) beschrieben.
 
 ### Lizenz
 
