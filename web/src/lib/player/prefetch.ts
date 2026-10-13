@@ -27,6 +27,19 @@ export const PREFETCH_TTL_MS = 30_000;
 export const HOVER_DWELL_MS = 150;
 interface Entry { itemId: string; key: string; profile: string | null; at: number; promise: Promise<PlaybackDto> }
 const entries = new Map<string, Entry>();
+/** the player's stop report while it is on its way: the resume position it writes must be in before a new info is asked for */
+let hold: Promise<void> | null = null;
+
+/**
+ * Called by the player when it goes away: drops any cached answer and holds new prefetches until `p` (the stop report)
+ * settles. Otherwise a prefetch fired by autofocus or a quick hover could read the last progress report (up to 10 s old)
+ * and a Play within 30 s would resume too early. Prefetches asked for meanwhile start after it settles.
+ */
+export function holdPrefetch(p: Promise<unknown>): void {
+  entries.clear();
+  const h: Promise<void> = Promise.resolve(p).then(() => undefined, () => undefined).then(() => { if (hold === h) hold = null; });
+  hold = h;
+}
 
 /**
  * Starts POST /api/playback/info for `itemId` with the body the player will send first (saved quality or the rung for the
@@ -36,6 +49,7 @@ const entries = new Map<string, Entry>();
  */
 export function prefetchPlayback(itemId: string, o: { audio?: string; startSec?: number } = {}): void {
   if (typeof window === 'undefined' || !itemId) return;
+  if (hold) { const h = hold; void h.then(() => { if (!hold) prefetchPlayback(itemId, o); }); return; } // never before the stop settled
   const { body } = firstPlaybackRequest(itemId, get(prefs), o.audio ?? '', o.startSec);
   const key = bodyKey(body), profile = getActiveProfile(), now = Date.now();
   const cur = entries.get(itemId);
@@ -82,7 +96,11 @@ export function playPrefetch(node: HTMLElement): { destroy(): void } {
   };
   const enter = () => { prefetchPlayer(); clearTimeout(timer); timer = setTimeout(now, HOVER_DWELL_MS); };
   const leave = () => clearTimeout(timer);
-  const click = () => { if (watchTarget(node.getAttribute('href'))) markPlayArt(artFor(node)); };
+  // a modified / middle click opens a tab or window: no navigation here, so no artwork for a transition
+  const click = (e: MouseEvent) => {
+    if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button !== 0 || e.defaultPrevented) return;
+    if (watchTarget(node.getAttribute('href'))) markPlayArt(artFor(node));
+  };
   const opts = { passive: true };
   node.addEventListener('pointerenter', enter);
   node.addEventListener('pointerleave', leave);
@@ -100,4 +118,4 @@ export function playPrefetch(node: HTMLElement): { destroy(): void } {
 }
 
 /** tests only */
-export function _resetPrefetch(): void { entries.clear(); }
+export function _resetPrefetch(): void { entries.clear(); hold = null; }

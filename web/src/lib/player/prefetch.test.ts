@@ -10,7 +10,9 @@ let profile: string | null = 'p1';
 vi.mock('#lib/api', () => ({ api: (...a: unknown[]) => api(...a), getActiveProfile: () => profile }));
 vi.mock('$app/navigation', () => ({ preloadCode: () => Promise.resolve() }));
 vi.mock('./hls', () => ({ loadHls: () => Promise.resolve() }));
-const { prefetchPlayback, takePrefetched, watchTarget, _resetPrefetch, PREFETCH_TTL_MS } = await import('./prefetch');
+const markPlayArt = vi.fn();
+vi.mock('./transition', async (orig) => ({ ...(await orig<typeof import('./transition')>()), markPlayArt: (...a: unknown[]) => markPlayArt(...a) }));
+const { holdPrefetch, playPrefetch, prefetchPlayback, takePrefetched, watchTarget, _resetPrefetch, PREFETCH_TTL_MS } = await import('./prefetch');
 const { firstPlaybackRequest, playbackInfoBody, bodyKey } = await import('./infobody');
 const { entryFadeMs, playTransition } = await import('./transition');
 const { prefs, DEFAULT_PREFS } = await import('#lib/stores');
@@ -85,6 +87,52 @@ describe('prefetchPlayback / takePrefetched', () => {
     prefetchPlayback('m1', { audio: 'eng', startSec: 90 });
     expect(api.mock.calls[0]![1].body).toEqual({ itemId: 'm1', startTicks: 900_000_000, maxBitrate: 8_000_000, reasonHint: 'manual', audioLang: 'eng' });
     expect(takePrefetched('m1', firstPlaybackRequest('m1', { quality: 8_000_000, audioLang: 'ger' }, 'eng', 90).body)).not.toBeNull();
+  });
+});
+
+describe('holdPrefetch (the leaving player\'s stop report)', () => {
+  it('a prefetch during the hold makes no request; after the stop settles it does', async () => {
+    api.mockResolvedValue({});
+    let settle!: () => void;
+    holdPrefetch(new Promise<void>((r) => (settle = r)));
+    prefetchPlayback('m1');
+    await flush();
+    expect(api).not.toHaveBeenCalled();
+    expect(takePrefetched('m1', playerBody('m1'))).toBeNull();
+    settle();
+    await flush();
+    expect(api).toHaveBeenCalledTimes(1);
+    expect(takePrefetched('m1', playerBody('m1'))).not.toBeNull();
+  });
+
+  it('clears a cached entry when the hold starts; a failed stop also releases it', async () => {
+    api.mockResolvedValue({});
+    prefetchPlayback('m1');
+    holdPrefetch(Promise.reject(new Error('offline')));
+    expect(takePrefetched('m1', playerBody('m1'))).toBeNull();
+    await flush();
+    prefetchPlayback('m1');
+    expect(api).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe('playPrefetch click', () => {
+  /** minimal element: listeners, href, no scope (artwork null) */
+  const fakeLink = (href: string) => {
+    const on = new Map<string, (e: unknown) => void>();
+    const node = { getAttribute: () => href, closest: () => null, addEventListener: (k: string, f: (e: unknown) => void) => on.set(k, f), removeEventListener: () => undefined };
+    playPrefetch(node as unknown as HTMLElement);
+    return (e: Partial<MouseEvent>) => on.get('click')!({ button: 0, metaKey: false, ctrlKey: false, shiftKey: false, altKey: false, defaultPrevented: false, ...e });
+  };
+  beforeEach(() => markPlayArt.mockReset());
+  it('a plain click marks the artwork for the transition', () => {
+    fakeLink('/watch/m1')({});
+    expect(markPlayArt).toHaveBeenCalledTimes(1);
+  });
+  it('ctrl/meta/shift/middle clicks and prevented clicks do not', () => {
+    const click = fakeLink('/watch/m1');
+    for (const e of [{ ctrlKey: true }, { metaKey: true }, { shiftKey: true }, { button: 1 }, { defaultPrevented: true }]) click(e);
+    expect(markPlayArt).not.toHaveBeenCalled();
   });
 });
 

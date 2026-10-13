@@ -22,7 +22,7 @@
   import QualityChip from '#lib/player/QualityChip.svelte';
   import { speedLabel, SPEEDS } from '#lib/player/bar';
   import { firstPlaybackRequest, playbackInfoBody, type InfoBody, type PlaybackDto } from '#lib/player/infobody';
-  import { takePrefetched } from '#lib/player/prefetch';
+  import { holdPrefetch, takePrefetched } from '#lib/player/prefetch';
   import EpisodesPanel from '#lib/player/EpisodesPanel.svelte';
   import CastInfoPanel from '#lib/player/CastInfoPanel.svelte';
   import CastPeek from '#lib/player/CastPeek.svelte';
@@ -912,7 +912,9 @@
     clearTimeout(peekT); clearTimeout(posterT); fxEngine?.destroy();
     persistEstimate(); clearInterval(abrTimer); clearInterval(bwTimer); clearTimeout(stallT);
     clearInterval(progressTimer); clearInterval(activityTimer); clearTimeout(toastTimer); clearTimeout(retryT); clearTimeout(spinT); clearTimeout(pendingTap); clearTimeout(hudT); clearTimeout(rippleT); clearTimeout(lockT); clearTimeout(unlockT); nowPlaying.set(null);
-    if (started && !stopped) { stopped = true; send('stop'); }
+    let stopP: unknown;
+    if (started && !stopped) { stopped = true; stopP = send('stop'); }
+    holdPrefetch(Promise.resolve(stopP)); // no cached info survives the player; the next prefetch waits for this stop (resume position)
     if (casting) { castRevoke(castInfo); castStop(); casting = false; } // leaving the page ends the cast session and revokes its token
     castOff?.();
     hls?.destroy();
