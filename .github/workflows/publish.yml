@@ -1,7 +1,7 @@
 name: Publish images
 # Does NOT build. Re-tags the image that CI already built and scanned (ghcr.io/<owner>/friendflix-<service>:ci-<git sha>,
 # see the top of ci.yml) to the release tags - same manifest digest, no second build.
-# Tags: latest + short sha on main, vX.Y.Z on version tags.
+# Tags: latest + short sha on main; X.Y.Z, X.Y, X + latest + short sha on vX.Y.Z tags (cut by release.yml).
 # Called by CI after tests, secret scan and image scan pass; workflow_dispatch is the manual escape hatch
 # (only works for a commit whose CI run pushed its ci-<sha> images; run it on that commit's ref).
 # After promotion the digest is signed with cosign KEYLESS (GitHub OIDC -> Fulcio cert, Rekor log; no keys or secrets)
@@ -34,10 +34,14 @@ jobs:
         uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6
         with:
           images: ${{ steps.img.outputs.name }}
+          # main: latest + short sha. vX.Y.Z tag: X.Y.Z, X.Y, X (pin `:1` to stay on a major line) and latest - the release
+          # commit is main's head, and release.yml pushes with GITHUB_TOKEN, which starts no CI run for main itself.
           tags: |
-            type=raw,value=latest,enable={{is_default_branch}}
+            type=raw,value=latest,enable=${{ github.ref == format('refs/heads/{0}', github.event.repository.default_branch) || startsWith(github.ref, 'refs/tags/v') }}
             type=sha,format=short
             type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{major}}
       - name: Re-tag the scanned image
         id: promote
         env:

@@ -1,0 +1,78 @@
+# Cuts a release by hand (Actions → Release → Run workflow, on main):
+#   bump version.json (a major bump takes the next codename), sync every package.json + package-lock.json, turn
+#   CHANGELOG "## [Unreleased]" into "## [x.y.z] – Codename – date" (scripts/release.mjs, tested), commit
+#   "release: vX.Y.Z Codename", tag vX.Y.Z, push both, create the GitHub Release with that changelog section as notes.
+# Pushes made with GITHUB_TOKEN start no workflows, so this then dispatches CI for the tag; CI builds, scans and
+# publishes the images as X.Y.Z, X.Y, X and latest (publish.yml). How to: docs/operations.md → "Release erstellen".
+# Protected main: allow this workflow to push (ruleset bypass for GitHub Actions) or the push step fails cleanly.
+name: Release
+on:
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: "Version bump (major = next codename)"
+        required: true
+        type: choice
+        options: [patch, minor, major]
+        default: minor
+permissions: { contents: read }
+concurrency: { group: release, cancel-in-progress: false }
+jobs:
+  release:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write # release commit, tag, GitHub Release
+      actions: write # start CI for the new tag (workflow_dispatch)
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with: { fetch-depth: 0 }
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with: { node-version: 26 }
+      - name: Release script tests
+        run: node --test scripts/release.test.mjs
+      - name: Bump version, sync packages, cut changelog
+        id: cut
+        env:
+          BUMP: ${{ inputs.bump }}
+        run: |
+          set -euo pipefail
+          node scripts/release.mjs "$BUMP" --notes "$RUNNER_TEMP/notes.md" > "$RUNNER_TEMP/release.json"
+          cat "$RUNNER_TEMP/release.json"
+          tag=$(jq -er .tag "$RUNNER_TEMP/release.json")
+          if git rev-parse -q --verify "refs/tags/$tag" >/dev/null || git ls-remote --exit-code --tags origin "refs/tags/$tag" >/dev/null; then
+            echo "::error::tag $tag already exists"; exit 1
+          fi
+          {
+            echo "tag=$tag"
+            echo "version=$(jq -er .version "$RUNNER_TEMP/release.json")"
+            echo "codename=$(jq -er .codename "$RUNNER_TEMP/release.json")"
+          } >> "$GITHUB_OUTPUT"
+      - name: Commit, tag and push
+        env:
+          TAG: ${{ steps.cut.outputs.tag }}
+          CODENAME: ${{ steps.cut.outputs.codename }}
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          jq -r '.files[]' "$RUNNER_TEMP/release.json" | xargs git add --
+          git commit -m "release: $TAG $CODENAME"
+          git tag -a "$TAG" -m "$TAG $CODENAME"
+          git push --atomic origin "HEAD:refs/heads/main" "refs/tags/$TAG"
+      - name: GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.cut.outputs.tag }}
+          CODENAME: ${{ steps.cut.outputs.codename }}
+        run: gh release create "$TAG" --verify-tag --latest --title "$TAG $CODENAME" --notes-file "$RUNNER_TEMP/notes.md"
+      - name: Build and publish the images (CI for the tag)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.cut.outputs.tag }}
+          CODENAME: ${{ steps.cut.outputs.codename }}
+        run: |
+          gh workflow run ci.yml --ref "$TAG"
+          echo "### Released $TAG $CODENAME" >> "$GITHUB_STEP_SUMMARY"
+          echo "CI started for $TAG: images are published as X.Y.Z, X.Y, X and latest once every check passed." >> "$GITHUB_STEP_SUMMARY"

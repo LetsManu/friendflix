@@ -49,15 +49,29 @@ Prüfung von außen: `nmap -p 8096,8920,5055 <öffentliche-IP>` → alle `filter
 Nach Jellyfin-Updates: `JELLYFIN_URL=… ./scripts/gen-jellyfin-client.sh` und Diff prüfen (Pfade ändern sich zwischen Versionen; der Client probiert alte/neue Pfade für Views/Resume/Item/Favoriten/Gesehen).
 
 ## Updates aus dem Portal
-*Admin → Update* vergleicht die installierte Version (`GIT_SHA`, beim Image-Build eingebacken) mit dem letzten erfolgreichen CI-Lauf auf `main`, listet die Änderungen und kann das Portainer-Stack sofort neu ziehen. Portainer selbst zieht Images ohnehin alle 12 Stunden. Der Knopf bleibt deaktiviert, solange eine der beiden Varianten fehlt:
+*Admin → Update* vergleicht die installierte Version (`APP_VERSION`/`APP_CODENAME` aus `version.json` und `GIT_SHA`, beim Image-Build eingebacken) mit dem neuesten GitHub-Release von `UPDATE_REPO` (*Update verfügbar*, Notizen unter *Was ist neu*) und zeigt zusätzlich, wie viele Commits der letzte erfolgreiche CI-Lauf auf `main` weiter ist (vor dem ersten Release ist das der einzige Vergleich). Das Portainer-Stack lässt sich sofort neu ziehen. Portainer selbst zieht Images ohnehin alle 12 Stunden. Der Knopf bleibt deaktiviert, solange eine der beiden Varianten fehlt:
 
 - **Webhook (einfach):** In Portainer → Stacks → *dein Stack* → *Stack-Webhook* aktivieren, URL kopieren und als `PORTAINER_WEBHOOK_URL` setzen. Die URL enthält ein Token und ist ein Secret (auch als `PORTAINER_WEBHOOK_URL_FILE` möglich).
 - **API:** In Portainer → *My account* → *Access tokens* ein Token anlegen (`PORTAINER_API_KEY`), `PORTAINER_URL` (intern erreichbar vom Backend), `PORTAINER_STACK_ID` (steht in der URL des Stacks, `…/stacks/<id>`) und ggf. `PORTAINER_ENDPOINT_ID` (Default 1) setzen. Das Portal liest den Stack (Git- oder Datei-Stack), behält dessen Umgebungsvariablen unverändert und löst ein Redeploy mit Image-Pull aus.
 
 Sicherheit: Webhook-URL und Token können den Stack neu deployen. Am besten einen eigenen Portainer-Benutzer nur mit Zugriff auf dieses eine Stack verwenden (kein Admin) und das Token ausschließlich in der `.env`/den Docker-Secrets ablegen. Beide Werte erscheinen weder in Antworten noch in Logs. Pro 2 Minuten ist ein Update möglich; jeder Auslöser steht als `system.update` im Audit-Log. Optional senkt `GITHUB_TOKEN` (ohne Rechte) das GitHub-Limit-Risiko; Ergebnisse werden 10 Minuten gecacht.
 
+## Release erstellen
+Versionen folgen SemVer; die Quelle ist `version.json` im Repo-Wurzelverzeichnis (`{ "version": "1.0.0", "codename": "Arancini" }`). Jede **Hauptversion** bekommt den nächsten Codenamen aus `codenames.json` (Kino-Snacks von A bis Z: 1 Arancini, 2 Brezel, 3 Churros, …). Minor- und Patch-Releases behalten den Codenamen.
+
+1. Unter `## [Unreleased]` im `CHANGELOG.md` stehen die Änderungen seit dem letzten Release (ist der Abschnitt leer, bricht der Workflow ab).
+2. GitHub → *Actions* → **Release** → *Run workflow* auf `main`, `bump` wählen: `patch` (Fehlerbehebungen), `minor` (neue Funktionen), `major` (inkompatible Änderungen, neuer Codename).
+3. Der Workflow ([release.yml](../.github/workflows/release.yml), Logik in `scripts/release.mjs` mit Tests) erhöht `version.json`, gleicht `version` in allen `package.json` und der `package-lock.json` an, macht aus `## [Unreleased]` den Abschnitt `## [x.y.z] – Codename – JJJJ-MM-TT` (darüber ein neuer, leerer Unreleased-Abschnitt), committet `release: vX.Y.Z Codename` auf `main`, setzt den Tag `vX.Y.Z` und legt das GitHub-Release mit diesem Abschnitt als Notizen an.
+4. Danach startet er CI für den Tag (Pushes mit `GITHUB_TOKEN` lösen selbst keine Workflows aus). Nach Tests und Scans veröffentlicht `publish.yml` die Images als `X.Y.Z`, `X.Y`, `X` und `latest`.
+
+Vorher lokal ausprobieren, ohne etwas zu ändern: `node scripts/release.mjs minor --dry-run` (zeigt neue Version, Codename, Dateien und die Release-Notizen).
+
+Ist `main` per Ruleset/Branch-Schutz gegen direkte Pushes gesperrt (siehe *Empfohlener Branch-Schutz*), braucht der Release-Commit eine Ausnahme für GitHub Actions (Ruleset → *Bypass list*, sofern dort auswählbar), sonst den Schutz für den Release kurz lockern. Ohne Ausnahme scheitert der Push atomar: es entstehen weder Commit noch Tag noch Release.
+
+**Auf einer Hauptversion bleiben:** In der `.env` des Stacks `FF_TAG=1` setzen (`compose.prod.yaml` nutzt `…/friendflix-<dienst>:${FF_TAG:-latest}`). Dann ziehen Portainer bzw. `docker compose pull` alle 1.x-Releases, aber nie 2.0. `FF_TAG=1.4` bleibt auf 1.4.x, `FF_TAG=1.4.2` friert genau eine Version ein. `latest` folgt `main` (auch Commits zwischen Releases).
+
 ## Images prüfen: Signatur, SBOM, Provenienz
-Jedes veröffentlichte Image (`ghcr.io/<owner>/friendflix-{backend,gateway,web}`, Tags `latest`, Kurz-SHA, `x.y.z`) ist
+Jedes veröffentlichte Image (`ghcr.io/<owner>/friendflix-{backend,gateway,web}`, Tags `latest`, Kurz-SHA, `x.y.z`, `x.y`, `x`) ist
 - mit **cosign keyless** signiert: kein Schlüssel, kein Secret. Der Publish-Job holt sich per GitHub-OIDC ein kurzlebiges Zertifikat von Sigstore (Fulcio), die Signatur steht im öffentlichen Transparenz-Log (Rekor). Die Identität im Zertifikat ist der Workflow, der signiert hat: `https://github.com/<Owner>/<Repo>/.github/workflows/publish.yml@refs/heads/main` bzw. `@refs/tags/vX.Y.Z`.
 - mit **GitHub-Attestations** versehen: SLSA-Provenienz (welcher Commit, welcher Workflow-Lauf) und die SBOM (SPDX, von BuildKit beim Build erzeugt), beide auch in GHCR neben dem Image abgelegt.
 - zusätzlich mit den BuildKit-Attestations (SBOM + Provenienz `mode=max`) direkt im Image-Index.
