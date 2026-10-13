@@ -14,6 +14,7 @@
   import { BRIGHTNESS_MIN, brightnessPct, classifyMove, levelFromDrag, registerTap, scrubTarget, TAP_WINDOW, volumeSettable, zoneOf, type Axis, type TapState, type Zone } from '#lib/player/gestures';
   import { creditsStart } from '#lib/player/nextup';
   import { COOLDOWN_RETRY_MS, decideRecovery, freshRecovery, kindOfMediaError, lowerQuality, MAX_NETWORK_TRIES, networkStep, type ErrorKind } from '#lib/player/retry';
+  import { WheelAccumulator } from '#lib/player/wheel';
   import { parseVolume, stepVolume } from '#lib/player/volume';
   import { hlsConfig, loadHls } from '#lib/player/hls';
   import { AbrController, LADDER, pickRung, type Decision } from '#lib/player/abr';
@@ -736,11 +737,13 @@
     if (onPicture) { e.stopPropagation(); void tickDom().then(() => opener?.focus()); }
   }
   /** mouse wheel over the picture = volume (desktop; a menu open keeps its own scrolling) */
+  const wheelAcc = new WheelAccumulator();
   function onWheel(e: WheelEvent) {
     if (coarse || tvMode() || locked || menu || subDlg || help || !video || e.ctrlKey || !e.deltaY) return;
-    if ((e.target as HTMLElement).closest(NO_GESTURE)) return;
+    if (e.target !== video && e.target !== stage) return; // slot content (party chat), menus, dialogs keep their own scrolling
     e.preventDefault(); wake();
-    volumeBy(e.deltaY > 0 ? -0.05 : 0.05);
+    const n = wheelAcc.add(e.deltaY, e.deltaMode, e.timeStamp || Date.now(), window.innerHeight);
+    if (n) volumeBy(-n * 0.05);
   }
   function toggleControls() { if (tick - lastActive < 3000 && !paused) lastActive = 0; else wake(); }
 
@@ -1058,7 +1061,7 @@
             {#if !coarse}<button class="ic" aria-label={$t('player.speed.aria', { r: speedLabel(rate, $t) })} title={$t('player.speed.short')} aria-expanded={menu === 'speed'} on:click={() => toggleMenu('speed')}><Icon name="gauge" size={ICON} />{#if rate !== 1}<span class="ratebadge" aria-hidden="true">{$t('player.speed.rate', { r: rate })}</span>{/if}</button>{/if}
             {#if menu === 'speed'}
               <div class="menu speed" data-nav data-scope role="dialog" aria-label={$t('player.speed.title')}>
-                <h3>{$t('player.speed.title')}</h3>
+                <h3>{#if coarse}<button class="back" aria-label={$t('player.controls.backToMore')} on:click={() => (menu = 'more')}>‹</button>{/if}{$t('player.speed.title')}</h3>
                 <div class="speeds" role="group" aria-label={$t('player.speed.short')}>
                   {#each SPEEDS as r}<button class="sp-opt" class:on={rate === r} aria-pressed={rate === r} on:click={() => setRate(r)}><span class="dot" aria-hidden="true"></span>{speedLabel(r, $t)}</button>{/each}
                 </div>
@@ -1273,5 +1276,5 @@
     .speeds { flex-wrap: wrap; justify-content: center; } .speeds::before { display: none; } .sp-opt { min-width: 64px; }
   }
   /* touch: every main-bar target is at least 48 px */
-  @media (pointer: coarse) { .ic { width: 48px; min-height: 48px; } }
+  @media (pointer: coarse) { .ic { min-width: 48px; min-height: 48px; } }
 </style>

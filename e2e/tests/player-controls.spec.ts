@@ -51,3 +51,18 @@ test('> raises speed and shows feedback', async ({ page, api: _api }) => {
   await page.keyboard.press('<'); await page.keyboard.press('<');
   expect(await page.evaluate(() => document.querySelector('video')!.playbackRate)).toBe(0.75);
 });
+
+test('wheel over slot content (chat) leaves the volume alone and scrolls it', async ({ page, api: _api }) => {
+  await open(page);
+  await page.evaluate(() => {
+    const d = document.createElement('div');
+    d.id = 'fake-chat'; d.style.cssText = 'position:absolute;right:0;top:0;width:200px;height:200px;overflow:auto;z-index:8;background:#222';
+    d.innerHTML = '<div style="height:1000px">chat</div>';
+    document.querySelector('.stage')!.appendChild(d);
+  });
+  const b = (await page.locator('#fake-chat').boundingBox())!;
+  await page.mouse.move(b.x + 100, b.y + 100);
+  await page.mouse.wheel(0, 100);
+  await expect.poll(() => page.evaluate(() => document.querySelector('#fake-chat')!.scrollTop)).toBeGreaterThan(0);
+  expect(await volume(page)).toBe(1);
+});
