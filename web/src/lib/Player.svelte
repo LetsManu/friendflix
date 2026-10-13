@@ -994,6 +994,8 @@
     const narrow = matchMedia('(max-width: 720px)'), setIcon = () => (ICON = narrow.matches ? 28 : 36);
     setIcon(); narrow.addEventListener?.('change', setIcon);
     try { const v = parseVolume(localStorage.getItem('ff_vol')); if (video && v !== null) { volume = v; video.volume = v; } } catch { /* ignore */ }
+    // a party plays here, in sync: a cast still running from an earlier title would be a second live stream
+    if (partyMode && get(castSession)) void castEngine.stop();
     const attached = attachToCast();
     if (!attached) load(startAt);
     castOff = onCastEvent(handleCast);

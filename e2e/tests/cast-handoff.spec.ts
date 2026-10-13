@@ -271,4 +271,19 @@ test.describe('party', () => {
     expect(await page.locator(engineVideo).count()).toBe(0);
     expect(sessions).toHaveLength(0);
   });
+
+  test('a party ends a running cast before it plays (one stream)', async ({ page, api: _api }) => {
+    const { sdk, deleted } = await castingMovieThenLeft(page);
+    await page.routeWebSocket(/\/ws\/party\//, (ws) => {
+      ws.send(JSON.stringify({ t: 'welcome', you: 'u1', hostId: 'u1', mode: 'host', itemId: items[0]!.id, title: 'Testfilm', members: [{ id: 'u1', name: 'Mia', buffering: false }], state: { playing: false, position: 0, at: Date.now(), hold: false }, serverNow: Date.now() }));
+      ws.onMessage((m) => { const msg = JSON.parse(String(m)); if (msg.t === 'ping') ws.send(JSON.stringify({ t: 'pong', c: msg.c, s: Date.now() })); });
+    });
+    await expect(page.getByRole('region', { name: 'Jetzt auf dem Fernseher' })).toBeVisible();
+    await clientNav(page, '/party/room1');
+    await videoReady(page);
+    await expect.poll(() => sdk.calls()).toContain('endCurrentSession');
+    await expect.poll(() => deleted).toEqual(['c'.repeat(32)]);
+    await clientNav(page, '/');
+    await expect(page.getByRole('region', { name: 'Jetzt auf dem Fernseher' })).toHaveCount(0);
+  });
 });
