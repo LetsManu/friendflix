@@ -1,4 +1,3 @@
-import { createHash } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { decrypt, encrypt, keyFromBase64 } from '../src/crypto.js';
 import { FILE_FP_KEY, getSourceKey, INVALID_KEY, PAUSE_KEY, syncFileKeys } from '../src/sources/keys.js';
@@ -158,8 +157,8 @@ describe('source keys', () => {
       const fp = await env.kv.get(FILE_FP_KEY('tmdb'));
       expect(fp).toBeTruthy();
       expect(fp).not.toContain('2222');
-      // keyed with APP_ENC_KEY: a plain sha256 of a short key could be brute-forced from a kv dump
-      expect(fp).not.toBe(createHash('sha256').update('filekey-new-2222').digest('hex').slice(0, 32));
+      // stored encrypted with APP_ENC_KEY, never as a plain or hashed value
+      expect(decrypt(env.ctx.encKey, fp!)).toBe('filekey-new-2222');
     } finally {
       env.ctx.cfg = orig;
       await syncFileKeys(env.ctx);

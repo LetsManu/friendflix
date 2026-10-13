@@ -1,4 +1,3 @@
-import { createHmac } from 'node:crypto';
 import { decrypt, encrypt } from '../crypto.js';
 import type { Ctx } from '../ctx.js';
 
@@ -90,8 +89,11 @@ export async function clearSourceFailures(ctx: Pick<Ctx, 'kv'>, name: SourceName
   for (const k of await ctx.kv.keys(CACHE_PREFIX(name))) if ((await ctx.kv.get(k)) === FAIL_MARK) await ctx.kv.del(k);
 }
 
-/** keyed with APP_ENC_KEY: a short key (OMDb: 8 hex chars) cannot be brute-forced from a kv dump or backup */
-const fingerprint = (encKey: Buffer, key: string) => createHmac('sha256', encKey).update(`source-key:${key}`).digest('hex').slice(0, 32);
+/** the last seen file key, stored encrypted with APP_ENC_KEY (no hash: a short key could be brute-forced from a kv dump) */
+const sameKey = (encKey: Buffer, stored: string | null, key: string) => {
+  if (!stored) return !key;
+  try { return decrypt(encKey, stored) === key; } catch { return false; }
+};
 
 /**
  * At startup: a file/env key that differs from the one seen last time (replaced secret file, restart) clears the source's failure state,
@@ -100,11 +102,9 @@ const fingerprint = (encKey: Buffer, key: string) => createHmac('sha256', encKey
 export async function syncFileKeys(ctx: Pick<Ctx, 'cfg' | 'kv' | 'encKey'>): Promise<void> {
   for (const name of SOURCES) {
     const file = fileKey(ctx, name);
-    const fp = file ? fingerprint(ctx.encKey, file) : '';
-    const seen = (await ctx.kv.get(FILE_FP_KEY(name))) ?? '';
-    if (fp === seen) continue;
+    if (sameKey(ctx.encKey, await ctx.kv.get(FILE_FP_KEY(name)), file ?? '')) continue;
     await clearSourceFailures(ctx, name);
-    if (fp) await ctx.kv.set(FILE_FP_KEY(name), fp, FILE_FP_TTL);
+    if (file) await ctx.kv.set(FILE_FP_KEY(name), encrypt(ctx.encKey, file), FILE_FP_TTL);
     else await ctx.kv.del(FILE_FP_KEY(name));
   }
 }
