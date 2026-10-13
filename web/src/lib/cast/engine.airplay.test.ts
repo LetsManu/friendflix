@@ -394,6 +394,23 @@ describe('cast engine: AirPlay title switch', () => {
     expect(get(env.out)?.subtitles).toEqual([{ index: 7, title: 'English', language: 'eng' }]);
   });
 
+  it('a renewal keeps a paused TV paused', async () => {
+    const env = await setup();
+    env.posts.push(async () => ci('r1', { expiresAt: T0 + 9 * 60 * 60_000 }));
+    await env.adopt({ cast: { ...env.air.info!, expiresAt: T0 + 5 * 60_000 } });
+    env.engine.playPause();
+    expect(env.video.paused).toBe(true);
+    env.video.play.mockClear();
+    await env.advance(PROGRESS_MS);
+    expect(env.air.info?.castId).toBe('r1');
+    expect(env.video.play).not.toHaveBeenCalled();
+    expect(get(env.out)).toMatchObject({ state: 'playing', paused: true, buffering: false });
+    const start = env.calls.filter((c) => c.path === '/api/playback/start').at(-1)!;
+    expect(start.init.body).toMatchObject({ playSessionId: 'ps-r1', isPaused: true });
+    env.engine.playPause(); // the bar's play button drives the new token
+    expect(env.video.play).toHaveBeenCalledTimes(1);
+  });
+
   it('renews the token before it expires', async () => {
     const env = await setup();
     env.posts.push(async () => ci('r1', { expiresAt: T0 + 9 * 60 * 60_000 }));

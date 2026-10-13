@@ -260,6 +260,13 @@ describe('loadOnCast', () => {
     expect(req).toMatchObject({ currentTime: 95, autoplay: true, activeTrackIds: [2] });
   });
 
+  it('autoplay false loads paused', async () => {
+    const sdk = await connectSdk();
+    sdk.context.current = sdk.session;
+    expect(await C.loadOnCast(info, -1, false)).toBe(true);
+    expect(sdk.session.loadMedia.mock.calls[0]![0]).toMatchObject({ autoplay: false });
+  });
+
   it('a movie without image or runtime, no active subtitle; a receiver error is false', async () => {
     const sdk = await connectSdk();
     sdk.context.current = sdk.session;

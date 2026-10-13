@@ -205,7 +205,8 @@ export async function requestCastSession(): Promise<boolean> {
 export const castConnected = () => get(castState).connected;
 
 /** Loads the cast stream on the receiver; resolves false on failure. */
-export async function loadOnCast(info: CastInfo, activeSubtitle = -1): Promise<boolean> {
+/** loads the token on the receiver; `autoplay` false: it stays paused at the start (a renewal while the TV is paused) */
+export async function loadOnCast(info: CastInfo, activeSubtitle = -1, autoplay = true): Promise<boolean> {
   const sess = ctxT?.getCurrentSession(), ch = window.chrome?.cast;
   if (!sess || !ch) return false;
   const m = ch.media;
@@ -232,7 +233,7 @@ export async function loadOnCast(info: CastInfo, activeSubtitle = -1): Promise<b
   });
   const req = new m.LoadRequest(media);
   req.currentTime = info.startTime;
-  req.autoplay = true;
+  req.autoplay = autoplay;
   const active = trackIds.get(activeSubtitle);
   if (active) req.activeTrackIds = [active];
   try {

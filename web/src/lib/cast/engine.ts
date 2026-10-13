@@ -120,6 +120,8 @@ interface Live {
   /** the latest `stop` report: the next token request waits for it (the server counts the stream until then) */
   stopping: Promise<unknown>;
   lastPaused: boolean | null;
+  /** a renewal of a paused TV: the token loads without autoplay and `start` follows once it is loaded (paused) */
+  hold: boolean;
   audioIndex?: number; subIndex: number; maxBitrate?: number; sleepAfterEpisode: boolean;
   /** what `reconnect()` repeats after a failed token request */
   retry: (() => Promise<void>) | null;
@@ -188,15 +190,16 @@ export function createCastEngine(deps: EngineDeps, out: Writable<CastSession | n
     const device = st.connected ? st.deviceName || 'Chromecast' : s.view.device;
     if (!s.ci || s.busy) { patch(s, { device }); return; }
     const p: Partial<CastSession> = { device, buffering: !st.loaded || st.state === 'buffering' };
+    const begins = st.loaded && !s.started && (st.state === 'playing' || (s.hold && st.state === 'paused'));
     if (st.loaded) {
       p.position = st.currentTime;
       if (st.duration) p.duration = st.duration;
       p.paused = st.paused;
-      if (st.state === 'playing' && !s.started) p.state = 'playing';
+      if (begins) p.state = 'playing';
     }
     patch(s, p);
     if (!st.loaded) return;
-    if (st.state === 'playing' && !s.started) { s.started = true; void report(s, 'start', s.ci); }
+    if (begins) { s.started = true; s.hold = false; void report(s, 'start', s.ci); }
     else if (s.started && s.lastPaused !== null && s.lastPaused !== st.paused) void report(s, 'progress', s.ci);
     s.lastPaused = st.paused;
   }
@@ -378,7 +381,7 @@ export function createCastEngine(deps: EngineDeps, out: Writable<CastSession | n
   }
 
   /** the AirPlay part of `swap`: the controller loads the new token on the same element */
-  async function airSwap(s: Live, a: AirLive, my: number, itemId: string, startAt: number | undefined, fresh: boolean, it: Item | null) {
+  async function airSwap(s: Live, a: AirLive, my: number, itemId: string, startAt: number | undefined, fresh: boolean, it: Item | null, hold: boolean) {
     airNote(s, 'switch', fresh ? undefined : 'same title');
     if (fresh) {
       a.want = { itemId, at: startAt };
@@ -391,6 +394,12 @@ export function createCastEngine(deps: EngineDeps, out: Writable<CastSession | n
     a.opSeq = null; // a newer switch waits for `op` before it sets its own
     if (my !== seq) return; // a newer switch takes over (the controller revokes this token when it replaces it)
     s.busy = false;
+    if (s.ci && hold && !s.started) {
+      // the element stays paused (the controller plays only what played): no `playing` will come, the paused token counts now
+      s.started = true;
+      patch(s, { state: 'playing', buffering: false });
+      void report(s, 'start', s.ci);
+    }
     if (s.ci) { if (fresh && !it) patch(s, { title: s.ci.seriesName ?? s.ci.title, subtitle: s.ci.seriesName ? s.ci.title : '', seriesId: undefined, posterId: itemId, isEpisode: Boolean(s.ci.seriesName) }); return; }
     if (s.view.state !== 'connecting') return;
     // the controller was busy: nothing loaded; the old title's stop is reported, so it must not keep playing on the TV
@@ -412,16 +421,17 @@ export function createCastEngine(deps: EngineDeps, out: Writable<CastSession | n
   /**
    * Replaces the live token: `stop` for the old one, old token revoked, new token requested and loaded on the receiver.
    * `fresh` = another title (metadata from the item, default audio, no subtitle); otherwise the same title (renewal, tracks).
+   * `hold`: the same title on a paused TV stays paused.
    */
-  async function swap(s: Live, itemId: string, startAt: number | undefined, fresh: boolean): Promise<void> {
+  async function swap(s: Live, itemId: string, startAt: number | undefined, fresh: boolean, hold = !fresh && s.view.paused): Promise<void> {
     const my = ++seq;
     if (s.hide !== undefined) { timers.clear(s.hide); s.hide = undefined; }
     const old = s.ci;
     void stopReport(s);
     const stopped = s.stopping; // also a stop an earlier, superseded switch still waits for
-    s.ci = null; s.busy = true; s.retry = null; s.lastPaused = null;
+    s.ci = null; s.busy = true; s.retry = null; s.lastPaused = null; s.hold = hold;
     if (fresh) { s.audioIndex = undefined; s.subIndex = -1; s.sleepAfterEpisode = false; } // "sleep after" meant the ended episode
-    patch(s, { itemId, state: 'connecting', position: startAt ?? 0, paused: false, buffering: true, next: undefined,
+    patch(s, { itemId, state: 'connecting', position: startAt ?? 0, paused: hold, buffering: true, next: undefined,
       ...(fresh ? { audioTracks: [], subtitles: [], audioIndex: undefined, subIndex: -1 } : {}) });
     const meta = fresh ? deps.item(itemId).catch(() => null) : Promise.resolve(null);
     const a = s.air;
@@ -429,7 +439,7 @@ export function createCastEngine(deps: EngineDeps, out: Writable<CastSession | n
     if (!a) revoke(old); // AirPlay: the controller revokes the old token once the new one is on the element
     if (my !== seq) return;
     if (it) { const { title, sub } = barTitles(it); patch(s, { title, subtitle: sub, seriesId: it.seriesId, posterId: it.id, isEpisode: it.type === 'Episode' }); }
-    if (a) { await airSwap(s, a, my, itemId, startAt, fresh, it); return; }
+    if (a) { await airSwap(s, a, my, itemId, startAt, fresh, it, hold); return; }
     let ci: CastInfo;
     try {
       ci = await call<CastInfo>('/api/cast/session', {
@@ -439,7 +449,7 @@ export function createCastEngine(deps: EngineDeps, out: Writable<CastSession | n
     } catch (e) {
       if (my !== seq) return;
       s.busy = false;
-      s.retry = () => swap(s, itemId, startAt, fresh);
+      s.retry = () => swap(s, itemId, startAt, fresh, hold);
       deps.toast('error', castErr(e));
       patch(s, { state: 'reconnect', buffering: false });
       return;
@@ -449,7 +459,7 @@ export function createCastEngine(deps: EngineDeps, out: Writable<CastSession | n
     if (fresh) patch(s, { subtitles: subsOf(ci) });
     if (fresh && !it) patch(s, { title: ci.seriesName ?? ci.title, subtitle: ci.seriesName ? ci.title : '', seriesId: undefined, posterId: itemId, isEpisode: Boolean(ci.seriesName) });
     patch(s, { position: startAt ?? ci.startTime, ...(ci.runtimeTicks ? { duration: ticksToSec(ci.runtimeTicks) } : {}) });
-    const ok = await cast.loadOnCast(ci, s.subIndex);
+    const ok = await cast.loadOnCast(ci, s.subIndex, !hold);
     if (my !== seq) return; // a newer switch revokes `ci`, a session end already did
     s.busy = false;
     if (!ok) {
@@ -487,7 +497,7 @@ export function createCastEngine(deps: EngineDeps, out: Writable<CastSession | n
         view: { kind: h.kind, device: h.kind === 'airplay' ? tr('player.castBar.airplayDevice') : 'Chromecast', itemId: h.itemId, seriesId: h.seriesId, title: h.title, subtitle: h.subtitle, posterId: h.itemId, isEpisode: h.isEpisode,
           position: h.position, duration: h.duration, paused: h.paused, buffering: false, state: h.started ? 'playing' : 'connecting',
           audioTracks: h.audioTracks ?? [], subtitles: h.subtitles ?? [], audioIndex: h.audioIndex, subIndex: h.subIndex },
-        ci: h.cast, started: h.started, busy: false, stopping: Promise.resolve(), lastPaused: null,
+        ci: h.cast, started: h.started, busy: false, stopping: Promise.resolve(), lastPaused: null, hold: false,
         audioIndex: h.audioIndex, subIndex: h.subIndex, maxBitrate: h.maxBitrate, sleepAfterEpisode: h.sleepAfterEpisode,
         retry: null, offs: [],
       };

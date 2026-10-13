@@ -508,6 +508,31 @@ describe('cast engine: session end, stop, pagehide (Chromecast)', () => {
     expect(env.item).not.toHaveBeenCalled();
   });
 
+  it('a renewal keeps a paused TV paused (no autoplay on load, start reported as paused)', async () => {
+    const env = setup();
+    await playingSession(env, { cast: ci('c1', { expiresAt: T0 + RENEW_BEFORE_MS + 5_000 }) });
+    env.state.set(playing({ state: 'paused', paused: true }));
+    await env.advance(PROGRESS_MS);
+    expect(env.tokenPosts()).toHaveLength(1);
+    expect(env.cast.loadOnCast).toHaveBeenCalledWith(expect.objectContaining({ castId: 'n1' }), -1, false);
+    expect(get(env.out)).toMatchObject({ paused: true });
+    env.state.set(playing({ state: 'paused', paused: true }));
+    expect(get(env.out)).toMatchObject({ state: 'playing', paused: true, buffering: false });
+    const starts = env.calls.filter((c) => c.path === '/api/playback/start');
+    expect(starts).toHaveLength(1);
+    expect(starts[0]!.init.body).toMatchObject({ playSessionId: 'ps-n1', isPaused: true });
+    expect(env.cast.castPlayPause).not.toHaveBeenCalled();
+  });
+
+  it('a renewal of a playing TV loads with autoplay', async () => {
+    const env = setup();
+    await playingSession(env, { cast: ci('c1', { expiresAt: T0 + RENEW_BEFORE_MS + 5_000 }) });
+    await env.advance(PROGRESS_MS);
+    expect(env.cast.loadOnCast).toHaveBeenCalledWith(expect.objectContaining({ castId: 'n1' }), -1, true);
+    env.state.set(playing({ state: 'paused', paused: true })); // not the receiver's answer to an autoplay load: no start yet
+    expect(env.reports()).not.toContain('start');
+  });
+
   it('refresh() takes a new audio track / quality and keeps the subtitle', async () => {
     const env = setup();
     await playingSession(env, { subIndex: 3 });
