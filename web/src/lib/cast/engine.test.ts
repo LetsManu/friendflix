@@ -429,6 +429,7 @@ describe('cast engine: session end, stop, pagehide (Chromecast)', () => {
   it('media-end: stop report at the end, ended, receiver stopped and bar gone after 5 s', async () => {
     const env = setup();
     await playingSession(env);
+    env.state.set(playing({ currentTime: 1790 })); // the last seconds
     env.emit('media-end');
     await flush();
     expect(env.reports()).toEqual(['stop']);
@@ -448,6 +449,7 @@ describe('cast engine: session end, stop, pagehide (Chromecast)', () => {
   it('playOnTv after the end cancels the hide timer', async () => {
     const env = setup();
     await playingSession(env);
+    env.state.set(playing({ currentTime: 1790 })); // the last seconds
     env.emit('media-end');
     await flush();
     await env.engine.playOnTv('ep2', 0);
@@ -596,5 +598,55 @@ describe('castEngine (browser wiring)', () => {
     expect(removed).toEqual([added[0]]);
     expect(get(castSession)).toBeNull();
     expect(paths).toContain('/api/items/ep9');
+  });
+});
+
+describe('cast engine: review fixes', () => {
+  it('quick Play taps: the next token request waits for the owed stop (stream slot freed), last tap wins', async () => {
+    const env = setup();
+    await playingSession(env);
+    const stop = deferred<null>();
+    const record = env.api.getMockImplementation()!;
+    env.api.mockImplementation(async (path, init) => {
+      if (path === '/api/playback/stop') { await record(path, init); return stop.promise; }
+      return record(path, init);
+    });
+    const p1 = env.engine.playOnTv('film', 0);
+    await flush();
+    const p2 = env.engine.playOnTv('ep2', 0);
+    await flush();
+    expect(env.tokenPosts()).toHaveLength(0);
+    stop.resolve(null);
+    await Promise.all([p1, p2]);
+    expect(env.tokenPosts()).toHaveLength(1);
+    expect(env.tokenPosts()[0]!.init.body.itemId).toBe('ep2');
+    expect(env.order.indexOf('POST /api/playback/stop')).toBeLessThan(env.order.indexOf('POST /api/cast/session'));
+    expect(get(env.out)?.itemId).toBe('ep2');
+  });
+
+  it('media-end well before the end (receiver error, other sender): stop at the real position, session gone, not ended', async () => {
+    const env = setup();
+    env.state.set(playing({ currentTime: 600 }));
+    env.engine.adopt(handoff({ started: true }));
+    await flush();
+    env.emit('media-end');
+    await flush();
+    expect(env.reports()).toEqual(['stop']);
+    expect(env.calls[0]!.init.body.positionTicks).toBe(secToTicks(600));
+    expect(env.deletes()).toEqual(['c1']);
+    expect(get(env.out)).toBeNull();
+    expect(env.pending()).toBe(0);
+    expect(env.cast.castStop).not.toHaveBeenCalled();
+  });
+
+  it('media-end within the last 20 s counts as the end', async () => {
+    const env = setup();
+    env.state.set(playing({ currentTime: 1785 }));
+    env.engine.adopt(handoff({ started: true }));
+    await flush();
+    env.emit('media-end');
+    await flush();
+    expect(env.calls[0]!.init.body.positionTicks).toBe(secToTicks(1800));
+    expect(get(env.out)?.state).toBe('ended');
   });
 });

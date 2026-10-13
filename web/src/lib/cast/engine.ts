@@ -73,6 +73,8 @@ interface Live {
   started: boolean;
   /** a token switch is in flight: the receiver still reports the previous media */
   busy: boolean;
+  /** the latest `stop` report: the next token request waits for it (the server counts the stream until then) */
+  stopping: Promise<unknown>;
   lastPaused: boolean | null;
   audioIndex?: number; subIndex: number; maxBitrate?: number; sleepAfterEpisode: boolean;
   /** what `reconnect()` repeats after a failed token request */
@@ -109,7 +111,8 @@ export function createCastEngine(deps: EngineDeps, out: Writable<CastSession | n
   const stopReport = (s: Live, keepalive = false): Promise<unknown> => {
     if (!s.started || !s.ci) return Promise.resolve();
     s.started = false;
-    return report(s, 'stop', s.ci, keepalive);
+    s.stopping = report(s, 'stop', s.ci, keepalive);
+    return s.stopping;
   };
   const revoke = (ci: CastInfo | null, keepalive = false) => {
     if (ci) void call(`/api/cast/session/${ci.castId}`, { method: 'DELETE', ...(keepalive ? { keepalive } : {}) }).catch(() => undefined);
@@ -146,7 +149,9 @@ export function createCastEngine(deps: EngineDeps, out: Writable<CastSession | n
 
   function onEvent(s: Live, e: CastEvent) {
     if (cur !== s) return;
-    if (e === 'session-end') {
+    // the receiver went idle well before the end (playback error, stopped by another sender): not finished
+    const finished = e === 'media-end' && s.view.duration > 0 && s.view.position >= s.view.duration - 20;
+    if (e === 'session-end' || (e === 'media-end' && s.ci && !s.busy && !finished)) {
       const ci = s.ci, stopped = stopReport(s);
       s.ci = null;
       end(s);
@@ -187,7 +192,9 @@ export function createCastEngine(deps: EngineDeps, out: Writable<CastSession | n
   async function swap(s: Live, itemId: string, startAt: number | undefined, fresh: boolean): Promise<void> {
     const my = ++seq;
     if (s.hide !== undefined) { timers.clear(s.hide); s.hide = undefined; }
-    const old = s.ci, stopped = stopReport(s);
+    const old = s.ci;
+    void stopReport(s);
+    const stopped = s.stopping; // also a stop an earlier, superseded switch still waits for
     s.ci = null; s.busy = true; s.retry = null; s.lastPaused = null;
     if (fresh) { s.audioIndex = undefined; s.subIndex = -1; }
     patch(s, { itemId, state: 'connecting', position: startAt ?? 0, paused: false, buffering: true, next: undefined });
@@ -249,7 +256,7 @@ export function createCastEngine(deps: EngineDeps, out: Writable<CastSession | n
       const s: Live = {
         view: { kind: h.kind, device: 'Chromecast', itemId: h.itemId, seriesId: h.seriesId, title: h.title, subtitle: h.subtitle, posterId: h.itemId, isEpisode: h.isEpisode,
           position: h.position, duration: h.duration, paused: h.paused, buffering: false, state: h.started ? 'playing' : 'connecting' },
-        ci: h.cast, started: h.started, busy: false, lastPaused: null,
+        ci: h.cast, started: h.started, busy: false, stopping: Promise.resolve(), lastPaused: null,
         audioIndex: h.audioIndex, subIndex: h.subIndex, maxBitrate: h.maxBitrate, sleepAfterEpisode: h.sleepAfterEpisode,
         retry: null, offs: [],
       };
