@@ -167,6 +167,25 @@ describe('client and playback reports (memory only)', () => {
     for (const v of [adminId, '10.77.66.55', 'UA-Secret', 'userId', 'ip', 'userAgent']) expect(json).not.toContain(v);
   });
 
+  it('an anonymous playback report is dropped (204, no entry, no count); a signed-in one counts', async () => {
+    const pb = body({ kind: 'playback', itemId: ID, code: 'manifestLoadError', message: 'fatal' });
+    for (let i = 0; i < 3; i++) expect((await beacon(pb)).statusCode).toBe(204);
+    expect((await listErrors(env.ctx, { source: 'playback' })).entries).toEqual([]);
+    expect(await recentCount(env.ctx, 'playback', 60)).toBe(0);
+    const me = await env.login(ADMIN);
+    expect((await beacon(pb, me.cookies)).statusCode).toBe(204);
+    expect(await recentCount(env.ctx, 'playback', 60)).toBe(1);
+  });
+
+  it('an anonymous browser error is listed but does not feed the 15-minute counter; a signed-in one does', async () => {
+    for (let i = 0; i < 25; i++) expect((await beacon(body({ message: `anon ${i}` }))).statusCode).toBe(204);
+    expect((await listErrors(env.ctx, { source: 'client' })).entries).toHaveLength(25);
+    expect(await recentCount(env.ctx, 'client', 15)).toBe(0);
+    const me = await env.login(ADMIN);
+    await beacon(body({ message: 'signed in' }), me.cookies);
+    expect(await recentCount(env.ctx, 'client', 15)).toBe(1);
+  });
+
   it('a URL in a browser error never reaches /api/admin/errors (code and sample)', async () => {
     const me = await env.login(ADMIN);
     await beacon(body({ kind: 'resource', message: 'failed to load https://portal.example.com/_app/immutable/x.js', url: '/watch/1' }), me.cookies);
