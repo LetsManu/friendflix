@@ -94,4 +94,19 @@ describe('AirPlay event log', () => {
     const txt = formatAirLog(readAirLog());
     expect(txt).toMatch(/\+0\.000s wireless w=0 src=none state=A debounced/);
   });
+
+  it('trusted notes: tag names survive, URLs and long ids do not, cap 600; ordinary notes stay capped at 160', () => {
+    airLog('probe-master', { src: '', state: '', trusted: true, note: `EXT-X-INDEPENDENT-SEGMENTS | https://x/y?k=1 | ${'a'.repeat(40)} | ${'z '.repeat(350)}` });
+    const n = readAirLog()[0]!.note!;
+    expect(n).toMatch(/^EXT-X-INDEPENDENT-SEGMENTS \| \[url\] \| \[id\]/);
+    expect(n.length).toBe(600);
+    clearAirLog();
+    airLog('x', { src: '', state: '', note: 'z '.repeat(200) });
+    expect(readAirLog()[0]!.note!.length).toBe(160);
+  });
+
+  it('keeps the ring buffer bounded with long notes', () => {
+    for (let i = 0; i < AIRLOG_MAX + 20; i++) airLog('probe-master', { src: '', state: '', trusted: true, note: 'q '.repeat(400) });
+    expect(readAirLog()).toHaveLength(AIRLOG_MAX);
+  });
 });

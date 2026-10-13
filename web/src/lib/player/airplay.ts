@@ -32,6 +32,8 @@
  *   AUTO_WINDOW_MS. Beyond either limit: `error` state with Retry, no request.
  * - A failed token request (e.g. 429) while the route is wireless or `ready` never calls restore (no src change): `error` state
  *   with Retry plus the hint to end AirPlay in the picker; no automatic retry. A playback error on the TV does the same.
+ * - After each successful token request a one-off diagnostic probe (airplayProbe.ts) fetches the token's master and first variant
+ *   playlist like the TV does and logs a sanitized summary (tags, codecs, no URIs) to the event log.
  * - Every decision is written to the AirPlay event log (airplayLog.ts, /diagnose) without URLs, tokens or cast ids.
  *
  * Other notes:
@@ -46,6 +48,7 @@
  */
 import type { CastInfo } from '#lib/cast';
 import { airLog } from './airplayLog';
+import { runProbe, scrubMessage } from './airplayProbe';
 
 /** the part of HTMLVideoElement this module uses (tests pass a fake) */
 export interface AirPlayVideo extends EventTarget {
@@ -113,8 +116,8 @@ export interface AirPlayController {
   refresh(): Promise<void>;
   /** error state (a tap on Retry): request a token stream again */
   retry(): Promise<void>;
-  /** the element reported a playback error (`code` = MediaError code, for the log): TV's stream -> error state (Retry); `ready` (phone plays the token) -> normal stream */
-  videoError(code?: number): void;
+  /** the element reported a playback error (`code` / `message` = MediaError, for the log; the message is scrubbed of URLs): TV's stream -> error state (Retry); `ready` (phone plays the token) -> normal stream */
+  videoError(code?: number, message?: string): void;
   /** the cast session while AirPlay plays the token stream */
   readonly info: CastInfo | null;
   /** removes the listeners and revokes a live token (leaving the player) */
@@ -155,6 +158,15 @@ export function createAirPlay(video: AirPlayVideo, deps: AirPlayDeps, probe?: Ev
   const emit = () => { if (!dead) deps.change(state()); };
   const flags = () => `${available ? 'v' : ''}${active ? 'A' : ''}${busy ? 'B' : ''}${ready ? 'R' : ''}${error ? 'E' : ''}${tokenOnElement ? 'T' : ''}${settleT !== undefined ? 'S' : ''}${offT !== undefined ? 'O' : ''}${autoUsed ? 'U' : ''}`;
   const log = (ev: string, o: { wireless?: boolean; note?: string } = {}) => { if (!dead) airLog(ev, { ...o, src: video.src, state: flags() }); };
+  const trustedLog = (ev: string, note: string) => { if (!dead) airLog(ev, { src: video.src, state: flags(), note, trusted: true }); };
+  /** casts already probed (once per token) */
+  const probed = new Set<string>();
+  /** fire and forget: fetches the token's playlists and logs what the TV gets; never changes state, never throws */
+  const startProbe = (ci: CastInfo) => {
+    if (dead || probed.has(ci.castId)) return;
+    probed.add(ci.castId);
+    try { void runProbe(ci.contentUrl, trustedLog, () => !dead).catch(() => undefined); } catch { /* diagnosis only */ }
+  };
   const isWireless = () => Boolean(video.webkitCurrentPlaybackTargetIsWireless);
   const stopArmTimer = () => { if (armT !== undefined) timers.clear(armT); armT = undefined; };
   const disarm = () => { stopArmTimer(); ready = false; armPos = null; };
@@ -274,6 +286,7 @@ export function createAirPlay(video: AirPlayVideo, deps: AirPlayDeps, probe?: Ev
     }
     if (my !== seq || dead) { deps.revoke(ci); return; }
     log('token-ok', { note: 'tap' });
+    startProbe(ci);
     info = ci;
     deps.started(ci);
     play(ci, pos, wasPlaying);
@@ -295,6 +308,7 @@ export function createAirPlay(video: AirPlayVideo, deps: AirPlayDeps, probe?: Ev
       const ci = await deps.request(pos);
       if (my !== seq || dead) { deps.revoke(ci); return; } // AirPlay ended (or the player closed) meanwhile
       log('token-ok', { note: why });
+      startProbe(ci);
       if (old) deps.revoke(old);
       info = ci; error = false;
       deps.started(ci);
@@ -356,9 +370,12 @@ export function createAirPlay(video: AirPlayVideo, deps: AirPlayDeps, probe?: Ev
     get state() { return state(); },
     async refresh() { if ((active || ready) && !busy && info && !error && !dead) await switchTo(info, undefined, 'refresh'); },
     async retry() { if ((active || error) && !busy && !dead) { log('retry'); await switchTo(info, undefined, 'retry'); } },
-    videoError(code?: number) {
+    videoError(code?: number, message?: string) {
       if (dead) return;
-      log('video-error', { note: `code ${code ?? '?'}${busy ? ', busy: ignored' : error ? ', already error' : ''}` });
+      const msg = scrubMessage(message);
+      const flag = busy ? ', busy: ignored' : error ? ', already error' : '';
+      if (msg) trustedLog('video-error', `code ${code ?? '?'} msg ${msg}${flag}`);
+      else log('video-error', { note: `code ${code ?? '?'}${flag}` });
       if (busy || error) return;
       if (ready && !active) { deps.fail(new Error('airplay_media')); void stop(); return; } // the phone's token stream: normal stream again
       if (!active) return;

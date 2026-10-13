@@ -318,8 +318,8 @@
   function retryManually() { rec = freshRecovery(); reconnecting = 0; error = ''; errNote = ''; waiting = true; wantAutoplay = true; void load(posKnown ? resumePos() : undefined); }
   function leave() { if (history.length > 1) history.back(); else location.href = '/'; }
   function onVideoError() {
-    if (airState.ready && !airOn) { if (video?.error && video.error.code !== 1) air?.videoError(video.error.code); return; } // the phone plays the AirPlay token stream: back to normal
-    if (airOn) { if (video?.error && video.error.code !== 1) air?.videoError(video.error.code); return; } // the TV's token stream failed: Retry, never the cookie URL
+    if (airState.ready && !airOn) { if (video?.error && video.error.code !== 1) air?.videoError(video.error.code, video.error.message); return; } // the phone plays the AirPlay token stream: back to normal
+    if (airOn) { if (video?.error && video.error.code !== 1) air?.videoError(video.error.code, video.error.message); return; } // the TV's token stream failed: Retry, never the cookie URL
     if (hls || casting || !video?.error || !info) return; // hls.js reports its own errors
     const kind = kindOfMediaError(video.error.code);
     if (video.error.code === 1) return; // aborted by us

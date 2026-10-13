@@ -21,6 +21,9 @@ interface Stored { start: number; entries: AirLogEntry[] }
 
 export const AIRLOG_KEY = 'ff.airplayLog';
 export const AIRLOG_MAX = 80;
+/** per-entry note cap: 160 for free text, NOTE_MAX_TRUSTED for notes the caller built from an allowlist (stream probe) */
+export const NOTE_MAX = 160;
+export const NOTE_MAX_TRUSTED = 600;
 
 /** what the element plays, without the URL itself */
 export function srcKind(src: string | null | undefined): SrcKind {
@@ -38,6 +41,14 @@ const scrub = (s: string) => s
   .replace(/\/media\/\S*/g, '[url]')
   .replace(/[A-Za-z0-9_-]{20,}/g, '[id]')
   .slice(0, 160);
+
+/** trusted notes (sanitized by the caller): URLs and long opaque strings still go, but tag names like EXT-X-INDEPENDENT-SEGMENTS survive */
+const scrubTrusted = (s: string) => s
+  .replace(/\b[a-z][a-z0-9+.-]*:\/\/\S*/gi, '[url]')
+  .replace(/blob:\S*/gi, '[url]')
+  .replace(/\/media\/\S*/g, '[url]')
+  .replace(/[A-Za-z0-9_-]{32,}/g, '[id]')
+  .slice(0, NOTE_MAX_TRUSTED);
 
 let mem: Stored = { start: 0, entries: [] };
 
@@ -71,14 +82,14 @@ function save(x: Stored) {
   for (const s of stores()) { try { s.setItem(AIRLOG_KEY, raw); } catch { /* quota / private mode */ } }
 }
 
-export function airLog(ev: string, o: { wireless?: boolean; src: string | null | undefined; state: string; note?: string }) {
+export function airLog(ev: string, o: { wireless?: boolean; src: string | null | undefined; state: string; note?: string; trusted?: boolean }) {
   try {
     const cur = load();
     const now = Date.now();
     const start = cur.entries.length ? cur.start : now;
     const e: AirLogEntry = { t: Math.max(0, now - start), ev: scrub(ev), src: srcKind(o.src), state: scrub(o.state) };
     if (o.wireless !== undefined) e.wireless = o.wireless;
-    if (o.note) e.note = scrub(o.note);
+    if (o.note) e.note = o.trusted ? scrubTrusted(o.note) : scrub(o.note);
     // property order as declared (t, ev, wireless?, src, state, note?)
     const ordered: AirLogEntry = { t: e.t, ev: e.ev, ...(e.wireless !== undefined ? { wireless: e.wireless } : {}), src: e.src, state: e.state, ...(e.note ? { note: e.note } : {}) };
     save({ start, entries: [...cur.entries, ordered].slice(-AIRLOG_MAX) });
