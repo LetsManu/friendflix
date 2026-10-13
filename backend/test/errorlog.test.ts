@@ -4,7 +4,7 @@ import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { encrypt } from '../src/crypto.js';
 import { migrate } from '../src/db.js';
-import { jobFailed, listErrors, recentCount, recordError, resetErrorLogForTests } from '../src/errorlog.js';
+import { errorLogSizesForTests, jobFailed, listErrors, recentCount, recordError, resetErrorLogForTests } from '../src/errorlog.js';
 import { ADMIN, makeEnv, type TestEnv } from './helpers.js';
 
 // Block 22 Task 1: migration 35, the aggregated error log (server 5xx + job failures in Redis, client + playback reports in
@@ -17,8 +17,8 @@ const ID = '0123456789abcdef0123456789abcdef';
 
 const as = (s: Sess, method: string, url: string) => env.app.inject({ method: method as 'GET', url, cookies: s.cookies, headers: { 'x-csrf-token': s.csrf } });
 let ipSeq = 0;
-const beacon = (payload: unknown) =>
-  env.app.inject({ method: 'POST', url: '/api/client-errors', payload: JSON.stringify(payload), headers: { 'content-type': 'text/plain;charset=UTF-8' }, remoteAddress: `10.9.0.${++ipSeq}` });
+const beacon = (payload: unknown, cookies?: Record<string, string>) =>
+  env.app.inject({ method: 'POST', url: '/api/client-errors', payload: JSON.stringify(payload), headers: { 'content-type': 'text/plain;charset=UTF-8' }, cookies, remoteAddress: `10.9.${(++ipSeq >> 8) & 255}.${ipSeq & 255}` });
 
 beforeAll(async () => {
   env = await makeEnv({}, {
@@ -82,14 +82,37 @@ describe('server errors', () => {
     expect(await recentCount(env.ctx, 'server', 60, now)).toBe(3);
   });
 
-  it('301st fingerprint is not stored, overflow 1', async () => {
-    for (let i = 0; i < 300; i++) await recordError(env.ctx, { source: 'server', code: `GET /api/r${i} 500` });
-    await recordError(env.ctx, { source: 'server', code: 'GET /api/r300 500' });
-    await recordError(env.ctx, { source: 'server', code: 'GET /api/r0 500' }); // a known one still counts
+  it('a full store (300) evicts the least recently seen entry for the 301st, overflow 1; a known one still counts', async () => {
+    const now = Date.now();
+    for (let i = 0; i < 300; i++) await recordError(env.ctx, { source: 'server', code: `GET /api/r${i} 500` }, now - 2 * 3600_000 + i);
+    await recordError(env.ctx, { source: 'server', code: 'GET /api/r0 500' }, now - 3600_000); // r0 is now recent, r1 the oldest
+    await recordError(env.ctx, { source: 'server', code: 'GET /api/r300 500' }, now);
     const { entries, overflow } = await listErrors(env.ctx, { limit: 1000 });
     expect(entries).toHaveLength(300);
     expect(overflow).toBe(1);
     expect(entries.find((e) => e.code === 'GET /api/r0 500')!.count).toBe(2);
+    expect(entries.some((e) => e.code === 'GET /api/r300 500')).toBe(true);
+    expect(entries.some((e) => e.code === 'GET /api/r1 500')).toBe(false);
+  });
+
+  it('after 300 fingerprints new errors still raise recentCount (counters count before the cap)', async () => {
+    const now = Date.now();
+    for (let i = 0; i < 300; i++) await recordError(env.ctx, { source: 'server', code: `GET /api/old${i} 500` }, now - 2 * 3600_000);
+    for (let i = 0; i < 10; i++) await recordError(env.ctx, { source: 'server', code: `GET /api/new${i} 500` }, now);
+    expect(await recentCount(env.ctx, 'server', 15, now)).toBe(10);
+    const { entries } = await listErrors(env.ctx, { since: new Date(now - 60_000) });
+    expect(entries).toHaveLength(10);
+  });
+
+  it('"last 24 h" counts only hits of the last 24 h, not the lifetime of a recurring entry', async () => {
+    const now = Date.now();
+    await recordError(env.ctx, { source: 'server', code: 'GET /api/rec 500' }, now - 30 * 3600_000);
+    await recordError(env.ctx, { source: 'server', code: 'GET /api/rec 500' }, now - 29 * 3600_000);
+    await recordError(env.ctx, { source: 'server', code: 'GET /api/rec 500' }, now - 3600_000);
+    const day = (await listErrors(env.ctx, { since: new Date(now - 24 * 3600_000) })).entries;
+    expect(day).toEqual([expect.objectContaining({ code: 'GET /api/rec 500', count: 1 })]);
+    expect(Date.parse(day[0]!.firstAt)).toBeGreaterThanOrEqual(now - 25 * 3600_000);
+    expect((await listErrors(env.ctx, {})).entries[0]!.count).toBe(3); // the whole 7-day window
   });
 });
 
@@ -124,7 +147,8 @@ describe('client and playback reports (memory only)', () => {
   });
 
   it('playback report {kind:"playback", itemId, code} → 204 and an entry of source playback with itemId; bad itemId → 400', async () => {
-    expect((await beacon(body({ kind: 'playback', itemId: ID, code: 'bufferStalledError', message: 'fatal media error' }))).statusCode).toBe(204);
+    const me = await env.login(ADMIN);
+    expect((await beacon(body({ kind: 'playback', itemId: ID, code: 'bufferStalledError', message: 'fatal media error' }), me.cookies)).statusCode).toBe(204);
     const { entries } = await listErrors(env.ctx, { source: 'playback' });
     expect(entries).toEqual([expect.objectContaining({ source: 'playback', itemId: ID, code: 'bufferStalledError', count: 1 })]);
     expect((await beacon(body({ kind: 'playback', itemId: 'not-an-id', code: 'x' }))).statusCode).toBe(400);
@@ -141,6 +165,39 @@ describe('client and playback reports (memory only)', () => {
     expect(entries).toHaveLength(1);
     const json = JSON.stringify(entries);
     for (const v of [adminId, '10.77.66.55', 'UA-Secret', 'userId', 'ip', 'userAgent']) expect(json).not.toContain(v);
+  });
+
+  it('a URL in a browser error never reaches /api/admin/errors (code and sample)', async () => {
+    const me = await env.login(ADMIN);
+    await beacon(body({ kind: 'resource', message: 'failed to load https://portal.example.com/_app/immutable/x.js', url: '/watch/1' }), me.cookies);
+    const r = await as(admin, 'GET', '/api/admin/errors?source=client');
+    const [e] = r.json().entries as Array<{ code: string; sample: string }>;
+    expect(e!.code).toBe('resource failed to load …');
+    expect(JSON.stringify(r.json())).not.toMatch(/https?:\/\/|portal\.example\.com/);
+  });
+
+  it('after 300 browser fingerprints new playback failures still raise the count and evict the least recently seen', async () => {
+    const now = Date.now();
+    for (let i = 0; i < 300; i++) await recordError(env.ctx, { source: 'client', code: `error e${i}` }, now - 2 * 3600_000 + i);
+    for (let i = 0; i < 3; i++) await recordError(env.ctx, { source: 'playback', code: 'MEDIA_ERR_DECODE', itemId: ID }, now);
+    expect(await recentCount(env.ctx, 'playback', 60, now)).toBe(3);
+    const all = await listErrors(env.ctx, { limit: 1000 });
+    expect(all.entries).toHaveLength(300);
+    expect(all.entries.find((e) => e.source === 'playback')).toMatchObject({ itemId: ID, count: 3 });
+    expect(all.entries.some((e) => e.code === 'error e0')).toBe(false);
+    expect(all.overflow).toBe(1);
+  });
+
+  it('memory entries are windowed to 24 h; the overflow is a bounded counter', async () => {
+    const now = Date.now();
+    await recordError(env.ctx, { source: 'client', code: 'error rec' }, now - 20 * 3600_000);
+    await recordError(env.ctx, { source: 'client', code: 'error rec' }, now - 60_000);
+    expect((await listErrors(env.ctx, { since: new Date(now - 10 * 3600_000) })).entries[0]!.count).toBe(1);
+    expect((await listErrors(env.ctx, { since: new Date(now - 24 * 3600_000) })).entries[0]!.count).toBe(2);
+    for (let i = 0; i < 2000; i++) await recordError(env.ctx, { source: 'client', code: `error flood ${i}` }, now);
+    expect((await listErrors(env.ctx, {})).overflow).toBe(1701);
+    expect(errorLogSizesForTests().overflow).toBeLessThanOrEqual(25);
+    expect(errorLogSizesForTests().entries).toBe(300);
   });
 });
 
