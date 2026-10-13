@@ -14,7 +14,8 @@
  * leaves the session in `reconnect`: a tap on the bar (`reconnect()`) opens the picker inside the gesture.
  *
  * End of an episode on the TV: the bar shows the next episode (`next`); with autoplay allowed it starts after the player's
- * countdown (`playOnTv`, resume position). Without a next episode the session ends `ENDED_HIDE_MS` later.
+ * countdown (`playOnTv`, resume position). Without a next episode the session ends `ENDED_HIDE_MS` later; an offered episode
+ * nobody starts ends it after `ENDED_IDLE_MS`.
  */
 import { get, writable, type Readable, type Writable } from 'svelte/store';
 import { api, cachedItem, secToTicks, ticksToSec, type Item, type ItemDetail } from '#lib/api';
@@ -85,6 +86,8 @@ export const PROGRESS_MS = 10_000;
 export const RENEW_BEFORE_MS = 10 * 60_000;
 /** the bar stays this long after the title ended */
 export const ENDED_HIDE_MS = 5_000;
+/** an offered next episode nobody starts (no autoplay, or its countdown cancelled): the session ends after this */
+export const ENDED_IDLE_MS = 30 * 60_000;
 
 /** marks the AirPlay `<video>` the engine owns (in `document.body`) */
 export const CAST_VIDEO_ATTR = 'data-cast-engine';
@@ -106,6 +109,8 @@ interface AirLive {
   resume: boolean;
   /** pagehide: revoke at once, with keepalive */
   leaving: boolean;
+  /** tokens the engine revoked itself (the ended one): the controller's own revoke of them is skipped */
+  revoked: Set<string>;
 }
 
 /** the engine's bookkeeping for the session in `castSession` */
@@ -127,8 +132,10 @@ interface Live {
   retry: (() => Promise<void>) | null;
   offs: Array<() => void>;
   loop?: unknown;
-  /** after the end: the session end after `ENDED_HIDE_MS`, or the next episode's autoplay */
+  /** after the end: the session end after `ENDED_HIDE_MS` / `ENDED_IDLE_MS`, or the next episode's autoplay */
   hide?: unknown;
+  /** after the end: ends the session (its stop is reported, its token revoked) */
+  close?: () => void;
   air?: AirLive;
 }
 
@@ -229,8 +236,10 @@ export function createCastEngine(deps: EngineDeps, out: Writable<CastSession | n
   /**
    * The title ended on the TV (its stop is reported, its token gone): `close` ends the session after `ENDED_HIDE_MS`
    * unless a next episode follows; that one is shown in the bar and, when autoplay is allowed, starts after the countdown.
+   * Without autoplay (or after `cancelNext`) the session ends after `ENDED_IDLE_MS`.
    */
   function afterEnd(s: Live, close: () => void) {
+    s.close = close;
     s.hide = timers.set(close, ENDED_HIDE_MS);
     if (!s.view.isEpisode) return;
     const my = seq;
@@ -243,7 +252,7 @@ export function createCastEngine(deps: EngineDeps, out: Writable<CastSession | n
         noteAutoplay();
         consumeAutoplay(); // the chain counts; the watch page's one-shot flag is for its own countdown only
         void swap(s, it.id, undefined, true);
-      }, COUNTDOWN_SECONDS * 1000) : undefined;
+      }, COUNTDOWN_SECONDS * 1000) : timers.set(close, ENDED_IDLE_MS);
       patch(s, { next: { itemId: it.id, label: nextLabel(it), startsAt: auto ? now + COUNTDOWN_SECONDS * 1000 : null } });
     });
   }
@@ -290,7 +299,7 @@ export function createCastEngine(deps: EngineDeps, out: Writable<CastSession | n
         });
       },
       // the server counts the stream until its `stop` arrived: revoke after it (pagehide: now, with keepalive)
-      revoke(ci) { if (a.leaving) revoke(ci, true); else void s.stopping.then(() => revoke(ci)); },
+      revoke(ci) { if (a.revoked.has(ci.castId)) return; if (a.leaving) revoke(ci, true); else void s.stopping.then(() => revoke(ci)); },
       detach() { void stopReport(s); return s.stopping.then(() => undefined); },
       started(ci) {
         if (cur !== s) return;
@@ -346,8 +355,11 @@ export function createCastEngine(deps: EngineDeps, out: Writable<CastSession | n
     if (!s.ci || s.busy) return;
     if (type === 'ended') {
       patch(s, { state: 'ended', position: s.view.duration || s.view.position, paused: true, buffering: false });
-      void stopReport(s);
+      // the ended token goes now (after its stop), not only when the controller replaces or drops it
+      const ci = s.ci, stopped = stopReport(s);
       s.ci = null;
+      a.revoked.add(ci.castId);
+      void stopped.then(() => revoke(ci));
       afterEnd(s, () => { airNote(s, 'stop', 'ended'); end(s); dropAir(a); });
       return;
     }
@@ -426,6 +438,7 @@ export function createCastEngine(deps: EngineDeps, out: Writable<CastSession | n
   async function swap(s: Live, itemId: string, startAt: number | undefined, fresh: boolean, hold = !fresh && s.view.paused): Promise<void> {
     const my = ++seq;
     if (s.hide !== undefined) { timers.clear(s.hide); s.hide = undefined; }
+    s.close = undefined;
     const old = s.ci;
     void stopReport(s);
     const stopped = s.stopping; // also a stop an earlier, superseded switch still waits for
@@ -504,7 +517,7 @@ export function createCastEngine(deps: EngineDeps, out: Writable<CastSession | n
       cur = s;
       out.set(s.view);
       if (h.video && h.air) {
-        s.air = { video: h.video, ctl: h.air, probe: h.probe ?? null, want: null, op: Promise.resolve(), opSeq: null, resume: false, leaving: false };
+        s.air = { video: h.video, ctl: h.air, probe: h.probe ?? null, want: null, op: Promise.resolve(), opSeq: null, resume: false, leaving: false, revoked: new Set() };
         adoptAir(s, s.air);
       } else s.offs.push(cast.castState.subscribe((st) => tick(s, st)), cast.onCastEvent((e) => onEvent(s, e)));
       s.offs.push(deps.onPageHide(() => onPageHide(s)));
@@ -534,7 +547,7 @@ export function createCastEngine(deps: EngineDeps, out: Writable<CastSession | n
       const s = cur;
       if (!s?.view.next || s.view.next.startsAt === null) return;
       timers.clear(s.hide);
-      s.hide = undefined;
+      s.hide = s.close ? timers.set(s.close, ENDED_IDLE_MS) : undefined;
       patch(s, { next: { ...s.view.next, startsAt: null } });
     },
     async stop() {

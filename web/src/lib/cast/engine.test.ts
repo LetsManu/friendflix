@@ -7,7 +7,7 @@ import type { CastInfo, CastState } from '#lib/cast';
 import { COUNTDOWN_SECONDS } from '#lib/player/nextup';
 import { consumeAutoplay, noteAutoplay, noteInteraction, shouldAsk } from '#lib/stillwatching';
 import { DEFAULT_PREFS, type Prefs } from '#lib/stores';
-import { createCastEngine, ENDED_HIDE_MS, PROGRESS_MS, RENEW_BEFORE_MS, type CastSession, type EngineDeps, type PlayerHandoff } from './engine';
+import { createCastEngine, ENDED_HIDE_MS, ENDED_IDLE_MS, PROGRESS_MS, RENEW_BEFORE_MS, type CastSession, type EngineDeps, type PlayerHandoff } from './engine';
 
 const T0 = 1_000_000;
 const ci = (castId: string, over: Partial<CastInfo> = {}): CastInfo => ({
@@ -768,6 +768,33 @@ describe('cast engine: next episode on the TV', () => {
     expect(env.cast.castStop).not.toHaveBeenCalled();
     expect(get(env.out)?.state).toBe('ended');
     expect(consumeAutoplay()).toBe(false);
+  });
+
+  it('an offered next episode nobody starts: the session closes after ENDED_IDLE_MS without a second report', async () => {
+    const env = setup({ prefs: { autoplayNext: false } });
+    await episodeEnds(env);
+    await env.advance(ENDED_IDLE_MS - 1);
+    expect(get(env.out)?.state).toBe('ended');
+    expect(env.cast.castStop).not.toHaveBeenCalled();
+    await env.advance(1);
+    expect(get(env.out)).toBeNull();
+    expect(env.cast.castStop).toHaveBeenCalledTimes(1);
+    expect(env.reports()).toEqual(['stop']);
+    expect(env.deletes()).toEqual(['c1']);
+    expect(env.pending()).toBe(0);
+  });
+
+  it('cancelNext(): the session closes after ENDED_IDLE_MS', async () => {
+    const env = setup();
+    await episodeEnds(env);
+    env.engine.cancelNext();
+    await env.advance(ENDED_IDLE_MS - 1);
+    expect(get(env.out)?.state).toBe('ended');
+    await env.advance(1);
+    expect(get(env.out)).toBeNull();
+    expect(env.cast.castStop).toHaveBeenCalledTimes(1);
+    expect(env.reports()).toEqual(['stop']);
+    expect(env.tokenPosts()).toHaveLength(0);
   });
 
   it('still-watching due: no autoplay', async () => {
