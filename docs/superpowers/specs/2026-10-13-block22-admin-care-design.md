@@ -338,3 +338,13 @@ All new methods are **optional**; absent means the feature degrades to what is s
   player reports every HLS stream as `Transcode` — cost if wrong: transcode share is over/under-stated, one rule.
 - **Ruling: all Block 22 tables in one migration (35)** — tasks run in order, one migration avoids renumbering conflicts —
   cost if wrong: none.
+
+### Controller override (supersedes the error-storage rulings above)
+
+- **Ruling: client and playback error reports are NOT persisted** — `docs/monitoring.md` promises that client error
+  reports are not stored, and that promise is not changed without the owner. Client and `playback` reports are aggregated
+  **in backend process memory only** (same scrubbing, fingerprint cap 300, no user, no IP, no user agent; window 24 h;
+  lost on restart, never written to Redis or Postgres). Server 5xx and job failures (no personal data) may use Redis as
+  planned. `docs/monitoring.md` gets one added sentence ("counted in memory for the admin health page, never written to
+  disk") instead of the "aggregated for 7 days" change — cost if wrong: after a backend restart the health page shows no
+  client/playback errors until new ones arrive; the owner can later opt into persistence.
