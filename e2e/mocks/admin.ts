@@ -335,6 +335,8 @@ export function adminRoute(st: AdminState, m: string, p: string, sp: URLSearchPa
     }
     if (m === 'GET') return J(src);
     if (src.from === 'file') return J({ error: 'from_file' }, 409);
+    if (m === 'PUT' && String(body.key).includes('boom')) return J({ error: 'server' }, 500);
+    if (m === 'PUT' && (String(body.key).length < 8 || /\s/.test(String(body.key)))) return J({ error: 'invalid' }, 400);
     if (m === 'PUT') { Object.assign(src, { set: true, last4: String(body.key).slice(-4), from: 'db', invalid: false }); log('source.set', null, { name: src.name }); return J(src); }
     if (m === 'DELETE') { Object.assign(src, { set: false, last4: null, from: null, invalid: false }); log('source.remove', null, { name: src.name }); return J(src); }
   }

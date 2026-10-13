@@ -26,21 +26,25 @@
   onMount(load);
   const replace = (s: Source) => { sources = (sources ?? []).map((x) => (x.name === s.name ? s : x)); };
 
+  function saveError(e: unknown): string {
+    if (e instanceof ApiError && e.status === 400) return tr('admin.sources.keyFormat');
+    if (e instanceof ApiError && e.status === 409) return tr('admin.sources.fromFile');
+    return tr('admin.sources.saveFailed');
+  }
   async function save(s: Source) {
     const key = keys[s.name].trim();
     if (!key) return;
     const res = await runAction({
       key: `src:save:${s.name}`, run: () => api<Source>(`/api/admin/sources/${s.name}`, { method: 'PUT', body: { key } }),
-      success: tr('admin.sources.saved'), error: tr('admin.sources.saveFailed'),
+      success: tr('admin.sources.saved'), error: saveError,
     });
-    keys[s.name] = '';
-    if (res.ok && res.value) replace(res.value);
+    if (res.ok) { keys[s.name] = ''; if (res.value) replace(res.value); }
   }
   async function remove(s: Source) {
     if (!(await confirm({ title: tr('admin.sources.removeConfirm', { name: label(s.name) }), body: tr('admin.sources.removeBody'), danger: true, confirmLabel: tr('admin.sources.remove') }))) return;
     const res = await runAction({
       key: `src:remove:${s.name}`, run: () => api<Source>(`/api/admin/sources/${s.name}`, { method: 'DELETE' }),
-      success: tr('admin.sources.removed'), error: tr('admin.sources.saveFailed'),
+      success: tr('admin.sources.removed'), error: saveError,
     });
     if (res.ok && res.value) replace(res.value);
   }
@@ -80,7 +84,7 @@
           {#if s.name === 'omdb' && s.usedToday !== undefined}<span class="muted small">{$t('admin.sources.usage', { n: s.usedToday })}</span>{/if}
         </div>
         <form on:submit|preventDefault={() => save(s)}>
-          <Field label={$t('admin.sources.keyLabel')} type="password" autocomplete="off" bind:value={keys[s.name]} disabled={file} hint={file ? $t('admin.sources.fromFile') : $t('admin.sources.keyHint')} maxlength={200} />
+          <Field label={$t('admin.sources.keyLabel')} type="password" autocomplete="off" bind:value={keys[s.name]} disabled={file} hint={file ? $t('admin.sources.fromFile') : $t('admin.sources.keyHint')} minlength={8} maxlength={200} />
           <div class="btns">
             <Button type="submit" icon="check" pending={$busyKeys.has(`src:save:${s.name}`)} disabled={file || !keys[s.name].trim()}>{$t('admin.sources.save')}</Button>
             <Button variant="secondary" icon="activity" pending={$busyKeys.has(`src:test:${s.name}`)} disabled={!s.set && !keys[s.name].trim()} on:click={() => test(s)}>{$t('admin.sources.test')}</Button>

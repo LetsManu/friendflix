@@ -5,6 +5,7 @@ const toasts = (page: import('@playwright/test').Page) => page.getByRole('region
 const card = (page: import('@playwright/test').Page, name: string) => page.locator('section', { has: page.getByRole('heading', { name, exact: true }) });
 
 test.describe('admin: data sources', () => {
+  test.use({ allowedConsole: /status of (409|500)/ });
   test.beforeEach(({ api }) => { api.asAdmin = true; });
 
   test('set key: pill shows …abcd, the typed key is gone from the field and the HTML', async ({ page }) => {
@@ -15,21 +16,51 @@ test.describe('admin: data sources', () => {
     await expect(field).toHaveAttribute('type', 'password');
     await expect(field).toHaveAttribute('autocomplete', 'off');
     await field.fill('sekret-key-wxyzabcd');
+    const put = page.waitForResponse((r) => r.request().method() === 'PUT' && r.url().endsWith('/api/admin/sources/tmdb'));
     await tmdb.getByRole('button', { name: 'Speichern' }).click();
+    expect(await (await put).text()).not.toContain('sekret-key-wxyzabcd');
     await expect(toasts(page).getByText('Schlüssel gespeichert.')).toBeVisible();
     await expect(tmdb.getByText('Gesetzt · …abcd')).toBeVisible();
     await expect(field).toHaveValue('');
     expect(await page.content()).not.toContain('sekret-key-wxyzabcd');
+    const stored = await page.evaluate(() => JSON.stringify([{ ...localStorage }, { ...sessionStorage }]));
+    expect(stored).not.toContain('sekret-key-wxyzabcd');
   });
 
-  test('test: success toast; invalid key shows "Schlüssel ungültig"', async ({ page }) => {
+  test('failed save keeps the typed key and shows an error', async ({ page }) => {
+    await page.goto('/admin/sources');
+    const tmdb = card(page, 'TMDB');
+    const field = tmdb.getByLabel('Neuer Schlüssel');
+    await field.fill('boom-key-12345');
+    await tmdb.getByRole('button', { name: 'Speichern' }).click();
+    await expect(toasts(page).getByText('Speichern fehlgeschlagen.')).toBeVisible();
+    await expect(field).toHaveValue('boom-key-12345');
+    await expect(tmdb.getByText('Nicht gesetzt')).toBeVisible();
+  });
+
+  test('invalid key shows the red "Schlüssel ungültig" pill', async ({ page, api }) => {
+    api.admin.sources[1] = { name: 'omdb', set: true, last4: 'k3y9', from: 'db', invalid: true, usedToday: 12, budget: 900 };
+    await page.goto('/admin/sources');
+    await expect(card(page, 'OMDb').getByText('Schlüssel ungültig')).toBeVisible();
+  });
+
+  test('409 from_file on save shows the from-file message', async ({ page }) => {
+    await page.route('**/api/admin/sources/tmdb', (r) => (r.request().method() === 'PUT' ? r.fulfill({ status: 409, json: { error: 'from_file' } }) : r.fallback()));
+    await page.goto('/admin/sources');
+    const tmdb = card(page, 'TMDB');
+    await tmdb.getByLabel('Neuer Schlüssel').fill('some-key-12345');
+    await tmdb.getByRole('button', { name: 'Speichern' }).click();
+    await expect(toasts(page).getByText(/kommt aus einer Datei/)).toBeVisible();
+  });
+
+  test('test: success toast; rejected key shows "Schlüssel wurde abgelehnt"', async ({ page }) => {
     await page.goto('/admin/sources');
     const omdb = card(page, 'OMDb');
     await omdb.getByRole('button', { name: 'Testen' }).click();
     await expect(toasts(page).getByText('Verbindung funktioniert.')).toBeVisible();
     await omdb.getByLabel('Neuer Schlüssel').fill('bad-key-12345');
     await omdb.getByRole('button', { name: 'Testen' }).click();
-    await expect(toasts(page).getByText('Schlüssel ungültig')).toBeVisible();
+    await expect(toasts(page).getByText('Schlüssel wurde abgelehnt')).toBeVisible();
   });
 
   test('remove asks for confirmation, then the pill says "Nicht gesetzt"', async ({ page }) => {
