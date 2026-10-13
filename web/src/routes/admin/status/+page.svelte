@@ -1,3 +1,5 @@
+<!-- SPDX-FileCopyrightText: 2026 Manuel Weißböck -->
+<!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
 <script lang="ts">
   /**
    * Admin → Status (Block 22: the health page): traffic light per dependency ("Jetzt prüfen" waits for a fresh check), disks,

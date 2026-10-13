@@ -78,6 +78,7 @@ All notable changes, grouped by what you notice. Each release has its own sectio
 
 ### Security, supply chain and operations
 - CI builds carry SBOM and provenance; Trivy findings go to code scanning; `publish.yml` signs each promoted digest with cosign (keyless) and adds GitHub attestations (verification in docs/operations.md).
+- **Reproducible images:** rebuilding a commit gives the same image digest (commit time as `SOURCE_DATE_EPOCH`, `rewrite-timestamp`, pinned BuildKit, no cache for published images, web version from the git sha instead of the build clock, no blanket `apk upgrade`). The CI job `reproducible` rebuilds every image from scratch and compares; `scripts/reproduce-image.sh` lets anyone check a release (docs/reproducible-builds.md).
 - New **OWASP ZAP baseline scan** job (`.zap/rules.tsv`, report artifact `zap-report`) that `publish` waits for; **OpenSSF Scorecard** workflow and badge; recommended branch protection.
 - Optional **Prometheus + Grafana** stack (`compose.monitoring.yaml`, internal network, provisioned datasource and dashboard, no default admin password). Browser errors are reported (scrubbed) to the backend log and counted in `friendflix_client_errors_total`.
 - Backup sidecar with verified dumps and a restore test, `Server-Timing` on every response, faster API and media path (single-flight auth, item memo, compression).
@@ -87,6 +88,7 @@ All notable changes, grouped by what you notice. Each release has its own sectio
 - Migrations 21–33: indexes, `item_langs` / `dropped`, `reactions`, `lists.featured_at`, brand hubs, comments, kids and onboarding columns, `leaving_soon`, themed lists (`lists.themed`, `emoji`, `cover_color`, `featured_pos`), quality index.
 - New i18n areas `anime`, `hubs`, `kids`, `together`, `fresh`, `scenes`, `mine`, `ui`, `adminPeople`, `adminContent` in all 7 languages (docs/i18n.md).
 - Dev toolchain upgrade (Vite 8, SvelteKit 3, vitest 5, TypeScript 6; `#lib` subpath imports).
+- Test coverage gates: at least 90 % statements and 80 % branches in backend, gateway and web (every TypeScript module counts); CI fails below the per-package thresholds (CONTRIBUTING.md).
 
 ## Earlier work
 

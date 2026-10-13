@@ -1,3 +1,5 @@
+// SPDX-FileCopyrightText: 2026 Manuel Weißböck
+// SPDX-License-Identifier: AGPL-3.0-or-later
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import type { Ctx } from '../ctx.js';
@@ -77,7 +79,7 @@ export function mediaRoutes(app: FastifyInstance, ctx: Ctx) {
     const desc = q.desc === 'true';
     const { audio, subs, start: _s, limit: _l, ...rest } = q;
     const jfUser = req.jfUser!;
-    const key = `langitems:${jfUser.jellyfin_user_id}:${createHash('sha1').update(JSON.stringify(Object.entries({ ...rest, audio, subs }).sort())).digest('hex')}`;
+    const key = `langitems:${jfUser.jellyfin_user_id}:${createHash('sha256').update(JSON.stringify(Object.entries({ ...rest, audio, subs }).sort())).digest('hex')}`;
     const hit = await ctx.kv.get(key).catch(() => null);
     if (hit) {
       try {

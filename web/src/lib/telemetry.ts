@@ -1,3 +1,5 @@
+// SPDX-FileCopyrightText: 2026 Manuel Weißböck
+// SPDX-License-Identifier: AGPL-3.0-or-later
 /**
  * Browser error reporting: window 'error' / 'unhandledrejection' listeners and the SvelteKit handleError hook feed one
  * Reporter that filters noise, dedupes and rate-limits per page load before posting to /api/client-errors.

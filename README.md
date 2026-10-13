@@ -13,6 +13,8 @@
   <a href="https://github.com/LetsManu/friendflix/actions/workflows/ci.yml"><img src="https://github.com/LetsManu/friendflix/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   <img src="https://img.shields.io/badge/self--hosted-Docker-2496ED" alt="Self-hosted with Docker">
   <img src="https://img.shields.io/badge/languages-7-ff4f6d" alt="7 languages">
+  <a href="https://www.bestpractices.dev/projects/15445"><img src="https://www.bestpractices.dev/projects/15445/badge" alt="OpenSSF Best Practices"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-AGPL--3.0-blue" alt="License: AGPL-3.0"></a>
 </p>
 
 <p align="center"><img src="docs/images/en/hero.jpg" alt="FriendFlix home page with a large billboard and rows of titles" width="900"></p>
@@ -294,7 +296,7 @@ flowchart TB
 - **Backups:** the opt-in `backup` sidecar runs `pg_dump` daily at `BACKUP_HOUR`, verifies each dump with `pg_restore --list`, keeps `BACKUP_KEEP_DAYS` days and turns `unhealthy` if a run fails. Restore steps and a monthly restore test (`scripts/restore-test.sh`) are in [docs/operations.md](docs/operations.md). Keep `APP_ENC_KEY` in a password manager, separate from the dumps.
 - **Updates:** *Admin → Update* shows the installed version and the newest release with its notes (plus the commits on main) and redeploys the stack through Portainer (webhook or API). Manually: `docker compose -f compose.prod.yaml pull && docker compose -f compose.prod.yaml up -d`. Database migrations run on start.
 - **Monitoring:** `/health` (liveness) and `/health/ready` (Redis, Postgres, Jellyfin) on `127.0.0.1:3081`; Prometheus metrics on `:3081/metrics` and `:3082/metrics` (Bearer `METRICS_TOKEN`). Icinga and Prometheus examples and an optional Prometheus + Grafana stack with a provisioned dashboard (`compose.monitoring.yaml`, internal network, no default password): [docs/monitoring.md](docs/monitoring.md).
-- **Supply chain:** images are scanned (Trivy), signed with cosign (keyless) and published with SBOM and provenance attestations; verify them before you deploy – [docs/operations.md](docs/operations.md).
+- **Supply chain:** images are scanned (Trivy), signed with cosign (keyless) and published with SBOM and provenance attestations; verify them before you deploy – [docs/operations.md](docs/operations.md). Builds are reproducible: rebuild any release from source and get the same image digest – [docs/reproducible-builds.md](docs/reproducible-builds.md).
 - **Performance:** every API response carries a `Server-Timing` header (`jf` = Jellyfin, `db` = Postgres, `kv` = Redis, `app` = total), the gateway adds `authz` and `upstream`; see them in the browser DevTools under *Network → Timing*. Requests ≥ 500 ms are logged as `slow request`. Browser errors are reported to the backend log and counted in `friendflix_client_errors_total`.
 
 ### Versions & releases
@@ -354,9 +356,7 @@ npm run e2e                                     # Playwright: builds the web app
 
 ### Contributing
 
-Contributions are welcome – see [CONTRIBUTING.md](CONTRIBUTING.md) for the requirements (code standard, tests, all 7 languages) and [SECURITY.md](SECURITY.md) for reporting vulnerabilities.
-
-### License
+Contributions are welcome – see [CONTRIBUTING.md](CONTRIBUTING.md) for the requirements (code standard, tests, all 7 languages) and [SECURITY.md](SECURITY.md) for reporting vulnerabilities. Please follow the [Code of Conduct](CODE_OF_CONDUCT.md); plans for the next months are in the [ROADMAP](ROADMAP.md); how the security design works is described in [docs/security.md](docs/security.md).
 
 Copyright © 2026 Manuel Weißböck.
 

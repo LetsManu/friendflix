@@ -1,3 +1,5 @@
+// SPDX-FileCopyrightText: 2026 Manuel Weißböck
+// SPDX-License-Identifier: AGPL-3.0-or-later
 /**
  * Admin API fixtures for the mocked FriendFlix backend (shapes follow backend/src/routes/admin.ts, seerr.ts, polls.ts,
  * hubs.ts, digest.ts). Stateful: mutations change the state, so specs can assert what the UI did.

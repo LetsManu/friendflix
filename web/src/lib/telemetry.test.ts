@@ -1,3 +1,5 @@
+// SPDX-FileCopyrightText: 2026 Manuel Weißböck
+// SPDX-License-Identifier: AGPL-3.0-or-later
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { DEDUPE_MS, MAX_REPORTS, Reporter, describeError, installTelemetry, reportError, reportPlayback, resetTelemetryForTests, shouldIgnore, toPayload, transmit, type RawReport } from './telemetry';
 

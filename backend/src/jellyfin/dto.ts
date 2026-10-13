@@ -1,3 +1,5 @@
+// SPDX-FileCopyrightText: 2026 Manuel Weißböck
+// SPDX-License-Identifier: AGPL-3.0-or-later
 /** Jellyfin JSON -> the server-neutral DTOs of ../media/types.ts (re-exported here for existing imports). */
 import { DOWNLOAD_PRESETS, maxWidthFor, type DownloadQuality, type DownloadSourceDto, type ImageTags, type ItemDto, type MediaTraits, type PlaybackDto, type TranscodeReason, type TrickplayDto } from '../media/types.js';
 import type { ChapterDto, ItemAboutDto, ItemCreditsDto, ProviderIds } from '../media/types.js'; // Block 17 P1

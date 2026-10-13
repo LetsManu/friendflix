@@ -1,3 +1,5 @@
+// SPDX-FileCopyrightText: 2026 Manuel Weißböck
+// SPDX-License-Identifier: AGPL-3.0-or-later
 import { Redis } from 'ioredis';
 import pg from 'pg';
 import { buildApp } from './app.js';

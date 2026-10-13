@@ -1,3 +1,5 @@
+// SPDX-FileCopyrightText: 2026 Manuel Weißböck
+// SPDX-License-Identifier: AGPL-3.0-or-later
 /** Admin navigation model (AdminShell sidebar, phone list, titles, badges). */
 import type { TKey } from '#lib/i18n';
 import type { AdminSummary } from './summary';

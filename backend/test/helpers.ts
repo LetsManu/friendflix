@@ -1,3 +1,5 @@
+// SPDX-FileCopyrightText: 2026 Manuel Weißböck
+// SPDX-License-Identifier: AGPL-3.0-or-later
 import pg from 'pg';
 import { buildApp, type Extra } from '../src/app.js';
 import type { Config } from '../src/config.js';

@@ -13,6 +13,8 @@
   <a href="https://github.com/LetsManu/friendflix/actions/workflows/ci.yml"><img src="https://github.com/LetsManu/friendflix/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   <img src="https://img.shields.io/badge/self--hosted-Docker-2496ED" alt="Selbst gehostet mit Docker">
   <img src="https://img.shields.io/badge/Sprachen-7-ff4f6d" alt="7 Sprachen">
+  <a href="https://www.bestpractices.dev/projects/15445"><img src="https://www.bestpractices.dev/projects/15445/badge" alt="OpenSSF Best Practices"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/Lizenz-AGPL--3.0-blue" alt="Lizenz: AGPL-3.0"></a>
 </p>
 
 <p align="center"><img src="docs/images/de/hero.jpg" alt="FriendFlix-Startseite mit großem Billboard und Titelreihen" width="900"></p>
@@ -294,7 +296,7 @@ flowchart TB
 - **Backups:** Der optionale Sidecar `backup` macht täglich um `BACKUP_HOUR` einen `pg_dump`, prüft jeden Dump mit `pg_restore --list`, behält `BACKUP_KEEP_DAYS` Tage und wird `unhealthy`, wenn ein Lauf fehlschlägt. Wiederherstellung und monatlicher Restore-Test (`scripts/restore-test.sh`): [docs/operations.md](docs/operations.md). `APP_ENC_KEY` getrennt von den Dumps im Passwort-Manager aufbewahren.
 - **Updates:** *Admin → Update* zeigt die installierte Version und das neueste Release samt Notizen (dazu die Commits auf main) und stößt über Portainer (Webhook oder API) ein Redeploy an. Von Hand: `docker compose -f compose.prod.yaml pull && docker compose -f compose.prod.yaml up -d`. Datenbank-Migrationen laufen beim Start.
 - **Monitoring:** `/health` (Liveness) und `/health/ready` (Redis, Postgres, Jellyfin) auf `127.0.0.1:3081`; Prometheus-Metriken unter `:3081/metrics` und `:3082/metrics` (Bearer `METRICS_TOKEN`). Beispiele für Icinga und Prometheus sowie ein optionaler Prometheus-+-Grafana-Stack mit fertigem Dashboard (`compose.monitoring.yaml`, internes Netz, kein Standardpasswort): [docs/monitoring.md](docs/monitoring.md).
-- **Lieferkette:** Images werden gescannt (Trivy), keyless mit cosign signiert und mit SBOM- und Provenienz-Attestations veröffentlicht; vor dem Deployen lassen sie sich prüfen – [docs/operations.md](docs/operations.md).
+- **Lieferkette:** Images werden gescannt (Trivy), keyless mit cosign signiert und mit SBOM- und Provenienz-Attestations veröffentlicht; vor dem Deployen lassen sie sich prüfen – [docs/operations.md](docs/operations.md). Die Builds sind reproduzierbar: jedes Release lässt sich aus dem Quellcode nachbauen und ergibt denselben Image-Digest – [docs/reproducible-builds.md](docs/reproducible-builds.md) (englisch).
 - **Ladezeiten:** Jede API-Antwort trägt einen `Server-Timing`-Header (`jf` = Jellyfin, `db` = Postgres, `kv` = Redis, `app` = gesamt), das Gateway ergänzt `authz` und `upstream`; sichtbar in den Browser-DevTools unter *Network → Timing*. Anfragen ab 500 ms erscheinen als `slow request` im Log. Browser-Fehler landen im Backend-Log und in `friendflix_client_errors_total`.
 
 ### Versionen und Releases
@@ -354,7 +356,9 @@ npm run e2e                                     # Playwright: baut die Web-App u
 
 ### Mitmachen
 
-Beiträge sind willkommen – die Anforderungen (Code-Standard, Tests, alle 7 Sprachen) stehen in [CONTRIBUTING.md](CONTRIBUTING.md), Sicherheitslücken bitte wie in [SECURITY.md](SECURITY.md) beschrieben melden.
+
+Wie Entscheidungen getroffen werden, steht in [GOVERNANCE.md](GOVERNANCE.md). Beiträge sind willkommen – die Anforderungen (Code-Standard, Tests, alle 7 Sprachen) stehen in [CONTRIBUTING.md](CONTRIBUTING.md), Sicherheitslücken bitte wie in [SECURITY.md](SECURITY.md) beschrieben melden.
+
 
 ### Lizenz
 
