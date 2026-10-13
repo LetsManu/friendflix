@@ -17,6 +17,7 @@
   import { cachedCalm } from '#lib/stores';
   import { t, tr, type TKey } from '#lib/i18n';
   import { confirm } from '#lib/ui/confirm';
+  import { endCast } from '#lib/session';
   const colorKey = (key: string) => `account.profiles.colors.${key}` as TKey;
 
   /** unlock 'owner': leaving the active kids profile towards this profile needs the owner profile's PIN (it has none of its own) */
@@ -83,6 +84,7 @@
     if (pin === undefined && (p.hasPin || p.unlock === 'owner')) { pinFor = p; pinOwner = !p.hasPin; pinErr = ''; return; }
     pinBusy = true; pinErr = '';
     try {
+      if (p.id !== activeId) await endCast(); // the old profile's stream must not keep running under the new one
       await api(`/api/profiles/${p.id}/select`, { method: 'POST', body: pin === undefined ? {} : { pin } });
       await setMeta('lastProfileId', p.id).catch(() => undefined); // offline hub: downloads of the last active profile
       markPicked(p.id); // the profile question ("Wer ist heute dabei?") was answered for this browser session

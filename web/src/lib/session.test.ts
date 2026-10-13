@@ -9,6 +9,13 @@ const h = vi.hoisted(() => ({
   removeAll: vi.fn(async () => undefined),
   disablePush: vi.fn(async () => undefined),
   clearHint: vi.fn(),
+  cast: null as unknown,
+  calls: [] as string[],
+  stop: vi.fn(async () => { h.calls.push('cast.stop'); }),
+}));
+vi.mock('#lib/cast/engine', () => ({
+  castEngine: { stop: h.stop },
+  castSession: { subscribe: (fn: (v: unknown) => void) => { fn(h.cast); return () => undefined; } },
 }));
 vi.mock('#lib/offline/db', () => ({ getAllDownloads: async () => { if (h.downloads === 'error') throw new Error('no IndexedDB'); return h.downloads; } }));
 vi.mock('#lib/offline/manager', () => ({ removeAll: h.removeAll }));
@@ -27,10 +34,13 @@ beforeEach(() => {
   h.removeAll.mockClear();
   h.disablePush.mockReset().mockResolvedValue(undefined);
   h.clearHint.mockClear();
+  h.cast = null;
+  h.calls = [];
+  h.stop.mockClear();
   logoutStatus = 204;
   loc = { pathname: '/account', href: '/account' };
   vi.stubGlobal('location', loc);
-  vi.stubGlobal('fetch', vi.fn(async () => new Response(null, { status: logoutStatus })));
+  vi.stubGlobal('fetch', vi.fn(async (url: string) => { h.calls.push(`POST ${url}`); return new Response(null, { status: logoutStatus }); }));
 });
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -38,6 +48,25 @@ afterEach(() => {
 });
 
 describe('logout', () => {
+  it('stops a running cast before the server logout', async () => {
+    h.cast = { castId: 'c' };
+    await logout(false);
+    expect(h.calls).toEqual(['cast.stop', 'POST /auth/logout']);
+  });
+
+  it('does not touch the cast engine when nothing is cast', async () => {
+    await logout(false);
+    expect(h.stop).not.toHaveBeenCalled();
+  });
+
+  it('still logs out when stopping the cast fails', async () => {
+    h.cast = { castId: 'c' };
+    h.stop.mockRejectedValueOnce(new Error('boom'));
+    await logout(false);
+    expect(h.calls).toEqual(['POST /auth/logout']);
+    expect(loc.href).toBe('/auth/login');
+  });
+
   it('without downloads: no question, drops push, ends the session and goes to the login', async () => {
     await logout(false);
     expect(h.confirmCalls).toHaveLength(0);

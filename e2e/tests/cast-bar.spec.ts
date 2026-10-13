@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { episodes, MOVIE, MOVIE2 } from '../mocks/fixtures.js';
+import { episodes, ME, MOVIE, MOVIE2 } from '../mocks/fixtures.js';
 import { available, castOn, castSessions, fakeCastSdk, mockHls, stubAirPlay } from '../mocks/cast.js';
 import { mockPlayer, videoReady } from '../mocks/scenes.js';
 import { expect, test } from '../fixtures.js';
@@ -297,4 +297,20 @@ test('public pages get no room for a bar they do not show', async ({ page, api: 
   await expect(page).toHaveURL(/\/offline$/);
   await expect(castBar(page)).toHaveCount(0);
   await expect.poll(h).toBe('0px');
+});
+
+test('switching profile ends the cast', async ({ page, api: _api }) => {
+  await page.route('**/api/me', (r) => r.fulfill({ json: { ...ME, profileCount: 3, profileChosen: true } }));
+  await page.addInitScript(() => sessionStorage.setItem('ff-profile-picked', '1'));
+  const order: string[] = [];
+  page.on('request', (r) => { const u = new URL(r.url()); if (r.method() !== 'GET' && /^\/api\/(cast\/session\/|playback\/stop|profiles\/[^/]+\/select)/.test(u.pathname)) order.push(`${r.method()} ${u.pathname}`); });
+  const { deleted } = await castAndLeave(page);
+  await expect(castBar(page)).toBeVisible();
+  await clientNav(page, '/profiles?pick=p2&next=%2F');
+  await expect.poll(() => order.at(-1)).toBe('POST /api/profiles/p2/select');
+  expect(deleted).toEqual(['c'.repeat(32)]);
+  const sel = order.indexOf('POST /api/profiles/p2/select');
+  expect(order.indexOf('DELETE /api/cast/session/' + 'c'.repeat(32))).toBeLessThan(sel);
+  expect(order.indexOf('POST /api/playback/stop')).toBeGreaterThanOrEqual(0);
+  expect(order.indexOf('POST /api/playback/stop')).toBeLessThan(sel);
 });
