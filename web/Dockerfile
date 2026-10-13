@@ -6,13 +6,18 @@ COPY backend/package.json backend/
 COPY gateway/package.json gateway/
 COPY web/package.json web/
 RUN npm ci
+# the footer shows version.json; the codename list is shared with backend + release script
+COPY version.json codenames.json ./
 COPY web web
 RUN npm run build -w web
 
 FROM node:26-alpine
 ARG GIT_SHA=dev
 ARG BUILD_TIME=
-ENV GIT_SHA=$GIT_SHA BUILD_TIME=$BUILD_TIME
+# release version + codename from version.json (CI passes them as build args; empty = the app reads version.json)
+ARG APP_VERSION=
+ARG APP_CODENAME=
+ENV GIT_SHA=$GIT_SHA BUILD_TIME=$BUILD_TIME APP_VERSION=$APP_VERSION APP_CODENAME=$APP_CODENAME
 ENV NODE_ENV=production PORT=3000 HOST=0.0.0.0
 WORKDIR /app
 # Runtime needs only node; the npm/yarn bundled in the base image only adds CVEs.

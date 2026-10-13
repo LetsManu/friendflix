@@ -1,8 +1,14 @@
 # Changelog
 
-All notable changes. Nothing is released yet, so everything is listed under *Unreleased*, grouped by what you notice.
+All notable changes, grouped by what you notice. Each release has its own section (`## [x.y.z] – Codename – date`, cut by the *Release* workflow); what is not released yet is listed under *Unreleased*.
 
 ## [Unreleased]
+
+### Versions & releases
+- **Version numbers with codenames:** FriendFlix now has a SemVer version (`version.json`, starting at 1.0.0 "Arancini"). Every major version gets the next cinema snack from A to Z as its codename. The desktop footer shows "FriendFlix 1.0.0 · Arancini"; `GET /api/version` returns version, codename and build sha.
+- **Releases:** the manual *Release* workflow (patch / minor / major) bumps the version, moves this changelog's Unreleased section under the new version, tags `vX.Y.Z` and creates a GitHub Release. Images are published as `X.Y.Z`, `X.Y`, `X` and `latest`, so a stack can stay on one major line with `FF_TAG=1`.
+- **Admin, Update** compares the installed version with the newest GitHub release ("Update available") and shows its notes under *What's new*. Before the first release, or on a build from main, the commits ahead of the installed build stay as secondary information.
+- Tap the version seven times. Just saying.
 
 ### Streaming
 - **Adaptive quality:** *Auto* picks the quality your connection can carry (the last estimate is remembered per device for 7 days), steps down after a stall or a network error and steps back up once the connection is steady. A chip in the player shows "Original" or "Converted · 720p"; tap it for the reason.
