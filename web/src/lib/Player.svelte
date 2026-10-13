@@ -1,7 +1,7 @@
 <script lang="ts">
   import type Hls from 'hls.js';
   import { createEventDispatcher, onDestroy, onMount, tick as tickDom } from 'svelte';
-  import { api, ApiError, fmtClock, getActiveProfile, secToTicks } from '#lib/api';
+  import { api, ApiError, backdrop, fmtClock, getActiveProfile, HERO_WIDTHS, img, secToTicks, srcset } from '#lib/api';
   import Icon from '#lib/Icon.svelte';
   import { get } from 'svelte/store';
   import { prefs, prefsLoaded, saveAudioFx } from '#lib/stores';
@@ -20,7 +20,9 @@
   import { AbrController, LADDER, pickRung, type Decision } from '#lib/player/abr';
   import { BandwidthEstimator, loadStoredEstimate, storeEstimate } from '#lib/player/bandwidth';
   import QualityChip from '#lib/player/QualityChip.svelte';
-  import { firstInfoBody, speedLabel, SPEEDS } from '#lib/player/bar';
+  import { speedLabel, SPEEDS } from '#lib/player/bar';
+  import { firstPlaybackRequest, playbackInfoBody, type InfoBody, type PlaybackDto } from '#lib/player/infobody';
+  import { takePrefetched } from '#lib/player/prefetch';
   import EpisodesPanel from '#lib/player/EpisodesPanel.svelte';
   import CastInfoPanel from '#lib/player/CastInfoPanel.svelte';
   import CastPeek from '#lib/player/CastPeek.svelte';
@@ -64,19 +66,15 @@
   export let startAt: number | undefined = undefined;
   /** second at which the end credits begin (outro segment or the last 25 s); Infinity while unknown. Read by the page for its "next episode" card. */
   export let creditsAt = Infinity;
+  /**
+   * Loading poster (watch page): the item's backdrop (else its primary image), dimmed, with the title and a thin progress bar
+   * from the first frame of the route until the video has its first frame; then it crossfades out (300 ms). backdrop/image
+   * false = the item has none; undefined = unknown yet (tried in that order). null = no poster (watch party).
+   */
+  export let poster: { id: string; backdrop?: boolean; image?: boolean } | null = null;
   const dispatch = createEventDispatcher();
 
-  interface Info {
-    playSessionId: string; mediaSourceId: string; directUrl?: string; hlsUrl: string; resumeTicks: number; maxBitrate: number;
-    roleMaxBitrate?: number;
-    /** why the server transcodes (absent on direct play) */
-    transcodeReason?: string;
-    trickplay?: { width: number; height: number; tileWidth: number; tileHeight: number; count: number; interval: number; url: string };
-    /** audio track the server baked into hlsUrl (audioLang matched a non-default track) */
-    audioIndex?: number;
-    audioTracks: Array<{ index: number; title: string; isDefault: boolean; language?: string }>;
-    subtitles: Array<{ index: number; title: string; url: string; language?: string; isDefault: boolean }>;
-  }
+  type Info = PlaybackDto;
   let info: Info | null = null, hls: Hls | null = null, error = '', mode = '', audioIndex: number | undefined, subIndex = -1;
   let segments: Array<{ type: string; start: number; end: number }> = [];
   let progressTimer: ReturnType<typeof setInterval>, started = false, stopped = false;
@@ -98,6 +96,16 @@
   let spin = false, spinT: ReturnType<typeof setTimeout>, reconnecting = 0, retryT: ReturnType<typeof setTimeout>, rec = freshRecovery(), lastPos = 0, posKnown = false, errPos = 0, errTitle = '', errNote = '';
   function setSpin(on: boolean) { clearTimeout(spinT); if (!on) { spin = false; return; } spinT = setTimeout(() => (spin = true), 500); }
   $: setSpin(waiting && !error && !casting && !reconnecting);
+  // ---- loading poster: shown until the first frame (loadeddata / playing), then a 300 ms crossfade; the control bar waits for it ----
+  let posterOn = Boolean(poster), posterOut = false, posterFail = 0, posterT: ReturnType<typeof setTimeout>;
+  $: posterKinds = poster ? ([poster.backdrop !== false && 'Backdrop', poster.image !== false && 'Primary'].filter(Boolean) as Array<'Backdrop' | 'Primary'>) : [];
+  $: posterKind = posterKinds[posterFail] ?? null;
+  function firstFrame() {
+    if (!posterOn || posterOut) return;
+    posterOut = true;
+    clearTimeout(posterT); posterT = setTimeout(() => (posterOn = false), 320);
+  }
+  $: if (casting) posterOn = false;
   // ---- adaptive quality (quality 0 = Auto): bandwidth estimate -> rung; stalls and network errors step down, a good link steps up ----
   const est = new BandwidthEstimator();
   let abr: AbrController | null = null, reqHint: 'network' | 'manual' = 'network', switching = false, queuedPick: number | null = null, sessionPlaying = false, shownQ = 0, chipOpen = false, waitSince = 0, stallHandled = false, stallT: ReturnType<typeof setTimeout>, abrTimer: ReturnType<typeof setInterval>, bwTimer: ReturnType<typeof setInterval>, directSeen = 0;
@@ -167,13 +175,18 @@
     // first start: the saved quality + audio language go into this same request (no second round trip)
     const first = !prefsApplied && !partyMode;
     if (first) await loadSerPref();
-    const fb = first ? firstInfoBody(get(prefs), wantAudio || serPref.audio || animeAudio(animeDefault)) : {};
-    if (fb.maxBitrate && !quality) quality = fb.maxBitrate;
-    const audioLang = fb.audioLang;
+    // the first body is built like the play buttons' prefetch builds it (lib/player/infobody.ts), so that answer can be reused
+    const fr = first ? firstPlaybackRequest(itemId, get(prefs), wantAudio || serPref.audio || animeAudio(animeDefault), startSec) : null;
+    if (fr?.quality && !quality) quality = fr.quality;
+    const audioLang = fr?.body.audioLang;
     if (first) reqHint = quality ? 'manual' : 'network'; // a saved quality is a pick, otherwise the network chooses
     const sentBps = wantBps();
+    const body: InfoBody = playbackInfoBody({ itemId, startSec, audioIndex, bps: sentBps, hint: reqHint, audioLang });
+    const ask = () => api<Info | null>('/api/playback/info', { method: 'POST', body });
+    // hovered/focused play button: its request is (usually) already answered; a failed prefetch is simply asked again
+    const pre = first ? takePrefetched(itemId, body) : null;
     try {
-      const got = await api<Info | null>('/api/playback/info', { method: 'POST', body: { itemId, startTicks: startSec !== undefined ? secToTicks(startSec) : undefined, audioIndex, maxBitrate: Number.isFinite(sentBps) ? sentBps : undefined, reasonHint: reqHint, audioLang } });
+      const got = await (pre ? pre.catch(ask) : ask());
       // an empty/foreign answer (204, proxy page ...) has no playback session: show the error instead of crashing on it
       if (!validInfo(got)) throw new ApiError(502, null);
       info = got;
@@ -299,7 +312,7 @@
     applyAbr(abr.onStall(ms)); // 'fail' needs nothing here: a stall at the lowest rung just keeps buffering
   }
   function onPlaying() {
-    waiting = false; sessionPlaying = true;
+    waiting = false; sessionPlaying = true; firstFrame();
     if (waitSince) { const ms = performance.now() - waitSince, done = stallHandled; resetStall(); if (!done && ms > 0) onStall(ms); }
     if (reconnecting) { reconnecting = 0; flash(tr('player.reconnected'), 1500); }
   }
@@ -896,7 +909,7 @@
     };
   });
   onDestroy(() => {
-    clearTimeout(peekT); fxEngine?.destroy();
+    clearTimeout(peekT); clearTimeout(posterT); fxEngine?.destroy();
     persistEstimate(); clearInterval(abrTimer); clearInterval(bwTimer); clearTimeout(stallT);
     clearInterval(progressTimer); clearInterval(activityTimer); clearTimeout(toastTimer); clearTimeout(retryT); clearTimeout(spinT); clearTimeout(pendingTap); clearTimeout(hudT); clearTimeout(rippleT); clearTimeout(lockT); clearTimeout(unlockT); nowPlaying.set(null);
     if (started && !stopped) { stopped = true; send('stop'); }
@@ -907,7 +920,7 @@
 </script>
 
 <svelte:window on:keydown={onKey} on:keydown|capture={onBackCapture} />
-<div class="stage {subClasses($prefs.subtitleStyle)}" class:idle={!showUi} class:locked style="--inset:{inset}px" bind:this={stage} on:mousemove={() => { if (Date.now() - lastTouch > 800) wake(); }} on:click={onSurfaceClick} on:wheel|nonpassive={onWheel} on:keydown={() => {}}
+<div class="stage {subClasses($prefs.subtitleStyle)}" class:idle={!showUi} class:locked class:pre={posterOn} style="--inset:{inset}px" bind:this={stage} on:mousemove={() => { if (Date.now() - lastTouch > 800) wake(); }} on:click={onSurfaceClick} on:wheel|nonpassive={onWheel} on:keydown={() => {}}
   on:pointerdown={gDown} on:pointermove={gMove} on:pointerup={gUp} on:pointercancel={gCancel} role="presentation">
   <!-- svelte-ignore a11y_media_has_caption -->
   <video bind:this={video} playsinline crossorigin="use-credentials" style:filter={brightness < 1 ? `brightness(${brightness})` : null}
@@ -915,11 +928,20 @@
     on:play={onPlay} on:pause={() => { paused = true; resetStall(); if (!castBusy && !casting && !stopped) send('progress'); }} on:seeked={() => started && send('progress')}
     on:ended={() => { stopped = true; paused = true; send('stop'); }}
     on:timeupdate={() => { syncTime(); reportTick(); }} on:progress={syncTime} on:loadedmetadata={syncTime}
-    on:waiting={onWaiting} on:seeking={resetStall} on:playing={onPlaying} on:canplay={() => { waiting = false; if (wantAutoplay) { wantAutoplay = false; playSafe(); } }}
+    on:waiting={onWaiting} on:seeking={resetStall} on:playing={onPlaying} on:loadeddata={firstFrame} on:canplay={() => { waiting = false; if (wantAutoplay) { wantAutoplay = false; playSafe(); } }}
     on:volumechange={() => { if (video) { muted = video.muted; } }}
     on:play on:pause on:seeked on:seeking on:waiting on:playing on:canplay on:timeupdate on:ended>
     {#if info}{#each info.subtitles as s}<track id="sub-{s.index}" kind="subtitles" src={s.url} srclang={s.language?.slice(0, 2) ?? 'xx'} label={s.title} />{/each}{/if}
   </video>
+  {#if posterOn && poster}
+    <!-- pointer-events: none -> clicks, double clicks, wheel and gestures reach the stage as over the video -->
+    <div class="poster ff-poster" class:out={posterOut} aria-hidden="true">
+      {#if posterKind === 'Backdrop'}<img src={backdrop(poster.id, 1280)} srcset={srcset('Backdrop', poster.id, HERO_WIDTHS)} sizes="100vw" alt="" fetchpriority="high" on:error={() => posterFail++} />
+      {:else if posterKind === 'Primary'}<img src={img(poster.id, 1280)} alt="" fetchpriority="high" on:error={() => posterFail++} />{/if}
+      <div class="pshade"></div>
+      <div class="pcap">{#if barTitle || title}<b>{barTitle || title}</b>{/if}{#if barSub}<span>{barSub}</span>{/if}<i class="pbar"><i></i></i></div>
+    </div>
+  {/if}
 
   <div class="sr" aria-live="polite" aria-atomic="true">{live}</div>
   {#if error}
@@ -931,7 +953,8 @@
     </div>
   {:else if reconnecting}
     <div class="center" role="status"><div class="reco ui"><div class="spin sm"></div><span>{$t('player.reconnecting')}</span><small>{$t('player.attempt', { n: reconnecting, max: MAX_NETWORK_TRIES })}</small></div></div>
-  {:else if spin && waiting && !casting}<div class="center" role="status" aria-label={$t('player.loading')}><div class="spin"></div></div>{/if}
+  {:else if spin && waiting && !casting && !posterOn}<div class="center" role="status" aria-label={$t('player.loading')}><div class="spin"></div></div>
+  {:else if posterOn && !posterOut && !casting}<div class="sr" role="status">{$t('player.loading')}</div>{/if}
   {#if casting}
     <div class="center castov" role="status"><div class="castbox"><Icon name="cast" size={56} /><b>{$t('player.cast.playingOn', { name: $castState.deviceName || 'Chromecast' })}</b><button class="btn light ui" on:click|stopPropagation={() => castStop()}>{$t('player.cast.stop')}</button></div></div>
   {/if}
@@ -982,7 +1005,7 @@
     </div>
   {/if}
 
-  <div class="ui ctl" data-nav class:hide={!showUi} on:click|stopPropagation on:keydown={ctlKey} role="toolbar" tabindex="-1" aria-label={$t('player.controls.toolbar')}>
+  <div class="ui ctl" data-nav class:hide={!showUi || (posterOn && !posterOut)} on:click|stopPropagation on:keydown={ctlKey} role="toolbar" tabindex="-1" aria-label={$t('player.controls.toolbar')}>
     <div class="timeline">
       <div class="track" bind:this={trackEl} class:locked={!canControl} role="slider" tabindex="0" aria-label={$t('player.positionLabel')} aria-valuemin="0" aria-valuemax={Math.round(duration)} aria-valuenow={Math.round(shown)}
         aria-valuetext={$t('player.valueText', { a: fmtClock(shown), b: fmtClock(duration) })}
@@ -1120,6 +1143,24 @@
 <style>
   .stage { position: relative; width: 100%; background: #000; color: #fff; overflow: hidden; user-select: none; -webkit-user-select: none; touch-action: none; -webkit-touch-callout: none; }
   .sr { position: absolute; width: 1px; height: 1px; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+  /* loading poster: the stage takes the page colour while it shows (never a white or black flash), then fades to the video */
+  .stage { transition: background-color 300ms ease; }
+  .stage.pre { background: var(--bg); }
+  .poster { position: absolute; inset: 0; z-index: 1; pointer-events: none; background: var(--bg); opacity: 1; transition: opacity 300ms ease; }
+  .poster.out { opacity: 0; }
+  .poster img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; display: block; }
+  .pshade { position: absolute; inset: 0; background: linear-gradient(rgba(0,0,0,.35), rgba(0,0,0,.55) 60%, rgba(0,0,0,.8)); }
+  .pcap { position: absolute; left: clamp(1rem, 4vw, 3.5rem); right: clamp(1rem, 4vw, 3.5rem); bottom: clamp(1.5rem, 8vh, 4.5rem); display: flex; flex-direction: column; gap: .35rem; max-width: 60ch; text-shadow: 0 1px 8px rgba(0,0,0,.6); }
+  .pcap b { font-size: clamp(1.3rem, 3vw, 2.2rem); line-height: 1.15; }
+  .pcap span { color: var(--mut); font-size: clamp(.95rem, 1.6vw, 1.15rem); }
+  .pbar { position: relative; display: block; height: 3px; width: min(320px, 70vw); margin-top: .7rem; border-radius: 2px; background: rgba(255,255,255,.22); overflow: hidden; }
+  .pbar i { position: absolute; inset: 0 auto 0 0; width: 35%; border-radius: 2px; background: #fff; animation: ff-pbar 1.2s ease-in-out infinite; }
+  @keyframes ff-pbar { from { transform: translateX(-100%); } to { transform: translateX(290%); } }
+  @media (prefers-reduced-motion: reduce) {
+    .poster { transition-duration: 120ms; }
+    .pbar i { animation: ff-pbar-calm 1.6s ease-in-out infinite alternate; transform: none; width: 100%; }
+    @keyframes ff-pbar-calm { from { opacity: .25; } to { opacity: .7; } }
+  }
   .stage :global(button:focus-visible), .stage :global(a:focus-visible), .stage :global([role=slider]:focus-visible) { outline: 3px solid #fff; outline-offset: 2px; }
   .stage.idle { cursor: none; }
   .stage :global(video) { display: block; width: 100%; height: 100%; max-height: 100%; object-fit: contain; background: #000; }
