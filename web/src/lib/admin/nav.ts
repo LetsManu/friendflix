@@ -21,6 +21,7 @@ export const GROUPS: NavGroup[] = [
     { href: '/admin/hubs', label: 'hubs.admin.tab', icon: 'star' },
     { href: '/admin/leaving', label: 'fresh.admin.tab', icon: 'calendar' },
     { href: '/admin/previews', label: 'admin.tabs.previews', icon: 'film', badge: 'previews' },
+    { href: '/admin/hygiene', label: 'admin.tabs.hygiene', icon: 'check' },
   ] },
   { id: 'operations', label: 'admin.nav.groups.operations', items: [
     { href: '/admin/playback', label: 'admin.tabs.playback', icon: 'play' },

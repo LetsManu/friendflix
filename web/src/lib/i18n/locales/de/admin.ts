@@ -4,6 +4,7 @@ export default {
   tabs: {
     users: 'Nutzer', status: 'Status', previews: 'Vorschauen', playback: 'Wiedergabe-Check', digest: 'Wochenrückblick', sources: 'Datenquellen', invites: 'Einladungen',
     requests: 'Wünsche', polls: 'Abstimmungen', lists: 'Listen', roles: 'Rollen', devices: 'Geräte', audit: 'Audit-Log', update: 'Update',
+    hygiene: 'Bibliothekspflege',
   },
   /** role names by key (unknown roles show the server label) */
   roleNames: { friend: 'Freund', family: 'Familie', guest: 'Gast', admin: 'Admin' },

@@ -7,6 +7,7 @@ const fr: Translation<typeof de> = {
   tabs: {
     users: 'Utilisateurs', status: 'État', previews: 'Aperçus', playback: 'Test de lecture', digest: 'Récap hebdomadaire', sources: 'Sources de données', invites: 'Invitations',
     requests: 'Demandes', polls: 'Votes', lists: 'Listes', roles: 'Rôles', devices: 'Appareils', audit: 'Journal d’audit', update: 'Mise à jour',
+    hygiene: 'Entretien de la bibliothèque',
   },
   roleNames: { friend: 'Ami', family: 'Famille', guest: 'Invité', admin: 'Admin' },
   kind: { movie: 'Film', series: 'Série' },

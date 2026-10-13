@@ -58,6 +58,40 @@ export interface AdminState {
   dismissed: Record<string, string>;
   bannerCalls: number;
   bannerFails: boolean;
+  /** Block 22 library hygiene (/api/admin/hygiene*): rows with every issue, ignored "itemId|code" pairs, scan state */
+  hygiene: HygieneMock;
+}
+export type HygieneCode = 'no_overview' | 'no_poster' | 'no_backdrop' | 'no_year' | 'no_ids' | 'no_audio' | 'audio_unknown' | 'foreign_no_subs' | 'forced_only' | 'image_subs_only' | 'dup_ids' | 'dup_title' | 'dup_episode' | 'no_source' | 'zero_runtime' | 'heavy_bitrate' | 'hevc_10bit' | 'video_codec' | 'audio_codec';
+export interface HygieneItem {
+  itemId: string; type: 'Movie' | 'Series' | 'Episode'; name: string; seriesId: string | null; seriesName: string | null; year: number | null;
+  issues: HygieneCode[]; versions: number; container: string | null; bitrate: number | null; sizeBytes: number | null;
+  video: string | null; audio: string[]; subtitles: string[]; dupOf: string[];
+}
+export interface HygieneMock {
+  supported: boolean; canRefresh: boolean; running: boolean; lastDone: string | null; lastFull: string | null;
+  items: HygieneItem[]; ignored: Set<string>; refreshed: string[]; scans: number;
+}
+export const HYG_CAT: Record<HygieneCode, 'info' | 'language' | 'duplicate' | 'file'> = {
+  no_overview: 'info', no_poster: 'info', no_backdrop: 'info', no_year: 'info', no_ids: 'info',
+  no_audio: 'language', audio_unknown: 'language', foreign_no_subs: 'language', forced_only: 'language', image_subs_only: 'language',
+  dup_ids: 'duplicate', dup_title: 'duplicate', dup_episode: 'duplicate',
+  no_source: 'file', zero_runtime: 'file', heavy_bitrate: 'file', hevc_10bit: 'file', video_codec: 'file', audio_codec: 'file',
+};
+const HYG_WARN = new Set<HygieneCode>(['no_overview', 'no_poster', 'no_audio', 'foreign_no_subs', 'dup_ids', 'dup_episode', 'no_source', 'zero_runtime', 'video_codec']);
+const hx = (n: number): string => n.toString(16).padStart(32, '0');
+function hygieneItems(): HygieneItem[] {
+  const base = { seriesId: null, seriesName: null, versions: 1, container: 'mkv', bitrate: 12e6, sizeBytes: 4.2 * 1024 ** 3, video: 'h264 1080p', audio: ['deu ac3 6ch'], subtitles: ['deu'], dupOf: [] };
+  const rows: HygieneItem[] = [
+    { ...base, itemId: hx(0x701), type: 'Movie', name: 'Lantern Bay', year: 2019, issues: ['foreign_no_subs', 'hevc_10bit'], video: 'hevc 10-bit 2160p HDR', audio: ['eng eac3 6ch'], subtitles: [], bitrate: 48e6, sizeBytes: 38 * 1024 ** 3 },
+    { ...base, itemId: hx(0x702), type: 'Movie', name: 'Quiet Harbor', year: 2004, issues: ['no_poster', 'no_backdrop'] },
+    { ...base, itemId: hx(0x703), type: 'Movie', name: 'Ironwood', year: 2011, issues: ['dup_ids'], dupOf: [hx(0x704)] },
+    { ...base, itemId: hx(0x704), type: 'Movie', name: 'Ironwood', year: 2011, issues: ['dup_ids'], dupOf: [hx(0x703)], versions: 2 },
+    { ...base, itemId: hx(0x705), type: 'Series', name: 'Sundial', year: 2020, issues: ['no_overview'], container: null, bitrate: null, sizeBytes: null, video: null, audio: [], subtitles: [] },
+    { ...base, itemId: hx(0x706), type: 'Episode', name: 'Pilot', seriesId: hx(0x705), seriesName: 'Sundial', year: 2020, issues: ['image_subs_only'], subtitles: ['deu pgs'] },
+    { ...base, itemId: hx(0x707), type: 'Movie', name: 'Old Reel', year: 1962, issues: ['video_codec', 'audio_codec'], container: 'avi', video: 'mpeg2 576p', audio: ['eng dts 2ch'] },
+  ];
+  for (let i = 0; i < 60; i++) rows.push({ ...base, itemId: hx(0x800 + i), type: 'Episode', name: `Folge ${i + 1}`, seriesId: hx(0x7ff), seriesName: 'Zephyr Road', year: 2015, issues: ['heavy_bitrate'], bitrate: 41e6 + i * 1e5 });
+  return rows;
 }
 export interface SourceRow { name: 'tmdb' | 'omdb'; set: boolean; last4: string | null; from: 'db' | 'file' | null; invalid: boolean; usedToday?: number; budget?: number }
 export interface LeavingRow { itemId: string; name: string | null; type: string | null; year: number | null; leavesAt: string; days: number; note: string | null; setBy: string | null }
@@ -133,7 +167,35 @@ export function adminState(): AdminState {
     dismissed: {},
     bannerCalls: 0,
     bannerFails: false,
+    hygiene: { supported: true, canRefresh: true, running: false, lastDone: ago(0.2), lastFull: ago(48), items: hygieneItems(), ignored: new Set(), refreshed: [], scans: 0 },
   };
+}
+
+const hygEff = (h: HygieneMock, r: HygieneItem): HygieneCode[] => r.issues.filter((c) => !h.ignored.has(`${r.itemId}|${c}`));
+function hygieneSummary(h: HygieneMock) {
+  const byCategory = { info: 0, language: 0, duplicate: 0, file: 0 };
+  const byIssue: Record<string, number> = {};
+  let total = 0;
+  for (const r of h.items) {
+    const eff = hygEff(h, r);
+    if (!eff.length) continue;
+    total++;
+    for (const c of new Set(eff.map((x) => HYG_CAT[x]))) byCategory[c]++;
+    for (const c of eff) byIssue[c] = (byIssue[c] ?? 0) + 1;
+  }
+  return { state: { supported: h.supported, running: h.running, lastDone: h.lastDone, lastFull: h.lastFull }, total, byCategory, byIssue, ignored: h.ignored.size, canRefresh: h.canRefresh };
+}
+function hygieneList(h: HygieneMock, sp: URLSearchParams) {
+  const cat = sp.get('category'), issue = sp.get('issue'), type = sp.get('type'), series = sp.get('seriesId'), q = (sp.get('q') ?? '').toLowerCase();
+  let rows = h.items.map((r) => ({ r, eff: hygEff(h, r) })).filter(({ r, eff }) => eff.length
+    && (!cat || eff.some((c) => HYG_CAT[c] === cat)) && (!issue || eff.includes(issue as HygieneCode)) && (!type || r.type === type)
+    && (!series || r.seriesId === series) && (!q || `${r.name} ${r.seriesName ?? ''}`.toLowerCase().includes(q)));
+  const sort = sp.get('sort') ?? 'name';
+  const dir = (sp.get('dir') ?? (sort === 'name' ? 'asc' : 'desc')) === 'asc' ? 1 : -1;
+  const key = (x: { r: HygieneItem; eff: HygieneCode[] }): string | number => (sort === 'issues' ? x.eff.length : sort === 'size' ? x.r.sizeBytes ?? -1 : sort === 'bitrate' ? x.r.bitrate ?? -1 : `${x.r.seriesName ?? x.r.name} ${x.r.name}`.toLowerCase());
+  rows = [...rows].sort((a, b) => { const x = key(a), y = key(b); return (typeof x === 'number' && typeof y === 'number' ? x - y : String(x).localeCompare(String(y), 'de', { numeric: true })) * dir; });
+  const off = Number(sp.get('offset') ?? 0), lim = Number(sp.get('limit') ?? 50);
+  return { items: rows.slice(off, off + lim).map(({ r, eff }) => ({ ...r, issues: eff.map((code) => ({ code, severity: HYG_WARN.has(code) ? 'warn' : 'info' })) })), total: rows.length };
 }
 
 const GiB = 1024 ** 3;
@@ -368,6 +430,26 @@ export function adminRoute(st: AdminState, m: string, p: string, sp: URLSearchPa
     if (st.bannerFails) return J({ error: 'boom' }, 500);
     const issues = st.bannerIssues.filter((i) => st.dismissed[i.id] !== i.fp).sort((a, b) => (a.level === b.level ? a.id.localeCompare(b.id) : a.level === 'err' ? -1 : 1));
     return J({ issues, worst: issues.some((i) => i.level === 'err') ? 'err' : issues.length ? 'warn' : 'ok' });
+  }
+  if (p === '/api/admin/hygiene/summary' && m === 'GET') return J(hygieneSummary(st.hygiene));
+  if (p === '/api/admin/hygiene' && m === 'GET') return J(hygieneList(st.hygiene, sp));
+  if (p === '/api/admin/hygiene/ignore' && (m === 'POST' || m === 'DELETE')) {
+    const r = st.hygiene.items.find((x) => x.itemId === body.itemId);
+    if (!r || !(body.code in HYG_CAT)) return J({ error: 'bad_request' }, 400);
+    if (m === 'POST') st.hygiene.ignored.add(`${r.itemId}|${body.code}`); else st.hygiene.ignored.delete(`${r.itemId}|${body.code}`);
+    log(m === 'POST' ? 'hygiene.ignore' : 'hygiene.unignore', r.itemId, { code: body.code });
+    return ok();
+  }
+  if ((mm = p.match(/^\/api\/admin\/hygiene\/([\w-]+)\/refresh$/)) && m === 'POST') {
+    if (!st.hygiene.canRefresh) return J({ error: 'unsupported' }, 501);
+    st.hygiene.refreshed.push(mm[1]!);
+    return ok();
+  }
+  if (p === '/api/admin/hygiene/scan' && m === 'POST') {
+    st.hygiene.scans++;
+    if (st.hygiene.running) return J({ started: false });
+    st.hygiene.running = true;
+    return J({ started: true });
   }
   if (p === '/api/admin/health/dismiss' && m === 'POST') {
     if (!/^[a-z]+:[a-zA-Z]+$/.test(body.id ?? '') || !/^[0-9a-f]{12}$/.test(body.fp ?? '')) return J({ error: 'bad_request' }, 400);

@@ -37,6 +37,8 @@ describe('admin nav', () => {
     expect(activeItem('/admin/users/x')?.href).toBe('/admin/users');
     expect(groupOf(activeItem('/admin/hubs'))?.id).toBe('content');
     expect(activeItem('/adminx')).toBeNull();
+    expect(activeItem('/admin/hygiene')?.label).toBe('admin.tabs.hygiene');
+    expect(groupOf(activeItem('/admin/hygiene'))?.id).toBe('content');
   });
   it('badge counts ignore zero and unknown', () => {
     const s = { pending: { requests: null, devices: 2, polls: 0, invites: 1, previewsFailed: 3 } } as never;
