@@ -314,3 +314,24 @@ test('switching profile ends the cast', async ({ page, api: _api }) => {
   expect(order.indexOf('POST /api/playback/stop')).toBeGreaterThanOrEqual(0);
   expect(order.indexOf('POST /api/playback/stop')).toBeLessThan(sel);
 });
+
+test('the /match "start vote" bar sits above the cast bar on desktop and phone', async ({ page, api: _api }) => {
+  await page.route('**/api/friends', (r) => r.fulfill({ json: { friends: [{ id: 'u2', name: 'Alex', sharesHistory: true }] } }));
+  await page.route('**/api/library/genres', (r) => r.fulfill({ json: { genres: [] } }));
+  await page.route('**/api/match', (r) => r.fulfill({ json: { participants: ['Alex'], total: 2, items: [MOVIE, MOVIE2] } }));
+  await castAndLeave(page);
+  await clientNav(page, '/match');
+  await expect(page).toHaveURL(/\/match$/);
+  await page.getByRole('checkbox', { name: /Alex/ }).check();
+  await page.getByRole('button', { name: 'Abgleichen' }).click();
+  const marks = page.getByRole('button', { name: 'Für Abstimmung vormerken' });
+  await marks.nth(0).click();
+  await marks.nth(1).click();
+  const vote = page.getByRole('button', { name: 'Abstimmung starten' });
+  for (const size of [{ width: 1280, height: 800 }, { width: 390, height: 844 }]) {
+    await page.setViewportSize(size);
+    await expect(vote).toBeVisible();
+    const v = (await vote.boundingBox())!, b = (await castBar(page).boundingBox())!;
+    expect(v.y + v.height).toBeLessThanOrEqual(b.y);
+  }
+});
