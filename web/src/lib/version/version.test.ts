@@ -45,7 +45,7 @@ describe('release notes', () => {
     const b = parseNotes('### Streaming\n- **Adaptive** quality, see [docs](https://x)\n- <img src=x onerror=alert(1)>Night `mode`\n  continued\n\nSome &lt;b&gt; text\nmore.\n');
     expect(b).toEqual([
       { kind: 'h', text: 'Streaming' },
-      { kind: 'ul', items: ['Adaptive quality, see docs', '<img src=x onerror=alert(1)>Night mode continued' // unknown tags stay visible as text; the page renders it escaped, never as HTML] },
+      { kind: 'ul', items: ['Adaptive quality, see docs', '<img src=x onerror=alert(1)>Night mode continued'] }, // unknown tags stay visible as text; the page renders it escaped, never as HTML
       { kind: 'p', text: 'Some <b> text more.' },
     ]);
   });
