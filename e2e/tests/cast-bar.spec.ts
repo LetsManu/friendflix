@@ -92,6 +92,24 @@ test('switching episodes of one series changes the visible bar text', async ({ p
   await expect(bar).not.toContainText(episodes[0]!.name);
 });
 
+test('episode end on the TV shows "Als Nächstes" and switches after the countdown', async ({ page, api: _api }) => {
+  test.setTimeout(45_000);
+  const { sdk, sessions } = await castAndLeave(page, { id: episodes[0]!.id });
+  await page.route('**/api/items/*/next', (r) => r.fulfill({ json: { item: r.request().url().includes(episodes[0]!.id) ? episodes[1] : null } }));
+  const bar = castBar(page);
+  await expect(bar).toContainText(episodes[0]!.name);
+  await sdk.nearEnd();
+  await page.waitForTimeout(300); // the engine mirrors the receiver's position
+  await sdk.finish();
+  await expect(bar).toContainText(`Als Nächstes: S1:E2 · ${episodes[1]!.name}`);
+  await expect(bar).toContainText(/in \d+ s/);
+  expect(sessions).toHaveLength(1);
+  await expect.poll(() => sessions.length, { timeout: 15_000 }).toBe(2);
+  expect(sessions[1]!.itemId).toBe(episodes[1]!.id);
+  expect(sessions[1]!.startTicks).toBeUndefined(); // the server's resume position
+  await expect(bar).not.toContainText('Als Nächstes');
+});
+
 /**
  * scrolled to the bottom: the last focusable element of the page content (main, and on desktop the footer after it) lies fully
  * above the bar. A button flush with the end of main stands for a page whose content ends without a margin.

@@ -12,6 +12,9 @@
  * `document.body`, hidden but rendered, and rebinds its AirPlay controller to the engine. A title switch is a new token URL
  * on the same element (`switchItem`); the controller keeps its grace / settle / breaker logic. A sustained route loss
  * leaves the session in `reconnect`: a tap on the bar (`reconnect()`) opens the picker inside the gesture.
+ *
+ * End of an episode on the TV: the bar shows the next episode (`next`); with autoplay allowed it starts after the player's
+ * countdown (`playOnTv`, resume position). Without a next episode the session ends `ENDED_HIDE_MS` later.
  */
 import { get, writable, type Readable, type Writable } from 'svelte/store';
 import { api, cachedItem, secToTicks, ticksToSec, type Item, type ItemDetail } from '#lib/api';
@@ -20,6 +23,8 @@ import { tr } from '#lib/i18n';
 import { createAirPlay, type AirPlayController, type AirPlayDeps, type AirPlayState } from '#lib/player/airplay';
 import { airLog } from '#lib/player/airplayLog';
 import { barTitles, firstInfoBody } from '#lib/player/bar';
+import { COUNTDOWN_SECONDS, mayAutoplay } from '#lib/player/nextup';
+import { noteAutoplay, shouldAsk } from '#lib/stillwatching';
 import { prefs, type Prefs } from '#lib/stores';
 import { toast } from '#lib/ui/toast';
 
@@ -116,7 +121,9 @@ interface Live {
   /** what `reconnect()` repeats after a failed token request */
   retry: (() => Promise<void>) | null;
   offs: Array<() => void>;
-  loop?: unknown; hide?: unknown;
+  loop?: unknown;
+  /** after the end: the session end after `ENDED_HIDE_MS`, or the next episode's autoplay */
+  hide?: unknown;
   air?: AirLive;
 }
 
@@ -202,8 +209,30 @@ export function createCastEngine(deps: EngineDeps, out: Writable<CastSession | n
       const ci = s.ci, stopped = stopReport(s);
       s.ci = null;
       void stopped.then(() => revoke(ci));
-      s.hide = timers.set(() => { end(s); cast.castStop(); }, ENDED_HIDE_MS);
+      afterEnd(s, () => { end(s); cast.castStop(); });
     }
+  }
+
+  /** the episode after `itemId` (null: none, a film, or the request failed) */
+  const nextOf = (itemId: string): Promise<Item | null> =>
+    call<{ item: Item | null } | null>(`/api/items/${itemId}/next`).then((r) => r?.item ?? null).catch(() => null);
+
+  /**
+   * The title ended on the TV (its stop is reported, its token gone): `close` ends the session after `ENDED_HIDE_MS`
+   * unless a next episode follows; that one is shown in the bar and, when autoplay is allowed, starts after the countdown.
+   */
+  function afterEnd(s: Live, close: () => void) {
+    s.hide = timers.set(close, ENDED_HIDE_MS);
+    if (!s.view.isEpisode) return;
+    const my = seq;
+    void nextOf(s.view.itemId).then((it) => {
+      if (!it || cur !== s || my !== seq) return; // none, or the session moved on (switch, stop, end) meanwhile
+      timers.clear(s.hide);
+      const now = timers.now(), p = deps.prefs();
+      const auto = mayAutoplay({ kind: 'episode', autoplayNext: p.autoplayNext, sleepAfterEpisode: s.sleepAfterEpisode, askStill: shouldAsk(now, p) });
+      s.hide = auto ? timers.set(() => { noteAutoplay(); void swap(s, it.id, undefined, true); }, COUNTDOWN_SECONDS * 1000) : undefined;
+      patch(s, { next: { itemId: it.id, label: `S${it.parentIndexNumber}:E${it.indexNumber} · ${it.name}`, startsAt: auto ? now + COUNTDOWN_SECONDS * 1000 : null } });
+    });
   }
 
   function onPageHide(s: Live) {
@@ -306,7 +335,7 @@ export function createCastEngine(deps: EngineDeps, out: Writable<CastSession | n
       patch(s, { state: 'ended', position: s.view.duration || s.view.position, paused: true, buffering: false });
       void stopReport(s);
       s.ci = null;
-      s.hide = timers.set(() => { airNote(s, 'stop', 'ended'); end(s); dropAir(a); }, ENDED_HIDE_MS);
+      afterEnd(s, () => { airNote(s, 'stop', 'ended'); end(s); dropAir(a); });
       return;
     }
     const start = type === 'playing' && !s.started && a.ctl.state.active;
@@ -471,7 +500,13 @@ export function createCastEngine(deps: EngineDeps, out: Writable<CastSession | n
     seek,
     skip(delta) { if (cur) seek(cur.view.position + delta); },
     async playOnTv(itemId, startAt) { if (cur) await swap(cur, itemId, startAt, true); },
-    next: async () => undefined,
+    async next() {
+      const s = cur;
+      if (!s) return;
+      const my = seq;
+      const id = s.view.next?.itemId ?? (s.view.isEpisode ? (await nextOf(s.view.itemId))?.id : undefined);
+      if (id && cur === s && my === seq) await swap(s, id, undefined, true);
+    },
     async stop() {
       const s = cur;
       if (!s) return;

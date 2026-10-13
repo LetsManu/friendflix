@@ -27,7 +27,9 @@
   $: langQ = [wantAudio && `audio=${encodeURIComponent(wantAudio)}`, wantSub && `sub=${encodeURIComponent(wantSub)}`].filter(Boolean).join('&');
   $: startAt = (() => { const t = Number($page.url.searchParams.get('t')); return Number.isFinite(t) && t > 0 && t < 86_400 ? Math.floor(t) : undefined; })();
   $: kind = nextKind(item?.type, Boolean(nextEp));
-  $: visible = cardVisible({ kind, current: curTime, start: creditsAt, dismissed });
+  /** the title plays on a TV (the cast engine owns it and shows its own "next" in the bar): no card, no countdown here */
+  let remote = false;
+  $: visible = !remote && cardVisible({ kind, current: curTime, start: creditsAt, dismissed });
   $: if (visible && !entered) enterCard(); else if (!visible && entered) leaveCard();
   const RING = 2 * Math.PI * 20;
   // no view transition running (no API, reduced motion): the page fades in instead of cutting; TV: no transition at all
@@ -40,7 +42,7 @@
   // whenever `item` changed, i.e. an endless request loop and a title that never showed.)
   async function loadItem(wanted: string) {
     item = cachedItem(wanted) ?? null; // title right away when a card/detail view had it
-    nextEp = null; similar = []; stopCountdown(); dismissed = false; entered = false; askStill = false; curTime = 0; creditsAt = Infinity;
+    nextEp = null; similar = []; stopCountdown(); remote = false; dismissed = false; entered = false; askStill = false; curTime = 0; creditsAt = Infinity;
     // item and "next episode" in parallel (/next answers null for films)
     const nx = api(`/api/items/${wanted}/next`).then((r) => r.item as Item | null).catch(() => null);
     try {
@@ -108,7 +110,7 @@
 <svelte:head><title>{$t('common.pageTitle', { page: item?.name ?? $t('player.pageTitle') })}</title></svelte:head>
 <div class="wrap" style:animation={fadeMs ? `ff-fade-in ${fadeMs}ms ease both` : null}>
   {#key id}
-    <Player itemId={id} {poster} title={label(item)} barTitle={bt.title} barSub={bt.sub} seriesId={item?.seriesId ?? ''} isMovie={item?.type === 'Movie'} seasonId={item?.seasonId ?? ''} on:episode={playEpisode} {startAt} {wantAudio} {wantSub} bind:video bind:sleepAfterEpisode bind:creditsAt hasNext={Boolean(nextEp)} on:next={() => nextEp && goto(nextHref())} on:timeupdate={onTime} on:ended={onEnded}>
+    <Player itemId={id} {poster} title={label(item)} barTitle={bt.title} barSub={bt.sub} seriesId={item?.seriesId ?? ''} isMovie={item?.type === 'Movie'} seasonId={item?.seasonId ?? ''} on:episode={playEpisode} {startAt} {wantAudio} {wantSub} bind:video bind:sleepAfterEpisode bind:creditsAt bind:remote hasNext={Boolean(nextEp)} on:next={() => nextEp && goto(nextHref())} on:timeupdate={onTime} on:ended={onEnded}>
       <div slot="top" class="top">
         <button class="icon-btn" aria-label={$t('player.watch.back')} on:click={back}><Icon name="arrow-left" size={30} /></button>
         {#if item}<div class="ttl phone"><b>{item.seriesName ?? item.name}</b>{#if item.seriesName}<span>S{item.parentIndexNumber}:E{item.indexNumber} · {item.name}</span>{/if}</div>{/if}

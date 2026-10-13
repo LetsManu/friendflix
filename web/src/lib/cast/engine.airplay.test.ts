@@ -71,6 +71,7 @@ async function setup(o: { started?: boolean } = {}) {
     calls.push({ path, init });
     order.push(`${init.method ?? 'GET'} ${path}`);
     if (path === '/api/cast/session') { const next = posts.shift(); return next ? next() : ci(`n${++n}`); }
+    if (path === '/api/items/ep1/next') return { item: items.ep2 };
     return null;
   });
   let now = T0;
@@ -557,6 +558,19 @@ describe('cast engine: AirPlay end and stop', () => {
     expect(env.deletes()).toEqual(['a1']);
     expect(env.body.children).toEqual([]);
     expect(env.reports()).toEqual(['stop']);
+  });
+
+  it('episode end: the next episode follows on the same element after the countdown', async () => {
+    const env = await setup();
+    await env.adopt({ itemId: 'ep1', isEpisode: true });
+    env.video.fire('ended');
+    await flush();
+    expect(get(env.out)).toMatchObject({ state: 'ended', next: { itemId: 'ep2', label: 'S1:E2 · Second' } });
+    expect(get(env.out)?.next?.startsAt).not.toBeNull();
+    await env.advance(10_000);
+    expect(env.tokenPosts().at(-1)!.init.body).toMatchObject({ itemId: 'ep2', via: 'airplay' });
+    expect(get(env.out)).toMatchObject({ itemId: 'ep2' });
+    expect(env.body.children).toContain(env.video);
   });
 
   it('a title switch after the end keeps the element', async () => {
