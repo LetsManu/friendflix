@@ -146,5 +146,6 @@ test('plan and changelogSection (used by release.yml to resume a half-finished r
   const cut = cutChangelog(LOG, '1.1.0', 'Arancini', '2026-10-13').text;
   assert.equal(changelogSection(cut, '1.1.0'), '### Streaming\n- New thing.');
   assert.throws(() => changelogSection(LOG, '1.0.1'), /no section for 1\.0\.1/);
-  assert.throws(() => changelogSection(LOG, '1x0x0'), /no section/); // dots are literal
+  assert.throws(() => changelogSection(LOG, '1x0x0'), /not a release version/); // only plain X.Y.Z is accepted
+  assert.throws(() => changelogSection(LOG, '9.9.9'), /no section/);
 });
