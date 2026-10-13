@@ -237,5 +237,11 @@
   .sp2 { width: 16px; flex: none; }
   .dot { position: absolute; top: 6px; right: 4px; background: var(--acc-fill); font-size: .65rem; min-width: 1.1rem; height: 1.1rem; border-radius: 99px; display: grid; place-items: center; font-weight: 700; }
   @media (max-width: 720px) { .avatars { display: none; } .bubbles { bottom: 12rem; } .rbar { right: 50%; transform: translateX(50%); bottom: 9rem; } .rbar .em { width: 36px; min-height: 36px; font-size: 1.2rem; } }
+  /* touch (phone player layout): reactions and chat bubbles sit above the measured control bar, clear of the side insets */
+  @media (pointer: coarse) {
+    :global(html:not(.tv)) .rbar:not(.shift) { right: max(.8rem, var(--safe-right)); bottom: calc(var(--bar-h, 9rem) + .5rem); }
+    :global(html:not(.tv)) .bubbles { left: max(.8rem, var(--safe-left)); bottom: calc(var(--bar-h, 9rem) + 4rem); }
+  }
+  @media (pointer: coarse) and (max-width: 720px) { :global(html:not(.tv)) .rbar:not(.shift) { right: 50%; } }
 .invite { position: absolute; top: calc(4.6rem + var(--safe-top)); right: max(1rem, var(--safe-right)); z-index: 12; background: rgba(16,20,24,.97); border: 1px solid #323a43; border-radius: 10px; padding: 1rem 1.2rem; width: min(380px, 92vw); display: grid; gap: .8rem; } .invite header { display: flex; justify-content: space-between; align-items: center; } .chk { display: inline-flex; gap: .45rem; align-items: center; color: var(--fg); min-height: 40px; }
 </style>
