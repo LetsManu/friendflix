@@ -105,10 +105,13 @@ export function setPackageVersion(json, version) {
 
 /** body of the `## [version] …` section of a changelog (the notes of an already cut release) */
 export function changelogSection(text, version) {
-  const esc = version.replace(/[.]/g, '\\.');
-  const m = new RegExp(`^## \\[${esc}\\][^\\n]*\\n`, 'm').exec(text);
-  if (!m) throw new Error(`CHANGELOG has no section for ${version}`);
-  const rest = text.slice(m.index + m[0].length);
+  if (!/^\d+\.\d+\.\d+$/.test(version)) throw new Error(`not a release version: ${version}`);
+  // plain string search, no regex built from input
+  const head = `## [${version}]`;
+  const lines = text.split('\n');
+  const at = lines.findIndex((l) => l.startsWith(head));
+  if (at < 0) throw new Error(`CHANGELOG has no section for ${version}`);
+  const rest = lines.slice(at + 1).join('\n');
   const next = rest.search(/^## /m);
   return (next < 0 ? rest : rest.slice(0, next)).trim();
 }
