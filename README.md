@@ -356,7 +356,7 @@ npm run e2e                                     # Playwright: builds the web app
 
 ### Contributing
 
-Contributions are welcome – see [CONTRIBUTING.md](CONTRIBUTING.md) for the requirements (code standard, tests, all 7 languages) and [SECURITY.md](SECURITY.md) for reporting vulnerabilities.
+Contributions are welcome – see [CONTRIBUTING.md](CONTRIBUTING.md); how decisions are made is described in [GOVERNANCE.md](GOVERNANCE.md) for the requirements (code standard, tests, all 7 languages) and [SECURITY.md](SECURITY.md) for reporting vulnerabilities.
 
 ### License
 
