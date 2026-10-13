@@ -335,3 +335,18 @@ test('the /match "start vote" bar sits above the cast bar on desktop and phone',
     expect(v.y + v.height).toBeLessThanOrEqual(b.y);
   }
 });
+
+test('keyboard focus stays in the bar when the focused button is replaced', async ({ page, api: _api }) => {
+  const { sdk } = await castAndLeave(page, { id: episodes[0]!.id });
+  await nextAfterFirst(page);
+  const bar = castBar(page);
+  await sdk.nearEnd();
+  await sdk.finish();
+  const next = bar.getByRole('button', { name: `Als Nächstes: S1:E2 · ${episodes[1]!.name}` });
+  await next.focus();
+  await page.keyboard.press('Enter'); // the button gives way to the spinner, then to Pause
+  await expect(next).toHaveCount(0);
+  await expect(bar.getByRole('button', { name: 'Fernbedienung öffnen' })).toBeFocused();
+  await expect(bar).toContainText(episodes[1]!.name);
+  expect(await bar.evaluate((el) => el.contains(document.activeElement))).toBe(true);
+});

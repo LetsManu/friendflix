@@ -6,7 +6,7 @@
    * Phone: docked directly above the tab bar (`tabbar = false`: at the bottom edge, e.g. kids profiles); desktop: at the
    * bottom edge, as wide as the content. The layout makes room for it with `--castbar-h`.
    */
-  import { onDestroy } from 'svelte';
+  import { onDestroy, tick as settled } from 'svelte';
   import { goto } from '$app/navigation';
   import { get } from 'svelte/store';
   import Icon from '#lib/Icon.svelte';
@@ -37,6 +37,20 @@
   $: secs = nextSecondsLeft(startsAt, now);
   $: next = state === 'ended' ? s?.next ?? null : null;
 
+  let region: HTMLDivElement | undefined;
+  /**
+   * A focused button can give way to another (Next -> spinner, reconnect -> playing): keyboard focus then moves to the
+   * remote button (else "Play here" / Stop) instead of falling back to the page. Runs before the DOM update.
+   */
+  $: keepFocus(state, Boolean(next), choose);
+  function keepFocus(..._changed: unknown[]) {
+    if (!region?.contains(document.activeElement)) return;
+    void settled().then(() => {
+      if (!region || region.contains(document.activeElement)) return;
+      region.querySelector<HTMLElement>('button.main, button.here, button.stop')?.focus();
+    });
+  }
+
   $: line2 = !s ? ''
     : state === 'reconnect' ? (choose ? $t('player.airplay.chooseHint') : $t('player.castBar.reconnect'))
     : next ? [$t('player.castBar.next', { label: next.label }), secs !== null ? $t('player.castBar.nextIn', { n: secs }) : ''].filter(Boolean).join(' · ')
@@ -60,7 +74,7 @@
 </script>
 
 {#if s}
-  <div class="castbar" class:notab={!tabbar} role="region" aria-label={$t('player.castBar.region')} aria-busy={state === 'connecting' ? 'true' : undefined}>
+  <div class="castbar" bind:this={region} class:notab={!tabbar} role="region" aria-label={$t('player.castBar.region')} aria-busy={state === 'connecting' ? 'true' : undefined}>
     <div class="box">
       <div class="line" role="progressbar" aria-label={$t('player.castBar.progress')} aria-valuemin={0} aria-valuemax={100} aria-valuenow={progress}><span style="width:{progress}%"></span></div>
       {#if state === 'reconnect'}
