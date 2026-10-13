@@ -11,7 +11,8 @@ export default defineConfig({
       provider: 'v8',
       reporter: ['text-summary', 'json-summary', 'lcov'],
       include: ['src/**/*.ts'],
-      exclude: ['**/*.test.ts', '**/*.d.ts', '**/generated/**', '**/*.generated.*'],
+      // src/test-utils: fakes of browser APIs (OPFS, IndexedDB) used by the unit tests, not application code
+      exclude: ['**/*.test.ts', '**/*.d.ts', '**/generated/**', '**/*.generated.*', 'src/test-utils/**'],
     },
   },
 });
