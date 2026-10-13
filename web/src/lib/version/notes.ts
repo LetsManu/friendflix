@@ -10,7 +10,7 @@ export type NoteBlock = { kind: 'h'; text: string } | { kind: 'ul'; items: strin
 export function plainInline(s: string): string {
   return s
     .replace(/\[([^\]]*)\]\([^)]*\)/g, '$1')
-    .replace(/<[^>]*>/g, '')
+    .replace(/<\/?(?:kbd|code|b|strong|em|i|br)\s*\/?>/gi, '') // only the simple inline tags the CHANGELOG uses; anything else stays visible as text (rendered escaped, never as HTML)
     .replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&amp;/g, '&')
     .replace(/(\*\*|__)(.+?)\1/g, '$2')
     .replace(/`([^`]*)`/g, '$1')
