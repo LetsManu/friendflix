@@ -1,5 +1,5 @@
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
-import { CAST_IDLE_TTL, castKeyTtl, hashToken } from '../src/cast.js';
+import { AIRPLAY_PIN2_WINDOW_MS, CAST_IDLE_TTL, castKeyTtl, hashToken } from '../src/cast.js';
 import { revokeSessions } from '../src/devices.js';
 import { countLive, getLive, setLive } from '../src/live.js';
 import { cfg, makeEnv, type TestEnv } from './helpers.js';
@@ -261,13 +261,14 @@ describe('cast token hardening', () => {
     expect((await authz({ ct, client: '203.0.113.22' })).statusCode).toBe(401);
   });
 
-  it('AirPlay second pin only within 60 s of creation; afterwards the token is locked to the addresses it has', async () => {
+  it('AirPlay second pin only within 120 s of creation (phone first, TV after the picker); afterwards the token is locked to the addresses it has', async () => {
+    expect(AIRPLAY_PIN2_WINDOW_MS).toBe(120_000);
     const late = await create(admin, { via: 'airplay' });
     expect((await authz({ ct: late.ct, client: '203.0.113.41' })).statusCode).toBe(200);
     const early = await create(admin, { via: 'airplay' });
     expect((await authz({ ct: early.ct, client: '203.0.113.51' })).statusCode).toBe(200);
     expect((await authz({ ct: early.ct, client: '203.0.113.52' })).statusCode).toBe(200);
-    skipClock(61_000);
+    skipClock(121_000);
     // too late for a second address
     expect((await authz({ ct: late.ct, client: '203.0.113.42' })).statusCode).toBe(401);
     expect((await authz({ ct: late.ct, client: '203.0.113.41' })).statusCode).toBe(200);
@@ -275,6 +276,14 @@ describe('cast token hardening', () => {
     expect((await authz({ ct: early.ct, client: '203.0.113.51' })).statusCode).toBe(200);
     expect((await authz({ ct: early.ct, client: '203.0.113.52' })).statusCode).toBe(200);
     expect((await authz({ ct: early.ct, client: '203.0.113.53' })).statusCode).toBe(401);
+  });
+
+  it('AirPlay token first: the phone pins it at once, the TV may still take the second address 90 s later (slow picker)', async () => {
+    const t = await create(admin, { via: 'airplay' });
+    expect((await authz({ ct: t.ct, client: '203.0.113.61' })).statusCode).toBe(200); // the phone plays the token stream
+    skipClock(90_000);
+    expect((await authz({ ct: t.ct, client: '203.0.113.62' })).statusCode).toBe(200); // the TV, picked 90 s later
+    expect((await authz({ ct: t.ct, client: '203.0.113.63' })).statusCode).toBe(401);
   });
 
   it('Chromecast stays single-pin (default via) and an unknown via is refused', async () => {

@@ -121,6 +121,8 @@ const fr: Translation<typeof de> = {
     change: 'Changer d’appareil AirPlay',
     failed: 'La lecture AirPlay a échoué.',
     endHint: 'Pour arrêter, choisissez cet appareil dans le menu AirPlay.',
+    choose: 'Choisir le téléviseur',
+    chooseHint: 'Choisissez maintenant le téléviseur dans la liste.',
     needsTranscode: 'AirPlay nécessite le transcodage – non autorisé pour votre rôle.',
     tvHint: 'Pas d’AirPlay ni de Chromecast sur la télé ? Ouvrez {url} dans le navigateur de la télé et associez votre téléphone comme télécommande.',
   },

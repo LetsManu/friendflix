@@ -121,6 +121,8 @@ const it: Translation<typeof de> = {
     change: 'Cambia dispositivo AirPlay',
     failed: 'Riproduzione AirPlay non riuscita.',
     endHint: 'Per terminare, scegli questo dispositivo nel menu AirPlay.',
+    choose: 'Scegli il televisore',
+    chooseHint: 'Ora scegli il televisore dall’elenco.',
     needsTranscode: 'AirPlay richiede la transcodifica – non consentita per il tuo ruolo.',
     tvHint: 'Niente AirPlay né Chromecast sul televisore? Apri {url} nel browser della TV e associa il telefono come telecomando.',
   },

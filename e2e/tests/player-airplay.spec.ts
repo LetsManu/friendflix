@@ -7,7 +7,8 @@ import type { Page } from '@playwright/test';
 /**
  * AirPlay button (Safari API simulated): Chromium has no webkitShowPlaybackTargetPicker, so the spec stubs it on
  * HTMLMediaElement and fires Safari's events by hand. The real picker / receiver can only be checked on Apple hardware.
- * `pickTv`: the stubbed picker "chooses the TV" right away (Safari then reports the wireless target).
+ * `pickTv`: the stubbed picker "chooses the TV" right away (Safari then reports the wireless target); `__srcAtPick` is what the TV
+ * would have been handed.
  */
 async function stubAirPlay(page: Page, o: { pickTv?: boolean } = {}) {
   await page.addInitScript((pickTv) => {
@@ -53,10 +54,11 @@ const hlsPlaying = async (page: Page) => {
   await page.waitForFunction(() => (document.querySelector('video')?.currentTime ?? 0) > 0.5);
 };
 
-test('AirPlay: the button appears once Safari reports a receiver and opens the system picker', async ({ page, api: _api }) => {
+test('AirPlay: the button appears once Safari reports a receiver and opens the system picker (with the token URL on the element)', async ({ page, api: _api }) => {
   await stubAirPlay(page);
   await mockPlayer(page);
   await castOn(page);
+  await castSessions(page);
   await page.goto('/watch/' + MOVIE.id);
   await videoReady(page);
   const btn = page.getByRole('button', { name: 'Auf AirPlay-Gerät abspielen' });
@@ -66,7 +68,8 @@ test('AirPlay: the button appears once Safari reports a receiver and opens the s
   await page.locator('.stage').hover();
   await expect(btn).toBeVisible();
   await btn.click();
-  expect(await page.evaluate(() => (window as unknown as { __picks: number }).__picks)).toBe(1);
+  await expect.poll(() => picks(page)).toBe(1);
+  expect(await srcAtPick(page)).toContain('#airplay');
 });
 
 test('AirPlay: no button while the server has casting off (same gate as Chromecast)', async ({ page, api: _api }) => {
@@ -102,21 +105,30 @@ test('Safari-like playback keeps hls.js (MSE + bandwidth samples) until the AirP
   expect(await src(page)).toMatch(/^blob:/);
 });
 
-test('AirPlay: tap -> native HLS + picker in the click; TV -> cast token stream at the same time; end -> token revoked, hls.js again', async ({ page, api: _api }) => {
-  await stubAirPlay(page, { pickTv: true });
-  await mockPlayer(page);
-  await castOn(page);
-  await mockHls(page);
+/** POST /api/cast/session answers with a token URL (a test file the phone can play); `fail` -> 429 max_streams */
+async function castSessions(page: Page, o: { fail?: () => boolean; castId?: string } = {}) {
   const sessions: Array<Record<string, unknown>> = [];
   const deleted: string[] = [];
   await page.route('**/api/cast/session', (r) => {
     sessions.push(r.request().postDataJSON());
+    if (o.fail?.()) return r.fulfill({ status: 429, json: { error: 'max_streams', max: 1 } });
     return r.fulfill({ json: {
-      castId: 'c'.repeat(32), expiresAt: Date.now() + 3 * 3600_000, playSessionId: 'air-ps', mediaSourceId: 'ms', startTime: 0,
+      castId: o.castId ?? 'c'.repeat(32), expiresAt: Date.now() + 3 * 3600_000, playSessionId: 'air-ps', mediaSourceId: 'ms', startTime: 0,
       contentUrl: `${new URL(page.url()).origin}/media/p1test.webm#airplay`, contentType: 'application/x-mpegURL', hlsSegmentFormat: 'ts', title: 'Film', subtitles: [],
     } });
   });
   await page.route('**/api/cast/session/*', (r) => { deleted.push(r.request().url().split('/').pop()!); return r.fulfill({ json: { ok: true } }); });
+  return { sessions, deleted };
+}
+const picks = (page: Page) => page.evaluate(() => (window as unknown as { __picks: number }).__picks);
+const srcAtPick = (page: Page) => page.evaluate(() => (window as unknown as { __srcAtPick: string }).__srcAtPick);
+
+test('AirPlay: tap -> cast token URL on the element FIRST, then the picker; TV -> active without a new token; end -> token revoked, hls.js again', async ({ page, api: _api }) => {
+  await stubAirPlay(page, { pickTv: true });
+  await mockPlayer(page);
+  await castOn(page);
+  await mockHls(page);
+  const { sessions, deleted } = await castSessions(page);
   await page.goto('/watch/' + MOVIE.id);
   await hlsPlaying(page);
   await available(page);
@@ -124,11 +136,12 @@ test('AirPlay: tap -> native HLS + picker in the click; TV -> cast token stream 
   await page.evaluate(() => { document.querySelector('video')!.currentTime = 12; });
   await page.locator('.stage').hover();
   await page.getByRole('button', { name: 'Auf AirPlay-Gerät abspielen' }).click();
-  // the picker opened while the element already had the native HLS URL (an MSE stream cannot be AirPlayed)
-  expect(await page.evaluate(() => (window as unknown as { __srcAtPick: string }).__srcAtPick)).toMatch(/\/media\/hls\/4000000\/out\.m3u8$/);
   await expect(page.getByTestId('airplay-active')).toContainText('Läuft über AirPlay');
-  await expect.poll(() => src(page)).toContain('#airplay');
-  expect(sessions).toHaveLength(1);
+  // the TV was handed the token URL, never the MSE blob or the cookie URL
+  expect(await picks(page)).toBe(1);
+  expect(await srcAtPick(page)).toContain('#airplay');
+  expect(await src(page)).toContain('#airplay');
+  expect(sessions).toHaveLength(1); // the wireless event did not fetch a second token
   expect(sessions[0]!.via).toBe('airplay');
   expect(Math.round(Number(sessions[0]!.startTicks) / 10_000_000)).toBe(12); // the phone's position
   expect(await page.evaluate(() => document.querySelector('video')!.getAttribute('crossorigin'))).toBeNull();
@@ -140,34 +153,74 @@ test('AirPlay: tap -> native HLS + picker in the click; TV -> cast token stream 
   expect(await page.evaluate(() => document.querySelector('video')!.getAttribute('crossorigin'))).toBe('use-credentials');
 });
 
-test.describe('AirPlay token failure', () => {
-  test.use({ allowedConsole: /status of 429/ });
-test('AirPlay: token request fails while the TV is the target -> error with Retry, no fallback to the cookie stream', async ({ page, api: _api }) => {
-  await stubAirPlay(page, { pickTv: true });
+test('AirPlay: picker did not lead to a TV yet -> prompt "Fernseher auswählen" opens it from a fresh tap; then TV -> active', async ({ page, api: _api }) => {
+  await stubAirPlay(page);
   await mockPlayer(page);
   await castOn(page);
   await mockHls(page);
-  let fail = true;
-  await page.route('**/api/cast/session', (r) => fail
-    ? r.fulfill({ status: 429, json: { error: 'max_streams', max: 1 } })
-    : r.fulfill({ json: {
-      castId: 'e'.repeat(32), expiresAt: Date.now() + 3 * 3600_000, playSessionId: 'air-ps', mediaSourceId: 'ms', startTime: 0,
-      contentUrl: `${new URL(page.url()).origin}/media/p1test.webm#airplay`, contentType: 'application/x-mpegURL', hlsSegmentFormat: 'ts', title: 'Film', subtitles: [],
-    } }));
+  const { sessions } = await castSessions(page);
   await page.goto('/watch/' + MOVIE.id);
   await hlsPlaying(page);
   await available(page);
   await page.locator('.stage').hover();
-  await page.getByRole('button', { name: 'Auf AirPlay-Gerät abspielen' }).click();
-  const box = page.getByTestId('airplay-active');
-  await expect(box).toContainText('Übertragung per AirPlay fehlgeschlagen.');
-  await expect(box).toContainText('dieses Gerät wählen');
-  expect(await src(page)).not.toMatch(/^blob:/); // no hls.js / cookie stream comes back while the TV is the target
-  fail = false;
-  await box.getByRole('button', { name: 'Erneut versuchen' }).click();
-  await expect(box).toContainText('Läuft über AirPlay');
-  await expect.poll(() => src(page)).toContain('#airplay');
+  const btn = page.getByRole('button', { name: 'Auf AirPlay-Gerät abspielen' });
+  await btn.click();
+  const prompt = page.getByTestId('airplay-ready');
+  await expect(prompt).toContainText('Jetzt den Fernseher in der Liste auswählen');
+  expect(await srcAtPick(page)).toContain('#airplay');
+  await prompt.getByRole('button', { name: 'Fernseher auswählen' }).click();
+  expect(await picks(page)).toBe(2);
+  expect(await srcAtPick(page)).toContain('#airplay');
+  await page.locator('.stage').hover();
+  await btn.click(); // the AirPlay button does the same while waiting: picker, no new token
+  expect(await picks(page)).toBe(3);
+  await wireless(page, true);
+  await expect(page.getByTestId('airplay-active')).toContainText('Läuft über AirPlay');
+  await expect(prompt).toHaveCount(0);
+  expect(sessions).toHaveLength(1);
 });
+
+test.describe('AirPlay token failure', () => {
+  test.use({ allowedConsole: /status of 429/ });
+  test('AirPlay: token request fails before any TV is chosen -> toast, normal stream, no picker, no AirPlay overlay', async ({ page, api: _api }) => {
+    await stubAirPlay(page, { pickTv: true });
+    await mockPlayer(page);
+    await castOn(page);
+    await mockHls(page);
+    const { sessions } = await castSessions(page, { fail: () => true });
+    await page.goto('/watch/' + MOVIE.id);
+    await hlsPlaying(page);
+    await available(page);
+    await page.locator('.stage').hover();
+    await page.getByRole('button', { name: 'Auf AirPlay-Gerät abspielen' }).click();
+    await expect(page.locator('.toast')).toContainText('Maximal 1 gleichzeitiger Stream erlaubt.');
+    await expect.poll(() => src(page)).toMatch(/^blob:/); // hls.js again
+    expect(sessions).toHaveLength(1);
+    expect(await picks(page)).toBe(0); // the TV never saw a URL it cannot load
+    await expect(page.getByTestId('airplay-active')).toHaveCount(0);
+    await expect(page.getByTestId('airplay-ready')).toHaveCount(0);
+  });
+
+  test('AirPlay: a TV route without our token (Control Center) and the token request fails -> error with Retry, no fallback to the cookie stream', async ({ page, api: _api }) => {
+    await stubAirPlay(page);
+    await mockPlayer(page);
+    await castOn(page);
+    await mockHls(page);
+    let fail = true;
+    await castSessions(page, { fail: () => fail, castId: 'e'.repeat(32) });
+    await page.goto('/watch/' + MOVIE.id);
+    await hlsPlaying(page);
+    await available(page);
+    await wireless(page, true);
+    const box = page.getByTestId('airplay-active');
+    await expect(box).toContainText('Übertragung per AirPlay fehlgeschlagen.');
+    await expect(box).toContainText('dieses Gerät wählen');
+    expect(await src(page)).not.toMatch(/^blob:/); // no hls.js / cookie stream comes back while the TV is the target
+    fail = false;
+    await box.getByRole('button', { name: 'Erneut versuchen' }).click();
+    await expect(box).toContainText('Läuft über AirPlay');
+    await expect.poll(() => src(page)).toContain('#airplay');
+  });
 });
 
 test('Chromium without the AirPlay API: no AirPlay button', async ({ page, api: _api }) => {

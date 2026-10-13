@@ -83,7 +83,7 @@
   // ---- Chromecast: while casting the local <video> stays paused and every control drives the receiver ----
   let casting = false, castBusy = false, castInfo: CastInfo | null = null, castPos = 0, castPaused: boolean | null = null, castOff: (() => void) | null = null;
   // ---- AirPlay (Safari): the <video> itself plays on the receiver, from a cast token URL (lib/player/airplay.ts) ----
-  let air: AirPlayController | null = null, airState: AirPlayState = { available: false, active: false, busy: false, armed: false, error: false }, airInfo: CastInfo | null = null, airProbe: HTMLVideoElement | null = null;
+  let air: AirPlayController | null = null, airState: AirPlayState = { available: false, active: false, busy: false, ready: false, error: false }, airInfo: CastInfo | null = null, airProbe: HTMLVideoElement | null = null;
   $: airOn = airState.active;
   let destroyed = false;
 
@@ -318,6 +318,7 @@
   function retryManually() { rec = freshRecovery(); reconnecting = 0; error = ''; errNote = ''; waiting = true; wantAutoplay = true; void load(posKnown ? resumePos() : undefined); }
   function leave() { if (history.length > 1) history.back(); else location.href = '/'; }
   function onVideoError() {
+    if (airState.ready && !airOn) { if (video?.error && video.error.code !== 1) air?.videoError(); return; } // the phone plays the AirPlay token stream: back to normal
     if (airOn) { if (video?.error && video.error.code !== 1) air?.videoError(); return; } // the TV's token stream failed: Retry, never the cookie URL
     if (hls || casting || !video?.error || !info) return; // hls.js reports its own errors
     const kind = kindOfMediaError(video.error.code);
@@ -333,7 +334,7 @@
   }
   function resetStall() { clearTimeout(stallT); waitSince = 0; stallHandled = false; }
   function onStall(ms: number) {
-    if (!abr || casting || airOn || switching || reconnecting || error) return;
+    if (!abr || casting || airOn || airInfo || switching || reconnecting || error) return;
     applyAbr(abr.onStall(ms)); // 'fail' needs nothing here: a stall at the lowest rung just keeps buffering
   }
   function onPlaying() {
@@ -412,27 +413,12 @@
     air = createAirPlay(v, {
       request: (pos) => castRequest(pos, 'airplay'),
       revoke: (ci) => castRevoke(ci),
-      prepare() {
-        // inside the click: hls.js (MSE) -> native HLS of the same stream, so Safari can hand a URL to the TV; direct play already has one
-        if (!video || !info || !hls) return false;
-        const pos = video.currentTime, play = !video.paused, v = video;
-        attachSeq++; hls.destroy(); hls = null;
-        v.disableRemotePlayback = false; // hls.js sets it for ManagedMediaSource
-        v.src = info.hlsUrl;
-        if (pos > 1) v.addEventListener('loadedmetadata', () => { v.currentTime = pos; }, { once: true });
-        if (play) v.play().catch(() => undefined);
-        return true;
-      },
-      reattach(pos, play) {
-        // the picker brought no TV: back to hls.js (bandwidth estimate, ABR) at the same position
-        if (destroyed || hls || airInfo) return;
-        wantAutoplay = play;
-        void attach(pos);
-      },
       async detach() {
+        // before the token stream (tap on the button, or a new token): the TV must never get the MSE / cookie URL
         attachSeq++; clearTimeout(retryT); reconnecting = 0; error = '';
-        if (started && !stopped) { stopped = true; await send('stop'); } // frees the stream slot (maxStreams) for the TV's session
+        if (started && !stopped) { stopped = true; await send('stop'); } // frees the stream slot (maxStreams) for the token's session
         hls?.destroy(); hls = null;
+        if (video?.disableRemotePlayback) video.disableRemotePlayback = false; // hls.js sets it for ManagedMediaSource; it would block AirPlay
         started = false; stopped = false;
       },
       started(ci) { airInfo = ci; started = false; stopped = false; mode = 'hls'; },
@@ -949,7 +935,7 @@
     // every 5 s: direct-play bandwidth sample + step-up check; every 30 s the estimate is remembered
     abrTimer = setInterval(() => {
       sampleDirect();
-      if (!abr || casting || airOn || switching || !started || stopped || paused || waiting || reconnecting || error) return;
+      if (!abr || casting || airOn || airInfo || switching || !started || stopped || paused || waiting || reconnecting || error) return;
       applyAbr(abr.onTick({ estimate: est.estimate, bufferSec: Math.max(0, buffered - current) }));
     }, 5000);
     bwTimer = setInterval(persistEstimate, 30_000);
@@ -1054,6 +1040,13 @@
         <button class="btn light ui" on:click|stopPropagation={() => air?.retry()}>{$t('player.error.retry')}</button>
       {:else}<b>{$t('player.airplay.playing')}</b>{/if}
       <button class="btn light ui" on:click|stopPropagation={() => air?.pick()}>{$t('player.airplay.change')}</button>
+    </div></div>
+  {:else if airState.ready}
+    <!-- the token stream is on the element; the picker may not have opened (no gesture after the await): open it from this tap -->
+    <div class="center airready" role="status" data-testid="airplay-ready"><div class="castbox">
+      <Icon name="airplay" size={40} />
+      <span class="airhint">{$t('player.airplay.chooseHint')}</span>
+      <button class="btn light ui" on:click|stopPropagation={() => air?.pick()}>{$t('player.airplay.choose')}</button>
     </div></div>
   {/if}
   {#if !phone && paused && !waiting && !error && !casting && !locked && !reconnecting}
@@ -1166,7 +1159,7 @@
             {#if menu === 'chapters'}<div class="menu bare"><ScenesPanel {chapters} current={shown} {duration} trickplay={info?.trickplay} on:seek={(e) => { seekTo(e.detail.time); closeScenes(); }} on:close={closeScenes} /></div>{/if}
           </div>
         {/if}
-        {#if air && (airState.available || airOn)}<button class="ic" class:on={airOn} aria-pressed={airOn} data-testid="airplay" aria-label={$t(airOn ? 'player.airplay.playing' : 'player.airplay.play')} title={$t(airOn ? 'player.airplay.playing' : 'player.airplay.play')} on:click={() => air?.pick()}><Icon name="airplay" size={ICON} /></button>{/if}
+        {#if air && (airState.available || airOn || airState.ready || airState.busy)}<button class="ic" class:on={airOn} class:airbusy={airState.busy} aria-pressed={airOn} aria-busy={airState.busy} data-testid="airplay" aria-label={$t(airOn ? 'player.airplay.playing' : 'player.airplay.play')} title={$t(airOn ? 'player.airplay.playing' : 'player.airplay.play')} on:click={() => air?.pick()}><Icon name="airplay" size={ICON} /></button>{/if}
         <button class="ic" class:on={showXray || peek} bind:this={castBtn} aria-label={$t('scenes.info.open')} title={$t(coarse ? 'scenes.info.open' : 'scenes.info.openKey')} aria-pressed={showXray} on:click={castButton}><Icon name="users" size={ICON} /></button>
         {#if info}
           <div class="mwrap">
@@ -1329,6 +1322,9 @@
   .castov { background: #000; pointer-events: none; z-index: 2; }
   .castbox { display: grid; justify-items: center; gap: .9rem; text-align: center; color: #fff; }
   .airhint { font-size: .85rem; opacity: .8; max-width: 22rem; }
+  .ic.airbusy { opacity: .55; }
+  .airready .castbox { background: rgba(0,0,0,.72); padding: 1rem 1.4rem; border-radius: 14px; }
+  .airready .airhint { opacity: .95; }
   .castbox button { pointer-events: auto; border: 1px solid #fff; padding: .6rem 1.4rem; }
   .toast { position: absolute; left: 50%; top: 18%; transform: translateX(-50%); background: rgba(0,0,0,.75); padding: .55rem 1.2rem; border-radius: 999px; z-index: 9; font-weight: 600; max-width: 90%; text-align: center; }
   .skipbtn { position: absolute; right: calc(var(--pad-x) + var(--inset, 0px)); bottom: 7.5rem; z-index: 8; border: 1px solid #fff; padding: .7rem 1.5rem; }
