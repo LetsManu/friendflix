@@ -10,6 +10,9 @@
   import Icon from '#lib/Icon.svelte';
   import Logo from '#lib/Logo.svelte';
   import Footer from '#lib/Footer.svelte';
+  import CastBar from '#lib/cast/CastBar.svelte';
+  import { barVisible } from '#lib/cast/bar';
+  import { castSession } from '#lib/cast/engine';
   import { avatarBg, initial } from '#lib/avatars';
   import { cachedCalm, loadList, loadPrefs, prefs } from '#lib/stores';
   import { kidsMode } from '#lib/kids';
@@ -520,6 +523,7 @@
     {#if $mobile && $previewSheet}<MobilePreviewSheet />{/if}
   {/if}
 
+  {#if barVisible({ path, tv, session: $castSession })}<CastBar />{/if}
   {#if !online}<div class="offbar" role="status">{$t('shell.offline.bar')} <a href="/offline" data-sveltekit-reload>{$t('shell.offline.toDownloads')}</a></div>{/if}
   {#if replaced}<div class="panel" role="alert" style="position:fixed;z-index:90;top:calc(5rem + var(--safe-top));left:50%;transform:translateX(-50%)"><b>{$t('shell.tvReplaced.text')}</b> <button on:click={() => location.reload()}>{$t('shell.tvReplaced.reconnect')}</button></div>{/if}
   {#if modalId && Modal}<svelte:component this={Modal} id={modalId} />{/if}

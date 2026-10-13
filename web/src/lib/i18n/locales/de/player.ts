@@ -132,6 +132,7 @@ export default {
   },
   /** the bar while a title plays on a TV (cast engine) */
   castBar: {
+    region: 'Jetzt auf dem Fernseher',
     failed: '„{title}“ kann auf {device} nicht abgespielt werden.',
     airplayDevice: 'AirPlay-Gerät',
   },

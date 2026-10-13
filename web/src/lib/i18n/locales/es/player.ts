@@ -130,6 +130,7 @@ const es: Translation<typeof de> = {
   },
   /** the bar while a title plays on a TV (cast engine) */
   castBar: {
+    region: 'Ahora en la tele',
     failed: 'No se puede reproducir «{title}» en {device}.',
     airplayDevice: 'Dispositivo AirPlay',
   },

@@ -145,6 +145,7 @@ const pl: Translation<typeof de> = {
   },
   /** the bar while a title plays on a TV (cast engine) */
   castBar: {
+    region: 'Teraz na telewizorze',
     failed: 'Nie można odtworzyć „{title}” na {device}.',
     airplayDevice: 'Urządzenie AirPlay',
   },
