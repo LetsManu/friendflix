@@ -34,6 +34,7 @@ import { trendingRoutes } from './routes/trending.js';
 import { hubRoutes } from './routes/hubs.js';
 import { homeRoutes } from './routes/home.js';
 import { animeRoutes } from './routes/anime.js';
+import { sourceRoutes } from './routes/sources.js';
 
 export interface Extra {
   /** Additional route registrars for later steps. */
@@ -152,6 +153,7 @@ export async function buildApp(ctx: Ctx, extra: Extra = {}): Promise<FastifyInst
   const hubs = hubRoutes(app, ctx);
   homeRoutes(app, ctx, hubs);
   animeRoutes(app, ctx);
+  sourceRoutes(app, ctx);
   for (const r of extra.register ?? []) await r(app, ctx);
   return app;
 }
