@@ -28,6 +28,7 @@ import { langIndexTick } from './langindex.js';
 import type { Ctx } from './ctx.js';
 import { jobFailed } from './errorlog.js';
 import { healthTick } from './health.js';
+import { hygieneDue, stopHygiene } from './hygiene/scan.js';
 
 const cfg = loadConfig();
 const pool = new pg.Pool({ connectionString: cfg.DATABASE_URL, max: 10 });
@@ -86,10 +87,17 @@ if (cfg.BACKGROUND_JOBS === 'true') {
   void qualityIndexTick(ctx);
   timers.push(setInterval(() => void leavingTick(ctx).catch(jobFailed(ctx, app.log, 'leaving-soon', 'leaving-soon tick failed')), 1800_000)); // expired dates + 7-day / last-day notices
   timers.push(setInterval(() => void pollJellyfinSessions(ctx).catch(jobFailed(ctx, app.log, 'session-poll', 'session poll failed')), 10_000));
+  // library hygiene (Block 22): every 30 min + early after library additions, checked every minute from 2 min after start; never throws
+  const hygieneStart = setTimeout(() => {
+    void hygieneDue(ctx);
+    timers.push(setInterval(() => void hygieneDue(ctx), 60_000));
+  }, 120_000);
+  timers.push(hygieneStart); // clearInterval also clears a timeout
 }
 for (const sig of ['SIGTERM', 'SIGINT'] as const) {
   process.on(sig, () => {
     timers.forEach(clearInterval);
+    stopHygiene();
     void Promise.resolve(ctx.jf.stop?.()).catch(() => undefined).then(() => app.close()).then(() => process.exit(0));
   });
 }
