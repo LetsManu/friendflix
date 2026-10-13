@@ -1,0 +1,56 @@
+import { api } from '#lib/api';
+import { createSwr, swrLoad } from '#lib/home';
+import { fmtNumber, tr } from '#lib/i18n';
+
+/** Block 21: GET /api/items/:id/about (mirrors `AboutDto` in backend/src/about.ts). */
+export type RatingKey = 'community' | 'critic' | 'imdb' | 'rt' | 'mc' | 'friends';
+export interface AboutRating { key: RatingKey; value: number; max: 5 | 10 | 100; from: 'jellyfin' | 'omdb' | 'friends' }
+export interface AboutLink { kind: 'imdb' | 'tmdb' | 'tvdb' | 'trakt'; url: string }
+export interface AboutPart {
+  id?: string; tmdbId?: number; name: string; year?: number; poster?: string; image: boolean; played: boolean; current: boolean; inLibrary: boolean;
+  from: 'jellyfin' | 'tmdb';
+}
+export interface AboutCollection { name: string; parts: AboutPart[]; from: 'jellyfin' | 'tmdb' }
+export type AboutSource = 'jellyfin' | 'tmdb' | 'omdb';
+export interface About {
+  ratings: AboutRating[]; tagline?: string; originalTitle?: string; releaseDate?: string; countries: string[]; studios: string[]; tags: string[];
+  keywords: string[]; links: AboutLink[]; collection: AboutCollection | null; canRequest: boolean; sources: AboutSource[];
+}
+
+/** 10 minutes per profile and title; the key carries the profile, so a kids profile never sees a grown-up's cached friends' rating */
+const cache = createSwr<About>(10 * 60_000);
+
+/** Loads the "about" data through the cache (cached value at once, then the network one). Errors are swallowed: the page stays as it is. */
+export function loadAbout(id: string, profileId: string, apply: (a: About) => void): Promise<void> {
+  return swrLoad<About>(cache, profileId + ':' + id, () => api<About>(`/api/items/${id}/about`), apply, undefined, () => undefined);
+}
+
+const one = (n: number) => fmtNumber(n, { minimumFractionDigits: 1, maximumFractionDigits: 1 });
+const whole = (n: number) => fmtNumber(Math.round(n));
+
+/** One text per rating, in the order of the response: "★ 7.8", "IMDb 8.1", "RT 92 %", "MC 81", "Kritiker 92 %", "Freunde 4.5 ★". */
+export function ratingParts(a: About | null): Array<{ key: RatingKey; text: string }> {
+  if (!a) return [];
+  const out: Array<{ key: RatingKey; text: string }> = [];
+  for (const r of a.ratings) {
+    if (!Number.isFinite(r.value)) continue;
+    const text = r.key === 'community' ? `★ ${one(r.value)}`
+      : r.key === 'imdb' ? `IMDb ${one(r.value)}`
+      : r.key === 'rt' ? `RT ${whole(r.value)} %`
+      : r.key === 'mc' ? `MC ${whole(r.value)}`
+      : r.key === 'critic' ? tr('detail.about.critics', { n: whole(r.value) })
+      : r.key === 'friends' ? tr('detail.about.friends', { n: one(r.value) })
+      : '';
+    if (text) out.push({ key: r.key, text });
+  }
+  return out;
+}
+
+export type DetailTab = 'episodes' | 'details' | 'more' | 'extras';
+
+/** Episodes (series only) · Details · More like this · Extras (only with extras) */
+export function detailTabs(type: string, hasExtras: boolean): DetailTab[] {
+  return [...(type === 'Series' ? ['episodes' as const] : []), 'details', 'more', ...(hasExtras ? ['extras' as const] : [])];
+}
+
+export const defaultTab = (type: string): DetailTab => (type === 'Series' ? 'episodes' : 'details');
