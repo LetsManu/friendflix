@@ -31,7 +31,7 @@ WORKDIR /app
 # (zlib 1.3.2-r1: CVE-2026-85091). `>=` and not `=`: Alpine drops superseded versions from its mirrors, an exact pin
 # would break every build (and every rebuild of an old tag) at the next bump. Once the base image ships the fixed
 # version this line is a no-op; remove the package from it then.
-RUN apk add --no-cache 'zlib>=1.3.2-r1' && rm -rf /usr/local/lib/node_modules/npm /usr/local/bin/npm /usr/local/bin/npx /opt/yarn-* /usr/local/bin/yarn /usr/local/bin/yarnpkg
+RUN apk add --no-cache 'zlib>=1.3.2-r1' && rm -rf /var/log/apk.log /usr/local/lib/node_modules/npm /usr/local/bin/npm /usr/local/bin/npx /opt/yarn-* /usr/local/bin/yarn /usr/local/bin/yarnpkg
 COPY --from=build --chown=node:node /app/web/build build
 COPY --chown=node:node web/package.json package.json
 USER node

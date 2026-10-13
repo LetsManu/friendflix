@@ -33,7 +33,7 @@ WORKDIR /app
 # (zlib 1.3.2-r1: CVE-2026-85091). `>=` and not `=`: Alpine drops superseded versions from its mirrors, an exact pin
 # would break every build (and every rebuild of an old tag) at the next bump. Once the base image ships the fixed
 # version this line is a no-op; remove the package from it then.
-RUN apk add --no-cache 'zlib>=1.3.2-r1' && rm -rf /usr/local/lib/node_modules/npm /usr/local/bin/npm /usr/local/bin/npx /opt/yarn-* /usr/local/bin/yarn /usr/local/bin/yarnpkg
+RUN apk add --no-cache 'zlib>=1.3.2-r1' && rm -rf /var/log/apk.log /usr/local/lib/node_modules/npm /usr/local/bin/npm /usr/local/bin/npx /opt/yarn-* /usr/local/bin/yarn /usr/local/bin/yarnpkg
 COPY --from=deps --chown=node:node /app/node_modules node_modules
 COPY --from=build --chown=node:node /app/backend/dist backend/dist
 COPY --chown=node:node backend/package.json backend/
@@ -42,7 +42,7 @@ COPY --chown=node:node version.json ./
 # (pins vanish from the Alpine mirrors, see above): reproducible as long as Alpine v3.x has not shipped a newer ffmpeg or
 # dependency since the build. No font package is installed, so the fontconfig trigger writes no (mtime-bearing) cache;
 # the rm keeps it that way should a dependency ever pull fonts in.
-RUN apk add --no-cache ffmpeg && rm -rf /var/cache/fontconfig/* && mkdir -p /data/previews /data/downloads && chown node:node /data/previews /data/downloads
+RUN apk add --no-cache ffmpeg && rm -rf /var/log/apk.log /var/cache/fontconfig/* && mkdir -p /data/previews /data/downloads && chown node:node /data/previews /data/downloads
 USER node
 EXPOSE 3000
 HEALTHCHECK --interval=15s --timeout=3s --retries=3 CMD wget -qO- http://127.0.0.1:3000/health || exit 1

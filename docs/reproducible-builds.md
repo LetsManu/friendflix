@@ -94,6 +94,8 @@ so this decides how long a commit stays reproducible:
   does not have yet is pulled in as a **minimum version** (`apk add 'zlib>=1.3.2-r1'`, CVE-2026-85091; the pinned base
   has 1.3.2-r0): no-op once the base image ships it, and then removed from the Dockerfile. `ffmpeg` is installed
   unpinned.
+- **`/var/log/apk.log` is deleted in the same `RUN`:** apk 3 appends a timestamped line per install there, the only
+  file `apk add` writes that differs between two runs (the package database and `scripts.tar.gz` are deterministic).
 - **Consequence:** an image reproduces bit for bit as long as Alpine has not published a newer version of those packages
   (`zlib` while the base still lacks the fix; for the backend `ffmpeg` and its ~100 dependencies) since it was built. CI
   checks within minutes, so this always holds there; a rebuild weeks later may differ *only in that `apk` layer*. To check
@@ -106,5 +108,5 @@ so this decides how long a commit stays reproducible:
 
 The failing job prints which layer differs and the file listing (mode, owner, size, mtime, name) of that layer in both
 builds. Typical causes: a build step that writes the current time, a random value or a machine-specific path into a file
-(look at `Date.now()`/`new Date()` in build tooling and config), a cache layer from another commit, or an Alpine package
+(look at `Date.now()`/`new Date()` in build tooling and config; log files such as `/var/log/apk.log`), a cache layer from another commit, or an Alpine package
 published in the minutes between the two builds (re-run the job).
