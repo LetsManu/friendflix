@@ -208,7 +208,7 @@ export default {
       loadFailed: 'Die Fehler konnten nicht geladen werden.',
       source: { server: 'Server', client: 'Browser', playback: 'Wiedergabe', job: 'Hintergrund' },
       release: 'Version {release}',
-      overflow: { one: '{n} weitere Fehlerart nicht gezählt', other: '{n} weitere Fehlerarten nicht gezählt' },
+      overflow: { one: '{n} ältere Fehlerart nicht mehr aufgeführt', other: '{n} ältere Fehlerarten nicht mehr aufgeführt' },
       recent: 'Server {server} · Browser {client} (15 Min.) · Wiedergabe {playback} (1 Std.)',
     },
   },
