@@ -27,7 +27,7 @@ Bei einer leeren/neuen Datenbank zuerst den Stack mit `postgres` starten (`docke
 Startet einen Wegwerf-Postgres ohne Port-Mapping, spielt den neuesten Dump ein und prüft Migrationen und Tabellen. Schnellprüfung einer einzelnen Datei: `docker compose exec -T postgres pg_restore --list < backups/<datei>.dump | head`.
 
 - **APP_ENC_KEY sichern!** (Passwort-Manager, getrennt vom Dump). Ohne ihn sind die gespeicherten Jellyfin-Passwörter der Nutzer unlesbar.
-- Nicht im Dump: Jellyfin-/Seerr-/Authentik-Daten (eigene Backups dieser Dienste; Authentik: [de/authentik.md §2.6](de/authentik.md#26-backups-und-updates)).
+- Nicht im Dump: Daten von Jellyfin, Wunsch-Dienst und Authentik (eigene Backups dieser Dienste; Authentik: [de/authentik.md §2.6](de/authentik.md#26-backups-und-updates)).
 
 ## TMDB-/OMDb-Schlüssel wechseln
 Die optionalen Schlüssel für die Detailseite lassen sich ohne Neustart tauschen:
@@ -36,7 +36,7 @@ Die optionalen Schlüssel für die Detailseite lassen sich ohne Neustart tausche
 - Der im Portal gespeicherte Schlüssel ist mit `APP_ENC_KEY` verschlüsselt. Geht `APP_ENC_KEY` verloren, meldet die Seite den Schlüssel als ungültig; dann einfach neu eintragen.
 
 ## Host-Firewall (zusätzlich zum fehlenden Port-Mapping)
-Jellyfin/Seerr haben keine `ports:` und hängen nur im internen Netz. Falls sie auf dem Host zusätzlich laufen (nicht gebündelt):
+Jellyfin und der Wunsch-Dienst haben keine `ports:` und hängen nur im internen Netz. Falls sie auf dem Host zusätzlich laufen (nicht gebündelt):
 ```bash
 # Docker umgeht ufw: Regeln gehören in DOCKER-USER
 iptables -I DOCKER-USER -p tcp -m multiport --dports 8096,8920,5055 ! -s 127.0.0.1 -j DROP
