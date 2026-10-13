@@ -1,3 +1,5 @@
+// SPDX-FileCopyrightText: 2026 Manuel Weißböck
+// SPDX-License-Identifier: AGPL-3.0-or-later
 /** Area "adminContent": admin pages Requests, Polls, Lists, Hubs, Previews, Playback, Digest, Update, Status. German is the typed source. */
 export default {
   requests: {

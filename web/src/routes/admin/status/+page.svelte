@@ -1,3 +1,5 @@
+<!-- SPDX-FileCopyrightText: 2026 Manuel Weißböck -->
+<!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
 <script lang="ts">
   /** Admin → Status: health of the connected services and the numbers behind the portal; every tile links to where it is handled. */
   import { onDestroy, onMount } from 'svelte';

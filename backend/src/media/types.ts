@@ -1,3 +1,5 @@
+// SPDX-FileCopyrightText: 2026 Manuel Weißböck
+// SPDX-License-Identifier: AGPL-3.0-or-later
 /**
  * The media server seam. Routes and jobs only talk to a `MediaServer` (ctx.jf); the Jellyfin implementation lives in
  * ../jellyfin/*. Another implementation (a fork) adds its own directory plus one entry in ./index.ts. Everything here is

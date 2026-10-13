@@ -39,6 +39,9 @@ Thanks for helping! Bug reports, ideas and pull requests are welcome. Everyone t
 - Media server credentials must never reach the browser; new media paths go through the gateway's authorization.
 - New dependencies need a reason in the PR; prefer none. They must be under a license compatible with AGPL-3.0.
 
+**File headers**
+- Every source file starts with an SPDX header (`SPDX-FileCopyrightText` + `SPDX-License-Identifier: AGPL-3.0-or-later`). `npm run spdx:fix` adds it to new files; CI runs `npm run spdx:check`.
+
 **Commits and docs**
 - Commit messages follow [Conventional Commits](https://www.conventionalcommits.org/) (`feat:`, `fix:`, `docs:`, `chore:` …).
 - Update the docs (`README.md` / `README.de.md`, `docs/`) and add a line to `CHANGELOG.md` under *Unreleased* for

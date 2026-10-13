@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: 2026 Manuel Weißböck
+# SPDX-License-Identifier: AGPL-3.0-or-later
 # CI flow: test + secrets scan + image build/scan, then (push only) publish.
 # Images are built exactly ONCE, in the `docker` job:
 #   pull_request     build with load:true (no push, forks cannot write packages) and scan the local image.
@@ -36,6 +38,7 @@ jobs:
         with: { node-version: "${{ matrix.node }}", cache: npm }
       - run: npm ci
       - run: npm run lint
+      - run: npm run spdx:check
       - run: npm run typecheck
       # newest Node: tests run once, with coverage (measurement only, no thresholds yet); other entries run plain tests
       - run: npm test

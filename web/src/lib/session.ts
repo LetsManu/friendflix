@@ -1,3 +1,5 @@
+// SPDX-FileCopyrightText: 2026 Manuel Weißböck
+// SPDX-License-Identifier: AGPL-3.0-or-later
 import { api } from '#lib/api';
 import { disablePush } from '#lib/push';
 import { getAllDownloads } from '#lib/offline/db';
