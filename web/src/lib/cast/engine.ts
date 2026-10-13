@@ -133,6 +133,9 @@ interface Live {
 /** a cast token's subtitles as remote tracks (without their URLs) */
 const subsOf = (ci: CastInfo): CastTrack[] => ci.subtitles.map(({ index, title, language }) => ({ index, title, language }));
 
+/** the bar's label of the next episode: "S1:E2 · Name", the name alone without season / episode numbers */
+const nextLabel = (it: Item): string => (it.parentIndexNumber != null && it.indexNumber != null ? `S${it.parentIndexNumber}:E${it.indexNumber} · ${it.name}` : it.name);
+
 /** the Player's texts for a failed token request */
 function castErr(e: unknown, kind: CastKind = 'chromecast'): string {
   const b = (e as { body?: { error?: string; max?: unknown } } | null)?.body;
@@ -238,7 +241,7 @@ export function createCastEngine(deps: EngineDeps, out: Writable<CastSession | n
         consumeAutoplay(); // the chain counts; the watch page's one-shot flag is for its own countdown only
         void swap(s, it.id, undefined, true);
       }, COUNTDOWN_SECONDS * 1000) : undefined;
-      patch(s, { next: { itemId: it.id, label: `S${it.parentIndexNumber}:E${it.indexNumber} · ${it.name}`, startsAt: auto ? now + COUNTDOWN_SECONDS * 1000 : null } });
+      patch(s, { next: { itemId: it.id, label: nextLabel(it), startsAt: auto ? now + COUNTDOWN_SECONDS * 1000 : null } });
     });
   }
 

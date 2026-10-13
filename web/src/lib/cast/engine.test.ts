@@ -17,11 +17,13 @@ const ci = (castId: string, over: Partial<CastInfo> = {}): CastInfo => ({
 const items: Record<string, Partial<Item>> = {
   ep2: { id: 'ep2', name: 'Second', type: 'Episode', seriesId: 's1', seriesName: 'Bright Valley', indexNumber: 2, parentIndexNumber: 1 },
   ep3: { id: 'ep3', name: 'Third', type: 'Episode', seriesId: 's1', seriesName: 'Bright Valley', indexNumber: 3, parentIndexNumber: 1 },
+  /** a special without season / episode numbers */
+  sp1: { id: 'sp1', name: 'Christmas Special', type: 'Episode', seriesId: 's1', seriesName: 'Bright Valley' },
   film: { id: 'film', name: 'Film', type: 'Movie' },
   other: { id: 'other', name: 'Other', type: 'Movie' },
 };
 /** GET /api/items/{id}/next: the episode after ep1 is ep2 (others: none) */
-const nexts: Record<string, string> = { ep1: 'ep2', ep2: 'ep3' };
+const nexts: Record<string, string> = { ep1: 'ep2', ep2: 'ep3', ep5: 'sp1' };
 const idle: CastState = { available: true, connected: true, deviceName: 'Wohnzimmer-TV', state: 'idle', currentTime: 0, duration: 0, paused: true, volume: 1, muted: false, loaded: false };
 const playing = (over: Partial<CastState> = {}): CastState => ({ ...idle, state: 'playing', loaded: true, paused: false, currentTime: 60, duration: 1800, ...over });
 
@@ -750,6 +752,12 @@ describe('cast engine: next episode on the TV', () => {
     expect(get(env.out)?.next).toMatchObject({ itemId: 'ep2', startsAt: null });
     await env.advance(60_000);
     expect(env.tokenPosts()).toHaveLength(0);
+  });
+
+  it('a next episode without season / episode numbers is labelled by its name only', async () => {
+    const env = setup();
+    await episodeEnds(env, { itemId: 'ep5' });
+    expect(get(env.out)?.next).toMatchObject({ itemId: 'sp1', label: 'Christmas Special' });
   });
 
   it('sleepAfterEpisode from the handoff: no autoplay', async () => {
