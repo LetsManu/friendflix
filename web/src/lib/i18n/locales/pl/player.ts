@@ -148,6 +148,7 @@ const pl: Translation<typeof de> = {
     region: 'Teraz na telewizorze',
     failed: 'Nie można odtworzyć „{title}” na {device}.',
     airplayDevice: 'Urządzenie AirPlay',
+    reconnect: 'Utracono połączenie – dotknij, aby kontynuować na telewizorze',
   },
   mode: {
     label: 'Odtwarzanie: {mode}',

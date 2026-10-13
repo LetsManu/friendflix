@@ -133,6 +133,7 @@ const tr: Translation<typeof de> = {
     region: 'Şu an televizyonda',
     failed: '“{title}” {device} üzerinde oynatılamıyor.',
     airplayDevice: 'AirPlay cihazı',
+    reconnect: 'Bağlantı kesildi – televizyonda devam etmek için dokunun',
   },
   mode: {
     label: 'Oynatma: {mode}',

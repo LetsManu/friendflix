@@ -133,6 +133,7 @@ const fr: Translation<typeof de> = {
     region: 'En cours sur la télé',
     failed: 'Impossible de lire « {title} » sur {device}.',
     airplayDevice: 'Appareil AirPlay',
+    reconnect: 'Connexion perdue – touchez pour continuer sur la télé',
   },
   mode: {
     label: 'Lecture : {mode}',

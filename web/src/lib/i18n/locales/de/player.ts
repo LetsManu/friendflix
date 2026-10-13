@@ -135,6 +135,7 @@ export default {
     region: 'Jetzt auf dem Fernseher',
     failed: '„{title}“ kann auf {device} nicht abgespielt werden.',
     airplayDevice: 'AirPlay-Gerät',
+    reconnect: 'Verbindung verloren – tippen, um am Fernseher fortzusetzen',
   },
   mode: {
     label: 'Wiedergabe: {mode}',
