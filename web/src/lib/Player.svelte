@@ -1204,7 +1204,7 @@
   .riplbl.left { left: 12%; } .riplbl.right { right: 12%; }
   .hud { position: absolute; top: 12%; left: 50%; transform: translateX(-50%); z-index: 9; display: flex; align-items: center; gap: .6rem; padding: .55rem 1.1rem; border-radius: 999px; background: rgba(0,0,0,.72); font-weight: 600; pointer-events: none; font-variant-numeric: tabular-nums; position: absolute; overflow: hidden; }
   .hud i { position: absolute; left: 0; bottom: 0; height: 3px; width: var(--p); background: var(--acc); }
-  .lockbtn { position: absolute; left: max(.8rem, env(safe-area-inset-left)); bottom: 8rem; z-index: 10; width: 48px; min-height: 48px; background: rgba(0,0,0,.55); border: 1px solid rgba(255,255,255,.5); }
+  .lockbtn { position: absolute; left: max(.8rem, var(--safe-left)); bottom: 8rem; z-index: 10; width: 48px; min-height: 48px; background: rgba(0,0,0,.55); border: 1px solid rgba(255,255,255,.5); }
   .lockbtn.holding { background: var(--acc); }
   .stage.locked { cursor: none; }
   .help { position: absolute; inset: 0; z-index: 13; display: grid; place-items: center; background: rgba(0,0,0,.7); }
@@ -1226,7 +1226,7 @@
   .ovl :global(*) { pointer-events: auto; }
   .ovl.hide { opacity: 0; } .ovl.hide :global(*) { pointer-events: none; }
 
-  .ctl { position: absolute; left: 0; right: var(--inset, 0px); bottom: 0; z-index: 8; padding: 3.5rem clamp(.6rem, 2.4vw, 2.4rem) .9rem; background: linear-gradient(transparent, rgba(0,0,0,.85)); transition: opacity var(--t-med); }
+  .ctl { position: absolute; left: 0; right: var(--inset, 0px); bottom: 0; z-index: 8; padding: 3.5rem max(clamp(.6rem, 2.4vw, 2.4rem), var(--safe-right)) .9rem max(clamp(.6rem, 2.4vw, 2.4rem), var(--safe-left)); background: linear-gradient(transparent, rgba(0,0,0,.85)); transition: opacity var(--t-med); }
   .ctl.hide { opacity: 0; pointer-events: none; }
   .timeline { display: flex; align-items: center; gap: 1rem; }
   .track { position: relative; flex: 1; height: 5px; background: rgba(255,255,255,.28); border-radius: 3px; cursor: pointer; touch-action: none; transition: height var(--t-fast); margin: 10px 0; }
@@ -1322,7 +1322,7 @@
     .menu, .menu.tracks, .menu.more, .menu.scenes, .menu.speed, .menu.bare { position: fixed; left: .5rem; right: .5rem; bottom: 8.6rem; min-width: 0; max-width: none; max-height: 60vh; overflow-y: auto; }
     .menu.bare { overflow: visible; }
     .menu.bare :global(.eps), .menu.bare :global(.scn) { width: 100%; max-height: 60vh; }
-    .lockbtn { bottom: auto; top: 5.5rem; } /* the two-row bar is taller on phones: keep the lock clear of the timeline */
+    .lockbtn { bottom: auto; top: calc(5.5rem + var(--safe-top)); } /* the two-row bar is taller on phones: keep the lock clear of the timeline */
     .speeds { flex-wrap: wrap; justify-content: center; } .speeds::before { display: none; } .sp-opt { min-width: 64px; }
   }
   /* touch: every main-bar target is at least 48 px */

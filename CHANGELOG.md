@@ -52,6 +52,7 @@ All notable changes. Nothing is released yet, so everything is listed under *Unr
 - Phone layout polish, touch action sheet on cards; TV pairing from kids profiles.
 - Seven interface languages (English, German, French, Spanish, Italian, Turkish, Polish) with server texts in the recipient's language and a localized offline page.
 - **Fix:** offline downloads no longer stay stuck at "Preparing · 99 %" after the server has finished preparing; the download now starts (also for downloads left in that state on a device).
+- **Fix:** in the iPhone home-screen app the header and the top bars (player, offline page, profiles, kids, overlays) no longer sit under the status bar and the Dynamic Island; sticky bars and page content move down with them. Browsers, Android and TV are unchanged.
 
 ### Admin
 - **New admin area on a shared UI kit** (`web/src/lib/ui`, docs/ui-kit.md): toasts with Undo, confirm dialogs, data tables with paging and phone cards, status pills, stat tiles; no more native `alert()` / `confirm()`.
