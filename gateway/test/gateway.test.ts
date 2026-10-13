@@ -4,7 +4,7 @@ import { mkdtempSync, readFileSync, rmSync, symlinkSync, truncateSync, writeFile
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { authClientIp, blocksDirectStream, compatPlaylist, createGateway, matchDownloadPath, normalizeCastPath, normalizePath, sanitizePlaylist } from '../src/gateway.js';
+import { authClientIp, blocksDirectStream, compatPlaylist, createGateway, hlsAttrs, matchDownloadPath, normalizeCastPath, normalizePath, sanitizePlaylist } from '../src/gateway.js';
 
 const ID = 'a'.repeat(32);
 let jf: Server, be: Server, gw: Server;
@@ -701,5 +701,24 @@ describe('direct (static) streams vs. role limits', () => {
   });
   it('/Items/<id>/Download is not in the allowlist at all', async () => {
     expect((await as(`/media/Items/${ID}/Download`, 'goodsid')).status).toBe(403);
+  });
+});
+
+describe('hlsAttrs', () => {
+  it('parses quoted values with commas and plain values', () => {
+    expect(hlsAttrs('BANDWIDTH=11088278,CODECS="avc1.640028,mp4a.40.2",RESOLUTION=1920x1080,VIDEO-RANGE=SDR')).toEqual([
+      ['BANDWIDTH', '11088278'],
+      ['CODECS', '"avc1.640028,mp4a.40.2"'],
+      ['RESOLUTION', '1920x1080'],
+      ['VIDEO-RANGE', 'SDR'],
+    ]);
+  });
+  it('ignores malformed keys and stays linear on hostile input', () => {
+    expect(hlsAttrs('bad key=1,OK=2')).toEqual([['OK', '2']]);
+    const hostile = '-'.repeat(200_000);
+    const t0 = performance.now();
+    expect(hlsAttrs(hostile)).toEqual([]);
+    expect(hlsAttrs(`${hostile}=x,${hostile}`)).toHaveLength(1);
+    expect(performance.now() - t0).toBeLessThan(200);
   });
 });

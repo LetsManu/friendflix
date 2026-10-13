@@ -125,10 +125,30 @@ export function stripUriTokens(uri: string, strip: ReadonlySet<string> = jellyfi
 const COMPAT_STREAM_ATTRS = new Set(['BANDWIDTH', 'AVERAGE-BANDWIDTH', 'CODECS', 'RESOLUTION', 'FRAME-RATE']);
 const COMPAT_GROUP_ATTRS = new Set(['AUDIO', 'VIDEO']);
 
-/** `KEY=value` pairs of an HLS attribute list (quoted values may contain commas) */
-function hlsAttrs(list: string): Array<[string, string]> {
+/**
+ * `KEY=value` pairs of an HLS attribute list (quoted values may contain commas). A single linear scan, no regex: the list comes
+ * from the upstream playlist, and a backtracking pattern would be quadratic on hostile input (long runs without `=`).
+ */
+export function hlsAttrs(list: string): Array<[string, string]> {
   const out: Array<[string, string]> = [];
-  for (const m of list.matchAll(/([A-Z0-9-]+)=("[^"]*"|[^,]*)/g)) out.push([m[1]!, m[2]!]);
+  let i = 0;
+  while (i < list.length) {
+    const eq = list.indexOf('=', i);
+    if (eq === -1) break;
+    const key = list.slice(i, eq).trim();
+    let end: number;
+    if (list[eq + 1] === '"') {
+      const close = list.indexOf('"', eq + 2);
+      end = close === -1 ? list.length : close + 1;
+    } else {
+      const comma = list.indexOf(',', eq + 1);
+      end = comma === -1 ? list.length : comma;
+    }
+    if (/^[A-Z0-9-]+$/.test(key)) out.push([key, list.slice(eq + 1, end)]);
+    const next = list.indexOf(',', end);
+    if (next === -1) break;
+    i = next + 1;
+  }
   return out;
 }
 const unquote = (v: string) => v.replace(/^"|"$/g, '');
