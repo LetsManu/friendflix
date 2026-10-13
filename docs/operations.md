@@ -158,6 +158,13 @@ Strenger (nur `main` und Versions-Tags): `--certificate-identity-regexp '^https:
 
 **Beim Deployment** am besten einen geprüften Digest pinnen statt `latest`: `docker buildx imagetools inspect "$IMG" --format '{{.Manifest.Digest}}'`, prüfen, dann in `compose.prod.yaml` per `FF_TAG` den Tag (oder direkt `image: …@sha256:…`) setzen.
 
+**Reproduzierbar nachbauen:** Jedes Image lässt sich aus dem Quellcode bitgenau nachbauen (gleicher Digest des linux/amd64-Image-Manifests), z. B. für ein Release:
+```bash
+git clone https://github.com/LetsManu/friendflix && cd friendflix
+scripts/reproduce-image.sh backend --ref v1.4.0 --compare ghcr.io/letsmanu/friendflix-backend:1.4.0
+```
+Das Skript baut aus `git archive` mit `SOURCE_DATE_EPOCH` = Commit-Zeit, `rewrite-timestamp=true`, ohne Cache und mit der in `ci.yml` gepinnten BuildKit-Version. Was verglichen wird, was nicht (Attestations, Index-Digest) und wo die Grenze liegt (Alpine-Pakete): [reproducible-builds.md](reproducible-builds.md). Der CI-Job `reproducible` prüft das bei jedem PR (zwei saubere Builds) und jedem Push (Nachbau gegen den gepushten Kandidaten); `publish` wartet auf ihn.
+
 ## Weitere Prüfungen in der Pipeline
 - **DAST:** Der CI-Job `dast` startet die gebaute Web-App und lässt einen **OWASP-ZAP-Baseline-Scan** darüber laufen (schlägt bei „High“ fehl, warnt bei „Medium/Low“; Regeln und bewusste Ausnahmen in `.zap/rules.tsv`, Bericht als Artefakt `zap-report`). `publish` wartet auf ihn.
 - **Lieferkette:** Trivy (Image-Digest), gitleaks (Secrets), `npm audit` und der **OpenSSF Scorecard** ([scorecard.yml](../.github/workflows/scorecard.yml), wöchentlich und bei jedem Push auf `main`, Ergebnis im Code-Scanning und als Badge im README).
@@ -168,7 +175,8 @@ GitHub → *Settings* → *Rules* → *Rulesets* (oder *Branches* → *Branch pr
 - **Require a pull request before merging** (ohne Pflicht-Review reicht für ein Ein-Personen-Projekt), **Block force pushes**, **Restrict deletions**.
 - *Bypass list*: nur der Akteur hinter `RELEASE_TOKEN` (für den Release-Commit), nie „GitHub Actions“. Dazu ein Tag-Ruleset für `v*` (siehe *Release erstellen*).
 - **Require status checks to pass** mit genau diesen Checks aus `.github/workflows/ci.yml` (Namen wie in der Auswahl; sie erscheinen dort erst, nachdem sie einmal gelaufen sind):
-  `test (22)`, `test (26)`, `e2e`, `dast`, `secrets`, `docker (backend)`, `docker (gateway)`, `docker (web)`
+  `test (22)`, `test (26)`, `e2e`, `dast`, `secrets`, `docker (backend)`, `docker (gateway)`, `docker (web)`,
+  `reproducible (backend)`, `reproducible (gateway)`, `reproducible (web)`
 - **Require branches to be up to date before merging** (*Require status checks to pass* → *Require branches to be up to date before merging*): die Checks müssen gegen den aktuellen Stand von `main` gelaufen sein.
 - Optional: den Check der CodeQL-Standardeinrichtung (Name erscheint nach dem ersten Lauf) bzw. unter Rulesets **Require code scanning results** für CodeQL.
 - Nicht als Pflicht-Check eintragen: `publish / …` und `Scorecard analysis` (laufen nur bei Push bzw. zeitgesteuert, nie in einem PR – der PR würde ewig warten).
