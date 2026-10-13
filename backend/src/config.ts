@@ -138,5 +138,11 @@ const checked = schema.superRefine((c, ctx) => {
 export type Config = z.infer<typeof schema>;
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
-  return checked.parse(withFileSecrets(env));
+  const c = checked.parse(withFileSecrets(env));
+  // yellow must come before red: a warn level at or above the critical one would never show, so both fall back to the defaults
+  if (c.HEALTH_DISK_WARN_PCT >= c.HEALTH_DISK_CRIT_PCT) {
+    console.warn(`HEALTH_DISK_WARN_PCT (${c.HEALTH_DISK_WARN_PCT}) must be below HEALTH_DISK_CRIT_PCT (${c.HEALTH_DISK_CRIT_PCT}); using 85 / 95`);
+    return { ...c, HEALTH_DISK_WARN_PCT: 85, HEALTH_DISK_CRIT_PCT: 95 };
+  }
+  return c;
 }
