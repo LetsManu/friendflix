@@ -435,6 +435,22 @@
     air = null; airProbe = null; airInfo = null; airState = AIR_IDLE;
   }
 
+  /**
+   * Opening a title while a cast runs: this Player becomes the remote of the engine's session instead of playing itself
+   * (no playback info, no AirPlay controller, no own token; a local stream would be a second one). The same title is only
+   * moved to `startAt`; another title plays on the TV (`playOnTv`). Party mode never attaches. AirPlay: the engine's controller
+   * (its picker) is not reachable from an attached Player, so "change device" is not offered here.
+   */
+  function attachToCast(): boolean {
+    const s = get(castSession);
+    if (partyMode || !s) return false;
+    handedOver();
+    if (s.itemId !== itemId) void castEngine.playOnTv(itemId, startAt);
+    else if (startAt !== undefined) castEngine.seek(startAt);
+    followTv(get(castSession));
+    return true;
+  }
+
   /** "change device": the system picker of the controller the engine owns (from the tap); a lost route: the engine reconnects */
   function changeAirPlay() { if ($castSession?.state === 'reconnect') castEngine.reconnect(); else handedAir?.pick(); }
 
@@ -978,10 +994,11 @@
     const narrow = matchMedia('(max-width: 720px)'), setIcon = () => (ICON = narrow.matches ? 28 : 36);
     setIcon(); narrow.addEventListener?.('change', setIcon);
     try { const v = parseVolume(localStorage.getItem('ff_vol')); if (video && v !== null) { volume = v; video.volume = v; } } catch { /* ignore */ }
-    load(startAt);
+    const attached = attachToCast();
+    if (!attached) load(startAt);
     castOff = onCastEvent(handleCast);
     if (!partyMode) void initCast();
-    void initAirPlay();
+    if (!attached) void initAirPlay();
     loadBookmarks();
     if ($serverCaps.chapters) api(`/api/items/${itemId}/chapters`).then((r) => (chapters = r?.supported ? normalizeChapters(r.chapters) : [])).catch(() => undefined);
     if ($serverCaps.segments.length) api(`/api/items/${itemId}/segments`).then((r) => (segments = (r.segments as typeof segments).map((x) => ({ ...x, type: String(x.type).toLowerCase() })).filter((x) => segmentShown($serverCaps, x.type)))).catch(() => undefined);
@@ -1093,7 +1110,7 @@
       <Icon name={tvSession.kind === 'airplay' ? 'airplay' : 'cast'} size={56} />
       <b>{tvSession.kind === 'airplay' ? $t('player.airplay.playing') : $t('player.cast.playingOn', { name: tvSession.device })}</b>
       {#if tvSession.buffering}<div class="spin sm" aria-hidden="true"></div>{/if}
-      {#if tvSession.kind === 'airplay'}<button class="btn light ui" on:click|stopPropagation={changeAirPlay}>{$t('player.airplay.change')}</button>{/if}
+      {#if tvSession.kind === 'airplay' && handedAir}<button class="btn light ui" on:click|stopPropagation={changeAirPlay}>{$t('player.airplay.change')}</button>{/if}
       <button class="btn light ui" on:click|stopPropagation={() => void castEngine.stop()}>{$t('player.cast.stop')}</button>
     </div></div>
   {:else if airOn || airState.error}

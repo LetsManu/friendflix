@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { items, MOVIE } from '../mocks/fixtures.js';
+import { items, MOVIE, MOVIE2 } from '../mocks/fixtures.js';
 import { available, castOn, castSessions, fakeCastSdk, mockHls, stubAirPlay, wireless } from '../mocks/cast.js';
 import { mockPlayer, videoReady } from '../mocks/scenes.js';
 import { expect, test } from '../fixtures.js';
@@ -22,12 +22,17 @@ async function playbackReports(page: Page) {
   });
   return reports;
 }
-/** the watch page through a client-side navigation (a full page load would fire pagehide when leaving) */
+/** a client-side navigation by a link click (a full page load would fire pagehide and end the cast) */
+async function clientNav(page: Page, path: string) {
+  await page.evaluate((path) => { const a = document.createElement('a'); a.href = path; document.body.appendChild(a); a.click(); a.remove(); }, path);
+  await expect(page).toHaveURL((u) => u.pathname + u.search === path);
+}
+/** the watch page through a client-side navigation */
 async function openWatch(page: Page, id = MOVIE.id) {
   await page.goto('/');
   await page.waitForLoadState('networkidle'); // hydrated: the app handles the link click itself
-  await page.evaluate((id) => { (window as unknown as { __sameDoc: boolean }).__sameDoc = true; const a = document.createElement('a'); a.href = '/watch/' + id; document.body.appendChild(a); a.click(); }, id);
-  await expect(page).toHaveURL(new RegExp(`/watch/${id}$`));
+  await page.evaluate(() => { (window as unknown as { __sameDoc: boolean }).__sameDoc = true; });
+  await clientNav(page, '/watch/' + id);
 }
 async function leaveWatch(page: Page) {
   await page.locator('.stage').hover();
@@ -145,6 +150,105 @@ test('only the engine reports after leaving the watch page', async ({ page, api:
   await after('play', progress(false));
   await after('ended', { kind: 'stop', playSessionId: 'air-ps', isPaused: true });
   expect(reports.slice(handed).filter((r) => r.kind === 'start')).toEqual([]); // never a second start
+});
+
+/** Chromecast plays MOVIE on the TV and the watch page was left; `infos` counts /api/playback/info from here on */
+async function castingMovieThenLeft(page: Page) {
+  await mockPlayer(page);
+  await castOn(page);
+  const sdk = await fakeCastSdk(page);
+  const cs = await castSessions(page);
+  await openWatch(page);
+  await videoReady(page);
+  await sdk.start();
+  await expect.poll(() => sdk.loads()).toHaveLength(1);
+  await expect(page.locator('.castov')).toContainText('Wird auf Wohnzimmer-TV abgespielt');
+  await leaveWatch(page);
+  const counts = { infos: 0 };
+  page.on('request', (r) => { if (r.url().endsWith('/api/playback/info')) counts.infos++; });
+  return { sdk, ...cs, counts };
+}
+/** the Player is a remote: the overlay shows, its own <video> never got a stream */
+async function attached(page: Page) {
+  await expect(page.locator('.castov')).toContainText('Wird auf Wohnzimmer-TV abgespielt');
+  expect(await page.locator('.stage video').evaluate((v: HTMLVideoElement) => v.currentSrc)).toBe('');
+}
+
+test('reopening the cast title attaches without a new session or playback info', async ({ page, api: _api }) => {
+  const { sdk, sessions, deleted, counts } = await castingMovieThenLeft(page);
+  await clientNav(page, '/watch/' + MOVIE.id);
+  await attached(page);
+  await page.waitForTimeout(400); // a late info request / token request would land by now
+  expect(sessions).toHaveLength(1);
+  expect(counts.infos).toBe(0);
+  expect(deleted).toEqual([]);
+  expect(await sdk.loads()).toHaveLength(1);
+  expect(await sdk.calls()).not.toContain('endCurrentSession');
+});
+
+test('same title with ?t= seeks instead of restarting', async ({ page, api: _api }) => {
+  const { sdk, sessions, counts } = await castingMovieThenLeft(page);
+  await clientNav(page, `/watch/${MOVIE.id}?t=120`);
+  await attached(page);
+  await expect.poll(() => sdk.calls()).toContain('seek:120');
+  expect(sessions).toHaveLength(1);
+  expect(counts.infos).toBe(0);
+  expect(await sdk.loads()).toHaveLength(1);
+});
+
+test('opening another title while casting plays it on the TV', async ({ page, api: _api }) => {
+  const { sdk, sessions, deleted, counts } = await castingMovieThenLeft(page);
+  await clientNav(page, '/watch/' + MOVIE2.id);
+  await expect.poll(() => sessions.length).toBe(2);
+  expect(sessions[1]!.itemId).toBe(MOVIE2.id);
+  await expect.poll(() => deleted).toEqual(['c'.repeat(32)]);
+  await expect.poll(() => sdk.loads()).toHaveLength(2);
+  await attached(page);
+  expect(counts.infos).toBe(0);
+});
+
+test('an id change on the open watch page plays the new title on the TV, never locally', async ({ page, api: _api }) => {
+  await mockPlayer(page);
+  await castOn(page);
+  const sdk = await fakeCastSdk(page);
+  const { sessions, deleted } = await castSessions(page);
+  let infos = 0;
+  page.on('request', (r) => { if (r.url().endsWith('/api/playback/info')) infos++; });
+  await openWatch(page);
+  await videoReady(page);
+  await sdk.start();
+  await expect.poll(() => sdk.loads()).toHaveLength(1);
+  await expect(page.locator('.castov')).toContainText('Wird auf Wohnzimmer-TV abgespielt');
+  // e.g. an episode picked in the player: the page's {#key id} mounts a fresh Player
+  await clientNav(page, `/watch/${MOVIE2.id}?t=30`);
+  await expect.poll(() => sessions.length).toBe(2);
+  expect(sessions[1]).toMatchObject({ itemId: MOVIE2.id, startTicks: 30 * 10_000_000 });
+  await expect.poll(() => deleted).toEqual(['c'.repeat(32)]);
+  await expect.poll(() => sdk.loads()).toHaveLength(2);
+  await attached(page);
+  expect(infos).toBe(1); // only the first title's local stream before the cast
+  expect(await page.evaluate(() => (window as unknown as { __sameDoc?: boolean }).__sameDoc)).toBe(true);
+});
+
+test('airplay: reopening the cast title attaches to the engine element', async ({ page, api: _api }) => {
+  await stubAirPlay(page, { pickTv: true });
+  await mockPlayer(page);
+  await castOn(page);
+  await mockHls(page);
+  const { sessions, deleted } = await castSessions(page);
+  await openWatch(page);
+  await airPlayToTv(page);
+  await leaveWatch(page);
+  let infos = 0;
+  page.on('request', (r) => { if (r.url().endsWith('/api/playback/info')) infos++; });
+  await clientNav(page, '/watch/' + MOVIE.id);
+  await expect(page.getByTestId('airplay-active')).toContainText('Läuft über AirPlay');
+  await page.waitForTimeout(400);
+  expect(await page.locator('.stage video').evaluate((v: HTMLVideoElement) => v.currentSrc)).toBe('');
+  expect(await page.evaluate((sel) => document.querySelector<HTMLVideoElement>(sel)?.parentElement === document.body, engineVideo)).toBe(true);
+  expect(sessions).toHaveLength(1);
+  expect(deleted).toEqual([]);
+  expect(infos).toBe(0);
 });
 
 test.describe('party', () => {
