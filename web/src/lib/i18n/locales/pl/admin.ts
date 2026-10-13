@@ -8,6 +8,7 @@ const pl: Translation<typeof de> = {
     users: 'Użytkownicy', status: 'Status', previews: 'Podglądy', playback: 'Test odtwarzania', digest: 'Podsumowanie tygodnia', sources: 'Źródła danych', invites: 'Zaproszenia',
     requests: 'Życzenia', polls: 'Głosowania', lists: 'Listy', roles: 'Role', devices: 'Urządzenia', audit: 'Dziennik audytu', update: 'Aktualizacja',
     hygiene: 'Porządek w bibliotece',
+    usage: 'Korzystanie',
   },
   roleNames: { friend: 'Znajomy', family: 'Rodzina', guest: 'Gość', admin: 'Admin' },
   kind: { movie: 'Film', series: 'Serial' },

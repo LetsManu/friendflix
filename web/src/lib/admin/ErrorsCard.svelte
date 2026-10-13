@@ -36,7 +36,7 @@
           <span class="top"><StatusPill tone={TONE[e.source]} icon={ICON[e.source]} label={$t(`adminContent.health.errors.source.${e.source}`)} /><code>{cleanCode(e.code)}</code></span>
           <span class="muted small">
             {$t('adminContent.health.streams.times', { n: e.count })} · <time datetime={e.lastAt} title={fmtDateTime(e.lastAt)}>{$t('adminContent.health.streams.last', { time: fmtRelative(e.lastAt) })}</time>
-            {#if e.release} · {$t('adminContent.health.errors.release', { release: e.release })}{/if}
+            {#if e.release}{' · '}{$t('adminContent.health.errors.release', { release: e.release })}{/if}
           </span>
         </li>
       {/each}

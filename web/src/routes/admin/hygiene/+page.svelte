@@ -136,7 +136,7 @@
       {#if running}{$t('adminContent.hygiene.running')}
       {:else if sum?.state.lastDone}{$t('adminContent.hygiene.scanned', { time: when(sum.state.lastDone, $t), full: when(sum.state.lastFull, $t) })}
       {:else if sum}{$t('adminContent.hygiene.notYet')}{/if}
-      {#if sum?.ignored} · {$t('adminContent.hygiene.ignoredCount', { n: sum.ignored })}{/if}
+      {#if sum?.ignored}{' · '}{$t('adminContent.hygiene.ignoredCount', { n: sum.ignored })}{/if}
     </p>
     <Button variant="secondary" icon="refresh" pending={$busyKeys.has('hyg:scan')} disabled={running || !sum} on:click={scan}>{$t('adminContent.hygiene.checkNow')}</Button>
   </div>

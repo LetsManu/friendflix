@@ -60,6 +60,10 @@ export interface AdminState {
   bannerFails: boolean;
   /** Block 22 library hygiene (/api/admin/hygiene*): rows with every issue, ignored "itemId|code" pairs, scan state */
   hygiene: HygieneMock;
+  /** Block 22 usage (/api/admin/usage*): query strings of the list calls, user ids of detail calls, `since` */
+  usageCalls: string[];
+  usageDetailCalls: string[];
+  usageSince: string | null;
 }
 export type HygieneCode = 'no_overview' | 'no_poster' | 'no_backdrop' | 'no_year' | 'no_ids' | 'no_audio' | 'audio_unknown' | 'foreign_no_subs' | 'forced_only' | 'image_subs_only' | 'dup_ids' | 'dup_title' | 'dup_episode' | 'no_source' | 'zero_runtime' | 'heavy_bitrate' | 'hevc_10bit' | 'video_codec' | 'audio_codec';
 export interface HygieneItem {
@@ -168,6 +172,36 @@ export function adminState(): AdminState {
     bannerCalls: 0,
     bannerFails: false,
     hygiene: { supported: true, canRefresh: true, running: false, lastDone: ago(0.2), lastFull: ago(48), items: hygieneItems(), ignored: new Set(), refreshed: [], scans: 0 },
+    usageCalls: [],
+    usageDetailCalls: [],
+    usageSince: leaveDay(-10),
+  };
+}
+
+/** Block 22: aggregated usage per account (shapes follow backend/src/routes/usage.ts; never a title) */
+function usageRows(st: AdminState, days: number) {
+  const f = days / 30;
+  return st.users.map((u, i) => {
+    const streams = i === 0 ? 8 : i === 1 ? 12 : i % 3 === 0 ? 0 : Math.round((i + 2) * f);
+    return {
+      userId: u.id, name: u.name, role: u.role, disabled: u.disabled, lastSeen: u.last_seen,
+      seconds: i === 0 ? Math.round(5400 * f) : streams * 2400, movieSeconds: i === 0 ? Math.round(3600 * f) : streams * 1200, seriesSeconds: i === 0 ? Math.round(1800 * f) : streams * 1200,
+      titles: Math.ceil(streams / 2), streams, transcodes: i === 0 ? 2 : Math.floor(streams / 4), topReason: i === 0 ? 'videoCodec' : streams >= 4 ? 'network' : null,
+      devices: i === 0 ? 3 : 1, devicesUsed: i === 0 ? 2 : streams ? 1 : 0, liveNow: st.live.filter((l) => l.userId === u.id).length,
+    };
+  });
+}
+function usageDetail(userId: string, days: number) {
+  const out = [];
+  for (let d = days - 1; d >= 0; d--) out.push({ day: leaveDay(-d), seconds: d % 3 === 0 ? 1800 + d * 60 : 0 });
+  return {
+    userId, days: out,
+    devices: [
+      { label: 'Chrome auf Windows', lastSeen: ago(1), streams: 5, transcodes: 1, app: false },
+      { label: 'Infuse', lastSeen: leaveDay(-2), streams: 3, transcodes: 1, app: true },
+      { label: '', lastSeen: null, streams: 1, transcodes: 0, app: false },
+    ],
+    reasons: { videoCodec: 2, network: 1 }, since: leaveDay(-10),
   };
 }
 
@@ -430,6 +464,17 @@ export function adminRoute(st: AdminState, m: string, p: string, sp: URLSearchPa
     if (st.bannerFails) return J({ error: 'boom' }, 500);
     const issues = st.bannerIssues.filter((i) => st.dismissed[i.id] !== i.fp).sort((a, b) => (a.level === b.level ? a.id.localeCompare(b.id) : a.level === 'err' ? -1 : 1));
     return J({ issues, worst: issues.some((i) => i.level === 'err') ? 'err' : issues.length ? 'warn' : 'ok' });
+  }
+  if (p === '/api/admin/usage' && m === 'GET') {
+    st.usageCalls.push(sp.toString());
+    const days = Number(sp.get('days') ?? 30);
+    if (![7, 30, 90].includes(days)) return J({ error: 'bad_request' }, 400);
+    return J({ users: usageRows(st, days), since: st.usageSince });
+  }
+  if ((mm = p.match(/^\/api\/admin\/usage\/([^/]+)$/)) && m === 'GET') {
+    st.usageDetailCalls.push(mm[1]!);
+    if (!st.users.some((u) => u.id === mm![1])) return J({ error: 'not_found' }, 404);
+    return J(usageDetail(mm[1]!, Number(sp.get('days') ?? 30)));
   }
   if (p === '/api/admin/hygiene/summary' && m === 'GET') return J(hygieneSummary(st.hygiene));
   if (p === '/api/admin/hygiene' && m === 'GET') return J(hygieneList(st.hygiene, sp));

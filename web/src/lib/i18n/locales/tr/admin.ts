@@ -8,6 +8,7 @@ const tr: Translation<typeof de> = {
     users: 'Kullanıcılar', status: 'Durum', previews: 'Önizlemeler', playback: 'Oynatma denetimi', digest: 'Haftalık özet', sources: 'Veri kaynakları', invites: 'Davetler',
     requests: 'İstekler', polls: 'Oylamalar', lists: 'Listeler', roles: 'Roller', devices: 'Cihazlar', audit: 'Denetim günlüğü', update: 'Güncelleme',
     hygiene: 'Kitaplık bakımı',
+    usage: 'Kullanım',
   },
   roleNames: { friend: 'Arkadaş', family: 'Aile', guest: 'Misafir', admin: 'Yönetici' },
   kind: { movie: 'Film', series: 'Dizi' },

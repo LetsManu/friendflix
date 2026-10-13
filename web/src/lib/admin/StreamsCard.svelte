@@ -55,7 +55,7 @@
             <a class="tt" href="/item/{f.itemId}">{f.title ?? $t('adminContent.health.streams.unknownTitle')}</a>
             <span class="muted small">
               {$t('adminContent.health.streams.times', { n: f.count })} · <time datetime={f.lastAt} title={fmtDateTime(f.lastAt)}>{$t('adminContent.health.streams.last', { time: fmtRelative(f.lastAt) })}</time>
-              {#if f.code} · <code>{cleanCode(f.code)}</code>{/if}
+              {#if f.code}{' · '}<code>{cleanCode(f.code)}</code>{/if}
             </span>
           </li>
         {/each}

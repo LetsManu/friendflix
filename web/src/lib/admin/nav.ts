@@ -12,6 +12,7 @@ export const GROUPS: NavGroup[] = [
     { href: '/admin/users', label: 'admin.tabs.users', icon: 'users' },
     { href: '/admin/roles', label: 'admin.tabs.roles', icon: 'key' },
     { href: '/admin/devices', label: 'admin.tabs.devices', icon: 'monitor', badge: 'devices' },
+    { href: '/admin/usage', label: 'admin.tabs.usage', icon: 'bar-chart' },
     { href: '/admin/invites', label: 'admin.tabs.invites', icon: 'mail' },
   ] },
   { id: 'content', label: 'admin.nav.groups.content', items: [

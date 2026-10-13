@@ -8,6 +8,7 @@ const en: Translation<typeof de> = {
     users: 'Users', status: 'Status', previews: 'Previews', playback: 'Playback check', digest: 'Weekly recap', sources: 'Data sources', invites: 'Invitations',
     requests: 'Requests', polls: 'Polls', lists: 'Lists', roles: 'Roles', devices: 'Devices', audit: 'Audit log', update: 'Update',
     hygiene: 'Library care',
+    usage: 'Usage',
   },
   roleNames: { friend: 'Friend', family: 'Family', guest: 'Guest', admin: 'Admin' },
   kind: { movie: 'Movie', series: 'TV show' },
