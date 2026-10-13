@@ -40,7 +40,32 @@ jobs:
       - run: npm run lint
       - run: npm run spdx:check
       - run: npm run typecheck
+      # newest Node: tests run once, with coverage (measurement only, no thresholds yet); other entries run plain tests
       - run: npm test
+        if: matrix.node != 26
+      - name: Tests with coverage
+        if: matrix.node == 26
+        run: npm run coverage && npm run test:scripts
+      - name: Coverage summary
+        if: matrix.node == 26
+        run: |
+          {
+            echo "## Test coverage"
+            echo "| Package | Statements | Branches | Functions | Lines |"
+            echo "|---|---|---|---|---|"
+            for pkg in backend gateway web; do
+              jq -r --arg p "$pkg" '.total | "| \($p) | \(.statements.pct)% | \(.branches.pct)% | \(.functions.pct)% | \(.lines.pct)% |"' "$pkg/coverage/coverage-summary.json"
+            done
+          } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        if: matrix.node == 26
+        with:
+          name: coverage
+          path: |
+            backend/coverage/
+            gateway/coverage/
+            web/coverage/
+          retention-days: 14
       - name: Dependency audit (prod, high+)
         if: matrix.node == 22
         run: npm audit --omit=dev --audit-level=high

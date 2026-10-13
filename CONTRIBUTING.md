@@ -1,6 +1,6 @@
 # Contributing to FriendFlix
 
-Thanks for helping! Bug reports, ideas and pull requests are welcome.
+Thanks for helping! Bug reports, ideas and pull requests are welcome. Everyone taking part is expected to follow the [Code of Conduct](CODE_OF_CONDUCT.md).
 
 ## Reporting bugs and asking for features
 
@@ -27,6 +27,7 @@ Thanks for helping! Bug reports, ideas and pull requests are welcome.
 **Tests**
 - New behaviour comes with tests; bug fixes come with a test that fails without the fix.
 - Unit tests: Vitest (`npm test`). End-to-end: Playwright (`npm run e2e`) for user-visible flows.
+- Coverage: `npm run coverage` (CI shows the summary in the job summary).
 
 **Texts and languages**
 - Every user-facing string goes through i18n and is added in **all 7 languages** ([docs/i18n.md](docs/i18n.md)).
