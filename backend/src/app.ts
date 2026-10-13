@@ -7,6 +7,7 @@ import type { Ctx } from './ctx.js';
 import { compressJson } from './compress.js';
 import { newTimingStore, serverTimingHeader, timedDb, timedKv, timingStorage, timingSummary, type TimingStore } from './timing.js';
 import { metricsPlugin } from './metrics.js';
+import { recordError } from './errorlog.js';
 import { adminRoutes, inviteRoutes } from './routes/admin.js';
 import { authRoutes } from './routes/auth.js';
 import { castRoutes } from './routes/cast.js';
@@ -97,6 +98,11 @@ export async function buildApp(ctx: Ctx, extra: Extra = {}): Promise<FastifyInst
       if (sum.totalMs >= SLOW_REQUEST_MS) req.log.info({ url: req.routeOptions.url ?? req.url.split('?')[0], method: req.method, status: reply.statusCode, ...sum }, 'slow request');
     }
     return ctx.cfg.API_COMPRESSION === 'false' ? payload : compressJson(req, reply, payload);
+  });
+  // Block 22 error log: server errors by route pattern only (never req.url: ids and query strings must not form keys)
+  app.addHook('onResponse', (req, reply, done) => {
+    if (reply.statusCode >= 500) void recordError(ctx, { source: 'server', code: `${req.method} ${req.routeOptions.url ?? 'unmatched'} ${reply.statusCode}` });
+    done();
   });
   await app.register(cookie);
   await app.register(rateLimit, { global: true, max: 600, timeWindow: '1 minute' });

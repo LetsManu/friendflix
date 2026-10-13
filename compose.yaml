@@ -105,6 +105,11 @@ services:
       BACKGROUND_JOBS: ${BACKGROUND_JOBS:-true}
       # gzip/brotli for JSON API responses >= 1 KB; false when the reverse proxy already compresses
       API_COMPRESSION: ${API_COMPRESSION:-true}
+      # admin health page: gateway address (only /health is called) and disk / database warning levels
+      GATEWAY_URL: ${GATEWAY_URL:-http://gateway:4000}
+      HEALTH_DISK_WARN_PCT: ${HEALTH_DISK_WARN_PCT:-85}
+      HEALTH_DISK_CRIT_PCT: ${HEALTH_DISK_CRIT_PCT:-95}
+      HEALTH_DB_WARN_GB: ${HEALTH_DB_WARN_GB:-10}
       CAST_ENABLED: ${CAST_ENABLED:-true}
       DOWNLOADS_ENABLED: ${DOWNLOADS_ENABLED:-true}
       DIRECT_PLAY_REQUIRES_DOWNLOAD: ${DIRECT_PLAY_REQUIRES_DOWNLOAD:-false}

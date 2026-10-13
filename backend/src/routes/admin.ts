@@ -7,6 +7,7 @@ import { revokeSessions } from '../devices.js';
 import { adminOverview, revokeLicense } from '../downloads.js';
 import { createInvite, deleteAuthentikInvitation } from '../invites.js';
 import { checkState, startPlaybackCheck } from '../healthcheck.js';
+import { ERROR_SOURCES, listErrors } from '../errorlog.js';
 import { clipPath, libraryItems, previews, serviceUser } from '../previews.js';
 import { stat } from 'node:fs/promises';
 import { defaultLimit } from '../requestlimit.js';
@@ -37,6 +38,13 @@ export function adminRoutes(app: FastifyInstance, ctx: Ctx) {
       partyRooms: parties.rooms.size,
       jellyfin: await ctx.jf.admin.ping(),
     };
+  });
+
+  // Block 22: aggregated error log (server 5xx + job failures from Redis, client + playback reports from process memory)
+  const errorsQuery = z.object({ source: z.enum(ERROR_SOURCES).optional(), hours: z.coerce.number().int().min(1).max(168).default(24) });
+  app.get('/api/admin/errors', admin, async (req) => {
+    const q = errorsQuery.parse(req.query);
+    return listErrors(ctx, { source: q.source, since: new Date(Date.now() - q.hours * 3600_000) });
   });
 
   // one cheap call for the admin shell (pending badges) and the overview: counts only, every source optional

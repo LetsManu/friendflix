@@ -1,4 +1,5 @@
 import type { Ctx } from './ctx.js';
+import { recordError } from './errorlog.js';
 import type { ItemStreams } from './media/types.js';
 
 /** ISO 639-2/B (bibliographic) -> 639-2/T, so "ger" and "deu" are one language. */
@@ -79,6 +80,7 @@ export async function langIndexTick(ctx: Ctx, opts: { force?: boolean } = {}): P
     await ctx.kv.del('langs:summary').catch(() => undefined);
   } catch (e) {
     console.warn('language index failed', (e as Error).message);
+    void recordError(ctx, { source: 'job', code: 'language-index' });
   } finally {
     busy = false;
   }
