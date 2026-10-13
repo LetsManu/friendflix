@@ -20,9 +20,12 @@ import type { JfUser, ProfileRow, UserRow } from './types.js';
  * - It must never be logged, put into metrics labels or error messages, or forwarded to Jellyfin.
  * - AirPlay (Safari "video URL" mode, `via: 'airplay'`) uses the same tokens: the TV fetches the stream without the user's cookies.
  *   Its pin admits TWO client addresses (castpin: + castpin2:), because Safari on the sender may load the playlist itself before
- *   handing the URL to the TV, and on a home network phone and TV reach the server from different addresses.
+ *   handing the URL to the TV, and on a home network phone and TV reach the server from different addresses. The second address
+ *   can only be taken within AIRPLAY_PIN2_WINDOW_MS of the token's creation; after that the token is locked to what it has.
  */
 export type CastVia = 'chromecast' | 'airplay';
+/** an AirPlay token's second pin can only be taken this soon after creation (phone + TV start within seconds of each other) */
+export const AIRPLAY_PIN2_WINDOW_MS = 60_000;
 export const CAST_TOKEN_RE = /^[A-Za-z0-9_-]{43}$/;
 export const MAX_CAST_TOKENS = 2;
 /** the Default Media Receiver decodes H.264 up to level 4.1 */
@@ -193,7 +196,7 @@ export async function resolveCast(ctx: Ctx, ct: string, client: string): Promise
   const rec = raw ? (JSON.parse(raw) as CastRecord) : null;
   if (rec && rec.exp > Date.now()) {
     const owner = await liveOwner(ctx, rec);
-    if (owner && (await pinned(ctx, hash, client, rec.exp, rec.via === 'airplay' ? 2 : 1))) {
+    if (owner && (await pinned(ctx, hash, client, rec.exp, rec.via === 'airplay' && Date.now() - rec.createdAt <= AIRPLAY_PIN2_WINDOW_MS ? 2 : 1, rec.via === 'airplay'))) {
       const { user, role, prof } = owner;
       const jfUser = jfUserFor(user, prof);
       v = {
@@ -260,12 +263,14 @@ export async function resolveCastSubtitle(ctx: Ctx, r: CastSubtitleRef, sig: str
 
 /**
  * First successful client wins the pin (SET NX, lives as long as the token can); everyone else must match it.
- * `slots` = 2 (AirPlay): the second distinct client takes a second pin the same way; a third one is refused.
+ * `slots` = 2 (AirPlay, early): the second distinct client takes a second pin the same way; a third one is refused.
+ * `twoPins` (AirPlay, later): no new pin is taken any more, but an address pinned in either slot keeps working.
  */
-async function pinned(ctx: Ctx, hash: string, client: string, exp: number, slots: 1 | 2 = 1): Promise<boolean> {
+async function pinned(ctx: Ctx, hash: string, client: string, exp: number, slots: 1 | 2 = 1, twoPins = false): Promise<boolean> {
   const ttl = Math.max(1, Math.ceil((exp - Date.now()) / 1000));
-  for (const key of slots === 2 ? [pinKey(hash), pin2Key(hash)] : [pinKey(hash)]) {
-    if (await ctx.kv.setnx(key, client, ttl)) return true;
+  const keys = twoPins ? [pinKey(hash), pin2Key(hash)] : [pinKey(hash)];
+  for (const [i, key] of keys.entries()) {
+    if (i < slots && (await ctx.kv.setnx(key, client, ttl))) return true;
     if ((await ctx.kv.get(key)) === client) return true;
   }
   return false;

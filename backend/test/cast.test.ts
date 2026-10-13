@@ -261,6 +261,22 @@ describe('cast token hardening', () => {
     expect((await authz({ ct, client: '203.0.113.22' })).statusCode).toBe(401);
   });
 
+  it('AirPlay second pin only within 60 s of creation; afterwards the token is locked to the addresses it has', async () => {
+    const late = await create(admin, { via: 'airplay' });
+    expect((await authz({ ct: late.ct, client: '203.0.113.41' })).statusCode).toBe(200);
+    const early = await create(admin, { via: 'airplay' });
+    expect((await authz({ ct: early.ct, client: '203.0.113.51' })).statusCode).toBe(200);
+    expect((await authz({ ct: early.ct, client: '203.0.113.52' })).statusCode).toBe(200);
+    skipClock(61_000);
+    // too late for a second address
+    expect((await authz({ ct: late.ct, client: '203.0.113.42' })).statusCode).toBe(401);
+    expect((await authz({ ct: late.ct, client: '203.0.113.41' })).statusCode).toBe(200);
+    // both early pins keep working, nobody else gets in
+    expect((await authz({ ct: early.ct, client: '203.0.113.51' })).statusCode).toBe(200);
+    expect((await authz({ ct: early.ct, client: '203.0.113.52' })).statusCode).toBe(200);
+    expect((await authz({ ct: early.ct, client: '203.0.113.53' })).statusCode).toBe(401);
+  });
+
   it('Chromecast stays single-pin (default via) and an unknown via is refused', async () => {
     const { ct } = await create();
     expect(JSON.parse((await env.kv.get(`cast:${hashToken(ct)}`))!).via).toBe('chromecast');

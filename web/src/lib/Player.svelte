@@ -17,7 +17,7 @@
   import { WheelAccumulator } from '#lib/player/wheel';
   import { parseVolume, stepVolume } from '#lib/player/volume';
   import { hlsConfig, loadHls } from '#lib/player/hls';
-  import { airPlaySupported, createAirPlay, prefersNativeHls, type AirPlayController, type AirPlayState } from '#lib/player/airplay';
+  import { airPlaySupported, createAirPlay, type AirPlayController, type AirPlayState } from '#lib/player/airplay';
   import { AbrController, LADDER, autoBps, isOriginalBps, rungKey, type Decision } from '#lib/player/abr';
   import { BandwidthEstimator, loadStoredEstimate, storeEstimate } from '#lib/player/bandwidth';
   import QualityChip from '#lib/player/QualityChip.svelte';
@@ -33,7 +33,7 @@
   import { AudioFxEngine, fxActive, fxBlocked, fxFromPref, fxToPref, loadFx, saveFx, type AudioFx } from '#lib/player/audiofx';
   import { fmtDuration, getLocale, t, tr, type TFn, type TKey } from '#lib/i18n';
   import { animeAudio, animeDefaultApplies, animeSubtitle } from '#lib/player/anime';
-  import { castPause, castPlay, castPlayPause, castSeek, castSetSubtitle, castSetVolume, castState, castStop, castToggleMute, initCast, loadOnCast, onCastEvent, requestCastSession, type CastInfo, type CastState } from '#lib/cast';
+  import { castConfigEnabled, castPause, castPlay, castPlayPause, castSeek, castSetSubtitle, castSetVolume, castState, castStop, castToggleMute, initCast, loadOnCast, onCastEvent, requestCastSession, type CastInfo, type CastState } from '#lib/cast';
 
   export let itemId: string;
   /** shown on the phone's remote while this plays */
@@ -83,7 +83,7 @@
   // ---- Chromecast: while casting the local <video> stays paused and every control drives the receiver ----
   let casting = false, castBusy = false, castInfo: CastInfo | null = null, castPos = 0, castPaused: boolean | null = null, castOff: (() => void) | null = null;
   // ---- AirPlay (Safari): the <video> itself plays on the receiver, from a cast token URL (lib/player/airplay.ts) ----
-  let air: AirPlayController | null = null, airState: AirPlayState = { available: false, active: false, busy: false }, airInfo: CastInfo | null = null;
+  let air: AirPlayController | null = null, airState: AirPlayState = { available: false, active: false, busy: false, armed: false, error: false }, airInfo: CastInfo | null = null, airProbe: HTMLVideoElement | null = null;
   $: airOn = airState.active;
   let destroyed = false;
 
@@ -241,19 +241,17 @@
     hls?.destroy(); hls = null;
     const useDirect = info.directUrl && audioIndex === undefined && !rec.forcedHls && video.canPlayType('video/mp4');
     mode = useDirect ? 'direct' : 'hls';
-    // Safari with AirPlay: native HLS, never hls.js (an MSE / ManagedMediaSource stream cannot be AirPlayed)
-    const native = !useDirect && prefersNativeHls(video);
     const seek = () => { if (startSec > 1) video!.currentTime = startSec; };
     // hls.js is loaded lazily, only on this path (and usually already prefetched by the play button)
     let H: typeof Hls | null = null;
-    if (!useDirect && !native) {
+    if (!useDirect) {
       try { H = await loadHls(); } catch { H = null; }
       if (my !== attachSeq || info !== cur || !video) return; // superseded while loading
     }
     if (useDirect) {
       video.src = info.directUrl!;
       video.addEventListener('loadedmetadata', seek, { once: true });
-    } else if (!native && H?.isSupported()) {
+    } else if (H?.isSupported()) {
       const HC = H;
       hls = new HC(hlsConfig(startSec));
       hls.loadSource(info.hlsUrl);
@@ -287,7 +285,7 @@
   const lowerStep = () => lowerQuality(QUALITIES.map(([, b]) => b).filter((b) => b < (info?.roleMaxBitrate ?? Infinity)), quality, info?.maxBitrate ?? 0);
   let retryViaLoad = false;
   function recover(kind: ErrorKind, viaLoad = false) {
-    if (casting || airInfo || airState.busy) return;
+    if (casting || airOn || airInfo || airState.busy) return;
     retryViaLoad = viaLoad;
     // the first retry already failed: the line is the problem, not a hiccup -> a lower rung (none = cooldown or 360p: the usual retries go on and end in giveUp)
     if (kind === 'network' && !viaLoad && abr && !switching && rec.networkTries >= 1) {
@@ -320,7 +318,8 @@
   function retryManually() { rec = freshRecovery(); reconnecting = 0; error = ''; errNote = ''; waiting = true; wantAutoplay = true; void load(posKnown ? resumePos() : undefined); }
   function leave() { if (history.length > 1) history.back(); else location.href = '/'; }
   function onVideoError() {
-    if (hls || casting || airOn || !video?.error || !info) return; // hls.js reports its own errors; AirPlay: the receiver plays
+    if (airOn) { if (video?.error && video.error.code !== 1) air?.videoError(); return; } // the TV's token stream failed: Retry, never the cookie URL
+    if (hls || casting || !video?.error || !info) return; // hls.js reports its own errors
     const kind = kindOfMediaError(video.error.code);
     if (video.error.code === 1) return; // aborted by us
     recover(kind);
@@ -413,6 +412,23 @@
     air = createAirPlay(v, {
       request: (pos) => castRequest(pos, 'airplay'),
       revoke: (ci) => castRevoke(ci),
+      prepare() {
+        // inside the click: hls.js (MSE) -> native HLS of the same stream, so Safari can hand a URL to the TV; direct play already has one
+        if (!video || !info || !hls) return false;
+        const pos = video.currentTime, play = !video.paused, v = video;
+        attachSeq++; hls.destroy(); hls = null;
+        v.disableRemotePlayback = false; // hls.js sets it for ManagedMediaSource
+        v.src = info.hlsUrl;
+        if (pos > 1) v.addEventListener('loadedmetadata', () => { v.currentTime = pos; }, { once: true });
+        if (play) v.play().catch(() => undefined);
+        return true;
+      },
+      reattach(pos, play) {
+        // the picker brought no TV: back to hls.js (bandwidth estimate, ABR) at the same position
+        if (destroyed || hls || airInfo) return;
+        wantAutoplay = play;
+        void attach(pos);
+      },
       async detach() {
         attachSeq++; clearTimeout(retryT); reconnecting = 0; error = '';
         if (started && !stopped) { stopped = true; await send('stop'); } // frees the stream slot (maxStreams) for the TV's session
@@ -429,7 +445,18 @@
       },
       fail: (e) => flash(airErr(e), 4000),
       change: (st) => { airState = st; },
-    });
+    }, airProbe);
+  }
+  /** the player's AirPlay button: same gate as Chromecast (/api/cast/config); a hidden non-MSE probe <video> reports receivers */
+  async function initAirPlay() {
+    if (partyMode || !video || !airPlaySupported(video) || !(await castConfigEnabled().catch(() => false)) || destroyed || !video) return;
+    airProbe = document.createElement('video');
+    airProbe.setAttribute('x-webkit-airplay', 'allow');
+    airProbe.setAttribute('playsinline', '');
+    airProbe.muted = true; airProbe.preload = 'none'; airProbe.className = 'airprobe';
+    airProbe.setAttribute('aria-hidden', 'true');
+    stage?.appendChild(airProbe);
+    startAirPlay(video);
   }
 
   function castTick(s: CastState) {
@@ -913,7 +940,7 @@
     load(startAt);
     castOff = onCastEvent(handleCast);
     if (!partyMode) void initCast();
-    if (!partyMode && video && airPlaySupported(video)) startAirPlay(video);
+    void initAirPlay();
     loadBookmarks();
     if ($serverCaps.chapters) api(`/api/items/${itemId}/chapters`).then((r) => (chapters = r?.supported ? normalizeChapters(r.chapters) : [])).catch(() => undefined);
     if ($serverCaps.segments.length) api(`/api/items/${itemId}/segments`).then((r) => (segments = (r.segments as typeof segments).map((x) => ({ ...x, type: String(x.type).toLowerCase() })).filter((x) => segmentShown($serverCaps, x.type)))).catch(() => undefined);
@@ -974,7 +1001,7 @@
     if (started && !stopped) { stopped = true; send('stop'); }
     holdPrefetch(Promise.resolve(lastStop)); // no cached info survives the player; the next prefetch waits for this stop (resume position)
     if (casting) { castRevoke(castInfo); castStop(); casting = false; } // leaving the page ends the cast session and revokes its token
-    destroyed = true; air?.destroy(); airInfo = null; // revokes a live AirPlay token
+    destroyed = true; air?.destroy(); airInfo = null; airProbe?.remove(); // revokes a live AirPlay token
     castOff?.();
     hls?.destroy();
   });
@@ -1020,7 +1047,14 @@
     <div class="center castov" role="status"><div class="castbox"><Icon name="cast" size={56} /><b>{$t('player.cast.playingOn', { name: $castState.deviceName || 'Chromecast' })}</b><button class="btn light ui" on:click|stopPropagation={() => castStop()}>{$t('player.cast.stop')}</button></div></div>
   {:else if airOn}
     <!-- Safari does not tell which receiver was picked; ending AirPlay happens in its picker (choose this device) -->
-    <div class="center castov" role="status" data-testid="airplay-active"><div class="castbox"><Icon name="airplay" size={56} /><b>{$t('player.airplay.playing')}</b><button class="btn light ui" on:click|stopPropagation={() => air?.pick()}>{$t('player.airplay.change')}</button></div></div>
+    <div class="center castov" role="status" data-testid="airplay-active"><div class="castbox">
+      <Icon name="airplay" size={56} />
+      {#if airState.error}
+        <b>{$t('player.airplay.failed')}</b><span class="airhint">{$t('player.airplay.endHint')}</span>
+        <button class="btn light ui" on:click|stopPropagation={() => air?.retry()}>{$t('player.error.retry')}</button>
+      {:else}<b>{$t('player.airplay.playing')}</b>{/if}
+      <button class="btn light ui" on:click|stopPropagation={() => air?.pick()}>{$t('player.airplay.change')}</button>
+    </div></div>
   {/if}
   {#if !phone && paused && !waiting && !error && !casting && !locked && !reconnecting}
     <button class="bigplay ui" aria-label={$t('player.controls.play')} on:click|stopPropagation={togglePlay}><Icon name="play" size={44} /></button>
@@ -1245,6 +1279,8 @@
   .stage :global(button:focus-visible), .stage :global(a:focus-visible), .stage :global([role=slider]:focus-visible) { outline: 3px solid #fff; outline-offset: 2px; }
   .stage.idle { cursor: none; }
   .stage :global(video) { display: block; width: 100%; height: 100%; max-height: 100%; object-fit: contain; background: #000; }
+  /* AirPlay availability probe: rendered (WebKit may skip hidden elements) but invisible and inert */
+  .stage :global(video.airprobe) { position: absolute; left: 0; top: 0; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
   .stage :global(video::cue) { background: rgba(0,0,0,.65); font-size: 1.15em; color: #fff; font-family: sans-serif; }
   .stage.sub-size-s :global(video::cue) { font-size: .9em; }
   .stage.sub-size-m :global(video::cue) { font-size: 1.15em; }
@@ -1292,6 +1328,7 @@
   .bigplay:hover:not(:disabled) { background: rgba(0,0,0,.75); }
   .castov { background: #000; pointer-events: none; z-index: 2; }
   .castbox { display: grid; justify-items: center; gap: .9rem; text-align: center; color: #fff; }
+  .airhint { font-size: .85rem; opacity: .8; max-width: 22rem; }
   .castbox button { pointer-events: auto; border: 1px solid #fff; padding: .6rem 1.4rem; }
   .toast { position: absolute; left: 50%; top: 18%; transform: translateX(-50%); background: rgba(0,0,0,.75); padding: .55rem 1.2rem; border-radius: 999px; z-index: 9; font-weight: 600; max-width: 90%; text-align: center; }
   .skipbtn { position: absolute; right: calc(var(--pad-x) + var(--inset, 0px)); bottom: 7.5rem; z-index: 8; border: 1px solid #fff; padding: .7rem 1.5rem; }
