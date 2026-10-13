@@ -1,18 +1,24 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
 /**
- * Cast engine: owns a running cast session (Chromecast; AirPlay joins later) so it outlives the watch page.
+ * Cast engine: owns a running cast session (Chromecast or AirPlay) so it outlives the watch page.
  *
  * The Player hands a running cast over with `adopt()`; from then on the engine mirrors the receiver into `castSession`,
  * reports `start` / `progress` / `stop` for the cast token (`/api/playback/*`), renews the token, and switches titles
  * on the TV (`playOnTv`: old title stopped and its token revoked, new token loaded). One cast token is live at a time.
  * Nothing (listeners, timers, requests) is touched before the first `adopt()`.
+ *
+ * AirPlay: the route belongs to the Player's `<video>`, so `adopt()` MOVES that element (and the availability probe) into
+ * `document.body`, hidden but rendered, and rebinds its AirPlay controller to the engine. A title switch is a new token URL
+ * on the same element (`switchItem`); the controller keeps its grace / settle / breaker logic. A sustained route loss
+ * leaves the session in `reconnect`: a tap on the bar (`reconnect()`) opens the picker inside the gesture.
  */
 import { get, writable, type Readable, type Writable } from 'svelte/store';
 import { api, cachedItem, secToTicks, ticksToSec, type Item, type ItemDetail } from '#lib/api';
 import { castPlayPause, castSeek, castSetSubtitle, castState, castStop, loadOnCast, onCastEvent, type CastEvent, type CastInfo, type CastState } from '#lib/cast';
 import { tr } from '#lib/i18n';
-import { createAirPlay, type AirPlayController, type AirPlayState } from '#lib/player/airplay';
+import { createAirPlay, type AirPlayController, type AirPlayDeps, type AirPlayState } from '#lib/player/airplay';
+import { airLog } from '#lib/player/airplayLog';
 import { barTitles, firstInfoBody } from '#lib/player/bar';
 import { prefs, type Prefs } from '#lib/stores';
 import { toast } from '#lib/ui/toast';
@@ -64,6 +70,28 @@ export const RENEW_BEFORE_MS = 10 * 60_000;
 /** the bar stays this long after the title ended */
 export const ENDED_HIDE_MS = 5_000;
 
+/** marks the AirPlay `<video>` the engine owns (in `document.body`) */
+export const CAST_VIDEO_ATTR = 'data-cast-engine';
+/** rendered but invisible and inert: WebKit may skip `display:none` media elements for AirPlay */
+const HIDDEN_STYLE = 'position:fixed;left:0;bottom:0;width:1px;height:1px;opacity:0;pointer-events:none';
+/** element events the engine mirrors (and `error`, which goes to the controller) */
+const AIR_EVENTS = ['timeupdate', 'play', 'pause', 'waiting', 'playing', 'ended', 'durationchange', 'error'] as const;
+
+/** the AirPlay part of a session: the moved element, its controller and the probe */
+interface AirLive {
+  video: HTMLVideoElement; ctl: AirPlayController; probe: HTMLVideoElement | null;
+  /** the title a switch asked for, until a token for it plays (`at` undefined = the server's resume position) */
+  want: { itemId: string; at: number | undefined } | null;
+  /** the controller call of the latest switch: the next switch waits for it (the controller runs one request at a time) */
+  op: Promise<void>;
+  /** the switch (`seq`) whose controller call runs */
+  opSeq: number | null;
+  /** `reconnect()` was tapped: play as soon as the TV is the target again */
+  resume: boolean;
+  /** pagehide: revoke at once, with keepalive */
+  leaving: boolean;
+}
+
 /** the engine's bookkeeping for the session in `castSession` */
 interface Live {
   view: CastSession;
@@ -81,13 +109,15 @@ interface Live {
   retry: (() => Promise<void>) | null;
   offs: Array<() => void>;
   loop?: unknown; hide?: unknown;
+  air?: AirLive;
 }
 
 /** the Player's texts for a failed token request */
-function castErr(e: unknown): string {
+function castErr(e: unknown, kind: CastKind = 'chromecast'): string {
   const b = (e as { body?: { error?: string; max?: unknown } } | null)?.body;
+  const k = kind === 'airplay' ? 'airplay' : 'cast';
   return b?.error === 'max_streams' ? tr('player.error.maxStreams', { n: Number(b.max) })
-    : b?.error === 'transcoding_disabled' ? tr('player.cast.needsTranscode') : tr('player.cast.failed');
+    : b?.error === 'transcoding_disabled' ? tr(`player.${k}.needsTranscode`) : tr(`player.${k}.failed`);
 }
 
 export function createCastEngine(deps: EngineDeps, out: Writable<CastSession | null> = writable(null)): CastEngine {
@@ -168,10 +198,147 @@ export function createCastEngine(deps: EngineDeps, out: Writable<CastSession | n
   function onPageHide(s: Live) {
     if (cur !== s) return;
     void stopReport(s, true);
+    if (s.air) {
+      s.air.leaving = true;
+      airNote(s, 'stop', 'pagehide');
+      s.ci = null;
+      end(s);
+      dropAir(s.air); // the controller revokes its token (keepalive)
+      return;
+    }
     revoke(s.ci, true);
     s.ci = null;
     end(s);
     cast.castStop();
+  }
+
+  // ---- AirPlay ----
+  const airNote = (s: Live, ev: 'adopt' | 'switch' | 'reconnect' | 'stop', why?: string) => {
+    if (s.air) airLog('engine', { src: s.air.video.src, state: s.view.state, note: why ? `${ev}: ${why}` : ev });
+  };
+  /** AirPlay over for good: controller gone (revokes its token), element emptied and removed */
+  function dropAir(a: AirLive) {
+    a.ctl.destroy();
+    a.video.removeAttribute('src');
+    a.video.load();
+    a.video.remove();
+    a.probe?.remove();
+    airState.set(null);
+  }
+
+  /** the controller's callbacks while the engine owns it */
+  function airDeps(s: Live, a: AirLive): AirPlayDeps {
+    return {
+      request(pos) {
+        const w = a.want, at = w ? w.at : pos;
+        return call<CastInfo>('/api/cast/session', {
+          method: 'POST',
+          body: { itemId: w?.itemId ?? s.view.itemId, startTicks: at === undefined ? undefined : secToTicks(at), audioIndex: s.audioIndex, maxBitrate: s.maxBitrate ?? firstInfoBody(deps.prefs()).maxBitrate, via: 'airplay' },
+        });
+      },
+      // the server counts the stream until its `stop` arrived: revoke after it (pagehide: now, with keepalive)
+      revoke(ci) { if (a.leaving) revoke(ci, true); else void s.stopping.then(() => revoke(ci)); },
+      detach() { void stopReport(s); return s.stopping.then(() => undefined); },
+      started(ci) {
+        if (cur !== s) return;
+        const w = a.want;
+        a.want = null;
+        s.ci = ci; s.started = false; s.lastPaused = null;
+        // the server chose the start (resume position): the stream's timeline is absolute, seek there once it loaded
+        if (w && w.at === undefined && ci.startTime > 1) a.video.addEventListener('loadedmetadata', () => { if (a.ctl.info === ci) a.video.currentTime = ci.startTime; }, { once: true });
+        patch(s, { position: w ? w.at ?? ci.startTime : s.view.position, ...(ci.runtimeTicks ? { duration: ticksToSec(ci.runtimeTicks) } : {}) });
+      },
+      restore(pos) {
+        // sustained route loss (or no TV chosen after a reconnect tap): never the cookie stream, wait for a tap
+        if (cur !== s || s.view.state === 'ended') return;
+        patch(s, { position: pos });
+        void stopReport(s);
+        s.ci = null;
+        a.video.pause();
+        patch(s, { state: 'reconnect', paused: true, buffering: false });
+        airNote(s, 'reconnect', 'route lost');
+      },
+      fail(e) {
+        if (cur !== s || (a.opSeq !== null && a.opSeq !== seq)) return; // a newer switch waits: its outcome counts
+        void stopReport(s);
+        s.ci = null;
+        if (e instanceof Error && e.message === 'airplay_media' && a.ctl.state.active) {
+          deps.toast('error', tr('player.castBar.failed', { title: s.view.title, device: s.view.device }));
+          patch(s, { state: 'failed', buffering: false });
+          return;
+        }
+        deps.toast('error', castErr(e, 'airplay'));
+        patch(s, { state: 'reconnect', buffering: false });
+      },
+      change(st) {
+        if (cur !== s) return;
+        airState.set(st);
+        if (a.resume && st.active && !st.error && !st.busy) {
+          a.resume = false;
+          void a.video.play().catch(() => undefined);
+          patch(s, { state: 'connecting', buffering: true });
+        }
+      },
+    };
+  }
+
+  /** the element's media events: mirrored into the session; `start` on the first `playing` of each token */
+  function airEvent(s: Live, a: AirLive, type: (typeof AIR_EVENTS)[number]) {
+    const v = a.video;
+    if (type === 'error') { if (v.error && v.error.code !== 1) a.ctl.videoError(v.error.code, v.error.message); return; }
+    if (!s.ci || s.busy) return;
+    if (type === 'ended') {
+      patch(s, { state: 'ended', position: s.view.duration || s.view.position, paused: true, buffering: false });
+      void stopReport(s);
+      s.ci = null;
+      s.hide = timers.set(() => { airNote(s, 'stop', 'ended'); end(s); dropAir(a); }, ENDED_HIDE_MS);
+      return;
+    }
+    const start = type === 'playing' && !s.started && a.ctl.state.active;
+    const p: Partial<CastSession> = { paused: v.paused };
+    if (s.started || start) p.position = v.currentTime; // before that the element may still be at 0 (the switch's start counts)
+    if (Number.isFinite(v.duration) && v.duration > 0) p.duration = v.duration;
+    if (type === 'waiting') p.buffering = true;
+    if (type === 'playing') p.buffering = false;
+    if (start) p.state = 'playing';
+    patch(s, p);
+    if (start) { s.started = true; void report(s, 'start', s.ci); }
+    else if ((type === 'play' || type === 'pause') && s.started) void report(s, 'progress', s.ci);
+  }
+
+  function adoptAir(s: Live, a: AirLive) {
+    for (const el of a.probe ? [a.video, a.probe] : [a.video]) {
+      deps.body().appendChild(el); // a DOM move: the element (and its AirPlay route) stays the same
+      el.setAttribute('aria-hidden', 'true');
+      el.setAttribute('style', HIDDEN_STYLE);
+    }
+    a.video.setAttribute(CAST_VIDEO_ATTR, '');
+    a.ctl.rebind(airDeps(s, a));
+    airState.set(a.ctl.state);
+    for (const t of AIR_EVENTS) {
+      const fn = () => airEvent(s, a, t);
+      a.video.addEventListener(t, fn);
+      s.offs.push(() => a.video.removeEventListener(t, fn));
+    }
+    airNote(s, 'adopt');
+  }
+
+  /** the AirPlay part of `swap`: the controller loads the new token on the same element */
+  async function airSwap(s: Live, a: AirLive, my: number, itemId: string, startAt: number | undefined, fresh: boolean, it: Item | null) {
+    airNote(s, 'switch', fresh ? undefined : 'same title');
+    if (fresh) {
+      a.want = { itemId, at: startAt };
+      if (!a.ctl.state.active) { s.busy = false; patch(s, { state: 'reconnect', buffering: false }); return; } // the tap on the bar loads it
+    }
+    a.opSeq = my;
+    const op = fresh ? a.ctl.switchItem(startAt ?? 0) : a.ctl.refresh();
+    a.op = op;
+    await op;
+    a.opSeq = null; // a newer switch waits for `op` before it sets its own
+    if (my !== seq) return; // a newer switch takes over (the controller revokes this token when it replaces it)
+    s.busy = false;
+    if (s.ci) { if (fresh && !it) patch(s, { title: s.ci.seriesName ?? s.ci.title, subtitle: s.ci.seriesName ? s.ci.title : '', seriesId: undefined, posterId: itemId, isEpisode: Boolean(s.ci.seriesName) }); return; }
+    if (s.view.state === 'connecting') patch(s, { state: 'reconnect', buffering: false }); // the controller was busy: nothing loaded
   }
 
   function arm(s: Live) {
@@ -199,10 +366,12 @@ export function createCastEngine(deps: EngineDeps, out: Writable<CastSession | n
     if (fresh) { s.audioIndex = undefined; s.subIndex = -1; }
     patch(s, { itemId, state: 'connecting', position: startAt ?? 0, paused: false, buffering: true, next: undefined });
     const meta = fresh ? deps.item(itemId).catch(() => null) : Promise.resolve(null);
-    const [, it] = await Promise.all([stopped, meta]);
-    revoke(old);
+    const a = s.air;
+    const [, it] = await Promise.all([stopped, meta, a?.op]);
+    if (!a) revoke(old); // AirPlay: the controller revokes the old token once the new one is on the element
     if (my !== seq) return;
     if (it) { const { title, sub } = barTitles(it); patch(s, { title, subtitle: sub, seriesId: it.seriesId, posterId: it.id, isEpisode: it.type === 'Episode' }); }
+    if (a) { await airSwap(s, a, my, itemId, startAt, fresh, it); return; }
     let ci: CastInfo;
     try {
       ci = await call<CastInfo>('/api/cast/session', {
@@ -237,7 +406,8 @@ export function createCastEngine(deps: EngineDeps, out: Writable<CastSession | n
     const s = cur;
     if (!s?.ci || s.busy) return;
     const t = Math.max(0, s.view.duration ? Math.min(s.view.duration, sec) : sec);
-    cast.castSeek(t);
+    if (s.air) s.air.video.currentTime = t;
+    else cast.castSeek(t);
     patch(s, { position: t });
     if (s.started) void report(s, 'progress', s.ci);
   }
@@ -245,16 +415,17 @@ export function createCastEngine(deps: EngineDeps, out: Writable<CastSession | n
   return {
     airState: { subscribe: airState.subscribe },
     adopt(h) {
-      if (h.kind !== 'chromecast') return;
+      if (h.kind === 'airplay' && (!h.video || !h.air)) return;
       const prev = cur;
       if (prev) {
         // the same token again (the Player re-hands its session): nothing to stop; another token: stop and revoke it
         const ci = prev.ci, same = ci?.castId === h.cast.castId, stopped = same ? Promise.resolve() : stopReport(prev);
         end(prev);
-        if (ci && !same) void stopped.then(() => revoke(ci));
+        if (prev.air) { if (prev.air.ctl !== h.air) dropAir(prev.air); } // its controller revokes its token
+        else if (ci && !same) void stopped.then(() => revoke(ci));
       }
       const s: Live = {
-        view: { kind: h.kind, device: 'Chromecast', itemId: h.itemId, seriesId: h.seriesId, title: h.title, subtitle: h.subtitle, posterId: h.itemId, isEpisode: h.isEpisode,
+        view: { kind: h.kind, device: h.kind === 'airplay' ? tr('player.castBar.airplayDevice') : 'Chromecast', itemId: h.itemId, seriesId: h.seriesId, title: h.title, subtitle: h.subtitle, posterId: h.itemId, isEpisode: h.isEpisode,
           position: h.position, duration: h.duration, paused: h.paused, buffering: false, state: h.started ? 'playing' : 'connecting' },
         ci: h.cast, started: h.started, busy: false, stopping: Promise.resolve(), lastPaused: null,
         audioIndex: h.audioIndex, subIndex: h.subIndex, maxBitrate: h.maxBitrate, sleepAfterEpisode: h.sleepAfterEpisode,
@@ -262,10 +433,20 @@ export function createCastEngine(deps: EngineDeps, out: Writable<CastSession | n
       };
       cur = s;
       out.set(s.view);
-      s.offs.push(cast.castState.subscribe((st) => tick(s, st)), cast.onCastEvent((e) => onEvent(s, e)), deps.onPageHide(() => onPageHide(s)));
+      if (h.video && h.air) {
+        s.air = { video: h.video, ctl: h.air, probe: h.probe ?? null, want: null, op: Promise.resolve(), opSeq: null, resume: false, leaving: false };
+        adoptAir(s, s.air);
+      } else s.offs.push(cast.castState.subscribe((st) => tick(s, st)), cast.onCastEvent((e) => onEvent(s, e)));
+      s.offs.push(deps.onPageHide(() => onPageHide(s)));
       arm(s);
     },
-    playPause() { if (cur?.ci) cast.castPlayPause(); },
+    playPause() {
+      const s = cur;
+      if (!s?.ci) return;
+      if (!s.air) { cast.castPlayPause(); return; }
+      if (s.air.video.paused) void s.air.video.play().catch(() => undefined);
+      else s.air.video.pause();
+    },
     seek,
     skip(delta) { if (cur) seek(cur.view.position + delta); },
     async playOnTv(itemId, startAt) { if (cur) await swap(cur, itemId, startAt, true); },
@@ -275,6 +456,13 @@ export function createCastEngine(deps: EngineDeps, out: Writable<CastSession | n
       if (!s) return;
       const ci = s.ci, stopped = stopReport(s);
       s.ci = null;
+      if (s.air) {
+        airNote(s, 'stop');
+        end(s);
+        dropAir(s.air); // the controller revokes its token once the stop report is through
+        await stopped;
+        return;
+      }
       end(s);
       cast.castStop();
       await stopped;
@@ -282,7 +470,19 @@ export function createCastEngine(deps: EngineDeps, out: Writable<CastSession | n
     },
     reconnect() {
       const s = cur;
-      if (!s?.retry || s.view.state !== 'reconnect') return;
+      if (!s || s.view.state !== 'reconnect') return;
+      const a = s.air;
+      if (a) {
+        // runs inside the tap: the picker (pick) must open synchronously; a failed request is retried once
+        airNote(s, 'reconnect', 'tap');
+        const st = a.ctl.state;
+        if (a.want && !st.ready) a.video.currentTime = a.want.at ?? 0; // the controller loads the token at the element's time
+        a.resume = true;
+        if (st.active && st.error) void a.ctl.retry();
+        else a.ctl.pick();
+        return;
+      }
+      if (!s.retry) return;
       const again = s.retry;
       s.retry = null;
       void again();
@@ -298,9 +498,14 @@ export function createCastEngine(deps: EngineDeps, out: Writable<CastSession | n
       const s = cur;
       if (!s) return;
       s.subIndex = index;
-      if (s.ci) cast.castSetSubtitle(index);
+      if (s.ci && !s.air) cast.castSetSubtitle(index); // AirPlay: the receiver only shows tracks inside the stream
     },
-    release() { if (cur?.view.state === 'failed') end(cur); },
+    release() {
+      const s = cur;
+      if (s?.view.state !== 'failed') return;
+      end(s);
+      if (s.air) dropAir(s.air);
+    },
   };
 }
 

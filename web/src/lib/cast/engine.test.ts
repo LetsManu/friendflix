@@ -146,7 +146,7 @@ describe('cast engine: adopt (Chromecast)', () => {
     expect(get(env.out)?.itemId).toBe('other');
   });
 
-  it('AirPlay hand-offs are not adopted by the Chromecast engine', () => {
+  it('an AirPlay hand-off without its element and controller is not adopted', () => {
     const env = setup();
     env.engine.adopt(handoff({ kind: 'airplay' }));
     expect(get(env.out)).toBeNull();
