@@ -244,6 +244,31 @@ describe('cast token hardening', () => {
     expect((await env.app.inject({ method: 'POST', url: '/internal/authz', headers: H, payload: { ct } })).statusCode).toBe(400);
   });
 
+  it('AirPlay token (via airplay): sender + TV may both use it (two-address pin), a third address is refused; record says airplay', async () => {
+    const { r, ct } = await create(admin, { via: 'airplay' });
+    expect(r.statusCode).toBe(200);
+    const rec = JSON.parse((await env.kv.get(`cast:${hashToken(ct)}`))!);
+    expect(rec.via).toBe('airplay');
+    expect((await authz({ ct, client: '203.0.113.21' })).statusCode).toBe(200); // Safari on the phone loads the playlist
+    expect((await authz({ ct, client: '203.0.113.22' })).statusCode).toBe(200); // the TV streams
+    expect((await authz({ ct, client: '203.0.113.23' })).statusCode).toBe(401);
+    expect((await authz({ ct, client: '203.0.113.21' })).statusCode).toBe(200);
+    expect((await authz({ ct, client: '203.0.113.22' })).statusCode).toBe(200);
+    // revoking drops both pins
+    expect((await call(admin, 'DELETE', `/api/cast/session/${r.json().castId}`)).statusCode).toBe(200);
+    expect((await env.kv.keys('castpin2:')).some((k) => k.endsWith(hashToken(ct)))).toBe(false);
+    skipClock(5100);
+    expect((await authz({ ct, client: '203.0.113.22' })).statusCode).toBe(401);
+  });
+
+  it('Chromecast stays single-pin (default via) and an unknown via is refused', async () => {
+    const { ct } = await create();
+    expect(JSON.parse((await env.kv.get(`cast:${hashToken(ct)}`))!).via).toBe('chromecast');
+    expect((await authz({ ct, client: '203.0.113.31' })).statusCode).toBe(200);
+    expect((await authz({ ct, client: '203.0.113.32' })).statusCode).toBe(401);
+    expect((await call(admin, 'POST', '/api/cast/session', { itemId: ID, via: 'miracast' })).statusCode).toBe(400);
+  });
+
   it('simultaneous first uses: exactly one client wins the pin', async () => {
     const { ct } = await create();
     const rs = await Promise.all(['203.0.113.10', '203.0.113.11', '203.0.113.12'].map((client) => authz({ ct, client })));

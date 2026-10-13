@@ -115,6 +115,14 @@ const en: Translation<typeof de> = {
     playingOn: 'Playing on {name}',
     stop: 'Stop casting',
   },
+  airplay: {
+    play: 'Play on AirPlay device',
+    playing: 'Playing via AirPlay',
+    change: 'Change AirPlay device',
+    failed: 'AirPlay failed – continuing here.',
+    needsTranscode: 'AirPlay needs transcoding – not allowed for your role.',
+    tvHint: 'No AirPlay or Chromecast on your TV? Open {url} in the TV’s browser and pair your phone as the remote.',
+  },
   mode: {
     label: 'Playback: {mode}',
     direct: 'Direct Play (original file)',

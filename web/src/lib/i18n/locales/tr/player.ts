@@ -115,6 +115,14 @@ const tr: Translation<typeof de> = {
     playingOn: '{name} cihazında oynatılıyor',
     stop: 'Aktarımı durdur',
   },
+  airplay: {
+    play: 'AirPlay cihazında oynat',
+    playing: 'AirPlay ile oynatılıyor',
+    change: 'AirPlay cihazını değiştir',
+    failed: 'AirPlay başarısız oldu – burada devam ediliyor.',
+    needsTranscode: 'AirPlay için dönüştürme gerekiyor – rolün buna izin vermiyor.',
+    tvHint: 'Televizyonda AirPlay veya Chromecast yok mu? TV tarayıcısında {url} adresini aç ve telefonunu kumanda olarak eşleştir.',
+  },
   mode: {
     label: 'Oynatma: {mode}',
     direct: 'Doğrudan oynatma (orijinal dosya)',

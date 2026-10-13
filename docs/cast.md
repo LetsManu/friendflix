@@ -1,4 +1,4 @@
-# Chromecast
+# Chromecast und AirPlay
 
 Aus dem Player kann ein Film oder eine Folge per Chromecast (und Geräte mit eingebautem Chromecast, z. B. Google TV) auf den Fernseher gesendet werden. Verwendet wird der **Default Media Receiver** von Google: keine Registrierung, keine eigene Receiver-App, kein Google-Konto nötig.
 
@@ -7,7 +7,7 @@ Aus dem Player kann ein Film oder eine Folge per Chromecast (und Geräte mit ein
 - `PUBLIC_URL` beginnt mit `https://` und hat ein **öffentlich gültiges Zertifikat** (Let's Encrypt über NPM genügt). Der Chromecast lädt die Streams selbst von dieser Adresse; ein selbst signiertes Zertifikat oder eine reine LAN-Adresse funktioniert nicht.
 - Der Chromecast erreicht `PUBLIC_URL` aus seinem Netz (bei Split-DNS muss der Name im Heimnetz auflösen).
 - NPM: die Location `/media/c/` aus `deploy/npm/portal.advanced.conf` (mit `access_log off` **und** `error_log /dev/null`, denn auch nginx-Fehlerzeilen enthalten die Anfrage-URI, also das Token) ist eingetragen.
-- Absender: Chrome, Edge oder ein anderer Chromium-Browser (Desktop und Android). Safari, Firefox und iOS-Browser bieten keine Cast-Taste (Apple erlaubt dort kein Google Cast); am iPhone hilft AirPlay.
+- Absender: Chrome, Edge oder ein anderer Chromium-Browser (Desktop und Android). Safari, Firefox und iOS-Browser bieten keine Cast-Taste (Apple erlaubt dort kein Google Cast); am iPhone, iPad und Mac gibt es stattdessen AirPlay (siehe unten).
 - **Plan B** (nginx `auth_request`, `deploy/npm/plan-b-auth-request.conf`) unterstützt Cast nicht: dort ist `CAST_ENABLED=false` zu setzen.
 
 `CAST_ENABLED=false` schaltet alles ab; die Cast-Taste erscheint dann nicht und das Google-Skript wird nicht geladen.
@@ -46,6 +46,22 @@ Eigenschaften:
 | Backend nicht erreichbar | 503 (zählt nicht als Fehlversuch) |
 | Metriken | `friendflix_gateway_cast_requests_total{code}`; das Token taucht nirgends auf |
 
+## AirPlay (Safari auf iPhone, iPad, Mac)
+
+Safari (auch die Home-Bildschirm-App und jeder iOS-Browser, da alle WebKit sind) kann das `<video>` des Players per AirPlay an ein Apple TV oder einen AirPlay-2-Fernseher (z. B. **LG webOS ab 2019**, Samsung, Sony, Vizio) geben. Es gelten dieselben Voraussetzungen wie oben (`CAST_ENABLED=true`, https-`PUBLIC_URL` mit gültigem Zertifikat, der Fernseher erreicht `PUBLIC_URL`, NPM-Block `/media/c/`).
+
+- **Taste:** Die AirPlay-Taste (Bildschirm mit Dreieck) erscheint in der Steuerleiste neben „Besetzung & Infos“, sobald Safari einen Empfänger meldet (`webkitplaybacktargetavailabilitychanged`, `availability: available`). Ein Tipp öffnet die Geräteauswahl des Systems (`webkitShowPlaybackTargetPicker()`). Erkannt wird über die Funktion selbst, nicht über den User-Agent; Chrome/Android behalten ihre Chromecast-Taste im Menü „Mehr“. Das Video trägt `x-webkit-airplay="allow"`, `disableRemotePlayback` wird nie gesetzt.
+- **Natives HLS:** AirPlay im „Video-URL“-Modus gibt die Adresse des Videos an den Fernseher weiter. Ein MSE-/ManagedMediaSource-Stream (hls.js) hat keine solche Adresse (hls.js setzt sogar `disableRemotePlayback`). Wo AirPlay möglich ist und der Browser HLS selbst abspielt, spielt der Player HLS deshalb immer **nativ** statt über hls.js.
+- **Token statt Cookie:** Der Fernseher lädt Playlist und Segmente selbst, ohne die Cookies des Nutzers. Sobald Safari `webkitCurrentPlaybackTargetIsWireless` meldet, meldet der Player die lokale Wiedergabe ab, holt mit `POST /api/cast/session` (`via: "airplay"`, gleiche Audiospur und Qualität) ein Cast-Token und setzt das Video auf dessen URL, an derselben Stelle und im selben Zustand (Pause/Wiedergabe). Grenzen (Rolle, `transcoding`, `maxStreams`, Fern-Bitrate außerhalb des Heimnetzes, 1080p/20 Mbit/s, höchstens 2 Tokens) und Laufzeit sind dieselben wie bei Chromecast; das Token wird 10 Minuten vor Ablauf erneuert, ebenso bei Wechsel von Audiospur oder Qualität.
+- **Ende:** Wählt man in der AirPlay-Auswahl wieder das iPhone, wird das Token widerrufen (`DELETE /api/cast/session/:castId`) und der normale Stream läuft an der Stelle weiter, an der der Fernseher war. Schlägt das Anfordern fehl (z. B. `max_streams`), erscheint ein Hinweis und der normale Stream wird wiederhergestellt. Verlassen des Players widerruft das Token ebenfalls.
+- **Anzeige:** Während AirPlay zeigt der Player „Läuft über AirPlay“ (Safari verrät den Gerätenamen nicht) und eine Taste, die die Geräteauswahl öffnet; Pause, Springen und Fortschritt laufen über das Video-Element selbst, Safari reicht sie an den Fernseher weiter. „Klare Stimmen“/„Nachtmodus“ sind währenddessen aus.
+- **Adress-Bindung:** Safari lädt die Playlist eventuell selbst, bevor es die URL an den Fernseher gibt; im Heimnetz haben Handy und Fernseher verschiedene Adressen. AirPlay-Tokens (`via: airplay`) binden sich deshalb an **zwei** Client-Adressen (`castpin:` und `castpin2:`, jeweils erster Nutzer gewinnt), jede weitere Adresse bekommt 401. Chromecast-Tokens bleiben bei einer Adresse.
+- **Untertitel:** Im Video-URL-Modus zeigt der Fernseher nur Spuren aus dem Stream selbst. Die Untertitel des Players sind seitlich geladene WebVTT-Spuren und erscheinen daher **nicht** auf dem Fernseher (eingebrannte Untertitel bietet der Cast-Ablauf nicht an). Die gewählte Audiospur gilt dagegen.
+
+### Fernseher ohne AirPlay und ohne Chromecast
+
+Ältere LG-/Samsung-Fernseher (oder solche mit abgeschaltetem AirPlay): den **TV-Modus** nutzen – im Browser des Fernsehers `https://portal.<domain>/tv` öffnen und das Handy unter **Menü → Fernbedienung** koppeln (siehe [tv-mode.md](tv-mode.md)). Der Player zeigt diesen Hinweis im Menü „Mehr“ auf Handys, wenn weder AirPlay- noch Chromecast-Empfänger gefunden werden.
+
 ## Auf echter Hardware prüfen
 
 Die Tests decken Backend und Gateway ab; folgendes lässt sich nur mit einem Chromecast prüfen:
@@ -56,3 +72,9 @@ Die Tests decken Backend und Gateway ab; folgendes lässt sich nur mit einem Chr
 - Der Chromecast nutzt für Playlist, Segmente und Poster dieselbe Client-Adresse (Adress-Bindung; z. B. kein Wechsel zwischen IPv4/IPv6 im laufenden Betrieb).
 - Token-Erneuerung bei langen Titeln und das Zurückwechseln auf lokale Wiedergabe nach Verbindungsabbruch.
 - Verhalten hinter Split-DNS/NAT-Loopback und mit dem NPM-Zertifikat.
+
+AirPlay (iPhone/iPad/Mac mit Safari und einem Apple TV oder AirPlay-2-Fernseher; die Tests simulieren nur Safaris Ereignisse):
+
+- Taste erscheint nur mit Empfänger im Netz; die Systemauswahl öffnet sich; nach der Wahl spielt der Fernseher an derselben Stelle weiter (Token-URL), nach Rückkehr zum iPhone läuft der lokale Stream an der Stelle des Fernsehers weiter.
+- Ob Safari die Playlist selbst lädt und von welcher Adresse (Zwei-Adressen-Bindung reicht? IPv4/IPv6-Wechsel?), Verhalten im Hintergrund und bei gesperrtem Bildschirm, Token-Erneuerung bei langen Filmen, Wechsel von Audiospur/Qualität während AirPlay.
+- Natives HLS in Safari (macOS und iOS) statt hls.js: Start, Springen, Qualitätswechsel.
