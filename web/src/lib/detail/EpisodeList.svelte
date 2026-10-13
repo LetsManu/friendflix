@@ -11,6 +11,7 @@
   import EpisodeComments from '#lib/detail/EpisodeComments.svelte';
   import { kidsMode } from '#lib/kids';
   import { playPrefetch } from '#lib/player/prefetch';
+  import { playOrCast } from '#lib/cast/playOrCast';
 
   /** series id (for the per-episode download buttons) */
   export let seriesId: string;
@@ -54,7 +55,7 @@
         {@const pct = e.positionTicks && e.runtimeTicks ? Math.min(100, (e.positionTicks / e.runtimeTicks) * 100) : 0}
         <li class="eprow" class:cur={current(e)}>
           <div class="epmain">
-          <a class="ep" href="/watch/{e.id}{qs ? '?' + qs : ''}" aria-current={current(e) ? 'true' : undefined} data-play-scope use:playPrefetch>
+          <a class="ep" href="/watch/{e.id}{qs ? '?' + qs : ''}" aria-current={current(e) ? 'true' : undefined} data-play-scope use:playPrefetch on:click={(ev) => playOrCast(ev, e)}>
             <span class="n" aria-hidden="true">{e.indexNumber ?? ''}</span>
             <span class="th" data-play-art>
               {#if e.image}<img class:spoil={hidden(e, revealed)} loading="lazy" src={img(e.id, 320)} alt="" />{/if}

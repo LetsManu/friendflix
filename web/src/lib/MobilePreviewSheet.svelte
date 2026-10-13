@@ -10,6 +10,7 @@
   import { listIds, prefs, toggleList } from '#lib/stores';
   import { closePreview, previewSheet } from '#lib/previewSheet';
   import { genreLine, itemPath, playPath, runtimeLabel, shareData } from '#lib/mobile';
+  import { playOrCast } from '#lib/cast/playOrCast';
   import { kidsMode } from '#lib/kids';
   import { t, tr } from '#lib/i18n';
 
@@ -111,7 +112,7 @@
     </div>
     {#if item.overview}<p class="ov">{hidden ? $t('home.card.spoilerHidden') : item.overview}</p>{/if}
     <div class="btns">
-      <a class="play" href={playPath(item)} on:click={() => close(false)}><Icon name="play" size={22} />{item.positionTicks ? $t('home.card.resume') : $t('home.card.play')}</a>
+      <a class="play" href={playPath(item)} on:click={(e) => { if (item.type !== 'Series' && item.type !== 'BoxSet') playOrCast(e, item); close(false); }}><Icon name="play" size={22} />{item.positionTicks ? $t('home.card.resume') : $t('home.card.play')}</a>
       {#if downloadable}<span class="ic dl"><DownloadButton itemId={item.id} seriesId={item.seriesId ?? ''} compact /><small>{$t('home.card.download')}</small></span>{/if}
       <button type="button" class="ic" aria-pressed={inList} on:click={list}><span class="circ"><Icon name={inList ? 'check' : 'plus'} size={22} /></span><small>{$t('home.card.myList')}</small></button>
       {#if !$kidsMode}<button type="button" class="ic" on:click={share}><span class="circ"><Icon name="share" size={20} /></span><small>{$t('home.card.share')}</small></button>{/if}
