@@ -1,3 +1,5 @@
+// SPDX-FileCopyrightText: 2026 Manuel Weißböck
+// SPDX-License-Identifier: AGPL-3.0-or-later
 import webpush from 'web-push';
 import type { Ctx } from './ctx.js';
 import { broadcastLanguage, isLanguage, msg, renderNotice, type Language } from './i18n.js';

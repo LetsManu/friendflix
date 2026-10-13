@@ -1,3 +1,5 @@
+// SPDX-FileCopyrightText: 2026 Manuel Weißböck
+// SPDX-License-Identifier: AGPL-3.0-or-later
 export class SeerrError extends Error {
   constructor(public status: number, message: string) {
     super(message);

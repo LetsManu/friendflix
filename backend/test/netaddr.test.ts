@@ -1,3 +1,5 @@
+// SPDX-FileCopyrightText: 2026 Manuel Weißböck
+// SPDX-License-Identifier: AGPL-3.0-or-later
 import { describe, expect, it } from 'vitest';
 import { clientAddress, isHomeAddress, isHomeRequest, isValidCidr } from '../src/netaddr.js';
 import { loadConfig } from '../src/config.js';

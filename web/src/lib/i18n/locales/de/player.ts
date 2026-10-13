@@ -1,3 +1,5 @@
+// SPDX-FileCopyrightText: 2026 Manuel Weißböck
+// SPDX-License-Identifier: AGPL-3.0-or-later
 /** Area "player": player controls, watch page, episodes panel, phone remote, Chromecast, TV pairing. German is the typed source. */
 export default {
   /** browser tab title of the watch page while the title is unknown */
