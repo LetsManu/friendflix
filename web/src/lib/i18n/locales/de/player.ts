@@ -152,6 +152,7 @@ export default {
     next: 'Nächste Folge',
     pip: 'Bild-in-Bild',
     jump: 'Zu 0 – 90 % springen',
+    speed: 'Wiedergabetempo ändern',
     escape: 'Menü schließen / Vollbild verlassen',
     help: 'Diese Übersicht',
   },

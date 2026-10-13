@@ -150,6 +150,7 @@ const fr: Translation<typeof de> = {
     next: 'Épisode suivant',
     pip: 'Image dans l’image',
     jump: 'Aller à 0 – 90 %',
+    speed: 'Changer la vitesse de lecture',
     escape: 'Fermer le menu / quitter le plein écran',
     help: 'Cet aperçu',
   },

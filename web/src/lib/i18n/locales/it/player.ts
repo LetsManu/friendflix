@@ -150,6 +150,7 @@ const it: Translation<typeof de> = {
     next: 'Episodio successivo',
     pip: 'Picture-in-picture',
     jump: 'Vai a 0 – 90%',
+    speed: 'Cambia la velocità di riproduzione',
     escape: 'Chiudi il menu / esci dallo schermo intero',
     help: 'Questa panoramica',
   },

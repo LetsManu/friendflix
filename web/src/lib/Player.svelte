@@ -529,7 +529,7 @@
   $: marks = chapterMarks(chapters, duration);
   $: showScenes = usefulChapters(chapters, duration);
   const chapterAt = (sec: number) => { const i = chapterIndexAt(chapters, sec); return chapters.length > 1 && i >= 0 ? chapterLabel(chapters[i]!, i) : ''; };
-  function closeScenes() { menu = ''; void tickDom().then(() => scBtn?.focus()); }
+  function closeScenes() { menu = ''; void tickDom().then(() => (scBtn ?? moreBtn)?.focus()); }
 
   // ---- sound: "Klare Stimmen" / "Nachtmodus" (Web Audio on the local <video>; the profile's server pref `audioFx`, with a
   //      localStorage copy so the player starts with the right mode before /api/prefs answered) ----
@@ -592,7 +592,14 @@
     } catch { subMsg = tr('player.subs.downloadFailed'); }
     subBusy = false;
   }
-  function setRate(r: number) { if (!video) return; rate = r; video.playbackRate = r; menu = ''; flash(r === 1 ? tr('player.speed.normalToast') : tr('player.speed.rate', { r })); }
+  function setRate(r: number, keepMenu = false) { if (!video) return; rate = r; video.playbackRate = r; if (!keepMenu) menu = ''; flash(r === 1 ? tr('player.speed.normalToast') : tr('player.speed.rate', { r })); }
+  /** < / > : one step along the speed list, clamped at both ends (no wrap); not in a watch party (the drift correction owns the rate) */
+  function speedBy(delta: 1 | -1) {
+    if (partyMode || !video) return;
+    let i = SPEEDS.findIndex((r) => r === rate);
+    if (i < 0) i = SPEEDS.reduce((best, r, k) => (Math.abs(r - rate) < Math.abs(SPEEDS[best]! - rate) ? k : best), 0);
+    setRate(SPEEDS[Math.max(0, Math.min(SPEEDS.length - 1, i + delta))]!, true);
+  }
   // ---- Chromecast entry in the "Mehr" menu (the SDK loads lazily, Chromium only) ----
   function castClick() { menu = ''; if (!$castState.connected) void requestCastSession(); else if (casting) castStop(); else void startCast(); }
   $: castLabel = casting ? $t('player.cast.stopOn', { name: $castState.deviceName || 'Chromecast' }) : $castState.connected ? $t('player.cast.playOn', { name: $castState.deviceName || 'Chromecast' }) : $t('player.cast.castTo');
@@ -602,7 +609,7 @@
   let ICON = 36;
   function pickEpisode(e: CustomEvent<{ id: string }>) { menu = ''; dispatch('episode', e.detail); }
   /** "Folgen" panel closed (✕ or the playing episode): focus goes back to its trigger */
-  let epBtn: HTMLButtonElement | undefined;
+  let epBtn: HTMLButtonElement | undefined, moreBtn: HTMLButtonElement | undefined;
   function closeEpisodes() { menu = ''; void tickDom().then(() => epBtn?.focus()); }
   function setVolume(v: number) { if (casting) { volume = v; muted = v === 0; castSetVolume(v); return; } if (!video) return; volume = v; video.volume = v; video.muted = v === 0; muted = v === 0; try { localStorage.setItem('ff_vol', String(v)); } catch { /* ignore */ } }
   function volumeBy(delta: number) { const v = stepVolume(muted ? 0 : volume, delta); setVolume(v); flash(tr('player.volume.level', { n: Math.round(v * 100) }), 600); }
@@ -648,6 +655,7 @@
       case 'skip': if (skip && allowed()) doSkip(); break;
       case 'next': if (hasNext && allowed()) dispatch('next'); else flash(tr('player.noNext')); break;
       case 'help': help = !help; break;
+      case 'speed': speedBy(a.delta); break;
       case 'pip': if (pipOk && !casting) void pip(); break;
       case 'tvControls': focusControls(); break;
       case 'escape': menu = ''; subDlg = false; help = false; if (showXray) closeCastInfo(); peek = false; break;
@@ -678,9 +686,10 @@
     if (chipOpen) { e.preventDefault(); e.stopImmediatePropagation(); chipOpen = false; return; } // the quality bubble closes alone
     if (menu || subDlg || help) {
       e.preventDefault(); e.stopImmediatePropagation();
-      const panelBtn = menu === 'episodes' ? epBtn : menu === 'chapters' ? scBtn : undefined;
+      const panelBtn = menu === 'episodes' ? epBtn : menu === 'chapters' ? (scBtn ?? moreBtn) : undefined;
+      const hadMenu = menu !== '';
       menu = ''; subDlg = false; help = false;
-      if (tvMode() || panelBtn) tickDom().then(() => (panelBtn ?? opener)?.focus());
+      if (hadMenu || tvMode() || panelBtn) tickDom().then(() => (panelBtn ?? opener)?.focus()); // focus goes back to the button that opened it
     } else if (showXray && (xray || stage?.querySelector('.ci')?.contains(document.activeElement))) {
       e.preventDefault(); e.stopImmediatePropagation();
       const sheetBack = stage?.querySelector<HTMLButtonElement>('.ci [data-back]');
@@ -715,6 +724,23 @@
     const now = Date.now();
     if (menu) { menu = ''; return; }
     if (now - lastTap < 280) { toggleFullscreen(); lastTap = 0; } else { lastTap = now; setTimeout(() => { if (lastTap === now) { togglePlay(); lastTap = 0; } }, 285); }
+  }
+  /** a click outside the open menu (and not on its opener, which toggles itself) closes it; focus returns to the opener. A click on the picture only closes. */
+  function onOutsideClick(e: MouseEvent) {
+    if (!menu || !stage) return;
+    const t = e.target as HTMLElement | null;
+    if (!t || t.closest('.menu, [aria-expanded="true"]')) return;
+    const opener = stage.querySelector<HTMLElement>('.ctl [aria-expanded="true"]');
+    const onPicture = stage.contains(t) && !t.closest(NO_GESTURE);
+    menu = '';
+    if (onPicture) { e.stopPropagation(); void tickDom().then(() => opener?.focus()); }
+  }
+  /** mouse wheel over the picture = volume (desktop; a menu open keeps its own scrolling) */
+  function onWheel(e: WheelEvent) {
+    if (coarse || tvMode() || locked || menu || subDlg || help || !video || e.ctrlKey || !e.deltaY) return;
+    if ((e.target as HTMLElement).closest(NO_GESTURE)) return;
+    e.preventDefault(); wake();
+    volumeBy(e.deltaY > 0 ? -0.05 : 0.05);
   }
   function toggleControls() { if (tick - lastActive < 3000 && !paused) lastActive = 0; else wake(); }
 
@@ -842,9 +868,16 @@
     window.addEventListener('online', online);
     document.addEventListener('visibilitychange', vis);
     video?.addEventListener('enterpictureinpicture', pipOn); video?.addEventListener('leavepictureinpicture', pipOff);
-    const fs = () => (fullscreen = Boolean(document.fullscreenElement));
+    const fs = () => {
+      fullscreen = Boolean(document.fullscreenElement);
+      // phones: fullscreen = landscape (refused on desktop / iOS / without a gesture: ignore)
+      if (!coarse || tvMode()) return;
+      const so = screen.orientation as ScreenOrientation & { lock?: (o: string) => Promise<void> };
+      try { if (fullscreen) void so.lock?.('landscape')?.catch(() => undefined); else so.unlock?.(); } catch { /* ignore */ }
+    };
     window.addEventListener('pagehide', bye);
     document.addEventListener('fullscreenchange', fs);
+    window.addEventListener('click', onOutsideClick, true);
     window.addEventListener('ff-remote', onRemote);
     const touched = () => { noteInteraction(); fxGesture(); };
     window.addEventListener('pointerdown', touched, true); window.addEventListener('keydown', touched, true); window.addEventListener('ff-remote', touched);
@@ -852,7 +885,7 @@
     window.addEventListener('pointerdown', unmuteOnGesture, true);
     return () => {
       window.removeEventListener('pointerdown', touched, true); window.removeEventListener('keydown', touched, true); window.removeEventListener('ff-remote', touched);
-      window.removeEventListener('pagehide', bye); document.removeEventListener('fullscreenchange', fs);
+      window.removeEventListener('pagehide', bye); document.removeEventListener('fullscreenchange', fs); window.removeEventListener('click', onOutsideClick, true);
       window.removeEventListener('online', online); document.removeEventListener('visibilitychange', vis);
       video?.removeEventListener('enterpictureinpicture', pipOn); video?.removeEventListener('leavepictureinpicture', pipOff);
       narrow.removeEventListener?.('change', setIcon);
@@ -871,7 +904,7 @@
 </script>
 
 <svelte:window on:keydown={onKey} on:keydown|capture={onBackCapture} />
-<div class="stage {subClasses($prefs.subtitleStyle)}" class:idle={!showUi} class:locked style="--inset:{inset}px" bind:this={stage} on:mousemove={() => { if (Date.now() - lastTouch > 800) wake(); }} on:click={onSurfaceClick} on:keydown={() => {}}
+<div class="stage {subClasses($prefs.subtitleStyle)}" class:idle={!showUi} class:locked style="--inset:{inset}px" bind:this={stage} on:mousemove={() => { if (Date.now() - lastTouch > 800) wake(); }} on:click={onSurfaceClick} on:wheel|nonpassive={onWheel} on:keydown={() => {}}
   on:pointerdown={gDown} on:pointermove={gMove} on:pointerup={gUp} on:pointercancel={gCancel} role="presentation">
   <!-- svelte-ignore a11y_media_has_caption -->
   <video bind:this={video} playsinline crossorigin="use-credentials" style:filter={brightness < 1 ? `brightness(${brightness})` : null}
@@ -991,7 +1024,7 @@
         {/if}
         {#if showScenes}
           <div class="mwrap">
-            <button class="ic" bind:this={scBtn} aria-label={$t('scenes.chapters.open')} title={$t('scenes.chapters.open')} aria-expanded={menu === 'chapters'} on:click={() => toggleMenu('chapters')}><Icon name="film" size={ICON} /></button>
+            {#if !coarse}<button class="ic" bind:this={scBtn} aria-label={$t('scenes.chapters.open')} title={$t('scenes.chapters.open')} aria-expanded={menu === 'chapters'} on:click={() => toggleMenu('chapters')}><Icon name="film" size={ICON} /></button>{/if}
             {#if menu === 'chapters'}<div class="menu bare"><ScenesPanel {chapters} current={shown} {duration} trickplay={info?.trickplay} on:seek={(e) => { seekTo(e.detail.time); closeScenes(); }} on:close={closeScenes} /></div>{/if}
           </div>
         {/if}
@@ -1022,7 +1055,7 @@
         {/if}
         {#if !partyMode}
           <div class="mwrap">
-            <button class="ic" aria-label={$t('player.speed.aria', { r: speedLabel(rate, $t) })} title={$t('player.speed.short')} aria-expanded={menu === 'speed'} on:click={() => toggleMenu('speed')}><Icon name="gauge" size={ICON} />{#if rate !== 1}<span class="ratebadge" aria-hidden="true">{$t('player.speed.rate', { r: rate })}</span>{/if}</button>
+            {#if !coarse}<button class="ic" aria-label={$t('player.speed.aria', { r: speedLabel(rate, $t) })} title={$t('player.speed.short')} aria-expanded={menu === 'speed'} on:click={() => toggleMenu('speed')}><Icon name="gauge" size={ICON} />{#if rate !== 1}<span class="ratebadge" aria-hidden="true">{$t('player.speed.rate', { r: rate })}</span>{/if}</button>{/if}
             {#if menu === 'speed'}
               <div class="menu speed" data-nav data-scope role="dialog" aria-label={$t('player.speed.title')}>
                 <h3>{$t('player.speed.title')}</h3>
@@ -1034,12 +1067,14 @@
           </div>
         {/if}
         <div class="mwrap">
-          <button class="ic" aria-label={$t('player.controls.more')} title={$t('player.controls.more')} aria-expanded={menu === 'more' || menu === 'scenes' || menu === 'settings'} on:click={() => (menu = menu === '' || (menu !== 'more' && menu !== 'scenes' && menu !== 'settings') ? 'more' : '')}>
+          <button class="ic" aria-label={$t('player.controls.more')} title={$t('player.controls.more')} bind:this={moreBtn} aria-expanded={menu === 'more' || menu === 'scenes' || menu === 'settings' || (coarse && (menu === 'speed' || menu === 'chapters'))} on:click={() => (menu = menu === '' || (menu !== 'more' && menu !== 'scenes' && menu !== 'settings' && !(coarse && (menu === 'speed' || menu === 'chapters'))) ? 'more' : '')}>
             <svg width={ICON} height={ICON} viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" focusable="false"><circle cx="5" cy="12" r="2" /><circle cx="12" cy="12" r="2" /><circle cx="19" cy="12" r="2" /></svg>
             {#if sleepAt}<span class="sleepdot" title={$t('player.sleep.left', { t: sleepLeft })}></span>{/if}
           </button>
           {#if menu === 'more'}
             <div class="menu more" data-nav data-scope role="dialog" aria-label={$t('player.controls.more')}>
+              {#if coarse && !partyMode}<button class="mi" on:click={() => (menu = 'speed')}><Icon name="gauge" size={20} />{$t('player.speed.title')}{#if rate !== 1}<span class="muted"> · {$t('player.speed.rate', { r: rate })}</span>{/if}<span class="chev" aria-hidden="true">›</span></button>{/if}
+              {#if coarse && showScenes}<button class="mi" on:click={() => (menu = 'chapters')}><Icon name="film" size={20} />{$t('scenes.chapters.open')}<span class="chev" aria-hidden="true">›</span></button>{/if}
               <button class="mi" on:click={() => (menu = 'scenes')}><Icon name="bookmark" size={20} />{$t('player.bookmark.menu')}<span class="chev" aria-hidden="true">›</span></button>
               <button class="mi" class:on={showXray} aria-pressed={showXray} on:click={() => { if (showXray) { menu = ''; closeCastInfo(); } else openCastInfo(tvMode()); }}><Icon name="users" size={20} />{$t('scenes.info.open')}</button>
               {#if !partyMode && ($castState.available || $castState.connected)}<button class="mi" class:on={casting} aria-pressed={casting} on:click={castClick}><Icon name="cast" size={20} />{castLabel}</button>{/if}
@@ -1237,4 +1272,6 @@
     .lockbtn { bottom: auto; top: 5.5rem; } /* the two-row bar is taller on phones: keep the lock clear of the timeline */
     .speeds { flex-wrap: wrap; justify-content: center; } .speeds::before { display: none; } .sp-opt { min-width: 64px; }
   }
+  /* touch: every main-bar target is at least 48 px */
+  @media (pointer: coarse) { .ic { width: 48px; min-height: 48px; } }
 </style>

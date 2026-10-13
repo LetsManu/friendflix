@@ -150,6 +150,7 @@ const tr: Translation<typeof de> = {
     next: 'Sonraki bölüm',
     pip: 'Pencere içinde pencere',
     jump: '0 – %90 noktasına atla',
+    speed: 'Oynatma hızını değiştir',
     escape: 'Menüyü kapat / tam ekrandan çık',
     help: 'Bu özet',
   },

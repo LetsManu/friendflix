@@ -165,6 +165,7 @@ const pl: Translation<typeof de> = {
     next: 'Następny odcinek',
     pip: 'Obraz w obrazie',
     jump: 'Przejdź do 0 – 90%',
+    speed: 'Zmień prędkość odtwarzania',
     escape: 'Zamknij menu / wyjdź z pełnego ekranu',
     help: 'Ten przegląd',
   },
