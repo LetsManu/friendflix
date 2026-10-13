@@ -342,7 +342,10 @@ export function createCastEngine(deps: EngineDeps, out: Writable<CastSession | n
     if (my !== seq) return; // a newer switch takes over (the controller revokes this token when it replaces it)
     s.busy = false;
     if (s.ci) { if (fresh && !it) patch(s, { title: s.ci.seriesName ?? s.ci.title, subtitle: s.ci.seriesName ? s.ci.title : '', seriesId: undefined, posterId: itemId, isEpisode: Boolean(s.ci.seriesName) }); return; }
-    if (s.view.state === 'connecting') patch(s, { state: 'reconnect', buffering: false }); // the controller was busy: nothing loaded
+    if (s.view.state !== 'connecting') return;
+    // the controller was busy: nothing loaded; the old title's stop is reported, so it must not keep playing on the TV
+    a.video.pause();
+    patch(s, { state: 'reconnect', paused: true, buffering: false });
   }
 
   function arm(s: Live) {

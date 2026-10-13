@@ -301,6 +301,18 @@ describe('cast engine: AirPlay title switch', () => {
     expect(get(env.out)).toMatchObject({ itemId: 'ep2', state: 'reconnect', buffering: false });
   });
 
+  it('a switch the controller does not take pauses the old title (its stop is reported)', async () => {
+    const env = await setup();
+    await env.adopt();
+    expect(env.video.paused).toBe(false);
+    env.spy.switchItem.mockResolvedValueOnce(undefined);
+    await env.engine.playOnTv('ep2', 0);
+    expect(env.reports()).toEqual(['stop']);
+    expect(env.video.pause).toHaveBeenCalled();
+    expect(env.video.paused).toBe(true);
+    expect(get(env.out)).toMatchObject({ state: 'reconnect', paused: true });
+  });
+
   it('tap after a switch the controller did not take loads the remembered title', async () => {
     const env = await setup();
     await env.adopt();
