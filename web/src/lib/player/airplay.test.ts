@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { CastInfo } from '#lib/cast';
 import { airPlaySupported, ARM_MS, AUTO_MAX, AUTO_WINDOW_MS, AVAILABILITY_EVENT, createAirPlay, SETTLE_MS, WIRELESS_EVENT, WIRELESS_OFF_GRACE_MS, type AirPlayDeps, type AirPlayState } from './airplay';
 import { clearAirLog, readAirLog } from './airplayLog';
@@ -29,7 +29,10 @@ const CI: CastInfo = {
 };
 const CI2: CastInfo = { ...CI, castId: 'd'.repeat(32), contentUrl: 'https://ff.example/media/c/TOKEN2/Videos/x/master.m3u8' };
 const flush = () => new Promise((r) => setTimeout(r, 0));
-afterEach(() => { vi.useRealTimers(); clearAirLog(); });
+/** the stream probe fetches the token's playlists: default stub = 404 (no network in unit tests) */
+const probeFetch = vi.fn(async (_u: string, _o?: unknown) => new Response('', { status: 404, headers: { 'content-type': 'text/plain' } }));
+beforeEach(() => { probeFetch.mockClear(); vi.stubGlobal('fetch', probeFetch); });
+afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); clearAirLog(); });
 const fake = () => vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'], shouldAdvanceTime: true });
 
 function setup(over: Partial<AirPlayDeps> = {}, probe?: EventTarget) {
@@ -695,5 +698,106 @@ describe('AirPlay: no token request loop', () => {
     await vi.advanceTimersByTimeAsync(SETTLE_MS + 10); // re-check: still wireless, same episode -> error, no request
     expect(deps.request).toHaveBeenCalledOnce();
     expect(c.state).toMatchObject({ active: true, error: true });
+  });
+});
+
+describe('stream probe', () => {
+  const MASTER = '#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=1,CODECS="avc1.640028,mp4a.40.2"\nmain.m3u8?api_key=SECRETKEY123\n';
+  const VARIANT = '#EXTM3U\n#EXT-X-VERSION:3\n#EXTINF:6,\nseg0.ts?api_key=SECRETKEY123\n#EXT-X-ENDLIST\n';
+  const okFetch = () => probeFetch.mockImplementation(async (u: string) => new Response(u.includes('master') ? MASTER : VARIANT, { status: 200, headers: { 'content-type': 'application/vnd.apple.mpegurl' } }));
+  const evs = () => readAirLog().map((e) => e.ev);
+
+  it('after token-ok: master and first variant are fetched without credentials and logged sanitized', async () => {
+    okFetch();
+    const { v, c } = setup();
+    c.pick();
+    await flush(); await flush();
+    expect(probeFetch.mock.calls.map((x) => x[0])).toEqual([CI.contentUrl, 'https://ff.example/media/c/TOKEN/Videos/x/main.m3u8?api_key=SECRETKEY123']);
+    expect(probeFetch.mock.calls[0]![1]).toEqual({ credentials: 'omit', cache: 'no-store' });
+    const log = readAirLog();
+    expect(log.map((e) => e.ev)).toEqual(expect.arrayContaining(['token-ok', 'probe-master', 'probe-variant']));
+    const pm = log.find((e) => e.ev === 'probe-master')!, pv = log.find((e) => e.ev === 'probe-variant')!;
+    expect(pm.note).toMatch(/^HTTP 200 application\/vnd\.apple\.mpegurl \d+ B \| EXTM3U \| EXT-X-STREAM-INF BANDWIDTH=1 CODECS="avc1\.640028,mp4a\.40\.2" \| uri:rel \.m3u8$/);
+    expect(pv.note).toMatch(/VERSION=3 \| ENDLIST \| EXTINF x1 \| first uri:rel \.ts$/);
+    expect(JSON.stringify(log)).not.toMatch(/SECRETKEY|api_key|TOKEN|main\.m3u8|seg0/);
+    expect(v.src).toBe(CI.contentUrl); // the probe changed nothing on the element
+  });
+
+  it('runs once per token: tap, then refresh and retry each probe their new token only', async () => {
+    okFetch();
+    const request = vi.fn().mockResolvedValueOnce(CI).mockResolvedValueOnce(CI2).mockResolvedValue(CI2);
+    const { v, c } = setup({ request });
+    await airplayOn(v, c);
+    await flush();
+    expect(probeFetch.mock.calls.filter((x) => x[0] === CI.contentUrl)).toHaveLength(1);
+    await c.refresh();
+    await flush(); await flush();
+    expect(probeFetch.mock.calls.filter((x) => x[0] === CI2.contentUrl)).toHaveLength(1);
+    expect(probeFetch.mock.calls.filter((x) => x[0] === CI.contentUrl)).toHaveLength(1);
+  });
+
+  it('probes automatic requests (route chosen outside the button)', async () => {
+    const { v } = setup();
+    v.wireless(true);
+    await flush(); await flush();
+    expect(probeFetch.mock.calls.map((x) => x[0])).toContain(CI.contentUrl);
+    expect(evs()).toContain('probe-master');
+  });
+
+  it('a failing probe (network / CORS) is logged and harmless', async () => {
+    probeFetch.mockImplementation(async () => { throw new TypeError('Load failed'); });
+    const { v, c, deps } = setup();
+    await airplayOn(v, c);
+    await flush();
+    expect(c.state.active).toBe(true);
+    expect(c.state.error).toBe(false);
+    expect(deps.fail).not.toHaveBeenCalled();
+    expect(readAirLog().find((e) => e.ev === 'probe-master-fail')?.note).toBe('error TypeError');
+  });
+
+  it('a non-200 master is logged with the status', async () => {
+    probeFetch.mockImplementation(async () => new Response('x', { status: 403, headers: { 'content-type': 'text/plain' } }));
+    const { c } = setup();
+    c.pick();
+    await flush(); await flush();
+    expect(readAirLog().find((e) => e.ev === 'probe-master')?.note).toBe('HTTP 403 text/plain 1 B (not 200)');
+  });
+
+  it('is skipped when the controller is dead, and silent when it dies meanwhile', async () => {
+    const { c } = setup();
+    c.destroy();
+    clearAirLog();
+    c.pick();
+    await flush();
+    expect(probeFetch).not.toHaveBeenCalled();
+
+    let release!: () => void;
+    probeFetch.mockImplementation(() => new Promise<Response>((r) => { release = () => r(new Response(MASTER, { status: 200 })); }));
+    const b = setup();
+    b.c.pick();
+    await flush(); await flush();
+    b.c.destroy();
+    clearAirLog();
+    release();
+    await flush(); await flush();
+    expect(readAirLog()).toEqual([]);
+  });
+
+  it('video-error logs the MediaError message without URLs, /media paths or ids', async () => {
+    const { v, c } = setup();
+    await airplayOn(v, c);
+    clearAirLog();
+    c.videoError(4, `The operation couldn't be completed (CoreMediaErrorDomain -12927) https://ff.example/media/c/TOKEN/Videos/x/master.m3u8?api_key=SECRETKEY123 /media/c/TOKEN2/y`);
+    const e = readAirLog().find((x) => x.ev === 'video-error')!;
+    expect(e.note).toBe("code 4 msg The operation couldn't be completed (CoreMediaErrorDomain -12927) <url> <url>");
+    expect(JSON.stringify(e)).not.toMatch(/SECRETKEY|TOKEN|ff\.example/);
+  });
+
+  it('video-error without a message keeps the short form', async () => {
+    const { v, c } = setup();
+    await airplayOn(v, c);
+    clearAirLog();
+    c.videoError(4);
+    expect(readAirLog().find((x) => x.ev === 'video-error')?.note).toBe('code 4');
   });
 });
