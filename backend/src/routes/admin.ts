@@ -8,6 +8,7 @@ import { adminOverview, revokeLicense } from '../downloads.js';
 import { createInvite, deleteAuthentikInvitation } from '../invites.js';
 import { checkState, startPlaybackCheck } from '../healthcheck.js';
 import { ERROR_SOURCES, listErrors } from '../errorlog.js';
+import { freshSnapshot } from '../health.js';
 import { clipPath, libraryItems, previews, serviceUser } from '../previews.js';
 import { stat } from 'node:fs/promises';
 import { defaultLimit } from '../requestlimit.js';
@@ -61,7 +62,11 @@ export function adminRoutes(app: FastifyInstance, ctx: Ctx) {
       one<{ bytes: string }>("select coalesce(sum(bytes),0)::text bytes from download_jobs where status='ready'"),
       ctx.db.query<{ finished_at: Date; results: Array<{ ok: boolean }> }>('select finished_at, results from playback_checks order by id desc limit 1').then((r) => r.rows[0] ?? null),
       ctx.seerr.requestCount().catch(() => null), // Seerr down or not configured: the UI shows "not reachable"
-      ctx.jf.admin.ping().catch(() => false),
+      // Block 22: a fresh health snapshot already knows whether the media server answers (saves a ping per shell load)
+      freshSnapshot(ctx).then((snap) => {
+        const media = snap?.services.find((x) => x.id === 'media');
+        return media ? media.level === 'ok' || media.level === 'warn' : ctx.jf.admin.ping();
+      }).catch(() => false),
       listLive(ctx).then((l) => l.length).catch(() => 0),
     ]);
     const total = Number(users.total), locked = Number(users.locked);

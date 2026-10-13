@@ -27,6 +27,7 @@ import { leavingTick, qualityIndexTick } from './fresh.js';
 import { langIndexTick } from './langindex.js';
 import type { Ctx } from './ctx.js';
 import { jobFailed } from './errorlog.js';
+import { healthTick } from './health.js';
 
 const cfg = loadConfig();
 const pool = new pg.Pool({ connectionString: cfg.DATABASE_URL, max: 10 });
@@ -77,6 +78,8 @@ if (cfg.BACKGROUND_JOBS === 'true') {
     timers.push(setInterval(() => void gcDownloads(ctx).then(() => gcLicenses(ctx)).catch(jobFailed(ctx, app.log, 'download-gc', 'download gc failed')), 600_000));
     void startPreparerTick(ctx).catch(jobFailed(ctx, app.log, 'download-prep', 'download prep start failed'));
   }
+  timers.push(setInterval(() => void healthTick(ctx), 60_000)); // admin health snapshot (kv health:snap); never throws
+  void healthTick(ctx);
   timers.push(setInterval(() => void langIndexTick(ctx), 1800_000)); // self-limits to every 12 h, never throws
   void langIndexTick(ctx);
   timers.push(setInterval(() => void qualityIndexTick(ctx), 1800_000)); // 4K / HDR browse filter; self-limits to every 12 h, never throws
