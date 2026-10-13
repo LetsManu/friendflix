@@ -45,20 +45,37 @@ describe('source keys', () => {
 
   it('a key from the environment/file wins: 409 and getSourceKey returns it', async () => {
     const orig = env.ctx.cfg; // same app and database: the routes read ctx.cfg live
-    env.ctx.cfg = { ...orig, TMDB_API_KEY: 'filekey-abcdef99' };
-    const a = admin;
-    const fileEnv = env;
-    await fileEnv.pool.query("insert into app_settings(key, value) values ('source.tmdb', $1)", [JSON.stringify({ enc: encrypt(fileEnv.ctx.encKey, 'dbkey-zzzzzzzz'), last4: 'zzzz', updatedAt: 'x' })]);
-    const put = await call(fileEnv, a, 'PUT', '/api/admin/sources/tmdb', { key: KEY });
-    expect(put.statusCode).toBe(409);
-    expect(put.json()).toEqual({ error: 'from_file' });
-    expect((await call(fileEnv, a, 'DELETE', '/api/admin/sources/tmdb')).statusCode).toBe(409);
-    expect(await getSourceKey(fileEnv.ctx, 'tmdb')).toEqual({ key: 'filekey-abcdef99', from: 'file' });
-    const st = await call(fileEnv, a, 'GET', '/api/admin/sources/tmdb');
-    expect(st.json()).toMatchObject({ set: true, from: 'file', last4: 'ef99' });
-    expect(st.body).not.toContain('filekey-abcdef99');
-    await env.pool.query("delete from app_settings where key='source.tmdb'");
-    env.ctx.cfg = orig;
+    try {
+      env.ctx.cfg = { ...orig, TMDB_API_KEY: 'filekey-abcdef99' };
+      const a = admin;
+      const fileEnv = env;
+      await fileEnv.pool.query("insert into app_settings(key, value) values ('source.tmdb', $1)", [JSON.stringify({ enc: encrypt(fileEnv.ctx.encKey, 'dbkey-zzzzzzzz'), last4: 'zzzz', updatedAt: 'x' })]);
+      const put = await call(fileEnv, a, 'PUT', '/api/admin/sources/tmdb', { key: KEY });
+      expect(put.statusCode).toBe(409);
+      expect(put.json()).toEqual({ error: 'from_file' });
+      expect((await call(fileEnv, a, 'DELETE', '/api/admin/sources/tmdb')).statusCode).toBe(409);
+      expect(await getSourceKey(fileEnv.ctx, 'tmdb')).toEqual({ key: 'filekey-abcdef99', from: 'file' });
+      const st = await call(fileEnv, a, 'GET', '/api/admin/sources/tmdb');
+      expect(st.json()).toMatchObject({ set: true, from: 'file', last4: 'ef99' });
+      expect(st.body).not.toContain('filekey-abcdef99');
+      await env.pool.query("delete from app_settings where key='source.tmdb'");
+    } finally {
+      env.ctx.cfg = orig;
+      await env.pool.query("delete from app_settings where key='source.tmdb'");
+    }
+  });
+
+  it('a stored key that no longer decrypts is reported as invalid, not as set', async () => {
+    const other = Buffer.alloc(32, 9);
+    await env.pool.query("delete from app_settings where key='source.omdb'");
+    await env.pool.query("insert into app_settings(key, value) values ('source.omdb', $1)", [JSON.stringify({ enc: encrypt(other, 'omdbkey-12345678'), last4: '5678', updatedAt: 'x' })]);
+    try {
+      const j = (await call(env, admin, 'GET', '/api/admin/sources/omdb')).json();
+      expect(j).toMatchObject({ set: false, from: null, last4: null, invalid: true });
+    } finally {
+      await env.pool.query("delete from app_settings where key='source.omdb'");
+      await call(env, admin, 'DELETE', '/api/admin/sources/omdb');
+    }
   });
 
   it('is admin only: friend 403, no session 401', async () => {

@@ -82,13 +82,15 @@ export async function sourceStatus(ctx: Ctx, name: SourceName): Promise<SourceSt
   const file = fileKey(ctx, name);
   let last4: string | null = null;
   let from: 'db' | 'file' | null = null;
+  let undecryptable = false;
   if (file) { last4 = file.slice(-4); from = 'file'; }
   else {
     const r = await ctx.db.query<{ value: Stored }>('select value from app_settings where key=$1', [settingKey(name)]);
     const v = r.rows[0]?.value;
-    if (v?.enc) { last4 = v.last4 ?? null; from = 'db'; }
+    if (v?.enc && (await dbKey(ctx, name)) !== null) { last4 = v.last4 ?? null; from = 'db'; } // undecryptable (APP_ENC_KEY changed) counts as not usable
+    else if (v?.enc) undecryptable = true;
   }
-  const s: SourceStatus = { name, set: from !== null, last4, from, invalid: from !== null && (await ctx.kv.get(INVALID_KEY(name))) !== null };
+  const s: SourceStatus = { name, set: from !== null, last4, from, invalid: undecryptable || (from !== null && (await ctx.kv.get(INVALID_KEY(name))) !== null) };
   if (name === 'omdb') {
     s.usedToday = Number((await ctx.kv.get(OMDB_COUNT_KEY(new Date().toISOString().slice(0, 10)))) ?? 0) || 0;
     s.budget = OMDB_DAILY_BUDGET;
