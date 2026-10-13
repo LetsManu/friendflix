@@ -1,5 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
+import { randomUUID } from 'node:crypto';
 import { setTimeout as sleep } from 'node:timers/promises';
 import type { Ctx } from '../ctx.js';
 import { recordError } from '../errorlog.js';
@@ -24,6 +25,9 @@ const SOON_MS = 2 * 60_000;
 const MAX_PAGES = 2000;
 const TYPES = ['Movie', 'Series', 'Episode'] as const;
 const KEEP_S = 90 * 86400;
+/** the running flag expires 5 min after the last heartbeat (refreshed every minute while a scan pages) */
+const RUNNING_TTL_S = 300;
+const HEARTBEAT_MS = 60_000;
 const K = {
   lastStart: 'hygiene:lastStart', lastFull: 'hygiene:lastFull', lastDone: 'hygiene:lastDone', lastTry: 'hygiene:lastTry',
   langs: 'hygiene:langs', running: 'hygiene:running', soon: 'hygiene:soon', summary: 'hygiene:summary',
@@ -140,8 +144,12 @@ type ScanFn = NonNullable<Ctx['jf']['libraryHygiene']>;
 async function run(ctx: Ctx, scanFn: ScanFn, opts: { full?: boolean; now?: Date; pauseMs?: number }): Promise<void> {
   const runStart = opts.now ?? new Date();
   const pause = opts.pauseMs ?? PAUSE_MS;
+  // the running flag is also the lock across replicas (setnx); a short TTL refreshed while scanning, so a killed process
+  // blocks the next scan for minutes, not an hour. Without Redis the scan still runs (single backend).
+  const token = randomUUID();
+  if (!(await ctx.kv.setnx(K.running, token, RUNNING_TTL_S).catch(() => true))) return;
+  let beat = Date.now();
   try {
-    await kvSet(ctx, K.running, '1', 3600);
     await kvSet(ctx, K.lastTry, String(runStart.getTime()));
     const lastFull = Date.parse((await kvGet(ctx, K.lastFull)) ?? '');
     const lastStart = Date.parse((await kvGet(ctx, K.lastStart)) ?? '');
@@ -149,13 +157,15 @@ async function run(ctx: Ctx, scanFn: ScanFn, opts: { full?: boolean; now?: Date;
     const savedSince = full ? undefined : new Date(lastStart - OVERLAP_MS).toISOString();
     const langs = await householdLanguages(ctx);
     const fp = langsFp(langs);
-    let pages = 0;
     for (const type of TYPES) {
       for (let page = 0; page < MAX_PAGES; page++) {
         if (stopping) return; // incomplete: nothing deleted, state unchanged, the next start retries
         const items = await scanFn(type, { start: page * PAGE, limit: PAGE, ...(savedSince ? { savedSince } : {}) });
         await upsert(ctx, items.filter((i) => i?.type === type), langs, runStart);
-        if (++pages % 50 === 0) await kvSet(ctx, K.running, '1', 3600);
+        if (Date.now() - beat >= HEARTBEAT_MS) {
+          beat = Date.now();
+          await kvSet(ctx, K.running, token, RUNNING_TTL_S);
+        }
         if (items.length < PAGE) break;
         if (pause > 0) await sleep(pause);
         else await new Promise((r) => setImmediate(r)); // still yield between pages
@@ -179,7 +189,8 @@ async function run(ctx: Ctx, scanFn: ScanFn, opts: { full?: boolean; now?: Date;
     void recordError(ctx, { source: 'job', code: 'hygiene' });
   } finally {
     await ctx.kv.del(K.summary).catch(() => undefined);
-    await ctx.kv.del(K.running).catch(() => undefined);
+    // only our own flag (another replica may have taken over after our TTL ran out)
+    if ((await kvGet(ctx, K.running)) === token) await ctx.kv.del(K.running).catch(() => undefined);
   }
 }
 

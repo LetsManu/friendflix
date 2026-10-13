@@ -3,7 +3,7 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import type { Ctx } from './ctx.js';
-import { recordError } from './errorlog.js';
+import { recordError, type ErrorInput } from './errorlog.js';
 import { clientErrorsTotal } from './metrics.js';
 import { loadSession } from './session.js';
 
@@ -59,16 +59,22 @@ export function toLogEntry(b: ClientErrorBody) {
   };
 }
 
-/** The aggregate for the admin health page: no user agent, no user, no address. */
-function toErrorInput(e: ReturnType<typeof toLogEntry>) {
-  if (e.kind === 'playback') return { source: 'playback' as const, code: e.code ?? 'unknown', itemId: e.itemId, sample: e.message, release: e.release };
-  return { source: 'client' as const, code: `${e.kind} ${e.message}`, sample: `${e.message} (${e.url})`, release: e.release };
+/**
+ * The aggregate for the admin health page: no user agent, no user, no address. `signedIn` is only a gate (the session's
+ * identity is never part of the entry): an anonymous report must not drive the admin's warning levels.
+ */
+export function toErrorInput(e: ReturnType<typeof toLogEntry>, signedIn: boolean): ErrorInput | null {
+  // the player always runs signed in: an anonymous playback report is not believable (logged, never aggregated)
+  if (e.kind === 'playback') return signedIn ? { source: 'playback', code: e.code ?? 'unknown', itemId: e.itemId, sample: e.message, release: e.release } : null;
+  // anonymous browser errors (login / offline pages) are listed for diagnosis but never raise the 15-minute warning
+  return { source: 'client', code: `${e.kind} ${e.message}`, sample: `${e.message} (${e.url})`, release: e.release, countRecent: signedIn };
 }
 
 /**
  * POST /api/client-errors: unauthenticated on purpose (errors happen on the login / offline pages too).
  * sendBeacon cannot set an x-csrf-token header, so the route is exempt from the CSRF check like /api/tv/code: it has
  * no ambient authority, persists nothing (an in-memory aggregate only) and is rate limited (20/min per IP, 200/h per user or IP).
+ * Only reports of a signed-in browser feed the admin's error levels; anonymous playback reports are not aggregated at all.
  */
 export function clientErrorRoutes(app: FastifyInstance, ctx: Ctx) {
   const origin = new URL(ctx.cfg.PUBLIC_URL).origin;
@@ -91,7 +97,8 @@ export function clientErrorRoutes(app: FastifyInstance, ctx: Ctx) {
     const entry = toLogEntry(parsed.data);
     clientErrorsTotal.inc({ kind: entry.kind });
     req.log.warn({ clientError: entry }, 'client error');
-    void recordError(ctx, toErrorInput(entry)); // process memory only, never Redis/Postgres
+    const input = toErrorInput(entry, Boolean(sess?.userId));
+    if (input) void recordError(ctx, input); // process memory only, never Redis/Postgres
     return reply.code(204).send();
   });
 }

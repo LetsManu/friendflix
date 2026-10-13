@@ -210,7 +210,7 @@ const dict: Translation<typeof de> = {
       loadFailed: 'Hatalar yüklenemedi.',
       source: { server: 'Sunucu', client: 'Tarayıcı', playback: 'Oynatma', job: 'Arka plan' },
       release: 'Sürüm {release}',
-      overflow: { one: '{n} hata türü daha sayılmadı', other: '{n} hata türü daha sayılmadı' },
+      overflow: { one: '{n} eski hata türü artık listelenmiyor', other: '{n} eski hata türü artık listelenmiyor' },
       recent: 'Sunucu {server} · Tarayıcı {client} (15 dk.) · Oynatma {playback} (1 sa.)',
     },
   },

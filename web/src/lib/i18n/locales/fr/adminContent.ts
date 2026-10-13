@@ -210,7 +210,7 @@ const dict: Translation<typeof de> = {
       loadFailed: 'Impossible de charger les erreurs.',
       source: { server: 'Serveur', client: 'Navigateur', playback: 'Lecture', job: 'Arrière-plan' },
       release: 'Version {release}',
-      overflow: { one: '{n} autre type d’erreur non compté', many: '{n} autres types d’erreurs non comptés', other: '{n} autres types d’erreurs non comptés' },
+      overflow: { one: '{n} ancien type d’erreur n’est plus listé', many: '{n} anciens types d’erreurs ne sont plus listés', other: '{n} anciens types d’erreurs ne sont plus listés' },
       recent: 'Serveur {server} · Navigateur {client} (15 min) · Lecture {playback} (1 h)',
     },
   },
