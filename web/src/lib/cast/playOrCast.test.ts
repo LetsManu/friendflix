@@ -3,26 +3,28 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Writable } from 'svelte/store';
 
-const { session, playOnTv, info } = vi.hoisted(() => ({ session: { current: null as unknown }, playOnTv: vi.fn(async () => {}), info: vi.fn() }));
+const { session, playOnTv, info, noteInteraction } = vi.hoisted(() => ({ session: { current: null as unknown }, playOnTv: vi.fn(async () => {}), info: vi.fn(), noteInteraction: vi.fn() }));
 vi.mock('./engine', async () => {
   const { writable } = await import('svelte/store');
   session.current = writable<{ device: string } | null>(null);
   return { castSession: { subscribe: (session.current as Writable<unknown>).subscribe }, castEngine: { playOnTv } };
 });
 vi.mock('#lib/ui/toast', () => ({ toast: { info } }));
+vi.mock('#lib/stillwatching', () => ({ noteInteraction }));
 
 import { playOrCast } from './playOrCast';
 
 const ev = (o: Partial<MouseEvent> = {}) => ({ button: 0, defaultPrevented: false, preventDefault: vi.fn(), ...o }) as unknown as MouseEvent;
 
 describe('playOrCast', () => {
-  beforeEach(() => { (session.current as Writable<unknown>).set(null); playOnTv.mockClear(); info.mockClear(); });
+  beforeEach(() => { (session.current as Writable<unknown>).set(null); playOnTv.mockClear(); info.mockClear(); noteInteraction.mockClear(); });
 
   it('does nothing without a session', () => {
     const e = ev();
     expect(playOrCast(e, { id: 'e1' })).toBe(false);
     expect(e.preventDefault).not.toHaveBeenCalled();
     expect(playOnTv).not.toHaveBeenCalled();
+    expect(noteInteraction).not.toHaveBeenCalled();
   });
 
   it('casts with the resume position and toasts', () => {
@@ -32,6 +34,7 @@ describe('playOrCast', () => {
     expect(e.preventDefault).toHaveBeenCalled();
     expect(playOnTv).toHaveBeenCalledWith('e1', 120);
     expect(info).toHaveBeenCalledWith('Läuft auf Wohnzimmer-TV');
+    expect(noteInteraction).toHaveBeenCalledTimes(1); // a tap: the viewer is there (still-watching)
   });
 
   it('no position = server resume', () => {

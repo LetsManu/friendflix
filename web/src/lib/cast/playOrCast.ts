@@ -7,6 +7,7 @@
  */
 import { get } from 'svelte/store';
 import { tr } from '#lib/i18n';
+import { noteInteraction } from '#lib/stillwatching';
 import { toast } from '#lib/ui/toast';
 import { castEngine, castSession } from './engine';
 
@@ -14,6 +15,7 @@ export function playOrCast(e: MouseEvent, item: { id: string; positionTicks?: nu
   const s = get(castSession);
   if (!s || e.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return false;
   e.preventDefault();
+  noteInteraction(); // a tap: the viewer is there ("still watching?")
   void castEngine.playOnTv(item.id, item.positionTicks ? item.positionTicks / 10_000_000 : undefined);
   toast.info(tr('player.castBar.playingOn', { device: s.device }));
   return true;
