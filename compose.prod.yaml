@@ -79,7 +79,7 @@ services:
       JELLYFIN_URL: ${JELLYFIN_URL:-} # required when MEDIA_SERVER=jellyfin (the backend refuses to start without it)
       JELLYFIN_ADMIN_API_KEY: ${JELLYFIN_ADMIN_API_KEY:-} # required when MEDIA_SERVER=jellyfin
       OIDC_ALLOW_INSECURE: ${OIDC_ALLOW_INSECURE:-false}
-      # request service; the SEERR_* lines only keep older .env files working (old names log a deprecation warning)
+      # request service; the two old-name lines below only keep older .env files working (they log a deprecation warning)
       REQUESTS_URL: ${REQUESTS_URL:-${SEERR_URL:-${REQUESTS_URL:?set in .env}}}
       REQUESTS_API_KEY: ${REQUESTS_API_KEY:-}
       SEERR_URL: ${SEERR_URL:-}
