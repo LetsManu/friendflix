@@ -20,6 +20,16 @@ All notable changes. Nothing is released yet, so everything is listed under *Unr
 - **Leaving soon:** admins set a removal date (nothing is deleted); countdown badge, home row, reminders 7 days and 1 day before for people who have the title on the watchlist or in Continue Watching (never for kids profiles).
 - **Skip preview** ("next time on …"), a series-wide audio/subtitle choice, optional "Anime: original audio with subtitles", and an **Extras** tab (trailers, special features).
 
+### Detail page
+- **Ratings line** under the title: community and critic scores from Jellyfin, plus IMDb, Rotten Tomatoes and Metacritic when an OMDb key is set, and the average of your friends' ratings. Tagline, release date and country appear when the server knows them.
+- **Collection row** for films that belong to a collection: the parts in order ("Part 2 of 3"), watched ticks, the current film marked, and a request button for parts that are missing from the library (not on kids profiles).
+- **Details tab**, always present next to Episodes / Extras: age rating, quality, studio, original title, facts and **links** to TMDB, IMDb, TVDB and Trakt where the ids are known. The cast row stays above the tabs; the old right-hand column is gone.
+- **Phone:** the tabs stick under the top bar while you scroll, and the page is much shorter (scroll height at 390 px: movie 3117 to 1897, series 3600 to 1796; at 1440 px: movie 2890 to 2244, series 3573 to 2541). API `GET /api/items/:id/about`.
+
+### Data sources
+- **Optional TMDB and OMDb keys** (`TMDB_API_KEY` / `OMDB_API_KEY`, or the `_FILE` variants), or set in *Admin, Data sources*: the page shows whether a key is active, where it comes from, lets you test, replace and remove it. Without keys everything still works, the extra data is just left out.
+- Answers are cached (7 days, failures 1 hour), every call has a 3 s limit, OMDb is held to 900 calls per day, and a rejected key (401) pauses that source for an hour. Keys stay on the server and are never sent to the browser. See docs/integrations.md.
+
 ### Discovering
 - **Brand hubs** (up to 8 tiles from a studio, collection, tag or genre; hub pages with *New*, *Popular*, *Movies*, *Series*, A–Z).
 - **Themed lists** (emoji, cover colour) that admins pin as home rows; the lists page becomes an editorial page.
