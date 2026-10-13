@@ -137,6 +137,14 @@ const tr: Translation<typeof de> = {
     reveal: 'göster',
     watched: 'İzlendi',
   },
+  collection: {
+    title: '{n} bölümün {i}. kısmı · {name}',
+    next: '{n}. kısımla devam et',
+    missing: 'Kütüphanede yok',
+    request: 'İste',
+    requested: 'İstendi',
+    watched: 'İzlendi',
+  },
   more: {
     title: 'Benzerleri',
     add: '{name} yapımını listeme ekle',

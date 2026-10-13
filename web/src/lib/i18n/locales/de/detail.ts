@@ -142,6 +142,14 @@ export default {
     reveal: 'anzeigen',
     watched: 'Gesehen',
   },
+  collection: {
+    title: 'Teil {i} von {n} · {name}',
+    next: 'Weiter mit Teil {n}',
+    missing: 'Nicht in der Bibliothek',
+    request: 'Anfragen',
+    requested: 'Angefragt',
+    watched: 'Gesehen',
+  },
   more: {
     title: 'Mehr davon',
     add: '{name} zur Merkliste hinzufügen',

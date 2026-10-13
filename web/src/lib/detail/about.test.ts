@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { setLocale } from '#lib/i18n';
-import { defaultTab, detailTabs, ratingParts, type About, type AboutRating } from './about';
+import { collectionView, defaultTab, detailTabs, ratingParts, type About, type AboutCollection, type AboutPart, type AboutRating } from './about';
 
 const about = (ratings: AboutRating[]): About => ({
   ratings, countries: [], studios: [], tags: [], keywords: [], links: [], collection: null, canRequest: false, sources: ['jellyfin'],
@@ -84,5 +84,28 @@ describe('loadAbout', () => {
     expect(calls).toHaveLength(2);
     expect(got).toHaveLength(2);
     vi.doUnmock('#lib/api');
+  });
+});
+
+const part = (n: number, o: Partial<AboutPart> = {}): AboutPart => ({ id: 'p' + n, name: 'Teil ' + n, image: true, played: false, current: false, inLibrary: true, from: 'jellyfin', ...o });
+const coll = (parts: AboutPart[]): AboutCollection => ({ name: 'Matrix-Reihe', parts, from: 'jellyfin' });
+
+describe('collectionView', () => {
+  it('current 2 of 4, next part 3 in library unwatched -> next = part 3', () => {
+    const v = collectionView(coll([part(1, { played: true }), part(2, { current: true }), part(3), part(4)]));
+    expect(v.index).toBe(2);
+    expect(v.total).toBe(4);
+    expect(v.next?.id).toBe('p3');
+  });
+  it('next watched -> null', () => {
+    expect(collectionView(coll([part(1), part(2, { current: true }), part(3, { played: true })])).next).toBeNull();
+  });
+  it('next missing -> null', () => {
+    expect(collectionView(coll([part(1), part(2, { current: true }), part(3, { inLibrary: false, id: undefined, tmdbId: 3, from: 'tmdb' })])).next).toBeNull();
+  });
+  it('current last -> null', () => {
+    const v = collectionView(coll([part(1), part(2, { current: true })]));
+    expect(v.next).toBeNull();
+    expect(v.index).toBe(2);
   });
 });

@@ -147,6 +147,14 @@ const pl: Translation<typeof de> = {
     reveal: 'pokaż',
     watched: 'Obejrzano',
   },
+  collection: {
+    title: 'Część {i} z {n} · {name}',
+    next: 'Dalej: część {n}',
+    missing: 'Brak w bibliotece',
+    request: 'Poproś',
+    requested: 'Poproszono',
+    watched: 'Obejrzano',
+  },
   more: {
     title: 'Podobne tytuły',
     add: 'Dodaj „{name}” do listy Do obejrzenia',

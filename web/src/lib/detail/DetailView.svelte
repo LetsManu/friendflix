@@ -26,6 +26,7 @@
   import RatingButton from '#lib/RatingButton.svelte';
   import MoreActions, { type MoreAction } from '#lib/MoreActions.svelte';
   import EpisodeList from '#lib/detail/EpisodeList.svelte';
+  import CollectionRow from '#lib/detail/CollectionRow.svelte';
   import MoreLikeThis from '#lib/detail/MoreLikeThis.svelte';
   import DetailsTab from '#lib/detail/DetailsTab.svelte';
   import RatingsLine from '#lib/detail/RatingsLine.svelte';
@@ -474,7 +475,7 @@
         {/if}
       </div>
 
-      <!-- Task 7 (collection row) goes here: {#if about?.collection && item.type === 'Movie'}<CollectionRow … />{/if} -->
+      {#if about?.collection && item.type === 'Movie'}<CollectionRow collection={about.collection} canRequest={about.canRequest} {variant} />{/if}
 
       {#if item.type === 'Series'}<StoryCard seriesId={item.id} />{/if}
 

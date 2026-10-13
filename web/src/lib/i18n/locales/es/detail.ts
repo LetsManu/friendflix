@@ -137,6 +137,14 @@ const es: Translation<typeof de> = {
     reveal: 'mostrar',
     watched: 'Visto',
   },
+  collection: {
+    title: 'Parte {i} de {n} · {name}',
+    next: 'Continuar con la parte {n}',
+    missing: 'No está en la biblioteca',
+    request: 'Pedir',
+    requested: 'Pedido',
+    watched: 'Visto',
+  },
   more: {
     title: 'Más títulos como este',
     add: 'Añadir {name} a Guardados',

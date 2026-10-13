@@ -137,6 +137,14 @@ const fr: Translation<typeof de> = {
     reveal: 'afficher',
     watched: 'Vu',
   },
+  collection: {
+    title: 'Partie {i} sur {n} · {name}',
+    next: 'Continuer avec la partie {n}',
+    missing: 'Pas dans la bibliothèque',
+    request: 'Demander',
+    requested: 'Demandé',
+    watched: 'Vu',
+  },
   more: {
     title: 'Dans le même genre',
     add: 'Ajouter {name} à Mes envies',

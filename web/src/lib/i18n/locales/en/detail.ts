@@ -137,6 +137,14 @@ const en: Translation<typeof de> = {
     reveal: 'show',
     watched: 'Watched',
   },
+  collection: {
+    title: 'Part {i} of {n} · {name}',
+    next: 'Continue with part {n}',
+    missing: 'Not in the library',
+    request: 'Request',
+    requested: 'Requested',
+    watched: 'Watched',
+  },
   more: {
     title: 'More like this',
     add: 'Add {name} to your watchlist',
