@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto';
+import { createHmac } from 'node:crypto';
 import { decrypt, encrypt } from '../crypto.js';
 import type { Ctx } from '../ctx.js';
 
@@ -90,16 +90,17 @@ export async function clearSourceFailures(ctx: Pick<Ctx, 'kv'>, name: SourceName
   for (const k of await ctx.kv.keys(CACHE_PREFIX(name))) if ((await ctx.kv.get(k)) === FAIL_MARK) await ctx.kv.del(k);
 }
 
-const fingerprint = (key: string) => createHash('sha256').update(key).digest('hex').slice(0, 32);
+/** keyed with APP_ENC_KEY: a short key (OMDb: 8 hex chars) cannot be brute-forced from a kv dump or backup */
+const fingerprint = (encKey: Buffer, key: string) => createHmac('sha256', encKey).update(`source-key:${key}`).digest('hex').slice(0, 32);
 
 /**
  * At startup: a file/env key that differs from the one seen last time (replaced secret file, restart) clears the source's failure state,
  * so the new key works at once instead of after the 1 h pause.
  */
-export async function syncFileKeys(ctx: Pick<Ctx, 'cfg' | 'kv'>): Promise<void> {
+export async function syncFileKeys(ctx: Pick<Ctx, 'cfg' | 'kv' | 'encKey'>): Promise<void> {
   for (const name of SOURCES) {
     const file = fileKey(ctx, name);
-    const fp = file ? fingerprint(file) : '';
+    const fp = file ? fingerprint(ctx.encKey, file) : '';
     const seen = (await ctx.kv.get(FILE_FP_KEY(name))) ?? '';
     if (fp === seen) continue;
     await clearSourceFailures(ctx, name);
