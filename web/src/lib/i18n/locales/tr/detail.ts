@@ -139,6 +139,7 @@ const tr: Translation<typeof de> = {
   },
   collection: {
     title: '{n} bölümün {i}. kısmı · {name}',
+    titleAll: '{name} · {n} kısım',
     next: '{n}. kısımla devam et',
     missing: 'Kütüphanede yok',
     request: 'İste',

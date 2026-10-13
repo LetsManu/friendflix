@@ -1,6 +1,6 @@
-import type { Page, Route } from '@playwright/test';
+import type { Locator, Page, Route } from '@playwright/test';
 import { expect, test } from '../fixtures.js';
-import { ME, MOVIE, SERIES } from '../mocks/fixtures.js';
+import { ME, MOVIE, SERIES, items } from '../mocks/fixtures.js';
 import { row, openPopout } from '../helpers.js';
 
 /** Block 21: detail page restructure (ratings line, tagline, always-on tabs with Details, links, social card). */
@@ -202,37 +202,68 @@ test.describe('detail page (desktop)', () => {
 });
 
 test.describe('detail page: TV', () => {
+  /** every async block is in (ratings line, cast row, tabs, social card) and the layout stopped moving before the first key */
+  async function settle(page: Page) {
+    await expect(page.locator('html.tv')).toHaveCount(1);
+    await expect(page.locator('.dv .cap a.play')).toBeVisible();
+    await expect(page.locator('section.cast a').first()).toBeVisible();
+    await expect(ratingsLine(page)).toContainText('Freunde');
+    await expect(tablist(page).getByRole('tab', { name: 'Details' })).toBeVisible();
+    await page.waitForLoadState('networkidle');
+  }
+  /** a key press that must land on `target`: press and assert again until it holds (focus handlers may still be wiring up) */
+  async function step(page: Page, key: string, target: Locator, from: Locator) {
+    await expect(async () => {
+      if (!(await target.evaluateAll((els) => els.some((el) => el === document.activeElement)))) {
+        await from.focus();
+        await page.keyboard.press(key);
+      }
+      await expect(target).toBeFocused({ timeout: 1000 });
+    }).toPass({ timeout: 10_000 });
+  }
+
   test('focus moves from the play button down to the tabs, Right selects Mehr davon, Down enters its panel, Up returns to the tab', async ({ page }) => {
     await mockAbout(page, NO_KEYS);
     await page.route('**/api/playback/info', (r) => r.fulfill({ json: {} })); // the focused play button prefetches the playback info
     await page.goto('/item/' + MOVIE.id + '?tv=1');
-    await expect(page.locator('html.tv')).toHaveCount(1);
+    await settle(page);
     const play = page.locator('.dv .cap a.play');
-    await expect(play).toBeVisible();
-    await play.focus();
     const details = tablist(page).getByRole('tab', { name: 'Details' });
-    await expect(play).toBeFocused();
-    await expect(page.locator('section.cast a').first()).toBeVisible(); // layout settled: cast row and ratings line are in
-    await expect(ratingsLine(page)).toContainText('Freunde');
-    // exactly two steps: play button -> first person of the cast row -> Details tab (the ratings line and the synopsis are not focus stops)
-    await page.keyboard.press('ArrowDown');
-    await expect(page.locator('section.cast a').first()).toBeFocused();
-    await page.keyboard.press('ArrowDown');
-    await expect(details).toBeFocused();
-    await expect(details).toHaveAttribute('tabindex', '0');
-    await expect(tablist(page).getByRole('tab', { name: 'Mehr davon' })).toHaveAttribute('tabindex', '0'); // every tab is focusable on TV
-    await page.keyboard.press('ArrowRight');
     const more = tablist(page).getByRole('tab', { name: 'Mehr davon' });
-    await expect(more).toBeFocused();
+    const cast = page.locator('section.cast a').first();
+    // exactly two steps: play button -> first person of the cast row -> Details tab (the ratings line and the synopsis are not focus stops)
+    await step(page, 'ArrowDown', cast, play);
+    await step(page, 'ArrowDown', details, cast);
+    await expect(details).toHaveAttribute('tabindex', '0');
+    await expect(more).toHaveAttribute('tabindex', '0'); // every tab is focusable on TV
+    await step(page, 'ArrowRight', more, details);
     await expect(more).toHaveAttribute('aria-selected', 'true');
     const panel = page.getByRole('tabpanel', { name: 'Mehr davon' });
     await expect(panel.locator('a[href], button').first()).toBeVisible();
-    await page.keyboard.press('ArrowDown');
-    const first = panel.locator('a[href], button:not([disabled])').first();
-    await expect(first).toBeFocused();
-    await page.keyboard.press('ArrowUp');
-    await expect(more).toBeFocused();
+    await step(page, 'ArrowDown', panel.locator('a[href], button:not([disabled])').first(), more);
+    await step(page, 'ArrowUp', more, panel.locator('a[href], button:not([disabled])').first());
     await expect(more).toHaveAttribute('aria-selected', 'true');
+  });
+
+  test('with a collection: Down goes buttons -> collection row -> cast -> tabs, Right walks the row', async ({ page }) => {
+    const part = (o: object) => ({ image: true, played: false, current: false, inLibrary: true, from: 'jellyfin', ...o });
+    const collection = { name: 'Matrix-Reihe', from: 'jellyfin', parts: [part({ id: SERIES.id, name: 'Teil Eins', played: true }), part({ id: MOVIE.id, name: MOVIE.name, current: true }), part({ id: items[4]!.id, name: 'Teil Drei' })] };
+    await mockAbout(page, { ...NO_KEYS, collection });
+    await page.route('**/api/playback/info', (r) => r.fulfill({ json: {} }));
+    await page.goto('/item/' + MOVIE.id + '?tv=1');
+    await settle(page);
+    const rowEl = page.getByRole('region', { name: /Teil 2 von 3/ });
+    await expect(rowEl.locator('li')).toHaveCount(3);
+    const play = page.locator('.dv .cap a.play');
+    const posters = rowEl.locator('a.poster');
+    const first = posters.first();
+    const details = tablist(page).getByRole('tab', { name: 'Details' });
+    // the collection row sits between the buttons and the cast row
+    await step(page, 'ArrowDown', first, play);
+    await step(page, 'ArrowRight', posters.nth(1), first);
+    // spatial navigation picks the cast member below the poster, so any cast link counts
+    await step(page, 'ArrowDown', page.locator('section.cast a:focus'), posters.nth(1));
+    await step(page, 'ArrowDown', details, page.locator('section.cast a').first());
   });
 });
 

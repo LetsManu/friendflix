@@ -144,6 +144,7 @@ export default {
   },
   collection: {
     title: 'Teil {i} von {n} · {name}',
+    titleAll: '{name} · {n} Teile',
     next: 'Weiter mit Teil {n}',
     missing: 'Nicht in der Bibliothek',
     request: 'Anfragen',

@@ -55,7 +55,7 @@ export function detailTabs(type: string, hasExtras: boolean): DetailTab[] {
 
 export const defaultTab = (type: string): DetailTab => (type === 'Series' ? 'episodes' : 'details');
 
-/** Position of the current part in a collection ("Teil 2 von 4") and the part to continue with (the next one, only if it is in the library and not yet watched). */
+/** Position of the current part in a collection ("Teil 2 von 4") and the part to continue with (index 0 when no part is current; the next one, only if it is in the library and not yet watched). */
 export function collectionView(c: AboutCollection): { index: number; total: number; next: AboutPart | null } {
   const i = c.parts.findIndex((p) => p.current);
   const nx = i >= 0 ? c.parts[i + 1] : undefined;

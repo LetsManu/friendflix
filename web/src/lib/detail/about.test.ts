@@ -108,4 +108,10 @@ describe('collectionView', () => {
     expect(v.next).toBeNull();
     expect(v.index).toBe(2);
   });
+  it('no current part -> index 0, next null', () => {
+    const v = collectionView(coll([part(1), part(2), part(3)]));
+    expect(v.index).toBe(0);
+    expect(v.total).toBe(3);
+    expect(v.next).toBeNull();
+  });
 });

@@ -149,6 +149,7 @@ const pl: Translation<typeof de> = {
   },
   collection: {
     title: 'Część {i} z {n} · {name}',
+    titleAll: '{name} · części: {n}',
     next: 'Dalej: część {n}',
     missing: 'Brak w bibliotece',
     request: 'Poproś',

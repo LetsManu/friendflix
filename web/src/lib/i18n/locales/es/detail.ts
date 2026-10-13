@@ -139,6 +139,7 @@ const es: Translation<typeof de> = {
   },
   collection: {
     title: 'Parte {i} de {n} · {name}',
+    titleAll: '{name} · {n} partes',
     next: 'Continuar con la parte {n}',
     missing: 'No está en la biblioteca',
     request: 'Pedir',

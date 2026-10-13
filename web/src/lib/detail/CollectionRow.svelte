@@ -1,3 +1,7 @@
+<script context="module" lang="ts">
+  let seq = 0;
+</script>
+
 <script lang="ts">
   import { api, ApiError, img } from '#lib/api';
   import { swapModal } from '#lib/modal';
@@ -10,6 +14,7 @@
   /** modal: titles open inside the dialog (no extra history entry); page: normal links */
   export let variant: 'modal' | 'page' = 'page';
 
+  const hid = 'col-h-' + (++seq);
   $: v = collectionView(collection);
   let sent = new Set<number>(), busy = 0, msg = '';
   const href = (p: AboutPart) => `/item/${p.id}`;
@@ -35,19 +40,19 @@
   }
 </script>
 
-{#if v.index > 0}
-  <section class="col" aria-labelledby="col-h">
+{#if collection.parts.length}
+  <section class="col" aria-labelledby={hid}>
     <div class="hd">
-      <h2 id="col-h">{$t('detail.collection.title', { i: v.index, n: v.total, name: collection.name })}</h2>
+      <h2 id={hid}>{v.index > 0 ? $t('detail.collection.title', { i: v.index, n: v.total, name: collection.name }) : $t('detail.collection.titleAll', { n: v.total, name: collection.name })}</h2>
       {#if v.next}<a class="nx" href={href(v.next)} on:click={(e) => go(e, v.next!)}>{$t('detail.collection.next', { n: v.index + 1 })}</a>{/if}
     </div>
     <ul class="parts">
       {#each collection.parts as p, i (p.id ?? 't' + p.tmdbId + ':' + i)}
         <li class="part" class:missing={!p.inLibrary}>
           {#if p.inLibrary && p.id}
-            <a class="poster" class:cur={p.current} href={href(p)} aria-current={p.current ? 'true' : undefined} on:click={(e) => go(e, p)}>
+            <a class="poster" class:cur={p.current} href={href(p)} aria-label={p.played ? `${p.name}, ${$t('detail.collection.watched')}` : p.name} aria-current={p.current ? 'true' : undefined} on:click={(e) => go(e, p)}>
               {#if p.image}<img loading="lazy" decoding="async" src={img(p.id, 240)} alt="" />{/if}
-              {#if p.played}<span class="tick" role="img" aria-label={$t('detail.collection.watched')}><Icon name="check" size={16} /></span>{/if}
+              {#if p.played}<span class="tick" aria-hidden="true"><Icon name="check" size={16} /></span>{/if}
             </a>
           {:else}
             <div class="poster">{#if p.poster}<img loading="lazy" decoding="async" src={p.poster} alt="" />{/if}</div>
@@ -57,7 +62,7 @@
             <span class="yr">{$t('detail.collection.missing')}</span>
             {#if canRequest && p.tmdbId !== undefined}
               {@const done = sent.has(p.tmdbId)}
-              <button type="button" class="rq" disabled={done || busy === p.tmdbId} on:click={() => request(p)}>{done ? $t('detail.collection.requested') : $t('detail.collection.request')}</button>
+              <button type="button" class="rq" aria-label={`${done ? $t('detail.collection.requested') : $t('detail.collection.request')}: ${p.name}`} aria-disabled={done || busy === p.tmdbId ? 'true' : undefined} on:click={() => request(p)}>{done ? $t('detail.collection.requested') : $t('detail.collection.request')}</button>
             {/if}
           {/if}
         </li>
@@ -82,6 +87,7 @@
   .nm { font-weight: 600; overflow-wrap: anywhere; }
   .yr { color: #bdbdbd; font-size: .8rem; }
   .rq { min-height: 44px; margin-top: .2rem; }
+  .rq[aria-disabled='true'] { opacity: .6; cursor: default; }
   .small { font-size: .85rem; margin: .4rem 0 0; }
   @media (max-width: 899px) { .part { width: 96px; font-size: .8rem; } .parts { gap: .7rem; } }
 </style>

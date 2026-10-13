@@ -41,6 +41,9 @@ test.describe('collection row', () => {
     await expect(reg.locator('li').nth(1).locator('.tick')).toHaveCount(0);
     await expect(reg.locator('li').nth(1).locator('[aria-current="true"]')).toHaveCount(1);
     await expect(reg.locator('li').nth(2).getByRole('link')).toHaveAttribute('href', '/item/' + B.id);
+    // accessible names: the poster links carry the title (watched parts say so)
+    await expect(reg.getByRole('link', { name: 'Teil Eins, Gesehen' })).toHaveCount(1);
+    await expect(reg.getByRole('link', { name: 'Teil Drei', exact: true })).toHaveCount(1);
   });
 
   test('missing part greyed, Anfragen posts {mediaType, tmdbId} once and shows Angefragt', async ({ page }) => {
@@ -56,10 +59,12 @@ test.describe('collection row', () => {
     await expect(li.getByRole('link')).toHaveCount(0);
     await expect(li.locator('img')).toHaveCSS('opacity', '0.5');
     await expect(li.getByText('Nicht in der Bibliothek')).toBeVisible();
-    await li.getByRole('button', { name: /^Anfragen/ }).click();
-    const done = li.getByRole('button', { name: /^Angefragt/ });
-    await expect(done).toBeDisabled();
-    await done.click({ force: true }).catch(() => undefined);
+    await li.getByRole('button', { name: 'Anfragen: Teil Vier' }).click();
+    const done = li.getByRole('button', { name: 'Angefragt: Teil Vier' });
+    await expect(done).toHaveAttribute('aria-disabled', 'true');
+    await expect(done).toBeFocused(); // stays a focus stop (D-pad position survives)
+    await done.click({ force: true }); // aria-disabled: Playwright would wait for it forever
+    await page.waitForTimeout(200);
     expect(posts).toEqual([{ mediaType: 'movie', tmdbId: 604 }]);
   });
 
@@ -70,9 +75,9 @@ test.describe('collection row', () => {
     await page.route('**/api/requests', (r) => r.request().method() === 'POST' ? r.fulfill({ status: 429, json: { error: 'request_limit' } }) : r.fallback());
     await page.goto('/item/' + MOVIE.id);
     const li = region(page).locator('li').nth(3);
-    await li.getByRole('button', { name: /^Anfragen/ }).click();
+    await li.getByRole('button', { name: 'Anfragen: Teil Vier' }).click();
     await expect(page.getByRole('status').filter({ hasText: 'Limit erreicht' })).toBeVisible();
-    await expect(li.getByRole('button', { name: /^Anfragen/ })).toBeEnabled();
+    await expect(li.getByRole('button', { name: 'Anfragen: Teil Vier' })).toBeEnabled();
   });
   });
 
@@ -81,6 +86,15 @@ test.describe('collection row', () => {
     await page.goto('/item/' + MOVIE.id);
     await expect(region(page).locator('li')).toHaveCount(4);
     await expect(page.getByRole('button', { name: /^Anfragen/ })).toHaveCount(0);
+  });
+
+  test('no current part: row shows with the name and count, no "Teil i von", no "Weiter mit"', async ({ page }) => {
+    const parts = COLLECTION.parts.map((p) => ({ ...p, current: false }));
+    await mockAbout(page, { ...BASE, collection: { ...COLLECTION, parts } });
+    await page.goto('/item/' + MOVIE.id);
+    await expect(page.getByRole('heading', { level: 2, name: 'Matrix-Reihe · 4 Teile' })).toBeVisible();
+    await expect(page.getByRole('link', { name: /^Weiter mit/ })).toHaveCount(0);
+    await expect(page.getByRole('region', { name: 'Matrix-Reihe · 4 Teile' }).locator('li')).toHaveCount(4);
   });
 
   test('no collection -> no row', async ({ page }) => {
