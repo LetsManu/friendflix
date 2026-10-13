@@ -138,12 +138,25 @@ async function services(ctx: Ctx, fetchImpl: typeof fetch, timeoutMs: number): P
 
 interface Vol { total: number; free: number; dev: number | null }
 
+/**
+ * statfs/stat calls still running, per implementation and path. A call on a hung network mount never returns and holds a
+ * libuv thread; bounded() only stops waiting. While one is pending no new call starts for that path (the disk reads as
+ * unavailable), so a stalled mount costs one thread, not one per tick.
+ */
+const pendingVolumes = new WeakMap<DiskDeps['statfs'], Map<string, Promise<unknown>>>();
+
 async function volume(path: string, d: DiskDeps, timeoutMs: number): Promise<Vol | null> {
-  const o = await bounded(async () => {
+  let pending = pendingVolumes.get(d.statfs);
+  if (!pending) pendingVolumes.set(d.statfs, (pending = new Map()));
+  if (pending.has(path)) return null;
+  const call = (async () => {
     const s = await d.statfs(path);
     const dev = await d.stat(path).then((x) => Number(x.dev), () => null);
     return { total: Number(s.blocks) * Number(s.bsize), free: Number(s.bavail) * Number(s.bsize), dev };
-  }, timeoutMs);
+  })();
+  const done = call.then(() => undefined, () => undefined).finally(() => pending.delete(path));
+  pending.set(path, done);
+  const o = await bounded(() => call, timeoutMs);
   return o.ok && o.v.total > 0 ? o.v : null;
 }
 
@@ -217,14 +230,15 @@ export function worstOf(levels: Level[]): Level {
   return w === 'off' ? 'ok' : w;
 }
 
+// module-level so the in-flight guard of volume() spans snapshots
+const realStatfs: DiskDeps['statfs'] = async (p) => fsStatfs(p);
+const realStat: DiskDeps['stat'] = async (p) => fsStat(p);
+
 /** All probes in parallel, each bounded by the 3 s probe timeout; a failing probe is that row's state, never a failed snapshot. */
 export async function buildSnapshot(ctx: Ctx, deps: HealthDeps = {}): Promise<HealthSnapshot> {
   const timeoutMs = deps.timeoutMs ?? PROBE_TIMEOUT_MS;
   const fetchImpl = deps.fetchImpl ?? ctx.fetchImpl;
-  const d: DiskDeps = {
-    statfs: deps.statfs ?? (async (p) => fsStatfs(p)),
-    stat: deps.stat ?? (async (p) => fsStat(p)),
-  };
+  const d: DiskDeps = { statfs: deps.statfs ?? realStatfs, stat: deps.stat ?? realStat };
   const [svcs, dsks, errs] = await Promise.all([services(ctx, fetchImpl, timeoutMs), disks(ctx, d, timeoutMs), errorHealth(ctx)]);
   const issues = issuesOf(svcs, dsks, errs);
   return { at: new Date().toISOString(), services: svcs, disks: dsks, errors: errs, issues, worst: worstOf([...svcs.map((s) => s.level), ...dsks.map((x) => x.level), errs.level]) };
