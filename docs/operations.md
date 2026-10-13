@@ -62,13 +62,22 @@ Versionen folgen SemVer; die Quelle ist `version.json` im Repo-Wurzelverzeichnis
 1. Unter `## [Unreleased]` im `CHANGELOG.md` stehen die Änderungen seit dem letzten Release (ist der Abschnitt leer, bricht der Workflow ab).
 2. GitHub → *Actions* → **Release** → *Run workflow* auf `main`, `bump` wählen: `patch` (Fehlerbehebungen), `minor` (neue Funktionen), `major` (inkompatible Änderungen, neuer Codename). **Erstes Release: mit `none` starten** – das veröffentlicht die Version, die schon in `version.json` steht (1.0.0 Arancini), als `v1.0.0`; existiert ihr Tag bereits, lehnt der Workflow `none` ab.
 3. Der Workflow ([release.yml](../.github/workflows/release.yml), Logik in `scripts/release.mjs` mit Tests) erhöht `version.json`, gleicht `version` in allen `package.json` und der `package-lock.json` an, macht aus `## [Unreleased]` den Abschnitt `## [x.y.z] – Codename – JJJJ-MM-TT` (darüber ein neuer, leerer Unreleased-Abschnitt), committet `release: vX.Y.Z Codename` auf `main`, setzt den Tag `vX.Y.Z` und legt das GitHub-Release mit diesem Abschnitt als Notizen an.
-4. Danach startet er CI für den Tag (Pushes mit `GITHUB_TOKEN` lösen selbst keine Workflows aus). Nach Tests und Scans veröffentlicht `publish.yml` die Images als `X.Y.Z`, `X.Y`, `X` und `latest`.
+4. CI baut den Tag: mit `RELEASE_TOKEN` startet der Push CI von selbst, sonst stößt der Workflow CI für den Tag an (Pushes mit `GITHUB_TOKEN` lösen keine Workflows aus). Nach Tests und Scans veröffentlicht `publish.yml` die Images als `X.Y.Z`, `X.Y`, `X` und – nur wenn es die höchste Version ist – `latest`. Ein Backport-Tag (z. B. `v1.2.4` nach `v1.3.0`), Vorabversionen (`-rc.1`) und andere Tags verschieben `latest` nie.
 
 Vorher lokal ausprobieren, ohne etwas zu ändern: `node scripts/release.mjs minor --dry-run` (zeigt neue Version, Codename, Dateien und die Release-Notizen).
 
-Ist `main` per Ruleset/Branch-Schutz gegen direkte Pushes gesperrt (siehe *Empfohlener Branch-Schutz*), braucht der Release-Commit eine Ausnahme für GitHub Actions (Ruleset → *Bypass list*, sofern dort auswählbar), sonst den Schutz für den Release kurz lockern. Ohne Ausnahme scheitert der Push atomar: es entstehen weder Commit noch Tag noch Release.
+**Token und Branch-Schutz.** GitHub Actions selbst gehört **nicht** in die *Bypass list* eines Rulesets (dann dürfte jeder Workflow, auch ein manipulierter, an `main` vorbei pushen). Stattdessen:
 
-**Auf einer Hauptversion bleiben:** In der `.env` des Stacks `FF_TAG=1` setzen (`compose.prod.yaml` nutzt `…/friendflix-<dienst>:${FF_TAG:-latest}`). Dann ziehen Portainer bzw. `docker compose pull` alle 1.x-Releases, aber nie 2.0. `FF_TAG=1.4` bleibt auf 1.4.x, `FF_TAG=1.4.2` friert genau eine Version ein. `latest` folgt `main` (auch Commits zwischen Releases).
+- **Empfohlen – Secret `RELEASE_TOKEN`:** ein fine-grained Personal Access Token (nur dieses Repo, Berechtigung *Contents: Read and write*) oder ein Token einer eigenen GitHub App mit denselben Rechten, als Repository-Secret `RELEASE_TOKEN`. Genau dieser Akteur (dein Konto bzw. die App) steht als einziger in der *Bypass list* der Rulesets für `main` und für `v*`-Tags. Der Workflow checkt damit aus und pusht damit; seine Pushes starten CI für `main` und den Tag selbst.
+- **Ohne `RELEASE_TOKEN`:** der Workflow pusht mit `GITHUB_TOKEN` als `github-actions[bot]` und stößt CI für den Tag an. Dann darf `main` für diesen Akteur **nicht** gegen direkte Pushes gesperrt sein (für ein Repo mit dem empfohlenen Branch-Schutz also nur mit `RELEASE_TOKEN` nutzbar).
+
+Der Push ist atomar: scheitert er, entstehen weder Commit noch Tag noch Release.
+
+**Tags schützen:** ein zweites Ruleset (*Target: Tags*, Muster `v*`) mit *Restrict creations*, *Restrict updates* und *Restrict deletions*, Bypass nur für den Release-Akteur (`RELEASE_TOKEN`-Inhaber bzw. Repo-Admins). Wer einen `v*`-Tag anlegen kann, kann Images als Release veröffentlichen.
+
+**Abgebrochenes Release wiederaufnehmen:** Ist der Tag schon gepusht, aber z. B. das GitHub-Release oder der CI-Start fehlgeschlagen, den Lauf mit *Re-run jobs* wiederholen oder neu mit `bump: none` starten. Zeigt der Tag auf einen Commit, dessen `version.json` genau diese Version enthält, überspringt der Workflow Bump, Commit und Push, legt nur das fehlende GitHub-Release an (Notizen aus dem `CHANGELOG.md` am Tag) und startet CI. Jeder andere schon existierende Tag wird abgelehnt. Von Hand geht es so: `gh release create vX.Y.Z --verify-tag --title "vX.Y.Z Codename" --notes-file <(node scripts/release.mjs notes X.Y.Z)` und `gh workflow run ci.yml --ref vX.Y.Z`. Ist dagegen gar nichts gepusht worden, einfach neu starten – lokal ändert der Workflow nichts dauerhaft.
+
+**Auf einer Hauptversion bleiben:** In der `.env` des Stacks `FF_TAG=1` setzen (`compose.prod.yaml` nutzt `…/friendflix-<dienst>:${FF_TAG:-latest}`). Dann ziehen Portainer bzw. `docker compose pull` alle 1.x-Releases, aber nie 2.0. `FF_TAG=1.4` bleibt auf 1.4.x, `FF_TAG=1.4.2` friert genau eine Version ein. `latest` folgt `main` (auch Commits zwischen Releases) und dem höchsten Release-Tag.
 
 ## Images prüfen: Signatur, SBOM, Provenienz
 Jedes veröffentlichte Image (`ghcr.io/<owner>/friendflix-{backend,gateway,web}`, Tags `latest`, Kurz-SHA, `x.y.z`, `x.y`, `x`) ist
@@ -157,6 +166,7 @@ Strenger (nur `main` und Versions-Tags): `--certificate-identity-regexp '^https:
 ## Empfohlener Branch-Schutz
 GitHub → *Settings* → *Rules* → *Rulesets* (oder *Branches* → *Branch protection rule*) für `main`:
 - **Require a pull request before merging** (ohne Pflicht-Review reicht für ein Ein-Personen-Projekt), **Block force pushes**, **Restrict deletions**.
+- *Bypass list*: nur der Akteur hinter `RELEASE_TOKEN` (für den Release-Commit), nie „GitHub Actions“. Dazu ein Tag-Ruleset für `v*` (siehe *Release erstellen*).
 - **Require status checks to pass** mit genau diesen Checks aus `.github/workflows/ci.yml` (Namen wie in der Auswahl; sie erscheinen dort erst, nachdem sie einmal gelaufen sind):
   `test (22)`, `test (26)`, `e2e`, `dast`, `secrets`, `docker (backend)`, `docker (gateway)`, `docker (web)`
 - **Require branches to be up to date before merging** (*Require status checks to pass* → *Require branches to be up to date before merging*): die Checks müssen gegen den aktuellen Stand von `main` gelaufen sein.

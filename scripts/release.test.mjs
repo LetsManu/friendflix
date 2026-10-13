@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { CODENAMES, bump, bumpVersionInfo, cutChangelog, nextCodename, parseVersion, release, setLockVersions, setPackageVersion } from './release.mjs';
+import { CODENAMES, bump, bumpVersionInfo, changelogSection, cutChangelog, nextCodename, parseVersion, plan, release, setLockVersions, setPackageVersion } from './release.mjs';
 
 const LOG = `# Changelog
 
@@ -124,4 +124,27 @@ test('none: first release of the version already in version.json; refused once i
 
 test('every bump refuses an existing tag', () => {
   assert.throws(() => release({ root: fixture(), kind: 'patch', date: '2026-10-13', tags: ['v1.3.3'] }), /tag v1\.3\.3 already exists/);
+});
+
+test('setPackageVersion: only the top-level key, nested "version" keys and strings stay', () => {
+  const pkg = '{\n  "name": "x",\n  "description": "has \\"version\\": \\"0.0.1\\" in text",\n  "config": { "version": "9.9.9", "deep": [{ "version": "8" }] },\n  "version": "0.1.0",\n  "workspaces": ["a"]\n}\n';
+  const out = setPackageVersion(pkg, '1.2.0');
+  assert.equal(JSON.parse(out).version, '1.2.0');
+  assert.equal(JSON.parse(out).config.version, '9.9.9');
+  assert.equal(JSON.parse(out).config.deep[0].version, '8');
+  assert.equal(out, pkg.replace('"version": "0.1.0"', '"version": "1.2.0"'));
+  // nested key BEFORE the top-level one is the trap of a plain regex
+  assert.throws(() => setPackageVersion('{ "config": { "version": "1" } }', '2.0.0'), /no "version"/);
+  assert.throws(() => setPackageVersion('{ broken', '2.0.0'));
+});
+
+test('plan and changelogSection (used by release.yml to resume a half-finished release)', () => {
+  const dir = fixture();
+  assert.deepEqual(plan({ root: dir, kind: 'minor' }), { version: '1.4.0', codename: 'Arancini', tag: 'v1.4.0', previous: '1.3.2' });
+  assert.deepEqual(plan({ root: dir, kind: 'none' }), { version: '1.3.2', codename: 'Arancini', tag: 'v1.3.2', previous: '1.3.2' });
+  assert.equal(changelogSection(LOG, '1.0.0'), '### Watching\n- Old thing.');
+  const cut = cutChangelog(LOG, '1.1.0', 'Arancini', '2026-10-13').text;
+  assert.equal(changelogSection(cut, '1.1.0'), '### Streaming\n- New thing.');
+  assert.throws(() => changelogSection(LOG, '1.0.1'), /no section for 1\.0\.1/);
+  assert.throws(() => changelogSection(LOG, '1x0x0'), /no section/); // dots are literal
 });

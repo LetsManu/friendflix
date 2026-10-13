@@ -76,11 +76,41 @@ export function cutChangelog(text, version, codename, date) {
   return { text: out, notes };
 }
 
-/** sets the top-level "version" of a package.json text, keeping its formatting */
+/**
+ * Sets the TOP-LEVEL "version" of a package.json text, keeping its formatting. A small scanner tracks strings and
+ * nesting depth, so a "version" key inside a nested object (e.g. a config block) is never touched.
+ */
 export function setPackageVersion(json, version) {
-  const re = /^(\s*"version"\s*:\s*")[^"]*(")/m;
-  if (!re.test(json)) throw new Error('package.json has no "version" field');
-  return json.replace(re, `$1${version}$2`);
+  JSON.parse(json); // must be valid JSON
+  let depth = 0;
+  for (let i = 0; i < json.length; i++) {
+    const c = json[i];
+    if (c === '{' || c === '[') depth++;
+    else if (c === '}' || c === ']') depth--;
+    else if (c === '"') {
+      let j = i + 1;
+      while (json[j] !== '"') j += json[j] === '\\' ? 2 : 1;
+      const isKey = depth === 1 && /^\s*:/.test(json.slice(j + 1));
+      if (isKey && json.slice(i + 1, j) === 'version') {
+        const m = /^(\s*:\s*")((?:[^"\\]|\\.)*)"/.exec(json.slice(j + 1));
+        if (!m) throw new Error('package.json "version" is not a string');
+        const start = j + 1 + m[1].length;
+        return json.slice(0, start) + version + json.slice(start + m[2].length);
+      }
+      i = j;
+    }
+  }
+  throw new Error('package.json has no "version" field');
+}
+
+/** body of the `## [version] …` section of a changelog (the notes of an already cut release) */
+export function changelogSection(text, version) {
+  const esc = version.replace(/[.]/g, '\\.');
+  const m = new RegExp(`^## \\[${esc}\\][^\\n]*\\n`, 'm').exec(text);
+  if (!m) throw new Error(`CHANGELOG has no section for ${version}`);
+  const rest = text.slice(m.index + m[0].length);
+  const next = rest.search(/^## /m);
+  return (next < 0 ? rest : rest.slice(0, next)).trim();
 }
 
 /** package-lock.json: root + workspace entries follow the new version (keeps `npm ci` in sync) */
@@ -119,9 +149,29 @@ export function release({ root = ROOT, kind, date = new Date().toISOString().sli
   return { summary: { version: next.version, codename: next.codename, tag: `v${next.version}`, previous: info.version, date, dryRun, files: [...writes.keys()] }, notes: cut.notes };
 }
 
+/** what a bump would release, without touching any file or looking at the changelog / tags (release.yml uses it to resume) */
+export function plan({ root = ROOT, kind }) {
+  if (!KINDS.includes(kind)) throw new Error(`unknown bump "${kind}" (expected ${KINDS.join(' | ')})`);
+  const info = JSON.parse(readFileSync(`${root.replace(/\/$/, '')}/version.json`, 'utf8'));
+  const next = bumpVersionInfo(info, kind);
+  return { ...next, tag: `v${next.version}`, previous: info.version };
+}
+
+/**
+ * CLI. `release.mjs <kind> [--dry-run] [--notes f] [--date d]` cuts a release;
+ * `release.mjs plan <kind>` prints what it would release; `release.mjs notes <version> --from <changelog> --notes <f>`
+ * writes the notes of an already cut version.
+ */
 function main(argv) {
   const args = [...argv];
   const flag = (name) => { const i = args.indexOf(name); if (i < 0) return undefined; const v = args[i + 1]; args.splice(i, 2); return v; };
+  if (args[0] === 'plan') { console.log(JSON.stringify(plan({ kind: args[1] }), null, 2)); return; }
+  if (args[0] === 'notes') {
+    const from = flag('--from') ?? `${ROOT}/CHANGELOG.md`, out = flag('--notes');
+    const notes = changelogSection(readFileSync(from, 'utf8'), args[1]);
+    if (out) writeFileSync(out, `${notes}\n`); else console.log(notes);
+    return;
+  }
   const dryRun = args.includes('--dry-run');
   if (dryRun) args.splice(args.indexOf('--dry-run'), 1);
   const notesFile = flag('--notes');
@@ -129,7 +179,7 @@ function main(argv) {
   const { summary, notes } = release({ kind: args[0], dryRun, tags: gitTags(), ...(date ? { date } : {}) });
   if (notesFile) writeFileSync(notesFile, `${notes}\n`);
   console.log(JSON.stringify(summary, null, 2));
-  if (dryRun) console.log(`\n--- release notes ${summary.tag} ---\n${notes}`);
+  if (dryRun) console.error(`\n--- release notes ${summary.tag} ---\n${notes}`); // stderr: stdout stays pure JSON
 }
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
