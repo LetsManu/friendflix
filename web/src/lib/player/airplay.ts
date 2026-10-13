@@ -34,6 +34,11 @@
  *   with Retry plus the hint to end AirPlay in the picker; no automatic retry. A playback error on the TV does the same.
  * - After each successful token request a one-off diagnostic probe (airplayProbe.ts) fetches the token's master and first variant
  *   playlist like the TV does and logs a sanitized summary (tags, codecs, no URIs) to the event log.
+ * - Variant fallback (field: LG webOS fetched the master, then nothing, MEDIA_ERR_SRC_NOT_SUPPORTED): on `video-error` code 4 while
+ *   our token stream is on the element (`ready` or active), once per token, the token's first VARIANT playlist (resolved from the
+ *   master, which is fetched without credentials; it must stay under /media/c/<token>/) replaces the master on the element at the
+ *   same position / play state. It still counts as our token stream (`tokenOnElement`). If that fails too (or the master has no
+ *   usable variant): the error behaviour below. A new token (retry / refresh) starts with its master again.
  * - Every decision is written to the AirPlay event log (airplayLog.ts, /diagnose) without URLs, tokens or cast ids.
  *
  * Other notes:
@@ -48,7 +53,7 @@
  */
 import type { CastInfo } from '#lib/cast';
 import { airLog } from './airplayLog';
-import { runProbe, scrubMessage } from './airplayProbe';
+import { fetchText, firstVariantUri, runProbe, scrubMessage } from './airplayProbe';
 
 /** the part of HTMLVideoElement this module uses (tests pass a fake) */
 export interface AirPlayVideo extends EventTarget {
@@ -159,6 +164,10 @@ export function createAirPlay(video: AirPlayVideo, deps: AirPlayDeps, probe?: Ev
   const flags = () => `${available ? 'v' : ''}${active ? 'A' : ''}${busy ? 'B' : ''}${ready ? 'R' : ''}${error ? 'E' : ''}${tokenOnElement ? 'T' : ''}${settleT !== undefined ? 'S' : ''}${offT !== undefined ? 'O' : ''}${autoUsed ? 'U' : ''}`;
   const log = (ev: string, o: { wireless?: boolean; note?: string } = {}) => { if (!dead) airLog(ev, { ...o, src: video.src, state: flags() }); };
   const trustedLog = (ev: string, note: string) => { if (!dead) airLog(ev, { src: video.src, state: flags(), note, trusted: true }); };
+  /** casts whose variant fallback was already used (once per token) */
+  const fellBack = new Set<string>();
+  /** the variant fallback's master fetch is running: further element errors are ignored meanwhile */
+  let fallingBack = false;
   /** casts already probed (once per token) */
   const probed = new Set<string>();
   /** fire and forget: fetches the token's playlists and logs what the TV gets; never changes state, never throws */
@@ -188,12 +197,12 @@ export function createAirPlay(video: AirPlayVideo, deps: AirPlayDeps, probe?: Ev
   };
 
   /** token URL on the element at `pos` (the token is the credential: no cookies; the cast path answers with CORS *) */
-  function play(ci: CastInfo, pos: number, wasPlaying: boolean) {
+  function play(ci: CastInfo, pos: number, wasPlaying: boolean, url = ci.contentUrl) {
     video.removeAttribute('crossorigin');
     tokenOnElement = ci;
-    video.src = ci.contentUrl;
+    video.src = url;
     settle(); // WebKit may now flip the wireless state: ignore that for SETTLE_MS
-    log('src', { note: 'token' });
+    log('src', { note: url === ci.contentUrl ? 'token' : 'token variant' });
     if (pos > 1) video.addEventListener('loadedmetadata', () => { if (info === ci) video.currentTime = pos; }, { once: true });
     if (wasPlaying) video.play().catch(() => undefined);
   }
@@ -343,6 +352,48 @@ export function createAirPlay(video: AirPlayVideo, deps: AirPlayDeps, probe?: Ev
     if (!dead && settleT !== undefined) settle(); // the window runs SETTLE_MS from the end of the restore
   }
 
+  /** the token's first variant playlist URL, or null (fetch failed, no variant, outside /media/c/<token>/) */
+  async function variantUrl(ci: CastInfo): Promise<string | null> {
+    try {
+      const master = await fetchText(ci.contentUrl);
+      if (master.status !== 200) return null;
+      const rel = firstVariantUri(master.text);
+      if (rel === null || rel.includes('\\')) return null;
+      const base = new URL(ci.contentUrl);
+      const prefix = /^\/media\/c\/[^/]+\//.exec(base.pathname)?.[0];
+      const u = new URL(rel, base);
+      return prefix && u.origin === base.origin && u.pathname.startsWith(prefix) ? u.href : null;
+    } catch {
+      return null;
+    }
+  }
+
+  /** code 4 on our token's master: put its variant playlist on the element instead (once per token); false = not applicable */
+  function tryVariant(code: number | undefined): boolean {
+    const ci = info;
+    if (code !== 4 || !ci || tokenOnElement !== ci || !(ready || active) || fellBack.has(ci.castId)) return false;
+    fellBack.add(ci.castId);
+    fallingBack = true;
+    const my = seq, pos = position(), wasPlaying = !video.paused;
+    log('fallback-variant', { note: 'master not supported: trying the variant playlist' });
+    void variantUrl(ci).then((url) => {
+      fallingBack = false;
+      if (dead || my !== seq || info !== ci || tokenOnElement !== ci || error) return; // AirPlay ended / new token meanwhile
+      if (url === null) { log('fallback-variant', { note: 'no usable variant' }); failed(); return; }
+      play(ci, pos, wasPlaying, url);
+    });
+    return true;
+  }
+
+  /** the token stream failed for good: the phone's (`ready`) -> normal stream; the TV's -> error state (Retry) */
+  function failed() {
+    if (ready && !active) { deps.fail(new Error('airplay_media')); void stop(); return; }
+    if (!active) return;
+    error = true;
+    deps.fail(new Error('airplay_media'));
+    emit();
+  }
+
   function armTimeout() {
     armT = undefined;
     if (!ready || active || dead) return;
@@ -373,15 +424,14 @@ export function createAirPlay(video: AirPlayVideo, deps: AirPlayDeps, probe?: Ev
     videoError(code?: number, message?: string) {
       if (dead) return;
       const msg = scrubMessage(message);
-      const flag = busy ? ', busy: ignored' : error ? ', already error' : '';
-      if (msg) trustedLog('video-error', `code ${code ?? '?'} msg ${msg}${flag}`);
-      else log('video-error', { note: `code ${code ?? '?'}${flag}` });
-      if (busy || error) return;
-      if (ready && !active) { deps.fail(new Error('airplay_media')); void stop(); return; } // the phone's token stream: normal stream again
-      if (!active) return;
-      error = true;
-      deps.fail(new Error('airplay_media'));
-      emit();
+      const flag = busy ? ', busy: ignored' : error ? ', already error' : fallingBack ? ', fallback running: ignored' : '';
+      // raw webkitCurrentPlaybackTargetIsWireless (true / false / undefined): tells a phone failure from a TV failure
+      const w = `w=${String(video.webkitCurrentPlaybackTargetIsWireless)}`;
+      if (msg) trustedLog('video-error', `code ${code ?? '?'} ${w} msg ${msg}${flag}`);
+      else log('video-error', { note: `code ${code ?? '?'} ${w}${flag}` });
+      if (busy || error || fallingBack) return;
+      if (tryVariant(code)) return;
+      failed();
     },
     get info() { return info; },
     destroy() {

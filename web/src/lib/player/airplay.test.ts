@@ -789,7 +789,7 @@ describe('stream probe', () => {
     clearAirLog();
     c.videoError(4, `The operation couldn't be completed (CoreMediaErrorDomain -12927) https://ff.example/media/c/TOKEN/Videos/x/master.m3u8?api_key=SECRETKEY123 /media/c/TOKEN2/y`);
     const e = readAirLog().find((x) => x.ev === 'video-error')!;
-    expect(e.note).toBe("code 4 msg The operation couldn't be completed (CoreMediaErrorDomain -12927) <url> <url>");
+    expect(e.note).toBe("code 4 w=true msg The operation couldn't be completed (CoreMediaErrorDomain -12927) <url> <url>");
     expect(JSON.stringify(e)).not.toMatch(/SECRETKEY|TOKEN|ff\.example/);
   });
 
@@ -798,6 +798,156 @@ describe('stream probe', () => {
     await airplayOn(v, c);
     clearAirLog();
     c.videoError(4);
-    expect(readAirLog().find((x) => x.ev === 'video-error')?.note).toBe('code 4');
+    expect(readAirLog().find((x) => x.ev === 'video-error')?.note).toBe('code 4 w=true');
+  });
+});
+
+describe('variant fallback (MEDIA_ERR_SRC_NOT_SUPPORTED on the master)', () => {
+  const MASTER = '#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=1,CODECS="avc1.640028,mp4a.40.2"\nmain.m3u8?MediaSourceId=ms&PlaySessionId=ps\n#EXT-X-STREAM-INF:BANDWIDTH=2\nother.m3u8\n';
+  const VARIANT_URL = 'https://ff.example/media/c/TOKEN/Videos/x/main.m3u8?MediaSourceId=ms&PlaySessionId=ps';
+  const serve = (master = MASTER) => probeFetch.mockImplementation(async (u: string) => new Response(u.includes('master') ? master : '#EXTM3U\n', { status: 200, headers: { 'content-type': 'application/vnd.apple.mpegurl' } }));
+  const evs = () => readAirLog().map((e) => e.ev);
+
+  it('active (TV): code 4 -> the first variant playlist goes on the element, no master, no error state, no new token', async () => {
+    serve();
+    const { v, c, deps } = setup();
+    v.paused = false;
+    v.currentTime = 300;
+    await airplayOn(v, c);
+    await flush();
+    probeFetch.mockClear();
+    v.play.mockClear();
+    c.videoError(4);
+    await flush(); await flush();
+    expect(probeFetch).toHaveBeenCalledWith(CI.contentUrl, expect.objectContaining({ credentials: 'omit' }));
+    expect(v.src).toBe(VARIANT_URL);
+    expect(c.state).toMatchObject({ active: true, error: false, busy: false });
+    expect(deps.fail).not.toHaveBeenCalled();
+    expect(deps.request).toHaveBeenCalledOnce();
+    expect(deps.revoke).not.toHaveBeenCalled();
+    expect(v.play).toHaveBeenCalled(); // resumes like play()
+    v.currentTime = 0;
+    v.dispatchEvent(new Event('loadedmetadata'));
+    expect(v.currentTime).toBe(300);
+    expect(evs()).toContain('fallback-variant');
+    expect(JSON.stringify(readAirLog())).not.toMatch(/main\.m3u8|TOKEN|ff\.example|MediaSourceId/);
+  });
+
+  it('ready (phone plays the token): code 4 -> variant instead of the normal stream', async () => {
+    serve();
+    const { v, c, deps } = setup();
+    c.pick();
+    await flush(); await flush();
+    c.videoError(4);
+    await flush(); await flush();
+    expect(v.src).toBe(VARIANT_URL);
+    expect(c.state).toMatchObject({ ready: true, active: false, error: false });
+    expect(deps.restore).not.toHaveBeenCalled();
+    expect(deps.fail).not.toHaveBeenCalled();
+  });
+
+  it('the variant URL counts as our token stream (wireless on -> active, no automatic request)', async () => {
+    serve();
+    const { v, c, deps } = setup();
+    c.pick();
+    await flush(); await flush();
+    c.videoError(4);
+    await flush(); await flush();
+    expect(v.src).toBe(VARIANT_URL);
+    v.wireless(true);
+    expect(c.state).toMatchObject({ active: true, error: false });
+    await flush();
+    expect(deps.request).toHaveBeenCalledOnce();
+  });
+
+  it('once per token: the variant also fails -> the existing error behaviour (TV: error state + toast)', async () => {
+    serve();
+    const { v, c, deps } = setup();
+    await airplayOn(v, c);
+    c.videoError(4);
+    await flush(); await flush();
+    expect(v.src).toBe(VARIANT_URL);
+    c.videoError(4);
+    expect(c.state.error).toBe(true);
+    expect(deps.fail).toHaveBeenCalledOnce();
+    expect(evs().filter((e) => e === 'fallback-variant')).toHaveLength(1);
+  });
+
+  it('a new token (retry / refresh) starts again with its master, and may fall back once more', async () => {
+    serve();
+    const CI2v = 'https://ff.example/media/c/TOKEN2/Videos/x/main.m3u8?MediaSourceId=ms&PlaySessionId=ps';
+    const request = vi.fn().mockResolvedValueOnce(CI).mockResolvedValue(CI2);
+    const { v, c } = setup({ request });
+    await airplayOn(v, c);
+    c.videoError(4);
+    await flush(); await flush();
+    c.videoError(4); // variant failed too: error
+    expect(c.state.error).toBe(true);
+    await c.retry();
+    expect(v.src).toBe(CI2.contentUrl);
+    c.videoError(4);
+    await flush(); await flush();
+    expect(v.src).toBe(CI2v);
+    expect(c.state.error).toBe(false);
+  });
+
+  it('master unreachable / without a variant / variant outside the token path: existing behaviour', async () => {
+    for (const body of [null, '#EXTM3U\n', '#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=1\nhttps://evil.example/v.m3u8\n', '#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=1\n../../../../Videos/x/main.m3u8\n']) {
+      if (body === null) probeFetch.mockImplementation(async () => { throw new TypeError('Load failed'); });
+      else serve(body);
+      const { v, c, deps } = setup();
+      await airplayOn(v, c);
+      c.videoError(4);
+      await flush(); await flush();
+      expect(v.src, String(body)).toBe(CI.contentUrl);
+      expect(c.state.error).toBe(true);
+      expect(deps.fail).toHaveBeenCalledOnce();
+      c.destroy();
+    }
+  });
+
+  it('only code 4 on a token stream: other codes and the normal stream keep the existing behaviour', async () => {
+    serve();
+    const { v, c, deps } = setup();
+    await airplayOn(v, c);
+    c.videoError(3);
+    await flush(); await flush();
+    expect(v.src).toBe(CI.contentUrl);
+    expect(c.state.error).toBe(true);
+    expect(deps.fail).toHaveBeenCalledOnce();
+    const b = setup();
+    b.c.videoError(4); // not AirPlaying
+    await flush();
+    expect(b.v.src).toBe('blob:hlsjs');
+    expect(probeFetch.mock.calls.filter((x) => x[0] === CI.contentUrl).length).toBeLessThanOrEqual(1); // only the token probe
+  });
+
+  it('AirPlay ends while the master is fetched: the variant is never put on the element', async () => {
+    let release!: () => void;
+    const { v, c, deps } = setup();
+    await airplayOn(v, c);
+    await flush();
+    probeFetch.mockImplementation(() => new Promise<Response>((r) => { release = () => r(new Response(MASTER, { status: 200 })); }));
+    c.videoError(4);
+    c.destroy();
+    release();
+    await flush(); await flush();
+    expect(v.src).toBe(CI.contentUrl);
+    expect(deps.fail).not.toHaveBeenCalled();
+  });
+
+  it('logs the raw wireless flag on every video-error (w=)', async () => {
+    const { v, c } = setup();
+    c.pick();
+    await flush();
+    c.videoError(4);
+    expect(readAirLog().find((e) => e.ev === 'video-error')?.note).toMatch(/^code 4 w=false/);
+    const b = setup();
+    delete (b.v as Partial<FakeVideo>).webkitCurrentPlaybackTargetIsWireless;
+    Object.defineProperty(b.v, 'webkitCurrentPlaybackTargetIsWireless', { value: undefined });
+    clearAirLog();
+    b.c.videoError(2);
+    expect(readAirLog().find((e) => e.ev === 'video-error')?.note).toBe('code 2 w=undefined');
+    void v;
   });
 });
