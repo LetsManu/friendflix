@@ -6,10 +6,11 @@
  *   3. turns CHANGELOG "## [Unreleased]" into "## [x.y.z] – Codename – YYYY-MM-DD" with a fresh empty Unreleased above
  * It never commits, tags or pushes; the workflow does that. Refuses when the Unreleased section is empty.
  *
- * Usage: node scripts/release.mjs <patch|minor|major> [--dry-run] [--notes <file>] [--date YYYY-MM-DD]
+ * Usage: node scripts/release.mjs <patch|minor|major|none> [--dry-run] [--notes <file>] [--date YYYY-MM-DD]
  * Prints a JSON summary ({ version, codename, tag, previous, files }) on stdout; --notes writes the release notes
  * (the changelog section without its heading) to a file.
  */
+import { execFileSync } from 'node:child_process';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import console from 'node:console';
 import process from 'node:process';
@@ -20,7 +21,8 @@ const ROOT = fileURLToPath(new URL('..', import.meta.url));
 export const CODENAMES = JSON.parse(readFileSync(new URL('../codenames.json', import.meta.url), 'utf8')).map((c) => c.name);
 /** package.json files whose "version" follows version.json (missing ones are skipped, e.g. e2e has none today) */
 export const PACKAGES = ['package.json', 'backend/package.json', 'web/package.json', 'gateway/package.json', 'e2e/package.json'];
-const KINDS = ['patch', 'minor', 'major'];
+/** `none` releases the version already in version.json (the first release, 1.0.0) as long as its tag does not exist */
+const KINDS = ['patch', 'minor', 'major', 'none'];
 
 /** "1.2.3" → [1, 2, 3]; anything else (pre-release, "v" prefix, missing parts) throws */
 export function parseVersion(v) {
@@ -31,6 +33,7 @@ export function parseVersion(v) {
 
 /** next version for a patch / minor / major bump */
 export function bump(version, kind) {
+  if (kind === 'none') { parseVersion(version); return version; }
   const [ma, mi, pa] = parseVersion(version);
   if (kind === 'patch') return `${ma}.${mi}.${pa + 1}`;
   if (kind === 'minor') return `${ma}.${mi + 1}.0`;
@@ -89,12 +92,18 @@ export function setLockVersions(json, version, workspaces) {
   return `${JSON.stringify(lock, null, 2)}\n`;
 }
 
-/** plans (and unless dryRun writes) a release in `root`; returns the summary and the notes */
-export function release({ root = ROOT, kind, date = new Date().toISOString().slice(0, 10), dryRun = false }) {
+/** git tags of `root` (the workflow checks out with fetch-depth 0, so all tags are there) */
+export function gitTags(root = ROOT) {
+  return execFileSync('git', ['tag', '--list'], { cwd: root, encoding: 'utf8' }).split('\n').map((t) => t.trim()).filter(Boolean);
+}
+
+/** plans (and unless dryRun writes) a release in `root`; `tags` = existing git tags (a release never reuses one) */
+export function release({ root = ROOT, kind, date = new Date().toISOString().slice(0, 10), dryRun = false, tags = [] }) {
   if (!KINDS.includes(kind)) throw new Error(`usage: release.mjs <${KINDS.join('|')}> [--dry-run] [--notes <file>]`);
   const p = (f) => `${root.replace(/\/$/, '')}/${f}`;
   const info = JSON.parse(readFileSync(p('version.json'), 'utf8'));
   const next = bumpVersionInfo(info, kind);
+  if (tags.includes(`v${next.version}`)) throw new Error(`tag v${next.version} already exists${kind === 'none' ? ': `none` only releases a version that has no tag yet, pick patch, minor or major' : ''}`);
   const cut = cutChangelog(readFileSync(p('CHANGELOG.md'), 'utf8'), next.version, next.codename, date);
   const writes = new Map([
     ['version.json', `{ "version": ${JSON.stringify(next.version)}, "codename": ${JSON.stringify(next.codename)} }\n`],
@@ -117,7 +126,7 @@ function main(argv) {
   if (dryRun) args.splice(args.indexOf('--dry-run'), 1);
   const notesFile = flag('--notes');
   const date = flag('--date');
-  const { summary, notes } = release({ kind: args[0], dryRun, ...(date ? { date } : {}) });
+  const { summary, notes } = release({ kind: args[0], dryRun, tags: gitTags(), ...(date ? { date } : {}) });
   if (notesFile) writeFileSync(notesFile, `${notes}\n`);
   console.log(JSON.stringify(summary, null, 2));
   if (dryRun) console.log(`\n--- release notes ${summary.tag} ---\n${notes}`);

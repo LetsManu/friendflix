@@ -1,5 +1,5 @@
 # Cuts a release by hand (Actions → Release → Run workflow, on main):
-#   bump version.json (a major bump takes the next codename), sync every package.json + package-lock.json, turn
+#   bump version.json (a major bump takes the next codename; `none` keeps it - first release), sync every package.json + package-lock.json, turn
 #   CHANGELOG "## [Unreleased]" into "## [x.y.z] – Codename – date" (scripts/release.mjs, tested), commit
 #   "release: vX.Y.Z Codename", tag vX.Y.Z, push both, create the GitHub Release with that changelog section as notes.
 # Pushes made with GITHUB_TOKEN start no workflows, so this then dispatches CI for the tag; CI builds, scans and
@@ -10,10 +10,10 @@ on:
   workflow_dispatch:
     inputs:
       bump:
-        description: "Version bump (major = next codename)"
+        description: "Version bump (major = next codename; none = release version.json as is, only while its tag does not exist: the first release 1.0.0)"
         required: true
         type: choice
-        options: [patch, minor, major]
+        options: [patch, minor, major, none]
         default: minor
 permissions: { contents: read }
 concurrency: { group: release, cancel-in-progress: false }

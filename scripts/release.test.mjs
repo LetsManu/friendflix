@@ -110,3 +110,18 @@ test('release: major bump writes every file; dry run writes nothing', () => {
   // the Unreleased section is now empty: a second release is refused
   assert.throws(() => release({ root: dir, kind: 'patch', date: '2026-10-14' }), /empty/);
 });
+
+test('none: first release of the version already in version.json; refused once its tag exists', () => {
+  assert.equal(bump('1.0.0', 'none'), '1.0.0');
+  assert.deepEqual(bumpVersionInfo({ version: '1.0.0', codename: 'Arancini' }, 'none'), { version: '1.0.0', codename: 'Arancini' });
+  const dir = fixture();
+  assert.throws(() => release({ root: dir, kind: 'none', date: '2026-10-13', tags: ['v1.3.2'] }), /tag v1\.3\.2 already exists.*none/);
+  const r = release({ root: dir, kind: 'none', date: '2026-10-13', tags: ['v1.3.1'] });
+  assert.equal(r.summary.tag, 'v1.3.2');
+  assert.equal(readFileSync(join(dir, 'version.json'), 'utf8'), '{ "version": "1.3.2", "codename": "Arancini" }\n');
+  assert.match(readFileSync(join(dir, 'CHANGELOG.md'), 'utf8'), /## \[Unreleased\]\n\n## \[1\.3\.2\] – Arancini – 2026-10-13\n\n### Streaming/);
+});
+
+test('every bump refuses an existing tag', () => {
+  assert.throws(() => release({ root: fixture(), kind: 'patch', date: '2026-10-13', tags: ['v1.3.3'] }), /tag v1\.3\.3 already exists/);
+});
