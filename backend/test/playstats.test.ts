@@ -116,6 +116,43 @@ describe('recording', () => {
   });
 });
 
+describe('foreign app streams (poller)', () => {
+  const infuse = (o: Record<string, unknown> = {}) => ({
+    Id: 'sy', UserId: 'f'.repeat(32), DeviceId: 'infuse-2', Client: 'Infuse', DeviceName: 'Apple TV',
+    NowPlayingItem: { Id: FOREIGN, Name: 'Pilot', Type: 'Episode', SeriesName: 'Show' }, PlayState: { PlayMethod: 'Transcode', IsPaused: false }, ...o,
+  });
+
+  it('a transcode first seen without reasons waits one poll and then counts as transcode with its reason', async () => {
+    sessions = [infuse()];
+    await pollJellyfinSessions(env.ctx);
+    expect(await daily(fritzId)).toEqual([]);
+    sessions = [infuse({ TranscodingInfo: { TranscodeReasons: ['VideoCodecNotSupported'] } })];
+    await pollJellyfinSessions(env.ctx);
+    await pollJellyfinSessions(env.ctx);
+    expect(await daily(fritzId)).toEqual([{ device_id: 'app:Infuse', streams: 1, transcodes: 1, reasons: { videoCodec: 1 } }]);
+  });
+
+  it('a transcode that never reports reasons counts as remux on the second poll', async () => {
+    sessions = [infuse()];
+    await pollJellyfinSessions(env.ctx);
+    await pollJellyfinSessions(env.ctx);
+    expect(await daily(fritzId)).toEqual([{ device_id: 'app:Infuse', streams: 1, transcodes: 0, reasons: {} }]);
+  });
+
+  it("a non-owner profile's own server identity counts for its account", async () => {
+    const pid = '00000000-0000-4000-8000-0000000000aa';
+    const pjf = '9'.repeat(32);
+    await env.pool.query('insert into profiles(id, user_id, name, is_owner, kids, jellyfin_user_id) values ($1, $2, $3, false, false, $4) on conflict do nothing', [pid, adminId, 'Kind', pjf]);
+    try {
+      sessions = [infuse({ UserId: pjf, PlayState: { PlayMethod: 'DirectPlay', IsPaused: false } })];
+      await pollJellyfinSessions(env.ctx);
+      expect(await daily(adminId)).toEqual([{ device_id: 'app:Infuse', streams: 1, transcodes: 0, reasons: {} }]);
+    } finally {
+      await env.pool.query('delete from profiles where id=$1', [pid]);
+    }
+  });
+});
+
 describe('GET /api/admin/streams', () => {
   it('a portal transcode is enriched with codecs / hardware from transcodeSessions; foreign apps come from it too', async () => {
     await info(admin, TC);
@@ -184,8 +221,15 @@ describe('GET /api/admin/streams', () => {
     ]);
   });
 
-  it('friend 403; no session 401', async () => {
+  it('friend 403; admin on a non-owner profile 403; no session 401', async () => {
     expect((await as(fritz, 'GET', '/api/admin/streams')).statusCode).toBe(403);
+    const s = await env.login(ADMIN);
+    const pid = '00000000-0000-4000-8000-0000000000ab';
+    await env.pool.query('insert into profiles(id, user_id, name, is_owner, kids, jellyfin_user_id) values ($1, $2, $3, false, false, $4)', [pid, adminId, 'Gast', '8'.repeat(32)]);
+    const raw = JSON.parse((await env.kv.get(`sess:${s.cookies.ff_sid}`))!);
+    await env.kv.set(`sess:${s.cookies.ff_sid}`, JSON.stringify({ ...raw, profileId: pid }), 600);
+    expect((await as(s, 'GET', '/api/admin/streams')).statusCode).toBe(403);
+    await env.pool.query('delete from profiles where id=$1', [pid]);
     expect((await env.app.inject({ url: '/api/admin/streams' })).statusCode).toBe(401);
   });
 });
