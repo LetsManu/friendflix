@@ -64,10 +64,13 @@ beforeEach(async () => {
   vi.resetModules();
   await import('./fetch-worker');
 });
-afterEach(() => vi.unstubAllGlobals());
+afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 
 describe('fetch worker', () => {
   it('downloads the whole file into ff-dl/<id>/video.mp4 and reports progress and done', async () => {
+    // progress is throttled to one message per 250 ms of performance.now(); a fresh test worker can be younger than
+    // that, so pin the clock past the first window instead of depending on process age
+    vi.spyOn(performance, 'now').mockReturnValue(10_000);
     start();
     expect(await finished()).toEqual({ type: 'done', id: ID, bytes: 1000, etag: '"e1"' });
     expect(video()!.data).toEqual(FILE);
@@ -167,6 +170,7 @@ describe('fetch worker', () => {
 
   it('pause aborts the transfer and reports the bytes kept; a start while running is ignored', async () => {
     handler = ({ signal }) => new Response(stream([FILE.subarray(0, 300)], 'hang', signal), { status: 200, headers: { 'content-length': '1000' } });
+    vi.spyOn(performance, 'now').mockReturnValue(10_000); // past the 250 ms progress throttle, see the first test
     start();
     await vi.waitFor(() => expect(out.some((m) => m.type === 'progress')).toBe(true));
     start({ id: 'other' }); // one download at a time
