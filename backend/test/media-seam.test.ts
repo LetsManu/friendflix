@@ -193,6 +193,10 @@ describe('transcodeReason on the playback DTO', () => {
   it('an explicit audio track is audioTrack', () => {
     expect(mk({ Container: 'mp4', SupportsDirectPlay: true }, { audioIndex: 2 }).transcodeReason).toBe('audioTrack');
   });
+  it('a cap below the source outranks the audio track (a remote limit must not read as "audio track")', () => {
+    expect(mk({ Container: 'mp4', SupportsDirectPlay: true, Bitrate: 9_000_000 }, { audioIndex: 2, maxBitrate: 4_000_000, capReason: 'remoteCap' }).transcodeReason).toBe('remoteCap');
+    expect(mk({ Container: 'mp4', SupportsDirectPlay: true, Bitrate: 2_000_000 }, { audioIndex: 2, maxBitrate: 4_000_000, capReason: 'remoteCap' }).transcodeReason).toBe('audioTrack');
+  });
 });
 
 describe('explicit video/audio bitrate on the transcode URL', () => {

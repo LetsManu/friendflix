@@ -27,6 +27,9 @@ const UP_EVERY_MS = 60_000;
 const UP_BUFFER_SEC = 20;
 
 const FINITE = LADDER.filter((r) => Number.isFinite(r.bps)).map((r) => r.bps);
+const TOP = FINITE[0]; // 1080p
+/** highest bit rate Auto ever asks for (the server lowers it to its ceiling) */
+export const AUTO_MAX = 200_000_000;
 
 function highestFinite(limit: number): number {
   for (const b of FINITE) if (b <= limit) return b;
@@ -40,6 +43,27 @@ export function pickRung(estimate: number | null, cap: number, sourceBps?: numbe
   if (sourceBps !== undefined && sourceBps <= cap && sourceBps <= usable) return Infinity;
   return Math.max(FLOOR, highestFinite(Math.min(cap, usable)));
 }
+
+/**
+ * Bit rate Auto asks for. The source bitrate is unknown before playback info, so a link that carries more than the top
+ * rung asks for 70% of the estimate (the server applies its ceiling, the media server direct-plays a source at or below it)
+ * = "Original". No estimate = the 720p start; otherwise the ladder rung.
+ */
+export function autoBps(estimate: number | null): number {
+  if (estimate === null) return START;
+  const usable = estimate * HEADROOM;
+  if (usable >= TOP) return Math.min(AUTO_MAX, Math.floor(usable));
+  return pickRung(estimate, Infinity);
+}
+
+/** ladder name of a transcode at `bps`, by threshold (the same steps as the server's rung height: >= 8 Mbit/s = 1080p ...) */
+export function rungKey(bps: number): Exclude<RungKey, 'original'> {
+  const k = LADDER.find((r) => Number.isFinite(r.bps) && bps >= r.bps)?.key;
+  return k && k !== 'original' ? k : '360p';
+}
+
+/** true when `bps` lies above the top ladder rung: Auto's "original" request */
+export const isOriginalBps = (bps: number) => bps > TOP;
 
 export class AbrController {
   private now: () => number;
@@ -93,12 +117,13 @@ export class AbrController {
     return { do: 'switch', bps: next, reason: 'up' };
   }
 
-  /** lowest finite rung above the current one that the cap allows */
+  /** lowest finite rung above the current one that the cap allows; above the top rung: the ceiling (= original, up to AUTO_MAX) */
   private nextUp(): number | null {
     for (let i = FINITE.length - 1; i >= 0; i--) {
       if (FINITE[i] > this.cur && FINITE[i] <= this.cap) return FINITE[i];
     }
-    return null;
+    const original = Math.min(this.cap, AUTO_MAX);
+    return original > TOP && original > this.cur ? original : null;
   }
 
   private down(reason: 'stall' | 'network'): Decision {

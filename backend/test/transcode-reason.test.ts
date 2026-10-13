@@ -50,6 +50,10 @@ describe('POST /api/playback/info transcodeReason', () => {
     // a hint does not override a lower server-side cap
     expect((await info(REMOTE, { maxBitrate: 15_000_000, reasonHint: 'manual' })).json().transcodeReason).toBe('remoteCap');
   });
+  it('a client maxBitrate equal to or above the ceiling is not a network limit (Auto on a fast link asks above the ceiling)', async () => {
+    expect((await info(REMOTE, { maxBitrate: 8_000_000, reasonHint: 'network' })).json().transcodeReason).toBe('remoteCap');
+    expect((await info(REMOTE, { maxBitrate: 70_000_000, reasonHint: 'network' })).json()).toMatchObject({ maxBitrate: 8_000_000, transcodeReason: 'remoteCap' });
+  });
   it('rejects an unknown reasonHint', async () => {
     expect((await info(REMOTE, { reasonHint: 'bogus' })).statusCode).toBe(400);
   });

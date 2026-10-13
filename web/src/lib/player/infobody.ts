@@ -2,7 +2,7 @@
  * The body of POST /api/playback/info, built in ONE place for the player and for the prefetch on the play buttons
  * (lib/player/prefetch.ts): the prefetched answer is only reused when both bodies are identical.
  */
-import { pickRung } from './abr';
+import { autoBps } from './abr';
 import { loadStoredEstimate } from './bandwidth';
 import { firstInfoBody } from './bar';
 
@@ -43,7 +43,7 @@ export function firstPlaybackRequest(itemId: string, pf: { quality?: number; aud
   const fb = firstInfoBody(pf, audioPick);
   const quality = fb.maxBitrate ?? 0;
   const hint: ReasonHint = quality ? 'manual' : 'network';
-  const bps = quality || pickRung(loadStoredEstimate(), Infinity);
+  const bps = quality || autoBps(loadStoredEstimate());
   return { body: playbackInfoBody({ itemId, startSec, bps, hint, audioLang: fb.audioLang }), quality, hint, bps };
 }
 

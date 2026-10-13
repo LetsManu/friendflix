@@ -17,7 +17,7 @@
   import { WheelAccumulator } from '#lib/player/wheel';
   import { parseVolume, stepVolume } from '#lib/player/volume';
   import { hlsConfig, loadHls } from '#lib/player/hls';
-  import { AbrController, LADDER, pickRung, type Decision } from '#lib/player/abr';
+  import { AbrController, LADDER, autoBps, isOriginalBps, rungKey, type Decision } from '#lib/player/abr';
   import { BandwidthEstimator, loadStoredEstimate, storeEstimate } from '#lib/player/bandwidth';
   import QualityChip from '#lib/player/QualityChip.svelte';
   import { speedLabel, SPEEDS } from '#lib/player/bar';
@@ -110,10 +110,10 @@
   const est = new BandwidthEstimator();
   let abr: AbrController | null = null, reqHint: 'network' | 'manual' = 'network', switching = false, queuedPick: number | null = null, sessionPlaying = false, shownQ = 0, chipOpen = false, waitSince = 0, stallHandled = false, stallT: ReturnType<typeof setTimeout>, abrTimer: ReturnType<typeof setInterval>, bwTimer: ReturnType<typeof setInterval>, directSeen = 0;
   const STALL_NOW_MS = 2100; // a wait this long counts as a stall at once (the controller steps down on > 2 s), not only when playback resumes
-  const rungLabel = (bps: number) => LADDER.find((r) => r.bps === bps)?.key ?? tr('player.quality.mbit', { n: Math.round(bps / 1e6) });
+  const rungLabel = (bps: number): string => rungKey(bps); // by threshold, like the server's rung height (a 20 Mbit/s transcode is 1080p)
   const makeAbr = (start: number, pinned?: number) => new AbrController({ now: () => performance.now(), cap: info?.roleMaxBitrate ?? Infinity, start, pinned });
-  /** bit/s asked from the server: the pinned pick, the running controller's rung, or (first load) the rung for the remembered estimate. Infinity = original. */
-  const wantBps = () => (abr ? abr.current : quality || pickRung(loadStoredEstimate(), Infinity));
+  /** bit/s asked from the server: the pinned pick, the running controller's rung, or (first load) Auto's value for the remembered estimate (above 8 Mbit/s = original). */
+  const wantBps = () => (abr ? abr.current : quality || autoBps(loadStoredEstimate()));
   const persistEstimate = () => { if (est.estimate !== null) storeEstimate(est.estimate); };
   $: chipDirect = mode === 'direct';
   // ---- touch gestures ----
@@ -469,7 +469,7 @@
   function applyAbr(d: Decision): boolean {
     if (d.do !== 'switch') return false;
     wantAutoplay = false;
-    void changeQuality(d.bps, 'abr', 3000, tr(d.reason === 'up' ? 'player.quality.stepUp' : 'player.quality.stepDown', { q: rungLabel(d.bps) }));
+    void changeQuality(d.bps, 'abr', 3000, tr(d.reason === 'up' ? 'player.quality.stepUp' : 'player.quality.stepDown', { q: isOriginalBps(d.bps) ? tr('player.quality.chipOriginal') : rungLabel(d.bps) }));
     return true;
   }
   /** 'manual' = the viewer's pick (0 = Auto; a rung is pinned: no step-up); 'abr' = the controller already moved to `bps` */
@@ -480,8 +480,9 @@
     if (switching) { if (how === 'manual') queuedPick = bps; return; } // a pick during a running switch is applied right after it
     switching = true;
     if (how === 'manual') {
-      quality = bps; reqHint = 'manual';
-      abr = makeAbr(bps || pickRung(est.estimate ?? loadStoredEstimate(), info?.roleMaxBitrate ?? Infinity), bps || undefined);
+      quality = bps; reqHint = bps ? 'manual' : 'network';
+      abr = makeAbr(bps || autoBps(est.estimate ?? loadStoredEstimate()), bps || undefined);
+      rec.networkTries = 0; reconnecting = 0; clearTimeout(retryT); // a pick replaces a pending cooldown retry
     } else {
       reqHint = 'network'; rec.networkTries = 0; reconnecting = 0; clearTimeout(retryT);
     }

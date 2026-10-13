@@ -209,16 +209,17 @@ export function listRoutes(app: FastifyInstance, ctx: Ctx) {
               updated_at = now() where id = $1`,
       [a.id, b.name ?? null, b.description !== undefined, b.description || null, b.themed ?? null, b.emoji !== undefined, b.emoji || null, b.coverColor !== undefined, b.coverColor || null],
     );
-    if (before?.featured) await bumpHomeAll(ctx); // look / name / kind of a pinned themed list is on every home page
     // Featuring is an admin decision about THIS kind of list: a featured plain list turned themed would become a kids-readable home
     // row, a pinned themed list turned plain a featured social list - neither without an admin. Changing `themed` on a featured list
     // therefore unfeatures it (the admin can pin it again); the owner learns it from `unfeatured`.
     if (before && b.themed !== undefined && b.themed !== before.themed && before.featured) {
       await ctx.db.query('update lists set featured_at = null, featured_pos = null where id = $1', [a.id]);
+      await bumpHomeAll(ctx); // after the unfeature write: a home request in between must not cache the list as a featured row
       await audit(ctx, req.user!.id, 'list.unfeature', a.id);
       return { ok: true, unfeatured: true };
     }
     if (b.themed === false) await ctx.db.query('update lists set featured_pos = null where id = $1', [a.id]);
+    if (before?.featured) await bumpHomeAll(ctx); // look / name / kind of a pinned themed list is on every home page (after the last write)
     return { ok: true };
   });
 

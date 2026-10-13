@@ -81,10 +81,12 @@ function transcodeReasonOf(
   const mapped = (raw ?? '').split(',').map((r) => r.trim()).filter(Boolean).map((r) => REASON_MAP[r] ?? 'other');
   const hard = REASON_ORDER.find((r) => mapped.includes(r));
   if (hard) return hard;
-  if (o.audioIndex !== undefined) return 'audioTrack';
   const srcBitrate = Number(src.Bitrate ?? 0);
-  // our cap is blamed only when it really lies below the source; a bitrate reason with the cap above it is a plain network/device limit
-  if (srcBitrate > o.maxBitrate || (mapped.includes('bitrate') && !srcBitrate)) return o.capReason ?? 'network';
+  // our cap is blamed only when it really lies below the source (it outranks the audio track: a remote limit must not read as "audio track");
+  // a bitrate reason with the cap above it is a plain network/device limit
+  if (srcBitrate > o.maxBitrate) return o.capReason ?? 'network';
+  if (o.audioIndex !== undefined) return 'audioTrack';
+  if (mapped.includes('bitrate') && !srcBitrate) return o.capReason ?? 'network';
   if (mapped.includes('bitrate')) return 'network';
   if (o.maxHeight && o.srcHeight > o.maxHeight) return 'height';
   return 'other';

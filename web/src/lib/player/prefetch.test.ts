@@ -169,6 +169,20 @@ describe('infobody', () => {
     localStorage.setItem('ff_bw', JSON.stringify({ bps: 30_000_000, at: Date.now() }));
     expect(firstPlaybackRequest('a', DEFAULT_PREFS).body.maxBitrate).toBeGreaterThan(4_000_000);
   });
+  it('Auto on a fast link asks for original (70% of the estimate, above the top rung), shared by prefetch and player', () => {
+    localStorage.setItem('ff_bw', JSON.stringify({ bps: 100_000_000, at: Date.now() }));
+    const fr = firstPlaybackRequest('a', DEFAULT_PREFS);
+    expect(fr.body).toEqual({ itemId: 'a', maxBitrate: 70_000_000, reasonHint: 'network' });
+    expect(fr.bps).toBe(70_000_000);
+    api.mockResolvedValue({});
+    prefetchPlayback('a');
+    expect(api).toHaveBeenCalledWith('/api/playback/info', { method: 'POST', body: fr.body });
+    expect(takePrefetched('a', fr.body)).not.toBeNull();
+  });
+  it('a slow link stays on the ladder', () => {
+    localStorage.setItem('ff_bw', JSON.stringify({ bps: 10_000_000, at: Date.now() }));
+    expect(firstPlaybackRequest('a', DEFAULT_PREFS).body.maxBitrate).toBe(4_000_000);
+  });
 });
 
 describe('watchTarget', () => {

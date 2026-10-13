@@ -11,7 +11,7 @@ interface InfoCall { maxBitrate?: number; reasonHint?: string; startTicks?: numb
  * /api/playback/info answers like the server: no maxBitrate = original (direct play of the file), otherwise a transcode at that rung
  * (a real 30 s HLS stream). `stallAt` = rungs whose segments from the 4th on arrive after 7 s, so playback really runs dry at about 6 s.
  */
-async function mockAbr(page: Page, o: { stallAt?: number[]; slowFirst?: number[]; tracks?: boolean; direct?: boolean } = {}) {
+async function mockAbr(page: Page, o: { stallAt?: number[]; slowFirst?: number[]; tracks?: boolean; direct?: boolean; sourceBps?: number } = {}) {
   await mockPlayer(page);
   const calls: InfoCall[] = [];
   const firstSeg = new Set<number>();
@@ -21,7 +21,9 @@ async function mockAbr(page: Page, o: { stallAt?: number[]; slowFirst?: number[]
     const base = { resumeTicks: 0, mediaSourceId: 'ms1', playSessionId: `ps${calls.length}`, roleMaxBitrate: 20_000_000, subtitles: [],
       audioTracks: o.tracks ? [{ index: 1, title: 'Deutsch', language: 'ger', isDefault: true }, { index: 2, title: 'English', language: 'eng', isDefault: false }] : [] };
     if (b.audioIndex !== undefined) Object.assign(base, { audioIndex: b.audioIndex });
-    if (o.direct || !b.maxBitrate) return r.fulfill({ json: { ...base, directUrl: '/media/p1test.webm', hlsUrl: '/media/p1test.webm', maxBitrate: 60_000_000 } });
+    // the server caps at the role ceiling (20 Mbit/s here) and plays the file directly when the source fits under that cap
+    const fits = o.sourceBps !== undefined && b.maxBitrate !== undefined && o.sourceBps <= Math.min(b.maxBitrate, 20_000_000);
+    if (o.direct || !b.maxBitrate || fits) return r.fulfill({ json: { ...base, directUrl: '/media/p1test.webm', hlsUrl: '/media/p1test.webm', maxBitrate: 60_000_000 } });
     return r.fulfill({ json: { ...base, hlsUrl: `/media/hls/${b.maxBitrate}/out.m3u8`, maxBitrate: b.maxBitrate, transcodeReason: b.reasonHint === 'manual' ? 'manual' : 'network' } });
   });
   await page.route('**/media/hls/**', async (r) => {
@@ -77,6 +79,15 @@ test.describe('player: adaptive quality', () => {
     await expect(chip).toBeVisible();
     await chip.click();
     await expect(page.getByRole('status').filter({ hasText: 'ohne Umwandlung' })).toBeVisible();
+  });
+
+  test('a fast remembered link asks for original and the chip says Original (direct play of a 15 Mbit/s file)', async ({ page, api: _api }) => {
+    await page.addInitScript(() => localStorage.setItem('ff_bw', JSON.stringify({ bps: 100_000_000, at: Date.now() })));
+    const calls = await mockAbr(page, { sourceBps: 15_000_000 });
+    await page.goto('/watch/' + MOVIE.id);
+    await page.waitForFunction(() => (document.querySelector('video')?.duration ?? 0) > 500);
+    expect(calls[0]).toMatchObject({ maxBitrate: 70_000_000, reasonHint: 'network' });
+    await expect(page.getByRole('button', { name: /^Original/ })).toBeVisible();
   });
 
   test('auto steps down after a stall and keeps the position (±2 s)', async ({ page, api: _api }) => {

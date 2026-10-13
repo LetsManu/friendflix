@@ -128,7 +128,8 @@ export function internalRoutes(app: FastifyInstance, ctx: Ctx) {
     if ('ct' in body.data) return (await resolveCast(ctx, body.data.ct, body.data.client)) ?? reply.code(401).send({ error: 'unauthenticated' });
     const m = await mediaAuth(body.data.sid);
     if (!m) return reply.code(401).send({ error: 'unauthenticated' });
-    const remote = body.data.ip !== undefined && !isHomeAddress(body.data.ip, ctx.cfg.HOME_NETWORKS);
+    // no ip (an older gateway, or one that cannot tell) is ambiguous = remote
+    const remote = body.data.ip === undefined || !isHomeAddress(body.data.ip, ctx.cfg.HOME_NETWORKS);
     return withoutRemoteCap(m, remote);
   });
 

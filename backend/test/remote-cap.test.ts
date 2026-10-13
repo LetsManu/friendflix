@@ -63,6 +63,19 @@ describe('POST /api/playback/info remote cap', () => {
   });
 });
 
+describe('POST /api/cast/session remote cap', () => {
+  const cast = (s: Sess, ip: string) => env.app.inject({ method: 'POST', url: '/api/cast/session', cookies: s.cookies, headers: { 'x-csrf-token': s.csrf, 'x-real-ip': ip }, payload: { itemId: ID } });
+  it('a cast from a public address stores and streams at most the remote cap; from home the role limit', async () => {
+    const away = await cast(friend, '203.0.113.9');
+    expect(away.statusCode).toBe(200);
+    expect(away.json().contentUrl).toContain('MaxStreamingBitrate=8000000');
+    const ctAway = /\/media\/c\/([\w-]{43})\//.exec(away.json().contentUrl)![1];
+    expect((await env.app.inject({ method: 'POST', url: '/internal/authz', headers: H, payload: { ct: ctAway, client: '198.51.100.1' } })).json().maxBitrate).toBe(8_000_000);
+    const home = await cast(friend, '192.168.1.10');
+    expect(home.json().contentUrl).toContain('MaxStreamingBitrate=20000000');
+  });
+});
+
 describe('POST /internal/authz {sid, ip}', () => {
   it('lowers maxBitrate for remote IPs only', async () => {
     const sid = friend.cookies.ff_sid!;
@@ -78,9 +91,9 @@ describe('POST /internal/authz {sid, ip}', () => {
     expect((await authz(sid, 'unknown')).json().maxBitrate).toBe(8_000_000);
     expect((await authz(sid, '127.0.0.1')).json().maxBitrate).toBe(20_000_000);
   });
-  it('without ip the role limit is unchanged, and the response carries no internal fields', async () => {
+  it('without ip the caller counts as remote (ambiguous = remote), and the response carries no internal fields', async () => {
     const r = (await authz(friend.cookies.ff_sid!)).json();
-    expect(r.maxBitrate).toBe(20_000_000);
+    expect(r.maxBitrate).toBe(8_000_000);
     expect(r).not.toHaveProperty('remoteMaxBitrate');
   });
   it('rejects a malformed ip', async () => {

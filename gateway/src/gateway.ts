@@ -579,6 +579,11 @@ export function createGateway(opts: GatewayOptions): { server: Server; metrics: 
       }
       target.searchParams.append(k, v);
     }
+    // a transcoded stream without the bitrate params would run at the source bitrate: add the missing ones at the cap
+    if (up.requireBitrate?.path.test(path)) {
+      const have = new Set([...target.searchParams.keys()].map((k) => k.toLowerCase()));
+      for (const p of up.requireBitrate.params) if (!have.has(p.toLowerCase())) target.searchParams.set(p, String(auth.maxBitrate));
+    }
     if (up.rewrite) {
       const r = up.rewrite(target.pathname, target.searchParams);
       const q = r.query.toString();

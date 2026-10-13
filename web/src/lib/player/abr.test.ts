@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { AbrController, LADDER, pickRung } from './abr';
+import { AbrController, AUTO_MAX, LADDER, autoBps, isOriginalBps, pickRung, rungKey } from './abr';
 
 function clock(t = 1_000_000) {
   const c = { t, now: () => c.t, adv: (ms: number) => { c.t += ms; } };
@@ -31,6 +31,37 @@ describe('pickRung', () => {
     expect(pickRung(100e6, 8e6, 15e6)).toBe(8e6);
     expect(pickRung(20e6, 40e6, 15e6)).toBe(8e6); // 14 < 15
     expect(pickRung(100e6, 20e6)).toBe(8e6);
+  });
+});
+
+describe('autoBps', () => {
+  it('starts at 720p without an estimate', () => {
+    expect(autoBps(null)).toBe(4e6);
+  });
+  it('uses the ladder while 70% of the estimate stays below 1080p', () => {
+    expect(autoBps(10e6)).toBe(4e6);
+    expect(autoBps(11.4e6)).toBe(4e6);
+    expect(autoBps(0.1e6)).toBe(0.8e6);
+  });
+  it('asks for original (70% of the estimate) once that reaches the top rung, capped at 200 Mbit/s', () => {
+    expect(autoBps(8e6 / 0.7)).toBe(Math.floor(8e6)); // boundary: exactly the top rung
+    expect(autoBps(100e6)).toBe(70e6);
+    expect(autoBps(1e9)).toBe(AUTO_MAX);
+    expect(isOriginalBps(autoBps(100e6))).toBe(true);
+    expect(isOriginalBps(8e6)).toBe(false);
+  });
+});
+
+describe('rungKey', () => {
+  it('labels by threshold like the server rung height', () => {
+    expect(rungKey(20e6)).toBe('1080p');
+    expect(rungKey(8e6)).toBe('1080p');
+    expect(rungKey(7.9e6)).toBe('720p');
+    expect(rungKey(4e6)).toBe('720p');
+    expect(rungKey(2e6)).toBe('480p');
+    expect(rungKey(1.5e6)).toBe('480p');
+    expect(rungKey(1e6)).toBe('360p');
+    expect(rungKey(0.5e6)).toBe('360p');
   });
 });
 
@@ -191,6 +222,28 @@ describe('AbrController step-up', () => {
     tick(b, null);
     c.adv(60_000);
     expect(tick(b, null)).toEqual({ do: 'none' });
+  });
+  it('steps up from the top rung to original (the ceiling) when the estimate allows it', () => {
+    const c = clock();
+    const a = new AbrController({ now: c.now, cap: 20e6, start: 8e6 }); // original = 20e6 needs 33.4e6
+    tick(a, 30e6);
+    c.adv(60_000);
+    expect(tick(a, 30e6)).toEqual({ do: 'none' });
+    tick(a, 40e6);
+    c.adv(30_000);
+    expect(tick(a, 40e6)).toEqual({ do: 'switch', bps: 20e6, reason: 'up' });
+    expect(a.current).toBe(20e6);
+    c.adv(120_000);
+    expect(tick(a, 400e6)).toEqual({ do: 'none' }); // already at the ceiling
+    expect(a.onStall(3000)).toEqual({ do: 'switch', bps: 8e6, reason: 'stall' });
+  });
+  it('an Auto start above the cap begins at the ceiling; an unknown cap tops out at 200 Mbit/s', () => {
+    expect(new AbrController({ now: () => 0, cap: 12e6, start: autoBps(100e6) }).current).toBe(12e6);
+    const c = clock();
+    const a = new AbrController({ now: c.now, cap: Infinity, start: 8e6 });
+    tick(a, 400e6);
+    c.adv(30_000);
+    expect(tick(a, 400e6)).toEqual({ do: 'switch', bps: AUTO_MAX, reason: 'up' });
   });
   it('pinned: never steps up, still steps down on stall', () => {
     const c = clock();

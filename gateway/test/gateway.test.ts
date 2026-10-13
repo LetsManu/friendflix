@@ -215,6 +215,23 @@ describe('gateway', () => {
     expect(u.url).toContain('MaxStreamingBitrate=5000000');
     expect(u.url).toContain('MediaSourceId=x');
   });
+  it('adds missing bitrate params at the cap on HLS paths; present higher values are clamped; direct streams are untouched', async () => {
+    seen.length = 0;
+    await (await get(`/media/Videos/${ID}/master.m3u8?MediaSourceId=x`)).arrayBuffer();
+    let q = new URL(seen[0]!.url, 'http://x').searchParams;
+    expect([q.get('MaxStreamingBitrate'), q.get('VideoBitrate')]).toEqual(['5000000', '5000000']);
+    seen.length = 0;
+    await (await get(`/media/Videos/${ID}/hls1/main/0.ts?maxstreamingbitrate=999999999&MediaSourceId=x`)).arrayBuffer();
+    q = new URL(seen[0]!.url, 'http://x').searchParams;
+    expect([q.get('maxstreamingbitrate'), q.get('MaxStreamingBitrate'), q.get('VideoBitrate')]).toEqual(['5000000', null, '5000000']); // no duplicate in another casing
+    seen.length = 0;
+    await (await get(`/media/Videos/${ID}/main.m3u8?VideoBitrate=1000000&MediaSourceId=x`)).arrayBuffer();
+    q = new URL(seen[0]!.url, 'http://x').searchParams;
+    expect([q.get('VideoBitrate'), q.get('MaxStreamingBitrate')]).toEqual(['1000000', '5000000']);
+    seen.length = 0;
+    await (await get(`/media/Videos/${ID}/stream?static=true`)).arrayBuffer();
+    expect(seen[0]!.url).not.toMatch(/bitrate/i);
+  });
   it('clamps resolution params to the role cap on the cookie path, and leaves them alone without a cap', async () => {
     seen.length = 0;
     await (await get(`/media/Videos/${ID}/master.m3u8?MaxHeight=2160&MaxWidth=3840&Height=4000&Width=9000&MediaSourceId=x`, { cookie: 'ff_sid=guestsid' })).arrayBuffer();
