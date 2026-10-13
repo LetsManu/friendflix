@@ -1,3 +1,5 @@
+// SPDX-FileCopyrightText: 2026 Manuel Weißböck
+// SPDX-License-Identifier: AGPL-3.0-or-later
 import { normLang } from '../langindex.js';
 import type { HygieneFacts, HygieneSource, HygieneStream, ProviderIds } from '../media/types.js';
 

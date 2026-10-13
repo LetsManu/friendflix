@@ -1,3 +1,5 @@
+// SPDX-FileCopyrightText: 2026 Manuel Weißböck
+// SPDX-License-Identifier: AGPL-3.0-or-later
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { listErrors } from '../src/errorlog.js';
 import { hygieneDue, hygieneState, hygieneTick, householdLanguages, startHygieneScan, hygieneIdle } from '../src/hygiene/scan.js';

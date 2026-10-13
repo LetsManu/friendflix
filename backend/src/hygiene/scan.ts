@@ -1,3 +1,5 @@
+// SPDX-FileCopyrightText: 2026 Manuel Weißböck
+// SPDX-License-Identifier: AGPL-3.0-or-later
 import { setTimeout as sleep } from 'node:timers/promises';
 import type { Ctx } from '../ctx.js';
 import { recordError } from '../errorlog.js';
