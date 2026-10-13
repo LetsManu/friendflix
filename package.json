@@ -13,7 +13,9 @@
     "test": "npm run test --workspaces --if-present && npm run test:scripts",
     "coverage": "npm run coverage --workspaces --if-present",
     "test:scripts": "node --test scripts/*.test.mjs",
-    "e2e": "playwright test -c e2e/playwright.config.ts"
+    "e2e": "playwright test -c e2e/playwright.config.ts",
+    "spdx:check": "node scripts/spdx.mjs --check",
+    "spdx:fix": "node scripts/spdx.mjs --fix"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
