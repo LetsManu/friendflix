@@ -121,6 +121,8 @@ const en: Translation<typeof de> = {
     change: 'Change AirPlay device',
     failed: 'AirPlay playback failed.',
     endHint: 'To stop, pick this device in the AirPlay menu.',
+    choose: 'Choose TV',
+    chooseHint: 'Now pick the TV from the list.',
     needsTranscode: 'AirPlay needs transcoding – not allowed for your role.',
     tvHint: 'No AirPlay or Chromecast on your TV? Open {url} in the TV’s browser and pair your phone as the remote.',
   },

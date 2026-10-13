@@ -121,6 +121,8 @@ const tr: Translation<typeof de> = {
     change: 'AirPlay cihazını değiştir',
     failed: 'AirPlay ile oynatma başarısız oldu.',
     endHint: 'Durdurmak için AirPlay menüsünde bu cihazı seç.',
+    choose: 'Televizyonu seç',
+    chooseHint: 'Şimdi listeden televizyonu seç.',
     needsTranscode: 'AirPlay için dönüştürme gerekiyor – rolün buna izin vermiyor.',
     tvHint: 'Televizyonda AirPlay veya Chromecast yok mu? TV tarayıcısında {url} adresini aç ve telefonunu kumanda olarak eşleştir.',
   },

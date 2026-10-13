@@ -19,13 +19,14 @@ import type { JfUser, ProfileRow, UserRow } from './types.js';
  *   shown/logged elsewhere, so it must not carry the media token.
  * - It must never be logged, put into metrics labels or error messages, or forwarded to Jellyfin.
  * - AirPlay (Safari "video URL" mode, `via: 'airplay'`) uses the same tokens: the TV fetches the stream without the user's cookies.
- *   Its pin admits TWO client addresses (castpin: + castpin2:), because Safari on the sender may load the playlist itself before
- *   handing the URL to the TV, and on a home network phone and TV reach the server from different addresses. The second address
+ *   Its pin admits TWO client addresses (castpin: + castpin2:): the player puts the token URL on the phone's <video> BEFORE the
+ *   AirPlay picker opens (the TV must never get a cookie URL it cannot load), so the phone pins the first address, and the TV,
+ *   once the user picked it, the second (on a home network they reach the server from different addresses). The second address
  *   can only be taken within AIRPLAY_PIN2_WINDOW_MS of the token's creation; after that the token is locked to what it has.
  */
 export type CastVia = 'chromecast' | 'airplay';
-/** an AirPlay token's second pin can only be taken this soon after creation (phone + TV start within seconds of each other) */
-export const AIRPLAY_PIN2_WINDOW_MS = 60_000;
+/** an AirPlay token's second pin can only be taken this soon after creation (the phone pins slot 1 when it loads the token stream, the TV slot 2 once the user picked it; the picker may take a while) */
+export const AIRPLAY_PIN2_WINDOW_MS = 120_000;
 export const CAST_TOKEN_RE = /^[A-Za-z0-9_-]{43}$/;
 export const MAX_CAST_TOKENS = 2;
 /** the Default Media Receiver decodes H.264 up to level 4.1 */
