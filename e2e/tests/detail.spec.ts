@@ -136,6 +136,56 @@ test.describe('detail page (desktop)', () => {
     expect(Math.abs(after.y - before.y)).toBeLessThan(1);
   });
 
+  test.describe('ratings block settles without a jump', () => {
+    test.use({ reducedMotion: 'no-preference' });
+    for (const [name, body, dir] of [
+      ['about with no ratings: the reserved line collapses smoothly', { ...NO_KEYS, ratings: [] }, -1],
+      ['about with a tagline: the block grows smoothly', WITH_KEYS, 1],
+    ] as const) {
+      test(name, async ({ page }) => {
+        await page.route('**/api/prefs', (r) => r.fulfill({ json: { prefs: { hoverTrailers: false, autoStartPreview: false } } })); // no hero trailer
+        let release!: () => void;
+        const held = new Promise<void>((r) => (release = r));
+        await mockAbout(page, async (r) => { await held; await r.fulfill({ json: body }); });
+        await page.goto('/item/' + MOVIE.id);
+        await expect(page.locator('.top .rl.ph')).toHaveCount(1);
+        const syn = page.locator('.top .ov');
+        await expect(syn).toBeVisible();
+        // record the synopsis position on every frame while "about" resolves
+        const rec = syn.evaluate((el) => new Promise<number[]>((done) => {
+          const ys: number[] = [];
+          const t0 = performance.now();
+          const step = () => { ys.push(el.getBoundingClientRect().top); if (performance.now() - t0 < 1500) requestAnimationFrame(step); else done(ys); };
+          requestAnimationFrame(step);
+        }));
+        await page.waitForTimeout(200);
+        release();
+        const ys = await rec;
+        const total = ys[ys.length - 1]! - ys[0]!;
+        expect(Math.sign(total)).toBe(dir);
+        expect(Math.abs(total)).toBeGreaterThan(5);
+        let maxStep = 0;
+        for (let i = 1; i < ys.length; i++) maxStep = Math.max(maxStep, Math.abs(ys[i]! - ys[i - 1]!));
+        expect(maxStep, `largest per-frame move of ${Math.abs(total)}px total`).toBeLessThan(Math.abs(total) * 0.6);
+      });
+    }
+  });
+
+  test('⋯ menu Download opens the sheet while another tab is selected', async ({ page }) => {
+    await page.route('**/api/me', (r) => r.fulfill({ json: { ...ME, downloads: { allowed: true, max: 5 } } }));
+    await page.route('**/api/downloads', (r) => r.fulfill({ json: { downloads: [] } }));
+    await page.route(/\/api\/downloads\/options\//, (r) => r.fulfill({ json: { allowed: true, qualities: [{ id: 'hd', label: 'HD', height: 1080, estBytes: 2e9 }], audio: [], subtitles: [], quota: { used: 0, max: 5 }, days: 30 } }));
+    await mockAbout(page, NO_KEYS);
+    await page.goto('/item/' + MOVIE.id);
+    await tablist(page).getByRole('tab', { name: 'Mehr davon' }).click();
+    await expect(tablist(page).getByRole('tab', { name: 'Mehr davon' })).toHaveAttribute('aria-selected', 'true');
+    await page.getByRole('button', { name: 'Mehr', exact: true }).click();
+    await page.getByRole('button', { name: 'Herunterladen', exact: true }).click();
+    const sheet = page.getByRole('dialog', { name: 'Herunterladen' });
+    await expect(sheet).toBeVisible();
+    await expect(sheet.getByText('HD')).toBeVisible();
+  });
+
   test('modal variant (open from a card): same tabs and ratings line', async ({ page }) => {
     await mockAbout(page, NO_KEYS);
     await page.goto('/');
@@ -161,7 +211,13 @@ test.describe('detail page: TV', () => {
     await expect(play).toBeVisible();
     await play.focus();
     const details = tablist(page).getByRole('tab', { name: 'Details' });
-    for (let i = 0; i < 12 && !(await details.evaluate((e) => e === document.activeElement)); i++) await page.keyboard.press('ArrowDown');
+    await expect(play).toBeFocused();
+    await expect(page.locator('section.cast a').first()).toBeVisible(); // layout settled: cast row and ratings line are in
+    await expect(ratingsLine(page)).toContainText('Freunde');
+    // exactly two steps: play button -> first person of the cast row -> Details tab (the ratings line and the synopsis are not focus stops)
+    await page.keyboard.press('ArrowDown');
+    await expect(page.locator('section.cast a').first()).toBeFocused();
+    await page.keyboard.press('ArrowDown');
     await expect(details).toBeFocused();
     await expect(details).toHaveAttribute('tabindex', '0');
     await expect(tablist(page).getByRole('tab', { name: 'Mehr davon' })).toHaveAttribute('tabindex', '0'); // every tab is focusable on TV

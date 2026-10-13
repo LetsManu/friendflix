@@ -51,7 +51,7 @@
   let followed = false;
   let logoFailed = false, saveMsg = '', saveT: ReturnType<typeof setTimeout>, castMsg = '', castT: ReturnType<typeof setTimeout>;
   let lgA = '', lgS = '';
-  let details: DetailsTab | undefined, dlAvail = false, dlState = '';
+  let dl: DownloadButton | undefined, dlAvail = false, dlState = '';
   /** Block 21 "about" data: undefined = loading (the ratings line keeps its height), null = none */
   let about: About | null | undefined = undefined, aboutSeq = 0, aboutRaf = 0;
   // fresh label, removal date and quality chips (Block 17); admins get "Entfernungsdatum" in the ⋯ menu
@@ -143,6 +143,21 @@
     }));
   }
   $: tagline = about?.tagline ?? '';
+  /**
+   * Ratings line + tagline block: keeps the placeholder's height while "about" loads, then eases to its real height
+   * (collapses when there is nothing to show, grows for a tagline) instead of jumping the synopsis below it.
+   */
+  function smoothHeight(node: HTMLElement) {
+    const inner = node.firstElementChild as HTMLElement | null;
+    if (!inner || typeof ResizeObserver === 'undefined') return {};
+    let first = true;
+    const ro = new ResizeObserver(() => {
+      node.style.height = inner.offsetHeight + 'px';
+      if (first) { first = false; requestAnimationFrame(() => node.classList.add('ready')); } // no animation for the first size
+    });
+    ro.observe(inner);
+    return { destroy: () => ro.disconnect() };
+  }
 
   // ---- synopsis: clamped to 4 lines on phones, "Mehr" only when the text overflows ----
   let synOpen = false, synClamped = false, synEl: HTMLParagraphElement | undefined;
@@ -252,7 +267,7 @@
     ...($tvOnline && playTarget ? [{ id: 'tv', label: $t('detail.actions.tv'), icon: 'tv', run: castHere }] : []),
     ...(facts?.admin && (item.type === 'Movie' || item.type === 'Series' || item.type === 'BoxSet') ? [{ id: 'leaving', label: $t('fresh.admin.menu'), icon: 'calendar', run: () => { leavingDlg = true; } }] : []),
     ...(canPreview && !heroPlaying ? [{ id: 'trailer', label: $t('detail.actions.trailer'), icon: 'film', run: () => startHero(true) }] : []),
-    ...(item.type !== 'Series' && dlAvail && !phone ? [{ id: 'dl', label: dlState ? $t('detail.actions.downloadState', { state: dlState }) : $t('detail.actions.download'), icon: 'download', run: () => details?.activateDownload() }] : []),
+    ...(item.type !== 'Series' && dlAvail && !phone ? [{ id: 'dl', label: dlState ? $t('detail.actions.downloadState', { state: dlState }) : $t('detail.actions.download'), icon: 'download', run: () => dl?.activate() }] : []),
   ] as MoreAction[]) : [];
 
   // ---- hero trailer: the still image fades into a muted preview clip (like the billboard) ----
@@ -406,11 +421,10 @@
         {#if len}<span>{len}</span>{/if}
       </p>
       <TitleFacts {facts} episode={item.type === 'Episode'} />
-      <RatingsLine {about} />
+      <div class="lead" use:smoothHeight><div class="lead-in"><RatingsLine {about} />{#if tagline}<p class="tagline">{tagline}</p>{/if}</div></div>
       <a class="btn pill play wide" data-autofocus href={playHref} use:playPrefetch><Icon name="play" size={24} />{playLabel}</a>
       {#if item.type !== 'Series'}<DownloadButton itemId={item.id} block />{:else if playTarget}<DownloadButton itemId={playTarget} seriesId={item.id} block />{/if}
       {#if resumeLine}<p class="resume">{resumeLine}</p>{/if}
-      {#if tagline}<p class="tagline">{tagline}</p>{/if}
       <div class="syn">
         <p class="ov" class:clamp={!synOpen} id="dv-syn" bind:this={synEl}>{overview || $t('detail.view.noOverview')}</p>
         {#if synClamped}<button type="button" class="lnk more-syn" aria-expanded={synOpen} aria-controls="dv-syn" on:click={() => (synOpen = !synOpen)}>{synOpen ? $t('detail.about.less') : $t('detail.about.more')}</button>{/if}
@@ -443,8 +457,7 @@
             {#if len}<span>{len}</span>{/if}
           </p>
           <TitleFacts {facts} episode={item.type === 'Episode'} />
-          <RatingsLine {about} />
-          {#if tagline}<p class="tagline">{tagline}</p>{/if}
+          <div class="lead" use:smoothHeight><div class="lead-in"><RatingsLine {about} />{#if tagline}<p class="tagline">{tagline}</p>{/if}</div></div>
           <p class="ov">{overview || $t('detail.view.noOverview')}</p>
           {#if langs}<p class="muted small">{langs}</p>{/if}
         {/if}
@@ -482,7 +495,7 @@
       {/if}
 
       <div class="tp" id="dv-panel-details" role="tabpanel" aria-labelledby="dv-tab-details" hidden={curTab !== 'details'}>
-        <DetailsTab bind:this={details} {item} {people} {facts} {about} download={item.type !== 'Series' && !phone} bind:dlAvailable={dlAvail} bind:dlState />
+        <DetailsTab {item} {people} {facts} {about} download={item.type !== 'Series' && !phone} />
       </div>
 
       <div class="tp" id="dv-panel-more" role="tabpanel" aria-labelledby="dv-tab-more" hidden={curTab !== 'more'}>
@@ -495,6 +508,8 @@
           <Extras items={extras} {qs} />
         </div>
       {/if}
+      <!-- the "⋯ Mehr" download entry: its own headless instance outside the tab panels, so the sheet opens from any tab -->
+      {#if item.type !== 'Series'}<DownloadButton bind:this={dl} itemId={item.id} headless bind:available={dlAvail} bind:stateText={dlState} />{/if}
     </div>
   {:else if !failed}
     <div class="body" aria-hidden="true">
@@ -566,6 +581,9 @@
   .small { font-size: .85rem; margin: -.2rem 0 .6rem; }
   .ov { margin: .8rem 0; line-height: 1.55; overflow-wrap: anywhere; }
   .tagline { margin: .1rem 0 0; font-style: italic; color: #d2d2d2; line-height: 1.45; }
+  .lead { overflow: hidden; }
+  .lead-in { display: flow-root; }
+  .lead:global(.ready) { transition: height .3s var(--ease); }
   .rec { display: grid; gap: .8rem; margin-top: .8rem; }
   .chk { display: inline-flex; gap: .45rem; align-items: center; color: var(--fg); min-height: 44px; }
   .lnk { background: none; border: 0; padding: 0 .1rem; min-height: 0; color: var(--fg); font: inherit; font-weight: 400; text-decoration: underline; cursor: pointer; display: inline; }
@@ -592,7 +610,7 @@
   .pcap .play.wide { width: 100%; justify-content: center; min-height: 44px; font-size: 1.05rem; border-radius: 4px; }
   .pcap .resume { margin: 0; text-shadow: none; font-size: .9rem; color: var(--mut); }
   .pcap .ov { margin: .2rem 0 0; font-size: .95rem; line-height: 1.45; }
-  .pcap .tagline { margin: .2rem 0 0; font-size: .95rem; }
+  .pcap .tagline { margin: 0 0 .1rem; font-size: .95rem; }
   .pcap :global(.rl) { margin: 0; }
   .ov.clamp { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 4; line-clamp: 4; overflow: hidden; }
   .more-syn { min-height: 44px; padding: 0 .2rem; font-weight: 600; text-decoration: none; }
@@ -615,5 +633,5 @@
     .body { padding: 0 1rem 5rem; }
     .vp .body { padding: 0 1rem 5rem; }
   }
-  @media (prefers-reduced-motion: reduce) { .bg, .hv { transition: none; } .auto .pr { transition: none; } }
+  @media (prefers-reduced-motion: reduce) { .bg, .hv { transition: none; } .auto .pr { transition: none; } .lead:global(.ready) { transition: none; } }
 </style>

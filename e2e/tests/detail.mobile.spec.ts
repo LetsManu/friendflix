@@ -27,19 +27,31 @@ test.describe('detail page (phone)', () => {
   test('synopsis clamped to 4 lines with Mehr; Mehr expands, aria-expanded true', async ({ page }) => {
     await open(page);
     const syn = page.locator('#dv-syn');
-    // the synopsis toggle (the "⋯ Mehr" menu button next to it has the same name)
-    const btn = page.locator('button[aria-controls="dv-syn"]');
+    const btn = page.getByRole('button', { name: 'Mehr lesen', exact: true });
+    await expect(btn).toHaveAttribute('aria-controls', 'dv-syn');
     await expect(btn).toBeVisible();
     await expect(btn).toHaveAttribute('aria-expanded', 'false');
     const lines = () => syn.evaluate((e) => Math.round(e.getBoundingClientRect().height / parseFloat(getComputedStyle(e).lineHeight)));
     expect(await lines()).toBe(4);
     await btn.click();
-    await expect(btn).toHaveText('Weniger');
-    await expect(btn).toHaveAttribute('aria-expanded', 'true');
+    const less = page.getByRole('button', { name: 'Weniger anzeigen', exact: true });
+    await expect(less).toHaveAttribute('aria-expanded', 'true');
     expect(await lines()).toBeGreaterThan(4);
-    await btn.click();
-    await expect(btn).toHaveText('Mehr');
+    await less.click();
     await expect(btn).toHaveAttribute('aria-expanded', 'false');
+  });
+
+  test('ratings line and tagline sit together right under the meta line, above the buttons', async ({ page }) => {
+    await open(page);
+    const meta = (await page.locator('.pcap .meta').boundingBox())!;
+    const line = (await page.getByRole('list', { name: 'Bewertungen' }).boundingBox())!;
+    const tag = page.locator('.pcap .tagline');
+    await expect(tag).toHaveText('Dein Traum ist der Tatort.');
+    const tagBox = (await tag.boundingBox())!;
+    const play = (await page.locator('.pcap a.play').boundingBox())!;
+    expect(line.y).toBeGreaterThanOrEqual(meta.y + meta.height - 1);
+    expect(tagBox.y).toBeGreaterThanOrEqual(line.y + line.height - 1);
+    expect(tagBox.y + tagBox.height).toBeLessThanOrEqual(play.y + 1);
   });
 
   test('tab bar sticks under the app bar while scrolling', async ({ page }) => {

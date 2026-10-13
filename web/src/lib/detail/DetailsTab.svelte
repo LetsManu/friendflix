@@ -16,12 +16,6 @@
   export let about: About | null | undefined = undefined;
   /** visible download button (desktop, non-series) */
   export let download = false;
-  /** read-only (bind): for the "⋯ Mehr" entry */
-  export let dlAvailable = false;
-  export let dlState = '';
-  let dl: DownloadButton | undefined;
-  /** opens the download sheet (the "⋯ Mehr" entry) */
-  export function activateDownload() { dl?.activate(); }
 
   const LINK_LABEL: Record<AboutLink['kind'], string> = { imdb: 'IMDb', tmdb: 'TMDB', tvdb: 'TVDB', trakt: 'Trakt' };
   /** "2026-10-24" as a local calendar day (new Date('…') would be UTC midnight and can shift a day) */
@@ -59,7 +53,7 @@
     </section>
   {/if}
   <SocialCard id={item.id} type={item.type} />
-  {#if download}<div class="dl"><DownloadButton bind:this={dl} itemId={item.id} bind:available={dlAvailable} bind:stateText={dlState} /></div>{/if}
+  {#if download}<div class="dl"><DownloadButton itemId={item.id} /></div>{/if}
 </div>
 
 <style>
