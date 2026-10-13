@@ -54,7 +54,7 @@ describe('unusable forwarding headers', () => {
 describe('HOME_NETWORKS config', () => {
   const BASE = {
     PUBLIC_URL: 'https://p.example.com', DATABASE_URL: 'x', REDIS_URL: 'x', APP_ENC_KEY: 'k'.repeat(44), INTERNAL_SECRET: 'i'.repeat(20), OIDC_ISSUER: 'https://a.example.com',
-    OIDC_CLIENT_ID: 'c', OIDC_CLIENT_SECRET: 's', JELLYFIN_URL: 'http://j', JELLYFIN_ADMIN_API_KEY: 'k', SEERR_URL: 'http://s', SEERR_API_KEY: 'k', WEBHOOK_SECRET: 'w'.repeat(20),
+    OIDC_CLIENT_ID: 'c', OIDC_CLIENT_SECRET: 's', JELLYFIN_URL: 'http://j', JELLYFIN_ADMIN_API_KEY: 'k', REQUESTS_URL: 'http://s', REQUESTS_API_KEY: 'k', WEBHOOK_SECRET: 'w'.repeat(20),
   };
   it('defaults to RFC1918 + loopback + ULA + link-local', () => {
     expect(loadConfig(BASE).HOME_NETWORKS).toEqual(['10.0.0.0/8', '172.16.0.0/12', '192.168.0.0/16', '127.0.0.0/8', '::1/128', 'fc00::/7', 'fe80::/10']);

@@ -174,7 +174,7 @@ git clone https://github.com/LetsManu/friendflix.git && cd friendflix
 cp .env.example .env
 openssl rand -base64 32    # -> APP_ENC_KEY
 openssl rand -hex 24       # -> INTERNAL_SECRET, WEBHOOK_SECRET, METRICS_TOKEN (je ein Wert)
-$EDITOR .env               # PUBLIC_URL, Passwörter, OIDC_*, JELLYFIN_*, SEERR_*
+$EDITOR .env               # PUBLIC_URL, Passwörter, OIDC_*, JELLYFIN_*, REQUESTS_*
 docker login ghcr.io -u <user>                                 # nur bei privaten Paketen (PAT mit read:packages)
 docker compose -f compose.prod.yaml up -d                      # mit --profile bundled auch Jellyfin + den Wunsch-Dienst
 docker compose -f compose.prod.yaml --profile backup up -d backup   # optional: nächtliche Datenbank-Backups
@@ -190,7 +190,7 @@ Danach:
 5. **Web-Push (optional):** `node scripts/gen-vapid.mjs`, beide Schlüssel in `.env`, neu starten.
 6. **Erster Login** mit einem Mitglied der Authentik-Gruppe `friendflix-admins`: Du wirst Portal-Admin, wählst die Sprache der Instanz und lädst deine Freunde unter *Admin → Einladungen* ein.
 
-Laufen Jellyfin/Wunsch-Dienst schon in einem eigenen Stack: `docker network connect friendflix_media <container>`, deren öffentliche Ports entfernen und `JELLYFIN_URL`/`SEERR_URL` setzen.
+Laufen Jellyfin/Wunsch-Dienst schon in einem eigenen Stack: `docker network connect friendflix_media <container>`, deren öffentliche Ports entfernen und `JELLYFIN_URL`/`REQUESTS_URL` setzen.
 
 ### Konfiguration
 
@@ -206,7 +206,7 @@ Vorlage: [.env.example](.env.example). Jede Variable kann mit der Endung `_FILE`
 | `TMDB_API_KEY`, `OMDB_API_KEY` (oder `…_FILE`) | leer | Optionale Zusatzdaten für die Detailseite (Links, Bewertungen); oder unter *Admin → Datenquellen* setzen. Siehe [docs/integrations.md](docs/integrations.md#tmdb--omdb-optional) |
 | `MEDIA_SERVER` | `jellyfin` | Art des Medienservers; in diesem Repository gibt es nur Jellyfin (ein Fork kann weitere ergänzen, siehe [docs/architecture.md](docs/architecture.md)) |
 | `JELLYFIN_URL`, `JELLYFIN_ADMIN_API_KEY` | – (Pflicht bei `jellyfin`) | Interne Jellyfin-URL, z. B. `http://jellyfin:8096`, und Admin-API-Key |
-| `SEERR_URL`, `SEERR_API_KEY` | – (Pflicht) | Interne URL und API-Key des Wunsch-Dienstes |
+| `REQUESTS_URL`, `REQUESTS_API_KEY` | – (Pflicht) | Interne URL (mitgeliefert: `http://requests:5055`) und API-Key des Wunsch-Dienstes (ältere Variablennamen funktionieren weiter, mit Hinweis im Log) |
 | `ADMIN_GROUP` | `friendflix-admins` | Authentik-Gruppe, deren Mitglieder Portal-Admins werden |
 | `BIND_ADDR` | `127.0.0.1` | Host-Adresse für die drei Ports – nie eine öffentliche Schnittstelle |
 | `WEB_PORT`, `BACKEND_PORT`, `GATEWAY_PORT` | `3080`, `3081`, `3082` | Host-Ports für den Reverse Proxy |
@@ -352,7 +352,7 @@ npm run e2e                                     # Playwright: baut die Web-App u
 - Bildbasierte Untertitel (PGS) werden nicht angeboten; Text-Untertitel kommen als WebVTT.
 - Intro überspringen braucht Jellyfin ≥ 10.10 mit Media Segments (z. B. vom Intro-Skipper-Plugin).
 - Die APIs von Jellyfin, Wunsch-Dienst und Authentik unterscheiden sich je Version – nach Upgrades siehe [docs/operations.md](docs/operations.md) und [docs/integrations.md](docs/integrations.md).
-- Optional: ein Seerr-kompatibler Wunsch-Dienst für Wünsche – siehe [docs/integrations.md](docs/integrations.md). Mit Jellyfin sind Profile versteckte Jellyfin-Nutzer: den automatischen Jellyfin-Nutzerimport im Wunsch-Dienst ausschalten, damit sie nicht auftauchen. Ein Medienserver ohne Jellyfin-Konten bekommt stattdessen je FriendFlix-Konto einen lokalen Nutzer im Wunsch-Dienst.
+- Optional: ein Wunsch-Dienst für Wünsche (mitgeliefert als Container `requests`; Upstream-Projekt: siehe seine `image:`-Zeile in [compose.prod.yaml](compose.prod.yaml)) – siehe [docs/integrations.md](docs/integrations.md). Mit Jellyfin sind Profile versteckte Jellyfin-Nutzer: den automatischen Jellyfin-Nutzerimport im Wunsch-Dienst ausschalten, damit sie nicht auftauchen. Ein Medienserver ohne Jellyfin-Konten bekommt stattdessen je FriendFlix-Konto einen lokalen Nutzer im Wunsch-Dienst.
 - In diesem Repository ist nur Jellyfin umgesetzt. Besetzung & Infos, Szenen und die Bild-/Ton-Chips brauchen vom Medienserver Besetzungslisten, Kapitel und Stream-Details; kann er sie nicht liefern, blendet die Oberfläche die Funktion aus (`capabilities` in `/api/me`).
 - „Bald nicht mehr verfügbar“ ist eine Ankündigung eines Admins; FriendFlix löscht nie Medien. Das Label „Staffelfinale“ ist eine Heuristik (letzte Folge der neuesten Staffel ist neu, die Serie läuft nicht mehr weiter). Der Bildqualitäts-Filter liest einen Hintergrund-Index (`BACKGROUND_JOBS=true`), der sich nach dem ersten Start erst nach und nach füllt.
 - Klare Stimmen und Nachtmodus nutzen die Audioverarbeitung des Browsers: nicht auf jedem Gerät verfügbar und nicht beim Streamen auf ein anderes Gerät. PWA-Widgets für den Home-Bildschirm gibt es nur unter Windows 11; Verknüpfungen und das Symbol-Badge (nicht auf jeder iOS-Version) sind der Ersatz auf dem Handy.

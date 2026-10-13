@@ -174,7 +174,7 @@ git clone https://github.com/LetsManu/friendflix.git && cd friendflix
 cp .env.example .env
 openssl rand -base64 32    # -> APP_ENC_KEY
 openssl rand -hex 24       # -> INTERNAL_SECRET, WEBHOOK_SECRET, METRICS_TOKEN (one value each)
-$EDITOR .env               # PUBLIC_URL, passwords, OIDC_*, JELLYFIN_*, SEERR_*
+$EDITOR .env               # PUBLIC_URL, passwords, OIDC_*, JELLYFIN_*, REQUESTS_*
 docker login ghcr.io -u <user>                                 # only if the packages are private (PAT with read:packages)
 docker compose -f compose.prod.yaml up -d                      # add --profile bundled to also start Jellyfin + the request service
 docker compose -f compose.prod.yaml --profile backup up -d backup   # optional: nightly database backups
@@ -190,7 +190,7 @@ Then:
 5. **Web push (optional):** `node scripts/gen-vapid.mjs`, put both keys into `.env`, restart.
 6. **First login** with a member of the Authentik group `friendflix-admins`: you become the portal admin, choose the instance language, and invite your friends under *Admin → Invitations*.
 
-If Jellyfin/the request service already run in their own stack: `docker network connect friendflix_media <container>`, remove their public ports and set `JELLYFIN_URL`/`SEERR_URL`.
+If Jellyfin/the request service already run in their own stack: `docker network connect friendflix_media <container>`, remove their public ports and set `JELLYFIN_URL`/`REQUESTS_URL`.
 
 ### Configuration
 
@@ -206,7 +206,7 @@ Template: [.env.example](.env.example). Every variable can also be read from a f
 | `TMDB_API_KEY`, `OMDB_API_KEY` (or `…_FILE`) | empty | Optional extra data for the detail page (links, ratings); or set in *Admin → Data sources*. See [docs/integrations.md](docs/integrations.md#tmdb--omdb-optional) |
 | `MEDIA_SERVER` | `jellyfin` | Media server kind; Jellyfin is the only one in this repository (a fork can add others, see [docs/architecture.md](docs/architecture.md)) |
 | `JELLYFIN_URL`, `JELLYFIN_ADMIN_API_KEY` | – (required for `jellyfin`) | Internal Jellyfin URL, e.g. `http://jellyfin:8096`, and admin API key |
-| `SEERR_URL`, `SEERR_API_KEY` | – (required) | Internal URL and API key of the request service |
+| `REQUESTS_URL`, `REQUESTS_API_KEY` | – (required) | Internal URL (bundled: `http://requests:5055`) and API key of the request service (older variable names still work, with a deprecation warning) |
 | `ADMIN_GROUP` | `friendflix-admins` | Authentik group whose members become portal admins |
 | `BIND_ADDR` | `127.0.0.1` | Host address the three ports are published on – never a public interface |
 | `WEB_PORT`, `BACKEND_PORT`, `GATEWAY_PORT` | `3080`, `3081`, `3082` | Host ports for the reverse proxy |
@@ -352,7 +352,7 @@ npm run e2e                                     # Playwright: builds the web app
 - Image-based subtitles (PGS) are not offered; text subtitles are delivered as WebVTT.
 - Skip intro needs Jellyfin ≥ 10.10 with media segments (e.g. from the Intro Skipper plugin).
 - Jellyfin, request service and Authentik APIs differ between versions – after upgrades see [docs/operations.md](docs/operations.md) and [docs/integrations.md](docs/integrations.md).
-- Optional: a Seerr-compatible request service for wishes – see [docs/integrations.md](docs/integrations.md). With Jellyfin, profiles are hidden Jellyfin users: turn off the automatic Jellyfin user import in the request service so they do not show up. A media server without Jellyfin accounts gets one local request-service user per FriendFlix account instead.
+- Optional: a request service for wishes (bundled as the `requests` container; upstream project: see its `image:` line in [compose.prod.yaml](compose.prod.yaml)) – see [docs/integrations.md](docs/integrations.md). With Jellyfin, profiles are hidden Jellyfin users: turn off the automatic Jellyfin user import in the request service so they do not show up. A media server without Jellyfin accounts gets one local request-service user per FriendFlix account instead.
 - Only Jellyfin is implemented in this repository. Cast & info, scenes and the picture-quality chips need the media server to report credits, chapters and stream details; where it cannot, the UI hides the feature (`capabilities` in `/api/me`).
 - "Leaving soon" is an announcement set by an admin; FriendFlix never deletes media. The "Season finale" label is a heuristic (last episode of the newest season is new, the series is no longer continuing). The picture-quality filter reads a background index (`BACKGROUND_JOBS=true`) that fills a little after the first start.
 - Clear voices and Night mode use the browser's audio processing: not available on every device and not while casting. PWA home-screen widgets exist only on Windows 11; shortcuts and the icon badge (not on every iOS version) are what the phone gets instead.

@@ -3,7 +3,7 @@
 import { Redis } from 'ioredis';
 import pg from 'pg';
 import { buildApp } from './app.js';
-import { loadConfig } from './config.js';
+import { deprecatedEnvNames, loadConfig } from './config.js';
 import { keyFromBase64 } from './crypto.js';
 import { migrate } from './db.js';
 import { createMediaServer, mediaConfigProblems } from './media/index.js';
@@ -44,12 +44,14 @@ const ctx: Ctx = {
   cfg, kv, db: pool, encKey, fetchImpl: fetch,
   oidc: await createAuthentikProvider(cfg),
   jf: createMediaServer({ cfg, kv, db: pool, encKey }),
-  seerr: new SeerrClient(cfg.SEERR_URL, cfg.SEERR_API_KEY),
+  seerr: new SeerrClient(cfg.REQUESTS_URL, cfg.REQUESTS_API_KEY),
   roles: loadRoles(cfg.ROLE_TEMPLATES),
 };
 
 const app = await buildApp(ctx);
 await app.listen({ port: cfg.PORT, host: '0.0.0.0' });
+// renamed settings that still use their old name (names only, never values)
+for (const msg of deprecatedEnvNames()) app.log.warn(msg);
 // the media server's own change feed (websocket, sync job …), if it has one; Jellyfin pushes webhooks instead
 await ctx.jf.start?.({ dispatch: (e) => dispatchMediaEvent(ctx, e), log: app.log });
 // one-off: push the changed role policies (guest transcoding) to every existing Jellyfin user

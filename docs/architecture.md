@@ -30,7 +30,7 @@ flowchart TB
     end
     subgraph MEDIA["media network · internal"]
       S("🎬 <b>jellyfin</b><br/><small>:8096</small>"):::media
-      SE("🔔 <b>seerr</b><br/><small>:5055</small>"):::svc
+      SE("🔔 <b>requests</b><br/><small>:5055</small>"):::svc
     end
     subgraph DB["db network · internal"]
       PG[("🗄️ <b>postgres</b>")]:::store
@@ -72,7 +72,7 @@ flowchart TB
 | backend | front, db, media, egress | 3081 | `APP_ENC_KEY`, `INTERNAL_SECRET`, Jellyfin admin API key, OIDC client secret; sessions (cookie `ff_sid`) in Redis; per-user Jellyfin credentials encrypted in Postgres |
 | gateway | front, media | 3082 | `INTERNAL_SECRET`; gets the user's media token per request from the backend (cached 5 s), never stores it |
 | postgres, redis | db (internal) | none | accounts, profiles, sessions |
-| jellyfin, seerr (profile `bundled`) | media (+egress) | none | media, request data |
+| jellyfin, requests (request service, profile `bundled`) | media (+egress) | none | media, request data |
 | Authentik (`compose.authentik.yaml`) | front, ak-db, egress | 9000 | identities |
 
 The browser only ever sees a session cookie and `/media/...` URLs, never a Jellyfin token.
@@ -205,7 +205,7 @@ What the interface covers, grouped:
 
 Conventions: item ids are 32 lower-case hex characters (an implementation with other ids encodes them), item types and sort keys use the existing vocabulary (`Movie`, `Series`, `Episode`, `BoxSet`; `SortName`, `DateCreated`, `PremiereDate`, …), positions are in 100 ns ticks. Upstream failures throw a `MediaError` subclass with an HTTP-like `status`; `routes/_shared.ts` `wrap()` and the routes map it (listed statuses → 404, otherwise 502 `{error:'jellyfin'}` – the error name stays for API compatibility).
 
-**Capabilities.** `ctx.jf.capabilities` says what the server can do: supported skip-segment types, trickplay, upcoming episodes, remote subtitle search, webhooks, a change feed, Plan B and chapters. The backend sends them once in `/api/me` (`server: { kind, capabilities }`, also `GET /api/server`); the web keeps them in `web/src/lib/capabilities.ts` (default: everything supported) and hides the skip buttons / timeline marks of unsupported segment types, the subtitle search and the calendar link. Jellyfin reports everything, so nothing changes visibly. `capabilities.requestUsers` (backend only, not in `/api/me`) picks how accounts become Seerr users for wishes: `'jellyfin-import'` (Jellyfin) or `'local'` (default when absent: a local Seerr user per account, see [integrations.md](integrations.md#seerr)).
+**Capabilities.** `ctx.jf.capabilities` says what the server can do: supported skip-segment types, trickplay, upcoming episodes, remote subtitle search, webhooks, a change feed, Plan B and chapters. The backend sends them once in `/api/me` (`server: { kind, capabilities }`, also `GET /api/server`); the web keeps them in `web/src/lib/capabilities.ts` (default: everything supported) and hides the skip buttons / timeline marks of unsupported segment types, the subtitle search and the calendar link. Jellyfin reports everything, so nothing changes visibly. `capabilities.requestUsers` (backend only, not in `/api/me`) picks how accounts become request service users for wishes: `'jellyfin-import'` (Jellyfin) or `'local'` (default when absent: a local request service user per account, see [integrations.md](integrations.md#request-service)).
 
 **Configuration.** `MEDIA_SERVER` (default `jellyfin`; the only accepted value in this repository) selects the implementation in the backend and in the gateway. Each kind lists its required settings in `config.ts` (`MEDIA_REQUIRED`: `JELLYFIN_URL`, `JELLYFIN_ADMIN_API_KEY` for Jellyfin); `mediaConfigProblems()` in `media/index.ts` can refuse settings a kind cannot work with at startup.
 

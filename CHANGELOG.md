@@ -78,6 +78,8 @@ All notable changes, grouped by what you notice. Each release has its own sectio
 ### Media servers and requests
 - Jellyfin sits behind a neutral **`MediaServer` interface** (backend) and an **`Upstream` adapter** (gateway), chosen with `MEDIA_SERVER` (default and only value here: `jellyfin`). Capabilities go to the web in `/api/me`; unsupported UI is hidden. Seam hooks for other servers: `MediaDeps.db`, `validateConfig(env)`, `playlist(body, ctx)`, signed cast subtitle URLs, `/internal/authz-nginx` answering 501 `plan_b_unsupported`. Block 17 added the optional `credits`, `chapters`, `mediaTraits`, `libraryMediaTraits` and `libraryContinuingSeriesIds`. Block 20 added the optional capability `playbackPrefetch` (absent = `true`; `false` for servers whose playback info starts the transcode: the web then only warms the player code on hover / focus, no playback info). See docs/architecture.md (containers and networks, press play, seam diagrams).
 - **Wishes without Jellyfin accounts:** capability `requestUsers` (`jellyfin-import` for Jellyfin, `local` otherwise) maps each account to a local request-service user (stored id, else same e-mail, else a new user with only the Request permission). See docs/integrations.md.
+- **Changed: request service settings renamed** (`REQUESTS_URL`, `REQUESTS_API_KEY`, `REQUESTS_API_KEY_FILE`, compose service `requests`, default URL `http://requests:5055`, webhook path `/internal/webhook/requests`). The old `SEERR_*` names still work and log a deprecation warning at startup (variable names only, never values); the service keeps `seerr` as a network alias and the old webhook path keeps working; the data volume is unchanged (the compose key `requests-config` points at the existing `friendflix_seerr-config` volume).
+  **Upgrade note:** rename `SEERR_URL` / `SEERR_API_KEY` in `.env` to `REQUESTS_URL` / `REQUESTS_API_KEY` when convenient (`http://seerr:5055` keeps resolving). With `compose.secrets.yaml`, rename the secret file before `up`: `mv secrets/seerr_api_key secrets/requests_api_key` (compose refuses to start while `secrets/requests_api_key` is missing). Your own override files that name the service `seerr` (e.g. a setup override with ports) must say `requests`.
 - Offline downloads re-check that the licence's profile can still see the title and revoke it otherwise. `compose*.yaml` no longer forces `JELLYFIN_URL`; the backend still refuses to start for `MEDIA_SERVER=jellyfin` without it.
 
 ### Security, supply chain and operations
@@ -102,7 +104,7 @@ The history before the groups above, newest first, as originally written.
 - Browser error reporting: `POST /api/client-errors` (unauthenticated, rate limited, logged scrubbed, counted in `friendflix_client_errors_total`), `web/src/lib/telemetry.ts` + `hooks.client.ts` (dedupe 60 s, max 10 per page load, extension/ResizeObserver noise filtered). See docs/monitoring.md.
 - Playwright browser tests in `e2e/` (API fully mocked, run against the built web app; `npm run e2e`) and an `e2e` CI job.
 #### Block 10 – Wünsche aus der Suche, kuratierte Reihen
-- Search shows "Noch nicht in der Bibliothek" with Seerr results and a "Wünschen" button (hidden when Seerr is unavailable).
+- Search shows "Noch nicht in der Bibliothek" with request service results and a "Wünschen" button (hidden when the request service is unavailable).
 - Admins can feature up to 5 lists (Admin → Listen); they appear as rows on everyone's home page ("Empfohlen von …") and are readable by all, with titles filtered per profile. Migration 24: `lists.featured_at`.
 #### Block 9 – Trending, Neue Folgen, Reaktionen
 - Home row "Diese Woche bei uns": what friends watched in the last 7 days (counts only; a title needs 2 viewers unless you are one of them).
@@ -134,9 +136,9 @@ The history before the groups above, newest first, as originally written.
 #### Block 3 – Digest, shared lists, reminders
 - Weekly digest ("Wochenrückblick"): new films/episodes, new episodes of followed series, fulfilled wishes, friends' tips; `/digest` page, schedule via `DIGEST_DAY`/`DIGEST_HOUR` or Admin → Wochenrückblick, opt-out in settings. Personal ntfy topic per account (never the shared ntfy/Discord channel).
 - Shared lists: owner invites editors/viewers, "Zu Liste hinzufügen" on cards/detail page, only titles visible to the viewer's profile are shown.
-- "Erinnere mich" on Demnächst and future calendar episodes: notification when the title is in the library (Seerr webhook, optional Jellyfin `ItemAdded` webhook, 30-min fallback), deduplicated with series follows and own requests.
+- "Erinnere mich" on Demnächst and future calendar episodes: notification when the title is in the library (request service webhook, optional Jellyfin `ItemAdded` webhook, 30-min fallback), deduplicated with series follows and own requests.
 #### Block 2 – Profiles & viewing comfort
-- Profiles per account (max 5, optional 4-digit PIN, "Wer ist heute dabei?"): each extra profile is a hidden Jellyfin user with the account's role policy, so progress, favourites, watchlist and viewing prefs are per profile; stream limit, requests, ratings and admin rights stay per account (admin only from the owner profile). "PIN vergessen?" re-login clears the owner PIN. Turn off Seerr's automatic Jellyfin user import so profile users don't show up there.
+- Profiles per account (max 5, optional 4-digit PIN, "Wer ist heute dabei?"): each extra profile is a hidden Jellyfin user with the account's role policy, so progress, favourites, watchlist and viewing prefs are per profile; stream limit, requests, ratings and admin rights stay per account (admin only from the owner profile). "PIN vergessen?" re-login clears the owner PIN. Turn off the request service's automatic Jellyfin user import so profile users don't show up there.
 - Verlauf page (remove an episode or a whole series), tidier "Weiterschauen" (no near-finished/barely-started items, one entry per series, X to hide).
 - "Noch da?" after N autoplayed episodes or 90 min without input; subtitle style (size, colour, background, font); spoiler protection for unwatched episodes.
 #### Reliability block 1
@@ -168,7 +170,7 @@ The history before the groups above, newest first, as originally written.
 - Scenes: share links with timestamp (`/watch/<id>?t=`), bookmarks with notes and timeline markers.
 - Cast panel on pause; find subtitles via Jellyfin remote providers; picture of title mood (dynamic tint on the detail page).
 - Recommend to friends, "Von Freunden empfohlen" and "Freunde haben bewertet" rows (rating sharing opt-out), thumbs up/down feeding "Weil du ... gesehen hast".
-- "Demnächst" from Seerr with one-click wish; extras/bonus material, collections and studio hubs.
+- "Demnächst" from the request service with one-click wish; extras/bonus material, collections and studio hubs.
 - Muted hover trailer previews (local trailers only), shareable year-in-review card (PNG, rendered in the browser).
 #### Step 13 – Streaming features
 - Timeline preview thumbnails (Jellyfin trickplay) through the gateway/auth_request allowlist.
@@ -205,11 +207,11 @@ The history before the groups above, newest first, as originally written.
 #### Step 7 – Stats, achievements, now playing
 - Watch-time statistics from playback events, personal year in review + group leaderboard, 11 achievements (state and event driven), now-playing board.
 #### Step 6 – Voting, wishes, notifications
-- Film-night polls (one vote per user, countdown, auto-start party room), non-library winners need admin approval -> Seerr request -> auto-scheduled when available, ratings with short reviews, series calendar with follow + notifications (in-app, ntfy, Discord).
+- Film-night polls (one vote per user, countdown, auto-start party room), non-library winners need admin approval -> request service request -> auto-scheduled when available, ratings with short reviews, series calendar with follow + notifications (in-app, ntfy, Discord).
 #### Step 5 – Watch party
 - Own WebSocket sync (no SyncPlay): host-controlled play/pause/seek with server timestamps, ~300 ms drift correction, room holds until all participants have buffered, chat + whitelisted emoji reactions, scheduled auto-start, Origin + session checks.
-#### Step 4 – Seerr
-- Search, wishes in the user's name (mapped Seerr user), status mapping, admin approve/decline, Seerr webhook (available/pending/approved/declined), in-app notifications + ntfy/Discord push, TMDB poster proxy.
+#### Step 4 – Request service
+- Search, wishes in the user's name (mapped request service user), status mapping, admin approve/decline, request service webhook (available/pending/approved/declined), in-app notifications + ntfy/Discord push, TMDB poster proxy.
 #### Step 3 – Invites, roles, mapping
 - Single-use hashed invite links with expiry (optional Authentik invitation), role templates applied to Jellyfin policy, admin user management (role, disable), device approval for new devices, audit log, public invite landing page.
 #### Step 2 – Gateway + Player
