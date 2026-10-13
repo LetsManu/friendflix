@@ -148,6 +148,6 @@ Verified from the workflows in [.github/workflows](../.github/workflows):
 - **Signing:** the promoted digest is signed with cosign keyless (GitHub OIDC, Fulcio certificate, Rekor log); there are no long-lived signing keys. Release tags are promotions of the already scanned digest, not rebuilds.
 - **DAST:** an OWASP ZAP baseline scan of the built web app fails the pipeline on High alerts; accepted findings are listed in `.zap/rules.tsv`.
 - **Scorecard:** the OpenSSF Scorecard workflow publishes supply-chain scores.
-- **Static analysis:** ESLint with the rules in `eslint.config.js` and TypeScript strict mode. A CodeQL workflow is not part of this repository; GitHub's own code scanning may be enabled separately in repository settings.
+- **Static analysis:** ESLint with the rules in `eslint.config.js`, TypeScript strict mode, and CodeQL (GitHub code scanning default setup, JavaScript/TypeScript and Actions queries) on every pull request and push to main; new high-severity alerts block the merge.
 
 To verify an image yourself, check the cosign signature and attestation with the GitHub OIDC identity of this repository's `publish.yml` workflow (for example `cosign verify` with `--certificate-identity-regexp` and `--certificate-oidc-issuer https://token.actions.githubusercontent.com`) or `gh attestation verify`.
