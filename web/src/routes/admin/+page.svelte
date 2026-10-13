@@ -1,3 +1,5 @@
+<!-- SPDX-FileCopyrightText: 2026 Manuel Weißböck -->
+<!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
 <script lang="ts">
   /** Admin overview: health strip, things waiting for a decision (inline approve/decline), recent activity, counts, storage. */
   import { onMount } from 'svelte';

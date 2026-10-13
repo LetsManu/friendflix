@@ -1,3 +1,5 @@
+<!-- SPDX-FileCopyrightText: 2026 Manuel Weißböck -->
+<!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
 <script lang="ts">
   /** Renders lib/ui/toast.ts. Mounted once in the root layout; pages never mount it. */
   import { fly, fade } from 'svelte/transition';

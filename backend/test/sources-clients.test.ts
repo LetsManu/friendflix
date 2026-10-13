@@ -1,3 +1,5 @@
+// SPDX-FileCopyrightText: 2026 Manuel Weißböck
+// SPDX-License-Identifier: AGPL-3.0-or-later
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { fakeHttp, makeEnv, type Call, type Handler, type TestEnv } from './helpers.js';
 import { extFetch } from '../src/sources/fetch.js';

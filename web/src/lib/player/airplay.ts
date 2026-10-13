@@ -1,3 +1,5 @@
+// SPDX-FileCopyrightText: 2026 Manuel Weißböck
+// SPDX-License-Identifier: AGPL-3.0-or-later
 /**
  * AirPlay (Safari on iOS / iPadOS / macOS) for the player's own <video> element.
  *

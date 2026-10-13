@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: 2026 Manuel Weißböck
+# SPDX-License-Identifier: AGPL-3.0-or-later
 # FriendFlix portal stack.
 # - NPM runs OUTSIDE Docker (or in its own stack) and reaches the portal through three ports that are bound to
 #   127.0.0.1 only (BIND_ADDR): web, backend (API/auth/WebSocket) and gateway (/media). Nothing else is published.

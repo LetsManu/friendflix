@@ -1,3 +1,5 @@
+// SPDX-FileCopyrightText: 2026 Manuel Weißböck
+// SPDX-License-Identifier: AGPL-3.0-or-later
 /** Area "adminPeople": admin pages Users, Roles, Devices, Invites, Audit (worker B fills it). German is the typed source. */
 export default {
   loadFailed: 'Das ließ sich nicht laden. Prüfe die Verbindung und versuche es erneut.',
