@@ -71,6 +71,7 @@ Intro überspringen, nächste Folge mit Countdown, Tonspur und Untertitel (mit e
 
 - **Marken-Hubs** – breite Kacheln, die der Admin aus deinen eigenen Jellyfin-Studios, -Sammlungen, -Tags oder -Genres baut (etwa „Anime“ oder „Dokus“) – führen auf eine eigene Seite mit *Neu*, *Beliebt*, *Filme*, *Serien* und A–Z.
 - **Themenlisten** – jede Liste kann zur redaktionellen Seite mit Titel, Farbe und Emoji werden; der Admin heftet einige als Reihen auf die Startseite aller an („Filmabend am Freitag“, „Gemütlicher Herbst“).
+- **Eine ausführlichere Detailseite** – Bewertungen in einer Zeile (Community, Kritik, Freunde; mit optionalem OMDb-Schlüssel auch IMDb, Rotten Tomatoes und Metacritic), eine Sammlungsreihe mit „Teil 2 von 3“ und Gesehen-Häkchen sowie ein Tab *Details* mit Fakten und Links zu TMDB, IMDb, TVDB und Trakt. Auf dem Handy bleiben die Tabs beim Scrollen in Reichweite.
 - **Weil du … gesehen hast** – mehrere Reihen, jede zu einem anderen zuletzt gesehenen Titel, verteilt zwischen den übrigen Reihen.
 - **Suche und Stöbern** finden Personen, Genres, Titel und Folgen; filtern geht nach Jahrzehnt, Bewertung, Sprache und **Bildqualität** (4K, HDR, Dolby Vision, Atmos). „Heute Abend“ schlägt drei Titel nach Stimmung und Zeit vor.
 - **Simulcast** (verlinkt im Kalender) zeigt die gerade laufenden Serien nach Wochentag und Season, mit Filter „Nur Anime“.
@@ -198,6 +199,7 @@ Vorlage: [.env.example](.env.example). Jede Variable kann mit der Endung `_FILE`
 | `APP_ENC_KEY` | – (Pflicht) | 32 Byte base64; verschlüsselt gespeicherte Jellyfin-Zugangsdaten. **Getrennt sichern.** |
 | `INTERNAL_SECRET`, `WEBHOOK_SECRET` | – (Pflicht, ≥ 16 Zeichen) | Backend ↔ Gateway; Jellyfin-/Wunsch-Dienst-Webhooks |
 | `OIDC_ISSUER`, `OIDC_CLIENT_ID`, `OIDC_CLIENT_SECRET` | – (Pflicht) | Authentik-OIDC-Provider |
+| `TMDB_API_KEY`, `OMDB_API_KEY` (oder `…_FILE`) | leer | Optionale Zusatzdaten für die Detailseite (Links, Bewertungen); oder unter *Admin → Datenquellen* setzen. Siehe [docs/integrations.md](docs/integrations.md#tmdb--omdb-optional) |
 | `MEDIA_SERVER` | `jellyfin` | Art des Medienservers; in diesem Repository gibt es nur Jellyfin (ein Fork kann weitere ergänzen, siehe [docs/architecture.md](docs/architecture.md)) |
 | `JELLYFIN_URL`, `JELLYFIN_ADMIN_API_KEY` | – (Pflicht bei `jellyfin`) | Interne Jellyfin-URL, z. B. `http://jellyfin:8096`, und Admin-API-Key |
 | `SEERR_URL`, `SEERR_API_KEY` | – (Pflicht) | Interne URL und API-Key des Wunsch-Dienstes |
@@ -352,4 +354,4 @@ Copyright © 2026 Manuel Weißböck. Alle Rechte vorbehalten – siehe [LICENSE]
 
 ### Markenhinweis
 
-Netflix, Disney+, Prime Video, Crunchyroll, Plex, Jellyfin und weitere genannte Namen sind Marken ihrer jeweiligen Inhaber. FriendFlix ist ein unabhängiges Open-Source-Projekt und steht in keiner Verbindung zu diesen Anbietern; es wird von ihnen weder gesponsert noch empfohlen.
+Netflix, Disney+, Prime Video, Crunchyroll, Plex, Jellyfin, TMDB, OMDb, IMDb, Rotten Tomatoes, Metacritic, TVDB, Trakt und weitere genannte Namen sind Marken ihrer jeweiligen Inhaber. FriendFlix ist ein unabhängiges Open-Source-Projekt und steht in keiner Verbindung zu diesen Anbietern; es wird von ihnen weder gesponsert noch empfohlen. This product uses the TMDB API but is not endorsed or certified by TMDB.

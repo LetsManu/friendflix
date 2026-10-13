@@ -71,6 +71,7 @@ Skip intro, next episode with countdown, audio track and subtitles (with your ow
 
 - **Brand hubs** – wide tiles the admin builds from your own Jellyfin studios, collections, tags or genres (say "Anime" or "Documentaries") – open a page of their own with *New*, *Popular*, *Movies*, *Series* and A–Z.
 - **Themed lists** – any list can become an editorial page with a title, a colour and an emoji; the admin pins a few of them as rows on everyone's home page ("Friday movie night", "Cosy autumn").
+- **A fuller detail page** – ratings in one line (community, critics, friends; IMDb, Rotten Tomatoes and Metacritic with an optional OMDb key), a collection row with "Part 2 of 3" and watched ticks, and a *Details* tab with facts and links to TMDB, IMDb, TVDB and Trakt. On phones the tabs stay in reach while you scroll.
 - **Because you watched …** – several rows, each based on a different recent title, spread between the other rows.
 - **Search and browse** find people, genres, titles and episodes; filter by decade, rating, language and **picture quality** (4K, HDR, Dolby Vision, Atmos). "Tonight" suggests three titles by mood and time.
 - **Simulcast** (linked from the calendar) lists the series that are airing right now, grouped by weekday and season, with an "Anime only" filter.
@@ -198,6 +199,7 @@ Template: [.env.example](.env.example). Every variable can also be read from a f
 | `APP_ENC_KEY` | – (required) | 32 bytes base64; encrypts stored Jellyfin credentials. **Back it up separately.** |
 | `INTERNAL_SECRET`, `WEBHOOK_SECRET` | – (required, ≥ 16 chars) | Backend ↔ gateway secret; Jellyfin/request-service webhooks |
 | `OIDC_ISSUER`, `OIDC_CLIENT_ID`, `OIDC_CLIENT_SECRET` | – (required) | Authentik OIDC provider |
+| `TMDB_API_KEY`, `OMDB_API_KEY` (or `…_FILE`) | empty | Optional extra data for the detail page (links, ratings); or set in *Admin → Data sources*. See [docs/integrations.md](docs/integrations.md#tmdb--omdb-optional) |
 | `MEDIA_SERVER` | `jellyfin` | Media server kind; Jellyfin is the only one in this repository (a fork can add others, see [docs/architecture.md](docs/architecture.md)) |
 | `JELLYFIN_URL`, `JELLYFIN_ADMIN_API_KEY` | – (required for `jellyfin`) | Internal Jellyfin URL, e.g. `http://jellyfin:8096`, and admin API key |
 | `SEERR_URL`, `SEERR_API_KEY` | – (required) | Internal URL and API key of the request service |
@@ -352,4 +354,4 @@ Copyright © 2026 Manuel Weißböck. All rights reserved – see [LICENSE](LICEN
 
 ### Trademarks
 
-Netflix, Disney+, Prime Video, Crunchyroll, Plex, Jellyfin and other names are trademarks of their respective owners. FriendFlix is an independent open-source project and is not affiliated with, sponsored or endorsed by any of them.
+Netflix, Disney+, Prime Video, Crunchyroll, Plex, Jellyfin, TMDB, OMDb, IMDb, Rotten Tomatoes, Metacritic, TVDB, Trakt and other names are trademarks of their respective owners. FriendFlix is an independent open-source project and is not affiliated with, sponsored or endorsed by any of them. This product uses the TMDB API but is not endorsed or certified by TMDB.
