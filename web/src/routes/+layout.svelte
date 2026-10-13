@@ -91,7 +91,7 @@
   /** kids profile: kids header, no footer links / tab bar / bell; the last /api/me answer decides until the fresh one arrives */
   $: kidsUi = me ? Boolean(me.kids) : Boolean(bootHint?.kids);
   $: if (typeof document !== 'undefined') document.documentElement.classList.toggle('kids', kidsUi);
-  $: castBarOn = barVisible({ path, tv, session: $castSession });
+  $: castBarOn = pageReady && !publicPage && barVisible({ path, tv, session: $castSession }); // where <CastBar> renders
   /**
    * `--castbar-h` on <html> while the bar shows: the page content gets room for it at its end (main on phones, the page below
    * the footer on desktop); the offline banner and the toasts move up by it

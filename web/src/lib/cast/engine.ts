@@ -252,7 +252,7 @@ export function createCastEngine(deps: EngineDeps, out: Writable<CastSession | n
       detach() { void stopReport(s); return s.stopping.then(() => undefined); },
       started(ci) {
         if (cur !== s) return;
-        const w = a.want;
+        const w = a.want; // set only by a switch to another title: its subtitles replace the list (a renewal keeps it)
         a.want = null;
         s.ci = ci; s.started = false; s.lastPaused = null;
         // the server chose the start (resume position): the stream's timeline is absolute, seek there once it loaded

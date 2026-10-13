@@ -381,6 +381,18 @@ describe('cast engine: AirPlay title switch', () => {
     expect(get(env.out)?.title).toBe('Film');
   });
 
+  it('a new token for the same title (audio switch) keeps the hand-off\'s subtitle list; another title takes its token\'s', async () => {
+    const env = await setup();
+    const subs = [{ index: 3, title: 'Deutsch (SDH)', language: 'deu' }];
+    await env.adopt({ subtitles: subs });
+    env.posts.push(async () => ci('r1', { subtitles: [] }));
+    await env.engine.refresh({ audioIndex: 2 });
+    expect(get(env.out)).toMatchObject({ subtitles: subs, audioIndex: 2 });
+    env.posts.push(async () => ci('o1', { subtitles: [{ index: 7, title: 'English', language: 'eng', url: '/media/c/o1/7.vtt' }] }));
+    await env.engine.playOnTv('other', 0);
+    expect(get(env.out)?.subtitles).toEqual([{ index: 7, title: 'English', language: 'eng' }]);
+  });
+
   it('renews the token before it expires', async () => {
     const env = await setup();
     env.posts.push(async () => ci('r1', { expiresAt: T0 + 9 * 60 * 60_000 }));

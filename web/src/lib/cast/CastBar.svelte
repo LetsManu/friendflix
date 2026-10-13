@@ -42,7 +42,7 @@
     : next ? [$t('player.castBar.next', { label: next.label }), secs !== null ? $t('player.castBar.nextIn', { n: secs }) : ''].filter(Boolean).join(' · ')
     : barLine(s, $t);
 
-  /** text / thumb: opens the remote (the watch page attaches); `failed`: the session is dropped and the title plays here */
+  /** text / thumb: opens the remote (the watch page attaches); "Play here" in `failed`: the session is dropped, the title plays here */
   function open() {
     const c = get(castSession);
     if (!c) return;
@@ -71,10 +71,17 @@
         </button>
         {#if choose}<button type="button" class="act" aria-label={$t('player.airplay.choose')} title={$t('player.airplay.choose')} on:click={reconnect}><Icon name="airplay" size={24} /></button>{/if}
       {:else}
-        <button type="button" class="main" aria-label={$t('player.castBar.open')} title={$t('player.castBar.open')} on:click={open}>
+        {#snippet info()}
           {#if thumb}<img class="thumb" src={thumb.src} alt="" style="aspect-ratio:{thumb.ratio}" />{/if}
-          <span class="txt"><span class="t1">{s.title}</span>{#if line2}<span class="t2">{line2}</span>{/if}</span>
-        </button>
+          <span class="txt" id="castbar-txt"><span class="t1">{s.title}</span>{#if line2}<span class="t2">{line2}</span>{/if}</span>
+        {/snippet}
+        {#if state === 'failed'}
+          <!-- the title can't play on the TV: no remote to open; "Play here" is the action -->
+          <div class="main">{@render info()}</div>
+        {:else}
+          <!-- named by its action; the title and the second line are its description -->
+          <button type="button" class="main" aria-label={$t('player.castBar.open')} aria-describedby="castbar-txt" on:click={open}>{@render info()}</button>
+        {/if}
         {#if state === 'connecting'}
           <span class="act spin-slot" aria-hidden="true"><span class="spin"></span></span>
         {:else if state === 'failed'}
@@ -99,7 +106,8 @@
   .line { position: absolute; left: 0; right: 0; top: 0; height: 2px; }
   .line span { display: block; height: 100%; background: var(--acc); transition: width .4s linear; }
   button { color: inherit; background: none; border: 0; padding: 0; cursor: pointer; font: inherit; }
-  .main { flex: 1 1 auto; min-width: 0; height: 100%; min-height: 48px; display: flex; align-items: center; gap: .7rem; padding-left: var(--pad-x); text-align: left; }
+  div.main { cursor: default; }
+  .main { flex: 1 1 auto; min-width: 0; height: 100%; cursor: pointer; min-height: 48px; display: flex; align-items: center; gap: .7rem; padding-left: var(--pad-x); text-align: left; }
   .thumb { flex: none; height: 44px; width: auto; object-fit: cover; border-radius: var(--radius); }
   .txt { min-width: 0; display: flex; flex-direction: column; }
   .t1, .t2 { display: block; max-width: 100%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }

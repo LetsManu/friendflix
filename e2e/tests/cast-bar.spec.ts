@@ -213,9 +213,27 @@ test.describe('receiver failure', () => {
     const bar = castBar(page);
     const here = bar.getByRole('button', { name: 'Hier abspielen' });
     await expect(here).toBeVisible();
+    await expect(bar.getByRole('button')).toHaveCount(2); // Hier abspielen + Stop: no "Fernbedienung öffnen" that would play here
+    await expect(bar.getByRole('button', { name: 'Fernbedienung öffnen' })).toHaveCount(0);
     expect(infos).toBe(0);
     await here.click();
     await expect(page).toHaveURL(new RegExp('/watch/' + MOVIE2.id));
     await expect.poll(() => infos).toBeGreaterThan(0);
   });
+});
+
+test('the remote button names its action and is described by the title and line', async ({ page, api: _api }) => {
+  await castAndLeave(page);
+  const open = castBar(page).getByRole('button', { name: 'Fernbedienung öffnen' });
+  await expect(open).toHaveAccessibleDescription(new RegExp(`${MOVIE.name}.*auf Wohnzimmer-TV`));
+});
+
+test('public pages get no room for a bar they do not show', async ({ page, api: _api }) => {
+  await castAndLeave(page);
+  const h = () => page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue('--castbar-h').trim());
+  expect(await h()).toBe('64px');
+  await clientNav(page, '/offline');
+  await expect(page).toHaveURL(/\/offline$/);
+  await expect(castBar(page)).toHaveCount(0);
+  await expect.poll(h).toBe('0px');
 });
