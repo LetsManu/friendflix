@@ -15,8 +15,8 @@ async function leaveWatch(page: Page) {
   await page.getByRole('button', { name: 'Zurück', exact: true }).click();
   await expect(page).toHaveURL(/\/$/);
 }
-/** a Chromecast cast started on the watch page (client-side navigation), then back to the home page; `fail()` -> 429 on a token request */
-async function castAndLeave(page: Page, o: { id?: string; fail?: () => boolean } = {}) {
+/** a Chromecast cast started on the watch page (client-side navigation); the page stays open as the TV's remote */
+async function castOnWatch(page: Page, o: { id?: string; fail?: () => boolean } = {}) {
   await mockPlayer(page);
   await castOn(page);
   const sdk = await fakeCastSdk(page);
@@ -28,9 +28,16 @@ async function castAndLeave(page: Page, o: { id?: string; fail?: () => boolean }
   await videoReady(page);
   await sdk.start();
   await expect(page.locator('.castov')).toContainText('Wird auf Wohnzimmer-TV abgespielt');
-  await leaveWatch(page);
   return { sdk, sessions, deleted };
 }
+/** `castOnWatch`, then back to the home page; `fail()` -> 429 on a token request */
+async function castAndLeave(page: Page, o: { id?: string; fail?: () => boolean } = {}) {
+  const r = await castOnWatch(page, o);
+  await leaveWatch(page);
+  return r;
+}
+/** GET /api/items/{id}/next: episode 2 follows episode 1 */
+const nextAfterFirst = (page: Page) => page.route('**/api/items/*/next', (r) => r.fulfill({ json: { item: r.request().url().includes(episodes[0]!.id) ? episodes[1] : null } }));
 const castBar = (page: Page) => page.getByRole('region', { name: 'Jetzt auf dem Fernseher' });
 
 test('bar appears after leaving the watch page and pauses the TV', async ({ page, api: _api }) => {
@@ -95,11 +102,11 @@ test('switching episodes of one series changes the visible bar text', async ({ p
 test('episode end on the TV shows "Als Nächstes" and switches after the countdown', async ({ page, api: _api }) => {
   test.setTimeout(45_000);
   const { sdk, sessions } = await castAndLeave(page, { id: episodes[0]!.id });
-  await page.route('**/api/items/*/next', (r) => r.fulfill({ json: { item: r.request().url().includes(episodes[0]!.id) ? episodes[1] : null } }));
+  await nextAfterFirst(page);
   const bar = castBar(page);
   await expect(bar).toContainText(episodes[0]!.name);
   await sdk.nearEnd();
-  await page.waitForTimeout(300); // the engine mirrors the receiver's position
+  await expect(bar.getByRole('progressbar')).toHaveAttribute('aria-valuenow', /^(99|100)$/); // the engine mirrors the receiver's position
   await sdk.finish();
   await expect(bar).toContainText(`Als Nächstes: S1:E2 · ${episodes[1]!.name}`);
   await expect(bar).toContainText(/in \d+ s/);
@@ -108,6 +115,42 @@ test('episode end on the TV shows "Als Nächstes" and switches after the countdo
   expect(sessions[1]!.itemId).toBe(episodes[1]!.id);
   expect(sessions[1]!.startTicks).toBeUndefined(); // the server's resume position
   await expect(bar).not.toContainText('Als Nächstes');
+});
+
+test('episode end on the TV while the watch page is open: its next card counts down, then the page follows the TV', async ({ page, api: _api }) => {
+  test.setTimeout(45_000);
+  const { sdk, sessions } = await castOnWatch(page, { id: episodes[0]!.id });
+  await nextAfterFirst(page);
+  let infos = 0;
+  page.on('request', (r) => { if (r.url().endsWith('/api/playback/info')) infos++; });
+  await sdk.nearEnd();
+  await expect.poll(() => page.locator('.track[role=slider]').evaluate((el) => Number(el.getAttribute('aria-valuemax')) - Number(el.getAttribute('aria-valuenow')))).toBeLessThan(10);
+  await sdk.finish();
+  const card = page.getByRole('dialog', { name: 'Nächste Folge' });
+  await expect(card).toContainText(`S1:E2 · ${episodes[1]!.name}`);
+  await expect(card).toContainText(/in \d+ s/);
+  await expect(page).toHaveURL(new RegExp('/watch/' + episodes[1]!.id), { timeout: 15_000 });
+  await expect(page.locator('.castov')).toContainText('Wird auf Wohnzimmer-TV abgespielt');
+  await expect(card).toHaveCount(0);
+  await page.waitForTimeout(500);
+  expect(sessions.filter((b) => b.itemId === episodes[1]!.id)).toHaveLength(1);
+  expect(sessions).toHaveLength(2);
+  expect(infos).toBe(0);
+});
+
+test('closing the next card on the watch page stops the TV countdown', async ({ page, api: _api }) => {
+  const { sdk, sessions } = await castOnWatch(page, { id: episodes[0]!.id });
+  await nextAfterFirst(page);
+  await sdk.nearEnd();
+  await expect.poll(() => page.locator('.track[role=slider]').evaluate((el) => Number(el.getAttribute('aria-valuemax')) - Number(el.getAttribute('aria-valuenow')))).toBeLessThan(10);
+  await sdk.finish();
+  const card = page.getByRole('dialog', { name: 'Nächste Folge' });
+  await page.locator('.stage').hover();
+  await card.getByRole('button', { name: 'Abbrechen' }).click();
+  await expect(card).toHaveCount(0);
+  await page.waitForTimeout(11_000);
+  expect(sessions).toHaveLength(1);
+  await expect(page).toHaveURL(new RegExp('/watch/' + episodes[0]!.id));
 });
 
 /**

@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ApiError, clearItemCache, primeItem, secToTicks, type Item } from '#lib/api';
 import type { CastInfo, CastState } from '#lib/cast';
 import { COUNTDOWN_SECONDS } from '#lib/player/nextup';
-import { consumeAutoplay, noteInteraction } from '#lib/stillwatching';
+import { consumeAutoplay, noteAutoplay, noteInteraction, shouldAsk } from '#lib/stillwatching';
 import { DEFAULT_PREFS, type Prefs } from '#lib/stores';
 import { createCastEngine, ENDED_HIDE_MS, PROGRESS_MS, RENEW_BEFORE_MS, type CastSession, type EngineDeps, type PlayerHandoff } from './engine';
 
@@ -16,11 +16,12 @@ const ci = (castId: string, over: Partial<CastInfo> = {}): CastInfo => ({
 });
 const items: Record<string, Partial<Item>> = {
   ep2: { id: 'ep2', name: 'Second', type: 'Episode', seriesId: 's1', seriesName: 'Bright Valley', indexNumber: 2, parentIndexNumber: 1 },
+  ep3: { id: 'ep3', name: 'Third', type: 'Episode', seriesId: 's1', seriesName: 'Bright Valley', indexNumber: 3, parentIndexNumber: 1 },
   film: { id: 'film', name: 'Film', type: 'Movie' },
   other: { id: 'other', name: 'Other', type: 'Movie' },
 };
 /** GET /api/items/{id}/next: the episode after ep1 is ep2 (others: none) */
-const nexts: Record<string, string> = { ep1: 'ep2' };
+const nexts: Record<string, string> = { ep1: 'ep2', ep2: 'ep3' };
 const idle: CastState = { available: true, connected: true, deviceName: 'Wohnzimmer-TV', state: 'idle', currentTime: 0, duration: 0, paused: true, volume: 1, muted: false, loaded: false };
 const playing = (over: Partial<CastState> = {}): CastState => ({ ...idle, state: 'playing', loaded: true, paused: false, currentTime: 60, duration: 1800, ...over });
 
@@ -722,7 +723,10 @@ describe('cast engine: next episode on the TV', () => {
     expect(env.tokenPosts()[0]!.init.body).toMatchObject({ itemId: 'ep2', startTicks: undefined });
     expect(get(env.out)).toMatchObject({ itemId: 'ep2', title: 'Bright Valley', state: 'connecting' });
     expect(get(env.out)?.next).toBeUndefined();
-    expect(consumeAutoplay()).toBe(true); // counted as an autoplay for "still watching?"
+    // counted for "still watching?" (one more makes two in a row), without the watch page's one-shot flag left set
+    expect(consumeAutoplay()).toBe(false);
+    noteAutoplay(); consumeAutoplay();
+    expect(shouldAsk(T0 + COUNTDOWN_MS, { stillWatching: true, stillWatchingEpisodes: 2 })).toBe(true);
     env.state.set(playing({ currentTime: 0 }));
     expect(env.reports()).toEqual(['stop', 'start']);
     expect(env.cast.castStop).not.toHaveBeenCalled();
@@ -810,6 +814,71 @@ describe('cast engine: next episode on the TV', () => {
     await env.engine.next();
     expect(env.order).toEqual(['GET /api/items/ep1/next', 'POST /api/playback/stop', 'DELETE /api/cast/session/c1', 'POST /api/cast/session']);
     expect(get(env.out)).toMatchObject({ itemId: 'ep2' });
+  });
+
+  /** the episode now on the TV plays and reaches its end */
+  async function currentEnds(env: Env) {
+    env.state.set(playing({ currentTime: 10 }));
+    env.state.set(playing({ currentTime: 1795 }));
+    env.emit('media-end');
+    await flush();
+  }
+
+  it('still-watching due -> next() -> the following episode end autoplays again', async () => {
+    noteInteraction(T0 - 90 * 60_000);
+    const env = setup();
+    await episodeEnds(env);
+    expect(get(env.out)?.next?.startsAt).toBeNull();
+    await env.engine.next(); // the viewer is there
+    await currentEnds(env);
+    expect(get(env.out)).toMatchObject({ itemId: 'ep2', state: 'ended', next: { itemId: 'ep3', startsAt: T0 + COUNTDOWN_MS } });
+    await env.advance(COUNTDOWN_MS);
+    expect(env.tokenPosts().at(-1)!.init.body.itemId).toBe('ep3');
+  });
+
+  it('playPause and skip on the bar count as the viewer being there', async () => {
+    for (const act of ['playPause', 'skip'] as const) {
+      noteInteraction(T0 - 90 * 60_000);
+      const env = setup();
+      await playingSession(env);
+      expect(shouldAsk(T0, DEFAULT_PREFS)).toBe(true);
+      if (act === 'skip') env.engine.skip(10); else env.engine.playPause();
+      expect(shouldAsk(T0, DEFAULT_PREFS)).toBe(false);
+    }
+  });
+
+  it('sleepAfterEpisode applies to the ended episode only', async () => {
+    const env = setup();
+    await episodeEnds(env, { sleepAfterEpisode: true });
+    expect(get(env.out)?.next?.startsAt).toBeNull();
+    await env.engine.next();
+    await currentEnds(env);
+    expect(get(env.out)?.next).toMatchObject({ itemId: 'ep3', startsAt: T0 + COUNTDOWN_MS });
+  });
+
+  it('next() twice, or while the next episode loads, starts one episode only', async () => {
+    const env = setup();
+    await episodeEnds(env);
+    await Promise.all([env.engine.next(), env.engine.next()]);
+    expect(env.tokenPosts()).toHaveLength(1);
+    expect(get(env.out)).toMatchObject({ itemId: 'ep2', state: 'connecting' });
+    await env.engine.next(); // ep2 not yet playing
+    await flush();
+    expect(env.tokenPosts()).toHaveLength(1);
+    expect(get(env.out)?.itemId).toBe('ep2');
+  });
+
+  it('cancelNext() stops the countdown; the next episode stays offered', async () => {
+    const env = setup();
+    env.engine.cancelNext(); // no session: nothing
+    await episodeEnds(env);
+    env.engine.cancelNext();
+    expect(get(env.out)).toMatchObject({ state: 'ended', next: { itemId: 'ep2', startsAt: null } });
+    await env.advance(60_000);
+    expect(env.tokenPosts()).toHaveLength(0);
+    expect(get(env.out)?.state).toBe('ended');
+    await env.engine.next();
+    expect(env.tokenPosts()).toHaveLength(1);
   });
 
   it('a next answer after the session moved on changes nothing', async () => {

@@ -24,7 +24,7 @@ import { createAirPlay, type AirPlayController, type AirPlayDeps, type AirPlaySt
 import { airLog } from '#lib/player/airplayLog';
 import { barTitles, firstInfoBody } from '#lib/player/bar';
 import { COUNTDOWN_SECONDS, mayAutoplay } from '#lib/player/nextup';
-import { noteAutoplay, shouldAsk } from '#lib/stillwatching';
+import { consumeAutoplay, noteAutoplay, noteInteraction, shouldAsk } from '#lib/stillwatching';
 import { prefs, type Prefs } from '#lib/stores';
 import { toast } from '#lib/ui/toast';
 
@@ -56,7 +56,10 @@ export interface CastEngine {
   playPause(): void; seek(sec: number): void; skip(delta: number): void;
   /** plays another title on the TV (no `startAt` = the server's resume position) */
   playOnTv(itemId: string, startAt?: number): Promise<void>;
+  /** plays the next episode now (from a tap): the known one in `ended`, else the episode after the playing one */
   next(): Promise<void>;
+  /** from a tap: the next episode's autoplay countdown stops, the episode stays offered */
+  cancelNext(): void;
   stop(): Promise<void>;
   /** from a tap on the bar in `reconnect`: Chromecast retries the last token request once */
   reconnect(): void;
@@ -230,7 +233,11 @@ export function createCastEngine(deps: EngineDeps, out: Writable<CastSession | n
       timers.clear(s.hide);
       const now = timers.now(), p = deps.prefs();
       const auto = mayAutoplay({ kind: 'episode', autoplayNext: p.autoplayNext, sleepAfterEpisode: s.sleepAfterEpisode, askStill: shouldAsk(now, p) });
-      s.hide = auto ? timers.set(() => { noteAutoplay(); void swap(s, it.id, undefined, true); }, COUNTDOWN_SECONDS * 1000) : undefined;
+      s.hide = auto ? timers.set(() => {
+        noteAutoplay();
+        consumeAutoplay(); // the chain counts; the watch page's one-shot flag is for its own countdown only
+        void swap(s, it.id, undefined, true);
+      }, COUNTDOWN_SECONDS * 1000) : undefined;
       patch(s, { next: { itemId: it.id, label: `S${it.parentIndexNumber}:E${it.indexNumber} · ${it.name}`, startsAt: auto ? now + COUNTDOWN_SECONDS * 1000 : null } });
     });
   }
@@ -410,7 +417,7 @@ export function createCastEngine(deps: EngineDeps, out: Writable<CastSession | n
     void stopReport(s);
     const stopped = s.stopping; // also a stop an earlier, superseded switch still waits for
     s.ci = null; s.busy = true; s.retry = null; s.lastPaused = null;
-    if (fresh) { s.audioIndex = undefined; s.subIndex = -1; }
+    if (fresh) { s.audioIndex = undefined; s.subIndex = -1; s.sleepAfterEpisode = false; } // "sleep after" meant the ended episode
     patch(s, { itemId, state: 'connecting', position: startAt ?? 0, paused: false, buffering: true, next: undefined,
       ...(fresh ? { audioTracks: [], subtitles: [], audioIndex: undefined, subIndex: -1 } : {}) });
     const meta = fresh ? deps.item(itemId).catch(() => null) : Promise.resolve(null);
@@ -493,19 +500,29 @@ export function createCastEngine(deps: EngineDeps, out: Writable<CastSession | n
     playPause() {
       const s = cur;
       if (!s?.ci) return;
+      noteInteraction();
       if (!s.air) { cast.castPlayPause(); return; }
       if (s.air.video.paused) void s.air.video.play().catch(() => undefined);
       else s.air.video.pause();
     },
     seek,
-    skip(delta) { if (cur) seek(cur.view.position + delta); },
+    skip(delta) { if (!cur) return; noteInteraction(); seek(cur.view.position + delta); },
     async playOnTv(itemId, startAt) { if (cur) await swap(cur, itemId, startAt, true); },
     async next() {
       const s = cur;
-      if (!s) return;
+      // a second tap while the next episode is on its way must not skip one more
+      if (!s || s.busy || (s.view.state !== 'ended' && s.view.state !== 'playing')) return;
+      noteInteraction();
       const my = seq;
       const id = s.view.next?.itemId ?? (s.view.isEpisode ? (await nextOf(s.view.itemId))?.id : undefined);
       if (id && cur === s && my === seq) await swap(s, id, undefined, true);
+    },
+    cancelNext() {
+      const s = cur;
+      if (!s?.view.next || s.view.next.startsAt === null) return;
+      timers.clear(s.hide);
+      s.hide = undefined;
+      patch(s, { next: { ...s.view.next, startsAt: null } });
     },
     async stop() {
       const s = cur;
