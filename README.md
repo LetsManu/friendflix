@@ -292,10 +292,14 @@ flowchart TB
 ### Operations
 
 - **Backups:** the opt-in `backup` sidecar runs `pg_dump` daily at `BACKUP_HOUR`, verifies each dump with `pg_restore --list`, keeps `BACKUP_KEEP_DAYS` days and turns `unhealthy` if a run fails. Restore steps and a monthly restore test (`scripts/restore-test.sh`) are in [docs/operations.md](docs/operations.md). Keep `APP_ENC_KEY` in a password manager, separate from the dumps.
-- **Updates:** *Admin → Update* shows the installed and latest version with the change list and redeploys the stack through Portainer (webhook or API). Manually: `docker compose -f compose.prod.yaml pull && docker compose -f compose.prod.yaml up -d`. Database migrations run on start.
+- **Updates:** *Admin → Update* shows the installed version and the newest release with its notes (plus the commits on main) and redeploys the stack through Portainer (webhook or API). Manually: `docker compose -f compose.prod.yaml pull && docker compose -f compose.prod.yaml up -d`. Database migrations run on start.
 - **Monitoring:** `/health` (liveness) and `/health/ready` (Redis, Postgres, Jellyfin) on `127.0.0.1:3081`; Prometheus metrics on `:3081/metrics` and `:3082/metrics` (Bearer `METRICS_TOKEN`). Icinga and Prometheus examples and an optional Prometheus + Grafana stack with a provisioned dashboard (`compose.monitoring.yaml`, internal network, no default password): [docs/monitoring.md](docs/monitoring.md).
 - **Supply chain:** images are scanned (Trivy), signed with cosign (keyless) and published with SBOM and provenance attestations; verify them before you deploy – [docs/operations.md](docs/operations.md).
 - **Performance:** every API response carries a `Server-Timing` header (`jf` = Jellyfin, `db` = Postgres, `kv` = Redis, `app` = total), the gateway adds `authz` and `upstream`; see them in the browser DevTools under *Network → Timing*. Requests ≥ 500 ms are logged as `slow request`. Browser errors are reported to the backend log and counted in `friendflix_client_errors_total`.
+
+### Versions & releases
+
+FriendFlix uses [SemVer](https://semver.org) (`version.json`, shown in the desktop footer and under *Admin → Update*). Every major version gets a codename: the next cinema snack from A to Z (1 = Arancini, 2 = Brezel, …; list in `codenames.json`). Releases are cut with the manual **Release** workflow (patch / minor / major): it bumps the version (`none` for the very first release publishes 1.0.0 as it is), moves the *Unreleased* part of [CHANGELOG.md](CHANGELOG.md) under the new version, tags `vX.Y.Z` and creates the GitHub Release. The workflow pushes with the optional `RELEASE_TOKEN` secret (a fine-grained token that is the only bypass actor of the main/tag rulesets; without it, main must accept direct pushes from GitHub Actions). Images are then published as `X.Y.Z`, `X.Y`, `X` and, for the highest version only, `latest`; set `FF_TAG=1` to stay on major version 1 and still get its minor and patch releases. Details: [docs/operations.md](docs/operations.md#release-erstellen).
 
 ### Development
 
