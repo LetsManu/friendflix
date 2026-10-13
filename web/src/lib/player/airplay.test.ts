@@ -1,12 +1,17 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { CastInfo } from '#lib/cast';
-import { airPlaySupported, ARM_MS, AVAILABILITY_EVENT, createAirPlay, WIRELESS_EVENT, type AirPlayDeps, type AirPlayState } from './airplay';
+import { airPlaySupported, ARM_MS, AUTO_MAX, AUTO_WINDOW_MS, AVAILABILITY_EVENT, createAirPlay, SETTLE_MS, WIRELESS_EVENT, WIRELESS_OFF_GRACE_MS, type AirPlayDeps, type AirPlayState } from './airplay';
+import { clearAirLog, readAirLog } from './airplayLog';
 
 /** a <video> stand-in: Safari's AirPlay events are simulated by dispatching them */
 class FakeVideo extends EventTarget {
   currentTime = 0;
   paused = true;
-  src = 'blob:hlsjs';
+  private _src = 'blob:hlsjs';
+  get src() { return this._src; }
+  set src(v: string) { this._src = v; this.srcChanged(); }
+  /** hook for WebKit's reaction to a src change */
+  protected srcChanged() { /* nothing */ }
   attrs = new Map<string, string>([['crossorigin', 'use-credentials']]);
   webkitCurrentPlaybackTargetIsWireless = false;
   webkitShowPlaybackTargetPicker = vi.fn();
@@ -24,7 +29,8 @@ const CI: CastInfo = {
 };
 const CI2: CastInfo = { ...CI, castId: 'd'.repeat(32), contentUrl: 'https://ff.example/media/c/TOKEN2/Videos/x/master.m3u8' };
 const flush = () => new Promise((r) => setTimeout(r, 0));
-afterEach(() => { vi.useRealTimers(); });
+afterEach(() => { vi.useRealTimers(); clearAirLog(); });
+const fake = () => vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'], shouldAdvanceTime: true });
 
 function setup(over: Partial<AirPlayDeps> = {}, probe?: EventTarget) {
   const v = new FakeVideo();
@@ -275,18 +281,23 @@ describe('AirPlay controller', () => {
     expect(request).toHaveBeenCalledTimes(2);
   });
 
-  it('refresh() fails while ready: toast and back to the normal stream (no TV to show an error on)', async () => {
+  it('refresh() fails while ready: toast + error state (Retry), no restore, src untouched, the old token stays', async () => {
     const request = vi.fn(async () => CI);
-    const { c, deps } = setup({ request });
+    const { v, c, deps } = setup({ request });
     c.pick();
     await flush();
     request.mockImplementationOnce(async () => { throw new Error('net'); });
     await c.refresh();
     await flush();
     expect(deps.fail).toHaveBeenCalledOnce();
-    expect(deps.revoke).toHaveBeenCalledWith(CI);
-    expect(deps.restore).toHaveBeenCalledOnce();
-    expect(c.state).toMatchObject({ ready: false, active: false, error: false });
+    expect(deps.revoke).not.toHaveBeenCalled();
+    expect(deps.restore).not.toHaveBeenCalled();
+    expect(v.src).toBe(CI.contentUrl);
+    expect(c.state).toMatchObject({ ready: true, active: false, error: true });
+    request.mockImplementationOnce(async () => CI2);
+    await c.retry();
+    expect(v.src).toBe(CI2.contentUrl);
+    expect(c.state).toMatchObject({ ready: true, active: false, error: false });
   });
 
   it('a paused video stays paused on the TV', async () => {
@@ -296,13 +307,18 @@ describe('AirPlay controller', () => {
     expect(v.play).not.toHaveBeenCalled();
   });
 
-  it('wireless off: revokes the token and restores the normal stream at the position', async () => {
+  it('sustained wireless off: revokes the token and restores the normal stream at the position', async () => {
+    fake();
     const { v, c, deps } = setup();
     v.currentTime = 100; v.paused = false;
     await airplayOn(v, c);
+    await vi.advanceTimersByTimeAsync(SETTLE_MS);
     v.currentTime = 812;
     v.wireless(false);
-    await flush();
+    await vi.advanceTimersByTimeAsync(WIRELESS_OFF_GRACE_MS - 100);
+    expect(deps.restore).not.toHaveBeenCalled();
+    expect(c.state.active).toBe(true);
+    await vi.advanceTimersByTimeAsync(200);
     expect(deps.revoke).toHaveBeenCalledWith(CI);
     expect(deps.restore).toHaveBeenCalledWith(812, true, CI);
     expect(v.getAttribute('crossorigin')).toBe('use-credentials');
@@ -312,11 +328,12 @@ describe('AirPlay controller', () => {
 
   it('Control Center route: AirPlay ended while the token was still being requested: the late token is revoked, never used', async () => {
     let resolve!: (ci: CastInfo) => void;
+    fake();
     const { v, c, deps } = setup({ request: vi.fn(() => new Promise<CastInfo>((r) => (resolve = r))) });
     v.wireless(true);
     await flush();
     v.wireless(false);
-    await flush();
+    await vi.advanceTimersByTimeAsync(WIRELESS_OFF_GRACE_MS + 10);
     expect(deps.restore).toHaveBeenCalledOnce();
     expect(c.state.active).toBe(false);
     resolve(CI);
@@ -415,5 +432,268 @@ describe('AirPlay controller', () => {
     v.wireless(false);
     expect(states).toHaveLength(n);
     expect(deps.restore).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * Field bug (iPhone PWA -> LG webOS): WebKit resets the wireless route state when `src` changes (bug 158226) and reports
+ * the still picked route again right after. The old controller reacted to every flip: off -> stop + restore (src change), on
+ * without our token -> new token (src change) -> off -> ... and after the first 429 a tight request loop (314 POSTs in 30 min).
+ */
+class FlakyRouteVideo extends FakeVideo {
+  /** while true: every src assignment makes WebKit report "not wireless" for `offMs`, then "wireless" again (route still picked) */
+  routePicked = false;
+  offMs = 200;
+  protected override srcChanged() {
+    if (!this.routePicked) return;
+    queueMicrotask(() => this.wireless(false));
+    setTimeout(() => { if (this.routePicked) this.wireless(true); }, this.offMs);
+  }
+}
+function setupFlaky(over: Partial<AirPlayDeps> = {}) {
+  const v = new FlakyRouteVideo();
+  const states: AirPlayState[] = [];
+  const deps = {
+    request: vi.fn(async () => CI), revoke: vi.fn(), detach: vi.fn(), started: vi.fn(), fail: vi.fn(),
+    // the player's restore puts the normal stream (hls.js blob) back on the element: a src change like any other
+    restore: vi.fn(() => { v.src = 'blob:hlsjs2'; }),
+    change: vi.fn((s: AirPlayState) => { states.push(s); }),
+    ...over,
+  } satisfies AirPlayDeps;
+  const c = createAirPlay(v, deps);
+  return { v, c, deps, states };
+}
+
+describe('AirPlay: no token request loop', () => {
+  it('constants: 4 s grace for wireless off, 1.5 s settle after our src change, breaker 3 / 60 s', () => {
+    expect(WIRELESS_OFF_GRACE_MS).toBe(4000);
+    expect(SETTLE_MS).toBe(1500);
+    expect(AUTO_MAX).toBe(3);
+    expect(AUTO_WINDOW_MS).toBe(60_000);
+  });
+
+  it('tap + TV picked, WebKit flips wireless off/on around our src change: one request, no stop, no restore', async () => {
+    fake();
+    const { v, c, deps } = setupFlaky();
+    v.paused = false;
+    v.routePicked = true; // the picker's choice (the flips start with our src assignment)
+    c.pick();
+    await vi.advanceTimersByTimeAsync(0);
+    v.wireless(true);
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(deps.request).toHaveBeenCalledOnce();
+    expect(deps.revoke).not.toHaveBeenCalled();
+    expect(deps.restore).not.toHaveBeenCalled();
+    expect(c.state).toMatchObject({ active: true, busy: false, error: false });
+    expect(v.src).toBe(CI.contentUrl);
+  });
+
+  it('route chosen outside our button, flips around every src change: exactly ONE automatic request', async () => {
+    fake();
+    const { v, c, deps } = setupFlaky();
+    v.routePicked = true;
+    v.wireless(true);
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(deps.request).toHaveBeenCalledOnce();
+    expect(deps.restore).not.toHaveBeenCalled();
+    expect(c.state).toMatchObject({ active: true, error: false });
+  });
+
+  it('the element is "on our token" by own tracking, not by URL comparison (Safari may report a different src string)', async () => {
+    fake();
+    const { v, c, deps } = setup();
+    c.pick();
+    await vi.advanceTimersByTimeAsync(SETTLE_MS + 10);
+    v.src = 'https://FF.EXAMPLE:443/media/c/TOKEN/Videos/x/master.m3u8?normalised'; // whatever WebKit reports
+    v.wireless(true);
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(c.state.active).toBe(true);
+    expect(deps.request).toHaveBeenCalledOnce();
+  });
+
+  it('429 while the route is wireless: error state, no restore, no src change, no further requests (even with flips)', async () => {
+    fake();
+    const err = Object.assign(new Error('429'), { status: 429, body: { error: 'rate_limited' } });
+    const { v, c, deps } = setupFlaky({ request: vi.fn(async (): Promise<CastInfo> => { throw err; }) });
+    v.routePicked = true;
+    v.wireless(true);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(c.state).toMatchObject({ active: true, error: true, busy: false });
+    const srcNow = v.src;
+    // WebKit keeps flipping briefly (no src change of ours, so do it by hand)
+    for (let i = 0; i < 5; i++) {
+      v.wireless(false);
+      await vi.advanceTimersByTimeAsync(500);
+      v.wireless(true);
+      await vi.advanceTimersByTimeAsync(5_000);
+    }
+    expect(deps.request).toHaveBeenCalledOnce();
+    expect(deps.fail).toHaveBeenCalledOnce();
+    expect(deps.restore).not.toHaveBeenCalled();
+    expect(v.src).toBe(srcNow);
+    expect(c.state).toMatchObject({ active: true, error: true });
+  });
+
+  it('token-first request fails while the route is already wireless: error state, no restore', async () => {
+    const { v, c, deps } = setup({ request: vi.fn(async (): Promise<CastInfo> => { throw new Error('429'); }) });
+    v.webkitCurrentPlaybackTargetIsWireless = true;
+    c.pick();
+    await flush();
+    expect(deps.fail).toHaveBeenCalledOnce();
+    expect(deps.restore).not.toHaveBeenCalled();
+    expect(c.state).toMatchObject({ active: true, error: true, busy: false });
+    expect(deps.request).toHaveBeenCalledOnce();
+  });
+
+  it('debounce: wireless off then on again within the grace: no stop, no restore, no new token', async () => {
+    fake();
+    const { v, c, deps } = setup();
+    await airplayOn(v, c);
+    await vi.advanceTimersByTimeAsync(SETTLE_MS);
+    v.wireless(false);
+    await vi.advanceTimersByTimeAsync(WIRELESS_OFF_GRACE_MS - 500);
+    v.wireless(true);
+    await vi.advanceTimersByTimeAsync(WIRELESS_OFF_GRACE_MS * 3);
+    expect(deps.restore).not.toHaveBeenCalled();
+    expect(deps.revoke).not.toHaveBeenCalled();
+    expect(deps.request).toHaveBeenCalledOnce();
+    expect(c.state.active).toBe(true);
+  });
+
+  it('the grace timer re-checks the actual property (an "on" event may be missing)', async () => {
+    fake();
+    const { v, c, deps } = setup();
+    await airplayOn(v, c);
+    await vi.advanceTimersByTimeAsync(SETTLE_MS);
+    v.wireless(false);
+    v.webkitCurrentPlaybackTargetIsWireless = true; // back on without an event
+    await vi.advanceTimersByTimeAsync(WIRELESS_OFF_GRACE_MS + 100);
+    expect(deps.restore).not.toHaveBeenCalled();
+    expect(c.state.active).toBe(true);
+  });
+
+  it('settle: wireless off right after our own src change is ignored; the actual state is checked once after the window', async () => {
+    fake();
+    const { v, c, deps } = setup();
+    await airplayOn(v, c); // active
+    const request = vi.mocked(deps.request);
+    request.mockResolvedValueOnce(CI2);
+    await c.refresh(); // our src change
+    v.wireless(false); // WebKit's reset
+    await vi.advanceTimersByTimeAsync(SETTLE_MS - 100);
+    v.wireless(true);
+    await vi.advanceTimersByTimeAsync(WIRELESS_OFF_GRACE_MS * 2);
+    expect(deps.restore).not.toHaveBeenCalled();
+    expect(c.state).toMatchObject({ active: true, error: false });
+    expect(c.info).toBe(CI2);
+  });
+
+  it('route really off after the window: stop after the grace (behaves as before)', async () => {
+    fake();
+    const { v, c, deps } = setup();
+    await airplayOn(v, c);
+    v.wireless(false); // during the settle window: ignored ...
+    await vi.advanceTimersByTimeAsync(SETTLE_MS + 10); // ... the re-check sees "off" -> grace
+    expect(deps.restore).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(WIRELESS_OFF_GRACE_MS);
+    expect(deps.revoke).toHaveBeenCalledWith(CI);
+    expect(deps.restore).toHaveBeenCalledOnce();
+    expect(c.state).toMatchObject({ active: false, error: false });
+  });
+
+  it('long off phases after each src change (sustained > grace): stop once, then error instead of a second automatic token', async () => {
+    fake();
+    const { v, c, deps } = setupFlaky();
+    v.offMs = WIRELESS_OFF_GRACE_MS + 2_000;
+    v.routePicked = true;
+    v.wireless(true); // outside route: automatic request #1
+    await vi.advanceTimersByTimeAsync(120_000);
+    expect(deps.request).toHaveBeenCalledOnce();
+    expect(deps.restore).toHaveBeenCalledOnce();
+    expect(c.state).toMatchObject({ active: true, error: true, busy: false });
+    // Retry is a user tap: allowed
+    await c.retry();
+    expect(deps.request).toHaveBeenCalledTimes(2);
+  });
+
+  it(`breaker: at most ${AUTO_MAX} automatic requests per ${AUTO_WINDOW_MS / 1000} s, then error with Retry (no request)`, async () => {
+    fake();
+    const { v, c, deps } = setupFlaky();
+    // the route really comes and goes (Control Center), each episode gets its one automatic request
+    for (let i = 0; i < AUTO_MAX + 1; i++) {
+      v.wireless(true);
+      await vi.advanceTimersByTimeAsync(SETTLE_MS + 10);
+      v.wireless(false);
+      await vi.advanceTimersByTimeAsync(WIRELESS_OFF_GRACE_MS + SETTLE_MS + 20);
+    }
+    expect(deps.request).toHaveBeenCalledTimes(AUTO_MAX);
+    expect(readAirLog().some((e) => e.ev === 'breaker')).toBe(true);
+    v.wireless(true);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(deps.request).toHaveBeenCalledTimes(AUTO_MAX);
+    expect(c.state).toMatchObject({ active: true, error: true });
+    await c.retry(); // a tap still works
+    expect(deps.request).toHaveBeenCalledTimes(AUTO_MAX + 1);
+    expect(c.state).toMatchObject({ active: true, error: false });
+  });
+
+  it('user taps do not count against the breaker', async () => {
+    fake();
+    const { v, c, deps } = setup();
+    for (let i = 0; i < AUTO_MAX + 2; i++) {
+      c.pick();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(c.state.ready).toBe(true);
+      c.videoError(); // phone's token stream fails: normal stream (stop)
+      await vi.advanceTimersByTimeAsync(SETTLE_MS + 10);
+    }
+    expect(deps.request).toHaveBeenCalledTimes(AUTO_MAX + 2);
+    expect(v.src).toBe(CI.contentUrl);
+  });
+
+  it('logs the decisions without URLs or cast ids', async () => {
+    fake();
+    const { v, c } = setupFlaky();
+    v.routePicked = true;
+    available(v, true);
+    c.pick();
+    await vi.advanceTimersByTimeAsync(0);
+    v.wireless(true);
+    await vi.advanceTimersByTimeAsync(10_000);
+    c.videoError(5);
+    const log = readAirLog();
+    const evs = log.map((e) => e.ev);
+    for (const ev of ['availability', 'pick', 'token-start', 'token-ok', 'src', 'wireless', 'video-error']) expect(evs).toContain(ev);
+    expect(log.some((e) => e.ev === 'wireless' && e.note?.includes('ignored'))).toBe(true);
+    expect(log.some((e) => e.src === 'token')).toBe(true);
+    const raw = JSON.stringify(log);
+    for (const bad of ['TOKEN', 'ff.example', 'c'.repeat(32), '/media/']) expect(raw).not.toContain(bad);
+  });
+
+  it('a failed request is logged with its status code', async () => {
+    const err = Object.assign(new Error('x'), { status: 429 });
+    const { c } = setup({ request: vi.fn(async (): Promise<CastInfo> => { throw err; }) });
+    c.pick();
+    await flush();
+    expect(readAirLog().find((e) => e.ev === 'token-fail')?.note).toContain('429');
+  });
+
+  it('a slow restore keeps the settle window open: flips while the normal stream re-attaches never start a request', async () => {
+    fake();
+    let done!: () => void;
+    const { v, c, deps } = setup({ restore: vi.fn(() => new Promise<void>((r) => (done = r))) });
+    v.wireless(true); // outside route: the one automatic request
+    await vi.advanceTimersByTimeAsync(SETTLE_MS + 10);
+    v.wireless(false);
+    await vi.advanceTimersByTimeAsync(WIRELESS_OFF_GRACE_MS + 10); // sustained: stop, restore starts (slow)
+    expect(deps.restore).toHaveBeenCalledOnce();
+    await vi.advanceTimersByTimeAsync(SETTLE_MS * 4); // restore still running: window kept open
+    v.src = 'blob:hlsjs2';
+    v.wireless(true); // WebKit reports the route again: ignored (settle)
+    expect(deps.request).toHaveBeenCalledOnce();
+    done();
+    await vi.advanceTimersByTimeAsync(SETTLE_MS + 10); // re-check: still wireless, same episode -> error, no request
+    expect(deps.request).toHaveBeenCalledOnce();
+    expect(c.state).toMatchObject({ active: true, error: true });
   });
 });
