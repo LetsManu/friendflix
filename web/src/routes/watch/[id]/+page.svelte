@@ -143,7 +143,8 @@
 <style>
   .wrap { position: fixed; inset: 0; background: var(--bg); z-index: 40; }
   .wrap :global(.stage) { height: 100%; }
-  .top { padding: .8rem 1rem; display: flex; align-items: center; gap: .6rem; background: linear-gradient(rgba(0,0,0,.8), transparent); }
+  /* below the status bar / Dynamic Island (portrait) and clear of the notch (landscape); the gradient still covers the status bar */
+  .top { padding: calc(.8rem + var(--safe-top)) max(1rem, var(--safe-right)) .8rem max(1rem, var(--safe-left)); display: flex; align-items: center; gap: .6rem; background: linear-gradient(rgba(0,0,0,.8), transparent); }
   .ttl { display: flex; flex-direction: column; line-height: 1.2; } .ttl span { color: var(--mut); font-size: .9rem; }
   /* desktop: the title sits centred in the control bar; phones keep it at the top */
   @media (min-width: 721px) { .ttl.phone { display: none; } }
