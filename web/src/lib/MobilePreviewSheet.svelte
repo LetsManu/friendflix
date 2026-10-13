@@ -45,16 +45,55 @@
     if (!item) return;
     if (!(await toggleList(item.seriesId ?? item.id, inList))) say(tr('home.card.saveFailed'));
   }
-  // swipe down on the grab zone closes the sheet (threshold 80 px)
-  function dragDown(e: PointerEvent) { dragging = true; dragStart = e.clientY; dragY = 0; (e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId); }
-  function dragMove(e: PointerEvent) { if (dragging) dragY = Math.max(0, e.clientY - dragStart); }
+  // swipe down closes the sheet (threshold 80 px): with a mouse/pen on the grab zone, with a finger anywhere on the sheet
+  // while it is scrolled to the top. The touch drag only starts after 8 px of mostly downward movement, so taps on the
+  // buttons and sideways moves still work; a swipe that started on a button swallows the click that follows it.
+  function dragDown(e: PointerEvent) { if (e.pointerType === 'touch') return; dragging = true; dragStart = e.clientY; dragY = 0; (e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId); }
+  function dragMove(e: PointerEvent) { if (dragging && e.pointerType !== 'touch') dragY = Math.max(0, e.clientY - dragStart); }
   function dragEnd() { if (!dragging) return; const far = dragY > 80; dragging = false; dragY = 0; if (far) close(); }
+
+  let touchX = 0, touchY = 0, touchArmed = false, swallowClick = false;
+  function touchStart(e: TouchEvent) {
+    if (e.touches.length !== 1) { touchArmed = false; return; }
+    touchArmed = sheetEl.scrollTop <= 0; touchX = e.touches[0]!.clientX; touchY = e.touches[0]!.clientY; dragging = false; dragY = 0;
+  }
+  function touchMove(e: TouchEvent) {
+    if (!touchArmed || e.touches.length !== 1) return;
+    const dx = e.touches[0]!.clientX - touchX, dy = e.touches[0]!.clientY - touchY;
+    if (!dragging) {
+      if (Math.abs(dx) < 8 && Math.abs(dy) < 8) return;
+      if (dy <= 0 || Math.abs(dx) > dy) { touchArmed = false; return; } // upward or sideways: leave it to the browser
+      dragging = true; dragStart = touchY;
+    }
+    e.preventDefault(); // no page/sheet scroll while the sheet follows the finger
+    dragY = Math.max(0, e.touches[0]!.clientY - dragStart);
+  }
+  function touchEnd() {
+    touchArmed = false;
+    if (!dragging) return;
+    swallowClick = true; setTimeout(() => (swallowClick = false), 400);
+    dragEnd();
+  }
+  function noClickAfterSwipe(e: MouseEvent) { if (swallowClick) { e.preventDefault(); e.stopPropagation(); swallowClick = false; } }
+  /** touchmove must be non-passive to stop the scroll; Svelte's on:touchmove is passive by default */
+  function swipeToClose(node: HTMLElement) {
+    node.addEventListener('touchstart', touchStart, { passive: true });
+    node.addEventListener('touchmove', touchMove, { passive: false });
+    node.addEventListener('touchend', touchEnd);
+    node.addEventListener('touchcancel', touchEnd);
+    node.addEventListener('click', noClickAfterSwipe, true);
+    return { destroy() {
+      node.removeEventListener('touchstart', touchStart); node.removeEventListener('touchmove', touchMove);
+      node.removeEventListener('touchend', touchEnd); node.removeEventListener('touchcancel', touchEnd);
+      node.removeEventListener('click', noClickAfterSwipe, true);
+    } };
+  }
 </script>
 
 {#if item}
   <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
   <div class="backdrop" on:click={() => close()}></div>
-  <div class="sheet" class:dragging role="dialog" aria-modal="true" aria-label={$t('home.card.preview', { name: item.name })} tabindex="-1" bind:this={sheetEl} use:dialogKeys={{ close: () => close() }} style={dragY ? `transform:translateY(${dragY}px)` : undefined}>
+  <div class="sheet" class:dragging role="dialog" aria-modal="true" aria-label={$t('home.card.preview', { name: item.name })} tabindex="-1" bind:this={sheetEl} use:dialogKeys={{ close: () => close() }} use:swipeToClose style={dragY ? `transform:translateY(${dragY}px)` : undefined}>
     <!-- svelte-ignore a11y_no_static_element_interactions -->
     <div class="grab" on:pointerdown={dragDown} on:pointermove={dragMove} on:pointerup={dragEnd} on:pointercancel={dragEnd}><span class="handle" aria-hidden="true"></span></div>
     <button type="button" class="close" aria-label={$t('common.close')} on:click={() => close()}><Icon name="x" size={18} /></button>
@@ -85,6 +124,7 @@
 <style>
   .backdrop { position: fixed; inset: 0; z-index: 90; background: rgba(0,0,0,.62); animation: fade .2s ease-out; }
   .sheet { position: fixed; left: 0; right: 0; bottom: 0; z-index: 91; max-width: 560px; margin: 0 auto; max-height: min(88dvh, calc(100dvh - var(--safe-top) - .5rem)); overflow-y: auto; overscroll-behavior: contain; outline: none; background: #161b21; border-radius: 16px 16px 0 0; padding: 0 var(--pad-x) calc(.8rem + var(--safe-bottom)); box-shadow: 0 -12px 40px rgba(0,0,0,.7); animation: rise .26s var(--ease, ease-out); }
+  .sheet { transition: transform .2s var(--ease, ease-out); }
   .sheet.dragging { transition: none; }
   .grab { touch-action: none; cursor: grab; padding: 0 0 .2rem; margin: 0 calc(var(--pad-x) * -1); }
   .handle { display: block; width: 40px; height: 4px; border-radius: 99px; background: #6a7480; margin: 10px auto 8px; }
