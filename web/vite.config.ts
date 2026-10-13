@@ -5,6 +5,7 @@ import { sveltekit } from '@sveltejs/kit/vite';
 import { vitePreprocess } from '@sveltejs/vite-plugin-svelte';
 import { defineConfig, type Plugin } from 'vite';
 import { localeManifest } from './src/service-worker/precache.ts';
+import { kitVersionName } from './src/lib/version/kit-version.ts';
 
 /** Writes /_app/locales.json (language → its chunk files) for the service worker's offline language precache. */
 const localeChunks = (): Plugin => ({
@@ -22,6 +23,8 @@ export default defineConfig({
     sveltekit({
       preprocess: vitePreprocess(),
       adapter: adapter(),
+      // reproducible builds: git sha / SOURCE_DATE_EPOCH instead of SvelteKit's default Date.now() (docs/reproducible-builds.md)
+      version: { name: kitVersionName(process.env) },
       // Strict CSP: only own origin. hls.js needs blob: for its worker and media source; styles are inline from Svelte.
       csp: {
         mode: 'auto',
