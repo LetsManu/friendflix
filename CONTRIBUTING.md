@@ -27,7 +27,16 @@ Thanks for helping! Bug reports, ideas and pull requests are welcome. Everyone t
 **Tests**
 - New behaviour comes with tests; bug fixes come with a test that fails without the fix.
 - Unit tests: Vitest (`npm test`). End-to-end: Playwright (`npm run e2e`) for user-visible flows.
-- Coverage: `npm run coverage` (CI shows the summary in the job summary).
+- Coverage: `npm run coverage` (Vitest, V8 provider; CI shows a per-package and overall table in the job summary).
+  Each package's `vitest.config.ts` sets minimum **statement** and **branch** coverage (currently backend 90 / 82,
+  gateway 93 / 90, web 94 / 89 %); `npm run coverage` and CI fail below them. The floor is 90 % statements and 80 %
+  branches (OpenSSF Best Practices, gold). Raise a threshold when coverage goes up; never lower it to make a change pass.
+- What the coverage numbers measure: every TypeScript module under `backend/src`, `gateway/src` and `web/src` counts,
+  also modules no test imports. Svelte components (`*.svelte`) are not part of the web number: Playwright (`e2e/`)
+  covers them end to end. Excluded are only tests, type declarations, generated files and the test doubles of browser
+  APIs in `web/src/test-utils/`. Web unit tests run in Node; browser APIs (IndexedDB, OPFS, Cache Storage, WebSocket,
+  Web Audio, the Cast SDK) are replaced by small doubles inside the tests.
+- Backend tests need PostgreSQL (CI: a service on port 5433); set `TEST_DATABASE_URL` to use another database.
 
 **Texts and languages**
 - Every user-facing string goes through i18n and is added in **all 7 languages** ([docs/i18n.md](docs/i18n.md)).

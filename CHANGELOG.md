@@ -88,6 +88,7 @@ All notable changes, grouped by what you notice. Each release has its own sectio
 - Migrations 21–33: indexes, `item_langs` / `dropped`, `reactions`, `lists.featured_at`, brand hubs, comments, kids and onboarding columns, `leaving_soon`, themed lists (`lists.themed`, `emoji`, `cover_color`, `featured_pos`), quality index.
 - New i18n areas `anime`, `hubs`, `kids`, `together`, `fresh`, `scenes`, `mine`, `ui`, `adminPeople`, `adminContent` in all 7 languages (docs/i18n.md).
 - Dev toolchain upgrade (Vite 8, SvelteKit 3, vitest 5, TypeScript 6; `#lib` subpath imports).
+- Test coverage gates: at least 90 % statements and 80 % branches in backend, gateway and web (every TypeScript module counts); CI fails below the per-package thresholds (CONTRIBUTING.md).
 
 ## Earlier work
 

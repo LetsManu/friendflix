@@ -6,8 +6,10 @@ export default defineConfig({
   test: {
     fileParallelism: false,
     coverage: {
-      // Measurement only for now: no thresholds yet, they will follow once the baseline is known.
       provider: 'v8',
+      // CI fails below these (reached level rounded down; OpenSSF gold asks for >= 90 % statements / >= 80 % branches).
+      // Raise them when coverage goes up, never lower them to make a change pass. See CONTRIBUTING.md.
+      thresholds: { statements: 90, branches: 82 },
       reporter: ['text-summary', 'json-summary', 'lcov'],
       include: ['src/**/*.ts'],
       exclude: ['**/*.test.ts', '**/*.d.ts', '**/generated/**', '**/*.generated.*'],
