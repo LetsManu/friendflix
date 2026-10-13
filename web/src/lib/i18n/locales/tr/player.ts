@@ -128,6 +128,13 @@ const tr: Translation<typeof de> = {
     needsTranscode: 'AirPlay için dönüştürme gerekiyor – rolün buna izin vermiyor.',
     tvHint: 'Televizyonda AirPlay veya Chromecast yok mu? TV tarayıcısında {url} adresini aç ve telefonunu kumanda olarak eşleştir.',
   },
+  /** the bar while a title plays on a TV (cast engine) */
+  castBar: {
+    region: 'Şu an televizyonda',
+    failed: '“{title}” {device} üzerinde oynatılamıyor.',
+    airplayDevice: 'AirPlay cihazı',
+    reconnect: 'Bağlantı kesildi – televizyonda devam etmek için dokunun',
+  },
   mode: {
     label: 'Oynatma: {mode}',
     direct: 'Doğrudan oynatma (orijinal dosya)',

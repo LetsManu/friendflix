@@ -128,6 +128,13 @@ const es: Translation<typeof de> = {
     needsTranscode: 'AirPlay necesita transcodificación – no permitida para tu rol.',
     tvHint: '¿Tu tele no tiene AirPlay ni Chromecast? Abre {url} en el navegador de la tele y vincula tu móvil como mando.',
   },
+  /** the bar while a title plays on a TV (cast engine) */
+  castBar: {
+    region: 'Ahora en la tele',
+    failed: 'No se puede reproducir «{title}» en {device}.',
+    airplayDevice: 'Dispositivo AirPlay',
+    reconnect: 'Conexión perdida – toca para seguir en la tele',
+  },
   mode: {
     label: 'Reproducción: {mode}',
     direct: 'Direct Play (archivo original)',

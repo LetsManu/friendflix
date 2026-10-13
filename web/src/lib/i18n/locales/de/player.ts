@@ -130,6 +130,13 @@ export default {
     needsTranscode: 'AirPlay braucht Transcoding – mit deiner Rolle nicht erlaubt.',
     tvHint: 'Kein AirPlay oder Chromecast am Fernseher? Öffne {url} im Browser des Fernsehers und kopple dein Handy als Fernbedienung.',
   },
+  /** the bar while a title plays on a TV (cast engine) */
+  castBar: {
+    region: 'Jetzt auf dem Fernseher',
+    failed: '„{title}“ kann auf {device} nicht abgespielt werden.',
+    airplayDevice: 'AirPlay-Gerät',
+    reconnect: 'Verbindung verloren – tippen, um am Fernseher fortzusetzen',
+  },
   mode: {
     label: 'Wiedergabe: {mode}',
     direct: 'Direct Play (Originaldatei)',
