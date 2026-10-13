@@ -2,7 +2,14 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // In-memory IndexedDB double with the semantics db.ts relies on: async requests, readonly/readwrite transactions that
 // commit once no request is pending at the end of a task, keyPath and out-of-line keys, structured-clone storage.
+// Requests and commits run on the REAL timer captured at import, so the double keeps working under vi.useFakeTimers();
+// tests using fake timers wait for it with idbTick().
 // Test infrastructure only: excluded from coverage (see vitest.config.ts).
+
+const realSetTimeout = globalThis.setTimeout.bind(globalThis);
+const nextTask = (fn: () => void) => void realSetTimeout(fn, 0);
+/** resolves after the fake database had a chance to run its pending requests (one real task) */
+export const idbTick = () => new Promise<void>((r) => nextTask(r));
 
 type Cb = (() => void) | null;
 interface Req<T = unknown> { result: T; error: Error | null; onsuccess: Cb; onerror: Cb; onupgradeneeded?: Cb }
@@ -26,13 +33,13 @@ class Tx {
       if (write && this.mode !== 'readwrite') throw Object.assign(new Error('read-only transaction'), { name: 'ReadOnlyError' });
       const r: Req<T> = { result: undefined as T, error: null, onsuccess: null, onerror: null };
       this.pending++;
-      setTimeout(() => {
+      nextTask(() => {
         this.pending--;
         if (this.db.failNext) { const e = this.db.failNext; this.db.failNext = null; r.error = e; this.error = e; r.onerror?.(); this.abort(); return; }
         r.result = op();
         r.onsuccess?.();
         this.check();
-      }, 0);
+      });
       return r;
     };
     const keyOf = (v: unknown, key?: IDBValidKey) => (st.keyPath ? (v as Record<string, IDBValidKey>)[st.keyPath]! : key!);
@@ -46,7 +53,7 @@ class Tx {
   private abort() { if (this.finished) return; this.finished = true; this.onerror?.(); this.onabort?.(); }
   /** commits at the end of a task in which no request is pending (promise continuations run before that) */
   private check() {
-    setTimeout(() => { if (!this.finished && this.pending === 0) { this.finished = true; this.oncomplete?.(); } }, 0);
+    nextTask(() => { if (!this.finished && this.pending === 0) { this.finished = true; this.oncomplete?.(); } });
   }
 }
 
@@ -67,13 +74,13 @@ export class FakeIndexedDB {
   open(name: string, _version?: number) {
     this.opens++;
     const r: Req<FakeDb> = { result: undefined as unknown as FakeDb, error: null, onsuccess: null, onerror: null, onupgradeneeded: null };
-    setTimeout(() => {
+    nextTask(() => {
       if (this.failOpen) { r.error = this.failOpen; this.failOpen = null; r.onerror?.(); return; }
       let db = this.dbs.get(name);
       r.result = db ?? (db = new FakeDb());
       if (!this.dbs.has(name)) { this.dbs.set(name, db); r.onupgradeneeded?.(); }
       r.onsuccess?.();
-    }, 0);
+    });
     return r;
   }
 }
