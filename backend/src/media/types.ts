@@ -309,6 +309,30 @@ export interface IdentityPolicy {
   parental?: { maxRating?: number; blockUnrated: string[] };
 }
 
+// ---- Block 22 (optional): admin care (active streams with play method, library hygiene, metadata refresh) ----
+/** One playing session on the server (FriendFlix devices included). Neutral: no token, URL or path. */
+export interface ServerSession {
+  sessionId: string; serverUserId: string;
+  /** raw device id as the server knows it ('ff-<deviceId>' for FriendFlix devices) */
+  deviceId?: string; client?: string; deviceName?: string;
+  item: { id: string; name: string; seriesName?: string; type?: string };
+  playSessionId?: string;
+  playMethod: 'DirectPlay' | 'DirectStream' | 'Transcode';
+  reasons: TranscodeReason[]; videoCodec?: string; audioCodec?: string; hardware?: boolean;
+  bitrate?: number; progressPct?: number; paused: boolean;
+}
+/** Facts of one media stream for the hygiene rules (codec lower case, language as the server reports it). */
+export interface HygieneStream { codec?: string; lang?: string; forced?: boolean; text?: boolean; channels?: number; bitDepth?: number; height?: number; hdr?: boolean }
+/** One version (media source) of an item. */
+export interface HygieneSource { container?: string; bitrate?: number; sizeBytes?: number; runtimeTicks?: number; video: HygieneStream[]; audio: HygieneStream[]; subtitles: HygieneStream[] }
+/** Neutral per-item facts for the library hygiene scan (no path, URL or protocol). */
+export interface HygieneFacts {
+  id: string; type: 'Movie' | 'Series' | 'Episode'; name: string;
+  seriesId?: string; seriesName?: string; season?: number; episode?: number; year?: number;
+  overview: boolean; poster: boolean; backdrop: boolean; providerIds: ProviderIds;
+  runtimeTicks?: number; virtual: boolean; sources: HygieneSource[];
+}
+
 /** Admin-key side: identities (one per account / profile), policies, server health, foreign sessions. */
 export interface MediaAdmin {
   createIdentity(name: string, password: string): Promise<{ id: string }>;
@@ -320,6 +344,11 @@ export interface MediaAdmin {
   ping(): Promise<boolean>;
   /** active playback not started through FriendFlix */
   externalSessions(): Promise<ExternalSession[]>;
+  /**
+   * Block 22 (optional): every session that plays something, FriendFlix devices included, with play method, mapped transcode
+   * reasons, codecs and hardware flag. Absent: the admin's active streams show only what FriendFlix itself knows.
+   */
+  transcodeSessions?(): Promise<ServerSession[]>;
 }
 
 /** Everything routes and jobs use. Per-user calls act as that user on the server, so its access rules apply. */
@@ -402,6 +431,15 @@ export interface MediaServer {
   itemAbout?(user: MediaUser, id: string): Promise<ItemAboutDto>;
   /** collections containing the item, with the parts the viewer can see (hidden parts are omitted, never reported as missing); [] = none */
   itemCollections?(user: MediaUser, id: string): Promise<MediaCollection[]>;
+
+  // ---- Block 22 (optional): admin care. Absent = hygiene page "not supported" / no "refresh metadata" button.
+  /**
+   * one page of neutral hygiene facts of the whole library (admin key), stable order, a short page = the end;
+   * `savedSince` (ISO) = only items saved at or after it (incremental scans)
+   */
+  libraryHygiene?(type: 'Movie' | 'Series' | 'Episode', page: { start: number; limit: number; savedSince?: string }): Promise<HygieneFacts[]>;
+  /** asks the server to refresh one item's metadata and images (admin key); MediaError(404) for an unknown id */
+  refreshMetadata?(id: string): Promise<void>;
 
   // ---- user data
   forgetItems(serverUserId?: string): void;

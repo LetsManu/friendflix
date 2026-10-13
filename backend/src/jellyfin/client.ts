@@ -144,6 +144,11 @@ export class JellyfinClient {
     return this.adminJson<Array<Record<string, any>>>('/Sessions?activeWithinSeconds=15');
   }
 
+  /** Block 22: every recently active session (FriendFlix devices included), for the admin's active streams */
+  allSessions() {
+    return this.adminJson<Array<Record<string, any>>>('/Sessions?activeWithinSeconds=30');
+  }
+
   async ping(): Promise<boolean> {
     try {
       const res = await this.fetchImpl(this.url('/System/Ping'), { signal: AbortSignal.timeout(2000) });
