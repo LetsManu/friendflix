@@ -266,7 +266,10 @@ describe('cast engine: AirPlay title switch', () => {
     env.posts.push(() => Promise.reject(new ApiError(429, { error: 'max_streams', max: 2 })));
     await env.engine.playOnTv('ep2', 120);
     expect(env.toast).toHaveBeenCalledWith('error', tr('player.error.maxStreams', { n: 2 }));
-    expect(get(env.out)).toMatchObject({ itemId: 'ep2', state: 'reconnect', buffering: false });
+    expect(get(env.out)).toMatchObject({ itemId: 'ep2', state: 'reconnect', buffering: false, paused: true });
+    // the old title's stop was reported: its token must not keep playing unreported on the TV
+    expect(env.video.pause).toHaveBeenCalled();
+    expect(env.video.paused).toBe(true);
     await env.advance(5 * 60_000);
     expect(env.tokenPosts()).toHaveLength(1);
     expect(env.deletes()).toEqual([]);
@@ -296,6 +299,23 @@ describe('cast engine: AirPlay title switch', () => {
     await env.engine.playOnTv('ep2', 0);
     expect(env.tokenPosts()).toHaveLength(0);
     expect(get(env.out)).toMatchObject({ itemId: 'ep2', state: 'reconnect', buffering: false });
+  });
+
+  it('tap after a switch the controller did not take loads the remembered title', async () => {
+    const env = await setup();
+    await env.adopt();
+    env.spy.switchItem.mockResolvedValueOnce(undefined);
+    await env.engine.playOnTv('ep2', 0);
+    expect(get(env.out)?.state).toBe('reconnect');
+    env.engine.reconnect();
+    expect(env.spy.switchItem).toHaveBeenCalledTimes(2);
+    await flush();
+    expect(env.tokenPosts().map((c) => c.init.body.itemId)).toEqual(['ep2']);
+    expect(env.video.src).toBe('/media/c/n1/master.m3u8');
+    env.video.fire('playing');
+    expect(env.reports()).toEqual(['stop', 'start']);
+    expect(env.calls.at(-1)!.init.body).toMatchObject({ itemId: 'ep2', playSessionId: 'ps-n1' });
+    expect(get(env.out)).toMatchObject({ itemId: 'ep2', state: 'playing' });
   });
 
   it('the same hand-off again keeps the element and the token', async () => {
@@ -406,6 +426,27 @@ describe('cast engine: AirPlay route loss and reconnect', () => {
     expect(get(env.out)?.position).toBe(754);
     env.video.fire('loadedmetadata');
     expect(env.video.currentTime).toBe(754);
+  });
+
+  it('playOnTv during ready: the TV gets the new title once it is picked', async () => {
+    const env = await setup();
+    await env.adopt();
+    await routeLost(env);
+    env.engine.reconnect();
+    await flush();
+    expect(get(env.engine.airState)).toMatchObject({ ready: true, active: false });
+    await env.engine.playOnTv('ep2', 0);
+    expect(get(env.out)).toMatchObject({ itemId: 'ep2', state: 'reconnect' });
+    env.engine.reconnect(); // picker (ready)
+    env.video.wireless(true); // the TV is picked: it first gets the ready token (film)
+    await flush();
+    expect(env.tokenPosts().map((c) => c.init.body.itemId)).toEqual(['film', 'ep2']);
+    expect(env.video.src).toBe('/media/c/n2/master.m3u8');
+    expect(env.deletes()).toEqual(['a1', 'n1']);
+    env.video.fire('playing');
+    expect(env.reports()).toEqual(['stop', 'start']);
+    expect(env.calls.at(-1)!.init.body).toMatchObject({ itemId: 'ep2', playSessionId: 'ps-n2' });
+    expect(get(env.out)).toMatchObject({ itemId: 'ep2', state: 'playing' });
   });
 
   it('a route loss after the end changes nothing', async () => {

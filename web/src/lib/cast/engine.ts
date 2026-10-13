@@ -268,14 +268,18 @@ export function createCastEngine(deps: EngineDeps, out: Writable<CastSession | n
           return;
         }
         deps.toast('error', castErr(e, 'airplay'));
-        patch(s, { state: 'reconnect', buffering: false });
+        // the TV still has the previous token, whose stop is reported: it must not keep playing unreported
+        a.video.pause();
+        patch(s, { state: 'reconnect', paused: true, buffering: false });
       },
       change(st) {
         if (cur !== s) return;
         airState.set(st);
         if (a.resume && st.active && !st.error && !st.busy) {
           a.resume = false;
-          void a.video.play().catch(() => undefined);
+          // a title remembered meanwhile (Play while `ready`): the TV gets that one, not the token it was picked with
+          if (a.want) void a.ctl.switchItem(a.want.at ?? 0);
+          else void a.video.play().catch(() => undefined);
           patch(s, { state: 'connecting', buffering: true });
         }
       },
@@ -479,6 +483,7 @@ export function createCastEngine(deps: EngineDeps, out: Writable<CastSession | n
         if (a.want && !st.ready) a.video.currentTime = a.want.at ?? 0; // the controller loads the token at the element's time
         a.resume = true;
         if (st.active && st.error) void a.ctl.retry();
+        else if (a.want && st.active && !st.busy) void a.ctl.switchItem(a.want.at ?? 0); // the TV is there: load the remembered title
         else a.ctl.pick();
         return;
       }
