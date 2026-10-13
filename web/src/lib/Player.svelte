@@ -118,6 +118,15 @@
   $: chipDirect = mode === 'direct';
   // ---- touch gestures ----
   let locked = false, lockHint = false, lockT: ReturnType<typeof setTimeout>, lockHold = false, coarse = false, volOk = true, brightness = 1;
+  /**
+   * Phone layout (touch, not the TV): top bar with title + quality chip, play / ±10 in the centre, one bottom bar
+   * (time · seek bar · time, then a row of icons), everything inside the safe areas (--safe-* tokens). Desktop and TV keep their bar.
+   */
+  let phone = false, ctlH = 0;
+  $: ccOn = phone && showUi && !locked && !error && !reconnecting && !(posterOn && !posterOut);
+  $: phoneChip = phone && Boolean(info && mode && !casting);
+  /** height of the bottom bar: panels, the skip button and the page's cards sit above it (phones only; elsewhere the old fixed offsets apply) */
+  $: barVar = phone && ctlH ? `;--bar-h:${ctlH}px` : '';
   let hud: { icon: string; text: string; pct: number } | null = null, hudT: ReturnType<typeof setTimeout>;
   let ripple: { zone: Zone; total: number; n: number } | null = null, rippleT: ReturnType<typeof setTimeout>;
   let help = false, live = '', liveN = 0;
@@ -856,8 +865,10 @@
   }
 
   onMount(() => {
-    if (video) volOk = volumeSettable(video); // iOS cannot set the volume: no volume swipe there
+    // iOS / iPadOS ignore a volume set from script (only the hardware buttons change it): no volume swipe and no volume button there
+    if (video) volOk = volumeSettable(video);
     coarse = matchMedia('(pointer: coarse)').matches;
+    phone = coarse && !tvMode();
     const narrow = matchMedia('(max-width: 720px)'), setIcon = () => (ICON = narrow.matches ? 28 : 36);
     setIcon(); narrow.addEventListener?.('change', setIcon);
     try { const v = parseVolume(localStorage.getItem('ff_vol')); if (video && v !== null) { volume = v; video.volume = v; } } catch { /* ignore */ }
@@ -929,7 +940,7 @@
 </script>
 
 <svelte:window on:keydown={onKey} on:keydown|capture={onBackCapture} />
-<div class="stage {subClasses($prefs.subtitleStyle)}" class:idle={!showUi} class:locked class:pre={posterOn} style="--inset:{inset}px" bind:this={stage} on:mousemove={() => { if (Date.now() - lastTouch > 800) wake(); }} on:click={onSurfaceClick} on:wheel|nonpassive={onWheel} on:keydown={() => {}}
+<div class="stage {subClasses($prefs.subtitleStyle)}" class:idle={!showUi} class:locked class:pre={posterOn} class:phone style="--inset:{inset}px{barVar}" bind:this={stage} on:mousemove={() => { if (Date.now() - lastTouch > 800) wake(); }} on:click={onSurfaceClick} on:wheel|nonpassive={onWheel} on:keydown={() => {}}
   on:pointerdown={gDown} on:pointermove={gMove} on:pointerup={gUp} on:pointercancel={gCancel} role="presentation">
   <!-- svelte-ignore a11y_media_has_caption -->
   <video bind:this={video} playsinline crossorigin="use-credentials" style:filter={brightness < 1 ? `brightness(${brightness})` : null}
@@ -962,12 +973,12 @@
     </div>
   {:else if reconnecting}
     <div class="center" role="status"><div class="reco ui"><div class="spin sm"></div><span>{$t('player.reconnecting')}</span><small>{$t('player.attempt', { n: reconnecting, max: MAX_NETWORK_TRIES })}</small></div></div>
-  {:else if spin && waiting && !casting && !posterOn}<div class="center" role="status" aria-label={$t('player.loading')}><div class="spin"></div></div>
-  {:else if posterOn && !posterOut && !casting}<div class="sr" role="status">{$t('player.loading')}</div>{/if}
+  {:else if spin && waiting && !casting && !posterOn && !ccOn}<div class="center" role="status" aria-label={$t('player.loading')}><div class="spin"></div></div>
+  {:else if (posterOn && !posterOut && !casting) || (spin && waiting && !casting && !posterOn)}<div class="sr" role="status">{$t('player.loading')}</div>{/if}
   {#if casting}
     <div class="center castov" role="status"><div class="castbox"><Icon name="cast" size={56} /><b>{$t('player.cast.playingOn', { name: $castState.deviceName || 'Chromecast' })}</b><button class="btn light ui" on:click|stopPropagation={() => castStop()}>{$t('player.cast.stop')}</button></div></div>
   {/if}
-  {#if paused && !waiting && !error && !casting && !locked && !reconnecting}
+  {#if !phone && paused && !waiting && !error && !casting && !locked && !reconnecting}
     <button class="bigplay ui" aria-label={$t('player.controls.play')} on:click|stopPropagation={togglePlay}><Icon name="play" size={44} /></button>
   {/if}
   {#if toast}<div class="toast" aria-hidden="true">{toast}</div>{/if}
@@ -978,7 +989,7 @@
   {#if hud}
     <div class="hud" aria-hidden="true"><Icon name={hud.icon} size={26} /><span>{hud.text}</span><i style="--p:{Math.max(0, Math.min(100, hud.pct))}%"></i></div>
   {/if}
-  {#if coarse && !tvMode() && !casting && (locked ? lockHint : showUi)}
+  {#if coarse && !tvMode() && !casting && (locked ? lockHint : showUi && !phone)}
     <button class="lockbtn ic" class:holding={lockHold} aria-label={locked ? $t('player.lock.unlockAria') : $t('player.lock.lockAria')}
       on:pointerdown|stopPropagation={() => (locked ? unlockDown() : undefined)} on:pointerup|stopPropagation={unlockUp} on:pointercancel={unlockUp} on:pointerleave={unlockUp}
       on:keydown={lockKey} on:click|stopPropagation={() => { if (!locked && Date.now() - unlockedAt > 1000) lockNow(); }} on:contextmenu|preventDefault>
@@ -995,7 +1006,18 @@
   {/if}
 
   <!-- overlays from the page (back button, next episode card, party chat/reactions) -->
-  <div class="ovl" class:hide={!showUi}><slot name="top" /></div>
+  <div class="ovl" class:hide={!showUi} class:withchip={phoneChip}>
+    <slot name="top" />
+    {#if phoneChip && info}<div class="qtop"><QualityChip bind:open={chipOpen} compact direct={chipDirect} label={rungLabel(info.maxBitrate)} reason={info.transcodeReason ?? 'other'} /></div>{/if}
+  </div>
+  {#if phone && !locked && !error && !reconnecting}
+    <!-- phones: play / pause between -10 and +10 in the middle of the picture (shown and hidden with the bar) -->
+    <div class="cc" class:hide={!ccOn}>
+      <button class="ic ccs" class:locked={!canControl} aria-label={$t('player.controls.back10')} on:click|stopPropagation={() => seekBy(-10)}><Icon name="rewind10" size={34} /></button>
+      <button class="ic ccp" class:locked={!canControl} class:busy={spin && waiting && !casting} aria-label={paused ? $t('player.controls.play') : $t('player.controls.pause')} on:click|stopPropagation={togglePlay}><Icon name={paused ? 'play' : 'pause'} size={44} /></button>
+      <button class="ic ccs" class:locked={!canControl} aria-label={$t('player.controls.forward10')} on:click|stopPropagation={() => seekBy(10)}><Icon name="forward10" size={34} /></button>
+    </div>
+  {/if}
   <slot />
 
   {#if skip && !locked}<button class="skipbtn light" aria-keyshortcuts="S" on:click|stopPropagation={doSkip}>{segText($t, skip.type, 'skip')}{tvMode() ? $t('player.skipOk') : ''}</button>{/if}
@@ -1014,8 +1036,9 @@
     </div>
   {/if}
 
-  <div class="ui ctl" data-nav class:hide={!showUi || (posterOn && !posterOut)} on:click|stopPropagation on:keydown={ctlKey} role="toolbar" tabindex="-1" aria-label={$t('player.controls.toolbar')}>
+  <div class="ui ctl" data-nav bind:offsetHeight={ctlH} class:hide={!showUi || (posterOn && !posterOut)} on:click|stopPropagation on:keydown={ctlKey} role="toolbar" tabindex="-1" aria-label={$t('player.controls.toolbar')}>
     <div class="timeline">
+      {#if phone}<span class="cur" aria-hidden="true">{fmtClock(shown)}</span>{/if}
       <div class="track" bind:this={trackEl} class:locked={!canControl} role="slider" tabindex="0" aria-label={$t('player.positionLabel')} aria-valuemin="0" aria-valuemax={Math.round(duration)} aria-valuenow={Math.round(shown)}
         aria-valuetext={$t('player.valueText', { a: fmtClock(shown), b: fmtClock(duration) })}
         on:pointermove={onTrackMove} on:pointerleave={() => (hoverX = -1)} on:pointerdown={onTrackDown} on:pointerup={onTrackUp} on:pointercancel={onTrackUp} on:keydown={onTrackKey}>
@@ -1033,21 +1056,23 @@
           </div>
         {/if}
       </div>
-      <span class="rem" aria-hidden="true">{duration ? fmtClock(Math.max(0, duration - shown)) : '–'}</span>
+      <span class="rem" aria-hidden="true">{duration ? `${phone ? '−' : ''}${fmtClock(Math.max(0, duration - shown))}` : '–'}</span>
     </div>
     <div class="row">
       <div class="grp">
-        <button class="ic" class:locked={!canControl} aria-label={paused ? $t('player.controls.play') : $t('player.controls.pause')} on:click={togglePlay}><Icon name={paused ? 'play' : 'pause'} size={ICON} /></button>
-        <button class="ic" class:locked={!canControl} aria-label={$t('player.controls.back10')} on:click={() => seekBy(-10)}><Icon name="rewind10" size={ICON} /></button>
-        <button class="ic" class:locked={!canControl} aria-label={$t('player.controls.forward10')} on:click={() => seekBy(10)}><Icon name="forward10" size={ICON} /></button>
-        <div class="vol">
+        {#if !phone}
+          <button class="ic" class:locked={!canControl} aria-label={paused ? $t('player.controls.play') : $t('player.controls.pause')} on:click={togglePlay}><Icon name={paused ? 'play' : 'pause'} size={ICON} /></button>
+          <button class="ic" class:locked={!canControl} aria-label={$t('player.controls.back10')} on:click={() => seekBy(-10)}><Icon name="rewind10" size={ICON} /></button>
+          <button class="ic" class:locked={!canControl} aria-label={$t('player.controls.forward10')} on:click={() => seekBy(10)}><Icon name="forward10" size={ICON} /></button>
+        {/if}
+        {#if !phone || volOk}<div class="vol">
           <button class="ic" aria-label={muted ? $t('player.unmute') : $t('player.mute')} on:click={toggleMute}><Icon name={muted || volume === 0 ? 'volume-off' : volume < 0.5 ? 'volume-low' : 'volume'} size={ICON} /></button>
-          <input class="vslider" type="range" min="0" max="1" step="0.05" value={muted ? 0 : volume} aria-label={$t('player.volume.label')} on:input={(e) => setVolume(Number(e.currentTarget.value))} />
-        </div>
-        <span class="clock">{fmtClock(shown)} / {fmtClock(duration)}</span>
-        {#if info && mode && !casting}<QualityChip bind:open={chipOpen} direct={chipDirect} label={rungLabel(info.maxBitrate)} reason={info.transcodeReason ?? 'other'} />{/if}
+          {#if !phone}<input class="vslider" type="range" min="0" max="1" step="0.05" value={muted ? 0 : volume} aria-label={$t('player.volume.label')} on:input={(e) => setVolume(Number(e.currentTarget.value))} />{/if}
+        </div>{/if}
+        {#if !phone}<span class="clock">{fmtClock(shown)} / {fmtClock(duration)}</span>{/if}
+        {#if info && mode && !casting && !phone}<QualityChip bind:open={chipOpen} direct={chipDirect} label={rungLabel(info.maxBitrate)} reason={info.transcodeReason ?? 'other'} />{/if}
       </div>
-      <div class="mid" title={barSub ? `${barTitle} · ${barSub}` : barTitle}>{#if barTitle}<b>{barTitle}</b>{#if barSub}<span>{barSub}</span>{/if}{/if}</div>
+      {#if !phone}<div class="mid" title={barSub ? `${barTitle} · ${barSub}` : barTitle}>{#if barTitle}<b>{barTitle}</b>{#if barSub}<span>{barSub}</span>{/if}{/if}</div>{/if}
       <div class="grp right">
         <slot name="extra" />
         {#if hasNext}<button class="ic" aria-label={$t('player.controls.next')} title={$t('player.controls.nextKey')} on:click={() => dispatch('next')}><Icon name="skip-next" size={ICON} /></button>{/if}
@@ -1113,6 +1138,7 @@
               <button class="mi" on:click={() => (menu = 'scenes')}><Icon name="bookmark" size={20} />{$t('player.bookmark.menu')}<span class="chev" aria-hidden="true">›</span></button>
               <button class="mi" class:on={showXray} aria-pressed={showXray} on:click={() => { if (showXray) { menu = ''; closeCastInfo(); } else openCastInfo(tvMode()); }}><Icon name="users" size={20} />{$t('scenes.info.open')}</button>
               {#if !partyMode && ($castState.available || $castState.connected)}<button class="mi" class:on={casting} aria-pressed={casting} on:click={castClick}><Icon name="cast" size={20} />{castLabel}</button>{/if}
+              {#if phone && !casting}<button class="mi" on:click={lockNow}><Icon name="lock" size={20} />{$t('player.lock.lockAria')}</button>{/if}
               {#if pipOk && !casting}<button class="mi" class:on={inPip} aria-pressed={inPip} aria-keyshortcuts="P" on:click={() => { menu = ''; void pip(); }}><Icon name="pip" size={20} />{$t('player.controls.pip')}</button>{/if}
               <button class="mi" on:click={() => (menu = 'settings')}><Icon name="settings" size={20} />{$t('player.controls.settings')}{#if sleepAt}<span class="muted"> · {$t('player.sleep.left', { t: sleepLeft })}</span>{/if}<span class="chev" aria-hidden="true">›</span></button>
               {#if modeLabel}<p class="modeinfo"><Icon name="info" size={16} /><span>{$t('player.mode.label', { mode: modeLabel })}</span></p>{/if}
@@ -1204,7 +1230,8 @@
   .riplbl.left { left: 12%; } .riplbl.right { right: 12%; }
   .hud { position: absolute; top: 12%; left: 50%; transform: translateX(-50%); z-index: 9; display: flex; align-items: center; gap: .6rem; padding: .55rem 1.1rem; border-radius: 999px; background: rgba(0,0,0,.72); font-weight: 600; pointer-events: none; font-variant-numeric: tabular-nums; position: absolute; overflow: hidden; }
   .hud i { position: absolute; left: 0; bottom: 0; height: 3px; width: var(--p); background: var(--acc); }
-  .lockbtn { position: absolute; left: max(.8rem, var(--safe-left)); bottom: 8rem; z-index: 10; width: 48px; min-height: 48px; background: rgba(0,0,0,.55); border: 1px solid rgba(255,255,255,.5); }
+  /* .ic.lockbtn: .ic (position: relative) comes later in this sheet and would win over a plain .lockbtn */
+  .ic.lockbtn { position: absolute; left: max(.8rem, var(--safe-left)); bottom: 8rem; z-index: 10; width: 48px; min-height: 48px; background: rgba(0,0,0,.55); border: 1px solid rgba(255,255,255,.5); }
   .lockbtn.holding { background: var(--acc); }
   .stage.locked { cursor: none; }
   .help { position: absolute; inset: 0; z-index: 13; display: grid; place-items: center; background: rgba(0,0,0,.7); }
@@ -1322,9 +1349,62 @@
     .menu, .menu.tracks, .menu.more, .menu.scenes, .menu.speed, .menu.bare { position: fixed; left: .5rem; right: .5rem; bottom: 8.6rem; min-width: 0; max-width: none; max-height: 60vh; overflow-y: auto; }
     .menu.bare { overflow: visible; }
     .menu.bare :global(.eps), .menu.bare :global(.scn) { width: 100%; max-height: 60vh; }
-    .lockbtn { bottom: auto; top: calc(5.5rem + var(--safe-top)); } /* the two-row bar is taller on phones: keep the lock clear of the timeline */
+    .ic.lockbtn { bottom: auto; top: calc(5.5rem + var(--safe-top)); } /* the two-row bar is taller on phones: keep the lock clear of the timeline */
     .speeds { flex-wrap: wrap; justify-content: center; } .speeds::before { display: none; } .sp-opt { min-width: 64px; }
   }
   /* touch: every main-bar target is at least 48 px */
   @media (pointer: coarse) { .ic { min-width: 48px; min-height: 48px; } }
+
+  /* ---- phone layout (touch, not TV): the stage fills the screen incl. the safe areas, every control stays inside them ---- */
+  .stage.phone { --menu-gap: calc(var(--bar-h, 8.6rem) + var(--safe-top) + 1rem); }
+  /* top bar: the page's back button + title, the quality chip on the right */
+  .ovl.withchip { display: flex; align-items: stretch; }
+  .ovl.withchip > :global(:first-child) { flex: 1; min-width: 0; }
+  .qtop { flex: none; display: flex; align-items: center; padding: var(--safe-top) max(.75rem, var(--safe-right)) 0 0; background: linear-gradient(rgba(0,0,0,.8), transparent); }
+  /* centre: -10 · play / pause · +10 */
+  .cc { position: absolute; left: var(--safe-left); right: calc(var(--safe-right) + var(--inset, 0px)); top: 50%; transform: translateY(-50%); z-index: 8; display: flex; justify-content: center; align-items: center; gap: clamp(1.5rem, 9vw, 3.5rem); pointer-events: none; transition: opacity var(--t-med); }
+  .cc .ic { pointer-events: auto; background: rgba(0,0,0,.4); }
+  .stage.phone .cc .ccs { width: 60px; min-width: 60px; min-height: 60px; }
+  .stage.phone .cc .ccp { width: 76px; min-width: 76px; min-height: 76px; }
+  .stage.phone .cc .ic:hover:not(:disabled) { transform: none; background: rgba(0,0,0,.55); }
+  .cc.hide { opacity: 0; pointer-events: none; } .cc.hide .ic { pointer-events: none; }
+  .ccp.busy::after { content: ''; position: absolute; inset: -4px; border-radius: 50%; border: 4px solid rgba(255,255,255,.2); border-top-color: var(--acc); animation: sp .9s linear infinite; pointer-events: none; }
+  /* bottom: time · seek bar · time, then one row of evenly spaced icons; reaches the screen edge, padded by the home indicator */
+  .stage.phone .ctl { padding: 2rem max(.75rem, var(--safe-right)) calc(.2rem + var(--safe-bottom)) max(.75rem, var(--safe-left)); }
+  .stage.phone .timeline { gap: .75rem; min-height: 44px; }
+  .stage.phone .cur, .stage.phone .rem { min-width: 3.2rem; font-size: .85rem; font-variant-numeric: tabular-nums; color: #e8e8e8; }
+  .stage.phone .rem { text-align: right; }
+  .stage.phone .track { margin: 0; }
+  .stage.phone .row { display: flex; flex-wrap: nowrap; justify-content: space-evenly; align-items: center; gap: 0; }
+  .stage.phone .grp, .stage.phone .vol, .stage.phone .mwrap { display: contents; }
+  .stage.phone .ic { width: 48px; min-width: 48px; min-height: 48px; }
+  .stage.phone .row .ic:hover:not(:disabled) { transform: none; }
+  /* menus and panels: above the bottom bar, inside the safe area */
+  .stage.phone .menu, .stage.phone .menu.tracks, .stage.phone .menu.more, .stage.phone .menu.scenes, .stage.phone .menu.speed, .stage.phone .menu.bare {
+    position: fixed; left: max(.5rem, var(--safe-left)); right: calc(max(.5rem, var(--safe-right)) + var(--inset, 0px)); bottom: calc(var(--bar-h, 8.6rem) + .25rem);
+    min-width: 0; max-width: none; max-height: calc(100dvh - var(--menu-gap)); overflow-y: auto;
+  }
+  .stage.phone .menu.tracks { flex-direction: column; }
+  .stage.phone .menu.tracks > div { max-height: none; overflow: visible; }
+  .stage.phone .menu.bare { overflow: visible; }
+  .stage.phone .menu.bare :global(.eps), .stage.phone .menu.bare :global(.scn) { width: 100%; max-height: calc(100dvh - var(--menu-gap)); }
+  .stage.phone .skipbtn { right: calc(max(.8rem, var(--safe-right)) + var(--inset, 0px)); bottom: calc(var(--bar-h, 7rem) + .5rem); }
+  /* locked: the unlock button alone, centred above the home indicator */
+  .stage.phone .lockbtn { top: auto; left: 50%; transform: translateX(-50%); bottom: calc(1.5rem + var(--safe-bottom)); width: 56px; min-height: 56px; }
+  /* casting: the device line moves up, the centre keeps play / ±10 for the receiver */
+  .stage.phone .castov { place-items: start center; padding-top: calc(4.6rem + var(--safe-top)); }
+  .stage.phone .castbox { grid-auto-flow: column; align-items: center; gap: .7rem; font-size: .9rem; }
+  .stage.phone .castbox button { padding: .4rem .9rem; min-height: 44px; }
+  /* landscape phone: seek row and icons on one line when they fit (else the icons wrap below), tighter spacing = more picture */
+  @media (orientation: landscape) and (max-height: 540px) {
+    .stage.phone .ctl { display: flex; flex-wrap: wrap; align-items: center; column-gap: .75rem; padding-top: 1.4rem; }
+    .stage.phone .timeline { flex: 1 1 20rem; min-width: 0; }
+    .stage.phone .row { flex: 0 1 auto; margin-left: auto; justify-content: flex-end; }
+    .stage.phone .menu, .stage.phone .menu.tracks, .stage.phone .menu.more, .stage.phone .menu.scenes, .stage.phone .menu.speed, .stage.phone .menu.bare { left: auto; width: min(34rem, calc(100vw - 1rem - var(--safe-left) - var(--safe-right) - var(--inset, 0px))); }
+    .stage.phone .menu.tracks { flex-direction: row; overflow: hidden; }
+    .stage.phone .menu.tracks > div { max-height: calc(100dvh - var(--menu-gap) - 1.6rem); overflow-y: auto; }
+    .stage.phone .castov { padding-top: calc(3.6rem + var(--safe-top)); }
+    .stage.phone .cc .ccs { width: 56px; min-width: 56px; min-height: 56px; }
+    .stage.phone .cc .ccp { width: 68px; min-width: 68px; min-height: 68px; }
+  }
 </style>
