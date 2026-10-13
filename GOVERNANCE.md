@@ -26,6 +26,22 @@ invited as additional maintainers; this document will then be updated to list th
 - **Disagreements** are discussed openly in the relevant issue or pull request. If no consensus is reached, the
   maintainer decides.
 
+## Bus factor and succession
+
+The project currently has **one active maintainer** (bus factor 1). This is known and is being addressed:
+
+- **A second maintainer is planned.** A trusted friend of the maintainer has agreed to join as co-maintainer once they
+  have time. Until then they have no write access; when they join, they will be added to the roles table above with
+  write access to the repository and GHCR, and this section will be updated.
+- **Knowledge is written down, not in one head.** Architecture (docs/architecture.md), setup and operations
+  (docs/setup.md, docs/operations.md), the security model (docs/security.md), design specs and implementation plans
+  (docs/superpowers/) and the release process (`.github/workflows/release.yml`) are all in the repository, so another
+  developer can take over without the current maintainer.
+- **Everything is reproducible from the public repository:** CI builds, tests and publishes the images; no step depends
+  on the maintainer's machine.
+- **Handover:** if the maintainer becomes unavailable, repository and package ownership is to be transferred to the
+  co-maintainer (or, before one exists, the project is marked as archived so users can fork it).
+
 ## Continuity
 
 The repository, issues, releases and documentation are public, and the project is licensed under the
