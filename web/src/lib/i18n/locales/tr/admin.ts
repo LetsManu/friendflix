@@ -373,5 +373,35 @@ const tr: Translation<typeof de> = {
       download: '{actor} altyazı indirdi',
     },
   },
+  banner: {
+    label: 'Yöneticiler için uyarılar',
+    more: { one: '+{n} tane daha', other: '+{n} tane daha' },
+    less: 'Daha az göster',
+    view: 'Görüntüle',
+    dismiss: 'Gizle',
+    dismissOne: '“{text}” gizle',
+    generic: 'Bir şey ilgini bekliyor',
+    name: { downloads: 'İndirme alanı', previews: 'Önizleme alanı', database: 'Veritabanı' },
+    svc: {
+      slow: '{name} yavaş yanıt veriyor',
+      down: '{name} erişilemiyor',
+      issuer_mismatch: '{name}: sağlayıcı ayarla eşleşmiyor',
+      invalid_key: '{name} anahtarı geçersiz',
+      paused: '{name} duraklatıldı (anahtar reddedildi)',
+      budget: '{name}: günlük sınırın %{pct} kadarı kullanıldı',
+      failed_titles: { one: 'Oynatma testinde {n} başlık başarısız', other: 'Oynatma testinde {n} başlık başarısız' },
+    },
+    disk: {
+      full: '{name} neredeyse dolu (%{pct})',
+      low_free: '{name}: az boş alan',
+      cap: 'İndirme sınırına neredeyse ulaşıldı (%{pct})',
+      large: 'Veritabanı büyüdü',
+    },
+    errors: {
+      server_errors: { one: '15 dakikada {n} sunucu hatası', other: '15 dakikada {n} sunucu hatası' },
+      client_errors: { one: '15 dakikada {n} tarayıcı hatası', other: '15 dakikada {n} tarayıcı hatası' },
+      failed_playbacks: { one: '{n} oynatma başarısız', other: '{n} oynatma başarısız' },
+    },
+  },
 };
 export default tr;

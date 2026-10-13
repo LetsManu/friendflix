@@ -34,6 +34,8 @@
   import ToastHost from '#lib/ui/ToastHost.svelte';
   import { flushDeferred } from '#lib/ui/action';
   import ConfirmHost from '#lib/ui/ConfirmHost.svelte';
+  import HealthBanner from '#lib/admin/HealthBanner.svelte';
+  import { startBanner } from '#lib/admin/banner';
   import { saveLanguage } from '#lib/stores';
   import { PLAY_ART_NAME, playTransition, takePlayArt } from '#lib/player/transition';
 
@@ -95,6 +97,11 @@
   $: profilesPage = path === '/profiles' || path === '/welcome'; // full-screen pages without navigation (picker, onboarding)
   $: heroPage = path === '/' || path.startsWith('/item/');
   $: kidsPage = path === '/kids' || path.startsWith('/kids/'); // full-bleed bright kids pages (own background and spacing)
+  // Block 22: warning banner for an admin on the owner profile; never in TV mode, on player/party/profile/public pages or kids profiles
+  $: showBanner = admin && !tv && !watchPage && !profilesPage && !publicPage && !kidsUi && !pending;
+  let stopBanner: (() => void) | null = null;
+  $: if (showBanner && !stopBanner) stopBanner = startBanner();
+  $: if (!showBanner && stopBanner) { stopBanner(); stopBanner = null; }
   $: unread = notes.filter((n) => !n.read).length;
   $: if (path) { menu = false; bell = false; cats = false; catOpen = false; closePreview(); }
   $: chips = $mobile && showsChips(path) && !kidsUi;
@@ -530,6 +537,7 @@
     {:else}
       <!-- a language switch made by the person re-renders the page once, so texts computed in scripts (tr(), fmtDate() …)
            follow it too; the language /api/me reports is applied before the page mounts and never re-renders it -->
+      {#if showBanner}<HealthBanner hero={heroPage} />{/if}
       {#key $pageEpoch}<slot />{/key}
     {/if}
   </main>

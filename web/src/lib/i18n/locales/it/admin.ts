@@ -382,5 +382,35 @@ const it: Translation<typeof de> = {
       download: '{actor} ha scaricato i sottotitoli',
     },
   },
+  banner: {
+    label: 'Avvisi per gli admin',
+    more: { one: '+{n} altro', many: '+{n} altri', other: '+{n} altri' },
+    less: 'Mostra meno',
+    view: 'Vedi',
+    dismiss: 'Nascondi',
+    dismissOne: 'Nascondi «{text}»',
+    generic: 'Qualcosa richiede la tua attenzione',
+    name: { downloads: 'Spazio dei download', previews: 'Spazio delle anteprime', database: 'Database' },
+    svc: {
+      slow: '{name} risponde lentamente',
+      down: '{name} non raggiungibile',
+      issuer_mismatch: '{name}: il fornitore non corrisponde all’impostazione',
+      invalid_key: '{name}: chiave non valida',
+      paused: '{name} in pausa (chiave rifiutata)',
+      budget: '{name}: {pct} % del limite giornaliero usato',
+      failed_titles: { one: '{n} titolo non riuscito nel test di riproduzione', many: '{n} titoli non riusciti nel test di riproduzione', other: '{n} titoli non riusciti nel test di riproduzione' },
+    },
+    disk: {
+      full: '{name} quasi pieno ({pct} %)',
+      low_free: '{name}: poco spazio libero',
+      cap: 'Limite download quasi raggiunto ({pct} %)',
+      large: 'Il database è diventato grande',
+    },
+    errors: {
+      server_errors: { one: '{n} errore del server in 15 minuti', many: '{n} errori del server in 15 minuti', other: '{n} errori del server in 15 minuti' },
+      client_errors: { one: '{n} errore del browser in 15 minuti', many: '{n} errori del browser in 15 minuti', other: '{n} errori del browser in 15 minuti' },
+      failed_playbacks: { one: '{n} riproduzione non riuscita', many: '{n} riproduzioni non riuscite', other: '{n} riproduzioni non riuscite' },
+    },
+  },
 };
 export default it;

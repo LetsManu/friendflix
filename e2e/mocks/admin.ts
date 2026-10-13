@@ -53,6 +53,11 @@ export interface AdminState {
   streams: Record<string, any>;
   /** /api/admin/errors */
   errors: { entries: Array<Record<string, any>>; overflow: number };
+  /** Block 22 banner: the snapshot's issues (/api/admin/health/banner minus dismissals), dismissals by id → fp, number of banner calls */
+  bannerIssues: Array<{ id: string; level: 'warn' | 'err'; reason: string; fp: string; detail?: { n?: number; pct?: number } }>;
+  dismissed: Record<string, string>;
+  bannerCalls: number;
+  bannerFails: boolean;
 }
 export interface SourceRow { name: 'tmdb' | 'omdb'; set: boolean; last4: string | null; from: 'db' | 'file' | null; invalid: boolean; usedToday?: number; budget?: number }
 export interface LeavingRow { itemId: string; name: string | null; type: string | null; year: number | null; leavesAt: string; days: number; note: string | null; setBy: string | null }
@@ -124,6 +129,10 @@ export function adminState(): AdminState {
     healthCalls: [],
     streams: { streams: [], totals: { direct: 0, remux: 0, transcode: 0 }, details: true, failed: [] },
     errors: { entries: [], overflow: 0 },
+    bannerIssues: [],
+    dismissed: {},
+    bannerCalls: 0,
+    bannerFails: false,
   };
 }
 
@@ -354,6 +363,17 @@ export function adminRoute(st: AdminState, m: string, p: string, sp: URLSearchPa
     return J(st.health);
   }
   if (p === '/api/admin/streams' && m === 'GET') return J(st.streams);
+  if (p === '/api/admin/health/banner' && m === 'GET') {
+    st.bannerCalls++;
+    if (st.bannerFails) return J({ error: 'boom' }, 500);
+    const issues = st.bannerIssues.filter((i) => st.dismissed[i.id] !== i.fp).sort((a, b) => (a.level === b.level ? a.id.localeCompare(b.id) : a.level === 'err' ? -1 : 1));
+    return J({ issues, worst: issues.some((i) => i.level === 'err') ? 'err' : issues.length ? 'warn' : 'ok' });
+  }
+  if (p === '/api/admin/health/dismiss' && m === 'POST') {
+    if (!/^[a-z]+:[a-zA-Z]+$/.test(body.id ?? '') || !/^[0-9a-f]{12}$/.test(body.fp ?? '')) return J({ error: 'bad_request' }, 400);
+    st.dismissed[body.id] = body.fp;
+    return ok();
+  }
   if (p === '/api/admin/errors' && m === 'GET') return J(st.errors);
   if (p === '/api/admin/playback-check') {
     if (m === 'POST') return ok();

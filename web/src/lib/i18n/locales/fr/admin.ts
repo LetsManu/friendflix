@@ -382,5 +382,35 @@ const fr: Translation<typeof de> = {
       download: '{actor} a téléchargé des sous-titres',
     },
   },
+  banner: {
+    label: 'Remarques pour les admins',
+    more: { one: '+{n} autre', many: '+{n} autres', other: '+{n} autres' },
+    less: 'Afficher moins',
+    view: 'Voir',
+    dismiss: 'Masquer',
+    dismissOne: 'Masquer « {text} »',
+    generic: 'Quelque chose demande ton attention',
+    name: { downloads: 'Stockage des téléchargements', previews: 'Stockage des aperçus', database: 'Base de données' },
+    svc: {
+      slow: '{name} répond lentement',
+      down: '{name} injoignable',
+      issuer_mismatch: '{name} : le fournisseur ne correspond pas au réglage',
+      invalid_key: '{name} : clé invalide',
+      paused: '{name} en pause (clé refusée)',
+      budget: '{name} : {pct} % de la limite quotidienne utilisés',
+      failed_titles: { one: '{n} titre en échec au test de lecture', many: '{n} titres en échec au test de lecture', other: '{n} titres en échec au test de lecture' },
+    },
+    disk: {
+      full: '{name} presque plein ({pct} %)',
+      low_free: '{name} : peu d’espace libre',
+      cap: 'Limite de téléchargement presque atteinte ({pct} %)',
+      large: 'La base de données est devenue volumineuse',
+    },
+    errors: {
+      server_errors: { one: '{n} erreur serveur en 15 minutes', many: '{n} erreurs serveur en 15 minutes', other: '{n} erreurs serveur en 15 minutes' },
+      client_errors: { one: '{n} erreur navigateur en 15 minutes', many: '{n} erreurs navigateur en 15 minutes', other: '{n} erreurs navigateur en 15 minutes' },
+      failed_playbacks: { one: '{n} lecture en échec', many: '{n} lectures en échec', other: '{n} lectures en échec' },
+    },
+  },
 };
 export default fr;

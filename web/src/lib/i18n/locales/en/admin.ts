@@ -373,5 +373,35 @@ const en: Translation<typeof de> = {
       download: '{actor} downloaded subtitles',
     },
   },
+  banner: {
+    label: 'Notes for admins',
+    more: { one: '+{n} more', other: '+{n} more' },
+    less: 'Show less',
+    view: 'View',
+    dismiss: 'Dismiss',
+    dismissOne: 'Dismiss “{text}”',
+    generic: 'Something needs your attention',
+    name: { downloads: 'Download storage', previews: 'Preview storage', database: 'Database' },
+    svc: {
+      slow: '{name} is responding slowly',
+      down: '{name} not reachable',
+      issuer_mismatch: '{name}: provider does not match the setting',
+      invalid_key: '{name} key invalid',
+      paused: '{name} paused (key rejected)',
+      budget: '{name}: {pct} % of the daily limit used',
+      failed_titles: { one: '{n} title failed in the playback check', other: '{n} titles failed in the playback check' },
+    },
+    disk: {
+      full: '{name} almost full ({pct} %)',
+      low_free: '{name}: little free space',
+      cap: 'Download limit almost reached ({pct} %)',
+      large: 'The database has grown large',
+    },
+    errors: {
+      server_errors: { one: '{n} server error in 15 minutes', other: '{n} server errors in 15 minutes' },
+      client_errors: { one: '{n} browser error in 15 minutes', other: '{n} browser errors in 15 minutes' },
+      failed_playbacks: { one: '{n} playback failed', other: '{n} playbacks failed' },
+    },
+  },
 };
 export default en;
