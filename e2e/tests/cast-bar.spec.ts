@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { episodes, ME, MOVIE, MOVIE2 } from '../mocks/fixtures.js';
+import { PROFILES } from '../mocks/api.js';
 import { available, castOn, castSessions, fakeCastSdk, mockHls, stubAirPlay } from '../mocks/cast.js';
 import { mockPlayer, videoReady } from '../mocks/scenes.js';
 import { expect, test } from '../fixtures.js';
@@ -349,4 +350,20 @@ test('keyboard focus stays in the bar when the focused button is replaced', asyn
   await expect(bar.getByRole('button', { name: 'Fernbedienung öffnen' })).toBeFocused();
   await expect(bar).toContainText(episodes[1]!.name);
   expect(await bar.evaluate((el) => el.contains(document.activeElement))).toBe(true);
+});
+
+test('the profile PIN overlay covers the cast bar', async ({ page, api: _api }) => {
+  await page.route('**/api/me', (r) => r.fulfill({ json: { ...ME, profileCount: 3, profileChosen: true } }));
+  await page.route('**/api/profiles', (r) => r.fulfill({ json: { profiles: PROFILES.map((p) => (p.id === 'p2' ? { ...p, hasPin: true } : p)), max: 5, activeId: 'p1' } }));
+  await page.addInitScript(() => sessionStorage.setItem('ff-profile-picked', '1'));
+  await castAndLeave(page);
+  await clientNav(page, '/profiles');
+  await expect(page).toHaveURL(/\/profiles$/);
+  await expect(castBar(page)).toBeVisible();
+  await page.getByRole('button', { name: 'Anna, mit PIN geschützt' }).click();
+  const dlg = page.getByRole('dialog', { name: /Anna/ });
+  await expect(dlg).toBeVisible();
+  const b = (await castBar(page).boundingBox())!;
+  const onTop = await page.evaluate(({ x, y }) => document.elementFromPoint(x, y)?.closest('.ov') !== null, { x: b.x + b.width / 2, y: b.y + b.height / 2 });
+  expect(onTop).toBe(true);
 });

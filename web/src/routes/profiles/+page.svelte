@@ -265,7 +265,7 @@
   .lock { position: absolute; right: 6px; bottom: 6px; background: rgba(0,0,0,.65); border-radius: 99px; width: 28px; height: 28px; display: grid; place-items: center; }
   .edit { position: absolute; inset: 0; border-radius: 24%; background: rgba(0,0,0,.55); display: grid; place-items: center; font-size: .95rem; font-weight: 600; }
   .sk { width: 140px; height: 140px; }
-  .ov { position: fixed; inset: 0; z-index: 80; background: rgba(0,0,0,.88); display: grid; place-items: center; padding: max(1rem, var(--safe-top)) 1rem max(1rem, var(--safe-bottom)); overflow-y: auto; }
+  .ov { position: fixed; inset: 0; z-index: 90; /* above the cast bar (81) */ background: rgba(0,0,0,.88); display: grid; place-items: center; padding: max(1rem, var(--safe-top)) 1rem max(1rem, var(--safe-bottom)); overflow-y: auto; }
   .box { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 1.6rem; display: flex; flex-direction: column; align-items: center; max-width: 100%; }
   .ed { width: min(440px, 100%); align-items: stretch; gap: .8rem; text-align: left; }
   .ed h2 { margin: 0; text-align: center; }
