@@ -39,6 +39,7 @@ import { sourceRoutes } from './routes/sources.js';
 import { aboutRoutes } from './routes/about.js';
 import { healthRoutes } from './routes/health.js';
 import { hygieneRoutes } from './routes/hygiene.js';
+import { usageRoutes } from './routes/usage.js';
 import { syncFileKeys } from './sources/keys.js';
 import { testSourceKey } from './sources/omdb.js';
 import { appVersion } from './version.js';
@@ -171,6 +172,7 @@ export async function buildApp(ctx: Ctx, extra: Extra = {}): Promise<FastifyInst
   aboutRoutes(app, ctx);
   healthRoutes(app, ctx);
   hygieneRoutes(app, ctx);
+  usageRoutes(app, ctx);
   for (const r of extra.register ?? []) await r(app, ctx);
   return app;
 }
