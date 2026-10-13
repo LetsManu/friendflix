@@ -123,6 +123,8 @@ export default {
     countries: 'Produktionsländer:',
     links: 'Links',
     newTab: '(öffnet in neuem Tab)',
+    /** TMDB's required notice (plain text, no logo) */
+    tmdbNotice: 'Dieses Produkt nutzt die TMDB-API, ist aber weder von TMDB unterstützt noch zertifiziert.',
   },
   info: {
     title: 'Infos zu <b>{name}</b>',

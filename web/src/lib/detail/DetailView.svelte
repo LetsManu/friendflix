@@ -12,7 +12,7 @@
   import { lengthLabel, ratingBadge } from '#lib/hover';
   import { toThumb, type Thumb } from '#lib/rating';
   import { remainingLabel, type Person } from '#lib/detail/format';
-  import { defaultTab, detailTabs, loadAbout, type About, type DetailTab } from '#lib/detail/about';
+  import { defaultTab, detailTabs, loadAbout, refreshFriends, withFriends, type About, type DetailTab } from '#lib/detail/about';
   import { focusFirst, usable } from '#lib/spatial';
   import { autoStartAllowed, AUTOSTART_COUNTDOWN_S, countdownLabel, interactionCancels, isTextEntry, previewDone } from '#lib/detail/autostart';
   import { playPrefetch } from '#lib/player/prefetch';
@@ -69,6 +69,7 @@
     stopHero(); cancelAuto(); autoCancelled = false; heroByUser = false;
     failed = false; episodes = null; next = null; seasons = []; followed = false; season = ''; epKey = '';
     about = undefined; synOpen = false;
+    aboutSeq++; aboutFor = ''; cancelAnimationFrame(aboutRaf); // a late answer for the previous title must not land on this one
     facts = null; leavingDlg = false;
     extras = []; more = null; people = []; logoFailed = false; heroLoaded = false; heroTried = ''; recOpen = false; castMsg = ''; saveMsg = ''; tab = '';
     savedLang(want);
@@ -142,6 +143,12 @@
       if (my !== aboutSeq) return;
       void loadAbout(itemId, getActiveProfile(), (a) => { if (my === aboutSeq) about = a; }).then(() => { if (my === aboutSeq && about === undefined) about = null; });
     }));
+  }
+  /** the viewer saved a rating (Details tab): the friends' average in the ratings line follows at once */
+  function onRated(itemId: string, average: number | null) {
+    const my = aboutSeq;
+    if (about) about = withFriends(about, average);
+    void refreshFriends(itemId, getActiveProfile(), average, (a) => { if (my === aboutSeq) about = a; });
   }
   $: tagline = about?.tagline ?? '';
   /**
@@ -496,7 +503,7 @@
       {/if}
 
       <div class="tp" id="dv-panel-details" role="tabpanel" aria-labelledby="dv-tab-details" hidden={curTab !== 'details'}>
-        <DetailsTab {item} {people} {facts} {about} download={item.type !== 'Series' && !phone} />
+        <DetailsTab {item} {people} {facts} {about} download={item.type !== 'Series' && !phone} on:rated={(e) => item && onRated(item.id, e.detail.average)} />
       </div>
 
       <div class="tp" id="dv-panel-more" role="tabpanel" aria-labelledby="dv-tab-more" hidden={curTab !== 'more'}>

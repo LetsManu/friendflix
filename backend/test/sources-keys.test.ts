@@ -1,6 +1,8 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { decrypt, encrypt, keyFromBase64 } from '../src/crypto.js';
-import { getSourceKey, INVALID_KEY, PAUSE_KEY } from '../src/sources/keys.js';
+import { FILE_FP_KEY, getSourceKey, INVALID_KEY, PAUSE_KEY, syncFileKeys } from '../src/sources/keys.js';
+import { buildApp } from '../src/app.js';
+import { MemoryKV } from '../src/kv.js';
 import { ENC_KEY, makeEnv, type TestEnv } from './helpers.js';
 
 const KEY = 'tmdbsecretkey1234';
@@ -130,5 +132,68 @@ describe('source keys', () => {
   it('test endpoint: not_set without any key', async () => {
     await call(env, admin, 'DELETE', '/api/admin/sources/tmdb');
     expect((await call(env, admin, 'POST', '/api/admin/sources/tmdb/test', {})).json()).toEqual({ ok: false, error: 'not_set' });
+  });
+
+  it('final review M3: a replaced file key clears pause, invalid flag and cached failures at startup (only when it changed)', async () => {
+    const orig = env.ctx.cfg;
+    const seed = async () => {
+      await env.kv.set(PAUSE_KEY('tmdb'), '1', 600);
+      await env.kv.set(INVALID_KEY('tmdb'), '1', 600);
+      await env.kv.set('ext:tmdb:movie:1', '{"f":1}', 600);
+      await env.kv.set('ext:tmdb:movie:2', '{"v":{"x":1}}', 600);
+    };
+    try {
+      env.ctx.cfg = { ...orig, TMDB_API_KEY: 'filekey-old-1111' };
+      await syncFileKeys(env.ctx);
+      await seed();
+      await syncFileKeys(env.ctx); // same key: the pause stays
+      expect(await env.kv.get(PAUSE_KEY('tmdb'))).toBe('1');
+      env.ctx.cfg = { ...orig, TMDB_API_KEY: 'filekey-new-2222' };
+      await syncFileKeys(env.ctx);
+      expect(await env.kv.get(PAUSE_KEY('tmdb'))).toBeNull();
+      expect(await env.kv.get(INVALID_KEY('tmdb'))).toBeNull();
+      expect(await env.kv.get('ext:tmdb:movie:1')).toBeNull();
+      expect(await env.kv.get('ext:tmdb:movie:2')).toBe('{"v":{"x":1}}');
+      const fp = await env.kv.get(FILE_FP_KEY('tmdb'));
+      expect(fp).toBeTruthy();
+      expect(fp).not.toContain('2222');
+    } finally {
+      env.ctx.cfg = orig;
+      await syncFileKeys(env.ctx);
+      for (const k of await env.kv.keys('ext:tmdb:')) await env.kv.del(k);
+    }
+  });
+
+  it('final review M3: buildApp syncs the file keys (a restart with a new secret file lifts the pause)', async () => {
+    const kv = new MemoryKV();
+    await kv.set(PAUSE_KEY('omdb'), '1', 600);
+    const app = await buildApp({ ...env.ctx, kv, cfg: { ...env.ctx.cfg, OMDB_API_KEY: 'omdb-file-key-77' } });
+    try {
+      expect(await kv.get(FILE_FP_KEY('omdb'))).toBeTruthy();
+      expect(await kv.get(PAUSE_KEY('omdb'))).toBeNull();
+    } finally { await app.close(); }
+  });
+
+  it('final review M3: a successful Test of the key in use clears pause, invalid flag and cached failures; a typed other key does not', async () => {
+    const origFetch = env.ctx.fetchImpl;
+    env.ctx.fetchImpl = (async () => new Response('{}', { status: 200, headers: { 'content-type': 'application/json' } })) as typeof fetch;
+    try {
+      await call(env, admin, 'PUT', '/api/admin/sources/tmdb', { key: KEY });
+      const seed = async () => {
+        await env.kv.set(PAUSE_KEY('tmdb'), '1', 600);
+        await env.kv.set(INVALID_KEY('tmdb'), '1', 600);
+        await env.kv.set('ext:tmdb:movie:1', '{"f":1}', 600);
+      };
+      await seed();
+      expect((await call(env, admin, 'POST', '/api/admin/sources/tmdb/test', { key: 'some-other-key-1' })).json()).toEqual({ ok: true });
+      expect(await env.kv.get(PAUSE_KEY('tmdb'))).toBe('1');
+      expect((await call(env, admin, 'POST', '/api/admin/sources/tmdb/test', {})).json()).toEqual({ ok: true });
+      expect(await env.kv.get(PAUSE_KEY('tmdb'))).toBeNull();
+      expect(await env.kv.get(INVALID_KEY('tmdb'))).toBeNull();
+      expect(await env.kv.get('ext:tmdb:movie:1')).toBeNull();
+    } finally {
+      env.ctx.fetchImpl = origFetch;
+      await call(env, admin, 'DELETE', '/api/admin/sources/tmdb');
+    }
   });
 });

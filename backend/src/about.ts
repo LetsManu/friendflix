@@ -25,6 +25,8 @@ const IMDB = /^tt\d{7,10}$/;
 const NUM_ID = /^\d{1,9}$/;
 /** TMDB collections are short; a bigger one would only cost lookups */
 const MAX_PARTS = 30;
+/** how long /about waits for the box sets (library-wide index build); later the answer goes out without a collection row */
+export const ABOUT_LIMITS = { collectionWaitMs: 2500 };
 
 /** Outbound links; every id is validated first, anything else is dropped (no URL is ever built from an unchecked value). */
 export function buildLinks(type: string, ids: ProviderIds): AboutLink[] {
@@ -100,16 +102,17 @@ async function libraryIdOf(ctx: Ctx, tmdbId: number): Promise<string | null> {
   return found?.id ?? null;
 }
 
-/** Box set parts with one entry per TMDB id (a second version of a movie, e.g. a 4K copy, does not count twice). */
-function dedupeParts(parts: MediaCollection['parts']): MediaCollection['parts'] {
-  const seen = new Set<number>();
-  return parts.filter((p) => {
+/**
+ * Box set parts with one entry per TMDB id (a second version of a movie, e.g. a 4K copy, does not count twice). The copy being viewed wins
+ * over another copy of it, so it stays marked as the current part.
+ */
+function dedupeParts(parts: MediaCollection['parts'], currentId?: string): MediaCollection['parts'] {
+  const keep = new Map<number, string>();
+  for (const p of parts) {
     const n = tmdbNum(p.tmdbId);
-    if (n === undefined) return true;
-    if (seen.has(n)) return false;
-    seen.add(n);
-    return true;
-  });
+    if (n !== undefined && (!keep.has(n) || p.item.id === currentId)) keep.set(n, p.item.id);
+  }
+  return parts.filter((p) => { const n = tmdbNum(p.tmdbId); return n === undefined || keep.get(n) === p.item.id; });
 }
 
 /**
@@ -124,12 +127,12 @@ export async function buildCollection({ ctx, user, current, currentTmdb, kids, s
   const box = pickBoxSet(sets, tmdb);
   if (!tmdb || !tmdb.parts.length) {
     if (!box) return null;
-    const parts = dedupeParts(box.parts).slice(0, MAX_PARTS).map((p) => libPart(p.item, currentId, tmdbNum(p.tmdbId)));
+    const parts = dedupeParts(box.parts, currentId).slice(0, MAX_PARTS).map((p) => libPart(p.item, currentId, tmdbNum(p.tmdbId)));
     return parts.length >= 2 ? { name: box.name, parts, from: 'jellyfin' } : null;
   }
   const tparts = tmdb.parts.slice(0, MAX_PARTS);
   const tset = new Set(tparts.map((t) => t.tmdbId));
-  const boxParts = box ? dedupeParts(box.parts) : [];
+  const boxParts = box ? dedupeParts(box.parts, currentId) : [];
   const related = boxParts.filter((p) => { const n = tmdbNum(p.tmdbId); return n !== undefined && tset.has(n); }).length >= 2;
   const byTmdb = new Map<number, ItemDto>();
   if (related) for (const p of boxParts) { const n = tmdbNum(p.tmdbId); if (n !== undefined) byTmdb.set(n, p.item); }
@@ -165,6 +168,12 @@ export async function buildCollection({ ctx, user, current, currentTmdb, kids, s
 }
 
 const settle = <T>(p: Promise<T | null>): Promise<T | null> => p.catch(() => null);
+/** p, or null when it takes longer than ms (p itself keeps running) */
+function withinMs<T>(p: Promise<T>, ms: number): Promise<T | null> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const limit = new Promise<null>((res) => { timer = setTimeout(() => res(null), ms); });
+  return Promise.race([p, limit]).finally(() => clearTimeout(timer));
+}
 
 /** Average of the friends' ratings exactly as GET /api/items/:id/ratings counts them (shareRatings respected); null = none. */
 async function friendsAverage(ctx: Ctx, itemId: string, userId: string): Promise<number | null> {
@@ -202,7 +211,8 @@ export async function buildAbout({ ctx, user, account, kids, id, log }: AboutInp
     const c = type === 'Movie' ? (await titleP)?.collection : undefined;
     return c ? settle(tmdbCollection(ctx, c.id, log)) : null;
   })();
-  const setsP = type === 'Movie' && jf.itemCollections ? jf.itemCollections(user, id).catch(() => [] as MediaCollection[]) : Promise.resolve(null);
+  // the box-set lookup may wait for the library-wide index build: bounded; the build goes on in the background and fills the cache
+  const setsP = type === 'Movie' && jf.itemCollections ? withinMs(jf.itemCollections(user, id).catch(() => [] as MediaCollection[]), ABOUT_LIMITS.collectionWaitMs) : Promise.resolve(null);
   const friendsP = kids ? Promise.resolve(null) : friendsAverage(ctx, id, account.id).catch(() => null);
   const canRequestP = kids ? Promise.resolve(false) : limitFor(ctx, account.role).then((l) => l !== 0, () => false);
 

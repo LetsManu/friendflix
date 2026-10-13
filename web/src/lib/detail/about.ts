@@ -25,6 +25,24 @@ export function loadAbout(id: string, profileId: string, apply: (a: About) => vo
   return swrLoad<About>(cache, profileId + ':' + id, () => api<About>(`/api/items/${id}/about`), apply, undefined, () => undefined);
 }
 
+/** The same "about" with the friends' rating set to `avg` (rounded like the server, always last) or removed for null. */
+export function withFriends(a: About, avg: number | null): About {
+  const ratings = a.ratings.filter((r) => r.key !== 'friends');
+  if (avg !== null && Number.isFinite(avg)) ratings.push({ key: 'friends', value: Math.round(avg * 10) / 10, max: 5, from: 'friends' });
+  return { ...a, ratings };
+}
+
+/**
+ * After the viewer rated the title: the cached entry shows the new friends' average at once (`apply` gets it), then the entry is
+ * revalidated from the server regardless of its age, so a later visit does not bring back the old average.
+ */
+export function refreshFriends(id: string, profileId: string, avg: number | null, apply: (a: About) => void): Promise<void> {
+  const key = profileId + ':' + id;
+  const hit = cache.get(key, Infinity);
+  if (hit) cache.set(key, withFriends(hit.value, avg));
+  return swrLoad<About>(cache, key, () => api<About>(`/api/items/${id}/about`), apply, 0, () => undefined);
+}
+
 const one = (n: number) => fmtNumber(n, { minimumFractionDigits: 1, maximumFractionDigits: 1 });
 const whole = (n: number) => fmtNumber(Math.round(n));
 

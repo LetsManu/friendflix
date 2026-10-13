@@ -1,5 +1,5 @@
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
-import { buildLinks } from '../src/about.js';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { ABOUT_LIMITS, buildLinks } from '../src/about.js';
 import { encrypt } from '../src/crypto.js';
 import { removeSourceKey, resetSourceState, setSourceKey } from '../src/sources/keys.js';
 import { ADMIN, fakeHttp, makeEnv, type Call, type Handler, type TestEnv } from './helpers.js';
@@ -317,6 +317,53 @@ describe('fix round 1: collection edge cases', () => {
     await about(owner);
     const b = await about(bea);
     expect(names(b)).toEqual(['Eins', 'Ashfall', 'Drei']);
+  });
+});
+
+describe('final review fixes', () => {
+  const resetIndex = async () => {
+    await env.kv.del('jf:boxsets:v1');
+    (env.ctx.jf as unknown as { boxsetIndexBuild: null }).boxsetIndexBuild = null;
+  };
+
+  it('M2: of two copies of a film in a box set (no TMDB), the one being viewed is kept and marked current', async () => {
+    const b = await about(owner, PA2);
+    expect(b.collection.parts.map((p: { id: string }) => p.id)).toEqual([PA2, MOV, PC]);
+    expect(b.collection.parts[0]).toMatchObject({ id: PA2, current: true });
+  });
+
+  it('I1: a slow box-set index does not hold up /about; the build finishes in the background, shared by concurrent requests', async () => {
+    await resetIndex();
+    const client = (env.ctx.jf as unknown as { client: { adminJson: (p: string) => Promise<unknown> } }).client;
+    const orig = client.adminJson.bind(client);
+    let release!: () => void;
+    const gate = new Promise<void>((r) => { release = r; });
+    const spy = vi.spyOn(client, 'adminJson').mockImplementation(async (p: string) => {
+      if (p.includes('parentId=')) await gate;
+      return orig(p);
+    });
+    const wait = ABOUT_LIMITS.collectionWaitMs;
+    ABOUT_LIMITS.collectionWaitMs = 100;
+    try {
+      const listings = () => env.jfCalls.filter((c) => c.search.includes('includeItemTypes=BoxSet')).length;
+      const before = listings();
+      const [a, b] = await Promise.all([about(owner), about(bea)]);
+      for (const x of [a, b]) {
+        expect(x.collection).toBeNull();
+        expect(x.ratings.map((r: { key: string }) => r.key)).toContain('community');
+        expect(x.tagline).toBe('In space no one hears');
+      }
+      expect(listings() - before).toBe(1);
+      release();
+      await vi.waitFor(async () => expect(await env.kv.get('jf:boxsets:v1')).toBeTruthy());
+      const c = await about(owner);
+      expect(c.collection.parts.map((p: { name: string }) => p.name)).toEqual(['Eins', 'Ashfall', 'Drei']);
+      expect(listings() - before).toBe(1);
+    } finally {
+      release();
+      ABOUT_LIMITS.collectionWaitMs = wait;
+      spy.mockRestore();
+    }
   });
 });
 

@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { encrypt } from '../src/crypto.js';
 import { MediaError } from '../src/media/types.js';
 import type { JfUser } from '../src/types.js';
@@ -26,6 +26,7 @@ const raw: Record<string, Record<string, unknown>> = {
   [B2]: { Id: B2, Name: 'Other Collection', Type: 'BoxSet' },
 };
 const members: Record<string, string[]> = { [B1]: [P1, P2, P3, MOV], [B2]: [P4] };
+const failingSets = new Set<string>();
 const hiddenFor: Record<string, Set<string>> = { [KID]: new Set([P3]), [ADULT]: new Set(), };
 const hiddenBoxFor: Record<string, Set<string>> = { [KID]: new Set(), [ADULT]: new Set() };
 let adminBoxsetPages = 0, adminChildCalls = 0;
@@ -39,7 +40,7 @@ beforeAll(async () => {
       const parent = u.searchParams.get('parentId');
       if (!uid) { // admin key
         if (u.searchParams.get('includeItemTypes') === 'BoxSet') { adminBoxsetPages++; return { json: { Items: Object.keys(members).map((b) => ({ Id: b })) } }; }
-        if (parent) { adminChildCalls++; return { json: { Items: (members[parent] ?? []).map((c) => ({ Id: c })) } }; }
+        if (parent) { adminChildCalls++; if (failingSets.has(parent)) return { status: 500 }; return { json: { Items: (members[parent] ?? []).map((c) => ({ Id: c })) } }; }
         return { json: { Items: [] } };
       }
       const hid = hiddenFor[uid] ?? new Set();
@@ -108,5 +109,47 @@ describe('itemCollections', () => {
     (jf() as unknown as { boxsetIndexBuild: null }).boxsetIndexBuild = null;
     await jf().itemCollections!(adult, MOV);
     expect(adminBoxsetPages).toBe(1);
+  });
+
+  it('final review I1: the index is built with at most 8 box-set calls at a time, in parallel', async () => {
+    const extra = Array.from({ length: 20 }, (_, i) => 'ee' + String(i).padStart(30, '0'));
+    for (const b of extra) members[b] = [];
+    const client = (jf() as unknown as { client: { adminJson: (p: string) => Promise<unknown> } }).client;
+    const orig = client.adminJson.bind(client);
+    let inflight = 0, max = 0;
+    const spy = vi.spyOn(client, 'adminJson').mockImplementation(async (p: string) => {
+      if (!p.includes('parentId=')) return orig(p);
+      inflight++; max = Math.max(max, inflight);
+      await new Promise((r) => setTimeout(r, 5));
+      try { return await orig(p); } finally { inflight--; }
+    });
+    try {
+      await env.kv.del('jf:boxsets:v1');
+      (jf() as unknown as { boxsetIndexBuild: null }).boxsetIndexBuild = null;
+      expect(await jf().itemCollections!(adult, MOV)).toHaveLength(1);
+      expect(max).toBeGreaterThan(1);
+      expect(max).toBeLessThanOrEqual(8);
+    } finally {
+      spy.mockRestore();
+      for (const b of extra) delete members[b];
+      await env.kv.del('jf:boxsets:v1');
+      (jf() as unknown as { boxsetIndexBuild: null }).boxsetIndexBuild = null;
+    }
+  });
+
+  it('final review I1: a failing box set is skipped, the others still count and the partial index is cached', async () => {
+    await env.kv.del('jf:boxsets:v1');
+    (jf() as unknown as { boxsetIndexBuild: null }).boxsetIndexBuild = null;
+    failingSets.add(B2);
+    try {
+      const c = await jf().itemCollections!(adult, MOV);
+      expect(c.map((x) => x.id)).toEqual([B1]);
+      const cached = JSON.parse((await env.kv.get('jf:boxsets:v1'))!);
+      expect(Object.keys(cached)).toEqual([B1]);
+    } finally {
+      failingSets.delete(B2);
+      await env.kv.del('jf:boxsets:v1');
+      (jf() as unknown as { boxsetIndexBuild: null }).boxsetIndexBuild = null;
+    }
   });
 });

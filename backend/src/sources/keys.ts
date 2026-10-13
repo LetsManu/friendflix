@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { decrypt, encrypt } from '../crypto.js';
 import type { Ctx } from '../ctx.js';
 
@@ -7,6 +8,10 @@ export const SOURCES: readonly SourceName[] = ['tmdb', 'omdb'];
 export const PAUSE_KEY = (name: SourceName) => `src:pause:${name}`;
 export const INVALID_KEY = (name: SourceName) => `src:invalid:${name}`;
 export const CACHE_PREFIX = (name: SourceName) => `ext:${name}:`;
+/** hash of the file/env key last seen at startup (never the key itself) */
+export const FILE_FP_KEY = (name: SourceName) => `src:fp:${name}`;
+const FILE_FP_TTL = 400 * 86_400;
+const FAIL_MARK = '{"f":1}';
 export const OMDB_COUNT_KEY = (dayUtc: string) => `src:omdb:calls:${dayUtc}`;
 export const OMDB_DAILY_BUDGET = 900;
 
@@ -76,6 +81,31 @@ export async function resetSourceState(ctx: Pick<Ctx, 'kv'>, name: SourceName): 
   await ctx.kv.del(PAUSE_KEY(name));
   await ctx.kv.del(INVALID_KEY(name));
   for (const k of await ctx.kv.keys(CACHE_PREFIX(name))) await ctx.kv.del(k);
+}
+
+/** After a key got better (a successful Test, a new file key): drop the 401 pause, the invalid flag and the cached failures; answers stay. */
+export async function clearSourceFailures(ctx: Pick<Ctx, 'kv'>, name: SourceName): Promise<void> {
+  await ctx.kv.del(PAUSE_KEY(name));
+  await ctx.kv.del(INVALID_KEY(name));
+  for (const k of await ctx.kv.keys(CACHE_PREFIX(name))) if ((await ctx.kv.get(k)) === FAIL_MARK) await ctx.kv.del(k);
+}
+
+const fingerprint = (key: string) => createHash('sha256').update(key).digest('hex').slice(0, 32);
+
+/**
+ * At startup: a file/env key that differs from the one seen last time (replaced secret file, restart) clears the source's failure state,
+ * so the new key works at once instead of after the 1 h pause.
+ */
+export async function syncFileKeys(ctx: Pick<Ctx, 'cfg' | 'kv'>): Promise<void> {
+  for (const name of SOURCES) {
+    const file = fileKey(ctx, name);
+    const fp = file ? fingerprint(file) : '';
+    const seen = (await ctx.kv.get(FILE_FP_KEY(name))) ?? '';
+    if (fp === seen) continue;
+    await clearSourceFailures(ctx, name);
+    if (fp) await ctx.kv.set(FILE_FP_KEY(name), fp, FILE_FP_TTL);
+    else await ctx.kv.del(FILE_FP_KEY(name));
+  }
 }
 
 export async function sourceStatus(ctx: Ctx, name: SourceName): Promise<SourceStatus> {

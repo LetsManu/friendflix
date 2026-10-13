@@ -1,6 +1,6 @@
 import type { Locator, Page, Route } from '@playwright/test';
 import { expect, test } from '../fixtures.js';
-import { ME, MOVIE, SERIES, items } from '../mocks/fixtures.js';
+import { ME, MOVIE, MOVIE2, SERIES, items } from '../mocks/fixtures.js';
 import { row, openPopout } from '../helpers.js';
 
 /** Block 21: detail page restructure (ratings line, tagline, always-on tabs with Details, links, social card). */
@@ -198,6 +198,73 @@ test.describe('detail page (desktop)', () => {
     await expect(modal.getByRole('tablist', { name: 'Weitere Inhalte' }).getByRole('tab')).toHaveText(['Details', 'Mehr davon']);
     await expect(modal.getByRole('tab', { name: 'Details' })).toHaveAttribute('aria-selected', 'true');
     await expect(modal.getByRole('tabpanel', { name: 'Details' }).getByRole('link', { name: /^IMDb/ })).toBeVisible();
+  });
+});
+
+test.describe('detail page: final review fixes', () => {
+  test.use({ allowedConsole: /status of 500/ });
+  const NOTICE = 'Dieses Produkt nutzt die TMDB-API, ist aber weder von TMDB unterstützt noch zertifiziert.';
+
+  test('TMDB notice under the Details links only when TMDB data was used', async ({ page }) => {
+    let body: object = WITH_KEYS;
+    await mockAbout(page, (r) => r.fulfill({ json: body }));
+    await page.goto('/item/' + MOVIE.id);
+    const panel = page.getByRole('tabpanel', { name: 'Details' });
+    await expect(panel.getByText(NOTICE)).toBeVisible();
+    await expect(panel.locator('.attrib img, .attrib svg')).toHaveCount(0);
+    body = NO_KEYS;
+    await page.goto('/item/' + MOVIE2.id);
+    await expect(page.getByRole('tabpanel', { name: 'Details' }).getByText('Wardell Pictures, Aster 9')).toBeVisible();
+    await expect(page.getByText(NOTICE)).toHaveCount(0);
+  });
+
+  test('saving a rating updates the friends\' average in the ratings line', async ({ page }) => {
+    let rated = false;
+    await mockAbout(page, (r) => r.fulfill({ json: { ...NO_KEYS, ratings: [NO_KEYS.ratings[0], { key: 'friends', value: rated ? 3 : 4.5, max: 5, from: 'friends' }] } }));
+    await page.route(/\/api\/items\/[0-9a-f]{32}\/rating$/, (r) => { rated = true; return r.fulfill({ json: { ok: true } }); });
+    await page.route(/\/api\/items\/[0-9a-f]{32}\/ratings$/, (r) => r.fulfill({ json: rated
+      ? { ratings: [{ userId: 'f1', name: 'Anna', stars: 5, review: null, mine: false }, { userId: 'me', name: 'Tester', stars: 1, review: null, mine: true }], average: 3 }
+      : { ratings: [{ userId: 'f1', name: 'Anna', stars: 5, review: 'Super!', mine: false }], average: 4.5 } }));
+    await page.goto('/item/' + MOVIE.id);
+    await expect(ratingsLine(page)).toContainText('Freunde 4,5 ★');
+    const panel = page.getByRole('tabpanel', { name: 'Details' });
+    await panel.getByRole('button', { name: /1 Stern/ }).first().click();
+    await panel.getByRole('button', { name: 'Speichern' }).click();
+    await expect(ratingsLine(page)).toContainText('Freunde 3,0 ★');
+    await expect(ratingsLine(page)).not.toContainText('4,5');
+  });
+
+  test('a late about answer for the previous title never shows on the next one', async ({ page }) => {
+    const NEXT = 'f'.repeat(32);
+    let releaseA!: () => void, releaseB!: () => void;
+    const gateA = new Promise<void>((r) => { releaseA = r; });
+    const gateB = new Promise<void>((r) => { releaseB = r; });
+    let askedA = false, askedNextItem = false, answeredNext = false;
+    await mockAbout(page, async (r) => {
+      if (r.request().url().includes(NEXT)) { answeredNext = true; return r.fulfill({ status: 500, json: { error: 'x' } }); }
+      askedA = true;
+      await gateA;
+      return r.fulfill({ json: WITH_KEYS });
+    });
+    await page.route(new RegExp(`/api/items/${NEXT}$`), async (r) => {
+      askedNextItem = true;
+      await gateB;
+      return r.fulfill({ json: { item: { ...MOVIE2, id: NEXT, name: 'Nachzügler' }, inWatchlist: false, thumb: 0, langs: { audio: ['deu'], subs: [] } } });
+    });
+    await page.goto('/item/' + MOVIE.id);
+    await expect.poll(() => askedA).toBe(true);
+    // in-app navigation to a title that is not in the item cache: its item request is still open
+    await page.evaluate((id) => { const a = document.createElement('a'); a.href = '/item/' + id; document.body.appendChild(a); a.click(); }, NEXT);
+    await expect.poll(() => askedNextItem).toBe(true);
+    releaseA(); // the previous title's about arrives now
+    await page.waitForTimeout(200);
+    releaseB();
+    await expect(page.getByRole('heading', { level: 1, name: 'Nachzügler' })).toBeVisible();
+    await expect.poll(() => answeredNext).toBe(true);
+    await page.waitForTimeout(300);
+    await expect(ratingsLine(page)).toHaveCount(0);
+    await expect(page.getByText('IMDb 8,1')).toHaveCount(0);
+    await expect(page.locator('.top .tagline')).toHaveCount(0);
   });
 });
 

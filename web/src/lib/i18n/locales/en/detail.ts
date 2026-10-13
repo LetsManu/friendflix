@@ -118,6 +118,8 @@ const en: Translation<typeof de> = {
     countries: 'Countries:',
     links: 'Links',
     newTab: '(opens in a new tab)',
+    /** TMDB's required notice (plain text, no logo) */
+    tmdbNotice: 'This product uses the TMDB API but is not endorsed or certified by TMDB.',
   },
   info: {
     title: 'About <b>{name}</b>',

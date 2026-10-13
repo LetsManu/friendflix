@@ -67,7 +67,7 @@
 </script>
 
 <div class="wrap">
-  <p class="intro muted">{$t('admin.sources.intro')}</p>
+  <p class="intro muted">{$t('admin.sources.intro')} {$t('detail.about.tmdbNotice')}</p>
   {#if loadFailed}
     <div class="state" role="alert"><Icon name="alert" size={22} /><p>{$t('admin.sources.loadFailed')}</p><Button variant="secondary" icon="refresh" on:click={load}>{$t('ui.retry')}</Button></div>
   {:else if !sources}

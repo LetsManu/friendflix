@@ -36,6 +36,7 @@ import { homeRoutes } from './routes/home.js';
 import { animeRoutes } from './routes/anime.js';
 import { sourceRoutes } from './routes/sources.js';
 import { aboutRoutes } from './routes/about.js';
+import { syncFileKeys } from './sources/keys.js';
 import { testSourceKey } from './sources/omdb.js';
 
 export interface Extra {
@@ -155,6 +156,7 @@ export async function buildApp(ctx: Ctx, extra: Extra = {}): Promise<FastifyInst
   const hubs = hubRoutes(app, ctx);
   homeRoutes(app, ctx, hubs);
   animeRoutes(app, ctx);
+  await syncFileKeys(ctx).catch(() => undefined); // a replaced TMDB/OMDb secret file lifts the old key's 1 h pause at once
   sourceRoutes(app, ctx, testSourceKey);
   aboutRoutes(app, ctx);
   for (const r of extra.register ?? []) await r(app, ctx);

@@ -15,6 +15,9 @@ import type { ChapterDto, ItemAboutDto, ItemCreditsDto, MediaCollection } from '
 const TOKEN_TTL = 6 * 3600;
 const BOXSET_INDEX_KEY = 'jf:boxsets:v1';
 const BOXSET_INDEX_TTL = 3600;
+/** a partial index (some box set calls failed) is kept shorter, so a passing outage heals sooner */
+const BOXSET_INDEX_PARTIAL_TTL = 600;
+const BOXSET_INDEX_PARALLEL = 8;
 /** item() memo: one detail page fires ~8 parallel requests that each load the same item (access check / data). */
 export const ITEM_MEMO_TTL_MS = 10_000;
 export const ITEM_MEMO_MAX = 2000;
@@ -748,14 +751,20 @@ export class JellyfinService implements MediaServer {
         sets.push(...page);
         if (page.length < 200) break;
       }
+      // bounded parallelism; a box set whose call fails is left out (the rest still counts and is cached)
       const index: Record<string, string[]> = {};
-      for (const b of sets) {
-        const p = new URLSearchParams({ parentId: b, fields: '', enableImages: 'false', enableUserData: 'false' });
-        const r = await this.client.adminJson<{ Items?: Array<{ Id?: string }> }>(`/Items?${p}`);
-        index[b] = (r?.Items ?? []).flatMap((i) => (i?.Id ? [nid(i.Id)] : []));
+      for (let i = 0; i < sets.length; i += BOXSET_INDEX_PARALLEL) {
+        await Promise.all(sets.slice(i, i + BOXSET_INDEX_PARALLEL).map(async (b) => {
+          try {
+            const p = new URLSearchParams({ parentId: b, fields: '', enableImages: 'false', enableUserData: 'false' });
+            const r = await this.client.adminJson<{ Items?: Array<{ Id?: string }> }>(`/Items?${p}`);
+            index[b] = (r?.Items ?? []).flatMap((it) => (it?.Id ? [nid(it.Id)] : []));
+          } catch { /* skipped */ }
+        }));
       }
-      await this.kv.set(BOXSET_INDEX_KEY, JSON.stringify(index), BOXSET_INDEX_TTL).catch(() => undefined);
-      return index;
+      const ordered = Object.fromEntries(sets.flatMap((b) => (index[b] ? [[b, index[b]] as const] : [])));
+      await this.kv.set(BOXSET_INDEX_KEY, JSON.stringify(ordered), Object.keys(ordered).length < sets.length ? BOXSET_INDEX_PARTIAL_TTL : BOXSET_INDEX_TTL).catch(() => undefined);
+      return ordered;
     })();
     this.boxsetIndexBuild = build;
     const clear = () => { if (this.boxsetIndexBuild === build) this.boxsetIndexBuild = null; };

@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { setLocale } from '#lib/i18n';
-import { collectionView, defaultTab, detailTabs, ratingParts, type About, type AboutCollection, type AboutPart, type AboutRating } from './about';
+import { collectionView, defaultTab, detailTabs, ratingParts, withFriends, type About, type AboutCollection, type AboutPart, type AboutRating } from './about';
 
 const about = (ratings: AboutRating[]): About => ({
   ratings, countries: [], studios: [], tags: [], keywords: [], links: [], collection: null, canRequest: false, sources: ['jellyfin'],
@@ -83,6 +83,37 @@ describe('loadAbout', () => {
     await expect(loadAbout('a1', 'p3', (a) => got.push(a))).resolves.toBeUndefined(); // other profile: own key, error swallowed
     expect(calls).toHaveLength(2);
     expect(got).toHaveLength(2);
+    vi.doUnmock('#lib/api');
+  });
+});
+
+describe('withFriends (final review M4)', () => {
+  it('replaces the friends\' rating, appends it when there was none, drops it for null; other ratings untouched', () => {
+    const base = about([{ key: 'community', value: 7.8, max: 10, from: 'jellyfin' }, { key: 'friends', value: 4.5, max: 5, from: 'friends' }]);
+    expect(texts(withFriends(base, 3.75))).toEqual(['★ 7,8', 'Freunde 3,8 ★']);
+    expect(texts(withFriends(about([{ key: 'community', value: 7.8, max: 10, from: 'jellyfin' }]), 5))).toEqual(['★ 7,8', 'Freunde 5,0 ★']);
+    expect(texts(withFriends(base, null))).toEqual(['★ 7,8']);
+    expect(base.ratings).toHaveLength(2);
+  });
+});
+
+describe('refreshFriends (final review M4)', () => {
+  it('patches the cached entry at once, then revalidates from the server even though the entry is fresh', async () => {
+    vi.resetModules();
+    const calls: string[] = [];
+    let friends = 4.5;
+    vi.doMock('#lib/api', () => ({ api: async (u: string) => { calls.push(u); return about([{ key: 'friends', value: friends, max: 5, from: 'friends' }]); } }));
+    const { loadAbout, refreshFriends } = await import('./about');
+    await loadAbout('r1', 'p1', () => undefined);
+    friends = 4;
+    const got: number[] = [];
+    await refreshFriends('r1', 'p1', 3.9, (a) => got.push(a.ratings[0]!.value));
+    expect(got).toEqual([3.9, 4]);
+    expect(calls).toEqual(['/api/items/r1/about', '/api/items/r1/about']);
+    const later: number[] = [];
+    await loadAbout('r1', 'p1', (a) => later.push(a.ratings[0]!.value)); // the server's answer is cached
+    expect(later).toEqual([4]);
+    expect(calls).toHaveLength(2);
     vi.doUnmock('#lib/api');
   });
 });

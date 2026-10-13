@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { createEventDispatcher } from 'svelte';
   import { api } from '#lib/api';
   import { kidsMode } from '#lib/kids';
   import { fmtNumber, t, tr } from '#lib/i18n';
@@ -11,6 +12,8 @@
 
   interface Rating { name: string; stars: number; review?: string | null; mine?: boolean }
   let ratings: Rating[] = [], avg: number | null = null, stars = 0, review = '', msg = '', seq = 0;
+  /** after the viewer's own rating: the friends' average now (the ratings line above updates from it) */
+  const dispatch = createEventDispatcher<{ rated: { average: number | null } }>();
 
   $: if (!$kidsMode) void load(id);
   async function load(itemId: string) {
@@ -30,6 +33,7 @@
     try {
       await api(`/api/items/${id}/rating`, { method: 'PUT', body: { stars, review: review || undefined } });
       const rr = await api(`/api/items/${id}/ratings`); ratings = rr.ratings ?? []; avg = rr.average ?? null;
+      dispatch('rated', { average: avg });
     } catch { msg = tr('detail.view.saveFailed'); }
   }
 </script>

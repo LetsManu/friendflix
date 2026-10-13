@@ -2,7 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { audit } from '../audit.js';
 import type { Ctx } from '../ctx.js';
-import { getSourceKey, removeSourceKey, resetSourceState, setSourceKey, sourceStatus, SOURCES, type SourceName } from '../sources/keys.js';
+import { clearSourceFailures, getSourceKey, removeSourceKey, resetSourceState, setSourceKey, sourceStatus, SOURCES, type SourceName } from '../sources/keys.js';
 import { requireAdmin } from '../session.js';
 
 export type SourceTestResult = { ok: true } | { ok: false; error: 'not_set' | 'invalid_key' | 'unreachable' | 'budget' };
@@ -40,8 +40,11 @@ export function sourceRoutes(app: FastifyInstance, ctx: Ctx, test?: SourceTester
   app.post('/api/admin/sources/:name/test', { ...admin, config: { rateLimit: { max: 10, timeWindow: '1 minute' } } }, async (req): Promise<SourceTestResult> => {
     const name = nameOf(req);
     const b = z.object({ key: keySchema.optional() }).parse(req.body ?? {});
-    const key = b.key ?? (await getSourceKey(ctx, name))?.key;
+    const effective = (await getSourceKey(ctx, name))?.key;
+    const key = b.key ?? effective;
     if (!key || !test) return { ok: false, error: 'not_set' };
-    return test(ctx, name, key);
+    const r = await test(ctx, name, key);
+    if (r.ok && key === effective) await clearSourceFailures(ctx, name); // the key in use works again: no 1 h wait
+    return r;
   });
 }

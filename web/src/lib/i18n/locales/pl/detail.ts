@@ -128,6 +128,8 @@ const pl: Translation<typeof de> = {
     countries: 'Kraje produkcji:',
     links: 'Linki',
     newTab: '(otwiera się w nowej karcie)',
+    /** TMDB's required notice (plain text, no logo) */
+    tmdbNotice: 'Ten produkt korzysta z API TMDB, ale nie jest wspierany ani certyfikowany przez TMDB.',
   },
   info: {
     title: 'Informacje o: <b>{name}</b>',

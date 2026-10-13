@@ -52,7 +52,8 @@
       </ul>
     </section>
   {/if}
-  <SocialCard id={item.id} type={item.type} />
+  {#if about?.sources.includes('tmdb')}<p class="attrib">{$t('detail.about.tmdbNotice')}</p>{/if}
+  <SocialCard id={item.id} type={item.type} on:rated />
   {#if download}<div class="dl"><DownloadButton itemId={item.id} /></div>{/if}
 </div>
 
@@ -67,6 +68,7 @@
   .links ul { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: .5rem; }
   .links a { display: inline-flex; align-items: center; gap: .35rem; min-height: 36px; padding: .2rem .8rem; border: 1px solid var(--line); border-radius: 99px; color: var(--fg); font-size: .9rem; text-decoration: none; }
   .links a:hover, .links a:focus-visible { border-color: var(--fg); }
+  .attrib { margin: 1rem 0 0; color: var(--mut); font-size: .85rem; }
   .dl { margin-top: 1.6rem; }
   .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; margin: 0; }
   @media (pointer: coarse) { .links a { min-height: 44px; } }

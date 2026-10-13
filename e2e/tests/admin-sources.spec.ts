@@ -91,6 +91,13 @@ test.describe('admin: data sources', () => {
     await expect(card(page, 'OMDb').getByText('12 von 900 Abfragen heute')).toBeVisible();
   });
 
+  test('intro carries the TMDB notice as plain text (no logo)', async ({ page }) => {
+    await page.goto('/admin/sources');
+    const intro = page.locator('p.intro');
+    await expect(intro).toContainText('Dieses Produkt nutzt die TMDB-API, ist aber weder von TMDB unterstützt noch zertifiziert.');
+    await expect(intro.locator('img, svg')).toHaveCount(0);
+  });
+
   test('nav: Datenquellen under Betrieb, active on /admin/sources', async ({ page }) => {
     await page.goto('/admin/sources');
     await expect(page.getByRole('heading', { level: 1, name: 'Datenquellen' })).toBeVisible();

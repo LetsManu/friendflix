@@ -118,6 +118,8 @@ const tr: Translation<typeof de> = {
     countries: 'Yapım ülkeleri:',
     links: 'Bağlantılar',
     newTab: '(yeni sekmede açılır)',
+    /** TMDB's required notice (plain text, no logo) */
+    tmdbNotice: 'Bu ürün TMDB API’sini kullanır ancak TMDB tarafından onaylanmış veya sertifikalandırılmış değildir.',
   },
   info: {
     title: '<b>{name}</b> hakkında',
