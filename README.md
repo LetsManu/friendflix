@@ -356,9 +356,7 @@ npm run e2e                                     # Playwright: builds the web app
 
 ### Contributing
 
-Contributions are welcome – see [CONTRIBUTING.md](CONTRIBUTING.md); how decisions are made is described in [GOVERNANCE.md](GOVERNANCE.md) for the requirements (code standard, tests, all 7 languages) and [SECURITY.md](SECURITY.md) for reporting vulnerabilities.
-
-### License
+Contributions are welcome – see [CONTRIBUTING.md](CONTRIBUTING.md) for the requirements (code standard, tests, all 7 languages) and [SECURITY.md](SECURITY.md) for reporting vulnerabilities. Please follow the [Code of Conduct](CODE_OF_CONDUCT.md); plans for the next months are in the [ROADMAP](ROADMAP.md); how the security design works is described in [docs/security.md](docs/security.md).
 
 Copyright © 2026 Manuel Weißböck.
 

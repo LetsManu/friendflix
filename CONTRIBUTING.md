@@ -1,6 +1,6 @@
 # Contributing to FriendFlix
 
-Thanks for helping! Bug reports, ideas and pull requests are welcome.
+Thanks for helping! Bug reports, ideas and pull requests are welcome. Everyone taking part is expected to follow the [Code of Conduct](CODE_OF_CONDUCT.md).
 
 ## Reporting bugs and asking for features
 
