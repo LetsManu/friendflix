@@ -11,9 +11,10 @@ interface InfoCall { maxBitrate?: number; reasonHint?: string; startTicks?: numb
  * /api/playback/info answers like the server: no maxBitrate = original (direct play of the file), otherwise a transcode at that rung
  * (a real 30 s HLS stream). `stallAt` = rungs whose segments from the 4th on arrive after 7 s, so playback really runs dry at about 6 s.
  */
-async function mockAbr(page: Page, o: { stallAt?: number[]; tracks?: boolean; direct?: boolean } = {}) {
+async function mockAbr(page: Page, o: { stallAt?: number[]; slowFirst?: number[]; tracks?: boolean; direct?: boolean } = {}) {
   await mockPlayer(page);
   const calls: InfoCall[] = [];
+  const firstSeg = new Set<number>();
   await page.route('**/api/playback/info', async (r) => {
     const b = r.request().postDataJSON() as InfoCall;
     calls.push(b);
@@ -30,6 +31,7 @@ async function mockAbr(page: Page, o: { stallAt?: number[]; tracks?: boolean; di
     if (file === 'out.m3u8') return r.fulfill({ contentType: 'application/vnd.apple.mpegurl', body: HLS_PLAYLIST });
     if (file === 'init.mp4') return r.fulfill({ contentType: 'video/mp4', body: HLS_INIT });
     if (seg) {
+      if (o.slowFirst?.includes(rung) && !firstSeg.has(rung)) { firstSeg.add(rung); await new Promise((res) => setTimeout(res, 3000)); } // slow start of a new stream
       if (o.stallAt?.includes(rung) && Number(seg[1]) >= 3) await new Promise((res) => setTimeout(res, 7000));
       return r.fulfill({ contentType: 'video/mp4', body: HLS_SEGMENTS[Number(seg[1])]! }).catch(() => undefined);
     }
@@ -90,7 +92,8 @@ test.describe('player: adaptive quality', () => {
     await expect(page.getByRole('button', { name: /Umgewandelt · 480p/ })).toBeVisible();
   });
 
-  test('manual 1080p is pinned: no step-up, step-down on stall shows toast', async ({ page, api: _api }) => {
+  test('manual 1080p: a stall steps down with a toast, never above the pick, and the same rung can be picked again', async ({ page, api: _api }) => {
+    test.setTimeout(60_000); // a real stall (7 s) plus the switches
     const calls = await mockAbr(page, { stallAt: [8_000_000] });
     await page.goto('/watch/' + MOVIE.id);
     await playing(page);
@@ -103,6 +106,10 @@ test.describe('player: adaptive quality', () => {
     await expect(page.locator('.toast', { hasText: 'Leitung langsam – 720p' })).toBeVisible({ timeout: 25_000 });
     expect(calls[2]).toMatchObject({ maxBitrate: 4_000_000 });
     expect(calls.every((c) => (c.maxBitrate ?? 0) <= 8_000_000)).toBe(true); // never above the pick
+    await openQuality(page);
+    await expect(page.getByRole('button', { name: '720p', exact: true })).toHaveClass(/on/); // the check follows the real rung
+    await page.getByRole('button', { name: '1080p' }).click();
+    await expect.poll(() => calls.at(-1)?.maxBitrate).toBe(8_000_000);
   });
 
   test('pause, then switch quality → still paused, same audio track', async ({ page, api: _api }) => {
@@ -121,5 +128,32 @@ test.describe('player: adaptive quality', () => {
     await page.waitForFunction(() => (document.querySelector('video')?.duration ?? 0) > 20);
     await page.waitForTimeout(1500);
     expect(await page.evaluate(() => document.querySelector('video')!.paused)).toBe(true);
+  });
+
+  test('a slow start of the new stream after a switch is no stall', async ({ page, api: _api }) => {
+    const calls = await mockAbr(page, { slowFirst: [1_500_000] });
+    await page.goto('/watch/' + MOVIE.id);
+    await playing(page);
+    await openQuality(page);
+    await page.getByRole('button', { name: '480p' }).click();
+    await expect.poll(() => calls.length).toBe(2);
+    await page.waitForTimeout(6500);
+    expect(calls).toHaveLength(2);
+    await expect(page.locator('.toast', { hasText: 'Leitung langsam' })).toBeHidden();
+  });
+
+  test('Escape closes only the reason bubble, the player stays', async ({ page, api: _api }) => {
+    await mockAbr(page);
+    await page.goto('/watch/' + MOVIE.id);
+    await playing(page);
+    const chip = page.getByRole('button', { name: /Umgewandelt · 720p/ });
+    await chip.click();
+    const bubble = page.getByRole('status').filter({ hasText: 'Leitung langsam' });
+    await expect(bubble).toBeVisible();
+    await page.keyboard.press('Escape');
+    await expect(bubble).toBeHidden();
+    await page.waitForTimeout(400);
+    expect(new URL(page.url()).pathname).toBe('/watch/' + MOVIE.id);
+    await expect(page.locator('video')).toBeVisible();
   });
 });

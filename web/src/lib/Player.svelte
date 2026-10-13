@@ -13,7 +13,7 @@
   import { isTypingTarget, nextSubtitle, resolveKey, SHORTCUTS, type KeyAction } from '#lib/player/keymap';
   import { BRIGHTNESS_MIN, brightnessPct, classifyMove, levelFromDrag, registerTap, scrubTarget, TAP_WINDOW, volumeSettable, zoneOf, type Axis, type TapState, type Zone } from '#lib/player/gestures';
   import { creditsStart } from '#lib/player/nextup';
-  import { decideRecovery, freshRecovery, kindOfMediaError, lowerQuality, MAX_NETWORK_TRIES, type ErrorKind } from '#lib/player/retry';
+  import { COOLDOWN_RETRY_MS, decideRecovery, freshRecovery, kindOfMediaError, lowerQuality, MAX_NETWORK_TRIES, networkStep, type ErrorKind } from '#lib/player/retry';
   import { parseVolume, stepVolume } from '#lib/player/volume';
   import { hlsConfig, loadHls } from '#lib/player/hls';
   import { AbrController, LADDER, pickRung, type Decision } from '#lib/player/abr';
@@ -99,7 +99,7 @@
   $: setSpin(waiting && !error && !casting && !reconnecting);
   // ---- adaptive quality (quality 0 = Auto): bandwidth estimate -> rung; stalls and network errors step down, a good link steps up ----
   const est = new BandwidthEstimator();
-  let abr: AbrController | null = null, reqHint: 'network' | 'manual' = 'network', switching = false, waitSince = 0, stallHandled = false, stallT: ReturnType<typeof setTimeout>, abrTimer: ReturnType<typeof setInterval>, bwTimer: ReturnType<typeof setInterval>, directSeen = 0;
+  let abr: AbrController | null = null, reqHint: 'network' | 'manual' = 'network', switching = false, queuedPick: number | null = null, sessionPlaying = false, shownQ = 0, chipOpen = false, waitSince = 0, stallHandled = false, stallT: ReturnType<typeof setTimeout>, abrTimer: ReturnType<typeof setInterval>, bwTimer: ReturnType<typeof setInterval>, directSeen = 0;
   const STALL_NOW_MS = 2100; // a wait this long counts as a stall at once (the controller steps down on > 2 s), not only when playback resumes
   const rungLabel = (bps: number) => LADDER.find((r) => r.bps === bps)?.key ?? tr('player.quality.mbit', { n: Math.round(bps / 1e6) });
   const makeAbr = (start: number, pinned?: number) => new AbrController({ now: () => performance.now(), cap: info?.roleMaxBitrate ?? Infinity, start, pinned });
@@ -186,7 +186,7 @@
     if (startSec === undefined) { lastPos = info.resumeTicks / 10_000_000; posKnown = true; } // a retry must not restart at 0 before playback ran
     if (info.audioIndex !== undefined) audioIndex = info.audioIndex;
     if (first && quality && info.roleMaxBitrate && quality >= info.roleMaxBitrate) quality = 0; // saved quality above the role limit = "Automatisch"
-    abr ??= makeAbr(sentBps, quality || undefined);
+    if (!abr) { abr = makeAbr(sentBps, quality || undefined); shownQ = quality; }
     // first start only: an older server ignores audioLang -> pick the track here (one extra request, as before)
     if (first) {
       prefsApplied = true;
@@ -200,6 +200,7 @@
   async function attach(startSec: number) {
     if (!video || !info) return;
     const my = ++attachSeq, cur = info;
+    sessionPlaying = false; resetStall(); // the first buffering of each stream is a start, not a stall
     hls?.destroy(); hls = null;
     const useDirect = info.directUrl && audioIndex === undefined && !rec.forcedHls && video.canPlayType('video/mp4');
     mode = useDirect ? 'direct' : 'hls';
@@ -249,7 +250,15 @@
     if (casting) return;
     retryViaLoad = viaLoad;
     // the first retry already failed: the line is the problem, not a hiccup -> a lower rung (none = cooldown or 360p: the usual retries go on and end in giveUp)
-    if (kind === 'network' && !viaLoad && abr && !switching && rec.networkTries >= 1 && applyAbr(abr.onNetworkError())) return;
+    if (kind === 'network' && !viaLoad && abr && !switching && rec.networkTries >= 1) {
+      const nd = abr.onNetworkError(), step = networkStep(nd);
+      if (step === 'switch') { applyAbr(nd); return; }
+      if (step === 'giveup') { giveUp(); return; }
+      // cooldown: the same rung again after a pause; this does not use up the retry budget
+      const p = resumePos(); errPos = p; waiting = true; reconnecting = Math.max(1, reconnecting);
+      clearTimeout(retryT); retryT = setTimeout(() => retryNow(p), COOLDOWN_RETRY_MS);
+      return;
+    }
     const pos = resumePos();
     const d = decideRecovery(kind, rec, { isHls: Boolean(hls), canLowerQuality: lowerStep() !== null });
     if (d.do === 'retry') {
@@ -279,7 +288,7 @@
   /** waiting -> start timing; playing -> the stall is over. Seeks and the first buffering after a (re)start are no stalls. */
   function onWaiting() {
     waiting = true;
-    if (!video || casting || !started || stopped || video.seeking || waitSince) return;
+    if (!video || casting || !started || stopped || !sessionPlaying || video.seeking || waitSince) return;
     waitSince = performance.now(); stallHandled = false;
     clearTimeout(stallT); stallT = setTimeout(() => { if (waitSince) { stallHandled = true; onStall(performance.now() - waitSince); } }, STALL_NOW_MS);
   }
@@ -289,7 +298,7 @@
     applyAbr(abr.onStall(ms)); // 'fail' needs nothing here: a stall at the lowest rung just keeps buffering
   }
   function onPlaying() {
-    waiting = false;
+    waiting = false; sessionPlaying = true;
     if (waitSince) { const ms = performance.now() - waitSince, done = stallHandled; resetStall(); if (!done && ms > 0) onStall(ms); }
     if (reconnecting) { reconnecting = 0; flash(tr('player.reconnected'), 1500); }
   }
@@ -432,9 +441,9 @@
     seekTo(skip.end);
     if (key) announce(tr(key));
   }
-  const QUALITIES: Array<[string, number]> = [['1080p', 8_000_000], ['720p', 4_000_000], ['480p', 1_500_000], ['360p', 800_000]];
+  const QUALITIES: Array<[string, number]> = LADDER.filter((r) => Number.isFinite(r.bps)).map((r) => [r.key, r.bps]);
   $: qualityOptions = QUALITIES.filter(([, b]) => b < (info?.roleMaxBitrate ?? Infinity));
-  const qualityToast = (bps: number) => bps ? tr('player.quality.pinned', { q: QUALITIES.find(([, b]) => b === bps)?.[0] ?? tr('player.quality.mbit', { n: Math.round(bps / 1e6) }) }) : tr('player.quality.changed', { q: tr('player.quality.auto') });
+  const qualityToast = (bps: number) => bps ? tr('player.quality.pinned', { q: rungLabel(bps) }) : tr('player.quality.changed', { q: tr('player.quality.auto') });
   /** the controller picked a new rung (stall, network error, step-up): reload the stream there and tell the viewer */
   function applyAbr(d: Decision): boolean {
     if (d.do !== 'switch') return false;
@@ -445,9 +454,9 @@
   /** 'manual' = the viewer's pick (0 = Auto; a rung is pinned: no step-up); 'abr' = the controller already moved to `bps` */
   async function changeQuality(bps: number, how: 'manual' | 'abr' = 'manual', ms = 1100, msg = '') {
     menu = '';
-    if (how === 'manual' && bps === quality) return;
-    if (casting) { quality = bps; await recast(castPos); flash(qualityToast(bps)); return; }
-    if (switching) return;
+    if (how === 'manual' && bps === shownQ) return;
+    if (casting) { quality = bps; shownQ = bps; await recast(castPos); flash(qualityToast(bps)); return; }
+    if (switching) { if (how === 'manual') queuedPick = bps; return; } // a pick during a running switch is applied right after it
     switching = true;
     if (how === 'manual') {
       quality = bps; reqHint = 'manual';
@@ -455,6 +464,7 @@
     } else {
       reqHint = 'network'; rec.networkTries = 0; reconnecting = 0; clearTimeout(retryT);
     }
+    shownQ = quality ? (abr?.current ?? quality) : 0;
     resetStall();
     const pos = video?.currentTime ?? 0, wasPlaying = !(video?.paused ?? true);
     try {
@@ -463,6 +473,8 @@
       if (wasPlaying) video?.play().catch(() => undefined);
       flash(msg || qualityToast(bps), ms);
     } finally { switching = false; }
+    const next = queuedPick; queuedPick = null;
+    if (next !== null) void changeQuality(next);
   }
   function setSleep(min: number | 'end') {
     menu = '';
@@ -663,6 +675,7 @@
   function onBackCapture(e: KeyboardEvent) {
     if (!(e.key === 'Escape' || (tvMode() && isBackKey(e)))) return;
     const opener = stage?.querySelector<HTMLElement>('.ctl [aria-expanded="true"]');
+    if (chipOpen) { e.preventDefault(); e.stopImmediatePropagation(); chipOpen = false; return; } // the quality bubble closes alone
     if (menu || subDlg || help) {
       e.preventDefault(); e.stopImmediatePropagation();
       const panelBtn = menu === 'episodes' ? epBtn : menu === 'chapters' ? scBtn : undefined;
@@ -809,7 +822,7 @@
     // every 5 s: direct-play bandwidth sample + step-up check; every 30 s the estimate is remembered
     abrTimer = setInterval(() => {
       sampleDirect();
-      if (!abr || casting || switching || !started || stopped || waiting || reconnecting || error) return;
+      if (!abr || casting || switching || !started || stopped || paused || waiting || reconnecting || error) return;
       applyAbr(abr.onTick({ estimate: est.estimate, bufferSec: Math.max(0, buffered - current) }));
     }, 5000);
     bwTimer = setInterval(persistEstimate, 30_000);
@@ -964,7 +977,7 @@
           <input class="vslider" type="range" min="0" max="1" step="0.05" value={muted ? 0 : volume} aria-label={$t('player.volume.label')} on:input={(e) => setVolume(Number(e.currentTarget.value))} />
         </div>
         <span class="clock">{fmtClock(shown)} / {fmtClock(duration)}</span>
-        {#if info && mode && !casting}<QualityChip direct={chipDirect} label={rungLabel(info.maxBitrate)} reason={info.transcodeReason ?? 'other'} />{/if}
+        {#if info && mode && !casting}<QualityChip bind:open={chipOpen} direct={chipDirect} label={rungLabel(info.maxBitrate)} reason={info.transcodeReason ?? 'other'} />{/if}
       </div>
       <div class="mid" title={barSub ? `${barTitle} · ${barSub}` : barTitle}>{#if barTitle}<b>{barTitle}</b>{#if barSub}<span>{barSub}</span>{/if}{/if}</div>
       <div class="grp right">
@@ -1046,8 +1059,8 @@
           {:else if menu === 'settings'}
             <div class="menu tracks" data-nav data-scope role="dialog" aria-label={$t('player.controls.settings')}>
               <div><h3><button class="back" aria-label={$t('player.controls.backToMore')} on:click={() => (menu = 'more')}>‹</button>{$t('player.quality.title')}</h3>
-                <button class="mi" class:on={quality === 0} on:click={() => changeQuality(0)}>{#if quality === 0}<Icon name="check" size={16} />{:else}<span class="sp"></span>{/if}{$t('player.quality.auto')}</button>
-                {#each qualityOptions as [label, bps]}<button class="mi" class:on={quality === bps} on:click={() => changeQuality(bps)}>{#if quality === bps}<Icon name="check" size={16} />{:else}<span class="sp"></span>{/if}{label}</button>{/each}
+                <button class="mi" class:on={shownQ === 0} on:click={() => changeQuality(0)}>{#if shownQ === 0}<Icon name="check" size={16} />{:else}<span class="sp"></span>{/if}{$t('player.quality.auto')}</button>
+                {#each qualityOptions as [label, bps]}<button class="mi" class:on={shownQ === bps} on:click={() => changeQuality(bps)}>{#if shownQ === bps}<Icon name="check" size={16} />{:else}<span class="sp"></span>{/if}{label}</button>{/each}
               </div>
               {#if !partyMode}
                 <div><h3>{$t('player.sleep.title')}</h3>

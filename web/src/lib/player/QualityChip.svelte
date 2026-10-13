@@ -5,7 +5,7 @@
   export let direct = false;
   export let label = '';
   export let reason = 'other';
-  let open = false;
+  export let open = false;
   const REASONS = {
     network: 'player.quality.reasonNetwork', remoteCap: 'player.quality.reasonRemoteCap', roleCap: 'player.quality.reasonRoleCap', container: 'player.quality.reasonContainer',
     videoCodec: 'player.quality.reasonVideoCodec', audioCodec: 'player.quality.reasonAudioCodec', audioTrack: 'player.quality.reasonAudioTrack', subtitles: 'player.quality.reasonSubtitles',
@@ -14,7 +14,7 @@
   const reasonKey = (r: string): TKey => (r in REASONS ? REASONS[r as keyof typeof REASONS] : REASONS.other);
 </script>
 
-<svelte:window on:keydown={(e) => { if (open && e.key === 'Escape') { open = false; e.stopPropagation(); } }} on:pointerdown={() => (open = false)} />
+<svelte:window on:pointerdown={() => (open = false)} />
 <span class="chipwrap">
   <button type="button" class="chip" title={$t('player.quality.chipLabel')} aria-expanded={open} on:pointerdown|stopPropagation on:click={() => (open = !open)}>
     {direct ? $t('player.quality.chipOriginal') : $t('player.quality.chipConverted', { q: label })}
