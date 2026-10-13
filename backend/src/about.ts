@@ -75,41 +75,72 @@ const libPart = (it: ItemDto, currentId: string, tmdbId?: number): AboutPart => 
 /** The box set to show: most parts shared with the TMDB collection, then most parts; only sets with ≥ 2 visible parts. */
 export function pickBoxSet(sets: MediaCollection[], tmdb: TmdbCollection | null): MediaCollection | null {
   const want = new Set((tmdb?.parts ?? []).map((p) => p.tmdbId));
-  const overlap = (c: MediaCollection) => c.parts.filter((p) => { const n = tmdbNum(p.tmdbId); return n !== undefined && want.has(n); }).length;
+  const overlap = (c: MediaCollection) => dedupeParts(c.parts).filter((p) => { const n = tmdbNum(p.tmdbId); return n !== undefined && want.has(n); }).length;
   let best: MediaCollection | null = null;
   for (const c of sets) {
-    if (c.parts.length < 2) continue;
+    if (dedupeParts(c.parts).length < 2) continue;
     if (!best || overlap(c) > overlap(best) || (overlap(c) === overlap(best) && c.parts.length > best.parts.length)) best = c;
   }
   return best;
 }
 
 interface CollectionInput {
-  ctx: Ctx; user: JfUser; currentId: string; kids: boolean; sets: MediaCollection[]; tmdb: TmdbCollection | null;
+  ctx: Ctx; user: JfUser; current: ItemDto; currentTmdb?: number; kids: boolean; sets: MediaCollection[]; tmdb: TmdbCollection | null;
+}
+
+/** tmdb id -> library item id (admin lookup, the same for every viewer): kv-cached so a collection row costs no lookup per request. */
+const LIB_KEY = (tmdbId: number) => `about:tmdb2jf:${tmdbId}`;
+const LIB_HIT_TTL = 3600;
+const LIB_MISS_TTL = 600;
+async function libraryIdOf(ctx: Ctx, tmdbId: number): Promise<string | null> {
+  const hit = await ctx.kv.get(LIB_KEY(tmdbId)).catch(() => null);
+  if (hit !== null) return hit || null;
+  const found = await ctx.jf.findByTmdb(tmdbId, 'movie'); // a failure throws: never cached, never "missing"
+  await ctx.kv.set(LIB_KEY(tmdbId), found?.id ?? '', found ? LIB_HIT_TTL : LIB_MISS_TTL).catch(() => undefined);
+  return found?.id ?? null;
+}
+
+/** Box set parts with one entry per TMDB id (a second version of a movie, e.g. a 4K copy, does not count twice). */
+function dedupeParts(parts: MediaCollection['parts']): MediaCollection['parts'] {
+  const seen = new Set<number>();
+  return parts.filter((p) => {
+    const n = tmdbNum(p.tmdbId);
+    if (n === undefined) return true;
+    if (seen.has(n)) return false;
+    seen.add(n);
+    return true;
+  });
 }
 
 /**
- * Library parts come from the viewer's own identity only: a box set part (already filtered by the media server) or, for a TMDB part outside
- * the box set, findByTmdb (admin lookup) followed by the viewer's item(). A part in the library the viewer cannot see is left out entirely,
- * never shown as missing. Missing parts (not in the library at all) are dropped for kids.
+ * Library parts come from the viewer's own identity only: the current item, a box set part (already filtered by the media server) or, for a
+ * TMDB part outside the box set, the library lookup (admin, cached) followed by the viewer's item(). A part in the library the viewer cannot
+ * see is left out entirely, never shown as missing. Missing parts (not in the library at all) are dropped for kids.
+ * A box set only names the row and adds parts TMDB does not list when it shares at least 2 parts with the TMDB collection: a user-made set
+ * ("Favourites") shares just the current item.
  */
-export async function buildCollection({ ctx, user, currentId, kids, sets, tmdb }: CollectionInput): Promise<AboutCollection | null> {
+export async function buildCollection({ ctx, user, current, currentTmdb, kids, sets, tmdb }: CollectionInput): Promise<AboutCollection | null> {
+  const currentId = current.id;
   const box = pickBoxSet(sets, tmdb);
   if (!tmdb || !tmdb.parts.length) {
     if (!box) return null;
-    const parts = box.parts.slice(0, MAX_PARTS).map((p) => libPart(p.item, currentId, tmdbNum(p.tmdbId)));
+    const parts = dedupeParts(box.parts).slice(0, MAX_PARTS).map((p) => libPart(p.item, currentId, tmdbNum(p.tmdbId)));
     return parts.length >= 2 ? { name: box.name, parts, from: 'jellyfin' } : null;
   }
-  const byTmdb = new Map<number, ItemDto>();
-  for (const p of box?.parts ?? []) { const n = tmdbNum(p.tmdbId); if (n !== undefined && !byTmdb.has(n)) byTmdb.set(n, p.item); }
   const tparts = tmdb.parts.slice(0, MAX_PARTS);
+  const tset = new Set(tparts.map((t) => t.tmdbId));
+  const boxParts = box ? dedupeParts(box.parts) : [];
+  const related = boxParts.filter((p) => { const n = tmdbNum(p.tmdbId); return n !== undefined && tset.has(n); }).length >= 2;
+  const byTmdb = new Map<number, ItemDto>();
+  if (related) for (const p of boxParts) { const n = tmdbNum(p.tmdbId); if (n !== undefined) byTmdb.set(n, p.item); }
   const resolved = await Promise.all(tparts.map(async (tp): Promise<AboutPart | null> => {
+    if (currentTmdb !== undefined && tp.tmdbId === currentTmdb) return libPart(current, currentId, tp.tmdbId); // never another copy of it
     const inBox = byTmdb.get(tp.tmdbId);
     if (inBox) return libPart(inBox, currentId, tp.tmdbId);
-    let hit: { id: string } | null;
-    try { hit = await ctx.jf.findByTmdb(tp.tmdbId, 'movie'); } catch { return null; } // unknown: never claim "missing"
+    let hit: string | null;
+    try { hit = await libraryIdOf(ctx, tp.tmdbId); } catch { return null; } // unknown: never claim "missing"
     if (hit) {
-      try { return libPart(await ctx.jf.item(user, hit.id), currentId, tp.tmdbId); } catch { return null; } // in the library, not for this viewer
+      try { return libPart(await ctx.jf.item(user, hit), currentId, tp.tmdbId); } catch { return null; } // in the library, not for this viewer
     }
     if (kids) return null;
     const year = tp.releaseDate ? Number(tp.releaseDate.slice(0, 4)) : undefined;
@@ -119,13 +150,18 @@ export async function buildCollection({ ctx, user, currentId, kids, sets, tmdb }
     };
   }));
   const parts = resolved.filter((p): p is AboutPart => p !== null);
-  // box set parts TMDB does not list (no tmdb id, other cut) stay visible, after the TMDB order
-  const listed = new Set(parts.flatMap((p) => (p.id ? [p.id] : [])));
-  if (box && box.parts.some((p) => { const n = tmdbNum(p.tmdbId); return n !== undefined && tparts.some((t) => t.tmdbId === n); })) {
-    for (const p of box.parts) if (!listed.has(p.item.id) && parts.length < MAX_PARTS) { parts.push(libPart(p.item, currentId, tmdbNum(p.tmdbId))); listed.add(p.item.id); }
+  if (related) {
+    // parts of the matching box set TMDB does not list (no tmdb id, other cut) stay visible, after the TMDB order
+    const listed = new Set(parts.flatMap((p) => (p.id ? [p.id] : [])));
+    for (const p of boxParts) {
+      const n = tmdbNum(p.tmdbId);
+      if (listed.has(p.item.id) || (n !== undefined && tset.has(n)) || parts.length >= MAX_PARTS) continue;
+      parts.push(libPart(p.item, currentId, n));
+      listed.add(p.item.id);
+    }
   }
   if (parts.length < 2) return null;
-  return { name: box?.name || tmdb.name, parts, from: 'tmdb' };
+  return { name: related ? box!.name : tmdb.name, parts, from: 'tmdb' };
 }
 
 const settle = <T>(p: Promise<T | null>): Promise<T | null> => p.catch(() => null);
@@ -171,7 +207,7 @@ export async function buildAbout({ ctx, user, account, kids, id, log }: AboutInp
   const canRequestP = kids ? Promise.resolve(false) : limitFor(ctx, account.role).then((l) => l !== 0, () => false);
 
   const [title, omdb, tColl, sets, friends, canRequest] = await Promise.all([titleP, omdbP, tmdbCollP, setsP, friendsP, canRequestP]);
-  const collection = sets === null ? null : await buildCollection({ ctx, user, currentId: item.id, kids, sets, tmdb: tColl }).catch(() => null);
+  const collection = sets === null ? null : await buildCollection({ ctx, user, current: item, currentTmdb: tmdbId, kids, sets, tmdb: tColl }).catch(() => null);
 
   const sources: AboutSource[] = [];
   if (about || sets?.length) sources.push('jellyfin');

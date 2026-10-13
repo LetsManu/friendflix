@@ -8,6 +8,8 @@ import { ADMIN, fakeHttp, makeEnv, type Call, type Handler, type TestEnv } from 
 type Sess = { cookies: Record<string, string>; csrf: string };
 const id = (c: string) => c.repeat(32);
 const MOV = id('a'), PA = id('b'), PC = id('c'), HIDLIB = id('d'), MOV2 = id('e'), INVIS = id('f'), B1 = id('1');
+// fix round 1: a user-made box set, a hidden duplicate copy of the current item, a second version of a box set part
+const MOV3 = id('7'), X1 = id('8'), B2 = id('2'), DUP = id('3'), CUR = id('4'), PA2 = id('5');
 const TMDB_KEY = 'tmdbkey-secret-123456', OMDB_KEY = 'omdbkey-secret-7890';
 
 const raw: Record<string, Record<string, unknown>> = {
@@ -22,10 +24,17 @@ const raw: Record<string, Record<string, unknown>> = {
   [MOV2]: { Id: MOV2, Name: 'Zweiter', Type: 'Movie', OriginalTitle: 'Der Zweite', ProviderIds: { Tmdb: '349' }, CriticRating: 70 },
   [INVIS]: { Id: INVIS, Name: 'Unsichtbar', Type: 'Movie', ProviderIds: { Imdb: 'tt0000001' } },
   [B1]: { Id: B1, Name: 'Ashfall Sammlung', Type: 'BoxSet' },
+  [PA2]: { Id: PA2, Name: 'Eins (4K)', Type: 'Movie', ProductionYear: 1979, PremiereDate: '1979-05-25T00:00:00Z', ProviderIds: { Tmdb: '100' } },
+  [MOV3]: { Id: MOV3, Name: 'Dritter', Type: 'Movie', ProductionYear: 2001, ProviderIds: { Tmdb: '350' } },
+  [X1]: { Id: X1, Name: 'Lieblingsfilm', Type: 'Movie', ProductionYear: 2010, ProviderIds: { Tmdb: '999' } },
+  [B2]: { Id: B2, Name: 'Favoriten', Type: 'BoxSet' },
+  // listed before CUR: findByTmdb(360) answers with this (hidden) copy first
+  [DUP]: { Id: DUP, Name: 'Aktuell (4K)', Type: 'Movie', ProviderIds: { Tmdb: '360' } },
+  [CUR]: { Id: CUR, Name: 'Aktuell', Type: 'Movie', ProductionYear: 2003, ProviderIds: { Tmdb: '360' } },
 };
-const members: Record<string, string[]> = { [B1]: [PA, MOV, PC] };
+const members: Record<string, string[]> = { [B1]: [PA, PA2, MOV, PC], [B2]: [MOV3, X1] };
 /** in a library no viewer's role has */
-const GLOBAL_HIDDEN = new Set([HIDLIB, INVIS]);
+const GLOBAL_HIDDEN = new Set([HIDLIB, INVIS, DUP]);
 /** above the kids profile's age cap */
 const KID_HIDDEN = new Set([PC]);
 let kidJf = '';
@@ -69,6 +78,14 @@ const ext: Record<string, Handler> = {
     { id: 100, title: 'Eins', release_date: '1979-05-25' },
     { id: 348, title: 'Ashfall', release_date: '1986-07-18' },
     { id: 200, title: 'Vier', release_date: '1992-05-22', poster_path: '/abcdefg.jpg' },
+  ] } }),
+  'GET /3/movie/350': () => ({ json: { belongs_to_collection: { id: 20, name: 'Dritter Collection' }, keywords: { keywords: [] } } }),
+  'GET /3/collection/20': () => ({ json: { id: 20, name: 'Dritter Collection', parts: [
+    { id: 350, title: 'Dritter', release_date: '2001-01-01' }, { id: 351, title: 'Dritter II', release_date: '2005-01-01', poster_path: '/dritter2.jpg' },
+  ] } }),
+  'GET /3/movie/360': () => ({ json: { belongs_to_collection: { id: 30, name: 'Aktuell Collection' }, keywords: { keywords: [] } } }),
+  'GET /3/collection/30': () => ({ json: { id: 30, name: 'Aktuell Collection', parts: [
+    { id: 360, title: 'Aktuell', release_date: '2003-01-01' }, { id: 361, title: 'Aktuell II', release_date: '2006-01-01' },
   ] } }),
   'GET /': () => (omdbMode === '401' ? { status: 401, json: { Response: 'False' } } : {
     json: { Response: 'True', imdbRating: '8.1', Ratings: [{ Source: 'Internet Movie Database', Value: '8.1/10' }, { Source: 'Rotten Tomatoes', Value: '92%' }, { Source: 'Metacritic', Value: '81/100' }] },
@@ -122,6 +139,7 @@ beforeEach(async () => {
   for (const n of ['tmdb', 'omdb'] as const) { await removeSourceKey(env.ctx, n); await resetSourceState(env.ctx, n); }
   await env.kv.del(`src:omdb:calls:${new Date().toISOString().slice(0, 10)}`);
   extCalls.length = 0;
+  for (const k of await env.kv.keys('about:')) await env.kv.del(k);
   tmdbMode = 'ok'; omdbMode = 'ok'; libHasPart3 = false;
   await env.pool.query("update users set role='admin' where authentik_sub='sub-admin'");
   await env.pool.query("update users set role='friend' where authentik_sub='sub-b'");
@@ -259,6 +277,46 @@ describe('GET /api/items/:id/about', () => {
     expect(ok.body).not.toContain(TMDB_KEY);
     expect(ok.body).not.toContain(OMDB_KEY);
     expect(ok.body).not.toContain('themoviedb.org/3');
+  });
+});
+
+describe('fix round 1: collection edge cases', () => {
+  const names = (b: { collection: { parts: Array<{ name: string }> } | null }) => b.collection?.parts.map((p) => p.name);
+
+  it('a user-made box set that shares only the current item with the TMDB collection neither names the row nor adds parts', async () => {
+    await keys(true, false);
+    const b = await about(owner, MOV3);
+    expect(b.collection.name).toBe('Dritter Collection');
+    expect(names(b)).toEqual(['Dritter', 'Dritter II']);
+    expect(JSON.stringify(b)).not.toContain('Favoriten');
+    expect(JSON.stringify(b)).not.toContain('Lieblingsfilm');
+  });
+
+  it('the current item stands for its own TMDB part, even when findByTmdb answers with another (hidden) copy', async () => {
+    await keys(true, false);
+    const b = await about(owner, CUR);
+    expect(names(b)).toEqual(['Aktuell', 'Aktuell II']);
+    expect(b.collection.parts[0]).toMatchObject({ id: CUR, current: true, inLibrary: true });
+    expect(JSON.stringify(b)).not.toContain(DUP);
+  });
+
+  it('a second version of a box set part (same TMDB id) is listed once, with and without TMDB', async () => {
+    expect(names(await about(owner))).toEqual(['Eins', 'Ashfall', 'Drei']);
+    await keys(true, false);
+    expect(names(await about(owner))).toEqual(['Eins', 'Ashfall', 'Vier', 'Drei']);
+  });
+
+  it('library lookups of TMDB parts are kv-cached across requests and viewers; visibility is still checked per viewer', async () => {
+    await keys(true, false);
+    const lookups = () => env.jfCalls.filter((c) => c.search.includes('anyProviderIdEquals=tmdb.361')).length;
+    const before = lookups();
+    await about(owner, CUR);
+    await about(bea, CUR);
+    expect(lookups() - before).toBe(1);
+    libHasPart3 = true; // a cached "in the library" answer still goes through the viewer's item(): hidden → omitted
+    await about(owner);
+    const b = await about(bea);
+    expect(names(b)).toEqual(['Eins', 'Ashfall', 'Drei']);
   });
 });
 
