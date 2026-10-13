@@ -64,6 +64,15 @@ describe('POST /api/client-errors', () => {
     });
   });
 
+  it('accepts kind playback with itemId and code and logs them (scrubbed like the rest)', async () => {
+    logged.length = 0;
+    const id = '0123456789abcdef0123456789abcdef';
+    const r = await beacon(body({ kind: 'playback', itemId: id, code: 'MEDIA_ERR_DECODE', message: 'fatal' }));
+    expect(r.statusCode).toBe(204);
+    expect(logged[0]!.obj.clientError).toMatchObject({ kind: 'playback', itemId: id, code: 'MEDIA_ERR_DECODE' });
+    expect((await beacon(body({ kind: 'playback', itemId: id.toUpperCase(), code: 'x' }))).statusCode).toBe(400);
+  });
+
   it('also accepts application/json', async () => {
     const r = await env.app.inject({ method: 'POST', url: '/api/client-errors', payload: body({ kind: 'resource' }), remoteAddress: fresh() });
     expect(r.statusCode).toBe(204);

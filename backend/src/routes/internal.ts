@@ -17,6 +17,7 @@ import { upstreamUri } from '../mediapath.js';
 import { authzNginx } from '../metrics.js';
 import { getUserById } from '../users.js';
 import type { UserRow } from '../types.js';
+import { appDeviceId, countStreamOnce, methodOf } from '../playstats.js';
 
 const eq = (a: string, b: string) => {
   const x = Buffer.from(a);
@@ -233,6 +234,10 @@ export async function pollJellyfinSessions(ctx: Ctx) {
     const u = byJf.get(s.serverUserId.replace(/-/g, ''));
     if (!u) continue;
     const it = s.item;
+    // Block 22: a foreign app's stream counts once for its account (device = the app's name, never the title)
+    const method = methodOf(s.playMethod, s.reasons?.[0]);
+    await countStreamOnce(ctx, u.id, `jf-${s.sessionId}:${it.id}`, appDeviceId(s.client), method, method === 'transcode' ? s.reasons?.[0] : undefined)
+      .catch(() => undefined);
     await setLive(ctx, {
       userId: u.id, userName: u.name, itemId: it.id, title: it.name, seriesName: it.seriesName, type: it.type,
       positionTicks: s.positionTicks, runtimeTicks: it.runtimeTicks, isPaused: s.isPaused,

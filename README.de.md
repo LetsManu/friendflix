@@ -129,6 +129,8 @@ Ein aufgeräumter Admin-Bereich mit Seitenleiste (Personen, Inhalte, Betrieb) un
 
 Außerdem im Admin-Bereich: Einladungen und Rollen, **Marken-Hubs**, hervorgehobene und Themenlisten, **Bald-weg-Termine**, Vorschau-Clips, der nächtliche Wiedergabe-Check, der Wochenrückblick, ein Audit-Log und Updates per Knopfdruck.
 
+**Admin-Pflege:** eine Status-Seite mit Ampeln für jeden Dienst, Speicherplatz, laufenden Streams (direkt oder umgewandelt, und warum) und den letzten Fehlern, dazu ein schmales Warnband, wenn etwas dich braucht; eine Seite **Bibliothekspflege**, die fehlende Bilder, Sprachlücken, Doppelte und Problemdateien findet; und eine Seite **Nutzung** mit Sehzeit, Streams und Geräten pro Konto (nur Summen, keine Titel).
+
 <table>
   <tr>
     <td><img src="docs/images/de/admin.jpg" alt="Admin-Übersicht mit Systemzustand, offenen Wünschen und Geräten und der letzten Aktivität" width="600"></td>
@@ -226,6 +228,9 @@ Vorlage: [.env.example](.env.example). Jede Variable kann mit der Endung `_FILE`
 | `PLAYBACK_CHECK_HOUR` | `4` | Nächtlicher Wiedergabe-Check mit Admin-Hinweis; `-1` = aus |
 | `BACKGROUND_JOBS` | `true` | Download-Vorbereitung/-Aufräumen, Sprach- und Bildqualitäts-Index, Bald-weg-Erinnerungen, Jellyfin-Session-Polling (auf dem einzigen Backend `true` lassen) |
 | `API_COMPRESSION` | `true` | gzip/brotli für JSON-Antworten ab 1 KB; `false`, wenn der Proxy `/api` schon komprimiert |
+| `GATEWAY_URL` | `http://gateway:4000` | Interne Gateway-Adresse für die Status-Seite im Admin-Bereich (nur `/health` wird abgefragt) |
+| `HEALTH_DISK_WARN_PCT`, `HEALTH_DISK_CRIT_PCT` | `85`, `95` | Belegung (Prozent), ab der Status-Seite und Warnband gelb / rot werden |
+| `HEALTH_DB_WARN_GB` | `10` | Datenbankgröße (GB), ab der die Status-Seite warnt |
 | `METRICS_TOKEN` | leer | Bearer-Token für `/metrics` |
 | `PORTAINER_WEBHOOK_URL` oder `PORTAINER_URL` + `PORTAINER_API_KEY` + `PORTAINER_STACK_ID` | leer | Updates per Knopfdruck unter *Admin → Update* (`PORTAINER_ENDPOINT_ID` Standard `1`) |
 | `UPDATE_REPO`, `GITHUB_TOKEN` | `LetsManu/friendflix`, leer | Versionsprüfung; das Token hebt nur das GitHub-Limit an |

@@ -115,6 +115,13 @@ const schema = z.object({
   BACKGROUND_JOBS: z.enum(['true', 'false']).default('true'),
   /** gzip/brotli for JSON API responses >= 1 KB (off when a reverse proxy already compresses) */
   API_COMPRESSION: z.enum(['true', 'false']).default('true'),
+  /** Block 22 admin health: the gateway's internal address (only GET /health is called, no token) */
+  GATEWAY_URL: z.string().url().default('http://gateway:4000'),
+  /** disk usage levels on the admin health page: warn / critical at this percentage used */
+  HEALTH_DISK_WARN_PCT: z.coerce.number().int().min(50).max(99).default(85),
+  HEALTH_DISK_CRIT_PCT: z.coerce.number().int().min(51).max(100).default(95),
+  /** database size (GB) above which the admin health page warns */
+  HEALTH_DB_WARN_GB: z.coerce.number().positive().default(10),
 });
 
 /** Settings each media server kind needs (another kind adds its own entry). */

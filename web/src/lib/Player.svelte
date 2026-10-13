@@ -15,6 +15,7 @@
   import { isTypingTarget, nextSubtitle, resolveKey, SHORTCUTS, type KeyAction } from '#lib/player/keymap';
   import { BRIGHTNESS_MIN, brightnessPct, classifyMove, levelFromDrag, registerTap, scrubTarget, TAP_WINDOW, volumeSettable, zoneOf, type Axis, type TapState, type Zone } from '#lib/player/gestures';
   import { creditsStart } from '#lib/player/nextup';
+  import { reportPlayback } from '#lib/telemetry';
   import { COOLDOWN_RETRY_MS, decideRecovery, freshRecovery, kindOfMediaError, lowerQuality, MAX_NETWORK_TRIES, networkStep, type ErrorKind } from '#lib/player/retry';
   import { WheelAccumulator } from '#lib/player/wheel';
   import { parseVolume, stepVolume } from '#lib/player/volume';
@@ -261,6 +262,7 @@
       hls.on(HC.Events.FRAG_LOADED, (_e, d) => { const st = d.frag.stats; est.add(st.loaded, st.loading.end - st.loading.start); });
       hls.on(HC.Events.ERROR, (_e, d) => {
         if (!d.fatal) return;
+        lastErrCode = String(d.details || d.type || 'hls');
         recover(d.type === HC.ErrorTypes.NETWORK_ERROR ? 'network' : d.type === HC.ErrorTypes.MEDIA_ERROR ? 'media' : 'other');
       });
     } else if (!H && !video.canPlayType('application/vnd.apple.mpegurl')) {
@@ -309,7 +311,15 @@
     else if (d.do === 'lower-quality') { rec.loweredQuality = true; errPos = pos; const q = lowerStep(); if (q) { wantAutoplay = !paused; abr = makeAbr(q, quality ? q : undefined); void changeQuality(q, 'abr', 3000, tr('player.quality.stepDown', { q: rungLabel(q) })); } else giveUp(); }
     else giveUp();
   }
-  function giveUp() { clearTimeout(retryT); reconnecting = 0; waiting = false; errTitle = tr('player.error.title'); error = errNote || tr('player.error.connection'); hls?.stopLoad(); }
+  function giveUp() { clearTimeout(retryT); reconnecting = 0; waiting = false; errTitle = tr('player.error.title'); error = errNote || tr('player.error.connection'); hls?.stopLoad(); reportFatal(); }
+  // Block 22: a playback that ends in an error is reported once per play session (admin health page, grouped by title)
+  let lastErrCode = '', reportedFor = '';
+  function reportFatal() {
+    const ps = info?.playSessionId ?? '';
+    if (!ps || reportedFor === ps) return;
+    reportedFor = ps;
+    reportPlayback(itemId, lastErrCode || 'unknown');
+  }
   function retryNow(pos: number) {
     clearTimeout(retryT);
     if (!reconnecting) return;
@@ -325,6 +335,7 @@
     if (hls || casting || !video?.error || !info) return; // hls.js reports its own errors
     const kind = kindOfMediaError(video.error.code);
     if (video.error.code === 1) return; // aborted by us
+    lastErrCode = `media_err_${video.error.code}`;
     recover(kind);
   }
   /** waiting -> start timing; playing -> the stall is over. Seeks and the first buffering after a (re)start are no stalls. */

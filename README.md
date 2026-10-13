@@ -129,6 +129,8 @@ A tidy admin area with a sidebar (People, Content, Operations) and an **overview
 
 Also in the admin area: invitations and roles, **brand hubs**, featured and themed lists, **leaving-soon** dates, hover-preview clips, the nightly playback check, the weekly digest, an audit log and one-click updates.
 
+**Admin care:** a status page with traffic lights for every service, disk space, running streams (direct or converted, and why) and recent errors, plus a slim warning banner when something needs you; a **library care** page that finds missing artwork, language gaps, duplicates and problem files; and a **usage** page with watch time, streams and devices per account (aggregates only, no titles).
+
 <table>
   <tr>
     <td><img src="docs/images/en/admin.jpg" alt="Admin overview with system health, requests and devices waiting for approval and recent activity" width="600"></td>
@@ -226,6 +228,9 @@ Template: [.env.example](.env.example). Every variable can also be read from a f
 | `PLAYBACK_CHECK_HOUR` | `4` | Nightly playback check with admin alert; `-1` = off |
 | `BACKGROUND_JOBS` | `true` | Download preparation/cleanup, language and picture-quality index, leaving-soon reminders, Jellyfin session polling (keep `true` on the single backend) |
 | `API_COMPRESSION` | `true` | gzip/brotli for JSON responses ≥ 1 KB; `false` if the proxy already compresses `/api` |
+| `GATEWAY_URL` | `http://gateway:4000` | Internal gateway address for the admin status page (only `/health` is called) |
+| `HEALTH_DISK_WARN_PCT`, `HEALTH_DISK_CRIT_PCT` | `85`, `95` | Disk usage (percent) at which the status page and the banner turn amber / red |
+| `HEALTH_DB_WARN_GB` | `10` | Database size (GB) above which the status page warns |
 | `METRICS_TOKEN` | empty | Bearer token for `/metrics` |
 | `PORTAINER_WEBHOOK_URL` or `PORTAINER_URL` + `PORTAINER_API_KEY` + `PORTAINER_STACK_ID` | empty | One-click updates from *Admin → Update* (`PORTAINER_ENDPOINT_ID` default `1`) |
 | `UPDATE_REPO`, `GITHUB_TOKEN` | `LetsManu/friendflix`, empty | Version check; the token only raises the GitHub rate limit |

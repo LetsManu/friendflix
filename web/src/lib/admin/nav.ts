@@ -14,6 +14,7 @@ export const GROUPS: NavGroup[] = [
     { href: '/admin/users', label: 'admin.tabs.users', icon: 'users' },
     { href: '/admin/roles', label: 'admin.tabs.roles', icon: 'key' },
     { href: '/admin/devices', label: 'admin.tabs.devices', icon: 'monitor', badge: 'devices' },
+    { href: '/admin/usage', label: 'admin.tabs.usage', icon: 'bar-chart' },
     { href: '/admin/invites', label: 'admin.tabs.invites', icon: 'mail' },
   ] },
   { id: 'content', label: 'admin.nav.groups.content', items: [
@@ -23,6 +24,7 @@ export const GROUPS: NavGroup[] = [
     { href: '/admin/hubs', label: 'hubs.admin.tab', icon: 'star' },
     { href: '/admin/leaving', label: 'fresh.admin.tab', icon: 'calendar' },
     { href: '/admin/previews', label: 'admin.tabs.previews', icon: 'film', badge: 'previews' },
+    { href: '/admin/hygiene', label: 'admin.tabs.hygiene', icon: 'check' },
   ] },
   { id: 'operations', label: 'admin.nav.groups.operations', items: [
     { href: '/admin/playback', label: 'admin.tabs.playback', icon: 'play' },
