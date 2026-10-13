@@ -37,7 +37,7 @@ jobs:
       - run: npm ci
       - run: npm run lint
       - run: npm run typecheck
-      # newest Node: tests run once, with coverage (measurement only, no thresholds yet); other entries run plain tests
+      # newest Node: tests run once, with coverage (fails below the thresholds in each vitest.config.ts); other entries run plain tests
       - run: npm test
         if: matrix.node != 26
       - name: Tests with coverage
@@ -53,6 +53,8 @@ jobs:
             for pkg in backend gateway web; do
               jq -r --arg p "$pkg" '.total | "| \($p) | \(.statements.pct)% | \(.branches.pct)% | \(.functions.pct)% | \(.lines.pct)% |"' "$pkg/coverage/coverage-summary.json"
             done
+            # overall: covered / total summed over the three packages
+            jq -s -r 'def pct(k): (([.[].total[k].covered] | add) * 10000 / ([.[].total[k].total] | add) | floor) / 100; "| **overall** | \(pct("statements"))% | \(pct("branches"))% | \(pct("functions"))% | \(pct("lines"))% |"' backend/coverage/coverage-summary.json gateway/coverage/coverage-summary.json web/coverage/coverage-summary.json
           } >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         if: matrix.node == 26
