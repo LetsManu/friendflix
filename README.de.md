@@ -354,7 +354,9 @@ npm run e2e                                     # Playwright: baut die Web-App u
 
 ### Lizenz
 
-Copyright © 2026 Manuel Weißböck. Alle Rechte vorbehalten – siehe [LICENSE](LICENSE).
+Copyright © 2026 Manuel Weißböck.
+
+FriendFlix ist freie Software: Du darfst sie unter den Bedingungen der **GNU Affero General Public License v3.0 oder später** (AGPL-3.0-or-later) weitergeben und verändern – siehe [LICENSE](LICENSE). Wer eine veränderte Version als Dienst für andere betreibt, muss ihnen deren Quellcode anbieten. FriendFlix kommt ohne jede Gewährleistung.
 
 ### Markenhinweis
 

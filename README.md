@@ -354,7 +354,9 @@ npm run e2e                                     # Playwright: builds the web app
 
 ### License
 
-Copyright © 2026 Manuel Weißböck. All rights reserved – see [LICENSE](LICENSE).
+Copyright © 2026 Manuel Weißböck.
+
+FriendFlix is free software: you can redistribute it and/or modify it under the terms of the **GNU Affero General Public License v3.0 or later** (AGPL-3.0-or-later) – see [LICENSE](LICENSE). If you run a modified version as a service for other people, you must offer them its source code. FriendFlix comes with no warranty.
 
 ### Trademarks
 

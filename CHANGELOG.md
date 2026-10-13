@@ -4,6 +4,9 @@ All notable changes, grouped by what you notice. Each release has its own sectio
 
 ## [Unreleased]
 
+### License
+- **FriendFlix is now open source** under the GNU Affero General Public License v3.0 or later (AGPL-3.0-or-later). Running a modified version as a service for others means offering them its source code.
+
 ### Versions & releases
 - **Version numbers with codenames:** FriendFlix now has a SemVer version (`version.json`, starting at 1.0.0 "Arancini"). Every major version gets the next cinema snack from A to Z as its codename. The desktop footer shows "FriendFlix 1.0.0 · Arancini"; `GET /api/version` returns version, codename and build sha.
 - **Releases:** the manual *Release* workflow (patch / minor / major) bumps the version, moves this changelog's Unreleased section under the new version, tags `vX.Y.Z` and creates a GitHub Release. Images are published as `X.Y.Z`, `X.Y`, `X` and `latest`, so a stack can stay on one major line with `FF_TAG=1`.
