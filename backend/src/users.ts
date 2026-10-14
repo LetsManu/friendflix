@@ -6,6 +6,7 @@ import { audit } from './audit.js';
 import type { Ctx } from './ctx.js';
 import { encrypt, randomPassword } from './crypto.js';
 import type { IdentityPolicy } from './media/types.js';
+import { effectiveLimits } from './limits.js';
 import { effectiveRole } from './roles.js';
 import { kidsPolicyFor } from './profiles.js';
 import type { OidcClaims } from './oidc.js';
@@ -25,7 +26,9 @@ const safeName = (s: string) => s.replace(/[^A-Za-z0-9._-]/g, '').slice(0, 24) |
 
 /** Writes the role template (plus hidden flag / kids caps) as the media server policy of one identity. */
 export async function applyRole(ctx: Ctx, jellyfinUserId: string, role: string, disabled = false, extra: Pick<IdentityPolicy, 'hidden' | 'parental'> = {}) {
-  const t = await effectiveRole(ctx, role);
+  // the account owning this identity (its own or a profile's) may override the role's limits, e.g. maxStreams -> MaxActiveSessions
+  const owner = (await ctx.db.query<{ id: string }>('select id from users where jellyfin_user_id=$1 union all select user_id from profiles where jellyfin_user_id=$1 limit 1', [jellyfinUserId])).rows[0];
+  const t = owner ? await effectiveLimits(ctx, { id: owner.id, role }) : await effectiveRole(ctx, role); // not stored yet (provisioning): the role
   if (!t) throw new Error(`unknown role ${role}`);
   // a kids profile keeps its parental cap through every re-apply (role edits, admin promotion, startup job)
   const kids = await kidsPolicyFor(ctx, jellyfinUserId, t.maxParentalRating);

@@ -9,6 +9,7 @@ import { authorizeDownload } from '../downloads.js';
 import { setLive } from '../live.js';
 import { dispatchMediaEvent } from '../media/events.js';
 import { MediaError, type ExternalSession } from '../media/types.js';
+import { effectiveLimits } from '../limits.js';
 import { jfUserFor, resolveProfile } from '../profiles.js';
 import { isHomeAddress } from '../netaddr.js';
 import { effectiveRole, remoteBitrateCap } from '../roles.js';
@@ -79,7 +80,9 @@ export function internalRoutes(app: FastifyInstance, ctx: Ctx) {
   async function lookup(sid: string): Promise<MediaAuth | null> {
     const id = await sessionIdentity(sid);
     if (!id) return null;
-    const { user, role, jfUser } = id;
+    const { user, jfUser } = id;
+    // per-user overrides (remote cap) on top of the role; an unknown role keeps the guest fallback without overrides
+    const role = (await effectiveLimits(ctx, user)) ?? id.role;
     return { userId: user.id, ...(await ctx.jf.mediaAuth(jfUser)), maxBitrate: role.maxBitrate, remoteMaxBitrate: remoteBitrateCap(role), canDownload: role.download || ctx.cfg.DIRECT_PLAY_REQUIRES_DOWNLOAD !== 'true', ...(role.maxHeight ? { maxHeight: role.maxHeight } : {}) };
   }
 

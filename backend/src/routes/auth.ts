@@ -8,7 +8,8 @@ import type { Ctx } from '../ctx.js';
 import { COOKIE, loadSession, newSession, rand, requireUser, saveSession } from '../session.js';
 import { revokeCasts } from '../cast.js';
 import { roleAllowsDownloads } from '../downloads.js';
-import { DEFAULT_ROLES, effectiveRole } from '../roles.js';
+import { effectiveLimits } from '../limits.js';
+import { DEFAULT_ROLES } from '../roles.js';
 import { deviceHasSession, registerDevice } from '../devices.js';
 import { deletePushSubscriptions } from '../push.js';
 import { claimInvite, deleteAuthentikInvitation, enrollFlowUrl, lookupInvite, releaseInvite, type InviteRow } from '../invites.js';
@@ -140,7 +141,7 @@ export function authRoutes(app: FastifyInstance, ctx: Ctx) {
   app.get('/api/me', { preHandler: requireUser(ctx, { allowPendingDevice: true, allowNoProfile: true, skipProfileHeader: true }) }, async (req) => {
     const u = req.user!;
     const profileCount = (await listProfiles(ctx, u.id)).length;
-    const dlRole = await effectiveRole(ctx, u.role);
+    const dlRole = await effectiveLimits(ctx, u); // role + the user's own overrides
     const [instLang, profLang, onboarded] = await Promise.all([instanceLanguage(ctx), profileLanguage(ctx, req.profile?.id), profileOnboarded(ctx, req.profile?.id)]);
     return {
       id: u.id,
@@ -154,7 +155,7 @@ export function authRoutes(app: FastifyInstance, ctx: Ctx) {
       deviceApproved: req.session!.deviceApproved,
       /** this session belongs to a paired television (device ids of paired TVs start with "tv-") */
       tv: Boolean(req.session!.deviceId?.startsWith('tv-')),
-      limits: ctx.roles[u.role],
+      limits: dlRole ?? ctx.roles[u.role],
       /** offline downloads: allowed for this role (and not on TVs) + max active licenses */
       downloads: { allowed: roleAllowsDownloads(ctx, dlRole) && !req.session!.deviceId?.startsWith('tv-'), max: dlRole?.maxDownloads ?? 0 },
       profile: req.profile ? publicProfile(req.profile) : null,
