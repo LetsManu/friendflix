@@ -60,19 +60,23 @@ const ours = (r: DownloadRecord | undefined): r is DownloadRecord => !!r && r.st
 /** the worker path takes over when the app opens (Range resume, no Background Fetch) */
 const toWorker = (r: DownloadRecord, now: number): DownloadRecord => ({ ...r, state: 'queued', bytesHave: 0, via: undefined, noBg: true, updatedAt: now });
 
-export async function onSuccess(ev: BgEvent, d: BgDeps): Promise<void> {
-  const id = idOfTag(ev.registration.id);
-  const rec = id ? await d.getDownload(id) : undefined;
-  if (!id || !rec) return; // removed meanwhile
-  let size = 0;
+/** the fetched video written to OPFS: its size, or 0 when the response or the copy is not usable */
+async function store(ev: BgEvent, id: string, d: BgDeps): Promise<number> {
   try {
     const [first] = await ev.registration.matchAll();
     const res = await first!.responseReady;
     const announced = Number(res.headers.get('content-length') ?? 0);
-    if (!res.ok || !res.body) throw new Error(`HTTP ${res.status}`);
-    size = await d.writeVideo(id, res.body);
-    if (!size || (announced && size !== announced)) throw new Error('size');
-  } catch { size = 0; }
+    if (!res.ok || !res.body) return 0;
+    const size = await d.writeVideo(id, res.body);
+    return announced && size !== announced ? 0 : size;
+  } catch { return 0; }
+}
+
+export async function onSuccess(ev: BgEvent, d: BgDeps): Promise<void> {
+  const id = idOfTag(ev.registration.id);
+  const rec = id ? await d.getDownload(id) : undefined;
+  if (!id || !rec) return; // removed meanwhile
+  const size = await store(ev, id, d);
   // the copy can take a while: write onto the record as it is now, and only while it is still ours
   const now = await d.getDownload(id);
   const ok = size > 0 && ours(now);
