@@ -143,6 +143,13 @@ describe('re-authentication guard', () => {
     expect((await env.pool.query("select 1 from audit_log where action='session.reauth'")).rowCount).toBe(0);
   });
 
+  it('next may be the Admin -> Settings resume path', async () => {
+    const s = await mk();
+    const r = await env.app.inject({ url: `/auth/reauth?next=${encodeURIComponent('/admin/settings?resume=1')}`, cookies: s.cookies });
+    const st = r.cookies.find((x) => x.name === 'ff_oidc')!.value;
+    expect(JSON.parse((await env.kv.get(`oidc:${st}`))!).reauth.next).toBe('/admin/settings?resume=1');
+  });
+
   it('next=//evil.example falls back to /me/account', async () => {
     const s = await mk();
     for (const bad of ['//evil.example', 'https://evil.example', '/\\evil.example', '/a b', `/${'x'.repeat(201)}`]) {
