@@ -14,7 +14,7 @@ import { OMDB_DAILY_BUDGET, PAUSE_KEY, SOURCES, sourceStatus, type SourceName } 
  */
 export type Level = 'ok' | 'warn' | 'err' | 'off';
 export type ServiceId = 'media' | 'postgres' | 'redis' | 'gateway' | 'oidc' | 'requests' | 'tmdb' | 'omdb' | 'playbackCheck';
-export type Reason = 'slow' | 'down' | 'issuer_mismatch' | 'invalid_key' | 'paused' | 'budget' | 'not_set' | 'failed_titles' | 'unavailable' | 'full' | 'low_free' | 'cap' | 'large' | 'server_errors' | 'client_errors' | 'failed_playbacks';
+export type Reason = 'slow' | 'down' | 'issuer_mismatch' | 'invalid_key' | 'paused' | 'budget' | 'not_set' | 'failed_titles' | 'unavailable' | 'full' | 'low_free' | 'cap' | 'large' | 'server_errors' | 'client_errors' | 'failed_playbacks' | 'empty_media';
 export interface ServiceHealth { id: ServiceId; level: Level; reason?: Reason; ms?: number; detail?: { n?: number; pct?: number } }
 export interface DiskHealth {
   id: 'downloads' | 'previews' | 'database'; level: Level; reason?: Reason; totalBytes?: number; freeBytes?: number; usedPct?: number; ownBytes: number; capBytes?: number;
@@ -39,6 +39,8 @@ const STALE_MS = 90_000;
 const OIDC_KEY = 'health:oidc';
 const OIDC_TTL = 300;
 const GiB = 1024 ** 3;
+/** a playback check where every one of at least this many titles failed is red (the media server, not a file, is broken) */
+const ALL_FAILED_MIN = 3;
 const RANK: Record<Level, number> = { err: 3, warn: 2, ok: 1, off: 0 };
 
 /** Stable per (issue, level, reason): numbers never change it, so 85 % → 86 % does not re-show a dismissed warning. */
@@ -109,10 +111,14 @@ async function sourceProbe(ctx: Ctx, name: SourceName): Promise<ServiceHealth> {
 
 async function playbackCheckProbe(ctx: Ctx): Promise<ServiceHealth> {
   try {
-    const r = await ctx.db.query<{ results: Array<{ ok: boolean }> }>('select results from playback_checks order by id desc limit 1');
+    const r = await ctx.db.query<{ results: Array<{ ok: boolean; itemId?: string }> }>('select results from playback_checks order by id desc limit 1');
     const row = r.rows[0];
     if (!row) return { id: 'playbackCheck', level: 'off' };
-    const failed = (Array.isArray(row.results) ? row.results : []).filter((x) => !x?.ok).length;
+    // the "aborted" row (no itemId) is not a checked title
+    const titles = (Array.isArray(row.results) ? row.results : []).filter((x) => x?.itemId !== '');
+    const failed = titles.filter((x) => !x?.ok).length;
+    // every title failed: not a broken file but a broken media server (e.g. a hung hardware encoder returning empty segments)
+    if (titles.length >= ALL_FAILED_MIN && failed === titles.length) return { id: 'playbackCheck', level: 'err', reason: 'empty_media', detail: { n: failed } };
     return failed ? { id: 'playbackCheck', level: 'warn', reason: 'failed_titles', detail: { n: failed } } : { id: 'playbackCheck', level: 'ok' };
   } catch {
     return { id: 'playbackCheck', level: 'off', reason: 'unavailable' };
