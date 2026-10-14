@@ -12,10 +12,12 @@ const fut = (h: number): string => new Date(NOW + h * 3600e3).toISOString();
 /** uuid-shaped ids (the backend validates uuids for users/devices) */
 export const auid = (n: number): string => `00000000-0000-4000-a000-${n.toString().padStart(12, '0')}`;
 
-export interface AdminUser { id: string; name: string; email: string | null; role: string; disabled: boolean; jellyfin_username: string; seerr_user_id: number | null; created_at: string; last_seen: string | null }
+export interface AdminUser { id: string; name: string; email: string | null; role: string; disabled: boolean; jellyfin_username: string; seerr_user_id: number | null; created_at: string; last_seen: string | null; access_until?: string | null; profiles?: number }
 export interface AdminDevice { user_id: string; device_id: string; label: string; approved: boolean; last_seen: string; name: string; /** the admin's own device (backend: current) */ current?: boolean }
 export interface AdminRequest { id: number; title: string; mediaType: 'movie' | 'tv'; requestedBy: string; status: string; createdAt: string }
-export interface AdminInvite { id: string; role: string; note: string | null; expires_at: string; used_at: string | null; used_by_name: string | null }
+export interface AdminInvite { id: string; role: string; note: string | null; expires_at: string; used_at: string | null; used_by_name: string | null; uses: number; max_uses: number; access_days: number | null }
+/** open approval request (GET /api/admin/approvals) */
+export interface AdminApproval { id: string; name: string; email: string | null; requested_at: string }
 export interface PreviewRow { itemId: string; name: string; type: string; status: 'ok' | 'failed' | 'missing' | 'preparing'; bytes: number | null; audioLang: string | null; error: string | null; createdAt: string | null }
 export interface AuditRow { id: number; at: string; action: string; target: string | null; meta: Record<string, unknown>; actor: string | null; target_name: string | null }
 
@@ -30,6 +32,9 @@ export interface AdminState {
   /** every request; the list endpoint filters by state */
   requests: AdminRequest[];
   invites: AdminInvite[];
+  /** accounts made from an invite (GET /api/admin/invites/:id/uses) */
+  inviteUses: Record<string, Array<{ id: string; name: string; email: string | null; role: string; disabled: boolean; at: string }>>;
+  approvals: AdminApproval[];
   audit: AuditRow[];
   polls: Array<{ id: string; title: string; creator: string; winnerOptionId: string; closesAt?: string; options: Array<{ id: string; title: string; votes?: number; inLibrary?: boolean }> }>;
   lists: Array<{ id: string; name: string; owner: { id: string; name: string }; itemCount: number; featured: boolean }>;
@@ -131,9 +136,18 @@ export function adminState(): AdminState {
       { id: 106, title: 'Quiet Mornings', mediaType: 'movie', requestedBy: 'Emma Schneider', status: 'verfügbar', createdAt: ago(90) },
     ],
     invites: [
-      { id: auid(201), role: 'friend', note: 'Für Annas Bruder', expires_at: fut(30), used_at: null, used_by_name: null },
-      { id: auid(202), role: 'guest', note: null, expires_at: ago(5), used_at: null, used_by_name: null },
-      { id: auid(203), role: 'family', note: 'Oma', expires_at: fut(2), used_at: ago(1), used_by_name: 'Oma Inge' },
+      { id: auid(201), role: 'friend', note: 'Für Annas Bruder', expires_at: fut(30), used_at: null, used_by_name: null, uses: 0, max_uses: 1, access_days: null },
+      { id: auid(202), role: 'guest', note: null, expires_at: ago(5), used_at: null, used_by_name: null, uses: 0, max_uses: 1, access_days: null },
+      { id: auid(203), role: 'family', note: 'Oma', expires_at: fut(2), used_at: ago(1), used_by_name: 'Oma Inge', uses: 1, max_uses: 1, access_days: null },
+      { id: auid(204), role: 'guest', note: 'Spieleabend', expires_at: fut(40), used_at: ago(3), used_by_name: 'Mila Kraus', uses: 2, max_uses: 5, access_days: 30 },
+    ],
+    inviteUses: {
+      [auid(203)]: [{ id: auid(50), name: 'Oma Inge', email: null, role: 'family', disabled: false, at: ago(1) }],
+      [auid(204)]: [{ id: auid(51), name: 'Mila Kraus', email: 'mila@example.org', role: 'guest', disabled: false, at: ago(3) }, { id: auid(52), name: 'Tom Kraus', email: null, role: 'guest', disabled: false, at: ago(2) }],
+    },
+    approvals: [
+      { id: auid(401), name: 'Mia Neu', email: 'mia@example.org', requested_at: ago(2) },
+      { id: auid(402), name: 'Paul Fremd', email: null, requested_at: ago(20) },
     ],
     audit: [
       { id: 50, at: ago(0.2), action: 'user.disable', target: auid(6), meta: {}, actor: 'Tester', target_name: 'Emma Schneider' },
@@ -272,10 +286,18 @@ function sorted<T>(rows: T[], sp: URLSearchParams, keys: Record<string, (r: T) =
   const dir = sp.get('dir') === 'desc' ? -1 : 1;
   return [...rows].sort((a, b) => { const x = k(a), y = k(b); return (typeof x === 'number' && typeof y === 'number' ? x - y : String(x).localeCompare(String(y))) * dir; });
 }
+const WEEK = 7 * 86400e3;
 function usersList(st: AdminState, sp: URLSearchParams) {
-  const q = norm(sp.get('q') ?? '');
-  let rows = st.users.filter((u) => (!q || norm(`${u.name} ${u.email ?? ''} ${u.jellyfin_username}`).includes(q)) && (!sp.get('role') || u.role === sp.get('role')) && (!sp.get('status') || (sp.get('status') === 'locked') === u.disabled));
-  rows = sorted(rows, sp, { name: (u) => u.name, email: (u) => u.email ?? '', role: (u) => u.role, status: (u) => Number(u.disabled), lastSeen: (u) => u.last_seen ?? '' });
+  const q = norm(sp.get('q') ?? ''), status = sp.get('status'), lastActive = Number(sp.get('lastActive') ?? 0), now = Date.now();
+  // status=pending: the open approval requests in the same row shape (backend: pending true, role null)
+  const all = status === 'pending'
+    ? st.approvals.map((a) => ({ id: a.id, name: a.name, email: a.email, role: null as unknown as string, disabled: false, jellyfin_username: '', seerr_user_id: null, created_at: a.requested_at, last_seen: null, access_until: null, profiles: 0, devices: 0, pending: true }))
+    : st.users.map((u) => ({ ...u, access_until: u.access_until ?? null, profiles: u.profiles ?? 1, devices: st.devices.filter((d) => d.user_id === u.id).length, pending: false }));
+  let rows = all.filter((u) => (!q || norm(`${u.name} ${u.email ?? ''} ${u.jellyfin_username}`).includes(q)) && (!sp.get('role') || u.role === sp.get('role'))
+    && (!status || status === 'pending' || (status === 'locked' && u.disabled) || (status === 'active' && !u.disabled)
+      || (status === 'expiring' && u.access_until !== null && Date.parse(u.access_until) >= now && Date.parse(u.access_until) <= now + WEEK))
+    && (!lastActive || (u.last_seen !== null && Date.parse(u.last_seen) >= now - lastActive * 86400e3)));
+  rows = sorted(rows, sp, { name: (u) => u.name, email: (u) => u.email ?? '', role: (u) => u.role, status: (u) => Number(u.disabled), lastSeen: (u) => u.last_seen ?? '', accessUntil: (u) => u.access_until ?? '' });
   const { slice, total } = paged(rows, sp, 1000);
   return { users: slice, total };
 }
@@ -289,7 +311,7 @@ function devicesList(st: AdminState, sp: URLSearchParams) {
 }
 function invitesList(st: AdminState, sp: URLSearchParams) {
   const q = norm(sp.get('q') ?? ''), now = new Date().toISOString();
-  const status = (i: AdminInvite) => (i.used_at ? 'used' : i.expires_at < now ? 'expired' : 'open');
+  const status = (i: AdminInvite) => (i.uses >= i.max_uses ? 'used' : i.expires_at < now ? 'expired' : 'open');
   let rows = st.invites.filter((i) => (!q || norm(`${i.note ?? ''} ${i.role} ${i.used_by_name ?? ''}`).includes(q)) && (!sp.get('status') || status(i) === sp.get('status')));
   rows = sorted(rows, sp, { role: (i) => i.role, note: (i) => i.note ?? '', validUntil: (i) => i.expires_at, status: (i) => status(i) });
   const { slice, total } = paged(rows, sp, 100);
@@ -312,7 +334,7 @@ export function adminSummary(st: AdminState) {
   const locked = st.users.filter((u) => u.disabled).length;
   return {
     users: { total: st.users.length, active: st.users.length - locked, locked },
-    pending: { requests: st.seerrUp ? pendingReq : null, devices: st.devices.filter((d) => !d.approved).length, polls: st.polls.length, invites: st.invites.filter((i) => !i.used_at && i.expires_at > new Date().toISOString()).length, previewsFailed: 10 },
+    pending: { requests: st.seerrUp ? pendingReq : null, devices: st.devices.filter((d) => !d.approved).length, polls: st.polls.length, invites: st.invites.filter((i) => i.uses < i.max_uses && i.expires_at > new Date().toISOString()).length, previewsFailed: 10 },
     requests: st.seerrUp ? { pending: pendingReq, approved: st.requests.filter((r) => r.status === 'genehmigt').length, processing: 1, available: st.requests.filter((r) => r.status === 'verfügbar').length, declined: 2, total: st.requests.length + 3 } : null,
     storage: { downloadsEnabled: true, downloadsBytes: 12.4 * 1024 ** 3, downloadsMaxBytes: 50 * 1024 ** 3, previewBytes: 99e6, previewClips: 30 },
     playbackCheck: { finishedAt: ago(2), total: 20, failed: 1 },
@@ -351,6 +373,37 @@ export function adminRoute(st: AdminState, m: string, p: string, sp: URLSearchPa
     return ok();
   }
   if ((mm = p.match(/^\/api\/admin\/users\/([^/]+)\/revoke-sessions$/)) && m === 'POST') return J({ revoked: 2 });
+  if (p === '/api/admin/users/bulk' && m === 'POST') {
+    const users = (body.ids as string[]).map((id) => st.users.find((u) => u.id === id));
+    if (users.some((u) => !u)) return J({ error: 'not_found' }, 404);
+    if ((body.action === 'lock' || (body.action === 'role' && body.role !== 'admin')) && body.ids.includes('u1')) return J({ error: 'cannot_lock_yourself_out' }, 400);
+    let done = 0;
+    for (const u of users as AdminUser[]) {
+      if (body.action === 'lock' || body.action === 'unlock') {
+        const d = body.action === 'lock';
+        if (u.disabled === d) continue;
+        u.disabled = d; log(d ? 'user.disable' : 'user.enable', u.id, {}, u.name);
+      } else if (body.action === 'role') {
+        if (u.role === body.role) continue;
+        log('user.role', u.id, { from: u.role, to: body.role }, u.name); u.role = body.role;
+      } else if (body.action === 'access') {
+        log('user.access_until', u.id, { from: u.access_until ?? null, to: body.accessUntil }, u.name); u.access_until = body.accessUntil;
+      }
+      done++;
+    }
+    return J({ done });
+  }
+  if (p === '/api/admin/approvals' && m === 'GET') return J({ requests: st.approvals });
+  if ((mm = p.match(/^\/api\/admin\/approvals\/([^/]+)\/(approve|reject)$/)) && m === 'POST') {
+    const a = st.approvals.find((x) => x.id === mm![1]);
+    if (!a) return J({ error: 'not_found' }, 404);
+    st.approvals = st.approvals.filter((x) => x !== a);
+    if (mm[2] === 'reject') { log('user.rejected', a.id, { from: 'pending', to: 'rejected', name: a.name, message: body?.message ?? null }); return ok(); }
+    const id = auid(500 + st.users.length);
+    st.users.push({ id, name: a.name, email: a.email, role: body.role, disabled: false, jellyfin_username: a.name.split(' ')[0]!.toLowerCase(), seerr_user_id: null, created_at: new Date().toISOString(), last_seen: null, access_until: body.accessUntil ?? null });
+    log('user.approved', id, { from: 'pending', to: body.role }, a.name);
+    return J({ id });
+  }
   if (p === '/api/admin/roles' && m === 'GET') {
     return J({ roles: ROLES, invitable: ['friend', 'family', 'guest'], limits: Object.entries(ROLES).map(([role, r], i) => ({ role, label: r.label, builtinLabel: true, requestsPerMonth: i === 0 ? null : 3, isDefault: i === 2, transcoding: i !== 3, maxHeight: i === 1 ? 1080 : null, download: i < 2, maxDownloads: 5, downloadMaxHeight: 720, downloadDays: 30, maxBitrate: role === 'guest' ? 2_000_000 * 4 : 40_000_000, remoteMaxBitrate: role === 'family' ? 12_000_000 : role === 'guest' ? 4_000_000 : 8_000_000, remoteDefault: role === 'guest' ? 4_000_000 : 8_000_000, remoteIsDefault: role !== 'family' })) });
   }
@@ -371,11 +424,23 @@ export function adminRoute(st: AdminState, m: string, p: string, sp: URLSearchPa
   if (p === '/api/admin/invites' && m === 'GET') return J(invitesList(st, sp));
   if (p === '/api/admin/invites' && m === 'POST') {
     const id = auid(300 + st.invites.length);
-    st.invites.unshift({ id, role: body.role, note: body.note ?? null, expires_at: fut(body.ttlHours ?? 48), used_at: null, used_by_name: null });
-    log('invite.create', id, { role: body.role });
-    return J({ id, link: `https://portal.example.com/invite/${'t'.repeat(32)}`, authentik: 'ok', expiresAt: fut(body.ttlHours ?? 48) });
+    const maxUses = body.maxUses ?? 1;
+    st.invites.unshift({ id, role: body.role, note: body.note ?? null, expires_at: fut(body.ttlHours ?? 48), used_at: null, used_by_name: null, uses: 0, max_uses: maxUses, access_days: body.accessDays ?? null });
+    log('invite.create', id, { role: body.role, maxUses, accessDays: body.accessDays ?? null });
+    return J({ id, link: `https://portal.example.com/invite/${'t'.repeat(32)}`, authentik: 'ok', expiresAt: fut(body.ttlHours ?? 48), uses: 0, maxUses });
   }
-  if ((mm = p.match(/^\/api\/admin\/invites\/([^/]+)$/)) && m === 'DELETE') { st.invites = st.invites.filter((i) => i.id !== mm![1] || i.used_at); log('invite.revoke', mm[1]!); return ok(); }
+  if ((mm = p.match(/^\/api\/admin\/invites\/([^/]+)\/uses$/)) && m === 'GET') {
+    if (!st.invites.some((i) => i.id === mm![1])) return J({ error: 'not_found' }, 404);
+    return J({ uses: st.inviteUses[mm[1]!] ?? [] });
+  }
+  // revoke: an unused invite is deleted, a partly used one is closed (max_uses = uses), a used-up one stays
+  if ((mm = p.match(/^\/api\/admin\/invites\/([^/]+)$/)) && m === 'DELETE') {
+    const inv = st.invites.find((i) => i.id === mm![1]);
+    if (inv && inv.uses === 0) st.invites = st.invites.filter((i) => i !== inv);
+    else if (inv) inv.max_uses = inv.uses;
+    log('invite.revoke', mm[1]!);
+    return ok();
+  }
   if (p === '/api/admin/audit') return J(auditList(st, sp));
   if (p === '/api/admin/audit/filters') return J({ actors: [{ id: 'u1', name: AUDIT_ACTOR }], system: st.audit.some((e) => e.actor === null), categories: [...new Set(st.audit.map((e) => e.action.split('.')[0]!))].sort() });
 
