@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Users manage their own account on `/me/account`: name, avatar and e-mail, their 2FA state, sessions and devices, a "Download my data" export, and deleting the account with a 7-day grace period that ends in a resumable, audited final deletion.
+**Goal:** Users manage their own account on `/me/account`: name and avatar (e-mail shown read-only), their 2FA state, sessions and devices, a "Download my data" export, and deleting the account with a 7-day grace period that ends in a resumable, audited final deletion.
 
 **Architecture:** A new `routes/account.ts` holds the self-service API. A new `reauth.ts` provides the `requireRecentAuth` guard: in this phase it is fed by an OIDC re-login (`prompt=login`, `max_age=0`) that stamps `reauthAt` on the existing session; phase 3 feeds the same guard from its in-app password screen. Deletion lives in a new `deletion.ts`. Scheduling it uses phase 1's `lockUser(…, 'deletion')`. The final cleanup is a per-step resumable state machine in a new `account_deletions` table, and it runs on the existing 60 s expiry timer. The export is a streamed JSON document built from explicit column allowlists.
 
@@ -30,7 +30,7 @@
 ## Controller Rulings (binding for this plan)
 
 1. **Scope.** Phase 2 covers:
-   - Profile: name, avatar, and e-mail via the Authentik API.
+   - Profile: name and avatar; e-mail read-only (its change moves to phase 3).
    - Sessions & devices UI, on the existing endpoints.
    - "Download my data": streamed JSON, own data only.
    - Delete account with the 7-day grace period:
@@ -41,7 +41,7 @@
      - the Authentik user is deactivated, not deleted
    - The 2FA **state** display.
 2. **Moved to phase 3:** the Security actions that need Authentik's flow-executor screens: change password, add/remove TOTP, passkeys, recovery codes. Phase 2 shows the 2FA state and a "Manage on the sign-in page" link to Authentik's user settings as a stopgap.
-3. **Re-authentication (≤ 10 min)** for delete account and e-mail change is implemented in phase 2 with the existing OIDC redirect (`prompt=login`, `max_age=0`) and a server-side `reauthAt` stamp on the session. Phase 3 swaps the producer for its in-app password screen, behind the same guard `requireRecentAuth` (interface in Task 1).
+3. **Re-authentication (≤ 10 min)** for delete account is implemented in phase 2 with the existing OIDC redirect (`prompt=login`, `max_age=0`) and a server-side `reauthAt` stamp on the session. Phase 3 swaps the producer for its in-app password screen, behind the same guard `requireRecentAuth` (interface in Task 1).
 4. **Final deletion** runs in the existing background tick pattern (`server.ts` 60 s timer next to `expiryTick`). It is idempotent, resumable per step and audited.
 5. **The `deletion` lock** interacts correctly with phase 1's `lockUser`/`unlockUser`, the `access_until` expiry and the last-admin guard. An admin who is the last active admin cannot self-delete.
 6. **Media server** only via `ctx.jf`. The Plex fork must keep compiling, so any new seam method is optional (none is needed; see Global Constraints).
@@ -50,7 +50,6 @@
 
 - **Avatar** is a FriendFlix avatar key from the existing preset set (`web/src/lib/avatars.ts` `AVATARS`, validated like profiles: `/^[a-z0-9-]{1,20}$/`). It is stored in `users.avatar` and mirrored to the owner profile's `avatar`. There is no image upload and no Authentik avatar write: that would need file storage or a new dependency.
 - **Name** is written to Authentik (`name`) when the Authentik API is configured, then to `users.name` and the owner profile name (`slice(0, 20)`, as `provisionUser` does). Without the API, the change is local only: the login callback never syncs names, so nothing overwrites it.
-- **E-mail** change needs the Authentik API. Without it, the answer is 501 `not_supported` and the UI shows the e-mail read-only with the "Manage on the sign-in page" link. The Authentik admin API has no "verify the new address" call, so phase 2 writes the e-mail directly after re-authentication. The spec's confirmation through Authentik's e-mail stage needs the flow executor and moves to phase 3 (risk noted).
 - **Self-service audits carry no personal values.** `account.profile` and `account.email` store `{ fields: [...] }` without from/to. Admin actions keep the from/to rule of phase 1.
 - **"Manage on the sign-in page" URL** = `new URL(OIDC_ISSUER).origin + '/if/user/#/settings'`. `OIDC_ISSUER` is the browser-facing Authentik URL; `AUTHENTIK_URL` may be internal. It is null when the issuer is not an Authentik URL (`/application/o/` missing from its path).
 - **An admin unlocking a deletion-locked account is a restore.** `unlockUser` clears `deletion_at` too, and when the previous `locked_reason` was `'deletion'` it also audits `user.deletion_restored`. Bulk unlock and `PATCH disabled:false` therefore restore. Phase 1's existing no-op checks stay: a manual lock on an already locked account changes nothing, and `setAccessUntil` only unlocks `'expired'`.
@@ -121,41 +120,36 @@
 
 **Interfaces (produces):**
 - In `authentik.ts`:
-  - `akUpdateUser(ctx, sub, patch: { name?: string; email?: string }): Promise<void>`
+  - `akUpdateUser(ctx, sub, patch: { name?: string }): Promise<void>`
     - `PATCH api/v3/core/users/<pk>/`. Errors: 400 → `HttpError(400, 'invalid_input')`; 404 → `authentik_user_not_found` (drops the `akuser:`/`akmfa:` kv); not configured → 503 `authentik_unavailable`.
   - `akSetActive(ctx, sub, active: boolean): Promise<'done' | 'not_configured' | 'not_found'>`: `PATCH … { is_active }`.
   - `akUserSettingsUrl(cfg): string | null`: as in the rulings.
 - Routes (all `requireOwner`):
   - `GET /api/account` →
     ```
-    { name, email, avatar, emailEditable: boolean, mfa: MfaState | null, manageUrl: string | null, reauthUntil: number | null }
+    { name, email, avatar, mfa: MfaState | null, manageUrl: string | null, reauthUntil: number | null }
     ```
-    - `emailEditable` = the Authentik API is configured and `akUserBySub` found the user.
     - `reauthUntil` = `reauthAt + 600_000` when still valid.
     - Never `authentik_sub` or ids of the Authentik user.
   - `PATCH /api/account/profile { name?: string 1..60 trimmed, avatar?: avatarKey }`
     - Authentik first (when configured), then `users.name` / owner profile, in one transaction.
     - Audit `account.profile` with `{ fields }`.
     - An Authentik failure leaves FriendFlix unchanged and answers the Authentik code.
-  - `PUT /api/account/email { email: z.string().email().max(254) }`, preHandler `requireRecentAuth(ctx)`.
-    - `akUpdateUser`, then `users.email`, `kv.del('akuser:'+sub)`, audit `account.email` with `{ fields: ['email'] }`.
     - 501 `not_supported` without the API.
 - `/api/me` stays unchanged.
 - [ ] Tests:
   - `GET /api/account never contains authentik_sub, jellyfin_pw_enc or the API token`: JSON string check.
-  - `mfa state and manageUrl from fake Authentik`, and `mfa null, manageUrl null, emailEditable false without the API`.
+  - `mfa state and manageUrl from fake Authentik`, and `mfa null and manageUrl null without the API`.
   - `name change writes Authentik, users and the owner profile`.
   - `Authentik 400 on name change leaves the local name`.
   - `avatar is mirrored to the owner profile`.
-  - `email change needs recent auth (401 reauth_required) and then writes Authentik and users`.
-  - `email change without the API answers 501`.
   - `a non-owner profile gets 403 owner_required`.
   - `audit meta of account.profile has fields only`.
   - Authentik tests:
     - `akUpdateUser PATCHes the user pk with the bearer header`
     - `akSetActive maps 404 to not_found`
     - `token never in thrown messages`
-- [ ] Run them and see them fail. Implement. Run them and see them pass. Commit `feat(account): profile, e-mail and 2FA state`.
+- [ ] Run them and see them fail. Implement. Run them and see them pass. Commit `feat(account): profile and 2FA state`.
 
 ### Task 3: Download my data
 
@@ -341,10 +335,7 @@ create index users_deletion_at on users(deletion_at) where deletion_at is not nu
 **Behaviour:**
 - **Profile:**
   - Name field and avatar picker (the `AVATARS` swatches used by the profile editor), saved with PATCH.
-  - E-mail:
-    - When `emailEditable`: an "Change e-mail" form.
-    - When `reauthUntil` is null or past: the form first shows "Confirm it's you" → `startReauth('/me/account#email')`. A 401 `reauth_required` on submit does the same.
-    - When not editable: read-only, with the manage link.
+  - E-mail: read-only, with the manage link (the change comes in phase 3).
 - **Security:**
   - 2FA chips: authenticator app / passkey / recovery codes, each "on/off". `mfa === null` → "Not available".
   - The manage link "Manage on the sign-in page" (`manageUrl`, `target=_blank rel=noopener`), hidden when null.
@@ -357,7 +348,6 @@ create index users_deletion_at on users(deletion_at) where deletion_at is not nu
 - [ ] e2e tests:
   - `account page shows profile, 2FA state and sessions`.
   - `saving the name sends PATCH and updates the header`.
-  - `e-mail change without recent auth starts re-authentication`: the navigation to `/auth/reauth?next=…` is intercepted.
   - `sign out all others shows the count`.
   - `manage link hidden when manageUrl is null`.
   - `mfa null shows not available`.
