@@ -10,6 +10,7 @@ import { compressJson } from './compress.js';
 import { newTimingStore, serverTimingHeader, timedDb, timedKv, timingStorage, timingSummary, type TimingStore } from './timing.js';
 import { metricsPlugin } from './metrics.js';
 import { recordError } from './errorlog.js';
+import { HttpError } from './users.js';
 import { adminRoutes, inviteRoutes } from './routes/admin.js';
 import { adminUserRoutes } from './routes/adminUsers.js';
 import { authRoutes } from './routes/auth.js';
@@ -86,6 +87,11 @@ export async function buildApp(ctx: Ctx, extra: Extra = {}): Promise<FastifyInst
     if (err instanceof ZodError) return reply.code(400).send({ error: 'bad_request', issues: err.issues.map((i) => i.path.join('.')) });
     const status = (err as { statusCode?: number }).statusCode;
     if (status && status < 500) return reply.code(status).send({ error: (err as Error).message });
+    // a business error with a 5xx status (e.g. 503 authentik_unavailable): its message is a code, safe to answer
+    if (err instanceof HttpError) {
+      req.log.warn({ status: err.statusCode, error: err.message }, 'upstream error');
+      return reply.code(err.statusCode).send({ error: err.message });
+    }
     req.log.error({ err }, 'unhandled error');
     if (process.env.DEBUG_TEST) console.error(err);
     return reply.code(500).send({ error: 'internal' });

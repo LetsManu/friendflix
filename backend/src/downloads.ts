@@ -431,6 +431,12 @@ export async function listLicenses(ctx: Ctx, userId: string, deviceId: string, p
   return viewLicenses(ctx, r.rows);
 }
 
+/** Active licenses of an account on all devices and profiles (admin user detail), oldest first. */
+export async function userLicenses(ctx: Ctx, userId: string): Promise<LicenseView[]> {
+  const r = await ctx.db.query<LicenseRow>(`select * from downloads where user_id=$1 and ${ACTIVE} order by created_at, id`, [userId]);
+  return viewLicenses(ctx, r.rows);
+}
+
 export async function getLicense(ctx: Ctx, userId: string, deviceId: string, profileId: string, id: string): Promise<LicenseView | null> {
   const r = await ctx.db.query<LicenseRow>('select * from downloads where id=$1 and user_id=$2 and device_id=$3 and profile_id=$4', [id, userId, deviceId, profileId]);
   if (!r.rows[0]) return null;

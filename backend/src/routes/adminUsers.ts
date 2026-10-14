@@ -1,16 +1,23 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
-/** Admin user management: the account list, single and bulk account actions (role, lock, access, sessions), the approval queue, invites. */
+/** Admin user management: the account list, single and bulk account actions (role, lock, access, sessions), the user detail page, the approval queue, invites. */
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { audit } from '../audit.js';
 import { Where, likePattern, orderBy, pageQuery } from '../adminlist.js';
+import { akActions, akMfaState, akSendMfaSetup, akSendRecovery } from '../authentik.js';
 import type { Ctx } from '../ctx.js';
-import { revokeSessions } from '../devices.js';
+import { forgetUserAuth, revokeSessions } from '../devices.js';
+import { userLicenses } from '../downloads.js';
 import { createInvite, deleteAuthentikInvitation } from '../invites.js';
-import { INVITABLE_ROLES } from '../roles.js';
-import { requireAdmin } from '../session.js';
-import { HttpError, assertNotLastAdmin, getUserById, getUserBySub, lockUser, provisionUser, setAccessUntil, setRole, unlockUser } from '../users.js';
+import { getUserLimits, invalidateLimits, setUserLimits } from '../limits.js';
+import { accountJellyfinIds, getProfile, jfUserFor, listProfiles, publicProfile } from '../profiles.js';
+import { roleLimitFor } from '../requestlimit.js';
+import { INVITABLE_ROLES, effectiveRole } from '../roles.js';
+import { ensureSeerrUser } from '../seerr/service.js';
+import { requireAdmin, type Session } from '../session.js';
+import type { ProfileRow, UserRow } from '../types.js';
+import { HttpError, applyRole, assertNotLastAdmin, getUserById, getUserBySub, lockUser, provisionUser, setAccessUntil, setRole, unlockUser } from '../users.js';
 import { pendingNoticeKey } from './auth.js';
 
 const uuid = z.guid();
@@ -88,6 +95,41 @@ export async function bulkUsers(ctx: Ctx, actor: string, b: BulkBody): Promise<{
     done++;
   }
   return { done };
+}
+
+/** Per-user limit overrides: the bounds of the role settings (roles.ts / PUT /api/admin/roles); null = as role, omitted = unchanged. */
+export const limitsBody = z.object({
+  maxStreams: z.number().int().min(1).max(50).nullable(),
+  remoteBitrate: z.number().int().min(300_000).max(200_000_000).nullable(),
+  maxDownloads: z.number().int().min(0).max(200).nullable(),
+  downloadMaxHeight: z.number().int().min(0).max(2160).nullable(),
+  requestsPerMonth: z.number().int().min(0).max(100).nullable(),
+}).partial().strict();
+
+const hours = (seconds: string | number) => Math.round(Number(seconds) / 360) / 10;
+
+/** Live sessions of an account: count per device, and per profile the last activity (no profileId = the owner profile). */
+async function liveSessions(ctx: Ctx, userId: string) {
+  const perDevice = new Map<string, number>();
+  const profileSeen = new Map<string, number>();
+  for (const k of await ctx.kv.keys('sess:')) {
+    const raw = await ctx.kv.get(k);
+    if (!raw) continue;
+    const s = JSON.parse(raw) as Session;
+    if (s.userId !== userId) continue;
+    if (s.deviceId) perDevice.set(s.deviceId, (perDevice.get(s.deviceId) ?? 0) + 1);
+    const p = s.profileId ?? userId;
+    if (s.touchedAt) profileSeen.set(p, Math.max(profileSeen.get(p) ?? 0, s.touchedAt));
+  }
+  return { perDevice, profileSeen };
+}
+
+/** Re-applies the role policy (with the user's overrides) to every media server identity of the account. Returns the failures. */
+async function reapplyAccount(ctx: Ctx, user: UserRow): Promise<{ identities: number; failed: number }> {
+  const ids = await accountJellyfinIds(ctx, user.id);
+  let failed = 0;
+  for (const jid of ids) await applyRole(ctx, jid, user.role, user.disabled, { userId: user.id, hidden: jid !== user.jellyfin_user_id }).catch(() => { failed++; });
+  return { identities: ids.length, failed };
 }
 
 /** Runs account changes one at a time, so the last-admin guard and the change it guards cannot interleave with another request. */
@@ -188,6 +230,187 @@ export function adminUserRoutes(app: FastifyInstance, ctx: Ctx) {
     const n = await revokeSessions(ctx, id);
     await audit(ctx, req.user!.id, 'user.revoke_sessions', id, { sessions: n });
     return { revoked: n };
+  });
+
+  // ---- user detail page ----
+  /** The account or a 404 HttpError. */
+  const userOr404 = async (id: string) => {
+    const user = await getUserById(ctx, id);
+    if (!user) throw new HttpError(404, 'not_found');
+    return user;
+  };
+  const idParam = (req: { params: unknown }) => uuid.parse((req.params as { id: string }).id);
+
+  // never answers credentials (jellyfin_pw_enc, PIN hashes, tokens) or the Authentik sub
+  app.get('/api/admin/users/:id', admin, async (req) => {
+    const id = idParam(req);
+    const user = await userOr404(id);
+    const extra = (await ctx.db.query<{ locked_reason: string | null; access_until: Date | null; avatar: string | null; last_active: Date | null }>(
+      'select locked_reason, access_until, avatar, (select max(last_seen) from devices d where d.user_id = u.id) last_active from users u where id=$1', [id])).rows[0]!;
+    const [watch, streams, counts, profiles, devices, licenses, live, mfa, jellyfinOk, requestsOk] = await Promise.all([
+      ctx.db.query<{ d7: string; d30: string; total: string }>(
+        `select coalesce(sum(seconds) filter (where day > current_date - 7), 0) d7, coalesce(sum(seconds) filter (where day > current_date - 30), 0) d30,
+                coalesce(sum(seconds), 0) total from play_seconds where user_id=$1`, [id]),
+      ctx.db.query<{ d7: string; d30: string; total: string }>(
+        `select coalesce(sum(streams) filter (where day > current_date - 7), 0) d7, coalesce(sum(streams) filter (where day > current_date - 30), 0) d30,
+                coalesce(sum(streams), 0) total from play_daily where user_id=$1`, [id]),
+      ctx.db.query<{ downloads: string; requests: string }>(
+        "select (select count(*) from downloads where user_id=$1) downloads, (select count(*) from seerr_requests where user_id=$1 and source='user') requests", [id]),
+      listProfiles(ctx, id),
+      ctx.db.query<{ id: string; name: string; last_seen: Date; approved: boolean }>('select device_id id, label name, last_seen, approved from devices where user_id=$1 order by last_seen desc, device_id', [id]),
+      userLicenses(ctx, id),
+      liveSessions(ctx, id),
+      akMfaState(ctx, user.authentik_sub).catch(() => null), // Authentik down: shown like "no Authentik API"
+      ctx.jf.views(user).then(() => true, () => false), // the account's own media server login works
+      user.seerr_user_id ? ctx.seerr.getUser(user.seerr_user_id).then(() => true, () => false) : Promise.resolve(false),
+    ]);
+    const w = watch.rows[0]!, st = streams.rows[0]!, c = counts.rows[0]!;
+    const seen = (ms: number | undefined) => (ms ? new Date(ms).toISOString() : null);
+    return {
+      user: {
+        id: user.id, name: user.name, email: user.email, role: user.role, disabled: user.disabled, lockedReason: extra.locked_reason,
+        accessUntil: extra.access_until, createdAt: user.created_at, lastActive: extra.last_active, avatar: extra.avatar,
+      },
+      mfa,
+      /** which Authentik actions the page may offer */
+      authentik: akActions(ctx),
+      totals: {
+        d7: { hours: hours(w.d7), streams: Number(st.d7) },
+        d30: { hours: hours(w.d30), streams: Number(st.d30) },
+        all: { hours: hours(w.total), streams: Number(st.total) },
+        downloads: Number(c.downloads),
+        requests: Number(c.requests),
+      },
+      linked: { jellyfin: { ok: jellyfinOk, username: user.jellyfin_username }, requests: { ok: requestsOk, id: user.seerr_user_id } },
+      profiles: profiles.map((p) => ({
+        id: p.id, name: p.name, kids: Boolean(p.kids), maxRating: p.kids ? p.kids_max_rating : null, avatar: p.avatar,
+        lastUsed: seen(live.profileSeen.get(p.id)), isOwner: p.is_owner, hasPin: Boolean(p.pin_hash),
+      })),
+      devices: devices.rows.map((d) => ({ id: d.id, name: d.name, lastSeen: d.last_seen, approved: d.approved, sessions: live.perDevice.get(d.id) ?? 0 })),
+      licenses,
+    };
+  });
+
+  // recently watched titles of every profile (media server history as that profile), newest first; viewing is audited.
+  // A profile whose identity fails (bad credentials, server error) is listed in `skipped` instead of failing the call.
+  app.get('/api/admin/users/:id/activity', admin, async (req) => {
+    const id = idParam(req);
+    const { limit } = z.object({ limit: z.coerce.number().int().min(1).max(200).default(50) }).parse(req.query);
+    const user = await userOr404(id);
+    const profiles = await listProfiles(ctx, id);
+    await audit(ctx, req.user!.id, 'user.activity_viewed', id, { profiles: profiles.length });
+    const lists = await Promise.all(profiles.map((p: ProfileRow) => ctx.jf.history(jfUserFor(user, p), { limit })
+      .then((items) => items.map((i) => ({ ...i, profile: { id: p.id, name: p.name } })), () => null)));
+    const ts = (i: { lastPlayedDate?: string }) => (i.lastPlayedDate ? Date.parse(i.lastPlayedDate) || 0 : 0);
+    const items = lists.flatMap((l) => l ?? []).sort((a, b) => ts(b) - ts(a)).slice(0, limit);
+    return { items, skipped: profiles.filter((_, i) => lists[i] === null).map((p) => p.id) };
+  });
+
+  // audit entries where the user is the target or the actor, newest first (same row shape as /api/admin/audit)
+  app.get('/api/admin/users/:id/audit', admin, async (req) => {
+    const id = idParam(req);
+    const p = z.object({ limit: z.coerce.number().int().min(1).max(200).default(50), offset: z.coerce.number().int().min(0).default(0) }).parse(req.query);
+    await userOr404(id);
+    const where = 'where a.target = $1::text or a.actor = $1::uuid';
+    const total = Number((await ctx.db.query<{ c: string }>(`select count(*) c from audit_log a ${where}`, [id])).rows[0]!.c);
+    const r = await ctx.db.query(
+      `select a.id, a.at, a.action, a.target, a.meta, a.actor actor_id, u.name actor, coalesce(tu.name, tl.name) target_name
+         from audit_log a left join users u on u.id = a.actor left join users tu on tu.id::text = a.target left join lists tl on tl.id::text = a.target
+        ${where} order by a.id desc limit $2 offset $3`, [id, p.limit, p.offset]);
+    return { entries: r.rows, total };
+  });
+
+  // the overrides (null = as role) and the role values they replace (the page shows them as placeholders)
+  app.get('/api/admin/users/:id/limits', admin, async (req) => {
+    const user = await userOr404(idParam(req));
+    const [limits, role, requests] = await Promise.all([getUserLimits(ctx, user.id), effectiveRole(ctx, user.role), roleLimitFor(ctx, user.role)]);
+    return {
+      limits,
+      role: { maxStreams: role?.maxStreams ?? null, remoteBitrate: role?.remoteMaxBitrate ?? null, maxDownloads: role?.maxDownloads ?? null, downloadMaxHeight: role?.downloadMaxHeight ?? null, requestsPerMonth: requests },
+    };
+  });
+
+  // partial update: omitted fields stay, null goes back to the role. The media server policies follow (MaxActiveSessions),
+  // the gateway forgets the memoised identity of the user's sessions (they stay signed in). 502 `jellyfin` when a policy failed.
+  app.put('/api/admin/users/:id/limits', admin, async (req, reply) => {
+    const id = idParam(req);
+    const b = limitsBody.parse(req.body);
+    return serial(async () => {
+      const user = await userOr404(id);
+      const from = await getUserLimits(ctx, id);
+      const to = { ...from, ...b };
+      if (JSON.stringify(from) !== JSON.stringify(to)) {
+        await setUserLimits(ctx, id, to);
+        await audit(ctx, req.user!.id, 'user.limits', id, { from, to });
+      }
+      invalidateLimits(id);
+      const { failed } = await reapplyAccount(ctx, user);
+      await forgetUserAuth(ctx, id);
+      if (failed) return reply.code(502).send({ error: 'jellyfin' });
+      return { limits: to };
+    });
+  });
+
+  // "Repair link": the role policy again on every media server identity, and the request-service user mapped again
+  app.post('/api/admin/users/:id/repair', admin, async (req) => {
+    const id = idParam(req);
+    return serial(async () => {
+      const user = await userOr404(id);
+      const jellyfin = await reapplyAccount(ctx, user);
+      const before = user.seerr_user_id;
+      const requestsOk = await ensureSeerrUser(ctx, user).then(() => true, () => false);
+      await audit(ctx, req.user!.id, 'user.repair', id, { jellyfin, requests: { ok: requestsOk, from: before, to: user.seerr_user_id } });
+      return { ok: !jellyfin.failed && requestsOk, jellyfin, requests: { ok: requestsOk, id: user.seerr_user_id } };
+    });
+  });
+
+  // sign out the sessions of one device (its offline licences, push subscriptions and cast tokens go too)
+  app.post('/api/admin/users/:id/sessions/:deviceId/revoke', admin, async (req) => {
+    const { id, deviceId } = z.object({ id: uuid, deviceId: z.string().min(1).max(100) }).parse(req.params);
+    const n = await revokeSessions(ctx, id, deviceId);
+    await audit(ctx, req.user!.id, 'user.revoke_sessions', id, { device: deviceId, sessions: n });
+    return { revoked: n };
+  });
+
+  // Authentik e-mails: 503 authentik_unavailable without the API, see authentik.ts for the other codes
+  app.post('/api/admin/users/:id/recovery', admin, async (req) => {
+    const user = await userOr404(idParam(req));
+    await akSendRecovery(ctx, user.authentik_sub);
+    await audit(ctx, req.user!.id, 'user.recovery_sent', user.id);
+    return { ok: true };
+  });
+
+  app.post('/api/admin/users/:id/mfa-setup', admin, async (req) => {
+    const user = await userOr404(idParam(req));
+    await akSendMfaSetup(ctx, user.authentik_sub); // 501 not_supported: Authentik has no API for it
+    await audit(ctx, req.user!.id, 'user.mfa_setup_sent', user.id);
+    return { ok: true };
+  });
+
+  // rename a profile and/or clear its PIN. The owner profile's name follows the account name (from the sign-in), so it is not renamed here.
+  app.patch('/api/admin/users/:id/profiles/:pid', admin, async (req, reply) => {
+    const { id, pid } = z.object({ id: uuid, pid: uuid }).parse(req.params);
+    const b = z.object({ name: z.string().trim().min(1).max(20).optional(), resetPin: z.literal(true).optional() }).strict()
+      .refine((x) => x.name !== undefined || x.resetPin, { path: ['name'] }).parse(req.body);
+    const p = await getProfile(ctx, id, pid);
+    if (!p) return reply.code(404).send({ error: 'not_found' });
+    if (b.name !== undefined && p.is_owner) return reply.code(400).send({ error: 'owner_name_from_account' });
+    if (b.name && (await ctx.db.query('select 1 from profiles where user_id=$1 and lower(name)=lower($2) and id<>$3', [id, b.name, pid])).rowCount) {
+      return reply.code(409).send({ error: 'name_taken' });
+    }
+    let u: ProfileRow;
+    try {
+      u = (await ctx.db.query<ProfileRow>('update profiles set name=coalesce($2, name), pin_hash=case when $3 then null else pin_hash end where id=$1 returning *',
+        [pid, b.name ?? null, Boolean(b.resetPin)])).rows[0]!;
+    } catch (e) {
+      if ((e as { code?: string }).code === '23505') return reply.code(409).send({ error: 'name_taken' });
+      throw e;
+    }
+    if (b.resetPin) await ctx.kv.del(`pinfail:${pid}`);
+    await audit(ctx, req.user!.id, 'profile.admin_update', id, {
+      profile: pid, from: { name: p.name, hasPin: Boolean(p.pin_hash) }, to: { name: u.name, hasPin: Boolean(u.pin_hash) },
+    });
+    return { profile: { ...publicProfile(u), hasPin: Boolean(u.pin_hash) } };
   });
 
   // ---- invites: multi-use (maxUses), optional access days for the accounts they create ----

@@ -31,7 +31,7 @@ export function authentikConfigProblem(cfg: Ctx['cfg']): string[] | null {
   return missing.length && missing.length < keys.length ? [...missing] : null;
 }
 
-const akBase = (url: string) => url.replace(/\/$/, '');
+export const akBase = (url: string) => url.replace(/\/$/, '');
 
 /**
  * Where the invite page's "Konto anlegen" button leads: the Authentik enrollment flow with the
