@@ -12,7 +12,7 @@ import { effectiveLimits } from '../limits.js';
 import { DEFAULT_ROLES } from '../roles.js';
 import { deviceHasSession, registerDevice } from '../devices.js';
 import { deletePushSubscriptions } from '../push.js';
-import { claimInvite, deleteAuthentikInvitation, enrollFlowUrl, lookupInvite, releaseInvite, type InviteRow } from '../invites.js';
+import { claimInvite, enrollFlowUrl, inviteAccessUntil, lookupInvite, recordInviteUse, releaseInvite, type InviteRow } from '../invites.js';
 import { accountJellyfinIds, deviceKidsProfile, listProfiles, publicProfile } from '../profiles.js';
 import { DEVICE_COOKIE } from '../devices.js';
 import { freshAuth, RESET_PIN_MAX_AGE, type OidcClaims } from '../oidc.js';
@@ -145,16 +145,13 @@ export function authRoutes(app: FastifyInstance, ctx: Ctx) {
           }
         }
         try {
-          user = await provisionUser(ctx, claims, isAdmin ? 'admin' : claimed!.role);
+          user = await provisionUser(ctx, claims, isAdmin ? 'admin' : claimed!.role, claimed ? inviteAccessUntil(claimed) : null);
         } catch (e) {
           if (claimed) await releaseInvite(ctx, claimed.id); // let the person retry
           throw e;
         }
         await ctx.db.query('delete from approval_requests where authentik_sub=$1', [claims.sub]); // an invite or the admin group overtook the request
-        if (claimed) {
-          await ctx.db.query('update invites set used_by=$1 where id=$2', [user.id, claimed.id]);
-          void deleteAuthentikInvitation(ctx, claimed.authentik_invite, req.log); // redeemed: the enrollment link must not create more accounts
-        }
+        if (claimed) await recordInviteUse(ctx, claimed, user.id, req.log); // used up: the enrollment link must not create more accounts
       } else if (user.disabled) {
         return reply.code(403).send({ error: 'disabled' });
       } else if (isAdmin && user.role !== 'admin') {

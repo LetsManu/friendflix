@@ -39,8 +39,9 @@ export async function applyRole(ctx: Ctx, jellyfinUserId: string, role: string, 
 /**
  * Creates the 1:1 mapping Authentik account = portal user = Jellyfin account:
  * a Jellyfin user with a random password (stored AES-GCM encrypted), role policy applied.
+ * `accessUntil`: the date the new account's access ends (invite access days, approval), null/omitted = no end.
  */
-export async function provisionUser(ctx: Ctx, claims: OidcClaims, role: string): Promise<UserRow> {
+export async function provisionUser(ctx: Ctx, claims: OidcClaims, role: string, accessUntil: Date | null = null): Promise<UserRow> {
   const base = safeName(claims.name ?? claims.email?.split('@')[0] ?? 'freund');
   const password = randomPassword();
   let jf: { id: string } | undefined;
@@ -62,9 +63,9 @@ export async function provisionUser(ctx: Ctx, claims: OidcClaims, role: string):
     try {
       await c.query('begin');
       const r = await c.query<UserRow>(
-        `insert into users(id, authentik_sub, email, name, role, jellyfin_user_id, jellyfin_username, jellyfin_pw_enc)
-         values ($1,$2,$3,$4,$5,$6,$7,$8) returning *`,
-        [id, claims.sub, claims.email ?? null, claims.name ?? jfName, role, jf!.id, jfName, encrypt(ctx.encKey, password)],
+        `insert into users(id, authentik_sub, email, name, role, jellyfin_user_id, jellyfin_username, jellyfin_pw_enc, access_until)
+         values ($1,$2,$3,$4,$5,$6,$7,$8,$9) returning *`,
+        [id, claims.sub, claims.email ?? null, claims.name ?? jfName, role, jf!.id, jfName, encrypt(ctx.encKey, password), accessUntil],
       );
       row = r.rows[0]!;
       await c.query('insert into profiles(id, user_id, name, is_owner) values ($1,$1,$2,true)', [id, row.name.slice(0, 20).trim() || 'Profil']);
@@ -75,7 +76,7 @@ export async function provisionUser(ctx: Ctx, claims: OidcClaims, role: string):
     } finally {
       c.release();
     }
-    await audit(ctx, id, 'user.provisioned', id, { role, jellyfin: jfName });
+    await audit(ctx, id, 'user.provisioned', id, { role, jellyfin: jfName, ...(accessUntil ? { accessUntil: accessUntil.toISOString() } : {}) });
     return row;
   } catch (e) {
     await ctx.jf.admin.deleteIdentity(jf!.id).catch(() => undefined); // roll back the orphaned Jellyfin account

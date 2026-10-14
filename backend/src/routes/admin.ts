@@ -7,7 +7,6 @@ import { Where, likePattern, orderBy, pageQuery } from '../adminlist.js';
 import type { Ctx } from '../ctx.js';
 import { revokeSessions } from '../devices.js';
 import { adminOverview, revokeLicense } from '../downloads.js';
-import { createInvite, deleteAuthentikInvitation } from '../invites.js';
 import { checkState, startPlaybackCheck } from '../healthcheck.js';
 import { ERROR_SOURCES, listErrors } from '../errorlog.js';
 import { freshSnapshot } from '../health.js';
@@ -35,7 +34,7 @@ export function adminRoutes(app: FastifyInstance, ctx: Ctx) {
     return {
       users: await n('select count(*) n from users where not disabled'),
       pendingDevices: await n('select count(*) n from devices where not approved'),
-      openInvites: await n('select count(*) n from invites where used_at is null and expires_at > now()'),
+      openInvites: await n('select count(*) n from invites where uses < max_uses and expires_at > now()'),
       pendingPolls: await n("select count(*) n from polls where status='needs_approval'"),
       activeStreams: (await listLive(ctx)).length,
       partyRooms: parties.rooms.size,
@@ -58,7 +57,7 @@ export function adminRoutes(app: FastifyInstance, ctx: Ctx) {
     const [users, devices, invites, polls, previews, downloads, check, seerr, jellyfin, live] = await Promise.all([
       one<{ total: string; locked: string }>('select count(*) total, count(*) filter (where disabled) locked from users'),
       one<{ n: string }>('select count(*) n from devices where not approved'),
-      one<{ n: string }>('select count(*) n from invites where used_at is null and expires_at > now()'),
+      one<{ n: string }>('select count(*) n from invites where uses < max_uses and expires_at > now()'),
       one<{ n: string }>("select count(*) n from polls where status='needs_approval'"),
       one<{ failed: string; ok: string; bytes: string }>("select count(*) filter (where status='failed') failed, count(*) filter (where status='ok') ok, coalesce(sum(bytes) filter (where status='ok'),0)::text bytes from preview_clips"),
       one<{ bytes: string }>("select coalesce(sum(bytes),0)::text bytes from download_jobs where status='ready'"),
@@ -283,46 +282,6 @@ export function adminRoutes(app: FastifyInstance, ctx: Ctx) {
     const id = uuid.parse((req.params as { id: string }).id);
     if (!(await revokeLicense(ctx, id))) return reply.code(404).send({ error: 'not_found' });
     await audit(ctx, req.user!.id, 'download.revoke', id);
-    return { ok: true };
-  });
-
-  app.post('/api/admin/invites', admin, async (req) => {
-    const b = z.object({
-      role: z.enum(INVITABLE_ROLES),
-      ttlHours: z.number().int().min(1).max(24 * 14).default(48),
-      note: z.string().max(100).optional(),
-      /** false: the person already has an Authentik account, skip enrollment */
-      enroll: z.boolean().default(true),
-    }).parse(req.body);
-    const inv = await createInvite(ctx, req.user!.id, b, req.log);
-    await audit(ctx, req.user!.id, 'invite.create', inv.id, { role: b.role, authentik: inv.authentik });
-    return { id: inv.id, link: inv.link, enrollUrl: inv.enrollUrl, authentik: inv.authentik, expiresAt: inv.expiresAt }; // token is shown exactly once
-  });
-
-  // ?q= (note/role/redeemer) &status=open|used|expired &sort=role|note|validUntil|status|createdAt &dir= &limit= &offset=; without params: the newest 100
-  app.get('/api/admin/invites', admin, async (req) => {
-    const p = pageQuery.extend({ status: z.enum(['open', 'used', 'expired']).optional(), role: z.string().max(40).optional() }).parse(req.query);
-    const w = new Where();
-    if (p.q) { const m = w.param(likePattern(p.q)); w.add(`(coalesce(i.note,'') ilike ${m} or i.role ilike ${m} or coalesce(u.name,'') ilike ${m})`); }
-    if (p.role) w.add('i.role = ?', p.role);
-    if (p.status === 'used') w.add('i.used_at is not null');
-    else if (p.status === 'expired') w.add('i.used_at is null and i.expires_at < now()');
-    else if (p.status === 'open') w.add('i.used_at is null and i.expires_at >= now()');
-    const order = orderBy({ role: 'i.role', note: "lower(coalesce(i.note,''))", validUntil: 'i.expires_at', createdAt: 'i.created_at', status: "(case when i.used_at is not null then 2 when i.expires_at < now() then 1 else 0 end)" }, p.sort, p.dir, 'i.created_at desc, i.id');
-    const from = 'from invites i left join users u on u.id = i.used_by';
-    const total = Number((await ctx.db.query<{ c: string }>(`select count(*) c ${from} ${w.sql}`, w.params)).rows[0]!.c);
-    const r = await ctx.db.query(
-      `select i.id, i.role, i.note, i.created_at, i.expires_at, i.used_at, u.name used_by_name ${from} ${w.sql} ${order} limit ${p.limit ?? 100} offset ${p.offset ?? 0}`,
-      w.params,
-    );
-    return { invites: r.rows, total };
-  });
-
-  app.delete('/api/admin/invites/:id', admin, async (req) => {
-    const id = uuid.parse((req.params as { id: string }).id);
-    const r = await ctx.db.query<{ authentik_invite: string | null }>('delete from invites where id=$1 and used_at is null returning authentik_invite', [id]);
-    await deleteAuthentikInvitation(ctx, r.rows[0]?.authentik_invite, req.log);
-    await audit(ctx, req.user!.id, 'invite.revoke', id);
     return { ok: true };
   });
 

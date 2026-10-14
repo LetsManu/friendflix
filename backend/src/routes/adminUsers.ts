@@ -1,12 +1,13 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
-/** Admin user management: the account list, single and bulk account actions (role, lock, access, sessions), the approval queue. */
+/** Admin user management: the account list, single and bulk account actions (role, lock, access, sessions), the approval queue, invites. */
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { audit } from '../audit.js';
 import { Where, likePattern, orderBy, pageQuery } from '../adminlist.js';
 import type { Ctx } from '../ctx.js';
 import { revokeSessions } from '../devices.js';
+import { createInvite, deleteAuthentikInvitation } from '../invites.js';
 import { INVITABLE_ROLES } from '../roles.js';
 import { requireAdmin } from '../session.js';
 import { HttpError, assertNotLastAdmin, getUserById, getUserBySub, lockUser, provisionUser, setAccessUntil, setRole, unlockUser } from '../users.js';
@@ -32,8 +33,7 @@ export async function approveRequest(ctx: Ctx, actor: string, id: string, role: 
     await ctx.db.query('delete from approval_requests where id=$1', [id]);
     throw new HttpError(409, 'user_exists');
   }
-  const user = await provisionUser(ctx, { sub: req.authentik_sub, email: req.email ?? undefined, name: req.name, groups: [] }, role);
-  if (until) await setAccessUntil(ctx, actor, user.id, until);
+  const user = await provisionUser(ctx, { sub: req.authentik_sub, email: req.email ?? undefined, name: req.name, groups: [] }, role, until);
   await ctx.db.query('delete from approval_requests where id=$1', [id]);
   await audit(ctx, actor, 'user.approved', user.id, { from: 'pending', to: role, accessUntil: until?.toISOString() ?? null, request: id });
   await ctx.kv.set(pendingNoticeKey(id), JSON.stringify({ sub: req.authentik_sub, email: req.email }), PENDING_NOTICE_TTL);
@@ -188,5 +188,71 @@ export function adminUserRoutes(app: FastifyInstance, ctx: Ctx) {
     const n = await revokeSessions(ctx, id);
     await audit(ctx, req.user!.id, 'user.revoke_sessions', id, { sessions: n });
     return { revoked: n };
+  });
+
+  // ---- invites: multi-use (maxUses), optional access days for the accounts they create ----
+  app.post('/api/admin/invites', admin, async (req) => {
+    const b = z.object({
+      role: z.enum(INVITABLE_ROLES),
+      ttlHours: z.number().int().min(1).max(24 * 14).default(48),
+      note: z.string().max(100).optional(),
+      /** false: the person already has an Authentik account, skip enrollment */
+      enroll: z.boolean().default(true),
+      /** how many accounts the invite may create */
+      maxUses: z.number().int().min(1).max(50).default(1),
+      /** access_until of each new account = now + accessDays; null = no end */
+      accessDays: z.number().int().min(1).max(3650).nullable().default(null),
+    }).parse(req.body);
+    const inv = await createInvite(ctx, req.user!.id, b, req.log);
+    await audit(ctx, req.user!.id, 'invite.create', inv.id, { role: b.role, authentik: inv.authentik, maxUses: b.maxUses, accessDays: b.accessDays });
+    // token is shown exactly once
+    return { id: inv.id, link: inv.link, enrollUrl: inv.enrollUrl, authentik: inv.authentik, expiresAt: inv.expiresAt, uses: inv.uses, maxUses: inv.maxUses };
+  });
+
+  // ?q= (note/role/first redeemer) &status=open|used|expired &sort=role|note|validUntil|status|createdAt &dir= &limit= &offset=; without params: the newest 100
+  // used = all uses taken; used_by_name names the first account (see /uses for all of them)
+  app.get('/api/admin/invites', admin, async (req) => {
+    const p = pageQuery.extend({ status: z.enum(['open', 'used', 'expired']).optional(), role: z.string().max(40).optional() }).parse(req.query);
+    const w = new Where();
+    if (p.q) { const m = w.param(likePattern(p.q)); w.add(`(coalesce(i.note,'') ilike ${m} or i.role ilike ${m} or coalesce(u.name,'') ilike ${m})`); }
+    if (p.role) w.add('i.role = ?', p.role);
+    if (p.status === 'used') w.add('i.uses >= i.max_uses');
+    else if (p.status === 'expired') w.add('i.uses < i.max_uses and i.expires_at < now()');
+    else if (p.status === 'open') w.add('i.uses < i.max_uses and i.expires_at >= now()');
+    const order = orderBy({ role: 'i.role', note: "lower(coalesce(i.note,''))", validUntil: 'i.expires_at', createdAt: 'i.created_at', status: "(case when i.uses >= i.max_uses then 2 when i.expires_at < now() then 1 else 0 end)" }, p.sort, p.dir, 'i.created_at desc, i.id');
+    const from = 'from invites i left join users u on u.id = i.used_by';
+    const total = Number((await ctx.db.query<{ c: string }>(`select count(*) c ${from} ${w.sql}`, w.params)).rows[0]!.c);
+    const r = await ctx.db.query(
+      `select i.id, i.role, i.note, i.created_at, i.expires_at, i.used_at, u.name used_by_name, i.uses, i.max_uses, i.access_days ${from} ${w.sql} ${order} limit ${p.limit ?? 100} offset ${p.offset ?? 0}`,
+      w.params,
+    );
+    return { invites: r.rows, total };
+  });
+
+  // the accounts created from an invite, oldest first
+  app.get('/api/admin/invites/:id/uses', admin, async (req, reply) => {
+    const id = uuid.safeParse((req.params as { id: string }).id);
+    if (!id.success || !(await ctx.db.query('select 1 from invites where id=$1', [id.data])).rowCount) return reply.code(404).send({ error: 'not_found' });
+    const r = await ctx.db.query(
+      'select u.id, u.name, u.email, u.role, u.disabled, iu.at from invite_uses iu join users u on u.id = iu.user_id where iu.invite_id=$1 order by iu.at, u.id',
+      [id.data],
+    );
+    return { uses: r.rows };
+  });
+
+  // revoke: an unused invite is deleted; a partly used one is closed (max_uses = uses) so the accounts it made stay listed
+  app.delete('/api/admin/invites/:id', admin, async (req) => {
+    const id = uuid.parse((req.params as { id: string }).id);
+    const r = await ctx.db.query<{ authentik_invite: string | null; uses: number; max_uses: number }>(
+      `with d as (delete from invites where id=$1 and uses = 0 returning authentik_invite, uses, max_uses),
+            c as (update invites n set max_uses = n.uses from invites o where n.id=$1 and o.id = n.id and n.uses > 0 and n.uses < n.max_uses
+                  returning n.authentik_invite, n.uses, o.max_uses)
+       select * from d union all select * from c`, [id]);
+    const row = r.rows[0];
+    if (row) {
+      await deleteAuthentikInvitation(ctx, row.authentik_invite, req.log);
+      await audit(ctx, req.user!.id, 'invite.revoke', id, { from: { uses: row.uses, maxUses: row.max_uses }, to: row.uses ? { uses: row.uses, maxUses: row.uses } : null });
+    }
+    return { ok: true };
   });
 }
