@@ -249,6 +249,7 @@ async function pump(): Promise<void> {
   // subtitles and pictures of a download the service worker finished
   const extras = [...recs.values()].find((v) => due(v) && v.state === 'done' && v.extrasPending && srv.has(v.id));
   if (extras) { startWorker(extras, true); return; }
+  if ([...recs.values()].some((v) => v.state === 'downloading' && v.via === 'bg')) return; // one download at a time, also when the service worker started it
   const next = [...recs.values()].find((v) => due(v) && pumpable(v.state, !!srv.get(v.id)?.ready));
   if (!next) return;
   running = next.id; // hold the slot over the awaits below
@@ -257,7 +258,9 @@ async function pump(): Promise<void> {
   const info = await storageEstimate();
   const size = next.bytesTotal || estimateBytes(next.quality, next.runtimeTicks);
   const need = viaBg ? 2 * size : size - next.bytesHave; // the finished Background Fetch is copied once into OPFS
-  running = '';
+  const gone = running !== next.id || recs.get(next.id) !== next || next.state !== 'queued'; // removed or paused meanwhile
+  if (running === next.id) running = '';
+  if (gone) return;
   if (!fitsQuota(need, info.quota, info.usage)) { await save(next, { state: 'error', msg: tr('account.downloads.msg.noSpace') }); return pump(); }
   if (viaBg) return startBackground(next);
   startWorker(next);
@@ -287,8 +290,8 @@ async function syncFromServiceWorker(id: string) {
   if (!r || !recs.has(id)) return;
   const v: DlView = { ...r };
   recs.set(id, v);
-  if (v.state === 'downloading' && v.via === 'bg' && (!running || running === id)) {
-    running = id; runningBg = true;
+  if (v.state === 'downloading' && v.via === 'bg') {
+    if (!running) { running = id; runningBg = true; } // the slot may be held by an extras run: follow the fetch anyway
     const follow = (n: number) => { const c = recs.get(id); if (c?.via === 'bg' && c.state === 'downloading') { c.bytesHave = n; publish(); } };
     if (await watchBg(id, follow)) { publish(); return; }
     await save(v, { state: 'queued', via: undefined, noBg: true, bytesHave: 0 });
@@ -300,9 +303,12 @@ async function syncFromServiceWorker(id: string) {
 
 /** stop whatever runs for this download: the worker or the Background Fetch (aborted before files are deleted) */
 async function stopRun(id: string) {
-  const bg = recs.get(id)?.via === 'bg';
+  const v = recs.get(id);
   if (running === id) { if (runningBg) { running = ''; runningBg = false; } else stopWorker(); }
-  if (bg) await abortBg(id);
+  if (v?.via !== 'bg') return;
+  // written before the abort: the service worker's abort/success handlers then leave the record alone
+  await save(v, { state: 'paused', bytesHave: 0, via: undefined });
+  await abortBg(id);
 }
 
 function startWorker(v: DlView, extrasOnly = false) {
@@ -375,10 +381,8 @@ async function releaseWake() { try { await wake?.release(); } catch { /* ignore 
 export function pause(id: string) {
   const v = recs.get(id);
   if (!v) return;
-  if (running === id && runningBg) {
-    running = ''; runningBg = false;
-    void abortBg(id).then(() => save(v, { state: 'paused', bytesHave: 0, via: undefined })).then(() => pump());
-  } else if (running === id) { userPause = id; worker?.postMessage({ cmd: 'pause' }); }
+  if (v.via === 'bg') void stopRun(id).then(() => pump());
+  else if (running === id && worker) { userPause = id; worker.postMessage({ cmd: 'pause' }); }
   else void save(v, { state: 'paused' });
 }
 export function resume(id: string) {

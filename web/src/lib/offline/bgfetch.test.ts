@@ -41,7 +41,7 @@ describe('bgfetch', () => {
 
   it('starts one fetch per download with title, icon and total; a second start reports running', async () => {
     expect(await startBg('a', '/media/d/a', { title: 'Film', total: 1000, icon: '/icon-192.png' })).toBe('started');
-    expect(fetched).toEqual([{ tag: 'ff-dl-a', urls: ['/media/d/a'], opts: { title: 'Film', icons: [{ src: '/icon-192.png', sizes: '192x192', type: 'image/png' }], downloadTotal: 1000 } }]);
+    expect(fetched).toEqual([{ tag: 'ff-dl-a', urls: ['/media/d/a'], opts: { title: 'Film', icons: [{ src: '/icon-192.png', sizes: '192x192', type: 'image/png' }], downloadTotal: 1100 } }]); // room for an estimated size
     expect(await startBg('a', '/media/d/a', { title: 'Film', total: 1000 })).toBe('running');
     expect(await startBg('b', '/media/d/b', { title: 'B', total: 0 })).toBe('started');
     expect(fetched[1]!.opts).toEqual({ title: 'B', icons: [] }); // unknown size: no downloadTotal

@@ -37,12 +37,14 @@ const bg = vi.hoisted(() => ({
   watchOk: true,
   log: [] as string[],
   msg: null as null | ((id: string) => void),
+  gate: null as null | Promise<void>,
+  onAbort: null as null | ((id: string) => string),
 }));
 vi.mock('./bgfetch', () => ({
-  bgSupported: async () => bg.supported,
+  bgSupported: async () => { if (bg.gate) await bg.gate; return bg.supported; },
   startBg: async (id: string, url: string, opts: { title: string; total: number; icon?: string }) => { bg.starts.push({ id, url, opts }); return bg.result; },
   watchBg: async (id: string, cb: (n: number) => void) => { if (!bg.watchOk) return false; bg.watching.set(id, cb); return true; },
-  abortBg: async (id: string) => { bg.log.push(`abort ${id}`); },
+  abortBg: async (id: string) => { bg.log.push(`abort ${id}${bg.onAbort ? ` ${bg.onAbort(id)}` : ''}`); },
   onBgMessage: (cb: (id: string) => void) => { bg.msg = cb; },
 }));
 
@@ -99,7 +101,7 @@ beforeEach(async () => {
   opfs.deleteFails = 0;
   opfs.orphansKept = [];
   FakeWorker.all = [];
-  Object.assign(bg, { supported: false, result: 'started', starts: [], watching: new Map(), watchOk: true, log: [], msg: null });
+  Object.assign(bg, { supported: false, result: 'started', starts: [], watching: new Map(), watchOk: true, log: [], msg: null, gate: null, onAbort: null });
   server = { list: [], listStatus: 200, check: { valid: [], revoked: [] }, progressStatus: 200, meStatus: 200 };
   calls = [];
   online = true;
@@ -505,6 +507,63 @@ describe('Background Fetch', () => {
     await vi.advanceTimersByTimeAsync(60);
     await settle();
     expect(worker().posted[0]).toMatchObject({ id: 'b', extrasOnly: true });
+  });
+
+  it('a download the service worker chained while the extras run is followed, pausable, and blocks new starts', async () => {
+    bg.onAbort = (id) => String(view(id)?.state);
+    await request(lic('a'), lic('b'), lic('c'));
+    await io(D.putDownload(record('a', { state: 'done', bytesHave: 1000, extrasPending: true })));
+    bg.msg!('a');
+    await settle();
+    await vi.advanceTimersByTimeAsync(60);
+    await settle();
+    expect(worker().posted[0]).toMatchObject({ id: 'a', extrasOnly: true }); // the extras hold the slot
+    await io(D.putDownload(record('b', { state: 'downloading', via: 'bg' })));
+    bg.msg!('b');
+    await settle();
+    expect(bg.watching.has('b')).toBe(true);
+    bg.watching.get('b')!(300);
+    expect(view('b')!.bytesHave).toBe(300);
+    worker().say({ type: 'done', id: 'a', bytes: 1000, etag: '' });
+    await settle();
+    await vi.advanceTimersByTimeAsync(60);
+    await settle();
+    expect(bg.starts.map((x) => x.id)).toEqual(['a']); // c waits while b runs in the background
+    expect(FakeWorker.all).toHaveLength(1);
+    M.pause('b');
+    await settle();
+    expect(bg.log).toContain('abort b paused');
+    expect(view('b')).toMatchObject({ state: 'paused', bytesHave: 0 });
+  });
+
+  it('remove and revoke write the record away before the fetch is aborted (the service worker must not bring it back)', async () => {
+    bg.onAbort = (id) => String(view(id)?.state);
+    await request(lic('a'));
+    M.pause('a');
+    await settle();
+    expect(bg.log).toEqual(['abort a paused']);
+    M.resume('a');
+    await settle();
+    await M.removeDownload('a');
+    await settle();
+    expect(bg.log.slice(1)).toEqual(['abort a paused', 'delete a']);
+  });
+
+  it('a download removed while pump waits is not started', async () => {
+    let open!: () => void;
+    bg.gate = new Promise((r) => { open = r; });
+    server.list = [lic('a')];
+    const p = M.requestDownload({ itemId: 'item-a', quality: 'hd', subLangs: [] });
+    await settle();
+    await p;
+    await M.removeDownload('a');
+    open();
+    await settle();
+    await vi.advanceTimersByTimeAsync(60);
+    await settle();
+    expect(bg.starts).toHaveLength(0);
+    expect(FakeWorker.all).toHaveLength(0);
+    expect(view('a')).toBeUndefined();
   });
 
   it('service worker gave up (noBg): the worker takes over', async () => {

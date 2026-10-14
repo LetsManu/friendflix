@@ -8,6 +8,8 @@
 export interface BgMessage { type: 'ff-dl'; id: string }
 
 export const bgTag = (id: string): string => `ff-dl-${id}`;
+/** Chromium fails a fetch whose body exceeds downloadTotal; the licence size can be an estimate, so leave room */
+export const bgTotal = (bytes: number): number => Math.ceil(bytes * 1.1);
 
 async function manager(): Promise<any | null> {
   try {
@@ -29,7 +31,7 @@ export async function startBg(id: string, url: string, opts: { title: string; to
     await bf.fetch(bgTag(id), [url], {
       title: opts.title,
       icons: opts.icon ? [{ src: opts.icon, sizes: '192x192', type: 'image/png' }] : [],
-      ...(opts.total > 0 ? { downloadTotal: opts.total } : {}),
+      ...(opts.total > 0 ? { downloadTotal: bgTotal(opts.total) } : {}),
     });
     return 'started';
   } catch { return 'failed'; }

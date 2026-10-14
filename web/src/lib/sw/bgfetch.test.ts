@@ -19,6 +19,7 @@ let written: Map<string, Uint8Array>;
 let started: string[];
 let deps: BgDeps;
 let ui: string[];
+let removed: string[];
 const event = (tag: string, res?: Response): BgEvent => ({
   registration: { id: tag, matchAll: async () => (res ? [{ responseReady: Promise.resolve(res) }] : []) },
   waitUntil: () => undefined,
@@ -28,7 +29,7 @@ const body = (s: string, headers: Record<string, string> = {}) => new Response(s
 
 beforeEach(() => {
   db = new Map([[A, rec(A, { state: 'downloading', via: 'bg' })]]);
-  notified = []; written = new Map(); started = []; ui = [];
+  notified = []; written = new Map(); started = []; ui = []; removed = [];
   deps = {
     getDownload: async (id) => db.get(id),
     getAll: async () => [...db.values()],
@@ -36,6 +37,7 @@ beforeEach(() => {
     writeVideo: async (id, b) => { const buf = new Uint8Array(await new Response(b).arrayBuffer()); written.set(id, buf); return buf.length; },
     startNext: async (r) => { started.push(r.id); return true; },
     notify: async (id) => { notified.push(id); },
+    removeFiles: async (id) => { removed.push(id); },
     locale: async () => 'en',
     now: () => NOW,
   };
@@ -159,5 +161,33 @@ describe('service worker Background Fetch', () => {
     on.get('backgroundfetchsuccess')!({ registration: { id: 'other', matchAll: async () => [] }, waitUntil: (p: Promise<unknown>) => waits.push(p) });
     await Promise.all(waits);
     expect(win.postMessage).not.toHaveBeenCalled(); // foreign tag
+  });
+
+  it('a download removed during the copy is not brought back; its files go', async () => {
+    const write = deps.writeVideo;
+    deps.writeVideo = async (id, b) => { db.delete(A); return write(id, b); };
+    await onSuccess(event(`ff-dl-${A}`, body('VIDEO!')), deps);
+    expect(db.has(A)).toBe(false);
+    expect(removed).toEqual([A]);
+    expect(ui).toEqual([]);
+  });
+
+  it('a download paused or revoked during the copy keeps the state the page wrote', async () => {
+    const write = deps.writeVideo;
+    deps.writeVideo = async (id, b) => { db.set(A, rec(A, { state: 'expired', positionSec: 7 })); return write(id, b); };
+    await onSuccess(event(`ff-dl-${A}`, body('VIDEO!')), deps);
+    expect(db.get(A)).toMatchObject({ state: 'expired', positionSec: 7 });
+    expect(removed).toEqual([A]);
+    db.set(A, rec(A, { state: 'downloading', via: 'bg' }));
+    deps.writeVideo = async () => { db.set(A, rec(A, { state: 'paused' })); throw new Error('x'); };
+    await onSuccess(event(`ff-dl-${A}`, body('VIDEO!')), deps);
+    expect(db.get(A)!.state).toBe('paused'); // not handed to the worker either
+  });
+
+  it('done merges onto the record as it is now (fields the page changed meanwhile survive)', async () => {
+    const write = deps.writeVideo;
+    deps.writeVideo = async (id, b) => { db.set(A, { ...db.get(A)!, validUntil: NOW + 99 }); return write(id, b); };
+    await onSuccess(event(`ff-dl-${A}`, body('VIDEO!')), deps);
+    expect(db.get(A)).toMatchObject({ state: 'done', validUntil: NOW + 99 });
   });
 });

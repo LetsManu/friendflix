@@ -219,4 +219,18 @@ describe('fetch worker', () => {
     expect(requests.map((r) => r.url)).toEqual(['/s.vtt']);
     expect(video()!.data).toEqual(FILE);
   });
+
+  it('extras only: a pause while the side files load reports paused, not done', async () => {
+    start();
+    await finished();
+    out = [];
+    let release!: () => void;
+    const gate = new Promise<void>((r) => { release = r; });
+    handler = async (req) => { await gate; if (req.signal.aborted) throw new DOMException('aborted', 'AbortError'); return new Response('WEBVTT'); };
+    start({ extras: [{ url: '/s.vtt', name: 'sub-de.vtt' }], extrasOnly: true });
+    await vi.waitFor(() => { if (!requests.some((r) => r.url === '/s.vtt')) throw new Error('not yet'); });
+    scope.onmessage!({ data: { cmd: 'pause' } });
+    release();
+    expect(await finished()).toEqual({ type: 'paused', id: ID, have: 0 });
+  });
 });

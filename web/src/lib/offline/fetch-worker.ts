@@ -49,7 +49,11 @@ async function run(m: StartMsg) {
   const d = await dir(m.id);
   await fetchExtras(d, m.extras, signal);
   const fh = await d.getFileHandle('video.mp4', { create: true });
-  if (m.extrasOnly) { abort = null; post({ type: 'done', id: m.id, bytes: (await fh.getFile()).size, etag: m.etag }); return; }
+  if (m.extrasOnly) {
+    abort = null;
+    post(signal.aborted ? { type: 'paused', id: m.id, have: m.have } : { type: 'done', id: m.id, bytes: (await fh.getFile()).size, etag: m.etag });
+    return;
+  }
   const h = await fh.createSyncAccessHandle();
   let have = Math.min(m.have, h.getSize()); // never trust more than what is really on disk
   let etag = m.etag, total = m.total, sinceFlush = 0, lastPost = 0;

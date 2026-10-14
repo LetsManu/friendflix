@@ -8,6 +8,7 @@
  */
 import { getAllDownloads, getDownload, putDownload, type DownloadRecord } from '../offline/db';
 import { offlineLocale } from './locale';
+import { bgTotal } from '../offline/bgfetch';
 
 interface BgFetchRecord { responseReady: Promise<Response> }
 interface BgRegistration { id: string; matchAll(): Promise<BgFetchRecord[]> }
@@ -27,6 +28,8 @@ export interface BgDeps {
   /** start a Background Fetch for this download; false when refused */
   startNext(r: DownloadRecord): Promise<boolean>;
   notify(id: string): Promise<void>;
+  /** delete the download's OPFS folder */
+  removeFiles(id: string): Promise<void>;
   locale(): Promise<string | null>;
   now(): number;
 }
@@ -51,6 +54,9 @@ export function nextToChain(records: DownloadRecord[], done: DownloadRecord, now
   return records.find((r) => r.id !== done.id && r.profileId === done.profileId && r.state === 'queued' && !!r.readyUrl && !r.noBg && r.bytesHave === 0 && r.expiresAt > now);
 }
 
+/** the record still belongs to this Background Fetch (the page did not pause, remove or revoke it meanwhile) */
+const ours = (r: DownloadRecord | undefined): r is DownloadRecord => !!r && r.state === 'downloading' && r.via === 'bg';
+
 /** the worker path takes over when the app opens (Range resume, no Background Fetch) */
 const toWorker = (r: DownloadRecord, now: number): DownloadRecord => ({ ...r, state: 'queued', bytesHave: 0, via: undefined, noBg: true, updatedAt: now });
 
@@ -58,19 +64,20 @@ export async function onSuccess(ev: BgEvent, d: BgDeps): Promise<void> {
   const id = idOfTag(ev.registration.id);
   const rec = id ? await d.getDownload(id) : undefined;
   if (!id || !rec) return; // removed meanwhile
-  let ok = false;
+  let size = 0;
   try {
     const [first] = await ev.registration.matchAll();
     const res = await first!.responseReady;
     const announced = Number(res.headers.get('content-length') ?? 0);
     if (!res.ok || !res.body) throw new Error(`HTTP ${res.status}`);
-    const size = await d.writeVideo(id, res.body);
+    size = await d.writeVideo(id, res.body);
     if (!size || (announced && size !== announced)) throw new Error('size');
-    await d.putDownload({ ...rec, state: 'done', bytesHave: size, bytesTotal: size, via: undefined, extrasPending: true, updatedAt: d.now() });
-    ok = true;
-  } catch {
-    await d.putDownload(toWorker(rec, d.now()));
-  }
+  } catch { size = 0; }
+  // the copy can take a while: write onto the record as it is now, and only while it is still ours
+  const now = await d.getDownload(id);
+  const ok = size > 0 && ours(now);
+  if (!ours(now)) await d.removeFiles(id).catch(() => undefined); // removed or revoked meanwhile: the file must not stay playable
+  else await d.putDownload(ok ? { ...now, state: 'done', bytesHave: size, bytesTotal: size, via: undefined, extrasPending: true, updatedAt: d.now() } : toWorker(now, d.now()));
   await d.notify(id);
   if (!ok) return;
   try { await ev.updateUI?.({ title: doneTitle(await d.locale(), rec.title) }); } catch { /* the notification keeps the default text */ }
@@ -89,7 +96,7 @@ export async function onFail(ev: BgEvent, d: BgDeps): Promise<void> {
   await d.notify(id);
 }
 
-/** cancelled from the notification (a pause or remove by the page wrote its own state first) */
+/** cancelled from the notification (a pause, remove or revoke by the page writes its own state before it aborts) */
 export async function onAbort(ev: BgEvent, d: BgDeps): Promise<void> {
   const id = idOfTag(ev.registration.id);
   const rec = id ? await d.getDownload(id) : undefined;
@@ -105,6 +112,11 @@ export async function openDownloads(s: Pick<SwScope, 'clients'>): Promise<void> 
   await s.clients.openWindow('/downloads');
 }
 
+async function removeFiles(id: string): Promise<void> {
+  const root = await navigator.storage.getDirectory();
+  await (await root.getDirectoryHandle('ff-dl')).removeEntry(id, { recursive: true });
+}
+
 async function writeVideo(id: string, body: ReadableStream<Uint8Array>): Promise<number> {
   const root = await navigator.storage.getDirectory();
   const dir = await (await root.getDirectoryHandle('ff-dl', { create: true })).getDirectoryHandle(id, { create: true });
@@ -117,7 +129,7 @@ async function writeVideo(id: string, body: ReadableStream<Uint8Array>): Promise
 export function installBgFetch(sw: unknown): void {
   const s = sw as SwScope;
   const deps: BgDeps = {
-    getDownload, getAll: getAllDownloads, putDownload, writeVideo, locale: offlineLocale, now: () => Date.now(),
+    getDownload, getAll: getAllDownloads, putDownload, writeVideo, removeFiles, locale: offlineLocale, now: () => Date.now(),
     notify: async (id) => { for (const c of await s.clients.matchAll({ type: 'window', includeUncontrolled: true })) c.postMessage({ type: 'ff-dl', id }); },
     startNext: async (r) => {
       try {
@@ -126,7 +138,7 @@ export function installBgFetch(sw: unknown): void {
         await s.registration.backgroundFetch!.fetch(`ff-dl-${r.id}`, [r.readyUrl!], {
           title: r.seriesName ? `${r.seriesName} S${r.s ?? '?'}:E${r.e ?? '?'} · ${r.title}` : r.title,
           icons: [{ src: '/icon-192.png', sizes: '192x192', type: 'image/png' }],
-          ...(r.bytesTotal > 0 ? { downloadTotal: r.bytesTotal } : {}),
+          ...(r.bytesTotal > 0 ? { downloadTotal: bgTotal(r.bytesTotal) } : {}),
         });
         return true;
       } catch { return false; }
