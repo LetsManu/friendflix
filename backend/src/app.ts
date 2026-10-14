@@ -13,6 +13,7 @@ import { recordError } from './errorlog.js';
 import { HttpError } from './users.js';
 import { accountRoutes } from './routes/account.js';
 import { adminRoutes, inviteRoutes } from './routes/admin.js';
+import { adminSettingsRoutes } from './routes/adminSettings.js';
 import { adminUserRoutes } from './routes/adminUsers.js';
 import { authRoutes } from './routes/auth.js';
 import { castRoutes } from './routes/cast.js';
@@ -46,6 +47,7 @@ import { aboutRoutes } from './routes/about.js';
 import { healthRoutes } from './routes/health.js';
 import { hygieneRoutes } from './routes/hygiene.js';
 import { usageRoutes } from './routes/usage.js';
+import { SettingsError } from './settings/store.js';
 import { syncFileKeys } from './sources/keys.js';
 import { testSourceKey } from './sources/omdb.js';
 import { appVersion } from './version.js';
@@ -53,13 +55,15 @@ import { appVersion } from './version.js';
 export interface Extra {
   /** Additional route registrars for later steps. */
   register?: Array<(app: FastifyInstance, ctx: Ctx) => void | Promise<void>>;
+  /** tests: capture the request log (production logs to stdout; tests are silent otherwise) */
+  logger?: { stream: { write(line: string): void }; level?: string };
 }
 
 /** requests slower than this are logged (info) with their jf/db/kv breakdown */
 const SLOW_REQUEST_MS = 500;
 
 export async function buildApp(ctx: Ctx, extra: Extra = {}): Promise<FastifyInstance> {
-  const app = Fastify({ logger: process.env.NODE_ENV !== 'test', trustProxy: true, bodyLimit: 256 * 1024 });
+  const app = Fastify({ logger: extra.logger ?? process.env.NODE_ENV !== 'test', trustProxy: true, bodyLimit: 256 * 1024 });
   // Server-Timing: Postgres and Redis calls are booked on the current request (Jellyfin: JellyfinClient). Same objects underneath.
   ctx.db = timedDb(ctx.db);
   ctx.kv = timedKv(ctx.kv);
@@ -86,6 +90,8 @@ export async function buildApp(ctx: Ctx, extra: Extra = {}): Promise<FastifyInst
   });
   app.setErrorHandler((err, req, reply) => {
     if (err instanceof ZodError) return reply.code(400).send({ error: 'bad_request', issues: err.issues.map((i) => i.path.join('.')) });
+    // a refused settings save: each key with its code (never a value)
+    if (err instanceof SettingsError) return reply.code(400).send({ error: err.message, errors: err.errors });
     const status = (err as { statusCode?: number }).statusCode;
     if (status && status < 500) return reply.code(status).send({ error: (err as Error).message });
     // a business error with a 5xx status (e.g. 503 authentik_unavailable): answered only when its message is a code,
@@ -161,6 +167,7 @@ export async function buildApp(ctx: Ctx, extra: Extra = {}): Promise<FastifyInst
   castRoutes(app, ctx);
   internalRoutes(app, ctx);
   adminRoutes(app, ctx);
+  adminSettingsRoutes(app, ctx);
   adminUserRoutes(app, ctx);
   inviteRoutes(app, ctx);
   seerrRoutes(app, ctx);

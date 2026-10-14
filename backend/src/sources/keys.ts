@@ -78,6 +78,11 @@ export async function removeSourceKey(ctx: KeyCtx, name: SourceName, actor: stri
   cacheOf(ctx).delete(name);
 }
 
+/** Drops the cached database key, so a key saved elsewhere (Admin -> Settings) is read at once on this instance. */
+export function forgetSourceKey(ctx: Pick<Ctx, 'db'>, name: SourceName): void {
+  cacheOf(ctx).delete(name);
+}
+
 /** A key change must work at once: drop the 401 pause, the invalid flag and every cached (failure) answer. */
 export async function resetSourceState(ctx: Pick<Ctx, 'kv'>, name: SourceName): Promise<void> {
   await ctx.kv.del(PAUSE_KEY(name));

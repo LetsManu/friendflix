@@ -125,25 +125,30 @@ function withOverride(inner: SettingsStore): TestSettings {
   };
 }
 
-/** A settings store holding the test config: settings as database rows (saves work), every other key as env. */
-export async function testSettings(pool: pg.Pool, c: Config = cfg): Promise<TestSettings> {
+/**
+ * A settings store holding the test config: settings as database rows (saves work), every other key as env. `extraEnv` adds real
+ * environment variables (VAR or VAR_FILE); the keys they name are neither stored as rows nor compared with the test config.
+ */
+export async function testSettings(pool: pg.Pool, c: Config = cfg, extraEnv: NodeJS.ProcessEnv = {}): Promise<TestSettings> {
+  const fromEnv = new Set(Object.keys(extraEnv).map((k) => k.replace(/_FILE$/, '')));
   const env: NodeJS.ProcessEnv = {};
   const rows: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(c)) {
-    if (v === undefined) continue;
+    if (v === undefined || fromEnv.has(k)) continue;
     const def = settingDef(k);
     if (def) rows[k] = toStored(def, v);
     else env[k] = Array.isArray(v) ? v.join(',') : String(v);
   }
+  Object.assign(env, extraEnv);
   await writeRows(pool, keyFromBase64(ENC_KEY), rows, null);
   const store = withOverride(await createSettingsStore({ db: pool, encKey: keyFromBase64(ENC_KEY), env, bus: new MemorySettingsBus(), log: { warn: () => {} }, pollMs: 3_600_000 }));
   const got = store.current() as Record<string, unknown>;
-  const off = Object.keys(c).filter((k) => !same(got[k], (c as Record<string, unknown>)[k]));
+  const off = Object.keys(c).filter((k) => !fromEnv.has(k) && !same(got[k], (c as Record<string, unknown>)[k]));
   if (off.length) throw new Error(`test settings differ from the test config: ${off.join(', ')}`);
   return store;
 }
 
-export async function makeEnv(extraJf: Record<string, Handler> = {}, extra: Extra & { ctxPatch?: (c: Ctx) => void; seerr?: Record<string, Handler> } = {}): Promise<TestEnv> {
+export async function makeEnv(extraJf: Record<string, Handler> = {}, extra: Extra & { ctxPatch?: (c: Ctx) => void; seerr?: Record<string, Handler>; settingsEnv?: NodeJS.ProcessEnv } = {}): Promise<TestEnv> {
   const pool = await resetDb();
   const kv = new MemoryKV();
   const jfCalls: Call[] = [];
@@ -152,7 +157,7 @@ export async function makeEnv(extraJf: Record<string, Handler> = {}, extra: Extr
   const jfFetch = fakeHttp({ ...defaultJellyfin(), ...extraJf }, jfCalls);
   const seerrFetch = fakeHttp(extra.seerr ?? {}, seerrCalls);
   const encKey = keyFromBase64(ENC_KEY);
-  const settings = await testSettings(pool);
+  const settings = await testSettings(pool, cfg, extra.settingsEnv);
   const live = createLiveCtx({
     settings, kv, db: pool, encKey, fetchImpl: fetch,
     roles: DEFAULT_ROLES,

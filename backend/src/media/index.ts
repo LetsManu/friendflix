@@ -3,7 +3,7 @@
 import type pg from 'pg';
 import { z } from 'zod';
 import type { Config } from '../config.js';
-import { JellyfinClient } from '../jellyfin/client.js';
+import { JellyfinClient, mediaBrowserHeader } from '../jellyfin/client.js';
 import { JellyfinService } from '../jellyfin/service.js';
 import type { KV } from '../kv.js';
 import type { SettingDef } from '../settings/registry.js';
@@ -40,6 +40,21 @@ const URL_KEYS: Record<MediaServerKind, keyof Config> = { jellyfin: 'JELLYFIN_UR
 /** The config key holding the media server URL of cfg's kind: the one place that knows the key name. */
 export function mediaUrlKey(cfg: Config): string {
   return URL_KEYS[cfg.MEDIA_SERVER];
+}
+
+/** The request of the media settings probe: answers 2xx only for an admin-level key, 401/403 otherwise. */
+export interface MediaProbeRequest { base: string; path: string; headers: Record<string, string> }
+
+const probeRequests: Record<MediaServerKind, (cfg: Config) => MediaProbeRequest | undefined> = {
+  // GET /Auth/Keys lists the API keys: only an administrator's key may
+  jellyfin: (c) => (c.JELLYFIN_URL && c.JELLYFIN_ADMIN_API_KEY
+    ? { base: c.JELLYFIN_URL, path: '/Auth/Keys', headers: { Authorization: mediaBrowserHeader({ deviceId: 'portal-probe', token: c.JELLYFIN_ADMIN_API_KEY }) } }
+    : undefined),
+};
+
+/** The probe request for cfg's kind; undefined while its URL or key is missing (Task 12 moves this into the media setup provider). */
+export function mediaProbeRequest(cfg: Config): MediaProbeRequest | undefined {
+  return probeRequests[cfg.MEDIA_SERVER](cfg);
 }
 
 /**
