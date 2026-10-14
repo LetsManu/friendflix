@@ -11,6 +11,7 @@ import { z } from 'zod';
 import { audit } from '../audit.js';
 import { akMfaState, akUpdateUser, akUserSettingsUrl } from '../authentik.js';
 import type { Ctx } from '../ctx.js';
+import { recordError } from '../errorlog.js';
 import { exportUserData } from '../export.js';
 import { recentlyAuthenticated, REAUTH_WINDOW_S } from '../reauth.js';
 import { requireOwner } from '../session.js';
@@ -88,13 +89,24 @@ export function accountRoutes(app: FastifyInstance, ctx: Ctx) {
    * 5 per hour and account: the limiter runs after requireOwner, so a new session does not reset it.
    */
   const exportLimit = { rateLimit: { max: 5, timeWindow: '1 hour', hook: 'preHandler' as const, keyGenerator: (req: FastifyRequest) => `export:${req.user?.id ?? req.ip}` } };
-  app.get('/api/account/export', { ...owner, config: exportLimit }, async (req, reply) => {
+  // no implicit HEAD route: it would run (and audit) the whole export to send no body
+  app.get('/api/account/export', { ...owner, exposeHeadRoute: false, config: exportLimit }, async (req, reply) => {
     const user = req.user!;
     await audit(ctx, user.id, 'account.export', user.id);
+    // a failure after the headers went out can only abort the download (the browser sees a failed transfer); it is logged here
+    async function* logged() {
+      try {
+        yield* exportUserData(ctx, user);
+      } catch (err) {
+        req.log.error({ err }, 'account export failed');
+        await recordError(ctx, { source: 'server', code: 'GET /api/account/export stream' }); // never throws
+        throw err;
+      }
+    }
     return reply
       .header('content-type', 'application/json; charset=utf-8')
       .header('content-disposition', `attachment; filename="friendflix-data-${new Date().toISOString().slice(0, 10)}.json"`)
       .header('cache-control', 'no-store')
-      .send(Readable.from(exportUserData(ctx, user)));
+      .send(Readable.from(logged()));
   });
 }

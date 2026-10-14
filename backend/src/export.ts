@@ -5,18 +5,43 @@
  * demand and yielded section by section so the route can stream it.
  *
  * Every query names its columns (an allowlist: a column added later never leaks by accident) and reads only the account's own
- * rows. Never exported: other people's ids, names or notes (a list item a member added is listed as `addedByMe: false`; of a
- * list the user is only a member of, only its name and the user's own items), device ids, push endpoints/keys, the ntfy topic
- * (it works like a password), PIN hashes, the Authentik subject and any media server credential.
+ * rows, including everything the user authored (comments, poll votes, sent recommendations). Never exported: other people's ids,
+ * names or notes (a list item a member added is listed as `addedByMe: false`; of a list the user is only a member of, only its
+ * name and the user's own items; a sent recommendation without its recipient; notification texts, which are rendered with
+ * other people's names), device ids, push endpoints/keys, the ntfy topic (it works like a password), PIN hashes, the Authentik
+ * subject and any media server credential.
  */
 import type { Ctx } from './ctx.js';
 import { jfUserFor } from './profiles.js';
 import { loadPrefs } from './routes/prefs.js';
 import { requestStateKey, SeerrError } from './seerr/client.js';
-import type { ProfileRow, UserRow } from './types.js';
+import type { ItemDto } from './media/types.js';
+import type { JfUser, ProfileRow, UserRow } from './types.js';
 
 /** media server history per profile (newest first) */
 const HISTORY_LIMIT = 1000;
+/** JellyfinService.history answers at most 200 items per call: the export pages with `start` */
+const HISTORY_PAGE = 200;
+/**
+ * The first page also merges in the in-progress items (JellyfinService.resume, at most 40), which can push played items out of its
+ * 200-item slice; the second page therefore starts this much earlier, and duplicates are dropped.
+ */
+const RESUME_OVERLAP = 40;
+/** the request service is asked for the state of the newest requests only (one call each); older ones read 'unknown' */
+const REQUEST_STATUS_MAX = 100;
+
+/** Up to HISTORY_LIMIT history items of one media server identity, newest first; `truncated` when the cap was reached. */
+async function historyOf(ctx: Ctx, jfUser: JfUser): Promise<{ items: ItemDto[]; truncated: boolean }> {
+  const seen = new Map<string, ItemDto>();
+  for (let start = 0; ; start = start === 0 ? HISTORY_PAGE - RESUME_OVERLAP : start + HISTORY_PAGE) {
+    const page = await ctx.jf.history(jfUser, { start, limit: HISTORY_PAGE });
+    const before = seen.size;
+    for (const i of page) if (seen.size < HISTORY_LIMIT && !seen.has(i.id)) seen.set(i.id, i);
+    const full = page.length >= HISTORY_PAGE;
+    // a short page is the last one; a page with nothing new means the server ignores `start` (never loop on it)
+    if (!full || seen.size >= HISTORY_LIMIT || seen.size === before) return { items: [...seen.values()], truncated: full };
+  }
+}
 
 /** the profile columns the export needs; the media server identity is used for the history call only and never written out */
 type ExportProfile = Pick<ProfileRow, 'id' | 'name' | 'avatar' | 'kids' | 'kids_max_rating' | 'is_owner' | 'created_at' | 'jellyfin_user_id' | 'jellyfin_username' | 'jellyfin_pw_enc'>;
@@ -73,6 +98,13 @@ export async function* exportUserData(ctx: Ctx, user: UserRow): AsyncGenerator<s
       })),
     seriesFollows: (await q<{ series_id: string; series_name: string }>('select series_id, series_name from series_follows where user_id=$1 order by series_name'))
       .map((r) => ({ seriesId: r.series_id, name: r.series_name })),
+    seriesLanguages: (await q<{ profile_id: string; series_id: string; audio: string | null; subtitle: string | null; updated_at: Date }>(
+      `select s.profile_id, s.series_id, s.audio, s.subtitle, s.updated_at
+         from series_langprefs s join profiles p on p.id=s.profile_id where p.user_id=$1 order by s.updated_at`))
+      .map((r) => ({ profileId: r.profile_id, seriesId: r.series_id, audio: r.audio, subtitle: r.subtitle, updatedAt: r.updated_at })),
+    hiddenFromResume: (await q<{ profile_id: string; item_id: string; hidden_at: Date }>(
+      'select h.profile_id, h.item_id, h.hidden_at from resume_hidden h join profiles p on p.id=h.profile_id where p.user_id=$1 order by h.hidden_at'))
+      .map((r) => ({ profileId: r.profile_id, itemId: r.item_id, hiddenAt: r.hidden_at })),
   });
 
   yield field('ratings', {
@@ -97,24 +129,29 @@ export async function* exportUserData(ctx: Ctx, user: UserRow): AsyncGenerator<s
       'select day::text, sum(streams) streams, sum(transcodes) transcodes from play_daily where user_id=$1 group by day order by day'))
       .map((r) => ({ day: r.day, streams: Number(r.streams), transcodes: Number(r.transcodes) })),
   };
-  // the media server's history as each profile; one failure marks the section unavailable, the rest of the export goes on
-  const history = await Promise.all(profiles.map(async (p) => ({
+  // the media server's history as each profile (every non-owner profile has its own media server user, migration 15's check);
+  // a failing profile is marked, all failing → `error`, and the rest of the export goes on
+  const perProfile = await Promise.all(profiles.map((p) => historyOf(ctx, jfUserFor(user, p as ProfileRow)).then(({ items, truncated }) => ({
     profileId: p.id,
-    items: (await ctx.jf.history(jfUserFor(user, p as ProfileRow), { limit: HISTORY_LIMIT })).map((i) => ({
+    items: items.map((i) => ({
       itemId: i.id, name: i.name, type: i.type, ...(i.seriesName ? { seriesName: i.seriesName } : {}),
       playedAt: i.lastPlayedDate ?? null, positionSeconds: Math.floor(i.positionTicks / 10_000_000), played: i.played,
     })),
-  }))).then((ps) => ({ profiles: ps, totals }), () => ({ error: 'unavailable', totals }));
-  yield field('history', history);
+    ...(truncated ? { truncated: true } : {}),
+  }), () => ({ profileId: p.id, error: 'unavailable' }))));
+  yield field('history', perProfile.length && perProfile.every((h) => 'error' in h)
+    ? { error: 'unavailable', totals }
+    : { profiles: perProfile, ...(perProfile.some((h) => 'truncated' in h) ? { truncated: true } : {}), totals });
 
-  // request state from the request service; a removed request reads 'removed', an unreachable service 'unknown' (asked once)
+  // request state from the request service (newest REQUEST_STATUS_MAX only); a removed request reads 'removed', an unreachable
+  // service 'unknown' (not asked again)
   const reqs = await q<{ seerr_request_id: number; tmdb_id: number; media_type: string; title: string; created_at: Date }>(
-    'select seerr_request_id, tmdb_id, media_type, title, created_at from seerr_requests where user_id=$1 order by created_at');
+    'select seerr_request_id, tmdb_id, media_type, title, created_at from seerr_requests where user_id=$1 order by created_at desc');
   let reachable = true;
   const requests = [];
-  for (const r of reqs) {
+  for (const [n, r] of reqs.entries()) {
     let status = 'unknown';
-    if (reachable) {
+    if (reachable && n < REQUEST_STATUS_MAX) {
       try {
         const sr = await ctx.seerr.getRequest(r.seerr_request_id);
         status = requestStateKey(sr?.media?.status, sr?.status);
@@ -131,14 +168,35 @@ export async function* exportUserData(ctx: Ctx, user: UserRow): AsyncGenerator<s
     'select label, approved, created_at, last_seen from devices where user_id=$1 order by created_at'))
     .map((d) => ({ label: d.label, approved: d.approved, createdAt: d.created_at, lastSeen: d.last_seen })));
 
-  // notification settings are account level (user_prefs); the ntfy topic is a secret, so only whether one is set
+  // notification settings are account level (user_prefs); the ntfy topic is a secret, so only whether one is set. Own notices
+  // without title, body and link: they are rendered with other people's names, lists and parties (invites, recommendations,
+  // admin notices about other accounts), and links carry their ids.
   const prefs = await loadPrefs(ctx, uid);
   const push = (await q<{ n: string }>('select count(*) n from push_subscriptions where user_id=$1'))[0]!;
-  const notes = await q<{ kind: string; title: string; created_at: Date; read: boolean }>(
-    'select kind, title, created_at, read_at is not null read from notifications where user_id=$1 order by created_at desc');
+  const notes = await q<{ kind: string; created_at: Date; read: boolean }>(
+    'select kind, created_at, read_at is not null read from notifications where user_id=$1 order by created_at desc');
   yield field('notifications', {
     weeklyDigest: prefs.weeklyDigest, ntfyTopicSet: prefs.ntfyTopic !== '', pushSubscriptions: Number(push.n),
-    items: notes.map((n) => ({ kind: n.kind, title: n.title, createdAt: n.created_at, read: n.read })),
+    items: notes.map((n) => ({ kind: n.kind, createdAt: n.created_at, read: n.read })),
   });
+
+  // what the user wrote or chose in shared places: own comments (soft-deleted ones are still stored, so listed flagged), own
+  // poll choices (the poll's title only for the user's own polls: another creator may have named people in it), sent
+  // recommendations without the recipient or whether they saw it
+  yield field('social', {
+    comments: (await q<{ profile_id: string; item_id: string; body: string; spoiler: boolean; created_at: Date; deleted: boolean }>(
+      'select profile_id, item_id, body, spoiler, created_at, deleted_at is not null deleted from episode_comments where user_id=$1 order by created_at'))
+      .map((r) => ({ profileId: r.profile_id, itemId: r.item_id, body: r.body, spoiler: r.spoiler, createdAt: r.created_at, deleted: r.deleted })),
+    pollVotes: (await q<{ poll_title: string | null; option_title: string; starts_at: Date }>(
+      `select case when p.created_by=$1 then p.title end poll_title, o.title option_title, p.starts_at
+         from poll_votes v join polls p on p.id=v.poll_id join poll_options o on o.id=v.option_id where v.user_id=$1 order by p.starts_at`))
+      .map((r) => ({ ...(r.poll_title !== null ? { poll: r.poll_title } : {}), choice: r.option_title, startsAt: r.starts_at })),
+    recommendationsSent: (await q<{ item_id: string; item_name: string; note: string | null; created_at: Date }>(
+      'select item_id, item_name, note, created_at from recommendations where from_user=$1 order by created_at'))
+      .map((r) => ({ itemId: r.item_id, name: r.item_name, note: r.note, createdAt: r.created_at })),
+  });
+
+  yield field('achievements', (await q<{ key: string; earned_at: Date }>('select key, earned_at from achievements where user_id=$1 order by earned_at'))
+    .map((r) => ({ key: r.key, earnedAt: r.earned_at })));
   yield '}';
 }

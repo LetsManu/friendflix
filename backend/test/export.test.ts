@@ -3,6 +3,9 @@
 import { randomUUID } from 'node:crypto';
 import { afterEach, describe, expect, it } from 'vitest';
 import { encrypt } from '../src/crypto.js';
+import { listErrors } from '../src/errorlog.js';
+import { m } from '../src/i18n.js';
+import { notify, notifyAdmins } from '../src/notify.js';
 import type { ItemDto } from '../src/media/types.js';
 import { makeEnv, type TestEnv } from './helpers.js';
 
@@ -59,7 +62,26 @@ async function seed(): Promise<Seed> {
       [u, `${tag}dev-secret-id-000001`, p, `https://push.example.com/${tag}-endpoint-secret`, `${tag}p256dh-secret`, `${tag}auth-secret`]);
     await q("insert into notifications(user_id, kind, title, dedupe, read_at) values ($1,'info',$2,$3,now()), ($1,'info',$4,null,null)", [u, `${tag}notice-read`, `${tag}-dedupe-1`, `${tag}notice-unread`]);
     await q(`insert into user_prefs(user_id, data) values ($1,$2) on conflict (user_id) do update set data=excluded.data`, [u, JSON.stringify({ weeklyDigest: false, ntfyTopic: `${tag}ntfy-topic-secret`, shareRatings: true })]);
+    // both comment on the same item
+    await q("insert into episode_comments(item_id, profile_id, user_id, body) values ('shared-item',$1,$2,$3)", [p, u, `${tag}comment-body`]);
+    await q('insert into achievements(user_id, key) values ($1,$2)', [u, `${tag}key-achievement`]);
+    await q("insert into series_langprefs(profile_id, series_id, audio, subtitle) values ($1,$2,'jpn','ger')", [k, `${tag}series-lang`]);
+    await q('insert into resume_hidden(profile_id, item_id) values ($1,$2)', [p, `${tag}item-hidden`]);
   }
+  // recommendations both ways: A's export shows only what A sent, without the recipient
+  await q("insert into recommendations(from_user, to_user, item_id, item_name, note, seen) values ($1,$2,'aitem-rec','A rec title','a-rec-note',true), ($2,$1,'bitem-rec','B rec title','bobmark-rec-note',false)", [a, b]);
+  // a poll by B ("Bobmark movie night") and one by A; both vote in both
+  const pollB = randomUUID(), pollA = randomUUID();
+  await q("insert into polls(id, title, created_by, closes_at, starts_at) values ($1,'Bobmark movie night',$2,now()+interval '1 day',now()+interval '2 days'), ($3,'A poll',$4,now()+interval '1 day',now()+interval '2 days')", [pollB, b, pollA, a]);
+  const opt = async (poll: string, title: string) => (await q('insert into poll_options(poll_id, title) values ($1,$2) returning id', [poll, title])).rows[0].id as string;
+  const [ob1, ob2, oa1, oa2] = [await opt(pollB, 'Option shared'), await opt(pollB, 'Option bobpick'), await opt(pollA, 'Option apick'), await opt(pollA, 'Option bobpick-a')];
+  await q('insert into poll_votes(poll_id, user_id, option_id) values ($1,$2,$3), ($1,$4,$5), ($6,$2,$7), ($6,$4,$8)', [pollB, a, ob1, b, ob2, pollA, oa1, oa2]);
+  // notices in A's inbox that are rendered with B's name, list and party (A is the admin, so it gets the admin notices too)
+  await notify(env.ctx, { userId: a, kind: 'list_invite', title: m('list.invite', { name: 'Bobmark', list: 'Bobmark secret list' }), link: `/lists/${randomUUID()}` });
+  await notify(env.ctx, { userId: a, kind: 'party_invite', title: m('party.invite', { name: 'Bobmark', title: 'Bobmark party' }), link: '/party/x' });
+  await notify(env.ctx, { userId: a, kind: 'recommend', title: m('recommend', { name: 'Bobmark', title: 'B rec title' }), body: 'bobmark-rec-note', link: '/item/bitem-rec' });
+  await notifyAdmins(env.ctx, { kind: 'approval', title: m('notify.approval.new', { name: 'Bobmark' }), link: '/admin/users?tab=approvals' });
+  await notifyAdmins(env.ctx, { kind: 'access_soon', title: m('notify.access.soonAdmin', { name: 'Bobmark', date: { date: '2026-10-20' } }), link: '/admin/users', dedupe: `access-soon-admin-${b}-x` });
   await q("insert into notifications(user_id, kind, title) values (null,'info','broadcast-title-other')");
   // lists: A's own (B is editor and added an item with a note), B's private one, B's list shared with A
   const la = randomUUID(), lbPriv = randomUUID(), lbShared = randomUUID();
@@ -80,7 +102,7 @@ async function seed(): Promise<Seed> {
 function fakeHistory(fail = false) {
   const asked: string[] = [];
   env.ctx.jf.history = async (u, q) => {
-    asked.push(`${u.jellyfin_user_id}:${q?.limit}`);
+    asked.push(`${u.jellyfin_user_id}:${q?.start}:${q?.limit}`);
     if (fail) throw new Error('media server down');
     return [item(`hist-${u.jellyfin_user_id.slice(0, 6)}`, `History ${u.jellyfin_user_id.slice(0, 6)}`, { type: 'Episode', seriesName: 'Some Show', positionTicks: 1_200_000_000 })];
   };
@@ -102,29 +124,56 @@ describe('GET /api/account/export', () => {
     expect(r.statusCode).toBe(200);
     const doc = r.json();
     const text = JSON.stringify(doc);
-    // B's name is part of "Bobmark shared list" (a list A is an editor of keeps its name), so names are checked as whole strings
-    const others = JSON.stringify(doc, (k, v) => (k === 'name' && v === 'Bobmark shared list' ? undefined : v));
-    for (const v of ['"Bobmark"', 'bobmark@example.com', 'Bobkidmark']) expect(others, v).not.toContain(v);
-    for (const v of [b, bKid, 'Bobmark secret list', 'bnotice-read', 'bnotice-unread', 'broadcast-title-other',
+    // the one place B's name may show: the (owner-chosen) name of the list A is an editor of, removed here by its key and path
+    const shared = doc.lists.find((l: { owned: boolean }) => !l.owned);
+    expect(shared.name).toBe('Bobmark shared list');
+    const scrubbed = JSON.stringify({ ...doc, lists: doc.lists.map((l: { owned: boolean }) => (l === shared ? { ...l, name: null } : l)) });
+    expect(scrubbed.toLowerCase()).not.toContain('bobmark'); // name, e-mail, list names, notes, poll titles: any substring
+    for (const v of [b, bKid, 'Bobmark secret list', 'bnotice-read', 'bnotice-unread', 'broadcast-title-other', 'bcomment-body', 'bkey-achievement', 'bseries-lang',
+      'bitem-hidden', 'bitem-rec', 'Option bobpick',
       'bitem-watch', 'bitem-rated', 'bitem-thumb', 'bitem-bm', 'btitle-reminder', 'bseries-followed', 'bitem-reacted', 'bitem-played', '2222', 'bdevice-label',
       'bitem-private-list', 'bitem-in-b-list', 'bobmark-note', 'breview-text', 'bbm-note']) {
       expect(text, v).not.toContain(v);
     }
     // A's own data is all there
     expect(doc).toMatchObject({ format: 'friendflix-export', version: 1 });
-    expect(Object.keys(doc)).toEqual(['format', 'version', 'exportedAt', 'account', 'profiles', 'lists', 'watchlist', 'ratings', 'history', 'requests', 'devices', 'notifications']);
+    expect(Object.keys(doc)).toEqual(['format', 'version', 'exportedAt', 'account', 'profiles', 'lists', 'watchlist', 'ratings', 'history', 'requests', 'devices', 'notifications',
+      'social', 'achievements']);
     expect(doc.account).toMatchObject({ name: 'Admin', email: 'admin@example.com', role: 'admin', avatar: 'teal' });
     expect(Object.keys(doc.account).sort()).toEqual(['accessUntil', 'avatar', 'createdAt', 'email', 'id', 'name', 'role']);
     expect(doc.profiles).toHaveLength(2);
     expect(doc.profiles[1]).toMatchObject({ name: 'Kiddo', kids: true, maxRating: 6, isOwner: false });
     for (const v of ['aitem-watch', 'aitem-watch-kid', 'aitem-rated', 'aitem-thumb', 'aitem-bm', 'atitle-reminder', 'aseries-followed', 'aitem-reacted', 'aitem-played',
-      'adevice-label', 'anotice-read', 'anotice-unread', 'A favourites']) {
+      'adevice-label', 'A favourites', 'acomment-body', 'akey-achievement', 'aseries-lang', 'aitem-hidden', 'aitem-rec', 'a-rec-note', 'A poll', 'Option apick', 'Option shared']) {
       expect(text, v).toContain(v);
     }
     expect(doc.requests).toEqual([expect.objectContaining({ tmdbId: 1111, mediaType: 'movie', status: 'available' })]);
     expect(doc.notifications).toMatchObject({ weeklyDigest: false, pushSubscriptions: 1 });
     expect(doc.notifications.items).toEqual(expect.arrayContaining([
-      expect.objectContaining({ kind: 'info', title: 'anotice-read', read: true }), expect.objectContaining({ title: 'anotice-unread', read: false })]));
+      expect.objectContaining({ kind: 'info', read: true }), expect.objectContaining({ kind: 'info', read: false })]));
+    // own rows from shared places
+    expect(doc.social.comments).toEqual([expect.objectContaining({ itemId: 'shared-item', body: 'acomment-body', deleted: false })]);
+    expect(doc.social.pollVotes).toHaveLength(2);
+    expect(doc.social.pollVotes).toEqual(expect.arrayContaining([{ choice: 'Option shared', startsAt: expect.any(String) }, { poll: 'A poll', choice: 'Option apick', startsAt: expect.any(String) }]));
+    expect(doc.social.recommendationsSent).toEqual([{ itemId: 'aitem-rec', name: 'A rec title', note: 'a-rec-note', createdAt: expect.any(String) }]);
+    expect(doc.achievements).toEqual([{ key: 'akey-achievement', earnedAt: expect.any(String) }]);
+    expect(doc.watchlist.seriesLanguages).toEqual([expect.objectContaining({ seriesId: 'aseries-lang', audio: 'jpn', subtitle: 'ger' })]);
+    expect(doc.watchlist.hiddenFromResume).toEqual([expect.objectContaining({ itemId: 'aitem-hidden' })]);
+  });
+
+  it('notification texts are not exported: invites, recommendations and admin notices name other people', async () => {
+    const { s, a } = await setup();
+    fakeHistory();
+    const r = await get(s);
+    const notices = (await env.pool.query('select kind, title, body from notifications where user_id=$1', [a])).rows;
+    expect(notices.map((n) => n.title).join(' ')).toContain('Bobmark'); // the seed really rendered B's name into A's inbox
+    const doc = r.json();
+    expect(doc.notifications.items.map((n: { kind: string }) => n.kind)).toEqual(expect.arrayContaining(['list_invite', 'party_invite', 'recommend', 'approval', 'access_soon']));
+    for (const n of doc.notifications.items) expect(Object.keys(n).sort()).toEqual(['createdAt', 'kind', 'read']);
+    const shared = doc.lists.find((l: { owned: boolean }) => !l.owned);
+    const raw = r.body.replace(JSON.stringify(shared.name), 'null'); // the allowed member-list name, once, by value of that key
+    expect(r.body.split('"Bobmark shared list"').length - 1).toBe(1);
+    for (const v of ['Bobmark', 'bobmark', 'Bobmark secret list', 'Bobmark party', 'B rec title']) expect(raw, v).not.toContain(v);
   });
 
   it('export never contains jellyfin_pw_enc, authentik_sub, pin_hash, push endpoints', async () => {
@@ -166,7 +215,7 @@ describe('GET /api/account/export', () => {
     const asked = fakeHistory();
     const doc = (await get(s)).json();
     const jfIds = (await env.pool.query("select jellyfin_user_id from users where authentik_sub='sub-admin'")).rows[0].jellyfin_user_id as string;
-    expect(asked.sort()).toEqual([`${jfIds}:1000`, 'jfakid000000000000000000000000ab:1000'].sort());
+    expect(asked.sort()).toEqual([`${jfIds}:0:200`, 'jfakid000000000000000000000000ab:0:200'].sort());
     expect(doc.history.profiles).toHaveLength(2);
     expect(doc.history.profiles[0].items[0]).toEqual({
       itemId: `hist-${jfIds.slice(0, 6)}`, name: `History ${jfIds.slice(0, 6)}`, type: 'Episode', seriesName: 'Some Show',
@@ -175,6 +224,46 @@ describe('GET /api/account/export', () => {
     // local totals of the user's own rows
     expect(doc.history.totals.perItem).toEqual([expect.objectContaining({ itemId: 'aitem-played', seconds: 900 })]);
     expect(doc.history.totals.perDay).toEqual([{ day: '2026-10-01', streams: 3, transcodes: 1 }]);
+  });
+
+  it('history is paged with start up to 1000 per profile, deduped, and marked truncated', async () => {
+    const { s, a, aKid } = await setup();
+    const jfA = (await env.pool.query('select jellyfin_user_id from users where id=$1', [a])).rows[0].jellyfin_user_id as string;
+    const calls: Array<{ start?: number; limit?: number }> = [];
+    // 1500 played items; page 0 also carries 10 in-progress items that push played ones out of its 200-item slice
+    const played = Array.from({ length: 1500 }, (_, n) => item(`p${n}`, `P${n}`));
+    env.ctx.jf.history = async (u, q) => {
+      if (u.jellyfin_user_id !== jfA) return [item('k1', 'K1')]; // the kids profile: one short page
+      calls.push({ start: q?.start, limit: q?.limit });
+      const start = q?.start ?? 0;
+      if (start === 0) return [...Array.from({ length: 10 }, (_, n) => item(`r${n}`, `R${n}`, { played: false })), ...played].slice(0, 200);
+      return played.slice(start, start + 200);
+    };
+    const doc = (await get(s)).json();
+    expect(calls.map((c) => c.limit).every((l) => l === 200)).toBe(true);
+    expect(calls.map((c) => c.start)).toEqual([0, 160, 360, 560, 760, 960]);
+    const own = doc.history.profiles.find((p: { profileId: string }) => p.profileId === a);
+    const ids = own.items.map((i: { itemId: string }) => i.itemId);
+    expect(ids).toHaveLength(1000);
+    expect(new Set(ids).size).toBe(1000);
+    expect(ids).toContain('p190'); // pushed out of page 0, picked up by the overlapping page 2
+    expect(own.truncated).toBe(true);
+    expect(doc.history.truncated).toBe(true);
+    expect(doc.history.profiles.find((p: { profileId: string }) => p.profileId === aKid)).toEqual({ profileId: aKid, items: [expect.objectContaining({ itemId: 'k1' })] });
+  });
+
+  it('a short history is not truncated; one failing profile is marked, the others export', async () => {
+    const { s, a, aKid } = await setup();
+    env.ctx.jf.history = async (u) => {
+      if (u.jellyfin_user_id.startsWith('jfakid')) throw new Error('profile user gone');
+      return [item('x1', 'X1')];
+    };
+    const doc = (await get(s)).json();
+    expect(doc.history.truncated).toBeUndefined();
+    expect(doc.history.profiles).toEqual([
+      { profileId: a, items: [expect.objectContaining({ itemId: 'x1' })] },
+      { profileId: aKid, error: 'unavailable' },
+    ]);
   });
 
   it('history failure still yields valid JSON with history.error', async () => {
@@ -209,6 +298,33 @@ describe('GET /api/account/export', () => {
     await get(s);
     const rows = (await env.pool.query("select actor, target, meta from audit_log where action='account.export'")).rows;
     expect(rows).toEqual([{ actor: a, target: a, meta: {} }]);
+  });
+
+  it('a HEAD request neither runs the export nor audits', async () => {
+    const { s } = await setup();
+    const asked = fakeHistory();
+    const r = await env.app.inject({ method: 'HEAD', url: '/api/account/export', cookies: s.cookies });
+    expect(r.statusCode).toBe(404);
+    expect(asked).toEqual([]);
+    expect((await env.pool.query("select 1 from audit_log where action='account.export'")).rowCount).toBe(0);
+  });
+
+  it('a database error mid-stream aborts the download, is logged, and the server keeps serving', async () => {
+    const { s } = await setup();
+    fakeHistory();
+    const db = env.ctx.db;
+    env.ctx.db = { query: ((sql: string, p?: unknown[]) => (sql.startsWith('select label, approved, created_at, last_seen from devices')
+      ? new Promise((_, rej) => setTimeout(() => rej(new Error('db gone')), 50)) : db.query(sql, p))) as typeof db.query };
+    const r = await env.app.inject({ method: 'GET', url: '/api/account/export', cookies: s.cookies }).catch((e: Error) => e);
+    // before the first bytes reached the socket Fastify still answers 500; after that the transfer is cut off. Never a
+    // silently complete file.
+    if (!(r instanceof Error)) {
+      if (r.statusCode === 500) expect(r.json()).toEqual({ error: 'internal' });
+      else expect(() => JSON.parse(r.body)).toThrow();
+    }
+    expect((await listErrors(env.ctx, { source: 'server' })).entries.map((e) => e.code)).toContain('GET /api/account/export stream');
+    env.ctx.db = db;
+    expect((await env.app.inject({ url: '/api/account', cookies: s.cookies })).statusCode).toBe(200);
   });
 
   it('needs the owner profile and is limited to 5 per hour', async () => {
