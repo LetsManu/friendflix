@@ -188,7 +188,12 @@ const KIND_CODE: Record<SettingKind, string> = {
 
 /** Parses an env string into the typed value (the same type as in Config); the error is a code, never the value. */
 export function parseEnvValue(def: SettingDef, raw: string): { ok: true; value: unknown } | { ok: false; code: string } {
-  const r = def.schema.safeParse(raw);
+  return parseSettingValue(def, raw);
+}
+
+/** parseEnvValue for any schema input (the settings store also passes numbers from stored or submitted JSON). */
+export function parseSettingValue(def: SettingDef, input: unknown): { ok: true; value: unknown } | { ok: false; code: string } {
+  const r = def.schema.safeParse(input);
   if (r.success) return { ok: true, value: r.data };
   const issue = r.error.issues[0] as { code: string; params?: { code?: unknown } } | undefined;
   const own = issue?.params?.code;
