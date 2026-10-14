@@ -311,6 +311,8 @@ const es: Translation<typeof de> = {
     doneText: 'Tu cuenta no se eliminará. Inicia sesión de nuevo ahora.',
     signIn: 'Iniciar sesión',
     expiredText: 'Tu cuenta no se eliminará. Pero tu acceso ha caducado, así que sigue bloqueada hasta que un administrador lo amplíe.',
+    keptTitle: 'La eliminación se mantiene',
+    keptText: 'Tu cuenta se eliminará el {date}. Ya puedes cerrar esta página.',
     goneTitle: 'La eliminación ya está en curso',
     goneText: 'Tu cuenta se está eliminando ahora mismo. Ya no se puede deshacer.',
     noneTitle: 'Nada que restaurar',

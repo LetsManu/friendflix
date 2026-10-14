@@ -313,6 +313,8 @@ export default {
     doneText: 'Dein Konto wird nicht gelöscht. Melde dich jetzt wieder an.',
     signIn: 'Anmelden',
     expiredText: 'Dein Konto wird nicht gelöscht. Dein Zugang ist aber abgelaufen, deshalb bleibt es gesperrt, bis ein Admin ihn verlängert.',
+    keptTitle: 'Löschung bleibt bestehen',
+    keptText: 'Dein Konto wird am {date} gelöscht. Du kannst diese Seite jetzt schließen.',
     goneTitle: 'Löschung läuft bereits',
     goneText: 'Dein Konto wird gerade gelöscht. Das lässt sich nicht mehr rückgängig machen.',
     noneTitle: 'Nichts wiederherzustellen',

@@ -311,6 +311,8 @@ const fr: Translation<typeof de> = {
     doneText: 'Ton compte ne sera pas supprimé. Reconnecte-toi maintenant.',
     signIn: 'Se connecter',
     expiredText: 'Ton compte ne sera pas supprimé. Mais ton accès a expiré : il reste donc bloqué jusqu’à ce qu’un administrateur le prolonge.',
+    keptTitle: 'Suppression maintenue',
+    keptText: 'Ton compte sera supprimé le {date}. Tu peux fermer cette page.',
     goneTitle: 'Suppression déjà en cours',
     goneText: 'Ton compte est en cours de suppression. Ce n’est plus réversible.',
     noneTitle: 'Rien à restaurer',

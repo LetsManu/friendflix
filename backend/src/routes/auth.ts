@@ -20,6 +20,7 @@ import { HttpError, accountSerial, applyRole, getUserById, getUserBySub, provisi
 import { restoreDeletion } from '../deletion.js';
 import { markReauthenticated, REAUTH_MAX_AGE } from '../reauth.js';
 import { notifyAdmins } from '../notify.js';
+import { pendingNoticeKey } from '../pending.js';
 import { profileOnboarded } from './prefs.js';
 import { publicCapabilities } from '../media/types.js';
 import { FALLBACK_LANGUAGE, instanceLanguage, languageFromAcceptLanguage, m, profileLanguage, roleLabel } from '../i18n.js';
@@ -32,8 +33,6 @@ export const PENDING_COOKIE = 'ff_pending';
 const PENDING_TTL = 30 * 86400;
 /** a person who was rejected and asks again only notifies the admins again after this long */
 const RENOTIFY_MS = 86400e3;
-/** kv `pending_notice:<request id>` → { sub, email } of an approved request (lets /pending answer "approved") */
-export const pendingNoticeKey = (requestId: string) => `pending_notice:${requestId}`;
 /** where a re-authentication may return to: a local path only (no `//host`, no scheme, no backslash) */
 const REAUTH_NEXT = /^\/(?!\/)[A-Za-z0-9/_?=&.-]{0,200}$/;
 const REAUTH_DEFAULT_NEXT = '/me/account';
@@ -50,7 +49,10 @@ interface SavedLogin {
   reauth?: { userId: string; next: string };
 }
 
-/** a sign-in during the deletion grace period: this cookie names the account that may be restored on /restore (signed, no session) */
+/**
+ * a sign-in during the deletion grace period: this cookie names the account and the scheduled deletion (its date) that may be
+ * restored on /restore (signed, no session); a later, different deletion of the same account is not covered by it
+ */
 export const RESTORE_COOKIE = 'ff_restore';
 const RESTORE_TTL = 900;
 
@@ -65,26 +67,33 @@ function verifyPending(ctx: Pick<Ctx, 'encKey'>, cookie: string | undefined): st
   return got.length === want.length && timingSafeEqual(got, want) ? id : null;
 }
 
-const restoreMac = (ctx: Pick<Ctx, 'encKey'>, userId: string, exp: string) =>
-  createHmac('sha256', ctx.encKey).update(`friendflix restore v1|${userId}|${exp}`).digest('base64url');
-const signRestore = (ctx: Pick<Ctx, 'encKey'>, userId: string, exp = String(Math.floor(Date.now() / 1000) + RESTORE_TTL)) =>
-  `${userId}.${exp}.${restoreMac(ctx, userId, exp)}`;
-/** The user id of a signed, unexpired `ff_restore` cookie, or null when it is missing, forged or expired. */
-function verifyRestore(ctx: Pick<Ctx, 'encKey'>, cookie: string | undefined): string | null {
-  const [id, exp, mac, ...rest] = (cookie ?? '').split('.');
-  if (!id || !exp || !mac || rest.length || !/^\d{1,12}$/.test(exp)) return null;
-  const want = Buffer.from(restoreMac(ctx, id, exp));
+const restoreMac = (ctx: Pick<Ctx, 'encKey'>, userId: string, exp: string, deletionAt: string) =>
+  createHmac('sha256', ctx.encKey).update(`friendflix restore v1|${userId}|${exp}|${deletionAt}`).digest('base64url');
+/** `<userId>.<exp>.<deletion_at ms>.<mac>`: valid for RESTORE_TTL, and only for the deletion scheduled at that date */
+function signRestore(ctx: Pick<Ctx, 'encKey'>, userId: string, deletionAt: Date, exp = String(Math.floor(Date.now() / 1000) + RESTORE_TTL)): string {
+  const at = String(deletionAt.getTime());
+  return `${userId}.${exp}.${at}.${restoreMac(ctx, userId, exp, at)}`;
+}
+/** The account and deletion date of a signed, unexpired `ff_restore` cookie, or null when it is missing, forged or expired. */
+function verifyRestore(ctx: Pick<Ctx, 'encKey'>, cookie: string | undefined): { userId: string; deletionAt: number } | null {
+  const [id, exp, at, mac, ...rest] = (cookie ?? '').split('.');
+  if (!id || !exp || !at || !mac || rest.length || !/^\d{1,12}$/.test(exp) || !/^\d{1,15}$/.test(at)) return null;
+  const want = Buffer.from(restoreMac(ctx, id, exp, at));
   const got = Buffer.from(mac);
   if (got.length !== want.length || !timingSafeEqual(got, want)) return null;
-  return Number(exp) * 1000 > Date.now() ? id : null;
+  return Number(exp) * 1000 > Date.now() ? { userId: id, deletionAt: Number(at) } : null;
 }
 
-/** The deletion date of an account that is locked for deletion, still in its grace period and not claimed by the tick; else null. */
-async function restorableUntil(ctx: Ctx, userId: string): Promise<Date | null> {
+/**
+ * The deletion date of an account that is locked for deletion, still in its grace period and not claimed by the tick; else null.
+ * With `issuedFor` (a restore cookie's date) also null when the account's deletion was rescheduled since the cookie was issued.
+ */
+async function restorableUntil(ctx: Ctx, userId: string, issuedFor?: number): Promise<Date | null> {
   const r = await ctx.db.query<{ deletion_at: Date }>(
     `select deletion_at from users u where id=$1 and disabled and locked_reason='deletion' and deletion_at > now()
        and not exists (select 1 from account_deletions d where d.user_id=u.id)`, [userId]);
-  return r.rows[0]?.deletion_at ?? null;
+  const at = r.rows[0]?.deletion_at ?? null;
+  return at && (issuedFor === undefined || at.getTime() === issuedFor) ? at : null;
 }
 
 /**
@@ -246,8 +255,9 @@ export function authRoutes(app: FastifyInstance, ctx: Ctx) {
         if (claimed) await recordInviteUse(ctx, claimed, user.id, req.log); // used up: the enrollment link must not create more accounts
       } else if (user.disabled) {
         // locked for deletion and still in the grace period: the person may restore it on /restore (no session); other locks: 403 (F15 step 3)
-        if (!(await restorableUntil(ctx, user.id))) return reply.code(403).send({ error: 'disabled' });
-        reply.setCookie(RESTORE_COOKIE, signRestore(ctx, user.id), { httpOnly: true, secure, sameSite: 'lax', path: '/', maxAge: RESTORE_TTL });
+        const deletionAt = await restorableUntil(ctx, user.id);
+        if (!deletionAt) return reply.code(403).send({ error: 'disabled' });
+        reply.setCookie(RESTORE_COOKIE, signRestore(ctx, user.id, deletionAt), { httpOnly: true, secure, sameSite: 'lax', path: '/', maxAge: RESTORE_TTL });
         return reply.redirect('/restore');
       } else if (isAdmin && user.role !== 'admin') {
         await ctx.db.query("update users set role='admin' where id=$1", [user.id]);
@@ -295,29 +305,37 @@ export function authRoutes(app: FastifyInstance, ctx: Ctx) {
 
   // the /restore page (no session): the deletion date of the account named by the signed ff_restore cookie; never its name or e-mail
   app.get('/api/restore', async (req) => {
-    const id = verifyRestore(ctx, req.cookies[RESTORE_COOKIE]);
-    const at = id ? await restorableUntil(ctx, id) : null;
+    const c = verifyRestore(ctx, req.cookies[RESTORE_COOKIE]);
+    const at = c ? await restorableUntil(ctx, c.userId, c.deletionAt) : null;
     return at ? { state: 'scheduled', deletionAt: at.toISOString() } : { state: 'none' };
   });
 
-  // Restores the scheduled deletion. No session, so the CSRF hook does not apply: JSON only (a cross-site form cannot send it,
-  // and a cross-site fetch with it needs a preflight). No session either: the person signs in again through /auth/login.
+  // Restores the scheduled deletion. It carries no session authority, so the CSRF hook exempts it (app.ts): JSON only (a cross-site
+  // form cannot send it, and a cross-site fetch with it needs a preflight) + the SameSite, HMAC-signed cookie. No session either:
+  // the person signs in again through /auth/login.
   app.post('/api/restore', { config: { rateLimit: { max: 10, timeWindow: '1 minute' } } }, async (req, reply) => {
     if (!/^application\/json(\s*;|$)/i.test(String(req.headers['content-type'] ?? ''))) return reply.code(415).send({ error: 'json_required' });
-    const id = verifyRestore(ctx, req.cookies[RESTORE_COOKIE]);
-    if (!id) return reply.code(401).send({ error: 'unauthenticated' });
+    const c = verifyRestore(ctx, req.cookies[RESTORE_COOKIE]);
+    if (!c) return reply.code(401).send({ error: 'unauthenticated' });
     const locked = await accountSerial(async () => {
-      // the grace period is the person's window (an admin may still restore later, until the tick claims the account)
-      if (!(await restorableUntil(ctx, id))) {
-        const claimed = await ctx.db.query('select 1 from account_deletions where user_id=$1', [id]);
+      // the grace period is the person's window (an admin may still restore later, until the tick claims the account);
+      // a cookie only restores the deletion it was issued for
+      if (!(await restorableUntil(ctx, c.userId, c.deletionAt))) {
+        const claimed = await ctx.db.query('select 1 from account_deletions where user_id=$1', [c.userId]);
         throw new HttpError(409, claimed.rowCount ? 'deletion_in_progress' : 'not_scheduled');
       }
-      await restoreDeletion(ctx, id, id);
-      return (await ctx.db.query<{ locked_reason: string | null }>('select locked_reason from users where id=$1', [id])).rows[0]?.locked_reason;
+      await restoreDeletion(ctx, c.userId, c.userId);
+      return (await ctx.db.query<{ locked_reason: string | null }>('select locked_reason from users where id=$1', [c.userId])).rows[0]?.locked_reason;
     });
     reply.clearCookie(RESTORE_COOKIE, { path: '/' });
     // F8: ended access stays locked (as 'expired'); the page says so instead of offering a sign-in that would answer 403
     return locked === 'expired' ? { ok: true, accessEnded: true } : { ok: true };
+  });
+
+  // "Keep the deletion" on /restore: forgets the restore cookie (nothing else changes; harmless, so no checks)
+  app.delete('/api/restore', { config: { rateLimit: { max: 10, timeWindow: '1 minute' } } }, async (_req, reply) => {
+    reply.clearCookie(RESTORE_COOKIE, { path: '/' });
+    return { ok: true };
   });
 
   app.get('/api/me', { preHandler: requireUser(ctx, { allowPendingDevice: true, allowNoProfile: true, skipProfileHeader: true }) }, async (req) => {

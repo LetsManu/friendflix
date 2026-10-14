@@ -311,6 +311,8 @@ const it: Translation<typeof de> = {
     doneText: 'Il tuo account non verrà eliminato. Accedi di nuovo ora.',
     signIn: 'Accedi',
     expiredText: 'Il tuo account non verrà eliminato. Però il tuo accesso è scaduto, quindi resta bloccato finché un amministratore non lo prolunga.',
+    keptTitle: 'Eliminazione confermata',
+    keptText: 'Il tuo account verrà eliminato il {date}. Ora puoi chiudere questa pagina.',
     goneTitle: 'Eliminazione già in corso',
     goneText: 'Il tuo account è in fase di eliminazione. Non si può più annullare.',
     noneTitle: 'Niente da ripristinare',

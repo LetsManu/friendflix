@@ -14,7 +14,7 @@ import { notifyAdmins } from './notify.js';
 import { akSetActive } from './authentik.js';
 import { revokeDownloads } from './downloads.js';
 import { accountJellyfinIds } from './profiles.js';
-import { pendingNoticeKey } from './routes/auth.js';
+import { pendingNoticeKey } from './pending.js';
 import { SeerrError } from './seerr/client.js';
 import { HttpError, accessEnded, accountSerial, assertNotLastAdmin, lockUser, unlockUser } from './users.js';
 

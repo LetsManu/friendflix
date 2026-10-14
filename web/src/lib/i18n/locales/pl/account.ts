@@ -331,6 +331,8 @@ const pl: Translation<typeof de> = {
     doneText: 'Twoje konto nie zostanie usunięte. Zaloguj się teraz ponownie.',
     signIn: 'Zaloguj się',
     expiredText: 'Twoje konto nie zostanie usunięte. Twój dostęp jednak wygasł, więc pozostaje zablokowane, dopóki administrator go nie przedłuży.',
+    keptTitle: 'Usunięcie pozostaje',
+    keptText: 'Twoje konto zostanie usunięte {date}. Możesz teraz zamknąć tę stronę.',
     goneTitle: 'Usuwanie już trwa',
     goneText: 'Twoje konto jest właśnie usuwane. Tego nie da się już cofnąć.',
     noneTitle: 'Nie ma czego przywracać',

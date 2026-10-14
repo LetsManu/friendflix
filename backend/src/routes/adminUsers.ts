@@ -19,7 +19,7 @@ import { ensureSeerrUser } from '../seerr/service.js';
 import { requireAdmin, type Session } from '../session.js';
 import type { ProfileRow, UserRow } from '../types.js';
 import { HttpError, accessEnded, accountSerial, applyRole, assertNotLastAdmin, getUserById, getUserBySub, lockUser, provisionUser, setAccessUntil, setRole, unlockUser, type LockReason } from '../users.js';
-import { pendingNoticeKey } from './auth.js';
+import { pendingNoticeKey } from '../pending.js';
 
 const uuid = z.guid();
 /** ISO date-time with offset, or null (= no end) */

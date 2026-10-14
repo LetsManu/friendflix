@@ -10,7 +10,7 @@ test('phone: /restore fits the screen, restores and offers sign in', async ({ pa
   }));
   await page.goto('/restore');
   const restore = page.getByRole('button', { name: 'Konto wiederherstellen' });
-  const keep = page.getByRole('link', { name: 'Löschung beibehalten' });
+  const keep = page.getByRole('button', { name: 'Löschung beibehalten' });
   await expect(restore).toBeVisible();
   await expect(keep).toBeVisible();
   expect(await noHorizontalOverflow(page)).toBe(true);

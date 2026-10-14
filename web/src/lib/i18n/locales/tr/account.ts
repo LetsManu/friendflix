@@ -311,6 +311,8 @@ const tr: Translation<typeof de> = {
     doneText: 'Hesabın silinmeyecek. Şimdi yeniden giriş yap.',
     signIn: 'Giriş yap',
     expiredText: 'Hesabın silinmeyecek. Ancak erişim süren doldu, bu yüzden bir yönetici uzatana kadar kilitli kalır.',
+    keptTitle: 'Silme işlemi korunuyor',
+    keptText: 'Hesabın {date} tarihinde silinecek. Bu sayfayı artık kapatabilirsin.',
     goneTitle: 'Silme işlemi zaten sürüyor',
     goneText: 'Hesabın şu anda siliniyor. Bu artık geri alınamaz.',
     noneTitle: 'Geri yüklenecek bir şey yok',

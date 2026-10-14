@@ -29,9 +29,10 @@ const freshIp = () => `10.7.${(++ipSeq >> 8) & 255}.${ipSeq & 255}`;
 const postRestore = (cookie?: string, ip = freshIp()) => env.app.inject({
   method: 'POST', url: '/api/restore', cookies: cookie ? { ff_restore: cookie } : {}, headers: { 'content-type': 'application/json' }, payload: '{}', remoteAddress: ip,
 });
-/** a correctly signed cookie with any expiry (what an attacker cannot make without the key) */
-const signed = (userId: string, exp: number) =>
-  `${userId}.${exp}.${createHmac('sha256', env.ctx.encKey).update(`friendflix restore v1|${userId}|${exp}`).digest('base64url')}`;
+/** a correctly signed cookie with any expiry and deletion date (what an attacker cannot make without the key) */
+const signed = (userId: string, exp: number, deletionAt: number) =>
+  `${userId}.${exp}.${deletionAt}.${createHmac('sha256', env.ctx.encKey).update(`friendflix restore v1|${userId}|${exp}|${deletionAt}`).digest('base64url')}`;
+const deletionMs = async () => (await row(anna)).deletion_at!.getTime();
 const row = async (id: string) => (await env.pool.query<{ disabled: boolean; locked_reason: string | null; deletion_at: Date | null }>(
   'select disabled, locked_reason, deletion_at from users where id=$1', [id])).rows[0]!;
 
@@ -97,16 +98,18 @@ describe('restore on sign-in', () => {
 
   it('forged or expired restore cookie answers state none / 401', async () => {
     const good = restoreCookie(await signIn())!.value;
-    const [id, exp, mac] = good.split('.');
+    const [id, exp, at, mac] = good.split('.');
+    expect(Number(at)).toBe(await deletionMs());
     const forged = [
       undefined,
       '',
       'garbage',
-      `${id}.${exp}`,
-      `${id}.${Number(exp) + 3600}.${mac}`, // a longer life with the old MAC
-      `${id}.${exp}.${mac}x`,
-      `${id}.${exp}.${mac}.x`,
-      signed(anna, Math.floor(Date.now() / 1000) - 1), // signed but expired
+      `${id}.${exp}.${at}`,
+      `${id}.${Number(exp) + 3600}.${at}.${mac}`, // a longer life with the old MAC
+      `${id}.${exp}.${Number(at) + 1}.${mac}`, // another deletion date with the old MAC
+      `${id}.${exp}.${at}.${mac}x`,
+      `${id}.${exp}.${at}.${mac}.x`,
+      signed(anna, Math.floor(Date.now() / 1000) - 1, await deletionMs()), // signed but expired
     ];
     for (const c of forged) {
       expect((await getRestore(c)).json(), String(c)).toEqual({ state: 'none' });
@@ -114,7 +117,7 @@ describe('restore on sign-in', () => {
     }
     expect((await row(anna)).disabled).toBe(true);
     // a signed cookie still in its 15 minutes works
-    expect((await getRestore(signed(anna, Math.floor(Date.now() / 1000) + 60))).json().state).toBe('scheduled');
+    expect((await getRestore(signed(anna, Math.floor(Date.now() / 1000) + 60, await deletionMs()))).json().state).toBe('scheduled');
   });
 
   it('form-encoded POST is refused', async () => {
@@ -133,7 +136,9 @@ describe('restore on sign-in', () => {
     expect(r.statusCode).toBe(409);
     expect(r.json()).toEqual({ error: 'deletion_in_progress' });
     expect((await getRestore(c)).json()).toEqual({ state: 'none' });
-    expect((await signIn()).statusCode).toBe(403);
+    const cb = await signIn();
+    expect(cb.statusCode).toBe(403);
+    expect(cb.json()).toEqual({ error: 'account_deleted' }); // F15: the claim is checked before the restore redirect
   });
 
   it('after deletion_at the callback answers 403', async () => {
@@ -143,9 +148,43 @@ describe('restore on sign-in', () => {
     expect(cb.json()).toEqual({ error: 'disabled' });
     expect(restoreCookie(cb)).toBeUndefined();
     // an issued cookie no longer restores either once the grace period is over
-    const c = signed(anna, Math.floor(Date.now() / 1000) + 600);
+    const c = signed(anna, Math.floor(Date.now() / 1000) + 600, await deletionMs());
     expect((await getRestore(c)).json()).toEqual({ state: 'none' });
     expect((await postRestore(c)).statusCode).toBe(409);
+  });
+
+  it('a cookie only restores the deletion it was issued for', async () => {
+    const old = restoreCookie(await signIn())!.value;
+    // restored (elsewhere), then deleted again: the first cookie is still within its 15 minutes
+    await postRestore(old);
+    await scheduleDeletion(env.ctx, anna, anna, new Date(Date.now() + 1000));
+    expect((await getRestore(old)).json()).toEqual({ state: 'none' });
+    const r = await postRestore(old);
+    expect(r.statusCode).toBe(409);
+    expect(r.json()).toEqual({ error: 'not_scheduled' });
+    expect((await row(anna)).locked_reason).toBe('deletion');
+  });
+
+  it('another account signed in in the same browser does not block the restore (no CSRF token needed)', async () => {
+    const other = await env.login(ADMIN);
+    const c = restoreCookie(await signIn())!.value;
+    const r = await env.app.inject({
+      method: 'POST', url: '/api/restore', cookies: { ...other.cookies, ff_restore: c }, headers: { 'content-type': 'application/json' }, payload: '{}', remoteAddress: freshIp(),
+    });
+    expect(r.statusCode).toBe(200);
+    expect((await row(anna)).disabled).toBe(false);
+    // the exemption is only for /api/restore: the other session still needs its token elsewhere
+    const d = await env.app.inject({ method: 'POST', url: '/api/account/delete', cookies: other.cookies, payload: { confirm: false } });
+    expect(d.statusCode).toBe(403);
+    expect(d.json()).toEqual({ error: 'csrf' });
+  });
+
+  it('DELETE /api/restore ("keep the deletion") clears the cookie and changes nothing else', async () => {
+    const c = restoreCookie(await signIn())!.value;
+    const r = await env.app.inject({ method: 'DELETE', url: '/api/restore', cookies: { ff_restore: c }, remoteAddress: freshIp() });
+    expect(r.statusCode).toBe(200);
+    expect(r.cookies.find((x) => x.name === 'ff_restore')!.value).toBe('');
+    expect((await row(anna)).locked_reason).toBe('deletion');
   });
 
   it('POST is rate limited to 10 a minute', async () => {

@@ -310,6 +310,8 @@ const en: Translation<typeof de> = {
     doneText: 'Your account will not be deleted. Sign in again now.',
     signIn: 'Sign in',
     expiredText: 'Your account will not be deleted. Your access has ended, though, so it stays locked until an admin extends it.',
+    keptTitle: 'Deletion kept',
+    keptText: 'Your account will be deleted on {date}. You can close this page.',
     goneTitle: 'Deletion already running',
     goneText: 'Your account is being deleted right now. This can no longer be undone.',
     noneTitle: 'Nothing to restore',

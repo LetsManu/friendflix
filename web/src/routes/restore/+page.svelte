@@ -6,7 +6,8 @@
   import { fmtDate, publicLocale, setLocale, t } from '#lib/i18n';
   import Logo from '#lib/Logo.svelte';
   import { onMount } from 'svelte';
-  type State = { state: 'scheduled'; deletionAt: string } | { state: 'none' } | { state: 'done'; accessEnded: boolean } | { state: 'gone' };
+  type State = { state: 'scheduled'; deletionAt: string } | { state: 'none' } | { state: 'done'; accessEnded: boolean } | { state: 'gone' }
+    | { state: 'kept'; deletionAt: string };
   let s: State | null = null;
   let busy = false;
   let failed = false;
@@ -32,6 +33,15 @@
     } catch { failed = true; }
     busy = false;
   }
+  /**
+   * "Keep the deletion" stays on this page: without a session `/` would go to the login, and the still valid IdP session would
+   * bring the person straight back here. The cookie is dropped (best effort; it also runs out after 15 minutes).
+   */
+  function keep(deletionAt: string) {
+    s = { state: 'kept', deletionAt };
+    failed = false;
+    void fetch('/api/restore', { method: 'DELETE', credentials: 'same-origin' }).catch(() => undefined);
+  }
   onMount(() => {
     const pre = publicLocale();
     if (pre) void setLocale(pre);
@@ -56,7 +66,7 @@
       {#if failed}<p class="err" role="alert">{$t('account.restore.failed')}</p>{/if}
       <div class="flex actions">
         <button disabled={busy} on:click={restore}>{busy ? $t('account.restore.restoring') : $t('account.restore.restore')}</button>
-        <a class="btn sec" href="/">{$t('account.restore.keep')}</a>
+        <button class="sec" disabled={busy} on:click={() => s?.state === 'scheduled' && keep(s.deletionAt)}>{$t('account.restore.keep')}</button>
       </div>
     {:else if s.state === 'done'}
       <h1>{$t('account.restore.doneTitle')}</h1>
@@ -66,6 +76,9 @@
         <p>{$t('account.restore.doneText')}</p>
         <p><a class="btn" href="/auth/login">{$t('account.restore.signIn')}</a></p>
       {/if}
+    {:else if s.state === 'kept'}
+      <h1>{$t('account.restore.keptTitle')}</h1>
+      <p>{$t('account.restore.keptText', { date: fmtDate(s.deletionAt) })}</p>
     {:else if s.state === 'gone'}
       <h1>{$t('account.restore.goneTitle')}</h1>
       <p>{$t('account.restore.goneText')}</p>
