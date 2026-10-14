@@ -15,6 +15,7 @@ import { SeerrClient } from './seerr/client.js';
 import { loadRoles } from './roles.js';
 import { nightlyTick } from './healthcheck.js';
 import { digestTick } from './digest.js';
+import { expiryTick } from './expiry.js';
 import { reapplyPoliciesOnce } from './users.js';
 import { pushEnabled } from './push.js';
 import { previews } from './previews.js';
@@ -77,6 +78,12 @@ if (cfg.PREVIEW_WARM === 'true') {
 timers.push(setInterval(() => void reminderTick(ctx).catch(jobFailed(ctx, app.log, 'reminder', 'reminder tick failed')), 1800_000));
 timers.push(setInterval(() => void nightlyTick(ctx).catch(jobFailed(ctx, app.log, 'playback-check', 'playback check failed')), 600_000));
 timers.push(setInterval(() => void digestTick(ctx).catch(jobFailed(ctx, app.log, 'digest', 'digest tick failed')), 600_000));
+let expiryBusy = false; // a slow tick (media server) must not overlap the next one
+timers.push(setInterval(() => {
+  if (expiryBusy) return;
+  expiryBusy = true;
+  void expiryTick(ctx).catch(jobFailed(ctx, app.log, 'access-expiry', 'access expiry tick failed')).finally(() => { expiryBusy = false; });
+}, 60_000)); // access-until warnings + automatic lock
 if (cfg.BACKGROUND_JOBS === 'true') {
   if (cfg.DOWNLOADS_ENABLED === 'true') {
     timers.push(setInterval(() => void startPreparerTick(ctx).catch(jobFailed(ctx, app.log, 'download-prep', 'download prep tick failed')), 15_000));

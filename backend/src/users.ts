@@ -140,14 +140,19 @@ export async function setRole(ctx: Ctx, actor: string | null, userId: string, ro
   await audit(ctx, actor, 'user.role', userId, { from: user.role, to: role });
 }
 
-/** Sets or clears (null) the date the account's access ends. No-op when unchanged. */
+/**
+ * Sets or clears (null) the date the account's access ends. No-op when unchanged.
+ * A change re-arms the expiry warning (expiry_notified_at); an account locked because its access expired is unlocked
+ * when the new date lies in the future or is cleared. A manual lock stays.
+ */
 export async function setAccessUntil(ctx: Ctx, actor: string | null, userId: string, until: Date | null): Promise<void> {
-  const r = await ctx.db.query<{ access_until: Date | null }>('select access_until from users where id=$1', [userId]);
+  const r = await ctx.db.query<{ access_until: Date | null; locked_reason: LockReason | null }>('select access_until, locked_reason from users where id=$1', [userId]);
   if (!r.rowCount) throw new HttpError(404, 'not_found');
-  const from = r.rows[0]!.access_until;
+  const { access_until: from, locked_reason } = r.rows[0]!;
   if (from?.getTime() === until?.getTime()) return;
-  await ctx.db.query('update users set access_until=$2 where id=$1', [userId, until]);
+  await ctx.db.query('update users set access_until=$2, expiry_notified_at=null where id=$1', [userId, until]);
   await audit(ctx, actor, 'user.access', userId, { from: from?.toISOString() ?? null, to: until?.toISOString() ?? null });
+  if (locked_reason === 'expired' && (until === null || until.getTime() > Date.now())) await unlockUser(ctx, actor, userId);
 }
 
 /**
