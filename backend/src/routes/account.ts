@@ -1,15 +1,17 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
 /**
- * Self-service account page (/me/account): the person's own name, avatar, 2FA state. Owner profile only.
+ * Self-service account page (/me/account): the person's own name, avatar, 2FA state, and "Download my data". Owner profile only.
  * The e-mail is shown read-only (its change needs Authentik's verification flow, a later phase).
  */
+import { Readable } from 'node:stream';
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import type pg from 'pg';
 import { z } from 'zod';
 import { audit } from '../audit.js';
 import { akMfaState, akUpdateUser, akUserSettingsUrl } from '../authentik.js';
 import type { Ctx } from '../ctx.js';
+import { exportUserData } from '../export.js';
 import { recentlyAuthenticated, REAUTH_WINDOW_S } from '../reauth.js';
 import { requireOwner } from '../session.js';
 
@@ -79,5 +81,20 @@ export function accountRoutes(app: FastifyInstance, ctx: Ctx) {
     await audit(ctx, user.id, 'account.profile', user.id, { fields: [...(b.name !== undefined ? ['name'] : []), ...(b.avatar !== undefined ? ['avatar'] : [])] });
     req.profile = { ...req.profile!, avatar: b.avatar ?? req.profile!.avatar };
     return view(req);
+  });
+
+  /**
+   * "Download my data": the export streamed as an attachment (built while it is sent, never held in memory as a whole).
+   * 5 per hour and account: the limiter runs after requireOwner, so a new session does not reset it.
+   */
+  const exportLimit = { rateLimit: { max: 5, timeWindow: '1 hour', hook: 'preHandler' as const, keyGenerator: (req: FastifyRequest) => `export:${req.user?.id ?? req.ip}` } };
+  app.get('/api/account/export', { ...owner, config: exportLimit }, async (req, reply) => {
+    const user = req.user!;
+    await audit(ctx, user.id, 'account.export', user.id);
+    return reply
+      .header('content-type', 'application/json; charset=utf-8')
+      .header('content-disposition', `attachment; filename="friendflix-data-${new Date().toISOString().slice(0, 10)}.json"`)
+      .header('cache-control', 'no-store')
+      .send(Readable.from(exportUserData(ctx, user)));
   });
 }
