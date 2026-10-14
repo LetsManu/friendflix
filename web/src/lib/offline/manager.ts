@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Download manager: store + queue + worker control + licence check-in + progress sync.
-// Runs in the page (tab must stay open: no Background Fetch yet). Everything is a no-op where OPFS is unsupported.
+// Runs in the page; phones pause it while the app is hidden (see pausesInBackground). Everything is a no-op where OPFS is unsupported.
 import { writable, get } from 'svelte/store';
 import { api } from '../api';
 import {
@@ -83,6 +83,8 @@ const mine = (v: { profileId: string }) => { const p = activeProfileId(); return
 const recs = new Map<string, DlView>();
 const srv = new Map<string, { ready: boolean; prep: number; failed: boolean; fileUrl: string; bytes: number; subs: ServerSub[]; poster: string; backdrop: string }>();
 let started = false, worker: Worker | null = null, running = '', wake: any = null, lastPut = 0;
+/** a pause asked for because the app went to the background (not by the user) / the download the user paused / last time the page became visible */
+let hiddenPause = false, userPause = '', visibleAt = 0;
 const retryAt = new Map<string, number>();
 const publish = () => downloads.set(new Map(recs));
 const persisted = (v: DlView): DownloadRecord => {
@@ -143,7 +145,11 @@ async function doInit(): Promise<void> {
     await setMeta('maxSeenTime', seen);
   } catch { /* IndexedDB blocked: stays empty */ }
   window.addEventListener('online', () => { void checkIn(); void flushProgress(); void poll(); });
-  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') { void poll(); if (running) void acquireWake(); } });
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') { visibleAt = Date.now(); retryAt.clear(); void poll(); if (running) void acquireWake(); }
+    else pauseForBackground();
+  });
+  window.addEventListener('pagehide', pauseForBackground);
   setInterval(() => { void tick(); }, 60_000);
   void checkIn().then(() => flushProgress());
   void poll();
@@ -214,8 +220,20 @@ export async function requestDownload(req: DownloadRequest): Promise<DlView[]> {
 }
 
 // ---- running ----
+/** phones freeze a hidden page (the fetch dies): pause cleanly there and continue at the same byte once visible again */
+export const pausesInBackground = (): boolean => /iPad|iPhone|iPod|Android/.test(navigator.userAgent ?? '') || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+const hidden = () => document.visibilityState === 'hidden';
+function pauseForBackground() {
+  if (!running || !worker || hiddenPause || userPause === running || !pausesInBackground()) return;
+  hiddenPause = true;
+  worker.postMessage({ cmd: 'pause' });
+}
+/** a dropped connection while hidden or just after coming back is the background freeze, not the network */
+const backgroundDrop = () => hidden() || Date.now() - visibleAt < 2000;
+
 async function pump(): Promise<void> {
   if (running || !started) return;
+  if (hidden() && pausesInBackground()) return; // continues on visibilitychange
   const now = Date.now();
   const next = [...recs.values()].find((v) => mine(v) && pumpable(v.state, !!srv.get(v.id)?.ready) && (retryAt.get(v.id) ?? 0) <= now);
   if (!next) return;
@@ -257,17 +275,20 @@ async function onWorker(m: WorkerOut) {
     if (Date.now() - lastPut > 2000) { lastPut = Date.now(); try { await putDownload(persisted(v)); } catch { /* ignore */ } }
     return;
   }
+  const bgPause = hiddenPause && userPause !== v.id;
+  hiddenPause = false; userPause = '';
   stopWorker();
   if (m.type === 'done') {
     await save(v, { state: 'done', bytesHave: m.bytes, bytesTotal: m.bytes, etag: m.etag, msg: undefined });
     void raw(`/api/downloads/${v.id}/fetched`, 'POST', { bytes: m.bytes });
     void refreshStorage();
   } else if (m.type === 'paused') {
-    await save(v, { state: 'paused', bytesHave: m.have });
+    await save(v, bgPause ? { state: 'queued', bytesHave: m.have, msg: tr('account.downloads.msg.background') } : { state: 'paused', bytesHave: m.have });
   } else {
     const back = (ms: number) => retryAt.set(v.id, Date.now() + ms);
     if (m.code === 'auth') { await save(v, { state: 'paused', msg: tr('account.downloads.msg.signIn') }); }
     else if (m.code === 'busy') { back(30_000); await save(v, { state: 'queued', msg: tr('account.downloads.msg.busy') }); }
+    else if (m.code === 'network' && backgroundDrop()) { await save(v, { state: 'queued', msg: tr('account.downloads.msg.background') }); }
     else if (m.code === 'network') { back(15_000); await save(v, { state: 'queued', msg: tr('account.downloads.msg.network') }); }
     else if (m.code === 'size') { await deleteDownloadFiles(v.id).catch(() => undefined); back(5_000); await save(v, { state: 'queued', bytesHave: 0, etag: '', msg: tr('account.downloads.msg.reload') }); }
     else if (m.code === 'gone') { await save(v, { state: 'error', msg: tr('account.downloads.msg.gone') }); }
@@ -286,7 +307,7 @@ async function releaseWake() { try { await wake?.release(); } catch { /* ignore 
 export function pause(id: string) {
   const v = recs.get(id);
   if (!v) return;
-  if (running === id) worker?.postMessage({ cmd: 'pause' });
+  if (running === id) { userPause = id; worker?.postMessage({ cmd: 'pause' }); }
   else void save(v, { state: 'paused' });
 }
 export function resume(id: string) {
@@ -393,6 +414,7 @@ export const stateLabel = (v: DlView): string => {
     expired: 'account.downloads.state.expired',
   };
   if (v.state === 'paused' && v.msg) return v.msg;
+  if (v.state === 'queued' && v.msg === tr('account.downloads.msg.background')) return v.msg;
   return tr(L[v.state], { n: v.state === 'preparing' ? v.prep ?? 0 : progressPct(v) });
 };
 export const snapshot = (): Map<string, DlView> => get(downloads);

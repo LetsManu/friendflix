@@ -293,6 +293,80 @@ describe('worker errors', () => {
   });
 });
 
+describe('app in the background (no Background Fetch)', () => {
+  const hide = () => { (document as any).visibilityState = 'hidden'; docListeners.get('visibilitychange')!(); };
+  const show = () => { (document as any).visibilityState = 'visible'; docListeners.get('visibilitychange')!(); };
+  beforeEach(() => { (navigator as any).userAgent = 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X)'; });
+
+  it('desktop browsers keep downloading in a hidden tab', async () => {
+    (navigator as any).userAgent = 'Mozilla/5.0 (X11; Linux x86_64)';
+    await request(lic('a'));
+    hide();
+    expect(worker().posted).toHaveLength(1);
+  });
+
+  it('hidden pauses the running worker and shows the background message', async () => {
+    await request(lic('a'));
+    hide();
+    expect(worker().posted.at(-1)).toEqual({ cmd: 'pause' });
+    worker().say({ type: 'paused', id: 'a', have: 400 });
+    await settle();
+    expect(view('a')).toMatchObject({ state: 'queued', bytesHave: 400, msg: tr('account.downloads.msg.background') });
+    expect(M.stateLabel(view('a')!)).toBe(tr('account.downloads.msg.background'));
+    expect(FakeWorker.all).toHaveLength(1); // not restarted while hidden
+  });
+
+  it('pagehide pauses the running worker too', async () => {
+    await request(lic('a'));
+    listeners.get('pagehide')!();
+    expect(worker().posted.at(-1)).toEqual({ cmd: 'pause' });
+  });
+
+  it('visible resumes at once without back-off, from the stored bytes', async () => {
+    await request(lic('a'));
+    hide();
+    worker().say({ type: 'paused', id: 'a', have: 400 });
+    await settle();
+    server.list = [lic('a')];
+    show();
+    await settle();
+    expect(FakeWorker.all).toHaveLength(2);
+    expect(worker().posted[0]).toMatchObject({ cmd: 'start', have: 400 });
+    expect(view('a')).toMatchObject({ state: 'downloading', msg: undefined });
+  });
+
+  it('a network error while hidden uses the background message and no back-off', async () => {
+    await request(lic('a'));
+    (document as any).visibilityState = 'hidden';
+    worker().say({ type: 'error', id: 'a', code: 'network', message: 'x' });
+    await settle();
+    expect(view('a')).toMatchObject({ state: 'queued', msg: tr('account.downloads.msg.background') });
+    server.list = [lic('a')];
+    show();
+    await settle();
+    expect(FakeWorker.all).toHaveLength(2);
+  });
+
+  it('a network error right after coming back counts as a background pause', async () => {
+    await request(lic('a'));
+    hide();
+    show();
+    worker().say({ type: 'error', id: 'a', code: 'network', message: 'x' });
+    await settle();
+    expect(FakeWorker.all).toHaveLength(2); // restarted at once: no 15 s back-off
+    expect(worker().posted[0]).toMatchObject({ cmd: 'start', id: 'a' });
+  });
+
+  it('a user pause while hidden stays a pause', async () => {
+    await request(lic('a'));
+    M.pause('a');
+    hide();
+    worker().say({ type: 'paused', id: 'a', have: 10 });
+    await settle();
+    expect(view('a')!.state).toBe('paused');
+  });
+});
+
 describe('user actions', () => {
   it('pause asks the running worker to stop; paused keeps the bytes; resume continues', async () => {
     await request(lic('a'));
