@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
-import { timingSafeEqual } from 'node:crypto';
+import { createHmac, randomUUID, timingSafeEqual } from 'node:crypto';
 import { dropRemotePeers } from './tv.js';
 import { audit } from '../audit.js';
 import type { Ctx } from '../ctx.js';
@@ -15,15 +15,57 @@ import { deletePushSubscriptions } from '../push.js';
 import { claimInvite, deleteAuthentikInvitation, enrollFlowUrl, lookupInvite, releaseInvite, type InviteRow } from '../invites.js';
 import { accountJellyfinIds, deviceKidsProfile, listProfiles, publicProfile } from '../profiles.js';
 import { DEVICE_COOKIE } from '../devices.js';
-import { freshAuth, RESET_PIN_MAX_AGE } from '../oidc.js';
+import { freshAuth, RESET_PIN_MAX_AGE, type OidcClaims } from '../oidc.js';
 import { applyRole, getUserBySub, provisionUser } from '../users.js';
+import { notifyAdmins } from '../notify.js';
 import { profileOnboarded } from './prefs.js';
 import { publicCapabilities } from '../media/types.js';
-import { FALLBACK_LANGUAGE, instanceLanguage, languageFromAcceptLanguage, profileLanguage, roleLabel } from '../i18n.js';
+import { FALLBACK_LANGUAGE, instanceLanguage, languageFromAcceptLanguage, m, profileLanguage, roleLabel } from '../i18n.js';
 
 const OIDC_COOKIE = 'ff_oidc';
 /** sign-up incl. MFA setup takes longer than a plain login */
 const ENROLL_TTL = 1800;
+/** a login without an invite waits for an admin: this cookie names the approval request (signed, no session) */
+export const PENDING_COOKIE = 'ff_pending';
+const PENDING_TTL = 30 * 86400;
+/** a person who was rejected and asks again only notifies the admins again after this long */
+const RENOTIFY_MS = 86400e3;
+/** kv `pending_notice:<request id>` → { sub, email } of an approved request (lets /pending answer "approved") */
+export const pendingNoticeKey = (requestId: string) => `pending_notice:${requestId}`;
+
+const pendingMac = (ctx: Pick<Ctx, 'encKey'>, id: string) => createHmac('sha256', ctx.encKey).update(`friendflix pending v1|${id}`).digest('base64url');
+const signPending = (ctx: Pick<Ctx, 'encKey'>, id: string) => `${id}.${pendingMac(ctx, id)}`;
+/** The request id of a signed `ff_pending` cookie, or null when it is missing or forged. */
+function verifyPending(ctx: Pick<Ctx, 'encKey'>, cookie: string | undefined): string | null {
+  const [id, mac, ...rest] = (cookie ?? '').split('.');
+  if (!id || !mac || rest.length) return null;
+  const want = Buffer.from(pendingMac(ctx, id));
+  const got = Buffer.from(mac);
+  return got.length === want.length && timingSafeEqual(got, want) ? id : null;
+}
+
+/**
+ * Records (or renews) the approval request of a person without an account and invite. The admins are notified on the
+ * first request, and again when the person asks after a rejection that is older than 24 h. Returns the request id.
+ */
+async function requestApproval(ctx: Ctx, claims: OidcClaims): Promise<string> {
+  const name = claims.name ?? claims.email?.split('@')[0] ?? claims.sub;
+  // one statement: concurrent logins of the same person cannot both count as the first request (Review Focus 2)
+  const r = await ctx.db.query<{ id: string; inserted: boolean; prev_rejected: Date | null }>(
+    `with prev as (select rejected_at from approval_requests where authentik_sub=$2)
+     insert into approval_requests(id, authentik_sub, email, name) values ($1,$2,$3,$4)
+     on conflict (authentik_sub) do update set email=excluded.email, name=excluded.name, rejected_at=null, reject_message=null,
+       requested_at = case when approval_requests.rejected_at is null then approval_requests.requested_at else now() end
+     returning id, (xmax = 0) inserted, (select rejected_at from prev) prev_rejected`,
+    [randomUUID(), claims.sub, claims.email ?? null, name],
+  );
+  const { id, inserted, prev_rejected } = r.rows[0]!;
+  if (inserted || (prev_rejected && Date.now() - prev_rejected.getTime() > RENOTIFY_MS)) {
+    await notifyAdmins(ctx, { kind: 'approval', title: m('notify.approval.new', { name }), link: '/admin/users?tab=pending' });
+    await ctx.db.query('update approval_requests set notified_at=now() where id=$1', [id]);
+  }
+  return id;
+}
 
 export function authRoutes(app: FastifyInstance, ctx: Ctx) {
   const secure = ctx.cfg.PUBLIC_URL.startsWith('https://');
@@ -95,7 +137,12 @@ export function authRoutes(app: FastifyInstance, ctx: Ctx) {
         let claimed: InviteRow | null = null;
         if (!isAdmin) {
           claimed = saved.invite ? await claimInvite(ctx, saved.invite) : null;
-          if (!claimed) return reply.code(403).send({ error: 'no_invite' });
+          if (!claimed) {
+            // no (valid) invite: the person waits for an admin on /pending, without a session
+            const requestId = await requestApproval(ctx, claims);
+            reply.setCookie(PENDING_COOKIE, signPending(ctx, requestId), { httpOnly: true, secure, sameSite: 'lax', path: '/', maxAge: PENDING_TTL });
+            return reply.redirect('/pending');
+          }
         }
         try {
           user = await provisionUser(ctx, claims, isAdmin ? 'admin' : claimed!.role);
@@ -103,6 +150,7 @@ export function authRoutes(app: FastifyInstance, ctx: Ctx) {
           if (claimed) await releaseInvite(ctx, claimed.id); // let the person retry
           throw e;
         }
+        await ctx.db.query('delete from approval_requests where authentik_sub=$1', [claims.sub]); // an invite or the admin group overtook the request
         if (claimed) {
           await ctx.db.query('update invites set used_by=$1 where id=$2', [user.id, claimed.id]);
           void deleteAuthentikInvitation(ctx, claimed.authentik_invite, req.log); // redeemed: the enrollment link must not create more accounts
@@ -130,12 +178,27 @@ export function authRoutes(app: FastifyInstance, ctx: Ctx) {
       const dev = await registerDevice(ctx, req, reply, user.id, secure);
       await saveSession(ctx, sid, newSession({ userId: user.id, csrf: rand(), deviceId: dev.deviceId, deviceApproved: dev.approved }));
       reply.setCookie(COOKIE, sid, { httpOnly: true, secure, sameSite: 'lax', path: '/', maxAge: ctx.cfg.SESSION_TTL_SECONDS });
+      const pendingId = verifyPending(ctx, req.cookies[PENDING_COOKIE]);
+      if (req.cookies[PENDING_COOKIE]) reply.clearCookie(PENDING_COOKIE, { path: '/' }); // approved: the waiting room is done
+      if (pendingId) await ctx.kv.del(pendingNoticeKey(pendingId));
       await audit(ctx, user.id, 'login', user.id, { ip: req.ip });
       return reply.redirect('/');
     } catch (err) {
       req.log.warn({ err }, 'oidc callback failed'); if (process.env.DEBUG_TEST) console.error(err);
       return reply.code(401).send({ error: 'login_failed' });
     }
+  });
+
+  // the /pending page polls this (no session): state of the approval request named by the signed ff_pending cookie
+  app.get('/api/pending', async (req) => {
+    const id = verifyPending(ctx, req.cookies[PENDING_COOKIE]);
+    if (!id) return { state: 'none' };
+    const r = await ctx.db.query<{ rejected_at: Date | null; reject_message: string | null }>('select rejected_at, reject_message from approval_requests where id=$1', [id]);
+    const row = r.rows[0];
+    if (row) return row.rejected_at ? { state: 'rejected', ...(row.reject_message ? { message: row.reject_message } : {}) } : { state: 'pending' };
+    const raw = await ctx.kv.get(pendingNoticeKey(id));
+    const sub = raw ? (JSON.parse(raw) as { sub: string }).sub : null;
+    return sub && (await getUserBySub(ctx, sub)) ? { state: 'approved' } : { state: 'none' };
   });
 
   app.get('/api/me', { preHandler: requireUser(ctx, { allowPendingDevice: true, allowNoProfile: true, skipProfileHeader: true }) }, async (req) => {

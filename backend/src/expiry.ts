@@ -9,6 +9,8 @@ import { HttpError, assertNotLastAdmin, lockUser } from './users.js';
 /** How long before `access_until` the account and the admins are warned. */
 const WARN_MS = 3 * 86400e3;
 const ADMIN_LINK = '/admin/users';
+/** rejected approval requests are kept this long (the person's /pending page shows the message), then deleted */
+const REJECTED_KEEP_MS = 30 * 86400e3;
 
 interface Due { id: string; name: string; access_until: Date }
 
@@ -16,6 +18,7 @@ interface Due { id: string; name: string; access_until: Date }
  * Timer tick for "access until": warns accounts whose access ends within 3 days (once per date, via expiry_notified_at)
  * and locks accounts whose access has ended (locked_reason 'expired'). Never locks the last active admin: the admins are
  * told once and the skip is audited instead. Idempotent: a second run sends nothing and locks nothing again.
+ * Also deletes approval requests that were rejected more than 30 days ago.
  */
 export async function expiryTick(ctx: Ctx, now = new Date()): Promise<{ warned: number; locked: number }> {
   // claim first (atomic), so overlapping ticks cannot both warn
@@ -30,6 +33,8 @@ export async function expiryTick(ctx: Ctx, now = new Date()): Promise<{ warned: 
     await notify(ctx, { userId: u.id, kind: 'access_soon', title: m('notify.access.soon', { date: { date: iso } }), dedupe: `access-soon-${u.id}-${iso}` });
     await notifyAdmins(ctx, { kind: 'access_soon', title: m('notify.access.soonAdmin', { name: u.name, date: { date: iso } }), link: ADMIN_LINK, dedupe: `access-soon-admin-${u.id}-${iso}` });
   }
+
+  await ctx.db.query('delete from approval_requests where rejected_at < $1', [new Date(now.getTime() - REJECTED_KEEP_MS)]);
 
   const ended = await ctx.db.query<Due>('select id, name, access_until from users where access_until <= $1 and not disabled order by access_until, id', [now]);
   let locked = 0;

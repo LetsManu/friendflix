@@ -281,5 +281,21 @@ const tr: Translation<typeof de> = {
     twoFactor: 'İki adımlı giriş (TOTP veya WebAuthn) herkes için zorunludur.',
     checking: 'Davet kontrol ediliyor …',
   },
+  /** /pending: a login without an invite waits for an admin */
+  pending: {
+    pageTitle: 'Erişim talebi',
+    title: 'Talep gönderildi',
+    sent: 'Erişim talebin gönderildi. Bir yönetici yakında onaylayacak.',
+    autoUpdate: 'Bu sayfa kendiliğinden güncellenir.',
+    approvedTitle: 'Erişimin açıldı',
+    approvedText: 'Bir yönetici erişimini onayladı. Şimdi giriş yap.',
+    signIn: 'Giriş yap',
+    rejectedTitle: 'Talep reddedildi',
+    rejectedText: 'Bir yönetici erişim talebini reddetti.',
+    messageLabel: 'Yöneticinin mesajı:',
+    noneTitle: 'Açık talep yok',
+    noneText: 'Bu tarayıcı için açık bir erişim talebi yok.',
+    checking: 'Talep kontrol ediliyor …',
+  },
 };
 export default tr;

@@ -66,6 +66,8 @@ const de = {
   'notify.access.soonAdmin': 'Der Zugang von {name} endet am {date}',
   'notify.access.ended': 'Dein Zugang ist am {date} abgelaufen',
   'notify.access.endedAdmin': 'Der Zugang von {name} ist am {date} abgelaufen',
+  // approval queue (login without an invite)
+  'notify.approval.new': 'Neue Zugangsanfrage von {name}',
   // achievements
   'achievement.unlocked': 'Achievement freigeschaltet: {name}',
   'ach.first_play.title': 'Premiere', 'ach.first_play.desc': 'Zum ersten Mal etwas geschaut',
@@ -149,6 +151,8 @@ const en: Catalog = {
   'notify.access.soonAdmin': 'Access for {name} ends on {date}',
   'notify.access.ended': 'Your access expired on {date}',
   'notify.access.endedAdmin': 'Access for {name} expired on {date}',
+  // approval queue (login without an invite)
+  'notify.approval.new': 'New access request from {name}',
   'achievement.unlocked': 'Achievement unlocked: {name}',
   'ach.first_play.title': 'Premiere', 'ach.first_play.desc': 'Watched something for the first time',
   'ach.hours_10.title': 'Couch potato', 'ach.hours_10.desc': 'Watched 10 hours',
@@ -226,6 +230,8 @@ const fr: Catalog = {
   'notify.access.soonAdmin': 'L’accès de {name} prend fin le {date}',
   'notify.access.ended': 'Votre accès a expiré le {date}',
   'notify.access.endedAdmin': 'L’accès de {name} a expiré le {date}',
+  // approval queue (login without an invite)
+  'notify.approval.new': 'Nouvelle demande d’accès de {name}',
   'achievement.unlocked': 'Succès débloqué : {name}',
   'ach.first_play.title': 'Première', 'ach.first_play.desc': 'Premier titre regardé',
   'ach.hours_10.title': 'Pantouflard', 'ach.hours_10.desc': '10 heures regardées',
@@ -303,6 +309,8 @@ const es: Catalog = {
   'notify.access.soonAdmin': 'El acceso de {name} termina el {date}',
   'notify.access.ended': 'Tu acceso expiró el {date}',
   'notify.access.endedAdmin': 'El acceso de {name} expiró el {date}',
+  // approval queue (login without an invite)
+  'notify.approval.new': 'Nueva solicitud de acceso de {name}',
   'achievement.unlocked': 'Logro desbloqueado: {name}',
   'ach.first_play.title': 'Estreno', 'ach.first_play.desc': 'Viste algo por primera vez',
   'ach.hours_10.title': 'Teleadicto', 'ach.hours_10.desc': '10 horas vistas',
@@ -380,6 +388,8 @@ const it: Catalog = {
   'notify.access.soonAdmin': 'L’accesso di {name} termina il {date}',
   'notify.access.ended': 'Il tuo accesso è scaduto il {date}',
   'notify.access.endedAdmin': 'L’accesso di {name} è scaduto il {date}',
+  // approval queue (login without an invite)
+  'notify.approval.new': 'Nuova richiesta di accesso da {name}',
   'achievement.unlocked': 'Traguardo sbloccato: {name}',
   'ach.first_play.title': 'Prima visione', 'ach.first_play.desc': 'Hai guardato qualcosa per la prima volta',
   'ach.hours_10.title': 'Pigro da divano', 'ach.hours_10.desc': '10 ore guardate',
@@ -457,6 +467,8 @@ const tr: Catalog = {
   'notify.access.soonAdmin': '{name} kullanıcısının erişimi {date} tarihinde sona eriyor',
   'notify.access.ended': 'Erişimin {date} tarihinde sona erdi',
   'notify.access.endedAdmin': '{name} kullanıcısının erişimi {date} tarihinde sona erdi',
+  // approval queue (login without an invite)
+  'notify.approval.new': '{name} erişim talep ediyor',
   'achievement.unlocked': 'Başarım açıldı: {name}',
   'ach.first_play.title': 'İlk gösterim', 'ach.first_play.desc': 'İlk kez bir şey izledin',
   'ach.hours_10.title': 'Kanepe patatesi', 'ach.hours_10.desc': '10 saat izledin',
@@ -539,6 +551,8 @@ const pl: Catalog = {
   'notify.access.soonAdmin': 'Dostęp użytkownika {name} kończy się {date}',
   'notify.access.ended': 'Twój dostęp wygasł {date}',
   'notify.access.endedAdmin': 'Dostęp użytkownika {name} wygasł {date}',
+  // approval queue (login without an invite)
+  'notify.approval.new': 'Nowa prośba o dostęp od {name}',
   'achievement.unlocked': 'Odblokowano osiągnięcie: {name}',
   'ach.first_play.title': 'Premiera', 'ach.first_play.desc': 'Pierwszy raz coś obejrzano',
   'ach.hours_10.title': 'Kanapowiec', 'ach.hours_10.desc': 'Obejrzano 10 godzin',

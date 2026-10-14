@@ -281,5 +281,21 @@ const es: Translation<typeof de> = {
     twoFactor: 'El inicio de sesión en dos pasos (TOTP o WebAuthn) es obligatorio para todos.',
     checking: 'Comprobando invitación …',
   },
+  /** /pending: a login without an invite waits for an admin */
+  pending: {
+    pageTitle: 'Solicitud de acceso',
+    title: 'Solicitud enviada',
+    sent: 'Tu solicitud de acceso se ha enviado. Un administrador la aprobará pronto.',
+    autoUpdate: 'Esta página se actualiza sola.',
+    approvedTitle: 'Ya tienes acceso',
+    approvedText: 'Un administrador ha aprobado tu acceso. Inicia sesión ahora.',
+    signIn: 'Iniciar sesión',
+    rejectedTitle: 'Solicitud rechazada',
+    rejectedText: 'Un administrador ha rechazado tu solicitud de acceso.',
+    messageLabel: 'Mensaje del administrador:',
+    noneTitle: 'No hay ninguna solicitud abierta',
+    noneText: 'No hay ninguna solicitud de acceso abierta para este navegador.',
+    checking: 'Comprobando solicitud …',
+  },
 };
 export default es;

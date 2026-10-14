@@ -280,5 +280,21 @@ const en: Translation<typeof de> = {
     twoFactor: 'Two-factor sign-in (TOTP or WebAuthn) is required for everyone.',
     checking: 'Checking invitation …',
   },
+  /** /pending: a login without an invite waits for an admin */
+  pending: {
+    pageTitle: 'Access request',
+    title: 'Request sent',
+    sent: 'Your access request was sent. An admin will approve it soon.',
+    autoUpdate: 'This page updates by itself.',
+    approvedTitle: 'You’re in',
+    approvedText: 'An admin approved your access. Sign in now.',
+    signIn: 'Sign in',
+    rejectedTitle: 'Request declined',
+    rejectedText: 'An admin declined your access request.',
+    messageLabel: 'Message from the admin:',
+    noneTitle: 'No open request',
+    noneText: 'There is no open access request for this browser.',
+    checking: 'Checking request …',
+  },
 };
 export default en;

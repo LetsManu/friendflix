@@ -1,19 +1,44 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
-/** Admin user management: the account list, single and bulk account actions (role, lock, access, sessions). */
+/** Admin user management: the account list, single and bulk account actions (role, lock, access, sessions), the approval queue. */
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { audit } from '../audit.js';
 import { Where, likePattern, orderBy, pageQuery } from '../adminlist.js';
 import type { Ctx } from '../ctx.js';
 import { revokeSessions } from '../devices.js';
+import { INVITABLE_ROLES } from '../roles.js';
 import { requireAdmin } from '../session.js';
-import { HttpError, assertNotLastAdmin, getUserById, lockUser, setAccessUntil, setRole, unlockUser } from '../users.js';
+import { HttpError, assertNotLastAdmin, getUserById, getUserBySub, lockUser, provisionUser, setAccessUntil, setRole, unlockUser } from '../users.js';
+import { pendingNoticeKey } from './auth.js';
 
 const uuid = z.guid();
 /** ISO date-time with offset, or null (= no end) */
 const accessUntil = z.iso.datetime({ offset: true }).nullable();
 const toDate = (s: string | null) => (s === null ? null : new Date(s));
+/** the approved person's /pending page may answer "approved" this long (as long as its cookie lives) */
+const PENDING_NOTICE_TTL = 30 * 86400;
+
+interface ApprovalRow { id: string; authentik_sub: string; email: string | null; name: string }
+
+/**
+ * Turns an approval request into an account: provisions it like an invite would (role, optional access-until), removes
+ * the request and remembers it for the person's /pending page. Errors: 404 `not_found`, 409 `user_exists`.
+ */
+export async function approveRequest(ctx: Ctx, actor: string, id: string, role: string, until: Date | null): Promise<string> {
+  const req = (await ctx.db.query<ApprovalRow>('select id, authentik_sub, email, name from approval_requests where id=$1', [id])).rows[0];
+  if (!req) throw new HttpError(404, 'not_found');
+  if (await getUserBySub(ctx, req.authentik_sub)) {
+    await ctx.db.query('delete from approval_requests where id=$1', [id]);
+    throw new HttpError(409, 'user_exists');
+  }
+  const user = await provisionUser(ctx, { sub: req.authentik_sub, email: req.email ?? undefined, name: req.name, groups: [] }, role);
+  if (until) await setAccessUntil(ctx, actor, user.id, until);
+  await ctx.db.query('delete from approval_requests where id=$1', [id]);
+  await audit(ctx, actor, 'user.approved', user.id, { from: 'pending', to: role, accessUntil: until?.toISOString() ?? null, request: id });
+  await ctx.kv.set(pendingNoticeKey(id), JSON.stringify({ sub: req.authentik_sub, email: req.email }), PENDING_NOTICE_TTL);
+  return user.id;
+}
 
 export const bulkBody = z.object({
   ids: z.array(uuid).min(1).max(200),
@@ -133,6 +158,29 @@ export function adminUserRoutes(app: FastifyInstance, ctx: Ctx) {
   app.post('/api/admin/users/bulk', admin, async (req) => {
     const b = bulkBody.parse(req.body);
     return serial(() => bulkUsers(ctx, req.user!.id, b));
+  });
+
+  // open approval requests (rejected ones are hidden; the expiry tick deletes them after 30 days)
+  app.get('/api/admin/approvals', admin, async () => {
+    const r = await ctx.db.query('select id, name, email, requested_at from approval_requests where rejected_at is null order by requested_at, id');
+    return { requests: r.rows };
+  });
+
+  app.post('/api/admin/approvals/:id/approve', admin, async (req) => {
+    const id = uuid.parse((req.params as { id: string }).id);
+    const b = z.object({ role: z.enum([...INVITABLE_ROLES, 'admin']), accessUntil: accessUntil.optional() }).parse(req.body);
+    // serialized: a double click must not provision the same person twice
+    return serial(async () => ({ id: await approveRequest(ctx, req.user!.id, id, b.role, toDate(b.accessUntil ?? null)) }));
+  });
+
+  app.post('/api/admin/approvals/:id/reject', admin, async (req, reply) => {
+    const id = uuid.parse((req.params as { id: string }).id);
+    const b = z.object({ message: z.string().trim().max(300).optional() }).parse(req.body ?? {});
+    const r = await ctx.db.query<{ name: string }>(
+      'update approval_requests set rejected_at=now(), reject_message=$2 where id=$1 and rejected_at is null returning name', [id, b.message || null]);
+    if (!r.rowCount) return reply.code(404).send({ error: 'not_found' });
+    await audit(ctx, req.user!.id, 'user.rejected', id, { from: 'pending', to: 'rejected', name: r.rows[0]!.name, message: b.message || null });
+    return { ok: true };
   });
 
   app.post('/api/admin/users/:id/revoke-sessions', admin, async (req) => {

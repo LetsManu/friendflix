@@ -93,11 +93,13 @@ describe('invites', () => {
     expect(inv.used_by_name).toBe('Freund guest1');
   });
 
-  it('expired invites are rejected and unknown users need an invite', async () => {
+  it('expired invites are rejected and unknown users without an invite wait for approval', async () => {
     const token = (await adm('POST', '/api/admin/invites', { role: 'friend', ttlHours: 1 })).json().link.split('/').pop();
     await env.pool.query("update invites set expires_at = now() - interval '1 minute' where used_at is null");
     expect((await inviteLogin(token, 'late')).statusCode).toBe(410);
-    expect((await inviteLogin(undefined, 'noinvite')).statusCode).toBe(403);
+    const cb = await inviteLogin(undefined, 'noinvite');
+    expect([cb.statusCode, cb.headers.location]).toEqual([302, '/pending']);
+    expect((await env.pool.query("select 1 from users where authentik_sub='noinvite'")).rowCount).toBe(0);
   });
 
   it('a failed provisioning releases the invite', async () => {
