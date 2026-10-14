@@ -59,6 +59,7 @@ All notable changes, grouped by what you notice. Each release has its own sectio
 - Owner PIN reset needs a fresh Authentik login and is refused on kid-locked devices.
 
 ### Phone and TV
+- **Downloads in the background:** on Android (Chrome, Edge, Samsung Internet) a new download runs as a Background Fetch with a progress notification and keeps going with the app closed or the screen locked; the next ready download starts on its own. On iPhone, where iOS stops web apps in the background, a download pauses cleanly instead of showing "Waiting" and continues at the same spot the moment the app is open again. See docs/downloads.md.
 - **Cast bar:** casting (Chromecast or AirPlay) keeps running while you browse; a bar at the bottom controls the TV, Play buttons send titles straight to it, the next episode continues on the TV when autoplay is allowed (otherwise the bar offers it), and logging out or switching profile stops it. See docs/cast.md.
 - PWA **shortcuts** (Continue Watching, Watchlist, Search, Downloads), an **icon badge** with unread notifications, and a **web manifest in the profile's language** (`/manifest.webmanifest?lang=`).
 - Phone layout polish, touch action sheet on cards; TV pairing from kids profiles.
