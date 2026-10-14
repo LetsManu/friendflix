@@ -162,6 +162,22 @@ New Svelte components in `web/src/lib/auth/`, one per supported stage, in Friend
 
 An **unknown stage** falls back to "Continue on the sign-in page" (today's redirect flow), so a custom Authentik flow never locks anyone out.
 
+**Owner decision (2026-10-14): login background and screen copy.**
+- **Cover wall:** behind the card, a slowly scrolling wall of covers: 5 tilted columns, alternating up and down, dimmed toward the card. It stands still under `prefers-reduced-motion`. Low data: small images, loaded lazily.
+- **Source:** the server's own library. A public, unauthenticated endpoint (`GET /api/public/login-art`) returns 30–40 random covers:
+  - downscaled (≤ 200 px wide), with no titles and no item ids (nothing beyond the image itself)
+  - media-server URLs and tokens never reach the client: the backend fetches and caches the images, and talks to the media server only through `ctx.jf` (the media seam)
+  - cached (1 h) and rate limited
+- **Admin setting** "Show covers on the sign-in page" (default on). When it is off, or there are no images, the page shows generated colour art instead.
+- **Restricted content:** kids-only and restricted libraries are excluded. Only items from a documented safe set are used (the plan picks and documents it).
+- **Screens and German copy** (owner's mockup; the other 6 languages are translations of it):
+  1. Identification: "Willkommen zurück" / "Melde dich an, um weiterzuschauen.", field "E-Mail oder Benutzername", "Weiter", divider "oder", "Mit Passkey anmelden", link "Noch kein Konto? Einladung einlösen".
+  2. Password: an identity pill with the chosen name and "ändern", "Passwort" / "Gib dein Passwort ein.", show-password toggle, "Anmelden", link "Passwort vergessen?".
+  3. TOTP: "Bestätigungscode" / "Öffne deine Authenticator-App und gib den 6-stelligen Code ein.", 6 single-digit boxes, "Bestätigen", links "Stattdessen Wiederherstellungscode nutzen" and "Passkey verwenden".
+  4. E-mail sent: "Schau in dein Postfach" / "Wir haben einen Link an a•••@example.com geschickt.", "Erneut senden (0:42)" with a countdown, link "Zurück zur Anmeldung".
+  5. Pending approval: "Fast geschafft" / "Dein Konto wartet auf Freigabe durch einen Admin. Du bekommst Bescheid, sobald es losgehen kann.", "Diese Seite aktualisiert sich von selbst."
+- **Layout:** on desktop the same card sits centred over the background, at most ~420 px wide.
+
 ### Passkeys
 - WebAuthn challenges carry Authentik's RP ID.
 - They work in FriendFlix only when the app's host is the RP ID or a subdomain of it. Example: app `tv.example.com`, Authentik `auth.example.com`, WebAuthn stage RP ID `example.com`.
