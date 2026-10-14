@@ -1,13 +1,14 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
 /**
- * Authentik admin API client for the user detail page: find a portal account's Authentik user, its MFA devices, and send
- * it a password-reset e-mail. Every Authentik call except the invitation ones (invites.ts) goes through this module.
+ * Authentik admin API client for the user detail and account pages: find a portal account's Authentik user, its MFA devices,
+ * send it a password-reset e-mail, change its name and (de)activate it. Every Authentik call except the invitation ones (invites.ts) goes through this module.
  *
  * Errors are HttpErrors with a code only (`authentik_unavailable`, `authentik_token_rejected`, `authentik_error`, ...):
  * neither the API token nor Authentik's response body ever ends up in a message, so they cannot leak into logs or answers.
  * Lookups answer null when the Authentik API is not configured; actions throw 503 `authentik_unavailable`.
  */
+import type { Config } from './config.js';
 import type { Ctx } from './ctx.js';
 import { akBase } from './invites.js';
 import { HttpError } from './users.js';
@@ -55,6 +56,12 @@ async function json<T>(ctx: AkCtx, path: string, init?: RequestInit, expect?: Pa
   } catch {
     throw new HttpError(502, 'authentik_error');
   }
+}
+
+/** Drops the cached lookup of a user Authentik no longer knows (deleted / re-created): looked up again next time. */
+async function forget(ctx: AkCtx, sub: string) {
+  await ctx.kv.del(`akuser:${sub}`);
+  await ctx.kv.del(`akmfa:${sub}`);
 }
 
 interface Page<T> { pagination?: { next?: number }; results: T[] }
@@ -145,12 +152,58 @@ export async function akSendRecovery(ctx: AkCtx, sub: string): Promise<void> {
       { method: 'POST', body: JSON.stringify({ email_stage: stage }) },
       { 400: notConfigured(), 404: new HttpError(404, 'authentik_user_not_found'), 405: new HttpError(501, 'not_supported') });
   } catch (e) {
-    if (e instanceof HttpError && e.statusCode === 404) {
-      await ctx.kv.del(`akuser:${sub}`); // a stale pk (user deleted / re-created in Authentik): look it up again next time
-      await ctx.kv.del(`akmfa:${sub}`);
-    }
+    if (e instanceof HttpError && e.statusCode === 404) await forget(ctx, sub); // a stale pk (user deleted / re-created in Authentik)
     throw e;
   }
+}
+
+/** `PATCH /core/users/<pk>/`; 404 -> 404 `authentik_user_not_found` (cache dropped), other errors as `call()` maps them. */
+async function patchUser(ctx: AkCtx, sub: string, body: Record<string, unknown>, expect: Partial<Record<number, HttpError>> = {}): Promise<void> {
+  const user = await akUserBySub(ctx, sub);
+  if (!user) throw new HttpError(404, 'authentik_user_not_found');
+  try {
+    await call(ctx, `api/v3/core/users/${user.pk}/`, { method: 'PATCH', body: JSON.stringify(body) },
+      { ...expect, 404: new HttpError(404, 'authentik_user_not_found') });
+  } catch (e) {
+    if (e instanceof HttpError && e.statusCode === 404) await forget(ctx, sub);
+    throw e;
+  }
+}
+
+/**
+ * Changes the user's display name in Authentik (the account page). 400 (Authentik rejects the value) -> 400 `invalid_input`;
+ * 404 -> `authentik_user_not_found`; without the API 503 `authentik_unavailable`.
+ */
+export async function akUpdateUser(ctx: AkCtx, sub: string, patch: { name?: string }): Promise<void> {
+  if (!configured(ctx)) throw new HttpError(503, 'authentik_unavailable');
+  await patchUser(ctx, sub, patch, { 400: new HttpError(400, 'invalid_input') });
+}
+
+/** Activates / deactivates the Authentik user (account deletion deactivates, never deletes). Other failures throw. */
+export async function akSetActive(ctx: AkCtx, sub: string, active: boolean): Promise<'done' | 'not_configured' | 'not_found'> {
+  if (!configured(ctx)) return 'not_configured';
+  try {
+    await patchUser(ctx, sub, { is_active: active });
+  } catch (e) {
+    if (e instanceof HttpError && e.statusCode === 404) return 'not_found';
+    throw e;
+  }
+  return 'done';
+}
+
+/**
+ * Authentik's own user settings page ("Manage on the sign-in page"): the browser-facing issuer origin plus `/if/user/#/settings`
+ * (AUTHENTIK_URL may be an internal address). Null without the Authentik API or when the issuer is no Authentik provider URL.
+ */
+export function akUserSettingsUrl(cfg: Pick<Config, 'OIDC_ISSUER' | 'AUTHENTIK_URL' | 'AUTHENTIK_API_TOKEN'>): string | null {
+  if (!cfg.AUTHENTIK_URL || !cfg.AUTHENTIK_API_TOKEN) return null;
+  let u: URL;
+  try {
+    u = new URL(cfg.OIDC_ISSUER);
+  } catch {
+    return null;
+  }
+  return u.pathname.includes('/application/o/') ? `${u.origin}/if/user/#/settings` : null;
 }
 
 /**
