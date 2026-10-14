@@ -71,14 +71,27 @@ let client = 0;
 const castGet = (base: string, path: string, method = 'GET') => fetch(`${base}/media/c/${CT}${path}`, { method, headers: { 'x-real-ip': `198.51.100.${++client}` } });
 
 describe('session authorization failures', () => {
-  it('an unreachable backend answers 401 and is not memoised, so the next request asks again', async () => {
+  it('an unreachable backend answers 503 and is not memoised, so the next request asks again', async () => {
     backendMode = 'throw';
     const before = backendCalls;
-    expect((await cookieGet(gw.base, `/media/Items/${ID}/Images/Primary`, 'net-down-session-0123')).status).toBe(401);
+    expect((await cookieGet(gw.base, `/media/Items/${ID}/Images/Primary`, 'net-down-session-0123')).status).toBe(503);
     backendMode = 'ok';
     const r = await cookieGet(gw.base, `/media/Items/${ID}/Images/Primary`, 'net-down-session-0123');
     expect(r.status).toBe(200);
     expect(backendCalls - before).toBe(2);
+  });
+
+  it('a backend 5xx (503 setup_required during setup) answers 503 and is never memoised', async () => {
+    backendMode = '500';
+    const before = backendCalls;
+    for (let i = 0; i < 2; i++) {
+      const r = await cookieGet(gw.base, `/media/Items/${ID}/Images/Primary`, 'setup-mode-session-01');
+      expect([r.status, r.headers.get('cache-control')]).toEqual([503, 'no-store']);
+    }
+    backendMode = 'ok';
+    expect((await cookieGet(gw.base, `/media/Items/${ID}/Images/Primary`, 'setup-mode-session-01')).status).toBe(200);
+    expect(backendCalls - before).toBe(3);
+    expect(gw.metrics()).toMatch(/friendflix_gateway_requests_total\{code="503"\} [1-9]/);
   });
 });
 

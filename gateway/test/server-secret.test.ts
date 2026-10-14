@@ -4,7 +4,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { internalSecret, need } from '../src/env.js';
+import { internalSecret, need, optional } from '../src/env.js';
 
 let dir: string;
 beforeEach(() => { dir = mkdtempSync(join(tmpdir(), 'ff-gw-secret-')); });
@@ -45,5 +45,13 @@ describe('gateway INTERNAL_SECRET', () => {
     expect(need({ JELLYFIN_URL_FILE: join(dir, 'u') }, 'JELLYFIN_URL')).toBe('http://jf:8096');
     expect(need({ BACKEND_URL: 'http://backend:3000' }, 'BACKEND_URL')).toBe('http://backend:3000');
     expect(() => need({}, 'JELLYFIN_URL')).toThrow('missing env JELLYFIN_URL');
+  });
+
+  it('optional reads VAR or VAR_FILE; unset or empty is undefined (the URL then comes from the backend)', () => {
+    writeFileSync(join(dir, 'u'), 'http://jf:8096\n');
+    expect(optional({ JELLYFIN_URL_FILE: join(dir, 'u') }, 'JELLYFIN_URL')).toBe('http://jf:8096');
+    expect(optional({ JELLYFIN_URL: 'http://jf:8096' }, 'JELLYFIN_URL')).toBe('http://jf:8096');
+    expect(optional({ JELLYFIN_URL: '' }, 'JELLYFIN_URL')).toBeUndefined();
+    expect(optional({}, 'JELLYFIN_URL')).toBeUndefined();
   });
 });

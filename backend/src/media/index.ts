@@ -34,6 +34,14 @@ export function mediaSettings(): SettingDef[] {
   ];
 }
 
+/** Each kind's media server URL setting (the gateway's upstream, /internal/gateway-config). */
+const URL_KEYS: Record<MediaServerKind, keyof Config> = { jellyfin: 'JELLYFIN_URL' };
+
+/** The config key holding the media server URL of cfg's kind: the one place that knows the key name. */
+export function mediaUrlKey(cfg: Config): string {
+  return URL_KEYS[cfg.MEDIA_SERVER];
+}
+
 /**
  * What a factory gets. `db` is the backend's shared Postgres pool: implementations that keep state (an id map, sync cursors …) use it
  * instead of opening a pool of their own. Jellyfin ignores it.

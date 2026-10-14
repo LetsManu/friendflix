@@ -9,6 +9,9 @@ function read(env: NodeJS.ProcessEnv, k: string): string | undefined {
   return (f ? readFileSync(f, 'utf8').trim() : env[k]) || undefined;
 }
 
+/** Reads VAR or VAR_FILE; undefined when unset or empty. */
+export const optional = (env: NodeJS.ProcessEnv, k: string): string | undefined => read(env, k);
+
 /** Reads VAR or VAR_FILE; refuses to start without it. */
 export function need(env: NodeJS.ProcessEnv, k: string): string {
   const v = read(env, k);
