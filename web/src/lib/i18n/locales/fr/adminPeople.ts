@@ -44,6 +44,7 @@ const dict: Translation<typeof de> = {
     confirmLockBody: "Toutes les sessions et téléchargements hors ligne de {name} s'arrêtent immédiatement. Vous pouvez lever le blocage à tout moment.",
     lockedToast: '{name} a été bloqué.',
     unlockedToast: '{name} a été débloqué.',
+    accessExpired: 'L’accès a pris fin : prolongez plutôt l’accès.',
     confirmSignOutTitle: 'Déconnecter {name} partout ?',
     confirmSignOutBody: "Tous les appareils de {name} sont déconnectés et les téléchargements hors ligne perdent leur licence. La reconnexion est possible tout de suite.",
     signedOutToast: { one: '{name} déconnecté ({n} session terminée).', many: '{name} déconnecté ({n} sessions terminées).', other: '{name} déconnecté ({n} sessions terminées).' },

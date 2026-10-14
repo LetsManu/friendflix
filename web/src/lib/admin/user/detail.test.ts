@@ -3,7 +3,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { ApiError } from '#lib/api';
 import { setLocale } from '#lib/i18n';
-import { akError, detailTab, limitsForm, limitsPatch, mfaChips, roleHint, statusPills, type Limits } from './detail';
+import { akError, detailTab, limitsForm, limitsPatch, lockAction, mfaChips, roleHint, statusPills, type Limits } from './detail';
 
 afterEach(async () => { await setLocale('de'); });
 
@@ -61,6 +61,16 @@ describe('header', () => {
     expect(soon[1]!.tone).toBe('warn');
     expect(soon[1]!.label).toMatch(/^Zugang bis /);
     expect(statusPills({ ...base, accessUntil: '2027-01-01T00:00:00Z' }, now)[1]!.tone).toBe('info');
+  });
+
+  it('lock action: lock, unlock, or extend access when the access has ended (an unlock would not last)', () => {
+    const now = Date.parse('2026-10-14T12:00:00Z');
+    expect(lockAction(base, now)).toBe('lock');
+    expect(lockAction({ ...base, disabled: true, lockedReason: 'manual' }, now)).toBe('unlock');
+    expect(lockAction({ ...base, disabled: true, lockedReason: 'manual', accessUntil: '2026-10-20T00:00:00Z' }, now)).toBe('unlock');
+    expect(lockAction({ ...base, disabled: true, lockedReason: 'expired', accessUntil: '2026-10-13T00:00:00Z' }, now)).toBe('extend');
+    expect(lockAction({ ...base, disabled: true, lockedReason: 'manual', accessUntil: '2026-10-13T00:00:00Z' }, now)).toBe('extend');
+    expect(lockAction({ ...base, disabled: true, lockedReason: 'expired' }, now)).toBe('extend');
   });
 
   it('2FA chips from the Authentik state (null = unknown)', () => {

@@ -8,7 +8,7 @@
   import { createEventDispatcher, onMount } from 'svelte';
   import { api, ApiError } from '#lib/api';
   import { fmtDateTime, fmtRelative, t, tr } from '#lib/i18n';
-  import { accessPreset, dayEnd } from '#lib/admin/people';
+  import { accessPreset, futureDayEnd, today } from '#lib/admin/people';
   import { roleName, type RoleInfo } from '#lib/roles';
   import { errorText, runAction } from '#lib/ui/action';
   import Button from '#lib/ui/Button.svelte';
@@ -46,10 +46,10 @@
     { value: 'p90', label: $t('adminPeople.access.p90') }, { value: 'date', label: $t('adminPeople.access.date') },
   ];
 
-  /** access-until for the API: undefined = no end; null = the chosen day is missing */
+  /** access-until for the API: undefined = no end; null = the chosen day is missing or past (it would lock at once) */
   function accessUntil(d: Draft): string | undefined | null {
     if (d.access === 'p30' || d.access === 'p90') return accessPreset(d.access === 'p30' ? '+30' : '+90') ?? undefined;
-    if (d.access === 'date') return dayEnd(d.day) || null;
+    if (d.access === 'date') return futureDayEnd(d.day) || null;
     return undefined;
   }
 
@@ -106,10 +106,10 @@
           <div class="choose">
             <Select label={$t('adminPeople.approvals.role')} options={roleOptions} value={d.role} on:change={(e) => set(r.id, { role: val(e) })} />
             <Select label={$t('adminPeople.access.label')} options={accessOptions} value={d.access} on:change={(e) => set(r.id, { access: val(e) })} />
-            {#if d.access === 'date'}<Field type="date" label={$t('adminPeople.access.day')} value={d.day} required on:input={(e) => set(r.id, { day: val(e) })} on:change={(e) => set(r.id, { day: val(e) })} />{/if}
+            {#if d.access === 'date'}<Field type="date" label={$t('adminPeople.access.day')} value={d.day} min={today()} required on:input={(e) => set(r.id, { day: val(e) })} on:change={(e) => set(r.id, { day: val(e) })} />{/if}
           </div>
           <div class="acts">
-            <Button icon="check" disabled={d.access === 'date' && !dayEnd(d.day)} on:click={() => approve(r)}>{$t('adminPeople.approvals.approve')}</Button>
+            <Button icon="check" disabled={d.access === 'date' && !futureDayEnd(d.day)} on:click={() => approve(r)}>{$t('adminPeople.approvals.approve')}</Button>
             {#if !d.rejecting}<Button variant="ghost" icon="x" on:click={() => set(r.id, { rejecting: true })}>{$t('adminPeople.approvals.reject')}</Button>{/if}
           </div>
           {#if d.rejecting}

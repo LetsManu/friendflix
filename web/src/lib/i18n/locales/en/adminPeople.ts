@@ -44,6 +44,7 @@ const dict: Translation<typeof de> = {
     confirmLockBody: 'All sessions and offline downloads of {name} end immediately. You can lift the lock at any time.',
     lockedToast: '{name} was locked.',
     unlockedToast: '{name} was unlocked.',
+    accessExpired: 'Access has ended – extend access instead.',
     confirmSignOutTitle: 'Sign {name} out everywhere?',
     confirmSignOutBody: 'All devices of {name} are signed out and offline downloads lose their licence. Signing in again works right away.',
     signedOutToast: { one: '{name} signed out ({n} session ended).', other: '{name} signed out ({n} sessions ended).' },

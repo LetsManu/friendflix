@@ -119,6 +119,33 @@ test.describe('admin user detail (desktop)', () => {
     await expect(form).toHaveCount(0);
   });
 
+  test('an account whose access ended offers "Extend access" instead of "Unlock"', async ({ page, api }) => {
+    const anna = api.admin.users.find((u) => u.id === ANNA)!;
+    Object.assign(anna, { disabled: true, locked_reason: 'expired', access_until: new Date(Date.now() - 86400e3).toISOString() });
+    await page.goto(`/admin/users/${ANNA}`);
+    const head = page.getByRole('region', { name: 'Anna Beispiel' });
+    await expect(head.getByText('Gesperrt: Zugang abgelaufen')).toBeVisible();
+    const m = await menu(page);
+    await expect(m.getByRole('button', { name: 'Entsperren' })).toHaveCount(0);
+    await expect(m.getByRole('button', { name: 'Zugang verlängern' })).toHaveCount(1);
+    await m.getByRole('button', { name: 'Zugang verlängern' }).click();
+    const form = page.getByRole('form', { name: 'Zugang verlängern' });
+    await form.getByRole('combobox', { name: 'Zugang bis' }).selectOption('p30');
+    await form.getByRole('button', { name: 'Übernehmen' }).click();
+    await expect(head.getByText('Aktiv', { exact: true })).toBeVisible();
+  });
+
+  test('a locked account whose access ended answers an unlock with the reason', async ({ page, api }) => {
+    const anna = api.admin.users.find((u) => u.id === ANNA)!;
+    Object.assign(anna, { disabled: true, locked_reason: 'manual', access_until: new Date(Date.now() + 86400e3).toISOString() });
+    await page.goto(`/admin/users/${ANNA}`);
+    await expect(page.getByRole('region', { name: 'Anna Beispiel' }).getByText('Gesperrt: von Hand')).toBeVisible();
+    anna.access_until = new Date(Date.now() - 1000).toISOString(); // ended while the page was open
+    await (await menu(page)).getByRole('button', { name: 'Entsperren' }).click();
+    await expect(toasts(page).getByText('Der Zugang ist abgelaufen – verlängere stattdessen den Zugang.')).toBeVisible();
+    expect(anna.disabled).toBe(true);
+  });
+
   test('role change and locking an admin need the typed name', async ({ page, api }) => {
     api.admin.users.find((u) => u.id === ANNA)!.role = 'admin';
     await page.goto(`/admin/users/${ANNA}`);

@@ -8,13 +8,13 @@
    */
   import { onMount } from 'svelte';
   import { goto } from '$app/navigation';
-  import { api, ApiError } from '#lib/api';
+  import { api } from '#lib/api';
   import { avatarBg, initial } from '#lib/avatars';
   import { fmtDate, fmtDateTime, fmtNumber, fmtRelative, t, tr } from '#lib/i18n';
   import { pageStore } from '#lib/page';
   import ApprovalsPanel from '#lib/admin/ApprovalsPanel.svelte';
   import InvitesPanel from '#lib/admin/InvitesPanel.svelte';
-  import { accessPreset, bulkSummary, dayEnd } from '#lib/admin/people';
+  import { accessPreset, accountGuardText, bulkSummary, futureDayEnd, today } from '#lib/admin/people';
   import { refreshSummary } from '#lib/admin/summary';
   import { roleName, type RoleInfo } from '#lib/roles';
   import { busyKeys, errorText, runAction } from '#lib/ui/action';
@@ -138,6 +138,7 @@
       key: `user:${u.id}`,
       apply: () => { const prev = u.disabled; u.disabled = disabled; rows = rows; return () => { u.disabled = prev; rows = rows; }; },
       run: patch(disabled),
+      error: (e) => accountGuardText(e) ?? errorText(e),
       success: tr(disabled ? 'adminPeople.users.lockedToast' : 'adminPeople.users.unlockedToast', { name: u.name }),
       undo: { run: patch(!disabled) },
     }).then(() => refreshSummary());
@@ -201,13 +202,8 @@
       case 'access': return b.accessUntil ? tr('adminPeople.bulk.confirmAccess', { n, date: fmtDate(b.accessUntil) }) : tr('adminPeople.bulk.confirmAccessUnlimited', { n });
     }
   }
-  const bulkError = (e: unknown): string => {
-    const code = e instanceof ApiError ? (e.body as { error?: string } | null)?.error : undefined;
-    // validation and guards are all or nothing; anything else may have stopped halfway through the accounts
-    if (code === 'last_admin') return tr('adminPeople.bulk.lastAdmin');
-    if (code === 'cannot_lock_yourself_out') return tr('adminPeople.users.selfNote');
-    return `${errorText(e)} ${tr('adminPeople.bulk.partial')}`;
-  };
+  // validation and guards are all or nothing; anything else may have stopped halfway through the accounts
+  const bulkError = (e: unknown): string => accountGuardText(e) ?? `${errorText(e)} ${tr('adminPeople.bulk.partial')}`;
   async function bulk(b: Bulk) {
     const ids = [...selected.keys()], picked = [...selected.values()];
     if (!ids.length) return;
@@ -242,10 +238,11 @@
     bulkRole = '';
     void bulk({ action: 'role', role });
   }
-  $: bulkAccessReady = bulkAccess !== '' && (bulkAccess !== 'date' || dayEnd(bulkDay) !== '');
+  // a past end date would lock everyone selected at the next expiry tick
+  $: bulkAccessReady = bulkAccess !== '' && (bulkAccess !== 'date' || futureDayEnd(bulkDay) !== '');
   function applyAccess() {
     if (!bulkAccessReady) return;
-    const accessUntil = bulkAccess === 'date' ? dayEnd(bulkDay) : accessPreset(bulkAccess === 'p30' ? '+30' : bulkAccess === 'p90' ? '+90' : 'unlimited');
+    const accessUntil = bulkAccess === 'date' ? futureDayEnd(bulkDay) : accessPreset(bulkAccess === 'p30' ? '+30' : bulkAccess === 'p90' ? '+90' : 'unlimited');
     bulkAccess = ''; bulkDay = '';
     void bulk({ action: 'access', accessUntil });
   }
@@ -276,7 +273,7 @@
         <Button variant="secondary" size="sm" icon="unlock" disabled={busyBulk} on:click={() => bulk({ action: 'unlock' })}>{$t('adminPeople.users.unlock')}</Button>
         <form class="pickapply" aria-label={$t('adminPeople.access.label')} on:submit|preventDefault={applyAccess}>
           <Select label={$t('adminPeople.access.label')} options={bulkAccessOptions} bind:value={bulkAccess} hideLabel disabled={busyBulk} />
-          {#if bulkAccess === 'date'}<Field type="date" label={$t('adminPeople.access.day')} bind:value={bulkDay} hideLabel required />{/if}
+          {#if bulkAccess === 'date'}<Field type="date" label={$t('adminPeople.access.day')} bind:value={bulkDay} hideLabel min={today()} required />{/if}
           <Button type="submit" size="sm" variant="secondary" disabled={busyBulk || !bulkAccessReady}>{$t('adminPeople.bulk.apply')}</Button>
         </form>
         <Button variant="secondary" size="sm" icon="log-out" disabled={busyBulk} on:click={() => bulk({ action: 'revoke' })}>{$t('adminPeople.users.signOut')}</Button>
