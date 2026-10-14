@@ -104,6 +104,16 @@ describe('enforcement', () => {
     expect(policy().MaxActiveSessions).toBe(1);
   });
 
+  it('a new profile identity gets the user stream limit, not the role one', async () => {
+    await setUserLimits(env.ctx, await uid('Fred'), { ...NONE, maxStreams: 1 }); // role friend: 2
+    const r = await call(friend, 'POST', '/api/profiles', { name: 'Zweit' });
+    expect(r.statusCode).toBe(201);
+    const jf = (await env.pool.query("select jellyfin_user_id from profiles where name='Zweit'")).rows[0].jellyfin_user_id as string;
+    const calls = env.jfCalls.filter((c) => c.method === 'POST' && c.path === `/Users/${jf}/Policy`);
+    expect(calls.length).toBeGreaterThan(0);
+    expect(calls[0]!.body.MaxActiveSessions).toBe(1);
+  });
+
   it('a user stream limit refuses a new start but keeps running ones', async () => {
     const userId = await uid('Fam'); // family: role maxStreams 4
     for (const ps of ['ps-live-1', 'ps-live-2']) await setLive(env.ctx, { userId, userName: 'Fam', itemId: ID, title: 'Film', positionTicks: 0, isPaused: false, playSessionId: ps, updatedAt: Date.now(), source: 'portal' });

@@ -112,7 +112,7 @@ export function authRoutes(app: FastifyInstance, ctx: Ctx) {
       } else if (isAdmin && user.role !== 'admin') {
         await ctx.db.query("update users set role='admin' where id=$1", [user.id]);
         const owned = await accountJellyfinIds(ctx, user.id);
-        for (const jid of owned) await applyRole(ctx, jid, 'admin', false, { hidden: jid !== user.jellyfin_user_id });
+        for (const jid of owned) await applyRole(ctx, jid, 'admin', false, { userId: user.id, hidden: jid !== user.jellyfin_user_id });
         user.role = 'admin';
       }
       if (user.disabled) return reply.code(403).send({ error: 'disabled' });

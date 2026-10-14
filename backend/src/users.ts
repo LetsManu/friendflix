@@ -25,10 +25,10 @@ export async function getUserBySub(ctx: Ctx, sub: string): Promise<UserRow | nul
 const safeName = (s: string) => s.replace(/[^A-Za-z0-9._-]/g, '').slice(0, 24) || 'freund';
 
 /** Writes the role template (plus hidden flag / kids caps) as the media server policy of one identity. */
-export async function applyRole(ctx: Ctx, jellyfinUserId: string, role: string, disabled = false, extra: Pick<IdentityPolicy, 'hidden' | 'parental'> = {}) {
-  // the account owning this identity (its own or a profile's) may override the role's limits, e.g. maxStreams -> MaxActiveSessions
-  const owner = (await ctx.db.query<{ id: string }>('select id from users where jellyfin_user_id=$1 union all select user_id from profiles where jellyfin_user_id=$1 limit 1', [jellyfinUserId])).rows[0];
-  const t = owner ? await effectiveLimits(ctx, { id: owner.id, role }) : await effectiveRole(ctx, role); // not stored yet (provisioning): the role
+/** `extra.userId`: the account owning the identity, whose overrides (e.g. maxStreams -> MaxActiveSessions) apply; looked up when omitted. */
+export async function applyRole(ctx: Ctx, jellyfinUserId: string, role: string, disabled = false, { userId, ...extra }: Pick<IdentityPolicy, 'hidden' | 'parental'> & { userId?: string } = {}) {
+  const owner = userId ?? (await ctx.db.query<{ id: string }>('select id from users where jellyfin_user_id=$1 union all select user_id from profiles where jellyfin_user_id=$1 limit 1', [jellyfinUserId])).rows[0]?.id;
+  const t = owner ? await effectiveLimits(ctx, { id: owner, role }) : await effectiveRole(ctx, role);
   if (!t) throw new Error(`unknown role ${role}`);
   // a kids profile keeps its parental cap through every re-apply (role edits, admin promotion, startup job)
   const kids = await kidsPolicyFor(ctx, jellyfinUserId, t.maxParentalRating);
@@ -53,8 +53,8 @@ export async function provisionUser(ctx: Ctx, claims: OidcClaims, role: string):
     }
   }
   try {
-    await applyRole(ctx, jf!.id, role);
     const id = randomUUID();
+    await applyRole(ctx, jf!.id, role, false, { userId: id });
     const pool = ctx.db as pg.Pool;
     const c = await pool.connect();
     let row: UserRow;
@@ -84,14 +84,14 @@ export async function provisionUser(ctx: Ctx, claims: OidcClaims, role: string):
 
 /** Re-applies the effective role policy to all non-disabled users of a role. Returns the number of failures. */
 export async function reapplyRole(ctx: Ctx, role: string): Promise<number> {
-  const r = await ctx.db.query<{ jellyfin_user_id: string; hidden: boolean }>(
-    `select jellyfin_user_id, false hidden from users where role=$1 and not disabled
-     union all select p.jellyfin_user_id, true from profiles p join users u on u.id=p.user_id
+  const r = await ctx.db.query<{ id: string; jellyfin_user_id: string; hidden: boolean }>(
+    `select id, jellyfin_user_id, false hidden from users where role=$1 and not disabled
+     union all select u.id, p.jellyfin_user_id, true from profiles p join users u on u.id=p.user_id
       where u.role=$1 and not u.disabled and p.jellyfin_user_id is not null`,
     [role],
   );
   let failed = 0;
-  for (const u of r.rows) await applyRole(ctx, u.jellyfin_user_id, role, false, { hidden: u.hidden }).catch(() => { failed++; });
+  for (const u of r.rows) await applyRole(ctx, u.jellyfin_user_id, role, false, { hidden: u.hidden, userId: u.id }).catch(() => { failed++; });
   return failed;
 }
 

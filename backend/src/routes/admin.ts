@@ -306,7 +306,7 @@ export function adminRoutes(app: FastifyInstance, ctx: Ctx) {
       if (!Object.hasOwn(ctx.roles, b.role)) return reply.code(400).send({ error: 'unknown_role' });
       const ids = await accountJellyfinIds(ctx, id);
       const hidden = new Set(ids.filter((x) => x !== user.jellyfin_user_id));
-      for (const jid of ids) await applyRole(ctx, jid, b.role, b.disabled ?? user.disabled, { hidden: hidden.has(jid) }); // re-apply template to the Jellyfin account and all its profile users
+      for (const jid of ids) await applyRole(ctx, jid, b.role, b.disabled ?? user.disabled, { userId: id, hidden: hidden.has(jid) }); // re-apply template to the Jellyfin account and all its profile users
       await ctx.db.query('update users set role=$1 where id=$2', [b.role, id]);
       await audit(ctx, req.user!.id, 'user.role', id, { from: user.role, to: b.role });
     }
