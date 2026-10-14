@@ -7,7 +7,6 @@ import { Where, likePattern, orderBy, pageQuery } from '../adminlist.js';
 import type { Ctx } from '../ctx.js';
 import { revokeSessions } from '../devices.js';
 import { adminOverview, revokeLicense } from '../downloads.js';
-import { createInvite, deleteAuthentikInvitation } from '../invites.js';
 import { checkState, startPlaybackCheck } from '../healthcheck.js';
 import { ERROR_SOURCES, listErrors } from '../errorlog.js';
 import { freshSnapshot } from '../health.js';
@@ -20,8 +19,7 @@ import { requireGrownUp } from '../kids.js';
 import { requireAdmin, requireOwner } from '../session.js';
 import { portainerMode, triggerUpdate, updateInfo } from '../updates.js';
 import { MAX_FEATURED } from '../lists.js';
-import { accountJellyfinIds } from '../profiles.js';
-import { applyRole, getUserById, reapplyRole } from '../users.js';
+import { getUserById, reapplyRole } from '../users.js';
 import { FALLBACK_LANGUAGE, LANGUAGES, instanceLanguage, isLanguage, roleLabel, setInstanceLanguage } from '../i18n.js';
 
 const uuid = z.guid();
@@ -36,7 +34,7 @@ export function adminRoutes(app: FastifyInstance, ctx: Ctx) {
     return {
       users: await n('select count(*) n from users where not disabled'),
       pendingDevices: await n('select count(*) n from devices where not approved'),
-      openInvites: await n('select count(*) n from invites where used_at is null and expires_at > now()'),
+      openInvites: await n('select count(*) n from invites where uses < max_uses and expires_at > now()'),
       pendingPolls: await n("select count(*) n from polls where status='needs_approval'"),
       activeStreams: (await listLive(ctx)).length,
       partyRooms: parties.rooms.size,
@@ -59,7 +57,7 @@ export function adminRoutes(app: FastifyInstance, ctx: Ctx) {
     const [users, devices, invites, polls, previews, downloads, check, seerr, jellyfin, live] = await Promise.all([
       one<{ total: string; locked: string }>('select count(*) total, count(*) filter (where disabled) locked from users'),
       one<{ n: string }>('select count(*) n from devices where not approved'),
-      one<{ n: string }>('select count(*) n from invites where used_at is null and expires_at > now()'),
+      one<{ n: string }>('select count(*) n from invites where uses < max_uses and expires_at > now()'),
       one<{ n: string }>("select count(*) n from polls where status='needs_approval'"),
       one<{ failed: string; ok: string; bytes: string }>("select count(*) filter (where status='failed') failed, count(*) filter (where status='ok') ok, coalesce(sum(bytes) filter (where status='ok'),0)::text bytes from preview_clips"),
       one<{ bytes: string }>("select coalesce(sum(bytes),0)::text bytes from download_jobs where status='ready'"),
@@ -278,100 +276,12 @@ export function adminRoutes(app: FastifyInstance, ctx: Ctx) {
     return { ok: true };
   });
 
-  // ?q= (name/email/login) &role= &status=active|locked &sort=name|email|role|status|lastSeen|createdAt &dir= &limit= &offset=; without params: everyone (max 1000)
-  app.get('/api/admin/users', admin, async (req) => {
-    const p = pageQuery.extend({ role: z.string().max(40).optional(), status: z.enum(['active', 'locked']).optional() }).parse(req.query);
-    const w = new Where();
-    if (p.q) { const m = w.param(likePattern(p.q)); w.add(`(u.name ilike ${m} or coalesce(u.email,'') ilike ${m} or coalesce(u.jellyfin_username,'') ilike ${m})`); }
-    if (p.role) w.add('u.role = ?', p.role);
-    if (p.status) w.add(p.status === 'locked' ? 'u.disabled' : 'not u.disabled');
-    const order = orderBy({ name: 'lower(u.name)', email: "lower(coalesce(u.email,''))", role: 'u.role', status: 'u.disabled', lastSeen: 'u.last_seen', createdAt: 'u.created_at' }, p.sort, p.dir, 'u.created_at, u.id');
-    const total = Number((await ctx.db.query<{ c: string }>(`select count(*) c from users u ${w.sql}`, w.params)).rows[0]!.c);
-    const r = await ctx.db.query(
-      `select * from (select u.id, u.name, u.email, u.role, u.disabled, u.jellyfin_username, u.seerr_user_id, u.created_at,
-              (select max(last_seen) from devices d where d.user_id = u.id) last_seen from users u) u
-        ${w.sql} ${order} limit ${p.limit ?? 1000} offset ${p.offset ?? 0}`,
-      w.params,
-    );
-    return { users: r.rows, total };
-  });
-
-  app.patch('/api/admin/users/:id', admin, async (req, reply) => {
-    const id = uuid.parse((req.params as { id: string }).id);
-    const b = z.object({ role: z.string().optional(), disabled: z.boolean().optional() }).parse(req.body);
-    const user = await getUserById(ctx, id);
-    if (!user) return reply.code(404).send({ error: 'not_found' });
-    if (id === req.user!.id && (b.disabled || (b.role && b.role !== 'admin'))) return reply.code(400).send({ error: 'cannot_lock_yourself_out' });
-    if (b.role && b.role !== user.role) {
-      if (!Object.hasOwn(ctx.roles, b.role)) return reply.code(400).send({ error: 'unknown_role' });
-      const ids = await accountJellyfinIds(ctx, id);
-      const hidden = new Set(ids.filter((x) => x !== user.jellyfin_user_id));
-      for (const jid of ids) await applyRole(ctx, jid, b.role, b.disabled ?? user.disabled, { hidden: hidden.has(jid) }); // re-apply template to the Jellyfin account and all its profile users
-      await ctx.db.query('update users set role=$1 where id=$2', [b.role, id]);
-      await audit(ctx, req.user!.id, 'user.role', id, { from: user.role, to: b.role });
-    }
-    if (b.disabled !== undefined && b.disabled !== user.disabled) {
-      for (const jid of await accountJellyfinIds(ctx, id)) await ctx.jf.admin.setDisabled(jid, b.disabled);
-      await ctx.db.query('update users set disabled=$1 where id=$2', [b.disabled, id]);
-      if (b.disabled) await revokeSessions(ctx, id); // also revokes the account's offline licenses
-      await audit(ctx, req.user!.id, b.disabled ? 'user.disable' : 'user.enable', id);
-    }
-    return { ok: true };
-  });
-
-  app.post('/api/admin/users/:id/revoke-sessions', admin, async (req) => {
-    const id = uuid.parse((req.params as { id: string }).id);
-    const n = await revokeSessions(ctx, id);
-    await audit(ctx, req.user!.id, 'user.revoke_sessions', id, { sessions: n });
-    return { revoked: n };
-  });
-
   // ---- offline downloads: prepared jobs, disk usage, active licenses ----
   app.get('/api/admin/downloads', admin, async () => ({ enabled: ctx.cfg.DOWNLOADS_ENABLED === 'true', maxBytes: Math.round(ctx.cfg.DOWNLOAD_CACHE_MAX_GB * 1024 ** 3), ...(await adminOverview(ctx)) }));
   app.delete('/api/admin/downloads/:id', admin, async (req, reply) => {
     const id = uuid.parse((req.params as { id: string }).id);
     if (!(await revokeLicense(ctx, id))) return reply.code(404).send({ error: 'not_found' });
     await audit(ctx, req.user!.id, 'download.revoke', id);
-    return { ok: true };
-  });
-
-  app.post('/api/admin/invites', admin, async (req) => {
-    const b = z.object({
-      role: z.enum(INVITABLE_ROLES),
-      ttlHours: z.number().int().min(1).max(24 * 14).default(48),
-      note: z.string().max(100).optional(),
-      /** false: the person already has an Authentik account, skip enrollment */
-      enroll: z.boolean().default(true),
-    }).parse(req.body);
-    const inv = await createInvite(ctx, req.user!.id, b, req.log);
-    await audit(ctx, req.user!.id, 'invite.create', inv.id, { role: b.role, authentik: inv.authentik });
-    return { id: inv.id, link: inv.link, enrollUrl: inv.enrollUrl, authentik: inv.authentik, expiresAt: inv.expiresAt }; // token is shown exactly once
-  });
-
-  // ?q= (note/role/redeemer) &status=open|used|expired &sort=role|note|validUntil|status|createdAt &dir= &limit= &offset=; without params: the newest 100
-  app.get('/api/admin/invites', admin, async (req) => {
-    const p = pageQuery.extend({ status: z.enum(['open', 'used', 'expired']).optional(), role: z.string().max(40).optional() }).parse(req.query);
-    const w = new Where();
-    if (p.q) { const m = w.param(likePattern(p.q)); w.add(`(coalesce(i.note,'') ilike ${m} or i.role ilike ${m} or coalesce(u.name,'') ilike ${m})`); }
-    if (p.role) w.add('i.role = ?', p.role);
-    if (p.status === 'used') w.add('i.used_at is not null');
-    else if (p.status === 'expired') w.add('i.used_at is null and i.expires_at < now()');
-    else if (p.status === 'open') w.add('i.used_at is null and i.expires_at >= now()');
-    const order = orderBy({ role: 'i.role', note: "lower(coalesce(i.note,''))", validUntil: 'i.expires_at', createdAt: 'i.created_at', status: "(case when i.used_at is not null then 2 when i.expires_at < now() then 1 else 0 end)" }, p.sort, p.dir, 'i.created_at desc, i.id');
-    const from = 'from invites i left join users u on u.id = i.used_by';
-    const total = Number((await ctx.db.query<{ c: string }>(`select count(*) c ${from} ${w.sql}`, w.params)).rows[0]!.c);
-    const r = await ctx.db.query(
-      `select i.id, i.role, i.note, i.created_at, i.expires_at, i.used_at, u.name used_by_name ${from} ${w.sql} ${order} limit ${p.limit ?? 100} offset ${p.offset ?? 0}`,
-      w.params,
-    );
-    return { invites: r.rows, total };
-  });
-
-  app.delete('/api/admin/invites/:id', admin, async (req) => {
-    const id = uuid.parse((req.params as { id: string }).id);
-    const r = await ctx.db.query<{ authentik_invite: string | null }>('delete from invites where id=$1 and used_at is null returning authentik_invite', [id]);
-    await deleteAuthentikInvitation(ctx, r.rows[0]?.authentik_invite, req.log);
-    await audit(ctx, req.user!.id, 'invite.revoke', id);
     return { ok: true };
   });
 

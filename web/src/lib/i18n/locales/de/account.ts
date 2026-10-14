@@ -282,4 +282,20 @@ export default {
     twoFactor: 'Die Zwei-Faktor-Anmeldung (TOTP oder WebAuthn) ist für alle Pflicht.',
     checking: 'Prüfe Einladung …',
   },
+  /** /pending: a login without an invite waits for an admin */
+  pending: {
+    pageTitle: 'Zugangsanfrage',
+    title: 'Anfrage gesendet',
+    sent: 'Deine Zugangsanfrage wurde gesendet. Ein Admin wird sie bald freigeben.',
+    autoUpdate: 'Diese Seite aktualisiert sich von selbst.',
+    approvedTitle: 'Du bist freigeschaltet',
+    approvedText: 'Ein Admin hat deinen Zugang freigegeben. Melde dich jetzt an.',
+    signIn: 'Anmelden',
+    rejectedTitle: 'Anfrage abgelehnt',
+    rejectedText: 'Ein Admin hat deine Zugangsanfrage abgelehnt.',
+    messageLabel: 'Nachricht vom Admin:',
+    noneTitle: 'Keine offene Anfrage',
+    noneText: 'Für diesen Browser gibt es keine offene Zugangsanfrage.',
+    checking: 'Prüfe Anfrage …',
+  },
 } as const;

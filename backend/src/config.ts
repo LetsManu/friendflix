@@ -101,6 +101,10 @@ const schema = z.object({
   AUTHENTIK_URL: opt,
   AUTHENTIK_API_TOKEN: opt,
   AUTHENTIK_ENROLL_FLOW: opt,
+  /** slug of the recovery flow whose first e-mail stage sends the admin's "password reset" mail (default default-recovery-flow) */
+  AUTHENTIK_RECOVERY_FLOW: opt,
+  /** slug of the TOTP setup flow (default default-authenticator-totp-setup); reserved for a "send 2FA setup" link */
+  AUTHENTIK_TOTP_SETUP_FLOW: opt,
   /** JSON overriding role templates, see roles.ts */
   ROLE_TEMPLATES: opt,
   /** DEV ONLY: allow an http:// OIDC issuer (openid-client requires https otherwise). */

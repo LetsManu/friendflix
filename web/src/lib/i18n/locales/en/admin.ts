@@ -305,7 +305,16 @@ const en: Translation<typeof de> = {
       enable: '{actor} unlocked {target}',
       revoke_sessions: '{actor} signed {target} out everywhere',
       provisioned: 'Account created for {target}',
+      access: '{actor} changed the access of {target}',
+      limits: '{actor} changed the limits of {target}',
+      repair: '{actor} repaired the links of {target}',
+      recovery_email: '{actor} sent {target} a password link',
+      mfa_setup_sent: '{actor} sent {target} the 2FA setup',
+      activity_viewed: '{actor} viewed the history of {target}',
+      revoke_device: '{actor} signed {target} out on one device',
+      recovery_email_failed: '{actor} tried to send {target} a password link – failed ({reason})',
     },
+    failReason: { recovery_not_configured: 'no recovery flow set up', authentik_user_not_found: 'no Authentik user', not_supported: 'not supported', authentik_unavailable: 'Authentik unreachable', unknown: 'error' },
     device: {
       approve: '{actor} approved a device of {target}',
       unapprove: '{actor} withdrew the approval of a device of {target}',
@@ -348,6 +357,7 @@ const en: Translation<typeof de> = {
       pin_set: '{actor} set a profile PIN',
       pin_clear: '{actor} removed a profile PIN',
       select: '{actor} switched profiles',
+      admin_update: '{actor} changed a profile of {target}',
     },
     download: {
       revoke: '{actor} revoked a download licence',
@@ -406,6 +416,9 @@ const en: Translation<typeof de> = {
       server_errors: { one: '{n} server error in 15 minutes', other: '{n} server errors in 15 minutes' },
       client_errors: { one: '{n} browser error in 15 minutes', other: '{n} browser errors in 15 minutes' },
       failed_playbacks: { one: '{n} playback failed', other: '{n} playbacks failed' },
+    },
+    approvals: {
+      pending_approvals: { one: '{n} sign-in is waiting for approval', other: '{n} sign-ins are waiting for approval' },
     },
   },
 };

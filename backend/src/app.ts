@@ -10,7 +10,9 @@ import { compressJson } from './compress.js';
 import { newTimingStore, serverTimingHeader, timedDb, timedKv, timingStorage, timingSummary, type TimingStore } from './timing.js';
 import { metricsPlugin } from './metrics.js';
 import { recordError } from './errorlog.js';
+import { HttpError } from './users.js';
 import { adminRoutes, inviteRoutes } from './routes/admin.js';
+import { adminUserRoutes } from './routes/adminUsers.js';
 import { authRoutes } from './routes/auth.js';
 import { castRoutes } from './routes/cast.js';
 import { internalRoutes } from './routes/internal.js';
@@ -85,6 +87,13 @@ export async function buildApp(ctx: Ctx, extra: Extra = {}): Promise<FastifyInst
     if (err instanceof ZodError) return reply.code(400).send({ error: 'bad_request', issues: err.issues.map((i) => i.path.join('.')) });
     const status = (err as { statusCode?: number }).statusCode;
     if (status && status < 500) return reply.code(status).send({ error: (err as Error).message });
+    // a business error with a 5xx status (e.g. 503 authentik_unavailable): answered only when its message is a code,
+    // so upstream text (URLs, bodies) never reaches the browser
+    if (err instanceof HttpError) {
+      const code = /^[a-z0-9_]{1,64}$/.test(err.message) ? err.message : 'internal';
+      req.log.warn({ status: err.statusCode, error: code }, 'upstream error');
+      return reply.code(err.statusCode).send({ error: code });
+    }
     req.log.error({ err }, 'unhandled error');
     if (process.env.DEBUG_TEST) console.error(err);
     return reply.code(500).send({ error: 'internal' });
@@ -147,6 +156,7 @@ export async function buildApp(ctx: Ctx, extra: Extra = {}): Promise<FastifyInst
   castRoutes(app, ctx);
   internalRoutes(app, ctx);
   adminRoutes(app, ctx);
+  adminUserRoutes(app, ctx);
   inviteRoutes(app, ctx);
   seerrRoutes(app, ctx);
   await partyRoutes(app, ctx);

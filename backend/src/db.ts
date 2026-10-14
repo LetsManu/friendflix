@@ -664,6 +664,47 @@ export const MIGRATIONS: string[] = [
   );
   create index playback_timings_created on playback_timings(created_at);
   `,
+  // 37: Block 23 user management (access expiry, per-user limits, approval queue, multi-use invites)
+  `
+  alter table users
+    add column access_until timestamptz,
+    add column expiry_notified_at timestamptz,
+    add column locked_reason text,
+    add column deletion_at timestamptz,
+    add column avatar text;
+  create table user_limits (
+    user_id uuid primary key references users(id) on delete cascade,
+    max_streams int,
+    remote_bitrate int,
+    max_downloads int,
+    download_max_height int,
+    requests_per_month int,
+    updated_at timestamptz default now()
+  );
+  create table approval_requests (
+    id uuid primary key,
+    authentik_sub text unique not null,
+    email text,
+    name text not null,
+    requested_at timestamptz default now(),
+    notified_at timestamptz,
+    rejected_at timestamptz,
+    reject_message text
+  );
+  alter table invites
+    add column max_uses int not null default 1,
+    add column uses int not null default 0,
+    add column access_days int;
+  create table invite_uses (
+    invite_id uuid references invites(id) on delete cascade,
+    user_id uuid references users(id) on delete cascade,
+    at timestamptz default now(),
+    primary key (invite_id, user_id)
+  );
+  update invites set uses = 1 where used_at is not null;
+  insert into invite_uses(invite_id, user_id, at)
+    select id, used_by, used_at from invites where used_by is not null;
+  `,
 ];
 
 export async function migrate(pool: pg.Pool): Promise<void> {

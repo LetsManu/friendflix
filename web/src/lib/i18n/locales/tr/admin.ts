@@ -305,7 +305,16 @@ const tr: Translation<typeof de> = {
       enable: '{actor}, {target} kullanıcısının kilidini açtı',
       revoke_sessions: '{actor}, {target} kullanıcısının tüm oturumlarını kapattı',
       provisioned: '{target} için hesap oluşturuldu',
+      access: '{actor}, {target} erişimini değiştirdi',
+      limits: '{actor}, {target} sınırlarını değiştirdi',
+      repair: '{actor}, {target} bağlantılarını onardı',
+      recovery_email: '{actor}, {target} kişisine parola bağlantısı gönderdi',
+      mfa_setup_sent: '{actor}, {target} kişisine 2FA kurulumunu gönderdi',
+      activity_viewed: '{actor}, {target} geçmişini görüntüledi',
+      revoke_device: '{actor}, {target} oturumunu bir cihazda kapattı',
+      recovery_email_failed: '{actor}, {target} kişisine parola bağlantısı göndermeyi denedi – başarısız ({reason})',
     },
+    failReason: { recovery_not_configured: 'kurtarma akışı yok', authentik_user_not_found: 'Authentik kullanıcısı yok', not_supported: 'desteklenmiyor', authentik_unavailable: 'Authentik erişilemiyor', unknown: 'hata' },
     device: {
       approve: '{actor}, {target} kullanıcısının bir cihazını onayladı',
       unapprove: '{actor}, {target} kullanıcısının bir cihaz onayını geri aldı',
@@ -348,6 +357,7 @@ const tr: Translation<typeof de> = {
       pin_set: '{actor} bir profil PIN’i belirledi',
       pin_clear: '{actor} bir profil PIN’ini kaldırdı',
       select: '{actor} profil değiştirdi',
+      admin_update: '{actor}, {target} profilini değiştirdi',
     },
     download: {
       revoke: '{actor} bir indirme lisansını iptal etti',
@@ -406,6 +416,9 @@ const tr: Translation<typeof de> = {
       server_errors: { one: '15 dakikada {n} sunucu hatası', other: '15 dakikada {n} sunucu hatası' },
       client_errors: { one: '15 dakikada {n} tarayıcı hatası', other: '15 dakikada {n} tarayıcı hatası' },
       failed_playbacks: { one: '{n} oynatma başarısız', other: '{n} oynatma başarısız' },
+    },
+    approvals: {
+      pending_approvals: { one: '{n} giriş onay bekliyor', other: '{n} giriş onay bekliyor' },
     },
   },
 };

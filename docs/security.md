@@ -8,10 +8,11 @@ FriendFlix is maintained by one person. Everything below is what the code, the c
 
 **What you can expect**
 
-- Only people with an invitation can get an account, and only a signed-in session can reach media or personal data. Sign-in goes through your OIDC identity provider (the docs use Authentik; multi-factor authentication is configured there).
+- Only people with an invitation, or whose sign-in request an admin approved, can get an account, and only a signed-in session can reach media or personal data. Sign-in goes through your OIDC identity provider (the docs use Authentik; multi-factor authentication is configured there).
 - The browser never receives a media-server token. It holds a session cookie (`ff_sid`, `HttpOnly`, `SameSite=Lax`, `Secure` over HTTPS) and plays `/media/...` URLs that only the gateway can resolve.
 - Every playlist and segment request is authorised by the backend (session, profile, role limits) before the gateway fetches it from the media server. Hidden titles and kids-profile restrictions are enforced server side.
 - Secrets stored by FriendFlix (per-user media-server credentials, admin-saved API keys) are encrypted at rest with a key you control (`APP_ENC_KEY`). Profile PINs are stored as salted scrypt hashes.
+- Admins can see what a person watched (*Admin → Users →* a person → *History*, read from the media server). Every time an admin opens it, FriendFlix writes `user.activity_viewed` with the admin and the person to the audit log, which other admins can read. Other admin pages (usage, status) show only totals, never titles.
 - State-changing API calls need a per-session CSRF token. Error reports from the browser are scrubbed and stay in your server log.
 - Published container images are scanned, signed and ship with an SBOM and provenance (see [Supply chain](#supply-chain)).
 
@@ -55,7 +56,7 @@ Networks and ports are defined in [compose.yaml](../compose.yaml); the diagram a
 
 | Who | Wants | Main defences |
 |---|---|---|
-| Anonymous internet client | Reach media or the API without an account; find bugs in public endpoints | Everything except health, version, invite redemption and the TV pairing endpoints needs a session; the gateway rejects paths outside its allowlist; global and per-route rate limits; strict response headers. |
+| Anonymous internet client | Reach media or the API without an account; find bugs in public endpoints | Everything except health, version, invite redemption, the approval-request status (`/api/pending`, read through a signed cookie) and the TV pairing endpoints needs a session; the gateway rejects paths outside its allowlist; global and per-route rate limits; strict response headers. |
 | Invited user (friend, family, guest) | See more than their role allows (hidden titles, higher bitrate, other people's data), stay signed in on stolen devices | Role and profile checks in the backend, bitrate and stream caps enforced by backend and gateway, device approval, session idle and absolute timeouts, per-user data scoping. |
 | Kid with access to a family device | Leave a kids profile | Profile PIN (scrypt, attempt-limited). Limited by design, see above. |
 | Holder of a leaked URL or cast token | Replay a stream URL | Cast tokens are random, hashed at rest, bound to the first client address, expire, are revocable and limited to two per account. |

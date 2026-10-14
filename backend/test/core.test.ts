@@ -71,12 +71,14 @@ describe('auth', () => {
     const pol = env.jfCalls.find((c) => c.path.endsWith('/Policy'))!;
     expect(pol.body).toMatchObject({ Keep: 'me', IsAdministrator: false, EnableContentDownloading: true, MaxActiveSessions: 6 });
   });
-  it('rejects unknown users without invite', async () => {
+  it('sends unknown users without invite to the approval queue, without a session', async () => {
     env.claims.current = { sub: 'x', name: 'X', groups: [] };
     const l = await env.app.inject('/auth/login');
     expect(l.statusCode).toBe(302);
     const st = l.cookies.find((x) => x.name === 'ff_oidc')!.value;
-    expect((await env.app.inject({ url: `/auth/callback?state=${st}&code=c`, cookies: { ff_oidc: st } })).statusCode).toBe(403);
+    const cb = await env.app.inject({ url: `/auth/callback?state=${st}&code=c`, cookies: { ff_oidc: st } });
+    expect([cb.statusCode, cb.headers.location]).toEqual([302, '/pending']);
+    expect(cb.cookies.find((x) => x.name === 'ff_sid')).toBeUndefined();
     env.claims.current = ADMIN;
   });
   it('requires CSRF for state-changing /api calls', async () => {

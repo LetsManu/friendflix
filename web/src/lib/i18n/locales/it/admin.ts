@@ -314,7 +314,16 @@ const it: Translation<typeof de> = {
       enable: '{actor} ha sbloccato {target}',
       revoke_sessions: '{actor} ha disconnesso {target} ovunque',
       provisioned: 'Account creato per {target}',
+      access: '{actor} ha modificato l’accesso di {target}',
+      limits: '{actor} ha modificato i limiti di {target}',
+      repair: '{actor} ha riparato i collegamenti di {target}',
+      recovery_email: '{actor} ha inviato a {target} un link per la password',
+      mfa_setup_sent: '{actor} ha inviato a {target} la configurazione 2FA',
+      activity_viewed: '{actor} ha visualizzato la cronologia di {target}',
+      revoke_device: '{actor} ha disconnesso {target} su un dispositivo',
+      recovery_email_failed: '{actor} ha provato a inviare a {target} un link per la password – non riuscito ({reason})',
     },
+    failReason: { recovery_not_configured: 'nessun flusso di recupero', authentik_user_not_found: 'nessun utente Authentik', not_supported: 'non supportato', authentik_unavailable: 'Authentik non raggiungibile', unknown: 'errore' },
     device: {
       approve: '{actor} ha approvato un dispositivo di {target}',
       unapprove: '{actor} ha revocato l’approvazione di un dispositivo di {target}',
@@ -357,6 +366,7 @@ const it: Translation<typeof de> = {
       pin_set: '{actor} ha impostato il PIN di un profilo',
       pin_clear: '{actor} ha rimosso il PIN di un profilo',
       select: '{actor} ha cambiato profilo',
+      admin_update: '{actor} ha modificato un profilo di {target}',
     },
     download: {
       revoke: '{actor} ha revocato una licenza di download',
@@ -415,6 +425,9 @@ const it: Translation<typeof de> = {
       server_errors: { one: '{n} errore del server in 15 minuti', many: '{n} errori del server in 15 minuti', other: '{n} errori del server in 15 minuti' },
       client_errors: { one: '{n} errore del browser in 15 minuti', many: '{n} errori del browser in 15 minuti', other: '{n} errori del browser in 15 minuti' },
       failed_playbacks: { one: '{n} riproduzione non riuscita', many: '{n} riproduzioni non riuscite', other: '{n} riproduzioni non riuscite' },
+    },
+    approvals: {
+      pending_approvals: { one: '{n} accesso in attesa di approvazione', many: '{n} accessi in attesa di approvazione', other: '{n} accessi in attesa di approvazione' },
     },
   },
 };

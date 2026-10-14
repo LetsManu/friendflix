@@ -343,7 +343,16 @@ const pl: Translation<typeof de> = {
       enable: '{actor} odblokował(a) użytkownika {target}',
       revoke_sessions: '{actor} wylogował(a) użytkownika {target} wszędzie',
       provisioned: 'Utworzono konto dla {target}',
+      access: '{actor} zmienił(a) dostęp: {target}',
+      limits: '{actor} zmienił(a) limity: {target}',
+      repair: '{actor} naprawił(a) połączenia: {target}',
+      recovery_email: '{actor} wysłał(a) link do hasła: {target}',
+      mfa_setup_sent: '{actor} wysłał(a) konfigurację 2FA: {target}',
+      activity_viewed: '{actor} przejrzał(a) historię: {target}',
+      revoke_device: '{actor} wylogował(a) na jednym urządzeniu: {target}',
+      recovery_email_failed: '{actor} próbował(a) wysłać link do hasła: {target} – nie udało się ({reason})',
     },
+    failReason: { recovery_not_configured: 'brak przepływu odzyskiwania', authentik_user_not_found: 'brak użytkownika Authentik', not_supported: 'nieobsługiwane', authentik_unavailable: 'Authentik niedostępny', unknown: 'błąd' },
     device: {
       approve: '{actor} zatwierdził(a) urządzenie użytkownika {target}',
       unapprove: '{actor} cofnął(-ęła) zatwierdzenie urządzenia użytkownika {target}',
@@ -386,6 +395,7 @@ const pl: Translation<typeof de> = {
       pin_set: '{actor} ustawił(a) PIN profilu',
       pin_clear: '{actor} usunął(-ęła) PIN profilu',
       select: '{actor} zmienił(a) profil',
+      admin_update: '{actor} zmienił(a) profil: {target}',
     },
     download: {
       revoke: '{actor} cofnął(-ęła) licencję pobrania',
@@ -444,6 +454,9 @@ const pl: Translation<typeof de> = {
       server_errors: { one: '{n} błąd serwera w 15 minut', few: '{n} błędy serwera w 15 minut', many: '{n} błędów serwera w 15 minut', other: '{n} błędu serwera w 15 minut' },
       client_errors: { one: '{n} błąd przeglądarki w 15 minut', few: '{n} błędy przeglądarki w 15 minut', many: '{n} błędów przeglądarki w 15 minut', other: '{n} błędu przeglądarki w 15 minut' },
       failed_playbacks: { one: '{n} nieudane odtworzenie', few: '{n} nieudane odtworzenia', many: '{n} nieudanych odtworzeń', other: '{n} nieudanego odtworzenia' },
+    },
+    approvals: {
+      pending_approvals: { one: '{n} logowanie czeka na zatwierdzenie', few: '{n} logowania czekają na zatwierdzenie', many: '{n} logowań czeka na zatwierdzenie', other: '{n} logowania czeka na zatwierdzenie' },
     },
   },
 };

@@ -58,6 +58,17 @@ export async function notify(ctx: Pick<Ctx, 'db' | 'cfg' | 'fetchImpl'>, n: Noti
   return true;
 }
 
+/**
+ * Sends the notice to every active admin (role admin, not disabled), each in their own language.
+ * A dedupe key gets the admin's id appended. Returns how many notifications were created.
+ */
+export async function notifyAdmins(ctx: Pick<Ctx, 'db' | 'cfg' | 'fetchImpl'>, n: Omit<Notice, 'userId'>): Promise<number> {
+  const admins = (await ctx.db.query<{ id: string }>("select id from users where role='admin' and not disabled order by created_at, id")).rows;
+  let sent = 0;
+  for (const a of admins) if (await notify(ctx, { ...n, userId: a.id, ...(n.dedupe ? { dedupe: `${n.dedupe}-${a.id}` } : {}) })) sent++;
+  return sent;
+}
+
 /** Base URL of the ntfy server for personal topics: NTFY_BASE_URL, else the origin of NTFY_URL; null = not configured. */
 export function ntfyBase(cfg: Pick<Ctx['cfg'], 'NTFY_BASE_URL' | 'NTFY_URL'>): string | null {
   try {

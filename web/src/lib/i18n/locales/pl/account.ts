@@ -301,5 +301,21 @@ const pl: Translation<typeof de> = {
     twoFactor: 'Uwierzytelnianie dwuskładnikowe (TOTP lub WebAuthn) jest obowiązkowe dla wszystkich.',
     checking: 'Sprawdzam zaproszenie …',
   },
+  /** /pending: a login without an invite waits for an admin */
+  pending: {
+    pageTitle: 'Prośba o dostęp',
+    title: 'Prośba wysłana',
+    sent: 'Twoja prośba o dostęp została wysłana. Administrator wkrótce ją zatwierdzi.',
+    autoUpdate: 'Ta strona odświeża się sama.',
+    approvedTitle: 'Masz dostęp',
+    approvedText: 'Administrator zatwierdził twój dostęp. Zaloguj się teraz.',
+    signIn: 'Zaloguj się',
+    rejectedTitle: 'Prośba odrzucona',
+    rejectedText: 'Administrator odrzucił twoją prośbę o dostęp.',
+    messageLabel: 'Wiadomość od administratora:',
+    noneTitle: 'Brak otwartej prośby',
+    noneText: 'Dla tej przeglądarki nie ma otwartej prośby o dostęp.',
+    checking: 'Sprawdzam prośbę …',
+  },
 };
 export default pl;

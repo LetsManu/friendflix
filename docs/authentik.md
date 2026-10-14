@@ -17,7 +17,7 @@ The full FriendFlix installation (Jellyfin, request service, `.env`, Nginx Proxy
 5. [OAuth2/OpenID provider and application](#5-oauth2openid-provider-and-application)
 6. [Authentication flow with mandatory MFA](#6-authentication-flow-with-mandatory-mfa)
 7. [Enrollment flow for invitations](#7-enrollment-flow-for-invitations)
-8. [Service account and API token for invitations](#8-service-account-and-api-token-for-invitations)
+8. [Service account and API token](#8-service-account-and-api-token)
 9. [FriendFlix `.env` values](#9-friendflix-env-values)
 10. [Password recovery by e-mail](#10-password-recovery-by-e-mail)
 11. [Optional: passwordless sign-in with passkeys](#11-optional-passwordless-sign-in-with-passkeys)
@@ -37,8 +37,8 @@ The full FriendFlix installation (Jellyfin, request service, `.env`, Nginx Proxy
 | Group | `friendflix-users` | optional access restriction in Authentik | – (FriendFlix does not read it) |
 | Authentication flow with MFA | `default-authentication-flow` (edited) | MFA on every login | – |
 | Enrollment flow | `friendflix-enrollment` | invitations that create the Authentik account | `AUTHENTIK_ENROLL_FLOW` |
-| Service account + API token | `friendflix-invites` | creating invitations through the API | `AUTHENTIK_API_TOKEN`, `AUTHENTIK_URL` |
-| Recovery flow | `default-recovery-flow` | "forgot password" by e-mail (optional) | – |
+| Service account + API token | `friendflix-invites` | creating invitations through the API; on the admin user page: finding the Authentik user, showing its two-factor state, sending a password link | `AUTHENTIK_API_TOKEN`, `AUTHENTIK_URL` |
+| Recovery flow with an e-mail stage | `default-recovery-flow` | "forgot password" by e-mail and the admin's *Send password link* (optional) | `AUTHENTIK_RECOVERY_FLOW` (default `default-recovery-flow`) |
 | Brand | default brand | title, logo, default flows (optional) | – |
 
 Without the last four rows FriendFlix still works: invited people then need an Authentik account that you create by hand (see [§7](#without-the-enrollment-flow)).
@@ -62,10 +62,11 @@ sequenceDiagram
   P->>A: token request (client secret + PKCE verifier)
   A-->>P: ID token (sub, email, name, groups)
   alt first login
-    P->>P: member of ADMIN_GROUP → role admin, otherwise redeem the invite (or 403 no_invite)
+    P->>P: member of ADMIN_GROUP → role admin, otherwise redeem the invite
     P->>J: create Jellyfin user, apply role policy
   end
   P-->>B: cookie ff_sid, 302 to /
+  Note over P,B: first login without admin group and without a valid invite:<br/>approval request, 302 to /pending (no session) until an admin approves
 ```
 
 ## 2. Install Authentik
@@ -173,7 +174,7 @@ Updates: read the release notes of every version in between, raise `AUTHENTIK_TA
 
 [`deploy/authentik/friendflix-blueprint.yaml`](../deploy/authentik/friendflix-blueprint.yaml) creates in one go:
 
-- the service account `friendflix-invites` with exactly the permissions the portal needs, and its non-expiring API token `friendflix-invites-token`;
+- the service account `friendflix-invites` with exactly the permissions the portal needs (invitations, and the user lookup, two-factor state and password link of the admin user page, see [§8.2](#82-role-with-exactly-these-global-permissions)), and its non-expiring API token `friendflix-invites-token`;
 - the enrollment flow `friendflix-enrollment` (invitation → username/password → name/e-mail → create user → MFA setup → login), see [§7](#7-enrollment-flow-for-invitations).
 
 Import: *Flows and Stages → Flows → Import* → **File upload** → choose the file → *Import*. Re-importing is safe (objects are matched by name/slug and updated).
@@ -197,7 +198,7 @@ The blueprint does **not** create the groups, the provider/application, MFA in t
 How FriendFlix uses groups (from `backend/src/routes/auth.ts`):
 
 - The `groups` claim contains the **names** of the user's groups. Authentik's default `profile` scope mapping fills it with the user's directly assigned groups (`request.user.groups.all()`). Add admins **directly** to `friendflix-admins`; membership inherited through a parent group may not appear *(unverified)*.
-- **First login:** in `ADMIN_GROUP` → portal role `admin`. Otherwise a valid portal invite is required; the user gets the invite's role (`friend`, `family` or `guest`). No invite → `403 {"error":"no_invite"}`.
+- **First login:** in `ADMIN_GROUP` → portal role `admin`. Otherwise a valid portal invite gives the user the invite's role (`friend`, `family` or `guest`). Without an invite the person lands in the **approval queue**: FriendFlix shows the page `/pending` (*Request sent*, no session yet) and notifies the admins. An admin approves (with role and optional access-until) or rejects under *Admin → Users → Waiting for approval*; after an approval the person signs in again and gets in.
 - **Later logins:** if an existing user is now in `ADMIN_GROUP`, they are promoted to `admin`. Removing someone from the group does **not** demote them: change the role under *Admin → Users* in the portal.
 - `friend`, `family` and `guest` are portal roles stored in the FriendFlix database. They do not map to Authentik groups.
 - Disabling a user in Authentik stops new logins, but a running portal session lives on until it expires (max. `SESSION_TTL_SECONDS`). To lock someone out immediately, disable them under *Admin → Users* in the portal as well (that also revokes their sessions).
@@ -223,7 +224,7 @@ How FriendFlix uses groups (from `backend/src/routes/auth.ts`):
 | Access Token validity | `hours=1` (default) | not used after login: FriendFlix keeps its own session |
 | Refresh Token validity | default | not used: FriendFlix does not request `offline_access` |
 | Scopes | the defaults: `authentik default OAuth Mapping: OpenID 'openid'`, `… 'email'`, `… 'profile'` | `profile` carries `name`, `preferred_username` **and `groups`** |
-| Subject mode | `Based on the User's hashed ID` (default) | **never change it once people have logged in**: FriendFlix links accounts by `sub`; a different `sub` looks like a new person (→ `no_invite`) |
+| Subject mode | `Based on the User's hashed ID` (default) | **never change it once people have logged in**: FriendFlix links accounts by `sub`; a different `sub` looks like a new person (→ approval queue) |
 | Include claims in id_token | **on** (default) | required: the backend reads `email`, `name` and `groups` from the ID token only, not from the userinfo endpoint |
 | Issuer mode | `Each provider has a different issuer, based on the application slug` (default) | gives the issuer format below |
 | Logout URI / Logout method | empty | FriendFlix has no front-/back-channel logout endpoint |
@@ -249,7 +250,7 @@ How FriendFlix uses groups (from `backend/src/routes/auth.ts`):
 | Policy engine mode | `any` |
 | Icon | optional, without third-party brand marks (e.g. `docs/images/logo.svg`) |
 
-**Who may sign in (bindings).** Without bindings every Authentik user may authorize the application. FriendFlix still blocks people without an invite (`no_invite`), so that is safe. To also stop them at Authentik: application → *Policy / Group / User Bindings* → *Create or bind…* → *Bind existing group* → `friendflix-admins`, and again for `friendflix-users`.
+**Who may sign in (bindings).** Without bindings every Authentik user may authorize the application. FriendFlix still lets nobody in without an invite: such a person only lands in the approval queue and waits for an admin, so that is safe. With bindings, people outside the groups never reach the queue. To also stop them at Authentik: application → *Policy / Group / User Bindings* → *Create or bind…* → *Bind existing group* → `friendflix-admins`, and again for `friendflix-users`.
 
 > If you bind groups, the enrollment flow **must** put new users into `friendflix-users` (*Create users group* in the User Write stage, [§7.2](#72-stages-in-order)). Otherwise a friend finishes sign-up and then gets *Permission denied* from Authentik.
 
@@ -354,9 +355,9 @@ The field keys matter: the User Write stage maps `username`, `name`, `email` and
 
 Leave `AUTHENTIK_URL`, `AUTHENTIK_API_TOKEN` and `AUTHENTIK_ENROLL_FLOW` empty. Then create each friend by hand in *Directory → Users*, send them the portal invite link, and they use **Sign in & unlock**. For someone who already has an Authentik account, tick **already has an Authentik account** when creating the invite (`"enroll": false`); the link then only offers sign-in.
 
-## 8. Service account and API token for invitations
+## 8. Service account and API token
 
-The backend calls the Authentik API with `Authorization: Bearer <AUTHENTIK_API_TOKEN>`. Give it the least privileges that work.
+The backend calls the Authentik API with `Authorization: Bearer <AUTHENTIK_API_TOKEN>` for invitations and for the admin user page (*Admin → Users →* a person: Authentik user, two-factor state, *Send password link*). Give it the least privileges that work.
 
 ### 8.1 Service account
 
@@ -372,12 +373,23 @@ Since 2025.12 Authentik permissions are assigned to **roles** only. *Directory �
 | Can add Invitation | `authentik_stages_invitation.add_invitation` | `POST /api/v3/stages/invitation/invitations/` |
 | Can view Invitation | `authentik_stages_invitation.view_invitation` | reading invitations (granted by the blueprint; not strictly needed by the current code) |
 | Can delete Invitation | `authentik_stages_invitation.delete_invitation` | `DELETE /api/v3/stages/invitation/invitations/<pk>/` after redemption/revocation |
+| Can view User | `authentik_core.view_user` | `GET /api/v3/core/users/?…` (finds the Authentik user of a portal account by its `sub`) and the user in the password-link call |
+| Can view TOTP Device | `authentik_stages_authenticator_totp.view_totpdevice` | two-factor state: authenticator app (`GET /api/v3/authenticators/admin/all/?user=<pk>`) |
+| Can view WebAuthn Device | `authentik_stages_authenticator_webauthn.view_webauthndevice` | two-factor state: passkey / security key (same call) |
+| Can view Static Device | `authentik_stages_authenticator_static.view_staticdevice` | two-factor state: recovery codes (same call) |
+| Can view Flow Stage Binding | `authentik_flows.view_flowstagebinding` | `GET /api/v3/flows/bindings/?target=<flow pk>` (finds the e-mail stage of the recovery flow) |
+| Can view Email Stage | `authentik_stages_email.view_emailstage` | checked by Authentik when it sends the password link (without it: "Email stage not found") |
+| Reset Password | `authentik_core.reset_user_password` | `POST /api/v3/core/users/<pk>/recovery_email/` (*Send password link*) |
 
 Assign the role to the service account (user → *Roles* → *Assign*, see [Authentik docs](https://docs.goauthentik.io/users-sources/user/user_basic_operations/#add-a-user-to-a-role)). Do **not** make it a superuser and do not use your admin's token: a leaked token could then change everything in Authentik.
 
 Without *Can view Flow* the backend logs `Authentik flow lookup failed` and creates the invitation without a flow binding (still works, less strict). Without *Can delete Invitation* used invitations stay until they expire.
 
-(The blueprint sets these via the user's `permissions` field; Authentik puts them into a managed role for that user.)
+> **Two-factor state needs the three device permissions.** Authentik answers the device list with only the devices the token may view, and with no error. A token without *Can view TOTP / WebAuthn / Static Device* gets an empty list, so every person silently shows **"No two-factor sign-in"** on the admin user page, even when they use 2FA. Without *Can view User* the Authentik user is not found at all: the page shows "2FA unknown" and offers no *Send password link*. After you fix the permissions, FriendFlix may keep showing the old answer until its cache expires: up to 10 minutes for the two-factor state, up to 1 hour for the user lookup.
+
+The codenames above are checked against the Authentik 2026.8.3 source (the `compose.authentik.yaml` pin). Re-import the blueprint after a FriendFlix update to pick up new permissions: it updates the existing service account in place.
+
+(The blueprint sets all of these via the user's `permissions` field; Authentik puts them into a managed role for that user.)
 
 ### 8.3 Copy the token
 
@@ -406,23 +418,37 @@ AUTHENTIK_URL=https://auth.example.com          # public base URL, no path
 AUTHENTIK_API_TOKEN=<token key>
 AUTHENTIK_ENROLL_FLOW=friendflix-enrollment     # the flow slug
 
+# admin user page (optional, these are the defaults)
+AUTHENTIK_RECOVERY_FLOW=default-recovery-flow   # slug of the recovery flow whose first e-mail stage sends the password link
+AUTHENTIK_TOTP_SETUP_FLOW=default-authenticator-totp-setup   # reserved: "Send 2FA setup" has no Authentik API yet and stays hidden
+
 # portal sessions (defaults)
 SESSION_TTL_SECONDS=28800    # absolute 8 h
 SESSION_IDLE_SECONDS=7200    # 2 h without activity
 ```
 
-Then recreate the backend: `docker compose -f compose.prod.yaml up -d backend`. Compose passes the `AUTHENTIK_*` variables through with an empty default, so a missing entry silently turns invitations off. If only some of the three are set, the backend logs `Authentik invitations disabled: … not set` at start and whenever an invite is created.
+Then recreate the backend: `docker compose -f compose.prod.yaml up -d backend`. Compose passes the `AUTHENTIK_*` variables through with an empty default, so a missing entry silently turns invitations off. If only some of the three are set, the backend logs `Authentik invitations disabled: … not set` at start and whenever an invite is created. The admin user page needs only `AUTHENTIK_URL` and `AUTHENTIK_API_TOKEN`; empty `AUTHENTIK_RECOVERY_FLOW` / `AUTHENTIK_TOTP_SETUP_FLOW` mean the defaults above.
 
 `OIDC_CLIENT_SECRET` can come from a Docker secret ([`compose.secrets.yaml`](../compose.secrets.yaml): `secrets/oidc_client_secret`). The backend reads `<VAR>_FILE` for every setting, so `AUTHENTIK_API_TOKEN_FILE` works too, but `compose.prod.yaml` does not pass that variable through: add it to the backend's `environment` (and mount the secret) in a local override if you want it.
 
 ## 10. Password recovery by e-mail
 
-Requires working SMTP ([§2.5](#25-e-mail-smtp)).
+One recovery flow serves two things: *Forgot username or password?* on the Authentik login page, and **Send password link** on the admin user page (*Admin → Users →* a person → *Actions*). For the second, FriendFlix asks Authentik to send its password-reset e-mail through the first e-mail stage of `AUTHENTIK_RECOVERY_FLOW` (default `default-recovery-flow`); Authentik builds the link from the **brand's** recovery flow.
 
-1. *Flows and Stages → Flows → Import* → **Local path** → `example/flows-recovery-email-mfa-verification.yaml` → *Import*. This creates the flow `default-recovery-flow`: identification → e-mail with link → **MFA check** → new password → login. (The variant `flows-recovery-email-verification.yaml` skips the MFA check; don't use it if MFA is mandatory.)
-2. *System → Brands* → default brand → *Edit* → *Default flows* → **Recovery flow**: `default-recovery-flow`.
-3. *Flows and Stages → Stages* → `default-authentication-identification` → *Edit* → **Recovery flow**: `default-recovery-flow`. The login page now shows *Forgot username or password?*.
-4. Test it with a test user in a private browser window.
+**Minimum Authentik version: 2024.4.** Since 2024.4 the API sends the recovery e-mail with `POST /api/v3/core/users/<pk>/recovery_email/`. Older releases only accept `GET` there and answer FriendFlix's request with 405; the admin page then shows *not supported*. (Checked against the Authentik source of 2023.8 – 2026.8.3.)
+
+1. *Flows and Stages → Flows → Import* → **Local path** → one of the two example blueprints → *Import*. Both create the flow `default-recovery-flow` with the e-mail stage `default-recovery-email`, and FriendFlix works with either:
+   - **A (recommended whenever MFA is mandatory, [§6](#6-authentication-flow-with-mandatory-mfa)):** `example/flows-recovery-email-mfa-verification.yaml`: identification → e-mail with link → **MFA check** → new password → login.
+   - **B (without MFA check):** `example/flows-recovery-email-verification.yaml`: identification → e-mail with link → new password → login.
+
+   > **Warning:** variant B logs the person in right after the new password, without asking for the second factor. Whoever takes over someone's mailbox then gets a full session and bypasses the mandatory MFA. Use B only if you accept that the mailbox alone is enough to take over an account.
+2. *System → Brands* → the brand of your Authentik host (e.g. `auth.example.com`, or the default brand) → *Edit* → *Default flows* → **Recovery flow**: `default-recovery-flow`. Without it Authentik answers "No recovery flow set" and the admin page shows *no recovery flow set up*.
+3. SMTP in the e-mail stage: *Flows and Stages → Stages* → `default-recovery-email` → *Edit* → switch **Use global connection settings** off and fill in host, port, username, password, *Use TLS* / *Use SSL* and the *From address* (e.g. `FriendFlix <authentik@example.com>`). Alternatively leave the switch on and use the global settings from [§2.5](#25-e-mail-smtp).
+4. *Flows and Stages → Stages* → `default-authentication-identification` → *Edit* → **Recovery flow**: `default-recovery-flow`. The login page now shows *Forgot username or password?*.
+5. Give the service account the password-link permissions from [§8.2](#82-role-with-exactly-these-global-permissions) (re-importing the blueprint does it).
+6. Test both ways with a test user that has an e-mail address: *Forgot username or password?* in a private browser window, and *Send password link* on that user's admin page. The link in the e-mail leads to `https://auth.example.com/if/flow/default-recovery-flow/?flow_token=…`: Authentik takes host and brand from the request, so `AUTHENTIK_URL` must be the public Authentik address.
+
+If you use a different recovery flow, put its slug into `AUTHENTIK_RECOVERY_FLOW`; it needs an e-mail stage (`ak-stage-email`) bound to it.
 
 Lost MFA device: there is no self-service reset. As admin open *Directory → Users* → the user → *MFA Devices*, delete the device; on the next login the user is forced to enrol a new one. Alternatively let users create recovery codes (bind `default-authenticator-static-setup` as an additional configuration stage and add *Static Tokens* to the device classes).
 
@@ -477,9 +503,11 @@ Same check from the host: `curl -H "Authorization: Bearer <token>" https://auth.
 In the browser:
 
 1. Log in to the portal as a member of `friendflix-admins` → you land on the portal as admin (MFA was asked).
-2. *Admin → Invitations* → create an invite. The result must say *The link guides through account creation (including two-factor) …*. *not configured* = env vars missing; *could not be created* = API error, see the backend log.
+2. *Admin → Users → Invites* → create an invite. The result must say *The link guides through account creation (including two-factor) …*. *not configured* = env vars missing; *could not be created* = API error, see the backend log.
 3. Open the link in a **private window** (not logged in to Authentik), click *Create account & get started*, sign up, set up TOTP or a passkey → you land logged in on the portal with the invite's role.
-4. In Authentik *Directory → Invitations* the invitation is gone after redemption.
+4. In Authentik *Directory → Invitations* the invitation is gone after redemption (for an invite with several uses: after the last use).
+5. *Admin → Users* → the new person: the header shows their two-factor methods (e.g. *Authenticator app*). "No two-factor sign-in" for someone who just set up TOTP means the device permissions are missing ([§8.2](#82-role-with-exactly-these-global-permissions)).
+6. Sign in once in a private window with an Authentik account that has no invite: you land on *Request sent* (`/pending`), and the admin sees the request under *Admin → Users → Waiting for approval*.
 
 ## 15. Troubleshooting
 
@@ -493,7 +521,7 @@ Logs: `docker compose -f compose.prod.yaml logs backend | grep -i -E "oidc|authe
 | Backend restarts, `fetch failed` / `ENOTFOUND` / timeout at start | The backend container cannot reach `auth.example.com` (DNS, NAT loopback, firewall). See [§2.3](#23-reverse-proxy-nginx-proxy-manager). |
 | `{"error":"invalid_state"}` on `/auth/callback` | The login started on another host name than `PUBLIC_URL` (e.g. LAN IP), cookies blocked, or more than 10 min (enrollment: 30 min) between start and callback. Start again from `PUBLIC_URL`. |
 | `{"error":"login_failed"}` (401) | Token exchange or ID token check failed: wrong client secret, encryption key set on the provider, or the clocks of the hosts differ by more than 30 s (enable NTP on all hosts). Backend log line `oidc callback failed` has the details. |
-| `{"error":"no_invite"}` (403) | First login without a valid invite and not in `ADMIN_GROUP`. Admin: check the group name and that *Include claims in id_token* is on. Others: create an invite (with *already has an Authentik account* if they already signed up). |
+| After sign-in the person sees *Request sent* (`/pending`) | First login without a valid invite and not in `ADMIN_GROUP`: the request waits in *Admin → Users → Waiting for approval*. Admin who lands there: check the group name and that *Include claims in id_token* is on. Others: approve the request, or send an invite (with *already has an Authentik account* if they already signed up). |
 | Admin is not recognised as admin | Group name differs from `ADMIN_GROUP` (case-sensitive), membership only inherited, or *Include claims in id_token* off. |
 | `{"error":"disabled"}` (403) | The account is disabled in the portal (*Admin → Users*). |
 | Invite page shows no *Create account* button | Invitations not configured or the Authentik invitation failed. See the invite result text and the backend log. Invites created before the configuration have no Authentik invitation: create a new one. |
@@ -501,11 +529,16 @@ Logs: `docker compose -f compose.prod.yaml logs backend | grep -i -E "oidc|authe
 | Log `Authentik API rejected AUTHENTIK_API_TOKEN` | Token wrong, expired, or intent *App password* instead of *API Token*. |
 | Log `invitation creation failed (… "Can add Invitation" …)` | 403: the role from [§8.2](#82-role-with-exactly-these-global-permissions) is missing or not assigned. |
 | Log `Authentik unreachable` | DNS/TLS/firewall from the backend container to `AUTHENTIK_URL`. |
+| Admin user page: everybody shows "No two-factor sign-in" | The token lacks *Can view TOTP / WebAuthn / Static Device* ([§8.2](#82-role-with-exactly-these-global-permissions)); Authentik then returns an empty list instead of an error. |
+| Admin user page: "2FA unknown" | `AUTHENTIK_URL` / `AUTHENTIK_API_TOKEN` not set, the token lacks *Can view User*, or the account has no Authentik user (e.g. created before a *Subject mode* change). |
+| *Send password link*: "no recovery flow set up" | No brand recovery flow, no e-mail stage in `AUTHENTIK_RECOVERY_FLOW`, the user has no e-mail address, or the token lacks *Can view Email Stage* / *Can view Flow Stage Binding* ([§10](#10-password-recovery-by-e-mail)). |
+| *Send password link*: "not supported" | Authentik is older than 2024.4 (the API answers 405). Update Authentik. |
+| *Send password link* succeeds but no e-mail arrives | SMTP of the e-mail stage: check *Events → Logs* in Authentik for `email_sent` / errors and the stage's connection settings ([§10](#10-password-recovery-by-e-mail) step 3). |
 | You open the enrollment link while signed in to Authentik and land on the portal without any sign-up | Expected: the flow requires no authentication, Authentik denies it and, with the default *Denied action* `MESSAGE_CONTINUE`, follows the relative `next` instead, i.e. you are logged in as the **already signed-in** Authentik user. If that user has no portal account yet, the invite is redeemed for them. Test invites in a private window. |
 | `'AnonymousUser' object has no attribute 'group_attributes'` during sign-up | Prompt fields with expression placeholders. Import `friendflix-prompt-fix.yaml` ([§3](#3-fast-path-import-the-friendflix-blueprint)). |
 | After sign-up the friend lands in the Authentik user interface | A redirect stage or redirect policy in the enrollment flow, or the User Login stage is missing. |
 | After sign-up *Permission denied* for FriendFlix | The application is bound to groups but the User Write stage does not add new users to `friendflix-users`. |
-| After changing *Subject mode* nobody can log in (`no_invite`) | Change it back. FriendFlix identifies users by `sub`. |
+| After changing *Subject mode* everybody lands on *Request sent* (`/pending`) | Change it back. FriendFlix identifies users by `sub`. |
 | Branding uploads disappear after an update | `/data` is not persisted: with option A use the current `compose.authentik.yaml` (volume `ak-data`, [§2.1](#21-option-a-the-stack-in-this-repository-composeauthentikyaml)); with option B keep the `./data` mount. |
 
 ## 16. Reference: what the FriendFlix code does
@@ -525,5 +558,9 @@ Logs: `docker compose -f compose.prod.yaml logs backend | grep -i -E "oidc|authe
 | Create invitation | `POST {AUTHENTIK_URL}/api/v3/stages/invitation/invitations/` body `{name: "ff-…", single_use: false, expires, fixed_data: {}, flow}` | `backend/src/invites.ts` (API shape tested against Authentik 2024.x – 2026.x) |
 | Delete invitation | `DELETE {AUTHENTIK_URL}/api/v3/stages/invitation/invitations/{pk}/` after redemption or revocation | `backend/src/invites.ts`, `backend/src/routes/admin.ts` |
 | Enrollment URL | `{AUTHENTIK_URL}/if/flow/{slug}/?itoken={pk}&next={authorize path+query}` | `backend/src/invites.ts` |
+| User lookup | `GET {AUTHENTIK_URL}/api/v3/core/users/?uuid=` / `?search=<e-mail>` / paged list, matched on `uid` (hashed sub) or `uuid`; cached 1 h (a miss 5 min) | `backend/src/authentik.ts` |
+| Two-factor state | `GET {AUTHENTIK_URL}/api/v3/authenticators/admin/all/?user={pk}`, confirmed TOTP / WebAuthn / static devices; cached 10 min | `backend/src/authentik.ts` |
+| Password link | `GET /api/v3/flows/instances/{AUTHENTIK_RECOVERY_FLOW}/`, `GET /api/v3/flows/bindings/?target={flow pk}` (first `ak-stage-email`), then `POST /api/v3/core/users/{pk}/recovery_email/` with `email_stage`; 400 → "not set up", 405 → "not supported" | `backend/src/authentik.ts` (checked against Authentik 2026.8.3; minimum 2024.4) |
+| API timeout (admin user page) | 5 s per call | `backend/src/authentik.ts` |
 | API timeout | 10 s per call | `backend/src/invites.ts` |
 | Invite TTL | 1 – 336 h (default 48 h); the Authentik invitation gets the same expiry | `backend/src/routes/admin.ts` |

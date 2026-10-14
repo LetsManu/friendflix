@@ -81,7 +81,7 @@ export function seerrRoutes(app: FastifyInstance, ctx: Ctx) {
     const d = await ctx.seerr.details(b.mediaType, b.tmdbId);
     const st = portalStatus(d.mediaInfo?.status, d.mediaInfo?.requests?.[0]?.status);
     if (st !== 'nicht_angefragt' && st !== 'abgelehnt') return reply.code(409).send({ error: 'already_requested', status: st });
-    const limit = await limitFor(ctx, req.user!.role);
+    const limit = await limitFor(ctx, req.user!);
     const slot = await reserve(ctx, req.user!.id, limit); // atomic check + hold; a failure below must not burn it
     if (slot === null) return reply.code(429).send({ error: 'request_limit', limit, used: await usage(ctx, req.user!.id), resetsAt: await resetsAt(ctx) });
     let created;

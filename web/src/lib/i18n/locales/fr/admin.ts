@@ -314,7 +314,16 @@ const fr: Translation<typeof de> = {
       enable: '{actor} a débloqué {target}',
       revoke_sessions: '{actor} a déconnecté {target} partout',
       provisioned: 'Compte créé pour {target}',
+      access: '{actor} a modifié l’accès de {target}',
+      limits: '{actor} a modifié les limites de {target}',
+      repair: '{actor} a réparé les liens de {target}',
+      recovery_email: '{actor} a envoyé un lien de mot de passe à {target}',
+      mfa_setup_sent: '{actor} a envoyé la configuration 2FA à {target}',
+      activity_viewed: '{actor} a consulté l’historique de {target}',
+      revoke_device: '{actor} a déconnecté {target} sur un appareil',
+      recovery_email_failed: '{actor} a tenté d’envoyer un lien de mot de passe à {target} – échec ({reason})',
     },
+    failReason: { recovery_not_configured: 'aucun flux de récupération configuré', authentik_user_not_found: 'aucun utilisateur Authentik', not_supported: 'non pris en charge', authentik_unavailable: 'Authentik injoignable', unknown: 'erreur' },
     device: {
       approve: '{actor} a validé un appareil de {target}',
       unapprove: '{actor} a retiré la validation d\'un appareil de {target}',
@@ -357,6 +366,7 @@ const fr: Translation<typeof de> = {
       pin_set: '{actor} a défini un code PIN de profil',
       pin_clear: '{actor} a supprimé un code PIN de profil',
       select: '{actor} a changé de profil',
+      admin_update: '{actor} a modifié un profil de {target}',
     },
     download: {
       revoke: '{actor} a révoqué une licence de téléchargement',
@@ -415,6 +425,9 @@ const fr: Translation<typeof de> = {
       server_errors: { one: '{n} erreur serveur en 15 minutes', many: '{n} erreurs serveur en 15 minutes', other: '{n} erreurs serveur en 15 minutes' },
       client_errors: { one: '{n} erreur navigateur en 15 minutes', many: '{n} erreurs navigateur en 15 minutes', other: '{n} erreurs navigateur en 15 minutes' },
       failed_playbacks: { one: '{n} lecture en échec', many: '{n} lectures en échec', other: '{n} lectures en échec' },
+    },
+    approvals: {
+      pending_approvals: { one: '{n} connexion en attente de validation', many: '{n} connexions en attente de validation', other: '{n} connexions en attente de validation' },
     },
   },
 };

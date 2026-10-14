@@ -314,7 +314,16 @@ const es: Translation<typeof de> = {
       enable: '{actor} desbloqueó a {target}',
       revoke_sessions: '{actor} cerró la sesión de {target} en todas partes',
       provisioned: 'Cuenta creada para {target}',
+      access: '{actor} cambió el acceso de {target}',
+      limits: '{actor} cambió los límites de {target}',
+      repair: '{actor} reparó los vínculos de {target}',
+      recovery_email: '{actor} envió a {target} un enlace de contraseña',
+      mfa_setup_sent: '{actor} envió a {target} la configuración 2FA',
+      activity_viewed: '{actor} consultó el historial de {target}',
+      revoke_device: '{actor} cerró la sesión de {target} en un dispositivo',
+      recovery_email_failed: '{actor} intentó enviar a {target} un enlace de contraseña – falló ({reason})',
     },
+    failReason: { recovery_not_configured: 'no hay flujo de recuperación', authentik_user_not_found: 'sin usuario de Authentik', not_supported: 'no compatible', authentik_unavailable: 'Authentik no disponible', unknown: 'error' },
     device: {
       approve: '{actor} aprobó un dispositivo de {target}',
       unapprove: '{actor} retiró la aprobación de un dispositivo de {target}',
@@ -357,6 +366,7 @@ const es: Translation<typeof de> = {
       pin_set: '{actor} puso un PIN a un perfil',
       pin_clear: '{actor} quitó el PIN de un perfil',
       select: '{actor} cambió de perfil',
+      admin_update: '{actor} cambió un perfil de {target}',
     },
     download: {
       revoke: '{actor} revocó una licencia de descarga',
@@ -415,6 +425,9 @@ const es: Translation<typeof de> = {
       server_errors: { one: '{n} error del servidor en 15 minutos', many: '{n} errores del servidor en 15 minutos', other: '{n} errores del servidor en 15 minutos' },
       client_errors: { one: '{n} error del navegador en 15 minutos', many: '{n} errores del navegador en 15 minutos', other: '{n} errores del navegador en 15 minutos' },
       failed_playbacks: { one: '{n} reproducción fallida', many: '{n} reproducciones fallidas', other: '{n} reproducciones fallidas' },
+    },
+    approvals: {
+      pending_approvals: { one: '{n} inicio de sesión espera aprobación', many: '{n} inicios de sesión esperan aprobación', other: '{n} inicios de sesión esperan aprobación' },
     },
   },
 };

@@ -848,6 +848,13 @@ export class JellyfinService implements MediaServer {
         await client.setPolicy(id, { ...policyFromTemplate(t, ids), IsDisabled: p.disabled, ...(p.hidden ? { IsHidden: true } : {}), ...parental });
       },
       setDisabled: (id, disabled) => client.setPolicy(id, { IsDisabled: disabled }),
+      identityExists: async (id) => {
+        const res = await client.adminFetch(`/Users/${id}`);
+        await res.body?.cancel().catch(() => undefined);
+        if (res.status === 404) return false;
+        if (!res.ok) throw new JellyfinError(res.status, `Jellyfin get user -> ${res.status}`);
+        return true;
+      },
       libraries: async () => (await client.mediaFolders()).map((f) => ({ id: f.Id, name: f.Name })),
       ping: () => client.ping(),
       /** sessions of other apps: FriendFlix' own devices ("ff-<id>") are tracked by the portal itself */
