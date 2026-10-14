@@ -1,10 +1,12 @@
 <!-- SPDX-FileCopyrightText: 2026 Manuel Weißböck -->
 <!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
 <script lang="ts">
-  /** /me/account (owner profile only): profile, security (2FA state), sessions & devices, and the privacy note. */
+  /** /me/account (owner profile only): profile, security (2FA state), sessions & devices, your data (export), delete the account, and the privacy note. */
   import { onMount } from 'svelte';
   import { goto } from '$app/navigation';
   import { api, ApiError, type Account } from '#lib/api';
+  import DataCard from '#lib/account/DataCard.svelte';
+  import DeleteCard from '#lib/account/DeleteCard.svelte';
   import ProfileCard from '#lib/account/ProfileCard.svelte';
   import SecurityCard from '#lib/account/SecurityCard.svelte';
   import SessionsCard from '#lib/account/SessionsCard.svelte';
@@ -49,6 +51,8 @@
       <ProfileCard {account} on:saved={(e) => saved(e.detail)} />
       <SecurityCard {account} />
       <div class="wide"><SessionsCard /></div>
+      <DataCard />
+      <DeleteCard {account} />
     </div>
     <p class="muted privacy"><Icon name="shield" size={18} />{$t('account.account.privacy')}</p>
   {/if}

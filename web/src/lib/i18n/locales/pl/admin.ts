@@ -351,6 +351,13 @@ const pl: Translation<typeof de> = {
       activity_viewed: '{actor} przejrzał(a) historię: {target}',
       revoke_device: '{actor} wylogował(a) na jednym urządzeniu: {target}',
       recovery_email_failed: '{actor} próbował(a) wysłać link do hasła: {target} – nie udało się ({reason})',
+      deletion_requested: '{actor} zaplanował(a) usunięcie konta {target} ({date})',
+      deletion_requested_self: '{actor} poprosił(a) o usunięcie własnego konta ({date})',
+      deletion_restored: '{actor} anulował(a) usunięcie konta {target}',
+      deletion_now: '{actor} zlecił(a) natychmiastowe usunięcie konta {target}',
+      deletion_started: 'Rozpoczęto usuwanie konta {target}',
+      deletion_failed: 'Usuwanie konta {target} nie powiodło się na kroku {step} z 6',
+      deleted: 'Konto {target} zostało usunięte',
     },
     failReason: { recovery_not_configured: 'brak przepływu odzyskiwania', authentik_user_not_found: 'brak użytkownika Authentik', not_supported: 'nieobsługiwane', authentik_unavailable: 'Authentik niedostępny', unknown: 'błąd' },
     device: {
@@ -416,6 +423,7 @@ const pl: Translation<typeof de> = {
       reauth_mismatch: '{actor}: odrzucono ponowne logowanie innym kontem',
     },
     account: {
+      export: '{actor} pobrał(a) swoje dane',
       profile: '{actor} zmienił(a) nazwę lub kolor swojego konta',
     },
     tv: {

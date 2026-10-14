@@ -10,6 +10,8 @@ export interface MfaState { totp: boolean; webauthn: boolean; static: boolean }
 export interface DetailUser {
   id: string; name: string; email: string | null; role: string; disabled: boolean; lockedReason: string | null
   accessUntil: string | null; createdAt: string; lastActive: string | null; avatar: string | null
+  /** scheduled deletion (locked as 'deletion' until then); null = none */
+  deletionAt: string | null
 }
 export interface DetailProfile { id: string; name: string; kids: boolean; maxRating: string | null; avatar: string | null; lastUsed: string | null; isOwner: boolean; hasPin: boolean }
 export interface DetailDevice { id: string; name: string | null; lastSeen: string; approved: boolean; sessions: number }
@@ -40,11 +42,16 @@ export interface Pill { tone: Tone; label: string; icon?: string }
 const LOCK_LABEL: Record<string, string> = { manual: 'lockedManual', expired: 'lockedExpired', deletion: 'lockedDeletion' };
 const WEEK = 7 * 86_400_000;
 
-/** status pills of the header: active | locked (with reason), plus the access end when there is one */
-export function statusPills(u: Pick<DetailUser, 'disabled' | 'lockedReason' | 'accessUntil'>, now = Date.now()): Pill[] {
-  const out: Pill[] = u.disabled
-    ? [{ tone: 'err', label: tr(`adminPeople.detail.status.${(u.lockedReason && LOCK_LABEL[u.lockedReason]) || 'locked'}` as 'adminPeople.detail.status.locked'), icon: 'lock' }]
-    : [{ tone: 'ok', label: tr('adminPeople.detail.status.active') }];
+/** "Deletion on {date}" (header and user list) */
+export const deletionLabel = (at: string): string => tr('adminPeople.detail.status.deletionOn', { date: fmtDate(at, { dateStyle: 'medium' }) });
+
+/** status pills of the header: active | locked (with reason; a scheduled deletion with its date), plus the access end when there is one */
+export function statusPills(u: Pick<DetailUser, 'disabled' | 'lockedReason' | 'accessUntil'> & { deletionAt?: string | null }, now = Date.now()): Pill[] {
+  const out: Pill[] = u.disabled && u.lockedReason === 'deletion' && u.deletionAt
+    ? [{ tone: 'err', label: deletionLabel(u.deletionAt), icon: 'lock' }]
+    : u.disabled
+      ? [{ tone: 'err', label: tr(`adminPeople.detail.status.${(u.lockedReason && LOCK_LABEL[u.lockedReason]) || 'locked'}` as 'adminPeople.detail.status.locked'), icon: 'lock' }]
+      : [{ tone: 'ok', label: tr('adminPeople.detail.status.active') }];
   if (u.accessUntil) {
     const soon = Date.parse(u.accessUntil) - now <= WEEK;
     out.push({ tone: soon ? 'warn' : 'info', label: tr('adminPeople.detail.status.until', { date: fmtDate(u.accessUntil, { dateStyle: 'medium' }) }), icon: 'calendar' });
@@ -55,9 +62,11 @@ export function statusPills(u: Pick<DetailUser, 'disabled' | 'lockedReason' | 'a
 /**
  * The header's lock action: lock an active account, unlock a locked one; when its access has ended, extend access
  * instead (an unlock would not last: the backend refuses it with 409 access_expired, the expiry tick would lock again).
+ * A deletion lock is restored (deletion/restore; an account whose access has ended stays locked as expired).
  */
-export function lockAction(u: Pick<DetailUser, 'disabled' | 'lockedReason' | 'accessUntil'>, now = Date.now()): 'lock' | 'unlock' | 'extend' {
+export function lockAction(u: Pick<DetailUser, 'disabled' | 'lockedReason' | 'accessUntil'>, now = Date.now()): 'lock' | 'unlock' | 'extend' | 'restore' {
   if (!u.disabled) return 'lock';
+  if (u.lockedReason === 'deletion') return 'restore';
   const ended = u.accessUntil !== null && Date.parse(u.accessUntil) <= now;
   return u.lockedReason === 'expired' || ended ? 'extend' : 'unlock';
 }

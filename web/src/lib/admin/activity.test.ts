@@ -42,6 +42,27 @@ describe('describeActivity', () => {
     await setLocale('en');
     expect(describeActivity({ ...base, action: 'session.reauth_mismatch' }).text).toBe('Tester: a new sign-in with a different account was refused');
   });
+  it('data export and account deletion (Block 23 self-service)', async () => {
+    const base = { id: 11, at: '', target: 'uuid', actor: 'Tester', target_name: 'Anna' };
+    expect(describeActivity({ ...base, actor: 'Anna', action: 'account.export' })).toEqual({ text: 'Anna hat die eigenen Daten heruntergeladen', icon: 'user' });
+    expect(describeActivity({ ...base, actor: 'Anna', action: 'user.deletion_requested', meta: { deletionAt: '2026-10-21T12:00:00Z', by: 'self' } }).text)
+      .toBe('Anna hat die Löschung des eigenen Kontos beantragt (am 21.10.2026)');
+    expect(describeActivity({ ...base, action: 'user.deletion_requested', meta: { deletionAt: '2026-10-21T12:00:00Z', by: 'admin' } }).text)
+      .toBe('Tester hat die Löschung von Anna beantragt (am 21.10.2026)');
+    expect(describeActivity({ ...base, action: 'user.deletion_restored' }).text).toBe('Tester hat die Löschung von Anna aufgehoben');
+    expect(describeActivity({ ...base, action: 'user.deletion_now', meta: { from: 'a', to: 'b' } }).text).toBe('Tester hat Anna sofort löschen lassen');
+    expect(describeActivity({ ...base, actor: null, target_name: 'deleted-1a2b3c4d', action: 'user.deletion_started', meta: { pseudonym: 'deleted-1a2b3c4d' } }).text)
+      .toBe('Die Löschung von deleted-1a2b3c4d hat begonnen');
+    expect(describeActivity({ ...base, actor: null, target_name: 'deleted-1a2b3c4d', action: 'user.deletion_failed', meta: { step: 3, error: 'media_error' } }).text)
+      .toBe('Die Löschung von deleted-1a2b3c4d ist bei Schritt 3 von 6 fehlgeschlagen');
+    expect(describeActivity({ ...base, actor: null, target_name: 'deleted-1a2b3c4d', action: 'user.deleted' }).text).toBe('deleted-1a2b3c4d wurde gelöscht');
+    // a step that is not a small number never reaches the text
+    expect(describeActivity({ ...base, actor: null, action: 'user.deletion_failed', meta: { step: '<b>' } }).text).not.toContain('<b>');
+    await setLocale('en');
+    expect(describeActivity({ ...base, action: 'user.deletion_now' }).text).toBe('Tester had Anna deleted right away');
+    expect(describeActivity({ ...base, actor: 'Anna', action: 'user.deletion_requested', meta: { deletionAt: '2026-10-21T12:00:00Z', by: 'self' } }).text)
+      .toBe('Anna asked to delete their own account (on 21 Oct 2026)');
+  });
   it('never shows raw keys or JSON for unknown actions', async () => {
     const d = describeActivity({ id: 5, at: '', action: 'weird.thing', actor: 'Tester', meta: { a: 1 } });
     expect(d.text).not.toContain('weird');

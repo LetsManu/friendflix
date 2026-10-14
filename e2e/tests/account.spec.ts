@@ -189,3 +189,84 @@ test.describe('account page errors', () => {
     await expect(page.getByRole('button', { name: 'Profilmenü (Tester)' })).toBeVisible();
   });
 });
+
+/** Block 23 self-service: your data (export) and deleting the account */
+test.describe('your data and account deletion', () => {
+  const REAUTH = () => Date.now() + 600_000;
+
+  test('download link points to the export', async ({ page }) => {
+    await page.goto('/me/account');
+    const data = page.getByRole('region', { name: 'Deine Daten' });
+    const link = data.getByRole('link', { name: 'Meine Daten herunterladen' });
+    await expect(link).toHaveAttribute('href', '/api/account/export');
+    await expect(link).toHaveAttribute('download', '');
+    await expect(data.getByText(/nur deine eigenen Daten/)).toBeVisible();
+  });
+
+  test('delete asks for re-authentication, then confirms with the date', async ({ page, api }) => {
+    let next: string | null = null;
+    // the forced sign-in (backend /auth/reauth) comes straight back to `next`, now recently authenticated
+    await page.route('**/auth/reauth?**', (r) => {
+      next = new URL(r.request().url()).searchParams.get('next');
+      api.account = { ...api.account, reauthUntil: REAUTH() };
+      return r.fulfill({ status: 302, headers: { location: next ?? '/' } });
+    });
+    await page.goto('/me/account');
+    const opener = page.getByRole('region', { name: 'Konto löschen' }).getByRole('button', { name: 'Konto löschen …' });
+    await opener.click();
+    let dlg = page.getByRole('dialog', { name: 'Konto löschen?' });
+    // the export comes first, then the 7 days, the restore by signing in, the deactivated sign-in account
+    await expect(dlg.getByRole('link', { name: 'Meine Daten herunterladen' })).toHaveAttribute('href', '/api/account/export');
+    await expect(dlg).toContainText('in 7 Tagen endgültig gelöscht');
+    await expect(dlg).toContainText('indem du dich wieder anmeldest');
+    await expect(dlg).toContainText('Anmeldekonto wird sofort deaktiviert');
+    await expect(dlg).toContainText('meldest du dich dafür noch einmal an');
+    await expect(dlg.getByRole('button', { name: 'Abbrechen' })).toBeFocused();
+    // Escape closes it and gives the focus back
+    await page.keyboard.press('Escape');
+    await expect(dlg).toHaveCount(0);
+    await expect(opener).toBeFocused();
+
+    await opener.click();
+    await dlg.getByRole('button', { name: 'Mein Konto löschen' }).click();
+    // back from the sign-in: the dialog is open again and the flag is gone from the address
+    dlg = page.getByRole('dialog', { name: 'Konto löschen?' });
+    await expect(dlg).toBeVisible();
+    expect(next).toBe('/me/account?delete=1');
+    await expect(page).toHaveURL(/\/me\/account$/);
+    expect(api.log.filter((l) => l.startsWith('POST /api/account/delete'))).toEqual([]); // nothing sent before the sign-in
+    await dlg.getByRole('button', { name: 'Mein Konto löschen' }).click();
+    const done = page.getByRole('dialog', { name: 'Konto wird gelöscht' });
+    await expect(done).toContainText('Dein Konto wird am 21. Oktober 2026 gelöscht.');
+    expect(api.log).toContain('POST /api/account/delete {"confirm":true} -> 200');
+    await expect(done.getByRole('button', { name: 'OK' })).toBeFocused();
+    await done.getByRole('button', { name: 'OK' }).click();
+    await expect(page).toHaveURL(/\/$/); // the session is gone
+  });
+});
+
+test.describe('account deletion refused', () => {
+  test.use({ allowedConsole: /status of (400|401)/ });
+  test('a lapsed re-authentication answer sends the person to sign in again', async ({ page, api }) => {
+    api.account = { ...api.account, reauthUntil: Date.now() + 600_000 };
+    api.reauthLapsed = true; // the window ran out between loading the page and confirming
+    let next: string | null = null;
+    await page.route('**/auth/reauth?**', (r) => { next = new URL(r.request().url()).searchParams.get('next'); return r.fulfill({ status: 200, contentType: 'text/html', body: '<p>sign in</p>' }); });
+    await page.goto('/me/account');
+    await page.getByRole('button', { name: 'Konto löschen …' }).click();
+    await page.getByRole('dialog', { name: 'Konto löschen?' }).getByRole('button', { name: 'Mein Konto löschen' }).click();
+    await expect.poll(() => next).toBe('/me/account?delete=1');
+  });
+
+  test('delete as last admin shows the hint', async ({ page, api }) => {
+    api.account = { ...api.account, reauthUntil: Date.now() + 600_000 };
+    await page.route('**/api/account/delete', (r) => r.fulfill({ status: 400, contentType: 'application/json', body: '{"error":"last_admin"}' }));
+    await page.goto('/me/account');
+    await page.getByRole('button', { name: 'Konto löschen …' }).click();
+    const dlg = page.getByRole('dialog', { name: 'Konto löschen?' });
+    await dlg.getByRole('button', { name: 'Mein Konto löschen' }).click();
+    await expect(dlg.getByRole('alert')).toHaveText('Du bist der letzte Admin – mach zuerst jemand anderen zum Admin.');
+    await expect(dlg.getByRole('button', { name: 'Mein Konto löschen' })).toBeVisible(); // still open, nothing else happened
+    await expect(page).toHaveURL(/\/me\/account$/);
+  });
+});

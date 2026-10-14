@@ -37,6 +37,8 @@ export interface MockState {
   devices: MockDevice[];
   /** answer of POST /api/sessions/revoke-others */
   revokedOthers: number;
+  /** POST /api/account/delete answers 401 reauth_required even inside the reauth window (it ran out meanwhile) */
+  reauthLapsed?: boolean;
 }
 export interface MockAccount {
   name: string; email: string | null; avatar: string;
@@ -133,6 +135,11 @@ export async function installApi(ctx: BrowserContext, st: MockState): Promise<vo
       st.account = { ...st.account, ...(b.name !== undefined ? { name: b.name } : {}), ...(b.avatar !== undefined ? { avatar: b.avatar } : {}) };
       st.accountSaved = { name: st.account.name, avatar: st.account.avatar };
       return J(st.account);
+    }
+    // deleting the account needs a recent sign-in (reauthUntil); the backend then ends the session
+    if (p === '/api/account/delete' && m === 'POST') {
+      if (st.reauthLapsed || !st.account.reauthUntil || st.account.reauthUntil < Date.now()) return J({ error: 'reauth_required' }, 401);
+      return J({ deletionAt: '2026-10-21T12:00:00.000Z' });
     }
     if (p === '/api/devices' && m === 'GET') return J({ devices: st.devices });
     if ((mm = p.match(/^\/api\/devices\/([^/]+)\/sign-out$/)) && m === 'POST') return J({ revoked: 1 }); // the device stays (approved)

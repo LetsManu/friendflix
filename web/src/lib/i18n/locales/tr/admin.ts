@@ -313,6 +313,13 @@ const tr: Translation<typeof de> = {
       activity_viewed: '{actor}, {target} geçmişini görüntüledi',
       revoke_device: '{actor}, {target} oturumunu bir cihazda kapattı',
       recovery_email_failed: '{actor}, {target} kişisine parola bağlantısı göndermeyi denedi – başarısız ({reason})',
+      deletion_requested: '{actor}, {target} hesabının silinmesini planladı ({date})',
+      deletion_requested_self: '{actor} kendi hesabının silinmesini istedi ({date})',
+      deletion_restored: '{actor}, {target} hesabının silinmesini iptal etti',
+      deletion_now: '{actor}, {target} hesabını hemen sildirdi',
+      deletion_started: '{target} hesabının silinmesi başladı',
+      deletion_failed: '{target} hesabının silinmesi {step}/6 adımında başarısız oldu',
+      deleted: '{target} silindi',
     },
     failReason: { recovery_not_configured: 'kurtarma akışı yok', authentik_user_not_found: 'Authentik kullanıcısı yok', not_supported: 'desteklenmiyor', authentik_unavailable: 'Authentik erişilemiyor', unknown: 'hata' },
     device: {
@@ -378,6 +385,7 @@ const tr: Translation<typeof de> = {
       reauth_mismatch: '{actor}: başka bir hesapla yapılan yeni giriş reddedildi',
     },
     account: {
+      export: '{actor} kendi verilerini indirdi',
       profile: '{actor} kendi hesabının adını veya rengini değiştirdi',
     },
     tv: {

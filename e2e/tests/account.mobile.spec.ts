@@ -28,3 +28,25 @@ test('phone: cards stack and buttons are ≥ 44 px', async ({ page }) => {
   await expect(page.getByText('2 andere Sitzungen beendet.')).toBeVisible();
   expect(await noHorizontalOverflow(page)).toBe(true);
 });
+
+test('phone: delete dialog fits the screen', async ({ page }) => {
+  await page.goto('/me/account');
+  const link = page.getByRole('region', { name: 'Deine Daten' }).getByRole('link', { name: 'Meine Daten herunterladen' });
+  expect((await link.boundingBox())!.height).toBeGreaterThanOrEqual(44);
+  await page.getByRole('button', { name: 'Konto löschen …' }).tap();
+  const dlg = page.getByRole('dialog', { name: 'Konto löschen?' });
+  await expect(dlg).toBeVisible();
+  const vp = page.viewportSize()!;
+  const box = (await dlg.boundingBox())!;
+  expect(box.x).toBeGreaterThanOrEqual(0);
+  expect(box.y).toBeGreaterThanOrEqual(0);
+  expect(box.x + box.width).toBeLessThanOrEqual(vp.width + 0.5);
+  expect(box.y + box.height).toBeLessThanOrEqual(vp.height + 0.5);
+  expect(await noHorizontalOverflow(page)).toBe(true);
+  const targets = dlg.getByRole('button').or(dlg.getByRole('link'));
+  const n = await targets.count();
+  expect(n).toBe(3); // download, cancel, delete
+  for (let i = 0; i < n; i++) expect((await targets.nth(i).boundingBox())!.height, await targets.nth(i).innerText()).toBeGreaterThanOrEqual(44);
+  // the last control can be reached on the phone
+  await expect(dlg.getByRole('button', { name: 'Mein Konto löschen' })).toBeInViewport();
+});

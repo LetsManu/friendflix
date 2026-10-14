@@ -14,7 +14,9 @@ const accessEnded = (until: string | null): boolean => until !== null && Date.pa
 /** uuid-shaped ids (the backend validates uuids for users/devices) */
 export const auid = (n: number): string => `00000000-0000-4000-a000-${n.toString().padStart(12, '0')}`;
 
-export interface AdminUser { id: string; name: string; email: string | null; role: string; disabled: boolean; jellyfin_username: string; seerr_user_id: number | null; created_at: string; last_seen: string | null; access_until?: string | null; profiles?: number; /** why a locked account is locked (default manual) */ locked_reason?: 'manual' | 'expired' | 'deletion' }
+export interface AdminUser { id: string; name: string; email: string | null; role: string; disabled: boolean; jellyfin_username: string; seerr_user_id: number | null; created_at: string; last_seen: string | null; access_until?: string | null; profiles?: number; /** why a locked account is locked (default manual) */ locked_reason?: 'manual' | 'expired' | 'deletion'; /** scheduled deletion (Block 23 self-service) */ deletion_at?: string | null }
+/** a claimed deletion whose users row is gone (status=deleting lists it by pseudonym); step = the step in work (1-6) */
+export interface AdminCleanup { id: string; pseudonym: string; started_at: string; step: number; error: string | null }
 export interface AdminDevice { user_id: string; device_id: string; label: string; approved: boolean; last_seen: string; name: string; /** the admin's own device (backend: current) */ current?: boolean }
 export interface AdminRequest { id: number; title: string; mediaType: 'movie' | 'tv'; requestedBy: string; status: string; createdAt: string }
 export interface AdminInvite { id: string; role: string; note: string | null; expires_at: string; used_at: string | null; used_by_name: string | null; uses: number; max_uses: number; access_days: number | null }
@@ -75,6 +77,9 @@ export interface AdminState {
   usageSince: string | null;
   /** Block 23 user detail (/api/admin/users/:id*): Authentik state (mfa null = no Authentik API), link health, limits, profiles, activity calls */
   detailMfa: { totp: boolean; webauthn: boolean; static: boolean } | null;
+  /** Block 23 self-service: deletions whose users row is gone, and ids the deletion tick has claimed (restore answers 409) */
+  cleanups: AdminCleanup[];
+  claimed: Set<string>;
   authentik: { recovery: boolean; mfaSetup: boolean };
   linkedOk: { jellyfin: boolean | null; requests: boolean };
   limits: Record<string, DetailLimits>;
@@ -207,6 +212,8 @@ export function adminState(): AdminState {
     usageDetailCalls: [],
     usageSince: leaveDay(-10),
     detailMfa: { totp: true, webauthn: false, static: true },
+    cleanups: [],
+    claimed: new Set(),
     authentik: { recovery: true, mfaSetup: false },
     linkedOk: { jellyfin: true, requests: true },
     limits: {},
@@ -224,7 +231,7 @@ const profilesOf = (st: AdminState, u: AdminUser): DetailProfile[] => (st.userPr
 function userDetail(st: AdminState, u: AdminUser) {
   const profiles = profilesOf(st, u);
   return {
-    user: { id: u.id, name: u.name, email: u.email, role: u.role, disabled: u.disabled, lockedReason: u.disabled ? (u.locked_reason ?? 'manual') : null, accessUntil: u.access_until ?? null, createdAt: u.created_at, lastActive: u.last_seen, avatar: null },
+    user: { id: u.id, name: u.name, email: u.email, role: u.role, disabled: u.disabled, lockedReason: u.disabled ? (u.locked_reason ?? 'manual') : null, accessUntil: u.access_until ?? null, deletionAt: u.deletion_at ?? null, createdAt: u.created_at, lastActive: u.last_seen, avatar: null },
     mfa: st.detailMfa,
     authentik: st.authentik,
     totals: { d7: { hours: 3.5, streams: 4 }, d30: { hours: 12.5, streams: 15 }, all: { hours: 140, streams: 230 }, downloads: 3, requests: 7 },
@@ -332,10 +339,13 @@ function usersList(st: AdminState, sp: URLSearchParams) {
   const q = norm(sp.get('q') ?? ''), status = sp.get('status'), inactive = sp.get('lastActive') === '90+', lastActive = inactive ? 0 : Number(sp.get('lastActive') ?? 0), now = Date.now();
   // status=pending: the open approval requests in the same row shape (backend: pending true, role null)
   const all = status === 'pending'
-    ? st.approvals.map((a) => ({ id: a.id, name: a.name, email: a.email, role: null as unknown as string, disabled: false, jellyfin_username: '', seerr_user_id: null, created_at: a.requested_at, last_seen: null, access_until: null, profiles: 0, devices: 0, pending: true }))
-    : st.users.map((u) => ({ ...u, access_until: u.access_until ?? null, profiles: u.profiles ?? 1, devices: st.devices.filter((d) => d.user_id === u.id).length, pending: false }));
+    ? st.approvals.map((a) => ({ id: a.id, name: a.name, email: a.email, role: null as unknown as string, disabled: false, jellyfin_username: '', seerr_user_id: null, created_at: a.requested_at, last_seen: null, access_until: null, locked_reason: null, deletion_at: null as string | null, profiles: 0, devices: 0, pending: true }))
+    : st.users.map((u) => ({ ...u, access_until: u.access_until ?? null, locked_reason: u.disabled ? (u.locked_reason ?? 'manual') : null, deletion_at: u.deletion_at ?? null, profiles: u.profiles ?? 1, devices: st.devices.filter((d) => d.user_id === u.id).length, pending: false }))
+      // status=deleting: plus the cleanup rows (backend: pseudonym as name, no e-mail or role, cleanup {step, error})
+      .concat(status === 'deleting' ? st.cleanups.map((c) => ({ id: c.id, name: c.pseudonym, email: null, role: null as unknown as string, disabled: true, jellyfin_username: '', seerr_user_id: null, created_at: c.started_at, last_seen: null, access_until: null, locked_reason: 'deletion' as const, deletion_at: null, profiles: 0, devices: 0, pending: false, cleanup: { step: c.step, error: c.error } })) : []);
   let rows = all.filter((u) => (!q || norm(`${u.name} ${u.email ?? ''} ${u.jellyfin_username}`).includes(q)) && (!sp.get('role') || u.role === sp.get('role'))
-    && (!status || status === 'pending' || (status === 'locked' && u.disabled) || (status === 'active' && !u.disabled)
+    && (!status || status === 'pending' || (status === 'locked' && u.disabled) || (status === 'active' && !u.disabled && !u.deletion_at)
+      || (status === 'deleting' && (Boolean(u.deletion_at) || 'cleanup' in u))
       || (status === 'expiring' && u.access_until !== null && Date.parse(u.access_until) >= now && Date.parse(u.access_until) <= now + WEEK))
     && (!lastActive || (u.last_seen !== null && Date.parse(u.last_seen) >= now - lastActive * 86400e3))
     && (!inactive || u.last_seen === null || Date.parse(u.last_seen) < now - 90 * 86400e3));
@@ -439,6 +449,23 @@ export function adminRoute(st: AdminState, m: string, p: string, sp: URLSearchPa
     }
     if (rest === '/recovery' && m === 'POST') { log('user.recovery_email', u.id, { ok: true }, u.name); return ok(); }
     if (rest === '/mfa-setup' && m === 'POST') return J({ error: 'not_supported' }, 501);
+    // Block 23 self-service: cancel a scheduled deletion (ended access stays locked as expired), or let the next tick delete it
+    if (rest === '/deletion/restore' && m === 'POST') {
+      if (st.claimed.has(u.id)) return J({ error: 'deletion_in_progress' }, 409);
+      if (!u.deletion_at || u.locked_reason !== 'deletion') return J({ error: 'not_scheduled' }, 409);
+      u.deletion_at = null;
+      if (accessEnded(u.access_until ?? null)) { u.locked_reason = 'expired'; log('user.deletion_restored', u.id, { lockedReason: 'expired' }, u.name); }
+      else { u.disabled = false; u.locked_reason = undefined; log('user.enable', u.id, {}, u.name); log('user.deletion_restored', u.id, {}, u.name); }
+      return ok();
+    }
+    if (rest === '/deletion/now' && m === 'POST') {
+      if (u.id === 'u1') return J({ error: 'cannot_lock_yourself_out' }, 400);
+      if (!u.deletion_at || u.locked_reason !== 'deletion') return J({ error: 'not_scheduled' }, 409);
+      const to = new Date().toISOString();
+      log('user.deletion_now', u.id, { from: u.deletion_at, to }, u.name);
+      u.deletion_at = to;
+      return ok();
+    }
     if ((sub = rest.match(/^\/sessions\/([^/]+)\/revoke$/)) && m === 'POST') { log('user.revoke_device', u.id, { deviceId: sub[1] }, u.name); return J({ revoked: 1 }); }
     if ((sub = rest.match(/^\/profiles\/([^/]+)$/)) && m === 'PATCH') {
       const pr = profilesOf(st, u).find((x) => x.id === sub![1]);
