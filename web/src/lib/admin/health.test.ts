@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { describe, expect, it } from 'vitest';
 import { hasKey } from '#lib/i18n';
-import { REASONS, SERVICE_IDS, TC_REASONS, cleanCode, diskLabelKey, levelTone, reasonKey, serviceText, sortServices, tcKey, type ServiceHealth } from './health';
+import { REASONS, SERVICE_IDS, TC_REASONS, cleanCode, diskLabelKey, emptyHintOnTop, isEmptyMediaError, levelTone, reasonKey, serviceText, sortServices, tcKey, type ServiceHealth } from './health';
 
 describe('health view helpers', () => {
   it('levelTone maps all four levels', () => {
@@ -43,6 +43,20 @@ describe('health view helpers', () => {
     expect(serviceText({ id: 'omdb', level: 'warn', reason: 'budget', detail: { n: 820, pct: 91 } })).toBe('Tageslimit zu 91 % genutzt');
     expect(serviceText({ id: 'postgres', level: 'ok' })).toBe('Läuft');
     expect(serviceText({ id: 'playbackCheck', level: 'off' })).toBe('Noch nie gelaufen');
+  });
+
+  it('empty media: red pill text, error matching, hint placement', () => {
+    expect(serviceText({ id: 'playbackCheck', level: 'err', reason: 'empty_media', detail: { n: 86 } })).toBe('Medienserver liefert leere Videostücke – Jellyfin neu starten; hilft das nicht, Hardware-Beschleunigung prüfen');
+    expect(isEmptyMediaError('HTTP 200 empty body')).toBe(true);
+    expect(isEmptyMediaError('empty playlist')).toBe(true);
+    expect(isEmptyMediaError('empty segment from media server')).toBe(true);
+    expect(isEmptyMediaError('HTTP 500 boom')).toBe(false);
+    expect(isEmptyMediaError(null)).toBe(false);
+    const empty = { ok: false, error: 'HTTP 200 empty body' };
+    expect(emptyHintOnTop([empty, empty, { ok: false, error: 'HTTP 500' }])).toBe(true);
+    expect(emptyHintOnTop([empty, { ok: true, error: null }])).toBe(false);
+    expect(emptyHintOnTop([{ ok: false, error: 'HTTP 500' }])).toBe(false);
+    expect(emptyHintOnTop([])).toBe(false);
   });
 
   it('cleanCode never shows an address or a query', () => {
