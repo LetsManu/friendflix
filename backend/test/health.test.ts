@@ -72,7 +72,7 @@ beforeEach(async () => {
   vols = { [cfg.DOWNLOAD_DIR]: { usedPct: 40 }, [cfg.PREVIEW_DIR]: { usedPct: 40 } };
   devs = { [cfg.DOWNLOAD_DIR]: 1, [cfg.PREVIEW_DIR]: 2 };
   httpCalls.length = 0;
-  await env.pool.query('delete from playback_checks; delete from download_jobs; delete from preview_clips; delete from health_dismissals');
+  await env.pool.query('delete from playback_checks; delete from download_jobs; delete from preview_clips; delete from health_dismissals; delete from approval_requests');
 });
 afterEach(() => { vi.useRealTimers(); });
 
@@ -280,6 +280,49 @@ describe('error levels', () => {
   it('20 client errors in 15 min → warn client_errors', async () => {
     for (let i = 0; i < 20; i++) await recordError(env.ctx, { source: 'client', code: 'error boom' });
     expect((await buildSnapshot(env.ctx, deps())).issues.map((i) => i.id)).toEqual(['errors:client']);
+  });
+});
+
+describe('approval queue', () => {
+  const request = (sub: string, rejected = false) => env.pool.query(
+    'insert into approval_requests(id, authentik_sub, email, name, rejected_at) values ($1, $2, $3, $4, $5)',
+    [randomUUID(), sub, `${sub}@example.com`, sub, rejected ? new Date() : null]);
+
+  it('open requests → warn approvals:pending with n; rejected ones do not count; the fp ignores n; worst stays a health level', async () => {
+    await request('sub-q1', true);
+    let s = await buildSnapshot(env.ctx, deps());
+    expect(s.issues).toEqual([]);
+    await request('sub-q2');
+    s = await buildSnapshot(env.ctx, deps());
+    const one = s.issues.find((i) => i.id === 'approvals:pending')!;
+    expect(one).toEqual({ id: 'approvals:pending', level: 'warn', reason: 'pending_approvals', fp: issueFp('approvals:pending', 'warn', 'pending_approvals'), detail: { n: 1 } });
+    expect(s.worst).toBe('ok');
+    await request('sub-q3');
+    s = await buildSnapshot(env.ctx, deps());
+    const two = s.issues.find((i) => i.id === 'approvals:pending')!;
+    expect(two.detail).toEqual({ n: 2 });
+    expect(two.fp).toBe(one.fp);
+  });
+
+  it('a count that fails is no issue (and no failed snapshot)', async () => {
+    await request('sub-q5');
+    const real = env.ctx.db;
+    env.ctx.db = { query: (sql: string, params?: unknown[]) => (sql.includes('approval_requests') ? Promise.reject(new Error('boom')) : real.query(sql, params)) } as unknown as typeof real;
+    try {
+      expect((await buildSnapshot(env.ctx, deps())).issues.some((i) => i.id === 'approvals:pending')).toBe(false);
+    } finally { env.ctx.db = real; }
+  });
+
+  it('the banner shows it to admins and it can be dismissed', async () => {
+    await request('sub-q4');
+    await healthTick(env.ctx, deps());
+    let b = (await as(admin, 'GET', '/api/admin/health/banner')).json() as { issues: Array<{ id: string; fp: string }>; worst: string };
+    const issue = b.issues.find((i) => i.id === 'approvals:pending')!;
+    expect(issue).toBeDefined();
+    expect(b.worst).toBe('warn');
+    expect((await as(admin, 'POST', '/api/admin/health/dismiss', { id: issue.id, fp: issue.fp })).statusCode).toBe(200);
+    b = (await as(admin, 'GET', '/api/admin/health/banner')).json() as typeof b;
+    expect(b.issues.some((i) => i.id === 'approvals:pending')).toBe(false);
   });
 });
 

@@ -426,6 +426,9 @@ const fr: Translation<typeof de> = {
       client_errors: { one: '{n} erreur navigateur en 15 minutes', many: '{n} erreurs navigateur en 15 minutes', other: '{n} erreurs navigateur en 15 minutes' },
       failed_playbacks: { one: '{n} lecture en échec', many: '{n} lectures en échec', other: '{n} lectures en échec' },
     },
+    approvals: {
+      pending_approvals: { one: '{n} connexion en attente de validation', many: '{n} connexions en attente de validation', other: '{n} connexions en attente de validation' },
+    },
   },
 };
 export default fr;

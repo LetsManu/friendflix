@@ -337,5 +337,8 @@ export default {
       client_errors: { one: '{n} Browserfehler in 15 Minuten', other: '{n} Browserfehler in 15 Minuten' },
       failed_playbacks: { one: '{n} Wiedergabe fehlgeschlagen', other: '{n} Wiedergaben fehlgeschlagen' },
     },
+    approvals: {
+      pending_approvals: { one: '{n} Anmeldung wartet auf Freigabe', other: '{n} Anmeldungen warten auf Freigabe' },
+    },
   },
 } as const;

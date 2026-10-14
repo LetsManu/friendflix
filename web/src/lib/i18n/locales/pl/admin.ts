@@ -455,6 +455,9 @@ const pl: Translation<typeof de> = {
       client_errors: { one: '{n} błąd przeglądarki w 15 minut', few: '{n} błędy przeglądarki w 15 minut', many: '{n} błędów przeglądarki w 15 minut', other: '{n} błędu przeglądarki w 15 minut' },
       failed_playbacks: { one: '{n} nieudane odtworzenie', few: '{n} nieudane odtworzenia', many: '{n} nieudanych odtworzeń', other: '{n} nieudanego odtworzenia' },
     },
+    approvals: {
+      pending_approvals: { one: '{n} logowanie czeka na zatwierdzenie', few: '{n} logowania czekają na zatwierdzenie', many: '{n} logowań czeka na zatwierdzenie', other: '{n} logowania czeka na zatwierdzenie' },
+    },
   },
 };
 export default pl;

@@ -417,6 +417,9 @@ const tr: Translation<typeof de> = {
       client_errors: { one: '15 dakikada {n} tarayıcı hatası', other: '15 dakikada {n} tarayıcı hatası' },
       failed_playbacks: { one: '{n} oynatma başarısız', other: '{n} oynatma başarısız' },
     },
+    approvals: {
+      pending_approvals: { one: '{n} giriş onay bekliyor', other: '{n} giriş onay bekliyor' },
+    },
   },
 };
 export default tr;

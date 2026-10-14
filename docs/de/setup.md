@@ -165,6 +165,7 @@ Jedes Secret einzeln erzeugen, keinen Wert für zwei Variablen verwenden. Für d
 | `REQUESTS_URL` | ja | `http://requests:5055` |
 | `REQUESTS_API_KEY` | ja | aus Schritt 5 |
 | `AUTHENTIK_URL`, `AUTHENTIK_API_TOKEN`, `AUTHENTIK_ENROLL_FLOW` | empfohlen | `https://auth.example.com`, der Token-Schlüssel, `friendflix-enrollment`; alle drei oder keine ([authentik.md §9](authentik.md#9-werte-für-die-friendflix-env)) |
+| `AUTHENTIK_RECOVERY_FLOW`, `AUTHENTIK_TOTP_SETUP_FLOW` | optional | Standard `default-recovery-flow` und `default-authenticator-totp-setup`. Der erste ist der Wiederherstellungs-Flow, dessen E-Mail-Stage *Passwort-Link senden* des Admins verschickt ([authentik.md §10](authentik.md#10-passwort-wiederherstellung-per-e-mail)); der zweite ist reserviert |
 | `SESSION_TTL_SECONDS`, `SESSION_IDLE_SECONDS` | – | `28800` (8 h absolut), `7200` (2 h Leerlauf) |
 | `TZ` | – | z. B. `Europe/Vienna`; Zeitpläne (Wochenrückblick, Wiedergabe-Check, Backups) |
 | `METRICS_TOKEN` | – | `openssl rand -hex 24`, wenn `/metrics` abgefragt wird ([monitoring.md](../monitoring.md)) |
@@ -228,14 +229,16 @@ Das Backend vertraut `X-Forwarded-*`-Headern (`trustProxy`), NPM muss daher der 
 
 ## 10. Freunde einladen
 
-*Admin → Einladungen*:
+*Admin → Nutzer → Einladungen*:
 
-1. Rolle wählen (`friend`, `family` oder `guest`; die Limits sind unter *Admin* änderbar), Gültigkeit des Links (Standard 48 h, max. 14 Tage) und optional eine Notiz.
+1. Rolle wählen (`friend`, `family` oder `guest`; die Limits sind unter *Admin* änderbar), Gültigkeit des Links (Standard 48 h, max. 14 Tage), optional eine Notiz, **Max. Nutzungen** (so viele Konten kann der Link anlegen, 1 – 50, Standard 1) und **Zugang (Tage)** (der Zugang jedes neuen Kontos endet nach so vielen Tagen; leer = unbegrenzt).
 2. **hat schon ein Authentik-Konto** für neue Leute nicht ankreuzen. Erstellen.
-3. Der Einmal-Link wird nur jetzt angezeigt. Darunter muss stehen: *Der Link führt durch die Konto-Erstellung (inkl. Zwei-Faktor) und schaltet den Zugang direkt frei.* Sonst ist die Authentik-Einladung nicht eingerichtet; siehe [authentik.md §15](authentik.md#15-fehlersuche).
+3. Der Link wird nur jetzt angezeigt (auch als QR-Code). Darunter muss stehen: *Der Link führt durch die Konto-Erstellung (inkl. Zwei-Faktor) und schaltet den Zugang direkt frei.* Sonst ist die Authentik-Einladung nicht eingerichtet; siehe [authentik.md §15](authentik.md#15-fehlersuche).
 4. Link verschicken. Der Freund öffnet ihn, klickt **Konto anlegen & loslegen**, registriert sich in Authentik (inklusive MFA) und landet eingeloggt im Portal.
 
-Für jemanden mit bestehendem Authentik-Konto **hat schon ein Authentik-Konto** ankreuzen: Der Link bietet dann **Anmelden & freischalten** an. Unbenutzte Einladungen lassen sich in der Liste widerrufen; das löscht auch die Authentik-Einladung.
+Für jemanden mit bestehendem Authentik-Konto **hat schon ein Authentik-Konto** ankreuzen: Der Link bietet dann **Anmelden & freischalten** an. Unbenutzte Einladungen lassen sich in der Liste widerrufen; das löscht auch die Authentik-Einladung. Die Liste zeigt die Nutzungen als „1/3“ und aufgeklappt die Konten, die über die Einladung entstanden sind.
+
+**Ohne Einladung:** Wer sich ohne Einladung über Authentik anmeldet (und nicht in `friendflix-admins` ist), wird nicht abgewiesen. Die Person sieht *Anfrage gesendet* (`/pending`), du bekommst eine Benachrichtigung, und die Anfrage wartet unter *Admin → Nutzer → Warten auf Freigabe*. Mit Rolle und optional einem „Zugang bis“-Datum freigeben oder mit optionaler Nachricht ablehnen; die Seite der Person aktualisiert sich von selbst, nach der Freigabe meldet sie sich erneut an. Details: [operations.md](../operations.md#nutzerverwaltung-zugang-bis-freigaben-einladungen).
 
 ## 11. Optionale Funktionen
 
@@ -279,7 +282,7 @@ Nach Änderungen an der `.env`: `docker compose -f compose.prod.yaml up -d` (ers
 | Login springt zur Startseite zurück / nicht eingeloggt | `PUBLIC_URL` ist `https://…`, die Seite wurde aber über `http://` oder eine IP geöffnet: Das Sitzungs-Cookie ist `Secure` und gilt nur für diesen Host. In NPM *Force SSL* aktivieren. |
 | `403 {"error":"csrf"}` bei Aktionen | Veraltete Seite nach neuer Anmeldung in einem anderen Tab: neu laden. Dauerhaft: NPM muss `/api/` unverändert ans Backend weitergeben (`portal.advanced.conf` verwenden), und kein Cache dazwischen darf Header entfernen. |
 | Watch-Party / Fernbedienung verbindet nicht (WebSocket schließt mit 4401) | Der `Origin` des Browsers muss `PUBLIC_URL` entsprechen; *Websockets Support* an und der `/ws/`-Block in NPM vorhanden. |
-| `{"error":"no_invite"}` | Erste Anmeldung ohne Einladung und nicht in `ADMIN_GROUP`. Siehe [authentik.md §15](authentik.md#15-fehlersuche). |
+| Nach der Anmeldung sieht jemand *Anfrage gesendet* (`/pending`) | Erste Anmeldung ohne Einladung und nicht in `ADMIN_GROUP`: unter *Admin → Nutzer → Warten auf Freigabe* freigeben. Bist du es selbst, wird die Admin-Gruppe nicht erkannt; siehe [authentik.md §15](authentik.md#15-fehlersuche). |
 | 502 Bad Gateway von NPM für die ganze Seite | NPM erreicht `BIND_ADDR:3080/3081/3082` nicht: falsche Weiterleitungs-IP (Bridge-Container → IP des Docker-Hosts), Container laufen nicht oder `BIND_ADDR` weicht von der IP in Proxy Host/Advanced-Konfiguration ab. |
 | 502/504 nur für `/media/…` oder „Jellyfin nicht erreichbar“ im Admin-Status | Gateway/Backend erreichen `JELLYFIN_URL` nicht: Jellyfin hängt nicht an `friendflix_media` (`docker network connect friendflix_media <jellyfin>`), falscher Containername oder Jellyfin läuft nicht. Prüfen mit `docker compose -f compose.prod.yaml exec gateway node -e "fetch(process.env.JELLYFIN_URL+'/System/Info/Public').then(r=>console.log(r.status))"`. |
 | Downloads scheitern mit `EACCES` | `DOWNLOADS_PATH`/`PREVIEWS_PATH` gehört nicht uid 1000: `chown 1000:1000 <ordner>`. |

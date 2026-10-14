@@ -426,6 +426,9 @@ const es: Translation<typeof de> = {
       client_errors: { one: '{n} error del navegador en 15 minutos', many: '{n} errores del navegador en 15 minutos', other: '{n} errores del navegador en 15 minutos' },
       failed_playbacks: { one: '{n} reproducción fallida', many: '{n} reproducciones fallidas', other: '{n} reproducciones fallidas' },
     },
+    approvals: {
+      pending_approvals: { one: '{n} inicio de sesión espera aprobación', many: '{n} inicios de sesión esperan aprobación', other: '{n} inicios de sesión esperan aprobación' },
+    },
   },
 };
 export default es;

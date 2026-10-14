@@ -165,6 +165,7 @@ Generate every secret separately; do not reuse a value for two variables. Use **
 | `REQUESTS_URL` | yes | `http://requests:5055` |
 | `REQUESTS_API_KEY` | yes | from step 5 |
 | `AUTHENTIK_URL`, `AUTHENTIK_API_TOKEN`, `AUTHENTIK_ENROLL_FLOW` | recommended | `https://auth.example.com`, the token key, `friendflix-enrollment`; all three or none ([authentik.md §9](authentik.md#9-friendflix-env-values)) |
+| `AUTHENTIK_RECOVERY_FLOW`, `AUTHENTIK_TOTP_SETUP_FLOW` | optional | Defaults `default-recovery-flow` and `default-authenticator-totp-setup`. The first is the recovery flow whose e-mail stage sends the admin's *Send password link* ([authentik.md §10](authentik.md#10-password-recovery-by-e-mail)); the second is reserved |
 | `SESSION_TTL_SECONDS`, `SESSION_IDLE_SECONDS` | – | `28800` (8 h absolute), `7200` (2 h idle) |
 | `TZ` | – | e.g. `Europe/Vienna`; schedules (digest, playback check, backups) |
 | `METRICS_TOKEN` | – | `openssl rand -hex 24` if you scrape `/metrics` ([monitoring.md](monitoring.md)) |
@@ -228,14 +229,16 @@ The backend trusts `X-Forwarded-*` headers (`trustProxy`), so NPM must be the on
 
 ## 10. Invite friends
 
-*Admin → Invitations*:
+*Admin → Users → Invites*:
 
-1. Choose the role (`friend`, `family` or `guest`; limits are editable under *Admin*), how long the link is valid (default 48 h, max. 14 days) and an optional note.
+1. Choose the role (`friend`, `family` or `guest`; limits are editable under *Admin*), how long the link is valid (default 48 h, max. 14 days), an optional note, **Max. uses** (how many accounts the link can create, 1 – 50, default 1) and **Access (days)** (each new account's access ends after that many days; empty = unlimited).
 2. Leave **already has an Authentik account** unticked for new people. Create.
-3. The one-time link is shown only now. The text below it must read *The link guides through account creation (including two-factor) and grants access directly.* Otherwise the Authentik invitation is not configured; see [authentik.md §15](authentik.md#15-troubleshooting).
+3. The link is shown only now (also as a QR code). The text below it must read *The link guides through account creation (including two-factor) and grants access directly.* Otherwise the Authentik invitation is not configured; see [authentik.md §15](authentik.md#15-troubleshooting).
 4. Send the link. The friend opens it, clicks **Create account & get started**, signs up in Authentik (including MFA) and lands logged in on the portal.
 
-For someone who already has an Authentik account, tick **already has an Authentik account**: the link then offers **Sign in & unlock**. Unused invites can be revoked in the list; that also deletes the Authentik invitation.
+For someone who already has an Authentik account, tick **already has an Authentik account**: the link then offers **Sign in & unlock**. Unused invites can be revoked in the list; that also deletes the Authentik invitation. The list shows the uses as "1/3" and, expanded, the accounts made from each invite.
+
+**Without an invite:** someone who signs in through Authentik without an invite (and is not in `friendflix-admins`) is not refused. They see *Request sent* (`/pending`), you get a notification, and the request waits under *Admin → Users → Waiting for approval*. Approve it with a role and an optional access-until date, or reject it with an optional message; the page updates by itself, and after an approval the person signs in again. Details: [operations.md](operations.md#nutzerverwaltung-zugang-bis-freigaben-einladungen) (German).
 
 ## 11. Optional features
 
@@ -279,7 +282,7 @@ After changing `.env`: `docker compose -f compose.prod.yaml up -d` (recreates on
 | Login loops back to the start page / not logged in | `PUBLIC_URL` is `https://…` but the site was opened via `http://` or an IP: the session cookie is `Secure` and only valid on that host. Enable *Force SSL* in NPM. |
 | `403 {"error":"csrf"}` on actions | Stale page after a new login in another tab: reload. Persistent: NPM must forward `/api/` to the backend unchanged (use `portal.advanced.conf`), and no cache in between may strip headers. |
 | Watch party / remote control does not connect (WebSocket closes with 4401) | The browser's `Origin` must equal `PUBLIC_URL`; *Websockets Support* on and the `/ws/` block present in NPM. |
-| `{"error":"no_invite"}` | First login without an invite and not in `ADMIN_GROUP`. See [authentik.md §15](authentik.md#15-troubleshooting). |
+| After sign-in someone sees *Request sent* (`/pending`) | First login without an invite and not in `ADMIN_GROUP`: approve them under *Admin → Users → Waiting for approval*. If it is you, the admin group is not recognised; see [authentik.md §15](authentik.md#15-troubleshooting). |
 | 502 Bad Gateway from NPM for the whole site | NPM cannot reach `BIND_ADDR:3080/3081/3082`: wrong forward IP (bridge container → Docker host IP), containers not running, or `BIND_ADDR` differs from the IP in the proxy host/advanced config. |
 | 502/504 for `/media/…` only, or "Jellyfin unreachable" in *Admin → Status* | The gateway/backend cannot reach `JELLYFIN_URL`: Jellyfin not attached to `friendflix_media` (`docker network connect friendflix_media <jellyfin>`), wrong container name, or Jellyfin down. Check `docker compose -f compose.prod.yaml exec gateway node -e "fetch(process.env.JELLYFIN_URL+'/System/Info/Public').then(r=>console.log(r.status))"`. |
 | Downloads fail with `EACCES` | `DOWNLOADS_PATH`/`PREVIEWS_PATH` not owned by uid 1000: `chown 1000:1000 <folder>`. |

@@ -417,6 +417,9 @@ const en: Translation<typeof de> = {
       client_errors: { one: '{n} browser error in 15 minutes', other: '{n} browser errors in 15 minutes' },
       failed_playbacks: { one: '{n} playback failed', other: '{n} playbacks failed' },
     },
+    approvals: {
+      pending_approvals: { one: '{n} sign-in is waiting for approval', other: '{n} sign-ins are waiting for approval' },
+    },
   },
 };
 export default en;

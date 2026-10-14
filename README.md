@@ -129,6 +129,8 @@ A tidy admin area with a sidebar (People, Content, Operations) and an **overview
 
 Also in the admin area: invitations and roles, **brand hubs**, featured and themed lists, **leaving-soon** dates, hover-preview clips, the nightly playback check, the weekly digest, an audit log and one-click updates.
 
+**User management:** one list of every account with filters and bulk actions (role, lock, access until, sign out everywhere), a *Waiting for approval* tab for people who signed in without an invite, invites with several uses and access days, and a page per person with usage, profiles, devices, downloads, viewing history, own limits, two-factor state and the audit log. Access can end on a date: FriendFlix reminds three days ahead and locks the account on the day. Looking at someone's viewing history is itself written to the audit log.
+
 **Admin care:** a status page with traffic lights for every service, disk space, running streams (direct or converted, and why) and recent errors, plus a slim warning banner when something needs you; a **library care** page that finds missing artwork, language gaps, duplicates and problem files; and a **usage** page with watch time, streams and devices per account (aggregates only, no titles).
 
 <table>
@@ -141,7 +143,7 @@ Also in the admin area: invitations and roles, **brand hubs**, featured and them
 ## Privacy and safety
 
 - **Self-hosted.** Everything runs on your own server. FriendFlix has no ads and no third-party analytics.
-- **Invite only.** New people join with one-time invitation links. Sign-in goes through your Authentik with **mandatory multi-factor authentication**, and new devices can require approval.
+- **Invite or approval only.** New people join with invitation links (single or limited use), or sign in and wait until an admin approves them. Sign-in goes through your Authentik with **mandatory multi-factor authentication**, and new devices can require approval.
 - **Jellyfin and the request service stay hidden.** Friends only ever talk to the portal. Media tokens stay on the server; video and images are streamed through a gateway that checks every request.
 - **You decide what friends see.** "Share history" (off by default) and "Share ratings" are switched in each person's settings; "Popular this week" only shows counts, never who watched. Reactions to a title only appear once you have watched it, and optional spoiler protection hides thumbnails and descriptions of unwatched episodes.
 - **Trailers without tracking.** Trailers for titles that are not in the library play in the privacy-friendly `youtube-nocookie.com` player and only load after a click.
@@ -188,7 +190,7 @@ Then:
 3. **Jellyfin:** create an admin API key. Optional webhook plugin for instant "now playing" and "new in library" events – [docs/integrations.md](docs/integrations.md).
 4. **Requests (optional):** API key and webhook – [docs/integrations.md](docs/integrations.md).
 5. **Web push (optional):** `node scripts/gen-vapid.mjs`, put both keys into `.env`, restart.
-6. **First login** with a member of the Authentik group `friendflix-admins`: you become the portal admin, choose the instance language, and invite your friends under *Admin → Invitations*.
+6. **First login** with a member of the Authentik group `friendflix-admins`: you become the portal admin, choose the instance language, and invite your friends under *Admin → Users → Invites*.
 
 If Jellyfin/the request service already run in their own stack: `docker network connect friendflix_media <container>`, remove their public ports and set `JELLYFIN_URL`/`REQUESTS_URL`.
 
@@ -213,7 +215,8 @@ Template: [.env.example](.env.example). Every variable can also be read from a f
 | `FF_REGISTRY`, `FF_TAG` | `ghcr.io/letsmanu`, `latest` | Image source and version (pin with a commit SHA or `x.y.z`) |
 | `SESSION_TTL_SECONDS`, `SESSION_IDLE_SECONDS` | `28800`, `7200` | Absolute session length (8 h) and idle timeout (2 h) |
 | `TZ` | `Europe/Vienna` | Time zone for scheduled jobs (digest, playback check, backups) |
-| `AUTHENTIK_URL`, `AUTHENTIK_API_TOKEN`, `AUTHENTIK_ENROLL_FLOW` | empty | Invitations that also create the Authentik account (all three needed) |
+| `AUTHENTIK_URL`, `AUTHENTIK_API_TOKEN`, `AUTHENTIK_ENROLL_FLOW` | empty | Invitations that also create the Authentik account (all three needed); URL and token also give the admin user page the two-factor state and *Send password link* |
+| `AUTHENTIK_RECOVERY_FLOW`, `AUTHENTIK_TOTP_SETUP_FLOW` | `default-recovery-flow`, `default-authenticator-totp-setup` | Recovery flow whose e-mail stage sends the password link (Authentik 2024.4 or newer); the second is reserved. See [docs/authentik.md](docs/authentik.md#10-password-recovery-by-e-mail) |
 | `NTFY_URL`, `NTFY_BASE_URL`, `DISCORD_WEBHOOK_URL` | empty | Shared ntfy/Discord channel; ntfy server for personal topics |
 | `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`, `VAPID_SUBJECT` | empty, empty, `PUBLIC_URL` | Web push; active only when both keys are set |
 | `DIGEST_DAY`, `DIGEST_HOUR` | `0` (Sunday), `18` | Weekly digest schedule; `-1` = off; can be changed in the admin area |

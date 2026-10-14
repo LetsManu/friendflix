@@ -129,6 +129,8 @@ Ein aufgeräumter Admin-Bereich mit Seitenleiste (Personen, Inhalte, Betrieb) un
 
 Außerdem im Admin-Bereich: Einladungen und Rollen, **Marken-Hubs**, hervorgehobene und Themenlisten, **Bald-weg-Termine**, Vorschau-Clips, der nächtliche Wiedergabe-Check, der Wochenrückblick, ein Audit-Log und Updates per Knopfdruck.
 
+**Nutzerverwaltung:** eine Liste aller Konten mit Filtern und Sammelaktionen (Rolle, sperren, Zugang bis, überall abmelden), ein Reiter *Warten auf Freigabe* für Leute, die sich ohne Einladung angemeldet haben, Einladungen mit mehreren Nutzungen und Zugangstagen und eine Seite pro Person mit Nutzung, Profilen, Geräten, Downloads, Verlauf, eigenen Limits, Zwei-Faktor-Stand und Audit-Log. Der Zugang kann an einem Datum enden: FriendFlix erinnert drei Tage vorher und sperrt das Konto am Stichtag. Schon das Ansehen des Verlaufs einer Person landet im Audit-Log.
+
 **Admin-Pflege:** eine Status-Seite mit Ampeln für jeden Dienst, Speicherplatz, laufenden Streams (direkt oder umgewandelt, und warum) und den letzten Fehlern, dazu ein schmales Warnband, wenn etwas dich braucht; eine Seite **Bibliothekspflege**, die fehlende Bilder, Sprachlücken, Doppelte und Problemdateien findet; und eine Seite **Nutzung** mit Sehzeit, Streams und Geräten pro Konto (nur Summen, keine Titel).
 
 <table>
@@ -141,7 +143,7 @@ Außerdem im Admin-Bereich: Einladungen und Rollen, **Marken-Hubs**, hervorgehob
 ## Datenschutz und Sicherheit
 
 - **Selbst gehostet.** Alles läuft auf deinem eigenen Server. FriendFlix hat keine Werbung und keine Analyse-Dienste von Dritten.
-- **Nur mit Einladung.** Neue Leute kommen über Einmal-Einladungslinks dazu. Die Anmeldung läuft über dein Authentik mit **verpflichtender Zwei-Faktor-Authentifizierung**, neue Geräte können eine Freigabe brauchen.
+- **Nur mit Einladung oder Freigabe.** Neue Leute kommen über Einladungslinks (einmalig oder mit begrenzten Nutzungen) dazu oder melden sich an und warten, bis ein Admin sie freigibt. Die Anmeldung läuft über dein Authentik mit **verpflichtender Zwei-Faktor-Authentifizierung**, neue Geräte können eine Freigabe brauchen.
 - **Jellyfin und der Wunsch-Dienst bleiben unsichtbar.** Freunde sprechen nur mit dem Portal. Medien-Tokens bleiben auf dem Server; Videos und Bilder laufen über ein Gateway, das jede Anfrage prüft.
 - **Du bestimmst, was Freunde sehen.** „Verlauf teilen“ (standardmäßig aus) und „Bewertungen teilen“ stellt jede Person in den Einstellungen ein; „Diese Woche bei uns“ zeigt nur Zahlen, nie wer geschaut hat. Reaktionen zu einem Titel erscheinen erst, wenn du ihn gesehen hast, und der optionale Spoilerschutz blendet Bilder und Beschreibungen ungesehener Folgen aus.
 - **Trailer ohne Tracking.** Trailer für Titel, die noch nicht in der Bibliothek sind, laufen im datenschutzfreundlichen `youtube-nocookie.com`-Player und laden erst nach einem Klick.
@@ -188,7 +190,7 @@ Danach:
 3. **Jellyfin:** Admin-API-Key anlegen. Optional das Webhook-Plugin für sofortige „läuft gerade“- und „neu in der Bibliothek“-Ereignisse – [docs/integrations.md](docs/integrations.md).
 4. **Wünsche (optional):** API-Key und Webhook – [docs/integrations.md](docs/integrations.md).
 5. **Web-Push (optional):** `node scripts/gen-vapid.mjs`, beide Schlüssel in `.env`, neu starten.
-6. **Erster Login** mit einem Mitglied der Authentik-Gruppe `friendflix-admins`: Du wirst Portal-Admin, wählst die Sprache der Instanz und lädst deine Freunde unter *Admin → Einladungen* ein.
+6. **Erster Login** mit einem Mitglied der Authentik-Gruppe `friendflix-admins`: Du wirst Portal-Admin, wählst die Sprache der Instanz und lädst deine Freunde unter *Admin → Nutzer → Einladungen* ein.
 
 Laufen Jellyfin/Wunsch-Dienst schon in einem eigenen Stack: `docker network connect friendflix_media <container>`, deren öffentliche Ports entfernen und `JELLYFIN_URL`/`REQUESTS_URL` setzen.
 
@@ -213,7 +215,8 @@ Vorlage: [.env.example](.env.example). Jede Variable kann mit der Endung `_FILE`
 | `FF_REGISTRY`, `FF_TAG` | `ghcr.io/letsmanu`, `latest` | Herkunft und Version der Images (festnageln mit Commit-SHA oder `x.y.z`) |
 | `SESSION_TTL_SECONDS`, `SESSION_IDLE_SECONDS` | `28800`, `7200` | Maximale Sitzungsdauer (8 h) und Ablauf bei Inaktivität (2 h) |
 | `TZ` | `Europe/Vienna` | Zeitzone für geplante Jobs (Rückblick, Wiedergabe-Check, Backups) |
-| `AUTHENTIK_URL`, `AUTHENTIK_API_TOKEN`, `AUTHENTIK_ENROLL_FLOW` | leer | Einladungen, die auch das Authentik-Konto anlegen (alle drei nötig) |
+| `AUTHENTIK_URL`, `AUTHENTIK_API_TOKEN`, `AUTHENTIK_ENROLL_FLOW` | leer | Einladungen, die auch das Authentik-Konto anlegen (alle drei nötig); URL und Token liefern der Admin-Nutzerseite auch den Zwei-Faktor-Stand und *Passwort-Link senden* |
+| `AUTHENTIK_RECOVERY_FLOW`, `AUTHENTIK_TOTP_SETUP_FLOW` | `default-recovery-flow`, `default-authenticator-totp-setup` | Wiederherstellungs-Flow, dessen E-Mail-Stage den Passwort-Link sendet (Authentik 2024.4 oder neuer); der zweite ist reserviert. Siehe [docs/de/authentik.md](docs/de/authentik.md#10-passwort-wiederherstellung-per-e-mail) |
 | `NTFY_URL`, `NTFY_BASE_URL`, `DISCORD_WEBHOOK_URL` | leer | Gemeinsamer ntfy-/Discord-Kanal; ntfy-Server für persönliche Themen |
 | `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`, `VAPID_SUBJECT` | leer, leer, `PUBLIC_URL` | Web-Push; nur aktiv, wenn beide Schlüssel gesetzt sind |
 | `DIGEST_DAY`, `DIGEST_HOUR` | `0` (Sonntag), `18` | Zeitplan des Wochenrückblicks; `-1` = aus; im Admin-Bereich änderbar |
