@@ -4,7 +4,7 @@ import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { encrypt } from '../src/crypto.js';
 import { migrate } from '../src/db.js';
-import { errorLogSizesForTests, jobFailed, listErrors, recentCount, recordError, resetErrorLogForTests } from '../src/errorlog.js';
+import { cleanRelease, errorLogSizesForTests, jobFailed, listErrors, recentCount, recordError, resetErrorLogForTests } from '../src/errorlog.js';
 import { ADMIN, makeEnv, type TestEnv } from './helpers.js';
 
 // Block 22 Task 1: migration 35, the aggregated error log (server 5xx + job failures in Redis, client + playback reports in
@@ -144,6 +144,22 @@ describe('client and playback reports (memory only)', () => {
     expect(entries[0]!.sample).toContain('[email]');
     // never written to Redis
     expect(await env.kv.keys('errlog:client')).toEqual([]);
+  });
+
+  it('a release (full git sha, semver, build epoch) is shown as is, not as [token]; anything else is dropped', async () => {
+    const sha = '0123456789abcdef0123456789abcdef01234567';
+    expect(cleanRelease(sha)).toBe(sha);
+    expect(cleanRelease('1.0.0')).toBe('1.0.0');
+    expect(cleanRelease('v1.2.3-rc.1')).toBe('v1.2.3-rc.1');
+    expect(cleanRelease('1760400000000')).toBe('1760400000000');
+    expect(cleanRelease(' abc1234 ')).toBe('abc1234');
+    for (const bad of ['token=abc', 'max@example.com', 'A'.repeat(40), 'abc', '', undefined, '0123456789abcdef0123456789abcdef012345678']) expect(cleanRelease(bad)).toBeUndefined();
+    expect((await beacon(body({ message: 'sha release', release: sha }))).statusCode).toBe(204);
+    expect((await beacon(body({ message: 'odd release', release: 'hello world' }))).statusCode).toBe(204);
+    const { entries } = await listErrors(env.ctx, { source: 'client' });
+    expect(entries.find((e) => e.code.includes('sha release'))?.release).toBe(sha);
+    expect(entries.find((e) => e.code.includes('odd release'))?.release).toBeUndefined();
+    expect(JSON.stringify(entries)).not.toContain('[token]');
   });
 
   it('playback report {kind:"playback", itemId, code} → 204 and an entry of source playback with itemId; bad itemId → 400', async () => {
