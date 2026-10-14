@@ -5,7 +5,7 @@ import { createHmac, randomUUID, timingSafeEqual } from 'node:crypto';
 import { dropRemotePeers } from './tv.js';
 import { audit } from '../audit.js';
 import type { Ctx } from '../ctx.js';
-import { COOKIE, loadSession, newSession, rand, requireUser, saveSession } from '../session.js';
+import { authenticate, COOKIE, loadSession, newSession, rand, requireUser, saveSession } from '../session.js';
 import { revokeCasts } from '../cast.js';
 import { roleAllowsDownloads } from '../downloads.js';
 import { effectiveLimits } from '../limits.js';
@@ -16,7 +16,8 @@ import { claimInvite, enrollFlowUrl, inviteAccessUntil, lookupInvite, recordInvi
 import { accountJellyfinIds, deviceKidsProfile, listProfiles, publicProfile } from '../profiles.js';
 import { DEVICE_COOKIE } from '../devices.js';
 import { freshAuth, RESET_PIN_MAX_AGE, type OidcClaims } from '../oidc.js';
-import { applyRole, getUserBySub, provisionUser } from '../users.js';
+import { applyRole, getUserById, getUserBySub, provisionUser } from '../users.js';
+import { markReauthenticated, REAUTH_MAX_AGE } from '../reauth.js';
 import { notifyAdmins } from '../notify.js';
 import { profileOnboarded } from './prefs.js';
 import { publicCapabilities } from '../media/types.js';
@@ -32,6 +33,21 @@ const PENDING_TTL = 30 * 86400;
 const RENOTIFY_MS = 86400e3;
 /** kv `pending_notice:<request id>` → { sub, email } of an approved request (lets /pending answer "approved") */
 export const pendingNoticeKey = (requestId: string) => `pending_notice:${requestId}`;
+/** where a re-authentication may return to: a local path only (no `//host`, no scheme, no backslash) */
+const REAUTH_NEXT = /^\/(?!\/)[A-Za-z0-9/_?=&.-]{0,200}$/;
+const REAUTH_DEFAULT_NEXT = '/me/account';
+const REAUTH_FAILED = '/me/account?reauth=failed';
+
+/** The OIDC flow state kept in kv `oidc:<state>` between /auth/login (… /auth/reauth) and /auth/callback. */
+interface SavedLogin {
+  state: string;
+  nonce: string;
+  codeVerifier: string;
+  invite?: string;
+  resetPin?: boolean;
+  /** a re-authentication of the session of `userId`: the callback only stamps that session, then returns to `next` */
+  reauth?: { userId: string; next: string };
+}
 
 const pendingMac = (ctx: Pick<Ctx, 'encKey'>, id: string) => createHmac('sha256', ctx.encKey).update(`friendflix pending v1|${id}`).digest('base64url');
 const signPending = (ctx: Pick<Ctx, 'encKey'>, id: string) => `${id}.${pendingMac(ctx, id)}`;
@@ -73,10 +89,14 @@ async function requestApproval(ctx: Ctx, claims: OidcClaims): Promise<string> {
 export function authRoutes(app: FastifyInstance, ctx: Ctx) {
   const secure = ctx.cfg.PUBLIC_URL.startsWith('https://');
 
-  /** Starts an OIDC login; the invite (if any) travels in the server-side state to /auth/callback. */
-  async function startLogin(reply: FastifyReply, invite: string | undefined, ttl: number, resetPin = false) {
-    const s = await ctx.oidc.start({ forceLogin: resetPin });
-    await ctx.kv.set(`oidc:${s.state}`, JSON.stringify({ state: s.state, nonce: s.nonce, codeVerifier: s.codeVerifier, invite, ...(resetPin ? { resetPin: true } : {}) }), ttl);
+  /**
+   * Starts an OIDC login; the invite (if any) travels in the server-side state to /auth/callback.
+   * resetPin (forgotten owner PIN) and reauth (re-authentication of a session) force a new login at the IdP.
+   */
+  async function startLogin(reply: FastifyReply, invite: string | undefined, ttl: number, opts: { resetPin?: boolean; reauth?: SavedLogin['reauth'] } = {}) {
+    const s = await ctx.oidc.start({ forceLogin: Boolean(opts.resetPin || opts.reauth) });
+    const saved: SavedLogin = { state: s.state, nonce: s.nonce, codeVerifier: s.codeVerifier, invite, ...(opts.resetPin ? { resetPin: true } : {}), ...(opts.reauth ? { reauth: opts.reauth } : {}) };
+    await ctx.kv.set(`oidc:${s.state}`, JSON.stringify(saved), ttl);
     reply.setCookie(OIDC_COOKIE, s.state, { httpOnly: true, secure, sameSite: 'lax', path: '/auth', maxAge: ttl }); // binds the flow to this browser
     return s.url;
   }
@@ -108,7 +128,7 @@ export function authRoutes(app: FastifyInstance, ctx: Ctx) {
     if (invite && !(await lookupInvite(ctx, invite))) return reply.code(410).send({ error: 'invite_invalid' });
     if (q.resetPin === '1' && (await kidLockedDevice(req))) return reply.redirect(RESET_BLOCKED);
     // ?resetPin=1: forgotten owner PIN -> forced re-login at the IdP, the callback then clears the owner profile's PIN
-    return reply.redirect(await startLogin(reply, invite, 600, q.resetPin === '1'));
+    return reply.redirect(await startLogin(reply, invite, 600, { resetPin: q.resetPin === '1' }));
   });
 
   // Invite with Authentik enrollment: start the portal login first, then run the enrollment flow with
@@ -123,6 +143,43 @@ export function authRoutes(app: FastifyInstance, ctx: Ctx) {
     return reply.redirect(enrollFlowUrl(ctx.cfg, inv.authentik_invite, authorize)!);
   });
 
+  // Re-authentication of the current session (sensitive account actions, see reauth.ts): a forced IdP login whose
+  // callback only stamps this session's `reauthAt`; it never creates a session.
+  app.get('/auth/reauth', { config: { rateLimit: { max: 10, timeWindow: '1 minute' } } }, async (req, reply) => {
+    if (!(await authenticate(ctx, req))) return reply.code(401).send({ error: 'unauthenticated' });
+    const next = (req.query as Record<string, string | undefined>).next;
+    const reauth = { userId: req.user!.id, next: next && REAUTH_NEXT.test(next) ? next : REAUTH_DEFAULT_NEXT };
+    return reply.redirect(await startLogin(reply, undefined, 600, { reauth }));
+  });
+
+  /**
+   * The re-authentication branch of /auth/callback: the IdP login must be fresh (auth_time) and be the same person as the
+   * session that started it. No provisioning, no device, no new session.
+   */
+  async function finishReauth(req: FastifyRequest, reply: FastifyReply, saved: SavedLogin & { reauth: NonNullable<SavedLogin['reauth']> }) {
+    const { userId, next } = saved.reauth;
+    let claims: OidcClaims;
+    try {
+      claims = await ctx.oidc.finish(new URL(req.url, ctx.cfg.PUBLIC_URL), saved, { maxAge: REAUTH_MAX_AGE });
+    } catch (err) {
+      req.log.warn({ err }, 'oidc re-authentication failed'); // e.g. auth_time older than REAUTH_MAX_AGE
+      return reply.redirect(REAUTH_FAILED);
+    }
+    // checked here as well (independent of the OIDC library): a still valid IdP session is not a re-authentication
+    if (!freshAuth(claims.authTime, REAUTH_MAX_AGE)) return reply.redirect(REAUTH_FAILED);
+    const sid = req.cookies[COOKIE];
+    const s = await loadSession(ctx, sid);
+    const user = s?.userId === userId ? await getUserById(ctx, userId) : null;
+    if (!sid || !s || !user || user.disabled || user.authentik_sub !== claims.sub) {
+      // another person signed in at the IdP, or another (or no) session finished the flow
+      await audit(ctx, userId, 'session.reauth_mismatch', userId, { ip: req.ip });
+      return reply.redirect(REAUTH_FAILED);
+    }
+    if (!(await markReauthenticated(ctx, sid, s))) return reply.redirect(REAUTH_FAILED); // revoked meanwhile
+    await audit(ctx, userId, 'session.reauth', userId, { ip: req.ip });
+    return reply.redirect(next);
+  }
+
   app.get('/auth/callback', { config: { rateLimit: { max: 30, timeWindow: '1 minute' } } }, async (req, reply) => {
     const state = (req.query as Record<string, string | undefined>).state;
     const raw = state ? await ctx.kv.get(`oidc:${state}`) : null;
@@ -131,7 +188,9 @@ export function authRoutes(app: FastifyInstance, ctx: Ctx) {
     if (!state || !raw || !bound || bound.length !== state.length || !timingSafeEqual(Buffer.from(bound), Buffer.from(state))) return reply.code(400).send({ error: 'invalid_state' });
     await ctx.kv.del(`oidc:${state}`); // single use
     try {
-      const saved = JSON.parse(raw) as { state: string; nonce: string; codeVerifier: string; invite?: string; resetPin?: boolean };
+      const saved = JSON.parse(raw) as SavedLogin;
+      // order matters (phase 2 ruling F15): a re-authentication is handled first, before any account lookup or provisioning
+      if (saved.reauth) return await finishReauth(req, reply, { ...saved, reauth: saved.reauth });
       // forgotten PIN: the IdP must really have asked for the login again (auth_time), a still valid IdP session is not enough
       const claims = await ctx.oidc.finish(new URL(req.url, ctx.cfg.PUBLIC_URL), saved, saved.resetPin ? { maxAge: RESET_PIN_MAX_AGE } : undefined);
       let user = await getUserBySub(ctx, claims.sub);
