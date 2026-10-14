@@ -124,6 +124,18 @@ async function liveSessions(ctx: Ctx, userId: string) {
   return { perDevice, profileSeen };
 }
 
+/**
+ * Health of the account's media server link, independent of a lock: an active account must be able to sign in (a real call as
+ * the account); a locked one is disabled on purpose, so only its identity's existence is checked (admin key). Without that
+ * check on the server, null (unknown) rather than false.
+ */
+async function jellyfinLinkOk(ctx: Ctx, user: UserRow): Promise<boolean | null> {
+  if (!user.disabled) return ctx.jf.views(user).then(() => true, () => false);
+  const exists = ctx.jf.admin.identityExists;
+  if (!exists) return null;
+  return exists.call(ctx.jf.admin, user.jellyfin_user_id).catch(() => false);
+}
+
 /** Re-applies the role policy (with the user's overrides) to every media server identity of the account. Returns the failures. */
 async function reapplyAccount(ctx: Ctx, user: UserRow): Promise<{ identities: number; failed: number }> {
   const ids = await accountJellyfinIds(ctx, user.id);
@@ -261,7 +273,7 @@ export function adminUserRoutes(app: FastifyInstance, ctx: Ctx) {
       userLicenses(ctx, id),
       liveSessions(ctx, id),
       akMfaState(ctx, user.authentik_sub).catch(() => null), // Authentik down: shown like "no Authentik API"
-      ctx.jf.views(user).then(() => true, () => false), // the account's own media server login works
+      jellyfinLinkOk(ctx, user),
       user.seerr_user_id ? ctx.seerr.getUser(user.seerr_user_id).then(() => true, () => false) : Promise.resolve(false),
     ]);
     const w = watch.rows[0]!, st = streams.rows[0]!, c = counts.rows[0]!;
@@ -375,8 +387,14 @@ export function adminUserRoutes(app: FastifyInstance, ctx: Ctx) {
   // Authentik e-mails: 503 authentik_unavailable without the API, see authentik.ts for the other codes
   app.post('/api/admin/users/:id/recovery', admin, async (req) => {
     const user = await userOr404(idParam(req));
-    await akSendRecovery(ctx, user.authentik_sub);
-    await audit(ctx, req.user!.id, 'user.recovery_sent', user.id);
+    try {
+      await akSendRecovery(ctx, user.authentik_sub);
+    } catch (e) {
+      // failed attempts are recorded too: the code only (never the token, the e-mail or Authentik's answer)
+      await audit(ctx, req.user!.id, 'user.recovery_email', user.id, { ok: false, error: e instanceof HttpError ? e.message : 'internal' });
+      throw e;
+    }
+    await audit(ctx, req.user!.id, 'user.recovery_email', user.id, { ok: true });
     return { ok: true };
   });
 
@@ -387,14 +405,13 @@ export function adminUserRoutes(app: FastifyInstance, ctx: Ctx) {
     return { ok: true };
   });
 
-  // rename a profile and/or clear its PIN. The owner profile's name follows the account name (from the sign-in), so it is not renamed here.
+  // rename a profile (the owner profile too, as its user can) and/or clear its PIN
   app.patch('/api/admin/users/:id/profiles/:pid', admin, async (req, reply) => {
     const { id, pid } = z.object({ id: uuid, pid: uuid }).parse(req.params);
     const b = z.object({ name: z.string().trim().min(1).max(20).optional(), resetPin: z.literal(true).optional() }).strict()
       .refine((x) => x.name !== undefined || x.resetPin, { path: ['name'] }).parse(req.body);
     const p = await getProfile(ctx, id, pid);
     if (!p) return reply.code(404).send({ error: 'not_found' });
-    if (b.name !== undefined && p.is_owner) return reply.code(400).send({ error: 'owner_name_from_account' });
     if (b.name && (await ctx.db.query('select 1 from profiles where user_id=$1 and lower(name)=lower($2) and id<>$3', [id, b.name, pid])).rowCount) {
       return reply.code(409).send({ error: 'name_taken' });
     }

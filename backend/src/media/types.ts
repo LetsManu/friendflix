@@ -344,6 +344,8 @@ export interface MediaAdmin {
   deleteIdentity(id: string): Promise<void>;
   applyPolicy(id: string, policy: IdentityPolicy): Promise<void>;
   setDisabled(id: string, disabled: boolean): Promise<void>;
+  /** Optional: whether the identity still exists on the server (admin key; works for disabled identities too). Throws MediaError when the server fails. */
+  identityExists?(id: string): Promise<boolean>;
   libraries(): Promise<Array<{ id: string; name: string }>>;
   ping(): Promise<boolean>;
   /** active playback not started through FriendFlix */

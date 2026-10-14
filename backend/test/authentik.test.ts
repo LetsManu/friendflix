@@ -83,9 +83,15 @@ describe('akUserBySub', () => {
     expect(await akUserBySub(ctx, SUB)).toMatchObject({ pk: 7 });
   });
 
-  it('unknown sub -> null', async () => {
-    const { ctx } = mk({ 'GET /api/v3/core/users/': () => ({ json: { pagination: { next: 0 }, results: [] } }) });
+  it('unknown sub -> null, remembered for 5 min (no paging on every lookup)', async () => {
+    const { ctx, calls } = mk({ 'GET /api/v3/core/users/': () => ({ json: { pagination: { next: 0 }, results: [] } }) });
     expect(await akUserBySub(ctx, 'd'.repeat(64))).toBeNull();
+    const n = calls.length;
+    expect(n).toBeGreaterThan(0);
+    expect(await akUserBySub(ctx, 'd'.repeat(64))).toBeNull();
+    expect(await akMfaState(ctx, 'd'.repeat(64))).toBeNull();
+    expect(calls.length).toBe(n);
+    expect(await ctx.kv.get(`akuser:${'d'.repeat(64)}`)).toBe('null');
   });
 });
 
@@ -144,6 +150,22 @@ describe('akSendRecovery', () => {
     const noEmail = { ...recoveryRoutes(), 'GET /api/v3/flows/bindings/': () => ({ json: { pagination: { next: 0 }, results: [{ order: 10, stage: 'x', stage_obj: { component: 'ak-stage-identification' } }] } }) } as Record<string, Handler>;
     expect(await codeOf(akSendRecovery(mk(noEmail).ctx, SUB))).toMatchObject({ status: 409, code: 'recovery_not_configured' });
     expect(await codeOf(akSendRecovery(mk(recoveryRoutes(), { flow: 'nope' }).ctx, SUB))).toMatchObject({ status: 409, code: 'recovery_not_configured' });
+  });
+
+  it('maps the recovery_email answers: 400 -> 409, 404 -> 404 (cached lookup dropped), 405 -> 501', async () => {
+    const answer = (status: number) => ({ ...recoveryRoutes(), 'POST /api/v3/core/users/7/recovery_email/': () => ({ status, json: { non_field_errors: ['No recovery flow set.'] } }) }) as Record<string, Handler>;
+    expect(await codeOf(akSendRecovery(mk(answer(400)).ctx, SUB))).toMatchObject({ status: 409, code: 'recovery_not_configured' });
+    const gone = mk(answer(404));
+    const r = await codeOf(akSendRecovery(gone.ctx, SUB));
+    expect(r).toMatchObject({ status: 404, code: 'authentik_user_not_found' });
+    expect(await gone.ctx.kv.get(`akuser:${SUB}`)).toBeNull();
+    expect(await codeOf(akSendRecovery(mk(answer(405)).ctx, SUB))).toMatchObject({ status: 501, code: 'not_supported' });
+  });
+
+  it('sends the stage in the JSON body', async () => {
+    const { ctx, calls } = mk(recoveryRoutes());
+    await akSendRecovery(ctx, SUB);
+    expect(calls.find((c) => c.method === 'POST')!.body).toEqual({ email_stage: 'email-stage-uuid' });
   });
 
   it('unknown Authentik user -> 404', async () => {

@@ -98,6 +98,27 @@ describe('GET /api/admin/users/:id', () => {
     expect(d.licenses[0]).toMatchObject({ itemId: 'm1', title: 'Owner Film', status: 'fetched', profileId: anna });
   });
 
+  it('a locked account\'s Jellyfin link is healthy while its identity exists (the sign-in is disabled on purpose)', async () => {
+    await env.pool.query('update users set disabled=true where id=$1', [anna]);
+    try {
+      env.jfCalls.length = 0;
+      const d = (await as('GET', `/api/admin/users/${anna}`)).json();
+      expect(d.linked.jellyfin).toEqual({ ok: true, username: 'anna' });
+      expect(env.jfCalls.some((c) => c.method === 'GET' && c.path === `/Users/${ANNA_JF}`)).toBe(true);
+      expect(env.jfCalls.some((c) => c.path === '/Users/AuthenticateByName')).toBe(false);
+      // identity gone on the server -> broken
+      const gone = env.ctx.jf.admin.identityExists!;
+      env.ctx.jf.admin.identityExists = async () => false;
+      try {
+        expect((await as('GET', `/api/admin/users/${anna}`)).json().linked.jellyfin.ok).toBe(false);
+      } finally {
+        env.ctx.jf.admin.identityExists = gone;
+      }
+    } finally {
+      await env.pool.query('update users set disabled=false where id=$1', [anna]);
+    }
+  });
+
   it('never returns credentials, tokens or the Authentik sub', async () => {
     const body = (await as('GET', `/api/admin/users/${anna}`)).body;
     for (const s of ['jellyfin_pw_enc', 'pw_enc', 'pin_hash', 'authentik_sub', 'anna-sub', 'token']) expect(body).not.toContain(s);
@@ -214,6 +235,8 @@ describe('repair, sessions, Authentik, profiles', () => {
 
   it('Authentik actions without the Authentik API -> 503', async () => {
     expect((await as('POST', `/api/admin/users/${anna}/recovery`)).json()).toEqual({ error: 'authentik_unavailable' });
+    // the failed attempt is on record, with the code only
+    expect((await audits('user.recovery_email', anna)).at(-1)).toEqual({ actor: adminId, meta: { ok: false, error: 'authentik_unavailable' } });
     expect((await as('POST', `/api/admin/users/${anna}/mfa-setup`)).statusCode).toBe(503);
   });
 
@@ -235,7 +258,7 @@ describe('repair, sessions, Authentik, profiles', () => {
       expect(d.authentik).toEqual({ recovery: true, mfaSetup: false });
       expect((await as('POST', `/api/admin/users/${anna}/recovery`)).json()).toEqual({ ok: true });
       expect(posted).toEqual(['?email_stage=mail']);
-      expect((await audits('user.recovery_sent', anna)).at(-1)).toMatchObject({ actor: adminId });
+      expect((await audits('user.recovery_email', anna)).at(-1)).toMatchObject({ actor: adminId, meta: { ok: true } });
       const setup = await as('POST', `/api/admin/users/${anna}/mfa-setup`);
       expect(setup.statusCode).toBe(501);
       expect(setup.json()).toEqual({ error: 'not_supported' });
@@ -257,8 +280,13 @@ describe('repair, sessions, Authentik, profiles', () => {
       actor: adminId, meta: { profile: KID, from: { name: 'Kiddo', hasPin: true }, to: { name: 'Kleine', hasPin: false } },
     });
 
-    // the owner profile's name follows the account name
-    expect((await as('PATCH', `/api/admin/users/${anna}/profiles/${anna}`, { name: 'Other' })).json()).toEqual({ error: 'owner_name_from_account' });
+    // the owner profile can be renamed too (its user can do the same); the account name stays
+    const owner = await as('PATCH', `/api/admin/users/${anna}/profiles/${anna}`, { name: 'Annie' });
+    expect(owner.statusCode).toBe(200);
+    expect(owner.json().profile).toMatchObject({ id: anna, name: 'Annie', isOwner: true });
+    expect((await env.pool.query('select name from users where id=$1', [anna])).rows[0].name).toBe('Anna');
+    expect((await audits('profile.admin_update', anna)).at(-1)).toMatchObject({ meta: { profile: anna, from: { name: 'Anna' }, to: { name: 'Annie' } } });
+    await env.pool.query("update profiles set name='Anna' where id=$1", [anna]);
     // name taken (case-insensitive), unknown profile, empty body
     expect((await as('PATCH', `/api/admin/users/${anna}/profiles/${KID}`, { name: 'broken' })).statusCode).toBe(409);
     expect((await as('PATCH', `/api/admin/users/${anna}/profiles/${adminId}`, { resetPin: true })).statusCode).toBe(404);

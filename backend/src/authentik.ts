@@ -19,6 +19,8 @@ export interface MfaState { totp: boolean; webauthn: boolean; static: boolean }
 const TIMEOUT_MS = 5_000;
 const MFA_TTL = 600;
 const USER_TTL = 3600;
+/** "no Authentik user for this sub" is remembered briefly, so the detail page does not page the user list on every view */
+const MISSING_TTL = 300;
 /** user list pages scanned for a hashed sub before giving up (100 users per page) */
 const MAX_PAGES = 50;
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -62,13 +64,14 @@ const toUser = (u: RawUser): AkUser => ({ pk: u.pk, username: u.username, email:
 /**
  * The Authentik user behind an OIDC `sub`. Authentik's default subject mode is the hashed user id, which the API shows as
  * `uid` (it is not a filter): a uuid sub (mode "user UUID") is looked up with `?uuid=`, otherwise the account's e-mail
- * narrows the search (`?search=`) and, failing that, the user list is paged. Matches only on `uid` / `uuid`. Cached 1 h.
+ * narrows the search (`?search=`) and, failing that, the user list is paged. Matches only on `uid` / `uuid`. Cached 1 h
+ * (a miss 5 min).
  */
 export async function akUserBySub(ctx: AkCtx, sub: string): Promise<AkUser | null> {
   if (!configured(ctx)) return null;
   const key = `akuser:${sub}`;
   const hit = await ctx.kv.get(key);
-  if (hit) return JSON.parse(hit) as AkUser;
+  if (hit) return JSON.parse(hit) as AkUser | null;
   const match = (rows: RawUser[]) => rows.find((u) => u.uid === sub || u.uuid === sub);
   const list = (q: Record<string, string>) => json<Page<RawUser>>(ctx, `api/v3/core/users/?${new URLSearchParams({ include_groups: 'false', ...q })}`);
 
@@ -83,7 +86,10 @@ export async function akUserBySub(ctx: AkCtx, sub: string): Promise<AkUser | nul
     found = match(r.results);
     if (!r.pagination?.next) break;
   }
-  if (!found) return null;
+  if (!found) {
+    await ctx.kv.set(key, 'null', MISSING_TTL);
+    return null;
+  }
   const user = toUser(found);
   await ctx.kv.set(key, JSON.stringify(user), USER_TTL);
   return user;
@@ -121,9 +127,12 @@ async function emailStageOf(ctx: AkCtx, slug: string): Promise<string> {
 }
 
 /**
- * Sends the user Authentik's password-reset e-mail: `POST /core/users/<pk>/recovery_email/?email_stage=<uuid>` with the
- * first e-mail stage of AUTHENTIK_RECOVERY_FLOW. Authentik builds the link from the brand's recovery flow (404 without one
- * -> 409 `recovery_not_configured`) and sends it through that stage's SMTP settings.
+ * Sends the user Authentik's password-reset e-mail: `POST /core/users/<pk>/recovery_email/` with `{email_stage}` (the first
+ * e-mail stage of AUTHENTIK_RECOVERY_FLOW). Authentik builds the link from the brand's recovery flow and sends it through that
+ * stage's SMTP settings. Its answers:
+ * - 400 (ValidationError: no brand recovery flow, user without e-mail, stage missing or not viewable) -> 409 `recovery_not_configured`
+ * - 404 (user pk unknown or not viewable by the token) -> 404 `authentik_user_not_found`, the cached lookup is dropped
+ * - 405 (releases where the action was GET only) -> 501 `not_supported`
  */
 export async function akSendRecovery(ctx: AkCtx, sub: string): Promise<void> {
   if (!configured(ctx)) throw new HttpError(503, 'authentik_unavailable');
@@ -131,8 +140,17 @@ export async function akSendRecovery(ctx: AkCtx, sub: string): Promise<void> {
   if (!user) throw new HttpError(404, 'authentik_user_not_found');
   const stage = await emailStageOf(ctx, ctx.cfg.AUTHENTIK_RECOVERY_FLOW || 'default-recovery-flow');
   // the stage goes as query parameter (older releases) and as body (newer ones take a serializer); each ignores the other
-  await call(ctx, `api/v3/core/users/${user.pk}/recovery_email/?${new URLSearchParams({ email_stage: stage })}`,
-    { method: 'POST', body: JSON.stringify({ email_stage: stage }) }, { 404: notConfigured() });
+  try {
+    await call(ctx, `api/v3/core/users/${user.pk}/recovery_email/?${new URLSearchParams({ email_stage: stage })}`,
+      { method: 'POST', body: JSON.stringify({ email_stage: stage }) },
+      { 400: notConfigured(), 404: new HttpError(404, 'authentik_user_not_found'), 405: new HttpError(501, 'not_supported') });
+  } catch (e) {
+    if (e instanceof HttpError && e.statusCode === 404) {
+      await ctx.kv.del(`akuser:${sub}`); // a stale pk (user deleted / re-created in Authentik): look it up again next time
+      await ctx.kv.del(`akmfa:${sub}`);
+    }
+    throw e;
+  }
 }
 
 /**
