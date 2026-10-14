@@ -1,11 +1,13 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { get, writable } from 'svelte/store';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ApiError, clearItemCache, primeItem, secToTicks, type Item } from '#lib/api';
 import type { CastInfo, CastState } from '#lib/cast';
+import { COUNTDOWN_SECONDS } from '#lib/player/nextup';
+import { consumeAutoplay, noteAutoplay, noteInteraction, shouldAsk } from '#lib/stillwatching';
 import { DEFAULT_PREFS, type Prefs } from '#lib/stores';
-import { createCastEngine, ENDED_HIDE_MS, PROGRESS_MS, RENEW_BEFORE_MS, type CastSession, type EngineDeps, type PlayerHandoff } from './engine';
+import { createCastEngine, ENDED_HIDE_MS, ENDED_IDLE_MS, PROGRESS_MS, RENEW_BEFORE_MS, type CastSession, type EngineDeps, type PlayerHandoff } from './engine';
 
 const T0 = 1_000_000;
 const ci = (castId: string, over: Partial<CastInfo> = {}): CastInfo => ({
@@ -14,9 +16,14 @@ const ci = (castId: string, over: Partial<CastInfo> = {}): CastInfo => ({
 });
 const items: Record<string, Partial<Item>> = {
   ep2: { id: 'ep2', name: 'Second', type: 'Episode', seriesId: 's1', seriesName: 'Bright Valley', indexNumber: 2, parentIndexNumber: 1 },
+  ep3: { id: 'ep3', name: 'Third', type: 'Episode', seriesId: 's1', seriesName: 'Bright Valley', indexNumber: 3, parentIndexNumber: 1 },
+  /** a special without season / episode numbers */
+  sp1: { id: 'sp1', name: 'Christmas Special', type: 'Episode', seriesId: 's1', seriesName: 'Bright Valley' },
   film: { id: 'film', name: 'Film', type: 'Movie' },
   other: { id: 'other', name: 'Other', type: 'Movie' },
 };
+/** GET /api/items/{id}/next: the episode after ep1 is ep2 (others: none) */
+const nexts: Record<string, string> = { ep1: 'ep2', ep2: 'ep3', ep5: 'sp1' };
 const idle: CastState = { available: true, connected: true, deviceName: 'Wohnzimmer-TV', state: 'idle', currentTime: 0, duration: 0, paused: true, volume: 1, muted: false, loaded: false };
 const playing = (over: Partial<CastState> = {}): CastState => ({ ...idle, state: 'playing', loaded: true, paused: false, currentTime: 60, duration: 1800, ...over });
 
@@ -38,6 +45,8 @@ function setup(o: { prefs?: Partial<Prefs> } = {}) {
     calls.push({ path, init });
     order.push(`${init.method ?? 'GET'} ${path}`);
     if (path === '/api/cast/session') { const next = posts.shift(); return next ? next() : ci(`n${++n}`); }
+    const nx = /^\/api\/items\/([^/]+)\/next$/.exec(path);
+    if (nx) return { item: nexts[nx[1]!] ? items[nexts[nx[1]!]!] : null };
     return null;
   });
   const state = writable<CastState>({ ...idle });
@@ -435,7 +444,7 @@ describe('cast engine: session end, stop, pagehide (Chromecast)', () => {
     expect(env.reports()).toEqual(['stop']);
     expect(env.calls[0]!.init.body.positionTicks).toBe(secToTicks(1800));
     expect(env.deletes()).toEqual(['c1']);
-    expect(get(env.out)).toMatchObject({ state: 'ended', position: 1800 });
+    expect(get(env.out)).toMatchObject({ state: 'ended', position: 1800, paused: true });
     env.state.set(playing({ currentTime: 3 }));
     expect(env.reports()).toEqual(['stop']);
     await env.advance(ENDED_HIDE_MS - 1);
@@ -499,6 +508,31 @@ describe('cast engine: session end, stop, pagehide (Chromecast)', () => {
     expect(env.item).not.toHaveBeenCalled();
   });
 
+  it('a renewal keeps a paused TV paused (no autoplay on load, start reported as paused)', async () => {
+    const env = setup();
+    await playingSession(env, { cast: ci('c1', { expiresAt: T0 + RENEW_BEFORE_MS + 5_000 }) });
+    env.state.set(playing({ state: 'paused', paused: true }));
+    await env.advance(PROGRESS_MS);
+    expect(env.tokenPosts()).toHaveLength(1);
+    expect(env.cast.loadOnCast).toHaveBeenCalledWith(expect.objectContaining({ castId: 'n1' }), -1, false);
+    expect(get(env.out)).toMatchObject({ paused: true });
+    env.state.set(playing({ state: 'paused', paused: true }));
+    expect(get(env.out)).toMatchObject({ state: 'playing', paused: true, buffering: false });
+    const starts = env.calls.filter((c) => c.path === '/api/playback/start');
+    expect(starts).toHaveLength(1);
+    expect(starts[0]!.init.body).toMatchObject({ playSessionId: 'ps-n1', isPaused: true });
+    expect(env.cast.castPlayPause).not.toHaveBeenCalled();
+  });
+
+  it('a renewal of a playing TV loads with autoplay', async () => {
+    const env = setup();
+    await playingSession(env, { cast: ci('c1', { expiresAt: T0 + RENEW_BEFORE_MS + 5_000 }) });
+    await env.advance(PROGRESS_MS);
+    expect(env.cast.loadOnCast).toHaveBeenCalledWith(expect.objectContaining({ castId: 'n1' }), -1, true);
+    env.state.set(playing({ state: 'paused', paused: true })); // not the receiver's answer to an autoplay load: no start yet
+    expect(env.reports()).not.toContain('start');
+  });
+
   it('refresh() takes a new audio track / quality and keeps the subtitle', async () => {
     const env = setup();
     await playingSession(env, { subIndex: 3 });
@@ -533,6 +567,45 @@ describe('cast engine: session end, stop, pagehide (Chromecast)', () => {
     expect(env.cast.castStop).not.toHaveBeenCalled();
     expect(env.subs()).toBe(0);
     expect(env.pending()).toBe(0);
+  });
+});
+
+describe('cast engine: tracks and device picker for an attached Player', () => {
+  const audio = [{ index: 1, title: 'Deutsch', language: 'deu', isDefault: true }, { index: 2, title: 'English', language: 'eng', isDefault: false }];
+  const subs = [{ index: 3, title: 'Deutsch (SDH)', language: 'deu' }];
+
+  it('the session keeps the hand-off\'s tracks; refresh and setSubtitle move the current indexes', async () => {
+    const env = setup();
+    await playingSession(env, { audioTracks: audio, subtitles: subs, audioIndex: 1, subIndex: -1 });
+    expect(get(env.out)).toMatchObject({ audioTracks: audio, subtitles: subs, audioIndex: 1, subIndex: -1 });
+    await env.engine.refresh({ audioIndex: 2 });
+    expect(get(env.out)).toMatchObject({ audioTracks: audio, audioIndex: 2 });
+    env.engine.setSubtitle(3);
+    expect(get(env.out)?.subIndex).toBe(3);
+  });
+
+  it('a hand-off without track lists has empty lists', async () => {
+    const env = setup();
+    await playingSession(env);
+    expect(get(env.out)).toMatchObject({ audioTracks: [], subtitles: [], audioIndex: 1, subIndex: -1 });
+  });
+
+  it('another title: no audio list (the default track), subtitles from its cast token, subtitle off', async () => {
+    const env = setup();
+    await playingSession(env, { audioTracks: audio, subtitles: subs, subIndex: 3 });
+    env.posts.push(async () => ci('n1', { subtitles: [{ index: 5, title: 'Français', language: 'fra', url: '/media/c/n1/sub5.vtt' }] }));
+    await env.engine.playOnTv('other', 0);
+    expect(get(env.out)).toMatchObject({ itemId: 'other', audioTracks: [], subtitles: [{ index: 5, title: 'Français', language: 'fra' }], audioIndex: undefined, subIndex: -1 });
+    expect(get(env.out)!.subtitles[0]).not.toHaveProperty('url');
+  });
+
+  it('pick() is a no-op for Chromecast and without a session', async () => {
+    const env = setup();
+    env.engine.pick();
+    await playingSession(env);
+    env.engine.pick();
+    expect(env.calls).toEqual([]);
+    expect(get(env.out)?.state).toBe('playing');
   });
 });
 
@@ -648,5 +721,238 @@ describe('cast engine: review fixes', () => {
     await flush();
     expect(env.calls[0]!.init.body.positionTicks).toBe(secToTicks(1800));
     expect(get(env.out)?.state).toBe('ended');
+  });
+});
+
+describe('cast engine: next episode on the TV', () => {
+  // the still-watching chain is module state: every test starts with a fresh interaction and no pending autoplay flag
+  beforeEach(() => { noteInteraction(T0); consumeAutoplay(); });
+  const COUNTDOWN_MS = COUNTDOWN_SECONDS * 1000;
+  /** episode 1 plays on the TV and reaches its end */
+  async function episodeEnds(env: Env, over: Partial<PlayerHandoff> = {}) {
+    await playingSession(env, { itemId: 'ep1', seriesId: 's1', title: 'Bright Valley', subtitle: 'S1:E1 First', isEpisode: true, ...over });
+    env.state.set(playing({ currentTime: 1795 }));
+    env.emit('media-end');
+    await flush();
+  }
+
+  it('ended episode with autoplay: countdown 10 s then the next episode starts at its resume position', async () => {
+    const env = setup();
+    await episodeEnds(env);
+    expect(env.order).toEqual(['POST /api/playback/stop', 'GET /api/items/ep1/next', 'DELETE /api/cast/session/c1']);
+    expect(get(env.out)).toMatchObject({ state: 'ended', next: { itemId: 'ep2', label: 'S1:E2 · Second', startsAt: T0 + COUNTDOWN_MS } });
+    await env.advance(COUNTDOWN_MS - 1);
+    expect(env.tokenPosts()).toHaveLength(0);
+    expect(env.cast.castStop).not.toHaveBeenCalled();
+    expect(get(env.out)?.state).toBe('ended');
+    await env.advance(1);
+    expect(env.tokenPosts()).toHaveLength(1);
+    expect(env.tokenPosts()[0]!.init.body).toMatchObject({ itemId: 'ep2', startTicks: undefined });
+    expect(get(env.out)).toMatchObject({ itemId: 'ep2', title: 'Bright Valley', state: 'connecting' });
+    expect(get(env.out)?.next).toBeUndefined();
+    // counted for "still watching?" (one more makes two in a row), without the watch page's one-shot flag left set
+    expect(consumeAutoplay()).toBe(false);
+    noteAutoplay(); consumeAutoplay();
+    expect(shouldAsk(T0 + COUNTDOWN_MS, { stillWatching: true, stillWatchingEpisodes: 2 })).toBe(true);
+    env.state.set(playing({ currentTime: 0 }));
+    expect(env.reports()).toEqual(['stop', 'start']);
+    expect(env.cast.castStop).not.toHaveBeenCalled();
+  });
+
+  it('autoplay off: next shown without countdown, nothing starts', async () => {
+    const env = setup({ prefs: { autoplayNext: false } });
+    await episodeEnds(env);
+    expect(get(env.out)).toMatchObject({ state: 'ended', next: { itemId: 'ep2', startsAt: null } });
+    await env.advance(60_000);
+    expect(env.tokenPosts()).toHaveLength(0);
+    expect(env.cast.castStop).not.toHaveBeenCalled();
+    expect(get(env.out)?.state).toBe('ended');
+    expect(consumeAutoplay()).toBe(false);
+  });
+
+  it('an offered next episode nobody starts: the session closes after ENDED_IDLE_MS without a second report', async () => {
+    const env = setup({ prefs: { autoplayNext: false } });
+    await episodeEnds(env);
+    await env.advance(ENDED_IDLE_MS - 1);
+    expect(get(env.out)?.state).toBe('ended');
+    expect(env.cast.castStop).not.toHaveBeenCalled();
+    await env.advance(1);
+    expect(get(env.out)).toBeNull();
+    expect(env.cast.castStop).toHaveBeenCalledTimes(1);
+    expect(env.reports()).toEqual(['stop']);
+    expect(env.deletes()).toEqual(['c1']);
+    expect(env.pending()).toBe(0);
+  });
+
+  it('cancelNext(): the session closes after ENDED_IDLE_MS', async () => {
+    const env = setup();
+    await episodeEnds(env);
+    env.engine.cancelNext();
+    await env.advance(ENDED_IDLE_MS - 1);
+    expect(get(env.out)?.state).toBe('ended');
+    await env.advance(1);
+    expect(get(env.out)).toBeNull();
+    expect(env.cast.castStop).toHaveBeenCalledTimes(1);
+    expect(env.reports()).toEqual(['stop']);
+    expect(env.tokenPosts()).toHaveLength(0);
+  });
+
+  it('still-watching due: no autoplay', async () => {
+    noteInteraction(T0 - 90 * 60_000); // nobody touched anything for 90 min
+    const env = setup();
+    await episodeEnds(env);
+    expect(get(env.out)?.next).toMatchObject({ itemId: 'ep2', startsAt: null });
+    await env.advance(60_000);
+    expect(env.tokenPosts()).toHaveLength(0);
+  });
+
+  it('a next episode without season / episode numbers is labelled by its name only', async () => {
+    const env = setup();
+    await episodeEnds(env, { itemId: 'ep5' });
+    expect(get(env.out)?.next).toMatchObject({ itemId: 'sp1', label: 'Christmas Special' });
+  });
+
+  it('sleepAfterEpisode from the handoff: no autoplay', async () => {
+    const env = setup();
+    await episodeEnds(env, { sleepAfterEpisode: true });
+    expect(get(env.out)?.next).toMatchObject({ itemId: 'ep2', startsAt: null });
+    await env.advance(60_000);
+    expect(env.tokenPosts()).toHaveLength(0);
+  });
+
+  it('film end: bar gone after 5 s, castStop called', async () => {
+    const env = setup();
+    await playingSession(env);
+    env.state.set(playing({ currentTime: 1795 }));
+    env.emit('media-end');
+    await flush();
+    expect(env.order).toEqual(['POST /api/playback/stop', 'DELETE /api/cast/session/c1']); // a film asks for no next episode
+    expect(get(env.out)?.next).toBeUndefined();
+    await env.advance(ENDED_HIDE_MS);
+    expect(env.cast.castStop).toHaveBeenCalledTimes(1);
+    expect(get(env.out)).toBeNull();
+    expect(env.reports()).toEqual(['stop']);
+  });
+
+  it('last episode (no next) or a failed next request: bar gone after 5 s', async () => {
+    for (const fail of [false, true]) {
+      const env = setup();
+      if (fail) { const record = env.api.getMockImplementation()!; env.api.mockImplementation(async (path, init) => (path.endsWith('/next') ? Promise.reject(new Error('net')) : record(path, init))); }
+      await episodeEnds(env, { itemId: fail ? 'ep1' : 'ep9' });
+      expect(get(env.out)).toMatchObject({ state: 'ended' });
+      expect(get(env.out)?.next).toBeUndefined();
+      await env.advance(ENDED_HIDE_MS);
+      expect(env.cast.castStop).toHaveBeenCalledTimes(1);
+      expect(get(env.out)).toBeNull();
+    }
+  });
+
+  it('next() during the countdown starts at once and cancels the timer', async () => {
+    const env = setup();
+    await episodeEnds(env);
+    await env.advance(3_000);
+    await env.engine.next();
+    expect(env.tokenPosts()).toHaveLength(1);
+    expect(env.tokenPosts()[0]!.init.body).toMatchObject({ itemId: 'ep2', startTicks: undefined });
+    expect(get(env.out)).toMatchObject({ itemId: 'ep2' });
+    await env.advance(COUNTDOWN_MS + ENDED_HIDE_MS);
+    expect(env.tokenPosts()).toHaveLength(1);
+    expect(env.cast.castStop).not.toHaveBeenCalled();
+    expect(consumeAutoplay()).toBe(false); // a tap, not an autoplay
+  });
+
+  it('next() while the episode plays fetches the next one; without one (or a session) nothing happens', async () => {
+    const none = setup();
+    await none.engine.next();
+    expect(none.calls).toEqual([]);
+    const film = setup();
+    await playingSession(film);
+    await film.engine.next();
+    expect(film.calls).toEqual([]);
+    const env = setup();
+    await playingSession(env, { itemId: 'ep1', isEpisode: true });
+    await env.engine.next();
+    expect(env.order).toEqual(['GET /api/items/ep1/next', 'POST /api/playback/stop', 'DELETE /api/cast/session/c1', 'POST /api/cast/session']);
+    expect(get(env.out)).toMatchObject({ itemId: 'ep2' });
+  });
+
+  /** the episode now on the TV plays and reaches its end */
+  async function currentEnds(env: Env) {
+    env.state.set(playing({ currentTime: 10 }));
+    env.state.set(playing({ currentTime: 1795 }));
+    env.emit('media-end');
+    await flush();
+  }
+
+  it('still-watching due -> next() -> the following episode end autoplays again', async () => {
+    noteInteraction(T0 - 90 * 60_000);
+    const env = setup();
+    await episodeEnds(env);
+    expect(get(env.out)?.next?.startsAt).toBeNull();
+    await env.engine.next(); // the viewer is there
+    await currentEnds(env);
+    expect(get(env.out)).toMatchObject({ itemId: 'ep2', state: 'ended', next: { itemId: 'ep3', startsAt: T0 + COUNTDOWN_MS } });
+    await env.advance(COUNTDOWN_MS);
+    expect(env.tokenPosts().at(-1)!.init.body.itemId).toBe('ep3');
+  });
+
+  it('playPause and skip on the bar count as the viewer being there', async () => {
+    for (const act of ['playPause', 'skip'] as const) {
+      noteInteraction(T0 - 90 * 60_000);
+      const env = setup();
+      await playingSession(env);
+      expect(shouldAsk(T0, DEFAULT_PREFS)).toBe(true);
+      if (act === 'skip') env.engine.skip(10); else env.engine.playPause();
+      expect(shouldAsk(T0, DEFAULT_PREFS)).toBe(false);
+    }
+  });
+
+  it('sleepAfterEpisode applies to the ended episode only', async () => {
+    const env = setup();
+    await episodeEnds(env, { sleepAfterEpisode: true });
+    expect(get(env.out)?.next?.startsAt).toBeNull();
+    await env.engine.next();
+    await currentEnds(env);
+    expect(get(env.out)?.next).toMatchObject({ itemId: 'ep3', startsAt: T0 + COUNTDOWN_MS });
+  });
+
+  it('next() twice, or while the next episode loads, starts one episode only', async () => {
+    const env = setup();
+    await episodeEnds(env);
+    await Promise.all([env.engine.next(), env.engine.next()]);
+    expect(env.tokenPosts()).toHaveLength(1);
+    expect(get(env.out)).toMatchObject({ itemId: 'ep2', state: 'connecting' });
+    await env.engine.next(); // ep2 not yet playing
+    await flush();
+    expect(env.tokenPosts()).toHaveLength(1);
+    expect(get(env.out)?.itemId).toBe('ep2');
+  });
+
+  it('cancelNext() stops the countdown; the next episode stays offered', async () => {
+    const env = setup();
+    env.engine.cancelNext(); // no session: nothing
+    await episodeEnds(env);
+    env.engine.cancelNext();
+    expect(get(env.out)).toMatchObject({ state: 'ended', next: { itemId: 'ep2', startsAt: null } });
+    await env.advance(60_000);
+    expect(env.tokenPosts()).toHaveLength(0);
+    expect(get(env.out)?.state).toBe('ended');
+    await env.engine.next();
+    expect(env.tokenPosts()).toHaveLength(1);
+  });
+
+  it('a next answer after the session moved on changes nothing', async () => {
+    const env = setup();
+    const answer = deferred<unknown>();
+    const record = env.api.getMockImplementation()!;
+    env.api.mockImplementation(async (path, init) => { const r = await record(path, init); return path.endsWith('/next') ? answer.promise.then(() => r) : r; });
+    await episodeEnds(env);
+    await env.engine.playOnTv('other', 0);
+    answer.resolve(null);
+    await flush();
+    expect(get(env.out)).toMatchObject({ itemId: 'other' });
+    expect(get(env.out)?.next).toBeUndefined();
+    await env.advance(COUNTDOWN_MS);
+    expect(env.tokenPosts()).toHaveLength(1);
   });
 });

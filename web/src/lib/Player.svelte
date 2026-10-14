@@ -96,14 +96,15 @@
    */
   let handedOff = false;
   $: tvSession = remote ? $castSession : null;
+  /** the tracks menu: the playback info's tracks, or (attached to a running cast, no info) the cast session's */
+  $: audioOpts = info?.audioTracks ?? tvSession?.audioTracks ?? [];
+  $: subOpts = info?.subtitles ?? tvSession?.subtitles ?? [];
   /** Chromecast: while casting the local <video> stays paused and every control drives the receiver */
   $: casting = remote && $castSession?.kind === 'chromecast';
   let castBusy = false, castOff: (() => void) | null = null;
   // ---- AirPlay (Safari): the <video> itself plays on the receiver, from a cast token URL (lib/player/airplay.ts) ----
   const AIR_IDLE: AirPlayState = { available: false, active: false, busy: false, ready: false, error: false };
   let air: AirPlayController | null = null, airState: AirPlayState = AIR_IDLE, airInfo: CastInfo | null = null, airProbe: HTMLVideoElement | null = null;
-  /** the controller the engine owns since the hand-off: only its system picker is opened from here ("change device") */
-  let handedAir: AirPlayController | null = null;
   $: airOn = remote ? $castSession?.kind === 'airplay' : airState.active;
   let destroyed = false;
 
@@ -385,6 +386,8 @@
   const handoff = (pos: number, dur: number, isPaused: boolean) => ({
     itemId, seriesId: seriesId || undefined, title: barTitle || title, subtitle: barSub, isEpisode: Boolean(seriesId),
     position: pos, duration: dur, paused: isPaused, audioIndex, subIndex, maxBitrate: quality || undefined, sleepAfterEpisode,
+    audioTracks: info?.audioTracks.map(({ index, title, language, isDefault }) => ({ index, title, language, isDefault })),
+    subtitles: info?.subtitles.map(({ index, title, language }) => ({ index, title, language })),
   });
   /** from now on the engine owns the session: nothing is reported, revoked or stopped from here (also not after unmount) */
   function handedOver() {
@@ -431,15 +434,14 @@
     // `start` was reported for this token exactly when the element played it here (the phone's token stream / the TV)
     castEngine.adopt({ kind: 'airplay', ...handoff(v.currentTime, duration, v.paused), cast: ci, started: started && !stopped, video: v, air: ctl, probe: airProbe });
     handedOver();
-    handedAir = ctl;
     air = null; airProbe = null; airInfo = null; airState = AIR_IDLE;
   }
 
   /**
    * Opening a title while a cast runs: this Player becomes the remote of the engine's session instead of playing itself
    * (no playback info, no AirPlay controller, no own token; a local stream would be a second one). The same title is only
-   * moved to `startAt`; another title plays on the TV (`playOnTv`). Party mode never attaches. AirPlay: the engine's controller
-   * (its picker) is not reachable from an attached Player, so "change device" is not offered here.
+   * moved to `startAt`; another title plays on the TV (`playOnTv`). Party mode never attaches. Without playback info the tracks
+   * menu lists the session's tracks (`castSession`); "change device" opens the engine's AirPlay picker (`castEngine.pick`).
    */
   function attachToCast(): boolean {
     const s = get(castSession);
@@ -452,7 +454,7 @@
   }
 
   /** "change device": the system picker of the controller the engine owns (from the tap); a lost route: the engine reconnects */
-  function changeAirPlay() { if ($castSession?.state === 'reconnect') castEngine.reconnect(); else handedAir?.pick(); }
+  function changeAirPlay() { if ($castSession?.state === 'reconnect') castEngine.reconnect(); else castEngine.pick(); }
 
   /** while this Player is still mounted: mirror the engine's session; a lost / failed one plays on locally */
   let lastTv: CastSession | null = null;
@@ -461,6 +463,7 @@
     if (!s) { void resumeLocal(); return; }
     current = s.position; if (s.duration) duration = s.duration;
     paused = s.paused; waiting = s.buffering || s.state === 'connecting';
+    audioIndex = s.audioIndex; subIndex = s.subIndex;
     if (s.state === 'reconnect') { queueMicrotask(() => void castEngine.stop()); return; } // watch page: the phone plays on instead
     if (s.state === 'failed') { queueMicrotask(() => castEngine.release()); return; }
     lastTv = s;
@@ -470,7 +473,7 @@
   /** the engine's session ended while this page is open: the element comes back (AirPlay) and local playback resumes */
   async function resumeLocal() {
     const was = lastTv;
-    remote = false; handedOff = false; handedAir = null; lastTv = null;
+    remote = false; handedOff = false; lastTv = null;
     started = false; stopped = false;
     if (video && stage && video.parentElement !== stage) {
       for (const a of [CAST_VIDEO_ATTR, 'aria-hidden', 'style']) video.removeAttribute(a);
@@ -527,7 +530,7 @@
   const doPause = () => { if (remote) { if (!paused) castEngine.playPause(); } else video?.pause(); };
 
   async function changeAudio(i: number) {
-    const lang = info?.audioTracks.find((a) => a.index === i)?.language;
+    const lang = audioOpts.find((a) => a.index === i)?.language;
     if (lang && lang !== 'und') rememberLang({ audio: lang });
     if (remote) { audioIndex = i; await castEngine.refresh({ audioIndex: i }); return; } // a new token with that track on the TV
     if (airInfo) { audioIndex = i; await air?.refresh(); return; } // AirPlay: a new token stream with that track
@@ -539,7 +542,7 @@
   }
   function setSubtitle(i: number, remember = true) {
     subIndex = i;
-    if (remember) { const lang = i === -1 ? 'off' : info?.subtitles.find((x) => x.index === i)?.language; if (lang && lang !== 'und') rememberLang({ subtitle: lang }); }
+    if (remember) { const lang = i === -1 ? 'off' : subOpts.find((x) => x.index === i)?.language; if (lang && lang !== 'und') rememberLang({ subtitle: lang }); }
     if (remote) castEngine.setSubtitle(i);
     [...(video?.textTracks ?? [])].forEach((t) => (t.mode = t.id === `sub-${i}` ? 'showing' : 'disabled'));
   }
@@ -1112,7 +1115,7 @@
       <Icon name={tvSession.kind === 'airplay' ? 'airplay' : 'cast'} size={56} />
       <b>{tvSession.kind === 'airplay' ? $t('player.airplay.playing') : $t('player.cast.playingOn', { name: tvSession.device })}</b>
       {#if tvSession.buffering}<div class="spin sm" aria-hidden="true"></div>{/if}
-      {#if tvSession.kind === 'airplay' && handedAir}<button class="btn light ui" on:click|stopPropagation={changeAirPlay}>{$t('player.airplay.change')}</button>{/if}
+      {#if tvSession.kind === 'airplay'}<button class="btn light ui" on:click|stopPropagation={changeAirPlay}>{$t('player.airplay.change')}</button>{/if}
       <button class="btn light ui" on:click|stopPropagation={() => void castEngine.stop()}>{$t('player.cast.stop')}</button>
     </div></div>
   {:else if airOn || airState.error}
@@ -1246,20 +1249,20 @@
         {/if}
         {#if air && (airState.available || airOn || airState.ready || airState.busy)}<button class="ic" class:on={airOn} class:airbusy={airState.busy} aria-pressed={airOn} aria-busy={airState.busy} data-testid="airplay" aria-label={$t(airOn ? 'player.airplay.playing' : 'player.airplay.play')} title={$t(airOn ? 'player.airplay.playing' : 'player.airplay.play')} on:click={() => air?.pick()}><Icon name="airplay" size={ICON} /></button>{/if}
         <button class="ic" class:on={showXray || peek} bind:this={castBtn} aria-label={$t('scenes.info.open')} title={$t(coarse ? 'scenes.info.open' : 'scenes.info.openKey')} aria-pressed={showXray} on:click={castButton}><Icon name="users" size={ICON} /></button>
-        {#if info}
+        {#if info || tvSession}
           <div class="mwrap">
             <button class="ic" aria-label={$t('player.controls.tracks')} title={$t('player.controls.tracksKey')} aria-expanded={menu === 'tracks'} on:click={() => toggleMenu('tracks')}><Icon name="subtitles" size={ICON} /></button>
             {#if menu === 'tracks'}
               <div class="menu tracks" data-nav data-scope role="dialog" aria-label={$t('player.controls.tracks')}>
-                {#if info.audioTracks.length > 1}
+                {#if audioOpts.length > 1}
                   <div><h3>{$t('player.controls.audio')}</h3>
-                    {#each info.audioTracks as a}<button class="mi" class:on={audioIndex === a.index || (audioIndex === undefined && a.isDefault)} on:click={() => { menu = ''; changeAudio(a.index); }}>{#if audioIndex === a.index || (audioIndex === undefined && a.isDefault)}<Icon name="check" size={16} />{:else}<span class="sp"></span>{/if}{a.title}</button>{/each}
+                    {#each audioOpts as a}<button class="mi" class:on={audioIndex === a.index || (audioIndex === undefined && a.isDefault)} on:click={() => { menu = ''; changeAudio(a.index); }}>{#if audioIndex === a.index || (audioIndex === undefined && a.isDefault)}<Icon name="check" size={16} />{:else}<span class="sp"></span>{/if}{a.title}</button>{/each}
                   </div>
                 {/if}
                 <div><h3>{$t('player.subs.title')}</h3>
                   <button class="mi" class:on={subIndex === -1} on:click={() => { setSubtitle(-1); menu = ''; }}>{#if subIndex === -1}<Icon name="check" size={16} />{:else}<span class="sp"></span>{/if}{$t('common.off')}</button>
-                  {#if $serverCaps.subtitleSearch}<button class="mi" on:click={() => { menu = ''; subDlg = true; subResults = null; subMsg = ''; }}><Icon name="search" size={16} />{$t('player.subs.searchMenu')}</button>{/if}
-                  {#each info.subtitles as s}<button class="mi" class:on={subIndex === s.index} on:click={() => { setSubtitle(s.index); menu = ''; }}>{#if subIndex === s.index}<Icon name="check" size={16} />{:else}<span class="sp"></span>{/if}{s.title}</button>{/each}
+                  {#if $serverCaps.subtitleSearch && info}<button class="mi" on:click={() => { menu = ''; subDlg = true; subResults = null; subMsg = ''; }}><Icon name="search" size={16} />{$t('player.subs.searchMenu')}</button>{/if}
+                  {#each subOpts as s}<button class="mi" class:on={subIndex === s.index} on:click={() => { setSubtitle(s.index); menu = ''; }}>{#if subIndex === s.index}<Icon name="check" size={16} />{:else}<span class="sp"></span>{/if}{s.title}</button>{/each}
                 </div>
                 <div class="fxcol"><h3>{$t('scenes.audio.title')}</h3>
                   {#each FX_OPTS as o (o.k)}<button class="mi fx" class:on={fx[o.k] && !fxDisabled} role="switch" aria-checked={fx[o.k]} disabled={Boolean(fxDisabled)} on:click={() => toggleFx(o.k)}>{#if fx[o.k] && !fxDisabled}<Icon name="check" size={16} />{:else}<span class="sp"></span>{/if}<span class="fxl">{$t(o.label)}<small>{$t(o.hint)}</small></span></button>{/each}

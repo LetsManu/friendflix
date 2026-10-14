@@ -91,9 +91,12 @@
   /** kids profile: kids header, no footer links / tab bar / bell; the last /api/me answer decides until the fresh one arrives */
   $: kidsUi = me ? Boolean(me.kids) : Boolean(bootHint?.kids);
   $: if (typeof document !== 'undefined') document.documentElement.classList.toggle('kids', kidsUi);
-  $: castBarOn = barVisible({ path, tv, session: $castSession });
-  /** `html.castbar`: the page content gets room for the bar at its end (main on phones, the page below the footer on desktop) */
-  $: if (typeof document !== 'undefined') document.documentElement.classList.toggle('castbar', castBarOn);
+  $: castBarOn = pageReady && !publicPage && barVisible({ path, tv, session: $castSession }); // where <CastBar> renders
+  /**
+   * `--castbar-h` on <html> while the bar shows: the page content gets room for it at its end (main on phones, the page below
+   * the footer on desktop); the offline banner and the toasts move up by it
+   */
+  $: if (typeof document !== 'undefined') { const st = document.documentElement.style; if (castBarOn) st.setProperty('--castbar-h', '64px'); else st.removeProperty('--castbar-h'); }
   $: kidsMode.set(kidsUi); // shared flag for components (no social UI on kids profiles)
   // ---- phone: chip bar + "Kategorien" overlay; desktop: "Kategorien" dropdown (genres, languages, collections) ----
   let catOpen = false, catGenres: string[] | null = null, catKind: Kind = 'movies', catBtn: HTMLElement | null = null;
@@ -526,8 +529,8 @@
     {#if $mobile && $previewSheet}<MobilePreviewSheet />{/if}
   {/if}
 
-  {#if castBarOn}<CastBar />{/if}
-  {#if !online}<div class="offbar" role="status">{$t('shell.offline.bar')} <a href="/offline" data-sveltekit-reload>{$t('shell.offline.toDownloads')}</a></div>{/if}
+  {#if castBarOn}<CastBar tabbar={!kidsUi && !profilesPage} />{/if}
+  {#if !online}<div class="offbar" class:notab={kidsUi || profilesPage} role="status">{$t('shell.offline.bar')} <a href="/offline" data-sveltekit-reload>{$t('shell.offline.toDownloads')}</a></div>{/if}
   {#if replaced}<div class="panel" role="alert" style="position:fixed;z-index:90;top:calc(5rem + var(--safe-top));left:50%;transform:translateX(-50%)"><b>{$t('shell.tvReplaced.text')}</b> <button on:click={() => location.reload()}>{$t('shell.tvReplaced.reconnect')}</button></div>{/if}
   {#if modalId && Modal}<svelte:component this={Modal} id={modalId} />{/if}
   <main id="main" class:page={!heroPage && !watchPage && !profilesPage && !kidsPage}>
@@ -574,9 +577,10 @@
 <ConfirmHost />
 
 <style>
-  .offbar { position: fixed; z-index: 80; left: 0; right: 0; bottom: calc(56px + var(--safe-bottom)); background: #242b33; padding: .6rem var(--pad-x); text-align: center; font-size: .9rem; }
+  .offbar { position: fixed; z-index: 80; left: 0; right: 0; bottom: calc(56px + var(--safe-bottom) + var(--castbar-h)); background: #242b33; padding: .6rem var(--pad-x); text-align: center; font-size: .9rem; }
   .offbar a { text-decoration: underline; font-weight: 600; }
-  @media (min-width: 721px) { .offbar { bottom: 0; } }
+  .offbar.notab { bottom: calc(var(--safe-bottom) + var(--castbar-h)); } /* no tab bar (kids profiles, profile picker) */
+  @media (min-width: 721px) { .offbar, .offbar.notab { bottom: var(--castbar-h); } }
   .logo { display: inline-flex; align-items: center; }
   .nav { position: fixed; top: 0; left: 0; right: 0; height: var(--nav-total); z-index: 50; display: flex; align-items: center; gap: .5rem; padding: var(--safe-top) max(var(--pad-x), var(--safe-right)) 0 max(var(--pad-x), var(--safe-left)); background: linear-gradient(to bottom, rgba(0,0,0,.9), rgba(0,0,0,.55) 55%, transparent); transition: background var(--t-med); }
   .nav.solid { background: var(--bg); }
@@ -659,11 +663,11 @@
     .tabbar a.active { color: #fff; font-weight: 700; }
     .tabbar .face.sm { width: 24px; height: 24px; font-size: .72rem; border-radius: 4px; }
     .tabbar a.active .face.sm { box-shadow: 0 0 0 2px #fff; }
-    main { padding-bottom: 70px; }
-    :global(html.castbar) main { padding-bottom: calc(70px + var(--safe-bottom) + var(--castbar-h)); }
+    /* with the cast bar also the home indicator's inset (the bar sits on the tab bar, which is 56 px + that inset high) */
+    main { padding-bottom: calc(70px + var(--castbar-h) + min(var(--castbar-h), var(--safe-bottom))); }
   }
-  :global(html.castbar) { --castbar-h: 64px; }
-  @media (min-width: 721px) { :global(html.castbar body) { padding-bottom: var(--castbar-h); } }
+  :global(html) { --castbar-h: 0px; } /* 64px while the cast bar shows (set on <html> above) */
+  @media (min-width: 721px) { :global(body) { padding-bottom: var(--castbar-h); } }
 
   /* ---- phone header: transparent over the hero, solid + blurred once scrolled; sticky chip bar below ---- */
   /* padding-top keeps the rows below the status bar / Dynamic Island; the background (solid once scrolled) covers that strip too */

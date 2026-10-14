@@ -8,7 +8,7 @@ import { tr } from '#lib/i18n';
 import { createAirPlay, SETTLE_MS, WIRELESS_EVENT, WIRELESS_OFF_GRACE_MS, type AirPlayTimers, type AirPlayVideo } from '#lib/player/airplay';
 import { clearAirLog, readAirLog, srcKind } from '#lib/player/airplayLog';
 import { DEFAULT_PREFS } from '#lib/stores';
-import { CAST_VIDEO_ATTR, createCastEngine, ENDED_HIDE_MS, PROGRESS_MS, type CastSession, type EngineDeps, type PlayerHandoff } from './engine';
+import { CAST_VIDEO_ATTR, createCastEngine, ENDED_HIDE_MS, ENDED_IDLE_MS, PROGRESS_MS, type CastSession, type EngineDeps, type PlayerHandoff } from './engine';
 
 const T0 = 1_000_000;
 const ci = (castId: string, over: Partial<CastInfo> = {}): CastInfo => ({
@@ -71,6 +71,7 @@ async function setup(o: { started?: boolean } = {}) {
     calls.push({ path, init });
     order.push(`${init.method ?? 'GET'} ${path}`);
     if (path === '/api/cast/session') { const next = posts.shift(); return next ? next() : ci(`n${++n}`); }
+    if (path === '/api/items/ep1/next') return { item: items.ep2 };
     return null;
   });
   let now = T0;
@@ -212,6 +213,26 @@ describe('cast engine: AirPlay adopt', () => {
     expect(env.deps.cast.castSetSubtitle).not.toHaveBeenCalled();
     expect(env.deps.cast.castSeek).not.toHaveBeenCalled();
     expect(env.deps.cast.castPlayPause).not.toHaveBeenCalled();
+  });
+});
+
+describe('cast engine: AirPlay change device', () => {
+  it('pick() opens the picker of the controller the engine owns, synchronously', async () => {
+    const env = await setup();
+    await env.adopt({ audioTracks: [{ index: 1, title: 'Deutsch', isDefault: true }, { index: 2, title: 'English', isDefault: false }] });
+    const before = env.video.webkitShowPlaybackTargetPicker.mock.calls.length;
+    env.engine.pick();
+    expect(env.spy.pick).toHaveBeenCalledTimes(1);
+    expect(env.video.webkitShowPlaybackTargetPicker).toHaveBeenCalledTimes(before + 1);
+    expect(get(env.out)?.audioTracks.map((a) => a.index)).toEqual([1, 2]);
+  });
+
+  it('pick() after the session ended does nothing', async () => {
+    const env = await setup();
+    await env.adopt();
+    await env.engine.stop();
+    env.engine.pick();
+    expect(env.spy.pick).not.toHaveBeenCalled();
   });
 });
 
@@ -359,6 +380,35 @@ describe('cast engine: AirPlay title switch', () => {
     expect(env.tokenPosts()[0]!.init.body).toMatchObject({ itemId: 'film', audioIndex: 3, startTicks: secToTicks(400), via: 'airplay' });
     expect(env.deletes()).toEqual(['a1']);
     expect(get(env.out)?.title).toBe('Film');
+  });
+
+  it('a new token for the same title (audio switch) keeps the hand-off\'s subtitle list; another title takes its token\'s', async () => {
+    const env = await setup();
+    const subs = [{ index: 3, title: 'Deutsch (SDH)', language: 'deu' }];
+    await env.adopt({ subtitles: subs });
+    env.posts.push(async () => ci('r1', { subtitles: [] }));
+    await env.engine.refresh({ audioIndex: 2 });
+    expect(get(env.out)).toMatchObject({ subtitles: subs, audioIndex: 2 });
+    env.posts.push(async () => ci('o1', { subtitles: [{ index: 7, title: 'English', language: 'eng', url: '/media/c/o1/7.vtt' }] }));
+    await env.engine.playOnTv('other', 0);
+    expect(get(env.out)?.subtitles).toEqual([{ index: 7, title: 'English', language: 'eng' }]);
+  });
+
+  it('a renewal keeps a paused TV paused', async () => {
+    const env = await setup();
+    env.posts.push(async () => ci('r1', { expiresAt: T0 + 9 * 60 * 60_000 }));
+    await env.adopt({ cast: { ...env.air.info!, expiresAt: T0 + 5 * 60_000 } });
+    env.engine.playPause();
+    expect(env.video.paused).toBe(true);
+    env.video.play.mockClear();
+    await env.advance(PROGRESS_MS);
+    expect(env.air.info?.castId).toBe('r1');
+    expect(env.video.play).not.toHaveBeenCalled();
+    expect(get(env.out)).toMatchObject({ state: 'playing', paused: true, buffering: false });
+    const start = env.calls.filter((c) => c.path === '/api/playback/start').at(-1)!;
+    expect(start.init.body).toMatchObject({ playSessionId: 'ps-r1', isPaused: true });
+    env.engine.playPause(); // the bar's play button drives the new token
+    expect(env.video.play).toHaveBeenCalledTimes(1);
   });
 
   it('renews the token before it expires', async () => {
@@ -520,11 +570,54 @@ describe('cast engine: AirPlay end and stop', () => {
     expect(env.reports()).toEqual(['stop']);
     expect(env.calls[0]!.init.body.positionTicks).toBe(secToTicks(1800));
     expect(get(env.out)).toMatchObject({ state: 'ended', position: 1800 });
+    expect(env.deletes()).toEqual(['a1']); // revoked at the end, after its stop
+    expect(env.order.slice(0, 2)).toEqual(['POST /api/playback/stop', 'DELETE /api/cast/session/a1']);
     await env.advance(ENDED_HIDE_MS);
     expect(get(env.out)).toBeNull();
-    expect(env.deletes()).toEqual(['a1']);
+    expect(env.deletes()).toEqual(['a1']); // not a second time when the controller goes
     expect(env.body.children).toEqual([]);
     expect(env.reports()).toEqual(['stop']);
+  });
+
+  it('episode end: the next episode follows on the same element after the countdown', async () => {
+    const env = await setup();
+    await env.adopt({ itemId: 'ep1', isEpisode: true });
+    env.video.fire('ended');
+    await flush();
+    expect(get(env.out)).toMatchObject({ state: 'ended', next: { itemId: 'ep2', label: 'S1:E2 · Second' } });
+    expect(get(env.out)?.next?.startsAt).not.toBeNull();
+    await env.advance(10_000);
+    expect(env.tokenPosts().at(-1)!.init.body).toMatchObject({ itemId: 'ep2', via: 'airplay' });
+    expect(get(env.out)).toMatchObject({ itemId: 'ep2' });
+    expect(env.body.children).toContain(env.video);
+  });
+
+  it('cancelled next episode: token revoked at the end, session closed after ENDED_IDLE_MS, no second stop or revoke', async () => {
+    const env = await setup();
+    await env.adopt({ itemId: 'ep1', isEpisode: true });
+    env.video.fire('ended');
+    await flush();
+    expect(env.deletes()).toEqual(['a1']);
+    env.engine.cancelNext();
+    await env.advance(ENDED_IDLE_MS - 1);
+    expect(get(env.out)?.state).toBe('ended');
+    await env.advance(1);
+    expect(get(env.out)).toBeNull();
+    expect(env.body.children).toEqual([]);
+    expect(env.reports()).toEqual(['stop']);
+    expect(env.deletes()).toEqual(['a1']);
+  });
+
+  it('next() after a cancelled countdown: the ended token is not revoked again', async () => {
+    const env = await setup();
+    await env.adopt({ itemId: 'ep1', isEpisode: true });
+    env.video.fire('ended');
+    await flush();
+    env.engine.cancelNext();
+    await env.engine.next();
+    await flush();
+    expect(env.air.info?.castId).toBe('n1');
+    expect(env.deletes()).toEqual(['a1']);
   });
 
   it('a title switch after the end keeps the element', async () => {

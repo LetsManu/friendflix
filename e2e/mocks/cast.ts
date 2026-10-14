@@ -73,7 +73,7 @@ export const srcAtPick = (page: Page) => page.evaluate(() => (window as unknown 
 /** runs in the page as the Cast sender SDK (same shape as `fakeSdk()` in web/src/lib/cast.test.ts) */
 function castSdkScript() {
   type Rec = { args: unknown[] } & Record<string, unknown>;
-  const w = window as unknown as Record<string, unknown> & { __castLoads: unknown[]; __castCalls: string[]; __onGCastApiAvailable?: (ok: boolean) => void; chrome?: Record<string, unknown> };
+  const w = window as unknown as Record<string, unknown> & { __castLoads: unknown[]; __castCalls: string[]; __castLoadFails?: boolean; __onGCastApiAvailable?: (ok: boolean) => void; chrome?: Record<string, unknown> };
   w.__castLoads = []; w.__castCalls = [];
   const ctxListeners = new Map<string, (e: { castState?: string; sessionState?: string }) => void>();
   let anyChange: () => void = () => undefined;
@@ -95,6 +95,7 @@ function castSdkScript() {
     async loadMedia(req: Rec): Promise<string | undefined> {
       const media = req.args[0] as Rec;
       w.__castLoads.push({ contentId: media.args[0], contentType: media.args[1], currentTime: req.currentTime, activeTrackIds: req.activeTrackIds ?? [] });
+      if (w.__castLoadFails) throw new Error('LOAD_FAILED'); // the receiver cannot play it
       setTimeout(() => change({ isMediaLoaded: true, isPaused: false, playerState: 'PLAYING', currentTime: Number(req.currentTime) || 0, duration: Number(media.duration) || 600 }), 0);
       return undefined;
     },
@@ -143,9 +144,11 @@ function castSdkScript() {
   }
   /** the Default Media Receiver reports a finished media as IDLE, nothing loaded */
   const finish = () => change({ isMediaLoaded: false, isPaused: true, playerState: 'IDLE' });
+  /** the receiver plays the last seconds of the media (so a following `finish()` is its real end) */
+  const nearEnd = () => change({ currentTime: Math.max(0, player.duration - 5) });
   w.cast = { framework };
   w.chrome = { ...(w.chrome ?? {}), cast: chromeCast };
-  w.__castFake = { start, end, finish };
+  w.__castFake = { start, end, finish, nearEnd };
   w.__onGCastApiAvailable?.(true);
   fire('caststatechanged', { castState: 'NOT_CONNECTED' }); // a receiver is around
 }
@@ -153,13 +156,15 @@ function castSdkScript() {
 /**
  * Google Cast sender SDK fake, served for gstatic's sender script (call after `castOn()`): `loads()` = the `loadMedia` requests,
  * `calls()` = controller / context calls (`playOrPause`, `seek:<sec>`, `endCurrentSession`, ...); `start()` = the user picked
- * `Wohnzimmer-TV`, `end()` = the session ended, `finish()` = the media finished on the receiver.
+ * `Wohnzimmer-TV`, `end()` = the session ended, `nearEnd()` = the receiver jumps to the last seconds, `finish()` = the media
+ * finished on the receiver (the end only counts as finished after `nearEnd()`); `failLoads()` = every
+ * later `loadMedia` rejects (the receiver cannot play the title).
  */
 export async function fakeCastSdk(page: Page) {
   await page.route('https://www.gstatic.com/cv/js/sender/**', (r) => r.fulfill({ contentType: 'text/javascript', body: `(${castSdkScript.toString()})();` }));
-  type Fake = { start(): void; end(): void; finish(): void };
+  type Fake = { start(): void; end(): void; finish(): void; nearEnd(): void };
   const ready = () => page.waitForFunction(() => Boolean((window as unknown as { __castFake?: unknown }).__castFake));
-  const run = async (fn: 'start' | 'end' | 'finish') => {
+  const run = async (fn: keyof Fake) => {
     await ready();
     await page.evaluate((f) => (window as unknown as { __castFake: Fake }).__castFake[f](), fn);
   };
@@ -169,5 +174,7 @@ export async function fakeCastSdk(page: Page) {
     start: () => run('start'),
     end: () => run('end'),
     finish: () => run('finish'),
+    nearEnd: () => run('nearEnd'),
+    failLoads: () => page.evaluate(() => { (window as unknown as { __castLoadFails: boolean }).__castLoadFails = true; }),
   };
 }
