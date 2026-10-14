@@ -10,7 +10,7 @@ import { createMediaServer, mediaConfigProblems } from './media/index.js';
 import { dispatchMediaEvent } from './media/events.js';
 import { RedisKV } from './kv.js';
 import { authentikConfigProblem } from './invites.js';
-import { createAuthentikProvider } from './oidc.js';
+import { createLazyOidc } from './oidc.js';
 import { SeerrClient } from './seerr/client.js';
 import { loadRoles } from './roles.js';
 import { nightlyTick } from './healthcheck.js';
@@ -19,7 +19,7 @@ import { expiryTick } from './expiry.js';
 import { deletionTick } from './deletion.js';
 import { reapplyPoliciesOnce } from './users.js';
 import { pushEnabled } from './push.js';
-import { previews } from './previews.js';
+import { previewWarmTick } from './previews.js';
 import { gcDownloads, startPreparerTick } from './downloadprep.js';
 import { gcLicenses } from './downloads.js';
 import { pollJellyfinSessions } from './routes/internal.js';
@@ -29,36 +29,50 @@ import { resolveRequestedPolls } from './polls.js';
 import { reminderTick } from './reminders.js';
 import { leavingTick, qualityIndexTick } from './fresh.js';
 import { langIndexTick } from './langindex.js';
-import type { Ctx } from './ctx.js';
+import { createLiveCtx } from './ctx.js';
+import { RedisSettingsBus } from './settings/bus.js';
+import { createSettingsStore } from './settings/store.js';
 import { jobFailed } from './errorlog.js';
 import { healthTick } from './health.js';
 import { hygieneDue, stopHygiene } from './hygiene/scan.js';
 
-const cfg = loadConfig();
-const pool = new pg.Pool({ connectionString: cfg.DATABASE_URL, max: 10 });
+// env only: the bootstrap keys open the database, the settings store then layers the saved settings over env
+const boot = loadConfig();
+const pool = new pg.Pool({ connectionString: boot.DATABASE_URL, max: 10 });
 await migrate(pool);
-const kv = new RedisKV(new Redis(cfg.REDIS_URL));
-const encKey = keyFromBase64(cfg.APP_ENC_KEY);
+const redis = new Redis(boot.REDIS_URL);
+const kv = new RedisKV(redis);
+const encKey = keyFromBase64(boot.APP_ENC_KEY);
+// the store logs key names only, never values; before the app (and its logger) exists, to the console
+const logTo: { app?: { warn(o: object, m: string): void } } = {};
+const log = { warn: (o: object, m: string) => (logTo.app ? logTo.app.warn(o, m) : console.warn(m, o)) };
+const settings = await createSettingsStore({ db: pool, encKey, env: process.env, bus: new RedisSettingsBus(redis), log });
+const cfg = settings.current(); // startup checks and env-only keys; routes and jobs read ctx.cfg (live)
 const mediaProblems = mediaConfigProblems(cfg);
 if (mediaProblems.length) throw new Error(`MEDIA_SERVER=${cfg.MEDIA_SERVER}: ${mediaProblems.join('; ')}`);
 
-const ctx: Ctx = {
-  cfg, kv, db: pool, encKey, fetchImpl: fetch,
-  oidc: await createAuthentikProvider(cfg),
-  jf: createMediaServer({ cfg, kv, db: pool, encKey }),
-  seerr: new SeerrClient(cfg.REQUESTS_URL, cfg.REQUESTS_API_KEY),
+const live = createLiveCtx({
+  settings, kv, db: pool, encKey, fetchImpl: fetch,
+  // discovered on the first login and again after a sign-in setting changes; an unreachable IdP answers 503, the backend stays up
+  oidc: createLazyOidc(() => settings.current(), { log }),
+  media: (c) => createMediaServer({ cfg: c, kv, db: pool, encKey }),
+  requests: (c) => new SeerrClient(c.REQUESTS_URL, c.REQUESTS_API_KEY),
   roles: loadRoles(cfg.ROLE_TEMPLATES),
-};
+  log,
+});
+const { ctx } = live;
 
 const app = await buildApp(ctx);
+logTo.app = app.log;
 await app.listen({ port: cfg.PORT, host: '0.0.0.0' });
 // renamed settings that still use their old name (names only, never values)
 for (const msg of deprecatedEnvNames()) app.log.warn(msg);
 // the media server's own change feed (websocket, sync job …), if it has one; Jellyfin pushes webhooks instead
-await ctx.jf.start?.({ dispatch: (e) => dispatchMediaEvent(ctx, e), log: app.log });
+await live.startMedia({ dispatch: (e) => dispatchMediaEvent(ctx, e), log: app.log });
 // one-off: push the changed role policies (guest transcoding) to every existing Jellyfin user
 void reapplyPoliciesOnce(ctx).catch(jobFailed(ctx, app.log, 'role-reapply', 'role policy re-apply failed'));
 pushEnabled(cfg); // validates the VAPID pair once (warns and disables push when invalid)
+settings.onChange(['VAPID_PUBLIC_KEY', 'VAPID_PRIVATE_KEY', 'VAPID_SUBJECT', 'PUBLIC_URL'], () => { pushEnabled(settings.current()); });
 const akMissing = authentikConfigProblem(cfg);
 if (akMissing) app.log.warn({ missing: akMissing }, `Authentik invitations disabled: ${akMissing.join(', ')} not set (see docs/integrations.md)`);
 else if (!cfg.AUTHENTIK_URL) app.log.info('Authentik invitations off: invited people need an existing Authentik account');
@@ -73,9 +87,8 @@ timers.push(setInterval(() => {
 }, 5_000));
 timers.push(setInterval(() => void resolveRequestedPolls(ctx).catch(jobFailed(ctx, app.log, 'poll-resolve', 'resolve failed')), 60_000));
 timers.push(setInterval(() => void calendarNotifications(ctx).catch(jobFailed(ctx, app.log, 'calendar', 'calendar job failed')), 3600_000));
-if (cfg.PREVIEW_WARM === 'true') {
-  timers.push(setInterval(() => void previews(ctx).warmTick().catch(jobFailed(ctx, app.log, 'preview-warm', 'preview warm failed')), 60_000));
-}
+// always scheduled: PREVIEW_WARM applies live, the tick checks it
+timers.push(setInterval(() => void previewWarmTick(ctx).catch(jobFailed(ctx, app.log, 'preview-warm', 'preview warm failed')), 60_000));
 timers.push(setInterval(() => void reminderTick(ctx).catch(jobFailed(ctx, app.log, 'reminder', 'reminder tick failed')), 1800_000));
 timers.push(setInterval(() => void nightlyTick(ctx).catch(jobFailed(ctx, app.log, 'playback-check', 'playback check failed')), 600_000));
 timers.push(setInterval(() => void digestTick(ctx).catch(jobFailed(ctx, app.log, 'digest', 'digest tick failed')), 600_000));
@@ -92,11 +105,15 @@ timers.push(setInterval(() => {
   void deletionTick(ctx).catch(jobFailed(ctx, app.log, 'account-deletion', 'account deletion tick failed')).finally(() => { deletionBusy = false; });
 }, 60_000)); // final account deletion after the grace period
 if (cfg.BACKGROUND_JOBS === 'true') {
-  if (cfg.DOWNLOADS_ENABLED === 'true') {
-    timers.push(setInterval(() => void startPreparerTick(ctx).catch(jobFailed(ctx, app.log, 'download-prep', 'download prep tick failed')), 15_000));
-    timers.push(setInterval(() => void gcDownloads(ctx).then(() => gcLicenses(ctx)).catch(jobFailed(ctx, app.log, 'download-gc', 'download gc failed')), 600_000));
-    void startPreparerTick(ctx).catch(jobFailed(ctx, app.log, 'download-prep', 'download prep start failed'));
-  }
+  // always scheduled: DOWNLOADS_ENABLED applies live, each tick checks it
+  const downloadsOn = () => ctx.cfg.DOWNLOADS_ENABLED === 'true';
+  timers.push(setInterval(() => {
+    if (downloadsOn()) void startPreparerTick(ctx).catch(jobFailed(ctx, app.log, 'download-prep', 'download prep tick failed'));
+  }, 15_000));
+  timers.push(setInterval(() => {
+    if (downloadsOn()) void gcDownloads(ctx).then(() => gcLicenses(ctx)).catch(jobFailed(ctx, app.log, 'download-gc', 'download gc failed'));
+  }, 600_000));
+  if (downloadsOn()) void startPreparerTick(ctx).catch(jobFailed(ctx, app.log, 'download-prep', 'download prep start failed'));
   timers.push(setInterval(() => void healthTick(ctx), 60_000)); // admin health snapshot (kv health:snap); never throws
   void healthTick(ctx);
   timers.push(setInterval(() => void langIndexTick(ctx), 1800_000)); // self-limits to every 12 h, never throws
@@ -116,6 +133,8 @@ for (const sig of ['SIGTERM', 'SIGINT'] as const) {
   process.on(sig, () => {
     timers.forEach(clearInterval);
     stopHygiene();
-    void Promise.resolve(ctx.jf.stop?.()).catch(() => undefined).then(() => app.close()).then(() => process.exit(0));
+    void live.close().catch(() => undefined)
+      .then(() => settings.close()).catch(() => undefined)
+      .then(() => app.close()).then(() => process.exit(0));
   });
 }

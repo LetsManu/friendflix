@@ -16,25 +16,26 @@ const BOOTSTRAP = new Set(BOOTSTRAP_KEYS);
 const legacyNames = (key: string) => settingDef(key)?.legacyEnv ?? [];
 
 /**
- * The env layer as raw strings, in loadConfig's order: VAR_FILE (Docker secrets) wins over VAR, and a legacy name only counts while the
- * new name is unset in both forms (new_FILE, new, old_FILE, old). An empty value or file counts as unset (compose passes `${VAR:-}`), so
- * '' never reaches a schema. An env PUBLIC_URL with a path keeps working with its origin.
+ * The env layer as raw strings, in loadConfig's order: a set VAR_FILE (Docker secrets) replaces VAR (an empty file is unset, even with
+ * VAR set), and a legacy name only counts while the new name is unset in both forms (new_FILE, new, old_FILE, old). An empty value counts
+ * as unset (compose passes `${VAR:-}`), so '' never reaches a schema. An env PUBLIC_URL with a path keeps working with its origin.
  */
 export function envLayer(env: NodeJS.ProcessEnv): Record<string, string> {
-  const pick = (name: string): string | undefined => {
+  // { set } = the name is given in either form (it then hides the legacy names, as in withRenamedEnv); a set VAR_FILE decides alone,
+  // so an empty file with a set VAR is unset, as in withFileSecrets
+  const pick = (name: string): { set: boolean; value?: string } => {
     const file = env[`${name}_FILE`];
     // a missing file fails like loadConfig does (the error names the path, never a value)
-    const fromFile = file ? readFileSync(file, 'utf8').trim() : '';
-    return fromFile || env[name] || undefined;
+    if (file) return { set: true, value: readFileSync(file, 'utf8').trim() || undefined };
+    return { set: Boolean(env[name]), value: env[name] || undefined };
   };
   const out: Record<string, string> = {};
   for (const key of KEYS) {
     for (const name of [key, ...legacyNames(key)]) {
-      const v = pick(name);
-      if (v) {
-        out[key] = v;
-        break;
-      }
+      const { set, value } = pick(name);
+      if (!set) continue;
+      if (value) out[key] = value;
+      break;
     }
   }
   return withOriginPublicUrl(out) as Record<string, string>;

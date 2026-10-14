@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { decrypt, encrypt } from '../crypto.js';
 import type { Ctx } from '../ctx.js';
-import { writeRows } from '../settings/repo.js';
 
 export type SourceName = 'tmdb' | 'omdb';
 export const SOURCES: readonly SourceName[] = ['tmdb', 'omdb'];
@@ -27,15 +26,16 @@ export interface SourceStatus {
   budget?: number;
 }
 
-type KeyCtx = Pick<Ctx, 'db' | 'cfg' | 'encKey'>;
+type KeyCtx = Pick<Ctx, 'db' | 'cfg' | 'encKey' | 'settings'>;
 interface Stored { enc: string | null; last4: string | null }
 
 /** the key's row in the settings table (Block 25; before migration 39 it was app_settings 'source.<name>') */
 const settingKey = (name: SourceName) => (name === 'tmdb' ? 'TMDB_API_KEY' : 'OMDB_API_KEY');
 const storedKey = async (ctx: Pick<Ctx, 'db'>, name: SourceName): Promise<Stored | undefined> =>
   (await ctx.db.query<Stored>('select enc, last4 from settings where key=$1', [settingKey(name)])).rows[0];
-const fileKey = (ctx: Pick<Ctx, 'cfg'>, name: SourceName): string | undefined =>
-  (name === 'tmdb' ? ctx.cfg.TMDB_API_KEY : ctx.cfg.OMDB_API_KEY) || undefined;
+/** the key from the environment / a secret file: ctx.cfg also holds a key saved in the database, so the source decides */
+const fileKey = (ctx: Pick<Ctx, 'cfg' | 'settings'>, name: SourceName): string | undefined =>
+  ctx.settings.sources()[settingKey(name)] === 'env' ? (name === 'tmdb' ? ctx.cfg.TMDB_API_KEY : ctx.cfg.OMDB_API_KEY) || undefined : undefined;
 
 const CACHE_MS = 30_000;
 // per database handle, so separate app instances (tests) never share a cache
@@ -67,14 +67,14 @@ export async function getSourceKey(ctx: KeyCtx, name: SourceName): Promise<{ key
   return key ? { key, from: 'db' } : null;
 }
 
-/** Stored through the settings repo (encrypted, last4, rev bump). Task 4 moves this to the settings store (publish to other instances). */
-export async function setSourceKey(ctx: KeyCtx, name: SourceName, key: string): Promise<void> {
-  await writeRows(ctx.db, ctx.encKey, { [settingKey(name)]: key }, null);
+/** Saved through the settings store (encrypted, last4, a new revision that the other instances reload). */
+export async function setSourceKey(ctx: KeyCtx, name: SourceName, key: string, actor: string | null = null): Promise<void> {
+  await ctx.settings.save({ [settingKey(name)]: key }, actor);
   cacheOf(ctx).delete(name);
 }
 
-export async function removeSourceKey(ctx: KeyCtx, name: SourceName): Promise<void> {
-  await writeRows(ctx.db, ctx.encKey, { [settingKey(name)]: null }, null);
+export async function removeSourceKey(ctx: KeyCtx, name: SourceName, actor: string | null = null): Promise<void> {
+  await ctx.settings.save({ [settingKey(name)]: null }, actor);
   cacheOf(ctx).delete(name);
 }
 
@@ -102,7 +102,7 @@ const sameKey = (encKey: Buffer, stored: string | null, key: string) => {
  * At startup: a file/env key that differs from the one seen last time (replaced secret file, restart) clears the source's failure state,
  * so the new key works at once instead of after the 1 h pause.
  */
-export async function syncFileKeys(ctx: Pick<Ctx, 'cfg' | 'kv' | 'encKey'>): Promise<void> {
+export async function syncFileKeys(ctx: Pick<Ctx, 'cfg' | 'settings' | 'kv' | 'encKey'>): Promise<void> {
   for (const name of SOURCES) {
     const file = fileKey(ctx, name);
     if (sameKey(ctx.encKey, await ctx.kv.get(FILE_FP_KEY(name)), file ?? '')) continue;

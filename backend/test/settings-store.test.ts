@@ -64,8 +64,14 @@ describe('resolveConfig', () => {
       const r = resolveConfig({ env: { ...BASE, JELLYFIN_ADMIN_API_KEY: 'from-var', JELLYFIN_ADMIN_API_KEY_FILE: file }, rows: [], encKey });
       expect(r.cfg.JELLYFIN_ADMIN_API_KEY).toBe('from-file');
       expect(loadConfig({ ...BASE, JELLYFIN_ADMIN_API_KEY: 'from-var', JELLYFIN_ADMIN_API_KEY_FILE: file }).JELLYFIN_ADMIN_API_KEY).toBe('from-file');
-      // an empty file counts as unset
-      expect(resolveConfig({ env: { ...BASE, JELLYFIN_ADMIN_API_KEY: 'from-var', JELLYFIN_ADMIN_API_KEY_FILE: join(dir, 'empty') }, rows: [], encKey }).cfg.JELLYFIN_ADMIN_API_KEY).toBe('from-var');
+      // an empty file with a set VAR is unset, as in loadConfig (one rule for both)
+      const emptyFile = { ...BASE, JELLYFIN_ADMIN_API_KEY: 'from-var', JELLYFIN_ADMIN_API_KEY_FILE: join(dir, 'empty') };
+      expect(resolveConfig({ env: emptyFile, rows: [], encKey }).cfg.JELLYFIN_ADMIN_API_KEY).toBeUndefined();
+      expect(loadConfig(emptyFile).JELLYFIN_ADMIN_API_KEY).toBeUndefined();
+      // ... and it hides the legacy names, as the new name in either form does
+      const emptyNew = { ...BASE, REQUESTS_API_KEY_FILE: join(dir, 'empty'), SEERR_API_KEY: 'old-var' };
+      expect(resolveConfig({ env: emptyNew, rows: [], encKey }).cfg.REQUESTS_API_KEY).toBe(loadConfig(emptyNew).REQUESTS_API_KEY);
+      expect(loadConfig(emptyNew).REQUESTS_API_KEY).toBe('');
       // legacy pair: old_FILE wins over old; the new name in either form wins over both
       const legacy = { ...BASE, SEERR_API_KEY: 'old-var', SEERR_API_KEY_FILE: file };
       expect(resolveConfig({ env: legacy, rows: [], encKey }).cfg.REQUESTS_API_KEY).toBe('from-file');

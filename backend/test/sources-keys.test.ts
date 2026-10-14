@@ -171,7 +171,10 @@ describe('source keys', () => {
   it('final review M3: buildApp syncs the file keys (a restart with a new secret file lifts the pause)', async () => {
     const kv = new MemoryKV();
     await kv.set(PAUSE_KEY('omdb'), '1', 600);
-    const app = await buildApp({ ...env.ctx, kv, cfg: { ...env.ctx.cfg, OMDB_API_KEY: 'omdb-file-key-77' } });
+    const orig = env.ctx.cfg;
+    env.ctx.cfg = { ...orig, OMDB_API_KEY: 'omdb-file-key-77' }; // a key from env / a secret file (the test store reports it as env)
+    const app = await buildApp({ ...env.ctx, kv });
+    env.ctx.cfg = orig;
     try {
       expect(await kv.get(FILE_FP_KEY('omdb'))).toBeTruthy();
       expect(await kv.get(PAUSE_KEY('omdb'))).toBeNull();

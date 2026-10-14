@@ -4,6 +4,7 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { createHmac, randomUUID, timingSafeEqual } from 'node:crypto';
 import { dropRemotePeers } from './tv.js';
 import { audit } from '../audit.js';
+import { secureCookies } from '../config.js';
 import type { Ctx } from '../ctx.js';
 import { authenticate, COOKIE, loadSession, newSession, rand, requireUser, saveSession } from '../session.js';
 import { revokeCasts } from '../cast.js';
@@ -123,7 +124,7 @@ async function requestApproval(ctx: Ctx, claims: OidcClaims): Promise<string> {
 }
 
 export function authRoutes(app: FastifyInstance, ctx: Ctx) {
-  const secure = ctx.cfg.PUBLIC_URL.startsWith('https://');
+  const secure = () => secureCookies(ctx.cfg); // PUBLIC_URL applies live
 
   /**
    * Starts an OIDC login; the invite (if any) travels in the server-side state to /auth/callback.
@@ -133,7 +134,7 @@ export function authRoutes(app: FastifyInstance, ctx: Ctx) {
     const s = await ctx.oidc.start({ forceLogin: Boolean(opts.resetPin || opts.reauth) });
     const saved: SavedLogin = { state: s.state, nonce: s.nonce, codeVerifier: s.codeVerifier, invite, ...(opts.resetPin ? { resetPin: true } : {}), ...(opts.reauth ? { reauth: opts.reauth } : {}) };
     await ctx.kv.set(`oidc:${s.state}`, JSON.stringify(saved), ttl);
-    reply.setCookie(OIDC_COOKIE, s.state, { httpOnly: true, secure, sameSite: 'lax', path: '/auth', maxAge: ttl }); // binds the flow to this browser
+    reply.setCookie(OIDC_COOKIE, s.state, { httpOnly: true, secure: secure(), sameSite: 'lax', path: '/auth', maxAge: ttl }); // binds the flow to this browser
     return s.url;
   }
 
@@ -241,7 +242,7 @@ export function authRoutes(app: FastifyInstance, ctx: Ctx) {
           if (!claimed) {
             // no (valid) invite: the person waits for an admin on /pending, without a session
             const requestId = await requestApproval(ctx, claims);
-            reply.setCookie(PENDING_COOKIE, signPending(ctx, requestId), { httpOnly: true, secure, sameSite: 'lax', path: '/', maxAge: PENDING_TTL });
+            reply.setCookie(PENDING_COOKIE, signPending(ctx, requestId), { httpOnly: true, secure: secure(), sameSite: 'lax', path: '/', maxAge: PENDING_TTL });
             return reply.redirect('/pending');
           }
         }
@@ -257,7 +258,7 @@ export function authRoutes(app: FastifyInstance, ctx: Ctx) {
         // locked for deletion and still in the grace period: the person may restore it on /restore (no session); other locks: 403 (F15 step 3)
         const deletionAt = await restorableUntil(ctx, user.id);
         if (!deletionAt) return reply.code(403).send({ error: 'disabled' });
-        reply.setCookie(RESTORE_COOKIE, signRestore(ctx, user.id, deletionAt), { httpOnly: true, secure, sameSite: 'lax', path: '/', maxAge: RESTORE_TTL });
+        reply.setCookie(RESTORE_COOKIE, signRestore(ctx, user.id, deletionAt), { httpOnly: true, secure: secure(), sameSite: 'lax', path: '/', maxAge: RESTORE_TTL });
         return reply.redirect('/restore');
       } else if (isAdmin && user.role !== 'admin') {
         await ctx.db.query("update users set role='admin' where id=$1", [user.id]);
@@ -277,9 +278,9 @@ export function authRoutes(app: FastifyInstance, ctx: Ctx) {
         if (cleared.rowCount) await audit(ctx, user.id, 'profile.pin_reset', user.id);
       }
       const sid = rand();
-      const dev = await registerDevice(ctx, req, reply, user.id, secure);
+      const dev = await registerDevice(ctx, req, reply, user.id, secure());
       await saveSession(ctx, sid, newSession({ userId: user.id, csrf: rand(), deviceId: dev.deviceId, deviceApproved: dev.approved }));
-      reply.setCookie(COOKIE, sid, { httpOnly: true, secure, sameSite: 'lax', path: '/', maxAge: ctx.cfg.SESSION_TTL_SECONDS });
+      reply.setCookie(COOKIE, sid, { httpOnly: true, secure: secure(), sameSite: 'lax', path: '/', maxAge: ctx.cfg.SESSION_TTL_SECONDS });
       const pendingId = verifyPending(ctx, req.cookies[PENDING_COOKIE]);
       if (req.cookies[PENDING_COOKIE]) reply.clearCookie(PENDING_COOKIE, { path: '/' }); // approved: the waiting room is done
       if (pendingId) await ctx.kv.del(pendingNoticeKey(pendingId));

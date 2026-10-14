@@ -3,7 +3,7 @@
 import pg from 'pg';
 import { buildApp, type Extra } from '../src/app.js';
 import type { Config } from '../src/config.js';
-import type { Ctx } from '../src/ctx.js';
+import { createLiveCtx, type Ctx } from '../src/ctx.js';
 import { keyFromBase64 } from '../src/crypto.js';
 import { migrate } from '../src/db.js';
 import { JellyfinClient } from '../src/jellyfin/client.js';
@@ -12,6 +12,11 @@ import { MemoryKV } from '../src/kv.js';
 import { SeerrClient } from '../src/seerr/client.js';
 import type { OidcClaims } from '../src/oidc.js';
 import { DEFAULT_ROLES } from '../src/roles.js';
+import { MemorySettingsBus } from '../src/settings/bus.js';
+import { settingDef } from '../src/settings/registry.js';
+import { writeRows } from '../src/settings/repo.js';
+import { toStored } from '../src/settings/resolve.js';
+import { createSettingsStore, type SettingsStore } from '../src/settings/store.js';
 
 export const TEST_DB = process.env.TEST_DATABASE_URL ?? 'postgres://postgres@localhost:5433/ff_test';
 export const ENC_KEY = Buffer.alloc(32, 7).toString('base64');
@@ -35,7 +40,7 @@ export const cfg: Config = {
 };
 
 export type Handler = (url: URL, init: RequestInit, body: any) => { status?: number; json?: unknown; raw?: string | Uint8Array } | undefined;
-export interface Call { method: string; path: string; search: string; body: any; auth?: string }
+export interface Call { method: string; host?: string; path: string; search: string; body: any; auth?: string }
 
 /** In-memory fake of the Jellyfin/Seerr HTTP APIs: routes are matched by "METHOD /path". */
 export function fakeHttp(routes: Record<string, Handler>, calls: Call[] = []): typeof fetch {
@@ -43,7 +48,7 @@ export function fakeHttp(routes: Record<string, Handler>, calls: Call[] = []): t
     const url = new URL(typeof input === 'string' || input instanceof URL ? input.toString() : input.url);
     const method = (init.method ?? 'GET').toUpperCase();
     const body = init.body ? JSON.parse(String(init.body)) : undefined;
-    calls.push({ method, path: url.pathname, search: url.search, body, auth: (init.headers as Record<string, string> | undefined)?.Authorization });
+    calls.push({ method, host: url.host, path: url.pathname, search: url.search, body, auth: (init.headers as Record<string, string> | undefined)?.Authorization });
     const key = Object.keys(routes).find((k) => {
       const [m, p] = k.split(' ');
       return m === method && new RegExp(`^${p}$`).test(url.pathname);
@@ -88,24 +93,79 @@ export function defaultJellyfin(): Record<string, Handler> {
   };
 }
 
+const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
+
+/**
+ * The test store: a real settings store plus the override behind `ctx.cfg = {...}` in tests. An override keeps the keys that differ from
+ * the store's snapshot and reports them as 'env' (like a value from the environment); a save of an overridden key drops its override.
+ */
+export interface TestSettings extends SettingsStore { override(next: Config): void }
+
+function withOverride(inner: SettingsStore): TestSettings {
+  let patch: Partial<Config> = {};
+  let merged: { base: Config; patch: Partial<Config>; cfg: Config } | undefined;
+  const current = (): Config => {
+    const base = inner.current();
+    if (!Object.keys(patch).length) return base;
+    if (merged?.base !== base || merged.patch !== patch) merged = { base, patch, cfg: Object.freeze({ ...base, ...patch }) };
+    return merged.cfg;
+  };
+  return {
+    ...inner,
+    current,
+    sources: () => ({ ...inner.sources(), ...Object.fromEntries(Object.keys(patch).map((k) => [k, 'env' as const])) }),
+    async save(changes, actor) {
+      patch = Object.fromEntries(Object.entries(patch).filter(([k]) => !(k in changes)));
+      return inner.save(changes, actor);
+    },
+    override(next) {
+      const base = inner.current() as Record<string, unknown>;
+      patch = Object.fromEntries(Object.entries(next).filter(([k, v]) => !same(v, base[k])));
+    },
+  };
+}
+
+/** A settings store holding the test config: settings as database rows (saves work), every other key as env. */
+export async function testSettings(pool: pg.Pool, c: Config = cfg): Promise<TestSettings> {
+  const env: NodeJS.ProcessEnv = {};
+  const rows: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(c)) {
+    if (v === undefined) continue;
+    const def = settingDef(k);
+    if (def) rows[k] = toStored(def, v);
+    else env[k] = Array.isArray(v) ? v.join(',') : String(v);
+  }
+  await writeRows(pool, keyFromBase64(ENC_KEY), rows, null);
+  const store = withOverride(await createSettingsStore({ db: pool, encKey: keyFromBase64(ENC_KEY), env, bus: new MemorySettingsBus(), log: { warn: () => {} }, pollMs: 3_600_000 }));
+  const got = store.current() as Record<string, unknown>;
+  const off = Object.keys(c).filter((k) => !same(got[k], (c as Record<string, unknown>)[k]));
+  if (off.length) throw new Error(`test settings differ from the test config: ${off.join(', ')}`);
+  return store;
+}
+
 export async function makeEnv(extraJf: Record<string, Handler> = {}, extra: Extra & { ctxPatch?: (c: Ctx) => void; seerr?: Record<string, Handler> } = {}): Promise<TestEnv> {
   const pool = await resetDb();
   const kv = new MemoryKV();
   const jfCalls: Call[] = [];
   const seerrCalls: Call[] = [];
   const claims = { current: ADMIN };
-  const client = new JellyfinClient(cfg.JELLYFIN_URL!, cfg.JELLYFIN_ADMIN_API_KEY!, fakeHttp({ ...defaultJellyfin(), ...extraJf }, jfCalls));
+  const jfFetch = fakeHttp({ ...defaultJellyfin(), ...extraJf }, jfCalls);
+  const seerrFetch = fakeHttp(extra.seerr ?? {}, seerrCalls);
   const encKey = keyFromBase64(ENC_KEY);
-  const ctx: Ctx = {
-    cfg, kv, db: pool, encKey, fetchImpl: fetch,
+  const settings = await testSettings(pool);
+  const live = createLiveCtx({
+    settings, kv, db: pool, encKey, fetchImpl: fetch,
     roles: DEFAULT_ROLES,
-    jf: new JellyfinService(client, kv, encKey),
-    seerr: new SeerrClient(cfg.REQUESTS_URL, cfg.REQUESTS_API_KEY, fakeHttp(extra.seerr ?? {}, seerrCalls)),
+    media: (c) => new JellyfinService(new JellyfinClient(c.JELLYFIN_URL!, c.JELLYFIN_ADMIN_API_KEY!, jfFetch), kv, encKey),
+    requests: (c) => new SeerrClient(c.REQUESTS_URL, c.REQUESTS_API_KEY, seerrFetch),
     oidc: {
       start: async () => ({ url: 'https://idp/authorize', state: 's' + Math.random().toString(36).slice(2), nonce: 'n', codeVerifier: 'v' }),
       finish: async () => ({ authTime: Math.floor(Date.now() / 1000), ...claims.current }), // a fresh IdP login unless a test sets authTime
     },
-  };
+    overrideCfg: (c) => settings.override(c),
+    log: { warn: () => {} },
+  });
+  const { ctx } = live;
   extra.ctxPatch?.(ctx);
   const app = await buildApp(ctx, extra);
   const dev: { v?: string } = {};
@@ -120,6 +180,6 @@ export async function makeEnv(extraJf: Record<string, Handler> = {}, extra: Extr
     const me = await app.inject({ url: '/api/me', cookies: { ff_sid: sid } });
     return { cookies: { ff_sid: sid }, csrf: me.json().csrfToken as string };
   };
-  return { ctx, app, pool, jfCalls, seerrCalls, claims, kv, login, close: async () => { await app.close(); await pool.end(); } };
+  return { ctx, app, pool, jfCalls, seerrCalls, claims, kv, login, close: async () => { await live.close(); await settings.close(); await app.close(); await pool.end(); } };
 }
 

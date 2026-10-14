@@ -234,6 +234,18 @@ export const configSchema = z.object({
 
 export type Config = z.infer<typeof configSchema>;
 
+/** The origin browsers use (Origin header checks); null while PUBLIC_URL is not set yet (setup), which matches no request. */
+export function publicOrigin(cfg: Pick<Config, 'PUBLIC_URL'>): string | null {
+  try {
+    return cfg.PUBLIC_URL ? new URL(cfg.PUBLIC_URL).origin : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Cookies get the Secure flag when the app is served over https. */
+export const secureCookies = (cfg: Pick<Config, 'PUBLIC_URL'>): boolean => cfg.PUBLIC_URL.startsWith('https://');
+
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   const c = configSchema.parse(withOriginPublicUrl(withFileSecrets(withRenamedEnv(env))));
   // yellow must come before red: a warn level at or above the critical one would never show, so both fall back to the defaults

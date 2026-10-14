@@ -217,10 +217,9 @@ export function internalRoutes(app: FastifyInstance, ctx: Ctx) {
 
   // Webhooks of the configured server (Jellyfin: /internal/webhook/jellyfin), translated into neutral events by the implementation.
   if (ctx.jf.webhookEvents) {
-    const translate = ctx.jf.webhookEvents.bind(ctx.jf);
     app.post(`/internal/webhook/${ctx.jf.kind}`, async (req, reply) => {
       if (!checkSecret(req, 'x-webhook-secret', ctx.cfg.WEBHOOK_SECRET)) return reply.code(403).send({ error: 'forbidden' });
-      const events = translate(req.body);
+      const events = ctx.jf.webhookEvents?.(req.body); // the current instance (rebuilt when the media settings change)
       if (!events) return reply.code(400).send({ error: 'bad_request' });
       for (const e of events) await dispatchMediaEvent(ctx, e);
       return { ok: true };

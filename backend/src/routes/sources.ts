@@ -24,7 +24,7 @@ export function sourceRoutes(app: FastifyInstance, ctx: Ctx, test?: SourceTester
     const name = nameOf(req);
     const { key } = z.object({ key: keySchema }).parse(req.body);
     if ((await getSourceKey(ctx, name))?.from === 'file') return reply.code(409).send({ error: 'from_file' });
-    await setSourceKey(ctx, name, key);
+    await setSourceKey(ctx, name, key, req.user!.id);
     await resetSourceState(ctx, name);
     await audit(ctx, req.user!.id, 'source.set', undefined, { name });
     return sourceStatus(ctx, name);
@@ -33,7 +33,7 @@ export function sourceRoutes(app: FastifyInstance, ctx: Ctx, test?: SourceTester
   app.delete('/api/admin/sources/:name', admin, async (req, reply) => {
     const name = nameOf(req);
     if ((await getSourceKey(ctx, name))?.from === 'file') return reply.code(409).send({ error: 'from_file' });
-    await removeSourceKey(ctx, name);
+    await removeSourceKey(ctx, name, req.user!.id);
     await resetSourceState(ctx, name);
     await audit(ctx, req.user!.id, 'source.remove', undefined, { name });
     return sourceStatus(ctx, name);
