@@ -20,10 +20,10 @@
   $: dirty = Object.keys(changes).length > 0;
   const colorKey = (key: string) => `account.profiles.colors.${key}` as TKey;
 
-  function failText(e: unknown): string {
+  function failText(e: unknown, sent: { name?: string }): string {
     if (!(e instanceof ApiError)) return errorText(e);
     if ((e.body as { error?: string } | null)?.error === 'name_taken') return tr('account.account.profile.nameTaken');
-    if (e.status === 400) return tr('account.account.profile.nameInvalid');
+    if (e.status === 400 && sent.name !== undefined) return tr('account.account.profile.nameInvalid'); // the server refused the name (e.g. characters)
     if (e.status === 502 || e.status === 503) return tr('account.account.profile.signInRefused'); // Authentik refused or is down
     return errorText(e);
   }
@@ -34,7 +34,7 @@
     const body = changes;
     const r = await runAction({ key: KEY, run: () => api<Account>('/api/account/profile', { method: 'PATCH', body }), success: tr('account.account.profile.saved'), error: false });
     if (r.ok && r.value) dispatch('saved', r.value);
-    else if (!r.skipped) err = failText(r.error);
+    else if (!r.skipped) err = failText(r.error, body);
   }
 </script>
 

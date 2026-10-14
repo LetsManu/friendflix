@@ -37,6 +37,7 @@ describe('describeActivity', () => {
     const base = { id: 10, at: '', target: 'uuid', actor: 'Tester', target_name: 'Tester', meta: { ip: '10.0.0.1' } };
     expect(describeActivity({ ...base, action: 'session.reauth' })).toEqual({ text: 'Tester hat sich erneut angemeldet (für eine Kontoaktion)', icon: 'log-out' });
     expect(describeActivity({ ...base, action: 'session.reauth_mismatch' }).text).toBe('Tester: erneute Anmeldung mit einem anderen Konto abgelehnt');
+    expect(describeActivity({ ...base, action: 'session.revoke_device', meta: { sessions: 1 } }).text).toBe('Tester hat ein eigenes Gerät abgemeldet');
     expect(describeActivity({ ...base, action: 'account.profile', meta: { fields: ['name'] } })).toEqual({ text: 'Tester hat Name oder Farbe des eigenen Kontos geändert', icon: 'user' });
     await setLocale('en');
     expect(describeActivity({ ...base, action: 'session.reauth_mismatch' }).text).toBe('Tester: a new sign-in with a different account was refused');

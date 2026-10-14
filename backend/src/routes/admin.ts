@@ -426,6 +426,16 @@ export function adminRoutes(app: FastifyInstance, ctx: Ctx) {
     await audit(ctx, req.user!.id, 'device.approve', req.user!.id, { by: 'self' });
     return { ok: true };
   });
+  // sign out one own device: its sessions go (with its offline licences, push subscriptions and cast tokens), the approval stays
+  app.post('/api/devices/:id/sign-out', { preHandler: requireOwner(ctx) }, async (req, reply) => {
+    const id = z.string().min(10).max(80).parse((req.params as { id: string }).id);
+    if (id === req.session!.deviceId) return reply.code(409).send({ error: 'current_device' });
+    const own = await ctx.db.query('select 1 from devices where user_id=$1 and device_id=$2', [req.user!.id, id]);
+    if (!own.rowCount) return reply.code(404).send({ error: 'not_found' });
+    const n = await revokeSessions(ctx, req.user!.id, id);
+    await audit(ctx, req.user!.id, 'session.revoke_device', req.user!.id, { sessions: n });
+    return { revoked: n };
+  });
   app.delete('/api/devices/:id', { preHandler: requireOwner(ctx) }, async (req, reply) => {
     const id = z.string().min(10).max(80).parse((req.params as { id: string }).id);
     if (id === req.session!.deviceId) return reply.code(400).send({ error: 'current_device' });

@@ -382,6 +382,7 @@ const es: Translation<typeof de> = {
     },
     session: {
       revoke_others: '{actor} cerró sesión en otros dispositivos',
+      revoke_device: '{actor} cerró sesión en uno de sus dispositivos',
       reauth: '{actor} volvió a iniciar sesión (para una acción de la cuenta)',
       reauth_mismatch: '{actor}: se rechazó un nuevo inicio de sesión con otra cuenta',
     },

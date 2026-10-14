@@ -299,7 +299,7 @@ export default {
     digest: { settings: '{actor} hat den Wochenrückblick eingestellt' },
     settings: { language: '{actor} hat die Standardsprache geändert' },
     system: { update: '{actor} hat ein Update gestartet' },
-    session: { revoke_others: '{actor} hat sich auf anderen Geräten abgemeldet', reauth: '{actor} hat sich erneut angemeldet (für eine Kontoaktion)', reauth_mismatch: '{actor}: erneute Anmeldung mit einem anderen Konto abgelehnt' },
+    session: { revoke_others: '{actor} hat sich auf anderen Geräten abgemeldet', revoke_device: '{actor} hat ein eigenes Gerät abgemeldet', reauth: '{actor} hat sich erneut angemeldet (für eine Kontoaktion)', reauth_mismatch: '{actor}: erneute Anmeldung mit einem anderen Konto abgelehnt' },
     account: { profile: '{actor} hat Name oder Farbe des eigenen Kontos geändert' },
     tv: { pair: '{actor} hat einen Fernseher gekoppelt', claim: '{actor} hat einen Fernseher verbunden' },
     party: { create: '{actor} hat eine Watch-Party gestartet' },

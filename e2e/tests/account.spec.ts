@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { expect, test } from '../fixtures.js';
 import { noHorizontalOverflow } from '../helpers.js';
+import { ME } from '../mocks/fixtures.js';
 
 /** Block 23 self-service: /me/account (profile, security, sessions & devices) */
 test.describe('account page (/me/account)', () => {
@@ -62,19 +63,38 @@ test.describe('account page (/me/account)', () => {
     await expect.poll(() => api.log).toContain('PATCH /api/account/profile {"avatar":"green"} -> 200');
   });
 
-  test('a sign-out of another device asks first', async ({ page, api }) => {
+  test('sign-out of another device asks first and keeps the device', async ({ page, api }) => {
     await page.goto('/me/account');
     const sessions = page.getByRole('region', { name: 'Sitzungen & Geräte' });
     await sessions.getByRole('button', { name: 'Safari auf iOS abmelden' }).click();
     const dlg = page.getByRole('alertdialog');
     await expect(dlg).toContainText('„Safari auf iOS“ abmelden?');
+    await expect(dlg).toContainText('Es bleibt freigegeben.');
     await dlg.getByRole('button', { name: 'Abmelden' }).click();
+    await expect(page.getByText('„Safari auf iOS“ abgemeldet.')).toBeVisible();
+    expect(api.log).toContain('POST /api/devices/dev-phone-00000000002/sign-out  -> 200');
+    expect(api.log.some((l) => l.startsWith('DELETE '))).toBe(false);
+    await expect(sessions.getByRole('listitem')).toHaveCount(2);
+  });
+
+  test('remove forgets the device after its own confirm, focus goes to the heading', async ({ page, api }) => {
+    await page.goto('/me/account');
+    const sessions = page.getByRole('region', { name: 'Sitzungen & Geräte' });
+    await sessions.getByRole('button', { name: 'Safari auf iOS entfernen' }).click();
+    const dlg = page.getByRole('alertdialog');
+    await expect(dlg).toContainText('„Safari auf iOS“ entfernen?');
+    await expect(dlg).toContainText('neu freigegeben werden');
+    await dlg.getByRole('button', { name: 'Entfernen' }).click();
     await expect(sessions.getByRole('listitem')).toHaveCount(1);
     expect(api.log.some((l) => l.startsWith('DELETE /api/devices/dev-phone-00000000002'))).toBe(true);
+    await expect(sessions.getByRole('heading', { level: 2, name: 'Sitzungen & Geräte' })).toBeFocused();
   });
 
   test('sign out all others shows the count', async ({ page, api }) => {
+    let listLoads = 0;
+    page.on('request', (r) => { if (r.method() === 'GET' && new URL(r.url()).pathname === '/api/devices') listLoads++; });
     await page.goto('/me/account');
+    await expect(page.getByText('Safari auf iOS')).toBeVisible();
     await page.getByRole('button', { name: 'Alle anderen Geräte abmelden' }).click();
     const dlg = page.getByRole('alertdialog');
     await expect(dlg).toContainText('Alle anderen Geräte abmelden?');
@@ -85,6 +105,7 @@ test.describe('account page (/me/account)', () => {
     await page.getByRole('alertdialog').getByRole('button', { name: 'Abmelden' }).click();
     await expect(page.getByText('2 andere Sitzungen beendet.')).toBeVisible();
     expect(api.log.filter((l) => l.includes('revoke-others'))).toHaveLength(1);
+    await expect.poll(() => listLoads).toBe(2); // the list is read again
   });
 
   test('waiting devices link to the approval page', async ({ page, api }) => {
@@ -129,6 +150,29 @@ test.describe('account page (/me/account)', () => {
     await expect(page.getByRole('region', { name: 'Sitzungen & Geräte' }).getByText('Dieses Gerät')).toBeVisible();
     // the colour swatches are named buttons in a labelled group
     await expect(page.getByRole('group', { name: 'Farbe' }).getByRole('button')).toHaveCount(8);
+  });
+});
+
+test.describe('owner profile only', () => {
+  const KID = { ...ME, profile: { id: 'p2', name: 'Anna', avatar: 'a2', isOwner: false } };
+  test('/me has no Account row on another profile', async ({ page }) => {
+    await page.route('**/api/me', (r) => r.fulfill({ json: KID }));
+    await page.goto('/me');
+    await expect(page.getByRole('heading', { level: 2, name: 'Konto & Einstellungen' })).toBeVisible();
+    await expect(page.getByRole('link', { name: 'Konto', exact: true })).toHaveCount(0);
+  });
+  test.describe('refused', () => {
+    test.use({ allowedConsole: /status of 403/ });
+    test('/me/account answering 403 shows the hint, no cards and no device list', async ({ page }) => {
+      let devices = 0;
+      page.on('request', (r) => { if (new URL(r.url()).pathname === '/api/devices') devices++; });
+      await page.route('**/api/me', (r) => r.fulfill({ json: KID }));
+      await page.route('**/api/account', (r) => r.fulfill({ status: 403, json: { error: 'owner_required' } }));
+      await page.goto('/me/account');
+      await expect(page.getByText('Dein Konto verwaltest du im Hauptprofil.')).toBeVisible();
+      await expect(page.locator('main').getByRole('region')).toHaveCount(0);
+      expect(devices).toBe(0);
+    });
   });
 });
 

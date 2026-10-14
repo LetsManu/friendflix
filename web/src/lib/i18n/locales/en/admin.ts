@@ -373,6 +373,7 @@ const en: Translation<typeof de> = {
     },
     session: {
       revoke_others: '{actor} signed out on other devices',
+      revoke_device: '{actor} signed out one of their devices',
       reauth: '{actor} signed in again (for an account action)',
       reauth_mismatch: '{actor}: a new sign-in with a different account was refused',
     },

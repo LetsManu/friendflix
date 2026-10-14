@@ -382,6 +382,7 @@ const it: Translation<typeof de> = {
     },
     session: {
       revoke_others: '{actor} si è disconnesso dagli altri dispositivi',
+      revoke_device: '{actor} ha disconnesso uno dei suoi dispositivi',
       reauth: '{actor} ha eseguito di nuovo l’accesso (per un’azione sull’account)',
       reauth_mismatch: '{actor}: un nuovo accesso con un altro account è stato rifiutato',
     },

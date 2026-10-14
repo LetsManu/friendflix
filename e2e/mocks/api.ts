@@ -33,7 +33,7 @@ export interface MockState {
   account: MockAccount;
   /** name/avatar saved via PATCH /api/account/profile (merged into /api/me) */
   accountSaved?: { name: string; avatar: string };
-  /** own devices (GET /api/devices, DELETE /api/devices/:id) */
+  /** own devices (GET /api/devices, POST /api/devices/:id/sign-out keeps one, DELETE /api/devices/:id drops it) */
   devices: MockDevice[];
   /** answer of POST /api/sessions/revoke-others */
   revokedOthers: number;
@@ -135,6 +135,7 @@ export async function installApi(ctx: BrowserContext, st: MockState): Promise<vo
       return J(st.account);
     }
     if (p === '/api/devices' && m === 'GET') return J({ devices: st.devices });
+    if ((mm = p.match(/^\/api\/devices\/([^/]+)\/sign-out$/)) && m === 'POST') return J({ revoked: 1 }); // the device stays (approved)
     if ((mm = p.match(/^\/api\/devices\/([^/]+)$/)) && m === 'DELETE') { st.devices = st.devices.filter((d) => d.id !== mm![1]); return J({ ok: true }); }
     if (p === '/api/sessions/revoke-others' && m === 'POST') return J({ revoked: st.revokedOthers });
     if (p === '/api/notifications') return J({ notifications: [{ id: 'n1', title: 'Anna hat dich zur Liste „Annas Klassiker“ eingeladen', link: '/lists/' + st.lists[1]!.id, read: false }] });
