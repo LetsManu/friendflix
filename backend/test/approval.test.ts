@@ -116,6 +116,18 @@ describe('approval queue', () => {
     expect(await approvalNotices()).toHaveLength(2);
   });
 
+  it('a new request brings a dismissed approvals banner back; a repeat sign-in and other dismissals stay', async () => {
+    await signIn('pend6');
+    const adminId = (await env.pool.query("select id from users where authentik_sub=$1", [ADMIN.sub])).rows[0].id;
+    await env.pool.query('delete from health_dismissals');
+    await env.pool.query("insert into health_dismissals(user_id, issue_id, fp) values ($1, 'approvals:pending', 'aaaaaaaaaaaa'), ($1, 'svc:media', 'bbbbbbbbbbbb')", [adminId]);
+    await signIn('pend6'); // same person again: no new request, no notice
+    const ids = async () => (await env.pool.query('select issue_id from health_dismissals order by issue_id')).rows.map((r) => r.issue_id);
+    expect(await ids()).toEqual(['approvals:pending', 'svc:media']);
+    await signIn('pend7'); // a new request
+    expect(await ids()).toEqual(['svc:media']);
+  });
+
   it('/api/pending trusts only a signed cookie', async () => {
     const c = pendingCookie(await signIn('pend5'))!.value;
     const [id] = c.split('.');

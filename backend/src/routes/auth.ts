@@ -46,7 +46,8 @@ function verifyPending(ctx: Pick<Ctx, 'encKey'>, cookie: string | undefined): st
 
 /**
  * Records (or renews) the approval request of a person without an account and invite. The admins are notified on the
- * first request, and again when the person asks after a rejection that is older than 24 h. Returns the request id.
+ * first request, and again when the person asks after a rejection that is older than 24 h; each such notice also brings a
+ * dismissed `approvals:pending` banner back. Returns the request id.
  */
 async function requestApproval(ctx: Ctx, claims: OidcClaims): Promise<string> {
   const name = claims.name ?? claims.email?.split('@')[0] ?? claims.sub;
@@ -63,6 +64,8 @@ async function requestApproval(ctx: Ctx, claims: OidcClaims): Promise<string> {
   if (inserted || (prev_rejected && Date.now() - prev_rejected.getTime() > RENOTIFY_MS)) {
     await notifyAdmins(ctx, { kind: 'approval', title: m('notify.approval.new', { name }), link: '/admin/users?tab=approvals' });
     await ctx.db.query('update approval_requests set notified_at=now() where id=$1', [id]);
+    // the banner's fingerprint ignores the count: drop the admins' dismissals so a new request shows it again
+    await ctx.db.query("delete from health_dismissals where issue_id='approvals:pending'");
   }
   return id;
 }
