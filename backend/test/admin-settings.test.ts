@@ -160,11 +160,14 @@ describe('PUT /api/admin/settings', () => {
     const hook = 'https://discord.com/api/webhooks/1/secret-token-XYZ';
     await h.reauth(h.admin, Date.now() - 11 * 60_000);
     for (const values of [{ DISCORD_WEBHOOK_URL: hook }, { ADMIN_GROUP: 'other' }, { AUTHENTIK_ENROLL_FLOW: 'x' }, { OIDC_CLIENT_ID: 'x' }, { JELLYFIN_URL: 'http://evil.example.com' },
-      { NTFY_URL: 'https://evil.example.com/t' }, { NTFY_BASE_URL: 'https://evil.example.com' }]) {
+      { NTFY_URL: 'https://evil.example.com/t' }, { NTFY_BASE_URL: 'https://evil.example.com' }, { PUBLIC_URL: 'https://evil.example.com' },
+      { HOME_NETWORKS: ['0.0.0.0/0'] }]) {
       const r = await h.put(values);
       expect(r.statusCode).toBe(401);
       expect(r.json()).toEqual({ error: 'reauth_required' });
     }
+    // session lifetimes stay without re-authentication
+    expect((await h.put({ SESSION_TTL_SECONDS: cfg.SESSION_TTL_SECONDS, SESSION_IDLE_SECONDS: cfg.SESSION_IDLE_SECONDS })).statusCode).toBe(200);
     await h.reauth(h.admin);
     const ok = await h.put({ DISCORD_WEBHOOK_URL: hook });
     expect(ok.statusCode).toBe(200);
@@ -450,10 +453,15 @@ describe('logs', () => {
     await h.put({ JELLYFIN_ADMIN_API_KEY: secret }); // 400 probe unreachable
     await h.as(h.admin, 'POST', '/api/admin/settings/test', { group: 'media', values: { JELLYFIN_ADMIN_API_KEY: secret } });
     await h.put({ DISCORD_WEBHOOK_URL: `https://discord.com/api/webhooks/1/${secret}` }); // 200
-    // a malformed body: the parser's message quotes the input, the 400 must not log it
-    const bad = await h.env.app.inject({ method: 'PUT', url: '/api/admin/settings', cookies: h.admin.cookies, headers: { 'x-csrf-token': h.admin.csrf, 'content-type': 'application/json' }, payload: `{"values":{"OIDC_CLIENT_SECRET":"${secret}"` });
+    // a malformed body whose parser error message quotes the secret (checked below): the 400 must neither answer nor log it
+    const short = 'Kx9-Q7z'; // short enough for the parser's quoted snippet
+    const payload = `{"values":${short}}`;
+    let parseMessage = '';
+    try { JSON.parse(payload); } catch (e) { parseMessage = (e as Error).message; }
+    expect(parseMessage).toContain(short);
+    const bad = await h.env.app.inject({ method: 'PUT', url: '/api/admin/settings', cookies: h.admin.cookies, headers: { 'x-csrf-token': h.admin.csrf, 'content-type': 'application/json' }, payload });
     expect(bad.statusCode).toBe(400);
-    expect(bad.body).not.toContain(secret);
+    expect(bad.body).not.toContain(short);
     const save = h.env.ctx.settings.save;
     h.env.ctx.settings.save = async () => { throw new Error('database down'); };
     try {
@@ -467,6 +475,7 @@ describe('logs', () => {
     expect(logs.join('\n')).toContain('"statusCode":500');
     for (const line of logs) {
       expect(line).not.toContain(secret);
+      expect(line).not.toContain(short);
       expect(line).not.toContain(generated);
     }
   });

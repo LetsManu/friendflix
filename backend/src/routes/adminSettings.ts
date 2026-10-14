@@ -140,8 +140,12 @@ export const CREDENTIAL_DESTINATIONS: Readonly<Record<string, readonly string[]>
 export const NO_DESTINATION: readonly string[] = ['TMDB_API_KEY', 'OMDB_API_KEY', 'GITHUB_TOKEN', 'DISCORD_WEBHOOK_URL', 'PORTAINER_WEBHOOK_URL',
   'WEBHOOK_SECRET', 'VAPID_PRIVATE_KEY'];
 const DESTINATIONS: ReadonlySet<string> = new Set(Object.values(CREDENTIAL_DESTINATIONS).flat());
-/** non-secret keys whose change needs re-authentication: the admin group, and ntfy (every user's topic and notification text goes there) */
-const REAUTH_KEYS: ReadonlySet<string> = new Set(['ADMIN_GROUP', 'NTFY_URL', 'NTFY_BASE_URL']);
+/**
+ * Non-secret keys whose change needs re-authentication: the admin group; ntfy (every user's topic and notification text goes there);
+ * the public URL (cast tokens, invite and notification links, the OIDC redirect URI and the websocket Origin are built from it); the home
+ * networks (they widen which clients get home trust).
+ */
+const REAUTH_KEYS: ReadonlySet<string> = new Set(['ADMIN_GROUP', 'NTFY_URL', 'NTFY_BASE_URL', 'PUBLIC_URL', 'HOME_NETWORKS']);
 
 /** Keys whose saving needs a recent re-authentication: secrets, OIDC_* / AUTHENTIK_*, REAUTH_KEYS and every credential destination. */
 export function needsReauth(keys: readonly string[]): boolean {
