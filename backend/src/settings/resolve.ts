@@ -16,15 +16,16 @@ const BOOTSTRAP = new Set(BOOTSTRAP_KEYS);
 const legacyNames = (key: string) => settingDef(key)?.legacyEnv ?? [];
 
 /**
- * The env layer as raw strings: VAR, then VAR_FILE (Docker secrets), then the legacy names in the same order. An empty value counts
- * as unset (compose passes `${VAR:-}`), so '' never reaches a schema. An env PUBLIC_URL with a path keeps working with its origin.
+ * The env layer as raw strings, in loadConfig's order: VAR_FILE (Docker secrets) wins over VAR, and a legacy name only counts while the
+ * new name is unset in both forms (new_FILE, new, old_FILE, old). An empty value or file counts as unset (compose passes `${VAR:-}`), so
+ * '' never reaches a schema. An env PUBLIC_URL with a path keeps working with its origin.
  */
 export function envLayer(env: NodeJS.ProcessEnv): Record<string, string> {
   const pick = (name: string): string | undefined => {
-    if (env[name]) return env[name];
     const file = env[`${name}_FILE`];
     // a missing file fails like loadConfig does (the error names the path, never a value)
-    return file ? readFileSync(file, 'utf8').trim() || undefined : undefined;
+    const fromFile = file ? readFileSync(file, 'utf8').trim() : '';
+    return fromFile || env[name] || undefined;
   };
   const out: Record<string, string> = {};
   for (const key of KEYS) {
@@ -68,6 +69,8 @@ function rowValue(def: SettingDef, row: StoredRow, encKey: Buffer): { value: unk
   const r = parseSettingValue(def, input);
   return r.ok && r.value !== undefined && r.value !== '' ? { value: r.value } : undefined;
 }
+
+let warnedDiskLevels = false;
 
 /**
  * Merges env > database > default for settings, env > bootstrap volume > default for bootstrap keys and env > default for everything
@@ -122,6 +125,10 @@ export function resolveConfig(input: { env: NodeJS.ProcessEnv; rows: StoredRow[]
 
   // yellow must come before red (as loadConfig): a warn level at or above the critical one would never show
   if ((cfg.HEALTH_DISK_WARN_PCT as number) >= (cfg.HEALTH_DISK_CRIT_PCT as number)) {
+    if (!warnedDiskLevels) {
+      warnedDiskLevels = true;
+      console.warn(`HEALTH_DISK_WARN_PCT (${cfg.HEALTH_DISK_WARN_PCT}) must be below HEALTH_DISK_CRIT_PCT (${cfg.HEALTH_DISK_CRIT_PCT}); using 85 / 95`);
+    }
     cfg.HEALTH_DISK_WARN_PCT = 85;
     cfg.HEALTH_DISK_CRIT_PCT = 95;
   }

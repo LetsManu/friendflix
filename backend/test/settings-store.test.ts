@@ -7,6 +7,7 @@ import { join } from 'node:path';
 import type { Redis } from 'ioredis';
 import type pg from 'pg';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { loadConfig } from '../src/config.js';
 import { decrypt, encrypt, keyFromBase64 } from '../src/crypto.js';
 import { MemorySettingsBus, RedisSettingsBus, SETTINGS_CHANNEL, type SettingsBus } from '../src/settings/bus.js';
 import type { StoredRow } from '../src/settings/repo.js';
@@ -54,6 +55,28 @@ describe('resolveConfig', () => {
     }
   });
 
+  it('VAR_FILE wins over VAR, as in loadConfig', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'ff-settings-'));
+    try {
+      writeFileSync(join(dir, 'k'), 'from-file\n');
+      writeFileSync(join(dir, 'empty'), '\n');
+      const file = join(dir, 'k');
+      const r = resolveConfig({ env: { ...BASE, JELLYFIN_ADMIN_API_KEY: 'from-var', JELLYFIN_ADMIN_API_KEY_FILE: file }, rows: [], encKey });
+      expect(r.cfg.JELLYFIN_ADMIN_API_KEY).toBe('from-file');
+      expect(loadConfig({ ...BASE, JELLYFIN_ADMIN_API_KEY: 'from-var', JELLYFIN_ADMIN_API_KEY_FILE: file }).JELLYFIN_ADMIN_API_KEY).toBe('from-file');
+      // an empty file counts as unset
+      expect(resolveConfig({ env: { ...BASE, JELLYFIN_ADMIN_API_KEY: 'from-var', JELLYFIN_ADMIN_API_KEY_FILE: join(dir, 'empty') }, rows: [], encKey }).cfg.JELLYFIN_ADMIN_API_KEY).toBe('from-var');
+      // legacy pair: old_FILE wins over old; the new name in either form wins over both
+      const legacy = { ...BASE, SEERR_API_KEY: 'old-var', SEERR_API_KEY_FILE: file };
+      expect(resolveConfig({ env: legacy, rows: [], encKey }).cfg.REQUESTS_API_KEY).toBe('from-file');
+      expect(loadConfig(legacy).REQUESTS_API_KEY).toBe('from-file');
+      expect(resolveConfig({ env: { ...legacy, REQUESTS_API_KEY: 'new-var' }, rows: [], encKey }).cfg.REQUESTS_API_KEY).toBe('new-var');
+      expect(loadConfig({ ...legacy, REQUESTS_API_KEY: 'new-var' }).REQUESTS_API_KEY).toBe('new-var');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it('legacy names count as env', () => {
     const r = resolveConfig({ env: { ...BASE, SEERR_URL: 'http://seerr:5055' }, rows: [row('REQUESTS_URL', 'http://db:5055')], encKey });
     expect(r.cfg.REQUESTS_URL).toBe('http://seerr:5055');
@@ -84,8 +107,14 @@ describe('resolveConfig', () => {
     expect(r.cfg.HOME_NETWORKS).toEqual(['10.0.0.0/8']);
   });
 
-  it('keeps the disk warn/crit rule for database values', () => {
-    const r = resolveConfig({ env: BASE, rows: [row('HEALTH_DISK_WARN_PCT', 95), row('HEALTH_DISK_CRIT_PCT', 90)], encKey });
+  it('keeps the disk warn/crit rule for database values, with one warning', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const rows = [row('HEALTH_DISK_WARN_PCT', 95), row('HEALTH_DISK_CRIT_PCT', 90)];
+    resolveConfig({ env: BASE, rows, encKey });
+    const r = resolveConfig({ env: BASE, rows, encKey });
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(warn.mock.calls[0]![0]).toContain('using 85 / 95');
+    warn.mockRestore();
     expect(r.cfg.HEALTH_DISK_WARN_PCT).toBe(85);
     expect(r.cfg.HEALTH_DISK_CRIT_PCT).toBe(95);
   });
@@ -118,8 +147,8 @@ const logger = () => ({ warn: vi.fn() });
 describe('settings store', () => {
   let pool: pg.Pool;
   const open: SettingsStore[] = [];
-  const make = async (opts: { env?: NodeJS.ProcessEnv; bus?: SettingsBus; log?: ReturnType<typeof logger>; pollMs?: number } = {}) => {
-    const s = await createSettingsStore({ db: pool, encKey, env: opts.env ?? BASE, bus: opts.bus ?? new MemorySettingsBus(), log: opts.log ?? logger(), pollMs: opts.pollMs });
+  const make = async (opts: { env?: NodeJS.ProcessEnv; bus?: SettingsBus; log?: ReturnType<typeof logger>; pollMs?: number; listenerTimeoutMs?: number } = {}) => {
+    const s = await createSettingsStore({ db: pool, encKey, env: opts.env ?? BASE, bus: opts.bus ?? new MemorySettingsBus(), log: opts.log ?? logger(), pollMs: opts.pollMs, listenerTimeoutMs: opts.listenerTimeoutMs });
     open.push(s);
     return s;
   };
@@ -191,6 +220,68 @@ describe('settings store', () => {
     expect(log.warn).toHaveBeenCalledWith(expect.objectContaining({ keys: ['CAST_ENABLED'] }), expect.any(String));
   });
 
+  it('a listener may call save, and a hanging listener does not block later reloads or saves', async () => {
+    const log = logger();
+    const s = await make({ log, listenerTimeoutMs: 50 });
+    s.onChange(['CAST_ENABLED'], async () => { await s.save({ PREVIEW_WARM: false }, null); });
+    await s.save({ CAST_ENABLED: false }, null); // the listener's own save completes inside this one
+    expect(s.current().PREVIEW_WARM).toBe('false');
+    expect(s.rev()).toBe(2);
+
+    s.onChange(['SESSION_IDLE_SECONDS'], () => new Promise(() => {}));
+    await s.save({ SESSION_IDLE_SECONDS: 900 }, null); // returns after the timeout
+    expect(log.warn).toHaveBeenCalledWith({ keys: ['SESSION_IDLE_SECONDS'] }, expect.any(String));
+    await s.save({ SESSION_TTL_SECONDS: 1800 }, null);
+    await s.reload();
+    expect(s.current().SESSION_TTL_SECONDS).toBe(1800);
+  });
+
+  it('snapshots are frozen, including array values', async () => {
+    const s = await make();
+    const c = s.current();
+    expect(Object.isFrozen(c)).toBe(true);
+    expect(() => { (c as { CAST_ENABLED: string }).CAST_ENABLED = 'false'; }).toThrow();
+    expect(() => (c.HOME_NETWORKS as string[]).push('1.2.3.0/24')).toThrow();
+  });
+
+  it('concurrent saves on two stores end with both values on both', async () => {
+    const bus = new MemorySettingsBus();
+    const a = await make({ bus });
+    const b = await make({ bus });
+    await Promise.all([a.save({ CAST_ENABLED: false }, null), b.save({ PREVIEW_WARM: false }, null), b.reload()]);
+    for (const s of [a, b]) {
+      await vi.waitFor(() => expect(s.rev()).toBe(2));
+      expect(s.current().CAST_ENABLED).toBe('false');
+      expect(s.current().PREVIEW_WARM).toBe('false');
+    }
+  });
+
+  it('a stored write whose local reload fails still returns its rev and publishes it', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'ff-settings-'));
+    const file = join(dir, 'token');
+    writeFileSync(file, 'ghp_from_file');
+    const bus = new MemorySettingsBus();
+    const seen: number[] = [];
+    await bus.subscribe((rev) => seen.push(rev));
+    const log = logger();
+    const s = await make({ env: { ...BASE, GITHUB_TOKEN_FILE: file }, bus, log });
+    rmSync(dir, { recursive: true, force: true }); // the next reload cannot read the env layer
+    expect(await s.save({ CAST_ENABLED: false }, null)).toBe(1);
+    await vi.waitFor(() => expect(seen).toEqual([1]));
+    expect(log.warn).toHaveBeenCalledWith(expect.objectContaining({ err: expect.any(Error) }), 'settings reload after save failed');
+  });
+
+  it('retries a failed bus subscription', async () => {
+    const shared = new MemorySettingsBus();
+    let fails = 1;
+    const flaky: SettingsBus = { publish: (r) => shared.publish(r), subscribe: (fn) => (fails-- > 0 ? Promise.reject(new Error('down')) : shared.subscribe(fn)) };
+    const a = await make({ bus: shared });
+    const b = await make({ bus: flaky, pollMs: 60_000 }); // first retry after min(pollMs, 1 s)
+    await new Promise((r) => setTimeout(r, 1200));
+    await a.save({ CAST_ENABLED: false }, null);
+    await vi.waitFor(() => expect(b.rev()).toBe(1));
+  });
+
   it('pendingRestart lists restart keys that differ from the boot value', async () => {
     const s = await make();
     expect(s.pendingRestart()).toEqual([]);
@@ -223,8 +314,8 @@ describe('settings store', () => {
     expect(err).toBeInstanceOf(HttpError);
     expect((err as HttpError).statusCode).toBe(400);
     expect((err as SettingsError).errors).toEqual({ JELLYFIN_URL: 'locked' });
-    const err2 = await s.save({ DATABASE_URL: 'postgres://x', PORT: 1, NOPE: 1 }, null).catch((e: unknown) => e) as SettingsError;
-    expect(err2.errors).toEqual({ DATABASE_URL: 'locked', PORT: 'locked', NOPE: 'unknown' });
+    const err2 = await s.save({ DATABASE_URL: 'postgres://x', PORT: 1, NOPE: 1, toString: 1 }, null).catch((e: unknown) => e) as SettingsError;
+    expect(err2.errors).toEqual({ DATABASE_URL: 'locked', PORT: 'locked', NOPE: 'unknown', toString: 'unknown' });
     expect(await readRev(pool)).toBe(0);
     expect((await pool.query('select count(*)::int as n from settings')).rows[0].n).toBe(0);
   });
