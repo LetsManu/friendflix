@@ -32,18 +32,16 @@ import { langIndexTick } from './langindex.js';
 import { createLiveCtx } from './ctx.js';
 import { RedisSettingsBus } from './settings/bus.js';
 import { createSettingsStore } from './settings/store.js';
-import { bootstrapEnv, readBootstrap } from './settings/bootstrapFiles.js';
+import { bootConfigEnv, bootstrapEnv, lazyBootstrap, nonEmptyEnv } from './settings/bootstrapFiles.js';
 import { jobFailed } from './errorlog.js';
 import { healthTick } from './health.js';
 import { hygieneDue, stopHygiene } from './hygiene/scan.js';
 
 // the bootstrap keys open the database: env (incl. VAR_FILE) wins, else the bootstrap volume written by the init container (a missing
 // file stops the start, naming the file); the settings store then layers the saved settings over env
-const bootstrap = bootstrapEnv(process.env, readBootstrap());
-// empty = unset, as in the settings resolver: compose passes every optional key as `${KEY:-}`
-const bootEnv: NodeJS.ProcessEnv = { ...Object.fromEntries(Object.entries(process.env).filter(([, v]) => v !== '')), ...bootstrap };
-for (const k of Object.keys(bootstrap)) delete bootEnv[`${k}_FILE`]; // already resolved above (an empty VAR_FILE counts as unset there)
-const boot = loadConfig(bootEnv);
+const bootstrap = bootstrapEnv(process.env, lazyBootstrap()); // reads only the files whose key env does not provide
+const env = nonEmptyEnv(process.env); // empty = unset, as compose passes every optional key as `${KEY:-}`
+const boot = loadConfig(bootConfigEnv(process.env, bootstrap));
 const pool = new pg.Pool({ connectionString: boot.DATABASE_URL, max: 10 });
 await migrate(pool);
 const redis = new Redis(boot.REDIS_URL);
@@ -52,7 +50,7 @@ const encKey = keyFromBase64(boot.APP_ENC_KEY);
 // the store logs key names only, never values; before the app (and its logger) exists, to the console
 const logTo: { app?: { warn(o: object, m: string): void } } = {};
 const log = { warn: (o: object, m: string) => (logTo.app ? logTo.app.warn(o, m) : console.warn(m, o)) };
-const settings = await createSettingsStore({ db: pool, encKey, env: process.env, bus: new RedisSettingsBus(redis), log, bootstrap });
+const settings = await createSettingsStore({ db: pool, encKey, env, bus: new RedisSettingsBus(redis), log, bootstrap });
 const cfg = settings.current(); // startup checks and env-only keys; routes and jobs read ctx.cfg (live)
 const mediaProblems = mediaConfigProblems(cfg);
 if (mediaProblems.length) throw new Error(`MEDIA_SERVER=${cfg.MEDIA_SERVER}: ${mediaProblems.join('; ')}`);

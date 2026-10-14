@@ -5,7 +5,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { runBootstrap } from '../src/bootstrap.js';
-import { bootstrapEnv, readBootstrap } from '../src/settings/bootstrapFiles.js';
+import { loadConfig } from '../src/config.js';
+import { bootConfigEnv, bootstrapEnv, lazyBootstrap, nonEmptyEnv, readBootstrap } from '../src/settings/bootstrapFiles.js';
 
 const FILES = ['app_enc_key', 'internal_secret', 'postgres_password', 'redis.conf', 'redis_password'];
 const HEX = /^[0-9a-f]{64}$/;
@@ -96,16 +97,59 @@ describe('runBootstrap', () => {
     expect(read('redis.conf')).toBe('requirepass "a b\\"c\\\\d\\x27e\\x0a#"\n');
   });
 
-  it('regenerates an empty file and repairs the modes of kept files', () => {
+  it('regenerates an empty redis_password or internal_secret (logged) and repairs the modes of kept files', () => {
     run();
     writeFileSync(join(dir, 'redis_password'), '');
+    writeFileSync(join(dir, 'internal_secret'), '\n');
     chmodSync(join(dir, 'app_enc_key'), 0o644);
     lines = [];
     run();
     expect(read('redis_password')).toMatch(HEX);
-    expect(lines).toContain('redis_password: generated');
+    expect(read('internal_secret')).toMatch(HEX);
+    expect(read('internal_secret', gatewayDir)).toBe(read('internal_secret'));
+    expect(lines).toContain('redis_password: regenerated (was empty)');
+    expect(lines).toContain('internal_secret: regenerated (was empty)');
     expect(lines).toContain('redis.conf: updated');
     expect(mode(join(dir, 'app_enc_key'))).toBe(0o440);
+  });
+
+  it('refuses an empty postgres_password or app_enc_key on a used volume and changes nothing', () => {
+    for (const f of ['postgres_password', 'app_enc_key']) {
+      run();
+      writeFileSync(join(dir, f), '');
+      const before = Object.fromEntries(FILES.map((n) => [n, read(n)]));
+      lines = [];
+      expect(() => run(), f).toThrow(`${join(dir, f)} exists but is empty (damaged volume): restore it from the backup of the bootstrap volume`);
+      expect(Object.fromEntries(FILES.map((n) => [n, read(n)]))).toEqual(before);
+      expect(lines).toEqual([]);
+      // an env value repairs it
+      run(f === 'app_enc_key' ? { APP_ENC_KEY: K } : { POSTGRES_PASSWORD: 'restored-pw' });
+      expect(read(f)).toBe(f === 'app_enc_key' ? K : 'restored-pw');
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('an empty file on a fresh volume (nothing else there yet) is generated', () => {
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, 'app_enc_key'), '');
+    run();
+    expect(Buffer.from(read('app_enc_key'), 'base64')).toHaveLength(32);
+    expect(lines).toContain('app_enc_key: generated');
+  });
+
+  it('strips one trailing newline from files and env values, the same way the readers do', () => {
+    run();
+    writeFileSync(join(dir, 'redis_password'), 'pw with space\n'); // echo-style
+    run({ POSTGRES_PASSWORD: 'pg-pw\r\n' });
+    expect(read('redis_password')).toBe('pw with space');
+    expect(read('postgres_password')).toBe('pg-pw');
+    expect(read('redis.conf')).toBe('requirepass "pw with space"\n');
+    const files = readBootstrap(dir);
+    expect(files.redisPassword).toBe('pw with space');
+    expect(files.postgresPassword).toBe('pg-pw');
+    // a value keeps any other whitespace: the readers must not trim it away
+    writeFileSync(join(dir, 'redis_password'), ' spaced \n');
+    expect(readBootstrap(dir).redisPassword).toBe(' spaced ');
   });
 
   it('never logs a value', () => {
@@ -137,6 +181,57 @@ describe('readBootstrap', () => {
     rmSync(join(dir, 'app_enc_key'));
     mkdirSync(join(dir, 'app_enc_key')); // EISDIR stands in for EACCES (the tests may run as root)
     expect(() => readBootstrap(dir)).toThrow(`bootstrap file ${join(dir, 'app_enc_key')} is not readable (EISDIR)`);
+  });
+});
+
+describe('lazyBootstrap', () => {
+  it('reads only the files that are asked for: an unreadable volume does not matter when env provides every key', () => {
+    mkdirSync(dir, { recursive: true });
+    for (const f of ['postgres_password', 'redis_password', 'app_enc_key', 'internal_secret']) mkdirSync(join(dir, f)); // EISDIR ~ EACCES
+    const env = { DATABASE_URL: 'postgres://u:x@db/x', REDIS_URL: 'redis://other', APP_ENC_KEY: K, INTERNAL_SECRET_FILE: '', INTERNAL_SECRET: S };
+    expect(bootstrapEnv(env, lazyBootstrap(dir))).toEqual({ DATABASE_URL: 'postgres://u:x@db/x', REDIS_URL: 'redis://other', APP_ENC_KEY: K, INTERNAL_SECRET: S });
+    expect(() => bootstrapEnv({ ...env, APP_ENC_KEY: '' }, lazyBootstrap(dir))).toThrow(`bootstrap file ${join(dir, 'app_enc_key')} is not readable (EISDIR)`);
+    expect(() => readBootstrap(dir)).toThrow('is not readable (EISDIR)');
+  });
+
+  it('reads each file once and gives the same values as readBootstrap', () => {
+    run();
+    const lazy = lazyBootstrap(dir);
+    expect({ ...lazy }).toEqual(readBootstrap(dir));
+    const key = lazy.appEncKey;
+    rmSync(join(dir, 'app_enc_key'));
+    expect(lazy.appEncKey).toBe(key); // read once, then cached
+    expect(lazyBootstrap(dir).appEncKey).toBeUndefined();
+  });
+});
+
+describe('bootConfigEnv', () => {
+  const b = { DATABASE_URL: 'postgres://friendflix:p@postgres:5432/friendflix', REDIS_URL: 'redis://:r@redis:6379', APP_ENC_KEY: K, INTERNAL_SECRET: S };
+
+  it('drops empty values (compose ${KEY:-}), so loadConfig parses an empty number key as its default', () => {
+    expect(() => loadConfig({ ...b, HEALTH_DISK_CRIT_PCT: '' })).toThrow();
+    const c = loadConfig(bootConfigEnv({ HEALTH_DISK_CRIT_PCT: '', SESSION_TTL_SECONDS: '', ADMIN_GROUP: '', TZ: 'UTC' }, b));
+    expect(c.HEALTH_DISK_CRIT_PCT).toBe(95);
+    expect(c.SESSION_TTL_SECONDS).toBe(8 * 3600);
+    expect(c.ADMIN_GROUP).toBe('friendflix-admins');
+    expect(c.DATABASE_URL).toBe(b.DATABASE_URL);
+  });
+
+  it('removes the bootstrap keys\' VAR_FILE names: an empty DATABASE_URL_FILE does not override the resolved value', () => {
+    const f = join(root, 'empty');
+    writeFileSync(f, '\n');
+    const env = { DATABASE_URL_FILE: f, APP_ENC_KEY_FILE: f, WEBHOOK_SECRET_FILE: f };
+    const out = bootConfigEnv(env, bootstrapEnv(env, { postgresPassword: 'p', redisPassword: 'r', appEncKey: K, internalSecret: S }));
+    expect(out.DATABASE_URL_FILE).toBeUndefined();
+    expect(out.APP_ENC_KEY_FILE).toBeUndefined();
+    expect(out.WEBHOOK_SECRET_FILE).toBe(f); // other keys keep their VAR_FILE
+    const c = loadConfig(out);
+    expect(c.DATABASE_URL).toBe(b.DATABASE_URL);
+    expect(c.APP_ENC_KEY).toBe(K);
+  });
+
+  it('nonEmptyEnv keeps everything but empty values', () => {
+    expect(nonEmptyEnv({ A: 'x', B: '', C: undefined, D: ' ' })).toEqual({ A: 'x', D: ' ' });
   });
 });
 

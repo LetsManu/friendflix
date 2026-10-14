@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { stripNewline } from '../bootstrap.js';
 
 /** What the `bootstrap` init container wrote into the bootstrap volume (src/bootstrap.ts); undefined = file missing or empty. */
 export interface BootstrapFiles {
@@ -18,21 +19,42 @@ const FILES: Record<keyof BootstrapFiles, string> = {
   postgresPassword: 'postgres_password', redisPassword: 'redis_password', appEncKey: 'app_enc_key', internalSecret: 'internal_secret',
 };
 
-/** Reads the bootstrap volume. A missing directory or file is not an error here (env may provide the key); an unreadable one is. */
+const KEYS = Object.keys(FILES) as Array<keyof BootstrapFiles>;
+
+/**
+ * One volume file, without one trailing newline (the writer's contract, src/bootstrap.ts). Missing or empty = undefined; unreadable
+ * (EACCES: the container lacks the secrets group, group_add: ["10001"]) throws, naming the path, never a value.
+ */
+function readFile(dir: string, key: keyof BootstrapFiles): string | undefined {
+  const path = join(dir, FILES[key]);
+  try {
+    return stripNewline(readFileSync(path, 'utf8')) || undefined;
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException).code;
+    if (code === 'ENOENT') return undefined;
+    throw new Error(`bootstrap file ${path} is not readable (${code})`, { cause: err });
+  }
+}
+
+/** Reads the whole bootstrap volume at once. A missing directory or file is not an error here; an unreadable one is. */
 export function readBootstrap(dir = DIR): BootstrapFiles {
   const out: BootstrapFiles = {};
-  for (const [key, name] of Object.entries(FILES) as Array<[keyof BootstrapFiles, string]>) {
-    const path = join(dir, name);
-    let v: string;
-    try {
-      v = readFileSync(path, 'utf8').trim();
-    } catch (err) {
-      const code = (err as NodeJS.ErrnoException).code;
-      if (code === 'ENOENT') continue;
-      // EACCES: the container lacks the secrets group (group_add: ["10001"]); the message names the path, never a value
-      throw new Error(`bootstrap file ${path} is not readable (${code})`, { cause: err });
-    }
+  for (const key of KEYS) {
+    const v = readFile(dir, key);
     if (v) out[key] = v;
+  }
+  return out;
+}
+
+/**
+ * The bootstrap volume, read per value on first access: bootstrapEnv only touches the files whose key env does not provide, so an
+ * unreadable volume does not stop a backend that gets all four values from env.
+ */
+export function lazyBootstrap(dir = DIR): BootstrapFiles {
+  const out: BootstrapFiles = {};
+  for (const key of KEYS) {
+    let cached: { v: string | undefined } | undefined;
+    Object.defineProperty(out, key, { enumerable: true, get: () => (cached ??= { v: readFile(dir, key) }).v });
   }
   return out;
 }
@@ -63,4 +85,20 @@ export function bootstrapEnv(env: NodeJS.ProcessEnv, files: BootstrapFiles): Boo
     APP_ENC_KEY: fromEnv(env, 'APP_ENC_KEY') ?? need('appEncKey'),
     INTERNAL_SECRET: fromEnv(env, 'INTERNAL_SECRET') ?? need('internalSecret'),
   };
+}
+
+/** The env without empty values: compose passes every optional key as `${KEY:-}`, and empty counts as unset everywhere. */
+export function nonEmptyEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  return Object.fromEntries(Object.entries(env).filter(([, v]) => v !== undefined && v !== ''));
+}
+
+/**
+ * The env loadConfig sees at start: empty values dropped (otherwise `${KEY:-}` = '' fails a number schema), the four resolved
+ * bootstrap values laid over it and their VAR_FILE names removed (bootstrapEnv already decided them; an empty file counts as unset
+ * there, while loadConfig would read it as '').
+ */
+export function bootConfigEnv(env: NodeJS.ProcessEnv, bootstrap: BootstrapEnv): NodeJS.ProcessEnv {
+  const out: NodeJS.ProcessEnv = { ...nonEmptyEnv(env), ...bootstrap };
+  for (const k of Object.keys(bootstrap)) delete out[`${k}_FILE`];
+  return out;
 }

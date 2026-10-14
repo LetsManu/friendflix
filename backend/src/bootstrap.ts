@@ -5,7 +5,7 @@
 // read-only root fs without network, then exits; every other service waits for it (service_completed_successfully).
 // Dependency-free on purpose (node: modules only): it must not load the app, its config or its database code.
 import { randomBytes } from 'node:crypto';
-import { chmodSync, chownSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, chownSync, closeSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync, renameSync, rmSync, writeSync } from 'node:fs';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
@@ -16,6 +16,14 @@ const SECRETS = [
   { file: 'app_enc_key', env: 'APP_ENC_KEY', make: () => randomBytes(32).toString('base64') },
   { file: 'internal_secret', env: 'INTERNAL_SECRET', make: () => randomBytes(32).toString('hex') },
 ] as const;
+/** Regenerating these would orphan existing data (pgdata's password, encrypted rows), so an empty copy is an error, never replaced. */
+const PRECIOUS: ReadonlySet<string> = new Set(['postgres_password', 'app_enc_key']);
+
+/**
+ * The one whitespace contract of the volume, shared with every reader (settings/bootstrapFiles.ts, gateway/src/env.ts): a value is
+ * the file (or env) content without one trailing newline (`echo pw > file`); any other whitespace is part of the value.
+ */
+export const stripNewline = (v: string): string => v.replace(/\r?\n$/, '');
 
 export interface BootstrapOptions {
   dir: string;
@@ -41,10 +49,22 @@ function redisArg(v: string): string {
 
 const readOr = (path: string): string | undefined => (existsSync(path) ? readFileSync(path, 'utf8') : undefined);
 
+/** fsync a file or directory, so a renamed file survives a power loss with its content */
+function sync(path: string, flags: string): void {
+  const fd = openSync(path, flags);
+  try {
+    fsyncSync(fd);
+  } finally {
+    closeSync(fd);
+  }
+}
+
 /**
  * Creates the volume layout (idempotent): per secret, a non-empty env value is written (env wins on every run), else an existing
  * non-empty file is kept, else a new value is generated. redis.conf and the gateway copy follow their source. Directories end up
- * 0750, files 0440, all owned by root and `gid`. Writes are atomic (temp file + rename).
+ * 0750, files 0440, all owned by root and `gid`. Writes are atomic and durable (temp file + fsync + rename + directory fsync).
+ * An existing but empty file on a volume that holds other files is a damaged volume: postgres_password and app_enc_key are then
+ * refused (the run fails before writing anything, naming the file), the others are regenerated with a log line.
  */
 export function runBootstrap(opts: BootstrapOptions): void {
   const { dir, gatewayDir, env, gid, chown, log } = opts;
@@ -63,30 +83,45 @@ export function runBootstrap(opts: BootstrapOptions): void {
     }
     const tmp = `${path}.tmp`;
     rmSync(tmp, { force: true }); // a leftover 0440 temp file could not be reopened for writing without CAP_DAC_OVERRIDE
-    writeFileSync(tmp, content, { mode: 0o600 });
+    const fd = openSync(tmp, 'w', 0o600);
+    try {
+      writeSync(fd, content);
+      fsyncSync(fd);
+    } finally {
+      closeSync(fd);
+    }
     chown(tmp, 0, gid);
     chmodSync(tmp, 0o440);
     renameSync(tmp, path);
+    sync(join(path, '..'), 'r');
     return 'written';
   };
 
-  const values: Record<string, string> = {};
-  for (const s of SECRETS) {
-    const path = join(dir, s.file);
-    const fromEnv = env[s.env];
-    const existing = readOr(path);
-    let action: string;
-    if (fromEnv) {
-      values[s.file] = fromEnv;
-      action = 'from environment';
-    } else if (existing) {
-      values[s.file] = existing;
-      action = 'kept';
-    } else {
-      values[s.file] = s.make();
-      action = 'generated';
+  // decide everything before the first write, so a refused run leaves the volume as it was
+  const existing = Object.fromEntries(SECRETS.map((s) => {
+    const raw = readOr(join(dir, s.file));
+    return [s.file, raw === undefined ? undefined : stripNewline(raw)];
+  }));
+  const fresh = !Object.values(existing).some(Boolean) && !existsSync(join(dir, 'redis.conf'));
+  const plan = SECRETS.map((s) => {
+    const fromEnv = stripNewline(env[s.env] ?? '');
+    const old = existing[s.file];
+    if (fromEnv) return { s, value: fromEnv, action: 'from environment' };
+    if (old) return { s, value: old, action: 'kept' };
+    if (old === '' && !fresh) {
+      if (PRECIOUS.has(s.file)) {
+        throw new Error(`${join(dir, s.file)} exists but is empty (damaged volume): restore it from the backup of the bootstrap volume or `
+          + `set ${s.env}; a new value would not match the existing data`);
+      }
+      return { s, value: s.make(), action: 'regenerated (was empty)' };
     }
-    put(path, values[s.file]!);
+    return { s, value: s.make(), action: 'generated' };
+  });
+
+  const values: Record<string, string> = {};
+  for (const { s, value, action } of plan) {
+    values[s.file] = value;
+    put(join(dir, s.file), value);
     log(`${s.file}: ${action}`);
   }
 

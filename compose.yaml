@@ -26,6 +26,7 @@ services:
   # the gateway's copy of internal_secret into `bootstrap-gateway`. A new install needs no .env at all. Existing installs:
   # the four values below win when set in .env and are copied into the volume on every start. It logs file names only.
   bootstrap:
+    # same build as `backend` (the image tag must exist before `up`); `docker compose build` runs it twice, the second from cache
     build: { context: ., dockerfile: backend/Dockerfile }
     image: friendflix-backend:dev
     command: ["node", "backend/dist/bootstrap.js"]

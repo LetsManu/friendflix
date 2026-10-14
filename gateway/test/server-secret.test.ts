@@ -17,6 +17,11 @@ describe('gateway INTERNAL_SECRET', () => {
     expect(internalSecret({ FF_GATEWAY_BOOTSTRAP_DIR: dir, INTERNAL_SECRET: '' })).toBe('b'.repeat(64)); // compose passes ${VAR:-}
   });
 
+  it('strips only one trailing newline from the volume file (the writer\'s contract), not other whitespace', () => {
+    writeFileSync(join(dir, 'internal_secret'), ` ${'b'.repeat(32)} \r\n`);
+    expect(internalSecret({ FF_GATEWAY_BOOTSTRAP_DIR: dir })).toBe(` ${'b'.repeat(32)} `);
+  });
+
   it('env and VAR_FILE win over the volume file', () => {
     writeFileSync(join(dir, 'internal_secret'), 'b'.repeat(64));
     writeFileSync(join(dir, 'secret_file'), 'f'.repeat(32));
