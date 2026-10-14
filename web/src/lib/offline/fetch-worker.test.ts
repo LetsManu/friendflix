@@ -207,4 +207,16 @@ describe('fetch worker', () => {
     await finished();
     expect(requests.map((r) => r.url)).toEqual([URL_]);
   });
+
+  it('extras only: fetches the side files, never the video, and reports the size of the video already on disk', async () => {
+    start();
+    await finished();
+    requests = [];
+    out = [];
+    handler = (req) => (req.url.endsWith('.vtt') ? new Response('WEBVTT') : server()(req));
+    start({ extras: [{ url: '/s.vtt', name: 'sub-de.vtt' }], extrasOnly: true, etag: '"e1"' });
+    expect(await finished()).toEqual({ type: 'done', id: ID, bytes: 1000, etag: '"e1"' });
+    expect(requests.map((r) => r.url)).toEqual(['/s.vtt']);
+    expect(video()!.data).toEqual(FILE);
+  });
 });
