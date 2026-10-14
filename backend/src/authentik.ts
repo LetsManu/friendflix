@@ -193,10 +193,9 @@ export async function akSetActive(ctx: AkCtx, sub: string, active: boolean): Pro
 
 /**
  * Authentik's own user settings page ("Manage on the sign-in page"): the browser-facing issuer origin plus `/if/user/#/settings`
- * (AUTHENTIK_URL may be an internal address). Null without the Authentik API or when the issuer is no Authentik provider URL.
+ * (AUTHENTIK_URL may be an internal address). It needs no API token. Null when the issuer is no Authentik provider URL.
  */
-export function akUserSettingsUrl(cfg: Pick<Config, 'OIDC_ISSUER' | 'AUTHENTIK_URL' | 'AUTHENTIK_API_TOKEN'>): string | null {
-  if (!cfg.AUTHENTIK_URL || !cfg.AUTHENTIK_API_TOKEN) return null;
+export function akUserSettingsUrl(cfg: Pick<Config, 'OIDC_ISSUER'>): string | null {
   let u: URL;
   try {
     u = new URL(cfg.OIDC_ISSUER);

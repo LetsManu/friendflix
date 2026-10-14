@@ -17,6 +17,8 @@ import { requireOwner } from '../session.js';
 const avatarKey = z.string().regex(/^[a-z0-9-]{1,20}$/);
 /** the owner profile carries the account name cut to the profile name length, as provisioning does */
 const profileName = (name: string) => name.slice(0, 20).trim() || 'Profil';
+/** control characters and bidi overrides/isolates (a name shows up in Authentik, admin lists, audit labels, notices); ZWJ stays allowed */
+const BAD_NAME_CHARS = /[\p{Cc}\u202A-\u202E\u2066-\u2069]/u;
 const isUniqueViolation = (e: unknown) => (e as { code?: string }).code === '23505';
 
 export function accountRoutes(app: FastifyInstance, ctx: Ctx) {
@@ -46,7 +48,7 @@ export function accountRoutes(app: FastifyInstance, ctx: Ctx) {
    * FriendFlix-only. A name another profile of the account already has is refused before Authentik is touched.
    */
   app.patch('/api/account/profile', owner, async (req, reply) => {
-    const b = z.object({ name: z.string().trim().min(1).max(60).optional(), avatar: avatarKey.optional() }).strict()
+    const b = z.object({ name: z.string().trim().min(1).max(60).refine((n) => !BAD_NAME_CHARS.test(n)).optional(), avatar: avatarKey.optional() }).strict()
       .refine((x) => x.name !== undefined || x.avatar !== undefined, { path: ['name'] }).parse(req.body);
     const user = req.user!, pid = req.profile!.id;
     if (b.name !== undefined) {
@@ -57,7 +59,12 @@ export function accountRoutes(app: FastifyInstance, ctx: Ctx) {
     const c = await (ctx.db as pg.Pool).connect();
     try {
       await c.query('begin');
-      await c.query('update users set name=coalesce($2, name), avatar=coalesce($3, avatar) where id=$1', [user.id, b.name ?? null, b.avatar ?? null]);
+      // a lock that landed during the Authentik call wins: answered like authenticate() would answer the next request
+      const upd = await c.query('update users set name=coalesce($2, name), avatar=coalesce($3, avatar) where id=$1 and not disabled', [user.id, b.name ?? null, b.avatar ?? null]);
+      if (!upd.rowCount) {
+        await c.query('rollback');
+        return reply.code(401).send({ error: 'unauthenticated' });
+      }
       await c.query('update profiles set name=coalesce($2, name), avatar=coalesce($3, avatar) where id=$1',
         [pid, b.name === undefined ? null : profileName(b.name), b.avatar ?? null]);
       await c.query('commit');

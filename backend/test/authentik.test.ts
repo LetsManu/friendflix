@@ -270,10 +270,10 @@ describe('akSetActive', () => {
 
 describe('akUserSettingsUrl', () => {
   const ak = { ...cfg, AUTHENTIK_URL: 'http://authentik-server:9000', AUTHENTIK_API_TOKEN: TOKEN };
-  it('the issuer origin plus the user settings path; null for a non-Authentik issuer or without the API', () => {
+  it('the issuer origin plus the user settings path; null only for a non-Authentik issuer (no API needed)', () => {
     expect(akUserSettingsUrl({ ...ak, OIDC_ISSUER: 'https://login.example.com/application/o/friendflix/' })).toBe('https://login.example.com/if/user/#/settings');
     expect(akUserSettingsUrl({ ...ak, OIDC_ISSUER: 'https://idp.example.com/realms/x' })).toBeNull();
-    expect(akUserSettingsUrl({ ...cfg, OIDC_ISSUER: 'https://login.example.com/application/o/friendflix/' })).toBeNull();
+    expect(akUserSettingsUrl({ ...cfg, OIDC_ISSUER: 'https://login.example.com/application/o/friendflix/' })).toBe('https://login.example.com/if/user/#/settings');
     expect(akUserSettingsUrl({ ...ak, OIDC_ISSUER: 'not a url' })).toBeNull();
   });
 });

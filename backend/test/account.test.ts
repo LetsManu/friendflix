@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { afterEach, describe, expect, it } from 'vitest';
 import type { Session } from '../src/session.js';
+import { lockUser } from '../src/users.js';
 import { fakeHttp, makeEnv, type Handler, type TestEnv } from './helpers.js';
 
 type Sess = { cookies: Record<string, string>; csrf: string };
@@ -57,12 +58,14 @@ describe('GET /api/account', () => {
     expect(a.manageUrl).toBe('https://login.example.com/if/user/#/settings');
   });
 
-  it('mfa null and manageUrl null without the API', async () => {
+  it('mfa null without the API, manageUrl from issuer', async () => {
     const s = await mk();
     env.ctx.cfg = { ...env.ctx.cfg, OIDC_ISSUER: ISSUER };
     const a = (await call(s, 'GET', '/api/account')).json();
     expect(a.mfa).toBeNull();
-    expect(a.manageUrl).toBeNull();
+    expect(a.manageUrl).toBe('https://login.example.com/if/user/#/settings');
+    env.ctx.cfg = { ...env.ctx.cfg, OIDC_ISSUER: 'https://idp.example.com/realms/x' }; // not Authentik
+    expect((await call(s, 'GET', '/api/account')).json().manageUrl).toBeNull();
   });
 
   it('Authentik down: mfa null, the page still loads', async () => {
@@ -158,6 +161,44 @@ describe('PATCH /api/account/profile', () => {
     for (const b of [{}, { name: '   ' }, { name: 'x'.repeat(61) }, { avatar: 'Bad Key' }, { email: 'a@b.c' }]) {
       expect((await call(s, 'PATCH', '/api/account/profile', b)).statusCode).toBe(400);
     }
+  });
+
+  it('control and bidi override characters in the name: 400; emoji with ZWJ is fine', async () => {
+    const s = await mk();
+    for (const name of ['Anna\nAdmin', 'Anna\u0007', 'Anna\u202Enimda', 'x\u2066y', 'tab\there']) {
+      const r = await call(s, 'PATCH', '/api/account/profile', { name });
+      expect(r.statusCode).toBe(400);
+    }
+    expect((await me()).name).toBe('Admin');
+    const ok = await call(s, 'PATCH', '/api/account/profile', { name: 'Familie \u{1F468}\u200D\u{1F469}' });
+    expect(ok.statusCode).toBe(200);
+  });
+
+  it('a locked user cannot rename', async () => {
+    const s = await mk();
+    const u = await me();
+    await lockUser(env.ctx, null, u.id, 'manual');
+    const r = await call(s, 'PATCH', '/api/account/profile', { name: 'Neu' });
+    expect(r.statusCode).toBe(401);
+    expect((await me()).name).toBe('Admin');
+  });
+
+  it('a lock landing during the Authentik call is not overwritten', async () => {
+    const s = await mk();
+    const u = await me();
+    withAuthentik();
+    const inner = env.ctx.fetchImpl;
+    env.ctx.fetchImpl = (async (input: RequestInfo | URL, init: RequestInit = {}) => {
+      // an admin locks the account while Authentik answers
+      if (init.method === 'PATCH') await env.pool.query("update users set disabled=true, locked_reason='manual' where id=$1", [u.id]);
+      return inner(input, init);
+    }) as typeof fetch;
+    const r = await call(s, 'PATCH', '/api/account/profile', { name: 'Neu', avatar: 'blue' });
+    expect(r.statusCode).toBe(401);
+    expect(r.json()).toEqual({ error: 'unauthenticated' });
+    expect(await me()).toMatchObject({ name: 'Admin', avatar: null });
+    expect(await owner(u.id)).toEqual({ name: 'Admin', avatar: 'red' });
+    expect(await audits('account.profile')).toHaveLength(0);
   });
 
   it('audit meta of account.profile has fields only', async () => {
