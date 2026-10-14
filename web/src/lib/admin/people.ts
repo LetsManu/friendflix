@@ -3,6 +3,7 @@
 /** Helpers of the People admin pages (users, roles, devices, invites, audit): device kinds, audit details, date filters, bulk texts. */
 import { ApiError } from '#lib/api';
 import { fmtList, fmtNumber, hasKey, tr, trDynamic } from '#lib/i18n';
+import { errorText } from '#lib/ui/action';
 
 export type DeviceKind = 'tv' | 'phone' | 'tablet' | 'desktop' | 'other';
 /** icon + kind of a device from its label ("Chrome auf Windows", "LG webOS TV" …) */
@@ -89,6 +90,20 @@ export function accountGuardText(e: unknown): string | null {
   if (code === 'cannot_lock_yourself_out') return tr('adminPeople.users.selfNote');
   if (code === 'access_expired') return tr('adminPeople.users.accessExpired');
   return null;
+}
+
+/** a scheduled deletion's restore / delete now: the claim already won, nothing scheduled, else the account guards */
+export function deletionErrorText(e: unknown): string {
+  const code = e instanceof ApiError ? (e.body as { error?: string } | null)?.error : undefined;
+  if (code === 'deletion_in_progress') return tr('adminPeople.detail.actions.deletionRunning');
+  if (code === 'not_scheduled') return tr('adminPeople.detail.actions.notScheduled');
+  return accountGuardText(e) ?? errorText(e);
+}
+
+/** the restore toast: an account whose access has ended stays locked (as expired) after the restore (F8) */
+export function restoredText(name: string, accessUntil: string | null, now = Date.now()): string {
+  const ended = accessUntil !== null && Date.parse(accessUntil) <= now;
+  return tr(ended ? 'adminPeople.detail.actions.restoredLocked' : 'adminPeople.detail.actions.restored', { name });
 }
 
 /** invite lifetimes offered in the form (hours) */

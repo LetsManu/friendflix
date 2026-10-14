@@ -5,7 +5,7 @@ import { createHmac, randomUUID, timingSafeEqual } from 'node:crypto';
 import { dropRemotePeers } from './tv.js';
 import { audit } from '../audit.js';
 import type { Ctx } from '../ctx.js';
-import { COOKIE, loadSession, newSession, rand, requireUser, saveSession } from '../session.js';
+import { authenticate, COOKIE, loadSession, newSession, rand, requireUser, saveSession } from '../session.js';
 import { revokeCasts } from '../cast.js';
 import { roleAllowsDownloads } from '../downloads.js';
 import { effectiveLimits } from '../limits.js';
@@ -16,8 +16,11 @@ import { claimInvite, enrollFlowUrl, inviteAccessUntil, lookupInvite, recordInvi
 import { accountJellyfinIds, deviceKidsProfile, listProfiles, publicProfile } from '../profiles.js';
 import { DEVICE_COOKIE } from '../devices.js';
 import { freshAuth, RESET_PIN_MAX_AGE, type OidcClaims } from '../oidc.js';
-import { applyRole, getUserBySub, provisionUser } from '../users.js';
+import { HttpError, accountSerial, applyRole, getUserById, getUserBySub, provisionUser } from '../users.js';
+import { restoreDeletion } from '../deletion.js';
+import { markReauthenticated, REAUTH_MAX_AGE } from '../reauth.js';
 import { notifyAdmins } from '../notify.js';
+import { pendingNoticeKey } from '../pending.js';
 import { profileOnboarded } from './prefs.js';
 import { publicCapabilities } from '../media/types.js';
 import { FALLBACK_LANGUAGE, instanceLanguage, languageFromAcceptLanguage, m, profileLanguage, roleLabel } from '../i18n.js';
@@ -30,8 +33,28 @@ export const PENDING_COOKIE = 'ff_pending';
 const PENDING_TTL = 30 * 86400;
 /** a person who was rejected and asks again only notifies the admins again after this long */
 const RENOTIFY_MS = 86400e3;
-/** kv `pending_notice:<request id>` → { sub, email } of an approved request (lets /pending answer "approved") */
-export const pendingNoticeKey = (requestId: string) => `pending_notice:${requestId}`;
+/** where a re-authentication may return to: a local path only (no `//host`, no scheme, no backslash) */
+const REAUTH_NEXT = /^\/(?!\/)[A-Za-z0-9/_?=&.-]{0,200}$/;
+const REAUTH_DEFAULT_NEXT = '/me/account';
+const REAUTH_FAILED = '/me/account?reauth=failed';
+
+/** The OIDC flow state kept in kv `oidc:<state>` between /auth/login (… /auth/reauth) and /auth/callback. */
+interface SavedLogin {
+  state: string;
+  nonce: string;
+  codeVerifier: string;
+  invite?: string;
+  resetPin?: boolean;
+  /** a re-authentication of the session of `userId`: the callback only stamps that session, then returns to `next` */
+  reauth?: { userId: string; next: string };
+}
+
+/**
+ * a sign-in during the deletion grace period: this cookie names the account and the scheduled deletion (its date) that may be
+ * restored on /restore (signed, no session); a later, different deletion of the same account is not covered by it
+ */
+export const RESTORE_COOKIE = 'ff_restore';
+const RESTORE_TTL = 900;
 
 const pendingMac = (ctx: Pick<Ctx, 'encKey'>, id: string) => createHmac('sha256', ctx.encKey).update(`friendflix pending v1|${id}`).digest('base64url');
 const signPending = (ctx: Pick<Ctx, 'encKey'>, id: string) => `${id}.${pendingMac(ctx, id)}`;
@@ -42,6 +65,35 @@ function verifyPending(ctx: Pick<Ctx, 'encKey'>, cookie: string | undefined): st
   const want = Buffer.from(pendingMac(ctx, id));
   const got = Buffer.from(mac);
   return got.length === want.length && timingSafeEqual(got, want) ? id : null;
+}
+
+const restoreMac = (ctx: Pick<Ctx, 'encKey'>, userId: string, exp: string, deletionAt: string) =>
+  createHmac('sha256', ctx.encKey).update(`friendflix restore v1|${userId}|${exp}|${deletionAt}`).digest('base64url');
+/** `<userId>.<exp>.<deletion_at ms>.<mac>`: valid for RESTORE_TTL, and only for the deletion scheduled at that date */
+function signRestore(ctx: Pick<Ctx, 'encKey'>, userId: string, deletionAt: Date, exp = String(Math.floor(Date.now() / 1000) + RESTORE_TTL)): string {
+  const at = String(deletionAt.getTime());
+  return `${userId}.${exp}.${at}.${restoreMac(ctx, userId, exp, at)}`;
+}
+/** The account and deletion date of a signed, unexpired `ff_restore` cookie, or null when it is missing, forged or expired. */
+function verifyRestore(ctx: Pick<Ctx, 'encKey'>, cookie: string | undefined): { userId: string; deletionAt: number } | null {
+  const [id, exp, at, mac, ...rest] = (cookie ?? '').split('.');
+  if (!id || !exp || !at || !mac || rest.length || !/^\d{1,12}$/.test(exp) || !/^\d{1,15}$/.test(at)) return null;
+  const want = Buffer.from(restoreMac(ctx, id, exp, at));
+  const got = Buffer.from(mac);
+  if (got.length !== want.length || !timingSafeEqual(got, want)) return null;
+  return Number(exp) * 1000 > Date.now() ? { userId: id, deletionAt: Number(at) } : null;
+}
+
+/**
+ * The deletion date of an account that is locked for deletion, still in its grace period and not claimed by the tick; else null.
+ * With `issuedFor` (a restore cookie's date) also null when the account's deletion was rescheduled since the cookie was issued.
+ */
+async function restorableUntil(ctx: Ctx, userId: string, issuedFor?: number): Promise<Date | null> {
+  const r = await ctx.db.query<{ deletion_at: Date }>(
+    `select deletion_at from users u where id=$1 and disabled and locked_reason='deletion' and deletion_at > now()
+       and not exists (select 1 from account_deletions d where d.user_id=u.id)`, [userId]);
+  const at = r.rows[0]?.deletion_at ?? null;
+  return at && (issuedFor === undefined || at.getTime() === issuedFor) ? at : null;
 }
 
 /**
@@ -73,10 +125,14 @@ async function requestApproval(ctx: Ctx, claims: OidcClaims): Promise<string> {
 export function authRoutes(app: FastifyInstance, ctx: Ctx) {
   const secure = ctx.cfg.PUBLIC_URL.startsWith('https://');
 
-  /** Starts an OIDC login; the invite (if any) travels in the server-side state to /auth/callback. */
-  async function startLogin(reply: FastifyReply, invite: string | undefined, ttl: number, resetPin = false) {
-    const s = await ctx.oidc.start({ forceLogin: resetPin });
-    await ctx.kv.set(`oidc:${s.state}`, JSON.stringify({ state: s.state, nonce: s.nonce, codeVerifier: s.codeVerifier, invite, ...(resetPin ? { resetPin: true } : {}) }), ttl);
+  /**
+   * Starts an OIDC login; the invite (if any) travels in the server-side state to /auth/callback.
+   * resetPin (forgotten owner PIN) and reauth (re-authentication of a session) force a new login at the IdP.
+   */
+  async function startLogin(reply: FastifyReply, invite: string | undefined, ttl: number, opts: { resetPin?: boolean; reauth?: SavedLogin['reauth'] } = {}) {
+    const s = await ctx.oidc.start({ forceLogin: Boolean(opts.resetPin || opts.reauth) });
+    const saved: SavedLogin = { state: s.state, nonce: s.nonce, codeVerifier: s.codeVerifier, invite, ...(opts.resetPin ? { resetPin: true } : {}), ...(opts.reauth ? { reauth: opts.reauth } : {}) };
+    await ctx.kv.set(`oidc:${s.state}`, JSON.stringify(saved), ttl);
     reply.setCookie(OIDC_COOKIE, s.state, { httpOnly: true, secure, sameSite: 'lax', path: '/auth', maxAge: ttl }); // binds the flow to this browser
     return s.url;
   }
@@ -108,7 +164,7 @@ export function authRoutes(app: FastifyInstance, ctx: Ctx) {
     if (invite && !(await lookupInvite(ctx, invite))) return reply.code(410).send({ error: 'invite_invalid' });
     if (q.resetPin === '1' && (await kidLockedDevice(req))) return reply.redirect(RESET_BLOCKED);
     // ?resetPin=1: forgotten owner PIN -> forced re-login at the IdP, the callback then clears the owner profile's PIN
-    return reply.redirect(await startLogin(reply, invite, 600, q.resetPin === '1'));
+    return reply.redirect(await startLogin(reply, invite, 600, { resetPin: q.resetPin === '1' }));
   });
 
   // Invite with Authentik enrollment: start the portal login first, then run the enrollment flow with
@@ -123,6 +179,43 @@ export function authRoutes(app: FastifyInstance, ctx: Ctx) {
     return reply.redirect(enrollFlowUrl(ctx.cfg, inv.authentik_invite, authorize)!);
   });
 
+  // Re-authentication of the current session (sensitive account actions, see reauth.ts): a forced IdP login whose
+  // callback only stamps this session's `reauthAt`; it never creates a session.
+  app.get('/auth/reauth', { config: { rateLimit: { max: 10, timeWindow: '1 minute' } } }, async (req, reply) => {
+    if (!(await authenticate(ctx, req))) return reply.code(401).send({ error: 'unauthenticated' });
+    const next = (req.query as Record<string, unknown>).next; // a repeated key is an array: refused like any other bad value
+    const reauth = { userId: req.user!.id, next: typeof next === 'string' && REAUTH_NEXT.test(next) ? next : REAUTH_DEFAULT_NEXT };
+    return reply.redirect(await startLogin(reply, undefined, 600, { reauth }));
+  });
+
+  /**
+   * The re-authentication branch of /auth/callback: the IdP login must be fresh (auth_time) and be the same person as the
+   * session that started it. No provisioning, no device, no new session.
+   */
+  async function finishReauth(req: FastifyRequest, reply: FastifyReply, saved: SavedLogin & { reauth: NonNullable<SavedLogin['reauth']> }) {
+    const { userId, next } = saved.reauth;
+    let claims: OidcClaims;
+    try {
+      claims = await ctx.oidc.finish(new URL(req.url, ctx.cfg.PUBLIC_URL), saved, { maxAge: REAUTH_MAX_AGE });
+    } catch (err) {
+      req.log.warn({ err }, 'oidc re-authentication failed'); // e.g. auth_time older than REAUTH_MAX_AGE
+      return reply.redirect(REAUTH_FAILED);
+    }
+    // checked here as well (independent of the OIDC library): a still valid IdP session is not a re-authentication
+    if (!freshAuth(claims.authTime, REAUTH_MAX_AGE)) return reply.redirect(REAUTH_FAILED);
+    const sid = req.cookies[COOKIE];
+    const s = await loadSession(ctx, sid);
+    const user = s?.userId === userId ? await getUserById(ctx, userId) : null;
+    if (!sid || !s || !user || user.disabled || user.authentik_sub !== claims.sub) {
+      // another person signed in at the IdP, or another (or no) session finished the flow
+      await audit(ctx, userId, 'session.reauth_mismatch', userId, { ip: req.ip });
+      return reply.redirect(REAUTH_FAILED);
+    }
+    if (!(await markReauthenticated(ctx, sid, s))) return reply.redirect(REAUTH_FAILED); // revoked meanwhile
+    await audit(ctx, userId, 'session.reauth', userId, { ip: req.ip });
+    return reply.redirect(next);
+  }
+
   app.get('/auth/callback', { config: { rateLimit: { max: 30, timeWindow: '1 minute' } } }, async (req, reply) => {
     const state = (req.query as Record<string, string | undefined>).state;
     const raw = state ? await ctx.kv.get(`oidc:${state}`) : null;
@@ -131,9 +224,14 @@ export function authRoutes(app: FastifyInstance, ctx: Ctx) {
     if (!state || !raw || !bound || bound.length !== state.length || !timingSafeEqual(Buffer.from(bound), Buffer.from(state))) return reply.code(400).send({ error: 'invalid_state' });
     await ctx.kv.del(`oidc:${state}`); // single use
     try {
-      const saved = JSON.parse(raw) as { state: string; nonce: string; codeVerifier: string; invite?: string; resetPin?: boolean };
+      const saved = JSON.parse(raw) as SavedLogin;
+      // order matters (phase 2 ruling F15): a re-authentication is handled first, before any account lookup or provisioning
+      if (saved.reauth) return await finishReauth(req, reply, { ...saved, reauth: saved.reauth });
       // forgotten PIN: the IdP must really have asked for the login again (auth_time), a still valid IdP session is not enough
       const claims = await ctx.oidc.finish(new URL(req.url, ctx.cfg.PUBLIC_URL), saved, saved.resetPin ? { maxAge: RESET_PIN_MAX_AGE } : undefined);
+      // the account is being deleted (claimed by the deletion tick): no login, no approval request, no new account (F15 step 2)
+      const deleting = await ctx.db.query('select 1 from account_deletions where authentik_sub=$1 and finished_at is null', [claims.sub]);
+      if (deleting.rowCount) return reply.code(403).send({ error: 'account_deleted' });
       let user = await getUserBySub(ctx, claims.sub);
       const isAdmin = claims.groups.includes(ctx.cfg.ADMIN_GROUP);
       if (!user) {
@@ -156,7 +254,11 @@ export function authRoutes(app: FastifyInstance, ctx: Ctx) {
         await ctx.db.query('delete from approval_requests where authentik_sub=$1', [claims.sub]); // an invite or the admin group overtook the request
         if (claimed) await recordInviteUse(ctx, claimed, user.id, req.log); // used up: the enrollment link must not create more accounts
       } else if (user.disabled) {
-        return reply.code(403).send({ error: 'disabled' });
+        // locked for deletion and still in the grace period: the person may restore it on /restore (no session); other locks: 403 (F15 step 3)
+        const deletionAt = await restorableUntil(ctx, user.id);
+        if (!deletionAt) return reply.code(403).send({ error: 'disabled' });
+        reply.setCookie(RESTORE_COOKIE, signRestore(ctx, user.id, deletionAt), { httpOnly: true, secure, sameSite: 'lax', path: '/', maxAge: RESTORE_TTL });
+        return reply.redirect('/restore');
       } else if (isAdmin && user.role !== 'admin') {
         await ctx.db.query("update users set role='admin' where id=$1", [user.id]);
         const owned = await accountJellyfinIds(ctx, user.id);
@@ -199,6 +301,41 @@ export function authRoutes(app: FastifyInstance, ctx: Ctx) {
     const raw = await ctx.kv.get(pendingNoticeKey(id));
     const sub = raw ? (JSON.parse(raw) as { sub: string }).sub : null;
     return sub && (await getUserBySub(ctx, sub)) ? { state: 'approved' } : { state: 'none' };
+  });
+
+  // the /restore page (no session): the deletion date of the account named by the signed ff_restore cookie; never its name or e-mail
+  app.get('/api/restore', async (req) => {
+    const c = verifyRestore(ctx, req.cookies[RESTORE_COOKIE]);
+    const at = c ? await restorableUntil(ctx, c.userId, c.deletionAt) : null;
+    return at ? { state: 'scheduled', deletionAt: at.toISOString() } : { state: 'none' };
+  });
+
+  // Restores the scheduled deletion. It carries no session authority, so the CSRF hook exempts it (app.ts): JSON only (a cross-site
+  // form cannot send it, and a cross-site fetch with it needs a preflight) + the SameSite, HMAC-signed cookie. No session either:
+  // the person signs in again through /auth/login.
+  app.post('/api/restore', { config: { rateLimit: { max: 10, timeWindow: '1 minute' } } }, async (req, reply) => {
+    if (!/^application\/json(\s*;|$)/i.test(String(req.headers['content-type'] ?? ''))) return reply.code(415).send({ error: 'json_required' });
+    const c = verifyRestore(ctx, req.cookies[RESTORE_COOKIE]);
+    if (!c) return reply.code(401).send({ error: 'unauthenticated' });
+    const locked = await accountSerial(async () => {
+      // the grace period is the person's window (an admin may still restore later, until the tick claims the account);
+      // a cookie only restores the deletion it was issued for
+      if (!(await restorableUntil(ctx, c.userId, c.deletionAt))) {
+        const claimed = await ctx.db.query('select 1 from account_deletions where user_id=$1', [c.userId]);
+        throw new HttpError(409, claimed.rowCount ? 'deletion_in_progress' : 'not_scheduled');
+      }
+      await restoreDeletion(ctx, c.userId, c.userId);
+      return (await ctx.db.query<{ locked_reason: string | null }>('select locked_reason from users where id=$1', [c.userId])).rows[0]?.locked_reason;
+    });
+    reply.clearCookie(RESTORE_COOKIE, { path: '/' });
+    // F8: ended access stays locked (as 'expired'); the page says so instead of offering a sign-in that would answer 403
+    return locked === 'expired' ? { ok: true, accessEnded: true } : { ok: true };
+  });
+
+  // "Keep the deletion" on /restore: forgets the restore cookie (nothing else changes; harmless, so no checks)
+  app.delete('/api/restore', { config: { rateLimit: { max: 10, timeWindow: '1 minute' } } }, async (_req, reply) => {
+    reply.clearCookie(RESTORE_COOKIE, { path: '/' });
+    return { ok: true };
   });
 
   app.get('/api/me', { preHandler: requireUser(ctx, { allowPendingDevice: true, allowNoProfile: true, skipProfileHeader: true }) }, async (req) => {

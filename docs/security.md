@@ -13,6 +13,7 @@ FriendFlix is maintained by one person. Everything below is what the code, the c
 - Every playlist and segment request is authorised by the backend (session, profile, role limits) before the gateway fetches it from the media server. Hidden titles and kids-profile restrictions are enforced server side.
 - Secrets stored by FriendFlix (per-user media-server credentials, admin-saved API keys) are encrypted at rest with a key you control (`APP_ENC_KEY`). Profile PINs are stored as salted scrypt hashes.
 - Admins can see what a person watched (*Admin → Users →* a person → *History*, read from the media server). Every time an admin opens it, FriendFlix writes `user.activity_viewed` with the admin and the person to the audit log, which other admins can read. Other admin pages (usage, status) show only totals, never titles.
+- Each person can download their own data and delete their own account (*My space → Account*). Deleting needs a fresh sign-in, waits 7 days so it can be undone, and then removes the account everywhere FriendFlix reaches; the audit log keeps a pseudonym instead of the name. See [Account self-service](#account-self-service).
 - State-changing API calls need a per-session CSRF token. Error reports from the browser are scrubbed and stay in your server log.
 - Published container images are scanned, signed and ship with an SBOM and provenance (see [Supply chain](#supply-chain)).
 
@@ -106,6 +107,82 @@ How the OWASP Top 10 classes are addressed. This is a design summary, not a proo
 | Logging and monitoring failures | Admin audit log, `/metrics` (bearer token when `METRICS_TOKEN` is set; also block it at the proxy), slow-request logs, scrubbed client error reports ([monitoring.md](monitoring.md)). |
 | Server-side request forgery | The gateway forwards only allowlisted server-relative paths; `mediaFetch` refuses absolute and protocol-relative URLs. External lookups use fixed provider hosts. |
 
+## Account self-service
+
+Each person manages their own account on *My space → Account* (`/me/account`, main profile only; kids and other profiles cannot open it). Admins have matching actions on *Admin → Users →* a person. Everything here is audited; self-service entries record which fields changed (`{ fields }`), never the old or new values.
+
+The account page also tells the person what admins can see: **"Admins can see which titles you watched recently. Every look at them is recorded in the audit log."** This is the same history view described under [Security requirements](#security-requirements) (`user.activity_viewed`).
+
+### Re-authentication
+
+Deleting the account needs a sign-in that is at most **10 minutes** old. The account page sends the person through `GET /auth/reauth`, an OIDC login with `prompt=login` and `max_age=0`, so the identity provider asks for the password and MFA even when its session is still valid. The callback checks that the identity provider's `auth_time` is at most 2 minutes old and that the `sub` is the session's own (a different person gets nothing and an audit entry `session.reauth_mismatch`). It then stamps the portal session with the time (`reauthAt`, audit `session.reauth`). Sensitive routes check the stamp with one guard, `requireRecentAuth`, and answer `401 reauth_required` without it.
+
+A later release replaces only the producer: an in-app password screen through Authentik's flow executor sets the same stamp, and the guard stays as it is. Until then, changing the password and two-factor methods happens on Authentik's own user settings page ([authentik.md §8.4](authentik.md#84-account-page-and-account-deletion)). The e-mail address is read-only in FriendFlix for now; a later release may change that.
+
+### Download my data
+
+*Your data → Download my data* (`GET /api/account/export`) builds one JSON file on demand and streams it; nothing is stored on the server. It needs the owner session but no re-authentication, is limited to 5 downloads per hour, and is audited (`account.export`). Every query names its columns and reads only the account's own rows, so a column added later never leaks by accident.
+
+What it contains:
+
+- **Account:** id, name, e-mail, role, avatar, created, access until.
+- **Profiles:** name, avatar, kids flag and age limit, owner flag, created.
+- **Lists:** own lists in full (description, look, items with your own notes; items others added are marked `addedByMe: false` without who). Lists you are a member of: only their name and the items you added.
+- **Watchlist and more:** watchlist, bookmarks with notes, reminders, followed series, series audio/subtitle choices, titles hidden from *Continue watching*.
+- **Ratings:** stars with reviews, thumbs, reactions with comments.
+- **History:** the media server's watch history per profile (up to 1,000 items each, marked `truncated` when there is more and `error` when the media server could not answer), plus FriendFlix's own watch-time totals per title and per day.
+- **Requests:** title, type, date and current state (the state is asked of the request service for the newest 100).
+- **Devices:** label, approved, first and last seen.
+- **Notifications:** weekly digest on/off, whether an ntfy topic is set, the number of push subscriptions, and each notice's kind, date and read state.
+- **What you wrote in shared places:** your episode comments (also deleted ones, flagged), your poll choices (the poll's title only for polls you created), recommendations you sent (title and note, without the recipient).
+- **Achievements.**
+
+What it never contains: other people's ids, names or notes; notification texts (they are rendered with other people's names); device ids; push endpoints and keys; the ntfy topic itself (it works like a password); PIN hashes; the Authentik `sub`; any media-server credential.
+
+### Account deletion
+
+*Delete account* first offers the data download, then asks for the fresh sign-in. The last active admin cannot delete their own account (`last_admin`: make someone else admin first).
+
+**At once** (`POST /api/account/delete`, audit `user.deletion_requested`):
+
+- The account is locked: `deletion_at = now + 7 days`, `locked_reason = 'deletion'`. Every session ends on every device, offline licences are revoked, and the media-server users of the account and its profiles are disabled.
+- The admins get a notice with the name and the date.
+- The Authentik user stays **active** for now: signing in is how the person restores the account.
+
+**Grace period (7 days):** signing in again shows "Your account is being deleted – restore?" (`/restore`, reached through a signed `ff_restore` cookie valid for 15 minutes). *Restore my account* unlocks it (or, if the person's access ended meanwhile, keeps it locked as "access ended"); *Keep the deletion* leaves it scheduled. Admins can *Restore account* or *Delete now* on the person's page (delete now moves the date to now; the next run, within a minute, starts the deletion). Unlocking a deletion-locked account from the list is a restore as well.
+
+**Final deletion.** A background job runs every 60 seconds. It first claims a due account: from that moment nothing can be restored, and a sign-in answers `403 account_deleted`. Then it runs six steps, each safe to repeat, and remembers the last one that finished, so a restart continues where it stopped:
+
+1. **Media server:** the account's user and every profile user are deleted (one already gone counts as done).
+2. **Request service:** the linked request-service user is deleted (404 counts as done).
+3. **Offline licences:** revoked again (the lock already did it; repeated for safety).
+4. **FriendFlix rows:** in one transaction, the account and everything that hangs off it (profiles, lists, watchlist, ratings, history, devices, push subscriptions, limits …), the person's approval request, and the admin notices that name the person (those linking to the account and those keyed by its id). Redis caches for the account and its profiles are cleared.
+5. **Audit log:** in every entry the person made or that is about them, the keys `name`, `email`, `jellyfin`, `username` and `ip` (and names nested in profile changes) are removed and replaced by the **pseudonym**. Entries of the person's approval request (`user.rejected`, which can quote the name in the admin's message) are scrubbed the same way, message included.
+6. **Authentik:** the user is **deactivated** (`is_active: false`), never deleted. Deleting it is the owner's call; the steps are in [authentik.md §8.4](authentik.md#84-account-page-and-account-deletion). Without the Authentik API token (or when the user is not found) this step is skipped and recorded as `authentik: not_configured` / `not_found`. **The Authentik user then stays active: the person can sign in again and lands in the approval queue as a new person (a member of `ADMIN_GROUP` gets a new admin account instead).**
+
+When all six are done, the admins get a notice with the pseudonym and the audit log gets `user.deleted`.
+
+**When a step fails** it stores only an error code (never a message that could quote a URL or token), audits `user.deletion_failed` and notifies the admins once per step. The step is then **retried once a minute, without backoff, until it succeeds or an admin fixes the cause** (for example the media server is down, or the Authentik token lacks *Can change User*). *Admin → Users*, filter *Deletion pending*, shows such an account as "Cleanup step n of 6" with the error. See [operations.md](operations.md#kontolöschung).
+
+### The pseudonym
+
+`deleted-` plus the first 8 hex characters of `HMAC-SHA256(APP_ENC_KEY, "friendflix deleted v1|" + account id)`, for example `deleted-3f9a1c07`. It is stable (every entry of the same person gets the same one, so the log still reads as one story) and cannot be turned back into the account id without the key. The audit views show it wherever the name used to be.
+
+### What stays, and for how long
+
+- **The deletion record:** account id, pseudonym, start and end time, kept for good so the audit views can resolve the pseudonym. The name, e-mail, Authentik `sub`, media-server ids and request-service id it held during the cleanup are cleared when the deletion finishes.
+- **The audit log:** entries stay (there is no automatic pruning), with the pseudonym instead of the name.
+- **The deactivated Authentik user** until the owner deletes it.
+- **Database backups** made before the deletion still contain the account until they rotate out (`BACKUP_KEEP_DAYS`, default 14 days; copies elsewhere follow your own rules). Restoring such a dump brings the account back.
+- **Places FriendFlix does not scrub**, where the person's name may remain:
+  - invite notes (an admin's free text, which may name the invitee);
+  - notices in other people's inboxes that were rendered with the name: list invitations, watch-party invitations and recommendations (including the sender's note);
+  - the admins' "new sign-in waiting for approval" notice;
+  - `user.rejected` audit entries of a request that never became this account (for example: rejected, then joined through an invite);
+  - free text other people wrote, such as a list or poll title, a comment or an admin's note in another audit entry.
+- Items (and their notes) the person added to other people's lists stay, without who added them.
+- A deleted admin's own administrative audit entries lose their name-type keys too (hub, source or item names), which removes some non-personal detail.
+
 ## Cryptography
 
 | Purpose | Mechanism | Notes |
@@ -114,6 +191,7 @@ How the OWASP Top 10 classes are addressed. This is a design summary, not a proo
 | Profile PINs | scrypt, random 16-byte salt, constant-time comparison; limited failed attempts | `hashPin` / `verifyPin` |
 | Cast and API tokens | 256-bit CSPRNG (`randomBytes`), base64url; only `sha256(token)` is stored in Redis | `backend/src/cast.ts`, [cast.md](cast.md) |
 | Signed cast subtitle URLs | HMAC-SHA-256 with a key derived from `APP_ENC_KEY`, compared in constant time | `backend/src/cast.ts` |
+| Audit pseudonym of a deleted account | `deleted-` + 8 hex characters of HMAC-SHA-256 keyed with `APP_ENC_KEY` over the account id | `backend/src/deletion.ts` |
 | Shared secrets between services | `INTERNAL_SECRET`, `WEBHOOK_SECRET`, `METRICS_TOKEN`, compared in constant time | `backend/src/routes/internal.ts`, `backend/src/app.ts` |
 | Sign-in | OIDC authorization code flow with PKCE (S256), `state`, `nonce` | `backend/src/oidc.ts` |
 | Web Push | VAPID keys (`VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`) | `backend/src/push.ts` |

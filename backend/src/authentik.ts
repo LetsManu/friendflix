@@ -1,19 +1,21 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
 /**
- * Authentik admin API client for the user detail page: find a portal account's Authentik user, its MFA devices, and send
- * it a password-reset e-mail. Every Authentik call except the invitation ones (invites.ts) goes through this module.
+ * Authentik admin API client for the user detail and account pages: find a portal account's Authentik user, its MFA devices,
+ * send it a password-reset e-mail, change its name and (de)activate it. Every Authentik call except the invitation ones (invites.ts) goes through this module.
  *
  * Errors are HttpErrors with a code only (`authentik_unavailable`, `authentik_token_rejected`, `authentik_error`, ...):
  * neither the API token nor Authentik's response body ever ends up in a message, so they cannot leak into logs or answers.
  * Lookups answer null when the Authentik API is not configured; actions throw 503 `authentik_unavailable`.
  */
+import type { Config } from './config.js';
 import type { Ctx } from './ctx.js';
 import { akBase } from './invites.js';
 import { HttpError } from './users.js';
 
 type AkCtx = Pick<Ctx, 'cfg' | 'kv' | 'db' | 'fetchImpl'>;
-export interface AkUser { pk: number; username: string; email: string }
+/** `isActive`: Authentik's is_active, when the list answered it */
+export interface AkUser { pk: number; username: string; email: string; isActive?: boolean }
 export interface MfaState { totp: boolean; webauthn: boolean; static: boolean }
 
 const TIMEOUT_MS = 5_000;
@@ -57,17 +59,25 @@ async function json<T>(ctx: AkCtx, path: string, init?: RequestInit, expect?: Pa
   }
 }
 
+/** Drops the cached lookup of a user Authentik no longer knows (deleted / re-created): looked up again next time. */
+async function forget(ctx: AkCtx, sub: string) {
+  await ctx.kv.del(`akuser:${sub}`);
+  await ctx.kv.del(`akmfa:${sub}`);
+}
+
 interface Page<T> { pagination?: { next?: number }; results: T[] }
-interface RawUser { pk: number; username: string; email?: string; uid?: string; uuid?: string }
-const toUser = (u: RawUser): AkUser => ({ pk: u.pk, username: u.username, email: u.email ?? '' });
+interface RawUser { pk: number; username: string; email?: string; uid?: string; uuid?: string; is_active?: boolean }
+const toUser = (u: RawUser): AkUser =>
+  ({ pk: u.pk, username: u.username, email: u.email ?? '', ...(typeof u.is_active === 'boolean' ? { isActive: u.is_active } : {}) });
 
 /**
  * The Authentik user behind an OIDC `sub`. Authentik's default subject mode is the hashed user id, which the API shows as
  * `uid` (it is not a filter): a uuid sub (mode "user UUID") is looked up with `?uuid=`, otherwise the account's e-mail
  * narrows the search (`?search=`) and, failing that, the user list is paged. Matches only on `uid` / `uuid`. Cached 1 h
- * (a miss 5 min).
+ * (a miss 5 min). `emailHint` stands in for the account's e-mail once the users row is gone (the deletion tick passes the
+ * tombstone's e-mail).
  */
-export async function akUserBySub(ctx: AkCtx, sub: string): Promise<AkUser | null> {
+export async function akUserBySub(ctx: AkCtx, sub: string, emailHint?: string | null): Promise<AkUser | null> {
   if (!configured(ctx)) return null;
   const key = `akuser:${sub}`;
   const hit = await ctx.kv.get(key);
@@ -78,7 +88,7 @@ export async function akUserBySub(ctx: AkCtx, sub: string): Promise<AkUser | nul
   let found: RawUser | undefined;
   if (UUID_RE.test(sub)) found = match((await list({ uuid: sub })).results);
   if (!found) {
-    const email = (await ctx.db.query<{ email: string | null }>('select email from users where authentik_sub=$1', [sub])).rows[0]?.email;
+    const email = (await ctx.db.query<{ email: string | null }>('select email from users where authentik_sub=$1', [sub])).rows[0]?.email ?? emailHint;
     if (email) found = match((await list({ search: email })).results);
   }
   for (let page = 1; !found && page <= MAX_PAGES; page++) {
@@ -145,12 +155,65 @@ export async function akSendRecovery(ctx: AkCtx, sub: string): Promise<void> {
       { method: 'POST', body: JSON.stringify({ email_stage: stage }) },
       { 400: notConfigured(), 404: new HttpError(404, 'authentik_user_not_found'), 405: new HttpError(501, 'not_supported') });
   } catch (e) {
-    if (e instanceof HttpError && e.statusCode === 404) {
-      await ctx.kv.del(`akuser:${sub}`); // a stale pk (user deleted / re-created in Authentik): look it up again next time
-      await ctx.kv.del(`akmfa:${sub}`);
-    }
+    if (e instanceof HttpError && e.statusCode === 404) await forget(ctx, sub); // a stale pk (user deleted / re-created in Authentik)
     throw e;
   }
+}
+
+/** `PATCH /core/users/<pk>/`; 404 -> 404 `authentik_user_not_found` (cache dropped), other errors as `call()` maps them. */
+async function patchUser(ctx: AkCtx, sub: string, body: Record<string, unknown>, expect: Partial<Record<number, HttpError>> = {}, emailHint?: string | null): Promise<void> {
+  const user = await akUserBySub(ctx, sub, emailHint);
+  if (!user) throw new HttpError(404, 'authentik_user_not_found');
+  try {
+    await call(ctx, `api/v3/core/users/${user.pk}/`, { method: 'PATCH', body: JSON.stringify(body) },
+      { ...expect, 404: new HttpError(404, 'authentik_user_not_found') });
+  } catch (e) {
+    if (e instanceof HttpError && e.statusCode === 404) await forget(ctx, sub);
+    throw e;
+  }
+}
+
+/**
+ * Changes the user's display name in Authentik (the account page). 400 (Authentik rejects the value) -> 400 `invalid_input`;
+ * 404 -> `authentik_user_not_found`; without the API 503 `authentik_unavailable`.
+ */
+export async function akUpdateUser(ctx: AkCtx, sub: string, patch: { name?: string }): Promise<void> {
+  if (!configured(ctx)) throw new HttpError(503, 'authentik_unavailable');
+  await patchUser(ctx, sub, patch, { 400: new HttpError(400, 'invalid_input') });
+}
+
+/**
+ * Activates / deactivates the Authentik user (account deletion deactivates, never deletes). Other failures throw.
+ * A user already in the wanted state (is_active from the lookup; the caller drops the cached lookup first) is done without a
+ * PATCH, so a token without `change_user` works once the user was deactivated by hand.
+ * `emailHint`: see akUserBySub (the account's users row may already be deleted).
+ */
+export async function akSetActive(ctx: AkCtx, sub: string, active: boolean, emailHint?: string | null): Promise<'done' | 'not_configured' | 'not_found'> {
+  if (!configured(ctx)) return 'not_configured';
+  try {
+    const user = await akUserBySub(ctx, sub, emailHint);
+    if (!user) return 'not_found';
+    if (user.isActive === active) return 'done';
+    await patchUser(ctx, sub, { is_active: active }, {}, emailHint);
+  } catch (e) {
+    if (e instanceof HttpError && e.statusCode === 404) return 'not_found';
+    throw e;
+  }
+  return 'done';
+}
+
+/**
+ * Authentik's own user settings page ("Manage on the sign-in page"): the browser-facing issuer origin plus `/if/user/#/settings`
+ * (AUTHENTIK_URL may be an internal address). It needs no API token. Null when the issuer is no Authentik provider URL.
+ */
+export function akUserSettingsUrl(cfg: Pick<Config, 'OIDC_ISSUER'>): string | null {
+  let u: URL;
+  try {
+    u = new URL(cfg.OIDC_ISSUER);
+  } catch {
+    return null;
+  }
+  return u.pathname.includes('/application/o/') ? `${u.origin}/if/user/#/settings` : null;
 }
 
 /**

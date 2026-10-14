@@ -313,6 +313,16 @@ const en: Translation<typeof de> = {
       activity_viewed: '{actor} viewed the history of {target}',
       revoke_device: '{actor} signed {target} out on one device',
       recovery_email_failed: '{actor} tried to send {target} a password link – failed ({reason})',
+      deletion_requested: '{actor} scheduled the deletion of {target} (on {date})',
+      deletion_requested_self: '{actor} asked to delete their own account (on {date})',
+      deletion_restored: '{actor} cancelled the deletion of {target}',
+      deletion_restored_self: '{actor} cancelled the deletion of their own account',
+      deletion_restored_locked: '{actor} cancelled the deletion of {target} – stays locked, the access has ended',
+      deletion_restored_self_locked: '{actor} cancelled the deletion of their own account – stays locked, the access has ended',
+      deletion_now: '{actor} had {target} deleted right away',
+      deletion_started: 'The deletion of {target} has started',
+      deletion_failed: 'The deletion of {target} failed at step {step} of 6',
+      deleted: '{target} was deleted',
     },
     failReason: { recovery_not_configured: 'no recovery flow set up', authentik_user_not_found: 'no Authentik user', not_supported: 'not supported', authentik_unavailable: 'Authentik unreachable', unknown: 'error' },
     device: {
@@ -373,6 +383,13 @@ const en: Translation<typeof de> = {
     },
     session: {
       revoke_others: '{actor} signed out on other devices',
+      revoke_device: '{actor} signed out one of their devices',
+      reauth: '{actor} signed in again (for an account action)',
+      reauth_mismatch: '{actor}: a new sign-in with a different account was refused',
+    },
+    account: {
+      export: '{actor} downloaded their data',
+      profile: '{actor} changed their own account name or colour',
     },
     tv: {
       pair: '{actor} paired a TV',

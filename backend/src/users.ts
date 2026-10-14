@@ -142,10 +142,18 @@ export async function lockUser(ctx: Ctx, actor: string | null, userId: string, r
   await audit(ctx, actor, 'user.disable', userId, { reason });
 }
 
+/**
+ * Unlocks the account (identities enabled, lock reason and deletion date cleared). Unlocking a deletion lock is a restore and is
+ * audited as one. Refused (409 deletion_in_progress) once the deletion tick has claimed the account. Callers run it in accountSerial.
+ */
 export async function unlockUser(ctx: Ctx, actor: string | null, userId: string): Promise<void> {
+  const prev = (await ctx.db.query<{ locked_reason: LockReason | null; claimed: boolean }>(
+    'select locked_reason, exists (select 1 from account_deletions where user_id=$1) claimed from users where id=$1', [userId])).rows[0];
+  if (prev?.claimed) throw new HttpError(409, 'deletion_in_progress');
   for (const jid of await accountJellyfinIds(ctx, userId)) await ctx.jf.admin.setDisabled(jid, false);
-  await ctx.db.query('update users set disabled=false, locked_reason=null where id=$1', [userId]);
+  await ctx.db.query('update users set disabled=false, locked_reason=null, deletion_at=null where id=$1', [userId]);
   await audit(ctx, actor, 'user.enable', userId);
+  if (prev?.locked_reason === 'deletion') await audit(ctx, actor, 'user.deletion_restored', userId);
 }
 
 /** Changes the role: the role policy goes to the account's media server identity and all its profile identities. No-op when unchanged. */

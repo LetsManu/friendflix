@@ -16,6 +16,7 @@ import { loadRoles } from './roles.js';
 import { nightlyTick } from './healthcheck.js';
 import { digestTick } from './digest.js';
 import { expiryTick } from './expiry.js';
+import { deletionTick } from './deletion.js';
 import { reapplyPoliciesOnce } from './users.js';
 import { pushEnabled } from './push.js';
 import { previews } from './previews.js';
@@ -84,6 +85,12 @@ timers.push(setInterval(() => {
   expiryBusy = true;
   void expiryTick(ctx).catch(jobFailed(ctx, app.log, 'access-expiry', 'access expiry tick failed')).finally(() => { expiryBusy = false; });
 }, 60_000)); // access-until warnings + automatic lock
+let deletionBusy = false; // the steps call the media server, the request service and Authentik: never two runs at once
+timers.push(setInterval(() => {
+  if (deletionBusy) return;
+  deletionBusy = true;
+  void deletionTick(ctx).catch(jobFailed(ctx, app.log, 'account-deletion', 'account deletion tick failed')).finally(() => { deletionBusy = false; });
+}, 60_000)); // final account deletion after the grace period
 if (cfg.BACKGROUND_JOBS === 'true') {
   if (cfg.DOWNLOADS_ENABLED === 'true') {
     timers.push(setInterval(() => void startPreparerTick(ctx).catch(jobFailed(ctx, app.log, 'download-prep', 'download prep tick failed')), 15_000));

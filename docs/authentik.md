@@ -37,7 +37,7 @@ The full FriendFlix installation (Jellyfin, request service, `.env`, Nginx Proxy
 | Group | `friendflix-users` | optional access restriction in Authentik | – (FriendFlix does not read it) |
 | Authentication flow with MFA | `default-authentication-flow` (edited) | MFA on every login | – |
 | Enrollment flow | `friendflix-enrollment` | invitations that create the Authentik account | `AUTHENTIK_ENROLL_FLOW` |
-| Service account + API token | `friendflix-invites` | creating invitations through the API; on the admin user page: finding the Authentik user, showing its two-factor state, sending a password link | `AUTHENTIK_API_TOKEN`, `AUTHENTIK_URL` |
+| Service account + API token | `friendflix-invites` | creating invitations through the API; on the admin user page: finding the Authentik user, showing its two-factor state, sending a password link; on the account page: changing the name; account deletion: deactivating the Authentik user | `AUTHENTIK_API_TOKEN`, `AUTHENTIK_URL` |
 | Recovery flow with an e-mail stage | `default-recovery-flow` | "forgot password" by e-mail and the admin's *Send password link* (optional) | `AUTHENTIK_RECOVERY_FLOW` (default `default-recovery-flow`) |
 | Brand | default brand | title, logo, default flows (optional) | – |
 
@@ -174,7 +174,7 @@ Updates: read the release notes of every version in between, raise `AUTHENTIK_TA
 
 [`deploy/authentik/friendflix-blueprint.yaml`](../deploy/authentik/friendflix-blueprint.yaml) creates in one go:
 
-- the service account `friendflix-invites` with exactly the permissions the portal needs (invitations, and the user lookup, two-factor state and password link of the admin user page, see [§8.2](#82-role-with-exactly-these-global-permissions)), and its non-expiring API token `friendflix-invites-token`;
+- the service account `friendflix-invites` with exactly the permissions the portal needs (invitations, the user lookup, two-factor state and password link of the admin user page, and the name change and deactivation of the account page and account deletion, see [§8.2](#82-role-with-exactly-these-global-permissions)), and its non-expiring API token `friendflix-invites-token`;
 - the enrollment flow `friendflix-enrollment` (invitation → username/password → name/e-mail → create user → MFA setup → login), see [§7](#7-enrollment-flow-for-invitations).
 
 Import: *Flows and Stages → Flows → Import* → **File upload** → choose the file → *Import*. Re-importing is safe (objects are matched by name/slug and updated).
@@ -357,7 +357,7 @@ Leave `AUTHENTIK_URL`, `AUTHENTIK_API_TOKEN` and `AUTHENTIK_ENROLL_FLOW` empty. 
 
 ## 8. Service account and API token
 
-The backend calls the Authentik API with `Authorization: Bearer <AUTHENTIK_API_TOKEN>` for invitations and for the admin user page (*Admin → Users →* a person: Authentik user, two-factor state, *Send password link*). Give it the least privileges that work.
+The backend calls the Authentik API with `Authorization: Bearer <AUTHENTIK_API_TOKEN>` for invitations, for the admin user page (*Admin → Users →* a person: Authentik user, two-factor state, *Send password link*), for the account page (*My space → Account*: name, two-factor state) and for account deletion (the Authentik user is deactivated). Give it the least privileges that work.
 
 ### 8.1 Service account
 
@@ -380,8 +380,11 @@ Since 2025.12 Authentik permissions are assigned to **roles** only. *Directory �
 | Can view Flow Stage Binding | `authentik_flows.view_flowstagebinding` | `GET /api/v3/flows/bindings/?target=<flow pk>` (finds the e-mail stage of the recovery flow) |
 | Can view Email Stage | `authentik_stages_email.view_emailstage` | checked by Authentik when it sends the password link (without it: "Email stage not found") |
 | Reset Password | `authentik_core.reset_user_password` | `POST /api/v3/core/users/<pk>/recovery_email/` (*Send password link*) |
+| Can change User | `authentik_core.change_user` | `PATCH /api/v3/core/users/<pk>/` with `name` (a person renames themselves on the account page) or `is_active: false` (last step of an account deletion). FriendFlix changes nothing else (name, `is_active`). |
 
 Assign the role to the service account (user → *Roles* → *Assign*, see [Authentik docs](https://docs.goauthentik.io/users-sources/user/user_basic_operations/#add-a-user-to-a-role)). Do **not** make it a superuser and do not use your admin's token: a leaked token could then change everything in Authentik.
+
+> **"Can change User" is global.** Authentik grants it for every user, not only for the people who use FriendFlix: a leaked token could rename or deactivate any Authentik account, admins included. FriendFlix itself only ever sends `name` and `is_active` for the Authentik user of the account in question, but the scope is wider than that. If you do not want this, leave the permission out (narrow the role, or remove the line from the blueprint before importing it). Then a name change on the account page answers "The sign-in page did not accept the change", and an account deletion stops at cleanup step 6 until you deactivate the Authentik user by hand: FriendFlix sees on its next try (within a minute) that the user is already inactive and finishes the step without changing anything in Authentik. That check needs *Can view User*. See [§8.4](#84-account-page-and-account-deletion).
 
 Without *Can view Flow* the backend logs `Authentik flow lookup failed` and creates the invitation without a flow binding (still works, less strict). Without *Can delete Invitation* used invitations stay until they expire.
 
@@ -403,6 +406,26 @@ The codenames above are checked against the Authentik 2026.8.3 source (the `comp
 | Expiring | off, or on with a reminder to rotate it |
 
 Then click the copy icon in the token's row and put the key into `AUTHENTIK_API_TOKEN`. When you used the blueprint, the token already exists: just copy it.
+
+### 8.4 Account page and account deletion
+
+Each person manages their own account under *My space → Account* (`/me/account`, main profile only). What it needs from Authentik:
+
+- **Name:** with the API token, a new name is written to Authentik first (`name`, needs *Can change User*), then to FriendFlix. Without the token the change stays in FriendFlix; the sign-in never copies the name back, so nothing overwrites it.
+- **E-mail is read-only for now** (a later release may change that). The account page shows the address FriendFlix stored at the first sign-in and links to Authentik ("Manage e-mail on the sign-in page"). An address changed there is neither copied into FriendFlix nor re-verified by FriendFlix. Whether people may change their name or e-mail in Authentik at all is an Authentik setting (*System → Settings*: *Allow users to change name*, on by default, and *Allow users to change email*, off by default).
+- **The user-settings link** ("Manage on the sign-in page", next to the two-factor state and the e-mail) is the origin of `OIDC_ISSUER` plus `/if/user/#/settings`, e.g. `https://auth.example.com/if/user/#/settings`. It needs no API token. It is hidden when `OIDC_ISSUER` is not an Authentik provider URL (no `/application/o/` in its path). Until a later release brings these screens into FriendFlix, people change their password, authenticator app, passkeys and recovery codes there.
+- **Two-factor state:** as on the admin user page (three device permissions, [§8.2](#82-role-with-exactly-these-global-permissions)); without the API token the page shows "Not available".
+- **Re-authentication:** deleting the account asks the person to sign in again first. FriendFlix starts a login with `prompt=login` and `max_age=0`, so Authentik asks for the password (and MFA) even when a session exists. The confirmation is valid for 10 minutes ([§13](#13-sessions-and-logout)).
+- **Account deletion** deactivates the Authentik user (`is_active: false`) as the last of six cleanup steps, 7 days after the request ([security.md](security.md#account-deletion)). During those 7 days the Authentik user stays active, because signing in is how the person restores the account. FriendFlix never deletes the Authentik user.
+  - **Without the API token**, or when the Authentik user is not found, the deletion still finishes (the audit entry `user.deleted` says `authentik: not_configured` or `not_found`), but the Authentik user stays active. The person can then sign in again and lands in the approval queue (*Waiting for approval*) as a new person; a member of `ADMIN_GROUP` gets a new admin account instead. Deactivate or delete them in Authentik yourself.
+  - **Without *Can change User*** step 6 fails with `authentik_token_rejected` and is retried once a minute; *Admin → Users*, filter *Deletion pending*, shows the cleanup row with the error. It ends when you add the permission, or when you deactivate the Authentik user by hand: step 6 looks the user up first (*Can view User*) and finishes without a change when it is already inactive. Until then the cleanup record keeps the person's name, e-mail and Authentik `sub`.
+
+**Deleting the Authentik user is your call as the owner.** FriendFlix keeps it deactivated, so the username and e-mail stay taken and Authentik's own event log keeps its history. To remove it for good:
+
+1. Wait until FriendFlix has finished the deletion: the person is gone from *Admin → Users* (also under *Deletion pending*), and the audit log has `user.deleted` with their pseudonym.
+2. In Authentik, *Directory → Users*, find the person by username or e-mail (inactive users are listed too; FriendFlix only shows the pseudonym, so you need to know who it was).
+3. Check that it is the right account and that it is inactive, then *Delete*. This also removes its MFA devices, tokens and sessions in Authentik.
+4. If the same person signs up again later, their new Authentik user has a new `sub`, and FriendFlix treats them as a new person (invite or approval queue; a member of `ADMIN_GROUP` gets a new admin account straight away).
 
 ## 9. FriendFlix `.env` values
 
@@ -479,6 +502,7 @@ Use your own name and artwork. Do not copy logos, colours or wording of commerci
 - **Authentik session:** independent. When the portal session ends, `/auth/login` sends the browser to Authentik; if the Authentik session is still valid, the person is back in without typing anything. How long that is depends on the *Session duration* of the User Login stage (`default-authentication-login`, default `seconds=0` = until the browser closes) and on the MFA *Last validation threshold*.
 - **Portal logout** (`POST /auth/logout`) only deletes the portal session (plus that device's push subscriptions and cast tokens). It does **not** call Authentik's end-session endpoint. On a shared computer also sign out of Authentik (`https://auth.example.com/if/user/` → sign out), or keep the Authentik session at `seconds=0`.
 - **Forgotten profile PIN:** the portal starts a login with `prompt=login` and `max_age=0`, which makes Authentik ask for the credentials again even if a session exists.
+- **Re-authentication for account deletion:** the same kind of login (`prompt=login`, `max_age=0`, `GET /auth/reauth`). Afterwards the portal session carries a re-authentication stamp for 10 minutes; Authentik's `auth_time` may be at most 2 minutes old. In a later release an in-app password screen will produce the same stamp.
 - End-session endpoint, if you want to link it somewhere: `https://auth.example.com/application/o/friendflix/end-session/`.
 
 ## 14. Verification
@@ -524,12 +548,16 @@ Logs: `docker compose -f compose.prod.yaml logs backend | grep -i -E "oidc|authe
 | After sign-in the person sees *Request sent* (`/pending`) | First login without a valid invite and not in `ADMIN_GROUP`: the request waits in *Admin → Users → Waiting for approval*. Admin who lands there: check the group name and that *Include claims in id_token* is on. Others: approve the request, or send an invite (with *already has an Authentik account* if they already signed up). |
 | Admin is not recognised as admin | Group name differs from `ADMIN_GROUP` (case-sensitive), membership only inherited, or *Include claims in id_token* off. |
 | `{"error":"disabled"}` (403) | The account is disabled in the portal (*Admin → Users*). |
+| `{"error":"account_deleted"}` (403) | The account's 7 days are over and its final deletion is running. Nothing can be restored any more; once the deletion has finished, the Authentik user is deactivated ([§8.4](#84-account-page-and-account-deletion)). |
+| A deleted person signs in again and lands on *Request sent* | The deletion finished without deactivating the Authentik user: no API token, or the user was not found (audit `user.deleted` with `authentik: not_configured` or `not_found`). Deactivate or delete it in Authentik ([§8.4](#84-account-page-and-account-deletion)). |
 | Invite page shows no *Create account* button | Invitations not configured or the Authentik invitation failed. See the invite result text and the backend log. Invites created before the configuration have no Authentik invitation: create a new one. |
 | Log `enrollment flow "…" not found` | `AUTHENTIK_ENROLL_FLOW` is not the slug of an existing flow. |
 | Log `Authentik API rejected AUTHENTIK_API_TOKEN` | Token wrong, expired, or intent *App password* instead of *API Token*. |
 | Log `invitation creation failed (… "Can add Invitation" …)` | 403: the role from [§8.2](#82-role-with-exactly-these-global-permissions) is missing or not assigned. |
 | Log `Authentik unreachable` | DNS/TLS/firewall from the backend container to `AUTHENTIK_URL`. |
 | Admin user page: everybody shows "No two-factor sign-in" | The token lacks *Can view TOTP / WebAuthn / Static Device* ([§8.2](#82-role-with-exactly-these-global-permissions)); Authentik then returns an empty list instead of an error. |
+| Account page: "The sign-in page did not accept the change" when saving the name | The token lacks *Can change User* (log `authentik_token_rejected`) or Authentik rejected the value. Re-import the blueprint ([§8.2](#82-role-with-exactly-these-global-permissions)). |
+| *Admin → Users*, *Deletion pending*: "Cleanup step 6 of 6" with `authentik_token_rejected` | Same permission missing; the step is retried once a minute. Add *Can change User*, or deactivate the Authentik user by hand: the next try sees that it is inactive and finishes (this needs *Can view User*). |
 | Admin user page: "2FA unknown" | `AUTHENTIK_URL` / `AUTHENTIK_API_TOKEN` not set, the token lacks *Can view User*, or the account has no Authentik user (e.g. created before a *Subject mode* change). |
 | *Send password link*: "no recovery flow set up" | No brand recovery flow, no e-mail stage in `AUTHENTIK_RECOVERY_FLOW`, the user has no e-mail address, or the token lacks *Can view Email Stage* / *Can view Flow Stage Binding* ([§10](#10-password-recovery-by-e-mail)). |
 | *Send password link*: "not supported" | Authentik is older than 2024.4 (the API answers 405). Update Authentik. |
@@ -550,7 +578,7 @@ Logs: `docker compose -f compose.prod.yaml logs backend | grep -i -E "oidc|authe
 | PKCE | S256; `state` and `nonce` checked | `backend/src/oidc.ts` |
 | Claims read | `sub` (account key), `email`, `name`, `groups` (array of names). `preferred_username` is **not** used. | `backend/src/oidc.ts`, `backend/src/users.ts` |
 | Claims source | ID token only | `tokens.claims()` in `backend/src/oidc.ts` |
-| Re-authentication | `prompt=login`, `max_age=0` (forgotten PIN) | `backend/src/oidc.ts` |
+| Re-authentication | `prompt=login`, `max_age=0` (forgotten PIN; account deletion through `GET /auth/reauth`, valid 10 min) | `backend/src/oidc.ts`, `backend/src/reauth.ts` |
 | Login state | Redis `oidc:<state>`, 600 s (enrollment 1800 s); cookie `ff_oidc` (path `/auth`, SameSite Lax, Secure when `PUBLIC_URL` is https) | `backend/src/routes/auth.ts` |
 | Portal routes | `GET /auth/login[?invite=]`, `GET /auth/enroll?invite=`, `GET /auth/callback`, `POST /auth/logout` | `backend/src/routes/auth.ts` |
 | Admin rule | `groups` contains `ADMIN_GROUP` → `admin` on first login, promotion on later logins, never demotion | `backend/src/routes/auth.ts` |
@@ -561,6 +589,8 @@ Logs: `docker compose -f compose.prod.yaml logs backend | grep -i -E "oidc|authe
 | User lookup | `GET {AUTHENTIK_URL}/api/v3/core/users/?uuid=` / `?search=<e-mail>` / paged list, matched on `uid` (hashed sub) or `uuid`; cached 1 h (a miss 5 min) | `backend/src/authentik.ts` |
 | Two-factor state | `GET {AUTHENTIK_URL}/api/v3/authenticators/admin/all/?user={pk}`, confirmed TOTP / WebAuthn / static devices; cached 10 min | `backend/src/authentik.ts` |
 | Password link | `GET /api/v3/flows/instances/{AUTHENTIK_RECOVERY_FLOW}/`, `GET /api/v3/flows/bindings/?target={flow pk}` (first `ak-stage-email`), then `POST /api/v3/core/users/{pk}/recovery_email/` with `email_stage`; 400 → "not set up", 405 → "not supported" | `backend/src/authentik.ts` (checked against Authentik 2026.8.3; minimum 2024.4) |
+| Change name / deactivate | `PATCH {AUTHENTIK_URL}/api/v3/core/users/{pk}/` with `{name}` (account page) or `{is_active: false}` (deletion step 6); 401/403 → `authentik_token_rejected`, 404 → user not found | `backend/src/authentik.ts` |
+| User settings link | origin of `OIDC_ISSUER` + `/if/user/#/settings` (only when the issuer path contains `/application/o/`) | `backend/src/authentik.ts` |
 | API timeout (admin user page) | 5 s per call | `backend/src/authentik.ts` |
 | API timeout | 10 s per call | `backend/src/invites.ts` |
 | Invite TTL | 1 – 336 h (default 48 h); the Authentik invitation gets the same expiry | `backend/src/routes/admin.ts` |
