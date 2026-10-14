@@ -72,9 +72,10 @@ const toUser = (u: RawUser): AkUser => ({ pk: u.pk, username: u.username, email:
  * The Authentik user behind an OIDC `sub`. Authentik's default subject mode is the hashed user id, which the API shows as
  * `uid` (it is not a filter): a uuid sub (mode "user UUID") is looked up with `?uuid=`, otherwise the account's e-mail
  * narrows the search (`?search=`) and, failing that, the user list is paged. Matches only on `uid` / `uuid`. Cached 1 h
- * (a miss 5 min).
+ * (a miss 5 min). `emailHint` stands in for the account's e-mail once the users row is gone (the deletion tick passes the
+ * tombstone's e-mail).
  */
-export async function akUserBySub(ctx: AkCtx, sub: string): Promise<AkUser | null> {
+export async function akUserBySub(ctx: AkCtx, sub: string, emailHint?: string | null): Promise<AkUser | null> {
   if (!configured(ctx)) return null;
   const key = `akuser:${sub}`;
   const hit = await ctx.kv.get(key);
@@ -85,7 +86,7 @@ export async function akUserBySub(ctx: AkCtx, sub: string): Promise<AkUser | nul
   let found: RawUser | undefined;
   if (UUID_RE.test(sub)) found = match((await list({ uuid: sub })).results);
   if (!found) {
-    const email = (await ctx.db.query<{ email: string | null }>('select email from users where authentik_sub=$1', [sub])).rows[0]?.email;
+    const email = (await ctx.db.query<{ email: string | null }>('select email from users where authentik_sub=$1', [sub])).rows[0]?.email ?? emailHint;
     if (email) found = match((await list({ search: email })).results);
   }
   for (let page = 1; !found && page <= MAX_PAGES; page++) {
@@ -158,8 +159,8 @@ export async function akSendRecovery(ctx: AkCtx, sub: string): Promise<void> {
 }
 
 /** `PATCH /core/users/<pk>/`; 404 -> 404 `authentik_user_not_found` (cache dropped), other errors as `call()` maps them. */
-async function patchUser(ctx: AkCtx, sub: string, body: Record<string, unknown>, expect: Partial<Record<number, HttpError>> = {}): Promise<void> {
-  const user = await akUserBySub(ctx, sub);
+async function patchUser(ctx: AkCtx, sub: string, body: Record<string, unknown>, expect: Partial<Record<number, HttpError>> = {}, emailHint?: string | null): Promise<void> {
+  const user = await akUserBySub(ctx, sub, emailHint);
   if (!user) throw new HttpError(404, 'authentik_user_not_found');
   try {
     await call(ctx, `api/v3/core/users/${user.pk}/`, { method: 'PATCH', body: JSON.stringify(body) },
@@ -179,11 +180,14 @@ export async function akUpdateUser(ctx: AkCtx, sub: string, patch: { name?: stri
   await patchUser(ctx, sub, patch, { 400: new HttpError(400, 'invalid_input') });
 }
 
-/** Activates / deactivates the Authentik user (account deletion deactivates, never deletes). Other failures throw. */
-export async function akSetActive(ctx: AkCtx, sub: string, active: boolean): Promise<'done' | 'not_configured' | 'not_found'> {
+/**
+ * Activates / deactivates the Authentik user (account deletion deactivates, never deletes). Other failures throw.
+ * `emailHint`: see akUserBySub (the account's users row may already be deleted).
+ */
+export async function akSetActive(ctx: AkCtx, sub: string, active: boolean, emailHint?: string | null): Promise<'done' | 'not_configured' | 'not_found'> {
   if (!configured(ctx)) return 'not_configured';
   try {
-    await patchUser(ctx, sub, { is_active: active });
+    await patchUser(ctx, sub, { is_active: active }, {}, emailHint);
   } catch (e) {
     if (e instanceof HttpError && e.statusCode === 404) return 'not_found';
     throw e;

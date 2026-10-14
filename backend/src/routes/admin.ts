@@ -338,13 +338,15 @@ export function adminRoutes(app: FastifyInstance, ctx: Ctx) {
     else if (p.action) { const exact = w.param(p.action), prefix = w.param(`${p.action}.%`); w.add(`(a.action = ${exact} or a.action like ${prefix})`); }
     if (p.from) w.add('a.at >= ?', p.from);
     if (p.to) w.add('a.at <= ?', p.to);
-    if (p.q) { const m = w.param(likePattern(p.q)); w.add(`(a.action ilike ${m} or coalesce(u.name,'') ilike ${m} or coalesce(tu.name, tl.name, '') ilike ${m})`); }
-    // target_name: the user (or list) the target id points to, so the UI can say "… locked Anna" instead of a uuid
-    const from = `from audit_log a left join users u on u.id = a.actor
-         left join users tu on tu.id::text = a.target left join lists tl on tl.id::text = a.target`;
+    if (p.q) { const m = w.param(likePattern(p.q)); w.add(`(a.action ilike ${m} or coalesce(u.name, ad.pseudonym, '') ilike ${m} or coalesce(tu.name, tad.pseudonym, tl.name, '') ilike ${m})`); }
+    // target_name: the user (or list) the target id points to, so the UI can say "… locked Anna" instead of a uuid;
+    // a deleted account shows its pseudonym (account_deletions)
+    const from = `from audit_log a left join users u on u.id = a.actor left join account_deletions ad on ad.user_id = a.actor
+         left join users tu on tu.id::text = a.target left join account_deletions tad on tad.user_id::text = a.target
+         left join lists tl on tl.id::text = a.target`;
     const total = Number((await ctx.db.query<{ c: string }>(`select count(*) c ${from} ${w.sql}`, w.params)).rows[0]!.c);
     const r = await ctx.db.query(
-      `select a.id, a.at, a.action, a.target, a.meta, a.actor actor_id, u.name actor, coalesce(tu.name, tl.name) target_name ${from} ${w.sql}
+      `select a.id, a.at, a.action, a.target, a.meta, a.actor actor_id, coalesce(u.name, ad.pseudonym) actor, coalesce(tu.name, tad.pseudonym, tl.name) target_name ${from} ${w.sql}
         order by a.id ${p.dir === 'asc' ? 'asc' : 'desc'} limit ${p.limit ?? 100} offset ${p.offset ?? 0}`,
       w.params,
     );
@@ -353,7 +355,10 @@ export function adminRoutes(app: FastifyInstance, ctx: Ctx) {
 
   // options of the audit filters: people who acted and the action groups that occur
   app.get('/api/admin/audit/filters', admin, async () => {
-    const actors = (await ctx.db.query<{ id: string; name: string }>('select distinct u.id, u.name from audit_log a join users u on u.id = a.actor order by u.name')).rows;
+    const actors = (await ctx.db.query<{ id: string; name: string }>(
+      `select distinct a.actor id, coalesce(u.name, ad.pseudonym) name from audit_log a
+         left join users u on u.id = a.actor left join account_deletions ad on ad.user_id = a.actor
+        where coalesce(u.name, ad.pseudonym) is not null order by 2`)).rows;
     const system = Number((await ctx.db.query<{ c: string }>('select count(*) c from (select 1 from audit_log where actor is null limit 1) x')).rows[0]!.c) > 0;
     const categories = (await ctx.db.query<{ c: string }>("select distinct split_part(action, '.', 1) c from audit_log order by 1")).rows.map((x) => x.c);
     return { actors, system, categories };

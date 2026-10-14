@@ -193,6 +193,9 @@ export function authRoutes(app: FastifyInstance, ctx: Ctx) {
       if (saved.reauth) return await finishReauth(req, reply, { ...saved, reauth: saved.reauth });
       // forgotten PIN: the IdP must really have asked for the login again (auth_time), a still valid IdP session is not enough
       const claims = await ctx.oidc.finish(new URL(req.url, ctx.cfg.PUBLIC_URL), saved, saved.resetPin ? { maxAge: RESET_PIN_MAX_AGE } : undefined);
+      // the account is being deleted (claimed by the deletion tick): no login, no approval request, no new account (F15 step 2)
+      const deleting = await ctx.db.query('select 1 from account_deletions where authentik_sub=$1 and finished_at is null', [claims.sub]);
+      if (deleting.rowCount) return reply.code(403).send({ error: 'account_deleted' });
       let user = await getUserBySub(ctx, claims.sub);
       const isAdmin = claims.groups.includes(ctx.cfg.ADMIN_GROUP);
       if (!user) {

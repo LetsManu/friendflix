@@ -68,6 +68,8 @@ const de = {
   'notify.access.endedAdmin': 'Der Zugang von {name} ist am {date} abgelaufen',
   'notify.deletion.requested': 'Das Konto von {name} wird am {date} gelöscht',
   'notify.deletion.restored': 'Die Löschung des Kontos von {name} wurde abgebrochen',
+  'notify.deletion.failed': 'Kontolöschung von {pseudonym}: Schritt {step} fehlgeschlagen, wird wiederholt',
+  'notify.deletion.done': 'Das Konto {pseudonym} wurde endgültig gelöscht',
   // approval queue (login without an invite)
   'notify.approval.new': 'Neue Zugangsanfrage von {name}',
   // achievements
@@ -155,6 +157,8 @@ const en: Catalog = {
   'notify.access.endedAdmin': 'Access for {name} expired on {date}',
   'notify.deletion.requested': 'The account of {name} will be deleted on {date}',
   'notify.deletion.restored': 'Deletion of the account of {name} was cancelled',
+  'notify.deletion.failed': 'Deleting account {pseudonym}: step {step} failed, will retry',
+  'notify.deletion.done': 'Account {pseudonym} has been permanently deleted',
   // approval queue (login without an invite)
   'notify.approval.new': 'New access request from {name}',
   'achievement.unlocked': 'Achievement unlocked: {name}',
@@ -236,6 +240,8 @@ const fr: Catalog = {
   'notify.access.endedAdmin': 'L’accès de {name} a expiré le {date}',
   'notify.deletion.requested': 'Le compte de {name} sera supprimé le {date}',
   'notify.deletion.restored': 'La suppression du compte de {name} a été annulée',
+  'notify.deletion.failed': 'Suppression du compte {pseudonym} : l’étape {step} a échoué, nouvel essai prévu',
+  'notify.deletion.done': 'Le compte {pseudonym} a été définitivement supprimé',
   // approval queue (login without an invite)
   'notify.approval.new': 'Nouvelle demande d’accès de {name}',
   'achievement.unlocked': 'Succès débloqué : {name}',
@@ -317,6 +323,8 @@ const es: Catalog = {
   'notify.access.endedAdmin': 'El acceso de {name} expiró el {date}',
   'notify.deletion.requested': 'La cuenta de {name} se eliminará el {date}',
   'notify.deletion.restored': 'Se canceló la eliminación de la cuenta de {name}',
+  'notify.deletion.failed': 'Eliminación de la cuenta {pseudonym}: falló el paso {step}, se reintentará',
+  'notify.deletion.done': 'La cuenta {pseudonym} se eliminó definitivamente',
   // approval queue (login without an invite)
   'notify.approval.new': 'Nueva solicitud de acceso de {name}',
   'achievement.unlocked': 'Logro desbloqueado: {name}',
@@ -398,6 +406,8 @@ const it: Catalog = {
   'notify.access.endedAdmin': 'L’accesso di {name} è scaduto il {date}',
   'notify.deletion.requested': 'L’account di {name} sarà eliminato il {date}',
   'notify.deletion.restored': 'L’eliminazione dell’account di {name} è stata annullata',
+  'notify.deletion.failed': 'Eliminazione dell’account {pseudonym}: passaggio {step} non riuscito, verrà ritentato',
+  'notify.deletion.done': 'L’account {pseudonym} è stato eliminato definitivamente',
   // approval queue (login without an invite)
   'notify.approval.new': 'Nuova richiesta di accesso da {name}',
   'achievement.unlocked': 'Traguardo sbloccato: {name}',
@@ -479,6 +489,8 @@ const tr: Catalog = {
   'notify.access.endedAdmin': '{name} kullanıcısının erişimi {date} tarihinde sona erdi',
   'notify.deletion.requested': '{name} kullanıcısının hesabı {date} tarihinde silinecek',
   'notify.deletion.restored': '{name} kullanıcısının hesap silme işlemi iptal edildi',
+  'notify.deletion.failed': '{pseudonym} hesabının silinmesi: {step}. adım başarısız oldu, yeniden denenecek',
+  'notify.deletion.done': '{pseudonym} hesabı kalıcı olarak silindi',
   // approval queue (login without an invite)
   'notify.approval.new': '{name} erişim talep ediyor',
   'achievement.unlocked': 'Başarım açıldı: {name}',
@@ -565,6 +577,8 @@ const pl: Catalog = {
   'notify.access.endedAdmin': 'Dostęp użytkownika {name} wygasł {date}',
   'notify.deletion.requested': 'Konto użytkownika {name} zostanie usunięte {date}',
   'notify.deletion.restored': 'Usunięcie konta użytkownika {name} zostało anulowane',
+  'notify.deletion.failed': 'Usuwanie konta {pseudonym}: krok {step} nie powiódł się, zostanie ponowiony',
+  'notify.deletion.done': 'Konto {pseudonym} zostało trwale usunięte',
   // approval queue (login without an invite)
   'notify.approval.new': 'Nowa prośba o dostęp od {name}',
   'achievement.unlocked': 'Odblokowano osiągnięcie: {name}',

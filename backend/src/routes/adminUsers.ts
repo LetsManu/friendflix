@@ -171,7 +171,7 @@ export function adminUserRoutes(app: FastifyInstance, ctx: Ctx) {
     if (p.status === 'active') w.add('not u.disabled and u.deletion_at is null');
     if (p.status === 'locked') w.add('u.disabled');
     if (p.status === 'expiring') w.add("u.access_until between now() and now() + interval '7 days'");
-    if (p.status === 'deleting') w.add('u.deletion_at is not null');
+    if (p.status === 'deleting') w.add('(u.deletion_at is not null or u.cleanup is not null)');
     if (p.lastActive === '90+') w.add("(u.last_seen is null or u.last_seen < now() - interval '90 days')");
     else if (p.lastActive) w.add("u.last_seen >= now() - make_interval(days => ?)", Number(p.lastActive));
     const base = p.status === 'pending'
@@ -181,8 +181,13 @@ export function adminUserRoutes(app: FastifyInstance, ctx: Ctx) {
       : `select u.id, u.name, u.email, u.role, u.disabled, u.jellyfin_username, u.seerr_user_id, u.created_at,
                 (select max(last_seen) from devices d where d.user_id = u.id) last_seen, u.access_until, u.locked_reason, u.deletion_at,
                 (select count(*) from profiles x where x.user_id = u.id)::int profiles,
-                (select count(*) from devices d where d.user_id = u.id)::int devices, false pending
-           from users u`;
+                (select count(*) from devices d where d.user_id = u.id)::int devices, false pending${p.status === 'deleting' ? ', null::jsonb cleanup' : ''}
+           from users u${p.status === 'deleting' ? `
+         union all
+         -- deletions whose users row is already gone (steps 5-6 still open): pseudonym only, the step being worked on and its error
+         select ad.user_id, ad.pseudonym, null, null, true, null, null, ad.started_at, null, null, 'deletion', null, 0, 0, false,
+                jsonb_build_object('step', ad.step + 1, 'error', ad.last_error)
+           from account_deletions ad where ad.finished_at is null and not exists (select 1 from users x where x.id = ad.user_id)` : ''}`;
     const order = orderBy({ name: 'lower(u.name)', email: "lower(coalesce(u.email,''))", role: 'u.role', status: 'u.disabled', lastSeen: 'u.last_seen', createdAt: 'u.created_at', accessUntil: 'u.access_until', profiles: 'u.profiles', devices: 'u.devices' }, p.sort, p.dir, 'u.created_at, u.id');
     const total = Number((await ctx.db.query<{ c: string }>(`select count(*) c from (${base}) u ${w.sql}`, w.params)).rows[0]!.c);
     const r = await ctx.db.query(`select * from (${base}) u ${w.sql} ${order} limit ${p.limit ?? 1000} offset ${p.offset ?? 0}`, w.params);
@@ -331,8 +336,10 @@ export function adminUserRoutes(app: FastifyInstance, ctx: Ctx) {
     const where = 'where a.target = $1::text or a.actor = $1::uuid';
     const total = Number((await ctx.db.query<{ c: string }>(`select count(*) c from audit_log a ${where}`, [id])).rows[0]!.c);
     const r = await ctx.db.query(
-      `select a.id, a.at, a.action, a.target, a.meta, a.actor actor_id, u.name actor, coalesce(tu.name, tl.name) target_name
-         from audit_log a left join users u on u.id = a.actor left join users tu on tu.id::text = a.target left join lists tl on tl.id::text = a.target
+      `select a.id, a.at, a.action, a.target, a.meta, a.actor actor_id, coalesce(u.name, ad.pseudonym) actor, coalesce(tu.name, tad.pseudonym, tl.name) target_name
+         from audit_log a left join users u on u.id = a.actor left join account_deletions ad on ad.user_id = a.actor
+         left join users tu on tu.id::text = a.target left join account_deletions tad on tad.user_id::text = a.target
+         left join lists tl on tl.id::text = a.target
         ${where} order by a.id desc limit $2 offset $3`, [id, p.limit, p.offset]);
     return { entries: r.rows, total };
   });
