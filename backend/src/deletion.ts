@@ -14,6 +14,7 @@ import { notifyAdmins } from './notify.js';
 import { akSetActive } from './authentik.js';
 import { revokeDownloads } from './downloads.js';
 import { accountJellyfinIds } from './profiles.js';
+import { pendingNoticeKey } from './routes/auth.js';
 import { SeerrError } from './seerr/client.js';
 import { HttpError, accessEnded, accountSerial, assertNotLastAdmin, lockUser, unlockUser } from './users.js';
 
@@ -189,6 +190,14 @@ function errorCode(e: unknown): string {
 
 type StepResult = 'finished' | 'failed' | 'pending';
 
+/**
+ * The audit scrub of entries keyed by the person's approval-request ids (`user.rejected` carries the requester's name and the
+ * admin's message, which may quote it). $1 the request ids, $2 the pseudonym.
+ */
+const SCRUB_REQUESTS = `update audit_log set meta = (meta - 'name' - 'email' - 'jellyfin' - 'username' - 'ip' - 'message')
+                                                 || jsonb_build_object('pseudonym', $2::text)
+                         where target = any($1::text[])`;
+
 /** Runs the steps of one claimed account from `step + 1`; stops at the first failure (recorded, not thrown). */
 async function runSteps(ctx: Ctx, t: Tombstone, now: Date): Promise<StepResult> {
   const id = t.user_id;
@@ -224,7 +233,12 @@ async function runSteps(ctx: Ctx, t: Tombstone, now: Date): Promise<StepResult> 
         profileIds = (await c.query<{ id: string }>('select id from profiles where user_id=$1', [id])).rows.map((r) => r.id);
         // the pseudonymous failure notices of this deletion stay
         await c.query("delete from notifications where (link = '/admin/users/' || $1 or dedupe like '%' || $1 || '%') and kind <> 'deletion_failed'", [id]);
-        if (t.authentik_sub) await c.query('delete from approval_requests where authentik_sub=$1', [t.authentik_sub]);
+        if (t.authentik_sub) {
+          // an open or rejected request of this person: its audit entries are keyed by the request id (step 5 cannot find them later)
+          const reqIds = (await c.query<{ id: string }>('select id::text id from approval_requests where authentik_sub=$1', [t.authentik_sub])).rows.map((r) => r.id);
+          await c.query(SCRUB_REQUESTS, [reqIds, t.pseudonym]);
+          await c.query('delete from approval_requests where authentik_sub=$1', [t.authentik_sub]);
+        }
         await c.query('delete from users where id=$1', [id]); // cascades profiles, lists, history, devices, push subscriptions, limits …
         await c.query('commit');
       } catch (e) {
@@ -254,6 +268,11 @@ async function runSteps(ctx: Ctx, t: Tombstone, now: Date): Promise<StepResult> 
       `update audit_log set meta = (meta - 'name' - 'email' - 'jellyfin' - 'username' - 'ip' #- '{from,name}' #- '{to,name}')
                                    || jsonb_build_object('pseudonym', $2::text)
         where actor = $1::uuid or target = $1::text`, [id, t.pseudonym]);
+    // the approval request that became this account (user.approved names it): its user.rejected entries and the /pending notice
+    const reqIds = (await ctx.db.query<{ r: string }>(
+      "select distinct meta->>'request' r from audit_log where action='user.approved' and target=$1 and meta ? 'request'", [id])).rows.map((x) => x.r);
+    await ctx.db.query(SCRUB_REQUESTS, [reqIds, t.pseudonym]);
+    for (const r of reqIds) await ctx.kv.del(pendingNoticeKey(r));
   }))) return 'failed';
   // 6: the Authentik user is deactivated (never deleted); finishing is part of the step, so its outcome reaches the audit
   let authentik: 'deactivated' | 'not_configured' | 'not_found' = 'not_found';

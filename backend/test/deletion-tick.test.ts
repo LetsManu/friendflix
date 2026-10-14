@@ -98,6 +98,18 @@ describe('deletionTick', () => {
     await env.pool.query("insert into audit_log(actor, action, target, meta) values ($1, 'login', $2, $3)", [d.id, d.id, JSON.stringify({ ip: '10.1.2.3' })]);
     await env.pool.query("insert into audit_log(actor, action, target, meta) values ($1, 'user.provisioned', $2, $3)",
       [adminId, d.id, JSON.stringify({ name: 'Doomed', email: 'doomed@x.de', jellyfin: 'Doomed', username: 'dd', role: 'friend' })]);
+    // the person's approval history: an earlier rejection (keyed by the request id, which user.approved names), and a
+    // request still on file for the sub with its own rejection
+    const approvedReq = '11111111-1111-4111-8111-111111111111';
+    await env.pool.query("insert into audit_log(actor, action, target, meta) values ($1, 'user.rejected', $2, $3)",
+      [adminId, approvedReq, JSON.stringify({ from: 'pending', to: 'rejected', name: d.claims.name, message: `Sorry ${d.claims.name}` })]);
+    await env.pool.query("insert into audit_log(actor, action, target, meta) values ($1, 'user.approved', $2, $3)",
+      [adminId, d.id, JSON.stringify({ from: 'pending', to: 'friend', accessUntil: null, request: approvedReq })]);
+    await env.kv.set(`pending_notice:${approvedReq}`, JSON.stringify({ sub: d.claims.sub, email: d.claims.email }), 600);
+    const openReq = (await env.pool.query("insert into approval_requests(id, authentik_sub, email, name, rejected_at) values (gen_random_uuid(), $1, $2, $3, now()) returning id::text id",
+      [d.claims.sub, d.claims.email, d.claims.name])).rows[0].id as string;
+    await env.pool.query("insert into audit_log(actor, action, target, meta) values ($1, 'user.rejected', $2, $3)",
+      [adminId, openReq, JSON.stringify({ from: 'pending', to: 'rejected', name: d.claims.name, message: null })]);
     // nested names (admin rename of a profile) and the account's own profile audit
     await env.pool.query("insert into audit_log(actor, action, target, meta) values ($1, 'profile.admin_update', $2, $3)",
       [adminId, d.id, JSON.stringify({ profile: d.id, from: { name: 'Doomed', hasPin: false }, to: { name: 'Lena', hasPin: false } })]);
@@ -141,6 +153,15 @@ describe('deletionTick', () => {
       for (const k of ['name', 'email', 'ip', 'jellyfin', 'username']) expect(a.meta).not.toHaveProperty(k);
     }
     expect(JSON.stringify(rows)).not.toMatch(/Doomed|Lena|"Kid"|10\.1\.2\.3/);
+    // nothing in the whole audit log names the person any more; the approval entries carry the pseudonym
+    const everything = (await env.pool.query<{ target: string; meta: Record<string, unknown> }>('select target, meta from audit_log')).rows;
+    const named = new RegExp(`${d.claims.name}(?![0-9])|doomed${n}@`);
+    expect(everything.filter((a) => named.test(JSON.stringify(a.meta)))).toEqual([]);
+    for (const target of [approvedReq, openReq]) {
+      expect(everything.find((a) => a.target === target)!.meta).toEqual({ from: 'pending', to: 'rejected', pseudonym: p });
+    }
+    expect((await env.pool.query('select 1 from approval_requests where authentik_sub=$1', [d.claims.sub])).rowCount).toBe(0);
+    expect(await env.kv.get(`pending_notice:${approvedReq}`)).toBeNull();
     const renamed = rows.find((a) => a.meta.profile === d.id)!;
     expect(renamed.meta).toEqual({ profile: d.id, from: { hasPin: false }, to: { hasPin: false }, pseudonym: p });
     expect(akPatches().map((c) => [c.path, c.body])).toEqual([[`/api/v3/core/users/${100 + n}/`, { is_active: false }]]);
