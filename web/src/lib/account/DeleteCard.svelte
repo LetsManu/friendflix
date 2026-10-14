@@ -3,7 +3,8 @@
 <script lang="ts">
   /**
    * /me/account, delete the account: a dialog that offers the export first, explains the 7 days (restore by signing in
-   * again) and that the sign-in account is deactivated. Deleting needs a recent sign-in: the button always asks the backend
+   * again), that it signs out every device at once and that the sign-in account is deactivated only when the deletion is
+   * final. Deleting needs a recent sign-in: the button always asks the backend
    * first (the last admin is refused before any sign-in); a 401 reauth_required goes through /auth/reauth and comes back as
    * `?delete=1`, which opens the dialog again. On success the session is gone: the dialog
    * shows the date, then the page leaves for `/`. The last admin is refused (400 last_admin).

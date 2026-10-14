@@ -253,6 +253,17 @@ describe('akSetActive', () => {
     expect(calls.find((c) => c.method === 'PATCH')).toMatchObject({ path: '/api/v3/core/users/7/', body: { is_active: false }, authorization: `Bearer ${TOKEN}` });
   });
 
+  it('a user already in the wanted state is done without a PATCH (works without change_user)', async () => {
+    const inactive: Handler = (u) => ({ json: { pagination: { next: 0 }, results: u.searchParams.get('search') === ANNA.email ? [{ ...ANNA, is_active: false }] : [] } });
+    // the token may only view users: a PATCH would answer 403
+    const { ctx, calls } = mk({ 'GET /api/v3/core/users/': inactive, 'PATCH /api/v3/core/users/7/': () => ({ status: 403 }) });
+    expect(await akSetActive(ctx, SUB, false)).toBe('done');
+    expect(calls.filter((c) => c.method === 'PATCH')).toEqual([]);
+    // the other direction still PATCHes (and fails with the rejected token)
+    expect(await codeOf(akSetActive(ctx, SUB, true))).toMatchObject({ status: 502, code: 'authentik_token_rejected' });
+    expect(calls.filter((c) => c.method === 'PATCH')).toHaveLength(1);
+  });
+
   it('akSetActive maps 404 to not_found', async () => {
     const gone = mk({ 'GET /api/v3/core/users/': users, 'PATCH /api/v3/core/users/7/': () => ({ status: 404 }) });
     expect(await akSetActive(gone.ctx, SUB, false)).toBe('not_found');

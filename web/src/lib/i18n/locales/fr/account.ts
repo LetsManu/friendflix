@@ -324,7 +324,7 @@ const fr: Translation<typeof de> = {
     ownerOnly: 'Tu gères ton compte depuis le profil principal.',
     loadFailed: 'Impossible de charger le compte.',
     retry: 'Réessayer',
-    reauthFailed: 'Cette connexion ne correspondait pas à ton compte.',
+    reauthFailed: 'La connexion n’a pas pu être confirmée. Réessaie.',
     privacy: 'Les admins peuvent voir les titres que tu as regardés récemment. Chaque consultation est consignée dans le journal d’audit.',
     data: {
       title: 'Tes données',
@@ -338,7 +338,7 @@ const fr: Translation<typeof de> = {
       dialogTitle: 'Supprimer ton compte ?',
       exportHint: 'Télécharge d’abord tes données si tu veux les garder.',
       grace: 'Ton compte sera définitivement supprimé dans 7 jours. D’ici là, tu peux le restaurer en te reconnectant.',
-      signIn: 'Ton compte de connexion est désactivé immédiatement et tu es déconnecté de tous tes appareils.',
+      signIn: 'Tu es déconnecté de tous tes appareils immédiatement ; ton compte de connexion est désactivé lorsque la suppression est définitive.',
       reauthHint: 'Par sécurité, tu te reconnectes d’abord.',
       confirm: 'Supprimer mon compte',
       cancel: 'Annuler',

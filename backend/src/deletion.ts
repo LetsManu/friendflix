@@ -61,6 +61,7 @@ export async function scheduleDeletion(ctx: Ctx, actor: string | null, userId: s
 export async function restoreDeletion(ctx: Ctx, actor: string | null, userId: string): Promise<void> {
   const c = await (ctx.db as pg.Pool).connect();
   let u: { name: string; deletion_at: Date; access_until: Date | null };
+  let ended: boolean;
   try {
     await c.query('begin');
     const r = await c.query<typeof u & { locked_reason: string | null }>(
@@ -71,8 +72,10 @@ export async function restoreDeletion(ctx: Ctx, actor: string | null, userId: st
     if (!row) throw new HttpError(404, 'not_found');
     if (row.locked_reason !== 'deletion' || !row.deletion_at) throw new HttpError(409, 'not_scheduled');
     u = row;
-    // ended access: the lock stays and becomes the expiry lock (phase 1 never unlocks ended access)
-    await c.query(`update users set deletion_at=null${accessEnded(u.access_until) ? ", locked_reason='expired'" : ''} where id=$1`, [userId]);
+    // ended access: the lock stays and becomes the expiry lock (phase 1 never unlocks ended access). Judged once, here: the
+    // branch after the commit must follow what this statement did
+    ended = accessEnded(u.access_until);
+    await c.query(`update users set deletion_at=null${ended ? ", locked_reason='expired'" : ''} where id=$1`, [userId]);
     await c.query('commit');
   } catch (e) {
     await c.query('rollback').catch(() => undefined);
@@ -80,13 +83,16 @@ export async function restoreDeletion(ctx: Ctx, actor: string | null, userId: st
   } finally {
     c.release();
   }
-  if (accessEnded(u.access_until)) await audit(ctx, actor, 'user.deletion_restored', userId, { lockedReason: 'expired' });
+  if (ended) await audit(ctx, actor, 'user.deletion_restored', userId, { lockedReason: 'expired' });
   else {
     try {
       await unlockUser(ctx, actor, userId); // still locked as 'deletion' here, so it audits user.deletion_restored
     } catch (e) {
-      // e.g. media server down: the account is still locked; the date goes back so the restore can be retried
-      await ctx.db.query("update users set deletion_at=$2 where id=$1 and disabled and locked_reason='deletion' and deletion_at is null", [userId, u.deletion_at]);
+      // e.g. media server down: the account is still locked; the date goes back so the restore can be retried. Never to a
+      // date that has passed (after "delete now", or close to the date): the next tick would delete what was being restored
+      await ctx.db.query(
+        "update users set deletion_at=greatest($2, now() + interval '1 hour') where id=$1 and disabled and locked_reason='deletion' and deletion_at is null",
+        [userId, u.deletion_at]);
       throw e;
     }
   }

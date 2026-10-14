@@ -134,7 +134,7 @@ test.describe('account page (/me/account)', () => {
 
   test('?reauth=failed shows an alert', async ({ page }) => {
     await page.goto('/me/account?reauth=failed');
-    await expect(page.getByRole('alert')).toHaveText('Diese Anmeldung passte nicht zu deinem Konto.');
+    await expect(page.getByRole('alert')).toHaveText('Die Anmeldung konnte nicht bestätigt werden. Bitte versuch es noch einmal.');
   });
 
   test('a11y: sections have headings, chips have names', async ({ page }) => {
@@ -216,11 +216,12 @@ test.describe('your data and account deletion', () => {
     const opener = page.getByRole('region', { name: 'Konto löschen' }).getByRole('button', { name: 'Konto löschen …' });
     await opener.click();
     let dlg = page.getByRole('dialog', { name: 'Konto löschen?' });
-    // the export comes first, then the 7 days, the restore by signing in, the deactivated sign-in account
+    // the export comes first, then the 7 days, the restore by signing in, signed out at once (the sign-in account only at the end)
     await expect(dlg.getByRole('link', { name: 'Meine Daten herunterladen' })).toHaveAttribute('href', '/api/account/export');
     await expect(dlg).toContainText('in 7 Tagen endgültig gelöscht');
     await expect(dlg).toContainText('indem du dich wieder anmeldest');
-    await expect(dlg).toContainText('Anmeldekonto wird sofort deaktiviert');
+    await expect(dlg).toContainText('Du wirst sofort auf allen Geräten abgemeldet; dein Anmeldekonto wird deaktiviert, sobald die Löschung endgültig ist.');
+    await expect(dlg).not.toContainText('sofort deaktiviert');
     await expect(dlg).toContainText('meldest du dich dafür noch einmal an');
     await expect(dlg.getByRole('button', { name: 'Abbrechen' })).toBeFocused();
     // Escape closes it and gives the focus back

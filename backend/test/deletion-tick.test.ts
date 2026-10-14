@@ -1,5 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
+import type pg from 'pg';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { deletionTick, pseudonymFor, restoreDeletion, scheduleDeletion } from '../src/deletion.js';
 import type { OidcClaims } from '../src/oidc.js';
@@ -15,6 +16,8 @@ const TOKEN = 'ak-secret-token';
 
 /** switches for the fakes: status codes the next calls answer */
 const fail = { jfDelete: 0, seerrDelete: 0, akPatch: 0 };
+/** what the Authentik user list answers for is_active (undefined: the field is left out) */
+const akUser: { isActive?: boolean } = {};
 const akCalls: Call[] = [];
 
 const call = (s: Sess, method: string, url: string, body?: unknown) =>
@@ -68,7 +71,7 @@ beforeAll(async () => {
     'GET /api/v3/core/users/': (u) => {
       const q = u.searchParams.get('search');
       const m = q?.match(/^doomed(\d+)@x\.de$/);
-      return { json: { pagination: { next: 0 }, results: m ? [{ pk: 100 + Number(m[1]), username: `d${m[1]}`, email: q, uid: `hashed-sub-${m[1]}` }] : [] } };
+      return { json: { pagination: { next: 0 }, results: m ? [{ pk: 100 + Number(m[1]), username: `d${m[1]}`, email: q, uid: `hashed-sub-${m[1]}`, ...(akUser.isActive === undefined ? {} : { is_active: akUser.isActive }) }] : [] } };
     },
     'PATCH /api/v3/core/users/\\d+/': () => (fail.akPatch ? { status: fail.akPatch } : { json: {} }),
   }, akCalls);
@@ -78,6 +81,7 @@ beforeAll(async () => {
 afterAll(() => env.close());
 beforeEach(async () => {
   Object.assign(fail, { jfDelete: 0, seerrDelete: 0, akPatch: 0 });
+  delete akUser.isActive;
   withAuthentik();
   // leftovers of earlier tests must not be picked up by this test's ticks
   await env.pool.query('delete from users where id in (select user_id from account_deletions where finished_at is null)');
@@ -244,6 +248,93 @@ describe('deletionTick', () => {
     fail.jfDelete = 500; // the claim commits, step 1 fails: the users row still exists
     expect((await deletionTick(env.ctx)).claimed).toBe(1);
     await expect(restoreDeletion(env.ctx, adminId, d.id)).rejects.toThrow('deletion_in_progress');
+  });
+
+  it('a failed restore after "delete now" re-arms a date at least an hour away: the next tick does not delete', async () => {
+    const d = await doomed({ due: false });
+    expect((await call(admin, 'POST', `/api/admin/users/${d.id}/deletion/now`)).statusCode).toBe(200);
+    const jfAdmin = env.ctx.jf.admin;
+    const setDisabled = jfAdmin.setDisabled;
+    jfAdmin.setDisabled = async () => { throw new Error('media server down'); };
+    try {
+      await expect(restoreDeletion(env.ctx, adminId, d.id)).rejects.toThrow('media server down');
+    } finally {
+      jfAdmin.setDisabled = setDisabled;
+    }
+    const r = (await env.pool.query<{ disabled: boolean; locked_reason: string; deletion_at: Date }>('select disabled, locked_reason, deletion_at from users where id=$1', [d.id])).rows[0]!;
+    expect(r).toMatchObject({ disabled: true, locked_reason: 'deletion' });
+    expect(r.deletion_at.getTime()).toBeGreaterThan(Date.now() + 59 * 60e3);
+    expect((await deletionTick(env.ctx)).claimed).toBe(0);
+    expect(await tomb(d.id)).toBeUndefined();
+    await restoreDeletion(env.ctx, adminId, d.id); // the retry works
+    expect((await env.pool.query('select disabled, deletion_at from users where id=$1', [d.id])).rows).toEqual([{ disabled: false, deletion_at: null }]);
+  });
+
+  it('a failed restore well before the date puts the original date back', async () => {
+    const d = await doomed({ due: false });
+    const before = (await env.pool.query<{ deletion_at: Date }>('select deletion_at from users where id=$1', [d.id])).rows[0]!.deletion_at;
+    const jfAdmin = env.ctx.jf.admin;
+    const setDisabled = jfAdmin.setDisabled;
+    jfAdmin.setDisabled = async () => { throw new Error('media server down'); };
+    try {
+      await expect(restoreDeletion(env.ctx, adminId, d.id)).rejects.toThrow('media server down');
+    } finally {
+      jfAdmin.setDisabled = setDisabled;
+    }
+    expect((await env.pool.query('select deletion_at from users where id=$1', [d.id])).rows[0].deletion_at).toEqual(before);
+  });
+
+  it('access that ends while a restore runs is judged once: the account is never left locked without a date', async () => {
+    const d = await doomed({ due: false });
+    const until = Date.now() + 300;
+    await env.pool.query('update users set access_until=$2 where id=$1', [d.id, new Date(until)]);
+    // the commit of the restore transaction returns only after access_until has passed
+    const pool = env.ctx.db as unknown as pg.Pool;
+    const connect = pool.connect;
+    // (pool.query checks out with a callback: that path stays as it is)
+    pool.connect = ((cb?: unknown) => cb ? (connect as (x: unknown) => void).call(pool, cb) : wrapped()) as typeof connect;
+    const wrapped = async () => {
+      const c = await (connect as () => Promise<pg.PoolClient>).call(pool);
+      const query = c.query;
+      const release = c.release;
+      c.query = (async (...a: Parameters<typeof query>) => {
+        const r = await (query as (...x: unknown[]) => Promise<unknown>).apply(c, a);
+        if (a[0] === 'commit') await new Promise((ok) => setTimeout(ok, Math.max(0, until - Date.now()) + 50));
+        return r;
+      }) as typeof query;
+      c.release = ((err?: Error | boolean) => {
+        c.query = query;
+        c.release = release;
+        return release.call(c, err);
+      }) as typeof release;
+      return c;
+    };
+    try {
+      await restoreDeletion(env.ctx, adminId, d.id);
+    } finally {
+      pool.connect = connect;
+    }
+    const r = (await env.pool.query('select disabled, locked_reason, deletion_at from users where id=$1', [d.id])).rows[0];
+    // access had not ended when the transaction ran: unlocked (the expiry tick locks it as expired later)
+    expect(r).toEqual({ disabled: false, locked_reason: null, deletion_at: null });
+  });
+
+  it('step 6 with an Authentik user that is already inactive finishes without a PATCH (token without change_user)', async () => {
+    const d = await doomed();
+    akUser.isActive = false;
+    fail.akPatch = 403;
+    expect(await deletionTick(env.ctx)).toEqual({ claimed: 1, finished: 1, failed: 0 });
+    expect(akPatches()).toEqual([]);
+    expect((await audits('user.deleted', d.id))[0]!.meta.authentik).toBe('deactivated');
+    expect(await tomb(d.id)).toMatchObject({ authentik_sub: null, email: null });
+  });
+
+  it('step 6 with an active Authentik user and a token that may not change it keeps retrying', async () => {
+    const d = await doomed();
+    akUser.isActive = true;
+    fail.akPatch = 403;
+    expect(await deletionTick(env.ctx)).toEqual({ claimed: 1, finished: 0, failed: 1 });
+    expect(await tomb(d.id)).toMatchObject({ step: 5, failed_step: 6, last_error: 'authentik_token_rejected' });
   });
 
   it('request service 404 counts as done', async () => {

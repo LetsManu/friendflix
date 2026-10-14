@@ -14,7 +14,8 @@ import { akBase } from './invites.js';
 import { HttpError } from './users.js';
 
 type AkCtx = Pick<Ctx, 'cfg' | 'kv' | 'db' | 'fetchImpl'>;
-export interface AkUser { pk: number; username: string; email: string }
+/** `isActive`: Authentik's is_active, when the list answered it */
+export interface AkUser { pk: number; username: string; email: string; isActive?: boolean }
 export interface MfaState { totp: boolean; webauthn: boolean; static: boolean }
 
 const TIMEOUT_MS = 5_000;
@@ -65,8 +66,9 @@ async function forget(ctx: AkCtx, sub: string) {
 }
 
 interface Page<T> { pagination?: { next?: number }; results: T[] }
-interface RawUser { pk: number; username: string; email?: string; uid?: string; uuid?: string }
-const toUser = (u: RawUser): AkUser => ({ pk: u.pk, username: u.username, email: u.email ?? '' });
+interface RawUser { pk: number; username: string; email?: string; uid?: string; uuid?: string; is_active?: boolean }
+const toUser = (u: RawUser): AkUser =>
+  ({ pk: u.pk, username: u.username, email: u.email ?? '', ...(typeof u.is_active === 'boolean' ? { isActive: u.is_active } : {}) });
 
 /**
  * The Authentik user behind an OIDC `sub`. Authentik's default subject mode is the hashed user id, which the API shows as
@@ -182,11 +184,16 @@ export async function akUpdateUser(ctx: AkCtx, sub: string, patch: { name?: stri
 
 /**
  * Activates / deactivates the Authentik user (account deletion deactivates, never deletes). Other failures throw.
+ * A user already in the wanted state (is_active from the lookup; the caller drops the cached lookup first) is done without a
+ * PATCH, so a token without `change_user` works once the user was deactivated by hand.
  * `emailHint`: see akUserBySub (the account's users row may already be deleted).
  */
 export async function akSetActive(ctx: AkCtx, sub: string, active: boolean, emailHint?: string | null): Promise<'done' | 'not_configured' | 'not_found'> {
   if (!configured(ctx)) return 'not_configured';
   try {
+    const user = await akUserBySub(ctx, sub, emailHint);
+    if (!user) return 'not_found';
+    if (user.isActive === active) return 'done';
     await patchUser(ctx, sub, { is_active: active }, {}, emailHint);
   } catch (e) {
     if (e instanceof HttpError && e.statusCode === 404) return 'not_found';

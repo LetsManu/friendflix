@@ -258,9 +258,9 @@ export function adminUserRoutes(app: FastifyInstance, ctx: Ctx) {
   });
 
   // ---- user detail page ----
-  /** The account or a 404 HttpError. */
   /** true once the deletion tick has claimed the account: admin changes would act on identities that are being deleted */
   const claimed = async (id: string) => Boolean((await ctx.db.query('select 1 from account_deletions where user_id=$1', [id])).rowCount);
+  /** The account or a 404 HttpError. */
   const userOr404 = async (id: string) => {
     const user = await getUserById(ctx, id);
     if (!user) throw new HttpError(404, 'not_found');

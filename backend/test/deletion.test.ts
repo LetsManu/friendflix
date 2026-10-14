@@ -101,6 +101,24 @@ describe('POST /api/account/delete', () => {
     expect(await row(anna)).toEqual({ disabled: false, locked_reason: null, deletion_at: null });
   });
 
+  it('a kids or other non-owner profile gets 403 owner_required and nothing is scheduled', async () => {
+    const s = await env.login(ANNA);
+    for (const body of [{ name: 'Kind', kids: true }, { name: 'Zweit' }]) {
+      const created = await call(s, 'POST', '/api/profiles', body);
+      expect(created.statusCode, body.name).toBe(201);
+      // the session switched to that profile (what /api/profiles/:id/select stores), recently authenticated: only the profile is wrong
+      const key = `sess:${s.cookies.ff_sid}`;
+      const sess = JSON.parse((await env.kv.get(key))!) as Session;
+      await env.kv.set(key, JSON.stringify({ ...sess, profileId: created.json().profile.id, reauthAt: Date.now() }), 300);
+      const r = await call(s, 'POST', '/api/account/delete', { confirm: true });
+      expect(r.statusCode, body.name).toBe(403);
+      expect(r.json()).toEqual({ error: 'owner_required' });
+      await env.kv.set(key, JSON.stringify(sess), 300); // back to the owner profile
+    }
+    expect(await row(anna)).toEqual({ disabled: false, locked_reason: null, deletion_at: null });
+    expect(await audits('user.deletion_requested', anna)).toEqual([]);
+  });
+
   it('last admin cannot self-delete; a second admin can', async () => {
     // the refusal comes before the re-authentication (no pointless sign-in first)
     const early = await call(admin, 'POST', '/api/account/delete', { confirm: true });

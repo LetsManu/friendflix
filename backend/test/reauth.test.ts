@@ -152,4 +152,11 @@ describe('re-authentication guard', () => {
     }
     expect((await reauth(s, '//evil.example')).headers.location).toBe('/me/account');
   });
+
+  it('a repeated next key falls back to /me/account', async () => {
+    const s = await mk();
+    const r = await env.app.inject({ url: '/auth/reauth?next=/me/account?delete=1&next=/me/account', cookies: s.cookies });
+    const st = r.cookies.find((x) => x.name === 'ff_oidc')!.value;
+    expect(JSON.parse((await env.kv.get(`oidc:${st}`))!).reauth.next).toBe('/me/account');
+  });
 });

@@ -324,7 +324,7 @@ const es: Translation<typeof de> = {
     ownerOnly: 'Tu cuenta se gestiona desde el perfil principal.',
     loadFailed: 'No se pudo cargar la cuenta.',
     retry: 'Reintentar',
-    reauthFailed: 'Ese inicio de sesión no coincidía con tu cuenta.',
+    reauthFailed: 'No se pudo confirmar el inicio de sesión. Inténtalo de nuevo.',
     privacy: 'Los admins pueden ver qué títulos has visto recientemente. Cada consulta queda registrada en el registro de auditoría.',
     data: {
       title: 'Tus datos',
@@ -338,7 +338,7 @@ const es: Translation<typeof de> = {
       dialogTitle: '¿Eliminar tu cuenta?',
       exportHint: 'Descarga antes tus datos si quieres conservarlos.',
       grace: 'Tu cuenta se eliminará definitivamente en 7 días. Hasta entonces puedes restaurarla volviendo a iniciar sesión.',
-      signIn: 'Tu cuenta de inicio de sesión se desactiva de inmediato y se cierra la sesión en todos tus dispositivos.',
+      signIn: 'Se cierra tu sesión en todos tus dispositivos de inmediato; tu cuenta de inicio de sesión se desactiva cuando la eliminación es definitiva.',
       reauthHint: 'Por seguridad, primero vuelves a iniciar sesión.',
       confirm: 'Eliminar mi cuenta',
       cancel: 'Cancelar',

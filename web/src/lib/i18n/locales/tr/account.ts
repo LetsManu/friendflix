@@ -324,7 +324,7 @@ const tr: Translation<typeof de> = {
     ownerOnly: 'Hesabını ana profilden yönetirsin.',
     loadFailed: 'Hesap yüklenemedi.',
     retry: 'Tekrar dene',
-    reauthFailed: 'Bu oturum açma hesabınla eşleşmedi.',
+    reauthFailed: 'Oturum açma doğrulanamadı. Lütfen tekrar dene.',
     privacy: 'Yöneticiler son izlediğin başlıkları görebilir. Her görüntüleme denetim günlüğüne kaydedilir.',
     data: {
       title: 'Verilerin',
@@ -338,7 +338,7 @@ const tr: Translation<typeof de> = {
       dialogTitle: 'Hesabın silinsin mi?',
       exportHint: 'Verilerini saklamak istiyorsan önce indir.',
       grace: 'Hesabın 7 gün içinde kalıcı olarak silinecek. O zamana kadar yeniden oturum açarak geri yükleyebilirsin.',
-      signIn: 'Oturum açma hesabın hemen devre dışı bırakılır ve tüm cihazlarda oturumun kapatılır.',
+      signIn: 'Tüm cihazlarda oturumun hemen kapatılır; oturum açma hesabın, silme işlemi kesinleştiğinde devre dışı bırakılır.',
       reauthHint: 'Güvenliğin için önce yeniden oturum açarsın.',
       confirm: 'Hesabımı sil',
       cancel: 'İptal',

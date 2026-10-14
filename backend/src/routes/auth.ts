@@ -183,8 +183,8 @@ export function authRoutes(app: FastifyInstance, ctx: Ctx) {
   // callback only stamps this session's `reauthAt`; it never creates a session.
   app.get('/auth/reauth', { config: { rateLimit: { max: 10, timeWindow: '1 minute' } } }, async (req, reply) => {
     if (!(await authenticate(ctx, req))) return reply.code(401).send({ error: 'unauthenticated' });
-    const next = (req.query as Record<string, string | undefined>).next;
-    const reauth = { userId: req.user!.id, next: next && REAUTH_NEXT.test(next) ? next : REAUTH_DEFAULT_NEXT };
+    const next = (req.query as Record<string, unknown>).next; // a repeated key is an array: refused like any other bad value
+    const reauth = { userId: req.user!.id, next: typeof next === 'string' && REAUTH_NEXT.test(next) ? next : REAUTH_DEFAULT_NEXT };
     return reply.redirect(await startLogin(reply, undefined, 600, { reauth }));
   });
 

@@ -344,7 +344,7 @@ const pl: Translation<typeof de> = {
     ownerOnly: 'Kontem zarządzasz w profilu głównym.',
     loadFailed: 'Nie udało się wczytać konta.',
     retry: 'Spróbuj ponownie',
-    reauthFailed: 'To logowanie nie pasowało do Twojego konta.',
+    reauthFailed: 'Nie udało się potwierdzić logowania. Spróbuj ponownie.',
     privacy: 'Administratorzy widzą, jakie tytuły ostatnio oglądałeś(-aś). Każdy taki wgląd jest zapisywany w dzienniku audytu.',
     data: {
       title: 'Twoje dane',
@@ -358,7 +358,7 @@ const pl: Translation<typeof de> = {
       dialogTitle: 'Usunąć Twoje konto?',
       exportHint: 'Jeśli chcesz zachować swoje dane, najpierw je pobierz.',
       grace: 'Twoje konto zostanie trwale usunięte za 7 dni. Do tego czasu możesz je przywrócić, logując się ponownie.',
-      signIn: 'Twoje konto logowania zostanie od razu dezaktywowane, a Ty zostaniesz wylogowany(-a) na wszystkich urządzeniach.',
+      signIn: 'Zostaniesz od razu wylogowany(-a) na wszystkich urządzeniach; Twoje konto logowania zostanie dezaktywowane, gdy usunięcie stanie się ostateczne.',
       reauthHint: 'Ze względów bezpieczeństwa najpierw zalogujesz się ponownie.',
       confirm: 'Usuń moje konto',
       cancel: 'Anuluj',

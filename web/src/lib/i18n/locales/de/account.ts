@@ -320,14 +320,14 @@ export default {
     noneTitle: 'Nichts wiederherzustellen',
     noneText: 'Für diesen Browser gibt es keine geplante Löschung, oder die Zeit zum Wiederherstellen ist abgelaufen. Melde dich erneut an, um es noch einmal zu versuchen.',
   },
-  /** /me/account (owner profile only): profile, security, sessions & devices; the e-mail is read-only until phase 3 */
+  /** /me/account (owner profile only): profile, security, sessions & devices; the e-mail is read-only for now */
   account: {
     pageTitle: 'Konto',
     title: 'Konto',
     ownerOnly: 'Dein Konto verwaltest du im Hauptprofil.',
     loadFailed: 'Das Konto konnte nicht geladen werden.',
     retry: 'Erneut versuchen',
-    reauthFailed: 'Diese Anmeldung passte nicht zu deinem Konto.',
+    reauthFailed: 'Die Anmeldung konnte nicht bestätigt werden. Bitte versuch es noch einmal.',
     privacy: 'Admins können sehen, welche Titel du zuletzt geschaut hast. Jeder Blick darauf wird im Audit-Log festgehalten.',
     data: {
       title: 'Deine Daten',
@@ -341,7 +341,7 @@ export default {
       dialogTitle: 'Konto löschen?',
       exportHint: 'Lade vorher deine Daten herunter, wenn du sie behalten möchtest.',
       grace: 'Dein Konto wird in 7 Tagen endgültig gelöscht. Bis dahin kannst du es wiederherstellen, indem du dich wieder anmeldest.',
-      signIn: 'Dein Anmeldekonto wird sofort deaktiviert, und du wirst auf allen Geräten abgemeldet.',
+      signIn: 'Du wirst sofort auf allen Geräten abgemeldet; dein Anmeldekonto wird deaktiviert, sobald die Löschung endgültig ist.',
       reauthHint: 'Zur Sicherheit meldest du dich dafür noch einmal an.',
       confirm: 'Mein Konto löschen',
       cancel: 'Abbrechen',

@@ -323,7 +323,7 @@ const en: Translation<typeof de> = {
     ownerOnly: 'You manage your account on the main profile.',
     loadFailed: 'Could not load the account.',
     retry: 'Try again',
-    reauthFailed: 'That sign-in did not match your account.',
+    reauthFailed: 'The sign-in could not be confirmed. Please try again.',
     privacy: 'Admins can see which titles you watched recently. Every look at them is recorded in the audit log.',
     data: {
       title: 'Your data',
@@ -337,7 +337,7 @@ const en: Translation<typeof de> = {
       dialogTitle: 'Delete your account?',
       exportHint: 'Download your data first if you want to keep it.',
       grace: 'Your account will be deleted for good in 7 days. Until then you can restore it by signing in again.',
-      signIn: 'Your sign-in account is deactivated straight away, and you are signed out on all devices.',
+      signIn: 'You are signed out on all devices straight away; your sign-in account is deactivated when the deletion is final.',
       reauthHint: 'For your security, you will sign in again first.',
       confirm: 'Delete my account',
       cancel: 'Cancel',

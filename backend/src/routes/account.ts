@@ -32,13 +32,14 @@ export function accountRoutes(app: FastifyInstance, ctx: Ctx) {
 
   /** Never the Authentik sub or pk, nor any media server credential. */
   const view = async (req: FastifyRequest) => {
-    const u = (await ctx.db.query<{ name: string; email: string | null; avatar: string | null; authentik_sub: string }>(
-      'select name, email, avatar, authentik_sub from users where id=$1', [req.user!.id])).rows[0]!;
+    const u = (await ctx.db.query<{ name: string; email: string | null; authentik_sub: string }>(
+      'select name, email, authentik_sub from users where id=$1', [req.user!.id])).rows[0]!;
     const s = req.session!;
     return {
       name: u.name,
       email: u.email,
-      avatar: u.avatar ?? req.profile!.avatar,
+      // the owner profile's (requireOwner): the profile editor changes it without touching users.avatar
+      avatar: req.profile!.avatar,
       mfa: await akMfaState(ctx, u.authentik_sub).catch(() => null), // Authentik down: shown like "no Authentik API"
       manageUrl: akUserSettingsUrl(ctx.cfg),
       /** epoch ms until which sensitive actions need no new sign-in */

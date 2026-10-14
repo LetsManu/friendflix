@@ -156,6 +156,14 @@ describe('PATCH /api/account/profile', () => {
     expect((await call(s, 'GET', '/api/account')).json().avatar).toBe('teal');
   });
 
+  it('the avatar follows the owner profile after a later change in the profile editor', async () => {
+    const s = await mk();
+    expect((await call(s, 'PATCH', '/api/account/profile', { avatar: 'teal' })).statusCode).toBe(200);
+    const u = await me();
+    expect((await call(s, 'PATCH', `/api/profiles/${u.id}`, { avatar: 'blue' })).statusCode).toBe(200);
+    expect((await call(s, 'GET', '/api/account')).json().avatar).toBe('blue');
+  });
+
   it('rejects bad input', async () => {
     const s = await mk();
     for (const b of [{}, { name: '   ' }, { name: 'x'.repeat(61) }, { avatar: 'Bad Key' }, { email: 'a@b.c' }]) {

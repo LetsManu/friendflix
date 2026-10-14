@@ -324,7 +324,7 @@ const it: Translation<typeof de> = {
     ownerOnly: 'Il tuo account si gestisce dal profilo principale.',
     loadFailed: 'Impossibile caricare l’account.',
     retry: 'Riprova',
-    reauthFailed: 'Quell’accesso non corrispondeva al tuo account.',
+    reauthFailed: 'Non è stato possibile confermare l’accesso. Riprova.',
     privacy: 'Gli admin possono vedere quali titoli hai guardato di recente. Ogni consultazione viene registrata nel registro di audit.',
     data: {
       title: 'I tuoi dati',
@@ -338,7 +338,7 @@ const it: Translation<typeof de> = {
       dialogTitle: 'Eliminare il tuo account?',
       exportHint: 'Scarica prima i tuoi dati se vuoi conservarli.',
       grace: 'Il tuo account verrà eliminato definitivamente tra 7 giorni. Fino ad allora puoi ripristinarlo accedendo di nuovo.',
-      signIn: 'Il tuo account di accesso viene disattivato subito e vieni disconnesso da tutti i dispositivi.',
+      signIn: 'Vieni disconnesso subito da tutti i dispositivi; il tuo account di accesso viene disattivato quando l’eliminazione è definitiva.',
       reauthHint: 'Per sicurezza, prima accedi di nuovo.',
       confirm: 'Elimina il mio account',
       cancel: 'Annulla',
