@@ -103,7 +103,7 @@
   let catLangs: string[] | null = null;
 
   $: path = $page.url.pathname;
-  $: publicPage = path.startsWith('/invite/') || path === '/tv' || path === '/offline' || path === '/pending';
+  $: publicPage = path.startsWith('/invite/') || path === '/tv' || path === '/offline' || path === '/pending' || path === '/restore';
   $: watchPage = path.startsWith('/watch/') || /^\/party\/[^/]+/.test(path); // immersive player pages: no navigation
   $: profilesPage = path === '/profiles' || path === '/welcome'; // full-screen pages without navigation (picker, onboarding)
   $: heroPage = path === '/' || path.startsWith('/item/');

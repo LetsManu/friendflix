@@ -16,7 +16,8 @@ import { claimInvite, enrollFlowUrl, inviteAccessUntil, lookupInvite, recordInvi
 import { accountJellyfinIds, deviceKidsProfile, listProfiles, publicProfile } from '../profiles.js';
 import { DEVICE_COOKIE } from '../devices.js';
 import { freshAuth, RESET_PIN_MAX_AGE, type OidcClaims } from '../oidc.js';
-import { applyRole, getUserById, getUserBySub, provisionUser } from '../users.js';
+import { HttpError, accountSerial, applyRole, getUserById, getUserBySub, provisionUser } from '../users.js';
+import { restoreDeletion } from '../deletion.js';
 import { markReauthenticated, REAUTH_MAX_AGE } from '../reauth.js';
 import { notifyAdmins } from '../notify.js';
 import { profileOnboarded } from './prefs.js';
@@ -49,6 +50,10 @@ interface SavedLogin {
   reauth?: { userId: string; next: string };
 }
 
+/** a sign-in during the deletion grace period: this cookie names the account that may be restored on /restore (signed, no session) */
+export const RESTORE_COOKIE = 'ff_restore';
+const RESTORE_TTL = 900;
+
 const pendingMac = (ctx: Pick<Ctx, 'encKey'>, id: string) => createHmac('sha256', ctx.encKey).update(`friendflix pending v1|${id}`).digest('base64url');
 const signPending = (ctx: Pick<Ctx, 'encKey'>, id: string) => `${id}.${pendingMac(ctx, id)}`;
 /** The request id of a signed `ff_pending` cookie, or null when it is missing or forged. */
@@ -58,6 +63,28 @@ function verifyPending(ctx: Pick<Ctx, 'encKey'>, cookie: string | undefined): st
   const want = Buffer.from(pendingMac(ctx, id));
   const got = Buffer.from(mac);
   return got.length === want.length && timingSafeEqual(got, want) ? id : null;
+}
+
+const restoreMac = (ctx: Pick<Ctx, 'encKey'>, userId: string, exp: string) =>
+  createHmac('sha256', ctx.encKey).update(`friendflix restore v1|${userId}|${exp}`).digest('base64url');
+const signRestore = (ctx: Pick<Ctx, 'encKey'>, userId: string, exp = String(Math.floor(Date.now() / 1000) + RESTORE_TTL)) =>
+  `${userId}.${exp}.${restoreMac(ctx, userId, exp)}`;
+/** The user id of a signed, unexpired `ff_restore` cookie, or null when it is missing, forged or expired. */
+function verifyRestore(ctx: Pick<Ctx, 'encKey'>, cookie: string | undefined): string | null {
+  const [id, exp, mac, ...rest] = (cookie ?? '').split('.');
+  if (!id || !exp || !mac || rest.length || !/^\d{1,12}$/.test(exp)) return null;
+  const want = Buffer.from(restoreMac(ctx, id, exp));
+  const got = Buffer.from(mac);
+  if (got.length !== want.length || !timingSafeEqual(got, want)) return null;
+  return Number(exp) * 1000 > Date.now() ? id : null;
+}
+
+/** The deletion date of an account that is locked for deletion, still in its grace period and not claimed by the tick; else null. */
+async function restorableUntil(ctx: Ctx, userId: string): Promise<Date | null> {
+  const r = await ctx.db.query<{ deletion_at: Date }>(
+    `select deletion_at from users u where id=$1 and disabled and locked_reason='deletion' and deletion_at > now()
+       and not exists (select 1 from account_deletions d where d.user_id=u.id)`, [userId]);
+  return r.rows[0]?.deletion_at ?? null;
 }
 
 /**
@@ -218,7 +245,10 @@ export function authRoutes(app: FastifyInstance, ctx: Ctx) {
         await ctx.db.query('delete from approval_requests where authentik_sub=$1', [claims.sub]); // an invite or the admin group overtook the request
         if (claimed) await recordInviteUse(ctx, claimed, user.id, req.log); // used up: the enrollment link must not create more accounts
       } else if (user.disabled) {
-        return reply.code(403).send({ error: 'disabled' });
+        // locked for deletion and still in the grace period: the person may restore it on /restore (no session); other locks: 403 (F15 step 3)
+        if (!(await restorableUntil(ctx, user.id))) return reply.code(403).send({ error: 'disabled' });
+        reply.setCookie(RESTORE_COOKIE, signRestore(ctx, user.id), { httpOnly: true, secure, sameSite: 'lax', path: '/', maxAge: RESTORE_TTL });
+        return reply.redirect('/restore');
       } else if (isAdmin && user.role !== 'admin') {
         await ctx.db.query("update users set role='admin' where id=$1", [user.id]);
         const owned = await accountJellyfinIds(ctx, user.id);
@@ -261,6 +291,33 @@ export function authRoutes(app: FastifyInstance, ctx: Ctx) {
     const raw = await ctx.kv.get(pendingNoticeKey(id));
     const sub = raw ? (JSON.parse(raw) as { sub: string }).sub : null;
     return sub && (await getUserBySub(ctx, sub)) ? { state: 'approved' } : { state: 'none' };
+  });
+
+  // the /restore page (no session): the deletion date of the account named by the signed ff_restore cookie; never its name or e-mail
+  app.get('/api/restore', async (req) => {
+    const id = verifyRestore(ctx, req.cookies[RESTORE_COOKIE]);
+    const at = id ? await restorableUntil(ctx, id) : null;
+    return at ? { state: 'scheduled', deletionAt: at.toISOString() } : { state: 'none' };
+  });
+
+  // Restores the scheduled deletion. No session, so the CSRF hook does not apply: JSON only (a cross-site form cannot send it,
+  // and a cross-site fetch with it needs a preflight). No session either: the person signs in again through /auth/login.
+  app.post('/api/restore', { config: { rateLimit: { max: 10, timeWindow: '1 minute' } } }, async (req, reply) => {
+    if (!/^application\/json(\s*;|$)/i.test(String(req.headers['content-type'] ?? ''))) return reply.code(415).send({ error: 'json_required' });
+    const id = verifyRestore(ctx, req.cookies[RESTORE_COOKIE]);
+    if (!id) return reply.code(401).send({ error: 'unauthenticated' });
+    const locked = await accountSerial(async () => {
+      // the grace period is the person's window (an admin may still restore later, until the tick claims the account)
+      if (!(await restorableUntil(ctx, id))) {
+        const claimed = await ctx.db.query('select 1 from account_deletions where user_id=$1', [id]);
+        throw new HttpError(409, claimed.rowCount ? 'deletion_in_progress' : 'not_scheduled');
+      }
+      await restoreDeletion(ctx, id, id);
+      return (await ctx.db.query<{ locked_reason: string | null }>('select locked_reason from users where id=$1', [id])).rows[0]?.locked_reason;
+    });
+    reply.clearCookie(RESTORE_COOKIE, { path: '/' });
+    // F8: ended access stays locked (as 'expired'); the page says so instead of offering a sign-in that would answer 403
+    return locked === 'expired' ? { ok: true, accessEnded: true } : { ok: true };
   });
 
   app.get('/api/me', { preHandler: requireUser(ctx, { allowPendingDevice: true, allowNoProfile: true, skipProfileHeader: true }) }, async (req) => {

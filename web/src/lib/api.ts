@@ -35,7 +35,7 @@ export async function api<T = any>(path: string, opts: { method?: string; body?:
     headers: { ...(opts.body === undefined ? {} : { 'content-type': 'application/json' }), 'x-csrf-token': csrf, ...(activeProfile ? { 'x-ff-profile': activeProfile } : {}) },
     body: opts.body === undefined ? undefined : JSON.stringify(opts.body),
   });
-  if (res.status === 401 && !location.pathname.startsWith('/invite/') && location.pathname !== '/tv' && location.pathname !== '/pending') {
+  if (res.status === 401 && !location.pathname.startsWith('/invite/') && location.pathname !== '/tv' && location.pathname !== '/pending' && location.pathname !== '/restore') {
     clearHint(); // the session is gone: the next start must not render early with this account's hint/profile
     location.href = localStorage.getItem('ff_tv_device') ? '/tv' : '/auth/login'; // a TV re-pairs instead of typing a login
     await new Promise(() => undefined);
