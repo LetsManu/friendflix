@@ -11,6 +11,7 @@ import { newTimingStore, serverTimingHeader, timedDb, timedKv, timingStorage, ti
 import { metricsPlugin } from './metrics.js';
 import { recordError } from './errorlog.js';
 import { adminRoutes, inviteRoutes } from './routes/admin.js';
+import { adminUserRoutes } from './routes/adminUsers.js';
 import { authRoutes } from './routes/auth.js';
 import { castRoutes } from './routes/cast.js';
 import { internalRoutes } from './routes/internal.js';
@@ -147,6 +148,7 @@ export async function buildApp(ctx: Ctx, extra: Extra = {}): Promise<FastifyInst
   castRoutes(app, ctx);
   internalRoutes(app, ctx);
   adminRoutes(app, ctx);
+  adminUserRoutes(app, ctx);
   inviteRoutes(app, ctx);
   seerrRoutes(app, ctx);
   await partyRoutes(app, ctx);

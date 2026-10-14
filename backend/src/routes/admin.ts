@@ -20,8 +20,7 @@ import { requireGrownUp } from '../kids.js';
 import { requireAdmin, requireOwner } from '../session.js';
 import { portainerMode, triggerUpdate, updateInfo } from '../updates.js';
 import { MAX_FEATURED } from '../lists.js';
-import { accountJellyfinIds } from '../profiles.js';
-import { applyRole, getUserById, reapplyRole } from '../users.js';
+import { getUserById, reapplyRole } from '../users.js';
 import { FALLBACK_LANGUAGE, LANGUAGES, instanceLanguage, isLanguage, roleLabel, setInstanceLanguage } from '../i18n.js';
 
 const uuid = z.guid();
@@ -276,54 +275,6 @@ export function adminRoutes(app: FastifyInstance, ctx: Ctx) {
       if (failed) return reply.code(502).send({ error: 'policy_partial', failed });
     }
     return { ok: true };
-  });
-
-  // ?q= (name/email/login) &role= &status=active|locked &sort=name|email|role|status|lastSeen|createdAt &dir= &limit= &offset=; without params: everyone (max 1000)
-  app.get('/api/admin/users', admin, async (req) => {
-    const p = pageQuery.extend({ role: z.string().max(40).optional(), status: z.enum(['active', 'locked']).optional() }).parse(req.query);
-    const w = new Where();
-    if (p.q) { const m = w.param(likePattern(p.q)); w.add(`(u.name ilike ${m} or coalesce(u.email,'') ilike ${m} or coalesce(u.jellyfin_username,'') ilike ${m})`); }
-    if (p.role) w.add('u.role = ?', p.role);
-    if (p.status) w.add(p.status === 'locked' ? 'u.disabled' : 'not u.disabled');
-    const order = orderBy({ name: 'lower(u.name)', email: "lower(coalesce(u.email,''))", role: 'u.role', status: 'u.disabled', lastSeen: 'u.last_seen', createdAt: 'u.created_at' }, p.sort, p.dir, 'u.created_at, u.id');
-    const total = Number((await ctx.db.query<{ c: string }>(`select count(*) c from users u ${w.sql}`, w.params)).rows[0]!.c);
-    const r = await ctx.db.query(
-      `select * from (select u.id, u.name, u.email, u.role, u.disabled, u.jellyfin_username, u.seerr_user_id, u.created_at,
-              (select max(last_seen) from devices d where d.user_id = u.id) last_seen from users u) u
-        ${w.sql} ${order} limit ${p.limit ?? 1000} offset ${p.offset ?? 0}`,
-      w.params,
-    );
-    return { users: r.rows, total };
-  });
-
-  app.patch('/api/admin/users/:id', admin, async (req, reply) => {
-    const id = uuid.parse((req.params as { id: string }).id);
-    const b = z.object({ role: z.string().optional(), disabled: z.boolean().optional() }).parse(req.body);
-    const user = await getUserById(ctx, id);
-    if (!user) return reply.code(404).send({ error: 'not_found' });
-    if (id === req.user!.id && (b.disabled || (b.role && b.role !== 'admin'))) return reply.code(400).send({ error: 'cannot_lock_yourself_out' });
-    if (b.role && b.role !== user.role) {
-      if (!Object.hasOwn(ctx.roles, b.role)) return reply.code(400).send({ error: 'unknown_role' });
-      const ids = await accountJellyfinIds(ctx, id);
-      const hidden = new Set(ids.filter((x) => x !== user.jellyfin_user_id));
-      for (const jid of ids) await applyRole(ctx, jid, b.role, b.disabled ?? user.disabled, { userId: id, hidden: hidden.has(jid) }); // re-apply template to the Jellyfin account and all its profile users
-      await ctx.db.query('update users set role=$1 where id=$2', [b.role, id]);
-      await audit(ctx, req.user!.id, 'user.role', id, { from: user.role, to: b.role });
-    }
-    if (b.disabled !== undefined && b.disabled !== user.disabled) {
-      for (const jid of await accountJellyfinIds(ctx, id)) await ctx.jf.admin.setDisabled(jid, b.disabled);
-      await ctx.db.query('update users set disabled=$1 where id=$2', [b.disabled, id]);
-      if (b.disabled) await revokeSessions(ctx, id); // also revokes the account's offline licenses
-      await audit(ctx, req.user!.id, b.disabled ? 'user.disable' : 'user.enable', id);
-    }
-    return { ok: true };
-  });
-
-  app.post('/api/admin/users/:id/revoke-sessions', admin, async (req) => {
-    const id = uuid.parse((req.params as { id: string }).id);
-    const n = await revokeSessions(ctx, id);
-    await audit(ctx, req.user!.id, 'user.revoke_sessions', id, { sessions: n });
-    return { revoked: n };
   });
 
   // ---- offline downloads: prepared jobs, disk usage, active licenses ----

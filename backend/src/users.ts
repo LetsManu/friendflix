@@ -8,7 +8,8 @@ import { encrypt, randomPassword } from './crypto.js';
 import type { IdentityPolicy } from './media/types.js';
 import { effectiveLimits } from './limits.js';
 import { effectiveRole } from './roles.js';
-import { kidsPolicyFor } from './profiles.js';
+import { accountJellyfinIds, kidsPolicyFor } from './profiles.js';
+import { revokeSessions } from './devices.js';
 import type { OidcClaims } from './oidc.js';
 import type { UserRow } from './types.js';
 
@@ -102,4 +103,61 @@ export async function reapplyPoliciesOnce(ctx: Ctx, flag = 'reapply_roles_v1'): 
   let failed = 0;
   for (const role of Object.keys(ctx.roles)) failed += await reapplyRole(ctx, role);
   if (failed) await ctx.db.query('delete from app_flags where key=$1', [flag]); // retry on next start
+}
+
+/** A business error with an HTTP status; app.ts' error handler answers `{ error: message }` with that status. */
+export class HttpError extends Error {
+  constructor(readonly statusCode: number, code: string) {
+    super(code);
+  }
+}
+
+export type LockReason = 'manual' | 'expired' | 'deletion';
+
+/** Locks the account: its media server identities (owner + profiles) are disabled and every session (and offline license) is revoked. */
+export async function lockUser(ctx: Ctx, actor: string | null, userId: string, reason: LockReason): Promise<void> {
+  for (const jid of await accountJellyfinIds(ctx, userId)) await ctx.jf.admin.setDisabled(jid, true);
+  await ctx.db.query('update users set disabled=true, locked_reason=$2 where id=$1', [userId, reason]);
+  await revokeSessions(ctx, userId); // also revokes the account's offline licenses
+  await audit(ctx, actor, 'user.disable', userId, { reason });
+}
+
+export async function unlockUser(ctx: Ctx, actor: string | null, userId: string): Promise<void> {
+  for (const jid of await accountJellyfinIds(ctx, userId)) await ctx.jf.admin.setDisabled(jid, false);
+  await ctx.db.query('update users set disabled=false, locked_reason=null where id=$1', [userId]);
+  await audit(ctx, actor, 'user.enable', userId);
+}
+
+/** Changes the role: the role policy goes to the account's media server identity and all its profile identities. No-op when unchanged. */
+export async function setRole(ctx: Ctx, actor: string | null, userId: string, role: string): Promise<void> {
+  if (!Object.hasOwn(ctx.roles, role)) throw new HttpError(400, 'unknown_role');
+  const user = await getUserById(ctx, userId);
+  if (!user) throw new HttpError(404, 'not_found');
+  if (user.role === role) return;
+  const ids = await accountJellyfinIds(ctx, userId);
+  for (const jid of ids) await applyRole(ctx, jid, role, user.disabled, { userId, hidden: jid !== user.jellyfin_user_id });
+  await ctx.db.query('update users set role=$1 where id=$2', [role, userId]);
+  await audit(ctx, actor, 'user.role', userId, { from: user.role, to: role });
+}
+
+/** Sets or clears (null) the date the account's access ends. No-op when unchanged. */
+export async function setAccessUntil(ctx: Ctx, actor: string | null, userId: string, until: Date | null): Promise<void> {
+  const r = await ctx.db.query<{ access_until: Date | null }>('select access_until from users where id=$1', [userId]);
+  if (!r.rowCount) throw new HttpError(404, 'not_found');
+  const from = r.rows[0]!.access_until;
+  if (from?.getTime() === until?.getTime()) return;
+  await ctx.db.query('update users set access_until=$2 where id=$1', [userId, until]);
+  await audit(ctx, actor, 'user.access', userId, { from: from?.toISOString() ?? null, to: until?.toISOString() ?? null });
+}
+
+/**
+ * Throws `last_admin` when demoting or locking `userIds` would leave no active admin (role admin, not disabled).
+ * Callers check the change first: `_change` only names it ('demote' | 'lock'), both count the same way.
+ */
+export async function assertNotLastAdmin(ctx: Ctx, userIds: string[], _change: 'demote' | 'lock'): Promise<void> {
+  const r = await ctx.db.query<{ affected: number; remaining: number }>(
+    `select count(*) filter (where id = any($1::uuid[]))::int affected, count(*) filter (where not id = any($1::uuid[]))::int remaining
+       from users where role='admin' and not disabled`, [userIds]);
+  const { affected, remaining } = r.rows[0]!;
+  if (affected > 0 && remaining === 0) throw new HttpError(400, 'last_admin');
 }
