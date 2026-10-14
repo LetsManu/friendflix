@@ -26,7 +26,10 @@ test.describe('admin user detail (phone)', () => {
     const card = panel.getByRole('row', { name: /Chrome auf Windows/ });
     await expect(card).toBeVisible();
     expect(await card.evaluate((el) => getComputedStyle(el).display)).toBe('block');
-    await expect(card.getByRole('button', { name: '„Chrome auf Windows“ abmelden' })).toBeVisible();
+    await expect(card.getByRole('button', { name: '„Chrome auf Windows“ freigeben' })).toBeVisible();
+    await card.getByRole('button', { name: 'Aktionen für Chrome auf Windows' }).click();
+    await expect(page.getByRole('dialog', { name: 'Chrome auf Windows' }).getByRole('button', { name: 'Entfernen' })).toBeVisible();
+    await page.keyboard.press('Escape');
     await expect.poll(() => noHorizontalOverflow(page)).toBe(true);
 
     await list.getByRole('tab', { name: 'Limits' }).click();

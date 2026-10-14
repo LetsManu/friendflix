@@ -349,7 +349,10 @@ const pl: Translation<typeof de> = {
       recovery_email: '{actor} wysłał(a) link do hasła: {target}',
       mfa_setup_sent: '{actor} wysłał(a) konfigurację 2FA: {target}',
       activity_viewed: '{actor} przejrzał(a) historię: {target}',
+      revoke_device: '{actor} wylogował(a) na jednym urządzeniu: {target}',
+      recovery_email_failed: '{actor} próbował(a) wysłać link do hasła: {target} – nie udało się ({reason})',
     },
+    failReason: { recovery_not_configured: 'brak przepływu odzyskiwania', authentik_user_not_found: 'brak użytkownika Authentik', not_supported: 'nieobsługiwane', authentik_unavailable: 'Authentik niedostępny', unknown: 'błąd' },
     device: {
       approve: '{actor} zatwierdził(a) urządzenie użytkownika {target}',
       unapprove: '{actor} cofnął(-ęła) zatwierdzenie urządzenia użytkownika {target}',

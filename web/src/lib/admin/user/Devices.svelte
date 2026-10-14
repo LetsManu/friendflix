@@ -1,13 +1,14 @@
 <!-- SPDX-FileCopyrightText: 2026 Manuel Weißböck -->
 <!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
 <script lang="ts">
-  /** User detail, devices tab: last seen, live sessions, approval; sign out one device (with confirm). */
+  /** User detail, devices tab: last seen, live sessions, approval; approve / withdraw approval, sign out one device, remove (with confirm). */
   import { createEventDispatcher } from 'svelte';
-  import { api } from '#lib/api';
+  import { api, ApiError } from '#lib/api';
+  import type { MoreAction } from '#lib/MoreActions.svelte';
   import Icon from '#lib/Icon.svelte';
   import { fmtDateTime, fmtNumber, fmtRelative, t, tr } from '#lib/i18n';
   import { deviceKind } from '#lib/admin/people';
-  import { busyKeys, runAction } from '#lib/ui/action';
+  import { busyKeys, errorText, runAction } from '#lib/ui/action';
   import Button from '#lib/ui/Button.svelte';
   import { confirm } from '#lib/ui/confirm';
   import DataTable from '#lib/ui/DataTable.svelte';
@@ -42,15 +43,39 @@
     });
     if (r.ok) dispatch('changed');
   }
+
+  /** the admin's own current device: the backend refuses to unapprove/remove it */
+  const ownError = (e: unknown): string => (e instanceof ApiError && (e.body as { error?: string } | null)?.error === 'cannot_lock_yourself_out' ? tr('adminPeople.devices.ownDevice') : errorText(e));
+  async function call(d: DetailDevice, what: 'approve' | 'unapprove' | 'remove', success: string) {
+    const r = await runAction({
+      key: key(d), error: ownError, success,
+      run: () => api(`/api/admin/devices/${what}`, { method: 'POST', body: { userId, deviceId: d.id } }),
+    });
+    if (r.ok) dispatch('changed');
+  }
+  const approve = (d: DetailDevice) => call(d, 'approve', tr('adminPeople.detail.devices.approved', { device: label(d) }));
+  const unapprove = (d: DetailDevice) => call(d, 'unapprove', tr('adminPeople.detail.devices.unapproved', { device: label(d) }));
+  async function remove(d: DetailDevice) {
+    const device = label(d);
+    const ok = await confirm({ title: tr('adminPeople.detail.devices.removeTitle', { device }), body: tr('adminPeople.detail.devices.removeBody'), danger: true, confirmLabel: tr('adminPeople.detail.devices.remove') });
+    if (ok) await call(d, 'remove', tr('adminPeople.detail.devices.removed', { device }));
+  }
+  $: actions = (d: DetailDevice): MoreAction[] => [
+    d.approved
+      ? { id: 'unapprove', label: $t('adminPeople.detail.devices.unapprove'), icon: 'x', run: () => unapprove(d) }
+      : { id: 'approve', label: $t('adminPeople.detail.devices.approve'), icon: 'check', run: () => approve(d) },
+    { id: 'signout', label: $t('adminPeople.detail.devices.signOut'), icon: 'log-out', danger: true, run: () => signOut(d) },
+    { id: 'remove', label: $t('adminPeople.detail.devices.remove'), icon: 'x', danger: true, run: () => remove(d) },
+  ];
 </script>
 
-<DataTable caption={$t('adminPeople.detail.tabs.devices')} rows={devices} {columns} key={(d) => d.id} pageSize={0} busyKey={key} emptyText={$t('adminPeople.detail.devices.empty')}>
+<DataTable caption={$t('adminPeople.detail.tabs.devices')} rows={devices} {columns} key={(d) => d.id} pageSize={0} busyKey={key} {actions} rowLabel={label} emptyText={$t('adminPeople.detail.devices.empty')}>
   <svelte:fragment slot="cell" let:row let:col>
     {#if col.key === 'name'}
       <span class="who">
         <Icon name={deviceKind(row.name).icon} size={18} />
         <span class="n">{label(row)}</span>
-        <Button variant="ghost" size="sm" icon="log-out" disabled={$busyKeys.has(key(row))} aria-label={$t('adminPeople.detail.devices.signOutFor', { device: label(row) })} on:click={() => signOut(row)}>{$t('adminPeople.detail.devices.signOut')}</Button>
+        {#if !row.approved}<Button size="sm" icon="check" disabled={$busyKeys.has(key(row))} aria-label={$t('adminPeople.detail.devices.approveFor', { device: label(row) })} on:click={() => approve(row)}>{$t('adminPeople.detail.devices.approve')}</Button>{/if}
       </span>
     {:else if col.key === 'lastSeen'}<time datetime={row.lastSeen} title={fmtDateTime(row.lastSeen)}>{fmtRelative(row.lastSeen)}</time>
     {:else if col.key === 'sessions'}<span class="num">{fmtNumber(row.sessions)}</span>

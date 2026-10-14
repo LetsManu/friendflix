@@ -311,7 +311,10 @@ const tr: Translation<typeof de> = {
       recovery_email: '{actor}, {target} kişisine parola bağlantısı gönderdi',
       mfa_setup_sent: '{actor}, {target} kişisine 2FA kurulumunu gönderdi',
       activity_viewed: '{actor}, {target} geçmişini görüntüledi',
+      revoke_device: '{actor}, {target} oturumunu bir cihazda kapattı',
+      recovery_email_failed: '{actor}, {target} kişisine parola bağlantısı göndermeyi denedi – başarısız ({reason})',
     },
+    failReason: { recovery_not_configured: 'kurtarma akışı yok', authentik_user_not_found: 'Authentik kullanıcısı yok', not_supported: 'desteklenmiyor', authentik_unavailable: 'Authentik erişilemiyor', unknown: 'hata' },
     device: {
       approve: '{actor}, {target} kullanıcısının bir cihazını onayladı',
       unapprove: '{actor}, {target} kullanıcısının bir cihaz onayını geri aldı',

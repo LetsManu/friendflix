@@ -11,7 +11,7 @@
   import { goto } from '$app/navigation';
   import { api, ApiError } from '#lib/api';
   import { avatarBg, initial } from '#lib/avatars';
-  import { fmtDate, fmtRelative, t, tr } from '#lib/i18n';
+  import { fmtDate, fmtRelative, locale, t, tr } from '#lib/i18n';
   import Icon from '#lib/Icon.svelte';
   import MoreActions, { type MoreAction } from '#lib/MoreActions.svelte';
   import { pageStore } from '#lib/page';
@@ -33,6 +33,7 @@
   import Select from '#lib/ui/Select.svelte';
   import Skeleton from '#lib/ui/Skeleton.svelte';
   import StatusPill from '#lib/ui/StatusPill.svelte';
+  import { toast } from '#lib/ui/toast';
 
   const page$ = pageStore();
   $: id = $page$.params.id ?? '';
@@ -59,6 +60,8 @@
       if (my !== seq) return;
       notFound = e instanceof ApiError && (e.status === 404 || e.status === 400);
       error = notFound ? tr('adminPeople.detail.notFound') : tr('adminPeople.loadFailed');
+      // a failed reload after an action: the shown data may be stale, say so
+      if (d) toast.error(error);
     }
   }
   $: if (id && id !== loadedId) { loadedId = id; d = null; error = null; panel = null; void load(); }
@@ -71,6 +74,9 @@
   $: u = d?.user ?? null;
   $: self = u !== null && u.id === meId;
   $: busy = $busyKeys.has(`user:${id}`);
+  // the pill texts come from tr(): $locale makes them follow an in-place language switch
+  $: pills = u && $locale ? statusPills(u) : [];
+  $: chips = d && $locale ? mfaChips(d.mfa) : [];
 
   // ---- quick actions ----
   const patch = (body: Record<string, unknown>) => () => api(`/api/admin/users/${id}`, { method: 'PATCH', body });
@@ -141,7 +147,9 @@
     const r = await runAction({ key: `user:${id}`, run: patch({ role }), error: guardError, success: tr('adminPeople.users.roleChanged', { name, role: rname(role) }) });
     if (r.ok) { panel = null; void load(); }
   }
-  $: accessReady = access !== '' && (access !== 'date' || dayEnd(accessDay) !== '');
+  /** today as YYYY-MM-DD (local): the earliest end date; a past one would lock the account at the next expiry tick */
+  const today = (): string => { const n = new Date(); return `${n.getFullYear()}-${String(n.getMonth() + 1).padStart(2, '0')}-${String(n.getDate()).padStart(2, '0')}`; };
+  $: accessReady = access !== '' && (access !== 'date' || (dayEnd(accessDay) !== '' && Date.parse(dayEnd(accessDay)) > Date.now()));
   async function applyAccess() {
     if (!u || !accessReady) return;
     const name = u.name;
@@ -155,17 +163,17 @@
 
   // Authentik actions only with a reachable Authentik (mfa known) and when the backend offers them
   $: actions = ((): MoreAction[] => {
-    if (!d || !u) return [];
+    // nothing until /api/me says whether this is the admin's own account
+    if (!d || !u || meId === '') return [];
+    // own account: no lock, demotion or "sign out everywhere" (it would end this very session)
     const out: MoreAction[] = self
       ? [{ id: 'self', label: $t('adminPeople.users.selfNote'), icon: 'lock', disabled: true }]
       : [
         u.disabled ? { id: 'unlock', label: $t('adminPeople.users.unlock'), icon: 'unlock', run: () => setLocked(false) } : { id: 'lock', label: $t('adminPeople.users.lock'), icon: 'lock', danger: true, run: () => setLocked(true) },
         { id: 'role', label: $t('adminPeople.detail.actions.changeRole'), icon: 'key', run: () => open('role') },
+        { id: 'signout', label: $t('adminPeople.users.signOut'), icon: 'log-out', danger: true, run: signOut },
       ];
-    out.push(
-      { id: 'signout', label: $t('adminPeople.users.signOut'), icon: 'log-out', danger: true, run: signOut },
-      { id: 'access', label: $t('adminPeople.detail.actions.extend'), icon: 'calendar', run: () => open('access') },
-    );
+    out.push({ id: 'access', label: $t('adminPeople.detail.actions.extend'), icon: 'calendar', run: () => open('access') });
     if (d.mfa !== null && d.authentik.recovery) out.push({ id: 'recovery', label: $t('adminPeople.detail.actions.recovery'), icon: 'mail', run: sendRecovery });
     if (d.mfa !== null && d.authentik.mfaSetup) out.push({ id: 'mfa', label: $t('adminPeople.detail.actions.mfaSetup'), icon: 'shield', run: sendMfaSetup });
     return out;
@@ -189,9 +197,9 @@
       <h2 id="ud-name">{u.name}</h2>
       <p class="sub">{#if u.email}<span>{u.email}</span>{/if}<span class="role"><Icon name="key" size={14} />{rname(u.role)}</span></p>
       <p class="pills">
-        {#each statusPills(u) as p (p.label)}<StatusPill tone={p.tone} label={p.label} icon={p.icon} />{/each}
+        {#each pills as p (p.label)}<StatusPill tone={p.tone} label={p.label} icon={p.icon} />{/each}
         <span class="sr-only">{$t('adminPeople.detail.mfa.label')}:</span>
-        {#each mfaChips(d.mfa) as c (c.label)}<StatusPill tone={c.tone} label={c.label} icon="shield" />{/each}
+        {#each chips as c (c.label)}<StatusPill tone={c.tone} label={c.label} icon="shield" />{/each}
       </p>
       <p class="meta">
         <span>{$t('adminPeople.detail.since', { date: fmtDate(u.createdAt, { dateStyle: 'medium' }) })}</span>
@@ -210,7 +218,7 @@
   {:else if panel === 'access'}
     <form class="panel" aria-label={$t('adminPeople.detail.actions.extend')} on:submit|preventDefault={applyAccess}>
       <Select label={$t('adminPeople.access.label')} options={accessOptions} bind:value={access} disabled={busy} />
-      {#if access === 'date'}<Field type="date" label={$t('adminPeople.access.day')} bind:value={accessDay} required />{/if}
+      {#if access === 'date'}<Field type="date" label={$t('adminPeople.access.day')} bind:value={accessDay} min={today()} required />{/if}
       <Button type="submit" size="sm" disabled={busy || !accessReady}>{$t('adminPeople.detail.actions.apply')}</Button>
       <Button variant="ghost" size="sm" on:click={() => (panel = null)}>{$t('adminPeople.detail.actions.cancel')}</Button>
     </form>
@@ -225,7 +233,7 @@
   <div id="udt-panel" role="tabpanel" aria-labelledby="udt-{tab}" tabindex="-1">
     {#if tab === 'profiles'}<Profiles userId={u.id} profiles={d.profiles} on:changed={load} />
     {:else if tab === 'devices'}<Devices userId={u.id} devices={d.devices} on:changed={load} />
-    {:else if tab === 'downloads'}<Downloads licenses={d.licenses} profiles={d.profiles} />
+    {:else if tab === 'downloads'}<Downloads licenses={d.licenses} profiles={d.profiles} on:changed={load} />
     {:else if tab === 'activity'}{#key u.id}<Activity userId={u.id} />{/key}
     {:else if tab === 'limits'}{#key u.id}<Limits userId={u.id} />{/key}
     {:else if tab === 'audit'}{#key u.id}<Audit userId={u.id} />{/key}

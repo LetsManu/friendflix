@@ -13,7 +13,7 @@ const menu = async (page: import('@playwright/test').Page) => {
 };
 
 test.describe('admin user detail (desktop)', () => {
-  test.use({ allowedConsole: /status of (409|501)/ });
+  test.use({ allowedConsole: /status of (404|409|500|501)/ });
   test.beforeEach(({ api }) => { api.asAdmin = true; });
 
   test('detail shows header and totals', async ({ page }) => {
@@ -71,6 +71,8 @@ test.describe('admin user detail (desktop)', () => {
     await expect(panel.getByText('Das Ansehen wird im Audit-Log festgehalten.')).toBeVisible();
     await expect(panel.getByText('Hearth')).toBeVisible();
     await expect(panel.getByText('Sundial')).toBeVisible();
+    await expect(panel.getByRole('row', { name: /Hearth/ })).toContainText('45 %');
+    await expect(panel.getByRole('row', { name: /Pilot/ })).toContainText('Gesehen');
     expect(api.admin.activityCalls).toBe(1);
     await page.getByRole('tab', { name: 'Übersicht' }).click();
     await page.getByRole('tab', { name: 'Verlauf' }).click();
@@ -197,18 +199,91 @@ test.describe('admin user detail (desktop)', () => {
     await expect(panel.getByRole('row', { name: /Hauptprofil/ }).getByRole('button', { name: '„Anna“ umbenennen' })).toBeVisible();
   });
 
-  test('devices: sign out one device; audit tab lists the entries', async ({ page, api }) => {
-    api.admin.audit.unshift({ id: 99, at: new Date().toISOString(), action: 'user.limits', target: ANNA, meta: { from: { maxStreams: null }, to: { maxStreams: 3 } }, actor: 'Tester', target_name: 'Anna Beispiel' });
+  test('devices: approve, withdraw approval, sign out one device, remove', async ({ page, api }) => {
     await page.goto(`/admin/users/${ANNA}?tab=devices`);
     const panel = page.getByRole('tabpanel', { name: 'Geräte' });
-    await panel.getByRole('button', { name: '„Chrome auf Windows“ abmelden' }).click();
+    const row = panel.getByRole('row', { name: /Chrome auf Windows/ });
+    await expect(row).toContainText('Wartet auf Freigabe');
+    await row.getByRole('button', { name: '„Chrome auf Windows“ freigeben' }).click();
+    await expect(toasts(page).getByText('„Chrome auf Windows“ freigegeben.')).toBeVisible();
+    expect(logged(api, new RegExp(`POST /api/admin/devices/approve .*"userId":"${ANNA}","deviceId":"dev-0-0123456789ab"`))).toBe(true);
+    await expect(row).toContainText('Freigegeben');
+
+    const actions = async () => {
+      await row.getByRole('button', { name: 'Aktionen für Chrome auf Windows' }).click();
+      return page.getByRole('dialog', { name: 'Chrome auf Windows' });
+    };
+    await (await actions()).getByRole('button', { name: 'Freigabe zurücknehmen' }).click();
+    await expect(toasts(page).getByText('Freigabe von „Chrome auf Windows“ zurückgenommen.')).toBeVisible();
+    expect(logged(api, /POST \/api\/admin\/devices\/unapprove /)).toBe(true);
+    await expect(row).toContainText('Wartet auf Freigabe');
+
+    await (await actions()).getByRole('button', { name: 'Abmelden' }).click();
     await page.getByRole('alertdialog', { name: '„Chrome auf Windows“ abmelden?' }).getByRole('button', { name: 'Abmelden' }).click();
     await expect(toasts(page).getByText(/Sitzung beendet/)).toBeVisible();
     expect(logged(api, new RegExp(`POST /api/admin/users/${ANNA}/sessions/dev-0-0123456789ab/revoke`))).toBe(true);
-    await page.getByRole('tab', { name: 'Downloads' }).click();
-    await expect(page.getByRole('tabpanel', { name: 'Downloads' }).getByText('Hearth')).toBeVisible();
+
+    await (await actions()).getByRole('button', { name: 'Entfernen' }).click();
+    const dlg = page.getByRole('alertdialog', { name: '„Chrome auf Windows“ entfernen?' });
+    await dlg.getByRole('button', { name: 'Abbrechen' }).click();
+    expect(logged(api, /devices\/remove/)).toBe(false);
+    await (await actions()).getByRole('button', { name: 'Entfernen' }).click();
+    await dlg.getByRole('button', { name: 'Entfernen' }).click();
+    await expect(toasts(page).getByText('„Chrome auf Windows“ entfernt.')).toBeVisible();
+    await expect(row).toHaveCount(0);
+
     await page.getByRole('tab', { name: 'Audit-Log' }).click();
+    const audit = page.getByRole('tabpanel', { name: 'Audit-Log' });
+    await expect(audit.getByText('Tester hat Anna Beispiel auf einem Gerät abgemeldet')).toBeVisible();
+    await expect(audit.getByText('Tester hat Anna Beispiel überall abgemeldet')).toHaveCount(0);
+  });
+
+  test('downloads: revoke a licence with confirm', async ({ page, api }) => {
+    await page.goto(`/admin/users/${ANNA}?tab=downloads`);
+    const panel = page.getByRole('tabpanel', { name: 'Downloads' });
+    const row = panel.getByRole('row', { name: /Hearth/ });
+    await row.getByRole('button', { name: 'Aktionen für Hearth' }).click();
+    await page.getByRole('dialog', { name: 'Hearth' }).getByRole('button', { name: 'Widerrufen' }).click();
+    const dlg = page.getByRole('alertdialog', { name: 'Download „Hearth“ widerrufen?' });
+    await dlg.getByRole('button', { name: 'Abbrechen' }).click();
+    expect(logged(api, /DELETE \/api\/admin\/downloads/)).toBe(false);
+    await row.getByRole('button', { name: 'Aktionen für Hearth' }).click();
+    await page.getByRole('dialog', { name: 'Hearth' }).getByRole('button', { name: 'Widerrufen' }).click();
+    await dlg.getByRole('button', { name: 'Widerrufen' }).click();
+    await expect(toasts(page).getByText('Download „Hearth“ widerrufen.')).toBeVisible();
+    expect(logged(api, new RegExp(`DELETE /api/admin/downloads/${auid(601)} `))).toBe(true);
+    await expect(panel.getByText('Keine aktiven Downloads.')).toBeVisible();
+  });
+
+  test('audit tab lists the entries as sentences', async ({ page, api }) => {
+    api.admin.audit.unshift({ id: 99, at: new Date().toISOString(), action: 'user.limits', target: ANNA, meta: { from: { maxStreams: null }, to: { maxStreams: 3 } }, actor: 'Tester', target_name: 'Anna Beispiel' });
+    await page.goto(`/admin/users/${ANNA}?tab=audit`);
     await expect(page.getByRole('tabpanel', { name: 'Audit-Log' }).getByText('Tester hat die Limits von Anna Beispiel geändert')).toBeVisible();
+  });
+
+  test('own account: no lock, demotion or sign out everywhere', async ({ page }) => {
+    await page.goto('/admin/users/u1');
+    await page.getByRole('button', { name: 'Aktionen', exact: true }).click();
+    const m = page.getByRole('dialog', { name: 'Tester' });
+    await expect(m.getByRole('button', { name: 'Du kannst dich nicht selbst sperren oder herabstufen.' })).toBeDisabled();
+    await expect(m.getByRole('button', { name: 'Zugang verlängern' })).toBeVisible();
+    for (const n of ['Sperren', 'Rolle ändern', 'Überall abmelden']) await expect(m.getByRole('button', { name: n, exact: true })).toHaveCount(0);
+  });
+
+  test('unknown user shows not found; a load error offers retry', async ({ page }) => {
+    await page.goto(`/admin/users/${auid(999)}`);
+    const nf = page.getByRole('alert').filter({ hasText: 'Diesen Nutzer gibt es nicht (mehr).' });
+    await expect(nf).toBeVisible();
+    await expect(nf.getByRole('button')).toHaveCount(0);
+
+    let fail = true;
+    await page.route(`**/api/admin/users/${ANNA}`, (r) => (fail ? r.fulfill({ status: 500, contentType: 'application/json', body: '{"error":"x"}' }) : r.fallback()));
+    await page.goto(`/admin/users/${ANNA}`);
+    const err = page.getByRole('alert').filter({ hasText: 'Das ließ sich nicht laden' });
+    await expect(err).toBeVisible();
+    fail = false;
+    await err.getByRole('button', { name: 'Erneut versuchen' }).click();
+    await expect(page.getByRole('heading', { level: 2, name: 'Anna Beispiel' })).toBeVisible();
   });
 
   test('tablist has names', async ({ page }) => {

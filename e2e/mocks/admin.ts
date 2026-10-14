@@ -78,6 +78,8 @@ export interface AdminState {
   limits: Record<string, DetailLimits>;
   userProfiles: Record<string, DetailProfile[]>;
   activityCalls: number;
+  /** licences revoked via DELETE /api/admin/downloads/:id */
+  revokedLicences: string[];
 }
 export interface DetailLimits { maxStreams: number | null; remoteBitrate: number | null; maxDownloads: number | null; downloadMaxHeight: number | null; requestsPerMonth: number | null }
 export interface DetailProfile { id: string; name: string; kids: boolean; maxRating: string | null; avatar: string; lastUsed: string | null; isOwner: boolean; hasPin: boolean }
@@ -208,6 +210,7 @@ export function adminState(): AdminState {
     limits: {},
     userProfiles: {},
     activityCalls: 0,
+    revokedLicences: [],
   };
 }
 
@@ -226,7 +229,7 @@ function userDetail(st: AdminState, u: AdminUser) {
     linked: { jellyfin: { ok: st.linkedOk.jellyfin, username: u.jellyfin_username }, requests: { ok: st.linkedOk.requests, id: st.linkedOk.requests ? 7 : null } },
     profiles,
     devices: st.devices.filter((d) => d.user_id === u.id).map((d, i) => ({ id: d.device_id, name: d.label, lastSeen: d.last_seen, approved: d.approved, sessions: i + 1 })),
-    licenses: [{ id: 'lic-1', itemId: 'it1', status: 'fetched', ready: true, title: 'Hearth', seriesName: null, season: null, episode: null, profileId: profiles[0]!.id, createdAt: ago(30), validUntil: fut(24 * 20), expiresAt: fut(24 * 20), bytes: 1.2e9 }],
+    licenses: [{ id: auid(601), itemId: 'it1', status: 'fetched', ready: true, title: 'Hearth', seriesName: null, season: null, episode: null, profileId: profiles[0]!.id, createdAt: ago(30), validUntil: fut(24 * 20), expiresAt: fut(24 * 20), bytes: 1.2e9 }].filter((l) => !st.revokedLicences.includes(l.id)),
   };
 }
 
@@ -413,8 +416,8 @@ export function adminRoute(st: AdminState, m: string, p: string, sp: URLSearchPa
       log('user.activity_viewed', u.id, { profiles: 2 }, u.name);
       const pr = profilesOf(st, u);
       return J({ items: [
-        { id: 'it1', name: 'Hearth', type: 'Movie', lastPlayedDate: ago(2), profile: { id: pr[0]!.id, name: pr[0]!.name } },
-        { id: 'it2', name: 'Pilot', type: 'Episode', seriesName: 'Sundial', parentIndexNumber: 1, indexNumber: 1, lastPlayedDate: ago(30), profile: { id: pr[1]!.id, name: pr[1]!.name } },
+        { id: 'it1', name: 'Hearth', type: 'Movie', played: false, playedPercentage: 45.4, lastPlayedDate: ago(2), profile: { id: pr[0]!.id, name: pr[0]!.name } },
+        { id: 'it2', name: 'Pilot', type: 'Episode', seriesName: 'Sundial', parentIndexNumber: 1, indexNumber: 1, played: true, lastPlayedDate: ago(30), profile: { id: pr[1]!.id, name: pr[1]!.name } },
       ], skipped: [] });
     }
     if (rest === '/audit' && m === 'GET') {
@@ -434,7 +437,7 @@ export function adminRoute(st: AdminState, m: string, p: string, sp: URLSearchPa
     }
     if (rest === '/recovery' && m === 'POST') { log('user.recovery_email', u.id, { ok: true }, u.name); return ok(); }
     if (rest === '/mfa-setup' && m === 'POST') return J({ error: 'not_supported' }, 501);
-    if ((sub = rest.match(/^\/sessions\/([^/]+)\/revoke$/)) && m === 'POST') { log('user.revoke_sessions', u.id, { device: sub[1] }, u.name); return J({ revoked: 1 }); }
+    if ((sub = rest.match(/^\/sessions\/([^/]+)\/revoke$/)) && m === 'POST') { log('user.revoke_device', u.id, { deviceId: sub[1] }, u.name); return J({ revoked: 1 }); }
     if ((sub = rest.match(/^\/profiles\/([^/]+)$/)) && m === 'PATCH') {
       const pr = profilesOf(st, u).find((x) => x.id === sub![1]);
       if (!pr) return J({ error: 'not_found' }, 404);
@@ -671,6 +674,7 @@ export function adminRoute(st: AdminState, m: string, p: string, sp: URLSearchPa
     if (m === 'POST') return ok();
     return J({ running: false, done: 6, total: 6, startedAt: ago(3), finishedAt: ago(2), results: [{ itemId: 'a'.repeat(32), name: 'Kaputter Film', type: 'Movie', ok: false, status: 500, ms: 900, bytes: 0, error: 'HTTP 500 transcoder failed' }, ...Array.from({ length: 5 }, (_, i) => ({ itemId: String(i).repeat(32), name: 'Film ' + i, type: 'Movie', ok: true, status: 200, ms: 800 + i * 90, bytes: 1, error: null }))] });
   }
+  if ((mm = p.match(/^\/api\/admin\/downloads\/([^/]+)$/)) && m === 'DELETE') { st.revokedLicences.push(mm[1]!); log('download.revoke', mm[1]!); return ok(); }
   if (p === '/api/admin/downloads') return J({ enabled: true, maxBytes: 50 * 1024 ** 3, diskBytes: 12.4 * 1024 ** 3, jobCounts: { ready: 3, preparing: 1 }, jobs: [{ id: auid(400), item_id: 'abcdef0123456789abcdef0123456789', title: 'Inkwell', series_name: null, quality: 'hd', audio_lang: 'deu', status: 'preparing', seg_done: 40, seg_total: 100, bytes: 1e9, error: null, created_at: ago(2), updated_at: ago(1), licenses: 2 }], licenses: [{ id: auid(401), user_name: 'Anna', device_label: 'iPhone', item_id: 'x', title: 'Inkwell', series_name: null, quality: 'hd', status: 'fetched', created_at: ago(30), expires_at: fut(500) }] });
   if ((mm = p.match(/^\/api\/admin\/downloads\/([^/]+)$/)) && m === 'DELETE') return ok();
   if (p === '/api/admin/digest') {

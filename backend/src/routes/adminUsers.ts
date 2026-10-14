@@ -381,7 +381,7 @@ export function adminUserRoutes(app: FastifyInstance, ctx: Ctx) {
   app.post('/api/admin/users/:id/sessions/:deviceId/revoke', admin, async (req) => {
     const { id, deviceId } = z.object({ id: uuid, deviceId: z.string().min(1).max(100) }).parse(req.params);
     const n = await revokeSessions(ctx, id, deviceId);
-    await audit(ctx, req.user!.id, 'user.revoke_sessions', id, { device: deviceId, sessions: n });
+    await audit(ctx, req.user!.id, 'user.revoke_device', id, { deviceId, sessions: n });
     return { revoked: n };
   });
 

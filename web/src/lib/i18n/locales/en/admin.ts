@@ -311,7 +311,10 @@ const en: Translation<typeof de> = {
       recovery_email: '{actor} sent {target} a password link',
       mfa_setup_sent: '{actor} sent {target} the 2FA setup',
       activity_viewed: '{actor} viewed the history of {target}',
+      revoke_device: '{actor} signed {target} out on one device',
+      recovery_email_failed: '{actor} tried to send {target} a password link – failed ({reason})',
     },
+    failReason: { recovery_not_configured: 'no recovery flow set up', authentik_user_not_found: 'no Authentik user', not_supported: 'not supported', authentik_unavailable: 'Authentik unreachable', unknown: 'error' },
     device: {
       approve: '{actor} approved a device of {target}',
       unapprove: '{actor} withdrew the approval of a device of {target}',

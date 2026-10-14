@@ -39,7 +39,12 @@ export function describeActivity(e: AuditEntry): { text: string; icon: string } 
   const isRole = e.action.startsWith('role.');
   const target = isRole ? roleText(e.target) : e.target_name || (e.action.startsWith('request.') && e.target ? `#${e.target}` : tr('admin.activity.someone'));
   const params = { actor, target, role: roleText(meta.role ?? (isRole ? e.target : '')), to: roleText(meta.to), from: roleText(meta.from) };
-  const key = activityKey(e.action);
   const icon = ICONS[e.action.split('.')[0]!] ?? 'info';
+  // a failed recovery attempt is audited under the same action with ok: false (and the error code, never Authentik's answer)
+  if (e.action === 'user.recovery_email' && meta.ok === false) {
+    const code = typeof meta.error === 'string' && /^[a-z_]+$/.test(meta.error) && hasKey(`admin.activity.failReason.${meta.error}`) ? meta.error : 'unknown';
+    return { text: tr('admin.activity.user.recovery_email_failed', { ...params, reason: trDynamic(`admin.activity.failReason.${code}`) }), icon };
+  }
+  const key = activityKey(e.action);
   return { text: key ? trDynamic(key, params) : tr('admin.activity.unknown', { actor }), icon };
 }

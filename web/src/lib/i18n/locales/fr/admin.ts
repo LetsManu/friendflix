@@ -320,7 +320,10 @@ const fr: Translation<typeof de> = {
       recovery_email: '{actor} a envoyé un lien de mot de passe à {target}',
       mfa_setup_sent: '{actor} a envoyé la configuration 2FA à {target}',
       activity_viewed: '{actor} a consulté l’historique de {target}',
+      revoke_device: '{actor} a déconnecté {target} sur un appareil',
+      recovery_email_failed: '{actor} a tenté d’envoyer un lien de mot de passe à {target} – échec ({reason})',
     },
+    failReason: { recovery_not_configured: 'aucun flux de récupération configuré', authentik_user_not_found: 'aucun utilisateur Authentik', not_supported: 'non pris en charge', authentik_unavailable: 'Authentik injoignable', unknown: 'erreur' },
     device: {
       approve: '{actor} a validé un appareil de {target}',
       unapprove: '{actor} a retiré la validation d\'un appareil de {target}',

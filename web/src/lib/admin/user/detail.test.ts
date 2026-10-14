@@ -33,6 +33,8 @@ describe('limits form', () => {
     expect(roleHint('maxStreams', 2)).toBe('wie Rolle: 2');
     expect(roleHint('remoteBitrate', 4_000_000)).toBe('wie Rolle: 4');
     expect(roleHint('requestsPerMonth', null)).toBe('wie Rolle: unbegrenzt');
+    expect(roleHint('downloadMaxHeight', 0)).toBe('wie Rolle: keine Downloads');
+    expect(roleHint('downloadMaxHeight', 1080)).toBe('wie Rolle: 1080');
   });
 });
 

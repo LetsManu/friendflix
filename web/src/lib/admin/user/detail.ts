@@ -114,7 +114,9 @@ export function limitsPatch(saved: Limits, form: LimitsForm): Partial<Limits> | 
   return out;
 }
 
-/** placeholder of a limit field: the role's value ("wie Rolle: 2"); null = unlimited */
+/** placeholder and hint of a limit field: the role's value ("wie Rolle: 2"); null = unlimited, download height 0 = no downloads */
 export function roleHint(k: LimitKey, roleValue: number | null): string {
-  return tr('adminPeople.detail.limits.asRole', { value: roleValue === null ? tr('adminPeople.detail.limits.unlimited') : fmtNumber(roleValue / field(k).scale) });
+  // download height 0: the role allows no downloads at all
+  if (k === 'downloadMaxHeight' && roleValue === 0) return tr('adminPeople.detail.limits.asRole', { value: tr('adminPeople.detail.limits.noDownloads') });
+  return tr('adminPeople.detail.limits.asRole', { value: roleValue === null ? tr('adminPeople.detail.limits.unlimited') : fmtNumber(roleValue / field(k).scale, { useGrouping: false }) });
 }

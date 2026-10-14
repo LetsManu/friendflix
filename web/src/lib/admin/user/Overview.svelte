@@ -7,6 +7,7 @@
   import { fmtNumber, t, tr } from '#lib/i18n';
   import { busyKeys, runAction } from '#lib/ui/action';
   import Button from '#lib/ui/Button.svelte';
+  import { toast } from '#lib/ui/toast';
   import type { Tone } from '#lib/ui/StatusPill.svelte';
   import type { UserDetail } from './detail';
 
@@ -25,12 +26,11 @@
   $: busy = $busyKeys.has(`repair:${userId}`);
 
   async function repair() {
-    const r = await runAction({
-      key: `repair:${userId}`,
-      run: () => api<{ ok: boolean }>(`/api/admin/users/${userId}/repair`, { method: 'POST' }),
-      success: (res) => (res?.ok ? tr('adminPeople.detail.overview.repaired') : tr('adminPeople.detail.overview.repairPartial')),
-    });
-    if (r.ok) dispatch('changed');
+    const r = await runAction({ key: `repair:${userId}`, run: () => api<{ ok: boolean }>(`/api/admin/users/${userId}/repair`, { method: 'POST' }) });
+    if (!r.ok) return;
+    // a partial repair is not a success
+    if (r.value?.ok) toast.success(tr('adminPeople.detail.overview.repaired')); else toast.error(tr('adminPeople.detail.overview.repairPartial'));
+    dispatch('changed');
   }
 </script>
 

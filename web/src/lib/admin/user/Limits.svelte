@@ -17,6 +17,8 @@
   /** bound to number inputs: the browser hands back numbers, '' or null */
   let form: Record<LimitKey, string | number | null> = { maxStreams: '', remoteBitrate: '', maxDownloads: '', downloadMaxHeight: '', requestsPerMonth: '' };
   let errors: Partial<Record<LimitKey, string>> = {};
+  /** fields whose text the browser could not read as a number ("-", "1e"): they bind as null, which must not mean "as role" */
+  let bad: Partial<Record<LimitKey, boolean>> = {};
 
   async function load() {
     try {
@@ -34,10 +36,10 @@
     if (!saved) return;
     errors = {};
     for (const f of LIMIT_FIELDS) {
-      if (parseLimit(f.key, text(f.key)) === undefined) errors[f.key] = tr('adminPeople.detail.limits.invalid', { min: fmtNumber(f.min), max: fmtNumber(f.max) });
+      if (bad[f.key] || parseLimit(f.key, text(f.key)) === undefined) errors[f.key] = tr('adminPeople.detail.limits.invalid', { min: fmtNumber(f.min), max: fmtNumber(f.max) });
     }
     const body = limitsPatch(saved, { maxStreams: text('maxStreams'), remoteBitrate: text('remoteBitrate'), maxDownloads: text('maxDownloads'), downloadMaxHeight: text('downloadMaxHeight'), requestsPerMonth: text('requestsPerMonth') });
-    if (!body) return;
+    if (!body || Object.keys(errors).length) return;
     if (!Object.keys(body).length) { toast.info(tr('adminPeople.detail.limits.unchanged')); return; }
     const r = await runAction({
       key: `limits:${userId}`,
@@ -59,7 +61,8 @@
     <div class="grid">
       {#each LIMIT_FIELDS as f (f.key)}
         <Field type="number" label={$t(`adminPeople.detail.limits.${f.key}`)} bind:value={form[f.key]} min={f.min} max={f.max} step={f.step}
-          placeholder={role ? roleHint(f.key, role[f.key]) : ''} error={errors[f.key] ?? ''} disabled={saved === null} />
+          placeholder={role ? roleHint(f.key, role[f.key]) : ''} hint={role ? roleHint(f.key, role[f.key]) : ''} error={errors[f.key] ?? ''} disabled={saved === null}
+          on:input={(e) => (bad[f.key] = (e.target as HTMLInputElement).validity.badInput)} />
       {/each}
     </div>
     <Button type="submit" pending={busy} disabled={saved === null}>{$t('adminPeople.detail.limits.save')}</Button>

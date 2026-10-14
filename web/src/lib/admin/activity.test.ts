@@ -21,6 +21,18 @@ describe('describeActivity', () => {
     await setLocale('en');
     expect(describeActivity({ id: 6, at: '', action: 'preview.clear', actor: 'Tester' }).text).toBe('Tester deleted a preview clip');
   });
+  it('one-device sign-out and failed password links say what happened', async () => {
+    const base = { id: 9, at: '', target: 'uuid', actor: 'Tester', target_name: 'Anna' };
+    expect(describeActivity({ ...base, action: 'user.revoke_device', meta: { deviceId: 'dev-a', sessions: 2 } })).toEqual({ text: 'Tester hat Anna auf einem Gerät abgemeldet', icon: 'user' });
+    expect(describeActivity({ ...base, action: 'user.recovery_email', meta: { ok: true } }).text).toBe('Tester hat Anna einen Passwort-Link geschickt');
+    expect(describeActivity({ ...base, action: 'user.recovery_email', meta: { ok: false, error: 'recovery_not_configured' } }).text)
+      .toBe('Tester wollte Anna einen Passwort-Link schicken – fehlgeschlagen (kein Ablauf zum Zurücksetzen eingerichtet)');
+    // unknown or odd codes never leak into the text
+    expect(describeActivity({ ...base, action: 'user.recovery_email', meta: { ok: false, error: 'constructor' } }).text).toMatch(/fehlgeschlagen \(Fehler\)$/);
+    await setLocale('en');
+    expect(describeActivity({ ...base, action: 'user.recovery_email', meta: { ok: false, error: 'authentik_unavailable' } }).text)
+      .toBe('Tester tried to send Anna a password link – failed (Authentik unreachable)');
+  });
   it('never shows raw keys or JSON for unknown actions', async () => {
     const d = describeActivity({ id: 5, at: '', action: 'weird.thing', actor: 'Tester', meta: { a: 1 } });
     expect(d.text).not.toContain('weird');
