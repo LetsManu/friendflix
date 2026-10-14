@@ -201,7 +201,7 @@ async function runSteps(ctx: Ctx, t: Tombstone, now: Date): Promise<StepResult> 
       await stepFailed(ctx, t, n, errorCode(e));
       return false;
     }
-    if (n < 6) await ctx.db.query('update account_deletions set step=$2, last_error=null, failed_step=null where user_id=$1', [id, n]);
+    if (n < 6) await ctx.db.query('update account_deletions set step=greatest(step, $2), last_error=null, failed_step=null where user_id=$1', [id, n]);
     step = n;
     return true;
   };
@@ -218,8 +218,10 @@ async function runSteps(ctx: Ctx, t: Tombstone, now: Date): Promise<StepResult> 
     // 4: the account's rows and the admin notices that name the person
     async () => {
       const c = await (ctx.db as pg.Pool).connect();
+      let profileIds: string[];
       try {
         await c.query('begin');
+        profileIds = (await c.query<{ id: string }>('select id from profiles where user_id=$1', [id])).rows.map((r) => r.id);
         // the pseudonymous failure notices of this deletion stay
         await c.query("delete from notifications where (link = '/admin/users/' || $1 or dedupe like '%' || $1 || '%') and kind <> 'deletion_failed'", [id]);
         if (t.authentik_sub) await c.query('delete from approval_requests where authentik_sub=$1', [t.authentik_sub]);
@@ -235,6 +237,8 @@ async function runSteps(ctx: Ctx, t: Tombstone, now: Date): Promise<StepResult> 
       if (t.authentik_sub) await ctx.kv.del(`akmfa:${t.authentik_sub}`);
       await ctx.kv.del(`pinfail:${id}`);
       await ctx.kv.del(`pinfail-acct:${id}`);
+      // per-profile caches (TTL only): media server tokens of the deleted identities, PIN lockouts, home cache stamps
+      for (const pid of profileIds) for (const k of [`jft:${pid}`, `pinfail:${pid}`, `homegen:${pid}`]) await ctx.kv.del(k);
     },
   ];
   if (step < 4) {
@@ -246,7 +250,9 @@ async function runSteps(ctx: Ctx, t: Tombstone, now: Date): Promise<StepResult> 
   }
   if (step < 5 && !(await run(5, async () => {
     await ctx.db.query(
-      `update audit_log set meta = (meta - 'name' - 'email' - 'jellyfin' - 'username' - 'ip') || jsonb_build_object('pseudonym', $2::text)
+      // nested names: profile.admin_update keeps { from: { name }, to: { name } } of the account's profiles
+      `update audit_log set meta = (meta - 'name' - 'email' - 'jellyfin' - 'username' - 'ip' #- '{from,name}' #- '{to,name}')
+                                   || jsonb_build_object('pseudonym', $2::text)
         where actor = $1::uuid or target = $1::text`, [id, t.pseudonym]);
   }))) return 'failed';
   // 6: the Authentik user is deactivated (never deleted); finishing is part of the step, so its outcome reaches the audit

@@ -181,10 +181,11 @@ export function adminUserRoutes(app: FastifyInstance, ctx: Ctx) {
       : `select u.id, u.name, u.email, u.role, u.disabled, u.jellyfin_username, u.seerr_user_id, u.created_at,
                 (select max(last_seen) from devices d where d.user_id = u.id) last_seen, u.access_until, u.locked_reason, u.deletion_at,
                 (select count(*) from profiles x where x.user_id = u.id)::int profiles,
-                (select count(*) from devices d where d.user_id = u.id)::int devices, false pending${p.status === 'deleting' ? ', null::jsonb cleanup' : ''}
-           from users u${p.status === 'deleting' ? `
+                (select count(*) from devices d where d.user_id = u.id)::int devices, false pending${p.status === 'deleting' ? `,
+                case when ad.user_id is not null and ad.finished_at is null then jsonb_build_object('step', ad.step + 1, 'error', ad.last_error) end cleanup` : ''}
+           from users u${p.status === 'deleting' ? ` left join account_deletions ad on ad.user_id = u.id
          union all
-         -- deletions whose users row is already gone (steps 5-6 still open): pseudonym only, the step being worked on and its error
+         -- claimed deletions carry the step being worked on and its error; once the users row is gone (steps 5-6) only the pseudonym is left
          select ad.user_id, ad.pseudonym, null, null, true, null, null, ad.started_at, null, null, 'deletion', null, 0, 0, false,
                 jsonb_build_object('step', ad.step + 1, 'error', ad.last_error)
            from account_deletions ad where ad.finished_at is null and not exists (select 1 from users x where x.id = ad.user_id)` : ''}`;
@@ -201,6 +202,7 @@ export function adminUserRoutes(app: FastifyInstance, ctx: Ctx) {
     return serial(async () => {
       const user = await getUserById(ctx, id);
       if (!user) return reply.code(404).send({ error: 'not_found' });
+      if (await claimed(id)) return reply.code(409).send({ error: 'deletion_in_progress' });
       const demote = b.role !== undefined && b.role !== 'admin';
       if (id === actor && (b.disabled || demote)) return reply.code(400).send({ error: 'cannot_lock_yourself_out' });
       if (b.role !== undefined && !Object.hasOwn(ctx.roles, b.role)) return reply.code(400).send({ error: 'unknown_role' });
@@ -256,6 +258,8 @@ export function adminUserRoutes(app: FastifyInstance, ctx: Ctx) {
 
   // ---- user detail page ----
   /** The account or a 404 HttpError. */
+  /** true once the deletion tick has claimed the account: admin changes would act on identities that are being deleted */
+  const claimed = async (id: string) => Boolean((await ctx.db.query('select 1 from account_deletions where user_id=$1', [id])).rowCount);
   const userOr404 = async (id: string) => {
     const user = await getUserById(ctx, id);
     if (!user) throw new HttpError(404, 'not_found');
@@ -384,6 +388,7 @@ export function adminUserRoutes(app: FastifyInstance, ctx: Ctx) {
     const b = limitsBody.parse(req.body);
     return serial(async () => {
       const user = await userOr404(id);
+      if (await claimed(id)) return reply.code(409).send({ error: 'deletion_in_progress' });
       const from = await getUserLimits(ctx, id);
       const to = { ...from, ...b };
       if (JSON.stringify(from) !== JSON.stringify(to)) {
@@ -399,10 +404,12 @@ export function adminUserRoutes(app: FastifyInstance, ctx: Ctx) {
   });
 
   // "Repair link": the role policy again on every media server identity, and the request-service user mapped again
-  app.post('/api/admin/users/:id/repair', admin, async (req) => {
+  app.post('/api/admin/users/:id/repair', admin, async (req, reply) => {
     const id = idParam(req);
     return serial(async () => {
       const user = await userOr404(id);
+      // a claimed account: the request-service user may already be deleted, a repair would create an orphan
+      if (await claimed(id)) return reply.code(409).send({ error: 'deletion_in_progress' });
       const jellyfin = await reapplyAccount(ctx, user);
       const before = user.seerr_user_id;
       const requestsOk = await ensureSeerrUser(ctx, user).then(() => true, () => false);

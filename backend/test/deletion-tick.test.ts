@@ -98,8 +98,25 @@ describe('deletionTick', () => {
     await env.pool.query("insert into audit_log(actor, action, target, meta) values ($1, 'login', $2, $3)", [d.id, d.id, JSON.stringify({ ip: '10.1.2.3' })]);
     await env.pool.query("insert into audit_log(actor, action, target, meta) values ($1, 'user.provisioned', $2, $3)",
       [adminId, d.id, JSON.stringify({ name: 'Doomed', email: 'doomed@x.de', jellyfin: 'Doomed', username: 'dd', role: 'friend' })]);
+    // nested names (admin rename of a profile) and the account's own profile audit
+    await env.pool.query("insert into audit_log(actor, action, target, meta) values ($1, 'profile.admin_update', $2, $3)",
+      [adminId, d.id, JSON.stringify({ profile: d.id, from: { name: 'Doomed', hasPin: false }, to: { name: 'Lena', hasPin: false } })]);
+    await env.pool.query("insert into audit_log(actor, action, target, meta) values ($1, 'profile.create', gen_random_uuid()::text, $2)", [d.id, JSON.stringify({ name: 'Kid' })]);
+    // rows the cascade must remove: a device with a download and a push subscription, a watchlist entry, an own list with
+    // another member, and a membership in someone else's list
     const dev = 'dev-doomed';
-    await env.pool.query('insert into devices(user_id, device_id) values ($1, $2) on conflict do nothing', [d.id, dev]).catch(() => undefined);
+    await env.pool.query("insert into devices(user_id, device_id, label) values ($1, $2, 'Phone')", [d.id, dev]);
+    await env.pool.query(
+      `insert into downloads(id, user_id, device_id, profile_id, item_id, quality, status, expires_at) values (gen_random_uuid(), $1, $2, $1, 'm1', 'original', 'fetched', now() + interval '10 days')`,
+      [d.id, dev]);
+    await env.pool.query("insert into push_subscriptions(user_id, device_id, profile_id, endpoint, p256dh, auth) values ($1, $2, $1, 'https://push.example/doomed', 'k', 'a')", [d.id, dev]);
+    await env.pool.query("insert into watchlist(user_id, profile_id, item_id) values ($1, $1, 'w1')", [d.id]);
+    const own = (await env.pool.query("insert into lists(id, owner_id, name) values (gen_random_uuid(), $1, 'Mine') returning id", [d.id])).rows[0].id;
+    await env.pool.query("insert into list_members(list_id, user_id, role) values ($1, $2, 'viewer')", [own, adminId]);
+    const other = (await env.pool.query("insert into lists(id, owner_id, name) values (gen_random_uuid(), $1, 'Theirs') returning id", [adminId])).rows[0].id;
+    await env.pool.query("insert into list_members(list_id, user_id, role) values ($1, $2, 'editor')", [other, d.id]);
+    await env.kv.set(`jft:${d.id}`, 'x', 600);
+    await env.kv.set(`homegen:${d.id}`, '1', 600);
     env.jfCalls.length = 0;
 
     const r = await deletionTick(env.ctx);
@@ -107,10 +124,15 @@ describe('deletionTick', () => {
 
     expect(jfDeletes().sort()).toEqual([`/Users/${d.ownerJf}`, `/Users/${d.profileJf}`].sort());
     expect(seerrDeletes()).toEqual([`/api/v1/user/${40 + n}`]);
-    for (const t of ['users', 'profiles', 'devices', 'notifications', 'downloads']) {
-      const col = t === 'users' ? 'id' : 'user_id';
+    for (const t of ['users', 'profiles', 'devices', 'notifications', 'downloads', 'push_subscriptions', 'watchlist', 'list_members', 'lists']) {
+      const col = t === 'users' ? 'id' : t === 'lists' ? 'owner_id' : 'user_id';
       expect((await env.pool.query(`select 1 from ${t} where ${col}=$1`, [d.id])).rowCount, t).toBe(0);
     }
+    expect((await env.pool.query('select 1 from lists where id=$1', [own])).rowCount).toBe(0);
+    expect((await env.pool.query('select 1 from list_members where list_id=$1', [other])).rowCount).toBe(0);
+    expect((await env.pool.query('select 1 from lists where id=$1', [other])).rowCount).toBe(1);
+    expect(await env.kv.get(`jft:${d.id}`)).toBeNull();
+    expect(await env.kv.get(`homegen:${d.id}`)).toBeNull();
     const p = pseudonymFor(env.ctx, d.id);
     const rows = (await env.pool.query<{ meta: Record<string, unknown> }>('select meta from audit_log where actor=$1 or target=$1::text', [d.id])).rows;
     expect(rows.length).toBeGreaterThan(3);
@@ -118,6 +140,9 @@ describe('deletionTick', () => {
       expect(a.meta.pseudonym).toBe(p);
       for (const k of ['name', 'email', 'ip', 'jellyfin', 'username']) expect(a.meta).not.toHaveProperty(k);
     }
+    expect(JSON.stringify(rows)).not.toMatch(/Doomed|Lena|"Kid"|10\.1\.2\.3/);
+    const renamed = rows.find((a) => a.meta.profile === d.id)!;
+    expect(renamed.meta).toEqual({ profile: d.id, from: { hasPin: false }, to: { hasPin: false }, pseudonym: p });
     expect(akPatches().map((c) => [c.path, c.body])).toEqual([[`/api/v3/core/users/${100 + n}/`, { is_active: false }]]);
     expect(await audits('user.deleted', d.id)).toEqual([{ actor: null, meta: { pseudonym: p, authentik: 'deactivated' } }]);
     expect(await notices('notify.deletion.done')).toEqual([{ user_id: adminId, link: '/admin/users?status=deleting', dedupe: `deletion-done-${d.id}-${adminId}`, params: { pseudonym: p } }]);
@@ -247,6 +272,22 @@ describe('deletionTick', () => {
     expect(r.json()).toEqual({ error: 'account_deleted' });
     expect((await env.pool.query('select 1 from approval_requests where authentik_sub=$1', [d.claims.sub])).rowCount).toBe(0);
     expect((await env.pool.query('select 1 from users where authentik_sub=$1', [d.claims.sub])).rowCount).toBe(0);
+  });
+
+  it('a claimed account whose users row still exists shows its failing step in the list', async () => {
+    const d = await doomed();
+    fail.jfDelete = 500;
+    await deletionTick(env.ctx);
+    const users = (await call(admin, 'GET', '/api/admin/users?status=deleting')).json().users as Array<Record<string, unknown>>;
+    expect(users.filter((u) => u.id === d.id)).toEqual([expect.objectContaining({ name: d.claims.name, cleanup: { step: 1, error: 'JellyfinError:500' } })]);
+    // admin changes on a claimed account are refused
+    for (const [method, url, body] of [['PATCH', `/api/admin/users/${d.id}`, { role: 'guest' }], ['POST', `/api/admin/users/${d.id}/repair`, undefined],
+      ['PUT', `/api/admin/users/${d.id}/limits`, { maxStreams: 2 }]] as const) {
+      const r = await call(admin, method, url, body);
+      expect(r.statusCode, url).toBe(409);
+      expect(r.json()).toEqual({ error: 'deletion_in_progress' });
+    }
+    expect(seerrDeletes()).toEqual([]);
   });
 
   it('the user list shows unfinished cleanups under status=deleting', async () => {
