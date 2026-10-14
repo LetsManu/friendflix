@@ -725,6 +725,35 @@ export const MIGRATIONS: string[] = [
   create index account_deletions_sub on account_deletions(authentik_sub) where finished_at is null;
   create index users_deletion_at on users(deletion_at) where deletion_at is not null;
   `,
+  // 39: Block 25 settings store. settings holds admin/wizard-set config keys (plain JSON value, or an AES-256-GCM blob for secrets);
+  // settings_meta.rev is bumped by every write so instances reload. An install with users counts as set up (never sees the wizard).
+  // The data-source keys move over from app_settings unchanged (same APP_ENC_KEY, same blob format); a malformed row (no string enc)
+  // is dropped instead of failing the migration.
+  `
+  create table settings (
+    key text primary key,
+    value jsonb,
+    enc text,
+    last4 text,
+    updated_at timestamptz not null default now(),
+    updated_by uuid references users(id) on delete set null,
+    check ((value is null) <> (enc is null))
+  );
+  create table settings_meta (
+    id int primary key check (id = 1),
+    rev bigint not null default 0,
+    setup_completed_at timestamptz,
+    setup_code_hash text,
+    setup_code_expires_at timestamptz,
+    setup_code_failures int not null default 0
+  );
+  insert into settings_meta(id, setup_completed_at)
+    select 1, case when exists (select 1 from users) then now() end;
+  insert into settings(key, enc, last4, updated_at)
+    select case key when 'source.tmdb' then 'TMDB_API_KEY' else 'OMDB_API_KEY' end, value->>'enc', value->>'last4', updated_at
+    from app_settings where key in ('source.tmdb','source.omdb') and value ? 'enc' and jsonb_typeof(value->'enc') = 'string';
+  delete from app_settings where key in ('source.tmdb','source.omdb');
+  `,
 ];
 
 export async function migrate(pool: pg.Pool): Promise<void> {

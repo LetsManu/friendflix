@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { decrypt, encrypt } from '../crypto.js';
 import type { Ctx } from '../ctx.js';
+import { writeRows } from '../settings/repo.js';
 
 export type SourceName = 'tmdb' | 'omdb';
 export const SOURCES: readonly SourceName[] = ['tmdb', 'omdb'];
@@ -27,9 +28,12 @@ export interface SourceStatus {
 }
 
 type KeyCtx = Pick<Ctx, 'db' | 'cfg' | 'encKey'>;
-interface Stored { enc: string; last4: string; updatedAt: string }
+interface Stored { enc: string | null; last4: string | null }
 
-const settingKey = (name: SourceName) => `source.${name}`;
+/** the key's row in the settings table (Block 25; before migration 39 it was app_settings 'source.<name>') */
+const settingKey = (name: SourceName) => (name === 'tmdb' ? 'TMDB_API_KEY' : 'OMDB_API_KEY');
+const storedKey = async (ctx: Pick<Ctx, 'db'>, name: SourceName): Promise<Stored | undefined> =>
+  (await ctx.db.query<Stored>('select enc, last4 from settings where key=$1', [settingKey(name)])).rows[0];
 const fileKey = (ctx: Pick<Ctx, 'cfg'>, name: SourceName): string | undefined =>
   (name === 'tmdb' ? ctx.cfg.TMDB_API_KEY : ctx.cfg.OMDB_API_KEY) || undefined;
 
@@ -46,9 +50,8 @@ async function dbKey(ctx: KeyCtx, name: SourceName): Promise<string | null> {
   const cache = cacheOf(ctx);
   const hit = cache.get(name);
   if (hit && Date.now() - hit.at < CACHE_MS) return hit.key;
-  const r = await ctx.db.query<{ value: Stored }>('select value from app_settings where key=$1', [settingKey(name)]);
   let key: string | null = null;
-  const enc = r.rows[0]?.value?.enc;
+  const enc = (await storedKey(ctx, name))?.enc;
   if (enc) {
     try { key = decrypt(ctx.encKey, enc); } catch { key = null; } // wrong APP_ENC_KEY: treat as not set, never log
   }
@@ -64,16 +67,14 @@ export async function getSourceKey(ctx: KeyCtx, name: SourceName): Promise<{ key
   return key ? { key, from: 'db' } : null;
 }
 
+/** Stored through the settings repo (encrypted, last4, rev bump). Task 4 moves this to the settings store (publish to other instances). */
 export async function setSourceKey(ctx: KeyCtx, name: SourceName, key: string): Promise<void> {
-  const value: Stored = { enc: encrypt(ctx.encKey, key), last4: key.slice(-4), updatedAt: new Date().toISOString() };
-  await ctx.db.query(
-    'insert into app_settings(key, value) values ($1, $2) on conflict (key) do update set value = excluded.value, updated_at = now()',
-    [settingKey(name), JSON.stringify(value)]);
+  await writeRows(ctx.db, ctx.encKey, { [settingKey(name)]: key }, null);
   cacheOf(ctx).delete(name);
 }
 
 export async function removeSourceKey(ctx: KeyCtx, name: SourceName): Promise<void> {
-  await ctx.db.query('delete from app_settings where key=$1', [settingKey(name)]);
+  await writeRows(ctx.db, ctx.encKey, { [settingKey(name)]: null }, null);
   cacheOf(ctx).delete(name);
 }
 
@@ -118,8 +119,7 @@ export async function sourceStatus(ctx: Ctx, name: SourceName): Promise<SourceSt
   let undecryptable = false;
   if (file) { last4 = file.slice(-4); from = 'file'; }
   else {
-    const r = await ctx.db.query<{ value: Stored }>('select value from app_settings where key=$1', [settingKey(name)]);
-    const v = r.rows[0]?.value;
+    const v = await storedKey(ctx, name);
     if (v?.enc && (await dbKey(ctx, name)) !== null) { last4 = v.last4 ?? null; from = 'db'; } // undecryptable (APP_ENC_KEY changed) counts as not usable
     else if (v?.enc) undecryptable = true;
   }

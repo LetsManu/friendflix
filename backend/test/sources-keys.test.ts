@@ -23,10 +23,10 @@ describe('source keys', () => {
   it('PUT stores the key encrypted', async () => {
     const r = await call(env, admin, 'PUT', '/api/admin/sources/tmdb', { key: KEY });
     expect(r.statusCode).toBe(200);
-    const row = (await env.pool.query("select * from app_settings where key='source.tmdb'")).rows[0];
+    const row = (await env.pool.query("select * from settings where key='TMDB_API_KEY'")).rows[0];
     expect(JSON.stringify(row)).not.toContain(KEY);
-    expect(decrypt(keyFromBase64(ENC_KEY), row.value.enc)).toBe(KEY);
-    expect(row.value.last4).toBe(KEY.slice(-4));
+    expect(decrypt(keyFromBase64(ENC_KEY), row.enc)).toBe(KEY);
+    expect(row.last4).toBe(KEY.slice(-4));
   });
 
   it('responses never contain the key', async () => {
@@ -53,7 +53,7 @@ describe('source keys', () => {
       env.ctx.cfg = { ...orig, TMDB_API_KEY: 'filekey-abcdef99' };
       const a = admin;
       const fileEnv = env;
-      await fileEnv.pool.query("insert into app_settings(key, value) values ('source.tmdb', $1)", [JSON.stringify({ enc: encrypt(fileEnv.ctx.encKey, 'dbkey-zzzzzzzz'), last4: 'zzzz', updatedAt: 'x' })]);
+      await fileEnv.pool.query("insert into settings(key, enc, last4) values ('TMDB_API_KEY', $1, 'zzzz')", [encrypt(fileEnv.ctx.encKey, 'dbkey-zzzzzzzz')]);
       const put = await call(fileEnv, a, 'PUT', '/api/admin/sources/tmdb', { key: KEY });
       expect(put.statusCode).toBe(409);
       expect(put.json()).toEqual({ error: 'from_file' });
@@ -62,22 +62,22 @@ describe('source keys', () => {
       const st = await call(fileEnv, a, 'GET', '/api/admin/sources/tmdb');
       expect(st.json()).toMatchObject({ set: true, from: 'file', last4: 'ef99' });
       expect(st.body).not.toContain('filekey-abcdef99');
-      await env.pool.query("delete from app_settings where key='source.tmdb'");
+      await env.pool.query("delete from settings where key='TMDB_API_KEY'");
     } finally {
       env.ctx.cfg = orig;
-      await env.pool.query("delete from app_settings where key='source.tmdb'");
+      await env.pool.query("delete from settings where key='TMDB_API_KEY'");
     }
   });
 
   it('a stored key that no longer decrypts is reported as invalid, not as set', async () => {
     const other = Buffer.alloc(32, 9);
-    await env.pool.query("delete from app_settings where key='source.omdb'");
-    await env.pool.query("insert into app_settings(key, value) values ('source.omdb', $1)", [JSON.stringify({ enc: encrypt(other, 'omdbkey-12345678'), last4: '5678', updatedAt: 'x' })]);
+    await env.pool.query("delete from settings where key='OMDB_API_KEY'");
+    await env.pool.query("insert into settings(key, enc, last4) values ('OMDB_API_KEY', $1, '5678')", [encrypt(other, 'omdbkey-12345678')]);
     try {
       const j = (await call(env, admin, 'GET', '/api/admin/sources/omdb')).json();
       expect(j).toMatchObject({ set: false, from: null, last4: null, invalid: true });
     } finally {
-      await env.pool.query("delete from app_settings where key='source.omdb'");
+      await env.pool.query("delete from settings where key='OMDB_API_KEY'");
       await call(env, admin, 'DELETE', '/api/admin/sources/omdb');
     }
   });

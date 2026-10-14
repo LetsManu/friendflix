@@ -162,7 +162,7 @@ describe('traffic lights', () => {
   it('a key saved in the database counts as set', async () => {
     await setSourceKey(env.ctx, 'tmdb', 'dbkey-5678');
     expect(svc(await buildSnapshot(env.ctx, deps()), 'tmdb').level).toBe('ok');
-    await env.pool.query("delete from app_settings where key='source.tmdb'");
+    await env.pool.query("delete from settings where key='TMDB_API_KEY'");
   });
 
   it('last playback check with 2 failed → warn failed_titles detail n 2', async () => {
