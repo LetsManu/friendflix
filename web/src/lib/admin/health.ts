@@ -13,7 +13,7 @@ export const SERVICE_IDS = ['media', 'postgres', 'redis', 'gateway', 'oidc', 're
 export type ServiceId = (typeof SERVICE_IDS)[number];
 export const REASONS = [
   'slow', 'down', 'issuer_mismatch', 'invalid_key', 'paused', 'budget', 'not_set', 'failed_titles', 'unavailable',
-  'full', 'low_free', 'cap', 'large', 'server_errors', 'client_errors', 'failed_playbacks',
+  'full', 'low_free', 'cap', 'large', 'server_errors', 'client_errors', 'failed_playbacks', 'empty_media',
 ] as const;
 export type Reason = (typeof REASONS)[number];
 export interface Detail { n?: number; pct?: number }
@@ -78,3 +78,14 @@ export const cleanCode = (code: string): string => code.replace(/\b[a-z][a-z0-9+
 
 /** short chip text of a transcode reason ("Videoformat"); `other` is stored as `misc` (an `other` key would read as a plural form) */
 export const tcKey = (r: TranscodeReason): TKey => `adminContent.health.tc.${r === 'other' ? 'misc' : r}` as TKey;
+
+/**
+ * A playback-check / download error that means the media server answered with empty video (a hung hardware encoder returns
+ * HTTP 200 with no bytes): the probe's "HTTP 200 empty body" / "empty playlist", the preparer's "empty segment from media server".
+ */
+export const isEmptyMediaError = (error: string | null | undefined): boolean =>
+  Boolean(error && /HTTP 200 empty body|empty playlist|empty segment from media server/i.test(error));
+
+/** every checked title failed and at least one with empty video: the hint is shown once above the list instead of under each row */
+export const emptyHintOnTop = (results: ReadonlyArray<{ ok: boolean; error: string | null }>): boolean =>
+  results.length > 0 && results.every((r) => !r.ok) && results.some((r) => isEmptyMediaError(r.error));

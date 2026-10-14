@@ -168,6 +168,22 @@ describe('traffic lights', () => {
     await env.pool.query("insert into playback_checks(started_at, finished_at, results) values (now(), now(), $1)", [JSON.stringify([{ ok: true }])]);
     expect(svc(await buildSnapshot(env.ctx, deps()), 'playbackCheck').level).toBe('ok');
   });
+
+  it('every checked title failed (≥ 3) → err empty_media and a red issue; fewer than 3 or an abort row stay yellow', async () => {
+    const fail = (itemId: string) => ({ itemId, ok: false, error: 'HTTP 200 empty body' });
+    const insert = (rows: unknown[]) => env.pool.query('insert into playback_checks(started_at, finished_at, results) values (now(), now(), $1)', [JSON.stringify(rows)]);
+    await insert([fail('a'), fail('b'), fail('c')]);
+    const s = await buildSnapshot(env.ctx, deps());
+    expect(svc(s, 'playbackCheck')).toMatchObject({ level: 'err', reason: 'empty_media', detail: { n: 3 } });
+    expect(s.issues).toContainEqual(expect.objectContaining({ id: 'svc:playbackCheck', level: 'err', reason: 'empty_media' }));
+    expect(s.worst).toBe('err');
+    // the "aborted" row (no itemId) does not count as a checked title
+    await insert([fail('a'), fail('b'), { itemId: '', ok: false, error: 'boom' }]);
+    expect(svc(await buildSnapshot(env.ctx, deps()), 'playbackCheck')).toMatchObject({ level: 'warn', reason: 'failed_titles', detail: { n: 2 } });
+    await insert([fail('a'), fail('b'), fail('c'), { itemId: 'd', ok: true }]);
+    expect(svc(await buildSnapshot(env.ctx, deps()), 'playbackCheck')).toMatchObject({ level: 'warn', reason: 'failed_titles', detail: { n: 3 } });
+    await insert([{ itemId: 'a', ok: true }]);
+  });
 });
 
 describe('disks', () => {

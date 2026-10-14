@@ -54,6 +54,16 @@ const clean = (s: string, max: number) => scrub(s).replace(/\s+/g, ' ').trim().s
 /** scheme://anything → … (as web/src/lib/admin/health.ts cleanCode) */
 const cutUrls = (s: string) => s.replace(/\b[a-z][a-z0-9+.-]*:\/\/\S+/gi, '…').trim();
 
+/**
+ * A release is set by the app (web: SvelteKit version name = git sha or build epoch; server: APP_VERSION / short sha), never typed by
+ * a user. It is kept verbatim when it has one of those shapes (scrub() would turn a full 40-hex sha into "[token]"), dropped otherwise.
+ */
+const RELEASE = /^(?:v?\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]{1,30})?|[0-9a-f]{7,40}|\d{1,13})$/;
+export function cleanRelease(r: string | undefined): string | undefined {
+  const v = r?.trim();
+  return v && RELEASE.test(v) ? v : undefined;
+}
+
 function releaseOf(cfg: KvCtx['cfg']): string | undefined {
   if (!cfg) return undefined;
   return cfg.APP_VERSION ?? (cfg.GIT_SHA ? cfg.GIT_SHA.slice(0, 7) : undefined);
@@ -159,7 +169,7 @@ function normalise(ctx: KvCtx, e: ErrorInput) {
   const code = (browser ? cutUrls(clean(e.code, 400)).slice(0, 120) : clean(e.code, 120)) || 'unknown';
   const sample = e.sample ? (browser ? cutUrls(clean(e.sample, 600)).slice(0, 300) : clean(e.sample, 300)) : undefined;
   const itemId = e.itemId && ITEM_ID.test(e.itemId) ? e.itemId : undefined;
-  const release = e.release ? clean(e.release, 40) : releaseOf(ctx.cfg);
+  const release = e.release ? cleanRelease(e.release) : releaseOf(ctx.cfg);
   return { code, sample, itemId, release };
 }
 
