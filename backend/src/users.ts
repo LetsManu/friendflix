@@ -115,6 +115,25 @@ export class HttpError extends Error {
 
 export type LockReason = 'manual' | 'expired' | 'deletion';
 
+/** Runs `fn` after every earlier call has settled (a promise queue). */
+function serialized() {
+  let tail: Promise<unknown> = Promise.resolve();
+  return <T>(fn: () => Promise<T>): Promise<T> => {
+    const run = tail.then(fn, fn);
+    tail = run.catch(() => undefined);
+    return run;
+  };
+}
+
+/**
+ * Account changes run one at a time (admin mutations and the expiry tick's lock), so the last-admin guard and the change
+ * it guards cannot interleave with another change, and a lock cannot act on a date read before an extension.
+ */
+export const accountSerial = serialized();
+
+/** True when the account's access has ended (`access_until` set and not in the future). */
+export const accessEnded = (until: Date | null, now = Date.now()) => until !== null && until.getTime() <= now;
+
 /** Locks the account: its media server identities (owner + profiles) are disabled and every session (and offline license) is revoked. */
 export async function lockUser(ctx: Ctx, actor: string | null, userId: string, reason: LockReason): Promise<void> {
   for (const jid of await accountJellyfinIds(ctx, userId)) await ctx.jf.admin.setDisabled(jid, true);

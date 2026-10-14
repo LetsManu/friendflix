@@ -17,7 +17,7 @@ import { INVITABLE_ROLES, effectiveRole } from '../roles.js';
 import { ensureSeerrUser } from '../seerr/service.js';
 import { requireAdmin, type Session } from '../session.js';
 import type { ProfileRow, UserRow } from '../types.js';
-import { HttpError, applyRole, assertNotLastAdmin, getUserById, getUserBySub, lockUser, provisionUser, setAccessUntil, setRole, unlockUser } from '../users.js';
+import { HttpError, accessEnded, accountSerial, applyRole, assertNotLastAdmin, getUserById, getUserBySub, lockUser, provisionUser, setAccessUntil, setRole, unlockUser, type LockReason } from '../users.js';
 import { pendingNoticeKey } from './auth.js';
 
 const uuid = z.guid();
@@ -31,11 +31,12 @@ interface ApprovalRow { id: string; authentik_sub: string; email: string | null;
 
 /**
  * Turns an approval request into an account: provisions it like an invite would (role, optional access-until), removes
- * the request and remembers it for the person's /pending page. Errors: 404 `not_found`, 409 `user_exists`.
+ * the request and remembers it for the person's /pending page. Errors: 404 `not_found`, 409 `user_exists`, 409 `rejected` (a rejected request returns to the queue only when the person signs in again).
  */
 export async function approveRequest(ctx: Ctx, actor: string, id: string, role: string, until: Date | null): Promise<string> {
-  const req = (await ctx.db.query<ApprovalRow>('select id, authentik_sub, email, name from approval_requests where id=$1', [id])).rows[0];
+  const req = (await ctx.db.query<ApprovalRow & { rejected: boolean }>('select id, authentik_sub, email, name, rejected_at is not null rejected from approval_requests where id=$1', [id])).rows[0];
   if (!req) throw new HttpError(404, 'not_found');
+  if (req.rejected) throw new HttpError(409, 'rejected');
   if (await getUserBySub(ctx, req.authentik_sub)) {
     await ctx.db.query('delete from approval_requests where id=$1', [id]);
     throw new HttpError(409, 'user_exists');
@@ -58,12 +59,14 @@ export type BulkBody = z.infer<typeof bulkBody>;
 
 /**
  * Applies one action to many accounts. All or nothing on validation and guards (unknown id, unknown role,
- * the actor locking/demoting themselves, last admin); then per user. `done` counts the accounts that changed.
+ * the actor locking/demoting themselves, last admin, unlocking an account whose access has ended); then per user. `done` counts the accounts that changed.
  */
 export async function bulkUsers(ctx: Ctx, actor: string, b: BulkBody): Promise<{ done: number }> {
   const ids = [...new Set(b.ids)];
-  const rows = (await ctx.db.query<{ id: string; role: string; disabled: boolean }>('select id, role, disabled from users where id = any($1::uuid[])', [ids])).rows;
+  const rows = (await ctx.db.query<{ id: string; role: string; disabled: boolean; access_until: Date | null }>('select id, role, disabled, access_until from users where id = any($1::uuid[])', [ids])).rows;
   if (rows.length !== ids.length) throw new HttpError(404, 'not_found');
+  // the expiry tick would lock such an account again within a minute: extend its access instead
+  if (b.action === 'unlock' && rows.some((u) => u.disabled && accessEnded(u.access_until))) throw new HttpError(409, 'access_expired');
   if (b.action === 'role' && !Object.hasOwn(ctx.roles, b.role!)) throw new HttpError(400, 'unknown_role');
   const demote = b.action === 'role' && b.role !== 'admin';
   if ((demote || b.action === 'lock') && ids.includes(actor)) throw new HttpError(400, 'cannot_lock_yourself_out');
@@ -144,19 +147,9 @@ async function reapplyAccount(ctx: Ctx, user: UserRow): Promise<{ identities: nu
   return { identities: ids.length, failed };
 }
 
-/** Runs account changes one at a time, so the last-admin guard and the change it guards cannot interleave with another request. */
-function serialized() {
-  let tail: Promise<unknown> = Promise.resolve();
-  return <T>(fn: () => Promise<T>): Promise<T> => {
-    const run = tail.then(fn, fn);
-    tail = run.catch(() => undefined);
-    return run;
-  };
-}
-
 export function adminUserRoutes(app: FastifyInstance, ctx: Ctx) {
   const admin = { preHandler: requireAdmin(ctx) };
-  const serial = serialized();
+  const serial = accountSerial;
 
   // ?q= (name/email/login) &role= &status=active|locked|pending|expiring|deleting &lastActive=7|30|90 (seen within) | 90+ (not seen for 90 days or never)
   // &sort=name|email|role|status|lastSeen|createdAt|accessUntil|profiles|devices &dir= &limit= &offset=; without params: everyone (max 1000)
@@ -203,8 +196,14 @@ export function adminUserRoutes(app: FastifyInstance, ctx: Ctx) {
       if (b.role !== undefined && !Object.hasOwn(ctx.roles, b.role)) return reply.code(400).send({ error: 'unknown_role' });
       if (demote) await assertNotLastAdmin(ctx, [id], 'demote');
       if (b.disabled) await assertNotLastAdmin(ctx, [id], 'lock');
+      const cur = (await ctx.db.query<{ access_until: Date | null; locked_reason: LockReason | null }>('select access_until, locked_reason from users where id=$1', [id])).rows[0]!;
+      const until = b.accessUntil !== undefined ? toDate(b.accessUntil) : cur.access_until;
+      // the expiry tick would lock it again within a minute: extend its access instead (409 access_expired)
+      if (b.disabled === false && user.disabled && accessEnded(until)) return reply.code(409).send({ error: 'access_expired' });
       if (b.role !== undefined) await setRole(ctx, actor, id, b.role);
-      if (b.disabled !== undefined && b.disabled !== user.disabled) await (b.disabled ? lockUser(ctx, actor, id, 'manual') : unlockUser(ctx, actor, id));
+      // an explicit lock of an expired account becomes manual, so a new date below does not unlock it
+      if (b.disabled && (!user.disabled || cur.locked_reason === 'expired')) await lockUser(ctx, actor, id, 'manual');
+      if (b.disabled === false && user.disabled) await unlockUser(ctx, actor, id);
       if (b.accessUntil !== undefined) await setAccessUntil(ctx, actor, id, toDate(b.accessUntil));
       return { ok: true };
     });
@@ -380,6 +379,7 @@ export function adminUserRoutes(app: FastifyInstance, ctx: Ctx) {
   // sign out the sessions of one device (its offline licences, push subscriptions and cast tokens go too)
   app.post('/api/admin/users/:id/sessions/:deviceId/revoke', admin, async (req) => {
     const { id, deviceId } = z.object({ id: uuid, deviceId: z.string().min(1).max(100) }).parse(req.params);
+    await userOr404(id);
     const n = await revokeSessions(ctx, id, deviceId);
     await audit(ctx, req.user!.id, 'user.revoke_device', id, { deviceId, sessions: n });
     return { revoked: n };

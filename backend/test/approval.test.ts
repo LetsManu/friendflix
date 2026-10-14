@@ -96,6 +96,11 @@ describe('approval queue', () => {
     expect(await pendingState(c)).toEqual({ state: 'rejected', message: 'Sorry, only family.' });
     expect((await env.pool.query("select 1 from audit_log where action='user.rejected' and target=$1", [id])).rowCount).toBe(1);
     expect((await adm('POST', `/api/admin/approvals/${id}/reject`, {})).statusCode).toBe(404); // already rejected
+    // a rejected request cannot be approved (only a new sign-in puts it back in the queue)
+    const ap = await adm('POST', `/api/admin/approvals/${id}/approve`, { role: 'friend' });
+    expect(ap.statusCode).toBe(409);
+    expect(ap.json().error).toBe('rejected');
+    expect((await env.pool.query("select 1 from users where authentik_sub='pend3'")).rowCount).toBe(0);
   });
 
   it('asking again after a rejection notifies the admins only when the rejection is older than 24 h', async () => {
