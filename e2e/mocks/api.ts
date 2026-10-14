@@ -38,7 +38,8 @@ export interface MockState {
   /** answer of POST /api/sessions/revoke-others */
   revokedOthers: number;
   /** POST /api/account/delete answers 401 reauth_required even inside the reauth window (it ran out meanwhile) */
-  reauthLapsed?: boolean;  /** /api/me `features` (optional services); absent = the field is left out, like an older backend (everything on) */
+  reauthLapsed?: boolean;
+  /** /api/me `features` (optional services); absent = the field is left out, like an older backend (everything on) */
   features?: { requests: boolean };
 }
 export interface MockAccount {

@@ -52,7 +52,7 @@ export const segmentShown = (c: ServerCaps, type: string) => c.segments.includes
  * for older backends that send nothing - everything counts as on.
  */
 export interface Features {
-  /** a request service is set up: wishes, the requests page, upcoming titles */
+  /** a request service is set up: wishes, upcoming titles (the /requests page keeps its reminders without it) */
   requests: boolean;
 }
 export const ALL_FEATURES: Features = { requests: true };
@@ -65,7 +65,7 @@ export const features = writable<Features>(featuresFrom(undefined));
 
 /** pages that only make sense with a capability or a feature (menus, footer, admin nav): href -> required flag */
 const NEEDS: Record<string, Exclude<keyof ServerCaps, 'segments'>> = { '/calendar': 'upcoming' };
-const FEATURE_NEEDS: Record<string, keyof Features> = { '/requests': 'requests', '/upcoming': 'requests', '/admin/requests': 'requests' };
+const FEATURE_NEEDS: Record<string, keyof Features> = { '/upcoming': 'requests', '/admin/requests': 'requests' };
 export const linkShown = (c: ServerCaps, href: string, f: Features = ALL_FEATURES) => {
   const k = NEEDS[href], fk = FEATURE_NEEDS[href];
   return (!k || c[k]) && (!fk || f[fk]);

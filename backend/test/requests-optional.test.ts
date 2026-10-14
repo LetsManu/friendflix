@@ -73,7 +73,12 @@ describe('request service optional', () => {
       expect(s.json()).toMatchObject({ pending: { requests: null }, requests: null });
       await env.pool.query('update users set seerr_user_id=7 where id=$1', [adminId]);
       const before = env.seerrCalls.length;
-      expect((await call('GET', `/api/admin/users/${adminId}`)).statusCode).toBe(200);
+      const d = await call('GET', `/api/admin/users/${adminId}`);
+      expect(d.statusCode).toBe(200);
+      expect(d.json().linked.requests).toEqual({ ok: null, id: 7 }); // unknown, nothing to repair
+      const r = await call('POST', `/api/admin/users/${adminId}/repair`);
+      expect(r.statusCode).toBe(200);
+      expect(r.json()).toMatchObject({ ok: true, requests: { ok: null } }); // no partial failure because of the missing service
       expect(env.seerrCalls.length).toBe(before);
     } finally {
       await env.pool.query('update users set seerr_user_id=null where id=$1', [adminId]);

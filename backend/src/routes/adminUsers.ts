@@ -15,6 +15,7 @@ import { getUserLimits, invalidateLimits, setUserLimits } from '../limits.js';
 import { accountJellyfinIds, getProfile, jfUserFor, listProfiles, publicProfile } from '../profiles.js';
 import { roleLimitFor } from '../requestlimit.js';
 import { INVITABLE_ROLES, effectiveRole } from '../roles.js';
+import { requestsEnabled } from '../seerr/client.js';
 import { ensureSeerrUser } from '../seerr/service.js';
 import { requireAdmin, type Session } from '../session.js';
 import type { ProfileRow, UserRow } from '../types.js';
@@ -308,7 +309,8 @@ export function adminUserRoutes(app: FastifyInstance, ctx: Ctx) {
         downloads: Number(c.downloads),
         requests: Number(c.requests),
       },
-      linked: { jellyfin: { ok: jellyfinOk, username: user.jellyfin_username }, requests: { ok: requestsOk, id: user.seerr_user_id } },
+      // no request service: the link is unknown (null), nothing to repair
+      linked: { jellyfin: { ok: jellyfinOk, username: user.jellyfin_username }, requests: { ok: requestsEnabled(ctx) ? requestsOk : null, id: user.seerr_user_id } },
       profiles: profiles.map((p) => ({
         id: p.id, name: p.name, kids: Boolean(p.kids), maxRating: p.kids ? p.kids_max_rating : null, avatar: p.avatar,
         lastUsed: seen(live.profileSeen.get(p.id)), isOwner: p.is_owner, hasPin: Boolean(p.pin_hash),
@@ -413,9 +415,10 @@ export function adminUserRoutes(app: FastifyInstance, ctx: Ctx) {
       if (await claimed(id)) return reply.code(409).send({ error: 'deletion_in_progress' });
       const jellyfin = await reapplyAccount(ctx, user);
       const before = user.seerr_user_id;
-      const requestsOk = await ensureSeerrUser(ctx, user).then(() => true, () => false);
+      // no request service: nothing to map (null), and the repair is not a partial failure because of it
+      const requestsOk = requestsEnabled(ctx) ? await ensureSeerrUser(ctx, user).then(() => true, () => false) : null;
       await audit(ctx, req.user!.id, 'user.repair', id, { jellyfin, requests: { ok: requestsOk, from: before, to: user.seerr_user_id } });
-      return { ok: !jellyfin.failed && requestsOk, jellyfin, requests: { ok: requestsOk, id: user.seerr_user_id } };
+      return { ok: !jellyfin.failed && requestsOk !== false, jellyfin, requests: { ok: requestsOk, id: user.seerr_user_id } };
     });
   });
 

@@ -8,6 +8,8 @@
   import { api, ApiError } from '#lib/api';
   import TrailerButton from '#lib/TrailerButton.svelte';
   import { episodeKey, loadReminders, movieKey, removeReminder } from '#lib/reminders';
+  import { features } from '#lib/capabilities';
+  import { get } from 'svelte/store';
 
   let q = $page.url.searchParams.get('q') ?? '', results: any[] = [], mine: any[] = [], msg = '', busy = false, mineErr = '', requesting = new Set<string>();
   let quota: { limit: number | null; used: number; remaining: number | null; resetsAt: string } | null = null;
@@ -49,11 +51,17 @@
     }
     requesting.delete(k); requesting = requesting;
   }
-  onMount(() => { void loadReminders(); loadRem(); loadMine(); loadQuota(); if (q) search(); });
+  // without a request service the page holds only the reminders (no quota, search or wishes; nothing that would answer 404)
+  onMount(() => {
+    void loadReminders(); loadRem();
+    if (!get(features).requests) return;
+    loadMine(); loadQuota(); if (q) search();
+  });
 </script>
 
 <svelte:head><title>{$t('common.pageTitle', { page: $t('social.requests.title') })}</title></svelte:head>
 <h1>{$t('social.requests.title')}</h1>
+{#if $features.requests}
 <form class="flex" on:submit|preventDefault={search}>
   <input placeholder={$t('social.requests.searchPlaceholder')} bind:value={q} style="width:100%;max-width:480px" />
   <button disabled={busy}>{$t('social.search')}</button>
@@ -75,6 +83,7 @@
 <h2 style="margin-top:2rem">{$t('social.requests.mine')}</h2>
 {#if mineErr}<p class="err" role="alert">{mineErr} <button type="button" class="sec" on:click={loadMine}>{$t('social.tryAgain')}</button></p>{:else if !mine.length}<p class="muted">{$t('social.requests.nothingYet')}</p>{/if}
 <table><tbody>{#each mine as m}<tr><td>{m.title}</td><td>{kindLabel(m.mediaType)}</td><td class={cls[m.status]}>{label(m.status)}</td><td class="muted">{day(m.createdAt)}</td></tr>{/each}</tbody></table>
+{:else}<div role="status">{#if msg}<p class="warn">{msg}</p>{/if}</div>{/if}
 <h2 style="margin-top:2rem">{$t('social.requests.reminders')}</h2>
 {#if !reminders.length}<p class="muted">{$t('social.requests.noReminders')}</p>{/if}
 <table><tbody>{#each reminders as r (r.id)}<tr><td>{r.title}</td><td>{r.kind === 'episode' ? $t('social.kind.episode') : kindLabel(r.mediaType)}</td><td class="muted">{r.releaseDate ? day(r.releaseDate) : $t('social.requests.dateOpen')}</td><td><button class="sec" aria-label={$t('social.requests.removeReminder', { title: r.title })} on:click={() => unremind(r)}>{$t('social.remove')}</button></td></tr>{/each}</tbody></table>

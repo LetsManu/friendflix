@@ -41,9 +41,10 @@ describe('instance features', () => {
     for (const raw of [undefined, null, 'x', {}, { requests: 'no' }, { requests: true }]) expect(featuresFrom(raw)).toEqual({ requests: true });
     expect(featuresFrom({ requests: false })).toEqual({ requests: false });
   });
-  it('without a request service the requests, upcoming and admin requests links are hidden', () => {
+  it('without a request service the upcoming and admin requests links are hidden; /requests stays (reminders)', () => {
     const off = featuresFrom({ requests: false });
-    for (const href of ['/requests', '/upcoming', '/admin/requests']) {
+    expect(linkShown(ALL_CAPS, '/requests', off)).toBe(true);
+    for (const href of ['/upcoming', '/admin/requests']) {
       expect(linkShown(ALL_CAPS, href)).toBe(true);
       expect(linkShown(ALL_CAPS, href, off)).toBe(false);
     }

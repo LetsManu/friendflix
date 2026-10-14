@@ -47,6 +47,14 @@ describe('kids profiles', () => {
     expect(canRenderEarly(h, true, '/kids')).toBe(true);
     expect(parseHint(JSON.stringify({ ...h, kids: 'yes' }))?.kids).toBeUndefined();
   });
+  it('the hint remembers a missing request service (only an explicit false)', () => {
+    const h = hintOf({ deviceApproved: true, profileCount: 1, features: { requests: false } });
+    expect(h.noRequests).toBe(true);
+    expect(parseHint(JSON.stringify(h))).toEqual(h);
+    expect(hintOf({ deviceApproved: true, profileCount: 1, features: { requests: true } }).noRequests).toBeUndefined();
+    expect(hintOf({ deviceApproved: true, profileCount: 1 }).noRequests).toBeUndefined();
+    expect(parseHint(JSON.stringify({ ...h, noRequests: 'yes' }))?.noRequests).toBeUndefined();
+  });
 });
 
 describe('onboarding (/welcome)', () => {

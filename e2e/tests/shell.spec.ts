@@ -30,19 +30,23 @@ test.describe('app shell (desktop)', () => {
     await expect(cats.getByRole('link', { name: 'Englisch' })).toHaveAttribute('href', '/browse/movies?audio=eng');
   });
 
-  test('requests nav entry hidden when features.requests is false', async ({ page, api }) => {
+  test('without a request service: requests stays in the nav for its reminders, upcoming is hidden', async ({ page, api }) => {
     api.features = { requests: false };
     const asked: string[] = [];
-    page.on('request', (r) => { if (r.url().includes('/api/seerr/')) asked.push(r.url()); });
+    page.on('request', (r) => { if (/\/api\/(seerr|requests)\//.test(r.url())) asked.push(r.url()); });
     await page.goto('/');
     const footer = page.getByRole('contentinfo');
     await expect(footer.getByRole('link', { name: 'Kalender' })).toBeAttached();
-    await expect(footer.getByRole('link', { name: 'Wünsche' })).toHaveCount(0);
+    await expect(footer.getByRole('link', { name: 'Wünsche' })).toBeAttached();
     await expect(footer.getByRole('link', { name: 'Demnächst' })).toHaveCount(0);
-    expect(asked).toEqual([]); // the home page's upcoming row does not ask the request service
     await page.goto('/me');
-    await expect(page.getByRole('link', { name: 'Favoriten' })).toBeVisible();
-    await expect(page.getByRole('link', { name: 'Wünsche' })).toHaveCount(0);
+    await expect(page.locator('main').getByRole('link', { name: 'Wünsche' })).toBeVisible();
+    await page.goto('/requests?q=dune');
+    await expect(page.getByRole('heading', { level: 2, name: 'Erinnerungen' })).toBeVisible();
+    await expect(page.getByRole('heading', { level: 2, name: 'Meine Wünsche' })).toHaveCount(0);
+    await expect(page.locator('main').getByRole('textbox')).toHaveCount(0);
+    await expect(page.getByRole('alert')).toHaveCount(0);
+    expect(asked).toEqual([]); // neither the upcoming row nor the page asks the request service
   });
 
   test('requests nav entry shown when features.requests is true', async ({ page, api }) => {
