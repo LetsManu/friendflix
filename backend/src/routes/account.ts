@@ -1,7 +1,8 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
 /**
- * Self-service account page (/me/account): the person's own name, avatar, 2FA state, and "Download my data". Owner profile only.
+ * Self-service account page (/me/account): the person's own name, avatar, 2FA state, "Download my data" and deleting the account
+ * (after a recent re-authentication). Owner profile only.
  * The e-mail is shown read-only (its change needs Authentik's verification flow, a later phase).
  */
 import { Readable } from 'node:stream';
@@ -11,10 +12,12 @@ import { z } from 'zod';
 import { audit } from '../audit.js';
 import { akMfaState, akUpdateUser, akUserSettingsUrl } from '../authentik.js';
 import type { Ctx } from '../ctx.js';
+import { scheduleDeletion } from '../deletion.js';
 import { recordError } from '../errorlog.js';
 import { exportUserData } from '../export.js';
-import { recentlyAuthenticated, REAUTH_WINDOW_S } from '../reauth.js';
-import { requireOwner } from '../session.js';
+import { recentlyAuthenticated, REAUTH_WINDOW_S, requireRecentAuth } from '../reauth.js';
+import { COOKIE, requireOwner } from '../session.js';
+import { accountSerial } from '../users.js';
 
 /** a FriendFlix avatar key (the preset swatches), validated like the profile avatar */
 const avatarKey = z.string().regex(/^[a-z0-9-]{1,20}$/);
@@ -108,5 +111,17 @@ export function accountRoutes(app: FastifyInstance, ctx: Ctx) {
       .header('content-disposition', `attachment; filename="friendflix-data-${new Date().toISOString().slice(0, 10)}.json"`)
       .header('cache-control', 'no-store')
       .send(Readable.from(logged()));
+  });
+
+  /**
+   * Deletes the account after the grace period: locked at once (every session and offline license revoked, this one too), the
+   * admins are told. 400 last_admin for the last active admin. Restoring is possible by signing in again within the grace period.
+   */
+  app.post('/api/account/delete', { preHandler: requireRecentAuth(ctx) }, async (req, reply) => {
+    z.object({ confirm: z.literal(true) }).parse(req.body);
+    const me = req.user!.id;
+    const deletionAt = await accountSerial(() => scheduleDeletion(ctx, me, me));
+    reply.clearCookie(COOKIE, { path: '/' });
+    return { deletionAt };
   });
 }

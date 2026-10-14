@@ -7,6 +7,7 @@ import { audit } from '../audit.js';
 import { Where, likePattern, orderBy, pageQuery } from '../adminlist.js';
 import { akActions, akMfaState, akSendMfaSetup, akSendRecovery } from '../authentik.js';
 import type { Ctx } from '../ctx.js';
+import { restoreDeletion } from '../deletion.js';
 import { forgetUserAuth, revokeSessions } from '../devices.js';
 import { userLicenses } from '../downloads.js';
 import { createInvite, deleteAuthentikInvitation } from '../invites.js';
@@ -59,7 +60,7 @@ export type BulkBody = z.infer<typeof bulkBody>;
 
 /**
  * Applies one action to many accounts. All or nothing on validation and guards (unknown id, unknown role,
- * the actor locking/demoting themselves, last admin, unlocking an account whose access has ended); then per user. `done` counts the accounts that changed.
+ * the actor locking/demoting themselves, last admin, unlocking an account whose access has ended or whose deletion is under way); then per user. `done` counts the accounts that changed.
  */
 export async function bulkUsers(ctx: Ctx, actor: string, b: BulkBody): Promise<{ done: number }> {
   const ids = [...new Set(b.ids)];
@@ -67,6 +68,10 @@ export async function bulkUsers(ctx: Ctx, actor: string, b: BulkBody): Promise<{
   if (rows.length !== ids.length) throw new HttpError(404, 'not_found');
   // the expiry tick would lock such an account again within a minute: extend its access instead
   if (b.action === 'unlock' && rows.some((u) => u.disabled && accessEnded(u.access_until))) throw new HttpError(409, 'access_expired');
+  // unlockUser would refuse a claimed deletion mid-loop: refuse the whole call first
+  if (b.action === 'unlock' && (await ctx.db.query('select 1 from account_deletions where user_id = any($1::uuid[]) limit 1', [ids])).rowCount) {
+    throw new HttpError(409, 'deletion_in_progress');
+  }
   if (b.action === 'role' && !Object.hasOwn(ctx.roles, b.role!)) throw new HttpError(400, 'unknown_role');
   const demote = b.action === 'role' && b.role !== 'admin';
   if ((demote || b.action === 'lock') && ids.includes(actor)) throw new HttpError(400, 'cannot_lock_yourself_out');
@@ -257,8 +262,8 @@ export function adminUserRoutes(app: FastifyInstance, ctx: Ctx) {
   app.get('/api/admin/users/:id', admin, async (req) => {
     const id = idParam(req);
     const user = await userOr404(id);
-    const extra = (await ctx.db.query<{ locked_reason: string | null; access_until: Date | null; avatar: string | null; last_active: Date | null }>(
-      'select locked_reason, access_until, avatar, (select max(last_seen) from devices d where d.user_id = u.id) last_active from users u where id=$1', [id])).rows[0]!;
+    const extra = (await ctx.db.query<{ locked_reason: string | null; access_until: Date | null; deletion_at: Date | null; avatar: string | null; last_active: Date | null }>(
+      'select locked_reason, access_until, deletion_at, avatar, (select max(last_seen) from devices d where d.user_id = u.id) last_active from users u where id=$1', [id])).rows[0]!;
     const [watch, streams, counts, profiles, devices, licenses, live, mfa, jellyfinOk, requestsOk] = await Promise.all([
       ctx.db.query<{ d7: string; d30: string; total: string }>(
         `select coalesce(sum(seconds) filter (where day > current_date - 7), 0) d7, coalesce(sum(seconds) filter (where day > current_date - 30), 0) d30,
@@ -281,7 +286,7 @@ export function adminUserRoutes(app: FastifyInstance, ctx: Ctx) {
     return {
       user: {
         id: user.id, name: user.name, email: user.email, role: user.role, disabled: user.disabled, lockedReason: extra.locked_reason,
-        accessUntil: extra.access_until, createdAt: user.created_at, lastActive: extra.last_active, avatar: extra.avatar,
+        accessUntil: extra.access_until, deletionAt: extra.deletion_at, createdAt: user.created_at, lastActive: extra.last_active, avatar: extra.avatar,
       },
       mfa,
       /** which Authentik actions the page may offer */
@@ -330,6 +335,29 @@ export function adminUserRoutes(app: FastifyInstance, ctx: Ctx) {
          from audit_log a left join users u on u.id = a.actor left join users tu on tu.id::text = a.target left join lists tl on tl.id::text = a.target
         ${where} order by a.id desc limit $2 offset $3`, [id, p.limit, p.offset]);
     return { entries: r.rows, total };
+  });
+
+  // cancels a scheduled deletion (409 not_scheduled, 409 deletion_in_progress once the tick claimed it); an account whose access
+  // has ended stays locked as expired
+  app.post('/api/admin/users/:id/deletion/restore', admin, async (req) => {
+    const id = idParam(req);
+    await serial(() => restoreDeletion(ctx, req.user!.id, id));
+    return { ok: true };
+  });
+
+  // "delete now": only for an account already scheduled; the next deletion tick claims it
+  app.post('/api/admin/users/:id/deletion/now', admin, async (req, reply) => {
+    const id = idParam(req);
+    const actor = req.user!.id;
+    if (id === actor) return reply.code(400).send({ error: 'cannot_lock_yourself_out' });
+    return serial(async () => {
+      const cur = (await ctx.db.query<{ deletion_at: Date | null; locked_reason: LockReason | null }>('select deletion_at, locked_reason from users where id=$1', [id])).rows[0];
+      if (!cur) return reply.code(404).send({ error: 'not_found' });
+      if (!cur.deletion_at || cur.locked_reason !== 'deletion') return reply.code(409).send({ error: 'not_scheduled' });
+      const to = (await ctx.db.query<{ deletion_at: Date }>('update users set deletion_at=now() where id=$1 returning deletion_at', [id])).rows[0]!.deletion_at;
+      await audit(ctx, actor, 'user.deletion_now', id, { from: cur.deletion_at.toISOString(), to: to.toISOString() });
+      return { ok: true };
+    });
   });
 
   // the overrides (null = as role) and the role values they replace (the page shows them as placeholders)
