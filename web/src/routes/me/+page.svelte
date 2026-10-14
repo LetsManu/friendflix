@@ -35,6 +35,7 @@
   $: canDownload = Boolean(me?.downloads?.allowed);
   $: groups = groupLinks(linksFor(canDownload).filter(([href]) => linkShown($serverCaps, href)));
   $: admin = Boolean(me?.isAdmin && me?.profile?.isOwner);
+  $: owner = Boolean(me?.profile?.isOwner && !me.kids); // the account page is the owner profile's
   $: shown = notes ? (allNotes ? notes : notes.slice(0, 5)) : [];
   $: tiles = [['/watchlist', 'shell.menu.myList', 'plus'], ...(canDownload ? [['/downloads', 'shell.menu.downloads', 'download']] : []), ['/lists', 'shell.menu.lists', 'list'], ['/history', 'shell.menu.history', 'calendar']] as Array<[string, TKey, string]>;
 </script>
@@ -80,6 +81,7 @@
           <ul class="lst">
             {#if g.title === 'shell.menu.groups.discover'}<li><button type="button" class="rowbtn" on:click={surprise}><Icon name="shuffle" size={20} />{$t('shell.menu.surprise')}<Icon name="chevron-right" size={18} /></button></li>{/if}
             {#each g.items as [href, label, icon] (href)}<li><a {href}><Icon name={icon} size={20} />{$t(label)}<Icon name="chevron-right" size={18} /></a></li>{/each}
+            {#if isAcc && owner}<li><a href="/me/account"><Icon name="user" size={20} />{$t('account.account.title')}<Icon name="chevron-right" size={18} /></a></li>{/if}
             {#if isAcc}<li><a href="/settings#language"><Icon name="globe" size={20} />{$t('account.me.language', { name: localeName($locale) })}<Icon name="chevron-right" size={18} /></a></li>{/if}
             {#if isAcc}<li><button type="button" class="rowbtn" on:click={() => window.dispatchEvent(new Event('ff-help'))}><Icon name="info" size={20} />{$t('shell.menu.help')}<Icon name="chevron-right" size={18} /></button></li>{/if}
             {#if isAcc && admin}<li><a href="/admin"><Icon name="shield" size={20} />{$t('shell.menu.admin')}<Icon name="chevron-right" size={18} /></a></li>{/if}

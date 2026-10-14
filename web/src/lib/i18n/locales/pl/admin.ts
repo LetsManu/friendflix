@@ -411,6 +411,11 @@ const pl: Translation<typeof de> = {
     },
     session: {
       revoke_others: '{actor} wylogował(a) się na innych urządzeniach',
+      reauth: '{actor} zalogował(a) się ponownie (dla operacji na koncie)',
+      reauth_mismatch: '{actor}: odrzucono ponowne logowanie innym kontem',
+    },
+    account: {
+      profile: '{actor} zmienił(a) nazwę lub kolor swojego konta',
     },
     tv: {
       pair: '{actor} sparował(a) telewizor',

@@ -373,6 +373,11 @@ const tr: Translation<typeof de> = {
     },
     session: {
       revoke_others: '{actor} diğer cihazlardaki oturumlarını kapattı',
+      reauth: '{actor} yeniden giriş yaptı (bir hesap işlemi için)',
+      reauth_mismatch: '{actor}: başka bir hesapla yapılan yeni giriş reddedildi',
+    },
+    account: {
+      profile: '{actor} kendi hesabının adını veya rengini değiştirdi',
     },
     tv: {
       pair: '{actor} bir TV eşleştirdi',

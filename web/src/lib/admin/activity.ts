@@ -18,7 +18,7 @@ export interface AuditEntry {
 const ICONS: Record<string, string> = {
   user: 'user', device: 'monitor', invite: 'mail', request: 'inbox', poll: 'vote', list: 'list', hub: 'star', role: 'key',
   profile: 'users', download: 'download', digest: 'calendar', settings: 'globe', system: 'refresh', session: 'log-out',
-  tv: 'tv', party: 'users', subtitle: 'subtitles', login: 'user', leaving: 'calendar', preview: 'film',
+  tv: 'tv', party: 'users', subtitle: 'subtitles', login: 'user', leaving: 'calendar', preview: 'film', account: 'user',
 };
 
 const roleText = (k: unknown): string => {

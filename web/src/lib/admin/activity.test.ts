@@ -33,6 +33,14 @@ describe('describeActivity', () => {
     expect(describeActivity({ ...base, action: 'user.recovery_email', meta: { ok: false, error: 'authentik_unavailable' } }).text)
       .toBe('Tester tried to send Anna a password link – failed (Authentik unreachable)');
   });
+  it('re-authentication and own profile changes (Block 23 self-service)', async () => {
+    const base = { id: 10, at: '', target: 'uuid', actor: 'Tester', target_name: 'Tester', meta: { ip: '10.0.0.1' } };
+    expect(describeActivity({ ...base, action: 'session.reauth' })).toEqual({ text: 'Tester hat sich erneut angemeldet (für eine Kontoaktion)', icon: 'log-out' });
+    expect(describeActivity({ ...base, action: 'session.reauth_mismatch' }).text).toBe('Tester: erneute Anmeldung mit einem anderen Konto abgelehnt');
+    expect(describeActivity({ ...base, action: 'account.profile', meta: { fields: ['name'] } })).toEqual({ text: 'Tester hat Name oder Farbe des eigenen Kontos geändert', icon: 'user' });
+    await setLocale('en');
+    expect(describeActivity({ ...base, action: 'session.reauth_mismatch' }).text).toBe('Tester: a new sign-in with a different account was refused');
+  });
   it('never shows raw keys or JSON for unknown actions', async () => {
     const d = describeActivity({ id: 5, at: '', action: 'weird.thing', actor: 'Tester', meta: { a: 1 } });
     expect(d.text).not.toContain('weird');
