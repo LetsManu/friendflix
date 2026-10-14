@@ -7,7 +7,7 @@ import { listErrors } from '../src/errorlog.js';
 import { m } from '../src/i18n.js';
 import { notify, notifyAdmins } from '../src/notify.js';
 import type { ItemDto } from '../src/media/types.js';
-import { makeEnv, type TestEnv } from './helpers.js';
+import { cfg, makeEnv, type TestEnv } from './helpers.js';
 
 type Sess = { cookies: Record<string, string>; csrf: string };
 let env: TestEnv;
@@ -363,6 +363,21 @@ describe('GET /api/account/export', () => {
     expect(doc.requests.slice(0, 100).every((r: { status: string }) => r.status === 'available')).toBe(true);
     expect(doc.requests.slice(100).map((r: { status: string; tmdbId: number }) => [r.status, r.tmdbId])).toEqual(
       [100, 101, 102, 103, 104, 105].map((n) => ['unknown', 5000 + n]));
+  });
+
+  it('without a request service the requests are listed with state unknown, nothing is asked', async () => {
+    const { s } = await setup();
+    fakeHistory();
+    await env.ctx.settings.save({ REQUESTS_URL: null }, null);
+    try {
+      env.seerrCalls.length = 0;
+      const doc = (await get(s)).json();
+      expect(doc.requests.length).toBeGreaterThan(0);
+      expect(doc.requests.every((r: { status: string }) => r.status === 'unknown')).toBe(true);
+      expect(env.seerrCalls).toEqual([]);
+    } finally {
+      await env.ctx.settings.save({ REQUESTS_URL: cfg.REQUESTS_URL }, null);
+    }
   });
 
   it('a HEAD request neither runs the export nor audits', async () => {

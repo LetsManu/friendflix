@@ -128,14 +128,17 @@ async function playbackCheckProbe(ctx: Ctx): Promise<ServiceHealth> {
 
 async function services(ctx: Ctx, fetchImpl: typeof fetch, timeoutMs: number): Promise<ServiceHealth[]> {
   const gatewayUrl = `${trimSlash(ctx.cfg.GATEWAY_URL)}/health`;
+  const seerr = ctx.seerr;
   const [media, postgres, redis, gateway, oidc, requests, tmdb, omdb, check] = await Promise.all([
     bounded(() => ctx.jf.admin.ping(), timeoutMs).then((o) => timedService('media', o)),
     bounded(async () => { await ctx.db.query('select 1'); return true; }, timeoutMs).then((o) => timedService('postgres', o)),
     bounded(() => ctx.kv.ping(), timeoutMs).then((o) => timedService('redis', o)),
     bounded(async () => (await fetchImpl(gatewayUrl, { signal: AbortSignal.timeout(timeoutMs) })).status === 200, timeoutMs).then((o) => timedService('gateway', o)),
     oidcProbe(ctx, fetchImpl, timeoutMs),
-    // the request service only affects wishes: down is a warning, never red
-    bounded(() => ctx.seerr.requestCount(), timeoutMs).then((o): ServiceHealth => (o.ok ? { id: 'requests', level: 'ok', ms: o.ms } : { id: 'requests', level: 'warn', reason: 'down', ms: o.ms })),
+    // the request service only affects wishes: down is a warning, never red; not set up (it is optional) is off
+    seerr
+      ? bounded(() => seerr.requestCount(), timeoutMs).then((o): ServiceHealth => (o.ok ? { id: 'requests', level: 'ok', ms: o.ms } : { id: 'requests', level: 'warn', reason: 'down', ms: o.ms }))
+      : Promise.resolve<ServiceHealth>({ id: 'requests', level: 'off', reason: 'not_set' }),
     bounded(() => sourceProbe(ctx, SOURCES[0]!), timeoutMs).then((o): ServiceHealth => (o.ok ? o.v : { id: 'tmdb', level: 'off', reason: 'unavailable' })),
     bounded(() => sourceProbe(ctx, SOURCES[1]!), timeoutMs).then((o): ServiceHealth => (o.ok ? o.v : { id: 'omdb', level: 'off', reason: 'unavailable' })),
     bounded(() => playbackCheckProbe(ctx), timeoutMs).then((o): ServiceHealth => (o.ok ? o.v : { id: 'playbackCheck', level: 'off', reason: 'unavailable' })),

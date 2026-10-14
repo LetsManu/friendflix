@@ -20,8 +20,8 @@ export interface Ctx {
   oidc: OidcProvider;
   /** the media server (name kept from the Jellyfin-only days): see media/types.ts; rebuilt when its settings change */
   readonly jf: MediaServer;
-  /** rebuilt when REQUESTS_URL / REQUESTS_API_KEY change */
-  readonly seerr: SeerrClient;
+  /** rebuilt when REQUESTS_URL / REQUESTS_API_KEY change; null while either is empty (the request service is optional, see requestsEnabled) */
+  readonly seerr: SeerrClient | null;
   roles: Record<string, RoleTemplate>;
   encKey: Buffer;
   fetchImpl: typeof fetch;
@@ -70,7 +70,9 @@ export function createLiveCtx(d: LiveCtxDeps): LiveCtx {
   };
 
   let media = { inst: d.media(settings.current()), sig: sig(mediaKeys) };
-  let requests = { inst: d.requests(settings.current()), sig: sig(REQUEST_KEYS) };
+  // no client without both keys: every caller checks for null (requestsEnabled / requestsClient)
+  const buildRequests = (c: Config) => (c.REQUESTS_URL && c.REQUESTS_API_KEY ? d.requests(c) : null);
+  let requests = { inst: buildRequests(settings.current()), sig: sig(REQUEST_KEYS) };
   let runtime: MediaRuntime | undefined;
   let chain: Promise<void> = Promise.resolve();
   const serial = (fn: () => Promise<void>): Promise<void> => {
@@ -98,7 +100,7 @@ export function createLiveCtx(d: LiveCtxDeps): LiveCtx {
 
   const swapRequests = () => {
     const s = sig(REQUEST_KEYS);
-    if (s !== requests.sig) requests = { inst: d.requests(settings.current()), sig: s };
+    if (s !== requests.sig) requests = { inst: buildRequests(settings.current()), sig: s };
   };
 
   const ctx: Ctx = {

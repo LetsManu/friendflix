@@ -20,7 +20,7 @@
   import { loadModal, prefetchModal } from '#lib/lazy';
   import { startTvLink, type ToTv } from '#lib/remote';
   import { logout as doLogout } from '#lib/session';
-  import { capsFrom, serverCaps } from '#lib/capabilities';
+  import { capsFrom, features, featuresFrom, serverCaps } from '#lib/capabilities';
   import { setMeta } from '#lib/offline/db';
   import { focusEl, focusFirst, isBackKey, isEditable, startSpatial } from '#lib/spatial';
   import Intro from '#lib/Intro.svelte';
@@ -363,6 +363,7 @@
         setCsrf(m.csrfToken);
         setActiveProfile(m.profile?.id);
         serverCaps.set(capsFrom(m.server?.capabilities));
+        features.set(featuresFrom(m.features));
         writeHint(hintOf(m)); writeActive(m.profile?.id); clearReloadFlag(); // the profile-switch reload is done: a later reload may render early again
         if (m.profile?.id) void setMeta('lastProfileId', m.profile.id).catch(() => undefined); // the offline hub shows the last active profile's downloads
         pending = !m.deviceApproved;

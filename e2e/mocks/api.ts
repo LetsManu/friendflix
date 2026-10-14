@@ -38,7 +38,8 @@ export interface MockState {
   /** answer of POST /api/sessions/revoke-others */
   revokedOthers: number;
   /** POST /api/account/delete answers 401 reauth_required even inside the reauth window (it ran out meanwhile) */
-  reauthLapsed?: boolean;
+  reauthLapsed?: boolean;  /** /api/me `features` (optional services); absent = the field is left out, like an older backend (everything on) */
+  features?: { requests: boolean };
 }
 export interface MockAccount {
   name: string; email: string | null; avatar: string;
@@ -124,7 +125,8 @@ export async function installApi(ctx: BrowserContext, st: MockState): Promise<vo
     }
     if (p === '/api/client-errors') { st.clientErrors.push(body()); return route.fulfill({ status: 204 }); }
     if (p === '/api/me') {
-      const me = st.asAdmin ? { ...ME, role: 'admin', roleLabel: 'Admin', isAdmin: true } : ME;
+      const base = st.features ? { ...ME, features: st.features } : ME;
+      const me = st.asAdmin ? { ...base, role: 'admin', roleLabel: 'Admin', isAdmin: true } : base;
       const s = st.accountSaved;
       return J(s ? { ...me, name: s.name, profile: { ...me.profile, name: s.name.slice(0, 20), avatar: s.avatar } } : me);
     }

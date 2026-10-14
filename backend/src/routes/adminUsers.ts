@@ -289,7 +289,7 @@ export function adminUserRoutes(app: FastifyInstance, ctx: Ctx) {
       liveSessions(ctx, id),
       akMfaState(ctx, user.authentik_sub).catch(() => null), // Authentik down: shown like "no Authentik API"
       jellyfinLinkOk(ctx, user),
-      user.seerr_user_id ? ctx.seerr.getUser(user.seerr_user_id).then(() => true, () => false) : Promise.resolve(false),
+      user.seerr_user_id && ctx.seerr ? ctx.seerr.getUser(user.seerr_user_id).then(() => true, () => false) : Promise.resolve(false),
     ]);
     const w = watch.rows[0]!, st = streams.rows[0]!, c = counts.rows[0]!;
     const seen = (ms: number | undefined) => (ms ? new Date(ms).toISOString() : null);

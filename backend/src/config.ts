@@ -134,7 +134,7 @@ export const configSchema = z.object({
   MEDIA_SERVER: z.enum(MEDIA_SERVERS).default('jellyfin'),
   /** the media server kinds' own fields (Jellyfin: JELLYFIN_URL, JELLYFIN_ADMIN_API_KEY), owned by media/index.ts; see mediaSettings() */
   ...MEDIA_FIELDS,
-  /** the request service (old names SEERR_URL / SEERR_API_KEY still work, see RENAMED_ENV) */
+  /** the request service, optional: without URL and key ctx.seerr is null and the request UI is hidden (old names SEERR_URL / SEERR_API_KEY still work, see RENAMED_ENV) */
   REQUESTS_URL: setupRequired(z.string().url()),
   REQUESTS_API_KEY: setupRequired(z.string()),
   NTFY_URL: opt, // e.g. https://ntfy.example.com/friendflix

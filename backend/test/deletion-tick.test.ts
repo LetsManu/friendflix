@@ -5,7 +5,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { deletionTick, pseudonymFor, restoreDeletion, scheduleDeletion } from '../src/deletion.js';
 import type { OidcClaims } from '../src/oidc.js';
 import { provisionUser } from '../src/users.js';
-import { ADMIN, fakeHttp, makeEnv, type Call, type TestEnv } from './helpers.js';
+import { ADMIN, cfg, fakeHttp, makeEnv, type Call, type TestEnv } from './helpers.js';
 
 type Sess = { cookies: Record<string, string>; csrf: string };
 let env: TestEnv;
@@ -350,6 +350,17 @@ describe('deletionTick', () => {
     await env.pool.query('update users set seerr_user_id=null where id=$1', [d.id]);
     expect(await deletionTick(env.ctx)).toEqual({ claimed: 1, finished: 1, failed: 0 });
     expect(seerrDeletes()).toEqual([]);
+  });
+
+  it('without a request service step 2 counts as done (no call)', async () => {
+    await doomed();
+    await env.ctx.settings.save({ REQUESTS_URL: null }, null);
+    try {
+      expect(await deletionTick(env.ctx)).toEqual({ claimed: 1, finished: 1, failed: 0 });
+      expect(seerrDeletes()).toEqual([]);
+    } finally {
+      await env.ctx.settings.save({ REQUESTS_URL: cfg.REQUESTS_URL }, null);
+    }
   });
 
   it('without the Authentik API the deletion finishes with authentik not_configured', async () => {

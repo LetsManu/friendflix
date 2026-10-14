@@ -24,6 +24,7 @@ import { notifyAdmins } from '../notify.js';
 import { pendingNoticeKey } from '../pending.js';
 import { profileOnboarded } from './prefs.js';
 import { publicCapabilities } from '../media/types.js';
+import { requestsEnabled } from '../seerr/client.js';
 import { FALLBACK_LANGUAGE, instanceLanguage, languageFromAcceptLanguage, m, profileLanguage, roleLabel } from '../i18n.js';
 
 const OIDC_COOKIE = 'ff_oidc';
@@ -381,6 +382,8 @@ export function authRoutes(app: FastifyInstance, ctx: Ctx) {
       suggestedLanguage: languageFromAcceptLanguage(req.headers['accept-language']),
       /** media server kind + what it supports: the client hides UI for anything missing (see media/types.ts) */
       server: { kind: ctx.jf.kind, capabilities: publicCapabilities(ctx.jf.capabilities) },
+      /** optional services of this instance: requests = a request service is set up (else the client hides wishes and requests) */
+      features: { requests: requestsEnabled(ctx) },
     };
   });
 

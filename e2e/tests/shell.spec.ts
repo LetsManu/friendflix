@@ -30,6 +30,27 @@ test.describe('app shell (desktop)', () => {
     await expect(cats.getByRole('link', { name: 'Englisch' })).toHaveAttribute('href', '/browse/movies?audio=eng');
   });
 
+  test('requests nav entry hidden when features.requests is false', async ({ page, api }) => {
+    api.features = { requests: false };
+    const asked: string[] = [];
+    page.on('request', (r) => { if (r.url().includes('/api/seerr/')) asked.push(r.url()); });
+    await page.goto('/');
+    const footer = page.getByRole('contentinfo');
+    await expect(footer.getByRole('link', { name: 'Kalender' })).toBeAttached();
+    await expect(footer.getByRole('link', { name: 'Wünsche' })).toHaveCount(0);
+    await expect(footer.getByRole('link', { name: 'Demnächst' })).toHaveCount(0);
+    expect(asked).toEqual([]); // the home page's upcoming row does not ask the request service
+    await page.goto('/me');
+    await expect(page.getByRole('link', { name: 'Favoriten' })).toBeVisible();
+    await expect(page.getByRole('link', { name: 'Wünsche' })).toHaveCount(0);
+  });
+
+  test('requests nav entry shown when features.requests is true', async ({ page, api }) => {
+    api.features = { requests: true };
+    await page.goto('/');
+    await expect(page.getByRole('contentinfo').getByRole('link', { name: 'Wünsche' })).toBeAttached();
+  });
+
   test('header turns solid once the page is scrolled', async ({ page }) => {
     await page.goto('/');
     const header = page.locator('header.nav');
