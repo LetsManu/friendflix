@@ -425,7 +425,7 @@ Jede Person verwaltet ihr Konto selbst unter *Mein Bereich → Konto* (`/me/acco
 1. Warten, bis FriendFlix die Löschung abgeschlossen hat: Die Person ist aus *Admin → Nutzer* verschwunden (auch unter *Löschung ausstehend*), und das Audit-Log hat `user.deleted` mit ihrem Pseudonym.
 2. In Authentik unter *Directory → Users* die Person über Benutzername oder E-Mail suchen (inaktive Nutzer stehen mit in der Liste; FriendFlix zeigt nur das Pseudonym, du musst also wissen, wer es war).
 3. Prüfen, dass es das richtige Konto ist und es inaktiv ist, dann *Delete*. Das entfernt in Authentik auch MFA-Geräte, Tokens und Sitzungen.
-4. Registriert sich dieselbe Person später neu, hat ihr neuer Authentik-Nutzer ein neues `sub`, und FriendFlix behandelt sie als neue Person (Einladung oder Warteschlange).
+4. Registriert sich dieselbe Person später neu, hat ihr neuer Authentik-Nutzer ein neues `sub`, und FriendFlix behandelt sie als neue Person (Einladung oder Warteschlange; ein Mitglied von `ADMIN_GROUP` bekommt sofort ein neues Admin-Konto).
 
 ## 9. Werte für die FriendFlix-`.env`
 

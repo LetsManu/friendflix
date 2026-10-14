@@ -425,7 +425,7 @@ Each person manages their own account under *My space → Account* (`/me/account
 1. Wait until FriendFlix has finished the deletion: the person is gone from *Admin → Users* (also under *Deletion pending*), and the audit log has `user.deleted` with their pseudonym.
 2. In Authentik, *Directory → Users*, find the person by username or e-mail (inactive users are listed too; FriendFlix only shows the pseudonym, so you need to know who it was).
 3. Check that it is the right account and that it is inactive, then *Delete*. This also removes its MFA devices, tokens and sessions in Authentik.
-4. If the same person signs up again later, their new Authentik user has a new `sub`, and FriendFlix treats them as a new person (invite or approval queue).
+4. If the same person signs up again later, their new Authentik user has a new `sub`, and FriendFlix treats them as a new person (invite or approval queue; a member of `ADMIN_GROUP` gets a new admin account straight away).
 
 ## 9. FriendFlix `.env` values
 
