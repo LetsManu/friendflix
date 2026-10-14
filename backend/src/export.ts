@@ -30,16 +30,35 @@ const RESUME_OVERLAP = 40;
 /** the request service is asked for the state of the newest requests only (one call each); older ones read 'unknown' */
 const REQUEST_STATUS_MAX = 100;
 
-/** Up to HISTORY_LIMIT history items of one media server identity, newest first; `truncated` when the cap was reached. */
-async function historyOf(ctx: Ctx, jfUser: JfUser): Promise<{ items: ItemDto[]; truncated: boolean }> {
+/**
+ * Up to HISTORY_LIMIT history items of one media server identity, newest first.
+ * - `truncated`: the server had more than was kept (an item was dropped at the cap), or may have (the cap was reached on a
+ *   full page). Exactly HISTORY_LIMIT items ending on a short page is complete, so not truncated.
+ * - `partial`: a later page failed; the pages fetched before it are kept. A failing first page rejects.
+ * Known gap (seam behaviour): in-progress items are merged into page 0 only, so with more than 200 items an in-progress item
+ * older than page 0's oldest entry is cut off there and never reappears on a later page.
+ */
+async function historyOf(ctx: Ctx, jfUser: JfUser): Promise<{ items: ItemDto[]; truncated: boolean; partial: boolean }> {
   const seen = new Map<string, ItemDto>();
+  let dropped = false;
   for (let start = 0; ; start = start === 0 ? HISTORY_PAGE - RESUME_OVERLAP : start + HISTORY_PAGE) {
-    const page = await ctx.jf.history(jfUser, { start, limit: HISTORY_PAGE });
+    let page: ItemDto[];
+    try {
+      page = await ctx.jf.history(jfUser, { start, limit: HISTORY_PAGE });
+    } catch (e) {
+      if (start === 0) throw e;
+      return { items: [...seen.values()], truncated: dropped, partial: true };
+    }
     const before = seen.size;
-    for (const i of page) if (seen.size < HISTORY_LIMIT && !seen.has(i.id)) seen.set(i.id, i);
+    for (const i of page) {
+      if (seen.has(i.id)) continue;
+      if (seen.size < HISTORY_LIMIT) seen.set(i.id, i);
+      else dropped = true;
+    }
     const full = page.length >= HISTORY_PAGE;
+    const capped = seen.size >= HISTORY_LIMIT;
     // a short page is the last one; a page with nothing new means the server ignores `start` (never loop on it)
-    if (!full || seen.size >= HISTORY_LIMIT || seen.size === before) return { items: [...seen.values()], truncated: full };
+    if (!full || capped || seen.size === before) return { items: [...seen.values()], truncated: dropped || (capped && full), partial: false };
   }
 }
 
@@ -130,16 +149,17 @@ export async function* exportUserData(ctx: Ctx, user: UserRow): AsyncGenerator<s
       .map((r) => ({ day: r.day, streams: Number(r.streams), transcodes: Number(r.transcodes) })),
   };
   // the media server's history as each profile (every non-owner profile has its own media server user, migration 15's check);
-  // a failing profile is marked, all failing → `error`, and the rest of the export goes on
-  const perProfile = await Promise.all(profiles.map((p) => historyOf(ctx, jfUserFor(user, p as ProfileRow)).then(({ items, truncated }) => ({
+  // a failing profile is marked (`error: 'unavailable'`, or `'partial'` next to the pages it got), all failing → `error`; the rest goes on
+  const perProfile = await Promise.all(profiles.map((p) => historyOf(ctx, jfUserFor(user, p as ProfileRow)).then(({ items, truncated, partial }) => ({
     profileId: p.id,
     items: items.map((i) => ({
       itemId: i.id, name: i.name, type: i.type, ...(i.seriesName ? { seriesName: i.seriesName } : {}),
       playedAt: i.lastPlayedDate ?? null, positionSeconds: Math.floor(i.positionTicks / 10_000_000), played: i.played,
     })),
     ...(truncated ? { truncated: true } : {}),
+    ...(partial ? { error: 'partial' } : {}),
   }), () => ({ profileId: p.id, error: 'unavailable' }))));
-  yield field('history', perProfile.length && perProfile.every((h) => 'error' in h)
+  yield field('history', perProfile.length && perProfile.every((h) => !('items' in h))
     ? { error: 'unavailable', totals }
     : { profiles: perProfile, ...(perProfile.some((h) => 'truncated' in h) ? { truncated: true } : {}), totals });
 

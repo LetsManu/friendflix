@@ -252,6 +252,55 @@ describe('GET /api/account/export', () => {
     expect(doc.history.profiles.find((p: { profileId: string }) => p.profileId === aKid)).toEqual({ profileId: aKid, items: [expect.objectContaining({ itemId: 'k1' })] });
   });
 
+  /** the owner identity gets `n` played items by `start` (a page may fail); the kids profile one short page */
+  async function servePlayed(a: string, n: number, failAt?: number) {
+    const jfA = (await env.pool.query('select jellyfin_user_id from users where id=$1', [a])).rows[0].jellyfin_user_id as string;
+    const played = Array.from({ length: n }, (_, k) => item(`p${k}`, `P${k}`));
+    const starts: number[] = [];
+    env.ctx.jf.history = async (u, q) => {
+      if (u.jellyfin_user_id !== jfA) return [item('k1', 'K1')];
+      const start = q?.start ?? 0;
+      starts.push(start);
+      if (start === failAt) throw new Error('timeout');
+      return played.slice(start, start + 200);
+    };
+    return starts;
+  }
+  type HistoryEntry = { profileId: string; items: Array<{ itemId: string }>; truncated?: boolean; error?: string };
+  const ownHistory = (doc: { history: { profiles: HistoryEntry[] } }, a: string) => doc.history.profiles.find((p) => p.profileId === a)!;
+
+  it('history: items dropped at the 1000 cap on a short last page still mark it truncated', async () => {
+    const { s, a } = await setup();
+    await servePlayed(a, 1100); // the page at 960 is short (140) but only 40 of it fit
+    const doc = (await get(s)).json();
+    const own = ownHistory(doc, a);
+    expect(own.items).toHaveLength(1000);
+    expect(own.truncated).toBe(true);
+    expect(doc.history.truncated).toBe(true);
+  });
+
+  it('history: exactly 1000 items ending on a short page are complete, not truncated', async () => {
+    const { s, a } = await setup();
+    const starts = await servePlayed(a, 1000);
+    const doc = (await get(s)).json();
+    const own = ownHistory(doc, a);
+    expect(starts).toEqual([0, 160, 360, 560, 760, 960]); // the last page (960) is short: 40 items, nothing more on the server
+    expect(own.items).toHaveLength(1000);
+    expect(own.truncated).toBeUndefined();
+    expect(doc.history.truncated).toBeUndefined();
+  });
+
+  it('history: a failing later page keeps the pages fetched before it, marked partial', async () => {
+    const { s, a, aKid } = await setup();
+    await servePlayed(a, 1500, 560);
+    const doc = (await get(s)).json();
+    const own = ownHistory(doc, a);
+    expect(own.items).toHaveLength(560); // pages 0, 160 and 360 cover p0..p559
+    expect(own.error).toBe('partial');
+    expect(doc.history.error).toBeUndefined();
+    expect(ownHistory(doc, aKid).items).toHaveLength(1);
+  });
+
   it('a short history is not truncated; one failing profile is marked, the others export', async () => {
     const { s, a, aKid } = await setup();
     env.ctx.jf.history = async (u) => {
@@ -298,6 +347,22 @@ describe('GET /api/account/export', () => {
     await get(s);
     const rows = (await env.pool.query("select actor, target, meta from audit_log where action='account.export'")).rows;
     expect(rows).toEqual([{ actor: a, target: a, meta: {} }]);
+  });
+
+  it('only the newest 100 requests are asked for their state; older ones read unknown', async () => {
+    const { s, a } = await setup();
+    fakeHistory();
+    // 105 more requests, all older than the seeded one
+    await env.pool.query(
+      `insert into seerr_requests(seerr_request_id, user_id, media_type, tmdb_id, title, created_at)
+         select 1000 + n, $1, 'movie', 5000 + n, 'old ' || n, now() - (n || ' days')::interval from generate_series(1, 105) n`, [a]);
+    env.seerrCalls.length = 0;
+    const doc = (await get(s)).json();
+    expect(doc.requests).toHaveLength(106);
+    expect(env.seerrCalls.filter((c) => c.path.startsWith('/api/v1/request/'))).toHaveLength(100);
+    expect(doc.requests.slice(0, 100).every((r: { status: string }) => r.status === 'available')).toBe(true);
+    expect(doc.requests.slice(100).map((r: { status: string; tmdbId: number }) => [r.status, r.tmdbId])).toEqual(
+      [100, 101, 102, 103, 104, 105].map((n) => ['unknown', 5000 + n]));
   });
 
   it('a HEAD request neither runs the export nor audits', async () => {
