@@ -288,7 +288,7 @@ function sorted<T>(rows: T[], sp: URLSearchParams, keys: Record<string, (r: T) =
 }
 const WEEK = 7 * 86400e3;
 function usersList(st: AdminState, sp: URLSearchParams) {
-  const q = norm(sp.get('q') ?? ''), status = sp.get('status'), lastActive = Number(sp.get('lastActive') ?? 0), now = Date.now();
+  const q = norm(sp.get('q') ?? ''), status = sp.get('status'), inactive = sp.get('lastActive') === '90+', lastActive = inactive ? 0 : Number(sp.get('lastActive') ?? 0), now = Date.now();
   // status=pending: the open approval requests in the same row shape (backend: pending true, role null)
   const all = status === 'pending'
     ? st.approvals.map((a) => ({ id: a.id, name: a.name, email: a.email, role: null as unknown as string, disabled: false, jellyfin_username: '', seerr_user_id: null, created_at: a.requested_at, last_seen: null, access_until: null, profiles: 0, devices: 0, pending: true }))
@@ -296,8 +296,9 @@ function usersList(st: AdminState, sp: URLSearchParams) {
   let rows = all.filter((u) => (!q || norm(`${u.name} ${u.email ?? ''} ${u.jellyfin_username}`).includes(q)) && (!sp.get('role') || u.role === sp.get('role'))
     && (!status || status === 'pending' || (status === 'locked' && u.disabled) || (status === 'active' && !u.disabled)
       || (status === 'expiring' && u.access_until !== null && Date.parse(u.access_until) >= now && Date.parse(u.access_until) <= now + WEEK))
-    && (!lastActive || (u.last_seen !== null && Date.parse(u.last_seen) >= now - lastActive * 86400e3)));
-  rows = sorted(rows, sp, { name: (u) => u.name, email: (u) => u.email ?? '', role: (u) => u.role, status: (u) => Number(u.disabled), lastSeen: (u) => u.last_seen ?? '', accessUntil: (u) => u.access_until ?? '' });
+    && (!lastActive || (u.last_seen !== null && Date.parse(u.last_seen) >= now - lastActive * 86400e3))
+    && (!inactive || u.last_seen === null || Date.parse(u.last_seen) < now - 90 * 86400e3));
+  rows = sorted(rows, sp, { name: (u) => u.name, email: (u) => u.email ?? '', role: (u) => u.role, status: (u) => Number(u.disabled), lastSeen: (u) => u.last_seen ?? '', accessUntil: (u) => u.access_until ?? '', profiles: (u) => u.profiles, devices: (u) => u.devices });
   const { slice, total } = paged(rows, sp, 1000);
   return { users: slice, total };
 }

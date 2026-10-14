@@ -7,7 +7,7 @@ export default {
   /** Block 23: tabs of /admin/users */
   tabs: { label: 'Nutzerverwaltung', users: 'Nutzer', approvals: 'Warten auf Freigabe', approvalsN: 'Warten auf Freigabe ({n})', invites: 'Einladungen' },
   /** access-until choices (bulk bar, approvals) */
-  access: { label: 'Zugang bis', choose: 'Zugang bis …', p30: '+30 Tage', p90: '+90 Tage', unlimited: 'Unbegrenzt', date: 'Datum wählen …', day: 'Zugang bis (Datum)' },
+  access: { label: 'Zugang bis', choose: 'Zugang bis …', p30: '+30 Tage ab heute', p90: '+90 Tage ab heute', unlimited: 'Unbegrenzt', date: 'Datum wählen …', day: 'Zugang bis (Datum)' },
   users: {
     searchPlaceholder: 'Name, E-Mail oder Login suchen …',
     col: {
@@ -20,7 +20,7 @@ export default {
     allRoles: 'Alle Rollen',
     allStatus: 'Alle',
     anyTime: 'Jederzeit',
-    lastActive: { d7: 'In den letzten 7 Tagen', d30: 'In den letzten 30 Tagen', d90: 'In den letzten 90 Tagen' },
+    lastActive: { d7: 'In den letzten 7 Tagen', d30: 'In den letzten 30 Tagen', d90: 'In den letzten 90 Tagen', inactive90: 'Seit 90+ Tagen inaktiv' },
     active: 'Aktiv',
     locked: 'Gesperrt',
     pending: 'Wartet auf Freigabe',
@@ -66,6 +66,8 @@ export default {
     signOutNote: 'Alle Geräte werden abgemeldet, Offline-Downloads verlieren ihre Lizenz.',
     done: { one: '{n} Konto geändert.', other: '{n} Konten geändert.' },
     lastAdmin: 'Das geht nicht: Danach gäbe es keinen aktiven Admin mehr.',
+    partial: 'Einige Konten wurden eventuell schon geändert – die Liste ist neu geladen.',
+    adminsNote: 'Darunter Admins: {names}.',
   },
   /** Block 23: approval queue (first logins without an invite) */
   approvals: {
@@ -82,6 +84,7 @@ export default {
     messageHint: 'Die Person sieht sie auf ihrer Warteseite.',
     cancel: 'Abbrechen',
     rejected: '{name} abgelehnt.',
+    alreadyHandled: '{name} wurde schon bearbeitet.',
   },
   roles: {
     intro: 'Was jede Rolle darf. Änderungen gelten erst nach „Speichern“ und werden auch auf bestehende Konten angewendet.',

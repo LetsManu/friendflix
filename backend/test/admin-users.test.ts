@@ -186,6 +186,34 @@ describe('users list', () => {
     expect(users.find((u) => u.id === ids.ben)).toMatchObject({ disabled: true, locked_reason: 'deletion' });
   });
 
+  it('lastActive=90+ lists accounts not seen for 90 days or never', async () => {
+    const dora = await addUser('dora', 'Dora', 'guest'); // no device: never seen
+    await env.pool.query("insert into devices(user_id, device_id, label, approved, last_seen) values ($1, 'dev-clara-old-00001', 'A', true, now() - interval '100 days'), ($2, 'dev-ben-new-0000001', 'B', true, now() - interval '1 day')", [ids.clara, ids.ben]);
+    try {
+      const names = (await get('/api/admin/users?lastActive=90%2B')).json().users.map((u: any) => u.name).sort();
+      expect(names).toContain('Clara'); // seen 100 days ago
+      expect(names).toContain('Dora'); // never
+      expect(names).not.toContain('Ben'); // seen yesterday
+    } finally {
+      await env.pool.query("delete from devices where device_id in ('dev-clara-old-00001', 'dev-ben-new-0000001')");
+      await env.pool.query('delete from users where id=$1', [dora]);
+    }
+  });
+
+  it('sorts by profile and device counts', async () => {
+    await env.pool.query("insert into devices(user_id, device_id, label, approved, last_seen) values ($1, 'dev-clara-s-000001', 'A', true, now()), ($1, 'dev-clara-s-000002', 'B', true, now()), ($1, 'dev-clara-s-000003', 'C', true, now())", [ids.clara]);
+    try {
+      const desc = (await get('/api/admin/users?sort=devices&dir=desc')).json().users;
+      expect(desc[0].name).toBe('Clara');
+      expect(desc.map((u: any) => u.devices)).toEqual([...desc.map((u: any) => u.devices)].sort((a: number, b: number) => b - a));
+      const prof = (await get('/api/admin/users?sort=profiles&dir=asc')).json().users.map((u: any) => u.profiles);
+      expect(prof).toEqual([...prof].sort((a: number, b: number) => a - b));
+      expect((await get('/api/admin/users?status=pending&sort=devices')).statusCode).toBe(200);
+    } finally {
+      await env.pool.query("delete from devices where device_id like 'dev-clara-s-%'");
+    }
+  });
+
   it('filters lastActive, active, locked, deleting and pending', async () => {
     const names = async (q: string) => (await get(`/api/admin/users?${q}`)).json().users.map((u: any) => u.name).sort();
     expect(await names('lastActive=30')).toEqual(['Admin']); // anna was last seen 40 days ago, ben/clara never

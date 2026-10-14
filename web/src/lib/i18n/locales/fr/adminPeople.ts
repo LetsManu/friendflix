@@ -8,7 +8,7 @@ const dict: Translation<typeof de> = {
   loadFailed: "Impossible de charger les données. Vérifiez la connexion et réessayez.",
   never: 'jamais',
   tabs: { label: 'Gestion des utilisateurs', users: 'Utilisateurs', approvals: 'En attente de validation', approvalsN: 'En attente de validation ({n})', invites: 'Invitations' },
-  access: { label: "Accès jusqu'au", choose: "Accès jusqu'au …", p30: '+30 jours', p90: '+90 jours', unlimited: 'Illimité', date: 'Choisir une date …', day: "Accès jusqu'au (date)" },
+  access: { label: "Accès jusqu'au", choose: "Accès jusqu'au …", p30: "+30 jours à partir d'aujourd'hui", p90: "+90 jours à partir d'aujourd'hui", unlimited: 'Illimité', date: 'Choisir une date …', day: "Accès jusqu'au (date)" },
   users: {
     searchPlaceholder: 'Rechercher un nom, un e-mail ou un identifiant …',
     col: {
@@ -21,7 +21,7 @@ const dict: Translation<typeof de> = {
     allRoles: 'Tous les rôles',
     allStatus: 'Tous',
     anyTime: "N'importe quand",
-    lastActive: { d7: 'Ces 7 derniers jours', d30: 'Ces 30 derniers jours', d90: 'Ces 90 derniers jours' },
+    lastActive: { d7: 'Ces 7 derniers jours', d30: 'Ces 30 derniers jours', d90: 'Ces 90 derniers jours', inactive90: 'Inactifs depuis 90+ jours' },
     active: 'Actif',
     locked: 'Bloqué',
     pending: 'En attente de validation',
@@ -66,6 +66,8 @@ const dict: Translation<typeof de> = {
     signOutNote: 'Tous les appareils sont déconnectés et les téléchargements hors ligne perdent leur licence.',
     done: { one: '{n} compte modifié.', many: '{n} comptes modifiés.', other: '{n} comptes modifiés.' },
     lastAdmin: 'Impossible : il ne resterait plus aucun admin actif.',
+    partial: 'Certains comptes ont peut-être déjà été modifiés – la liste a été rechargée.',
+    adminsNote: 'Dont des admins : {names}.',
   },
   approvals: {
     intro: 'Ces personnes se sont connectées sans invitation et attendent votre décision.',
@@ -81,6 +83,7 @@ const dict: Translation<typeof de> = {
     messageHint: "La personne le verra sur sa page d'attente.",
     cancel: 'Annuler',
     rejected: '{name} refusé.',
+    alreadyHandled: '{name} a déjà été traité.',
   },
   roles: {
     intro: "Ce que chaque rôle peut faire. Les modifications ne s'appliquent qu'après « Enregistrer » et valent aussi pour les comptes existants.",

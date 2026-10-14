@@ -9,7 +9,7 @@ const toasts = (page: import('@playwright/test').Page) => page.getByRole('region
 const logged = (api: { log: string[] }, re: RegExp) => api.log.some((l) => re.test(l));
 
 test.describe('admin people (desktop)', () => {
-  test.use({ allowedConsole: /status of (500|502)/ });
+  test.use({ allowedConsole: /status of (409|500|502)/ });
   test.beforeEach(({ api }) => { api.asAdmin = true; });
 
   test.describe('users', () => {
@@ -155,11 +155,61 @@ test.describe('admin people (desktop)', () => {
       await table.getByRole('checkbox', { name: 'Ben Test auswählen' }).check();
       const bar = page.getByRole('region', { name: 'Aktionen für die Auswahl' });
       await bar.getByRole('combobox', { name: 'Zugang bis' }).selectOption('p30');
+      // picking (also with arrow keys) does not run anything yet; Apply does
+      await expect(page.getByRole('alertdialog')).toHaveCount(0);
+      await bar.getByRole('form', { name: 'Zugang bis' }).getByRole('button', { name: 'Übernehmen' }).click();
       const dlg = page.getByRole('alertdialog', { name: /Zugang für 1 Nutzer bis/ });
       await dlg.getByRole('button', { name: 'Übernehmen' }).click();
       await expect.poll(() => logged(api, /POST \/api\/admin\/users\/bulk .*"action":"access","accessUntil":"\d{4}-\d\d-\d\dT[\d:.]+Z"/)).toBe(true);
       const until = api.admin.users.find((u) => u.name === 'Ben Test')!.access_until!;
       expect(Math.round((Date.parse(until) - Date.now()) / 86400e3)).toBe(30);
+    });
+
+    test('bulk lock with an admin selected needs the typed name, like the single lock', async ({ page, api }) => {
+      api.admin.users.find((u) => u.name === 'David Müller')!.role = 'admin';
+      await page.goto('/admin/users');
+      const table = page.getByRole('table', { name: 'Nutzer' });
+      await table.getByRole('checkbox', { name: 'Ben Test auswählen' }).check();
+      await table.getByRole('checkbox', { name: 'David Müller auswählen' }).check();
+      const bar = page.getByRole('region', { name: 'Aktionen für die Auswahl' });
+      await bar.getByRole('button', { name: 'Sperren', exact: true }).click();
+      const dlg = page.getByRole('alertdialog', { name: '2 Nutzer sperren?' });
+      await expect(dlg).toContainText('Darunter Admins: David Müller.');
+      await expect(dlg.getByRole('button', { name: 'Sperren' })).toBeDisabled();
+      await dlg.getByRole('textbox').fill('David Müller');
+      await dlg.getByRole('button', { name: 'Sperren' }).click();
+      await expect(toasts(page).getByText('2 Konten geändert.')).toBeVisible();
+      // a demoting role change asks the same way; promoting does not
+      await table.getByRole('checkbox', { name: 'David Müller auswählen' }).check();
+      await bar.getByRole('combobox', { name: 'Rolle ändern' }).selectOption('guest');
+      await bar.getByRole('form', { name: 'Rolle ändern' }).getByRole('button', { name: 'Übernehmen' }).click();
+      await expect(page.getByRole('alertdialog', { name: /1 Nutzer zu „Gast“ machen\?/ }).getByRole('textbox')).toBeVisible();
+    });
+
+    test('a failed bulk call reloads the list and keeps the selection', async ({ page }) => {
+      await page.goto('/admin/users');
+      const table = page.getByRole('table', { name: 'Nutzer' });
+      await table.getByRole('checkbox', { name: 'Ben Test auswählen' }).check();
+      await page.route('**/api/admin/users/bulk', (r) => r.fulfill({ status: 500, contentType: 'application/json', body: '{"error":"x"}' }));
+      let reloads = 0;
+      page.on('request', (r) => { if (r.method() === 'GET' && /\/api\/admin\/users\?/.test(r.url())) reloads++; });
+      const bar = page.getByRole('region', { name: 'Aktionen für die Auswahl' });
+      await bar.getByRole('button', { name: 'Überall abmelden' }).click();
+      await page.getByRole('alertdialog').getByRole('button', { name: 'Überall abmelden' }).click();
+      await expect(toasts(page).getByText(/Einige Konten wurden eventuell schon geändert/)).toBeVisible();
+      await expect.poll(() => reloads).toBeGreaterThan(0);
+      await expect(bar).toContainText('1 ausgewählt');
+    });
+
+    test('last active: inactive for 90+ days lists never-seen and old accounts', async ({ page, api }) => {
+      api.admin.users.find((u) => u.name === 'Felix Weber')!.last_seen = null;
+      api.admin.users.find((u) => u.name === 'Greta Wagner')!.last_seen = new Date(Date.now() - 120 * 86400e3).toISOString();
+      await page.goto('/admin/users');
+      await page.getByRole('combobox', { name: 'Zuletzt aktiv' }).selectOption('90+');
+      const table = page.getByRole('table', { name: 'Nutzer' });
+      await expect(table.getByRole('row', { name: /Felix Weber/ })).toBeVisible();
+      await expect(table.getByRole('row', { name: /Greta Wagner/ })).toBeVisible();
+      await expect(table.getByRole('row', { name: /Anna Beispiel/ })).toHaveCount(0);
     });
 
     test('approval tab approves with role', async ({ page, api }) => {
@@ -185,6 +235,20 @@ test.describe('admin people (desktop)', () => {
       await expect(toasts(page).getByText('Paul Fremd abgelehnt.')).toBeVisible();
       await expect.poll(() => logged(api, new RegExp(`POST /api/admin/approvals/${auid(402)}/reject .*"message":"Kenne ich nicht"`))).toBe(true);
       await expect(page.getByText('Niemand wartet auf Freigabe.')).toBeVisible();
+    });
+
+    test('approvals: the old ?tab=pending link opens the tab; an already handled request drops its card', async ({ page, api }) => {
+      await page.goto('/admin/users?tab=pending');
+      await expect(page.getByRole('tab', { name: 'Warten auf Freigabe (2)' })).toHaveAttribute('aria-selected', 'true');
+      const card = page.getByRole('region', { name: 'Mia Neu' });
+      await expect(card).toBeVisible();
+      // someone else approved Mia meanwhile: the server answers 409 and no longer lists her
+      api.admin.approvals = api.admin.approvals.filter((a) => a.name !== 'Mia Neu');
+      await page.route('**/api/admin/approvals/*/approve', (r) => r.fulfill({ status: 409, contentType: 'application/json', body: '{"error":"user_exists"}' }));
+      await card.getByRole('button', { name: 'Freigeben' }).click();
+      await expect(toasts(page).getByText('Mia Neu wurde schon bearbeitet.')).toBeVisible();
+      await expect(card).toHaveCount(0);
+      await expect(page.getByRole('region', { name: 'Paul Fremd' })).toBeVisible();
     });
 
     test('invites tab creates a 3-use invite and shows 0/3', async ({ page, api }) => {

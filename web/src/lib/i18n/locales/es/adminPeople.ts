@@ -8,7 +8,7 @@ const dict: Translation<typeof de> = {
   loadFailed: 'No se pudo cargar. Comprueba la conexión e inténtalo de nuevo.',
   never: 'nunca',
   tabs: { label: 'Gestión de usuarios', users: 'Usuarios', approvals: 'Esperando aprobación', approvalsN: 'Esperando aprobación ({n})', invites: 'Invitaciones' },
-  access: { label: 'Acceso hasta', choose: 'Acceso hasta …', p30: '+30 días', p90: '+90 días', unlimited: 'Ilimitado', date: 'Elegir fecha …', day: 'Acceso hasta (fecha)' },
+  access: { label: 'Acceso hasta', choose: 'Acceso hasta …', p30: '+30 días desde hoy', p90: '+90 días desde hoy', unlimited: 'Ilimitado', date: 'Elegir fecha …', day: 'Acceso hasta (fecha)' },
   users: {
     searchPlaceholder: 'Buscar nombre, correo o usuario …',
     col: {
@@ -21,7 +21,7 @@ const dict: Translation<typeof de> = {
     allRoles: 'Todos los roles',
     allStatus: 'Todos',
     anyTime: 'Cualquier momento',
-    lastActive: { d7: 'En los últimos 7 días', d30: 'En los últimos 30 días', d90: 'En los últimos 90 días' },
+    lastActive: { d7: 'En los últimos 7 días', d30: 'En los últimos 30 días', d90: 'En los últimos 90 días', inactive90: 'Inactivos desde hace 90+ días' },
     active: 'Activo',
     locked: 'Bloqueado',
     pending: 'Esperando aprobación',
@@ -66,6 +66,8 @@ const dict: Translation<typeof de> = {
     signOutNote: 'Se cierra la sesión en todos los dispositivos y las descargas sin conexión pierden su licencia.',
     done: { one: '{n} cuenta modificada.', many: '{n} cuentas modificadas.', other: '{n} cuentas modificadas.' },
     lastAdmin: 'No es posible: no quedaría ningún administrador activo.',
+    partial: 'Puede que algunas cuentas ya hayan cambiado: la lista se ha recargado.',
+    adminsNote: 'Incluye administradores: {names}.',
   },
   approvals: {
     intro: 'Estas personas iniciaron sesión sin invitación y esperan tu decisión.',
@@ -81,6 +83,7 @@ const dict: Translation<typeof de> = {
     messageHint: 'La persona lo verá en su página de espera.',
     cancel: 'Cancelar',
     rejected: '{name} rechazado.',
+    alreadyHandled: '{name} ya se ha gestionado.',
   },
   roles: {
     intro: 'Lo que puede hacer cada rol. Los cambios solo se aplican tras «Guardar» y también afectan a las cuentas existentes.',

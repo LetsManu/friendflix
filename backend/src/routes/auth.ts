@@ -61,7 +61,7 @@ async function requestApproval(ctx: Ctx, claims: OidcClaims): Promise<string> {
   );
   const { id, inserted, prev_rejected } = r.rows[0]!;
   if (inserted || (prev_rejected && Date.now() - prev_rejected.getTime() > RENOTIFY_MS)) {
-    await notifyAdmins(ctx, { kind: 'approval', title: m('notify.approval.new', { name }), link: '/admin/users?tab=pending' });
+    await notifyAdmins(ctx, { kind: 'approval', title: m('notify.approval.new', { name }), link: '/admin/users?tab=approvals' });
     await ctx.db.query('update approval_requests set notified_at=now() where id=$1', [id]);
   }
   return id;

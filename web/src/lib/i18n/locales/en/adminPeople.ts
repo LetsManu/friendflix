@@ -8,7 +8,7 @@ const dict: Translation<typeof de> = {
   loadFailed: 'This could not be loaded. Check your connection and try again.',
   never: 'never',
   tabs: { label: 'User management', users: 'Users', approvals: 'Waiting for approval', approvalsN: 'Waiting for approval ({n})', invites: 'Invites' },
-  access: { label: 'Access until', choose: 'Access until …', p30: '+30 days', p90: '+90 days', unlimited: 'Unlimited', date: 'Pick a date …', day: 'Access until (date)' },
+  access: { label: 'Access until', choose: 'Access until …', p30: '+30 days from today', p90: '+90 days from today', unlimited: 'Unlimited', date: 'Pick a date …', day: 'Access until (date)' },
   users: {
     searchPlaceholder: 'Search name, email or login …',
     col: {
@@ -21,7 +21,7 @@ const dict: Translation<typeof de> = {
     allRoles: 'All roles',
     allStatus: 'All',
     anyTime: 'Any time',
-    lastActive: { d7: 'In the last 7 days', d30: 'In the last 30 days', d90: 'In the last 90 days' },
+    lastActive: { d7: 'In the last 7 days', d30: 'In the last 30 days', d90: 'In the last 90 days', inactive90: 'Inactive for 90+ days' },
     active: 'Active',
     locked: 'Locked',
     pending: 'Waiting for approval',
@@ -66,6 +66,8 @@ const dict: Translation<typeof de> = {
     signOutNote: 'All devices are signed out and offline downloads lose their licence.',
     done: { one: '{n} account changed.', other: '{n} accounts changed.' },
     lastAdmin: 'Not possible: there would be no active admin left.',
+    partial: 'Some accounts may already have changed – the list has been reloaded.',
+    adminsNote: 'Includes admins: {names}.',
   },
   approvals: {
     intro: 'These people signed in without an invite and are waiting for your decision.',
@@ -81,6 +83,7 @@ const dict: Translation<typeof de> = {
     messageHint: 'They see it on their waiting page.',
     cancel: 'Cancel',
     rejected: '{name} rejected.',
+    alreadyHandled: '{name} has already been handled.',
   },
   roles: {
     intro: 'What each role may do. Changes only apply after “Save” and are also applied to existing accounts.',

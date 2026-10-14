@@ -8,7 +8,7 @@ const dict: Translation<typeof de> = {
   loadFailed: 'Nie udało się wczytać danych. Sprawdź połączenie i spróbuj ponownie.',
   never: 'nigdy',
   tabs: { label: 'Zarządzanie użytkownikami', users: 'Użytkownicy', approvals: 'Czekają na zatwierdzenie', approvalsN: 'Czekają na zatwierdzenie ({n})', invites: 'Zaproszenia' },
-  access: { label: 'Dostęp do', choose: 'Dostęp do …', p30: '+30 dni', p90: '+90 dni', unlimited: 'Bez limitu', date: 'Wybierz datę …', day: 'Dostęp do (data)' },
+  access: { label: 'Dostęp do', choose: 'Dostęp do …', p30: '+30 dni od dziś', p90: '+90 dni od dziś', unlimited: 'Bez limitu', date: 'Wybierz datę …', day: 'Dostęp do (data)' },
   users: {
     searchPlaceholder: 'Szukaj imienia, e-maila lub loginu …',
     col: {
@@ -21,7 +21,7 @@ const dict: Translation<typeof de> = {
     allRoles: 'Wszystkie role',
     allStatus: 'Wszystkie',
     anyTime: 'Kiedykolwiek',
-    lastActive: { d7: 'W ostatnich 7 dniach', d30: 'W ostatnich 30 dniach', d90: 'W ostatnich 90 dniach' },
+    lastActive: { d7: 'W ostatnich 7 dniach', d30: 'W ostatnich 30 dniach', d90: 'W ostatnich 90 dniach', inactive90: 'Nieaktywni od 90+ dni' },
     active: 'Aktywny',
     locked: 'Zablokowany',
     pending: 'Czeka na zatwierdzenie',
@@ -66,6 +66,8 @@ const dict: Translation<typeof de> = {
     signOutNote: 'Wszystkie urządzenia zostaną wylogowane, a pobrania offline stracą licencję.',
     done: { one: 'Zmieniono {n} konto.', few: 'Zmieniono {n} konta.', many: 'Zmieniono {n} kont.', other: 'Zmieniono {n} konta.' },
     lastAdmin: 'To niemożliwe: nie zostałby żaden aktywny administrator.',
+    partial: 'Część kont mogła już zostać zmieniona – lista została odświeżona.',
+    adminsNote: 'W tym administratorzy: {names}.',
   },
   approvals: {
     intro: 'Te osoby zalogowały się bez zaproszenia i czekają na decyzję.',
@@ -81,6 +83,7 @@ const dict: Translation<typeof de> = {
     messageHint: 'Osoba zobaczy ją na swojej stronie oczekiwania.',
     cancel: 'Anuluj',
     rejected: 'Odrzucono: {name}.',
+    alreadyHandled: 'Prośba ({name}) została już obsłużona.',
   },
   roles: {
     intro: 'Co może robić każda rola. Zmiany obowiązują dopiero po kliknięciu „Zapisz” i dotyczą też istniejących kont.',

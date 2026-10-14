@@ -36,11 +36,12 @@
   const PAGE = 25;
 
   const page$ = pageStore();
-  $: tab = ((v) => (TABS.includes(v as Tab) ? (v as Tab) : 'users'))($page$.url.searchParams.get('tab'));
-  const select = (to: Tab) => goto(to === 'users' ? '?' : `?tab=${to}`, { replaceState: true, reset: false });
+  // `pending` is the tab name older approval notices link to
+  $: tab = ((v) => (v === 'pending' ? 'approvals' : TABS.includes(v as Tab) ? (v as Tab) : 'users'))($page$.url.searchParams.get('tab'));
+  const select = (to: Tab) => goto(to === 'users' ? $page$.url.pathname : `?tab=${to}`, { replaceState: true, reset: false });
   function tabKey(e: KeyboardEvent) {
-    const i = TABS.indexOf(tab);
-    const n = e.key === 'ArrowRight' ? (i + 1) % TABS.length : e.key === 'ArrowLeft' ? (i + TABS.length - 1) % TABS.length : -1;
+    const i = TABS.indexOf(tab), last = TABS.length - 1;
+    const n = e.key === 'ArrowRight' ? (i + 1) % TABS.length : e.key === 'ArrowLeft' ? (i + last) % TABS.length : e.key === 'Home' ? 0 : e.key === 'End' ? last : -1;
     if (n < 0) return;
     e.preventDefault(); void select(TABS[n]!);
     queueMicrotask(() => document.getElementById(`ut-${TABS[n]!}`)?.focus());
@@ -52,8 +53,8 @@
   let q = '', sort: SortState | null = null, page = 0, roleFilter = '', statusFilter = '', lastActive = '';
   let cur: Query = { q: '', sort: null, offset: 0, limit: PAGE };
   let seq = 0;
-  /** selected accounts (id → name), kept across pages until an action ran or the selection is cleared */
-  let selected = new Map<string, string>();
+  /** selected accounts (id → name and role), kept across pages until an action ran or the selection is cleared */
+  let selected = new Map<string, { name: string; role: string | null }>();
   let bulkRole = '', bulkAccess = '', bulkDay = '';
 
   async function load() {
@@ -101,20 +102,22 @@
   $: lastActiveOptions = [
     { value: '', label: $t('adminPeople.users.anyTime') }, { value: '7', label: $t('adminPeople.users.lastActive.d7') },
     { value: '30', label: $t('adminPeople.users.lastActive.d30') }, { value: '90', label: $t('adminPeople.users.lastActive.d90') },
+    { value: '90+', label: $t('adminPeople.users.lastActive.inactive90') },
   ];
   $: columns = [
     { key: 'select', sortable: false, label: $t('adminPeople.users.col.select'), hideLabel: true, width: '2.75rem' },
     { key: 'name', sortable: true, label: $t('adminPeople.users.col.name'), primary: true },
     { key: 'email', sortable: true, label: $t('adminPeople.users.col.email') },
     { key: 'role', sortable: true, label: $t('adminPeople.users.col.role') },
-    { key: 'profiles', sortable: false, label: $t('adminPeople.users.col.profiles'), align: 'end' },
-    { key: 'devices', sortable: false, label: $t('adminPeople.users.col.devices'), align: 'end' },
+    { key: 'profiles', sortable: true, label: $t('adminPeople.users.col.profiles'), align: 'end' },
+    { key: 'devices', sortable: true, label: $t('adminPeople.users.col.devices'), align: 'end' },
     { key: 'lastSeen', sortable: true, label: $t('adminPeople.users.col.lastSeen') },
     { key: 'mfa', sortable: false, label: $t('adminPeople.users.col.mfa'), align: 'center' },
     { key: 'accessUntil', sortable: true, label: $t('adminPeople.users.col.accessUntil') },
   ] satisfies Column<U>[];
   const optionsFor = (opts: Array<{ value: string; label: string }>, role: string) => (opts.some((o) => o.value === role) ? opts : [...opts, { value: role, label: rname(role) }]);
-  $: selectable = (u: U): boolean => !u.pending && u.id !== meId;
+  // nothing is selectable until /api/me says which row is the admin's own
+  $: selectable = (u: U): boolean => !u.pending && meId !== '' && u.id !== meId;
 
   function changeRole(u: U, role: string) {
     const prev = u.role;
@@ -172,14 +175,14 @@
   // ---- selection + bulk actions ----
   function toggle(u: U, on: boolean) {
     const next = new Map(selected);
-    if (on) next.set(u.id, u.name); else next.delete(u.id);
+    if (on) next.set(u.id, { name: u.name, role: u.role }); else next.delete(u.id);
     selected = next;
   }
   $: pageSelectable = (rows ?? []).filter(selectable);
   $: allOnPage = pageSelectable.length > 0 && pageSelectable.every((u) => selected.has(u.id));
   function togglePage(on: boolean) {
     const next = new Map(selected);
-    for (const u of pageSelectable) { if (on) next.set(u.id, u.name); else next.delete(u.id); }
+    for (const u of pageSelectable) { if (on) next.set(u.id, { name: u.name, role: u.role }); else next.delete(u.id); }
     selected = next;
   }
   $: bulkRoleOptions = [{ value: '', label: $t('adminPeople.bulk.roleChoose') }, ...roleOptions];
@@ -200,18 +203,26 @@
   }
   const bulkError = (e: unknown): string => {
     const code = e instanceof ApiError ? (e.body as { error?: string } | null)?.error : undefined;
+    // validation and guards are all or nothing; anything else may have stopped halfway through the accounts
     if (code === 'last_admin') return tr('adminPeople.bulk.lastAdmin');
     if (code === 'cannot_lock_yourself_out') return tr('adminPeople.users.selfNote');
-    return errorText(e);
+    return `${errorText(e)} ${tr('adminPeople.bulk.partial')}`;
   };
   async function bulk(b: Bulk) {
-    const ids = [...selected.keys()], names = [...selected.values()];
+    const ids = [...selected.keys()], picked = [...selected.values()];
     if (!ids.length) return;
-    const names10 = tr('adminPeople.bulk.names', { names: bulkSummary(names) });
+    const names10 = tr('adminPeople.bulk.names', { names: bulkSummary(picked.map((p) => p.name)) });
     const note = b.action === 'lock' ? ` ${tr('adminPeople.bulk.lockNote')}` : b.action === 'revoke' ? ` ${tr('adminPeople.bulk.signOutNote')}` : '';
-    const danger = b.action === 'lock' || b.action === 'revoke';
+    // locking or demoting admins needs the same typed confirmation as the single lock: one admin = their name, several = their number
+    const admins = picked.filter((p) => p.role === 'admin').map((p) => p.name);
+    const guarded = admins.length > 0 && (b.action === 'lock' || (b.action === 'role' && b.role !== 'admin'));
+    const adminNote = guarded ? ` ${tr('adminPeople.bulk.adminsNote', { names: bulkSummary(admins) })}` : '';
+    const danger = b.action === 'lock' || b.action === 'revoke' || guarded;
     const label = b.action === 'lock' ? tr('adminPeople.users.lock') : b.action === 'unlock' ? tr('adminPeople.users.unlock') : b.action === 'revoke' ? tr('adminPeople.users.signOut') : tr('adminPeople.bulk.apply');
-    const ok = await confirm({ title: bulkTitle(b, ids.length), body: names10 + note, danger, confirmLabel: label });
+    const ok = await confirm({
+      title: bulkTitle(b, ids.length), body: names10 + note + adminNote, danger, confirmLabel: label,
+      ...(guarded ? { typed: admins.length === 1 ? admins[0]! : String(admins.length) } : {}),
+    });
     if (!ok) return;
     const r = await runAction({
       key: 'users:bulk',
@@ -219,27 +230,24 @@
       success: (res) => tr('adminPeople.bulk.done', { n: res?.done ?? 0 }),
       error: bulkError,
     });
-    if (!r.ok) return;
-    selected = new Map();
+    // reload either way: a failure in the middle can leave some accounts changed (the selection stays for a retry)
     void load();
     if (b.action === 'lock' || b.action === 'unlock') void refreshSummary();
+    if (r.ok) selected = new Map();
   }
-  function onBulkRole() {
+  /** the bulk selects only pick; Apply runs (arrow keys on a closed select fire change in some browsers) */
+  function applyRole() {
     const role = bulkRole;
+    if (!role) return;
     bulkRole = '';
-    if (role) void bulk({ action: 'role', role });
+    void bulk({ action: 'role', role });
   }
-  function onBulkAccess() {
-    if (bulkAccess === 'date' || !bulkAccess) return;
-    const preset = bulkAccess === 'p30' ? '+30' : bulkAccess === 'p90' ? '+90' : 'unlimited';
-    bulkAccess = '';
-    void bulk({ action: 'access', accessUntil: accessPreset(preset) });
-  }
-  function applyDay() {
-    const until = dayEnd(bulkDay);
-    if (!until) return;
+  $: bulkAccessReady = bulkAccess !== '' && (bulkAccess !== 'date' || dayEnd(bulkDay) !== '');
+  function applyAccess() {
+    if (!bulkAccessReady) return;
+    const accessUntil = bulkAccess === 'date' ? dayEnd(bulkDay) : accessPreset(bulkAccess === 'p30' ? '+30' : bulkAccess === 'p90' ? '+90' : 'unlimited');
     bulkAccess = ''; bulkDay = '';
-    void bulk({ action: 'access', accessUntil: until });
+    void bulk({ action: 'access', accessUntil });
   }
   $: busyBulk = $busyKeys.has('users:bulk');
   $: tabLabel = (id: Tab): string => (id === 'approvals' ? (approvals === null ? $t('adminPeople.tabs.approvals') : $t('adminPeople.tabs.approvalsN', { n: approvals })) : $t(`adminPeople.tabs.${id}`));
@@ -260,16 +268,17 @@
     {#if selected.size}
       <section class="bulk" aria-label={$t('adminPeople.bulk.label')} aria-busy={busyBulk ? 'true' : undefined}>
         <p class="cnt" aria-live="polite">{$t('adminPeople.bulk.selected', { n: selected.size })}</p>
-        <Select label={$t('adminPeople.bulk.role')} options={bulkRoleOptions} bind:value={bulkRole} on:change={onBulkRole} hideLabel disabled={busyBulk} />
+        <form class="pickapply" aria-label={$t('adminPeople.bulk.role')} on:submit|preventDefault={applyRole}>
+          <Select label={$t('adminPeople.bulk.role')} options={bulkRoleOptions} bind:value={bulkRole} hideLabel disabled={busyBulk} />
+          <Button type="submit" size="sm" variant="secondary" disabled={busyBulk || !bulkRole}>{$t('adminPeople.bulk.apply')}</Button>
+        </form>
         <Button variant="secondary" size="sm" icon="lock" disabled={busyBulk} on:click={() => bulk({ action: 'lock' })}>{$t('adminPeople.users.lock')}</Button>
         <Button variant="secondary" size="sm" icon="unlock" disabled={busyBulk} on:click={() => bulk({ action: 'unlock' })}>{$t('adminPeople.users.unlock')}</Button>
-        <Select label={$t('adminPeople.access.label')} options={bulkAccessOptions} bind:value={bulkAccess} on:change={onBulkAccess} hideLabel disabled={busyBulk} />
-        {#if bulkAccess === 'date'}
-          <form class="day" on:submit|preventDefault={applyDay}>
-            <Field type="date" label={$t('adminPeople.access.day')} bind:value={bulkDay} hideLabel required />
-            <Button type="submit" size="sm" disabled={busyBulk || !dayEnd(bulkDay)}>{$t('adminPeople.bulk.apply')}</Button>
-          </form>
-        {/if}
+        <form class="pickapply" aria-label={$t('adminPeople.access.label')} on:submit|preventDefault={applyAccess}>
+          <Select label={$t('adminPeople.access.label')} options={bulkAccessOptions} bind:value={bulkAccess} hideLabel disabled={busyBulk} />
+          {#if bulkAccess === 'date'}<Field type="date" label={$t('adminPeople.access.day')} bind:value={bulkDay} hideLabel required />{/if}
+          <Button type="submit" size="sm" variant="secondary" disabled={busyBulk || !bulkAccessReady}>{$t('adminPeople.bulk.apply')}</Button>
+        </form>
         <Button variant="secondary" size="sm" icon="log-out" disabled={busyBulk} on:click={() => bulk({ action: 'revoke' })}>{$t('adminPeople.users.signOut')}</Button>
         <Button variant="ghost" size="sm" icon="x" on:click={() => (selected = new Map())}>{$t('adminPeople.bulk.clear')}</Button>
       </section>
@@ -339,7 +348,7 @@
   .bulk { position: sticky; top: var(--nav-total); z-index: 3; display: flex; flex-wrap: wrap; align-items: center; gap: .5rem; padding: .6rem .8rem; margin-bottom: .8rem; background: var(--surface); border: 1px solid var(--line); border-radius: 8px; }
   .bulk .cnt { margin: 0 .4rem 0 0; font-weight: 700; }
   .bulk :global(.field) { min-width: 10rem; }
-  .day { display: flex; align-items: center; gap: .4rem; }
+  .pickapply { display: flex; flex-wrap: wrap; align-items: center; gap: .4rem; }
   .all { display: inline-flex; align-items: center; gap: .4rem; color: var(--mut); font-size: .9rem; min-height: 44px; }
   .pick, .all input { width: 20px; height: 20px; margin: 0; accent-color: var(--accent, #fff); }
   .who { display: inline-flex; align-items: center; gap: .7rem; min-width: 0; }
@@ -358,5 +367,5 @@
     .ulist :global(th) { white-space: normal; }
   }
   /* phone card: the selection cell is the first line, keep its box clear of the actions button (top right) */
-  @media (max-width: 720px) { .pick { margin-right: 3.2rem; } }
+  @media (max-width: 720px) { .pick { margin-right: 3.2rem; } .bulk { position: static; } }
 </style>

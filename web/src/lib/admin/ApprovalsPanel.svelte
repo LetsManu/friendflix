@@ -6,11 +6,11 @@
    * optional access-until, or reject with an optional message (shown on their waiting page). Reports the open count.
    */
   import { createEventDispatcher, onMount } from 'svelte';
-  import { api } from '#lib/api';
+  import { api, ApiError } from '#lib/api';
   import { fmtDateTime, fmtRelative, t, tr } from '#lib/i18n';
   import { accessPreset, dayEnd } from '#lib/admin/people';
   import { roleName, type RoleInfo } from '#lib/roles';
-  import { runAction } from '#lib/ui/action';
+  import { errorText, runAction } from '#lib/ui/action';
   import Button from '#lib/ui/Button.svelte';
   import Field from '#lib/ui/Field.svelte';
   import Select from '#lib/ui/Select.svelte';
@@ -53,30 +53,36 @@
     return undefined;
   }
 
-  /** takes the request out of the list; the rollback puts it back */
+  /** 404 / 409: someone else already approved or rejected it (or the person has an account by now) */
+  const handled = (e: unknown) => e instanceof ApiError && (e.status === 404 || e.status === 409);
+  /** takes only this request out of the list; the rollback puts only it back (other cards handled meanwhile stay gone) */
   function withdraw(r: R): () => void {
-    const prev = rows;
-    rows = (rows ?? []).filter((x) => x !== r);
+    rows = (rows ?? []).filter((x) => x.id !== r.id);
     dispatch('count', rows.length);
-    return () => { rows = prev; dispatch('count', prev?.length ?? 0); };
+    return () => {
+      if (!rows || rows.some((x) => x.id === r.id)) return;
+      rows = [...rows, r].sort((a, b) => a.requested_at.localeCompare(b.requested_at) || a.id.localeCompare(b.id));
+      dispatch('count', rows.length);
+    };
+  }
+  async function decide(r: R, run: () => Promise<unknown>, success: string) {
+    const res = await runAction({
+      key: `apr:${r.id}`, apply: () => withdraw(r), run, success,
+      error: (e) => (handled(e) ? tr('adminPeople.approvals.alreadyHandled', { name: r.name }) : errorText(e)),
+    });
+    if (!res.ok && handled(res.error)) void load(); // the server's list drops the card again
   }
   function approve(r: R) {
     const d = drafts[r.id]!;
     const until = accessUntil(d);
     if (until === null) return;
-    void runAction({
-      key: `apr:${r.id}`, apply: () => withdraw(r),
-      run: () => api(`/api/admin/approvals/${r.id}/approve`, { method: 'POST', body: { role: d.role, ...(until ? { accessUntil: until } : {}) } }),
-      success: tr('adminPeople.approvals.approved', { name: r.name }),
-    });
+    void decide(r, () => api(`/api/admin/approvals/${r.id}/approve`, { method: 'POST', body: { role: d.role, ...(until ? { accessUntil: until } : {}) } }),
+      tr('adminPeople.approvals.approved', { name: r.name }));
   }
   function reject(r: R) {
     const message = drafts[r.id]!.message.trim();
-    void runAction({
-      key: `apr:${r.id}`, apply: () => withdraw(r),
-      run: () => api(`/api/admin/approvals/${r.id}/reject`, { method: 'POST', body: message ? { message } : {} }),
-      success: tr('adminPeople.approvals.rejected', { name: r.name }),
-    });
+    void decide(r, () => api(`/api/admin/approvals/${r.id}/reject`, { method: 'POST', body: message ? { message } : {} }),
+      tr('adminPeople.approvals.rejected', { name: r.name }));
   }
 </script>
 

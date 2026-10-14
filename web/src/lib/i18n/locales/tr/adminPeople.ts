@@ -8,7 +8,7 @@ const dict: Translation<typeof de> = {
   loadFailed: 'Yüklenemedi. Bağlantını kontrol edip tekrar dene.',
   never: 'hiç',
   tabs: { label: 'Kullanıcı yönetimi', users: 'Kullanıcılar', approvals: 'Onay bekleyenler', approvalsN: 'Onay bekleyenler ({n})', invites: 'Davetler' },
-  access: { label: 'Erişim bitişi', choose: 'Erişim bitişi …', p30: '+30 gün', p90: '+90 gün', unlimited: 'Sınırsız', date: 'Tarih seç …', day: 'Erişim bitişi (tarih)' },
+  access: { label: 'Erişim bitişi', choose: 'Erişim bitişi …', p30: 'Bugünden itibaren +30 gün', p90: 'Bugünden itibaren +90 gün', unlimited: 'Sınırsız', date: 'Tarih seç …', day: 'Erişim bitişi (tarih)' },
   users: {
     searchPlaceholder: 'Ad, e-posta veya kullanıcı adı ara …',
     col: {
@@ -21,7 +21,7 @@ const dict: Translation<typeof de> = {
     allRoles: 'Tüm roller',
     allStatus: 'Tümü',
     anyTime: 'Herhangi bir zaman',
-    lastActive: { d7: 'Son 7 günde', d30: 'Son 30 günde', d90: 'Son 90 günde' },
+    lastActive: { d7: 'Son 7 günde', d30: 'Son 30 günde', d90: 'Son 90 günde', inactive90: '90+ gündür etkin değil' },
     active: 'Etkin',
     locked: 'Engelli',
     pending: 'Onay bekliyor',
@@ -66,6 +66,8 @@ const dict: Translation<typeof de> = {
     signOutNote: 'Tüm cihazlardan çıkış yapılır ve çevrimdışı indirmeler lisansını kaybeder.',
     done: { one: '{n} hesap değiştirildi.', other: '{n} hesap değiştirildi.' },
     lastAdmin: 'Mümkün değil: hiç etkin yönetici kalmazdı.',
+    partial: 'Bazı hesaplar zaten değişmiş olabilir – liste yeniden yüklendi.',
+    adminsNote: 'Aralarında yöneticiler var: {names}.',
   },
   approvals: {
     intro: 'Bu kişiler davetsiz giriş yaptı ve kararını bekliyor.',
@@ -81,6 +83,7 @@ const dict: Translation<typeof de> = {
     messageHint: 'Kişi bunu bekleme sayfasında görür.',
     cancel: 'İptal',
     rejected: '{name} reddedildi.',
+    alreadyHandled: '{name} zaten işlendi.',
   },
   roles: {
     intro: 'Her rolün neler yapabileceği. Değişiklikler yalnızca “Kaydet” ile geçerli olur ve mevcut hesaplara da uygulanır.',

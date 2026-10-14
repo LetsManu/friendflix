@@ -158,14 +158,14 @@ export function adminUserRoutes(app: FastifyInstance, ctx: Ctx) {
   const admin = { preHandler: requireAdmin(ctx) };
   const serial = serialized();
 
-  // ?q= (name/email/login) &role= &status=active|locked|pending|expiring|deleting &lastActive=7|30|90
-  // &sort=name|email|role|status|lastSeen|createdAt|accessUntil &dir= &limit= &offset=; without params: everyone (max 1000)
+  // ?q= (name/email/login) &role= &status=active|locked|pending|expiring|deleting &lastActive=7|30|90 (seen within) | 90+ (not seen for 90 days or never)
+  // &sort=name|email|role|status|lastSeen|createdAt|accessUntil|profiles|devices &dir= &limit= &offset=; without params: everyone (max 1000)
   // status=pending lists open approval requests in the same row shape (pending: true, role null)
   app.get('/api/admin/users', admin, async (req) => {
     const p = pageQuery.extend({
       role: z.string().max(40).optional(),
       status: z.enum(['active', 'locked', 'pending', 'expiring', 'deleting']).optional(),
-      lastActive: z.enum(['7', '30', '90']).optional(),
+      lastActive: z.enum(['7', '30', '90', '90+']).optional(),
     }).parse(req.query);
     const w = new Where();
     if (p.q) { const m = w.param(likePattern(p.q)); w.add(`(u.name ilike ${m} or coalesce(u.email,'') ilike ${m} or coalesce(u.jellyfin_username,'') ilike ${m})`); }
@@ -174,7 +174,8 @@ export function adminUserRoutes(app: FastifyInstance, ctx: Ctx) {
     if (p.status === 'locked') w.add('u.disabled');
     if (p.status === 'expiring') w.add("u.access_until between now() and now() + interval '7 days'");
     if (p.status === 'deleting') w.add('u.deletion_at is not null');
-    if (p.lastActive) w.add("u.last_seen >= now() - make_interval(days => ?)", Number(p.lastActive));
+    if (p.lastActive === '90+') w.add("(u.last_seen is null or u.last_seen < now() - interval '90 days')");
+    else if (p.lastActive) w.add("u.last_seen >= now() - make_interval(days => ?)", Number(p.lastActive));
     const base = p.status === 'pending'
       ? `select a.id, a.name, a.email, null::text role, false disabled, null::text jellyfin_username, null::int seerr_user_id, a.requested_at created_at,
                 null::timestamptz last_seen, null::timestamptz access_until, null::text locked_reason, null::timestamptz deletion_at, 0 profiles, 0 devices, true pending
@@ -184,7 +185,7 @@ export function adminUserRoutes(app: FastifyInstance, ctx: Ctx) {
                 (select count(*) from profiles x where x.user_id = u.id)::int profiles,
                 (select count(*) from devices d where d.user_id = u.id)::int devices, false pending
            from users u`;
-    const order = orderBy({ name: 'lower(u.name)', email: "lower(coalesce(u.email,''))", role: 'u.role', status: 'u.disabled', lastSeen: 'u.last_seen', createdAt: 'u.created_at', accessUntil: 'u.access_until' }, p.sort, p.dir, 'u.created_at, u.id');
+    const order = orderBy({ name: 'lower(u.name)', email: "lower(coalesce(u.email,''))", role: 'u.role', status: 'u.disabled', lastSeen: 'u.last_seen', createdAt: 'u.created_at', accessUntil: 'u.access_until', profiles: 'u.profiles', devices: 'u.devices' }, p.sort, p.dir, 'u.created_at, u.id');
     const total = Number((await ctx.db.query<{ c: string }>(`select count(*) c from (${base}) u ${w.sql}`, w.params)).rows[0]!.c);
     const r = await ctx.db.query(`select * from (${base}) u ${w.sql} ${order} limit ${p.limit ?? 1000} offset ${p.offset ?? 0}`, w.params);
     return { users: r.rows, total };

@@ -53,7 +53,7 @@ describe('approval queue', () => {
     expect(c.value.startsWith(`${rows[0].id}.`)).toBe(true);
     const n = await approvalNotices();
     expect(n).toHaveLength(1);
-    expect(n[0]).toMatchObject({ link: '/admin/users?tab=pending', params: { name: 'Person pend1' } });
+    expect(n[0]).toMatchObject({ link: '/admin/users?tab=approvals', params: { name: 'Person pend1' } });
     expect(await pendingState(c.value)).toEqual({ state: 'pending' });
     expect((await env.pool.query("select 1 from users where authentik_sub='pend1'")).rowCount).toBe(0);
   });

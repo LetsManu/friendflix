@@ -8,7 +8,7 @@ const dict: Translation<typeof de> = {
   loadFailed: 'Impossibile caricare i dati. Controlla la connessione e riprova.',
   never: 'mai',
   tabs: { label: 'Gestione utenti', users: 'Utenti', approvals: 'In attesa di approvazione', approvalsN: 'In attesa di approvazione ({n})', invites: 'Inviti' },
-  access: { label: 'Accesso fino al', choose: 'Accesso fino al …', p30: '+30 giorni', p90: '+90 giorni', unlimited: 'Illimitato', date: 'Scegli una data …', day: 'Accesso fino al (data)' },
+  access: { label: 'Accesso fino al', choose: 'Accesso fino al …', p30: '+30 giorni da oggi', p90: '+90 giorni da oggi', unlimited: 'Illimitato', date: 'Scegli una data …', day: 'Accesso fino al (data)' },
   users: {
     searchPlaceholder: 'Cerca nome, e-mail o login …',
     col: {
@@ -21,7 +21,7 @@ const dict: Translation<typeof de> = {
     allRoles: 'Tutti i ruoli',
     allStatus: 'Tutti',
     anyTime: 'In qualsiasi momento',
-    lastActive: { d7: 'Negli ultimi 7 giorni', d30: 'Negli ultimi 30 giorni', d90: 'Negli ultimi 90 giorni' },
+    lastActive: { d7: 'Negli ultimi 7 giorni', d30: 'Negli ultimi 30 giorni', d90: 'Negli ultimi 90 giorni', inactive90: 'Inattivi da 90+ giorni' },
     active: 'Attivo',
     locked: 'Bloccato',
     pending: 'In attesa di approvazione',
@@ -66,6 +66,8 @@ const dict: Translation<typeof de> = {
     signOutNote: 'Tutti i dispositivi vengono disconnessi e i download offline perdono la licenza.',
     done: { one: '{n} account modificato.', many: '{n} account modificati.', other: '{n} account modificati.' },
     lastAdmin: 'Non è possibile: non resterebbe nessun admin attivo.',
+    partial: 'Alcuni account potrebbero essere già stati modificati: la lista è stata ricaricata.',
+    adminsNote: 'Tra cui admin: {names}.',
   },
   approvals: {
     intro: 'Queste persone hanno effettuato l’accesso senza invito e attendono la tua decisione.',
@@ -81,6 +83,7 @@ const dict: Translation<typeof de> = {
     messageHint: 'La persona lo vede nella sua pagina di attesa.',
     cancel: 'Annulla',
     rejected: '{name} rifiutato.',
+    alreadyHandled: '{name} è già stato gestito.',
   },
   roles: {
     intro: 'Cosa può fare ogni ruolo. Le modifiche valgono solo dopo «Salva» e si applicano anche agli account esistenti.',
