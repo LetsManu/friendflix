@@ -51,6 +51,31 @@ function withFileSecrets(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   return out;
 }
 
+let warnedPublicUrlPath = false;
+
+/**
+ * Env layer only: an existing install whose PUBLIC_URL carries a path, query, fragment or credentials keeps starting with its origin
+ * (FriendFlix only runs at the root), with one warning that never echoes the raw value. Saved values (DB, wizard) stay strict
+ * (publicUrlSchema rejects them with origin_only). The settings resolver's env layer uses the same step.
+ */
+export function withOriginPublicUrl(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  const raw = env.PUBLIC_URL;
+  if (!raw) return env;
+  let u: URL;
+  try {
+    u = new URL(raw);
+  } catch {
+    return env; // the schema reports it
+  }
+  if (u.protocol !== 'http:' && u.protocol !== 'https:') return env;
+  if (u.pathname === '/' && !u.search && !u.hash && !u.username && !u.password) return env;
+  if (!warnedPublicUrlPath) {
+    warnedPublicUrlPath = true;
+    console.warn(`PUBLIC_URL has a path, query or credentials; using its origin ${u.origin} (FriendFlix only runs at the root)`);
+  }
+  return { ...env, PUBLIC_URL: u.origin };
+}
+
 const opt = z.string().optional().transform((v) => (v ? v : undefined));
 /** compose passes '' for an unset variable */
 const emptyAsUnset = (v: unknown) => (v === '' ? undefined : v);
@@ -107,9 +132,8 @@ export const configSchema = z.object({
   OIDC_CLIENT_SECRET: setupRequired(z.string()),
   /** which media server implementation backs this instance (one per instance), see docs/architecture.md "Media server seam" */
   MEDIA_SERVER: z.enum(MEDIA_SERVERS).default('jellyfin'),
-  /** owned by the media module (mediaSettings(): required once setup is complete when MEDIA_SERVER=jellyfin) */
-  JELLYFIN_URL: MEDIA_FIELDS.JELLYFIN_URL,
-  JELLYFIN_ADMIN_API_KEY: MEDIA_FIELDS.JELLYFIN_ADMIN_API_KEY,
+  /** the media server kinds' own fields (Jellyfin: JELLYFIN_URL, JELLYFIN_ADMIN_API_KEY), owned by media/index.ts; see mediaSettings() */
+  ...MEDIA_FIELDS,
   /** the request service (old names SEERR_URL / SEERR_API_KEY still work, see RENAMED_ENV) */
   REQUESTS_URL: setupRequired(z.string().url()),
   REQUESTS_API_KEY: setupRequired(z.string()),
@@ -211,7 +235,7 @@ export const configSchema = z.object({
 export type Config = z.infer<typeof configSchema>;
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
-  const c = configSchema.parse(withFileSecrets(withRenamedEnv(env)));
+  const c = configSchema.parse(withOriginPublicUrl(withFileSecrets(withRenamedEnv(env))));
   // yellow must come before red: a warn level at or above the critical one would never show, so both fall back to the defaults
   if (c.HEALTH_DISK_WARN_PCT >= c.HEALTH_DISK_CRIT_PCT) {
     console.warn(`HEALTH_DISK_WARN_PCT (${c.HEALTH_DISK_WARN_PCT}) must be below HEALTH_DISK_CRIT_PCT (${c.HEALTH_DISK_CRIT_PCT}); using 85 / 95`);

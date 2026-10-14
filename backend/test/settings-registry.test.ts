@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { configSchema, loadConfig } from '../src/config.js';
 import { mediaSettings } from '../src/media/index.js';
 import { BOOTSTRAP_KEYS, BUILD_KEYS, ENV_ONLY_KEYS, SETTINGS, parseEnvValue, publicUrlSchema, settingDef } from '../src/settings/registry.js';
@@ -115,9 +115,29 @@ describe('loadConfig with bootstrap env only', () => {
   });
   it('validates a set value and normalises PUBLIC_URL', () => {
     expect(loadConfig({ ...BOOT, PUBLIC_URL: 'https://tv.example.com/' }).PUBLIC_URL).toBe('https://tv.example.com');
-    expect(() => loadConfig({ ...BOOT, PUBLIC_URL: 'https://tv.example.com/ff' })).toThrow();
+    expect(() => loadConfig({ ...BOOT, PUBLIC_URL: 'ftp://tv.example.com' })).toThrow();
     expect(() => loadConfig({ ...BOOT, OIDC_ISSUER: 'not a url' })).toThrow();
     expect(() => loadConfig({ ...BOOT, WEBHOOK_SECRET: 'short' })).toThrow();
+  });
+});
+
+describe('PUBLIC_URL with a path in env', () => {
+  it('starts with the origin and warns once without the raw value; a save still rejects the path', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      expect(loadConfig({ ...BOOT, PUBLIC_URL: 'https://user:pw@tv.example.com/ff?x=1' }).PUBLIC_URL).toBe('https://tv.example.com');
+      expect(loadConfig({ ...BOOT, PUBLIC_URL: 'https://tv.example.com/ff' }).PUBLIC_URL).toBe('https://tv.example.com');
+      expect(warn).toHaveBeenCalledTimes(1);
+      const msg = String(warn.mock.calls[0]![0]);
+      expect(msg).toContain('https://tv.example.com');
+      expect(msg).not.toMatch(/\/ff|pw|x=1/);
+      expect(loadConfig({ ...BOOT, PUBLIC_URL: 'https://tv.example.com' }).PUBLIC_URL).toBe('https://tv.example.com');
+      expect(warn).toHaveBeenCalledTimes(1);
+    } finally {
+      warn.mockRestore();
+    }
+    expect(parseEnvValue(def('PUBLIC_URL'), 'https://tv.example.com/ff')).toEqual({ ok: false, code: 'origin_only' });
+    expect(configSchema.shape.PUBLIC_URL.safeParse('https://tv.example.com/ff').success).toBe(false);
   });
 });
 

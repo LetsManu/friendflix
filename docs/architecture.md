@@ -254,7 +254,7 @@ New files only:
 Shared lines to touch:
 
 - `backend/src/media/index.ts`: add the kind to `MEDIA_SERVERS` and one line to `factories` (plus its import; the factory gets `cfg`, `kv`, the shared `db` pool and `encKey`); refuse unsupported settings in `mediaConfigProblems()` if needed.
-- `backend/src/media/index.ts` again: the kind's fields in `MEDIA_FIELDS` and its entries in `mediaSettings()` (`runRequired` for its kind); `backend/src/config.ts`: one schema line per field (`KEY: MEDIA_FIELDS.KEY`).
+- `backend/src/media/index.ts` again: the kind's fields in `MEDIA_FIELDS` (`config.ts` spreads them into its schema) and its entries in `mediaSettings()` (`runRequired` for its kind).
 - `gateway/src/upstream/index.ts`: one entry in `UPSTREAMS` (plus its import).
 
 Everything else (routes, jobs, the web, the gateway core) works through the interface.

@@ -17,8 +17,8 @@ export const MEDIA_SERVERS = ['jellyfin'] as const;
 export type MediaServerKind = (typeof MEDIA_SERVERS)[number];
 
 /**
- * The config fields of every media server kind (config.ts puts them into its schema). They live here, not in config.ts, so a fork adds its
- * fields, settings and factory in this one file; config.ts imports this module, so nothing here may read config.ts at load time.
+ * The config fields of every media server kind (config.ts spreads them into its schema). They live here, not in config.ts, so a fork adds
+ * its fields, settings and factory in this one file; config.ts imports this module, so nothing here may read config.ts at load time.
  */
 export const MEDIA_FIELDS = {
   JELLYFIN_URL: z.preprocess((v) => (v === '' ? undefined : v), z.string().url().optional()), // compose passes '' when unset
