@@ -52,6 +52,19 @@ export interface SettingView {
 /** The server group's keys whose values are never shown (they hold credentials). */
 const HIDDEN_VALUES: ReadonlySet<string> = new Set([...BOOTSTRAP_KEYS, 'METRICS_TOKEN']);
 const isSet = (v: unknown) => v !== undefined && v !== null && v !== '';
+/** a URL value as shown: without userinfo, and ntfy's `auth` query token replaced (they are credentials inside a non-secret value) */
+function shownUrl(v: string): string {
+  try {
+    const u = new URL(v);
+    if (!u.username && !u.password && !u.searchParams.has('auth')) return v;
+    u.username = '';
+    u.password = '';
+    if (u.searchParams.has('auth')) u.searchParams.set('auth', 'redacted');
+    return u.toString();
+  } catch {
+    return v;
+  }
+}
 const envNames = (key: string, legacy: readonly string[] = []) => [key, ...legacy].flatMap((n) => [n, `${n}_FILE`]);
 
 export async function settingsView(ctx: Ctx): Promise<{ rev: number; pendingRestart: string[]; groups: Array<{ id: SettingGroup | 'server'; items: SettingView[] }> }> {
@@ -66,7 +79,7 @@ export async function settingsView(ctx: Ctx): Promise<{ rev: number; pendingRest
     const set = isSet(v);
     const row = rows.get(d.key);
     const view: SettingView = {
-      key: d.key, kind: d.kind, source: sources[d.key] ?? 'unset', value: d.secret || !set ? null : toStored(d, v), set, apply: d.apply,
+      key: d.key, kind: d.kind, source: sources[d.key] ?? 'unset', value: d.secret || !set ? null : d.kind === 'url' ? shownUrl(String(v)) : toStored(d, v), set, apply: d.apply,
       restartPending: pending.includes(d.key), invalid: invalid.has(d.key), envNames: envNames(d.key, d.legacyEnv), updatedAt: row?.updatedAt ?? null,
     };
     if (d.hint === 'last4' && set) {
@@ -99,36 +112,59 @@ export async function settingsView(ctx: Ctx): Promise<{ rev: number; pendingRest
 
 /** Settings that hold a URL the backend calls (Discord and the Portainer webhook are secrets whose value is the URL). */
 const URL_KEYS: ReadonlySet<string> = new Set([...SETTINGS.filter((d) => d.kind === 'url').map((d) => d.key), 'DISCORD_WEBHOOK_URL', 'PORTAINER_WEBHOOK_URL']);
+/** an http(s) URL without userinfo (credentials belong in their own secret setting, never in a URL shown in Admin -> Settings) */
 const httpUrl = (v: unknown) => {
   try {
-    return ['http:', 'https:'].includes(new URL(String(v)).protocol);
+    const u = new URL(String(v));
+    return ['http:', 'https:'].includes(u.protocol) && !u.username && !u.password;
   } catch {
     return false;
   }
 };
-/** probes that send a stored secret: a changed URL of their group redirects that secret */
-const CREDENTIAL_PROBES: ReadonlySet<ProbeId> = new Set(SETTINGS.filter((d) => d.secret && d.probe).map((d) => d.probe!));
-const isDestination = (d: SettingDef) => d.kind === 'url' && d.probe !== undefined && CREDENTIAL_PROBES.has(d.probe);
 
 /**
- * Keys whose change needs a recent re-authentication on the admin route: secrets, ADMIN_GROUP, OIDC_* and AUTHENTIK_*, and the URL a
- * saved secret is sent to (JELLYFIN_URL, REQUESTS_URL, PORTAINER_URL): changing it alone would hand the saved key to the new host.
+ * Every stored credential and the settings that decide where the backend sends it. Changing a destination while the credential stays
+ * the saved one (from env, _FILE or the database) hands that credential to the new host, so it needs a recent re-authentication.
+ * The media module's secrets go to its URL settings (Task 12 kinds included). Secrets not listed here go to fixed hosts or nowhere:
+ * see NO_DESTINATION (a test checks that every secret of the registry is in exactly one of the two).
  */
+const mediaDefs = SETTINGS.filter((d) => d.group === 'media');
+export const CREDENTIAL_DESTINATIONS: Readonly<Record<string, readonly string[]>> = {
+  ...Object.fromEntries(mediaDefs.filter((d) => d.secret).map((d) => [d.key, mediaDefs.filter((u) => u.kind === 'url').map((u) => u.key)])),
+  REQUESTS_API_KEY: ['REQUESTS_URL'],
+  AUTHENTIK_API_TOKEN: ['AUTHENTIK_URL'],
+  PORTAINER_API_KEY: ['PORTAINER_URL'],
+  OIDC_CLIENT_SECRET: ['OIDC_ISSUER'], // the token endpoint comes from the issuer's discovery
+};
+/** secrets that go to a fixed host (TMDB, OMDb, GitHub), are their own URL (Discord, Portainer webhook) or never leave (inbound, VAPID) */
+export const NO_DESTINATION: readonly string[] = ['TMDB_API_KEY', 'OMDB_API_KEY', 'GITHUB_TOKEN', 'DISCORD_WEBHOOK_URL', 'PORTAINER_WEBHOOK_URL',
+  'WEBHOOK_SECRET', 'VAPID_PRIVATE_KEY'];
+const DESTINATIONS: ReadonlySet<string> = new Set(Object.values(CREDENTIAL_DESTINATIONS).flat());
+/** non-secret keys whose change needs re-authentication: the admin group, and ntfy (every user's topic and notification text goes there) */
+const REAUTH_KEYS: ReadonlySet<string> = new Set(['ADMIN_GROUP', 'NTFY_URL', 'NTFY_BASE_URL']);
+
+/** Keys whose saving needs a recent re-authentication: secrets, OIDC_* / AUTHENTIK_*, REAUTH_KEYS and every credential destination. */
 export function needsReauth(keys: readonly string[]): boolean {
   return keys.some((k) => {
     const d = settingDef(k);
-    return Boolean(d && (d.secret || k === 'ADMIN_GROUP' || /^(OIDC|AUTHENTIK)_/.test(k) || isDestination(d)));
+    return Boolean(d && (d.secret || REAUTH_KEYS.has(k) || /^(OIDC|AUTHENTIK)_/.test(k) || DESTINATIONS.has(k)));
   });
 }
 
-/** A test sends the saved secret of a group to a changed URL (the candidate secret was not typed in). */
-function testRedirectsSavedSecret(cfg: Config, values: Record<string, unknown>): boolean {
-  const c = cfg as Record<string, unknown>;
-  return Object.entries(values).some(([k, v]) => {
-    const d = settingDef(k);
-    if (!d || !isDestination(d) || v === undefined || String(v ?? '') === String(c[k] ?? '')) return false;
-    return SETTINGS.some((s) => s.secret && s.probe === d.probe && isSet(c[s.key]) && !isSet(values[s.key]));
-  });
+/** The candidate sends a saved credential to a changed destination (decided on the final candidate, after locked keys were dropped). */
+export function redirectsSavedCredential(current: Config, next: Config): boolean {
+  const cur = current as Record<string, unknown>, nxt = next as Record<string, unknown>;
+  return Object.entries(CREDENTIAL_DESTINATIONS).some(([cred, dests]) =>
+    isSet(nxt[cred]) && nxt[cred] === cur[cred] && dests.some((d) => String(nxt[d] ?? '') !== String(cur[d] ?? '')));
+}
+
+/**
+ * The admin route's re-authentication rule for a save (`test: false`) or a Test (`test: true`): a save of a sensitive key, or any
+ * candidate that would send a saved credential to a new host. A Test with its own typed credential needs none.
+ */
+export function reauthNeeded(ctx: Ctx, values: Record<string, unknown>, opts: { test: boolean }): boolean {
+  if (!opts.test && needsReauth(Object.keys(values))) return true;
+  return redirectsSavedCredential(ctx.cfg, candidate(ctx, values, { skipLocked: true }).cfg);
 }
 
 interface Candidate { errors: Record<string, string>; cfg: Config; changes: Record<string, unknown | null> }
@@ -179,9 +215,9 @@ function candidate(ctx: Ctx, values: Record<string, unknown>, opts: { allowedKey
     if (typeof rr === 'function' ? rr(cfg) : rr) errors[key] = 'required';
   }
   // yellow must come before red (resolveConfig would silently fall back to 85 / 95)
-  if (('HEALTH_DISK_WARN_PCT' in changes || 'HEALTH_DISK_CRIT_PCT' in changes) && cfg.HEALTH_DISK_WARN_PCT >= cfg.HEALTH_DISK_CRIT_PCT) {
-    errors.HEALTH_DISK_WARN_PCT ??= 'warn_above_critical';
-  }
+  // reported on the level that was submitted (the warn level when both were)
+  const level = 'HEALTH_DISK_WARN_PCT' in changes ? 'HEALTH_DISK_WARN_PCT' : 'HEALTH_DISK_CRIT_PCT';
+  if (level in changes && cfg.HEALTH_DISK_WARN_PCT >= cfg.HEALTH_DISK_CRIT_PCT) errors[level] ??= 'warn_above_critical';
   return { errors, cfg, changes };
 }
 
@@ -261,7 +297,7 @@ export function adminSettingsRoutes(app: FastifyInstance, ctx: Ctx) {
 
   app.put('/api/admin/settings', saving, async (req, reply) => {
     const b = z.object({ values: valuesSchema, force: z.boolean().optional() }).parse(req.body);
-    if (needsReauth(Object.keys(b.values)) && !recentlyAuthenticated(req.session!, REAUTH_WINDOW_S)) return reply.code(401).send(reauthRequired);
+    if (reauthNeeded(ctx, b.values, { test: false }) && !recentlyAuthenticated(req.session!, REAUTH_WINDOW_S)) return reply.code(401).send(reauthRequired);
     const r = await saveWithProbes(ctx, b.values, { force: b.force ?? false, actor: req.user!.id });
     if ('errors' in r) return reply.code(400).send({ error: 'invalid_settings', errors: r.errors });
     if ('probe' in r) return reply.code(400).send({ error: 'probe_failed', group: r.group, probe: r.probe });
@@ -271,7 +307,7 @@ export function adminSettingsRoutes(app: FastifyInstance, ctx: Ctx) {
   app.post('/api/admin/settings/test', probing, async (req, reply) => {
     const b = z.object({ group: z.enum(SETTING_GROUPS as [SettingGroup, ...SettingGroup[]]), values: valuesSchema.optional() }).parse(req.body);
     const values = b.values ?? {};
-    if (testRedirectsSavedSecret(ctx.cfg, values) && !recentlyAuthenticated(req.session!, REAUTH_WINDOW_S)) return reply.code(401).send(reauthRequired);
+    if (reauthNeeded(ctx, values, { test: true }) && !recentlyAuthenticated(req.session!, REAUTH_WINDOW_S)) return reply.code(401).send(reauthRequired);
     const r = await testGroup(ctx, b.group, values);
     if ('noProbe' in r) return reply.code(400).send({ error: 'no_probe' });
     if ('errors' in r) return reply.code(400).send({ error: 'invalid_settings', errors: r.errors });

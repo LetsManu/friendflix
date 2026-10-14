@@ -6,8 +6,8 @@ import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { encrypt } from '../src/crypto.js';
 import { pushEnabled } from '../src/push.js';
-import { generateVapidPair, generateWebhookSecret } from '../src/routes/adminSettings.js';
-import { SETTINGS } from '../src/settings/registry.js';
+import { CREDENTIAL_DESTINATIONS, generateVapidPair, generateWebhookSecret, NO_DESTINATION } from '../src/routes/adminSettings.js';
+import { SETTINGS, settingDef } from '../src/settings/registry.js';
 import { ADMIN, cfg, ENC_KEY, fakeHttp, makeEnv, type Handler, type TestEnv } from './helpers.js';
 
 // Admin -> Settings API (Block 25, spec Part I): write-only secrets, locked env keys, validation, probes against the candidate config,
@@ -29,6 +29,8 @@ function harness(opts: { settingsEnv?: NodeJS.ProcessEnv; logs?: string[] } = {}
     admin: undefined as unknown as Sess,
     /** the probes' HTTP world (ctx.fetchImpl), replaceable per test */
     probe: {} as Record<string, Handler>,
+    /** every host a probe called */
+    hosts: [] as string[],
     as: (s: Sess, method: string, url: string, payload?: unknown) =>
       h.env.app.inject({ method: method as 'GET', url, cookies: s.cookies, headers: { 'x-csrf-token': s.csrf }, payload: payload as object }),
     /** stamps a re-authentication on the admin session (phase 2's reauthAt) */
@@ -43,7 +45,12 @@ function harness(opts: { settingsEnv?: NodeJS.ProcessEnv; logs?: string[] } = {}
     const stream = opts.logs ? { write: (m: string) => { opts.logs!.push(m); } } : undefined;
     h.env = await makeEnv({}, {
       settingsEnv: opts.settingsEnv,
-      ctxPatch: (c) => { c.fetchImpl = (async (i: RequestInfo | URL, init?: RequestInit) => fakeHttp(h.probe)(i, init)) as typeof fetch; },
+      ctxPatch: (c) => {
+        c.fetchImpl = (async (i: RequestInfo | URL, init?: RequestInit) => {
+          h.hosts.push(new URL(i instanceof Request ? i.url : String(i)).host);
+          return fakeHttp(h.probe)(i, init);
+        }) as typeof fetch;
+      },
       ...(stream ? { logger: { stream, level: 'trace' } } : {}),
     });
     h.admin = await h.env.login(ADMIN);
@@ -60,6 +67,7 @@ describe('settings with values from env, a secret file and the database', () => 
       OIDC_CLIENT_SECRET: SECRETS.oidcEnv,
       JELLYFIN_ADMIN_API_KEY_FILE: join(dir, 'jf'),
       PREVIEW_WARM: 'false',
+      NTFY_URL: 'https://ntfy.example.com/friendflix?auth=ntfy-token-FFFF9955',
       DATABASE_URL: `postgres://friendflix:${SECRETS.dbPass}@postgres:5432/friendflix`,
       METRICS_TOKEN: SECRETS.metrics,
     },
@@ -93,6 +101,9 @@ describe('settings with values from env, a secret file and the database', () => 
     expect(items.get('APP_ENC_KEY')).toMatchObject({ group: 'server', set: true, value: null });
     expect(items.get('METRICS_TOKEN')).toMatchObject({ group: 'server', source: 'env', set: true, value: null });
     expect(items.get('MEDIA_SERVER')).toMatchObject({ group: 'server', value: 'jellyfin' });
+    // a credential inside a shown URL is redacted
+    expect(items.get('NTFY_URL')).toMatchObject({ source: 'env', value: 'https://ntfy.example.com/friendflix?auth=redacted' });
+    expect(text).not.toContain('ntfy-token-FFFF9955');
     expect(body.groups.map((g: any) => g.id).at(-1)).toBe('server');
     expect(body.rev).toEqual(expect.any(Number));
     expect(body.pendingRestart).toEqual([]);
@@ -120,7 +131,7 @@ describe('settings with values from env, a secret file and the database', () => 
   it('import-env all moves exactly the env-set settings (env keeps winning) and is audited with key names', async () => {
     const r = await h.as(h.admin, 'POST', '/api/admin/settings/import-env', { keys: 'all' });
     expect(r.statusCode).toBe(200);
-    expect([...r.json().moved].sort()).toEqual(['JELLYFIN_ADMIN_API_KEY', 'OIDC_CLIENT_SECRET', 'PREVIEW_WARM']);
+    expect([...r.json().moved].sort()).toEqual(['JELLYFIN_ADMIN_API_KEY', 'NTFY_URL', 'OIDC_CLIENT_SECRET', 'PREVIEW_WARM']);
     const rows = (await h.env.pool.query<{ key: string; value: unknown; enc: string | null }>("select key, value, enc from settings where key in ('OIDC_CLIENT_SECRET','PREVIEW_WARM')")).rows;
     expect(rows.find((x) => x.key === 'OIDC_CLIENT_SECRET')).toMatchObject({ value: null, enc: expect.any(String) });
     expect(rows.find((x) => x.key === 'PREVIEW_WARM')).toMatchObject({ value: false, enc: null });
@@ -148,7 +159,8 @@ describe('PUT /api/admin/settings', () => {
   it('a secret without recent re-authentication -> 401 reauth_required; within 10 min -> 200', async () => {
     const hook = 'https://discord.com/api/webhooks/1/secret-token-XYZ';
     await h.reauth(h.admin, Date.now() - 11 * 60_000);
-    for (const values of [{ DISCORD_WEBHOOK_URL: hook }, { ADMIN_GROUP: 'other' }, { AUTHENTIK_ENROLL_FLOW: 'x' }, { OIDC_CLIENT_ID: 'x' }, { JELLYFIN_URL: 'http://evil.example.com' }]) {
+    for (const values of [{ DISCORD_WEBHOOK_URL: hook }, { ADMIN_GROUP: 'other' }, { AUTHENTIK_ENROLL_FLOW: 'x' }, { OIDC_CLIENT_ID: 'x' }, { JELLYFIN_URL: 'http://evil.example.com' },
+      { NTFY_URL: 'https://evil.example.com/t' }, { NTFY_BASE_URL: 'https://evil.example.com' }]) {
       const r = await h.put(values);
       expect(r.statusCode).toBe(401);
       expect(r.json()).toEqual({ error: 'reauth_required' });
@@ -176,7 +188,9 @@ describe('PUT /api/admin/settings', () => {
         OIDC_CLIENT_SECRET: 'required', JELLYFIN_URL: 'required', HEALTH_DISK_WARN_PCT: 'warn_above_critical',
       },
     });
-    expect((await h.put({ HEALTH_DISK_CRIT_PCT: 85 })).json().errors).toEqual({ HEALTH_DISK_WARN_PCT: 'warn_above_critical' });
+    expect((await h.put({ HEALTH_DISK_CRIT_PCT: 85 })).json().errors).toEqual({ HEALTH_DISK_CRIT_PCT: 'warn_above_critical' });
+    // credentials never go into a URL setting (they would be shown in Admin -> Settings)
+    expect((await h.put({ NTFY_URL: 'https://user:pass@ntfy.example.com/t' })).json().errors).toEqual({ NTFY_URL: 'invalid_url' });
     expect(h.env.ctx.cfg.OIDC_CLIENT_SECRET).toBe(cfg.OIDC_CLIENT_SECRET);
     // a valid change of both levels together is fine; '' resets a non-required key to its default
     expect((await h.put({ HEALTH_DISK_WARN_PCT: 90, HEALTH_DISK_CRIT_PCT: 97 })).statusCode).toBe(200);
@@ -339,6 +353,59 @@ describe('POST /api/admin/settings/generate', () => {
   });
 });
 
+describe('saved credentials never go to a new host without re-authentication', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'ff-settings-'));
+  writeFileSync(join(dir, 'requests'), 'file-requests-key-GGGG\n');
+  const h = harness({ settingsEnv: { REQUESTS_API_KEY_FILE: join(dir, 'requests'), JELLYFIN_ADMIN_API_KEY: 'env-jf-key-HHHH', AUTHENTIK_API_TOKEN: 'env-ak-token-IIII' } });
+  const EVIL = 'evil.example.com';
+  const stale = () => h.reauth(h.admin, Date.now() - 20 * 60_000);
+  const test = (group: string, values: Record<string, unknown>) => h.as(h.admin, 'POST', '/api/admin/settings/test', { group, values });
+
+  it('every secret of the registry is a credential with destinations or one without (and every destination is a URL setting)', () => {
+    const secrets = SETTINGS.filter((d) => d.secret).map((d) => d.key).sort();
+    expect([...Object.keys(CREDENTIAL_DESTINATIONS), ...NO_DESTINATION].sort()).toEqual(secrets);
+    for (const dests of Object.values(CREDENTIAL_DESTINATIONS)) {
+      expect(dests.length).toBeGreaterThan(0);
+      for (const d of dests) expect(settingDef(d)?.kind).toBe('url');
+    }
+  });
+
+  it('a typed dummy for an env/_FILE credential does not unlock a new destination (Test and PUT)', async () => {
+    await h.env.ctx.settings.save({ AUTHENTIK_URL: 'https://auth.example.com' }, null);
+    await stale();
+    h.hosts.length = 0;
+    h.probe = { 'GET .*': () => ({ json: { total: 0 } }) };
+    for (const [group, values] of [
+      ['requests', { REQUESTS_URL: `http://${EVIL}`, REQUESTS_API_KEY: 'dummy' }],
+      ['media', { JELLYFIN_URL: `http://${EVIL}`, JELLYFIN_ADMIN_API_KEY: 'dummy' }],
+      ['signin', { AUTHENTIK_URL: `https://${EVIL}`, AUTHENTIK_API_TOKEN: 'dummy' }],
+    ] as const) {
+      const r = await test(group, values);
+      expect(r.statusCode, group).toBe(401);
+      expect(r.json()).toEqual({ error: 'reauth_required' });
+      expect((await h.put(values)).statusCode, group).toBe(401);
+    }
+    expect(h.hosts).not.toContain(EVIL);
+  });
+
+  it.each(Object.entries(CREDENTIAL_DESTINATIONS).flatMap(([cred, dests]) => dests.map((d) => [cred, d] as const)))('%s -> %s', async (cred, dest) => {
+    // the credential is saved (env or database) and the destination changes
+    const c = h.env.ctx.cfg as Record<string, unknown>;
+    if (!c[cred]) await h.env.ctx.settings.save({ [cred]: `saved-${cred}` }, null);
+    if (cred === 'PORTAINER_API_KEY') await h.env.ctx.settings.save({ PORTAINER_URL: 'https://portainer.example.com', PORTAINER_STACK_ID: '1' }, null);
+    await stale();
+    h.hosts.length = 0;
+    h.probe = { 'GET .*': () => ({ json: {} }) };
+    const group = settingDef(dest)!.group;
+    const url = `https://${EVIL}`;
+    expect((await h.put({ [dest]: url })).statusCode).toBe(401);
+    expect((await test(group, { [dest]: url })).statusCode).toBe(401);
+    expect(h.hosts).not.toContain(EVIL);
+    // the admin typed the credential for the new host themselves: a Test needs no re-authentication
+    if (h.env.ctx.settings.sources()[cred] !== 'env') expect((await test(group, { [dest]: url, [cred]: 'typed-credential' })).statusCode).toBe(200);
+  });
+});
+
 describe('access', () => {
   const h = harness();
 
@@ -359,6 +426,15 @@ describe('access', () => {
     }
     expect((await h.env.app.inject({ url: '/api/admin/settings' })).statusCode).toBe(401);
   });
+
+  it('state-changing routes need the CSRF token', async () => {
+    for (const [url, body] of [['/api/admin/settings', { values: { CAST_ENABLED: false } }], ['/api/admin/settings/test', { group: 'media' }],
+      ['/api/admin/settings/import-env', { keys: 'all' }], ['/api/admin/settings/generate', { what: 'webhookSecret' }]] as const) {
+      const r = await h.env.app.inject({ method: url === '/api/admin/settings' ? 'PUT' : 'POST', url, cookies: h.admin.cookies, payload: body });
+      expect(r.statusCode, url).toBe(403);
+      expect(r.json()).toEqual({ error: 'csrf' });
+    }
+  });
 });
 
 describe('logs', () => {
@@ -374,6 +450,10 @@ describe('logs', () => {
     await h.put({ JELLYFIN_ADMIN_API_KEY: secret }); // 400 probe unreachable
     await h.as(h.admin, 'POST', '/api/admin/settings/test', { group: 'media', values: { JELLYFIN_ADMIN_API_KEY: secret } });
     await h.put({ DISCORD_WEBHOOK_URL: `https://discord.com/api/webhooks/1/${secret}` }); // 200
+    // a malformed body: the parser's message quotes the input, the 400 must not log it
+    const bad = await h.env.app.inject({ method: 'PUT', url: '/api/admin/settings', cookies: h.admin.cookies, headers: { 'x-csrf-token': h.admin.csrf, 'content-type': 'application/json' }, payload: `{"values":{"OIDC_CLIENT_SECRET":"${secret}"` });
+    expect(bad.statusCode).toBe(400);
+    expect(bad.body).not.toContain(secret);
     const save = h.env.ctx.settings.save;
     h.env.ctx.settings.save = async () => { throw new Error('database down'); };
     try {
