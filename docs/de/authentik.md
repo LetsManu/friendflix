@@ -37,7 +37,7 @@ Die komplette FriendFlix-Installation (Jellyfin, Wunsch-Dienst, `.env`, Nginx Pr
 | Gruppe | `friendflix-users` | optionale Zugriffsbeschränkung in Authentik | – (FriendFlix liest sie nicht) |
 | Authentifizierungs-Flow mit MFA | `default-authentication-flow` (angepasst) | MFA bei jeder Anmeldung | – |
 | Registrierungs-Flow (Enrollment) | `friendflix-enrollment` | Einladungen, die das Authentik-Konto gleich mit anlegen | `AUTHENTIK_ENROLL_FLOW` |
-| Service-Account + API-Token | `friendflix-invites` | Einladungen über die API anlegen; auf der Admin-Nutzerseite: Authentik-Nutzer finden, Zwei-Faktor-Stand zeigen, Passwort-Link senden | `AUTHENTIK_API_TOKEN`, `AUTHENTIK_URL` |
+| Service-Account + API-Token | `friendflix-invites` | Einladungen über die API anlegen; auf der Admin-Nutzerseite: Authentik-Nutzer finden, Zwei-Faktor-Stand zeigen, Passwort-Link senden; auf der Kontoseite: Namen ändern; Kontolöschung: Authentik-Nutzer deaktivieren | `AUTHENTIK_API_TOKEN`, `AUTHENTIK_URL` |
 | Wiederherstellungs-Flow mit E-Mail-Stage | `default-recovery-flow` | „Passwort vergessen“ per E-Mail und *Passwort-Link senden* durch den Admin (optional) | `AUTHENTIK_RECOVERY_FLOW` (Standard `default-recovery-flow`) |
 | Brand | Standard-Brand | Titel, Logo, Standard-Flows (optional) | – |
 
@@ -174,7 +174,7 @@ Updates: die Release Notes aller Versionen dazwischen lesen, `AUTHENTIK_TAG` anh
 
 [`deploy/authentik/friendflix-blueprint.yaml`](../../deploy/authentik/friendflix-blueprint.yaml) legt in einem Schritt an:
 
-- den Service-Account `friendflix-invites` mit genau den Berechtigungen, die das Portal braucht (Einladungen sowie Nutzersuche, Zwei-Faktor-Stand und Passwort-Link der Admin-Nutzerseite, siehe [§8.2](#82-rolle-mit-genau-diesen-globalen-berechtigungen)), und sein nicht ablaufendes API-Token `friendflix-invites-token`;
+- den Service-Account `friendflix-invites` mit genau den Berechtigungen, die das Portal braucht (Einladungen, Nutzersuche, Zwei-Faktor-Stand und Passwort-Link der Admin-Nutzerseite sowie Namensänderung und Deaktivieren für Kontoseite und Kontolöschung, siehe [§8.2](#82-rolle-mit-genau-diesen-globalen-berechtigungen)), und sein nicht ablaufendes API-Token `friendflix-invites-token`;
 - den Registrierungs-Flow `friendflix-enrollment` (Einladung → Benutzername/Passwort → Name/E-Mail → Nutzer anlegen → MFA einrichten → Login), siehe [§7](#7-registrierungs-flow-für-einladungen).
 
 Import: *Flows and Stages → Flows → Import* → **File upload** → Datei wählen → *Import*. Erneutes Importieren ist unbedenklich (Objekte werden über Name/Slug gefunden und aktualisiert).
@@ -357,7 +357,7 @@ Die Feld-Schlüssel sind wichtig: Die User-Write-Stage schreibt `username`, `nam
 
 ## 8. Service-Account und API-Token
 
-Das Backend ruft die Authentik-API mit `Authorization: Bearer <AUTHENTIK_API_TOKEN>` für Einladungen und für die Admin-Nutzerseite auf (*Admin → Nutzer →* eine Person: Authentik-Nutzer, Zwei-Faktor-Stand, *Passwort-Link senden*). Es bekommt nur die Rechte, die es wirklich braucht.
+Das Backend ruft die Authentik-API mit `Authorization: Bearer <AUTHENTIK_API_TOKEN>` für Einladungen, für die Admin-Nutzerseite (*Admin → Nutzer →* eine Person: Authentik-Nutzer, Zwei-Faktor-Stand, *Passwort-Link senden*), für die Kontoseite (*Mein Bereich → Konto*: Name, Zwei-Faktor-Stand) und für die Kontolöschung (der Authentik-Nutzer wird deaktiviert) auf. Es bekommt nur die Rechte, die es wirklich braucht.
 
 ### 8.1 Service-Account
 
@@ -380,8 +380,11 @@ Seit 2025.12 vergibt Authentik Berechtigungen nur noch über **Rollen**. *Direct
 | Can view Flow Stage Binding | `authentik_flows.view_flowstagebinding` | `GET /api/v3/flows/bindings/?target=<Flow-pk>` (findet die E-Mail-Stage des Wiederherstellungs-Flows) |
 | Can view Email Stage | `authentik_stages_email.view_emailstage` | prüft Authentik beim Senden des Passwort-Links (ohne: „Email stage not found“) |
 | Reset Password | `authentik_core.reset_user_password` | `POST /api/v3/core/users/<pk>/recovery_email/` (*Passwort-Link senden*) |
+| Can change User | `authentik_core.change_user` | `PATCH /api/v3/core/users/<pk>/` mit `name` (jemand benennt sich auf der Kontoseite um) oder `is_active: false` (letzter Schritt einer Kontolöschung). FriendFlix ändert sonst nichts (Name, `is_active`). |
 
 Die Rolle dem Service-Account zuweisen (Nutzer → *Roles* → *Assign*, siehe [Authentik-Doku](https://docs.goauthentik.io/users-sources/user/user_basic_operations/#add-a-user-to-a-role)). **Kein** Superuser und nicht das Token deines Admins verwenden: Ein geleaktes Token könnte sonst alles in Authentik ändern.
+
+> **„Can change User“ gilt global.** Authentik vergibt das Recht für alle Nutzer, nicht nur für die Leute, die FriendFlix nutzen: Ein geleaktes Token könnte jedes Authentik-Konto umbenennen oder deaktivieren, auch Admins. FriendFlix selbst schickt nur `name` und `is_active`, und nur für den Authentik-Nutzer des jeweiligen Kontos, aber die Berechtigung reicht weiter. Wer das nicht will, lässt sie weg (Rolle enger fassen oder die Zeile vor dem Import aus dem Blueprint löschen). Dann meldet die Kontoseite beim Umbenennen „Die Anmeldeseite hat die Änderung nicht angenommen“, und eine Kontolöschung bleibt bei Bereinigungsschritt 6 stehen, bis du den Authentik-Nutzer von Hand deaktivierst (siehe [§8.4](#84-kontoseite-und-kontolöschung)).
 
 Ohne *Can view Flow* loggt das Backend `Authentik flow lookup failed` und legt die Einladung ohne Flow-Bindung an (funktioniert, ist aber weniger streng). Ohne *Can delete Invitation* bleiben benutzte Einladungen bis zum Ablauf stehen.
 
@@ -403,6 +406,26 @@ Die Codenamen oben sind gegen den Quellcode von Authentik 2026.8.3 geprüft (die
 | Expiring | aus, oder an mit Erinnerung zum Erneuern |
 
 Dann in der Zeile des Tokens auf das Kopier-Symbol klicken und den Schlüssel in `AUTHENTIK_API_TOKEN` eintragen. Mit dem Blueprint existiert das Token schon: nur kopieren.
+
+### 8.4 Kontoseite und Kontolöschung
+
+Jede Person verwaltet ihr Konto selbst unter *Mein Bereich → Konto* (`/me/account`, nur im Hauptprofil). Was dafür von Authentik gebraucht wird:
+
+- **Name:** Mit API-Token wird ein neuer Name zuerst in Authentik geschrieben (`name`, braucht *Can change User*), dann in FriendFlix. Ohne Token bleibt die Änderung in FriendFlix; die Anmeldung übernimmt den Namen nie zurück, also überschreibt ihn nichts.
+- **Die E-Mail-Adresse ist bis Phase 3 nur lesbar.** Die Kontoseite zeigt die Adresse, die FriendFlix bei der ersten Anmeldung gespeichert hat, und verlinkt zu Authentik („E-Mail auf der Anmeldeseite verwalten“). Eine dort geänderte Adresse wird weder in FriendFlix übernommen noch von FriendFlix erneut bestätigt. Ob Leute Namen oder E-Mail in Authentik überhaupt ändern dürfen, ist eine Authentik-Einstellung (*System → Settings*: *Allow users to change name* / *Allow users to change email*) *(nicht geprüft)*.
+- **Der Link zu den Nutzereinstellungen** („Auf der Anmeldeseite verwalten“, neben dem Zwei-Faktor-Stand und der E-Mail) ist der Ursprung von `OIDC_ISSUER` plus `/if/user/#/settings`, z. B. `https://auth.example.com/if/user/#/settings`. Er braucht kein API-Token. Er fehlt, wenn `OIDC_ISSUER` keine Authentik-Provider-URL ist (kein `/application/o/` im Pfad). Bis Phase 3 diese Bildschirme in FriendFlix bringt, ändern die Leute dort Passwort, Authenticator-App, Passkeys und Wiederherstellungscodes.
+- **Zwei-Faktor-Stand:** wie auf der Admin-Nutzerseite (drei Geräte-Rechte, [§8.2](#82-rolle-mit-genau-diesen-globalen-berechtigungen)); ohne API-Token zeigt die Seite „Nicht verfügbar“.
+- **Erneute Anmeldung:** Vor dem Löschen des Kontos meldet sich die Person noch einmal an. FriendFlix startet einen Login mit `prompt=login` und `max_age=0`, Authentik fragt also Passwort (und MFA) ab, auch wenn eine Sitzung besteht. Die Bestätigung gilt 10 Minuten ([§13](#13-sitzungen-und-abmelden)).
+- **Die Kontolöschung** deaktiviert den Authentik-Nutzer (`is_active: false`) als letzten von sechs Bereinigungsschritten, 7 Tage nach dem Antrag ([security.md](../security.md#account-deletion), englisch). In diesen 7 Tagen bleibt der Authentik-Nutzer aktiv, denn mit einer Anmeldung stellt die Person ihr Konto wieder her. FriendFlix löscht den Authentik-Nutzer nie.
+  - **Ohne API-Token** oder wenn der Authentik-Nutzer nicht gefunden wird, wird die Löschung trotzdem fertig (der Audit-Eintrag `user.deleted` zeigt `authentik: not_configured` oder `not_found`), aber der Authentik-Nutzer bleibt aktiv. Die Person kann sich dann wieder anmelden und landet als neue Person in der Warteschlange (*Warten auf Freigabe*). Deaktiviere oder lösche sie selbst in Authentik.
+  - **Ohne *Can change User*** scheitert Schritt 6 mit `authentik_token_rejected` und wird einmal pro Minute wiederholt, bis du das Recht ergänzt oder den Nutzer von Hand deaktivierst; *Admin → Nutzer*, Filter *Löschung ausstehend*, zeigt die Bereinigungszeile mit dem Fehler.
+
+**Den Authentik-Nutzer zu löschen, entscheidest du als Betreiber.** FriendFlix lässt ihn deaktiviert stehen; Benutzername und E-Mail bleiben damit belegt, und Authentiks eigenes Ereignisprotokoll behält seine Geschichte. Zum endgültigen Entfernen:
+
+1. Warten, bis FriendFlix die Löschung abgeschlossen hat: Die Person ist aus *Admin → Nutzer* verschwunden (auch unter *Löschung ausstehend*), und das Audit-Log hat `user.deleted` mit ihrem Pseudonym.
+2. In Authentik unter *Directory → Users* die Person über Benutzername oder E-Mail suchen (inaktive Nutzer stehen mit in der Liste; FriendFlix zeigt nur das Pseudonym, du musst also wissen, wer es war).
+3. Prüfen, dass es das richtige Konto ist und es inaktiv ist, dann *Delete*. Das entfernt in Authentik auch MFA-Geräte, Tokens und Sitzungen.
+4. Registriert sich dieselbe Person später neu, hat ihr neuer Authentik-Nutzer ein neues `sub`, und FriendFlix behandelt sie als neue Person (Einladung oder Warteschlange).
 
 ## 9. Werte für die FriendFlix-`.env`
 
@@ -479,6 +502,7 @@ Eigenen Namen und eigene Grafiken verwenden. Keine Logos, Farben oder Formulieru
 - **Authentik-Sitzung:** unabhängig davon. Endet die Portal-Sitzung, schickt `/auth/login` den Browser zu Authentik; ist die Authentik-Sitzung noch gültig, ist die Person ohne Eingabe wieder drin. Wie lange, hängt von *Session duration* der User-Login-Stage (`default-authentication-login`, Standard `seconds=0` = bis der Browser geschlossen wird) und vom MFA-*Last validation threshold* ab.
 - **Abmelden im Portal** (`POST /auth/logout`) löscht nur die Portal-Sitzung (plus Push-Abos und Cast-Tokens dieses Geräts). Der End-Session-Endpunkt von Authentik wird **nicht** aufgerufen. An einem geteilten Rechner zusätzlich bei Authentik abmelden (`https://auth.example.com/if/user/` → abmelden) oder die Authentik-Sitzung bei `seconds=0` belassen.
 - **Profil-PIN vergessen:** Das Portal startet einen Login mit `prompt=login` und `max_age=0`; Authentik fragt die Zugangsdaten dann erneut ab, auch wenn eine Sitzung besteht.
+- **Erneute Anmeldung vor der Kontolöschung:** dieselbe Art Login (`prompt=login`, `max_age=0`, `GET /auth/reauth`). Danach trägt die Portal-Sitzung 10 Minuten lang einen Zeitstempel der erneuten Anmeldung; Authentiks `auth_time` darf höchstens 2 Minuten alt sein. In Phase 3 setzt der Passwort-Bildschirm in FriendFlix denselben Stempel.
 - End-Session-Endpunkt, falls du ihn irgendwo verlinken willst: `https://auth.example.com/application/o/friendflix/end-session/`.
 
 ## 14. Prüfen
@@ -524,12 +548,16 @@ Logs: `docker compose -f compose.prod.yaml logs backend | grep -i -E "oidc|authe
 | Nach der Anmeldung sieht die Person *Anfrage gesendet* (`/pending`) | Erste Anmeldung ohne gültige Einladung und nicht in `ADMIN_GROUP`: Die Anfrage wartet unter *Admin → Nutzer → Warten auf Freigabe*. Landet ein Admin dort: Gruppenname prüfen und ob *Include claims in id_token* an ist. Andere: Anfrage freigeben oder eine Einladung senden (mit *hat schon ein Authentik-Konto*, wenn sie sich schon registriert haben). |
 | Admin wird nicht als Admin erkannt | Gruppenname weicht von `ADMIN_GROUP` ab (Groß-/Kleinschreibung), Mitgliedschaft nur geerbt oder *Include claims in id_token* aus. |
 | `{"error":"disabled"}` (403) | Das Konto ist im Portal deaktiviert (*Admin → Nutzer*). |
+| `{"error":"account_deleted"}` (403) | Die 7 Tage des Kontos sind um, die endgültige Löschung läuft. Wiederherstellen geht nicht mehr; ist die Löschung fertig, ist der Authentik-Nutzer deaktiviert ([§8.4](#84-kontoseite-und-kontolöschung)). |
+| Eine gelöschte Person meldet sich wieder an und landet auf *Anfrage gesendet* | Die Löschung wurde fertig, ohne den Authentik-Nutzer zu deaktivieren: kein API-Token, oder der Nutzer wurde nicht gefunden (Audit `user.deleted` mit `authentik: not_configured` oder `not_found`). Deaktiviere oder lösche ihn in Authentik ([§8.4](#84-kontoseite-und-kontolöschung)). |
 | Einladungsseite zeigt keinen Knopf *Konto anlegen* | Einladungen nicht konfiguriert oder Authentik-Einladung gescheitert. Ergebnistext der Einladung und Backend-Log ansehen. Einladungen von vor der Konfiguration haben keine Authentik-Einladung: neue erstellen. |
 | Log `enrollment flow "…" not found` | `AUTHENTIK_ENROLL_FLOW` ist nicht der Slug eines existierenden Flows. |
 | Log `Authentik API rejected AUTHENTIK_API_TOKEN` | Token falsch, abgelaufen oder Intent *App password* statt *API Token*. |
 | Log `invitation creation failed (… "Can add Invitation" …)` | 403: Die Rolle aus [§8.2](#82-rolle-mit-genau-diesen-globalen-berechtigungen) fehlt oder ist nicht zugewiesen. |
 | Log `Authentik unreachable` | DNS/TLS/Firewall vom Backend-Container zu `AUTHENTIK_URL`. |
 | Admin-Nutzerseite: alle zeigen „Keine Zwei-Faktor-Anmeldung“ | Dem Token fehlen *Can view TOTP / WebAuthn / Static Device* ([§8.2](#82-rolle-mit-genau-diesen-globalen-berechtigungen)); Authentik liefert dann eine leere Liste statt eines Fehlers. |
+| Kontoseite: „Die Anmeldeseite hat die Änderung nicht angenommen“ beim Speichern des Namens | Dem Token fehlt *Can change User* (Log `authentik_token_rejected`), oder Authentik hat den Wert abgelehnt. Blueprint erneut importieren ([§8.2](#82-rolle-mit-genau-diesen-globalen-berechtigungen)). |
+| *Admin → Nutzer*, *Löschung ausstehend*: „Bereinigung: Schritt 6 von 6“ mit `authentik_token_rejected` | Dasselbe fehlende Recht; der Schritt wird einmal pro Minute wiederholt. *Can change User* ergänzen oder den Authentik-Nutzer von Hand deaktivieren. |
 | Admin-Nutzerseite: „2FA unbekannt“ | `AUTHENTIK_URL` / `AUTHENTIK_API_TOKEN` nicht gesetzt, dem Token fehlt *Can view User*, oder das Konto hat keinen Authentik-Nutzer (z. B. angelegt vor einer Änderung des *Subject mode*). |
 | *Passwort-Link senden*: „kein Ablauf zum Zurücksetzen eingerichtet“ | Kein Recovery-Flow an der Brand, keine E-Mail-Stage in `AUTHENTIK_RECOVERY_FLOW`, der Nutzer hat keine E-Mail-Adresse, oder dem Token fehlen *Can view Email Stage* / *Can view Flow Stage Binding* ([§10](#10-passwort-wiederherstellung-per-e-mail)). |
 | *Passwort-Link senden*: „nicht unterstützt“ | Authentik ist älter als 2024.4 (die API antwortet 405). Authentik aktualisieren. |
@@ -550,7 +578,7 @@ Logs: `docker compose -f compose.prod.yaml logs backend | grep -i -E "oidc|authe
 | PKCE | S256; `state` und `nonce` werden geprüft | `backend/src/oidc.ts` |
 | Gelesene Claims | `sub` (Kontoschlüssel), `email`, `name`, `groups` (Liste von Namen). `preferred_username` wird **nicht** benutzt. | `backend/src/oidc.ts`, `backend/src/users.ts` |
 | Quelle der Claims | nur das ID-Token | `tokens.claims()` in `backend/src/oidc.ts` |
-| Erneute Anmeldung | `prompt=login`, `max_age=0` (vergessene PIN) | `backend/src/oidc.ts` |
+| Erneute Anmeldung | `prompt=login`, `max_age=0` (vergessene PIN; Kontolöschung über `GET /auth/reauth`, 10 min gültig) | `backend/src/oidc.ts`, `backend/src/reauth.ts` |
 | Login-State | Redis `oidc:<state>`, 600 s (Registrierung 1800 s); Cookie `ff_oidc` (Pfad `/auth`, SameSite Lax, Secure bei https-`PUBLIC_URL`) | `backend/src/routes/auth.ts` |
 | Portal-Routen | `GET /auth/login[?invite=]`, `GET /auth/enroll?invite=`, `GET /auth/callback`, `POST /auth/logout` | `backend/src/routes/auth.ts` |
 | Admin-Regel | `groups` enthält `ADMIN_GROUP` → `admin` bei der ersten Anmeldung, Beförderung bei späteren, nie Herabstufung | `backend/src/routes/auth.ts` |
@@ -561,6 +589,8 @@ Logs: `docker compose -f compose.prod.yaml logs backend | grep -i -E "oidc|authe
 | Nutzersuche | `GET {AUTHENTIK_URL}/api/v3/core/users/?uuid=` / `?search=<E-Mail>` / seitenweise Liste, Treffer über `uid` (gehashtes sub) oder `uuid`; 1 h gecacht (kein Treffer 5 min) | `backend/src/authentik.ts` |
 | Zwei-Faktor-Stand | `GET {AUTHENTIK_URL}/api/v3/authenticators/admin/all/?user={pk}`, bestätigte TOTP- / WebAuthn- / Static-Geräte; 10 min gecacht | `backend/src/authentik.ts` |
 | Passwort-Link | `GET /api/v3/flows/instances/{AUTHENTIK_RECOVERY_FLOW}/`, `GET /api/v3/flows/bindings/?target={Flow-pk}` (erste `ak-stage-email`), dann `POST /api/v3/core/users/{pk}/recovery_email/` mit `email_stage`; 400 → „nicht eingerichtet“, 405 → „nicht unterstützt“ | `backend/src/authentik.ts` (geprüft mit Authentik 2026.8.3; mindestens 2024.4) |
+| Namen ändern / deaktivieren | `PATCH {AUTHENTIK_URL}/api/v3/core/users/{pk}/` mit `{name}` (Kontoseite) oder `{is_active: false}` (Löschschritt 6); 401/403 → `authentik_token_rejected`, 404 → Nutzer nicht gefunden | `backend/src/authentik.ts` |
+| Link zu den Nutzereinstellungen | Ursprung von `OIDC_ISSUER` + `/if/user/#/settings` (nur wenn der Issuer-Pfad `/application/o/` enthält) | `backend/src/authentik.ts` |
 | API-Timeout (Admin-Nutzerseite) | 5 s pro Aufruf | `backend/src/authentik.ts` |
 | API-Timeout | 10 s pro Aufruf | `backend/src/invites.ts` |
 | Gültigkeit der Einladung | 1 – 336 h (Standard 48 h); die Authentik-Einladung läuft gleichzeitig ab | `backend/src/routes/admin.ts` |

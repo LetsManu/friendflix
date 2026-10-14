@@ -144,6 +144,7 @@ Also in the admin area: invitations and roles, **brand hubs**, featured and them
 
 - **Self-hosted.** Everything runs on your own server. FriendFlix has no ads and no third-party analytics.
 - **Invite or approval only.** New people join with invitation links (single or limited use), or sign in and wait until an admin approves them. Sign-in goes through your Authentik with **mandatory multi-factor authentication**, and new devices can require approval.
+- **Your data, your account.** Everyone manages their own account in the app (name, colour, devices, two-factor state), can download everything FriendFlix keeps about them as one JSON file, and can delete the account themselves. Deletion needs a fresh sign-in, can be undone for 7 days, and then removes the account from FriendFlix, the media server and the request service; the audit log keeps only a pseudonym.
 - **Jellyfin and the request service stay hidden.** Friends only ever talk to the portal. Media tokens stay on the server; video and images are streamed through a gateway that checks every request.
 - **You decide what friends see.** "Share history" (off by default) and "Share ratings" are switched in each person's settings; "Popular this week" only shows counts, never who watched. Reactions to a title only appear once you have watched it, and optional spoiler protection hides thumbnails and descriptions of unwatched episodes.
 - **Trailers without tracking.** Trailers for titles that are not in the library play in the privacy-friendly `youtube-nocookie.com` player and only load after a click.
