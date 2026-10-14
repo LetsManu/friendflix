@@ -103,7 +103,7 @@
   let catLangs: string[] | null = null;
 
   $: path = $page.url.pathname;
-  $: publicPage = path.startsWith('/invite/') || path === '/tv' || path === '/offline' || path === '/pending';
+  $: publicPage = path.startsWith('/invite/') || path === '/tv' || path === '/offline' || path === '/pending' || path === '/restore';
   $: watchPage = path.startsWith('/watch/') || /^\/party\/[^/]+/.test(path); // immersive player pages: no navigation
   $: profilesPage = path === '/profiles' || path === '/welcome'; // full-screen pages without navigation (picker, onboarding)
   $: heroPage = path === '/' || path.startsWith('/item/');
@@ -314,7 +314,9 @@
     window.addEventListener('ff-help', onHelp);
     const onOnboarded = () => { if (me) me = { ...me, onboarded: true }; }; // /welcome finished
     window.addEventListener('ff-onboarded', onOnboarded);
-    stops.push(() => { window.removeEventListener('ff-notes', onNotes); window.removeEventListener('ff-help', onHelp); window.removeEventListener('ff-onboarded', onOnboarded); });
+    const onMeChanged = () => void api<Me>('/api/me').then((m) => { if (me) me = { ...me, name: m.name, profile: m.profile }; }).catch(() => undefined); // /me/account saved name or avatar
+    window.addEventListener('ff-me-changed', onMeChanged);
+    stops.push(() => { window.removeEventListener('ff-notes', onNotes); window.removeEventListener('ff-help', onHelp); window.removeEventListener('ff-onboarded', onOnboarded); window.removeEventListener('ff-me-changed', onMeChanged); });
     // header background: a 10 px sentinel at the top of the document instead of reading scrollY on every scroll event
     if (typeof IntersectionObserver === 'function' && sentinel) {
       const io = new IntersectionObserver(([e]) => { scrolled = !e!.isIntersecting; });

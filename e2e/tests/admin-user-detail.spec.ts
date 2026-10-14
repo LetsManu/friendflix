@@ -328,3 +328,105 @@ test.describe('admin user detail (desktop)', () => {
     await expect(page.getByRole('tabpanel', { name: 'Profile' })).toBeVisible();
   });
 });
+
+/** Block 23 self-service: a scheduled deletion on the detail page, cleanup rows in the list */
+test.describe('admin user deletion', () => {
+  test.use({ allowedConsole: /status of (404|409)/ });
+  test.beforeEach(({ api }) => { api.asAdmin = true; });
+  const WEEKISH = () => new Date(Date.now() + 5 * 86400e3).toISOString();
+
+  test('admin restore and delete-now call the APIs', async ({ page, api }) => {
+    const anna = api.admin.users.find((u) => u.id === ANNA)!;
+    Object.assign(anna, { disabled: true, locked_reason: 'deletion', deletion_at: WEEKISH() });
+    await page.goto(`/admin/users/${ANNA}`);
+    const head = page.getByRole('region', { name: 'Anna Beispiel' });
+    await expect(head.getByText(/^Löschung am \d/)).toBeVisible();
+    // a deletion lock: restore takes the place of unlock, plus delete now; nothing else applies to an account being deleted
+    let m = await menu(page);
+    await expect(m.getByRole('button')).toHaveText(['Konto wiederherstellen', 'Jetzt löschen']);
+    await m.getByRole('button', { name: 'Jetzt löschen' }).click();
+    const dlg = page.getByRole('alertdialog');
+    await expect(dlg).toContainText('Anna Beispiel jetzt löschen?');
+    await expect(dlg).toContainText('Das lässt sich nicht rückgängig machen.');
+    await expect(dlg.getByRole('button', { name: 'Abbrechen' })).toBeFocused(); // danger: focus starts on cancel
+    await dlg.getByRole('button', { name: 'Jetzt löschen' }).click();
+    await expect(toasts(page).getByText('Anna Beispiel wird jetzt gelöscht.')).toBeVisible();
+    expect(logged(api, new RegExp(`^POST /api/admin/users/${ANNA}/deletion/now `))).toBe(true);
+
+    m = await menu(page);
+    await m.getByRole('button', { name: 'Konto wiederherstellen' }).click();
+    await expect(toasts(page).getByText('Anna Beispiel wiederhergestellt.')).toBeVisible();
+    expect(logged(api, new RegExp(`^POST /api/admin/users/${ANNA}/deletion/restore `))).toBe(true);
+    await expect(head.getByText('Aktiv', { exact: true })).toBeVisible();
+    await expect(head.getByText(/^Löschung am/)).toHaveCount(0);
+  });
+
+  test('restoring an account whose access ended keeps it locked as expired (F8)', async ({ page, api }) => {
+    const anna = api.admin.users.find((u) => u.id === ANNA)!;
+    Object.assign(anna, { disabled: true, locked_reason: 'deletion', deletion_at: WEEKISH(), access_until: new Date(Date.now() - 86400e3).toISOString() });
+    await page.goto(`/admin/users/${ANNA}`);
+    await (await menu(page)).getByRole('button', { name: 'Konto wiederherstellen' }).click();
+    await expect(toasts(page).getByText('Anna Beispiel wiederhergestellt – bleibt gesperrt, weil der Zugang abgelaufen ist.')).toBeVisible();
+    const head = page.getByRole('region', { name: 'Anna Beispiel' });
+    await expect(head.getByText('Gesperrt: Zugang abgelaufen')).toBeVisible();
+    const m = await menu(page);
+    await expect(m.getByRole('button', { name: 'Zugang verlängern' })).toHaveCount(1);
+    await expect(m.getByRole('button', { name: 'Entsperren' })).toHaveCount(0);
+  });
+
+  test('a deletion already running answers restore with the reason', async ({ page, api }) => {
+    const anna = api.admin.users.find((u) => u.id === ANNA)!;
+    Object.assign(anna, { disabled: true, locked_reason: 'deletion', deletion_at: WEEKISH() });
+    api.admin.claimed.add(ANNA);
+    await page.goto(`/admin/users/${ANNA}`);
+    await (await menu(page)).getByRole('button', { name: 'Konto wiederherstellen' }).click();
+    await expect(toasts(page).getByText('Die Löschung läuft bereits – sie lässt sich nicht mehr aufhalten.')).toBeVisible();
+  });
+
+  test('cleanup row shows the pseudonym and step', async ({ page, api }) => {
+    Object.assign(api.admin.users.find((u) => u.id === ANNA)!, { disabled: true, locked_reason: 'deletion', deletion_at: WEEKISH() });
+    api.admin.cleanups.push({ id: auid(900), pseudonym: 'deleted-1a2b3c4d', started_at: new Date(Date.now() - 3600e3).toISOString(), step: 3, error: 'media_error' });
+    api.admin.cleanups.push({ id: auid(901), pseudonym: 'deleted-99ff00aa', started_at: new Date(Date.now() - 600e3).toISOString(), step: 5, error: null });
+    // claimed, users row still there (steps 1-4): still has a detail page
+    Object.assign(api.admin.users.find((u) => u.id === auid(3))!, { disabled: true, locked_reason: 'deletion', deletion_at: new Date(Date.now() - 60e3).toISOString(), cleanup: { step: 2, error: 'request_error' } });
+    await page.goto('/admin/users');
+    const table = page.getByRole('table', { name: 'Nutzer' });
+    await expect(table.getByRole('row', { name: /Ben Test/ })).toBeVisible();
+    await page.getByRole('combobox', { name: 'Status' }).selectOption({ label: 'Löschung ausstehend' });
+    await expect(table.getByRole('row', { name: /Clara Fischer/ })).toHaveCount(0);
+    const failing = table.getByRole('row', { name: /deleted-1a2b3c4d/ });
+    await expect(failing).toContainText('Bereinigung: Schritt 3 von 6 – Fehler: media_error');
+    await expect(table.getByRole('row', { name: /deleted-99ff00aa/ })).toContainText('Bereinigung: Schritt 5 von 6');
+    await expect(table.getByRole('row', { name: /deleted-99ff00aa/ })).not.toContainText('Fehler');
+    // no detail page behind a gone cleanup row, not selectable, no actions
+    await expect(failing.getByRole('link')).toHaveCount(0);
+    await expect(failing.getByRole('checkbox')).toBeDisabled();
+    await expect(failing.getByRole('button')).toHaveCount(0);
+    // a claimed account whose users row exists links to its detail page, but is not selectable and has no actions either
+    const claimed = table.getByRole('row', { name: /Ben Test/ });
+    await expect(claimed).toContainText('Bereinigung: Schritt 2 von 6 – Fehler: request_error');
+    await expect(claimed.getByRole('link', { name: 'Ben Test' })).toHaveAttribute('href', `/admin/users/${auid(3)}`);
+    await expect(claimed.getByRole('checkbox')).toBeDisabled();
+    await expect(claimed.getByRole('button')).toHaveCount(0);
+    // the scheduled account keeps its link and shows the date
+    const anna = table.getByRole('row', { name: /Anna Beispiel/ });
+    await expect(anna.getByRole('link', { name: 'Anna Beispiel' })).toBeVisible();
+    await expect(anna.getByText(/^Löschung am \d/)).toBeVisible();
+    await expect(page.locator('main')).not.toContainText('undefined');
+  });
+
+  test('a scheduled account in the list offers "Restore account" instead of "Unlock" (no undo)', async ({ page, api }) => {
+    const anna = api.admin.users.find((u) => u.id === ANNA)!;
+    Object.assign(anna, { disabled: true, locked_reason: 'deletion', deletion_at: WEEKISH() });
+    await page.goto('/admin/users');
+    await page.getByRole('button', { name: 'Aktionen für Anna Beispiel' }).click();
+    const m = page.getByRole('dialog', { name: 'Anna Beispiel' });
+    await expect(m.getByRole('button', { name: 'Entsperren' })).toHaveCount(0);
+    await m.getByRole('button', { name: 'Konto wiederherstellen' }).click();
+    await expect(toasts(page).getByText('Anna Beispiel wiederhergestellt.')).toBeVisible();
+    await expect(toasts(page).getByRole('button', { name: 'Rückgängig' })).toHaveCount(0);
+    expect(logged(api, new RegExp(`^POST /api/admin/users/${ANNA}/deletion/restore `))).toBe(true);
+    expect(logged(api, /^PATCH /)).toBe(false);
+    expect(anna).toMatchObject({ disabled: false, deletion_at: null });
+  });
+});

@@ -705,6 +705,26 @@ export const MIGRATIONS: string[] = [
   insert into invite_uses(invite_id, user_id, at)
     select id, used_by, used_at from invites where used_by is not null;
   `,
+  // 38: Block 23 phase 2 account deletion: the tombstone of a claimed deletion (snapshot for the later steps; no FK, the users row
+  // is deleted in step 4; the personal fields are nulled when finished, the pseudonym stays for the audit views) + due lookup
+  `
+  create table account_deletions (
+    user_id uuid primary key,
+    pseudonym text not null,
+    step int not null default 0,
+    authentik_sub text,
+    jellyfin_ids text[],
+    seerr_user_id int,
+    name text,
+    email text,
+    started_at timestamptz not null default now(),
+    finished_at timestamptz,
+    last_error text,
+    failed_step int
+  );
+  create index account_deletions_sub on account_deletions(authentik_sub) where finished_at is null;
+  create index users_deletion_at on users(deletion_at) where deletion_at is not null;
+  `,
 ];
 
 export async function migrate(pool: pg.Pool): Promise<void> {

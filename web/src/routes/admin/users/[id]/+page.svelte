@@ -3,7 +3,7 @@
 <script lang="ts">
   /**
    * Admin: one user. Header (avatar, name, e-mail, role, status and 2FA pills) with the quick actions (lock/unlock, sign out
-   * everywhere, change role, extend access, Authentik e-mails), then tabs in the URL (`?tab=`): overview (totals, linked
+   * everywhere, change role, extend access, Authentik e-mails; a scheduled deletion: restore or delete now), then tabs in the URL (`?tab=`): overview (totals, linked
    * accounts), profiles, devices, downloads, activity (loads only when opened: viewing is audited), limits, audit.
    * Never shows credentials, tokens or the Authentik id (the API does not send them).
    */
@@ -15,7 +15,7 @@
   import Icon from '#lib/Icon.svelte';
   import MoreActions, { type MoreAction } from '#lib/MoreActions.svelte';
   import { pageStore } from '#lib/page';
-  import { accessPreset, accountGuardText, futureDayEnd, today } from '#lib/admin/people';
+  import { accessPreset, accountGuardText, deletionErrorText, futureDayEnd, restoredText, today } from '#lib/admin/people';
   import { refreshSummary } from '#lib/admin/summary';
   import { DETAIL_TABS, akError, detailTab, lockAction, mfaChips, statusPills, type DetailTab, type UserDetail } from '#lib/admin/user/detail';
   import Activity from '#lib/admin/user/Activity.svelte';
@@ -108,6 +108,29 @@
     });
     if (r.ok) void load();
   }
+  // a scheduled deletion (Block 23 self-service): restore cancels it, delete now hands it to the next deletion tick
+  async function restoreDeletion() {
+    if (!u) return;
+    const r = await runAction({
+      key: `user:${id}`, run: () => api(`/api/admin/users/${id}/deletion/restore`, { method: 'POST' }), error: deletionErrorText,
+      success: restoredText(u.name, u.accessUntil),
+    });
+    if (r.ok) { void load(); void refreshSummary(); }
+  }
+  async function deleteNow() {
+    if (!u) return;
+    const name = u.name;
+    const ok = await confirm({
+      title: tr('adminPeople.detail.actions.deleteNowTitle', { name }), body: tr('adminPeople.detail.actions.deleteNowBody', { name }),
+      danger: true, confirmLabel: tr('adminPeople.detail.actions.deleteNow'),
+    });
+    if (!ok) return;
+    const r = await runAction({
+      key: `user:${id}`, run: () => api(`/api/admin/users/${id}/deletion/now`, { method: 'POST' }), error: deletionErrorText,
+      success: tr('adminPeople.detail.actions.deleteNowDone', { name }),
+    });
+    if (r.ok) void load();
+  }
   async function sendRecovery() {
     if (!u) return;
     const name = u.name;
@@ -163,6 +186,13 @@
     const extend: MoreAction = { id: 'access', label: $t('adminPeople.detail.actions.extend'), icon: 'calendar', run: () => open('access') };
     // access ended: "Extend access" takes the place of "Unlock" (an unlock would not last)
     const lock = lockAction(u);
+    // a scheduled deletion: restore takes the place of "Unlock", plus delete now (never on yourself); nothing else applies
+    if (lock === 'restore') {
+      return [
+        { id: 'restore', label: $t('adminPeople.detail.actions.restore'), icon: 'unlock', run: restoreDeletion },
+        ...(self ? [] : [{ id: 'delete-now', label: $t('adminPeople.detail.actions.deleteNow'), icon: 'x', danger: true, run: deleteNow }]),
+      ];
+    }
     const out: MoreAction[] = self
       ? [{ id: 'self', label: $t('adminPeople.users.selfNote'), icon: 'lock', disabled: true }]
       : [

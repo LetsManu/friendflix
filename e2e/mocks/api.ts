@@ -29,7 +29,23 @@ export interface MockState {
   resumeGone: Set<string>;
   /** the profile's player sound pref (PUT /api/prefs/audiofx), echoed by GET /api/prefs */
   audioFx?: string;
+  /** Block 23 self-service: GET /api/account; PATCH /api/account/profile changes it, and /api/me follows once saved */
+  account: MockAccount;
+  /** name/avatar saved via PATCH /api/account/profile (merged into /api/me) */
+  accountSaved?: { name: string; avatar: string };
+  /** own devices (GET /api/devices, POST /api/devices/:id/sign-out keeps one, DELETE /api/devices/:id drops it) */
+  devices: MockDevice[];
+  /** answer of POST /api/sessions/revoke-others */
+  revokedOthers: number;
+  /** POST /api/account/delete answers 401 reauth_required even inside the reauth window (it ran out meanwhile) */
+  reauthLapsed?: boolean;
 }
+export interface MockAccount {
+  name: string; email: string | null; avatar: string;
+  mfa: { totp: boolean; webauthn: boolean; static: boolean } | null;
+  manageUrl: string | null; reauthUntil: number | null;
+}
+export interface MockDevice { id: string; label: string; approved: boolean; current: boolean; created_at: string; last_seen: string }
 
 export function freshState(): MockState {
   return {
@@ -43,6 +59,12 @@ export function freshState(): MockState {
     admin: adminState(),
     asAdmin: false,
     resumeGone: new Set(),
+    account: { name: 'Tester', email: 'tester@example.com', avatar: 'blue', mfa: { totp: true, webauthn: false, static: true }, manageUrl: 'https://login.example.com/if/user/#/settings', reauthUntil: null },
+    devices: [
+      { id: 'dev-current-0000000001', label: 'Chrome auf Linux', approved: true, current: true, created_at: '2026-09-01T10:00:00Z', last_seen: '2026-10-14T09:00:00Z' },
+      { id: 'dev-phone-00000000002', label: 'Safari auf iOS', approved: true, current: false, created_at: '2026-09-02T10:00:00Z', last_seen: '2026-10-12T20:15:00Z' },
+    ],
+    revokedOthers: 2,
   };
 }
 
@@ -101,7 +123,28 @@ export async function installApi(ctx: BrowserContext, st: MockState): Promise<vo
       });
     }
     if (p === '/api/client-errors') { st.clientErrors.push(body()); return route.fulfill({ status: 204 }); }
-    if (p === '/api/me') return J(st.asAdmin ? { ...ME, role: 'admin', roleLabel: 'Admin', isAdmin: true } : ME);
+    if (p === '/api/me') {
+      const me = st.asAdmin ? { ...ME, role: 'admin', roleLabel: 'Admin', isAdmin: true } : ME;
+      const s = st.accountSaved;
+      return J(s ? { ...me, name: s.name, profile: { ...me.profile, name: s.name.slice(0, 20), avatar: s.avatar } } : me);
+    }
+    // Block 23 self-service: the account page (/me/account)
+    if (p === '/api/account' && m === 'GET') return J(st.account);
+    if (p === '/api/account/profile' && m === 'PATCH') {
+      const b = body();
+      st.account = { ...st.account, ...(b.name !== undefined ? { name: b.name } : {}), ...(b.avatar !== undefined ? { avatar: b.avatar } : {}) };
+      st.accountSaved = { name: st.account.name, avatar: st.account.avatar };
+      return J(st.account);
+    }
+    // deleting the account needs a recent sign-in (reauthUntil); the backend then ends the session
+    if (p === '/api/account/delete' && m === 'POST') {
+      if (st.reauthLapsed || !st.account.reauthUntil || st.account.reauthUntil < Date.now()) return J({ error: 'reauth_required' }, 401);
+      return J({ deletionAt: '2026-10-21T12:00:00.000Z' });
+    }
+    if (p === '/api/devices' && m === 'GET') return J({ devices: st.devices });
+    if ((mm = p.match(/^\/api\/devices\/([^/]+)\/sign-out$/)) && m === 'POST') return J({ revoked: 1 }); // the device stays (approved)
+    if ((mm = p.match(/^\/api\/devices\/([^/]+)$/)) && m === 'DELETE') { st.devices = st.devices.filter((d) => d.id !== mm![1]); return J({ ok: true }); }
+    if (p === '/api/sessions/revoke-others' && m === 'POST') return J({ revoked: st.revokedOthers });
     if (p === '/api/notifications') return J({ notifications: [{ id: 'n1', title: 'Anna hat dich zur Liste „Annas Klassiker“ eingeladen', link: '/lists/' + st.lists[1]!.id, read: false }] });
     if (p === '/api/notifications/read') return J({ ok: true });
     if (p === '/api/prefs') return J({ prefs: st.audioFx ? { audioFx: st.audioFx } : {} });

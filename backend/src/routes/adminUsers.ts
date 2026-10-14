@@ -7,6 +7,7 @@ import { audit } from '../audit.js';
 import { Where, likePattern, orderBy, pageQuery } from '../adminlist.js';
 import { akActions, akMfaState, akSendMfaSetup, akSendRecovery } from '../authentik.js';
 import type { Ctx } from '../ctx.js';
+import { restoreDeletion } from '../deletion.js';
 import { forgetUserAuth, revokeSessions } from '../devices.js';
 import { userLicenses } from '../downloads.js';
 import { createInvite, deleteAuthentikInvitation } from '../invites.js';
@@ -18,7 +19,7 @@ import { ensureSeerrUser } from '../seerr/service.js';
 import { requireAdmin, type Session } from '../session.js';
 import type { ProfileRow, UserRow } from '../types.js';
 import { HttpError, accessEnded, accountSerial, applyRole, assertNotLastAdmin, getUserById, getUserBySub, lockUser, provisionUser, setAccessUntil, setRole, unlockUser, type LockReason } from '../users.js';
-import { pendingNoticeKey } from './auth.js';
+import { pendingNoticeKey } from '../pending.js';
 
 const uuid = z.guid();
 /** ISO date-time with offset, or null (= no end) */
@@ -59,7 +60,7 @@ export type BulkBody = z.infer<typeof bulkBody>;
 
 /**
  * Applies one action to many accounts. All or nothing on validation and guards (unknown id, unknown role,
- * the actor locking/demoting themselves, last admin, unlocking an account whose access has ended); then per user. `done` counts the accounts that changed.
+ * the actor locking/demoting themselves, last admin, unlocking an account whose access has ended or whose deletion is under way); then per user. `done` counts the accounts that changed.
  */
 export async function bulkUsers(ctx: Ctx, actor: string, b: BulkBody): Promise<{ done: number }> {
   const ids = [...new Set(b.ids)];
@@ -67,6 +68,10 @@ export async function bulkUsers(ctx: Ctx, actor: string, b: BulkBody): Promise<{
   if (rows.length !== ids.length) throw new HttpError(404, 'not_found');
   // the expiry tick would lock such an account again within a minute: extend its access instead
   if (b.action === 'unlock' && rows.some((u) => u.disabled && accessEnded(u.access_until))) throw new HttpError(409, 'access_expired');
+  // unlockUser would refuse a claimed deletion mid-loop: refuse the whole call first
+  if (b.action === 'unlock' && (await ctx.db.query('select 1 from account_deletions where user_id = any($1::uuid[]) limit 1', [ids])).rowCount) {
+    throw new HttpError(409, 'deletion_in_progress');
+  }
   if (b.action === 'role' && !Object.hasOwn(ctx.roles, b.role!)) throw new HttpError(400, 'unknown_role');
   const demote = b.action === 'role' && b.role !== 'admin';
   if ((demote || b.action === 'lock') && ids.includes(actor)) throw new HttpError(400, 'cannot_lock_yourself_out');
@@ -166,7 +171,7 @@ export function adminUserRoutes(app: FastifyInstance, ctx: Ctx) {
     if (p.status === 'active') w.add('not u.disabled and u.deletion_at is null');
     if (p.status === 'locked') w.add('u.disabled');
     if (p.status === 'expiring') w.add("u.access_until between now() and now() + interval '7 days'");
-    if (p.status === 'deleting') w.add('u.deletion_at is not null');
+    if (p.status === 'deleting') w.add('(u.deletion_at is not null or u.cleanup is not null)');
     if (p.lastActive === '90+') w.add("(u.last_seen is null or u.last_seen < now() - interval '90 days')");
     else if (p.lastActive) w.add("u.last_seen >= now() - make_interval(days => ?)", Number(p.lastActive));
     const base = p.status === 'pending'
@@ -176,8 +181,15 @@ export function adminUserRoutes(app: FastifyInstance, ctx: Ctx) {
       : `select u.id, u.name, u.email, u.role, u.disabled, u.jellyfin_username, u.seerr_user_id, u.created_at,
                 (select max(last_seen) from devices d where d.user_id = u.id) last_seen, u.access_until, u.locked_reason, u.deletion_at,
                 (select count(*) from profiles x where x.user_id = u.id)::int profiles,
-                (select count(*) from devices d where d.user_id = u.id)::int devices, false pending
-           from users u`;
+                (select count(*) from devices d where d.user_id = u.id)::int devices, false pending${p.status === 'deleting' ? `,
+                case when ad.user_id is not null and ad.finished_at is null then jsonb_build_object('step', ad.step + 1, 'error', ad.last_error, 'gone', false) end cleanup` : ''}
+           from users u${p.status === 'deleting' ? ` left join account_deletions ad on ad.user_id = u.id
+         union all
+         -- claimed deletions carry the step being worked on and its error; once the users row is gone (steps 5-6) only the pseudonym is
+         -- left (gone: no detail page to link to)
+         select ad.user_id, ad.pseudonym, null, null, true, null, null, ad.started_at, null, null, 'deletion', null, 0, 0, false,
+                jsonb_build_object('step', ad.step + 1, 'error', ad.last_error, 'gone', true)
+           from account_deletions ad where ad.finished_at is null and not exists (select 1 from users x where x.id = ad.user_id)` : ''}`;
     const order = orderBy({ name: 'lower(u.name)', email: "lower(coalesce(u.email,''))", role: 'u.role', status: 'u.disabled', lastSeen: 'u.last_seen', createdAt: 'u.created_at', accessUntil: 'u.access_until', profiles: 'u.profiles', devices: 'u.devices' }, p.sort, p.dir, 'u.created_at, u.id');
     const total = Number((await ctx.db.query<{ c: string }>(`select count(*) c from (${base}) u ${w.sql}`, w.params)).rows[0]!.c);
     const r = await ctx.db.query(`select * from (${base}) u ${w.sql} ${order} limit ${p.limit ?? 1000} offset ${p.offset ?? 0}`, w.params);
@@ -191,6 +203,7 @@ export function adminUserRoutes(app: FastifyInstance, ctx: Ctx) {
     return serial(async () => {
       const user = await getUserById(ctx, id);
       if (!user) return reply.code(404).send({ error: 'not_found' });
+      if (await claimed(id)) return reply.code(409).send({ error: 'deletion_in_progress' });
       const demote = b.role !== undefined && b.role !== 'admin';
       if (id === actor && (b.disabled || demote)) return reply.code(400).send({ error: 'cannot_lock_yourself_out' });
       if (b.role !== undefined && !Object.hasOwn(ctx.roles, b.role)) return reply.code(400).send({ error: 'unknown_role' });
@@ -245,6 +258,8 @@ export function adminUserRoutes(app: FastifyInstance, ctx: Ctx) {
   });
 
   // ---- user detail page ----
+  /** true once the deletion tick has claimed the account: admin changes would act on identities that are being deleted */
+  const claimed = async (id: string) => Boolean((await ctx.db.query('select 1 from account_deletions where user_id=$1', [id])).rowCount);
   /** The account or a 404 HttpError. */
   const userOr404 = async (id: string) => {
     const user = await getUserById(ctx, id);
@@ -257,8 +272,8 @@ export function adminUserRoutes(app: FastifyInstance, ctx: Ctx) {
   app.get('/api/admin/users/:id', admin, async (req) => {
     const id = idParam(req);
     const user = await userOr404(id);
-    const extra = (await ctx.db.query<{ locked_reason: string | null; access_until: Date | null; avatar: string | null; last_active: Date | null }>(
-      'select locked_reason, access_until, avatar, (select max(last_seen) from devices d where d.user_id = u.id) last_active from users u where id=$1', [id])).rows[0]!;
+    const extra = (await ctx.db.query<{ locked_reason: string | null; access_until: Date | null; deletion_at: Date | null; avatar: string | null; last_active: Date | null }>(
+      'select locked_reason, access_until, deletion_at, avatar, (select max(last_seen) from devices d where d.user_id = u.id) last_active from users u where id=$1', [id])).rows[0]!;
     const [watch, streams, counts, profiles, devices, licenses, live, mfa, jellyfinOk, requestsOk] = await Promise.all([
       ctx.db.query<{ d7: string; d30: string; total: string }>(
         `select coalesce(sum(seconds) filter (where day > current_date - 7), 0) d7, coalesce(sum(seconds) filter (where day > current_date - 30), 0) d30,
@@ -281,7 +296,7 @@ export function adminUserRoutes(app: FastifyInstance, ctx: Ctx) {
     return {
       user: {
         id: user.id, name: user.name, email: user.email, role: user.role, disabled: user.disabled, lockedReason: extra.locked_reason,
-        accessUntil: extra.access_until, createdAt: user.created_at, lastActive: extra.last_active, avatar: extra.avatar,
+        accessUntil: extra.access_until, deletionAt: extra.deletion_at, createdAt: user.created_at, lastActive: extra.last_active, avatar: extra.avatar,
       },
       mfa,
       /** which Authentik actions the page may offer */
@@ -326,10 +341,35 @@ export function adminUserRoutes(app: FastifyInstance, ctx: Ctx) {
     const where = 'where a.target = $1::text or a.actor = $1::uuid';
     const total = Number((await ctx.db.query<{ c: string }>(`select count(*) c from audit_log a ${where}`, [id])).rows[0]!.c);
     const r = await ctx.db.query(
-      `select a.id, a.at, a.action, a.target, a.meta, a.actor actor_id, u.name actor, coalesce(tu.name, tl.name) target_name
-         from audit_log a left join users u on u.id = a.actor left join users tu on tu.id::text = a.target left join lists tl on tl.id::text = a.target
+      `select a.id, a.at, a.action, a.target, a.meta, a.actor actor_id, coalesce(u.name, ad.pseudonym) actor, coalesce(tu.name, tad.pseudonym, tl.name) target_name
+         from audit_log a left join users u on u.id = a.actor left join account_deletions ad on ad.user_id = a.actor
+         left join users tu on tu.id::text = a.target left join account_deletions tad on tad.user_id::text = a.target
+         left join lists tl on tl.id::text = a.target
         ${where} order by a.id desc limit $2 offset $3`, [id, p.limit, p.offset]);
     return { entries: r.rows, total };
+  });
+
+  // cancels a scheduled deletion (409 not_scheduled, 409 deletion_in_progress once the tick claimed it); an account whose access
+  // has ended stays locked as expired
+  app.post('/api/admin/users/:id/deletion/restore', admin, async (req) => {
+    const id = idParam(req);
+    await serial(() => restoreDeletion(ctx, req.user!.id, id));
+    return { ok: true };
+  });
+
+  // "delete now": only for an account already scheduled; the next deletion tick claims it
+  app.post('/api/admin/users/:id/deletion/now', admin, async (req, reply) => {
+    const id = idParam(req);
+    const actor = req.user!.id;
+    if (id === actor) return reply.code(400).send({ error: 'cannot_lock_yourself_out' });
+    return serial(async () => {
+      const cur = (await ctx.db.query<{ deletion_at: Date | null; locked_reason: LockReason | null }>('select deletion_at, locked_reason from users where id=$1', [id])).rows[0];
+      if (!cur) return reply.code(404).send({ error: 'not_found' });
+      if (!cur.deletion_at || cur.locked_reason !== 'deletion') return reply.code(409).send({ error: 'not_scheduled' });
+      const to = (await ctx.db.query<{ deletion_at: Date }>('update users set deletion_at=now() where id=$1 returning deletion_at', [id])).rows[0]!.deletion_at;
+      await audit(ctx, actor, 'user.deletion_now', id, { from: cur.deletion_at.toISOString(), to: to.toISOString() });
+      return { ok: true };
+    });
   });
 
   // the overrides (null = as role) and the role values they replace (the page shows them as placeholders)
@@ -349,6 +389,7 @@ export function adminUserRoutes(app: FastifyInstance, ctx: Ctx) {
     const b = limitsBody.parse(req.body);
     return serial(async () => {
       const user = await userOr404(id);
+      if (await claimed(id)) return reply.code(409).send({ error: 'deletion_in_progress' });
       const from = await getUserLimits(ctx, id);
       const to = { ...from, ...b };
       if (JSON.stringify(from) !== JSON.stringify(to)) {
@@ -364,10 +405,12 @@ export function adminUserRoutes(app: FastifyInstance, ctx: Ctx) {
   });
 
   // "Repair link": the role policy again on every media server identity, and the request-service user mapped again
-  app.post('/api/admin/users/:id/repair', admin, async (req) => {
+  app.post('/api/admin/users/:id/repair', admin, async (req, reply) => {
     const id = idParam(req);
     return serial(async () => {
       const user = await userOr404(id);
+      // a claimed account: the request-service user may already be deleted, a repair would create an orphan
+      if (await claimed(id)) return reply.code(409).send({ error: 'deletion_in_progress' });
       const jellyfin = await reapplyAccount(ctx, user);
       const before = user.seerr_user_id;
       const requestsOk = await ensureSeerrUser(ctx, user).then(() => true, () => false);
