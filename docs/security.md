@@ -117,7 +117,7 @@ The account page also tells the person what admins can see: **"Admins can see wh
 
 Deleting the account needs a sign-in that is at most **10 minutes** old. The account page sends the person through `GET /auth/reauth`, an OIDC login with `prompt=login` and `max_age=0`, so the identity provider asks for the password and MFA even when its session is still valid. The callback checks that the identity provider's `auth_time` is at most 2 minutes old and that the `sub` is the session's own (a different person gets nothing and an audit entry `session.reauth_mismatch`). It then stamps the portal session with the time (`reauthAt`, audit `session.reauth`). Sensitive routes check the stamp with one guard, `requireRecentAuth`, and answer `401 reauth_required` without it.
 
-Phase 3 replaces only the producer: an in-app password screen through Authentik's flow executor sets the same stamp, and the guard stays as it is. Until then, changing the password and two-factor methods happens on Authentik's own user settings page ([authentik.md §8.4](authentik.md#84-account-page-and-account-deletion)). The e-mail address is read-only in FriendFlix until phase 3.
+A later release replaces only the producer: an in-app password screen through Authentik's flow executor sets the same stamp, and the guard stays as it is. Until then, changing the password and two-factor methods happens on Authentik's own user settings page ([authentik.md §8.4](authentik.md#84-account-page-and-account-deletion)). The e-mail address is read-only in FriendFlix for now; a later release may change that.
 
 ### Download my data
 
@@ -158,7 +158,7 @@ What it never contains: other people's ids, names or notes; notification texts (
 3. **Offline licences:** revoked again (the lock already did it; repeated for safety).
 4. **FriendFlix rows:** in one transaction, the account and everything that hangs off it (profiles, lists, watchlist, ratings, history, devices, push subscriptions, limits …), the person's approval request, and the admin notices that name the person (those linking to the account and those keyed by its id). Redis caches for the account and its profiles are cleared.
 5. **Audit log:** in every entry the person made or that is about them, the keys `name`, `email`, `jellyfin`, `username` and `ip` (and names nested in profile changes) are removed and replaced by the **pseudonym**. Entries of the person's approval request (`user.rejected`, which can quote the name in the admin's message) are scrubbed the same way, message included.
-6. **Authentik:** the user is **deactivated** (`is_active: false`), never deleted. Deleting it is the owner's call; the steps are in [authentik.md §8.4](authentik.md#84-account-page-and-account-deletion). Without the Authentik API token (or when the user is not found) this step is skipped and recorded as `authentik: not_configured` / `not_found`. **The Authentik user then stays active: the person can sign in again and lands in the approval queue as a new person.**
+6. **Authentik:** the user is **deactivated** (`is_active: false`), never deleted. Deleting it is the owner's call; the steps are in [authentik.md §8.4](authentik.md#84-account-page-and-account-deletion). Without the Authentik API token (or when the user is not found) this step is skipped and recorded as `authentik: not_configured` / `not_found`. **The Authentik user then stays active: the person can sign in again and lands in the approval queue as a new person (a member of `ADMIN_GROUP` gets a new admin account instead).**
 
 When all six are done, the admins get a notice with the pseudonym and the audit log gets `user.deleted`.
 
@@ -180,6 +180,7 @@ When all six are done, the admins get a notice with the pseudonym and the audit 
   - the admins' "new sign-in waiting for approval" notice;
   - `user.rejected` audit entries of a request that never became this account (for example: rejected, then joined through an invite);
   - free text other people wrote, such as a list or poll title, a comment or an admin's note in another audit entry.
+- Items (and their notes) the person added to other people's lists stay, without who added them.
 - A deleted admin's own administrative audit entries lose their name-type keys too (hub, source or item names), which removes some non-personal detail.
 
 ## Cryptography
