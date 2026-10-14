@@ -349,7 +349,7 @@ const pl: Translation<typeof de> = {
     data: {
       title: 'Twoje dane',
       download: 'Pobierz moje dane',
-      hint: 'Plik JSON z Twoim kontem, profilami, listami, ocenami, historią i ustawieniami. Zawiera tylko Twoje własne dane.',
+      hint: 'Plik JSON z Twoim kontem, profilami, listami, ocenami, historią i ustawieniami. Zawiera tylko Twoje własne dane. Najwyżej 5 pobrań na godzinę.',
     },
     delete: {
       title: 'Usuń konto',

@@ -50,6 +50,17 @@ describe('describeActivity', () => {
     expect(describeActivity({ ...base, action: 'user.deletion_requested', meta: { deletionAt: '2026-10-21T12:00:00Z', by: 'admin' } }).text)
       .toBe('Tester hat die Löschung von Anna beantragt (am 21.10.2026)');
     expect(describeActivity({ ...base, action: 'user.deletion_restored' }).text).toBe('Tester hat die Löschung von Anna aufgehoben');
+    // self variants: meta.by, or the actor is the target (a restore by signing in again)
+    expect(describeActivity({ ...base, actor: 'Anna', actor_id: 'uuid', action: 'user.deletion_restored' }).text).toBe('Anna hat die Löschung des eigenen Kontos aufgehoben');
+    expect(describeActivity({ ...base, actor: 'Anna', action: 'user.deletion_restored', meta: { by: 'self' } }).text).toBe('Anna hat die Löschung des eigenen Kontos aufgehoben');
+    expect(describeActivity({ ...base, actor: 'Anna', actor_id: 'uuid', action: 'user.deletion_requested', meta: { deletionAt: '2026-10-21T12:00:00Z' } }).text)
+      .toBe('Anna hat die Löschung des eigenen Kontos beantragt (am 21.10.2026)');
+    expect(describeActivity({ ...base, actor_id: 'other', action: 'user.deletion_restored' }).text).toBe('Tester hat die Löschung von Anna aufgehoben');
+    // restored while the access had ended: it stays locked
+    expect(describeActivity({ ...base, action: 'user.deletion_restored', meta: { lockedReason: 'expired' } }).text)
+      .toBe('Tester hat die Löschung von Anna aufgehoben – bleibt gesperrt, der Zugang ist abgelaufen');
+    expect(describeActivity({ ...base, actor: 'Anna', actor_id: 'uuid', action: 'user.deletion_restored', meta: { lockedReason: 'expired' } }).text)
+      .toBe('Anna hat die Löschung des eigenen Kontos aufgehoben – bleibt gesperrt, der Zugang ist abgelaufen');
     expect(describeActivity({ ...base, action: 'user.deletion_now', meta: { from: 'a', to: 'b' } }).text).toBe('Tester hat Anna sofort löschen lassen');
     expect(describeActivity({ ...base, actor: null, target_name: 'deleted-1a2b3c4d', action: 'user.deletion_started', meta: { pseudonym: 'deleted-1a2b3c4d' } }).text)
       .toBe('Die Löschung von deleted-1a2b3c4d hat begonnen');
@@ -60,6 +71,9 @@ describe('describeActivity', () => {
     expect(describeActivity({ ...base, actor: null, action: 'user.deletion_failed', meta: { step: '<b>' } }).text).not.toContain('<b>');
     await setLocale('en');
     expect(describeActivity({ ...base, action: 'user.deletion_now' }).text).toBe('Tester had Anna deleted right away');
+    expect(describeActivity({ ...base, actor: 'Anna', actor_id: 'uuid', action: 'user.deletion_restored' }).text).toBe('Anna cancelled the deletion of their own account');
+    expect(describeActivity({ ...base, action: 'user.deletion_restored', meta: { lockedReason: 'expired' } }).text)
+      .toBe('Tester cancelled the deletion of Anna – stays locked, the access has ended');
     expect(describeActivity({ ...base, actor: 'Anna', action: 'user.deletion_requested', meta: { deletionAt: '2026-10-21T12:00:00Z', by: 'self' } }).text)
       .toBe('Anna asked to delete their own account (on 21 Oct 2026)');
   });

@@ -329,7 +329,7 @@ const tr: Translation<typeof de> = {
     data: {
       title: 'Verilerin',
       download: 'Verilerimi indir',
-      hint: 'Hesabın, profillerin, listelerin, puanların, geçmişin ve ayarlarınla bir JSON dosyası. Yalnızca kendi verilerini içerir.',
+      hint: 'Hesabın, profillerin, listelerin, puanların, geçmişin ve ayarlarınla bir JSON dosyası. Yalnızca kendi verilerini içerir. Saatte en fazla 5 indirme.',
     },
     delete: {
       title: 'Hesabı sil',

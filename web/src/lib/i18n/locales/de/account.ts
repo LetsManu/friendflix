@@ -332,7 +332,7 @@ export default {
     data: {
       title: 'Deine Daten',
       download: 'Meine Daten herunterladen',
-      hint: 'Eine JSON-Datei mit deinem Konto, deinen Profilen, Listen, Bewertungen, deinem Verlauf und deinen Einstellungen. Sie enthält nur deine eigenen Daten.',
+      hint: 'Eine JSON-Datei mit deinem Konto, deinen Profilen, Listen, Bewertungen, deinem Verlauf und deinen Einstellungen. Sie enthält nur deine eigenen Daten. Höchstens 5 Downloads pro Stunde.',
     },
     delete: {
       title: 'Konto löschen',

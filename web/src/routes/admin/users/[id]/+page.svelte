@@ -15,7 +15,7 @@
   import Icon from '#lib/Icon.svelte';
   import MoreActions, { type MoreAction } from '#lib/MoreActions.svelte';
   import { pageStore } from '#lib/page';
-  import { accessPreset, accountGuardText, futureDayEnd, today } from '#lib/admin/people';
+  import { accessPreset, accountGuardText, deletionErrorText, futureDayEnd, restoredText, today } from '#lib/admin/people';
   import { refreshSummary } from '#lib/admin/summary';
   import { DETAIL_TABS, akError, detailTab, lockAction, mfaChips, statusPills, type DetailTab, type UserDetail } from '#lib/admin/user/detail';
   import Activity from '#lib/admin/user/Activity.svelte';
@@ -109,19 +109,11 @@
     if (r.ok) void load();
   }
   // a scheduled deletion (Block 23 self-service): restore cancels it, delete now hands it to the next deletion tick
-  const deletionError = (e: unknown): string => {
-    const code = e instanceof ApiError ? (e.body as { error?: string } | null)?.error : undefined;
-    return code === 'deletion_in_progress' ? tr('adminPeople.detail.actions.deletionRunning')
-      : code === 'not_scheduled' ? tr('adminPeople.detail.actions.notScheduled') : guardError(e);
-  };
   async function restoreDeletion() {
     if (!u) return;
-    const name = u.name;
-    // an account whose access has ended stays locked (as expired) after the restore (F8)
-    const ended = u.accessUntil !== null && Date.parse(u.accessUntil) <= Date.now();
     const r = await runAction({
-      key: `user:${id}`, run: () => api(`/api/admin/users/${id}/deletion/restore`, { method: 'POST' }), error: deletionError,
-      success: tr(ended ? 'adminPeople.detail.actions.restoredLocked' : 'adminPeople.detail.actions.restored', { name }),
+      key: `user:${id}`, run: () => api(`/api/admin/users/${id}/deletion/restore`, { method: 'POST' }), error: deletionErrorText,
+      success: restoredText(u.name, u.accessUntil),
     });
     if (r.ok) { void load(); void refreshSummary(); }
   }
@@ -134,7 +126,7 @@
     });
     if (!ok) return;
     const r = await runAction({
-      key: `user:${id}`, run: () => api(`/api/admin/users/${id}/deletion/now`, { method: 'POST' }), error: deletionError,
+      key: `user:${id}`, run: () => api(`/api/admin/users/${id}/deletion/now`, { method: 'POST' }), error: deletionErrorText,
       success: tr('adminPeople.detail.actions.deleteNowDone', { name }),
     });
     if (r.ok) void load();

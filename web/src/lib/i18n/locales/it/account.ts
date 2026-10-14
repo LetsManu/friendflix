@@ -329,7 +329,7 @@ const it: Translation<typeof de> = {
     data: {
       title: 'I tuoi dati',
       download: 'Scarica i miei dati',
-      hint: 'Un file JSON con il tuo account, i profili, le liste, le valutazioni, la cronologia e le impostazioni. Contiene solo i tuoi dati.',
+      hint: 'Un file JSON con il tuo account, i profili, le liste, le valutazioni, la cronologia e le impostazioni. Contiene solo i tuoi dati. Al massimo 5 download all’ora.',
     },
     delete: {
       title: 'Elimina account',

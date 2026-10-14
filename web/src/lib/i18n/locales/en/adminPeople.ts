@@ -47,7 +47,7 @@ const dict: Translation<typeof de> = {
     accessExpired: 'Access has ended – extend access instead.',
     deleting: 'Deletion pending',
     cleanupStep: 'Cleanup step {n} of 6',
-    cleanupError: 'Cleanup step {n} of 6 — error: {error}',
+    cleanupError: 'Cleanup step {n} of 6 – error: {error}',
     confirmSignOutTitle: 'Sign {name} out everywhere?',
     confirmSignOutBody: 'All devices of {name} are signed out and offline downloads lose their licence. Signing in again works right away.',
     signedOutToast: { one: '{name} signed out ({n} session ended).', other: '{name} signed out ({n} sessions ended).' },

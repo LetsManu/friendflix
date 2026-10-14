@@ -102,6 +102,10 @@ describe('POST /api/account/delete', () => {
   });
 
   it('last admin cannot self-delete; a second admin can', async () => {
+    // the refusal comes before the re-authentication (no pointless sign-in first)
+    const early = await call(admin, 'POST', '/api/account/delete', { confirm: true });
+    expect(early.statusCode).toBe(400);
+    expect(early.json()).toEqual({ error: 'last_admin' });
     await stamp(admin);
     const r = await call(admin, 'POST', '/api/account/delete', { confirm: true });
     expect(r.statusCode).toBe(400);

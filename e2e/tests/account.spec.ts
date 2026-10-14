@@ -192,6 +192,7 @@ test.describe('account page errors', () => {
 
 /** Block 23 self-service: your data (export) and deleting the account */
 test.describe('your data and account deletion', () => {
+  test.use({ allowedConsole: /status of 401/ }); // the first delete answers 401 reauth_required
   const REAUTH = () => Date.now() + 600_000;
 
   test('download link points to the export', async ({ page }) => {
@@ -230,15 +231,16 @@ test.describe('your data and account deletion', () => {
     await opener.click();
     await dlg.getByRole('button', { name: 'Mein Konto löschen' }).click();
     // back from the sign-in: the dialog is open again and the flag is gone from the address
+    await expect.poll(() => next).toBe('/me/account?delete=1');
     dlg = page.getByRole('dialog', { name: 'Konto löschen?' });
     await expect(dlg).toBeVisible();
-    expect(next).toBe('/me/account?delete=1');
     await expect(page).toHaveURL(/\/me\/account$/);
-    expect(api.log.filter((l) => l.startsWith('POST /api/account/delete'))).toEqual([]); // nothing sent before the sign-in
+    // the backend was asked first (it refuses a last admin before any sign-in); it answered reauth_required
+    expect(api.log.filter((l) => l.startsWith('POST /api/account/delete'))).toEqual(['POST /api/account/delete {"confirm":true} -> 401']);
     await dlg.getByRole('button', { name: 'Mein Konto löschen' }).click();
     const done = page.getByRole('dialog', { name: 'Konto wird gelöscht' });
     await expect(done).toContainText('Dein Konto wird am 21. Oktober 2026 gelöscht.');
-    expect(api.log).toContain('POST /api/account/delete {"confirm":true} -> 200');
+    expect(api.log.filter((l) => l.startsWith('POST /api/account/delete'))).toEqual(['POST /api/account/delete {"confirm":true} -> 401', 'POST /api/account/delete {"confirm":true} -> 200']);
     await expect(done.getByRole('button', { name: 'OK' })).toBeFocused();
     await done.getByRole('button', { name: 'OK' }).click();
     await expect(page).toHaveURL(/\/$/); // the session is gone
@@ -258,8 +260,10 @@ test.describe('account deletion refused', () => {
     await expect.poll(() => next).toBe('/me/account?delete=1');
   });
 
-  test('delete as last admin shows the hint', async ({ page, api }) => {
-    api.account = { ...api.account, reauthUntil: Date.now() + 600_000 };
+  test('delete as last admin shows the hint', async ({ page }) => {
+    // no recent sign-in: the refusal comes first, nobody is sent through the sign-in for nothing
+    let reauth = 0;
+    page.on('request', (r) => { if (new URL(r.url()).pathname === '/auth/reauth') reauth++; });
     await page.route('**/api/account/delete', (r) => r.fulfill({ status: 400, contentType: 'application/json', body: '{"error":"last_admin"}' }));
     await page.goto('/me/account');
     await page.getByRole('button', { name: 'Konto löschen …' }).click();
@@ -268,5 +272,6 @@ test.describe('account deletion refused', () => {
     await expect(dlg.getByRole('alert')).toHaveText('Du bist der letzte Admin – mach zuerst jemand anderen zum Admin.');
     await expect(dlg.getByRole('button', { name: 'Mein Konto löschen' })).toBeVisible(); // still open, nothing else happened
     await expect(page).toHaveURL(/\/me\/account$/);
+    expect(reauth).toBe(0);
   });
 });

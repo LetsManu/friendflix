@@ -5,8 +5,9 @@
    * Admin: users – tabs Users | Waiting for approval (n) | Invites (`?tab=`). Users: server-side search/sort/paging,
    * filters (role, status, last active), role select (optimistic, rollback), lock/unlock (confirm + undo), sign out
    * everywhere (confirm); row checkboxes with a bulk bar (role, lock, unlock, access-until, sign out; confirm with the names).
-   * "Deletion pending" lists scheduled deletions (with their date) and cleanup rows: deletions under way, shown with the
-   * step in work and its error; they are not selectable, have no actions and no link (the account may already be gone).
+   * "Deletion pending" lists scheduled deletions (with their date; "Restore account" instead of unlock) and cleanup rows:
+   * deletions under way, shown with the step in work and its error; they are not selectable and have no actions, and link to
+   * the detail page only while the users row exists (gone: steps 5-6).
    */
   import { onMount } from 'svelte';
   import { goto } from '$app/navigation';
@@ -16,7 +17,7 @@
   import { pageStore } from '#lib/page';
   import ApprovalsPanel from '#lib/admin/ApprovalsPanel.svelte';
   import InvitesPanel from '#lib/admin/InvitesPanel.svelte';
-  import { accessPreset, accountGuardText, bulkSummary, futureDayEnd, today } from '#lib/admin/people';
+  import { accessPreset, accountGuardText, bulkSummary, deletionErrorText, futureDayEnd, restoredText, today } from '#lib/admin/people';
   import { deletionLabel } from '#lib/admin/user/detail';
   import { refreshSummary } from '#lib/admin/summary';
   import { roleName, type RoleInfo } from '#lib/roles';
@@ -35,7 +36,7 @@
     last_seen: string | null; access_until: string | null; profiles: number; devices: number; pending: boolean
     deletion_at?: string | null; locked_reason?: string | null
     /** status=deleting only: a deletion under way (step = the step being worked on, 1-6; error = its last error code) */
-    cleanup?: { step: number; error: string | null } | null
+    cleanup?: { step: number; error: string | null; gone: boolean } | null
   }
   const TABS = ['users', 'approvals', 'invites'] as const;
   type Tab = typeof TABS[number];
@@ -173,12 +174,22 @@
     });
   }
 
+  // a scheduled deletion: restore (no undo: locking again would be a manual lock and lose the deletion)
+  async function restoreDeletion(u: U) {
+    const r = await runAction({
+      key: `user:${u.id}`, run: () => api(`/api/admin/users/${u.id}/deletion/restore`, { method: 'POST' }), error: deletionErrorText,
+      success: restoredText(u.name, u.access_until),
+    });
+    if (r.ok) { void load(); void refreshSummary(); }
+  }
+
   $: actions = (u: U): MoreAction[] => u.cleanup ? [] : u.pending
     ? [{ id: 'approve', label: $t('adminPeople.users.toApprovals'), icon: 'check', run: () => void select('approvals') }]
     : u.id === meId
       ? [{ id: 'self', label: $t('adminPeople.users.selfNote'), icon: 'lock', disabled: true }]
       : [
-        u.disabled ? { id: 'unlock', label: $t('adminPeople.users.unlock'), icon: 'unlock', run: () => setLocked(u, false) } : { id: 'lock', label: $t('adminPeople.users.lock'), icon: 'lock', danger: true, run: () => lock(u) },
+        u.disabled && u.locked_reason === 'deletion' ? { id: 'restore', label: $t('adminPeople.detail.actions.restore'), icon: 'unlock', run: () => restoreDeletion(u) }
+          : u.disabled ? { id: 'unlock', label: $t('adminPeople.users.unlock'), icon: 'unlock', run: () => setLocked(u, false) } : { id: 'lock', label: $t('adminPeople.users.lock'), icon: 'lock', danger: true, run: () => lock(u) },
         { id: 'signout', label: $t('adminPeople.users.signOut'), icon: 'log-out', danger: true, run: () => signOut(u) },
       ];
 
@@ -314,7 +325,7 @@
           <span class="who">
             <span class="av" style:background={avatarBg(undefined)} aria-hidden="true">{initial(row.name)}</span>
             <span class="nm">
-              <span class="n">{#if row.pending || row.cleanup}{row.name}{:else}<a href="/admin/users/{row.id}">{row.name}</a>{/if}{#if row.id === meId} <StatusPill tone="info" label={$t('adminPeople.users.you')} icon="" />{/if}</span>
+              <span class="n">{#if row.pending || row.cleanup?.gone}{row.name}{:else}<a href="/admin/users/{row.id}">{row.name}</a>{/if}{#if row.id === meId} <StatusPill tone="info" label={$t('adminPeople.users.you')} icon="" />{/if}</span>
               <span class="st">
                 {#if row.pending}<StatusPill tone="warn" label={$t('adminPeople.users.pending')} />
                 {:else if row.cleanup}<StatusPill tone={row.cleanup.error ? 'err' : 'warn'} label={$locale && cleanupText(row.cleanup)} />

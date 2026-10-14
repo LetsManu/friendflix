@@ -387,23 +387,46 @@ test.describe('admin user deletion', () => {
     Object.assign(api.admin.users.find((u) => u.id === ANNA)!, { disabled: true, locked_reason: 'deletion', deletion_at: WEEKISH() });
     api.admin.cleanups.push({ id: auid(900), pseudonym: 'deleted-1a2b3c4d', started_at: new Date(Date.now() - 3600e3).toISOString(), step: 3, error: 'media_error' });
     api.admin.cleanups.push({ id: auid(901), pseudonym: 'deleted-99ff00aa', started_at: new Date(Date.now() - 600e3).toISOString(), step: 5, error: null });
+    // claimed, users row still there (steps 1-4): still has a detail page
+    Object.assign(api.admin.users.find((u) => u.id === auid(3))!, { disabled: true, locked_reason: 'deletion', deletion_at: new Date(Date.now() - 60e3).toISOString(), cleanup: { step: 2, error: 'request_error' } });
     await page.goto('/admin/users');
     const table = page.getByRole('table', { name: 'Nutzer' });
     await expect(table.getByRole('row', { name: /Ben Test/ })).toBeVisible();
     await page.getByRole('combobox', { name: 'Status' }).selectOption({ label: 'Löschung ausstehend' });
-    await expect(table.getByRole('row', { name: /Ben Test/ })).toHaveCount(0);
+    await expect(table.getByRole('row', { name: /Clara Fischer/ })).toHaveCount(0);
     const failing = table.getByRole('row', { name: /deleted-1a2b3c4d/ });
     await expect(failing).toContainText('Bereinigung: Schritt 3 von 6 – Fehler: media_error');
     await expect(table.getByRole('row', { name: /deleted-99ff00aa/ })).toContainText('Bereinigung: Schritt 5 von 6');
     await expect(table.getByRole('row', { name: /deleted-99ff00aa/ })).not.toContainText('Fehler');
-    // no detail page behind a cleanup row, not selectable, no actions
+    // no detail page behind a gone cleanup row, not selectable, no actions
     await expect(failing.getByRole('link')).toHaveCount(0);
     await expect(failing.getByRole('checkbox')).toBeDisabled();
     await expect(failing.getByRole('button')).toHaveCount(0);
+    // a claimed account whose users row exists links to its detail page, but is not selectable and has no actions either
+    const claimed = table.getByRole('row', { name: /Ben Test/ });
+    await expect(claimed).toContainText('Bereinigung: Schritt 2 von 6 – Fehler: request_error');
+    await expect(claimed.getByRole('link', { name: 'Ben Test' })).toHaveAttribute('href', `/admin/users/${auid(3)}`);
+    await expect(claimed.getByRole('checkbox')).toBeDisabled();
+    await expect(claimed.getByRole('button')).toHaveCount(0);
     // the scheduled account keeps its link and shows the date
     const anna = table.getByRole('row', { name: /Anna Beispiel/ });
     await expect(anna.getByRole('link', { name: 'Anna Beispiel' })).toBeVisible();
     await expect(anna.getByText(/^Löschung am \d/)).toBeVisible();
     await expect(page.locator('main')).not.toContainText('undefined');
+  });
+
+  test('a scheduled account in the list offers "Restore account" instead of "Unlock" (no undo)', async ({ page, api }) => {
+    const anna = api.admin.users.find((u) => u.id === ANNA)!;
+    Object.assign(anna, { disabled: true, locked_reason: 'deletion', deletion_at: WEEKISH() });
+    await page.goto('/admin/users');
+    await page.getByRole('button', { name: 'Aktionen für Anna Beispiel' }).click();
+    const m = page.getByRole('dialog', { name: 'Anna Beispiel' });
+    await expect(m.getByRole('button', { name: 'Entsperren' })).toHaveCount(0);
+    await m.getByRole('button', { name: 'Konto wiederherstellen' }).click();
+    await expect(toasts(page).getByText('Anna Beispiel wiederhergestellt.')).toBeVisible();
+    await expect(toasts(page).getByRole('button', { name: 'Rückgängig' })).toHaveCount(0);
+    expect(logged(api, new RegExp(`^POST /api/admin/users/${ANNA}/deletion/restore `))).toBe(true);
+    expect(logged(api, /^PATCH /)).toBe(false);
+    expect(anna).toMatchObject({ disabled: false, deletion_at: null });
   });
 });

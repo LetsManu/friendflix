@@ -300,7 +300,7 @@ describe('deletionTick', () => {
     fail.jfDelete = 500;
     await deletionTick(env.ctx);
     const users = (await call(admin, 'GET', '/api/admin/users?status=deleting')).json().users as Array<Record<string, unknown>>;
-    expect(users.filter((u) => u.id === d.id)).toEqual([expect.objectContaining({ name: d.claims.name, cleanup: { step: 1, error: 'JellyfinError:500' } })]);
+    expect(users.filter((u) => u.id === d.id)).toEqual([expect.objectContaining({ name: d.claims.name, cleanup: { step: 1, error: 'JellyfinError:500', gone: false } })]);
     // admin changes on a claimed account are refused
     for (const [method, url, body] of [['PATCH', `/api/admin/users/${d.id}`, { role: 'guest' }], ['POST', `/api/admin/users/${d.id}/repair`, undefined],
       ['PUT', `/api/admin/users/${d.id}/limits`, { maxStreams: 2 }]] as const) {
@@ -320,7 +320,7 @@ describe('deletionTick', () => {
     expect(r.statusCode).toBe(200);
     const users = r.json().users as Array<Record<string, unknown>>;
     const cleanup = users.find((u) => u.id === d.id)!;
-    expect(cleanup).toMatchObject({ id: d.id, name: pseudonymFor(env.ctx, d.id), email: null, cleanup: { step: 6, error: 'authentik_error' } });
+    expect(cleanup).toMatchObject({ id: d.id, name: pseudonymFor(env.ctx, d.id), email: null, cleanup: { step: 6, error: 'authentik_error', gone: true } });
     expect(JSON.stringify(cleanup)).not.toContain('doomed');
     expect(users.find((u) => u.id === pending.id)).toMatchObject({ name: pending.claims.name, cleanup: null });
     expect(r.json().total).toBe(users.length);

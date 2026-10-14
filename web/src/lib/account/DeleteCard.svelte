@@ -3,8 +3,9 @@
 <script lang="ts">
   /**
    * /me/account, delete the account: a dialog that offers the export first, explains the 7 days (restore by signing in
-   * again) and that the sign-in account is deactivated. Deleting needs a recent sign-in: without one the button goes through
-   * /auth/reauth and comes back as `?delete=1`, which opens the dialog again. On success the session is gone: the dialog
+   * again) and that the sign-in account is deactivated. Deleting needs a recent sign-in: the button always asks the backend
+   * first (the last admin is refused before any sign-in); a 401 reauth_required goes through /auth/reauth and comes back as
+   * `?delete=1`, which opens the dialog again. On success the session is gone: the dialog
    * shows the date, then the page leaves for `/`. The last admin is refused (400 last_admin).
    */
   import { onMount, tick } from 'svelte';
@@ -24,6 +25,7 @@
   let open = false, busy = false, err = '', doneAt: string | null = null;
   let opener: HTMLElement | undefined, cancelBtn: HTMLButtonElement | undefined, okBtn: HTMLButtonElement | undefined;
   const portal = (node: HTMLElement) => { document.body.appendChild(node); return { destroy() { node.remove(); } }; };
+  /** only for the hint: the backend decides (401 reauth_required) */
   $: needsReauth = !account.reauthUntil || account.reauthUntil <= Date.now();
 
   async function show() {
@@ -50,7 +52,6 @@
 
   async function remove() {
     if (busy) return;
-    if (needsReauth) return startReauth(NEXT);
     busy = true; err = '';
     try {
       doneAt = (await api<{ deletionAt: string }>('/api/account/delete', { method: 'POST', body: { confirm: true } })).deletionAt;
@@ -59,7 +60,7 @@
       okBtn?.focus();
     } catch (e) {
       busy = false;
-      if (isReauthError(e)) return startReauth(NEXT); // the window ran out meanwhile
+      if (isReauthError(e)) return startReauth(NEXT); // no recent sign-in (or the window ran out meanwhile)
       err = e instanceof ApiError && (e.body as { error?: string } | null)?.error === 'last_admin' ? tr('account.account.delete.lastAdmin') : errorText(e);
     }
   }
@@ -81,7 +82,7 @@
         <p class="done">{$t('account.account.delete.done', { date: fmtDate(doneAt) })}</p>
         <p class="muted">{$t('account.account.delete.doneHint')}</p>
       </div>
-      <div class="acts end"><button type="button" bind:this={okBtn} on:click={leave}>{$t('account.account.delete.ok')}</button></div>
+      <div class="acts end"><button type="button" aria-describedby="del-d" bind:this={okBtn} on:click={leave}>{$t('account.account.delete.ok')}</button></div>
     {:else}
       <h2 id="del-h">{$t('account.account.delete.dialogTitle')}</h2>
       <p class="muted">{$t('account.account.delete.exportHint')}</p>

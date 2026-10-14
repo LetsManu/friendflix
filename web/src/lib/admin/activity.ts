@@ -11,6 +11,8 @@ export interface AuditEntry {
   meta?: Record<string, unknown> | null;
   /** actor name (null = system) */
   actor?: string | null;
+  /** actor's user id (the audit endpoints send it): actor = target marks a person's own action */
+  actor_id?: string | null;
   /** name of the user/list the target id points to (backend join) */
   target_name?: string | null;
 }
@@ -48,8 +50,14 @@ export function describeActivity(e: AuditEntry): { text: string; icon: string } 
     const code = typeof meta.error === 'string' && /^[a-z_]+$/.test(meta.error) && hasKey(`admin.activity.failReason.${meta.error}`) ? meta.error : 'unknown';
     return { text: tr('admin.activity.user.recovery_email_failed', { ...params, reason: trDynamic(`admin.activity.failReason.${code}`) }), icon };
   }
-  // a person deleting their own account (the actor is the target)
-  if (e.action === 'user.deletion_requested' && meta.by === 'self') return { text: tr('admin.activity.user.deletion_requested_self', params), icon };
+  // a person deleting or restoring their own account (meta.by, or the actor is the target); a restore of ended access stays locked
+  const self = meta.by === 'self' || (Boolean(e.actor_id) && e.actor_id === e.target);
+  if (e.action === 'user.deletion_requested' && self) return { text: tr('admin.activity.user.deletion_requested_self', params), icon };
+  if (e.action === 'user.deletion_restored') {
+    const locked = meta.lockedReason === 'expired';
+    const k = self ? (locked ? 'deletion_restored_self_locked' : 'deletion_restored_self') : locked ? 'deletion_restored_locked' : 'deletion_restored';
+    return { text: tr(`admin.activity.user.${k}`, params), icon };
+  }
   const key = activityKey(e.action);
   return { text: key ? trDynamic(key, params) : tr('admin.activity.unknown', { actor }), icon };
 }

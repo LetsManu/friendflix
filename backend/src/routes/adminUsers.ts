@@ -182,12 +182,13 @@ export function adminUserRoutes(app: FastifyInstance, ctx: Ctx) {
                 (select max(last_seen) from devices d where d.user_id = u.id) last_seen, u.access_until, u.locked_reason, u.deletion_at,
                 (select count(*) from profiles x where x.user_id = u.id)::int profiles,
                 (select count(*) from devices d where d.user_id = u.id)::int devices, false pending${p.status === 'deleting' ? `,
-                case when ad.user_id is not null and ad.finished_at is null then jsonb_build_object('step', ad.step + 1, 'error', ad.last_error) end cleanup` : ''}
+                case when ad.user_id is not null and ad.finished_at is null then jsonb_build_object('step', ad.step + 1, 'error', ad.last_error, 'gone', false) end cleanup` : ''}
            from users u${p.status === 'deleting' ? ` left join account_deletions ad on ad.user_id = u.id
          union all
-         -- claimed deletions carry the step being worked on and its error; once the users row is gone (steps 5-6) only the pseudonym is left
+         -- claimed deletions carry the step being worked on and its error; once the users row is gone (steps 5-6) only the pseudonym is
+         -- left (gone: no detail page to link to)
          select ad.user_id, ad.pseudonym, null, null, true, null, null, ad.started_at, null, null, 'deletion', null, 0, 0, false,
-                jsonb_build_object('step', ad.step + 1, 'error', ad.last_error)
+                jsonb_build_object('step', ad.step + 1, 'error', ad.last_error, 'gone', true)
            from account_deletions ad where ad.finished_at is null and not exists (select 1 from users x where x.id = ad.user_id)` : ''}`;
     const order = orderBy({ name: 'lower(u.name)', email: "lower(coalesce(u.email,''))", role: 'u.role', status: 'u.disabled', lastSeen: 'u.last_seen', createdAt: 'u.created_at', accessUntil: 'u.access_until', profiles: 'u.profiles', devices: 'u.devices' }, p.sort, p.dir, 'u.created_at, u.id');
     const total = Number((await ctx.db.query<{ c: string }>(`select count(*) c from (${base}) u ${w.sql}`, w.params)).rows[0]!.c);

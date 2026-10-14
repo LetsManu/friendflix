@@ -17,7 +17,7 @@ import { recordError } from '../errorlog.js';
 import { exportUserData } from '../export.js';
 import { recentlyAuthenticated, REAUTH_WINDOW_S, requireRecentAuth } from '../reauth.js';
 import { COOKIE, requireOwner } from '../session.js';
-import { accountSerial } from '../users.js';
+import { accountSerial, assertNotLastAdmin } from '../users.js';
 
 /** a FriendFlix avatar key (the preset swatches), validated like the profile avatar */
 const avatarKey = z.string().regex(/^[a-z0-9-]{1,20}$/);
@@ -115,9 +115,12 @@ export function accountRoutes(app: FastifyInstance, ctx: Ctx) {
 
   /**
    * Deletes the account after the grace period: locked at once (every session and offline license revoked, this one too), the
-   * admins are told. 400 last_admin for the last active admin. Restoring is possible by signing in again within the grace period.
+   * admins are told. 400 last_admin for the last active admin, checked before the recent sign-in (no pointless re-auth; the
+   * refusal tells the owner nothing secret) and again inside the queue. Restoring is possible by signing in again within the
+   * grace period.
    */
-  app.post('/api/account/delete', { preHandler: requireRecentAuth(ctx) }, async (req, reply) => {
+  const lastAdminFirst = async (req: FastifyRequest) => { await assertNotLastAdmin(ctx, [req.user!.id], 'lock'); };
+  app.post('/api/account/delete', { preHandler: [requireOwner(ctx), lastAdminFirst, requireRecentAuth(ctx)] }, async (req, reply) => {
     z.object({ confirm: z.literal(true) }).parse(req.body);
     const me = req.user!.id;
     const deletionAt = await accountSerial(() => scheduleDeletion(ctx, me, me));

@@ -3,7 +3,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { setLocale } from '#lib/i18n';
 import { ApiError } from '#lib/api';
-import { accessPreset, accountGuardText, auditArea, auditDetails, bulkSummary, dayEnd, dayStart, deviceKind, futureDayEnd, humanizeKey, inviteStatus, today } from './people';
+import { accessPreset, accountGuardText, auditArea, deletionErrorText, restoredText, auditDetails, bulkSummary, dayEnd, dayStart, deviceKind, futureDayEnd, humanizeKey, inviteStatus, today } from './people';
 
 afterEach(async () => { await setLocale('de'); });
 
@@ -98,5 +98,20 @@ describe('accountGuardText', () => {
     expect(accountGuardText(err(400, 'cannot_lock_yourself_out'))).toBe('You cannot lock or demote yourself.');
     expect(accountGuardText(err(500, 'internal'))).toBeNull();
     expect(accountGuardText(new Error('x'))).toBeNull();
+  });
+});
+
+describe('scheduled deletion texts', () => {
+  const err = (status: number, error: string) => new ApiError(status, { error });
+  it('restore / delete now errors, and the restore toast with ended access (F8)', async () => {
+    await setLocale('en');
+    expect(deletionErrorText(err(409, 'deletion_in_progress'))).toBe('The deletion is already running – it can no longer be stopped.');
+    expect(deletionErrorText(err(409, 'not_scheduled'))).toBe('No deletion is scheduled for this account.');
+    expect(deletionErrorText(err(400, 'last_admin'))).toBe('Not possible: there would be no active admin left.');
+    expect(deletionErrorText(err(500, 'x'))).toBe('Server error. Please try again later.');
+    const now = Date.parse('2026-10-14T12:00:00Z');
+    expect(restoredText('Anna', null, now)).toBe('Anna restored.');
+    expect(restoredText('Anna', '2026-10-20T00:00:00Z', now)).toBe('Anna restored.');
+    expect(restoredText('Anna', '2026-10-13T00:00:00Z', now)).toBe('Anna restored – stays locked because the access has ended.');
   });
 });
