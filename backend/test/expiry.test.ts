@@ -143,6 +143,30 @@ describe('changing access until', () => {
     expect(await row(ids.ben!)).toMatchObject({ disabled: false, locked_reason: null, access_until: null });
   });
 
+  it('a failed unlock while extending an expired account heals on retry', async () => {
+    const now = new Date();
+    await setUntil(ids.anna!, new Date(now.getTime() - 60e3));
+    await expiryTick(env.ctx, now);
+    const until = new Date(now.getTime() + 30 * DAY);
+    until.setMilliseconds(0);
+    const patch = () => env.app.inject({ method: 'PATCH', url: `/api/admin/users/${ids.anna}`, cookies: admin.cookies, headers: { 'x-csrf-token': admin.csrf }, payload: { accessUntil: until.toISOString() } });
+    const jfAdmin = env.ctx.jf.admin;
+    const setDisabled = jfAdmin.setDisabled;
+    jfAdmin.setDisabled = async () => { throw new Error('media server down'); };
+    try {
+      expect((await patch()).statusCode).toBe(500);
+    } finally {
+      jfAdmin.setDisabled = setDisabled;
+    }
+    expect(await row(ids.anna!)).toMatchObject({ disabled: true, locked_reason: 'expired' }); // date stored, unlock failed
+    expect((await row(ids.anna!)).access_until.toISOString()).toBe(until.toISOString());
+
+    expect((await patch()).statusCode).toBe(200); // same date again
+    expect(await row(ids.anna!)).toMatchObject({ disabled: false, locked_reason: null });
+    expect(await audits('user.access', ids.anna!)).toHaveLength(1); // the unchanged date is not audited twice
+    expect(await audits('user.enable', ids.anna!)).toHaveLength(1);
+  });
+
   it('a new date in the past keeps an expired account locked', async () => {
     const now = new Date();
     await setUntil(ids.anna!, new Date(now.getTime() - 60e3));
