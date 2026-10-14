@@ -1,24 +1,16 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { readFileSync } from 'node:fs';
+import { internalSecret, need } from './env.js';
 import { createGateway } from './gateway.js';
 import { checkUpstreamConfig, selectUpstream } from './upstream/index.js';
-
-/** Reads VAR or the file referenced by VAR_FILE (Docker secrets). */
-const need = (k: string) => {
-  const f = process.env[`${k}_FILE`];
-  const v = f ? readFileSync(f, 'utf8').trim() : process.env[k];
-  if (!v) throw new Error(`missing env ${k}`);
-  return v;
-};
 
 const upstream = selectUpstream(process.env.MEDIA_SERVER);
 checkUpstreamConfig(upstream, process.env); // like the backend's config validation: refuse to start with a clear error
 const { server } = createGateway({
   upstream,
-  upstreamUrl: need(upstream.urlEnv),
-  backendUrl: need('BACKEND_URL'),
-  internalSecret: need('INTERNAL_SECRET'),
+  upstreamUrl: need(process.env, upstream.urlEnv),
+  backendUrl: need(process.env, 'BACKEND_URL'),
+  internalSecret: internalSecret(process.env), // env, INTERNAL_SECRET_FILE or the bootstrap-gateway volume
   downloadDir: process.env.DOWNLOAD_DIR || undefined,
   metricsToken: process.env.METRICS_TOKEN || undefined,
 });
