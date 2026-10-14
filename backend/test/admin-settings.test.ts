@@ -194,6 +194,14 @@ describe('PUT /api/admin/settings', () => {
     expect((await h.put({ HEALTH_DISK_CRIT_PCT: 85 })).json().errors).toEqual({ HEALTH_DISK_CRIT_PCT: 'warn_above_critical' });
     // credentials never go into a URL setting (they would be shown in Admin -> Settings)
     expect((await h.put({ NTFY_URL: 'https://user:pass@ntfy.example.com/t' })).json().errors).toEqual({ NTFY_URL: 'invalid_url' });
+    // the shown redaction marker never goes back as the token (an edited redacted URL), on save and on test
+    const ntfy = h.env.ctx.cfg.NTFY_URL;
+    const red = await h.put({ NTFY_URL: 'https://ntfy.example.com/other?auth=redacted' });
+    expect(red.statusCode).toBe(400);
+    expect(red.json().errors).toEqual({ NTFY_URL: 'redacted' });
+    expect((await h.put({ NTFY_BASE_URL: 'https://ntfy.example.com/?x=redacted' })).json().errors).toEqual({ NTFY_BASE_URL: 'redacted' });
+    expect(h.env.ctx.cfg.NTFY_URL).toBe(ntfy);
+    expect((await h.put({ NTFY_URL: 'https://ntfy.example.com/redacted?auth=tk_real' })).statusCode).toBe(200);
     expect(h.env.ctx.cfg.OIDC_CLIENT_SECRET).toBe(cfg.OIDC_CLIENT_SECRET);
     // a valid change of both levels together is fine; '' resets a non-required key to its default
     expect((await h.put({ HEALTH_DISK_WARN_PCT: 90, HEALTH_DISK_CRIT_PCT: 97 })).statusCode).toBe(200);

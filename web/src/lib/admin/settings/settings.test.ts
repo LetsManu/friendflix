@@ -6,7 +6,10 @@ import { hasKey, setLocale, tr } from '#lib/i18n';
 import { describeActivity } from '../activity';
 import { activeItem } from '../nav';
 import { fieldErrors, generate, importEnv, loadSettings, probeFailure, saveSettings, testGroup, type SettingView } from './api';
-import { changedValues, errorText, isChange, keepable, keyHelp, keyLabel, moveHint, probeText, shownDraft, stashPending, submitValue, takePending } from './form';
+import {
+  changedValues, clearPending, errorText, isChange, keepable, keyHelp, keyLabel, moveHint, probeText, redactedKeys, shownDraft, stashPending, stillRedacted,
+  submitValue, takePending,
+} from './form';
 
 /** every visible setting of the registry (spec Part A: 48) */
 const KEYS = ['PUBLIC_URL', 'WEBHOOK_SECRET', 'API_COMPRESSION', 'OIDC_ISSUER', 'OIDC_CLIENT_ID', 'OIDC_CLIENT_SECRET', 'ADMIN_GROUP', 'AUTHENTIK_URL',
@@ -135,43 +138,67 @@ describe('re-authentication stash', () => {
   const token = view({ key: 'AUTHENTIK_API_TOKEN', kind: 'secret', set: true });
   const ntfy = view({ key: 'NTFY_URL', kind: 'url', source: 'unset' });
 
-  it('keepable: never a secret or a URL carrying a credential', () => {
+  it('keepable is an allowlist: plain settings, cleared fields and URLs without query, fragment or userinfo', () => {
     expect(keepable(token, 'x')).toBe(false);
     expect(keepable(group, 'ff-admins')).toBe(true);
     expect(keepable(ntfy, 'https://ntfy.example.com/ff')).toBe(true);
-    expect(keepable(ntfy, 'https://ntfy.example.com/ff?auth=abc')).toBe(false);
-    expect(keepable(ntfy, 'https://u:p@ntfy.example.com/ff')).toBe(false);
     expect(keepable(ntfy, null)).toBe(true);
+    expect(keepable(ntfy, '  ')).toBe(true);
+    for (const bad of ['https://ntfy.example.com/ff?auth=abc', 'https://ntfy.example.com/ff?access_token=a', 'https://ntfy.example.com/ff?x-api-key=a',
+      'https://ntfy.example.com/ff?', 'https://ntfy.example.com/ff#k', 'https://u:p@ntfy.example.com/ff', 'https://u@ntfy.example.com', 'not a url']) {
+      expect(keepable(ntfy, bad), bad).toBe(false);
+    }
+    expect(keepable(ntfy, true)).toBe(false);
   });
 
-  it('stashes the keepable changes without secrets and gives them back once', () => {
+  it('stillRedacted / redactedKeys: an edited URL keeping the marker is refused, the unedited one is no change', () => {
+    const shown = view({ key: 'NTFY_URL', kind: 'url', value: 'https://ntfy.example.com/ff?auth=redacted', set: true });
+    expect(stillRedacted(shown, undefined)).toBe(false);
+    expect(stillRedacted(shown, 'https://ntfy.example.com/ff?auth=redacted')).toBe(false);
+    expect(stillRedacted(shown, 'https://ntfy.example.com/other?auth=redacted')).toBe(true);
+    expect(stillRedacted(shown, 'https://ntfy.example.com/other?auth=tk_1')).toBe(false);
+    expect(stillRedacted(shown, 'garbage ?auth=redacted')).toBe(true);
+    expect(stillRedacted(shown, 'garbage')).toBe(false);
+    expect(stillRedacted(group, 'redacted')).toBe(false);
+    const env = { ...shown, key: 'X', source: 'env' as const };
+    expect(redactedKeys([shown, env, group], { NTFY_URL: 'https://n.example.com/?auth=redacted', X: 'https://n.example.com/?auth=redacted', ADMIN_GROUP: 'a' })).toEqual(['NTFY_URL']);
+    expect(errorText('redacted')).toContain('„redacted“');
+  });
+
+  it('stashes the action and the keepable changes without secrets and gives them back once', () => {
     const m = store();
-    expect(stashPending('signin', [group, token], { ADMIN_GROUP: 'ff-admins', AUTHENTIK_API_TOKEN: 'very-secret' }, 1000)).toEqual({ dropped: true });
+    expect(stashPending('save', 'signin', [group, token], { ADMIN_GROUP: 'ff-admins', AUTHENTIK_API_TOKEN: 'very-secret' }, { now: 1000, force: true })).toEqual({ dropped: true });
     expect([...m.values()].join()).not.toContain('very-secret');
-    expect(takePending(2000)).toEqual({ group: 'signin', edits: { ADMIN_GROUP: 'ff-admins' }, dropped: true, at: 1000 });
+    expect(takePending(2000)).toEqual({ action: 'save', group: 'signin', edits: { ADMIN_GROUP: 'ff-admins' }, force: true, dropped: true, at: 1000 });
     expect(takePending(2000)).toBeNull();
-    stashPending('signin', [group], { ADMIN_GROUP: 'ff-admins' }, 1000);
-    expect(takePending(2000)?.dropped).toBe(false);
+    stashPending('test', 'signin', [group], { ADMIN_GROUP: 'ff-admins' }, { now: 1000, force: true });
+    expect(takePending(2000)).toMatchObject({ action: 'test', force: false, dropped: false });
+    stashPending('save', 'signin', [group], { ADMIN_GROUP: 'ff-admins' });
+    clearPending();
+    expect(takePending()).toBeNull();
   });
 
   it('drops stale, future or malformed stashes', () => {
     const m = store();
-    stashPending('signin', [group], { ADMIN_GROUP: 'ff-admins' }, 0);
+    stashPending('save', 'signin', [group], { ADMIN_GROUP: 'ff-admins' }, { now: 0 });
     expect(takePending(16 * 60_000)).toBeNull();
-    stashPending('signin', [group], { ADMIN_GROUP: 'ff-admins' }, 5000);
+    stashPending('save', 'signin', [group], { ADMIN_GROUP: 'ff-admins' }, { now: 5000 });
     expect(takePending(1000)).toBeNull();
     m.set('ff_settings_pending', '{nope');
     expect(takePending()).toBeNull();
-    m.set('ff_settings_pending', JSON.stringify({ group: 'signin', at: Date.now() }));
+    m.set('ff_settings_pending', JSON.stringify({ action: 'save', group: 'signin', at: Date.now() }));
     expect(takePending()).toBeNull();
-    m.set('ff_settings_pending', JSON.stringify({ group: 'signin', at: Date.now(), edits: { A: 'x', B: true, C: null, D: 5, E: {} } }));
+    m.set('ff_settings_pending', JSON.stringify({ action: 'delete', group: 'signin', edits: {}, at: Date.now() }));
+    expect(takePending()).toBeNull();
+    m.set('ff_settings_pending', JSON.stringify({ action: 'save', group: 'signin', at: Date.now(), edits: { A: 'x', B: true, C: null, D: 5, E: {} } }));
     expect(takePending()?.edits).toEqual({ A: 'x', B: true, C: null });
   });
 
   it('blocked storage is no error', () => {
-    vi.stubGlobal('sessionStorage', { getItem: () => { throw new Error('blocked'); }, setItem: () => { throw new Error('blocked'); }, removeItem: () => undefined });
-    expect(stashPending('signin', [group], { ADMIN_GROUP: 'x' })).toEqual({ dropped: false });
+    vi.stubGlobal('sessionStorage', { getItem: () => { throw new Error('blocked'); }, setItem: () => { throw new Error('blocked'); }, removeItem: () => { throw new Error('blocked'); } });
+    expect(stashPending('save', 'signin', [group], { ADMIN_GROUP: 'x' })).toEqual({ dropped: false });
     expect(takePending()).toBeNull();
+    expect(() => clearPending()).not.toThrow();
   });
 });
 

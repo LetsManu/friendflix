@@ -82,10 +82,12 @@ const settings: Translation<typeof de> = {
     not_allowed: 'No se puede cambiar aquí.',
     required: 'Es obligatorio y no se puede vaciar.',
     warn_above_critical: 'El nivel de aviso debe estar por debajo del nivel crítico.',
+    redacted: 'La dirección aún contiene el marcador «redacted» en lugar del token de acceso. Vuelve a introducir el token o deja el campo sin cambios.',
   },
   reauth: {
     resumed: 'Has vuelto a iniciar sesión. Tus cambios se han vuelto a rellenar.',
     dropped: 'Los valores secretos nunca se guardan entretanto: vuelve a introducirlos y guarda.',
+    failed: 'Volver a iniciar sesión no ha bastado. Tus cambios están rellenados; inténtalo de nuevo.',
   },
   generate: {
     webhookSecret: 'Generar nuevo', vapidPair: 'Generar par de claves',
@@ -97,6 +99,7 @@ const settings: Translation<typeof de> = {
     once: 'Solo se muestra ahora. Cópialo e introdúcelo en el servidor multimedia y en el servicio de peticiones.',
     done: 'Generado y guardado.',
     failed: 'No se pudo generar.',
+    a11y: '{label}: {action}',
   },
   keys: {
     PUBLIC_URL: { label: 'Dirección pública', help: 'La dirección con la que todos acceden a FriendFlix, p. ej. https://friend.example.com. Enlaces, inicio de sesión y streaming dependen de ella.' },

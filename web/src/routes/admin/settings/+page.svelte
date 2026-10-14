@@ -4,8 +4,10 @@
   /**
    * Admin → Einstellungen (spec Part I): the settings store by group, the read-only server values, env import, restart banner, live
    * tests. A save sends only the fields that changed (a shown value may be redacted). A save that needs a recent sign-in stashes the
-   * change without secrets (form.ts), goes through /auth/reauth and comes back with ?resume=1: the change is restored and, when
-   * nothing had to be left out, saved again.
+   * change without secrets and the action (save or test, with "Save anyway") (form.ts), goes through /auth/reauth and comes back with
+   * ?resume=1: the change is restored and, when nothing had to be left out, exactly that action runs once more. A resumed action that
+   * still needs a sign-in shows an error instead of another round trip. An edited URL that still carries the backend's redaction
+   * marker is refused before anything is sent (it would replace the real token).
    */
   import { onMount } from 'svelte';
   import { goto } from '$app/navigation';
@@ -24,7 +26,9 @@
     fieldErrors, generate, importEnv, loadSettings, PROBE_GROUPS, probeFailure, saveSettings, SOFT_PROBE_CODES, testGroup,
     type ProbeResult, type SettingGroup, type SettingsGroupView, type SettingsView, type SettingView,
   } from '#lib/admin/settings/api';
-  import { changedValues, errorText, keyLabel, moveHint, probeText, stashPending, takePending, type Draft } from '#lib/admin/settings/form';
+  import {
+    changedValues, clearPending, errorText, keyLabel, moveHint, probeText, redactedKeys, stashPending, takePending, type Draft, type PendingAction,
+  } from '#lib/admin/settings/form';
 
   const RESUME = '/admin/settings?resume=1';
 
@@ -38,7 +42,9 @@
   let moved = new Set<string>();
   /** a generated webhook secret, shown once (in memory only) */
   let generated: Record<string, string> = {};
-  let resumeNotice: 'resumed' | 'dropped' | null = null;
+  let resumeNotice: 'resumed' | 'dropped' | 'failed' | null = null;
+  /** the action repeated after a re-authentication runs: another reauth_required is an error, not a new round trip */
+  let resuming = false;
 
   $: groups = (view?.groups ?? []).filter((g): g is SettingsGroupView & { id: SettingGroup } => g.id !== 'server');
   $: server = view?.groups.find((g) => g.id === 'server') ?? null;
@@ -62,12 +68,17 @@
       void goto(u.pathname + u.search + u.hash, { shallow: true, replace: true });
     }
     if (!(await load()) || !resume) return;
-    // back from the sign-in: restore what could be kept; save again only when nothing had to be left out
+    // back from the sign-in: restore what could be kept; repeat exactly the interrupted action, once, when nothing had to be left out
     const p = takePending();
     if (!p) return;
     edits = { ...p.edits };
     resumeNotice = p.dropped ? 'dropped' : 'resumed';
-    if (!p.dropped && Object.keys(changesOf(p.group)).length) await save(p.group);
+    if (p.dropped) return;
+    resuming = true;
+    try {
+      if (p.action === 'test') await test(p.group);
+      else if (Object.keys(changesOf(p.group)).length) await save(p.group, p.force);
+    } finally { resuming = false; }
   });
 
   function edit(key: string, d: Draft | undefined) {
@@ -76,15 +87,28 @@
     if (errors[key]) { delete errors[key]; errors = errors; }
   }
 
-  /** a refused action that needs a recent sign-in: keep the group's change (without secrets) and go through the sign-in */
-  function reauth(group: SettingGroup | null) {
-    if (group) stashPending(group, itemsOf(group), edits);
-    startReauth(group ? RESUME : '/admin/settings');
+  /** a refused action that needs a recent sign-in: keep the group's change (without secrets) and the action, go through the sign-in */
+  function reauth(target: { action: PendingAction; group: SettingGroup; force?: boolean } | null) {
+    if (resuming) {
+      // the sign-in just happened and the backend still refuses: no second round trip
+      clearPending();
+      resumeNotice = 'failed';
+      return;
+    }
+    if (target) stashPending(target.action, target.group, itemsOf(target.group), edits, { force: target.force });
+    startReauth(target ? RESUME : '/admin/settings');
+  }
+  /** refuses edited URLs that still carry the redaction marker; true when something was refused */
+  function refuseRedacted(group: SettingGroup): boolean {
+    const keys = redactedKeys(itemsOf(group), edits);
+    if (!keys.length) return false;
+    errors = { ...errors, ...Object.fromEntries(keys.map((k) => [k, 'redacted'])) };
+    return true;
   }
 
   async function save(group: SettingGroup, force = false) {
     const values = changesOf(group);
-    if (!Object.keys(values).length) return;
+    if (!Object.keys(values).length || refuseRedacted(group)) return;
     probes = { ...probes, [group]: undefined };
     const res = await runAction({ key: `set:save:${group}`, run: () => saveSettings(values, force), success: tr('settings.saved'), error: false });
     if (res.ok) {
@@ -94,7 +118,7 @@
       await load();
       return;
     }
-    if (isReauthError(res.error)) return reauth(group);
+    if (isReauthError(res.error)) return reauth({ action: 'save', group, force });
     const fe = fieldErrors(res.error);
     const pf = probeFailure(res.error);
     if (fe) errors = { ...errors, ...fe };
@@ -104,10 +128,11 @@
 
   async function test(group: SettingGroup) {
     probes = { ...probes, [group]: undefined };
+    if (refuseRedacted(group)) return;
     const values = changesOf(group);
     const res = await runAction({ key: `set:test:${group}`, run: () => testGroup(group, values), error: false });
     if (res.ok && res.value) { probes = { ...probes, [group]: { result: res.value, save: false } }; return; }
-    if (isReauthError(res.error)) return reauth(group);
+    if (isReauthError(res.error)) return reauth({ action: 'test', group });
     const fe = fieldErrors(res.error);
     if (fe) errors = { ...errors, ...fe };
     toast.error(tr('settings.testFailed'));
@@ -151,6 +176,7 @@
     <AdminCard><div class="sk" aria-hidden="true"><Skeleton w="12rem" h="2rem" /><Skeleton h="2.8rem" /><Skeleton h="2.8rem" /></div><p class="sr-only" role="status">{$t('ui.table.loading')}</p></AdminCard>
   {:else}
     {#if resumeNotice === 'dropped'}<p class="banner warn" role="alert"><Icon name="key" size={18} />{$t('settings.reauth.dropped')}</p>
+    {:else if resumeNotice === 'failed'}<p class="banner warn" role="alert"><Icon name="alert" size={18} />{$t('settings.reauth.failed')}</p>
     {:else if resumeNotice === 'resumed'}<p class="banner" role="status"><Icon name="check" size={18} />{$t('settings.reauth.resumed')}</p>{/if}
     {#if restartKeys.length}
       <div class="banner warn" role="status">

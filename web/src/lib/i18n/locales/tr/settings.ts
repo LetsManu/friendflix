@@ -81,10 +81,12 @@ const settings: Translation<typeof de> = {
     not_allowed: 'Burada değiştirilemez.',
     required: 'Gerekli, boşaltılamaz.',
     warn_above_critical: 'Uyarı düzeyi kritik düzeyin altında olmalı.',
+    redacted: 'Adres, erişim token’ı yerine hâlâ “redacted” yer tutucusunu içeriyor. Token’ı yeniden gir veya alanı değiştirmeden bırak.',
   },
   reauth: {
     resumed: 'Yeniden oturum açtın. Değişikliklerin yeniden dolduruldu.',
     dropped: 'Gizli değerler arada asla saklanmaz: lütfen yeniden gir ve kaydet.',
+    failed: 'Yeniden oturum açmak yetmedi. Değişikliklerin dolduruldu; lütfen tekrar dene.',
   },
   generate: {
     webhookSecret: 'Yeniden oluştur', vapidPair: 'Anahtar çifti oluştur',
@@ -96,6 +98,7 @@ const settings: Translation<typeof de> = {
     once: 'Yalnızca şimdi gösterilir. Kopyala ve medya sunucusuna ve istek hizmetine gir.',
     done: 'Oluşturuldu ve kaydedildi.',
     failed: 'Oluşturulamadı.',
+    a11y: '{label}: {action}',
   },
   keys: {
     PUBLIC_URL: { label: 'Genel adres', help: 'Herkesin FriendFlix’e ulaştığı adres, ör. https://friend.example.com. Bağlantılar, oturum açma ve yayın buna dayanır.' },

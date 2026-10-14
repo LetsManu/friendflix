@@ -31,9 +31,11 @@ export interface SettingsMock {
 }
 
 const UPDATED = '2026-10-01T09:30:00Z';
+/** canary: seeded as the `value` of secret rows (the real API sends null); it must never reach the page */
+export const LEAK = 'mock-leak-canary-9f3e';
 const env = (key: string, legacy: string[] = []) => [key, ...legacy].flatMap((n) => [n, `${n}_FILE`]);
 
-interface Spec { kind: Kind; source?: Source; value?: unknown; set?: boolean; last4?: string; apply?: 'restart'; invalid?: boolean; legacy?: string[]; options?: string[]; min?: number; max?: number; generate?: 'webhookSecret' | 'vapidPair' }
+interface Spec { /** a value the backend would never send (secrets): the UI must ignore it */ leak?: string; kind: Kind; source?: Source; value?: unknown; set?: boolean; last4?: string; apply?: 'restart'; invalid?: boolean; legacy?: string[]; options?: string[]; min?: number; max?: number; generate?: 'webhookSecret' | 'vapidPair' }
 /** every visible setting of the registry, by group (spec Part A: 48) */
 const GROUPS: Array<[string, Array<[string, Spec]>]> = [
   ['general', [
@@ -71,7 +73,7 @@ const GROUPS: Array<[string, Array<[string, Spec]>]> = [
     ['VAPID_SUBJECT', { kind: 'string', source: 'unset' }],
   ]],
   ['sources', [
-    ['TMDB_API_KEY', { kind: 'secret', source: 'db', set: true, last4: 'abcd' }],
+    ['TMDB_API_KEY', { kind: 'secret', source: 'db', set: true, last4: 'abcd', leak: LEAK }],
     ['OMDB_API_KEY', { kind: 'secret', source: 'unset', set: false }],
   ]],
   ['downloads', [
@@ -115,7 +117,7 @@ const SERVER: Array<[string, Kind, Source, unknown]> = [
   ['METRICS_TOKEN', 'secret', 'unset', null], ['ROLE_TEMPLATES', 'string', 'unset', null], ['OIDC_ALLOW_INSECURE', 'string', 'default', 'false'],
   ['PREVIEW_DIR', 'string', 'default', '/data/previews'], ['UPDATE_REPO', 'string', 'default', 'LetsManu/friendflix'], ['DOWNLOAD_DIR', 'string', 'default', '/data/downloads'],
   ['BACKGROUND_JOBS', 'string', 'env', 'true'], ['GATEWAY_URL', 'string', 'default', 'http://gateway:4000'],
-  ['DATABASE_URL', 'secret', 'bootstrap', null], ['REDIS_URL', 'secret', 'bootstrap', null], ['APP_ENC_KEY', 'secret', 'bootstrap', null], ['INTERNAL_SECRET', 'secret', 'bootstrap', null],
+  ['DATABASE_URL', 'secret', 'bootstrap', LEAK], ['REDIS_URL', 'secret', 'bootstrap', null], ['APP_ENC_KEY', 'secret', 'bootstrap', null], ['INTERNAL_SECRET', 'secret', 'bootstrap', null],
 ];
 
 /** non-secret keys whose save needs a recent sign-in (backend adminSettings.ts REAUTH_KEYS, OIDC_* / AUTHENTIK_*, credential destinations) */
@@ -127,7 +129,7 @@ export function settingsState(): SettingsMock {
     items: rows.map(([key, s]): SettingViewMock => {
       const set = s.set ?? (s.value !== undefined && s.value !== null);
       return {
-        key, kind: s.kind, source: s.source ?? 'default', value: s.kind === 'secret' ? null : (s.value ?? null), set, apply: s.apply ?? 'live',
+        key, kind: s.kind, source: s.source ?? 'default', value: s.kind === 'secret' ? (s.leak ?? null) : (s.value ?? null), set, apply: s.apply ?? 'live',
         restartPending: false, invalid: s.invalid ?? false, envNames: env(key, s.legacy), updatedAt: s.source === 'db' ? UPDATED : null,
         ...(s.last4 ? { last4: s.last4 } : {}), ...(s.options ? { options: s.options } : {}), ...(s.min !== undefined ? { min: s.min } : {}),
         ...(s.max !== undefined ? { max: s.max } : {}), ...(s.generate ? { generate: s.generate } : {}),
@@ -167,6 +169,7 @@ export function settingsRoute(st: SettingsMock, m: string, p: string, body: any,
       if (!f) errors[k] = 'unknown';
       else if (f.item.source === 'env') errors[k] = 'locked';
     }
+    for (const [k, v] of Object.entries(values)) if (typeof v === 'string' && /[?&]auth=redacted\b/.test(v)) errors[k] = 'redacted';
     if (Object.keys(errors).length) return J({ error: 'invalid_settings', errors }, 400);
     if (st.probeFail && !body.force) return J({ error: 'probe_failed', group: find(Object.keys(values)[0]!)!.group, probe: st.probeFail }, 400);
     for (const [k, v] of Object.entries(values)) {
@@ -183,6 +186,8 @@ export function settingsRoute(st: SettingsMock, m: string, p: string, body: any,
     return J({ rev: st.rev });
   }
   if (p === '/api/admin/settings/test' && m === 'POST') {
+    // the real rule: a saved credential would go to a changed destination
+    if (st.reauthRequired && Object.keys(body.values ?? {}).some((k) => REAUTH.test(k))) return J({ error: 'reauth_required' }, 401);
     st.tests.push(body);
     return J(st.testResult);
   }

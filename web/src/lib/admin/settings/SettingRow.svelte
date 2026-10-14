@@ -92,7 +92,7 @@
           <Button variant="secondary" size="sm" icon="key" aria-label={$t('settings.secret.replaceA11y', { label })} on:click={replace}>{$t('settings.secret.replace')}</Button>
           <Button variant="ghost" size="sm" icon="x" disabled={!item.set && !item.invalid} aria-label={$t('settings.secret.clearA11y', { label })} on:click={() => dispatch('edit', null)}>{$t('settings.secret.clear')}</Button>
           {#if item.generate}
-            <Button variant="ghost" size="sm" icon="refresh" pending={generating} on:click={() => dispatch('generate')}>{$t(`settings.generate.${item.generate}`)}</Button>
+            <Button variant="ghost" size="sm" icon="refresh" pending={generating} aria-label={$t('settings.generate.a11y', { label, action: $t(`settings.generate.${item.generate}`) })} on:click={() => dispatch('generate')}>{$t(`settings.generate.${item.generate}`)}</Button>
           {/if}
         </div>
       {/if}

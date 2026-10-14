@@ -53,22 +53,55 @@ export function changedValues(items: readonly SettingView[], edits: Readonly<Rec
   return out;
 }
 
-/** A draft that may sit in sessionStorage: no secret, no URL with userinfo or a token-like query parameter. */
+/**
+ * A draft that may sit in sessionStorage (an allowlist): a plain non-URL setting, a cleared field, or a URL without userinfo, query
+ * string or fragment. Secrets and everything else are left out and entered again.
+ */
 export function keepable(v: SettingView, d: Draft): boolean {
   if (v.kind === 'secret') return false;
-  if (typeof d !== 'string' || v.kind !== 'url') return true;
-  return !d.includes('@') && !/[?&#;](auth|token|key|secret|pass|password|apikey|api_key|sig)=/i.test(d);
+  if (v.kind !== 'url' || d === null || (typeof d === 'string' && d.trim() === '')) return true;
+  if (typeof d !== 'string') return false;
+  try {
+    const u = new URL(d.trim());
+    return !u.username && !u.password && !u.search && !u.hash && !d.includes('?') && !d.includes('#') && !d.includes('@');
+  } catch {
+    return false;
+  }
 }
+
+/** The marker the backend puts into a shown URL instead of a credential (ntfy's `auth=` token). */
+export const REDACTED = 'redacted';
+/** A URL draft that still carries the redaction marker: saving it would replace the real token with the marker. */
+export function stillRedacted(v: SettingView, d: Draft | undefined): boolean {
+  if (v.kind !== 'url' || typeof d !== 'string' || !isChange(v, d)) return false;
+  try {
+    return [...new URL(d.trim()).searchParams.values()].includes(REDACTED);
+  } catch {
+    return /[?&]auth=redacted(&|#|$)/i.test(d);
+  }
+}
+/** The keys of these rows whose edited URL still carries the redaction marker (refused before anything is sent). */
+export const redactedKeys = (items: readonly SettingView[], edits: Readonly<Record<string, Draft>>): string[] =>
+  items.filter((v) => v.source !== 'env' && stillRedacted(v, edits[v.key])).map((v) => v.key);
 
 const STASH = 'ff_settings_pending';
 /** a stashed change older than this is dropped (the re-authentication window is 10 minutes) */
 const MAX_AGE_MS = 15 * 60_000;
 
-/** A save interrupted by a re-authentication: the group and the drafts that could be kept. */
-export interface Pending { group: SettingGroup; edits: Record<string, Draft>; /** a secret or credential URL was left out */ dropped: boolean; at: number }
+export type PendingAction = 'save' | 'test';
+/** An action interrupted by a re-authentication: what to repeat (exactly that), the group and the drafts that could be kept. */
+export interface Pending {
+  action: PendingAction; group: SettingGroup; edits: Record<string, Draft>;
+  /** "Save anyway" (force) was chosen */
+  force: boolean;
+  /** a secret or credential URL was left out */
+  dropped: boolean;
+  at: number;
+}
 
-/** Keeps a group's changed drafts for the return from the sign-in; returns whether something had to be left out. */
-export function stashPending(group: SettingGroup, items: readonly SettingView[], edits: Readonly<Record<string, Draft>>, now = Date.now()): { dropped: boolean } {
+/** Keeps a group's changed drafts and the action for the return from the sign-in; returns whether something had to be left out. */
+export function stashPending(action: PendingAction, group: SettingGroup, items: readonly SettingView[], edits: Readonly<Record<string, Draft>>,
+  opts: { force?: boolean; now?: number } = {}): { dropped: boolean } {
   const kept: Record<string, Draft> = {};
   let dropped = false;
   for (const v of items) {
@@ -77,12 +110,17 @@ export function stashPending(group: SettingGroup, items: readonly SettingView[],
     if (keepable(v, d!)) kept[v.key] = d!;
     else dropped = true;
   }
-  const p: Pending = { group, edits: kept, dropped, at: now };
+  const p: Pending = { action, group, edits: kept, force: action === 'save' && opts.force === true, dropped, at: opts.now ?? Date.now() };
   try { sessionStorage.setItem(STASH, JSON.stringify(p)); } catch { /* storage blocked: the person types it again */ }
   return { dropped };
 }
 
-/** Reads and removes the stashed change (null when there is none, it is too old or unreadable). */
+/** Drops a stashed change (failed re-authentication, sign-out). */
+export function clearPending(): void {
+  try { sessionStorage.removeItem(STASH); } catch { /* ignore */ }
+}
+
+/** Reads and removes the stashed change (null when there is none, it is too old or unreadable): it is used at most once. */
 export function takePending(now = Date.now()): Pending | null {
   let raw: string | null;
   try {
@@ -93,9 +131,10 @@ export function takePending(now = Date.now()): Pending | null {
   try {
     const p = JSON.parse(raw) as Partial<Pending>;
     if (typeof p.group !== 'string' || !p.edits || typeof p.edits !== 'object' || typeof p.at !== 'number' || now - p.at > MAX_AGE_MS || p.at > now) return null;
+    if (p.action !== 'save' && p.action !== 'test') return null;
     const edits: Record<string, Draft> = {};
     for (const [k, d] of Object.entries(p.edits)) if (typeof d === 'string' || typeof d === 'boolean' || d === null) edits[k] = d;
-    return { group: p.group as SettingGroup, edits, dropped: p.dropped === true, at: p.at };
+    return { action: p.action, group: p.group as SettingGroup, edits, force: p.action === 'save' && p.force === true, dropped: p.dropped === true, at: p.at };
   } catch { return null; }
 }
 

@@ -6,6 +6,7 @@
   import { goto } from '$app/navigation';
   import { api, ApiError, type Account } from '#lib/api';
   import DataCard from '#lib/account/DataCard.svelte';
+  import { clearPending } from '#lib/admin/settings/form';
   import DeleteCard from '#lib/account/DeleteCard.svelte';
   import ProfileCard from '#lib/account/ProfileCard.svelte';
   import SecurityCard from '#lib/account/SecurityCard.svelte';
@@ -25,6 +26,7 @@
     const u = new URL(location.href);
     if (u.searchParams.get('reauth') === 'failed') {
       reauthFailed = true;
+      clearPending(); // an Admin → Settings change waiting for this sign-in is not repeated
       u.searchParams.delete('reauth');
       void goto(u.pathname + u.search + u.hash, { shallow: true, replace: true });
     }

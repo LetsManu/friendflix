@@ -78,10 +78,12 @@ const settings: Translation<typeof de> = {
     not_allowed: 'Cannot be changed here.',
     required: 'Required and cannot be emptied.',
     warn_above_critical: 'The warning level must be below the critical level.',
+    redacted: 'The address still contains the placeholder “redacted” instead of the access token. Enter the token again or leave the field unchanged.',
   },
   reauth: {
     resumed: 'You signed in again. Your changes are filled in again.',
     dropped: 'Secret values are never kept in between: please enter them again and save.',
+    failed: 'Signing in again was not enough. Your changes are filled in; please try once more.',
   },
   generate: {
     webhookSecret: 'Generate new', vapidPair: 'Generate key pair',
@@ -93,6 +95,7 @@ const settings: Translation<typeof de> = {
     once: 'Shown only now. Copy it and enter it in the media server and in the request service.',
     done: 'Generated and saved.',
     failed: 'Generating failed.',
+    a11y: '{label}: {action}',
   },
   keys: {
     PUBLIC_URL: { label: 'Public address', help: 'The address everyone uses to reach FriendFlix, e.g. https://friend.example.com. Links, sign-in and streaming are built on it.' },

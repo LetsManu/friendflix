@@ -83,10 +83,12 @@ const settings: Translation<typeof de> = {
     not_allowed: 'Nie można tego tu zmienić.',
     required: 'Wymagane, nie można wyczyścić.',
     warn_above_critical: 'Poziom ostrzeżenia musi być niższy niż poziom krytyczny.',
+    redacted: 'Adres nadal zawiera symbol zastępczy „redacted” zamiast tokenu dostępu. Wpisz token ponownie lub zostaw pole bez zmian.',
   },
   reauth: {
     resumed: 'Zalogowano ponownie. Twoje zmiany zostały wpisane z powrotem.',
     dropped: 'Tajne wartości nigdy nie są przechowywane w międzyczasie: wpisz je ponownie i zapisz.',
+    failed: 'Ponowne logowanie nie wystarczyło. Twoje zmiany są wpisane; spróbuj jeszcze raz.',
   },
   generate: {
     webhookSecret: 'Wygeneruj nowy', vapidPair: 'Wygeneruj parę kluczy',
@@ -98,6 +100,7 @@ const settings: Translation<typeof de> = {
     once: 'Pokazywany tylko teraz. Skopiuj go i wpisz w serwerze multimediów i w usłudze próśb.',
     done: 'Wygenerowano i zapisano.',
     failed: 'Generowanie nie powiodło się.',
+    a11y: '{label}: {action}',
   },
   keys: {
     PUBLIC_URL: { label: 'Adres publiczny', help: 'Adres, pod którym wszyscy otwierają FriendFlix, np. https://friend.example.com. Opierają się na nim linki, logowanie i streaming.' },

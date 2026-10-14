@@ -52,6 +52,15 @@ export interface SettingView {
 /** The server group's keys whose values are never shown (they hold credentials). */
 const HIDDEN_VALUES: ReadonlySet<string> = new Set([...BOOTSTRAP_KEYS, 'METRICS_TOKEN']);
 const isSet = (v: unknown) => v !== undefined && v !== null && v !== '';
+/** what a shown URL carries instead of a credential; a submitted URL still holding it is refused (it would replace the real token) */
+export const REDACTED = 'redacted';
+const holdsRedaction = (v: unknown) => {
+  try {
+    return [...new URL(String(v)).searchParams.values()].includes(REDACTED);
+  } catch {
+    return false;
+  }
+};
 /** a URL value as shown: without userinfo, and ntfy's `auth` query token replaced (they are credentials inside a non-secret value) */
 function shownUrl(v: string): string {
   try {
@@ -59,7 +68,7 @@ function shownUrl(v: string): string {
     if (!u.username && !u.password && !u.searchParams.has('auth')) return v;
     u.username = '';
     u.password = '';
-    if (u.searchParams.has('auth')) u.searchParams.set('auth', 'redacted');
+    if (u.searchParams.has('auth')) u.searchParams.set('auth', REDACTED);
     return u.toString();
   } catch {
     return v;
@@ -207,6 +216,7 @@ function candidate(ctx: Ctx, values: Record<string, unknown>, opts: { allowedKey
     const r = parseSettingValue(def, toSchemaInput(def, v));
     if (!r.ok) errors[key] = r.code;
     else if (URL_KEYS.has(key) && isSet(r.value) && !httpUrl(r.value)) errors[key] = 'invalid_url';
+    else if (URL_KEYS.has(key) && isSet(r.value) && holdsRedaction(r.value)) errors[key] = 'redacted';
     else {
       next[key] = r.value;
       changes[key] = v;

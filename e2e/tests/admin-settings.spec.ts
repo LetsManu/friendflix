@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { expect, test } from '../fixtures.js';
+import { LEAK } from '../mocks/settings.js';
 
 // Admin → Einstellungen (/admin/settings): the settings store (Block 25, spec Part I). Secrets are write-only, env rows are locked,
 // a save sends only the fields that changed.
@@ -46,6 +47,9 @@ test.describe('admin: settings', () => {
     });
     await page.goto('/admin/settings');
     const tmdb = setting(page, 'TMDB-API-Schlüssel');
+    // the mock seeds a canary as the value of secret rows (TMDB, DATABASE_URL); the page ignores it
+    await expect(tmdb.getByText('Gesetzt · …abcd')).toBeVisible();
+    expect(await page.content()).not.toContain(LEAK);
     const omdb = setting(page, 'OMDb-API-Schlüssel');
     await expect(tmdb.getByText('Gesetzt · …abcd')).toBeVisible();
     await expect(omdb.getByText('Nicht gesetzt', { exact: true })).toBeVisible();
@@ -198,7 +202,7 @@ test.describe('admin: settings', () => {
   test('generate: the new webhook secret is shown once', async ({ page }) => {
     await page.goto('/admin/settings');
     const row = setting(page, 'Webhook-Geheimnis');
-    await row.getByRole('button', { name: 'Neu erzeugen' }).click();
+    await row.getByRole('button', { name: 'Webhook-Geheimnis: Neu erzeugen' }).click();
     const dlg = page.getByRole('alertdialog').or(page.getByRole('dialog'));
     await dlg.getByRole('button', { name: 'Neu erzeugen' }).click();
     await expect(row.getByLabel('Neues Webhook-Geheimnis')).toHaveValue(/^0f1e2d3c/);
@@ -213,6 +217,86 @@ test.describe('admin: settings', () => {
     await expect(server.getByText('DATABASE_URL', { exact: true })).toBeVisible();
     await expect(server.getByRole('textbox')).toHaveCount(0);
     await expect(server.getByRole('button')).toHaveCount(0);
+  });
+
+  test('an edited ntfy URL that still carries the redaction marker is refused at the field, nothing is sent', async ({ page, api }) => {
+    await page.goto('/admin/settings');
+    const row = setting(page, 'ntfy-Kanal für Ankündigungen');
+    await row.getByRole('textbox').fill('https://ntfy.example.com/other-topic?auth=redacted');
+    await card(page, 'Benachrichtigungen').getByRole('button', { name: 'Speichern' }).click();
+    await expect(row.getByRole('alert')).toContainText('Platzhalter „redacted“');
+    expect(api.settings.puts).toEqual([]);
+    // with the token entered again it is saved
+    await row.getByRole('textbox').fill('https://ntfy.example.com/other-topic?auth=tk_new');
+    await card(page, 'Benachrichtigungen').getByRole('button', { name: 'Speichern' }).click();
+    await expect(toasts(page).getByText('Einstellungen gespeichert.')).toBeVisible();
+    expect(api.settings.puts).toEqual([{ values: { NTFY_URL: 'https://ntfy.example.com/other-topic?auth=tk_new' } }]);
+  });
+
+  test('re-authentication for a Test repeats the test, never a save', async ({ page, api }) => {
+    api.settings.reauthRequired = true;
+    let next: string | null = null;
+    await page.route('**/auth/reauth?**', (r) => {
+      next = new URL(r.request().url()).searchParams.get('next');
+      api.settings.reauthRequired = false;
+      return r.fulfill({ status: 302, headers: { location: next ?? '/' } });
+    });
+    await page.goto('/admin/settings');
+    await setting(page, 'Jellyfin-Adresse').getByRole('textbox').fill('http://jellyfin.lan:8096');
+    const media = card(page, 'Mediaserver');
+    await media.getByRole('button', { name: 'Testen' }).click();
+    await expect.poll(() => next).toBe('/admin/settings?resume=1');
+    await expect(media.getByRole('status')).toHaveText('Verbindung funktioniert.');
+    expect(api.settings.tests).toEqual([{ group: 'media', values: { JELLYFIN_URL: 'http://jellyfin.lan:8096' } }]);
+    expect(api.settings.puts).toEqual([]);
+    await expect(setting(page, 'Jellyfin-Adresse').getByRole('textbox')).toHaveValue('http://jellyfin.lan:8096');
+  });
+
+  test('"Save anyway" keeps force across a re-authentication', async ({ page, api }) => {
+    api.settings.probeFail = { ok: false, code: 'timeout' };
+    await page.route('**/auth/reauth?**', (r) => {
+      api.settings.reauthRequired = false;
+      return r.fulfill({ status: 302, headers: { location: new URL(r.request().url()).searchParams.get('next') ?? '/' } });
+    });
+    await page.goto('/admin/settings');
+    const media = card(page, 'Mediaserver');
+    await setting(page, 'Jellyfin-Adresse').getByRole('textbox').fill('http://jellyfin.lan:8096');
+    await media.getByRole('button', { name: 'Speichern' }).click();
+    await expect(media.getByRole('alert')).toContainText('Keine Antwort');
+    api.settings.reauthRequired = true; // the sign-in window ran out meanwhile
+    await media.getByRole('button', { name: 'Trotzdem speichern' }).click();
+    await expect(toasts(page).getByText('Einstellungen gespeichert.')).toBeVisible();
+    expect(api.settings.puts).toEqual([
+      { values: { JELLYFIN_URL: 'http://jellyfin.lan:8096' } },
+      { values: { JELLYFIN_URL: 'http://jellyfin.lan:8096' }, force: true },
+      { values: { JELLYFIN_URL: 'http://jellyfin.lan:8096' }, force: true },
+    ]);
+  });
+
+  test('a resumed action that still needs a sign-in shows an error instead of another round trip', async ({ page, api }) => {
+    api.settings.reauthRequired = true;
+    let reauths = 0;
+    await page.route('**/auth/reauth?**', (r) => {
+      reauths++;
+      return r.fulfill({ status: 302, headers: { location: new URL(r.request().url()).searchParams.get('next') ?? '/' } });
+    });
+    await page.goto('/admin/settings');
+    await setting(page, 'Admin-Gruppe').getByRole('textbox').fill('ff-admins');
+    await card(page, 'Anmeldung').getByRole('button', { name: 'Speichern' }).click();
+    await expect(page.getByRole('alert').filter({ hasText: 'Die erneute Anmeldung hat nicht gereicht' })).toBeVisible();
+    await expect(page).toHaveURL(/\/admin\/settings$/);
+    expect(reauths).toBe(1);
+    expect(api.settings.puts).toHaveLength(2);
+    expect(await page.evaluate(() => sessionStorage.getItem('ff_settings_pending'))).toBeNull();
+    await expect(setting(page, 'Admin-Gruppe').getByRole('textbox')).toHaveValue('ff-admins');
+  });
+
+  test('a failed re-authentication drops the kept change', async ({ page }) => {
+    await page.goto('/admin/settings');
+    await page.evaluate(() => sessionStorage.setItem('ff_settings_pending', JSON.stringify({ action: 'save', group: 'signin', edits: { ADMIN_GROUP: 'x' }, force: false, dropped: false, at: Date.now() })));
+    await page.goto('/me/account?reauth=failed');
+    await expect(page.getByRole('alert').first()).toBeVisible();
+    expect(await page.evaluate(() => sessionStorage.getItem('ff_settings_pending'))).toBeNull();
   });
 
   test('nav: Einstellungen under Betrieb, active on /admin/settings', async ({ page }) => {

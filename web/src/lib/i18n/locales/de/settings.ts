@@ -76,10 +76,12 @@ export default {
     not_allowed: 'Hier nicht änderbar.',
     required: 'Wird gebraucht und kann nicht geleert werden.',
     warn_above_critical: 'Die Warnstufe muss unter der kritischen Stufe liegen.',
+    redacted: 'Die Adresse enthält noch den Platzhalter „redacted“ statt des Zugangstokens. Gib das Token erneut ein oder lass das Feld unverändert.',
   },
   reauth: {
     resumed: 'Du hast dich erneut angemeldet. Deine Änderungen sind wieder eingetragen.',
     dropped: 'Geheime Werte werden nicht zwischengespeichert: bitte noch einmal eingeben und speichern.',
+    failed: 'Die erneute Anmeldung hat nicht gereicht. Deine Änderungen sind eingetragen; versuch es bitte noch einmal.',
   },
   generate: {
     webhookSecret: 'Neu erzeugen', vapidPair: 'Schlüsselpaar erzeugen',
@@ -91,6 +93,7 @@ export default {
     once: 'Wird nur jetzt angezeigt. Kopier es und trag es im Mediaserver und im Anfragen-Dienst ein.',
     done: 'Neu erzeugt und gespeichert.',
     failed: 'Erzeugen fehlgeschlagen.',
+    a11y: '{label}: {action}',
   },
   keys: {
     PUBLIC_URL: { label: 'Öffentliche Adresse', help: 'Unter dieser Adresse erreichen alle FriendFlix, z. B. https://friend.example.com. Links, Anmeldung und Streaming bauen darauf auf.' },

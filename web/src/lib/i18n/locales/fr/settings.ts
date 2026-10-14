@@ -82,10 +82,12 @@ const settings: Translation<typeof de> = {
     not_allowed: 'Non modifiable ici.',
     required: 'Obligatoire, ne peut pas être vidé.',
     warn_above_critical: 'Le niveau d’avertissement doit être inférieur au niveau critique.',
+    redacted: 'L’adresse contient encore le marqueur « redacted » au lieu du jeton d’accès. Saisis à nouveau le jeton ou laisse le champ inchangé.',
   },
   reauth: {
     resumed: 'Tu t’es reconnecté·e. Tes modifications sont de nouveau remplies.',
     dropped: 'Les valeurs secrètes ne sont jamais conservées entre-temps : saisis-les à nouveau et enregistre.',
+    failed: 'La reconnexion n’a pas suffi. Tes modifications sont remplies ; réessaie.',
   },
   generate: {
     webhookSecret: 'Générer à nouveau', vapidPair: 'Générer une paire de clés',
@@ -97,6 +99,7 @@ const settings: Translation<typeof de> = {
     once: 'Affiché uniquement maintenant. Copie-le et saisis-le dans le serveur multimédia et dans le service de demandes.',
     done: 'Généré et enregistré.',
     failed: 'La génération a échoué.',
+    a11y: '{label}: {action}',
   },
   keys: {
     PUBLIC_URL: { label: 'Adresse publique', help: 'L’adresse par laquelle tout le monde accède à FriendFlix, p. ex. https://friend.example.com. Liens, connexion et streaming en dépendent.' },
