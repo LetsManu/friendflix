@@ -26,7 +26,8 @@ const eq = (a: string, b: string) => {
   return x.length === y.length && timingSafeEqual(x, y);
 };
 
-export const checkSecret = (req: FastifyRequest, header: string, secret: string) => eq(String(req.headers[header] ?? ''), secret);
+/** An empty secret (WEBHOOK_SECRET is unset until it is generated) never matches, also not a missing or empty header. */
+export const checkSecret = (req: FastifyRequest, header: string, secret: string) => secret.length > 0 && eq(String(req.headers[header] ?? ''), secret);
 
 interface MediaAuth {
   userId: string;

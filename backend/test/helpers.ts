@@ -29,6 +29,9 @@ export const cfg: Config = {
   CAST_ENABLED: 'true', GIT_SHA: 'dev', BUILD_TIME: undefined, APP_VERSION: undefined, APP_CODENAME: undefined, UPDATE_REPO: 'LetsManu/friendflix', GITHUB_TOKEN: undefined, PORTAINER_WEBHOOK_URL: undefined, PORTAINER_URL: undefined,
   PORTAINER_API_KEY: undefined, PORTAINER_STACK_ID: undefined, PORTAINER_ENDPOINT_ID: 1, API_COMPRESSION: 'true', HOME_NETWORKS: ['10.0.0.0/8', '172.16.0.0/12', '192.168.0.0/16', '127.0.0.0/8', '::1/128', 'fc00::/7', 'fe80::/10'],
   GATEWAY_URL: 'http://gateway:4000', HEALTH_DISK_WARN_PCT: 85, HEALTH_DISK_CRIT_PCT: 95, HEALTH_DB_WARN_GB: 10,
+  LOGIN_UI: undefined, AUTHENTIK_LOGIN_FLOW: 'default-authentication-flow', AUTHENTIK_STATIC_SETUP_FLOW: 'default-authenticator-static-setup',
+  AUTHENTIK_WEBAUTHN_SETUP_FLOW: 'default-authenticator-webauthn-setup', AUTHENTIK_PASSWORD_CHANGE_FLOW: 'default-password-change',
+  AUTHENTIK_INVALIDATION_FLOW: 'default-invalidation-flow', AUTHENTIK_EMAIL_CHANGE_FLOW: 'friendflix-email-change', PASSKEYS_IN_APP: 'auto', LOGIN_COVER_WALL: 'true',
 };
 
 export type Handler = (url: URL, init: RequestInit, body: any) => { status?: number; json?: unknown; raw?: string | Uint8Array } | undefined;
