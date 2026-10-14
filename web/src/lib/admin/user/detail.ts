@@ -52,6 +52,16 @@ export function statusPills(u: Pick<DetailUser, 'disabled' | 'lockedReason' | 'a
   return out;
 }
 
+/**
+ * The header's lock action: lock an active account, unlock a locked one; when its access has ended, extend access
+ * instead (an unlock would not last: the backend refuses it with 409 access_expired, the expiry tick would lock again).
+ */
+export function lockAction(u: Pick<DetailUser, 'disabled' | 'lockedReason' | 'accessUntil'>, now = Date.now()): 'lock' | 'unlock' | 'extend' {
+  if (!u.disabled) return 'lock';
+  const ended = u.accessUntil !== null && Date.parse(u.accessUntil) <= now;
+  return u.lockedReason === 'expired' || ended ? 'extend' : 'unlock';
+}
+
 /** 2FA chips: one per method; none = warning; null = unknown */
 export function mfaChips(mfa: MfaState | null): Pill[] {
   if (!mfa) return [{ tone: 'muted', label: tr('adminPeople.detail.mfa.unknown') }];

@@ -105,6 +105,9 @@ describe('traffic lights', () => {
     env.ctx.jf.admin.ping = () => new Promise(() => undefined);
     let done = false;
     const p = buildSnapshot(env.ctx, deps()).then((s) => { done = true; return s; });
+    // the postgres probe does real I/O: give it real time before the fake clock jumps (a slow runner hit its own 3 s
+    // timeout first). setInterval is not faked here, so this waits for real.
+    await new Promise((r) => { const i = setInterval(() => { clearInterval(i); r(undefined); }, 500); });
     await vi.advanceTimersByTimeAsync(2900);
     expect(done).toBe(false);
     await vi.advanceTimersByTimeAsync(200);

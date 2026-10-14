@@ -44,6 +44,7 @@ const dict: Translation<typeof de> = {
     confirmLockBody: 'Wszystkie sesje i pobrania offline użytkownika {name} kończą się natychmiast. Blokadę można w każdej chwili zdjąć.',
     lockedToast: 'Użytkownik {name} został zablokowany.',
     unlockedToast: 'Użytkownik {name} został odblokowany.',
+    accessExpired: 'Dostęp wygasł – zamiast tego przedłuż dostęp.',
     confirmSignOutTitle: 'Wylogować użytkownika {name} wszędzie?',
     confirmSignOutBody: 'Wszystkie urządzenia użytkownika {name} zostaną wylogowane, a pobrania offline stracą licencję. Ponowne logowanie jest możliwe od razu.',
     signedOutToast: { one: 'Wylogowano użytkownika {name} (zakończono {n} sesję).', few: 'Wylogowano użytkownika {name} (zakończono {n} sesje).', many: 'Wylogowano użytkownika {name} (zakończono {n} sesji).', other: 'Wylogowano użytkownika {name} (zakończono {n} sesji).' },

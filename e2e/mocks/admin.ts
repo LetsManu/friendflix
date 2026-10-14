@@ -9,10 +9,12 @@
 const NOW = Date.now();
 const ago = (h: number): string => new Date(NOW - h * 3600e3).toISOString();
 const fut = (h: number): string => new Date(NOW + h * 3600e3).toISOString();
+/** access_until set and not in the future (the backend refuses to unlock such an account: 409 access_expired) */
+const accessEnded = (until: string | null): boolean => until !== null && Date.parse(until) <= Date.now();
 /** uuid-shaped ids (the backend validates uuids for users/devices) */
 export const auid = (n: number): string => `00000000-0000-4000-a000-${n.toString().padStart(12, '0')}`;
 
-export interface AdminUser { id: string; name: string; email: string | null; role: string; disabled: boolean; jellyfin_username: string; seerr_user_id: number | null; created_at: string; last_seen: string | null; access_until?: string | null; profiles?: number }
+export interface AdminUser { id: string; name: string; email: string | null; role: string; disabled: boolean; jellyfin_username: string; seerr_user_id: number | null; created_at: string; last_seen: string | null; access_until?: string | null; profiles?: number; /** why a locked account is locked (default manual) */ locked_reason?: 'manual' | 'expired' | 'deletion' }
 export interface AdminDevice { user_id: string; device_id: string; label: string; approved: boolean; last_seen: string; name: string; /** the admin's own device (backend: current) */ current?: boolean }
 export interface AdminRequest { id: number; title: string; mediaType: 'movie' | 'tv'; requestedBy: string; status: string; createdAt: string }
 export interface AdminInvite { id: string; role: string; note: string | null; expires_at: string; used_at: string | null; used_by_name: string | null; uses: number; max_uses: number; access_days: number | null }
@@ -222,7 +224,7 @@ const profilesOf = (st: AdminState, u: AdminUser): DetailProfile[] => (st.userPr
 function userDetail(st: AdminState, u: AdminUser) {
   const profiles = profilesOf(st, u);
   return {
-    user: { id: u.id, name: u.name, email: u.email, role: u.role, disabled: u.disabled, lockedReason: u.disabled ? 'manual' : null, accessUntil: u.access_until ?? null, createdAt: u.created_at, lastActive: u.last_seen, avatar: null },
+    user: { id: u.id, name: u.name, email: u.email, role: u.role, disabled: u.disabled, lockedReason: u.disabled ? (u.locked_reason ?? 'manual') : null, accessUntil: u.access_until ?? null, createdAt: u.created_at, lastActive: u.last_seen, avatar: null },
     mfa: st.detailMfa,
     authentik: st.authentik,
     totals: { d7: { hours: 3.5, streams: 4 }, d30: { hours: 12.5, streams: 15 }, all: { hours: 140, streams: 230 }, downloads: 3, requests: 7 },
@@ -454,9 +456,14 @@ export function adminRoute(st: AdminState, m: string, p: string, sp: URLSearchPa
     const u = st.users.find((x) => x.id === mm![1]);
     if (!u) return J({ error: 'not_found' }, 404);
     if (u.id === 'u1' && (body.disabled || (body.role && body.role !== 'admin'))) return J({ error: 'cannot_lock_yourself_out' }, 400);
+    const until = body.accessUntil !== undefined ? body.accessUntil : u.access_until ?? null;
+    if (body.disabled === false && u.disabled && accessEnded(until)) return J({ error: 'access_expired' }, 409);
     if (body.role && body.role !== u.role) { log('user.role', u.id, { from: u.role, to: body.role }, u.name); u.role = body.role; }
     if (typeof body.disabled === 'boolean' && body.disabled !== u.disabled) { u.disabled = body.disabled; log(body.disabled ? 'user.disable' : 'user.enable', u.id, {}, u.name); }
-    if (body.accessUntil !== undefined) { log('user.access', u.id, { from: u.access_until ?? null, to: body.accessUntil }, u.name); u.access_until = body.accessUntil; }
+    if (body.accessUntil !== undefined) {
+      log('user.access', u.id, { from: u.access_until ?? null, to: body.accessUntil }, u.name); u.access_until = body.accessUntil;
+      if (u.disabled && u.locked_reason === 'expired' && !accessEnded(body.accessUntil)) { u.disabled = false; u.locked_reason = undefined; log('user.enable', u.id, {}, u.name); }
+    }
     return ok();
   }
   if ((mm = p.match(/^\/api\/admin\/users\/([^/]+)\/revoke-sessions$/)) && m === 'POST') return J({ revoked: 2 });
@@ -464,6 +471,7 @@ export function adminRoute(st: AdminState, m: string, p: string, sp: URLSearchPa
     const users = (body.ids as string[]).map((id) => st.users.find((u) => u.id === id));
     if (users.some((u) => !u)) return J({ error: 'not_found' }, 404);
     if ((body.action === 'lock' || (body.action === 'role' && body.role !== 'admin')) && body.ids.includes('u1')) return J({ error: 'cannot_lock_yourself_out' }, 400);
+    if (body.action === 'unlock' && (users as AdminUser[]).some((u) => u.disabled && accessEnded(u.access_until ?? null))) return J({ error: 'access_expired' }, 409);
     let done = 0;
     for (const u of users as AdminUser[]) {
       if (body.action === 'lock' || body.action === 'unlock') {

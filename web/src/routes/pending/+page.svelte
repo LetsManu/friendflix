@@ -19,7 +19,8 @@
     const pre = publicLocale();
     if (pre) void setLocale(pre);
     void check();
-    const timer = setInterval(() => { if (s?.state === 'pending') void check(); }, POLL_MS);
+    // also while the state is unknown (first answer was a 5xx or the network was down): never stuck on "Checking"
+    const timer = setInterval(() => { if (!s || s.state === 'pending') void check(); }, POLL_MS);
     return () => clearInterval(timer);
   });
 </script>

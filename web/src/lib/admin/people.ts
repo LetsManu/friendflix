@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
 /** Helpers of the People admin pages (users, roles, devices, invites, audit): device kinds, audit details, date filters, bulk texts. */
+import { ApiError } from '#lib/api';
 import { fmtList, fmtNumber, hasKey, tr, trDynamic } from '#lib/i18n';
 
 export type DeviceKind = 'tv' | 'phone' | 'tablet' | 'desktop' | 'other';
@@ -69,6 +70,25 @@ export function dayStart(day: string): string {
 export function dayEnd(day: string): string {
   const d = /^\d{4}-\d{2}-\d{2}$/.test(day) ? new Date(`${day}T23:59:59.999`) : null;
   return d && !Number.isNaN(d.getTime()) ? d.toISOString() : '';
+}
+
+/** today as YYYY-MM-DD (local): the earliest access end a date field offers (`min`) */
+export function today(now = new Date()): string {
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+}
+/** end of the chosen day as ISO time when it lies in the future, else '' (a past end would lock the account at the next expiry tick) */
+export function futureDayEnd(day: string, now = Date.now()): string {
+  const end = dayEnd(day);
+  return end && Date.parse(end) > now ? end : '';
+}
+
+/** clear texts for the account guards of the user actions (single and bulk); null for any other error */
+export function accountGuardText(e: unknown): string | null {
+  const code = e instanceof ApiError ? (e.body as { error?: string } | null)?.error : undefined;
+  if (code === 'last_admin') return tr('adminPeople.bulk.lastAdmin');
+  if (code === 'cannot_lock_yourself_out') return tr('adminPeople.users.selfNote');
+  if (code === 'access_expired') return tr('adminPeople.users.accessExpired');
+  return null;
 }
 
 /** invite lifetimes offered in the form (hours) */

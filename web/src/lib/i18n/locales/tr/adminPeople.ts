@@ -44,6 +44,7 @@ const dict: Translation<typeof de> = {
     confirmLockBody: '{name} adlı kişinin tüm oturumları ve çevrimdışı indirmeleri hemen sona erer. Engeli istediğin zaman kaldırabilirsin.',
     lockedToast: '{name} engellendi.',
     unlockedToast: '{name} adlı kişinin engeli kaldırıldı.',
+    accessExpired: 'Erişim sona erdi – bunun yerine erişimi uzat.',
     confirmSignOutTitle: '{name} her yerden çıkış yapsın mı?',
     confirmSignOutBody: '{name} adlı kişinin tüm cihazlarında oturum kapanır ve çevrimdışı indirmeler lisansını kaybeder. Hemen yeniden giriş yapabilir.',
     signedOutToast: { one: '{name} çıkış yaptırıldı ({n} oturum sonlandırıldı).', other: '{name} çıkış yaptırıldı ({n} oturum sonlandırıldı).' },

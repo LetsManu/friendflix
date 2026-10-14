@@ -96,6 +96,11 @@ describe('approval queue', () => {
     expect(await pendingState(c)).toEqual({ state: 'rejected', message: 'Sorry, only family.' });
     expect((await env.pool.query("select 1 from audit_log where action='user.rejected' and target=$1", [id])).rowCount).toBe(1);
     expect((await adm('POST', `/api/admin/approvals/${id}/reject`, {})).statusCode).toBe(404); // already rejected
+    // a rejected request cannot be approved (only a new sign-in puts it back in the queue)
+    const ap = await adm('POST', `/api/admin/approvals/${id}/approve`, { role: 'friend' });
+    expect(ap.statusCode).toBe(409);
+    expect(ap.json().error).toBe('rejected');
+    expect((await env.pool.query("select 1 from users where authentik_sub='pend3'")).rowCount).toBe(0);
   });
 
   it('asking again after a rejection notifies the admins only when the rejection is older than 24 h', async () => {
@@ -114,6 +119,18 @@ describe('approval queue', () => {
     row = (await env.pool.query('select rejected_at from approval_requests where id=$1', [id])).rows[0];
     expect(row.rejected_at).toBeNull();
     expect(await approvalNotices()).toHaveLength(2);
+  });
+
+  it('a new request brings a dismissed approvals banner back; a repeat sign-in and other dismissals stay', async () => {
+    await signIn('pend6');
+    const adminId = (await env.pool.query("select id from users where authentik_sub=$1", [ADMIN.sub])).rows[0].id;
+    await env.pool.query('delete from health_dismissals');
+    await env.pool.query("insert into health_dismissals(user_id, issue_id, fp) values ($1, 'approvals:pending', 'aaaaaaaaaaaa'), ($1, 'svc:media', 'bbbbbbbbbbbb')", [adminId]);
+    await signIn('pend6'); // same person again: no new request, no notice
+    const ids = async () => (await env.pool.query('select issue_id from health_dismissals order by issue_id')).rows.map((r) => r.issue_id);
+    expect(await ids()).toEqual(['approvals:pending', 'svc:media']);
+    await signIn('pend7'); // a new request
+    expect(await ids()).toEqual(['svc:media']);
   });
 
   it('/api/pending trusts only a signed cookie', async () => {

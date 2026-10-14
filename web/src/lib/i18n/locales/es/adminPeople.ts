@@ -44,6 +44,7 @@ const dict: Translation<typeof de> = {
     confirmLockBody: 'Todas las sesiones y descargas sin conexión de {name} terminan de inmediato. Puedes quitar el bloqueo cuando quieras.',
     lockedToast: '{name} fue bloqueado.',
     unlockedToast: '{name} fue desbloqueado.',
+    accessExpired: 'El acceso ha terminado: amplía el acceso en su lugar.',
     confirmSignOutTitle: '¿Cerrar la sesión de {name} en todas partes?',
     confirmSignOutBody: 'Se cierra la sesión en todos los dispositivos de {name} y las descargas sin conexión pierden su licencia. Puede volver a iniciar sesión enseguida.',
     signedOutToast: { one: 'Sesión de {name} cerrada ({n} sesión terminada).', many: 'Sesión de {name} cerrada ({n} sesiones terminadas).', other: 'Sesión de {name} cerrada ({n} sesiones terminadas).' },

@@ -15,9 +15,9 @@
   import Icon from '#lib/Icon.svelte';
   import MoreActions, { type MoreAction } from '#lib/MoreActions.svelte';
   import { pageStore } from '#lib/page';
-  import { accessPreset, dayEnd } from '#lib/admin/people';
+  import { accessPreset, accountGuardText, futureDayEnd, today } from '#lib/admin/people';
   import { refreshSummary } from '#lib/admin/summary';
-  import { DETAIL_TABS, akError, detailTab, mfaChips, statusPills, type DetailTab, type UserDetail } from '#lib/admin/user/detail';
+  import { DETAIL_TABS, akError, detailTab, lockAction, mfaChips, statusPills, type DetailTab, type UserDetail } from '#lib/admin/user/detail';
   import Activity from '#lib/admin/user/Activity.svelte';
   import Audit from '#lib/admin/user/Audit.svelte';
   import Devices from '#lib/admin/user/Devices.svelte';
@@ -80,12 +80,7 @@
 
   // ---- quick actions ----
   const patch = (body: Record<string, unknown>) => () => api(`/api/admin/users/${id}`, { method: 'PATCH', body });
-  const guardError = (e: unknown): string => {
-    const code = e instanceof ApiError ? (e.body as { error?: string } | null)?.error : undefined;
-    if (code === 'last_admin') return tr('adminPeople.bulk.lastAdmin');
-    if (code === 'cannot_lock_yourself_out') return tr('adminPeople.users.selfNote');
-    return errorText(e);
-  };
+  const guardError = (e: unknown): string => accountGuardText(e) ?? errorText(e);
   async function setLocked(disabled: boolean) {
     if (!u) return;
     const name = u.name;
@@ -147,13 +142,12 @@
     const r = await runAction({ key: `user:${id}`, run: patch({ role }), error: guardError, success: tr('adminPeople.users.roleChanged', { name, role: rname(role) }) });
     if (r.ok) { panel = null; void load(); }
   }
-  /** today as YYYY-MM-DD (local): the earliest end date; a past one would lock the account at the next expiry tick */
-  const today = (): string => { const n = new Date(); return `${n.getFullYear()}-${String(n.getMonth() + 1).padStart(2, '0')}-${String(n.getDate()).padStart(2, '0')}`; };
-  $: accessReady = access !== '' && (access !== 'date' || (dayEnd(accessDay) !== '' && Date.parse(dayEnd(accessDay)) > Date.now()));
+  // a past end date would lock the account at the next expiry tick
+  $: accessReady = access !== '' && (access !== 'date' || futureDayEnd(accessDay) !== '');
   async function applyAccess() {
     if (!u || !accessReady) return;
     const name = u.name;
-    const accessUntil = access === 'date' ? dayEnd(accessDay) : accessPreset(access === 'p30' ? '+30' : access === 'p90' ? '+90' : 'unlimited');
+    const accessUntil = access === 'date' ? futureDayEnd(accessDay) : accessPreset(access === 'p30' ? '+30' : access === 'p90' ? '+90' : 'unlimited');
     const r = await runAction({
       key: `user:${id}`, run: patch({ accessUntil }),
       success: accessUntil ? tr('adminPeople.detail.actions.accessSet', { name, date: fmtDate(accessUntil, { dateStyle: 'medium' }) }) : tr('adminPeople.detail.actions.accessUnlimited', { name }),
@@ -166,14 +160,19 @@
     // nothing until /api/me says whether this is the admin's own account
     if (!d || !u || meId === '') return [];
     // own account: no lock, demotion or "sign out everywhere" (it would end this very session)
+    const extend: MoreAction = { id: 'access', label: $t('adminPeople.detail.actions.extend'), icon: 'calendar', run: () => open('access') };
+    // access ended: "Extend access" takes the place of "Unlock" (an unlock would not last)
+    const lock = lockAction(u);
     const out: MoreAction[] = self
       ? [{ id: 'self', label: $t('adminPeople.users.selfNote'), icon: 'lock', disabled: true }]
       : [
-        u.disabled ? { id: 'unlock', label: $t('adminPeople.users.unlock'), icon: 'unlock', run: () => setLocked(false) } : { id: 'lock', label: $t('adminPeople.users.lock'), icon: 'lock', danger: true, run: () => setLocked(true) },
+        lock === 'extend' ? extend
+          : lock === 'unlock' ? { id: 'unlock', label: $t('adminPeople.users.unlock'), icon: 'unlock', run: () => setLocked(false) }
+          : { id: 'lock', label: $t('adminPeople.users.lock'), icon: 'lock', danger: true, run: () => setLocked(true) },
         { id: 'role', label: $t('adminPeople.detail.actions.changeRole'), icon: 'key', run: () => open('role') },
         { id: 'signout', label: $t('adminPeople.users.signOut'), icon: 'log-out', danger: true, run: signOut },
       ];
-    out.push({ id: 'access', label: $t('adminPeople.detail.actions.extend'), icon: 'calendar', run: () => open('access') });
+    if (self || lock !== 'extend') out.push(extend);
     if (d.mfa !== null && d.authentik.recovery) out.push({ id: 'recovery', label: $t('adminPeople.detail.actions.recovery'), icon: 'mail', run: sendRecovery });
     if (d.mfa !== null && d.authentik.mfaSetup) out.push({ id: 'mfa', label: $t('adminPeople.detail.actions.mfaSetup'), icon: 'shield', run: sendMfaSetup });
     return out;

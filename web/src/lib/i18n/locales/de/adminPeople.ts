@@ -43,6 +43,7 @@ export default {
     confirmLockBody: 'Alle Sitzungen und Offline-Downloads von {name} enden sofort. Du kannst die Sperre jederzeit wieder aufheben.',
     lockedToast: '{name} wurde gesperrt.',
     unlockedToast: '{name} wurde entsperrt.',
+    accessExpired: 'Der Zugang ist abgelaufen – verlängere stattdessen den Zugang.',
     confirmSignOutTitle: '{name} überall abmelden?',
     confirmSignOutBody: 'Alle Geräte von {name} werden abgemeldet und Offline-Downloads verlieren ihre Lizenz. Die erneute Anmeldung ist sofort wieder möglich.',
     signedOutToast: { one: '{name} abgemeldet ({n} Sitzung beendet).', other: '{name} abgemeldet ({n} Sitzungen beendet).' },

@@ -231,6 +231,9 @@ describe('repair, sessions, Authentik, profiles', () => {
     expect(await env.kv.get('sess:s-a2')).toBeNull();
     expect(await env.kv.get('sess:s-b1')).not.toBeNull();
     expect((await audits('user.revoke_device', anna)).at(-1)).toEqual({ actor: adminId, meta: { deviceId: 'dev-a', sessions: 2 } });
+    const unknown = '00000000-0000-4000-8000-000000000000';
+    expect((await as('POST', `/api/admin/users/${unknown}/sessions/dev-a/revoke`)).statusCode).toBe(404);
+    expect(await audits('user.revoke_device', unknown)).toHaveLength(0);
   });
 
   it('Authentik actions without the Authentik API -> 503', async () => {
