@@ -305,6 +305,12 @@ const tr: Translation<typeof de> = {
       enable: '{actor}, {target} kullanıcısının kilidini açtı',
       revoke_sessions: '{actor}, {target} kullanıcısının tüm oturumlarını kapattı',
       provisioned: '{target} için hesap oluşturuldu',
+      access: '{actor}, {target} erişimini değiştirdi',
+      limits: '{actor}, {target} sınırlarını değiştirdi',
+      repair: '{actor}, {target} bağlantılarını onardı',
+      recovery_email: '{actor}, {target} kişisine parola bağlantısı gönderdi',
+      mfa_setup_sent: '{actor}, {target} kişisine 2FA kurulumunu gönderdi',
+      activity_viewed: '{actor}, {target} geçmişini görüntüledi',
     },
     device: {
       approve: '{actor}, {target} kullanıcısının bir cihazını onayladı',
@@ -348,6 +354,7 @@ const tr: Translation<typeof de> = {
       pin_set: '{actor} bir profil PIN’i belirledi',
       pin_clear: '{actor} bir profil PIN’ini kaldırdı',
       select: '{actor} profil değiştirdi',
+      admin_update: '{actor}, {target} profilini değiştirdi',
     },
     download: {
       revoke: '{actor} bir indirme lisansını iptal etti',

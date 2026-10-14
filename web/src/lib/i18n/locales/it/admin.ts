@@ -314,6 +314,12 @@ const it: Translation<typeof de> = {
       enable: '{actor} ha sbloccato {target}',
       revoke_sessions: '{actor} ha disconnesso {target} ovunque',
       provisioned: 'Account creato per {target}',
+      access: '{actor} ha modificato l’accesso di {target}',
+      limits: '{actor} ha modificato i limiti di {target}',
+      repair: '{actor} ha riparato i collegamenti di {target}',
+      recovery_email: '{actor} ha inviato a {target} un link per la password',
+      mfa_setup_sent: '{actor} ha inviato a {target} la configurazione 2FA',
+      activity_viewed: '{actor} ha visualizzato la cronologia di {target}',
     },
     device: {
       approve: '{actor} ha approvato un dispositivo di {target}',
@@ -357,6 +363,7 @@ const it: Translation<typeof de> = {
       pin_set: '{actor} ha impostato il PIN di un profilo',
       pin_clear: '{actor} ha rimosso il PIN di un profilo',
       select: '{actor} ha cambiato profilo',
+      admin_update: '{actor} ha modificato un profilo di {target}',
     },
     download: {
       revoke: '{actor} ha revocato una licenza di download',

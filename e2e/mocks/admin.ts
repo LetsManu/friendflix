@@ -71,7 +71,18 @@ export interface AdminState {
   usageCalls: string[];
   usageDetailCalls: string[];
   usageSince: string | null;
+  /** Block 23 user detail (/api/admin/users/:id*): Authentik state (mfa null = no Authentik API), link health, limits, profiles, activity calls */
+  detailMfa: { totp: boolean; webauthn: boolean; static: boolean } | null;
+  authentik: { recovery: boolean; mfaSetup: boolean };
+  linkedOk: { jellyfin: boolean | null; requests: boolean };
+  limits: Record<string, DetailLimits>;
+  userProfiles: Record<string, DetailProfile[]>;
+  activityCalls: number;
 }
+export interface DetailLimits { maxStreams: number | null; remoteBitrate: number | null; maxDownloads: number | null; downloadMaxHeight: number | null; requestsPerMonth: number | null }
+export interface DetailProfile { id: string; name: string; kids: boolean; maxRating: string | null; avatar: string; lastUsed: string | null; isOwner: boolean; hasPin: boolean }
+/** role values the limits page shows as placeholders */
+export const DETAIL_ROLE_LIMITS: DetailLimits = { maxStreams: 2, remoteBitrate: 8_000_000, maxDownloads: 5, downloadMaxHeight: 720, requestsPerMonth: 3 };
 export type HygieneCode = 'no_overview' | 'no_poster' | 'no_backdrop' | 'no_year' | 'no_ids' | 'no_audio' | 'audio_unknown' | 'foreign_no_subs' | 'forced_only' | 'image_subs_only' | 'dup_ids' | 'dup_title' | 'dup_episode' | 'no_source' | 'zero_runtime' | 'heavy_bitrate' | 'hevc_10bit' | 'video_codec' | 'audio_codec';
 export interface HygieneItem {
   itemId: string; type: 'Movie' | 'Series' | 'Episode'; name: string; seriesId: string | null; seriesName: string | null; year: number | null;
@@ -191,6 +202,31 @@ export function adminState(): AdminState {
     usageCalls: [],
     usageDetailCalls: [],
     usageSince: leaveDay(-10),
+    detailMfa: { totp: true, webauthn: false, static: true },
+    authentik: { recovery: true, mfaSetup: false },
+    linkedOk: { jellyfin: true, requests: true },
+    limits: {},
+    userProfiles: {},
+    activityCalls: 0,
+  };
+}
+
+const profilesOf = (st: AdminState, u: AdminUser): DetailProfile[] => (st.userProfiles[u.id] ??= [
+  { id: `${u.id.slice(0, -4)}p001`, name: u.name.split(' ')[0]!, kids: false, maxRating: null, avatar: 'a2', lastUsed: u.last_seen, isOwner: true, hasPin: false },
+  { id: `${u.id.slice(0, -4)}p002`, name: 'Kinder', kids: true, maxRating: 'FSK-6', avatar: 'a4', lastUsed: null, isOwner: false, hasPin: true },
+]);
+/** GET /api/admin/users/:id (shape of backend/src/routes/adminUsers.ts; never credentials or the Authentik sub) */
+function userDetail(st: AdminState, u: AdminUser) {
+  const profiles = profilesOf(st, u);
+  return {
+    user: { id: u.id, name: u.name, email: u.email, role: u.role, disabled: u.disabled, lockedReason: u.disabled ? 'manual' : null, accessUntil: u.access_until ?? null, createdAt: u.created_at, lastActive: u.last_seen, avatar: null },
+    mfa: st.detailMfa,
+    authentik: st.authentik,
+    totals: { d7: { hours: 3.5, streams: 4 }, d30: { hours: 12.5, streams: 15 }, all: { hours: 140, streams: 230 }, downloads: 3, requests: 7 },
+    linked: { jellyfin: { ok: st.linkedOk.jellyfin, username: u.jellyfin_username }, requests: { ok: st.linkedOk.requests, id: st.linkedOk.requests ? 7 : null } },
+    profiles,
+    devices: st.devices.filter((d) => d.user_id === u.id).map((d, i) => ({ id: d.device_id, name: d.label, lastSeen: d.last_seen, approved: d.approved, sessions: i + 1 })),
+    licenses: [{ id: 'lic-1', itemId: 'it1', status: 'fetched', ready: true, title: 'Hearth', seriesName: null, season: null, episode: null, profileId: profiles[0]!.id, createdAt: ago(30), validUntil: fut(24 * 20), expiresAt: fut(24 * 20), bytes: 1.2e9 }],
   };
 }
 
@@ -365,12 +401,59 @@ export function adminRoute(st: AdminState, m: string, p: string, sp: URLSearchPa
 
   // ---- people ----
   if (p === '/api/admin/users') return J(usersList(st, sp));
+  // ---- user detail (Block 23) ----
+  if ((mm = p.match(/^\/api\/admin\/users\/([0-9a-f-]{36}|u1)(\/.*)?$/)) && !(m === 'PATCH' && !mm[2]) && mm[2] !== '/revoke-sessions') {
+    const u = st.users.find((x) => x.id === mm![1]);
+    if (!u) return J({ error: 'not_found' }, 404);
+    const rest = mm[2] ?? '';
+    let sub: RegExpMatchArray | null;
+    if (!rest && m === 'GET') return J(userDetail(st, u));
+    if (rest === '/activity' && m === 'GET') {
+      st.activityCalls++;
+      log('user.activity_viewed', u.id, { profiles: 2 }, u.name);
+      const pr = profilesOf(st, u);
+      return J({ items: [
+        { id: 'it1', name: 'Hearth', type: 'Movie', lastPlayedDate: ago(2), profile: { id: pr[0]!.id, name: pr[0]!.name } },
+        { id: 'it2', name: 'Pilot', type: 'Episode', seriesName: 'Sundial', parentIndexNumber: 1, indexNumber: 1, lastPlayedDate: ago(30), profile: { id: pr[1]!.id, name: pr[1]!.name } },
+      ], skipped: [] });
+    }
+    if (rest === '/audit' && m === 'GET') {
+      const rows = st.audit.filter((e) => e.target === u.id);
+      const { slice, total } = paged(rows, sp, 50);
+      return J({ entries: slice.map((e) => ({ ...e, actor_id: e.actor ? 'u1' : null })), total });
+    }
+    if (rest === '/limits') {
+      const cur = (st.limits[u.id] ??= { maxStreams: null, remoteBitrate: null, maxDownloads: null, downloadMaxHeight: null, requestsPerMonth: null });
+      if (m === 'GET') return J({ limits: cur, role: DETAIL_ROLE_LIMITS });
+      if (m === 'PUT') { const to = { ...cur, ...body }; log('user.limits', u.id, { from: cur, to }, u.name); st.limits[u.id] = to; return J({ limits: to }); }
+    }
+    if (rest === '/repair' && m === 'POST') {
+      st.linkedOk = { jellyfin: st.linkedOk.jellyfin === false ? true : st.linkedOk.jellyfin, requests: true };
+      log('user.repair', u.id, {}, u.name);
+      return J({ ok: true, jellyfin: { identities: 2, failed: 0 }, requests: { ok: true, id: 7 } });
+    }
+    if (rest === '/recovery' && m === 'POST') { log('user.recovery_email', u.id, { ok: true }, u.name); return ok(); }
+    if (rest === '/mfa-setup' && m === 'POST') return J({ error: 'not_supported' }, 501);
+    if ((sub = rest.match(/^\/sessions\/([^/]+)\/revoke$/)) && m === 'POST') { log('user.revoke_sessions', u.id, { device: sub[1] }, u.name); return J({ revoked: 1 }); }
+    if ((sub = rest.match(/^\/profiles\/([^/]+)$/)) && m === 'PATCH') {
+      const pr = profilesOf(st, u).find((x) => x.id === sub![1]);
+      if (!pr) return J({ error: 'not_found' }, 404);
+      if (body.name && profilesOf(st, u).some((x) => x !== pr && x.name.toLowerCase() === String(body.name).toLowerCase())) return J({ error: 'name_taken' }, 409);
+      const from = { name: pr.name, hasPin: pr.hasPin };
+      if (body.name) pr.name = body.name;
+      if (body.resetPin) pr.hasPin = false;
+      log('profile.admin_update', u.id, { from, to: { name: pr.name, hasPin: pr.hasPin } }, u.name);
+      return J({ profile: pr });
+    }
+    return null;
+  }
   if ((mm = p.match(/^\/api\/admin\/users\/([^/]+)$/)) && m === 'PATCH') {
     const u = st.users.find((x) => x.id === mm![1]);
     if (!u) return J({ error: 'not_found' }, 404);
     if (u.id === 'u1' && (body.disabled || (body.role && body.role !== 'admin'))) return J({ error: 'cannot_lock_yourself_out' }, 400);
     if (body.role && body.role !== u.role) { log('user.role', u.id, { from: u.role, to: body.role }, u.name); u.role = body.role; }
     if (typeof body.disabled === 'boolean' && body.disabled !== u.disabled) { u.disabled = body.disabled; log(body.disabled ? 'user.disable' : 'user.enable', u.id, {}, u.name); }
+    if (body.accessUntil !== undefined) { log('user.access', u.id, { from: u.access_until ?? null, to: body.accessUntil }, u.name); u.access_until = body.accessUntil; }
     return ok();
   }
   if ((mm = p.match(/^\/api\/admin\/users\/([^/]+)\/revoke-sessions$/)) && m === 'POST') return J({ revoked: 2 });

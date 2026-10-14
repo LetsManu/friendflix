@@ -305,6 +305,12 @@ const en: Translation<typeof de> = {
       enable: '{actor} unlocked {target}',
       revoke_sessions: '{actor} signed {target} out everywhere',
       provisioned: 'Account created for {target}',
+      access: '{actor} changed the access of {target}',
+      limits: '{actor} changed the limits of {target}',
+      repair: '{actor} repaired the links of {target}',
+      recovery_email: '{actor} sent {target} a password link',
+      mfa_setup_sent: '{actor} sent {target} the 2FA setup',
+      activity_viewed: '{actor} viewed the history of {target}',
     },
     device: {
       approve: '{actor} approved a device of {target}',
@@ -348,6 +354,7 @@ const en: Translation<typeof de> = {
       pin_set: '{actor} set a profile PIN',
       pin_clear: '{actor} removed a profile PIN',
       select: '{actor} switched profiles',
+      admin_update: '{actor} changed a profile of {target}',
     },
     download: {
       revoke: '{actor} revoked a download licence',

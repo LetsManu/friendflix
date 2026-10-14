@@ -343,6 +343,12 @@ const pl: Translation<typeof de> = {
       enable: '{actor} odblokował(a) użytkownika {target}',
       revoke_sessions: '{actor} wylogował(a) użytkownika {target} wszędzie',
       provisioned: 'Utworzono konto dla {target}',
+      access: '{actor} zmienił(a) dostęp: {target}',
+      limits: '{actor} zmienił(a) limity: {target}',
+      repair: '{actor} naprawił(a) połączenia: {target}',
+      recovery_email: '{actor} wysłał(a) link do hasła: {target}',
+      mfa_setup_sent: '{actor} wysłał(a) konfigurację 2FA: {target}',
+      activity_viewed: '{actor} przejrzał(a) historię: {target}',
     },
     device: {
       approve: '{actor} zatwierdził(a) urządzenie użytkownika {target}',
@@ -386,6 +392,7 @@ const pl: Translation<typeof de> = {
       pin_set: '{actor} ustawił(a) PIN profilu',
       pin_clear: '{actor} usunął(-ęła) PIN profilu',
       select: '{actor} zmienił(a) profil',
+      admin_update: '{actor} zmienił(a) profil: {target}',
     },
     download: {
       revoke: '{actor} cofnął(-ęła) licencję pobrania',
