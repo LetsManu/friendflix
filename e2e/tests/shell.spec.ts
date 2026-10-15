@@ -49,6 +49,20 @@ test.describe('app shell (desktop)', () => {
     expect(asked).toEqual([]); // neither the upcoming row nor the page asks the request service
   });
 
+  test('a stale "no request service" boot hint: /requests loads wishes, quota and ?q= once /api/me reports the service', async ({ page, api }) => {
+    api.features = { requests: false };
+    await page.goto('/'); // writes the boot hint with noRequests
+    await expect(page.getByRole('contentinfo').getByRole('link', { name: 'Kalender' })).toBeAttached();
+    api.features = { requests: true }; // the service was set up meanwhile
+    const asked: string[] = [];
+    page.on('request', (r) => { const p = new URL(r.url()).pathname; if (/^\/api\/(seerr|requests)\//.test(p)) asked.push(p); });
+    // /api/me answers late, so the page renders early from the stale hint first
+    await page.route('**/api/me', async (r) => { await new Promise((res) => setTimeout(res, 800)); return r.fallback(); });
+    await page.goto('/requests?q=dune');
+    await expect(page.getByRole('heading', { level: 2, name: 'Meine Wünsche' })).toBeVisible();
+    await expect.poll(() => [...new Set(asked)].sort()).toEqual(['/api/requests/mine', '/api/requests/quota', '/api/seerr/search']);
+  });
+
   test('requests nav entry shown when features.requests is true', async ({ page, api }) => {
     api.features = { requests: true };
     await page.goto('/');

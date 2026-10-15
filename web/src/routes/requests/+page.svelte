@@ -9,7 +9,6 @@
   import TrailerButton from '#lib/TrailerButton.svelte';
   import { episodeKey, loadReminders, movieKey, removeReminder } from '#lib/reminders';
   import { features } from '#lib/capabilities';
-  import { get } from 'svelte/store';
 
   let q = $page.url.searchParams.get('q') ?? '', results: any[] = [], mine: any[] = [], msg = '', busy = false, mineErr = '', requesting = new Set<string>();
   let quota: { limit: number | null; used: number; remaining: number | null; resetsAt: string } | null = null;
@@ -52,11 +51,18 @@
     requesting.delete(k); requesting = requesting;
   }
   // without a request service the page holds only the reminders (no quota, search or wishes; nothing that would answer 404)
+  let mounted = false, serviceLoaded = false;
+  function loadService() {
+    serviceLoaded = true;
+    loadMine(); loadQuota(); if (q) search();
+  }
   onMount(() => {
     void loadReminders(); loadRem();
-    if (!get(features).requests) return;
-    loadMine(); loadQuota(); if (q) search();
+    mounted = true;
   });
+  // reactive, not read once: a page rendered early from a stale boot hint (no request service) loads its wishes, quota and
+  // ?q= search as soon as /api/me reports the service
+  $: if (mounted && $features.requests && !serviceLoaded) loadService();
 </script>
 
 <svelte:head><title>{$t('common.pageTitle', { page: $t('social.requests.title') })}</title></svelte:head>
