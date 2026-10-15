@@ -15,6 +15,7 @@ import { toHygieneFacts, toServerSession } from './dto.js'; // Block 22
 import { MediaError } from '../media/types.js';
 import type { ChapterDto, ItemAboutDto, ItemCreditsDto, MediaCollection } from '../media/types.js'; // Block 17 P1, Block 21
 import type { HygieneFacts, ServerSession } from '../media/types.js'; // Block 22
+import type { SeriesStatus } from '../media/types.js'; // 1.1 post-play
 
 const TOKEN_TTL = 6 * 3600;
 const BOXSET_INDEX_KEY = 'jf:boxsets:v1';
@@ -732,6 +733,15 @@ export class JellyfinService implements MediaServer {
     });
     const r = await this.client.adminJson<{ Items?: Array<{ Id?: string }> }>(`/Items?${p}`);
     return (r?.Items ?? []).flatMap((i) => (i?.Id ? [nid(i.Id)] : []));
+  }
+
+  /** Status of one series as the viewer sees it: Jellyfin's `Status` "Continuing" / "Ended"; anything else (unset) = null (unknown). */
+  async seriesStatus(user: JfUser, seriesId: string): Promise<SeriesStatus> {
+    const p = new URLSearchParams({ userId: user.jellyfin_user_id, ids: seriesId, includeItemTypes: 'Series', recursive: 'true', enableImages: 'false', enableUserData: 'false' });
+    const r = await this.json<{ Items?: any[] }>(user, `/Items?${p}`);
+    const it = (r.Items ?? []).find((x) => nid(x.Id) === nid(seriesId));
+    if (!it) throw new JellyfinError(404, 'Jellyfin: series not visible');
+    return it.Status === 'Continuing' ? 'continuing' : it.Status === 'Ended' ? 'ended' : null;
   }
 
   // ---- Block 17 P1: chapters + credits (player "Szenen" panel, "Besetzung & Infos") ----

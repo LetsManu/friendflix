@@ -40,6 +40,8 @@ export const prefsSchema = z.object({
    * audio/subtitle preference (GET /api/series/:id/langpref). Per profile.
    */
   animeOriginal: z.boolean().default(false),
+  /** 1.1 post-play: "Show suggestions after the last episode" (caught-up screen and the "Done? See what's next" card) */
+  postplay: z.boolean().default(true),
   /** blur thumbnails and hide descriptions of unwatched episodes */
   spoilerProtection: z.boolean().default(false),
   /** weekly "Wochenrückblick" (in-app + personal ntfy), account level */

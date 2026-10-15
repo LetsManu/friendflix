@@ -17,6 +17,11 @@ const partyRooms = new Gauge({ name: 'friendflix_party_rooms', help: 'Open watch
 const pendingRequests = new Gauge({ name: 'friendflix_pending_polls', help: 'Polls waiting for admin approval', registers: [registry] });
 export const authzNginx = new Counter({ name: 'friendflix_authz_nginx_total', help: 'Plan B auth_request decisions', labelNames: ['result'], registers: [registry] });
 export const clientErrorsTotal = new Counter({ name: 'friendflix_client_errors_total', help: 'Browser errors reported via POST /api/client-errors', labelNames: ['kind'], registers: [registry] });
+// 1.1 post-play screen: aggregates only, bounded labels (state / row kind are fixed enums, never a title or a user)
+export const postplayShown = new Counter({ name: 'friendflix_postplay_shown_total', help: 'Post-play screens shown', labelNames: ['state'], registers: [registry] });
+export const postplayClick = new Counter({ name: 'friendflix_postplay_click_total', help: 'Post-play suggestions opened', labelNames: ['row_kind'], registers: [registry] });
+export const postplayPlay = new Counter({ name: 'friendflix_postplay_play_total', help: 'Post-play suggestions played', labelNames: ['row_kind'], registers: [registry] });
+export const postplayDismiss = new Counter({ name: 'friendflix_postplay_dismiss_total', help: 'Post-play screens dismissed', registers: [registry] });
 const downloadJobs = new Gauge({ name: 'friendflix_download_jobs', help: 'Offline download jobs by status', labelNames: ['status'], registers: [registry] });
 const downloadDisk = new Gauge({ name: 'friendflix_download_disk_bytes', help: 'Bytes of prepared download files', registers: [registry] });
 const up = new Gauge({ name: 'friendflix_dependency_up', help: '1 if dependency reachable', labelNames: ['dependency'], registers: [registry] });

@@ -101,7 +101,7 @@ const CONT_MAX = 50_000;
  * continuingSeries(), cached PER VIEWER (a restricted viewer's partial list must never decide for everybody else).
  * null = unknown (then a finale is never claimed).
  */
-async function continuingIds(ctx: Ctx, user: JfUser): Promise<Set<string> | null> {
+export async function continuingIds(ctx: Ctx, user: JfUser): Promise<Set<string> | null> {
   const lib = ctx.jf.libraryContinuingSeriesIds?.bind(ctx.jf);
   const key = lib ? 'fresh:continuing:lib' : `fresh:continuing:u:${user.jellyfin_user_id}`;
   const hit = await ctx.kv.get(key).catch(() => null);

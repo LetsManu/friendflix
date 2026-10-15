@@ -22,6 +22,7 @@ import { castRoutes } from './routes/cast.js';
 import { internalRoutes } from './routes/internal.js';
 import { downloadRoutes } from './routes/downloads.js';
 import { discoverRoutes } from './routes/discover.js';
+import { postplayRoutes } from './routes/postplay.js';
 import { digestRoutes } from './routes/digest.js';
 import { listRoutes } from './routes/lists.js';
 import { partyRoutes } from './routes/party.js';
@@ -238,6 +239,7 @@ export async function buildApp(ctx: Ctx, extra: Extra = {}): Promise<FastifyInst
   prefsRoutes(app, ctx);
   profileRoutes(app, ctx);
   discoverRoutes(app, ctx);
+  postplayRoutes(app, ctx);
   digestRoutes(app, ctx);
   sceneRoutes(app, ctx);
   tvRoutes(app, ctx);
