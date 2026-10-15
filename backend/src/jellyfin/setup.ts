@@ -54,13 +54,17 @@ async function createApiKey(input: { url: string; username: string; password: st
     return r;
   };
 
+  // the deadline also covers the body: a server that stalls or resets after the headers is unreachable, never a 500
+  const json = (r: Response, max: number) =>
+    smallJson(r, max).catch((e: unknown) => { throw new MediaSetupError('unreachable', isTimeout(e) ? 'timeout' : 'bad_response'); });
+
   // 1. Jellyfin's own startup wizard must be finished (before it, there is no administrator to sign in with)
   const info = await call('GET', '/System/Info/Public');
   if (!info.ok) {
     cancel(info);
     throw new MediaSetupError('unreachable', info.status === 404 ? 'not_found' : 'upstream_error');
   }
-  const pub = obj(await smallJson(info, 64 * 1024));
+  const pub = obj(await json(info, 64 * 1024));
   if (!pub) throw new MediaSetupError('unreachable', 'bad_response');
   if (pub.StartupWizardCompleted !== true) throw new MediaSetupError('wizard_pending');
 
@@ -74,7 +78,7 @@ async function createApiKey(input: { url: string; username: string; password: st
     cancel(auth);
     throw new MediaSetupError('unreachable', 'upstream_error');
   }
-  const session = obj(await smallJson(auth, 256 * 1024));
+  const session = obj(await json(auth, 256 * 1024));
   const token = typeof session?.AccessToken === 'string' && session.AccessToken ? session.AccessToken : undefined;
   if (!token) throw new MediaSetupError('unexpected');
 
@@ -88,7 +92,7 @@ async function createApiKey(input: { url: string; username: string; password: st
       cancel(r);
       throw new MediaSetupError('unexpected');
     }
-    const items = obj(await smallJson(r, 1024 * 1024))?.Items;
+    const items = obj(await json(r, 1024 * 1024))?.Items;
     if (!Array.isArray(items)) throw new MediaSetupError('unexpected');
     return items.filter((k): k is ApiKey => typeof obj(k)?.AccessToken === 'string');
   };
@@ -126,5 +130,17 @@ export const jellyfinSetup: MediaSetupProvider = {
     const headers = { Authorization: mediaBrowserHeader({ deviceId: 'portal-probe', token: key }) };
     return byStatus(await fetchImpl(join(base, '/Auth/Keys'), { headers }), 'not_admin');
   },
-  auto: { fields: ['url', 'username', 'password'], run: createApiKey },
+  auto: {
+    fields: ['url', 'username', 'password'],
+    run: createApiKey,
+    // the key deletes itself (verified on Jellyfin 12.2.0: DELETE /Auth/Keys/<key> with that key answers 204); the admin session is gone by now
+    async revoke(values, { fetchImpl }) {
+      const base = plainHttpUrl(values.JELLYFIN_URL ?? '');
+      const key = values.JELLYFIN_ADMIN_API_KEY;
+      if (!base || !key) return;
+      const headers = { Authorization: mediaBrowserHeader({ device: 'Setup', deviceId: `ff-setup-${randomBytes(8).toString('hex')}`, token: key }) };
+      await fetchImpl(join(base, `/Auth/Keys/${encodeURIComponent(key)}`), { method: 'DELETE', headers, redirect: 'manual', signal: AbortSignal.timeout(TIMEOUT_MS) })
+        .then(cancel, () => undefined);
+    },
+  },
 };

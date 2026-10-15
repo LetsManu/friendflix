@@ -108,7 +108,10 @@ export function createLiveCtx(d: LiveCtxDeps): LiveCtx {
     await startCurrent().catch((err: unknown) => log.warn({ err }, 'starting the media server failed'));
   });
 
-  /** starts the current instance when there is a runtime and the app is operational (not again once started) */
+  /**
+   * starts the current instance when there is a runtime and the app is operational (not again once started). `started` is set before
+   * start() runs: a start() that throws is logged and not retried (as before setup mode), and its stop() still runs on a swap or close.
+   */
   const startCurrent = async () => {
     if (!runtime || started || !(d.operational?.() ?? true)) return;
     started = true;

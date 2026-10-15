@@ -11,7 +11,7 @@ const PASSWORD = 'pw-placeholder-Zq81'; // a test placeholder, never a real cred
 const URL_ = 'http://jf.example.com:8096';
 const auto = jellyfinSetup.auto!;
 
-interface FakeOpts { wizardDone?: boolean; admin?: boolean; auth?: Handler; createStatus?: number; noNewKey?: boolean; twoNew?: boolean }
+interface FakeOpts { wizardDone?: boolean; admin?: boolean; auth?: Handler; createStatus?: number; noNewKey?: boolean; twoNew?: boolean; probeStatus?: number }
 function fakeJellyfin(o: FakeOpts = {}) {
   const calls: Call[] = [];
   const inits: RequestInit[] = [];
@@ -32,7 +32,16 @@ function fakeJellyfin(o: FakeOpts = {}) {
       }
       return { status: 204 };
     },
-    'GET /Auth/Keys': () => ({ json: { Items: keys, TotalRecordCount: keys.length } }),
+    'GET /Auth/Keys': (_u, init) => {
+      // the media probe after the save: GET /Auth/Keys with the new key itself
+      if (o.probeStatus && (init.headers as Record<string, string>).Authorization?.includes('Token="new-ff-key"')) return { status: o.probeStatus };
+      return { json: { Items: keys, TotalRecordCount: keys.length } };
+    },
+    'DELETE /Auth/Keys/[^/]+': (u) => {
+      const i = keys.findIndex((k) => k.AccessToken === decodeURIComponent(u.pathname.split('/').at(-1)!));
+      if (i >= 0) keys.splice(i, 1);
+      return { status: 204 };
+    },
     'POST /Sessions/Logout': () => ({ status: 204 }),
   };
   const base = fakeHttp(routes, calls);
@@ -120,6 +129,29 @@ describe('jellyfinSetup provider', () => {
     expect(await codeOf(auto.run(input, deps(boom(new Error(`connect failed ${PASSWORD}`)))))).toEqual({ code: 'unreachable', detail: undefined });
     const timeout = Object.assign(new Error('t'), { name: 'TimeoutError' });
     expect(await codeOf(auto.run(input, deps(boom(timeout))))).toEqual({ code: 'unreachable', detail: 'timeout' });
+  });
+
+  it('a body that stalls or breaks after the headers is unreachable (timeout / bad_response), not a 500', async () => {
+    const broken = (err: Error) => (async () => new Response(new ReadableStream({ pull(c) { c.error(err); } }), { status: 200 })) as unknown as typeof fetch;
+    expect(await codeOf(auto.run(input, deps(broken(Object.assign(new Error('t'), { name: 'TimeoutError' })))))).toEqual({ code: 'unreachable', detail: 'timeout' });
+    expect(await codeOf(auto.run(input, deps(broken(new TypeError('terminated')))))).toEqual({ code: 'unreachable', detail: 'bad_response' });
+  });
+
+  it('revoke: DELETE /Auth/Keys/<key> with that key, no redirect, a deadline; nothing without URL or key; never throws', async () => {
+    const jf = fakeJellyfin();
+    const values = await auto.run(input, deps(jf.fetchImpl));
+    const n = jf.inits.length;
+    await auto.revoke!(values, { fetchImpl: jf.fetchImpl });
+    const del = jf.calls.at(-1)!;
+    expect([del.method, del.path]).toEqual(['DELETE', '/Auth/Keys/new-ff-key']);
+    expect(del.auth).toMatch(/Device="Setup", DeviceId="ff-setup-[0-9a-f]{16}".*Token="new-ff-key"/);
+    expect(jf.inits[n]).toMatchObject({ method: 'DELETE', redirect: 'manual' });
+    expect(jf.inits[n]!.signal).toBeInstanceOf(AbortSignal);
+    expect(jf.keys.some((k) => k.AccessToken === 'new-ff-key')).toBe(false);
+    await auto.revoke!({ JELLYFIN_URL: URL_ }, { fetchImpl: jf.fetchImpl });
+    await auto.revoke!({ JELLYFIN_ADMIN_API_KEY: 'k' }, { fetchImpl: jf.fetchImpl });
+    expect(jf.inits.length).toBe(n + 1);
+    await expect(auto.revoke!(values, { fetchImpl: (async () => { throw new Error('down'); }) as typeof fetch })).resolves.toBeUndefined();
   });
 
   it('a logout failure does not change the result (best effort)', async () => {
@@ -223,6 +255,59 @@ describe('POST /api/setup/media/auto', () => {
     expect(env.ctx.cfg.JELLYFIN_ADMIN_API_KEY).toBe(before);
     jf = fakeJellyfin({ wizardDone: false });
     expect((await post(input)).json()).toEqual({ ok: false, code: 'wizard_pending' });
+  });
+
+  it('the probe after creating the key fails (500): 400 probe_failed, the key is revoked with itself, nothing saved, logout still called', async () => {
+    jf = fakeJellyfin({ probeStatus: 500 });
+    const before = { url: env.ctx.cfg.JELLYFIN_URL, key: env.ctx.cfg.JELLYFIN_ADMIN_API_KEY };
+    const rev = env.ctx.settings.rev();
+    const r = await post({ ...input, url: 'http://revoke.example.com:8096' });
+    expect(r.statusCode).toBe(400);
+    expect(r.json()).toMatchObject({ error: 'probe_failed', group: 'media' });
+    expect(r.body).not.toContain(PASSWORD);
+    const seq = jf.calls.map((c) => `${c.method} ${c.path}`);
+    expect(seq.indexOf('POST /Sessions/Logout')).toBeGreaterThan(-1);
+    const del = jf.calls.find((c) => c.method === 'DELETE');
+    expect(del).toMatchObject({ path: '/Auth/Keys/new-ff-key', auth: expect.stringContaining('Token="new-ff-key"') });
+    expect(seq.indexOf('DELETE /Auth/Keys/new-ff-key')).toBeGreaterThan(seq.indexOf('POST /Sessions/Logout'));
+    expect(jf.keys.some((k) => k.AccessToken === 'new-ff-key')).toBe(false);
+    await env.ctx.settings.reload();
+    expect(env.ctx.settings.rev()).toBe(rev);
+    expect({ url: env.ctx.cfg.JELLYFIN_URL, key: env.ctx.cfg.JELLYFIN_ADMIN_API_KEY }).toEqual(before);
+    expect(logs.join('\n')).not.toContain(PASSWORD);
+  });
+
+  it('one run at a time: 409 busy while another holds the lock (no request)', async () => {
+    jf = fakeJellyfin();
+    await env.ctx.kv.set('setup:media:auto', '1', 60);
+    try {
+      const r = await post(input);
+      expect(r.statusCode).toBe(409);
+      expect(r.json()).toEqual({ error: 'busy' });
+      expect(jf.calls).toEqual([]);
+    } finally {
+      await env.ctx.kv.del('setup:media:auto');
+    }
+    expect((await post(input)).json()).toEqual({ ok: true }); // the lock is released after each run
+    expect(await env.ctx.kv.get('setup:media:auto')).toBeNull();
+  });
+
+  it('JELLYFIN_URL from the environment: another URL is refused (env_locked); the same URL saves only the key', async () => {
+    const real = env.ctx.settings.sources.bind(env.ctx.settings);
+    const spy = vi.spyOn(env.ctx.settings, 'sources').mockImplementation(() => ({ ...real(), JELLYFIN_URL: 'env' }));
+    try {
+      jf = fakeJellyfin();
+      const other = await post({ ...input, url: 'http://elsewhere.example.com:8096' });
+      expect(other.statusCode).toBe(400);
+      expect(other.json()).toEqual({ ok: false, code: 'invalid', detail: 'env_locked' });
+      expect(jf.calls).toEqual([]);
+      const r = await post({ ...input, url: env.ctx.cfg.JELLYFIN_URL! });
+      expect(r.json()).toEqual({ ok: true });
+      const audit = await env.pool.query("select meta from audit_log where action = 'settings.update' order by id desc limit 1");
+      expect(audit.rows[0].meta).toEqual({ keys: ['JELLYFIN_ADMIN_API_KEY'] });
+    } finally {
+      spy.mockRestore();
+    }
   });
 
   it('the password never appears in any log call or error message (spy on the logger)', async () => {

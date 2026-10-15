@@ -120,18 +120,36 @@ export function setupRoutes(app: FastifyInstance, ctx: Ctx) {
     if (!provider?.auto) return reply.code(400).send({ error: 'not_supported' });
     // http(s) without user info, checked before any request
     if (!plainHttpUrl(b.url)) return reply.code(400).send({ ok: false, code: 'invalid', detail: 'invalid_url' });
-    let values: Record<string, string>;
+    // keys from the environment stay as they are: the URL must be the locked one, and only the other keys are saved
+    const sources = ctx.settings.sources();
+    const lockedUrl = sources[provider.urlKey] === 'env' ? String((ctx.cfg as Record<string, unknown>)[provider.urlKey] ?? '') : undefined;
+    if (lockedUrl !== undefined && b.url !== lockedUrl) return reply.code(400).send({ ok: false, code: 'invalid', detail: 'env_locked' });
+    // one run at a time (all instances): two runs listing the keys at once could both pick the same new key and orphan the other
+    const lock = 'setup:media:auto';
+    if (!(await ctx.kv.setnx(lock, '1', 60))) return reply.code(409).send({ error: 'busy' });
     try {
-      values = await provider.auto.run(b, { fetchImpl: ctx.fetchImpl, appVersion: ctx.cfg.APP_VERSION ?? 'dev' });
-    } catch (e) {
-      if (!(e instanceof MediaSetupError)) throw e;
-      req.log.info({ code: e.code, detail: e.detail }, 'media server: automatic API key failed');
-      return { ok: false, code: e.code, ...(e.detail ? { detail: e.detail } : {}) };
+      let values: Record<string, string>;
+      try {
+        values = await provider.auto.run(b, { fetchImpl: ctx.fetchImpl, appVersion: ctx.cfg.APP_VERSION ?? 'dev' });
+      } catch (e) {
+        if (!(e instanceof MediaSetupError)) throw e;
+        req.log.info({ code: e.code, detail: e.detail }, 'media server: automatic API key failed');
+        return { ok: false, code: e.code, ...(e.detail ? { detail: e.detail } : {}) };
+      }
+      const toSave = Object.fromEntries(Object.entries(values).filter(([k]) => sources[k] !== 'env'));
+      const r = await saveWithProbes(ctx, toSave, { force: false, actor: null, allowedKeys: provider.keys });
+      // a refusal saved nothing: the new credential would be orphaned, so it is revoked. Never when saveWithProbes throws: it may throw
+      // after the commit (the audit write), and the saved key must keep working.
+      if ('errors' in r || 'probe' in r) {
+        await provider.auto.revoke?.(values, { fetchImpl: ctx.fetchImpl }).catch(() => undefined);
+        req.log.info('media server: the created API key was not saved and has been revoked');
+        if ('errors' in r) return reply.code(400).send({ error: 'invalid_settings', errors: r.errors });
+        return reply.code(400).send({ error: 'probe_failed', group: r.group, probe: r.probe });
+      }
+      req.log.info('media server: API key created and saved');
+      return { ok: true };
+    } finally {
+      await ctx.kv.del(lock).catch(() => undefined);
     }
-    const r = await saveWithProbes(ctx, values, { force: false, actor: null, allowedKeys: provider.keys });
-    if ('errors' in r) return reply.code(400).send({ error: 'invalid_settings', errors: r.errors });
-    if ('probe' in r) return reply.code(400).send({ error: 'probe_failed', group: r.group, probe: r.probe });
-    req.log.info('media server: API key created and saved');
-    return { ok: true };
   });
 }

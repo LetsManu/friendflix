@@ -236,13 +236,17 @@ interface MediaSetupProvider {
   keys: readonly string[];   // registry keys, in field order
   urlKey: string;            // the gateway upstream (mediaUrlKey)
   probe(values, { fetchImpl }): Promise<ProbeResult>;
-  auto?: { fields: readonly ('url' | 'username' | 'password')[]; run(input, { fetchImpl, appVersion }): Promise<Record<string, string>> };
+  auto?: {
+    fields: readonly ('url' | 'username' | 'password')[];
+    run(input, { fetchImpl, appVersion }): Promise<Record<string, string>>;
+    revoke?(values, { fetchImpl }): Promise<void>;   // best effort, when the save refused the values
+  };
 }
 ```
 
 - `GET /api/setup/state` sends `media: { keys, auto }` (`auto` = the provider's `auto.fields` or `null`); the web renders the media step from it, with labels from `settings.keys.<KEY>`. A kind without an entry gets manual fields from `mediaSettings()` (the settings its kind requires), `auto: null`, and its `media` probe answers a non-blocking warning (`not_tested`); `mediaUrlKey()` then falls back to the first `url` setting. A fork (Plex) adds `MEDIA_SETUP.plex` (URL + token, manual, probe) and its i18n strings, no web code.
 - The `media` probe calls `provider.probe` with the candidate values and the probe runner's fetch (no redirects, 5 s deadline). Jellyfin: `GET /Auth/Keys` with the key (2xx only for an administrator's key, 401/403 → `not_admin`).
-- `POST /api/setup/media/auto { url, username, password }` (setup session + `x-ff-setup-csrf`, 10 per minute) checks the URL (http/https, no user info) before any request, runs `auto.run` and saves its values with the same probes and audit as `PUT /api/setup/settings`, limited to the provider's keys. Answers `{ ok: true }`, or `{ ok: false, code, detail? }` with `code` one of `wizard_pending`, `unauthorized`, `not_admin`, `unreachable`, `unexpected`.
+- `POST /api/setup/media/auto { url, username, password }` (setup session + `x-ff-setup-csrf`, 10 per minute) checks the URL (http/https, no user info) before any request, runs `auto.run` and saves its values with the same probes and audit as `PUT /api/setup/settings`, limited to the provider's keys. One run at a time (kv lock `setup:media:auto`, else `409 busy`). A URL key from the environment must match (`invalid/env_locked`) and env keys are not saved. When the save refuses the values (`invalid_settings` / `probe_failed`), `auto.revoke` deletes the new credential (Jellyfin: `DELETE /Auth/Keys/<key>` with the key itself, verified on 12.2.0); never when the save throws, since it may throw after the commit. Answers `{ ok: true }`, or `{ ok: false, code, detail? }` with `code` one of `wizard_pending`, `unauthorized`, `not_admin`, `unreachable`, `unexpected`.
 - Jellyfin's `auto` (`jellyfin/setup.ts`): `GET /System/Info/Public` (`StartupWizardCompleted` must be true, else `wizard_pending`, before any sign-in), `POST /Users/AuthenticateByName` with `MediaBrowser Client="FriendFlix", Device="Setup", DeviceId="ff-setup-<16 hex>", Version="<APP_VERSION or dev>"` (401 → `unauthorized`; `User.Policy.IsAdministrator` must be true, else `not_admin`), `GET /Auth/Keys`, `POST /Auth/Keys?app=FriendFlix`, `GET /Auth/Keys` again: the newest `FriendFlix` key by `DateCreated` that was not in the first list (compared with Jellyfin's list, not this backend's clock). `POST /Sessions/Logout` with the session token runs in a `finally` block, whatever happened. Every call has a 5 s deadline and never follows a redirect; network errors and timeouts are `unreachable`.
 - The password is used only in memory for the sign-in: it is never stored, logged or put into an error (`MediaSetupError` carries a code only), and `/api/setup/*` bodies are kept out of error logs.
 - Only types flow back from `media/setup.ts` and `jellyfin/setup.ts` to `media/index.ts` (which imports them), so there is no import cycle; the shared probe helpers live in the leaf module `settings/probeKit.ts`.

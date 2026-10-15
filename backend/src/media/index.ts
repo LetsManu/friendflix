@@ -50,7 +50,9 @@ export function mediaSetupKeys(cfg: Config): readonly string[] {
 
 /** The config key holding the media server URL of cfg's kind (the gateway's upstream, /internal/gateway-config): the one place that knows it. */
 export function mediaUrlKey(cfg: Config): string {
-  return MEDIA_SETUP[cfg.MEDIA_SERVER]?.urlKey ?? kindSettings(cfg).find((d) => d.kind === 'url')!.key;
+  const key = MEDIA_SETUP[cfg.MEDIA_SERVER]?.urlKey ?? kindSettings(cfg).find((d) => d.kind === 'url')?.key;
+  if (!key) throw new Error(`media server kind ${cfg.MEDIA_SERVER} has neither a setup provider nor a url setting`);
+  return key;
 }
 
 /**

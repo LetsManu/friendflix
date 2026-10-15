@@ -22,6 +22,8 @@ export interface MediaSetupProvider {
     fields: readonly ('url' | 'username' | 'password')[];
     /** the values to save (keys within `keys`); throws MediaSetupError. The credentials live only in this call: never stored or logged. */
     run(input: { url: string; username: string; password: string }, deps: { fetchImpl: typeof fetch; appVersion: string }): Promise<Record<string, string>>;
+    /** best effort: deletes a credential run() created when the save refused it (optional: a provider without it leaves the key); never throws */
+    revoke?(values: Record<string, string>, deps: { fetchImpl: typeof fetch }): Promise<void>;
   };
 }
 
