@@ -25,9 +25,51 @@ FriendFlix is a private streaming portal that sits in front of **Jellyfin** (you
 
 ## Contents
 
+- [Get started](#get-started)
+- [Invite your friends](#invite-your-friends)
 - [What you get](#what-you-get)
 - [Privacy and safety](#privacy-and-safety)
 - [For admins: setup and operation](#for-admins-setup-and-operation)
+
+## Get started
+
+**You need:**
+
+- A Linux server or NAS with **Docker** and the **Compose v2** plugin.
+- A domain with HTTPS and a reverse proxy, e.g. **Nginx Proxy Manager**: one proxy host `friend.example.com` → `127.0.0.1:3080`, WebSockets on, plus [deploy/npm/portal.advanced.conf](deploy/npm/portal.advanced.conf) in its *Advanced* tab.
+- **Authentik** for sign-in, installed with its admin account at e.g. `auth.example.com` ([docs/authentik.md §2](docs/authentik.md#2-install-authentik)).
+- **Jellyfin** (your library) with its own setup finished, reachable on the Docker network `friendflix_media` or started with `--profile bundled`. A request service is optional.
+
+**Quick start.** A new install needs no `.env`; the production stack pulls prebuilt images.
+
+1. **Start:**
+
+   ```bash
+   git clone https://github.com/LetsManu/friendflix.git && cd friendflix
+   docker compose -f compose.prod.yaml up -d
+   ```
+
+2. **Read the one-time setup code** from the backend log (the line appears once the backend is up, so repeat after a few seconds if it is empty):
+
+   ```bash
+   docker compose -f compose.prod.yaml logs backend | grep "setup code"
+   ```
+
+3. **Open `https://friend.example.com` and work through the setup wizard:** the code, the public address, the media server (it creates the Jellyfin API key from an admin login), sign-in (it sets up Authentik with a one-time admin token: provider, groups, invitations, recovery), then your first sign-in becomes the admin. Optional extras (request service, push, webhooks, data sources) come last. Neither login is stored.
+
+Afterwards revoke the one-time token in Authentik and make MFA mandatory there ([docs/setup.md, Harden Authentik](docs/setup.md#harden-authentik)). Every setting can be changed later in *Admin → Settings*, and each change is tested before it is saved. Also worth doing: `./scripts/backup-bootstrap.sh` backs up the generated secrets (see [docs/setup.md](docs/setup.md#7-start-the-stack)). The full walkthrough from an empty server, with the typical errors of every wizard step: **[docs/setup.md](docs/setup.md)**.
+
+Upgrading an existing install? Keep your `.env`; it never sees the wizard ([docs/setup.md §14](docs/setup.md#14-upgrading-to-settings-in-the-database)). `.env` and Docker secrets also remain an advanced option for pinning values ([below](#advanced-configure-by-environment)).
+
+## Invite your friends
+
+In *Admin → Users → Invites* choose a role and create an invite link; send it to your friend ([docs/setup.md §10](docs/setup.md#10-invite-friends)). Your friend:
+
+1. opens the link and clicks **Create account & get started**;
+2. signs up in Authentik, including two-factor sign-in, and lands signed in on the portal;
+3. on the first visit picks a language, checks the profile name and colour and chooses 3 titles they like, so recommendations fit from the start (**onboarding**, a few clicks, skippable).
+
+What friends see step by step: [docs/setup.md, What a friend sees](docs/setup.md#what-a-friend-sees).
 
 ## What you get
 
@@ -158,45 +200,16 @@ Also in the admin area: invitations and roles, **brand hubs**, featured and them
 
 ## For admins: setup and operation
 
-Everything below is technical. The detailed operating docs are in German (see [Documentation](#documentation)).
+Everything below is technical. Installation is covered in [Get started](#get-started); the detailed operating docs are in German (see [Documentation](#documentation)).
 
-**Setup guide:** step-by-step installation from an empty server to the first invited friend – [docs/setup.md](docs/setup.md); Authentik (installation, provider, flows, invitations) – [docs/authentik.md](docs/authentik.md).
+**Setup guide:** from an empty server to the first invited friend – [docs/setup.md](docs/setup.md); Authentik (installation, provider, flows, invitations) – [docs/authentik.md](docs/authentik.md).
 
-### Requirements
+### Advanced: configure by environment
 
-- A Linux server with **Docker** and **Docker Compose**.
-- **Jellyfin** (your library) and, optionally, a request service (wishes) – either already running or started with the bundled profile.
-- **Authentik** as the login provider (OIDC with PKCE; enforce MFA there).
-- A reverse proxy with TLS, e.g. **Nginx Proxy Manager**, with one proxy host for the portal.
-- Optional: ntfy, a Discord webhook, Portainer (one-click updates).
+A new install needs none of this: the setup wizard and *Admin → Settings* store the settings in the database. `.env` and Docker secrets are for pinning values: what they set wins and shows locked in the wizard and in *Admin → Settings* ([docs/setup.md §15](docs/setup.md#15-advanced-configure-by-environment), [docs/setup.md, settings in the database](docs/setup.md#settings-in-the-database)). Template: [.env.example](.env.example). Every variable can also be read from a file with the `_FILE` suffix (Docker secrets, see [compose.secrets.yaml](compose.secrets.yaml)). Defaults are the ones in [compose.prod.yaml](compose.prod.yaml).
 
-### Quick start
-
-Install in three lines. The production stack pulls prebuilt images from `ghcr.io/letsmanu/friendflix-{backend,gateway,web}`; there is no build on the server, and no `.env` to write.
-
-```bash
-git clone https://github.com/LetsManu/friendflix.git && cd friendflix
-docker compose -f compose.prod.yaml up -d
-docker compose -f compose.prod.yaml logs backend | grep "setup code"
-```
-
-No output yet? `up -d` returns before the backend has started: wait a few seconds and run the last command again; the line appears once the backend is up.
-
-Then open the portal in your browser, enter the setup code and follow the **setup wizard**: public address, media server (it creates the Jellyfin API key from an admin login), sign-in (it sets up Authentik with a one-time admin token: provider, groups, invitations, recovery), and your first sign-in becomes the admin. Optional extras (request service, push, webhooks, data sources) follow; everything can be changed later under *Admin → Settings*. Neither login is stored. Step by step: [docs/setup.md](docs/setup.md).
-
-Before that you need:
-
-1. **Authentik** installed with its admin account – [docs/authentik.md §2](docs/authentik.md#2-install-authentik). Afterwards make MFA mandatory there and revoke the one-time token ([§3](docs/authentik.md#3-automatic-setup-from-friendflix)).
-2. **Jellyfin** with its own setup wizard finished, attached to the network `friendflix_media` (`docker network connect friendflix_media <container>`) or started with `--profile bundled`.
-3. **Nginx Proxy Manager:** one proxy host `portal.<domain>` → `127.0.0.1:3080`, WebSockets on, Force SSL/HTTP2/HSTS; paste [deploy/npm/portal.advanced.conf](deploy/npm/portal.advanced.conf) into the *Advanced* tab (routes `/api`, `/auth`, `/ws` to `:3081` and `/media/` to `:3082`). Keep its `/media/c/` block: it stops cast tokens from being logged.
-
-Also worth doing: `./scripts/backup-bootstrap.sh` backs up the generated secrets (the `bootstrap` service creates the database and Redis passwords, `APP_ENC_KEY` and `INTERNAL_SECRET` in the Docker volume `friendflix_bootstrap`), and `docker compose -f compose.prod.yaml --profile backup up -d backup` adds nightly database backups. Private packages: `docker login ghcr.io -u <user>` (PAT with read:packages) first.
-
-Prefer files? Every setting can still come from `.env` or Docker secrets and then shows locked in the wizard and in *Admin → Settings* ([docs/setup.md §15](docs/setup.md#15-advanced-configure-by-environment)). Upgrading an existing install: [docs/setup.md §14](docs/setup.md#14-upgrading-to-settings-in-the-database); it never sees the wizard.
-
-### Configuration
-
-A new install needs none of these: the setup wizard and *Admin → Settings* store them in the database. Template for pinning values from the environment: [.env.example](.env.example). Every variable can also be read from a file with the `_FILE` suffix (Docker secrets, see [compose.secrets.yaml](compose.secrets.yaml)). Defaults are the ones in [compose.prod.yaml](compose.prod.yaml). Settings can instead be saved in *Admin → Settings*; a value from `.env` or a file wins and shows locked there ([docs/setup.md](docs/setup.md#settings-in-the-database)).
+<details>
+<summary>All variables</summary>
 
 | Variable | Default | Purpose |
 |---|---|---|
@@ -243,6 +256,8 @@ A new install needs none of these: the setup wizard and *Admin → Settings* sto
 | `MEDIA_PATH` | `./media` | Media folder for the bundled Jellyfin (profile `bundled`) |
 
 The full list with explanations is in [.env.example](.env.example).
+
+</details>
 
 ### Architecture
 

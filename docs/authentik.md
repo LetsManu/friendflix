@@ -228,7 +228,7 @@ Variants:
 - [`friendflix-service-account.yaml`](../deploy/authentik/friendflix-service-account.yaml): only the service account and token, if you already have an enrollment flow.
 - [`friendflix-prompt-fix.yaml`](../deploy/authentik/friendflix-prompt-fix.yaml): a prompt stage without placeholder expressions for an existing enrollment flow that fails with `'AnonymousUser' object has no attribute 'group_attributes'` (bind `friendflix-prompt-fixed` instead of the old prompt stage, same order).
 
-The blueprint does **not** create the groups, the provider/application, MFA in the authentication flow or recovery. [`friendflix-setup.yaml`](../deploy/authentik/friendflix-setup.yaml) creates the groups, the provider and the application, but needs the context `{"public_url": "https://portal.example.com", "admin_group": "friendflix-admins"}`, which the *Flows → Import* dialog cannot pass: import it under *Customization → Blueprints → Create* with that context *(unverified)*, or do [§4](#4-groups) and [§5](#5-oauth2openid-provider-and-application) by hand. Then [§6](#6-authentication-flow-with-mandatory-mfa) and [§8.3](#83-copy-the-token) (copy the token). Sections 7 and 8 describe what the blueprint builds, in case you prefer to click it together or need to adapt it.
+The blueprint does **not** create the groups, the provider/application, MFA in the authentication flow or recovery. [`friendflix-setup.yaml`](../deploy/authentik/friendflix-setup.yaml) creates the groups, the provider and the application, but needs the context `{"public_url": "https://friend.example.com", "admin_group": "friendflix-admins"}`, which the *Flows → Import* dialog cannot pass: import it under *Customization → Blueprints → Create* with that context *(unverified)*, or do [§4](#4-groups) and [§5](#5-oauth2openid-provider-and-application) by hand. Then [§6](#6-authentication-flow-with-mandatory-mfa) and [§8.3](#83-copy-the-token) (copy the token). Sections 7 and 8 describe what the blueprint builds, in case you prefer to click it together or need to adapt it.
 
 ## 4. Groups
 
@@ -260,7 +260,7 @@ How FriendFlix uses groups (from `backend/src/routes/auth.ts`):
 | Client type | **Confidential** | the backend authenticates with the client secret (and additionally uses PKCE S256) |
 | Client ID | generated – copy | → `OIDC_CLIENT_ID` |
 | Client Secret | generated – copy | → `OIDC_CLIENT_SECRET` (or the Docker secret `oidc_client_secret`) |
-| Redirect URIs/Origins | matching mode **Strict**, URL `https://portal.example.com/auth/callback` | must match `${PUBLIC_URL}/auth/callback` character for character (see note) |
+| Redirect URIs/Origins | matching mode **Strict**, URL `https://friend.example.com/auth/callback` | must match `${PUBLIC_URL}/auth/callback` character for character (see note) |
 | Signing Key | `authentik Self-signed Certificate` | ID tokens signed with RS256; without a key Authentik signs with HS256 and the client secret |
 | Encryption Key | **empty** | FriendFlix cannot decrypt encrypted (JWE) ID tokens |
 | *Advanced protocol settings* | | |
@@ -277,8 +277,8 @@ How FriendFlix uses groups (from `backend/src/routes/auth.ts`):
 
 **Redirect URI.** The backend builds it as `new URL('/auth/callback', PUBLIC_URL)` (`backend/src/oidc.ts`). Consequences:
 
-- Scheme and host come from `PUBLIC_URL`; any path in `PUBLIC_URL` is dropped. FriendFlix must run at the root of its own host name (`https://portal.example.com`, not `https://example.com/friendflix`).
-- No trailing slash after `callback`. `https://portal.example.com/auth/callback/` or `http://…` will not match.
+- Scheme and host come from `PUBLIC_URL`; any path in `PUBLIC_URL` is dropped. FriendFlix must run at the root of its own host name (`https://friend.example.com`, not `https://example.com/friendflix`).
+- No trailing slash after `callback`. `https://friend.example.com/auth/callback/` or `http://…` will not match.
 - One entry is enough. Add a second one only if you really serve the portal under a second host name (and then that host must also be `PUBLIC_URL` for that instance).
 
 **Scopes the backend requests:** `openid profile email groups`. Authentik has no `groups` scope by default and silently drops unknown scopes, so you do **not** need a custom `groups` mapping: the default `profile` mapping already returns `groups`. (A custom scope mapping named `groups` would also work, but is unnecessary.) `email_verified` is not evaluated.
@@ -290,7 +290,7 @@ How FriendFlix uses groups (from `backend/src/routes/auth.ts`):
 | Name | `FriendFlix` |
 | Slug | `friendflix` → part of `OIDC_ISSUER` (reserved slugs `authorize`, `token`, `device`, `userinfo`, `introspect`, `revoke` are not allowed) |
 | Provider | `FriendFlix` |
-| Launch URL | `https://portal.example.com/` (the tile in Authentik's user library) |
+| Launch URL | `https://friend.example.com/` (the tile in Authentik's user library) |
 | Policy engine mode | `any` |
 | Icon | optional, without third-party brand marks (e.g. `docs/images/logo.svg`) |
 

@@ -77,11 +77,11 @@ ssh -L 3083:127.0.0.1:3083 docker-host                                   # dann 
 ```
 # Zertifikat des öffentlichen Hosts (NPM / Let's Encrypt): Warnung < 21 Tage, kritisch < 7 Tage
 object Service "friendflix-cert" { host_name = "docker-host"; check_command = "http"
-  vars.http_address = "portal.example.com"; vars.http_ssl = true; vars.http_certificate = "21,7" }
+  vars.http_address = "friend.example.com"; vars.http_ssl = true; vars.http_certificate = "21,7" }
 
 # Öffentliche Erreichbarkeit der UI
 object Service "friendflix-ui" { host_name = "docker-host"; check_command = "http"
-  vars.http_address = "portal.example.com"; vars.http_ssl = true; vars.http_uri = "/"; vars.http_expect = "200" }
+  vars.http_address = "friend.example.com"; vars.http_ssl = true; vars.http_uri = "/"; vars.http_expect = "200" }
 
 # Interne Readiness (vom Docker-Host aus; Container-IP oder `docker exec`)
 object Service "friendflix-ready" { host_name = "docker-host"; check_command = "http"
