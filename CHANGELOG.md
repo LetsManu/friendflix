@@ -52,6 +52,7 @@ All notable changes, grouped by what you notice. Each release has its own sectio
 - **Themed lists** (emoji, cover colour) that admins pin as home rows; the lists page becomes an editorial page.
 - Several **Because you watched …** rows, **Simulcast** page (airing series by weekday and season, "Anime only"), 4K / HDR **browse filters** from a background quality index.
 - Search for people, genres, titles and episodes; decade, rating and person filters; person pages.
+- **Recommendation measurement (first step towards engine v2):** `scripts/reco-eval.mjs` replays each profile's history offline (leave-last-out) and compares popularity, the current "Because you watched" logic and item-item co-occurrence on HitRate@10, NDCG@10, MRR, coverage, diversity, already-seen share, mid-popularity share, new-title hit rate and transition accuracy. It reads the database read-only and prints aggregates only. The "Because you watched" rows now report how often they are shown and clicked as bare counts per row and engine (`friendflix_reco_impressions_total`, `friendflix_reco_clicks_total`, plus `_plays_total` and `_dismiss_total` for later steps); no titles, items or profiles are sent. See docs/discovery.md.
 
 ### Together
 - Watch-party **emoji reactions** that float over the picture (rate limited, reduced-motion aware).
