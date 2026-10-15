@@ -12,7 +12,7 @@
 import { akFlowStages, akOauthProvider, type FlowStages } from './authentik.js';
 import { loginUi, flowSlug, passkeysStatus, type FlowKind, type PasskeysReason } from './akflow.js';
 import type { Ctx } from './ctx.js';
-import { cacheKeyHash } from './crypto.js';
+import { secretTag } from './crypto.js';
 
 type CheckCtx = Pick<Ctx, 'cfg' | 'kv' | 'db' | 'fetchImpl'>;
 
@@ -62,7 +62,7 @@ const originOf = (url: string | undefined): string | null => {
 export async function checkLoginFlows(ctx: CheckCtx): Promise<LoginCheck> {
   const cfg = ctx.cfg;
   const slugs = KINDS.map((k) => slugOf(cfg, k) ?? '');
-  const key = `flowcheck:${cacheKeyHash([cfg.AUTHENTIK_URL, cfg.AUTHENTIK_API_TOKEN, cfg.OIDC_CLIENT_ID, cfg.OIDC_ISSUER, cfg.PUBLIC_URL, cfg.PASSKEYS_IN_APP, cfg.LOGIN_UI, ...slugs].join('|'))}`;
+  const key = `flowcheck:${secretTag(cfg.AUTHENTIK_API_TOKEN)}:${[cfg.AUTHENTIK_URL, cfg.OIDC_CLIENT_ID, cfg.OIDC_ISSUER, cfg.PUBLIC_URL, cfg.PASSKEYS_IN_APP, cfg.LOGIN_UI, ...slugs].map((v) => encodeURIComponent(v ?? '')).join('|')}`;
   const hit = await ctx.kv.get(key);
   if (hit) {
     try {

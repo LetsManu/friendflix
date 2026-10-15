@@ -10,7 +10,7 @@
  */
 import type { Config } from './config.js';
 import type { Ctx } from './ctx.js';
-import { cacheKeyHash } from './crypto.js';
+import { secretTag } from './crypto.js';
 import { akBase } from './invites.js';
 import { HttpError } from './users.js';
 
@@ -274,7 +274,7 @@ export async function akFlowStages(ctx: AkCtx, slug: string): Promise<FlowStages
 
 /** the kv key of a cached flow read (own prefix: the flow jars use `akflow:`) */
 export const akFlowCacheKey = (cfg: Pick<Config, 'AUTHENTIK_URL' | 'AUTHENTIK_API_TOKEN'>, slug: string): string =>
-  `akflowstages:${cacheKeyHash(`${cfg.AUTHENTIK_URL}|${cfg.AUTHENTIK_API_TOKEN}|${slug}`)}`;
+  `akflowstages:${secretTag(cfg.AUTHENTIK_API_TOKEN)}:${encodeURIComponent(cfg.AUTHENTIK_URL ?? '')}:${encodeURIComponent(slug)}`;
 
 /** Whether Authentik has a flow with this slug (an unreachable Authentik answers false); see akFlowStages. */
 export async function akFlowExists(ctx: AkCtx, slug: string): Promise<boolean> {

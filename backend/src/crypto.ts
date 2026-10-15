@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { createCipheriv, createDecipheriv, createHash, createHmac, randomBytes, scryptSync, timingSafeEqual } from 'node:crypto';
+import { createCipheriv, createDecipheriv, createHash, randomBytes, scryptSync, timingSafeEqual } from 'node:crypto';
 
 /** AES-256-GCM. Output: base64url(iv | tag | ciphertext). */
 export function encrypt(key: Buffer, plain: string): string {
@@ -26,10 +26,20 @@ export const keyFromBase64 = (b64: string): Buffer => {
 export const randomPassword = () => randomBytes(24).toString('base64url');
 export const randomToken = (bytes = 32) => randomBytes(bytes).toString('base64url');
 export const sha256 = (s: string) => createHash('sha256').update(s).digest('hex');
-const CACHE_KEY_SALT = randomBytes(32);
-/** Cache-key digest for inputs that include a secret (an API token): HMAC with a random per-process key, so a kv dump cannot be
- *  checked against a guessed secret. Keys differ between processes, which only costs a cache miss per instance. */
-export const cacheKeyHash = (s: string) => createHmac('sha256', CACHE_KEY_SALT).update(s).digest('hex');
+const secretTags = new Map<string, string>();
+/** A stand-in for a secret inside a cache key: a random tag per distinct secret value, kept in this process's memory only. The
+ *  secret itself is never hashed or stored; a changed secret gets a new tag (a new cache key). Tags differ between processes,
+ *  which only costs one cache miss per instance. */
+export function secretTag(secret: string | undefined): string {
+  if (!secret) return '-';
+  let t = secretTags.get(secret);
+  if (!t) {
+    if (secretTags.size >= 64) secretTags.clear();
+    t = randomToken(12);
+    secretTags.set(secret, t);
+  }
+  return t;
+}
 
 /** Profile PIN: scrypt with a random 16-byte salt, stored as `scrypt$<salt>$<hash>` (base64url). */
 export function hashPin(pin: string): string {
