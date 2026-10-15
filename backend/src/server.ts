@@ -64,6 +64,8 @@ const live = createLiveCtx({
   media: (c) => createMediaServer({ cfg: c, kv, db: pool, encKey }),
   requests: (c) => new SeerrClient(c.REQUESTS_URL, c.REQUESTS_API_KEY),
   roles: loadRoles(cfg.ROLE_TEMPLATES),
+  // a media server's own change feed waits for the end of setup mode (empty settings until the wizard's media step); see syncMedia below
+  operational: () => isOperational(ctx),
   log,
 });
 const { ctx } = live;
@@ -73,12 +75,13 @@ logTo.app = app.log;
 await app.listen({ port: cfg.PORT, host: '0.0.0.0' });
 // renamed settings that still use their old name (names only, never values)
 for (const msg of deprecatedEnvNames()) app.log.warn(msg);
-// the media server's own change feed (websocket, sync job …), if it has one; Jellyfin pushes webhooks instead
-await live.startMedia({ dispatch: (e) => dispatchMediaEvent(ctx, e), log: app.log });
 // setup mode (spec Part E): the jobs below ask isOperational on every tick, which reads the cached setup state warmed here; the instance
 // that owns the background jobs prints a new setup code while setup is incomplete (every start replaces the previous one)
 await isSetupComplete(ctx);
 await announceSetupCode(ctx, app.log);
+// the media server's own change feed (websocket, sync job …), if it has one; Jellyfin pushes webhooks instead. Deferred while the app
+// is not operational (setup mode): the syncMedia timer below starts it then.
+await live.startMedia({ dispatch: (e) => dispatchMediaEvent(ctx, e), log: app.log });
 // one-off: push the changed role policies (guest transcoding) to every existing Jellyfin user
 if (isOperational(ctx)) void reapplyPoliciesOnce(ctx).catch(jobFailed(ctx, app.log, 'role-reapply', 'role policy re-apply failed'));
 pushEnabled(cfg); // validates the VAPID pair once (warns and disables push when invalid)
@@ -91,6 +94,8 @@ const timers: NodeJS.Timeout[] = [];
 // every tick returns early while setup is incomplete or a run-required setting is missing (isOperational, spec Part E1)
 const op = () => isOperational(ctx);
 timers.push(setInterval(() => { if (op()) parties.tick(); }, 1000));
+// starts the media server's change feed once setup completes (startMedia above deferred it); a no-op once started
+timers.push(setInterval(() => { if (op()) void live.syncMedia(); }, 5_000));
 let pollTickBusy = false;
 timers.push(setInterval(() => {
   if (pollTickBusy || !op()) return;

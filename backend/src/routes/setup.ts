@@ -3,7 +3,10 @@
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import type { Ctx } from '../ctx.js';
-import { mediaSettings } from '../media/index.js';
+import { mediaSetupKeys } from '../media/index.js';
+import { MEDIA_SETUP } from '../media/setup.js';
+import { MediaSetupError } from '../media/types.js';
+import { plainHttpUrl } from '../settings/probeKit.js';
 import { publicUrlSchema, SETTINGS, type SettingGroup } from '../settings/registry.js';
 import { createSetupSession, hasSetupSession, requireSetupSession, verifySetupCode } from '../setup/code.js';
 import { isSetupComplete } from '../setup/state.js';
@@ -15,12 +18,9 @@ import { saveWithProbes, testGroup, valuesSchema } from './adminSettings.js';
  * CSRF hook skips /api/setup/: these endpoints carry their own token (x-ff-setup-csrf), never the account session's.
  */
 
-/** The keys the wizard's steps 2-4 own: the public URL, the media server's keys and the sign-in group. */
-const WIZARD_KEYS: readonly string[] = [
-  'PUBLIC_URL',
-  ...mediaSettings().map((d) => d.key),
-  ...SETTINGS.filter((d) => d.group === 'signin' && d.visible !== false).map((d) => d.key),
-];
+const SIGNIN_KEYS = SETTINGS.filter((d) => d.group === 'signin' && d.visible !== false).map((d) => d.key);
+/** The keys the wizard's steps 2-4 own: the public URL, the media server kind's keys (its setup provider, spec Part H) and the sign-in group. */
+const wizardKeys = (ctx: Ctx): readonly string[] => ['PUBLIC_URL', ...mediaSetupKeys(ctx.cfg), ...SIGNIN_KEYS];
 const WIZARD_GROUPS = ['general', 'media', 'signin'] as const satisfies readonly SettingGroup[];
 
 type Step = 'todo' | 'done' | 'env';
@@ -57,6 +57,8 @@ export function setupRoutes(app: FastifyInstance, ctx: Ctx) {
       complete,
       unlocked: !complete && (await hasSetupSession(ctx, req)),
       mediaKind: ctx.cfg.MEDIA_SERVER,
+      // the media step's fields (labels: settings.keys.<KEY>) and whether "Create API key automatically" exists for this kind
+      media: { keys: mediaSetupKeys(ctx.cfg), auto: MEDIA_SETUP[ctx.cfg.MEDIA_SERVER]?.auto?.fields ?? null },
       steps: {
         publicUrl: step(ctx, ['PUBLIC_URL']),
         media: step(ctx, runRequired(ctx, 'media')),
@@ -93,7 +95,7 @@ export function setupRoutes(app: FastifyInstance, ctx: Ctx) {
   app.put('/api/setup/settings', { ...session, config: { rateLimit: { max: 60, timeWindow: '1 minute' } } }, async (req, reply) => {
     const b = z.object({ values: valuesSchema, force: z.boolean().optional() }).parse(req.body);
     // actor null: nobody is signed in yet; the audit row lists the keys only
-    const r = await saveWithProbes(ctx, b.values, { force: b.force ?? false, actor: null, allowedKeys: WIZARD_KEYS });
+    const r = await saveWithProbes(ctx, b.values, { force: b.force ?? false, actor: null, allowedKeys: wizardKeys(ctx) });
     if ('errors' in r) return reply.code(400).send({ error: 'invalid_settings', errors: r.errors });
     if ('probe' in r) return reply.code(400).send({ error: 'probe_failed', group: r.group, probe: r.probe });
     return r;
@@ -102,9 +104,34 @@ export function setupRoutes(app: FastifyInstance, ctx: Ctx) {
   app.post('/api/setup/test', { ...session, config: { rateLimit: { max: 20, timeWindow: '1 minute' } } }, async (req, reply) => {
     const b = z.object({ group: z.string().max(32), values: valuesSchema.optional() }).parse(req.body);
     if (!(WIZARD_GROUPS as readonly string[]).includes(b.group)) return reply.code(400).send({ error: 'not_allowed' });
-    const r = await testGroup(ctx, b.group as SettingGroup, b.values ?? {}, { allowedKeys: WIZARD_KEYS });
+    const r = await testGroup(ctx, b.group as SettingGroup, b.values ?? {}, { allowedKeys: wizardKeys(ctx) });
     if ('noProbe' in r) return reply.code(400).send({ error: 'no_probe' });
     if ('errors' in r) return reply.code(400).send({ error: 'invalid_settings', errors: r.errors });
     return r;
+  });
+
+  // spec Part G "Jellyfin automation": the provider signs in with the administrator's username and password (in this request only:
+  // never stored or logged, and the body is kept out of error logs, app.ts SENSITIVE_BODY), creates an API key and logs out; the key is
+  // saved like a manual entry, so the media probe confirms it first. Answers { ok: true } or a ProbeResult failure.
+  const autoBody = z.object({ url: z.string().max(2048), username: z.string().min(1).max(256), password: z.string().max(1024) });
+  app.post('/api/setup/media/auto', { ...session, config: { rateLimit: { max: 10, timeWindow: '1 minute' } } }, async (req, reply) => {
+    const b = autoBody.parse(req.body);
+    const provider = MEDIA_SETUP[ctx.cfg.MEDIA_SERVER];
+    if (!provider?.auto) return reply.code(400).send({ error: 'not_supported' });
+    // http(s) without user info, checked before any request
+    if (!plainHttpUrl(b.url)) return reply.code(400).send({ ok: false, code: 'invalid', detail: 'invalid_url' });
+    let values: Record<string, string>;
+    try {
+      values = await provider.auto.run(b, { fetchImpl: ctx.fetchImpl, appVersion: ctx.cfg.APP_VERSION ?? 'dev' });
+    } catch (e) {
+      if (!(e instanceof MediaSetupError)) throw e;
+      req.log.info({ code: e.code, detail: e.detail }, 'media server: automatic API key failed');
+      return { ok: false, code: e.code, ...(e.detail ? { detail: e.detail } : {}) };
+    }
+    const r = await saveWithProbes(ctx, values, { force: false, actor: null, allowedKeys: provider.keys });
+    if ('errors' in r) return reply.code(400).send({ error: 'invalid_settings', errors: r.errors });
+    if ('probe' in r) return reply.code(400).send({ error: 'probe_failed', group: r.group, probe: r.probe });
+    req.log.info('media server: API key created and saved');
+    return { ok: true };
   });
 }

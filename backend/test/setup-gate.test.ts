@@ -74,7 +74,7 @@ describe('the setup gate while setup is incomplete', () => {
   it('GET /api/setup/state: complete, unlocked, media kind, steps and the prefill from the forwarded request', async () => {
     const r = await env.app.inject({ url: '/api/setup/state', headers: { 'x-forwarded-proto': 'https', host: 'tv.example.com' } });
     expect(r.json()).toEqual({
-      complete: false, unlocked: false, mediaKind: 'jellyfin',
+      complete: false, unlocked: false, mediaKind: 'jellyfin', media: { keys: ['JELLYFIN_URL', 'JELLYFIN_ADMIN_API_KEY'], auto: ['url', 'username', 'password'] },
       steps: { publicUrl: 'done', media: 'done', signin: 'done', admin: 'todo' },
       prefill: { publicUrl: 'https://tv.example.com' },
     });

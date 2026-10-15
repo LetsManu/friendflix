@@ -129,6 +129,36 @@ describe('live settings in the context', () => {
     }
     expect(made.every((r) => r.started === r.stopped)).toBe(true);
   });
+  it('media holder: start() waits until the app is operational (setup mode, spec Part E1); syncMedia starts it once', async () => {
+    let operational = false;
+    const made: Array<{ url: string | undefined; started: number; stopped: number }> = [];
+    const media = (c: Config) => {
+      const rec = { url: c.JELLYFIN_URL, started: 0, stopped: 0 };
+      made.push(rec);
+      return { rec, start: async () => { rec.started++; }, stop: async () => { rec.stopped++; } } as unknown as MediaServer;
+    };
+    const live = createLiveCtx({
+      settings: env.ctx.settings, kv: env.kv, db: env.pool, encKey: env.ctx.encKey, fetchImpl: fetch, roles: env.ctx.roles, oidc: env.ctx.oidc,
+      media, requests: (c) => new SeerrClient(c.REQUESTS_URL, c.REQUESTS_API_KEY), log: { warn: () => {} }, operational: () => operational,
+    });
+    try {
+      await live.startMedia({ dispatch: async () => {}, log: { warn: () => {}, info: () => {} } });
+      await live.syncMedia();
+      expect(made[0]).toMatchObject({ started: 0, stopped: 0 });
+      // the wizard saves the media settings: a new instance, still not started
+      await env.ctx.settings.save({ JELLYFIN_URL: 'http://wizard.internal:8096' }, null);
+      await live.ready();
+      expect(made.map((r) => [r.started, r.stopped])).toEqual([[0, 0], [0, 0]]);
+      operational = true;
+      await live.syncMedia();
+      await live.syncMedia();
+      expect(made.map((r) => [r.started, r.stopped])).toEqual([[0, 0], [1, 0]]);
+    } finally {
+      await live.close();
+      await env.ctx.settings.save({ JELLYFIN_URL: cfg.JELLYFIN_URL }, null);
+    }
+    expect(made.map((r) => [r.started, r.stopped])).toEqual([[0, 0], [1, 1]]);
+  });
   it('media holder: a factory that throws keeps the previous instance; failing stop()/start() are logged, not thrown', async () => {
     const warned: string[] = [];
     let fail: 'build' | 'lifecycle' = 'build';
