@@ -12,8 +12,11 @@
  * - Answers are checked against the step that was shown (its stage, and whether it offered a passkey, an inline password, a code).
  * - Rate limits: per IP (route config, counted by the plugin before the handler runs) and per account under
  *   `flowfail:<sha256(lower(identifier))>` for every jar kind, 10 failures in 15 min. An answer that carries a secret (password, code,
- *   passkey) reserves its slot atomically before Authentik is called and gives it back unless Authentik refused it, so parallel answers
- *   from many flows cannot all slip past the limit; any other answer is refused at the limit and counts only when Authentik refuses it.
+ *   passkey) reserves its slot atomically before Authentik is called and gives it back only when the flow moved past that stage (or
+ *   Authentik never judged it), so parallel answers from many flows cannot all slip past the limit; any other answer is refused at the
+ *   limit and counts only when Authentik refuses it.
+ * - The end of a login or enrolment flow (completeFlow): a silent OIDC authorize with the flow's Authentik session, then the same rules
+ *   as the classic `/auth/callback` (loginFinish.ts); the Authentik session is ended afterwards in every case.
  * - Errors: codes only. Logged as `{ route, code }`, never the error object or the body (passwords, codes, credentials).
  *   Authentik unreachable or answering nonsense → `200 {stage:'unavailable'}` (the card offers retry and the classic sign-in).
  */
@@ -21,15 +24,18 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { timingSafeEqual } from 'node:crypto';
 import { z } from 'zod';
 import {
-  akExec, appHost, createJar, dropJar, endAkSession, flowSlug, type Jar, JAR_TTL_S, loadJar, loginUi, type RawChallenge, saveJar,
+  akExec, akGet, appHost, createJar, dropJar, endAkSession, flowSlug, type Jar, JAR_TTL_S, loadJar, loginUi, type RawChallenge, saveJar,
 } from '../akflow.js';
 import { akFlowExists } from '../authentik.js';
 import { secureCookies } from '../config.js';
 import type { Ctx } from '../ctx.js';
 import { randomToken, sha256 } from '../crypto.js';
-import { FlowFieldError, type FlowError, type FlowStep, stepErrors, toAnswer, toStep } from '../flowSteps.js';
+import { FlowFieldError, type FlowError, type FlowInternal, type FlowStage, type FlowStep, stepErrors, toAnswer, toStep } from '../flowSteps.js';
 import { lookupInvite } from '../invites.js';
+import { type LoginOutcome, resolveLogin } from '../loginFinish.js';
+import type { OidcClaims } from '../oidc.js';
 import { COOKIE as SESSION_COOKIE, loadSession } from '../session.js';
+import { isSetupComplete } from '../setup/state.js';
 import { HttpError } from '../users.js';
 
 /** the flow id (httpOnly, only sent to /auth/flow) */
@@ -75,6 +81,15 @@ function keptChallenge(c: RawChallenge): RawChallenge {
   return rest;
 }
 
+/**
+ * whether the challenge after an answer is a step past the answered stage: the end of the flow, a stage answered internally, or a step
+ * of another stage that is not a restart (identify). Denied, classic and the same stage again do not count as progress.
+ */
+function movedOn(next: FlowStep | FlowInternal, answered: FlowStage): boolean {
+  if ('internal' in next) return true;
+  return 'step' in next && next.stage !== answered && next.stage !== 'identify';
+}
+
 /** an answer may only use what the shown step offered (an inline password, a passkey, a code); prompt answers only the shown fields */
 function checkOffered(shown: AnswerableStep, answer: Record<string, unknown>): void {
   const has = (k: string) => Object.hasOwn(answer, k);
@@ -91,6 +106,82 @@ function checkOffered(shown: AnswerableStep, answer: Record<string, unknown>): v
       return;
     }
     default:
+  }
+}
+
+/** where a finished recovery sends the person: the sign-in page with the "password changed" notice (plan Ruling 3) */
+const RECOVERY_DONE = '/login?reset=1';
+/** the HttpError code of an error, for the `{route, code}` log line (never the error object: it may quote a URL with a code in it) */
+const errCode = (err: unknown) => (err instanceof HttpError && /^[a-z0-9_]{1,64}$/.test(err.message) ? err.message : 'internal');
+
+/** the sign-in outcome as a flow answer (preflight D4); the cookies (`ff_sid`, `ff_pending`, `ff_restore`) are on the same response */
+function outcomeStep(out: LoginOutcome): FlowStep {
+  switch (out.kind) {
+    case 'session': return { stage: 'done', next: out.next };
+    case 'pending': return { stage: 'done', next: '/pending' };
+    case 'restore': return { stage: 'done', next: '/restore' };
+    case 'redirect': return { stage: 'done', next: out.to }; // the classic forgotten-PIN paths only; the flow never asks for them
+    case 'account_deleted':
+    case 'locked': return { stage: 'locked' };
+  }
+}
+
+type SilentResult = { claims: OidcClaims } | { step: FlowStep };
+
+/**
+ * The OIDC authorize request of a finished login flow, sent with the jar's Authentik session (`prompt=none`, no forwarded host).
+ * Authentik answers a 302: to the app's `/auth/callback` with a code (exchanged here with the state, nonce and PKCE verifier of this very
+ * start, like the classic callback's), to its own `/if/flow/…` (an explicit-consent provider: the classic sign-in asks for it), or to the
+ * callback with `error=` (`consent_required` on older releases → classic; anything else → unavailable).
+ */
+async function silentAuthorize(ctx: Ctx, req: FastifyRequest, jar: Jar): Promise<SilentResult> {
+  const unavailable = (code: string): SilentResult => {
+    req.log.warn({ route: req.routeOptions.url ?? 'unmatched', code }, 'silent authorize refused');
+    return { step: { stage: 'unavailable' } };
+  };
+  const consent: SilentResult = { step: { stage: 'classic', reason: 'consent' } };
+  const start = await ctx.oidc.start({ silent: true });
+  const r = await akGet(ctx, jar, start.url);
+  await r.body?.cancel().catch(() => undefined);
+  let to: URL | null = null;
+  try {
+    to = r.status >= 300 && r.status < 400 && r.headers.get('location') ? new URL(r.headers.get('location')!, start.url) : null;
+  } catch { /* an unparsable Location: unavailable below */ }
+  if (!to) return unavailable('authorize_no_redirect');
+  const callback = new URL('/auth/callback', ctx.cfg.PUBLIC_URL);
+  if (to.origin !== callback.origin || to.pathname !== callback.pathname) {
+    return /^\/(?:.*\/)?if\/flow\//.test(to.pathname) ? consent : unavailable('authorize_elsewhere');
+  }
+  const error = to.searchParams.get('error');
+  if (error !== null) return error === 'consent_required' ? consent : unavailable('authorize_error');
+  // the state must be the one this start made (openid-client checks it again, with the nonce and the PKCE verifier)
+  if (!sameToken(to.searchParams.get('state') ?? '', start.state)) return unavailable('invalid_state');
+  return { claims: await ctx.oidc.finish(to, { state: start.state, nonce: start.nonce, codeVerifier: start.codeVerifier }) };
+}
+
+/**
+ * The end of a flow (`{internal:'end'}`, preflight D4/P12):
+ * - `login`/`enroll`: the silent authorize yields the person's claims, and `resolveLogin` applies exactly the classic callback's rules
+ *   (approval, invites incl. the enrolment's, the admin group, deletion/restore, locks, ended access) and issues the session (`ui:'app'`).
+ *   Never during setup (defence in depth behind the gate, T4-e): the first admin is created only by `/auth/callback` with the setup session.
+ * - `recovery`: no session; the person signs in with the new password.
+ * Whatever happens, the Authentik session the flow created is ended and the jar dropped (the FriendFlix session, if any, is issued first).
+ */
+export async function completeFlow(ctx: Ctx, req: FastifyRequest, reply: FastifyReply, flowId: string, jar: Jar): Promise<FlowStep> {
+  try {
+    if (jar.kind === 'recovery' || jar.kind === 'recovery-resume') return { stage: 'done', next: RECOVERY_DONE };
+    if (jar.kind !== 'login' && jar.kind !== 'enroll') return { stage: 'unavailable' }; // the signed-in kinds (Task 10) end elsewhere
+    if (!(await isSetupComplete(ctx))) return { stage: 'classic', reason: 'unsupported_stage' };
+    const got = await silentAuthorize(ctx, req, jar);
+    if ('step' in got) return got.step;
+    return outcomeStep(await resolveLogin(ctx, req, reply, got.claims, { invite: jar.invite, ui: 'app' }));
+  } catch (err) {
+    // OIDC unavailable (503), Authentik down, a refused code exchange, a provisioning failure: no session, codes only in the log
+    req.log.warn({ route: req.routeOptions.url ?? 'unmatched', code: errCode(err) }, 'flow completion failed');
+    return { stage: 'unavailable' };
+  } finally {
+    await endAkSession(ctx, jar);
+    await dropJar(ctx, flowId);
   }
 }
 
@@ -117,16 +208,6 @@ export function authFlowRoutes(app: FastifyInstance, ctx: Ctx) {
   }
 
   /**
-   * The end of a flow (`{internal:'end'}`). Task 4 replaces this single call with completeFlow (silent authorize, resolveLogin); until
-   * then a finished flow never yields a session: the Authentik session is ended, the jar dropped, and the card shows "unavailable".
-   */
-  async function onFlowEnd(_req: FastifyRequest, _reply: FastifyReply, flowId: string, jar: Jar): Promise<FlowStep> {
-    await endAkSession(ctx, jar);
-    await dropJar(ctx, flowId);
-    return { stage: 'unavailable' };
-  }
-
-  /**
    * Turns a challenge into the answer for the browser: internal outcomes are handled here (select-stage answered automatically, the end
    * of the flow, a link interstitial outside resume → classic consent). A step with an id is kept in the jar (`live`); any other outcome
    * ends the flow in the app and drops the jar.
@@ -140,7 +221,7 @@ export function authFlowRoutes(app: FastifyInstance, ctx: Ctx) {
           challenge = (await akExec(ctx, jar, 'POST', { selected_stage: out.pk }, req.ip)).challenge;
           continue;
         }
-        if (out.internal === 'end') return { out: await onFlowEnd(req, reply, flowId, jar), live: false };
+        if (out.internal === 'end') return { out: await completeFlow(ctx, req, reply, flowId, jar), live: false };
         break; // link-confirm comes only from resume (Task 5); anything else here is a consent the app does not answer
       }
       if ('step' in out) {
@@ -278,7 +359,9 @@ export function authFlowRoutes(app: FastifyInstance, ctx: Ctx) {
     }
     // a wrong password, code or passkey counts; the e-mail stage's resend notice is no error (stepErrors skips it)
     const errors = stepErrors(challenge);
-    if (failKey && reserved && !errors.length) await ctx.kv.decr(failKey); // accepted: the slot goes back
+    // a reserved slot goes back only when the flow moved past the answered stage (Task 3 review N1): a denial, a restart or an answer
+    // the app cannot continue keeps it, like a refused secret
+    if (failKey && reserved && !errors.length && movedOn(toStep(challenge, jar, jar.step, appHost(ctx.cfg)), shown.stage)) await ctx.kv.decr(failKey);
     else if (failKey && !reserved && errors.length) await ctx.kv.incr(failKey, FLOW_FAIL_WINDOW_S);
     const { out, live } = await advance(req, reply, flowId, jar, challenge, false);
     if (!live) clearFlowCookie(reply);

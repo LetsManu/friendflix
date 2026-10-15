@@ -170,7 +170,8 @@ export async function makeEnv(extraJf: Record<string, Handler> = {}, extra: Extr
     media: (c) => new JellyfinService(new JellyfinClient(c.JELLYFIN_URL!, c.JELLYFIN_ADMIN_API_KEY!, jfFetch), kv, encKey),
     requests: (c) => new SeerrClient(c.REQUESTS_URL, c.REQUESTS_API_KEY, seerrFetch),
     oidc: {
-      start: async () => ({ url: 'https://idp/authorize', state: 's' + Math.random().toString(36).slice(2), nonce: 'n', codeVerifier: 'v' }),
+      // silent (the in-app sign-in's authorize): prompt=none, as the real provider sends it
+      start: async (o) => ({ url: `https://idp/authorize${o?.silent ? '?prompt=none' : ''}`, state: 's' + Math.random().toString(36).slice(2), nonce: 'n', codeVerifier: 'v' }),
       finish: async () => ({ authTime: Math.floor(Date.now() / 1000), ...claims.current }), // a fresh IdP login unless a test sets authTime
     },
     overrideCfg: (c) => settings.override(c),

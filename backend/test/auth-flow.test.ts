@@ -317,7 +317,8 @@ describe('/auth/flow', () => {
     const other = await started();
     const pw = (await other.b.post('answer', { step: other.step.step, stage: 'identify', identifier: 'bert' })).json() as { step: string };
     const done = await other.b.post('answer', { step: pw.step, stage: 'password', password: RIGHT });
-    // Task 3: the end of a flow never issues a session (Task 4's completeFlow does); the Authentik session is ended
+    // the end of the flow: this suite's OIDC fake authorizes on a host that is not Authentik's, so completeFlow answers unavailable
+    // without a session (login-finish.test.ts covers the silent authorize); the Authentik session is ended either way
     expect([done.statusCode, done.json()]).toEqual([200, { stage: 'unavailable' }]);
     expect(done.cookies.find((c) => c.name === 'ff_sid')).toBeUndefined();
     expect(ak.calls.some((c) => c.path === '/api/v3/flows/executor/default-invalidation-flow/')).toBe(true);
@@ -396,7 +397,7 @@ describe('/auth/flow', () => {
     expect(await env.kv.get(flowFailKey('gina'))).toBe('4');
     env.ctx.fetchImpl = fake.fetchImpl;
     const right = await atPassword();
-    expect((await right.b.post('answer', { step: right.step, stage: 'password', password: RIGHT })).json()).toEqual({ stage: 'unavailable' }); // the T3 end
+    expect((await right.b.post('answer', { step: right.step, stage: 'password', password: RIGHT })).json()).toEqual({ stage: 'unavailable' }); // the end (no silent authorize in this suite)
     expect(await env.kv.get(flowFailKey('gina'))).toBe('4');
   });
 
