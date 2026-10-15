@@ -14,6 +14,7 @@
  * - Nothing here logs or keeps a password, code or credential: they live only in the request.
  */
 import { goto } from '$app/navigation';
+import { getCsrf } from '#lib/api';
 import type { TKey } from '#lib/i18n';
 import { readCookie } from '#lib/setup/api';
 
@@ -63,7 +64,9 @@ export type FlowStage = FlowStep['stage'];
 export type AnswerableStep = Extract<FlowStep, { step: string }>;
 /** what the screens render: a step (maybe with the field errors of the last answer) or a notice */
 export type FlowReply = (AnswerableStep & { errors?: FlowError[] }) | Exclude<FlowStep, { step: string }>;
-export type FlowKind = 'login' | 'recovery' | 'enroll';
+export type FlowKind = 'login' | 'recovery' | 'enroll' | 'reauth';
+/** what a re-authentication may continue with (the follow-up flow runs in the same Authentik session) */
+export type ThenKind = 'setup-totp' | 'setup-static' | 'setup-webauthn' | 'change-password' | 'change-email';
 export interface FlowConfig { mode: 'app' | 'authentik'; recovery: boolean; enroll: boolean }
 
 /** a WebAuthn credential as JSON (RegistrationResponseJSON / AuthenticationResponseJSON), in the strict shape the backend accepts */
@@ -97,6 +100,9 @@ async function request(method: 'GET' | 'POST', path: string, body?: unknown): Pr
   if (method === 'POST') {
     headers['content-type'] = 'application/json';
     headers[FLOW_CSRF_HEADER] = readCookie(FLOW_CSRF_COOKIE);
+    // a flow of a signed-in person (re-authentication, security setup) also needs that session's csrf token; the sign-in page has none
+    const session = getCsrf();
+    if (session) headers['x-csrf-token'] = session;
   }
   let res: Response;
   try {
@@ -186,10 +192,17 @@ export async function flowConfig(): Promise<FlowConfig> {
 }
 
 /** starts a flow; `invite` keeps a portal invite to the end (login, enroll), `identifier` answers a recovery's identification */
-export async function startFlow(kind: FlowKind, extra: { invite?: string; identifier?: string } = {}): Promise<FlowReply> {
+export async function startFlow(kind: FlowKind, extra: { invite?: string; identifier?: string; then?: ThenKind } = {}): Promise<FlowReply> {
   const r = await post('/auth/flow/start', { kind, ...extra });
   if (r?.status === 410) throw new FlowRefused(410, typeof r.body?.error === 'string' ? r.body.error : 'invite_invalid');
+  // a re-authentication that cannot start: no passkeys in-app (`passkey_classic`), no such flow (`flow_not_configured`)
+  if (kind === 'reauth' && r && r.status >= 400 && r.status < 500 && r.status !== 429 && typeof r.body?.error === 'string') throw new FlowRefused(r.status, r.body.error);
   return toReply(r);
+}
+
+/** the button on /confirm-email: continues the e-mail change's flow with the link's token (no session needed); `done`, `expired` or `unavailable` */
+export async function resumeFlow(token: string): Promise<FlowReply> {
+  return toReply(await post('/auth/flow/resume', { token, kind: 'email-confirm' }));
 }
 
 /** answers the shown step; the reply is the next step, the same stage with `errors`, or a notice */

@@ -371,7 +371,6 @@ const en: Translation<typeof de> = {
       notAvailableHint: 'The state cannot be checked right now.',
       manage: 'Manage on the sign-in page',
       newTab: '(opens in a new tab)',
-      coming: 'Changing your password and 2FA in FriendFlix is coming.',
     },
     sessions: {
       title: 'Sessions & devices',

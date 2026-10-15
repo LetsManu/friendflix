@@ -372,7 +372,6 @@ const it: Translation<typeof de> = {
       notAvailableHint: 'Al momento lo stato non si può verificare.',
       manage: 'Gestisci nella pagina di accesso',
       newTab: '(si apre in una nuova scheda)',
-      coming: 'Presto potrai cambiare password e 2FA direttamente in FriendFlix.',
     },
     sessions: {
       title: 'Sessioni e dispositivi',

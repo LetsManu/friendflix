@@ -52,6 +52,15 @@ describe('api() and 401', () => {
 });
 
 describe('api() and 401 on public pages (preflight D8)', () => {
+  it('the e-mail confirmation page /confirm-email works without a session: a 401 is not sent to /auth/login', async () => {
+    const l = loc('/confirm-email');
+    vi.stubGlobal('location', l);
+    vi.stubGlobal('fetch', answer(401, '{"error":"unauthenticated"}'));
+    const e = await api('/api/me').catch((x: unknown) => x);
+    expect(e).toBeInstanceOf(ApiError);
+    expect(l.href).toBe('');
+  });
+
   it('the in-app sign-in /login keeps a 401 to itself: no redirect to /auth/login (which would come back to /login)', async () => {
     const l = loc('/login');
     vi.stubGlobal('location', l);

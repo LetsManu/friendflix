@@ -392,7 +392,6 @@ const pl: Translation<typeof de> = {
       notAvailableHint: 'Nie można teraz sprawdzić stanu.',
       manage: 'Zarządzaj na stronie logowania',
       newTab: '(otwiera się w nowej karcie)',
-      coming: 'Zmiana hasła i 2FA bezpośrednio w FriendFlix już wkrótce.',
     },
     sessions: {
       title: 'Sesje i urządzenia',

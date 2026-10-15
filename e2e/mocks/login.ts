@@ -17,6 +17,8 @@ export interface LoginMock {
   starts: Array<MockReply | ((body: any) => MockReply)>;
   /** replies to POST /auth/flow/answer, in order (the last one repeats) */
   answers: Array<MockReply | ((body: any) => MockReply)>;
+  /** replies to POST /auth/flow/resume (the e-mail confirmation page), in order (the last one repeats) */
+  resumes?: Array<MockReply | ((body: any) => MockReply)>;
   /** every POST, with the csrf header and cookie it carried */
   calls: FlowCall[];
   /** the value the next config sets as ff_flow_csrf */
@@ -38,6 +40,10 @@ const stepId = () => `mock-step-${String(++n).padStart(4, '0')}`;
 export const identify = (over: Record<string, unknown> = {}) => ({ stage: 'identify', step: stepId(), passwordInline: false, canRecover: true, canEnroll: false, passkey: null, ...over });
 export const password = (identity = 'anna@example.com', over: Record<string, unknown> = {}) => ({ stage: 'password', step: stepId(), identity, canRecover: true, ...over });
 export const mfa = (over: Record<string, unknown> = {}) => ({ stage: 'mfa', step: stepId(), totp: true, recovery: true, passkey: null, passkeyClassic: false, ...over });
+export const prompt = (fields: Array<{ key: string; type: string; label: string }>, over: Record<string, unknown> = {}) => ({ stage: 'prompt', step: stepId(), fields: fields.map((f) => ({ ...f, required: true })), ...over });
+export const totpSetup = () => ({ stage: 'totp-setup', step: stepId(), otpauth: 'otpauth://totp/FriendFlix%3Aanna?secret=FAKESECRETFAKESECRETFAKESECRETAA&algorithm=SHA1&digits=6&period=30&issuer=FriendFlix' });
+export const recoveryCodes = () => ({ stage: 'recovery-codes', step: stepId(), codes: ['fakecode0001', 'fakecode0002', 'fakecode0003', 'fakecode0004'] });
+export const emailSent = (to: string | null) => ({ stage: 'email-sent', step: stepId(), to });
 export const done = (next = '/') => ({ stage: 'done', next });
 
 const cookieValue = (header: string | undefined, name: string): string | null => {
@@ -75,6 +81,7 @@ export async function installLogin(ctx: BrowserContext, st: LoginMock): Promise<
     };
     if (p === '/auth/flow/start') return J(next(st.starts));
     if (p === '/auth/flow/answer') return J(next(st.answers));
+    if (p === '/auth/flow/resume') return J(next(st.resumes ?? []));
     if (p === '/auth/flow/cancel') {
       await ctx.clearCookies({ name: 'ff_flow_csrf' });
       return J({ body: { ok: true } });

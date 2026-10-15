@@ -372,7 +372,6 @@ const tr: Translation<typeof de> = {
       notAvailableHint: 'Durum şu anda sorgulanamıyor.',
       manage: 'Giriş sayfasında yönet',
       newTab: '(yeni sekmede açılır)',
-      coming: 'Şifreni ve 2FA’yı doğrudan FriendFlix’te değiştirme özelliği yakında geliyor.',
     },
     sessions: {
       title: 'Oturumlar ve cihazlar',

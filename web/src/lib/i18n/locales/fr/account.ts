@@ -372,7 +372,6 @@ const fr: Translation<typeof de> = {
       notAvailableHint: 'L’état ne peut pas être vérifié pour le moment.',
       manage: 'Gérer sur la page de connexion',
       newTab: '(s’ouvre dans un nouvel onglet)',
-      coming: 'La modification du mot de passe et de la 2FA dans FriendFlix arrive bientôt.',
     },
     sessions: {
       title: 'Sessions et appareils',

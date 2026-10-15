@@ -5,10 +5,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const nav = vi.hoisted(() => ({ goto: vi.fn(async (_to: string, _o?: unknown) => undefined) }));
 vi.mock('$app/navigation', () => nav);
+const csrf = vi.hoisted(() => ({ token: '' }));
+vi.mock('#lib/api', () => ({ getCsrf: () => csrf.token }));
 
 import {
   answer, artPaths, cancelFlow, classicHref, codeFromBoxes, credentialJSON, errorKey, fallbackArt, fieldLabel, flowConfig, inviteToken,
-  passkeyCreate, passkeyGet, pasteCode, safeNext, startFlow, wallColumns,
+  passkeyCreate, passkeyGet, pasteCode, resumeFlow, safeNext, startFlow, wallColumns,
   type FlowStep, type PasskeyCreate, type PasskeyGet,
 } from './flow';
 
@@ -215,6 +217,34 @@ describe('transport', () => {
     expect(await startFlow('login', { invite: 'inv-1' })).toEqual(IDENTIFY);
     expect(calls[0]).toMatchObject({ url: '/auth/flow/start', method: 'POST', body: { kind: 'login', invite: 'inv-1' } });
     expect(calls[0]!.headers['x-ff-flow-csrf']).toBe('tok-1');
+  });
+
+  it('a re-authentication: then is sent, and the signed-in session csrf token goes along (the sign-in page has none)', async () => {
+    queue.push({ status: 200, body: IDENTIFY }, { status: 200, body: IDENTIFY });
+    await startFlow('login');
+    expect(calls[0]!.headers['x-csrf-token']).toBeUndefined();
+    csrf.token = 'session-csrf';
+    await startFlow('reauth', { then: 'setup-totp' });
+    csrf.token = '';
+    expect(calls[1]).toMatchObject({ url: '/auth/flow/start', body: { kind: 'reauth', then: 'setup-totp' } });
+    expect(calls[1]!.headers['x-csrf-token']).toBe('session-csrf');
+  });
+
+  it('a re-authentication that cannot start rejects with its code (passkey_classic, flow_not_configured, unauthenticated)', async () => {
+    queue.push({ status: 409, body: { error: 'passkey_classic' } }, { status: 409, body: { error: 'flow_not_configured' } }, { status: 401, body: { error: 'unauthenticated' } }, { status: 429, body: {} });
+    await expect(startFlow('reauth', { then: 'setup-webauthn' })).rejects.toMatchObject({ status: 409, code: 'passkey_classic' });
+    await expect(startFlow('reauth', { then: 'change-email' })).rejects.toMatchObject({ code: 'flow_not_configured' });
+    await expect(startFlow('reauth')).rejects.toMatchObject({ status: 401 });
+    expect(await startFlow('reauth')).toEqual({ stage: 'unavailable' }); // too many starts: the same notice as for a login
+  });
+
+  it('resumeFlow posts the token with kind email-confirm; done, expired and unavailable come back as stages', async () => {
+    queue.push({ status: 200, body: { stage: 'done', next: '/confirm-email?ok=1' } }, { status: 200, body: { stage: 'expired' } }, { status: 502, body: {} });
+    expect(await resumeFlow('tok-abcdefghijklmnop')).toEqual({ stage: 'done', next: '/confirm-email?ok=1' });
+    expect(calls[0]).toMatchObject({ url: '/auth/flow/resume', method: 'POST', body: { token: 'tok-abcdefghijklmnop', kind: 'email-confirm' } });
+    expect(calls[0]!.headers['x-ff-flow-csrf']).toBe('tok-1');
+    expect(await resumeFlow('tok-abcdefghijklmnop')).toEqual({ stage: 'expired' });
+    expect(await resumeFlow('tok-abcdefghijklmnop')).toEqual({ stage: 'unavailable' });
   });
 
   it('a stale csrf cookie: flowConfig() and one retry', async () => {
