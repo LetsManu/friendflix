@@ -4,6 +4,7 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { createHmac, randomUUID, timingSafeEqual } from 'node:crypto';
 import { dropRemotePeers } from './tv.js';
 import { audit } from '../audit.js';
+import { loginUi } from '../akflow.js';
 import { publicOrigin, secureCookies } from '../config.js';
 import type { Ctx } from '../ctx.js';
 import { authenticate, COOKIE, loadSession, newSession, rand, requireUser, saveSession } from '../session.js';
@@ -167,6 +168,12 @@ export function authRoutes(app: FastifyInstance, ctx: Ctx) {
     }
     return false;
   }
+  /** whether a sign-in navigation goes to the app's own /login: LOGIN_UI app, setup complete, and none of ?classic=1, ?resetPin=1, ?setup=1 */
+  async function appLogin(q: Record<string, string | undefined>): Promise<boolean> {
+    if (q.classic === '1' || q.resetPin === '1' || q.setup === '1' || loginUi(ctx.cfg) !== 'app') return false;
+    return isSetupComplete(ctx);
+  }
+
   /** the profile picker explains why (no JSON error page for a person who clicked "PIN vergessen?") */
   const RESET_BLOCKED = '/profiles?pinReset=kids';
   const RESET_STALE = '/profiles?pinReset=stale';
@@ -175,6 +182,9 @@ export function authRoutes(app: FastifyInstance, ctx: Ctx) {
     const q = req.query as Record<string, string | undefined>;
     const invite = q.invite;
     if (invite && !(await lookupInvite(ctx, invite))) return reply.code(410).send({ error: 'invite_invalid' });
+    // the in-app sign-in (LOGIN_UI=app): /login, with the invite. Not for ?classic=1 (the fallback), ?resetPin=1 (needs the IdP's
+    // auth_time) or ?setup=1, and never during setup: the first admin signs in only here, at the IdP (preflight D3)
+    if (await appLogin(q)) return reply.redirect(invite ? `/login?invite=${encodeURIComponent(invite)}` : '/login');
     if (q.resetPin === '1' && (await kidLockedDevice(req))) return reply.redirect(RESET_BLOCKED);
     // ?setup=1: the first admin's sign-in (wizard step 5), bound to this browser's setup session; once setup is complete (or without a
     // setup session) it is a normal login
@@ -191,6 +201,7 @@ export function authRoutes(app: FastifyInstance, ctx: Ctx) {
     const inv = invite ? await lookupInvite(ctx, invite) : null;
     if (!invite || !inv) return reply.code(410).send({ error: 'invite_invalid' });
     if (!inv.authentik_invite || !enrollFlowUrl(ctx.cfg, inv.authentik_invite)) return reply.redirect(`/auth/login?invite=${encodeURIComponent(invite)}`);
+    if (await appLogin(req.query as Record<string, string | undefined>)) return reply.redirect(`/login?invite=${encodeURIComponent(invite)}&enroll=1`);
     const authorize = await startLogin(reply, invite, ENROLL_TTL);
     return reply.redirect(enrollFlowUrl(ctx.cfg, inv.authentik_invite, authorize)!);
   });

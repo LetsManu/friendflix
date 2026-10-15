@@ -10,6 +10,7 @@
  */
 import type { Config } from './config.js';
 import type { Ctx } from './ctx.js';
+import { sha256 } from './crypto.js';
 import { akBase } from './invites.js';
 import { HttpError } from './users.js';
 
@@ -122,6 +123,33 @@ export async function akMfaState(ctx: AkCtx, sub: string): Promise<MfaState | nu
   const state: MfaState = { totp: has('totp'), webauthn: has('webauthn'), static: has('static') };
   await ctx.kv.set(key, JSON.stringify(state), MFA_TTL);
   return state;
+}
+
+/** a flow lookup is kept this long; a failed one (Authentik unreachable, token rejected) only briefly */
+const FLOW_TTL = 600;
+const FLOW_FAILED_TTL = 60;
+
+/**
+ * Whether Authentik has a flow with this slug (`GET /flows/instances/<slug>/`; the login page offers "forgot password" only then).
+ * Cached under a hash of its inputs (AUTHENTIK_URL, the token, the slug): 10 min, an unreachable Authentik 1 min. Never throws: any
+ * failure answers false. Not configured -> false.
+ */
+export async function akFlowExists(ctx: AkCtx, slug: string): Promise<boolean> {
+  if (!configured(ctx)) return false;
+  const key = `akflowok:${sha256(`${ctx.cfg.AUTHENTIK_URL}|${ctx.cfg.AUTHENTIK_API_TOKEN}|${slug}`)}`;
+  const hit = await ctx.kv.get(key);
+  if (hit === '1' || hit === '0') return hit === '1';
+  let found = false;
+  let ttl = FLOW_TTL;
+  try {
+    const r = await call(ctx, `api/v3/flows/instances/${encodeURIComponent(slug)}/`, undefined, { 404: new HttpError(404, 'not_found') });
+    await r.body?.cancel().catch(() => undefined);
+    found = true;
+  } catch (e) {
+    if (!(e instanceof HttpError && e.statusCode === 404)) ttl = FLOW_FAILED_TTL;
+  }
+  await ctx.kv.set(key, found ? '1' : '0', ttl);
+  return found;
 }
 
 const notConfigured = () => new HttpError(409, 'recovery_not_configured');

@@ -183,7 +183,7 @@ export async function makeEnv(extraJf: Record<string, Handler> = {}, extra: Extr
   const dev: { v?: string } = {};
   const login = async (c: OidcClaims = claims.current) => {
     claims.current = c;
-    const l = await app.inject('/auth/login');
+    const l = await app.inject('/auth/login?classic=1'); // the IdP redirect, also when LOGIN_UI is app
     const state = l.cookies.find((x) => x.name === 'ff_oidc')!.value; // the login cookie carries the state
     const cb = await app.inject({ url: `/auth/callback?state=${state}&code=c`, cookies: { ...(dev.v ? { ff_dev: dev.v } : {}), ff_oidc: state } });
     dev.v = cb.cookies.find((x) => x.name === 'ff_dev')?.value ?? dev.v; // same browser -> same device

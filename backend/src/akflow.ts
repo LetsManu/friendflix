@@ -14,6 +14,7 @@
 import type { Config } from './config.js';
 import type { Ctx } from './ctx.js';
 import { decrypt, encrypt, sha256 } from './crypto.js';
+import type { FlowStep } from './flowSteps.js';
 import { akBase } from './invites.js';
 import { HttpError } from './users.js';
 
@@ -43,6 +44,11 @@ export interface Jar {
   then?: FlowKind;
   /** whether executor calls forward the app host (fixed when the jar is created) */
   forwardHost: boolean;
+  /**
+   * the step the browser was shown last and the challenge it came from (avatar and flow info left out): an answer is checked against
+   * these (its stage, what the step offered) before anything reaches Authentik
+   */
+  last?: { raw: RawChallenge; step: Extract<FlowStep, { step: string }> };
 }
 
 /** an executor challenge as Authentik sends it (only `component` is guaranteed; the sanitiser reads the rest) */

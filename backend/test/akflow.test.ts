@@ -573,12 +573,12 @@ describe('passkeys in-app and the forwarded-host probe', () => {
   });
 });
 
-describe('error logs of routes with secret bodies (/auth/flow/, /api/setup/, /api/admin/settings)', () => {
+describe('error logs of routes with secret bodies (/api/setup/, /api/admin/settings; /auth/flow/ in auth-flow.test.ts)', () => {
   const logs: string[] = [];
   let env: TestEnv;
   const PASSWORD = 'Sup3r-Secret-Passw0rd!';
   // stand-ins for the real routes: an error that quotes the request body
-  const BOOM = ['/auth/flow/answer', '/api/setup/boom', '/api/admin/settings/boom'];
+  const BOOM = ['/api/setup/boom', '/api/admin/settings/boom'];
   beforeAll(async () => {
     env = await makeEnv({}, {
       logger: { stream: { write: (m: string) => { logs.push(m); } }, level: 'trace' },
@@ -594,9 +594,9 @@ describe('error logs of routes with secret bodies (/auth/flow/, /api/setup/, /ap
   afterAll(() => env.close());
   const post = (url: string) => env.app.inject({ method: 'POST', url, payload: { step: 'st1', stage: 'password', password: PASSWORD } });
 
-  it('a thrown error under /auth/flow/ is logged by type and code only, never with the body', async () => {
+  it('a thrown error under a sensitive prefix is logged by type and code only, never with the body', async () => {
     logs.length = 0;
-    const r = await post('/auth/flow/answer');
+    const r = await post('/api/setup/boom');
     expect(r.statusCode).toBe(500);
     expect(r.json()).toEqual({ error: 'internal' });
     const text = logs.join('\n');
@@ -606,9 +606,8 @@ describe('error logs of routes with secret bodies (/auth/flow/, /api/setup/, /ap
     expect(text).not.toContain('stage failed');
   });
 
-  it('no path trick (percent-encoding, case, double slashes) gets the body into the log, for all three prefixes', async () => {
+  it('no path trick (percent-encoding, case, double slashes) gets the body into the log, for both prefixes', async () => {
     const variants = [
-      '/auth/flow/answer', '/%61uth/flow/answer', '/auth/%66low/answer', '/auth/flow/%61nswer', '/AUTH/flow/answer', '//auth/flow/answer', '/auth//flow/answer',
       '/api/setup/boom', '/%61pi/setup/boom', '/api/%73etup/boom', '/API/setup/boom', '//api/setup/boom', '/api//setup/boom',
       '/api/admin/settings/boom', '/%61pi/admin/settings/boom', '/api/admin/%73ettings/boom', '/api/%61dmin/settings/boom', '/api/ADMIN/settings/boom', '/api/admin//settings/boom',
     ];
@@ -622,7 +621,7 @@ describe('error logs of routes with secret bodies (/auth/flow/, /api/setup/, /ap
       expect(text, url).not.toContain(PASSWORD);
       expect(text, url).not.toContain('stage failed');
     }
-    expect(reached).toBeGreaterThanOrEqual(9); // the encoded variants do reach the handlers
+    expect(reached).toBeGreaterThanOrEqual(6); // the encoded variants do reach the handlers
   });
 
   it('other routes still log the error object (the capture works)', async () => {
