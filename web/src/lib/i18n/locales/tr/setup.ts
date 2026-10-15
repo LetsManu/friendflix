@@ -74,6 +74,7 @@ const setup: Translation<typeof de> = {
     applying: 'Authentik kuruluyor. Bu yaklaşık 30 saniye sürer, lütfen bekle …',
     resultsTitle: 'Sonuç',
     applied: 'Authentik kuruldu ve oturum açma kaydedildi.',
+    envKept: 'Ortamdan (.env) korundu: {keys}. Authentik artık bunlar için başka değerlere sahip, bu yüzden oturum açma başarısız olabilir. Bunları .env dosyasından kaldır ve backend’i yeniden başlat.',
     applyFailed: 'Kurulum bu adımda durdu. Önceden oluşturulanlar kalır; yeni bir deneme oradan devam eder.',
     tokenAgain: 'Yeni bir deneme için yönetici API belirtecini yeniden gir.',
     retry: 'Yeniden dene',

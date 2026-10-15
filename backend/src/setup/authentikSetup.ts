@@ -129,6 +129,18 @@ type BlueprintSource = { file: string; context: Record<string, string> } | { pat
  * (seen on a freshly started 2026.8.3) answers 500 ResultTimeout. Such an answer is retried; nothing was applied.
  */
 const PATH_ATTEMPTS = 3;
+const PATH_RETRY_MS = 3_000;
+/** the requests of an apply besides the imports (check, lookups, brand and stage patches, readback, admin membership), generously */
+const APPLY_REQUESTS = 20;
+
+/**
+ * How long the apply lock (routes/setup.ts) must last: a run's worst case, every import at its deadline (the path import with its
+ * retries and pauses, the extra blueprints too), every other request at its own, plus a margin for the probes after the save.
+ */
+export function applyLockTtlS(): number {
+  const imports = Object.keys(BLUEPRINTS).length + PATH_ATTEMPTS + AK_EXTRA_BLUEPRINTS.length;
+  return Math.ceil((imports * IMPORT_TIMEOUT_MS + (PATH_ATTEMPTS - 1) * PATH_RETRY_MS + APPLY_REQUESTS * TIMEOUT_MS) / 1000) + 120;
+}
 
 async function importWith(c: Client, src: BlueprintSource, deps: { blueprintDir: string; retryDelayMs?: number }): Promise<void> {
   const data = new FormData();
@@ -145,7 +157,7 @@ async function importWith(c: Client, src: BlueprintSource, deps: { blueprintDir:
   let r = await c.form('/api/v3/managed/blueprints/import/', data);
   for (let attempt = 1; 'path' in src && r.status >= 500 && attempt < PATH_ATTEMPTS; attempt++) {
     cancel(r);
-    await new Promise((res) => setTimeout(res, deps.retryDelayMs ?? 3_000));
+    await new Promise((res) => setTimeout(res, deps.retryDelayMs ?? PATH_RETRY_MS));
     r = await c.form('/api/v3/managed/blueprints/import/', data);
   }
   if (r.status === 400) {
@@ -292,12 +304,14 @@ export async function applyAuthentik(
   const publicUrl = input.publicUrl.replace(/\/+$/, '');
   const imported = (file: string, context: Record<string, string> = {}) => importWith(ak, { file, context }, deps);
 
-  // step 2: one file holds the groups and the provider; both are reported
+  // step 2: one file holds the groups and the provider; both are reported, a failure too (the import cannot tell which part failed,
+  // and the provider's scope mappings are the likelier cause on a freshly started Authentik)
   await s.run('groups', async () => {
     await imported(BLUEPRINTS.setup, { public_url: publicUrl, admin_group: input.adminGroup });
     return { state: 'ok' };
   });
-  if (!s.failed) s.list.push({ id: 'provider', state: 'ok' });
+  const groups = s.list.at(-1)!;
+  s.list.push({ ...groups, id: 'provider' });
   await s.run('serviceAccount', async () => (await imported(BLUEPRINTS.serviceAccount), { state: 'ok' }));
   await s.run('enrollment', async () => (await imported(BLUEPRINTS.enrollment), { state: 'ok' }));
 

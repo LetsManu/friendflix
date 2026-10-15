@@ -13,7 +13,8 @@
   import Field from '#lib/ui/Field.svelte';
   import StatusPill, { type Tone } from '#lib/ui/StatusPill.svelte';
   import { uid } from '#lib/ui/ids';
-  import { akApply, akPlan, isPlainHttp, type AkStep } from './api';
+  import { keyLabel } from '#lib/admin/settings/form';
+  import { akApply, akPlan, isPlainHttp, type AkResult, type AkStep } from './api';
   import { akFailText, failedStep, type Handle } from './messages';
   import Notice from './Notice.svelte';
 
@@ -23,7 +24,7 @@
 
   let url = '', token = '', addMe = true;
   let plan: AkStep[] | null = null;
-  let result: { ok: boolean; steps: AkStep[] } | null = null;
+  let result: AkResult | null = null;
   let busy: 'plan' | 'apply' | null = null;
   let msg = '';
 
@@ -115,6 +116,7 @@
     </ul>
     {#if result.ok}
       <Notice tone="ok"><p>{$t('setup.signin.applied')}</p></Notice>
+      {#if result.envKept?.length}<Notice tone="warn"><p>{$t('setup.signin.envKept', { keys: result.envKept.map(keyLabel).join(', ') })}</p></Notice>{/if}
       <h3 id="{id}-l">{$t('setup.signin.leftoversTitle')}</h3>
       <ul class="left" aria-labelledby="{id}-l">
         <li>{$t('setup.signin.leftovers.smtp')}</li>

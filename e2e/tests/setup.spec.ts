@@ -86,8 +86,11 @@ test.describe('setup wizard', () => {
     await expect(page.getByText(/Ein vorhandener Provider „FriendFlix“ wird angepasst/)).toBeVisible();
     expect(api.setup!.plans).toEqual([{ url: 'https://auth.example.com', token: 'ak-admin-placeholder' }]);
 
+    // the environment sets the client id with another value: it was kept, and the page says so (key names only)
+    api.setup!.apply = { status: 200, body: { ...api.setup!.apply.body, envKept: ['OIDC_CLIENT_ID'] } };
     await page.getByRole('button', { name: 'Anwenden' }).click();
     await expect(page.getByRole('status').filter({ hasText: 'Authentik wird eingerichtet' })).toBeVisible();
+    await expect(page.getByText('Aus der Umgebung (.env) beibehalten: OIDC-Client-ID. Authentik hat dafür jetzt andere Werte')).toBeVisible();
     const results = page.getByRole('list', { name: 'Ergebnis' });
     await expect(results.getByRole('listitem')).toHaveCount(10);
     await expect(page.getByText('Authentik ist eingerichtet, die Anmeldung ist gespeichert.')).toBeVisible();

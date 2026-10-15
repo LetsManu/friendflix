@@ -8,7 +8,8 @@ import { MEDIA_SETUP } from '../media/setup.js';
 import { MediaSetupError } from '../media/types.js';
 import { plainHttpUrl } from '../settings/probeKit.js';
 import { publicUrlSchema, SETTINGS, type SettingGroup } from '../settings/registry.js';
-import { AK_BLUEPRINT_DIR, applyAuthentik, planAuthentik } from '../setup/authentikSetup.js';
+import { randomToken } from '../crypto.js';
+import { AK_BLUEPRINT_DIR, applyAuthentik, applyLockTtlS, planAuthentik } from '../setup/authentikSetup.js';
 import { createSetupSession, hasSetupSession, requireSetupSession, verifySetupCode } from '../setup/code.js';
 import { isSetupComplete, SIGNIN_VIA } from '../setup/state.js';
 import { saveWithProbes, testGroup, valuesSchema } from './adminSettings.js';
@@ -137,7 +138,8 @@ export function setupRoutes(app: FastifyInstance, ctx: Ctx) {
     if (provider.keys.some((k) => k !== provider.urlKey && sources[k] === 'env')) return reply.code(400).send({ ok: false, code: 'invalid', detail: 'env_key_locked' });
     // one run at a time (all instances): two runs listing the keys at once could both pick the same new key and orphan the other
     const lock = 'setup:media:auto';
-    if (!(await ctx.kv.setnx(lock, '1', 60))) return reply.code(409).send({ error: 'busy' });
+    const owner = randomToken();
+    if (!(await ctx.kv.setnx(lock, owner, 60))) return reply.code(409).send({ error: 'busy' });
     try {
       let values: Record<string, string>;
       try {
@@ -162,7 +164,7 @@ export function setupRoutes(app: FastifyInstance, ctx: Ctx) {
       req.log.info('media server: API key created and saved');
       return { ok: true };
     } finally {
-      await ctx.kv.del(lock).catch(() => undefined);
+      await ctx.kv.delIfEquals(lock, owner).catch(() => undefined); // only this run's lock
     }
   });
 
@@ -187,9 +189,11 @@ export function setupRoutes(app: FastifyInstance, ctx: Ctx) {
     const publicUrl = ctx.cfg.PUBLIC_URL;
     if (!publicUrl) return reply.code(400).send({ ok: false, code: 'invalid', detail: 'public_url_missing' });
     // one run at a time (all instances): two runs would import the same blueprints and race on the settings write. The TTL outlasts a
-    // run's worst case (each blueprint import may take IMPORT_TIMEOUT_MS); the finally block releases it as soon as the run ends.
+    // run's worst case (applyLockTtlS); the finally block releases it as soon as the run ends, and only while it is still this run's
+    // (should a run outlast the TTL after all, it never drops the lock of the run that took over)
     const lock = 'setup:authentik:apply';
-    if (!(await ctx.kv.setnx(lock, '1', 600))) return reply.code(409).send({ error: 'busy' });
+    const owner = randomToken();
+    if (!(await ctx.kv.setnx(lock, owner, applyLockTtlS()))) return reply.code(409).send({ error: 'busy' });
     try {
       const { steps, values } = await applyAuthentik(
         { url: b.url, token: b.token, addMeToAdmins: b.addMeToAdmins, publicUrl, adminGroup: ctx.cfg.ADMIN_GROUP },
@@ -200,15 +204,19 @@ export function setupRoutes(app: FastifyInstance, ctx: Ctx) {
       // keys from the environment stay as they are; the rest is saved like a manual entry, so the oidc and authentik probes confirm it
       // (AUTHENTIK_API_TOKEN is the service account's token from the readback, never the admin token)
       const sources = ctx.settings.sources();
+      const cfg = ctx.cfg as Record<string, unknown>;
       const toSave = Object.fromEntries(Object.entries(values).filter(([k]) => sources[k] !== 'env'));
+      // the environment keys whose value differs from what Authentik now has (e.g. another client's id next to this client's new
+      // secret): reported by name (never a value), the web asks to remove them from .env
+      const envKept = Object.keys(values).filter((k) => sources[k] === 'env' && String(cfg[k] ?? '') !== values[k]);
       const r = await saveWithProbes(ctx, toSave, { force: false, actor: null, allowedKeys: SIGNIN_KEYS });
       if ('errors' in r) return reply.code(400).send({ error: 'invalid_settings', errors: r.errors, steps });
       if ('probe' in r) return reply.code(400).send({ error: 'probe_failed', group: r.group, probe: r.probe, steps });
-      req.log.info('authentik: sign-in settings saved');
+      req.log.info({ envKept }, 'authentik: sign-in settings saved');
       await ctx.kv.set(SIGNIN_VIA, 'authentik', SIGNIN_VIA_TTL_S).catch(() => undefined);
-      return { ok: true, steps };
+      return { ok: true, steps, ...(envKept.length ? { envKept } : {}) };
     } finally {
-      await ctx.kv.del(lock).catch(() => undefined);
+      await ctx.kv.delIfEquals(lock, owner).catch(() => undefined); // only this run's lock
     }
   });
 }

@@ -72,6 +72,7 @@ const setup = {
     applying: 'Authentik wird eingerichtet. Das dauert etwa 30 Sekunden, bitte warte …',
     resultsTitle: 'Ergebnis',
     applied: 'Authentik ist eingerichtet, die Anmeldung ist gespeichert.',
+    envKept: 'Aus der Umgebung (.env) beibehalten: {keys}. Authentik hat dafür jetzt andere Werte, die Anmeldung kann deshalb scheitern. Entferne sie aus der .env und starte das Backend neu.',
     applyFailed: 'Die Einrichtung ist bei diesem Schritt stehen geblieben. Bereits angelegte Teile bleiben bestehen; ein neuer Versuch setzt dort fort.',
     tokenAgain: 'Gib den Admin-API-Token für einen neuen Versuch noch einmal ein.',
     retry: 'Noch einmal versuchen',

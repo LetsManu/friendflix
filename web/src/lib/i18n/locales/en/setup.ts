@@ -74,6 +74,7 @@ const setup: Translation<typeof de> = {
     applying: 'Setting up Authentik. This takes about 30 seconds, please wait …',
     resultsTitle: 'Result',
     applied: 'Authentik is set up and the sign-in is saved.',
+    envKept: 'Kept from the environment (.env): {keys}. Authentik now has other values for these, so the sign-in may fail. Remove them from .env and restart the backend.',
     applyFailed: 'The setup stopped at this step. Parts already created stay; another try continues from there.',
     tokenAgain: 'Enter the admin API token again for another try.',
     retry: 'Try again',

@@ -36,7 +36,7 @@ const TIMEOUT_MS = 30_000;
 const AUTO_TIMEOUT_MS = 90_000;
 /** a plan only reads, but each of its calls may take the backend's 10 s */
 const PLAN_TIMEOUT_MS = 120_000;
-/** an apply takes ~30 s, blueprint imports up to 60 s each on a busy Authentik: the backend's lock lasts 10 minutes */
+/** an apply takes ~30 s, blueprint imports up to 60 s each on a busy Authentik (the backend's lock outlasts a run's worst case) */
 export const APPLY_TIMEOUT_MS = 600_000;
 
 /** A cookie's value from document.cookie ('' when it is not there). */
@@ -98,8 +98,12 @@ export const mediaAuto = (input: { url: string; username: string; password: stri
 export const akPlan = (input: { url: string; token: string }): Promise<{ steps: AkStep[] }> =>
   call('/api/setup/authentik/plan', { method: 'POST', body: input, timeoutMs: PLAN_TIMEOUT_MS });
 
-/** Runs the Authentik automation and saves the sign-in settings; `ok: false` with the steps up to the failed one. */
-export const akApply = (input: { url: string; token: string; addMeToAdmins: boolean }): Promise<{ ok: boolean; steps: AkStep[] }> =>
+/**
+ * Runs the Authentik automation and saves the sign-in settings; `ok: false` with the steps up to the failed one. `envKept`: the sign-in
+ * keys the environment sets with other values than Authentik now has (kept, not saved; key names only).
+ */
+export interface AkResult { ok: boolean; steps: AkStep[]; envKept?: string[] }
+export const akApply = (input: { url: string; token: string; addMeToAdmins: boolean }): Promise<AkResult> =>
   call('/api/setup/authentik/apply', { method: 'POST', body: input, timeoutMs: APPLY_TIMEOUT_MS });
 
 /** The step to open: the first one that still needs something (2 public URL, 3 media, 4 sign-in, else 5 first admin). */

@@ -74,6 +74,7 @@ const setup: Translation<typeof de> = {
     applying: 'Trwa konfiguracja Authentik. To potrwa około 30 sekund, zaczekaj …',
     resultsTitle: 'Wynik',
     applied: 'Authentik jest skonfigurowany, a logowanie zapisane.',
+    envKept: 'Zachowano ze środowiska (.env): {keys}. Authentik ma teraz dla nich inne wartości, więc logowanie może się nie udać. Usuń je z .env i uruchom backend ponownie.',
     applyFailed: 'Konfiguracja zatrzymała się na tym kroku. To, co już utworzono, zostaje; kolejna próba zaczyna od tego miejsca.',
     tokenAgain: 'Wpisz ponownie token API administratora, aby spróbować jeszcze raz.',
     retry: 'Spróbuj jeszcze raz',

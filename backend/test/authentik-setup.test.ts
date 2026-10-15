@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { readFileSync } from 'node:fs';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
-import { AK_BLUEPRINT_DIR, AK_EXTRA_BLUEPRINTS, applyAuthentik, IMPORT_TIMEOUT_MS, importBlueprint, planAuthentik, type AkStep } from '../src/setup/authentikSetup.js';
+import { AK_BLUEPRINT_DIR, AK_EXTRA_BLUEPRINTS, applyAuthentik, applyLockTtlS, IMPORT_TIMEOUT_MS, importBlueprint, planAuthentik, type AkStep } from '../src/setup/authentikSetup.js';
 import { issueSetupCode } from '../src/setup/code.js';
 import { makeEnv, type TestEnv } from './helpers.js';
 
@@ -273,8 +273,9 @@ describe('applyAuthentik', () => {
     expect(states(r.steps)).toEqual(['check:ok', 'groups:ok', 'provider:ok', 'serviceAccount:failed:blueprint_invalid']);
     expect(r.values).toBeUndefined();
     expect(ak.imports.length).toBe(2);
+    // the first file holds the groups and the provider: its failure is reported on both (the import cannot tell which part failed)
     const first = await applyAuthentik(applyInput, deps(fakeAuthentik({ failImport: 1 }).fetchImpl));
-    expect(states(first.steps)).toEqual(['check:ok', 'groups:failed:blueprint_invalid']);
+    expect(states(first.steps)).toEqual(['check:ok', 'groups:failed:blueprint_invalid', 'provider:failed:blueprint_invalid']);
   });
 
   it('a failure in a later step stops the run there (codes only)', async () => {
@@ -282,6 +283,18 @@ describe('applyAuthentik', () => {
     expect(states(r.steps).at(-1)).toBe('brand:failed:unreachable');
     expect(JSON.stringify(r)).not.toContain(ADMIN_TOKEN);
     expect(r.values).toBeUndefined();
+  });
+
+  it("the apply lock's TTL outlasts a run's worst case, extra blueprints included", async () => {
+    // 3 file imports + 3 path attempts at 60 s, 2 pauses, about 13 other requests at 10 s, the probes after the save
+    expect(applyLockTtlS()).toBeGreaterThanOrEqual((6 * IMPORT_TIMEOUT_MS + 6_000 + 13 * 10_000 + 60_000) / 1000);
+    const base = applyLockTtlS();
+    AK_EXTRA_BLUEPRINTS.push({ id: 'emailChange', file: 'friendflix-service-account.yaml' });
+    try {
+      expect(applyLockTtlS()).toBe(base + IMPORT_TIMEOUT_MS / 1000);
+    } finally {
+      AK_EXTRA_BLUEPRINTS.length = 0;
+    }
   });
 
   it('extra blueprints (phase 3) are imported after the admin membership, with their context', async () => {
@@ -500,6 +513,54 @@ describe('POST /api/setup/authentik/plan and /apply', () => {
     }
   });
 
+  it("a run that outlasted its lock never releases the next run's lock; its own lock has an owner value and the derived TTL", async () => {
+    ak = fakeAuthentik();
+    const real = ak.fetchImpl;
+    let seen: string | null = null;
+    ak.fetchImpl = (async (u: RequestInfo | URL, i?: RequestInit) => {
+      // mid-run: the lock is this run's (a random owner value), then it runs out and another run takes it
+      if (seen === null && String(u).includes('/managed/blueprints/import/')) {
+        seen = await env.ctx.kv.get('setup:authentik:apply');
+        await env.ctx.kv.set('setup:authentik:apply', 'next-run', 60);
+      }
+      return real(u, i);
+    }) as typeof fetch;
+    const setnx = vi.spyOn(env.ctx.kv, 'setnx');
+    try {
+      const r = await post('apply', { ...planInput, addMeToAdmins: false });
+      expect(r.statusCode).toBe(200);
+      expect(setnx).toHaveBeenCalledWith('setup:authentik:apply', expect.any(String), applyLockTtlS());
+      expect(seen).toMatch(/^[A-Za-z0-9_-]{40,}$/);
+      expect(await env.ctx.kv.get('setup:authentik:apply')).toBe('next-run');
+    } finally {
+      setnx.mockRestore();
+      await env.ctx.kv.del('setup:authentik:apply');
+    }
+  });
+
+  it('sign-in keys from the environment are kept and, when Authentik now has another value, reported by name (never the value)', async () => {
+    ak = fakeAuthentik();
+    const real = env.ctx.settings.sources.bind(env.ctx.settings);
+    const cfg = vi.spyOn(env.ctx, 'cfg', 'get').mockReturnValue({ ...env.ctx.cfg, OIDC_CLIENT_ID: 'env-client-id-placeholder', ADMIN_GROUP: 'friendflix-admins' } as never);
+    const spy = vi.spyOn(env.ctx.settings, 'sources').mockImplementation(() => ({ ...real(), OIDC_CLIENT_ID: 'env', ADMIN_GROUP: 'env' }));
+    try {
+      const r = await post('apply', { ...planInput, addMeToAdmins: false });
+      expect(r.statusCode).toBe(200);
+      // ADMIN_GROUP from the environment is the one Authentik got: not reported
+      expect(r.json()).toMatchObject({ ok: true, envKept: ['OIDC_CLIENT_ID'] });
+      expect(r.body).not.toContain('env-client-id-placeholder');
+      expect(r.body).not.toContain('fictional-client-id-0001');
+      const audit = await env.pool.query("select meta from audit_log where action = 'settings.update' order by id desc limit 1");
+      expect(audit.rows[0].meta.keys).not.toContain('OIDC_CLIENT_ID');
+    } finally {
+      spy.mockRestore();
+      cfg.mockRestore();
+    }
+    // nothing from the environment: no envKept at all
+    ak = fakeAuthentik();
+    expect((await post('apply', { ...planInput, addMeToAdmins: false })).json().envKept).toBeUndefined();
+  });
+
   it('PUBLIC_URL unset → 400 public_url_missing, no request', async () => {
     ak = fakeAuthentik();
     const spy = vi.spyOn(env.ctx, 'cfg', 'get').mockReturnValue({ ...env.ctx.cfg, PUBLIC_URL: undefined } as never);
@@ -555,7 +616,9 @@ describe('POST /api/setup/authentik/plan and /apply', () => {
     expect(JSON.stringify(rows.rows)).not.toContain(ADMIN_TOKEN);
     const audit = await env.pool.query('select * from audit_log');
     expect(JSON.stringify(audit.rows)).not.toContain(ADMIN_TOKEN);
-    const kv = env.kv as unknown as { m?: Map<string, unknown>; store?: Map<string, unknown> };
-    expect(JSON.stringify([...(kv.m ?? kv.store ?? new Map()).entries()])).not.toContain(ADMIN_TOKEN);
+    // every kv key and value, through the public API
+    const keys = await env.kv.keys('');
+    expect(keys.length).toBeGreaterThan(0);
+    expect(JSON.stringify([keys, await env.kv.mget(keys)])).not.toContain(ADMIN_TOKEN);
   });
 });
