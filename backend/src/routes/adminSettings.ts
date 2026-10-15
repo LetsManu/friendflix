@@ -9,7 +9,7 @@ import type { Config } from '../config.js';
 import type { Ctx } from '../ctx.js';
 import { REAUTH_WINDOW_S, recentlyAuthenticated } from '../reauth.js';
 import { requireAdmin } from '../session.js';
-import { forgetSourceKey, resetSourceState } from '../sources/keys.js';
+import { resetSourceState } from '../sources/keys.js';
 import { probeBlocks, probeConfigured, runProbe, type ProbeResult } from '../settings/probes.js';
 import {
   BOOTSTRAP_KEYS, ENV_ONLY_KEYS, parseSettingValue, SETTINGS, settingDef,
@@ -262,7 +262,6 @@ async function save(ctx: Ctx, values: Record<string, unknown>, opts: SaveOpts, l
   // a new data-source key must work at once (no 1 h pause from the old one)
   for (const [key, name] of [['TMDB_API_KEY', 'tmdb'], ['OMDB_API_KEY', 'omdb']] as const) {
     if (!(key in c.changes)) continue;
-    forgetSourceKey(ctx, name);
     await resetSourceState(ctx, name).catch(() => undefined);
   }
   return { rev };

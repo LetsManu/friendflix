@@ -37,50 +37,33 @@ const storedKey = async (ctx: Pick<Ctx, 'db'>, name: SourceName): Promise<Stored
 const fileKey = (ctx: Pick<Ctx, 'cfg' | 'settings'>, name: SourceName): string | undefined =>
   ctx.settings.sources()[settingKey(name)] === 'env' ? (name === 'tmdb' ? ctx.cfg.TMDB_API_KEY : ctx.cfg.OMDB_API_KEY) || undefined : undefined;
 
-const CACHE_MS = 30_000;
-// per database handle, so separate app instances (tests) never share a cache
-const caches = new WeakMap<object, Map<SourceName, { at: number; key: string | null }>>();
-const cacheOf = (ctx: Pick<Ctx, 'db'>) => {
-  let m = caches.get(ctx.db);
-  if (!m) caches.set(ctx.db, (m = new Map()));
-  return m;
-};
+/**
+ * The key saved in the database, as the settings store resolved it: ctx.cfg holds the decrypted value and every instance reloads it on
+ * the revision broadcast, so a key saved on another instance is used at once (no own cache). Undecryptable rows are left out by the store.
+ */
+const dbKey = (ctx: Pick<Ctx, 'cfg' | 'settings'>, name: SourceName): string | null =>
+  ctx.settings.sources()[settingKey(name)] === 'db' ? (name === 'tmdb' ? ctx.cfg.TMDB_API_KEY : ctx.cfg.OMDB_API_KEY) || null : null;
 
-async function dbKey(ctx: KeyCtx, name: SourceName): Promise<string | null> {
-  const cache = cacheOf(ctx);
-  const hit = cache.get(name);
-  if (hit && Date.now() - hit.at < CACHE_MS) return hit.key;
-  let key: string | null = null;
-  const enc = (await storedKey(ctx, name))?.enc;
-  if (enc) {
-    try { key = decrypt(ctx.encKey, enc); } catch { key = null; } // wrong APP_ENC_KEY: treat as not set, never log
-  }
-  cache.set(name, { at: Date.now(), key });
-  return key;
-}
+/** the stored row decrypts with the current APP_ENC_KEY (status only; the value is never kept) */
+const readable = (encKey: Buffer, enc: string): boolean => {
+  try { decrypt(encKey, enc); return true; } catch { return false; } // wrong APP_ENC_KEY: treat as not set, never log
+};
 
 /** The effective key: a file/env value wins over the one saved in the database. */
 export async function getSourceKey(ctx: KeyCtx, name: SourceName): Promise<{ key: string; from: 'db' | 'file' } | null> {
   const file = fileKey(ctx, name);
   if (file) return { key: file, from: 'file' };
-  const key = await dbKey(ctx, name);
+  const key = dbKey(ctx, name);
   return key ? { key, from: 'db' } : null;
 }
 
 /** Saved through the settings store (encrypted, last4, a new revision that the other instances reload). */
 export async function setSourceKey(ctx: KeyCtx, name: SourceName, key: string, actor: string | null = null): Promise<void> {
   await ctx.settings.save({ [settingKey(name)]: key }, actor);
-  cacheOf(ctx).delete(name);
 }
 
 export async function removeSourceKey(ctx: KeyCtx, name: SourceName, actor: string | null = null): Promise<void> {
   await ctx.settings.save({ [settingKey(name)]: null }, actor);
-  cacheOf(ctx).delete(name);
-}
-
-/** Drops the cached database key, so a key saved elsewhere (Admin -> Settings) is read at once on this instance. */
-export function forgetSourceKey(ctx: Pick<Ctx, 'db'>, name: SourceName): void {
-  cacheOf(ctx).delete(name);
 }
 
 /** A key change must work at once: drop the 401 pause, the invalid flag and every cached (failure) answer. */
@@ -125,7 +108,7 @@ export async function sourceStatus(ctx: Ctx, name: SourceName): Promise<SourceSt
   if (file) { last4 = file.slice(-4); from = 'file'; }
   else {
     const v = await storedKey(ctx, name);
-    if (v?.enc && (await dbKey(ctx, name)) !== null) { last4 = v.last4 ?? null; from = 'db'; } // undecryptable (APP_ENC_KEY changed) counts as not usable
+    if (v?.enc && readable(ctx.encKey, v.enc)) { last4 = v.last4 ?? null; from = 'db'; } // undecryptable (APP_ENC_KEY changed) counts as not usable
     else if (v?.enc) undecryptable = true;
   }
   const s: SourceStatus = { name, set: from !== null, last4, from, invalid: undecryptable || (from !== null && (await ctx.kv.get(INVALID_KEY(name))) !== null) };

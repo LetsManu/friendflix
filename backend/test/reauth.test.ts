@@ -150,6 +150,13 @@ describe('re-authentication guard', () => {
     expect(JSON.parse((await env.kv.get(`oidc:${st}`))!).reauth.next).toBe('/admin/settings?resume=1');
   });
 
+  it('next may be Admin -> Data sources (replacing a key needs a recent sign-in)', async () => {
+    const s = await mk();
+    const r = await env.app.inject({ url: `/auth/reauth?next=${encodeURIComponent('/admin/sources')}`, cookies: s.cookies });
+    const st = r.cookies.find((x) => x.name === 'ff_oidc')!.value;
+    expect(JSON.parse((await env.kv.get(`oidc:${st}`))!).reauth.next).toBe('/admin/sources');
+  });
+
   it('next=//evil.example falls back to /me/account', async () => {
     const s = await mk();
     for (const bad of ['//evil.example', 'https://evil.example', '/\\evil.example', '/a b', `/${'x'.repeat(201)}`]) {

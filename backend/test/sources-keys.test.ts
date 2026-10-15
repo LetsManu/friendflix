@@ -13,9 +13,16 @@ let admin: { cookies: Record<string, string>; csrf: string };
 const call = (e: TestEnv, a: typeof admin | null, method: 'GET' | 'PUT' | 'DELETE' | 'POST', url: string, payload?: unknown) =>
   e.app.inject({ method, url, cookies: a?.cookies, headers: a ? { 'x-csrf-token': a.csrf } : {}, payload: payload as object });
 
+/** stamps a re-authentication on the session (replacing or removing a key needs one at most 10 minutes old) */
+const reauth = async (e: TestEnv, a: typeof admin, at = Date.now()) => {
+  const k = `sess:${a.cookies.ff_sid}`;
+  await e.kv.set(k, JSON.stringify({ ...JSON.parse((await e.kv.get(k))!), reauthAt: at }), 600);
+};
+
 beforeAll(async () => {
   env = await makeEnv();
   admin = await env.login();
+  await reauth(env, admin);
 });
 afterAll(() => env.close());
 
@@ -79,6 +86,43 @@ describe('source keys', () => {
     } finally {
       await env.pool.query("delete from settings where key='OMDB_API_KEY'");
       await call(env, admin, 'DELETE', '/api/admin/sources/omdb');
+    }
+  });
+
+  it('PUT and DELETE need a recent re-authentication: 401 reauth_required, nothing changes', async () => {
+    const stale = await env.login();
+    await reauth(env, stale, Date.now() - 601_000);
+    await call(env, admin, 'PUT', '/api/admin/sources/tmdb', { key: KEY });
+    await env.pool.query('delete from audit_log');
+    try {
+      const put = await call(env, stale, 'PUT', '/api/admin/sources/tmdb', { key: 'another-key-0000' });
+      expect(put.statusCode).toBe(401);
+      expect(put.json()).toEqual({ error: 'reauth_required' });
+      const del = await call(env, stale, 'DELETE', '/api/admin/sources/tmdb');
+      expect(del.statusCode).toBe(401);
+      expect(del.json()).toEqual({ error: 'reauth_required' });
+      expect(await getSourceKey(env.ctx, 'tmdb')).toEqual({ key: KEY, from: 'db' });
+      expect((await env.pool.query("select 1 from audit_log where action like 'source.%'")).rowCount).toBe(0);
+      // reading and testing need no fresh sign-in
+      expect((await call(env, stale, 'GET', '/api/admin/sources/tmdb')).statusCode).toBe(200);
+      expect((await call(env, stale, 'POST', '/api/admin/sources/tmdb/test', {})).statusCode).toBe(200);
+      await reauth(env, stale);
+      expect((await call(env, stale, 'DELETE', '/api/admin/sources/tmdb')).statusCode).toBe(200);
+    } finally {
+      await call(env, admin, 'DELETE', '/api/admin/sources/tmdb');
+    }
+  });
+
+  it('25a review: a key saved on another instance is used at once (the store snapshot, no own cache)', async () => {
+    await call(env, admin, 'PUT', '/api/admin/sources/tmdb', { key: KEY });
+    try {
+      expect(await getSourceKey(env.ctx, 'tmdb')).toEqual({ key: KEY, from: 'db' });
+      // what another instance's save looks like here: a new revision, reloaded into ctx.cfg (no source route, no cache drop)
+      await env.ctx.settings.save({ TMDB_API_KEY: 'other-instance-key-42' }, null);
+      expect(await getSourceKey(env.ctx, 'tmdb')).toEqual({ key: 'other-instance-key-42', from: 'db' });
+      expect((await call(env, admin, 'GET', '/api/admin/sources/tmdb')).json()).toMatchObject({ set: true, from: 'db', last4: 'y-42', invalid: false });
+    } finally {
+      await call(env, admin, 'DELETE', '/api/admin/sources/tmdb');
     }
   });
 
