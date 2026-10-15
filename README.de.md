@@ -25,9 +25,57 @@ FriendFlix ist ein privates Streaming-Portal vor **Jellyfin** (deine Medien) und
 
 ## Inhalt
 
+- [Loslegen](#loslegen)
+- [Freunde einladen](#freunde-einladen)
 - [Das bekommst du](#das-bekommst-du)
 - [Datenschutz und Sicherheit](#datenschutz-und-sicherheit)
 - [Für Admins: Einrichtung und Betrieb](#für-admins-einrichtung-und-betrieb)
+
+## Loslegen
+
+**Du brauchst:**
+
+- Einen Linux-Server oder ein NAS mit **Docker** und dem **Compose-v2**-Plugin.
+- Eine Domain mit HTTPS und einen Reverse Proxy, z. B. **Nginx Proxy Manager**: ein Proxy-Host `friend.example.com` → `127.0.0.1:3080`, Websockets an, dazu [deploy/npm/portal.advanced.conf](deploy/npm/portal.advanced.conf) im Reiter *Advanced*.
+- **Authentik** für die Anmeldung, installiert mit Admin-Konto, z. B. unter `auth.example.com` ([docs/de/authentik.md §2](docs/de/authentik.md#2-authentik-installieren)).
+- **Jellyfin** (deine Bibliothek) mit abgeschlossenem eigenem Einrichtungsassistenten, am Docker-Netz `friendflix_media` erreichbar oder mit `--profile bundled` gestartet. Ein Wunsch-Dienst ist optional.
+
+**Schnellstart.** Eine neue Installation braucht keine `.env`; der Produktions-Stack zieht fertige Images.
+
+1. **Starten:**
+
+   ```bash
+   git clone https://github.com/LetsManu/friendflix.git && cd friendflix
+   docker compose -f compose.prod.yaml up -d
+   ```
+
+2. **Den einmaligen Einrichtungscode** aus dem Backend-Log lesen (die Zeile erscheint, sobald das Backend läuft; bei leerer Ausgabe nach ein paar Sekunden wiederholen):
+
+   ```bash
+   docker compose -f compose.prod.yaml logs backend | grep "setup code"
+   ```
+
+3. **`https://friend.example.com` öffnen und den Einrichtungsassistenten durcharbeiten:** Code, öffentliche Adresse, Medienserver (er legt den Jellyfin-API-Schlüssel aus einem Admin-Login an), Anmeldung (er richtet Authentik mit einem einmaligen Admin-Token ein: Provider, Gruppen, Einladungen, Wiederherstellung), dann wird deine erste Anmeldung Admin. Optionale Extras (Wunsch-Dienst, Push, Webhooks, Datenquellen) kommen zuletzt. Keiner der beiden Logins wird gespeichert.
+
+<p align="center"><img src="docs/images/de/setup-code.jpg" alt="Einrichtungsassistent, Schritt 1: Eingabe des Einrichtungscodes" width="600"></p>
+
+<p align="center"><img src="docs/images/de/setup-signin.jpg" alt="Einrichtungsassistent, Schritt Anmeldung: Plan, was in Authentik angelegt wird" width="600"></p>
+
+Danach in Authentik den einmaligen Token widerrufen und MFA zur Pflicht machen ([docs/de/setup.md, Authentik absichern](docs/de/setup.md#authentik-absichern)). Jede Einstellung lässt sich später unter *Admin → Einstellungen* ändern, und jede Änderung wird vor dem Speichern getestet. Außerdem sinnvoll: `./scripts/backup-bootstrap.sh` sichert die erzeugten Secrets (siehe [docs/de/setup.md](docs/de/setup.md#7-stack-starten)). Die ganze Anleitung vom leeren Server aus, mit den typischen Fehlern jedes Assistenten-Schritts: **[docs/de/setup.md](docs/de/setup.md)**.
+
+Bestehende Installation? Deine `.env` bleibt erhalten; sie sieht den Assistenten nie ([docs/de/setup.md §14](docs/de/setup.md#14-umstieg-auf-einstellungen-in-der-datenbank)). `.env` und Docker-Secrets bleiben außerdem eine fortgeschrittene Option, um Werte festzunageln ([unten](#fortgeschritten-konfiguration-über-die-umgebung)).
+
+*Die Screenshots zeigen die deutsche Oberfläche mit erfundenen Beispieldaten und Platzhalter-Hosts.*
+
+## Freunde einladen
+
+Unter *Admin → Nutzer → Einladungen* eine Rolle wählen und einen Einladungslink erstellen; den Link an deinen Freund schicken ([docs/de/setup.md §10](docs/de/setup.md#10-freunde-einladen)). Dein Freund:
+
+1. öffnet den Link und klickt **Konto anlegen & loslegen**;
+2. registriert sich in Authentik, inklusive Zwei-Faktor-Anmeldung, und landet angemeldet im Portal;
+3. wählt beim ersten Besuch eine Sprache, prüft Profilname und Farbe und wählt 3 Titel, die ihm gefallen, damit die Empfehlungen von Anfang an passen (**Willkommen**, ein paar Klicks, überspringbar).
+
+Was Freunde Schritt für Schritt sehen: [docs/de/setup.md, Was ein Freund sieht](docs/de/setup.md#was-ein-freund-sieht).
 
 ## Das bekommst du
 
@@ -158,45 +206,16 @@ Außerdem im Admin-Bereich: Einladungen und Rollen, **Marken-Hubs**, hervorgehob
 
 ## Für Admins: Einrichtung und Betrieb
 
-Ab hier wird es technisch. Die ausführliche Betriebsdoku steht unter [Dokumentation](#dokumentation).
+Ab hier wird es technisch. Die Installation steht unter [Loslegen](#loslegen); die ausführliche Betriebsdoku steht unter [Dokumentation](#dokumentation).
 
-**Installationsanleitung:** Schritt für Schritt vom leeren Server bis zum ersten eingeladenen Freund – [docs/de/setup.md](docs/de/setup.md); Authentik (Installation, Provider, Flows, Einladungen) – [docs/de/authentik.md](docs/de/authentik.md).
+**Installationsanleitung:** vom leeren Server bis zum ersten eingeladenen Freund – [docs/de/setup.md](docs/de/setup.md); Authentik (Installation, Provider, Flows, Einladungen) – [docs/de/authentik.md](docs/de/authentik.md).
 
-### Voraussetzungen
+### Fortgeschritten: Konfiguration über die Umgebung
 
-- Ein Linux-Server mit **Docker** und **Docker Compose**.
-- **Jellyfin** (deine Bibliothek) und optional einem Wunsch-Dienst (Wünsche) – schon vorhanden oder über das Profil `bundled` mitgestartet.
-- **Authentik** als Login (OIDC mit PKCE; MFA dort erzwingen).
-- Ein Reverse Proxy mit TLS, z. B. **Nginx Proxy Manager**, mit einem Proxy-Host für das Portal.
-- Optional: ntfy, ein Discord-Webhook, Portainer (Updates per Knopfdruck).
+Eine neue Installation braucht davon nichts: Einrichtungsassistent und *Admin → Einstellungen* speichern die Einstellungen in der Datenbank. `.env` und Docker-Secrets sind dazu da, Werte festzunageln: Was sie setzen, hat Vorrang und ist im Assistenten und unter *Admin → Einstellungen* gesperrt ([docs/de/setup.md §15](docs/de/setup.md#15-fortgeschritten-konfiguration-über-die-umgebung), [docs/de/setup.md, Einstellungen in der Datenbank](docs/de/setup.md#einstellungen-in-der-datenbank)). Vorlage: [.env.example](.env.example). Jede Variable kann mit der Endung `_FILE` auch aus einer Datei gelesen werden (Docker Secrets, siehe [compose.secrets.yaml](compose.secrets.yaml)). Die Standardwerte stammen aus [compose.prod.yaml](compose.prod.yaml).
 
-### Schnellstart
-
-Installation in drei Zeilen. Der Produktions-Stack zieht fertige Images von `ghcr.io/letsmanu/friendflix-{backend,gateway,web}`; auf dem Server wird nichts gebaut und keine `.env` geschrieben.
-
-```bash
-git clone https://github.com/LetsManu/friendflix.git && cd friendflix
-docker compose -f compose.prod.yaml up -d
-docker compose -f compose.prod.yaml logs backend | grep "setup code"
-```
-
-Noch keine Ausgabe? `up -d` kehrt zurück, bevor das Backend gestartet ist: ein paar Sekunden warten und den letzten Befehl wiederholen; die Zeile erscheint, sobald das Backend läuft.
-
-Dann das Portal im Browser öffnen, den Einrichtungscode eingeben und dem **Einrichtungsassistenten** folgen: öffentliche Adresse, Medienserver (er legt den Jellyfin-API-Schlüssel aus einem Admin-Login an), Anmeldung (er richtet Authentik mit einem einmaligen Admin-Token ein: Provider, Gruppen, Einladungen, Wiederherstellung), und deine erste Anmeldung wird Admin. Danach folgen optionale Extras (Wunsch-Dienst, Push, Webhooks, Datenquellen); alles lässt sich später unter *Admin → Einstellungen* ändern. Keiner der beiden Logins wird gespeichert. Schritt für Schritt: [docs/de/setup.md](docs/de/setup.md).
-
-Vorher brauchst du:
-
-1. **Authentik**, installiert mit Admin-Konto – [docs/de/authentik.md §2](docs/de/authentik.md#2-authentik-installieren). Danach dort MFA zur Pflicht machen und den einmaligen Token widerrufen ([§3](docs/de/authentik.md#3-automatische-einrichtung-aus-friendflix)).
-2. **Jellyfin** mit abgeschlossenem eigenem Einrichtungsassistenten, am Netz `friendflix_media` (`docker network connect friendflix_media <container>`) oder mit `--profile bundled` gestartet.
-3. **Nginx Proxy Manager:** ein Proxy-Host `portal.<domain>` → `127.0.0.1:3080`, Websockets an, Force SSL/HTTP2/HSTS; [deploy/npm/portal.advanced.conf](deploy/npm/portal.advanced.conf) in den Reiter *Advanced* einfügen (leitet `/api`, `/auth`, `/ws` an `:3081` und `/media/` an `:3082`). Den Block `/media/c/` nicht entfernen: Er verhindert, dass Cast-Tokens in Logs landen.
-
-Außerdem sinnvoll: `./scripts/backup-bootstrap.sh` sichert die erzeugten Secrets (der Dienst `bootstrap` legt die Passwörter für Datenbank und Redis, `APP_ENC_KEY` und `INTERNAL_SECRET` im Docker-Volume `friendflix_bootstrap` an), und `docker compose -f compose.prod.yaml --profile backup up -d backup` ergänzt nächtliche Datenbank-Backups. Private Pakete: vorher `docker login ghcr.io -u <user>` (PAT mit read:packages).
-
-Lieber Dateien? Jede Einstellung kann weiterhin aus der `.env` oder aus Docker-Secrets kommen und erscheint dann im Assistenten und unter *Admin → Einstellungen* gesperrt ([docs/de/setup.md §15](docs/de/setup.md#15-fortgeschritten-konfiguration-über-die-umgebung)). Bestehende Installation aktualisieren: [docs/de/setup.md §14](docs/de/setup.md#14-umstieg-auf-einstellungen-in-der-datenbank); sie sieht den Assistenten nie.
-
-### Konfiguration
-
-Eine neue Installation braucht keine davon: Einrichtungsassistent und *Admin → Einstellungen* speichern sie in der Datenbank. Vorlage, um Werte aus der Umgebung festzunageln: [.env.example](.env.example). Jede Variable kann mit der Endung `_FILE` auch aus einer Datei gelesen werden (Docker Secrets, siehe [compose.secrets.yaml](compose.secrets.yaml)). Die Standardwerte stammen aus [compose.prod.yaml](compose.prod.yaml). Einstellungen lassen sich stattdessen unter *Admin → Einstellungen* speichern; ein Wert aus `.env` oder Datei hat Vorrang und ist dort gesperrt ([docs/de/setup.md](docs/de/setup.md#einstellungen-in-der-datenbank)).
+<details>
+<summary>Alle Variablen</summary>
 
 | Variable | Standard | Bedeutung |
 |---|---|---|
@@ -243,6 +262,8 @@ Eine neue Installation braucht keine davon: Einrichtungsassistent und *Admin →
 | `MEDIA_PATH` | `./media` | Medienordner für das mitgelieferte Jellyfin (Profil `bundled`) |
 
 Die vollständige Liste mit Erklärungen steht in [.env.example](.env.example).
+
+</details>
 
 ### Architektur
 
