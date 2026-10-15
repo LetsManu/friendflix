@@ -5,6 +5,7 @@ import { ME, byName, episodes, hex, items, nolan, people, seedLists, type MockIt
 import { pngFor } from './png.js';
 import { adminRoute, adminState, type AdminState } from './admin.js';
 import { settingsRoute, settingsState, type SettingsMock } from './settings.js';
+import { setupRoute, type SetupMock } from './setup.js';
 
 /** Item whose reactions are locked (viewer has not seen it) / unlocked and contain an XSS probe. */
 export const LOCKED_ID = MOVIE.id;
@@ -44,6 +45,8 @@ export interface MockState {
   reauthLapsed?: boolean;
   /** /api/me `features` (optional services); absent = the field is left out, like an older backend (everything on) */
   features?: { requests: boolean };
+  /** the setup wizard (mocks/setup.ts); while it is not complete, /api/me answers 503 setup_required */
+  setup?: SetupMock;
 }
 export interface MockAccount {
   name: string; email: string | null; avatar: string;
@@ -93,9 +96,9 @@ export async function installApi(ctx: BrowserContext, st: MockState): Promise<vo
     const m = req.method();
     const sp = u.searchParams;
     const body = (): any => { try { return JSON.parse(req.postData() || '{}'); } catch { return {}; } };
-    const J = (b: unknown, status = 200) => {
+    const J = (b: unknown, status = 200, headers?: Record<string, string>) => {
       if (m !== 'GET') st.log.push(`${m} ${p} ${req.postData() ?? ''} -> ${status}`);
-      return route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(b) });
+      return route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(b), ...(headers ? { headers } : {}) });
     };
     const withFav = (i: MockItem) => ({ ...i, favorite: st.fav.has(i.id) });
     let mm: RegExpMatchArray | null;
@@ -129,6 +132,12 @@ export async function installApi(ctx: BrowserContext, st: MockState): Promise<vo
       });
     }
     if (p === '/api/client-errors') { st.clientErrors.push(body()); return route.fulfill({ status: 204 }); }
+    if (p.startsWith('/api/setup/')) {
+      if (!st.setup) { st.unmocked.add(`${m} ${p}`); return J({ error: 'not_found' }, 404); }
+      const r = setupRoute(st.setup, m, p, body(), await req.allHeaders(), J);
+      if (r) return r;
+    }
+    if (p === '/api/me' && st.setup && !st.setup.complete) return J({ error: 'setup_required' }, 503);
     if (p === '/api/me') {
       const base = st.features ? { ...ME, features: st.features } : ME;
       const me = st.asAdmin ? { ...base, role: 'admin', roleLabel: 'Admin', isAdmin: true } : base;

@@ -39,7 +39,7 @@ export async function api<T = any>(path: string, opts: { method?: string; body?:
   let json: any = null;
   try { json = text ? JSON.parse(text) : null; } catch (e) { if (res.status !== 401) throw e; } // a 401 from a proxy may not be JSON
   // 401 reauth_required: the session is fine, only a sensitive action wants a fresh sign-in; the caller starts it (lib/account/reauth.ts)
-  if (res.status === 401 && json?.error !== 'reauth_required' && !location.pathname.startsWith('/invite/') && location.pathname !== '/tv' && location.pathname !== '/pending' && location.pathname !== '/restore') {
+  if (res.status === 401 && json?.error !== 'reauth_required' && !location.pathname.startsWith('/invite/') && location.pathname !== '/tv' && location.pathname !== '/pending' && location.pathname !== '/restore' && location.pathname !== '/setup') {
     clearHint(); // the session is gone: the next start must not render early with this account's hint/profile
     location.href = localStorage.getItem('ff_tv_device') ? '/tv' : '/auth/login'; // a TV re-pairs instead of typing a login
     await new Promise(() => undefined);

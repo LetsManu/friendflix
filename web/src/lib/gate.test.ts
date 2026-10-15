@@ -64,7 +64,7 @@ describe('onboarding (/welcome)', () => {
     expect(needsWelcome({ onboarded: true }, '/')).toBe(false);
     expect(needsWelcome({}, '/')).toBe(false); // older server
     expect(needsWelcome(null, '/')).toBe(false);
-    for (const p of ['/welcome', '/profiles', '/offline', '/invite/x', '/tv', '/remote']) expect(needsWelcome({ onboarded: false }, p), p).toBe(false);
+    for (const p of ['/welcome', '/profiles', '/offline', '/invite/x', '/tv', '/remote', '/setup', '/setup/extras']) expect(needsWelcome({ onboarded: false }, p), p).toBe(false);
     expect(needsWelcome({ onboarded: false, tv: true }, '/')).toBe(false);
   });
   it('continues where the person wanted to go (kids: on the kids home)', () => {

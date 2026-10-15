@@ -309,6 +309,7 @@ export default {
     download: { revoke: '{actor} hat eine Download-Lizenz widerrufen' },
     digest: { settings: '{actor} hat den Wochenrückblick eingestellt' },
     settings: { language: '{actor} hat die Standardsprache geändert', update: '{actor} hat Einstellungen geändert', import_env: '{actor} hat Werte aus der Umgebung in die Einstellungen übernommen', generate: '{actor} hat einen Schlüssel neu erzeugt' },
+    setup: { completed: '{actor} hat die Einrichtung abgeschlossen' },
     system: { update: '{actor} hat ein Update gestartet' },
     session: { revoke_others: '{actor} hat sich auf anderen Geräten abgemeldet', revoke_device: '{actor} hat ein eigenes Gerät abgemeldet', reauth: '{actor} hat sich erneut angemeldet (für eine Kontoaktion)', reauth_mismatch: '{actor}: erneute Anmeldung mit einem anderen Konto abgelehnt' },
     account: { export: '{actor} hat die eigenen Daten heruntergeladen', profile: '{actor} hat Name oder Farbe des eigenen Kontos geändert' },

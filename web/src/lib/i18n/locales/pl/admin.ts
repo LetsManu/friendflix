@@ -420,6 +420,9 @@ const pl: Translation<typeof de> = {
       import_env: '{actor} przeniósł(-osła) wartości ze środowiska do ustawień',
       generate: '{actor} wygenerował(a) nowy klucz',
     },
+    setup: {
+      completed: '{actor} zakończył(a) konfigurację początkową',
+    },
     system: {
       update: '{actor} uruchomił(a) aktualizację',
     },

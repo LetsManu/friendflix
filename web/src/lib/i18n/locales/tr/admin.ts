@@ -382,6 +382,9 @@ const tr: Translation<typeof de> = {
       import_env: '{actor} ortamdaki değerleri ayarlara taşıdı',
       generate: '{actor} yeni bir anahtar oluşturdu',
     },
+    setup: {
+      completed: '{actor} kurulumu tamamladı',
+    },
     system: {
       update: '{actor} bir güncelleme başlattı',
     },
