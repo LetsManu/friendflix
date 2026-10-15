@@ -871,7 +871,10 @@ export class JellyfinService implements MediaServer {
         if (!res.ok) { await res.body?.cancel().catch(() => undefined); return null; }
         const type = (res.headers.get('content-type') ?? '').split(';')[0]!.trim();
         if (type !== 'image/jpeg' && type !== 'image/webp') { await res.body?.cancel().catch(() => undefined); return null; }
-        return { bytes: new Uint8Array(await res.arrayBuffer()), type };
+        const MAX = 2 * 1024 * 1024; // one oversized image must not bloat the cache
+        if (Number(res.headers.get('content-length') ?? 0) > MAX) { await res.body?.cancel().catch(() => undefined); return null; }
+        const bytes = new Uint8Array(await res.arrayBuffer());
+        return bytes.length > MAX ? null : { bytes, type };
       },
       libraries: async () => (await client.mediaFolders()).map((f) => ({ id: f.Id, name: f.Name })),
       ping: () => client.ping(),

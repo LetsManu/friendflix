@@ -130,4 +130,57 @@ describe('login art', () => {
     }
     expect(art(env)).toHaveLength(0);
   });
+
+  it('a failed image is skipped; the set is compact (half-built set stays consistent)', async () => {
+    env = await makeEnv({ [`GET /Items/${ID(1)}/Images/Primary`]: () => ({ status: 500 }), ...jf() });
+    const r = (await env.app.inject('/api/public/login-art')).json().images as string[];
+    expect(r).toHaveLength(1);
+    expect(r[0]).toMatch(/\/0$/);
+    expect((await env.app.inject(r[0]!)).statusCode).toBe(200);
+  });
+
+  it('no image at all: empty answer is no-store', async () => {
+    env = await makeEnv({ 'GET /Items/[0-9a-f]{32}/Images/Primary': () => ({ status: 404 }), 'GET /Items': () => ({ json: { Items: items } }) });
+    const r = await env.app.inject('/api/public/login-art');
+    expect(r.json()).toEqual({ images: [] });
+    expect(r.headers['cache-control']).toBe('no-store');
+  });
+
+  it('a failed or empty build is remembered: no second listing within the window', async () => {
+    env = await makeEnv({ 'GET /Items': () => ({ status: 500 }) });
+    for (let i = 0; i < 3; i++) {
+      const r = await env.app.inject('/api/public/login-art');
+      expect(r.json()).toEqual({ images: [] });
+      expect(r.headers['cache-control']).toBe('no-store');
+    }
+    expect(art(env)).toHaveLength(1);
+    expect(JSON.stringify(env.jfCalls)).toContain('/Items'); // only the one listing; no error text reaches the reply
+  });
+
+  it('a waiter that gives up while another request holds the lock gets an uncached empty list', async () => {
+    await start();
+    await env.kv.setnx('loginart:building', 'other', 60);
+    const r = await env.app.inject('/api/public/login-art');
+    expect(r.json()).toEqual({ images: [] });
+    expect(r.headers['cache-control']).toBe('no-store');
+    expect(art(env)).toHaveLength(0);
+  }, 20_000);
+
+  it('images outlive the list', async () => {
+    await start();
+    await env.app.inject('/api/public/login-art');
+    const { LOGIN_ART_IMAGE_TTL, LOGIN_ART_TTL } = await import('../src/loginArt.js');
+    expect(LOGIN_ART_IMAGE_TTL).toBeGreaterThan(2 * LOGIN_ART_TTL);
+  });
+
+  it('image route answers 404 when the wall is off, and rejects a leading zero', async () => {
+    await start();
+    const [first] = (await env.app.inject('/api/public/login-art')).json().images as string[];
+    expect((await env.app.inject(first!.replace(/\/0$/, '/00'))).statusCode).toBe(404);
+    expect((await env.app.inject(first!)).statusCode).toBe(200);
+    env.ctx.cfg = { ...env.ctx.cfg, LOGIN_COVER_WALL: 'false' };
+    const r = await env.app.inject(first!);
+    expect(r.statusCode).toBe(404);
+    expect(r.headers['cache-control']).toBe('no-store');
+  });
 });

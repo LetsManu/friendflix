@@ -18,11 +18,20 @@ export const LOGIN_ART_WIDTH = 200;
 export const LOGIN_ART_TTL = 3600;
 
 export const ART_SET_RE = /^[A-Za-z0-9_-]{12}$/;
-export const ART_INDEX_RE = /^\d{1,2}$/;
+export const ART_INDEX_RE = /^(0|[1-9]\d?)$/;
 
+/** images outlive the list: a browser holding a cached list (max-age = LOGIN_ART_TTL) must never get 404s for its images */
+export const LOGIN_ART_IMAGE_TTL = 2 * LOGIN_ART_TTL + 600;
 const BUILDING = 'loginart:building';
 const CURRENT = 'loginart:current';
+const EMPTY = 'loginart:empty';
+const LOCK_TTL = 60;
+const EMPTY_TTL = 45;
+/** no new poster fetch starts after this, so a build ends well inside its lock */
+const BUILD_BUDGET_MS = 40_000;
+const FETCH_CONCURRENCY = 6;
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+export interface ArtLog { warn(o: object, m: string): void }
 
 async function readCurrent(ctx: Ctx): Promise<{ set: string; count: number } | null> {
   const raw = await ctx.kv.get(CURRENT);
@@ -38,35 +47,58 @@ async function readCurrent(ctx: Ctx): Promise<{ set: string; count: number } | n
 async function build(ctx: Ctx): Promise<{ set: string; count: number } | null> {
   const admin = ctx.jf.admin;
   if (!admin.loginArtIds || !admin.posterThumb) return null;
+  const thumb = admin.posterThumb.bind(admin);
   const ids = (await admin.loginArtIds({ ratings: LOGIN_ART_RATINGS, limit: LOGIN_ART_COUNT })).slice(0, LOGIN_ART_COUNT);
   if (!ids.length) return null;
   const set = randomToken(9);
+  const results: Array<{ type: string; b64: string } | null> = new Array(ids.length).fill(null);
+  const deadline = Date.now() + BUILD_BUDGET_MS;
+  let next = 0;
+  const worker = async () => {
+    while (next < ids.length && Date.now() < deadline) {
+      const k = next++;
+      try {
+        const img = await thumb(ids[k]!, LOGIN_ART_WIDTH);
+        if (img) results[k] = { type: img.type, b64: Buffer.from(img.bytes).toString('base64') };
+      } catch { /* a single image is skipped */ }
+    }
+  };
+  await Promise.all(Array.from({ length: FETCH_CONCURRENCY }, worker));
   let n = 0;
-  for (const id of ids) {
-    let img: Awaited<ReturnType<NonNullable<typeof admin.posterThumb>>> = null;
-    try { img = await admin.posterThumb(id, LOGIN_ART_WIDTH); } catch { /* a single image is skipped */ }
-    if (!img) continue;
-    await ctx.kv.set(`loginart:${set}:${n}`, JSON.stringify({ type: img.type, b64: Buffer.from(img.bytes).toString('base64') }), LOGIN_ART_TTL);
+  for (const r of results) {
+    if (!r) continue;
+    await ctx.kv.set(`loginart:${set}:${n}`, JSON.stringify(r), LOGIN_ART_IMAGE_TTL);
     n++;
   }
   if (!n) return null;
+  // the list is written last, after every image
   await ctx.kv.set(CURRENT, JSON.stringify({ set, count: n }), LOGIN_ART_TTL);
   return { set, count: n };
 }
 
 /** The current set (built on first use, then reused for an hour); null when off, unsupported by the media server, or empty. */
-export async function currentArtSet(ctx: Ctx): Promise<{ set: string; count: number } | null> {
+export async function currentArtSet(ctx: Ctx, log?: ArtLog): Promise<{ set: string; count: number } | null> {
   if (ctx.cfg.LOGIN_COVER_WALL !== 'true') return null;
   if (!ctx.jf.admin.loginArtIds || !ctx.jf.admin.posterThumb) return null;
   const have = await readCurrent(ctx);
   if (have) return have;
-  if (await ctx.kv.setnx(BUILDING, '1', 60)) {
+  // a failed or empty build is remembered for a short while: the public route must not make a library listing per request
+  if (await ctx.kv.get(EMPTY)) return null;
+  const token = randomToken(9);
+  if (await ctx.kv.setnx(BUILDING, token, LOCK_TTL)) {
     try {
-      return await build(ctx);
-    } catch {
-      return null; // a media-server outage leaves the page with generated art; nothing of the error (URLs, key) is kept
+      const again = await readCurrent(ctx); // a builder may have finished just before we won the lock
+      if (again) return again;
+      const r = await build(ctx);
+      if (!r) await ctx.kv.set(EMPTY, '1', EMPTY_TTL);
+      return r;
+    } catch (e) {
+      // class and status only: the message may quote the request URL
+      log?.warn({ type: (e as Error)?.name, status: (e as { statusCode?: unknown })?.statusCode }, 'login art build failed');
+      await ctx.kv.set(EMPTY, '1', EMPTY_TTL);
+      return null;
     } finally {
-      await ctx.kv.del(BUILDING);
+      await ctx.kv.delIfEquals(BUILDING, token);
     }
   }
   // another request is building: wait for its result instead of listing again
@@ -78,7 +110,6 @@ export async function currentArtSet(ctx: Ctx): Promise<{ set: string; count: num
   }
   return readCurrent(ctx);
 }
-
 /** One cached image, or null. The caller has validated `set` and `i` with ART_SET_RE / ART_INDEX_RE. */
 export async function artImage(ctx: Ctx, set: string, i: number): Promise<{ bytes: Buffer; type: string } | null> {
   const raw = await ctx.kv.get(`loginart:${set}:${i}`);
