@@ -5,7 +5,7 @@ import type { FastifyReply, FastifyRequest } from 'fastify';
 import { randomToken, sha256 } from '../crypto.js';
 import type { Ctx } from '../ctx.js';
 import { readMeta, updateMeta } from '../settings/repo.js';
-import { isSetupComplete } from './state.js';
+import { isSetupComplete, SETUP_SESSION_PREFIX } from './state.js';
 
 /**
  * The one-time setup code (spec Part E2). The backend that owns the background jobs issues it at start while setup is incomplete and
@@ -90,7 +90,7 @@ export async function verifySetupCode(ctx: Pick<Ctx, 'db'>, input: string, ip: s
   return 'wrong';
 }
 
-const sessKey = (token: string) => `setup:sess:${sha256(token)}`;
+const sessKey = (token: string) => `${SETUP_SESSION_PREFIX}${sha256(token)}`;
 
 /** Opens a setup session: a random token in ff_setup (httpOnly) and a CSRF token in ff_setup_csrf (readable), kv by the token's hash. */
 export async function createSetupSession(ctx: Pick<Ctx, 'kv'>, req: FastifyRequest, reply: FastifyReply): Promise<void> {
@@ -119,6 +119,20 @@ async function loadSetupSession(ctx: Pick<Ctx, 'kv'>, req: FastifyRequest): Prom
 
 export async function hasSetupSession(ctx: Pick<Ctx, 'kv'>, req: FastifyRequest): Promise<boolean> {
   return (await loadSetupSession(ctx, req)) !== null;
+}
+
+/**
+ * The request's setup session as sha256 of its token (the name of its kv key, never the token), or null without a valid one. The first
+ * admin's login saves it in the OIDC state, and the callback takes the setup branch only for the same setup session.
+ */
+export async function setupSessionHash(ctx: Pick<Ctx, 'kv'>, req: FastifyRequest): Promise<string | null> {
+  return (await loadSetupSession(ctx, req)) ? sha256(req.cookies[SETUP_COOKIE]!) : null;
+}
+
+/** Whether the request carries the setup session whose hash is `hash` (constant time). */
+export async function isSetupSession(ctx: Pick<Ctx, 'kv'>, req: FastifyRequest, hash: unknown): Promise<boolean> {
+  const mine = await setupSessionHash(ctx, req);
+  return typeof hash === 'string' && mine !== null && safeEqual(mine, hash);
 }
 
 /**

@@ -25,6 +25,9 @@ import { pendingNoticeKey } from '../pending.js';
 import { profileOnboarded } from './prefs.js';
 import { publicCapabilities } from '../media/types.js';
 import { requestsEnabled } from '../seerr/client.js';
+import { isSetupSession, SETUP_COOKIE, SETUP_CSRF_COOKIE, setupSessionHash } from '../setup/code.js';
+import { claimSetup, completeSetup, isSetupComplete } from '../setup/state.js';
+import type { UserRow } from '../types.js';
 import { FALLBACK_LANGUAGE, instanceLanguage, languageFromAcceptLanguage, m, profileLanguage, roleLabel } from '../i18n.js';
 
 const OIDC_COOKIE = 'ff_oidc';
@@ -49,6 +52,11 @@ interface SavedLogin {
   resetPin?: boolean;
   /** a re-authentication of the session of `userId`: the callback only stamps that session, then returns to `next` */
   reauth?: { userId: string; next: string };
+  /**
+   * the first admin's sign-in (/auth/login?setup=1 during setup): sha256 of the setup session's token. The callback takes the setup
+   * branch only while setup is incomplete and the same setup session finishes the login (a state planted from another one is refused).
+   */
+  setup?: string;
 }
 
 /**
@@ -131,9 +139,12 @@ export function authRoutes(app: FastifyInstance, ctx: Ctx) {
    * Starts an OIDC login; the invite (if any) travels in the server-side state to /auth/callback.
    * resetPin (forgotten owner PIN) and reauth (re-authentication of a session) force a new login at the IdP.
    */
-  async function startLogin(reply: FastifyReply, invite: string | undefined, ttl: number, opts: { resetPin?: boolean; reauth?: SavedLogin['reauth'] } = {}) {
+  async function startLogin(reply: FastifyReply, invite: string | undefined, ttl: number, opts: { resetPin?: boolean; reauth?: SavedLogin['reauth']; setup?: string } = {}) {
     const s = await ctx.oidc.start({ forceLogin: Boolean(opts.resetPin || opts.reauth) });
-    const saved: SavedLogin = { state: s.state, nonce: s.nonce, codeVerifier: s.codeVerifier, invite, ...(opts.resetPin ? { resetPin: true } : {}), ...(opts.reauth ? { reauth: opts.reauth } : {}) };
+    const saved: SavedLogin = {
+      state: s.state, nonce: s.nonce, codeVerifier: s.codeVerifier, invite,
+      ...(opts.resetPin ? { resetPin: true } : {}), ...(opts.reauth ? { reauth: opts.reauth } : {}), ...(opts.setup ? { setup: opts.setup } : {}),
+    };
     await ctx.kv.set(`oidc:${s.state}`, JSON.stringify(saved), ttl);
     reply.setCookie(OIDC_COOKIE, s.state, { httpOnly: true, secure: secure(), sameSite: 'lax', path: '/auth', maxAge: ttl }); // binds the flow to this browser
     return s.url;
@@ -165,8 +176,11 @@ export function authRoutes(app: FastifyInstance, ctx: Ctx) {
     const invite = q.invite;
     if (invite && !(await lookupInvite(ctx, invite))) return reply.code(410).send({ error: 'invite_invalid' });
     if (q.resetPin === '1' && (await kidLockedDevice(req))) return reply.redirect(RESET_BLOCKED);
+    // ?setup=1: the first admin's sign-in (wizard step 5), bound to this browser's setup session; once setup is complete (or without a
+    // setup session) it is a normal login
+    const setup = q.setup === '1' && !(await isSetupComplete(ctx)) ? await setupSessionHash(ctx, req) : null;
     // ?resetPin=1: forgotten owner PIN -> forced re-login at the IdP, the callback then clears the owner profile's PIN
-    return reply.redirect(await startLogin(reply, invite, 600, { resetPin: q.resetPin === '1' }));
+    return reply.redirect(await startLogin(reply, invite, 600, { resetPin: q.resetPin === '1', ...(setup ? { setup } : {}) }));
   });
 
   // Invite with Authentik enrollment: start the portal login first, then run the enrollment flow with
@@ -227,6 +241,49 @@ export function authRoutes(app: FastifyInstance, ctx: Ctx) {
     return reply.redirect(next);
   }
 
+  /** Makes `user` admin (role on the account and on all its media server identities); no-op when it is one. */
+  async function promoteToAdmin(user: UserRow): Promise<void> {
+    if (user.role === 'admin') return;
+    await ctx.db.query("update users set role='admin' where id=$1", [user.id]);
+    const owned = await accountJellyfinIds(ctx, user.id);
+    for (const jid of owned) await applyRole(ctx, jid, 'admin', false, { userId: user.id, hidden: jid !== user.jellyfin_user_id });
+    user.role = 'admin';
+  }
+
+  /**
+   * The first admin's account (spec Part F step 5), inside claimSetup: created as admin without a group, invite or approval check
+   * (the media server user as for any first login). An account that already exists (a completion that failed after its provisioning)
+   * is made admin.
+   */
+  async function provisionFirstAdmin(claims: OidcClaims): Promise<UserRow> {
+    const user = await getUserBySub(ctx, claims.sub);
+    if (!user) return provisionUser(ctx, claims, 'admin');
+    if (user.disabled) throw new HttpError(403, 'disabled');
+    await promoteToAdmin(user);
+    return user;
+  }
+
+  /** The end of every sign-in: device, session, cookie, audit. The first admin also completes setup and lands on the wizard's step 6. */
+  async function finishLogin(req: FastifyRequest, reply: FastifyReply, user: UserRow, firstAdmin = false) {
+    const sid = rand();
+    const dev = await registerDevice(ctx, req, reply, user.id, secure());
+    const session = newSession({ userId: user.id, csrf: rand(), deviceId: dev.deviceId, deviceApproved: dev.approved });
+    // stamps session.reauthAt before the save below (the stamp's second producer, at session creation; see reauth.ts)
+    if (firstAdmin) await completeSetup(ctx, user.id, session, req.log);
+    await saveSession(ctx, sid, session);
+    reply.setCookie(COOKIE, sid, { httpOnly: true, secure: secure(), sameSite: 'lax', path: '/', maxAge: ctx.cfg.SESSION_TTL_SECONDS });
+    if (firstAdmin) {
+      // the setup session is gone (completeSetup): the browser forgets its cookies too
+      reply.clearCookie(SETUP_COOKIE, { path: '/' });
+      reply.clearCookie(SETUP_CSRF_COOKIE, { path: '/' });
+    }
+    const pendingId = verifyPending(ctx, req.cookies[PENDING_COOKIE]);
+    if (req.cookies[PENDING_COOKIE]) reply.clearCookie(PENDING_COOKIE, { path: '/' }); // approved: the waiting room is done
+    if (pendingId) await ctx.kv.del(pendingNoticeKey(pendingId));
+    await audit(ctx, user.id, 'login', user.id, { ip: req.ip });
+    return reply.redirect(firstAdmin ? '/setup/extras' : '/');
+  }
+
   app.get('/auth/callback', { config: { rateLimit: { max: 30, timeWindow: '1 minute' } } }, async (req, reply) => {
     const state = (req.query as Record<string, string | undefined>).state;
     const raw = state ? await ctx.kv.get(`oidc:${state}`) : null;
@@ -236,6 +293,10 @@ export function authRoutes(app: FastifyInstance, ctx: Ctx) {
     await ctx.kv.del(`oidc:${state}`); // single use
     try {
       const saved = JSON.parse(raw) as SavedLogin;
+      // setup mode: the only sign-in is the first admin's, started by /auth/login?setup=1 with the setup session that finishes it here
+      // (the gate in app.ts lets the callback through with any valid setup session; the binding is checked here)
+      const firstAdmin = !(await isSetupComplete(ctx));
+      if (firstAdmin && (saved.reauth || !(await isSetupSession(ctx, req, saved.setup)))) return reply.code(503).send({ error: 'setup_required' });
       // order matters (phase 2 ruling F15): a re-authentication is handled first, before any account lookup or provisioning
       if (saved.reauth) return await finishReauth(req, reply, { ...saved, reauth: saved.reauth });
       // forgotten PIN: the IdP must really have asked for the login again (auth_time), a still valid IdP session is not enough
@@ -243,6 +304,12 @@ export function authRoutes(app: FastifyInstance, ctx: Ctx) {
       // the account is being deleted (claimed by the deletion tick): no login, no approval request, no new account (F15 step 2)
       const deleting = await ctx.db.query('select 1 from account_deletions where authentik_sub=$1 and finished_at is null', [claims.sub]);
       if (deleting.rowCount) return reply.code(403).send({ error: 'account_deleted' });
+      if (firstAdmin) {
+        // exactly one first admin, across instances: the completion and the provisioning run in one serial section (claimSetup)
+        const admin = await claimSetup(ctx, () => provisionFirstAdmin(claims));
+        if (admin) return await finishLogin(req, reply, admin, true);
+        // another sign-in completed setup meanwhile: this one follows the normal rules below (group, invite, approval)
+      }
       let user = await getUserBySub(ctx, claims.sub);
       const isAdmin = claims.groups.includes(ctx.cfg.ADMIN_GROUP);
       if (!user) {
@@ -270,11 +337,8 @@ export function authRoutes(app: FastifyInstance, ctx: Ctx) {
         if (!deletionAt) return reply.code(403).send({ error: 'disabled' });
         reply.setCookie(RESTORE_COOKIE, signRestore(ctx, user.id, deletionAt), { httpOnly: true, secure: secure(), sameSite: 'lax', path: '/', maxAge: RESTORE_TTL });
         return reply.redirect('/restore');
-      } else if (isAdmin && user.role !== 'admin') {
-        await ctx.db.query("update users set role='admin' where id=$1", [user.id]);
-        const owned = await accountJellyfinIds(ctx, user.id);
-        for (const jid of owned) await applyRole(ctx, jid, 'admin', false, { userId: user.id, hidden: jid !== user.jellyfin_user_id });
-        user.role = 'admin';
+      } else if (isAdmin) {
+        await promoteToAdmin(user);
       }
       if (user.disabled) return reply.code(403).send({ error: 'disabled' });
       if (saved.resetPin) {
@@ -287,15 +351,7 @@ export function authRoutes(app: FastifyInstance, ctx: Ctx) {
         await ctx.kv.del(`pinfail-acct:${user.id}`);
         if (cleared.rowCount) await audit(ctx, user.id, 'profile.pin_reset', user.id);
       }
-      const sid = rand();
-      const dev = await registerDevice(ctx, req, reply, user.id, secure());
-      await saveSession(ctx, sid, newSession({ userId: user.id, csrf: rand(), deviceId: dev.deviceId, deviceApproved: dev.approved }));
-      reply.setCookie(COOKIE, sid, { httpOnly: true, secure: secure(), sameSite: 'lax', path: '/', maxAge: ctx.cfg.SESSION_TTL_SECONDS });
-      const pendingId = verifyPending(ctx, req.cookies[PENDING_COOKIE]);
-      if (req.cookies[PENDING_COOKIE]) reply.clearCookie(PENDING_COOKIE, { path: '/' }); // approved: the waiting room is done
-      if (pendingId) await ctx.kv.del(pendingNoticeKey(pendingId));
-      await audit(ctx, user.id, 'login', user.id, { ip: req.ip });
-      return reply.redirect('/');
+      return await finishLogin(req, reply, user);
     } catch (err) {
       if (unavailable(err)) throw err; // 503 oidc_unavailable through the error handler
       req.log.warn({ err }, 'oidc callback failed'); if (process.env.DEBUG_TEST) console.error(err);

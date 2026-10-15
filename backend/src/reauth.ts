@@ -31,7 +31,10 @@ export function requireRecentAuth(ctx: Ctx, maxAgeS = REAUTH_WINDOW_S): preHandl
   };
 }
 
-/** The single producer of the stamp: stores `reauthAt` on the live session; false when it was revoked meanwhile (never resurrected). */
+/**
+ * The producer of the stamp on a live session: stores `reauthAt`; false when it was revoked meanwhile (never resurrected). The only other
+ * producer is setup/state.ts completeSetup, which stamps the first admin's new session before it is saved.
+ */
 export async function markReauthenticated(ctx: Ctx, sid: string, s: Session, now = Date.now()): Promise<boolean> {
   s.reauthAt = now;
   return saveSession(ctx, sid, s, true);

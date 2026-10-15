@@ -1,5 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
+import type pg from 'pg';
+import { audit } from '../audit.js';
 import type { Config } from '../config.js';
 import type { Ctx } from '../ctx.js';
 import { readMeta } from '../settings/repo.js';
@@ -52,4 +54,57 @@ export function isOperational(ctx: Pick<Ctx, 'db' | 'settings' | 'cfg'>): boolea
   const c = cache.get(ctx.settings);
   if (!c || c.rev !== ctx.settings.rev()) void isSetupComplete(ctx).catch(() => undefined);
   return Boolean(c?.complete) && missingRunRequired(ctx.cfg).length === 0;
+}
+
+/** kv prefix of the setup sessions (code.ts): all of them end with setup */
+export const SETUP_SESSION_PREFIX = 'setup:sess:';
+/** how long a second first-admin sign-in waits for the first one's provisioning (Jellyfin calls) before it gives up */
+const CLAIM_LOCK_TIMEOUT = '60s';
+
+/**
+ * The serial section of the first admin (spec Part F step 5): completes setup with a conditional update and runs `provision` while that
+ * transaction holds the settings_meta row, then commits. Exactly one caller wins, on every instance: a concurrent claim waits on the
+ * row lock and then finds setup complete (its update matches no row), so it gets null and follows the normal login rules. A failing
+ * `provision` (or a crash) rolls the completion back: setup stays open and the code valid. The rev moves in the same statement, so the
+ * other instances drop their cached gate answer (ruling D10). Returns provision's result, or null when setup was already complete.
+ */
+export async function claimSetup<T>(ctx: Pick<Ctx, 'db'>, provision: () => Promise<T>): Promise<T | null> {
+  const c = await (ctx.db as pg.Pool).connect();
+  try {
+    await c.query('begin');
+    await c.query(`set local lock_timeout = '${CLAIM_LOCK_TIMEOUT}'`);
+    const won = await c.query(`update settings_meta set setup_completed_at = now(), setup_code_hash = null, rev = rev + 1
+      where id = 1 and setup_completed_at is null returning rev`);
+    if (!won.rowCount) {
+      await c.query('rollback');
+      return null;
+    }
+    const result = await provision();
+    await c.query('commit');
+    return result;
+  } catch (e) {
+    await c.query('rollback').catch(() => undefined);
+    throw e;
+  } finally {
+    c.release();
+  }
+}
+
+/**
+ * Completes setup for the first admin `userId` (spec Part E2): setup_completed_at (if claimSetup has not set it), the code cleared, every
+ * setup session deleted, audit `setup.completed`, and the other instances told (their gate opens). It also stamps `reauthAt` on the new
+ * admin's session object, which the caller saves afterwards, so the wizard's step 6 can save secrets without another re-authentication.
+ */
+export async function completeSetup(ctx: Pick<Ctx, 'db' | 'kv' | 'settings'>, userId: string, session: { reauthAt?: number },
+  log: { info(msg: string): void } = { info: () => {} }): Promise<void> {
+  await ctx.db.query(`update settings_meta set setup_code_hash = null, setup_completed_at = coalesce(setup_completed_at, now()),
+    rev = rev + case when setup_completed_at is null then 1 else 0 end where id = 1`);
+  for (const key of await ctx.kv.keys(SETUP_SESSION_PREFIX)) await ctx.kv.del(key);
+  await audit(ctx, userId, 'setup.completed');
+  // the second producer of the stamp (next to reauth.ts markReauthenticated), at the session's creation: the person has just signed in
+  // at the IdP, and the session is saved by the caller after this
+  session.reauthAt = Date.now();
+  // reloads here (the gate's cache sees the new rev now) and publishes the rev for the other instances (their poll covers a lost message)
+  await ctx.settings.announce();
+  log.info('Setup completed; the setup code is no longer valid.');
 }
