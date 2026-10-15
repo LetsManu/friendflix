@@ -87,5 +87,52 @@ const login: Translation<typeof de> = {
     title: 'Presque fini',
     text: 'Ton compte attend la validation d’un administrateur. Tu seras prévenu dès que tu pourras commencer.',
   },
+  /** screen 4, the recovery mail sent */
+  emailSent: {
+    title: 'Vérifie ta boîte mail',
+    text: 'Nous avons envoyé un lien de réinitialisation à {to}. Il ne fonctionne qu’une fois.',
+    textNoAddress: 'Si ce compte a une adresse e-mail, nous t’avons envoyé un lien. Il ne fonctionne qu’une fois.',
+    hint: 'Rien reçu ? Regarde aussi dans les spams.',
+    resend: 'Renvoyer',
+    resendIn: 'Renvoyer ({time})',
+    back: 'Retour à la connexion',
+  },
+  /** invite sign-up (prompt) */
+  enroll: {
+    title: 'Créer ton compte',
+    text: 'Définis tes identifiants de connexion.',
+    submit: 'Continuer',
+  },
+  /** /reset (the e-mail link) */
+  reset: {
+    startTitle: 'Définir un nouveau mot de passe',
+    startText: 'Tu as ouvert le lien de l’e-mail. Appuie sur Continuer pour choisir ton nouveau mot de passe.',
+    startButton: 'Continuer',
+    newTitle: 'Nouveau mot de passe',
+    newText: 'Choisis un nouveau mot de passe pour ton compte.',
+    submit: 'Enregistrer le mot de passe',
+    doneTitle: 'Mot de passe modifié',
+    doneText: 'Tu peux maintenant te connecter avec ton nouveau mot de passe.',
+    doneButton: 'Aller à la connexion',
+    passkeyTitle: 'Réinitialisation impossible avec une passkey',
+    passkeyText: 'Ton compte se connecte uniquement avec une passkey : aucun mot de passe ne peut être défini ici et le lien est utilisé. Ajoute une application d’authentification (TOTP) ou demande l’aide d’un administrateur.',
+    banner: 'Mot de passe modifié. Connecte-toi maintenant.',
+  },
+  totp: {
+    title: 'Configurer une application d’authentification',
+    text: 'Scanne le code QR avec ton application d’authentification et saisis le code à 6 chiffres.',
+    qr: 'Code QR pour l’application d’authentification',
+    secret: 'Impossible de scanner ? Saisis cette clé :',
+    group: 'Code de vérification',
+    submit: 'Confirmer',
+  },
+  codes: {
+    title: 'Codes de récupération',
+    text: 'Garde ces codes en lieu sûr. Chacun ne sert qu’une fois et t’aide si tu n’as pas l’application.',
+    copy: 'Copier',
+    copied: 'Copié',
+    download: 'Enregistrer en fichier texte',
+    saved: 'Enregistré – continuer',
+  },
 };
 export default login;

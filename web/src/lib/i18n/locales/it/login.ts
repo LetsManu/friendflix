@@ -87,5 +87,52 @@ const login: Translation<typeof de> = {
     title: 'Ci siamo quasi',
     text: 'Il tuo account è in attesa dell’approvazione di un amministratore. Ti avviseremo appena potrai iniziare.',
   },
+  /** screen 4, the recovery mail sent */
+  emailSent: {
+    title: 'Controlla la posta in arrivo',
+    text: 'Abbiamo inviato un link di reimpostazione a {to}. Funziona una sola volta.',
+    textNoAddress: 'Se questo account ha un indirizzo e-mail, ti abbiamo inviato un link. Funziona una sola volta.',
+    hint: 'Non arriva nulla? Controlla anche la cartella spam.',
+    resend: 'Invia di nuovo',
+    resendIn: 'Invia di nuovo ({time})',
+    back: 'Torna all’accesso',
+  },
+  /** invite sign-up (prompt) */
+  enroll: {
+    title: 'Crea il tuo account',
+    text: 'Imposta i tuoi dati di accesso.',
+    submit: 'Continua',
+  },
+  /** /reset (the e-mail link) */
+  reset: {
+    startTitle: 'Imposta una nuova password',
+    startText: 'Hai aperto il link dell’e-mail. Premi Continua per scegliere la nuova password.',
+    startButton: 'Continua',
+    newTitle: 'Nuova password',
+    newText: 'Scegli una nuova password per il tuo account.',
+    submit: 'Salva password',
+    doneTitle: 'Password modificata',
+    doneText: 'Ora puoi accedere con la nuova password.',
+    doneButton: 'Vai all’accesso',
+    passkeyTitle: 'Reimpostazione con passkey non possibile',
+    passkeyText: 'Il tuo account accede solo con passkey, quindi qui non si può impostare una password e il link è già usato. Aggiungi un’app di autenticazione (TOTP) o chiedi aiuto a un amministratore.',
+    banner: 'Password modificata. Accedi ora.',
+  },
+  totp: {
+    title: 'Configura un’app di autenticazione',
+    text: 'Inquadra il codice QR con la tua app di autenticazione e inserisci il codice a 6 cifre.',
+    qr: 'Codice QR per l’app di autenticazione',
+    secret: 'Non riesci a inquadrarlo? Inserisci questa chiave:',
+    group: 'Codice di verifica',
+    submit: 'Conferma',
+  },
+  codes: {
+    title: 'Codici di recupero',
+    text: 'Conserva questi codici in un posto sicuro. Ognuno vale una sola volta e ti aiuta se non hai l’app.',
+    copy: 'Copia',
+    copied: 'Copiato',
+    download: 'Salva come file di testo',
+    saved: 'Salvato – continua',
+  },
 };
 export default login;

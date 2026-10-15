@@ -87,5 +87,52 @@ const login = {
     title: 'Fast geschafft',
     text: 'Dein Konto wartet auf Freigabe durch einen Admin. Du bekommst Bescheid, sobald es losgehen kann.',
   },
+  /** screen 4, the recovery mail sent */
+  emailSent: {
+    title: 'Schau in dein Postfach',
+    text: 'Wir haben einen Link zum Zurücksetzen an {to} geschickt. Er funktioniert nur einmal.',
+    textNoAddress: 'Wenn es zu diesem Konto eine E-Mail-Adresse gibt, haben wir dir einen Link geschickt. Er funktioniert nur einmal.',
+    hint: 'Nichts angekommen? Schau auch im Spam-Ordner nach.',
+    resend: 'Erneut senden',
+    resendIn: 'Erneut senden ({time})',
+    back: 'Zurück zur Anmeldung',
+  },
+  /** invite sign-up (prompt) */
+  enroll: {
+    title: 'Konto anlegen',
+    text: 'Lege deine Zugangsdaten fest.',
+    submit: 'Weiter',
+  },
+  /** /reset (the e-mail link) */
+  reset: {
+    startTitle: 'Neues Passwort festlegen',
+    startText: 'Du hast den Link aus der E-Mail geöffnet. Mit „Weiter“ legst du dein neues Passwort fest.',
+    startButton: 'Weiter',
+    newTitle: 'Neues Passwort',
+    newText: 'Wähle ein neues Passwort für dein Konto.',
+    submit: 'Passwort speichern',
+    doneTitle: 'Passwort geändert',
+    doneText: 'Du kannst dich jetzt mit deinem neuen Passwort anmelden.',
+    doneButton: 'Zur Anmeldung',
+    passkeyTitle: 'Zurücksetzen per Passkey nicht möglich',
+    passkeyText: 'Dein Konto meldet sich nur mit Passkey an, deshalb lässt sich hier kein Passwort festlegen, und der Link ist verbraucht. Richte eine Authenticator-App (TOTP) ein oder bitte einen Admin um Hilfe.',
+    banner: 'Passwort geändert. Melde dich jetzt an.',
+  },
+  totp: {
+    title: 'Authenticator-App einrichten',
+    text: 'Scanne den QR-Code mit deiner Authenticator-App und gib den 6-stelligen Code ein.',
+    qr: 'QR-Code für die Authenticator-App',
+    secret: 'Kein Scan möglich? Gib diesen Schlüssel ein:',
+    group: 'Bestätigungscode',
+    submit: 'Bestätigen',
+  },
+  codes: {
+    title: 'Wiederherstellungscodes',
+    text: 'Bewahre diese Codes sicher auf. Jeder gilt nur einmal und hilft dir, wenn du die App nicht hast.',
+    copy: 'Kopieren',
+    copied: 'Kopiert',
+    download: 'Als Textdatei speichern',
+    saved: 'Gespeichert – weiter',
+  },
 };
 export default login;

@@ -128,7 +128,15 @@ describe('invites', () => {
 
   it('enrollment link: portal login -> Authentik enrollment -> authorize -> callback, one pass', async () => {
     const token = (await adm('POST', '/api/admin/invites', { role: 'family', ttlHours: 24 })).json().link.split('/').pop();
-    expect((await env.app.inject(`/api/invite/${token}`)).json().enrollUrl).toBe(`/auth/enroll?invite=${token}`);
+    // in-app sign-in (LOGIN_UI app): the invite page links to the app's own sign-up; otherwise to /auth/enroll (preflight T8-a)
+    expect((await env.app.inject(`/api/invite/${token}`)).json().enrollUrl).toBe(`/login?invite=${token}&enroll=1`);
+    const before = env.ctx.cfg;
+    env.ctx.cfg = { ...before, LOGIN_UI: 'authentik' };
+    try {
+      expect((await env.app.inject(`/api/invite/${token}`)).json().enrollUrl).toBe(`/auth/enroll?invite=${token}`);
+    } finally {
+      env.ctx.cfg = before;
+    }
 
     // in-app sign-in (LOGIN_UI app): the button leads to the app's own enrolment screens
     expect((await env.app.inject(`/auth/enroll?invite=${token}`)).headers.location).toBe(`/login?invite=${token}&enroll=1`);

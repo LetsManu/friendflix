@@ -87,5 +87,52 @@ const login: Translation<typeof de> = {
     title: 'Almost there',
     text: 'Your account is waiting for an admin to approve it. You will hear from us as soon as you can start.',
   },
+  /** screen 4, the recovery mail sent */
+  emailSent: {
+    title: 'Check your inbox',
+    text: 'We sent a reset link to {to}. It works only once.',
+    textNoAddress: 'If this account has an e-mail address, we sent you a link. It works only once.',
+    hint: 'Nothing there? Check your spam folder too.',
+    resend: 'Resend',
+    resendIn: 'Resend ({time})',
+    back: 'Back to sign-in',
+  },
+  /** invite sign-up (prompt) */
+  enroll: {
+    title: 'Create your account',
+    text: 'Set your sign-in details.',
+    submit: 'Continue',
+  },
+  /** /reset (the e-mail link) */
+  reset: {
+    startTitle: 'Set a new password',
+    startText: 'You opened the link from the e-mail. Press Continue to choose your new password.',
+    startButton: 'Continue',
+    newTitle: 'New password',
+    newText: 'Choose a new password for your account.',
+    submit: 'Save password',
+    doneTitle: 'Password changed',
+    doneText: 'You can now sign in with your new password.',
+    doneButton: 'Go to sign-in',
+    passkeyTitle: 'Passkey accounts cannot reset here',
+    passkeyText: 'Your account signs in with a passkey only, so no password can be set here, and the link is used up. Add an authenticator app (TOTP) or ask an admin for help.',
+    banner: 'Password changed. Please sign in.',
+  },
+  totp: {
+    title: 'Set up an authenticator app',
+    text: 'Scan the QR code with your authenticator app and enter the 6-digit code.',
+    qr: 'QR code for the authenticator app',
+    secret: 'Cannot scan? Enter this key instead:',
+    group: 'Verification code',
+    submit: 'Confirm',
+  },
+  codes: {
+    title: 'Recovery codes',
+    text: 'Keep these codes safe. Each works once and helps if you do not have the app.',
+    copy: 'Copy',
+    copied: 'Copied',
+    download: 'Save as text file',
+    saved: 'Saved – continue',
+  },
 };
 export default login;

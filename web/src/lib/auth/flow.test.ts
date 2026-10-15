@@ -8,7 +8,7 @@ vi.mock('$app/navigation', () => nav);
 
 import {
   answer, artPaths, cancelFlow, classicHref, codeFromBoxes, credentialJSON, errorKey, fallbackArt, fieldLabel, flowConfig, inviteToken,
-  passkeyCreate, passkeyGet, pasteCode, safeNext, startFlow, wallColumns,
+  passkeyCreate, passkeyGet, pasteCode, resumeFlow, safeNext, startFlow, wallColumns,
   type FlowStep, type PasskeyCreate, type PasskeyGet,
 } from './flow';
 
@@ -208,6 +208,13 @@ describe('transport', () => {
     expect(calls[0]).toMatchObject({ url: '/auth/flow/answer', method: 'POST', body: { step: 's1', stage: 'identify', identifier: 'anna@example.com' } });
     expect(calls[0]!.headers['x-ff-flow-csrf']).toBe('tok-9');
     expect(calls[0]!.headers['content-type']).toBe('application/json');
+  });
+
+  it('resumeFlow posts the token in the body only and maps the reply', async () => {
+    queue.push({ status: 200, body: { stage: 'expired' } });
+    expect(await resumeFlow('tok_abc-1')).toEqual({ stage: 'expired' });
+    expect(calls[0]).toMatchObject({ url: '/auth/flow/resume', method: 'POST', body: { token: 'tok_abc-1' } });
+    expect(calls[0]!.url).not.toContain('tok_abc');
   });
 
   it('startFlow sends the kind and extras', async () => {

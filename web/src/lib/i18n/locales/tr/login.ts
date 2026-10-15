@@ -87,5 +87,52 @@ const login: Translation<typeof de> = {
     title: 'Neredeyse tamam',
     text: 'Hesabın bir yöneticinin onayını bekliyor. Başlayabileceğin anda sana haber vereceğiz.',
   },
+  /** screen 4, the recovery mail sent */
+  emailSent: {
+    title: 'Gelen kutunu kontrol et',
+    text: '{to} adresine bir sıfırlama bağlantısı gönderdik. Yalnızca bir kez çalışır.',
+    textNoAddress: 'Bu hesabın bir e-posta adresi varsa sana bir bağlantı gönderdik. Yalnızca bir kez çalışır.',
+    hint: 'Bir şey gelmedi mi? Spam klasörüne de bak.',
+    resend: 'Yeniden gönder',
+    resendIn: 'Yeniden gönder ({time})',
+    back: 'Girişe dön',
+  },
+  /** invite sign-up (prompt) */
+  enroll: {
+    title: 'Hesabını oluştur',
+    text: 'Giriş bilgilerini belirle.',
+    submit: 'Devam',
+  },
+  /** /reset (the e-mail link) */
+  reset: {
+    startTitle: 'Yeni parola belirle',
+    startText: 'E-postadaki bağlantıyı açtın. Yeni parolanı seçmek için Devam’a bas.',
+    startButton: 'Devam',
+    newTitle: 'Yeni parola',
+    newText: 'Hesabın için yeni bir parola seç.',
+    submit: 'Parolayı kaydet',
+    doneTitle: 'Parola değiştirildi',
+    doneText: 'Artık yeni parolanla giriş yapabilirsin.',
+    doneButton: 'Girişe git',
+    passkeyTitle: 'Passkey ile sıfırlama mümkün değil',
+    passkeyText: 'Hesabın yalnızca passkey ile giriş yapıyor; bu yüzden burada parola belirlenemez ve bağlantı kullanılmış sayılır. Bir kimlik doğrulayıcı uygulaması (TOTP) ekle ya da bir yöneticiden yardım iste.',
+    banner: 'Parola değiştirildi. Şimdi giriş yap.',
+  },
+  totp: {
+    title: 'Kimlik doğrulayıcı uygulaması kur',
+    text: 'QR kodunu kimlik doğrulayıcı uygulamanla tara ve 6 haneli kodu gir.',
+    qr: 'Kimlik doğrulayıcı uygulaması için QR kodu',
+    secret: 'Taratamıyor musun? Bu anahtarı gir:',
+    group: 'Doğrulama kodu',
+    submit: 'Onayla',
+  },
+  codes: {
+    title: 'Kurtarma kodları',
+    text: 'Bu kodları güvenli bir yerde sakla. Her biri yalnızca bir kez çalışır ve uygulamaya erişemediğinde işe yarar.',
+    copy: 'Kopyala',
+    copied: 'Kopyalandı',
+    download: 'Metin dosyası olarak kaydet',
+    saved: 'Kaydedildi – devam',
+  },
 };
 export default login;

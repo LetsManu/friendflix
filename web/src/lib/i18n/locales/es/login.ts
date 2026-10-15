@@ -87,5 +87,52 @@ const login: Translation<typeof de> = {
     title: 'Casi listo',
     text: 'Tu cuenta está esperando la aprobación de un administrador. Te avisaremos en cuanto puedas empezar.',
   },
+  /** screen 4, the recovery mail sent */
+  emailSent: {
+    title: 'Revisa tu bandeja de entrada',
+    text: 'Hemos enviado un enlace para restablecer la contraseña a {to}. Solo funciona una vez.',
+    textNoAddress: 'Si esta cuenta tiene una dirección de correo, te hemos enviado un enlace. Solo funciona una vez.',
+    hint: '¿No llega nada? Mira también en la carpeta de spam.',
+    resend: 'Reenviar',
+    resendIn: 'Reenviar ({time})',
+    back: 'Volver al inicio de sesión',
+  },
+  /** invite sign-up (prompt) */
+  enroll: {
+    title: 'Crear tu cuenta',
+    text: 'Define tus datos de acceso.',
+    submit: 'Continuar',
+  },
+  /** /reset (the e-mail link) */
+  reset: {
+    startTitle: 'Establecer una contraseña nueva',
+    startText: 'Has abierto el enlace del correo. Pulsa Continuar para elegir tu nueva contraseña.',
+    startButton: 'Continuar',
+    newTitle: 'Contraseña nueva',
+    newText: 'Elige una contraseña nueva para tu cuenta.',
+    submit: 'Guardar contraseña',
+    doneTitle: 'Contraseña cambiada',
+    doneText: 'Ya puedes iniciar sesión con tu nueva contraseña.',
+    doneButton: 'Ir al inicio de sesión',
+    passkeyTitle: 'Aquí no se puede restablecer con passkey',
+    passkeyText: 'Tu cuenta solo inicia sesión con passkey, así que aquí no se puede definir una contraseña y el enlace ya está usado. Añade una app de autenticación (TOTP) o pide ayuda a un administrador.',
+    banner: 'Contraseña cambiada. Inicia sesión ahora.',
+  },
+  totp: {
+    title: 'Configurar una app de autenticación',
+    text: 'Escanea el código QR con tu app de autenticación e introduce el código de 6 dígitos.',
+    qr: 'Código QR para la app de autenticación',
+    secret: '¿No puedes escanear? Introduce esta clave:',
+    group: 'Código de verificación',
+    submit: 'Confirmar',
+  },
+  codes: {
+    title: 'Códigos de recuperación',
+    text: 'Guarda estos códigos en un lugar seguro. Cada uno sirve una sola vez y te ayuda si no tienes la app.',
+    copy: 'Copiar',
+    copied: 'Copiado',
+    download: 'Guardar como archivo de texto',
+    saved: 'Guardado – continuar',
+  },
 };
 export default login;

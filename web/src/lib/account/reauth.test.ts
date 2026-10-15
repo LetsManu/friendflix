@@ -61,4 +61,13 @@ describe('api() and 401 on public pages (preflight D8)', () => {
     expect((e as ApiError).status).toBe(401);
     expect(l.href).toBe('');
   });
+
+  it('the reset-link page /reset keeps a 401 to itself too', async () => {
+    const l = loc('/reset');
+    vi.stubGlobal('location', l);
+    vi.stubGlobal('fetch', answer(401, '{"error":"unauthenticated"}'));
+    const e = await api('/api/me').catch((x: unknown) => x);
+    expect(e).toBeInstanceOf(ApiError);
+    expect(l.href).toBe('');
+  });
 });

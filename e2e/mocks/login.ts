@@ -15,6 +15,8 @@ export interface LoginMock {
   config: MockReply;
   /** replies to POST /auth/flow/start, in order (the last one repeats) */
   starts: Array<MockReply | ((body: any) => MockReply)>;
+  /** replies to POST /auth/flow/resume, in order (the last one repeats) */
+  resumes: Array<MockReply | ((body: any) => MockReply)>;
   /** replies to POST /auth/flow/answer, in order (the last one repeats) */
   answers: Array<MockReply | ((body: any) => MockReply)>;
   /** every POST, with the csrf header and cookie it carried */
@@ -29,7 +31,7 @@ export const ART_SET = 'mockartset01';
 export const ART_IMAGES = Array.from({ length: 36 }, (_, i) => `/api/public/login-art/${ART_SET}/${i}`);
 
 export function loginState(over: Partial<LoginMock> = {}): LoginMock {
-  return { config: { body: { mode: 'app', recovery: true, enroll: false } }, starts: [{ body: identify() }], answers: [], calls: [], csrf: MOCK_CSRF, ...over };
+  return { config: { body: { mode: 'app', recovery: true, enroll: false } }, starts: [{ body: identify() }], resumes: [{ body: { stage: 'expired' } }], answers: [], calls: [], csrf: MOCK_CSRF, ...over };
 }
 
 // ---- step builders (FlowStep, flowSteps.ts) ----
@@ -38,6 +40,10 @@ const stepId = () => `mock-step-${String(++n).padStart(4, '0')}`;
 export const identify = (over: Record<string, unknown> = {}) => ({ stage: 'identify', step: stepId(), passwordInline: false, canRecover: true, canEnroll: false, passkey: null, ...over });
 export const password = (identity = 'anna@example.com', over: Record<string, unknown> = {}) => ({ stage: 'password', step: stepId(), identity, canRecover: true, ...over });
 export const mfa = (over: Record<string, unknown> = {}) => ({ stage: 'mfa', step: stepId(), totp: true, recovery: true, passkey: null, passkeyClassic: false, ...over });
+export const emailSent = (to: string | null = 'a•••@example.com') => ({ stage: 'email-sent', step: stepId(), to });
+export const prompt = (fields: Array<{ key: string; type: string; label: string; required?: boolean }>) => ({ stage: 'prompt', step: stepId(), fields: fields.map((f) => ({ required: true, ...f })) });
+export const totpSetup = (secret = 'JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP') => ({ stage: 'totp-setup', step: stepId(), otpauth: `otpauth://totp/FriendFlix:anna?secret=${secret}&issuer=FriendFlix` });
+export const recoveryCodes = (codes: string[]) => ({ stage: 'recovery-codes', step: stepId(), codes });
 export const done = (next = '/') => ({ stage: 'done', next });
 
 const cookieValue = (header: string | undefined, name: string): string | null => {
@@ -75,6 +81,7 @@ export async function installLogin(ctx: BrowserContext, st: LoginMock): Promise<
     };
     if (p === '/auth/flow/start') return J(next(st.starts));
     if (p === '/auth/flow/answer') return J(next(st.answers));
+    if (p === '/auth/flow/resume') return J(next(st.resumes));
     if (p === '/auth/flow/cancel') {
       await ctx.clearCookies({ name: 'ff_flow_csrf' });
       return J({ body: { ok: true } });

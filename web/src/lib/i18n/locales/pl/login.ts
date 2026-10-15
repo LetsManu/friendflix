@@ -87,5 +87,52 @@ const login: Translation<typeof de> = {
     title: 'Prawie gotowe',
     text: 'Twoje konto czeka na zatwierdzenie przez administratora. Damy ci znać, gdy tylko będzie można zaczynać.',
   },
+  /** screen 4, the recovery mail sent */
+  emailSent: {
+    title: 'Sprawdź skrzynkę',
+    text: 'Wysłaliśmy link do zresetowania hasła na adres {to}. Działa tylko raz.',
+    textNoAddress: 'Jeśli to konto ma adres e-mail, wysłaliśmy ci link. Działa tylko raz.',
+    hint: 'Nic nie przyszło? Zajrzyj też do folderu ze spamem.',
+    resend: 'Wyślij ponownie',
+    resendIn: 'Wyślij ponownie ({time})',
+    back: 'Wróć do logowania',
+  },
+  /** invite sign-up (prompt) */
+  enroll: {
+    title: 'Załóż konto',
+    text: 'Ustaw dane logowania.',
+    submit: 'Dalej',
+  },
+  /** /reset (the e-mail link) */
+  reset: {
+    startTitle: 'Ustaw nowe hasło',
+    startText: 'Otwarto link z e-maila. Naciśnij Dalej, aby wybrać nowe hasło.',
+    startButton: 'Dalej',
+    newTitle: 'Nowe hasło',
+    newText: 'Wybierz nowe hasło do swojego konta.',
+    submit: 'Zapisz hasło',
+    doneTitle: 'Hasło zmienione',
+    doneText: 'Możesz się teraz zalogować nowym hasłem.',
+    doneButton: 'Przejdź do logowania',
+    passkeyTitle: 'Reset przez passkey nie jest możliwy',
+    passkeyText: 'Twoje konto loguje się tylko kluczem dostępu (passkey), więc nie można tu ustawić hasła, a link został zużyty. Dodaj aplikację uwierzytelniającą (TOTP) lub poproś o pomoc administratora.',
+    banner: 'Hasło zmienione. Zaloguj się teraz.',
+  },
+  totp: {
+    title: 'Skonfiguruj aplikację uwierzytelniającą',
+    text: 'Zeskanuj kod QR aplikacją uwierzytelniającą i wpisz 6-cyfrowy kod.',
+    qr: 'Kod QR dla aplikacji uwierzytelniającej',
+    secret: 'Nie możesz zeskanować? Wpisz ten klucz:',
+    group: 'Kod weryfikacyjny',
+    submit: 'Potwierdź',
+  },
+  codes: {
+    title: 'Kody odzyskiwania',
+    text: 'Przechowuj te kody w bezpiecznym miejscu. Każdy działa tylko raz i pomoże, gdy nie masz aplikacji.',
+    copy: 'Kopiuj',
+    copied: 'Skopiowano',
+    download: 'Zapisz jako plik tekstowy',
+    saved: 'Zapisane – dalej',
+  },
 };
 export default login;

@@ -192,6 +192,14 @@ export async function startFlow(kind: FlowKind, extra: { invite?: string; identi
   return toReply(r);
 }
 
+/**
+ * Continues Authentik's recovery flow with the token of the e-mail link (the /reset button). The token goes to the backend in the body
+ * only: not stored, not logged, not part of any URL.
+ */
+export async function resumeFlow(token: string): Promise<FlowReply> {
+  return toReply(await post('/auth/flow/resume', { token }));
+}
+
 /** answers the shown step; the reply is the next step, the same stage with `errors`, or a notice */
 export async function answer(step: AnswerableStep, body: Record<string, unknown>): Promise<FlowReply> {
   return toReply(await post('/auth/flow/answer', { ...body, step: step.step, stage: step.stage }), step);
