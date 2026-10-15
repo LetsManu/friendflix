@@ -47,6 +47,8 @@ export interface MockState {
   features?: { requests: boolean };
   /** the setup wizard (mocks/setup.ts); while it is not complete, /api/me answers 503 setup_required */
   setup?: SetupMock;
+  /** the sign-in cover wall: GET /api/public/login-art answers this status and image paths (mocks/login.ts ART_IMAGES) */
+  loginArt: { status: number; images: string[] };
 }
 export interface MockAccount {
   name: string; email: string | null; avatar: string;
@@ -74,6 +76,7 @@ export function freshState(): MockState {
       { id: 'dev-phone-00000000002', label: 'Safari auf iOS', approved: true, current: false, created_at: '2026-09-02T10:00:00Z', last_seen: '2026-10-12T20:15:00Z' },
     ],
     revokedOthers: 2,
+    loginArt: { status: 200, images: [] },
   };
 }
 
@@ -131,6 +134,11 @@ export async function installApi(ctx: BrowserContext, st: MockState): Promise<vo
         failed: [...failed].sort(),
       });
     }
+    // the public cover wall of the sign-in pages (/login, /pending): the list, and the generated image for every path
+    if (p === '/api/public/login-art' && m === 'GET') {
+      return st.loginArt.status === 200 ? J({ images: st.loginArt.images }) : J({ error: st.loginArt.status === 503 ? 'setup_required' : 'unavailable' }, st.loginArt.status);
+    }
+    if (/^\/api\/public\/login-art\/[A-Za-z0-9_-]{12}\/\d{1,2}$/.test(p) && m === 'GET') return route.fulfill({ status: 200, contentType: 'image/png', body: pngFor(req.url()) });
     if (p === '/api/client-errors') { st.clientErrors.push(body()); return route.fulfill({ status: 204 }); }
     if (p.startsWith('/api/setup/')) {
       if (!st.setup) { st.unmocked.add(`${m} ${p}`); return J({ error: 'not_found' }, 404); }

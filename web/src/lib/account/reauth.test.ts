@@ -50,3 +50,15 @@ describe('api() and 401', () => {
     }
   });
 });
+
+describe('api() and 401 on public pages (preflight D8)', () => {
+  it('the in-app sign-in /login keeps a 401 to itself: no redirect to /auth/login (which would come back to /login)', async () => {
+    const l = loc('/login');
+    vi.stubGlobal('location', l);
+    vi.stubGlobal('fetch', answer(401, '{"error":"unauthenticated"}'));
+    const e = await api('/api/me').catch((x: unknown) => x);
+    expect(e).toBeInstanceOf(ApiError);
+    expect((e as ApiError).status).toBe(401);
+    expect(l.href).toBe('');
+  });
+});
