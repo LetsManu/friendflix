@@ -1,0 +1,258 @@
+// SPDX-FileCopyrightText: 2026 Manuel Weißböck
+// SPDX-License-Identifier: AGPL-3.0-or-later
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { createInvite } from '../src/invites.js';
+import { pushPersonal } from '../src/notify.js';
+import { pollTick } from '../src/polls.js';
+import { issueSetupCode } from '../src/setup/code.js';
+import { isOperational, isSetupComplete } from '../src/setup/state.js';
+import { runProbe } from '../src/settings/probes.js';
+import { updateMeta } from '../src/settings/repo.js';
+import { ADMIN, cfg, makeEnv, type TestEnv } from './helpers.js';
+
+// Block 25 Task 11 (spec Parts E1 and F): the setup gate, the setup-session endpoints and the publicUrl probe.
+type SetupSess = { cookies: Record<string, string>; csrf: string };
+let ipN = 0;
+const freshIp = () => `10.12.${Math.floor(++ipN / 250)}.${ipN % 250}`;
+
+async function unlock(env: TestEnv): Promise<SetupSess> {
+  const code = await issueSetupCode(env.ctx);
+  const r = await env.app.inject({ method: 'POST', url: '/api/setup/unlock', payload: { code }, remoteAddress: freshIp() });
+  expect(r.statusCode).toBe(200);
+  const token = r.cookies.find((c) => c.name === 'ff_setup')!.value;
+  const csrf = r.cookies.find((c) => c.name === 'ff_setup_csrf')!.value;
+  return { cookies: { ff_setup: token, ff_setup_csrf: csrf }, csrf };
+}
+
+/** ctx.fetchImpl that sends the probe's request into the app itself (the public URL reaches this backend) */
+function selfFetch(env: { app?: TestEnv['app'] }, override?: () => Response | undefined): typeof fetch {
+  return (async (input: RequestInfo | URL) => {
+    const u = new URL(input instanceof Request ? input.url : String(input));
+    const o = override?.();
+    if (o) return o;
+    const r = await env.app!.inject({ url: u.pathname + u.search });
+    return new Response(r.body, { status: r.statusCode, headers: { 'content-type': String(r.headers['content-type'] ?? '') } });
+  }) as typeof fetch;
+}
+
+describe('the setup gate while setup is incomplete', () => {
+  let env: TestEnv;
+  beforeAll(async () => { env = await makeEnv({}, { setupComplete: false }); });
+  afterAll(() => env.close());
+
+  it('answers 503 setup_required everywhere but the allow-list', async () => {
+    for (const url of ['/api/me', '/health/ready', '/metrics', '/api/admin/settings', '/api/nope', '/API/me', '/api/setup/../me', '/ws/remote']) {
+      const r = await env.app.inject({ url });
+      expect(r.statusCode, url).toBe(503);
+      expect(r.json(), url).toEqual({ error: 'setup_required' });
+    }
+    const post = await env.app.inject({ method: 'POST', url: '/api/client-errors', payload: { message: 'x' } });
+    expect(post.statusCode).toBe(503);
+  });
+
+  it('lets /health, GET /api/version, /api/setup/* and /internal/gateway-config through', async () => {
+    expect((await env.app.inject('/health')).statusCode).toBe(200);
+    expect((await env.app.inject('/api/version')).statusCode).toBe(200);
+    expect((await env.app.inject('/api/setup/state')).statusCode).toBe(200);
+    const gw = await env.app.inject({ url: '/internal/gateway-config', headers: { 'x-internal-secret': cfg.INTERNAL_SECRET } });
+    expect(gw.statusCode).toBe(200);
+    expect(gw.json().upstreamUrl).toBe(cfg.JELLYFIN_URL);
+  });
+
+  it('/auth/login and /auth/callback need a valid setup session', async () => {
+    expect((await env.app.inject('/auth/login')).statusCode).toBe(503);
+    expect((await env.app.inject('/auth/callback?state=x&code=c')).statusCode).toBe(503);
+    expect((await env.app.inject({ url: '/auth/login', cookies: { ff_setup: 'forged' } })).statusCode).toBe(503);
+    const s = await unlock(env);
+    expect((await env.app.inject({ url: '/auth/login', cookies: s.cookies })).statusCode).toBe(302);
+    // other auth routes stay closed even with a setup session
+    expect((await env.app.inject({ url: '/auth/enroll', cookies: s.cookies })).statusCode).toBe(503);
+    expect((await env.app.inject({ url: '/api/me', cookies: s.cookies })).statusCode).toBe(503);
+  });
+
+  it('GET /api/setup/state: complete, unlocked, media kind, steps and the prefill from the forwarded request', async () => {
+    const r = await env.app.inject({ url: '/api/setup/state', headers: { 'x-forwarded-proto': 'https', host: 'tv.example.com' } });
+    expect(r.json()).toEqual({
+      complete: false, unlocked: false, mediaKind: 'jellyfin',
+      steps: { publicUrl: 'done', media: 'done', signin: 'done', admin: 'todo' },
+      prefill: { publicUrl: 'https://tv.example.com' },
+    });
+    const s = await unlock(env);
+    expect((await env.app.inject({ url: '/api/setup/state', cookies: s.cookies })).json().unlocked).toBe(true);
+    // a garbage host is no prefill
+    const bad = await env.app.inject({ url: '/api/setup/state', headers: { host: 'tv.example.com/evil' } });
+    expect(bad.json().prefill).toEqual({ publicUrl: null });
+  });
+
+  it('steps report env-locked and missing keys', async () => {
+    const before = env.ctx.cfg;
+    try {
+      env.ctx.cfg = { ...before, PUBLIC_URL: 'https://env.example.com', OIDC_CLIENT_SECRET: '' };
+      const steps = (await env.app.inject('/api/setup/state')).json().steps;
+      expect(steps.publicUrl).toBe('env');
+      expect(steps.signin).toBe('todo');
+    } finally {
+      env.ctx.cfg = before;
+    }
+  });
+
+  it('jobs: pollTick with setup incomplete touches nothing (no media call, the due poll stays open)', async () => {
+    const uid = (await env.pool.query("insert into users(id, authentik_sub, name, role, jellyfin_user_id, jellyfin_username, jellyfin_pw_enc) values (gen_random_uuid(),'sub-p','P','admin','jfp','P','x') returning id")).rows[0].id;
+    const poll = (await env.pool.query("insert into polls(id, title, created_by, closes_at, starts_at) values (gen_random_uuid(), 'T', $1, now() - interval '1 minute', now() + interval '1 hour') returning id", [uid])).rows[0].id;
+    await env.pool.query("insert into poll_options(poll_id, jf_item_id, title) values ($1, $2, 'A')", [poll, 'a'.repeat(32)]);
+    expect(isOperational(env.ctx)).toBe(false);
+    const calls = env.jfCalls.length;
+    await pollTick(env.ctx);
+    expect(env.jfCalls.length).toBe(calls);
+    expect((await env.pool.query('select status from polls where id=$1', [poll])).rows[0].status).toBe('open');
+    await env.pool.query('delete from users where id=$1', [uid]);
+  });
+
+  it('isSetupComplete is cached until the settings rev moves; isOperational needs the run-required keys too', async () => {
+    expect(await isSetupComplete(env.ctx)).toBe(false);
+    await updateMeta(env.pool, { setupCompletedAt: new Date() });
+    expect(await isSetupComplete(env.ctx)).toBe(false); // cached: this instance has not seen the new rev yet
+    await env.ctx.settings.reload();
+    expect(await isSetupComplete(env.ctx)).toBe(true);
+    expect(isOperational(env.ctx)).toBe(true);
+    const before = env.ctx.cfg;
+    try {
+      env.ctx.cfg = { ...before, OIDC_ISSUER: '' };
+      expect(isOperational(env.ctx)).toBe(false);
+    } finally {
+      env.ctx.cfg = before;
+    }
+    expect((await env.app.inject('/api/me')).statusCode).toBe(401); // the gate is inert now
+    await updateMeta(env.pool, { setupCompletedAt: null });
+    await env.ctx.settings.reload();
+    expect((await env.app.inject('/api/me')).statusCode).toBe(503);
+  });
+});
+
+describe('setup-session endpoints', () => {
+  const holder: { app?: TestEnv['app'] } = {};
+  let override: (() => Response | undefined) | undefined;
+  let env: TestEnv;
+  let s: SetupSess;
+  beforeAll(async () => {
+    env = await makeEnv({}, { setupComplete: false, ctxPatch: (c) => { c.fetchImpl = selfFetch(holder, () => override?.()); } });
+    holder.app = env.app;
+    s = await unlock(env);
+  });
+  afterAll(() => env.close());
+  const put = (values: Record<string, unknown>, sess: Partial<SetupSess> = s, headers: Record<string, string> = { 'x-ff-setup-csrf': s.csrf }) =>
+    env.app.inject({ method: 'PUT', url: '/api/setup/settings', cookies: sess.cookies ?? {}, headers, payload: { values } });
+
+  it('PUT /api/setup/settings needs the setup session and its csrf header', async () => {
+    expect((await put({ PUBLIC_URL: 'https://tv.example.com' }, {}, {})).statusCode).toBe(401);
+    const noCsrf = await put({ PUBLIC_URL: 'https://tv.example.com' }, s, {});
+    expect(noCsrf.statusCode).toBe(403);
+    expect(noCsrf.json()).toEqual({ error: 'csrf' });
+    expect((await put({ PUBLIC_URL: 'https://tv.example.com' }, s, { 'x-ff-setup-csrf': 'x'.repeat(s.csrf.length) })).statusCode).toBe(403);
+    // the header must match the session's own cookie, not just any cookie value
+    expect((await put({ PUBLIC_URL: 'https://tv.example.com' }, { cookies: { ...s.cookies, ff_setup_csrf: 'abc' } }, { 'x-ff-setup-csrf': 'abc' })).statusCode).toBe(403);
+  });
+
+  it('saves PUBLIC_URL as an origin (trailing slash dropped), audited with actor null and key names only', async () => {
+    const r = await put({ PUBLIC_URL: 'https://tv.example.com/' });
+    expect(r.statusCode).toBe(200);
+    expect(env.ctx.cfg.PUBLIC_URL).toBe('https://tv.example.com');
+    const a = (await env.pool.query("select actor, meta from audit_log where action='settings.update' order by id desc limit 1")).rows[0];
+    expect(a.actor).toBeNull();
+    expect(a.meta).toEqual({ keys: ['PUBLIC_URL'] });
+  });
+
+  it('refuses a path (origin_only), keys outside the wizard (not_allowed) and clearing a run-required key', async () => {
+    const path = await put({ PUBLIC_URL: 'https://tv.example.com/ff' });
+    expect(path.statusCode).toBe(400);
+    expect(path.json()).toEqual({ error: 'invalid_settings', errors: { PUBLIC_URL: 'origin_only' } });
+    const cast = await put({ CAST_ENABLED: false });
+    expect(cast.statusCode).toBe(400);
+    expect(cast.json().errors).toEqual({ CAST_ENABLED: 'not_allowed' });
+    expect((await put({ OIDC_CLIENT_ID: '' })).json().errors).toEqual({ OIDC_CLIENT_ID: 'required' });
+    // media and sign-in keys are the wizard's
+    expect((await put({ ADMIN_GROUP: 'ff-admins' })).statusCode).toBe(200);
+  });
+
+  it('publicUrl probe: the echo through the public URL answers -> ok; another body -> warning, the save still succeeds', async () => {
+    const test = (values: Record<string, unknown>) => env.app.inject({ method: 'POST', url: '/api/setup/test', cookies: s.cookies, headers: { 'x-ff-setup-csrf': s.csrf }, payload: { group: 'general', values } });
+    const ok = await test({ PUBLIC_URL: 'https://tv.example.com' });
+    expect(ok.statusCode).toBe(200);
+    expect(ok.json()).toEqual({ ok: true, code: 'ok', probe: 'publicUrl' });
+    override = () => new Response(JSON.stringify({ answer: 'something else' }), { status: 200, headers: { 'content-type': 'application/json' } });
+    try {
+      const warn = await test({ PUBLIC_URL: 'https://other.example.com' });
+      expect(warn.json()).toMatchObject({ ok: true, code: 'warning', detail: 'echo_mismatch' });
+      expect((await put({ PUBLIC_URL: 'https://other.example.com' })).statusCode).toBe(200);
+      expect(env.ctx.cfg.PUBLIC_URL).toBe('https://other.example.com');
+      override = () => { throw new TypeError('fetch failed'); };
+      expect((await test({ PUBLIC_URL: 'https://down.example.com' })).json()).toMatchObject({ ok: true, code: 'warning', detail: 'unreachable' });
+    } finally {
+      override = undefined;
+    }
+    // http works but is a warning (cookies not secure, cast and passkeys off)
+    expect((await test({ PUBLIC_URL: 'http://tv.example.com' })).json()).toMatchObject({ ok: true, code: 'warning', detail: 'insecure' });
+    // keys outside the wizard are refused here as well
+    const other = await env.app.inject({ method: 'POST', url: '/api/setup/test', cookies: s.cookies, headers: { 'x-ff-setup-csrf': s.csrf }, payload: { group: 'requests' } });
+    expect(other.statusCode).toBe(400);
+  });
+
+  it('runProbe publicUrl directly: the nonce is used once and removed', async () => {
+    const before = (await env.kv.keys('setup:echo:')).length;
+    const r = await runProbe(env.ctx, 'publicUrl', { ...env.ctx.cfg, PUBLIC_URL: 'https://tv.example.com' });
+    expect(r).toEqual({ ok: true, code: 'ok' });
+    expect((await env.kv.keys('setup:echo:')).length).toBe(before);
+    expect(await runProbe(env.ctx, 'publicUrl', { ...env.ctx.cfg, PUBLIC_URL: '' })).toEqual({ ok: false, code: 'invalid', detail: 'not_set' });
+  });
+
+  it('the echo endpoint is no reflector: strict nonce format, unknown nonces 404, a fixed answer shape', async () => {
+    for (const n of ['abc', '<script>', 'a'.repeat(44), `${'a'.repeat(42)}%2F`]) {
+      const r = await env.app.inject({ url: `/api/setup/echo/${n}` });
+      expect(r.statusCode, n).toBe(404);
+      expect(r.body).not.toContain('script');
+    }
+    const unknown = await env.app.inject({ url: `/api/setup/echo/${'a'.repeat(43)}` });
+    expect(unknown.statusCode).toBe(404);
+    expect(unknown.json()).toEqual({ error: 'not_found' });
+    await env.kv.set(`setup:echo:${'b'.repeat(43)}`, 'answer-123', 60);
+    const known = await env.app.inject({ url: `/api/setup/echo/${'b'.repeat(43)}` });
+    expect(known.statusCode).toBe(200);
+    expect(known.json()).toEqual({ answer: 'answer-123' });
+    expect(known.headers['content-type']).toMatch(/^application\/json/);
+  });
+
+  it('after setup completes: an admin ff_sid plus an old ff_setup cookie get 409 setup_complete or 401, never 403 csrf', async () => {
+    await updateMeta(env.pool, { setupCompletedAt: new Date() });
+    await env.ctx.settings.reload();
+    const admin = await env.login({ ...ADMIN, groups: [env.ctx.cfg.ADMIN_GROUP] }); // ADMIN_GROUP was changed by the wizard above
+    const both = { ...s.cookies, ...admin.cookies };
+    const r = await env.app.inject({ method: 'PUT', url: '/api/setup/settings', cookies: both, payload: { values: { PUBLIC_URL: 'https://tv.example.com' } } });
+    expect(r.statusCode).toBe(409);
+    expect(r.json()).toEqual({ error: 'setup_complete' });
+    const t = await env.app.inject({ method: 'POST', url: '/api/setup/test', cookies: both, headers: { 'x-csrf-token': admin.csrf }, payload: { group: 'general' } });
+    expect(t.statusCode).toBe(409);
+    const u = await env.app.inject({ method: 'POST', url: '/api/setup/unlock', cookies: both, payload: { code: 'AAAA-BBBB-CCCC' }, remoteAddress: freshIp() });
+    expect(u.statusCode).toBe(409);
+    const st = await env.app.inject({ url: '/api/setup/state', cookies: both });
+    expect(st.json()).toMatchObject({ complete: true, unlocked: false });
+  });
+});
+
+describe('links without a public URL (setup mode) do not throw', () => {
+  let env: TestEnv;
+  beforeAll(async () => { env = await makeEnv({}, { setupComplete: false }); });
+  afterAll(() => env.close());
+
+  it('the gate keeps notifications and invites unreachable; called directly, they keep the link as given', async () => {
+    expect((await env.app.inject({ method: 'POST', url: '/api/admin/invites', payload: {} })).statusCode).toBe(503);
+    const sent: Array<Record<string, string>> = [];
+    const uid = (await env.pool.query("insert into users(id, authentik_sub, name, role, jellyfin_user_id, jellyfin_username, jellyfin_pw_enc) values (gen_random_uuid(),'sub-n','N','admin','jfn','N','x') returning id")).rows[0].id;
+    await env.pool.query(`insert into user_prefs(user_id, data) values ($1, '{"ntfyTopic":"topic1"}')`, [uid]);
+    const ctx = { db: env.pool, cfg: { ...env.ctx.cfg, PUBLIC_URL: '', NTFY_URL: 'https://ntfy.example.com/x' }, fetchImpl: (async (_u: unknown, init: RequestInit) => { sent.push(init.headers as Record<string, string>); return new Response(null); }) as typeof fetch };
+    expect(await pushPersonal(ctx, uid, { title: 'T', link: '/party/abc' })).toBe(true);
+    expect(sent[0]!.Click).toBe('/party/abc');
+    env.ctx.cfg = { ...env.ctx.cfg, PUBLIC_URL: '' };
+    const inv = await createInvite(env.ctx, uid, { role: 'friend', ttlHours: 1 });
+    expect(inv.link).toBe(`/invite/${inv.token}`);
+  });
+});

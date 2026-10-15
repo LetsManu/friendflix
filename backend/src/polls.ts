@@ -9,6 +9,7 @@ import { notify } from './notify.js';
 import { parties } from './routes/party.js';
 import { requestsClient, requestsEnabled } from './seerr/client.js';
 import { ensureSeerrUser } from './seerr/service.js';
+import { isOperational } from './setup/state.js';
 import { getUserById } from './users.js';
 
 export interface OptionInput {
@@ -147,6 +148,7 @@ export async function resolveRequestedPolls(ctx: Ctx) {
 
 /** Maintenance tick: closes polls, restores rooms lost on restart, marks started polls. */
 export async function pollTick(ctx: Ctx) {
+  if (!isOperational(ctx)) return; // setup mode: no media or request service calls (server.ts checks every tick as well)
   await closeDuePolls(ctx);
   const sched = (await ctx.db.query("select p.*, o.jf_item_id, o.title otitle from polls p join poll_options o on o.id=p.winner_option_id where p.status='scheduled'")).rows;
   for (const p of sched) {

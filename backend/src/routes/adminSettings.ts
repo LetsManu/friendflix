@@ -297,7 +297,7 @@ export function generateVapidPair(): { publicKey: string; privateKey: string } {
   return webpush.generateVAPIDKeys();
 }
 
-const valuesSchema = z.record(z.string().max(64), z.unknown()).refine((v) => Object.keys(v).length <= 100, 'too_many');
+export const valuesSchema = z.record(z.string().max(64), z.unknown()).refine((v) => Object.keys(v).length <= 100, 'too_many');
 
 export function adminSettingsRoutes(app: FastifyInstance, ctx: Ctx) {
   const admin = { preHandler: requireAdmin(ctx) };

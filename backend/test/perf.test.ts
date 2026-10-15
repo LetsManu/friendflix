@@ -12,6 +12,7 @@ import { forgetAuth } from '../src/routes/internal.js';
 import { requireUser } from '../src/session.js';
 import type { Ctx } from '../src/ctx.js';
 import type { JfUser } from '../src/types.js';
+import { isSetupComplete } from '../src/setup/state.js';
 import { cfg, ENC_KEY, fakeHttp, makeEnv, type Call, type Handler, type TestEnv } from './helpers.js';
 import { encrypt, keyFromBase64 } from '../src/crypto.js';
 
@@ -265,6 +266,7 @@ describe('HTTP: compression, Server-Timing, media authz single flight, "because"
   it('emits Server-Timing with db / kv / jf breakdown', async () => {
     const h = (await env.app.inject('/health')).headers['server-timing'];
     expect(h).toMatch(/^app;dur=[\d.]+$/);
+    await isSetupComplete(env.ctx); // the test above moved the settings rev: the setup gate re-reads its state once (one db call)
     const d = String((await call('GET', '/test/db')).headers['server-timing']);
     expect(d).toMatch(/db;dur=[\d.]+;desc="2 calls"/);
     expect(d).toMatch(/kv;dur=[\d.]+;desc="\d+ calls?"/); // session lookup + the explicit get

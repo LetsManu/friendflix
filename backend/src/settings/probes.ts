@@ -1,5 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
+import { randomBytes } from 'node:crypto';
 import type { Config } from '../config.js';
 import type { Ctx } from '../ctx.js';
 import { akBase } from '../invites.js';
@@ -107,6 +108,51 @@ function byStatus(r: Response, denied?: ProbeCode): ProbeResult {
   return byCode(r.status, denied);
 }
 
+/** A JSON body of at most `max` bytes (a URL the admin typed may answer anything); null when larger or not JSON. */
+async function smallJson(r: Response, max = 4096): Promise<unknown> {
+  const reader = r.body?.getReader();
+  if (!reader) return null;
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    size += value.length;
+    if (size > max) {
+      void reader.cancel().catch(() => undefined);
+      return null;
+    }
+    chunks.push(value);
+  }
+  try {
+    return JSON.parse(Buffer.concat(chunks).toString('utf8'));
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Reaches this backend through the public URL (spec Part F step 2): stores a nonce with a random answer in kv (shared by every instance)
+ * and fetches <origin>/api/setup/echo/<nonce>; only the stored answer counts, so a host that reflects the request does not pass. A
+ * mismatch is a warning (NAT loopback often fails inside the network), never a blocker; so is http (cookies not secure, cast and passkeys off).
+ */
+async function publicUrl(ctx: Ctx, f: typeof fetch, cfg: Config): Promise<ProbeResult> {
+  const base = httpUrl(cfg.PUBLIC_URL);
+  if (!base) return fail('invalid', 'invalid_url');
+  const nonce = randomBytes(32).toString('base64url');
+  const answer = randomBytes(16).toString('base64url');
+  const key = `setup:echo:${nonce}`;
+  await ctx.kv.set(key, answer, 60);
+  try {
+    const r = await f(new URL(`/api/setup/echo/${nonce}`, base.origin), { headers: { accept: 'application/json' } });
+    const body = r.ok ? await smallJson(r) : (void r.body?.cancel().catch(() => undefined), null);
+    if ((body as { answer?: unknown } | null)?.answer !== answer) return { ok: true, code: 'warning', detail: 'echo_mismatch' };
+  } finally {
+    await ctx.kv.del(key).catch(() => undefined);
+  }
+  return base.protocol === 'http:' ? { ok: true, code: 'warning', detail: 'insecure' } : OK;
+}
+
 async function media(f: typeof fetch, cfg: Config): Promise<ProbeResult> {
   // the media module knows the request (Task 12: MEDIA_SETUP[kind].probe); an admin-level key gets 2xx
   const req = mediaProbeRequest(cfg);
@@ -198,9 +244,13 @@ async function github(f: typeof fetch, cfg: Config): Promise<ProbeResult> {
 
 /** Runs one probe against `cfg` (the candidate: the current config merged with the submitted values). Never throws. */
 export async function runProbe(ctx: Ctx, id: ProbeId, cfg: Config, opts: { timeoutMs?: number; fetchImpl?: typeof fetch } = {}): Promise<ProbeResult> {
-  if (id === 'publicUrl') return OK; // Task 11: the echo through the public URL (a warning at most, never a blocker)
   if (!probeConfigured(id, cfg)) return fail('invalid', 'not_set');
   const r = runner(opts.fetchImpl ?? ctx.fetchImpl, opts.timeoutMs ?? PROBE_TIMEOUT_MS);
+  if (id === 'publicUrl') {
+    // unreachable or slow through the public URL: a warning, never a blocker
+    const res = await r.within(() => publicUrl(ctx, r.fetch, cfg));
+    return res.code === 'unreachable' || res.code === 'timeout' ? { ok: true, code: 'warning', detail: res.code } : res;
+  }
   return r.within(async () => {
     switch (id) {
       case 'media': return media(r.fetch, cfg);
