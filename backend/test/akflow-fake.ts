@@ -40,7 +40,7 @@ export interface FakeAuthentik {
   /** index of the current stage (stages.length = the flow ended) */
   state: { index: number };
   /** replaces the fetch answer for one call (network errors, CSRF failure pages ...) */
-  override?: (call: AkCall) => Response | Promise<Response> | undefined;
+  override?: (call: AkCall) => Response | Promise<Response | undefined> | undefined;
 }
 
 const json = (body: unknown, setCookie: string[] = [], status = 200) => {

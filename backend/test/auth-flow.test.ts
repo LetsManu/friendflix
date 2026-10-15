@@ -172,9 +172,12 @@ describe('/auth/flow', () => {
     useFake(recoveryStages());
     const second = await b.post('start', { kind: 'recovery' });
     expect(second.json()).toMatchObject({ stage: 'identify' });
-    expect(ak.calls.find((c) => c.path.startsWith('/api/v3/flows/executor/'))!.path).toBe('/api/v3/flows/executor/default-recovery-flow/');
+    expect(ak.calls.some((c) => c.path === '/api/v3/flows/executor/default-recovery-flow/')).toBe(true);
     expect(b.cookies.ff_flow).not.toBe(firstFlow);
     expect(await env.kv.get(`akflow:${sha256(firstFlow)}`)).toBeNull();
+    // the previous attempt's Authentik session was ended first (its cookie went to the invalidation flow)
+    const inval = ak.calls.find((c) => c.path === '/api/v3/flows/executor/default-invalidation-flow/');
+    expect(inval?.headers.cookie).toMatch(/authentik_session=/);
     expect(first.statusCode).toBe(200);
   });
 
@@ -319,7 +322,105 @@ describe('/auth/flow', () => {
     expect(done.cookies.find((c) => c.name === 'ff_sid')).toBeUndefined();
     expect(ak.calls.some((c) => c.path === '/api/v3/flows/executor/default-invalidation-flow/')).toBe(true);
     expect(other.b.cookies.ff_flow).toBeUndefined();
-    expect(await env.kv.get(flowFailKey('bert'))).toBeNull();
+    expect(Number((await env.kv.get(flowFailKey('bert'))) ?? 0)).toBe(0); // the reserved slot came back
+  });
+
+  /** an executor fake with one flow per Authentik session: identification → password (only RIGHT passes) → end; password answers wait a moment */
+  function perSessionFake() {
+    const calls: AkCall[] = [];
+    const where = new Map<string, number>();
+    let n = 0;
+    const json = (body: unknown, cookie?: string) => {
+      const h = new Headers({ 'content-type': 'application/json' });
+      if (cookie) h.append('set-cookie', cookie);
+      return new Response(JSON.stringify(body), { headers: h });
+    };
+    const fetchImpl = (async (input: RequestInfo | URL, init: RequestInit = {}) => {
+      const url = new URL(String(input));
+      const headers = Object.fromEntries(Object.entries((init.headers ?? {}) as Record<string, string>).map(([k, v]) => [k.toLowerCase(), v]));
+      const method = (init.method ?? 'GET').toUpperCase();
+      const body = init.body ? JSON.parse(String(init.body)) : undefined;
+      calls.push({ method, url, path: url.pathname, search: url.search, headers, body });
+      if (!url.pathname.startsWith('/api/v3/flows/executor/default-authentication-flow/')) return new Response('nf', { status: 404 });
+      let sess = /authentik_session=([^;]+)/.exec(headers.cookie ?? '')?.[1];
+      const fresh = sess ? undefined : `authentik_session=${(sess = `p${++n}`)}; Path=/`;
+      const at = where.get(sess) ?? 0;
+      const self = () => new Response(null, { status: 302, headers: { location: `${url.pathname}${url.search}`, ...(fresh ? { 'set-cookie': fresh } : {}) } });
+      if (method === 'GET') return json(at === 0 ? fixture('identification') : at === 1 ? fixture('password') : { component: 'xak-flow-redirect', to: '/', final_redirect: true }, fresh);
+      if (at === 0) { where.set(sess, 1); return self(); }
+      await new Promise((r) => setTimeout(r, 5));
+      if (body?.password === RIGHT) { where.set(sess, 2); return self(); }
+      return json(fixture('password-invalid'), fresh);
+    }) as typeof fetch;
+    return { calls, fetchImpl, passwordPosts: () => calls.filter((c) => c.method === 'POST' && c.body?.password !== undefined) };
+  }
+
+  it('parallel wrong answers from many flows cannot pass the per-account limit (the slot is reserved before Authentik)', async () => {
+    const fake = perSessionFake();
+    env.ctx.fetchImpl = fake.fetchImpl;
+    // 15 flows prepared up to the password stage (identification answers are free)
+    const flows: Array<{ b: ReturnType<typeof browser>; step: string }> = [];
+    for (let i = 0; i < 15; i++) {
+      const b = browser(env);
+      await b.config();
+      const s0 = (await b.post('start', { kind: 'login' })).json() as { step: string };
+      const pw = (await b.post('answer', { step: s0.step, stage: 'identify', identifier: 'fred' })).json() as { stage: string; step: string };
+      expect(pw.stage).toBe('password');
+      flows.push({ b, step: pw.step });
+    }
+    await env.kv.set(flowFailKey('fred'), '9', 900); // one failure left
+    const rs = await Promise.all(flows.map((f) => f.b.post('answer', { step: f.step, stage: 'password', password: PASSWORD })));
+    expect(fake.passwordPosts()).toHaveLength(1);
+    const bodies = rs.map((r) => r.json() as { errors?: string[] });
+    expect(bodies.filter((b) => b.errors?.[0] === 'rate_limited')).toHaveLength(14);
+    expect(bodies.filter((b) => b.errors?.[0] === 'invalid')).toHaveLength(1);
+    expect(await env.kv.get(flowFailKey('fred'))).toBe('10'); // the refused ones gave their slot back
+  });
+
+  it('the reserved slot goes back on success and when Authentik is unavailable; a wrong answer keeps it', async () => {
+    const fake = perSessionFake();
+    env.ctx.fetchImpl = fake.fetchImpl;
+    const atPassword = async () => {
+      const b = browser(env);
+      await b.config();
+      const s0 = (await b.post('start', { kind: 'login' })).json() as { step: string };
+      return { b, step: ((await b.post('answer', { step: s0.step, stage: 'identify', identifier: 'gina' })).json() as { step: string }).step };
+    };
+    await env.kv.set(flowFailKey('gina'), '3', 900);
+    const wrong = await atPassword();
+    expect((await wrong.b.post('answer', { step: wrong.step, stage: 'password', password: PASSWORD })).json()).toMatchObject({ errors: ['invalid'] });
+    expect(await env.kv.get(flowFailKey('gina'))).toBe('4');
+    const down = await atPassword();
+    env.ctx.fetchImpl = (async () => { throw new TypeError('fetch failed'); }) as typeof fetch;
+    expect((await down.b.post('answer', { step: down.step, stage: 'password', password: PASSWORD })).json()).toEqual({ stage: 'unavailable' });
+    expect(await env.kv.get(flowFailKey('gina'))).toBe('4');
+    env.ctx.fetchImpl = fake.fetchImpl;
+    const right = await atPassword();
+    expect((await right.b.post('answer', { step: right.step, stage: 'password', password: RIGHT })).json()).toEqual({ stage: 'unavailable' }); // the T3 end
+    expect(await env.kv.get(flowFailKey('gina'))).toBe('4');
+  });
+
+  it('an answer racing a cancel does not bring the dropped jar back', async () => {
+    const { b, step } = await started();
+    const pw = (await b.post('answer', { step: step.step, stage: 'identify', identifier: 'hugo' })).json() as { step: string };
+    const flowId = b.cookies.ff_flow!;
+    let release!: () => void;
+    const gate = new Promise<void>((r) => { release = r; });
+    let entered!: () => void;
+    const inFlight = new Promise<void>((r) => { entered = r; });
+    ak.override = async (c) => {
+      if (c.method === 'POST' && c.body?.password !== undefined) { entered(); await gate; }
+      return undefined;
+    };
+    const answering = b.post('answer', { step: pw.step, stage: 'password', password: PASSWORD });
+    await inFlight;
+    const cancelCookies = { ...b.cookies };
+    const c = await env.app.inject({ method: 'POST', url: '/auth/flow/cancel', cookies: cancelCookies, headers: { 'x-ff-flow-csrf': cancelCookies.ff_flow_csrf! }, remoteAddress: b.ip });
+    expect(c.statusCode).toBe(200);
+    release();
+    const r = await answering;
+    expect(r.json()).toEqual({ stage: 'expired' });
+    expect(await env.kv.get(`akflow:${sha256(flowId)}`)).toBeNull();
   });
 
   it('an email-sent resend does not count as a failure', async () => {

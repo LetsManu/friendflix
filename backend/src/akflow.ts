@@ -223,12 +223,22 @@ export function continueJar(cfg: SlugCfg, jar: Jar, kind: FlowKind): Jar {
 const jarKey = (flowId: string) => `akflow:${sha256(flowId)}`;
 const jarAgeMs = (jar: Jar, now = Date.now()) => now - jar.createdAt;
 
-/** Stores the jar encrypted under `akflow:<sha256(flowId)>` for what is left of its 600 s; an expired jar is dropped instead. */
-export async function saveJar(ctx: JarCtx, flowId: string, jar: Jar): Promise<void> {
+/**
+ * Stores the jar encrypted under `akflow:<sha256(flowId)>` for what is left of its 600 s; an expired jar is dropped instead (false).
+ * `existing`: only while the jar is still stored (an answer racing a cancel or a new start never brings a dropped jar back); false when
+ * it is gone.
+ */
+export async function saveJar(ctx: JarCtx, flowId: string, jar: Jar, opts: { existing?: boolean } = {}): Promise<boolean> {
   const left = Math.ceil(JAR_TTL_S - jarAgeMs(jar) / 1000);
-  if (left <= 0) return ctx.kv.del(jarKey(flowId));
+  if (left <= 0) {
+    await ctx.kv.del(jarKey(flowId));
+    return false;
+  }
   // the plaintext names its flow id (hashed): a blob copied to another flow's key does not load there
-  await ctx.kv.set(jarKey(flowId), encrypt(ctx.encKey, JSON.stringify({ fid: sha256(flowId), jar })), left);
+  const blob = encrypt(ctx.encKey, JSON.stringify({ fid: sha256(flowId), jar }));
+  if (opts.existing) return ctx.kv.replace(jarKey(flowId), blob, left);
+  await ctx.kv.set(jarKey(flowId), blob, left);
+  return true;
 }
 
 /** The jar of a flow id; null when missing, unreadable or older than 600 s. */

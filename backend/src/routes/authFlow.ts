@@ -10,8 +10,10 @@
  * - Single-use steps: every answer names the step id it answers; the id is claimed atomically and rotated before Authentik is called, so a
  *   replay (double click, captured request) gets 409 `step_used` and Authentik sees one POST.
  * - Answers are checked against the step that was shown (its stage, and whether it offered a passkey, an inline password, a code).
- * - Rate limits: per IP (route config) and per account: failed answers count under `flowfail:<sha256(lower(identifier))>` for every jar
- *   kind; at 10 within 15 min the next answer is refused without calling Authentik.
+ * - Rate limits: per IP (route config, counted by the plugin before the handler runs) and per account under
+ *   `flowfail:<sha256(lower(identifier))>` for every jar kind, 10 failures in 15 min. An answer that carries a secret (password, code,
+ *   passkey) reserves its slot atomically before Authentik is called and gives it back unless Authentik refused it, so parallel answers
+ *   from many flows cannot all slip past the limit; any other answer is refused at the limit and counts only when Authentik refuses it.
  * - Errors: codes only. Logged as `{ route, code }`, never the error object or the body (passwords, codes, credentials).
  *   Authentik unreachable or answering nonsense → `200 {stage:'unavailable'}` (the card offers retry and the classic sign-in).
  */
@@ -39,6 +41,8 @@ const FLOW_PATH = '/auth/flow';
 /** failed answers per account before the next one is refused, and the window they count in */
 export const MAX_FLOW_FAILURES = 10;
 export const FLOW_FAIL_WINDOW_S = 900;
+/** the answer keys (executor side) that carry a secret: these reserve a failure slot before Authentik sees them */
+const SECRET_KEYS = ['password', 'code', 'webauthn', 'passkey'] as const;
 /** internal hops answered by the backend itself (select-stage) before a step is shown */
 const MAX_AUTO = 3;
 
@@ -127,7 +131,7 @@ export function authFlowRoutes(app: FastifyInstance, ctx: Ctx) {
    * of the flow, a link interstitial outside resume → classic consent). A step with an id is kept in the jar (`live`); any other outcome
    * ends the flow in the app and drops the jar.
    */
-  async function advance(req: FastifyRequest, reply: FastifyReply, flowId: string, jar: Jar, first: RawChallenge): Promise<{ out: FlowStep; live: boolean }> {
+  async function advance(req: FastifyRequest, reply: FastifyReply, flowId: string, jar: Jar, first: RawChallenge, fresh: boolean): Promise<{ out: FlowStep; live: boolean }> {
     let challenge = first;
     for (let i = 0; i <= MAX_AUTO; i++) {
       const out = toStep(challenge, jar, jar.step, appHost(ctx.cfg));
@@ -141,8 +145,10 @@ export function authFlowRoutes(app: FastifyInstance, ctx: Ctx) {
       }
       if ('step' in out) {
         jar.last = { raw: keptChallenge(challenge), step: out };
-        await saveJar(ctx, flowId, jar);
-        return { out, live: true };
+        if (await saveJar(ctx, flowId, jar, { existing: !fresh })) return { out, live: true };
+        // cancelled or replaced while Authentik answered: the jar stays gone, and so does the session this answer may have advanced
+        await endAkSession(ctx, jar);
+        return { out: { stage: 'expired' }, live: false };
       }
       await dropJar(ctx, flowId);
       return { out, live: false };
@@ -202,13 +208,17 @@ export function authFlowRoutes(app: FastifyInstance, ctx: Ctx) {
       if (!(await lookupInvite(ctx, body.invite))) throw new HttpError(410, 'invite_invalid');
       init = { invite: body.invite };
     }
-    // one attempt per browser: a new start forgets the previous jar
+    // one attempt per browser: a new start ends the previous attempt (its Authentik session too) and forgets its jar
     const old = req.cookies[FLOW_COOKIE];
-    if (old) await dropJar(ctx, old);
+    if (old) {
+      const prev = await loadJar(ctx, old);
+      if (prev) await endAkSession(ctx, prev);
+      await dropJar(ctx, old);
+    }
     const jar = await createJar(ctx, body.kind, { ...init, step: randomToken(16) });
     const flowId = randomToken();
     const { challenge } = await akExec(ctx, jar, 'GET', undefined, req.ip);
-    const { out, live } = await advance(req, reply, flowId, jar, challenge);
+    const { out, live } = await advance(req, reply, flowId, jar, challenge, true);
     if (live) setFlowCookie(reply, flowId);
     else if (old) clearFlowCookie(reply);
     return out;
@@ -242,15 +252,35 @@ export function authFlowRoutes(app: FastifyInstance, ctx: Ctx) {
     jar.step = randomToken(16);
     jar.last = { ...jar.last, step: { ...shown, step: jar.step } };
     if (identifier !== undefined) jar.identifier = identifier;
-    await saveJar(ctx, flowId, jar);
-    if (identifier && Number((await ctx.kv.get(flowFailKey(identifier))) ?? 0) >= MAX_FLOW_FAILURES) {
-      return { ...jar.last.step, errors: ['rate_limited'] };
+    // only while the jar is still stored: an answer racing a cancel or a new start never brings it back
+    if (!(await saveJar(ctx, flowId, jar, { existing: true }))) {
+      clearFlowCookie(reply);
+      return { stage: 'expired' };
     }
-    const { challenge } = await akExec(ctx, jar, 'POST', answer, req.ip);
+    const limited = (): Reply => ({ ...jar.last!.step, errors: ['rate_limited'] });
+    const failKey = identifier ? flowFailKey(identifier) : null;
+    // a secret reserves its failure slot first (atomic incr): of N parallel answers at the limit, at most the free slots reach Authentik
+    const reserved = failKey !== null && SECRET_KEYS.some((k) => Object.hasOwn(answer, k));
+    if (failKey && reserved) {
+      if ((await ctx.kv.incr(failKey, FLOW_FAIL_WINDOW_S)) > MAX_FLOW_FAILURES) {
+        await ctx.kv.decr(failKey);
+        return limited();
+      }
+    } else if (failKey && Number((await ctx.kv.get(failKey)) ?? 0) >= MAX_FLOW_FAILURES) {
+      return limited();
+    }
+    let challenge: RawChallenge;
+    try {
+      ({ challenge } = await akExec(ctx, jar, 'POST', answer, req.ip));
+    } catch (err) {
+      if (failKey && reserved) await ctx.kv.decr(failKey); // Authentik never judged it (unreachable, transport error)
+      throw err;
+    }
     // a wrong password, code or passkey counts; the e-mail stage's resend notice is no error (stepErrors skips it)
     const errors = stepErrors(challenge);
-    if (errors.length && identifier) await ctx.kv.incr(flowFailKey(identifier), FLOW_FAIL_WINDOW_S);
-    const { out, live } = await advance(req, reply, flowId, jar, challenge);
+    if (failKey && reserved && !errors.length) await ctx.kv.decr(failKey); // accepted: the slot goes back
+    else if (failKey && !reserved && errors.length) await ctx.kv.incr(failKey, FLOW_FAIL_WINDOW_S);
+    const { out, live } = await advance(req, reply, flowId, jar, challenge, false);
     if (!live) clearFlowCookie(reply);
     return errors.length && 'step' in out ? { ...out, errors } : out;
   }));
