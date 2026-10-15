@@ -32,6 +32,11 @@ const run = (env: NodeJS.ProcessEnv = {}) =>
   runBootstrap({ dir, gatewayDir, env, gid: 10001, chown: (p, u, g) => chowns.push([p, u, g]), log: (l) => lines.push(l) });
 const read = (name: string, d = dir) => readFileSync(join(d, name), 'utf8');
 const mode = (p: string) => statSync(p).mode & 0o777;
+/** Overwrite a file the bootstrap may have left read-only (0440): without root (CI runners) the write needs the owner bit back first. */
+const overwrite = (p: string, content: string) => {
+  try { chmodSync(p, 0o600); } catch { /* not there yet */ }
+  writeFileSync(p, content);
+};
 
 describe('runBootstrap', () => {
   it('generates the five files, owned by root and the secrets group, mode 0440, and the gateway copy', () => {
@@ -99,8 +104,8 @@ describe('runBootstrap', () => {
 
   it('regenerates an empty redis_password or internal_secret (logged) and repairs the modes of kept files', () => {
     run();
-    writeFileSync(join(dir, 'redis_password'), '');
-    writeFileSync(join(dir, 'internal_secret'), '\n');
+    overwrite(join(dir, 'redis_password'), '');
+    overwrite(join(dir, 'internal_secret'), '\n');
     chmodSync(join(dir, 'app_enc_key'), 0o644);
     lines = [];
     run();
@@ -116,7 +121,7 @@ describe('runBootstrap', () => {
   it('refuses an empty postgres_password or app_enc_key on a used volume and changes nothing', () => {
     for (const f of ['postgres_password', 'app_enc_key']) {
       run();
-      writeFileSync(join(dir, f), '');
+      overwrite(join(dir, f), '');
       const before = Object.fromEntries(FILES.map((n) => [n, read(n)]));
       lines = [];
       expect(() => run(), f).toThrow(`${join(dir, f)} exists but is empty (damaged volume): restore it from the backup of the bootstrap volume`);
@@ -131,7 +136,7 @@ describe('runBootstrap', () => {
 
   it('an empty file on a fresh volume (nothing else there yet) is generated', () => {
     mkdirSync(dir, { recursive: true });
-    writeFileSync(join(dir, 'app_enc_key'), '');
+    overwrite(join(dir, 'app_enc_key'), '');
     run();
     expect(Buffer.from(read('app_enc_key'), 'base64')).toHaveLength(32);
     expect(lines).toContain('app_enc_key: generated');
@@ -139,7 +144,7 @@ describe('runBootstrap', () => {
 
   it('strips a trailing newline from files and env values, the same way the readers do', () => {
     run();
-    writeFileSync(join(dir, 'redis_password'), 'pw with space\n'); // echo-style
+    overwrite(join(dir, 'redis_password'), 'pw with space\n'); // echo-style
     run({ POSTGRES_PASSWORD: 'pg-pw\r\n' });
     expect(read('redis_password')).toBe('pw with space');
     expect(read('postgres_password')).toBe('pg-pw');
@@ -148,19 +153,19 @@ describe('runBootstrap', () => {
     expect(files.redisPassword).toBe('pw with space');
     expect(files.postgresPassword).toBe('pg-pw');
     // a value keeps any other whitespace: the readers must not trim it away
-    writeFileSync(join(dir, 'redis_password'), ' spaced \n');
+    overwrite(join(dir, 'redis_password'), ' spaced \n');
     expect(readBootstrap(dir).redisPassword).toBe(' spaced ');
   });
 
   it('strips every trailing newline (a fixed point): a value read back equals the one in redis.conf', () => {
     run();
-    writeFileSync(join(dir, 'redis_password'), 'dummy\n\n');
+    overwrite(join(dir, 'redis_password'), 'dummy\n\n');
     run({ POSTGRES_PASSWORD: 'pg-pw\r\n\r\n' });
     expect(read('redis_password')).toBe('dummy');
     expect(read('redis.conf')).toBe('requirepass dummy\n');
     expect(read('postgres_password')).toBe('pg-pw');
     expect(readBootstrap(dir)).toMatchObject({ redisPassword: 'dummy', postgresPassword: 'pg-pw' });
-    writeFileSync(join(dir, 'app_enc_key'), `${K}\n\n\n`);
+    overwrite(join(dir, 'app_enc_key'), `${K}\n\n\n`);
     expect(readBootstrap(dir).appEncKey).toBe(K);
     expect(lazyBootstrap(dir).appEncKey).toBe(K);
   });
@@ -168,13 +173,13 @@ describe('runBootstrap', () => {
   it('a volume whose only remaining trace is the gateway copy is not fresh: an empty postgres_password is refused', () => {
     run();
     for (const f of FILES) rmSync(join(dir, f), { force: true });
-    writeFileSync(join(dir, 'postgres_password'), '');
+    overwrite(join(dir, 'postgres_password'), '');
     const before = read('internal_secret', gatewayDir);
     expect(() => run()).toThrow(/postgres_password exists but is empty/);
     expect(read('postgres_password')).toBe('');
     expect(read('internal_secret', gatewayDir)).toBe(before);
     // an empty gateway copy does not count: nothing ever completed
-    writeFileSync(join(gatewayDir, 'internal_secret'), '\n');
+    overwrite(join(gatewayDir, 'internal_secret'), '\n');
     run();
     expect(read('postgres_password')).toMatch(HEX);
     expect(lines).toContain('postgres_password: generated');
@@ -199,7 +204,7 @@ describe('readBootstrap', () => {
       appEncKey: read('app_enc_key'), internalSecret: read('internal_secret'),
     });
     rmSync(join(dir, 'app_enc_key'), { force: true });
-    writeFileSync(join(dir, 'internal_secret'), '\n');
+    overwrite(join(dir, 'internal_secret'), '\n');
     expect(readBootstrap(dir)).toEqual({ postgresPassword: files.postgresPassword, redisPassword: files.redisPassword });
     expect(readBootstrap(join(root, 'nope'))).toEqual({});
   });
