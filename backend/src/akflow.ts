@@ -42,6 +42,8 @@ export interface Jar {
   invite?: string;
   userId?: string;
   then?: FlowKind;
+  /** setup-static: the ids of the user's static (recovery code) devices before the flow ran; exactly these are deleted once the new codes are confirmed */
+  oldStatic?: string[];
   /**
    * a recovery whose identification Authentik refused (a stage without "pretend user exists"): the person sees "e-mail sent" like
    * everyone else, and resends never reach Authentik, so the answer does not tell whether the account exists (Task 5)

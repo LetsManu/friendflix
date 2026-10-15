@@ -3,7 +3,6 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { timingSafeEqual } from 'node:crypto';
 import { dropRemotePeers } from './tv.js';
-import { audit } from '../audit.js';
 import { loginUi } from '../akflow.js';
 import { publicOrigin, secureCookies } from '../config.js';
 import type { Ctx } from '../ctx.js';
@@ -16,14 +15,14 @@ import { deviceHasSession } from '../devices.js';
 import { deletePushSubscriptions } from '../push.js';
 import { enrollFlowUrl, lookupInvite } from '../invites.js';
 import { listProfiles, publicProfile } from '../profiles.js';
-import { freshAuth, RESET_PIN_MAX_AGE, type OidcClaims } from '../oidc.js';
+import { RESET_PIN_MAX_AGE, type OidcClaims } from '../oidc.js';
 import { HttpError, accountSerial, getUserById, getUserBySub, provisionUser } from '../users.js';
 import { restoreDeletion } from '../deletion.js';
 import {
   accountBeingDeleted, applyAdminPolicy, issueSession, kidLockedDevice, PENDING_COOKIE, RESET_BLOCKED, RESTORE_COOKIE, resolveLogin,
   restorableUntil, verifyPending, verifyRestore,
 } from '../loginFinish.js';
-import { markReauthenticated, REAUTH_MAX_AGE } from '../reauth.js';
+import { REAUTH_MAX_AGE, stampReauth } from '../reauth.js';
 import { pendingNoticeKey } from '../pending.js';
 import { profileOnboarded } from './prefs.js';
 import { publicCapabilities } from '../media/types.js';
@@ -142,18 +141,8 @@ export function authRoutes(app: FastifyInstance, ctx: Ctx) {
       req.log.warn({ err }, 'oidc re-authentication failed'); // e.g. auth_time older than REAUTH_MAX_AGE
       return reply.redirect(REAUTH_FAILED);
     }
-    // checked here as well (independent of the OIDC library): a still valid IdP session is not a re-authentication
-    if (!freshAuth(claims.authTime, REAUTH_MAX_AGE)) return reply.redirect(REAUTH_FAILED);
-    const sid = req.cookies[COOKIE];
-    const s = await loadSession(ctx, sid);
-    const user = s?.userId === userId ? await getUserById(ctx, userId) : null;
-    if (!sid || !s || !user || user.disabled || user.authentik_sub !== claims.sub) {
-      // another person signed in at the IdP, or another (or no) session finished the flow
-      await audit(ctx, userId, 'session.reauth_mismatch', userId, { ip: req.ip });
-      return reply.redirect(REAUTH_FAILED);
-    }
-    if (!(await markReauthenticated(ctx, sid, s))) return reply.redirect(REAUTH_FAILED); // revoked meanwhile
-    await audit(ctx, userId, 'session.reauth', userId, { ip: req.ip });
+    // the checks shared with the in-app flow (reauth.ts): fresh auth_time, same person and session, then the stamp
+    if ((await stampReauth(ctx, req, claims, userId)) !== 'ok') return reply.redirect(REAUTH_FAILED);
     return reply.redirect(next);
   }
 

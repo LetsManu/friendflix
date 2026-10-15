@@ -29,21 +29,26 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { timingSafeEqual } from 'node:crypto';
 import { z } from 'zod';
 import {
-  akExec, akGet, appHost, createJar, dropJar, endAkSession, flowSlug, type Jar, JAR_TTL_S, loadJar, loginUi, type RawChallenge, saveJar,
+  akExec, akGet, appHost, continueJar, createJar, dropJar, endAkSession, flowSlug, type Jar, JAR_TTL_S, loadJar, loginUi, passkeysInApp,
+  type RawChallenge, saveJar,
 } from '../akflow.js';
-import { akFlowExists } from '../authentik.js';
+import {
+  akDeleteDevice, akDevices, akFlowExists, akFlowUrl, akForget, akUserByUsername, akUserBySub, akUsersByEmail,
+} from '../authentik.js';
+import { audit } from '../audit.js';
 import { secureCookies } from '../config.js';
 import type { Ctx } from '../ctx.js';
-import { randomToken, sha256 } from '../crypto.js';
+import { encrypt, randomToken, sha256 } from '../crypto.js';
 import {
   FlowFieldError, type FlowError, type FlowInternal, type FlowStage, type FlowStep, MAX_PENDING_USER, stepErrors, toAnswer, toStep,
 } from '../flowSteps.js';
 import { lookupInvite } from '../invites.js';
 import { type LoginOutcome, resolveLogin } from '../loginFinish.js';
 import type { OidcClaims } from '../oidc.js';
-import { COOKIE as SESSION_COOKIE, loadSession } from '../session.js';
+import { stampReauth } from '../reauth.js';
+import { COOKIE as SESSION_COOKIE, loadSession, requireOwner } from '../session.js';
 import { isSetupComplete } from '../setup/state.js';
-import { HttpError } from '../users.js';
+import { getUserById, getUserBySub, HttpError } from '../users.js';
 
 /** the flow id (httpOnly, only sent to /auth/flow) */
 export const FLOW_COOKIE = 'ff_flow';
@@ -86,13 +91,26 @@ const badRequest = () => new HttpError(400, 'bad_request');
 const csrfError = () => new HttpError(403, 'csrf');
 const AK_DOWN: ReadonlySet<string> = new Set(['authentik_unavailable', 'authentik_error']);
 
+/** what a re-authentication may continue with (the setup kinds and the account changes are reachable only through it) */
+const THEN_KINDS = ['setup-totp', 'setup-static', 'setup-webauthn', 'change-password', 'change-email'] as const;
 const StartBody = z.strictObject({
-  kind: z.enum(['login', 'recovery', 'enroll']),
+  kind: z.enum(['login', 'recovery', 'enroll', 'reauth']),
+  /** reauth only: the flow that continues in the same Authentik session once the person is re-authenticated */
+  then: z.enum(THEN_KINDS).optional(),
   invite: z.string().min(1).max(128).optional(),
   /** recovery only: the name typed on the password screen ("Passwort vergessen?"), answered to the identification by the backend */
   identifier: z.string().trim().min(1).max(254).optional(),
 });
-const ResumeBody = z.strictObject({ token: z.string().max(1024), kind: z.literal('recovery').optional() });
+const ResumeBody = z.strictObject({ token: z.string().max(1024), kind: z.enum(['recovery', 'email-confirm']).optional() });
+/** the new address of an e-mail change: a plausible address, at most 254 characters */
+const NewEmail = z.string().trim().max(254).email();
+/** where a finished re-authentication or account change returns to (phase 2's account page, preflight D6) */
+const ACCOUNT_NEXT = '/me/account';
+/** where the e-mail link of an e-mail change ends */
+const EMAIL_CONFIRMED = '/confirm-email?ok=1';
+/** the pending e-mail change shown on the account page (encrypted, 30 minutes like Authentik's link) */
+export const EMAIL_CHANGE_TTL_S = 1800;
+export const emailChangeKey = (userId: string) => `emailchange:${userId}`;
 /** what an e-mail link token may look like (Authentik's FlowToken key: 60 letters and digits); anything else never reaches Authentik */
 const LINK_TOKEN = /^[A-Za-z0-9_-]{16,256}$/;
 /** a link Authentik no longer knows (used, expired, unknown): it starts a new plan (identification) or denies the flow */
@@ -185,18 +203,79 @@ async function silentAuthorize(ctx: Ctx, req: FastifyRequest, jar: Jar): Promise
   return { claims: await ctx.oidc.finish(to, { state: start.state, nonce: start.nonce, codeVerifier: start.codeVerifier }) };
 }
 
+/** a re-authentication's end: the silent authorize names the person, who must be the session's own; the session gets its stamp */
+async function reauthEnd(ctx: Ctx, req: FastifyRequest, jar: Jar): Promise<'ok' | FlowStep> {
+  if (!jar.userId) return { stage: 'unavailable' };
+  if (!(await isSetupComplete(ctx))) return { stage: 'classic', reason: 'unsupported_stage' };
+  const got = await silentAuthorize(ctx, req, jar);
+  if ('step' in got) return got.step;
+  const r = await stampReauth(ctx, req, got.claims, jar.userId);
+  if (r === 'ok') return 'ok';
+  return r === 'mismatch' ? { stage: 'denied' } : r === 'revoked' ? { stage: 'expired' } : { stage: 'unavailable' };
+}
+
+/** setup-static: the old recovery codes go once the new ones are confirmed (U4: a second run adds a device, the old codes stay valid) */
+async function removeOldStatic(ctx: Ctx, req: FastifyRequest, jar: Jar): Promise<void> {
+  const user = jar.userId ? await getUserById(ctx, jar.userId) : null;
+  if (!user) return;
+  for (const id of jar.oldStatic ?? []) {
+    try {
+      await akDeleteDevice(ctx, user.authentik_sub, 'static', Number(id));
+    } catch (err) {
+      // a device that is already gone (404) is fine; anything else leaves an old code valid, which the log line names (codes only)
+      req.log.warn({ route: req.routeOptions.url ?? 'unmatched', code: errCode(err) }, 'old recovery code device not removed');
+    }
+  }
+}
+
+/**
+ * The e-mail link of an e-mail change was followed and the flow ended: the account is the one the link named (`jar.identifier`, the
+ * Authentik username), and the new address is what Authentik holds now (written by the flow's user write stage), never anything the
+ * client sent. Unknown account, unusable address or an address another account took meanwhile → expired, nothing changes.
+ */
+async function confirmEmail(ctx: Ctx, jar: Jar): Promise<FlowStep> {
+  const ak = jar.identifier ? await akUserByUsername(ctx, jar.identifier) : null;
+  let user = null;
+  for (const sub of ak?.subs ?? []) user ??= await getUserBySub(ctx, sub);
+  const email = ak?.email.trim() ?? '';
+  if (!ak || !user || user.disabled || !NewEmail.safeParse(email).success) return { stage: 'expired' };
+  const taken = await ctx.db.query('select 1 from users where lower(email)=lower($1) and id<>$2', [email, user.id]);
+  if (taken.rowCount) return { stage: 'expired' };
+  await ctx.db.query('update users set email=$2 where id=$1', [user.id, email]);
+  await audit(ctx, user.id, 'account.email', user.id, { fields: ['email'] });
+  await ctx.kv.del(emailChangeKey(user.id));
+  await akForget(ctx, user.authentik_sub);
+  return { stage: 'done', next: EMAIL_CONFIRMED };
+}
+
 /**
  * The end of a flow (`{internal:'end'}`, preflight D4/P12):
  * - `login`/`enroll`: the silent authorize yields the person's claims, and `resolveLogin` applies exactly the classic callback's rules
  *   (approval, invites incl. the enrolment's, the admin group, deletion/restore, locks, ended access) and issues the session (`ui:'app'`).
  *   Never during setup (defence in depth behind the gate, T4-e): the first admin is created only by `/auth/callback` with the setup session.
  * - `recovery`: no session; the person signs in with the new password.
+ * - `reauth` (without `then`): the silent authorize must name the session's own person (stampReauth, shared with the classic callback);
+ *   the session is stamped, no new session is created. A foreign person → `denied`.
+ * - `setup-*`, `change-password`: the account's changes are done; `setup-static` also removes the codes that existed before.
+ * - `email-confirm`: the e-mail link's flow ended; the address Authentik now holds becomes the account's e-mail (confirmEmail).
  * Whatever happens, the Authentik session the flow created is ended and the jar dropped (the FriendFlix session, if any, is issued first).
+ * A `reauth` jar with `then` does not come here: the routes continue it in the same Authentik session.
  */
 export async function completeFlow(ctx: Ctx, req: FastifyRequest, reply: FastifyReply, flowId: string, jar: Jar): Promise<FlowStep> {
   try {
     if (jar.kind === 'recovery' || jar.kind === 'recovery-resume') return { stage: 'done', next: RECOVERY_DONE };
-    if (jar.kind !== 'login' && jar.kind !== 'enroll') return { stage: 'unavailable' }; // the signed-in kinds (Task 10) end elsewhere
+    if (jar.kind === 'email-confirm') return await confirmEmail(ctx, jar);
+    if (jar.kind === 'reauth') {
+      const r = await reauthEnd(ctx, req, jar);
+      return r === 'ok' ? { stage: 'done', next: ACCOUNT_NEXT } : r;
+    }
+    if (jar.kind === 'setup-totp' || jar.kind === 'setup-static' || jar.kind === 'setup-webauthn' || jar.kind === 'change-password') {
+      if (jar.kind === 'setup-static') await removeOldStatic(ctx, req, jar);
+      const user = jar.userId ? await getUserById(ctx, jar.userId) : null;
+      if (user) await akForget(ctx, user.authentik_sub); // the account page shows the new factor
+      return { stage: 'done', next: ACCOUNT_NEXT };
+    }
+    if (jar.kind !== 'login' && jar.kind !== 'enroll') return { stage: 'unavailable' }; // change-email ends at its e-mail stage, not here
     if (!(await isSetupComplete(ctx))) return { stage: 'classic', reason: 'unsupported_stage' };
     const got = await silentAuthorize(ctx, req, jar);
     if ('step' in got) return got.step;
@@ -204,7 +283,7 @@ export async function completeFlow(ctx: Ctx, req: FastifyRequest, reply: Fastify
   } catch (err) {
     // OIDC unavailable (503), Authentik down, a refused code exchange, a provisioning failure: no session, codes only in the log
     req.log.warn({ route: req.routeOptions.url ?? 'unmatched', code: errCode(err) }, 'flow completion failed');
-    return { stage: 'unavailable' };
+    return jar.kind === 'email-confirm' ? { stage: 'expired' } : { stage: 'unavailable' };
   } finally {
     await endAkSession(ctx, jar);
     await dropJar(ctx, flowId);
@@ -238,16 +317,19 @@ export function authFlowRoutes(app: FastifyInstance, ctx: Ctx) {
    * of the flow, a link interstitial outside resume → classic consent). A step with an id is kept in the jar (`live`); any other outcome
    * ends the flow in the app and drops the jar.
    */
-  async function advance(req: FastifyRequest, reply: FastifyReply, flowId: string, jar: Jar, first: RawChallenge, fresh: boolean): Promise<{ out: FlowStep; live: boolean }> {
+  async function advance(req: FastifyRequest, reply: FastifyReply, flowId: string, jar: Jar, first: RawChallenge, fresh: boolean, newEmail?: string): Promise<{ out: FlowStep; live: boolean }> {
     let challenge = first;
     for (let i = 0; i <= MAX_AUTO; i++) {
-      const out = toStep(challenge, jar, jar.step, appHost(ctx.cfg));
+      const out = toStep(challenge, jar, jar.step, appHost(ctx.cfg), newEmail);
       if ('internal' in out) {
         if (out.internal === 'select-stage' && i < MAX_AUTO) {
           challenge = (await akExec(ctx, jar, 'POST', { selected_stage: out.pk }, req.ip)).challenge;
           continue;
         }
-        if (out.internal === 'end') return { out: await completeFlow(ctx, req, reply, flowId, jar), live: false };
+        if (out.internal === 'end') {
+          if (jar.kind === 'reauth' && jar.then) return reauthThen(req, reply, flowId, jar);
+          return { out: await completeFlow(ctx, req, reply, flowId, jar), live: false };
+        }
         break; // link-confirm comes only from resume (Task 5); anything else here is a consent the app does not answer
       }
       if ('step' in out) {
@@ -262,6 +344,42 @@ export function authFlowRoutes(app: FastifyInstance, ctx: Ctx) {
     }
     await dropJar(ctx, flowId);
     return { out: { stage: 'classic', reason: 'consent' }, live: false };
+  }
+
+  /**
+   * A re-authentication with `then` ends: the person is checked and stamped (reauthEnd), then the same jar, now logged in to Authentik,
+   * continues with the follow-up flow (setup-*, change-password, change-email) and shows its first step. A setup-static run first lists
+   * the user's existing recovery-code devices, which are deleted once the new codes are confirmed (completeFlow). On any failure the
+   * Authentik session is ended and the jar dropped.
+   */
+  async function reauthThen(req: FastifyRequest, reply: FastifyReply, flowId: string, jar: Jar): Promise<{ out: FlowStep; live: boolean }> {
+    const fail = async (out: FlowStep) => {
+      await endAkSession(ctx, jar);
+      await dropJar(ctx, flowId);
+      return { out, live: false };
+    };
+    try {
+      const done = await reauthEnd(ctx, req, jar);
+      if (done !== 'ok') return await fail(done);
+      const then = jar.then!;
+      let oldStatic: string[] | undefined;
+      if (then === 'setup-static') {
+        const user = await getUserById(ctx, jar.userId!);
+        const devices = user ? await akDevices(ctx, user.authentik_sub) : null;
+        if (!devices) return await fail({ stage: 'unavailable' });
+        oldStatic = devices.filter((d) => d.type === 'static').map((d) => d.id);
+      }
+      const next = continueJar(ctx.cfg, jar, then);
+      for (const k of Object.keys(jar)) delete (jar as unknown as Record<string, unknown>)[k];
+      Object.assign(jar, next, { step: randomToken(16), ...(oldStatic ? { oldStatic } : {}) });
+      delete jar.last;
+      const { challenge } = await akExec(ctx, jar, 'GET', undefined, req.ip);
+      return await advance(req, reply, flowId, jar, challenge, false);
+    } catch (err) {
+      await endAkSession(ctx, jar);
+      await dropJar(ctx, flowId);
+      throw err;
+    }
   }
 
   /**
@@ -304,7 +422,9 @@ export function authFlowRoutes(app: FastifyInstance, ctx: Ctx) {
     if (!parsed.success) throw badRequest();
     const body = parsed.data;
     if (body.identifier !== undefined && body.kind !== 'recovery') throw badRequest();
+    if (body.then !== undefined && body.kind !== 'reauth') throw badRequest();
     if (loginUi(ctx.cfg) !== 'app') throw new HttpError(409, 'classic');
+    if (body.kind === 'reauth') return startReauth(req, reply, body.then);
     let init: Partial<Pick<Jar, 'query' | 'invite'>> = {};
     if (body.kind === 'enroll') {
       // enrolment runs with the Authentik invitation of a portal invite; the invite also travels to the end of the flow (preflight P16)
@@ -330,6 +450,37 @@ export function authFlowRoutes(app: FastifyInstance, ctx: Ctx) {
     return out;
   }));
 
+  /**
+   * A re-authentication of the signed-in person (owner profile): needs the session and its `x-csrf-token` (these routes are outside /api/,
+   * so the global hook does not run; the jar does not exist yet to check it later). The backend answers the identification with the
+   * person's Authentik username itself, so the first step is the password (or the second factor, or a passkey). With `then` the follow-up
+   * flow is checked up front: a passkey setup needs passkeys in-app (else 409 `passkey_classic`: the web uses the classic page), an
+   * e-mail change needs its flow in Authentik.
+   */
+  async function startReauth(req: FastifyRequest, reply: FastifyReply, then: (typeof THEN_KINDS)[number] | undefined) {
+    await requireOwner(ctx)(req, reply);
+    if (reply.sent) return reply;
+    const sent = req.headers['x-csrf-token'];
+    if (typeof sent !== 'string' || !sameToken(sent, req.session!.csrf)) throw csrfError();
+    const user = req.user!;
+    if (then === 'setup-webauthn' && !(await passkeysInApp(ctx))) throw new HttpError(409, 'passkey_classic');
+    if (then === 'change-email' && !(await akFlowExists(ctx, flowSlug(ctx.cfg, 'change-email')!))) throw new HttpError(409, 'flow_not_configured');
+    const ak = await akUserBySub(ctx, user.authentik_sub);
+    if (!ak) throw new HttpError(404, 'authentik_user_not_found');
+    const old = await forgetPrevious(req);
+    const jar = await createJar(ctx, 'reauth', { userId: user.id, identifier: ak.username, ...(then ? { then } : {}), step: randomToken(16) });
+    const flowId = randomToken();
+    let { challenge } = await akExec(ctx, jar, 'GET', undefined, req.ip);
+    // an identification stage with the password inline cannot be answered without it: the person sees it (the sub check at the end holds anyway)
+    if (challenge.component === 'ak-stage-identification' && challenge.password_fields !== true) {
+      ({ challenge } = await akExec(ctx, jar, 'POST', { uid_field: ak.username }, req.ip));
+    }
+    const { out, live } = await advance(req, reply, flowId, jar, challenge, true);
+    if (live) setFlowCookie(reply, flowId);
+    else if (old) clearFlowCookie(reply);
+    return out;
+  }
+
   // The button on /reset?token= (Ruling 11: the page itself never calls this): continues Authentik's recovery flow with the e-mail
   // link's token in a new jar. Authentik's link interstitial (the first challenge, nothing else) is answered with its own token, since the
   // click is the confirmation; then the flow goes on as usual (MFA, new password ×2). The token is only passed on to Authentik, never
@@ -346,10 +497,29 @@ export function authFlowRoutes(app: FastifyInstance, ctx: Ctx) {
     };
     const { token } = parsed.data;
     if (!LINK_TOKEN.test(token)) return expired();
-    const jar = await createJar(ctx, 'recovery-resume', { query: `flow_token=${token}`, step: randomToken(16) });
+    const confirm = parsed.data.kind === 'email-confirm';
+    const jar = await createJar(ctx, confirm ? 'email-confirm' : 'recovery-resume', { query: `flow_token=${token}`, step: randomToken(16) });
     const flowId = randomToken();
     let { challenge } = await akExec(ctx, jar, 'GET', undefined, req.ip);
     let first = toStep(challenge, jar, jar.step, appHost(ctx.cfg));
+    if (confirm) {
+      // the e-mail change's link: no session of any kind. The first challenge must be the link interstitial, which names the account
+      // (read before it is answered); the flow must then end (its user write stage has written the address). Anything else → expired.
+      if (!('internal' in first && first.internal === 'link-confirm' && first.pendingUser)) {
+        await endAkSession(ctx, jar);
+        return expired();
+      }
+      jar.identifier = first.pendingUser;
+      ({ challenge } = await akExec(ctx, jar, 'POST', { token: first.token }, req.ip));
+      first = toStep(challenge, jar, jar.step, appHost(ctx.cfg));
+      if (!('internal' in first && first.internal === 'end')) {
+        await endAkSession(ctx, jar);
+        return expired();
+      }
+      const out = await completeFlow(ctx, req, reply, flowId, jar);
+      if (old) clearFlowCookie(reply);
+      return out;
+    }
     if ('internal' in first && first.internal === 'link-confirm') {
       if (first.pendingUser) jar.identifier = first.pendingUser; // the account the link belongs to: its failure counter (codes)
       ({ challenge } = await akExec(ctx, jar, 'POST', { token: first.token }, req.ip));
@@ -397,7 +567,7 @@ export function authFlowRoutes(app: FastifyInstance, ctx: Ctx) {
     const shown = jar.last.step;
     if (stage !== shown.stage) throw badRequest();
     checkOffered(shown, given);
-    const answer = toAnswer(shown.stage, given, jar.last.raw); // 400 bad_request / password_mismatch, before anything is used up
+    let answer = toAnswer(shown.stage, given, jar.last.raw); // 400 bad_request / password_mismatch, before anything is used up
     const typed = (answer as { uid_field?: unknown }).uid_field;
     const identifier = shown.stage === 'identify' && typeof typed === 'string' ? typed : jar.identifier;
     // single use: the step is claimed atomically (a concurrent replay loses here) and rotated before Authentik is called
@@ -409,6 +579,14 @@ export function authFlowRoutes(app: FastifyInstance, ctx: Ctx) {
     if (!(await saveJar(ctx, flowId, jar, { existing: true }))) {
       clearFlowCookie(reply);
       return { stage: 'expired' };
+    }
+    // e-mail change: the new address is checked before Authentik or a mail budget is touched (a refused address uses up nothing but the step)
+    let newEmail: string | undefined;
+    if (jar.kind === 'change-email' && shown.stage === 'prompt') {
+      const bad = await checkNewEmail(jar, (answer as { email?: unknown }).email);
+      if (bad) return { ...jar.last.step, errors: [bad] };
+      newEmail = String((answer as { email: string }).email).trim();
+      answer = { ...answer, email: newEmail };
     }
     const limited = (): Reply => ({ ...jar.last!.step, errors: ['rate_limited'] });
     const failKey = identifier ? flowFailKey(identifier) : null;
@@ -424,7 +602,7 @@ export function authFlowRoutes(app: FastifyInstance, ctx: Ctx) {
     }
     // e-mails: a recovery identification sends the reset mail, every answer on the e-mail stage re-sends it. One resend a minute per
     // attempt, and a budget per typed name and per IP; neither depends on whether the account exists.
-    const mails = shown.stage === 'email-sent' || (shown.stage === 'identify' && jar.kind === 'recovery');
+    const mails = shown.stage === 'email-sent' || (shown.stage === 'identify' && jar.kind === 'recovery') || newEmail !== undefined;
     let budget: string[] = [];
     if (mails) {
       if (shown.stage === 'email-sent' && !(await ctx.kv.setnx(resendKey(flowId), '1', RESEND_GAP_S))) return limited();
@@ -440,6 +618,10 @@ export function authFlowRoutes(app: FastifyInstance, ctx: Ctx) {
       if (failKey && reserved) await ctx.kv.decr(failKey); // Authentik never judged it (unreachable, transport error)
       for (const k of budget) await ctx.kv.decr(k); // no mail went out
       throw err;
+    }
+    if (newEmail !== undefined) {
+      if (challenge.component !== 'ak-stage-email') for (const k of budget) await ctx.kv.decr(k); // Authentik sent no mail
+      else return emailRequested(reply, flowId, jar, challenge, newEmail);
     }
     if (jar.kind === 'recovery' && shown.stage === 'identify' && challenge.component === 'ak-stage-identification') {
       // an identification stage without "pretend user exists" refused the name: answer exactly as for an existing account
@@ -457,6 +639,40 @@ export function authFlowRoutes(app: FastifyInstance, ctx: Ctx) {
     // a mail went out: the next resend waits a minute from now
     else if (mails && out.stage === 'email-sent') await ctx.kv.set(resendKey(flowId), '1', RESEND_GAP_S);
     return errors.length && 'step' in out ? { ...out, errors } : out;
+  }
+
+  /**
+   * The new address of an e-mail change: a plausible address (zod, ≤ 254) that differs from the current one → `invalid`, and that no
+   * other FriendFlix account (`users.email`, case-insensitive) or Authentik user has → `email_in_use`. Null when it is fine.
+   */
+  async function checkNewEmail(jar: Jar, typed: unknown): Promise<FlowError | null> {
+    if (typeof typed !== 'string' || !typed.trim()) return 'required';
+    const parsed = NewEmail.safeParse(typed);
+    if (!parsed.success) return 'invalid';
+    const email = parsed.data;
+    const me = jar.userId ? await getUserById(ctx, jar.userId) : null;
+    if (!me) throw new HttpError(401, 'unauthenticated');
+    if ((me.email ?? '').toLowerCase() === email.toLowerCase()) return 'invalid';
+    const other = await ctx.db.query('select 1 from users where lower(email)=lower($1) and id<>$2', [email, me.id]);
+    if (other.rowCount) return 'email_in_use';
+    const mine = await akUserBySub(ctx, me.authentik_sub);
+    if ((await akUsersByEmail(ctx, email)).some((u) => u.pk !== mine?.pk)) return 'email_in_use';
+    return null;
+  }
+
+  /**
+   * Authentik sent the confirmation link to the new address: the answer is the masked address. The link works without a session, so the
+   * Authentik session is ended and the jar dropped now. The address is kept encrypted for 30 minutes, only to show "confirmation pending"
+   * on the account page; the audit row lists field names, never addresses.
+   */
+  async function emailRequested(reply: FastifyReply, flowId: string, jar: Jar, challenge: RawChallenge, newEmail: string): Promise<FlowStep> {
+    const out = toStep(challenge, jar, randomToken(16), appHost(ctx.cfg), newEmail);
+    await endAkSession(ctx, jar);
+    await dropJar(ctx, flowId);
+    clearFlowCookie(reply);
+    await ctx.kv.set(emailChangeKey(jar.userId!), encrypt(ctx.encKey, newEmail), EMAIL_CHANGE_TTL_S);
+    await audit(ctx, jar.userId!, 'account.email_requested', jar.userId!, { fields: ['email'] });
+    return 'step' in out ? out : { stage: 'unavailable' };
   }
 
   /**
@@ -487,6 +703,16 @@ export function authFlowRoutes(app: FastifyInstance, ctx: Ctx) {
     }
     return old;
   }
+
+  // The fallback of Ruling 1 (passkeys cannot run in-app): the person registers a passkey on Authentik's own page. A redirect to the
+  // browser-facing issuer origin (AUTHENTIK_URL may be internal), for the signed-in owner only.
+  app.get('/auth/flow/classic/webauthn-setup', { config: { rateLimit: { max: 10, timeWindow: '1 minute' } } }, guarded(async (req, reply) => {
+    await requireOwner(ctx)(req, reply);
+    if (reply.sent) return reply;
+    const url = akFlowUrl(ctx.cfg, flowSlug(ctx.cfg, 'setup-webauthn')!);
+    if (!url) throw new HttpError(409, 'flow_not_configured');
+    return reply.redirect(url);
+  }));
 
   // Gives up the attempt: Authentik's session (if any) is ended, the jar deleted, the cookies cleared.
   app.post('/auth/flow/cancel', { config: { rateLimit: { max: 30, timeWindow: '1 minute' } } }, guarded(async (req, reply) => {
