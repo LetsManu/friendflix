@@ -4,7 +4,7 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { createHmac, randomUUID, timingSafeEqual } from 'node:crypto';
 import { dropRemotePeers } from './tv.js';
 import { audit } from '../audit.js';
-import { secureCookies } from '../config.js';
+import { publicOrigin, secureCookies } from '../config.js';
 import type { Ctx } from '../ctx.js';
 import { authenticate, COOKIE, loadSession, newSession, rand, requireUser, saveSession } from '../session.js';
 import { revokeCasts } from '../cast.js';
@@ -194,12 +194,21 @@ export function authRoutes(app: FastifyInstance, ctx: Ctx) {
    * The re-authentication branch of /auth/callback: the IdP login must be fresh (auth_time) and be the same person as the
    * session that started it. No provisioning, no device, no new session.
    */
+  /** The URL the IdP sent the browser back to. Without a PUBLIC_URL nobody can sign in yet: 503, like an unreachable IdP. */
+  function callbackUrl(req: FastifyRequest): URL {
+    if (!publicOrigin(ctx.cfg)) throw new HttpError(503, 'oidc_unavailable');
+    return new URL(req.url, ctx.cfg.PUBLIC_URL);
+  }
+  /** a sign-in that cannot run at all (lazy OIDC 503) is answered as such, not as a failed login */
+  const unavailable = (err: unknown) => err instanceof HttpError && err.statusCode === 503 && err.message === 'oidc_unavailable';
+
   async function finishReauth(req: FastifyRequest, reply: FastifyReply, saved: SavedLogin & { reauth: NonNullable<SavedLogin['reauth']> }) {
     const { userId, next } = saved.reauth;
     let claims: OidcClaims;
     try {
-      claims = await ctx.oidc.finish(new URL(req.url, ctx.cfg.PUBLIC_URL), saved, { maxAge: REAUTH_MAX_AGE });
+      claims = await ctx.oidc.finish(callbackUrl(req), saved, { maxAge: REAUTH_MAX_AGE });
     } catch (err) {
+      if (unavailable(err)) throw err;
       req.log.warn({ err }, 'oidc re-authentication failed'); // e.g. auth_time older than REAUTH_MAX_AGE
       return reply.redirect(REAUTH_FAILED);
     }
@@ -230,7 +239,7 @@ export function authRoutes(app: FastifyInstance, ctx: Ctx) {
       // order matters (phase 2 ruling F15): a re-authentication is handled first, before any account lookup or provisioning
       if (saved.reauth) return await finishReauth(req, reply, { ...saved, reauth: saved.reauth });
       // forgotten PIN: the IdP must really have asked for the login again (auth_time), a still valid IdP session is not enough
-      const claims = await ctx.oidc.finish(new URL(req.url, ctx.cfg.PUBLIC_URL), saved, saved.resetPin ? { maxAge: RESET_PIN_MAX_AGE } : undefined);
+      const claims = await ctx.oidc.finish(callbackUrl(req), saved, saved.resetPin ? { maxAge: RESET_PIN_MAX_AGE } : undefined);
       // the account is being deleted (claimed by the deletion tick): no login, no approval request, no new account (F15 step 2)
       const deleting = await ctx.db.query('select 1 from account_deletions where authentik_sub=$1 and finished_at is null', [claims.sub]);
       if (deleting.rowCount) return reply.code(403).send({ error: 'account_deleted' });
@@ -288,6 +297,7 @@ export function authRoutes(app: FastifyInstance, ctx: Ctx) {
       await audit(ctx, user.id, 'login', user.id, { ip: req.ip });
       return reply.redirect('/');
     } catch (err) {
+      if (unavailable(err)) throw err; // 503 oidc_unavailable through the error handler
       req.log.warn({ err }, 'oidc callback failed'); if (process.env.DEBUG_TEST) console.error(err);
       return reply.code(401).send({ error: 'login_failed' });
     }

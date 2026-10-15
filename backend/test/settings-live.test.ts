@@ -80,6 +80,8 @@ describe('live settings in the context', () => {
 
   it('a TMDB key saved in the database reports from: db, and the admin route publishes a revision', async () => {
     const admin = await env.login();
+    const sk = `sess:${admin.cookies.ff_sid}`; // replacing a source key needs a recent re-authentication
+    await env.kv.set(sk, JSON.stringify({ ...JSON.parse((await env.kv.get(sk))!), reauthAt: Date.now() }), 600);
     await env.ctx.settings.save({ TMDB_API_KEY: 'saved-in-db-1234' }, null);
     const st = await env.app.inject({ url: '/api/admin/sources/tmdb', cookies: admin.cookies });
     expect(st.json()).toMatchObject({ set: true, from: 'db', last4: '1234' });
@@ -217,6 +219,25 @@ describe('lazy OIDC', () => {
     expect(calls).toBe(4);
   });
 
+  it('saving PUBLIC_URL drops the cached provider (its redirect_uri): the next login discovers again', async () => {
+    expect((await env.app.inject('/auth/login')).statusCode).toBe(302); // cached from the test above
+    const before = discovered.length;
+    await env.app.inject('/auth/login');
+    expect(discovered).toHaveLength(before);
+    await env.ctx.settings.save({ PUBLIC_URL: 'https://friend2.example.com' }, null);
+    expect((await env.app.inject('/auth/login')).statusCode).toBe(302);
+    expect(discovered).toHaveLength(before + 1);
+  });
+
+  it('a callback whose provider became unavailable answers 503 oidc_unavailable, not 401 login_failed', async () => {
+    const l = await env.app.inject('/auth/login');
+    const state = l.cookies.find((c) => c.name === 'ff_oidc')!.value;
+    await env.ctx.settings.save({ OIDC_ISSUER: 'https://down.example.com/' }, null);
+    const cb = await env.app.inject({ url: `/auth/callback?state=${state}&code=c`, cookies: { ff_oidc: state } });
+    expect(cb.statusCode).toBe(503);
+    expect(cb.json()).toEqual({ error: 'oidc_unavailable' });
+  });
+
   it('an empty OIDC_ISSUER is unavailable, not a crash', async () => {
     const oidc = createLazyOidc(() => ({ ...cfg, OIDC_ISSUER: '' }));
     await expect(oidc.start()).rejects.toMatchObject({ statusCode: 503, message: 'oidc_unavailable' });
@@ -240,11 +261,30 @@ describe('an empty PUBLIC_URL', () => {
     expect(code.statusCode).toBe(200);
   });
 
+  it('a callback without a PUBLIC_URL answers 503 oidc_unavailable (no TypeError, no 401)', async () => {
+    const l = await env.app.inject('/auth/login');
+    const state = l.cookies.find((c) => c.name === 'ff_oidc')!.value;
+    const cb = await env.app.inject({ url: `/auth/callback?state=${state}&code=c`, cookies: { ff_oidc: state } });
+    expect(cb.statusCode).toBe(503);
+    expect(cb.json()).toEqual({ error: 'oidc_unavailable' });
+  });
+
   it('cookies follow a PUBLIC_URL saved later (secure once it is https)', async () => {
     const plain = await env.app.inject('/auth/login');
     expect(plain.cookies.find((c) => c.name === 'ff_oidc')?.secure).toBeFalsy();
-    env.ctx.cfg = { ...env.ctx.cfg, PUBLIC_URL: 'https://portal.example.com' };
+    await env.ctx.settings.save({ PUBLIC_URL: 'https://portal.example.com' }, null); // the real save path, not a test override
     const secure = await env.app.inject('/auth/login');
     expect(secure.cookies.find((c) => c.name === 'ff_oidc')?.secure).toBe(true);
+  });
+
+  it('a re-authentication callback without a PUBLIC_URL answers 503, not the reauth-failed redirect', async () => {
+    const { cookies } = await env.login(); // PUBLIC_URL is set by the test above
+    env.ctx.cfg = { ...env.ctx.cfg, PUBLIC_URL: '' };
+    const r = await env.app.inject({ url: '/auth/reauth', cookies });
+    expect(r.statusCode).toBe(302);
+    const state = r.cookies.find((c) => c.name === 'ff_oidc')!.value;
+    const cb = await env.app.inject({ url: `/auth/callback?state=${state}&code=c`, cookies: { ...cookies, ff_oidc: state } });
+    expect(cb.statusCode).toBe(503);
+    expect(cb.json()).toEqual({ error: 'oidc_unavailable' });
   });
 });

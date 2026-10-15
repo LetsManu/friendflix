@@ -76,7 +76,7 @@ await live.startMedia({ dispatch: (e) => dispatchMediaEvent(ctx, e), log: app.lo
 // one-off: push the changed role policies (guest transcoding) to every existing Jellyfin user
 void reapplyPoliciesOnce(ctx).catch(jobFailed(ctx, app.log, 'role-reapply', 'role policy re-apply failed'));
 pushEnabled(cfg); // validates the VAPID pair once (warns and disables push when invalid)
-settings.onChange(['VAPID_PUBLIC_KEY', 'VAPID_PRIVATE_KEY', 'VAPID_SUBJECT', 'PUBLIC_URL'], () => { pushEnabled(settings.current()); });
+const offPush = settings.onChange(['VAPID_PUBLIC_KEY', 'VAPID_PRIVATE_KEY', 'VAPID_SUBJECT', 'PUBLIC_URL'], () => { pushEnabled(settings.current()); });
 const akMissing = authentikConfigProblem(cfg);
 if (akMissing) app.log.warn({ missing: akMissing }, `Authentik invitations disabled: ${akMissing.join(', ')} not set (see docs/integrations.md)`);
 else if (!cfg.AUTHENTIK_URL) app.log.info('Authentik invitations off: invited people need an existing Authentik account');
@@ -137,6 +137,7 @@ for (const sig of ['SIGTERM', 'SIGINT'] as const) {
   process.on(sig, () => {
     timers.forEach(clearInterval);
     stopHygiene();
+    offPush();
     void live.close().catch(() => undefined)
       .then(() => settings.close()).catch(() => undefined)
       .then(() => app.close()).then(() => process.exit(0));
