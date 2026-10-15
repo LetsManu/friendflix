@@ -141,10 +141,14 @@ export async function isSetupSession(ctx: Pick<Ctx, 'kv'>, req: FastifyRequest, 
  */
 export function requireSetupSession(ctx: Pick<Ctx, 'kv' | 'db' | 'settings'>) {
   return async (req: FastifyRequest, reply: FastifyReply) => {
-    if (await isSetupComplete(ctx)) return reply.code(409).send({ error: 'setup_complete' });
+    const write = req.method !== 'GET' && req.method !== 'HEAD';
+    // a write reads the database itself (they are rare): this instance's cached answer may still say "incomplete" for up to the 30 s poll
+    // when the completion's bus message was lost, and a setup session must not change settings once an admin exists
+    const complete = write ? (await readMeta(ctx.db)).setupCompletedAt !== null : await isSetupComplete(ctx);
+    if (complete) return reply.code(409).send({ error: 'setup_complete' });
     const s = await loadSetupSession(ctx, req);
     if (!s) return reply.code(401).send({ error: 'setup_session_required' });
-    if (req.method === 'GET' || req.method === 'HEAD') return;
+    if (!write) return;
     const sent = String(req.headers[SETUP_CSRF_HEADER] ?? '');
     const cookie = req.cookies[SETUP_CSRF_COOKIE] ?? '';
     if (!safeEqual(sent, s.csrf) || !safeEqual(cookie, s.csrf)) return reply.code(403).send({ error: 'csrf' });

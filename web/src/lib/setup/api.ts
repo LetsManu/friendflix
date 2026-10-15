@@ -13,7 +13,7 @@ import type { ProbeResult } from '#lib/admin/settings/api';
 export type StepState = 'todo' | 'done' | 'env';
 export type AutoField = 'url' | 'username' | 'password';
 export interface SetupState {
-  complete: boolean;
+  complete: false;
   /** this browser holds a valid setup session */
   unlocked: boolean;
   mediaKind: string;
@@ -75,7 +75,9 @@ async function call<T>(path: string, opts: { method?: string; body?: unknown; ti
   return json as T;
 }
 
-export const setupState = (): Promise<SetupState> => call<SetupState>('/api/setup/state');
+/** GET /api/setup/state: the wizard's state during setup; once setup is complete only `{ complete: true }` */
+export type SetupAnswer = SetupState | { complete: true };
+export const setupState = (): Promise<SetupAnswer> => call<SetupAnswer>('/api/setup/state');
 
 /** Opens the setup session (the cookies ff_setup and ff_setup_csrf). */
 export const unlock = (code: string): Promise<{ ok: true }> => call('/api/setup/unlock', { method: 'POST', body: { code } });

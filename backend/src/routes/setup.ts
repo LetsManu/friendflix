@@ -10,7 +10,7 @@ import { plainHttpUrl } from '../settings/probeKit.js';
 import { publicUrlSchema, SETTINGS, type SettingGroup } from '../settings/registry.js';
 import { AK_BLUEPRINT_DIR, applyAuthentik, planAuthentik } from '../setup/authentikSetup.js';
 import { createSetupSession, hasSetupSession, requireSetupSession, verifySetupCode } from '../setup/code.js';
-import { isSetupComplete } from '../setup/state.js';
+import { isSetupComplete, SIGNIN_VIA } from '../setup/state.js';
 import { saveWithProbes, testGroup, valuesSchema } from './adminSettings.js';
 
 /**
@@ -46,11 +46,7 @@ function prefillUrl(req: FastifyRequest): string | null {
   return r.success ? r.data : null;
 }
 
-/**
- * Set once the Authentik automation applied and saved the sign-in (step 5 then says "Sign in with Authentik"); a manual save of a
- * sign-in key drops it (step 5 says something neutral: any OIDC provider). Holds no value, only the path taken.
- */
-const SIGNIN_VIA = 'setup:signin:via';
+/** SIGNIN_VIA (setup/state.ts) lasts this long; a manual save of a sign-in key drops it (step 5 then says something neutral: any OIDC provider) */
 const SIGNIN_VIA_TTL_S = 7 * 24 * 3600;
 
 /** 32 random bytes, base64url (settings/probes.ts publicUrl): nothing else is ever looked up */
@@ -60,10 +56,11 @@ export function setupRoutes(app: FastifyInstance, ctx: Ctx) {
   const session = { preHandler: requireSetupSession(ctx) };
 
   app.get('/api/setup/state', async (req) => {
-    const complete = await isSetupComplete(ctx);
+    // public: once setup is complete it says that and nothing else (no keys, sources or addresses of a running install)
+    if (await isSetupComplete(ctx)) return { complete: true };
     return {
-      complete,
-      unlocked: !complete && (await hasSetupSession(ctx, req)),
+      complete: false,
+      unlocked: await hasSetupSession(ctx, req),
       mediaKind: ctx.cfg.MEDIA_SERVER,
       // the media step's fields (labels: settings.keys.<KEY>) and whether "Create API key automatically" exists for this kind
       media: { keys: mediaSetupKeys(ctx.cfg), auto: MEDIA_SETUP[ctx.cfg.MEDIA_SERVER]?.auto?.fields ?? null },
@@ -71,11 +68,11 @@ export function setupRoutes(app: FastifyInstance, ctx: Ctx) {
         publicUrl: step(ctx, ['PUBLIC_URL']),
         media: step(ctx, runRequired(ctx, 'media')),
         signin: step(ctx, runRequired(ctx, 'signin')),
-        admin: complete ? 'done' : 'todo',
+        admin: 'todo',
       },
       // the saved (or environment) public URL wins: step 4's redirect URI must be the one OIDC will use; else the browser's origin
       prefill: { publicUrl: ctx.cfg.PUBLIC_URL || prefillUrl(req) },
-      signinVia: !complete && (await ctx.kv.get(SIGNIN_VIA).catch(() => null)) === 'authentik' ? 'authentik' : null,
+      signinVia: (await ctx.kv.get(SIGNIN_VIA).catch(() => null)) === 'authentik' ? 'authentik' : null,
     };
   });
 

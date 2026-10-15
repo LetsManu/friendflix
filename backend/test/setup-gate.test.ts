@@ -60,10 +60,15 @@ describe('the setup gate while setup is incomplete', () => {
     expect(gw.json().upstreamUrl).toBe(cfg.JELLYFIN_URL);
   });
 
-  it('/auth/login and /auth/callback need a valid setup session', async () => {
-    expect((await env.app.inject('/auth/login')).statusCode).toBe(503);
-    expect((await env.app.inject('/auth/callback?state=x&code=c')).statusCode).toBe(503);
-    expect((await env.app.inject({ url: '/auth/login', cookies: { ff_setup: 'forged' } })).statusCode).toBe(503);
+  it('/auth/login and /auth/callback need a valid setup session (without one: back to the wizard, no JSON page)', async () => {
+    const login = await env.app.inject('/auth/login');
+    expect([login.statusCode, login.headers.location]).toEqual([302, '/setup']);
+    // the setup session ran out between login and callback, or its cookie was lost on the way back from the IdP: the code step says so
+    const cb = await env.app.inject('/auth/callback?state=x&code=c');
+    expect([cb.statusCode, cb.headers.location]).toEqual([302, '/setup?expired=1']);
+    expect((await env.app.inject({ url: '/auth/login', cookies: { ff_setup: 'forged' } })).headers.location).toBe('/setup');
+    // not a navigation: the usual answer
+    expect((await env.app.inject({ method: 'POST', url: '/auth/logout' })).statusCode).toBe(503);
     const s = await unlock(env);
     expect((await env.app.inject({ url: '/auth/login', cookies: s.cookies })).statusCode).toBe(302);
     // other auth routes stay closed even with a setup session
@@ -282,7 +287,18 @@ describe('setup-session endpoints', () => {
   });
 
   it('after setup completes: an admin ff_sid plus an old ff_setup cookie get 409 setup_complete or 401, never 403 csrf', async () => {
+    expect(await isSetupComplete(env.ctx)).toBe(false); // cached for the current rev
     await updateMeta(env.pool, { setupCompletedAt: new Date() });
+    // this instance has not seen the completion yet (a lost bus message: up to the 30 s poll), its cached gate still says incomplete;
+    // a setup session's write reads the database itself and is refused
+    expect(await isSetupComplete(env.ctx)).toBe(false);
+    for (const [method, url, payload] of [['PUT', '/api/setup/settings', { values: { PUBLIC_URL: 'https://stale.example.com' } }], ['POST', '/api/setup/media/auto', { url: 'https://jf.example.com', username: 'a', password: 'b' }],
+      ['POST', '/api/setup/authentik/apply', { url: 'https://auth.example.com', token: 't', addMeToAdmins: false }]] as const) {
+      const w = await env.app.inject({ method, url, cookies: s.cookies, headers: { 'x-ff-setup-csrf': s.csrf }, payload });
+      expect(w.statusCode, url).toBe(409);
+      expect(w.json()).toEqual({ error: 'setup_complete' });
+    }
+    expect(env.ctx.cfg.PUBLIC_URL).not.toBe('https://stale.example.com');
     await env.ctx.settings.reload();
     const admin = await env.login({ ...ADMIN, groups: [env.ctx.cfg.ADMIN_GROUP] }); // ADMIN_GROUP was changed by the wizard above
     const both = { ...s.cookies, ...admin.cookies };
@@ -293,8 +309,9 @@ describe('setup-session endpoints', () => {
     expect(t.statusCode).toBe(409);
     const u = await env.app.inject({ method: 'POST', url: '/api/setup/unlock', cookies: both, payload: { code: 'AAAA-BBBB-CCCC' }, remoteAddress: freshIp() });
     expect(u.statusCode).toBe(409);
+    // once complete, the public state says that and nothing else (no keys, sources or addresses)
     const st = await env.app.inject({ url: '/api/setup/state', cookies: both });
-    expect(st.json()).toMatchObject({ complete: true, unlocked: false });
+    expect(st.json()).toEqual({ complete: true });
   });
 });
 

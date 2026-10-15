@@ -77,7 +77,8 @@ type Reply = (b: unknown, status?: number, headers?: Record<string, string>) => 
 /** null when the path is not a setup endpoint */
 export function setupRoute(st: SetupMock, m: string, p: string, body: any, headers: Record<string, string>, J: Reply): Promise<void> | null {
   if (p === '/api/setup/state' && m === 'GET') {
-    return J({ complete: st.complete, unlocked: st.unlocked && !st.complete, mediaKind: 'jellyfin', media: st.media, steps: st.steps, prefill: st.prefill, signinVia: st.signinVia });
+    if (st.complete) return J({ complete: true }); // nothing else once complete (backend: routes/setup.ts)
+    return J({ complete: false, unlocked: st.unlocked, mediaKind: 'jellyfin', media: st.media, steps: st.steps, prefill: st.prefill, signinVia: st.signinVia });
   }
   if (p === '/api/setup/unlock' && m === 'POST') {
     st.unlocks.push(String(body.code ?? ''));

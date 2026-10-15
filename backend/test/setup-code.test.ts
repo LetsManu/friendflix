@@ -48,7 +48,7 @@ describe('unlock', () => {
   afterAll(() => env.close());
   beforeEach(async () => { code = await issueSetupCode(env.ctx); });
 
-  it('the right code -> 200, ff_setup httpOnly + SameSite=Strict, ff_setup_csrf readable; the session lives in kv by hash', async () => {
+  it('the right code -> 200, ff_setup httpOnly + SameSite=Lax, ff_setup_csrf readable; the session lives in kv by hash', async () => {
     const r = await unlock(code.toLowerCase().replace(/-/g, ' '));
     expect(r.statusCode).toBe(200);
     expect(r.json()).toEqual({ ok: true });

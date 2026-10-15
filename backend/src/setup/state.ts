@@ -56,6 +56,14 @@ export function isOperational(ctx: Pick<Ctx, 'db' | 'settings' | 'cfg'>): boolea
   return Boolean(c?.complete) && missingRunRequired(ctx.cfg).length === 0;
 }
 
+/** where a sign-in during setup goes when its setup session is gone: the wizard's code step with the "session expired" note */
+export const SETUP_EXPIRED = '/setup?expired=1';
+/**
+ * Set once the Authentik automation applied and saved the sign-in (routes/setup.ts: step 5 then says "Sign in with Authentik"); holds no
+ * value, only the path taken. completeSetup deletes it.
+ */
+export const SIGNIN_VIA = 'setup:signin:via';
+
 /** kv prefix of the setup sessions (code.ts): all of them end with setup */
 export const SETUP_SESSION_PREFIX = 'setup:sess:';
 /** how long a second first-admin sign-in waits for the first one's provisioning (Jellyfin calls) before it gives up */
@@ -118,6 +126,7 @@ export async function completeSetup(ctx: Pick<Ctx, 'db' | 'kv' | 'settings'>, us
     where id = 1 and exists (select 1 from users where id = $1 and role = 'admin')`, [userId]));
   await step('deleting the setup sessions', async () => {
     for (const key of await ctx.kv.keys(SETUP_SESSION_PREFIX)) await ctx.kv.del(key);
+    await ctx.kv.del(SIGNIN_VIA); // a stale path if setup is ever reopened by hand
   });
   await audit(ctx, userId, 'setup.completed'); // audit() never throws
   // the second producer of the stamp (next to reauth.ts markReauthenticated), at the session's creation: the person has just signed in

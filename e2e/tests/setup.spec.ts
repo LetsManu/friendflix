@@ -207,6 +207,15 @@ test.describe('setup wizard', () => {
     await expect(page).toHaveURL(/127\.0\.0\.1:\d+\/$/);
   });
 
+  test('a sign-in whose setup session ran out comes back to /setup?expired=1: the code step says why', async ({ page }) => {
+    await page.goto('/setup?expired=1');
+    await expect(h2(page, 'Einrichtungscode eingeben')).toBeVisible();
+    await expect(page.getByText('Deine Einrichtungssitzung ist abgelaufen. Gib den Einrichtungscode noch einmal ein.')).toBeVisible();
+    await page.getByLabel('Einrichtungscode', { exact: true }).fill(SETUP_CODE);
+    await page.getByRole('button', { name: 'Entsperren' }).click();
+    await expect(h2(page, 'Öffentliche Adresse')).toBeVisible();
+  });
+
   test('Authentik: plan failures stop before Apply; blueprint_invalid and busy explain the retry; http needs OIDC_ALLOW_INSECURE', async ({ page, api }) => {
     api.setup!.steps.publicUrl = 'done';
     api.setup!.steps.media = 'done';

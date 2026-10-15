@@ -50,7 +50,7 @@ import { hygieneRoutes } from './routes/hygiene.js';
 import { usageRoutes } from './routes/usage.js';
 import { SettingsError } from './settings/store.js';
 import { hasSetupSession } from './setup/code.js';
-import { isSetupComplete } from './setup/state.js';
+import { isSetupComplete, SETUP_EXPIRED } from './setup/state.js';
 import { syncFileKeys } from './sources/keys.js';
 import { testSourceKey } from './sources/omdb.js';
 import { appVersion } from './version.js';
@@ -154,11 +154,19 @@ export async function buildApp(ctx: Ctx, extra: Extra = {}): Promise<FastifyInst
     // the allow-list first: /health and the gateway's polls never wait for the setup state
     if (route !== undefined && (route.startsWith('/api/setup/') || SETUP_OPEN.has(route))) return;
     if (route !== undefined && SETUP_OPEN_GET.has(route) && (req.method === 'GET' || req.method === 'HEAD')) return;
-    if (await isSetupComplete(ctx)) return;
-    if (route !== undefined && SETUP_LOGIN.has(route) && (await hasSetupSession(ctx, req))) return;
-    // a refused websocket upgrade: this hook runs before @fastify/websocket's own (which would destroy the socket on response), so the
-    // upgrade socket is closed here; otherwise it stays open and holds up app.close()
-    if (req.headers.upgrade) reply.raw.once('finish', () => req.raw.socket?.destroy());
+    let open = false;
+    try {
+      open = (await isSetupComplete(ctx)) || (route !== undefined && SETUP_LOGIN.has(route) && (await hasSetupSession(ctx, req)));
+    } finally {
+      // a refused websocket upgrade (Node's own flag: an Upgrade header without Connection: upgrade is a plain request): this hook runs
+      // before @fastify/websocket's own (which would destroy the socket on response), so the upgrade socket is closed here, also when a
+      // check above throws (the error handler's 500); otherwise it stays open and holds up app.close()
+      if (!open && (req.raw as { upgrade?: boolean }).upgrade === true) reply.raw.once('finish', () => req.raw.socket?.destroy());
+    }
+    if (open) return;
+    // the sign-in routes are browser navigations: without a setup session (it ran out between login and callback, or the cookie was lost on
+    // the way back from the IdP) they go to the wizard, which asks for the code again, instead of showing a JSON answer
+    if (route !== undefined && SETUP_LOGIN.has(route) && req.method === 'GET') return reply.redirect(route === '/auth/callback' ? SETUP_EXPIRED : '/setup');
     return reply.code(503).send({ error: 'setup_required' });
   });
 

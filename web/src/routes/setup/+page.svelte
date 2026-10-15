@@ -5,7 +5,7 @@
    * The setup wizard (spec Part F), steps 1-5; step 6 is /setup/extras, signed in. A public page (no /api/me): the layout sends a new
    * install here when /api/me answers 503 setup_required. GET /api/setup/state decides where to start: the code step until this
    * browser holds a setup session, then the first step that still needs something. A step whose keys come from the environment is
-   * shown locked with a Next button and skipped on the way in. An expired setup session goes back to the code step; a completed setup
+   * shown locked with a Next button and skipped on the way in. An expired setup session (also ?expired=1 from the sign-in) goes back to the code step; a completed setup
    * (someone else finished) goes to / with a full page load (the layout has not loaded the account on this public page).
    */
   import { onMount, tick } from 'svelte';
@@ -59,13 +59,15 @@
   async function refresh(how: { start: true } | { after: N } | { stay: true }) {
     loading = true;
     loadFailed = false;
+    let r: Awaited<ReturnType<typeof setupState>>;
     try {
-      s = await setupState();
+      r = await setupState();
     } catch {
       loadFailed = true;
       return;
     } finally { loading = false; }
-    if (s.complete) return leave();
+    if (r.complete) return leave();
+    s = r;
     if (!publicUrl) publicUrl = s.prefill.publicUrl ?? '';
     if (!s.unlocked) return go(1, !('start' in how));
     if ('start' in how) return go(firstOpenStep(s), false);
@@ -86,6 +88,8 @@
   }
 
   onMount(() => {
+    // the backend sends a sign-in whose setup session ran out back here (/setup?expired=1): the code step says why
+    if (new URLSearchParams(location.search).get('expired') === '1') expired = true;
     const pre = publicLocale();
     if (pre) void setLocale(pre);
     void refresh({ start: true });

@@ -26,7 +26,7 @@ import { profileOnboarded } from './prefs.js';
 import { publicCapabilities } from '../media/types.js';
 import { requestsEnabled } from '../seerr/client.js';
 import { isSetupSession, SETUP_COOKIE, SETUP_CSRF_COOKIE, setupSessionHash } from '../setup/code.js';
-import { claimSetup, completeSetup, isSetupComplete } from '../setup/state.js';
+import { claimSetup, completeSetup, isSetupComplete, SETUP_EXPIRED } from '../setup/state.js';
 import type { UserRow } from '../types.js';
 import { FALLBACK_LANGUAGE, instanceLanguage, languageFromAcceptLanguage, m, profileLanguage, roleLabel } from '../i18n.js';
 
@@ -316,7 +316,9 @@ export function authRoutes(app: FastifyInstance, ctx: Ctx) {
       // setup mode: the only sign-in is the first admin's, started by /auth/login?setup=1 with the setup session that finishes it here
       // (the gate in app.ts lets the callback through with any valid setup session; the binding is checked here)
       const firstAdmin = !(await isSetupComplete(ctx));
-      if (firstAdmin && (saved.reauth || !(await isSetupSession(ctx, req, saved.setup)))) return reply.code(503).send({ error: 'setup_required' });
+      // without that setup session (it ran out meanwhile, or another browser finishes the login): back to the wizard's code step, a browser
+      // navigation gets no JSON answer
+      if (firstAdmin && (saved.reauth || !(await isSetupSession(ctx, req, saved.setup)))) return reply.redirect(SETUP_EXPIRED);
       // order matters (phase 2 ruling F15): a re-authentication is handled first, before any account lookup or provisioning
       if (saved.reauth) return await finishReauth(req, reply, { ...saved, reauth: saved.reauth });
       // forgotten PIN: the IdP must really have asked for the login again (auth_time), a still valid IdP session is not enough

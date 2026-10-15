@@ -54,6 +54,7 @@ describe('the first admin', () => {
     s = await unlock(env);
     revBefore = env.ctx.settings.rev();
     env.claims.current = person('sub-first'); // neither the admin group nor an invite
+    await env.kv.set('setup:signin:via', 'authentik', 60); // the Authentik automation's mark: completion removes it
     const announce = vi.spyOn(env.ctx.settings, 'announce');
     cb = await callback(env, await setupLogin(env, s), s.cookies);
     expect(announce).toHaveBeenCalled();
@@ -74,6 +75,7 @@ describe('the first admin', () => {
     expect(meta.rev).toBeGreaterThan(revBefore);
     expect(env.ctx.settings.rev()).toBe(meta.rev);
     expect(await env.kv.keys('setup:sess:')).toEqual([]);
+    expect(await env.kv.get('setup:signin:via')).toBeNull();
     expect(await audits(env, 'setup.completed')).toEqual([{ actor: u!.id, target: null, meta: {} }]);
     // signed in, with the re-authentication stamp of the session's creation
     adminSid = cb.cookies.find((c) => c.name === 'ff_sid')!.value;
@@ -97,7 +99,7 @@ describe('the first admin', () => {
     // 409, not the brief's 401: requireSetupSession answers setup_complete before it looks at the session (ruling D22)
     const put = await env.app.inject({ method: 'PUT', url: '/api/setup/settings', cookies: s.cookies, headers: { 'x-ff-setup-csrf': s.csrf }, payload: { values: { PUBLIC_URL: 'https://tv.example.com' } } });
     expect(put.statusCode).toBe(409);
-    expect((await env.app.inject({ url: '/api/setup/state', cookies: s.cookies })).json()).toMatchObject({ complete: true, unlocked: false });
+    expect((await env.app.inject({ url: '/api/setup/state', cookies: s.cookies })).json()).toEqual({ complete: true });
     const me = await env.app.inject({ url: '/api/me', cookies: { ff_sid: adminSid } });
     expect(me.statusCode).toBe(200);
     expect(me.json()).toMatchObject({ role: 'admin', isAdmin: true });
@@ -154,21 +156,19 @@ describe('the setup branch needs the setup session that started the login', () =
   afterAll(() => env.close());
   const noUsers = async () => expect((await env.pool.query('select count(*)::int n from users')).rows[0].n).toBe(0);
 
-  it('callback without setup session during setup -> 503 setup_required, no user row', async () => {
+  it('callback without setup session during setup -> back to the code step (/setup?expired=1), no user row', async () => {
     const s = await unlock(env);
     const state = await setupLogin(env, s);
     const r = await callback(env, state);
-    expect(r.statusCode).toBe(503);
-    expect(r.json()).toEqual({ error: 'setup_required' });
+    expect([r.statusCode, r.headers.location]).toEqual([302, '/setup?expired=1']);
     await noUsers();
     expect(await isSetupComplete(env.ctx)).toBe(false);
   });
 
-  it('a login started without ?setup=1 is no setup login: 503, no user row', async () => {
+  it('a login started without ?setup=1 is no setup login: back to the code step, no user row', async () => {
     const s = await unlock(env);
     const r = await callback(env, await setupLogin(env, s, ''), s.cookies);
-    expect(r.statusCode).toBe(503);
-    expect(r.json()).toEqual({ error: 'setup_required' });
+    expect([r.statusCode, r.headers.location]).toEqual([302, '/setup?expired=1']);
     await noUsers();
   });
 
@@ -180,28 +180,27 @@ describe('the setup branch needs the setup session that started the login', () =
     expect(JSON.stringify(saved)).not.toContain(s.cookies.ff_setup!);
   });
 
-  it('a planted ff_oidc state from another setup session is refused (503, no user row)', async () => {
+  it('a planted ff_oidc state from another setup session is refused (back to the code step, no user row)', async () => {
     // the attacker's own setup session starts the login; the victim's browser (another setup session) finishes it
     const attacker = await unlock(env);
     const victim = await unlock(env);
     const state = await setupLogin(env, attacker);
     const r = await callback(env, state, victim.cookies);
-    expect(r.statusCode).toBe(503);
-    expect(r.json()).toEqual({ error: 'setup_required' });
+    expect([r.statusCode, r.headers.location]).toEqual([302, '/setup?expired=1']);
     await noUsers();
     // a state forged with a setup flag but no hash of this session is refused the same way
     const forged = 'forged-state-1';
     await env.kv.set(`oidc:${forged}`, JSON.stringify({ state: forged, nonce: 'n', codeVerifier: 'v', setup: true }), 600);
-    expect((await callback(env, forged, victim.cookies)).statusCode).toBe(503);
+    expect((await callback(env, forged, victim.cookies)).headers.location).toBe('/setup?expired=1');
     await noUsers();
     expect(await isSetupComplete(env.ctx)).toBe(false);
   });
 
-  it('a setup session that expired between login and callback -> 503', async () => {
+  it('a setup session that expired between login and callback -> back to the code step', async () => {
     const s = await unlock(env);
     const state = await setupLogin(env, s);
     await env.kv.del(`setup:sess:${sha(s.cookies.ff_setup!)}`);
-    expect((await callback(env, state, s.cookies)).statusCode).toBe(503);
+    expect((await callback(env, state, s.cookies)).headers.location).toBe('/setup?expired=1');
     await noUsers();
   });
 
