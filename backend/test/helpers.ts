@@ -40,7 +40,7 @@ export const cfg: Config = {
   AUTHENTIK_INVALIDATION_FLOW: 'default-invalidation-flow', AUTHENTIK_EMAIL_CHANGE_FLOW: 'friendflix-email-change', PASSKEYS_IN_APP: 'auto', LOGIN_COVER_WALL: 'true',
 };
 
-export type Handler = (url: URL, init: RequestInit, body: any) => { status?: number; json?: unknown; raw?: string | Uint8Array } | undefined;
+export type Handler = (url: URL, init: RequestInit, body: any) => { status?: number; json?: unknown; raw?: string | Uint8Array; type?: string } | undefined;
 export interface Call { method: string; host?: string; path: string; search: string; body: any; auth?: string }
 
 /** In-memory fake of the Jellyfin/Seerr HTTP APIs: routes are matched by "METHOD /path". */
@@ -56,7 +56,7 @@ export function fakeHttp(routes: Record<string, Handler>, calls: Call[] = []): t
     });
     const r = key ? routes[key]!(url, init, body) : undefined;
     const status = r?.status ?? (key ? 200 : 404);
-    if (r?.raw !== undefined) return new Response(r.raw as BodyInit, { status });
+    if (r?.raw !== undefined) return new Response(r.raw as BodyInit, { status, ...(r.type ? { headers: { 'content-type': r.type } } : {}) });
     return new Response(status === 204 || r?.json === undefined ? null : JSON.stringify(r.json), { status, headers: { 'content-type': 'application/json' } });
   }) as typeof fetch;
 }

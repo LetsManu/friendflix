@@ -34,6 +34,7 @@ import { searchRoutes } from './routes/search.js';
 import { seerrRoutes } from './routes/seerr.js';
 import { setupRoutes } from './routes/setup.js';
 import { statsRoutes } from './routes/stats.js';
+import { publicArtRoutes } from './routes/publicArt.js';
 import { tvRoutes } from './routes/tv.js';
 import { clientErrorRoutes } from './clientErrors.js';
 import { playbackTimingRoutes } from './playtiming.js';
@@ -218,6 +219,7 @@ export async function buildApp(ctx: Ctx, extra: Extra = {}): Promise<FastifyInst
 
   authRoutes(app, ctx);
   authFlowRoutes(app, ctx);
+  publicArtRoutes(app, ctx);
   accountRoutes(app, ctx);
   mediaRoutes(app, ctx);
   castRoutes(app, ctx);
