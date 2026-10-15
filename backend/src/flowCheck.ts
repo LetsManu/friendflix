@@ -45,8 +45,8 @@ export interface LoginCheck {
 
 const TTL_S = 600;
 const UNREACHABLE_TTL_S = 60;
-/** the flows the in-app login drives, in the order the card lists them (the e-mail change flow is checked by Task 10) */
-const KINDS: readonly CheckedKind[] = ['login', 'recovery', 'enroll', 'invalidation', 'setup-totp', 'setup-static', 'setup-webauthn', 'change-password'];
+/** the flows the in-app login drives, in the order the card lists them (the e-mail change flow: prompt, e-mail, user write; Task 10) */
+const KINDS: readonly CheckedKind[] = ['login', 'recovery', 'enroll', 'invalidation', 'setup-totp', 'setup-static', 'setup-webauthn', 'change-password', 'change-email'];
 
 const slugOf = (cfg: Ctx['cfg'], kind: CheckedKind): string | undefined =>
   kind === 'invalidation' ? cfg.AUTHENTIK_INVALIDATION_FLOW || 'default-invalidation-flow' : flowSlug(cfg, kind);

@@ -93,7 +93,7 @@ export const emptyHintOnTop = (results: ReadonlyArray<{ ok: boolean; error: stri
 // ---------------------------------------------------------------------------------------------------------------------------
 // Block 23 phase 3: the sign-in card (mirror of backend/src/flowCheck.ts `LoginCheck`)
 
-export type CheckedKind = 'login' | 'recovery' | 'enroll' | 'invalidation' | 'setup-totp' | 'setup-static' | 'setup-webauthn' | 'change-password';
+export type CheckedKind = 'login' | 'recovery' | 'enroll' | 'invalidation' | 'setup-totp' | 'setup-static' | 'setup-webauthn' | 'change-password' | 'change-email';
 export interface FlowCheckRow { kind: CheckedKind; slug: string; state: 'ok' | 'missing' | 'unsupported'; stages: string[] }
 export interface LoginCheck {
   mode: 'app' | 'authentik';

@@ -12,6 +12,7 @@ import { metricsPlugin } from './metrics.js';
 import { recordError } from './errorlog.js';
 import { HttpError } from './users.js';
 import { accountRoutes } from './routes/account.js';
+import { accountSecurityRoutes } from './routes/accountSecurity.js';
 import { adminRoutes, inviteRoutes } from './routes/admin.js';
 import { adminSettingsRoutes } from './routes/adminSettings.js';
 import { adminUserRoutes } from './routes/adminUsers.js';
@@ -221,6 +222,7 @@ export async function buildApp(ctx: Ctx, extra: Extra = {}): Promise<FastifyInst
   authFlowRoutes(app, ctx);
   publicArtRoutes(app, ctx);
   accountRoutes(app, ctx);
+  accountSecurityRoutes(app, ctx);
   mediaRoutes(app, ctx);
   castRoutes(app, ctx);
   internalRoutes(app, ctx);

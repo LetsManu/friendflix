@@ -370,7 +370,6 @@ const es: Translation<typeof de> = {
       notAvailableHint: 'Ahora mismo no se puede consultar el estado.',
       manage: 'Gestionar en la página de inicio de sesión',
       newTab: '(se abre en una pestaña nueva)',
-      coming: 'Pronto podrás cambiar tu contraseña y la 2FA en FriendFlix.',
     },
     sessions: {
       title: 'Sesiones y dispositivos',

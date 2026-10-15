@@ -163,7 +163,7 @@ describe('/auth/flow', () => {
   it('start: bad bodies → 400; a recovery jar; a second start forgets the first jar', async () => {
     const b = browser(env);
     await b.config();
-    for (const body of [{ kind: 'reauth' }, { kind: 'login', extra: 1 }, { kind: 'login', invite: 'x'.repeat(129) }, { kind: 'recovery', invite: 'x'.repeat(30) }]) {
+    for (const body of [{ kind: 'setup-totp' }, { kind: 'login', then: 'setup-totp' }, { kind: 'login', extra: 1 }, { kind: 'login', invite: 'x'.repeat(129) }, { kind: 'recovery', invite: 'x'.repeat(30) }]) {
       const r = await b.post('start', body);
       expect([r.statusCode, r.json()], JSON.stringify(body)).toEqual([400, { error: 'bad_request' }]);
     }

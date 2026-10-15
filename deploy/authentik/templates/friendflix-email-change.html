@@ -1,0 +1,43 @@
+https://friend.example.com/confirm-email?token={{ token }}
+{# SPDX-FileCopyrightText: 2026 Manuel Weißböck #}
+{# SPDX-License-Identifier: AGPL-3.0-or-later #}
+{# FriendFlix: the first line is the one value to replace: the app address of the confirmation link (the e-mail stage of the e-mail #}
+{# change flow, friendflix-email-change.yaml, uses this file as its template). The link leads into FriendFlix (/confirm-email), which #}
+{# continues the flow with the token after a click there; it works without a session. Mount this folder at /templates on the #}
+{# Authentik server and worker (see docs/authentik.md). Not imported by FriendFlix. #}
+{% extends "email/base.html" %}
+
+{% load i18n %}
+{% load humanize %}
+
+{% block content %}
+<tr>
+  <td align="center">
+    <h1>{% trans "Confirm your new e-mail address" %}</h1>
+  </td>
+</tr>
+<tr>
+  <td align="center">
+    <table border="0">
+      <tr>
+        <td align="center" style="max-width: 300px; padding: 20px 0; color: #212124;">
+          {% trans "Use the button below to confirm this e-mail address for your FriendFlix account." %}
+        </td>
+      </tr>
+      <tr>
+        <td align="center" class="btn btn-primary">
+          <a id="confirm" href="https://friend.example.com/confirm-email?token={{ token }}" rel="noopener noreferrer" target="_blank">{% trans "Confirm e-mail address" %}</a>
+        </td>
+      </tr>
+    </table>
+  </td>
+</tr>
+{% endblock %}
+
+{% block sub_content %}
+<tr>
+  <td style="padding: 20px; font-size: 12px; color: #212124;" align="center">
+    {% blocktrans with expires=expires|timeuntil %}If you did not ask for this, ignore this e-mail. The link is valid for {{ expires }}.{% endblocktrans %}
+  </td>
+</tr>
+{% endblock %}

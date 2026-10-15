@@ -2,7 +2,7 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
 <script lang="ts">
   /**
-   * The authenticator-app setup of an enrolment: the QR code (drawn from `qrPath(otpauth)`, as SVG path data, no markup injected), the
+   * The authenticator-app setup (an enrolment, or the account page via ReauthDialog): the QR code (drawn from `qrPath(otpauth)`, as SVG path data, no markup injected), the
    * secret in groups of 4 for a manual entry, and 6 boxes for the first code. The otpauth link stays in this component's props: it is
    * never stored, logged or put into a URL. Never navigates: emits `next` / `done`.
    */

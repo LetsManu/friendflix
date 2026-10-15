@@ -11,6 +11,7 @@ const MODEL = {
   validate: 'authentik_stages_authenticator_validate.authenticatorvalidatestage', login: 'authentik_stages_user_login.userloginstage',
   email: 'authentik_stages_email.emailstage', prompt: 'authentik_stages_prompt.promptstage', consent: 'authentik_stages_consent.consentstage',
   captcha: 'authentik_stages_captcha.captchastage', logout: 'authentik_stages_user_logout.userlogoutstage',
+  write: 'authentik_stages_user_write.userwritestage',
 };
 const OK_STAGES: Record<string, string[]> = {
   'default-authentication-flow': [MODEL.ident, MODEL.password, MODEL.validate, MODEL.login],
@@ -20,6 +21,7 @@ const OK_STAGES: Record<string, string[]> = {
   'default-authenticator-static-setup': [MODEL.prompt],
   'default-authenticator-webauthn-setup': [MODEL.prompt],
   'default-password-change': [MODEL.prompt],
+  'friendflix-email-change': [MODEL.prompt, MODEL.email, MODEL.write],
   'default-provider-authorization-implicit-consent': [],
 };
 
@@ -65,7 +67,7 @@ describe('checkLoginFlows', () => {
     const r = await checkLoginFlows(setup().ctx);
     expect(r).toMatchObject({ mode: 'app', implicitConsent: true, authCodeGrant: true, issuerMatches: true, passkeys: 'in-app', passkeysReason: 'ok', unreachable: false, warnings: [] });
     expect(r.flows.map((f) => [f.kind, f.state])).toEqual([
-      ['login', 'ok'], ['recovery', 'ok'], ['invalidation', 'ok'], ['setup-totp', 'ok'], ['setup-static', 'ok'], ['setup-webauthn', 'ok'], ['change-password', 'ok'],
+      ['login', 'ok'], ['recovery', 'ok'], ['invalidation', 'ok'], ['setup-totp', 'ok'], ['setup-static', 'ok'], ['setup-webauthn', 'ok'], ['change-password', 'ok'], ['change-email', 'ok'],
     ]);
     expect(row(r, 'login').stages).toEqual([MODEL.ident, MODEL.password, MODEL.validate, MODEL.login]);
   });
@@ -75,6 +77,14 @@ describe('checkLoginFlows', () => {
     expect(row(r, 'recovery')).toEqual({ kind: 'recovery', slug: 'default-recovery-flow', state: 'missing', stages: [] });
     expect(r.warnings).toEqual(['flow_missing:recovery']);
     expect(r.mode).toBe('app'); // a failing check never changes the mode
+  });
+
+  it('the e-mail change flow (blueprint not imported, or a custom slug) is checked too', async () => {
+    const r = await checkLoginFlows(setup({ stages: { 'friendflix-email-change': null } }).ctx);
+    expect(row(r, 'change-email')).toEqual({ kind: 'change-email', slug: 'friendflix-email-change', state: 'missing', stages: [] });
+    expect(r.warnings).toEqual(['flow_missing:change-email']);
+    const custom = await checkLoginFlows(setup({ stages: { 'my-email-change': [MODEL.prompt, MODEL.email, MODEL.write] }, cfgOver: { AUTHENTIK_EMAIL_CHANGE_FLOW: 'my-email-change' } }).ctx);
+    expect(row(custom, 'change-email')).toMatchObject({ slug: 'my-email-change', state: 'ok', stages: [MODEL.prompt, MODEL.email, MODEL.write] });
   });
 
   it('flow with a captcha stage -> unsupported with stages listed', async () => {

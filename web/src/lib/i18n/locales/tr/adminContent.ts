@@ -335,6 +335,7 @@ const dict: Translation<typeof de> = {
       'setup-static': 'Kurtarma kodları',
       'setup-webauthn': 'Passkey kur',
       'change-password': 'Parolayı değiştir',
+      'change-email': 'E-posta adresini değiştir',
     },
     states: { ok: 'Tamam', missing: 'Eksik', unsupported: 'Desteklenmiyor' },
     steps: 'Adımlar: {list}',

@@ -335,6 +335,7 @@ const dict: Translation<typeof de> = {
       'setup-static': 'Codici di recupero',
       'setup-webauthn': 'Configura passkey',
       'change-password': 'Cambia password',
+      'change-email': 'Cambia indirizzo e-mail',
     },
     states: { ok: 'OK', missing: 'Mancante', unsupported: 'Non supportato' },
     steps: 'Passaggi: {list}',

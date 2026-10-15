@@ -334,6 +334,7 @@ export default {
       'setup-static': 'Wiederherstellungscodes',
       'setup-webauthn': 'Passkey einrichten',
       'change-password': 'Passwort ändern',
+      'change-email': 'E-Mail-Adresse ändern',
     },
     states: { ok: 'In Ordnung', missing: 'Fehlt', unsupported: 'Nicht unterstützt' },
     steps: 'Schritte: {list}',

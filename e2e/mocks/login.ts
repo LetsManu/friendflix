@@ -15,7 +15,7 @@ export interface LoginMock {
   config: MockReply;
   /** replies to POST /auth/flow/start, in order (the last one repeats) */
   starts: Array<MockReply | ((body: any) => MockReply)>;
-  /** replies to POST /auth/flow/resume, in order (the last one repeats) */
+  /** replies to POST /auth/flow/resume (/reset and /confirm-email), in order (the last one repeats) */
   resumes: Array<MockReply | ((body: any) => MockReply)>;
   /** replies to POST /auth/flow/answer, in order (the last one repeats) */
   answers: Array<MockReply | ((body: any) => MockReply)>;
@@ -41,9 +41,10 @@ export const identify = (over: Record<string, unknown> = {}) => ({ stage: 'ident
 export const password = (identity = 'anna@example.com', over: Record<string, unknown> = {}) => ({ stage: 'password', step: stepId(), identity, canRecover: true, ...over });
 export const mfa = (over: Record<string, unknown> = {}) => ({ stage: 'mfa', step: stepId(), totp: true, recovery: true, passkey: null, passkeyClassic: false, ...over });
 export const emailSent = (to: string | null = 'a•••@example.com') => ({ stage: 'email-sent', step: stepId(), to });
-export const prompt = (fields: Array<{ key: string; type: string; label: string; required?: boolean }>) => ({ stage: 'prompt', step: stepId(), fields: fields.map((f) => ({ required: true, ...f })) });
+export const prompt = (fields: Array<{ key: string; type: string; label: string; required?: boolean }>, over: Record<string, unknown> = {}) =>
+  ({ stage: 'prompt', step: stepId(), fields: fields.map((f) => ({ required: true, ...f })), ...over });
 export const totpSetup = (secret = 'JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP') => ({ stage: 'totp-setup', step: stepId(), otpauth: `otpauth://totp/FriendFlix:anna?secret=${secret}&issuer=FriendFlix` });
-export const recoveryCodes = (codes: string[]) => ({ stage: 'recovery-codes', step: stepId(), codes });
+export const recoveryCodes = (codes: string[] = ['fakecode0001', 'fakecode0002', 'fakecode0003', 'fakecode0004']) => ({ stage: 'recovery-codes', step: stepId(), codes });
 export const done = (next = '/') => ({ stage: 'done', next });
 
 const cookieValue = (header: string | undefined, name: string): string | null => {

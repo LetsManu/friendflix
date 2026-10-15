@@ -2,8 +2,8 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
 <script lang="ts">
   /**
-   * The recovery codes of an enrolment: the list (wraps on a phone), copy, download as a text file and the "Gespeichert" confirmation
-   * that answers the step. The codes stay in this component's props: never stored, logged or put into a URL. Never navigates.
+   * Recovery codes, shown once (an enrolment, or new codes from the account page, where the old codes stop working only after the
+   * confirmation): the list (wraps on a phone), copy, download as a text file and the "Gespeichert" confirmation that answers the step. The codes stay in this component's props: never stored, logged or put into a URL. Never navigates.
    */
   import { createEventDispatcher, onDestroy } from 'svelte';
   import { t } from '#lib/i18n';
@@ -54,7 +54,7 @@
 <div class="af-form" aria-busy={busy}>
   <h1>{$t('login.codes.title')}</h1>
   <p class="af-sub">{$t('login.codes.text')}</p>
-  <ul class="codes" data-codes>
+  <ul class="codes" data-codes aria-label={$t('login.codes.title')}>
     {#each step.codes as c (c)}<li>{c}</li>{/each}
   </ul>
   <div class="row">

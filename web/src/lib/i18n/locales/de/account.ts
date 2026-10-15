@@ -373,7 +373,6 @@ export default {
       notAvailableHint: 'Der Stand lässt sich gerade nicht abfragen.',
       manage: 'Auf der Anmeldeseite verwalten',
       newTab: '(öffnet in einem neuen Tab)',
-      coming: 'Passwort und Zwei-Faktor-Anmeldung direkt in FriendFlix ändern – das kommt noch.',
     },
     sessions: {
       title: 'Sitzungen & Geräte',

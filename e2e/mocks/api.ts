@@ -49,11 +49,23 @@ export interface MockState {
   setup?: SetupMock;
   /** the sign-in cover wall: GET /api/public/login-art answers this status and image paths (mocks/login.ts ART_IMAGES) */
   loginArt: { status: number; images: string[] };
+  /** Block 23 phase 3 Task 11: GET /api/account/security; DELETE .../devices/:type/:id answers 401 reauth_required while `securityStale` */
+  security: MockSecurity;
+  securityStale: boolean;
+  /** DELETE calls (type/id) */
+  securityDeleted: string[];
 }
 export interface MockAccount {
   name: string; email: string | null; avatar: string;
   mfa: { totp: boolean; webauthn: boolean; static: boolean } | null;
   manageUrl: string | null; reauthUntil: number | null;
+}
+export interface MockSecurity {
+  mfa: { totp: boolean; webauthn: boolean; static: boolean } | null;
+  devices: Array<{ id: string; type: 'totp' | 'static' | 'webauthn'; name: string; lastUsed: string | null }>;
+  passkeySetup: 'in-app' | 'sign-in page';
+  emailChange: boolean;
+  emailChangePending: string | null;
 }
 export interface MockDevice { id: string; label: string; approved: boolean; current: boolean; created_at: string; last_seen: string }
 
@@ -77,6 +89,13 @@ export function freshState(): MockState {
     ],
     revokedOthers: 2,
     loginArt: { status: 200, images: [] },
+    security: {
+      mfa: { totp: true, webauthn: false, static: true },
+      devices: [{ id: '11', type: 'totp', name: 'Pixel 8', lastUsed: null }, { id: '21', type: 'static', name: 'Recovery', lastUsed: null }],
+      passkeySetup: 'sign-in page', emailChange: true, emailChangePending: null,
+    },
+    securityStale: false,
+    securityDeleted: [],
   };
 }
 
@@ -161,6 +180,13 @@ export async function installApi(ctx: BrowserContext, st: MockState): Promise<vo
       return J(st.account);
     }
     // deleting the account needs a recent sign-in (reauthUntil); the backend then ends the session
+    if (p === '/api/account/security' && m === 'GET') return J(st.security);
+    if ((mm = p.match(/^\/api\/account\/security\/devices\/(totp|static|webauthn)\/(\d+)$/)) && m === 'DELETE') {
+      if (st.securityStale) return J({ error: 'reauth_required' }, 401);
+      st.securityDeleted.push(`${mm[1]}/${mm[2]}`);
+      st.security = { ...st.security, devices: st.security.devices.filter((d) => !(d.type === mm![1] && d.id === mm![2])) };
+      return J({ ok: true });
+    }
     if (p === '/api/account/delete' && m === 'POST') {
       if (st.reauthLapsed || !st.account.reauthUntil || st.account.reauthUntil < Date.now()) return J({ error: 'reauth_required' }, 401);
       return J({ deletionAt: '2026-10-21T12:00:00.000Z' });
