@@ -284,7 +284,9 @@ describe('e-mail change', () => {
     const LINK = 'https://friend.example.com/confirm-email?token={{ token }}';
     expect(tpl.split('\n')[0]).toBe(`{# FriendFlix: the one value to replace is the app address in the link below: ${LINK} #}`);
     expect(tpl.match(/href="[^"]*"/g)).toEqual([`href="${LINK}"`]);
-    expect(tpl.replace(/\{#.*?#\}/g, '').split('{% extends')[0]!.trim()).toBe(''); // nothing but comments before {% extends %}
+    // nothing but one-line comments before {% extends %}
+    const head = tpl.split('{% extends')[0]!.split('\n').map((l) => l.trim()).filter(Boolean);
+    expect(head.every((l) => l.startsWith('{#') && l.endsWith('#}'))).toBe(true);
     expect(tpl).toContain('{% extends "email/base.html" %}');
     expect(tpl).toContain('{% trans ');
   });
