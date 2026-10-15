@@ -294,7 +294,7 @@ Setup-session endpoints for steps 2–4 (all need `ff_setup` + `x-ff-setup-csrf`
 
 ## Part G – Authentik automation
 
-Client: `backend/src/setup/authentikSetup.ts`, `fetch` with 10 s timeout per call, `Authorization: Bearer <admin token>`.
+Client: `backend/src/setup/authentikSetup.ts`, `fetch` with 10 s timeout per call (blueprint imports 60 s; a path import answered 5xx is retried, see Verified), `Authorization: Bearer <admin token>`.
 
 **Plan** (`POST /api/setup/authentik/plan { url, token }`, read-only) and **apply** (`POST /api/setup/authentik/apply { url, token, addMeToAdmins: boolean }`) return the same step list:
 ```ts
@@ -309,7 +309,7 @@ interface AkStep { id: AkStepId; state: 'create' | 'update' | 'exists' | 'skip' 
    - Plan mode reads instead: `GET /api/v3/core/groups/?name=`, `GET /api/v3/providers/oauth2/?name=FriendFlix`, `GET /api/v3/core/applications/friendflix/`, `GET /api/v3/core/users/?username=friendflix-invites`, `GET /api/v3/flows/instances/friendflix-enrollment/` → `create` / `update`.
    - An existing provider named `FriendFlix` with other settings is **updated** (plan shows `update`, the UI says which fields the blueprint sets).
 3. **recovery:** if `GET /api/v3/flows/instances/default-recovery-flow/` is 404: import by path, `POST /api/v3/managed/blueprints/import/` with `path=example/flows-recovery-email-mfa-verification.yaml` (Authentik's shipped example, MFA variant per docs §10). Otherwise `exists`.
-4. **brand:** the default brand (`GET /api/v3/core/brands/?default=true`) gets `PATCH { flow_recovery: <recovery flow pk> }` when empty; the identification stage `default-authentication-identification` gets `PATCH /api/v3/stages/identification/<pk>/ { recovery_flow: <pk> }` when empty. Existing values are never overwritten (`exists`).
+4. **brand:** the default brand (`GET /api/v3/core/brands/?default=true`) gets `PATCH { flow_recovery: <recovery flow pk> }` when empty; the identification stage `default-authentication-identification` gets `PATCH /api/v3/stages/identification/<pk>/ { user_fields, sources, recovery_flow: <pk> }` when empty (`user_fields`/`sources` sent back unchanged: 2026.8.3 refuses the PATCH without them). Existing values are never overwritten (`exists`).
 5. **readback:** `GET /api/v3/providers/oauth2/?name=FriendFlix` → `client_id`, `client_secret` (visible to superusers: the serializer's `secret_fields` are returned when the caller may change the object); `GET /api/v3/core/tokens/friendflix-invites-token/view_key/` → `key`. Issuer = `<url>/application/o/friendflix/`; verified by fetching its discovery document (issuer must match exactly).
 6. **adminMember** (when `addMeToAdmins`): `POST /api/v3/core/groups/<admin group pk>/add_user/ { pk: <me.user.pk> }`.
 7. **extraFlows:** each blueprint in `AK_EXTRA_BLUEPRINTS` (empty in Block 25; phase 3 appends the e-mail change flow) is imported like step 2.
@@ -428,13 +428,16 @@ Phase 3 consumes:
 - Coverage thresholds hold; new strings in all 7 locales; `grep -ri seerr` over the new locale files is empty.
 
 ## Unverified assumptions (to verify in the named task)
-- U1 – Blueprint import of `authentik_providers_oauth2.oauth2provider` accepts `grant_types` and `redirect_uris` (list of `{matching_mode, url}`) as attrs (source-checked: serializer field `redirect_uris` with source `_redirect_uris`, `grant_types` ArrayField; not run).
-- U2 – `!Find [authentik_crypto.certificatekeypair, [name, "authentik Self-signed Certificate"]]` resolves on a default install (name from `crypto/apps.py`, not run).
-- U3 – `PATCH /api/v3/stages/identification/<pk>/ { recovery_flow }` and `PATCH /api/v3/core/brands/<uuid>/ { flow_recovery }` (field names from the serializers; not run).
-- U4 – the blueprint import's per-model permission check passes for a superuser token (it should: superusers have every permission).
 - U5 – adapter-node with `ORIGIN=''` behaves as unset.
 - U6 – Redis 7 official image honours `user: "999:999"` + `group_add` for reading the conf file (entrypoint does not re-exec with su-exec when not root).
 - U7 – `depends_on: service_completed_successfully` in Portainer stacks (needs Compose v2; documented minimum).
+
+Verified (running, Task 13, 2026-10-15, fresh `ghcr.io/goauthentik/server:2026.8.3` + Postgres 16, bootstrap token of `akadmin`, plan → apply with `authentikSetup.ts`, then a second apply):
+- U1 – the blueprint import accepts `grant_types: [authorization_code]` and `redirect_uris: [{matching_mode: strict, url: !Format [...]}]`: the provider reads back `grant_types ["authorization_code"]`, `redirect_uris [{matching_mode: strict, url: https://tv.example.com/auth/callback}]`, confidential, `hashed_user_id`, `per_provider`, three scope mappings, implicit-consent authorization flow, `default-provider-invalidation-flow`. A second apply is idempotent (one provider, same client id/secret, same service token).
+- U2 – `!Find [authentik_crypto.certificatekeypair, [name, "authentik Self-signed Certificate"]]` resolves (signing key name read back).
+- U3 – `PATCH /api/v3/core/brands/<brand_uuid>/ { flow_recovery }` works. `PATCH /api/v3/stages/identification/<pk>/ { recovery_flow }` alone is **refused** (400 "When no user fields are selected, at least one source must be selected": the serializer's `validate()` reads `user_fields`/`sources` from the request only); sending the stage's current `user_fields` and `sources` with it works (implemented so).
+- U4 – the import's per-model permission check passes for a superuser token; the readback (`client_secret` visible, `view_key`) works; the saved service token passes the `authentik` probe, the discovery issuer equals `<url>/application/o/friendflix/` (`oidc` probe ok), and a login through the provider with PKCE S256 + client secret via the backend's own `oidc.ts` (Authentik session from the flow executor, authorize → `/auth/callback?code&state`, token exchange) returns `sub`, `email`, `groups` incl. `friendflix-admins` (adminMember) and `auth_time`.
+- Found on the way: a path import (`path=example/...`) is validated by a worker task the server waits on for 10 s; a busy worker answers **500 ResultTimeout** (seen on a freshly started instance), so path imports are retried (3 attempts) and blueprint imports get a 60 s deadline (the recovery example took ~17 s). Right after Authentik's first start (until its default blueprints are applied, ~3–4 min here) imports can fail `blueprint_invalid` (`!Find` targets missing); "Try again" then succeeds. A full apply took ~27 s (re-run ~6 s).
 
 Verified (source, 2026-10-14): Authentik 2026.8.3 `managed/blueprints/import/` (multipart `file`/`path` + JSON `context`, synchronous, returns `{logs, success}`), `!Context`/`!Format`/`!Find` tags, `core/tokens/<identifier>/view_key/`, `core/users/me/`, `admin/version/`, `core/groups/<pk>/add_user/ {pk}`, `client_secret` visible to users who may change the provider, `grant_types` default `[]`, default flow slugs and managed scope mapping ids. Jellyfin 10.11.0: `POST /Auth/Keys?app=` (204, elevation), `GET /Auth/Keys` (`AccessToken`, `AppName`, `DateCreated`), `POST /Users/AuthenticateByName`, `POST /Sessions/Logout`, `GET /System/Info/Public` (`StartupWizardCompleted`).
 

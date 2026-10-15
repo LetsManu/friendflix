@@ -8,6 +8,7 @@ import { MEDIA_SETUP } from '../media/setup.js';
 import { MediaSetupError } from '../media/types.js';
 import { plainHttpUrl } from '../settings/probeKit.js';
 import { publicUrlSchema, SETTINGS, type SettingGroup } from '../settings/registry.js';
+import { AK_BLUEPRINT_DIR, applyAuthentik, planAuthentik } from '../setup/authentikSetup.js';
 import { createSetupSession, hasSetupSession, requireSetupSession, verifySetupCode } from '../setup/code.js';
 import { isSetupComplete } from '../setup/state.js';
 import { saveWithProbes, testGroup, valuesSchema } from './adminSettings.js';
@@ -148,6 +149,51 @@ export function setupRoutes(app: FastifyInstance, ctx: Ctx) {
       }
       req.log.info('media server: API key created and saved');
       return { ok: true };
+    } finally {
+      await ctx.kv.del(lock).catch(() => undefined);
+    }
+  });
+
+  // spec Part G "Authentik automation": a one-time admin API token (this request only: never stored or logged, the body is kept out of
+  // error logs, app.ts SENSITIVE_BODY) plans or applies the groups, provider, service account and flows. Plan only reads (GET).
+  const akBody = z.object({ url: z.string().max(2048), token: z.string().min(1).max(512) });
+  const badUrl = { ok: false, code: 'invalid', detail: 'invalid_url' } as const;
+
+  app.post('/api/setup/authentik/plan', { ...session, config: { rateLimit: { max: 20, timeWindow: '1 minute' } } }, async (req, reply) => {
+    const b = akBody.parse(req.body);
+    if (!plainHttpUrl(b.url)) return reply.code(400).send(badUrl);
+    const steps = await planAuthentik({ url: b.url, token: b.token, publicUrl: ctx.cfg.PUBLIC_URL, adminGroup: ctx.cfg.ADMIN_GROUP }, { fetchImpl: ctx.fetchImpl });
+    req.log.info({ steps: steps.map((s) => `${s.id}:${s.state}${s.detail ? `:${s.detail}` : ''}`) }, 'authentik: setup planned');
+    return { steps };
+  });
+
+  app.post('/api/setup/authentik/apply', { ...session, config: { rateLimit: { max: 10, timeWindow: '1 minute' } } }, async (req, reply) => {
+    const b = akBody.extend({ addMeToAdmins: z.boolean() }).parse(req.body);
+    // http(s) without user info, checked before any request
+    if (!plainHttpUrl(b.url)) return reply.code(400).send(badUrl);
+    // the redirect URI is <PUBLIC_URL>/auth/callback: step 2 of the wizard comes first
+    const publicUrl = ctx.cfg.PUBLIC_URL;
+    if (!publicUrl) return reply.code(400).send({ ok: false, code: 'invalid', detail: 'public_url_missing' });
+    // one run at a time (all instances): two runs would import the same blueprints and race on the settings write. The TTL outlasts a
+    // run's worst case (each blueprint import may take IMPORT_TIMEOUT_MS); the finally block releases it as soon as the run ends.
+    const lock = 'setup:authentik:apply';
+    if (!(await ctx.kv.setnx(lock, '1', 600))) return reply.code(409).send({ error: 'busy' });
+    try {
+      const { steps, values } = await applyAuthentik(
+        { url: b.url, token: b.token, addMeToAdmins: b.addMeToAdmins, publicUrl, adminGroup: ctx.cfg.ADMIN_GROUP },
+        { fetchImpl: ctx.fetchImpl, blueprintDir: AK_BLUEPRINT_DIR, cfg: ctx.cfg },
+      );
+      req.log.info({ steps: steps.map((s) => `${s.id}:${s.state}${s.detail ? `:${s.detail}` : ''}`) }, 'authentik: setup applied');
+      if (!values) return { ok: false, steps };
+      // keys from the environment stay as they are; the rest is saved like a manual entry, so the oidc and authentik probes confirm it
+      // (AUTHENTIK_API_TOKEN is the service account's token from the readback, never the admin token)
+      const sources = ctx.settings.sources();
+      const toSave = Object.fromEntries(Object.entries(values).filter(([k]) => sources[k] !== 'env'));
+      const r = await saveWithProbes(ctx, toSave, { force: false, actor: null, allowedKeys: SIGNIN_KEYS });
+      if ('errors' in r) return reply.code(400).send({ error: 'invalid_settings', errors: r.errors, steps });
+      if ('probe' in r) return reply.code(400).send({ error: 'probe_failed', group: r.group, probe: r.probe, steps });
+      req.log.info('authentik: sign-in settings saved');
+      return { ok: true, steps };
     } finally {
       await ctx.kv.del(lock).catch(() => undefined);
     }
