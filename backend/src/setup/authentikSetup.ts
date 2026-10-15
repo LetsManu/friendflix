@@ -310,8 +310,8 @@ export async function applyAuthentik(
     await imported(BLUEPRINTS.setup, { public_url: publicUrl, admin_group: input.adminGroup });
     return { state: 'ok' };
   });
-  const groups = s.list.at(-1)!;
-  s.list.push({ ...groups, id: 'provider' });
+  const groups = s.list.at(-1);
+  if (groups?.id === 'groups') s.list.push({ ...groups, id: 'provider' });
   await s.run('serviceAccount', async () => (await imported(BLUEPRINTS.serviceAccount), { state: 'ok' }));
   await s.run('enrollment', async () => (await imported(BLUEPRINTS.enrollment), { state: 'ok' }));
 

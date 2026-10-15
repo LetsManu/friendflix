@@ -278,6 +278,16 @@ describe('applyAuthentik', () => {
     expect(states(first.steps)).toEqual(['check:ok', 'groups:failed:blueprint_invalid', 'provider:failed:blueprint_invalid']);
   });
 
+  it('a failed check ends apply with that step alone (200 with the step list, no import): not_superuser, unauthorized', async () => {
+    const su = fakeAuthentik({ superuser: false });
+    const r = await applyAuthentik(applyInput, deps(su.fetchImpl));
+    expect(states(r.steps)).toEqual(['check:failed:not_superuser']);
+    expect(r.values).toBeUndefined();
+    expect(su.imports).toEqual([]);
+    const denied = await applyAuthentik(applyInput, deps(fakeAuthentik({ meStatus: 401 }).fetchImpl));
+    expect(states(denied.steps)).toEqual(['check:failed:unauthorized']);
+  });
+
   it('a failure in a later step stops the run there (codes only)', async () => {
     const r = await applyAuthentik(applyInput, deps(fakeAuthentik({ throwOn: '/core/brands/' }).fetchImpl));
     expect(states(r.steps).at(-1)).toBe('brand:failed:unreachable');

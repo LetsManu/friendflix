@@ -339,6 +339,16 @@ describe('setup-session endpoints', () => {
     }
     expect(env.ctx.cfg.PUBLIC_URL).not.toBe('https://stale.example.com');
     await env.ctx.settings.reload();
+    // a cached "complete" is final: 409 without reading the database
+    expect(await isSetupComplete(env.ctx)).toBe(true);
+    const realDb = env.ctx.db;
+    env.ctx.db = { query: async () => { throw new Error('db down'); } } as unknown as typeof realDb;
+    try {
+      const w = await env.app.inject({ method: 'PUT', url: '/api/setup/settings', cookies: s.cookies, headers: { 'x-ff-setup-csrf': s.csrf }, payload: { values: { PUBLIC_URL: 'https://tv.example.com' } } });
+      expect([w.statusCode, w.json()]).toEqual([409, { error: 'setup_complete' }]);
+    } finally {
+      env.ctx.db = realDb;
+    }
     const admin = await env.login({ ...ADMIN, groups: [env.ctx.cfg.ADMIN_GROUP] }); // ADMIN_GROUP was changed by the wizard above
     const both = { ...s.cookies, ...admin.cookies };
     const r = await env.app.inject({ method: 'PUT', url: '/api/setup/settings', cookies: both, payload: { values: { PUBLIC_URL: 'https://tv.example.com' } } });

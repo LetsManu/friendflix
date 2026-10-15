@@ -198,7 +198,7 @@ const setup: Translation<typeof de> = {
     not_tested: 'Tego serwera multimediów nie da się sprawdzić automatycznie.',
     timeout: 'Brak odpowiedzi na czas.',
     env_locked: 'Adres pochodzi ze środowiska (.env). Wpisz dokładnie ten adres.',
-    env_key_locked: 'Klucz API pochodzi ze środowiska (.env), więc nie można tu zapisać nowego. Usuń go z .env i uruchom ponownie albo wpisz adres i klucz ręcznie.',
+    env_key_locked: 'Klucz API pochodzi ze środowiska (.env) i nie można go tu zastąpić. Przełącz na „Ręcznie” i wpisz tylko adres (zostanie użyty klucz z .env) albo usuń klucz z .env i uruchom backend ponownie.',
     public_url_missing: 'Najpierw zapisz adres publiczny (krok 2).',
   },
 };

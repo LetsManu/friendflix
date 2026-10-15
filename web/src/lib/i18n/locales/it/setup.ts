@@ -198,7 +198,7 @@ const setup: Translation<typeof de> = {
     not_tested: 'Questo media server non si può verificare automaticamente.',
     timeout: 'Nessuna risposta in tempo.',
     env_locked: 'L’indirizzo viene dall’ambiente (.env). Inserisci esattamente quell’indirizzo.',
-    env_key_locked: 'La chiave API viene dall’ambiente (.env), quindi qui non se ne può salvare una nuova. Rimuovila dal .env e riavvia, oppure inserisci indirizzo e chiave a mano.',
+    env_key_locked: 'La chiave API viene dall’ambiente (.env) e qui non si può sostituire. Passa ad «A mano» e inserisci solo l’indirizzo (viene usata la chiave del .env), oppure rimuovi la chiave dal .env e riavvia il backend.',
     public_url_missing: 'Salva prima l’indirizzo pubblico (passaggio 2).',
   },
 };

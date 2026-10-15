@@ -196,7 +196,7 @@ const setup = {
     not_tested: 'Dieser Medienserver lässt sich nicht automatisch prüfen.',
     timeout: 'Keine Antwort in der Zeit.',
     env_locked: 'Die Adresse kommt aus der Umgebung (.env). Trage genau diese Adresse ein.',
-    env_key_locked: 'Der API-Schlüssel kommt aus der Umgebung (.env), deshalb kann hier kein neuer gespeichert werden. Entferne ihn aus der .env und starte neu, oder trage Adresse und Schlüssel von Hand ein.',
+    env_key_locked: 'Der API-Schlüssel kommt aus der Umgebung (.env) und lässt sich hier nicht ersetzen. Wechsle zu „Von Hand“ und trage nur die Adresse ein (der Schlüssel aus der .env wird verwendet), oder entferne den Schlüssel aus der .env und starte das Backend neu.',
     public_url_missing: 'Speichere zuerst die öffentliche Adresse (Schritt 2).',
   },
 };

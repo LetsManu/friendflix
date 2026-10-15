@@ -142,9 +142,9 @@ export async function isSetupSession(ctx: Pick<Ctx, 'kv'>, req: FastifyRequest, 
 export function requireSetupSession(ctx: Pick<Ctx, 'kv' | 'db' | 'settings'>) {
   return async (req: FastifyRequest, reply: FastifyReply) => {
     const write = req.method !== 'GET' && req.method !== 'HEAD';
-    // a write reads the database itself (they are rare): this instance's cached answer may still say "incomplete" for up to the 30 s poll
-    // when the completion's bus message was lost, and a setup session must not change settings once an admin exists
-    const complete = write ? (await readMeta(ctx.db)).setupCompletedAt !== null : await isSetupComplete(ctx);
+    // a cached "complete" is final; a cached "incomplete" may be outdated for up to the 30 s poll (a lost bus message), so a write (they
+    // are rare) then reads the database itself: a setup session must not change settings once an admin exists
+    const complete = (await isSetupComplete(ctx)) || (write && (await readMeta(ctx.db)).setupCompletedAt !== null);
     if (complete) return reply.code(409).send({ error: 'setup_complete' });
     const s = await loadSetupSession(ctx, req);
     if (!s) return reply.code(401).send({ error: 'setup_session_required' });

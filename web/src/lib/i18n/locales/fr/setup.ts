@@ -198,7 +198,7 @@ const setup: Translation<typeof de> = {
     not_tested: 'Ce serveur multimédia ne peut pas être vérifié automatiquement.',
     timeout: 'Pas de réponse à temps.',
     env_locked: 'L’adresse vient de l’environnement (.env). Saisis exactement cette adresse.',
-    env_key_locked: 'La clé d’API vient de l’environnement (.env), donc une nouvelle ne peut pas être enregistrée ici. Retire-la du .env et redémarre, ou saisis l’adresse et la clé à la main.',
+    env_key_locked: 'La clé d’API vient de l’environnement (.env) et ne peut pas être remplacée ici. Passe à « À la main » et saisis seulement l’adresse (la clé du .env est utilisée), ou retire la clé du .env et redémarre le backend.',
     public_url_missing: 'Enregistre d’abord l’adresse publique (étape 2).',
   },
 };
