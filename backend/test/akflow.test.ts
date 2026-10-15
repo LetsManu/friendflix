@@ -382,11 +382,12 @@ describe('the jar in kv', () => {
 
   it('jar round-trips encrypted and the kv value contains no cookie value', async () => {
     const ctx = ctxWith(fetch);
-    const jar = jarOf({ cookies: { authentik_session: 's1', authentik_csrf: 'csrf-value-1' }, identifier: 'anna@example.com', challenges: 2 });
+    // long, distinctive values: a two-letter value can turn up in random ciphertext by chance
+    const jar = jarOf({ cookies: { authentik_session: 'session-value-QX7', authentik_csrf: 'csrf-value-1' }, identifier: 'anna@example.com', challenges: 2 });
     await saveJar(ctx, 'flow-1', jar);
     const raw = (await ctx.kv.get(key('flow-1')))!;
     expect(raw).toBeTruthy();
-    expect(raw.includes('s1')).toBe(false);
+    expect(raw).not.toContain('session-value-QX7');
     expect(raw).not.toContain('csrf-value-1');
     expect(raw).not.toContain('anna');
     expect(await ctx.kv.keys('akflow:')).toEqual([key('flow-1')]); // the flow id itself is not the key
