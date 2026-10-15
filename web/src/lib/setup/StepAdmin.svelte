@@ -11,6 +11,8 @@
   import type { SetupState } from './api';
 
   export let state: SetupState;
+  /** the sign-in was set up by the Authentik automation (server state): name it; any other OIDC provider gets the neutral wording */
+  export let viaAuthentik = false;
   const dispatch = createEventDispatcher<{ go: 2 | 3 | 4 }>();
   const OPEN = [[2, 'publicUrl'], [3, 'media'], [4, 'signin']] as const;
   $: missing = OPEN.filter(([, k]) => state.steps[k] === 'todo');
@@ -27,7 +29,7 @@
 {:else}
   <p>{$t('setup.admin.text')}</p>
   <p class="muted">{$t('setup.admin.after')}</p>
-  <div class="acts"><Button href="/auth/login?setup=1" icon="user" data-sveltekit-reload>{$t('setup.admin.signIn')}</Button></div>
+  <div class="acts"><Button href="/auth/login?setup=1" icon="user" data-sveltekit-reload>{viaAuthentik ? $t('setup.admin.signIn') : $t('setup.admin.signInNeutral')}</Button></div>
 {/if}
 
 <style>

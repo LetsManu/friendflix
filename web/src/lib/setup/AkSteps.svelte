@@ -99,6 +99,7 @@
       {#if busy === 'apply'}
         <div class="progress" role="status"><span class="spinner" aria-hidden="true"></span><span>{$t('setup.signin.applying')}</span></div>
       {/if}
+      {#if !token && busy !== 'apply'}<p class="muted small">{$t('setup.signin.tokenAgain')}</p>{/if}
       <div class="acts"><Button icon="check" pending={busy === 'apply'} disabled={!ready} on:click={apply}>{$t('setup.signin.apply')}</Button></div>
     {/if}
   </section>

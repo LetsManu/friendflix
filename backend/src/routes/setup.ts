@@ -46,6 +46,13 @@ function prefillUrl(req: FastifyRequest): string | null {
   return r.success ? r.data : null;
 }
 
+/**
+ * Set once the Authentik automation applied and saved the sign-in (step 5 then says "Sign in with Authentik"); a manual save of a
+ * sign-in key drops it (step 5 says something neutral: any OIDC provider). Holds no value, only the path taken.
+ */
+const SIGNIN_VIA = 'setup:signin:via';
+const SIGNIN_VIA_TTL_S = 7 * 24 * 3600;
+
 /** 32 random bytes, base64url (settings/probes.ts publicUrl): nothing else is ever looked up */
 const NONCE = /^[A-Za-z0-9_-]{43}$/;
 
@@ -66,7 +73,9 @@ export function setupRoutes(app: FastifyInstance, ctx: Ctx) {
         signin: step(ctx, runRequired(ctx, 'signin')),
         admin: complete ? 'done' : 'todo',
       },
-      prefill: { publicUrl: prefillUrl(req) },
+      // the saved (or environment) public URL wins: step 4's redirect URI must be the one OIDC will use; else the browser's origin
+      prefill: { publicUrl: ctx.cfg.PUBLIC_URL || prefillUrl(req) },
+      signinVia: !complete && (await ctx.kv.get(SIGNIN_VIA).catch(() => null)) === 'authentik' ? 'authentik' : null,
     };
   });
 
@@ -99,6 +108,8 @@ export function setupRoutes(app: FastifyInstance, ctx: Ctx) {
     const r = await saveWithProbes(ctx, b.values, { force: b.force ?? false, actor: null, allowedKeys: wizardKeys(ctx) });
     if ('errors' in r) return reply.code(400).send({ error: 'invalid_settings', errors: r.errors });
     if ('probe' in r) return reply.code(400).send({ error: 'probe_failed', group: r.group, probe: r.probe });
+    // a sign-in key typed by hand: the sign-in is no longer (only) the automation's
+    if (Object.keys(b.values).some((k) => SIGNIN_KEYS.includes(k))) await ctx.kv.del(SIGNIN_VIA).catch(() => undefined);
     return r;
   });
 
@@ -193,6 +204,7 @@ export function setupRoutes(app: FastifyInstance, ctx: Ctx) {
       if ('errors' in r) return reply.code(400).send({ error: 'invalid_settings', errors: r.errors, steps });
       if ('probe' in r) return reply.code(400).send({ error: 'probe_failed', group: r.group, probe: r.probe, steps });
       req.log.info('authentik: sign-in settings saved');
+      await ctx.kv.set(SIGNIN_VIA, 'authentik', SIGNIN_VIA_TTL_S).catch(() => undefined);
       return { ok: true, steps };
     } finally {
       await ctx.kv.del(lock).catch(() => undefined);

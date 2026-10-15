@@ -9,6 +9,7 @@
    */
   import { onMount } from 'svelte';
   import { goto } from '$app/navigation';
+  import { ApiError } from '#lib/api';
   import { isReauthError, startReauth } from '#lib/account/reauth';
   import AdminCard from '#lib/adminContent/AdminCard.svelte';
   import SettingRow from '#lib/admin/settings/SettingRow.svelte';
@@ -52,7 +53,11 @@
 
   async function load() {
     loadFailed = false;
-    try { view = await loadSettings(); } catch { if (!view) loadFailed = true; }
+    try { view = await loadSettings(); } catch (e) {
+      // not an admin (403): nothing to set up here
+      if (e instanceof ApiError && e.status === 403) return void goto('/', { replaceState: true });
+      if (!view) loadFailed = true;
+    }
   }
   onMount(() => {
     void load();

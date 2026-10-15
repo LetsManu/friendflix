@@ -18,7 +18,10 @@ export interface SetupMock {
   unlockError: { status: number; error: string } | null;
   media: { keys: string[]; auto: string[] | null };
   steps: { publicUrl: Step; media: Step; signin: Step; admin: Step };
+  /** the backend's prefill: the saved PUBLIC_URL, else the browser's origin */
   prefill: { publicUrl: string | null };
+  /** 'authentik' after a successful apply; a PUT of a sign-in key clears it */
+  signinVia: 'authentik' | null;
   /** POST /api/setup/test answers per group */
   testResults: Record<string, ProbeMock>;
   /** the next PUT /api/setup/settings without force answers 400 probe_failed with this probe (then it is cleared) */
@@ -59,7 +62,7 @@ export function setupState(): SetupMock {
     complete: false, unlocked: false, code: SETUP_CODE, unlockError: null,
     media: { keys: ['JELLYFIN_URL', 'JELLYFIN_ADMIN_API_KEY'], auto: ['url', 'username', 'password'] },
     steps: { publicUrl: 'todo', media: 'todo', signin: 'todo', admin: 'todo' },
-    prefill: { publicUrl: 'https://tv.example.com' },
+    prefill: { publicUrl: 'https://tv.example.com' }, signinVia: null,
     testResults: {}, saveProbeFail: null, saveError: null, autoResult: { ok: true },
     planSteps: AK_PLAN, apply: { status: 200, body: { ok: true, steps: AK_APPLIED } }, applyDelayMs: 0,
     puts: [], tests: [], autos: [], plans: [], applies: [], unlocks: [], badCsrf: 0,
@@ -74,7 +77,7 @@ type Reply = (b: unknown, status?: number, headers?: Record<string, string>) => 
 /** null when the path is not a setup endpoint */
 export function setupRoute(st: SetupMock, m: string, p: string, body: any, headers: Record<string, string>, J: Reply): Promise<void> | null {
   if (p === '/api/setup/state' && m === 'GET') {
-    return J({ complete: st.complete, unlocked: st.unlocked && !st.complete, mediaKind: 'jellyfin', media: st.media, steps: st.steps, prefill: st.prefill });
+    return J({ complete: st.complete, unlocked: st.unlocked && !st.complete, mediaKind: 'jellyfin', media: st.media, steps: st.steps, prefill: st.prefill, signinVia: st.signinVia });
   }
   if (p === '/api/setup/unlock' && m === 'POST') {
     st.unlocks.push(String(body.code ?? ''));
@@ -97,7 +100,7 @@ export function setupRoute(st: SetupMock, m: string, p: string, body: any, heade
     const keys = Object.keys(values);
     if (keys.includes('PUBLIC_URL')) st.steps.publicUrl = 'done';
     if (keys.some((k) => st.media.keys.includes(k))) st.steps.media = 'done';
-    if (keys.some((k) => SIGNIN.test(k))) st.steps.signin = 'done';
+    if (keys.some((k) => SIGNIN.test(k))) { st.steps.signin = 'done'; st.signinVia = null; }
     return J({ rev: 3 });
   }
   if (p === '/api/setup/test' && m === 'POST') {
@@ -116,7 +119,7 @@ export function setupRoute(st: SetupMock, m: string, p: string, body: any, heade
   if (p === '/api/setup/authentik/apply' && m === 'POST') {
     st.applies.push(body);
     const done = () => {
-      if (st.apply.status === 200 && (st.apply.body as { ok?: boolean }).ok) st.steps.signin = 'done';
+      if (st.apply.status === 200 && (st.apply.body as { ok?: boolean }).ok) { st.steps.signin = 'done'; st.signinVia = 'authentik'; }
       return J(st.apply.body, st.apply.status);
     };
     return st.applyDelayMs ? new Promise((r) => setTimeout(r, st.applyDelayMs)).then(done) : done();

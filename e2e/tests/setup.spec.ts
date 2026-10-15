@@ -104,6 +104,10 @@ test.describe('setup wizard', () => {
     await page.getByRole('button', { name: 'Weiter', exact: true }).click();
     await expect(h2(page, 'Erster Admin')).toBeVisible();
     await expect(page.getByRole('link', { name: 'Mit Authentik anmelden' })).toHaveAttribute('href', '/auth/login?setup=1');
+    // the wording comes from the server state: a reload keeps it
+    await page.reload();
+    await expect(h2(page, 'Erster Admin')).toBeVisible();
+    await expect(page.getByRole('link', { name: 'Mit Authentik anmelden' })).toHaveAttribute('href', '/auth/login?setup=1');
   });
 
   test('manual path: Jellyfin URL + key with a failing probe shows not_admin; OIDC manual fields with the checklist (redirect URI shows https://tv.example.com/auth/callback)', async ({ page, api }) => {
@@ -132,6 +136,7 @@ test.describe('setup wizard', () => {
     expect(api.setup!.puts.at(-1)).toEqual({ values: { JELLYFIN_URL: 'http://jellyfin:8096', JELLYFIN_ADMIN_API_KEY: 'jf-key-placeholder' }, force: true });
 
     await page.getByRole('button', { name: 'Von Hand' }).click();
+    // the backend's prefill is the saved public address (not this browser's origin, 127.0.0.1 here): the strict redirect URI uses it
     await expect(page.getByLabel('Redirect-URI (strict)')).toHaveValue('https://tv.example.com/auth/callback');
     await expect(page.getByText('Grant-Typ: authorization_code')).toBeVisible();
     await expect(page.getByText(/implizite Zustimmung/)).toBeVisible();
@@ -143,6 +148,9 @@ test.describe('setup wizard', () => {
     await page.getByLabel('OIDC-Client-Geheimnis').fill('client-secret-placeholder');
     await page.getByRole('button', { name: 'Speichern und weiter' }).click();
     await expect(h2(page, 'Erster Admin')).toBeVisible();
+    // any OIDC provider: neutral wording
+    await expect(page.getByRole('link', { name: 'Anmelden und Einrichtung abschließen' })).toHaveAttribute('href', '/auth/login?setup=1');
+    await expect(page.getByRole('link', { name: 'Mit Authentik anmelden' })).toHaveCount(0);
     expect(api.setup!.puts.at(-1)).toEqual({ values: {
       OIDC_ISSUER: 'https://auth.example.com/application/o/friendflix/', OIDC_CLIENT_ID: 'friendflix', OIDC_CLIENT_SECRET: 'client-secret-placeholder',
     } });
@@ -227,12 +235,18 @@ test.describe('setup wizard', () => {
     await expect(page.getByText('Gerade läuft schon eine Einrichtung. Warte einen Moment und versuche es dann noch einmal.')).toBeVisible();
   });
 
+  test('a visit to /setup after setup completed goes to /', async ({ page, api }) => {
+    api.setup!.complete = true;
+    await page.goto('/setup');
+    await expect(page).toHaveURL(/127\.0\.0\.1:\d+\/$/);
+  });
+
   test('step 5 lists what is still open instead of the sign-in', async ({ page, api }) => {
     api.setup!.steps.publicUrl = 'done';
     await unlock(page);
     await step(page, 5).click();
     await expect(page.getByText('Vorher noch erledigen:')).toBeVisible();
-    await expect(page.getByRole('link', { name: 'Mit Authentik anmelden' })).toHaveCount(0);
+    await expect(page.getByRole('link', { name: /anmelden/i })).toHaveCount(0);
     await page.getByRole('button', { name: 'Medienserver', exact: true }).click();
     await expect(h2(page, 'Medienserver')).toBeVisible();
   });

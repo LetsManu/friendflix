@@ -14,7 +14,7 @@
   import Field from '#lib/ui/Field.svelte';
   import { isPlainHttp, redirectUri, saveSetup, testSetup, type SetupState } from './api';
   import AkSteps from './AkSteps.svelte';
-  import { filled, isSecretKey, probeText, type Handle, type Message } from './messages';
+  import { filled, isSecretKey, otherFieldErrors, probeText, type Handle, type Message } from './messages';
   import Notice from './Notice.svelte';
 
   export let state: SetupState;
@@ -33,6 +33,7 @@
 
   $: typed = filled(values);
   $: insecure = isPlainHttp(values.OIDC_ISSUER ?? '') || isPlainHttp(values.AUTHENTIK_URL ?? '');
+  $: others = otherFieldErrors(msg?.fields, [...REQUIRED, ...OPTIONAL]);
   $: fieldErr = (key: string) => (msg?.fields?.[key] ? fieldText(msg.fields[key]!) : '');
 
   function setMode(m: 'auto' | 'manual') { mode = m; msg = null; ok = ''; }
@@ -97,9 +98,10 @@
     {/each}
     {#if insecure}<Notice tone="warn"><p>{$t('setup.signin.insecure')}</p></Notice>{/if}
     {#if ok}<Notice tone="ok"><p>{ok}</p></Notice>{/if}
-    {#if msg && !msg.fields}
+    {#if msg && (!msg.fields || others.length)}
       <Notice tone="err">
         <p>{msg.text}</p>
+        {#each others as o (o)}<p>{o}</p>{/each}
         {#if msg.soft}
           <p>{$t('setup.saveSoft')}</p>
           <Button variant="secondary" size="sm" pending={busy === 'force'} on:click={() => save(true)}>{$t('setup.saveAnyway')}</Button>

@@ -454,6 +454,12 @@ describe('POST /api/setup/authentik/plan and /apply', () => {
     const audit = await env.pool.query("select meta from audit_log where action = 'settings.update' order by id desc limit 1");
     expect(audit.rows[0].meta.keys.sort()).toEqual(['ADMIN_GROUP', 'AUTHENTIK_API_TOKEN', 'AUTHENTIK_ENROLL_FLOW', 'AUTHENTIK_RECOVERY_FLOW', 'AUTHENTIK_URL', 'OIDC_CLIENT_ID', 'OIDC_CLIENT_SECRET', 'OIDC_ISSUER']);
     expect(await env.ctx.kv.get('setup:authentik:apply')).toBeNull(); // the lock is released
+    // step 5 may say "Sign in with Authentik" (also after a reload); a sign-in key saved by hand makes it neutral again
+    const state = () => env.app.inject({ url: '/api/setup/state', cookies: sess.cookies }).then((x) => x.json().signinVia);
+    expect(await state()).toBe('authentik');
+    const put = await env.app.inject({ method: 'PUT', url: '/api/setup/settings', cookies: sess.cookies, headers: { 'x-ff-setup-csrf': sess.csrf }, payload: { values: { ADMIN_GROUP: 'friendflix-admins' } } });
+    expect(put.statusCode).toBe(200);
+    expect(await state()).toBeNull();
   });
 
   it('a failed step answers ok false with the steps; nothing is saved', async () => {

@@ -7,7 +7,7 @@ import { describeActivity } from '#lib/admin/activity';
 import {
   akApply, akPlan, APPLY_TIMEOUT_MS, CSRF_HEADER, firstOpenStep, isPlainHttp, mediaAuto, readCookie, redirectUri, saveSetup, setupState, testSetup, unlock,
 } from './api';
-import { akFailText, errorText, failedStep, failure, filled, isSecretKey, probeText } from './messages';
+import { akFailText, errorText, failedStep, failure, filled, isSecretKey, otherFieldErrors, probeText } from './messages';
 
 const LOCALES = ['de', 'en', 'es', 'fr', 'it', 'pl', 'tr'] as const;
 
@@ -134,13 +134,15 @@ describe('setup messages', () => {
     expect(errorText('no_code')).toMatch(/BACKGROUND_JOBS=true/);
     expect(errorText('x-y', 418)).toBe(tr('setup.errors.unknown', { status: '418' }));
     expect(filled({ A: ' x ', B: '', C: '  ' })).toEqual({ A: 'x' });
+    expect(otherFieldErrors({ JELLYFIN_URL: 'invalid_url', ADMIN_GROUP: 'locked' }, ['JELLYFIN_URL'])).toEqual([`${tr('settings.keys.ADMIN_GROUP.label')}: ${tr('settings.errors.locked')}`]);
+    expect(otherFieldErrors(undefined, [])).toEqual([]);
     expect(['JELLYFIN_ADMIN_API_KEY', 'OIDC_CLIENT_SECRET', 'AUTHENTIK_API_TOKEN'].every(isSecretKey)).toBe(true);
     expect(['JELLYFIN_URL', 'OIDC_CLIENT_ID', 'ADMIN_GROUP', 'AUTHENTIK_ENROLL_FLOW'].some(isSecretKey)).toBe(false);
   });
 
   it('every code the backend answers has a sentence in every language; the request service is never named after a product', async () => {
     const errors = ['wrong_code', 'code_expired', 'code_locked', 'no_code', 'setup_session_required', 'csrf', 'setup_complete', 'busy', 'not_allowed', 'not_supported',
-      'invalid_settings', 'rate_limited', 'network', 'timeout'];
+      'invalid_settings', 'rate_limited', 'network', 'timeout', 'no_probe', 'bad_request'];
     const ak = ['unauthorized', 'not_superuser', 'unsupported_version', 'blueprint_invalid', 'unreachable', 'unexpected', 'issuer_mismatch', 'invalid_url'];
     // probe codes and details of settings/probes.ts, the media server's automatic key and the setup routes
     const probe = ['ok', 'unreachable', 'timeout', 'unauthorized', 'invalid', 'not_admin', 'issuer_mismatch', 'wizard_pending', 'unexpected', 'warning'];

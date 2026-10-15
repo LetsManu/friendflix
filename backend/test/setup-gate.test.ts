@@ -71,18 +71,30 @@ describe('the setup gate while setup is incomplete', () => {
     expect((await env.app.inject({ url: '/api/me', cookies: s.cookies })).statusCode).toBe(503);
   });
 
-  it('GET /api/setup/state: complete, unlocked, media kind, steps and the prefill from the forwarded request', async () => {
+  it('GET /api/setup/state: complete, unlocked, media kind, steps, the saved public URL as prefill and the sign-in path', async () => {
     const r = await env.app.inject({ url: '/api/setup/state', headers: { 'x-forwarded-proto': 'https', host: 'tv.example.com' } });
+    expect(env.ctx.cfg.PUBLIC_URL).toBeTruthy();
+    expect(env.ctx.cfg.PUBLIC_URL).not.toBe('https://tv.example.com');
     expect(r.json()).toEqual({
       complete: false, unlocked: false, mediaKind: 'jellyfin', media: { keys: ['JELLYFIN_URL', 'JELLYFIN_ADMIN_API_KEY'], auto: ['url', 'username', 'password'] },
       steps: { publicUrl: 'done', media: 'done', signin: 'done', admin: 'todo' },
-      prefill: { publicUrl: 'https://tv.example.com' },
+      // the saved address wins over the browser's origin: the redirect URI of step 4 must be the one OIDC uses
+      prefill: { publicUrl: env.ctx.cfg.PUBLIC_URL },
+      signinVia: null,
     });
     const s = await unlock(env);
     expect((await env.app.inject({ url: '/api/setup/state', cookies: s.cookies })).json().unlocked).toBe(true);
-    // a garbage host is no prefill
-    const bad = await env.app.inject({ url: '/api/setup/state', headers: { host: 'tv.example.com/evil' } });
-    expect(bad.json().prefill).toEqual({ publicUrl: null });
+    const before = env.ctx.cfg;
+    try {
+      // no public URL saved yet: the origin of the forwarded request; a garbage host is no prefill
+      env.ctx.cfg = { ...before, PUBLIC_URL: '' };
+      const fwd = await env.app.inject({ url: '/api/setup/state', headers: { 'x-forwarded-proto': 'https', host: 'tv.example.com' } });
+      expect(fwd.json().prefill).toEqual({ publicUrl: 'https://tv.example.com' });
+      const bad = await env.app.inject({ url: '/api/setup/state', headers: { host: 'tv.example.com/evil' } });
+      expect(bad.json().prefill).toEqual({ publicUrl: null });
+    } finally {
+      env.ctx.cfg = before;
+    }
   });
 
   it('steps report env-locked and missing keys', async () => {

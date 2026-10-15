@@ -8,6 +8,7 @@
 import { ApiError } from '#lib/api';
 import { hasKey, tr, trDynamic } from '#lib/i18n';
 import type { ProbeResult } from '#lib/admin/settings/api';
+import { errorText as fieldText, keyLabel } from '#lib/admin/settings/form';
 import type { AkStep } from './api';
 
 /** Probe failures "Save anyway" may override (backend probes.ts: everything else is HARD). */
@@ -84,3 +85,7 @@ export function filled(values: Readonly<Record<string, string>>): Record<string,
 
 /** Registry keys that hold a credential (shown as password fields, emptied after a save). */
 export const isSecretKey = (key: string): boolean => /(_KEY|_TOKEN|_SECRET|_PASSWORD)$/.test(key);
+
+/** Field errors for keys the form does not show (locked, not allowed …), as "Label: reason" lines: they would be invisible otherwise. */
+export const otherFieldErrors = (fields: Readonly<Record<string, string>> | undefined, shown: readonly string[]): string[] =>
+  Object.entries(fields ?? {}).filter(([k]) => !shown.includes(k)).map(([k, code]) => `${keyLabel(k)}: ${fieldText(code)}`);

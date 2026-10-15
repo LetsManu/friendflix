@@ -31,7 +31,7 @@
   let loadFailed = false, loading = false;
   let step: N = 1;
   let expired = false;
-  /** the public address typed on this visit; until then the backend's suggestion (the origin this browser used) */
+  /** the public address typed on this visit; until then the backend's (the saved one, else the origin this browser used) */
   let publicUrl = '';
   let stepEl: HTMLElement;
 
@@ -119,8 +119,9 @@
               </button>
             </li>
           {/each}
-          <li class="later" aria-label={$t('setup.stepA11y', { n: 6, name: $t('setup.steps.extras'), state: $t('setup.stepState.todo') })}>
+          <li class="later">
             <span class="num" aria-hidden="true">6</span><span class="name" aria-hidden="true">{$t('setup.steps.extras')}</span>
+            <span class="sr-only">{$t('setup.stepA11y', { n: 6, name: $t('setup.steps.extras'), state: $t('setup.stepState.todo') })}</span>
           </li>
         </ol>
       </nav>
@@ -140,7 +141,7 @@
         {:else if step === 4}
           <StepSignin state={s} {handle} {publicUrl} on:done={() => refresh({ after: 4 })} />
         {:else}
-          <StepAdmin state={s} on:go={(e) => go(e.detail)} />
+          <StepAdmin state={s} viaAuthentik={s.signinVia === 'authentik'} on:go={(e) => go(e.detail)} />
         {/if}
       </section>
     {/if}

@@ -20,8 +20,10 @@ export interface SetupState {
   /** the media step's fields (registry keys, labels settings.keys.<KEY>) and the automatic setup's fields, null = manual only */
   media: { keys: string[]; auto: AutoField[] | null };
   steps: { publicUrl: StepState; media: StepState; signin: StepState; admin: StepState };
-  /** the origin the browser used (a suggestion for step 2); null when it is not an origin */
+  /** the saved (or environment) public URL, else the origin the browser used (a suggestion for step 2); null when neither */
   prefill: { publicUrl: string | null };
+  /** 'authentik' once the Authentik automation saved the sign-in (and no sign-in key was typed by hand since); absent on older backends */
+  signinVia?: 'authentik' | null;
 }
 export type AkStepId = 'check' | 'groups' | 'provider' | 'serviceAccount' | 'enrollment' | 'recovery' | 'brand' | 'readback' | 'adminMember' | 'extraFlows';
 export interface AkStep { id: AkStepId; state: 'create' | 'update' | 'exists' | 'skip' | 'ok' | 'failed'; detail?: string }

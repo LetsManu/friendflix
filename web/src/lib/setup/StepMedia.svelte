@@ -12,7 +12,7 @@
   import Button from '#lib/ui/Button.svelte';
   import Field from '#lib/ui/Field.svelte';
   import { mediaAuto, saveSetup, testSetup, type AutoField, type SetupState } from './api';
-  import { filled, isSecretKey, probeText, type Handle, type Message } from './messages';
+  import { filled, isSecretKey, otherFieldErrors, probeText, type Handle, type Message } from './messages';
   import Notice from './Notice.svelte';
 
   export let state: SetupState;
@@ -30,6 +30,7 @@
   const AUTO_LABEL = { url: 'setup.media.url', username: 'setup.media.username', password: 'setup.media.password' } as const;
   $: autoReady = autoFields.every((f) => auto[f].trim() || f === 'password');
   $: manualValues = filled(manual);
+  $: others = otherFieldErrors(msg?.fields, mode === 'manual' ? state.media.keys : []);
   $: fieldErr = (key: string) => (msg?.fields?.[key] ? fieldText(msg.fields[key]!) : '');
 
   function setMode(m: 'auto' | 'manual') { mode = m; msg = null; ok = ''; }
@@ -99,7 +100,7 @@
       </Field>
     {/each}
     {#if ok}<Notice tone="ok"><p>{ok}</p></Notice>{/if}
-    {#if msg}<Notice tone="err"><p>{msg.text}</p></Notice>{/if}
+    {#if msg}<Notice tone="err"><p>{msg.text}</p>{#each others as o (o)}<p>{o}</p>{/each}</Notice>{/if}
     <div class="acts"><Button type="submit" icon="key" pending={busy === 'auto'} disabled={!autoReady}>{$t('setup.media.create')}</Button></div>
   </form>
 {:else}
@@ -112,9 +113,10 @@
       </Field>
     {/each}
     {#if ok}<Notice tone="ok"><p>{ok}</p></Notice>{/if}
-    {#if msg && !msg.fields}
+    {#if msg && (!msg.fields || others.length)}
       <Notice tone="err">
         <p>{msg.text}</p>
+        {#each others as o (o)}<p>{o}</p>{/each}
         {#if msg.soft}
           <p>{$t('setup.saveSoft')}</p>
           <Button variant="secondary" size="sm" pending={busy === 'force'} on:click={() => save(true)}>{$t('setup.saveAnyway')}</Button>
