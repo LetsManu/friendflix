@@ -1,5 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
+import http from 'node:http';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import WebSocket from 'ws';
 import { createInvite } from '../src/invites.js';
@@ -139,6 +140,44 @@ describe('the setup gate while setup is incomplete', () => {
       expect(status, path).toBe(503);
     }
     // the refused upgrade sockets are closed by the gate (an open one would hold up app.close() in afterAll)
+  });
+
+  it('a refused upgrade is closed even when the gate check throws; a plain request with an Upgrade header keeps its connection', async () => {
+    if (!env.app.server.listening) await env.app.listen({ port: 0, host: '127.0.0.1' });
+    const port = (env.app.server.address() as { port: number }).port;
+    // a plain request (Upgrade header, no Connection: upgrade) is no upgrade: 503 and the keep-alive connection stays open
+    const agent = new http.Agent({ keepAlive: true });
+    try {
+      const res = await new Promise<http.IncomingMessage>((resolve, reject) => {
+        http.get({ host: '127.0.0.1', port, path: '/api/me', agent, headers: { upgrade: 'websocket', connection: 'keep-alive' } }, resolve).on('error', reject);
+      });
+      const sock = res.socket;
+      expect(res.statusCode).toBe(503);
+      await new Promise((r) => { res.on('end', r); res.resume(); });
+      await new Promise((r) => setTimeout(r, 100));
+      expect(sock.destroyed).toBe(false);
+    } finally {
+      agent.destroy();
+    }
+    // a cold cache with the database down: the gate throws (500), and the upgrade socket is still closed by the server
+    const { settings, db } = env.ctx;
+    env.ctx.settings = { ...settings, rev: () => -2 } as typeof settings;
+    env.ctx.db = { query: async () => { throw new Error('db down'); } } as unknown as typeof db;
+    try {
+      const closed = await new Promise<number>((resolve) => {
+        const timer = setTimeout(() => resolve(-1), 3000);
+        const ws = new WebSocket(`ws://127.0.0.1:${port}/ws/remote`, { headers: { origin: 'https://portal.example.com' } });
+        ws.on('unexpected-response', (_req, res) => {
+          res.socket.once('close', () => { clearTimeout(timer); resolve(res.statusCode ?? 0); });
+          res.resume();
+        });
+        ws.on('error', () => undefined);
+      });
+      expect(closed).toBe(500);
+    } finally {
+      env.ctx.settings = settings;
+      env.ctx.db = db;
+    }
   });
 
   it('isSetupComplete keeps the last known state while the database is down (a cold cache fails)', async () => {
