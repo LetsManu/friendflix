@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import WebSocket from 'ws';
 import { createInvite } from '../src/invites.js';
 import { pushPersonal } from '../src/notify.js';
 import { pollTick } from '../src/polls.js';
@@ -108,8 +109,35 @@ describe('the setup gate while setup is incomplete', () => {
     await env.pool.query('delete from users where id=$1', [uid]);
   });
 
+  it('a real websocket upgrade is refused with 503 while setup is incomplete', async () => {
+    await env.app.listen({ port: 0, host: '127.0.0.1' });
+    const port = (env.app.server.address() as { port: number }).port;
+    for (const path of ['/ws/remote', '/ws/party/abc']) {
+      const status = await new Promise<number>((resolve) => {
+        const ws = new WebSocket(`ws://127.0.0.1:${port}${path}`, { headers: { origin: 'https://portal.example.com' } });
+        ws.on('unexpected-response', (_req, res) => { resolve(res.statusCode ?? 0); ws.terminate(); });
+        ws.on('open', () => { resolve(101); ws.close(); });
+        ws.on('error', () => undefined);
+      });
+      expect(status, path).toBe(503);
+    }
+    // the refused upgrade sockets are closed by the gate (an open one would hold up app.close() in afterAll)
+  });
+
+  it('isSetupComplete keeps the last known state while the database is down (a cold cache fails)', async () => {
+    const known = await isSetupComplete(env.ctx);
+    await env.ctx.settings.save({ ADMIN_GROUP: 'friendflix-admins' }, null); // moves the rev: the next call re-reads
+    const down = { query: async () => { throw new Error('db down'); } } as unknown as TestEnv['ctx']['db'];
+    expect(await isSetupComplete({ settings: env.ctx.settings, db: down })).toBe(known);
+    const cold = { ...env.ctx.settings, rev: () => -1 } as typeof env.ctx.settings; // another store: no cache entry
+    await expect(isSetupComplete({ settings: cold, db: down })).rejects.toThrow('db down');
+    expect(await isSetupComplete(env.ctx)).toBe(known); // recovers with the database
+  });
+
   it('isSetupComplete is cached until the settings rev moves; isOperational needs the run-required keys too', async () => {
     expect(await isSetupComplete(env.ctx)).toBe(false);
+    const uid = (await env.pool.query("insert into users(id, authentik_sub, name, role, jellyfin_user_id, jellyfin_username, jellyfin_pw_enc) values (gen_random_uuid(),'sub-q','Q','admin','jfq','Q','x') returning id")).rows[0].id;
+    await env.pool.query("insert into polls(id, title, created_by, closes_at, starts_at) values (gen_random_uuid(), 'T2', $1, now() - interval '1 minute', now() + interval '1 hour')", [uid]);
     await updateMeta(env.pool, { setupCompletedAt: new Date() });
     expect(await isSetupComplete(env.ctx)).toBe(false); // cached: this instance has not seen the new rev yet
     await env.ctx.settings.reload();
@@ -123,6 +151,9 @@ describe('the setup gate while setup is incomplete', () => {
       env.ctx.cfg = before;
     }
     expect((await env.app.inject('/api/me')).statusCode).toBe(401); // the gate is inert now
+    // and the jobs run again: the due poll from the test above is closed now (no votes -> cancelled)
+    await pollTick(env.ctx);
+    expect((await env.pool.query("select status from polls where title='T2'")).rows[0].status).toBe('cancelled');
     await updateMeta(env.pool, { setupCompletedAt: null });
     await env.ctx.settings.reload();
     expect((await env.app.inject('/api/me')).statusCode).toBe(503);
@@ -142,6 +173,23 @@ describe('setup-session endpoints', () => {
   afterAll(() => env.close());
   const put = (values: Record<string, unknown>, sess: Partial<SetupSess> = s, headers: Record<string, string> = { 'x-ff-setup-csrf': s.csrf }) =>
     env.app.inject({ method: 'PUT', url: '/api/setup/settings', cookies: sess.cookies ?? {}, headers, payload: { values } });
+
+  it('ff_setup is SameSite=Lax, ff_setup_csrf Strict; the Lax cookie alone never authorises a write', async () => {
+    const code = await issueSetupCode(env.ctx);
+    const r = await env.app.inject({ method: 'POST', url: '/api/setup/unlock', payload: { code }, remoteAddress: freshIp() });
+    const sess = r.cookies.find((c) => c.name === 'ff_setup')!;
+    expect(sess).toMatchObject({ sameSite: 'Lax', httpOnly: true });
+    expect(r.cookies.find((c) => c.name === 'ff_setup_csrf')).toMatchObject({ sameSite: 'Strict' });
+    // what a cross-site top-level request could carry: the Lax cookie, never the Strict one, never the header
+    for (const method of ['PUT', 'POST'] as const) {
+      const url = method === 'PUT' ? '/api/setup/settings' : '/api/setup/test';
+      const payload = method === 'PUT' ? { values: { PUBLIC_URL: 'https://evil.example.com' } } : { group: 'general' };
+      const w = await env.app.inject({ method, url, cookies: { ff_setup: sess.value }, payload });
+      expect(w.statusCode, url).toBe(403);
+      expect(w.json()).toEqual({ error: 'csrf' });
+    }
+    expect(env.ctx.cfg.PUBLIC_URL).not.toBe('https://evil.example.com');
+  });
 
   it('PUT /api/setup/settings needs the setup session and its csrf header', async () => {
     expect((await put({ PUBLIC_URL: 'https://tv.example.com' }, {}, {})).statusCode).toBe(401);

@@ -26,6 +26,10 @@ export async function isSetupComplete(ctx: Pick<Ctx, 'db' | 'settings'>): Promis
       const complete = m.setupCompletedAt !== null;
       cache.set(ctx.settings, { rev, complete });
       return complete;
+    }, (err: unknown) => {
+      // the database is unavailable: keep answering the last known state (the outdated rev makes the next call retry); only a cold cache fails
+      if (c) return c.complete;
+      throw err;
     }).finally(() => pending.delete(ctx.settings));
     pending.set(ctx.settings, p);
   }

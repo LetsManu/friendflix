@@ -54,7 +54,8 @@ describe('unlock', () => {
     expect(r.json()).toEqual({ ok: true });
     const s = r.cookies.find((c) => c.name === 'ff_setup')!;
     const c = r.cookies.find((x) => x.name === 'ff_setup_csrf')!;
-    expect(s).toMatchObject({ httpOnly: true, sameSite: 'Strict', path: '/' });
+    // Lax: the IdP's cross-site redirect to /auth/callback must carry it (spec E2, review I1); the csrf cookie stays Strict
+    expect(s).toMatchObject({ httpOnly: true, sameSite: 'Lax', path: '/' });
     expect(s.secure).toBeFalsy(); // plain http request
     expect(c.httpOnly).toBeFalsy();
     expect(c).toMatchObject({ sameSite: 'Strict', path: '/' });
@@ -149,6 +150,15 @@ describe('unlock', () => {
     } finally {
       Date.now = realNow;
     }
+  });
+
+  it('no code issued yet (no instance with BACKGROUND_JOBS=true) -> 410 no_code, distinct from a lockout', async () => {
+    await updateMeta(env.pool, { setupCodeHash: null, setupCodeFailures: 0 });
+    const r = await unlock('AAAA-BBBB-CCCC');
+    expect(r.statusCode).toBe(410);
+    expect(r.json()).toEqual({ error: 'no_code' });
+    await updateMeta(env.pool, { setupCodeFailures: 10 });
+    expect((await unlock('AAAA-BBBB-CCCC')).json()).toEqual({ error: 'code_locked' });
   });
 
   it('once setup is complete: unlock -> 409 setup_complete, and verifySetupCode says complete', async () => {

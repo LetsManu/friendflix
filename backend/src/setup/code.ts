@@ -67,10 +67,11 @@ const quiet: Log = { warn: () => {}, info: () => {} };
  * Checks a typed code. A wrong one counts against the global limit in one statement (concurrent attempts all count; the one that reaches
  * MAX_FAILURES clears the hash). Only codes and the client IP are logged, never the input.
  */
-export async function verifySetupCode(ctx: Pick<Ctx, 'db'>, input: string, ip: string, log: Log = quiet): Promise<'ok' | 'wrong' | 'expired' | 'locked' | 'complete'> {
+export async function verifySetupCode(ctx: Pick<Ctx, 'db'>, input: string, ip: string, log: Log = quiet): Promise<'ok' | 'wrong' | 'expired' | 'locked' | 'no_code' | 'complete'> {
   const m = await readMeta(ctx.db);
   if (m.setupCompletedAt) return 'complete';
-  if (!m.setupCodeHash) return 'locked';
+  // no hash and no failures: no code was ever issued (no instance runs with BACKGROUND_JOBS=true), not a lockout
+  if (!m.setupCodeHash) return m.setupCodeFailures === 0 ? 'no_code' : 'locked';
   if (!m.setupCodeExpiresAt || m.setupCodeExpiresAt.getTime() <= Date.now()) return 'expired';
   if (safeEqual(sha256(normalizeCode(input)), m.setupCodeHash)) return 'ok';
   // counted against the code that was compared: a code issued meanwhile starts at 0
@@ -98,7 +99,9 @@ export async function createSetupSession(ctx: Pick<Ctx, 'kv'>, req: FastifyReque
   await ctx.kv.set(sessKey(token), JSON.stringify({ csrf, createdAt: Date.now() }), SESSION_TTL_S);
   // PUBLIC_URL may not exist yet: Secure follows the request itself (x-forwarded-proto behind the proxy)
   const secure = req.protocol === 'https';
-  reply.setCookie(SETUP_COOKIE, token, { httpOnly: true, sameSite: 'strict', secure, path: '/' });
+  // Lax, not Strict (spec E2): the IdP's redirect back to /auth/callback is cross-site when Authentik runs on another site, and the gate
+  // needs this cookie there. Writes stay protected by x-ff-setup-csrf, which a cross-site page cannot set (ff_setup_csrf stays Strict).
+  reply.setCookie(SETUP_COOKIE, token, { httpOnly: true, sameSite: 'lax', secure, path: '/' });
   reply.setCookie(SETUP_CSRF_COOKIE, csrf, { httpOnly: false, sameSite: 'strict', secure, path: '/' });
 }
 

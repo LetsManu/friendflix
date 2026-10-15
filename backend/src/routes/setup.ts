@@ -74,6 +74,7 @@ export function setupRoutes(app: FastifyInstance, ctx: Ctx) {
     if (r === 'complete') return reply.code(409).send({ error: 'setup_complete' });
     if (r === 'expired') return reply.code(410).send({ error: 'code_expired' });
     if (r === 'locked') return reply.code(410).send({ error: 'code_locked' });
+    if (r === 'no_code') return reply.code(410).send({ error: 'no_code' }); // the web explains: start one backend with BACKGROUND_JOBS=true
     if (r === 'wrong') return reply.code(401).send({ error: 'wrong_code' });
     await createSetupSession(ctx, req, reply);
     req.log.info({ ip: req.ip }, 'setup session opened');

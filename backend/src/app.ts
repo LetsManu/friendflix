@@ -156,6 +156,9 @@ export async function buildApp(ctx: Ctx, extra: Extra = {}): Promise<FastifyInst
     if (route !== undefined && SETUP_OPEN_GET.has(route) && (req.method === 'GET' || req.method === 'HEAD')) return;
     if (await isSetupComplete(ctx)) return;
     if (route !== undefined && SETUP_LOGIN.has(route) && (await hasSetupSession(ctx, req))) return;
+    // a refused websocket upgrade: this hook runs before @fastify/websocket's own (which would destroy the socket on response), so the
+    // upgrade socket is closed here; otherwise it stays open and holds up app.close()
+    if (req.headers.upgrade) reply.raw.once('finish', () => req.raw.socket?.destroy());
     return reply.code(503).send({ error: 'setup_required' });
   });
 
