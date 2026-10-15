@@ -234,7 +234,7 @@ describe('akExec', () => {
     const ctx = ctxWith((async () => { throw new TypeError(`fetch failed: ${AK_URL}/api/v3/flows/executor/x/ cookie=s1`); }) as typeof fetch);
     const e = await codeOf(akExec(ctx, jarOf({ cookies: { authentik_session: 's1' } }), 'GET'));
     expect(e).toEqual({ status: 503, code: 'authentik_unavailable' });
-    expect(e.code).not.toMatch(/http|authentik\.internal|s1/);
+    expect(e.code).not.toMatch(/http|example|s1/);
   });
 
   it('a timeout counts as unreachable (8 s for the whole exchange)', async () => {
@@ -400,7 +400,7 @@ describe('the jar in kv', () => {
     const ctx = ctxWith(fetch);
     // saved while fresh, read back after its createdAt is 601 s old (the kv entry still exists here)
     const old = jarOf({ createdAt: Date.now() - (JAR_TTL_S + 1) * 1000 });
-    await ctx.kv.set(key('old'), encrypt(ctx.encKey, JSON.stringify(old)), 3600);
+    await ctx.kv.set(key('old'), encrypt(ctx.encKey, JSON.stringify({ fid: sha256('old'), jar: old })), 3600);
     expect(await loadJar(ctx, 'old')).toBeNull();
     expect(await ctx.kv.get(key('old'))).toBeNull();
     // saving an expired jar stores nothing (and removes what was there)
@@ -425,12 +425,12 @@ describe('the jar in kv', () => {
     const ctx = ctxWith(fetch);
     await ctx.kv.set(key('bad'), 'not-encrypted', 600);
     expect(await loadJar(ctx, 'bad')).toBeNull();
-    await ctx.kv.set(key('foreign'), encrypt(Buffer.alloc(32, 9), JSON.stringify(jarOf())), 600);
+    await ctx.kv.set(key('foreign'), encrypt(Buffer.alloc(32, 9), JSON.stringify({ fid: sha256('foreign'), jar: jarOf() })), 600);
     expect(await loadJar(ctx, 'foreign')).toBeNull();
     const { challenges: _c, ...legacy } = jarOf();
-    await ctx.kv.set(key('legacy'), encrypt(ctx.encKey, JSON.stringify(legacy)), 600);
+    await ctx.kv.set(key('legacy'), encrypt(ctx.encKey, JSON.stringify({ fid: sha256('legacy'), jar: legacy })), 600);
     expect((await loadJar(ctx, 'legacy'))?.challenges).toBe(0);
-    await ctx.kv.set(key('noage'), encrypt(ctx.encKey, JSON.stringify({ ...jarOf(), createdAt: 'x' })), 600);
+    await ctx.kv.set(key('noage'), encrypt(ctx.encKey, JSON.stringify({ fid: sha256('noage'), jar: { ...jarOf(), createdAt: 'x' } })), 600);
     expect(await loadJar(ctx, 'noage')).toBeNull();
   });
 
@@ -444,12 +444,58 @@ describe('the jar in kv', () => {
     const next = continueJar(ctx.cfg, reauth, reauth.then!);
     expect(next).toMatchObject({ kind: 'setup-webauthn', slug: 'default-authenticator-webauthn-setup', forwardHost: true, userId: 'u1', challenges: 0, createdAt: reauth.createdAt, cookies: { authentik_session: 's1' } });
     expect(next.then).toBeUndefined();
+    for (const kind of ['change-email', 'setup-totp', 'setup-static', 'change-password'] as const) expect(continueJar(ctx.cfg, reauth, kind).forwardHost).toBe(false);
     const plain = { ...reauth, forwardHost: false };
     expect(continueJar(ctx.cfg, plain, 'setup-webauthn').forwardHost).toBe(false);
     expect(await codeOf(createJar(ctx, 'enroll'))).toEqual({ status: 409, code: 'flow_not_configured' });
     expect(() => continueJar(ctx.cfg, reauth, 'enroll')).toThrow('flow_not_configured');
     const off = ctxWith(ak.fetch, { PASSKEYS_IN_APP: 'off' });
     expect((await createJar(off, 'login')).forwardHost).toBe(false);
+  });
+});
+
+describe('fix round 1', () => {
+  it('reauth -> change-email after a forwarded re-authentication sends no forwarded host; the CSRF origin is AUTHENTIK_URL', async () => {
+    const ak = fakeAuthentik([{ challenge: fixture('prompt-password-change') }], { [DISCOVERY]: discovery(true) });
+    const ctx = ctxWith(ak.fetch);
+    const reauth = await createJar(ctx, 'reauth', { then: 'change-email' });
+    expect(reauth.forwardHost).toBe(true);
+    reauth.cookies = { authentik_session: 's1', authentik_csrf: 'csrf-placeholder' };
+    const mail = continueJar(ctx.cfg, reauth, 'change-email');
+    ak.calls.length = 0;
+    await akExec(ctx, mail, 'GET');
+    await akExec(ctx, mail, 'POST', { email: 'new@example.com' });
+    for (const c of ak.calls) {
+      expect(c.headers['x-forwarded-host']).toBeUndefined();
+      expect(c.headers['x-forwarded-proto']).toBeUndefined();
+    }
+    expect(ak.calls[0]!.headers.origin).toBeUndefined();
+    expect(ak.calls[1]!.headers).toMatchObject({ 'x-authentik-csrf': 'csrf-placeholder', origin: AK_URL });
+  });
+
+  it('a jar blob copied under another flow id does not load there', async () => {
+    const ctx = ctxWith(fetch);
+    await saveJar(ctx, 'flow-a', jarOf({ cookies: { authentik_session: 's1' } }));
+    await ctx.kv.set(`akflow:${sha256('flow-b')}`, (await ctx.kv.get(`akflow:${sha256('flow-a')}`))!, 600);
+    expect(await loadJar(ctx, 'flow-b')).toBeNull();
+    expect((await loadJar(ctx, 'flow-a'))?.cookies.authentik_session).toBe('s1');
+  });
+
+  it('a declared body over 1 MB is refused unread (executor 502, probe unreachable)', async () => {
+    const big = () => new Response('{}', { headers: { 'content-type': 'application/json', 'content-length': '5000000' } });
+    const ak = fakeAuthentik([], { [DISCOVERY]: big });
+    ak.override = (c) => (c.path.includes('/flows/executor/') ? big() : undefined);
+    expect(await codeOf(akExec(ctxWith(ak.fetch), jarOf(), 'GET'))).toEqual({ status: 502, code: 'authentik_error' });
+    expect(await probeForwardedHost(ctxWith(ak.fetch))).toBe('unreachable');
+  });
+
+  it('a 404 from the probe is probe_not_found; concurrent first callers share one probe', async () => {
+    const missing = fakeAuthentik([]);
+    expect(await passkeysStatus(ctxWith(missing.fetch))).toEqual({ inApp: false, reason: 'probe_not_found' });
+    const ak = fakeAuthentik([], { [DISCOVERY]: discovery(true) });
+    const ctx = ctxWith(ak.fetch);
+    expect(await Promise.all([passkeysInApp(ctx), passkeysInApp(ctx), passkeysInApp(ctx)])).toEqual([true, true, true]);
+    expect(ak.calls).toHaveLength(1);
   });
 });
 
@@ -527,25 +573,30 @@ describe('passkeys in-app and the forwarded-host probe', () => {
   });
 });
 
-describe('error logs of /auth/flow/ routes', () => {
+describe('error logs of routes with secret bodies (/auth/flow/, /api/setup/, /api/admin/settings)', () => {
   const logs: string[] = [];
   let env: TestEnv;
   const PASSWORD = 'Sup3r-Secret-Passw0rd!';
+  // stand-ins for the real routes: an error that quotes the request body
+  const BOOM = ['/auth/flow/answer', '/api/setup/boom', '/api/admin/settings/boom'];
   beforeAll(async () => {
     env = await makeEnv({}, {
       logger: { stream: { write: (m: string) => { logs.push(m); } }, level: 'trace' },
       register: [(app) => {
-        // stands in for the flow routes (Task 3): an error that quotes the request body
-        app.post('/auth/flow/answer', async (req) => {
-          throw Object.assign(new Error(`stage failed for ${JSON.stringify(req.body)}`), { code: 'E_TEST' });
-        });
+        for (const url of [...BOOM, '/api/plain/boom']) {
+          app.post(url, async (req) => {
+            throw Object.assign(new Error(`stage failed for ${JSON.stringify(req.body)}`), { code: 'E_TEST' });
+          });
+        }
       }],
     });
   });
   afterAll(() => env.close());
+  const post = (url: string) => env.app.inject({ method: 'POST', url, payload: { step: 'st1', stage: 'password', password: PASSWORD } });
 
   it('a thrown error under /auth/flow/ is logged by type and code only, never with the body', async () => {
-    const r = await env.app.inject({ method: 'POST', url: '/auth/flow/answer', payload: { step: 'st1', stage: 'password', password: PASSWORD } });
+    logs.length = 0;
+    const r = await post('/auth/flow/answer');
     expect(r.statusCode).toBe(500);
     expect(r.json()).toEqual({ error: 'internal' });
     const text = logs.join('\n');
@@ -553,5 +604,30 @@ describe('error logs of /auth/flow/ routes', () => {
     expect(text).toContain('E_TEST');
     expect(text).not.toContain(PASSWORD);
     expect(text).not.toContain('stage failed');
+  });
+
+  it('no path trick (percent-encoding, case, double slashes) gets the body into the log, for all three prefixes', async () => {
+    const variants = [
+      '/auth/flow/answer', '/%61uth/flow/answer', '/auth/%66low/answer', '/auth/flow/%61nswer', '/AUTH/flow/answer', '//auth/flow/answer', '/auth//flow/answer',
+      '/api/setup/boom', '/%61pi/setup/boom', '/api/%73etup/boom', '/API/setup/boom', '//api/setup/boom', '/api//setup/boom',
+      '/api/admin/settings/boom', '/%61pi/admin/settings/boom', '/api/admin/%73ettings/boom', '/api/%61dmin/settings/boom', '/api/ADMIN/settings/boom', '/api/admin//settings/boom',
+    ];
+    let reached = 0;
+    for (const url of variants) {
+      logs.length = 0;
+      const r = await post(url);
+      expect([404, 500]).toContain(r.statusCode);
+      if (r.statusCode === 500) reached++;
+      const text = logs.join('\n');
+      expect(text, url).not.toContain(PASSWORD);
+      expect(text, url).not.toContain('stage failed');
+    }
+    expect(reached).toBeGreaterThanOrEqual(9); // the encoded variants do reach the handlers
+  });
+
+  it('other routes still log the error object (the capture works)', async () => {
+    logs.length = 0;
+    expect((await post('/api/plain/boom')).statusCode).toBe(500);
+    expect(logs.join('\n')).toContain('stage failed');
   });
 });

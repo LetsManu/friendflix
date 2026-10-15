@@ -13,7 +13,8 @@
 import { readFileSync } from 'node:fs';
 import type { RawChallenge } from '../src/akflow.js';
 
-export const AK_URL = 'http://authentik.internal:9000';
+/** AUTHENTIK_URL in the tests: another origin than the browser-facing issuer (https://auth.example.com) */
+export const AK_URL = 'http://auth.example.com:9000';
 
 /** a recorded challenge from fixtures/akflow/<name>.json */
 export function fixture(name: string): RawChallenge {

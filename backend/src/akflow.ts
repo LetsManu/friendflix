@@ -112,8 +112,12 @@ export function appHost(cfg: Pick<Config, 'PUBLIC_URL'>): string | null {
 // ---------------------------------------------------------------------------------------------------------------------------
 // passkeys in-app: preconditions and the forwarded-host probe
 
-export type PasskeysReason = 'ok' | 'disabled' | 'not_https' | 'not_configured' | 'forwarded_host_ignored' | 'unreachable';
-export type ForwardedHostProbe = 'honoured' | 'ignored' | 'unreachable';
+export type PasskeysReason = 'ok' | 'disabled' | 'not_https' | 'not_configured' | 'forwarded_host_ignored' | 'probe_not_found' | 'unreachable';
+/** `not_found`: Authentik answered 404 (the issuer path names no application) */
+export type ForwardedHostProbe = 'honoured' | 'ignored' | 'not_found' | 'unreachable';
+const PROBES: ReadonlySet<string> = new Set(['honoured', 'ignored', 'not_found', 'unreachable']);
+/** probes running in this process, by cache key: concurrent first callers share one request */
+const probing = new Map<string, Promise<ForwardedHostProbe>>();
 
 /**
  * Whether Authentik takes `X-Forwarded-Host` from this backend: an anonymous `GET <issuer path>.well-known/openid-configuration` on
@@ -135,7 +139,15 @@ export async function probeForwardedHost(ctx: FlowCtx): Promise<ForwardedHostPro
   if (!app) return 'unreachable';
   const key = `akflow:fwdhost:${sha256(`${PUBLIC_URL}|${OIDC_ISSUER}|${AUTHENTIK_URL}`)}`;
   const hit = await ctx.kv.get(key);
-  if (hit === 'honoured' || hit === 'ignored' || hit === 'unreachable') return hit;
+  if (hit && PROBES.has(hit)) return hit as ForwardedHostProbe;
+  const running = probing.get(key);
+  if (running) return running;
+  const run = runProbe(ctx, target, app, key).finally(() => probing.delete(key));
+  probing.set(key, run);
+  return run;
+}
+
+async function runProbe(ctx: FlowCtx, target: URL, app: URL, key: string): Promise<ForwardedHostProbe> {
   let result: ForwardedHostProbe = 'unreachable';
   try {
     const r = await ctx.fetchImpl(target, {
@@ -143,16 +155,17 @@ export async function probeForwardedHost(ctx: FlowCtx): Promise<ForwardedHostPro
       redirect: 'manual',
       signal: AbortSignal.timeout(PROBE_TIMEOUT_MS),
     });
-    if (r.ok) {
+    if (r.ok && !tooLarge(r)) {
       const issuer = ((await r.json()) as { issuer?: unknown }).issuer;
       if (typeof issuer === 'string') result = issuer.startsWith(`${app.protocol}//${app.host}/`) ? 'honoured' : 'ignored';
     } else {
+      if (r.status === 404) result = 'not_found';
       await r.body?.cancel().catch(() => undefined);
     }
   } catch {
     result = 'unreachable'; // the cause may quote the request: never kept
   }
-  await ctx.kv.set(key, result, result === 'unreachable' ? PROBE_UNREACHABLE_TTL_S : PROBE_TTL_S);
+  await ctx.kv.set(key, result, result === 'unreachable' || result === 'not_found' ? PROBE_UNREACHABLE_TTL_S : PROBE_TTL_S);
   return result;
 }
 
@@ -167,7 +180,7 @@ export async function passkeysStatus(ctx: FlowCtx): Promise<{ inApp: boolean; re
   if (!ctx.cfg.AUTHENTIK_URL) return { inApp: false, reason: 'not_configured' };
   const probe = await probeForwardedHost(ctx);
   if (probe === 'honoured') return { inApp: true, reason: 'ok' };
-  return { inApp: false, reason: probe === 'ignored' ? 'forwarded_host_ignored' : 'unreachable' };
+  return { inApp: false, reason: probe === 'ignored' ? 'forwarded_host_ignored' : probe === 'not_found' ? 'probe_not_found' : 'unreachable' };
 }
 
 export async function passkeysInApp(ctx: FlowCtx): Promise<boolean> {
@@ -190,13 +203,15 @@ export async function createJar(ctx: FlowCtx, kind: FlowKind, init: Partial<Pick
 
 /**
  * The jar continues with another flow in the same Authentik session (a `reauth` jar's `then`): new slug, kind and challenge count,
- * the same cookies, age and `forwardHost` (inherited, so setup-webauthn forwards exactly when the re-authentication did).
+ * the same cookies and age. `forwardHost` is inherited only by kinds that can meet WebAuthn (setup-webauthn forwards exactly when the
+ * re-authentication did); every other kind, the e-mail change above all, never forwards the app host (Ruling 1: it changes Authentik's
+ * brand lookup and the links in its mails).
  */
 export function continueJar(cfg: SlugCfg, jar: Jar, kind: FlowKind): Jar {
   const slug = flowSlug(cfg, kind);
   if (!slug) throw new HttpError(409, 'flow_not_configured');
   const { then: _then, ...rest } = jar;
-  return { ...rest, kind, slug, query: '', challenges: 0 };
+  return { ...rest, kind, slug, query: '', challenges: 0, forwardHost: jar.forwardHost && FORWARD_HOST_KINDS.includes(kind) };
 }
 
 const jarKey = (flowId: string) => `akflow:${sha256(flowId)}`;
@@ -206,20 +221,22 @@ const jarAgeMs = (jar: Jar, now = Date.now()) => now - jar.createdAt;
 export async function saveJar(ctx: JarCtx, flowId: string, jar: Jar): Promise<void> {
   const left = Math.ceil(JAR_TTL_S - jarAgeMs(jar) / 1000);
   if (left <= 0) return ctx.kv.del(jarKey(flowId));
-  await ctx.kv.set(jarKey(flowId), encrypt(ctx.encKey, JSON.stringify(jar)), left);
+  // the plaintext names its flow id (hashed): a blob copied to another flow's key does not load there
+  await ctx.kv.set(jarKey(flowId), encrypt(ctx.encKey, JSON.stringify({ fid: sha256(flowId), jar })), left);
 }
 
 /** The jar of a flow id; null when missing, unreadable or older than 600 s. */
 export async function loadJar(ctx: JarCtx, flowId: string): Promise<Jar | null> {
   const blob = await ctx.kv.get(jarKey(flowId));
   if (!blob) return null;
-  let jar: Jar;
+  let jar: Jar | undefined;
   try {
-    jar = JSON.parse(decrypt(ctx.encKey, blob)) as Jar;
+    const box = JSON.parse(decrypt(ctx.encKey, blob)) as { fid?: string; jar?: Jar };
+    jar = box.fid === sha256(flowId) ? box.jar : undefined;
   } catch {
     return null; // another key or a damaged entry: a fresh start, never an error
   }
-  if (typeof jar.createdAt !== 'number' || jarAgeMs(jar) > JAR_TTL_S * 1000) {
+  if (!jar || typeof jar.createdAt !== 'number' || jarAgeMs(jar) > JAR_TTL_S * 1000) {
     await ctx.kv.del(jarKey(flowId));
     return null;
   }
@@ -262,6 +279,10 @@ const akRoot = (cfg: Pick<Config, 'AUTHENTIK_URL'>): URL => {
     throw new HttpError(503, 'authentik_unavailable');
   }
 };
+
+/** challenges are a few KB; a declared body over 1 MB (a misconfigured URL streaming something else) is refused unread */
+const MAX_BODY = 1_000_000;
+const tooLarge = (r: Response) => Number(r.headers.get('content-length') ?? 0) > MAX_BODY;
 
 const resolveUrl = (to: string | null, base: URL): URL | null => {
   try {
@@ -320,7 +341,7 @@ export async function akExec(ctx: FlowCtx, jar: Jar, method: 'GET' | 'POST', bod
       m = 'GET';
       continue;
     }
-    if (r.status >= 400 || !/json/i.test(r.headers.get('content-type') ?? '')) {
+    if (r.status >= 400 || !/json/i.test(r.headers.get('content-type') ?? '') || tooLarge(r)) {
       await r.body?.cancel().catch(() => undefined);
       throw new HttpError(502, 'authentik_error');
     }

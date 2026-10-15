@@ -117,7 +117,10 @@ export async function buildApp(ctx: Ctx, extra: Extra = {}): Promise<FastifyInst
     }
     // the wizard's and Admin -> Settings' requests carry one-time admin credentials and secrets: the error is logged by its type and
     // code only (an error object may quote a request value), never with a body
-    if (SENSITIVE_BODY.test(req.url)) req.log.error({ err: { type: (err as Error).name, code: (err as { code?: unknown }).code } }, 'unhandled error');
+    // matched against the route pattern (the path as Fastify decoded and routed it: `/%61uth/flow/…` is `/auth/flow/…`), never the raw
+    // url; a request without a route is treated as sensitive too
+    const route = req.routeOptions.url;
+    if (route === undefined || SENSITIVE_BODY.test(route)) req.log.error({ err: { type: (err as Error).name, code: (err as { code?: unknown }).code } }, 'unhandled error');
     else req.log.error({ err }, 'unhandled error');
     if (process.env.DEBUG_TEST) console.error(err);
     return reply.code(500).send({ error: 'internal' });
