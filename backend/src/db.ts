@@ -754,6 +754,11 @@ export const MIGRATIONS: string[] = [
     from app_settings where key in ('source.tmdb','source.omdb') and value ? 'enc' and jsonb_typeof(value->'enc') = 'string';
   delete from app_settings where key in ('source.tmdb','source.omdb');
   `,
+  // 40: Block 25b. An install that got migration 39 while it had no users yet, and its first users afterwards (before the setup wizard
+  // existed), counts as set up as well: it must never fall into setup mode. An empty install stays in setup.
+  `
+  update settings_meta set setup_completed_at = now() where setup_completed_at is null and exists (select 1 from users);
+  `,
 ];
 
 export async function migrate(pool: pg.Pool): Promise<void> {

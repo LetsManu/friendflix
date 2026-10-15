@@ -4,7 +4,7 @@
 
 FriendFlix hat keine eigenen Passwörter. Jede Anmeldung läuft über **Authentik** (OpenID Connect, Authorization-Code-Flow mit PKCE), und Authentik erzwingt die Zwei-Faktor-Anmeldung. Diese Anleitung beschreibt die Installation von Authentik und jedes Authentik-Objekt, das FriendFlix braucht, mit genau den Werten, die das Backend erwartet.
 
-Die komplette FriendFlix-Installation (Jellyfin, Wunsch-Dienst, `.env`, Nginx Proxy Manager, erste Anmeldung) steht in der [Installationsanleitung](setup.md).
+Die komplette FriendFlix-Installation (Jellyfin, Wunsch-Dienst, Nginx Proxy Manager, der Einrichtungsassistent, erste Anmeldung) steht in der [Installationsanleitung](setup.md). Der Assistent kann jedes FriendFlix-Objekt in Authentik für dich anlegen ([§3](#3-automatische-einrichtung-aus-friendflix)); die Abschnitte 4 – 8 beschreiben sie für die Einrichtung von Hand oder zum Anpassen.
 
 > Die Menüpfade entsprechen der Authentik-Admin-Oberfläche der Versionen 2025.12 – 2026.x in englischer Sprache (`compose.authentik.yaml` pinnt `2026.8.3`). Ältere Versionen benennen manches anders. Was mit *(nicht verifiziert)* markiert ist, ließ sich weder im Code noch in der offiziellen Dokumentation prüfen.
 
@@ -12,7 +12,7 @@ Die komplette FriendFlix-Installation (Jellyfin, Wunsch-Dienst, `.env`, Nginx Pr
 
 1. [Was FriendFlix von Authentik braucht](#1-was-friendflix-von-authentik-braucht)
 2. [Authentik installieren](#2-authentik-installieren)
-3. [Schnellweg: FriendFlix-Blueprint importieren](#3-schnellweg-friendflix-blueprint-importieren)
+3. [Automatische Einrichtung aus FriendFlix](#3-automatische-einrichtung-aus-friendflix)
 4. [Gruppen](#4-gruppen)
 5. [OAuth2/OpenID-Provider und Anwendung](#5-oauth2openid-provider-und-anwendung)
 6. [Authentifizierungs-Flow mit Pflicht-MFA](#6-authentifizierungs-flow-mit-pflicht-mfa)
@@ -170,7 +170,51 @@ Außerdem `.env.authentik` (vor allem `AUTHENTIK_SECRET_KEY`) und die Volumes `a
 
 Updates: die Release Notes aller Versionen dazwischen lesen, `AUTHENTIK_TAG` anheben (immer nur ein Release-Schritt, z. B. `2026.5` → `2026.8`), dann `… pull && … up -d`. Nach dem Update die Prüfung aus [§14](#14-prüfen) laufen lassen; am ehesten ändert sich die Einladungs-API.
 
-## 3. Schnellweg: FriendFlix-Blueprint importieren
+## 3. Automatische Einrichtung aus FriendFlix
+
+Der Einrichtungsassistent von FriendFlix ([setup.md §8](setup.md#8-der-einrichtungsassistent), Schritt *Anmeldung* → *Automatisch*) richtet Authentik über dessen API mit einem **einmaligen Superuser-API-Token** ein. Nötig ist nur ein installiertes Authentik mit Admin-Konto ([§2](#2-authentik-installieren)). *Plan anzeigen* liest nur und listet, was angelegt, angepasst oder gelassen würde; *Anwenden* führt es aus (etwa 30 Sekunden) und speichert das Ergebnis in FriendFlix. Ein erneuter Lauf ist ungefährlich: alles wird über Name oder Slug gefunden und aktualisiert, nichts doppelt angelegt, und ein vorhandener Provider behält Client-ID und Secret.
+
+### 3.1 Was der Assistent anlegt
+
+| Schritt | In Authentik | In FriendFlix |
+|---|---|---|
+| Prüfen | der Token muss einem Superuser gehören; Authentik 2024.4 oder neuer | – |
+| Gruppen | `friendflix-admins` (oder deine `ADMIN_GROUP`) und `friendflix-users` | `ADMIN_GROUP` |
+| Provider und Anwendung | OAuth2/OpenID-Provider `FriendFlix`: vertraulicher Client, nur Grant-Typ `authorization_code`, Redirect-URI genau `<öffentliche Adresse>/auth/callback` (*Strict*), implizite Zustimmung, Scopes `openid`, `email`, `profile`, Issuer pro Provider, Subject-Modus *hashed user ID*, Claims im ID-Token, der selbstsignierte Signaturschlüssel; Anwendung `FriendFlix` (Slug `friendflix`) | `OIDC_ISSUER` (`https://auth.example.com/application/o/friendflix/`), `OIDC_CLIENT_ID`, `OIDC_CLIENT_SECRET` |
+| Service-Account | Nutzer `friendflix-invites` mit genau den Berechtigungen aus [§8.2](#82-rolle-mit-genau-diesen-globalen-berechtigungen) und sein nicht ablaufender Token `friendflix-invites-token` | `AUTHENTIK_URL`, `AUTHENTIK_API_TOKEN` (dieser Token, nie der Superuser-Token) |
+| Registrierungs-Flow | `friendflix-enrollment` ([§7](#7-registrierungs-flow-für-einladungen)) | `AUTHENTIK_ENROLL_FLOW` |
+| Wiederherstellungs-Flow | `default-recovery-flow` aus Authentiks eigenem Beispiel (E-Mail + MFA), nur wenn es ihn noch nicht gibt | `AUTHENTIK_RECOVERY_FLOW` |
+| Brand | der Wiederherstellungs-Flow an der Standard-Brand und an der Identification-Stage (*Forgot username or password?*), nur wo keiner gesetzt ist; vorhandene Werte werden nie überschrieben | – |
+| Auslesen | Client-ID und Secret, der Service-Token und der Issuer aus dem Discovery-Dokument | – |
+| Admin-Gruppe | der Besitzer des Tokens (z. B. `akadmin`) kommt in die Admin-Gruppe, wenn *Mich zur Admin-Gruppe hinzufügen* angehakt ist | – |
+
+Die Dateien liegen in [`deploy/authentik/`](../../deploy/authentik/): [`friendflix-setup.yaml`](../../deploy/authentik/friendflix-setup.yaml) (Gruppen, Provider, Anwendung), [`friendflix-service-account.yaml`](../../deploy/authentik/friendflix-service-account.yaml) und [`friendflix-blueprint.yaml`](../../deploy/authentik/friendflix-blueprint.yaml). Authentik 2026.8 legt Provider, die über die API oder ein Blueprint entstehen, **ohne** Grant-Typen an (die Anmeldung scheitert dann mit `invalid_request`); `friendflix-setup.yaml` setzt `authorization_code` ausdrücklich, und ein erneutes Anwenden ergänzt den Grant-Typ bei einem Provider, dem er fehlt.
+
+Die erste Anmeldung über den Assistenten wird Admin von FriendFlix, egal in welchen Gruppen das Konto ist. Die Admin-Gruppe zählt für alle danach: ihre Mitglieder werden bei der ersten Anmeldung Admin.
+
+### 3.2 Der einmalige Superuser-Token
+
+1. In Authentik als `akadmin` (oder ein anderer Superuser): *Directory → Tokens and App passwords → Create*. Identifier z. B. `friendflix-setup`, User: du selbst, Intent **API Token** (nicht *App password*). Ein kurzes Ablaufdatum genügt; der Assistent braucht den Token nur ein paar Minuten.
+2. Den Schlüssel (*Copy* in der Zeile des Tokens) in den Assistenten kopieren. Wenn beim ersten Start von Authentik `AUTHENTIK_BOOTSTRAP_TOKEN` gesetzt war, geht auch dieser Token.
+3. Der Token wird für diesen einen Lauf benutzt und dann vergessen: FriendFlix speichert und loggt ihn nie und schreibt ihn in keine Fehlermeldung. Gespeichert wird der Token des Service-Accounts, der nur kann, was [§8.2](#82-rolle-mit-genau-diesen-globalen-berechtigungen) aufzählt.
+4. **Danach widerrufen:** *Directory → Tokens and App passwords*, den Token anhaken, *Delete*. Den Bootstrap-Token (`authentik-bootstrap-token`) genauso löschen und `AUTHENTIK_BOOTSTRAP_TOKEN` aus der Umgebung von Authentik entfernen. Ein Superuser-Token darf in Authentik alles; er soll die Einrichtung nicht überdauern.
+
+### 3.3 Zeitpunkt und Adressen
+
+- **Frisches Authentik:** direkt nach dem ersten Start importiert Authentik im Hintergrund seine Standard-Flows, im Test dauerte das 3 – 4 Minuten. Bis dahin kann *Anwenden* mit *Authentik hat die Einrichtung abgelehnt* (`blueprint_invalid`) stehen bleiben: warten und *Noch einmal versuchen*; bereits angelegte Teile werden wiederverwendet.
+- **Eine Adresse für beide:** die Authentik-Adresse so eintragen, wie der Browser sie erreicht (`https://auth.example.com`). Der Backend-Container muss Authentik unter genau dieser Adresse erreichen, denn der Issuer wird daraus abgeleitet ([§2.3](#23-reverse-proxy-nginx-proxy-manager), DNS).
+- **http:** ein `http://`-Authentik wird für die Anmeldung abgelehnt, außer das Backend läuft mit `OIDC_ALLOW_INSECURE=true` in seiner Umgebung (nur für Tests, nie im Betrieb).
+- Scheitert ein Schritt, wird nichts zurückgerollt; die Liste zeigt den Schritt und einen Grund (`invalid_url`, `unauthorized`, `not_superuser`, `unsupported_version`, `blueprint_invalid`, `unreachable`, `unexpected`, `issuer_mismatch`), und ein neuer Lauf setzt dort fort. Gruppen und Provider kommen aus einer Datei, ein Fehler dort steht deshalb bei beiden.
+- Anmelde-Einstellungen, die deine `.env` setzt, bleiben, wie sie sind. Weicht eine davon von dem ab, was Authentik jetzt hat (zum Beispiel eine andere `OIDC_CLIENT_ID`), nennt das Ergebnis sie: aus der `.env` entfernen und das Backend neu starten.
+
+### 3.4 Was von Hand bleibt
+
+- **SMTP** für Einladungs-, Wiederherstellungs- und Benachrichtigungs-Mails ([§2.5](#25-e-mail-smtp)).
+- **MFA im Authentifizierungs-Flow** ([§6](#6-authentifizierungs-flow-mit-pflicht-mfa)): der Assistent ändert nicht, wie man sich bei Authentik anmeldet.
+- **E-Mail-Vorlagen:** eigene Vorlagen liegen in `/templates` auf dem Authentik-Host, einem Datei-Mount, den die API nicht beschreiben kann.
+- Optional: Branding ([§12](#12-optional-branding)), Passkeys ([§11](#11-optional-passwortlos-mit-passkeys)).
+
+### 3.5 Von Hand: FriendFlix-Blueprints importieren
 
 [`deploy/authentik/friendflix-blueprint.yaml`](../../deploy/authentik/friendflix-blueprint.yaml) legt in einem Schritt an:
 
@@ -184,7 +228,7 @@ Varianten:
 - [`friendflix-service-account.yaml`](../../deploy/authentik/friendflix-service-account.yaml): nur Service-Account und Token, wenn es schon einen Registrierungs-Flow gibt.
 - [`friendflix-prompt-fix.yaml`](../../deploy/authentik/friendflix-prompt-fix.yaml): eine Prompt-Stage ohne Platzhalter-Ausdrücke für einen bestehenden Registrierungs-Flow, der mit `'AnonymousUser' object has no attribute 'group_attributes'` abbricht (`friendflix-prompt-fixed` statt der alten Prompt-Stage binden, gleiche Order).
 
-Das Blueprint legt **nicht** an: die Gruppen, Provider/Anwendung, MFA im Authentifizierungs-Flow und die Wiederherstellung. [§4](#4-gruppen), [§5](#5-oauth2openid-provider-und-anwendung), [§6](#6-authentifizierungs-flow-mit-pflicht-mfa) und [§8.3](#83-token-kopieren) (Token kopieren) also von Hand erledigen. Die Abschnitte 7 und 8 beschreiben, was das Blueprint baut – für alle, die es lieber zusammenklicken oder anpassen wollen.
+Das Blueprint legt **nicht** an: die Gruppen, Provider/Anwendung, MFA im Authentifizierungs-Flow und die Wiederherstellung. [`friendflix-setup.yaml`](../../deploy/authentik/friendflix-setup.yaml) legt Gruppen, Provider und Anwendung an, braucht aber den Kontext `{"public_url": "https://portal.example.com", "admin_group": "friendflix-admins"}`, den der Dialog *Flows → Import* nicht übergeben kann: unter *Customization → Blueprints → Create* mit diesem Kontext importieren *(nicht verifiziert)*, oder [§4](#4-gruppen) und [§5](#5-oauth2openid-provider-und-anwendung) von Hand erledigen. Danach [§6](#6-authentifizierungs-flow-mit-pflicht-mfa) und [§8.3](#83-token-kopieren) (Token kopieren). Die Abschnitte 7 und 8 beschreiben, was das Blueprint baut – für alle, die es lieber zusammenklicken oder anpassen wollen.
 
 ## 4. Gruppen
 
@@ -429,6 +473,8 @@ Jede Person verwaltet ihr Konto selbst unter *Mein Bereich → Konto* (`/me/acco
 
 ## 9. Werte für die FriendFlix-`.env`
 
+Der Einrichtungsassistent speichert diese Werte in der Datenbank: die automatische Einrichtung ([§3](#3-automatische-einrichtung-aus-friendflix)) füllt alle, *Von Hand* übernimmt sie aus dem Formular. In die `.env` gehören sie nur, wenn du FriendFlix über die Umgebung konfigurierst ([setup.md §15](setup.md#15-fortgeschritten-konfiguration-über-die-umgebung)); ein Wert dort hat Vorrang und ist gesperrt.
+
 ```bash
 # Anmeldung (Pflicht)
 OIDC_ISSUER=https://auth.example.com/application/o/friendflix/   # Schrägstrich am Ende!
@@ -450,7 +496,7 @@ SESSION_TTL_SECONDS=28800    # absolut 8 h
 SESSION_IDLE_SECONDS=7200    # 2 h ohne Aktivität
 ```
 
-Danach das Backend neu erstellen: `docker compose -f compose.prod.yaml up -d backend`. Alles außer dem Anmelde-Block lässt sich stattdessen nach der ersten Anmeldung unter *Admin → Einstellungen → Anmeldung* eintragen (in der Datenbank gespeichert, sofort wirksam, vor dem Speichern gegen Authentik getestet); ein Wert aus der `.env` hat dort Vorrang. Compose reicht die `AUTHENTIK_*`-Variablen mit leerem Standardwert durch; ein fehlender Eintrag schaltet Einladungen also stillschweigend ab. Sind nur einige der drei gesetzt, loggt das Backend beim Start und bei jeder neuen Einladung `Authentik invitations disabled: … not set`. Die Admin-Nutzerseite braucht nur `AUTHENTIK_URL` und `AUTHENTIK_API_TOKEN`; leere `AUTHENTIK_RECOVERY_FLOW` / `AUTHENTIK_TOTP_SETUP_FLOW` bedeuten die Standardwerte oben.
+Nach einer Änderung der `.env` das Backend neu erstellen: `docker compose -f compose.prod.yaml up -d backend`. Alle Werte lassen sich stattdessen im Assistenten oder später unter *Admin → Einstellungen → Anmeldung* eintragen (in der Datenbank gespeichert, sofort wirksam, vor dem Speichern gegen Authentik getestet); ein Wert aus der `.env` hat dort Vorrang. Compose reicht die `AUTHENTIK_*`-Variablen mit leerem Standardwert durch; ein fehlender Eintrag schaltet Einladungen also stillschweigend ab. Sind nur einige der drei gesetzt, loggt das Backend beim Start und bei jeder neuen Einladung `Authentik invitations disabled: … not set`. Die Admin-Nutzerseite braucht nur `AUTHENTIK_URL` und `AUTHENTIK_API_TOKEN`; leere `AUTHENTIK_RECOVERY_FLOW` / `AUTHENTIK_TOTP_SETUP_FLOW` bedeuten die Standardwerte oben.
 
 `OIDC_CLIENT_SECRET` kann aus einem Docker-Secret kommen ([`compose.secrets.yaml`](../../compose.secrets.yaml): `secrets/oidc_client_secret`). Das Backend liest für jede Einstellung auch `<VAR>_FILE`, also geht `AUTHENTIK_API_TOKEN_FILE` ebenfalls – `compose.prod.yaml` reicht diese Variable aber nicht durch: bei Bedarf in einem lokalen Override im `environment` des Backends ergänzen (und das Secret einbinden).
 
@@ -563,7 +609,7 @@ Logs: `docker compose -f compose.prod.yaml logs backend | grep -i -E "oidc|authe
 | *Passwort-Link senden*: „nicht unterstützt“ | Authentik ist älter als 2024.4 (die API antwortet 405). Authentik aktualisieren. |
 | *Passwort-Link senden* klappt, aber keine Mail kommt an | SMTP der E-Mail-Stage: in Authentik unter *Events → Logs* nach `email_sent` / Fehlern sehen und die Verbindungseinstellungen der Stage prüfen ([§10](#10-passwort-wiederherstellung-per-e-mail), Schritt 3). |
 | Du öffnest den Registrierungslink, während du bei Authentik angemeldet bist, und landest ohne Registrierung im Portal | Erwartet: Der Flow verlangt „nicht angemeldet“, Authentik verweigert ihn und folgt mit der Standard-*Denied action* `MESSAGE_CONTINUE` stattdessen dem relativen `next` – du bist also als der **schon angemeldete** Authentik-Nutzer drin. Hat dieser noch kein Portal-Konto, wird die Einladung für ihn eingelöst. Einladungen im privaten Fenster testen. |
-| `'AnonymousUser' object has no attribute 'group_attributes'` bei der Registrierung | Prompt-Felder mit Ausdrucks-Platzhaltern. `friendflix-prompt-fix.yaml` importieren ([§3](#3-schnellweg-friendflix-blueprint-importieren)). |
+| `'AnonymousUser' object has no attribute 'group_attributes'` bei der Registrierung | Prompt-Felder mit Ausdrucks-Platzhaltern. `friendflix-prompt-fix.yaml` importieren ([§3.5](#35-von-hand-friendflix-blueprints-importieren)). |
 | Nach der Registrierung landet der Freund in der Authentik-Oberfläche | Redirect-Stage oder Redirect-Policy im Registrierungs-Flow, oder die User-Login-Stage fehlt. |
 | Nach der Registrierung *Permission denied* für FriendFlix | Die Anwendung ist an Gruppen gebunden, aber die User-Write-Stage nimmt neue Nutzer nicht in `friendflix-users` auf. |
 | Nach Änderung des *Subject mode* landen alle auf *Anfrage gesendet* (`/pending`) | Zurückstellen. FriendFlix erkennt Nutzer am `sub`. |

@@ -14,9 +14,10 @@ import type { OidcClaims } from '../src/oidc.js';
 import { DEFAULT_ROLES } from '../src/roles.js';
 import { MemorySettingsBus } from '../src/settings/bus.js';
 import { settingDef } from '../src/settings/registry.js';
-import { writeRows } from '../src/settings/repo.js';
+import { updateMeta, writeRows } from '../src/settings/repo.js';
 import { toStored } from '../src/settings/resolve.js';
 import { createSettingsStore, type SettingsStore } from '../src/settings/store.js';
+import { isSetupComplete } from '../src/setup/state.js';
 
 export const TEST_DB = process.env.TEST_DATABASE_URL ?? 'postgres://postgres@localhost:5433/ff_test';
 export const ENC_KEY = Buffer.alloc(32, 7).toString('base64');
@@ -148,8 +149,13 @@ export async function testSettings(pool: pg.Pool, c: Config = cfg, extraEnv: Nod
   return store;
 }
 
-export async function makeEnv(extraJf: Record<string, Handler> = {}, extra: Extra & { ctxPatch?: (c: Ctx) => void; seerr?: Record<string, Handler>; settingsEnv?: NodeJS.ProcessEnv } = {}): Promise<TestEnv> {
+/**
+ * A test app over a fresh database. Setup counts as complete unless `setupComplete: false` (the setup gate's own tests): most tests
+ * exercise the running app, and a fresh database is otherwise in setup mode (spec Part E).
+ */
+export async function makeEnv(extraJf: Record<string, Handler> = {}, extra: Extra & { ctxPatch?: (c: Ctx) => void; seerr?: Record<string, Handler>; settingsEnv?: NodeJS.ProcessEnv; setupComplete?: boolean } = {}): Promise<TestEnv> {
   const pool = await resetDb();
+  if (extra.setupComplete !== false) await updateMeta(pool, { setupCompletedAt: new Date() });
   const kv = new MemoryKV();
   const jfCalls: Call[] = [];
   const seerrCalls: Call[] = [];
@@ -172,6 +178,7 @@ export async function makeEnv(extraJf: Record<string, Handler> = {}, extra: Extr
   });
   const { ctx } = live;
   extra.ctxPatch?.(ctx);
+  await isSetupComplete(ctx); // warms the cache isOperational reads (server.ts does the same before the timers start)
   const app = await buildApp(ctx, extra);
   const dev: { v?: string } = {};
   const login = async (c: OidcClaims = claims.current) => {

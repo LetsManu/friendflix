@@ -24,6 +24,7 @@ import mine from './mine';
 import diagnose from './diagnose';
 import version from './version';
 import settings from './settings';
+import setup from './setup';
 
-const dict: Translation<typeof de> = { common, shell, home, detail, player, account, social, admin, hubs, anime, together, kids, scenes, fresh, mine, diagnose, version, settings, ui, adminPeople, adminContent };
+const dict: Translation<typeof de> = { common, shell, home, detail, player, account, social, admin, hubs, anime, together, kids, scenes, fresh, mine, diagnose, version, settings, setup, ui, adminPeople, adminContent };
 export default dict;

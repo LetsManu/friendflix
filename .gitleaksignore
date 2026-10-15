@@ -1,3 +1,5 @@
+# Every entry is pinned to a commit SHA: after a rebase or squash of these commits the entries stop matching and the CI secrets
+# job fails. Merge main into a branch instead of rebasing it, or regenerate the entries (gitleaks git --report-format json) afterwards.
 # test-only placeholder (cfg.INTERNAL_SECRET of the test helpers), replaced in a later commit
 12220615f4b663e80fdeae36682cb20d3f41aa8c:backend/test/profiles.test.ts:generic-api-key:167
 12220615f4b663e80fdeae36682cb20d3f41aa8c:backend/test/profiles.test.ts:generic-api-key:212
@@ -32,3 +34,5 @@ eb9759f5d9991fc5c41bf15fd7f866693c336354:backend/test/settings-repo.test.ts:gene
 dae644181e1532bd6f73fe7de5332de9bcfeb6a8:backend/test/settings-store.test.ts:generic-api-key:21
 dae644181e1532bd6f73fe7de5332de9bcfeb6a8:backend/test/settings-store.test.ts:generic-api-key:70
 dae644181e1532bd6f73fe7de5332de9bcfeb6a8:backend/test/settings-store.test.ts:generic-api-key:204
+# Block 25 Task 12: test placeholder password (backend/test/jellyfin-setup.test.ts), not a credential
+4d4c0e6aefedd326740939633b715da1b18dcd88:backend/test/jellyfin-setup.test.ts:generic-api-key:10

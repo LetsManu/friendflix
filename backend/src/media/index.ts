@@ -3,15 +3,17 @@
 import type pg from 'pg';
 import { z } from 'zod';
 import type { Config } from '../config.js';
-import { JellyfinClient, mediaBrowserHeader } from '../jellyfin/client.js';
+import { JellyfinClient } from '../jellyfin/client.js';
 import { JellyfinService } from '../jellyfin/service.js';
 import type { KV } from '../kv.js';
 import type { SettingDef } from '../settings/registry.js';
+import { MEDIA_SETUP } from './setup.js';
 import type { MediaServer } from './types.js';
 
 /**
  * The one place that knows the implementations. A fork adds its kind to MEDIA_SERVERS, its fields to MEDIA_FIELDS, its settings to
- * mediaSettings() and a factory below; config.ts (MEDIA_SERVER, the fields), the settings registry and server.ts pick them up from here.
+ * mediaSettings() and a factory below, and its setup provider to MEDIA_SETUP (media/setup.ts); config.ts (MEDIA_SERVER, the fields), the
+ * settings registry and server.ts pick them up from here.
  */
 export const MEDIA_SERVERS = ['jellyfin'] as const;
 export type MediaServerKind = (typeof MEDIA_SERVERS)[number];
@@ -34,27 +36,23 @@ export function mediaSettings(): SettingDef[] {
   ];
 }
 
-/** Each kind's media server URL setting (the gateway's upstream, /internal/gateway-config). */
-const URL_KEYS: Record<MediaServerKind, keyof Config> = { jellyfin: 'JELLYFIN_URL' };
-
-/** The config key holding the media server URL of cfg's kind: the one place that knows the key name. */
-export function mediaUrlKey(cfg: Config): string {
-  return URL_KEYS[cfg.MEDIA_SERVER];
+/** The media settings of cfg's kind: those it requires (registry runRequired), all of mediaSettings() when none says so. */
+function kindSettings(cfg: Config): SettingDef[] {
+  const all = mediaSettings();
+  const mine = all.filter((d) => (typeof d.runRequired === 'function' ? d.runRequired(cfg) : d.runRequired));
+  return mine.length ? mine : all;
 }
 
-/** The request of the media settings probe: answers 2xx only for an admin-level key, 401/403 otherwise. */
-export interface MediaProbeRequest { base: string; path: string; headers: Record<string, string> }
+/** The registry keys of cfg's kind in field order (the wizard's media step): its setup provider's, else the manual fields of mediaSettings(). */
+export function mediaSetupKeys(cfg: Config): readonly string[] {
+  return MEDIA_SETUP[cfg.MEDIA_SERVER]?.keys ?? kindSettings(cfg).map((d) => d.key);
+}
 
-const probeRequests: Record<MediaServerKind, (cfg: Config) => MediaProbeRequest | undefined> = {
-  // GET /Auth/Keys lists the API keys: only an administrator's key may
-  jellyfin: (c) => (c.JELLYFIN_URL && c.JELLYFIN_ADMIN_API_KEY
-    ? { base: c.JELLYFIN_URL, path: '/Auth/Keys', headers: { Authorization: mediaBrowserHeader({ deviceId: 'portal-probe', token: c.JELLYFIN_ADMIN_API_KEY }) } }
-    : undefined),
-};
-
-/** The probe request for cfg's kind; undefined while its URL or key is missing (Task 12 moves this into the media setup provider). */
-export function mediaProbeRequest(cfg: Config): MediaProbeRequest | undefined {
-  return probeRequests[cfg.MEDIA_SERVER](cfg);
+/** The config key holding the media server URL of cfg's kind (the gateway's upstream, /internal/gateway-config): the one place that knows it. */
+export function mediaUrlKey(cfg: Config): string {
+  const key = MEDIA_SETUP[cfg.MEDIA_SERVER]?.urlKey ?? kindSettings(cfg).find((d) => d.kind === 'url')?.key;
+  if (!key) throw new Error(`media server kind ${cfg.MEDIA_SERVER} has neither a setup provider nor a url setting`);
+  return key;
 }
 
 /**

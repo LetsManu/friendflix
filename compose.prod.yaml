@@ -3,8 +3,8 @@
 # FriendFlix portal stack - PRODUCTION variant: pulls the prebuilt images from ghcr.io (no build on the server).
 # Images come from .github/workflows/publish.yml. Private packages: docker login ghcr.io -u <user> (PAT with read:packages).
 # Pin a version with FF_TAG=<sha|x.y.z> in .env, other owner with FF_REGISTRY=ghcr.io/<owner> (both optional).
-# FriendFlix portal stack. A new install needs no secrets in .env (only the sign-in and media server values for the first
-# start, docs/setup.md); every other setting lives in the database (Admin -> Settings).
+# FriendFlix portal stack. A new install needs no .env: `up -d`, then the setup code from the backend log
+# (`logs backend | grep "setup code"`) opens the setup wizard (docs/setup.md); every setting lives in the database (Admin -> Settings).
 # The `bootstrap` service generates the internal secrets into the `bootstrap` volume (back it up, scripts/backup-bootstrap.sh).
 # - NPM runs OUTSIDE Docker (or in its own stack) and reaches the portal through three ports that are bound to
 #   127.0.0.1 only (BIND_ADDR): web, backend (API/auth/WebSocket) and gateway (/media). Nothing else is published.

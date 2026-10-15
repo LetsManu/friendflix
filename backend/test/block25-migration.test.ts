@@ -12,12 +12,13 @@ let pool: pg.Pool;
 beforeAll(async () => { pool = await resetDb(); });
 afterAll(async () => { await pool.end(); });
 
-const rewind = () => pool.query('drop table settings, settings_meta; delete from schema_migrations where version = 39;');
+const rewind = () => pool.query('drop table settings, settings_meta; delete from schema_migrations where version in (39, 40);');
 
 describe('block25 migration', () => {
-  it('is migration 39', () => {
-    expect(MIGRATIONS.length).toBe(39);
+  it('is migration 39, followed by 40 (setup completed for installs with users)', () => {
+    expect(MIGRATIONS.length).toBe(40);
     expect(MIGRATIONS[38]).toContain('create table settings (');
+    expect(MIGRATIONS[39]).toContain('setup_completed_at = now()');
   });
 
   it('an empty database: setup not completed, rev 0, no settings', async () => {
@@ -64,5 +65,23 @@ describe('block25 migration', () => {
     await pool.query(`insert into settings(key, value, updated_by) values ('Y', '"v"', $1)`, [uid]);
     await pool.query('delete from users where id = $1', [uid]);
     expect((await pool.query("select updated_by from settings where key = 'Y'")).rows[0].updated_by).toBeNull();
+  });
+
+  it('migration 40: a database with users but no setup_completed_at counts as set up; one without users stays in setup', async () => {
+    const at40 = () => pool.query('delete from schema_migrations where version = 40');
+    await pool.query('delete from users; update settings_meta set setup_completed_at = null');
+    await at40();
+    await migrate(pool);
+    expect((await pool.query('select setup_completed_at from settings_meta')).rows[0].setup_completed_at).toBeNull();
+    await pool.query("insert into users(id, authentik_sub, name, role, jellyfin_user_id, jellyfin_username, jellyfin_pw_enc) values ($1,'sub-c','C','admin','j3','j3','x')", [randomUUID()]);
+    await at40();
+    await migrate(pool);
+    expect((await pool.query('select setup_completed_at from settings_meta')).rows[0].setup_completed_at).toBeInstanceOf(Date);
+    // an earlier completion is kept as it is
+    const done = new Date('2026-01-01T00:00:00Z');
+    await pool.query('update settings_meta set setup_completed_at = $1', [done]);
+    await at40();
+    await migrate(pool);
+    expect((await pool.query('select setup_completed_at from settings_meta')).rows[0].setup_completed_at).toEqual(done);
   });
 });

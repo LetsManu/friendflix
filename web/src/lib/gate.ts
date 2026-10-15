@@ -32,8 +32,8 @@ export const kidsAllowed = (path: string): boolean => KIDS_ALLOWED.test(path);
 export const kidsRedirect = (me: Pick<GateMe, 'kids'> | null | undefined, path: string): string | null => (me?.kids && !kidsAllowed(path) ? '/kids' : null);
 
 // ---- onboarding (/welcome): new profiles go through it once, after the profile and language gates ----
-/** pages that never send to /welcome (the onboarding itself, the picker, public and remote pages) */
-const NO_WELCOME = /^\/(welcome|profiles|offline|invite|tv|remote)(\/|$)/;
+/** pages that never send to /welcome (the onboarding itself, the picker, public and remote pages, the setup wizard's extras) */
+const NO_WELCOME = /^\/(welcome|profiles|offline|invite|tv|remote|setup)(\/|$)/;
 /** true when the layout must send the profile to /welcome first (`onboarded` absent = older server = onboarded) */
 export const needsWelcome = (me: Pick<GateMe, 'onboarded' | 'tv'> | null | undefined, path: string): boolean =>
   me?.onboarded === false && !me.tv && !NO_WELCOME.test(path);

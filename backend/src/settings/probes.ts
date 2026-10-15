@@ -1,11 +1,14 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
+import { randomBytes } from 'node:crypto';
 import type { Config } from '../config.js';
 import type { Ctx } from '../ctx.js';
 import { akBase } from '../invites.js';
-import { mediaProbeRequest, mediaSettings } from '../media/index.js';
+import { mediaSettings } from '../media/index.js';
+import { MEDIA_SETUP } from '../media/setup.js';
 import { SeerrClient, SeerrError } from '../seerr/client.js';
 import { testSourceKey } from '../sources/omdb.js';
+import { byCode, byStatus, fail, httpUrl, join, OK, smallJson, type ProbeCode, type ProbeResult } from './probeKit.js';
 import type { ProbeId } from './registry.js';
 
 /**
@@ -13,14 +16,10 @@ import type { ProbeId } from './registry.js';
  * candidate values and answers a code only: an upstream body or error text (which may quote a URL with a token) never leaves this module.
  * Probes that send a credential never follow a redirect (`redirect: 'manual'`), so a key is only ever sent to the host the admin entered.
  */
-export type ProbeCode = 'ok' | 'unreachable' | 'timeout' | 'unauthorized' | 'invalid' | 'not_admin' | 'issuer_mismatch' | 'wizard_pending' | 'warning';
-/** `detail` is an i18n code, never an upstream body */
-export interface ProbeResult { ok: boolean; code: ProbeCode; detail?: string }
+export type { ProbeCode, ProbeResult };
 
 export const PROBE_TIMEOUT_MS = 5_000;
 const MEDIA_KEYS = mediaSettings().map((d) => d.key);
-const OK: ProbeResult = { ok: true, code: 'ok' };
-const fail = (code: ProbeCode, detail?: string): ProbeResult => ({ ok: false, code, ...(detail ? { detail } : {}) });
 
 /** Hard failures block a save even with force; unreachable / timeout block unless the admin chose "Save anyway". */
 const HARD: ReadonlySet<ProbeCode> = new Set(['unauthorized', 'invalid', 'not_admin', 'issuer_mismatch', 'wizard_pending']);
@@ -51,19 +50,6 @@ const isTimeout = (e: unknown) => {
   return name === 'TimeoutError' || name === 'AbortError';
 };
 
-/** An http(s) URL, or undefined (the caller answers invalid_url). */
-function httpUrl(raw: string): URL | undefined {
-  try {
-    const u = new URL(raw);
-    return u.protocol === 'http:' || u.protocol === 'https:' ? u : undefined;
-  } catch {
-    return undefined;
-  }
-}
-
-/** base + path without a double slash; the base may carry a path (a reverse-proxy prefix) */
-const join = (base: URL, path: string) => new URL(base.pathname.replace(/\/+$/, '') + path, base.origin);
-
 interface Runner {
   /** a fetch that never follows redirects and is aborted at the probe's deadline */
   fetch: typeof fetch;
@@ -92,28 +78,35 @@ function runner(fetchImpl: typeof fetch, timeoutMs: number): Runner {
   };
 }
 
-/** Maps an HTTP status; 401/403 to `denied`. */
-function byCode(status: number, denied: ProbeCode = 'unauthorized'): ProbeResult {
-  if (status >= 200 && status < 300) return OK;
-  if (status >= 300 && status < 400) return fail('invalid', 'redirect');
-  if (status === 401 || status === 403) return fail(denied);
-  if (status === 404) return fail('invalid', 'not_found');
-  return fail('unreachable', 'upstream_error');
-}
-
-/** byCode for an answer whose body is not needed (it is cancelled, never read). */
-function byStatus(r: Response, denied?: ProbeCode): ProbeResult {
-  void r.body?.cancel().catch(() => undefined);
-  return byCode(r.status, denied);
-}
-
-async function media(f: typeof fetch, cfg: Config): Promise<ProbeResult> {
-  // the media module knows the request (Task 12: MEDIA_SETUP[kind].probe); an admin-level key gets 2xx
-  const req = mediaProbeRequest(cfg);
-  if (!req) return fail('invalid', 'incomplete');
-  const base = httpUrl(req.base);
+/**
+ * Reaches this backend through the public URL (spec Part F step 2): stores a nonce with a random answer in kv (shared by every instance)
+ * and fetches <origin>/api/setup/echo/<nonce>; only the stored answer counts, so a host that reflects the request does not pass. A
+ * mismatch is a warning (NAT loopback often fails inside the network), never a blocker; so is http (cookies not secure, cast and passkeys off).
+ */
+async function publicUrl(ctx: Ctx, f: typeof fetch, cfg: Config): Promise<ProbeResult> {
+  const base = httpUrl(cfg.PUBLIC_URL);
   if (!base) return fail('invalid', 'invalid_url');
-  return byStatus(await f(join(base, req.path), { headers: req.headers }), 'not_admin');
+  const nonce = randomBytes(32).toString('base64url');
+  const answer = randomBytes(16).toString('base64url');
+  const key = `setup:echo:${nonce}`;
+  await ctx.kv.set(key, answer, 60);
+  try {
+    const r = await f(new URL(`/api/setup/echo/${nonce}`, base.origin), { headers: { accept: 'application/json' } });
+    const body = r.ok ? await smallJson(r) : (void r.body?.cancel().catch(() => undefined), null);
+    if ((body as { answer?: unknown } | null)?.answer !== answer) return { ok: true, code: 'warning', detail: 'echo_mismatch' };
+  } finally {
+    await ctx.kv.del(key).catch(() => undefined);
+  }
+  return base.protocol === 'http:' ? { ok: true, code: 'warning', detail: 'insecure' } : OK;
+}
+
+/** The media server kind's setup provider knows the request (spec Part H); a kind without one cannot be tested: a warning, never a blocker. */
+async function media(f: typeof fetch, cfg: Config): Promise<ProbeResult> {
+  const provider = MEDIA_SETUP[cfg.MEDIA_SERVER];
+  if (!provider) return { ok: true, code: 'warning', detail: 'not_tested' };
+  const c = cfg as Record<string, unknown>;
+  const values = Object.fromEntries(provider.keys.map((k) => [k, c[k] === undefined || c[k] === null ? undefined : String(c[k])]));
+  return provider.probe(values, { fetchImpl: f });
 }
 
 async function oidc(f: typeof fetch, cfg: Config): Promise<ProbeResult> {
@@ -198,9 +191,13 @@ async function github(f: typeof fetch, cfg: Config): Promise<ProbeResult> {
 
 /** Runs one probe against `cfg` (the candidate: the current config merged with the submitted values). Never throws. */
 export async function runProbe(ctx: Ctx, id: ProbeId, cfg: Config, opts: { timeoutMs?: number; fetchImpl?: typeof fetch } = {}): Promise<ProbeResult> {
-  if (id === 'publicUrl') return OK; // Task 11: the echo through the public URL (a warning at most, never a blocker)
   if (!probeConfigured(id, cfg)) return fail('invalid', 'not_set');
   const r = runner(opts.fetchImpl ?? ctx.fetchImpl, opts.timeoutMs ?? PROBE_TIMEOUT_MS);
+  if (id === 'publicUrl') {
+    // unreachable or slow through the public URL: a warning, never a blocker
+    const res = await r.within(() => publicUrl(ctx, r.fetch, cfg));
+    return res.code === 'unreachable' || res.code === 'timeout' ? { ok: true, code: 'warning', detail: res.code } : res;
+  }
   return r.within(async () => {
     switch (id) {
       case 'media': return media(r.fetch, cfg);

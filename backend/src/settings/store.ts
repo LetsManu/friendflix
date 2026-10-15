@@ -26,6 +26,8 @@ export interface SettingsStore {
   onChange(keys: readonly string[], fn: (cfg: Config, changed: string[]) => void | Promise<void>): () => void;
   /** restart keys whose effective value differs from the boot snapshot */
   pendingRestart(): string[];
+  /** after a settings_meta write outside save() (setup completion): reloads and publishes the rev, like a save */
+  announce(): Promise<void>;
   /** stops the poll and the bus subscription */
   close(): Promise<void>;
 }
@@ -186,6 +188,12 @@ export async function createSettingsStore(deps: {
       const l = { keys: new Set(keys), fn };
       listeners.add(l);
       return () => { listeners.delete(l); };
+    },
+
+    async announce() {
+      const rev = await readRev(db);
+      bus.publish(rev).catch((err: unknown) => log.warn({ err }, 'settings bus publish failed; others reload on their poll'));
+      await reload().catch((err: unknown) => log.warn({ err }, 'settings reload failed'));
     },
 
     pendingRestart: () => RESTART_KEYS.filter((k) => !same(boot[k], snap.cfg[k])),

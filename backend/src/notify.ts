@@ -1,5 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
+import { publicOrigin } from './config.js';
 import type { Ctx } from './ctx.js';
 import { broadcastLanguage, isMsg, renderKnown, renderNotice, userLanguage, type Language, type Rendered, type Text } from './i18n.js';
 export { renderNotice, type Rendered } from './i18n.js';
@@ -85,7 +86,9 @@ export async function pushPersonal(ctx: Pick<Ctx, 'db' | 'cfg' | 'fetchImpl'>, u
   const r = await ctx.db.query<{ topic: string | null }>("select data->>'ntfyTopic' as topic from user_prefs where user_id=$1", [userId]);
   const topic = r.rows[0]?.topic;
   if (!topic || !/^[A-Za-z0-9_-]{1,64}$/.test(topic)) return false;
-  const click = n.link ? new URL(n.link, ctx.cfg.PUBLIC_URL).toString() : undefined;
+  // without a public URL (setup mode, where the gate keeps this unreachable) the link goes out as given instead of throwing
+  const origin = publicOrigin(ctx.cfg);
+  const click = n.link ? (origin ? new URL(n.link, origin).toString() : n.link) : undefined;
   const res = await ctx.fetchImpl(new URL(encodeURIComponent(topic), `${base}/`).toString(), {
     method: 'POST',
     headers: { Title: encodeURIComponent(n.title).slice(0, 200), ...(click ? { Click: click } : {}) },

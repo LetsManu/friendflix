@@ -391,6 +391,9 @@ const es: Translation<typeof de> = {
       import_env: '{actor} pasó valores del entorno a los ajustes',
       generate: '{actor} generó una clave nueva',
     },
+    setup: {
+      completed: '{actor} completó la configuración inicial',
+    },
     system: {
       update: '{actor} inició una actualización',
     },

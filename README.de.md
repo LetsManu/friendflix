@@ -127,6 +127,8 @@ App-artige Oberfläche mit Tab-Leiste unten, einer Vorschau beim Antippen eines 
 
 Ein aufgeräumter Admin-Bereich mit Seitenleiste (Personen, Inhalte, Betrieb) und einer **Übersicht**, die Systemzustand, offene Entscheidungen – einen Wunsch oder ein neues Gerät gleich dort freigeben oder ablehnen –, die letzte Aktivität in ganzen Sätzen, Zahlen und Speicher zeigt. Alles meldet sich zurück: keine Pop-up-Fenster, riskante Aktionen fragen vorher, kleine bieten **Rückgängig**. Auf dem Handy ist derselbe Bereich eine einfache Liste mit großen Tippflächen.
 
+**Einrichtung im Browser:** eine neue Installation beginnt mit einem Einrichtungsassistenten, den ein einmaliger Code aus dem Server-Log freischaltet; er verbindet Jellyfin und richtet Authentik automatisch ein, und jede Einstellung liegt danach unter *Admin → Einstellungen*, vor dem Speichern geprüft.
+
 Außerdem im Admin-Bereich: Einladungen und Rollen, **Marken-Hubs**, hervorgehobene und Themenlisten, **Bald-weg-Termine**, Vorschau-Clips, der nächtliche Wiedergabe-Check, der Wochenrückblick, ein Audit-Log und Updates per Knopfdruck.
 
 **Nutzerverwaltung:** eine Liste aller Konten mit Filtern und Sammelaktionen (Rolle, sperren, Zugang bis, überall abmelden), ein Reiter *Warten auf Freigabe* für Leute, die sich ohne Einladung angemeldet haben, Einladungen mit mehreren Nutzungen und Zugangstagen und eine Seite pro Person mit Nutzung, Profilen, Geräten, Downloads, Verlauf, eigenen Limits, Zwei-Faktor-Stand und Audit-Log. Der Zugang kann an einem Datum enden: FriendFlix erinnert drei Tage vorher und sperrt das Konto am Stichtag. Schon das Ansehen des Verlaufs einer Person landet im Audit-Log.
@@ -170,47 +172,43 @@ Ab hier wird es technisch. Die ausführliche Betriebsdoku steht unter [Dokumenta
 
 ### Schnellstart
 
-Der Produktions-Stack zieht fertige Images von `ghcr.io/letsmanu/friendflix-{backend,gateway,web}`; auf dem Server wird nichts gebaut.
+Installation in drei Zeilen. Der Produktions-Stack zieht fertige Images von `ghcr.io/letsmanu/friendflix-{backend,gateway,web}`; auf dem Server wird nichts gebaut und keine `.env` geschrieben.
 
 ```bash
 git clone https://github.com/LetsManu/friendflix.git && cd friendflix
-cp .env.example .env
-$EDITOR .env               # PUBLIC_URL, OIDC_*, JELLYFIN_* (die internen Secrets werden erzeugt, siehe unten)
-docker login ghcr.io -u <user>                                 # nur bei privaten Paketen (PAT mit read:packages)
-docker compose -f compose.prod.yaml up -d                      # mit --profile bundled auch Jellyfin + den Wunsch-Dienst
-docker compose -f compose.prod.yaml --profile backup up -d backup   # optional: nächtliche Datenbank-Backups
-docker compose -f compose.prod.yaml ps                         # alles "healthy"
-./scripts/backup-bootstrap.sh                                  # erzeugte Secrets sichern, getrennt von den Dumps
+docker compose -f compose.prod.yaml up -d
+docker compose -f compose.prod.yaml logs backend | grep "setup code"
 ```
 
-Der Dienst `bootstrap` erzeugt beim ersten `up` die Passwörter für Datenbank und Redis, `APP_ENC_KEY` und `INTERNAL_SECRET` im Docker-Volume `friendflix_bootstrap`. Alles andere ist eine Einstellung in der Datenbank und wird unter *Admin → Einstellungen* geändert; ein Wert aus der `.env` hat dort weiter Vorrang. Bestehende Installation aktualisieren: [docs/de/setup.md §14](docs/de/setup.md#14-umstieg-auf-einstellungen-in-der-datenbank).
+Noch keine Ausgabe? `up -d` kehrt zurück, bevor das Backend gestartet ist: ein paar Sekunden warten und den letzten Befehl wiederholen; die Zeile erscheint, sobald das Backend läuft.
 
-Danach:
+Dann das Portal im Browser öffnen, den Einrichtungscode eingeben und dem **Einrichtungsassistenten** folgen: öffentliche Adresse, Medienserver (er legt den Jellyfin-API-Schlüssel aus einem Admin-Login an), Anmeldung (er richtet Authentik mit einem einmaligen Admin-Token ein: Provider, Gruppen, Einladungen, Wiederherstellung), und deine erste Anmeldung wird Admin. Danach folgen optionale Extras (Wunsch-Dienst, Push, Webhooks, Datenquellen); alles lässt sich später unter *Admin → Einstellungen* ändern. Keiner der beiden Logins wird gespeichert. Schritt für Schritt: [docs/de/setup.md](docs/de/setup.md).
 
-1. **Authentik:** OIDC-Provider anlegen (Redirect-URI `${PUBLIC_URL}/auth/callback`) und MFA erzwingen – [docs/de/authentik.md](docs/de/authentik.md).
-2. **Nginx Proxy Manager:** ein Proxy-Host `portal.<domain>` → `127.0.0.1:3080`, Websockets an, Force SSL/HTTP2/HSTS; [deploy/npm/portal.advanced.conf](deploy/npm/portal.advanced.conf) in den Reiter *Advanced* einfügen (leitet `/api`, `/auth`, `/ws` an `:3081` und `/media/` an `:3082`). Den Block `/media/c/` nicht entfernen: Er verhindert, dass Cast-Tokens in Logs landen.
-3. **Jellyfin:** Admin-API-Key anlegen. Optional das Webhook-Plugin für sofortige „läuft gerade“- und „neu in der Bibliothek“-Ereignisse – [docs/integrations.md](docs/integrations.md).
-4. **Wünsche (optional):** API-Key und Webhook – [docs/integrations.md](docs/integrations.md).
-5. **Web-Push und Webhooks (optional):** unter *Admin → Einstellungen* das Push-Schlüsselpaar und das Webhook-Secret erzeugen.
-6. **Erster Login** mit einem Mitglied der Authentik-Gruppe `friendflix-admins`: Du wirst Portal-Admin, wählst die Sprache der Instanz und lädst deine Freunde unter *Admin → Nutzer → Einladungen* ein.
+Vorher brauchst du:
 
-Laufen Jellyfin/Wunsch-Dienst schon in einem eigenen Stack: `docker network connect friendflix_media <container>`, deren öffentliche Ports entfernen und `JELLYFIN_URL`/`REQUESTS_URL` setzen.
+1. **Authentik**, installiert mit Admin-Konto – [docs/de/authentik.md §2](docs/de/authentik.md#2-authentik-installieren). Danach dort MFA zur Pflicht machen und den einmaligen Token widerrufen ([§3](docs/de/authentik.md#3-automatische-einrichtung-aus-friendflix)).
+2. **Jellyfin** mit abgeschlossenem eigenem Einrichtungsassistenten, am Netz `friendflix_media` (`docker network connect friendflix_media <container>`) oder mit `--profile bundled` gestartet.
+3. **Nginx Proxy Manager:** ein Proxy-Host `portal.<domain>` → `127.0.0.1:3080`, Websockets an, Force SSL/HTTP2/HSTS; [deploy/npm/portal.advanced.conf](deploy/npm/portal.advanced.conf) in den Reiter *Advanced* einfügen (leitet `/api`, `/auth`, `/ws` an `:3081` und `/media/` an `:3082`). Den Block `/media/c/` nicht entfernen: Er verhindert, dass Cast-Tokens in Logs landen.
+
+Außerdem sinnvoll: `./scripts/backup-bootstrap.sh` sichert die erzeugten Secrets (der Dienst `bootstrap` legt die Passwörter für Datenbank und Redis, `APP_ENC_KEY` und `INTERNAL_SECRET` im Docker-Volume `friendflix_bootstrap` an), und `docker compose -f compose.prod.yaml --profile backup up -d backup` ergänzt nächtliche Datenbank-Backups. Private Pakete: vorher `docker login ghcr.io -u <user>` (PAT mit read:packages).
+
+Lieber Dateien? Jede Einstellung kann weiterhin aus der `.env` oder aus Docker-Secrets kommen und erscheint dann im Assistenten und unter *Admin → Einstellungen* gesperrt ([docs/de/setup.md §15](docs/de/setup.md#15-fortgeschritten-konfiguration-über-die-umgebung)). Bestehende Installation aktualisieren: [docs/de/setup.md §14](docs/de/setup.md#14-umstieg-auf-einstellungen-in-der-datenbank); sie sieht den Assistenten nie.
 
 ### Konfiguration
 
-Vorlage: [.env.example](.env.example). Jede Variable kann mit der Endung `_FILE` auch aus einer Datei gelesen werden (Docker Secrets, siehe [compose.secrets.yaml](compose.secrets.yaml)). Die Standardwerte stammen aus [compose.prod.yaml](compose.prod.yaml). Einstellungen lassen sich stattdessen unter *Admin → Einstellungen* speichern; ein Wert aus `.env` oder Datei hat Vorrang und ist dort gesperrt ([docs/de/setup.md](docs/de/setup.md#einstellungen-in-der-datenbank)).
+Eine neue Installation braucht keine davon: Einrichtungsassistent und *Admin → Einstellungen* speichern sie in der Datenbank. Vorlage, um Werte aus der Umgebung festzunageln: [.env.example](.env.example). Jede Variable kann mit der Endung `_FILE` auch aus einer Datei gelesen werden (Docker Secrets, siehe [compose.secrets.yaml](compose.secrets.yaml)). Die Standardwerte stammen aus [compose.prod.yaml](compose.prod.yaml). Einstellungen lassen sich stattdessen unter *Admin → Einstellungen* speichern; ein Wert aus `.env` oder Datei hat Vorrang und ist dort gesperrt ([docs/de/setup.md](docs/de/setup.md#einstellungen-in-der-datenbank)).
 
 | Variable | Standard | Bedeutung |
 |---|---|---|
-| `PUBLIC_URL` | – (Pflicht) | Öffentliche https-URL des Portals |
+| `PUBLIC_URL` | – (Einrichtungsassistent) | Öffentliche https-URL des Portals |
 | `POSTGRES_PASSWORD`, `REDIS_PASSWORD` | erzeugt | Passwörter für Datenbank und Redis; nur bei Installationen setzen, die sie schon hatten (werden ins Volume `bootstrap` kopiert) |
 | `APP_ENC_KEY` | erzeugt | 32 Byte base64; verschlüsselt gespeicherte Zugangsdaten und geheime Einstellungen. **Volume `bootstrap` getrennt sichern** (`scripts/backup-bootstrap.sh`) |
 | `INTERNAL_SECRET` | erzeugt | Backend ↔ Gateway (≥ 16 Zeichen, wenn gesetzt) |
 | `WEBHOOK_SECRET` | – | Jellyfin-/Wunsch-Dienst-Webhooks (≥ 16 Zeichen); *Admin → Einstellungen → Allgemein → Neu erzeugen*. Ohne: Die Webhooks antworten mit 403 |
-| `OIDC_ISSUER`, `OIDC_CLIENT_ID`, `OIDC_CLIENT_SECRET` | – (Pflicht) | Authentik-OIDC-Provider |
+| `OIDC_ISSUER`, `OIDC_CLIENT_ID`, `OIDC_CLIENT_SECRET` | – (Einrichtungsassistent) | Authentik-OIDC-Provider |
 | `TMDB_API_KEY`, `OMDB_API_KEY` (oder `…_FILE`) | leer | Optionale Zusatzdaten für die Detailseite (Links, Bewertungen); oder unter *Admin → Datenquellen* setzen. Siehe [docs/integrations.md](docs/integrations.md#tmdb--omdb-optional) |
 | `MEDIA_SERVER` | `jellyfin` | Art des Medienservers; in diesem Repository gibt es nur Jellyfin (ein Fork kann weitere ergänzen, siehe [docs/architecture.md](docs/architecture.md)) |
-| `JELLYFIN_URL`, `JELLYFIN_ADMIN_API_KEY` | – (Pflicht bei `jellyfin`) | Interne Jellyfin-URL, z. B. `http://jellyfin:8096`, und Admin-API-Key |
+| `JELLYFIN_URL`, `JELLYFIN_ADMIN_API_KEY` | – (Einrichtungsassistent) | Interne Jellyfin-URL, z. B. `http://jellyfin:8096`, und Admin-API-Key |
 | `REQUESTS_URL`, `REQUESTS_API_KEY` | – (Pflicht) | Interne URL (mitgeliefert: `http://requests:5055`) und API-Key des Wunsch-Dienstes (ältere Variablennamen funktionieren weiter, mit Hinweis im Log) |
 | `ADMIN_GROUP` | `friendflix-admins` | Authentik-Gruppe, deren Mitglieder Portal-Admins werden |
 | `BIND_ADDR` | `127.0.0.1` | Host-Adresse für die drei Ports – nie eine öffentliche Schnittstelle |

@@ -143,8 +143,33 @@ describe('settings probes', () => {
     expect(await runProbe(world({ 'GET /repos/.*': () => ({ status: 403 }) }).ctx, 'github', gh)).toEqual({ ok: false, code: 'unreachable', detail: 'rate_limited' });
   });
 
-  it('publicUrl answers ok until the setup echo exists', async () => {
-    expect(await runProbe(world({}).ctx, 'publicUrl', cfg)).toEqual({ ok: true, code: 'ok' });
+  it('publicUrl: the stored answer for the nonce -> ok; anything else is a warning, never a failure; no redirect is followed', async () => {
+    const kv = new MemoryKV();
+    const inits: RequestInit[] = [];
+    const urls: URL[] = [];
+    const echo = (async (input: RequestInfo | URL, init: RequestInit = {}) => {
+      const u = new URL(String(input));
+      urls.push(u);
+      inits.push(init);
+      return Response.json({ answer: await kv.get(`setup:echo:${u.pathname.split('/').pop()}`) });
+    }) as typeof fetch;
+    const ctx = { fetchImpl: echo, kv, cfg } as unknown as Ctx;
+    expect(await runProbe(ctx, 'publicUrl', cfg)).toEqual({ ok: true, code: 'ok' });
+    expect(urls[0]!.origin).toBe('https://portal.example.com');
+    expect(urls[0]!.pathname).toMatch(/^\/api\/setup\/echo\/[A-Za-z0-9_-]{43}$/);
+    expect(inits[0]!.redirect).toBe('manual');
+    expect(await kv.keys('setup:echo:')).toEqual([]); // used once
+    expect(await runProbe(ctx, 'publicUrl', withCfg({ PUBLIC_URL: 'http://portal.example.com' }))).toEqual({ ok: true, code: 'warning', detail: 'insecure' });
+    // a reflector (answers with the nonce itself) does not pass: only the stored random answer does
+    const reflect = world({ 'GET /api/setup/echo/.*': (u) => ({ json: { answer: u.pathname.split('/').pop() } }) });
+    expect(await runProbe(reflect.ctx, 'publicUrl', cfg)).toEqual({ ok: true, code: 'warning', detail: 'echo_mismatch' });
+    expect(await runProbe(world({}).ctx, 'publicUrl', cfg)).toEqual({ ok: true, code: 'warning', detail: 'echo_mismatch' });
+    const big = world({ 'GET /api/setup/echo/.*': () => ({ raw: 'x'.repeat(10_000) }) });
+    expect(await runProbe(big.ctx, 'publicUrl', cfg)).toEqual({ ok: true, code: 'warning', detail: 'echo_mismatch' });
+    const html = world({ 'GET /api/setup/echo/.*': () => ({ raw: '<html>' }) });
+    expect(await runProbe(html.ctx, 'publicUrl', cfg)).toEqual({ ok: true, code: 'warning', detail: 'echo_mismatch' });
+    expect(await runProbe(throwing(new TypeError('fetch failed')), 'publicUrl', cfg)).toEqual({ ok: true, code: 'warning', detail: 'unreachable' });
+    expect(await runProbe(throwing(Object.assign(new Error('t'), { name: 'TimeoutError' })), 'publicUrl', cfg)).toEqual({ ok: true, code: 'warning', detail: 'timeout' });
   });
 
   it('probeConfigured and probeBlocks', () => {

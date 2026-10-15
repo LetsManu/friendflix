@@ -38,6 +38,11 @@ export interface LiveCtxDeps {
   /** builds the media server / the request service client for a config; called again when their settings change */
   media(cfg: Config): MediaServer;
   requests(cfg: Config): SeerrClient;
+  /**
+   * whether the media server may start its own change feed (start()): server.ts passes isOperational, so during setup mode a media module
+   * never starts with empty settings (spec Part E1); syncMedia starts it once the app is operational. Omitted = always.
+   */
+  operational?(): boolean;
   /** what an assignment to ctx.cfg does: tests install an override; omitted (production) = ctx.cfg is read-only */
   overrideCfg?(cfg: Config): void;
   log: { warn(o: object, m: string): void };
@@ -45,8 +50,10 @@ export interface LiveCtxDeps {
 
 export interface LiveCtx {
   ctx: Ctx;
-  /** starts the media server's own change feed (and that of every later rebuild) */
+  /** starts the media server's own change feed (and that of every later rebuild), once `operational` says so */
   startMedia(rt: MediaRuntime): Promise<void>;
+  /** starts the current media server if startMedia ran, it is not started yet and the app is operational now (server.ts asks every few seconds) */
+  syncMedia(): Promise<void>;
   /** settles once the rebuilds triggered so far are done */
   ready(): Promise<void>;
   /** stops the media server and drops the change listeners */
@@ -74,6 +81,8 @@ export function createLiveCtx(d: LiveCtxDeps): LiveCtx {
   const buildRequests = (c: Config) => (c.REQUESTS_URL && c.REQUESTS_API_KEY ? d.requests(c) : null);
   let requests = { inst: buildRequests(settings.current()), sig: sig(REQUEST_KEYS) };
   let runtime: MediaRuntime | undefined;
+  /** whether media.inst.start ran with the runtime (only a started instance is stopped) */
+  let started = false;
   let chain: Promise<void> = Promise.resolve();
   const serial = (fn: () => Promise<void>): Promise<void> => {
     const run = chain.then(fn);
@@ -92,11 +101,22 @@ export function createLiveCtx(d: LiveCtxDeps): LiveCtx {
       return;
     }
     const old = media.inst;
+    const wasStarted = started;
     media = { inst: next, sig: s };
-    if (!runtime) return;
-    await Promise.resolve(old.stop?.()).catch((err: unknown) => log.warn({ err }, 'stopping the replaced media server failed'));
-    await Promise.resolve(next.start?.(runtime)).catch((err: unknown) => log.warn({ err }, 'starting the media server failed'));
+    started = false;
+    if (wasStarted) await Promise.resolve(old.stop?.()).catch((err: unknown) => log.warn({ err }, 'stopping the replaced media server failed'));
+    await startCurrent().catch((err: unknown) => log.warn({ err }, 'starting the media server failed'));
   });
+
+  /**
+   * starts the current instance when there is a runtime and the app is operational (not again once started). `started` is set before
+   * start() runs: a start() that throws is logged and not retried (as before setup mode), and its stop() still runs on a swap or close.
+   */
+  const startCurrent = async () => {
+    if (!runtime || started || !(d.operational?.() ?? true)) return;
+    started = true;
+    await media.inst.start?.(runtime);
+  };
 
   const swapRequests = () => {
     const s = sig(REQUEST_KEYS);
@@ -124,14 +144,16 @@ export function createLiveCtx(d: LiveCtxDeps): LiveCtx {
     ctx,
     startMedia: (rt) => serial(async () => {
       runtime = rt;
-      await media.inst.start?.(rt);
+      await startCurrent();
     }),
+    syncMedia: () => serial(() => startCurrent().catch((err: unknown) => log.warn({ err }, 'starting the media server failed'))),
     ready: () => chain,
     async close() {
       for (const f of off) f();
       await serial(async () => {
-        const was = runtime;
+        const was = started;
         runtime = undefined;
+        started = false;
         if (was) await media.inst.stop?.();
       });
     },

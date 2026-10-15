@@ -155,14 +155,14 @@ describe('repository hygiene', () => {
 });
 
 describe('seam boundary', () => {
-  it('only jellyfin/* and the media factory import the Jellyfin implementation', () => {
+  it('only jellyfin/*, the media factory and the media setup seam import the Jellyfin implementation', () => {
     const root = new URL('../src/', import.meta.url).pathname;
     const files: string[] = [];
     const walk = (d: string) => { for (const n of readdirSync(d)) { const p = join(d, n); if (statSync(p).isDirectory()) walk(p); else if (p.endsWith('.ts')) files.push(p); } };
     walk(root);
     const offenders = files
       .map((f) => relative(root, f))
-      .filter((f) => !f.startsWith('jellyfin/') && f !== 'media/index.ts')
+      .filter((f) => !f.startsWith('jellyfin/') && f !== 'media/index.ts' && f !== 'media/setup.ts')
       .filter((f) => /from '[./]*\/?jellyfin\//.test(readFileSync(join(root, f), 'utf8')));
     expect(offenders).toEqual([]);
   });

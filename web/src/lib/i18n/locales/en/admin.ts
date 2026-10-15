@@ -382,6 +382,9 @@ const en: Translation<typeof de> = {
       import_env: '{actor} moved values from the environment into the settings',
       generate: '{actor} generated a new key',
     },
+    setup: {
+      completed: '{actor} completed the setup',
+    },
     system: {
       update: '{actor} started an update',
     },

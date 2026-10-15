@@ -207,9 +207,10 @@ flowchart TB
 |---|---|
 | `backend/src/media/types.ts` | The `MediaServer` interface, its `admin` sub-interface (`MediaAdmin`), the normalized DTOs (`ItemDto`, `PlaybackDto`, `TrickplayDto`, `DownloadSourceDto`, …), `MediaCapabilities` and the `MediaError` base class. Nothing in here knows Jellyfin. |
 | `backend/src/media/index.ts` | `MEDIA_SERVERS` (the accepted `MEDIA_SERVER` values) and the one factory `createMediaServer()`. The only shared file that imports an implementation. |
-| `backend/src/jellyfin/*` | `JellyfinService implements MediaServer` (`service.ts`), the HTTP client (`client.ts`), Jellyfin JSON → DTO mapping (`dto.ts`). `JellyfinError extends MediaError`. |
+| `backend/src/media/setup.ts` | `MediaSetupProvider` and `MEDIA_SETUP` (Block 25): per kind the registry keys of the wizard's media step, the gateway's URL key, the `media` settings probe and, optionally, `auto` (create the server's API key from an administrator's sign-in). |
+| `backend/src/jellyfin/*` | `JellyfinService implements MediaServer` (`service.ts`), the HTTP client (`client.ts`), Jellyfin JSON → DTO mapping (`dto.ts`), the setup provider `jellyfinSetup` (`setup.ts`). `JellyfinError extends MediaError`. |
 
-Routes and jobs use `ctx.jf` (the name is kept from the Jellyfin-only days; its type is `MediaServer`). They never build server paths themselves. A test (`backend/test/media-seam.test.ts`, "seam boundary") fails when a file outside `jellyfin/` and `media/index.ts` imports from `jellyfin/`.
+Routes and jobs use `ctx.jf` (the name is kept from the Jellyfin-only days; its type is `MediaServer`). They never build server paths themselves. A test (`backend/test/media-seam.test.ts`, "seam boundary") fails when a file outside `jellyfin/`, `media/index.ts` and `media/setup.ts` imports from `jellyfin/`.
 
 What the interface covers, grouped:
 
@@ -226,6 +227,30 @@ Conventions: item ids are 32 lower-case hex characters (an implementation with o
 **Capabilities.** `ctx.jf.capabilities` says what the server can do: supported skip-segment types, trickplay, upcoming episodes, remote subtitle search, webhooks, a change feed, Plan B and chapters. The backend sends them once in `/api/me` (`server: { kind, capabilities }`, also `GET /api/server`); the web keeps them in `web/src/lib/capabilities.ts` (default: everything supported) and hides the skip buttons / timeline marks of unsupported segment types, the subtitle search and the calendar link. Jellyfin reports everything, so nothing changes visibly. `capabilities.requestUsers` (backend only, not in `/api/me`) picks how accounts become request service users for wishes: `'jellyfin-import'` (Jellyfin) or `'local'` (default when absent: a local request service user per account, see [integrations.md](integrations.md#request-service)).
 
 **Configuration.** `MEDIA_SERVER` (default `jellyfin`; the only accepted value in this repository) selects the implementation in the backend and in the gateway. Each kind declares its config fields (`MEDIA_FIELDS`) and its settings (`mediaSettings()`: `JELLYFIN_URL`, `JELLYFIN_ADMIN_API_KEY` for Jellyfin, required once setup is complete) in `media/index.ts`; `mediaConfigProblems()` in `media/index.ts` can refuse settings a kind cannot work with at startup.
+
+**Setup provider (Block 25).** `MEDIA_SETUP[kind]` (`backend/src/media/setup.ts`) is what the setup wizard and the `media` settings probe know about a kind:
+
+```ts
+interface MediaSetupProvider {
+  kind: MediaServerKind;
+  keys: readonly string[];   // registry keys, in field order
+  urlKey: string;            // the gateway upstream (mediaUrlKey)
+  probe(values, { fetchImpl }): Promise<ProbeResult>;
+  auto?: {
+    fields: readonly ('url' | 'username' | 'password')[];
+    run(input, { fetchImpl, appVersion }): Promise<Record<string, string>>;
+    revoke?(values, { fetchImpl }): Promise<void>;   // best effort, when the save refused the values
+  };
+}
+```
+
+- `GET /api/setup/state` sends `media: { keys, auto }` (`auto` = the provider's `auto.fields` or `null`); the web renders the media step from it, with labels from `settings.keys.<KEY>`. A kind without an entry gets manual fields from `mediaSettings()` (the settings its kind requires), `auto: null`, and its `media` probe answers a non-blocking warning (`not_tested`); `mediaUrlKey()` then falls back to the first `url` setting. A fork (Plex) adds `MEDIA_SETUP.plex` (URL + token, manual, probe) and its i18n strings, no web code.
+- The `media` probe calls `provider.probe` with the candidate values and the probe runner's fetch (no redirects, 5 s deadline). Jellyfin: `GET /Auth/Keys` with the key (2xx only for an administrator's key, 401/403 → `not_admin`).
+- `POST /api/setup/media/auto { url, username, password }` (setup session + `x-ff-setup-csrf`, 10 per minute) checks the URL (http/https, no user info) before any request, runs `auto.run` and saves its values with the same probes and audit as `PUT /api/setup/settings`, limited to the provider's keys. One run at a time (kv lock `setup:media:auto`, else `409 busy`). A URL key from the environment must match (`invalid/env_locked`) and env keys are not saved. When the save refuses the values (`invalid_settings` / `probe_failed`), `auto.revoke` deletes the new credential (Jellyfin: `DELETE /Auth/Keys/<key>` with the key itself, verified on 12.2.0); never when the save throws, since it may throw after the commit. Answers `{ ok: true }`, or `{ ok: false, code, detail? }` with `code` one of `wizard_pending`, `unauthorized`, `not_admin`, `unreachable`, `unexpected`.
+- Jellyfin's `auto` (`jellyfin/setup.ts`): `GET /System/Info/Public` (`StartupWizardCompleted` must be true, else `wizard_pending`, before any sign-in), `POST /Users/AuthenticateByName` with `MediaBrowser Client="FriendFlix", Device="Setup", DeviceId="ff-setup-<16 hex>", Version="<APP_VERSION or dev>"` (401 → `unauthorized`; `User.Policy.IsAdministrator` must be true, else `not_admin`), `GET /Auth/Keys`, `POST /Auth/Keys?app=FriendFlix`, `GET /Auth/Keys` again: the newest `FriendFlix` key by `DateCreated` that was not in the first list (compared with Jellyfin's list, not this backend's clock). `POST /Sessions/Logout` with the session token runs in a `finally` block, whatever happened. Every call has a 5 s deadline and never follows a redirect; network errors and timeouts are `unreachable`.
+- The password is used only in memory for the sign-in: it is never stored, logged or put into an error (`MediaSetupError` carries a code only), and `/api/setup/*` bodies are kept out of error logs.
+- Only types flow back from `media/setup.ts` and `jellyfin/setup.ts` to `media/index.ts` (which imports them), so there is no import cycle; the shared probe helpers live in the leaf module `settings/probeKit.ts`.
+- A media server's own change feed (`start()`) waits until the app is operational: `createLiveCtx({ operational })` defers it during setup mode, and `server.ts` calls `live.syncMedia()` every 5 s, which starts it once.
 
 **Player depth (Block 17).** `GET /api/items/:id/castinfo` ("Besetzung & Infos": cast with characters, an episode's guest stars = everyone credited on the episode who is not a series regular, directors / writers / creators, studios, genres, tags, year, rating) uses `credits()`; without it the route falls back to `people()` + `itemTraits()` tags. `GET /api/items/:id/chapters` answers `{supported, chapters}`; `supported:false` when `capabilities.chapters` is off or `chapters()` is absent (the player then shows no marks and no "Szenen" panel). Both check visibility with the viewer's identity on every call (`item()`), cache the server data 5 min per server identity, and answer 404 for invisible items. Jellyfin: `/Items?ids=…&fields=People,Studios,Tags` and `fields=Chapters`; chapter stills are `/media/Items/<id>/Images/Chapter/<index>?tag=…` (the web falls back to a trickplay frame when a still does not load). A Plex fork maps its chapters (`Chapter` elements of the media part) and roles (`Role` with `role` = character) onto the same DTOs.
 

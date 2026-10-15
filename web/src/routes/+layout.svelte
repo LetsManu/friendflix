@@ -6,7 +6,7 @@
   import { afterNavigate, beforeNavigate, goto, onNavigate } from '$app/navigation';
   import { pageStore } from '#lib/page';
   const page = pageStore();
-  import { api, setActiveProfile, setCsrf, type Me } from '#lib/api';
+  import { api, ApiError, setActiveProfile, setCsrf, type Me } from '#lib/api';
   import Icon from '#lib/Icon.svelte';
   import Logo from '#lib/Logo.svelte';
   import Footer from '#lib/Footer.svelte';
@@ -104,7 +104,8 @@
   let catLangs: string[] | null = null;
 
   $: path = $page.url.pathname;
-  $: publicPage = path.startsWith('/invite/') || path === '/tv' || path === '/offline' || path === '/pending' || path === '/restore';
+  // /setup: the wizard of a new install (no account yet); /setup/extras is not public (the first admin is signed in there)
+  $: publicPage = path.startsWith('/invite/') || path === '/tv' || path === '/offline' || path === '/pending' || path === '/restore' || path === '/setup';
   $: watchPage = path.startsWith('/watch/') || /^\/party\/[^/]+/.test(path); // immersive player pages: no navigation
   $: profilesPage = path === '/profiles' || path === '/welcome'; // full-screen pages without navigation (picker, onboarding)
   $: heroPage = path === '/' || path.startsWith('/item/');
@@ -397,7 +398,10 @@
           if (!watchPage) void settleFocus();
         }
         if (m.tv && !pending) stops.push(startTvLink(onTvCommand, (code) => { if (code === 4401) location.href = '/tv'; else if (code === 4000) replaced = true; }));
-      } catch { /* api() redirects to login on 401 */ }
+      } catch (e) {
+        // a new install: the backend answers 503 setup_required until the wizard is done (spec Part E1); api() redirects to login on 401
+        if (e instanceof ApiError && e.status === 503 && e.body?.error === 'setup_required') await goto('/setup', { replaceState: true });
+      }
     }
   }
 </script>

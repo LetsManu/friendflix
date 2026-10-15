@@ -40,8 +40,10 @@ export async function applyRole(ctx: Ctx, jellyfinUserId: string, role: string, 
  * Creates the 1:1 mapping Authentik account = portal user = Jellyfin account:
  * a Jellyfin user with a random password (stored AES-GCM encrypted), role policy applied.
  * `accessUntil`: the date the new account's access ends (invite access days, approval), null/omitted = no end.
+ * `tx`: a connection inside an open transaction (setup/state.ts claimSetup): the account rows and their audit are written there and
+ * commit or roll back with it; the caller then owns the Jellyfin account if that transaction does not commit.
  */
-export async function provisionUser(ctx: Ctx, claims: OidcClaims, role: string, accessUntil: Date | null = null): Promise<UserRow> {
+export async function provisionUser(ctx: Ctx, claims: OidcClaims, role: string, accessUntil: Date | null = null, tx?: pg.PoolClient): Promise<UserRow> {
   const base = safeName(claims.name ?? claims.email?.split('@')[0] ?? 'freund');
   const password = randomPassword();
   let jf: { id: string } | undefined;
@@ -57,11 +59,10 @@ export async function provisionUser(ctx: Ctx, claims: OidcClaims, role: string, 
   try {
     const id = randomUUID();
     await applyRole(ctx, jf!.id, role, false, { userId: id });
-    const pool = ctx.db as pg.Pool;
-    const c = await pool.connect();
+    const c = tx ?? (await (ctx.db as pg.Pool).connect());
     let row: UserRow;
     try {
-      await c.query('begin');
+      if (!tx) await c.query('begin');
       const r = await c.query<UserRow>(
         `insert into users(id, authentik_sub, email, name, role, jellyfin_user_id, jellyfin_username, jellyfin_pw_enc, access_until)
          values ($1,$2,$3,$4,$5,$6,$7,$8,$9) returning *`,
@@ -69,14 +70,14 @@ export async function provisionUser(ctx: Ctx, claims: OidcClaims, role: string, 
       );
       row = r.rows[0]!;
       await c.query('insert into profiles(id, user_id, name, is_owner) values ($1,$1,$2,true)', [id, row.name.slice(0, 20).trim() || 'Profil']);
-      await c.query('commit');
+      if (!tx) await c.query('commit');
     } catch (e) {
-      await c.query('rollback').catch(() => undefined);
+      if (!tx) await c.query('rollback').catch(() => undefined);
       throw e;
     } finally {
-      c.release();
+      if (!tx) c.release();
     }
-    await audit(ctx, id, 'user.provisioned', id, { role, jellyfin: jfName, ...(accessUntil ? { accessUntil: accessUntil.toISOString() } : {}) });
+    await audit(tx ? { db: tx } : ctx, id, 'user.provisioned', id, { role, jellyfin: jfName, ...(accessUntil ? { accessUntil: accessUntil.toISOString() } : {}) });
     return row;
   } catch (e) {
     await ctx.jf.admin.deleteIdentity(jf!.id).catch(() => undefined); // roll back the orphaned Jellyfin account

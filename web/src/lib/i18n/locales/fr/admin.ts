@@ -391,6 +391,9 @@ const fr: Translation<typeof de> = {
       import_env: '{actor} a repris des valeurs de l’environnement dans les paramètres',
       generate: '{actor} a généré une nouvelle clé',
     },
+    setup: {
+      completed: '{actor} a terminé la configuration initiale',
+    },
     system: {
       update: '{actor} a lancé une mise à jour',
     },
