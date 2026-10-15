@@ -4,7 +4,7 @@
 
 FriendFlix has no passwords of its own. Every sign-in goes through **Authentik** (OpenID Connect, authorization code flow with PKCE), and Authentik enforces multi-factor authentication. This guide covers installing Authentik and every Authentik object FriendFlix needs, with the exact values the backend expects.
 
-The full FriendFlix installation (Jellyfin, request service, `.env`, Nginx Proxy Manager, first login) is in the [setup guide](setup.md).
+The full FriendFlix installation (Jellyfin, request service, Nginx Proxy Manager, the setup wizard, first login) is in the [setup guide](setup.md). The wizard can create every FriendFlix object in Authentik for you ([§3](#3-automatic-setup-from-friendflix)); sections 4 – 8 describe them for doing it by hand or adapting them.
 
 > Menu paths follow the Authentik admin interface of the 2025.12 – 2026.x releases (`compose.authentik.yaml` pins `2026.8.3`). Older releases use slightly different labels. Everything marked *(unverified)* could not be checked against code or the official documentation.
 
@@ -12,7 +12,7 @@ The full FriendFlix installation (Jellyfin, request service, `.env`, Nginx Proxy
 
 1. [What FriendFlix needs from Authentik](#1-what-friendflix-needs-from-authentik)
 2. [Install Authentik](#2-install-authentik)
-3. [Fast path: import the FriendFlix blueprint](#3-fast-path-import-the-friendflix-blueprint)
+3. [Automatic setup from FriendFlix](#3-automatic-setup-from-friendflix)
 4. [Groups](#4-groups)
 5. [OAuth2/OpenID provider and application](#5-oauth2openid-provider-and-application)
 6. [Authentication flow with mandatory MFA](#6-authentication-flow-with-mandatory-mfa)
@@ -170,7 +170,50 @@ Also keep `.env.authentik` (above all `AUTHENTIK_SECRET_KEY`) and the volumes `a
 
 Updates: read the release notes of every version in between, raise `AUTHENTIK_TAG` (only one major release, e.g. `2026.5` → `2026.8`, at a time), then `… pull && … up -d`. After an update, run the check in [§14](#14-verification); the invitation API is the part most likely to change.
 
-## 3. Fast path: import the FriendFlix blueprint
+## 3. Automatic setup from FriendFlix
+
+The FriendFlix setup wizard ([setup.md §8](setup.md#8-the-setup-wizard), step *Sign-in* → *Automatic*) sets Authentik up through its API with a **one-time superuser API token**. You need an installed Authentik with its admin account ([§2](#2-install-authentik)) and nothing else. *Show plan* only reads and lists what would be created, adjusted or left alone; *Apply* does it (about 30 seconds) and saves the result in FriendFlix. Running it again is safe: everything is matched by name or slug and updated, nothing is duplicated, and an existing provider keeps its client ID and secret.
+
+### 3.1 What the wizard creates
+
+| Step | In Authentik | In FriendFlix |
+|---|---|---|
+| Check | the token must belong to a superuser; Authentik 2024.4 or newer | – |
+| Groups | `friendflix-admins` (or your `ADMIN_GROUP`) and `friendflix-users` | `ADMIN_GROUP` |
+| Provider and application | OAuth2/OpenID provider `FriendFlix`: confidential client, grant type `authorization_code` only, redirect URI exactly `<public address>/auth/callback` (*Strict*), implicit consent, scopes `openid`, `email`, `profile`, per-provider issuer, subject mode *hashed user ID*, claims in the ID token, the self-signed signing key; application `FriendFlix` (slug `friendflix`) | `OIDC_ISSUER` (`https://auth.example.com/application/o/friendflix/`), `OIDC_CLIENT_ID`, `OIDC_CLIENT_SECRET` |
+| Service account | user `friendflix-invites` with exactly the permissions of [§8.2](#82-role-with-exactly-these-global-permissions) and its non-expiring token `friendflix-invites-token` | `AUTHENTIK_URL`, `AUTHENTIK_API_TOKEN` (this token, never the superuser token) |
+| Enrollment flow | `friendflix-enrollment` ([§7](#7-enrollment-flow-for-invitations)) | `AUTHENTIK_ENROLL_FLOW` |
+| Recovery flow | `default-recovery-flow` from Authentik's own example (e-mail + MFA), only if it does not exist yet | `AUTHENTIK_RECOVERY_FLOW` |
+| Brand | the recovery flow on the default brand and the identification stage (*Forgot username or password?*), only where none is set; existing values are never overwritten | – |
+| Read back | client ID and secret, the service token, and the issuer from the discovery document | – |
+| Admin group | the token's owner (e.g. `akadmin`) joins the admin group, if *Add me to the admin group* is ticked | – |
+
+The files are the ones in [`deploy/authentik/`](../deploy/authentik/): [`friendflix-setup.yaml`](../deploy/authentik/friendflix-setup.yaml) (groups, provider, application), [`friendflix-service-account.yaml`](../deploy/authentik/friendflix-service-account.yaml) and [`friendflix-blueprint.yaml`](../deploy/authentik/friendflix-blueprint.yaml). Authentik 2026.8 creates providers made through the API or a blueprint **without** grant types (sign-in then fails with `invalid_request`); `friendflix-setup.yaml` sets `authorization_code` explicitly, and re-applying it adds the grant type to a provider that lacks it.
+
+The first sign-in through the wizard becomes the FriendFlix admin whatever its groups. The admin group matters for everybody after that: its members become admins on their first login.
+
+### 3.2 The one-time superuser token
+
+1. In Authentik as `akadmin` (or another superuser): *Directory → Tokens and App passwords → Create*. Identifier e.g. `friendflix-setup`, user: yourself, intent **API Token** (not *App password*). A short expiry is fine; the wizard needs the token for a few minutes.
+2. Copy the key (*Copy* in the token's row) into the wizard. With `AUTHENTIK_BOOTSTRAP_TOKEN` set at Authentik's first start, that token works too.
+3. The token is used for this one run and then forgotten: FriendFlix never stores or logs it and never puts it into an error. What FriendFlix keeps is the service account's token, which can only do what [§8.2](#82-role-with-exactly-these-global-permissions) lists.
+4. **Revoke it afterwards:** *Directory → Tokens and App passwords*, tick the token, *Delete*. The bootstrap token: delete it the same way (`authentik-bootstrap-token`) and remove `AUTHENTIK_BOOTSTRAP_TOKEN` from Authentik's environment. A superuser token can do anything in Authentik; it should not outlive the setup.
+
+### 3.3 Timing and addresses
+
+- **Fresh Authentik:** right after the first start Authentik imports its default flows in the background, which took 3 – 4 minutes in testing. Until then *Apply* can stop with *Authentik refused the setup* (`blueprint_invalid`): wait and press *Try again*; parts already created are reused.
+- **One address for both:** enter the Authentik address as the browser reaches it (`https://auth.example.com`). The backend container must reach Authentik at that same address, because the issuer is derived from it ([§2.3](#23-reverse-proxy-nginx-proxy-manager), DNS).
+- **http:** an `http://` Authentik is refused for sign-in unless the backend runs with `OIDC_ALLOW_INSECURE=true` in its environment (tests only, never in production).
+- Nothing is rolled back when a step fails; the list shows the failed step and a reason (`unauthorized`, `not_superuser`, `unsupported_version`, `blueprint_invalid`, `unreachable`, `unexpected`, `issuer_mismatch`), and a new run continues from there.
+
+### 3.4 What stays manual
+
+- **SMTP** for invitation, recovery and notification e-mails ([§2.5](#25-e-mail-smtp)).
+- **MFA in the authentication flow** ([§6](#6-authentication-flow-with-mandatory-mfa)): the wizard does not change how people sign in to Authentik.
+- **E-mail templates:** custom templates live in `/templates` on the Authentik host, a file mount the API cannot write.
+- Optional: branding ([§12](#12-optional-branding)), passkeys ([§11](#11-optional-passwordless-sign-in-with-passkeys)).
+
+### 3.5 By hand: import the FriendFlix blueprints
 
 [`deploy/authentik/friendflix-blueprint.yaml`](../deploy/authentik/friendflix-blueprint.yaml) creates in one go:
 
@@ -184,7 +227,7 @@ Variants:
 - [`friendflix-service-account.yaml`](../deploy/authentik/friendflix-service-account.yaml): only the service account and token, if you already have an enrollment flow.
 - [`friendflix-prompt-fix.yaml`](../deploy/authentik/friendflix-prompt-fix.yaml): a prompt stage without placeholder expressions for an existing enrollment flow that fails with `'AnonymousUser' object has no attribute 'group_attributes'` (bind `friendflix-prompt-fixed` instead of the old prompt stage, same order).
 
-The blueprint does **not** create the groups, the provider/application, MFA in the authentication flow or recovery. Do [§4](#4-groups), [§5](#5-oauth2openid-provider-and-application), [§6](#6-authentication-flow-with-mandatory-mfa) and [§8.3](#83-copy-the-token) (copy the token) by hand. Sections 7 and 8 describe what the blueprint builds, in case you prefer to click it together or need to adapt it.
+The blueprint does **not** create the groups, the provider/application, MFA in the authentication flow or recovery. [`friendflix-setup.yaml`](../deploy/authentik/friendflix-setup.yaml) creates the groups, the provider and the application, but needs the context `{"public_url": "https://portal.example.com", "admin_group": "friendflix-admins"}`, which the *Flows → Import* dialog cannot pass: import it under *Customization → Blueprints → Create* with that context, or do [§4](#4-groups) and [§5](#5-oauth2openid-provider-and-application) by hand. Then [§6](#6-authentication-flow-with-mandatory-mfa) and [§8.3](#83-copy-the-token) (copy the token). Sections 7 and 8 describe what the blueprint builds, in case you prefer to click it together or need to adapt it.
 
 ## 4. Groups
 
@@ -429,6 +472,8 @@ Each person manages their own account under *My space → Account* (`/me/account
 
 ## 9. FriendFlix `.env` values
 
+The setup wizard saves these values in the database: the automatic setup ([§3](#3-automatic-setup-from-friendflix)) fills all of them, *By hand* takes them from the form. Put them into `.env` only if you configure FriendFlix by environment ([setup.md §15](setup.md#15-advanced-configure-by-environment)); a value there wins and shows locked.
+
 ```bash
 # login (required)
 OIDC_ISSUER=https://auth.example.com/application/o/friendflix/   # trailing slash!
@@ -450,7 +495,7 @@ SESSION_TTL_SECONDS=28800    # absolute 8 h
 SESSION_IDLE_SECONDS=7200    # 2 h without activity
 ```
 
-Then recreate the backend: `docker compose -f compose.prod.yaml up -d backend`. Everything except the login block can instead be entered after the first login in *Admin → Settings → Sign-in* (saved in the database, live, tested against Authentik before saving); a value in `.env` wins there. Compose passes the `AUTHENTIK_*` variables through with an empty default, so a missing entry silently turns invitations off. If only some of the three are set, the backend logs `Authentik invitations disabled: … not set` at start and whenever an invite is created. The admin user page needs only `AUTHENTIK_URL` and `AUTHENTIK_API_TOKEN`; empty `AUTHENTIK_RECOVERY_FLOW` / `AUTHENTIK_TOTP_SETUP_FLOW` mean the defaults above.
+After changing `.env`, recreate the backend: `docker compose -f compose.prod.yaml up -d backend`. All of them can instead be entered in the wizard or later in *Admin → Settings → Sign-in* (saved in the database, live, tested against Authentik before saving); a value in `.env` wins there. Compose passes the `AUTHENTIK_*` variables through with an empty default, so a missing entry silently turns invitations off. If only some of the three are set, the backend logs `Authentik invitations disabled: … not set` at start and whenever an invite is created. The admin user page needs only `AUTHENTIK_URL` and `AUTHENTIK_API_TOKEN`; empty `AUTHENTIK_RECOVERY_FLOW` / `AUTHENTIK_TOTP_SETUP_FLOW` mean the defaults above.
 
 `OIDC_CLIENT_SECRET` can come from a Docker secret ([`compose.secrets.yaml`](../compose.secrets.yaml): `secrets/oidc_client_secret`). The backend reads `<VAR>_FILE` for every setting, so `AUTHENTIK_API_TOKEN_FILE` works too, but `compose.prod.yaml` does not pass that variable through: add it to the backend's `environment` (and mount the secret) in a local override if you want it.
 
@@ -563,7 +608,7 @@ Logs: `docker compose -f compose.prod.yaml logs backend | grep -i -E "oidc|authe
 | *Send password link*: "not supported" | Authentik is older than 2024.4 (the API answers 405). Update Authentik. |
 | *Send password link* succeeds but no e-mail arrives | SMTP of the e-mail stage: check *Events → Logs* in Authentik for `email_sent` / errors and the stage's connection settings ([§10](#10-password-recovery-by-e-mail) step 3). |
 | You open the enrollment link while signed in to Authentik and land on the portal without any sign-up | Expected: the flow requires no authentication, Authentik denies it and, with the default *Denied action* `MESSAGE_CONTINUE`, follows the relative `next` instead, i.e. you are logged in as the **already signed-in** Authentik user. If that user has no portal account yet, the invite is redeemed for them. Test invites in a private window. |
-| `'AnonymousUser' object has no attribute 'group_attributes'` during sign-up | Prompt fields with expression placeholders. Import `friendflix-prompt-fix.yaml` ([§3](#3-fast-path-import-the-friendflix-blueprint)). |
+| `'AnonymousUser' object has no attribute 'group_attributes'` during sign-up | Prompt fields with expression placeholders. Import `friendflix-prompt-fix.yaml` ([§3.5](#35-by-hand-import-the-friendflix-blueprints)). |
 | After sign-up the friend lands in the Authentik user interface | A redirect stage or redirect policy in the enrollment flow, or the User Login stage is missing. |
 | After sign-up *Permission denied* for FriendFlix | The application is bound to groups but the User Write stage does not add new users to `friendflix-users`. |
 | After changing *Subject mode* everybody lands on *Request sent* (`/pending`) | Change it back. FriendFlix identifies users by `sub`. |

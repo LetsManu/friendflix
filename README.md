@@ -127,6 +127,8 @@ An app-like layout with a bottom tab bar, a preview sheet when you tap a poster,
 
 A tidy admin area with a sidebar (People, Content, Operations) and an **overview** that shows system health, what is waiting for you – approve or decline a wish or a new device right there –, recent activity in plain sentences, counts and storage. Everything gives feedback: no pop-up boxes, risky actions ask first, small ones offer **Undo**. On the phone the same area is a simple list with big touch targets.
 
+**Setup in the browser:** a new install starts with a setup wizard that is unlocked by a one-time code from the server log; it connects Jellyfin and sets up Authentik automatically, and every setting lives in *Admin → Settings* afterwards, tested before it is saved.
+
 Also in the admin area: invitations and roles, **brand hubs**, featured and themed lists, **leaving-soon** dates, hover-preview clips, the nightly playback check, the weekly digest, an audit log and one-click updates.
 
 **User management:** one list of every account with filters and bulk actions (role, lock, access until, sign out everywhere), a *Waiting for approval* tab for people who signed in without an invite, invites with several uses and access days, and a page per person with usage, profiles, devices, downloads, viewing history, own limits, two-factor state and the audit log. Access can end on a date: FriendFlix reminds three days ahead and locks the account on the day. Looking at someone's viewing history is itself written to the audit log.
@@ -170,47 +172,41 @@ Everything below is technical. The detailed operating docs are in German (see [D
 
 ### Quick start
 
-The production stack pulls prebuilt images from `ghcr.io/letsmanu/friendflix-{backend,gateway,web}`; there is no build on the server.
+Install in three lines. The production stack pulls prebuilt images from `ghcr.io/letsmanu/friendflix-{backend,gateway,web}`; there is no build on the server, and no `.env` to write.
 
 ```bash
 git clone https://github.com/LetsManu/friendflix.git && cd friendflix
-cp .env.example .env
-$EDITOR .env               # PUBLIC_URL, OIDC_*, JELLYFIN_* (the internal secrets are generated, see below)
-docker login ghcr.io -u <user>                                 # only if the packages are private (PAT with read:packages)
-docker compose -f compose.prod.yaml up -d                      # add --profile bundled to also start Jellyfin + the request service
-docker compose -f compose.prod.yaml --profile backup up -d backup   # optional: nightly database backups
-docker compose -f compose.prod.yaml ps                         # everything "healthy"
-./scripts/backup-bootstrap.sh                                  # back up the generated secrets, apart from the dumps
+docker compose -f compose.prod.yaml up -d
+docker compose -f compose.prod.yaml logs backend | grep "setup code"
 ```
 
-The `bootstrap` service generates the database and Redis passwords, `APP_ENC_KEY` and `INTERNAL_SECRET` into the Docker volume `friendflix_bootstrap` on the first `up`. Everything else is a setting stored in the database and changed under *Admin → Settings*; a value in `.env` still wins there. Upgrading an existing install: [docs/setup.md §14](docs/setup.md#14-upgrading-to-settings-in-the-database).
+Then open the portal in your browser, enter the setup code and follow the **setup wizard**: public address, media server (it creates the Jellyfin API key from an admin login), sign-in (it sets up Authentik with a one-time admin token: provider, groups, invitations, recovery), and your first sign-in becomes the admin. Optional extras (request service, push, webhooks, data sources) follow; everything can be changed later under *Admin → Settings*. Neither login is stored. Step by step: [docs/setup.md](docs/setup.md).
 
-Then:
+Before that you need:
 
-1. **Authentik:** create the OIDC provider (redirect URI `${PUBLIC_URL}/auth/callback`) and enforce MFA – [docs/authentik.md](docs/authentik.md).
-2. **Nginx Proxy Manager:** one proxy host `portal.<domain>` → `127.0.0.1:3080`, WebSockets on, Force SSL/HTTP2/HSTS; paste [deploy/npm/portal.advanced.conf](deploy/npm/portal.advanced.conf) into the *Advanced* tab (routes `/api`, `/auth`, `/ws` to `:3081` and `/media/` to `:3082`). Keep its `/media/c/` block: it stops cast tokens from being logged.
-3. **Jellyfin:** create an admin API key. Optional webhook plugin for instant "now playing" and "new in library" events – [docs/integrations.md](docs/integrations.md).
-4. **Requests (optional):** API key and webhook – [docs/integrations.md](docs/integrations.md).
-5. **Web push and webhooks (optional):** *Admin → Settings*: generate the push key pair and the webhook secret there.
-6. **First login** with a member of the Authentik group `friendflix-admins`: you become the portal admin, choose the instance language, and invite your friends under *Admin → Users → Invites*.
+1. **Authentik** installed with its admin account – [docs/authentik.md §2](docs/authentik.md#2-install-authentik). Afterwards make MFA mandatory there and revoke the one-time token ([§3](docs/authentik.md#3-automatic-setup-from-friendflix)).
+2. **Jellyfin** with its own setup wizard finished, attached to the network `friendflix_media` (`docker network connect friendflix_media <container>`) or started with `--profile bundled`.
+3. **Nginx Proxy Manager:** one proxy host `portal.<domain>` → `127.0.0.1:3080`, WebSockets on, Force SSL/HTTP2/HSTS; paste [deploy/npm/portal.advanced.conf](deploy/npm/portal.advanced.conf) into the *Advanced* tab (routes `/api`, `/auth`, `/ws` to `:3081` and `/media/` to `:3082`). Keep its `/media/c/` block: it stops cast tokens from being logged.
 
-If Jellyfin/the request service already run in their own stack: `docker network connect friendflix_media <container>`, remove their public ports and set `JELLYFIN_URL`/`REQUESTS_URL`.
+Also worth doing: `./scripts/backup-bootstrap.sh` backs up the generated secrets (the `bootstrap` service creates the database and Redis passwords, `APP_ENC_KEY` and `INTERNAL_SECRET` in the Docker volume `friendflix_bootstrap`), and `docker compose -f compose.prod.yaml --profile backup up -d backup` adds nightly database backups. Private packages: `docker login ghcr.io -u <user>` (PAT with read:packages) first.
+
+Prefer files? Every setting can still come from `.env` or Docker secrets and then shows locked in the wizard and in *Admin → Settings* ([docs/setup.md §15](docs/setup.md#15-advanced-configure-by-environment)). Upgrading an existing install: [docs/setup.md §14](docs/setup.md#14-upgrading-to-settings-in-the-database); it never sees the wizard.
 
 ### Configuration
 
-Template: [.env.example](.env.example). Every variable can also be read from a file with the `_FILE` suffix (Docker secrets, see [compose.secrets.yaml](compose.secrets.yaml)). Defaults are the ones in [compose.prod.yaml](compose.prod.yaml). Settings can instead be saved in *Admin → Settings*; a value from `.env` or a file wins and shows locked there ([docs/setup.md](docs/setup.md#settings-in-the-database)).
+A new install needs none of these: the setup wizard and *Admin → Settings* store them in the database. Template for pinning values from the environment: [.env.example](.env.example). Every variable can also be read from a file with the `_FILE` suffix (Docker secrets, see [compose.secrets.yaml](compose.secrets.yaml)). Defaults are the ones in [compose.prod.yaml](compose.prod.yaml). Settings can instead be saved in *Admin → Settings*; a value from `.env` or a file wins and shows locked there ([docs/setup.md](docs/setup.md#settings-in-the-database)).
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `PUBLIC_URL` | – (required) | Public https URL of the portal |
+| `PUBLIC_URL` | – (setup wizard) | Public https URL of the portal |
 | `POSTGRES_PASSWORD`, `REDIS_PASSWORD` | generated | Database and Redis passwords; set only on installs that had them before (copied into the `bootstrap` volume) |
 | `APP_ENC_KEY` | generated | 32 bytes base64; encrypts stored credentials and secret settings. **Back up the `bootstrap` volume separately** (`scripts/backup-bootstrap.sh`) |
 | `INTERNAL_SECRET` | generated | Backend ↔ gateway secret (≥ 16 chars when set) |
 | `WEBHOOK_SECRET` | – | Jellyfin/request-service webhooks (≥ 16 chars); *Admin → Settings → General → Generate new*. Unset: the webhooks answer 403 |
-| `OIDC_ISSUER`, `OIDC_CLIENT_ID`, `OIDC_CLIENT_SECRET` | – (required) | Authentik OIDC provider |
+| `OIDC_ISSUER`, `OIDC_CLIENT_ID`, `OIDC_CLIENT_SECRET` | – (setup wizard) | Authentik OIDC provider |
 | `TMDB_API_KEY`, `OMDB_API_KEY` (or `…_FILE`) | empty | Optional extra data for the detail page (links, ratings); or set in *Admin → Data sources*. See [docs/integrations.md](docs/integrations.md#tmdb--omdb-optional) |
 | `MEDIA_SERVER` | `jellyfin` | Media server kind; Jellyfin is the only one in this repository (a fork can add others, see [docs/architecture.md](docs/architecture.md)) |
-| `JELLYFIN_URL`, `JELLYFIN_ADMIN_API_KEY` | – (required for `jellyfin`) | Internal Jellyfin URL, e.g. `http://jellyfin:8096`, and admin API key |
+| `JELLYFIN_URL`, `JELLYFIN_ADMIN_API_KEY` | – (setup wizard) | Internal Jellyfin URL, e.g. `http://jellyfin:8096`, and admin API key |
 | `REQUESTS_URL`, `REQUESTS_API_KEY` | – (optional) | Internal URL (bundled: `http://requests:5055`) and API key of the request service; without both, wishes and requests are hidden (older variable names still work, with a deprecation warning) |
 | `ADMIN_GROUP` | `friendflix-admins` | Authentik group whose members become portal admins |
 | `BIND_ADDR` | `127.0.0.1` | Host address the three ports are published on – never a public interface |

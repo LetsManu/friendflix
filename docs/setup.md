@@ -4,6 +4,8 @@
 
 This guide takes you from an empty server to a running FriendFlix with your first invited friend. It uses the production stack ([`compose.prod.yaml`](../compose.prod.yaml), prebuilt images), Authentik for sign-in and Nginx Proxy Manager (NPM) as the only public entry point.
 
+A new install needs **no `.env` file**: you start the stack, read a one-time setup code from the backend log and do the rest in the browser. The setup wizard sets the public address, connects Jellyfin and Authentik (automatically or by hand) and makes your first sign-in the admin. Configuring everything through `.env` still works ([section 15](#15-advanced-configure-by-environment)).
+
 Placeholders used throughout: `portal.example.com` (FriendFlix), `auth.example.com` (Authentik), `/opt/friendflix` (your clone). Replace them with your own values. Never paste real secrets into issues, chats or commits.
 
 ## Contents
@@ -13,15 +15,16 @@ Placeholders used throughout: `portal.example.com` (FriendFlix), `auth.example.c
 3. [Authentik](#3-authentik)
 4. [Jellyfin](#4-jellyfin)
 5. [Request service](#5-request-service)
-6. [The `.env` file](#6-the-env-file)
+6. [Nginx Proxy Manager: portal proxy host](#6-nginx-proxy-manager-portal-proxy-host)
 7. [Start the stack](#7-start-the-stack)
-8. [Nginx Proxy Manager: portal proxy host](#8-nginx-proxy-manager-portal-proxy-host)
-9. [First login as admin](#9-first-login-as-admin)
+8. [The setup wizard](#8-the-setup-wizard)
+9. [First steps as admin](#9-first-steps-as-admin)
 10. [Invite friends](#10-invite-friends)
 11. [Optional features](#11-optional-features)
 12. [Verification checklist](#12-verification-checklist)
 13. [Troubleshooting](#13-troubleshooting)
 14. [Upgrading to settings in the database](#14-upgrading-to-settings-in-the-database)
+15. [Advanced: configure by environment](#15-advanced-configure-by-environment)
 
 ## 1. Overview and order of steps
 
@@ -37,17 +40,25 @@ flowchart LR
 
 For the full picture of containers, networks and ports see [architecture.md](architecture.md#containers-and-networks).
 
-Order matters because each step produces a value the next one needs:
+The short version:
 
-| Step | Produces |
-|---|---|
-| 2. DNS, Docker, NPM | host names with TLS |
-| 3. Authentik | `OIDC_ISSUER`, `OIDC_CLIENT_ID`, `OIDC_CLIENT_SECRET`, `ADMIN_GROUP`, optionally `AUTHENTIK_URL`/`AUTHENTIK_API_TOKEN`/`AUTHENTIK_ENROLL_FLOW` |
-| 4. Jellyfin | `JELLYFIN_URL`, `JELLYFIN_ADMIN_API_KEY` |
-| 5. Request service (optional) | `REQUESTS_URL`, `REQUESTS_API_KEY` |
-| 6. `.env` | the values for the first start (sign-in, media server); the internal secrets are generated |
-| 7.–8. stack + NPM | the running portal |
-| 9.–10. first login, invites | admin account, friends |
+```bash
+git clone https://github.com/LetsManu/friendflix.git /opt/friendflix && cd /opt/friendflix
+docker compose -f compose.prod.yaml up -d
+docker compose -f compose.prod.yaml logs backend | grep "setup code"
+```
+
+Then open `https://portal.example.com` and follow the wizard. Before that, the services the wizard connects must exist:
+
+| Step | What you do | What the wizard needs from it |
+|---|---|---|
+| 2. DNS, Docker, NPM | host names with TLS | – |
+| 3. Authentik | install it and create its admin account | its address and a one-time superuser API token |
+| 4. Jellyfin | finish Jellyfin's own setup wizard | its internal address and an administrator's username and password (used once) |
+| 5. Request service (optional) | finish its setup wizard | its address and API key (wizard extras, or later) |
+| 6.–7. NPM proxy host, stack | the running portal, no `.env` | – |
+| 8. Setup wizard | setup code, public address, Jellyfin, Authentik, first admin | – |
+| 9.–10. first steps, invites | admin account, friends | – |
 
 ## 2. Prerequisites
 
@@ -68,7 +79,7 @@ Ports 80 and 443 forwarded from the router to NPM. The FriendFlix backend fetche
 **Nginx Proxy Manager** running ([installation](https://nginxproxymanager.com/setup/)), reachable on 80/443, with an e-mail address set for Let's Encrypt. FriendFlix and Authentik publish their ports on `127.0.0.1` only, so NPM must run on the same host:
 
 - NPM with host networking or installed natively: forward to `127.0.0.1`.
-- NPM in a normal bridge container: `127.0.0.1` inside the container is NPM itself. Set `BIND_ADDR` (FriendFlix and Authentik) to the Docker host's bridge address, e.g. `172.17.0.1`, and forward to that address. Never use `0.0.0.0` on a host with a public interface.
+- NPM in a normal bridge container: `127.0.0.1` inside the container is NPM itself. Set `BIND_ADDR` (FriendFlix and Authentik) to the Docker host's bridge address, e.g. `172.17.0.1`, and forward to that address. Never use `0.0.0.0` on a host with a public interface. `BIND_ADDR` is one of the few values that are not settings: put it into a `.env` file next to the compose file (`echo BIND_ADDR=172.17.0.1 > .env`) or pass it on the command line.
 
 **Clone the repository:**
 
@@ -80,30 +91,30 @@ cd /opt/friendflix
 
 ## 3. Authentik
 
-Follow **[docs/authentik.md](authentik.md)**. In short:
+Install Authentik and create its admin account: **[docs/authentik.md §2](authentik.md#2-install-authentik)** (`compose.authentik.yaml` or the official compose file, the NPM proxy host `auth.example.com`, the admin account `akadmin`, optionally SMTP).
 
-1. Install Authentik (`compose.authentik.yaml` or the official compose file), add the NPM proxy host `auth.example.com`, create the admin account, optionally SMTP.
-2. Import [`deploy/authentik/friendflix-blueprint.yaml`](../deploy/authentik/friendflix-blueprint.yaml) (enrollment flow + service account + API token).
-3. Create the groups `friendflix-admins` (put yourself in it) and optionally `friendflix-users`.
-4. Create the OAuth2/OpenID provider and the application with slug `friendflix`, redirect URI `https://portal.example.com/auth/callback`.
-5. Make MFA mandatory in the authentication flow.
-6. Note the client ID, client secret and API token for step 6.
+That is all you need before the wizard. In the wizard's sign-in step FriendFlix sets up the rest **automatically** with a one-time superuser API token: the groups, the OAuth2/OpenID provider and the application, the service account for invitations, the enrollment and recovery flows. What it creates, how to get the token and how to revoke it afterwards: [authentik.md §3](authentik.md#3-automatic-setup-from-friendflix).
+
+Two things stay manual in Authentik: make **MFA mandatory** in the authentication flow ([authentik.md §6](authentik.md#6-authentication-flow-with-mandatory-mfa)) and set up SMTP for invitation and password e-mails ([authentik.md §2.5](authentik.md#25-e-mail-smtp)).
+
+Prefer to click everything together yourself? Follow [authentik.md §4–§8](authentik.md#4-groups) and enter the values in the wizard's *By hand* mode.
+
+**A freshly installed Authentik** imports its default flows in the background during the first 3 – 4 minutes. Start the wizard's sign-in step after that; if it stops with *Authentik refused the setup* (`blueprint_invalid`), wait a minute and press *Try again*.
 
 ## 4. Jellyfin
 
 FriendFlix talks to Jellyfin over the internal Docker network `friendflix_media`; Jellyfin is never exposed publicly.
 
-**A) Existing Jellyfin** (own container or stack): create the API key below in its normal web UI. After the FriendFlix stack has been started once ([step 7](#7-start-the-stack) creates the network `friendflix_media`), attach the container:
+**A) Existing Jellyfin** (own container or stack): after the FriendFlix stack has been started once ([step 7](#7-start-the-stack) creates the network `friendflix_media`), attach the container:
 
 ```bash
 docker network connect friendflix_media <jellyfin-container>
-docker compose -f compose.prod.yaml restart backend gateway
 ```
 
-`JELLYFIN_URL=http://<jellyfin-container-name>:8096`. A `docker network connect` does not survive re-creating the Jellyfin container; to make it permanent, add `friendflix_media` as an `external: true` network in Jellyfin's own compose file. Remove Jellyfin's public port mapping and any public proxy host for it once FriendFlix works (or at least firewall it, see [operations.md](operations.md#host-firewall-zusätzlich-zum-fehlenden-port-mapping)).
+Its address for the wizard is `http://<jellyfin-container-name>:8096`. A `docker network connect` does not survive re-creating the Jellyfin container; to make it permanent, add `friendflix_media` as an `external: true` network in Jellyfin's own compose file. Remove Jellyfin's public port mapping and any public proxy host for it once FriendFlix works (or at least firewall it, see [operations.md](operations.md#host-firewall-zusätzlich-zum-fehlenden-port-mapping)).
 If Jellyfin runs natively on the host (not in Docker), the backend cannot reach `localhost`; use a Docker container or attach Jellyfin via the host bridge IP *(not covered by the shipped compose files)*.
 
-**B) Bundled Jellyfin** (`--profile bundled`): the containers `jellyfin` and `requests` (the request service) start inside the stack with no ports at all. They start without a `.env`. For the one-time setup wizards publish both services temporarily on loopback with a local override file (do not commit it):
+**B) Bundled Jellyfin** (`--profile bundled`): the containers `jellyfin` and `requests` (the request service) start inside the stack with no ports at all. For their one-time setup wizards publish both services temporarily on loopback with a local override file (do not commit it):
 
 ```yaml
 # compose.setup.yaml - TEMPORARY, remove after the setup wizards
@@ -121,12 +132,12 @@ MEDIA_PATH=/mnt/data/media docker compose -f compose.prod.yaml -f compose.setup.
 ssh -L 8096:127.0.0.1:8096 -L 5055:127.0.0.1:5055 you@server     # from your PC; then open http://localhost:8096
 ```
 
-(`MEDIA_PATH` can also go into `.env`; it is mounted read-only at `/media` in Jellyfin.) Finish the wizards, then start again without `compose.setup.yaml` so the ports disappear. `JELLYFIN_URL=http://jellyfin:8096`.
+(`MEDIA_PATH` is mounted read-only at `/media` in Jellyfin.) Finish the wizards, then start again without `compose.setup.yaml` so the ports disappear. Its address for the wizard is `http://jellyfin:8096`.
 
 **In Jellyfin:**
 
-1. Finish the setup wizard: admin user, metadata language, libraries (Movies, Shows …). Library names matter only if you restrict roles to certain libraries (`ROLE_TEMPLATES`).
-2. *Dashboard → API Keys* (in newer versions under *Dashboard → Advanced → API Keys*) → **+** → app name `FriendFlix` → copy the key → `JELLYFIN_ADMIN_API_KEY`. The key acts as admin: FriendFlix uses it to create one Jellyfin user per portal user (random password, stored encrypted with `APP_ENC_KEY`) and to apply the role policies.
+1. **Finish Jellyfin's own setup wizard first**: admin user, metadata language, libraries (Movies, Shows …). Library names matter only if you restrict roles to certain libraries (`ROLE_TEMPLATES`). The FriendFlix wizard refuses the automatic API key until this is done (*The media server itself is not set up yet*).
+2. The API key: the FriendFlix wizard creates it for you (*Create API key automatically*, [section 8](#8-the-setup-wizard)). By hand instead: *Dashboard → API Keys* (in newer versions under *Dashboard → Advanced → API Keys*) → **+** → app name `FriendFlix` → copy the key and choose *By hand* in the wizard. The key acts as admin: FriendFlix uses it to create one Jellyfin user per portal user (random password, stored encrypted with `APP_ENC_KEY`) and to apply the role policies.
 3. Optional: the webhook plugin for instant "now playing" and "new in library" events, see [integrations.md](integrations.md#jellyfin-webhook-plugin-optional-polling-sessions-every-10-s-is-the-fallback).
 4. Hardware transcoding as usual for your hardware (Intel QSV/VAAPI: see the note on "VPP Tone mapping" in the README).
 
@@ -134,73 +145,14 @@ ssh -L 8096:127.0.0.1:8096 -L 5055:127.0.0.1:5055 you@server     # from your PC;
 
 Wishes go through a request service: the bundled `requests` container (upstream project: see its `image:` line in [`compose.prod.yaml`](../compose.prod.yaml)) or a compatible instance you already run.
 
-The request service is **optional**. Without `REQUESTS_URL` and `REQUESTS_API_KEY`, FriendFlix hides wishes, the upcoming row and the admin request pages; *Requests* then only lists reminders. You can add it later under *Admin → Settings → Requests*.
+The request service is **optional**. Without `REQUESTS_URL` and `REQUESTS_API_KEY`, FriendFlix hides wishes, the upcoming row and the admin request pages; *Requests* then only lists reminders. You connect it in the wizard's extras or later under *Admin → Settings → Requests*.
 
 1. Open the request service (existing instance, or `http://localhost:5055` through the tunnel above) and finish the wizard with **Jellyfin** as media server: URL `http://jellyfin:8096` (bundled) or your container name, plus a Jellyfin admin login. Sync libraries, add Radarr/Sonarr if you use them.
-2. *Settings → General* → copy the **API Key** → `REQUESTS_API_KEY`. `REQUESTS_URL=http://requests:5055` (bundled) or `http://<container-name>:5055` after `docker network connect friendflix_media <container-name>`.
+2. *Settings → General* → copy the **API Key** (`REQUESTS_API_KEY`). The address is `http://requests:5055` (bundled) or `http://<container-name>:5055` after `docker network connect friendflix_media <container-name>`.
 3. *Settings → Users*: turn off automatic Jellyfin user import (FriendFlix profiles are hidden Jellyfin users and would show up otherwise). Leave auto-approve off if you want to approve every request.
 4. Webhook for "request approved/available": see [integrations.md](integrations.md#request-service).
 
-## 6. The `.env` file
-
-FriendFlix generates its internal secrets and keeps its settings in the database, so `.env` only holds what the first start needs:
-
-- **Generated, never in `.env` on a new install:** the database and Redis passwords, `APP_ENC_KEY` and `INTERNAL_SECRET`. The `bootstrap` service runs on every `docker compose up`, writes them into the Docker volume `friendflix_bootstrap` and exits. Back that volume up ([step 7](#7-start-the-stack)).
-- **Settings:** everything else the backend reads is stored in the database and changed under *Admin → Settings* ([below](#settings-in-the-database)). A value in `.env` still wins.
-
-Nobody can sign in to *Admin → Settings* before sign-in and the media server work, so these come from `.env` for the first start:
-
-```bash
-cp .env.example .env
-chmod 600 .env
-```
-
-| Variable | Required | Value / how to generate |
-|---|---|---|
-| `PUBLIC_URL` | yes | `https://portal.example.com`, no path. Must be exactly the URL people use (cookies, redirect URI, WebSocket origin check). |
-| `OIDC_ISSUER` | yes | `https://auth.example.com/application/o/friendflix/` **with trailing slash** |
-| `OIDC_CLIENT_ID`, `OIDC_CLIENT_SECRET` | yes | from the Authentik provider |
-| `ADMIN_GROUP` | – | `friendflix-admins` (default); Authentik group name, case-sensitive |
-| `JELLYFIN_URL` | yes | `http://jellyfin:8096` (internal name, never the public URL) |
-| `JELLYFIN_ADMIN_API_KEY` | yes | from step 4 |
-| `BIND_ADDR` | – | `127.0.0.1` (default) or the Docker bridge IP if NPM runs in a bridge container |
-| `WEB_PORT`, `BACKEND_PORT`, `GATEWAY_PORT` | – | `3080`, `3081`, `3082` (defaults); change only if taken |
-| `TZ` | – | e.g. `Europe/Vienna`; schedules (digest, playback check, backups) |
-| `METRICS_TOKEN` | – | `openssl rand -hex 24` if you scrape `/metrics` ([monitoring.md](monitoring.md)) |
-| `FF_REGISTRY`, `FF_TAG` | – | `ghcr.io/letsmanu`, `latest`; pin a version with a commit SHA or `x.y.z` |
-| `POSTGRES_PASSWORD`, `REDIS_PASSWORD`, `APP_ENC_KEY`, `INTERNAL_SECRET` | – | **leave out** on a new install (generated). An existing install keeps them until the volume holds them ([section 14](#14-upgrading-to-settings-in-the-database)) |
-
-Everything else (request service, `AUTHENTIK_*`, sessions, downloads, push, ntfy, Portainer) can be set after the first login in *Admin → Settings*, or in `.env` as described in the [README configuration table](../README.md#configuration). The webhook secret is generated there too: *Admin → Settings → General → Webhook secret → Generate new* shows it once. Until it is set, the webhooks of Jellyfin and the request service answer 403.
-
-**Docker secrets instead of `.env`** (optional): [`compose.secrets.yaml`](../compose.secrets.yaml) reads `APP_ENC_KEY`, `INTERNAL_SECRET`, `WEBHOOK_SECRET`, `OIDC_CLIENT_SECRET`, `JELLYFIN_ADMIN_API_KEY`, `REQUESTS_API_KEY` (file `secrets/requests_api_key`) and `VAPID_PRIVATE_KEY` from files in `secrets/` (all must exist; `touch secrets/vapid_private_key` if you have no push). Start with `docker compose -f compose.prod.yaml -f compose.secrets.yaml up -d`. The files win like environment values (locked in *Admin → Settings*); the copies of `APP_ENC_KEY` and `INTERNAL_SECRET` that the `bootstrap` service generates then stay unused, so back up `secrets/` instead.
-
-### Settings in the database
-
-*Admin → Settings* shows every setting with its source: **From environment** (`.env`, a `_FILE` secret or an older variable name; locked, the field cannot be edited), **Saved** (the database) or **Default**. The generated values of the *Server* group (`DATABASE_URL`, `REDIS_URL`, `APP_ENC_KEY`, `INTERNAL_SECRET`) show **From startup file**: the `bootstrap` service created them in its volume; they are read-only here. The environment wins over the database, the database over the default.
-
-- **Live:** most settings apply at once on every backend; a save bumps a revision, other instances and the gateway reload within seconds (at the latest after 30 s). `API_COMPRESSION` applies to the next response. Settings marked *Restart needed* (`DOWNLOAD_CREATE_PER_HOUR`) take effect after `docker compose -f compose.prod.yaml restart backend`; a banner lists them.
-- **Secrets are write-only:** the page shows *Set* or *Not set* and the date of the last change (data-source keys also their last four characters), with *Replace* and *Remove*. No secret ever comes back from the server, and the audit log records key names only.
-- **Checked before saving:** a save tests the affected service (media server, sign-in, Authentik, request service, data sources, Portainer, GitHub) with the new values. A refused key or login blocks the save; an unreachable service offers *Save anyway*.
-- **Fresh sign-in:** saving a secret, `PUBLIC_URL`, `HOME_NETWORKS`, `ADMIN_GROUP`, `NTFY_URL` / `NTFY_BASE_URL`, any `OIDC_*` or `AUTHENTIK_*` value, or an address a saved key is sent to (`JELLYFIN_URL`, `REQUESTS_URL`, `PORTAINER_URL`) needs a sign-in that is at most 10 minutes old; so does replacing or removing a key in *Admin → Data sources*. FriendFlix sends you through the sign-in once more and then repeats the save (on *Data sources* you enter the key again).
-- **Server:** a read-only group lists the values that stay per container in `.env` (`MEDIA_SERVER`, `BACKGROUND_JOBS`, `METRICS_TOKEN`, `DIGEST_DAY`/`DIGEST_HOUR`, `ROLE_TEMPLATES`, `UPDATE_REPO`, `GATEWAY_URL`, paths) and whether the generated secrets are set, never their values.
-- **Move:** a row that comes from the environment has **Move** (and the page **Move all**): it copies the value into the database. Afterwards you can remove the variable from `.env` and run `docker compose -f compose.prod.yaml up -d`; until then the environment value keeps winning.
-
-## 7. Start the stack
-
-```bash
-docker login ghcr.io -u <github-user>                   # only if the packages are private (PAT with read:packages)
-docker compose -f compose.prod.yaml up -d               # add --profile bundled for the bundled Jellyfin + request service
-docker compose -f compose.prod.yaml logs bootstrap      # file names and actions ("generated"), never values
-docker compose -f compose.prod.yaml ps                  # postgres/redis healthy, backend/gateway/web running
-docker compose -f compose.prod.yaml logs -f backend     # migrations, then "Server listening"
-curl -s http://127.0.0.1:3081/health/ready              # Postgres, Redis and Jellyfin reachable
-```
-
-The `bootstrap` service starts first and exits (`docker compose -f compose.prod.yaml ps -a` shows it as *Exited (0)*); every other service waits for it. If the backend restarts in a loop, read the first error in its log: an invalid variable (the config check names it) or a missing file of the bootstrap volume (see [troubleshooting](#13-troubleshooting)). An unreachable Authentik no longer stops the backend; sign-in answers 503 until discovery works.
-
-**Back up the generated secrets now:** `./scripts/backup-bootstrap.sh` writes `backups/friendflix-bootstrap-<time>.tgz`. Keep it apart from the database dumps (password manager, another disk): without it a restored database cannot read its encrypted values. Details: [operations.md](operations.md#backups--wiederherstellung).
-
-## 8. Nginx Proxy Manager: portal proxy host
+## 6. Nginx Proxy Manager: portal proxy host
 
 *Hosts → Proxy Hosts → Add Proxy Host*:
 
@@ -221,13 +173,69 @@ The advanced config routes `/api/`, `/auth/` and `/ws/` to the backend (`:3081`)
 
 The backend trusts `X-Forwarded-*` headers (`trustProxy`), so NPM must be the only way in: the ports stay on `BIND_ADDR`.
 
-## 9. First login as admin
+Until the setup wizard is finished, anybody who reaches the portal sees the wizard's first page (the code prompt). They cannot get past it without the code, but they can use up its attempts ([section 8](#the-setup-code)). Finish the wizard right after starting the stack, or keep the portal private until then, e.g. with an NPM *Access List* that only allows your own address, or by opening the wizard through an SSH tunnel to `127.0.0.1:3080`.
 
-1. Open `https://portal.example.com` and click sign in. Authentik asks for username, password and, the first time, makes you set up TOTP or a passkey.
-2. Because you are in `friendflix-admins` (`ADMIN_GROUP`), FriendFlix creates your account with the role **admin** without an invite, plus a Jellyfin user and your owner profile. Your first device is approved automatically; further devices have to be approved under *Devices*.
-3. **Instance language:** FriendFlix asks the first admin once which language the whole instance should use by default (English, German, French, Spanish, Italian, Turkish, Polish). Every profile can pick its own language later; new profiles are asked on their first login, with the browser language suggested.
-4. *Admin → Settings*: generate the webhook secret if you use the webhooks (*General*), and use **Move all** if you want to manage the values from `.env` here ([settings in the database](#settings-in-the-database)).
-5. Look around *Admin*: the **overview** (health of the media server and the request service, what waits for your decision, recent activity), roles and limits, the weekly digest. Under *Content* you can add **brand hubs**, pin themed lists to the home page and set "leaving soon" dates; the owner profile can create kids profiles under *Profiles*.
+## 7. Start the stack
+
+```bash
+docker login ghcr.io -u <github-user>                   # only if the packages are private (PAT with read:packages)
+docker compose -f compose.prod.yaml up -d               # add --profile bundled for the bundled Jellyfin + request service
+docker compose -f compose.prod.yaml logs bootstrap      # file names and actions ("generated"), never values
+docker compose -f compose.prod.yaml ps                  # postgres/redis healthy, backend/gateway/web running
+docker compose -f compose.prod.yaml logs backend | grep "setup code"
+```
+
+No `.env` is needed. The `bootstrap` service starts first, generates the database and Redis passwords, `APP_ENC_KEY` and `INTERNAL_SECRET` into the Docker volume `friendflix_bootstrap` and exits (`docker compose -f compose.prod.yaml ps -a` shows it as *Exited (0)*); every other service waits for it. If the backend restarts in a loop, read the first error in its log: an invalid variable (the config check names it) or a missing file of the bootstrap volume (see [troubleshooting](#13-troubleshooting)).
+
+Until setup is complete the backend runs in **setup mode**: everything except the wizard answers `503 setup_required`, background jobs wait, `/health` stays OK, and the gateway answers `/media/…` with 503 until the media server is configured. The last command prints the line with the setup code:
+
+```
+FriendFlix setup: open the portal in your browser and enter the setup code K7QM-3XA9-PT2D (valid until 2026-10-15 14:03 UTC). Restart the backend for a new code.
+```
+
+**Back up the generated secrets now:** `./scripts/backup-bootstrap.sh` writes `backups/friendflix-bootstrap-<time>.tgz`. Keep it apart from the database dumps (password manager, another disk): without it a restored database cannot read its encrypted values. Details: [operations.md](operations.md#backups--wiederherstellung).
+
+## 8. The setup wizard
+
+Open `https://portal.example.com`. While setup is incomplete every page leads to `/setup`. Every step can be changed later under *Admin → Settings*; a step whose values come from the environment shows them locked (*From environment*) and can be skipped.
+
+1. **Setup code.** Paste the code from the log. Case, spaces and dashes do not matter (`O` counts as `0`, `I` and `L` as `1`).
+2. **Public address.** The address everybody uses, without a path: `https://portal.example.com`. The wizard suggests the one your browser used. FriendFlix then fetches a test page from that address; if that fails it only warns (common without NAT loopback), it does not block. `http://` works for tests but turns off secure cookies, Chromecast and passkeys.
+3. **Media server.** *Automatic*: the Jellyfin address as the backend reaches it (`http://jellyfin:8096` or your container name, never the public URL) plus the username and password of a Jellyfin **administrator** → *Create API key automatically*. *By hand*: address and an API key from Jellyfin. Both are tested before they are saved.
+4. **Sign-in.** *Automatic*: the Authentik address as the browser reaches it (`https://auth.example.com`; the backend must reach the same address) and a superuser API token → *Show plan* lists what will be created or adjusted, nothing changes yet → *Apply* (about 30 seconds). Leave *Add me to the admin group* ticked to put the token's owner into `friendflix-admins`. The result lists what is still to do by hand (SMTP, MFA, e-mail templates). Details: [authentik.md §3](authentik.md#3-automatic-setup-from-friendflix). *By hand*: issuer, client ID, client secret and admin group from your own provider, with a checklist of how the provider must be set up; optionally the Authentik API values for invitations.
+5. **First admin.** *Sign in with Authentik*. Sign in with the account that should run FriendFlix (it needs MFA set up once MFA is mandatory). **This sign-in becomes the admin and completes the setup**, whatever groups the account has; FriendFlix creates its Jellyfin user and owner profile as for any first login. Exactly one account becomes admin this way, even with several backends.
+6. **Extras** (signed in now; every card has *Skip*): request service, TMDB/OMDb keys, downloads, push keys (*Generate push keys*), ntfy/Discord, webhook secret (*Generate webhook secret*, shown once with the header lines to paste into Jellyfin and the request service), updates via Portainer. *Finish* opens the home page.
+
+### The setup code
+
+- The backend prints it **once**, at start, to its log (`docker compose -f compose.prod.yaml logs backend | grep "setup code"`). Only its hash is stored. It is valid for **24 hours**.
+- **Every backend restart issues a new code** and the old one stops working: `docker compose -f compose.prod.yaml restart backend`. Do that when the code has expired or is locked.
+- **Limits:** 5 tries per 15 minutes per client address; after **10 wrong codes in total** the code is locked (log: `Too many wrong setup codes; restart the backend for a new code`). The per-address limit is counted per backend instance and relies on the proxy reporting the client address (`trustProxy`); a client that can send its own `X-Forwarded-For` through your proxy gets around it, but not around the total of 10.
+- **Anyone who reaches the portal before setup is done can lock the code** by guessing. They cannot guess it (60 random bits), but locking forces a restart. Finish the wizard promptly or restrict access until it is done ([section 6](#6-nginx-proxy-manager-portal-proxy-host)).
+- Only a backend with `BACKGROUND_JOBS=true` (the default) issues a code. If none does, the wizard says *No code has been issued yet* (`no_code`).
+- A valid code opens a **setup session** in this browser (2 hours, renewed while you work). The same code works on another device until setup completes. Completing setup invalidates the code and ends every setup session.
+
+### What the wizard never keeps
+
+The Authentik superuser token and the Jellyfin administrator's password are used for that one request and then forgotten: never stored, never logged, never shown in an error. What is saved is what an `.env` would hold: the Jellyfin API key `FriendFlix`, and the client ID and secret of the provider plus the token of the service account `friendflix-invites` (with only the permissions FriendFlix needs). **Revoke the superuser token in Authentik afterwards** ([authentik.md §3](authentik.md#3-automatic-setup-from-friendflix)).
+
+## 9. First steps as admin
+
+1. **Instance language:** FriendFlix asks the first admin once which language the whole instance should use by default (English, German, French, Spanish, Italian, Turkish, Polish). Every profile can pick its own language later; new profiles are asked on their first login, with the browser language suggested.
+2. Your first device is approved automatically; further devices have to be approved under *Devices*. Further admins: put them into the Authentik group `friendflix-admins` (`ADMIN_GROUP`); on their first login FriendFlix makes them admin without an invite.
+3. Revoke the Authentik superuser token if you used the automatic sign-in setup, and make MFA mandatory in Authentik if you have not yet ([authentik.md §6](authentik.md#6-authentication-flow-with-mandatory-mfa)).
+4. Look around *Admin*: the **overview** (health of the media server and the request service, what waits for your decision, recent activity), roles and limits, the weekly digest. Under *Content* you can add **brand hubs**, pin themed lists to the home page and set "leaving soon" dates; the owner profile can create kids profiles under *Profiles*.
+
+### Settings in the database
+
+*Admin → Settings* shows every setting with its source: **From environment** (`.env`, a `_FILE` secret or an older variable name; locked, the field cannot be edited), **Saved** (the database) or **Default**. The generated values of the *Server* group (`DATABASE_URL`, `REDIS_URL`, `APP_ENC_KEY`, `INTERNAL_SECRET`) show **From startup file**: the `bootstrap` service created them in its volume; they are read-only here. The environment wins over the database, the database over the default.
+
+- **Live:** most settings apply at once on every backend; a save bumps a revision, other instances and the gateway reload within seconds (at the latest after 30 s). `API_COMPRESSION` applies to the next response. Settings marked *Restart needed* (`DOWNLOAD_CREATE_PER_HOUR`) take effect after `docker compose -f compose.prod.yaml restart backend`; a banner lists them.
+- **Secrets are write-only:** the page shows *Set* or *Not set* and the date of the last change (data-source keys also their last four characters), with *Replace* and *Remove*. No secret ever comes back from the server, and the audit log records key names only.
+- **Checked before saving:** a save tests the affected service (media server, sign-in, Authentik, request service, data sources, Portainer, GitHub) with the new values. A refused key or login blocks the save; an unreachable service offers *Save anyway*.
+- **Fresh sign-in:** saving a secret, `PUBLIC_URL`, `HOME_NETWORKS`, `ADMIN_GROUP`, `NTFY_URL` / `NTFY_BASE_URL`, any `OIDC_*` or `AUTHENTIK_*` value, or an address a saved key is sent to (`JELLYFIN_URL`, `REQUESTS_URL`, `PORTAINER_URL`) needs a sign-in that is at most 10 minutes old; so does replacing or removing a key in *Admin → Data sources*. FriendFlix sends you through the sign-in once more and then repeats the save (on *Data sources* you enter the key again).
+- **Server:** a read-only group lists the values that stay per container in `.env` (`MEDIA_SERVER`, `BACKGROUND_JOBS`, `METRICS_TOKEN`, `DIGEST_DAY`/`DIGEST_HOUR`, `ROLE_TEMPLATES`, `UPDATE_REPO`, `GATEWAY_URL`, paths) and whether the generated secrets are set, never their values.
+- **Move:** a row that comes from the environment has **Move** (and the page **Move all**): it copies the value into the database. Afterwards you can remove the variable from `.env` and run `docker compose -f compose.prod.yaml up -d`; until then the environment value keeps winning.
 
 ## 10. Invite friends
 
@@ -260,6 +268,8 @@ Values in the table can also be set in *Admin → Settings*. After changing `.en
 
 ## 12. Verification checklist
 
+- [ ] The setup wizard is closed: the backend log has `Setup completed; the setup code is no longer valid.` and `/setup` leads to the home page.
+- [ ] The Authentik superuser token used by the wizard is deleted.
 - [ ] `docker compose -f compose.prod.yaml ps`: all services up, `postgres`/`redis` (and `backup`) healthy.
 - [ ] `curl -s http://127.0.0.1:3081/health/ready` reports Postgres, Redis and Jellyfin OK.
 - [ ] `curl -sI https://portal.example.com` → `200`, valid certificate, `strict-transport-security` header.
@@ -275,6 +285,14 @@ Values in the table can also be set in *Admin → Settings*. After changing `.en
 
 | Symptom | Cause / fix |
 |---|---|
+| No line with `setup code` in the backend log | The log was cut (the line is printed once per start) or setup is already complete. `docker compose -f compose.prod.yaml restart backend` prints a new code. The wizard says *No code has been issued yet* (`no_code`): no backend runs with `BACKGROUND_JOBS=true`; set it on one backend and restart it. |
+| Wizard: *The code has expired* / *Too many wrong attempts* | The code is valid for 24 hours and locked after 10 wrong tries. `docker compose -f compose.prod.yaml restart backend` and use the new code from the log. If somebody else is guessing, restrict access to the portal until setup is done ([section 6](#6-nginx-proxy-manager-portal-proxy-host)). |
+| Wizard: *Your setup session has expired* | More than 2 hours without activity, a restart of Redis, or another browser. Enter the code again (it stays valid until setup completes). |
+| Wizard, media server: *The media server itself is not set up yet* / *no admin rights* | Finish Jellyfin's own setup wizard first; the account must be a Jellyfin administrator. *Cannot be reached*: the address must be the one the backend container reaches (`http://jellyfin:8096`, Jellyfin attached to `friendflix_media`), not the public one. |
+| Wizard, sign-in: *Authentik refused the setup* (`blueprint_invalid`) | A freshly installed Authentik is still importing its default flows (3 – 4 minutes after the first start). Wait and press *Try again*; parts already created are reused. |
+| Wizard, sign-in: *The token does not belong to a superuser* / *refuses the token* | Use an API token (intent *API Token*) of a superuser such as `akadmin`, not an app password ([authentik.md §3](authentik.md#3-automatic-setup-from-friendflix)). |
+| Wizard, sign-in: Authentik *cannot be reached*, or the sign-in test fails with an `http://` address | The backend must reach Authentik at exactly the address you entered (the browser uses the same one). An `http://` Authentik needs `OIDC_ALLOW_INSECURE=true` in the environment (tests only). |
+| *Sign in with Authentik* in the wizard ends with `{"error":"setup_required"}` | The sign-in came back to another browser or address than the one that holds the setup session (cookies), or the session expired. Open the wizard at `PUBLIC_URL`, enter the code again and sign in from there. |
 | Authentik shows a redirect URI error | The provider's redirect URI must be exactly `${PUBLIC_URL}/auth/callback` (scheme, host, no trailing slash). FriendFlix must run at the root of its host name. |
 | Sign-in answers 503, backend log `oidc discovery failed`, `"issuer" property does not match the expected value` | `OIDC_ISSUER` needs the trailing slash and the exact application slug. |
 | Sign-in answers 503, backend log `oidc discovery failed` with `fetch failed` / `ENOTFOUND` | The backend container cannot reach `auth.example.com`: DNS inside the LAN, NAT loopback, firewall. Test with `docker compose -f compose.prod.yaml run --rm --no-deps backend node -e "fetch('https://auth.example.com').then(r=>console.log(r.status))"`. As a workaround, a local override can add `extra_hosts: ["auth.example.com:host-gateway"]` to `backend` when NPM listens on the host's port 443. |
@@ -316,4 +334,36 @@ An existing install upgrades like any update (`docker compose -f compose.prod.ya
 6. **Keys from *Admin → Data sources*** move into the settings unchanged (same encryption); the page keeps working.
 7. **Docker secrets** (`compose.secrets.yaml`) keep winning; the generated copies in the volume stay unused.
 8. **Own override files:** the `postgres` service now reads `POSTGRES_PASSWORD_FILE`; an override that also sets `POSTGRES_PASSWORD` there must drop it (the image refuses both). `DATABASE_URL` and `REDIS_URL` are no longer set by the compose files; a value from an override still wins.
-9. **Plan B:** the NPM configuration keeps the `INTERNAL_SECRET` it has; after removing it from `.env`, the value lives in the volume ([operations.md](operations.md#plan-b-npm-liefert-media-direkt-auth_request)).
+9. **No setup wizard.** The upgrade marks setup as complete because accounts exist; the setup code and the wizard only appear on installs without any account.
+10. **Plan B:** the NPM configuration keeps the `INTERNAL_SECRET` it has; after removing it from `.env`, the value lives in the volume ([operations.md](operations.md#plan-b-npm-liefert-media-direkt-auth_request)).
+
+## 15. Advanced: configure by environment
+
+Everything the wizard saves can also come from the environment: a `.env` file next to the compose file, `environment:` in a local override, or Docker secrets. A value from the environment **wins** over the database and shows locked in *Admin → Settings* and in the wizard (*From environment*, the step can be skipped). Use this to pin values, for automated installs, or if you prefer files over a web UI.
+
+A fresh install with a complete `.env` still shows the wizard once: the setup code and the first admin's sign-in are always needed (the steps whose values come from `.env` are skipped). Installs that already have accounts never see the wizard ([section 14](#14-upgrading-to-settings-in-the-database)).
+
+```bash
+cp .env.example .env     # every line in it is commented out: uncomment only what you want to pin
+chmod 600 .env
+```
+
+| Variable | Wizard step | Value |
+|---|---|---|
+| `PUBLIC_URL` | 2 | `https://portal.example.com`, no path. Must be exactly the URL people use (cookies, redirect URI, WebSocket origin check). |
+| `JELLYFIN_URL`, `JELLYFIN_ADMIN_API_KEY` | 3 | `http://jellyfin:8096` (internal name, never the public URL) and an API key from *Dashboard → API Keys* |
+| `OIDC_ISSUER` | 4 | `https://auth.example.com/application/o/friendflix/` **with trailing slash** |
+| `OIDC_CLIENT_ID`, `OIDC_CLIENT_SECRET` | 4 | from the Authentik provider |
+| `ADMIN_GROUP` | 4 | `friendflix-admins` (default); Authentik group name, case-sensitive |
+| `AUTHENTIK_URL`, `AUTHENTIK_API_TOKEN`, `AUTHENTIK_ENROLL_FLOW` | 4 | invitations that create the Authentik account ([authentik.md §9](authentik.md#9-friendflix-env-values)) |
+| `BIND_ADDR` | – | `127.0.0.1` (default) or the Docker bridge IP if NPM runs in a bridge container |
+| `WEB_PORT`, `BACKEND_PORT`, `GATEWAY_PORT` | – | `3080`, `3081`, `3082` (defaults); change only if taken |
+| `TZ` | – | e.g. `Europe/Vienna`; schedules (digest, playback check, backups) |
+| `METRICS_TOKEN` | – | `openssl rand -hex 24` if you scrape `/metrics` ([monitoring.md](monitoring.md)) |
+| `FF_REGISTRY`, `FF_TAG` | – | `ghcr.io/letsmanu`, `latest`; pin a version with a commit SHA or `x.y.z` |
+| `OIDC_ALLOW_INSECURE` | – | `false`; `true` only for tests against an `http://` Authentik, never in production |
+| `POSTGRES_PASSWORD`, `REDIS_PASSWORD`, `APP_ENC_KEY`, `INTERNAL_SECRET` | – | **leave out** on a new install (generated). An existing install keeps them until the volume holds them ([section 14](#14-upgrading-to-settings-in-the-database)) |
+
+Everything else (request service, sessions, downloads, push, ntfy, Portainer) is listed in the [README configuration table](../README.md#configuration) and in [.env.example](../.env.example). The webhook secret is generated in *Admin → Settings → General → Webhook secret → Generate new* (or in the wizard's extras) and shown once. Until it is set, the webhooks of Jellyfin and the request service answer 403. After changing `.env`: `docker compose -f compose.prod.yaml up -d` (recreates only what changed).
+
+**Docker secrets instead of `.env`** (optional): [`compose.secrets.yaml`](../compose.secrets.yaml) reads `APP_ENC_KEY`, `INTERNAL_SECRET`, `WEBHOOK_SECRET`, `OIDC_CLIENT_SECRET`, `JELLYFIN_ADMIN_API_KEY`, `REQUESTS_API_KEY` (file `secrets/requests_api_key`) and `VAPID_PRIVATE_KEY` from files in `secrets/` (all must exist; `touch secrets/vapid_private_key` if you have no push). Start with `docker compose -f compose.prod.yaml -f compose.secrets.yaml up -d`. The files win like environment values (locked in *Admin → Settings*); the copies of `APP_ENC_KEY` and `INTERNAL_SECRET` that the `bootstrap` service generates then stay unused, so back up `secrets/` instead.
