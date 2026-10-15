@@ -94,6 +94,7 @@ describe('the first admin', () => {
     expect(u.json()).toEqual({ error: 'setup_complete' });
     // the setup session is deleted (its kv key), so the old cookie opens nothing, setup complete or not
     expect(await env.kv.get(`setup:sess:${sha(s.cookies.ff_setup!)}`)).toBeNull();
+    // 409, not the brief's 401: requireSetupSession answers setup_complete before it looks at the session (ruling D22)
     const put = await env.app.inject({ method: 'PUT', url: '/api/setup/settings', cookies: s.cookies, headers: { 'x-ff-setup-csrf': s.csrf }, payload: { values: { PUBLIC_URL: 'https://tv.example.com' } } });
     expect(put.statusCode).toBe(409);
     expect((await env.app.inject({ url: '/api/setup/state', cookies: s.cookies })).json()).toMatchObject({ complete: true, unlocked: false });
@@ -204,7 +205,18 @@ describe('the setup branch needs the setup session that started the login', () =
     await noUsers();
   });
 
-  it('an account that already exists (a completion that failed after provisioning) becomes admin and completes setup', async () => {
+  it('a disabled account that already exists gets 403 disabled, not the setup branch', async () => {
+    await env.pool.query("insert into users(id, authentik_sub, name, role, jellyfin_user_id, jellyfin_username, jellyfin_pw_enc, disabled) values (gen_random_uuid(),'sub-off','Off','friend','jfoff','Off','x',true)");
+    env.claims.current = person('sub-off');
+    const s = await unlock(env);
+    const r = await callback(env, await setupLogin(env, s), s.cookies);
+    expect(r.statusCode).toBe(403);
+    expect(r.json()).toEqual({ error: 'disabled' });
+    expect((await userRow(env, 'sub-off'))?.role).toBe('friend');
+    expect(await isSetupComplete(env.ctx)).toBe(false);
+  });
+
+  it('an account that already exists (setup reopened by hand) becomes admin and completes setup', async () => {
     await env.pool.query("insert into users(id, authentik_sub, name, role, jellyfin_user_id, jellyfin_username, jellyfin_pw_enc) values (gen_random_uuid(),'sub-pre','Pre','friend','jfpre','Pre','x')");
     env.claims.current = person('sub-pre');
     const s = await unlock(env);
@@ -212,6 +224,71 @@ describe('the setup branch needs the setup session that started the login', () =
     expect(r.headers.location).toBe('/setup/extras');
     expect((await userRow(env, 'sub-pre'))?.role).toBe('admin');
     expect(await isSetupComplete(env.ctx)).toBe(true);
+  });
+});
+
+describe('a claim that does not commit leaves no admin', () => {
+  let env: TestEnv;
+  beforeAll(async () => { env = await makeEnv({ 'DELETE /Users/[^/]+': () => ({ status: 204 }) }, { setupComplete: false }); });
+  afterAll(() => env.close());
+
+  /** the next claim's COMMIT fails (after the account was written on its transaction) */
+  function failNextCommit() {
+    type Client = { query: (...a: unknown[]) => Promise<unknown>; release: (...a: unknown[]) => void };
+    const pool = env.pool as unknown as { connect(...cb: unknown[]): Promise<Client> };
+    const connect = pool.connect.bind(pool);
+    // pool.query() connects with a callback: only the promise form (claimSetup's transaction) is caught
+    pool.connect = async (...cb: unknown[]) => {
+      if (cb.length) return connect(...cb);
+      pool.connect = connect;
+      const c = await connect();
+      const query = c.query;
+      const release = c.release;
+      c.query = (...a: unknown[]) => (a[0] === 'commit' ? Promise.reject(new Error('commit failed')) : query.apply(c, a));
+      c.release = (...a: unknown[]) => { c.query = query; c.release = release; release.apply(c, a); };
+      return c;
+    };
+  }
+
+  it('commit fails after provisioning A -> no admin row; B completes setup -> exactly one admin; A then gets no admin', async () => {
+    const code = await issueSetupCode(env.ctx);
+    env.claims.current = person('sub-a');
+    const a = await unlock(env, code);
+    failNextCommit();
+    const ra = await callback(env, await setupLogin(env, a), a.cookies);
+    expect(ra.statusCode).toBe(401);
+    expect((await env.pool.query('select count(*)::int n from users')).rows[0].n).toBe(0);
+    expect((await env.pool.query("select count(*)::int n from audit_log where action='user.provisioned'")).rows[0].n).toBe(0);
+    // the media server account created for A is deleted again
+    const created = env.jfCalls.filter((c) => c.method === 'POST' && c.path === '/Users/New');
+    expect(created).toHaveLength(1);
+    expect(env.jfCalls.some((c) => c.method === 'DELETE' && c.path.startsWith('/Users/'))).toBe(true);
+    const meta = await readMeta(env.pool);
+    expect(meta.setupCompletedAt).toBeNull();
+    expect(meta.setupCodeHash).not.toBeNull(); // the code is still valid
+    // B completes setup
+    env.claims.current = person('sub-b');
+    const b = await unlock(env, code);
+    const rb = await callback(env, await setupLogin(env, b), b.cookies);
+    expect(rb.headers.location).toBe('/setup/extras');
+    // A signs in normally: approval rules, no account, no admin
+    env.claims.current = person('sub-a');
+    const again = await callback(env, await setupLogin(env, null, ''));
+    expect(again.headers.location).toBe('/pending');
+    expect((await env.pool.query("select authentik_sub from users where role='admin'")).rows).toEqual([{ authentik_sub: 'sub-b' }]);
+    expect((await env.pool.query('select count(*)::int n from users')).rows[0].n).toBe(1);
+  });
+
+  it('a failing completion step after the claim committed still signs the admin in (best effort, logged)', async () => {
+    const warn = vi.fn();
+    const info = vi.fn();
+    const keys = vi.spyOn(env.kv, 'keys').mockRejectedValueOnce(new Error('redis down'));
+    const session: { reauthAt?: number } = {};
+    await completeSetup(env.ctx, 'x', session, { info, warn });
+    expect(warn).toHaveBeenCalledWith('Setup completion: deleting the setup sessions failed');
+    expect(typeof session.reauthAt).toBe('number');
+    expect(info).toHaveBeenCalled();
+    keys.mockRestore();
   });
 });
 
@@ -288,7 +365,7 @@ describe('claimSetup / completeSetup', () => {
       const uid = (await env.pool.query("insert into users(id, authentik_sub, name, role, jellyfin_user_id, jellyfin_username, jellyfin_pw_enc) values (gen_random_uuid(),'sub-c','C','admin','jfc','C','x') returning id")).rows[0].id;
       const session: { reauthAt?: number } = {};
       const info = vi.fn();
-      await completeSetup(hereCtx, uid, session, { info });
+      await completeSetup(hereCtx, uid, session, { info, warn: () => {} });
       expect(typeof session.reauthAt).toBe('number');
       expect(info).toHaveBeenCalledWith('Setup completed; the setup code is no longer valid.');
       expect(await env.kv.get('setup:sess:x')).toBeNull();

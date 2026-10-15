@@ -63,15 +63,18 @@ const CLAIM_LOCK_TIMEOUT = '60s';
 
 /**
  * The serial section of the first admin (spec Part F step 5): completes setup with a conditional update and runs `provision` while that
- * transaction holds the settings_meta row, then commits. Exactly one caller wins, on every instance: a concurrent claim waits on the
+ * transaction holds the settings_meta row, then commits. `provision` writes the admin account on the given connection (`tx`), so the
+ * account and the completion commit or roll back together: no admin without a completed setup, even after a failed commit or a crash. Exactly one caller wins, on every instance: a concurrent claim waits on the
  * row lock and then finds setup complete (its update matches no row), so it gets null and follows the normal login rules. A failing
  * `provision` (or a crash) rolls the completion back: setup stays open and the code valid. The rev moves in the same statement, so the
  * other instances drop their cached gate answer (ruling D10). Returns provision's result, or null when setup was already complete.
  */
-export async function claimSetup<T>(ctx: Pick<Ctx, 'db'>, provision: () => Promise<T>): Promise<T | null> {
+export async function claimSetup<T>(ctx: Pick<Ctx, 'db'>, provision: (tx: pg.PoolClient) => Promise<T>): Promise<T | null> {
   const c = await (ctx.db as pg.Pool).connect();
   try {
     await c.query('begin');
+    // a waiting claim gives up after lock_timeout. The winner holds the row (settings saves wait on it) only while it provisions: a few
+    // statements and the media server calls, each of which has its own deadline (jellyfin/client.ts AbortSignal.timeout)
     await c.query(`set local lock_timeout = '${CLAIM_LOCK_TIMEOUT}'`);
     const won = await c.query(`update settings_meta set setup_completed_at = now(), setup_code_hash = null, rev = rev + 1
       where id = 1 and setup_completed_at is null returning rev`);
@@ -79,7 +82,7 @@ export async function claimSetup<T>(ctx: Pick<Ctx, 'db'>, provision: () => Promi
       await c.query('rollback');
       return null;
     }
-    const result = await provision();
+    const result = await provision(c);
     await c.query('commit');
     return result;
   } catch (e) {
@@ -91,20 +94,31 @@ export async function claimSetup<T>(ctx: Pick<Ctx, 'db'>, provision: () => Promi
 }
 
 /**
- * Completes setup for the first admin `userId` (spec Part E2): setup_completed_at (if claimSetup has not set it), the code cleared, every
- * setup session deleted, audit `setup.completed`, and the other instances told (their gate opens). It also stamps `reauthAt` on the new
- * admin's session object, which the caller saves afterwards, so the wizard's step 6 can save secrets without another re-authentication.
+ * Completes setup for the first admin `userId` (spec Part E2), after claimSetup committed: setup_completed_at (if it is not set yet), the
+ * code cleared, every setup session deleted, audit `setup.completed`, and the other instances told (their gate opens). It also stamps
+ * `reauthAt` on the new admin's session object, which the caller saves afterwards, so the wizard's step 6 can save secrets without another
+ * re-authentication. The steps are best effort: setup is complete once the claim committed, so a failing step (a Redis outage) is logged
+ * and the admin still gets the session (the setup sessions run out on their TTL, other instances reload on their poll).
  */
 export async function completeSetup(ctx: Pick<Ctx, 'db' | 'kv' | 'settings'>, userId: string, session: { reauthAt?: number },
-  log: { info(msg: string): void } = { info: () => {} }): Promise<void> {
-  await ctx.db.query(`update settings_meta set setup_code_hash = null, setup_completed_at = coalesce(setup_completed_at, now()),
-    rev = rev + case when setup_completed_at is null then 1 else 0 end where id = 1`);
-  for (const key of await ctx.kv.keys(SETUP_SESSION_PREFIX)) await ctx.kv.del(key);
-  await audit(ctx, userId, 'setup.completed');
+  log: { info(msg: string): void; warn(msg: string): void } = { info: () => {}, warn: () => {} }): Promise<void> {
+  const step = async (what: string, fn: () => Promise<unknown>) => {
+    try {
+      await fn();
+    } catch {
+      log.warn(`Setup completion: ${what} failed`); // never the error itself (it might quote a key)
+    }
+  };
+  await step('marking setup complete', () => ctx.db.query(`update settings_meta set setup_code_hash = null,
+    setup_completed_at = coalesce(setup_completed_at, now()), rev = rev + case when setup_completed_at is null then 1 else 0 end where id = 1`));
+  await step('deleting the setup sessions', async () => {
+    for (const key of await ctx.kv.keys(SETUP_SESSION_PREFIX)) await ctx.kv.del(key);
+  });
+  await audit(ctx, userId, 'setup.completed'); // audit() never throws
   // the second producer of the stamp (next to reauth.ts markReauthenticated), at the session's creation: the person has just signed in
   // at the IdP, and the session is saved by the caller after this
   session.reauthAt = Date.now();
   // reloads here (the gate's cache sees the new rev now) and publishes the rev for the other instances (their poll covers a lost message)
-  await ctx.settings.announce();
+  await step('announcing the change', () => ctx.settings.announce());
   log.info('Setup completed; the setup code is no longer valid.');
 }

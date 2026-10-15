@@ -241,26 +241,44 @@ export function authRoutes(app: FastifyInstance, ctx: Ctx) {
     return reply.redirect(next);
   }
 
+  /** The admin role policy on all media server identities of the account (owner + profiles). */
+  async function applyAdminPolicy(user: UserRow): Promise<void> {
+    const owned = await accountJellyfinIds(ctx, user.id);
+    for (const jid of owned) await applyRole(ctx, jid, 'admin', false, { userId: user.id, hidden: jid !== user.jellyfin_user_id });
+  }
+
   /** Makes `user` admin (role on the account and on all its media server identities); no-op when it is one. */
   async function promoteToAdmin(user: UserRow): Promise<void> {
     if (user.role === 'admin') return;
     await ctx.db.query("update users set role='admin' where id=$1", [user.id]);
-    const owned = await accountJellyfinIds(ctx, user.id);
-    for (const jid of owned) await applyRole(ctx, jid, 'admin', false, { userId: user.id, hidden: jid !== user.jellyfin_user_id });
+    await applyAdminPolicy(user);
     user.role = 'admin';
   }
 
   /**
-   * The first admin's account (spec Part F step 5), inside claimSetup: created as admin without a group, invite or approval check
-   * (the media server user as for any first login). An account that already exists (a completion that failed after its provisioning)
-   * is made admin.
+   * The first admin (spec Part F step 5): the account is created as admin without a group, invite or approval check (the media server
+   * user as for any first login), or an existing one (only when setup was reopened by hand) gets the admin role. Every database write
+   * runs on claimSetup's transaction, so the role exists only together with the completed setup; a claim that does not commit leaves
+   * no admin, and the media server account created for it is deleted. Returns null when another sign-in completed setup first.
    */
-  async function provisionFirstAdmin(claims: OidcClaims): Promise<UserRow> {
-    const user = await getUserBySub(ctx, claims.sub);
-    if (!user) return provisionUser(ctx, claims, 'admin');
-    if (user.disabled) throw new HttpError(403, 'disabled');
-    await promoteToAdmin(user);
-    return user;
+  async function claimFirstAdmin(claims: OidcClaims, existing: UserRow | null): Promise<UserRow | null> {
+    const made: { user?: UserRow } = {};
+    let admin: UserRow | null;
+    try {
+      admin = await claimSetup(ctx, async (tx) => {
+        if (!existing) return (made.user = await provisionUser(ctx, claims, 'admin', null, tx));
+        await tx.query("update users set role='admin' where id=$1", [existing.id]);
+        return { ...existing, role: 'admin' };
+      });
+    } catch (e) {
+      // rolled back (unless the commit went through after all and only its answer was lost: then the account exists and keeps it)
+      const u = made.user;
+      if (u && !(await getUserById(ctx, u.id).catch(() => u))) await ctx.jf.admin.deleteIdentity(u.jellyfin_user_id).catch(() => undefined);
+      throw e;
+    }
+    // the media server side of a promotion, once the role is committed
+    if (admin && existing && existing.role !== 'admin') await applyAdminPolicy(admin);
+    return admin;
   }
 
   /** The end of every sign-in: device, session, cookie, audit. The first admin also completes setup and lands on the wizard's step 6. */
@@ -305,8 +323,10 @@ export function authRoutes(app: FastifyInstance, ctx: Ctx) {
       const deleting = await ctx.db.query('select 1 from account_deletions where authentik_sub=$1 and finished_at is null', [claims.sub]);
       if (deleting.rowCount) return reply.code(403).send({ error: 'account_deleted' });
       if (firstAdmin) {
-        // exactly one first admin, across instances: the completion and the provisioning run in one serial section (claimSetup)
-        const admin = await claimSetup(ctx, () => provisionFirstAdmin(claims));
+        const existing = await getUserBySub(ctx, claims.sub);
+        if (existing?.disabled) return reply.code(403).send({ error: 'disabled' });
+        // exactly one first admin, across instances: the completion and the account commit in one transaction (claimSetup)
+        const admin = await claimFirstAdmin(claims, existing);
         if (admin) return await finishLogin(req, reply, admin, true);
         // another sign-in completed setup meanwhile: this one follows the normal rules below (group, invite, approval)
       }
