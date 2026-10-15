@@ -96,10 +96,11 @@ describe('settings with values from env, a secret file and the database', () => 
     expect(items.get('DOWNLOAD_CREATE_PER_HOUR')).toMatchObject({ apply: 'restart', restartPending: false });
     expect(items.get('HEALTH_DISK_WARN_PCT')).toMatchObject({ min: 50, max: 99 });
     expect(items.get('WEBHOOK_SECRET')).toMatchObject({ generate: 'webhookSecret' });
-    // phase 3: five keys are shown, the other four are left out; env-only and bootstrap keys are in "server" without secret values
+    // phase 3: all nine keys are shown (the account-security flows too, D1); env-only and bootstrap keys are in "server" without secret values
     expect(items.get('LOGIN_UI')).toMatchObject({ group: 'signin', kind: 'enum', options: ['app', 'authentik'] });
     expect(items.get('LOGIN_COVER_WALL')).toMatchObject({ group: 'general', kind: 'bool', value: true });
-    expect(items.has('AUTHENTIK_EMAIL_CHANGE_FLOW')).toBe(false);
+    expect(items.get('AUTHENTIK_EMAIL_CHANGE_FLOW')).toMatchObject({ group: 'signin', kind: 'string', value: 'friendflix-email-change' });
+    for (const k of ['AUTHENTIK_STATIC_SETUP_FLOW', 'AUTHENTIK_WEBAUTHN_SETUP_FLOW', 'AUTHENTIK_PASSWORD_CHANGE_FLOW']) expect(items.get(k), k).toMatchObject({ group: 'signin' });
     expect(items.get('DATABASE_URL')).toMatchObject({ group: 'server', source: 'env', set: true, value: null });
     expect(items.get('APP_ENC_KEY')).toMatchObject({ group: 'server', set: true, value: null });
     expect(items.get('METRICS_TOKEN')).toMatchObject({ group: 'server', source: 'env', set: true, value: null });
@@ -122,12 +123,12 @@ describe('settings with values from env, a secret file and the database', () => 
     await h.env.ctx.settings.reload();
   });
 
-  it('PUT of an env-locked key -> 400 locked; METRICS_TOKEN and hidden keys -> unknown', async () => {
-    await h.reauth(h.admin); // the hidden AUTHENTIK_* key below would otherwise stop at the re-authentication
+  it('PUT of an env-locked key -> 400 locked; METRICS_TOKEN and unknown keys -> unknown', async () => {
+    await h.reauth(h.admin);
     const r = await h.put({ PREVIEW_WARM: true });
     expect(r.statusCode).toBe(400);
     expect(r.json().errors).toEqual({ PREVIEW_WARM: 'locked' });
-    expect((await h.put({ METRICS_TOKEN: 'x', NOPE: 1, AUTHENTIK_EMAIL_CHANGE_FLOW: 'x' })).json().errors).toEqual({ METRICS_TOKEN: 'unknown', NOPE: 'unknown', AUTHENTIK_EMAIL_CHANGE_FLOW: 'unknown' });
+    expect((await h.put({ METRICS_TOKEN: 'x', NOPE: 1 })).json().errors).toEqual({ METRICS_TOKEN: 'unknown', NOPE: 'unknown' });
     await h.reauth(h.admin);
     expect((await h.put({ OIDC_CLIENT_SECRET: 'new' })).json().errors).toEqual({ OIDC_CLIENT_SECRET: 'locked' });
   });

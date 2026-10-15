@@ -91,7 +91,6 @@ function setting(key: Key, meta: Meta): SettingDef {
 const oidc = { group: 'signin', probe: 'oidc', runRequired: true } as const;
 const authentik = { group: 'signin', probe: 'authentik' } as const;
 const portainer = { group: 'updates', probe: 'portainer' } as const;
-const hidden = { group: 'signin', visible: false } as const;
 
 export const SETTINGS: readonly SettingDef[] = [
   // general
@@ -154,15 +153,15 @@ export const SETTINGS: readonly SettingDef[] = [
   // sessions
   setting('SESSION_TTL_SECONDS', { kind: 'int', group: 'sessions' }),
   setting('SESSION_IDLE_SECONDS', { kind: 'int', group: 'sessions' }),
-  // Block 23 phase 3: shown with the sign-in screens (T9: the sign-in mode, the login and invalidation flows, passkeys, the cover wall);
-  // the other four stay hidden until the account-security screens (T10/T12) use them
+  // Block 23 phase 3: the sign-in mode, the flows the in-app screens drive (sign-in, sign-out and the account page's security actions),
+  // passkeys and the cover wall
   setting('LOGIN_UI', { kind: 'enum', group: 'signin' }), // no default: unset = automatic (loginUi in akflow.ts)
   setting('AUTHENTIK_LOGIN_FLOW', { kind: 'string', ...authentik }),
-  setting('AUTHENTIK_STATIC_SETUP_FLOW', { kind: 'string', ...hidden }),
-  setting('AUTHENTIK_WEBAUTHN_SETUP_FLOW', { kind: 'string', ...hidden }),
-  setting('AUTHENTIK_PASSWORD_CHANGE_FLOW', { kind: 'string', ...hidden }),
+  setting('AUTHENTIK_STATIC_SETUP_FLOW', { kind: 'string', ...authentik }),
+  setting('AUTHENTIK_WEBAUTHN_SETUP_FLOW', { kind: 'string', ...authentik }),
+  setting('AUTHENTIK_PASSWORD_CHANGE_FLOW', { kind: 'string', ...authentik }),
   setting('AUTHENTIK_INVALIDATION_FLOW', { kind: 'string', ...authentik }),
-  setting('AUTHENTIK_EMAIL_CHANGE_FLOW', { kind: 'string', ...hidden }),
+  setting('AUTHENTIK_EMAIL_CHANGE_FLOW', { kind: 'string', ...authentik }),
   setting('PASSKEYS_IN_APP', { kind: 'enum', group: 'signin' }),
   // group general, not signin: saving a signin-group key clears the wizard's SIGNIN_VIA note (routes/setup.ts), and the wall is no credential
   setting('LOGIN_COVER_WALL', { kind: 'bool', group: 'general' }),

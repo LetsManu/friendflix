@@ -1,10 +1,9 @@
-https://friend.example.com/confirm-email?token={{ token }}
+{# FriendFlix: the one value to replace is the app address in the link below: https://friend.example.com/confirm-email?token={{ token }} #}
 {# SPDX-FileCopyrightText: 2026 Manuel Weißböck #}
 {# SPDX-License-Identifier: AGPL-3.0-or-later #}
-{# FriendFlix: the first line is the one value to replace: the app address of the confirmation link (the e-mail stage of the e-mail #}
-{# change flow, friendflix-email-change.yaml, uses this file as its template). The link leads into FriendFlix (/confirm-email), which #}
-{# continues the flow with the token after a click there; it works without a session. Mount this folder at /templates on the #}
-{# Authentik server and worker (see docs/authentik.md). Not imported by FriendFlix. #}
+{# Confirmation e-mail of the e-mail change flow (friendflix-email-change.yaml uses this file as the template of its e-mail stage). #}
+{# The link leads into FriendFlix (/confirm-email), which continues the flow with the token after a click there; it works without a #}
+{# session. Mount this folder at /templates on the Authentik server and worker (see docs/authentik.md). Not imported by FriendFlix. #}
 {% extends "email/base.html" %}
 
 {% load i18n %}

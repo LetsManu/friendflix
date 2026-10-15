@@ -278,9 +278,13 @@ describe('e-mail change', () => {
     expect(text).toMatch(/plan\.context\["pending_user"\] = request\.user/);
     expect(text).toMatch(/plan\.context\["email"\] = context\["prompt_data"\]\["email"\]/);
     expect(text).toMatch(/token_expiry: minutes=30/);
-    // the template: first line is the owner-specific link, extends the base mail
+    // the template: the first line (a comment, so it never reaches the mail) names the owner-specific link, which is the button's only
+    // link; a bare first line before {% extends %} would be dropped by Django and leave the button on the placeholder host
     const tpl = readFileSync(new URL('../../deploy/authentik/templates/friendflix-email-change.html', import.meta.url), 'utf8');
-    expect(tpl.split('\n')[0]).toBe('https://friend.example.com/confirm-email?token={{ token }}');
+    const LINK = 'https://friend.example.com/confirm-email?token={{ token }}';
+    expect(tpl.split('\n')[0]).toBe(`{# FriendFlix: the one value to replace is the app address in the link below: ${LINK} #}`);
+    expect(tpl.match(/href="[^"]*"/g)).toEqual([`href="${LINK}"`]);
+    expect(tpl.replace(/\{#.*?#\}/g, '').split('{% extends')[0]!.trim()).toBe(''); // nothing but comments before {% extends %}
     expect(tpl).toContain('{% extends "email/base.html" %}');
     expect(tpl).toContain('{% trans ');
   });

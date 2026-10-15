@@ -57,6 +57,10 @@ const GROUPS: Array<[string, Array<[string, Spec]>]> = [
     ['LOGIN_UI', { kind: 'enum', source: 'unset', options: ['app', 'authentik'], optional: true }],
     ['AUTHENTIK_LOGIN_FLOW', { kind: 'string', source: 'default', value: 'default-authentication-flow' }],
     ['AUTHENTIK_INVALIDATION_FLOW', { kind: 'string', source: 'default', value: 'default-invalidation-flow' }],
+    ['AUTHENTIK_STATIC_SETUP_FLOW', { kind: 'string', source: 'default', value: 'default-authenticator-static-setup' }],
+    ['AUTHENTIK_WEBAUTHN_SETUP_FLOW', { kind: 'string', source: 'default', value: 'default-authenticator-webauthn-setup' }],
+    ['AUTHENTIK_PASSWORD_CHANGE_FLOW', { kind: 'string', source: 'default', value: 'default-password-change' }],
+    ['AUTHENTIK_EMAIL_CHANGE_FLOW', { kind: 'string', source: 'default', value: 'friendflix-email-change' }],
     ['PASSKEYS_IN_APP', { kind: 'enum', source: 'default', value: 'auto', options: ['auto', 'off'] }],
   ]],
   ['media', [

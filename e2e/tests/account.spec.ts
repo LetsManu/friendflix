@@ -15,6 +15,10 @@ test.describe('account page (/me/account)', () => {
     await expect(profile.getByRole('button', { name: 'Blau' })).toHaveAttribute('aria-pressed', 'true');
     await expect(profile.getByText('tester@example.com')).toBeVisible();
     await expect(profile.getByRole('textbox', { name: 'E-Mail' })).toHaveCount(0);
+    // the e-mail is changed in the security section: the profile points to that row
+    await expect(profile.getByText('Die E-Mail-Adresse änderst du unter „Sicherheit“.')).toBeVisible();
+    await expect(profile.getByRole('link', { name: 'Zur E-Mail-Adresse' })).toHaveAttribute('href', '#sec-email');
+    await expect(page.locator('#sec-email')).toBeAttached();
     // security: the rows (password, authenticator app, passkeys, recovery codes, e-mail) and the manage link
     const security = page.getByRole('region', { name: 'Sicherheit' });
     await expect(security.getByRole('button', { name: 'Passwort ändern' })).toBeVisible();
