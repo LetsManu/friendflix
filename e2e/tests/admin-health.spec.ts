@@ -60,6 +60,22 @@ test.describe('admin health page', () => {
     }
   });
 
+  test('recommendation index tile: size and age; building, not built and unsupported are worded', async ({ page, api }) => {
+    await page.goto('/admin/status');
+    const tile = page.getByText('Empfehlungs-Index').locator('xpath=ancestor::*[contains(@class,"tile")][1]');
+    await expect(tile).toContainText('1.234');
+    await expect(tile).toContainText('Aktualisiert');
+    api.admin.recoIndex = { supported: true, running: true, items: 0, updatedAt: null };
+    await page.getByRole('button', { name: 'Aktualisieren' }).click();
+    await expect(tile).toContainText('Wird aufgebaut');
+    api.admin.recoIndex = { supported: true, running: false, items: 0, updatedAt: null };
+    await page.getByRole('button', { name: 'Aktualisieren' }).click();
+    await expect(tile).toContainText('Noch nicht aufgebaut');
+    api.admin.recoIndex = { supported: false, running: false, items: 0, updatedAt: null };
+    await page.getByRole('button', { name: 'Aktualisieren' }).click();
+    await expect(tile).toContainText('Vom Medienserver nicht unterstützt');
+  });
+
   test('Jetzt prüfen calls ?refresh=1 once, shows the new state and reloads the banner', async ({ page, api }) => {
     await page.goto('/admin/status');
     const health = page.getByRole('region', { name: 'Systemzustand' });

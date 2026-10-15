@@ -148,6 +148,11 @@ const dict: Translation<typeof de> = {
     loadFailed: 'The status could not be loaded.',
     numbers: 'Numbers',
     pendingRequests: 'Pending requests',
+    recoIndex: 'Recommendation index',
+    recoIndexUpdated: 'Updated {when}',
+    recoIndexNever: 'Not built yet',
+    recoIndexBuilding: 'Building…',
+    recoIndexOff: 'Not supported by the media server',
   },
   leaving: {
     left: 'Remaining',

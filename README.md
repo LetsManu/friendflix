@@ -242,6 +242,7 @@ A new install needs none of this: the setup wizard and *Admin → Settings* stor
 | `DOWNLOAD_FILE_TTL_HOURS`, `DOWNLOAD_OFFLINE_GRACE_DAYS`, `DOWNLOAD_CREATE_PER_HOUR` | `48`, `7`, `20` | Cleanup of unused files, offline grace period, licence rate limit |
 | `DIRECT_PLAY_REQUIRES_DOWNLOAD` | `false` | `true`: roles without download permission also lose direct play |
 | `PREVIEW_WARM` | `true` | Background job that pre-generates hover/billboard preview clips |
+| `RECO_W_GENRES`, `RECO_W_TAGS`, `RECO_W_STUDIOS`, `RECO_W_PEOPLE`, `RECO_W_TEXT`, `RECO_W_NUMERIC`, `RECO_W_COLLECTION` | `1`, `0.6`, `0.4`, `0.8`, `1`, `0.3`, `1.5` | Weight (0–10, `0` = off) of each feature group of the recommendation item index: genres, tags, studios, people, overview text, numbers (year, runtime, ratings), collection. Nothing reads the index for recommendations yet |
 | `PLAYBACK_CHECK_HOUR` | `4` | Nightly playback check with admin alert; `-1` = off |
 | `BACKGROUND_JOBS` | `true` | Download preparation/cleanup, language and picture-quality index, leaving-soon reminders, Jellyfin session polling (keep `true` on the single backend) |
 | `API_COMPRESSION` | `true` | gzip/brotli for JSON responses ≥ 1 KB; `false` if the proxy already compresses `/api` |

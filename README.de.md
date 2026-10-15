@@ -248,6 +248,7 @@ Eine neue Installation braucht davon nichts: Einrichtungsassistent und *Admin �
 | `DOWNLOAD_FILE_TTL_HOURS`, `DOWNLOAD_OFFLINE_GRACE_DAYS`, `DOWNLOAD_CREATE_PER_HOUR` | `48`, `7`, `20` | Aufräumen ungenutzter Dateien, Offline-Kulanz, Rate-Limit für Lizenzen |
 | `DIRECT_PLAY_REQUIRES_DOWNLOAD` | `false` | `true`: Rollen ohne Download-Recht verlieren auch Direct Play |
 | `PREVIEW_WARM` | `true` | Hintergrundjob, der Vorschau-Clips für Karten und Billboard vorab erzeugt |
+| `RECO_W_GENRES`, `RECO_W_TAGS`, `RECO_W_STUDIOS`, `RECO_W_PEOPLE`, `RECO_W_TEXT`, `RECO_W_NUMERIC`, `RECO_W_COLLECTION` | `1`, `0.6`, `0.4`, `0.8`, `1`, `0.3`, `1.5` | Gewicht (0–10, `0` = aus) je Merkmalsgruppe des Empfehlungs-Index: Genres, Tags, Studios, Personen, Beschreibungstext, Zahlen (Jahr, Laufzeit, Bewertungen), Sammlung. Empfehlungen lesen den Index noch nicht |
 | `PLAYBACK_CHECK_HOUR` | `4` | Nächtlicher Wiedergabe-Check mit Admin-Hinweis; `-1` = aus |
 | `BACKGROUND_JOBS` | `true` | Download-Vorbereitung/-Aufräumen, Sprach- und Bildqualitäts-Index, Bald-weg-Erinnerungen, Jellyfin-Session-Polling (auf dem einzigen Backend `true` lassen) |
 | `API_COMPRESSION` | `true` | gzip/brotli für JSON-Antworten ab 1 KB; `false`, wenn der Proxy `/api` schon komprimiert |

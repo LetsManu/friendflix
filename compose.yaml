@@ -145,6 +145,14 @@ services:
       PORTAINER_ENDPOINT_ID: ${PORTAINER_ENDPOINT_ID:-}
       PLAYBACK_CHECK_HOUR: ${PLAYBACK_CHECK_HOUR:-}
       PREVIEW_WARM: ${PREVIEW_WARM:-}
+      # recommendation index (docs/discovery.md): weight of each feature group (0-10; 0 = off)
+      RECO_W_GENRES: ${RECO_W_GENRES:-}
+      RECO_W_TAGS: ${RECO_W_TAGS:-}
+      RECO_W_STUDIOS: ${RECO_W_STUDIOS:-}
+      RECO_W_PEOPLE: ${RECO_W_PEOPLE:-}
+      RECO_W_TEXT: ${RECO_W_TEXT:-}
+      RECO_W_NUMERIC: ${RECO_W_NUMERIC:-}
+      RECO_W_COLLECTION: ${RECO_W_COLLECTION:-}
       # download preparation + cleanup, audio/subtitle language index, Jellyfin session polling; false only for extra replicas
       BACKGROUND_JOBS: ${BACKGROUND_JOBS:-true}
       # gzip/brotli for JSON API responses >= 1 KB; false when the reverse proxy already compresses

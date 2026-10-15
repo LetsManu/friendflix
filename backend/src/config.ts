@@ -107,6 +107,9 @@ export const publicUrlSchema = z.string().transform((v, ctx) => {
   return u.origin;
 });
 
+/** a RECO_W_* weight: 0 to 10, compose passes '' for an unset variable */
+const recoWeight = (dflt: number) => z.preprocess(emptyAsUnset, z.coerce.number().min(0).max(10).default(dflt));
+
 /**
  * Every key FriendFlix reads from its environment. This literal object is the type source of Config; settings/registry.ts classifies
  * each key (setting / env-only / bootstrap / build) and uses the field schemas below for settings as well.
@@ -209,6 +212,14 @@ export const configSchema = z.object({
     if (bad.length) ctx.addIssue({ code: 'custom', params: { code: 'invalid_cidr' }, message: `HOME_NETWORKS: invalid CIDR ${bad.map((b) => `'${b}'`).join(', ')} (expected e.g. 192.168.0.0/16 or fd00::/8)` });
     return list;
   }),
+  /** recommendation index (docs/discovery.md): weight of each feature group when item vectors are combined; 0 switches a group off */
+  RECO_W_GENRES: recoWeight(1),
+  RECO_W_TAGS: recoWeight(0.6),
+  RECO_W_STUDIOS: recoWeight(0.4),
+  RECO_W_PEOPLE: recoWeight(0.8),
+  RECO_W_TEXT: recoWeight(1),
+  RECO_W_NUMERIC: recoWeight(0.3),
+  RECO_W_COLLECTION: recoWeight(1.5),
   BACKGROUND_JOBS: z.enum(['true', 'false']).default('true'),
   /** gzip/brotli for JSON API responses >= 1 KB (off when a reverse proxy already compresses) */
   API_COMPRESSION: z.enum(['true', 'false']).default('true'),

@@ -51,6 +51,8 @@ export interface AdminState {
   seerrUp: boolean;
   /** make GET /api/admin/summary fail (500) */
   summaryFails: boolean;
+  /** recommendation item index (summary.recoIndex) */
+  recoIndex: { supported: boolean; running: boolean; items: number; updatedAt: string | null };
   /** removal dates ("Bald weg", /api/admin/leaving) */
   leaving: LeavingRow[];
   /** optional TMDB/OMDb keys (/api/admin/sources); the real API never returns more than last4 */
@@ -198,6 +200,7 @@ export function adminState(): AdminState {
     ],
     seerrUp: true,
     summaryFails: false,
+    recoIndex: { supported: true, running: false, items: 1234, updatedAt: ago(3) },
     leaving: [leavingRow('00000000000000000000000000000001', 1, 'Lizenz endet'), leavingRow('00000000000000000000000000000002', 5, null), leavingRow('00000000000000000000000000000003', 20, 'Rechte laufen aus')],
     sources: [{ name: 'tmdb', set: false, last4: null, from: null, invalid: false }, { name: 'omdb', set: true, last4: 'k3y9', from: 'db', invalid: false, usedToday: 12, budget: 900 }],
     health: healthOk(),
@@ -405,6 +408,7 @@ export function adminSummary(st: AdminState) {
     playbackCheck: { finishedAt: ago(2), total: 20, failed: 1 },
     services: { jellyfin: true, seerr: st.seerrUp },
     live: { streams: 2, partyRooms: 1 },
+    recoIndex: st.recoIndex,
   };
 }
 

@@ -27,6 +27,10 @@ export const recoPlays = new Counter({ name: 'friendflix_reco_plays_total', help
 export const recoDismiss = new Counter({ name: 'friendflix_reco_dismiss_total', help: 'Recommendations dismissed, by row and engine', labelNames: ['row', 'engine'], registers: [registry] });
 const downloadJobs = new Gauge({ name: 'friendflix_download_jobs', help: 'Offline download jobs by status', labelNames: ['status'], registers: [registry] });
 const downloadDisk = new Gauge({ name: 'friendflix_download_disk_bytes', help: 'Bytes of prepared download files', registers: [registry] });
+const recoIndexItems = new Gauge({ name: 'friendflix_reco_index_items', help: 'Films and series in the recommendation item index', registers: [registry] });
+const recoIndexAge = new Gauge({ name: 'friendflix_reco_index_age_seconds', help: 'Seconds since the recommendation item index was last refreshed (0 while empty)', registers: [registry] });
+/** mode: full | incremental; result: ok | error */
+export const recoIndexRuns = new Counter({ name: 'friendflix_reco_index_runs_total', help: 'Recommendation item index passes', labelNames: ['mode', 'result'], registers: [registry] });
 const up = new Gauge({ name: 'friendflix_dependency_up', help: '1 if dependency reachable', labelNames: ['dependency'], registers: [registry] });
 
 /** Prometheus endpoint for Icinga. Also blocked in NPM; protected by a bearer token when METRICS_TOKEN is set. */
@@ -47,6 +51,9 @@ export async function metricsPlugin(app: FastifyInstance, opts: { ctx: Ctx }) {
     const byStatus = await c.db.query<{ status: string; n: string }>('select status, count(*) n from download_jobs group by status').then((r) => r.rows, () => []);
     for (const s of ['queued', 'preparing', 'ready', 'failed']) downloadJobs.set({ status: s }, Number(byStatus.find((r) => r.status === s)?.n ?? 0));
     downloadDisk.set(await one("select coalesce(sum(bytes), 0) n from download_jobs where status = 'ready' and quality <> 'original'").catch(() => 0));
+    const idx = await c.db.query<{ n: string; age: string | null }>('select count(*) n, extract(epoch from now() - max(updated_at)) age from item_features').then((r) => r.rows[0], () => undefined);
+    recoIndexItems.set(Number(idx?.n ?? 0));
+    recoIndexAge.set(Math.max(0, Math.round(Number(idx?.age ?? 0))));
     up.set({ dependency: 'postgres' }, (await c.db.query('select 1').then(() => 1, () => 0)));
     up.set({ dependency: 'redis' }, (await c.kv.ping().catch(() => false)) ? 1 : 0);
     up.set({ dependency: 'jellyfin' }, (await c.jf.admin.ping().catch(() => false)) ? 1 : 0);
