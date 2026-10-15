@@ -97,6 +97,8 @@ const settings: Translation<typeof de> = {
     failed: 'Generating failed.',
     a11y: '{label}: {action}',
   },
+  /** option labels of the enum settings (an unset LOGIN_UI is "Automatic") */
+  options: { auto: 'Automatic', LOGIN_UI: { app: 'FriendFlix', authentik: 'Authentik' }, PASSKEYS_IN_APP: { auto: 'Automatic', off: 'Off' } },
   keys: {
     PUBLIC_URL: { label: 'Public address', help: 'The address everyone uses to reach FriendFlix, e.g. https://friend.example.com. Links, sign-in and streaming are built on it.' },
     WEBHOOK_SECRET: { label: 'Webhook secret', help: 'Shared secret for the webhooks of the media server and the request service.' },
@@ -110,6 +112,11 @@ const settings: Translation<typeof de> = {
     AUTHENTIK_ENROLL_FLOW: { label: 'Enrollment flow', help: 'Slug of the flow invited people use to create their account.' },
     AUTHENTIK_RECOVERY_FLOW: { label: 'Recovery flow', help: 'Slug of the flow that sends the password reset mail.' },
     AUTHENTIK_TOTP_SETUP_FLOW: { label: 'Two-factor setup flow', help: 'Slug of the flow for setting up an authenticator app.' },
+    LOGIN_UI: { label: 'Sign-in page', help: 'Who shows the sign-in: FriendFlix with its own screens, or Authentik\'s page. Automatic uses FriendFlix once Authentik is connected.' },
+    AUTHENTIK_LOGIN_FLOW: { label: 'Sign-in flow', help: 'Slug of the flow the sign-in inside FriendFlix runs at Authentik.' },
+    AUTHENTIK_INVALIDATION_FLOW: { label: 'Sign-out flow', help: 'Slug of the flow that runs at Authentik when someone signs out.' },
+    PASSKEYS_IN_APP: { label: 'Passkeys in FriendFlix', help: 'Automatic: passkeys inside FriendFlix when Authentik allows it. Off: passkeys only on Authentik\'s sign-in page.' },
+    LOGIN_COVER_WALL: { label: 'Cover wall behind the sign-in', help: 'Shows covers from the library (age ratings up to 12 only, nothing unrated) behind the sign-in. The images can be fetched without signing in.' },
     JELLYFIN_URL: { label: 'Jellyfin address', help: 'Internal address of the media server, e.g. http://jellyfin:8096.' },
     JELLYFIN_ADMIN_API_KEY: { label: 'Jellyfin API key (admin)', help: 'API key with admin rights (Jellyfin → Dashboard → API keys).' },
     REQUESTS_URL: { label: 'Request service address', help: 'Optional. Without address and key, requests are hidden.' },

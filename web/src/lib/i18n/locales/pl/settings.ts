@@ -102,6 +102,8 @@ const settings: Translation<typeof de> = {
     failed: 'Generowanie nie powiodło się.',
     a11y: '{label}: {action}',
   },
+  /** option labels of the enum settings (an unset LOGIN_UI is "Automatic") */
+  options: { auto: 'Automatycznie', LOGIN_UI: { app: 'FriendFlix', authentik: 'Authentik' }, PASSKEYS_IN_APP: { auto: 'Automatycznie', off: 'Wyłączone' } },
   keys: {
     PUBLIC_URL: { label: 'Adres publiczny', help: 'Adres, pod którym wszyscy otwierają FriendFlix, np. https://friend.example.com. Opierają się na nim linki, logowanie i streaming.' },
     WEBHOOK_SECRET: { label: 'Sekret webhooka', help: 'Wspólny sekret dla webhooków serwera multimediów i usługi próśb.' },
@@ -115,6 +117,11 @@ const settings: Translation<typeof de> = {
     AUTHENTIK_ENROLL_FLOW: { label: 'Przepływ rejestracji', help: 'Slug przepływu, w którym zaproszone osoby zakładają konto.' },
     AUTHENTIK_RECOVERY_FLOW: { label: 'Przepływ odzyskiwania', help: 'Slug przepływu, który wysyła e-mail do resetu hasła.' },
     AUTHENTIK_TOTP_SETUP_FLOW: { label: 'Przepływ konfiguracji dwuskładnikowej', help: 'Slug przepływu do konfiguracji aplikacji uwierzytelniającej.' },
+    LOGIN_UI: { label: 'Strona logowania', help: 'Kto pokazuje logowanie: FriendFlix własnymi ekranami albo strona Authentik. Automatycznie używa FriendFlix, gdy tylko Authentik jest połączony.' },
+    AUTHENTIK_LOGIN_FLOW: { label: 'Przepływ logowania', help: 'Slug przepływu, który logowanie w FriendFlix wykonuje w Authentik.' },
+    AUTHENTIK_INVALIDATION_FLOW: { label: 'Przepływ wylogowania', help: 'Slug przepływu uruchamianego w Authentik przy wylogowaniu.' },
+    PASSKEYS_IN_APP: { label: 'Passkey w FriendFlix', help: 'Automatycznie: passkey w FriendFlix, jeśli Authentik na to pozwala. Wyłączone: passkey tylko na stronie logowania Authentik.' },
+    LOGIN_COVER_WALL: { label: 'Okładki za ekranem logowania', help: 'Pokazuje okładki z biblioteki (tylko oceny wiekowe do 12 lat, nic bez oceny) za ekranem logowania. Obrazy można pobrać bez logowania.' },
     JELLYFIN_URL: { label: 'Adres Jellyfin', help: 'Wewnętrzny adres serwera multimediów, np. http://jellyfin:8096.' },
     JELLYFIN_ADMIN_API_KEY: { label: 'Klucz API Jellyfin (admin)', help: 'Klucz API z uprawnieniami administratora (Jellyfin → Panel → Klucze API).' },
     REQUESTS_URL: { label: 'Adres usługi próśb', help: 'Opcjonalne. Bez adresu i klucza prośby są ukryte.' },

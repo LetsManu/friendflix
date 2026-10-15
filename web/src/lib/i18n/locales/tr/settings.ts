@@ -100,6 +100,8 @@ const settings: Translation<typeof de> = {
     failed: 'Oluşturulamadı.',
     a11y: '{label}: {action}',
   },
+  /** option labels of the enum settings (an unset LOGIN_UI is "Automatic") */
+  options: { auto: 'Otomatik', LOGIN_UI: { app: 'FriendFlix', authentik: 'Authentik' }, PASSKEYS_IN_APP: { auto: 'Otomatik', off: 'Kapalı' } },
   keys: {
     PUBLIC_URL: { label: 'Genel adres', help: 'Herkesin FriendFlix’e ulaştığı adres, ör. https://friend.example.com. Bağlantılar, oturum açma ve yayın buna dayanır.' },
     WEBHOOK_SECRET: { label: 'Webhook sırrı', help: 'Medya sunucusu ve istek hizmetinin webhook’ları için ortak sır.' },
@@ -113,6 +115,11 @@ const settings: Translation<typeof de> = {
     AUTHENTIK_ENROLL_FLOW: { label: 'Kayıt akışı', help: 'Davet edilenlerin hesap oluşturduğu akışın slug’ı.' },
     AUTHENTIK_RECOVERY_FLOW: { label: 'Kurtarma akışı', help: 'Parola sıfırlama e-postasını gönderen akışın slug’ı.' },
     AUTHENTIK_TOTP_SETUP_FLOW: { label: 'İki adımlı doğrulama kurulum akışı', help: 'Kimlik doğrulama uygulaması kurmak için akışın slug’ı.' },
+    LOGIN_UI: { label: 'Giriş sayfası', help: 'Girişi kimin gösterdiği: kendi ekranlarıyla FriendFlix ya da Authentik sayfası. Otomatik, Authentik bağlanır bağlanmaz FriendFlix’i kullanır.' },
+    AUTHENTIK_LOGIN_FLOW: { label: 'Giriş akışı', help: 'FriendFlix içindeki girişin Authentik’te izlediği akışın slug’ı.' },
+    AUTHENTIK_INVALIDATION_FLOW: { label: 'Çıkış akışı', help: 'Biri çıkış yaptığında Authentik’te çalışan akışın slug’ı.' },
+    PASSKEYS_IN_APP: { label: 'FriendFlix içinde passkey', help: 'Otomatik: Authentik izin veriyorsa FriendFlix içinde passkey. Kapalı: passkey yalnızca Authentik giriş sayfasında.' },
+    LOGIN_COVER_WALL: { label: 'Girişin arkasında kapaklar', help: 'Girişin arkasında kütüphaneden kapaklar gösterir (yalnızca 12 yaşa kadar derecelendirmeler, derecesiz hiçbir şey yok). Görseller giriş yapmadan alınabilir.' },
     JELLYFIN_URL: { label: 'Jellyfin adresi', help: 'Medya sunucusunun iç adresi, ör. http://jellyfin:8096.' },
     JELLYFIN_ADMIN_API_KEY: { label: 'Jellyfin API anahtarı (yönetici)', help: 'Yönetici yetkili API anahtarı (Jellyfin → Kontrol paneli → API anahtarları).' },
     REQUESTS_URL: { label: 'İstek hizmeti adresi', help: 'İsteğe bağlı. Adres ve anahtar olmadan istekler gizlenir.' },

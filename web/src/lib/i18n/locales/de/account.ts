@@ -285,8 +285,6 @@ export default {
   /** /pending: a login without an invite waits for an admin */
   pending: {
     pageTitle: 'Zugangsanfrage',
-    title: 'Anfrage gesendet',
-    sent: 'Deine Zugangsanfrage wurde gesendet. Ein Admin wird sie bald freigeben.',
     autoUpdate: 'Diese Seite aktualisiert sich von selbst.',
     approvedTitle: 'Du bist freigeschaltet',
     approvedText: 'Ein Admin hat deinen Zugang freigegeben. Melde dich jetzt an.',

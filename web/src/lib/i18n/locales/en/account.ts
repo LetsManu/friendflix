@@ -283,8 +283,6 @@ const en: Translation<typeof de> = {
   /** /pending: a login without an invite waits for an admin */
   pending: {
     pageTitle: 'Access request',
-    title: 'Request sent',
-    sent: 'Your access request was sent. An admin will approve it soon.',
     autoUpdate: 'This page updates by itself.',
     approvedTitle: 'You’re in',
     approvedText: 'An admin approved your access. Sign in now.',

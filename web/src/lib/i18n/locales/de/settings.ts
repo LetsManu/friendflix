@@ -95,6 +95,8 @@ export default {
     failed: 'Erzeugen fehlgeschlagen.',
     a11y: '{label}: {action}',
   },
+  /** option labels of the enum settings (an unset LOGIN_UI is "Automatic") */
+  options: { auto: 'Automatisch', LOGIN_UI: { app: 'FriendFlix', authentik: 'Authentik' }, PASSKEYS_IN_APP: { auto: 'Automatisch', off: 'Aus' } },
   keys: {
     PUBLIC_URL: { label: 'Öffentliche Adresse', help: 'Unter dieser Adresse erreichen alle FriendFlix, z. B. https://friend.example.com. Links, Anmeldung und Streaming bauen darauf auf.' },
     WEBHOOK_SECRET: { label: 'Webhook-Geheimnis', help: 'Gemeinsames Geheimnis für die Webhooks von Mediaserver und Anfragen-Dienst.' },
@@ -108,6 +110,11 @@ export default {
     AUTHENTIK_ENROLL_FLOW: { label: 'Registrierungsablauf', help: 'Slug des Ablaufs, über den Eingeladene ihr Konto anlegen.' },
     AUTHENTIK_RECOVERY_FLOW: { label: 'Ablauf zum Zurücksetzen', help: 'Slug des Ablaufs, der die Mail zum Zurücksetzen des Passworts verschickt.' },
     AUTHENTIK_TOTP_SETUP_FLOW: { label: 'Ablauf für Zwei-Faktor-Einrichtung', help: 'Slug des Ablaufs zum Einrichten einer Authenticator-App.' },
+    LOGIN_UI: { label: 'Anmeldeseite', help: 'Wer die Anmeldung zeigt: FriendFlix mit eigenen Bildschirmen oder die Seite von Authentik. „Automatisch“ nimmt FriendFlix, sobald Authentik angebunden ist.' },
+    AUTHENTIK_LOGIN_FLOW: { label: 'Anmelde-Ablauf', help: 'Slug des Ablaufs, den die Anmeldung in FriendFlix bei Authentik durchläuft.' },
+    AUTHENTIK_INVALIDATION_FLOW: { label: 'Abmelde-Ablauf', help: 'Slug des Ablaufs, der beim Abmelden bei Authentik läuft.' },
+    PASSKEYS_IN_APP: { label: 'Passkeys in FriendFlix', help: 'Automatisch: Passkeys direkt in FriendFlix, wenn Authentik das zulässt. Aus: Passkeys nur auf der Anmeldeseite von Authentik.' },
+    LOGIN_COVER_WALL: { label: 'Titelbilder hinter der Anmeldung', help: 'Zeigt Cover aus der Bibliothek (nur Altersfreigaben bis 12, nichts ohne Einstufung) hinter der Anmeldung. Die Bilder sind ohne Anmeldung abrufbar.' },
     JELLYFIN_URL: { label: 'Jellyfin-Adresse', help: 'Interne Adresse des Mediaservers, z. B. http://jellyfin:8096.' },
     JELLYFIN_ADMIN_API_KEY: { label: 'Jellyfin-API-Schlüssel (Admin)', help: 'API-Schlüssel mit Admin-Rechten (Jellyfin → Dashboard → API-Schlüssel).' },
     REQUESTS_URL: { label: 'Adresse des Anfragen-Dienstes', help: 'Optional. Ohne Adresse und Schlüssel sind Wünsche ausgeblendet.' },

@@ -284,8 +284,6 @@ const tr: Translation<typeof de> = {
   /** /pending: a login without an invite waits for an admin */
   pending: {
     pageTitle: 'Erişim talebi',
-    title: 'Talep gönderildi',
-    sent: 'Erişim talebin gönderildi. Bir yönetici yakında onaylayacak.',
     autoUpdate: 'Bu sayfa kendiliğinden güncellenir.',
     approvedTitle: 'Erişimin açıldı',
     approvedText: 'Bir yönetici erişimini onayladı. Şimdi giriş yap.',

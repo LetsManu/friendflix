@@ -304,8 +304,6 @@ const pl: Translation<typeof de> = {
   /** /pending: a login without an invite waits for an admin */
   pending: {
     pageTitle: 'Prośba o dostęp',
-    title: 'Prośba wysłana',
-    sent: 'Twoja prośba o dostęp została wysłana. Administrator wkrótce ją zatwierdzi.',
     autoUpdate: 'Ta strona odświeża się sama.',
     approvedTitle: 'Masz dostęp',
     approvedText: 'Administrator zatwierdził twój dostęp. Zaloguj się teraz.',

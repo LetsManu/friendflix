@@ -13,6 +13,10 @@ All notable changes, grouped by what you notice. Each release has its own sectio
 - **Admin, Update** compares the installed version with the newest GitHub release ("Update available") and shows its notes under *What's new*. Before the first release, or on a build from main, the commits ahead of the installed build stay as secondary information.
 - Tap the version seven times. Just saying.
 
+### Login
+- **Sign-in inside FriendFlix:** the sign-in page is now FriendFlix's own, over a wall of covers from your library (only age ratings up to 12, nothing unrated; switch it off under *Admin → Status → Sign-in* or *Settings → General*). Password, authenticator code, recovery code and passkeys run on the page; Authentik still decides and enforces everything behind it. *Forgot password?* shows a "check your inbox" screen, the e-mail link opens `/reset` in FriendFlix (it takes the token out of the address bar and waits for a click), and an invitation creates the account with the authenticator app and recovery codes in the same screens. A step FriendFlix cannot show continues on Authentik's sign-in page (`/auth/login?classic=1` always works); `LOGIN_UI` switches back to the classic redirect. *Admin → Status* gets a Sign-in card that checks the Authentik flows, consent, grant types and passkeys. See docs/authentik.md section 10a and docs/security.md.
+- **Fix:** the admin's *Send password link* works again on Authentik 2026.8 (the e-mail stage is now recognised by its model, not by an admin form name).
+
 ### Streaming
 - **Adaptive quality:** *Auto* picks the quality your connection can carry (the last estimate is remembered per device for 7 days), steps down after a stall or a network error and steps back up once the connection is steady. A chip in the player shows "Original" or "Converted · 720p"; tap it for the reason.
 - **Remote limit per role:** outside the home network each role has its own bitrate cap (defaults: friends and family 8, guests 4, admins 12 Mbit/s), set on the admin roles page. Home networks are listed in `HOME_NETWORKS`; the server and the gateway enforce the cap, so the browser cannot raise it. See docs/operations.md.

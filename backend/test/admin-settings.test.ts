@@ -96,8 +96,10 @@ describe('settings with values from env, a secret file and the database', () => 
     expect(items.get('DOWNLOAD_CREATE_PER_HOUR')).toMatchObject({ apply: 'restart', restartPending: false });
     expect(items.get('HEALTH_DISK_WARN_PCT')).toMatchObject({ min: 50, max: 99 });
     expect(items.get('WEBHOOK_SECRET')).toMatchObject({ generate: 'webhookSecret' });
-    // hidden (phase 3) keys are left out; env-only and bootstrap keys are in "server" without secret values
-    expect(items.has('LOGIN_UI')).toBe(false);
+    // phase 3: five keys are shown, the other four are left out; env-only and bootstrap keys are in "server" without secret values
+    expect(items.get('LOGIN_UI')).toMatchObject({ group: 'signin', kind: 'enum', options: ['app', 'authentik'] });
+    expect(items.get('LOGIN_COVER_WALL')).toMatchObject({ group: 'general', kind: 'bool', value: true });
+    expect(items.has('AUTHENTIK_EMAIL_CHANGE_FLOW')).toBe(false);
     expect(items.get('DATABASE_URL')).toMatchObject({ group: 'server', source: 'env', set: true, value: null });
     expect(items.get('APP_ENC_KEY')).toMatchObject({ group: 'server', set: true, value: null });
     expect(items.get('METRICS_TOKEN')).toMatchObject({ group: 'server', source: 'env', set: true, value: null });
@@ -121,10 +123,11 @@ describe('settings with values from env, a secret file and the database', () => 
   });
 
   it('PUT of an env-locked key -> 400 locked; METRICS_TOKEN and hidden keys -> unknown', async () => {
+    await h.reauth(h.admin); // the hidden AUTHENTIK_* key below would otherwise stop at the re-authentication
     const r = await h.put({ PREVIEW_WARM: true });
     expect(r.statusCode).toBe(400);
     expect(r.json().errors).toEqual({ PREVIEW_WARM: 'locked' });
-    expect((await h.put({ METRICS_TOKEN: 'x', NOPE: 1, LOGIN_UI: 'app' })).json().errors).toEqual({ METRICS_TOKEN: 'unknown', NOPE: 'unknown', LOGIN_UI: 'unknown' });
+    expect((await h.put({ METRICS_TOKEN: 'x', NOPE: 1, AUTHENTIK_EMAIL_CHANGE_FLOW: 'x' })).json().errors).toEqual({ METRICS_TOKEN: 'unknown', NOPE: 'unknown', AUTHENTIK_EMAIL_CHANGE_FLOW: 'unknown' });
     await h.reauth(h.admin);
     expect((await h.put({ OIDC_CLIENT_SECRET: 'new' })).json().errors).toEqual({ OIDC_CLIENT_SECRET: 'locked' });
   });
@@ -487,5 +490,47 @@ describe('logs', () => {
       expect(line).not.toContain(short);
       expect(line).not.toContain(generated);
     }
+  });
+});
+
+describe('Block 23 phase 3 keys (Task 9)', () => {
+  const h = harness({});
+
+  it('PUT /api/admin/settings {values:{LOGIN_COVER_WALL:false}} turns the cover wall off (no re-authentication), audited with the key name only', async () => {
+    expect((await h.env.app.inject('/api/public/login-art')).statusCode).toBe(200);
+    const r = await h.put({ LOGIN_COVER_WALL: false });
+    expect(r.statusCode).toBe(200);
+    expect(h.env.ctx.cfg.LOGIN_COVER_WALL).toBe('false');
+    const wall = await h.env.app.inject('/api/public/login-art'); // off: an empty list that nobody caches
+    expect([wall.json(), wall.headers['cache-control']]).toEqual([{ images: [] }, 'no-store']);
+    const item = (await h.as(h.admin, 'GET', '/api/admin/settings')).json().groups.find((g: any) => g.id === 'general').items.find((i: any) => i.key === 'LOGIN_COVER_WALL');
+    expect(item).toMatchObject({ source: 'db', value: false, kind: 'bool' });
+    expect(await h.audits('settings.update')).toEqual([{ keys: ['LOGIN_COVER_WALL'] }]);
+    expect((await h.put({ LOGIN_COVER_WALL: true })).statusCode).toBe(200);
+    expect(h.env.ctx.cfg.LOGIN_COVER_WALL).toBe('true');
+  });
+
+  it('LOGIN_UI changes the sign-in mode for everyone: it needs a recent re-authentication, and null returns to automatic', async () => {
+    const denied = await h.put({ LOGIN_UI: 'authentik' });
+    expect(denied.statusCode).toBe(401);
+    expect(denied.json().error).toBe('reauth_required');
+    await h.reauth(h.admin);
+    expect((await h.put({ LOGIN_UI: 'authentik' })).statusCode).toBe(200);
+    expect(h.env.ctx.cfg.LOGIN_UI).toBe('authentik');
+    expect((await h.put({ LOGIN_UI: null })).statusCode).toBe(200);
+    expect(h.env.ctx.cfg.LOGIN_UI).toBeUndefined();
+    expect((await h.put({ LOGIN_UI: 'nope' })).statusCode).toBe(400);
+  });
+});
+
+describe('Block 23 phase 3 keys from the environment (Task 9)', () => {
+  const h = harness({ settingsEnv: { LOGIN_COVER_WALL: 'true' } });
+
+  it('an env-set LOGIN_COVER_WALL is shown as source env and cannot be toggled (the status card says "locked")', async () => {
+    const item = (await h.as(h.admin, 'GET', '/api/admin/settings')).json().groups.find((g: any) => g.id === 'general').items.find((i: any) => i.key === 'LOGIN_COVER_WALL');
+    expect(item).toMatchObject({ source: 'env', value: true });
+    const r = await h.put({ LOGIN_COVER_WALL: false });
+    expect(r.statusCode).toBe(400);
+    expect(r.json().errors).toEqual({ LOGIN_COVER_WALL: 'locked' });
   });
 });

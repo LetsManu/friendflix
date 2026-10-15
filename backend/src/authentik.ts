@@ -129,37 +129,91 @@ export async function akMfaState(ctx: AkCtx, sub: string): Promise<MfaState | nu
 const FLOW_TTL = 600;
 const FLOW_FAILED_TTL = 60;
 
+/** one stage bound to a flow: the stage's pk and its model (`stage_obj.meta_model_name`, e.g. `authentik_stages_email.emailstage`) */
+export interface FlowStage { pk: string; model: string }
 /**
- * Whether Authentik has a flow with this slug (`GET /flows/instances/<slug>/`; the login page offers "forgot password" only then).
- * Cached under a hash of its inputs (AUTHENTIK_URL, the token, the slug): 10 min, an unreachable Authentik 1 min. Never throws: any
- * failure answers false. Not configured -> false.
+ * A flow as the checks need it. `stages` are in binding order and classified by `stage_obj.meta_model_name`: `stage_obj.component` is
+ * the admin form's name (`ak-stage-email-form` on 2026.8.3), not the challenge component. `failed`: Authentik did not answer (or
+ * rejected the token), so `exists` and `stages` are unknown.
  */
-export async function akFlowExists(ctx: AkCtx, slug: string): Promise<boolean> {
-  if (!configured(ctx)) return false;
-  const key = `akflowok:${sha256(`${ctx.cfg.AUTHENTIK_URL}|${ctx.cfg.AUTHENTIK_API_TOKEN}|${slug}`)}`;
+export interface FlowStages { exists: boolean; failed: boolean; stages: FlowStage[] }
+const NO_FLOW: FlowStages = { exists: false, failed: false, stages: [] };
+
+/**
+ * The one reader of a flow (`GET /flows/instances/<slug>/`, then `GET /flows/bindings/?target=<pk>`): whether it exists (the login page
+ * offers "forgot password" only then, preflight P27), which stages it holds (the sign-in status check, the admin reset e-mail).
+ * Cached under a hash of its inputs (AUTHENTIK_URL, the token, the slug): 10 min, an unreachable Authentik 1 min. Never throws: any
+ * failure answers `failed: true`. Not configured -> not found.
+ */
+export async function akFlowStages(ctx: AkCtx, slug: string): Promise<FlowStages> {
+  if (!configured(ctx)) return NO_FLOW;
+  const key = `akflow:${sha256(`${ctx.cfg.AUTHENTIK_URL}|${ctx.cfg.AUTHENTIK_API_TOKEN}|${slug}`)}`;
   const hit = await ctx.kv.get(key);
-  if (hit === '1' || hit === '0') return hit === '1';
-  let found = false;
+  if (hit) {
+    try {
+      const v = JSON.parse(hit) as FlowStages;
+      if (typeof v.exists === 'boolean' && Array.isArray(v.stages)) return v;
+    } catch { /* a damaged entry: read again */ }
+  }
+  let out: FlowStages = NO_FLOW;
   let ttl = FLOW_TTL;
   try {
-    const r = await call(ctx, `api/v3/flows/instances/${encodeURIComponent(slug)}/`, undefined, { 404: new HttpError(404, 'not_found') });
-    await r.body?.cancel().catch(() => undefined);
-    found = true;
+    const flow = await json<{ pk?: string }>(ctx, `api/v3/flows/instances/${encodeURIComponent(slug)}/`, undefined, { 404: new HttpError(404, 'not_found') });
+    out = { exists: true, failed: false, stages: [] };
+    if (typeof flow.pk === 'string' && flow.pk) {
+      try {
+        const r = await json<Page<{ order: number; stage: string; stage_obj?: { meta_model_name?: string } }>>(
+          ctx, `api/v3/flows/bindings/?${new URLSearchParams({ target: flow.pk, ordering: 'order', page_size: '100' })}`);
+        out.stages = [...r.results].sort((a, b) => a.order - b.order)
+          .map((b) => ({ pk: String(b.stage), model: b.stage_obj?.meta_model_name ?? '' }));
+      } catch {
+        out.failed = true; // the flow exists, its stages are unknown
+        ttl = FLOW_FAILED_TTL;
+      }
+    }
   } catch (e) {
-    if (!(e instanceof HttpError && e.statusCode === 404)) ttl = FLOW_FAILED_TTL;
+    if (!(e instanceof HttpError && e.statusCode === 404)) {
+      out = { exists: false, failed: true, stages: [] };
+      ttl = FLOW_FAILED_TTL;
+    }
   }
-  await ctx.kv.set(key, found ? '1' : '0', ttl);
-  return found;
+  await ctx.kv.set(key, JSON.stringify(out), ttl);
+  return out;
+}
+
+/** Whether Authentik has a flow with this slug (an unreachable Authentik answers false); see akFlowStages. */
+export async function akFlowExists(ctx: AkCtx, slug: string): Promise<boolean> {
+  return (await akFlowStages(ctx, slug)).exists;
+}
+
+/**
+ * The OAuth2 provider of an OIDC client id (`GET /providers/oauth2/?client_id=`) with its authorization flow's stages and grant types,
+ * for the sign-in status check. null: not found, not configured or Authentik did not answer. Not cached (the check caches itself).
+ */
+export async function akOauthProvider(ctx: AkCtx, clientId: string): Promise<{ authorizationFlow: string | null; grantTypes: string[] | null } | null> {
+  if (!configured(ctx)) return null;
+  try {
+    const r = await json<Page<{ authorization_flow?: string; authorization_flow_obj?: { slug?: string }; grant_types?: unknown }>>(
+      ctx, `api/v3/providers/oauth2/?${new URLSearchParams({ client_id: clientId })}`);
+    const p = r.results[0];
+    if (!p) return null;
+    const slug = p.authorization_flow_obj?.slug;
+    return {
+      authorizationFlow: typeof slug === 'string' ? slug : null,
+      grantTypes: Array.isArray(p.grant_types) ? p.grant_types.map((g) => (typeof g === 'string' ? g : (g as { name?: string } | null)?.name ?? '')) : null,
+    };
+  } catch {
+    return null;
+  }
 }
 
 const notConfigured = () => new HttpError(409, 'recovery_not_configured');
 
-/** The first `ak-stage-email` stage bound to the flow (by binding order). 409 `recovery_not_configured` without flow or stage. */
+/** The first e-mail stage bound to the flow (by binding order). 409 `recovery_not_configured` without flow or stage. */
 async function emailStageOf(ctx: AkCtx, slug: string): Promise<string> {
-  const flow = await json<{ pk: string }>(ctx, `api/v3/flows/instances/${encodeURIComponent(slug)}/`, undefined, { 404: notConfigured() });
-  const r = await json<Page<{ order: number; stage: string; stage_obj?: { component?: string } }>>(
-    ctx, `api/v3/flows/bindings/?${new URLSearchParams({ target: flow.pk, ordering: 'order', page_size: '100' })}`);
-  const stage = [...r.results].sort((a, b) => a.order - b.order).find((b) => b.stage_obj?.component === 'ak-stage-email')?.stage;
+  const flow = await akFlowStages(ctx, slug);
+  if (flow.failed) throw new HttpError(503, 'authentik_unavailable');
+  const stage = flow.stages.find((b) => b.model === 'authentik_stages_email.emailstage')?.pk;
   if (!stage) throw notConfigured();
   return stage;
 }

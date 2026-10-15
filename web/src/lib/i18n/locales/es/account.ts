@@ -284,8 +284,6 @@ const es: Translation<typeof de> = {
   /** /pending: a login without an invite waits for an admin */
   pending: {
     pageTitle: 'Solicitud de acceso',
-    title: 'Solicitud enviada',
-    sent: 'Tu solicitud de acceso se ha enviado. Un administrador la aprobará pronto.',
     autoUpdate: 'Esta página se actualiza sola.',
     approvedTitle: 'Ya tienes acceso',
     approvedText: 'Un administrador ha aprobado tu acceso. Inicia sesión ahora.',

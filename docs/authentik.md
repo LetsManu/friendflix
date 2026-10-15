@@ -20,6 +20,7 @@ The full FriendFlix installation (Jellyfin, request service, Nginx Proxy Manager
 8. [Service account and API token](#8-service-account-and-api-token)
 9. [FriendFlix `.env` values](#9-friendflix-env-values)
 10. [Password recovery by e-mail](#10-password-recovery-by-e-mail)
+    - 10a. [In-app sign-in](#10a-in-app-sign-in)
 11. [Optional: passwordless sign-in with passkeys](#11-optional-passwordless-sign-in-with-passkeys)
 12. [Optional: branding](#12-optional-branding)
 13. [Sessions and logout](#13-sessions-and-logout)
@@ -517,18 +518,48 @@ One recovery flow serves two things: *Forgot username or password?* on the Authe
 5. Give the service account the password-link permissions from [§8.2](#82-role-with-exactly-these-global-permissions) (re-importing the blueprint does it).
 6. Test both ways with a test user that has an e-mail address: *Forgot username or password?* in a private browser window, and *Send password link* on that user's admin page. The link in the e-mail leads to `https://auth.example.com/if/flow/default-recovery-flow/?flow_token=…`: Authentik takes host and brand from the request, so `AUTHENTIK_URL` must be the public Authentik address.
 
-If you use a different recovery flow, put its slug into `AUTHENTIK_RECOVERY_FLOW`; it needs an e-mail stage (`ak-stage-email`) bound to it.
+If you use a different recovery flow, put its slug into `AUTHENTIK_RECOVERY_FLOW`; it needs an e-mail stage bound to it.
 
-**Optional: the reset link into FriendFlix** (in-app sign-in). With the template [`deploy/authentik/templates/friendflix-recovery.html`](../deploy/authentik/templates/friendflix-recovery.html) the e-mail link leads to `https://friend.example.com/reset?token=…` on FriendFlix instead of Authentik's page; FriendFlix continues Authentik's own recovery flow there after one click (MFA check and new password included) and then asks the person to sign in with the new password.
-1. Replace `friend.example.com` in the template's link with your FriendFlix address (its first line names the value).
-2. Authentik reads custom templates only from `/templates`, which the image does not create: mount a folder with the file there on **server and worker** (e.g. `./authentik/templates:/templates:ro`) and recreate both containers.
-3. *Flows and Stages → Stages* → `default-recovery-email` → *Edit* → **Template**: `friendflix-recovery.html`. The admin's *Send password link* uses the same stage, so its mails lead to FriendFlix as well.
-
-> **Before you set the template:** it applies to the shared stage `default-recovery-email`, so **every** recovery mail links to FriendFlix's `/reset`: the ones from *Forgot username or password?* on Authentik's own page and the admin's *Send password link* too.
-> - **Only while the in-app sign-in is on** (`LOGIN_UI=app`, or `LOGIN_UI` unset with `AUTHENTIK_URL` and `AUTHENTIK_API_TOKEN` set). With `LOGIN_UI=authentik` FriendFlix refuses to continue the link (`409 classic`), and recovery mails stop working altogether. Switch the template back to Authentik's default before you change `LOGIN_UI` to `authentik`.
-> - **Accounts whose only second factor is a passkey (WebAuthn) cannot reset their password themselves:** FriendFlix runs recovery without the app host, so the passkey check cannot happen in the app, and the click has already used up the link. A new mail ends the same way. Such people need a TOTP app as well, or an admin: *Directory → Users →* the user → *MFA Devices* → delete the passkey, then *Send password link* on the FriendFlix admin user page. With the example flow (its MFA check skips accounts without a device) the reset then works in FriendFlix, and the next sign-in makes the person enrol a second factor again ([§6](#6-authentication-flow-with-mandatory-mfa)).
+Optional: send the reset link into FriendFlix instead of Authentik's page. That belongs to the in-app sign-in: [§10a](#10a-in-app-sign-in), step 4.
 
 Lost MFA device: there is no self-service reset. As admin open *Directory → Users* → the user → *MFA Devices*, delete the device; on the next login the user is forced to enrol a new one. Alternatively let users create recovery codes (bind `default-authenticator-static-setup` as an additional configuration stage and add *Static Tokens* to the device classes).
+
+## 10a. In-app sign-in
+
+By default FriendFlix shows its own sign-in screens over a wall of covers (`/login`) and plays the sign-in through Authentik's flow executor behind the scenes: password, second factor, "Forgot password?", invite sign-up and passkeys never leave the FriendFlix page. Authentik stays the identity provider and still enforces every stage of its flows. Nothing about this changes the OIDC setup of [§5](#5-oauth2openid-provider-and-application); the classic Authentik pages always remain reachable as a fallback (`/auth/login?classic=1`, linked from every screen).
+
+**Admin → Settings → Sign-in** (and the status card below) controls it:
+
+| Setting | Meaning |
+|---|---|
+| `LOGIN_UI` | `app` (FriendFlix's own screens) or `authentik` (the classic redirect). Unset = automatic: `app` as soon as `AUTHENTIK_URL` and `AUTHENTIK_API_TOKEN` are set. Changing it needs a recent re-authentication. |
+| `AUTHENTIK_LOGIN_FLOW` | Slug of the login flow the app drives (default `default-authentication-flow`). |
+| `AUTHENTIK_INVALIDATION_FLOW` | Slug of the flow that runs at sign-out (default `default-invalidation-flow`). |
+| `AUTHENTIK_RECOVERY_FLOW`, `AUTHENTIK_ENROLL_FLOW` | As before ([§10](#10-password-recovery-by-e-mail), [§7](#7-enrollment-flow-for-invitations)); the app drives them too. |
+| `PASSKEYS_IN_APP` | `auto` (default) or `off`, see step 5. |
+| `LOGIN_COVER_WALL` | The cover wall behind the sign-in (Admin → Settings → General, or the switch on the status card). See [security.md](security.md#in-app-sign-in). |
+
+**Admin → Status → Sign-in** checks the Authentik side and lists what to fix. A warning never switches the mode; the classic page stays available.
+
+1. **Flows and slugs.** The app drives the login, recovery, enrollment and invalidation flows plus the setup flows for the authenticator app, recovery codes and passkeys, and password change. The stock flows of Authentik 2026.8 work unchanged. A flow may contain these stages: identification, password, authenticator validation, TOTP / static / WebAuthn authenticator setup, e-mail, prompt, user login, user write, invitation, deny and user logout. Any other stage (captcha, consent, a source redirect) cannot be shown; the person is sent on to Authentik's sign-in page at that step, and the check lists the flow as *Not supported*.
+2. **Implicit consent.** The provider's *Authorization flow* must not ask for consent (the stock `default-provider-authorization-implicit-consent`): FriendFlix runs authorize silently at the end of the flow and cannot answer a consent screen. The check reads the authorization flow's stages.
+3. **Grant types.** The provider needs the grant type **`authorization_code`** ticked (*Applications → Providers →* the provider → *Edit* → *Advanced protocol settings*). Providers created on 2026.8 start with **none**, and authorize then fails with `invalid_request`; sign-in fails for everybody. The check shows a warning naming this.
+4. **The reset link into FriendFlix** (optional). With the template [`deploy/authentik/templates/friendflix-recovery.html`](../deploy/authentik/templates/friendflix-recovery.html) the e-mail link leads to `https://friend.example.com/reset?token=…` instead of Authentik's page. FriendFlix's page removes the token from the address bar on load and does nothing until the person clicks **Weiter**/**Continue**, so a mail scanner that opens the link does not use it up. Then it continues Authentik's own recovery flow (MFA check and new password included) and asks the person to sign in with the new password.
+   1. Replace `friend.example.com` in the template's link with your FriendFlix address (its first line names the value; this is the one edited line).
+   2. Authentik reads custom templates only from `/templates`, which the image does not create (the `/templates` mount is not part of the stock stack): mount a folder with the file there on **server and worker** (e.g. `./authentik/templates:/templates:ro`) and recreate both containers.
+   3. *Flows and Stages → Stages* → `default-recovery-email` → *Edit* → **Template**: `friendflix-recovery.html`. The admin's *Send password link* uses the same stage, so its mails lead to FriendFlix as well.
+
+   > **Before you set the template:** it applies to the shared stage `default-recovery-email`, so **every** recovery mail links to FriendFlix's `/reset`: the ones from *Forgot username or password?* on Authentik's own page and the admin's *Send password link* too.
+   > - **Only while the in-app sign-in is on** (`LOGIN_UI=app`, or `LOGIN_UI` unset with `AUTHENTIK_URL` and `AUTHENTIK_API_TOKEN` set). With `LOGIN_UI=authentik` the `/reset` page forwards the token nowhere and only offers Authentik's sign-in page, so recovery mails stop working. Switch the template back to Authentik's default before you change `LOGIN_UI` to `authentik`.
+   > - **Accounts whose only second factor is a passkey (WebAuthn) cannot reset their password themselves:** FriendFlix runs recovery without the app host, so the passkey check cannot happen in the app, and the click has already used up the link. The page says so and asks the person to add a TOTP app or ask an admin. As admin: *Directory → Users →* the user → *MFA Devices* → delete the passkey, then *Send password link* on the FriendFlix admin user page. With the example flow (its MFA check skips accounts without a device) the reset then works in FriendFlix, and the next sign-in makes the person enrol a second factor again ([§6](#6-authentication-flow-with-mandatory-mfa)).
+5. **Passkeys in the app.** WebAuthn binds a passkey to the host of the page that asks for it. For passkeys to work on FriendFlix's own page, the backend forwards the FriendFlix host (`X-Forwarded-Host`) to Authentik when it plays the login, so Authentik issues the challenge for `friend.example.com`. This works when **all** of these hold:
+   - `PUBLIC_URL` is `https` (a `localhost` address is fine for tests);
+   - Authentik trusts the backend as a proxy: set `AUTHENTIK_LISTEN__TRUSTED_PROXY_CIDRS` on **server** (and worker) to a range containing the backend's address (e.g. `172.18.0.0/16` for the compose network), otherwise Authentik ignores the forwarded host;
+   - the backend reaches Authentik **directly** (`AUTHENTIK_URL` points to Authentik, not through the public reverse proxy): the proxy would overwrite the forwarded host, and Authentik would see the proxy's address as the client IP instead of the person's;
+   - `PASSKEYS_IN_APP` is not `off`.
+
+   The status card probes this (an anonymous discovery request with the forwarded host) and shows *Passkeys: in FriendFlix* or *on the sign-in page* with the reason. The browser still binds every assertion to the app origin; only the backend sends the forwarded host, and only for sign-in, re-authentication and passkey setup. **Trade-off:** a passkey is bound to one host. Passkeys created in FriendFlix work only there; passkeys created earlier on Authentik's pages work only on Authentik's sign-in page (and the other way round). With `PASSKEYS_IN_APP=off` (or a failing precondition) people keep using passkeys on Authentik's page; the sign-in screen links there.
+6. **`?classic=1`.** `https://friend.example.com/auth/login?classic=1` always goes straight to Authentik's own sign-in page, whatever `LOGIN_UI` says; it is the way back in when the Authentik side is mis-configured, and the first-admin setup (`?setup=1`) uses the classic flow too.
 
 ## 11. Optional: passwordless sign-in with passkeys
 
