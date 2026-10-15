@@ -108,7 +108,13 @@ async function createApiKey(input: { url: string; username: string; password: st
     if (created.status === 401 || created.status === 403) throw new MediaSetupError('not_admin');
     if (!created.ok) throw new MediaSetupError('unexpected');
     const when = (k: ApiKey) => (typeof k.DateCreated === 'string' ? Date.parse(k.DateCreated) || 0 : 0);
-    const fresh = (await listKeys()).filter((k) => k.AppName === APP_NAME && !before.has(k.AccessToken)).sort((a, b) => when(b) - when(a));
+    // the key exists now: a failed listing is tried once more (still with the admin session), since without it the key cannot be found
+    // and so not be revoked either
+    const after = await listKeys().catch((e: unknown) => {
+      if (e instanceof MediaSetupError && e.code === 'not_admin') throw e;
+      return listKeys();
+    });
+    const fresh = after.filter((k) => k.AppName === APP_NAME && !before.has(k.AccessToken)).sort((a, b) => when(b) - when(a));
     if (!fresh[0]) throw new MediaSetupError('unexpected');
     return { JELLYFIN_URL: input.url, JELLYFIN_ADMIN_API_KEY: fresh[0].AccessToken };
   } finally {

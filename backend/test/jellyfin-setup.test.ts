@@ -11,7 +11,7 @@ const PASSWORD = 'pw-placeholder-Zq81'; // a test placeholder, never a real cred
 const URL_ = 'http://jf.example.com:8096';
 const auto = jellyfinSetup.auto!;
 
-interface FakeOpts { wizardDone?: boolean; admin?: boolean; auth?: Handler; createStatus?: number; noNewKey?: boolean; twoNew?: boolean; probeStatus?: number }
+interface FakeOpts { listFailsAfterCreate?: number; wizardDone?: boolean; admin?: boolean; auth?: Handler; createStatus?: number; noNewKey?: boolean; twoNew?: boolean; probeStatus?: number }
 function fakeJellyfin(o: FakeOpts = {}) {
   const calls: Call[] = [];
   const inits: RequestInit[] = [];
@@ -19,11 +19,14 @@ function fakeJellyfin(o: FakeOpts = {}) {
     { AccessToken: 'old-ff-key', AppName: 'FriendFlix', DateCreated: '2026-01-01T00:00:00.0000000Z' },
     { AccessToken: 'other-key', AppName: 'Other', DateCreated: '2026-02-01T00:00:00.0000000Z' },
   ];
+  let created = false;
+  let listFails = o.listFailsAfterCreate ?? 0;
   const routes: Record<string, Handler> = {
     'GET /System/Info/Public': () => ({ json: { StartupWizardCompleted: o.wizardDone ?? true, Version: '10.11.0' } }),
     'POST /Users/AuthenticateByName': o.auth ?? (() => ({ json: { AccessToken: 'sess-token', User: { Id: 'u1', Name: 'admin', Policy: { IsAdministrator: o.admin ?? true } } } })),
     'POST /Auth/Keys': () => {
       if (o.createStatus) return { status: o.createStatus };
+      created = true;
       if (!o.noNewKey) {
         if (o.twoNew) keys.push({ AccessToken: 'new-ff-key-a', AppName: 'FriendFlix', DateCreated: '2026-10-15T10:00:00.0000000Z' });
         keys.push({ AccessToken: 'new-ff-key', AppName: 'FriendFlix', DateCreated: '2026-10-15T10:00:01.0000000Z' });
@@ -33,6 +36,7 @@ function fakeJellyfin(o: FakeOpts = {}) {
       return { status: 204 };
     },
     'GET /Auth/Keys': (_u, init) => {
+      if (created && listFails > 0) { listFails--; return { status: 500 }; }
       // the media probe after the save: GET /Auth/Keys with the new key itself
       if (o.probeStatus && (init.headers as Record<string, string>).Authorization?.includes('Token="new-ff-key"')) return { status: o.probeStatus };
       return { json: { Items: keys, TotalRecordCount: keys.length } };
@@ -99,6 +103,12 @@ describe('jellyfinSetup provider', () => {
   it('two new FriendFlix keys: the one with the newest DateCreated', async () => {
     const jf = fakeJellyfin({ twoNew: true });
     expect((await auto.run(input, deps(jf.fetchImpl))).JELLYFIN_ADMIN_API_KEY).toBe('new-ff-key');
+  });
+
+  it('the listing after the key was created fails once: it is tried again and the key is found; twice: unexpected', async () => {
+    const once = fakeJellyfin({ listFailsAfterCreate: 1 });
+    expect((await auto.run(input, deps(once.fetchImpl))).JELLYFIN_ADMIN_API_KEY).toBe('new-ff-key');
+    expect(await codeOf(auto.run(input, deps(fakeJellyfin({ listFailsAfterCreate: 2 }).fetchImpl)))).toMatchObject({ code: 'unexpected' });
   });
 
   it('wrong password (401) → unauthorized; other answers and network errors → unreachable; no new key → unexpected', async () => {
@@ -307,6 +317,33 @@ describe('POST /api/setup/media/auto', () => {
       expect(audit.rows[0].meta).toEqual({ keys: ['JELLYFIN_ADMIN_API_KEY'] });
     } finally {
       spy.mockRestore();
+    }
+  });
+
+  it('JELLYFIN_ADMIN_API_KEY from the environment: refused (env_locked) before any request, so no key is left behind', async () => {
+    const real = env.ctx.settings.sources.bind(env.ctx.settings);
+    const spy = vi.spyOn(env.ctx.settings, 'sources').mockImplementation(() => ({ ...real(), JELLYFIN_ADMIN_API_KEY: 'env' }));
+    try {
+      jf = fakeJellyfin();
+      const r = await post(input);
+      expect(r.statusCode).toBe(400);
+      expect(r.json()).toEqual({ ok: false, code: 'invalid', detail: 'env_locked' });
+      expect(jf.calls).toEqual([]);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it("a provider's revoke that throws synchronously does not escape: still 400 probe_failed", async () => {
+    jf = fakeJellyfin({ probeStatus: 500 });
+    const revoke = vi.spyOn(auto, 'revoke').mockImplementation(() => { throw new Error('sync throw'); });
+    try {
+      const r = await post({ ...input, url: 'http://sync.example.com:8096' });
+      expect(r.statusCode).toBe(400);
+      expect(r.json()).toMatchObject({ error: 'probe_failed' });
+      expect(revoke).toHaveBeenCalled();
+    } finally {
+      revoke.mockRestore();
     }
   });
 
