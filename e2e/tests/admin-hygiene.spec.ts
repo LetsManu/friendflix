@@ -94,8 +94,9 @@ test.describe('admin library hygiene', () => {
     expect(api.admin.hygiene.ignored.has(`${OLD}|audio_codec`)).toBe(true);
     await toasts(page).getByRole('button', { name: 'Rückgängig' }).last().click();
     await expect(table(page).getByRole('row', { name: /Old Reel/ })).toHaveCount(1);
-    expect(api.log.some((l) => l.startsWith('DELETE /api/admin/hygiene/ignore') && l.includes('audio_codec'))).toBe(true);
-    expect(api.admin.hygiene.ignored.has(`${OLD}|audio_codec`)).toBe(false);
+    // Undo puts the row back at once (rollback) and sends the DELETE after it: poll the mock instead of reading it once
+    await expect.poll(() => api.log.some((l) => l.startsWith('DELETE /api/admin/hygiene/ignore') && l.includes('audio_codec'))).toBe(true);
+    await expect.poll(() => api.admin.hygiene.ignored.has(`${OLD}|audio_codec`)).toBe(false);
   });
 
   test('refresh metadata posts once and shows a toast; hidden when canRefresh false', async ({ page, api }) => {

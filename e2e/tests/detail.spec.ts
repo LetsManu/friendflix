@@ -195,7 +195,9 @@ test.describe('detail page (desktop)', () => {
     await page.route(/\/api\/downloads\/options\//, (r) => r.fulfill({ json: { allowed: true, qualities: [{ id: 'hd', label: 'HD', height: 1080, estBytes: 2e9 }], audio: [], subtitles: [], quota: { used: 0, max: 5 }, days: 30 } }));
     await mockAbout(page, NO_KEYS);
     await page.goto('/item/' + MOVIE.id);
-    await tablist(page).getByRole('tab', { name: 'Mehr davon' }).click();
+    // by keyboard: a mouse click scrolls the tab into view, the tab switch scrolls the page back and leaves the pointer
+    // over Play, whose hover prefetch (POST /api/playback/info, after 150 ms) then fires when the next step is slow
+    await tablist(page).getByRole('tab', { name: 'Mehr davon' }).press('Enter');
     await expect(tablist(page).getByRole('tab', { name: 'Mehr davon' })).toHaveAttribute('aria-selected', 'true');
     await page.getByRole('button', { name: 'Mehr', exact: true }).click();
     await page.getByRole('button', { name: 'Herunterladen', exact: true }).click();
@@ -388,9 +390,10 @@ test.describe('detail page: kids', () => {
 
     await page.goto('/profiles');
     await page.getByRole('button', { name: /Mia/ }).click();
-    // the pick leaves with location.href (a full document load): wait for "load", not just the URL commit, which comes
-    // before the new document has a <body>
-    await page.waitForURL((u) => !u.pathname.startsWith('/profiles'));
+    // the pick leaves with location.href (a full document load to "/"), then boot() sends the kids profile on to /kids
+    // (client-side). Wait for /kids, where the app has settled: a URL check on "not /profiles" passed at the commit of
+    // "/", before the new document had a <body>, and the link click below must not race the app's own redirect.
+    await page.waitForURL((u) => u.pathname === '/kids');
     // back to the same title: the kids profile gets its own answer, never the grown-up's cached friends' rating
     await page.evaluate((id) => { const a = document.createElement('a'); a.href = '/item/' + id; document.body.appendChild(a); a.click(); }, MOVIE.id);
     await expect(page.getByRole('heading', { level: 1, name: 'Inkwell' })).toBeVisible();
