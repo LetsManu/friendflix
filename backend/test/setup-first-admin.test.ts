@@ -216,6 +216,27 @@ describe('the setup branch needs the setup session that started the login', () =
     expect(await isSetupComplete(env.ctx)).toBe(false);
   });
 
+  it('an existing account deleted between the lookup and the claim: the claim rolls back (no admin, setup stays open)', async () => {
+    await env.pool.query("insert into users(id, authentik_sub, name, role, jellyfin_user_id, jellyfin_username, jellyfin_pw_enc) values (gen_random_uuid(),'sub-gone','Gone','friend','jfgone','Gone','x')");
+    env.claims.current = person('sub-gone');
+    const s = await unlock(env);
+    const state = await setupLogin(env, s);
+    // the deletion lands right before the claim's transaction starts (after the callback looked the account up)
+    const pool = env.pool as unknown as { connect(...cb: unknown[]): Promise<unknown> };
+    const connect = pool.connect.bind(pool);
+    pool.connect = async (...cb: unknown[]) => {
+      if (cb.length) return connect(...cb);
+      pool.connect = connect;
+      await env.pool.query("delete from users where authentik_sub='sub-gone'");
+      return connect();
+    };
+    const r = await callback(env, state, s.cookies);
+    expect(r.statusCode).not.toBe(302);
+    expect((await env.pool.query("select count(*)::int n from users where role='admin' or authentik_sub='sub-gone'")).rows[0].n).toBe(0);
+    expect((await readMeta(env.pool)).setupCompletedAt).toBeNull();
+    expect(await isSetupComplete(env.ctx)).toBe(false);
+  });
+
   it('an account that already exists (setup reopened by hand) becomes admin and completes setup', async () => {
     await env.pool.query("insert into users(id, authentik_sub, name, role, jellyfin_user_id, jellyfin_username, jellyfin_pw_enc) values (gen_random_uuid(),'sub-pre','Pre','friend','jfpre','Pre','x')");
     env.claims.current = person('sub-pre');
@@ -289,6 +310,65 @@ describe('a claim that does not commit leaves no admin', () => {
     expect(typeof session.reauthAt).toBe('number');
     expect(info).toHaveBeenCalled();
     keys.mockRestore();
+  });
+});
+
+describe('a claim whose transaction aborted (it answers ROLLBACK to the commit) leaves no admin', () => {
+  let env: TestEnv;
+  beforeAll(async () => { env = await makeEnv({ 'DELETE /Users/[^/]+': () => ({ status: 204 }) }, { setupComplete: false }); });
+  afterAll(() => env.close());
+
+  /** the next claim's audit insert fails inside its transaction: Postgres aborts it, audit() swallows the error, COMMIT rolls back */
+  function abortNextClaim() {
+    type Client = { query: (...a: unknown[]) => Promise<unknown>; release: (...a: unknown[]) => void };
+    const pool = env.pool as unknown as { connect(...cb: unknown[]): Promise<Client> };
+    const connect = pool.connect.bind(pool);
+    pool.connect = async (...cb: unknown[]) => {
+      if (cb.length) return connect(...cb);
+      pool.connect = connect;
+      const c = await connect();
+      const query = c.query;
+      const release = c.release;
+      c.query = (...a: unknown[]) => (String(a[0]).startsWith('insert into audit_log') ? query.apply(c, ['select 1/0']) : query.apply(c, a));
+      c.release = (...a: unknown[]) => { c.query = query; c.release = release; release.apply(c, a); };
+      return c;
+    };
+  }
+
+  it('no admin, setup stays open, the code stays valid, no session; a later claim succeeds with exactly one admin', async () => {
+    const code = await issueSetupCode(env.ctx);
+    const hash = (await readMeta(env.pool)).setupCodeHash;
+    env.claims.current = person('sub-abort');
+    const a = await unlock(env, code);
+    abortNextClaim();
+    const ra = await callback(env, await setupLogin(env, a), a.cookies);
+    expect(ra.statusCode).not.toBe(302);
+    expect(ra.cookies.find((c) => c.name === 'ff_sid')).toBeUndefined();
+    expect((await env.pool.query('select count(*)::int n from users')).rows[0].n).toBe(0);
+    const meta = await readMeta(env.pool);
+    expect(meta.setupCompletedAt).toBeNull();
+    expect(meta.setupCodeHash).toBe(hash);
+    expect(await isSetupComplete(env.ctx)).toBe(false);
+    expect(await audits(env, 'setup.completed')).toEqual([]);
+    // the media server account created for the aborted claim is deleted again
+    expect(env.jfCalls.some((c) => c.method === 'DELETE' && c.path.startsWith('/Users/'))).toBe(true);
+    // the same code still opens a setup session, and the next claim completes setup
+    env.claims.current = person('sub-next');
+    const b = await unlock(env, code);
+    const rb = await callback(env, await setupLogin(env, b), b.cookies);
+    expect(rb.headers.location).toBe('/setup/extras');
+    expect((await env.pool.query("select authentik_sub from users where role='admin'")).rows).toEqual([{ authentik_sub: 'sub-next' }]);
+    expect((await env.pool.query('select count(*)::int n from users')).rows[0].n).toBe(1);
+    expect(await audits(env, 'setup.completed')).toHaveLength(1);
+  });
+
+  it('completeSetup never completes setup on its own: without an admin account it leaves setup open', async () => {
+    await updateMeta(env.pool, { setupCompletedAt: null });
+    await env.ctx.settings.reload();
+    const warn = vi.fn();
+    await completeSetup(env.ctx, '00000000-0000-4000-8000-000000000000', {}, { info: () => {}, warn });
+    expect((await readMeta(env.pool)).setupCompletedAt).toBeNull();
+    expect(await isSetupComplete(env.ctx)).toBe(false);
   });
 });
 

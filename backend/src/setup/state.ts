@@ -83,7 +83,10 @@ export async function claimSetup<T>(ctx: Pick<Ctx, 'db'>, provision: (tx: pg.Poo
       return null;
     }
     const result = await provision(c);
-    await c.query('commit');
+    // a transaction that a failed statement aborted (one whose error was caught, such as audit()'s insert) does not throw here: Postgres
+    // answers ROLLBACK to the COMMIT. Only a real COMMIT is a win; anything else is a claim that did not happen
+    const done = await c.query('commit');
+    if (done.command !== 'COMMIT') throw new Error('setup claim rolled back');
     return result;
   } catch (e) {
     await c.query('rollback').catch(() => undefined);
@@ -94,8 +97,9 @@ export async function claimSetup<T>(ctx: Pick<Ctx, 'db'>, provision: (tx: pg.Poo
 }
 
 /**
- * Completes setup for the first admin `userId` (spec Part E2), after claimSetup committed: setup_completed_at (if it is not set yet), the
- * code cleared, every setup session deleted, audit `setup.completed`, and the other instances told (their gate opens). It also stamps
+ * Completes setup for the first admin `userId` (spec Part E2), after claimSetup committed (which set setup_completed_at, cleared the code
+ * and moved the rev): the code cleared once more and setup_completed_at set if it is somehow missing, both only while `userId` is an
+ * admin account (completion never happens here on its own: without the claim's admin there is nothing to complete), every setup session deleted, audit `setup.completed`, and the other instances told (their gate opens). It also stamps
  * `reauthAt` on the new admin's session object, which the caller saves afterwards, so the wizard's step 6 can save secrets without another
  * re-authentication. The steps are best effort: setup is complete once the claim committed, so a failing step (a Redis outage) is logged
  * and the admin still gets the session (the setup sessions run out on their TTL, other instances reload on their poll).
@@ -110,7 +114,8 @@ export async function completeSetup(ctx: Pick<Ctx, 'db' | 'kv' | 'settings'>, us
     }
   };
   await step('marking setup complete', () => ctx.db.query(`update settings_meta set setup_code_hash = null,
-    setup_completed_at = coalesce(setup_completed_at, now()), rev = rev + case when setup_completed_at is null then 1 else 0 end where id = 1`));
+    setup_completed_at = coalesce(setup_completed_at, now()), rev = rev + case when setup_completed_at is null then 1 else 0 end
+    where id = 1 and exists (select 1 from users where id = $1 and role = 'admin')`, [userId]));
   await step('deleting the setup sessions', async () => {
     for (const key of await ctx.kv.keys(SETUP_SESSION_PREFIX)) await ctx.kv.del(key);
   });

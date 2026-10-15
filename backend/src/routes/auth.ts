@@ -267,7 +267,9 @@ export function authRoutes(app: FastifyInstance, ctx: Ctx) {
     try {
       admin = await claimSetup(ctx, async (tx) => {
         if (!existing) return (made.user = await provisionUser(ctx, claims, 'admin', null, tx));
-        await tx.query("update users set role='admin' where id=$1", [existing.id]);
+        // the account may have been deleted since the lookup: no row, no admin, so the claim rolls back instead of completing setup
+        const promoted = await tx.query("update users set role='admin' where id=$1 returning id", [existing.id]);
+        if (!promoted.rowCount) throw new Error('setup claim: the account is gone');
         return { ...existing, role: 'admin' };
       });
     } catch (e) {
