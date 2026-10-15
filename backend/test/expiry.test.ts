@@ -121,6 +121,60 @@ describe('expiryTick', () => {
   });
 });
 
+describe('expiryTick and concurrent admin changes', () => {
+  const ENDED = 'select id, name, access_until from users where access_until <=';
+  /** Runs `between` right after the tick has selected the accounts whose access ended (before it locks them). */
+  async function tickWith(now: Date, between: () => Promise<unknown>) {
+    const db = env.ctx.db;
+    let hook: Promise<unknown> | undefined;
+    env.ctx.db = new Proxy(db, {
+      get(t, prop) {
+        const v = Reflect.get(t, prop);
+        if (prop !== 'query') return v;
+        return async (...args: unknown[]) => {
+          const res = await (v as (...a: unknown[]) => Promise<unknown>).apply(t, args);
+          if (typeof args[0] === 'string' && args[0].startsWith(ENDED) && !hook) { hook = between(); await hook; }
+          return res;
+        };
+      },
+    });
+    try {
+      return await expiryTick(env.ctx, now);
+    } finally {
+      env.ctx.db = db;
+    }
+  }
+
+  it('an extension made after the tick selected the account is not undone', async () => {
+    const now = new Date();
+    await setUntil(ids.anna!, new Date(now.getTime() - 60e3));
+    const until = new Date(now.getTime() + 30 * DAY);
+    expect(await tickWith(now, () => setAccessUntil(env.ctx, adminId, ids.anna!, until))).toEqual({ warned: 0, locked: 0 });
+    expect(await row(ids.anna!)).toMatchObject({ disabled: false, locked_reason: null });
+    expect(await audits('user.expired', ids.anna!)).toHaveLength(0);
+  });
+
+  it('the last-admin guard holds when the tick and an admin lock race', async () => {
+    const now = new Date();
+    await env.pool.query("update users set role='admin' where id=$1", [ids.ben]);
+    await setUntil(adminId, new Date(now.getTime() - 60e3)); // the acting admin's access has ended
+    let patch: Promise<{ statusCode: number }> | undefined;
+    // the admin locks Ben while the tick is between its select and the lock of the admin
+    await tickWith(now, async () => {
+      patch = env.app.inject({ method: 'PATCH', url: `/api/admin/users/${ids.ben}`, cookies: admin.cookies, headers: { 'x-csrf-token': admin.csrf }, payload: { disabled: true } });
+      // let the PATCH reach its own last-admin check before the tick goes on
+      for (let i = 0; i < 50; i++) await new Promise((r) => setImmediate(r));
+    });
+    await patch;
+    try {
+      expect(Number((await env.pool.query("select count(*) n from users where role='admin' and not disabled")).rows[0].n)).toBe(1);
+    } finally {
+      await env.pool.query("update users set disabled=false, locked_reason=null, access_until=null where id=$1", [adminId]);
+      admin = await env.login(); // a lock of the admin may have revoked the session
+    }
+  });
+});
+
 describe('changing access until', () => {
   it('extending an expired account unlocks it', async () => {
     const now = new Date();

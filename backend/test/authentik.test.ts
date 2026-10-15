@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { describe, expect, it } from 'vitest';
-import { akMfaState, akSendMfaSetup, akSendRecovery, akUserBySub } from '../src/authentik.js';
+import { akMfaState, akSendMfaSetup, akSendRecovery, akSetActive, akUpdateUser, akUserBySub, akUserSettingsUrl } from '../src/authentik.js';
 import type { Ctx } from '../src/ctx.js';
 import { MemoryKV } from '../src/kv.js';
 import { HttpError } from '../src/users.js';
@@ -219,5 +219,91 @@ describe('the token never leaks', () => {
     const r = await codeOf(akSendRecovery(ctx, SUB));
     expect(r).toMatchObject({ status: 502, code: 'authentik_error' });
     expect(leaks(r.err)).toBe(false);
+  });
+});
+
+describe('akUpdateUser', () => {
+  it('akUpdateUser PATCHes the user pk with the bearer header', async () => {
+    const { ctx, calls } = mk({ 'GET /api/v3/core/users/': users, 'PATCH /api/v3/core/users/7/': () => ({ json: { ...ANNA, name: 'Anna B.' } }) });
+    await akUpdateUser(ctx, SUB, { name: 'Anna B.' });
+    const patch = calls.find((c) => c.method === 'PATCH')!;
+    expect(patch).toMatchObject({ path: '/api/v3/core/users/7/', authorization: `Bearer ${TOKEN}`, body: { name: 'Anna B.' } });
+  });
+
+  it('maps 400 -> invalid_input, 404 -> authentik_user_not_found (cached lookup dropped), no config -> 503', async () => {
+    const answer = (status: number) => ({ 'GET /api/v3/core/users/': users, 'PATCH /api/v3/core/users/7/': () => ({ status, json: { name: ['bad'] } }) }) as Record<string, Handler>;
+    expect(await codeOf(akUpdateUser(mk(answer(400)).ctx, SUB, { name: 'x' }))).toMatchObject({ status: 400, code: 'invalid_input' });
+    const gone = mk(answer(404));
+    await gone.ctx.kv.set(`akmfa:${SUB}`, '{}', 60);
+    expect(await codeOf(akUpdateUser(gone.ctx, SUB, { name: 'x' }))).toMatchObject({ status: 404, code: 'authentik_user_not_found' });
+    expect(await gone.ctx.kv.get(`akuser:${SUB}`)).toBeNull();
+    expect(await gone.ctx.kv.get(`akmfa:${SUB}`)).toBeNull();
+    const none = mk({ 'GET /api/v3/core/users/': () => ({ json: { pagination: { next: 0 }, results: [] } }) });
+    expect(await codeOf(akUpdateUser(none.ctx, SUB, { name: 'x' }))).toMatchObject({ status: 404, code: 'authentik_user_not_found' });
+    const off = mk(answer(200), { configured: false });
+    expect(await codeOf(akUpdateUser(off.ctx, SUB, { name: 'x' }))).toMatchObject({ status: 503, code: 'authentik_unavailable' });
+    expect(off.calls).toHaveLength(0);
+  });
+});
+
+describe('akSetActive', () => {
+  it('PATCHes is_active', async () => {
+    const { ctx, calls } = mk({ 'GET /api/v3/core/users/': users, 'PATCH /api/v3/core/users/7/': () => ({ json: ANNA }) });
+    expect(await akSetActive(ctx, SUB, false)).toBe('done');
+    expect(calls.find((c) => c.method === 'PATCH')).toMatchObject({ path: '/api/v3/core/users/7/', body: { is_active: false }, authorization: `Bearer ${TOKEN}` });
+  });
+
+  it('a user already in the wanted state is done without a PATCH (works without change_user)', async () => {
+    const inactive: Handler = (u) => ({ json: { pagination: { next: 0 }, results: u.searchParams.get('search') === ANNA.email ? [{ ...ANNA, is_active: false }] : [] } });
+    // the token may only view users: a PATCH would answer 403
+    const { ctx, calls } = mk({ 'GET /api/v3/core/users/': inactive, 'PATCH /api/v3/core/users/7/': () => ({ status: 403 }) });
+    expect(await akSetActive(ctx, SUB, false)).toBe('done');
+    expect(calls.filter((c) => c.method === 'PATCH')).toEqual([]);
+    // the other direction still PATCHes (and fails with the rejected token)
+    expect(await codeOf(akSetActive(ctx, SUB, true))).toMatchObject({ status: 502, code: 'authentik_token_rejected' });
+    expect(calls.filter((c) => c.method === 'PATCH')).toHaveLength(1);
+  });
+
+  it('akSetActive maps 404 to not_found', async () => {
+    const gone = mk({ 'GET /api/v3/core/users/': users, 'PATCH /api/v3/core/users/7/': () => ({ status: 404 }) });
+    expect(await akSetActive(gone.ctx, SUB, false)).toBe('not_found');
+    expect(await gone.ctx.kv.get(`akuser:${SUB}`)).toBeNull();
+    const none = mk({ 'GET /api/v3/core/users/': () => ({ json: { pagination: { next: 0 }, results: [] } }) });
+    expect(await akSetActive(none.ctx, SUB, true)).toBe('not_found');
+    const off = mk({}, { configured: false });
+    expect(await akSetActive(off.ctx, SUB, true)).toBe('not_configured');
+    expect(off.calls).toHaveLength(0);
+    // other failures still throw (the caller retries)
+    expect(await codeOf(akSetActive(mk({ 'GET /api/v3/core/users/': users, 'PATCH /api/v3/core/users/7/': () => ({ status: 500 }) }).ctx, SUB, false)))
+      .toMatchObject({ status: 502, code: 'authentik_error' });
+  });
+});
+
+describe('akUserSettingsUrl', () => {
+  const ak = { ...cfg, AUTHENTIK_URL: 'http://authentik-server:9000', AUTHENTIK_API_TOKEN: TOKEN };
+  it('the issuer origin plus the user settings path; null only for a non-Authentik issuer (no API needed)', () => {
+    expect(akUserSettingsUrl({ ...ak, OIDC_ISSUER: 'https://login.example.com/application/o/friendflix/' })).toBe('https://login.example.com/if/user/#/settings');
+    expect(akUserSettingsUrl({ ...ak, OIDC_ISSUER: 'https://idp.example.com/realms/x' })).toBeNull();
+    expect(akUserSettingsUrl({ ...cfg, OIDC_ISSUER: 'https://login.example.com/application/o/friendflix/' })).toBe('https://login.example.com/if/user/#/settings');
+    expect(akUserSettingsUrl({ ...ak, OIDC_ISSUER: 'not a url' })).toBeNull();
+  });
+});
+
+describe('token never in thrown messages', () => {
+  const leaks = (e: Error) => [e.message, String(e), e.stack ?? '', JSON.stringify(e)].some((s) => s.includes(TOKEN));
+  it('token never in thrown messages', async () => {
+    const echo: Handler = () => ({ status: 403, json: { detail: `Token invalid: ${TOKEN}` } });
+    const { ctx } = mk({ 'GET /api/v3/core/users/': users, 'PATCH /api/v3/core/users/7/': echo });
+    for (const p of [akUpdateUser(ctx, SUB, { name: 'x' }), akSetActive(ctx, SUB, false)]) {
+      const r = await codeOf(p);
+      expect(r).toMatchObject({ status: 502, code: 'authentik_token_rejected' });
+      expect(leaks(r.err)).toBe(false);
+    }
+    const down = mk({}, { throwWith: `connect ECONNREFUSED (Authorization: Bearer ${TOKEN})` });
+    for (const p of [akUpdateUser(down.ctx, SUB, { name: 'x' }), akSetActive(down.ctx, SUB, true)]) {
+      const r = await codeOf(p);
+      expect(r).toMatchObject({ status: 503, code: 'authentik_unavailable' });
+      expect(leaks(r.err)).toBe(false);
+    }
   });
 });

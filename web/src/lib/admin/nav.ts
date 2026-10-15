@@ -32,6 +32,7 @@ export const GROUPS: NavGroup[] = [
     { href: '/admin/status', label: 'admin.tabs.status', icon: 'activity' },
     { href: '/admin/audit', label: 'admin.tabs.audit', icon: 'shield' },
     { href: '/admin/update', label: 'admin.tabs.update', icon: 'refresh' },
+    { href: '/admin/settings', label: 'admin.tabs.settings', icon: 'settings' },
   ] },
 ];
 export const ALL_ITEMS: NavItem[] = [OVERVIEW, ...GROUPS.flatMap((g) => g.items)];

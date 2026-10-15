@@ -5,16 +5,20 @@
    * Admin: users – tabs Users | Waiting for approval (n) | Invites (`?tab=`). Users: server-side search/sort/paging,
    * filters (role, status, last active), role select (optimistic, rollback), lock/unlock (confirm + undo), sign out
    * everywhere (confirm); row checkboxes with a bulk bar (role, lock, unlock, access-until, sign out; confirm with the names).
+   * "Deletion pending" lists scheduled deletions (with their date; "Restore account" instead of unlock) and cleanup rows:
+   * deletions under way, shown with the step in work and its error; they are not selectable and have no actions, and link to
+   * the detail page only while the users row exists (gone: steps 5-6).
    */
   import { onMount } from 'svelte';
   import { goto } from '$app/navigation';
-  import { api, ApiError } from '#lib/api';
+  import { api } from '#lib/api';
   import { avatarBg, initial } from '#lib/avatars';
-  import { fmtDate, fmtDateTime, fmtNumber, fmtRelative, t, tr } from '#lib/i18n';
+  import { fmtDate, fmtDateTime, fmtNumber, fmtRelative, locale, t, tr } from '#lib/i18n';
   import { pageStore } from '#lib/page';
   import ApprovalsPanel from '#lib/admin/ApprovalsPanel.svelte';
   import InvitesPanel from '#lib/admin/InvitesPanel.svelte';
-  import { accessPreset, bulkSummary, dayEnd } from '#lib/admin/people';
+  import { accessPreset, accountGuardText, bulkSummary, deletionErrorText, futureDayEnd, restoredText, today } from '#lib/admin/people';
+  import { deletionLabel } from '#lib/admin/user/detail';
   import { refreshSummary } from '#lib/admin/summary';
   import { roleName, type RoleInfo } from '#lib/roles';
   import { busyKeys, errorText, runAction } from '#lib/ui/action';
@@ -30,6 +34,9 @@
   interface U {
     id: string; name: string; email: string | null; role: string | null; disabled: boolean; jellyfin_username: string | null; created_at: string
     last_seen: string | null; access_until: string | null; profiles: number; devices: number; pending: boolean
+    deletion_at?: string | null; locked_reason?: string | null
+    /** status=deleting only: a deletion under way (step = the step being worked on, 1-6; error = its last error code) */
+    cleanup?: { step: number; error: string | null; gone: boolean } | null
   }
   const TABS = ['users', 'approvals', 'invites'] as const;
   type Tab = typeof TABS[number];
@@ -97,7 +104,7 @@
   $: statusOptions = [
     { value: '', label: $t('adminPeople.users.allStatus') }, { value: 'active', label: $t('adminPeople.users.active') },
     { value: 'locked', label: $t('adminPeople.users.locked') }, { value: 'expiring', label: $t('adminPeople.users.expiring') },
-    { value: 'pending', label: $t('adminPeople.users.pending') },
+    { value: 'pending', label: $t('adminPeople.users.pending') }, { value: 'deleting', label: $t('adminPeople.users.deleting') },
   ];
   $: lastActiveOptions = [
     { value: '', label: $t('adminPeople.users.anyTime') }, { value: '7', label: $t('adminPeople.users.lastActive.d7') },
@@ -117,7 +124,10 @@
   ] satisfies Column<U>[];
   const optionsFor = (opts: Array<{ value: string; label: string }>, role: string) => (opts.some((o) => o.value === role) ? opts : [...opts, { value: role, label: rname(role) }]);
   // nothing is selectable until /api/me says which row is the admin's own
-  $: selectable = (u: U): boolean => !u.pending && meId !== '' && u.id !== meId;
+  $: selectable = (u: U): boolean => !u.pending && !u.cleanup && meId !== '' && u.id !== meId;
+  const cleanupText = (c: NonNullable<U['cleanup']>): string => (c.error
+    ? tr('adminPeople.users.cleanupError', { n: c.step, error: c.error })
+    : tr('adminPeople.users.cleanupStep', { n: c.step }));
 
   function changeRole(u: U, role: string) {
     const prev = u.role;
@@ -138,6 +148,7 @@
       key: `user:${u.id}`,
       apply: () => { const prev = u.disabled; u.disabled = disabled; rows = rows; return () => { u.disabled = prev; rows = rows; }; },
       run: patch(disabled),
+      error: (e) => accountGuardText(e) ?? errorText(e),
       success: tr(disabled ? 'adminPeople.users.lockedToast' : 'adminPeople.users.unlockedToast', { name: u.name }),
       undo: { run: patch(!disabled) },
     }).then(() => refreshSummary());
@@ -163,12 +174,22 @@
     });
   }
 
-  $: actions = (u: U): MoreAction[] => u.pending
+  // a scheduled deletion: restore (no undo: locking again would be a manual lock and lose the deletion)
+  async function restoreDeletion(u: U) {
+    const r = await runAction({
+      key: `user:${u.id}`, run: () => api(`/api/admin/users/${u.id}/deletion/restore`, { method: 'POST' }), error: deletionErrorText,
+      success: restoredText(u.name, u.access_until),
+    });
+    if (r.ok) { void load(); void refreshSummary(); }
+  }
+
+  $: actions = (u: U): MoreAction[] => u.cleanup ? [] : u.pending
     ? [{ id: 'approve', label: $t('adminPeople.users.toApprovals'), icon: 'check', run: () => void select('approvals') }]
     : u.id === meId
       ? [{ id: 'self', label: $t('adminPeople.users.selfNote'), icon: 'lock', disabled: true }]
       : [
-        u.disabled ? { id: 'unlock', label: $t('adminPeople.users.unlock'), icon: 'unlock', run: () => setLocked(u, false) } : { id: 'lock', label: $t('adminPeople.users.lock'), icon: 'lock', danger: true, run: () => lock(u) },
+        u.disabled && u.locked_reason === 'deletion' ? { id: 'restore', label: $t('adminPeople.detail.actions.restore'), icon: 'unlock', run: () => restoreDeletion(u) }
+          : u.disabled ? { id: 'unlock', label: $t('adminPeople.users.unlock'), icon: 'unlock', run: () => setLocked(u, false) } : { id: 'lock', label: $t('adminPeople.users.lock'), icon: 'lock', danger: true, run: () => lock(u) },
         { id: 'signout', label: $t('adminPeople.users.signOut'), icon: 'log-out', danger: true, run: () => signOut(u) },
       ];
 
@@ -201,13 +222,8 @@
       case 'access': return b.accessUntil ? tr('adminPeople.bulk.confirmAccess', { n, date: fmtDate(b.accessUntil) }) : tr('adminPeople.bulk.confirmAccessUnlimited', { n });
     }
   }
-  const bulkError = (e: unknown): string => {
-    const code = e instanceof ApiError ? (e.body as { error?: string } | null)?.error : undefined;
-    // validation and guards are all or nothing; anything else may have stopped halfway through the accounts
-    if (code === 'last_admin') return tr('adminPeople.bulk.lastAdmin');
-    if (code === 'cannot_lock_yourself_out') return tr('adminPeople.users.selfNote');
-    return `${errorText(e)} ${tr('adminPeople.bulk.partial')}`;
-  };
+  // validation and guards are all or nothing; anything else may have stopped halfway through the accounts
+  const bulkError = (e: unknown): string => accountGuardText(e) ?? `${errorText(e)} ${tr('adminPeople.bulk.partial')}`;
   async function bulk(b: Bulk) {
     const ids = [...selected.keys()], picked = [...selected.values()];
     if (!ids.length) return;
@@ -242,10 +258,11 @@
     bulkRole = '';
     void bulk({ action: 'role', role });
   }
-  $: bulkAccessReady = bulkAccess !== '' && (bulkAccess !== 'date' || dayEnd(bulkDay) !== '');
+  // a past end date would lock everyone selected at the next expiry tick
+  $: bulkAccessReady = bulkAccess !== '' && (bulkAccess !== 'date' || futureDayEnd(bulkDay) !== '');
   function applyAccess() {
     if (!bulkAccessReady) return;
-    const accessUntil = bulkAccess === 'date' ? dayEnd(bulkDay) : accessPreset(bulkAccess === 'p30' ? '+30' : bulkAccess === 'p90' ? '+90' : 'unlimited');
+    const accessUntil = bulkAccess === 'date' ? futureDayEnd(bulkDay) : accessPreset(bulkAccess === 'p30' ? '+30' : bulkAccess === 'p90' ? '+90' : 'unlimited');
     bulkAccess = ''; bulkDay = '';
     void bulk({ action: 'access', accessUntil });
   }
@@ -276,7 +293,7 @@
         <Button variant="secondary" size="sm" icon="unlock" disabled={busyBulk} on:click={() => bulk({ action: 'unlock' })}>{$t('adminPeople.users.unlock')}</Button>
         <form class="pickapply" aria-label={$t('adminPeople.access.label')} on:submit|preventDefault={applyAccess}>
           <Select label={$t('adminPeople.access.label')} options={bulkAccessOptions} bind:value={bulkAccess} hideLabel disabled={busyBulk} />
-          {#if bulkAccess === 'date'}<Field type="date" label={$t('adminPeople.access.day')} bind:value={bulkDay} hideLabel required />{/if}
+          {#if bulkAccess === 'date'}<Field type="date" label={$t('adminPeople.access.day')} bind:value={bulkDay} hideLabel min={today()} required />{/if}
           <Button type="submit" size="sm" variant="secondary" disabled={busyBulk || !bulkAccessReady}>{$t('adminPeople.bulk.apply')}</Button>
         </form>
         <Button variant="secondary" size="sm" icon="log-out" disabled={busyBulk} on:click={() => bulk({ action: 'revoke' })}>{$t('adminPeople.users.signOut')}</Button>
@@ -308,9 +325,11 @@
           <span class="who">
             <span class="av" style:background={avatarBg(undefined)} aria-hidden="true">{initial(row.name)}</span>
             <span class="nm">
-              <span class="n">{#if row.pending}{row.name}{:else}<a href="/admin/users/{row.id}">{row.name}</a>{/if}{#if row.id === meId} <StatusPill tone="info" label={$t('adminPeople.users.you')} icon="" />{/if}</span>
+              <span class="n">{#if row.pending || row.cleanup?.gone}{row.name}{:else}<a href="/admin/users/{row.id}">{row.name}</a>{/if}{#if row.id === meId} <StatusPill tone="info" label={$t('adminPeople.users.you')} icon="" />{/if}</span>
               <span class="st">
                 {#if row.pending}<StatusPill tone="warn" label={$t('adminPeople.users.pending')} />
+                {:else if row.cleanup}<StatusPill tone={row.cleanup.error ? 'err' : 'warn'} label={$locale && cleanupText(row.cleanup)} />
+                {:else if row.disabled && row.locked_reason === 'deletion' && row.deletion_at}<StatusPill tone="err" label={$locale && deletionLabel(row.deletion_at)} icon="lock" />
                 {:else if row.disabled}<StatusPill tone="err" label={$t('adminPeople.users.locked')} icon="lock" />
                 {:else}<StatusPill tone="ok" label={$t('adminPeople.users.active')} />{/if}
                 {#if row.jellyfin_username}<span class="sub">{row.jellyfin_username}</span>{/if}
@@ -331,7 +350,7 @@
         {:else if col.key === 'mfa'}<span class="sub" title={$t('adminPeople.users.mfaInDetail')}>–</span>
         {:else if col.key === 'accessUntil'}
           {#if row.access_until}<time datetime={row.access_until} title={fmtRelative(row.access_until)}>{fmtDate(row.access_until, { dateStyle: 'medium' })}</time>
-          {:else}<span class="sub">{row.pending ? '–' : $t('adminPeople.users.unlimited')}</span>{/if}
+          {:else}<span class="sub">{row.pending || row.cleanup ? '–' : $t('adminPeople.users.unlimited')}</span>{/if}
         {/if}
       </svelte:fragment>
     </DataTable>

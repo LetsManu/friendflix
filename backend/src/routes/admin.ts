@@ -62,7 +62,7 @@ export function adminRoutes(app: FastifyInstance, ctx: Ctx) {
       one<{ failed: string; ok: string; bytes: string }>("select count(*) filter (where status='failed') failed, count(*) filter (where status='ok') ok, coalesce(sum(bytes) filter (where status='ok'),0)::text bytes from preview_clips"),
       one<{ bytes: string }>("select coalesce(sum(bytes),0)::text bytes from download_jobs where status='ready'"),
       ctx.db.query<{ finished_at: Date; results: Array<{ ok: boolean }> }>('select finished_at, results from playback_checks order by id desc limit 1').then((r) => r.rows[0] ?? null),
-      ctx.seerr.requestCount().catch(() => null), // Seerr down or not configured: the UI shows "not reachable"
+      ctx.seerr ? ctx.seerr.requestCount().catch(() => null) : null, // Seerr down or not set up: the UI shows "not reachable"
       // Block 22: a fresh health snapshot already knows whether the media server answers (saves a ping per shell load)
       freshSnapshot(ctx).then((snap) => {
         const media = snap?.services.find((x) => x.id === 'media');
@@ -338,13 +338,15 @@ export function adminRoutes(app: FastifyInstance, ctx: Ctx) {
     else if (p.action) { const exact = w.param(p.action), prefix = w.param(`${p.action}.%`); w.add(`(a.action = ${exact} or a.action like ${prefix})`); }
     if (p.from) w.add('a.at >= ?', p.from);
     if (p.to) w.add('a.at <= ?', p.to);
-    if (p.q) { const m = w.param(likePattern(p.q)); w.add(`(a.action ilike ${m} or coalesce(u.name,'') ilike ${m} or coalesce(tu.name, tl.name, '') ilike ${m})`); }
-    // target_name: the user (or list) the target id points to, so the UI can say "… locked Anna" instead of a uuid
-    const from = `from audit_log a left join users u on u.id = a.actor
-         left join users tu on tu.id::text = a.target left join lists tl on tl.id::text = a.target`;
+    if (p.q) { const m = w.param(likePattern(p.q)); w.add(`(a.action ilike ${m} or coalesce(u.name, ad.pseudonym, '') ilike ${m} or coalesce(tu.name, tad.pseudonym, tl.name, '') ilike ${m})`); }
+    // target_name: the user (or list) the target id points to, so the UI can say "… locked Anna" instead of a uuid;
+    // a deleted account shows its pseudonym (account_deletions)
+    const from = `from audit_log a left join users u on u.id = a.actor left join account_deletions ad on ad.user_id = a.actor
+         left join users tu on tu.id::text = a.target left join account_deletions tad on tad.user_id::text = a.target
+         left join lists tl on tl.id::text = a.target`;
     const total = Number((await ctx.db.query<{ c: string }>(`select count(*) c ${from} ${w.sql}`, w.params)).rows[0]!.c);
     const r = await ctx.db.query(
-      `select a.id, a.at, a.action, a.target, a.meta, a.actor actor_id, u.name actor, coalesce(tu.name, tl.name) target_name ${from} ${w.sql}
+      `select a.id, a.at, a.action, a.target, a.meta, a.actor actor_id, coalesce(u.name, ad.pseudonym) actor, coalesce(tu.name, tad.pseudonym, tl.name) target_name ${from} ${w.sql}
         order by a.id ${p.dir === 'asc' ? 'asc' : 'desc'} limit ${p.limit ?? 100} offset ${p.offset ?? 0}`,
       w.params,
     );
@@ -353,7 +355,10 @@ export function adminRoutes(app: FastifyInstance, ctx: Ctx) {
 
   // options of the audit filters: people who acted and the action groups that occur
   app.get('/api/admin/audit/filters', admin, async () => {
-    const actors = (await ctx.db.query<{ id: string; name: string }>('select distinct u.id, u.name from audit_log a join users u on u.id = a.actor order by u.name')).rows;
+    const actors = (await ctx.db.query<{ id: string; name: string }>(
+      `select distinct a.actor id, coalesce(u.name, ad.pseudonym) name from audit_log a
+         left join users u on u.id = a.actor left join account_deletions ad on ad.user_id = a.actor
+        where coalesce(u.name, ad.pseudonym) is not null order by 2`)).rows;
     const system = Number((await ctx.db.query<{ c: string }>('select count(*) c from (select 1 from audit_log where actor is null limit 1) x')).rows[0]!.c) > 0;
     const categories = (await ctx.db.query<{ c: string }>("select distinct split_part(action, '.', 1) c from audit_log order by 1")).rows.map((x) => x.c);
     return { actors, system, categories };
@@ -420,6 +425,16 @@ export function adminRoutes(app: FastifyInstance, ctx: Ctx) {
     if (!r.rowCount) return reply.code(404).send({ error: 'not_found' });
     await audit(ctx, req.user!.id, 'device.approve', req.user!.id, { by: 'self' });
     return { ok: true };
+  });
+  // sign out one own device: its sessions go (with its offline licences, push subscriptions and cast tokens), the approval stays
+  app.post('/api/devices/:id/sign-out', { preHandler: requireOwner(ctx) }, async (req, reply) => {
+    const id = z.string().min(10).max(80).parse((req.params as { id: string }).id);
+    if (id === req.session!.deviceId) return reply.code(409).send({ error: 'current_device' });
+    const own = await ctx.db.query('select 1 from devices where user_id=$1 and device_id=$2', [req.user!.id, id]);
+    if (!own.rowCount) return reply.code(404).send({ error: 'not_found' });
+    const n = await revokeSessions(ctx, req.user!.id, id);
+    await audit(ctx, req.user!.id, 'session.revoke_device', req.user!.id, { sessions: n });
+    return { revoked: n };
   });
   app.delete('/api/devices/:id', { preHandler: requireOwner(ctx) }, async (req, reply) => {
     const id = z.string().min(10).max(80).parse((req.params as { id: string }).id);

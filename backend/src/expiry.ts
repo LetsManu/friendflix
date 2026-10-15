@@ -4,7 +4,7 @@ import { audit } from './audit.js';
 import type { Ctx } from './ctx.js';
 import { m } from './i18n.js';
 import { notify, notifyAdmins } from './notify.js';
-import { HttpError, assertNotLastAdmin, lockUser } from './users.js';
+import { HttpError, accountSerial, assertNotLastAdmin, lockUser } from './users.js';
 
 /** How long before `access_until` the account and the admins are warned. */
 const WARN_MS = 3 * 86400e3;
@@ -41,7 +41,7 @@ export async function expiryTick(ctx: Ctx, now = new Date()): Promise<{ warned: 
   let failure: unknown;
   for (const u of ended.rows) {
     try {
-      if (await expire(ctx, u)) locked++;
+      if (await accountSerial(() => expire(ctx, u.id, now))) locked++;
     } catch (e) {
       failure ??= e; // one failing account (e.g. media server error) must not block the others; retried next tick
     }
@@ -50,8 +50,14 @@ export async function expiryTick(ctx: Ctx, now = new Date()): Promise<{ warned: 
   return { warned: soon.rowCount ?? 0, locked };
 }
 
-/** Locks one account whose access ended. Returns false when it is the last active admin and stays unlocked. */
-async function expire(ctx: Ctx, u: Due): Promise<boolean> {
+/**
+ * Locks one account whose access ended. Runs in the account serial queue and reads the account again there, so an
+ * extension or lock made since the tick's select is respected. Returns false when nothing was locked (no longer ended,
+ * or the last active admin, who stays unlocked).
+ */
+async function expire(ctx: Ctx, id: string, now: Date): Promise<boolean> {
+  const u = (await ctx.db.query<Due>('select id, name, access_until from users where id=$1 and access_until <= $2 and not disabled', [id, now])).rows[0];
+  if (!u) return false;
   const iso = u.access_until.toISOString();
   const adminNotice = { kind: 'access_ended', title: m('notify.access.endedAdmin', { name: u.name, date: { date: iso } }), link: ADMIN_LINK };
   try {

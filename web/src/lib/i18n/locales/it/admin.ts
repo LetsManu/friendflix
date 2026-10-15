@@ -10,6 +10,7 @@ const it: Translation<typeof de> = {
     users: 'Utenti', status: 'Stato', previews: 'Anteprime', playback: 'Test di riproduzione', digest: 'Riepilogo settimanale', sources: 'Fonti di dati', invites: 'Inviti',
     requests: 'Richieste', polls: 'Votazioni', lists: 'Liste', roles: 'Ruoli', devices: 'Dispositivi', audit: 'Registro di audit', update: 'Aggiornamento',
     hygiene: 'Cura della libreria',
+    settings: 'Impostazioni',
     usage: 'Utilizzo',
   },
   roleNames: { friend: 'Amico', family: 'Famiglia', guest: 'Ospite', admin: 'Admin' },
@@ -322,6 +323,16 @@ const it: Translation<typeof de> = {
       activity_viewed: '{actor} ha visualizzato la cronologia di {target}',
       revoke_device: '{actor} ha disconnesso {target} su un dispositivo',
       recovery_email_failed: '{actor} ha provato a inviare a {target} un link per la password – non riuscito ({reason})',
+      deletion_requested: '{actor} ha programmato l’eliminazione di {target} (il {date})',
+      deletion_requested_self: '{actor} ha chiesto di eliminare il proprio account (il {date})',
+      deletion_restored: '{actor} ha annullato l’eliminazione di {target}',
+      deletion_restored_self: '{actor} ha annullato l’eliminazione del proprio account',
+      deletion_restored_locked: '{actor} ha annullato l’eliminazione di {target} – resta bloccato, l’accesso è scaduto',
+      deletion_restored_self_locked: '{actor} ha annullato l’eliminazione del proprio account – resta bloccato, l’accesso è scaduto',
+      deletion_now: '{actor} ha fatto eliminare {target} subito',
+      deletion_started: 'L’eliminazione di {target} è iniziata',
+      deletion_failed: 'L’eliminazione di {target} non è riuscita al passo {step} di 6',
+      deleted: '{target} è stato eliminato',
     },
     failReason: { recovery_not_configured: 'nessun flusso di recupero', authentik_user_not_found: 'nessun utente Authentik', not_supported: 'non supportato', authentik_unavailable: 'Authentik non raggiungibile', unknown: 'errore' },
     device: {
@@ -376,12 +387,25 @@ const it: Translation<typeof de> = {
     },
     settings: {
       language: '{actor} ha cambiato la lingua predefinita',
+      update: '{actor} ha modificato le impostazioni',
+      import_env: '{actor} ha spostato valori dall’ambiente nelle impostazioni',
+      generate: '{actor} ha generato una nuova chiave',
+    },
+    setup: {
+      completed: '{actor} ha completato la configurazione iniziale',
     },
     system: {
       update: '{actor} ha avviato un aggiornamento',
     },
     session: {
       revoke_others: '{actor} si è disconnesso dagli altri dispositivi',
+      revoke_device: '{actor} ha disconnesso uno dei suoi dispositivi',
+      reauth: '{actor} ha eseguito di nuovo l’accesso (per un’azione sull’account)',
+      reauth_mismatch: '{actor}: un nuovo accesso con un altro account è stato rifiutato',
+    },
+    account: {
+      export: '{actor} ha scaricato i propri dati',
+      profile: '{actor} ha cambiato nome o colore del proprio account',
     },
     tv: {
       pair: '{actor} ha associato un televisore',
@@ -425,6 +449,9 @@ const it: Translation<typeof de> = {
       server_errors: { one: '{n} errore del server in 15 minuti', many: '{n} errori del server in 15 minuti', other: '{n} errori del server in 15 minuti' },
       client_errors: { one: '{n} errore del browser in 15 minuti', many: '{n} errori del browser in 15 minuti', other: '{n} errori del browser in 15 minuti' },
       failed_playbacks: { one: '{n} riproduzione non riuscita', many: '{n} riproduzioni non riuscite', other: '{n} riproduzioni non riuscite' },
+    },
+    approvals: {
+      pending_approvals: { one: '{n} accesso in attesa di approvazione', many: '{n} accessi in attesa di approvazione', other: '{n} accessi in attesa di approvazione' },
     },
   },
 };

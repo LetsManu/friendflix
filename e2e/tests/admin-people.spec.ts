@@ -201,6 +201,51 @@ test.describe('admin people (desktop)', () => {
       await expect(bar).toContainText('1 ausgewählt');
     });
 
+    test('unlocking an account whose access ended explains why (row and bulk); a past end date cannot be applied', async ({ page, api }) => {
+      const emma = api.admin.users.find((u) => u.name === 'Emma Schneider')!;
+      emma.access_until = new Date(Date.now() - 86400e3).toISOString();
+      emma.locked_reason = 'expired';
+      await page.goto('/admin/users');
+      const table = page.getByRole('table', { name: 'Nutzer' });
+      const row = table.getByRole('row', { name: /Emma Schneider/ });
+      await page.getByRole('button', { name: 'Aktionen für Emma Schneider' }).click();
+      await page.getByRole('dialog', { name: 'Emma Schneider' }).getByRole('button', { name: 'Entsperren' }).click();
+      await expect(toasts(page).getByText('Der Zugang ist abgelaufen – verlängere stattdessen den Zugang.')).toBeVisible();
+      await expect(row.getByText('Gesperrt')).toBeVisible(); // rolled back
+      expect(emma.disabled).toBe(true);
+
+      await table.getByRole('checkbox', { name: 'Emma Schneider auswählen' }).check();
+      const bar = page.getByRole('region', { name: 'Aktionen für die Auswahl' });
+      await bar.getByRole('button', { name: 'Entsperren', exact: true }).click();
+      await page.getByRole('alertdialog', { name: '1 Nutzer entsperren?' }).getByRole('button', { name: 'Entsperren' }).click();
+      await expect.poll(() => logged(api, /POST \/api\/admin\/users\/bulk .*"action":"unlock".* -> 409/)).toBe(true);
+      await expect(toasts(page).getByText('Der Zugang ist abgelaufen – verlängere stattdessen den Zugang.').last()).toBeVisible();
+      await expect(toasts(page).getByText(/Einige Konten wurden eventuell schon geändert/)).toHaveCount(0); // all or nothing
+      expect(emma.disabled).toBe(true);
+
+      // the bulk access form refuses a past day (it would lock everyone selected at the next expiry tick)
+      const form = bar.getByRole('form', { name: 'Zugang bis' });
+      await form.getByRole('combobox', { name: 'Zugang bis' }).selectOption('date');
+      const day = form.getByLabel('Zugang bis (Datum)');
+      await expect(day).toHaveAttribute('min', /^\d{4}-\d\d-\d\d$/);
+      await day.fill('2020-01-01');
+      await expect(form.getByRole('button', { name: 'Übernehmen' })).toBeDisabled();
+      await day.fill('2099-01-01');
+      await expect(form.getByRole('button', { name: 'Übernehmen' })).toBeEnabled();
+    });
+
+    test('approvals: a past end date cannot be approved', async ({ page }) => {
+      await page.goto('/admin/users?tab=approvals');
+      const card = page.getByRole('region', { name: 'Mia Neu' });
+      await card.getByRole('combobox', { name: 'Zugang bis' }).selectOption('date');
+      const day = card.getByLabel('Zugang bis (Datum)');
+      await expect(day).toHaveAttribute('min', /^\d{4}-\d\d-\d\d$/);
+      await day.fill('2020-01-01');
+      await expect(card.getByRole('button', { name: 'Freigeben' })).toBeDisabled();
+      await day.fill('2099-01-01');
+      await expect(card.getByRole('button', { name: 'Freigeben' })).toBeEnabled();
+    });
+
     test('last active: inactive for 90+ days lists never-seen and old accounts', async ({ page, api }) => {
       api.admin.users.find((u) => u.name === 'Felix Weber')!.last_seen = null;
       api.admin.users.find((u) => u.name === 'Greta Wagner')!.last_seen = new Date(Date.now() - 120 * 86400e3).toISOString();

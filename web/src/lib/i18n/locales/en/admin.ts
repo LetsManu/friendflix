@@ -10,6 +10,7 @@ const en: Translation<typeof de> = {
     users: 'Users', status: 'Status', previews: 'Previews', playback: 'Playback check', digest: 'Weekly recap', sources: 'Data sources', invites: 'Invitations',
     requests: 'Requests', polls: 'Polls', lists: 'Lists', roles: 'Roles', devices: 'Devices', audit: 'Audit log', update: 'Update',
     hygiene: 'Library care',
+    settings: 'Settings',
     usage: 'Usage',
   },
   roleNames: { friend: 'Friend', family: 'Family', guest: 'Guest', admin: 'Admin' },
@@ -313,6 +314,16 @@ const en: Translation<typeof de> = {
       activity_viewed: '{actor} viewed the history of {target}',
       revoke_device: '{actor} signed {target} out on one device',
       recovery_email_failed: '{actor} tried to send {target} a password link – failed ({reason})',
+      deletion_requested: '{actor} scheduled the deletion of {target} (on {date})',
+      deletion_requested_self: '{actor} asked to delete their own account (on {date})',
+      deletion_restored: '{actor} cancelled the deletion of {target}',
+      deletion_restored_self: '{actor} cancelled the deletion of their own account',
+      deletion_restored_locked: '{actor} cancelled the deletion of {target} – stays locked, the access has ended',
+      deletion_restored_self_locked: '{actor} cancelled the deletion of their own account – stays locked, the access has ended',
+      deletion_now: '{actor} had {target} deleted right away',
+      deletion_started: 'The deletion of {target} has started',
+      deletion_failed: 'The deletion of {target} failed at step {step} of 6',
+      deleted: '{target} was deleted',
     },
     failReason: { recovery_not_configured: 'no recovery flow set up', authentik_user_not_found: 'no Authentik user', not_supported: 'not supported', authentik_unavailable: 'Authentik unreachable', unknown: 'error' },
     device: {
@@ -367,12 +378,25 @@ const en: Translation<typeof de> = {
     },
     settings: {
       language: '{actor} changed the default language',
+      update: '{actor} changed settings',
+      import_env: '{actor} moved values from the environment into the settings',
+      generate: '{actor} generated a new key',
+    },
+    setup: {
+      completed: '{actor} completed the setup',
     },
     system: {
       update: '{actor} started an update',
     },
     session: {
       revoke_others: '{actor} signed out on other devices',
+      revoke_device: '{actor} signed out one of their devices',
+      reauth: '{actor} signed in again (for an account action)',
+      reauth_mismatch: '{actor}: a new sign-in with a different account was refused',
+    },
+    account: {
+      export: '{actor} downloaded their data',
+      profile: '{actor} changed their own account name or colour',
     },
     tv: {
       pair: '{actor} paired a TV',
@@ -416,6 +440,9 @@ const en: Translation<typeof de> = {
       server_errors: { one: '{n} server error in 15 minutes', other: '{n} server errors in 15 minutes' },
       client_errors: { one: '{n} browser error in 15 minutes', other: '{n} browser errors in 15 minutes' },
       failed_playbacks: { one: '{n} playback failed', other: '{n} playbacks failed' },
+    },
+    approvals: {
+      pending_approvals: { one: '{n} sign-in is waiting for approval', other: '{n} sign-ins are waiting for approval' },
     },
   },
 };

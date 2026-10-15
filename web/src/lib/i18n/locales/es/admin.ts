@@ -10,6 +10,7 @@ const es: Translation<typeof de> = {
     users: 'Usuarios', status: 'Estado', previews: 'Vistas previas', playback: 'Prueba de reproducción', digest: 'Resumen semanal', sources: 'Fuentes de datos', invites: 'Invitaciones',
     requests: 'Peticiones', polls: 'Votaciones', lists: 'Listas', roles: 'Roles', devices: 'Dispositivos', audit: 'Registro de auditoría', update: 'Actualización',
     hygiene: 'Cuidado de la biblioteca',
+    settings: 'Ajustes',
     usage: 'Uso',
   },
   roleNames: { friend: 'Amigo', family: 'Familia', guest: 'Invitado', admin: 'Administrador' },
@@ -322,6 +323,16 @@ const es: Translation<typeof de> = {
       activity_viewed: '{actor} consultó el historial de {target}',
       revoke_device: '{actor} cerró la sesión de {target} en un dispositivo',
       recovery_email_failed: '{actor} intentó enviar a {target} un enlace de contraseña – falló ({reason})',
+      deletion_requested: '{actor} programó la eliminación de {target} (el {date})',
+      deletion_requested_self: '{actor} pidió eliminar su propia cuenta (el {date})',
+      deletion_restored: '{actor} canceló la eliminación de {target}',
+      deletion_restored_self: '{actor} canceló la eliminación de su propia cuenta',
+      deletion_restored_locked: '{actor} canceló la eliminación de {target}: sigue bloqueada, el acceso ha terminado',
+      deletion_restored_self_locked: '{actor} canceló la eliminación de su propia cuenta: sigue bloqueada, el acceso ha terminado',
+      deletion_now: '{actor} hizo eliminar a {target} de inmediato',
+      deletion_started: 'Ha empezado la eliminación de {target}',
+      deletion_failed: 'La eliminación de {target} falló en el paso {step} de 6',
+      deleted: '{target} fue eliminado',
     },
     failReason: { recovery_not_configured: 'no hay flujo de recuperación', authentik_user_not_found: 'sin usuario de Authentik', not_supported: 'no compatible', authentik_unavailable: 'Authentik no disponible', unknown: 'error' },
     device: {
@@ -376,12 +387,25 @@ const es: Translation<typeof de> = {
     },
     settings: {
       language: '{actor} cambió el idioma predeterminado',
+      update: '{actor} cambió los ajustes',
+      import_env: '{actor} pasó valores del entorno a los ajustes',
+      generate: '{actor} generó una clave nueva',
+    },
+    setup: {
+      completed: '{actor} completó la configuración inicial',
     },
     system: {
       update: '{actor} inició una actualización',
     },
     session: {
       revoke_others: '{actor} cerró sesión en otros dispositivos',
+      revoke_device: '{actor} cerró sesión en uno de sus dispositivos',
+      reauth: '{actor} volvió a iniciar sesión (para una acción de la cuenta)',
+      reauth_mismatch: '{actor}: se rechazó un nuevo inicio de sesión con otra cuenta',
+    },
+    account: {
+      export: '{actor} descargó sus datos',
+      profile: '{actor} cambió el nombre o el color de su cuenta',
     },
     tv: {
       pair: '{actor} vinculó un televisor',
@@ -425,6 +449,9 @@ const es: Translation<typeof de> = {
       server_errors: { one: '{n} error del servidor en 15 minutos', many: '{n} errores del servidor en 15 minutos', other: '{n} errores del servidor en 15 minutos' },
       client_errors: { one: '{n} error del navegador en 15 minutos', many: '{n} errores del navegador en 15 minutos', other: '{n} errores del navegador en 15 minutos' },
       failed_playbacks: { one: '{n} reproducción fallida', many: '{n} reproducciones fallidas', other: '{n} reproducciones fallidas' },
+    },
+    approvals: {
+      pending_approvals: { one: '{n} inicio de sesión espera aprobación', many: '{n} inicios de sesión esperan aprobación', other: '{n} inicios de sesión esperan aprobación' },
     },
   },
 };

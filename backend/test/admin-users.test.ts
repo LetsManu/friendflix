@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { encrypt, keyFromBase64 } from '../src/crypto.js';
-import { assertNotLastAdmin, lockUser, unlockUser } from '../src/users.js';
+import { HttpError, assertNotLastAdmin, lockUser, unlockUser } from '../src/users.js';
 import { bulkUsers } from '../src/routes/adminUsers.js';
 import { ENC_KEY, makeEnv, type TestEnv } from './helpers.js';
 
@@ -61,6 +61,74 @@ describe('lockUser / unlockUser', () => {
     expect(await row(ids.ben!)).toMatchObject({ disabled: true, locked_reason: 'manual' });
     expect((await as(admin, 'PATCH', `/api/admin/users/${ids.ben}`, { disabled: false })).statusCode).toBe(200);
     expect(await row(ids.ben!)).toMatchObject({ disabled: false, locked_reason: null });
+  });
+});
+
+describe('unlocking an account whose access has ended', () => {
+  const past = () => new Date(Date.now() - 60e3);
+  const PATCH = (id: string, body: unknown) => as(admin, 'PATCH', `/api/admin/users/${id}`, body);
+
+  it('PATCH disabled:false answers 409 access_expired and changes nothing', async () => {
+    for (const reason of ['expired', 'manual'] as const) {
+      await env.pool.query('update users set access_until=$2 where id=$1', [ids.anna, past()]);
+      await lockUser(env.ctx, adminId, ids.anna!, reason);
+      const before = Number((await env.pool.query('select count(*) n from audit_log')).rows[0].n);
+      env.jfCalls.length = 0;
+      const r = await PATCH(ids.anna!, { disabled: false });
+      expect(r.statusCode).toBe(409);
+      expect(r.json().error).toBe('access_expired');
+      expect(await row(ids.anna!)).toMatchObject({ disabled: true, locked_reason: reason });
+      expect(Number((await env.pool.query('select count(*) n from audit_log')).rows[0].n)).toBe(before);
+      expect(env.jfCalls.filter((c) => c.method === 'POST')).toHaveLength(0);
+    }
+  });
+
+  it('PATCH disabled:false with a new future date unlocks', async () => {
+    await env.pool.query('update users set access_until=$2 where id=$1', [ids.clara, past()]);
+    await lockUser(env.ctx, adminId, ids.clara!, 'expired');
+    const until = new Date(Date.now() + 5 * 86400e3).toISOString();
+    expect((await PATCH(ids.clara!, { disabled: false, accessUntil: until })).statusCode).toBe(200);
+    expect(await row(ids.clara!)).toMatchObject({ disabled: false, locked_reason: null });
+  });
+
+  it('bulk unlock answers 409 access_expired for the whole set and changes nothing', async () => {
+    await lockUser(env.ctx, adminId, ids.ben!, 'manual');
+    await env.pool.query('update users set access_until=$2 where id=$1', [ids.clara, past()]);
+    await lockUser(env.ctx, adminId, ids.clara!, 'expired');
+    const r = await as(admin, 'POST', '/api/admin/users/bulk', { ids: [ids.ben, ids.clara], action: 'unlock' });
+    expect(r.statusCode).toBe(409);
+    expect(r.json().error).toBe('access_expired');
+    expect((await row(ids.ben!)).disabled).toBe(true); // all or nothing
+    expect((await row(ids.clara!)).disabled).toBe(true);
+  });
+
+  it('PATCH disabled:true with a future date on an expired lock keeps the account locked (manual)', async () => {
+    await env.pool.query('update users set access_until=$2 where id=$1', [ids.clara, past()]);
+    await lockUser(env.ctx, adminId, ids.clara!, 'expired');
+    const until = new Date(Date.now() + 5 * 86400e3).toISOString();
+    expect((await PATCH(ids.clara!, { disabled: true, accessUntil: until })).statusCode).toBe(200);
+    expect(await row(ids.clara!)).toMatchObject({ disabled: true, locked_reason: 'manual' });
+    expect((await row(ids.clara!)).access_until.toISOString()).toBe(until);
+    expect((await audits('user.disable', ids.clara!)).at(-1)!.meta).toEqual({ reason: 'manual' });
+  });
+});
+
+describe('error handler', () => {
+  it('passes a 5xx business error code through, but never free text', async () => {
+    const jfAdmin = env.ctx.jf.admin;
+    const setDisabled = jfAdmin.setDisabled;
+    try {
+      jfAdmin.setDisabled = async () => { throw new HttpError(502, 'jellyfin_down'); };
+      const code = await as(admin, 'PATCH', `/api/admin/users/${ids.anna}`, { disabled: true });
+      expect(code.statusCode).toBe(502);
+      expect(code.json()).toEqual({ error: 'jellyfin_down' });
+      jfAdmin.setDisabled = async () => { throw new HttpError(502, 'Upstream https://auth.example.com/api said: no'); };
+      const text = await as(admin, 'PATCH', `/api/admin/users/${ids.anna}`, { disabled: true });
+      expect(text.statusCode).toBe(502);
+      expect(text.json()).toEqual({ error: 'internal' });
+    } finally {
+      jfAdmin.setDisabled = setDisabled;
+    }
   });
 });
 

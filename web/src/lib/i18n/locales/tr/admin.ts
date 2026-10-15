@@ -10,6 +10,7 @@ const tr: Translation<typeof de> = {
     users: 'Kullanıcılar', status: 'Durum', previews: 'Önizlemeler', playback: 'Oynatma denetimi', digest: 'Haftalık özet', sources: 'Veri kaynakları', invites: 'Davetler',
     requests: 'İstekler', polls: 'Oylamalar', lists: 'Listeler', roles: 'Roller', devices: 'Cihazlar', audit: 'Denetim günlüğü', update: 'Güncelleme',
     hygiene: 'Kitaplık bakımı',
+    settings: 'Ayarlar',
     usage: 'Kullanım',
   },
   roleNames: { friend: 'Arkadaş', family: 'Aile', guest: 'Misafir', admin: 'Yönetici' },
@@ -313,6 +314,16 @@ const tr: Translation<typeof de> = {
       activity_viewed: '{actor}, {target} geçmişini görüntüledi',
       revoke_device: '{actor}, {target} oturumunu bir cihazda kapattı',
       recovery_email_failed: '{actor}, {target} kişisine parola bağlantısı göndermeyi denedi – başarısız ({reason})',
+      deletion_requested: '{actor}, {target} hesabının silinmesini planladı ({date})',
+      deletion_requested_self: '{actor} kendi hesabının silinmesini istedi ({date})',
+      deletion_restored: '{actor}, {target} hesabının silinmesini iptal etti',
+      deletion_restored_self: '{actor} kendi hesabının silinmesini iptal etti',
+      deletion_restored_locked: '{actor}, {target} hesabının silinmesini iptal etti – erişim sona erdiği için kilitli kalıyor',
+      deletion_restored_self_locked: '{actor} kendi hesabının silinmesini iptal etti – erişim sona erdiği için kilitli kalıyor',
+      deletion_now: '{actor}, {target} hesabını hemen sildirdi',
+      deletion_started: '{target} hesabının silinmesi başladı',
+      deletion_failed: '{target} hesabının silinmesi {step}/6 adımında başarısız oldu',
+      deleted: '{target} silindi',
     },
     failReason: { recovery_not_configured: 'kurtarma akışı yok', authentik_user_not_found: 'Authentik kullanıcısı yok', not_supported: 'desteklenmiyor', authentik_unavailable: 'Authentik erişilemiyor', unknown: 'hata' },
     device: {
@@ -367,12 +378,25 @@ const tr: Translation<typeof de> = {
     },
     settings: {
       language: '{actor} varsayılan dili değiştirdi',
+      update: '{actor} ayarları değiştirdi',
+      import_env: '{actor} ortamdaki değerleri ayarlara taşıdı',
+      generate: '{actor} yeni bir anahtar oluşturdu',
+    },
+    setup: {
+      completed: '{actor} kurulumu tamamladı',
     },
     system: {
       update: '{actor} bir güncelleme başlattı',
     },
     session: {
       revoke_others: '{actor} diğer cihazlardaki oturumlarını kapattı',
+      revoke_device: '{actor} cihazlarından birinde oturumu kapattı',
+      reauth: '{actor} yeniden giriş yaptı (bir hesap işlemi için)',
+      reauth_mismatch: '{actor}: başka bir hesapla yapılan yeni giriş reddedildi',
+    },
+    account: {
+      export: '{actor} kendi verilerini indirdi',
+      profile: '{actor} kendi hesabının adını veya rengini değiştirdi',
     },
     tv: {
       pair: '{actor} bir TV eşleştirdi',
@@ -416,6 +440,9 @@ const tr: Translation<typeof de> = {
       server_errors: { one: '15 dakikada {n} sunucu hatası', other: '15 dakikada {n} sunucu hatası' },
       client_errors: { one: '15 dakikada {n} tarayıcı hatası', other: '15 dakikada {n} tarayıcı hatası' },
       failed_playbacks: { one: '{n} oynatma başarısız', other: '{n} oynatma başarısız' },
+    },
+    approvals: {
+      pending_approvals: { one: '{n} giriş onay bekliyor', other: '{n} giriş onay bekliyor' },
     },
   },
 };

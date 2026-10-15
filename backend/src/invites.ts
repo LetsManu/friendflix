@@ -146,6 +146,7 @@ export async function createInvite(
   await ctx.db.query('insert into invites(id, token_hash, role, note, expires_at, created_by, authentik_invite, max_uses, access_days) values ($1,$2,$3,$4,$5,$6,$7,$8,$9)', [
     id, sha256(token), opts.role, opts.note ?? null, expiresAt, createdBy, akId, maxUses, opts.accessDays ?? null,
   ]);
+  // '' without a public URL (setup mode, where the gate keeps invites unreachable): the links stay relative, nothing throws
   const base = ctx.cfg.PUBLIC_URL.replace(/\/$/, '');
   return {
     id, token, link: `${base}/invite/${token}`,

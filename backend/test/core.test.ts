@@ -271,6 +271,7 @@ describe('renamed request service settings', () => {
   it('an empty new value (compose passes "") does not hide the old name', () => {
     const c = loadConfig({ ...base, REQUESTS_URL: 'http://seerr:5055', REQUESTS_API_KEY: '', SEERR_API_KEY: 'old' });
     expect(c.REQUESTS_API_KEY).toBe('old');
-    expect(() => loadConfig({ ...base, REQUESTS_URL: 'http://requests:5055' })).toThrow();
+    // Block 25: the request service is optional, an unset key resolves to '' (it used to fail the start)
+    expect(loadConfig({ ...base, REQUESTS_URL: 'http://requests:5055' }).REQUESTS_API_KEY).toBe('');
   });
 });

@@ -165,8 +165,12 @@ export async function buildCollection({ ctx, user, current, currentTmdb, kids, s
       listed.add(p.item.id);
     }
   }
-  if (parts.length < 2) return null;
-  return { name: related ? box!.name : tmdb.name, parts, from: 'tmdb' };
+  // one entry per library title: the library lookup of two TMDB parts can land on the same item (a wrong TMDB id on it, or a media
+  // server that ignores anyProviderIdEquals); a repeated id is a duplicate key in the web's collection row
+  const seen = new Set<string>();
+  const unique = parts.filter((p) => !p.id || (!seen.has(p.id) && Boolean(seen.add(p.id))));
+  if (unique.length < 2) return null;
+  return { name: related ? box!.name : tmdb.name, parts: unique, from: 'tmdb' };
 }
 
 const settle = <T>(p: Promise<T | null>): Promise<T | null> => p.catch(() => null);

@@ -40,8 +40,10 @@ export async function applyRole(ctx: Ctx, jellyfinUserId: string, role: string, 
  * Creates the 1:1 mapping Authentik account = portal user = Jellyfin account:
  * a Jellyfin user with a random password (stored AES-GCM encrypted), role policy applied.
  * `accessUntil`: the date the new account's access ends (invite access days, approval), null/omitted = no end.
+ * `tx`: a connection inside an open transaction (setup/state.ts claimSetup): the account rows and their audit are written there and
+ * commit or roll back with it; the caller then owns the Jellyfin account if that transaction does not commit.
  */
-export async function provisionUser(ctx: Ctx, claims: OidcClaims, role: string, accessUntil: Date | null = null): Promise<UserRow> {
+export async function provisionUser(ctx: Ctx, claims: OidcClaims, role: string, accessUntil: Date | null = null, tx?: pg.PoolClient): Promise<UserRow> {
   const base = safeName(claims.name ?? claims.email?.split('@')[0] ?? 'freund');
   const password = randomPassword();
   let jf: { id: string } | undefined;
@@ -57,11 +59,10 @@ export async function provisionUser(ctx: Ctx, claims: OidcClaims, role: string, 
   try {
     const id = randomUUID();
     await applyRole(ctx, jf!.id, role, false, { userId: id });
-    const pool = ctx.db as pg.Pool;
-    const c = await pool.connect();
+    const c = tx ?? (await (ctx.db as pg.Pool).connect());
     let row: UserRow;
     try {
-      await c.query('begin');
+      if (!tx) await c.query('begin');
       const r = await c.query<UserRow>(
         `insert into users(id, authentik_sub, email, name, role, jellyfin_user_id, jellyfin_username, jellyfin_pw_enc, access_until)
          values ($1,$2,$3,$4,$5,$6,$7,$8,$9) returning *`,
@@ -69,14 +70,14 @@ export async function provisionUser(ctx: Ctx, claims: OidcClaims, role: string, 
       );
       row = r.rows[0]!;
       await c.query('insert into profiles(id, user_id, name, is_owner) values ($1,$1,$2,true)', [id, row.name.slice(0, 20).trim() || 'Profil']);
-      await c.query('commit');
+      if (!tx) await c.query('commit');
     } catch (e) {
-      await c.query('rollback').catch(() => undefined);
+      if (!tx) await c.query('rollback').catch(() => undefined);
       throw e;
     } finally {
-      c.release();
+      if (!tx) c.release();
     }
-    await audit(ctx, id, 'user.provisioned', id, { role, jellyfin: jfName, ...(accessUntil ? { accessUntil: accessUntil.toISOString() } : {}) });
+    await audit(tx ? { db: tx } : ctx, id, 'user.provisioned', id, { role, jellyfin: jfName, ...(accessUntil ? { accessUntil: accessUntil.toISOString() } : {}) });
     return row;
   } catch (e) {
     await ctx.jf.admin.deleteIdentity(jf!.id).catch(() => undefined); // roll back the orphaned Jellyfin account
@@ -115,6 +116,25 @@ export class HttpError extends Error {
 
 export type LockReason = 'manual' | 'expired' | 'deletion';
 
+/** Runs `fn` after every earlier call has settled (a promise queue). */
+function serialized() {
+  let tail: Promise<unknown> = Promise.resolve();
+  return <T>(fn: () => Promise<T>): Promise<T> => {
+    const run = tail.then(fn, fn);
+    tail = run.catch(() => undefined);
+    return run;
+  };
+}
+
+/**
+ * Account changes run one at a time (admin mutations and the expiry tick's lock), so the last-admin guard and the change
+ * it guards cannot interleave with another change, and a lock cannot act on a date read before an extension.
+ */
+export const accountSerial = serialized();
+
+/** True when the account's access has ended (`access_until` set and not in the future). */
+export const accessEnded = (until: Date | null, now = Date.now()) => until !== null && until.getTime() <= now;
+
 /** Locks the account: its media server identities (owner + profiles) are disabled and every session (and offline license) is revoked. */
 export async function lockUser(ctx: Ctx, actor: string | null, userId: string, reason: LockReason): Promise<void> {
   for (const jid of await accountJellyfinIds(ctx, userId)) await ctx.jf.admin.setDisabled(jid, true);
@@ -123,10 +143,18 @@ export async function lockUser(ctx: Ctx, actor: string | null, userId: string, r
   await audit(ctx, actor, 'user.disable', userId, { reason });
 }
 
+/**
+ * Unlocks the account (identities enabled, lock reason and deletion date cleared). Unlocking a deletion lock is a restore and is
+ * audited as one. Refused (409 deletion_in_progress) once the deletion tick has claimed the account. Callers run it in accountSerial.
+ */
 export async function unlockUser(ctx: Ctx, actor: string | null, userId: string): Promise<void> {
+  const prev = (await ctx.db.query<{ locked_reason: LockReason | null; claimed: boolean }>(
+    'select locked_reason, exists (select 1 from account_deletions where user_id=$1) claimed from users where id=$1', [userId])).rows[0];
+  if (prev?.claimed) throw new HttpError(409, 'deletion_in_progress');
   for (const jid of await accountJellyfinIds(ctx, userId)) await ctx.jf.admin.setDisabled(jid, false);
-  await ctx.db.query('update users set disabled=false, locked_reason=null where id=$1', [userId]);
+  await ctx.db.query('update users set disabled=false, locked_reason=null, deletion_at=null where id=$1', [userId]);
   await audit(ctx, actor, 'user.enable', userId);
+  if (prev?.locked_reason === 'deletion') await audit(ctx, actor, 'user.deletion_restored', userId);
 }
 
 /** Changes the role: the role policy goes to the account's media server identity and all its profile identities. No-op when unchanged. */

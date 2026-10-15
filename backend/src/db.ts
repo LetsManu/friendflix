@@ -705,6 +705,60 @@ export const MIGRATIONS: string[] = [
   insert into invite_uses(invite_id, user_id, at)
     select id, used_by, used_at from invites where used_by is not null;
   `,
+  // 38: Block 23 phase 2 account deletion: the tombstone of a claimed deletion (snapshot for the later steps; no FK, the users row
+  // is deleted in step 4; the personal fields are nulled when finished, the pseudonym stays for the audit views) + due lookup
+  `
+  create table account_deletions (
+    user_id uuid primary key,
+    pseudonym text not null,
+    step int not null default 0,
+    authentik_sub text,
+    jellyfin_ids text[],
+    seerr_user_id int,
+    name text,
+    email text,
+    started_at timestamptz not null default now(),
+    finished_at timestamptz,
+    last_error text,
+    failed_step int
+  );
+  create index account_deletions_sub on account_deletions(authentik_sub) where finished_at is null;
+  create index users_deletion_at on users(deletion_at) where deletion_at is not null;
+  `,
+  // 39: Block 25 settings store. settings holds admin/wizard-set config keys (plain JSON value, or an AES-256-GCM blob for secrets);
+  // settings_meta.rev is bumped by every write so instances reload. An install with users counts as set up (never sees the wizard).
+  // The data-source keys move over from app_settings unchanged (same APP_ENC_KEY, same blob format); a malformed row (no string enc)
+  // is dropped instead of failing the migration.
+  `
+  create table settings (
+    key text primary key,
+    value jsonb,
+    enc text,
+    last4 text,
+    updated_at timestamptz not null default now(),
+    updated_by uuid references users(id) on delete set null,
+    check ((value is null) <> (enc is null))
+  );
+  create table settings_meta (
+    id int primary key check (id = 1),
+    rev bigint not null default 0,
+    setup_completed_at timestamptz,
+    setup_code_hash text,
+    setup_code_expires_at timestamptz,
+    setup_code_failures int not null default 0
+  );
+  insert into settings_meta(id, setup_completed_at)
+    select 1, case when exists (select 1 from users) then now() end;
+  insert into settings(key, enc, last4, updated_at)
+    select case key when 'source.tmdb' then 'TMDB_API_KEY' else 'OMDB_API_KEY' end, value->>'enc', value->>'last4', updated_at
+    from app_settings where key in ('source.tmdb','source.omdb') and value ? 'enc' and jsonb_typeof(value->'enc') = 'string';
+  delete from app_settings where key in ('source.tmdb','source.omdb');
+  `,
+  // 40: Block 25b. An install that got migration 39 while it had no users yet, and its first users afterwards (before the setup wizard
+  // existed), counts as set up as well: it must never fall into setup mode. An empty install stays in setup.
+  `
+  update settings_meta set setup_completed_at = now() where setup_completed_at is null and exists (select 1 from users);
+  `,
 ];
 
 export async function migrate(pool: pg.Pool): Promise<void> {

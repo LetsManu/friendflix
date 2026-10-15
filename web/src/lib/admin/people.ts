@@ -1,7 +1,9 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
 /** Helpers of the People admin pages (users, roles, devices, invites, audit): device kinds, audit details, date filters, bulk texts. */
+import { ApiError } from '#lib/api';
 import { fmtList, fmtNumber, hasKey, tr, trDynamic } from '#lib/i18n';
+import { errorText } from '#lib/ui/action';
 
 export type DeviceKind = 'tv' | 'phone' | 'tablet' | 'desktop' | 'other';
 /** icon + kind of a device from its label ("Chrome auf Windows", "LG webOS TV" …) */
@@ -69,6 +71,39 @@ export function dayStart(day: string): string {
 export function dayEnd(day: string): string {
   const d = /^\d{4}-\d{2}-\d{2}$/.test(day) ? new Date(`${day}T23:59:59.999`) : null;
   return d && !Number.isNaN(d.getTime()) ? d.toISOString() : '';
+}
+
+/** today as YYYY-MM-DD (local): the earliest access end a date field offers (`min`) */
+export function today(now = new Date()): string {
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+}
+/** end of the chosen day as ISO time when it lies in the future, else '' (a past end would lock the account at the next expiry tick) */
+export function futureDayEnd(day: string, now = Date.now()): string {
+  const end = dayEnd(day);
+  return end && Date.parse(end) > now ? end : '';
+}
+
+/** clear texts for the account guards of the user actions (single and bulk); null for any other error */
+export function accountGuardText(e: unknown): string | null {
+  const code = e instanceof ApiError ? (e.body as { error?: string } | null)?.error : undefined;
+  if (code === 'last_admin') return tr('adminPeople.bulk.lastAdmin');
+  if (code === 'cannot_lock_yourself_out') return tr('adminPeople.users.selfNote');
+  if (code === 'access_expired') return tr('adminPeople.users.accessExpired');
+  return null;
+}
+
+/** a scheduled deletion's restore / delete now: the claim already won, nothing scheduled, else the account guards */
+export function deletionErrorText(e: unknown): string {
+  const code = e instanceof ApiError ? (e.body as { error?: string } | null)?.error : undefined;
+  if (code === 'deletion_in_progress') return tr('adminPeople.detail.actions.deletionRunning');
+  if (code === 'not_scheduled') return tr('adminPeople.detail.actions.notScheduled');
+  return accountGuardText(e) ?? errorText(e);
+}
+
+/** the restore toast: an account whose access has ended stays locked (as expired) after the restore (F8) */
+export function restoredText(name: string, accessUntil: string | null, now = Date.now()): string {
+  const ended = accessUntil !== null && Date.parse(accessUntil) <= now;
+  return tr(ended ? 'adminPeople.detail.actions.restoredLocked' : 'adminPeople.detail.actions.restored', { name });
 }
 
 /** invite lifetimes offered in the form (hours) */
