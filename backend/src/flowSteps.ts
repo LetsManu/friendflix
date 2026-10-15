@@ -98,8 +98,9 @@ const oneOf = (v: unknown, set: ReadonlySet<string>): string | undefined => (typ
 /** plain text for display: no tags, no control characters, bounded; null when nothing usable (or it carries a URL) is left */
 function plainText(v: unknown, max = 200): string | null {
   if (typeof v !== 'string') return null;
-  // tags removed, then any leftover angle bracket too (a nested or split tag such as `<scr<x>ipt>` cannot survive)
-  const s = v.replace(/<[^>]*>/g, '').replace(/[<>]/g, '').replace(/[\u0000-\u001f\u007f]/g, ' ').replace(/\s+/g, ' ').trim();
+  // markup is refused, not stripped: a label with any angle bracket is dropped (the caller falls back to the field key)
+  if (/[<>]/.test(v)) return null;
+  const s = v.replace(/[\u0000-\u001f\u007f]/g, ' ').replace(/\s+/g, ' ').trim();
   if (!s || s.length > max || /:\/\/|^\/\/|\bwww\./i.test(s)) return null;
   return s;
 }

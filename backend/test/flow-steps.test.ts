@@ -224,16 +224,18 @@ describe('toStep', () => {
     // the e-mail change's single field gets FriendFlix's label
     const change = fx('prompt-enroll', { fields: [{ field_key: 'email', label: 'New e-mail address', type: 'email', required: true }] });
     expect(step(change, { kind: 'change-email' })).toEqual({ stage: 'prompt', step: STEP, fields: [{ key: 'email', type: 'email', label: 'ff:new_email', required: true }] });
-    // Authentik labels are plain text only: tags stripped; a label with a URL (or none) falls back to the key
+    // Authentik labels are plain text only: a label with markup or a URL (or none) falls back to the key
     const labels = fx('prompt-enroll', { fields: [
       { field_key: 'name', label: '<i>Your</i>\n name', type: 'text' },
       { field_key: 'nick', label: 'see https://auth.example.com/x', type: 'text', required: false },
       { field_key: 'city', type: 'text' },
+      { field_key: 'zip', label: '<scr<x>ipt>Zip', type: 'text' },
     ] });
     expect(step(labels, { kind: 'enroll' })).toEqual({ stage: 'prompt', step: STEP, fields: [
-      { key: 'name', type: 'text', label: 'Your name', required: false },
+      { key: 'name', type: 'text', label: 'name', required: false },
       { key: 'nick', type: 'text', label: 'nick', required: false },
       { key: 'city', type: 'text', label: 'city', required: false },
+      { key: 'zip', type: 'text', label: 'zip', required: false },
     ] });
   });
 
