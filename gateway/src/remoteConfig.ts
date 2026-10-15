@@ -18,7 +18,7 @@ export interface RemoteConfigOptions {
 export interface RemoteConfig {
   /** the media server base URL, or null while the backend has none (setup not done, backend unreachable since start) */
   url(): string | null;
-  /** the settings revision of an /internal/authz* answer (x-ff-config-rev): a newer one refetches at once */
+  /** the settings revision of an /internal/authz* answer (x-ff-config-rev): one that differs from the cached one refetches at once */
   noteRev(rev: string | null): void;
   stop(): void;
 }
@@ -36,8 +36,10 @@ function usable(v: unknown): v is string {
 
 /**
  * The gateway's media upstream from the backend's live settings (GET /internal/gateway-config): fetched at start, retried every retryMs
- * until it answers, then refreshed every refreshMs and at once when an authz answer carries a newer settings revision. One fetch at a time;
- * a failed refresh keeps the last good URL. Only the URL's origin is ever logged (no userinfo, path or query), never the secret.
+ * until it answers, then refreshed every refreshMs and at once when an authz answer carries a different settings revision (also a lower
+ * one: a database restored from an older backup). An answer below that revision (a backend instance that has not reloaded yet) gets one
+ * more try after retryMs. One fetch at a time; a failed refresh keeps the last good URL. Only the URL's origin is ever logged (no
+ * userinfo, path or query), never the secret.
  */
 export function createRemoteConfig(opts: RemoteConfigOptions): RemoteConfig {
   if (opts.envUrl) {
@@ -53,7 +55,8 @@ export function createRemoteConfig(opts: RemoteConfigOptions): RemoteConfig {
 
   let url: string | null = null;
   let rev: number | null = null;
-  let noted = 0; // highest rev that already triggered a fetch: every newer rev triggers one, never more
+  let noted: number | null = null; // the last authz rev that triggered a fetch: each different rev triggers one, never more
+  let retried: number | null = null; // the noted rev that already had its one early retry
   let running = false;
   let again = false;
   let stopped = false;
@@ -75,6 +78,7 @@ export function createRemoteConfig(opts: RemoteConfigOptions): RemoteConfig {
         signal: AbortSignal.any([ac.signal, AbortSignal.timeout(5000)]),
       });
       why = `HTTP ${r.status}`;
+      if (!r.ok) void r.body?.cancel().catch(() => {}); // release the connection now, not at GC (retries run every retryMs)
       if (r.ok) {
         why = 'an invalid answer';
         const j = (await r.json()) as { rev?: unknown; upstreamUrl?: unknown };
@@ -112,7 +116,10 @@ export function createRemoteConfig(opts: RemoteConfigOptions): RemoteConfig {
         again = false;
         return kick();
       }
-      schedule(ok ? refreshMs : retryMs);
+      // an instance behind the noted rev answered (several backends, one not reloaded yet): one more try soon, then the normal refresh
+      const behind = ok && noted !== null && rev !== null && rev < noted && retried !== noted;
+      if (behind) retried = noted;
+      schedule(ok && !behind ? refreshMs : retryMs);
     });
   }
 
@@ -122,7 +129,7 @@ export function createRemoteConfig(opts: RemoteConfigOptions): RemoteConfig {
     noteRev(v) {
       if (!v || !/^\d{1,15}$/.test(v)) return;
       const n = Number(v);
-      if ((rev !== null && n <= rev) || n <= noted) return;
+      if (n === rev || n === noted) return;
       noted = n;
       kick();
     },

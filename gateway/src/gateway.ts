@@ -360,8 +360,9 @@ export function createGateway(opts: GatewayOptions): { server: Server; metrics: 
     }
     // no media server yet (setup not done): 503 before any backend call; /health stays 200 so the container is not restarted
     if (url.pathname.startsWith('/media/') && !upstreamBase()) {
-      count('503');
-      return end(res, 503, 'unavailable', 'text/plain', { 'retry-after': '5', 'cache-control': 'no-store' });
+      const cast = url.pathname.startsWith(CAST_PREFIX); // a receiver must be able to read the 503 (CORS), counted as a cast request
+      (cast ? castCount : count)('503');
+      return end(res, 503, 'unavailable', 'text/plain', { 'retry-after': '5', 'cache-control': 'no-store', ...(cast ? CAST_CORS : {}) });
     }
     if (url.pathname.startsWith(CAST_PREFIX)) return handleCast(req, res, url);
     if (url.pathname.startsWith('/media/d/')) return handleDownload(req, res, url);
@@ -674,7 +675,10 @@ export function createGateway(opts: GatewayOptions): { server: Server; metrics: 
 
   async function forward(req: IncomingMessage, res: ServerResponse, url: URL, path: string, auth: Authz, countCode: (k: string) => void, cast = false, download = false, authzMs = 0) {
     const base = upstreamBase();
-    if (!base) return end(res, 503, 'unavailable', 'text/plain', cast ? CAST_CORS : undefined); // the upstream went away since the check in handle()
+    if (!base) {
+      countCode('503');
+      return end(res, 503, 'unavailable', 'text/plain', cast ? CAST_CORS : undefined); // the upstream went away since the check in handle()
+    }
     let target = new URL(path, base);
     if (target.origin !== base.origin) return end(res, 403, 'forbidden'); // SSRF guard (defence in depth)
     for (const [k, v] of url.searchParams) {

@@ -15,7 +15,7 @@ const CT = 'C'.repeat(43);
 const DL = '99999999-9999-4999-8999-999999999999';
 const SECRET = 's3cret-s3cret-s3cret';
 
-type BackendMode = 'ok' | 'throw' | '500' | 'noscope' | 'badDownload';
+type BackendMode = 'ok' | 'throw' | '500' | '403' | 'noscope' | 'badDownload';
 type UpstreamMode = 'ok' | 'throw' | 'hugePlaylist';
 let backendMode: BackendMode = 'ok';
 let upstreamMode: UpstreamMode = 'ok';
@@ -33,6 +33,7 @@ const fakeFetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
     const body = JSON.parse(String(init?.body ?? '{}')) as { ct?: string; dl?: string };
     if (backendMode === 'throw') throw new TypeError('fetch failed');
     if (backendMode === '500') return new Response('boom', { status: 500 });
+    if (backendMode === '403') return json({ error: 'forbidden' }, 403); // a wrong INTERNAL_SECRET
     if (body.ct !== undefined) return json(backendMode === 'noscope' ? authzAnswer : { ...authzAnswer, kind: 'media', scope });
     if (body.dl !== undefined) return json(backendMode === 'badDownload' ? { ...authzAnswer, download: { kind: 'ftp' } } : { ...authzAnswer, download: { kind: 'static', path: `/Videos/${ID}/stream` } });
     return json(authzAnswer);
@@ -92,6 +93,17 @@ describe('session authorization failures', () => {
     expect((await cookieGet(gw.base, `/media/Items/${ID}/Images/Primary`, 'setup-mode-session-01')).status).toBe(200);
     expect(backendCalls - before).toBe(3);
     expect(gw.metrics()).toMatch(/friendflix_gateway_requests_total\{code="503"\} [1-9]/);
+  });
+  it('a backend 403 (wrong INTERNAL_SECRET) answers 503 and is never memoised', async () => {
+    backendMode = '403';
+    const before = backendCalls;
+    for (let i = 0; i < 2; i++) {
+      const r = await cookieGet(gw.base, `/media/Items/${ID}/Images/Primary`, 'wrong-secret-session-01');
+      expect([r.status, r.headers.get('cache-control')]).toEqual([503, 'no-store']);
+    }
+    backendMode = 'ok';
+    expect((await cookieGet(gw.base, `/media/Items/${ID}/Images/Primary`, 'wrong-secret-session-01')).status).toBe(200);
+    expect(backendCalls - before).toBe(3);
   });
 });
 

@@ -96,22 +96,70 @@ describe('createRemoteConfig', () => {
     expect(be.calls).toHaveLength(2);
     expect(rc.url()).toBe('http://media:8096');
     rc.noteRev('7'); // the cached rev
-    rc.noteRev('6'); // older
     for (const bad of [null, '', 'abc', '7.5', '-8', '1e3', ' 9', String(2 ** 60)]) rc.noteRev(bad);
     await settle();
     expect(be.calls).toHaveLength(2);
     rc.stop();
   });
 
-  it('a rev the backend has not reached yet triggers one refetch only, then the normal schedule', async () => {
+  it('a rev the backend has not reached yet triggers one refetch, one retry after retryMs, then the normal schedule', async () => {
     const be = fakeBackend([cfgAnswer(6, 'http://jf:8096')]);
-    const rc = createRemoteConfig({ backendUrl: BACKEND, internalSecret: SECRET, fetchImpl: be.f, log: () => {} });
+    const rc = createRemoteConfig({ backendUrl: BACKEND, internalSecret: SECRET, fetchImpl: be.f, retryMs: 5000, refreshMs: 30_000, log: () => {} });
     await settle();
     rc.noteRev('8');
     await settle();
     rc.noteRev('8');
     await settle();
     expect(be.calls).toHaveLength(2);
+    await vi.advanceTimersByTimeAsync(5000); // the answer (6) was behind the noted rev (8): one more try soon
+    expect(be.calls).toHaveLength(3);
+    await vi.advanceTimersByTimeAsync(5000); // still behind: no further early retry
+    expect(be.calls).toHaveLength(3);
+    await vi.advanceTimersByTimeAsync(25_000);
+    expect(be.calls).toHaveLength(4);
+    rc.stop();
+  });
+
+  it('a stale instance answering an older rev: the early retry picks up the new upstream', async () => {
+    const be = fakeBackend([cfgAnswer(6, 'http://jf:8096'), cfgAnswer(6, 'http://jf:8096'), cfgAnswer(7, 'http://media:8096')]);
+    const rc = createRemoteConfig({ backendUrl: BACKEND, internalSecret: SECRET, fetchImpl: be.f, retryMs: 5000, refreshMs: 30_000, log: () => {} });
+    await settle();
+    rc.noteRev('7');
+    await settle();
+    expect(rc.url()).toBe('http://jf:8096');
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(rc.url()).toBe('http://media:8096');
+    rc.stop();
+  });
+
+  it('a different rev refetches, also a lower one (a database restored from an older backup); the cached rev does not', async () => {
+    const be = fakeBackend([cfgAnswer(10, 'http://jf:8096'), cfgAnswer(4, 'http://restored:8096')]);
+    const rc = createRemoteConfig({ backendUrl: BACKEND, internalSecret: SECRET, fetchImpl: be.f, log: () => {} });
+    await settle();
+    rc.noteRev('10');
+    await settle();
+    expect(be.calls).toHaveLength(1);
+    rc.noteRev('4');
+    await settle();
+    expect(be.calls).toHaveLength(2);
+    expect(rc.url()).toBe('http://restored:8096');
+    rc.noteRev('4');
+    await settle();
+    expect(be.calls).toHaveLength(2);
+    rc.stop();
+  });
+
+  it('cancels the body of a refused answer (the connection is released at once)', async () => {
+    let cancelled = 0;
+    const refused = () => Promise.resolve(new Response(new ReadableStream({ cancel() { cancelled++; } }), { status: 503 }));
+    const be = fakeBackend([refused, refused, cfgAnswer(1, 'http://jf:8096')]);
+    const rc = createRemoteConfig({ backendUrl: BACKEND, internalSecret: SECRET, fetchImpl: be.f, retryMs: 100, log: () => {} });
+    await settle();
+    await vi.advanceTimersByTimeAsync(100);
+    await vi.advanceTimersByTimeAsync(100);
+    expect(be.calls).toHaveLength(3);
+    expect(cancelled).toBe(2);
+    expect(rc.url()).toBe('http://jf:8096');
     rc.stop();
   });
 
@@ -227,6 +275,23 @@ describe('gateway with a remote upstream', () => {
       expect([p, r.status, r.headers.get('retry-after')]).toEqual([p, 503, '5']);
     }
     expect(calls).toEqual([]); // not even the backend is asked
+  });
+
+  it('a cast request without an upstream: the 503 carries the CORS headers and counts as a cast request', async () => {
+    const base = await start(() => null);
+    const r = await fetch(`${base}/media/c/${'A'.repeat(43)}${IMG.slice(6)}`);
+    expect([r.status, r.headers.get('access-control-allow-origin'), r.headers.get('cache-control')]).toEqual([503, '*', 'no-store']);
+    const m = await (await fetch(`${base}/metrics`)).text();
+    expect(m).toMatch(/friendflix_gateway_cast_requests_total\{code="503"\} 1/);
+    expect(m).not.toMatch(/friendflix_gateway_requests_total\{code="503"\}/);
+    expect((await get(base, IMG)).headers.get('access-control-allow-origin')).toBeNull(); // the cookie path stays same-origin
+  });
+
+  it('an upstream that goes away between the check and the forward: 503, counted', async () => {
+    let n = 0;
+    const base = await start(() => (n++ === 0 ? 'http://jf-a:8096' : null));
+    expect((await get(base, IMG)).status).toBe(503);
+    expect(await (await fetch(`${base}/metrics`)).text()).toMatch(/friendflix_gateway_requests_total\{code="503"\} 1/);
   });
 
   it('an invalid URL from the getter answers 503 too', async () => {
