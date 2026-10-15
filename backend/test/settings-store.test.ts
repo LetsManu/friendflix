@@ -291,9 +291,11 @@ describe('settings store', () => {
   it('pendingRestart lists restart keys that differ from the boot value', async () => {
     const s = await make();
     expect(s.pendingRestart()).toEqual([]);
-    await s.save({ API_COMPRESSION: false }, null);
-    expect(s.pendingRestart()).toEqual(['API_COMPRESSION']);
-    await s.save({ API_COMPRESSION: true }, null);
+    await s.save({ DOWNLOAD_CREATE_PER_HOUR: 7 }, null);
+    expect(s.pendingRestart()).toEqual(['DOWNLOAD_CREATE_PER_HOUR']);
+    await s.save({ API_COMPRESSION: false }, null); // live: never pending
+    expect(s.pendingRestart()).toEqual(['DOWNLOAD_CREATE_PER_HOUR']);
+    await s.save({ DOWNLOAD_CREATE_PER_HOUR: null }, null);
     expect(s.pendingRestart()).toEqual([]);
   });
 

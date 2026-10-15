@@ -97,7 +97,7 @@ export const SETTINGS: readonly SettingDef[] = [
   // general
   setting('PUBLIC_URL', { kind: 'url', group: 'general', probe: 'publicUrl', runRequired: true }),
   setting('WEBHOOK_SECRET', { kind: 'secret', group: 'general', generate: 'webhookSecret' }),
-  setting('API_COMPRESSION', { kind: 'bool', group: 'general', apply: 'restart' }), // the plugin is registered at start
+  setting('API_COMPRESSION', { kind: 'bool', group: 'general' }), // read per response (app.ts onSend): applies at once
   // sign-in
   setting('OIDC_ISSUER', { kind: 'url', ...oidc }),
   setting('OIDC_CLIENT_ID', { kind: 'string', ...oidc }),

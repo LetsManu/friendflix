@@ -41,7 +41,7 @@ const GROUPS: Array<[string, Array<[string, Spec]>]> = [
   ['general', [
     ['PUBLIC_URL', { kind: 'url', source: 'env', value: 'https://friend.example.com' }],
     ['WEBHOOK_SECRET', { kind: 'secret', source: 'db', set: true, generate: 'webhookSecret' }],
-    ['API_COMPRESSION', { kind: 'bool', source: 'default', value: true, apply: 'restart' }],
+    ['API_COMPRESSION', { kind: 'bool', source: 'default', value: true }],
   ]],
   ['signin', [
     ['OIDC_ISSUER', { kind: 'url', source: 'db', value: 'https://auth.example.com/application/o/friendflix/' }],

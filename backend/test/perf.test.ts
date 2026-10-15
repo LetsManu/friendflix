@@ -250,6 +250,18 @@ describe('HTTP: compression, Server-Timing, media authz single flight, "because"
     }
   });
 
+  it('a saved API_COMPRESSION applies to the next response (live, no restart)', async () => {
+    try {
+      await env.ctx.settings.save({ API_COMPRESSION: false }, null);
+      expect((await call('GET', '/test/big', undefined, { 'accept-encoding': 'br' })).headers['content-encoding']).toBeUndefined();
+      expect(env.ctx.settings.pendingRestart()).not.toContain('API_COMPRESSION');
+      await env.ctx.settings.save({ API_COMPRESSION: true }, null);
+      expect((await call('GET', '/test/big', undefined, { 'accept-encoding': 'br' })).headers['content-encoding']).toBe('br');
+    } finally {
+      await env.ctx.settings.save({ API_COMPRESSION: null }, null);
+    }
+  });
+
   it('emits Server-Timing with db / kv / jf breakdown', async () => {
     const h = (await env.app.inject('/health')).headers['server-timing'];
     expect(h).toMatch(/^app;dur=[\d.]+$/);

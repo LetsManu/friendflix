@@ -43,8 +43,8 @@ describe('key classification', () => {
     expect(SETTINGS.filter((s) => s.hint === 'last4').map((s) => s.key).sort()).toEqual(['OMDB_API_KEY', 'TMDB_API_KEY']);
     for (const s of SETTINGS) expect(s.secret === true, s.key).toBe(s.kind === 'secret');
   });
-  it("apply === 'restart' exactly for DOWNLOAD_CREATE_PER_HOUR and API_COMPRESSION", () => {
-    expect(SETTINGS.filter((s) => s.apply === 'restart').map((s) => s.key).sort()).toEqual(['API_COMPRESSION', 'DOWNLOAD_CREATE_PER_HOUR']);
+  it("apply === 'restart' exactly for DOWNLOAD_CREATE_PER_HOUR (API_COMPRESSION is read per response: live)", () => {
+    expect(SETTINGS.filter((s) => s.apply === 'restart').map((s) => s.key).sort()).toEqual(['DOWNLOAD_CREATE_PER_HOUR']);
   });
   it('legacy env names', () => {
     expect(def('REQUESTS_URL').legacyEnv).toEqual(['SEERR_URL']);

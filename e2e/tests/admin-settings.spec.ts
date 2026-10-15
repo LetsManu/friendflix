@@ -60,6 +60,10 @@ test.describe('admin: settings', () => {
     await expect(field).toHaveValue('');
     await expect(field).toHaveAttribute('type', 'password');
     await expect(field).toHaveAttribute('autocomplete', 'off');
+    // page.content() does not serialise an input's live value: read every field's value property, with Replace open
+    const values = await page.locator('input, textarea').evaluateAll((els) => els.map((e) => (e as HTMLInputElement).value));
+    expect(values.length).toBeGreaterThan(0);
+    expect(values.join('\n')).not.toContain(LEAK);
     await field.fill('sekret-tmdb-key-wxyz');
     const sources = card(page, 'Datenquellen');
     await sources.getByRole('button', { name: 'Speichern' }).click();
@@ -83,17 +87,18 @@ test.describe('admin: settings', () => {
     await expect(key.getByText('Gespeicherter Wert nicht lesbar – bitte neu eingeben.')).toBeVisible();
   });
 
-  test('saving API_COMPRESSION shows the restart banner', async ({ page, api }) => {
+  test('saving a restart setting shows the restart banner; API_COMPRESSION applies live', async ({ page, api }) => {
     await page.goto('/admin/settings');
     await expect(page.getByText('docker compose restart backend')).toHaveCount(0);
-    const row = setting(page, 'API-Antworten komprimieren');
+    await expect(setting(page, 'API-Antworten komprimieren').getByText('Neustart nötig')).toHaveCount(0);
+    const row = setting(page, 'Downloads pro Stunde');
     await expect(row.getByText('Neustart nötig')).toBeVisible();
-    await row.getByRole('switch').click();
-    await card(page, 'Allgemein').getByRole('button', { name: 'Speichern' }).click();
-    expect(api.settings.puts).toEqual([{ values: { API_COMPRESSION: false } }]);
+    await row.getByRole('spinbutton').fill('7');
+    await card(page, 'Downloads').getByRole('button', { name: 'Speichern' }).click();
+    expect(api.settings.puts).toEqual([{ values: { DOWNLOAD_CREATE_PER_HOUR: 7 } }]);
     const banner = page.getByRole('status').filter({ hasText: 'docker compose restart backend' });
     await expect(banner).toBeVisible();
-    await expect(banner).toContainText('API-Antworten komprimieren');
+    await expect(banner).toContainText('Downloads pro Stunde');
   });
 
   test('probe unreachable → Save anyway saves with force: true', async ({ page, api }) => {
