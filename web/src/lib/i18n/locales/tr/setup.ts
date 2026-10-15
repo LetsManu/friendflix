@@ -197,6 +197,7 @@ const setup: Translation<typeof de> = {
     not_tested: 'Bu medya sunucusu otomatik olarak denetlenemez.',
     timeout: 'Zamanında yanıt gelmedi.',
     env_locked: 'Adres ortamdan (.env) geliyor. Tam olarak bu adresi gir.',
+    env_key_locked: 'API anahtarı ortamdan (.env) geliyor, bu yüzden burada yenisi kaydedilemez. Onu .env dosyasından kaldırıp yeniden başlat ya da adresi ve anahtarı elle gir.',
     public_url_missing: 'Önce herkese açık adresi kaydet (adım 2).',
   },
 };

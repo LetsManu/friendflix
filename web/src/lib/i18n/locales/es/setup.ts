@@ -197,6 +197,7 @@ const setup: Translation<typeof de> = {
     not_tested: 'Este servidor multimedia no se puede comprobar automáticamente.',
     timeout: 'Sin respuesta a tiempo.',
     env_locked: 'La dirección viene del entorno (.env). Introduce exactamente esa dirección.',
+    env_key_locked: 'La clave de API viene del entorno (.env), así que aquí no se puede guardar una nueva. Quítala de .env y reinicia, o introduce la dirección y la clave a mano.',
     public_url_missing: 'Guarda primero la dirección pública (paso 2).',
   },
 };

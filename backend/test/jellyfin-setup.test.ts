@@ -320,14 +320,14 @@ describe('POST /api/setup/media/auto', () => {
     }
   });
 
-  it('JELLYFIN_ADMIN_API_KEY from the environment: refused (env_locked) before any request, so no key is left behind', async () => {
+  it('JELLYFIN_ADMIN_API_KEY from the environment: refused (env_key_locked) before any request, so no key is left behind', async () => {
     const real = env.ctx.settings.sources.bind(env.ctx.settings);
     const spy = vi.spyOn(env.ctx.settings, 'sources').mockImplementation(() => ({ ...real(), JELLYFIN_ADMIN_API_KEY: 'env' }));
     try {
       jf = fakeJellyfin();
       const r = await post(input);
       expect(r.statusCode).toBe(400);
-      expect(r.json()).toEqual({ ok: false, code: 'invalid', detail: 'env_locked' });
+      expect(r.json()).toEqual({ ok: false, code: 'invalid', detail: 'env_key_locked' });
       expect(jf.calls).toEqual([]);
     } finally {
       spy.mockRestore();

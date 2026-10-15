@@ -64,7 +64,7 @@ export function failure(e: unknown): Failure {
   if (b.error === 'invalid_settings' && b.errors && typeof b.errors === 'object') {
     return { kind: 'message', text: errorText('invalid_settings'), fields: b.errors as Record<string, string>, ...withSteps };
   }
-  // a refusal in the shape of a probe result: { ok: false, code: 'invalid', detail: 'invalid_url' | 'env_locked' | 'public_url_missing' }
+  // a refusal in the shape of a probe result: { ok: false, code: 'invalid', detail: 'invalid_url' | 'env_locked' | 'env_key_locked' | 'public_url_missing' }
   if (b.ok === false && word(b.code)) {
     const probe: ProbeResult = { ok: false, code: b.code as ProbeResult['code'], ...(word(b.detail) ? { detail: b.detail } : {}) };
     return { kind: 'message', text: probeText(probe), probe, soft: false };

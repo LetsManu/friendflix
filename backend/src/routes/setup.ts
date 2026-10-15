@@ -134,7 +134,7 @@ export function setupRoutes(app: FastifyInstance, ctx: Ctx) {
     const lockedUrl = sources[provider.urlKey] === 'env' ? String((ctx.cfg as Record<string, unknown>)[provider.urlKey] ?? '') : undefined;
     if (lockedUrl !== undefined && b.url !== lockedUrl) return reply.code(400).send({ ok: false, code: 'invalid', detail: 'env_locked' });
     // a credential from the environment is never replaced: a new key could not be saved (and would be left behind in the media server)
-    if (provider.keys.some((k) => k !== provider.urlKey && sources[k] === 'env')) return reply.code(400).send({ ok: false, code: 'invalid', detail: 'env_locked' });
+    if (provider.keys.some((k) => k !== provider.urlKey && sources[k] === 'env')) return reply.code(400).send({ ok: false, code: 'invalid', detail: 'env_key_locked' });
     // one run at a time (all instances): two runs listing the keys at once could both pick the same new key and orphan the other
     const lock = 'setup:media:auto';
     if (!(await ctx.kv.setnx(lock, '1', 60))) return reply.code(409).send({ error: 'busy' });

@@ -146,7 +146,7 @@ describe('setup messages', () => {
     const ak = ['unauthorized', 'not_superuser', 'unsupported_version', 'blueprint_invalid', 'unreachable', 'unexpected', 'issuer_mismatch', 'invalid_url'];
     // probe codes and details of settings/probes.ts, the media server's automatic key and the setup routes
     const probe = ['ok', 'unreachable', 'timeout', 'unauthorized', 'invalid', 'not_admin', 'issuer_mismatch', 'wizard_pending', 'unexpected', 'warning'];
-    const details = ['echo_mismatch', 'insecure', 'not_tested', 'timeout', 'env_locked', 'public_url_missing', 'invalid_url', 'redirect', 'not_found', 'upstream_error',
+    const details = ['echo_mismatch', 'insecure', 'not_tested', 'timeout', 'env_locked', 'env_key_locked', 'public_url_missing', 'invalid_url', 'redirect', 'not_found', 'upstream_error',
       'bad_response', 'incomplete', 'insecure_issuer', 'enroll_flow_missing', 'not_set', 'rate_limited'];
     for (const c of errors) expect(hasKey(`setup.errors.${c}`), c).toBe(true);
     for (const c of ak) expect(hasKey(`setup.ak.fail.${c}`), c).toBe(true);

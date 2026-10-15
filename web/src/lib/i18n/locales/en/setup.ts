@@ -197,6 +197,7 @@ const setup: Translation<typeof de> = {
     not_tested: 'This media server cannot be checked automatically.',
     timeout: 'No answer in time.',
     env_locked: 'The address comes from the environment (.env). Enter exactly that address.',
+    env_key_locked: 'The API key comes from the environment (.env), so a new one cannot be saved here. Remove it from .env and restart, or enter the address and key by hand.',
     public_url_missing: 'Save the public address first (step 2).',
   },
 };
