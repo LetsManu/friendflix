@@ -46,7 +46,7 @@ Networks and ports are defined in [compose.yaml](../compose.yaml); the diagram a
 | Browser to reverse proxy | Any client on the internet to your TLS terminator | HTTPS only; HSTS and TLS settings are configured at the proxy ([setup.md](setup.md)). Treated as untrusted input from here on. |
 | Reverse proxy to web, backend, gateway | Your proxy to three ports bound to `127.0.0.1` (`BIND_ADDR`) | Requests are routed by path (`/api`, `/auth`, `/ws` to the backend, `/media` to the gateway). The backend sets `trustProxy` and so relies on the proxy for the client address. |
 | Web to backend | SvelteKit app to API | Cookie session plus CSRF header on state-changing requests. The web container holds no secrets. |
-| Gateway to backend | Media path to authorisation | Shared `INTERNAL_SECRET` header on `/internal/authz`; the answer (user's media token and limits) is cached for 5 s and never stored. |
+| Gateway to backend | Media path to authorisation | Shared `INTERNAL_SECRET` header on `/internal/authz` and `/internal/gateway-config`; the authz answer (user's media token and limits) is cached for 5 s and never stored, the config answer carries only the settings revision and the media server URL. |
 | Backend and gateway to Postgres and Redis | App to data stores | Only the backend reaches them, over the `db` network which is `internal`. Redis requires a password and persistence is switched off (sessions are not written to disk). |
 | Backend and gateway to media server | Admin API key and per-user tokens | Only on the `media` network (internal). The gateway allowlists upstream paths and clamps height and bitrate before forwarding. |
 | FriendFlix to identity provider | OIDC discovery and code exchange | Authorization code flow with PKCE (S256), `state` and `nonce`, and a cookie binding the flow to the browser. The IdP is trusted to authenticate users and enforce MFA. |
@@ -85,9 +85,9 @@ These are backed by automated checks in CI (lint, type check, unit and end-to-en
 |---|---|---|
 | Least privilege | Containers run as non-root (`USER node`), drop all capabilities and cannot gain privileges. Only the backend sits on the db network. The gateway mounts downloads read-only. Roles cap bitrate, resolution and concurrent streams. Cast tokens are scoped to one title (poster tokens to images only). | `compose.yaml`, `backend/Dockerfile`, `gateway/Dockerfile`, `backend/src/cast.ts` |
 | Complete mediation | Gateway authorises every playlist and segment through the backend; the CSRF hook runs on every state-changing `/api` request; item visibility is checked before external lookups. | `gateway/src/gateway.ts`, `backend/src/app.ts` |
-| Fail-safe defaults | Ports bind to `127.0.0.1` by default; unknown gateway paths are rejected; unauthenticated requests get 401; "Share history" is off by default; the backend refuses to start without required settings; an unreadable encrypted value is treated as unset. | `compose.yaml`, `backend/src/config.ts`, `backend/src/sources/keys.ts` |
+| Fail-safe defaults | Ports bind to `127.0.0.1` by default; unknown gateway paths are rejected; unauthenticated requests get 401; "Share history" is off by default; the backend refuses to start without its bootstrap secrets; webhooks answer 403 while no webhook secret is set; an unreadable encrypted value is treated as unset. | `compose.yaml`, `backend/src/config.ts`, `backend/src/settings/resolve.ts` |
 | Economy of mechanism | Small set of building blocks: Node `crypto`, Fastify plugins, one media-server interface, one gateway allowlist. No custom cryptography or protocol. | `backend/src/crypto.ts`, [architecture.md](architecture.md) |
-| Separation of privilege | Admin API key lives only in the backend; the gateway only knows `INTERNAL_SECRET` and gets user tokens on demand; the web container holds no secret; admin role comes from an IdP group (`ADMIN_GROUP`). | `compose.yaml`, [architecture.md](architecture.md) |
+| Separation of privilege | Admin API key lives only in the backend; the gateway only knows `INTERNAL_SECRET` (from its own volume) and gets user tokens on demand; the web container holds no secret; admin role comes from an IdP group (`ADMIN_GROUP`). | `compose.yaml`, [architecture.md](architecture.md) |
 | Defense in depth | Proxy, then session and CSRF, then role checks, then gateway allowlist and clamps, then internal networks, then container hardening, then encryption at rest. | all of the above |
 
 ### Common weaknesses
@@ -115,7 +115,7 @@ The account page also tells the person what admins can see: **"Admins can see wh
 
 ### Re-authentication
 
-Deleting the account needs a sign-in that is at most **10 minutes** old. The account page sends the person through `GET /auth/reauth`, an OIDC login with `prompt=login` and `max_age=0`, so the identity provider asks for the password and MFA even when its session is still valid. The callback checks that the identity provider's `auth_time` is at most 2 minutes old and that the `sub` is the session's own (a different person gets nothing and an audit entry `session.reauth_mismatch`). It then stamps the portal session with the time (`reauthAt`, audit `session.reauth`). Sensitive routes check the stamp with one guard, `requireRecentAuth`, and answer `401 reauth_required` without it.
+Deleting the account needs a sign-in that is at most **10 minutes** old. The account page sends the person through `GET /auth/reauth`, an OIDC login with `prompt=login` and `max_age=0`, so the identity provider asks for the password and MFA even when its session is still valid. The callback checks that the identity provider's `auth_time` is at most 2 minutes old and that the `sub` is the session's own (a different person gets nothing and an audit entry `session.reauth_mismatch`). It then stamps the portal session with the time (`reauthAt`, audit `session.reauth`). Sensitive routes check the stamp with one guard, `requireRecentAuth`, and answer `401 reauth_required` without it. *Admin → Settings* checks the same stamp for sensitive changes ([Settings and generated secrets](#settings-and-generated-secrets)).
 
 A later release replaces only the producer: an in-app password screen through Authentik's flow executor sets the same stamp, and the guard stays as it is. Until then, changing the password and two-factor methods happens on Authentik's own user settings page ([authentik.md §8.4](authentik.md#84-account-page-and-account-deletion)). The e-mail address is read-only in FriendFlix for now; a later release may change that.
 
@@ -183,11 +183,24 @@ When all six are done, the admins get a notice with the pseudonym and the audit 
 - Items (and their notes) the person added to other people's lists stay, without who added them.
 - A deleted admin's own administrative audit entries lose their name-type keys too (hub, source or item names), which removes some non-personal detail.
 
+## Settings and generated secrets
+
+Settings live in the database and are changed by admins in *Admin → Settings*; the secrets needed before the database can be read are generated on the host. The rules:
+
+- **Bootstrap volume.** The `bootstrap` service writes the database and Redis passwords, `APP_ENC_KEY` and `INTERNAL_SECRET` into the `bootstrap` volume and exits. It runs as root with no capability but `CHOWN`, a read-only root file system and no network. Files are owned by `root:10001` with mode `0440`, the directory `0750`; only the containers that need them join group `10001` (`backend`, `redis`, the `backup` sidecar; Postgres reads its password file as root in its entrypoint). Writes are atomic and synced to disk. It logs file names and actions, never values. It refuses to replace an empty `postgres_password` or `app_enc_key` on a volume that holds other files, because a new value would lock out the existing data.
+- **Gateway-only volume.** The gateway mounts `bootstrap-gateway`, which holds a copy of `INTERNAL_SECRET` and nothing else: it never sees the database password or the encryption key, and it is still not on the `db` network. It gets its media server URL from the backend (`GET /internal/gateway-config`, behind `INTERNAL_SECRET`) and logs only the URL's origin.
+- **Environment wins.** A value from the environment or a `_FILE` secret cannot be changed from the web UI; the page shows it locked. Saved values are validated against the same schema as environment values.
+- **Write-only secrets.** Secret settings are encrypted with `APP_ENC_KEY` (see [Cryptography](#cryptography)) in the `settings` table. `GET /api/admin/settings` never returns them: only *set* / *not set*, the change date and, for data-source API keys, the last four characters. Credentials inside a non-secret URL (user info, ntfy's `auth` query) are shown redacted, and a submitted URL that still holds the redaction is refused. A generated webhook secret is returned once, with `Cache-Control: no-store`; the VAPID private key never leaves the server.
+- **Fresh sign-in for sensitive changes.** Saving a secret, `PUBLIC_URL`, `HOME_NETWORKS`, `ADMIN_GROUP`, `NTFY_URL` / `NTFY_BASE_URL`, any `OIDC_*` or `AUTHENTIK_*` value or a URL a stored credential is sent to, generating a secret, and any save or test that would send a stored credential to a changed host need a sign-in at most 10 minutes old ([Re-authentication](#re-authentication)).
+- **Checks and logs carry codes, not data.** Each save probes the affected service with the candidate values; probe results and validation errors are codes, never an upstream body. The audit log records `settings.update`, `settings.import_env` and `settings.generate` with key names only.
+- **Revision-only broadcast.** After a save the backend publishes only the new revision number on the Redis channel `ff:settings:rev`; every instance then reloads from the database (and polls the revision every 30 s in case a message is lost). Values never travel over Redis. A stored value that cannot be decrypted or fails validation is ignored, flagged in the UI and logged by key name only.
+- **No Docker socket.** No FriendFlix container gets `/var/run/docker.sock`; the web app cannot control Docker.
+
 ## Cryptography
 
 | Purpose | Mechanism | Notes |
 |---|---|---|
-| Secrets at rest (media-server passwords and tokens, admin-saved API keys) | AES-256-GCM, random 12-byte IV, authentication tag; key `APP_ENC_KEY` (must decode to 32 bytes) | `backend/src/crypto.ts` |
+| Secrets at rest (media-server passwords and tokens, secret settings saved in *Admin → Settings*) | AES-256-GCM, random 12-byte IV, authentication tag; key `APP_ENC_KEY` (must decode to 32 bytes) | `backend/src/crypto.ts` |
 | Profile PINs | scrypt, random 16-byte salt, constant-time comparison; limited failed attempts | `hashPin` / `verifyPin` |
 | Cast and API tokens | 256-bit CSPRNG (`randomBytes`), base64url; only `sha256(token)` is stored in Redis | `backend/src/cast.ts`, [cast.md](cast.md) |
 | Signed cast subtitle URLs | HMAC-SHA-256 with a key derived from `APP_ENC_KEY`, compared in constant time | `backend/src/cast.ts` |
@@ -196,13 +209,13 @@ When all six are done, the admins get a notice with the pseudonym and the audit 
 | Sign-in | OIDC authorization code flow with PKCE (S256), `state`, `nonce` | `backend/src/oidc.ts` |
 | Web Push | VAPID keys (`VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`) | `backend/src/push.ts` |
 
-Keep `APP_ENC_KEY` out of backups of the database: losing it makes encrypted values unreadable (the app treats them as unset), leaking it together with a database dump exposes them. Docker secrets are supported through [compose.secrets.yaml](../compose.secrets.yaml).
+`APP_ENC_KEY` lives in the `bootstrap` volume (or in `.env` / a Docker secret on installs that set it). Back the volume up apart from the database dumps (`scripts/backup-bootstrap.sh`): losing it makes encrypted values unreadable (the app treats them as unset and flags them for re-entry), leaking it together with a database dump exposes them. Docker secrets are supported through [compose.secrets.yaml](../compose.secrets.yaml).
 
 ## Hardening
 
 What the shipped [compose.yaml](../compose.yaml) and images do:
 
-- **Containers:** `read_only: true` root file system with a `tmpfs` for `/tmp`, `cap_drop: [ALL]`, `security_opt: no-new-privileges:true` on backend, gateway, web and the backup sidecar; Redis runs read-only too. The app images run as the unprivileged `node` user.
+- **Containers:** `read_only: true` root file system with a `tmpfs` for `/tmp`, `cap_drop: [ALL]`, `security_opt: no-new-privileges:true` on backend, gateway, web and the backup sidecar; Redis runs read-only as its own user. The app images run as the unprivileged `node` user. The one-shot `bootstrap` service runs as root, but read-only, without network and with `CHOWN` as its only capability ([Settings and generated secrets](#settings-and-generated-secrets)).
 - **Images:** base images pinned by digest; `npm`, `npx` and `yarn` are removed from the runtime images; production dependencies only; Alpine security updates applied at build; health checks.
 - **Network:** only the three app ports are published, bound to `127.0.0.1`; `db` and `media` networks are `internal`; Redis requires a password and keeps no data on disk.
 - **API headers:** `X-Content-Type-Options: nosniff`, `Referrer-Policy: same-origin`, `X-Frame-Options: DENY`, `Cross-Origin-Resource-Policy: same-origin` (relaxed only for the Chromecast subtitle route) and `Cache-Control: no-store` unless a route sets its own.

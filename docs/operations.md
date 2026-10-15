@@ -11,9 +11,15 @@ docker compose logs -f backup                 # eine Zeile pro Lauf: "backup: OK
 ```
 - Der Sidecar nutzt `postgres:17-alpine` (gleiche Major-Version wie `postgres`; beim Upgrade beide gemeinsam anheben) und läuft täglich um `BACKUP_HOUR` (Default 3, Zeitzone aus `TZ`). Optional `BACKUP_RUN_ON_START=true` für einen Sofort-Dump beim Start.
 - **Ablauf je Lauf:** `pg_dump -Fc` in eine `.tmp`-Datei, Prüfung mit `pg_restore --list`, erst dann Umbenennen nach `friendflix-YYYYmmdd-HHMM.dump`; danach werden Dumps älter als `BACKUP_KEEP_DAYS` (Default 14) gelöscht. Schlägt ein Schritt fehl, bleibt der letzte gute Dump unangetastet, die Logzeile zeigt `FAIL exit=<rc>` und der Container wird `unhealthy` (`docker compose ps`; für Alarme z. B. Portainer/Icinga auf den Health-Status).
-- **Ablageort:** Host-Verzeichnis `BACKUP_PATH` (Default `./backups`) → `/backups` im Container. Das Passwort kommt aus `POSTGRES_PASSWORD` (wie beim `postgres`-Dienst) oder aus einer gemounteten Datei (`BACKUP_PGPASSWORD_FILE`), nie aus dem Image oder dem Dump-Verzeichnis.
+- **Ablageort:** Host-Verzeichnis `BACKUP_PATH` (Default `./backups`) → `/backups` im Container. Das Passwort liest der Sidecar aus dem Volume `bootstrap` (`/run/friendflix/postgres_password`, schreibgeschützt eingebunden); ein gesetztes `POSTGRES_PASSWORD` hat Vorrang, `BACKUP_PGPASSWORD_FILE` wählt eine andere Datei. Nie aus dem Image oder dem Dump-Verzeichnis.
 - Alternativ per Cron auf dem Host: `0 3 * * * cd /opt/friendflix && ./scripts/backup.sh >> backups/backup.log 2>&1`
-- **Off-site:** Dumps zusätzlich auf ein anderes Gerät kopieren, ein Backup auf derselben Platte schützt nicht vor Plattenausfall. Beispiel TerraMaster-NAS: `BACKUP_PATH` auf ein NAS-Share legen (NFS/SMB) und dort Snapshots aktivieren, oder per Cron `rsync -a --delete-after backups/ nas:/volume1/backups/friendflix/`. Den Schlüssel `APP_ENC_KEY` separat im Passwort-Manager sichern.
+- **Off-site:** Dumps zusätzlich auf ein anderes Gerät kopieren, ein Backup auf derselben Platte schützt nicht vor Plattenausfall. Beispiel TerraMaster-NAS: `BACKUP_PATH` auf ein NAS-Share legen (NFS/SMB) und dort Snapshots aktivieren, oder per Cron `rsync -a --delete-after backups/ nas:/volume1/backups/friendflix/`. Das Volume `bootstrap` separat sichern (siehe unten).
+
+**Backup = Datenbank-Dump + Volume `bootstrap`.** Das Volume enthält die erzeugten Secrets (Passwörter für Datenbank und Redis, `APP_ENC_KEY`, `INTERNAL_SECRET`). Der nächtliche Sidecar nimmt es bewusst **nicht** mit: Der Schlüssel neben den Daten, die er schützt, hebt die Trennung auf. Einmal nach der Installation und nach jeder Änderung eines dieser Werte sichern:
+```bash
+./scripts/backup-bootstrap.sh     # -> backups/friendflix-bootstrap-<UTC-Zeit>.tgz (Modus 0600, gehört dem Aufrufer)
+```
+Die Datei getrennt von den Dumps aufbewahren (Passwort-Manager als Anhang, anderes Gerät). Andere Projektnamen: `COMPOSE_PROJECT_NAME=<name> ./scripts/backup-bootstrap.sh`; Zielordner `BACKUP_DIR`. Mit `compose.secrets.yaml` kommen `APP_ENC_KEY` und `INTERNAL_SECRET` aus `secrets/`; dann zusätzlich diesen Ordner sichern. Das Volume `bootstrap-gateway` braucht kein Backup (der Dienst `bootstrap` füllt es bei jedem Start neu).
 
 **Wiederherstellung** (App gestoppt, damit keine Verbindungen offen sind):
 ```bash
@@ -21,19 +27,24 @@ docker compose stop backend gateway
 docker compose exec -T postgres pg_restore --clean --if-exists --no-owner -U friendflix -d friendflix < backups/friendflix-<ts>.dump
 docker compose start backend gateway
 ```
-Bei einer leeren/neuen Datenbank zuerst den Stack mit `postgres` starten (`docker compose up -d postgres`) und dann wie oben einspielen. Migrationen laufen beim Start des Backends ggf. nach.
+Bei einer leeren/neuen Datenbank (neuer Host) **zuerst das Volume `bootstrap` zurückspielen**, dann den Stack mit `postgres` starten (`docker compose up -d postgres`) und wie oben einspielen. Migrationen laufen beim Start des Backends ggf. nach.
+```bash
+docker volume create friendflix_bootstrap   # leer, vor dem ersten `docker compose up`
+docker run --rm -v friendflix_bootstrap:/s -v "$PWD/backups":/b:ro alpine:3.24.2 tar xzf /b/friendflix-bootstrap-<zeit>.tgz -C /s
+```
+**Ohne das Volume** erzeugt der Dienst `bootstrap` einen neuen `APP_ENC_KEY`: Die geheimen Einstellungen in der Datenbank sind dann unlesbar (*Admin → Einstellungen* zeigt *Gespeicherter Wert nicht lesbar*, das Backend loggt die Namen), sie müssen neu eingegeben werden; die gespeicherten Jellyfin-Passwörter der Nutzer gehen verloren. Ist nur der alte `APP_ENC_KEY` bekannt (Passwort-Manager, alte `.env`), ihn vor dem ersten Start als `APP_ENC_KEY` in die `.env` setzen: Der Dienst `bootstrap` übernimmt ihn ins Volume.
 
 **Restore-Test** (monatlich per Cron, Exit-Code ≠ 0 bei Fehler → Icinga/Cron-Mail): `./scripts/restore-test.sh`
 Startet einen Wegwerf-Postgres ohne Port-Mapping, spielt den neuesten Dump ein und prüft Migrationen und Tabellen. Schnellprüfung einer einzelnen Datei: `docker compose exec -T postgres pg_restore --list < backups/<datei>.dump | head`.
 
-- **APP_ENC_KEY sichern!** (Passwort-Manager, getrennt vom Dump). Ohne ihn sind die gespeicherten Jellyfin-Passwörter der Nutzer unlesbar.
+- **Volume `bootstrap` sichern!** (getrennt vom Dump). Ohne den `APP_ENC_KEY` darin sind die gespeicherten Jellyfin-Passwörter der Nutzer und die geheimen Einstellungen unlesbar.
 - Nicht im Dump: Daten von Jellyfin, Wunsch-Dienst und Authentik (eigene Backups dieser Dienste; Authentik: [de/authentik.md §2.6](de/authentik.md#26-backups-und-updates)).
 
 ## TMDB-/OMDb-Schlüssel wechseln
 Die optionalen Schlüssel für die Detailseite lassen sich ohne Neustart tauschen:
 - **Über das Portal:** *Admin → Datenquellen*, neuen Schlüssel eintragen, *Testen*, *Speichern*. Die Sperre nach einem abgelehnten Schlüssel (401, 1 Stunde) und die zwischengespeicherten Fehlantworten fallen sofort weg.
 - **Über die Secret-Datei** (`TMDB_API_KEY_FILE` / `OMDB_API_KEY_FILE`): Datei ändern und das Backend neu starten: `docker compose restart backend` (mit denselben `-f`-Dateien wie beim Start, z. B. `docker compose -f compose.prod.yaml -f compose.secrets.yaml restart backend`). `up -d` erstellt den Container nicht neu, wenn sich nur der Inhalt der Datei geändert hat. Beim Start erkennt das Backend den geänderten Schlüssel und hebt die Sperre und die zwischengespeicherten Fehlantworten sofort auf; ein erfolgreicher *Testen*-Klick tut das ebenfalls. Ein Schlüssel aus Datei oder Umgebung hat Vorrang vor einem im Portal gespeicherten; die Admin-Seite zeigt ihn dann nur an. Zum Wechsel auf die Portal-Eingabe die Variable entfernen.
-- Der im Portal gespeicherte Schlüssel ist mit `APP_ENC_KEY` verschlüsselt. Geht `APP_ENC_KEY` verloren, meldet die Seite den Schlüssel als ungültig; dann einfach neu eintragen.
+- Der im Portal gespeicherte Schlüssel ist mit `APP_ENC_KEY` verschlüsselt und steht wie alle Einstellungen in der Tabelle `settings` (auch unter *Admin → Einstellungen → Datenquellen*). Geht `APP_ENC_KEY` verloren, meldet die Seite den Schlüssel als ungültig; dann einfach neu eintragen.
 
 ## Host-Firewall (zusätzlich zum fehlenden Port-Mapping)
 Jellyfin und der Wunsch-Dienst haben keine `ports:` und hängen nur im internen Netz. Falls sie auf dem Host zusätzlich laufen (nicht gebündelt):
@@ -45,7 +56,7 @@ ufw deny 8096,8920,5055/tcp
 Prüfung von außen: `nmap -p 8096,8920,5055 <öffentliche-IP>` → alle `filtered/closed`.
 
 ## Updates
-`git pull && docker compose build --pull && docker compose up -d`. Migrationen laufen beim Start (Advisory-Lock, transaktional).
+`git pull && docker compose build --pull && docker compose up -d`. Migrationen laufen beim Start (Advisory-Lock, transaktional). Umstieg einer älteren Installation auf Einstellungen in der Datenbank und das Volume `bootstrap`: [de/setup.md §14](de/setup.md#14-umstieg-auf-einstellungen-in-der-datenbank).
 Nach Jellyfin-Updates: `JELLYFIN_URL=… ./scripts/gen-jellyfin-client.sh` und Diff prüfen (Pfade ändern sich zwischen Versionen; der Client probiert alte/neue Pfade für Views/Resume/Item/Favoriten/Gesehen).
 
 ## Updates aus dem Portal
@@ -61,7 +72,7 @@ Admins sehen im Hauptprofil ein schmales **Warnband** unter der Kopfzeile, sobal
 
 | Meldung | Was tun |
 | --- | --- |
-| Medienserver nicht erreichbar | Läuft der Medienserver-Container? Stimmt `JELLYFIN_URL` (interne Adresse) und ist der API-Schlüssel noch gültig? Ohne Medienserver läuft keine Wiedergabe. |
+| Medienserver nicht erreichbar | Läuft der Medienserver-Container? Stimmt `JELLYFIN_URL` (interne Adresse; `.env` oder *Admin → Einstellungen → Mediaserver*) und ist der API-Schlüssel noch gültig? Ohne Medienserver läuft keine Wiedergabe. |
 | Datenbank / Redis nicht erreichbar | `docker compose ps`, Logs von `postgres` / `redis`; voller Datenträger ist die häufigste Ursache. Das Backend meldet dann auch `/health/ready` als nicht bereit. |
 | Gateway nicht erreichbar | Gateway-Container und `GATEWAY_URL` prüfen (Standard `http://gateway:4000`); ohne Gateway laufen keine Streams und Downloads. |
 | Login nicht erreichbar / anderer Aussteller | Authentik erreichbar? `OIDC_ISSUER` muss genau dem `issuer` im Discovery-Dokument entsprechen (abschließender Schrägstrich egal). Bestehende Sitzungen laufen weiter, neue Anmeldungen scheitern. |
@@ -249,7 +260,12 @@ Standard ist das Node-Gateway. Wird es bei vielen parallelen Streams zum Engpass
 
 **Einrichten**
 1. Jellyfin muss vom NPM-Host erreichbar sein, ohne öffentlich zu sein: Stack mit `docker compose -f compose.yaml -f compose.planb.yaml --profile bundled up -d` starten. Das veröffentlicht Jellyfin **nur auf `127.0.0.1:8096`**. Port 8096 bleibt in der Host-Firewall gesperrt. (Läuft Jellyfin außerhalb des Stacks, muss es auf `127.0.0.1:8096` für NPM erreichbar und von außen gesperrt sein.)
-2. In NPM → Proxy Host → Advanced: den `location /media/`-Block aus `portal.advanced.conf` **ersetzen** durch den Inhalt von `deploy/npm/plan-b-auth-request.conf`; `__INTERNAL_SECRET__` durch den Wert aus `.env` ersetzen.
+2. In NPM → Proxy Host → Advanced: den `location /media/`-Block aus `portal.advanced.conf` **ersetzen** durch den Inhalt von `deploy/npm/plan-b-auth-request.conf`; `__INTERNAL_SECRET__` durch das `INTERNAL_SECRET` ersetzen. Steht es in der `.env` (ältere Installation), diesen Wert nehmen; sonst liegt es im Volume `bootstrap` (mit `compose.secrets.yaml`: `secrets/internal_secret`). Ohne es auf dem Bildschirm oder in einem geteilten Log auszugeben, direkt in eine lokale Kopie schreiben (gleiche `-f`-Dateien wie beim Start):
+   ```bash
+   S=$(docker compose run --rm --no-deps -T --entrypoint cat backend /run/friendflix/internal_secret)
+   ( umask 077; sed "s|__INTERNAL_SECRET__|$S|" deploy/npm/plan-b-auth-request.conf > plan-b.local.conf ); unset S
+   ```
+   Den Inhalt von `plan-b.local.conf` in NPM einfügen und die Datei danach löschen (`rm plan-b.local.conf`; nie committen).
 3. Gateway-Container kann gestoppt werden (`docker compose stop gateway`).
 4. Testen: `curl -I https://portal.example.com/media/Videos/<id>/master.m3u8` ohne Cookie → **401**; im Browser abspielen → läuft.
 

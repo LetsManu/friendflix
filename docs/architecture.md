@@ -69,15 +69,33 @@ flowchart TB
 | Service | Networks | Host port (127.0.0.1) | Holds |
 |---|---|---|---|
 | web | front | 3080 | nothing secret |
-| backend | front, db, media, egress | 3081 | `APP_ENC_KEY`, `INTERNAL_SECRET`, Jellyfin admin API key, OIDC client secret; sessions (cookie `ff_sid`) in Redis; per-user Jellyfin credentials encrypted in Postgres |
-| gateway | front, media | 3082 | `INTERNAL_SECRET`; gets the user's media token per request from the backend (cached 5 s), never stores it |
-| postgres, redis | db (internal) | none | accounts, profiles, sessions |
+| bootstrap (one-shot) | none | none | writes the generated secrets into the `bootstrap` volume and `INTERNAL_SECRET` into `bootstrap-gateway`, then exits; every other service waits for it |
+| backend | front, db, media, egress | 3081 | `APP_ENC_KEY`, `INTERNAL_SECRET` and the database and Redis passwords (`bootstrap` volume, read-only); the settings with Jellyfin admin API key and OIDC client secret (encrypted in Postgres); sessions (cookie `ff_sid`) in Redis; per-user Jellyfin credentials encrypted in Postgres |
+| gateway | front, media | 3082 | `INTERNAL_SECRET` (`bootstrap-gateway` volume, read-only); pulls the media server URL from the backend; gets the user's media token per request from the backend (cached 5 s), never stores it |
+| postgres, redis | db (internal) | none | accounts, profiles, settings, sessions; their passwords come from the `bootstrap` volume |
 | jellyfin, requests (request service, profile `bundled`) | media (+egress) | none | media, request data |
 | Authentik (`compose.authentik.yaml`) | front, ak-db, egress | 9000 | identities |
 
 The browser only ever sees a session cookie and `/media/...` URLs, never a Jellyfin token.
 
 Media tokens never leave the server: the browser holds a session cookie and plays `/media/...` URLs that only the gateway can resolve. Alternative setups (Plan B, bundled Jellyfin, Authentik in its own stack): [operations.md](operations.md), [setup.md](setup.md).
+
+## Settings
+
+Configuration has four classes (`backend/src/settings/registry.ts`; every key of `config.ts` is in exactly one):
+
+- **bootstrap** – needed before the database can be read: `DATABASE_URL`, `REDIS_URL`, `APP_ENC_KEY`, `INTERNAL_SECRET`. Environment (incl. `_FILE`) first, else the files the `bootstrap` service writes into `/run/friendflix` (`settings/bootstrapFiles.ts`; the URLs are built from `postgres_password` / `redis_password`). A missing file stops the backend with the file name and the fix.
+- **setting** – stored in the `settings` table (secrets AES-256-GCM encrypted with `APP_ENC_KEY`, API keys of data sources with their last four characters), edited in *Admin → Settings*. Environment > database > default. Most apply live; `API_COMPRESSION` and `DOWNLOAD_CREATE_PER_HOUR` need a restart (`pendingRestart()`).
+- **env-only** – per container or shared with a container that reads env only (`MEDIA_SERVER`, `BACKGROUND_JOBS`, `METRICS_TOKEN`, `GATEWAY_URL`, paths, …); shown read-only.
+- **build** – baked into the image (`GIT_SHA`, `APP_VERSION`, …).
+
+`resolveConfig()` (`settings/resolve.ts`) is pure: environment (an empty value counts as unset, `_FILE` and the older names included), then the decrypted rows, then defaults. A row that cannot be decrypted or fails its schema is ignored, listed as invalid and logged by key name. An environment `PUBLIC_URL` with a path or query is reduced to its origin with one warning; a saved one must be an origin.
+
+The store (`settings/store.ts`) keeps one immutable `Config` snapshot; `ctx.cfg` is a getter for it, so code reads the live value on every use. A save validates all values, writes them and bumps `settings_meta.rev` in one transaction, swaps the snapshot and publishes the revision on the Redis channel `ff:settings:rev` (`settings/bus.ts`). Other instances reload from the database when they hear it, or on their 30 s poll of the revision. `onChange(keys, fn)` rebuilds what was built from the config at start: the OIDC client (lazily, on the next sign-in), the media server client, the request service client (`null` while `REQUESTS_URL` or `REQUESTS_API_KEY` is unset), the Web Push keys.
+
+The admin API is `backend/src/routes/adminSettings.ts` (`GET`/`PUT /api/admin/settings`, `POST …/test`, `…/import-env`, `…/generate`). A save runs the probes of the touched groups (`settings/probes.ts`) against the candidate config; refused credentials block, an unreachable service blocks unless `force`. Security rules: [security.md](security.md#settings-and-generated-secrets).
+
+**Gateway pull.** The gateway has no database and no Redis. `gateway/src/remoteConfig.ts` fetches `GET /internal/gateway-config` (`INTERNAL_SECRET`) → `{ rev, upstreamUrl }` at start (every 5 s until it answers), then every 30 s, and at once when an `/internal/authz*` answer carries a newer `x-ff-config-rev`. A failed refresh keeps the last URL. Without a URL (`503 setup_required` from the backend) `/media/*` answers 503 and `/health` stays 200, so the container is not restarted. An environment `JELLYFIN_URL` (the adapter's URL variable) wins and nothing is fetched. `INTERNAL_SECRET` comes from the environment or `_FILE`, else from `/run/friendflix-gateway/internal_secret` (`gateway/src/env.ts`).
 
 ## Press play
 
@@ -236,7 +254,7 @@ Every event, whatever its source, goes through `media/events.ts` `dispatchMediaE
 
 ### Gateway
 
-`gateway/src/upstream/types.ts` defines the `Upstream` adapter: the path allowlists (cookie and Chromecast), the direct-stream and image patterns, the query parameters that carry credentials or caps, and `authHeaders(credentials)`. `gateway/src/upstream/jellyfin.ts` is the Jellyfin adapter, `gateway/src/upstream/index.ts` holds the registry and `selectUpstream(MEDIA_SERVER)`, which refuses unknown values. `createGateway({ upstream, upstreamUrl, … })` takes the adapter; everything else (authorization against the backend, clamping, cast scope checks, playlist sanitising with the adapter's credential parameters, downloads) stays generic. Optional adapter hooks (all absent for Jellyfin):
+`gateway/src/upstream/types.ts` defines the `Upstream` adapter: the path allowlists (cookie and Chromecast), the direct-stream and image patterns, the query parameters that carry credentials or caps, and `authHeaders(credentials)`. `gateway/src/upstream/jellyfin.ts` is the Jellyfin adapter, `gateway/src/upstream/index.ts` holds the registry and `selectUpstream(MEDIA_SERVER)`, which refuses unknown values. `createGateway({ upstream, upstreamUrl, … })` takes the adapter (`upstreamUrl` may be a getter: the live URL from `remoteConfig`); everything else (authorization against the backend, clamping, cast scope checks, playlist sanitising with the adapter's credential parameters, downloads) stays generic. Optional adapter hooks (all absent for Jellyfin):
 
 - `authorize(ctx)` – per-request access check after the allowlist / session / direct-stream checks, for servers the gateway reaches with one server-wide token. `ctx.checkItem(itemId, kind)` asks the backend `POST /internal/authz/item {sid, itemId, kind}` (internal secret; answers `{allow}` from the active profile's visibility via `ctx.jf.item`, 401 without a usable session; memoised 5 s on both sides, dropped on a profile switch). On the Chromecast route it compares with the token's item scope. `false` → 403, a throw → 503.
 - `rewrite(path, query)` – maps the public `/media/…` shape (what the web and the DTOs use) to the upstream request; the result must stay server-relative (else 502). The shared `test-vectors/media-paths.json` results are unchanged for the Jellyfin adapter.

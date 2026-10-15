@@ -175,14 +175,15 @@ Der Produktions-Stack zieht fertige Images von `ghcr.io/letsmanu/friendflix-{bac
 ```bash
 git clone https://github.com/LetsManu/friendflix.git && cd friendflix
 cp .env.example .env
-openssl rand -base64 32    # -> APP_ENC_KEY
-openssl rand -hex 24       # -> INTERNAL_SECRET, WEBHOOK_SECRET, METRICS_TOKEN (je ein Wert)
-$EDITOR .env               # PUBLIC_URL, Passwörter, OIDC_*, JELLYFIN_*, REQUESTS_*
+$EDITOR .env               # PUBLIC_URL, OIDC_*, JELLYFIN_* (die internen Secrets werden erzeugt, siehe unten)
 docker login ghcr.io -u <user>                                 # nur bei privaten Paketen (PAT mit read:packages)
 docker compose -f compose.prod.yaml up -d                      # mit --profile bundled auch Jellyfin + den Wunsch-Dienst
 docker compose -f compose.prod.yaml --profile backup up -d backup   # optional: nächtliche Datenbank-Backups
 docker compose -f compose.prod.yaml ps                         # alles "healthy"
+./scripts/backup-bootstrap.sh                                  # erzeugte Secrets sichern, getrennt von den Dumps
 ```
+
+Der Dienst `bootstrap` erzeugt beim ersten `up` die Passwörter für Datenbank und Redis, `APP_ENC_KEY` und `INTERNAL_SECRET` im Docker-Volume `friendflix_bootstrap`. Alles andere ist eine Einstellung in der Datenbank und wird unter *Admin → Einstellungen* geändert; ein Wert aus der `.env` hat dort weiter Vorrang. Bestehende Installation aktualisieren: [docs/de/setup.md §14](docs/de/setup.md#14-umstieg-auf-einstellungen-in-der-datenbank).
 
 Danach:
 
@@ -190,21 +191,22 @@ Danach:
 2. **Nginx Proxy Manager:** ein Proxy-Host `portal.<domain>` → `127.0.0.1:3080`, Websockets an, Force SSL/HTTP2/HSTS; [deploy/npm/portal.advanced.conf](deploy/npm/portal.advanced.conf) in den Reiter *Advanced* einfügen (leitet `/api`, `/auth`, `/ws` an `:3081` und `/media/` an `:3082`). Den Block `/media/c/` nicht entfernen: Er verhindert, dass Cast-Tokens in Logs landen.
 3. **Jellyfin:** Admin-API-Key anlegen. Optional das Webhook-Plugin für sofortige „läuft gerade“- und „neu in der Bibliothek“-Ereignisse – [docs/integrations.md](docs/integrations.md).
 4. **Wünsche (optional):** API-Key und Webhook – [docs/integrations.md](docs/integrations.md).
-5. **Web-Push (optional):** `node scripts/gen-vapid.mjs`, beide Schlüssel in `.env`, neu starten.
+5. **Web-Push und Webhooks (optional):** unter *Admin → Einstellungen* das Push-Schlüsselpaar und das Webhook-Secret erzeugen.
 6. **Erster Login** mit einem Mitglied der Authentik-Gruppe `friendflix-admins`: Du wirst Portal-Admin, wählst die Sprache der Instanz und lädst deine Freunde unter *Admin → Nutzer → Einladungen* ein.
 
 Laufen Jellyfin/Wunsch-Dienst schon in einem eigenen Stack: `docker network connect friendflix_media <container>`, deren öffentliche Ports entfernen und `JELLYFIN_URL`/`REQUESTS_URL` setzen.
 
 ### Konfiguration
 
-Vorlage: [.env.example](.env.example). Jede Variable kann mit der Endung `_FILE` auch aus einer Datei gelesen werden (Docker Secrets, siehe [compose.secrets.yaml](compose.secrets.yaml)). Die Standardwerte stammen aus [compose.prod.yaml](compose.prod.yaml).
+Vorlage: [.env.example](.env.example). Jede Variable kann mit der Endung `_FILE` auch aus einer Datei gelesen werden (Docker Secrets, siehe [compose.secrets.yaml](compose.secrets.yaml)). Die Standardwerte stammen aus [compose.prod.yaml](compose.prod.yaml). Einstellungen lassen sich stattdessen unter *Admin → Einstellungen* speichern; ein Wert aus `.env` oder Datei hat Vorrang und ist dort gesperrt ([docs/de/setup.md](docs/de/setup.md#einstellungen-in-der-datenbank)).
 
 | Variable | Standard | Bedeutung |
 |---|---|---|
 | `PUBLIC_URL` | – (Pflicht) | Öffentliche https-URL des Portals |
-| `POSTGRES_PASSWORD`, `REDIS_PASSWORD` | – (Pflicht) | Passwörter für Datenbank und Redis |
-| `APP_ENC_KEY` | – (Pflicht) | 32 Byte base64; verschlüsselt gespeicherte Jellyfin-Zugangsdaten. **Getrennt sichern.** |
-| `INTERNAL_SECRET`, `WEBHOOK_SECRET` | – (Pflicht, ≥ 16 Zeichen) | Backend ↔ Gateway; Jellyfin-/Wunsch-Dienst-Webhooks |
+| `POSTGRES_PASSWORD`, `REDIS_PASSWORD` | erzeugt | Passwörter für Datenbank und Redis; nur bei Installationen setzen, die sie schon hatten (werden ins Volume `bootstrap` kopiert) |
+| `APP_ENC_KEY` | erzeugt | 32 Byte base64; verschlüsselt gespeicherte Zugangsdaten und geheime Einstellungen. **Volume `bootstrap` getrennt sichern** (`scripts/backup-bootstrap.sh`) |
+| `INTERNAL_SECRET` | erzeugt | Backend ↔ Gateway (≥ 16 Zeichen, wenn gesetzt) |
+| `WEBHOOK_SECRET` | – | Jellyfin-/Wunsch-Dienst-Webhooks (≥ 16 Zeichen); *Admin → Einstellungen → Allgemein → Neu erzeugen*. Ohne: Die Webhooks antworten mit 403 |
 | `OIDC_ISSUER`, `OIDC_CLIENT_ID`, `OIDC_CLIENT_SECRET` | – (Pflicht) | Authentik-OIDC-Provider |
 | `TMDB_API_KEY`, `OMDB_API_KEY` (oder `…_FILE`) | leer | Optionale Zusatzdaten für die Detailseite (Links, Bewertungen); oder unter *Admin → Datenquellen* setzen. Siehe [docs/integrations.md](docs/integrations.md#tmdb--omdb-optional) |
 | `MEDIA_SERVER` | `jellyfin` | Art des Medienservers; in diesem Repository gibt es nur Jellyfin (ein Fork kann weitere ergänzen, siehe [docs/architecture.md](docs/architecture.md)) |
@@ -302,7 +304,7 @@ flowchart TB
 
 ### Betrieb
 
-- **Backups:** Der optionale Sidecar `backup` macht täglich um `BACKUP_HOUR` einen `pg_dump`, prüft jeden Dump mit `pg_restore --list`, behält `BACKUP_KEEP_DAYS` Tage und wird `unhealthy`, wenn ein Lauf fehlschlägt. Wiederherstellung und monatlicher Restore-Test (`scripts/restore-test.sh`): [docs/operations.md](docs/operations.md). `APP_ENC_KEY` getrennt von den Dumps im Passwort-Manager aufbewahren.
+- **Backups:** Der optionale Sidecar `backup` macht täglich um `BACKUP_HOUR` einen `pg_dump`, prüft jeden Dump mit `pg_restore --list`, behält `BACKUP_KEEP_DAYS` Tage und wird `unhealthy`, wenn ein Lauf fehlschlägt. Wiederherstellung und monatlicher Restore-Test (`scripts/restore-test.sh`): [docs/operations.md](docs/operations.md). Das Volume `bootstrap` (`scripts/backup-bootstrap.sh`, enthält `APP_ENC_KEY`) getrennt von den Dumps sichern.
 - **Updates:** *Admin → Update* zeigt die installierte Version und das neueste Release samt Notizen (dazu die Commits auf main) und stößt über Portainer (Webhook oder API) ein Redeploy an. Von Hand: `docker compose -f compose.prod.yaml pull && docker compose -f compose.prod.yaml up -d`. Datenbank-Migrationen laufen beim Start.
 - **Monitoring:** `/health` (Liveness) und `/health/ready` (Redis, Postgres, Jellyfin) auf `127.0.0.1:3081`; Prometheus-Metriken unter `:3081/metrics` und `:3082/metrics` (Bearer `METRICS_TOKEN`). Beispiele für Icinga und Prometheus sowie ein optionaler Prometheus-+-Grafana-Stack mit fertigem Dashboard (`compose.monitoring.yaml`, internes Netz, kein Standardpasswort): [docs/monitoring.md](docs/monitoring.md).
 - **Lieferkette:** Images werden gescannt (Trivy), keyless mit cosign signiert und mit SBOM- und Provenienz-Attestations veröffentlicht; vor dem Deployen lassen sie sich prüfen – [docs/operations.md](docs/operations.md). Die Builds sind reproduzierbar: jedes Release lässt sich aus dem Quellcode nachbauen und ergibt denselben Image-Digest – [docs/reproducible-builds.md](docs/reproducible-builds.md) (englisch).

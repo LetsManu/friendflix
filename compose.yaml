@@ -1,6 +1,7 @@
 # SPDX-FileCopyrightText: 2026 Manuel Weißböck
 # SPDX-License-Identifier: AGPL-3.0-or-later
-# FriendFlix portal stack. A new install needs no .env: `docker compose up -d`, then the setup wizard in the browser.
+# FriendFlix portal stack. A new install needs no secrets in .env (only the sign-in and media server values for the first
+# start, docs/setup.md); every other setting lives in the database (Admin -> Settings).
 # The `bootstrap` service generates the internal secrets into the `bootstrap` volume (back it up, scripts/backup-bootstrap.sh).
 # - NPM runs OUTSIDE Docker (or in its own stack) and reaches the portal through three ports that are bound to
 #   127.0.0.1 only (BIND_ADDR): web, backend (API/auth/WebSocket) and gateway (/media). Nothing else is published.
@@ -23,7 +24,7 @@ networks:
 services:
   # Init container (runs once per `up`, then exits): writes every secret needed before the database can be read into the
   # `bootstrap` volume (postgres_password, redis_password, redis.conf, app_enc_key, internal_secret; root:10001, 0440) and
-  # the gateway's copy of internal_secret into `bootstrap-gateway`. A new install needs no .env at all. Existing installs:
+  # the gateway's copy of internal_secret into `bootstrap-gateway`. A new install sets none of them. Existing installs:
   # the four values below win when set in .env and are copied into the volume on every start. It logs file names only.
   bootstrap:
     # same build as `backend` (the image tag must exist before `up`); `docker compose build` runs it twice, the second from cache
@@ -95,7 +96,7 @@ services:
     security_opt: ["no-new-privileges:true"]
     # secrets group: reads the bootstrap volume (DATABASE_URL, REDIS_URL, APP_ENC_KEY and INTERNAL_SECRET derive from it)
     group_add: ["10001"]
-    # Every setting below is optional: set up in the browser (setup wizard, Admin -> Settings) and stored in the database.
+    # Every setting below is optional: set in the browser (Admin -> Settings) and stored in the database.
     # A value set here (.env) still wins and shows locked ("from environment"); the lines only pass existing .env values through.
     environment:
       PUBLIC_URL: ${PUBLIC_URL:-}
@@ -211,9 +212,7 @@ services:
     cap_drop: [ALL]
     security_opt: ["no-new-privileges:true"]
     environment:
-      # the origin comes from the request (Host + X-Forwarded-Proto, set by the reverse proxy). adapter-node 6 reads no ORIGIN
-      # env at runtime; the pass-through is harmless either way (an empty value counts as unset)
-      ORIGIN: ${PUBLIC_URL:-}
+      # the origin comes from the request (Host + X-Forwarded-Proto, set by the reverse proxy); adapter-node 6 reads no ORIGIN
       PROTOCOL_HEADER: x-forwarded-proto
     depends_on:
       bootstrap: { condition: service_completed_successfully }

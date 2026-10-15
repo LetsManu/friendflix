@@ -450,7 +450,7 @@ SESSION_TTL_SECONDS=28800    # absolute 8 h
 SESSION_IDLE_SECONDS=7200    # 2 h without activity
 ```
 
-Then recreate the backend: `docker compose -f compose.prod.yaml up -d backend`. Compose passes the `AUTHENTIK_*` variables through with an empty default, so a missing entry silently turns invitations off. If only some of the three are set, the backend logs `Authentik invitations disabled: … not set` at start and whenever an invite is created. The admin user page needs only `AUTHENTIK_URL` and `AUTHENTIK_API_TOKEN`; empty `AUTHENTIK_RECOVERY_FLOW` / `AUTHENTIK_TOTP_SETUP_FLOW` mean the defaults above.
+Then recreate the backend: `docker compose -f compose.prod.yaml up -d backend`. Everything except the login block can instead be entered after the first login in *Admin → Settings → Sign-in* (saved in the database, live, tested against Authentik before saving); a value in `.env` wins there. Compose passes the `AUTHENTIK_*` variables through with an empty default, so a missing entry silently turns invitations off. If only some of the three are set, the backend logs `Authentik invitations disabled: … not set` at start and whenever an invite is created. The admin user page needs only `AUTHENTIK_URL` and `AUTHENTIK_API_TOKEN`; empty `AUTHENTIK_RECOVERY_FLOW` / `AUTHENTIK_TOTP_SETUP_FLOW` mean the defaults above.
 
 `OIDC_CLIENT_SECRET` can come from a Docker secret ([`compose.secrets.yaml`](../compose.secrets.yaml): `secrets/oidc_client_secret`). The backend reads `<VAR>_FILE` for every setting, so `AUTHENTIK_API_TOKEN_FILE` works too, but `compose.prod.yaml` does not pass that variable through: add it to the backend's `environment` (and mount the secret) in a local override if you want it.
 
