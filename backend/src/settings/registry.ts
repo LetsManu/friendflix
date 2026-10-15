@@ -169,7 +169,8 @@ export const SETTINGS: readonly SettingDef[] = [
 
 /** Per container or per deployment, or shared with a container that reads env only: env > default, read-only in Admin -> Settings. */
 export const ENV_ONLY_KEYS: readonly string[] = ['PORT', 'DIGEST_DAY', 'DIGEST_HOUR', 'MEDIA_SERVER', 'METRICS_TOKEN', 'ROLE_TEMPLATES',
-  'OIDC_ALLOW_INSECURE', 'PREVIEW_DIR', 'UPDATE_REPO', 'DOWNLOAD_DIR', 'BACKGROUND_JOBS', 'GATEWAY_URL'];
+  'OIDC_ALLOW_INSECURE', 'PREVIEW_DIR', 'UPDATE_REPO', 'DOWNLOAD_DIR', 'BACKGROUND_JOBS', 'GATEWAY_URL',
+  'POSTPLAY_ENABLED'];
 /** Needed before the database can be read: env (incl. _FILE) > bootstrap volume file > default; never stored in the database. */
 export const BOOTSTRAP_KEYS: readonly string[] = ['DATABASE_URL', 'REDIS_URL', 'APP_ENC_KEY', 'INTERNAL_SECRET'];
 /** Baked into the image at build time. */

@@ -12,6 +12,7 @@
   import { langLabel } from '#lib/langs';
   import type { Me } from '#lib/api';
   import { kidsMode } from '#lib/kids';
+  import { features } from '#lib/capabilities';
 
   /** audio/subtitle track languages (ISO 639-2 as Jellyfin reports them; names in the UI language) */
   const LANGS = ['ger', 'eng', 'fre', 'spa', 'ita', 'jpn'];
@@ -102,6 +103,7 @@
   {#if form.stillWatching}<div class="field"><label for="swe">{$t('account.settings.stillWatchingEpisodes')}</label>
     <select id="swe" bind:value={form.stillWatchingEpisodes}>{#each [2, 3, 4, 5] as n}<option value={n}>{n}</option>{/each}</select></div>{/if}
   {@render check('spoilerProtection', 'account.settings.spoiler', 'account.settings.spoilerHint')}
+  {#if $features.postplay}{@render check('postplay', 'postplay.settings.label', 'postplay.settings.hint')}{/if}
   {@render check('autoSkipIntro', 'account.settings.skipIntro', 'account.settings.skipIntroHint')}
   {@render check('hoverTrailers', 'account.settings.hoverTrailers', 'account.settings.hoverTrailersHint')}
   {@render check('hoverClip', 'account.settings.hoverClip', 'account.settings.hoverClipHint')}

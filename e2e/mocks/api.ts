@@ -46,7 +46,9 @@ export interface MockState {
   /** POST /api/account/delete answers 401 reauth_required even inside the reauth window (it ran out meanwhile) */
   reauthLapsed?: boolean;
   /** /api/me `features` (optional services); absent = the field is left out, like an older backend (everything on) */
-  features?: { requests: boolean };
+  features?: { requests?: boolean; postplay?: boolean };
+  /** 1.1 post-play counters the app sent (POST /api/postplay/event bodies) */
+  postplayEvents: Array<Record<string, unknown>>;
   /** the setup wizard (mocks/setup.ts); while it is not complete, /api/me answers 503 setup_required */
   setup?: SetupMock;
   /** the sign-in cover wall: GET /api/public/login-art answers this status and image paths (mocks/login.ts ART_IMAGES) */
@@ -78,6 +80,7 @@ export function freshState(): MockState {
     dropped: new Set([items[3]!.id, items[10]!.id]),
     fav: new Set(items.filter((i) => i.favorite).map((i) => i.id)),
     log: [],
+    postplayEvents: [],
     unmocked: new Set(),
     clientErrors: [],
     reco: [],
@@ -359,6 +362,8 @@ export async function installApi(ctx: BrowserContext, st: MockState): Promise<vo
         case 'people': return J({ people });
         case 'ratings': return J({ ratings: [{ userId: 'f1', name: 'Anna', stars: 5, review: 'Super!', mine: false }], average: 4.5 });
         case 'similar': return J({ items: items.slice(0, 8) });
+        // 1.1 post-play: a plain "film finished" answer (specs that test the screen mock their own); the counters only count
+        case 'postplay': { const cur = find(mm[1]!) ?? byName('Inkwell'); return J({ state: 'movie_end', current: cur, next: null, nextAirDate: null, sequel: null, canWish: false, remind: null, rows: [{ kind: 'because', title: cur.name, reason: { seed: { id: cur.id, name: cur.name } }, items: items.filter((i) => i.id !== cur.id).slice(0, 6) }], hero: items.find((i) => i.id !== cur.id) ?? null, suggestions: true }); }
         case 'extras': return J({ items: [] });
         case 'comments': return J(m === 'POST' ? { id: 'c1', name: 'Tester', mine: true, spoiler: false, body: body().body, createdAt: new Date().toISOString(), canDelete: true } : { watched: true, comments: [] }); // episode comments (block 15)
         case 'seasons': return J({ items: [{ id: hex(200), name: 'Staffel 1', type: 'Season', indexNumber: 1, genres: [], image: true, backdrop: false, logo: false, played: false, favorite: false, positionTicks: 0 }] });
@@ -372,6 +377,7 @@ export async function installApi(ctx: BrowserContext, st: MockState): Promise<vo
       return J({ item: withFav(it), inWatchlist: st.watch.has(it.id), thumb: 0, langs: { audio: ['deu', 'eng'], subs: ['deu'] } });
     }
 
+    if (p === '/api/postplay/event' && m === 'POST') { st.postplayEvents.push(body()); return route.fulfill({ status: 204 }); }
     if (/^\/api\/comments\/[^/]+$/.test(p) && m === 'DELETE') return J({ ok: true });
 
     // profiles (gate "Wer ist heute dabei?" and the avatar menu)

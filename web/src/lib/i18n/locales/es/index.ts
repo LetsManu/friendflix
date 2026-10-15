@@ -26,6 +26,7 @@ import version from './version';
 import settings from './settings';
 import setup from './setup';
 import login from './login';
+import postplay from './postplay';
 
-const dict: Translation<typeof de> = { common, shell, home, detail, player, account, social, admin, hubs, anime, together, kids, scenes, fresh, mine, diagnose, version, settings, setup, login, ui, adminPeople, adminContent };
+const dict: Translation<typeof de> = { common, shell, home, detail, player, account, social, admin, hubs, anime, together, kids, scenes, fresh, mine, diagnose, version, settings, setup, login, postplay, ui, adminPeople, adminContent };
 export default dict;
