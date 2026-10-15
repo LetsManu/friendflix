@@ -180,6 +180,8 @@ docker compose -f compose.prod.yaml up -d
 docker compose -f compose.prod.yaml logs backend | grep "setup code"
 ```
 
+No output yet? `up -d` returns before the backend has started: wait a few seconds and run the last command again; the line appears once the backend is up.
+
 Then open the portal in your browser, enter the setup code and follow the **setup wizard**: public address, media server (it creates the Jellyfin API key from an admin login), sign-in (it sets up Authentik with a one-time admin token: provider, groups, invitations, recovery), and your first sign-in becomes the admin. Optional extras (request service, push, webhooks, data sources) follow; everything can be changed later under *Admin → Settings*. Neither login is stored. Step by step: [docs/setup.md](docs/setup.md).
 
 Before that you need:

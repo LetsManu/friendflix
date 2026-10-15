@@ -1,3 +1,5 @@
+# Every entry is pinned to a commit SHA: after a rebase or squash of these commits the entries stop matching and the CI secrets
+# job fails. Merge main into a branch instead of rebasing it, or regenerate the entries (gitleaks git --report-format json) afterwards.
 # test-only placeholder (cfg.INTERNAL_SECRET of the test helpers), replaced in a later commit
 12220615f4b663e80fdeae36682cb20d3f41aa8c:backend/test/profiles.test.ts:generic-api-key:167
 12220615f4b663e80fdeae36682cb20d3f41aa8c:backend/test/profiles.test.ts:generic-api-key:212

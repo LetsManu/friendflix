@@ -2,10 +2,10 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # FriendFlix – sign-in: the groups, the OAuth2/OpenID provider and the application (docs/authentik.md).
 #
-# Import: the FriendFlix setup wizard ("Sign-in" → "Set up automatically") imports this file through the Authentik API
+# Import: the FriendFlix setup wizard ("Sign-in" → "Automatic") imports this file through the Authentik API
 # together with friendflix-service-account.yaml and friendflix-blueprint.yaml, with the context
 #   {"public_url": "<your FriendFlix address, e.g. https://friend.example.com>", "admin_group": "friendflix-admins"}.
-# By hand: Customization → Blueprints → Create, with this file and the same context (public_url has no default: without it
+# By hand: Customization → Blueprints → Create (unverified), with this file and the same context (public_url has no default: without it
 # the redirect URI is wrong). Re-importing is safe (entries are matched by their identifiers and updated, not duplicated).
 #
 # Creates or updates:

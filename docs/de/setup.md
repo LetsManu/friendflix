@@ -48,6 +48,8 @@ docker compose -f compose.prod.yaml up -d
 docker compose -f compose.prod.yaml logs backend | grep "setup code"
 ```
 
+Noch keine Ausgabe? `up -d` kehrt zurück, bevor das Backend gestartet ist: ein paar Sekunden warten und den letzten Befehl wiederholen; die Zeile erscheint, sobald das Backend läuft.
+
 Dann `https://portal.example.com` öffnen und dem Assistenten folgen. Vorher müssen die Dienste existieren, die der Assistent verbindet:
 
 | Schritt | Was du tust | Was der Assistent davon braucht |
@@ -185,6 +187,8 @@ docker compose -f compose.prod.yaml ps                  # postgres/redis healthy
 docker compose -f compose.prod.yaml logs backend | grep "setup code"
 ```
 
+Noch keine Ausgabe? `up -d` kehrt zurück, bevor das Backend gestartet ist: ein paar Sekunden warten und den letzten Befehl wiederholen; die Zeile erscheint, sobald das Backend läuft.
+
 Eine `.env` ist nicht nötig. Der Dienst `bootstrap` startet zuerst, erzeugt die Passwörter für Datenbank und Redis, `APP_ENC_KEY` und `INTERNAL_SECRET` im Docker-Volume `friendflix_bootstrap` und beendet sich (`docker compose -f compose.prod.yaml ps -a` zeigt ihn als *Exited (0)*); alle anderen Dienste warten auf ihn. Startet das Backend in einer Schleife neu, den ersten Fehler im Log lesen: eine ungültige Variable (die Konfigurationsprüfung nennt sie) oder eine fehlende Datei im Bootstrap-Volume (siehe [Fehlersuche](#13-fehlersuche)).
 
 Bis die Einrichtung abgeschlossen ist, läuft das Backend im **Einrichtungsmodus**: Alles außer dem Assistenten antwortet mit `503 setup_required`, Hintergrundjobs warten, `/health` bleibt OK, und das Gateway beantwortet `/media/…` mit 503, bis der Medienserver eingerichtet ist. Der letzte Befehl zeigt die Zeile mit dem Einrichtungscode:
@@ -287,12 +291,13 @@ Die Werte in der Tabelle lassen sich auch unter *Admin → Einstellungen* setzen
 |---|---|
 | Keine Zeile mit `setup code` im Backend-Log | Das Log wurde abgeschnitten (die Zeile erscheint einmal pro Start) oder die Einrichtung ist schon abgeschlossen. `docker compose -f compose.prod.yaml restart backend` schreibt einen neuen Code. Meldet der Assistent *Es wurde noch kein Code ausgegeben* (`no_code`), läuft kein Backend mit `BACKGROUND_JOBS=true`; auf einem Backend setzen und es neu starten. |
 | Assistent: *Der Code ist abgelaufen* / *Zu viele falsche Versuche* | Der Code gilt 24 Stunden und wird nach 10 falschen Versuchen gesperrt. `docker compose -f compose.prod.yaml restart backend` und den neuen Code aus dem Log nehmen. Rät jemand anderes, den Zugang zum Portal bis zum Abschluss beschränken ([Abschnitt 6](#6-nginx-proxy-manager-proxy-host-für-das-portal)). |
-| Assistent: *Deine Einrichtungssitzung ist abgelaufen* | Mehr als 2 Stunden ohne Aktivität, ein Neustart von Redis oder ein anderer Browser. Den Code noch einmal eingeben (er gilt bis zum Abschluss). |
+| Assistent: *Deine Einrichtungssitzung ist abgelaufen* | Mehr als 2 Stunden ohne Aktivität, ein Neustart von Redis oder ein anderer Browser. Den Code noch einmal eingeben: er gilt 24 Stunden, außer das Backend wurde inzwischen neu gestartet (dann den neuen Code aus dem Log nehmen). |
 | Assistent, Medienserver: *Der Medienserver ist selbst noch nicht eingerichtet* / *keine Admin-Rechte* | Zuerst Jellyfins eigenen Einrichtungsassistenten abschließen; das Konto muss Jellyfin-Administrator sein. *Nicht erreichbar*: Die Adresse muss die sein, die der Backend-Container erreicht (`http://jellyfin:8096`, Jellyfin am Netz `friendflix_media`), nicht die öffentliche. |
+| Assistent, Medienserver: *Der API-Schlüssel kommt aus der Umgebung (.env)* | `JELLYFIN_ADMIN_API_KEY` steht in der `.env`, der automatische Schritt würde also einen Schlüssel anlegen, den er nicht speichern kann. Adresse (und Schlüssel) von Hand eintragen, oder den Schlüssel aus der `.env` entfernen und das Backend neu starten. |
 | Assistent, Anmeldung: *Authentik hat die Einrichtung abgelehnt* (`blueprint_invalid`) | Ein frisch installiertes Authentik importiert noch seine Standard-Flows (3 – 4 Minuten nach dem ersten Start). Warten und *Noch einmal versuchen*; bereits angelegte Teile werden wiederverwendet. |
 | Assistent, Anmeldung: *Der Token gehört keinem Superuser* / *lehnt den Token ab* | Einen API-Token (Intent *API Token*) eines Superusers wie `akadmin` verwenden, kein App-Passwort ([authentik.md §3](authentik.md#3-automatische-einrichtung-aus-friendflix)). |
 | Assistent, Anmeldung: Authentik *nicht erreichbar*, oder die Anmeldeprüfung scheitert mit einer `http://`-Adresse | Das Backend muss Authentik unter genau der eingegebenen Adresse erreichen (der Browser benutzt dieselbe). Ein `http://`-Authentik braucht `OIDC_ALLOW_INSECURE=true` in der Umgebung (nur für Tests). |
-| *Mit Authentik anmelden* im Assistenten endet mit `{"error":"setup_required"}` | Die Anmeldung kam in einem anderen Browser oder unter einer anderen Adresse zurück als der, die die Einrichtungssitzung hält (Cookies), oder die Sitzung ist abgelaufen. Den Assistenten unter `PUBLIC_URL` öffnen, den Code noch einmal eingeben und von dort anmelden. |
+| *Mit Authentik anmelden* im Assistenten führt zurück zum Code-Schritt (*Deine Einrichtungssitzung ist abgelaufen*) | Die Anmeldung kam in einem anderen Browser oder unter einer anderen Adresse zurück als der, die die Einrichtungssitzung hält (Cookies), oder die Sitzung ist abgelaufen. Den Assistenten unter `PUBLIC_URL` öffnen, den Code noch einmal eingeben und von dort anmelden. |
 | Authentik zeigt einen Redirect-URI-Fehler | Die Redirect-URI im Provider muss exakt `${PUBLIC_URL}/auth/callback` sein (Schema, Host, kein Schrägstrich am Ende). FriendFlix muss an der Wurzel seines Hostnamens laufen. |
 | Anmeldung antwortet mit 503, Backend-Log `oidc discovery failed`, `"issuer" property does not match the expected value` | `OIDC_ISSUER` braucht den Schrägstrich am Ende und genau den Slug der Anwendung. |
 | Anmeldung antwortet mit 503, Backend-Log `oidc discovery failed` mit `fetch failed` / `ENOTFOUND` | Der Backend-Container erreicht `auth.example.com` nicht: DNS im Heimnetz, NAT-Loopback, Firewall. Testen mit `docker compose -f compose.prod.yaml run --rm --no-deps backend node -e "fetch('https://auth.example.com').then(r=>console.log(r.status))"`. Notlösung: ein lokales Override ergänzt beim `backend` `extra_hosts: ["auth.example.com:host-gateway"]`, wenn NPM auf Port 443 des Hosts lauscht. |

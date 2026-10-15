@@ -48,6 +48,8 @@ docker compose -f compose.prod.yaml up -d
 docker compose -f compose.prod.yaml logs backend | grep "setup code"
 ```
 
+No output yet? `up -d` returns before the backend has started: wait a few seconds and run the last command again; the line appears once the backend is up.
+
 Then open `https://portal.example.com` and follow the wizard. Before that, the services the wizard connects must exist:
 
 | Step | What you do | What the wizard needs from it |
@@ -185,6 +187,8 @@ docker compose -f compose.prod.yaml ps                  # postgres/redis healthy
 docker compose -f compose.prod.yaml logs backend | grep "setup code"
 ```
 
+No output yet? `up -d` returns before the backend has started: wait a few seconds and run the last command again; the line appears once the backend is up.
+
 No `.env` is needed. The `bootstrap` service starts first, generates the database and Redis passwords, `APP_ENC_KEY` and `INTERNAL_SECRET` into the Docker volume `friendflix_bootstrap` and exits (`docker compose -f compose.prod.yaml ps -a` shows it as *Exited (0)*); every other service waits for it. If the backend restarts in a loop, read the first error in its log: an invalid variable (the config check names it) or a missing file of the bootstrap volume (see [troubleshooting](#13-troubleshooting)).
 
 Until setup is complete the backend runs in **setup mode**: everything except the wizard answers `503 setup_required`, background jobs wait, `/health` stays OK, and the gateway answers `/media/…` with 503 until the media server is configured. The last command prints the line with the setup code:
@@ -287,12 +291,13 @@ Values in the table can also be set in *Admin → Settings*. After changing `.en
 |---|---|
 | No line with `setup code` in the backend log | The log was cut (the line is printed once per start) or setup is already complete. `docker compose -f compose.prod.yaml restart backend` prints a new code. The wizard says *No code has been issued yet* (`no_code`): no backend runs with `BACKGROUND_JOBS=true`; set it on one backend and restart it. |
 | Wizard: *The code has expired* / *Too many wrong attempts* | The code is valid for 24 hours and locked after 10 wrong tries. `docker compose -f compose.prod.yaml restart backend` and use the new code from the log. If somebody else is guessing, restrict access to the portal until setup is done ([section 6](#6-nginx-proxy-manager-portal-proxy-host)). |
-| Wizard: *Your setup session has expired* | More than 2 hours without activity, a restart of Redis, or another browser. Enter the code again (it stays valid until setup completes). |
+| Wizard: *Your setup session has expired* | More than 2 hours without activity, a restart of Redis, or another browser. Enter the code again: it stays valid for 24 hours, unless the backend restarted in between (then use the new code from the log). |
 | Wizard, media server: *The media server itself is not set up yet* / *no admin rights* | Finish Jellyfin's own setup wizard first; the account must be a Jellyfin administrator. *Cannot be reached*: the address must be the one the backend container reaches (`http://jellyfin:8096`, Jellyfin attached to `friendflix_media`), not the public one. |
+| Wizard, media server: *The API key comes from the environment (.env)* | `JELLYFIN_ADMIN_API_KEY` is set in `.env`, so the automatic step would create a key it cannot save. Enter the address (and the key) by hand, or remove the key from `.env` and restart the backend. |
 | Wizard, sign-in: *Authentik refused the setup* (`blueprint_invalid`) | A freshly installed Authentik is still importing its default flows (3 – 4 minutes after the first start). Wait and press *Try again*; parts already created are reused. |
 | Wizard, sign-in: *The token does not belong to a superuser* / *refuses the token* | Use an API token (intent *API Token*) of a superuser such as `akadmin`, not an app password ([authentik.md §3](authentik.md#3-automatic-setup-from-friendflix)). |
 | Wizard, sign-in: Authentik *cannot be reached*, or the sign-in test fails with an `http://` address | The backend must reach Authentik at exactly the address you entered (the browser uses the same one). An `http://` Authentik needs `OIDC_ALLOW_INSECURE=true` in the environment (tests only). |
-| *Sign in with Authentik* in the wizard ends with `{"error":"setup_required"}` | The sign-in came back to another browser or address than the one that holds the setup session (cookies), or the session expired. Open the wizard at `PUBLIC_URL`, enter the code again and sign in from there. |
+| *Sign in with Authentik* in the wizard comes back to the code step (*Your setup session has expired*) | The sign-in came back to another browser or address than the one that holds the setup session (cookies), or the session expired. Open the wizard at `PUBLIC_URL`, enter the code again and sign in from there. |
 | Authentik shows a redirect URI error | The provider's redirect URI must be exactly `${PUBLIC_URL}/auth/callback` (scheme, host, no trailing slash). FriendFlix must run at the root of its host name. |
 | Sign-in answers 503, backend log `oidc discovery failed`, `"issuer" property does not match the expected value` | `OIDC_ISSUER` needs the trailing slash and the exact application slug. |
 | Sign-in answers 503, backend log `oidc discovery failed` with `fetch failed` / `ENOTFOUND` | The backend container cannot reach `auth.example.com`: DNS inside the LAN, NAT loopback, firewall. Test with `docker compose -f compose.prod.yaml run --rm --no-deps backend node -e "fetch('https://auth.example.com').then(r=>console.log(r.status))"`. As a workaround, a local override can add `extra_hosts: ["auth.example.com:host-gateway"]` to `backend` when NPM listens on the host's port 443. |

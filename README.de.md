@@ -180,6 +180,8 @@ docker compose -f compose.prod.yaml up -d
 docker compose -f compose.prod.yaml logs backend | grep "setup code"
 ```
 
+Noch keine Ausgabe? `up -d` kehrt zurück, bevor das Backend gestartet ist: ein paar Sekunden warten und den letzten Befehl wiederholen; die Zeile erscheint, sobald das Backend läuft.
+
 Dann das Portal im Browser öffnen, den Einrichtungscode eingeben und dem **Einrichtungsassistenten** folgen: öffentliche Adresse, Medienserver (er legt den Jellyfin-API-Schlüssel aus einem Admin-Login an), Anmeldung (er richtet Authentik mit einem einmaligen Admin-Token ein: Provider, Gruppen, Einladungen, Wiederherstellung), und deine erste Anmeldung wird Admin. Danach folgen optionale Extras (Wunsch-Dienst, Push, Webhooks, Datenquellen); alles lässt sich später unter *Admin → Einstellungen* ändern. Keiner der beiden Logins wird gespeichert. Schritt für Schritt: [docs/de/setup.md](docs/de/setup.md).
 
 Vorher brauchst du:

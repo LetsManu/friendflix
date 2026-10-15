@@ -204,7 +204,8 @@ The first sign-in through the wizard becomes the FriendFlix admin whatever its g
 - **Fresh Authentik:** right after the first start Authentik imports its default flows in the background, which took 3 – 4 minutes in testing. Until then *Apply* can stop with *Authentik refused the setup* (`blueprint_invalid`): wait and press *Try again*; parts already created are reused.
 - **One address for both:** enter the Authentik address as the browser reaches it (`https://auth.example.com`). The backend container must reach Authentik at that same address, because the issuer is derived from it ([§2.3](#23-reverse-proxy-nginx-proxy-manager), DNS).
 - **http:** an `http://` Authentik is refused for sign-in unless the backend runs with `OIDC_ALLOW_INSECURE=true` in its environment (tests only, never in production).
-- Nothing is rolled back when a step fails; the list shows the failed step and a reason (`unauthorized`, `not_superuser`, `unsupported_version`, `blueprint_invalid`, `unreachable`, `unexpected`, `issuer_mismatch`), and a new run continues from there.
+- Nothing is rolled back when a step fails; the list shows the failed step and a reason (`invalid_url`, `unauthorized`, `not_superuser`, `unsupported_version`, `blueprint_invalid`, `unreachable`, `unexpected`, `issuer_mismatch`), and a new run continues from there. Groups and provider come from one file, so a failure there shows on both.
+- Sign-in settings that your `.env` sets are kept as they are. If one of them differs from what Authentik now has (for example another `OIDC_CLIENT_ID`), the result names it: remove it from `.env` and restart the backend.
 
 ### 3.4 What stays manual
 
@@ -227,7 +228,7 @@ Variants:
 - [`friendflix-service-account.yaml`](../deploy/authentik/friendflix-service-account.yaml): only the service account and token, if you already have an enrollment flow.
 - [`friendflix-prompt-fix.yaml`](../deploy/authentik/friendflix-prompt-fix.yaml): a prompt stage without placeholder expressions for an existing enrollment flow that fails with `'AnonymousUser' object has no attribute 'group_attributes'` (bind `friendflix-prompt-fixed` instead of the old prompt stage, same order).
 
-The blueprint does **not** create the groups, the provider/application, MFA in the authentication flow or recovery. [`friendflix-setup.yaml`](../deploy/authentik/friendflix-setup.yaml) creates the groups, the provider and the application, but needs the context `{"public_url": "https://portal.example.com", "admin_group": "friendflix-admins"}`, which the *Flows → Import* dialog cannot pass: import it under *Customization → Blueprints → Create* with that context, or do [§4](#4-groups) and [§5](#5-oauth2openid-provider-and-application) by hand. Then [§6](#6-authentication-flow-with-mandatory-mfa) and [§8.3](#83-copy-the-token) (copy the token). Sections 7 and 8 describe what the blueprint builds, in case you prefer to click it together or need to adapt it.
+The blueprint does **not** create the groups, the provider/application, MFA in the authentication flow or recovery. [`friendflix-setup.yaml`](../deploy/authentik/friendflix-setup.yaml) creates the groups, the provider and the application, but needs the context `{"public_url": "https://portal.example.com", "admin_group": "friendflix-admins"}`, which the *Flows → Import* dialog cannot pass: import it under *Customization → Blueprints → Create* with that context *(unverified)*, or do [§4](#4-groups) and [§5](#5-oauth2openid-provider-and-application) by hand. Then [§6](#6-authentication-flow-with-mandatory-mfa) and [§8.3](#83-copy-the-token) (copy the token). Sections 7 and 8 describe what the blueprint builds, in case you prefer to click it together or need to adapt it.
 
 ## 4. Groups
 
