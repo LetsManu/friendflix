@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import type { FastifyInstance } from 'fastify';
-import { Counter, Gauge, Registry, collectDefaultMetrics } from 'prom-client';
+import { Counter, Gauge, Histogram, Registry, collectDefaultMetrics } from 'prom-client';
 import type { Ctx } from './ctx.js';
 import { listLive } from './live.js';
 import { parties } from './routes/party.js';
@@ -25,6 +25,13 @@ export const recoImpressions = new Counter({ name: 'friendflix_reco_impressions_
 export const recoClicks = new Counter({ name: 'friendflix_reco_clicks_total', help: 'Recommended titles opened, by row and engine', labelNames: ['row', 'engine'], registers: [registry] });
 export const recoPlays = new Counter({ name: 'friendflix_reco_plays_total', help: 'Plays started from a recommendation, by row and engine', labelNames: ['row', 'engine'], registers: [registry] });
 export const recoDismiss = new Counter({ name: 'friendflix_reco_dismiss_total', help: 'Recommendations dismissed, by row and engine', labelNames: ['row', 'engine'], registers: [registry] });
+/**
+ * R2 shadow mode (RECO_ENGINE=shadow): v2 computed beside v1 on the "because" path. Labels are bounded (surface is one of five names,
+ * result ok|error); nothing about a title, a profile or a user is ever a label or a value.
+ */
+export const recoShadowRuns = new Counter({ name: 'friendflix_reco_shadow_runs_total', help: 'Shadow comparisons of recommendation engine v2 with v1', labelNames: ['surface', 'result'], registers: [registry] });
+export const recoShadowOverlap = new Histogram({ name: 'friendflix_reco_shadow_overlap', help: 'Share of the v1 top 10 that v2 also has in its top 10', labelNames: ['surface'], buckets: [0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1], registers: [registry] });
+export const recoShadowScoreDelta = new Histogram({ name: 'friendflix_reco_shadow_score_delta', help: 'Mean v2 score of the v2 top 10 minus the mean v2 score of the v1 top 10', labelNames: ['surface'], buckets: [-0.25, 0, 0.05, 0.1, 0.2, 0.3, 0.5, 1], registers: [registry] });
 const downloadJobs = new Gauge({ name: 'friendflix_download_jobs', help: 'Offline download jobs by status', labelNames: ['status'], registers: [registry] });
 const downloadDisk = new Gauge({ name: 'friendflix_download_disk_bytes', help: 'Bytes of prepared download files', registers: [registry] });
 const recoIndexItems = new Gauge({ name: 'friendflix_reco_index_items', help: 'Films and series in the recommendation item index', registers: [registry] });

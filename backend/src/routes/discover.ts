@@ -14,6 +14,8 @@ import { notify } from '../notify.js';
 import { clipPath, previews } from '../previews.js';
 import { loadPrefs } from './prefs.js';
 import { requireGrownUp } from '../kids.js';
+import { recommend, shadowCompare } from '../reco/recommend.js';
+import type { RecoProfile } from '../reco/profile.js';
 import { requireAdmin, requireUser } from '../session.js';
 import { portalStatus, requestsClient } from '../seerr/client.js';
 import type { JfUser, UserRow } from '../types.js';
@@ -121,7 +123,22 @@ export async function libraryBecause(ctx: Ctx, jfUser: JfUser, profileId: string
   }
   if (!entry.because) return { because: null, items: [] };
   const down = new Set(downRows.map((r) => r.item_id));
-  return { because: entry.because, items: entry.items.filter((i) => !down.has(i.id)) };
+  const v1 = entry.items.filter((i) => !down.has(i.id));
+  const engine = ctx.cfg.RECO_ENGINE;
+  if (engine === 'v1') return { because: entry.because, items: v1 };
+  const profile = (await ctx.db.query<RecoProfile>('select id, user_id, is_owner, kids, kids_max_rating from profiles where id=$1', [profileId]).catch(() => ({ rows: [] as RecoProfile[] }))).rows[0];
+  if (!profile) return { because: entry.because, items: v1 };
+  if (engine === 'shadow') {
+    // v2 runs beside v1 (metrics only, not awaited); the answer is v1
+    void shadowCompare(ctx, jfUser, profile, { seed: entry.because.id, surface: 'because', v1: v1.map((i) => i.id), guardKey: `${profileId}:${ver}:${entry.because.id}` });
+    return { because: entry.because, items: v1 };
+  }
+  try {
+    const r = await recommend(ctx, jfUser, profile, { seed: entry.because.id, surface: 'because', limit: 24 });
+    return { because: entry.because, items: r.items.map((i) => i.item) };
+  } catch {
+    return { because: entry.because, items: v1 }; // v2 failing never empties the row
+  }
 }
 
 /** Extra "Weil du X geschaut hast" rows: how many, items per row and the smallest row worth showing. */

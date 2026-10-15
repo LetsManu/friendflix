@@ -155,6 +155,10 @@ services:
       RECO_W_TEXT: ${RECO_W_TEXT:-}
       RECO_W_NUMERIC: ${RECO_W_NUMERIC:-}
       RECO_W_COLLECTION: ${RECO_W_COLLECTION:-}
+      # recommendation engine v2: v1 | shadow | v2, decay half-life in days, JSON overrides of the scoring coefficients
+      RECO_ENGINE: ${RECO_ENGINE:-}
+      RECO_HALF_LIFE_DAYS: ${RECO_HALF_LIFE_DAYS:-}
+      RECO_COEFFS: ${RECO_COEFFS:-}
       # download preparation + cleanup, audio/subtitle language index, Jellyfin session polling; false only for extra replicas
       BACKGROUND_JOBS: ${BACKGROUND_JOBS:-true}
       # gzip/brotli for JSON API responses >= 1 KB; false when the reverse proxy already compresses

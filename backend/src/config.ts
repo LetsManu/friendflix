@@ -220,6 +220,21 @@ export const configSchema = z.object({
   RECO_W_TEXT: recoWeight(1),
   RECO_W_NUMERIC: recoWeight(0.3),
   RECO_W_COLLECTION: recoWeight(1.5),
+  /** R2: which recommendation engine answers "because you watched": v1 (Jellyfin similar), v2 (own taste model), shadow (v2 computed beside v1, v1 returned) */
+  RECO_ENGINE: z.preprocess(emptyAsUnset, z.enum(['v1', 'v2', 'shadow']).default('v1')),
+  /** R2: half-life (days) of the recency decay of a taste signal */
+  RECO_HALF_LIFE_DAYS: z.preprocess(emptyAsUnset, z.coerce.number().min(1).max(3650).default(120)),
+  /** R2: JSON object with coefficient overrides by dotted name (reco/weights.ts lists them), e.g. {"signal.thumbUp":2,"surface.because.seed":0.5}; empty = defaults */
+  RECO_COEFFS: z.preprocess(emptyAsUnset, z.string().max(4000).optional().superRefine((v, ctx) => {
+    if (v === undefined) return;
+    try {
+      const o = JSON.parse(v) as unknown;
+      if (o && typeof o === 'object' && !Array.isArray(o)) return;
+    } catch {
+      // falls through to the issue below
+    }
+    ctx.addIssue({ code: 'custom', message: 'expected a JSON object', params: { code: 'invalid_json' } });
+  })),
   BACKGROUND_JOBS: z.enum(['true', 'false']).default('true'),
   /** gzip/brotli for JSON API responses >= 1 KB (off when a reverse proxy already compresses) */
   API_COMPRESSION: z.enum(['true', 'false']).default('true'),

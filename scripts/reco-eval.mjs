@@ -16,6 +16,13 @@
  *            similar?: { [seedItemId]: string[] }   // recorded Jellyfin similar() answers, best first (optional)
  *          }
  * Engines implement { name, fit(train), recommend({ surface: 'home' | 'next', history, seed, k }) -> itemIds }: see ENGINES.
+ *
+ * Engine v2 (R2) is the real code of backend/src/reco (taste maths, item vectors, scoring, MMR) in its offline form, backend/src/reco/offline.ts.
+ * The script imports the compiled backend, so build it first:   npm run build -w backend
+ * (RECO_EVAL_DIST points at another compiled directory.) Without the build v2 is reported as not evaluated; asking for it with --engines fails.
+ * Item features beyond genres and year are optional in the dataset: tags, studios, people (arrays), runtime (min), rating (0-10), collection, added (ms).
+ * The run prints a v2-versus-baselines comparison and the spec 4.7 gate (v2 NDCG@10 must beat every baseline by --gate-margin, default 5 %);
+ * --gate makes a failed gate exit with code 1.
  */
 import { readFileSync } from 'node:fs';
 import process from 'node:process';
@@ -178,8 +185,48 @@ export function cooccurrenceEngine({ minSupport = MIN_SUPPORT, decay = 0.85 } = 
   };
 }
 
-/** Name -> factory. v2 plugs in here (or through --plugin, a module exporting `engines` with more factories). */
+/** Name -> factory of the engines that need nothing built. v2 is added by main() when the compiled backend is there (loadV2), more through --plugin. */
 export const ENGINES = { popularity: popularityEngine, v1: v1Engine, cooccurrence: cooccurrenceEngine };
+
+export const DEFAULT_DIST = join(dirname(fileURLToPath(import.meta.url)), '..', 'backend', 'dist');
+/** The compiled offline v2 module (backend/dist/reco/offline.js), or null when the backend is not built. */
+export async function loadV2(dist = DEFAULT_DIST) {
+  try {
+    const mod = await import(pathToFileURL(join(dist, 'reco', 'offline.js')).href);
+    return typeof mod.offlineEngine === 'function' ? mod : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * v2: backend/src/reco in its offline form. The dataset's items are the index (IDF over the dataset); similar() answers come from the
+ * recorded `similar` map (without one the seed's nearest neighbours stand in). 'home' = profile taste (surface home_rows, no seed),
+ * 'next' = post-play (surface postplay, seed = the last title).
+ */
+export function v2Engine(mod) {
+  let eng;
+  return {
+    name: 'v2',
+    fit(_train, prep) {
+      const items = new Map([...prep.catalog].map((id) => [id, { id }]));
+      for (const [id, f] of prep.features) items.set(id, f);
+      eng = mod.offlineEngine([...items.values()], prep.similar);
+    },
+    recommend({ surface, history, seed, k, disliked }) {
+      return eng.recommend({ surface, history, ...(seed ? { seed } : {}), k, disliked });
+    },
+  };
+}
+
+/** Spec 4.7 gate: v2 NDCG@10 beats every other engine by `margin` (relative). null when v2 or a baseline is missing. */
+export function gate(res, margin = 0.05) {
+  const v2 = res.engines.v2;
+  const others = Object.entries(res.engines).filter(([n]) => n !== 'v2');
+  if (!v2 || !others.length) return null;
+  const [bestName, best] = others.reduce((a, b) => (b[1].ndcg > a[1].ndcg ? b : a));
+  return { pass: v2.ndcg > best.ndcg * (1 + margin), margin, v2: v2.ndcg, best: best.ndcg, bestName };
+}
 
 // -------------------------------------------------------------------------------------------------------------- metrics
 
@@ -312,6 +359,25 @@ export function format(res) {
   lines.push('metric'.padEnd(24) + names.map((n) => n.padStart(14)).join(''));
   for (const [label, key, f] of rows) lines.push(label.padEnd(24) + names.map((n) => f(res.engines[n][key]).padStart(14)).join(''));
   lines.push('cold-start cases'.padEnd(24) + names.map((n) => String(res.engines[n].coldCases).padStart(14)).join(''));
+  const v2 = res.engines.v2;
+  const base = names.filter((n) => n !== 'v2');
+  if (v2 && base.length) {
+    lines.push('', 'v2 against the baselines (percentage points; for "Already seen" lower is better)');
+    lines.push('metric'.padEnd(24) + base.map((n) => n.padStart(14)).join(''));
+    for (const [label, key] of rows) {
+      const seen = key === 'seenShare';
+      lines.push(label.padEnd(24) + base.map((n) => {
+        const a = v2[key], b = res.engines[n][key];
+        if (a === null || b === null) return '   n/a'.padStart(14);
+        const d = (a - b) * (['hitRate', 'coverage', 'seenShare', 'midPopularityShare', 'newTitleHitRate', 'transitionAccuracy'].includes(key) ? 100 : 1);
+        const unit = key === 'ndcg' || key === 'mrr' || key === 'diversity' ? '' : ' pp';
+        return ((d > 0 ? '+' : '') + d.toFixed(unit ? 1 : 3) + unit + (seen ? (d < 0 ? ' *' : '') : d > 0 ? ' *' : '')).padStart(14);
+      }).join(''));
+    }
+    lines.push('(* = v2 is better)');
+    const g = gate(res, res.meta.gateMargin);
+    if (g) lines.push(`gate (spec 4.7): v2 NDCG@10 ${g.v2.toFixed(3)} vs best baseline ${g.bestName} ${g.best.toFixed(3)}, needs +${(g.margin * 100).toFixed(0)} %: ${g.pass ? 'PASS' : 'FAIL'}`);
+  }
   return lines.join('\n');
 }
 
@@ -329,20 +395,25 @@ export function parseArgs(argv) {
     else if (a === '--engines') o.engines = val().split(',').filter(Boolean);
     else if (a === '--min-profiles') o.minProfiles = Number(val());
     else if (a === '--min-seconds') o.minSeconds = Number(val());
+    else if (a === '--gate') o.gate = true;
+    else if (a === '--gate-margin') o.gateMargin = Number(val());
     else if (a === '--help' || a === '-h') o.help = true;
     else throw new Error(`unknown argument ${a}`);
   }
   return o;
 }
 
-const HELP = `usage: node scripts/reco-eval.mjs [--data file.json | --db] [--engines popularity,v1,cooccurrence] [--exclude-seen] [--json]
+const HELP = `usage: node scripts/reco-eval.mjs [--data file.json | --db] [--engines popularity,v1,cooccurrence,v2] [--exclude-seen] [--json]
+  (v2 needs the compiled backend: npm run build -w backend; RECO_EVAL_DIST = another build directory)
+  --gate            exit 1 when v2 does not beat every baseline on NDCG@10 by the margin (spec 4.7 gate)
+  --gate-margin X   relative margin of the gate (default 0.05 = 5 %)
   --db              read interactions from DATABASE_URL (read only); --items / --similar add features and recorded similar() answers
   --min-profiles N  refuse to print fewer than N evaluated profiles (default 5)
   --plugin file.mjs add engines (module exports { engines: { name: factory } })`;
 
 const out = new Console(process.stdout, process.stderr);
 
-export async function main(argv, env = process.env, log = (s) => out.log(s)) {
+export async function main(argv, env = process.env, log = (s) => out.log(s), warn = (s) => out.error(s)) {
   const o = parseArgs(argv);
   if (o.help) { log(HELP); return 0; }
   let data;
@@ -355,10 +426,18 @@ export async function main(argv, env = process.env, log = (s) => out.log(s)) {
     data = JSON.parse(readFileSync(o.data ?? DEFAULT_FIXTURE, 'utf8'));
   }
   let registry = ENGINES;
-  if (o.plugin) registry = { ...ENGINES, ...(await import(pathToFileURL(o.plugin).href)).engines };
+  const v2 = await loadV2(env.RECO_EVAL_DIST || DEFAULT_DIST);
+  if (v2) registry = { ...registry, v2: () => v2Engine(v2) };
+  if (o.plugin) registry = { ...registry, ...(await import(pathToFileURL(o.plugin).href)).engines };
+  if (!v2 && o.engines?.includes('v2') && !registry.v2) throw new Error('engine v2 needs the compiled backend: run `npm run build -w backend` (or set RECO_EVAL_DIST)');
+  if (!v2 && !o.engines && !registry.v2) warn('reco-eval: v2 not evaluated, the backend is not built (npm run build -w backend)');
+  const gateMargin = Number.isFinite(o.gateMargin) ? o.gateMargin : 0.05;
   const res = evaluate(data, { engines: o.engines ?? Object.keys(registry), registry, minProfiles: o.minProfiles ?? 5, excludeSeen: o.excludeSeen });
+  res.meta.gateMargin = gateMargin;
+  const g = gate(res, gateMargin);
+  if (g) res.meta.gate = g;
   log(o.json ? JSON.stringify(res, null, 2) : format(res));
-  return 0;
+  return o.gate && g && !g.pass ? 1 : 0;
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {

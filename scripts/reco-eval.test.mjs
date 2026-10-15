@@ -5,7 +5,13 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { URL } from 'node:url';
-import { ENGINES, K, cooccurrenceEngine, evaluate, format, listDiversity, main, parseArgs, popularityTiers, prepare, split, v1Engine, DEFAULT_FIXTURE } from './reco-eval.mjs';
+import { execFileSync } from 'node:child_process';
+import process from 'node:process';
+import { mkdtempSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { DEFAULT_DIST, ENGINES, K, cooccurrenceEngine, evaluate, format, gate, listDiversity, loadV2, main, parseArgs, popularityTiers, prepare, split, v1Engine, v2Engine, DEFAULT_FIXTURE } from './reco-eval.mjs';
 
 const fixture = JSON.parse(readFileSync(DEFAULT_FIXTURE, 'utf8'));
 const near = (a, b, eps = 1e-3) => assert.ok(Math.abs(a - b) < eps, `${a} != ${b}`);
@@ -181,4 +187,66 @@ test('CLI: argument handling', async () => {
   assert.match(help[0], /usage/);
   // the default gate: the fixture has far more than 5 evaluable profiles, a dataset with 2 does not pass
   await assert.rejects(main(['--data', new URL('./fixtures/reco-eval.json', import.meta.url).pathname, '--min-profiles', '1000'], {}, () => {}), /need 1000/);
+});
+
+// ---------------------------------------------------------------------------------------------------------------- engine v2 (R2)
+
+// v2 is the compiled backend (backend/src/reco/offline.ts). Use the build that is there, else compile one into a temp directory.
+const root = fileURLToPath(new URL('..', import.meta.url));
+let dist = process.env.RECO_EVAL_DIST || DEFAULT_DIST;
+let v2mod = await loadV2(dist);
+if (!v2mod) {
+  dist = mkdtempSync(join(tmpdir(), 'ff-reco-dist-'));
+  execFileSync(process.execPath, [join(root, 'node_modules', 'typescript', 'bin', 'tsc'), '-p', join(root, 'backend', 'tsconfig.json'), '--outDir', dist], { stdio: 'inherit' });
+  v2mod = await loadV2(dist);
+}
+const registry = { ...ENGINES, v2: () => v2Engine(v2mod) };
+
+test('v2: evaluated next to every baseline, deterministic, beats popularity and v1 on the fixture', () => {
+  const a = evaluate(fixture, { registry, engines: Object.keys(registry) });
+  assert.deepEqual(Object.keys(a.engines), ['popularity', 'v1', 'cooccurrence', 'v2']);
+  assert.deepEqual(a, evaluate(fixture, { registry, engines: Object.keys(registry) }));
+  const { v2, popularity, v1, cooccurrence } = a.engines;
+  assert.ok(v2.ndcg > popularity.ndcg && v2.ndcg > v1.ndcg && v2.ndcg > cooccurrence.ndcg, JSON.stringify(a.engines));
+  assert.ok(v2.hitRate > 0.5);
+  assert.ok(v2.newTitleHitRate > cooccurrence.newTitleHitRate, 'content features reach titles nobody has watched');
+});
+
+test('v2: never recommends a disliked title; --exclude-seen leaves the already-seen share at zero', () => {
+  const data = { items: ['a', 'b', 'c', 'd', 'e', 'f', 'g'].map((id) => ({ id, genres: ['g'] })), profiles: [{ id: 'p', events: [ev('a', 1), ev('b', 2, { kind: 'dislike' }), ev('c', 3), ev('e', 4), ev('f', 5), ev('g', 6)] }] };
+  const prep = prepare(data);
+  const eng = v2Engine(v2mod);
+  eng.fit({ profiles: [] }, prep);
+  const list = eng.recommend({ surface: 'home', history: prep.profiles[0].seq, seed: 'c', k: 10, disliked: prep.profiles[0].disliked });
+  assert.ok(!list.includes('b'));
+  assert.deepEqual(list, ['d']); // neighbours of the profile are unseen titles only; the dislike is out
+  const r = evaluate(fixture, { registry, engines: ['v2'], excludeSeen: true });
+  assert.equal(r.engines.v2.seenShare, 0);
+});
+
+test('v2: the comparison table and the 4.7 gate', async () => {
+  const lines = [];
+  assert.equal(await main([], { RECO_EVAL_DIST: dist }, (s) => lines.push(s)), 0);
+  const out = lines.join('\n');
+  assert.match(out, /v2 against the baselines/);
+  assert.match(out, /gate \(spec 4\.7\): .*PASS/);
+  const gated = [];
+  assert.equal(await main(['--gate', '--gate-margin', '50'], { RECO_EVAL_DIST: dist }, (s) => gated.push(s)), 1); // +5000 % is out of reach
+  assert.match(gated.join('\n'), /FAIL/);
+  assert.equal(await main(['--gate'], { RECO_EVAL_DIST: dist }, () => {}), 0);
+  const r = evaluate(fixture, { registry, engines: Object.keys(registry) });
+  assert.equal(gate({ engines: { v1: r.engines.v1 } }), null); // no v2, no gate
+  assert.equal(gate(r, 0.05).bestName, 'cooccurrence');
+  // aggregates only, also with v2
+  const json = [];
+  await main(['--json'], { RECO_EVAL_DIST: dist }, (s) => json.push(s));
+  for (const id of [...fixture.items.map((i) => i.id), ...fixture.profiles.map((p) => p.id)]) assert.ok(!new RegExp(`\\b${id}\\b`).test(out + json.join('\n')), `leaked ${id}`);
+});
+
+test('v2: without the compiled backend it is reported, and asking for it explicitly fails', async () => {
+  const lines = [], warns = [];
+  assert.equal(await main([], { RECO_EVAL_DIST: join(tmpdir(), 'ff-no-such-dist') }, (s) => lines.push(s), (s) => warns.push(s)), 0);
+  assert.match(warns.join('\n'), /v2 not evaluated/);
+  assert.doesNotMatch(lines.join('\n'), /v2 against/);
+  await assert.rejects(main(['--engines', 'v2'], { RECO_EVAL_DIST: join(tmpdir(), 'ff-no-such-dist') }, () => {}), /compiled backend/);
 });
