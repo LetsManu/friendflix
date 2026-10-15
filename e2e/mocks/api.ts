@@ -23,6 +23,8 @@ export interface MockState {
   unmocked: Set<string>;
   /** payloads POSTed to /api/client-errors */
   clientErrors: unknown[];
+  /** payloads POSTed to /api/reco/events (recommendation row impressions / clicks) */
+  reco: unknown[];
   /** admin endpoints (mocks/admin.ts) */
   admin: AdminState;
   /** Admin → Settings (mocks/settings.ts) */
@@ -81,6 +83,7 @@ export function freshState(): MockState {
     postplayEvents: [],
     unmocked: new Set(),
     clientErrors: [],
+    reco: [],
     admin: adminState(),
     settings: settingsState(),
     asAdmin: false,
@@ -161,6 +164,7 @@ export async function installApi(ctx: BrowserContext, st: MockState): Promise<vo
       return st.loginArt.status === 200 ? J({ images: st.loginArt.images }) : J({ error: st.loginArt.status === 503 ? 'setup_required' : 'unavailable' }, st.loginArt.status);
     }
     if (/^\/api\/public\/login-art\/[A-Za-z0-9_-]{12}\/\d{1,2}$/.test(p) && m === 'GET') return route.fulfill({ status: 200, contentType: 'image/png', body: pngFor(req.url()) });
+    if (p === '/api/reco/events' && m === 'POST') { st.reco.push(body()); return route.fulfill({ status: 204 }); }
     if (p === '/api/client-errors') { st.clientErrors.push(body()); return route.fulfill({ status: 204 }); }
     if (p.startsWith('/api/setup/')) {
       if (!st.setup) { st.unmocked.add(`${m} ${p}`); return J({ error: 'not_found' }, 404); }

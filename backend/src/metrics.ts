@@ -22,6 +22,14 @@ export const postplayShown = new Counter({ name: 'friendflix_postplay_shown_tota
 export const postplayClick = new Counter({ name: 'friendflix_postplay_click_total', help: 'Post-play suggestions opened', labelNames: ['row_kind'], registers: [registry] });
 export const postplayPlay = new Counter({ name: 'friendflix_postplay_play_total', help: 'Post-play suggestions played', labelNames: ['row_kind'], registers: [registry] });
 export const postplayDismiss = new Counter({ name: 'friendflix_postplay_dismiss_total', help: 'Post-play screens dismissed', registers: [registry] });
+/**
+ * Recommendation telemetry (spec 4.7). Labels are bounded by RECO_ROWS / RECO_ENGINES (routes/reco.ts) and never carry an item, a title or a user.
+ * Impressions, clicks and dismisses come from the browser (POST /api/reco/events); plays are counted server side by the engine step (R4).
+ */
+export const recoImpressions = new Counter({ name: 'friendflix_reco_impressions_total', help: 'Recommendation rows shown, by row and engine', labelNames: ['row', 'engine'], registers: [registry] });
+export const recoClicks = new Counter({ name: 'friendflix_reco_clicks_total', help: 'Recommended titles opened, by row and engine', labelNames: ['row', 'engine'], registers: [registry] });
+export const recoPlays = new Counter({ name: 'friendflix_reco_plays_total', help: 'Plays started from a recommendation, by row and engine', labelNames: ['row', 'engine'], registers: [registry] });
+export const recoDismiss = new Counter({ name: 'friendflix_reco_dismiss_total', help: 'Recommendations dismissed, by row and engine', labelNames: ['row', 'engine'], registers: [registry] });
 const downloadJobs = new Gauge({ name: 'friendflix_download_jobs', help: 'Offline download jobs by status', labelNames: ['status'], registers: [registry] });
 const downloadDisk = new Gauge({ name: 'friendflix_download_disk_bytes', help: 'Bytes of prepared download files', registers: [registry] });
 const up = new Gauge({ name: 'friendflix_dependency_up', help: '1 if dependency reachable', labelNames: ['dependency'], registers: [registry] });

@@ -39,6 +39,7 @@ import { statsRoutes } from './routes/stats.js';
 import { publicArtRoutes } from './routes/publicArt.js';
 import { tvRoutes } from './routes/tv.js';
 import { clientErrorRoutes } from './clientErrors.js';
+import { recoRoutes } from './routes/reco.js';
 import { playbackTimingRoutes } from './playtiming.js';
 import { mediaRoutes } from './routes/media.js';
 import { socialRoutes } from './routes/social.js';
@@ -244,6 +245,7 @@ export async function buildApp(ctx: Ctx, extra: Extra = {}): Promise<FastifyInst
   sceneRoutes(app, ctx);
   tvRoutes(app, ctx);
   clientErrorRoutes(app, ctx);
+  recoRoutes(app, ctx);
   playbackTimingRoutes(app, ctx);
   reminderRoutes(app, ctx);
   listRoutes(app, ctx);
