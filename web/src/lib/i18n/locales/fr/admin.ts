@@ -10,6 +10,7 @@ const fr: Translation<typeof de> = {
     users: 'Utilisateurs', status: 'État', previews: 'Aperçus', playback: 'Test de lecture', digest: 'Récap hebdomadaire', sources: 'Sources de données', invites: 'Invitations',
     requests: 'Demandes', polls: 'Votes', lists: 'Listes', roles: 'Rôles', devices: 'Appareils', audit: 'Journal d’audit', update: 'Mise à jour',
     hygiene: 'Entretien de la bibliothèque',
+    settings: 'Paramètres',
     usage: 'Utilisation',
   },
   roleNames: { friend: 'Ami', family: 'Famille', guest: 'Invité', admin: 'Admin' },
@@ -386,6 +387,9 @@ const fr: Translation<typeof de> = {
     },
     settings: {
       language: '{actor} a changé la langue par défaut',
+      update: '{actor} a modifié les paramètres',
+      import_env: '{actor} a repris des valeurs de l’environnement dans les paramètres',
+      generate: '{actor} a généré une nouvelle clé',
     },
     system: {
       update: '{actor} a lancé une mise à jour',

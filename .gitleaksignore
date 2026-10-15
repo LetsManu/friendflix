@@ -15,3 +15,20 @@ c0afee0e9f185ea0f700875b3093fe04fcb3f44c:backend/test/sources-keys.test.ts:gener
 c0afee0e9f185ea0f700875b3093fe04fcb3f44c:backend/test/sources-keys.test.ts:generic-api-key:84
 # test placeholder (backend/test/helpers.ts INTERNAL_SECRET) in the Block 23 user detail test
 eaa804d7cce260a98fd5db716612bf4d5f1e3e50:backend/test/admin-user-detail.test.ts:generic-api-key:176
+# Block 25a test placeholders (settings store, probes, gateway config, sources keys, e2e mock generate answer)
+f2f5f49d056eaccf884ef590bd02af9545dfef05:backend/test/sources-keys.test.ts:generic-api-key:121
+f2f5f49d056eaccf884ef590bd02af9545dfef05:backend/test/sources-keys.test.ts:generic-api-key:122
+0b780bdbd52bcac95f03ce3a78d25041e00e8cad:e2e/mocks/settings.ts:generic-api-key:199
+4b610b83f2519996a7572c99328f4dcdd3e630d1:backend/test/settings-probes.test.ts:generic-api-key:111
+4b610b83f2519996a7572c99328f4dcdd3e630d1:backend/test/settings-probes.test.ts:generic-api-key:115
+b1e64405249dd1c91566ee8eb23e819d02318b94:backend/test/gateway-config.test.ts:generic-api-key:9
+b1e64405249dd1c91566ee8eb23e819d02318b94:backend/test/gateway-config.test.ts:generic-api-key:51
+4b610b83f2519996a7572c99328f4dcdd3e630d1:backend/test/admin-settings.test.ts:generic-api-key:237
+4b610b83f2519996a7572c99328f4dcdd3e630d1:backend/test/admin-settings.test.ts:generic-api-key:272
+4b610b83f2519996a7572c99328f4dcdd3e630d1:backend/test/admin-settings.test.ts:generic-api-key:330
+c5136e4339bb18a34f1aabe67f08c3085159d704:backend/test/settings-live.test.ts:generic-api-key:83
+c5136e4339bb18a34f1aabe67f08c3085159d704:backend/test/settings-live.test.ts:generic-api-key:87
+eb9759f5d9991fc5c41bf15fd7f866693c336354:backend/test/settings-repo.test.ts:generic-api-key:45
+dae644181e1532bd6f73fe7de5332de9bcfeb6a8:backend/test/settings-store.test.ts:generic-api-key:21
+dae644181e1532bd6f73fe7de5332de9bcfeb6a8:backend/test/settings-store.test.ts:generic-api-key:70
+dae644181e1532bd6f73fe7de5332de9bcfeb6a8:backend/test/settings-store.test.ts:generic-api-key:204

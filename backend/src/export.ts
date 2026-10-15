@@ -164,16 +164,17 @@ export async function* exportUserData(ctx: Ctx, user: UserRow): AsyncGenerator<s
     : { profiles: perProfile, ...(perProfile.some((h) => 'truncated' in h) ? { truncated: true } : {}), totals });
 
   // request state from the request service (newest REQUEST_STATUS_MAX only); a removed request reads 'removed', an unreachable
-  // service 'unknown' (not asked again)
+  // service 'unknown' (not asked again), as does every request while no request service is set up
   const reqs = await q<{ seerr_request_id: number; tmdb_id: number; media_type: string; title: string; created_at: Date }>(
     'select seerr_request_id, tmdb_id, media_type, title, created_at from seerr_requests where user_id=$1 order by created_at desc');
-  let reachable = true;
+  const seerr = ctx.seerr;
+  let reachable = seerr !== null;
   const requests = [];
   for (const [n, r] of reqs.entries()) {
     let status = 'unknown';
-    if (reachable && n < REQUEST_STATUS_MAX) {
+    if (seerr && reachable && n < REQUEST_STATUS_MAX) {
       try {
-        const sr = await ctx.seerr.getRequest(r.seerr_request_id);
+        const sr = await seerr.getRequest(r.seerr_request_id);
         status = requestStateKey(sr?.media?.status, sr?.status);
       } catch (e) {
         if (e instanceof SeerrError && e.status === 404) status = 'removed';

@@ -4,6 +4,7 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { createHmac, randomUUID, timingSafeEqual } from 'node:crypto';
 import { dropRemotePeers } from './tv.js';
 import { audit } from '../audit.js';
+import { publicOrigin, secureCookies } from '../config.js';
 import type { Ctx } from '../ctx.js';
 import { authenticate, COOKIE, loadSession, newSession, rand, requireUser, saveSession } from '../session.js';
 import { revokeCasts } from '../cast.js';
@@ -23,6 +24,7 @@ import { notifyAdmins } from '../notify.js';
 import { pendingNoticeKey } from '../pending.js';
 import { profileOnboarded } from './prefs.js';
 import { publicCapabilities } from '../media/types.js';
+import { requestsEnabled } from '../seerr/client.js';
 import { FALLBACK_LANGUAGE, instanceLanguage, languageFromAcceptLanguage, m, profileLanguage, roleLabel } from '../i18n.js';
 
 const OIDC_COOKIE = 'ff_oidc';
@@ -123,7 +125,7 @@ async function requestApproval(ctx: Ctx, claims: OidcClaims): Promise<string> {
 }
 
 export function authRoutes(app: FastifyInstance, ctx: Ctx) {
-  const secure = ctx.cfg.PUBLIC_URL.startsWith('https://');
+  const secure = () => secureCookies(ctx.cfg); // PUBLIC_URL applies live
 
   /**
    * Starts an OIDC login; the invite (if any) travels in the server-side state to /auth/callback.
@@ -133,7 +135,7 @@ export function authRoutes(app: FastifyInstance, ctx: Ctx) {
     const s = await ctx.oidc.start({ forceLogin: Boolean(opts.resetPin || opts.reauth) });
     const saved: SavedLogin = { state: s.state, nonce: s.nonce, codeVerifier: s.codeVerifier, invite, ...(opts.resetPin ? { resetPin: true } : {}), ...(opts.reauth ? { reauth: opts.reauth } : {}) };
     await ctx.kv.set(`oidc:${s.state}`, JSON.stringify(saved), ttl);
-    reply.setCookie(OIDC_COOKIE, s.state, { httpOnly: true, secure, sameSite: 'lax', path: '/auth', maxAge: ttl }); // binds the flow to this browser
+    reply.setCookie(OIDC_COOKIE, s.state, { httpOnly: true, secure: secure(), sameSite: 'lax', path: '/auth', maxAge: ttl }); // binds the flow to this browser
     return s.url;
   }
 
@@ -192,12 +194,21 @@ export function authRoutes(app: FastifyInstance, ctx: Ctx) {
    * The re-authentication branch of /auth/callback: the IdP login must be fresh (auth_time) and be the same person as the
    * session that started it. No provisioning, no device, no new session.
    */
+  /** The URL the IdP sent the browser back to. Without a PUBLIC_URL nobody can sign in yet: 503, like an unreachable IdP. */
+  function callbackUrl(req: FastifyRequest): URL {
+    if (!publicOrigin(ctx.cfg)) throw new HttpError(503, 'oidc_unavailable');
+    return new URL(req.url, ctx.cfg.PUBLIC_URL);
+  }
+  /** a sign-in that cannot run at all (lazy OIDC 503) is answered as such, not as a failed login */
+  const unavailable = (err: unknown) => err instanceof HttpError && err.statusCode === 503 && err.message === 'oidc_unavailable';
+
   async function finishReauth(req: FastifyRequest, reply: FastifyReply, saved: SavedLogin & { reauth: NonNullable<SavedLogin['reauth']> }) {
     const { userId, next } = saved.reauth;
     let claims: OidcClaims;
     try {
-      claims = await ctx.oidc.finish(new URL(req.url, ctx.cfg.PUBLIC_URL), saved, { maxAge: REAUTH_MAX_AGE });
+      claims = await ctx.oidc.finish(callbackUrl(req), saved, { maxAge: REAUTH_MAX_AGE });
     } catch (err) {
+      if (unavailable(err)) throw err;
       req.log.warn({ err }, 'oidc re-authentication failed'); // e.g. auth_time older than REAUTH_MAX_AGE
       return reply.redirect(REAUTH_FAILED);
     }
@@ -228,7 +239,7 @@ export function authRoutes(app: FastifyInstance, ctx: Ctx) {
       // order matters (phase 2 ruling F15): a re-authentication is handled first, before any account lookup or provisioning
       if (saved.reauth) return await finishReauth(req, reply, { ...saved, reauth: saved.reauth });
       // forgotten PIN: the IdP must really have asked for the login again (auth_time), a still valid IdP session is not enough
-      const claims = await ctx.oidc.finish(new URL(req.url, ctx.cfg.PUBLIC_URL), saved, saved.resetPin ? { maxAge: RESET_PIN_MAX_AGE } : undefined);
+      const claims = await ctx.oidc.finish(callbackUrl(req), saved, saved.resetPin ? { maxAge: RESET_PIN_MAX_AGE } : undefined);
       // the account is being deleted (claimed by the deletion tick): no login, no approval request, no new account (F15 step 2)
       const deleting = await ctx.db.query('select 1 from account_deletions where authentik_sub=$1 and finished_at is null', [claims.sub]);
       if (deleting.rowCount) return reply.code(403).send({ error: 'account_deleted' });
@@ -241,7 +252,7 @@ export function authRoutes(app: FastifyInstance, ctx: Ctx) {
           if (!claimed) {
             // no (valid) invite: the person waits for an admin on /pending, without a session
             const requestId = await requestApproval(ctx, claims);
-            reply.setCookie(PENDING_COOKIE, signPending(ctx, requestId), { httpOnly: true, secure, sameSite: 'lax', path: '/', maxAge: PENDING_TTL });
+            reply.setCookie(PENDING_COOKIE, signPending(ctx, requestId), { httpOnly: true, secure: secure(), sameSite: 'lax', path: '/', maxAge: PENDING_TTL });
             return reply.redirect('/pending');
           }
         }
@@ -257,7 +268,7 @@ export function authRoutes(app: FastifyInstance, ctx: Ctx) {
         // locked for deletion and still in the grace period: the person may restore it on /restore (no session); other locks: 403 (F15 step 3)
         const deletionAt = await restorableUntil(ctx, user.id);
         if (!deletionAt) return reply.code(403).send({ error: 'disabled' });
-        reply.setCookie(RESTORE_COOKIE, signRestore(ctx, user.id, deletionAt), { httpOnly: true, secure, sameSite: 'lax', path: '/', maxAge: RESTORE_TTL });
+        reply.setCookie(RESTORE_COOKIE, signRestore(ctx, user.id, deletionAt), { httpOnly: true, secure: secure(), sameSite: 'lax', path: '/', maxAge: RESTORE_TTL });
         return reply.redirect('/restore');
       } else if (isAdmin && user.role !== 'admin') {
         await ctx.db.query("update users set role='admin' where id=$1", [user.id]);
@@ -277,15 +288,16 @@ export function authRoutes(app: FastifyInstance, ctx: Ctx) {
         if (cleared.rowCount) await audit(ctx, user.id, 'profile.pin_reset', user.id);
       }
       const sid = rand();
-      const dev = await registerDevice(ctx, req, reply, user.id, secure);
+      const dev = await registerDevice(ctx, req, reply, user.id, secure());
       await saveSession(ctx, sid, newSession({ userId: user.id, csrf: rand(), deviceId: dev.deviceId, deviceApproved: dev.approved }));
-      reply.setCookie(COOKIE, sid, { httpOnly: true, secure, sameSite: 'lax', path: '/', maxAge: ctx.cfg.SESSION_TTL_SECONDS });
+      reply.setCookie(COOKIE, sid, { httpOnly: true, secure: secure(), sameSite: 'lax', path: '/', maxAge: ctx.cfg.SESSION_TTL_SECONDS });
       const pendingId = verifyPending(ctx, req.cookies[PENDING_COOKIE]);
       if (req.cookies[PENDING_COOKIE]) reply.clearCookie(PENDING_COOKIE, { path: '/' }); // approved: the waiting room is done
       if (pendingId) await ctx.kv.del(pendingNoticeKey(pendingId));
       await audit(ctx, user.id, 'login', user.id, { ip: req.ip });
       return reply.redirect('/');
     } catch (err) {
+      if (unavailable(err)) throw err; // 503 oidc_unavailable through the error handler
       req.log.warn({ err }, 'oidc callback failed'); if (process.env.DEBUG_TEST) console.error(err);
       return reply.code(401).send({ error: 'login_failed' });
     }
@@ -380,6 +392,8 @@ export function authRoutes(app: FastifyInstance, ctx: Ctx) {
       suggestedLanguage: languageFromAcceptLanguage(req.headers['accept-language']),
       /** media server kind + what it supports: the client hides UI for anything missing (see media/types.ts) */
       server: { kind: ctx.jf.kind, capabilities: publicCapabilities(ctx.jf.capabilities) },
+      /** optional services of this instance: requests = a request service is set up (else the client hides wishes and requests) */
+      features: { requests: requestsEnabled(ctx) },
     };
   });
 

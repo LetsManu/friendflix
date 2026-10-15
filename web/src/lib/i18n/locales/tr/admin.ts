@@ -10,6 +10,7 @@ const tr: Translation<typeof de> = {
     users: 'Kullanıcılar', status: 'Durum', previews: 'Önizlemeler', playback: 'Oynatma denetimi', digest: 'Haftalık özet', sources: 'Veri kaynakları', invites: 'Davetler',
     requests: 'İstekler', polls: 'Oylamalar', lists: 'Listeler', roles: 'Roller', devices: 'Cihazlar', audit: 'Denetim günlüğü', update: 'Güncelleme',
     hygiene: 'Kitaplık bakımı',
+    settings: 'Ayarlar',
     usage: 'Kullanım',
   },
   roleNames: { friend: 'Arkadaş', family: 'Aile', guest: 'Misafir', admin: 'Yönetici' },
@@ -377,6 +378,9 @@ const tr: Translation<typeof de> = {
     },
     settings: {
       language: '{actor} varsayılan dili değiştirdi',
+      update: '{actor} ayarları değiştirdi',
+      import_env: '{actor} ortamdaki değerleri ayarlara taşıdı',
+      generate: '{actor} yeni bir anahtar oluşturdu',
     },
     system: {
       update: '{actor} bir güncelleme başlattı',

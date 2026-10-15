@@ -223,9 +223,9 @@ async function runSteps(ctx: Ctx, t: Tombstone, now: Date): Promise<StepResult> 
   const early: Array<() => Promise<void>> = [
     // 1: the owner and profile identities on the media server (an identity that is already gone counts as deleted)
     async () => { for (const jid of t.jellyfin_ids ?? []) await ctx.jf.admin.deleteIdentity(jid); },
-    // 2: the request-service user (404: already gone)
+    // 2: the request-service user (404: already gone; no request service set up: nothing to do, the step counts as done)
     async () => {
-      if (t.seerr_user_id == null) return;
+      if (t.seerr_user_id == null || !ctx.seerr) return;
       await ctx.seerr.deleteUser(t.seerr_user_id).catch((e: unknown) => { if (!(e instanceof SeerrError && e.status === 404)) throw e; });
     },
     // 3: offline licences (the lock revoked them already; repeated for safety)

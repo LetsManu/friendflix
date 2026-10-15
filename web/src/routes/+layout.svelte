@@ -20,7 +20,7 @@
   import { loadModal, prefetchModal } from '#lib/lazy';
   import { startTvLink, type ToTv } from '#lib/remote';
   import { logout as doLogout } from '#lib/session';
-  import { capsFrom, serverCaps } from '#lib/capabilities';
+  import { capsFrom, features, featuresFrom, serverCaps } from '#lib/capabilities';
   import { setMeta } from '#lib/offline/db';
   import { focusEl, focusFirst, isBackKey, isEditable, startSpatial } from '#lib/spatial';
   import Intro from '#lib/Intro.svelte';
@@ -65,6 +65,7 @@
    * active. Without /api/me the page mounts after the server language was applied (boot() awaits setLocale before `me`).
    * Either way the page mounts once in the right language; nothing re-creates it later (see pageEpoch in lib/i18n).
    */
+  if (bootHint?.noRequests) features.set(featuresFrom({ requests: false })); // until /api/me answers: no request links flash
   let earlyLang = !(early && bootHint?.lang);
   if (early && bootHint?.lang) void setLocale(bootHint.lang).finally(() => (earlyLang = true));
   let pageReady = false; // sticky: a later language load (ready = false for a moment) must not unmount the page
@@ -363,6 +364,7 @@
         setCsrf(m.csrfToken);
         setActiveProfile(m.profile?.id);
         serverCaps.set(capsFrom(m.server?.capabilities));
+        features.set(featuresFrom(m.features));
         writeHint(hintOf(m)); writeActive(m.profile?.id); clearReloadFlag(); // the profile-switch reload is done: a later reload may render early again
         if (m.profile?.id) void setMeta('lastProfileId', m.profile.id).catch(() => undefined); // the offline hub shows the last active profile's downloads
         pending = !m.deviceApproved;

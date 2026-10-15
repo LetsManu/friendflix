@@ -175,14 +175,15 @@ The production stack pulls prebuilt images from `ghcr.io/letsmanu/friendflix-{ba
 ```bash
 git clone https://github.com/LetsManu/friendflix.git && cd friendflix
 cp .env.example .env
-openssl rand -base64 32    # -> APP_ENC_KEY
-openssl rand -hex 24       # -> INTERNAL_SECRET, WEBHOOK_SECRET, METRICS_TOKEN (one value each)
-$EDITOR .env               # PUBLIC_URL, passwords, OIDC_*, JELLYFIN_*, REQUESTS_*
+$EDITOR .env               # PUBLIC_URL, OIDC_*, JELLYFIN_* (the internal secrets are generated, see below)
 docker login ghcr.io -u <user>                                 # only if the packages are private (PAT with read:packages)
 docker compose -f compose.prod.yaml up -d                      # add --profile bundled to also start Jellyfin + the request service
 docker compose -f compose.prod.yaml --profile backup up -d backup   # optional: nightly database backups
 docker compose -f compose.prod.yaml ps                         # everything "healthy"
+./scripts/backup-bootstrap.sh                                  # back up the generated secrets, apart from the dumps
 ```
+
+The `bootstrap` service generates the database and Redis passwords, `APP_ENC_KEY` and `INTERNAL_SECRET` into the Docker volume `friendflix_bootstrap` on the first `up`. Everything else is a setting stored in the database and changed under *Admin → Settings*; a value in `.env` still wins there. Upgrading an existing install: [docs/setup.md §14](docs/setup.md#14-upgrading-to-settings-in-the-database).
 
 Then:
 
@@ -190,26 +191,27 @@ Then:
 2. **Nginx Proxy Manager:** one proxy host `portal.<domain>` → `127.0.0.1:3080`, WebSockets on, Force SSL/HTTP2/HSTS; paste [deploy/npm/portal.advanced.conf](deploy/npm/portal.advanced.conf) into the *Advanced* tab (routes `/api`, `/auth`, `/ws` to `:3081` and `/media/` to `:3082`). Keep its `/media/c/` block: it stops cast tokens from being logged.
 3. **Jellyfin:** create an admin API key. Optional webhook plugin for instant "now playing" and "new in library" events – [docs/integrations.md](docs/integrations.md).
 4. **Requests (optional):** API key and webhook – [docs/integrations.md](docs/integrations.md).
-5. **Web push (optional):** `node scripts/gen-vapid.mjs`, put both keys into `.env`, restart.
+5. **Web push and webhooks (optional):** *Admin → Settings*: generate the push key pair and the webhook secret there.
 6. **First login** with a member of the Authentik group `friendflix-admins`: you become the portal admin, choose the instance language, and invite your friends under *Admin → Users → Invites*.
 
 If Jellyfin/the request service already run in their own stack: `docker network connect friendflix_media <container>`, remove their public ports and set `JELLYFIN_URL`/`REQUESTS_URL`.
 
 ### Configuration
 
-Template: [.env.example](.env.example). Every variable can also be read from a file with the `_FILE` suffix (Docker secrets, see [compose.secrets.yaml](compose.secrets.yaml)). Defaults are the ones in [compose.prod.yaml](compose.prod.yaml).
+Template: [.env.example](.env.example). Every variable can also be read from a file with the `_FILE` suffix (Docker secrets, see [compose.secrets.yaml](compose.secrets.yaml)). Defaults are the ones in [compose.prod.yaml](compose.prod.yaml). Settings can instead be saved in *Admin → Settings*; a value from `.env` or a file wins and shows locked there ([docs/setup.md](docs/setup.md#settings-in-the-database)).
 
 | Variable | Default | Purpose |
 |---|---|---|
 | `PUBLIC_URL` | – (required) | Public https URL of the portal |
-| `POSTGRES_PASSWORD`, `REDIS_PASSWORD` | – (required) | Database and Redis passwords |
-| `APP_ENC_KEY` | – (required) | 32 bytes base64; encrypts stored Jellyfin credentials. **Back it up separately.** |
-| `INTERNAL_SECRET`, `WEBHOOK_SECRET` | – (required, ≥ 16 chars) | Backend ↔ gateway secret; Jellyfin/request-service webhooks |
+| `POSTGRES_PASSWORD`, `REDIS_PASSWORD` | generated | Database and Redis passwords; set only on installs that had them before (copied into the `bootstrap` volume) |
+| `APP_ENC_KEY` | generated | 32 bytes base64; encrypts stored credentials and secret settings. **Back up the `bootstrap` volume separately** (`scripts/backup-bootstrap.sh`) |
+| `INTERNAL_SECRET` | generated | Backend ↔ gateway secret (≥ 16 chars when set) |
+| `WEBHOOK_SECRET` | – | Jellyfin/request-service webhooks (≥ 16 chars); *Admin → Settings → General → Generate new*. Unset: the webhooks answer 403 |
 | `OIDC_ISSUER`, `OIDC_CLIENT_ID`, `OIDC_CLIENT_SECRET` | – (required) | Authentik OIDC provider |
 | `TMDB_API_KEY`, `OMDB_API_KEY` (or `…_FILE`) | empty | Optional extra data for the detail page (links, ratings); or set in *Admin → Data sources*. See [docs/integrations.md](docs/integrations.md#tmdb--omdb-optional) |
 | `MEDIA_SERVER` | `jellyfin` | Media server kind; Jellyfin is the only one in this repository (a fork can add others, see [docs/architecture.md](docs/architecture.md)) |
 | `JELLYFIN_URL`, `JELLYFIN_ADMIN_API_KEY` | – (required for `jellyfin`) | Internal Jellyfin URL, e.g. `http://jellyfin:8096`, and admin API key |
-| `REQUESTS_URL`, `REQUESTS_API_KEY` | – (required) | Internal URL (bundled: `http://requests:5055`) and API key of the request service (older variable names still work, with a deprecation warning) |
+| `REQUESTS_URL`, `REQUESTS_API_KEY` | – (optional) | Internal URL (bundled: `http://requests:5055`) and API key of the request service; without both, wishes and requests are hidden (older variable names still work, with a deprecation warning) |
 | `ADMIN_GROUP` | `friendflix-admins` | Authentik group whose members become portal admins |
 | `BIND_ADDR` | `127.0.0.1` | Host address the three ports are published on – never a public interface |
 | `WEB_PORT`, `BACKEND_PORT`, `GATEWAY_PORT` | `3080`, `3081`, `3082` | Host ports for the reverse proxy |
@@ -302,7 +304,7 @@ flowchart TB
 
 ### Operations
 
-- **Backups:** the opt-in `backup` sidecar runs `pg_dump` daily at `BACKUP_HOUR`, verifies each dump with `pg_restore --list`, keeps `BACKUP_KEEP_DAYS` days and turns `unhealthy` if a run fails. Restore steps and a monthly restore test (`scripts/restore-test.sh`) are in [docs/operations.md](docs/operations.md). Keep `APP_ENC_KEY` in a password manager, separate from the dumps.
+- **Backups:** the opt-in `backup` sidecar runs `pg_dump` daily at `BACKUP_HOUR`, verifies each dump with `pg_restore --list`, keeps `BACKUP_KEEP_DAYS` days and turns `unhealthy` if a run fails. Restore steps and a monthly restore test (`scripts/restore-test.sh`) are in [docs/operations.md](docs/operations.md). Back up the `bootstrap` volume (`scripts/backup-bootstrap.sh`, holds `APP_ENC_KEY`) separately from the dumps.
 - **Updates:** *Admin → Update* shows the installed version and the newest release with its notes (plus the commits on main) and redeploys the stack through Portainer (webhook or API). Manually: `docker compose -f compose.prod.yaml pull && docker compose -f compose.prod.yaml up -d`. Database migrations run on start.
 - **Monitoring:** `/health` (liveness) and `/health/ready` (Redis, Postgres, Jellyfin) on `127.0.0.1:3081`; Prometheus metrics on `:3081/metrics` and `:3082/metrics` (Bearer `METRICS_TOKEN`). Icinga and Prometheus examples and an optional Prometheus + Grafana stack with a provisioned dashboard (`compose.monitoring.yaml`, internal network, no default password): [docs/monitoring.md](docs/monitoring.md).
 - **Supply chain:** images are scanned (Trivy), signed with cosign (keyless) and published with SBOM and provenance attestations; verify them before you deploy – [docs/operations.md](docs/operations.md). Builds are reproducible: rebuild any release from source and get the same image digest – [docs/reproducible-builds.md](docs/reproducible-builds.md).

@@ -102,7 +102,8 @@ export interface Me { id: string; name: string; role: string; roleLabel: string;
   /** browser language from Accept-Language when supported, else null */ suggestedLanguage?: string | null;
   /** the active profile is a kids profile (kids home, no social features); absent on older servers */ kids?: boolean;
   /** false = the active profile never finished /welcome (absent = onboarded) */ onboarded?: boolean;
-  /** media server kind + capabilities (see lib/capabilities.ts); absent on older servers = everything supported */ server?: { kind: string; capabilities?: unknown } }
+  /** media server kind + capabilities (see lib/capabilities.ts); absent on older servers = everything supported */ server?: { kind: string; capabilities?: unknown };
+  /** optional services of this instance (lib/capabilities.ts featuresFrom); absent on older servers = everything on */ features?: { requests?: boolean } }
 /** GET /api/account (owner profile only): the person's own account for /me/account */
 export interface Account {
   name: string;

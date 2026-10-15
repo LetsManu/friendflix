@@ -4,6 +4,7 @@ import type { BrowserContext, Route } from '@playwright/test';
 import { ME, byName, episodes, hex, items, nolan, people, seedLists, type MockItem, type MockList, MOVIE, MOVIE2, SERIES } from './fixtures.js';
 import { pngFor } from './png.js';
 import { adminRoute, adminState, type AdminState } from './admin.js';
+import { settingsRoute, settingsState, type SettingsMock } from './settings.js';
 
 /** Item whose reactions are locked (viewer has not seen it) / unlocked and contain an XSS probe. */
 export const LOCKED_ID = MOVIE.id;
@@ -23,6 +24,8 @@ export interface MockState {
   clientErrors: unknown[];
   /** admin endpoints (mocks/admin.ts) */
   admin: AdminState;
+  /** Admin → Settings (mocks/settings.ts) */
+  settings: SettingsMock;
   /** /api/me reports an admin owner profile (admin pages, admin menu) */
   asAdmin: boolean;
   /** ids removed from Weiterschauen (DELETE /api/library/resume/:id), left out of GET /api/library/resume */
@@ -39,6 +42,8 @@ export interface MockState {
   revokedOthers: number;
   /** POST /api/account/delete answers 401 reauth_required even inside the reauth window (it ran out meanwhile) */
   reauthLapsed?: boolean;
+  /** /api/me `features` (optional services); absent = the field is left out, like an older backend (everything on) */
+  features?: { requests: boolean };
 }
 export interface MockAccount {
   name: string; email: string | null; avatar: string;
@@ -57,6 +62,7 @@ export function freshState(): MockState {
     unmocked: new Set(),
     clientErrors: [],
     admin: adminState(),
+    settings: settingsState(),
     asAdmin: false,
     resumeGone: new Set(),
     account: { name: 'Tester', email: 'tester@example.com', avatar: 'blue', mfa: { totp: true, webauthn: false, static: true }, manageUrl: 'https://login.example.com/if/user/#/settings', reauthUntil: null },
@@ -124,7 +130,8 @@ export async function installApi(ctx: BrowserContext, st: MockState): Promise<vo
     }
     if (p === '/api/client-errors') { st.clientErrors.push(body()); return route.fulfill({ status: 204 }); }
     if (p === '/api/me') {
-      const me = st.asAdmin ? { ...ME, role: 'admin', roleLabel: 'Admin', isAdmin: true } : ME;
+      const base = st.features ? { ...ME, features: st.features } : ME;
+      const me = st.asAdmin ? { ...base, role: 'admin', roleLabel: 'Admin', isAdmin: true } : base;
       const s = st.accountSaved;
       return J(s ? { ...me, name: s.name, profile: { ...me.profile, name: s.name.slice(0, 20), avatar: s.avatar } } : me);
     }
@@ -324,6 +331,7 @@ export async function installApi(ctx: BrowserContext, st: MockState): Promise<vo
     if (p === '/api/profiles') return J({ profiles: PROFILES, max: 5, activeId: 'p1' });
     if ((mm = p.match(/^\/api\/profiles\/([^/]+)\/select$/)) && m === 'POST') return J({ ok: true });
 
+    if (p.startsWith('/api/admin/settings')) { const r = settingsRoute(st.settings, m, p, body(), J); if (r) return r; }
     if (p.startsWith('/api/admin/')) { const r = adminRoute(st.admin, m, p, sp, body(), J); if (r) return r; }
 
     st.unmocked.add(`${m} ${p}${u.search ? '?…' : ''}`);

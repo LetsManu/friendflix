@@ -62,7 +62,7 @@ export function adminRoutes(app: FastifyInstance, ctx: Ctx) {
       one<{ failed: string; ok: string; bytes: string }>("select count(*) filter (where status='failed') failed, count(*) filter (where status='ok') ok, coalesce(sum(bytes) filter (where status='ok'),0)::text bytes from preview_clips"),
       one<{ bytes: string }>("select coalesce(sum(bytes),0)::text bytes from download_jobs where status='ready'"),
       ctx.db.query<{ finished_at: Date; results: Array<{ ok: boolean }> }>('select finished_at, results from playback_checks order by id desc limit 1').then((r) => r.rows[0] ?? null),
-      ctx.seerr.requestCount().catch(() => null), // Seerr down or not configured: the UI shows "not reachable"
+      ctx.seerr ? ctx.seerr.requestCount().catch(() => null) : null, // Seerr down or not set up: the UI shows "not reachable"
       // Block 22: a fresh health snapshot already knows whether the media server answers (saves a ping per shell load)
       freshSnapshot(ctx).then((snap) => {
         const media = snap?.services.find((x) => x.id === 'media');

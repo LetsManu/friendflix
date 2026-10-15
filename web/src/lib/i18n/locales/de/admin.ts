@@ -7,6 +7,7 @@ export default {
     users: 'Nutzer', status: 'Status', previews: 'Vorschauen', playback: 'Wiedergabe-Check', digest: 'Wochenrückblick', sources: 'Datenquellen', invites: 'Einladungen',
     requests: 'Wünsche', polls: 'Abstimmungen', lists: 'Listen', roles: 'Rollen', devices: 'Geräte', audit: 'Audit-Log', update: 'Update',
     hygiene: 'Bibliothekspflege',
+    settings: 'Einstellungen',
     usage: 'Nutzung',
   },
   /** role names by key (unknown roles show the server label) */
@@ -307,7 +308,7 @@ export default {
     },
     download: { revoke: '{actor} hat eine Download-Lizenz widerrufen' },
     digest: { settings: '{actor} hat den Wochenrückblick eingestellt' },
-    settings: { language: '{actor} hat die Standardsprache geändert' },
+    settings: { language: '{actor} hat die Standardsprache geändert', update: '{actor} hat Einstellungen geändert', import_env: '{actor} hat Werte aus der Umgebung in die Einstellungen übernommen', generate: '{actor} hat einen Schlüssel neu erzeugt' },
     system: { update: '{actor} hat ein Update gestartet' },
     session: { revoke_others: '{actor} hat sich auf anderen Geräten abgemeldet', revoke_device: '{actor} hat ein eigenes Gerät abgemeldet', reauth: '{actor} hat sich erneut angemeldet (für eine Kontoaktion)', reauth_mismatch: '{actor}: erneute Anmeldung mit einem anderen Konto abgelehnt' },
     account: { export: '{actor} hat die eigenen Daten heruntergeladen', profile: '{actor} hat Name oder Farbe des eigenen Kontos geändert' },
