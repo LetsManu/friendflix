@@ -8,7 +8,7 @@ Endpunkte (nur lokal auf dem Docker-Host erreichbar: Ports sind an `127.0.0.1` g
 | `http://127.0.0.1:3081/metrics` | Prometheus (Bearer `METRICS_TOKEN`, falls gesetzt) |
 | `http://127.0.0.1:3082/metrics` | Gateway-Durchsatz |
 
-Wichtige Metriken: `friendflix_active_streams`, `friendflix_gateway_bytes_total` (Durchsatz = `rate()`), `friendflix_gateway_active_streams`, `friendflix_gateway_requests_total{code}`, `friendflix_dependency_up{dependency}`, `friendflix_users_total`, `friendflix_pending_devices`, `friendflix_pending_polls`, `friendflix_party_rooms`, `friendflix_client_errors_total{kind}` (Browser-Fehler, siehe unten).
+Wichtige Metriken: `friendflix_active_streams`, `friendflix_gateway_bytes_total` (Durchsatz = `rate()`), `friendflix_gateway_active_streams`, `friendflix_gateway_requests_total{code}`, `friendflix_dependency_up{dependency}`, `friendflix_users_total`, `friendflix_pending_devices`, `friendflix_pending_polls`, `friendflix_party_rooms`, `friendflix_client_errors_total{kind}` (Browser-Fehler, siehe unten), `friendflix_reco_impressions_total{row,engine}` / `_clicks_total` / `_plays_total` / `_dismiss_total` (Empfehlungszeilen, siehe [discovery.md](discovery.md); nur Zahlen, keine Titel).
 
 Weitere Metriken: `friendflix_http_requests_total{method,status}` (Status als Klasse `2xx`…`5xx`), `friendflix_gateway_download_bytes_total`, `friendflix_gateway_cast_requests_total{code}`, `friendflix_download_jobs{status}`, `friendflix_download_disk_bytes`, `friendflix_authz_nginx_total{result}` (nur Plan B) sowie die Node.js-Standardmetriken des Backends mit Präfix `friendflix_` (`friendflix_process_cpu_seconds_total`, `friendflix_nodejs_eventloop_lag_p99_seconds`, …).
 
