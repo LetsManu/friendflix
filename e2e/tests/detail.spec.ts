@@ -153,22 +153,38 @@ test.describe('detail page (desktop)', () => {
         await expect(page.locator('.top .rl.ph')).toHaveCount(1);
         const syn = page.locator('.top .ov');
         await expect(syn).toBeVisible();
-        // record the synopsis position on every frame while "about" resolves
-        const rec = syn.evaluate((el) => new Promise<number[]>((done) => {
-          const ys: number[] = [];
-          const t0 = performance.now();
-          const step = () => { ys.push(el.getBoundingClientRect().top); if (performance.now() - t0 < 1500) requestAnimationFrame(step); else done(ys); };
-          requestAnimationFrame(step);
-        }));
-        await page.waitForTimeout(200);
+        const lead = page.locator('.top .lead');
+        await expect(lead).toHaveClass(/\bready\b/); // the height transition is armed (the first size is not animated)
+        // Catch the height transition the moment it is created and pause it, then seek it in tenths and record the synopsis
+        // position at each step. Sampling real frames instead measured the frame rate: under load Chromium paints only
+        // one or two frames in the 0.3 s, and a smooth transition looked like a jump. The app sets style.height when the
+        // block resizes; getAnimations() in the mutation callback (same task) creates the transition before time passes.
+        await lead.evaluate((el) => {
+          (window as unknown as { leadAnim: Promise<Animation> }).leadAnim = new Promise((done) => {
+            const mo = new MutationObserver(() => {
+              const a = el.getAnimations().find((x) => (x as CSSTransition).transitionProperty === 'height');
+              if (a) { a.pause(); mo.disconnect(); done(a); }
+            });
+            mo.observe(el, { attributes: true, attributeFilter: ['style'] });
+          });
+        });
         release();
-        const ys = await rec;
+        const ys = await syn.evaluate(async (el) => {
+          const none = new Promise<null>((r) => setTimeout(() => r(null), 7_500));
+          const a = await Promise.race([(window as unknown as { leadAnim: Promise<Animation> }).leadAnim, none]);
+          if (!a) throw new Error('no height transition on the ratings block: it jumped');
+          const dur = Number(a.effect!.getComputedTiming().duration);
+          const out: number[] = [];
+          for (let i = 0; i <= 10; i++) { a.currentTime = (dur * i) / 10; out.push(el.getBoundingClientRect().top); }
+          a.finish();
+          return out;
+        });
         const total = ys[ys.length - 1]! - ys[0]!;
         expect(Math.sign(total)).toBe(dir);
         expect(Math.abs(total)).toBeGreaterThan(5);
         let maxStep = 0;
         for (let i = 1; i < ys.length; i++) maxStep = Math.max(maxStep, Math.abs(ys[i]! - ys[i - 1]!));
-        expect(maxStep, `largest per-frame move of ${Math.abs(total)}px total`).toBeLessThan(Math.abs(total) * 0.6);
+        expect(maxStep, `largest move per tenth of the transition, of ${Math.abs(total)}px total`).toBeLessThan(Math.abs(total) * 0.6);
       });
     }
   });
@@ -372,7 +388,9 @@ test.describe('detail page: kids', () => {
 
     await page.goto('/profiles');
     await page.getByRole('button', { name: /Mia/ }).click();
-    await expect(page).not.toHaveURL(/\/profiles/);
+    // the pick leaves with location.href (a full document load): wait for "load", not just the URL commit, which comes
+    // before the new document has a <body>
+    await page.waitForURL((u) => !u.pathname.startsWith('/profiles'));
     // back to the same title: the kids profile gets its own answer, never the grown-up's cached friends' rating
     await page.evaluate((id) => { const a = document.createElement('a'); a.href = '/item/' + id; document.body.appendChild(a); a.click(); }, MOVIE.id);
     await expect(page.getByRole('heading', { level: 1, name: 'Inkwell' })).toBeVisible();
