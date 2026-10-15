@@ -8,7 +8,8 @@
 #   ./scripts/backup-bootstrap.sh                 -> ./backups/friendflix-bootstrap-<UTC time>.tgz (mode 0600, owned by the caller)
 # Restore into a fresh (empty) volume before the first `docker compose up`:
 #   docker volume create friendflix_bootstrap
-#   docker run --rm -v friendflix_bootstrap:/s -v "$PWD/backups":/b:ro alpine:3.24.2 tar xzf /b/<file>.tgz -C /s
+#   docker run --rm -v friendflix_bootstrap:/s -v "$PWD/backups":/b:ro \
+#     alpine:3.24.2@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cabeaec77e6 tar xzf /b/<file>.tgz -C /s
 # Env: BACKUP_DIR (default ./backups), COMPOSE_PROJECT_NAME (default friendflix).
 set -euo pipefail
 # pinned by digest like the Dockerfiles (it runs as root against the secrets volume); bump tag + digest by hand
