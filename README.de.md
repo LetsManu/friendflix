@@ -123,6 +123,7 @@ Intro überspringen, nächste Folge mit Countdown, Tonspur und Untertitel (mit e
 - **Themenlisten** – jede Liste kann zur redaktionellen Seite mit Titel, Farbe und Emoji werden; der Admin heftet einige als Reihen auf die Startseite aller an („Filmabend am Freitag“, „Gemütlicher Herbst“).
 - **Eine ausführlichere Detailseite** – Bewertungen in einer Zeile (Community, Kritik, Freunde; mit optionalem OMDb-Schlüssel auch IMDb, Rotten Tomatoes und Metacritic), eine Sammlungsreihe mit „Teil 2 von 3“ und Gesehen-Häkchen sowie ein Tab *Details* mit Fakten und Links zu TMDB, IMDb, TVDB und Trakt. Auf dem Handy bleiben die Tabs beim Scrollen in Reichweite.
 - **Weil du … gesehen hast** – mehrere Reihen, jede zu einem anderen zuletzt gesehenen Titel, verteilt zwischen den übrigen Reihen.
+- **Was als Nächstes kommt, nach der letzten Folge** – endet ein Film oder die letzte verfügbare Folge, zeigt ein ruhiger Bildschirm *Du hast … gesehen* oder *Du bist auf dem neuesten Stand* (mit dem Termin der nächsten Folge und *Erinnere mich*), führt zum nächsten Teil, einer Fortsetzung oder einer übersprungenen Folge, bietet für eine fehlende Staffel einen Wunsch an und schlägt Titel aus derselben Welt, *Weil du … gesehen hast*, von Freunden und nach deinem Geschmack vor. Ab dem Abspann erscheint eine kleine Karte *Fertig? Sieh dir an, was als Nächstes kommt*. Nichts startet von selbst, Esc oder Zurück lässt dich beim Titel, und *Einstellungen → Vorschläge nach der letzten Folge zeigen* schaltet die Vorschläge ab.
 - **Suche und Stöbern** finden Personen, Genres, Titel und Folgen; filtern geht nach Jahrzehnt, Bewertung, Sprache und **Bildqualität** (4K, HDR, Dolby Vision, Atmos). „Heute Abend“ schlägt drei Titel nach Stimmung und Zeit vor.
 - **Simulcast** (verlinkt im Kalender) zeigt die gerade laufenden Serien nach Wochentag und Season, mit Filter „Nur Anime“.
 
@@ -241,6 +242,7 @@ Eine neue Installation braucht davon nichts: Einrichtungsassistent und *Admin �
 | `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`, `VAPID_SUBJECT` | leer, leer, `PUBLIC_URL` | Web-Push; nur aktiv, wenn beide Schlüssel gesetzt sind |
 | `DIGEST_DAY`, `DIGEST_HOUR` | `0` (Sonntag), `18` | Zeitplan des Wochenrückblicks; `-1` = aus; im Admin-Bereich änderbar |
 | `CAST_ENABLED` | `true` | Chromecast und AirPlay (braucht eine https-`PUBLIC_URL`); bei Plan B `false` |
+| `POSTPLAY_ENABLED` | `true` | Der Bildschirm nach einem Film oder der letzten Folge („Du bist auf dem neuesten Stand“, Vorschläge); `false` schaltet ihn für alle ab. Siehe [docs/discovery.md](docs/discovery.md) |
 | `DOWNLOADS_ENABLED` | `true` | Offline-Downloads; bei Plan B `false` |
 | `DOWNLOADS_PATH`, `PREVIEWS_PATH` | Volumes `downloads`, `previews` | Host-Ordner (absoluter Pfad, beschreibbar für uid 1000) für vorbereitete Downloads und Vorschau-Clips |
 | `DOWNLOAD_CACHE_MAX_GB`, `DOWNLOAD_MIN_FREE_GB` | `50`, `2` | Obergrenze für vorbereitete Downloads; Mindest-Freiplatz |

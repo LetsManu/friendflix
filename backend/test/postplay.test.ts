@@ -69,7 +69,7 @@ let env: TestEnv;
 const kidsJf = new Set<string>();
 let owner: Sess;
 let ownerId = '';
-const visible = (u: { jellyfin_user_id: string }, i: { adult?: boolean } | undefined) => Boolean(i) && !(kidsJf.has(u.jellyfin_user_id) && i!.adult);
+const visible = (u: { jellyfin_user_id: string }, i: (ItemDto & { adult?: boolean }) | undefined) => Boolean(i) && !(kidsJf.has(u.jellyfin_user_id) && i!.adult);
 const strip = ({ adult: _a, ...i }: ItemDto & { adult?: boolean }): ItemDto => ({ ...i });
 let calls: string[] = [];
 

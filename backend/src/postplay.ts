@@ -79,7 +79,7 @@ export function isCurrentSeason(i: Pick<ItemDto, 'premiereDate'>, now: number): 
 }
 
 /**
- * Crunchyroll anti-pattern "balance current season vs. back catalog": at most 1 in 3 items of a row is a current-season title.
+ * Anti-pattern (spec §2.3 lesson 11) "balance current season vs. back catalog": at most 1 in 3 items of a row is a current-season title.
  * Keeps the order of each group; current-season titles go to every third slot (3rd, 6th ...), the surplus is dropped.
  */
 export function balanceSeason(items: ItemDto[], now: number): ItemDto[] {
@@ -96,7 +96,7 @@ export function balanceSeason(items: ItemDto[], now: number): ItemDto[] {
   return out;
 }
 
-/** an already-watched title (a fully watched series counts too: Crunchyroll anti-pattern "no already-watched series") */
+/** an already-watched title (a fully watched series counts too: spec §2.3 lesson 11 "no already-watched series") */
 export const alreadyWatched = (i: Pick<ItemDto, 'type' | 'played' | 'unplayedCount' | 'childCount'>): boolean =>
   i.played || (i.type === 'Series' && i.unplayedCount === 0 && (i.childCount ?? 0) > 0);
 
