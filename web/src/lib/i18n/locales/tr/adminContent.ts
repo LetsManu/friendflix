@@ -354,6 +354,8 @@ const dict: Translation<typeof de> = {
       flow_unsupported: '“{flow}” akışında FriendFlix’in gösteremediği adımlar var. Authentik’in giriş sayfasında devam eder.',
       consent: 'Sağlayıcının yetkilendirme akışı onay istiyor. Örtük onaya geçir.',
       auth_code_grant: 'Sağlayıcıda “authorization_code” izin türü eksik. Sağlayıcıda işaretle, yoksa giriş başarısız olur.',
+      permission_provider: 'Hizmet hesabında “view_oauth2provider” izni eksik: sağlayıcının onayı ve izin türü denetlenemiyor. Blueprint’i yeniden uygula.',
+      permission_validate_stage: 'Hizmet hesabında “view_authenticatorvalidatestage” izni eksik: girişin ikinci faktör isteyip istemediği bilinmiyor, bu yüzden herkes son faktörünü kaldırabilir. Blueprint’i yeniden uygula.',
       issuer: 'Yayıncı adresi Authentik ana bilgisayarında değil; bu yüzden giriş çerezi yetkilendirmede geçerli olmaz.',
       passkeys_not_https: 'Passkey’ler yalnızca giriş sayfasında çalışır: genel adres https değil.',
       passkeys_forwarded_host_ignored: 'Passkey’ler yalnızca giriş sayfasında çalışır: Authentik iletilen ana bilgisayarı yok sayıyor. Arka ucu AUTHENTIK_LISTEN__TRUSTED_PROXY_CIDRS’e ekle ve Authentik’e doğrudan ulaşmasını sağla.',

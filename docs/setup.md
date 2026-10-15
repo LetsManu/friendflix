@@ -231,7 +231,7 @@ Right after the wizard, in Authentik:
    - **The e-mail change flow** (the *E-mail address → Change* row of *Security* on the account page) is **not** imported by the wizard: import `deploy/authentik/friendflix-email-change.yaml` and mount its mail template under `/templates` ([authentik.md §10a, step 7](authentik.md#10a-in-app-sign-in)). Until then the row shows the address without a *Change* button, and admins see a note.
    - **Optional:** let password-reset mails open in FriendFlix (`/reset`) with the recovery template ([authentik.md §10a, step 4](authentik.md#10a-in-app-sign-in)).
 
-   Upgrading an install from before the in-app sign-in? Re-import `deploy/authentik/friendflix-service-account.yaml` (or `friendflix-blueprint.yaml`): the service account needs the new device-delete permissions for *Remove* on the account page ([authentik.md §8.2](authentik.md#82-role-with-exactly-these-global-permissions)).
+   Upgrading an install from before the in-app sign-in? Re-import `deploy/authentik/friendflix-service-account.yaml` (or `friendflix-blueprint.yaml`): the service account needs the new device-delete permissions for *Remove* on the account page, and read permissions for the validation stage and the OAuth2 provider (the last-factor rule and the status card's consent and grant-type checks) ([authentik.md §8.2](authentik.md#82-role-with-exactly-these-global-permissions)).
 5. Check the result with [authentik.md §14](authentik.md#14-verification) and tick the checklist in [section 12](#12-verification-checklist).
 
 ### Settings in the database
@@ -299,7 +299,7 @@ Values in the table can also be set in *Admin → Settings*. After changing `.en
 - [ ] `curl -s https://auth.example.com/application/o/friendflix/.well-known/openid-configuration | jq -r .issuer` equals `OIDC_ISSUER`.
 - [ ] Admin login works, MFA is requested, *Admin* is visible.
 - [ ] A test invite in a private window ends logged in on the portal; the user appears in *Admin → Users* and in Jellyfin.
-- [ ] *Admin → Status → Sign-in* shows no warning (a missing e-mail change flow is expected until you import it, see [Harden Authentik](#harden-authentik)).
+- [ ] *Admin → Status → Sign-in* shows no warning (the e-mail change flow shows *Missing* until you import it, without a warning; see [Harden Authentik](#harden-authentik)).
 - [ ] A movie plays (direct play and a forced lower quality → transcoding), subtitles work, seeking works.
 - [ ] Optional: push test notification, a download, casting, a backup file in `backups/`.
 

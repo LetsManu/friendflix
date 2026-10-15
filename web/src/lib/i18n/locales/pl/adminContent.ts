@@ -359,6 +359,8 @@ const dict: Translation<typeof de> = {
       flow_unsupported: 'Przepływ „{flow}” ma kroki, których FriendFlix nie potrafi pokazać. Ciąg dalszy na stronie logowania Authentik.',
       consent: 'Przepływ autoryzacji dostawcy pyta o zgodę. Ustaw zgodę domniemaną.',
       auth_code_grant: 'Dostawcy brakuje typu uprawnienia „authorization_code”. Zaznacz go u dostawcy, inaczej logowanie się nie powiedzie.',
+      permission_provider: 'Kontu serwisowemu brakuje uprawnienia „view_oauth2provider”: nie da się sprawdzić zgody ani typu uprawnienia dostawcy. Zastosuj blueprint ponownie.',
+      permission_validate_stage: 'Kontu serwisowemu brakuje uprawnienia „view_authenticatorvalidatestage”: nie wiadomo, czy logowanie wymaga drugiego składnika, więc każdy może usunąć swój ostatni składnik. Zastosuj blueprint ponownie.',
       issuer: 'Adres wystawcy nie leży na hoście Authentik, więc ciasteczko logowania nie obowiązuje przy autoryzacji.',
       passkeys_not_https: 'Passkey działają tylko na stronie logowania: adres publiczny nie jest https.',
       passkeys_forwarded_host_ignored: 'Passkey działają tylko na stronie logowania: Authentik ignoruje przekazany host. Dodaj backend do AUTHENTIK_LISTEN__TRUSTED_PROXY_CIDRS i pozwól mu łączyć się z Authentik bezpośrednio.',

@@ -103,6 +103,17 @@ test.describe('/reset (e-mail link)', () => {
     expect([st.calls[0]!.csrf, st.calls[0]!.csrfCookie]).toEqual(['mock-flow-csrf-0001', 'mock-flow-csrf-0001']);
   });
 
+  test('Authentik unavailable on "Weiter": the retry sends the same token again (the link was not used), without reloading', async ({ page }) => {
+    const st = loginState({ resumes: [{ body: { stage: 'unavailable' } }, { body: prompt(PASSWORDS) }] });
+    await open(page, st, `/reset?token=${TOKEN}`);
+    await expect(page).toHaveURL(/\/reset$/);
+    await page.getByRole('button', { name: 'Weiter' }).click();
+    await page.getByRole('button', { name: 'Erneut versuchen' }).click();
+    await expect(h1(page, 'Neues Passwort')).toBeVisible();
+    expect(posts(st, '/auth/flow/resume').map((c) => c.body.token)).toEqual([TOKEN, TOKEN]);
+    expect(page.url()).not.toContain(TOKEN);
+  });
+
   test('mismatched passwords show the error', async ({ page }) => {
     const st = loginState({ resumes: [{ body: prompt(PASSWORDS) }], answers: [{ status: 400, body: { errors: ['password_mismatch'] } }] });
     await open(page, st, `/reset?token=${TOKEN}`);

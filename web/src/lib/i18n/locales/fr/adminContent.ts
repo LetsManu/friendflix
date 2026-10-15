@@ -354,6 +354,8 @@ const dict: Translation<typeof de> = {
       flow_unsupported: 'Le flux « {flow} » contient des étapes que FriendFlix ne peut pas afficher. Il continue sur la page d’Authentik.',
       consent: 'Le flux d’autorisation du fournisseur demande un consentement. Passe-le en consentement implicite.',
       auth_code_grant: 'Le fournisseur n’a pas le type d’octroi « authorization_code ». Coche-le dans le fournisseur, sinon la connexion échoue.',
+      permission_provider: 'Le compte de service n’a pas la permission « view_oauth2provider » : le consentement et le type d’octroi du fournisseur ne peuvent pas être vérifiés. Réapplique le blueprint.',
+      permission_validate_stage: 'Le compte de service n’a pas la permission « view_authenticatorvalidatestage » : on ne sait pas si la connexion exige un second facteur, donc chacun peut retirer son dernier facteur. Réapplique le blueprint.',
       issuer: 'L’adresse de l’émetteur n’est pas sur l’hôte d’Authentik : le cookie de connexion ne s’applique pas à l’autorisation.',
       passkeys_not_https: 'Les passkeys ne fonctionnent que sur la page de connexion : l’adresse publique n’est pas en https.',
       passkeys_forwarded_host_ignored: 'Les passkeys ne fonctionnent que sur la page de connexion : Authentik ignore l’hôte transmis. Ajoute le backend à AUTHENTIK_LISTEN__TRUSTED_PROXY_CIDRS et laisse-le joindre Authentik directement.',

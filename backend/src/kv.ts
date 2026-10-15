@@ -54,9 +54,10 @@ export class RedisKV implements KV {
     return (await this.redis.eval(lua, 1, key, value)) === 1;
   }
   async incr(key: string, ttl: number) {
-    const n = await this.redis.incr(key);
-    if (n === 1) await this.redis.expire(key, ttl);
-    return n;
+    // one atomic call: INCR and EXPIRE as two calls could leave a counter without a TTL after a crash in between (a permanent
+    // in-app lock for that name); a counter found without a TTL (ttl -1) gets one too
+    const lua = "local n = redis.call('incr', KEYS[1]) if n == 1 or redis.call('ttl', KEYS[1]) == -1 then redis.call('expire', KEYS[1], ARGV[1]) end return n";
+    return Number(await this.redis.eval(lua, 1, key, String(ttl)));
   }
   async decr(key: string) {
     const lua = "local v = tonumber(redis.call('get', KEYS[1])) if v and v > 0 then return redis.call('decr', KEYS[1]) else return 0 end";

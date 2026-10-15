@@ -31,6 +31,9 @@ interface Opts {
   issuer?: string; // what the discovery answers
   cfgOver?: Record<string, unknown>;
   down?: boolean;
+  /** the token lacks view_oauth2provider / view_authenticatorvalidatestage: Authentik answers 403 */
+  providerForbidden?: boolean;
+  validateForbidden?: boolean;
 }
 function setup(o: Opts = {}) {
   const calls: Call[] = [];
@@ -44,7 +47,8 @@ function setup(o: Opts = {}) {
       const slug = (u.searchParams.get('target') ?? '').replace(/^pk-/, '');
       return { json: { pagination: { next: 0 }, results: (stages[slug] ?? []).map((m, i) => ({ order: i * 10, stage: `s${i}`, stage_obj: { component: `ak-stage-${i}-form`, meta_model_name: m } })) } };
     },
-    'GET /api/v3/providers/oauth2/': () => ({
+    'GET /api/v3/stages/authenticator/validate/[^/]+/': () => (o.validateForbidden ? { status: 403, json: { detail: 'no' } } : { json: { not_configured_action: 'configure' } }),
+    'GET /api/v3/providers/oauth2/': () => (o.providerForbidden ? { status: 403, json: { detail: 'no' } } : {
       json: { pagination: { next: 0 }, results: o.provider === null ? [] : [{ authorization_flow_obj: { slug: 'default-provider-authorization-implicit-consent' }, grant_types: ['authorization_code', 'refresh_token'], ...o.provider }] },
     }),
     'GET /application/o/friendflix/.well-known/openid-configuration': () => ({ json: { issuer: o.issuer ?? 'https://friend.example.com/application/o/friendflix/' } }),
@@ -79,12 +83,27 @@ describe('checkLoginFlows', () => {
     expect(r.mode).toBe('app'); // a failing check never changes the mode
   });
 
-  it('the e-mail change flow (blueprint not imported, or a custom slug) is checked too', async () => {
+  it('the e-mail change flow (blueprint not imported, or a custom slug) is checked too; missing is no warning (an optional manual import)', async () => {
     const r = await checkLoginFlows(setup({ stages: { 'friendflix-email-change': null } }).ctx);
     expect(row(r, 'change-email')).toEqual({ kind: 'change-email', slug: 'friendflix-email-change', state: 'missing', stages: [] });
-    expect(r.warnings).toEqual(['flow_missing:change-email']);
+    expect(r.warnings).toEqual([]);
+    const odd = await checkLoginFlows(setup({ stages: { 'friendflix-email-change': [MODEL.prompt, MODEL.captcha] } }).ctx);
+    expect(odd.warnings).toEqual(['flow_unsupported:change-email']);
     const custom = await checkLoginFlows(setup({ stages: { 'my-email-change': [MODEL.prompt, MODEL.email, MODEL.write] }, cfgOver: { AUTHENTIK_EMAIL_CHANGE_FLOW: 'my-email-change' } }).ctx);
     expect(row(custom, 'change-email')).toMatchObject({ slug: 'my-email-change', state: 'ok', stages: [MODEL.prompt, MODEL.email, MODEL.write] });
+  });
+
+  it('a token without view_oauth2provider (403): a distinct permission warning, never a silent pass of the consent and grant checks', async () => {
+    const r = await checkLoginFlows(setup({ providerForbidden: true, stages: { 'default-provider-authorization-implicit-consent': [MODEL.consent] } }).ctx);
+    expect([r.implicitConsent, r.authCodeGrant, r.unreachable]).toEqual([null, null, false]);
+    expect(r.warnings).toEqual(['permission:provider']);
+  });
+
+  it('a token without view_authenticatorvalidatestage (403): a permission warning; the flow rows stay ok', async () => {
+    const r = await checkLoginFlows(setup({ validateForbidden: true }).ctx);
+    expect(row(r, 'login').state).toBe('ok');
+    expect(r.unreachable).toBe(false);
+    expect(r.warnings).toEqual(['permission:validate_stage']);
   });
 
   it('flow with a captcha stage -> unsupported with stages listed', async () => {

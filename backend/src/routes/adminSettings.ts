@@ -157,7 +157,7 @@ const DESTINATIONS: ReadonlySet<string> = new Set(Object.values(CREDENTIAL_DESTI
  * the public URL (cast tokens, invite and notification links, the OIDC redirect URI and the websocket Origin are built from it); the home
  * networks (they widen which clients get home trust).
  */
-const REAUTH_KEYS: ReadonlySet<string> = new Set(['LOGIN_UI', 'ADMIN_GROUP', 'NTFY_URL', 'NTFY_BASE_URL', 'PUBLIC_URL', 'HOME_NETWORKS']);
+const REAUTH_KEYS: ReadonlySet<string> = new Set(['LOGIN_UI', 'PASSKEYS_IN_APP', 'ADMIN_GROUP', 'NTFY_URL', 'NTFY_BASE_URL', 'PUBLIC_URL', 'HOME_NETWORKS']);
 
 /** Keys whose saving needs a recent re-authentication: secrets, OIDC_* / AUTHENTIK_*, REAUTH_KEYS and every credential destination. */
 export function needsReauth(keys: readonly string[]): boolean {

@@ -8,7 +8,6 @@
    * e-mail change's flow (`resume {token, kind:'email-confirm'}`): `done` → "E-Mail-Adresse geändert", `expired` → used or expired link.
    */
   import { onMount } from 'svelte';
-  import { replaceState } from '$app/navigation';
   import { publicLocale, setLocale, t } from '#lib/i18n';
   import AuthShell from '#lib/auth/AuthShell.svelte';
   import Icon from '#lib/Icon.svelte';
@@ -29,7 +28,9 @@
     // the address after a confirmation (`done.next`), e.g. when the page is reloaded
     if (q.get('ok') === '1' && !token) view = 'done';
     else if (!token) view = 'expired';
-    if (q.has('token')) replaceState('/confirm-email', {}); // the token does not stay in the address bar or the history
+    // the token does not stay in the address bar or the history entry. Not SvelteKit's replaceState: it keeps the old URL (with the
+    // token) in history.state (`sveltekit:metadata.pageUrl`)
+    if (q.has('token')) history.replaceState(history.state, '', location.pathname);
     void flowConfig().catch(() => undefined); // sets the csrf cookie; no executor call
   });
 

@@ -3,8 +3,10 @@
 <script lang="ts">
   /**
    * /reset?token= (Block 23 phase 3): the link of the recovery e-mail. A public page (no /api/me).
-   * - On load the token moves into this component's state only and `history.replaceState` drops it from the URL; `flowConfig()` sets
+   * - On load the token moves into this component's state only and `replaceState` drops it from the URL (`history.replaceState`); `flowConfig()` sets
    *   the csrf cookie (preflight P14). Authentik is not called yet (Ruling 11).
+   * - "Erneut versuchen" after `unavailable` keeps the token (Authentik never used it): a failed config loads it again, a failed
+   *   resume sends the same token again.
    * - "Weiter" calls `resume` (the only place the token is sent, in the request body), then: MFA (TOTP) when the flow has it (P19), the
    *   two password fields, and "Passwort geändert" with a link to /login.
    * - A passkey-only account comes back as `classic/passkey_origin`: "add a TOTP app, or ask an admin".
@@ -25,28 +27,37 @@
   /** 'intro' = the "Weiter" screen; null = loading */
   let view: FlowReply | { stage: 'intro' } | { stage: 'finished' } | null = null;
   let busy = false;
+  /** the config answered: a retry then resends the token instead of loading the config again */
+  let ready = false;
 
-  onMount(async () => {
+  onMount(() => {
     const pre = publicLocale();
     if (pre) void setLocale(pre);
-    const given = new URLSearchParams(location.search).get('token') ?? '';
+    const q = new URLSearchParams(location.search);
+    const given = q.get('token') ?? '';
     token = given.length <= 512 ? given : '';
-    history.replaceState(history.state, '', location.pathname); // the token never stays in the address bar or the history entry
+    // the token never stays in the address bar or the history entry. Not SvelteKit's replaceState: it keeps the old URL (with the
+    // token) in history.state (`sveltekit:metadata.pageUrl`)
+    if (q.has('token')) history.replaceState(history.state, '', location.pathname);
+    void boot();
+  });
+  async function boot() {
+    view = null;
     let mode: 'app' | 'authentik';
     try {
       mode = (await flowConfig()).mode;
     } catch {
-      token = '';
-      view = { stage: 'unavailable' };
+      view = { stage: 'unavailable' }; // the token stays for the retry
       return;
     }
+    ready = true;
     if (mode !== 'app') {
       token = ''; // nothing is forwarded: the sign-in page is Authentik's own
       view = { stage: 'classic', reason: 'unsupported_stage' };
       return;
     }
     view = token ? { stage: 'intro' } : { stage: 'expired' };
-  });
+  }
   onDestroy(() => (token = ''));
 
   async function go() {
@@ -55,10 +66,17 @@
     const t0 = token;
     token = ''; // single use
     try {
-      show(await resumeFlow(t0));
+      const r = await resumeFlow(t0);
+      if (r.stage === 'unavailable') token = t0; // Authentik did not take it: the retry sends the same link again
+      show(r);
     } finally {
       busy = false;
     }
+  }
+  function retry() {
+    if (!ready) void boot();
+    else if (token) void go();
+    else location.href = '/login';
   }
   function show(r: FlowReply) {
     view = r.stage === 'done' ? { stage: 'finished' } : r;
@@ -94,7 +112,7 @@
       <a class="btn af-pri" href="/login">{$t('login.reset.doneButton')}</a>
     </div>
   {:else if view.stage === 'denied' || view.stage === 'locked' || view.stage === 'expired' || view.stage === 'unavailable' || view.stage === 'classic'}
-    <Notice kind={view.stage} classicHref={classic} on:retry={() => location.reload()} on:restart={() => (location.href = '/login')} />
+    <Notice kind={view.stage} classicHref={classic} on:retry={retry} on:restart={() => (location.href = '/login')} />
   {:else}
     <Notice kind="classic" classicHref={classic} />
   {/if}

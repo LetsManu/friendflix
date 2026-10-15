@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { encrypt } from '../src/crypto.js';
 import { pushEnabled } from '../src/push.js';
-import { CREDENTIAL_DESTINATIONS, generateVapidPair, generateWebhookSecret, NO_DESTINATION } from '../src/routes/adminSettings.js';
+import { CREDENTIAL_DESTINATIONS, generateVapidPair, generateWebhookSecret, NO_DESTINATION, needsReauth } from '../src/routes/adminSettings.js';
 import { SETTINGS, settingDef } from '../src/settings/registry.js';
 import { ADMIN, cfg, ENC_KEY, fakeHttp, makeEnv, type Handler, type TestEnv } from './helpers.js';
 
@@ -511,10 +511,12 @@ describe('Block 23 phase 3 keys (Task 9)', () => {
     expect(h.env.ctx.cfg.LOGIN_COVER_WALL).toBe('true');
   });
 
-  it('LOGIN_UI changes the sign-in mode for everyone: it needs a recent re-authentication, and null returns to automatic', async () => {
+  it('LOGIN_UI and PASSKEYS_IN_APP change the sign-in for everyone: they need a recent re-authentication (D17), and null returns to automatic', async () => {
     const denied = await h.put({ LOGIN_UI: 'authentik' });
     expect(denied.statusCode).toBe(401);
     expect(denied.json().error).toBe('reauth_required');
+    expect((await h.put({ PASSKEYS_IN_APP: 'off' })).json().error).toBe('reauth_required');
+    expect(needsReauth(['PASSKEYS_IN_APP'])).toBe(true);
     await h.reauth(h.admin);
     expect((await h.put({ LOGIN_UI: 'authentik' })).statusCode).toBe(200);
     expect(h.env.ctx.cfg.LOGIN_UI).toBe('authentik');

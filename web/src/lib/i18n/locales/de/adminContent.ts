@@ -353,6 +353,8 @@ export default {
       flow_unsupported: 'Der Ablauf „{flow}“ enthält Schritte, die FriendFlix nicht zeigen kann. Dort geht es auf der Anmeldeseite von Authentik weiter.',
       consent: 'Der Autorisierungs-Ablauf des Providers fragt nach Zustimmung. Stelle ihn auf „implizite Zustimmung“.',
       auth_code_grant: 'Dem Provider fehlt der Grant-Typ „authorization_code“. Hake ihn im Provider an, sonst scheitert die Anmeldung.',
+      permission_provider: 'Dem Service-Account fehlt das Recht „view_oauth2provider“: Zustimmung und Grant-Typ des Providers lassen sich nicht prüfen. Blueprint neu anwenden.',
+      permission_validate_stage: 'Dem Service-Account fehlt das Recht „view_authenticatorvalidatestage“: Ob die Anmeldung einen zweiten Faktor verlangt, ist unbekannt, also darf jeder seinen letzten Faktor entfernen. Blueprint neu anwenden.',
       issuer: 'Die Issuer-Adresse liegt nicht auf dem Authentik-Host. Das Cookie der Anmeldung gilt dann nicht beim Autorisieren.',
       passkeys_not_https: 'Passkeys laufen nur auf der Anmeldeseite: die öffentliche Adresse ist nicht https.',
       passkeys_forwarded_host_ignored: 'Passkeys laufen nur auf der Anmeldeseite: Authentik übernimmt den weitergereichten Host nicht. Trage das Backend bei AUTHENTIK_LISTEN__TRUSTED_PROXY_CIDRS ein und lass es Authentik direkt erreichen.',

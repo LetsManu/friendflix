@@ -41,7 +41,8 @@ export interface World {
   people: Person[];
   devices: Device[];
   /** the login flow's bindings as the API lists them (the validate stage's not_configured_action) */
-  mfaMandatory: boolean | 'error';
+  /** the login flow's validate stage: deny (true), configure (false), Authentik down ('error'), the stage read refused ('forbidden') */
+  mfaMandatory: boolean | 'error' | 'forbidden';
   /** every Authentik call in order */
   calls: AkCall[];
   /** DELETE calls on devices (type/id) */
@@ -69,9 +70,14 @@ export function installWorld(env: TestEnv, flows: Record<string, FakeStage[]>, o
     'GET /api/v3/flows/instances/friendflix-email-change/': () => jsonResponse({ pk: 'flow-email' }),
     'GET /api/v3/flows/bindings/': (c) => jsonResponse({
       results: c.url.searchParams.get('target') === 'flow-login'
-        ? [{ order: 10, stage_obj: { meta_model_name: 'authentik_stages_authenticator_validate.authenticatorvalidatestage', not_configured_action: w.mfaMandatory === true ? 'deny' : 'configure' } }]
+        // like Authentik's bindings API: stage_obj is the base StageSerializer, without the validate stage's own settings
+        ? [{ order: 10, stage: 'stage-validate', stage_obj: { component: 'ak-stage-authenticator-validate-form', meta_model_name: 'authentik_stages_authenticator_validate.authenticatorvalidatestage' } }]
         : [],
     }),
+    // the validate stage's settings come only from its own endpoint (needs view_authenticatorvalidatestage)
+    'GET /api/v3/stages/authenticator/validate/stage-validate/': () => (w.mfaMandatory === 'forbidden'
+      ? new Response('{"detail":"no"}', { status: 403 })
+      : jsonResponse({ pk: 'stage-validate', not_configured_action: w.mfaMandatory === true ? 'deny' : 'configure' })),
     ...opts.extraRoutes,
   };
   for (const kind of ['totp', 'static', 'webauthn']) {

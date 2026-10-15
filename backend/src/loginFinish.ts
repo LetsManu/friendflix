@@ -236,6 +236,9 @@ export async function resolveLogin(ctx: Ctx, req: FastifyRequest, reply: Fastify
     if (accessEnded(until)) {
       const id = user.id;
       if (await accountSerial(() => expireAccess(ctx, id, new Date()))) return { kind: 'locked' };
+      // not locked by this call: the last active admin, or the expiry tick locked it meanwhile (then the row says so)
+      const now = await ctx.db.query<{ disabled: boolean }>('select disabled from users where id=$1', [id]);
+      if (now.rows[0]?.disabled) return { kind: 'locked' };
     }
     if (isAdmin) await promoteToAdmin(ctx, user);
   }

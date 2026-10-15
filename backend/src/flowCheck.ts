@@ -97,7 +97,9 @@ async function run(ctx: CheckCtx): Promise<LoginCheck> {
     if (f.failed) unreachable = true;
     flows.push(row(kind, slug, f));
   }
-  const provider = cfg.OIDC_CLIENT_ID ? await akOauthProvider(ctx, cfg.OIDC_CLIENT_ID) : null;
+  const found = cfg.OIDC_CLIENT_ID ? await akOauthProvider(ctx, cfg.OIDC_CLIENT_ID) : null;
+  const providerDenied = found === 'forbidden';
+  const provider = providerDenied ? null : found;
   let implicitConsent: boolean | null = null;
   if (provider?.authorizationFlow) {
     const auth = await akFlowStages(ctx, provider.authorizationFlow);
@@ -110,9 +112,14 @@ async function run(ctx: CheckCtx): Promise<LoginCheck> {
   if (unreachable) warnings.push('unreachable');
   for (const r of flows) {
     // an optional flow that is not there only matters when the app would use it (login and recovery are always used in app mode)
-    if (r.state === 'missing' && !unreachable) warnings.push(`flow_missing:${r.kind}`);
+    // the e-mail change flow is imported by hand (optional): without it the account page just hides "Change"
+    if (r.state === 'missing' && !unreachable && r.kind !== 'change-email') warnings.push(`flow_missing:${r.kind}`);
     if (r.state === 'unsupported') warnings.push(`flow_unsupported:${r.kind}`);
   }
+  // a permission the token lacks: the checks behind it cannot run, which must not look like a pass
+  if (providerDenied) warnings.push('permission:provider');
+  const loginRow = flows.find((r) => r.kind === 'login');
+  if (loginRow && (await akFlowStages(ctx, loginRow.slug)).stageDenied) warnings.push('permission:validate_stage');
   if (implicitConsent === false) warnings.push('consent');
   if (authCodeGrant === false) warnings.push('auth_code_grant');
   if (!base.issuerMatches) warnings.push('issuer');

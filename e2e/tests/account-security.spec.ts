@@ -245,6 +245,9 @@ test.describe('/confirm-email', () => {
     await expect(page.getByRole('link', { name: 'Zum Konto' })).toHaveAttribute('href', '/me/account');
     expect(me).toBe(0);
     expect(page.url()).not.toContain(TOKEN);
+    // nor the history entry or the page storage (SvelteKit's replaceState would keep the old URL in history.state)
+    const stored = await page.evaluate(() => JSON.stringify([{ ...localStorage }, { ...sessionStorage }, location.href, history.state]));
+    expect(stored).not.toContain(TOKEN);
   });
 
   test('a used link → "Link abgelaufen oder schon benutzt"', async ({ page }) => {

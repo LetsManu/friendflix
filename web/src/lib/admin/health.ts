@@ -104,7 +104,8 @@ export interface LoginCheck {
   passkeys: 'in-app' | 'sign-in page';
   passkeysReason: string;
   unreachable: boolean;
-  /** codes: `unreachable`, `flow_missing:<kind>`, `flow_unsupported:<kind>`, `consent`, `auth_code_grant`, `issuer`, `passkeys:<reason>` */
+  /** codes: `unreachable`, `flow_missing:<kind>`, `flow_unsupported:<kind>`, `consent`, `auth_code_grant`, `issuer`, `passkeys:<reason>`,
+   *  `permission:provider|validate_stage` (the service account lacks a read permission) */
   warnings: string[];
 }
 export const loadLoginCheck = (): Promise<LoginCheck> => api<LoginCheck>('/api/admin/health/login');
@@ -112,6 +113,6 @@ export const loadLoginCheck = (): Promise<LoginCheck> => api<LoginCheck>('/api/a
 /** The text of a check warning code (unknown codes get no text: the card shows nothing rather than a raw code). */
 export function loginWarningText(code: string, flowName: (kind: string) => string): string {
   const [head, arg = ''] = code.split(':');
-  const key = head === 'passkeys' ? `adminContent.login.warn.passkeys_${arg}` : `adminContent.login.warn.${head}`;
+  const key = head === 'passkeys' || head === 'permission' ? `adminContent.login.warn.${head}_${arg}` : `adminContent.login.warn.${head}`;
   return hasKey(key) ? trDynamic(key, { flow: flowName(arg) }) : '';
 }

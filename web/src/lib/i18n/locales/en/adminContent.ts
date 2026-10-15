@@ -354,6 +354,8 @@ const dict: Translation<typeof de> = {
       flow_unsupported: 'The flow "{flow}" has steps FriendFlix cannot show. It continues on Authentik\'s sign-in page.',
       consent: 'The provider\'s authorization flow asks for consent. Switch it to implicit consent.',
       auth_code_grant: 'The provider lacks the "authorization_code" grant type. Tick it in the provider, or sign-in fails.',
+      permission_provider: 'The service account lacks the "view_oauth2provider" permission: the provider\'s consent and grant type cannot be checked. Re-apply the blueprint.',
+      permission_validate_stage: 'The service account lacks the "view_authenticatorvalidatestage" permission: whether sign-in requires a second factor is unknown, so anyone may remove their last factor. Re-apply the blueprint.',
       issuer: 'The issuer address is not on the Authentik host, so the sign-in cookie does not apply when authorizing.',
       passkeys_not_https: 'Passkeys run on the sign-in page only: the public address is not https.',
       passkeys_forwarded_host_ignored: 'Passkeys run on the sign-in page only: Authentik ignores the forwarded host. Add the backend to AUTHENTIK_LISTEN__TRUSTED_PROXY_CIDRS and let it reach Authentik directly.',

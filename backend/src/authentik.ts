@@ -195,13 +195,18 @@ export async function akDeleteDevice(ctx: AkCtx, sub: string, type: DeviceType, 
   }
 }
 
-/** a flow lookup is kept this long; a failed one (Authentik unreachable, token rejected) only briefly */
+/**
+ * a flow lookup is kept this long; a failed one (Authentik unreachable, token rejected), a missing flow (the admin may import it any
+ * minute) and a refused stage read (a permission the admin may grant) only briefly
+ */
 const FLOW_TTL = 600;
 const FLOW_FAILED_TTL = 60;
+const VALIDATE_MODEL = 'authentik_stages_authenticator_validate.authenticatorvalidatestage';
 
 /**
  * one stage bound to a flow: the stage's pk, its model (`stage_obj.meta_model_name`, e.g. `authentik_stages_email.emailstage`) and, for
- * an authenticator-validate stage, what it does with people without a device (`stage_obj.not_configured_action`)
+ * an authenticator-validate stage, what it does with people without a device. The bindings' `stage_obj` (the base StageSerializer)
+ * never carries `not_configured_action`: it is read from the stage itself (`GET stages/authenticator/validate/<pk>/`).
  */
 export interface FlowStage { pk: string; model: string; notConfiguredAction?: string }
 /**
@@ -209,7 +214,11 @@ export interface FlowStage { pk: string; model: string; notConfiguredAction?: st
  * the admin form's name (`ak-stage-email-form` on 2026.8.3), not the challenge component. `failed`: Authentik did not answer (or
  * rejected the token), so `exists` and `stages` are unknown.
  */
-export interface FlowStages { exists: boolean; failed: boolean; stages: FlowStage[] }
+export interface FlowStages {
+  exists: boolean; failed: boolean; stages: FlowStage[];
+  /** a validate stage could not be read because the token lacks `view_authenticatorvalidatestage` (403): its settings are unknown */
+  stageDenied?: boolean;
+}
 const NO_FLOW: FlowStages = { exists: false, failed: false, stages: [] };
 
 /**
@@ -220,7 +229,7 @@ const NO_FLOW: FlowStages = { exists: false, failed: false, stages: [] };
  */
 export async function akFlowStages(ctx: AkCtx, slug: string): Promise<FlowStages> {
   if (!configured(ctx)) return NO_FLOW;
-  const key = `akflow:${sha256(`${ctx.cfg.AUTHENTIK_URL}|${ctx.cfg.AUTHENTIK_API_TOKEN}|${slug}`)}`;
+  const key = akFlowCacheKey(ctx.cfg, slug);
   const hit = await ctx.kv.get(key);
   if (hit) {
     try {
@@ -228,33 +237,44 @@ export async function akFlowStages(ctx: AkCtx, slug: string): Promise<FlowStages
       if (typeof v.exists === 'boolean' && Array.isArray(v.stages)) return v;
     } catch { /* a damaged entry: read again */ }
   }
-  let out: FlowStages = NO_FLOW;
+  let out: FlowStages;
   let ttl = FLOW_TTL;
   try {
     const flow = await json<{ pk?: string }>(ctx, `api/v3/flows/instances/${encodeURIComponent(slug)}/`, undefined, { 404: new HttpError(404, 'not_found') });
     out = { exists: true, failed: false, stages: [] };
     if (typeof flow.pk === 'string' && flow.pk) {
       try {
-        const r = await json<Page<{ order: number; stage: string; stage_obj?: { meta_model_name?: string; not_configured_action?: string } }>>(
+        const r = await json<Page<{ order: number; stage: string; stage_obj?: { meta_model_name?: string } }>>(
           ctx, `api/v3/flows/bindings/?${new URLSearchParams({ target: flow.pk, ordering: 'order', page_size: '100' })}`);
-        out.stages = [...r.results].sort((a, b) => a.order - b.order).map((b) => ({
-          pk: String(b.stage), model: b.stage_obj?.meta_model_name ?? '',
-          ...(typeof b.stage_obj?.not_configured_action === 'string' ? { notConfiguredAction: b.stage_obj.not_configured_action } : {}),
-        }));
+        out.stages = [...r.results].sort((a, b) => a.order - b.order).map((b) => ({ pk: String(b.stage), model: b.stage_obj?.meta_model_name ?? '' }));
+        for (const st of out.stages) {
+          if (st.model !== VALIDATE_MODEL) continue;
+          try {
+            const v = await json<{ not_configured_action?: unknown }>(ctx, `api/v3/stages/authenticator/validate/${encodeURIComponent(st.pk)}/`, undefined,
+              { 403: new HttpError(403, 'forbidden') });
+            if (typeof v.not_configured_action === 'string') st.notConfiguredAction = v.not_configured_action;
+          } catch (e) {
+            if (!(e instanceof HttpError && e.statusCode === 403)) throw e;
+            out.stageDenied = true; // the stage list is right; only this stage's settings are unknown
+            ttl = FLOW_FAILED_TTL;
+          }
+        }
       } catch {
         out.failed = true; // the flow exists, its stages are unknown
         ttl = FLOW_FAILED_TTL;
       }
     }
   } catch (e) {
-    if (!(e instanceof HttpError && e.statusCode === 404)) {
-      out = { exists: false, failed: true, stages: [] };
-      ttl = FLOW_FAILED_TTL;
-    }
+    out = e instanceof HttpError && e.statusCode === 404 ? NO_FLOW : { exists: false, failed: true, stages: [] };
+    ttl = FLOW_FAILED_TTL; // missing or failed: looked at again within a minute
   }
   await ctx.kv.set(key, JSON.stringify(out), ttl);
   return out;
 }
+
+/** the kv key of a cached flow read (own prefix: the flow jars use `akflow:`) */
+export const akFlowCacheKey = (cfg: Pick<Config, 'AUTHENTIK_URL' | 'AUTHENTIK_API_TOKEN'>, slug: string): string =>
+  `akflowstages:${sha256(`${cfg.AUTHENTIK_URL}|${cfg.AUTHENTIK_API_TOKEN}|${slug}`)}`;
 
 /** Whether Authentik has a flow with this slug (an unreachable Authentik answers false); see akFlowStages. */
 export async function akFlowExists(ctx: AkCtx, slug: string): Promise<boolean> {
@@ -263,13 +283,14 @@ export async function akFlowExists(ctx: AkCtx, slug: string): Promise<boolean> {
 
 /**
  * The OAuth2 provider of an OIDC client id (`GET /providers/oauth2/?client_id=`) with its authorization flow's stages and grant types,
- * for the sign-in status check. null: not found, not configured or Authentik did not answer. Not cached (the check caches itself).
+ * for the sign-in status check. null: not found, not configured or Authentik did not answer. `'forbidden'`: the token lacks
+ * `view_oauth2provider` (Authentik answers 403), so the card can say so instead of showing nothing. Not cached (the check caches itself).
  */
-export async function akOauthProvider(ctx: AkCtx, clientId: string): Promise<{ authorizationFlow: string | null; grantTypes: string[] | null } | null> {
+export async function akOauthProvider(ctx: AkCtx, clientId: string): Promise<{ authorizationFlow: string | null; grantTypes: string[] | null } | 'forbidden' | null> {
   if (!configured(ctx)) return null;
   try {
     const r = await json<Page<{ authorization_flow?: string; authorization_flow_obj?: { slug?: string }; grant_types?: unknown }>>(
-      ctx, `api/v3/providers/oauth2/?${new URLSearchParams({ client_id: clientId })}`);
+      ctx, `api/v3/providers/oauth2/?${new URLSearchParams({ client_id: clientId })}`, undefined, { 403: new HttpError(403, 'forbidden') });
     const p = r.results[0];
     if (!p) return null;
     const slug = p.authorization_flow_obj?.slug;
@@ -277,8 +298,8 @@ export async function akOauthProvider(ctx: AkCtx, clientId: string): Promise<{ a
       authorizationFlow: typeof slug === 'string' ? slug : null,
       grantTypes: Array.isArray(p.grant_types) ? p.grant_types.map((g) => (typeof g === 'string' ? g : (g as { name?: string } | null)?.name ?? '')) : null,
     };
-  } catch {
-    return null;
+  } catch (e) {
+    return e instanceof HttpError && e.statusCode === 403 ? 'forbidden' : null;
   }
 }
 
@@ -289,7 +310,7 @@ export async function akOauthProvider(ctx: AkCtx, clientId: string): Promise<{ a
 export async function akMfaMandatory(ctx: AkCtx): Promise<boolean | null> {
   if (!configured(ctx)) return null;
   const flow = await akFlowStages(ctx, ctx.cfg.AUTHENTIK_LOGIN_FLOW || 'default-authentication-flow'); // the one reader and its cache (P27)
-  if (flow.failed || !flow.exists) return null;
+  if (flow.failed || !flow.exists || flow.stageDenied) return null;
   return flow.stages.some((s) => s.model.includes('authenticator_validate') && s.notConfiguredAction === 'deny');
 }
 

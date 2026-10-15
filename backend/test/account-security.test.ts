@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { loadJar } from '../src/akflow.js';
+import { akFlowCacheKey } from '../src/authentik.js';
 import { sha256 } from '../src/crypto.js';
 import type { OidcProvider } from '../src/oidc.js';
 import type { Session } from '../src/session.js';
@@ -273,8 +274,8 @@ describe('re-authentication, security actions', () => {
     expect(w.deleted).toEqual([]);
   });
 
-  /** drops the cached read of the login flow (authentik.ts akFlowStages: `akflow:<sha256(url|token|slug)>`), as its 10 minutes would */
-  const forgetLoginFlow = () => env.ctx.kv.del(`akflow:${sha256(`${env.ctx.cfg.AUTHENTIK_URL}|${env.ctx.cfg.AUTHENTIK_API_TOKEN}|${LOGIN}`)}`);
+  /** drops the cached read of the login flow (authentik.ts akFlowStages), as its 10 minutes would */
+  const forgetLoginFlow = () => env.ctx.kv.del(akFlowCacheKey(env.ctx.cfg, LOGIN));
 
   it('removing the last factor under mandatory MFA → 409 last_factor; with another factor, without mandatory MFA or when unknown it works', async () => {
     const s = await env.login();
@@ -299,6 +300,23 @@ describe('re-authentication, security actions', () => {
     w.mfaMandatory = 'error';
     await forgetLoginFlow();
     expect((await del(s, 'totp/14')).statusCode).toBe(200);
+  });
+
+  it('the deny setting is read from the validate stage itself (the bindings never carry it): 409 last_factor; a refused stage read allows', async () => {
+    const s = await env.login();
+    await setReauthAtNow(s);
+    await forgetLoginFlow();
+    w.mfaMandatory = true;
+    w.devices = [{ pk: 21, type: TOTP_TYPE, name: 'Only', owner: ANNA.pk }];
+    const r = await del(s, 'totp/21');
+    expect([r.statusCode, r.json()]).toEqual([409, { error: 'last_factor' }]);
+    expect(w.calls.some((c) => c.path === '/api/v3/stages/authenticator/validate/stage-validate/')).toBe(true);
+    expect(w.deleted).toEqual([]);
+    // without view_authenticatorvalidatestage (403) the setting is unknown: allowed, like an unreadable flow (P26)
+    w.mfaMandatory = 'forbidden';
+    await forgetLoginFlow();
+    expect((await del(s, 'totp/21')).statusCode).toBe(200);
+    expect(w.deleted).toEqual(['totp/21']);
   });
 
   it('GET /auth/flow/classic/webauthn-setup redirects to the browser-facing flow page for the signed-in owner only', async () => {

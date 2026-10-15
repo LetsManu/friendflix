@@ -231,7 +231,7 @@ Gleich nach dem Assistenten, in Authentik:
    - **Der Ablauf für die E-Mail-Änderung** (die Zeile *E-Mail-Adresse → Ändern* unter *Sicherheit* auf der Kontoseite) wird vom Assistenten **nicht** importiert: `deploy/authentik/friendflix-email-change.yaml` importieren und die Mail-Vorlage unter `/templates` einbinden ([authentik.md §10a, Schritt 7](authentik.md#10a-anmeldung-in-der-app)). Bis dahin zeigt die Zeile die Adresse ohne *Ändern*, und Admins sehen einen Hinweis.
    - **Optional:** Passwort-Mails mit der Wiederherstellungs-Vorlage in FriendFlix öffnen lassen (`/reset`, [authentik.md §10a, Schritt 4](authentik.md#10a-anmeldung-in-der-app)).
 
-   Update einer Installation von vor der Anmeldung in der App? `deploy/authentik/friendflix-service-account.yaml` (oder `friendflix-blueprint.yaml`) neu importieren: Der Service-Account braucht die neuen Rechte zum Löschen von Geräten für *Entfernen* auf der Kontoseite ([authentik.md §8.2](authentik.md#82-rolle-mit-genau-diesen-globalen-berechtigungen)).
+   Update einer Installation von vor der Anmeldung in der App? `deploy/authentik/friendflix-service-account.yaml` (oder `friendflix-blueprint.yaml`) neu importieren: Der Service-Account braucht die neuen Rechte zum Löschen von Geräten für *Entfernen* auf der Kontoseite und Leserechte für die Validation-Stage und den OAuth2-Provider (die Regel zum letzten Faktor und die Prüfung von Zustimmung und Grant-Typ auf der Status-Karte) ([authentik.md §8.2](authentik.md#82-rolle-mit-genau-diesen-globalen-berechtigungen)).
 5. Ergebnis mit [authentik.md §14](authentik.md#14-prüfen) prüfen und die Checkliste in [Abschnitt 12](#12-checkliste) abhaken.
 
 ### Einstellungen in der Datenbank
@@ -299,7 +299,7 @@ Die Werte in der Tabelle lassen sich auch unter *Admin → Einstellungen* setzen
 - [ ] `curl -s https://auth.example.com/application/o/friendflix/.well-known/openid-configuration | jq -r .issuer` entspricht `OIDC_ISSUER`.
 - [ ] Admin-Anmeldung klappt, MFA wird abgefragt, *Admin* ist sichtbar.
 - [ ] Eine Test-Einladung im privaten Fenster endet eingeloggt im Portal; der Nutzer erscheint unter *Admin → Nutzer* und in Jellyfin.
-- [ ] *Admin → Status → Anmeldung* zeigt keine Warnung (ein fehlender Ablauf für die E-Mail-Änderung ist erwartet, bis du ihn importierst, siehe [Authentik absichern](#authentik-absichern)).
+- [ ] *Admin → Status → Anmeldung* zeigt keine Warnung (der Ablauf für die E-Mail-Änderung steht bis zum Import auf *Fehlt*, ohne Warnung; siehe [Authentik absichern](#authentik-absichern)).
 - [ ] Ein Film läuft (Direct Play und eine erzwungene niedrigere Qualität → Transkodierung), Untertitel und Spulen funktionieren.
 - [ ] Optional: Test-Push, ein Download, Casten, eine Backup-Datei in `backups/`.
 
