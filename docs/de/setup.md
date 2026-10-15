@@ -227,11 +227,18 @@ Gleich nach dem Assistenten, in Authentik:
 1. **Den einmaligen Superuser-Token widerrufen** (nur wenn du *Automatisch* benutzt hast): *Directory → Tokens and App passwords*, Token anhaken, *Delete*. Ein Bootstrap-Token (`authentik-bootstrap-token`) wird genauso gelöscht, und `AUTHENTIK_BOOTSTRAP_TOKEN` verschwindet aus der Umgebung von Authentik. FriendFlix behält nur den Token des Service-Accounts `friendflix-invites`. [authentik.md §3.2](authentik.md#32-der-einmalige-superuser-token).
 2. **MFA zur Pflicht machen** im Authentifizierungs-Flow, damit jeder Freund bei der Registrierung eine Authenticator-App oder einen Sicherheitsschlüssel einrichtet: [authentik.md §6](authentik.md#6-authentifizierungs-flow-mit-pflicht-mfa). Der Assistent ändert nicht, wie man sich bei Authentik anmeldet.
 3. **SMTP einrichten** für Einladungs- und Passwort-Mails: [authentik.md §2.5](authentik.md#25-e-mail-smtp).
-4. Ergebnis mit [authentik.md §14](authentik.md#14-prüfen) prüfen und die Checkliste in [Abschnitt 12](#12-checkliste) abhaken.
+4. **Die Anmeldung in der App vorbereiten.** FriendFlix zeigt eigene Anmeldebildschirme, sobald Authentik verbunden ist (`LOGIN_UI`, [authentik.md §10a](authentik.md#10a-anmeldung-in-der-app)). Öffne *Admin → Status → Anmeldung*: Die Karte prüft die Abläufe, die implizite Zustimmung, den Grant-Typ `authorization_code` und ob Passkeys auf der eigenen Seite von FriendFlix laufen können, und nennt, was zu korrigieren ist. Zwei Dinge bleiben Handarbeit:
+   - **Der Ablauf für die E-Mail-Änderung** (die Zeile *E-Mail-Adresse → Ändern* unter *Sicherheit* auf der Kontoseite) wird vom Assistenten **nicht** importiert: `deploy/authentik/friendflix-email-change.yaml` importieren und die Mail-Vorlage unter `/templates` einbinden ([authentik.md §10a, Schritt 7](authentik.md#10a-anmeldung-in-der-app)). Bis dahin zeigt die Zeile die Adresse ohne *Ändern*, und Admins sehen einen Hinweis.
+   - **Optional:** Passwort-Mails mit der Wiederherstellungs-Vorlage in FriendFlix öffnen lassen (`/reset`, [authentik.md §10a, Schritt 4](authentik.md#10a-anmeldung-in-der-app)).
+
+   Update einer Installation von vor der Anmeldung in der App? `deploy/authentik/friendflix-service-account.yaml` (oder `friendflix-blueprint.yaml`) neu importieren: Der Service-Account braucht die neuen Rechte zum Löschen von Geräten für *Entfernen* auf der Kontoseite und Leserechte für die Validation-Stage und den OAuth2-Provider (die Regel zum letzten Faktor und die Prüfung von Zustimmung und Grant-Typ auf der Status-Karte) ([authentik.md §8.2](authentik.md#82-rolle-mit-genau-diesen-globalen-berechtigungen)).
+5. Ergebnis mit [authentik.md §14](authentik.md#14-prüfen) prüfen und die Checkliste in [Abschnitt 12](#12-checkliste) abhaken.
 
 ### Einstellungen in der Datenbank
 
 *Admin → Einstellungen* zeigt jede Einstellung mit ihrer Quelle: **Aus der Umgebung** (`.env`, ein `_FILE`-Secret oder ein älterer Variablenname; gesperrt, das Feld ist nicht änderbar), **Gespeichert** (Datenbank) oder **Standard**. Die erzeugten Werte der Gruppe *Server* (`DATABASE_URL`, `REDIS_URL`, `APP_ENC_KEY`, `INTERNAL_SECRET`) zeigen **Aus der Startdatei**: Der Dienst `bootstrap` hat sie in seinem Volume angelegt; hier sind sie nur lesbar. Die Umgebung hat Vorrang vor der Datenbank, die Datenbank vor dem Standard.
+
+Die Anmeldung in der App hat eigene Einstellungen unter *Admin → Einstellungen → Anmeldung* (`LOGIN_UI`, die Slugs für Anmelde- und Abmelde-Flow, die Slugs der Abläufe der Kontoseite für Wiederherstellungscodes, Passkeys, Passwort- und E-Mail-Änderung, `PASSKEYS_IN_APP`) und *Allgemein* (`LOGIN_COVER_WALL`); `.env`-Zeilen sind dafür nicht nötig. *Admin → Status* zeigt eine Karte „Anmeldung“, die die Authentik-Seite prüft. Siehe [authentik.md §10a](authentik.md#10a-anmeldung-in-der-app).
 
 - **Sofort wirksam:** Die meisten Einstellungen gelten sofort auf jedem Backend; Speichern erhöht eine Revision, andere Instanzen und das Gateway laden binnen Sekunden nach (spätestens nach 30 s). `API_COMPRESSION` gilt ab der nächsten Antwort. Einstellungen mit *Neustart nötig* (`DOWNLOAD_CREATE_PER_HOUR`) wirken erst nach `docker compose -f compose.prod.yaml restart backend`; ein Hinweisband listet sie.
 - **Secrets nur schreibbar:** Die Seite zeigt *Gesetzt* oder *Nicht gesetzt* und das Datum der letzten Änderung (Schlüssel der Datenquellen zusätzlich die letzten vier Zeichen), dazu *Ersetzen* und *Entfernen*. Kein Secret kommt je vom Server zurück, das Audit-Log nennt nur die Namen.
@@ -247,7 +254,7 @@ Gleich nach dem Assistenten, in Authentik:
 1. Rolle wählen (`friend`, `family` oder `guest`; die Limits sind unter *Admin* änderbar), Gültigkeit des Links (Standard 48 h, max. 14 Tage), optional eine Notiz, **Max. Nutzungen** (so viele Konten kann der Link anlegen, 1 – 50, Standard 1) und **Zugang (Tage)** (der Zugang jedes neuen Kontos endet nach so vielen Tagen; leer = unbegrenzt).
 2. **hat schon ein Authentik-Konto** für neue Leute nicht ankreuzen. Erstellen.
 3. Der Link wird nur jetzt angezeigt (auch als QR-Code). Darunter muss stehen: *Der Link führt durch die Konto-Erstellung (inkl. Zwei-Faktor) und schaltet den Zugang direkt frei.* Sonst ist die Authentik-Einladung nicht eingerichtet; siehe [authentik.md §15](authentik.md#15-fehlersuche).
-4. Link verschicken. Der Freund öffnet ihn, klickt **Konto anlegen & loslegen**, registriert sich in Authentik (inklusive MFA) und landet eingeloggt im Portal.
+4. Link verschicken. Der Freund öffnet ihn, klickt **Konto anlegen & loslegen**, legt das Konto auf den Anmeldebildschirmen von FriendFlix an (Authentik führt dahinter seinen Registrierungs-Flow aus, inklusive MFA) und landet eingeloggt im Portal. Mit `LOGIN_UI=authentik` läuft die Registrierung stattdessen auf den Seiten von Authentik.
 
 Für jemanden mit bestehendem Authentik-Konto **hat schon ein Authentik-Konto** ankreuzen: Der Link bietet dann **Anmelden & freischalten** an. Unbenutzte Einladungen lassen sich in der Liste widerrufen; das löscht auch die Authentik-Einladung. Die Liste zeigt die Nutzungen als „1/3“ und aufgeklappt die Konten, die über die Einladung entstanden sind.
 
@@ -256,9 +263,11 @@ Für jemanden mit bestehendem Authentik-Konto **hat schon ein Authentik-Konto** 
 ### Was ein Freund sieht
 
 1. **Die Einladungsseite** (`/invite/…`): Kontotyp (Rolle) und Gültigkeit, dazu die Schaltfläche **Konto anlegen & loslegen**. Wer schon ein Authentik-Konto hat, sieht **Anmelden & freischalten**. Ein benutzter oder abgelaufener Link zeigt *Einladung ungültig*: einen neuen schicken.
-2. **Registrierung in Authentik**: Benutzername, Passwort und Einrichtung der Zwei-Faktor-Anmeldung (Authenticator-App oder Sicherheitsschlüssel). Danach ist der Freund im Portal angemeldet und freigeschaltet.
+2. **Registrierung** auf der Anmeldeseite von FriendFlix, über der Cover-Wand: Benutzername und Passwort, dann die Authenticator-App (QR-Code oder der Schlüssel zum Abtippen, und der erste 6-stellige Code) und Wiederherstellungscodes zum Kopieren oder Herunterladen. Authentik führt den Registrierungs-Flow hinter diesen Bildschirmen aus; einen Schritt, den FriendFlix nicht zeigen kann, setzt die Seite von Authentik fort. Danach ist der Freund im Portal angemeldet und freigeschaltet.
 3. **Erster Besuch** (einmal pro Profil): Sprachauswahl (die Browsersprache als Vorschlag), dann **Willkommen** in drei Schritten: Profilname und Farbe prüfen, 3 Titel wählen, die gefallen (sie speisen die Empfehlungen; *Überspringen* geht), *Los geht's*. Ein Kinderprofil bekommt eine einfachere Fassung.
 4. **Später:** Das erste Gerät ist automatisch vertraut; jedes weitere wartet unter *Geräte*, bis du es freigibst. Bei mehreren Profilen in einem Konto erscheint die Profilauswahl einmal pro Browser-Sitzung. Jellyfin und der Wunsch-Dienst bleiben unsichtbar: Freunde öffnen immer nur `https://friend.example.com`.
+5. **Wieder anmelden** geht auf derselben Seite: Name, Passwort, dann der 6-stellige Code (oder ein Wiederherstellungscode oder ein Passkey). *Passwort vergessen?* zeigt „Schau in dein Postfach“; der Link in der Mail öffnet die Seite von Authentik oder, wenn du die Vorlage gesetzt hast, die Seite `/reset` von FriendFlix. Nach zu vielen Fehlversuchen verlinkt die Seite die Anmeldeseite von Authentik.
+6. **Mein Bereich → Konto → Sicherheit:** Der Freund ändert das Passwort, fügt eine Authenticator-App oder einen Passkey hinzu oder entfernt sie, erzeugt neue Wiederherstellungscodes und ändert die E-Mail-Adresse. Jede Aktion fragt vorher in einem kleinen Dialog noch einmal nach Passwort (und zweitem Faktor); eine neue E-Mail-Adresse gilt erst, wenn der Freund den Link klickt, der an sie geht.
 
 Weiter: was du als Admin siehst und einstellst, steht in [Abschnitt 9](#9-erste-schritte-als-admin).
 
@@ -290,6 +299,7 @@ Die Werte in der Tabelle lassen sich auch unter *Admin → Einstellungen* setzen
 - [ ] `curl -s https://auth.example.com/application/o/friendflix/.well-known/openid-configuration | jq -r .issuer` entspricht `OIDC_ISSUER`.
 - [ ] Admin-Anmeldung klappt, MFA wird abgefragt, *Admin* ist sichtbar.
 - [ ] Eine Test-Einladung im privaten Fenster endet eingeloggt im Portal; der Nutzer erscheint unter *Admin → Nutzer* und in Jellyfin.
+- [ ] *Admin → Status → Anmeldung* zeigt keine Warnung (der Ablauf für die E-Mail-Änderung steht bis zum Import auf *Fehlt*, ohne Warnung; siehe [Authentik absichern](#authentik-absichern)).
 - [ ] Ein Film läuft (Direct Play und eine erzwungene niedrigere Qualität → Transkodierung), Untertitel und Spulen funktionieren.
 - [ ] Optional: Test-Push, ein Download, Casten, eine Backup-Datei in `backups/`.
 

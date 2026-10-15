@@ -227,11 +227,18 @@ Right after the wizard, in Authentik:
 1. **Revoke the one-time superuser token** (only if you used *Automatic*): *Directory → Tokens and App passwords*, tick the token, *Delete*. A bootstrap token (`authentik-bootstrap-token`) goes the same way, and `AUTHENTIK_BOOTSTRAP_TOKEN` leaves Authentik's environment. FriendFlix keeps only the token of the service account `friendflix-invites`. [authentik.md §3.2](authentik.md#32-the-one-time-superuser-token).
 2. **Make MFA mandatory** in the authentication flow, so every friend sets up an authenticator app or security key at sign-up: [authentik.md §6](authentik.md#6-authentication-flow-with-mandatory-mfa). The wizard does not change how people sign in to Authentik.
 3. **Set up SMTP** for invitation and password e-mails: [authentik.md §2.5](authentik.md#25-e-mail-smtp).
-4. Check the result with [authentik.md §14](authentik.md#14-verification) and tick the checklist in [section 12](#12-verification-checklist).
+4. **Prepare the in-app sign-in.** FriendFlix shows its own sign-in screens as soon as Authentik is connected (`LOGIN_UI`, [authentik.md §10a](authentik.md#10a-in-app-sign-in)). Open *Admin → Status → Sign-in*: it checks the flows, implicit consent, the `authorization_code` grant type and whether passkeys can run on FriendFlix's own page, and names what to fix. Two things stay manual:
+   - **The e-mail change flow** (the *E-mail address → Change* row of *Security* on the account page) is **not** imported by the wizard: import `deploy/authentik/friendflix-email-change.yaml` and mount its mail template under `/templates` ([authentik.md §10a, step 7](authentik.md#10a-in-app-sign-in)). Until then the row shows the address without a *Change* button, and admins see a note.
+   - **Optional:** let password-reset mails open in FriendFlix (`/reset`) with the recovery template ([authentik.md §10a, step 4](authentik.md#10a-in-app-sign-in)).
+
+   Upgrading an install from before the in-app sign-in? Re-import `deploy/authentik/friendflix-service-account.yaml` (or `friendflix-blueprint.yaml`): the service account needs the new device-delete permissions for *Remove* on the account page, and read permissions for the validation stage and the OAuth2 provider (the last-factor rule and the status card's consent and grant-type checks) ([authentik.md §8.2](authentik.md#82-role-with-exactly-these-global-permissions)).
+5. Check the result with [authentik.md §14](authentik.md#14-verification) and tick the checklist in [section 12](#12-verification-checklist).
 
 ### Settings in the database
 
 *Admin → Settings* shows every setting with its source: **From environment** (`.env`, a `_FILE` secret or an older variable name; locked, the field cannot be edited), **Saved** (the database) or **Default**. The generated values of the *Server* group (`DATABASE_URL`, `REDIS_URL`, `APP_ENC_KEY`, `INTERNAL_SECRET`) show **From startup file**: the `bootstrap` service created them in its volume; they are read-only here. The environment wins over the database, the database over the default.
+
+The in-app sign-in has its own settings under *Admin → Settings → Sign-in* (`LOGIN_UI`, the login and sign-out flow slugs, the slugs of the account page's flows for recovery codes, passkeys, password change and e-mail change, `PASSKEYS_IN_APP`) and *General* (`LOGIN_COVER_WALL`); no `.env` lines are needed. *Admin → Status* shows a Sign-in card that checks the Authentik side. See [authentik.md §10a](authentik.md#10a-in-app-sign-in).
 
 - **Live:** most settings apply at once on every backend; a save bumps a revision, other instances and the gateway reload within seconds (at the latest after 30 s). `API_COMPRESSION` applies to the next response. Settings marked *Restart needed* (`DOWNLOAD_CREATE_PER_HOUR`) take effect after `docker compose -f compose.prod.yaml restart backend`; a banner lists them.
 - **Secrets are write-only:** the page shows *Set* or *Not set* and the date of the last change (data-source keys also their last four characters), with *Replace* and *Remove*. No secret ever comes back from the server, and the audit log records key names only.
@@ -247,7 +254,7 @@ Right after the wizard, in Authentik:
 1. Choose the role (`friend`, `family` or `guest`; limits are editable under *Admin*), how long the link is valid (default 48 h, max. 14 days), an optional note, **Max. uses** (how many accounts the link can create, 1 – 50, default 1) and **Access (days)** (each new account's access ends after that many days; empty = unlimited).
 2. Leave **already has an Authentik account** unticked for new people. Create.
 3. The link is shown only now (also as a QR code). The text below it must read *The link guides through account creation (including two-factor) and grants access directly.* Otherwise the Authentik invitation is not configured; see [authentik.md §15](authentik.md#15-troubleshooting).
-4. Send the link. The friend opens it, clicks **Create account & get started**, signs up in Authentik (including MFA) and lands logged in on the portal.
+4. Send the link. The friend opens it, clicks **Create account & get started**, creates the account on FriendFlix's sign-in screens (Authentik runs its enrollment flow behind them, including MFA) and lands logged in on the portal. With `LOGIN_UI=authentik` the sign-up runs on Authentik's own pages instead.
 
 For someone who already has an Authentik account, tick **already has an Authentik account**: the link then offers **Sign in & unlock**. Unused invites can be revoked in the list; that also deletes the Authentik invitation. The list shows the uses as "1/3" and, expanded, the accounts made from each invite.
 
@@ -256,9 +263,11 @@ For someone who already has an Authentik account, tick **already has an Authenti
 ### What a friend sees
 
 1. **The invite page** (`/invite/…`): the account type (role) and the validity, plus a button **Create account & get started**. For someone with an Authentik account it reads **Sign in & unlock**. A used or expired link says *Invalid invitation*: send a new one.
-2. **Sign-up in Authentik**: username, password and the two-factor setup (authenticator app or security key). Afterwards the friend is signed in on the portal and unlocked.
+2. **Sign-up** on FriendFlix's sign-in page, over the cover wall: username and password, then the authenticator app (QR code, or the key to type in, and the first 6-digit code) and recovery codes to copy or download. Authentik runs the enrollment flow behind these screens; a step FriendFlix cannot show continues on Authentik's page. Afterwards the friend is signed in on the portal and unlocked.
 3. **First visit** (once per profile): a language picker (the browser language suggested), then **Welcome** in three steps: check the profile name and colour, pick 3 titles they like (these feed the recommendations; *Skip* is possible), *Let's go*. A kids profile gets a simpler version.
 4. **Later:** the first device is trusted automatically; every further device waits under *Devices* until you approve it. With several profiles on an account, the profile picker appears once per browser session. Jellyfin and the request service stay invisible: friends only ever open `https://friend.example.com`.
+5. **Signing in again** happens on the same page: name, password, then the 6-digit code (or a recovery code, or a passkey). *Forgot your password?* shows a "check your inbox" screen; the link in the mail opens Authentik's reset page, or FriendFlix's `/reset` page if you set the template. After too many wrong attempts the page links to Authentik's own sign-in.
+6. **My space → Account → Security:** the friend changes the password, adds or removes an authenticator app or passkey, makes new recovery codes and changes the e-mail address. Each action asks for the password (and second factor) once more in a small dialog first; a new e-mail address only counts once the friend clicks the link sent to it.
 
 Next: what you get to see and configure as admin is in [section 9](#9-first-steps-as-admin).
 
@@ -290,6 +299,7 @@ Values in the table can also be set in *Admin → Settings*. After changing `.en
 - [ ] `curl -s https://auth.example.com/application/o/friendflix/.well-known/openid-configuration | jq -r .issuer` equals `OIDC_ISSUER`.
 - [ ] Admin login works, MFA is requested, *Admin* is visible.
 - [ ] A test invite in a private window ends logged in on the portal; the user appears in *Admin → Users* and in Jellyfin.
+- [ ] *Admin → Status → Sign-in* shows no warning (the e-mail change flow shows *Missing* until you import it, without a warning; see [Harden Authentik](#harden-authentik)).
 - [ ] A movie plays (direct play and a forced lower quality → transcoding), subtitles work, seeking works.
 - [ ] Optional: push test notification, a download, casting, a backup file in `backups/`.
 

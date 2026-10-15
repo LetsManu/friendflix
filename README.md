@@ -57,7 +57,7 @@ FriendFlix is a private streaming portal that sits in front of **Jellyfin** (you
 
 3. **Open `https://friend.example.com` and work through the setup wizard:** the code, the public address, the media server (it creates the Jellyfin API key from an admin login), sign-in (it sets up Authentik with a one-time admin token: provider, groups, invitations, recovery), then your first sign-in becomes the admin. Optional extras (request service, push, webhooks, data sources) come last. Neither login is stored.
 
-Afterwards revoke the one-time token in Authentik and make MFA mandatory there ([docs/setup.md, Harden Authentik](docs/setup.md#harden-authentik)). Every setting can be changed later in *Admin → Settings*, and each change is tested before it is saved. Also worth doing: `./scripts/backup-bootstrap.sh` backs up the generated secrets (see [docs/setup.md](docs/setup.md#7-start-the-stack)). The full walkthrough from an empty server, with the typical errors of every wizard step: **[docs/setup.md](docs/setup.md)**.
+Afterwards revoke the one-time token in Authentik and make MFA mandatory there ([docs/setup.md, Harden Authentik](docs/setup.md#harden-authentik)). From then on people sign in on FriendFlix's own sign-in page over a wall of covers from your library (`LOGIN_UI`, automatic once Authentik is connected); Authentik still checks every password and second factor behind it, and *Admin → Status → Sign-in* tells you if a flow needs a fix. Every setting can be changed later in *Admin → Settings*, and each change is tested before it is saved. Also worth doing: `./scripts/backup-bootstrap.sh` backs up the generated secrets (see [docs/setup.md](docs/setup.md#7-start-the-stack)). The full walkthrough from an empty server, with the typical errors of every wizard step: **[docs/setup.md](docs/setup.md)**.
 
 Upgrading an existing install? Keep your `.env`; it never sees the wizard ([docs/setup.md §14](docs/setup.md#14-upgrading-to-settings-in-the-database)). `.env` and Docker secrets also remain an advanced option for pinning values ([below](#advanced-configure-by-environment)).
 
@@ -66,7 +66,7 @@ Upgrading an existing install? Keep your `.env`; it never sees the wizard ([docs
 In *Admin → Users → Invites* choose a role and create an invite link; send it to your friend ([docs/setup.md §10](docs/setup.md#10-invite-friends)). Your friend:
 
 1. opens the link and clicks **Create account & get started**;
-2. signs up in Authentik, including two-factor sign-in, and lands signed in on the portal;
+2. creates the account on FriendFlix's sign-in screens (password, authenticator app, recovery codes; Authentik runs the sign-up behind them) and lands signed in on the portal;
 3. on the first visit picks a language, checks the profile name and colour and chooses 3 titles they like, so recommendations fit from the start (**onboarding**, a few clicks, skippable).
 
 What friends see step by step: [docs/setup.md, What a friend sees](docs/setup.md#what-a-friend-sees).
@@ -187,8 +187,8 @@ Also in the admin area: invitations and roles, **brand hubs**, featured and them
 ## Privacy and safety
 
 - **Self-hosted.** Everything runs on your own server. FriendFlix has no ads and no third-party analytics.
-- **Invite or approval only.** New people join with invitation links (single or limited use), or sign in and wait until an admin approves them. Sign-in goes through your Authentik with **mandatory multi-factor authentication**, and new devices can require approval.
-- **Your data, your account.** Everyone manages their own account in the app (name, colour, devices, two-factor state), can download everything FriendFlix keeps about them as one JSON file, and can delete the account themselves. Deletion needs a fresh sign-in, can be undone for 7 days, and then removes the account from FriendFlix, the media server and the request service; the audit log keeps a pseudonym instead of the name.
+- **Invite or approval only.** New people join with invitation links (single or limited use), or sign in and wait until an admin approves them. Sign-in goes through your Authentik with **mandatory multi-factor authentication**, on FriendFlix's own sign-in page over a wall of cover art (password, authenticator code, recovery by e-mail and passkeys without leaving the app; Authentik's page stays as the fallback), and new devices can require approval.
+- **Your data, your account.** Everyone manages their own account in the app (name, colour, devices) and, under *Security*, their password, authenticator app, passkeys, recovery codes and e-mail address (a fresh sign-in first; a new address only counts once its confirmation link is clicked). *Forgot your password?* on the sign-in page sends a reset link by e-mail. Everyone can download everything FriendFlix keeps about them as one JSON file, and can delete the account themselves. Deletion needs a fresh sign-in, can be undone for 7 days, and then removes the account from FriendFlix, the media server and the request service; the audit log keeps a pseudonym instead of the name.
 - **Jellyfin and the request service stay hidden.** Friends only ever talk to the portal. Media tokens stay on the server; video and images are streamed through a gateway that checks every request.
 - **You decide what friends see.** "Share history" (off by default) and "Share ratings" are switched in each person's settings; "Popular this week" only shows counts, never who watched. Reactions to a title only appear once you have watched it, and optional spoiler protection hides thumbnails and descriptions of unwatched episodes.
 - **Trailers without tracking.** Trailers for titles that are not in the library play in the privacy-friendly `youtube-nocookie.com` player and only load after a click.
