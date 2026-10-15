@@ -15,7 +15,7 @@ const c = recoCoefficients();
 const none: Marks = { thumbsDown: new Set(), dropped: new Set(), watchlist: new Set() };
 const marks = (m: Partial<Record<keyof Marks, string[]>>): Marks => ({ thumbsDown: new Set(m.thumbsDown), dropped: new Set(m.dropped), watchlist: new Set(m.watchlist) });
 const taste = (o: Partial<Taste> = {}): Taste => ({ pos: new Map(), neg: new Map(), weighted: 10, cold: false, seen: new Set(), prefs: { animeShare: 0, runtimeBand: null, genres: {}, rewatchShare: 0 }, ...o });
-const cand = (key: string, o: Partial<Candidate> = {}): Candidate => ({ id: H(key), sources: new Set(['similar']), signals: {}, ...o });
+const cand = (key: string, o: Partial<Candidate> = {}): Candidate => ({ id: H(key), sources: new Set(['similar']), signals: {}, meta: {}, ...o });
 
 describe('quality prior and age cap', () => {
   it('Bayesian smoothing: 10.0 from two votes does not beat a solid 8.4', () => {
@@ -64,6 +64,18 @@ describe('scoring', () => {
   afterAll(() => env.close());
   const ctxOf = (o: Partial<ScoreContext> = {}): ScoreContext => ({ surface: 'because', c, taste: taste(), index, profile: { kids: false, kids_max_rating: 12 }, marks: none, now: NOW, ...o });
   const score = (key: string, o: Partial<ScoreContext> = {}, cd: Partial<Candidate> = {}, item = {}) => scoreCandidate(cand(key, cd), dto(key, item), ctxOf(o));
+
+  it('a new season of a watched series is new content: no played penalty; the fresh label counts as fresh', () => {
+    const seen = taste({ seen: new Set([H('signal')]) });
+    const plain = score('signal', { taste: seen });
+    const labelled = score('signal', { taste: seen }, { meta: { fresh: 'newSeason' } });
+    expect(plain.parts.penalties.played).toBe(c.penalty.played);
+    expect(labelled.parts.penalties.played).toBe(0);
+    // a label on a film does not waive anything
+    expect(score('noir2', { taste: taste({ seen: new Set([H('noir2')]) }) }, { meta: { fresh: 'new' } }).parts.penalties.played).toBe(c.penalty.played);
+    expect(score('rom2', {}, { meta: { fresh: 'newSeries' } }).parts.fresh).toBeGreaterThanOrEqual(c.score.freshLabelBoost);
+    expect(score('rom2').parts.fresh).toBeLessThan(c.score.freshLabelBoost);
+  });
 
   it('penalties: played, dropped and on the watchlist subtract their coefficients exactly', () => {
     const base = score('noir2').score;

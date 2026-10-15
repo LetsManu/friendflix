@@ -4,7 +4,10 @@ import type { Ctx } from '../ctx.js';
 import type { ItemDto } from '../media/types.js';
 import { recoShadowOverlap, recoShadowRuns, recoShadowScoreDelta } from '../metrics.js';
 import type { JfUser } from '../types.js';
-import { gatherCandidates, resolveVisible, SOURCES, type CandidateSource, type SourceName } from './candidates.js';
+import { gatherCandidates, resolveVisible, type CandidateSource, type SourceName } from './candidates.js';
+import { contextFor, type DeviceClass, type RecoContext } from './context.js';
+import { explain, type Reason } from './explain.js';
+import { RECO_SOURCES } from './sources.js';
 import { tasteProfile, type RecoProfile } from './profile.js';
 import { mmr, type RankItem } from './rank.js';
 import { filterReason, scoreCandidate, type Marks, type ScoreParts, type Scored } from './score.js';
@@ -17,7 +20,7 @@ import { recoCoefficients, recoWeights, type Surface } from './weights.js';
  * itself as well, and never runs social sources for a kids profile.
  */
 
-export interface RecoItem { item: ItemDto; score: number; sources: SourceName[]; parts: ScoreParts }
+export interface RecoItem { item: ItemDto; score: number; sources: SourceName[]; parts: ScoreParts; /** the seed that contributed most plus up to two shared traits (explain.ts) */ reason: Reason }
 export interface RecoResult {
   surface: Surface;
   /** the taste profile had too few interactions: the quality prior carried the ranking */
@@ -26,7 +29,13 @@ export interface RecoResult {
   /** v2 score of every candidate that survived the filters, before re-ranking (shadow mode compares v1's titles against it) */
   pool: Map<string, number>;
 }
-export interface RecommendOptions { seed?: string; surface: Surface; limit: number; now?: number; sources?: readonly CandidateSource[] }
+export interface RecommendOptions {
+  seed?: string; surface: Surface; limit: number; now?: number; sources?: readonly CandidateSource[];
+  /** context of the request (hour, device, language); default: derived from `now`, the profile's language and the instance's device mix */
+  context?: RecoContext;
+  /** the caller's device class, when it knows it (the web app does) */
+  device?: DeviceClass;
+}
 
 const rootItem = async (ctx: Pick<Ctx, 'jf'>, user: JfUser, id: string): Promise<ItemDto | undefined> => {
   const it = await ctx.jf.item(user, id).catch(() => null);
@@ -55,12 +64,13 @@ export async function recommend(ctx: Pick<Ctx, 'cfg' | 'db' | 'kv' | 'jf'>, user
     loadMarks(ctx, profile.id),
     o.seed ? rootItem(ctx, user, o.seed) : Promise.resolve(undefined),
   ]);
-  const cands = await gatherCandidates({ ctx, user, profile, taste, index, c, surface: o.surface, ...(seed ? { seed } : {}) }, o.sources ?? SOURCES);
+  const context = o.context ?? (await contextFor(ctx, profile, now, o.device).catch((): RecoContext | undefined => undefined));
+  const cands = await gatherCandidates({ ctx, user, profile, taste, index, c, surface: o.surface, now, ...(seed ? { seed } : {}) }, o.sources ?? RECO_SOURCES);
 
   // titles the sources did not bring resolved are looked up with the viewer's token; invisible ones drop out here
   const missing = [...cands.values()].filter((x) => !x.item).map((x) => x.id);
   const found = missing.length ? await resolveVisible(ctx, user, missing) : new Map<string, ItemDto>();
-  const sc = { surface: o.surface, c, taste, index, profile, marks, ...(seed ? { seed } : {}), now };
+  const sc = { surface: o.surface, c, taste, index, profile, marks, ...(seed ? { seed } : {}), ...(context ? { context } : {}), now };
   const scored: Scored[] = [];
   for (const cand of cands.values()) {
     const item = cand.item ?? found.get(cand.id);
@@ -72,9 +82,10 @@ export async function recommend(ctx: Pick<Ctx, 'cfg' | 'db' | 'kv' | 'jf'>, user
     scored.map((s) => Object.assign(s, { franchise: s.row?.collection_id ?? null, genre: s.row?.genres[0] ?? s.item.genres[0]?.trim().toLowerCase() ?? null })),
     o.limit, c,
   );
+  const reasons = await explain(ctx, user, ranked, { ...(seed ? { seed: { id: seed.id, name: seed.name } } : {}), taste, index, c }).catch(() => new Map<string, Reason>());
   return {
     surface: o.surface, cold: taste.cold, pool: new Map(scored.map((s) => [s.id, s.score])),
-    items: ranked.map((s) => ({ item: s.item, score: s.score, sources: s.sources, parts: s.parts })),
+    items: ranked.map((s) => ({ item: s.item, score: s.score, sources: s.sources, parts: s.parts, reason: reasons.get(s.id) ?? { seed: null, traits: [] } })),
   };
 }
 

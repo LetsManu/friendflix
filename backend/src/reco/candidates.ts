@@ -12,13 +12,24 @@ import { dot, type Index } from './vectors.js';
  * Implemented: 1 `similar` (the media server's similar() for the seed), 2 `universe` (same collection or shared creator),
  * 3 `taste_nn` (nearest neighbours of the profile vector in the item index), plus `prior` (cold-start filler by quality).
  *
- * Extension points for R3: a source is one `CandidateSource` pushed with registerSource(); `social: true` marks sources built on other
+ * Extension points: a source is one `CandidateSource` pushed with registerSource(); `social: true` marks sources built on other
  * accounts' data (co-occurrence, transitions, friends, trending), which gatherCandidates never runs for a kids profile. A source may
- * return numeric `signals` (cooccurrence, transition, friends, trending, each 0..1) that score.ts weights per surface.
+ * return numeric `signals` (cooccurrence, transition, friends, trending, each 0..1) that score.ts weights per surface, and `meta`.
+ * R3 adds those sources in sources.ts (RECO_SOURCES = SOURCES + co-occurrence, transition, friends, trending, fresh).
  */
 
-export type SourceName = 'similar' | 'universe' | 'taste_nn' | 'prior' | 'cooccurrence' | 'transition' | 'friends' | 'trending';
+export type SourceName = 'similar' | 'universe' | 'taste_nn' | 'prior' | 'cooccurrence' | 'transition' | 'friends' | 'trending' | 'fresh';
 export type SignalName = 'cooccurrence' | 'transition' | 'friends' | 'trending';
+
+/** What a source knows about a hit beyond the numbers; the explanations (explain.ts) and the scoring (score.ts) read it. */
+export interface HitMeta {
+  /** the seed or profile anchor that produced the hit with its strongest signal (co-occurrence, transition) */
+  via?: string;
+  /** first names of friends behind the hit, only as far as the friends' opt-ins allow (at most 3) */
+  friends?: string[];
+  /** the media server's fresh label of the title (fresh.ts) */
+  fresh?: 'newEpisode' | 'newSeason' | 'finale' | 'newSeries' | 'new';
+}
 
 export interface Candidate {
   id: string;
@@ -28,6 +39,7 @@ export interface Candidate {
   /** 1 for the first answer of the media server's similar(), falling to 0 for the last */
   jfRank?: number;
   signals: Partial<Record<SignalName, number>>;
+  meta: HitMeta;
 }
 
 export interface SourceInput {
@@ -40,9 +52,11 @@ export interface SourceInput {
   surface: Surface;
   /** the seed title (a film or series; an episode was rolled up by the caller) */
   seed?: ItemDto;
+  /** the clock of the request (ms); sources that look at dates use it, tests pin it */
+  now?: number;
 }
 
-export interface SourceHit { id: string; item?: ItemDto; jfRank?: number; signals?: Partial<Record<SignalName, number>> }
+export interface SourceHit { id: string; item?: ItemDto; jfRank?: number; signals?: Partial<Record<SignalName, number>>; meta?: HitMeta }
 
 export interface CandidateSource {
   name: SourceName;
@@ -109,7 +123,6 @@ const priorSource: CandidateSource = {
 
 export const SOURCES: CandidateSource[] = [similarSource, universeSource, tasteNnSource, priorSource];
 
-/** R3 adds co-occurrence, transitions and friends here. */
 export function registerSource(s: CandidateSource, list: CandidateSource[] = SOURCES): void {
   if (!list.some((x) => x.name === s.name)) list.push(s);
 }
@@ -122,11 +135,17 @@ export async function gatherCandidates(input: SourceInput, sources: readonly Can
   allowed.forEach((s, n) => {
     for (const h of lists[n]!) {
       let cand = out.get(h.id);
-      if (!cand) out.set(h.id, (cand = { id: h.id, sources: new Set(), signals: {} }));
+      if (!cand) out.set(h.id, (cand = { id: h.id, sources: new Set(), signals: {}, meta: {} }));
       cand.sources.add(s.name);
       if (h.item && !cand.item) cand.item = h.item;
       if (h.jfRank !== undefined) cand.jfRank = Math.max(cand.jfRank ?? 0, h.jfRank);
-      for (const [k, v] of Object.entries(h.signals ?? {})) cand.signals[k as SignalName] = Math.max(cand.signals[k as SignalName] ?? 0, v);
+      for (const [k, v] of Object.entries(h.signals ?? {})) {
+        // the anchor behind the strongest signal explains the hit
+        if (h.meta?.via && v >= (cand.signals[k as SignalName] ?? 0)) cand.meta.via = h.meta.via;
+        cand.signals[k as SignalName] = Math.max(cand.signals[k as SignalName] ?? 0, v);
+      }
+      if (h.meta?.friends?.length) cand.meta.friends = [...new Set([...(cand.meta.friends ?? []), ...h.meta.friends])].slice(0, 3);
+      if (h.meta?.fresh && !cand.meta.fresh) cand.meta.fresh = h.meta.fresh;
     }
   });
   return out;

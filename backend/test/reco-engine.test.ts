@@ -210,7 +210,7 @@ describe('kids and the viewer token', () => {
     await recommend(engineCtx(env, f.jf), s.kidsUser, s.kids, { surface: 'because', seed: H('rom1'), limit: 5, now: NOW });
     expect(f.calls.length).toBeGreaterThan(3);
     expect(f.calls.every((x) => x.user === s.kidsUser)).toBe(true);
-    expect(new Set(f.calls.map((x) => x.fn))).toEqual(new Set(['item', 'items', 'history', 'similar']));
+    expect(new Set(f.calls.map((x) => x.fn))).toEqual(new Set(['item', 'items', 'history', 'similar', 'credits']));
   });
 
   it('titles the viewer cannot see are dropped, not shown', async () => {
@@ -306,7 +306,8 @@ describe('RECO_ENGINE', () => {
     expect(overlap(['a', 'b', 'c', 'd'], ['b', 'c', 'x', 'y'])).toBe(0.5);
     expect(overlap([], ['a'])).toBe(0);
     expect(overlap(Array.from({ length: 20 }, (_, n) => `a${n}`), Array.from({ length: 20 }, (_, n) => `a${n}`))).toBe(1); // top 10 only
-    const items = [{ item: dto('saga1'), score: 0.8, sources: [], parts: {} as never }, { item: dto('saga2'), score: 0.6, sources: [], parts: {} as never }];
+    const reason = { seed: null, traits: [] };
+    const items = [{ item: dto('saga1'), score: 0.8, sources: [], parts: {} as never, reason }, { item: dto('saga2'), score: 0.6, sources: [], parts: {} as never, reason }];
     expect(scoreDelta(['a', 'b', 'zz'], items, new Map([['a', 0.5], ['b', 0.3]]))).toBeCloseTo(0.3, 10);
     expect(scoreDelta(['zz'], items, new Map())).toBeNull();
   });

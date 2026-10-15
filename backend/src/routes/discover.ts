@@ -7,6 +7,7 @@ import { z } from 'zod';
 import type { Ctx } from '../ctx.js';
 import { MediaError, type ItemDto, type MediaTraits } from '../media/types.js';
 import { audit } from '../audit.js';
+import { friendsRatedFor, inPool, itemsByIds, recommendationsFor } from '../discoverData.js';
 import { badgesFor, instanceToday, leavingFor, LEAVING_ROW_DAYS, storySoFar } from '../fresh.js';
 import { m } from '../i18n.js';
 import { bumpHomeAll, bumpHome } from '../homegen.js';
@@ -24,57 +25,7 @@ import { id32, wrap as sharedWrap } from './_shared.js';
 
 const wrap = <T extends (...a: any[]) => Promise<any>>(fn: T): T => sharedWrap(fn, { seerr: true, passthrough: [404] });
 
-/**
- * Fetches items by id in chunks of 40 (keeps URLs short), up to 4 chunks in parallel, with the viewer's own token, so library
- * permissions apply. Jellyfin errors count as "not visible" unless `strict` (then they throw). Keeps the requested order.
- */
-export async function itemsByIds(ctx: Ctx, user: JfUser, ids: string[], strict = false): Promise<ItemDto[]> {
-  const chunks: string[][] = [];
-  for (let i = 0; i < ids.length; i += 40) chunks.push(ids.slice(i, i + 40));
-  const parts = await inPool(chunks, 4, async (c) =>
-    (await ctx.jf.items(user, { ids: c, types: 'Movie,Series,Episode,BoxSet', limit: 40 }).catch((e) => { if (strict) throw e; return { items: [] as ItemDto[] }; })).items);
-  const byId = new Map(parts.flat().map((i) => [i.id, i]));
-  return ids.map((i) => byId.get(i)).filter((x): x is ItemDto => Boolean(x));
-}
-
-/** Runs `fn` over `xs` with at most `n` calls in flight; results keep the input order. The first error rejects. */
-export async function inPool<T, R>(xs: T[], n: number, fn: (x: T, i: number) => Promise<R>): Promise<R[]> {
-  const out: R[] = new Array(xs.length);
-  let next = 0;
-  await Promise.all(Array.from({ length: Math.min(n, xs.length) }, async () => {
-    while (next < xs.length) {
-      const i = next++;
-      out[i] = await fn(xs[i]!, i);
-    }
-  }));
-  return out;
-}
-
-/** Data of GET /api/recommendations (also part of GET /api/home): what friends recommended to this user, newest unseen first. */
-export async function recommendationsFor(ctx: Ctx, jfUser: JfUser, userId: string) {
-  const rows = (await ctx.db.query<{ id: string; item_id: string; note: string | null; from_name: string }>(
-    `select r.id, r.item_id, r.note, u.name from_name from recommendations r join users u on u.id=r.from_user
-      where r.to_user=$1 and r.created_at > now() - interval '60 days' order by r.seen, r.created_at desc limit 30`, [userId])).rows;
-  const items = await itemsByIds(ctx, jfUser, [...new Set(rows.map((r) => r.item_id))]);
-  const meta = new Map(rows.map((r) => [r.item_id, `Von ${r.from_name}${r.note ? `: ${r.note}` : ''}`]));
-  const shown = new Set(items.map((i) => i.id));
-  return { items: items.map((i) => ({ ...i, caption: meta.get(i.id) })), recIds: rows.filter((r) => shown.has(r.item_id)).map((r) => Number(r.id)) }; // recIds: send back to /seen
-}
-
-/** Data of GET /api/library/friends-rated (also part of GET /api/home). */
-export async function friendsRatedFor(ctx: Ctx, jfUser: JfUser, userId: string, profileId: string) {
-  const rows = (await ctx.db.query<{ item_id: string; names: string[]; avg: string }>(
-    `select r.item_id, array_agg(u.name || ' ' || r.stars || '★' order by r.created_at desc) names, avg(r.stars) avg
-       from ratings r join users u on u.id = r.user_id left join user_prefs p on p.user_id = r.user_id
-      where r.user_id <> $1 and r.stars >= 4 and r.created_at > now() - interval '90 days' and not u.disabled
-        and coalesce((p.data->>'shareRatings')::boolean, true)
-        and r.item_id not in (select item_id from ratings where user_id = $1)
-        and r.item_id not in (select item_id from thumbs where profile_id = $2 and value = -1)
-      group by r.item_id order by max(r.created_at) desc limit 24`, [userId, profileId])).rows;
-  const items = await itemsByIds(ctx, jfUser, rows.map((r) => r.item_id));
-  const cap = new Map(rows.map((r) => [r.item_id, r.names.slice(0, 2).join(', ')]));
-  return { items: items.filter((i) => !i.played).map((i) => ({ ...i, caption: cap.get(i.id) })) };
-}
+export { friendsRatedFor, inPool, itemsByIds, recommendationsFor } from '../discoverData.js';
 
 /** Data of GET /api/library/leaving (also part of GET /api/home): home row "Bald nicht mehr verfügbar", only titles the viewer can see. */
 export async function leavingRow(ctx: Ctx, jfUser: JfUser) {

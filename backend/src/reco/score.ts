@@ -1,15 +1,18 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import type { ItemDto } from '../media/types.js';
-import type { Candidate, SourceName } from './candidates.js';
+import type { Candidate, HitMeta, SourceName } from './candidates.js';
+import { contextFit, type RecoContext } from './context.js';
 import type { RecoProfile, Taste } from './profile.js';
 import { dot, type FeatureRow, type Index, type SparseVec } from './vectors.js';
 import type { RecoCoefficients, Surface, SurfaceWeights } from './weights.js';
 
 /**
  * Recommendation engine v2, R2: scoring (spec 4.5).
- *   score = a*affinity + b*seed + c*cooccurrence + t*transition + d*friends + e*quality + f*fresh + trending(capped) - penalties
- * with one weight set per surface (weights.ts). Thumbs-down and the kids age cap are hard filters, not penalties.
+ *   score = context * (a*affinity + b*seed + c*cooccurrence + t*transition + d*friends + e*quality + f*fresh) + trending(capped) - penalties
+ * with one weight set per surface (weights.ts). Thumbs-down and the kids age cap are hard filters, not penalties. `context` (R3,
+ * context.ts) is a soft multiplier around 1 (time of day, device, language, runtime budget, series status), never a filter.
+ * Trending is capped so that it is at most `trendingCap` (10 %) of the score before penalties, on every surface.
  */
 
 const DAY_MS = 86_400_000;
@@ -78,6 +81,8 @@ export type FilterReason = 'seed' | 'thumbs_down' | 'age_cap' | 'type';
 
 export interface ScoreParts {
   affinity: number; seed: number; cooccurrence: number; transition: number; friends: number; quality: number; fresh: number; trending: number;
+  /** the context multiplier applied to the sum of the other parts (1 = neutral, or no context given) */
+  context: number;
   penalties: { played: number; dropped: number; watchlist: number };
 }
 
@@ -87,6 +92,7 @@ export interface Scored {
   score: number;
   parts: ScoreParts;
   sources: SourceName[];
+  meta: HitMeta;
   vec?: SparseVec;
   row?: FeatureRow;
 }
@@ -100,6 +106,8 @@ export interface ScoreContext {
   marks: Marks;
   seed?: ItemDto;
   now: number;
+  /** R3: time of day, device, language; absent = no context multiplier (the offline engine has none) */
+  context?: RecoContext;
 }
 
 /** Hard filters: the seed itself, thumbs-down, anything but films and series, and (kids) anything above the age cap or unrated. */
@@ -125,22 +133,26 @@ export function scoreCandidate(cand: Candidate, item: ItemDto, x: ScoreContext):
     seed = cos !== null && jf !== null ? (1 - x.c.score.jfRankShare) * cos + x.c.score.jfRankShare * jf : cos ?? jf ?? 0;
   }
   const quality = qualityPrior(item, row, x.index.meanRating, x.c);
-  const fresh = freshness(item, x.now, x.c);
+  // a title the media server labels new (fresh.ts) counts as fresh whatever its library date says
+  const fresh = Math.max(freshness(item, x.now, x.c), cand.meta.fresh ? x.c.score.freshLabelBoost : 0);
   const sig = (k: 'cooccurrence' | 'transition' | 'friends') => clamp01(cand.signals[k] ?? 0);
 
-  const rest = w.affinity * affinity + w.seed * seed + w.cooccurrence * sig('cooccurrence') + w.transition * sig('transition') + w.friends * sig('friends') + w.quality * quality + w.fresh * fresh;
+  const ctxFit = x.context ? contextFit(item, row, x.taste, x.context, x.c).factor : 1;
+  const rest = ctxFit * (w.affinity * affinity + w.seed * seed + w.cooccurrence * sig('cooccurrence') + w.transition * sig('transition') + w.friends * sig('friends') + w.quality * quality + w.fresh * fresh);
   // trending may be at most trendingCap of the whole score: t <= cap/(1-cap) * rest
   const cap = x.c.score.trendingCap;
   const trending = Math.min(w.trending * clamp01(cand.signals.trending ?? 0), (cap / (1 - cap)) * Math.max(0, rest));
 
   const p = x.c.penalty;
   const rewatchFriendly = x.taste.prefs.rewatchShare >= p.rewatchFriendlyShare;
-  const played = item.played || x.taste.seen.has(item.id) ? (rewatchFriendly ? p.playedRewatchFriendly : p.played) : 0;
+  // a new season of a series the profile watches is new content, not a repeat
+  const newSeason = cand.meta.fresh === 'newSeason' && item.type === 'Series';
+  const played = !newSeason && (item.played || x.taste.seen.has(item.id)) ? (rewatchFriendly ? p.playedRewatchFriendly : p.played) : 0;
   const penalties = { played, dropped: x.marks.dropped.has(item.id) ? p.dropped : 0, watchlist: x.marks.watchlist.has(item.id) ? p.watchlist : 0 };
 
   const score = rest + trending - penalties.played - penalties.dropped - penalties.watchlist;
   return {
-    id: item.id, item, score, sources: [...cand.sources], ...(vec ? { vec } : {}), ...(row ? { row } : {}),
-    parts: { affinity, seed, cooccurrence: sig('cooccurrence'), transition: sig('transition'), friends: sig('friends'), quality, fresh, trending, penalties },
+    id: item.id, item, score, sources: [...cand.sources], meta: cand.meta, ...(vec ? { vec } : {}), ...(row ? { row } : {}),
+    parts: { affinity, seed, cooccurrence: sig('cooccurrence'), transition: sig('transition'), friends: sig('friends'), quality, fresh, trending, context: ctxFit, penalties },
   };
 }

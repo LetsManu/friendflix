@@ -23,6 +23,11 @@
  * Item features beyond genres and year are optional in the dataset: tags, studios, people (arrays), runtime (min), rating (0-10), collection, added (ms).
  * The run prints a v2-versus-baselines comparison and the spec 4.7 gate (v2 NDCG@10 must beat every baseline by --gate-margin, default 5 %);
  * --gate makes a failed gate exit with code 1.
+ *
+ * R3: v2 also uses co-occurrence, transitions and trending built from the dataset's other profiles (minimum support of 2 profiles, as live).
+ * `--ablation` prints one table: v2 with each score component switched off in turn, and what that does to NDCG@10 (home), HitRate@10 and
+ * transition accuracy (post-play). Context features, the friends signal and fresh labels need data a dataset does not have (time of day,
+ * device, friends, library dates) and are reported as not evaluable.
  */
 import { readFileSync } from 'node:fs';
 import process from 'node:process';
@@ -204,14 +209,15 @@ export async function loadV2(dist = DEFAULT_DIST) {
  * recorded `similar` map (without one the seed's nearest neighbours stand in). 'home' = profile taste (surface home_rows, no seed),
  * 'next' = post-play (surface postplay, seed = the last title).
  */
-export function v2Engine(mod) {
+export function v2Engine(mod, { off = [] } = {}) {
   let eng;
   return {
     name: 'v2',
-    fit(_train, prep) {
+    fit(train, prep) {
       const items = new Map([...prep.catalog].map((id) => [id, { id }]));
       for (const [id, f] of prep.features) items.set(id, f);
-      eng = mod.offlineEngine([...items.values()], prep.similar);
+      // the other profiles feed co-occurrence, transitions and trending (the sequences carry the event times)
+      eng = mod.offlineEngine([...items.values()], prep.similar, undefined, { train: train?.profiles ?? [], off });
     },
     recommend({ surface, history, seed, k, disliked }) {
       return eng.recommend({ surface, history, ...(seed ? { seed } : {}), k, disliked });
@@ -226,6 +232,34 @@ export function gate(res, margin = 0.05) {
   if (!v2 || !others.length) return null;
   const [bestName, best] = others.reduce((a, b) => (b[1].ndcg > a[1].ndcg ? b : a));
   return { pass: v2.ndcg > best.ndcg * (1 + margin), margin, v2: v2.ndcg, best: best.ndcg, bestName };
+}
+
+/** The score components of the offline v2 that the ablation switches off one at a time (backend/src/reco/offline.ts OFFLINE_COMPONENTS). */
+export const ABLATION_COMPONENTS = ['affinity', 'seed', 'cooccurrence', 'transition', 'quality', 'fresh', 'trending', 'mmr'];
+/** Not evaluable on a dataset: they need data it does not have. */
+export const NOT_EVALUABLE = ['context features (time of day, device, language, runtime budget, series status)', 'friends signal', 'fresh labels of the media server'];
+/** The smallest change the table can resolve: one evaluated profile moving a hit in or out of the top 10 changes NDCG@10 by about 1 / profiles. */
+export const ablationEpsilon = (profiles) => (profiles > 0 ? 1 / profiles : 1);
+
+/**
+ * Ablation: v2 as is, and v2 with each component left out. `d*` = left-out minus full, so a negative NDCG delta means the component helps.
+ * verdict: "helps" (NDCG@10 or transition accuracy drops by more than one profile's worth without it), "hurts" (rises), "trade-off" (rises,
+ * but the diversity of the lists falls by more than 0.05: the component buys diversity with accuracy), else "no effect".
+ */
+export function ablation(data, mod, { minInteractions = MIN_INTERACTIONS, minProfiles = 1, excludeSeen = false } = {}) {
+  const prep = prepare(data);
+  const tr = split(prep, minInteractions);
+  if (tr.cases.length < minProfiles) throw new Error(`only ${tr.cases.length} profile(s) with >= ${minInteractions} interactions; need ${minProfiles} for aggregates`);
+  const full = runEngine(v2Engine(mod), prep, tr, { excludeSeen });
+  const eps = ablationEpsilon(tr.cases.length);
+  const rows = ABLATION_COMPONENTS.map((component) => {
+    const m = runEngine(v2Engine(mod, { off: [component] }), prep, tr, { excludeSeen });
+    const dNdcg = round(m.ndcg - full.ndcg), dTrans = round(m.transitionAccuracy - full.transitionAccuracy), dDiversity = round(m.diversity - full.diversity);
+    const helps = dNdcg < -eps || dTrans < -eps, hurts = dNdcg > eps || dTrans > eps;
+    const verdict = helps && !hurts ? 'helps' : hurts && !helps ? (dDiversity < -0.05 ? 'trade-off' : 'hurts') : helps && hurts ? 'mixed' : 'no effect';
+    return { component, ndcg: m.ndcg, hitRate: m.hitRate, transitionAccuracy: m.transitionAccuracy, diversity: m.diversity, dNdcg, dHitRate: round(m.hitRate - full.hitRate), dTrans, dDiversity, verdict };
+  });
+  return { meta: { k: K, evaluatedProfiles: tr.cases.length, epsilon: round(eps), notEvaluable: NOT_EVALUABLE }, full: { ndcg: full.ndcg, hitRate: full.hitRate, transitionAccuracy: full.transitionAccuracy, diversity: full.diversity }, rows };
 }
 
 // -------------------------------------------------------------------------------------------------------------- metrics
@@ -381,6 +415,21 @@ export function format(res) {
   return lines.join('\n');
 }
 
+/** The ablation table as text. */
+export function formatAblation(res) {
+  const d4 = (x) => (x === null ? '   n/a' : ((x > 0 ? '+' : '') + x.toFixed(3)).padStart(6));
+  const lines = [`ablation of engine v2: each component switched off in turn (profiles evaluated: ${res.meta.evaluatedProfiles}, k=${res.meta.k})`, ''];
+  lines.push('left out'.padEnd(16) + ['NDCG@10', 'd NDCG', 'HitRate@10', 'd Hit', 'Transition', 'd Trans', 'Diversity', 'd Div'].map((h) => h.padStart(11)).join('') + '  verdict');
+  lines.push('(v2 as is)'.padEnd(16) + [num(res.full.ndcg), '', pct(res.full.hitRate), '', pct(res.full.transitionAccuracy), '', num(res.full.diversity), ''].map((h) => h.padStart(11)).join(''));
+  for (const r of res.rows) {
+    lines.push(r.component.padEnd(16) + [num(r.ndcg), d4(r.dNdcg), pct(r.hitRate), d4(r.dHitRate), pct(r.transitionAccuracy), d4(r.dTrans), num(r.diversity), d4(r.dDiversity)].map((h) => h.padStart(11)).join('') + '  ' + r.verdict);
+  }
+  lines.push('', `verdict: "helps" = NDCG@10 or transition accuracy falls by more than ${res.meta.epsilon} (one profile's worth) without the component, "hurts" = it rises,`,
+    '"trade-off" = it rises but the lists lose diversity (the component buys diversity), "mixed" = one up, one down, else "no effect"');
+  lines.push('not evaluable on a dataset: ' + res.meta.notEvaluable.join('; '));
+  return lines.join('\n');
+}
+
 export function parseArgs(argv) {
   const o = { engines: undefined, minProfiles: undefined };
   for (let i = 0; i < argv.length; i++) {
@@ -388,6 +437,7 @@ export function parseArgs(argv) {
     if (a === '--db') o.db = true;
     else if (a === '--json') o.json = true;
     else if (a === '--exclude-seen') o.excludeSeen = true;
+    else if (a === '--ablation') o.ablation = true;
     else if (a === '--data') o.data = val();
     else if (a === '--items') o.items = val();
     else if (a === '--similar') o.similar = val();
@@ -403,8 +453,9 @@ export function parseArgs(argv) {
   return o;
 }
 
-const HELP = `usage: node scripts/reco-eval.mjs [--data file.json | --db] [--engines popularity,v1,cooccurrence,v2] [--exclude-seen] [--json]
+const HELP = `usage: node scripts/reco-eval.mjs [--data file.json | --db] [--engines popularity,v1,cooccurrence,v2] [--exclude-seen] [--json] [--ablation]
   (v2 needs the compiled backend: npm run build -w backend; RECO_EVAL_DIST = another build directory)
+  --ablation        v2 with each score component left out in turn: which ones move NDCG@10 (needs the compiled backend)
   --gate            exit 1 when v2 does not beat every baseline on NDCG@10 by the margin (spec 4.7 gate)
   --gate-margin X   relative margin of the gate (default 0.05 = 5 %)
   --db              read interactions from DATABASE_URL (read only); --items / --similar add features and recorded similar() answers
@@ -431,6 +482,12 @@ export async function main(argv, env = process.env, log = (s) => out.log(s), war
   if (o.plugin) registry = { ...registry, ...(await import(pathToFileURL(o.plugin).href)).engines };
   if (!v2 && o.engines?.includes('v2') && !registry.v2) throw new Error('engine v2 needs the compiled backend: run `npm run build -w backend` (or set RECO_EVAL_DIST)');
   if (!v2 && !o.engines && !registry.v2) warn('reco-eval: v2 not evaluated, the backend is not built (npm run build -w backend)');
+  if (o.ablation) {
+    if (!v2) throw new Error('--ablation needs the compiled backend: run `npm run build -w backend` (or set RECO_EVAL_DIST)');
+    const abl = ablation(data, v2, { minProfiles: o.minProfiles ?? 5, excludeSeen: o.excludeSeen });
+    log(o.json ? JSON.stringify(abl, null, 2) : formatAblation(abl));
+    return 0;
+  }
   const gateMargin = Number.isFinite(o.gateMargin) ? o.gateMargin : 0.05;
   const res = evaluate(data, { engines: o.engines ?? Object.keys(registry), registry, minProfiles: o.minProfiles ?? 5, excludeSeen: o.excludeSeen });
   res.meta.gateMargin = gateMargin;

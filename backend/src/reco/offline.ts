@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import type { ItemDto } from '../media/types.js';
+import { buildPairTables, coocSignals, transitionSignals, type TitleSpan } from './aggregates.js';
+import type { SourceName } from './candidates.js';
 import { buildTaste, type Signal } from './profile.js';
 import { mmr } from './rank.js';
 import { scoreCandidate, type Marks, type ScoreContext } from './score.js';
@@ -14,7 +16,23 @@ import { DEFAULT_RECO_WEIGHTS, recoCoefficients, type RecoCoefficients, type Rec
  * file (`npm run build -w backend`). Differences to the live engine, by necessity: the item index is built from the dataset's own
  * item features (IDF over the dataset), "similar()" comes from the dataset's recorded answers (or is left out), and the signals are
  * what a dataset knows: played (+finished movie weight), liked (+thumbs-up weight), disliked (thumbs-down).
+ *
+ * R3 adds, from the training profiles of the dataset: item-item co-occurrence and transitions (the same aggregate code as the live
+ * engine, with the same minimum support of 2 profiles) and a trending signal (profiles that played a title in the last 7 days before the
+ * query), and switches (`off`) to leave one component out for the ablation table. Not evaluable offline, because a dataset has no such
+ * data: context features (time of day, device, language, runtime budget, series status), the friends signal and the fresh labels.
  */
+
+/** The components of the score the ablation can switch off one by one. */
+export const OFFLINE_COMPONENTS = ['affinity', 'seed', 'cooccurrence', 'transition', 'quality', 'fresh', 'trending', 'mmr'] as const;
+export type OfflineComponent = (typeof OFFLINE_COMPONENTS)[number];
+export interface OfflineOptions {
+  /** the other profiles of the dataset (never kids profiles): their sequences feed co-occurrence, transitions and trending */
+  train?: ReadonlyArray<{ seq: ReadonlyArray<{ item: string; t: number }> }>;
+  /** components left out of the score (affinity, seed ... as weights set to 0; mmr = plain score order) */
+  off?: ReadonlyArray<OfflineComponent>;
+}
+const TREND_WINDOW_MS = 7 * 86_400_000;
 
 export interface OfflineItem {
   id: string; genres?: string[]; tags?: string[]; studios?: string[]; people?: string[]; year?: number; runtime?: number; rating?: number; collection?: string;
@@ -56,8 +74,24 @@ export function offlineIndex(items: readonly OfflineItem[], w: RecoWeights = DEF
 
 const NO_MARKS: Marks = { thumbsDown: new Set(), dropped: new Set(), watchlist: new Set() };
 
-export function offlineEngine(items: readonly OfflineItem[], similar: Readonly<Record<string, readonly string[]>> = {}, c: RecoCoefficients = recoCoefficients()) {
+export function offlineEngine(items: readonly OfflineItem[], similar: Readonly<Record<string, readonly string[]>> = {}, c0: RecoCoefficients = recoCoefficients(), opts: OfflineOptions = {}) {
+  const off = new Set(opts.off ?? []);
+  const c = structuredClone(c0);
+  for (const sw of Object.values(c.surface)) {
+    if (off.has('affinity')) sw.affinity = 0;
+    if (off.has('seed')) sw.seed = 0;
+    if (off.has('cooccurrence')) sw.cooccurrence = 0;
+    if (off.has('transition')) sw.transition = 0;
+    if (off.has('quality')) sw.quality = 0;
+    if (off.has('fresh')) sw.fresh = 0;
+    if (off.has('trending')) sw.trending = 0;
+  }
   const index = offlineIndex(items);
+  // cross-profile aggregates from the training profiles: one span per profile and title (a day each), all counted as finished
+  const tables = opts.train?.length ? buildPairTables(
+    opts.train.flatMap((p, n) => p.seq.map((e): TitleSpan => ({ acct: String(n), root: e.item, first: e.t, last: e.t, secs: 1e9 }))), c,
+    { runtimeSec: () => null, isSeries: () => false },
+  ) : null;
   const added = new Map(items.map((i) => [i.id, i.added]));
   const asItem = (id: string, seen: ReadonlySet<string>): ItemDto => {
     const r = index.rows.get(id);
@@ -85,13 +119,14 @@ export function offlineEngine(items: readonly OfflineItem[], similar: Readonly<R
       const surface: Surface = q.surface === 'next' ? 'postplay' : 'home_rows';
       const seedId = q.surface === 'next' ? q.seed : undefined;
       const seed = seedId ? asItem(seedId, seen) : undefined;
-      const cands = new Map<string, { id: string; sources: Set<'similar' | 'universe' | 'taste_nn' | 'prior'>; jfRank?: number; signals: Record<string, number> }>();
-      const add = (id: string, src: 'similar' | 'universe' | 'taste_nn' | 'prior', jfRank?: number) => {
+      const cands = new Map<string, { id: string; sources: Set<SourceName>; jfRank?: number; signals: Record<string, number>; meta: Record<string, never> }>();
+      const add = (id: string, src: SourceName, jfRank?: number, signal?: [string, number]) => {
         if (!index.rows.has(id) || id === seedId) return;
         let x = cands.get(id);
-        if (!x) cands.set(id, (x = { id, sources: new Set(), signals: {} }));
+        if (!x) cands.set(id, (x = { id, sources: new Set(), signals: {}, meta: {} }));
         x.sources.add(src);
         if (jfRank !== undefined) x.jfRank = Math.max(x.jfRank ?? 0, jfRank);
+        if (signal) x.signals[signal[0]] = Math.max(x.signals[signal[0]] ?? 0, signal[1]);
       };
       if (seedId) {
         const list = (similar[seedId] ?? []).filter((id) => id !== seedId).slice(0, c.candidates.similar);
@@ -112,9 +147,27 @@ export function offlineEngine(items: readonly OfflineItem[], similar: Readonly<R
         [...index.rows.values()].filter((r) => r.community_rating !== null).sort((a, b) => b.community_rating! - a.community_rating! || (a.item_id < b.item_id ? -1 : 1))
           .slice(0, c.candidates.prior).forEach((r) => add(r.item_id, 'prior'));
       }
+      // R3 sources: co-occurrence with the seed (post-play) or with the profile's strongest titles (home), transitions out of the seed,
+      // trending = profiles that played the title in the week before the query
+      const w = c.surface[surface];
+      if (tables && w.cooccurrence > 0) {
+        for (const a of seedId ? [{ id: seedId, w: 1 }] : (taste.anchors ?? []).slice(0, c.social.anchors)) {
+          for (const [id, cos] of coocSignals(tables, a.id)) add(id, 'cooccurrence', undefined, ['cooccurrence', Math.min(1, cos * a.w)]);
+        }
+      }
+      if (tables && seedId && w.transition > 0) for (const [id, t] of transitionSignals(tables, seedId)) add(id, 'transition', undefined, ['transition', t.p]);
+      if (opts.train?.length && w.trending > 0) {
+        const per = new Map<string, number>();
+        opts.train.forEach((p) => {
+          for (const it of new Set(p.seq.filter((e) => e.t <= now && e.t > now - TREND_WINDOW_MS).map((e) => e.item))) per.set(it, (per.get(it) ?? 0) + 1);
+        });
+        const top = Math.max(3, ...per.values());
+        for (const [id, n] of per) if (n >= c.social.minSupport) add(id, 'trending', undefined, ['trending', Math.min(1, Math.log1p(n) / Math.log1p(top))]);
+      }
       const marks: Marks = { ...NO_MARKS, thumbsDown: new Set(q.disliked ?? []) };
       const sc: ScoreContext = { surface, c, taste, index, profile: { kids: false, kids_max_rating: 12 }, marks, ...(seed ? { seed } : {}), now };
       const scored = [...cands.values()].filter((x) => !marks.thumbsDown.has(x.id)).map((x) => scoreCandidate(x, asItem(x.id, seen), sc));
+      if (off.has('mmr')) return scored.sort((a, b) => b.score - a.score || (a.id < b.id ? -1 : 1)).slice(0, q.k).map((s) => s.id);
       return mmr(scored.map((s) => Object.assign(s, { franchise: s.row?.collection_id ?? null, genre: s.row?.genres[0] ?? null })), q.k, c).map((s) => s.id);
     },
   };

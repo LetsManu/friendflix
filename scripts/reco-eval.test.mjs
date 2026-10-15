@@ -11,7 +11,7 @@ import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { DEFAULT_DIST, ENGINES, K, cooccurrenceEngine, evaluate, format, gate, listDiversity, loadV2, main, parseArgs, popularityTiers, prepare, split, v1Engine, v2Engine, DEFAULT_FIXTURE } from './reco-eval.mjs';
+import { ABLATION_COMPONENTS, DEFAULT_DIST, ENGINES, K, ablation, ablationEpsilon, cooccurrenceEngine, evaluate, format, formatAblation, gate, listDiversity, loadV2, main, parseArgs, popularityTiers, prepare, runEngine, split, v1Engine, v2Engine, DEFAULT_FIXTURE } from './reco-eval.mjs';
 
 const fixture = JSON.parse(readFileSync(DEFAULT_FIXTURE, 'utf8'));
 const near = (a, b, eps = 1e-3) => assert.ok(Math.abs(a - b) < eps, `${a} != ${b}`);
@@ -249,4 +249,61 @@ test('v2: without the compiled backend it is reported, and asking for it explici
   assert.match(warns.join('\n'), /v2 not evaluated/);
   assert.doesNotMatch(lines.join('\n'), /v2 against/);
   await assert.rejects(main(['--engines', 'v2'], { RECO_EVAL_DIST: join(tmpdir(), 'ff-no-such-dist') }, () => {}), /compiled backend/);
+});
+
+// ------------------------------------------------------------------------------------------------------------- ablation (R3)
+
+/** 12 evaluated profiles (+ 8 short ones that only train) that walk the same two chains (a1 -> a2 -> a3 -> a4, b1 -> ... -> b4) on consecutive days after the same filler titles; 40 other titles nobody watched. */
+function chainData() {
+  // ids of the chains sort after the unwatched titles: when nothing else knows better, ties in the neighbour search favour the unwatched ones
+  const chains = ['x-a1', 'x-a2', 'x-a3', 'x-a4', 'x-b1', 'x-b2', 'x-b3', 'x-b4'], filler = ['x-c1', 'x-c2', 'x-c3', 'x-c4'];
+  const ids = [...chains, ...filler, ...Array.from({ length: 40 }, (_, i) => `d-${String(i).padStart(2, '0')}`)];
+  const items = ids.map((id) => ({ id, genres: [`g-${id}`] }));
+  const walk = (p, withFiller) => {
+    const chain = chains.slice(p % 2 ? 4 : 0, p % 2 ? 8 : 4);
+    return { id: `${withFiller ? 'p' : 'q'}${p}`, events: [...(withFiller ? filler : []).map((x, i) => ({ item: x, ts: 86_400_000 * (i + 1) })), ...chain.map((x, i) => ({ item: x, ts: 86_400_000 * (i + 5) }))] };
+  };
+  // 12 profiles with 8 titles are evaluated (the last title is held out); 8 short ones (4 titles) are skipped as cases but still train: so the held-out titles are known to others
+  return { items, profiles: [...Array.from({ length: 12 }, (_, p) => walk(p, true)), ...Array.from({ length: 8 }, (_, p) => walk(p, false))] };
+}
+
+test('ablation: every component is switched off in turn and the table says what moved', () => {
+  const abl = ablation(fixture, v2mod, { minProfiles: 5 });
+  assert.deepEqual(abl.rows.map((r) => r.component), ABLATION_COMPONENTS);
+  assert.equal(abl.meta.evaluatedProfiles, 36);
+  near(abl.meta.epsilon, ablationEpsilon(36), 1e-3);
+  const by = Object.fromEntries(abl.rows.map((r) => [r.component, r]));
+  assert.equal(abl.full.ndcg, evaluate(fixture, { registry, engines: ['v2'] }).engines.v2.ndcg); // "v2 as is" is the v2 column of the main table
+  assert.equal(by.affinity.verdict, 'helps'); // without the taste profile the ranking collapses (NDCG@10 -0.2)
+  assert.ok(by.affinity.dNdcg < -0.1);
+  assert.equal(by.mmr.verdict, 'trade-off'); // re-ranking costs accuracy and buys diversity
+  assert.ok(by.mmr.dDiversity < -0.05);
+  for (const r of abl.rows) assert.ok(['helps', 'hurts', 'trade-off', 'mixed', 'no effect'].includes(r.verdict));
+  assert.deepEqual(abl, ablation(fixture, v2mod, { minProfiles: 5 })); // deterministic
+});
+
+test('v2: transitions and co-occurrence of the other profiles predict the next title on sequential data', () => {
+  const data = chainData();
+  const prep = prepare(data), tr = split(prep, 8);
+  const acc = (off) => runEngine(v2Engine(v2mod, { off }), prep, tr).transitionAccuracy;
+  assert.equal(acc([]), 1);
+  assert.equal(acc(['transition', 'cooccurrence']), 0); // nothing else knows what follows what
+  assert.equal(acc(['cooccurrence']), 1); // the transition alone is enough
+  const abl = ablation(data, v2mod, { minProfiles: 5, minInteractions: 8 });
+  assert.equal(abl.rows.find((r) => r.component === 'transition').component, 'transition');
+});
+
+test('ablation: needs enough profiles, prints aggregates only, CLI --ablation', async () => {
+  assert.throws(() => ablation(fixture, v2mod, { minProfiles: 1000 }), /need 1000/);
+  const lines = [];
+  assert.equal(await main(['--ablation'], { RECO_EVAL_DIST: dist }, (x) => lines.push(x)), 0);
+  const out = lines.join('\n');
+  assert.match(out, /ablation of engine v2/);
+  assert.match(out, /not evaluable on a dataset: context features/);
+  assert.match(formatAblation(ablation(fixture, v2mod)), /verdict/);
+  for (const id of [...fixture.items.map((i) => i.id), ...fixture.profiles.map((p) => p.id)]) assert.ok(!new RegExp(`\\b${id}\\b`).test(out), `leaked ${id}`);
+  await assert.rejects(main(['--ablation'], { RECO_EVAL_DIST: join(tmpdir(), 'ff-no-such-dist') }, () => {}), /compiled backend/);
+  const json = [];
+  await main(['--ablation', '--json'], { RECO_EVAL_DIST: dist }, (x) => json.push(x));
+  assert.equal(JSON.parse(json[0]).rows.length, ABLATION_COMPONENTS.length);
 });

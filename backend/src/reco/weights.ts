@@ -100,6 +100,50 @@ export interface RecoCoefficients {
     jfRankShare: number;
     /** trending may be at most this share of the score on every surface */
     trendingCap: number;
+    /** a title the media server labels new (fresh.ts: new series, new film, new season) scores at least this much freshness */
+    freshLabelBoost: number;
+  };
+  /** R3: cross-user aggregates (co-occurrence, transitions). Counts of distinct accounts only, never an account or a title per person. */
+  social: {
+    /** a pair counts only when this many distinct accounts share it; never below 2 (spec 4.8), whatever is configured */
+    minSupport: number;
+    /** days of viewing history the aggregates look at */
+    lookbackDays: number;
+    /** a transition X -> Y: Y was started within this many days after the last play of X */
+    transitionDays: number;
+    /** seconds of viewing before an account counts as having watched a title */
+    minSeconds: number;
+    /** a film counts as finished at this share of its runtime ... */
+    finishRatio: number;
+    /** ... a series after viewing time worth this many episodes (play_seconds has no finished flag, see docs/discovery.md) */
+    finishEpisodes: number;
+    /** strongest partners kept per title in the cached aggregate */
+    topPerItem: number;
+    /** seconds the aggregate is cached (an account that switches shareHistory off disappears at the next rebuild) */
+    cacheSeconds: number;
+    /** rows read from play_seconds per rebuild */
+    maxRows: number;
+    /** seedless surfaces seed co-occurrence with the profile's strongest titles: how many */
+    anchors: number;
+  };
+  /** R3: context fit (spec 4.5), a soft multiplier on the score, never a filter. 0 switches a factor off. */
+  context: {
+    /** the product of all factors is kept within [min, max] */
+    min: number; max: number;
+    /** time of day: how much the profile's usual genres in this time bucket count */
+    timeOfDay: number;
+    /** device class: short titles on phones, long ones on TVs, by the instance's device mix (playback_timings) or the caller's device */
+    device: number;
+    /** language: the share of the profile's liked titles in the item's original language, plus the UI language */
+    language: number;
+    /** runtime above the time budget of the hour */
+    runtime: number;
+    /** series status against the profile's drop behaviour: a profile that drops series meets fewer unfinished ones */
+    status: number;
+    /** minutes a viewer is assumed to have, by hour: daytime, evening (17-20), late (21-22), night (23-4) */
+    budgetDay: number; budgetEvening: number; budgetLate: number; budgetNight: number;
+    /** a profile that dropped or abandoned at least this share of the series it started counts as dropping series */
+    dropRate: number;
   };
   penalty: {
     played: number; playedRewatchFriendly: number; dropped: number; watchlist: number; nearDuplicate: number;
@@ -129,15 +173,18 @@ export const DEFAULT_RECO_COEFFICIENTS: Readonly<RecoCoefficients> = {
   },
   profile: { coldStart: 5, abandonPct: 15, abandonDays: 14, favoriteAgeDays: 60, rewatchFactor: 1.6, historyLimit: 200, topDims: 400, negWeight: 0.5, cacheTtlSeconds: 6 * 3600 },
   candidates: { similar: 30, knn: 200, universe: 40, creatorSlots: 3, prior: 60 },
-  score: { ratingPriorVotes: 25, ratingAssumedVotes: 25, ratingPriorMean: 6.5, ratingFloor: 4, ratingCeil: 9, freshHalfLifeDays: 120, jfRankShare: 0.3, trendingCap: 0.1 },
+  score: { ratingPriorVotes: 25, ratingAssumedVotes: 25, ratingPriorMean: 6.5, ratingFloor: 4, ratingCeil: 9, freshHalfLifeDays: 120, jfRankShare: 0.3, trendingCap: 0.1, freshLabelBoost: 0.8 },
+  social: { minSupport: 2, lookbackDays: 365, transitionDays: 7, minSeconds: 300, finishRatio: 0.7, finishEpisodes: 3, topPerItem: 30, cacheSeconds: 900, maxRows: 200_000, anchors: 5 },
+  context: { min: 0.75, max: 1.2, timeOfDay: 0.15, device: 0.1, language: 0.1, runtime: 0.15, status: 0.1, budgetDay: 240, budgetEvening: 180, budgetLate: 120, budgetNight: 90, dropRate: 0.3 },
   penalty: { played: 0.8, playedRewatchFriendly: 0.25, dropped: 1.5, watchlist: 0.4, nearDuplicate: 0.5, rewatchFriendlyShare: 0.15 },
   rank: { lambda: 0.7, perFranchise: 2, genreShare: 0.5, duplicateCos: 0.92 },
   surface: {
-    // post-play: what comes next; seed similarity and transitions lead
-    postplay: SW(0.3, 0.5, 0.08, 0.05, 0.15, 0.6, 0, 0.05),
-    because: SW(0.3, 0.55, 0.1, 0.05, 0.1, 0, 0, 0.05),
+    // post-play: what comes next; transitions and seed similarity lead, friends only as a small nudge (they have their own row)
+    postplay: SW(0.3, 0.5, 0.08, 0.05, 0.15, 0.6, 0.05, 0.05),
+    because: SW(0.3, 0.55, 0.1, 0.05, 0.1, 0, 0.05, 0.05),
     // taste: no seed
     taste: SW(0.7, 0, 0.15, 0.1, 0.1, 0, 0.15, 0.05),
+    // "more like this" on a detail page: pure similarity, no friends, no trend
     detail_similar: SW(0.1, 0.8, 0.07, 0.03, 0.1, 0, 0, 0),
     home_rows: SW(0.6, 0.1, 0.15, 0.1, 0.1, 0, 0.15, 0.05),
   },
@@ -197,5 +244,14 @@ export function recoCoefficients(cfg?: Partial<Pick<Config, 'RECO_COEFFS' | 'REC
   c.score.ratingFloor = Math.min(c.score.ratingFloor, c.score.ratingCeil - 0.1);
   c.candidates.knn = Math.max(1, Math.round(c.candidates.knn));
   c.candidates.similar = Math.max(1, Math.round(c.candidates.similar));
+  // privacy floor: no cross-user aggregate below 2 distinct accounts, whatever RECO_COEFFS says
+  c.social.minSupport = Math.max(2, Math.round(c.social.minSupport));
+  c.social.lookbackDays = Math.max(1, Math.round(c.social.lookbackDays));
+  c.social.transitionDays = Math.max(1, c.social.transitionDays);
+  c.social.topPerItem = Math.max(1, Math.round(c.social.topPerItem));
+  c.social.anchors = Math.max(1, Math.round(c.social.anchors));
+  c.social.maxRows = Math.max(1000, Math.round(c.social.maxRows));
+  c.context.min = Math.max(0.1, Math.min(1, c.context.min));
+  c.context.max = Math.max(1, Math.min(3, c.context.max));
   return c;
 }

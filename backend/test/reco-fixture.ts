@@ -79,11 +79,15 @@ export interface FakeState {
   /** Series ItemDto overrides (unplayedCount) */
   unplayed: Record<string, number>;
   fail: Set<string>;
+  /** R3: what the media server lists as recently added (fixture keys), in this order; answered to every items() call that sorts */
+  recent: string[];
+  /** R3: credits per item id (names of people for the explanations); absent = none */
+  credits: Record<string, { people: Array<{ id: string; name: string; type: string }> }>;
 }
 export interface FakeCall { fn: string; user: JfUser }
 
 export function fakeJf(): { jf: Ctx['jf']; state: FakeState; calls: FakeCall[] } {
-  const state: FakeState = { history: [], favorites: [], similar: {}, version: '1', caps: {}, hidden: new Set(), unplayed: {}, fail: new Set() };
+  const state: FakeState = { history: [], favorites: [], similar: {}, version: '1', caps: {}, hidden: new Set(), unplayed: {}, fail: new Set(), recent: [], credits: {} };
   const calls: FakeCall[] = [];
   const visible = (u: JfUser, i: ItemDto) => {
     if (state.hidden.has(i.id)) return false;
@@ -96,9 +100,10 @@ export function fakeJf(): { jf: Ctx['jf']; state: FakeState; calls: FakeCall[] }
   const find = (id: string) => SPECS.find((s) => H(s.key) === id);
   const jf = {
     async item(u: JfUser, id: string) { calls.push({ fn: 'item', user: u }); const s = find(id); if (!s || !visible(u, dto(s.key))) throw new MediaError(404, 'x'); return dto(s.key); },
-    async items(u: JfUser, q: { ids?: string[]; filter?: string }) {
+    async items(u: JfUser, q: { ids?: string[]; filter?: string; sort?: string }) {
       calls.push({ fn: 'items', user: u });
       if (state.fail.has('items')) throw new MediaError(500, 'x');
+      if (q.sort) { const out = state.recent.map((k) => dto(k)).filter((i) => visible(u, i)); return { items: out, total: out.length }; }
       if (q.filter === 'favorites') return { items: state.favorites.filter((i) => visible(u, i)), total: state.favorites.length };
       const out = (q.ids ?? []).map((id) => find(id)).filter((s): s is Spec => Boolean(s)).map((s) => withUnplayed(dto(s.key))).filter((i) => visible(u, i));
       return { items: out, total: out.length };
@@ -110,6 +115,11 @@ export function fakeJf(): { jf: Ctx['jf']; state: FakeState; calls: FakeCall[] }
     },
     async lastWatched(u: JfUser) { calls.push({ fn: 'lastWatched', user: u }); return state.history.find((i) => i.played) ?? null; },
     async userDataVersion() { return state.version; },
+    // fresh labels (fresh.ts) look at the episodes of a series: the fixture's series have none, so the library date decides
+    async episodes() { return []; },
+    async availableEpisodes() { return new Set<string>(); },
+    async continuingSeries() { return []; },
+    async credits(u: JfUser, id: string) { calls.push({ fn: 'credits', user: u }); const c = state.credits[id]; return { people: (c?.people ?? []).map((p) => ({ ...p, image: false })), studios: [], tags: [] }; },
     capabilities: { libraryFeatures: true },
     libraryFeatures: async (start: number, limit: number) => features().slice(start, start + limit),
   };

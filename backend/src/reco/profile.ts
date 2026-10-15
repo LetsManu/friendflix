@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import type { Ctx } from '../ctx.js';
 import { homeGens } from '../homegen.js';
+import { hourIn, timeBucket, TIME_BUCKETS, type TimeBucket } from './context.js';
 import type { ItemDto } from '../media/types.js';
 import type { JfUser, ProfileRow } from '../types.js';
 import { addScaled, normalize, topDims, vecFromJson, vecToJson, weightsSignature, type FeatureRow, type Index, type SparseVec } from './vectors.js';
@@ -31,6 +32,12 @@ export interface TastePrefs {
   genres: Record<string, number>;
   /** share of the positive weight that came from rewatching */
   rewatchShare: number;
+  /** R3: share of the positive weight by original language of the title (top 5; the index does not know the language of every title) */
+  languages?: Record<string, number>;
+  /** R3: share of the series the profile started that it dropped or abandoned; null = fewer than 3 started series */
+  dropRate?: number | null;
+  /** R3: the profile's own plays by time bucket: how many, and the genre mix per bucket and overall (numbers only) */
+  timeOfDay?: { n: Record<TimeBucket, number>; genres: Record<TimeBucket, Record<string, number>>; overall: Record<string, number> } | null;
 }
 
 export interface Taste {
@@ -43,7 +50,14 @@ export interface Taste {
   /** series and films the profile has played or started (episodes rolled up into their series) */
   seen: Set<string>;
   prefs: TastePrefs;
+  /** R3: the titles that weigh most in the positive vector, strongest first (w relative to the strongest, 0..1): seeds for seedless surfaces and for explanations */
+  anchors?: Array<{ id: string; w: number }>;
 }
+
+/** One play of a title by the profile (episodes rolled up into their series), when it last happened (ms). */
+export interface PlayAt { item: string; at: number }
+
+const ANCHORS_KEPT = 8;
 
 const DAY_MS = 86_400_000;
 
@@ -61,7 +75,7 @@ const anime = (r: FeatureRow) => r.genres.includes('anime') || r.tags.includes('
  */
 export function buildTaste(
   signals: readonly Signal[], seen: ReadonlySet<string>, lookup: { vec(id: string): SparseVec | undefined; row(id: string): FeatureRow | undefined },
-  c: RecoCoefficients, now = Date.now(),
+  c: RecoCoefficients, now = Date.now(), plays: readonly PlayAt[] = [],
 ): Taste {
   const net = new Map<string, number>();
   const rewatch = new Map<string, number>();
@@ -77,13 +91,17 @@ export function buildTaste(
   const genreW = new Map<string, number>();
   const runtimes: Array<[number, number]> = [];
   let posTotal = 0, animeW = 0, rewatchW = 0;
+  const langW = new Map<string, number>();
+  const anchorW: Array<[string, number]> = [];
   for (const [id, w] of net) {
     const v = lookup.vec(id);
     if (w > 0) {
       posTotal += w;
       rewatchW += Math.min(w, rewatch.get(id) ?? 0);
+      if (v) anchorW.push([id, w]);
       const r = lookup.row(id);
       if (r) {
+        if (r.original_language) langW.set(r.original_language, (langW.get(r.original_language) ?? 0) + w);
         if (anime(r)) animeW += w;
         for (const g of r.genres) genreW.set(g, (genreW.get(g) ?? 0) + w / r.genres.length);
         if (r.runtime_min) runtimes.push([r.runtime_min, w]);
@@ -101,10 +119,46 @@ export function buildTaste(
     const median = runtimes.find(([, w]) => (acc += w) >= half)![0];
     runtimeBand = median < 40 ? 'short' : median < 100 ? 'medium' : 'long';
   }
+  const languages = Object.fromEntries([...langW.entries()].sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : 1)).slice(0, 5).map(([l, x]) => [l, share(x)]));
+  anchorW.sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : 1));
+  const anchors = anchorW.slice(0, ANCHORS_KEPT).map(([id, w]) => ({ id, w: Math.round((w / anchorW[0]![1]) * 1000) / 1000 }));
   return {
-    pos: normalize(pos), neg: normalize(neg), weighted: counted.size, cold: counted.size < c.profile.coldStart, seen: new Set(seen),
-    prefs: { animeShare: share(animeW), runtimeBand, genres, rewatchShare: share(rewatchW) },
+    pos: normalize(pos), neg: normalize(neg), weighted: counted.size, cold: counted.size < c.profile.coldStart, seen: new Set(seen), anchors,
+    prefs: { animeShare: share(animeW), runtimeBand, genres, rewatchShare: share(rewatchW), languages, dropRate: dropRate(signals, lookup), timeOfDay: timeOfDay(plays, lookup) },
   };
+}
+
+/** Share of the started series that the profile dropped or abandoned early; null with fewer than 3 started series. */
+function dropRate(signals: readonly Signal[], lookup: { row(id: string): FeatureRow | undefined }): number | null {
+  const started = new Set<string>(), lost = new Set<string>();
+  for (const s of signals) {
+    if (lookup.row(s.item)?.type !== 'Series') continue;
+    if (s.kind === 'seriesCompletion' || s.kind === 'abandonedEarly' || s.kind === 'dropped') started.add(s.item);
+    if (s.kind === 'abandonedEarly' || s.kind === 'dropped') lost.add(s.item);
+  }
+  return started.size >= 3 ? Math.round((lost.size / started.size) * 1000) / 1000 : null;
+}
+
+/** The profile's plays by time bucket (instance time zone): count and genre mix per bucket, and the genre mix overall. Null without plays. */
+function timeOfDay(plays: readonly PlayAt[], lookup: { row(id: string): FeatureRow | undefined }): TastePrefs['timeOfDay'] {
+  const n = { morning: 0, afternoon: 0, evening: 0, night: 0 } as Record<TimeBucket, number>;
+  const per = { morning: new Map<string, number>(), afternoon: new Map<string, number>(), evening: new Map<string, number>(), night: new Map<string, number>() } as Record<TimeBucket, Map<string, number>>;
+  const all = new Map<string, number>();
+  let total = 0;
+  for (const p of plays) {
+    const r = lookup.row(p.item);
+    if (!r?.genres.length) continue;
+    const b = timeBucket(hourIn(p.at));
+    n[b]++;
+    total++;
+    for (const g of r.genres) {
+      per[b].set(g, (per[b].get(g) ?? 0) + 1 / r.genres.length);
+      all.set(g, (all.get(g) ?? 0) + 1 / r.genres.length);
+    }
+  }
+  if (!total) return null;
+  const shares = (m: Map<string, number>, div: number) => Object.fromEntries([...m].sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : 1)).slice(0, 8).map(([g, x]) => [g, Math.round((x / div) * 1000) / 1000]));
+  return { n, genres: Object.fromEntries(TIME_BUCKETS.map((b) => [b, shares(per[b], Math.max(1, n[b]))])) as Record<TimeBucket, Record<string, number>>, overall: shares(all, total) };
 }
 
 // ----------------------------------------------------------------------------------------------------------------------- signals
@@ -124,7 +178,7 @@ interface Group { series: boolean; played: Set<string>; maxPct: number; lastAt: 
  * identity (history, favorites; read with the viewer's token). Per-account sources (stars, viewing time for rewatches) have no profile
  * column, so they count for the owner profile only. Failures of the media server count as "no data", never as an error.
  */
-export async function gatherSignals(ctx: Pick<Ctx, 'db' | 'jf'>, user: JfUser, profile: RecoProfile, c: RecoCoefficients, now = Date.now()): Promise<{ signals: Signal[]; seen: Set<string> }> {
+export async function gatherSignals(ctx: Pick<Ctx, 'db' | 'jf'>, user: JfUser, profile: RecoProfile, c: RecoCoefficients, now = Date.now()): Promise<{ signals: Signal[]; seen: Set<string>; plays: PlayAt[] }> {
   const [thumbs, watchlist, dropped, ratings, history, favorites] = await Promise.all([
     ctx.db.query<{ item_id: string; value: number; at: Date }>('select item_id, value, created_at as at from thumbs where profile_id=$1', [profile.id]),
     ctx.db.query<{ item_id: string; at: Date }>('select item_id, added_at as at from watchlist where profile_id=$1', [profile.id]),
@@ -195,12 +249,13 @@ export async function gatherSignals(ctx: Pick<Ctx, 'db' | 'jf'>, user: JfUser, p
     if (rewatched.has(root)) out.push({ item: root, kind: 'rewatch', weight: s.rewatch, at });
   }
   for (const root of favored) out.push({ item: root, kind: 'favorite', weight: s.favorite, at: groups.get(root)?.lastAt || now - c.profile.favoriteAgeDays * DAY_MS });
-  return { signals: out, seen };
+  const plays: PlayAt[] = [...groups].filter(([, g]) => g.lastAt > 0).map(([item, g]) => ({ item, at: g.lastAt }));
+  return { signals: out, seen, plays };
 }
 
 // ------------------------------------------------------------------------------------------------------------------------ cache
 
-interface Stored { v: 1; pos: Record<string, number>; neg: Record<string, number>; weighted: number; cold: boolean; seen: string[]; prefs: TastePrefs }
+interface Stored { v: 2; pos: Record<string, number>; neg: Record<string, number>; weighted: number; cold: boolean; seen: string[]; prefs: TastePrefs; anchors: Array<{ id: string; w: number }> }
 
 const cacheKey = (profileId: string, ver: string, gens: string, sig: string) => `reco:taste:${profileId}:${ver}:${gens}:${sig}`;
 
@@ -216,16 +271,16 @@ export async function tasteProfile(ctx: Pick<Ctx, 'db' | 'jf' | 'kv'>, user: JfU
   if (hit) {
     try {
       const o = JSON.parse(hit) as Stored;
-      if (o.v === 1) return { pos: vecFromJson(o.pos), neg: vecFromJson(o.neg), weighted: o.weighted, cold: o.cold, seen: new Set(o.seen), prefs: o.prefs };
+      if (o.v === 2) return { pos: vecFromJson(o.pos), neg: vecFromJson(o.neg), weighted: o.weighted, cold: o.cold, seen: new Set(o.seen), prefs: o.prefs, anchors: o.anchors };
     } catch {
       // corrupt entry: rebuild
     }
   }
-  const { signals, seen } = await gatherSignals(ctx, user, profile, c, now);
-  const built = buildTaste(signals, seen, { vec: (id) => index.vecs.get(id), row: (id) => index.rows.get(id) }, c, now);
+  const { signals, seen, plays } = await gatherSignals(ctx, user, profile, c, now);
+  const built = buildTaste(signals, seen, { vec: (id) => index.vecs.get(id), row: (id) => index.rows.get(id) }, c, now, plays);
   // the stored and the returned vector are the same one: top dimensions only, re-normalised
   const taste: Taste = { ...built, pos: normalize(topDims(built.pos, c.profile.topDims)), neg: normalize(topDims(built.neg, c.profile.topDims)) };
-  const stored: Stored = { v: 1, pos: vecToJson(topDims(taste.pos, c.profile.topDims)), neg: vecToJson(topDims(taste.neg, c.profile.topDims)), weighted: taste.weighted, cold: taste.cold, seen: [...taste.seen], prefs: taste.prefs };
+  const stored: Stored = { v: 2, pos: vecToJson(topDims(taste.pos, c.profile.topDims)), neg: vecToJson(topDims(taste.neg, c.profile.topDims)), weighted: taste.weighted, cold: taste.cold, seen: [...taste.seen], prefs: taste.prefs, anchors: taste.anchors ?? [] };
   await ctx.kv.set(key, JSON.stringify(stored), c.profile.cacheTtlSeconds).catch(() => undefined);
   return taste;
 }

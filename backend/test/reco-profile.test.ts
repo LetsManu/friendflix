@@ -60,6 +60,27 @@ describe('maths', () => {
     expect(buildTaste([], new Set(), look({}), c, NOW)).toMatchObject({ weighted: 0, cold: true, prefs: { genres: {}, runtimeBand: null } });
   });
 
+  it('R3: anchors (strongest positive titles), language shares, drop rate and time-of-day mix', () => {
+    const R = (type: 'Movie' | 'Series', genres: string[], original_language: string): Partial<FeatureRow> => ({ type, genres, tags: [], original_language });
+    const rows = { a: R('Series', ['drama'], 'en'), b: R('Series', ['comedy'], 'en'), d: R('Series', ['drama'], 'ja'), e: R('Series', ['drama'], 'ja'), m: R('Movie', ['comedy'], 'en') };
+    const vs = Object.fromEntries(Object.keys(rows).map((k) => [k, vec({ [k]: 1 })]));
+    const signals = [sig('a', 3, 0, 'seriesCompletion'), sig('b', 1.5, 0, 'seriesCompletion'), sig('d', -1, 0, 'abandonedEarly'), sig('e', -2, 0, 'dropped'), sig('m', 1, 0, 'finishedMovie')];
+    const at = (h: number) => Date.UTC(2026, 8, 20, h);
+    const plays = [at(20), at(21), at(22), at(20), at(21), at(9)].map((t, n) => ({ item: ['a', 'b', 'a', 'b', 'm', 'a'][n]!, at: t }));
+    const tz = process.env.TZ;
+    process.env.TZ = 'UTC'; // the time buckets follow the instance's time zone
+    const t = buildTaste(signals, new Set(), look(vs, rows), c, NOW, plays);
+    if (tz === undefined) delete process.env.TZ; else process.env.TZ = tz;
+    expect(t.anchors).toEqual([{ id: 'a', w: 1 }, { id: 'b', w: 0.5 }, { id: 'm', w: 0.333 }]); // negatives are no anchors
+    expect(t.prefs.languages).toEqual({ en: 1 });
+    expect(t.prefs.dropRate).toBeCloseTo(2 / 4, 3); // d and e of the four series started
+    expect(t.prefs.timeOfDay!.n).toEqual({ morning: 1, afternoon: 0, evening: 5, night: 0 });
+    expect(t.prefs.timeOfDay!.genres.evening.comedy).toBeCloseTo(3 / 5, 3);
+    expect(t.prefs.timeOfDay!.overall.drama).toBeCloseTo(3 / 6, 3);
+    // fewer than 3 started series: no drop rate
+    expect(buildTaste([sig('a', 3, 0, 'seriesCompletion')], new Set(), look(vs, rows), c, NOW).prefs.dropRate).toBeNull();
+  });
+
   it('derived preferences: anime share, runtime band, genre shares, rewatch share', () => {
     const rows = {
       a: { genres: ['anime', 'fantasy'], tags: [], runtime_min: 24 }, b: { genres: ['drama'], tags: ['anime'], runtime_min: 30 }, d: { genres: ['drama'], tags: [], runtime_min: 120 },

@@ -160,7 +160,7 @@ Weitere Schalter: `--engines popularity,v1,cooccurrence`, `--exclude-seen` (scho
 
 **Datenbank (`--db`).** Eine einzige Transaktion `READ ONLY`, nur Lesen, die Verbindung wird nie ausgegeben. Positive Interaktionen: `play_seconds` (mindestens 120 s je Titel, `--min-seconds`), Daumen hoch/geliebt, Bewertungen ab 4 Sternen; Daumen runter zählt nicht als Interaktion. Grenzen: `play_seconds` kennt nur das Konto, nicht das Profil (die Wiedergaben zählen für das Hauptprofil), und nur den Tag, nicht die Uhrzeit; Folgen sind eigene Titel. Der Katalog ist die Menge aller Titel mit Interaktionen. Der Wiedergabe-Verlauf des Medienservers wird nicht gelesen.
 
-**Offene Punkte aus der Spezifikation.** Matrixfaktorisierung (ALS) und Replay mit Propensities kommen mit der Exploration (R3b). `shadow` gibt es seit R2 (siehe unten).
+**Offene Punkte aus der Spezifikation.** Matrixfaktorisierung (ALS) ist nicht gebaut (zu dünne Daten für eine Freundesgruppe, Begründung in der Spezifikation 2.2). Replay mit Propensities und die Ablationstabelle gibt es seit R3/R3b (unten). `shadow` gibt es seit R2.
 
 ### Online-Zähler
 
@@ -222,7 +222,7 @@ Code in `backend/src/reco/`. Standard bleibt `RECO_ENGINE=v1`: Es ändert sich n
 
 - **Zeitabfall:** `Gewicht · 0,5^(Alter in Tagen / 120)` (`RECO_HALF_LIFE_DAYS`). Die Signale eines Titels werden nach dem Abfall addiert; die Summe sortiert den Titel in den positiven oder den negativen Vektor (sein Merkmalsvektor, mit |Summe| gewichtet). Beide Vektoren werden L2-normiert; ein Titel ohne Eintrag im Index zählt als Interaktion, trägt aber nichts bei.
 - **Kaltstart:** weniger als 5 Titel mit Gewicht (3-Sterne-Wertungen und doppelte Signale zählen nicht extra) = `cold`. Dann gibt es keine Nachbarn aus dem Profil, die Kandidaten stammen aus `similar()` und, ohne Seed, aus den bestbewerteten Titeln der Bibliothek (Quelle `prior`); die Inhaltsnähe ist 0.
-- **Abgeleitet:** Anime-Anteil, Laufzeitband (kurz unter 40 Minuten, mittel unter 100, lang), die fünf stärksten Genres, Rewatch-Anteil (gebraucht für die Strafe „schon gesehen“). Geräteverteilung und Uhrzeiten (`context_fit`) folgen später.
+- **Abgeleitet:** Anime-Anteil, Laufzeitband (kurz unter 40 Minuten, mittel unter 100, lang), die fünf stärksten Genres, Rewatch-Anteil (gebraucht für die Strafe „schon gesehen“). Daneben seit R3: Sprachanteile, Abbruchquote bei Serien, Tageszeit-Verteilung der Genres und die stärksten Titel („Anker“), siehe unten.
 - **Cache:** Redis `reco:taste:<profil>:<nutzerdaten-version>:<home-generation>:<signatur>`, 6 Stunden. Nutzerdaten-Version und Home-Generation (`bumpHome`) ändern sich bei jedem Abspielen, Daumen, Bewerten, Merken und Verwerfen; die Signatur bei geänderten Gewichten. Der Eintrag enthält nur Zahlen (die 400 stärksten Dimensionen je Vektor) und Titel-Ids, nie einen Titel. `resetTaste()` verwirft die Einträge eines Profils (für „Meine Empfehlungen zurücksetzen“).
 - **Grenzen:** Sterne und Abspielzeiten gehören zum Konto, nicht zum Profil; sie fließen deshalb nur ins Hauptprofil ein. Lesen und Merken sind pro Profil. Der Verlauf hat höchstens 200 Einträge.
 
@@ -235,7 +235,7 @@ Code in `backend/src/reco/`. Standard bleibt `RECO_ENGINE=v1`: Es ändert sich n
 3. `taste_nn`: die 200 nächsten Nachbarn des positiven Profilvektors im Index (Kosinus), ohne schon Gesehenes.
 4. `prior`: nur Kaltstart ohne Seed: die bestbewerteten Titel.
 
-Co-Occurrence, Übergänge, Freunde und Trending kommen mit R3. Erweiterungspunkt: ein `CandidateSource` (`name`, `social`, `run`) wird mit `registerSource()` eingetragen und kann Zahlen (`cooccurrence`, `transition`, `friends`, `trending`, je 0 bis 1) mitgeben, die die Bewertung je Fläche gewichtet. **Quellen mit `social: true` (und die Namen `cooccurrence`, `transition`, `friends`, `trending`) werden für Kinderprofile nie ausgeführt.** Titel, die die Quellen nur als Id kennen, werden mit der Identität des Betrachters nachgeladen; was sie nicht sehen dürfen, fällt weg.
+Co-Occurrence, Übergänge, Freunde, Trending und Frische-Labels sind seit R3 dabei (Abschnitt unten). Erweiterungspunkt: ein `CandidateSource` (`name`, `social`, `run`) wird mit `registerSource()` eingetragen und kann Zahlen (`cooccurrence`, `transition`, `friends`, `trending`, je 0 bis 1) mitgeben, die die Bewertung je Fläche gewichtet. **Quellen mit `social: true` (und die Namen `cooccurrence`, `transition`, `friends`, `trending`) werden für Kinderprofile nie ausgeführt.** Titel, die die Quellen nur als Id kennen, werden mit der Identität des Betrachters nachgeladen; was sie nicht sehen dürfen, fällt weg.
 
 **Bewertung** (`score.ts`):
 
@@ -268,7 +268,92 @@ DATABASE_URL=… node scripts/reco-eval.mjs --db --items items.json --similar si
 
 `RECO_EVAL_DIST=<Verzeichnis>` zeigt auf einen anderen Build. Ohne Build wird v2 übersprungen (Hinweis auf stderr); `--engines v2` bricht dann mit einer Meldung ab. v2 läuft offline mit demselben Code wie im Betrieb (Profilmathematik, Vektoren, Bewertung, MMR; `backend/src/reco/offline.ts`), nur aus dem Datensatz gespeist: Der Index wird aus den Datensatz-Titeln gebaut, `similar()` kommt aus `--similar` (ohne Angabe nehmen die nächsten Nachbarn des Seeds seinen Platz), Signale sind „gesehen“ (+1,0), „Daumen hoch“ (+1,5) und „Daumen runter“ (−4,0) mit Zeitabfall. Zusätzliche Titelmerkmale im Datensatz (alle optional): `tags`, `studios`, `people` (Listen), `runtime` (Minuten), `rating` (0 bis 10), `collection`, `added` (ms). `--items` sollte sie enthalten, sonst kennt v2 nur Genre und Jahr.
 
-Die Ausgabe ergänzt die Tabelle um den Vergleich von v2 mit jeder Basis (Prozentpunkte, `*` = v2 besser) und das Tor aus der Spezifikation: v2 braucht beim NDCG@10 mindestens `--gate-margin` (Standard 0,05 = 5 %) Vorsprung vor **jeder** Basis. Die mitgelieferten Testdaten sind synthetisch (sechs Genre-Cluster) und begünstigen inhaltsbasierte Verfahren; sie prüfen die Mechanik, nicht die Qualität. Aussagekräftig ist der Lauf erst mit den Daten der eigenen Instanz. Das Tor ist nur ein Teil der Freigabe: Dazu kommt die Wiedergabequote nach 2 Wochen im Shadow-/Teilbetrieb (R4). Übergangs-Genauigkeit von v2 enthält noch keine Übergangsquelle (R3).
+Die Ausgabe ergänzt die Tabelle um den Vergleich von v2 mit jeder Basis (Prozentpunkte, `*` = v2 besser) und das Tor aus der Spezifikation: v2 braucht beim NDCG@10 mindestens `--gate-margin` (Standard 0,05 = 5 %) Vorsprung vor **jeder** Basis. Die mitgelieferten Testdaten sind synthetisch (sechs Genre-Cluster) und begünstigen inhaltsbasierte Verfahren; sie prüfen die Mechanik, nicht die Qualität. Aussagekräftig ist der Lauf erst mit den Daten der eigenen Instanz. Das Tor ist nur ein Teil der Freigabe: Dazu kommt die Wiedergabequote nach 2 Wochen im Shadow-/Teilbetrieb (R4).
+
+## Empfehlungs-Engine v2: Quellen, Kontext, Erklärungen (R3)
+
+Gilt für alle Flächen von `recommend()`; der Standard bleibt `RECO_ENGINE=v1`. Neue Dateien in `backend/src/reco/`: `aggregates.ts` (Co-Occurrence und Übergänge), `sources.ts` (Quellen), `context.ts` (Kontext-Faktoren), `explain.ts` (Begründungen). Es gibt keine neuen Umgebungsvariablen; alle Zahlen sind Koeffizienten (`social.*`, `context.*`, `surface.*`) und über `RECO_COEFFS` änderbar.
+
+### Co-Occurrence und Übergänge (`aggregates.ts`)
+
+- **Co-Occurrence:** „Konten, die X gesehen haben, haben auch Y gesehen“. Wert = n(X und Y) / √(n(X)·n(Y)), gezählt über verschiedene Konten (Kosinus, 0 bis 1).
+- **Übergang (Transition):** „Konten, die X zu Ende gesehen haben, haben direkt danach Y begonnen (innerhalb von 7 Tagen)“. Y ist der erste Titel, den das Konto nach der letzten Wiedergabe von X angefangen hat; Titel, die schon während X liefen, zählen nicht. Wert = n(X→Y) / (n(X fertig) + 1).
+- **Nur mit Einwilligung, nur Aggregate:** Es zählen ausschließlich Konten mit `shareHistory` (dieselbe Einstellung wie bei „Diese Woche bei uns“; aus = ausgeschlossen, Voreinstellung aus). Ein Paar zählt erst ab **mindestens 2 verschiedenen Konten** (`social.minSupport`; die Untergrenze 2 lässt sich auch über `RECO_COEFFS` nicht unterschreiten). Die Tabellen enthalten nur Zähler je Titelpaar (stärkste 30 Partner je Titel), keine Konto-Id, keinen Tag, keine Uhrzeit; sie liegen 15 Minuten in Redis (`reco:pairs:…`). Schaltet jemand `shareHistory` aus, ist das Konto spätestens beim nächsten Neuaufbau draußen.
+- **Grundlage:** `play_seconds` der letzten 365 Tage. „Gesehen“ = mindestens 300 Sekunden je Titel (Folgen werden zur Serie gerechnet: über die Folgenzeilen des Hygiene-Scans, sonst über den Medienserver mit der Identität des Betrachters). Grenzen: `play_seconds` kennt das Konto, nicht das Profil, und nur den Tag; eine Wiedergabe unter einem Kinderprofil zählt daher für das Konto (wie bei „Diese Woche bei uns“). Ein „fertig gesehen“-Merkmal gibt es dort nicht; als **Näherung** gilt ein Film ab 70 % seiner Laufzeit und eine Serie ab 3 Folgen Sehzeit (`social.finishRatio`, `social.finishEpisodes`).
+- **Wer bekommt sie:** Quellen `cooccurrence` und `transition` laufen nicht bei Kinderprofilen und nur, wenn die Fläche dem Signal ein Gewicht gibt. Die Co-Occurrence nimmt den Seed; Flächen ohne Seed (`taste`, `home_rows`) nehmen die „Anker“ des Profils (seine 5 stärksten Titel). Übergänge brauchen einen Seed (den eben fertig gesehenen Titel).
+- **`transitionsFor(ctx, itemId, { user, profile }, { limit? })`** (`reco/aggregates.ts`) ist die Schnittstelle für den Post-Play-Bildschirm (wird in R4 angeschlossen): „Was Leute danach sehen“, stärkste zuerst, je mit Unterstützung (Anzahl Konten) und Anteil, mit der Identität des Betrachters aufgelöst, ohne Daumen-runter und ohne schon Gesehenes. Eine Folge zählt als ihre Serie; ein unsichtbarer Titel ergibt eine leere Liste; **ein Kinderprofil bekommt immer eine leere Liste**, ohne dass die Daten gelesen werden.
+
+### Freunde, Trending, Frische
+
+- **Freunde** (`friends`): die vorhandenen Abfragen, jetzt in `backend/src/discoverData.ts` (`friendsRatedRows`, `recommendationRows`; die Routen `friends-rated` und `recommendations` benutzen sie unverändert). Freundes-Bewertungen ab 4 Sternen nur von Konten mit `shareRatings` (Voreinstellung an), Empfehlungen, die Freunde diesem Konto geschickt haben. Signal: 4 Sterne 0,5, 5 Sterne 1,0 (plus 0,1 je weiterem Freund, höchstens 0,2), eine direkte Empfehlung 1,0. Namen erscheinen nur in der Begründung und nur so weit diese Einwilligungen reichen; die Notiz einer Empfehlung nie. Nie für Kinderprofile.
+- **Trending** (`trending`): die Aggregate von „Diese Woche bei uns“ (jetzt `trendingItems()` in `discoverData.ts`, die Route ruft sie auf; mindestens 2 Zuschauer, `shareHistory`). Signal = ln(1+Zuschauer) / ln(1+Maximum). **Der Anteil von Trending am Score ist auf jeder Fläche höchstens 10 %** (`score.trendingCap`): `trending ≤ 0,1/0,9 · (Rest des Scores)`, also höchstens 10 % von Rest + Trending vor den Strafen; `detail_similar` gibt ihm gar kein Gewicht. Ein Test erzwingt das auf allen fünf Flächen mit absichtlich riesigem Gewicht. Nie für Kinderprofile.
+- **Frische** (`fresh`): die zuletzt hinzugefügten Titel (`DateLastContentAdded`) mit den Labels aus `fresh.ts` (`badgesFor`): neue Serie und neuer Film, bei einer Serie, die das Profil schon sieht, nur „neue Staffel“. Ein gelabelter Titel zählt mit mindestens 0,8 als frisch (`score.freshLabelBoost`), und eine neue Staffel einer gesehenen Serie bekommt die Strafe „schon gesehen“ nicht (sie ist neuer Inhalt). Das ist keine Sozialquelle und läuft auch bei Kinderprofilen, mit deren Token und Altersgrenze.
+
+### Kontext-Faktoren (`context.ts`)
+
+Weiche Multiplikatoren auf den Score, **nie Filter**: Jeder Faktor liegt um 1, das Produkt wird auf [0,75; 1,2] begrenzt (`context.min`, `context.max`), und ohne Daten ist ein Faktor genau 1. 0 schaltet einen Faktor ab (`context.timeOfDay`, `.device`, `.language`, `.runtime`, `.status`).
+
+| Faktor | Wirkung | Daten |
+|---|---|---|
+| Tageszeit (Eimer: Morgen 5–11, Nachmittag 12–16, Abend 17–22, Nacht 23–4, in der Zeitzone der Instanz `TZ`) | bis ±15 %: Genres, die das Profil in diesem Eimer öfter sieht als sonst, steigen (erst ab 5 Wiedergaben im Eimer) | eigene Wiedergaben des Profils, nur Zahlen im Taste-Cache |
+| Gerät | bis ±10 %: kurze Titel passen zu Handys (≤ 45 min +1, ≥ 150 min −1), lange zu Fernsehern (≥ 100 min +0,5, ≤ 30 min −0,5) | Gerät des Aufrufers (`device`), sonst die Geräteverteilung der Instanz zu dieser Tageszeit aus `playback_timings` (anonym, 14 Tage, mindestens 30 Starts je Eimer, 1 h gecacht) |
+| Sprache | bis ±10 %: Anteil der Originalsprache des Titels an dem, was das Profil mag; ohne Verlauf ein halber Bonus für die UI-Sprache | `original_language` des Index (bei Jellyfin leer, dann 1), `profile_prefs.language` |
+| Laufzeit gegen Zeitbudget | bis −15 %: über dem Budget der Stunde (Tag 240 min, 17–20 Uhr 180, 21–22 Uhr 120, 23–4 Uhr 90); Serien zählen mit der Folgenlänge | `runtime_min` |
+| Serienstatus gegen Abbruchverhalten | bis ±10 %: Profile, die mindestens 30 % ihrer begonnenen Serien abgebrochen haben, bekommen laufende Serien gedämpft und beendete leicht angehoben (mindestens 3 begonnene Serien nötig) | `dropped`, frühes Abbrechen |
+
+### Gewichte je Fläche
+
+`postplay`, `because`, `taste`, `detail_similar`, `home_rows` haben je einen Satz (`DEFAULT_RECO_COEFFICIENTS.surface`). Seit R3 neu: **Post-Play gewichtet Übergänge (0,6) und Seed-Nähe (0,5) am höchsten**, `because` und `detail_similar` ohne Übergänge, `taste` ohne Seed; Freunde gehen mit 0,05 in `postplay` und `because` ein (dort gibt es eigene Zeilen), mit 0,15 in `taste` und `home_rows`, nicht in `detail_similar`. Die Werte sind begründete Startwerte, keine aus Messungen abgeleiteten; die mitgelieferten Testdaten können sie nicht entscheiden (siehe Ablation). Abstimmen soll R5 mit den Daten der eigenen Instanz.
+
+### Begründungen (`explain.ts`)
+
+Jeder Titel trägt `reason = { seed, traits }`:
+
+- **`seed`** (`{ id, name }` oder `null`): der Titel, der am meisten beigetragen hat. Mit Seed (Post-Play, „Weil du …“, Detailseite) ist es der Seed. Ohne Seed oder bei einer Crowd-Quelle der Anker, der die Co-Occurrence geliefert hat, sonst der stärkste Anker des Profils mit dem größten Beitrag (Gewicht · Kosinus zum Titel). Ein Kaltstart-Profil hat keinen.
+- **`traits`**: bis zu 2 gemeinsame Eigenschaften, als `art` oder `art:wert`, in dieser Reihenfolge: `friends[:Anna, Ben]` (Freunde haben bewertet oder empfohlen, Namen nur mit Einwilligung), `next` („Leute sehen danach“, Übergang), `together` („wer das sah, sah auch“, Co-Occurrence; nicht in der Spezifikationsliste, weil dort kein Eintrag für Co-Occurrence vorgesehen war), `universe` (gleiche Sammlung), `director[:Name]`, `actor[:Name]`, `studio:Name`, `genre:name` (das seltenste gemeinsame Genre). Je Art höchstens eine. Namen von Personen stammen aus den Besetzungsdaten des Seeds (ein Aufruf `credits()` je Seed, höchstens 3 je Aufruf, mit dem Token des Betrachters); ohne sie steht nur die Art.
+- Weder Titel noch Namen gelangen in Metriken oder Logs.
+
+### Kinderprofile
+
+Nie Co-Occurrence, Übergänge, Freunde oder Trending (die Quellen sind `social` und werden in `gatherCandidates` übersprungen; jede prüft es zusätzlich selbst), immer die Altersgrenze (eigener Filter plus Token des Kindes bei jedem Aufruf), keine Begründung mit Freunden. Tests: `backend/test/reco-sources.test.ts` (Quellen, Altersgrenze, nur Kind-Token, keine Abfrage von Wiedergaben, Bewertungen oder Empfehlungen anderer Konten).
+
+### Ablation: welche Bestandteile den NDCG@10 bewegen
+
+```
+node scripts/reco-eval.mjs --ablation
+```
+
+v2 wird mit jedem Bestandteil einzeln abgeschaltet und gegen v2 „wie es ist“ gehalten. Die Tabelle: NDCG@10 und HitRate@10 der Fläche „Startseite“, Übergangs-Genauigkeit der Fläche „was kommt danach“, Diversität; `d …` = ohne Bestandteil minus mit. Urteil: „helps“, wenn NDCG@10 oder Übergangs-Genauigkeit ohne den Bestandteil um mehr als ein Profil (1/Profile) fallen, „hurts“ wenn sie steigen, „trade-off“, wenn sie steigen, die Listen aber an Diversität verlieren, sonst „no effect“. Nicht auswertbar mit einem Datensatz (er hat weder Uhrzeit noch Gerät, Freunde oder Bibliotheksdaten): Kontext-Faktoren, Freunde-Signal, Frische-Labels.
+
+Lauf auf den mitgelieferten Testdaten (`node scripts/reco-eval.mjs --ablation`):
+
+```
+ablation of engine v2: each component switched off in turn (profiles evaluated: 36, k=10)
+
+left out            NDCG@10     d NDCG HitRate@10      d Hit Transition    d Trans  Diversity      d Div  verdict
+(v2 as is)            0.579                 69.4%                 66.7%                 0.934           
+affinity              0.383     -0.196      52.8%     -0.167      63.9%     -0.028      0.944     +0.010  helps
+seed                  0.579      0.000      69.4%      0.000      72.2%     +0.056      0.934      0.000  hurts
+cooccurrence          0.539     -0.040      66.7%     -0.028      66.7%      0.000      0.936     +0.003  helps
+transition            0.579      0.000      69.4%      0.000      66.7%      0.000      0.934      0.000  no effect
+quality               0.578     -0.001      69.4%      0.000      66.7%      0.000      0.934      0.000  no effect
+fresh                 0.579      0.000      69.4%      0.000      66.7%      0.000      0.934      0.000  no effect
+trending              0.576     -0.003      72.2%     +0.028      58.3%     -0.083      0.931     -0.002  helps
+mmr                   0.696     +0.117      91.7%     +0.222      66.7%      0.000      0.602     -0.332  trade-off
+
+verdict: "helps" = NDCG@10 or transition accuracy falls by more than 0.0278 (one profile's worth) without the component, "hurts" = it rises,
+"trade-off" = it rises but the lists lose diversity (the component buys diversity), "mixed" = one up, one down, else "no effect"
+not evaluable on a dataset: context features (time of day, device, language, runtime budget, series status); friends signal; fresh labels of the media server
+```
+
+Lesehilfe und Grenzen:
+
+- Die mitgelieferten Testdaten sind klein (36 ausgewertete Profile, 1 Profil ≈ 0,028 NDCG) und inhaltsgetrieben; Unterschiede unter einem Profil sind Rauschen. Das Bild zeigt die Mechanik, nicht die Qualität auf einer echten Instanz.
+- Das Taste-Profil (`affinity`) trägt fast alles (NDCG@10 −0,20 ohne). Co-Occurrence hilft (−0,04 ohne). Trending bewegt den NDCG@10 nicht (−0,003), die Übergangs-Genauigkeit um 3 Profile (Rauschen oder echt, kann dieser Datensatz nicht sagen). Qualität und Frische bewegen auf diesen Daten nichts (keine Bewertungen, keine Aufnahmedaten).
+- Einzeln abgeschaltet verdeckt die Tabelle Wechselwirkungen: schaltet man Co-Occurrence **und** Trending gemeinsam ab, steigt der NDCG@10 der Startseite auf den R2-Wert 0,648 (die beiden Crowd-Signale bringen auf diesen inhaltsgetriebenen Daten Titel in die Liste, die das Profil nicht vorhersagt). Das Tor (v2 gegen die beste Basis, Co-Occurrence 0,489) besteht weiter: 0,579 gegen 0,489.
+- `transition` zeigt hier keine Wirkung, weil auf den Testdaten nur 2 der 36 gesuchten Titel ein gestützter Nachfolger des Seeds sind. Dass Übergänge die Folge auf sequentiellen Daten vorhersagen, prüft ein eigener Test (`scripts/reco-eval.test.mjs`: Ketten a1→a2→a3→a4: Übergangs-Genauigkeit 100 %, ohne Übergänge und Co-Occurrence 0 %).
+- `seed` verschlechtert die Übergangs-Genauigkeit der Testdaten um 2 Profile; die Spezifikation verlangt trotzdem, dass Post-Play die Seed-Nähe hoch gewichtet. Entscheiden soll der Lauf mit `--db` auf echten Daten (R5).
+- `mmr` kostet Genauigkeit und kauft Diversität (0,60 → 0,93): so gedacht.
 
 ## Kinderprofile
 
