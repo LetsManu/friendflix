@@ -52,7 +52,7 @@ describe('the setup gate while setup is incomplete', () => {
     expect(post.statusCode).toBe(503);
     // the in-app sign-in (Block 23 phase 3) stays gated: during setup the only sign-in is the first admin's at the IdP (preflight D9)
     expect((await env.app.inject('/auth/flow/config')).json()).toEqual({ error: 'setup_required' });
-    for (const url of ['/auth/flow/start', '/auth/flow/answer', '/auth/flow/cancel', '/%61uth/flow/start']) {
+    for (const url of ['/auth/flow/start', '/auth/flow/answer', '/auth/flow/cancel', '/auth/flow/resume', '/%61uth/flow/start', '/%61uth/flow/resume']) {
       const r = await env.app.inject({ method: 'POST', url, payload: { kind: 'login' } });
       expect([r.statusCode, r.json()], url).toEqual([503, { error: 'setup_required' }]);
     }

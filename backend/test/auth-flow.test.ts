@@ -80,7 +80,7 @@ describe('/auth/flow', () => {
   beforeEach(async () => {
     env.ctx.cfg = { ...env.ctx.cfg, ...AK, LOGIN_UI: undefined, AUTHENTIK_ENROLL_FLOW: undefined };
     useFake(loginStages());
-    for (const k of await env.kv.keys('flowfail:')) await env.kv.del(k); // each test counts its own failures
+    for (const k of [...(await env.kv.keys('flowfail:')), ...(await env.kv.keys('recoverymail:'))]) await env.kv.del(k); // each test counts its own
   });
   afterEach(() => {
     vi.useRealTimers();
@@ -430,6 +430,8 @@ describe('/auth/flow', () => {
     let cur = (await b.post('answer', { step: step.step, stage: 'identify', identifier: 'carla@example.com' })).json() as { step: string; stage: string };
     expect(cur).toMatchObject({ stage: 'email-sent', to: 'c•••@example.com' });
     for (let i = 0; i < 11; i++) {
+      // past the one-resend-per-minute gap and the recovery e-mail budget (Task 5): this test is about the failure counter only
+      for (const k of [...(await env.kv.keys('akflow:resend:')), ...(await env.kv.keys('recoverymail:'))]) await env.kv.del(k);
       const r = await b.post('answer', { step: cur.step, stage: 'email-sent' });
       cur = r.json();
       expect(cur.stage).toBe('email-sent');
@@ -576,6 +578,336 @@ describe('/auth/flow', () => {
   });
 });
 
+// Block 23 phase 3, Task 5: password recovery. "Passwort vergessen?" answers the recovery flow's identification itself; the e-mail
+// link leads to /reset, whose button resumes Authentik's own recovery flow with the token (never checked by FriendFlix itself).
+describe('/auth/flow recovery (Task 5)', () => {
+  let env: TestEnv;
+  let ak: FakeAuthentik;
+  const logs: string[] = [];
+  /** obviously fake: shaped like Authentik's 60-character FlowToken key only in its alphabet */
+  const TOKEN = 'fakeFlowTokenForTestsOnly0000000000000000000000000000000001';
+  const LINK = '00000000-0000-4000-8000-000000000001';
+  const NEW_PW = 'New-Passw0rd-placeholder';
+  const useFake = (stages: FakeStage[]) => {
+    ak = fakeAuthentik(stages, flowsRoute);
+    env.ctx.fetchImpl = ak.fetch;
+    return ak;
+  };
+  /** the link interstitial (answered with its token only) → optional MFA → new password ×2 → end */
+  const resumeStages = (mfa?: FakeStage): FakeStage[] => [
+    { challenge: fixture('consent-link'), answer: (b: { token?: string }) => (b.token === LINK ? true : fixture('consent-link')) },
+    ...(mfa ? [mfa] : []),
+    { challenge: fixture('prompt-recovery'), answer: (b: { password?: string; password_repeat?: string }) => (b.password === NEW_PW && b.password_repeat === NEW_PW ? true : fixture('prompt-mismatch')), hops: 2 },
+  ];
+  const totpMfa: FakeStage = { challenge: fixture('validate-all'), answer: (b: { code?: string }) => (b.code === '123456' ? true : fixture('validate-code-invalid')) };
+  const executorCalls = () => ak.calls.filter((c) => c.path.startsWith('/api/v3/flows/executor/default-recovery-flow/'));
+  const clearKeys = async (...prefixes: string[]) => {
+    for (const p of prefixes) for (const k of await env.kv.keys(p)) await env.kv.del(k);
+  };
+
+  beforeAll(async () => {
+    env = await makeEnv({}, { logger: { stream: { write: (m: string) => { logs.push(m); } }, level: 'trace' } });
+  });
+  beforeEach(async () => {
+    env.ctx.cfg = { ...env.ctx.cfg, ...AK, LOGIN_UI: undefined };
+    useFake(recoveryStages());
+    await clearKeys('flowfail:', 'recoverymail:', 'akflow:resend:');
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
+  afterAll(() => env.close());
+
+  async function resumed(b = browser(env), token = TOKEN) {
+    await b.config();
+    const r = await b.post('resume', { token });
+    return { b, r, step: r.json() as { stage: string; step: string } };
+  }
+
+  it('forgot password with identifier → email-sent with masked address', async () => {
+    const b = browser(env);
+    await b.config();
+    const r = await b.post('start', { kind: 'recovery', identifier: 'Carla@Example.com' });
+    expect(r.statusCode).toBe(200);
+    expect(r.json()).toEqual({ stage: 'email-sent', step: expect.stringMatching(/^[A-Za-z0-9_-]{20,24}$/), to: 'C•••@example.com' });
+    // the backend answered the identification itself; the flow continues in this browser (resend)
+    expect(executorPosts(ak).map((c) => c.body)).toEqual([{ uid_field: 'Carla@Example.com' }]);
+    expect(b.cookies.ff_flow).toBeTruthy();
+    // a username is not shown back
+    useFake(recoveryStages());
+    expect((await b.post('start', { kind: 'recovery', identifier: 'carla' })).json()).toMatchObject({ stage: 'email-sent', to: null });
+    // an identifier only belongs to a recovery start
+    for (const body of [{ kind: 'login', identifier: 'carla' }, { kind: 'recovery', identifier: '' }, { kind: 'recovery', identifier: 'x'.repeat(255) }]) {
+      expect((await b.post('start', body)).json(), JSON.stringify(body)).toEqual({ error: 'bad_request' });
+    }
+  });
+
+  it('no enumeration: an unknown identifier gets the same answer, also when Authentik does not pretend', async () => {
+    // Authentik's default: the e-mail stage for everyone (fixtures from 2026.8.3)
+    const known = await (async () => { const b = browser(env); await b.config(); return (await b.post('start', { kind: 'recovery', identifier: 'anna@example.com' })).json(); })();
+    useFake(recoveryStages());
+    const unknown = await (async () => { const b = browser(env); await b.config(); return (await b.post('start', { kind: 'recovery', identifier: 'nobody@example.com' })).json(); })();
+    expect({ ...known, step: 's' }).toEqual({ stage: 'email-sent', step: 's', to: 'a•••@example.com' });
+    expect({ ...unknown, step: 's' }).toEqual({ stage: 'email-sent', step: 's', to: 'n•••@example.com' });
+    // an identification stage without "pretend user exists" refuses unknown names: the answer is still "e-mail sent", nothing counts as a
+    // failure, and the resend never reaches Authentik (the name stays unconfirmed)
+    const refuse = { ...fixture('identification-recovery'), response_errors: { non_field_errors: [{ string: 'Failed to authenticate.', code: 'invalid' }] } };
+    useFake([{ challenge: fixture('identification-recovery'), answer: () => refuse }, { challenge: fixture('email-sent'), answer: () => fixture('email-resent') }]);
+    const b = browser(env);
+    await b.config();
+    const r = await b.post('start', { kind: 'recovery', identifier: 'nobody@example.com' });
+    expect({ ...r.json(), step: 's' }).toEqual({ stage: 'email-sent', step: 's', to: 'n•••@example.com' });
+    expect(await env.kv.get(flowFailKey('nobody@example.com'))).toBeNull();
+    await clearKeys('akflow:resend:');
+    const posts = executorPosts(ak).length;
+    const again = await b.post('answer', { step: r.json().step, stage: 'email-sent' });
+    expect({ ...again.json(), step: 's' }).toEqual({ stage: 'email-sent', step: 's', to: 'n•••@example.com' });
+    expect(executorPosts(ak)).toHaveLength(posts);
+    // the same via the identify screen
+    useFake([{ challenge: fixture('identification-recovery'), answer: () => refuse }]);
+    const { b: b2, step } = await (async () => { const x = browser(env); await x.config(); return { b: x, step: (await x.post('start', { kind: 'recovery' })).json() }; })();
+    const viaScreen = await b2.post('answer', { step: step.step, stage: 'identify', identifier: 'nobody' });
+    expect({ ...viaScreen.json(), step: 's' }).toEqual({ stage: 'email-sent', step: 's', to: null });
+  });
+
+  it('resend within 60 s → rate_limited, no Authentik call; after 60 s it re-sends', async () => {
+    const b = browser(env);
+    await b.config();
+    const sent = (await b.post('start', { kind: 'recovery', identifier: 'dora@example.com' })).json() as { step: string };
+    const posts = executorPosts(ak).length;
+    const early = await b.post('answer', { step: sent.step, stage: 'email-sent' });
+    expect(early.statusCode).toBe(200);
+    expect(early.json()).toEqual({ stage: 'email-sent', step: expect.any(String), to: 'd•••@example.com', errors: ['rate_limited'] });
+    expect(executorPosts(ak)).toHaveLength(posts);
+    // the refused resend used its step up: the new step id answers
+    expect((await b.post('answer', { step: sent.step, stage: 'email-sent' })).statusCode).toBe(409);
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(Date.now() + 61_000);
+    const later = await b.post('answer', { step: early.json().step, stage: 'email-sent' });
+    expect(later.json()).toEqual({ stage: 'email-sent', step: expect.any(String), to: 'd•••@example.com' });
+    expect(executorPosts(ak).slice(posts).map((c) => c.body)).toEqual([{}]);
+    // and the gap starts again
+    expect((await b.post('answer', { step: later.json().step, stage: 'email-sent' })).json()).toMatchObject({ errors: ['rate_limited'] });
+  });
+
+  it('recovery e-mails are limited per account (any spelling, any IP) and per IP', async () => {
+    const send = async (identifier: string, b = browser(env)) => {
+      useFake(recoveryStages()); // a fresh flow each time
+      await b.config();
+      return (await b.post('start', { kind: 'recovery', identifier })).json() as { stage: string; errors?: string[] };
+    };
+    for (let i = 0; i < 5; i++) expect(await send(i % 2 ? 'Emil@Example.com' : 'emil@example.com')).toMatchObject({ stage: 'email-sent' });
+    const sixth = await send(' EMIL@example.com');
+    // the identify screen comes back with the error; Authentik is not asked
+    expect(sixth).toMatchObject({ stage: 'identify', errors: ['rate_limited'] });
+    expect(executorPosts(ak)).toHaveLength(0);
+    // through the identify screen: the same budget
+    useFake(recoveryStages());
+    const b = browser(env);
+    await b.config();
+    const id = (await b.post('start', { kind: 'recovery' })).json() as { step: string };
+    expect((await b.post('answer', { step: id.step, stage: 'identify', identifier: 'emil@example.com' })).json()).toMatchObject({ stage: 'identify', errors: ['rate_limited'] });
+    expect(executorPosts(ak)).toHaveLength(0);
+    // and as a resend of an attempt started before the budget ran out
+    await clearKeys('recoverymail:');
+    const early = browser(env);
+    const sent = (await send('gina@example.com', early)) as unknown as { step: string };
+    for (let i = 0; i < 4; i++) await send('gina@example.com');
+    await clearKeys('akflow:resend:');
+    expect((await early.post('answer', { step: sent.step, stage: 'email-sent' })).json()).toMatchObject({ stage: 'email-sent', errors: ['rate_limited'] });
+    expect(executorPosts(ak)).toHaveLength(1); // the last send() only
+    // another account still works
+    expect(await send('fritz@example.com')).toMatchObject({ stage: 'email-sent' });
+    // per IP: ten e-mails an hour from one address, whatever the names
+    await clearKeys('recoverymail:');
+    const one = browser(env);
+    for (let i = 0; i < 10; i++) expect(await send(`person${i}@example.com`, one)).toMatchObject({ stage: 'email-sent' });
+    expect(await send('person10@example.com', one)).toMatchObject({ stage: 'identify', errors: ['rate_limited'] });
+    // the budget does not depend on whether the account exists: nothing to learn from it
+    expect(await env.kv.get(flowFailKey('person10@example.com'))).toBeNull();
+  });
+
+  it('resume with token restores the plan (fake checks query=flow_token%3D…), answers the link interstitial with its token, and returns prompt with two password fields', async () => {
+    useFake(resumeStages());
+    const { b, r, step } = await resumed();
+    expect(r.statusCode).toBe(200);
+    expect(step).toEqual({
+      stage: 'prompt', step: expect.any(String),
+      fields: [
+        { key: 'password', type: 'password', label: 'ff:password', required: true },
+        { key: 'password_repeat', type: 'password', label: 'ff:password_repeat', required: true },
+      ],
+    });
+    // every executor call continues Authentik's own plan with the token; FriendFlix never judged it itself
+    const calls = executorCalls();
+    expect(calls[0]).toMatchObject({ method: 'GET', search: `?query=flow_token%3D${TOKEN}` });
+    expect(calls.every((c) => c.search === `?query=flow_token%3D${TOKEN}`)).toBe(true);
+    // the click on /reset is the confirmation: the interstitial is answered with its own token, once
+    expect(executorPosts(ak).map((c) => c.body)).toEqual([{ token: LINK }]);
+    // no forwarded app host for recovery (brand and mail links stay Authentik's)
+    expect(calls.some((c) => c.headers['x-forwarded-host'])).toBe(false);
+    // the token never reaches the browser or the jar's step; the flow continues under the flow cookie
+    expect(r.body).not.toContain(TOKEN);
+    expect(r.body).not.toContain(LINK);
+    expect(r.body).not.toContain('anna');
+    expect(b.cookies.ff_flow).toBeTruthy();
+  });
+
+  it('resume → link-confirm → mfa(totp) → prompt (the MFA recovery example of wizard installs); a wrong code counts for the account', async () => {
+    useFake(resumeStages(totpMfa));
+    const { b, step } = await resumed();
+    expect(step).toEqual({ stage: 'mfa', step: expect.any(String), totp: true, recovery: true, passkey: null, passkeyClassic: true });
+    const wrong = await b.post('answer', { step: step.step, stage: 'mfa', code: '000000' });
+    expect(wrong.json()).toMatchObject({ stage: 'mfa', errors: ['code_invalid'] });
+    // the per-account counter is the one of the Authentik username the link belongs to
+    expect(await env.kv.get(flowFailKey('anna'))).toBe('1');
+    const prompt = await b.post('answer', { step: wrong.json().step, stage: 'mfa', code: '123456' });
+    expect(prompt.json()).toMatchObject({ stage: 'prompt' });
+    const done = await b.post('answer', { step: prompt.json().step, stage: 'prompt', password: NEW_PW, password_repeat: NEW_PW });
+    expect(done.json()).toEqual({ stage: 'done', next: '/login?reset=1' });
+  });
+
+  it('resume with a WebAuthn-only second factor → classic passkey_origin (no forwarded host in recovery jars)', async () => {
+    const webauthnOnly = { ...fixture('validate-webauthn'), device_challenges: (fixture('validate-webauthn').device_challenges as Array<{ device_class: string }>).filter((d) => d.device_class === 'webauthn') };
+    useFake(resumeStages({ challenge: webauthnOnly }));
+    const { b, step } = await resumed();
+    expect(step).toEqual({ stage: 'classic', reason: 'passkey_origin' });
+    expect(b.cookies.ff_flow).toBeUndefined();
+  });
+
+  it('resume where the first challenge is a consent with permissions → classic consent, the interstitial is not auto-answered', async () => {
+    useFake([{ challenge: { ...fixture('consent-link'), permissions: [{ name: 'Read your profile', id: 'profile' }] } }]);
+    const { b, step } = await resumed();
+    expect(step).toEqual({ stage: 'classic', reason: 'consent' });
+    expect(executorPosts(ak)).toHaveLength(0);
+    expect(b.cookies.ff_flow).toBeUndefined();
+    // a second interstitial after the first one is not answered either
+    useFake([{ challenge: fixture('consent-link'), answer: () => true }, { challenge: fixture('consent-link') }]);
+    expect((await resumed()).step).toEqual({ stage: 'classic', reason: 'consent' });
+    expect(executorPosts(ak)).toHaveLength(1);
+  });
+
+  it('older releases without the interstitial: a direct prompt is accepted', async () => {
+    useFake([{ challenge: fixture('prompt-recovery'), answer: () => true }]);
+    const { step } = await resumed();
+    expect(step).toMatchObject({ stage: 'prompt' });
+    expect(executorPosts(ak)).toHaveLength(0);
+  });
+
+  it('password mismatch → errors password_mismatch, no Authentik call', async () => {
+    useFake(resumeStages());
+    const { b, step } = await resumed();
+    const posts = executorPosts(ak).length;
+    const r = await b.post('answer', { step: step.step, stage: 'prompt', password: NEW_PW, password_repeat: `${NEW_PW}x` });
+    expect([r.statusCode, r.json()]).toEqual([400, { errors: ['password_mismatch'] }]);
+    expect(executorPosts(ak)).toHaveLength(posts);
+    // the step is still unused: the corrected answer goes through
+    expect((await b.post('answer', { step: step.step, stage: 'prompt', password: NEW_PW, password_repeat: NEW_PW })).json()).toEqual({ stage: 'done', next: '/login?reset=1' });
+  });
+
+  it('used token (fake answers identification) → expired', async () => {
+    useFake([{ challenge: fixture('recovery-token-reused') }]);
+    const { b, r } = await resumed();
+    expect([r.statusCode, r.json()]).toEqual([200, { stage: 'expired' }]);
+    expect(executorPosts(ak)).toHaveLength(0);
+    expect(b.cookies.ff_flow).toBeUndefined();
+    // access denied, or an identification right after the interstitial, too
+    useFake([{ challenge: fixture('access-denied') }]);
+    expect((await resumed()).step).toEqual({ stage: 'expired' });
+    useFake([{ challenge: fixture('consent-link'), answer: () => true }, { challenge: fixture('recovery-token-reused') }]);
+    expect((await resumed()).step).toEqual({ stage: 'expired' });
+    // a plan that ends without a new password was never a reset
+    useFake([{ challenge: fixture('consent-link'), answer: () => true }]);
+    expect((await resumed()).step).toEqual({ stage: 'expired' });
+  });
+
+  it('recovery end → done next=/login?reset=1, no session cookie, invalidation called', async () => {
+    useFake(resumeStages());
+    const { b, step } = await resumed();
+    const flowId = b.cookies.ff_flow!;
+    const r = await b.post('answer', { step: step.step, stage: 'prompt', password: NEW_PW, password_repeat: NEW_PW });
+    expect([r.statusCode, r.json()]).toEqual([200, { stage: 'done', next: '/login?reset=1' }]);
+    // recovery never signs in: no FriendFlix session, and Authentik's session from user_login is ended
+    expect(r.cookies.map((c) => c.name)).not.toContain('ff_sid');
+    expect(b.cookies.ff_sid).toBeUndefined();
+    const inval = ak.calls.find((c) => c.path === '/api/v3/flows/executor/default-invalidation-flow/');
+    expect(inval?.headers.cookie).toMatch(/authentik_session=/);
+    expect(ak.calls.some((c) => c.path.startsWith('/application/o/authorize'))).toBe(false);
+    expect(await env.kv.get(`akflow:${sha256(flowId)}`)).toBeNull();
+    expect(b.cookies.ff_flow).toBeUndefined();
+    expect(await env.pool.query('select 1 from audit_log where action=$1', ['login']).then((x) => x.rowCount)).toBe(0);
+  });
+
+  it('bad token → expired', async () => {
+    // malformed: Authentik is not asked
+    for (const token of ['short', 'x'.repeat(257), `${TOKEN.slice(0, 20)}/../${TOKEN.slice(0, 20)}`, `${TOKEN}&next=/x`, `${TOKEN} `]) {
+      const { r } = await resumed(browser(env), token);
+      expect([r.statusCode, r.json()], token).toEqual([200, { stage: 'expired' }]);
+    }
+    expect(ak.calls).toHaveLength(0);
+    // a well-formed token Authentik does not know: it starts a new plan (identification)
+    useFake([{ challenge: fixture('recovery-token-reused') }]);
+    expect((await resumed(browser(env), 'unknownTokenUnknownToken0000')).step).toEqual({ stage: 'expired' });
+    // not a string, extra keys, another kind → 400
+    const b = browser(env);
+    await b.config();
+    for (const body of [{}, { token: 5 }, { token: TOKEN, extra: 1 }, { token: TOKEN, kind: 'login' }, { token: 'x'.repeat(1025) }]) {
+      expect((await b.post('resume', body)).json(), JSON.stringify(body)).toEqual({ error: 'bad_request' });
+    }
+  });
+
+  it('resume: csrf, LOGIN_UI=authentik, Authentik down, the token never in a log line, 10 per minute per IP', async () => {
+    const b = browser(env);
+    await b.config();
+    expect((await b.post('resume', { token: TOKEN }, { csrf: null })).statusCode).toBe(403);
+    env.ctx.cfg = { ...env.ctx.cfg, LOGIN_UI: 'authentik' };
+    expect((await b.post('resume', { token: TOKEN })).json()).toEqual({ error: 'classic' });
+    env.ctx.cfg = { ...env.ctx.cfg, LOGIN_UI: undefined };
+    expect(ak.calls).toHaveLength(0);
+    logs.length = 0;
+    ak.override = (c) => { throw new Error(`connect failed ${c.url.toString()}`); };
+    expect((await b.post('resume', { token: TOKEN })).json()).toEqual({ stage: 'unavailable' });
+    ak.override = () => new Response(`<html>${TOKEN}</html>`, { status: 500, headers: { 'content-type': 'text/html' } });
+    expect((await b.post('resume', { token: TOKEN })).json()).toEqual({ stage: 'unavailable' });
+    ak.override = undefined;
+    vi.spyOn(env.kv, 'set').mockRejectedValueOnce(new Error(`kv failed ${TOKEN}`));
+    useFake(resumeStages());
+    expect((await b.post('resume', { token: TOKEN })).statusCode).toBe(500);
+    const text = logs.join('\n');
+    expect(text).not.toContain(TOKEN);
+    expect(text).not.toContain('flow_token');
+    expect(logs.map((l) => JSON.parse(l) as { route?: string; code?: string }).filter((l) => l.route)).toContainEqual(expect.objectContaining({ route: '/auth/flow/resume', code: 'authentik_unavailable' }));
+    // the jar holds the token only encrypted
+    useFake(resumeStages());
+    const { b: ok } = await resumed();
+    expect(await env.kv.get(`akflow:${sha256(ok.cookies.ff_flow!)}`)).not.toContain(TOKEN);
+    // 10 per minute per IP (the requests above came from b and ok: a fresh browser counts its own)
+    const c = browser(env);
+    await c.config();
+    const codes: number[] = [];
+    for (let i = 0; i < 11; i++) codes.push((await c.post('resume', { token: 'short' })).statusCode);
+    expect(codes.slice(0, 10).every((x) => x === 200)).toBe(true);
+    expect(codes[10]).toBe(429);
+  });
+
+  it('a new resume ends the previous attempt in this browser', async () => {
+    useFake(resumeStages());
+    const { b } = await resumed();
+    const first = b.cookies.ff_flow!;
+    useFake(resumeStages());
+    await b.post('resume', { token: TOKEN });
+    expect(b.cookies.ff_flow).not.toBe(first);
+    expect(await env.kv.get(`akflow:${sha256(first)}`)).toBeNull();
+    expect(ak.calls.some((c) => c.path === '/api/v3/flows/executor/default-invalidation-flow/')).toBe(true);
+    // a bad token also forgets the previous attempt
+    const second = b.cookies.ff_flow!;
+    await b.post('resume', { token: 'short' });
+    expect(b.cookies.ff_flow).toBeUndefined();
+    expect(await env.kv.get(`akflow:${sha256(second)}`)).toBeNull();
+  });
+});
+
 describe('/auth/login and the LOGIN_UI switch', () => {
   let env: TestEnv;
   beforeAll(async () => { env = await makeEnv(); });
@@ -623,7 +955,7 @@ describe('the LOGIN_UI switch during setup (preflight D3, D9)', () => {
   afterAll(() => env.close());
 
   it('/auth/flow/* stays gated (503 setup_required)', async () => {
-    for (const [method, url] of [['GET', '/auth/flow/config'], ['POST', '/auth/flow/start'], ['POST', '/auth/flow/answer'], ['POST', '/auth/flow/cancel']] as const) {
+    for (const [method, url] of [['GET', '/auth/flow/config'], ['POST', '/auth/flow/start'], ['POST', '/auth/flow/answer'], ['POST', '/auth/flow/cancel'], ['POST', '/auth/flow/resume']] as const) {
       const r = await env.app.inject({ method, url, payload: method === 'POST' ? {} : undefined });
       expect([r.statusCode, r.json()], url).toEqual([503, { error: 'setup_required' }]);
     }

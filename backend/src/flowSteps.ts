@@ -74,6 +74,8 @@ export const RP_NAME = 'FriendFlix';
 /** prompt labels FriendFlix sets itself, by field key: the web shows its own localised text for `ff:<name>` labels */
 const FF_LABEL = 'ff:';
 
+/** Authentik usernames are at most 150 characters; anything longer is not a username and is dropped (Task 2 review) */
+export const MAX_PENDING_USER = 254;
 const TOTP_STAGE_MODEL = 'authentik_stages_authenticator_totp.authenticatortotpstage';
 const LINK_KINDS: readonly FlowKind[] = ['recovery-resume', 'email-confirm'];
 const SHOWN_FIELD_TYPES: ReadonlySet<string> = new Set(['text', 'username', 'email', 'password']);
@@ -248,7 +250,7 @@ export function toStep(raw: RawChallenge, jar: Jar, step: string, appHost: strin
         && typeof r.token === 'string' && /^[A-Za-z0-9_-]{1,128}$/.test(r.token);
       if (!link) return classic('consent');
       const out: FlowInternal = { internal: 'link-confirm', token: r.token as string };
-      if (typeof raw.pending_user === 'string' && raw.pending_user) out.pendingUser = raw.pending_user;
+      if (typeof raw.pending_user === 'string' && raw.pending_user && raw.pending_user.length <= MAX_PENDING_USER) out.pendingUser = raw.pending_user;
       return out;
     }
     case 'ak-stage-access-denied':

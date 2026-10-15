@@ -519,6 +519,11 @@ One recovery flow serves two things: *Forgot username or password?* on the Authe
 
 If you use a different recovery flow, put its slug into `AUTHENTIK_RECOVERY_FLOW`; it needs an e-mail stage (`ak-stage-email`) bound to it.
 
+**Optional: the reset link into FriendFlix** (in-app sign-in). With the template [`deploy/authentik/templates/friendflix-recovery.html`](../deploy/authentik/templates/friendflix-recovery.html) the e-mail link leads to `https://friend.example.com/reset?token=…` on FriendFlix instead of Authentik's page; FriendFlix continues Authentik's own recovery flow there after one click (MFA check and new password included) and then asks the person to sign in with the new password.
+1. Replace `friend.example.com` in the template's link with your FriendFlix address (its first line names the value).
+2. Authentik reads custom templates only from `/templates`, which the image does not create: mount a folder with the file there on **server and worker** (e.g. `./authentik/templates:/templates:ro`) and recreate both containers.
+3. *Flows and Stages → Stages* → `default-recovery-email` → *Edit* → **Template**: `friendflix-recovery.html`. The admin's *Send password link* uses the same stage, so its mails lead to FriendFlix as well.
+
 Lost MFA device: there is no self-service reset. As admin open *Directory → Users* → the user → *MFA Devices*, delete the device; on the next login the user is forced to enrol a new one. Alternatively let users create recovery codes (bind `default-authenticator-static-setup` as an additional configuration stage and add *Static Tokens* to the device classes).
 
 ## 11. Optional: passwordless sign-in with passkeys

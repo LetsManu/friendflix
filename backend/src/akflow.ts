@@ -42,6 +42,11 @@ export interface Jar {
   invite?: string;
   userId?: string;
   then?: FlowKind;
+  /**
+   * a recovery whose identification Authentik refused (a stage without "pretend user exists"): the person sees "e-mail sent" like
+   * everyone else, and resends never reach Authentik, so the answer does not tell whether the account exists (Task 5)
+   */
+  decoy?: boolean;
   /** whether executor calls forward the app host (fixed when the jar is created) */
   forwardHost: boolean;
   /**

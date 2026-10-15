@@ -17,6 +17,11 @@
  *   limit and counts only when Authentik refuses it.
  * - The end of a login or enrolment flow (completeFlow): a silent OIDC authorize with the flow's Authentik session, then the same rules
  *   as the classic `/auth/callback` (loginFinish.ts); the Authentik session is ended afterwards in every case.
+ * - Recovery (Task 5): "Passwort vergessen?" starts the recovery flow with the typed identifier and answers its identification itself;
+ *   the reply is "e-mail sent" whether or not the account exists. Recovery e-mails (the first and every resend) are limited per typed
+ *   identifier and per IP, resends to one per minute per attempt. The e-mail link leads to the app's `/reset`, whose button calls
+ *   `resume`: the token only continues Authentik's own recovery flow (`?query=flow_token=…`), FriendFlix never checks or keeps it
+ *   anywhere but in the encrypted jar, and a finished recovery never signs in (`done /login?reset=1`, Authentik's session ended).
  * - Errors: codes only. Logged as `{ route, code }`, never the error object or the body (passwords, codes, credentials).
  *   Authentik unreachable or answering nonsense → `200 {stage:'unavailable'}` (the card offers retry and the classic sign-in).
  */
@@ -30,7 +35,9 @@ import { akFlowExists } from '../authentik.js';
 import { secureCookies } from '../config.js';
 import type { Ctx } from '../ctx.js';
 import { randomToken, sha256 } from '../crypto.js';
-import { FlowFieldError, type FlowError, type FlowInternal, type FlowStage, type FlowStep, stepErrors, toAnswer, toStep } from '../flowSteps.js';
+import {
+  FlowFieldError, type FlowError, type FlowInternal, type FlowStage, type FlowStep, MAX_PENDING_USER, stepErrors, toAnswer, toStep,
+} from '../flowSteps.js';
 import { lookupInvite } from '../invites.js';
 import { type LoginOutcome, resolveLogin } from '../loginFinish.js';
 import type { OidcClaims } from '../oidc.js';
@@ -51,6 +58,12 @@ export const FLOW_FAIL_WINDOW_S = 900;
 const SECRET_KEYS = ['password', 'code', 'webauthn', 'passkey'] as const;
 /** internal hops answered by the backend itself (select-stage) before a step is shown */
 const MAX_AUTO = 3;
+/** one resend of an e-mail per attempt (jar) in this many seconds */
+export const RESEND_GAP_S = 60;
+/** recovery e-mails (the first and every resend) per typed identifier and per client IP, in RECOVERY_MAIL_WINDOW_S */
+export const MAX_RECOVERY_MAILS_ACCOUNT = 5;
+export const MAX_RECOVERY_MAILS_IP = 10;
+export const RECOVERY_MAIL_WINDOW_S = 3600;
 
 type AnswerableStep = Extract<FlowStep, { step: string }>;
 type Reply = AnswerableStep & { errors?: FlowError[] } | FlowStep;
@@ -58,6 +71,10 @@ type Reply = AnswerableStep & { errors?: FlowError[] } | FlowStep;
 /** the per-account failure counter's key: the identifier the person typed, case-insensitive, hashed */
 export const flowFailKey = (identifier: string) => `flowfail:${sha256(identifier.trim().toLowerCase())}`;
 const usedStepKey = (flowId: string, step: string) => `akflow:used:${sha256(`${flowId}|${step}`)}`;
+/** the recovery e-mail budgets: per typed identifier (case-insensitive, like flowFailKey) and per client IP */
+export const recoveryMailKey = (identifier: string) => `recoverymail:${sha256(identifier.trim().toLowerCase())}`;
+const recoveryMailIpKey = (ip: string) => `recoverymail:ip:${sha256(ip)}`;
+const resendKey = (flowId: string) => `akflow:resend:${sha256(flowId)}`;
 
 const sameToken = (a: string, b: string) => {
   const x = Buffer.from(a);
@@ -72,7 +89,16 @@ const AK_DOWN: ReadonlySet<string> = new Set(['authentik_unavailable', 'authenti
 const StartBody = z.strictObject({
   kind: z.enum(['login', 'recovery', 'enroll']),
   invite: z.string().min(1).max(128).optional(),
+  /** recovery only: the name typed on the password screen ("Passwort vergessen?"), answered to the identification by the backend */
+  identifier: z.string().trim().min(1).max(254).optional(),
 });
+const ResumeBody = z.strictObject({ token: z.string().max(1024), kind: z.literal('recovery').optional() });
+/** what an e-mail link token may look like (Authentik's FlowToken key: 60 letters and digits); anything else never reaches Authentik */
+const LINK_TOKEN = /^[A-Za-z0-9_-]{16,256}$/;
+/** a link Authentik no longer knows (used, expired, unknown): it starts a new plan (identification) or denies the flow */
+const STALE_LINK: ReadonlySet<string> = new Set(['ak-stage-identification', 'ak-stage-access-denied']);
+/** what a decoy attempt shows and "re-sends" (Jar.decoy): the e-mail stage, without anything from Authentik */
+const DECOY_EMAIL: RawChallenge = { component: 'ak-stage-email' };
 const AnswerHead = z.object({ step: z.string().min(1).max(64), stage: z.string().min(1).max(32) });
 
 /** the challenge as kept in the jar: what toAnswer reads, without the avatar (a data URI) and the flow's brand info */
@@ -277,6 +303,7 @@ export function authFlowRoutes(app: FastifyInstance, ctx: Ctx) {
     const parsed = StartBody.safeParse(req.body ?? {});
     if (!parsed.success) throw badRequest();
     const body = parsed.data;
+    if (body.identifier !== undefined && body.kind !== 'recovery') throw badRequest();
     if (loginUi(ctx.cfg) !== 'app') throw new HttpError(409, 'classic');
     let init: Partial<Pick<Jar, 'query' | 'invite'>> = {};
     if (body.kind === 'enroll') {
@@ -289,16 +316,52 @@ export function authFlowRoutes(app: FastifyInstance, ctx: Ctx) {
       if (!(await lookupInvite(ctx, body.invite))) throw new HttpError(410, 'invite_invalid');
       init = { invite: body.invite };
     }
-    // one attempt per browser: a new start ends the previous attempt (its Authentik session too) and forgets its jar
-    const old = req.cookies[FLOW_COOKIE];
-    if (old) {
-      const prev = await loadJar(ctx, old);
-      if (prev) await endAkSession(ctx, prev);
-      await dropJar(ctx, old);
-    }
+    const old = await forgetPrevious(req);
     const jar = await createJar(ctx, body.kind, { ...init, step: randomToken(16) });
     const flowId = randomToken();
     const { challenge } = await akExec(ctx, jar, 'GET', undefined, req.ip);
+    const { out, live } = await advance(req, reply, flowId, jar, challenge, true);
+    if (live) setFlowCookie(reply, flowId);
+    else if (old) clearFlowCookie(reply);
+    // "Passwort vergessen?": the name from the password screen answers the identification right away (normally → email-sent)
+    if (body.identifier !== undefined && live && out.stage === 'identify') {
+      return answerStep(req, reply, flowId, jar, 'identify', { identifier: body.identifier });
+    }
+    return out;
+  }));
+
+  // The button on /reset?token= (Ruling 11: the page itself never calls this): continues Authentik's recovery flow with the e-mail
+  // link's token in a new jar. Authentik's link interstitial (the first challenge, nothing else) is answered with its own token, since the
+  // click is the confirmation; then the flow goes on as usual (MFA, new password ×2). The token is only passed on to Authentik, never
+  // checked, logged or answered by FriendFlix; a token Authentik does not continue (used, expired, unknown, malformed) → expired.
+  app.post('/auth/flow/resume', { config: { rateLimit: { max: 10, timeWindow: '1 minute' } } }, guarded(async (req, reply) => {
+    checkFlowCsrf(req);
+    const parsed = ResumeBody.safeParse(req.body ?? {});
+    if (!parsed.success) throw badRequest();
+    if (loginUi(ctx.cfg) !== 'app') throw new HttpError(409, 'classic');
+    const old = await forgetPrevious(req);
+    const expired = (): FlowStep => {
+      if (old) clearFlowCookie(reply);
+      return { stage: 'expired' };
+    };
+    const { token } = parsed.data;
+    if (!LINK_TOKEN.test(token)) return expired();
+    const jar = await createJar(ctx, 'recovery-resume', { query: `flow_token=${token}`, step: randomToken(16) });
+    const flowId = randomToken();
+    let { challenge } = await akExec(ctx, jar, 'GET', undefined, req.ip);
+    let first = toStep(challenge, jar, jar.step, appHost(ctx.cfg));
+    if ('internal' in first && first.internal === 'link-confirm') {
+      if (first.pendingUser) jar.identifier = first.pendingUser; // the account the link belongs to: its failure counter (codes)
+      ({ challenge } = await akExec(ctx, jar, 'POST', { token: first.token }, req.ip));
+      first = toStep(challenge, jar, jar.step, appHost(ctx.cfg));
+    }
+    // a link Authentik does not continue, or a plan that ends before a new password was set: no reset happened
+    if (STALE_LINK.has(challenge.component) || ('internal' in first && first.internal === 'end')) {
+      await endAkSession(ctx, jar);
+      return expired();
+    }
+    const named = challenge.pending_user;
+    if (!jar.identifier && typeof named === 'string' && named && named.length <= MAX_PENDING_USER) jar.identifier = named;
     const { out, live } = await advance(req, reply, flowId, jar, challenge, true);
     if (live) setFlowCookie(reply, flowId);
     else if (old) clearFlowCookie(reply);
@@ -322,8 +385,17 @@ export function authFlowRoutes(app: FastifyInstance, ctx: Ctx) {
     }
     await checkSessionCsrf(req, jar);
     if (!sameToken(head.data.step, jar.step)) throw new HttpError(409, 'step_used');
+    return answerStep(req, reply, flowId, jar, head.data.stage, given);
+  }));
+
+  /**
+   * Answers the step a live jar shows: the answer route, and a recovery start with an identifier. Checked against the shown step, made
+   * single use, rate limited (per account, and for e-mails per account and IP), then sent to Authentik; the next challenge is advanced.
+   */
+  async function answerStep(req: FastifyRequest, reply: FastifyReply, flowId: string, jar: Jar, stage: string, given: Record<string, unknown>): Promise<Reply> {
+    if (!jar.last) throw badRequest();
     const shown = jar.last.step;
-    if (head.data.stage !== shown.stage) throw badRequest();
+    if (stage !== shown.stage) throw badRequest();
     checkOffered(shown, given);
     const answer = toAnswer(shown.stage, given, jar.last.raw); // 400 bad_request / password_mismatch, before anything is used up
     const typed = (answer as { uid_field?: unknown }).uid_field;
@@ -350,12 +422,29 @@ export function authFlowRoutes(app: FastifyInstance, ctx: Ctx) {
     } else if (failKey && Number((await ctx.kv.get(failKey)) ?? 0) >= MAX_FLOW_FAILURES) {
       return limited();
     }
+    // e-mails: a recovery identification sends the reset mail, every answer on the e-mail stage re-sends it. One resend a minute per
+    // attempt, and a budget per typed name and per IP; neither depends on whether the account exists.
+    const mails = shown.stage === 'email-sent' || (shown.stage === 'identify' && jar.kind === 'recovery');
+    let budget: string[] = [];
+    if (mails) {
+      if (shown.stage === 'email-sent' && !(await ctx.kv.setnx(resendKey(flowId), '1', RESEND_GAP_S))) return limited();
+      const taken = await takeMailBudget(identifier, req.ip);
+      if (!taken) return limited();
+      budget = taken;
+    }
     let challenge: RawChallenge;
     try {
-      ({ challenge } = await akExec(ctx, jar, 'POST', answer, req.ip));
+      // a decoy attempt never asks Authentik again: a resend there must look like any other
+      challenge = jar.decoy ? DECOY_EMAIL : (await akExec(ctx, jar, 'POST', answer, req.ip)).challenge;
     } catch (err) {
       if (failKey && reserved) await ctx.kv.decr(failKey); // Authentik never judged it (unreachable, transport error)
+      for (const k of budget) await ctx.kv.decr(k); // no mail went out
       throw err;
+    }
+    if (jar.kind === 'recovery' && shown.stage === 'identify' && challenge.component === 'ak-stage-identification') {
+      // an identification stage without "pretend user exists" refused the name: answer exactly as for an existing account
+      jar.decoy = true;
+      challenge = DECOY_EMAIL;
     }
     // a wrong password, code or passkey counts; the e-mail stage's resend notice is no error (stepErrors skips it)
     const errors = stepErrors(challenge);
@@ -365,8 +454,39 @@ export function authFlowRoutes(app: FastifyInstance, ctx: Ctx) {
     else if (failKey && !reserved && errors.length) await ctx.kv.incr(failKey, FLOW_FAIL_WINDOW_S);
     const { out, live } = await advance(req, reply, flowId, jar, challenge, false);
     if (!live) clearFlowCookie(reply);
+    // a mail went out: the next resend waits a minute from now
+    else if (mails && out.stage === 'email-sent') await ctx.kv.set(resendKey(flowId), '1', RESEND_GAP_S);
     return errors.length && 'step' in out ? { ...out, errors } : out;
-  }));
+  }
+
+  /**
+   * Takes one recovery e-mail from the per-IP budget and, when a name was typed, from that name's budget. Null when either is used up
+   * (nothing is taken then); otherwise the keys taken, to give back when the mail could not be sent.
+   */
+  async function takeMailBudget(identifier: string | undefined, ip: string): Promise<string[] | null> {
+    const budgets: Array<[string, number]> = [[recoveryMailIpKey(ip), MAX_RECOVERY_MAILS_IP]];
+    if (identifier) budgets.push([recoveryMailKey(identifier), MAX_RECOVERY_MAILS_ACCOUNT]);
+    const taken: string[] = [];
+    for (const [key, max] of budgets) {
+      taken.push(key);
+      if ((await ctx.kv.incr(key, RECOVERY_MAIL_WINDOW_S)) > max) {
+        for (const k of taken) await ctx.kv.decr(k);
+        return null;
+      }
+    }
+    return taken;
+  }
+
+  /** one attempt per browser: a new start or resume ends the previous attempt (its Authentik session too) and forgets its jar */
+  async function forgetPrevious(req: FastifyRequest): Promise<string | undefined> {
+    const old = req.cookies[FLOW_COOKIE];
+    if (old) {
+      const prev = await loadJar(ctx, old);
+      if (prev) await endAkSession(ctx, prev);
+      await dropJar(ctx, old);
+    }
+    return old;
+  }
 
   // Gives up the attempt: Authentik's session (if any) is ended, the jar deleted, the cookies cleared.
   app.post('/auth/flow/cancel', { config: { rateLimit: { max: 30, timeWindow: '1 minute' } } }, guarded(async (req, reply) => {

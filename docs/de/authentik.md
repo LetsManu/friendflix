@@ -519,6 +519,11 @@ Ein Wiederherstellungs-Flow dient zweierlei: *Forgot username or password?* auf 
 
 Für einen anderen Wiederherstellungs-Flow dessen Slug in `AUTHENTIK_RECOVERY_FLOW` eintragen; an ihn muss eine E-Mail-Stage (`ak-stage-email`) gebunden sein.
 
+**Optional: der Reset-Link in FriendFlix** (Anmeldung in der App). Mit dem Template [`deploy/authentik/templates/friendflix-recovery.html`](../../deploy/authentik/templates/friendflix-recovery.html) führt der Link in der Mail auf `https://friend.example.com/reset?token=…` in FriendFlix statt auf die Seite von Authentik; FriendFlix setzt dort nach einem Klick den Wiederherstellungs-Flow von Authentik fort (samt MFA-Prüfung und neuem Passwort) und bittet danach um die Anmeldung mit dem neuen Passwort.
+1. `friend.example.com` im Link des Templates durch deine FriendFlix-Adresse ersetzen (die erste Zeile nennt den Wert).
+2. Eigene Templates liest Authentik nur aus `/templates`, das das Image nicht anlegt: einen Ordner mit der Datei dort in **Server und Worker** einhängen (z. B. `./authentik/templates:/templates:ro`) und beide Container neu erstellen.
+3. *Flows and Stages → Stages* → `default-recovery-email` → *Edit* → **Template**: `friendflix-recovery.html`. *Passwort-Link senden* des Admins nutzt dieselbe Stage, seine Mails führen also ebenfalls zu FriendFlix.
+
 MFA-Gerät verloren: Es gibt keinen Selbstdienst. Als Admin *Directory → Users* → Nutzer → *MFA Devices* das Gerät löschen; beim nächsten Login muss die Person ein neues einrichten. Alternativ Wiederherstellungscodes erlauben (`default-authenticator-static-setup` als weitere Configuration stage binden und *Static Tokens* zu den Device classes hinzufügen).
 
 ## 11. Optional: passwortlos mit Passkeys

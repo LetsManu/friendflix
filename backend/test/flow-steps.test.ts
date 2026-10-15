@@ -138,6 +138,9 @@ describe('toStep', () => {
     expect(step(fixture('consent-link'), resume)).toEqual({ internal: 'link-confirm', token: '00000000-0000-4000-8000-000000000001', pendingUser: 'anna' });
     expect(step(fixture('consent-link'), { ...resume, kind: 'email-confirm' })).toMatchObject({ internal: 'link-confirm' });
     expect(step(fx('consent-link', { pending_user: '' }), resume)).toEqual({ internal: 'link-confirm', token: '00000000-0000-4000-8000-000000000001' });
+    // a pending user longer than any username is dropped (Task 2 review: bounded before it becomes a counter key or a lookup)
+    expect(step(fx('consent-link', { pending_user: 'a'.repeat(254) }), resume)).toMatchObject({ pendingUser: 'a'.repeat(254) });
+    expect(step(fx('consent-link', { pending_user: 'a'.repeat(255) }), resume)).toEqual({ internal: 'link-confirm', token: '00000000-0000-4000-8000-000000000001' });
     const consent = { stage: 'classic', reason: 'consent' };
     expect(step(fx('consent-link', { permissions: [{ name: 'profile', id: 'profile' }] }), resume)).toEqual(consent);
     expect(step(fx('consent-link', { additional_permissions: [{ name: 'email', id: 'email' }] }), resume)).toEqual(consent);
