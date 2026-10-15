@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { stripNewline } from '../bootstrap.js';
+import { stripNewlines } from '../volumeValue.js';
 
 /** What the `bootstrap` init container wrote into the bootstrap volume (src/bootstrap.ts); undefined = file missing or empty. */
 export interface BootstrapFiles {
@@ -22,13 +22,13 @@ const FILES: Record<keyof BootstrapFiles, string> = {
 const KEYS = Object.keys(FILES) as Array<keyof BootstrapFiles>;
 
 /**
- * One volume file, without one trailing newline (the writer's contract, src/bootstrap.ts). Missing or empty = undefined; unreadable
+ * One volume file, without its trailing newlines (the writer's contract, src/volumeValue.ts). Missing or empty = undefined; unreadable
  * (EACCES: the container lacks the secrets group, group_add: ["10001"]) throws, naming the path, never a value.
  */
 function readFile(dir: string, key: keyof BootstrapFiles): string | undefined {
   const path = join(dir, FILES[key]);
   try {
-    return stripNewline(readFileSync(path, 'utf8')) || undefined;
+    return stripNewlines(readFileSync(path, 'utf8')) || undefined;
   } catch (err) {
     const code = (err as NodeJS.ErrnoException).code;
     if (code === 'ENOENT') return undefined;

@@ -137,7 +137,7 @@ describe('runBootstrap', () => {
     expect(lines).toContain('app_enc_key: generated');
   });
 
-  it('strips one trailing newline from files and env values, the same way the readers do', () => {
+  it('strips a trailing newline from files and env values, the same way the readers do', () => {
     run();
     writeFileSync(join(dir, 'redis_password'), 'pw with space\n'); // echo-style
     run({ POSTGRES_PASSWORD: 'pg-pw\r\n' });
@@ -150,6 +150,34 @@ describe('runBootstrap', () => {
     // a value keeps any other whitespace: the readers must not trim it away
     writeFileSync(join(dir, 'redis_password'), ' spaced \n');
     expect(readBootstrap(dir).redisPassword).toBe(' spaced ');
+  });
+
+  it('strips every trailing newline (a fixed point): a value read back equals the one in redis.conf', () => {
+    run();
+    writeFileSync(join(dir, 'redis_password'), 'dummy\n\n');
+    run({ POSTGRES_PASSWORD: 'pg-pw\r\n\r\n' });
+    expect(read('redis_password')).toBe('dummy');
+    expect(read('redis.conf')).toBe('requirepass dummy\n');
+    expect(read('postgres_password')).toBe('pg-pw');
+    expect(readBootstrap(dir)).toMatchObject({ redisPassword: 'dummy', postgresPassword: 'pg-pw' });
+    writeFileSync(join(dir, 'app_enc_key'), `${K}\n\n\n`);
+    expect(readBootstrap(dir).appEncKey).toBe(K);
+    expect(lazyBootstrap(dir).appEncKey).toBe(K);
+  });
+
+  it('a volume whose only remaining trace is the gateway copy is not fresh: an empty postgres_password is refused', () => {
+    run();
+    for (const f of FILES) rmSync(join(dir, f), { force: true });
+    writeFileSync(join(dir, 'postgres_password'), '');
+    const before = read('internal_secret', gatewayDir);
+    expect(() => run()).toThrow(/postgres_password exists but is empty/);
+    expect(read('postgres_password')).toBe('');
+    expect(read('internal_secret', gatewayDir)).toBe(before);
+    // an empty gateway copy does not count: nothing ever completed
+    writeFileSync(join(gatewayDir, 'internal_secret'), '\n');
+    run();
+    expect(read('postgres_password')).toMatch(HEX);
+    expect(lines).toContain('postgres_password: generated');
   });
 
   it('never logs a value', () => {

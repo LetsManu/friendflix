@@ -29,7 +29,7 @@ export function internalSecret(env: NodeJS.ProcessEnv): string {
   const file = join(env.FF_GATEWAY_BOOTSTRAP_DIR || '/run/friendflix-gateway', 'internal_secret');
   let fromFile = '';
   try {
-    fromFile = readFileSync(file, 'utf8').replace(/\r?\n$/, ''); // the volume's contract (backend/src/bootstrap.ts): one trailing newline only
+    fromFile = readFileSync(file, 'utf8').replace(/(\r?\n)+$/, ''); // the volume's contract (backend/src/volumeValue.ts): trailing newlines only
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw new Error(`bootstrap file ${file} is not readable (${(err as NodeJS.ErrnoException).code})`, { cause: err });
   }

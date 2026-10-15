@@ -3,11 +3,13 @@
 // The `bootstrap` init container (compose): generates every secret needed before the database can be read into the `bootstrap`
 // volume, and the gateway's copy of INTERNAL_SECRET into `bootstrap-gateway`. Runs as root without any capability but CHOWN, on a
 // read-only root fs without network, then exits; every other service waits for it (service_completed_successfully).
-// Dependency-free on purpose (node: modules only): it must not load the app, its config or its database code.
+// Dependency-free on purpose (node: modules and the import-free volumeValue.ts only): it must not load the app, its config or its
+// database code.
 import { randomBytes } from 'node:crypto';
 import { chmodSync, chownSync, closeSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync, renameSync, rmSync, writeSync } from 'node:fs';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { stripNewlines } from './volumeValue.js';
 
 /** volume file -> the legacy env variable that wins over it (existing installs keep their .env values) */
 const SECRETS = [
@@ -18,12 +20,6 @@ const SECRETS = [
 ] as const;
 /** Regenerating these would orphan existing data (pgdata's password, encrypted rows), so an empty copy is an error, never replaced. */
 const PRECIOUS: ReadonlySet<string> = new Set(['postgres_password', 'app_enc_key']);
-
-/**
- * The one whitespace contract of the volume, shared with every reader (settings/bootstrapFiles.ts, gateway/src/env.ts): a value is
- * the file (or env) content without one trailing newline (`echo pw > file`); any other whitespace is part of the value.
- */
-export const stripNewline = (v: string): string => v.replace(/\r?\n$/, '');
 
 export interface BootstrapOptions {
   dir: string;
@@ -85,7 +81,8 @@ export function runBootstrap(opts: BootstrapOptions): void {
     rmSync(tmp, { force: true }); // a leftover 0440 temp file could not be reopened for writing without CAP_DAC_OVERRIDE
     const fd = openSync(tmp, 'w', 0o600);
     try {
-      writeSync(fd, content);
+      const buf = Buffer.from(content, 'utf8');
+      for (let off = 0; off < buf.length;) off += writeSync(fd, buf, off, buf.length - off); // a short write continues
       fsyncSync(fd);
     } finally {
       closeSync(fd);
@@ -100,11 +97,13 @@ export function runBootstrap(opts: BootstrapOptions): void {
   // decide everything before the first write, so a refused run leaves the volume as it was
   const existing = Object.fromEntries(SECRETS.map((s) => {
     const raw = readOr(join(dir, s.file));
-    return [s.file, raw === undefined ? undefined : stripNewline(raw)];
+    return [s.file, raw === undefined ? undefined : stripNewlines(raw)];
   }));
-  const fresh = !Object.values(existing).some(Boolean) && !existsSync(join(dir, 'redis.conf'));
+  // fresh = no run ever completed: no value, no redis.conf, and no gateway copy (it lives on its own volume)
+  const gwOld = readOr(join(gatewayDir, 'internal_secret'));
+  const fresh = !Object.values(existing).some(Boolean) && !existsSync(join(dir, 'redis.conf')) && !stripNewlines(gwOld ?? '');
   const plan = SECRETS.map((s) => {
-    const fromEnv = stripNewline(env[s.env] ?? '');
+    const fromEnv = stripNewlines(env[s.env] ?? '');
     const old = existing[s.file];
     if (fromEnv) return { s, value: fromEnv, action: 'from environment' };
     if (old) return { s, value: old, action: 'kept' };
