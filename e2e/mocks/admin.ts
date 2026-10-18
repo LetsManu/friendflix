@@ -64,6 +64,9 @@ export interface AdminState {
   healthCalls: string[];
   /** Block 23 phase 3: /api/admin/health/login (backend flowCheck.ts LoginCheck) */
   loginCheck: Record<string, any>;
+  /** POST /api/admin/authentik/repair: the bodies received and the answer (the result's `check` replaces loginCheck) */
+  repairs: Array<Record<string, unknown>>;
+  repairReply: Record<string, any> | null;
   /** /api/admin/streams */
   streams: Record<string, any>;
   /** /api/admin/errors */
@@ -207,6 +210,8 @@ export function adminState(): AdminState {
     healthRefreshed: null,
     healthCalls: [],
     loginCheck: loginCheckOk(),
+    repairs: [],
+    repairReply: null,
     streams: { streams: [], totals: { direct: 0, remux: 0, transcode: 0 }, details: true, failed: [] },
     errors: { entries: [], overflow: 0 },
     bannerIssues: [],
@@ -673,6 +678,12 @@ export function adminRoute(st: AdminState, m: string, p: string, sp: URLSearchPa
     return J(st.health);
   }
   if (p === '/api/admin/health/login' && m === 'GET') return J(st.loginCheck);
+  if (p === '/api/admin/authentik/repair' && m === 'POST') {
+    st.repairs.push(body ?? {});
+    const reply = st.repairReply ?? { ok: true, steps: [{ id: 'check', state: 'ok' }, { id: 'serviceAccount', state: 'ok' }, { id: 'extraFlows', state: 'ok' }, { id: 'readback', state: 'ok' }], tokenSaved: true, check: loginCheckOk() };
+    if (reply.check) st.loginCheck = reply.check;
+    return J(reply);
+  }
   if (p === '/api/admin/streams' && m === 'GET') return J(st.streams);
   if (p === '/api/admin/health/banner' && m === 'GET') {
     st.bannerCalls++;
