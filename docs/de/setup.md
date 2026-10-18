@@ -95,6 +95,8 @@ Lieber alles selbst zusammenklicken? [authentik.md §4–§8](authentik.md#4-gru
 
 ## 4. Jellyfin
 
+> **Plex statt Jellyfin?** Diesen Abschnitt überspringen und [plex.md](plex.md) folgen: `compose.plex.yaml` setzt `MEDIA_SERVER=plex`, der Medien-Schritt des Assistenten fragt dann nach Plex-Adresse und Token.
+
 FriendFlix spricht mit Jellyfin über das interne Docker-Netz `friendflix_media`; Jellyfin ist nie öffentlich erreichbar.
 
 **A) Bestehendes Jellyfin** (eigener Container oder Stack): Nachdem der FriendFlix-Stack einmal gestartet wurde ([Schritt 7](#7-stack-starten) legt das Netz `friendflix_media` an), den Container anhängen:

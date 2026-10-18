@@ -21,6 +21,8 @@
 
 FriendFlix ist ein privates Streaming-Portal vor **Jellyfin** (deine Medien) und einem optionalen Wunsch-Dienst. Deine Freunde bekommen ein schickes, vertrautes Streaming-Erlebnis auf Laptop, Handy und Fernseher – mit Profilen, Downloads, Watch-Partys und Empfehlungen untereinander. Jellyfin und den Wunsch-Dienst sehen sie nie direkt, und du bestimmst, wer hineinkommt.
 
+**Jellyfin oder Plex.** Dieselben Images funktionieren auch mit **Plex Media Server**: mit `compose.plex.yaml` starten (setzt `MEDIA_SERVER=plex`) und im Einrichtungsassistenten Plex-Adresse und Token eintragen – ein Token für den ganzen Server, der nie einen Browser erreicht; deine Freunde brauchen kein plex.tv-Konto ([docs/de/plex.md](docs/de/plex.md)). Umstieg von den bisherigen friendflix-plex-Images: [Umstiegsanleitung](docs/de/plex.md#umstieg-von-friendflix-plex-auf-friendflix-20).
+
 > Alle Titel und Bilder in diesen Screenshots sind erfunden und für die Demo generiert.
 
 ## Inhalt
@@ -38,7 +40,7 @@ FriendFlix ist ein privates Streaming-Portal vor **Jellyfin** (deine Medien) und
 - Einen Linux-Server oder ein NAS mit **Docker** und dem **Compose-v2**-Plugin.
 - Eine Domain mit HTTPS und einen Reverse Proxy, z. B. **Nginx Proxy Manager**: ein Proxy-Host `friend.example.com` → `127.0.0.1:3080`, Websockets an, dazu [deploy/npm/portal.advanced.conf](deploy/npm/portal.advanced.conf) im Reiter *Advanced*.
 - **Authentik** für die Anmeldung, installiert mit Admin-Konto, z. B. unter `auth.example.com` ([docs/de/authentik.md §2](docs/de/authentik.md#2-authentik-installieren)).
-- **Jellyfin** (deine Bibliothek) mit abgeschlossenem eigenem Einrichtungsassistenten, am Docker-Netz `friendflix_media` erreichbar oder mit `--profile bundled` gestartet. Ein Wunsch-Dienst ist optional.
+- **Jellyfin** (deine Bibliothek) mit abgeschlossenem eigenem Einrichtungsassistenten, am Docker-Netz `friendflix_media` erreichbar oder mit `--profile bundled` gestartet – oder ein vorhandener **Plex Media Server** ([docs/de/plex.md](docs/de/plex.md)). Ein Wunsch-Dienst ist optional.
 
 **Schnellstart.** Eine neue Installation braucht keine `.env`; der Produktions-Stack zieht fertige Images.
 
@@ -227,8 +229,9 @@ Eine neue Installation braucht davon nichts: Einrichtungsassistent und *Admin �
 | `WEBHOOK_SECRET` | – | Jellyfin-/Wunsch-Dienst-Webhooks (≥ 16 Zeichen); *Admin → Einstellungen → Allgemein → Neu erzeugen*. Ohne: Die Webhooks antworten mit 403 |
 | `OIDC_ISSUER`, `OIDC_CLIENT_ID`, `OIDC_CLIENT_SECRET` | – (Einrichtungsassistent) | Authentik-OIDC-Provider |
 | `TMDB_API_KEY`, `OMDB_API_KEY` (oder `…_FILE`) | leer | Optionale Zusatzdaten für die Detailseite (Links, Bewertungen); oder unter *Admin → Datenquellen* setzen. Siehe [docs/integrations.md](docs/integrations.md#tmdb--omdb-optional) |
-| `MEDIA_SERVER` | `jellyfin` | Art des Medienservers; in diesem Repository gibt es nur Jellyfin (ein Fork kann weitere ergänzen, siehe [docs/architecture.md](docs/architecture.md)) |
-| `JELLYFIN_URL`, `JELLYFIN_ADMIN_API_KEY` | – (Einrichtungsassistent) | Interne Jellyfin-URL, z. B. `http://jellyfin:8096`, und Admin-API-Key |
+| `MEDIA_SERVER` | `jellyfin` | Art des Medienservers: `jellyfin` oder `plex` (nur Umgebung; `compose.plex.yaml` setzt `plex`, siehe [docs/de/plex.md](docs/de/plex.md) und [docs/architecture.md](docs/architecture.md)) |
+| `JELLYFIN_URL`, `JELLYFIN_ADMIN_API_KEY` | – (Einrichtungsassistent) | Interne Jellyfin-URL, z. B. `http://jellyfin:8096`, und Admin-API-Key (nur mit `MEDIA_SERVER=jellyfin`) |
+| `PLEX_URL`, `PLEX_TOKEN` | – (Einrichtungsassistent) | Nur mit `MEDIA_SERVER=plex`: die Plex-Adresse, unter der Backend und Gateway Plex erreichen, z. B. `http://plex.example.com:32400` (nur die Adresse: kein `?…`, `#…` oder `benutzer:passwort@`), und der Token des Plex-Kontos, das FriendFlix nutzt (verschlüsselt in der Datenbank, nur schreibbar; `PLEX_TOKEN_FILE` als Docker-Secret). *Admin → Einstellungen* zeigt sie nur auf einer Plex-Instanz; ein Wert hier gewinnt und sperrt das Feld |
 | `REQUESTS_URL`, `REQUESTS_API_KEY` | – (Pflicht) | Interne URL (mitgeliefert: `http://requests:5055`) und API-Key des Wunsch-Dienstes (ältere Variablennamen funktionieren weiter, mit Hinweis im Log) |
 | `ADMIN_GROUP` | `friendflix-admins` | Authentik-Gruppe, deren Mitglieder Portal-Admins werden |
 | `BIND_ADDR` | `127.0.0.1` | Host-Adresse für die drei Ports – nie eine öffentliche Schnittstelle |
@@ -265,7 +268,7 @@ Eine neue Installation braucht davon nichts: Einrichtungsassistent und *Admin �
 | `PORTAINER_WEBHOOK_URL` oder `PORTAINER_URL` + `PORTAINER_API_KEY` + `PORTAINER_STACK_ID` | leer | Updates per Knopfdruck unter *Admin → Update* (`PORTAINER_ENDPOINT_ID` Standard `1`) |
 | `UPDATE_REPO`, `GITHUB_TOKEN` | `LetsManu/friendflix`, leer | Versionsprüfung; das Token hebt nur das GitHub-Limit an |
 | `UPDATE_CHANNEL`, `UPDATE_VERSION` | `stable`, leer | Wird mit dem Schalter *Stabil / Nightly / Feste Version* unter *Admin → Update* gesetzt (in der Datenbank, keine `.env` nötig): womit die Update-Prüfung vergleicht und, mit dem Updater, was er installiert. Ohne Updater wechselt es nie Images, das macht `FF_TAG` |
-| `UPDATER_URL`, `UPDATER_COMPOSE_FILES` | `http://updater:7070`, `compose.prod.yaml` | Opt-in-Updater (Profil `updater`, [Installationsanleitung](docs/de/setup.md#updater-optional)): seine interne Adresse (nur Umgebung) und die Compose-Dateien des Stacks |
+| `UPDATER_URL`, `UPDATER_COMPOSE_FILES` | `http://updater:7070`, `compose.prod.yaml` | Opt-in-Updater (Profil `updater`, [Installationsanleitung](docs/de/setup.md#updater-optional)): seine interne Adresse (nur Umgebung) und die Compose-Dateien des Stacks (mit Plex macht `compose.plex.yaml` daraus `compose.prod.yaml,compose.plex.yaml`) |
 | `AUTO_UPDATE`, `AUTO_UPDATE_TIME` | `off`, `04:00` | Automatische Updates über den Updater: `nightly-window` startet den Update-Auftrag einmal pro Nacht ab dieser Uhrzeit (Zeitzone des Servers); unter *Admin → Update* einstellbar |
 | `GRAFANA_ADMIN_PASSWORD`, `GRAFANA_PORT`, `PROMETHEUS_RETENTION` | – (Pflicht für den Monitoring-Stack), `3083`, `30d` | Optionales Prometheus + Grafana (`compose.monitoring.yaml`); kein Standardpasswort |
 | `BACKUP_PATH`, `BACKUP_HOUR`, `BACKUP_KEEP_DAYS`, `BACKUP_RUN_ON_START` | `./backups`, `3`, `14`, `false` | Backup-Sidecar (Profil `backup`) |
@@ -328,7 +331,7 @@ flowchart TB
 - Öffentlich ist nur der Proxy. `web`, `backend` und `gateway` sind nur auf `127.0.0.1` veröffentlicht; Jellyfin und der Wunsch-Dienst haben gar keine Ports und hängen im internen Netz `media`, Postgres und Redis im internen Netz `db`.
 - Alle Videodaten (Playlists, Segmente, Direct Play, Bilder, Untertitel, Downloads, Chromecast) laufen durch das Gateway: ohne Pufferung, mit HTTP-Range, Jellyfin-Tokens nur serverseitig, Pfad-Allowlist, fester Upstream, Bitrate-Grenze pro Rolle.
 - Container laufen ohne Root, mit schreibgeschütztem Dateisystem, `cap_drop: ALL` und `no-new-privileges`. Strikte CSP, CSRF-Tokens, Rate-Limits, Audit-Log.
-- Der Medienserver hängt hinter einer neutralen Schnittstelle (`MediaServer` im Backend, ein `Upstream`-Adapter im Gateway, gewählt über `MEDIA_SERVER`). Jellyfin ist hier die einzige Implementierung; ein weiterer Server kommt überwiegend über neue Dateien dazu – Container, Netze, der Ablauf von „Play drücken“ und die Schnittstelle stehen in [docs/architecture.md](docs/architecture.md).
+- Der Medienserver hängt hinter einer neutralen Schnittstelle (`MediaServer` im Backend, ein `Upstream`-Adapter im Gateway, gewählt über `MEDIA_SERVER`). Jellyfin (`backend/src/jellyfin`, `gateway/src/upstream/jellyfin.ts`) und Plex (`backend/src/plex`, `gateway/src/upstream/plex.ts`) sind die beiden Implementierungen, zur Laufzeit aus denselben Images gewählt; außer dem Schnittstellen-Index importiert sie nichts außerhalb ihrer Ordner – Container, Netze, der Ablauf von „Play drücken“ und die Schnittstelle stehen in [docs/architecture.md](docs/architecture.md), die Plex-Details in [docs/de/plex.md](docs/de/plex.md).
 - Alternative „Plan B“: nginx liefert `/media/` selbst über `auth_request` aus – [docs/operations.md](docs/operations.md).
 
 ### Betrieb
@@ -370,6 +373,7 @@ npm run e2e                                     # Playwright: baut die Web-App u
 | Architektur: Container und Netze, Play drücken, Medienserver-Schnittstelle | [docs/architecture.md](docs/architecture.md) |
 | Authentik: Installation, Provider, Flows, Einladungen | [docs/de/authentik.md](docs/de/authentik.md) |
 | Jellyfin, Wunsch-Dienst, ntfy/Discord, Web-Push | [docs/integrations.md](docs/integrations.md) |
+| Plex Media Server statt Jellyfin, Umstieg von friendflix-plex | [docs/de/plex.md](docs/de/plex.md) |
 | Backups, Wiederherstellung, Firewall, Updates, Image-Prüfung, Branch-Schutz, Plan B | [docs/operations.md](docs/operations.md) |
 | Monitoring, Metriken, Grafana-Dashboard, Server-Timing, Browser-Fehler | [docs/monitoring.md](docs/monitoring.md) |
 | Offline-Downloads (Plattformen, Speicher, Grenzen) | [docs/downloads.md](docs/downloads.md) |
@@ -388,7 +392,7 @@ npm run e2e                                     # Playwright: baut die Web-App u
 - Intro überspringen braucht Jellyfin ≥ 10.10 mit Media Segments (z. B. vom Intro-Skipper-Plugin).
 - Die APIs von Jellyfin, Wunsch-Dienst und Authentik unterscheiden sich je Version – nach Upgrades siehe [docs/operations.md](docs/operations.md) und [docs/integrations.md](docs/integrations.md).
 - Optional: ein Wunsch-Dienst für Wünsche (mitgeliefert als Container `requests`; Upstream-Projekt: siehe seine `image:`-Zeile in [compose.prod.yaml](compose.prod.yaml)) – siehe [docs/integrations.md](docs/integrations.md). Mit Jellyfin sind Profile versteckte Jellyfin-Nutzer: den automatischen Jellyfin-Nutzerimport im Wunsch-Dienst ausschalten, damit sie nicht auftauchen. Ein Medienserver ohne Jellyfin-Konten bekommt stattdessen je FriendFlix-Konto einen lokalen Nutzer im Wunsch-Dienst.
-- In diesem Repository ist nur Jellyfin umgesetzt. Besetzung & Infos, Szenen und die Bild-/Ton-Chips brauchen vom Medienserver Besetzungslisten, Kapitel und Stream-Details; kann er sie nicht liefern, blendet die Oberfläche die Funktion aus (`capabilities` in `/api/me`).
+- Jellyfin und Plex sind umgesetzt (Plex: Funktionstabelle in [docs/de/plex.md](docs/de/plex.md)). Besetzung & Infos, Szenen und die Bild-/Ton-Chips brauchen vom Medienserver Besetzungslisten, Kapitel und Stream-Details; kann er sie nicht liefern, blendet die Oberfläche die Funktion aus (`capabilities` in `/api/me`).
 - „Bald nicht mehr verfügbar“ ist eine Ankündigung eines Admins; FriendFlix löscht nie Medien. Das Label „Staffelfinale“ ist eine Heuristik (letzte Folge der neuesten Staffel ist neu, die Serie läuft nicht mehr weiter). Der Bildqualitäts-Filter liest einen Hintergrund-Index (`BACKGROUND_JOBS=true`), der sich nach dem ersten Start erst nach und nach füllt.
 - Klare Stimmen und Nachtmodus nutzen die Audioverarbeitung des Browsers: nicht auf jedem Gerät verfügbar und nicht beim Streamen auf ein anderes Gerät. PWA-Widgets für den Home-Bildschirm gibt es nur unter Windows 11; Verknüpfungen und das Symbol-Badge (nicht auf jeder iOS-Version) sind der Ersatz auf dem Handy.
 - Mit Intel QSV/VAAPI in Jellyfin „VPP Tone mapping“ ausschalten, wenn der Treiber kein HDR kann; sonst scheitern 4K-HDR-Titel.

@@ -95,6 +95,8 @@ Prefer to click everything together yourself? Follow [authentik.md §4–§8](au
 
 ## 4. Jellyfin
 
+> **Plex instead of Jellyfin?** Skip this section and follow [plex.md](plex.md): `compose.plex.yaml` sets `MEDIA_SERVER=plex`, the wizard's media step then asks for the Plex address and token.
+
 FriendFlix talks to Jellyfin over the internal Docker network `friendflix_media`; Jellyfin is never exposed publicly.
 
 **A) Existing Jellyfin** (own container or stack): after the FriendFlix stack has been started once ([step 7](#7-start-the-stack) creates the network `friendflix_media`), attach the container:
