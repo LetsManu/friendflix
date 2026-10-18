@@ -227,7 +227,7 @@ A new install needs none of this: the setup wizard and *Admin → Settings* stor
 | `ADMIN_GROUP` | `friendflix-admins` | Authentik group whose members become portal admins |
 | `BIND_ADDR` | `127.0.0.1` | Host address the three ports are published on – never a public interface |
 | `WEB_PORT`, `BACKEND_PORT`, `GATEWAY_PORT` | `3080`, `3081`, `3082` | Host ports for the reverse proxy |
-| `FF_REGISTRY`, `FF_TAG` | `ghcr.io/letsmanu`, `latest` | Image source and version (pin with a commit SHA or `x.y.z`) |
+| `FF_REGISTRY`, `FF_TAG` | `ghcr.io/letsmanu`, `latest` | Image source and release channel: `latest` = stable releases, `nightly` = every green commit on main, `1` / `1.1` / `1.1.0` (or a commit SHA) to pin ([release channels](docs/operations.md#release-kanäle)) |
 | `SESSION_TTL_SECONDS`, `SESSION_IDLE_SECONDS` | `28800`, `7200` | Absolute session length (8 h) and idle timeout (2 h) |
 | `TZ` | `Europe/Vienna` | Time zone for scheduled jobs (digest, playback check, backups) |
 | `AUTHENTIK_URL`, `AUTHENTIK_API_TOKEN`, `AUTHENTIK_ENROLL_FLOW` | empty | Invitations that also create the Authentik account (all three needed); URL and token also give the admin user page the two-factor state and *Send password link* |
@@ -258,6 +258,7 @@ A new install needs none of this: the setup wizard and *Admin → Settings* stor
 | `METRICS_TOKEN` | empty | Bearer token for `/metrics` |
 | `PORTAINER_WEBHOOK_URL` or `PORTAINER_URL` + `PORTAINER_API_KEY` + `PORTAINER_STACK_ID` | empty | One-click updates from *Admin → Update* (`PORTAINER_ENDPOINT_ID` default `1`) |
 | `UPDATE_REPO`, `GITHUB_TOKEN` | `LetsManu/friendflix`, empty | Version check; the token only raises the GitHub rate limit |
+| `UPDATE_CHANNEL` | `stable` | Set with the *Stable / Nightly* switch under *Admin → Update* (stored in the database, no `.env` needed): what the update check compares with. It never switches images; `FF_TAG` does |
 | `GRAFANA_ADMIN_PASSWORD`, `GRAFANA_PORT`, `PROMETHEUS_RETENTION` | – (required for the monitoring stack), `3083`, `30d` | Optional Prometheus + Grafana (`compose.monitoring.yaml`); no default password |
 | `BACKUP_PATH`, `BACKUP_HOUR`, `BACKUP_KEEP_DAYS`, `BACKUP_RUN_ON_START` | `./backups`, `3`, `14`, `false` | Backup sidecar (profile `backup`) |
 | `MEDIA_PATH` | `./media` | Media folder for the bundled Jellyfin (profile `bundled`) |
@@ -332,7 +333,7 @@ flowchart TB
 
 ### Versions & releases
 
-FriendFlix uses [SemVer](https://semver.org) (`version.json`, shown in the desktop footer and under *Admin → Update*). Every major version gets a codename: the next cinema snack from A to Z (1 = Arancini, 2 = Brezel, …; list in `codenames.json`). Releases are cut with the manual **Release** workflow (patch / minor / major): it bumps the version (`none` for the very first release publishes 1.0.0 as it is), moves the *Unreleased* part of [CHANGELOG.md](CHANGELOG.md) under the new version, tags `vX.Y.Z` and creates the GitHub Release. The workflow pushes with the optional `RELEASE_TOKEN` secret (a fine-grained token that is the only bypass actor of the main/tag rulesets; without it, main must accept direct pushes from GitHub Actions). Images are then published as `X.Y.Z`, `X.Y`, `X` and, for the highest version only, `latest`; set `FF_TAG=1` to stay on major version 1 and still get its minor and patch releases. Details: [docs/operations.md](docs/operations.md#release-erstellen).
+FriendFlix uses [SemVer](https://semver.org) (`version.json`, shown in the desktop footer and under *Admin → Update*). Every major version gets a codename: the next cinema snack from A to Z (1 = Arancini, 2 = Brezel, …; list in `codenames.json`). Releases are cut with the manual **Release** workflow (patch / minor / major): it bumps the version (`none` for the very first release publishes 1.0.0 as it is), moves the *Unreleased* part of [CHANGELOG.md](CHANGELOG.md) under the new version, tags `vX.Y.Z` and creates the GitHub Release. The workflow pushes with the optional `RELEASE_TOKEN` secret (a fine-grained token that is the only bypass actor of the main/tag rulesets; without it, main must accept direct pushes from GitHub Actions). Images are then published as `X.Y.Z`, `X.Y`, `X` and, for the highest version only, `latest` (every green commit on main is published as `nightly`, never as `latest`); set `FF_TAG=1` to stay on major version 1 and still get its minor and patch releases. Details: [docs/operations.md](docs/operations.md#release-erstellen).
 
 ### Development
 
