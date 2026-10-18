@@ -1,0 +1,68 @@
+# SPDX-FileCopyrightText: 2026 Manuel Weißböck
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Optional override for compose.prod.yaml (or compose.yaml): connects FriendFlix to an EXISTING Plex Media Server instead of
+# Jellyfin (docs/plex.md). Same images as for Jellyfin (friendflix-*): MEDIA_SERVER=plex picks the Plex adapter at runtime.
+# There is no Plex container here, and Plan B (compose.planb.yaml / NPM serving /media itself) is not supported with Plex.
+#
+#   docker compose -f compose.prod.yaml -f compose.plex.yaml config      # check
+#   docker compose -f compose.prod.yaml -f compose.plex.yaml up -d
+#   docker compose -f compose.prod.yaml -f compose.plex.yaml --profile updater up -d   # with the opt-in updater (see the end)
+#   (or put COMPOSE_FILE=compose.prod.yaml:compose.plex.yaml into .env and use plain `docker compose up -d`)
+#
+# Setup: nothing is required in .env. `up -d`, open the setup wizard with the setup code from the backend log
+# (`docker compose logs backend | grep "setup code"`) and enter the Plex address and token in the media step; both are stored in the
+# database (token encrypted) and can be changed under Admin -> Settings. The gateway gets them from the backend over the internal
+# network (/internal/gateway-config, secured by the shared secret from the bootstrap volume), so the token never needs to be in the
+# gateway's environment and never reaches a browser.
+#
+# Optional pins in .env (a value set here wins over the database and shows locked, "from environment"):
+#   PLEX_URL=http://plex.example.com:32400   how backend + gateway reach Plex (LAN IP, host.docker.internal, or a container name on a
+#                                            shared network). Plex on this Docker host: http://host.docker.internal:32400
+#                                            Set it for BOTH backend and gateway or for NEITHER: this file passes it to both, so
+#                                            do not remove it from one of them.
+#   PLEX_TOKEN=...                           token of the Plex account FriendFlix uses (ONE token for everybody; a dedicated Plex
+#                                            account is recommended). Backend only. As a Docker secret instead: PLEX_TOKEN_FILE
+#                                            (see the end of this file); a _FILE value locks the field in the wizard.
+#   JELLYFIN_URL / JELLYFIN_ADMIN_API_KEY    not used with Plex (this file removes them from the containers).
+#
+# The Plex token is sent to Plex as a header by the backend and gateway only and never reaches a browser.
+services:
+  backend:
+    environment:
+      MEDIA_SERVER: plex
+      PLEX_URL: ${PLEX_URL:-} # optional pin, same value for backend and gateway
+      PLEX_TOKEN: ${PLEX_TOKEN:-}
+      PLEX_TOKEN_FILE: ${PLEX_TOKEN_FILE:-}
+      JELLYFIN_URL: !reset null
+      JELLYFIN_ADMIN_API_KEY: !reset null
+      JELLYFIN_ADMIN_API_KEY_FILE: !reset null # set by compose.secrets.yaml; unused with Plex
+    # reach a Plex server that runs directly on the Docker host (PLEX_URL=http://host.docker.internal:32400)
+    extra_hosts: ["host.docker.internal:host-gateway"]
+
+  gateway:
+    environment:
+      MEDIA_SERVER: plex
+      PLEX_URL: ${PLEX_URL:-} # optional pin, same value for backend and gateway
+      # no PLEX_TOKEN here: the gateway takes the token from the backend (settings in the database, or the backend's env pin)
+      JELLYFIN_URL: !reset null
+    extra_hosts: ["host.docker.internal:host-gateway"]
+
+  # Opt-in updater (profile `updater`; the docker-proxy service, the networks updater / updater-docker / updater-egress, the
+  # volume updater-state, the backend's `updater` network and UPDATER_URL come from compose.prod.yaml):
+  #   docker compose -f compose.prod.yaml -f compose.plex.yaml --profile updater up -d
+  # The updater runs compose with EVERY file of this stack, so its default list names this file too; otherwise it would recreate the
+  # backend and gateway without MEDIA_SERVER=plex. With more files, list them all in .env, e.g.
+  #   UPDATER_COMPOSE_FILES=compose.prod.yaml,compose.plex.yaml,compose.authentik.yaml
+  # Images (friendflix-*), the cosign identity (UPDATE_REPO, default LetsManu/friendflix) and the services it may recreate
+  # (bootstrap, backend, gateway, web; never the Plex server) are the same as with Jellyfin.
+  updater:
+    profiles: [updater]
+    environment:
+      UPDATER_COMPOSE_FILES: ${UPDATER_COMPOSE_FILES:-compose.prod.yaml,compose.plex.yaml}
+
+# Token as a Docker secret instead of PLEX_TOKEN (optional):
+#   printf '%s' 'your-plex-token' > secrets/plex_token && chmod 600 secrets/plex_token
+#   .env: PLEX_TOKEN_FILE=/run/secrets/plex_token   (leave PLEX_TOKEN empty)
+#   and add to this file:  top level `secrets: { plex_token: { file: ./secrets/plex_token } }`,
+#   plus `secrets: [plex_token]` under backend only (with compose.secrets.yaml: append plex_token to its backend list). The gateway
+#   receives the token from the backend.
