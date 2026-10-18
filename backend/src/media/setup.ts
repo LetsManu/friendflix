@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { jellyfinSetup } from '../jellyfin/setup.js';
+import { plexSetup } from '../plex/setup.js';
 import type { ProbeResult } from '../settings/probeKit.js';
 import type { MediaServerKind } from './index.js';
 
@@ -16,6 +17,12 @@ export interface MediaSetupProvider {
   keys: readonly string[];
   /** the gateway upstream (Jellyfin: 'JELLYFIN_URL') */
   urlKey: string;
+  /**
+   * settings the gateway needs besides urlKey (Plex: ['PLEX_TOKEN'], the one server-wide token). /internal/gateway-config sends
+   * them as `upstreamAuth` behind the internal secret (no-store, never logged) and answers 503 setup_required while one is empty.
+   * Jellyfin: absent (the gateway authenticates with each user's own token from /internal/authz).
+   */
+  gatewayKeys?: readonly string[];
   /** the settings probe with candidate values; `fetchImpl` never follows a redirect and is aborted at the probe's deadline */
   probe(values: Record<string, string | undefined>, deps: { fetchImpl: typeof fetch }): Promise<ProbeResult>;
   auto?: {
@@ -29,4 +36,5 @@ export interface MediaSetupProvider {
 
 export const MEDIA_SETUP: Partial<Record<MediaServerKind, MediaSetupProvider>> = {
   jellyfin: jellyfinSetup,
+  plex: plexSetup, // manual only (no `auto`), see plex/setup.ts
 };

@@ -8,7 +8,8 @@ import type { Ctx } from '../ctx.js';
 import { authorizeDownload } from '../downloads.js';
 import { setLive } from '../live.js';
 import { dispatchMediaEvent } from '../media/events.js';
-import { mediaUrlKey } from '../media/index.js';
+import { addressOnly } from '../media/address.js';
+import { mediaGatewayKeys, mediaUrlKey } from '../media/index.js';
 import { MediaError, type ExternalSession } from '../media/types.js';
 import { effectiveLimits } from '../limits.js';
 import { jfUserFor, resolveProfile } from '../profiles.js';
@@ -224,6 +225,8 @@ export function internalRoutes(app: FastifyInstance, ctx: Ctx) {
   /**
    * The gateway's configuration (it has no database): the media server URL from the live settings plus the settings revision it belongs
    * to. 503 setup_required while the URL is empty; the gateway keeps retrying and answers /media/* with 503 until then.
+   * a kind with gatewayKeys (Plex: PLEX_TOKEN) also gets `upstreamAuth` {key: value} (503 while one is empty). Only behind the
+   * secret above, no-store, never logged (Fastify logs no bodies): the Plex token travels backend -> gateway on the internal network only.
    */
   app.get('/internal/gateway-config', { config: { rateLimit: false } }, async (req, reply) => {
     if (!checkSecret(req, 'x-internal-secret', ctx.cfg.INTERNAL_SECRET)) return reply.code(403).send({ error: 'forbidden' });
@@ -232,7 +235,16 @@ export function internalRoutes(app: FastifyInstance, ctx: Ctx) {
     const url = (cfg as unknown as Record<string, unknown>)[mediaUrlKey(cfg)];
     reply.header('cache-control', 'no-store');
     if (typeof url !== 'string' || !url) return reply.code(503).send({ error: 'setup_required' });
-    return { rev, upstreamUrl: url };
+    const keys = mediaGatewayKeys(cfg);
+    if (!keys.length) return { rev, upstreamUrl: url };
+    const upstreamAuth: Record<string, string> = {};
+    for (const k of keys) {
+      const v = (cfg as unknown as Record<string, unknown>)[k];
+      if (typeof v !== 'string' || !v) return reply.code(503).send({ error: 'setup_required' });
+      upstreamAuth[k] = v;
+    }
+    // origin + path only: a query (a pasted ?X-Plex-Token=…) never travels in the URL, the token goes only in upstreamAuth
+    return { rev, upstreamUrl: addressOnly(url), upstreamAuth };
   });
 
   // Webhooks of the configured server (Jellyfin: /internal/webhook/jellyfin), translated into neutral events by the implementation.
