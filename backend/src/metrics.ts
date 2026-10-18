@@ -17,6 +17,11 @@ const partyRooms = new Gauge({ name: 'friendflix_party_rooms', help: 'Open watch
 const pendingRequests = new Gauge({ name: 'friendflix_pending_polls', help: 'Polls waiting for admin approval', registers: [registry] });
 export const authzNginx = new Counter({ name: 'friendflix_authz_nginx_total', help: 'Plan B auth_request decisions', labelNames: ['result'], registers: [registry] });
 export const clientErrorsTotal = new Counter({ name: 'friendflix_client_errors_total', help: 'Browser errors reported via POST /api/client-errors', labelNames: ['kind'], registers: [registry] });
+// 1.1 post-play screen: aggregates only, bounded labels (state / row kind are fixed enums, never a title or a user)
+export const postplayShown = new Counter({ name: 'friendflix_postplay_shown_total', help: 'Post-play screens shown', labelNames: ['state'], registers: [registry] });
+export const postplayClick = new Counter({ name: 'friendflix_postplay_click_total', help: 'Post-play suggestions opened', labelNames: ['row_kind'], registers: [registry] });
+export const postplayPlay = new Counter({ name: 'friendflix_postplay_play_total', help: 'Post-play suggestions played', labelNames: ['row_kind'], registers: [registry] });
+export const postplayDismiss = new Counter({ name: 'friendflix_postplay_dismiss_total', help: 'Post-play screens dismissed', registers: [registry] });
 /**
  * Recommendation telemetry (spec 4.7). Labels are bounded by RECO_ROWS / RECO_ENGINES (routes/reco.ts) and never carry an item, a title or a user.
  * Impressions, clicks and dismisses come from the browser (POST /api/reco/events); plays are counted server side by the engine step (R4).

@@ -260,6 +260,8 @@ export interface ItemAboutDto {
   countries: string[]; studios: string[]; tags: string[]; communityRating?: number; criticRating?: number;
 }
 /** A collection (box set) the item belongs to. `parts` = only what the viewer can see, in release order (premiere date, year, name). */
+/** Airing status of a series; null = unknown (never treat it as ended). */
+export type SeriesStatus = 'continuing' | 'ended' | null;
 export interface MediaCollection { id: string; name: string; parts: Array<{ item: ItemDto; tmdbId?: string }> }
 
 /** Metadata FriendFlix classifies on (e.g. "is this an anime"): genres, tags, production countries. */
@@ -475,6 +477,13 @@ export interface MediaServer {
   itemAbout?(user: MediaUser, id: string): Promise<ItemAboutDto>;
   /** collections containing the item, with the parts the viewer can see (hidden parts are omitted, never reported as missing); [] = none */
   itemCollections?(user: MediaUser, id: string): Promise<MediaCollection[]>;
+
+  // ---- 1.1 post-play (optional): series status. Absent = the status counts as unknown (a series is then never called finished).
+  /**
+   * Airing status of a series the viewer can see: 'continuing', 'ended', or null when the server does not know it (no status set).
+   * MediaError(404) when the series is not visible to the viewer.
+   */
+  seriesStatus?(user: MediaUser, seriesId: string): Promise<SeriesStatus>;
 
   // ---- Block 22 (optional): admin care. Absent = hygiene page "not supported" / no "refresh metadata" button.
   /**

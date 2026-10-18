@@ -340,7 +340,7 @@ const QUALITY_PARALLEL = 4;
 /** the viewer's visible, sorted id list of one quality browse is kept this long (seconds): paging does not re-scan */
 const QUALITY_LIST_TTL = 180;
 /** per session (cookie) limits of the two heavier Block 17 routes; IP as the fallback for cookie-less callers (they get 401 anyway) */
-const perSession = (max: number) => ({ rateLimit: { max, timeWindow: '1 minute', keyGenerator: (req: { cookies?: Record<string, string | undefined>; ip: string }) => `s:${req.cookies?.ff_sid ?? req.ip}` } });
+export const perSession = (max: number) => ({ rateLimit: { max, timeWindow: '1 minute', keyGenerator: (req: { cookies?: Record<string, string | undefined>; ip: string }) => `s:${req.cookies?.ff_sid ?? req.ip}` } });
 const dateOnly = z.string().regex(/^\d{4}-\d{2}-\d{2}$/).refine((v) => {
   const t = Date.parse(`${v}T00:00:00Z`);
   return Number.isFinite(t) && new Date(t).toISOString().startsWith(v); // 2026-02-30 rolls over: refused

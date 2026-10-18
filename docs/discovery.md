@@ -126,6 +126,49 @@ Jeder Treffer trägt `planned`: die Zahl der Teilnehmer (Konten), die den Titel 
 - **`GET /api/items/:id/story`** („Die Geschichte bisher“ auf der Serienseite): `{ story: null }` für Filme und wenn nichts zutrifft, sonst `{ reason: 'newSeason' | 'longBreak', weeks?, season?, episode, next }`. Sie erscheint, wenn die nächste ungesehene Folge die erste einer neuen Staffel ist oder die letzte Wiedergabe mindestens 6 Wochen (`STORY_BREAK_WEEKS`) zurückliegt, und besteht nur aus Metadaten: der Beschreibung der zuletzt vollständig gesehenen Staffel und der Beschreibung der zuletzt gesehenen Folge – nie Folgen, die du noch nicht gesehen hast. Ausgeblendet wird die Karte im Browser (`localStorage`).
 - **Klang im Player** und **Ruhiger Modus** sind Profil-Einstellungen und stehen in [personal.md](personal.md).
 
+## 1.1: „Was als Nächstes?“ – Bildschirm nach dem Ende (`GET /api/items/:id/postplay`)
+
+Sitzung nötig, je Profil, mit dem Token des aktiven Profils (Kinder-Altersgrenze und Bibliotheken gelten); nicht sichtbare oder unbekannte Titel `404`, falsche IDs `400`. Rate-Limit `perSession(60)` (60 pro Minute und Sitzung). Mit `POSTPLAY_ENABLED=false` antwortet der Endpunkt `404 {"error":"disabled"}`, `/api/me` meldet `features.postplay: false` und die Web-App zeigt weder Karte noch Bildschirm.
+
+```json
+{ "state": "next" | "movie_end" | "series_finished" | "caught_up" | "gap",
+  "current": ItemDto, "next": ItemDto | null, "nextAirDate": "2026-10-21" | null, "sequel": ItemDto | null,
+  "canWish": true, "remind": { "episodeId": "…" } | null, "suggestions": true,
+  "rows": [{ "kind": "continuation|universe|because|friends|taste", "title": "…",
+             "reason": { "seed": { "id": "…", "name": "…" }, "traits": ["genre:…", "collection:…", "hub:…", "tag:…"] },
+             "items": [ItemDto], "wish": { "mediaType": "tv", "tmdbId": 1396, "quota": { "limit": 5, "used": 3, "remaining": 2, "resetsAt": "…" } } }],
+  "hero": ItemDto | null }
+```
+
+- **Zustände:**
+  - `next`: Eine ungesehene Fortsetzung ist da – die nächste *verfügbare* Folge (`nextEpisode`, angekündigte Folgen zählen nicht) oder der nächste ungesehene Teil einer Filmsammlung (`itemCollections`). Bei Folgen bleibt im Player der bisherige Countdown; der Bildschirm erscheint dort nicht.
+  - `gap`: Keine nächste Folge, aber eine frühere verfügbare Folge ist noch ungesehen (Specials ausgenommen) → „Folge N ist noch ungesehen“, `next` ist diese Folge.
+  - `series_finished`: Letzte Folge einer Serie, deren Status *sicher* „beendet“ ist. Den Status liefert der optionale Medienserver-Hook `seriesStatus()` (Jellyfin: `Status` = `Ended`). Fehlt der Hook oder ist der Status unbekannt, zählt nur ein positives „läuft noch“ aus der Liste in `fresh.ts` – eine Serie wird **nie** „beendet“ genannt, wenn der Status unbekannt ist (gleiche Regel wie beim „Staffelfinale“). `sequel` ist ein späterer Teil einer Sammlung, zu der die Serie gehört.
+  - `caught_up`: Letzte verfügbare Folge einer laufenden Serie (oder einer mit unbekanntem Status). `nextAirDate` und `remind` kommen von der angekündigten nächsten Folge bzw. `upcoming()`; „Erinnere mich“ nutzt die bestehenden Erinnerungen (`POST /api/reminders {episodeId}`), nicht auf Kinderprofilen.
+  - `movie_end`: Film ohne ungesehenen späteren Teil.
+- **Reihen** in dieser Reihenfolge, leere fallen weg, kein Titel kommt zweimal vor:
+  1. `continuation`: nächster Teil, Fortsetzung oder die übersprungene Folge. Fehlt bei einer beendeten Serie eine Staffel (Wunsch-Dienst meldet „teilweise verfügbar“), trägt die Reihe `wish` mit dem Monatskontingent; gewünscht wird über den bestehenden Weg `POST /api/requests`.
+  2. *(R3: `transition`, „Was andere nach X schauen“ – Erweiterungspunkt `ROW_SOURCES` in `backend/src/postplay.ts`, noch nicht aktiv)* und `universe`: die anderen Teile der Sammlung, sonst der erste passende Marken-Hub (Studio/Tag/Sammlung), sonst das erste Tag (ab 4 Titeln).
+  3. `because`: Jellyfins `similar()` mit dem gerade beendeten Titel als Ausgangspunkt (bei Folgen die Serie); `reason.seed` ist dieser Titel.
+  4. `friends`: das bestehende `friendsRatedFor` (Opt-in `shareRatings`, ≥ 4 Sterne, 90 Tage). Nie auf Kinderprofilen.
+  5. `taste`: die profilbasierten Reihen der bestehenden Engine (`libraryBecause` + `libraryBecauseMore`, abwechselnd gemischt).
+- **Filter:** Nie der Titel selbst oder seine Serie, nie Gesehenes oder komplett gesehene Serien, nie „Abgebrochen“ (`dropped`) oder Daumen runter des Profils. Höchstens jeder dritte Titel einer Reihe stammt aus der aktuellen Season (Premiere in den letzten 91 Tagen; auf jedem dritten Platz), damit nicht nur Simulcast-Hits erscheinen.
+- **Hero:** Fortsetzung bzw. nächster Teil, sonst aus den ersten 8 Titeln der `because`-Reihe der, der auch zur `taste`-Reihe des Profils passt, dann mit Bild, dann eine je Profil stabile Reihenfolge – nicht jedes Profil bekommt denselben Tipp.
+- **Spoilerschutz:** Ist er an, fehlt die Beschreibung ungesehener Folgen (`current`, `next`, Reihen); die Web-App blendet auch deren Vorschaubild aus.
+- **Einstellung je Profil** „Vorschläge nach der letzten Folge zeigen“ (`postplay` in `GET/PUT /api/prefs`, Standard an). Aus: `suggestions: false`, nur noch die Reihe `continuation`, kein Hero.
+- **Cache:** 60 s je Profil + Titel + User-Data-Version des Medienservers + Home-Generation; `bumpHome()` (Daumen, Liste, Status …) verwirft ihn sofort.
+
+### Zähler: `POST /api/postplay/event`
+
+Body `{"type":"shown","state":…}`, `{"type":"click"|"play","row":…}` oder `{"type":"dismiss"}` (nur die festen Werte oben, sonst `400`); Antwort `204`, Rate-Limit `perSession(120)`. Es entstehen nur Summen ohne Titel, Nutzer oder IDs: `friendflix_postplay_shown_total{state}`, `friendflix_postplay_click_total{row_kind}`, `friendflix_postplay_play_total{row_kind}`, `friendflix_postplay_dismiss_total`.
+
+### Web
+
+- **Karte „Fertig? Sieh dir an, was als Nächstes kommt“:** klein und nicht blockierend, ab dem Abspann – Outro-Segment des Medienservers, sonst das letzte Kapitel (wenn es in den letzten 20 % beginnt), sonst 95 % der Laufzeit. Nur ohne nächste Folge (sonst bleibt der Countdown) und nicht, während ein Fernseher spielt. Sie lädt die Antwort schon vor.
+- **Bildschirm:** Endet der Titel (oder auf Klick auf die Karte), legt sich der Bildschirm über den Player (Vollbild wird verlassen). Oben links der gerade gesehene Titel und die Überschrift (`aria-live`), dann der nächste Schritt (Abspielen, Zurückspringen, Erinnere mich, Wunsch mit Kontingent), ein Hero mit *Abspielen*, *Auf die Merkliste*, *Kein Interesse* (mit *Rückgängig*, inline) und *Details*, „Bewerten“ für den gerade gesehenen Titel, dann die Reihen mit ihrem Grund. Es startet **nie** etwas von selbst. Esc bzw. Zurück (TV) schließt den Bildschirm; man bleibt beim Titel.
+- **`/postplay/<id>`:** derselbe Bildschirm ohne Player (TV, Handy, Direktlink, Detailseite nach der letzten Folge).
+- **Ruhemodus und reduzierte Bewegung:** keine Einblendung, keine Übergänge; Trailer, Vorschauclips oder Ton gibt es auf dem Bildschirm ohnehin nicht. **TV-Modus:** große Schrift, Fokus mit den Pfeiltasten (`data-nav`/`data-scope`), der erste sinnvolle Knopf hat den Fokus.
+
 ## Empfehlungen messen: `scripts/reco-eval.mjs` und `POST /api/reco/events`
 
 Schritt R0 der Empfehlungs-Engine v2 (Spezifikation 4.7): erst messen, dann bauen. Der Auswertungslauf ist offline und ändert nichts.

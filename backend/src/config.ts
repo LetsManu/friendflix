@@ -258,6 +258,8 @@ export const configSchema = z.object({
   AUTHENTIK_EMAIL_CHANGE_FLOW: later('friendflix-email-change'),
   PASSKEYS_IN_APP: z.preprocess(emptyAsUnset, z.enum(['auto', 'off']).default('auto')),
   LOGIN_COVER_WALL: z.preprocess(emptyAsUnset, z.enum(['true', 'false']).default('true')),
+  /** 1.1: the post-play screen ("caught up", suggestions after the last episode / a film); false = off for everybody */
+  POSTPLAY_ENABLED: z.preprocess(emptyAsUnset, z.enum(['true', 'false']).default('true')),
 });
 
 export type Config = z.infer<typeof configSchema>;
