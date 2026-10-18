@@ -258,10 +258,12 @@ export function discoverRoutes(app: FastifyInstance, ctx: Ctx) {
   app.put('/api/items/:id/thumb', pre, wrap(async (req) => {
     const id = id32.parse((req.params as { id: string }).id);
     const { value } = z.object({ value: z.union([z.literal(-1), z.literal(0), z.literal(1), z.literal(2)]) }).parse(req.body);
+    // the value it replaces (0 = none): an Undo ("Not interested" on post-play) puts back exactly that
+    const previous = (await ctx.db.query<{ value: number }>('select value from thumbs where profile_id=$1 and item_id=$2', [req.profile!.id, id])).rows[0]?.value ?? 0;
     if (value === 0) {
       await ctx.db.query('delete from thumbs where profile_id=$1 and item_id=$2', [req.profile!.id, id]);
       await bumpHome(ctx, req.profile!.id);
-      return { value: 0 };
+      return { value: 0, previous };
     }
     const item = await ctx.jf.item(req.jfUser!, id);
     await ctx.db.query(
@@ -270,7 +272,7 @@ export function discoverRoutes(app: FastifyInstance, ctx: Ctx) {
       [req.profile!.id, req.user!.id, id, value, item.name],
     );
     await bumpHome(ctx, req.profile!.id);
-    return { value };
+    return { value, previous };
   }));
 
   // ---- Cast panel, hover trailer, collections, studios ----

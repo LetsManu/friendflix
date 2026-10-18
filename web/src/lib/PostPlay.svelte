@@ -30,7 +30,8 @@
   let p: Postplay | null = data, failed = false, root: HTMLElement | undefined;
   /** titles hidden after "Not interested" (until Undo) */
   let hidden = new Set<string>();
-  let feedback: { id: string; title: string } | null = null, note = '';
+  /** the title just marked "Not interested" and the thumb it had before (Undo restores it; 0 = none) */
+  let feedback: { id: string; title: string; previous: number } | null = null, note = '';
   let remindMsg = '', wishState: '' | 'busy' | 'done' = '', wishMsg = '', listMsg = '';
   /** calm mode (per profile) or reduced motion: no fade, no transitions (the screen never plays a trailer or sound anyway) */
   $: still = $prefs.calm === true || !motionAllowed();
@@ -82,15 +83,19 @@
 
   async function notInterested(i: Item) {
     if (p) recoCount(p, rowOf(p, i.id), 'dismisses');
-    hidden = new Set(hidden).add(i.id); feedback = { id: i.id, title: i.name }; note = '';
-    try { await api(`/api/items/${i.id}/thumb`, { method: 'PUT', body: { value: -1 } }); }
+    hidden = new Set(hidden).add(i.id); feedback = { id: i.id, title: i.name, previous: 0 }; note = '';
+    try {
+      const r = await api(`/api/items/${i.id}/thumb`, { method: 'PUT', body: { value: -1 } }) as { previous?: number };
+      const previous = typeof r?.previous === 'number' && [-1, 1, 2].includes(r.previous) ? r.previous : 0;
+      if (feedback?.id === i.id) feedback = { ...feedback, previous };
+    }
     catch { hidden.delete(i.id); hidden = new Set(hidden); feedback = null; note = tr('common.saveFailed'); }
   }
   async function undo() {
     if (!feedback) return;
-    const id = feedback.id;
+    const { id, previous } = feedback;
     feedback = null;
-    try { await api(`/api/items/${id}/thumb`, { method: 'PUT', body: { value: 0 } }); hidden.delete(id); hidden = new Set(hidden); note = tr('postplay.action.undone'); }
+    try { await api(`/api/items/${id}/thumb`, { method: 'PUT', body: { value: previous } }); hidden.delete(id); hidden = new Set(hidden); note = tr('postplay.action.undone'); }
     catch { note = tr('common.saveFailed'); }
   }
   async function list(i: Item) {

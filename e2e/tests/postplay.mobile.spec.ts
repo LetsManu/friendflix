@@ -33,6 +33,42 @@ test.describe('post-play screen (phone)', () => {
     await expect.poll(() => api.postplayEvents.map((e) => e.type)).toEqual(['shown', 'dismiss']);
   });
 
+  test('phone / browser Back while the screen is open closes it and stays on the title (one history entry)', async ({ page, api }) => {
+    await mockPlayer(page, { chapters: [] });
+    await mockPostplay(page, MOVIE.id, MOVIE_END);
+    await page.goto('/');
+    await page.goto('/watch/' + MOVIE.id);
+    await toCredits(page);
+    await endTitle(page);
+    const pp = page.getByTestId('postplay');
+    await expect(pp.getByRole('heading', { level: 1 })).toBeVisible();
+    // the covered player is out of reach while the screen is open (inert, no focus trap)
+    expect(await page.locator('.stagewrap').evaluate((el) => (el as HTMLElement).inert)).toBe(true);
+    await page.goBack();
+    await expect(pp).toHaveCount(0);
+    expect(new URL(page.url()).pathname).toBe('/watch/' + MOVIE.id);
+    expect(await page.locator('.stagewrap').evaluate((el) => (el as HTMLElement).inert)).toBe(false);
+    await expect.poll(() => api.postplayEvents.map((e) => e.type)).toEqual(['shown']);
+    // the next Back leaves the watch page as usual: the screen left no extra entry behind
+    await page.goBack();
+    await expect(page).toHaveURL(/\/$/);
+  });
+
+  test('closing the screen with its own button takes its history entry back off', async ({ page }) => {
+    await mockPlayer(page, { chapters: [] });
+    await mockPostplay(page, MOVIE.id, MOVIE_END);
+    await page.goto('/');
+    await page.goto('/watch/' + MOVIE.id);
+    await toCredits(page);
+    await page.getByTestId('postplay-card').getByRole('button', { name: 'Was als Nächstes?' }).tap();
+    const pp = page.getByTestId('postplay');
+    await pp.getByRole('button', { name: 'Zurück zum Titel' }).tap();
+    await expect(pp).toHaveCount(0);
+    expect(new URL(page.url()).pathname).toBe('/watch/' + MOVIE.id);
+    await page.goBack();
+    await expect(page).toHaveURL(/\/$/);
+  });
+
   test('ongoing series: caught up with a reminder', async ({ page }) => {
     await mockPostplay(page, LAST_EP.id, CAUGHT_UP);
     await page.route('**/api/reminders', (r) => r.fulfill({ json: { id: 7, coveredByFollow: false } }));

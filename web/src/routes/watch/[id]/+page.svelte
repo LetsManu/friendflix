@@ -5,7 +5,7 @@
   import { recoPlayStarted } from '#lib/reco';
   import { pageStore } from '#lib/page';
   const page = pageStore();
-  import { goto } from '$app/navigation';
+  import { goto, pushState } from '$app/navigation';
   import { api, cachedItem, img, primeItem, type Item } from '#lib/api';
   import Icon from '#lib/Icon.svelte';
   import Player from '#lib/Player.svelte';
@@ -77,7 +77,7 @@
   async function loadItem(wanted: string) {
     item = cachedItem(wanted) ?? null; // title right away when a card/detail view had it
     nextEp = null; similar = []; stopCountdown(); remote = false; dismissed = false; entered = false; askStill = false; curTime = 0; creditsAt = Infinity;
-    postplayAt = Infinity; ppData = null; ppLoading = false; ppCardClosed = false; ppOpen = false;
+    postplayAt = Infinity; ppData = null; ppLoading = false; ppCardClosed = false; ppOpen = false; ppToken = ''; ppEntered = false;
     // item and "next episode" in parallel (/next answers null for films)
     const nx = api(`/api/items/${wanted}/next`).then((r) => r.item as Item | null).catch(() => null);
     try {
@@ -133,16 +133,39 @@
     ppLoading = true;
     try { const d = await loadPostplay(wanted); if (wanted === id) ppData = d; } catch { /* the screen loads (and reports) on its own */ }
   }
+  /**
+   * The open overlay owns one shallow history entry (its own token in page.state), so browser and phone Back close it and keep the
+   * viewer on this title instead of leaving the watch page (spec 3.2). Closing it any other way takes that entry back off.
+   */
+  let ppToken = '', ppSeq = 0, ppEntered = false;
   /** opens the post-play screen over the finished title (the viewer asked, or the title ended); never plays anything */
   function openPostplay() {
     ppOpen = true; stopCountdown();
     if (video && !video.paused && !video.ended) video.pause();
     if (document.fullscreenElement) void document.exitFullscreen().catch(() => undefined);
+    if (!ppToken) {
+      ppToken = `${id}:${++ppSeq}:${Date.now()}`;
+      ppEntered = false;
+      pushState('', { ...$page.state, postplay: ppToken });
+    }
   }
-  /** Esc / Back / "Back to the title": the screen goes away and the viewer stays on this title */
-  function closePostplay() {
+  function hidePostplay() {
     ppOpen = false; ppCardClosed = true;
     tick().then(() => document.querySelector<HTMLElement>('.stage')?.focus?.());
+  }
+  /** Esc / TV Back / "Back to the title": the screen goes away and the viewer stays on this title (its history entry is popped) */
+  function closePostplay() {
+    const pushed = Boolean(ppToken) && $page.state.postplay === ppToken;
+    ppToken = ''; ppEntered = false;
+    hidePostplay();
+    if (pushed) history.back();
+  }
+  // browser / phone Back popped the overlay's entry (the state held our token and no longer does): close it, stay here
+  $: onPpState($page.state.postplay);
+  function onPpState(st: string | undefined) {
+    if (!ppToken) return;
+    if (st === ppToken) ppEntered = true;
+    else if (ppEntered) { ppToken = ''; ppEntered = false; if (ppOpen) hidePostplay(); }
   }
   function onEnded() {
     if (ppWanted) { openPostplay(); return; }
@@ -163,6 +186,8 @@
 <svelte:window on:keydown={onKey} />
 <svelte:head><title>{$t('common.pageTitle', { page: item?.name ?? $t('player.pageTitle') })}</title></svelte:head>
 <div class="wrap" style:animation={fadeMs ? `ff-fade-in ${fadeMs}ms ease both` : null}>
+  <!-- the overlay covers the player: while it is open the player's controls are out of the tab order (inert, not a focus trap) -->
+  <div class="stagewrap" inert={ppOpen}>
   {#key id}
     <Player itemId={id} {poster} title={label(item)} barTitle={bt.title} barSub={bt.sub} seriesId={item?.seriesId ?? ''} isMovie={item?.type === 'Movie'} seasonId={item?.seasonId ?? ''} on:episode={playEpisode} {startAt} {wantAudio} {wantSub} bind:video bind:sleepAfterEpisode bind:creditsAt bind:postplayAt bind:remote hasNext={Boolean(nextEp)} on:next={() => nextEp && goto(nextHref())} on:timeupdate={onTime} on:ended={onEnded}>
       <div slot="top" class="top">
@@ -218,11 +243,13 @@
       {/if}
     </Player>
   {/key}
+  </div>
   {#if ppOpen}<PostPlay itemId={id} variant="overlay" data={ppData} on:close={closePostplay} />{/if}
 </div>
 
 <style>
   .wrap { position: fixed; inset: 0; background: var(--bg); z-index: 40; }
+  .stagewrap { display: contents; }
   :global(html.ff-watch), :global(html.ff-watch body) { background: #000; }
   .wrap :global(.stage) { height: 100%; }
   /* below the status bar / Dynamic Island (portrait) and clear of the notch (landscape); the gradient still covers the status bar */

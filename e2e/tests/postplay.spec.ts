@@ -65,6 +65,37 @@ test.describe('post-play screen (desktop)', () => {
     await expect.poll(() => api.postplayEvents).toContainEqual({ type: 'play', row: 'because' });
   });
 
+  test('browser Back while the screen is open closes it and stays on the title', async ({ page }) => {
+    await mockPlayer(page, { chapters: [] });
+    await mockPostplay(page, MOVIE.id, MOVIE_END);
+    await page.goto('/');
+    await page.goto('/watch/' + MOVIE.id);
+    await toCredits(page);
+    await endTitle(page);
+    const pp = page.getByTestId('postplay');
+    await expect(pp.getByRole('heading', { level: 1 })).toBeVisible();
+    await page.goBack();
+    await expect(pp).toHaveCount(0);
+    expect(path(page)).toBe('/watch/' + MOVIE.id);
+    // no extra entry is left behind: the next Back leaves the watch page as usual
+    await page.goBack();
+    await expect(page).toHaveURL(/\/$/);
+  });
+
+  test('"Not interested" → Undo puts back the thumb the title had before', async ({ page }) => {
+    await mockPlayer(page, { chapters: [] });
+    await mockPostplay(page, MOVIE.id, MOVIE_END);
+    await page.route(`**/api/items/${items[2]!.id}/thumb`, (r) => r.fulfill({ json: { value: r.request().postDataJSON().value, previous: 2 } }));
+    await page.goto('/postplay/' + MOVIE.id);
+    const pp = page.getByTestId('postplay');
+    const puts: unknown[] = [];
+    page.on('request', (r) => { if (r.method() === 'PUT' && r.url().includes(`/api/items/${items[2]!.id}/thumb`)) puts.push(r.postDataJSON()); });
+    await pp.getByRole('article').getByRole('button', { name: 'Kein Interesse' }).click();
+    await pp.getByRole('button', { name: 'Rückgängig' }).click();
+    await expect(pp.getByText('Rückgängig gemacht.')).toBeVisible();
+    expect(puts).toEqual([{ value: -1 }, { value: 2 }]); // the earlier "loved it" comes back, not "no thumb"
+  });
+
   test('ongoing series: "You\'re caught up", next air date, Remind me; Back to the title stays', async ({ page }) => {
     await mockPlayer(page, { chapters: [] });
     await mockPostplay(page, LAST_EP.id, CAUGHT_UP);
