@@ -706,6 +706,26 @@ export class JellyfinService implements MediaServer {
     return items.map((i) => toItemFeatures(i, i.Type, collection.get(nid(i.Id))));
   }
 
+  /** Film / series behind each id (episode -> SeriesId), admin key, library-wide; unknown ids are absent. */
+  async libraryRoots(ids: string[]): Promise<Map<string, string>> {
+    const want = [...new Set(ids.map(normId).filter((i) => /^[0-9a-f]{32}$/.test(i)))];
+    const out = new Map<string, string>();
+    for (let i = 0; i < want.length; i += 100) {
+      const batch = want.slice(i, i + 100);
+      const p = new URLSearchParams({
+        ids: batch.join(','), recursive: 'true', includeItemTypes: 'Movie,Series,Episode', fields: 'SeriesId',
+        enableImages: 'false', enableUserData: 'false', enableTotalRecordCount: 'false', limit: String(batch.length),
+      });
+      const r = await this.client.adminJson<{ Items?: any[] }>(`/Items?${p}`);
+      for (const it of r?.Items ?? []) {
+        if (!it?.Id) continue;
+        if (it.Type === 'Episode') { if (it.SeriesId) out.set(nid(it.Id), nid(it.SeriesId)); }
+        else if (it.Type === 'Movie' || it.Type === 'Series') out.set(nid(it.Id), nid(it.Id));
+      }
+    }
+    return out;
+  }
+
   // ---- Block 22: admin care (library hygiene, metadata refresh) ----
   /** One page of hygiene facts of the whole library (admin key), stable order; `savedSince` -> minDateLastSaved (incremental scans). */
   async libraryHygiene(type: 'Movie' | 'Series' | 'Episode', page: { start: number; limit: number; savedSince?: string }): Promise<HygieneFacts[]> {

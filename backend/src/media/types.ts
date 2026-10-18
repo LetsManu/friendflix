@@ -501,6 +501,11 @@ export interface MediaServer {
    * its seriesId; unknown ids and episodes are left out), `opts.savedSince` (ISO) = only items saved at or after it.
    */
   libraryFeatures?(start: number, limit: number, opts?: { ids?: string[]; savedSince?: string }): Promise<ItemFeatures[]>;
+  /**
+   * The film or series behind each id (an episode -> its series, a film / series -> itself), library-wide (admin key, no viewer), for the
+   * cross-user aggregates (reco/aggregates.ts). Ids the library does not know are absent. Absent hook: only the hygiene scan's episode rows map.
+   */
+  libraryRoots?(ids: string[]): Promise<Map<string, string>>;
 
   // ---- user data
   forgetItems(serverUserId?: string): void;

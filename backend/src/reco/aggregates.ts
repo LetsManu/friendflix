@@ -1,5 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
+import { randomUUID } from 'node:crypto';
 import type { Ctx } from '../ctx.js';
 import type { ItemDto } from '../media/types.js';
 import type { JfUser } from '../types.js';
@@ -16,7 +17,8 @@ import { recoCoefficients, recoWeights, type RecoCoefficients } from './weights.
  *  - transition: "accounts that finished X started Y next, within 7 days", scored as n(X -> Y) / (n(finished X) + 1).
  *
  * Only accounts with `shareHistory` on feed it (same opt-in as "Diese Woche bei uns"); a pair counts only when at least `minSupport`
- * (>= 2, a floor no setting can lower) distinct accounts share it; the tables keep counts per title pair and nothing else: no account,
+ * (>= 2, a floor no setting can lower) distinct accounts share it, and a viewer is shown a pair only when that many OTHER accounts
+ * share it (the viewer's own contribution is subtracted at read time, ownTables); the tables keep counts per title pair and nothing else: no account,
  * no day, no time. They are rebuilt from play_seconds every 15 minutes, so an account that switches the opt-in off is gone at the next
  * rebuild. play_seconds is per account (not per profile) and has no "finished" flag, so "finished" is an approximation (docs/discovery.md).
  * Kids profiles never receive anything from here (the sources are social; transitionsFor refuses them as well).
@@ -106,21 +108,40 @@ export function buildPairTables(spans: readonly TitleSpan[], c: RecoCoefficients
   return { v: 1, builtAt: now, n, done, cooc: top(cooc, c.social.minSupport, c.social.topPerItem), trans: top(trans, c.social.minSupport, c.social.topPerItem) };
 }
 
-/** Co-occurrence of `id` with every partner: cosine over accounts, 0..1. */
-export function coocSignals(t: PairTables, id: string): Map<string, number> {
+/**
+ * What the viewer's own account contributed to the tables (M4): built from that account's spans alone with buildPairTables, so every
+ * count in it is 0 or 1. Subtracted at read time, so a pair the viewer is shown always rests on at least `minSupport` OTHER accounts:
+ * a viewer who is one of only two accounts behind a pair can no longer read the other person's next title from it.
+ */
+export type OwnTables = PairTables;
+export interface SignalOptions { own?: OwnTables | null; minSupport?: number }
+
+const ownHas = (list: Array<[string, number]> | undefined, other: string): number => (list?.some(([o]) => o === other) ? 1 : 0);
+
+/** Co-occurrence of `id` with every partner: cosine over the other accounts, 0..1. */
+export function coocSignals(t: PairTables, id: string, o: SignalOptions = {}): Map<string, number> {
+  const own = o.own ?? null, min = Math.max(2, o.minSupport ?? 2);
   const out = new Map<string, number>();
-  for (const [other, count] of t.cooc[id] ?? []) {
-    const d = Math.sqrt(Math.max(1, t.n[id] ?? 1) * Math.max(1, t.n[other] ?? 1));
+  const nId = (t.n[id] ?? 1) - (own?.n[id] ?? 0);
+  for (const [other, total] of t.cooc[id] ?? []) {
+    const count = total - ownHas(own?.cooc[id], other);
+    if (count < min) continue;
+    const d = Math.sqrt(Math.max(1, nId) * Math.max(1, (t.n[other] ?? 1) - (own?.n[other] ?? 0)));
     out.set(other, Math.min(1, count / d));
   }
   return out;
 }
 
-/** Transitions out of `id`: share of the accounts that finished it who started the partner next (smoothed), plus the support. */
-export function transitionSignals(t: PairTables, id: string): Map<string, { p: number; support: number }> {
+/** Transitions out of `id`: share of the other accounts that finished it who started the partner next (smoothed), plus the support. */
+export function transitionSignals(t: PairTables, id: string, o: SignalOptions = {}): Map<string, { p: number; support: number }> {
+  const own = o.own ?? null, min = Math.max(2, o.minSupport ?? 2);
   const out = new Map<string, { p: number; support: number }>();
-  const d = (t.done[id] ?? 0) + 1;
-  for (const [other, count] of t.trans[id] ?? []) out.set(other, { p: Math.min(1, count / d), support: count });
+  const d = Math.max(0, (t.done[id] ?? 0) - (own?.done[id] ?? 0)) + 1;
+  for (const [other, total] of t.trans[id] ?? []) {
+    const count = total - ownHas(own?.trans[id], other);
+    if (count < min) continue;
+    out.set(other, { p: Math.min(1, count / d), support: count });
+  }
   return out;
 }
 
@@ -131,10 +152,11 @@ const NO_ROOT_TTL = 3600;
 const ROOT_LOOKUPS = 300;
 
 /**
- * Series (or film) behind play_seconds item ids. Episode ids are mapped through, in this order: a kv cache, the hygiene scan's
- * episode rows, and the media server (with the viewer's token: what the viewer cannot see stays out). Library facts only.
+ * Series (or film) behind play_seconds item ids, from library-level data only (never a viewer's token, so the tables do not depend on
+ * whoever triggered the build): a kv cache, the hygiene scan's episode rows, and the media server's admin-side libraryRoots() hook.
+ * Only that library-wide lookup may record "not in the library" (a short negative entry); without the hook unknown ids are simply skipped.
  */
-async function resolveRoots(ctx: Pick<Ctx, 'db' | 'kv' | 'jf'>, user: JfUser, ids: string[]): Promise<Map<string, string>> {
+async function resolveRoots(ctx: Pick<Ctx, 'db' | 'kv' | 'jf'>, ids: string[]): Promise<Map<string, string>> {
   const out = new Map<string, string>();
   if (!ids.length) return out;
   const cached = await ctx.kv.mget(ids.map((i) => `reco:root:${i}`)).catch(() => ids.map(() => null));
@@ -150,36 +172,37 @@ async function resolveRoots(ctx: Pick<Ctx, 'db' | 'kv' | 'jf'>, user: JfUser, id
     for (const r of rows) learned.set(r.item_id, r.series_id);
     todo = todo.filter((i) => !learned.has(i));
   }
-  const ask = todo.slice(0, ROOT_LOOKUPS);
+  const ask = typeof ctx.jf.libraryRoots === 'function' ? todo.slice(0, ROOT_LOOKUPS) : [];
+  const answered: string[] = [];
   for (let i = 0; i < ask.length; i += 40) {
-    const r = await ctx.jf.items(user, { ids: ask.slice(i, i + 40), types: 'Movie,Series,Episode', limit: 40 }).catch(() => ({ items: [] as ItemDto[] }));
-    for (const it of r.items) learned.set(it.id, it.type === 'Episode' && it.seriesId ? it.seriesId : it.id);
+    const batch = ask.slice(i, i + 40);
+    const r = await ctx.jf.libraryRoots!(batch).then((m) => { answered.push(...batch); return m; }, () => new Map<string, string>());
+    for (const [id, root] of r) if (batch.includes(id) && root) learned.set(id, root);
   }
   await Promise.all([...learned].map(([id, root]) => ctx.kv.set(`reco:root:${id}`, root, ROOT_TTL).catch(() => undefined)));
-  await Promise.all(ask.filter((i) => !learned.has(i)).map((id) => ctx.kv.set(`reco:root:${id}`, '', NO_ROOT_TTL).catch(() => undefined)));
+  await Promise.all(answered.filter((i) => !learned.has(i)).map((id) => ctx.kv.set(`reco:root:${id}`, '', NO_ROOT_TTL).catch(() => undefined)));
   for (const [id, root] of learned) out.set(id, root);
   return out;
 }
 
-const tablesKey = (c: RecoCoefficients) => `reco:pairs:${[c.social.minSupport, c.social.lookbackDays, c.social.transitionDays, c.social.minSeconds, c.social.finishRatio, c.social.finishEpisodes, c.social.topPerItem].join(':')}`;
+export const tablesKey = (c: RecoCoefficients): string => `reco:pairs:${[c.social.minSupport, c.social.lookbackDays, c.social.transitionDays, c.social.minSeconds, c.social.finishRatio, c.social.finishEpisodes, c.social.topPerItem].join(':')}`;
+export const lockKey = (c: RecoCoefficients): string => tablesKey(c).replace('reco:pairs:', 'reco:pairlock:');
+/** a stale table is kept this many times the rebuild interval and served while one builder replaces it (stale-while-revalidate) */
+const STALE_FACTOR = 4;
+const LOCK_TTL_S = 120;
 
-/** The aggregate tables: from kv while fresh, else rebuilt from play_seconds of the opted-in accounts. */
-export async function loadPairTables(ctx: Pick<Ctx, 'db' | 'kv' | 'jf'>, user: JfUser, index: Index, c: RecoCoefficients, now = Date.now()): Promise<PairTables> {
-  const key = tablesKey(c);
-  const hit = await ctx.kv.get(key).catch(() => null);
-  if (hit) {
-    try {
-      const t = JSON.parse(hit) as PairTables;
-      if (t.v === 1) return t;
-    } catch { /* corrupt: rebuild */ }
-  }
-  const rows = (await ctx.db.query<{ acct: string; item_id: string; first_day: string; last_day: string; secs: number }>(
+type SpanRow = { acct: string; item_id: string; first_day: string; last_day: string; secs: number };
+
+/** play_seconds of the opted-in accounts (or of one of them) rolled up into film / series spans of the library index. */
+async function spansOf(ctx: Pick<Ctx, 'db' | 'kv' | 'jf'>, index: Index, c: RecoCoefficients, acct?: string): Promise<TitleSpan[]> {
+  const rows = (await ctx.db.query<SpanRow>(
     `select p.user_id::text as acct, p.item_id, min(p.day)::text as first_day, max(p.day)::text as last_day, sum(p.seconds)::int as secs
        from play_seconds p join users u on u.id = p.user_id left join user_prefs pr on pr.user_id = p.user_id
       where p.day >= current_date - $1::int and not u.disabled and coalesce((pr.data->>'shareHistory')::boolean, false)
-      group by p.user_id, p.item_id order by max(p.day) desc limit $2`, [c.social.lookbackDays, c.social.maxRows])).rows;
+        and ($3::uuid is null or p.user_id = $3::uuid)
+      group by p.user_id, p.item_id order by max(p.day) desc limit $2`, [c.social.lookbackDays, c.social.maxRows, acct ?? null])).rows;
   const unknown = [...new Set(rows.filter((r) => !index.rows.has(r.item_id)).map((r) => r.item_id))];
-  const roots = await resolveRoots(ctx, user, unknown);
+  const roots = await resolveRoots(ctx, unknown);
   const merged = new Map<string, TitleSpan>();
   for (const r of rows) {
     const root = index.rows.has(r.item_id) ? r.item_id : roots.get(r.item_id);
@@ -191,12 +214,94 @@ export async function loadPairTables(ctx: Pick<Ctx, 'db' | 'kv' | 'jf'>, user: J
     if (s) { s.first = Math.min(s.first, first); s.last = Math.max(s.last, last); s.secs += Number(r.secs); }
     else merged.set(k, { acct: r.acct, root, first, last, secs: Number(r.secs) });
   }
-  const t = buildPairTables([...merged.values()], c, {
-    runtimeSec: (id) => { const m = index.rows.get(id)?.runtime_min; return m ? m * 60 : null; },
-    isSeries: (id) => index.rows.get(id)?.type === 'Series',
-  }, now);
-  await ctx.kv.set(key, JSON.stringify(t), c.social.cacheSeconds).catch(() => undefined);
-  return t;
+  return [...merged.values()];
+}
+
+const factsOf = (index: Index): TableFacts => ({
+  runtimeSec: (id) => { const m = index.rows.get(id)?.runtime_min; return m ? m * 60 : null; },
+  isSeries: (id) => index.rows.get(id)?.type === 'Series',
+});
+
+let builds = 0;
+/** How many times this process built the aggregate tables (tests: concurrent callers share one build). */
+export const pairTableBuilds = (): number => builds;
+/** in-flight builds per kv store and table key: one builder per process */
+const inflight = new WeakMap<object, Map<string, Promise<PairTables | null>>>();
+
+const emptyTables = (now: number): PairTables => ({ v: 1, builtAt: now, n: {}, done: {}, cooc: {}, trans: {} });
+const parse = (raw: string | null): PairTables | null => {
+  if (!raw) return null;
+  try { const t = JSON.parse(raw) as PairTables; return t.v === 1 ? t : null; } catch { return null; }
+};
+
+/**
+ * One rebuild: a single builder per process (the in-flight promise is shared) and across replicas (a kv setnx lock). A caller that
+ * finds the lock taken gets null and keeps what it has. The tables are library-level: no viewer's token is involved.
+ */
+function rebuild(ctx: Pick<Ctx, 'db' | 'kv' | 'jf'>, index: Index, c: RecoCoefficients): Promise<PairTables | null> {
+  const key = tablesKey(c);
+  let mine = inflight.get(ctx.kv);
+  if (!mine) inflight.set(ctx.kv, (mine = new Map()));
+  const running = mine.get(key);
+  if (running) return running;
+  const p = (async () => {
+    const token = randomUUID();
+    if (!(await ctx.kv.setnx(lockKey(c), token, LOCK_TTL_S).catch(() => false))) return null; // another replica builds
+    try {
+      builds++;
+      const t = buildPairTables(await spansOf(ctx, index, c), c, factsOf(index), Date.now());
+      await ctx.kv.set(key, JSON.stringify(t), c.social.cacheSeconds * STALE_FACTOR).catch(() => undefined);
+      return t;
+    } finally {
+      await ctx.kv.delIfEquals(lockKey(c), token).catch(() => undefined);
+    }
+  })().finally(() => { if (mine!.get(key) === p) mine!.delete(key); });
+  mine.set(key, p);
+  return p;
+}
+
+/**
+ * The aggregate tables. Fresh (younger than social.cacheSeconds, wall clock): from kv. Stale: the stale copy is answered at once and one
+ * builder replaces it in the background. None at all: the request waits for the single build (or, when another replica holds the
+ * lock, gets empty tables for now). Never rebuilt by several requests in parallel.
+ */
+export async function loadPairTables(ctx: Pick<Ctx, 'db' | 'kv' | 'jf'>, index: Index, c: RecoCoefficients): Promise<PairTables> {
+  const stored = parse(await ctx.kv.get(tablesKey(c)).catch(() => null));
+  if (stored && Date.now() - stored.builtAt < c.social.cacheSeconds * 1000) return stored;
+  if (stored) {
+    void rebuild(ctx, index, c).catch(() => undefined);
+    return stored;
+  }
+  return (await rebuild(ctx, index, c)) ?? emptyTables(Date.now());
+}
+
+const OWN_TTL_MS = 60_000;
+/** per loaded index (a reload starts afresh), per account and table build */
+const ownCache = new WeakMap<Index, Map<string, { at: number; promise: Promise<OwnTables> }>>();
+
+/**
+ * The viewer's own contribution to `tables` (see OwnTables), from the account's own play_seconds with the same opt-in rule (an account
+ * that does not share its history contributed nothing). Shared by concurrent callers, kept for a minute in this process only.
+ */
+export function ownTables(ctx: Pick<Ctx, 'db' | 'kv' | 'jf'>, index: Index, c: RecoCoefficients, tables: PairTables, acct: string): Promise<OwnTables> {
+  let m = ownCache.get(index);
+  if (!m) ownCache.set(index, (m = new Map()));
+  const key = `${acct}|${tablesKey(c)}|${tables.builtAt}`;
+  const now = Date.now();
+  const hit = m.get(key);
+  if (hit && now - hit.at < OWN_TTL_MS) return hit.promise;
+  if (m.size > 500) m.clear();
+  const one = { ...c, social: { ...c.social, minSupport: 1, topPerItem: Number.MAX_SAFE_INTEGER } } as RecoCoefficients;
+  const promise = spansOf(ctx, index, c, acct).then((spans) => buildPairTables(spans, one, factsOf(index), now));
+  promise.catch(() => m!.delete(key));
+  m.set(key, { at: now, promise });
+  return promise;
+}
+
+/** The tables as one viewer may use them: the aggregate plus that account's own contribution, which the signals subtract. */
+export async function pairTablesFor(ctx: Pick<Ctx, 'db' | 'kv' | 'jf'>, index: Index, c: RecoCoefficients, acct: string): Promise<{ tables: PairTables; own: OwnTables }> {
+  const tables = await loadPairTables(ctx, index, c);
+  return { tables, own: await ownTables(ctx, index, c, tables, acct) };
 }
 
 // ------------------------------------------------------------------------------------------------------------------ public helper
@@ -218,8 +323,8 @@ export async function transitionsFor(
   if (!item) return []; // invisible to the viewer: nothing is revealed
   const root = item.type === 'Episode' && item.seriesId ? item.seriesId : item.id;
   const index = await loadIndex(ctx, recoWeights(ctx.cfg), now);
-  const tables = await loadPairTables(ctx, viewer.user, index, c, now);
-  const sig = transitionSignals(tables, root);
+  const { tables, own } = await pairTablesFor(ctx, index, c, viewer.profile.user_id);
+  const sig = transitionSignals(tables, root, { own, minSupport: c.social.minSupport });
   if (!sig.size) return [];
   const ranked = [...sig].sort((a, b) => b[1].support - a[1].support || (a[0] < b[0] ? -1 : 1)).map(([id]) => id);
   const [found, down] = await Promise.all([

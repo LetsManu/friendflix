@@ -1,12 +1,12 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
-import { transitionsFor } from '../src/reco/aggregates.js';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { lockKey, pairTableBuilds, tablesKey, transitionsFor } from '../src/reco/aggregates.js';
 import { contextFor, deviceMixes } from '../src/reco/context.js';
 import type { SourceName } from '../src/reco/candidates.js';
 import { recommend } from '../src/reco/recommend.js';
-import { resetIndexCache } from '../src/reco/vectors.js';
-import { SURFACES, type Surface } from '../src/reco/weights.js';
+import { indexLoads, resetIndexCache } from '../src/reco/vectors.js';
+import { recoCoefficients, SURFACES, type Surface } from '../src/reco/weights.js';
 import { encrypt } from '../src/crypto.js';
 import type { Ctx } from '../src/ctx.js';
 import { buildIndex, DAY, dto, engineCtx, fakeJf, H, keysOf, NOW, seedProfiles, type Seeded } from './reco-fixture.js';
@@ -169,6 +169,111 @@ describe('transition and co-occurrence candidates', () => {
     // an item the viewer cannot see reveals nothing
     f.state.hidden.add(H('noir1'));
     expect(await transitionsFor(ctx, H('noir1'), { user: s.user, profile: s.owner }, { now: NOW })).toEqual([]);
+  });
+});
+
+describe('performance under v2: one load, one build, bounded search (I1)', () => {
+  it('concurrent recommend() calls on a cold cache load the item vectors once and build the pair tables once', async () => {
+    await crowd();
+    const f = fakeJf();
+    const ctx = engineCtx(env, f.jf);
+    const loads = indexLoads(), builds = pairTableBuilds();
+    const seeds = ['noir1', 'noir2', 'saga1', 'mars', 'doc1', 'noir1', 'rom1'];
+    const out = await Promise.all(seeds.map((seed) => recommend(ctx, s.user, s.owner, { surface: 'postplay', seed: H(seed), limit: 20, now: NOW, context: { hour: 12 } })));
+    expect(out.every((r) => r.items.length > 0)).toBe(true);
+    expect(indexLoads() - loads).toBe(1);
+    expect(pairTableBuilds() - builds).toBe(1);
+    // and the next round is served from the caches
+    await Promise.all(seeds.map((seed) => recommend(ctx, s.user, s.owner, { surface: 'postplay', seed: H(seed), limit: 20, now: NOW, context: { hour: 12 } })));
+    expect(indexLoads() - loads).toBe(1);
+    expect(pairTableBuilds() - builds).toBe(1);
+  });
+
+  it('a finished index pass (a new lastDone stamp in kv) invalidates the cached vectors on every replica', async () => {
+    const ctx = engineCtx(env, fakeJf().jf);
+    const loads = indexLoads();
+    await recommend(ctx, s.user, s.owner, { surface: 'taste', limit: 5, now: NOW });
+    await recommend(ctx, s.user, s.owner, { surface: 'taste', limit: 5, now: NOW });
+    expect(indexLoads() - loads).toBe(1);
+    await env.kv.set('reco:idx:lastDone', new Date().toISOString() + Math.random(), 60);
+    await recommend(ctx, s.user, s.owner, { surface: 'taste', limit: 5, now: NOW });
+    expect(indexLoads() - loads).toBe(2);
+  });
+
+  it('while another replica holds the build lock no request builds; a stale table is served and rebuilt by one builder', async () => {
+    await crowd();
+    const c = recoCoefficients(env.ctx.cfg);
+    await env.kv.set(lockKey(c), 'other-replica', 60);
+    const builds = pairTableBuilds();
+    const cold = await run({ surface: 'postplay', seed: 'noir1' });
+    expect(cold.r.items.every((i) => !i.sources.includes('transition'))).toBe(true); // nothing yet, and no build of its own
+    expect(pairTableBuilds()).toBe(builds);
+    await env.kv.del(lockKey(c));
+    const warm = await run({ surface: 'postplay', seed: 'noir1' });
+    expect(pick(warm.r, 'heist2')!.sources).toContain('transition');
+    expect(pairTableBuilds()).toBe(builds + 1);
+    // stale: answered at once from the old copy, one background rebuild replaces it
+    const t = JSON.parse((await env.kv.get(tablesKey(c)))!);
+    await env.kv.set(tablesKey(c), JSON.stringify({ ...t, builtAt: Date.now() - 3600_000 }), 600);
+    const stale = await run({ surface: 'postplay', seed: 'noir1' });
+    expect(pick(stale.r, 'heist2')!.sources).toContain('transition');
+    await vi.waitFor(async () => expect(JSON.parse((await env.kv.get(tablesKey(c)))!).builtAt).toBeGreaterThan(Date.now() - 60_000));
+    expect(pairTableBuilds()).toBe(builds + 2);
+    expect(await env.kv.get(lockKey(c))).toBeNull();
+  });
+});
+
+describe('aggregates are library-level and exclude the viewer (M1, M4)', () => {
+  it('the tables are built without any viewer token: episodes map through the admin-side libraryRoots hook', async () => {
+    const [a, b] = [await friend('P', { history: true }), await friend('Q', { history: true })];
+    const eps = ['e1', 'e2', 'e3'].map((k) => H(`cops-x-${k}`));
+    for (const u of [a, b]) {
+      await play(u, 'noir1', 15);
+      for (const e of eps) await play(u, e, 12, 1700, 'Episode');
+    }
+    const f = fakeJf();
+    const asked: string[][] = [];
+    (f.jf as { libraryRoots?: unknown }).libraryRoots = async (ids: string[]) => { asked.push(ids); return new Map(ids.filter((i) => eps.includes(i)).map((i) => [i, H('cops')])); };
+    // the viewer's items() knows no episodes at all (a viewer-scoped lookup would map nothing): the tables must not care
+    const ctx = engineCtx(env, f.jf);
+    const before = f.calls.length;
+    await transitionsFor(ctx, H('noir1'), { user: s.user, profile: s.owner }, { now: NOW });
+    expect(asked.flat().sort()).toEqual([...eps].sort());
+    const t = JSON.parse((await env.kv.get(tablesKey(recoCoefficients(env.ctx.cfg))))!);
+    expect(t.trans[H('noir1')]).toEqual([[H('cops'), 2]]);
+    // the viewer's token was used only for the viewer's own lookups (the title and resolving what to show), never for the build
+    expect(f.calls.slice(before).filter((c) => c.fn === 'items').length).toBeLessThanOrEqual(1);
+    expect(await env.kv.get(`reco:root:${eps[0]}`)).toBe(H('cops'));
+  });
+
+  it('a viewer who is one of only 2 accounts behind a transition does not see it; with 2 other accounts it shows', async () => {
+    await env.pool.query("insert into user_prefs(user_id, data) values ($1, '{\"shareHistory\": true}') on conflict (user_id) do update set data = excluded.data", [s.user.id]);
+    try {
+      const other = await friend('P', { history: true });
+      for (const u of [s.user.id, other]) { await play(u, 'noir2', 12); await play(u, 'heist2', 10); }
+      const ctx = engineCtx(env, fakeJf().jf);
+      // the table counts 2 accounts (the viewer and one other) ...
+      const r1 = await transitionsFor(ctx, H('noir2'), { user: s.user, profile: s.owner }, { now: NOW });
+      expect(r1).toEqual([]);
+      const t = JSON.parse((await env.kv.get(tablesKey(recoCoefficients(env.ctx.cfg))))!);
+      expect(t.trans[H('noir2')]).toEqual([[H('heist2'), 2]]);
+      // ... and neither the transition nor the co-occurrence candidate reaches the viewer
+      const { r } = await run({ surface: 'postplay', seed: 'noir2' });
+      expect(pick(r, 'heist2')?.sources ?? []).not.toContain('transition');
+      expect(pick(r, 'heist2')?.sources ?? []).not.toContain('cooccurrence');
+      // a second other account: support 2 from others alone (the viewer's own play is still left out of the count)
+      const third = await friend('Q', { history: true });
+      await play(third, 'noir2', 12);
+      await play(third, 'heist2', 10);
+      for (const k of await env.kv.keys('reco:pairs:')) await env.kv.del(k);
+      const r2 = await transitionsFor(ctx, H('noir2'), { user: s.user, profile: s.owner }, { now: NOW });
+      expect(r2.map((x) => [keysOf([x.item])[0], x.support])).toEqual([['heist2', 2]]);
+      // another viewer, who contributed nothing, sees all 3 accounts
+      const out = await run({ surface: 'postplay', seed: 'noir2' });
+      expect(pick(out.r, 'heist2')!.sources).toContain('transition');
+    } finally {
+      await env.pool.query('delete from user_prefs where user_id = $1', [s.user.id]);
+    }
   });
 });
 

@@ -3,7 +3,7 @@
 import { friendsRatedRows, recommendationRows, trendingItems } from '../discoverData.js';
 import { badgesFor } from '../fresh.js';
 import type { ItemDto } from '../media/types.js';
-import { coocSignals, loadPairTables, transitionSignals } from './aggregates.js';
+import { coocSignals, pairTablesFor, transitionSignals } from './aggregates.js';
 import { SOURCES, type CandidateSource, type SourceHit, type SourceInput } from './candidates.js';
 
 /**
@@ -23,14 +23,14 @@ function anchorsOf({ seed, taste, c }: SourceInput): Array<{ id: string; w: numb
 const cooccurrenceSource: CandidateSource = {
   name: 'cooccurrence', social: true,
   async run(input) {
-    const { ctx, user, profile, index, c, surface } = input;
+    const { ctx, profile, index, c, surface } = input;
     if (profile.kids || !(c.surface[surface].cooccurrence > 0)) return [];
     const anchors = anchorsOf(input);
     if (!anchors.length) return [];
-    const tables = await loadPairTables(ctx, user, index, c);
+    const { tables, own } = await pairTablesFor(ctx, index, c, profile.user_id);
     const best = new Map<string, { s: number; via: string }>();
     for (const a of anchors) {
-      for (const [id, cos] of coocSignals(tables, a.id)) {
+      for (const [id, cos] of coocSignals(tables, a.id, { own, minSupport: c.social.minSupport })) {
         const s = clamp01(cos * a.w);
         if (id !== a.id && s > (best.get(id)?.s ?? 0)) best.set(id, { s, via: a.id });
       }
@@ -42,11 +42,11 @@ const cooccurrenceSource: CandidateSource = {
 const transitionSource: CandidateSource = {
   name: 'transition', social: true,
   async run(input) {
-    const { ctx, user, profile, index, c, surface, seed } = input;
+    const { ctx, profile, index, c, surface, seed } = input;
     // a transition needs a title that was just finished: the seed. Surfaces without a seed (taste, home rows) have none.
     if (profile.kids || !seed || !(c.surface[surface].transition > 0)) return [];
-    const tables = await loadPairTables(ctx, user, index, c);
-    return [...transitionSignals(tables, seed.id)].map(([id, t]): SourceHit => ({ id, signals: { transition: t.p }, meta: { via: seed.id } }));
+    const { tables, own } = await pairTablesFor(ctx, index, c, profile.user_id);
+    return [...transitionSignals(tables, seed.id, { own, minSupport: c.social.minSupport })].map(([id, t]): SourceHit => ({ id, signals: { transition: t.p }, meta: { via: seed.id } }));
   },
 };
 

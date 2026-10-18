@@ -107,6 +107,20 @@ describe('libraryFeatures (Jellyfin)', () => {
   });
 });
 
+describe('libraryRoots (Jellyfin)', () => {
+  it('maps an episode to its series and a film / series to itself, with the admin key; unknown ids are absent', async () => {
+    env.jfCalls.length = 0;
+    const out = await env.ctx.jf.libraryRoots!([E1, M1, S1.toUpperCase(), id('f'), 'not-an-id']);
+    expect([...out].sort()).toEqual([[M1, M1], [S1, S1], [E1, S1]].sort());
+    const calls = env.jfCalls.filter((c) => c.path === '/Items');
+    expect(calls).toHaveLength(1);
+    expect(calls[0]!.auth).toContain('Token="adminkey"');
+    const q = new URLSearchParams(calls[0]!.search);
+    expect(q.get('includeItemTypes')).toBe('Movie,Series,Episode');
+    expect(q.get('userId')).toBeNull();
+  });
+});
+
 describe('featurePeople', () => {
   const p = (n: number, type: string) => ({ id: id(n.toString(16)), name: `P${n}`, type, image: false });
   it('takes up to 2 directors, 2 creators, 2 writers, then actors in billing order, 8 in all, no duplicates', () => {
