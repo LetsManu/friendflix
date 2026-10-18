@@ -61,11 +61,11 @@ describe('admin update', () => {
     expect(b.release).toBeNull();
     expect(b.updateAvailable).toBeNull();
     expect(b.portainer).toEqual({ configured: false, mode: null });
-    expect(ghCalls()).toBe(3);
+    expect(ghCalls()).toBe(4); // release, CI run, compare, tag commit of the installed version
     await get();
-    expect(ghCalls()).toBe(3);
+    expect(ghCalls()).toBe(4);
     await get('?refresh=1');
-    expect(ghCalls()).toBe(6);
+    expect(ghCalls()).toBe(8);
     expect(seen[0]!.headers['user-agent']).toBe('friendflix');
   });
 
@@ -144,7 +144,8 @@ describe('admin update', () => {
 
   it('exposes the version unauthenticated', async () => {
     await setup({ APP_VERSION: '1.3.0', APP_CODENAME: 'Arancini' });
-    expect((await env.app.inject('/api/version')).json()).toEqual({ sha: CUR, version: '1.3.0', codename: 'Arancini' });
+    // CUR is no tag commit (the mock answers 404 for the tag): a nightly build
+    expect((await env.app.inject('/api/version')).json()).toEqual({ sha: CUR, version: '1.3.0', codename: 'Arancini', build: 'nightly', channel: 'nightly', label: '1.3.0-nightly · ccccccc' });
     expect((await env.app.inject('/health')).json().version).toBe(CUR.slice(0, 7));
   });
 

@@ -103,6 +103,7 @@ const GROUPS: Array<[string, Array<[string, Spec]>]> = [
   ]],
   ['updates', [
     ['GITHUB_TOKEN', { kind: 'secret', source: 'unset', set: false }],
+    ['UPDATE_CHANNEL', { kind: 'enum', source: 'default', value: 'stable', options: ['stable', 'nightly'] }],
     ['PORTAINER_WEBHOOK_URL', { kind: 'secret', source: 'unset', set: false }],
     ['PORTAINER_URL', { kind: 'url', source: 'unset' }],
     ['PORTAINER_API_KEY', { kind: 'secret', source: 'unset', set: false }],

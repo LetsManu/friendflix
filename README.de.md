@@ -233,7 +233,7 @@ Eine neue Installation braucht davon nichts: Einrichtungsassistent und *Admin �
 | `ADMIN_GROUP` | `friendflix-admins` | Authentik-Gruppe, deren Mitglieder Portal-Admins werden |
 | `BIND_ADDR` | `127.0.0.1` | Host-Adresse für die drei Ports – nie eine öffentliche Schnittstelle |
 | `WEB_PORT`, `BACKEND_PORT`, `GATEWAY_PORT` | `3080`, `3081`, `3082` | Host-Ports für den Reverse Proxy |
-| `FF_REGISTRY`, `FF_TAG` | `ghcr.io/letsmanu`, `latest` | Herkunft und Version der Images (festnageln mit Commit-SHA oder `x.y.z`) |
+| `FF_REGISTRY`, `FF_TAG` | `ghcr.io/letsmanu`, `latest` | Herkunft und Release-Kanal der Images: `latest` = stabile Releases, `nightly` = jeder grüne Commit auf main, `1` / `1.1` / `1.1.0` (oder Commit-SHA) zum Festnageln ([Release-Kanäle](docs/operations.md#release-kanäle)) |
 | `SESSION_TTL_SECONDS`, `SESSION_IDLE_SECONDS` | `28800`, `7200` | Maximale Sitzungsdauer (8 h) und Ablauf bei Inaktivität (2 h) |
 | `TZ` | `Europe/Vienna` | Zeitzone für geplante Jobs (Rückblick, Wiedergabe-Check, Backups) |
 | `AUTHENTIK_URL`, `AUTHENTIK_API_TOKEN`, `AUTHENTIK_ENROLL_FLOW` | leer | Einladungen, die auch das Authentik-Konto anlegen (alle drei nötig); URL und Token liefern der Admin-Nutzerseite auch den Zwei-Faktor-Stand und *Passwort-Link senden* |
@@ -264,6 +264,7 @@ Eine neue Installation braucht davon nichts: Einrichtungsassistent und *Admin �
 | `METRICS_TOKEN` | leer | Bearer-Token für `/metrics` |
 | `PORTAINER_WEBHOOK_URL` oder `PORTAINER_URL` + `PORTAINER_API_KEY` + `PORTAINER_STACK_ID` | leer | Updates per Knopfdruck unter *Admin → Update* (`PORTAINER_ENDPOINT_ID` Standard `1`) |
 | `UPDATE_REPO`, `GITHUB_TOKEN` | `LetsManu/friendflix`, leer | Versionsprüfung; das Token hebt nur das GitHub-Limit an |
+| `UPDATE_CHANNEL` | `stable` | Wird mit dem Schalter *Stabil / Nightly* unter *Admin → Update* gesetzt (in der Datenbank, keine `.env` nötig): womit die Update-Prüfung vergleicht. Wechselt nie Images, das macht `FF_TAG` |
 | `GRAFANA_ADMIN_PASSWORD`, `GRAFANA_PORT`, `PROMETHEUS_RETENTION` | – (Pflicht für den Monitoring-Stack), `3083`, `30d` | Optionales Prometheus + Grafana (`compose.monitoring.yaml`); kein Standardpasswort |
 | `BACKUP_PATH`, `BACKUP_HOUR`, `BACKUP_KEEP_DAYS`, `BACKUP_RUN_ON_START` | `./backups`, `3`, `14`, `false` | Backup-Sidecar (Profil `backup`) |
 | `MEDIA_PATH` | `./media` | Medienordner für das mitgelieferte Jellyfin (Profil `bundled`) |
@@ -338,7 +339,7 @@ flowchart TB
 
 ### Versionen und Releases
 
-FriendFlix nutzt [SemVer](https://semver.org) (`version.json`, angezeigt in der Fußzeile am Desktop und unter *Admin → Update*). Jede Hauptversion bekommt einen Codenamen: den nächsten Kino-Snack von A bis Z (1 = Arancini, 2 = Brezel, …; Liste in `codenames.json`). Releases entstehen über den manuellen Workflow **Release** (patch / minor / major): er erhöht die Version (`none` veröffentlicht beim allerersten Release 1.0.0 unverändert), verschiebt den *Unreleased*-Teil des [CHANGELOG.md](CHANGELOG.md) unter die neue Version, setzt den Tag `vX.Y.Z` und legt das GitHub-Release an. Gepusht wird mit dem optionalen Secret `RELEASE_TOKEN` (ein fine-grained Token, einziger Bypass-Akteur der Rulesets für main und Tags; ohne ihn muss main direkte Pushes von GitHub Actions zulassen). Die Images erscheinen danach als `X.Y.Z`, `X.Y`, `X` und, nur für die höchste Version, `latest`; mit `FF_TAG=1` bleibt die Installation auf Hauptversion 1 und bekommt trotzdem deren Minor- und Patch-Releases. Details: [docs/operations.md](docs/operations.md#release-erstellen).
+FriendFlix nutzt [SemVer](https://semver.org) (`version.json`, angezeigt in der Fußzeile am Desktop und unter *Admin → Update*). Jede Hauptversion bekommt einen Codenamen: den nächsten Kino-Snack von A bis Z (1 = Arancini, 2 = Brezel, …; Liste in `codenames.json`). Releases entstehen über den manuellen Workflow **Release** (patch / minor / major): er erhöht die Version (`none` veröffentlicht beim allerersten Release 1.0.0 unverändert), verschiebt den *Unreleased*-Teil des [CHANGELOG.md](CHANGELOG.md) unter die neue Version, setzt den Tag `vX.Y.Z` und legt das GitHub-Release an. Gepusht wird mit dem optionalen Secret `RELEASE_TOKEN` (ein fine-grained Token, einziger Bypass-Akteur der Rulesets für main und Tags; ohne ihn muss main direkte Pushes von GitHub Actions zulassen). Die Images erscheinen danach als `X.Y.Z`, `X.Y`, `X` und, nur für die höchste Version, `latest` (jeder grüne Commit auf main erscheint als `nightly`, nie als `latest`); mit `FF_TAG=1` bleibt die Installation auf Hauptversion 1 und bekommt trotzdem deren Minor- und Patch-Releases. Details: [docs/operations.md](docs/operations.md#release-erstellen).
 
 ### Entwicklung
 
