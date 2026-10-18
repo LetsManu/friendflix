@@ -21,6 +21,7 @@
   import { parseVolume, stepVolume } from '#lib/player/volume';
   import { hlsConfig, loadHls } from '#lib/player/hls';
   import { airPlaySupported, createAirPlay, type AirPlayController, type AirPlayState } from '#lib/player/airplay';
+  import { airLog } from '#lib/player/airplayLog';
   import { AbrController, LADDER, autoBps, isOriginalBps, rungKey, type Decision } from '#lib/player/abr';
   import { BandwidthEstimator, loadStoredEstimate, storeEstimate } from '#lib/player/bandwidth';
   import QualityChip from '#lib/player/QualityChip.svelte';
@@ -482,13 +483,21 @@
 
   /** while this Player is still mounted: mirror the engine's session; a lost / failed one plays on locally */
   let lastTv: CastSession | null = null;
+  /** the AirPlay route still pointed at the TV when the engine's session was last seen (nobody ended it in the picker) */
+  let lastRouteOn = false;
   function followTv(s: CastSession | null) {
     if (!remote || destroyed) return;
     if (!s) { void resumeLocal(); return; }
     current = s.position; if (s.duration) duration = s.duration;
     paused = s.paused; waiting = s.buffering || s.state === 'connecting';
     audioIndex = s.audioIndex; subIndex = s.subIndex;
-    if (s.state === 'reconnect') { queueMicrotask(() => void castEngine.stop()); return; } // watch page: the phone plays on instead
+    lastRouteOn = s.kind === 'airplay' && Boolean(get(castEngine.airState)?.active);
+    if (s.state === 'reconnect') {
+      // AirPlay with the route still on the TV (a failed token request): local hls.js (MSE) would send the TV the sound only;
+      // stay its remote ("change device" / the bar retries); a lost route (or Chromecast): the phone plays on instead
+      if (lastRouteOn) { airLog('engine', { src: video?.src, state: 'reconnect', note: 'route still wireless: stays remote' }); lastTv = s; return; }
+      queueMicrotask(() => void castEngine.stop()); return;
+    }
     if (s.state === 'failed') { queueMicrotask(() => castEngine.release()); return; }
     lastTv = s;
   }
@@ -506,6 +515,12 @@
     }
     if (!air) void initAirPlay();
     if (was?.state === 'ended') { paused = true; dispatch('ended'); return; } // finished on the TV: the page offers what comes next
+    if (was?.kind === 'airplay' && lastRouteOn) {
+      // the system route may still be the TV: the local stream (MSE) would play its sound there, the picture here
+      airLog('engine', { src: video?.src, state: was.state, note: 'local playback, route was still wireless' });
+      flash(tr('player.airplay.endHint'), 5000);
+    }
+    lastRouteOn = false;
     wantAutoplay = !(was?.paused ?? true);
     await load(was?.position);
   }
@@ -596,7 +611,7 @@
     else if (m.action === 'toggle') { if (paused) { if (allowed()) playSafe(); } else if (allowed()) doPause(); }
     else if (m.action === 'audio' && typeof m.value === 'number') { if (info?.audioTracks.some((a) => a.index === m.value)) changeAudio(m.value); }
     else if (m.action === 'sub' && typeof m.value === 'number') { if (m.value === -1 || info?.subtitles.some((x) => x.index === m.value)) setSubtitle(m.value); }
-    else if (m.action === 'next') { if (hasNext && allowed()) dispatch('next'); else flash(tr('player.noNext')); }
+    else if (m.action === 'next') { if (hasNext && allowed()) goNext(); else flash(tr('player.noNext')); }
     else if (m.action === 'seekBy' && typeof m.value === 'number') seekBy(m.value);
   }
 
@@ -609,11 +624,13 @@
     if (remote) { if (!allowed()) return; castEngine.seek(t); return; } // the engine clamps, reports and mirrors the position
     if (!video || !allowed()) return; video.currentTime = Math.max(0, Math.min(duration || t, t)); }
   function seekBy(d: number, quiet = false) { if (!video || !allowed()) return; seekTo((remote ? current : video.currentTime) + d); if (quiet) announce(d > 0 ? tr('player.secondsForward', { n: d }) : tr('player.secondsBack', { n: -d })); else flash(d > 0 ? `+${d} s` : `−${-d} s`, 700); }
+  /** next episode: as a remote the engine moves the TV on (its next(); the watch page follows the TV), else the page navigates */
+  function goNext() { if (remote) void castEngine.next(); else dispatch('next'); }
   function doSkip() {
     if (!skip) return;
     const key = segKey(skip.type, 'skipped');
     // a preview at the very end is the teaser of the next episode: go there instead of seeking into nothing
-    if (skip.type === 'preview' && duration && skip.end >= duration - 3 && hasNext) { if (allowed()) dispatch('next'); return; }
+    if (skip.type === 'preview' && duration && skip.end >= duration - 3 && hasNext) { if (allowed()) goNext(); return; }
     seekTo(skip.end);
     if (key) announce(tr(key));
   }
@@ -831,7 +848,7 @@
       case 'fullscreen': toggleFullscreen(); break;
       case 'subtitles': cycleSubtitles(); break;
       case 'skip': if (skip && allowed()) doSkip(); break;
-      case 'next': if (hasNext && allowed()) dispatch('next'); else flash(tr('player.noNext')); break;
+      case 'next': if (hasNext && allowed()) goNext(); else flash(tr('player.noNext')); break;
       case 'help': help = !help; break;
       case 'speed': speedBy(a.delta); break;
       case 'pip': if (pipOk && !remote) void pip(); break;
@@ -1259,7 +1276,7 @@
       {#if !phone}<div class="mid" title={barSub ? `${barTitle} · ${barSub}` : barTitle}>{#if barTitle}<b>{barTitle}</b>{#if barSub}<span>{barSub}</span>{/if}{/if}</div>{/if}
       <div class="grp right">
         <slot name="extra" />
-        {#if hasNext}<button class="ic" aria-label={$t('player.controls.next')} title={$t('player.controls.nextKey')} on:click={() => dispatch('next')}><Icon name="skip-next" size={ICON} /></button>{/if}
+        {#if hasNext}<button class="ic" aria-label={$t('player.controls.next')} title={$t('player.controls.nextKey')} on:click={goNext}><Icon name="skip-next" size={ICON} /></button>{/if}
         {#if seriesId}
           <div class="mwrap">
             <button class="ic" bind:this={epBtn} aria-label={$t('player.controls.episodes')} title={$t('player.controls.episodes')} aria-expanded={menu === 'episodes'} on:click={() => toggleMenu('episodes')}><Icon name="list" size={ICON} /></button>

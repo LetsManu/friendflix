@@ -118,6 +118,21 @@ test('episode end on the TV shows "Als Nächstes" and switches after the countdo
   await expect(bar).not.toContainText('Als Nächstes');
 });
 
+test('credits on the TV: the bar counts down to the next episode while the TV plays; Cancel stops it', async ({ page, api: _api }) => {
+  test.setTimeout(45_000);
+  const { sdk, sessions } = await castAndLeave(page, { id: episodes[0]!.id });
+  await nextAfterFirst(page);
+  const bar = castBar(page);
+  await expect(bar.getByRole('button', { name: 'Nächste Folge' })).toBeVisible(); // next episode at any time
+  await sdk.nearEnd(); // the last seconds: the credits (no segments: the last 25 s)
+  await expect(bar).toContainText(`Als Nächstes: S1:E2 · ${episodes[1]!.name}`);
+  await expect(bar).toContainText(/in \d+ s/);
+  await bar.getByRole('button', { name: 'Abbrechen' }).click();
+  await expect(bar).not.toContainText(/in \d+ s/);
+  await page.waitForTimeout(11_000);
+  expect(sessions.filter((b) => !b.next)).toHaveLength(1);
+});
+
 test('episode end on the TV while the watch page is open: its next card counts down, then the page follows the TV', async ({ page, api: _api }) => {
   test.setTimeout(45_000);
   const { sdk, sessions } = await castOnWatch(page, { id: episodes[0]!.id });

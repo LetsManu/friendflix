@@ -35,7 +35,8 @@
   $: if (visible && !entered) enterCard(); else if (!visible && entered) leaveCard();
 
   // ---- while the TV plays (remote): the engine's end-of-episode flow drives the card, and the page follows the TV ----
-  $: tvNext = remote && $castSession?.state === 'ended' ? $castSession.next ?? null : null;
+  // from the credits on (the TV still plays) or after the end: the engine's offer with its countdown
+  $: tvNext = remote && ($castSession?.state === 'ended' || $castSession?.state === 'playing') ? $castSession.next ?? null : null;
   /** the next episode whose card was closed ("Abbrechen": the engine's countdown stopped) */
   let tvClosed = '';
   let tvNow = Date.now(), tvTick: ReturnType<typeof setInterval> | undefined;
