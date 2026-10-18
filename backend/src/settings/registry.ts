@@ -136,6 +136,7 @@ export const SETTINGS: readonly SettingDef[] = [
   setting('DOWNLOAD_CREATE_PER_HOUR', { kind: 'int', group: 'downloads', apply: 'restart' }), // route rate-limit option, read at registration
   // playback
   setting('CAST_ENABLED', { kind: 'bool', group: 'playback' }),
+  setting('CAST_RECEIVER_APP_ID', { kind: 'string', group: 'playback' }), // read per request (/api/cast/config, /api/cast/session)
   setting('PREVIEW_WARM', { kind: 'bool', group: 'playback' }),
   setting('HOME_NETWORKS', { kind: 'cidrList', group: 'playback' }),
   // recommendations: read per request from ctx.cfg (reco/engine.ts, recommend.ts, postplay.ts, routes/discover.ts, home.ts), so a save
