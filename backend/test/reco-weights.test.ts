@@ -16,6 +16,9 @@ describe('coefficients', () => {
     expect(c.candidates.knn).toBe(200);
     expect(c.rank).toMatchObject({ lambda: 0.7, perFranchise: 2 });
     expect(c.score.trendingCap).toBe(0.1);
+    // the spec's ceiling: RECO_COEFFS can lower the trending cap, never raise it above 10 %
+    expect(recoCoefficients({ RECO_COEFFS: '{"score.trendingCap":0.5}' }).score.trendingCap).toBe(0.1);
+    expect(recoCoefficients({ RECO_COEFFS: '{"score.trendingCap":0.05}' }).score.trendingCap).toBe(0.05);
     expect(Object.keys(c.surface)).toEqual([...SURFACES]);
   });
 

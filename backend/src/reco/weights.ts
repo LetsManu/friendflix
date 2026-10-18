@@ -276,7 +276,7 @@ export function recoCoefficients(cfg?: Partial<Pick<Config, 'RECO_COEFFS' | 'REC
   c.profile.historyLimit = Math.max(1, Math.min(200, Math.round(c.profile.historyLimit)));
   c.profile.coldStart = Math.max(0, Math.round(c.profile.coldStart));
   c.profile.topDims = Math.max(10, Math.round(c.profile.topDims));
-  c.score.trendingCap = Math.max(0, Math.min(0.5, c.score.trendingCap));
+  c.score.trendingCap = Math.max(0, Math.min(0.1, c.score.trendingCap)); // spec: trending is at most 10 % of the score on every surface
   c.score.ratingFloor = Math.min(c.score.ratingFloor, c.score.ratingCeil - 0.1);
   c.candidates.knn = Math.max(1, Math.round(c.candidates.knn));
   c.candidates.similar = Math.max(1, Math.round(c.candidates.similar));
