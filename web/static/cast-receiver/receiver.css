@@ -1,0 +1,47 @@
+/* SPDX-FileCopyrightText: 2026 Manuel Weißböck */
+/* SPDX-License-Identifier: AGPL-3.0-or-later */
+/* FriendFlix Cast receiver: the app's tokens (coral accent, OLED dark), sized for reading from 3 m (10 ft) on a 1080p TV. */
+:root {
+  --bg: #101418; --fg: #f5f5f5; --mut: #b3bac2; --acc: #ff4f6d; --acc-fill: #d6325a;
+  --safe: 5vh 5vw; /* TV overscan-safe area */
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; background: #000; color: var(--fg); overflow: hidden;
+  font: 400 28px/1.35 'Inter Variable', Inter, Roboto, system-ui, sans-serif; -webkit-font-smoothing: antialiased; }
+video { position: fixed; inset: 0; width: 100%; height: 100%; background: #000; object-fit: contain; }
+[hidden] { display: none !important; }
+
+/* nothing loaded: the brand on dark */
+.brand { position: fixed; inset: 0; display: none; place-items: center; background: radial-gradient(circle at 50% 40%, #1b2128, var(--bg) 70%); }
+body.idle .brand { display: grid; }
+.brand div { display: flex; align-items: center; gap: .6em; font-size: 56px; font-weight: 700; letter-spacing: -.01em; }
+.brand img { width: 96px; height: 96px; }
+
+/* skip intro / recap: bottom right, like the web player */
+.skip { position: fixed; right: 5vw; bottom: 12vh; font: inherit; font-weight: 600; font-size: 30px; color: #fff; padding: .55em 1.2em;
+  background: rgba(16, 20, 24, .78); border: 3px solid rgba(255, 255, 255, .85); border-radius: 999px; }
+
+/* next-up card / still watching (credits), bottom right */
+.card { position: fixed; right: 5vw; bottom: 10vh; width: min(760px, 44vw); padding: 32px 36px; border-radius: 16px;
+  background: rgba(16, 20, 24, .92); box-shadow: 0 12px 48px rgba(0, 0, 0, .6); border-left: 6px solid var(--acc);
+  animation: rise 260ms cubic-bezier(.2, .7, .2, 1); }
+.card h2 { margin: 0 0 .25em; font-size: 38px; line-height: 1.2; font-weight: 700; }
+.card p { margin: 0 0 .9em; color: var(--mut); font-size: 28px; min-height: 1.35em; }
+.bar { height: 6px; border-radius: 3px; background: rgba(255, 255, 255, .18); overflow: hidden; margin-bottom: 24px; }
+.bar i { display: block; height: 100%; width: calc(var(--p, 0) * 100%); background: var(--acc); }
+.card[data-mode="still"] .bar { display: none; }
+.btns { display: flex; gap: 20px; }
+.btns button, .still button { font: inherit; font-weight: 600; font-size: 30px; padding: .5em 1.3em; border-radius: 999px; border: 3px solid transparent;
+  background: rgba(112, 124, 138, .55); color: #fff; }
+.btns button.focus, .still button { background: var(--acc-fill); border-color: #fff; }
+
+/* still watching while the queued episode waits paused: full screen dim */
+.still { position: fixed; inset: 0; display: grid; place-content: center; text-align: center; padding: var(--safe); background: rgba(0, 0, 0, .72); }
+.still h2 { font-size: 64px; margin: 0 0 .3em; }
+.still p { font-size: 34px; color: var(--mut); margin: 0 0 1.2em; }
+
+@keyframes rise { from { opacity: 0; transform: translateY(24px); } to { opacity: 1; transform: none; } }
+@media (prefers-reduced-motion: reduce) {
+  .card { animation: none; }
+}

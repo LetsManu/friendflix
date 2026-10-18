@@ -26,8 +26,9 @@ export async function stubAirPlay(page: Page, o: { pickTv?: boolean } = {}) {
  * /api/cast/config enabled (the AirPlay button's gate); the Chromecast SDK Chromium then asks for is answered empty.
  * `fakeCastSdk()` must be called after this (Playwright tries the most recently added route first).
  */
-export async function castOn(page: Page, enabled = true) {
-  await page.route('**/api/cast/config', (r) => r.fulfill({ json: { enabled } }));
+export async function castOn(page: Page, enabled = true, receiverAppId?: string) {
+  // receiverAppId: FriendFlix's own receiver is configured (CAST_RECEIVER_APP_ID); absent = the Default Media Receiver
+  await page.route('**/api/cast/config', (r) => r.fulfill({ json: { enabled, ...(receiverAppId ? { receiverAppId } : {}) } }));
   await page.route('https://www.gstatic.com/**', (r) => r.fulfill({ contentType: 'text/javascript', body: '' }));
 }
 /** the player plays a real HLS stream through hls.js (like Safari normally does) */
@@ -53,7 +54,7 @@ export const wireless = (page: Page, on: boolean) => page.evaluate((on) => {
 }, on);
 
 /** POST /api/cast/session answers with a token URL (a test file the phone can play); `fail` -> 429 max_streams */
-export async function castSessions(page: Page, o: { fail?: () => boolean; castId?: string } = {}) {
+export async function castSessions(page: Page, o: { fail?: () => boolean; castId?: string; report?: string } = {}) {
   const sessions: Array<Record<string, unknown>> = [];
   const deleted: string[] = [];
   await page.route('**/api/cast/session', (r) => {
@@ -62,6 +63,7 @@ export async function castSessions(page: Page, o: { fail?: () => boolean; castId
     return r.fulfill({ json: {
       castId: o.castId ?? 'c'.repeat(32), expiresAt: Date.now() + 3 * 3600_000, playSessionId: 'air-ps', mediaSourceId: 'ms', startTime: 0,
       contentUrl: `${new URL(page.url()).origin}/media/p1test.webm#airplay`, contentType: 'application/x-mpegURL', hlsSegmentFormat: 'ts', title: 'Film', subtitles: [],
+      ...(o.report ? { report: o.report } : {}),
     } });
   });
   await page.route('**/api/cast/session/*', (r) => { deleted.push(r.request().url().split('/').pop()!); return r.fulfill({ json: { ok: true } }); });
@@ -73,8 +75,8 @@ export const srcAtPick = (page: Page) => page.evaluate(() => (window as unknown 
 /** runs in the page as the Cast sender SDK (same shape as `fakeSdk()` in web/src/lib/cast.test.ts) */
 function castSdkScript() {
   type Rec = { args: unknown[] } & Record<string, unknown>;
-  const w = window as unknown as Record<string, unknown> & { __castLoads: unknown[]; __castCalls: string[]; __castLoadFails?: boolean; __onGCastApiAvailable?: (ok: boolean) => void; chrome?: Record<string, unknown> };
-  w.__castLoads = []; w.__castCalls = [];
+  const w = window as unknown as Record<string, unknown> & { __castLoads: unknown[]; __castCalls: string[]; __castOptions: unknown; __castMsgs: unknown[]; __castLoadFails?: boolean; __onGCastApiAvailable?: (ok: boolean) => void; chrome?: Record<string, unknown> };
+  w.__castLoads = []; w.__castCalls = []; w.__castOptions = null; w.__castMsgs = [];
   const ctxListeners = new Map<string, (e: { castState?: string; sessionState?: string }) => void>();
   let anyChange: () => void = () => undefined;
   const player = { isConnected: false, isPaused: true, isMediaLoaded: false, currentTime: 0, duration: 0, volumeLevel: 1, isMuted: false, playerState: null as string | null, mediaInfo: null };
@@ -94,17 +96,20 @@ function castSdkScript() {
     getCastDevice: () => ({ friendlyName: 'Wohnzimmer-TV' }),
     async loadMedia(req: Rec): Promise<string | undefined> {
       const media = req.args[0] as Rec;
-      w.__castLoads.push({ contentId: media.args[0], contentType: media.args[1], currentTime: req.currentTime, activeTrackIds: req.activeTrackIds ?? [] });
+      w.__castLoads.push({ contentId: media.args[0], contentType: media.args[1], currentTime: req.currentTime, activeTrackIds: req.activeTrackIds ?? [], customData: media.customData ?? null });
       if (w.__castLoadFails) throw new Error('LOAD_FAILED'); // the receiver cannot play it
       setTimeout(() => change({ isMediaLoaded: true, isPaused: false, playerState: 'PLAYING', currentTime: Number(req.currentTime) || 0, duration: Number(media.duration) || 600 }), 0);
       return undefined;
     },
     getMediaSession: () => mediaSession,
+    // the custom receiver channel (only FriendFlix's own receiver uses it)
+    async sendMessage(ns: string, msg: unknown) { w.__castMsgs.push({ ns, msg }); },
+    addMessageListener(_ns: string, _fn: unknown) { w.__castCalls.push('addMessageListener'); },
   };
   const fire = (type: string, e: { castState?: string; sessionState?: string }) => ctxListeners.get(type)?.(e);
   const context = {
     current: null as typeof session | null,
-    setOptions() { /* nothing to configure */ },
+    setOptions(o: unknown) { w.__castOptions = o; },
     addEventListener: (t: string, fn: (e: { castState?: string; sessionState?: string }) => void) => { ctxListeners.set(t, fn); },
     async requestSession(): Promise<string | undefined> { w.__castCalls.push('requestSession'); return 'cancel'; },
     getCurrentSession() { return context.current; },
@@ -171,6 +176,9 @@ export async function fakeCastSdk(page: Page) {
   return {
     loads: () => page.evaluate(() => (window as unknown as { __castLoads?: unknown[] }).__castLoads ?? []),
     calls: () => page.evaluate(() => (window as unknown as { __castCalls?: string[] }).__castCalls ?? []),
+    /** the CastContext options (receiverApplicationId) and what the sender sent on the custom receiver channel */
+    options: () => page.evaluate(() => (window as unknown as { __castOptions?: unknown }).__castOptions ?? null),
+    messages: () => page.evaluate(() => (window as unknown as { __castMsgs?: unknown[] }).__castMsgs ?? []),
     start: () => run('start'),
     end: () => run('end'),
     finish: () => run('finish'),
