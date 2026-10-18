@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
-import { CAST_MAX_BITRATE, CAST_MAX_HEIGHT, castEnabled, castSubtitlePath, castTtlSeconds, createCast, resolveCastSubtitle, revokeCast } from '../cast.js';
+import { CAST_MAX_BITRATE, CAST_MAX_HEIGHT, castEnabled, castSubtitlePath, castTtlSeconds, createCast, hasCastToken, resolveCastSubtitle, revokeCast } from '../cast.js';
 import type { Ctx } from '../ctx.js';
 import { MediaError } from '../media/types.js';
 import { countLive } from '../live.js';
@@ -26,12 +26,16 @@ export function castRoutes(app: FastifyInstance, ctx: Ctx) {
       maxBitrate: z.number().int().min(300_000).max(200_000_000).optional(),
       /** sender protocol: Chromecast (default) or Safari AirPlay (same token flow, two-address pin, see cast.ts) */
       via: z.enum(['chromecast', 'airplay']).optional(),
+      /** the next episode for the receiver's queue (Chromecast): it follows this device's running cast, whose stream it replaces */
+      next: z.boolean().optional(),
     }).parse(req.body);
     const deviceId = req.session!.deviceId;
     if (!deviceId) return reply.code(403).send({ error: 'device_pending' });
     const role = (await effectiveLimits(ctx, req.user!))!;
     if (!role.transcoding) return reply.code(403).send({ error: 'transcoding_disabled' }); // Chromecast always needs a transcoded HLS stream
-    if ((await countLive(ctx, req.user!.id)) >= role.maxStreams) return reply.code(429).send({ error: 'max_streams', max: role.maxStreams });
+    // the queued next episode only plays once the current one ended (its stop clears that stream): the limit may be full by it, never more
+    const live = await countLive(ctx, req.user!.id);
+    if (live >= role.maxStreams && !(b.next && live === role.maxStreams && (await hasCastToken(ctx, req.user!.id, deviceId)))) return reply.code(429).send({ error: 'max_streams', max: role.maxStreams });
     try {
       const item = await ctx.jf.item(req.jfUser!, b.itemId); // access check: the profile must be able to see the item
       const startTicks = b.startTicks ?? item.positionTicks;
@@ -46,7 +50,7 @@ export function castRoutes(app: FastifyInstance, ctx: Ctx) {
       const ttl = castTtlSeconds(info.runtimeTicks, startTicks);
       const { ct, imgCt, castId, expiresAt } = await createCast(ctx, {
         userId: req.user!.id, profileId: req.profile!.id, deviceId, itemId: b.itemId, mediaSourceId: info.mediaSourceId, playSessionId: info.playSessionId, maxBitrate, title: item.name, via: b.via ?? 'chromecast',
-      }, ttl, Boolean(item.image));
+      }, ttl, Boolean(item.image), b.next ? 1 : 0);
       // Jellyfin returns /media/... URLs; the cast variant carries the token in the path: /media/c/<ct>/...
       const absWith = (t: string, u: string) => `${ctx.cfg.PUBLIC_URL.replace(/\/+$/, '')}/media/c/${t}${u.slice('/media'.length)}`;
       const abs = (u: string) => absWith(ct, u);

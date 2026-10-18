@@ -4,7 +4,7 @@ import { createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypt
 import type { Ctx } from './ctx.js';
 import { jfUserFor, getProfile } from './profiles.js';
 import { effectiveRole } from './roles.js';
-import { setLive, getLive } from './live.js';
+import { setLive, getLive, wasStopped } from './live.js';
 import { getUserById } from './users.js';
 import type { JfUser, ProfileRow, UserRow } from './types.js';
 
@@ -114,11 +114,12 @@ async function listIdx(ctx: Ctx, userId: string): Promise<Array<IdxEntry & { key
 }
 
 /**
- * Creates a media token (plus, with `image`, a poster-only token), keeping at most MAX_CAST_TOKENS media tokens per account (oldest revoked).
+ * Creates a media token (plus, with `image`, a poster-only token), keeping at most MAX_CAST_TOKENS (+ `extra`: the queued next
+ * episode's token next to the playing one) media tokens per account (oldest revoked).
  * The limit is enforced AFTER the insert, so two simultaneous creations converge to the limit instead of racing past it.
  * Returns the raw tokens (once).
  */
-export async function createCast(ctx: Ctx, rec: Omit<CastRecord, 'exp' | 'createdAt' | 'kind' | 'seen'>, ttlSeconds: number, image = false): Promise<{ ct: string; imgCt?: string; castId: string; expiresAt: number }> {
+export async function createCast(ctx: Ctx, rec: Omit<CastRecord, 'exp' | 'createdAt' | 'kind' | 'seen'>, ttlSeconds: number, image = false, extra = 0): Promise<{ ct: string; imgCt?: string; castId: string; expiresAt: number }> {
   const now = Date.now();
   const exp = now + ttlSeconds * 1000;
   const ttl = castKeyTtl(exp, now);
@@ -132,12 +133,17 @@ export async function createCast(ctx: Ctx, rec: Omit<CastRecord, 'exp' | 'create
   const img = image ? await mint('img') : undefined;
   const media = await mint('media', img ? { imgHash: img.hash } : {});
   const active = (await listIdx(ctx, rec.userId)).filter((i) => i.kind !== 'img' && i.hash !== media.hash).sort((a, b) => a.createdAt - b.createdAt);
-  while (active.length >= MAX_CAST_TOKENS) {
+  while (active.length >= MAX_CAST_TOKENS + extra) {
     const old = active.shift()!;
     await dropByHash(ctx, rec.userId, old.hash, old.imgHash);
   }
   memo.clear();
   return { ct: media.ct, imgCt: img?.ct, castId: castIdOf(media.hash), expiresAt: exp };
+}
+
+/** the account has a media token created from this device (a cast of it runs, or ran within the token's lifetime) */
+export async function hasCastToken(ctx: Ctx, userId: string, deviceId: string): Promise<boolean> {
+  return (await listIdx(ctx, userId)).some((i) => i.kind !== 'img' && i.deviceId === deviceId);
 }
 
 /** Revokes one token of an account by its public handle (a media token takes its poster token with it). */
@@ -178,6 +184,8 @@ async function touch(ctx: Ctx, hash: string, rec: CastRecord, userName: string, 
   if (idx) await ctx.kv.replace(ik, idx, ttl);
   if (rec.kind === 'img') return;
   const cur = await getLive(ctx, rec.userId, rec.playSessionId);
+  // its stop was reported (title switch / end): the receiver only drains buffered segments until the revoke, no ghost stream
+  if (!cur && (await wasStopped(ctx, rec.userId, rec.playSessionId))) return;
   await setLive(ctx, cur
     ? { ...cur, updatedAt: now }
     : { userId: rec.userId, userName, profileName, itemId: rec.itemId, title: rec.title ?? '', positionTicks: 0, isPaused: false, playSessionId: rec.playSessionId, updatedAt: now, source: 'portal' });

@@ -21,6 +21,9 @@ const runtime = 7200 * 10_000_000;
 beforeAll(async () => {
   env = await makeEnv({
     'GET /Users/[^/]+/Items/[^/]+': () => (visible ? { json: { Id: ID, Name: 'Film', Type: 'Movie', ImageTags: { Primary: 'x' }, UserData: { PlaybackPositionTicks: 600_000_000 } } } : { status: 404 }),
+    'POST /Sessions/Playing': () => ({ status: 204 }),
+    'POST /Sessions/Playing/Progress': () => ({ status: 204 }),
+    'POST /Sessions/Playing/Stopped': () => ({ status: 204 }),
     'POST /Items/[^/]+/PlaybackInfo': () => ({
       json: {
         PlaySessionId: 'ps-12345678',
@@ -362,6 +365,59 @@ describe('cast token hardening', () => {
     const l = (await getLive(env.ctx, me, 'ps-12345678'))!;
     expect(l.positionTicks).toBe(5);
     expect(l.updatedAt).toBeGreaterThan(1);
+  });
+});
+
+describe('cast session: stop report and the queued next episode', () => {
+  const me = async () => (await call(admin, 'GET', '/api/me')).json().id as string;
+  const stale = async (ct: string) => env.kv.set(`cast:${hashToken(ct)}`, JSON.stringify({ ...JSON.parse((await env.kv.get(`cast:${hashToken(ct)}`))!), seen: 0 }), 600);
+
+  it('a segment fetch after the stop report does not bring the stopped stream back (no ghost stream for maxStreams)', async () => {
+    const uid = await me();
+    for (const k of await env.kv.keys(`play:${uid}:`)) await env.kv.del(k);
+    const { ct, j } = await create();
+    const body = { itemId: ID, playSessionId: j.playSessionId, mediaSourceId: MS, positionTicks: 0, isPaused: false, playMethod: 'Transcode' };
+    expect((await call(admin, 'POST', '/api/playback/start', body)).statusCode).toBe(200);
+    expect(await countLive(env.ctx, uid)).toBe(1);
+    expect((await call(admin, 'POST', '/api/playback/stop', body)).statusCode).toBe(200);
+    expect(await countLive(env.ctx, uid)).toBe(0);
+    // the receiver still fetches the old token's segments until the new one is loaded (its sliding refresh is due)
+    await stale(ct);
+    skipClock(5100);
+    expect((await authz({ ct })).statusCode).toBe(200);
+    expect(await countLive(env.ctx, uid)).toBe(0);
+    // a new start of that play session counts again
+    expect((await call(admin, 'POST', '/api/playback/start', body)).statusCode).toBe(200);
+    expect(await countLive(env.ctx, uid)).toBe(1);
+    await call(admin, 'POST', '/api/playback/stop', body);
+  });
+
+  it('next: the token for the queued next episode is issued while the current cast fills the stream limit, never beyond it', async () => {
+    const uid = await me();
+    await revokeSessions(env.ctx, uid);
+    admin = await env.login();
+    for (const k of await env.kv.keys(`play:${uid}:`)) await env.kv.del(k);
+    const role = env.ctx.roles.admin!;
+    const before = role.maxStreams;
+    role.maxStreams = 1;
+    try {
+      // no cast of this device yet: `next` is no way around the limit
+      await setLive(env.ctx, { userId: uid, userName: 'a', itemId: ID, title: 't', positionTicks: 0, isPaused: false, playSessionId: 'other-ps-1', updatedAt: Date.now(), source: 'portal' });
+      expect((await call(admin, 'POST', '/api/cast/session', { itemId: ID, next: true })).statusCode).toBe(429);
+      await env.kv.del(`play:${uid}:other-ps-1`);
+      const cur = await create();
+      expect(cur.r.statusCode).toBe(200);
+      await setLive(env.ctx, { userId: uid, userName: 'a', itemId: ID, title: 't', positionTicks: 0, isPaused: false, playSessionId: cur.j.playSessionId, updatedAt: Date.now(), source: 'portal' });
+      expect((await call(admin, 'POST', '/api/cast/session', { itemId: ID })).statusCode).toBe(429);
+      const nx = await call(admin, 'POST', '/api/cast/session', { itemId: ID, next: true });
+      expect(nx.statusCode).toBe(200);
+      // one stream over the limit (another device plays too): refused
+      await setLive(env.ctx, { userId: uid, userName: 'a', itemId: ID, title: 't', positionTicks: 0, isPaused: false, playSessionId: 'other-ps-2', updatedAt: Date.now(), source: 'portal' });
+      expect((await call(admin, 'POST', '/api/cast/session', { itemId: ID, next: true })).statusCode).toBe(429);
+    } finally {
+      role.maxStreams = before;
+      for (const k of await env.kv.keys(`play:${uid}:`)) await env.kv.del(k);
+    }
   });
 });
 
