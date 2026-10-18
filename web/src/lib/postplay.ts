@@ -5,13 +5,18 @@
  * headline per state and the anonymous counters (POST /api/postplay/event: fixed enums only, never a title).
  */
 import { api, type Item } from '#lib/api';
+import { markOrigin, recoReporter, type RecoEngine, type RecoKind, type RecoRow, type RecoTag } from '#lib/reco';
 import type { TFn } from '#lib/i18n';
 
 export type PostplayState = 'next' | 'movie_end' | 'series_finished' | 'caught_up' | 'gap';
 export type RowKind = 'continuation' | 'transition' | 'universe' | 'because' | 'friends' | 'taste';
 export interface RowReason { seed?: { id: string; name: string }; traits?: string[] }
 export interface Wish { mediaType: 'tv'; tmdbId: number; quota: { limit: number | null; used: number; remaining: number | null; resetsAt: string } }
-export interface PostplayRow { kind: RowKind; title: string; reason: RowReason; items: Item[]; wish?: Wish }
+export interface PostplayRow {
+  kind: RowKind; title: string; reason: RowReason; items: Item[]; wish?: Wish;
+  /** which engine built the row, and the row kind the recommendation counters know it by (absent on older servers) */
+  engine?: RecoEngine; recoRow?: RecoRow;
+}
 export interface Postplay {
   state: PostplayState;
   current: Item;
@@ -23,6 +28,7 @@ export interface Postplay {
   rows: PostplayRow[];
   hero: Item | null;
   suggestions: boolean;
+  engine?: RecoEngine;
 }
 
 /** share of the runtime after which the card appears when neither an outro segment nor chapters say where the credits start */
@@ -98,3 +104,18 @@ export function track(e: PostplayEvent): void {
 }
 
 export const loadPostplay = (id: string, signal?: AbortSignal): Promise<Postplay> => api<Postplay>(`/api/items/${id}/postplay`, { signal });
+
+/** The counter tag of a row (row kind + engine), or null for the continuation (the next part is not a recommendation) and unknown rows. */
+export function recoTagOf(p: Postplay, kind: RowKind): RecoTag | null {
+  const r = p.rows.find((x) => x.kind === kind);
+  if (!r || r.kind === 'continuation') return null;
+  return { row: r.recoRow ?? (r.kind === 'transition' ? 'transition' : r.kind === 'universe' ? 'universe' : r.kind === 'friends' ? 'friends' : r.kind === 'taste' ? 'top_picks' : 'postplay'), engine: r.engine ?? p.engine ?? 'v1' };
+}
+
+/** Counts one recommendation event (impression, click, play, dismiss) for a post-play row; the continuation is skipped. */
+export function recoCount(p: Postplay, kind: RowKind, what: RecoKind, itemId?: string): void {
+  const tag = recoTagOf(p, kind);
+  if (!tag) return;
+  recoReporter().add(tag, what);
+  if (what === 'clicks' && itemId) markOrigin(tag, itemId); // the play that follows the click counts for this row
+}

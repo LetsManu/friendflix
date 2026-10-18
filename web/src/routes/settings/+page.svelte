@@ -13,6 +13,7 @@
   import type { Me } from '#lib/api';
   import { kidsMode } from '#lib/kids';
   import { features } from '#lib/capabilities';
+  import { homeCache } from '#lib/home';
 
   /** audio/subtitle track languages (ISO 639-2 as Jellyfin reports them; names in the UI language) */
   const LANGS = ['ger', 'eng', 'fre', 'spa', 'ita', 'jpn'];
@@ -47,6 +48,14 @@
     const keep = keepPageOnSwitch();
     return () => { unsub(); keep(); };
   });
+  // ---- "Reset my recommendations": forgets the taste vector and the row statistics of this profile (history, ratings and the list stay) ----
+  let recoBusy = false, recoMsg = '', recoFailed = false;
+  async function resetReco() {
+    recoBusy = true; recoMsg = ''; recoFailed = false;
+    try { await api('/api/prefs/reco/reset', { method: 'POST', body: {} }); homeCache.clear(); recoMsg = tr('reco.settings.resetDone'); }
+    catch { recoFailed = true; recoMsg = tr('reco.settings.resetFailed'); }
+    recoBusy = false;
+  }
   // ---- brand intro (stored per profile in localStorage, not on the server) ----
   let introShow = true, introSound = true, previewing = false, previewSound = false;
   onMount(() => { const s = loadIntroSettings(getActiveProfile()); introShow = s.show; introSound = s.sound; });
@@ -140,6 +149,15 @@
   </fieldset>
   <div class="flex"><button disabled={busy}>{$t('common.save')}</button>{#if saved}<span class="ok" role="status">{$t('common.saved')}</span>{/if}{#if error}<span class="err" role="alert">{error}</span>{/if}</div>
 </form>
+<section class="panel form push" aria-labelledby="recoh" data-testid="reco-settings">
+  <h2 id="recoh">{$t('reco.settings.title')}</h2>
+  <p class="muted">{$t('reco.settings.whyHint')}</p>
+  <div class="flex">
+    <button type="button" class="sec" disabled={recoBusy} on:click={resetReco}>{$t('reco.settings.reset')}</button>
+  </div>
+  <small class="muted">{$t('reco.settings.resetHint')}</small>
+  {#if recoMsg}<span role="status" class:err={recoFailed} class:ok={!recoFailed}>{recoMsg}</span>{/if}
+</section>
 {#if !$kidsMode}
 <section class="panel form push" aria-labelledby="introh">
   <h2 id="introh">{$t('account.settings.intro.title')}</h2>

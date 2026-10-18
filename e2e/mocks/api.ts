@@ -153,7 +153,9 @@ export async function installApi(ctx: BrowserContext, st: MockState): Promise<vo
         parts: {
           hero: pool.find((i) => i.backdrop) ?? pool[0] ?? null, resume: got.resume?.items ?? [], nextup: got.nextup?.items ?? [], leaving: got.leaving?.items ?? [],
           recs: { items: got.recs?.items ?? [], recIds: got.recs?.recIds ?? [], friends: got.friends?.items ?? [] },
-          because: { because: got.because?.because ?? null, items: got.because?.items ?? [], more: got.more?.rows ?? [] },
+          because: { because: got.because?.because ?? null, items: got.because?.items ?? [], more: got.more?.rows ?? [], ...(got.because?.engine ? { engine: got.because.engine } : {}) },
+          // engine v2 (RECO_ENGINE=v2): the mocked /api/library/because may carry the row ranker's `order`
+          ...(got.because?.order ? { order: got.because.order } : {}),
           hubs: got.hubs?.hubs ?? [], themed: got.themed?.lists ?? [],
         },
         failed: [...failed].sort(),
@@ -164,6 +166,8 @@ export async function installApi(ctx: BrowserContext, st: MockState): Promise<vo
       return st.loginArt.status === 200 ? J({ images: st.loginArt.images }) : J({ error: st.loginArt.status === 503 ? 'setup_required' : 'unavailable' }, st.loginArt.status);
     }
     if (/^\/api\/public\/login-art\/[A-Za-z0-9_-]{12}\/\d{1,2}$/.test(p) && m === 'GET') return route.fulfill({ status: 200, contentType: 'image/png', body: pngFor(req.url()) });
+    // R4: "Reset my recommendations" (profile settings); the call shows up in `log`
+    if (p === '/api/prefs/reco/reset' && m === 'POST') return J({ ok: true });
     if (p === '/api/reco/events' && m === 'POST') { st.reco.push(body()); return route.fulfill({ status: 204 }); }
     if (p === '/api/client-errors') { st.clientErrors.push(body()); return route.fulfill({ status: 204 }); }
     if (p.startsWith('/api/setup/')) {

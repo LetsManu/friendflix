@@ -24,12 +24,17 @@ export const postplayPlay = new Counter({ name: 'friendflix_postplay_play_total'
 export const postplayDismiss = new Counter({ name: 'friendflix_postplay_dismiss_total', help: 'Post-play screens dismissed', registers: [registry] });
 /**
  * Recommendation telemetry (spec 4.7). Labels are bounded by RECO_ROWS / RECO_ENGINES (routes/reco.ts) and never carry an item, a title or a user.
- * Impressions, clicks and dismisses come from the browser (POST /api/reco/events); plays are counted server side by the engine step (R4).
+ * Impressions, clicks, plays and dismisses all come from the browser (POST /api/reco/events): a play counts when playback starts on a title opened from a recommendation row.
  */
 export const recoImpressions = new Counter({ name: 'friendflix_reco_impressions_total', help: 'Recommendation rows shown, by row and engine', labelNames: ['row', 'engine'], registers: [registry] });
 export const recoClicks = new Counter({ name: 'friendflix_reco_clicks_total', help: 'Recommended titles opened, by row and engine', labelNames: ['row', 'engine'], registers: [registry] });
 export const recoPlays = new Counter({ name: 'friendflix_reco_plays_total', help: 'Plays started from a recommendation, by row and engine', labelNames: ['row', 'engine'], registers: [registry] });
 export const recoDismiss = new Counter({ name: 'friendflix_reco_dismiss_total', help: 'Recommendations dismissed, by row and engine', labelNames: ['row', 'engine'], registers: [registry] });
+/**
+ * R4 (RECO_ENGINE=v2): v2 threw on a request and v1 answered instead. surface is one of FALLBACK_SURFACES (reco/engine.ts), never a title,
+ * a message or a user.
+ */
+export const recoFallback = new Counter({ name: 'friendflix_reco_fallback_total', help: 'Requests where recommendation engine v2 failed and v1 answered, by surface', labelNames: ['surface'], registers: [registry] });
 /**
  * R2 shadow mode (RECO_ENGINE=shadow): v2 computed beside v1 on the "because" path. Labels are bounded (surface is one of five names,
  * result ok|error); nothing about a title, a profile or a user is ever a label or a value.

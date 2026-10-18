@@ -2,6 +2,7 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
 <script lang="ts">
   import { onDestroy, onMount, tick } from 'svelte';
+  import { recoPlayStarted } from '#lib/reco';
   import { pageStore } from '#lib/page';
   const page = pageStore();
   import { goto } from '$app/navigation';
@@ -83,6 +84,7 @@
       const it = (await api(`/api/items/${wanted}`)).item as Item;
       if (wanted !== id) return; // navigated on in the meantime
       item = it; primeItem(it);
+      recoPlayStarted([wanted, it.seriesId]); // playback of a title opened from a recommendation row counts as one play for that row
       if (it.type === 'Episode' && it.seriesId) {
         const n = await nx; // the episode AFTER this one, also across seasons
         if (wanted === id) nextEp = n;

@@ -243,7 +243,7 @@ Code in `backend/src/reco/`. Standard bleibt `RECO_ENGINE=v1`: Es ändert sich n
 |---|---|
 | `v1` (Standard) | „Weil du … gesehen hast“ wie bisher: `similar()` des Medienservers minus Daumen-runter. v2 läuft nicht. |
 | `shadow` | Die Antwort ist **genau die von v1**. Daneben rechnet v2 mit demselben Seed (nicht abgewartet, höchstens einmal je Profil, Nutzerdaten-Version und Seed in 10 Minuten, Redis-Schlüssel `reco:shadow:…`) und hält nur Zahlen fest. Ein Fehler in v2 wird gezählt und bleibt für den Zuschauer unsichtbar. |
-| `v2` | Die Zeile besteht aus den v2-Titeln (bis 24); fällt v2 aus, antwortet v1. Gedacht für Tests und den Rollout (R4), nicht vorher. |
+| `v2` | Alles, was der Abschnitt [Rollout (R4)](#empfehlungs-engine-v2-rollout-r4) nennt, kommt aus `recommend()`; fällt v2 aus, antwortet v1. Der Standard bleibt `v1`, bis jemand (nach dem Tor der Spezifikation) umschaltet. |
 
 **Shadow-Metriken** (Labels sind begrenzt: `surface` ist eine der fünf Flächen, `result` ist `ok|error`; nie ein Titel, eine Id, ein Profil oder ein Nutzer):
 
@@ -403,6 +403,47 @@ A target is valued from the explored slots that happen to match: noisy (see eff.
 ```
 
 Lesehilfe: v2 selbst wird richtig geschätzt; Ziele fern von v2 (Popularität, Co-Occurrence) liegen fast ganz außerhalb des Supports, ihre Schätzung ist entsprechend klein. Das ist die bekannte Grenze: Exploration macht nur Rankings bewertbar, die dem geloggten ähneln. Mit echten Zählern läuft das nicht (sie sind absichtlich nur Aggregate je Zeilenart); der Lauf zeigt die Mechanik und dient dazu, in R5 kleine Änderungen offline zu beurteilen.
+
+## Empfehlungs-Engine v2: Rollout (R4)
+
+Alles hinter `RECO_ENGINE=v2`. Standard bleibt `v1`: Ohne Umschalten ändert sich weder eine Antwort noch ein Zähler, und es gibt keine Bildunterschriften. `shadow` rechnet weiter nur nebenher (R2) und antwortet v1.
+
+**Was über `recommend()` läuft** (Code: `reco/engine.ts`, `routes/discover.ts`, `routes/home.ts`, `postplay.ts`)
+
+| Stelle | v2 |
+|---|---|
+| Startseite, „Weil du … gesehen hast“ (`GET /api/library/because`, Teil von `GET /api/home`) | `recommend({ surface: 'because', seed })` |
+| Weitere „Weil du …“-Zeilen (`GET /api/library/because-more`) | je Seed `recommend({ surface: 'because' })`; eine Zeile, deren v2-Aufruf scheitert, kommt von Jellyfin (`engine: 'v1'` an dieser Zeile) |
+| Bildschirm nach dem Ende, Zeile „Weil du …“ | `recommend({ surface: 'postplay', seed })` |
+| Bildschirm nach dem Ende, Zeile „Passt zu deinem Geschmack“ | `recommend({ surface: 'taste' })` ohne Seed |
+| Bildschirm nach dem Ende, neue Zeile „Was andere nach … schauen“ (`kind: 'transition'`) | `transitionsFor()` (R3): mindestens 2 Konten mit `shareHistory` je Paar; nie für Kinderprofile |
+
+**Zeilenreihenfolge** (`rankRows`, R3b). Startseite: `parts.order` listet die Empfehlungszeilen (`friends`, `because`, `more:<n>`) in der Reihenfolge des Rankers; eine nicht genannte Zeile ist weg (zu klein, nur schon gesehene Serien, zu viele aktuelle Titel). Die Antwort enthält die bereinigten Titel. Fehlt `order` (v1, oder der Ranker ist ausgefallen), gilt das feste Layout wie bisher. „Weiterschauen“, „Nächste Folge“ und „Bald nicht mehr verfügbar“ bleiben, wo sie sind. Bildschirm nach dem Ende: die Fortsetzung bleibt oben, die übrigen Zeilen ordnet der Ranker nach der Klick- und Abspielrate des Profils je Zeilenart (`PostplayRow.recoRow`: `transition`, `universe`, `postplay` für „Weil du …“, `friends`, `top_picks` für „Geschmack“). Eine Zeile mit weniger als 4 Titeln fällt weg (`rows.minSize`), die Übergangszeile braucht also mindestens 4 gestützte Folgetitel.
+
+**Begründung (`reason`).** Jeder Titel einer v2-Zeile trägt `reason: { seed, traits[≤2] }` (`reco/explain.ts`). Das Web macht daraus eine Zeile unter der Überschrift („Weil du „Dune“ gesehen hast · gleiche Regie“), in allen 7 Sprachen (`lib/reason.ts`, Bereich `reco`). Sie zeigt den ersten Titel der Zeile; ein Tipp darauf öffnet „Warum sehe ich das?“ mit der Begründung der ersten fünf Titel (eingeblendet, kein Pop-up). Unbekannte Merkmale einer neueren Version bleiben weg. Freundesnamen stehen nur drin, soweit deren Freigaben es erlauben (R3).
+
+**Rückfall auf v1.** Wirft v2 (Index nicht lesbar, Datenbank, Medienserver), antwortet v1 und `friendflix_reco_fallback_total{surface}` steigt um 1 (`surface` ∈ `because`, `because_more`, `postplay`, `taste`, `transition`, `home`; keine Meldung, kein Titel). Nur eine Ausnahme zählt; eine leere v2-Antwort bleibt leer. Zeilen sagen, wer sie gebaut hat (`engine`), die Zähler folgen dem.
+
+**Zähler** (`POST /api/reco/events`, Zählwerte je `row` und `engine`): `friendflix_reco_impressions_total`, `_clicks_total`, `_plays_total`, `_dismiss_total`. Ein *Abspielen* zählt, wenn die Wiedergabe eines Titels beginnt, den man aus einer Empfehlungszeile geöffnet hat (der Browser merkt sich Zeile und Engine in `sessionStorage`, 30 Minuten; ein Link direkt auf `/watch/…` zählt sofort). *Ablehnen* kommt aus „Kein Interesse“ am Bildschirm nach dem Ende. Die Zähler enthalten keine Titel, Ids oder Profile; dieselben Zahlen füttern je Profil die Zeilenstatistik des Rankers.
+
+**Profil-Einstellungen** (`routes/prefs.ts`, Seite „Einstellungen“, auch für Kinderprofile)
+
+- **Meine Empfehlungen zurücksetzen:** `POST /api/prefs/reco/reset` löscht den zwischengespeicherten Geschmacksvektor (`reco:taste:<profil>:…`) und die Zeilenstatistik (`reco:rows:<profil>`) dieses Profils und verwirft dessen Startseiten- und Post-Play-Zwischenspeicher. Daumen, Bewertungen, Verlauf und Merkliste bleiben; v2 baut den Geschmack beim nächsten Aufruf daraus neu auf.
+- **Warum sehe ich das?:** der Tipp auf die Zeile unter einer Empfehlungszeile (siehe oben). Die Einstellungsseite erklärt es in einem Satz.
+
+**Admin-Karte** (Übersicht, `GET /api/admin/reco`): je Engine angezeigt, geklickt, abgespielt, abgelehnt, dazu **Klickrate = Klicks ÷ angezeigte Zeilen** und **Abspielrate = Abspielungen ÷ angezeigte Zeilen**, außerdem die Rückfälle auf v1. Quelle sind die Zähler dieses Prozesses: Sie beginnen bei jedem Neustart bei 0, die Geschichte liegt in Prometheus. Ohne Anzeigen steht „–“ statt einer Rate.
+
+**Kinderprofile** bleiben, wie sie waren: Altersgrenze immer, nie Freunde, Co-Watch, Übergänge oder Trending, alle Titel mit dem Token des Kindes. Die Übergangszeile wird für sie weder gebaut noch werden die Übergangsdaten gelesen.
+
+### Shadow gegen v1 vergleichen und wann umschalten
+
+Das Tor der Spezifikation (§4.7): v2 wird Standard, wenn der NDCG@10 offline **jede** Basis um den Abstand schlägt **und** die Abspielrate online nach zwei Wochen nicht schlechter ist. Die Umstellung macht die Betreiberin oder der Betreiber selbst; ausgeliefert wird `v1`.
+
+1. **Offline:** `node scripts/reco-eval.mjs --gate` (siehe „v2 auswerten“); mit `--db` auf den eigenen Daten. Besteht das Tor nicht, nicht umschalten.
+2. **Shadow, mindestens eine Woche:** `RECO_ENGINE=shadow`. Viewer sehen v1. Prüfen: `friendflix_reco_shadow_runs_total{result="error"}` bleibt ≈ 0; `friendflix_reco_shadow_overlap` (Histogramm): liegt der Mittelwert bei 1, ist v2 nur eine Kopie von v1, bei sehr niedrigen Werten ist v2 ein ganz anderer Geschmack, dann Stichproben ansehen; `friendflix_reco_shadow_score_delta` positiv heißt, v2 hält seine Liste für besser, sagt aber nichts über die Zuschauer. Mittelwerte: `sum(rate(friendflix_reco_shadow_overlap_sum[7d])) / sum(rate(friendflix_reco_shadow_overlap_count[7d]))`.
+3. **Grundlinie festhalten:** die Abspielrate von v1 aus den Wochen davor (Admin-Karte seit dem letzten Neustart, besser Prometheus): `sum(increase(friendflix_reco_plays_total{engine="v1"}[14d])) / sum(increase(friendflix_reco_impressions_total{engine="v1"}[14d]))`. Ein Profil ohne Verlauf (kalt) bekommt bei v2 vor allem Beliebtes; wenige Profile mit Verlauf: lieber länger messen.
+4. **Umschalten:** `RECO_ENGINE=v2`, Backend neu starten. In den zwei Wochen danach die v2-Abspielrate (gleiche Abfrage mit `engine="v2"`) mit der Grundlinie vergleichen und `friendflix_reco_fallback_total` im Blick halten (Rückfälle sollten nahe 0 bleiben). Ist die Abspielrate schlechter als die Grundlinie, `RECO_ENGINE=v1` setzen; das ist jederzeit ohne Datenverlust möglich. „Meine Empfehlungen zurücksetzen“ ändert nichts an dieser Messung.
+5. **Aufgepasst:** Klickrate und Abspielrate hängen auch von der Bibliothek und der Jahreszeit ab; ein Vergleich von v1 und v2 zu verschiedenen Zeiten ist ein Hinweis, kein Beweis. Die Zähler sind pro Zeilenart getrennt (`row`), vergleiche gleiche Zeilen.
 
 ## Kinderprofile
 

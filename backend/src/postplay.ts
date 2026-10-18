@@ -21,6 +21,11 @@ import { continuingIds } from './fresh.js';
 import { homeGens } from './homegen.js';
 import { MediaError, type ItemDto, type MediaCollection, type SeriesStatus } from './media/types.js';
 import { quota } from './requestlimit.js';
+import { transitionsFor } from './reco/aggregates.js';
+import { countFallback, rankHomeRows, recoProfileOf, v2Active, withReason, type EngineName } from './reco/engine.js';
+import type { RecoProfile } from './reco/profile.js';
+import { recommend } from './reco/recommend.js';
+import type { RowKind as RecoRowKind } from './reco/rows.js';
 import { friendsRatedFor, libraryBecause, libraryBecauseMore, BECAUSE_TTL } from './routes/discover.js';
 import { portalStatus, requestsClient, requestsEnabled } from './seerr/client.js';
 import type { JfUser } from './types.js';
@@ -41,7 +46,17 @@ const DAY = 86_400_000;
 
 export interface RowReason { seed?: { id: string; name: string }; traits?: string[] }
 export interface Wish { mediaType: 'tv'; tmdbId: number; quota: { limit: number | null; used: number; remaining: number | null; resetsAt: string } }
-export interface PostplayRow { kind: RowKind; /** the row's subject (seed, collection or hub name); the web builds the localized heading from kind + title */ title: string; reason: RowReason; items: ItemDto[]; wish?: Wish }
+export interface PostplayRow {
+  kind: RowKind; /** the row's subject (seed, collection or hub name); the web builds the localized heading from kind + title */ title: string; reason: RowReason;
+  /** items of a v2 row carry `reason` (seed + up to two shared traits, reco/explain.ts); the web turns it into the caption */
+  items: ItemDto[]; wish?: Wish;
+  /** which engine built the row (RECO_ENGINE=v2 rows that fell back to v1 say v1) */
+  engine?: EngineName;
+  /** the row kind the recommendation counters use for this row (reco/rows.ts); the web tags impressions, clicks, plays and dismisses with it */
+  recoRow?: RecoRowKind;
+}
+/** The row kind the recommendation counters and the row ranker know this row by (reco/rows.ts ROW_KINDS). */
+export const RECO_ROW_OF: Record<RowKind, RecoRowKind> = { continuation: 'continue', transition: 'transition', universe: 'universe', because: 'postplay', friends: 'friends', taste: 'top_picks' };
 export interface Postplay {
   state: PostplayState;
   current: ItemDto;
@@ -55,6 +70,8 @@ export interface Postplay {
   hero: ItemDto | null;
   /** false: the profile turned "Show suggestions after the last episode" off (only the continuation row is sent) */
   suggestions: boolean;
+  /** v2 when RECO_ENGINE=v2 built at least one row, else v1 */
+  engine: EngineName;
 }
 
 export interface Viewer {
@@ -219,6 +236,8 @@ interface SourceCtx {
   now: number;
   /** filled by the taste source, read by the hero pick */
   taste: Set<string>;
+  /** RECO_ENGINE=v2: the viewer's profile (recommend() input); undefined = v1 */
+  profile?: RecoProfile;
 }
 
 type RowSource = (s: SourceCtx) => Promise<PostplayRow | null>;
@@ -293,6 +312,15 @@ const universe: RowSource = async (s) => {
 /** 3. Because you watched <X>: the existing similar() source, seeded with the title just finished (its series for an episode). */
 const because: RowSource = async (s) => {
   const seed = s.facts.subject;
+  if (s.profile) {
+    try {
+      const r = await recommend(s.ctx, s.v.user, s.profile, { seed: seed.id, surface: 'postplay', limit: ROW_MAX + 10, row: 'postplay' });
+      const items = r.items.map(withReason).filter((i) => i.id !== seed.id);
+      return items.length ? { kind: 'because', title: seed.name, reason: { seed: { id: seed.id, name: seed.name }, traits: [] }, items, engine: 'v2' } : null;
+    } catch {
+      countFallback('postplay'); // v1 below
+    }
+  }
   const items = (await cachedSimilar(s, seed.id)).filter((i) => i.id !== seed.id);
   if (!items.length) return null;
   return { kind: 'because', title: seed.name, reason: { seed: { id: seed.id, name: seed.name }, traits: seed.genres.slice(0, 2).map((g) => `genre:${g}`) }, items };
@@ -308,6 +336,16 @@ const friends: RowSource = async (s) => {
 
 /** 5. Fits your taste: the profile-based rows of the existing engine (latest thumbs-up / last finished + recent distinct titles). */
 const taste: RowSource = async (s) => {
+  if (s.profile) {
+    try {
+      const r = await recommend(s.ctx, s.v.user, s.profile, { surface: 'taste', limit: ROW_MAX + 10, row: 'top_picks' });
+      const items = r.items.map(withReason);
+      items.forEach((i) => s.taste.add(i.id));
+      return items.length ? { kind: 'taste', title: '', reason: { traits: [] }, items, engine: 'v2' } : null;
+    } catch {
+      countFallback('taste'); // v1 below
+    }
+  }
   const [main, more] = await Promise.all([
     soft(libraryBecause(s.ctx, s.v.user, s.v.profileId), { because: null, items: [] as ItemDto[] }),
     soft(libraryBecauseMore(s.ctx, s.v.user, s.v.profileId), { rows: [] as Array<{ because: { id: string; name: string }; items: ItemDto[] }> }),
@@ -323,13 +361,30 @@ const taste: RowSource = async (s) => {
 };
 
 /**
+ * 2a. What people watch after <X> (RECO_ENGINE=v2): the titles opted-in accounts started right after finishing this one (>= 2 accounts,
+ * aggregates only, reco/aggregates.ts transitionsFor). Never on kids profiles (transitionsFor answers [] for them and the source is grown-ups only).
+ */
+const transition: RowSource = async (s) => {
+  if (!s.profile) return null;
+  try {
+    const seed = { id: s.facts.subject.id, name: s.facts.subject.name };
+    const reason = { seed, traits: ['next'] };
+    const found = await transitionsFor(s.ctx, s.cur.id, { user: s.v.user, profile: s.profile }, { limit: 12 });
+    return found.length ? { kind: 'transition', title: seed.name, reason: { seed }, items: found.map((t) => ({ ...t.item, reason })), engine: 'v2' } : null;
+  } catch {
+    countFallback('transition');
+    return null;
+  }
+};
+
+/**
  * Row sources in display order (spec §3.3). Extension point for R3: the "transition" source ("What people watch after <X>", only
  * from >= 2 opted-in accounts, never on kids profiles) goes between continuation and universe as `{ kind: 'transition', build, grownUp: true }`.
  * `suggestion: true` rows are left out when the profile turned post-play suggestions off.
  */
 export const ROW_SOURCES: Array<{ kind: RowKind; build: RowSource; grownUp?: boolean; suggestion?: boolean }> = [
   { kind: 'continuation', build: continuation },
-  // { kind: 'transition', build: transition, grownUp: true, suggestion: true },  <- R3
+  { kind: 'transition', build: transition, grownUp: true, suggestion: true },
   { kind: 'universe', build: universe, suggestion: true },
   { kind: 'because', build: because, suggestion: true },
   { kind: 'friends', build: friends, grownUp: true, suggestion: true },
@@ -346,6 +401,8 @@ async function vetoes(ctx: Ctx, profileId: string): Promise<Set<string>> {
 export async function buildPostplay(ctx: Ctx, v: Viewer, cur: ItemDto, ver: string, now = Date.now()): Promise<Postplay> {
   const facts = await factsFor(ctx, v, cur, now);
   const s: SourceCtx = { ctx, v, cur, facts, ver, now, taste: new Set() };
+  const profile = v2Active(ctx.cfg) ? await recoProfileOf(ctx, v.profileId) : undefined;
+  if (profile) s.profile = profile;
   const sources = ROW_SOURCES.filter((r) => !(r.grownUp && v.kids) && !(r.suggestion && !v.suggestions));
   const [veto, built] = await Promise.all([vetoes(ctx, v.profileId), Promise.all(sources.map((r) => r.build(s).catch(() => null)))]);
   // never again: the title itself, its series, what follows it, anything watched, dropped or thumbed down; no row repeats a title
@@ -364,6 +421,18 @@ export async function buildPostplay(ctx: Ctx, v: Viewer, cur: ItemDto, ver: stri
     items.forEach((i) => seen.add(i.id));
     rows.push({ ...r, items });
   }
+  // RECO_ENGINE=v2: the row ranker orders the suggestion rows by the profile's past click / play rate per row kind (continuation stays first)
+  if (profile) {
+    try {
+      const head = rows.filter((r) => r.kind === 'continuation');
+      const tail = rows.filter((r) => r.kind !== 'continuation');
+      const ranked = await rankHomeRows(ctx, v.user, profile, tail.map((r) => ({ key: r.kind, kind: RECO_ROW_OF[r.kind], items: r.items })), now);
+      const by = new Map(tail.map((r) => [r.kind as string, r]));
+      rows.splice(0, rows.length, ...head, ...ranked.flatMap((r) => { const row = by.get(r.key); return row ? [{ ...row, items: r.items }] : []; }));
+    } catch {
+      countFallback('postplay'); // the display order of spec 3.3 stays
+    }
+  }
   const continuationItem = facts.state === 'series_finished' ? facts.sequel : facts.state === 'next' && facts.next?.type === 'Movie' ? facts.next : null;
   const recs = rows.find((r) => r.kind === 'because')?.items ?? rows.find((r) => r.kind === 'taste')?.items ?? [];
   const hero = continuationItem && !veto.has(continuationItem.id) ? continuationItem : v.suggestions ? pickHero(recs, s.taste, v.profileId) : null;
@@ -376,16 +445,17 @@ export async function buildPostplay(ctx: Ctx, v: Viewer, cur: ItemDto, ver: stri
     sequel: facts.sequel,
     canWish: Boolean(wish),
     remind: facts.remind,
-    rows,
+    rows: rows.map((r) => ({ ...r, engine: r.engine ?? 'v1', recoRow: RECO_ROW_OF[r.kind] })),
     hero,
     suggestions: v.suggestions,
+    engine: rows.some((r) => r.engine === 'v2') ? 'v2' : 'v1',
   };
 }
 
 /** Cached answer of GET /api/items/:id/postplay: 60 s per profile + item + user-data version + home generation (bumpHome drops it). */
 export async function postplayFor(ctx: Ctx, v: Viewer, itemId: string): Promise<Postplay> {
   const [ver, gens] = await Promise.all([ctx.jf.userDataVersion(v.user).catch(() => '0'), homeGens(ctx, v.profileId)]);
-  const key = `postplay:${v.profileId}:${itemId}:${ver}:${gens}:${v.suggestions ? 1 : 0}${v.spoilerProtection ? 1 : 0}`;
+  const key = `postplay:${v.profileId}:${itemId}:${ver}:${gens}:${v.suggestions ? 1 : 0}${v.spoilerProtection ? 1 : 0}${v2Active(ctx.cfg) ? 'v2' : ''}`;
   const hit = await ctx.kv.get(key).catch(() => null);
   if (hit) { try { return JSON.parse(hit) as Postplay; } catch { /* recompute */ } }
   const cur = await ctx.jf.item(v.user, itemId); // 404/403: not visible to this profile

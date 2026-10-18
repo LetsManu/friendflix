@@ -94,7 +94,10 @@ export interface Item {
   lastAdded?: string; childCount?: number; unplayedCount?: number;
   /** only on /api/library/trending: number of distinct viewers this week */
   viewers?: number;
+  /** recommendation engine v2: why the title is in a row (seed + up to two shared traits); see lib/reason.ts */
+  reason?: Reason;
 }
+export interface Reason { seed: { id: string; name: string } | null; traits: string[] }
 export interface Me { id: string; name: string; role: string; roleLabel: string; isAdmin: boolean; csrfToken: string; deviceApproved: boolean; tv: boolean; profile?: MeProfile | null; profileRequired?: boolean; profileCount?: number; profileChosen?: boolean; downloads?: { allowed: boolean; max: number };
   /** effective UI language (profile → instance default → 'de'); see docs/i18n.md */ language?: string;
   /** false = the active profile never chose a language (first-login picker); absent on older servers */ languageChosen?: boolean;

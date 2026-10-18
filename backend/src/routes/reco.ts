@@ -4,7 +4,7 @@ import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import type { Ctx } from '../ctx.js';
 import { requireUser } from '../session.js';
-import { recoClicks, recoDismiss, recoImpressions } from '../metrics.js';
+import { recoClicks, recoDismiss, recoImpressions, recoPlays } from '../metrics.js';
 import { recoCoefficients } from '../reco/weights.js';
 import { recordRowStats, ROW_KINDS } from '../reco/rows.js';
 
@@ -14,7 +14,7 @@ export const RECO_ENGINES = ['v1', 'v2'] as const;
 
 /**
  * One aggregate per row and engine: counts only, no item, title, position or profile. The route never stores anything;
- * it only bumps the Prometheus counters.
+ * it only bumps the Prometheus counters. A play is a playback that started on a title opened from a recommendation row.
  */
 export const recoEventsBody = z.object({
   events: z.array(z.object({
@@ -22,6 +22,7 @@ export const recoEventsBody = z.object({
     engine: z.enum(RECO_ENGINES),
     impressions: z.number().int().min(0).max(50).default(0),
     clicks: z.number().int().min(0).max(50).default(0),
+    plays: z.number().int().min(0).max(50).default(0),
     dismisses: z.number().int().min(0).max(50).default(0),
   })).min(1).max(12),
 });
@@ -35,10 +36,11 @@ export function recoRoutes(app: FastifyInstance, ctx: Ctx) {
       const l = { row: e.row, engine: e.engine };
       if (e.impressions) recoImpressions.inc(l, e.impressions);
       if (e.clicks) recoClicks.inc(l, e.clicks);
+      if (e.plays) recoPlays.inc(l, e.plays);
       if (e.dismisses) recoDismiss.inc(l, e.dismisses);
     }
     // the profile's own aggregate per row kind (counts only) for the row ranker, rows.ts
-    if (req.profile) await recordRowStats(ctx, req.profile.id, parsed.data.events.map((e) => ({ row: e.row, impressions: e.impressions, clicks: e.clicks, dismisses: e.dismisses })), recoCoefficients(ctx.cfg));
+    if (req.profile) await recordRowStats(ctx, req.profile.id, parsed.data.events.map((e) => ({ row: e.row, impressions: e.impressions, clicks: e.clicks, plays: e.plays, dismisses: e.dismisses })), recoCoefficients(ctx.cfg));
     return reply.code(204).send();
   });
 }

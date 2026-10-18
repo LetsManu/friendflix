@@ -25,5 +25,6 @@ import settings from './settings';
 import setup from './setup';
 import login from './login';
 import postplay from './postplay';
+import reco from './reco';
 
-export default { common, shell, home, detail, player, account, social, admin, hubs, anime, together, kids, scenes, fresh, mine, diagnose, version, settings, setup, login, postplay, ui, adminPeople, adminContent } as const;
+export default { common, shell, home, detail, player, account, social, admin, hubs, anime, together, kids, scenes, fresh, mine, diagnose, version, settings, setup, login, postplay, reco, ui, adminPeople, adminContent } as const;

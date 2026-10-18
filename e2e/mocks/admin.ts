@@ -425,6 +425,14 @@ export function adminRoute(st: AdminState, m: string, p: string, sp: URLSearchPa
   const log = (action: string, target: string | null, meta: Record<string, unknown> = {}, target_name: string | null = null) =>
     st.audit.unshift({ id: (st.audit[0]?.id ?? 0) + 1, at: new Date().toISOString(), action, target, meta, actor: 'Tester', target_name });
 
+  // R4: CTR and play rate per recommendation engine (the server's counters)
+  if (p === '/api/admin/reco') return J({
+    engine: 'shadow', fallbacks: 3, since: '2026-10-18T08:00:00.000Z',
+    engines: {
+      v1: { impressions: 400, clicks: 40, plays: 20, dismisses: 4, ctr: 0.1, playRate: 0.05 },
+      v2: { impressions: 0, clicks: 0, plays: 0, dismisses: 0, ctr: null, playRate: null },
+    },
+  });
   if (p === '/api/admin/summary') return st.summaryFails ? J({ error: 'boom' }, 500) : J(adminSummary(st));
   if (p === '/api/admin/status') {
     const s = adminSummary(st);

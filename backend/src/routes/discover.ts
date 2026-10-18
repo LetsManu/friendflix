@@ -15,8 +15,8 @@ import { notify } from '../notify.js';
 import { clipPath, previews } from '../previews.js';
 import { loadPrefs } from './prefs.js';
 import { requireGrownUp } from '../kids.js';
+import { countFallback, recoProfileOf, v2Active, withReason, type EngineName } from '../reco/engine.js';
 import { recommend, shadowCompare } from '../reco/recommend.js';
-import type { RecoProfile } from '../reco/profile.js';
 import { requireAdmin, requireUser } from '../session.js';
 import { portalStatus, requestsClient } from '../seerr/client.js';
 import type { JfUser, UserRow } from '../types.js';
@@ -45,7 +45,7 @@ export const BECAUSE_TTL = 600;
  * thumbs-up re-seeds at once and thumbs-down filtering always uses fresh rows. Plays made outside the portal without the webhook
  * plugin show up after the TTL.
  */
-export async function libraryBecause(ctx: Ctx, jfUser: JfUser, profileId: string): Promise<{ because: { id: string; name: string; liked: boolean } | null; items: ItemDto[] }> {
+export async function libraryBecause(ctx: Ctx, jfUser: JfUser, profileId: string): Promise<{ because: { id: string; name: string; liked: boolean } | null; items: ItemDto[]; engine?: EngineName }> {
   const [upRow, downRows, ver] = await Promise.all([
     ctx.db.query<{ item_id: string }>('select item_id from thumbs where profile_id=$1 and value>=1 order by created_at desc limit 1', [profileId]).then((r) => r.rows[0]),
     ctx.db.query<{ item_id: string }>('select item_id from thumbs where profile_id=$1 and value=-1', [profileId]).then((r) => r.rows),
@@ -76,19 +76,20 @@ export async function libraryBecause(ctx: Ctx, jfUser: JfUser, profileId: string
   const down = new Set(downRows.map((r) => r.item_id));
   const v1 = entry.items.filter((i) => !down.has(i.id));
   const engine = ctx.cfg.RECO_ENGINE;
-  if (engine === 'v1') return { because: entry.because, items: v1 };
-  const profile = (await ctx.db.query<RecoProfile>('select id, user_id, is_owner, kids, kids_max_rating from profiles where id=$1', [profileId]).catch(() => ({ rows: [] as RecoProfile[] }))).rows[0];
-  if (!profile) return { because: entry.because, items: v1 };
+  if (engine === 'v1') return { because: entry.because, items: v1, engine: 'v1' };
+  const profile = await recoProfileOf(ctx, profileId);
+  if (!profile) return { because: entry.because, items: v1, engine: 'v1' };
   if (engine === 'shadow') {
     // v2 runs beside v1 (metrics only, not awaited); the answer is v1
     void shadowCompare(ctx, jfUser, profile, { seed: entry.because.id, surface: 'because', v1: v1.map((i) => i.id), guardKey: `${profileId}:${ver}:${entry.because.id}` });
-    return { because: entry.because, items: v1 };
+    return { because: entry.because, items: v1, engine: 'v1' };
   }
   try {
     const r = await recommend(ctx, jfUser, profile, { seed: entry.because.id, surface: 'because', limit: 24 });
-    return { because: entry.because, items: r.items.map((i) => i.item) };
+    return { because: entry.because, items: r.items.map(withReason), engine: 'v2' };
   } catch {
-    return { because: entry.because, items: v1 }; // v2 failing never empties the row
+    countFallback('because');
+    return { because: entry.because, items: v1, engine: 'v1' }; // v2 failing never empties the row
   }
 }
 
@@ -103,14 +104,15 @@ const BECAUSE_MORE_MIN = 4;
  * profile already finished, thumbed down, or shows in an earlier row (rows never repeat a title or show a seed). The Jellyfin part is
  * cached like libraryBecause (key carries the user-data version); played / thumbs filtering always uses fresh data. The seed lookups run in parallel.
  */
-export async function libraryBecauseMore(ctx: Ctx, jfUser: JfUser, profileId: string): Promise<{ rows: Array<{ because: { id: string; name: string }; items: ItemDto[] }> }> {
+export async function libraryBecauseMore(ctx: Ctx, jfUser: JfUser, profileId: string): Promise<{ rows: Array<{ because: { id: string; name: string }; items: ItemDto[]; engine?: EngineName }> }> {
   const [main, downRows, ver] = await Promise.all([
     libraryBecause(ctx, jfUser, profileId).catch(() => null),
     ctx.db.query<{ item_id: string }>('select item_id from thumbs where profile_id=$1 and value=-1', [profileId]).then((r) => r.rows),
     ctx.jf.userDataVersion(jfUser),
   ]);
-  const key = `becausemore:${jfUser.jellyfin_user_id}:${profileId}:${ver}`;
-  type Entry = { mainId: string | null; rows: Array<{ because: { id: string; name: string }; items: ItemDto[] }> };
+  const v2 = v2Active(ctx.cfg);
+  const key = `becausemore:${jfUser.jellyfin_user_id}:${profileId}:${ver}${v2 ? ':v2' : ''}`;
+  type Entry = { mainId: string | null; rows: Array<{ because: { id: string; name: string }; items: ItemDto[]; engine?: EngineName }> };
   let entry: Entry | null = null;
   const hit = await ctx.kv.get(key).catch(() => null);
   if (hit) {
@@ -132,17 +134,29 @@ export async function libraryBecauseMore(ctx: Ctx, jfUser: JfUser, profileId: st
       seeds.push({ id, name: i.type === 'Episode' && i.seriesName ? i.seriesName : i.name });
       if (seeds.length >= BECAUSE_MORE_ROWS + 2) break; // a little spare: a seed can end up with too few titles
     }
-    const similar = await Promise.all(seeds.map((s) => ctx.jf.similar(jfUser, s.id, 30).catch(() => [] as ItemDto[])));
-    entry = { mainId, rows: seeds.map((s, n) => ({ because: s, items: similar[n]!.filter((i) => i.id !== s.id) })) };
+    const profile = v2 ? await recoProfileOf(ctx, profileId) : undefined;
+    // v2 (RECO_ENGINE=v2): every seed row comes from recommend(); a row whose v2 call throws is answered by Jellyfin's similar() and counted
+    const rowFor = async (s: { id: string; name: string }): Promise<{ items: ItemDto[]; engine: EngineName }> => {
+      if (profile) {
+        try {
+          return { items: (await recommend(ctx, jfUser, profile, { seed: s.id, surface: 'because', limit: 30, row: 'because_more' })).items.map(withReason), engine: 'v2' };
+        } catch {
+          countFallback('because_more');
+        }
+      }
+      return { items: await ctx.jf.similar(jfUser, s.id, 30).catch(() => [] as ItemDto[]), engine: 'v1' };
+    };
+    const lists = await Promise.all(seeds.map(rowFor));
+    entry = { mainId, rows: seeds.map((s, n) => ({ because: s, items: lists[n]!.items.filter((i) => i.id !== s.id), engine: lists[n]!.engine })) };
     await ctx.kv.set(key, JSON.stringify(entry), BECAUSE_TTL).catch(() => undefined);
   }
   const skip = new Set([...downRows.map((r) => r.item_id), ...entry.rows.map((r) => r.because.id), ...(main?.items ?? []).map((i) => i.id)]);
-  const rows: Array<{ because: { id: string; name: string }; items: ItemDto[] }> = [];
+  const rows: Array<{ because: { id: string; name: string }; items: ItemDto[]; engine?: EngineName }> = [];
   for (const r of entry.rows) {
     const items = r.items.filter((i) => !i.played && !skip.has(i.id)).slice(0, BECAUSE_MORE_ITEMS);
     if (items.length < BECAUSE_MORE_MIN) continue;
     items.forEach((i) => skip.add(i.id));
-    rows.push({ because: r.because, items });
+    rows.push({ because: r.because, items, ...(r.engine ? { engine: r.engine } : {}) });
     if (rows.length >= BECAUSE_MORE_ROWS) break;
   }
   return { rows };

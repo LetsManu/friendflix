@@ -18,6 +18,7 @@ import { defaultLimit } from '../requestlimit.js';
 import { DEFAULT_ROLES, INVITABLE_ROLES, effectiveRole, invalidateRoles } from '../roles.js';
 import { requireGrownUp } from '../kids.js';
 import { recoIndexState } from '../reco/indexJob.js';
+import { recoStats } from '../reco/engine.js';
 import { requireAdmin, requireOwner } from '../session.js';
 import { portainerMode, triggerUpdate, updateInfo } from '../updates.js';
 import { MAX_FEATURED } from '../lists.js';
@@ -52,6 +53,9 @@ export function adminRoutes(app: FastifyInstance, ctx: Ctx) {
   });
 
   // one cheap call for the admin shell (pending badges) and the overview: counts only, every source optional
+  /** R4: CTR and play rate per recommendation engine, from the Prometheus counters of this process (admin card on the dashboard). */
+  app.get('/api/admin/reco', admin, async () => recoStats(ctx.cfg));
+
   app.get('/api/admin/summary', admin, async () => {
     const { listLive } = await import('../live.js');
     const { parties } = await import('./party.js');

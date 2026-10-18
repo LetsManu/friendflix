@@ -17,7 +17,8 @@
   import { focusFirst, isBackKey } from '#lib/spatial';
   import { isSpoiler } from '#lib/spoiler';
   import { listIds, prefs, toggleList } from '#lib/stores';
-  import { headline, loadPostplay, rowOf, rowTitle, rowWhy, track, type Postplay, type RowKind } from '#lib/postplay';
+  import { headline, loadPostplay, recoCount, rowOf, rowTitle, rowWhy, track, type Postplay, type RowKind } from '#lib/postplay';
+  import ReasonCaption from '#lib/ReasonCaption.svelte';
 
   export let itemId: string;
   /** overlay: over the finished title in the player (Esc / Back closes it); page: the /postplay/:id route */
@@ -41,6 +42,7 @@
         try { p = await loadPostplay(itemId); } catch { failed = true; return; }
       }
       track({ type: 'shown', state: p.state });
+      for (const r of p.rows) if (r.items.length) recoCount(p, r.kind, 'impressions');
       if (p.remind && !$kidsMode) void loadReminders();
       await tick();
       // overlay: the first sensible control ([data-autofocus]) gets the focus, arrow keys move on from there; on the page the
@@ -70,10 +72,16 @@
   $: reminded = p?.remind ? $remindKeys[episodeKey(p.remind.episodeId)] !== undefined : false;
   $: next = p && (p.state === 'next' || p.state === 'gap') ? p.next : null;
 
+  /** one click or play on a title of a row: the anonymous post-play counter plus the recommendation counters (row kind + engine) */
+  function hit(type: 'click' | 'play', row: RowKind, itemId: string) {
+    track({ type, row });
+    if (p) recoCount(p, row, type === 'play' ? 'plays' : 'clicks', itemId);
+  }
   const epLabel = (i: Item) => tr('postplay.episode', { s: i.parentIndexNumber ?? '', e: i.indexNumber ?? '', name: i.name });
   const playHref = (i: Item) => `/watch/${i.id}`;
 
   async function notInterested(i: Item) {
+    if (p) recoCount(p, rowOf(p, i.id), 'dismisses');
     hidden = new Set(hidden).add(i.id); feedback = { id: i.id, title: i.name }; note = '';
     try { await api(`/api/items/${i.id}/thumb`, { method: 'PUT', body: { value: -1 } }); }
     catch { hidden.delete(i.id); hidden = new Set(hidden); feedback = null; note = tr('common.saveFailed'); }
@@ -155,10 +163,10 @@
           <h2 id="pp-hero">{hero.name}{#if hero.year}<span class="yr">{hero.year}</span>{/if}</h2>
           {#if hero.overview}<p class="ov">{hero.overview}</p>{/if}
           <div class="flex acts">
-            <a class="btn light" href={playHref(hero)} data-autofocus={!next && !p.remind && !(p.state === 'series_finished' && p.sequel) ? '' : undefined} on:click={() => track({ type: 'play', row: heroRow })}><Icon name="play" size={20} />{$t('postplay.action.play')}</a>
+            <a class="btn light" href={playHref(hero)} data-autofocus={!next && !p.remind && !(p.state === 'series_finished' && p.sequel) ? '' : undefined} on:click={() => hit('play', heroRow, hero.id)}><Icon name="play" size={20} />{$t('postplay.action.play')}</a>
             <button type="button" class="sec" aria-pressed={$listIds.has(hero.id)} on:click={() => list(hero)}><Icon name={$listIds.has(hero.id) ? 'check' : 'plus'} size={20} />{$listIds.has(hero.id) ? $t('postplay.action.onList') : $t('postplay.action.addList')}</button>
             <button type="button" class="sec" on:click={() => notInterested(hero)}><Icon name="thumb-down" size={20} />{$t('postplay.action.notInterested')}</button>
-            <a class="sec more" href="/item/{hero.id}" on:click={() => track({ type: 'click', row: heroRow })}>{$t('postplay.action.details')}</a>
+            <a class="sec more" href="/item/{hero.id}" on:click={() => hit('click', heroRow, hero.id)}>{$t('postplay.action.details')}</a>
           </div>
         </div>
       </article>
@@ -172,12 +180,12 @@
     {#each rows as r (r.kind)}
       <section class="prow" aria-labelledby="pp-r-{r.kind}" data-kind={r.kind}>
         <h2 id="pp-r-{r.kind}">{rowTitle(r, $t)}</h2>
-        {#if rowWhy(r, $t)}<p class="why muted small">{rowWhy(r, $t)}</p>{/if}
+        {#if r.items.some((x) => x.reason)}<div class="rc"><ReasonCaption items={r.items} /></div>{:else if rowWhy(r, $t)}<p class="why muted small">{rowWhy(r, $t)}</p>{/if}
         <ul class="tiles">
           {#each r.items as i (i.id)}
             {@const spoil = isSpoiler(i, $prefs)}
             <li class:ep={i.type === 'Episode'}>
-              <a href={i.type === 'Episode' ? playHref(i) : `/item/${i.id}`} on:click={() => track(i.type === 'Episode' ? { type: 'play', row: r.kind } : { type: 'click', row: r.kind })}>
+              <a href={i.type === 'Episode' ? playHref(i) : `/item/${i.id}`} on:click={() => hit(i.type === 'Episode' ? 'play' : 'click', r.kind, i.id)}>
                 <span class="poster">
                   {#if spoil}<span class="spoil"><Icon name="eye-off" size={22} /><span class="sr">{$t('postplay.spoiler')}</span></span>
                   {:else if i.image}<img src={img(i.id, i.type === 'Episode' ? 360 : 240)} alt="" loading="lazy" decoding="async" />
@@ -226,6 +234,7 @@
   .fb { min-height: 1.4rem; display: flex; gap: .6rem; align-items: baseline; flex-wrap: wrap; }
   .link { background: none; border: 0; color: #fff; text-decoration: underline; padding: .2rem .3rem; cursor: pointer; font: inherit; font-weight: 600; }
   .prow h2 { font-size: 1.2rem; margin: 0 0 .2rem; } .why { margin: 0 0 .5rem; }
+  .rc { margin: 0 0 .4rem; } .rc :global(.why) { margin: 0; }
   .tiles { list-style: none; margin: 0; padding: 0 0 .4rem; display: flex; gap: .7rem; overflow-x: auto; overscroll-behavior-x: contain; scrollbar-width: thin; }
   .tiles li { flex: none; width: 128px; } .tiles li.ep { width: 220px; }
   .tiles a { display: grid; gap: .35rem; color: #fff; text-decoration: none; border-radius: 6px; }

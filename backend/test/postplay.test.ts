@@ -168,10 +168,11 @@ describe('pure rules', () => {
     expect(pickHero(cands, new Set(), 'p1')!.id).toBe(pickHero(cands, new Set(), 'p1')!.id); // stable
     expect(pickHero([], new Set(), 'p1')).toBeNull();
   });
-  it('rows come in the spec order; "transition" is reserved for R3', () => {
+  it('rows come in the spec order; the transition source (RECO_ENGINE=v2, R4) is grown-ups only', () => {
     expect(ROW_KINDS).toEqual(['continuation', 'transition', 'universe', 'because', 'friends', 'taste']);
-    expect(ROW_SOURCES.map((r) => r.kind)).toEqual(['continuation', 'universe', 'because', 'friends', 'taste']);
+    expect(ROW_SOURCES.map((r) => r.kind)).toEqual(['continuation', 'transition', 'universe', 'because', 'friends', 'taste']);
     expect(ROW_SOURCES.find((r) => r.kind === 'friends')!.grownUp).toBe(true);
+    expect(ROW_SOURCES.find((r) => r.kind === 'transition')!.grownUp).toBe(true);
   });
 });
 
