@@ -162,7 +162,7 @@ export interface RecoCoefficients {
   };
   /** R3b: row ranker (rows.ts) */
   rows: {
-    /** a row with fewer titles is dropped (continue watching is exempt) */
+    /** a row with fewer titles is dropped (continue, universe and transition have their own minimum: rows.ts ROW_MIN_SIZE) */
     minSize: number;
     /** position of the fixed "new / leaving soon" slot (0 = top) */
     fixedSlot: number;

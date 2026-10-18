@@ -57,6 +57,13 @@ describe('row ranker', () => {
     expect(kinds(rank([row('because', items('b', 6))], { c: recoCoefficients({ RECO_COEFFS: '{"rows.minSize":7}' }) }))).toEqual([]);
   });
 
+  it('each kind has its own minimum: universe 1, transition 2, the rest rows.minSize (post-play shows what v1 shows)', () => {
+    const got = kinds(rank([row('transition', items('x', 2)), row('universe', items('u', 1)), row('postplay', items('b', 3)), row('top_picks', items('t', 4))]));
+    expect(got).toEqual(['transition', 'universe', 'top_picks']);
+    expect(kinds(rank([row('transition', items('x', 1))]))).toEqual([]);
+    expect(kinds(rank([row('universe', items('u', 1))], { c: recoCoefficients({ RECO_COEFFS: '{"rows.minSize":7}' }) }))).toEqual(['universe']);
+  });
+
   it('a title appears in one row only; a row that shrinks below the minimum is dropped', () => {
     const shared = items('s', 4);
     const got = rank([row('because', [...shared, ...items('b', 2)]), row('top_picks', [...shared, ...items('t', 3)]), row('popular', items('p', 4))]);

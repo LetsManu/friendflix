@@ -45,16 +45,16 @@ async function spaceFan(state: FakeState) {
  * needs 2 accounts per pair and the row ranker drops rows under 4 titles
  */
 const SUCCESSORS = ['orbit', 'mars', 'noir3', 'robot'];
-async function seedTransitions() {
+async function seedTransitions(successors = SUCCESSORS, from = 'saga2') {
   await env.pool.query('delete from play_seconds');
   let n = 0;
-  for (const next of SUCCESSORS) {
+  for (const next of successors) {
     for (let k = 0; k < 2; k++, n++) {
       const id = (await env.pool.query<{ id: string }>(
         `insert into users(id, authentik_sub, email, name, role, jellyfin_user_id, jellyfin_username, jellyfin_pw_enc) values (gen_random_uuid(), $1, $2, $3, 'friend', $4, $3, $5)
          on conflict (authentik_sub) do update set name = excluded.name returning id`, [`sub-tr-${n}`, `${n}@tr.example.com`, `Tr${n}`, `jftr${n}`, encrypt(env.ctx.encKey, 'pw')])).rows[0]!.id;
       await env.pool.query("insert into user_prefs(user_id, data) values ($1, '{\"shareHistory\": true}') on conflict (user_id) do update set data = excluded.data", [id]);
-      await env.pool.query("insert into play_seconds(user_id, item_id, day, seconds, item_name) values ($1,$2,current_date - 3,8000,'x'), ($1,$3,current_date - 2,6000,'y')", [id, H('saga2'), H(next)]);
+      await env.pool.query("insert into play_seconds(user_id, item_id, day, seconds, item_name) values ($1,$2,current_date - 3,8000,'x'), ($1,$3,current_date - 2,6000,'y')", [id, H(from), H(next)]);
     }
   }
   for (const k of await env.kv.keys('reco:pairs')) await env.kv.del(k);
@@ -174,6 +174,25 @@ describe('RECO_ENGINE=v2: post-play', () => {
     const ids = p.rows.flatMap((x: { items: Array<{ id: string }> }) => x.items.map((i) => i.id));
     expect(new Set(ids).size).toBe(ids.length);
     expect(ids).not.toContain(H('saga2'));
+  });
+
+  it('a trilogy\'s universe row and a transition row with 2 titles both appear (per-kind minimum sizes)', async () => {
+    const saga = { id: H('col-saga'), name: 'Saga', parts: ['saga1', 'saga2', 'saga3'].map((k) => ({ item: dto(k, { played: k === 'saga2' }) })) };
+    Object.assign(env.ctx.jf, { itemCollections: async () => [saga] });
+    try {
+      await seedTransitions(['orbit', 'noir3'], 'saga3');
+      const p = (await call(owner, 'GET', `/api/items/${H('saga3')}/postplay`)).json();
+      expect(p.engine).toBe('v2');
+      const kinds = p.rows.map((x: { kind: string }) => x.kind);
+      expect(kinds).toContain('universe');
+      expect(kinds).toContain('transition');
+      const uni = p.rows.find((x: { kind: string }) => x.kind === 'universe');
+      expect(keysOf(uni.items)).toEqual(['saga1']); // saga2 is played; only the first part is left of the trilogy
+      const tr = p.rows.find((x: { kind: string }) => x.kind === 'transition');
+      expect(keysOf(tr.items).sort()).toEqual(['noir3', 'orbit']);
+    } finally {
+      Object.assign(env.ctx.jf, { itemCollections: undefined });
+    }
   });
 
   it('default v1: the rows of the post-play screen are as before (no transition row, engine v1)', async () => {

@@ -13,7 +13,8 @@ import type { RecoCoefficients } from './weights.js';
  *  2. One fixed slot (default position 3 of the list, `rows.fixedSlot`) holds "leaving soon" or else "new".
  *  3. The other rows follow by the profile's past click / play rate per row kind (shrunk towards a prior, so a row kind with little history
  *     keeps its default place); ties keep the order the caller passed.
- *  4. A row with fewer than `rows.minSize` (4) titles is dropped (`continue` needs 1).
+ *  4. A row with fewer titles than its kind's minimum is dropped: `rows.minSize` (4) for most kinds, but `continue` and `universe` need 1
+ *     and `transition` 2 (ROW_MIN_SIZE): a trilogy leaves 1 or 2 other parts, and every transition already rests on >= 2 accounts.
  *  5. No series the profile has already watched in any row but `continue` (Crunchyroll's anti-pattern, spec 2.3 item 11); the one exception
  *     is a new season of a watched series in the "new" slot.
  *  6. No row of current-season titles only: at most `rows.currentShare` (1 in 3) of a row (the "new" slot excepted) may be series that
@@ -28,6 +29,9 @@ export type RowKind = (typeof ROW_KINDS)[number];
 /** Row kinds built on other accounts' data: never for kids. */
 export const SOCIAL_ROWS: ReadonlySet<RowKind> = new Set<RowKind>(['friends', 'popular', 'transition']);
 const FIXED: readonly RowKind[] = ['leaving', 'new'];
+/** Row kinds with their own minimum size; every other kind needs `rows.minSize`. */
+export const ROW_MIN_SIZE: Readonly<Partial<Record<RowKind, number>>> = { continue: 1, universe: 1, transition: 2 };
+export const minSizeOf = (kind: RowKind, c: Pick<RecoCoefficients, 'rows'>): number => ROW_MIN_SIZE[kind] ?? c.rows.minSize;
 
 export interface RowItem { item: ItemDto; /** fresh.ts label, when known */ fresh?: FreshLabel | null }
 export interface RowIn { kind: RowKind; /** distinguishes several rows of one kind (because_more); defaults to the kind */ key?: string; items: RowItem[] }
@@ -73,8 +77,8 @@ export function rankRows(rows: readonly RowIn[], o: RankRowsOptions): RowOut[] {
   const cont = avail.filter((r) => r.kind === 'continue');
   const rest = avail.filter((r) => r.kind !== 'continue');
   const order = [...rest].sort((a, b) => rate(b) - rate(a)); // Array.sort is stable: ties keep the caller's order
-  const slotKind = FIXED.find((k) => rest.some((r) => r.kind === k && r.items.length >= c.rows.minSize));
-  const slotRow = slotKind ? order.find((r) => r.kind === slotKind && r.items.length >= c.rows.minSize) : undefined;
+  const slotKind = FIXED.find((k) => rest.some((r) => r.kind === k && r.items.length >= minSizeOf(k, c)));
+  const slotRow = slotKind ? order.find((r) => r.kind === slotKind && r.items.length >= minSizeOf(slotKind, c)) : undefined;
   const ranked = [...cont, ...order.filter((r) => r !== slotRow)];
   if (slotRow) ranked.splice(Math.min(c.rows.fixedSlot, ranked.length), 0, slotRow);
 
@@ -96,7 +100,7 @@ export function rankRows(rows: readonly RowIn[], o: RankRowsOptions): RowOut[] {
         items = items.filter((x) => !isCurrentSeason(x, o.now, c) || ++current <= max);
       }
     }
-    if (items.length < (isCont ? 1 : c.rows.minSize)) continue;
+    if (items.length < minSizeOf(r.kind, c)) continue;
     for (const x of items) used.add(x.item.id);
     out.push({ kind: r.kind, key: keyOf(r), items });
   }
