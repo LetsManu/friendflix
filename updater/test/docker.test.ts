@@ -31,7 +31,7 @@ describe('docker command lines', () => {
       '--profile', 'updater', '--ansi', 'never', 'pull', '--quiet', 'backend', 'web']);
     expect(calls[1]!.args.slice(11)).toEqual(['up', '-d', '--no-deps', '--pull', 'never', 'backend', 'web']);
     for (const c of calls) {
-      expect(c.env).toEqual({ PATH: '/usr/local/bin:/usr/bin:/bin', HOME: '/tmp', DOCKER_HOST: 'tcp://docker-proxy:2375', DOCKER_CONFIG: '/tmp/.docker', FF_TAG: 'nightly' });
+      expect(c.env).toEqual({ PATH: '/usr/local/bin:/usr/bin:/bin', HOME: '/tmp', PWD: '/srv/friendflix', DOCKER_HOST: 'tcp://docker-proxy:2375', DOCKER_CONFIG: '/tmp/.docker', FF_TAG: 'nightly' });
       expect(JSON.stringify(c)).not.toContain('must-never-reach');
     }
     delete process.env.INTERNAL_SECRET;

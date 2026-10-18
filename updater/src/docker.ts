@@ -37,11 +37,14 @@ const MIN = 60_000;
 export class Docker {
   constructor(private readonly s: ComposeSettings, private readonly run: Runner) {}
 
-  /** the child environment: Docker endpoint, a writable config dir, the tag compose interpolates, and nothing else */
+  /**
+   * The child environment: Docker endpoint, a writable config dir, the tag compose interpolates, PWD = the stack directory
+   * (compose.prod.yaml mounts it at ${PWD}, so the updater's own definition renders the same as on the host), nothing else.
+   */
   env(tag?: string): Record<string, string> {
     if (tag !== undefined && !isTag(tag)) throw new Error('invalid tag');
     return {
-      PATH: '/usr/local/bin:/usr/bin:/bin', HOME: '/tmp', DOCKER_HOST: this.s.dockerHost, DOCKER_CONFIG: '/tmp/.docker',
+      PATH: '/usr/local/bin:/usr/bin:/bin', HOME: '/tmp', PWD: this.s.projectDir, DOCKER_HOST: this.s.dockerHost, DOCKER_CONFIG: '/tmp/.docker',
       ...(tag ? { FF_TAG: tag } : {}),
     };
   }
