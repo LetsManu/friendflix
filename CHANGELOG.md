@@ -4,6 +4,8 @@ All notable changes, grouped by what you notice. Each release has its own sectio
 
 ## [Unreleased]
 
+## [1.1.0] – Arancini – 2026-10-18
+
 ### License
 - **FriendFlix is now open source** under the GNU Affero General Public License v3.0 or later (AGPL-3.0-or-later). Running a modified version as a service for others means offering them its source code.
 
