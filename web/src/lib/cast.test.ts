@@ -323,6 +323,9 @@ describe('receiver queue (next episode)', () => {
     sdk.context.current = sdk.session;
     sdk.mediaSession.queueInsertItems.mockImplementationOnce((_r: unknown, _ok: () => void, err: (e: unknown) => void) => err(new Error('INVALID_REQUEST')));
     expect(await C.queueOnCast(next)).toBeNull();
+    // an SDK without the queue API (older sender, test fakes): null, never a page error
+    delete (sdk.chromeCast.media as Record<string, unknown>).QueueItem;
+    await expect(C.queueOnCast(next)).resolves.toBeNull();
   });
 
   it('queues the next title after the playing one (autoplay, preload, its resume position) and returns its queue item id', async () => {

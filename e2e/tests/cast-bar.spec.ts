@@ -165,7 +165,7 @@ test('closing the next card on the watch page stops the TV countdown', async ({ 
   await card.getByRole('button', { name: 'Abbrechen' }).click();
   await expect(card).toHaveCount(0);
   await page.waitForTimeout(11_000);
-  expect(sessions).toHaveLength(1);
+  expect(sessions.filter((b) => !b.next)).toHaveLength(1); // a `next` one is the receiver queue's (refused by the fake SDK, revoked)
   await expect(page).toHaveURL(new RegExp('/watch/' + episodes[0]!.id));
 });
 

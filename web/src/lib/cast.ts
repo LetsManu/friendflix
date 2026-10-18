@@ -288,11 +288,16 @@ export async function queueOnCast(info: CastInfo): Promise<number | null> {
   const ms = ctxT?.getCurrentSession()?.getMediaSession(), ch = window.chrome?.cast;
   if (!ms || !ch) return null;
   const m = ch.media;
-  const item = new m.QueueItem(mediaOf(info, ch));
-  item.autoplay = true;
-  item.startTime = info.startTime;
-  item.preloadTime = QUEUE_PRELOAD_S;
-  const ok = await new Promise<boolean>((done) => { try { ms.queueInsertItems(new m.QueueInsertItemsRequest([item]), () => done(true), () => done(false)); } catch { done(false); } });
+  // an SDK / receiver without the queue API: null (the engine's countdown loads the next episode instead)
+  const ok = await new Promise<boolean>((done) => {
+    try {
+      const item = new m.QueueItem(mediaOf(info, ch));
+      item.autoplay = true;
+      item.startTime = info.startTime;
+      item.preloadTime = QUEUE_PRELOAD_S;
+      ms.queueInsertItems(new m.QueueInsertItemsRequest([item]), () => done(true), () => done(false));
+    } catch { done(false); }
+  });
   if (!ok) return null;
   return ms.items?.find((q) => q.media?.contentId === info.contentUrl)?.itemId ?? null;
 }
