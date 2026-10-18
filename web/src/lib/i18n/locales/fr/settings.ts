@@ -58,6 +58,7 @@ const settings: Translation<typeof de> = {
   },
   probeDetail: {
     redirect: 'L’adresse redirige ; saisis l’adresse de destination.',
+    not_admin: 'Le jeton fonctionne, mais ce n’est pas celui du propriétaire du serveur Plex ; certaines fonctions peuvent être limitées.',
     not_found: 'Le service n’existe pas à cette adresse.',
     upstream_error: 'Le service a répondu par une erreur.',
     incomplete: 'Il manque encore des informations.',
@@ -103,6 +104,10 @@ const settings: Translation<typeof de> = {
     failed: 'La génération a échoué.',
     a11y: '{label}: {action}',
   },
+  // a key's own field error text (errorText(code, key)): PLEX_URL refuses ?…, #… and user:pass@ (a pasted ?X-Plex-Token=…)
+  keyErrors: {
+    PLEX_URL: { invalid_url: 'Saisis seulement l’adresse du serveur : commençant par http:// ou https://, sans nom d’utilisateur ni mot de passe, et rien après ? ou #. Le jeton va dans le champ Jeton Plex.' },
+  },
   /** option labels of the enum settings (an unset LOGIN_UI is "Automatic") */
   options: { auto: 'Automatique', RECO_ENGINE: { v1: 'v1 (Jellyfin)', v2: 'v2 (modèle de goûts propre)', shadow: 'Shadow (v2 à côté de v1)' }, UPDATE_CHANNEL: { stable: 'Stable', nightly: 'Nightly', pinned: 'Version fixe' }, AUTO_UPDATE: { off: 'Désactivées', 'nightly-window': 'Fenêtre nocturne' }, LOGIN_UI: { app: 'FriendFlix', authentik: 'Authentik' }, PASSKEYS_IN_APP: { auto: 'Automatique', off: 'Désactivé' } },
   keys: {
@@ -129,6 +134,8 @@ const settings: Translation<typeof de> = {
     LOGIN_COVER_WALL: { label: 'Jaquettes derrière la connexion', help: 'Affiche des jaquettes de la bibliothèque (classifications jusqu’à 12 ans seulement, rien sans classification) derrière la connexion. Les images sont accessibles sans connexion.' },
     JELLYFIN_URL: { label: 'Adresse de Jellyfin', help: 'Adresse interne du serveur multimédia, p. ex. http://jellyfin:8096.' },
     JELLYFIN_ADMIN_API_KEY: { label: 'Clé API Jellyfin (admin)', help: 'Clé API avec droits d’administration (Jellyfin → Tableau de bord → Clés API).' },
+    PLEX_URL: { label: 'Adresse de Plex', help: 'Adresse interne par laquelle le backend et la passerelle multimédia joignent le serveur Plex. Seulement l’adresse : le jeton va dans son propre champ, jamais dans l’adresse.' },
+    PLEX_TOKEN: { label: 'Jeton Plex', help: 'Jeton du compte Plex qu’utilise FriendFlix ; le jeton du propriétaire du serveur débloque toutes les fonctions. Il n’est enregistré que dans le backend et jamais affiché.' },
     REQUESTS_URL: { label: 'Adresse du service de demandes', help: 'Facultatif. Sans adresse ni clé, les demandes sont masquées.' },
     REQUESTS_API_KEY: { label: 'Clé API du service de demandes', help: 'Clé API issue des paramètres du service de demandes.' },
     NTFY_URL: { label: 'Canal ntfy d’annonces', help: 'Canal ntfy partagé pour les nouveaux titres et les avis, p. ex. https://ntfy.example.com/friendflix.' },

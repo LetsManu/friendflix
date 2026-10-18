@@ -21,7 +21,7 @@
   import { loadModal, prefetchModal } from '#lib/lazy';
   import { startTvLink, type ToTv } from '#lib/remote';
   import { logout as doLogout } from '#lib/session';
-  import { capsFrom, features, featuresFrom, serverCaps } from '#lib/capabilities';
+  import { capsFrom, features, featuresFrom, kindFrom, serverCaps, serverKind } from '#lib/capabilities';
   import { setMeta } from '#lib/offline/db';
   import { focusEl, focusFirst, isBackKey, isEditable, startSpatial } from '#lib/spatial';
   import Intro from '#lib/Intro.svelte';
@@ -34,7 +34,7 @@
   import { canRenderEarly, clearReloadFlag, earlyProfile, gateHref, hintOf, kidsRedirect, needsProfileGate, needsWelcome, readActive, readHint, readPicked, readReloading, welcomeHref, writeActive, writeHint } from '#lib/gate';
   import MobilePreviewSheet from '#lib/MobilePreviewSheet.svelte';
   import { closePreview, previewSheet } from '#lib/previewSheet';
-  import { isLocale, locale, pageEpoch, pickLocale, ready, setLocale, t, type Locale } from '#lib/i18n';
+  import { isLocale, locale, pageEpoch, pickLocale, ready, setLocale, setMediaServer, t, type Locale } from '#lib/i18n';
   import Rich from '#lib/i18n/Rich.svelte';
   import LanguageGate from '#lib/LanguageGate.svelte';
   import ToastHost from '#lib/ui/ToastHost.svelte';
@@ -370,6 +370,8 @@
         setCsrf(m.csrfToken);
         setActiveProfile(m.profile?.id);
         serverCaps.set(capsFrom(m.server?.capabilities));
+        serverKind.set(kindFrom(m.server?.kind));
+        setMediaServer(m.server?.kind); // texts that name the media server (i18n serverText)
         features.set(featuresFrom(m.features));
         writeHint(hintOf(m)); writeActive(m.profile?.id); clearReloadFlag(); // the profile-switch reload is done: a later reload may render early again
         if (m.profile?.id) void setMeta('lastProfileId', m.profile.id).catch(() => undefined); // the offline hub shows the last active profile's downloads

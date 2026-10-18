@@ -15,6 +15,10 @@ export const CHANNELS: readonly SelectedChannel[] = ['stable', 'nightly', 'pinne
 export const VERSION_RE = /^(0|[1-9][0-9]{0,3})\.(0|[1-9][0-9]{0,3})\.(0|[1-9][0-9]{0,3})$/;
 /** the production stack (compose.prod.yaml); FF_TAG only exists there */
 export const PULL_COMMAND = 'docker compose -f compose.prod.yaml pull && docker compose -f compose.prod.yaml up -d';
+/** the pull command of this instance: a Plex stack also names its override (compose.plex.yaml sets MEDIA_SERVER=plex) */
+export const pullCommand = (kind: string = 'jellyfin'): string => (kind === 'plex'
+  ? 'docker compose -f compose.prod.yaml -f compose.plex.yaml pull && docker compose -f compose.prod.yaml -f compose.plex.yaml up -d'
+  : PULL_COMMAND);
 
 export interface ChannelInfo { selected: SelectedChannel; version?: string | null; running: Channel | null; build: BuildKind | null; label: string; locked: boolean; envLine: string }
 export interface ChannelState { updateAvailable?: boolean | null; behind?: number | null; channel?: ChannelInfo | null }

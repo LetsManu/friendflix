@@ -59,6 +59,7 @@ const settings: Translation<typeof de> = {
   },
   probeDetail: {
     redirect: 'Adres przekierowuje; wpisz adres docelowy.',
+    not_admin: 'Token działa, ale nie należy do właściciela serwera Plex, więc niektóre funkcje mogą być ograniczone.',
     not_found: 'Pod tym adresem nie ma tej usługi.',
     upstream_error: 'Usługa odpowiedziała błędem.',
     incomplete: 'Brakuje jeszcze danych.',
@@ -104,6 +105,10 @@ const settings: Translation<typeof de> = {
     failed: 'Generowanie nie powiodło się.',
     a11y: '{label}: {action}',
   },
+  // a key's own field error text (errorText(code, key)): PLEX_URL refuses ?…, #… and user:pass@ (a pasted ?X-Plex-Token=…)
+  keyErrors: {
+    PLEX_URL: { invalid_url: 'Wpisz tylko adres serwera: zaczynający się od http:// lub https://, bez nazwy użytkownika i hasła i bez niczego po ? lub #. Token wpisz w pole Token Plex.' },
+  },
   /** option labels of the enum settings (an unset LOGIN_UI is "Automatic") */
   options: { auto: 'Automatycznie', RECO_ENGINE: { v1: 'v1 (Jellyfin)', v2: 'v2 (własny model gustu)', shadow: 'Shadow (v2 obok v1)' }, UPDATE_CHANNEL: { stable: 'Stabilny', nightly: 'Nightly', pinned: 'Stała wersja' }, AUTO_UPDATE: { off: 'Wyłączone', 'nightly-window': 'Okno nocne' }, LOGIN_UI: { app: 'FriendFlix', authentik: 'Authentik' }, PASSKEYS_IN_APP: { auto: 'Automatycznie', off: 'Wyłączone' } },
   keys: {
@@ -130,6 +135,8 @@ const settings: Translation<typeof de> = {
     LOGIN_COVER_WALL: { label: 'Okładki za ekranem logowania', help: 'Pokazuje okładki z biblioteki (tylko oceny wiekowe do 12 lat, nic bez oceny) za ekranem logowania. Obrazy można pobrać bez logowania.' },
     JELLYFIN_URL: { label: 'Adres Jellyfin', help: 'Wewnętrzny adres serwera multimediów, np. http://jellyfin:8096.' },
     JELLYFIN_ADMIN_API_KEY: { label: 'Klucz API Jellyfin (admin)', help: 'Klucz API z uprawnieniami administratora (Jellyfin → Panel → Klucze API).' },
+    PLEX_URL: { label: 'Adres Plex', help: 'Wewnętrzny adres, pod którym backend i brama multimediów łączą się z serwerem Plex. Tylko adres: token wpisz w osobne pole, nigdy w adres.' },
+    PLEX_TOKEN: { label: 'Token Plex', help: 'Token konta Plex, którego używa FriendFlix; token właściciela serwera odblokowuje wszystkie funkcje. Jest zapisywany tylko w backendzie i nigdy nie jest pokazywany.' },
     REQUESTS_URL: { label: 'Adres usługi próśb', help: 'Opcjonalne. Bez adresu i klucza prośby są ukryte.' },
     REQUESTS_API_KEY: { label: 'Klucz API usługi próśb', help: 'Klucz API z ustawień usługi próśb.' },
     NTFY_URL: { label: 'Kanał ntfy z ogłoszeniami', help: 'Wspólny kanał ntfy dla nowych tytułów i komunikatów, np. https://ntfy.example.com/friendflix.' },

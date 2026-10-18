@@ -57,6 +57,7 @@ const settings: Translation<typeof de> = {
   },
   probeDetail: {
     redirect: 'Adres yönlendiriyor; hedef adresi gir.',
+    not_admin: 'Token çalışıyor ama Plex sunucusu sahibine ait değil; bazı özellikler sınırlı olabilir.',
     not_found: 'Bu adreste hizmet yok.',
     upstream_error: 'Hizmet bir hatayla yanıt verdi.',
     incomplete: 'Hâlâ eksik bilgiler var.',
@@ -102,6 +103,10 @@ const settings: Translation<typeof de> = {
     failed: 'Oluşturulamadı.',
     a11y: '{label}: {action}',
   },
+  // a key's own field error text (errorText(code, key)): PLEX_URL refuses ?…, #… and user:pass@ (a pasted ?X-Plex-Token=…)
+  keyErrors: {
+    PLEX_URL: { invalid_url: 'Lütfen yalnızca sunucu adresini gir: http:// veya https:// ile başlayan, kullanıcı adı ve parola içermeyen, ? veya # işaretinden sonra hiçbir şey olmayan bir adres. Token, Plex token’ı alanına girilir.' },
+  },
   /** option labels of the enum settings (an unset LOGIN_UI is "Automatic") */
   options: { auto: 'Otomatik', RECO_ENGINE: { v1: 'v1 (Jellyfin)', v2: 'v2 (kendi zevk modeli)', shadow: 'Shadow (v2, v1’in yanında)' }, UPDATE_CHANNEL: { stable: 'Kararlı', nightly: 'Nightly', pinned: 'Sabit sürüm' }, AUTO_UPDATE: { off: 'Kapalı', 'nightly-window': 'Gece penceresi' }, LOGIN_UI: { app: 'FriendFlix', authentik: 'Authentik' }, PASSKEYS_IN_APP: { auto: 'Otomatik', off: 'Kapalı' } },
   keys: {
@@ -128,6 +133,8 @@ const settings: Translation<typeof de> = {
     LOGIN_COVER_WALL: { label: 'Girişin arkasında kapaklar', help: 'Girişin arkasında kütüphaneden kapaklar gösterir (yalnızca 12 yaşa kadar derecelendirmeler, derecesiz hiçbir şey yok). Görseller giriş yapmadan alınabilir.' },
     JELLYFIN_URL: { label: 'Jellyfin adresi', help: 'Medya sunucusunun iç adresi, ör. http://jellyfin:8096.' },
     JELLYFIN_ADMIN_API_KEY: { label: 'Jellyfin API anahtarı (yönetici)', help: 'Yönetici yetkili API anahtarı (Jellyfin → Kontrol paneli → API anahtarları).' },
+    PLEX_URL: { label: 'Plex adresi', help: 'Backend’in ve medya geçidinin Plex sunucusuna ulaştığı iç adres. Yalnızca adres: token kendi alanına girilir, asla adrese değil.' },
+    PLEX_TOKEN: { label: 'Plex token’ı', help: 'FriendFlix’in kullandığı Plex hesabının token’ı; sunucu sahibinin token’ı tüm özelliklerin kilidini açar. Yalnızca backend’de saklanır ve hiçbir zaman gösterilmez.' },
     REQUESTS_URL: { label: 'İstek hizmeti adresi', help: 'İsteğe bağlı. Adres ve anahtar olmadan istekler gizlenir.' },
     REQUESTS_API_KEY: { label: 'İstek hizmeti API anahtarı', help: 'İstek hizmetinin ayarlarındaki API anahtarı.' },
     NTFY_URL: { label: 'ntfy duyuru kanalı', help: 'Yeni yapımlar ve duyurular için ortak ntfy kanalı, ör. https://ntfy.example.com/friendflix.' },

@@ -16,7 +16,7 @@
   import AdminCard from '#lib/adminContent/AdminCard.svelte';
   import { busyKeys, errorText, runAction } from '#lib/ui/action';
   import { saveSettings } from '#lib/admin/settings/api';
-  import { CHANNELS, PULL_COMMAND, VERSION_RE, envLineFor, isUpToDate, showSnippet, snippetReason, stepChannel, type ChannelInfo, type SelectedChannel } from '#lib/admin/updateChannel';
+  import { CHANNELS, VERSION_RE, pullCommand, envLineFor, isUpToDate, showSnippet, snippetReason, stepChannel, type ChannelInfo, type SelectedChannel } from '#lib/admin/updateChannel';
   import { statusOf, type UpdaterView } from '#lib/admin/updater';
   import UpdaterCard from '#lib/admin/UpdaterCard.svelte';
   import Field from '#lib/ui/Field.svelte';
@@ -32,6 +32,7 @@
   import type { Column } from '#lib/ui/table';
   import VersionEgg from '#lib/version/VersionEgg.svelte';
   import { parseNotes } from '#lib/version/notes';
+  import { serverKind } from '#lib/capabilities';
 
   interface Commit { sha: string; url: string; message: string; author: string; date: string }
   interface Release { version: string; codename: string | null; tag: string; name: string; url: string; publishedAt: string | null; notes: string }
@@ -274,7 +275,7 @@
         <div class="snippet" data-snippet>
           <p class="lead">{snippetReason(u) === 'switch' ? $t('admin.update.channel.switchLead', { channel: channelName(sel) }) : $t('admin.update.channel.updateLead')}</p>
           <CopyField label={$t('admin.update.channel.envLabel')} value={u.channel.envLine} />
-          <CopyField label={$t('admin.update.channel.cmdLabel')} value={PULL_COMMAND} />
+          <CopyField label={$t('admin.update.channel.cmdLabel')} value={pullCommand($serverKind)} />
           <p class="muted small">{$t('admin.update.channel.note')}</p>
         </div>
       {/if}
