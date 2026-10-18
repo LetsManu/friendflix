@@ -4,7 +4,7 @@ import { createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypt
 import type { Ctx } from './ctx.js';
 import { jfUserFor, getProfile } from './profiles.js';
 import { effectiveRole } from './roles.js';
-import { setLive, getLive, wasStopped } from './live.js';
+import { clearLive, getLive, setLive, wasStopped } from './live.js';
 import { getUserById } from './users.js';
 import type { JfUser, ProfileRow, UserRow } from './types.js';
 
@@ -151,8 +151,14 @@ export async function revokeCast(ctx: Ctx, userId: string, castId: string): Prom
   const raw = await ctx.kv.get(idxKey(userId, castId));
   if (!raw) return false;
   const i = JSON.parse(raw) as IdxEntry;
+  const rec = await ctx.kv.get(dataKey(i.hash));
   await dropByHash(ctx, userId, i.hash, i.imgHash);
   memo.clear();
+  // a stream only its segment fetches counted (touch; never a `start` report, e.g. a queued next episode the receiver preloaded
+  // and that was dropped) ends with its token; a reported one ends with its own stop
+  const ps = rec ? (JSON.parse(rec) as CastRecord).playSessionId : undefined;
+  const live = ps ? await getLive(ctx, userId, ps) : null;
+  if (ps && live && !live.playMethod) await clearLive(ctx, userId, ps);
   return true;
 }
 

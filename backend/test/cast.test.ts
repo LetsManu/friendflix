@@ -392,6 +392,26 @@ describe('cast session: stop report and the queued next episode', () => {
     await call(admin, 'POST', '/api/playback/stop', body);
   });
 
+  it('revoking a token whose stream never reported `start` (a dropped queued episode the receiver preloaded) frees its stream slot', async () => {
+    const uid = await me();
+    for (const k of await env.kv.keys(`play:${uid}:`)) await env.kv.del(k);
+    for (const k of await env.kv.keys(`pstop:${uid}:`)) await env.kv.del(k); // the fake server reuses one play session id
+    const { ct, j } = await create();
+    await stale(ct);
+    skipClock(5100);
+    expect((await authz({ ct })).statusCode).toBe(200);
+    expect(await countLive(env.ctx, uid)).toBe(1); // counted from its segment fetches
+    expect((await call(admin, 'DELETE', `/api/cast/session/${j.castId}`)).statusCode).toBe(200);
+    expect(await countLive(env.ctx, uid)).toBe(0);
+    // a reported stream stays until its own stop
+    const b = await create();
+    const body = { itemId: ID, playSessionId: b.j.playSessionId, mediaSourceId: MS, positionTicks: 0, isPaused: false, playMethod: 'Transcode' };
+    await call(admin, 'POST', '/api/playback/start', body);
+    expect((await call(admin, 'DELETE', `/api/cast/session/${b.j.castId}`)).statusCode).toBe(200);
+    expect(await countLive(env.ctx, uid)).toBe(1);
+    await call(admin, 'POST', '/api/playback/stop', body);
+  });
+
   it('next: the token for the queued next episode is issued while the current cast fills the stream limit, never beyond it', async () => {
     const uid = await me();
     await revokeSessions(env.ctx, uid);
