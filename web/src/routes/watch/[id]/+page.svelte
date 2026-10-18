@@ -162,6 +162,13 @@
     hidePostplay();
     if (pushed) history.back();
   }
+  /** a title played from the post-play screen: its entry is popped first, then the title replaces this one (one Back leaves) */
+  async function playFromPostplay(e: CustomEvent<string>) {
+    const pushed = Boolean(ppToken) && $page.state.postplay === ppToken;
+    ppToken = ''; ppEntered = false; ppOpen = false;
+    if (pushed) await new Promise<void>((r) => { addEventListener('popstate', () => r(), { once: true }); history.back(); });
+    await toEpisode(e.detail);
+  }
   // browser / phone Back popped the overlay's entry (the state held our token and no longer does): close it, stay here
   $: onPpState($page.state.postplay);
   function onPpState(st: string | undefined) {
@@ -246,7 +253,7 @@
     </Player>
   {/key}
   </div>
-  {#if ppOpen}<PostPlay itemId={id} variant="overlay" data={ppData} on:close={closePostplay} />{/if}
+  {#if ppOpen}<PostPlay itemId={id} variant="overlay" data={ppData} on:close={closePostplay} on:play={playFromPostplay} />{/if}
 </div>
 
 <style>

@@ -26,7 +26,7 @@
   /** answer prefetched by the watch page while the credits run */
   export let data: Postplay | null = null;
 
-  const dispatch = createEventDispatcher<{ close: void }>();
+  const dispatch = createEventDispatcher<{ close: void; play: string }>();
   let p: Postplay | null = data, failed = false, root: HTMLElement | undefined;
   /** titles hidden after "Not interested" (until Undo) */
   let hidden = new Set<string>();
@@ -80,6 +80,17 @@
   }
   const epLabel = (i: Item) => tr('postplay.episode', { s: i.parentIndexNumber ?? '', e: i.indexNumber ?? '', name: i.name });
   const playHref = (i: Item) => `/watch/${i.id}`;
+  /**
+   * overlay: a title played from here replaces the finished one in the history, so one Back leaves the player. The watch page
+   * pops the overlay's own entry first (`play`); the links' tracking handlers still run (they sit below this one).
+   */
+  function onNav(e: MouseEvent) {
+    if (variant !== 'overlay' || e.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+    const a = (e.target as Element | null)?.closest?.('a[href^="/watch/"]');
+    if (!a) return;
+    e.preventDefault();
+    dispatch('play', a.getAttribute('href')!);
+  }
 
   async function notInterested(i: Item) {
     if (p) recoCount(p, rowOf(p, i.id), 'dismisses');
@@ -120,7 +131,7 @@
   }
 </script>
 
-<section class="pp {variant}" class:still data-nav data-scope bind:this={root} aria-labelledby="pp-h" data-testid="postplay">
+<section class="pp {variant}" class:still data-nav data-scope bind:this={root} aria-labelledby="pp-h" data-testid="postplay" on:click={onNav}>
   {#if p && current}
     {#if variant === 'overlay' && current.backdrop}<div class="bg" style:background-image={`url(${backdrop(subject, 1280)})`} aria-hidden="true"></div>{/if}
     <header class="top">
