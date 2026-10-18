@@ -311,9 +311,11 @@ services:
     networks: [db]
 
   # ---- Opt-in updater: `docker compose -f compose.prod.yaml --profile updater up -d` (docs/operations.md "Updater") ----
-  # The ONLY service with the Docker socket, read-only, on an internal network that only the updater shares. It forwards just
-  # what `compose pull` + `up -d --no-deps` need; exec, build, swarm, secrets, plugins, system, archive/export, commit and
-  # logs are refused (403). Third-party image pinned by digest (Dependabot does not see it: bump tag + digest by hand).
+  # The ONLY service with the Docker socket, read-only, on an internal network that only the updater shares. It forwards the
+  # API sections `compose pull` + `up -d --no-deps` need (containers, images, networks, volumes, info); exec, build, commit,
+  # swarm, services, secrets, configs, plugins, system, session, distribution, auth and the container archive/export/logs/
+  # top/changes endpoints are refused (403). Third-party image pinned by digest (Dependabot does not see it: bump by hand).
+  # haproxy runs as root inside (`user root` + `chroot /` in its config): it keeps only the three capabilities for that.
   docker-proxy:
     profiles: [updater]
     image: ghcr.io/linuxserver/socket-proxy:3.4.7@sha256:e5d819de59b343c01b2fe7adc7fad3c7a60e5dba08e45f1ac317352bc08599b5
@@ -321,6 +323,7 @@ services:
     read_only: true
     tmpfs: [/run]
     cap_drop: [ALL]
+    cap_add: [SETGID, SETUID, SYS_CHROOT]
     security_opt: ["no-new-privileges:true"]
     environment:
       # read: what compose inspects (containers, images, networks, volumes) plus ping/version/info
@@ -332,7 +335,8 @@ services:
       PING: 1
       VERSION: 1
       EVENTS: 0
-      # write (POST/DELETE): pull, create/recreate, start/stop of containers
+      # write (POST/DELETE) in the sections above: pull, create/recreate, start/stop/remove of containers. Note: with
+      # CONTAINERS + POST the proxy also lets kill/restart/pause through; ALLOW_* only add allows, they never deny.
       POST: 1
       ALLOW_START: 1
       ALLOW_STOP: 1
