@@ -82,6 +82,20 @@ test.describe('post-play screen (desktop)', () => {
     await expect(page).toHaveURL(/\/$/);
   });
 
+  test('a title played from the screen replaces the finished one: one Back leaves the player', async ({ page }) => {
+    await mockPlayer(page, { chapters: [] });
+    await mockPostplay(page, MOVIE.id, MOVIE_END);
+    await page.goto('/');
+    await page.goto('/watch/' + MOVIE.id);
+    await toCredits(page);
+    await endTitle(page);
+    const pp = page.getByTestId('postplay');
+    await pp.getByRole('article').getByRole('link', { name: 'Abspielen' }).click();
+    await expect(page).toHaveURL(new RegExp(`/watch/${items[2]!.id}$`));
+    await page.goBack();
+    await expect(page).toHaveURL(/\/$/);
+  });
+
   test('"Not interested" → Undo puts back the thumb the title had before', async ({ page }) => {
     await mockPlayer(page, { chapters: [] });
     await mockPostplay(page, MOVIE.id, MOVIE_END);
