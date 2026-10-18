@@ -321,8 +321,8 @@ export function createCastEngine(deps: EngineDeps, out: Writable<CastSession | n
   }
 
   /**
-   * Chromecast: the next episode into the receiver's queue (own token, `next: true`: it may fill the stream limit the playing one
-   * holds), when autoplay is allowed for the expected end time. The receiver then moves on by itself, also with the phone asleep.
+   * Chromecast: the next episode into the receiver's queue (own token, `next: true` after the playing token: it may fill the
+   * stream limit the playing one holds; the server serves it only as that one's successor), when autoplay is allowed for the expected end time. The receiver then moves on by itself, also with the phone asleep.
    * Any failure leaves the countdown path.
    */
   async function prequeue(s: Live) {
@@ -334,7 +334,7 @@ export function createCastEngine(deps: EngineDeps, out: Writable<CastSession | n
     if (!it || stale() || s.noAuto === it.id) return;
     let ci: CastInfo;
     try {
-      ci = await call<CastInfo>('/api/cast/session', { method: 'POST', body: { itemId: it.id, maxBitrate: s.maxBitrate ?? firstInfoBody(deps.prefs()).maxBitrate, next: true } });
+      ci = await call<CastInfo>('/api/cast/session', { method: 'POST', body: { itemId: it.id, maxBitrate: s.maxBitrate ?? firstInfoBody(deps.prefs()).maxBitrate, next: true, after: s.ci!.castId } });
     } catch { return; }
     if (stale() || s.noAuto === it.id) { revoke(ci); return; }
     const qid = await cast.queueOnCast(ci);

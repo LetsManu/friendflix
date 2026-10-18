@@ -40,6 +40,12 @@ const MAX_TTL = 6 * 3600;
 export const CAST_IDLE_TTL = 45 * 60;
 /** record / TTL / live refresh happens at most this often per token (limits Redis writes; also keeps the 45 s live record alive) */
 export const CAST_TOUCH_MS = 20_000;
+/**
+ * A queued next episode's token (`afterPs`) is served while the play session it follows is still live (not stopped) only within
+ * this window from its first such fetch: the receiver's preload of the next item. It never counts as a stream meanwhile; after the
+ * window it is refused until that play session is over, so the queue cannot be a way past maxStreams.
+ */
+export const NEXT_OVERLAP_MS = 180_000;
 
 export interface CastRecord {
   userId: string;
@@ -60,6 +66,10 @@ export interface CastRecord {
   createdAt: number;
   /** epoch ms of the last sliding refresh */
   seen?: number;
+  /** a queued next episode's token: the play session it follows (the newest other media token of the same device) */
+  afterPs?: string;
+  /** epoch ms of its first fetch while that play session was still live (start of the preload overlap) */
+  overlapAt?: number;
 }
 
 export interface CastAuth {
@@ -93,7 +103,7 @@ export const castTtlSeconds = (runtimeTicks: number | undefined, startTicks: num
 /** Redis TTL of a token's keys: idle window, but never past the absolute cap (0 = already over). */
 export const castKeyTtl = (exp: number, now = Date.now()) => Math.max(0, Math.min(CAST_IDLE_TTL, Math.ceil((exp - now) / 1000)));
 
-interface IdxEntry { hash: string; createdAt: number; deviceId?: string; kind?: 'media' | 'img'; imgHash?: string }
+interface IdxEntry { hash: string; createdAt: number; deviceId?: string; kind?: 'media' | 'img'; imgHash?: string; /** a queued next episode's token */ next?: boolean }
 
 async function dropByHash(ctx: Ctx, userId: string, hash: string, imgHash?: string) {
   for (const h of imgHash ? [hash, imgHash] : [hash]) {
@@ -114,12 +124,12 @@ async function listIdx(ctx: Ctx, userId: string): Promise<Array<IdxEntry & { key
 }
 
 /**
- * Creates a media token (plus, with `image`, a poster-only token), keeping at most MAX_CAST_TOKENS (+ `extra`: the queued next
- * episode's token next to the playing one) media tokens per account (oldest revoked).
+ * Creates a media token (plus, with `image`, a poster-only token), keeping at most MAX_CAST_TOKENS media tokens per account (oldest
+ * revoked). A queued next episode's token (`rec.afterPs`) replaces the device's earlier one and may be one more than that.
  * The limit is enforced AFTER the insert, so two simultaneous creations converge to the limit instead of racing past it.
  * Returns the raw tokens (once).
  */
-export async function createCast(ctx: Ctx, rec: Omit<CastRecord, 'exp' | 'createdAt' | 'kind' | 'seen'>, ttlSeconds: number, image = false, extra = 0): Promise<{ ct: string; imgCt?: string; castId: string; expiresAt: number }> {
+export async function createCast(ctx: Ctx, rec: Omit<CastRecord, 'exp' | 'createdAt' | 'kind' | 'seen' | 'overlapAt'>, ttlSeconds: number, image = false): Promise<{ ct: string; imgCt?: string; castId: string; expiresAt: number }> {
   const now = Date.now();
   const exp = now + ttlSeconds * 1000;
   const ttl = castKeyTtl(exp, now);
@@ -130,10 +140,13 @@ export async function createCast(ctx: Ctx, rec: Omit<CastRecord, 'exp' | 'create
     await ctx.kv.set(idxKey(rec.userId, castIdOf(hash)), JSON.stringify({ hash, createdAt: now, deviceId: rec.deviceId, kind, ...extra } satisfies IdxEntry), ttl);
     return { ct, hash };
   };
+  const next = Boolean(rec.afterPs);
+  // one queued next episode per device: a repeated request replaces a still waiting one (one that plays already stays)
+  if (next) for (const i of await listIdx(ctx, rec.userId)) if (i.next && i.deviceId === rec.deviceId && (await waiting(ctx, i))) await dropByHash(ctx, rec.userId, i.hash, i.imgHash);
   const img = image ? await mint('img') : undefined;
-  const media = await mint('media', img ? { imgHash: img.hash } : {});
+  const media = await mint('media', { ...(img ? { imgHash: img.hash } : {}), ...(next ? { next: true } : {}) });
   const active = (await listIdx(ctx, rec.userId)).filter((i) => i.kind !== 'img' && i.hash !== media.hash).sort((a, b) => a.createdAt - b.createdAt);
-  while (active.length >= MAX_CAST_TOKENS + extra) {
+  while (active.length >= MAX_CAST_TOKENS + (next ? 1 : 0)) {
     const old = active.shift()!;
     await dropByHash(ctx, rec.userId, old.hash, old.imgHash);
   }
@@ -141,9 +154,22 @@ export async function createCast(ctx: Ctx, rec: Omit<CastRecord, 'exp' | 'create
   return { ct: media.ct, imgCt: img?.ct, castId: castIdOf(media.hash), expiresAt: exp };
 }
 
-/** the account has a media token created from this device (a cast of it runs, or ran within the token's lifetime) */
-export async function hasCastToken(ctx: Ctx, userId: string, deviceId: string): Promise<boolean> {
-  return (await listIdx(ctx, userId)).some((i) => i.kind !== 'img' && i.deviceId === deviceId);
+/** a queued next episode's token whose predecessor still plays (live, not stopped): it waits, it is no predecessor itself */
+async function waiting(ctx: Ctx, i: IdxEntry, rec?: CastRecord | null): Promise<boolean> {
+  if (!i.next) return false;
+  const r = rec ?? (await ctx.kv.get(dataKey(i.hash)).then((x) => (x ? (JSON.parse(x) as CastRecord) : null)));
+  return Boolean(r?.afterPs && (await getLive(ctx, r.userId, r.afterPs)) && !(await wasStopped(ctx, r.userId, r.afterPs)));
+}
+
+/** the cast a queued next episode follows: the newest media token of this device that is not a waiting queued one (null = none) */
+export async function castPredecessor(ctx: Ctx, userId: string, deviceId: string): Promise<{ castId: string; playSessionId: string } | null> {
+  const mine = (await listIdx(ctx, userId)).filter((i) => i.kind !== 'img' && i.deviceId === deviceId).sort((a, b) => b.createdAt - a.createdAt);
+  for (const i of mine) {
+    const raw = await ctx.kv.get(dataKey(i.hash));
+    const rec = raw ? (JSON.parse(raw) as CastRecord) : null;
+    if (rec && !(await waiting(ctx, i, rec))) return { castId: castIdOf(i.hash), playSessionId: rec.playSessionId };
+  }
+  return null;
 }
 
 /** Revokes one token of an account by its public handle (a media token takes its poster token with it). */
@@ -180,7 +206,7 @@ export async function revokeCasts(ctx: Ctx, userId: string, deviceId?: string, e
  * `replace` (SET XX) so a token revoked in between is never resurrected. Media tokens also keep their play session
  * counted as live (maxStreams), because the Chromecast may never get progress reports from a sender.
  */
-async function touch(ctx: Ctx, hash: string, rec: CastRecord, userName: string, profileName: string) {
+async function touch(ctx: Ctx, hash: string, rec: CastRecord, userName: string, profileName: string, overlap = false) {
   const now = Date.now();
   const ttl = castKeyTtl(rec.exp, now);
   if (ttl <= 0) return;
@@ -188,7 +214,7 @@ async function touch(ctx: Ctx, hash: string, rec: CastRecord, userName: string, 
   const ik = idxKey(rec.userId, castIdOf(hash));
   const idx = await ctx.kv.get(ik);
   if (idx) await ctx.kv.replace(ik, idx, ttl);
-  if (rec.kind === 'img') return;
+  if (rec.kind === 'img' || overlap) return; // a queued next episode's preload: the stream it follows is the counted one
   const cur = await getLive(ctx, rec.userId, rec.playSessionId);
   // its stop was reported (title switch / end): the receiver only drains buffered segments until the revoke, no ghost stream
   if (!cur && (await wasStopped(ctx, rec.userId, rec.playSessionId))) return;
@@ -213,7 +239,9 @@ export async function resolveCast(ctx: Ctx, ct: string, client: string): Promise
   const rec = raw ? (JSON.parse(raw) as CastRecord) : null;
   if (rec && rec.exp > Date.now()) {
     const owner = await liveOwner(ctx, rec);
-    if (owner && (await pinned(ctx, hash, client, rec.exp, rec.via === 'airplay' && Date.now() - rec.createdAt <= AIRPLAY_PIN2_WINDOW_MS ? 2 : 1, rec.via === 'airplay'))) {
+    const ok = owner && (await pinned(ctx, hash, client, rec.exp, rec.via === 'airplay' && Date.now() - rec.createdAt <= AIRPLAY_PIN2_WINDOW_MS ? 2 : 1, rec.via === 'airplay'));
+    const overlap = ok ? await nextOverlap(ctx, hash, rec) : false;
+    if (ok && owner && overlap !== null) {
       const { user, role, prof } = owner;
       const jfUser = jfUserFor(user, prof);
       v = {
@@ -224,12 +252,27 @@ export async function resolveCast(ctx: Ctx, ct: string, client: string): Promise
         kind: rec.kind ?? 'media',
         scope: { itemId: rec.itemId, mediaSourceId: rec.mediaSourceId, playSessionId: rec.playSessionId },
       };
-      if (Date.now() - (rec.seen ?? rec.createdAt) > CAST_TOUCH_MS) await touch(ctx, hash, rec, user.name, prof.name);
+      if (Date.now() - (rec.seen ?? rec.createdAt) > CAST_TOUCH_MS) await touch(ctx, hash, rec, user.name, prof.name, overlap);
     }
   }
   memo.set(mk, { exp: Date.now() + (v ? 5_000 : 2_000), v });
   if (memo.size > 5000) memo.clear();
   return v;
+}
+
+/**
+ * A queued next episode's token while the play session it follows is live and not stopped: true = inside the preload overlap
+ * (served, not counted; its start is recorded on the first such fetch), null = the overlap is over (refused). false = a normal token.
+ */
+async function nextOverlap(ctx: Ctx, hash: string, rec: CastRecord): Promise<boolean | null> {
+  if (!rec.afterPs || (rec.kind ?? 'media') !== 'media') return false;
+  if (!(await getLive(ctx, rec.userId, rec.afterPs)) || (await wasStopped(ctx, rec.userId, rec.afterPs))) return false;
+  const now = Date.now();
+  if (rec.overlapAt === undefined) {
+    rec.overlapAt = now;
+    await ctx.kv.replace(dataKey(hash), JSON.stringify(rec), Math.max(1, castKeyTtl(rec.exp, now)));
+  }
+  return now - rec.overlapAt <= NEXT_OVERLAP_MS ? true : null;
 }
 
 /** The token's account, role and profile while all are still usable (account enabled, role known, profile of the account, sender device approved). */

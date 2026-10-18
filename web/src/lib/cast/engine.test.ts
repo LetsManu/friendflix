@@ -1038,7 +1038,7 @@ describe('cast engine: Netflix-like next episode (credits, receiver queue, skip)
     await playingSession(env, ep1);
     await flush();
     expect(env.queuePosts()).toHaveLength(1);
-    expect(env.queuePosts()[0]!.init.body).toEqual({ itemId: 'ep2', maxBitrate: 8_000_000, next: true });
+    expect(env.queuePosts()[0]!.init.body).toEqual({ itemId: 'ep2', maxBitrate: 8_000_000, next: true, after: 'c1' });
     expect(env.queued.map((q) => q.castId)).toEqual(['q1']);
     // no countdown ran (the page slept): the receiver reports the queued title
     env.state.set(playing({ currentTime: 30, contentId: '/media/c/q1/master.m3u8' }));
