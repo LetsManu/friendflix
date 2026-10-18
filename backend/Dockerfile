@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1
 # SPDX-FileCopyrightText: 2026 Manuel Weißböck
 # SPDX-License-Identifier: AGPL-3.0-or-later
-FROM node:26-alpine@sha256:143494b1da2945f061539253adc65e4f1569ddf07da2d384c022c791a9d90a4a AS build
+FROM node:26-alpine@sha256:6f08a523443ddedf52941874c203475b0ad503e859ad70cb26ab8be9a517dbd5 AS build
 WORKDIR /app
 COPY package.json package-lock.json tsconfig.base.json ./
 COPY backend/package.json backend/
@@ -12,7 +12,7 @@ RUN npm ci
 COPY backend backend
 RUN npm run build -w backend
 
-FROM node:26-alpine@sha256:143494b1da2945f061539253adc65e4f1569ddf07da2d384c022c791a9d90a4a AS deps
+FROM node:26-alpine@sha256:6f08a523443ddedf52941874c203475b0ad503e859ad70cb26ab8be9a517dbd5 AS deps
 WORKDIR /app
 COPY package.json package-lock.json ./
 COPY backend/package.json backend/
@@ -21,7 +21,7 @@ COPY web/package.json web/
 COPY updater/package.json updater/
 RUN npm ci --omit=dev -w backend
 
-FROM node:26-alpine@sha256:143494b1da2945f061539253adc65e4f1569ddf07da2d384c022c791a9d90a4a
+FROM node:26-alpine@sha256:6f08a523443ddedf52941874c203475b0ad503e859ad70cb26ab8be9a517dbd5
 ARG GIT_SHA=dev
 ARG BUILD_TIME=
 # release version + codename from version.json (CI passes them as build args; empty = the app reads version.json)
