@@ -3,7 +3,7 @@
 import { friendsRatedRows, recommendationRows, trendingItems } from '../discoverData.js';
 import { badgesFor } from '../fresh.js';
 import type { ItemDto } from '../media/types.js';
-import { coocSignals, pairTablesFor, transitionSignals } from './aggregates.js';
+import { coocSignals, tablesOfViewer, transitionSignals } from './aggregates.js';
 import { SOURCES, type CandidateSource, type SourceHit, type SourceInput } from './candidates.js';
 
 /**
@@ -27,7 +27,7 @@ const cooccurrenceSource: CandidateSource = {
     if (profile.kids || !(c.surface[surface].cooccurrence > 0)) return [];
     const anchors = anchorsOf(input);
     if (!anchors.length) return [];
-    const { tables, own } = await pairTablesFor(ctx, index, c, profile.user_id);
+    const { tables, own } = await tablesOfViewer(ctx, index, c, profile.user_id);
     const best = new Map<string, { s: number; via: string }>();
     for (const a of anchors) {
       for (const [id, cos] of coocSignals(tables, a.id, { own, minSupport: c.social.minSupport })) {
@@ -45,7 +45,7 @@ const transitionSource: CandidateSource = {
     const { ctx, profile, index, c, surface, seed } = input;
     // a transition needs a title that was just finished: the seed. Surfaces without a seed (taste, home rows) have none.
     if (profile.kids || !seed || !(c.surface[surface].transition > 0)) return [];
-    const { tables, own } = await pairTablesFor(ctx, index, c, profile.user_id);
+    const { tables, own } = await tablesOfViewer(ctx, index, c, profile.user_id);
     return [...transitionSignals(tables, seed.id, { own, minSupport: c.social.minSupport })].map(([id, t]): SourceHit => ({ id, signals: { transition: t.p }, meta: { via: seed.id } }));
   },
 };

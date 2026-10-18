@@ -299,7 +299,7 @@ export function ownTables(ctx: Pick<Ctx, 'db' | 'kv' | 'jf'>, index: Index, c: R
 }
 
 /** The tables as one viewer may use them: the aggregate plus that account's own contribution, which the signals subtract. */
-export async function pairTablesFor(ctx: Pick<Ctx, 'db' | 'kv' | 'jf'>, index: Index, c: RecoCoefficients, acct: string): Promise<{ tables: PairTables; own: OwnTables }> {
+export async function tablesOfViewer(ctx: Pick<Ctx, 'db' | 'kv' | 'jf'>, index: Index, c: RecoCoefficients, acct: string): Promise<{ tables: PairTables; own: OwnTables }> {
   const tables = await loadPairTables(ctx, index, c);
   return { tables, own: await ownTables(ctx, index, c, tables, acct) };
 }
@@ -323,7 +323,7 @@ export async function transitionsFor(
   if (!item) return []; // invisible to the viewer: nothing is revealed
   const root = item.type === 'Episode' && item.seriesId ? item.seriesId : item.id;
   const index = await loadIndex(ctx, recoWeights(ctx.cfg), now);
-  const { tables, own } = await pairTablesFor(ctx, index, c, viewer.profile.user_id);
+  const { tables, own } = await tablesOfViewer(ctx, index, c, viewer.profile.user_id);
   const sig = transitionSignals(tables, root, { own, minSupport: c.social.minSupport });
   if (!sig.size) return [];
   const ranked = [...sig].sort((a, b) => b[1].support - a[1].support || (a[0] < b[0] ? -1 : 1)).map(([id]) => id);
