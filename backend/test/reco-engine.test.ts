@@ -298,7 +298,9 @@ describe('RECO_ENGINE', () => {
     expect(keysOf(v2.items)).not.toContain('bear1');
     const broken = engineCtx(env, f.jf, { RECO_ENGINE: 'v2' });
     (broken as { db: unknown }).db = new Proxy(env.ctx.db, { get: (t, p, r) => (p === 'query' ? async (q: string, a?: unknown[]) => { if (/item_features/.test(q)) throw new Error('x'); return t.query(q, a as never); } : Reflect.get(t, p, r)) });
-    for (const k of await env.kv.keys('reco:')) await env.kv.del(k);
+    // the v2 row is cached for BECAUSE_TTL: a second call is served from it, without recommend()
+    expect(keysOf((await libraryBecause(broken as Ctx, s.user, s.owner.id)).items)).toEqual(keysOf(v2.items));
+    for (const pre of ['reco:', 'because:v2:']) for (const k of await env.kv.keys(pre)) await env.kv.del(k);
     expect(keysOf((await libraryBecause(broken as Ctx, s.user, s.owner.id)).items)).toEqual(keysOf(v1.items));
   });
 

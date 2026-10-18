@@ -10,7 +10,7 @@ import { audit } from '../audit.js';
 import { friendsRatedFor, inPool, itemsByIds, recommendationsFor } from '../discoverData.js';
 import { badgesFor, instanceToday, leavingFor, LEAVING_ROW_DAYS, storySoFar } from '../fresh.js';
 import { m } from '../i18n.js';
-import { bumpHomeAll, bumpHome } from '../homegen.js';
+import { bumpHomeAll, bumpHome, homeGens } from '../homegen.js';
 import { notify } from '../notify.js';
 import { clipPath, previews } from '../previews.js';
 import { loadPrefs } from './prefs.js';
@@ -36,6 +36,8 @@ export async function leavingRow(ctx: Ctx, jfUser: JfUser) {
 
 /** "Weil du ... gesehen hast" cache lifetime (seconds). */
 export const BECAUSE_TTL = 600;
+/** v2 "because" rows being computed in this process, by cache key (concurrent callers share one recommend()) */
+const becauseV2 = new Map<string, Promise<ItemDto[]>>();
 
 /**
  * Data of GET /api/library/because: seed = the profile's latest thumbs-up item, else the last finished title; then Jellyfin's
@@ -85,8 +87,19 @@ export async function libraryBecause(ctx: Ctx, jfUser: JfUser, profileId: string
     return { because: entry.because, items: v1, engine: 'v1' };
   }
   try {
-    const r = await recommend(ctx, jfUser, profile, { seed: entry.because.id, surface: 'because', limit: 24 });
-    return { because: entry.because, items: r.items.map(withReason), engine: 'v2' };
+    // the v2 row is cached like the Jellyfin part (plus the home generations, which every thumb, list or reset change bumps) and
+    // shared while it is computed: the home page and because-more ask for it at the same time
+    const because = entry.because;
+    const v2Key = `because:v2:${jfUser.jellyfin_user_id}:${profileId}:${ver}:${await homeGens(ctx, profileId)}:${because.id}`;
+    const cached = await ctx.kv.get(v2Key).catch(() => null);
+    if (cached) { try { return { because, items: JSON.parse(cached) as ItemDto[], engine: 'v2' }; } catch { /* recompute */ } }
+    let run = becauseV2.get(v2Key);
+    if (!run) {
+      run = recommend(ctx, jfUser, profile, { seed: because.id, surface: 'because', limit: 24 }).then((r) => r.items.map(withReason));
+      becauseV2.set(v2Key, run);
+      void run.then((items) => ctx.kv.set(v2Key, JSON.stringify(items), BECAUSE_TTL).catch(() => undefined), () => undefined).finally(() => becauseV2.delete(v2Key));
+    }
+    return { because, items: await run, engine: 'v2' };
   } catch {
     countFallback('because');
     return { because: entry.because, items: v1, engine: 'v1' }; // v2 failing never empties the row
