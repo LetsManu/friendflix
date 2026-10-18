@@ -128,29 +128,97 @@ export interface Index extends IndexData {
   vecs: Map<string, SparseVec>;
   /** collection_id -> item ids */
   byCollection: Map<string, string[]>;
+  /**
+   * Inverted index for the nearest-neighbour search: dimension (prefixed `-` for negative values) -> item ids, strongest value first,
+   * at most POSTING_CAP per key.
+   */
+  postings: Map<string, string[]>;
+  /** ids with a community rating, best first, at most TOP_RATED (the cold-start prior reads it instead of sorting the library) */
+  topRated: string[];
   builtAt: number;
 }
 
 const TTL_MS = 5 * 60_000;
-const cache = new WeakMap<object, { sig: string; at: number; index: Index }>();
+/** ids kept per dimension of the inverted index (the strongest ones) */
+export const POSTING_CAP = 400;
+export const TOP_RATED = 1000;
+/** kv key the index job writes after every pass: a change means the index changed, so a cached copy is stale on every replica */
+export const INDEX_GEN_KEY = 'reco:idx:lastDone';
 
-/** Forgets the in-process index of this ctx (tests, and after a weight change in the same process). */
+interface CacheEntry { sig: string; gen: string; at: number; promise: Promise<Index> }
+const cache = new WeakMap<object, CacheEntry>();
+let loads = 0;
+
+/** Forgets the in-process index of this ctx (tests, and the index job after a pass in this process). */
 export function resetIndexCache(ctx: Pick<Ctx, 'db'>): void {
   cache.delete(ctx.db);
 }
+/** How many times the item_features table was read into memory in this process (tests: concurrent callers share one load). */
+export const indexLoads = (): number => loads;
 
 export const weightsSignature = (w: RecoWeights): string => createHash('sha1').update(JSON.stringify(w)).digest('hex').slice(0, 10);
 
 const EMPTY_STAT: NumStat = { mean: 0, std: 0, n: 0 };
 
+/** Posting key of a dimension value: the dimension for a positive value, `-` + dimension for a negative one (both raise a dot product). */
+const postingKey = (dim: string, x: number): string => (x > 0 ? dim : '-' + dim);
+
+/** Builds the inverted index of `vecs` (pure; exported for tests). */
+export function buildPostings(vecs: ReadonlyMap<string, SparseVec>, cap = POSTING_CAP): Map<string, string[]> {
+  const lists = new Map<string, Array<[string, number]>>();
+  for (const [id, v] of vecs) {
+    for (const [dim, x] of v) {
+      if (x === 0) continue;
+      const k = postingKey(dim, x);
+      let l = lists.get(k);
+      if (!l) lists.set(k, (l = []));
+      l.push([id, Math.abs(x)]);
+    }
+  }
+  const out = new Map<string, string[]>();
+  for (const [dim, l] of lists) {
+    l.sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : 1));
+    out.set(dim, (l.length > cap ? l.slice(0, cap) : l).map((x) => x[0]));
+  }
+  return out;
+}
+
+/** Ids with a community rating, best first (ties by id), at most TOP_RATED. */
+export const topRatedOf = (rows: ReadonlyMap<string, FeatureRow>): string[] => [...rows.values()].filter((r) => r.community_rating !== null)
+  .sort((a, b) => (b.community_rating ?? 0) - (a.community_rating ?? 0) || (a.item_id < b.item_id ? -1 : 1)).slice(0, TOP_RATED).map((r) => r.item_id);
+
+/** The nearest-neighbour search scores at most about this many vectors per call. */
+export const NN_MAX_SCAN = 4000;
+
 /**
- * The whole index in memory (rows, IDF, statistics, item vectors), rebuilt after 5 minutes or when the weights change. A library of
- * tens of thousands of titles is a few tens of MB; the nearest-neighbour search runs over it in-process. Empty index = empty maps.
+ * Bounded nearest neighbours of `q`: the inverted index lists, per dimension and sign, the POSTING_CAP titles with the strongest value;
+ * the query's dimensions are walked strongest first and their titles pooled until the pool holds NN_MAX_SCAN, and only the pool is
+ * scored. One call therefore scores at most NN_MAX_SCAN + POSTING_CAP vectors, whatever the size of the library; on a small library the
+ * pool is every title that shares a dimension of the same sign with q, so the answer equals a full scan.
+ * Returns [id, cosine] for scores > 0, best first, at most `k`. `stats.scanned` reports how many vectors were scored.
  */
-export async function loadIndex(ctx: Pick<Ctx, 'db'>, w: RecoWeights, now = Date.now()): Promise<Index> {
-  const sig = weightsSignature(w);
-  const hit = cache.get(ctx.db);
-  if (hit && hit.sig === sig && now - hit.at < TTL_MS) return hit.index;
+export function nearest(index: Pick<Index, 'vecs' | 'postings'>, q: SparseVec, k: number, skip: (id: string) => boolean = () => false, stats?: { scanned: number }): Array<[string, number]> {
+  const dims = [...q].filter(([, x]) => x !== 0).sort((a, b) => Math.abs(b[1]) - Math.abs(a[1]) || (a[0] < b[0] ? -1 : 1));
+  const pool = new Set<string>();
+  for (const [d, x] of dims) {
+    if (pool.size >= NN_MAX_SCAN) break;
+    for (const id of index.postings.get(postingKey(d, x)) ?? []) pool.add(id);
+  }
+  const scored: Array<[string, number]> = [];
+  for (const id of pool) {
+    if (skip(id)) continue;
+    const v = index.vecs.get(id);
+    if (!v) continue;
+    const s = dot(q, v);
+    if (s > 0) scored.push([id, s]);
+  }
+  if (stats) stats.scanned = pool.size;
+  scored.sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : 1));
+  return scored.slice(0, k);
+}
+
+async function readIndex(ctx: Pick<Ctx, 'db'>, w: RecoWeights, now: number): Promise<Index> {
+  loads++;
   const [rows, idf, stats] = await Promise.all([
     ctx.db.query<FeatureRow>('select item_id, type, genres, tags, studios, people, year, runtime_min, community_rating, critic_rating, original_language, countries, collection_id, series_status, overview_terms from item_features'),
     ctx.db.query<{ kind: string; value: string; idf: number }>("select kind, value, idf from item_feature_idf where kind <> 'term'"),
@@ -172,7 +240,22 @@ export async function loadIndex(ctx: Pick<Ctx, 'db'>, w: RecoWeights, now = Date
     vecs.set(id, itemVector(r, data, w));
     if (r.collection_id) (byCollection.get(r.collection_id) ?? byCollection.set(r.collection_id, []).get(r.collection_id)!).push(id);
   }
-  const index: Index = { ...data, vecs, byCollection, builtAt: now };
-  cache.set(ctx.db, { sig, at: now, index });
-  return index;
+  return { ...data, vecs, byCollection, postings: buildPostings(vecs), topRated: topRatedOf(data.rows), builtAt: now };
+}
+
+/**
+ * The whole index in memory (rows, IDF, statistics, item vectors, inverted index). Cached per process and shared: concurrent callers
+ * wait for one in-flight load instead of each reading the table. Rebuilt after 5 minutes, when the weights change, or when the index
+ * job finished a pass (its `reco:idx:lastDone` stamp in kv changed, so every replica notices). A failed load is not cached.
+ */
+export async function loadIndex(ctx: Pick<Ctx, 'db'> & Partial<Pick<Ctx, 'kv'>>, w: RecoWeights, now = Date.now()): Promise<Index> {
+  const sig = weightsSignature(w);
+  const gen = (ctx.kv ? await ctx.kv.get(INDEX_GEN_KEY).catch(() => null) : null) ?? '';
+  const hit = cache.get(ctx.db);
+  if (hit && hit.sig === sig && hit.gen === gen && now - hit.at < TTL_MS) return hit.promise;
+  // set before the first await of the load, so every caller that arrives meanwhile shares this promise
+  const entry: CacheEntry = { sig, gen, at: now, promise: readIndex(ctx, w, now) };
+  cache.set(ctx.db, entry);
+  entry.promise.catch(() => { if (cache.get(ctx.db) === entry) cache.delete(ctx.db); });
+  return entry.promise;
 }

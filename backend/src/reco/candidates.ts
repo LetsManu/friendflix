@@ -5,12 +5,12 @@ import type { ItemDto } from '../media/types.js';
 import type { JfUser } from '../types.js';
 import type { RecoProfile, Taste } from './profile.js';
 import type { Surface, RecoCoefficients } from './weights.js';
-import { dot, type Index } from './vectors.js';
+import { nearest, type Index } from './vectors.js';
 
 /**
  * Recommendation engine v2, R2: candidate generation (spec 4.4). Every candidate carries the sources that proposed it.
  * Implemented: 1 `similar` (the media server's similar() for the seed), 2 `universe` (same collection or shared creator),
- * 3 `taste_nn` (nearest neighbours of the profile vector in the item index), plus `prior` (cold-start filler by quality).
+ * 3 `taste_nn` (nearest neighbours of the profile vector in the item index, bounded by its inverted index), plus `prior` (cold-start filler by quality).
  *
  * Extension points: a source is one `CandidateSource` pushed with registerSource(); `social: true` marks sources built on other
  * accounts' data (co-occurrence, transitions, friends, trending), which gatherCandidates never runs for a kids profile. A source may
@@ -85,10 +85,11 @@ const universeSource: CandidateSource = {
     const out = new Set<string>();
     if (row.collection_id) for (const id of index.byCollection.get(row.collection_id) ?? []) if (id !== seed.id) out.add(id);
     const creators = new Set(row.people.slice(0, c.candidates.creatorSlots));
-    if (creators.size) {
-      for (const [id, r] of index.rows) {
-        if (id !== seed.id && r.people.slice(0, c.candidates.creatorSlots).some((p) => creators.has(p))) out.add(id);
+    // the inverted index lists the titles of each person (p:<id>): only those are looked at, never the whole library
+    for (const p of creators) {
+      for (const id of index.postings.get('p:' + p) ?? []) {
         if (out.size >= c.candidates.universe * 3) break;
+        if (id !== seed.id && index.rows.get(id)?.people.slice(0, c.candidates.creatorSlots).some((x) => creators.has(x))) out.add(id);
       }
     }
     // collection mates first, then creators (the Set keeps insertion order)
@@ -100,14 +101,8 @@ const tasteNnSource: CandidateSource = {
   name: 'taste_nn', social: false,
   async run({ taste, index, c }) {
     if (taste.cold || !taste.pos.size) return [];
-    const scored: Array<[string, number]> = [];
-    for (const [id, v] of index.vecs) {
-      if (taste.seen.has(id)) continue;
-      const s = dot(taste.pos, v);
-      if (s > 0) scored.push([id, s]);
-    }
-    scored.sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : 1));
-    return scored.slice(0, c.candidates.knn).map(([id]) => ({ id }));
+    // bounded: only titles sharing one of the profile's strongest dimensions are scored (vectors.ts nearest)
+    return nearest(index, taste.pos, c.candidates.knn, (id) => taste.seen.has(id)).map(([id]) => ({ id }));
   },
 };
 
@@ -115,9 +110,7 @@ const priorSource: CandidateSource = {
   name: 'prior', social: false,
   async run({ taste, seed, index, c }) {
     if (seed || !taste.cold) return [];
-    const rated = [...index.rows.values()].filter((r) => r.community_rating !== null);
-    rated.sort((a, b) => (b.community_rating ?? 0) - (a.community_rating ?? 0) || (a.item_id < b.item_id ? -1 : 1));
-    return rated.slice(0, c.candidates.prior).map((r) => ({ id: r.item_id }));
+    return index.topRated.slice(0, c.candidates.prior).map((id) => ({ id }));
   },
 };
 

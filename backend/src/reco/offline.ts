@@ -8,7 +8,7 @@ import { buildTaste, type Signal } from './profile.js';
 import { mmr } from './rank.js';
 import { scoreCandidate, type Marks, type ScoreContext } from './score.js';
 import { idf as idfOf, numStat } from './tfidf.js';
-import { dot, itemVector, type FeatureRow, type Index, type SparseVec } from './vectors.js';
+import { buildPostings, dot, itemVector, topRatedOf, type FeatureRow, type Index, type SparseVec } from './vectors.js';
 import { DEFAULT_RECO_WEIGHTS, recoCoefficients, type RecoCoefficients, type RecoWeights, type Surface } from './weights.js';
 
 /**
@@ -70,7 +70,7 @@ export function offlineIndex(items: readonly OfflineItem[], w: RecoWeights = DEF
     vecs.set(id, itemVector(r, data, w));
     if (r.collection_id) (byCollection.get(r.collection_id) ?? byCollection.set(r.collection_id, []).get(r.collection_id)!).push(id);
   }
-  return { rows, idf, stats, meanRating: stats.community_rating.n ? stats.community_rating.mean : 0, vecs, byCollection, builtAt: 0 };
+  return { rows, idf, stats, meanRating: stats.community_rating.n ? stats.community_rating.mean : 0, vecs, byCollection, postings: buildPostings(vecs), topRated: topRatedOf(rows), builtAt: 0 };
 }
 
 const NO_MARKS: Marks = { thumbsDown: new Set(), dropped: new Set(), watchlist: new Set() };

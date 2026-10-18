@@ -5,7 +5,7 @@ import { recoShadowOverlap, recoShadowRuns, recoShadowScoreDelta } from '../src/
 import { gatherCandidates, SOURCES, type CandidateSource, type SourceInput } from '../src/reco/candidates.js';
 import type { Taste } from '../src/reco/profile.js';
 import { overlap, recommend, scoreDelta, shadowIdle } from '../src/reco/recommend.js';
-import { loadIndex, resetIndexCache, type SparseVec } from '../src/reco/vectors.js';
+import { buildPostings, dot, loadIndex, nearest, NN_MAX_SCAN, POSTING_CAP, resetIndexCache, type SparseVec } from '../src/reco/vectors.js';
 import { recoCoefficients, recoWeights } from '../src/reco/weights.js';
 import { libraryBecause } from '../src/routes/discover.js';
 import type { Ctx } from '../src/ctx.js';
@@ -310,5 +310,37 @@ describe('RECO_ENGINE', () => {
     const items = [{ item: dto('saga1'), score: 0.8, sources: [], parts: {} as never, reason }, { item: dto('saga2'), score: 0.6, sources: [], parts: {} as never, reason }];
     expect(scoreDelta(['a', 'b', 'zz'], items, new Map([['a', 0.5], ['b', 0.3]]))).toBeCloseTo(0.3, 10);
     expect(scoreDelta(['zz'], items, new Map())).toBeNull();
+  });
+});
+
+describe('nearest-neighbour search is bounded (I1)', () => {
+  const vec = (o: Record<string, number>): SparseVec => new Map(Object.entries(o));
+  const full = (vecs: Map<string, SparseVec>, q: SparseVec, k: number) =>
+    [...vecs].map(([id, v]) => [id, dot(q, v)] as [string, number]).filter(([, x]) => x > 0).sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : 1)).slice(0, k);
+
+  it('on a small library it equals a full scan (signed dimensions included)', () => {
+    const vecs = new Map<string, SparseVec>([
+      ['a', vec({ 'g:sf': 0.8, 'n:year': -0.2 })], ['b', vec({ 'g:crime': 0.9, 'n:year': -0.4 })], ['c', vec({ 'g:sf': 0.3, 't:space': 0.9 })],
+      ['d', vec({ 'g:romance': 1 })], ['e', vec({ 'n:year': 0.5, 'g:crime': 0.5 })],
+    ]);
+    const index = { vecs, postings: buildPostings(vecs) };
+    const q = vec({ 'g:sf': 0.7, 't:space': 0.5, 'n:year': -0.3 });
+    expect(nearest(index, q, 10)).toEqual(full(vecs, q, 10));
+    expect(nearest(index, q, 10, (id) => id === 'c').map(([id]) => id)).not.toContain('c');
+  });
+
+  it('a large library: one call scores a bounded pool, never every vector, and still finds the strongest matches', () => {
+    const vecs = new Map<string, SparseVec>();
+    // 30 000 titles share the genre; 30 000 more share nothing with the query
+    for (let i = 0; i < 30_000; i++) vecs.set(`g${i}`, vec({ 'g:drama': 0.1 + (i % 100) / 1000, [`t:x${i % 500}`]: 0.5 }));
+    for (let i = 0; i < 30_000; i++) vecs.set(`o${i}`, vec({ 'g:other': 1 }));
+    vecs.set('best', vec({ 'g:drama': 0.6, 't:space': 0.8 }));
+    const index = { vecs, postings: buildPostings(vecs) };
+    expect(Math.max(...[...index.postings.values()].map((l) => l.length))).toBeLessThanOrEqual(POSTING_CAP);
+    const stats = { scanned: 0 };
+    const out = nearest(index, vec({ 'g:drama': 0.6, 't:space': 0.8 }), 20, () => false, stats);
+    expect(out[0]![0]).toBe('best');
+    expect(stats.scanned).toBeLessThanOrEqual(NN_MAX_SCAN + POSTING_CAP);
+    expect(stats.scanned).toBeLessThan(vecs.size / 50);
   });
 });
