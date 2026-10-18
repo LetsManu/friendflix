@@ -142,7 +142,7 @@ test('episode end on the TV while the watch page is open: its next card counts d
   await sdk.nearEnd();
   await expect.poll(() => page.locator('.track[role=slider]').evaluate((el) => Number(el.getAttribute('aria-valuemax')) - Number(el.getAttribute('aria-valuenow')))).toBeLessThan(10);
   await sdk.finish();
-  const card = page.getByRole('dialog', { name: 'Nächste Folge' });
+  const card = page.getByRole('group', { name: 'Nächste Folge' });
   await expect(card).toContainText(`S1:E2 · ${episodes[1]!.name}`);
   await expect(card).toContainText(/in \d+ s/);
   await expect(page).toHaveURL(new RegExp('/watch/' + episodes[1]!.id), { timeout: 15_000 });
@@ -160,10 +160,12 @@ test('closing the next card on the watch page stops the TV countdown', async ({ 
   await sdk.nearEnd();
   await expect.poll(() => page.locator('.track[role=slider]').evaluate((el) => Number(el.getAttribute('aria-valuemax')) - Number(el.getAttribute('aria-valuenow')))).toBeLessThan(10);
   await sdk.finish();
-  const card = page.getByRole('dialog', { name: 'Nächste Folge' });
+  const card = page.getByRole('group', { name: 'Nächste Folge' });
   await page.locator('.stage').hover();
   await card.getByRole('button', { name: 'Abbrechen' }).click();
-  await expect(card).toHaveCount(0);
+  // the countdown stops; the episode stays offered (Play now), nothing starts by itself
+  await expect(card).not.toContainText(/in \d+ s/);
+  await expect(card.getByRole('button', { name: 'Jetzt abspielen' })).toBeVisible();
   await page.waitForTimeout(11_000);
   expect(sessions.filter((b) => !b.next)).toHaveLength(1); // a `next` one is the receiver queue's (refused by the fake SDK, revoked)
   await expect(page).toHaveURL(new RegExp('/watch/' + episodes[0]!.id));

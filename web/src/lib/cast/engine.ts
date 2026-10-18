@@ -31,6 +31,7 @@ import { tr } from '#lib/i18n';
 import { createAirPlay, type AirPlayController, type AirPlayDeps, type AirPlayState } from '#lib/player/airplay';
 import { airLog } from '#lib/player/airplayLog';
 import { barTitles, firstInfoBody } from '#lib/player/bar';
+import { episodeLabel } from './remoteview';
 import { COUNTDOWN_SECONDS, creditsStart, mayAutoplay, type Segment } from '#lib/player/nextup';
 import { consumeAutoplay, noteAutoplay, noteInteraction, shouldAsk } from '#lib/stillwatching';
 import { prefs, type Prefs } from '#lib/stores';
@@ -178,8 +179,8 @@ interface Live {
 /** a cast token's subtitles as remote tracks (without their URLs) */
 const subsOf = (ci: CastInfo): CastTrack[] => ci.subtitles.map(({ index, title, language }) => ({ index, title, language }));
 
-/** the bar's label of the next episode: "S1:E2 · Name", the name alone without season / episode numbers */
-const nextLabel = (it: Item): string => (it.parentIndexNumber != null && it.indexNumber != null ? `S${it.parentIndexNumber}:E${it.indexNumber} · ${it.name}` : it.name);
+/** the bar's label of the next episode: "S1:E2 · Name", the name alone without season / episode numbers (the header's format) */
+const nextLabel = (it: Item): string => episodeLabel(it);
 
 /** the Player's texts for a failed token request */
 function castErr(e: unknown, kind: CastKind = 'chromecast'): string {
