@@ -3,7 +3,7 @@
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { AIRPLAY_PIN2_WINDOW_MS, CAST_IDLE_TTL, castKeyTtl, hashToken, NEXT_OVERLAP_MS } from '../src/cast.js';
 import { revokeSessions } from '../src/devices.js';
-import { countLive, getLive, setLive } from '../src/live.js';
+import { countLive, DRAIN_MS, getLive, setLive } from '../src/live.js';
 import { cfg, makeEnv, type TestEnv } from './helpers.js';
 
 const ID = 'a'.repeat(32);
@@ -498,6 +498,42 @@ describe('cast session: stop report and the queued next episode', () => {
     expect(nx2.r.statusCode).toBe(200);
     expect((await authz({ ct: nx.ct })).statusCode).toBe(200);
     await report('stop', 'ps-next-0001');
+  });
+
+  it('next: re-minting does not renew the overlap: the window belongs to the play session it follows', async () => {
+    const uid = await fresh();
+    const { cur, nx } = await playingThenNext();
+    const progress = () => call(admin, 'POST', '/api/playback/progress', { itemId: ID, playSessionId: cur.j.playSessionId, mediaSourceId: MS, positionTicks: 0, isPaused: false, playMethod: 'Transcode' });
+    const elsewhere = '203.0.113.78';
+    expect((await authz({ ct: nx.ct, client: elsewhere })).statusCode).toBe(200);
+    skipClock(170_000);
+    await progress();
+    psNext = 'ps-next-0004';
+    const nx2 = await create(admin, { next: true, after: cur.j.castId });
+    expect(nx2.r.statusCode).toBe(200);
+    expect((await authz({ ct: nx2.ct, client: elsewhere })).statusCode).toBe(200);
+    skipClock(11_000); // 181 s after the first overlap fetch
+    await progress();
+    expect((await authz({ ct: nx2.ct, client: elsewhere })).statusCode).toBe(401);
+    expect(await countLive(env.ctx, uid)).toBe(1);
+  });
+
+  it('a stop report only excuses a short drain: fetches of the stopped token count again after DRAIN_MS', async () => {
+    const uid = await fresh();
+    psNext = null;
+    for (const k of await env.kv.keys(`pstop:${uid}:`)) await env.kv.del(k);
+    const { ct, j } = await create();
+    await report('start', j.playSessionId);
+    await report('stop', j.playSessionId);
+    skipClock(60_000);
+    await stale(ct);
+    expect((await authz({ ct })).statusCode).toBe(200);
+    expect(await countLive(env.ctx, uid)).toBe(0);
+    skipClock(70_000); // 130 s after the stop
+    await stale(ct);
+    expect((await authz({ ct })).statusCode).toBe(200);
+    expect(await countLive(env.ctx, uid)).toBe(1);
+    expect(DRAIN_MS).toBe(120_000);
   });
 
   it('next: used concurrently while the predecessor plays: refused once the 180 s overlap is over, never counted twice', async () => {

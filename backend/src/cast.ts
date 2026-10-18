@@ -4,7 +4,7 @@ import { createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypt
 import type { Ctx } from './ctx.js';
 import { jfUserFor, getProfile } from './profiles.js';
 import { effectiveRole } from './roles.js';
-import { clearLive, getLive, setLive, wasStopped } from './live.js';
+import { clearLive, draining, getLive, setLive } from './live.js';
 import { getUserById } from './users.js';
 import type { JfUser, ProfileRow, UserRow } from './types.js';
 
@@ -68,8 +68,6 @@ export interface CastRecord {
   seen?: number;
   /** a queued next episode's token: the play session it follows (the newest other media token of the same device) */
   afterPs?: string;
-  /** epoch ms of its first fetch while that play session was still live (start of the preload overlap) */
-  overlapAt?: number;
 }
 
 export interface CastAuth {
@@ -87,6 +85,8 @@ const dataKey = (hash: string) => `cast:${hash}`;
 const pinKey = (hash: string) => `castpin:${hash}`;
 const pin2Key = (hash: string) => `castpin2:${hash}`;
 const idxKey = (userId: string, castId: string) => `castidx:${userId}:${castId}`;
+/** start of the preload overlap of the queued next episode(s) after a play session (one window per predecessor, set once) */
+const ovlKey = (userId: string, ps: string) => `povl:${userId}:${ps}`;
 /** public, non-secret handle of a token (cannot be turned back into the token) */
 const castIdOf = (hash: string) => hash.slice(0, 32);
 
@@ -129,7 +129,7 @@ async function listIdx(ctx: Ctx, userId: string): Promise<Array<IdxEntry & { key
  * The limit is enforced AFTER the insert, so two simultaneous creations converge to the limit instead of racing past it.
  * Returns the raw tokens (once).
  */
-export async function createCast(ctx: Ctx, rec: Omit<CastRecord, 'exp' | 'createdAt' | 'kind' | 'seen' | 'overlapAt'>, ttlSeconds: number, image = false): Promise<{ ct: string; imgCt?: string; castId: string; expiresAt: number }> {
+export async function createCast(ctx: Ctx, rec: Omit<CastRecord, 'exp' | 'createdAt' | 'kind' | 'seen'>, ttlSeconds: number, image = false): Promise<{ ct: string; imgCt?: string; castId: string; expiresAt: number }> {
   const now = Date.now();
   const exp = now + ttlSeconds * 1000;
   const ttl = castKeyTtl(exp, now);
@@ -154,11 +154,18 @@ export async function createCast(ctx: Ctx, rec: Omit<CastRecord, 'exp' | 'create
   return { ct: media.ct, imgCt: img?.ct, castId: castIdOf(media.hash), expiresAt: exp };
 }
 
-/** a queued next episode's token whose predecessor still plays (live, not stopped): it waits, it is no predecessor itself */
+/**
+ * The play session a queued next episode follows still plays: it has a live record. Its stop clears that record and, within
+ * DRAIN_MS, nothing brings it back, so a stopped predecessor is over; one still fetched after the drain counts as live again
+ * (touch), and then it still plays here too: the safe side (the next token waits / is refused, never a stream uncounted).
+ */
+const predecessorPlays = async (ctx: Ctx, r: CastRecord) => Boolean(r.afterPs && (await getLive(ctx, r.userId, r.afterPs)));
+
+/** a queued next episode's token whose predecessor still plays: it waits, it is no predecessor itself */
 async function waiting(ctx: Ctx, i: IdxEntry, rec?: CastRecord | null): Promise<boolean> {
   if (!i.next) return false;
   const r = rec ?? (await ctx.kv.get(dataKey(i.hash)).then((x) => (x ? (JSON.parse(x) as CastRecord) : null)));
-  return Boolean(r?.afterPs && (await getLive(ctx, r.userId, r.afterPs)) && !(await wasStopped(ctx, r.userId, r.afterPs)));
+  return Boolean(r && (await predecessorPlays(ctx, r)));
 }
 
 /** the cast a queued next episode follows: the newest media token of this device that is not a waiting queued one (null = none) */
@@ -216,8 +223,9 @@ async function touch(ctx: Ctx, hash: string, rec: CastRecord, userName: string, 
   if (idx) await ctx.kv.replace(ik, idx, ttl);
   if (rec.kind === 'img' || overlap) return; // a queued next episode's preload: the stream it follows is the counted one
   const cur = await getLive(ctx, rec.userId, rec.playSessionId);
-  // its stop was reported (title switch / end): the receiver only drains buffered segments until the revoke, no ghost stream
-  if (!cur && (await wasStopped(ctx, rec.userId, rec.playSessionId))) return;
+  // its stop was reported just now (title switch / end): the receiver only drains buffered segments until the revoke, no ghost
+  // stream; a token still fetched after DRAIN_MS counts again
+  if (!cur && (await draining(ctx, rec.userId, rec.playSessionId))) return;
   await setLive(ctx, cur
     ? { ...cur, updatedAt: now }
     : { userId: rec.userId, userName, profileName, itemId: rec.itemId, title: rec.title ?? '', positionTicks: 0, isPaused: false, playSessionId: rec.playSessionId, updatedAt: now, source: 'portal' });
@@ -240,7 +248,7 @@ export async function resolveCast(ctx: Ctx, ct: string, client: string): Promise
   if (rec && rec.exp > Date.now()) {
     const owner = await liveOwner(ctx, rec);
     const ok = owner && (await pinned(ctx, hash, client, rec.exp, rec.via === 'airplay' && Date.now() - rec.createdAt <= AIRPLAY_PIN2_WINDOW_MS ? 2 : 1, rec.via === 'airplay'));
-    const overlap = ok ? await nextOverlap(ctx, hash, rec) : false;
+    const overlap = ok ? await nextOverlap(ctx, rec) : false;
     if (ok && owner && overlap !== null) {
       const { user, role, prof } = owner;
       const jfUser = jfUserFor(user, prof);
@@ -261,18 +269,16 @@ export async function resolveCast(ctx: Ctx, ct: string, client: string): Promise
 }
 
 /**
- * A queued next episode's token while the play session it follows is live and not stopped: true = inside the preload overlap
- * (served, not counted; its start is recorded on the first such fetch), null = the overlap is over (refused). false = a normal token.
+ * A queued next episode's token while the play session it follows still plays: true = inside the preload overlap (served, not
+ * counted), null = the overlap is over (refused), false = a normal token. The overlap starts with the first such fetch of ANY
+ * next token after that play session (`povl:`, set once): re-minting the next token never renews it.
  */
-async function nextOverlap(ctx: Ctx, hash: string, rec: CastRecord): Promise<boolean | null> {
-  if (!rec.afterPs || (rec.kind ?? 'media') !== 'media') return false;
-  if (!(await getLive(ctx, rec.userId, rec.afterPs)) || (await wasStopped(ctx, rec.userId, rec.afterPs))) return false;
-  const now = Date.now();
-  if (rec.overlapAt === undefined) {
-    rec.overlapAt = now;
-    await ctx.kv.replace(dataKey(hash), JSON.stringify(rec), Math.max(1, castKeyTtl(rec.exp, now)));
-  }
-  return now - rec.overlapAt <= NEXT_OVERLAP_MS ? true : null;
+async function nextOverlap(ctx: Ctx, rec: CastRecord): Promise<boolean | null> {
+  if (!rec.afterPs || (rec.kind ?? 'media') !== 'media' || !(await predecessorPlays(ctx, rec))) return false;
+  const key = ovlKey(rec.userId, rec.afterPs), now = Date.now();
+  await ctx.kv.setnx(key, String(now), 6 * 3600);
+  const at = Number(await ctx.kv.get(key));
+  return Number.isFinite(at) && now - at <= NEXT_OVERLAP_MS ? true : null;
 }
 
 /** The token's account, role and profile while all are still usable (account enabled, role known, profile of the account, sender device approved). */
