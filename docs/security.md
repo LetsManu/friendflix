@@ -63,6 +63,7 @@ Networks and ports are defined in [compose.yaml](../compose.yaml); the diagram a
 | Invited user (friend, family, guest) | See more than their role allows (hidden titles, higher bitrate, other people's data), stay signed in on stolen devices | Role and profile checks in the backend, bitrate and stream caps enforced by backend and gateway, device approval, session idle and absolute timeouts, per-user data scoping. |
 | Kid with access to a family device | Leave a kids profile | Profile PIN (scrypt, attempt-limited). Limited by design, see above. |
 | Holder of a leaked URL or cast token | Replay a stream URL | Cast tokens are random, hashed at rest, bound to the first client address, expire, are revocable and limited to two per account. |
+| Device on the TV's network (another Cast sender), or anyone holding a cast receiver report token | Read the receiver's report token, report as the user, stream more than allowed | The report token goes only over the sender's private Cast channel, never into media metadata; it is signed, bound to one cast token's account, profile, device, item and play session, valid only from the address that streams that token and while that token lives; it can only report, never fetch media or mint tokens ([Cast receiver](#cast-receiver)). |
 | Malicious web page or injected script | Act as the user (CSRF/XSS), read tokens | CSRF token, `SameSite=Lax`, `HttpOnly` cookies, strict CSP, `nosniff`, `X-Frame-Options: DENY`. No media token reaches the browser. |
 | Attacker with a stolen database or Redis dump | Read credentials | Media-server passwords and API keys are AES-256-GCM encrypted; PINs are scrypt hashes; Redis holds only SHA-256 hashes of cast tokens; sessions are not persisted. |
 | Compromised dependency or CI | Ship malicious images | Pinned actions and base images, lockfile with `npm ci`, dependency audit, Trivy gate, signed and attested images; the optional updater refuses any image whose cosign signature is not this repository's publish workflow. |
@@ -290,6 +291,47 @@ backend --signed request--> updater --(internal net)--> docker-proxy --ro--> /va
 **What the proxy blocks.** Requests to `/exec` (so an exec created under `/containers/<id>/exec` can never be started), `/build`, `/commit`, `/swarm`, `/services`, `/tasks`, `/nodes`, `/secrets`, `/configs`, `/plugins`, `/system` (`df`, prune of everything), `/session`, `/distribution`, `/auth` and `/grpc`, and `/containers/<id>/archive`, `/export`, `/logs`, `/top` and `/changes` answer 403; every path outside the allowlist does too. The socket is mounted read-only into the proxy and the proxy has no published port. What it does **not** block: inside the allowed sections it filters by path and method only, never by body, so `POST /containers/create` with a dangerous body (privileged, host binds), kill / restart / pause of any container, image removal and volume or network changes all pass. That is why the proxy is reachable from the updater alone.
 
 **Disable** by stopping and removing `updater` and `docker-proxy` and starting without the profile; nothing else depends on them.
+
+## Cast receiver
+
+FriendFlix's own Cast Web Receiver ([cast-receiver.md](cast-receiver.md), opt-in with `CAST_RECEIVER_APP_ID`) runs on a TV that has
+no FriendFlix session and must never get one. It is a static page (`/cast-receiver/`) plus Google's receiver framework.
+
+**What the TV holds.** The cast token URLs the sender loads or queues (as with the Default Media Receiver), and for each of them a
+**report token** that lets it report the play session of that one token. No session cookie, no CSRF token, no profile token, no
+media-server credential. The receiver never asks the server for a title on its own: the sender's queue and the `next: true` token
+gate (`castPredecessor`, the `povl:` overlap window, `DRAIN_MS`) stay the only way a next episode reaches the TV.
+
+**Report token design** (`backend/src/cast.ts`, `castReportToken` / `verifyCastReport`).
+- `base64url(claims) "." base64url(HMAC-SHA256(k, claims))`, `k = HMAC(APP_ENC_KEY, "friendflix cast report v1")` (a key of its own;
+  the subtitle URLs use another derivation). Claims: account, profile, sender device, castId, item, media source, play session,
+  `exp` = the cast token's absolute cap (1 to 6 hours). Compared in constant time.
+- Valid only while the cast token it was minted with exists and still names the same account, profile, device, item, media source
+  and play session. Everything that ends a cast token ends it: revoke (stop, switch, cancel), logout and session revocation, device
+  revocation, the 45-minute idle expiry, the two-tokens-per-account cap. AirPlay tokens never get one.
+- Bound to the receiver: the request must come from the client address the cast token is pinned to (the TV's first media fetch).
+  A token that was never streamed has no pin and reports nothing; a copied report token is useless from any other address.
+- Re-checked on every use like the media itself: account enabled, role known, profile of the account, sender device approved.
+- Only `start`, `progress` and `stop` of that play session (`POST /api/cast/report`, no cookie, 60 per minute per address). The
+  backend runs the same report code as `/api/playback/*` (`playbackReport` in `routes/media.ts`): a `start` without a live record
+  still needs a free stream slot (429 `max_streams`), the item is resolved with the profile's own media-server user (kids rules and
+  the age cap apply), statistics count a play session once.
+- The next-token gate holds: a queued episode's report token is refused (409) while the play session it follows still plays, so a
+  preloaded episode cannot report itself into a stream of its own.
+- Handed out only when the sender asks with `receiver: true` and `CAST_RECEIVER_APP_ID` is set; the sender sends it only on the
+  private channel `urn:x-cast:com.friendflix.cast`, which other senders cannot read. Media metadata (visible to every sender on the
+  network) carries only the public castId. The raw token is never logged, never in a URL, never in metrics; the receiver keeps it in
+  memory only.
+
+**What someone with a report token can do.** From the TV's address, while that cast token lives: set the resume position and the
+watched state of that one item for that profile, and mark that play session as playing, paused or stopped (affecting "Now playing"
+and the stream count for up to the live record's 45 s, never beyond the limit). They cannot stream, fetch other items, mint tokens,
+change settings or act as the user anywhere else.
+
+**The page.** Served by the web app with its own CSP: scripts only from the own origin and Google's Cast library paths
+(`https://www.gstatic.com/cast/sdk/libs/`, Shaka's path on `ajax.googleapis.com`), media and requests only to the own origin (plus
+`blob:` for the player), no frames, objects or forms, `frame-ancestors 'none'`. The app pages' CSP is unchanged. Sender messages are
+validated field by field (sizes, enums, castId / token shapes) before use; texts are set with `textContent`, never as HTML.
 
 ## Hardening
 

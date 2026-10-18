@@ -2,6 +2,8 @@
 
 Aus dem Player kann ein Film oder eine Folge per Chromecast (und Geräte mit eingebautem Chromecast, z. B. Google TV) auf den Fernseher gesendet werden. Verwendet wird der **Default Media Receiver** von Google: keine Registrierung, keine eigene Receiver-App, kein Google-Konto nötig.
 
+Optional gibt es einen **eigenen FriendFlix-Empfänger** (`/cast-receiver/`, `CAST_RECEIVER_APP_ID`) mit „Nächste Folge“-Countdown, „Noch da?“, Untertitel-Stil und Fortschritt am Fernseher; er braucht eine Registrierung in der Google Cast SDK Developer Console: [de/cast-receiver.md](de/cast-receiver.md) (English: [cast-receiver.md](cast-receiver.md)).
+
 ## Voraussetzungen
 
 - `PUBLIC_URL` beginnt mit `https://` und hat ein **öffentlich gültiges Zertifikat** (Let's Encrypt über NPM genügt). Der Chromecast lädt die Streams selbst von dieser Adresse; ein selbst signiertes Zertifikat oder eine reine LAN-Adresse funktioniert nicht.
