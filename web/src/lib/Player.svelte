@@ -15,6 +15,7 @@
   import { isTypingTarget, nextSubtitle, resolveKey, SHORTCUTS, type KeyAction } from '#lib/player/keymap';
   import { BRIGHTNESS_MIN, brightnessPct, classifyMove, levelFromDrag, registerTap, scrubTarget, TAP_WINDOW, volumeSettable, zoneOf, type Axis, type TapState, type Zone } from '#lib/player/gestures';
   import { creditsStart } from '#lib/player/nextup';
+  import { postplayStart } from '#lib/postplay';
   import { reportPlayback } from '#lib/telemetry';
   import { COOLDOWN_RETRY_MS, decideRecovery, freshRecovery, kindOfMediaError, lowerQuality, MAX_NETWORK_TRIES, networkStep, type ErrorKind } from '#lib/player/retry';
   import { WheelAccumulator } from '#lib/player/wheel';
@@ -75,6 +76,8 @@
   export let startAt: number | undefined = undefined;
   /** second at which the end credits begin (outro segment or the last 25 s); Infinity while unknown. Read by the page for its "next episode" card. */
   export let creditsAt = Infinity;
+  /** 1.1 post-play: second from which the "Done? See what's next" card may show (outro segment, else last chapter, else 95 %); bind:postplayAt */
+  export let postplayAt = Infinity;
   /**
    * Loading poster (watch page): the item's backdrop (else its primary image), dimmed, with the title and a thin progress bar
    * from the first frame of the route until the video has its first frame; then it crossfades out (300 ms). backdrop/image
@@ -163,6 +166,7 @@
   let help = false, live = '', liveN = 0;
   $: showUi = !locked && (paused || menu !== '' || scrubbing || tick - lastActive < 3000);
   $: creditsAt = creditsStart(segments, duration);
+  $: postplayAt = postplayStart(segments, chapters, duration);
   $: skip = segments.find((x) => x.type !== 'recap' && current >= x.start && current < x.end - 1) ?? null;
   $: shown = scrubbing ? scrubTime : current;
   $: pct = duration ? Math.min(100, (shown / duration) * 100) : 0;

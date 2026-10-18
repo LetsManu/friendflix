@@ -145,6 +145,11 @@ export default {
     loadFailed: 'Der Status konnte nicht geladen werden.',
     numbers: 'Zahlen',
     pendingRequests: 'Offene Wünsche',
+    recoIndex: 'Empfehlungs-Index',
+    recoIndexUpdated: 'Aktualisiert {when}',
+    recoIndexNever: 'Noch nicht aufgebaut',
+    recoIndexBuilding: 'Wird aufgebaut …',
+    recoIndexOff: 'Vom Medienserver nicht unterstützt',
   },
   leaving: {
     left: 'Verbleibend',

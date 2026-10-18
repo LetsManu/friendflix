@@ -2,9 +2,10 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
 <script lang="ts">
   import { onDestroy, onMount, tick } from 'svelte';
+  import { recoPlayStarted } from '#lib/reco';
   import { pageStore } from '#lib/page';
   const page = pageStore();
-  import { goto } from '$app/navigation';
+  import { goto, pushState } from '$app/navigation';
   import { api, cachedItem, img, primeItem, type Item } from '#lib/api';
   import Icon from '#lib/Icon.svelte';
   import Player from '#lib/Player.svelte';
@@ -16,10 +17,16 @@
   import { advanceCountdown, cardVisible, COUNTDOWN_SECONDS, mayAutoplay, nextKind, ringOffset, secondsLeft } from '#lib/player/nextup';
   import { entryFadeMs } from '#lib/player/transition';
   import { castSession } from '#lib/cast/engine';
+  import PostPlay from '#lib/PostPlay.svelte';
+  import { features } from '#lib/capabilities';
+  import { loadPostplay, postplayWanted, type Postplay } from '#lib/postplay';
 
   let video: HTMLVideoElement | null = null;
   let item: Item | null = null, nextEp: Item | null = null, similar: Item[] = [];
   let sleepAfterEpisode = false, creditsAt = Infinity;
+  // 1.1 post-play: no next episode follows -> a small "Done? See what's next" card from the credits (outro segment, else the last
+  // chapter, else 95 %) and the full-screen screen once the title has ended. Nothing ever starts by itself.
+  let postplayAt = Infinity, ppData: Postplay | null = null, ppLoading = false, ppCardClosed = false, ppOpen = false;
   // "next up" card: shown from the start of the credits (Outro segment, else the last 25 s)
   let curTime = 0, dismissed = false, entered = false, askStill = false, elapsed = 0, counting = false, cd: ReturnType<typeof setInterval>;
   $: id = $page.params.id!;
@@ -32,6 +39,9 @@
   let remote = false;
   $: visible = !remote && cardVisible({ kind, current: curTime, start: creditsAt, dismissed });
   $: if (visible && !entered) enterCard(); else if (!visible && entered) leaveCard();
+  $: ppWanted = postplayWanted({ type: item?.type, hasNextEpisode: Boolean(nextEp), feature: $features.postplay, pref: $prefs.postplay, remote });
+  $: ppCard = ppWanted && !ppCardClosed && !ppOpen && Number.isFinite(postplayAt) && curTime >= postplayAt;
+  $: if (ppCard && !ppData && !ppLoading) prefetchPostplay(id);
 
   // ---- while the TV plays (remote): the Player's cast screen shows the engine's next episode; the page follows the TV ----
   /** the TV went on to another title (next episode): the page shows that one; its Player attaches (no new token) */
@@ -57,12 +67,14 @@
   async function loadItem(wanted: string) {
     item = cachedItem(wanted) ?? null; // title right away when a card/detail view had it
     nextEp = null; similar = []; stopCountdown(); remote = false; dismissed = false; entered = false; askStill = false; curTime = 0; creditsAt = Infinity;
+    postplayAt = Infinity; ppData = null; ppLoading = false; ppCardClosed = false; ppOpen = false; ppToken = ''; ppEntered = false;
     // item and "next episode" in parallel (/next answers null for films)
     const nx = api(`/api/items/${wanted}/next`).then((r) => r.item as Item | null).catch(() => null);
     try {
       const it = (await api(`/api/items/${wanted}`)).item as Item;
       if (wanted !== id) return; // navigated on in the meantime
       item = it; primeItem(it);
+      recoPlayStarted([wanted, it.seriesId]); // playback of a title opened from a recommendation row counts as one play for that row
       if (it.type === 'Episode' && it.seriesId) {
         const n = await nx; // the episode AFTER this one, also across seasons
         if (wanted === id) nextEp = n;
@@ -78,7 +90,7 @@
   function stopCountdown() { clearInterval(cd); counting = false; elapsed = 0; }
   function enterCard() {
     entered = true;
-    if (kind === 'movie') { void loadSimilar(id); return; }
+    if (kind === 'movie') { if (!ppWanted) void loadSimilar(id); return; }
     if (kind !== 'episode') return;
     if ($prefs.autoplayNext && !sleepAfterEpisode && shouldAsk(Date.now(), $prefs)) { askStill = true; return; } // nobody there for a while: do not autoplay on
     if (mayAutoplay({ kind, autoplayNext: $prefs.autoplayNext, sleepAfterEpisode, askStill })) startCountdown();
@@ -109,7 +121,53 @@
   function go() { stopCountdown(); void toEpisode(nextHref()); }
   function onTime() { if (video) curTime = video.currentTime; }
   /** the film is over: a dismissed card comes back (with the countdown) so the viewer is not left at a black screen */
+  async function prefetchPostplay(wanted: string) {
+    ppLoading = true;
+    try { const d = await loadPostplay(wanted); if (wanted === id) ppData = d; } catch { /* the screen loads (and reports) on its own */ }
+  }
+  /**
+   * The open overlay owns one shallow history entry (its own token in page.state), so browser and phone Back close it and keep the
+   * viewer on this title instead of leaving the watch page (spec 3.2). Closing it any other way takes that entry back off.
+   */
+  let ppToken = '', ppSeq = 0, ppEntered = false;
+  /** opens the post-play screen over the finished title (the viewer asked, or the title ended); never plays anything */
+  function openPostplay() {
+    ppOpen = true; stopCountdown();
+    if (video && !video.paused && !video.ended) video.pause();
+    if (document.fullscreenElement) void document.exitFullscreen().catch(() => undefined);
+    if (!ppToken) {
+      ppToken = `${id}:${++ppSeq}:${Date.now()}`;
+      ppEntered = false;
+      pushState('', { ...$page.state, postplay: ppToken });
+    }
+  }
+  function hidePostplay() {
+    ppOpen = false; ppCardClosed = true;
+    tick().then(() => document.querySelector<HTMLElement>('.stage')?.focus?.());
+  }
+  /** Esc / TV Back / "Back to the title": the screen goes away and the viewer stays on this title (its history entry is popped) */
+  function closePostplay() {
+    const pushed = Boolean(ppToken) && $page.state.postplay === ppToken;
+    ppToken = ''; ppEntered = false;
+    hidePostplay();
+    if (pushed) history.back();
+  }
+  /** a title played from the post-play screen: its entry is popped first, then the title replaces this one (one Back leaves) */
+  async function playFromPostplay(e: CustomEvent<string>) {
+    const pushed = Boolean(ppToken) && $page.state.postplay === ppToken;
+    ppToken = ''; ppEntered = false; ppOpen = false;
+    if (pushed) await new Promise<void>((r) => { addEventListener('popstate', () => r(), { once: true }); history.back(); });
+    await toEpisode(e.detail);
+  }
+  // browser / phone Back popped the overlay's entry (the state held our token and no longer does): close it, stay here
+  $: onPpState($page.state.postplay);
+  function onPpState(st: string | undefined) {
+    if (!ppToken) return;
+    if (st === ppToken) ppEntered = true;
+    else if (ppEntered) { ppToken = ''; ppEntered = false; if (ppOpen) hidePostplay(); }
+  }
   function onEnded() {
+    if (ppWanted) { openPostplay(); return; }
     if (kind !== 'episode') return;
     if (dismissed) { dismissed = false; entered = false; }
     if (tvMode()) tick().then(() => document.querySelector<HTMLElement>('.next .go')?.focus()); // TV: after the end OK starts the next episode
@@ -127,8 +185,10 @@
 <svelte:window on:keydown={onKey} />
 <svelte:head><title>{$t('common.pageTitle', { page: item?.name ?? $t('player.pageTitle') })}</title></svelte:head>
 <div class="wrap" style:animation={fadeMs ? `ff-fade-in ${fadeMs}ms ease both` : null}>
+  <!-- the overlay covers the player: while it is open the player's controls are out of the tab order (inert, not a focus trap) -->
+  <div class="stagewrap" inert={ppOpen}>
   {#key id}
-    <Player itemId={id} {poster} title={label(item)} barTitle={bt.title} barSub={bt.sub} seriesId={item?.seriesId ?? ''} isMovie={item?.type === 'Movie'} seasonId={item?.seasonId ?? ''} on:episode={playEpisode} {startAt} {wantAudio} {wantSub} bind:video bind:sleepAfterEpisode bind:creditsAt bind:remote hasNext={Boolean(nextEp)} on:next={() => nextEp && toEpisode(nextHref())} on:timeupdate={onTime} on:ended={onEnded}>
+    <Player itemId={id} {poster} title={label(item)} barTitle={bt.title} barSub={bt.sub} seriesId={item?.seriesId ?? ''} isMovie={item?.type === 'Movie'} seasonId={item?.seasonId ?? ''} on:episode={playEpisode} {startAt} {wantAudio} {wantSub} bind:video bind:sleepAfterEpisode bind:creditsAt bind:postplayAt bind:remote hasNext={Boolean(nextEp)} on:next={() => nextEp && toEpisode(nextHref())} on:timeupdate={onTime} on:ended={onEnded}>
       <div slot="top" class="top">
         <button class="icon-btn" aria-label={$t('player.watch.back')} on:click={back}><Icon name="arrow-left" size={30} /></button>
         {#if item}<div class="ttl phone"><b>{item.seriesName ?? item.name}</b>{#if item.seriesName}<span>S{item.parentIndexNumber}:E{item.indexNumber} · {item.name}</span>{/if}</div>{/if}
@@ -153,7 +213,12 @@
           <div class="flex"><button class="btn light go" on:click={go}><Icon name="play" size={20} />{$t('player.watch.next')}</button><button class="sec" on:click={watchCredits}>{$t('player.watch.watchCredits')}</button></div>
           <span class="sr" role="status">{counting ? $t('player.watch.startsIn', { n: secondsLeft(elapsed) }) : ''}</span>
         </div>
-      {:else if visible && kind === 'movie' && similar.length}
+      {:else if ppCard}
+        <div class="next pp ui" data-nav role="region" aria-label={$t('postplay.card.title')} data-testid="postplay-card">
+          <div class="mhead"><b>{$t('postplay.card.title')}</b><button class="icon-btn" aria-label={$t('postplay.card.close')} on:click={() => (ppCardClosed = true)}><Icon name="x" size={20} /></button></div>
+          <div class="flex"><button class="btn light go" on:click={openPostplay}>{$t('postplay.card.open')}</button></div>
+        </div>
+      {:else if visible && kind === 'movie' && similar.length && !ppWanted}
         <div class="next more ui" data-nav role="dialog" aria-label={$t('player.watch.more')}>
           <div class="mhead"><b>{$t('player.watch.more')}</b><button class="icon-btn" aria-label={$t('common.close')} on:click={watchCredits}><Icon name="x" size={20} /></button></div>
           <ul>{#each similar as m (m.id)}
@@ -162,10 +227,13 @@
       {/if}
     </Player>
   {/key}
+  </div>
+  {#if ppOpen}<PostPlay itemId={id} variant="overlay" data={ppData} on:close={closePostplay} on:play={playFromPostplay} />{/if}
 </div>
 
 <style>
   .wrap { position: fixed; inset: 0; background: var(--bg); z-index: 40; }
+  .stagewrap { display: contents; }
   :global(html.ff-watch), :global(html.ff-watch body) { background: #000; }
   .wrap :global(.stage) { height: 100%; }
   /* below the status bar / Dynamic Island (portrait) and clear of the notch (landscape); the gradient still covers the status bar */
