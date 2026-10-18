@@ -53,7 +53,7 @@
     // only a change on the TV counts: a title opened here is sent to the TV by its own Player (then the ids match)
     if (!changed || !itemId || !remote || itemId === id) return;
     followedTv = true;
-    void goto(`/watch/${itemId}`, { replace: true });
+    void goto(`/watch/${itemId}`, { replaceState: true });
   }
   const RING = 2 * Math.PI * 20;
   // no view transition running (no API, reduced motion): the page fades in instead of cutting; TV: no transition at all
@@ -83,6 +83,8 @@
 
   const back = () => (history.length > 1 ? history.back() : goto('/'));
   const nextHref = () => `/watch/${nextEp!.id}${langQ ? '?' + langQ : ''}`;
+  /** moving on to another episode inside the player replaces the history entry: one Back leaves the player, however many episodes ran */
+  const toEpisode = (href: string) => goto(href, { replaceState: true });
   function stopCountdown() { clearInterval(cd); counting = false; elapsed = 0; }
   function enterCard() {
     entered = true;
@@ -98,7 +100,7 @@
       const now = Date.now(), dt = now - last; last = now;
       const r = advanceCountdown(elapsed, dt, !video || !video.paused || video.ended); // paused = the countdown waits
       elapsed = r.elapsed;
-      if (r.done) { stopCountdown(); if (nextEp) { noteAutoplay(); goto(nextHref()); } }
+      if (r.done) { stopCountdown(); if (nextEp) { noteAutoplay(); void toEpisode(nextHref()); } }
     }, 100);
   }
   async function loadSimilar(wanted: string) {
@@ -113,8 +115,8 @@
   // (following the TV is no interaction either: a tap on the card or bar already counted, an autoplay must not)
   $: if (id) opened();
   function opened() { if (followedTv) followedTv = false; else if (!consumeAutoplay()) noteInteraction(); }
-  function stillGo() { noteInteraction(); askStill = false; goto(nextHref()); }
-  function go() { stopCountdown(); goto(nextHref()); }
+  function stillGo() { noteInteraction(); askStill = false; void toEpisode(nextHref()); }
+  function go() { stopCountdown(); void toEpisode(nextHref()); }
   function onTime() { if (video) curTime = video.currentTime; }
   /** the film is over: a dismissed card comes back (with the countdown) so the viewer is not left at a black screen */
   function onEnded() {
@@ -125,7 +127,7 @@
   const tvMode = () => document.documentElement.classList.contains('tv');
   function onKey(e: KeyboardEvent) { if ((e.key === 'Escape' || (tvMode() && isBackKey(e))) && !document.fullscreenElement) { e.preventDefault(); back(); } }
   $: bt = barTitles(item, $t);
-  const playEpisode = (e: CustomEvent<{ id: string }>) => goto(`/watch/${e.detail.id}${langQ ? '?' + langQ : ''}`);
+  const playEpisode = (e: CustomEvent<{ id: string }>) => toEpisode(`/watch/${e.detail.id}${langQ ? '?' + langQ : ''}`);
   const label = (i: Item | null) => (i ? (i.seriesName ? `${i.seriesName} · S${i.parentIndexNumber}:E${i.indexNumber} ${i.name}` : i.name) : '');
   onDestroy(() => { stopCountdown(); clearInterval(tvTick); });
   // the player fills the whole screen: whatever the system draws over (status bar, home indicator) sits on black, not on the page colour
@@ -136,7 +138,7 @@
 <svelte:head><title>{$t('common.pageTitle', { page: item?.name ?? $t('player.pageTitle') })}</title></svelte:head>
 <div class="wrap" style:animation={fadeMs ? `ff-fade-in ${fadeMs}ms ease both` : null}>
   {#key id}
-    <Player itemId={id} {poster} title={label(item)} barTitle={bt.title} barSub={bt.sub} seriesId={item?.seriesId ?? ''} isMovie={item?.type === 'Movie'} seasonId={item?.seasonId ?? ''} on:episode={playEpisode} {startAt} {wantAudio} {wantSub} bind:video bind:sleepAfterEpisode bind:creditsAt bind:remote hasNext={Boolean(nextEp)} on:next={() => nextEp && goto(nextHref())} on:timeupdate={onTime} on:ended={onEnded}>
+    <Player itemId={id} {poster} title={label(item)} barTitle={bt.title} barSub={bt.sub} seriesId={item?.seriesId ?? ''} isMovie={item?.type === 'Movie'} seasonId={item?.seasonId ?? ''} on:episode={playEpisode} {startAt} {wantAudio} {wantSub} bind:video bind:sleepAfterEpisode bind:creditsAt bind:remote hasNext={Boolean(nextEp)} on:next={() => nextEp && toEpisode(nextHref())} on:timeupdate={onTime} on:ended={onEnded}>
       <div slot="top" class="top">
         <button class="icon-btn" aria-label={$t('player.watch.back')} on:click={back}><Icon name="arrow-left" size={30} /></button>
         {#if item}<div class="ttl phone"><b>{item.seriesName ?? item.name}</b>{#if item.seriesName}<span>S{item.parentIndexNumber}:E{item.indexNumber} · {item.name}</span>{/if}</div>{/if}
@@ -201,9 +203,9 @@
     :global(html:not(.tv)) .ttl.phone { display: block; flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; line-height: 1.3; }
     :global(html:not(.tv)) .ttl.phone span { font-size: .9rem; }
     :global(html:not(.tv)) .ttl.phone span::before { content: ' · '; }
-    :global(html:not(.tv)) .next { bottom: calc(var(--bar-h, 10rem) + 4rem); right: max(1rem, var(--safe-right)); }
+    :global(html:not(.tv)) .next { right: max(1rem, var(--safe-right)); }
   }
-  .next { position: absolute; right: var(--pad-x); bottom: 8.5rem; z-index: 9; background: rgba(16,20,24,.94); border: 1px solid #3b444e; border-radius: 8px; padding: 1rem 1.2rem; display: flex; flex-direction: column; gap: .8rem; max-width: min(380px, 92vw); }
+  .next { position: absolute; right: var(--pad-x); z-index: 9; background: rgba(16,20,24,.94); border: 1px solid #3b444e; border-radius: 8px; padding: 1rem 1.2rem; display: flex; flex-direction: column; gap: .8rem; max-width: min(380px, 92vw); }
   .nt { display: flex; flex-direction: column; gap: .15rem; }
   .next { width: min(400px, calc(100vw - 2rem)); } .next.more { width: min(440px, calc(100vw - 2rem)); }
   .nrow { display: flex; gap: .9rem; align-items: center; }
@@ -219,8 +221,8 @@
   .more img, .more .nph { width: 100%; aspect-ratio: 2 / 3; object-fit: cover; border-radius: 6px; display: block; }
   .mt { font-size: .85rem; line-height: 1.2; display: -webkit-box; -webkit-line-clamp: 2; line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
   .sr { position: absolute; width: 1px; height: 1px; margin: -1px; overflow: hidden; clip-path: inset(50%); }
-  /* above the skip button (7.5rem) and, on phones in portrait, above the two-row control bar */
-  .next { bottom: 12.5rem; }
-  @media (max-width: 720px) { .next { bottom: 14rem; right: 1rem; } .nthumb { width: 104px; } }
-  @media (max-height: 520px) { .next { bottom: 6rem; } .nthumb { display: none; } }
+  /* above the skip button, which sits above the control bar (--ctl-h: its measured height, set by the Player): the two never overlap */
+  .next { bottom: calc(var(--ctl-h, 8rem) + 4.5rem); }
+  @media (max-width: 720px) { .next { right: 1rem; } .nthumb { width: 104px; } }
+  @media (max-height: 520px) { .nthumb { display: none; } }
 </style>

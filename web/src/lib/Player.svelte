@@ -154,7 +154,7 @@
   $: ccOn = phone && showUi && !locked && !error && !reconnecting && !(posterOn && !posterOut);
   $: phoneChip = phone && Boolean(info && mode && !remote);
   /** height of the bottom bar: panels, the skip button and the page's cards sit above it (phones only; elsewhere the old fixed offsets apply) */
-  $: barVar = phone && ctlH ? `;--bar-h:${ctlH}px` : '';
+  $: barVar = (phone && ctlH ? `;--bar-h:${ctlH}px` : '') + (ctlH ? `;--ctl-h:${ctlH}px` : '');
   let hud: { icon: string; text: string; pct: number } | null = null, hudT: ReturnType<typeof setTimeout>;
   let ripple: { zone: Zone; total: number; n: number } | null = null, rippleT: ReturnType<typeof setTimeout>;
   let help = false, live = '', liveN = 0;
@@ -1440,7 +1440,8 @@
   .airready .airhint { opacity: .95; }
   .castbox button { pointer-events: auto; border: 1px solid #fff; padding: .6rem 1.4rem; }
   .toast { position: absolute; left: 50%; top: 18%; transform: translateX(-50%); background: rgba(0,0,0,.75); padding: .55rem 1.2rem; border-radius: 999px; z-index: 9; font-weight: 600; max-width: 90%; text-align: center; }
-  .skipbtn { position: absolute; right: calc(var(--pad-x) + var(--inset, 0px)); bottom: 7.5rem; z-index: 8; border: 1px solid #fff; padding: .7rem 1.5rem; }
+  /* sits above the whole control bar box (its transparent gradient padding included, --ctl-h is its measured height) and on top of it in z-order, so no part of the button is covered by the bar */
+  .skipbtn { position: absolute; right: calc(var(--pad-x) + var(--inset, 0px)); bottom: calc(var(--ctl-h, 7rem) + .5rem); z-index: 9; border: 1px solid #fff; padding: .7rem 1.5rem; }
   .ovl { position: absolute; inset: 0 var(--inset, 0px) auto 0; z-index: 7; pointer-events: none; transition: opacity var(--t-med); }
   .ovl :global(*) { pointer-events: auto; }
   .ovl.hide { opacity: 0; } .ovl.hide :global(*) { pointer-events: none; }

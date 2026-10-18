@@ -19,6 +19,8 @@ All notable changes, grouped by what you notice. Each release has its own sectio
 - **Fix:** the admin's *Send password link* works again on Authentik 2026.8 (the e-mail stage is now recognised by its model, not by an admin form name).
 
 ### Streaming
+- **Fix:** the *Skip intro / credits* button is clickable over its whole area (the control bar's transparent top edge used to sit on its lower half), and the *Next episode* card no longer crowds it.
+- **Fix:** moving on to the next episode (button, autoplay, *Are you still watching?*, episode list) replaces the history entry, so one Back leaves the player instead of one per episode.
 - **Adaptive quality:** *Auto* picks the quality your connection can carry (the last estimate is remembered per device for 7 days), steps down after a stall or a network error and steps back up once the connection is steady. A chip in the player shows "Original" or "Converted · 720p"; tap it for the reason.
 - **Remote limit per role:** outside the home network each role has its own bitrate cap (defaults: friends and family 8, guests 4, admins 12 Mbit/s), set on the admin roles page. Home networks are listed in `HOME_NETWORKS`; the server and the gateway enforce the cap, so the browser cannot raise it. See docs/operations.md.
 - **Explicit transcode bitrates:** converted streams ask for video and audio bitrates that match the chosen quality, so the picture is the one the chip shows.
