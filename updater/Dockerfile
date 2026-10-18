@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # The opt-in updater (compose profile `updater`, docs/operations.md "Updater"): a small Node service with the docker CLI +
 # compose plugin and cosign. It never mounts the Docker socket: it talks to the socket proxy (DOCKER_HOST=tcp://docker-proxy:2375).
-FROM node:26-alpine@sha256:143494b1da2945f061539253adc65e4f1569ddf07da2d384c022c791a9d90a4a AS build
+FROM node:26-alpine@sha256:6f08a523443ddedf52941874c203475b0ad503e859ad70cb26ab8be9a517dbd5 AS build
 WORKDIR /app
 COPY package.json package-lock.json tsconfig.base.json ./
 COPY backend/package.json backend/
@@ -14,7 +14,7 @@ RUN npm ci
 COPY updater updater
 RUN npm run build -w updater
 
-FROM node:26-alpine@sha256:143494b1da2945f061539253adc65e4f1569ddf07da2d384c022c791a9d90a4a
+FROM node:26-alpine@sha256:6f08a523443ddedf52941874c203475b0ad503e859ad70cb26ab8be9a517dbd5
 ARG GIT_SHA=dev
 ARG BUILD_TIME=
 ARG APP_VERSION=
