@@ -51,6 +51,8 @@ export interface AdminState {
   seerrUp: boolean;
   /** make GET /api/admin/summary fail (500) */
   summaryFails: boolean;
+  /** recommendation item index (summary.recoIndex) */
+  recoIndex: { supported: boolean; running: boolean; items: number; updatedAt: string | null };
   /** removal dates ("Bald weg", /api/admin/leaving) */
   leaving: LeavingRow[];
   /** optional TMDB/OMDb keys (/api/admin/sources); the real API never returns more than last4 */
@@ -198,6 +200,7 @@ export function adminState(): AdminState {
     ],
     seerrUp: true,
     summaryFails: false,
+    recoIndex: { supported: true, running: false, items: 1234, updatedAt: ago(3) },
     leaving: [leavingRow('00000000000000000000000000000001', 1, 'Lizenz endet'), leavingRow('00000000000000000000000000000002', 5, null), leavingRow('00000000000000000000000000000003', 20, 'Rechte laufen aus')],
     sources: [{ name: 'tmdb', set: false, last4: null, from: null, invalid: false }, { name: 'omdb', set: true, last4: 'k3y9', from: 'db', invalid: false, usedToday: 12, budget: 900 }],
     health: healthOk(),
@@ -405,6 +408,7 @@ export function adminSummary(st: AdminState) {
     playbackCheck: { finishedAt: ago(2), total: 20, failed: 1 },
     services: { jellyfin: true, seerr: st.seerrUp },
     live: { streams: 2, partyRooms: 1 },
+    recoIndex: st.recoIndex,
   };
 }
 
@@ -421,6 +425,14 @@ export function adminRoute(st: AdminState, m: string, p: string, sp: URLSearchPa
   const log = (action: string, target: string | null, meta: Record<string, unknown> = {}, target_name: string | null = null) =>
     st.audit.unshift({ id: (st.audit[0]?.id ?? 0) + 1, at: new Date().toISOString(), action, target, meta, actor: 'Tester', target_name });
 
+  // R4: CTR and play rate per recommendation engine (the server's counters)
+  if (p === '/api/admin/reco') return J({
+    engine: 'shadow', fallbacks: 3, since: '2026-10-18T08:00:00.000Z',
+    engines: {
+      v1: { impressions: 400, clicks: 40, plays: 20, dismisses: 4, ctr: 0.1, playRate: 0.05 },
+      v2: { impressions: 0, clicks: 0, plays: 0, dismisses: 0, ctr: null, playRate: null },
+    },
+  });
   if (p === '/api/admin/summary') return st.summaryFails ? J({ error: 'boom' }, 500) : J(adminSummary(st));
   if (p === '/api/admin/status') {
     const s = adminSummary(st);

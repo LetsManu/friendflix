@@ -148,6 +148,11 @@ const dict: Translation<typeof de> = {
     loadFailed: 'Durum yüklenemedi.',
     numbers: 'Sayılar',
     pendingRequests: 'Bekleyen istekler',
+    recoIndex: 'Öneri dizini',
+    recoIndexUpdated: 'Güncellendi: {when}',
+    recoIndexNever: 'Henüz oluşturulmadı',
+    recoIndexBuilding: 'Oluşturuluyor…',
+    recoIndexOff: 'Medya sunucusu desteklemiyor',
   },
   leaving: {
     left: 'Kalan',

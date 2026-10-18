@@ -153,6 +153,11 @@ const dict: Translation<typeof de> = {
     loadFailed: 'Nie udało się wczytać stanu.',
     numbers: 'Liczby',
     pendingRequests: 'Oczekujące prośby',
+    recoIndex: 'Indeks rekomendacji',
+    recoIndexUpdated: 'Zaktualizowano {when}',
+    recoIndexNever: 'Jeszcze nie zbudowany',
+    recoIndexBuilding: 'Budowanie…',
+    recoIndexOff: 'Nieobsługiwane przez serwer multimediów',
   },
   leaving: {
     left: 'Pozostało',
