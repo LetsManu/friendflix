@@ -170,6 +170,34 @@ test.describe('admin health page', () => {
     await expect(page.getByRole('region', { name: 'Hinweise' }).getByText('Gespeichert.')).toBeVisible();
   });
 
+  test('sign-in card: a refused service token, the executor check, the last error and the one-click repair', async ({ page, api }) => {
+    api.admin.loginCheck = {
+      ...loginCheckOk(), warnings: ['token:invalid', 'executor:non_json'],
+      serviceToken: { token: 'invalid', missing: [] },
+      executor: { ok: false, cls: 'non_json', status: 200, endpoint: 'api/v3/flows/executor/default-authentication-flow/' },
+      lastFailures: [{ area: 'api', cls: 'token_invalid', status: 403, endpoint: 'api/v3/core/users/', at: '2026-10-18T08:00:00.000Z' }],
+    };
+    await page.goto('/admin/status');
+    const card = page.getByRole('region', { name: 'Anmeldung', exact: true });
+    await expect(card.getByText('Von Authentik abgelehnt')).toBeVisible();
+    await expect(card.getByText(/Fehler: keine JSON-Antwort .* \(HTTP 200\) bei api\/v3\/flows\/executor\/default-authentication-flow\//)).toBeVisible();
+    await expect(card.getByText(/Authentik-API: Token abgelehnt \(HTTP 403\), api\/v3\/core\/users\//)).toBeVisible();
+    await expect(card.getByText(/Authentik lehnt das Dienst-Token \(AUTHENTIK_API_TOKEN\) ab/)).toBeVisible();
+    await expect(card.getByText(/Prüf, ob AUTHENTIK_URL die Adresse ist/)).toBeVisible();
+    const form = card.getByRole('form', { name: 'Authentik-Einrichtung reparieren' });
+    const run = form.getByRole('button', { name: 'Reparieren' });
+    await expect(run).toBeDisabled();
+    await form.getByLabel('Authentik-Admin-Token (Superuser, einmalig)').fill('ak-admin-placeholder-e2e');
+    await run.click();
+    await expect(form.getByRole('status')).toHaveText('Authentik-Einrichtung repariert. Das neue Dienst-Token wurde gespeichert.');
+    await expect(form.getByRole('list')).toContainText('Dienstkonto für Einladungen');
+    await expect(form.getByLabel('Authentik-Admin-Token (Superuser, einmalig)')).toHaveValue(''); // used once, never kept
+    expect(api.admin.repairs).toEqual([{ token: 'ak-admin-placeholder-e2e' }]);
+    // the card shows the state after the repair
+    await expect(card.getByText('Alles in Ordnung.')).toBeVisible();
+    await expect(card.getByText('Von Authentik abgelehnt')).toHaveCount(0);
+  });
+
   test('sign-in card: a cover switch from the environment is locked', async ({ page, api }) => {
     api.settings.groups.find((g) => g.id === 'general')!.items.find((i) => i.key === 'LOGIN_COVER_WALL')!.source = 'env';
     await page.goto('/admin/status');

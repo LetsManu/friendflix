@@ -129,6 +129,11 @@ export interface AccountSecurity {
   /** the e-mail change flow exists in Authentik */
   emailChange: boolean;
   emailChangePending: string | null;
+  /** the Authentik username (null: not readable right now) and whether it can be changed here */
+  username?: string | null;
+  usernameChange?: boolean;
+  /** why Authentik could not be read: the service token was refused, no answer, something else, or no Authentik API at all */
+  problem?: 'service_token' | 'unreachable' | 'error' | 'not_configured' | null;
 }
 /** GET /api/devices: the account's own devices */
 export interface OwnDevice { id: string; label: string; approved: boolean; current: boolean; created_at: string; last_seen: string }

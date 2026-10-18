@@ -56,6 +56,9 @@ export interface MockState {
   securityStale: boolean;
   /** DELETE calls (type/id) */
   securityDeleted: string[];
+  /** PUT /api/account/security/username: the names sent; `usernameError` answers that code (409, or 401 for reauth_required) */
+  usernamePuts: string[];
+  usernameError: string | null;
 }
 export interface MockAccount {
   name: string; email: string | null; avatar: string;
@@ -68,6 +71,9 @@ export interface MockSecurity {
   passkeySetup: 'in-app' | 'sign-in page';
   emailChange: boolean;
   emailChangePending: string | null;
+  username?: string | null;
+  usernameChange?: boolean;
+  problem?: 'service_token' | 'unreachable' | 'error' | 'not_configured' | null;
 }
 export interface MockDevice { id: string; label: string; approved: boolean; current: boolean; created_at: string; last_seen: string }
 
@@ -95,10 +101,12 @@ export function freshState(): MockState {
     security: {
       mfa: { totp: true, webauthn: false, static: true },
       devices: [{ id: '11', type: 'totp', name: 'Pixel 8', lastUsed: null }, { id: '21', type: 'static', name: 'Recovery', lastUsed: null }],
-      passkeySetup: 'sign-in page', emailChange: true, emailChangePending: null,
+      passkeySetup: 'sign-in page', emailChange: true, emailChangePending: null, username: 'anna', usernameChange: true, problem: null,
     },
     securityStale: false,
     securityDeleted: [],
+    usernamePuts: [],
+    usernameError: null,
   };
 }
 
@@ -185,6 +193,13 @@ export async function installApi(ctx: BrowserContext, st: MockState): Promise<vo
     }
     // deleting the account needs a recent sign-in (reauthUntil); the backend then ends the session
     if (p === '/api/account/security' && m === 'GET') return J(st.security);
+    if (p === '/api/account/security/username' && m === 'PUT') {
+      const name = String((body() as { username?: unknown } | null)?.username ?? '');
+      st.usernamePuts.push(name);
+      if (st.usernameError) return J({ error: st.usernameError }, st.usernameError === 'reauth_required' ? 401 : st.usernameError === 'username_invalid' ? 400 : 409);
+      st.security = { ...st.security, username: name.trim() };
+      return J({ ok: true, username: name.trim() });
+    }
     if ((mm = p.match(/^\/api\/account\/security\/devices\/(totp|static|webauthn)\/(\d+)$/)) && m === 'DELETE') {
       if (st.securityStale) return J({ error: 'reauth_required' }, 401);
       st.securityDeleted.push(`${mm[1]}/${mm[2]}`);
