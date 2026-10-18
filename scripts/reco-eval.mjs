@@ -25,7 +25,8 @@
  * --gate makes a failed gate exit with code 1.
  *
  * R3: v2 also uses co-occurrence, transitions and trending built from the dataset's other profiles (minimum support of 2 profiles, as live).
- * `--ablation` prints one table: v2 with each score component switched off in turn, and what that does to NDCG@10 (home), HitRate@10 and
+ * R3b: `--ipw` replays a logged exploration policy (v2 with RECO_EXPLORE-style exploration, seeded) and values other rankings from the log by
+ * inverse propensity weighting, next to their true value. `--ablation` prints one table: v2 with each score component switched off in turn, and what that does to NDCG@10 (home), HitRate@10 and
  * transition accuracy (post-play). Context features, the friends signal and fresh labels need data a dataset does not have (time of day,
  * device, friends, library dates) and are reported as not evaluable.
  */
@@ -222,6 +223,10 @@ export function v2Engine(mod, { off = [] } = {}) {
     recommend({ surface, history, seed, k, disliked }) {
       return eng.recommend({ surface, history, ...(seed ? { seed } : {}), k, disliked });
     },
+    /** the ranked list and the scored pool (for exploration), R3b */
+    slate({ surface, history, seed, k, disliked }) {
+      return eng.slate({ surface, history, ...(seed ? { seed } : {}), k, disliked });
+    },
   };
 }
 
@@ -260,6 +265,81 @@ export function ablation(data, mod, { minInteractions = MIN_INTERACTIONS, minPro
     return { component, ndcg: m.ndcg, hitRate: m.hitRate, transitionAccuracy: m.transitionAccuracy, diversity: m.diversity, dNdcg, dHitRate: round(m.hitRate - full.hitRate), dTrans, dDiversity, verdict };
   });
   return { meta: { k: K, evaluatedProfiles: tr.cases.length, epsilon: round(eps), notEvaluable: NOT_EVALUABLE }, full: { ndcg: full.ndcg, hitRate: full.hitRate, transitionAccuracy: full.transitionAccuracy, diversity: full.diversity }, rows };
+}
+
+export const IPW_DEFAULTS = { explore: 0.1, rounds: 200, seed: 1 };
+
+/**
+ * Inverse-propensity-weighted replay (spec 4.5, 4.7; R3b). The logging policy is engine v2 with exploration at rate `explore`: every case's
+ * slate is v2's top 10 with about one eligible slot in ten (the best 3 are never touched) replaced by a medium-score candidate, repeated
+ * for `rounds` rounds with a seeded generator. Each logged slot carries its propensity: 1 - explore for the ranked title, explore / band
+ * size for an explored one, 1 for the protected top. A target policy (any ranking) is then valued from the log alone:
+ *     value = mean over cases and rounds of  sum over slots j of  discount(j) * [logged_j = target_j = held-out title] / propensity_j
+ * (discount(j) = 1 / log2(j + 2), so this is NDCG@10), and compared with its true value on the same cases. The estimate is unbiased for
+ * every slot whose target title had a chance of being logged ("support"); the share of such slots is reported, because a target that wants
+ * titles the logging policy never shows cannot be valued from the log at all. With `explore` 0 only the logging policy itself is valued.
+ * Targets: v2 itself, v2 without co-occurrence / without taste affinity, popularity, co-occurrence.
+ */
+export function ipwReplay(data, mod, { explore = IPW_DEFAULTS.explore, rounds = IPW_DEFAULTS.rounds, seed = IPW_DEFAULTS.seed, minInteractions = MIN_INTERACTIONS, minProfiles = 1 } = {}) {
+  const prep = prepare(data);
+  const tr = split(prep, minInteractions);
+  if (tr.cases.length < minProfiles) throw new Error(`only ${tr.cases.length} profile(s) with >= ${minInteractions} interactions; need ${minProfiles} for aggregates`);
+  const logger = v2Engine(mod);
+  logger.fit({ profiles: tr.train }, prep);
+  const policies = {
+    v2: logger, 'v2 without cooccurrence': v2Engine(mod, { off: ['cooccurrence'] }), 'v2 without affinity': v2Engine(mod, { off: ['affinity'] }),
+    popularity: ENGINES.popularity(), cooccurrence: ENGINES.cooccurrence(),
+  };
+  for (const e of Object.values(policies)) if (e !== logger) e.fit({ profiles: tr.train }, prep);
+  const q = (c) => ({ surface: 'home', history: c.history, seed: c.history[c.history.length - 1]?.item, k: K, disliked: c.disliked });
+  const disc = (j) => 1 / Math.log2(j + 2);
+  const rng = mod.seededRng(seed);
+  // the logs: per case, `rounds` slates with their propensities
+  const logs = tr.cases.map((c) => {
+    const s = logger.slate(q(c));
+    return Array.from({ length: rounds }, () => mod.exploreSlate(s.ranked, s.pool, explore, rng));
+  });
+  const out = [];
+  for (const [name, eng] of Object.entries(policies)) {
+    let truth = 0, truthSupported = 0, est = 0, slots = 0, supported = 0, matches = 0, sumW = 0, sumW2 = 0;
+    tr.cases.forEach((c, n) => {
+      const target = eng.recommend(q(c)).slice(0, K);
+      const at = target.indexOf(c.target);
+      if (at >= 0) truth += disc(at);
+      const seen = target.map(() => false);
+      for (const l of logs[n]) {
+        target.forEach((id, j) => {
+          if (l.ids[j] === id) seen[j] = true;
+          if (j === at && l.ids[j] === id) {
+            const w = 1 / l.propensity[j];
+            est += disc(j) * w; matches++; sumW += w; sumW2 += w * w;
+          }
+        });
+      }
+      if (at >= 0 && seen[at]) truthSupported += disc(at);
+      slots += target.length;
+      supported += seen.filter(Boolean).length;
+    });
+    const cases = tr.cases.length;
+    out.push({
+      policy: name, direct: round(truth / cases), supported: round(truthSupported / cases), ipw: round(est / (cases * rounds)), support: round(slots ? supported / slots : null),
+      matches, effectiveSample: round(sumW2 ? (sumW * sumW) / sumW2 : 0, 1),
+    });
+  }
+  return { meta: { k: K, evaluatedProfiles: tr.cases.length, explore, rounds, seed }, rows: out };
+}
+
+export function formatIpw(res) {
+  const lines = [`inverse-propensity-weighted replay of the v2 logging policy with exploration ${res.meta.explore} (profiles: ${res.meta.evaluatedProfiles}, rounds: ${res.meta.rounds}, seed: ${res.meta.seed}, k=${res.meta.k})`, ''];
+  lines.push('target policy'.padEnd(26) + ['true NDCG@10', 'true, supported', 'IPW estimate', 'error', 'support', 'matches', 'eff. n'].map((h) => h.padStart(17)).join(''));
+  for (const r of res.rows) {
+    const err = r.ipw === null || r.supported === null ? null : r.ipw - r.supported;
+    lines.push(r.policy.padEnd(26) + [num(r.direct), num(r.supported), num(r.ipw), err === null ? '   n/a' : (err > 0 ? '+' : '') + err.toFixed(3), pct(r.support), String(r.matches), String(r.effectiveSample)].map((h) => h.padStart(17)).join(''));
+  }
+  lines.push('', 'support = share of the target slots whose title the logging policy showed there at least once. "true, supported" = the true value counting only supported slots;',
+    'the IPW estimate is unbiased for that (error = IPW minus it). Titles the log never showed cannot be valued, so for a target that differs from v2 the estimate is a lower bound of the true value.',
+    'A target is valued from the explored slots that happen to match: noisy (see eff. n).');
+  return lines.join('\n');
 }
 
 // -------------------------------------------------------------------------------------------------------------- metrics
@@ -438,6 +518,10 @@ export function parseArgs(argv) {
     else if (a === '--json') o.json = true;
     else if (a === '--exclude-seen') o.excludeSeen = true;
     else if (a === '--ablation') o.ablation = true;
+    else if (a === '--ipw') o.ipw = true;
+    else if (a === '--explore') o.explore = Number(val());
+    else if (a === '--rounds') o.rounds = Number(val());
+    else if (a === '--seed') o.seed = Number(val());
     else if (a === '--data') o.data = val();
     else if (a === '--items') o.items = val();
     else if (a === '--similar') o.similar = val();
@@ -453,9 +537,10 @@ export function parseArgs(argv) {
   return o;
 }
 
-const HELP = `usage: node scripts/reco-eval.mjs [--data file.json | --db] [--engines popularity,v1,cooccurrence,v2] [--exclude-seen] [--json] [--ablation]
+const HELP = `usage: node scripts/reco-eval.mjs [--data file.json | --db] [--engines popularity,v1,cooccurrence,v2] [--exclude-seen] [--json] [--ablation] [--ipw] [--ipw]
   (v2 needs the compiled backend: npm run build -w backend; RECO_EVAL_DIST = another build directory)
   --ablation        v2 with each score component left out in turn: which ones move NDCG@10 (needs the compiled backend)
+  --ipw             inverse-propensity-weighted replay of v2 with exploration (--explore 0.1, --rounds 200, --seed 1); needs the compiled backend
   --gate            exit 1 when v2 does not beat every baseline on NDCG@10 by the margin (spec 4.7 gate)
   --gate-margin X   relative margin of the gate (default 0.05 = 5 %)
   --db              read interactions from DATABASE_URL (read only); --items / --similar add features and recorded similar() answers
@@ -482,6 +567,12 @@ export async function main(argv, env = process.env, log = (s) => out.log(s), war
   if (o.plugin) registry = { ...registry, ...(await import(pathToFileURL(o.plugin).href)).engines };
   if (!v2 && o.engines?.includes('v2') && !registry.v2) throw new Error('engine v2 needs the compiled backend: run `npm run build -w backend` (or set RECO_EVAL_DIST)');
   if (!v2 && !o.engines && !registry.v2) warn('reco-eval: v2 not evaluated, the backend is not built (npm run build -w backend)');
+  if (o.ipw) {
+    if (!v2) throw new Error('--ipw needs the compiled backend: run `npm run build -w backend` (or set RECO_EVAL_DIST)');
+    const rep = ipwReplay(data, v2, { ...(Number.isFinite(o.explore) ? { explore: o.explore } : {}), ...(Number.isFinite(o.rounds) ? { rounds: o.rounds } : {}), ...(Number.isFinite(o.seed) ? { seed: o.seed } : {}), minProfiles: o.minProfiles ?? 5 });
+    log(o.json ? JSON.stringify(rep, null, 2) : formatIpw(rep));
+    return 0;
+  }
   if (o.ablation) {
     if (!v2) throw new Error('--ablation needs the compiled backend: run `npm run build -w backend` (or set RECO_EVAL_DIST)');
     const abl = ablation(data, v2, { minProfiles: o.minProfiles ?? 5, excludeSeen: o.excludeSeen });

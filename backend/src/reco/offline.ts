@@ -3,6 +3,7 @@
 import type { ItemDto } from '../media/types.js';
 import { buildPairTables, coocSignals, transitionSignals, type TitleSpan } from './aggregates.js';
 import type { SourceName } from './candidates.js';
+import { explore as exploreFn } from './explore.js';
 import { buildTaste, type Signal } from './profile.js';
 import { mmr } from './rank.js';
 import { scoreCandidate, type Marks, type ScoreContext } from './score.js';
@@ -105,6 +106,16 @@ export function offlineEngine(items: readonly OfflineItem[], similar: Readonly<R
   return {
     name: 'v2',
     recommend(q: OfflineQuery): string[] {
+      return run(q).ranked.map((x) => x.id);
+    },
+    /** The ranked list and the whole scored pool (what exploration draws its medium-score titles from), for the replay. */
+    slate(q: OfflineQuery): { ranked: ScoredOffline[]; pool: ScoredOffline[] } {
+      return run(q);
+    },
+  };
+
+  function run(q: OfflineQuery): { ranked: ScoredOffline[]; pool: ScoredOffline[] } {
+    {
       const last = q.history.reduce((m, e) => Math.max(m, e.t), 0);
       const now = last + 86_400_000;
       const signals: Signal[] = [];
@@ -167,8 +178,24 @@ export function offlineEngine(items: readonly OfflineItem[], similar: Readonly<R
       const marks: Marks = { ...NO_MARKS, thumbsDown: new Set(q.disliked ?? []) };
       const sc: ScoreContext = { surface, c, taste, index, profile: { kids: false, kids_max_rating: 12 }, marks, ...(seed ? { seed } : {}), now };
       const scored = [...cands.values()].filter((x) => !marks.thumbsDown.has(x.id)).map((x) => scoreCandidate(x, asItem(x.id, seen), sc));
-      if (off.has('mmr')) return scored.sort((a, b) => b.score - a.score || (a.id < b.id ? -1 : 1)).slice(0, q.k).map((s) => s.id);
-      return mmr(scored.map((s) => Object.assign(s, { franchise: s.row?.collection_id ?? null, genre: s.row?.genres[0] ?? null })), q.k, c).map((s) => s.id);
-    },
-  };
+      const pool: ScoredOffline[] = scored.map((s) => Object.assign(s, { franchise: s.row?.collection_id ?? null, genre: s.row?.genres[0] ?? null }));
+      if (off.has('mmr')) return { ranked: [...pool].sort((a, b) => b.score - a.score || (a.id < b.id ? -1 : 1)).slice(0, q.k), pool };
+      return { ranked: mmr(pool, q.k, c), pool };
+    }
+  }
+}
+
+/** A scored candidate of the offline engine: id, score, franchise (collection) for the per-franchise cap. */
+export interface ScoredOffline { id: string; score: number; franchise: string | null; genre: string | null }
+export { seededRng } from './explore.js';
+
+/**
+ * Exploration for the replay: the same draw as the live engine (explore.ts), over the offline ranked list and pool, keeping the per-franchise
+ * cap. Returns the logged slate (item per slot) and, per slot, the propensity of the item that ended up there (1 for the protected top).
+ */
+export function exploreSlate(ranked: readonly ScoredOffline[], pool: readonly ScoredOffline[], rate: number, rng: () => number, c: RecoCoefficients = recoCoefficients()): { ids: string[]; propensity: number[] } {
+  const x = exploreFn(ranked, pool, rate, c, rng, (cand, rest) => !cand.franchise || rest.filter((r) => r.franchise === cand.franchise).length < c.rank.perFranchise);
+  const p = x.items.map(() => 1);
+  for (const sl of x.slots) p[sl.index] = sl.propensity;
+  return { ids: x.items.map((i) => i.id), propensity: p };
 }

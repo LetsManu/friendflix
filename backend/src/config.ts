@@ -224,6 +224,8 @@ export const configSchema = z.object({
   RECO_ENGINE: z.preprocess(emptyAsUnset, z.enum(['v1', 'v2', 'shadow']).default('v1')),
   /** R2: half-life (days) of the recency decay of a taste signal */
   RECO_HALF_LIFE_DAYS: z.preprocess(emptyAsUnset, z.coerce.number().min(1).max(3650).default(120)),
+  /** R3b: exploration share of the slots in a row (0 = off, the default; 0.1 = about 1 in 10 titles drawn from medium-score candidates, logged as aggregate counters) */
+  RECO_EXPLORE: z.preprocess(emptyAsUnset, z.coerce.number().min(0).max(0.5).default(0)),
   /** R2: JSON object with coefficient overrides by dotted name (reco/weights.ts lists them), e.g. {"signal.thumbUp":2,"surface.because.seed":0.5}; empty = defaults */
   RECO_COEFFS: z.preprocess(emptyAsUnset, z.string().max(4000).optional().superRefine((v, ctx) => {
     if (v === undefined) return;

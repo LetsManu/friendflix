@@ -29,7 +29,7 @@ describe('coefficients', () => {
       const get = (o: any) => name.split('.').reduce((x, k) => x[k], o);
       if (!['rank.lambda', 'rank.genreShare', 'rank.perFranchise', 'profile.historyLimit', 'profile.coldStart', 'profile.topDims', 'score.trendingCap', 'score.ratingFloor', 'candidates.knn', 'candidates.similar', 'signal.halfLifeDays',
         // R3: clamped or rounded on read (the privacy floor of 2 accounts among them)
-        'social.minSupport', 'social.lookbackDays', 'social.transitionDays', 'social.topPerItem', 'social.anchors', 'social.maxRows', 'context.min', 'context.max'].includes(name)) {
+        'social.minSupport', 'social.lookbackDays', 'social.transitionDays', 'social.topPerItem', 'social.anchors', 'social.maxRows', 'context.min', 'context.max', 'explore.from', 'explore.to', 'explore.protectTop', 'rows.minSize', 'rows.fixedSlot', 'rows.currentShare'].includes(name)) {
         expect(get(c), name).toBe(0.5);
       }
     }

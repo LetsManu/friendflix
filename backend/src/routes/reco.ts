@@ -5,9 +5,11 @@ import { z } from 'zod';
 import type { Ctx } from '../ctx.js';
 import { requireUser } from '../session.js';
 import { recoClicks, recoDismiss, recoImpressions } from '../metrics.js';
+import { recoCoefficients } from '../reco/weights.js';
+import { recordRowStats, ROW_KINDS } from '../reco/rows.js';
 
 /** Closed label sets: the metric cardinality is fixed here, whatever the browser sends. New rows / engines are added with their step. */
-export const RECO_ROWS = ['because', 'because_more', 'top_picks', 'popular', 'friends', 'postplay'] as const;
+export const RECO_ROWS = ROW_KINDS;
 export const RECO_ENGINES = ['v1', 'v2'] as const;
 
 /**
@@ -35,6 +37,8 @@ export function recoRoutes(app: FastifyInstance, ctx: Ctx) {
       if (e.clicks) recoClicks.inc(l, e.clicks);
       if (e.dismisses) recoDismiss.inc(l, e.dismisses);
     }
+    // the profile's own aggregate per row kind (counts only) for the row ranker, rows.ts
+    if (req.profile) await recordRowStats(ctx, req.profile.id, parsed.data.events.map((e) => ({ row: e.row, impressions: e.impressions, clicks: e.clicks, dismisses: e.dismisses })), recoCoefficients(ctx.cfg));
     return reply.code(204).send();
   });
 }

@@ -23,6 +23,12 @@ export function recoWeights(cfg: Pick<Config, 'RECO_W_GENRES' | 'RECO_W_TAGS' | 
 export type RecoEngine = 'v1' | 'v2' | 'shadow';
 export const recoEngine = (cfg: Pick<Config, 'RECO_ENGINE'>): RecoEngine => cfg.RECO_ENGINE;
 
+/** R3b: share of the slots of a row that exploration may fill from medium-score candidates (RECO_EXPLORE, default 0 = off, 0.1 = about 1 in 10). */
+export const recoExplore = (cfg: Partial<Pick<Config, 'RECO_EXPLORE'>>): number => {
+  const x = cfg.RECO_EXPLORE;
+  return typeof x === 'number' && Number.isFinite(x) ? Math.max(0, Math.min(0.5, x)) : 0;
+};
+
 /** The score recipe of one surface: coefficient per component (spec 4.5). Inputs of c, t and d arrive with R3; their weights are already here. */
 export interface SurfaceWeights {
   /** a: content affinity cos(pos) - 0.5 cos(neg) */
@@ -145,6 +151,34 @@ export interface RecoCoefficients {
     /** a profile that dropped or abandoned at least this share of the series it started counts as dropping series */
     dropRate: number;
   };
+  /** R3b: exploration (RECO_EXPLORE switches it on) */
+  explore: {
+    /** medium-score candidates: positions from this share ... */
+    from: number;
+    /** ... to this share of the score-ranked pool */
+    to: number;
+    /** the best this many slots of a row are never replaced */
+    protectTop: number;
+  };
+  /** R3b: row ranker (rows.ts) */
+  rows: {
+    /** a row with fewer titles is dropped (continue watching is exempt) */
+    minSize: number;
+    /** position of the fixed "new / leaving soon" slot (0 = top) */
+    fixedSlot: number;
+    /** at most this share of a row may be current-season titles (spec 3.5: 1 in 3) */
+    currentShare: number;
+    /** a title counts as current season when it arrived or premiered within this many days */
+    currentDays: number;
+    /** shrinkage of the per-row-kind play rate towards its prior: pseudo impressions */
+    priorImpressions: number;
+    /** prior click rate of a row kind without history */
+    priorRate: number;
+    /** a play counts this much more than a click */
+    playWeight: number;
+    /** per-profile row statistics are halved when impressions pass this */
+    statsCap: number;
+  };
   penalty: {
     played: number; playedRewatchFriendly: number; dropped: number; watchlist: number; nearDuplicate: number;
     /** a profile whose rewatch share of positive weight is at least this counts as rewatch-friendly */
@@ -176,6 +210,8 @@ export const DEFAULT_RECO_COEFFICIENTS: Readonly<RecoCoefficients> = {
   score: { ratingPriorVotes: 25, ratingAssumedVotes: 25, ratingPriorMean: 6.5, ratingFloor: 4, ratingCeil: 9, freshHalfLifeDays: 120, jfRankShare: 0.3, trendingCap: 0.1, freshLabelBoost: 0.8 },
   social: { minSupport: 2, lookbackDays: 365, transitionDays: 7, minSeconds: 300, finishRatio: 0.7, finishEpisodes: 3, topPerItem: 30, cacheSeconds: 900, maxRows: 200_000, anchors: 5 },
   context: { min: 0.75, max: 1.2, timeOfDay: 0.15, device: 0.1, language: 0.1, runtime: 0.15, status: 0.1, budgetDay: 240, budgetEvening: 180, budgetLate: 120, budgetNight: 90, dropRate: 0.3 },
+  explore: { from: 0.25, to: 0.6, protectTop: 3 },
+  rows: { minSize: 4, fixedSlot: 2, currentShare: 1 / 3, currentDays: 120, priorImpressions: 20, priorRate: 0.1, playWeight: 2, statsCap: 500 },
   penalty: { played: 0.8, playedRewatchFriendly: 0.25, dropped: 1.5, watchlist: 0.4, nearDuplicate: 0.5, rewatchFriendlyShare: 0.15 },
   rank: { lambda: 0.7, perFranchise: 2, genreShare: 0.5, duplicateCos: 0.92 },
   surface: {
@@ -253,5 +289,11 @@ export function recoCoefficients(cfg?: Partial<Pick<Config, 'RECO_COEFFS' | 'REC
   c.social.maxRows = Math.max(1000, Math.round(c.social.maxRows));
   c.context.min = Math.max(0.1, Math.min(1, c.context.min));
   c.context.max = Math.max(1, Math.min(3, c.context.max));
+  c.explore.from = Math.max(0, Math.min(1, c.explore.from));
+  c.explore.to = Math.max(c.explore.from, Math.min(1, c.explore.to));
+  c.explore.protectTop = Math.max(0, Math.round(c.explore.protectTop));
+  c.rows.minSize = Math.max(1, Math.round(c.rows.minSize));
+  c.rows.fixedSlot = Math.max(0, Math.round(c.rows.fixedSlot));
+  c.rows.currentShare = Math.max(0, Math.min(1, c.rows.currentShare));
   return c;
 }

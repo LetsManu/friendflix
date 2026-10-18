@@ -2,17 +2,19 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import type { Ctx } from '../ctx.js';
 import type { ItemDto } from '../media/types.js';
-import { recoShadowOverlap, recoShadowRuns, recoShadowScoreDelta } from '../metrics.js';
+import { recoExplorePropensity, recoExploreSlots, recoShadowOverlap, recoShadowRuns, recoShadowScoreDelta } from '../metrics.js';
 import type { JfUser } from '../types.js';
 import { gatherCandidates, resolveVisible, type CandidateSource, type SourceName } from './candidates.js';
 import { contextFor, type DeviceClass, type RecoContext } from './context.js';
 import { explain, type Reason } from './explain.js';
+import { explore } from './explore.js';
+import type { RowKind } from './rows.js';
 import { RECO_SOURCES } from './sources.js';
 import { tasteProfile, type RecoProfile } from './profile.js';
 import { mmr, type RankItem } from './rank.js';
 import { filterReason, scoreCandidate, type Marks, type ScoreParts, type Scored } from './score.js';
 import { loadIndex } from './vectors.js';
-import { recoCoefficients, recoWeights, type Surface } from './weights.js';
+import { recoCoefficients, recoExplore, recoWeights, type Surface } from './weights.js';
 
 /**
  * Recommendation engine v2, R2: recommend() ties the steps together (taste profile -> candidates -> score -> MMR). It always resolves
@@ -20,7 +22,7 @@ import { recoCoefficients, recoWeights, type Surface } from './weights.js';
  * itself as well, and never runs social sources for a kids profile.
  */
 
-export interface RecoItem { item: ItemDto; score: number; sources: SourceName[]; parts: ScoreParts; /** the seed that contributed most plus up to two shared traits (explain.ts) */ reason: Reason }
+export interface RecoItem { item: ItemDto; score: number; sources: SourceName[]; parts: ScoreParts; /** the seed that contributed most plus up to two shared traits (explain.ts) */ reason: Reason; /** R3b: this slot was filled by exploration with a medium-score candidate */ explored?: boolean; /** R3b: logged propensity of the slot (only when exploration is on) */ propensity?: number }
 export interface RecoResult {
   surface: Surface;
   /** the taste profile had too few interactions: the quality prior carried the ranking */
@@ -35,7 +37,16 @@ export interface RecommendOptions {
   context?: RecoContext;
   /** the caller's device class, when it knows it (the web app does) */
   device?: DeviceClass;
+  /** R3b: the row kind this list becomes (label of the exploration counters); default by surface */
+  row?: RowKind;
+  /** R3b: false switches exploration off for this call (shadow comparisons) */
+  explore?: boolean;
+  /** R3b: random numbers in [0, 1) for exploration (tests, replay); default Math.random. Never drawn while RECO_EXPLORE is 0. */
+  rng?: () => number;
 }
+
+/** The row kind (metric label) a surface feeds. */
+export const ROW_OF_SURFACE: Record<Surface, RowKind> = { because: 'because', taste: 'top_picks', home_rows: 'top_picks', postplay: 'postplay', detail_similar: 'detail' };
 
 const rootItem = async (ctx: Pick<Ctx, 'jf'>, user: JfUser, id: string): Promise<ItemDto | undefined> => {
   const it = await ctx.jf.item(user, id).catch(() => null);
@@ -78,14 +89,30 @@ export async function recommend(ctx: Pick<Ctx, 'cfg' | 'db' | 'kv' | 'jf'>, user
     scored.push(scoreCandidate(cand, item, sc));
   }
 
-  const ranked = mmr<Scored & RankItem>(
-    scored.map((s) => Object.assign(s, { franchise: s.row?.collection_id ?? null, genre: s.row?.genres[0] ?? s.item.genres[0]?.trim().toLowerCase() ?? null })),
-    o.limit, c,
-  );
+  const rankable = scored.map((s) => Object.assign(s, { franchise: s.row?.collection_id ?? null, genre: s.row?.genres[0] ?? s.item.genres[0]?.trim().toLowerCase() ?? null }));
+  let ranked = mmr<Scored & RankItem>(rankable, o.limit, c);
+
+  // R3b exploration (RECO_EXPLORE, default 0 = off: no random number is drawn, nothing is counted): about 1 slot in 10 after the best 3 is
+  // swapped for a medium-score candidate; the propensity of every eligible slot is counted by row kind and arm, nothing else
+  const rate = o.explore === false ? 0 : recoExplore(ctx.cfg);
+  const slotOf = new Map<string, { arm: string; propensity: number }>();
+  if (rate > 0) {
+    const row = o.row ?? ROW_OF_SURFACE[o.surface];
+    const x = explore(ranked, rankable, rate, c, o.rng ?? Math.random, (cand, rest) => !cand.franchise || rest.filter((r) => r.franchise === cand.franchise).length < c.rank.perFranchise);
+    ranked = x.items;
+    for (const sl of x.slots) {
+      slotOf.set(sl.id, sl);
+      recoExploreSlots.inc({ row, arm: sl.arm });
+      recoExplorePropensity.inc({ row, arm: sl.arm }, sl.propensity);
+    }
+  }
   const reasons = await explain(ctx, user, ranked, { ...(seed ? { seed: { id: seed.id, name: seed.name } } : {}), taste, index, c }).catch(() => new Map<string, Reason>());
   return {
     surface: o.surface, cold: taste.cold, pool: new Map(scored.map((s) => [s.id, s.score])),
-    items: ranked.map((s) => ({ item: s.item, score: s.score, sources: s.sources, parts: s.parts, reason: reasons.get(s.id) ?? { seed: null, traits: [] } })),
+    items: ranked.map((s) => {
+      const sl = slotOf.get(s.id);
+      return { item: s.item, score: s.score, sources: s.sources, parts: s.parts, reason: reasons.get(s.id) ?? { seed: null, traits: [] }, ...(sl ? { propensity: sl.propensity, ...(sl.arm === 'explore' ? { explored: true } : {}) } : {}) };
+    }),
   };
 }
 
@@ -127,7 +154,7 @@ export function shadowCompare(ctx: Pick<Ctx, 'cfg' | 'db' | 'kv' | 'jf'>, user: 
   const run = (async () => {
     try {
       if (!(await ctx.kv.setnx(`reco:shadow:${o.guardKey}`, '1', 600).catch(() => true))) return;
-      const r = await recommend(ctx, user, profile, { seed: o.seed, surface: o.surface, limit: SHADOW_TOP });
+      const r = await recommend(ctx, user, profile, { seed: o.seed, surface: o.surface, limit: SHADOW_TOP, explore: false });
       recoShadowOverlap.observe({ surface: o.surface }, overlap(o.v1, r.items.map((i) => i.item.id)));
       const d = scoreDelta(o.v1, r.items, r.pool);
       if (d !== null) recoShadowScoreDelta.observe({ surface: o.surface }, d);

@@ -11,7 +11,7 @@ import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { ABLATION_COMPONENTS, DEFAULT_DIST, ENGINES, K, ablation, ablationEpsilon, cooccurrenceEngine, evaluate, format, formatAblation, gate, listDiversity, loadV2, main, parseArgs, popularityTiers, prepare, runEngine, split, v1Engine, v2Engine, DEFAULT_FIXTURE } from './reco-eval.mjs';
+import { ABLATION_COMPONENTS, DEFAULT_DIST, ENGINES, K, ablation, ablationEpsilon, cooccurrenceEngine, evaluate, format, formatAblation, formatIpw, gate, ipwReplay, listDiversity, loadV2, main, parseArgs, popularityTiers, prepare, runEngine, split, v1Engine, v2Engine, DEFAULT_FIXTURE } from './reco-eval.mjs';
 
 const fixture = JSON.parse(readFileSync(DEFAULT_FIXTURE, 'utf8'));
 const near = (a, b, eps = 1e-3) => assert.ok(Math.abs(a - b) < eps, `${a} != ${b}`);
@@ -306,4 +306,37 @@ test('ablation: needs enough profiles, prints aggregates only, CLI --ablation', 
   const json = [];
   await main(['--ablation', '--json'], { RECO_EVAL_DIST: dist }, (x) => json.push(x));
   assert.equal(JSON.parse(json[0]).rows.length, ABLATION_COMPONENTS.length);
+});
+
+// ----------------------------------------------------------------------------------------------------- IPW replay (R3b)
+
+test('IPW replay: the logging policy is valued exactly without exploration and without bias with it', () => {
+  const none = ipwReplay(fixture, v2mod, { explore: 0, rounds: 3, minProfiles: 5 });
+  const v2row = (r) => r.rows.find((x) => x.policy === 'v2');
+  assert.equal(v2row(none).ipw, v2row(none).direct); // propensity 1 everywhere: the log is the policy
+  assert.equal(v2row(none).support, 1);
+  assert.equal(v2row(none).direct, evaluate(fixture, { registry, engines: ['v2'] }).engines.v2.ndcg);
+  const some = ipwReplay(fixture, v2mod, { explore: 0.3, rounds: 1500, seed: 7, minProfiles: 5 });
+  assert.deepEqual(some.rows.map((r) => r.policy), ['v2', 'v2 without cooccurrence', 'v2 without affinity', 'popularity', 'cooccurrence']);
+  for (const r of some.rows) {
+    if (r.matches) near(r.ipw, r.supported, 0.03); // unbiased for the supported part of the target's slots
+    assert.ok(r.supported <= r.direct + 1e-9 && r.support <= 1);
+  }
+  near(v2row(some).ipw, v2row(some).direct, 0.02);
+  assert.ok(some.rows.find((r) => r.policy === 'popularity').support < 0.5, 'a policy far from v2 is mostly out of support');
+  assert.ok(some.rows.find((r) => r.policy === 'v2 without cooccurrence').effectiveSample > 0);
+  assert.deepEqual(some, ipwReplay(fixture, v2mod, { explore: 0.3, rounds: 1500, seed: 7, minProfiles: 5 })); // seeded: reproducible
+  assert.notDeepEqual(some.rows[1], ipwReplay(fixture, v2mod, { explore: 0.3, rounds: 1500, seed: 8, minProfiles: 5 }).rows[1]);
+  assert.throws(() => ipwReplay(fixture, v2mod, { minProfiles: 1000 }), /need 1000/);
+});
+
+test('IPW replay: CLI, aggregates only', async () => {
+  const lines = [];
+  assert.equal(await main(['--ipw', '--rounds', '20', '--explore', '0.2'], { RECO_EVAL_DIST: dist }, (x) => lines.push(x)), 0);
+  const out = lines.join('\n');
+  assert.match(out, /inverse-propensity-weighted replay/);
+  assert.match(out, /exploration 0\.2/);
+  assert.match(formatIpw(ipwReplay(fixture, v2mod, { rounds: 5, minProfiles: 5 })), /support/);
+  for (const id of [...fixture.items.map((i) => i.id), ...fixture.profiles.map((p) => p.id)]) assert.ok(!new RegExp(`\\b${id}\\b`).test(out), `leaked ${id}`);
+  await assert.rejects(main(['--ipw'], { RECO_EVAL_DIST: join(tmpdir(), 'ff-no-such-dist') }, () => {}), /compiled backend/);
 });

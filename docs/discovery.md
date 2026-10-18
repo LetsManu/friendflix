@@ -170,7 +170,7 @@ Weitere Schalter: `--engines popularity,v1,cooccurrence`, `--exclude-seen` (scho
 { "events": [{ "row": "because", "engine": "v1", "impressions": 1, "clicks": 2, "dismisses": 0 }] }
 ```
 
-Antwort `204`. `row` ist eine feste Liste (`because`, `because_more`, `top_picks`, `popular`, `friends`, `postplay`), `engine` ist `v1` oder `v2`; alles andere wird mit `400` abgelehnt, die Labels bleiben also begrenzt. Es werden weder Titel noch IDs, Positionen oder Profile übertragen oder gespeichert. Prometheus: `friendflix_reco_impressions_total`, `friendflix_reco_clicks_total`, `friendflix_reco_dismiss_total` und `friendflix_reco_plays_total`, jeweils `{row,engine}`. Click-through-Rate: `sum(increase(friendflix_reco_clicks_total[7d])) by (engine) / sum(increase(friendflix_reco_impressions_total[7d])) by (engine)`.
+Antwort `204`. `row` ist eine feste Liste (`ROW_KINDS` in `reco/rows.ts`: `continue`, `because`, `because_more`, `top_picks`, `popular`, `friends`, `postplay`, `new`, `leaving`, `transition`, `universe`, `detail`), `engine` ist `v1` oder `v2`; alles andere wird mit `400` abgelehnt, die Labels bleiben also begrenzt. Es werden weder Titel noch IDs, Positionen oder Profile übertragen oder gespeichert. Prometheus: `friendflix_reco_impressions_total`, `friendflix_reco_clicks_total`, `friendflix_reco_dismiss_total` und `friendflix_reco_plays_total`, jeweils `{row,engine}`. Click-through-Rate: `sum(increase(friendflix_reco_clicks_total[7d])) by (engine) / sum(increase(friendflix_reco_impressions_total[7d])) by (engine)`.
 
 Die Startseite meldet je „Weil du … geschaut hast“-Zeile (`because`, `because_more`, Engine `v1`) eine Einblendung, sobald die Hälfte der Zeile zu sehen ist, und jeden Klick auf einen Titel; die Zahlen werden gesammelt und alle 4 Sekunden oder beim Verlassen der Seite gesendet. `plays` zählt der Server selbst, sobald eine Wiedergabe einer Empfehlung zugeordnet werden kann, und `dismisses` kommen mit den Schaltflächen „nicht interessiert“: beides gehört zu R4.
 
@@ -313,7 +313,55 @@ Jeder Titel trägt `reason = { seed, traits }`:
 - **`traits`**: bis zu 2 gemeinsame Eigenschaften, als `art` oder `art:wert`, in dieser Reihenfolge: `friends[:Anna, Ben]` (Freunde haben bewertet oder empfohlen, Namen nur mit Einwilligung), `next` („Leute sehen danach“, Übergang), `together` („wer das sah, sah auch“, Co-Occurrence; nicht in der Spezifikationsliste, weil dort kein Eintrag für Co-Occurrence vorgesehen war), `universe` (gleiche Sammlung), `director[:Name]`, `actor[:Name]`, `studio:Name`, `genre:name` (das seltenste gemeinsame Genre). Je Art höchstens eine. Namen von Personen stammen aus den Besetzungsdaten des Seeds (ein Aufruf `credits()` je Seed, höchstens 3 je Aufruf, mit dem Token des Betrachters); ohne sie steht nur die Art.
 - Weder Titel noch Namen gelangen in Metriken oder Logs.
 
-### Kinderprofile
+### Empfehlungs-Engine v2: Zeilen-Ranker und Exploration (R3b)
+
+### Zeilen-Ranker (`reco/rows.ts`)
+
+Regelbasierte zweite Ebene (Spezifikation 4.5): `rankRows(zeilen, { c, stats, seen, kids, now })` ordnet die verfügbaren Zeilen der Startseite oder des Post-Play-Bildschirms und bereinigt ihren Inhalt. Angeschlossen wird er in R4; bis dahin ist er ein getesteter Baustein.
+
+1. **„Weiter schauen“ (`continue`, bei Post-Play die Fortsetzung) steht immer ganz oben.**
+2. **Ein fester Platz** (`rows.fixedSlot`, Standard Position 3 der Liste) für „Bald nicht mehr verfügbar“ (`leaving`), sonst „Neu“ (`new`). Sind beide da, bekommt `leaving` den Platz und `new` konkurriert wie jede andere Zeile.
+3. **Die übrigen Zeilen nach der bisherigen Klick-/Abspielrate des Profils je Zeilenart:** `(Klicks + 2·Abspielungen − Verwerfen + 0,1·20) / (Einblendungen + 20)`, also zum Vorwert 0,1 hin geglättet; eine Zeilenart ohne Verlauf behält ihre Standardreihenfolge (stabile Sortierung).
+4. **Mindestgröße** `rows.minSize` = 4 Titel (`continue`: 1); kleinere Zeilen entfallen.
+5. **Keine schon gesehene Serie** in irgendeiner Zeile außer `continue` (Anti-Muster aus 2.3 Punkt 11); einzige Ausnahme: eine neue Staffel einer gesehenen Serie im „Neu“-Platz.
+6. **Keine Zeile nur aus Titeln der laufenden Staffel:** höchstens 1 von 3 Titeln (`rows.currentShare`) einer Zeile darf eine Serie sein, die gerade läuft (Label `newEpisode|newSeason|newSeries|finale` aus `fresh.ts` oder in den letzten 120 Tagen hinzugekommen/erschienen); der Rest muss Altbestand sein, sonst entfällt die Zeile. „Neu“ ist ausgenommen.
+7. Ein Titel steht nur in der ersten Zeile, in der er vorkommt.
+8. **Kinderprofile** bekommen nie `friends`, `popular` oder `transition`.
+
+**Statistik je Profil** (`loadRowStats`, `recordRowStats`): ein kv-Eintrag `reco:rows:<profil>` mit vier Zählern (gezeigt, geklickt, abgespielt, verworfen) je Zeilenart, also höchstens 12 × 4 Zahlen, nur Zähler, keine Titel. Sobald eine Zeilenart über `rows.statsCap` (500) Einblendungen kommt, werden alle Zähler halbiert (neueres Verhalten zählt mehr); Lebensdauer 180 Tage. Gefüttert von `POST /api/reco/events` für das aktive Profil; `plays` zählt der Server erst ab R4. `resetRowStats()` gehört zu „Meine Empfehlungen zurücksetzen“ (R4).
+
+### Exploration (`RECO_EXPLORE`, Standard 0 = aus)
+
+- `RECO_EXPLORE=0.1`: etwa jeder zehnte Platz einer Zeile wird statt des gerankten Titels mit einem Titel **mittleren Scores** gefüllt (`explore.ts`): gezogen wird gleichverteilt aus den Kandidaten auf den Rängen 25 % bis 60 % des nach Score geordneten Pools (`explore.from/to`), die nicht schon in der Zeile stehen, einen positiven Score haben und die Franchise-Grenze einhalten. Die besten 3 Plätze (`explore.protectTop`) bleiben unberührt. Bereich 0 bis 0,5.
+- **Aus heißt aus:** bei `0` wird keine Zufallszahl gezogen, nichts gezählt, die Liste ist bei jedem Aufruf gleich. Shadow-Vergleiche erkunden nie. Kinderprofile erkunden nur innerhalb der Altersgrenze (der Pool ist schon gefiltert).
+- **Propensity-Protokoll, nur Zähler nach Zeilenart:** `friendflix_reco_explore_slots_total{row,arm}` (belegte Plätze) und `friendflix_reco_explore_propensity_total{row,arm}` (Summe der Propensities; Mittel = Summe / Plätze). `row` stammt aus `ROW_KINDS`, `arm` ist `exploit|explore`; Propensity eines gerankten Platzes = 1 − Rate, eines erkundeten = Rate / Größe des mittleren Bereichs. Kein Titel, keine Id, kein Nutzer. In `recommend()` tragen erkundete Einträge `explored: true` und `propensity`.
+
+### Replay mit inverser Propensity-Gewichtung
+
+```
+node scripts/reco-eval.mjs --ipw [--explore 0.1] [--rounds 200] [--seed 1]
+```
+
+Die Logging-Politik ist v2 mit Exploration (gleicher Code wie live, `reco/explore.ts`, mit festem Zufallsgenerator); je Fall werden `--rounds` Listen „geloggt“, jeder Platz mit seiner Propensity. Eine Ziel-Politik wird allein aus dem Log bewertet: `Wert = Mittel über Fälle und Runden von Σ_Plätze Rabatt(j) · [geloggt_j = Ziel_j = gesuchter Titel] / Propensity_j` (Rabatt = 1/log2(j+2), also NDCG@10) und neben ihren wahren Wert gestellt. „support“ ist der Anteil der Plätze, an denen das Log den Zieltitel überhaupt gezeigt hat; nur dafür ist die Schätzung erwartungstreu („true, supported“ ist der wahre Wert nur über diese Plätze). Titel, die das Log nie zeigt, lassen sich nicht bewerten: für Ziele, die von v2 abweichen, ist die Schätzung eine Untergrenze. Auf den Testdaten:
+
+```
+inverse-propensity-weighted replay of the v2 logging policy with exploration 0.1 (profiles: 36, rounds: 200, seed: 1, k=10)
+
+target policy                  true NDCG@10  true, supported     IPW estimate            error          support          matches           eff. n
+v2                                    0.579            0.579            0.579            0.000           100.0%             4959             4955
+v2 without cooccurrence               0.539            0.494            0.494            0.000            50.8%             4180           4177.9
+v2 without affinity                   0.383            0.222            0.222            0.000            18.3%             1600             1600
+popularity                            0.028            0.000            0.000            0.000            15.0%                0                0
+cooccurrence                          0.489            0.278            0.278            0.000            23.1%             2000             2000
+
+support = share of the target slots whose title the logging policy showed there at least once. "true, supported" = the true value counting only supported slots;
+the IPW estimate is unbiased for that (error = IPW minus it). Titles the log never showed cannot be valued, so for a target that differs from v2 the estimate is a lower bound of the true value.
+A target is valued from the explored slots that happen to match: noisy (see eff. n).
+```
+
+Lesehilfe: v2 selbst wird richtig geschätzt; Ziele fern von v2 (Popularität, Co-Occurrence) liegen fast ganz außerhalb des Supports, ihre Schätzung ist entsprechend klein. Das ist die bekannte Grenze: Exploration macht nur Rankings bewertbar, die dem geloggten ähneln. Mit echten Zählern läuft das nicht (sie sind absichtlich nur Aggregate je Zeilenart); der Lauf zeigt die Mechanik und dient dazu, in R5 kleine Änderungen offline zu beurteilen.
+
+## Kinderprofile
 
 Nie Co-Occurrence, Übergänge, Freunde oder Trending (die Quellen sind `social` und werden in `gatherCandidates` übersprungen; jede prüft es zusätzlich selbst), immer die Altersgrenze (eigener Filter plus Token des Kindes bei jedem Aufruf), keine Begründung mit Freunden. Tests: `backend/test/reco-sources.test.ts` (Quellen, Altersgrenze, nur Kind-Token, keine Abfrage von Wiedergaben, Bewertungen oder Empfehlungen anderer Konten).
 

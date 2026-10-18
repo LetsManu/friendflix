@@ -32,6 +32,12 @@ export const recoDismiss = new Counter({ name: 'friendflix_reco_dismiss_total', 
 export const recoShadowRuns = new Counter({ name: 'friendflix_reco_shadow_runs_total', help: 'Shadow comparisons of recommendation engine v2 with v1', labelNames: ['surface', 'result'], registers: [registry] });
 export const recoShadowOverlap = new Histogram({ name: 'friendflix_reco_shadow_overlap', help: 'Share of the v1 top 10 that v2 also has in its top 10', labelNames: ['surface'], buckets: [0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1], registers: [registry] });
 export const recoShadowScoreDelta = new Histogram({ name: 'friendflix_reco_shadow_score_delta', help: 'Mean v2 score of the v2 top 10 minus the mean v2 score of the v1 top 10', labelNames: ['surface'], buckets: [-0.25, 0, 0.05, 0.1, 0.2, 0.3, 0.5, 1], registers: [registry] });
+/**
+ * R3b exploration (RECO_EXPLORE > 0): per row kind and arm (exploit | explore), how many eligible slots were served and the sum of their
+ * logged propensities (mean propensity = sum / slots). Labels come from the closed sets ROW_KINDS and {exploit, explore}; no title, item or user.
+ */
+export const recoExploreSlots = new Counter({ name: 'friendflix_reco_explore_slots_total', help: 'Row slots served by exploration, by row kind and arm', labelNames: ['row', 'arm'], registers: [registry] });
+export const recoExplorePropensity = new Counter({ name: 'friendflix_reco_explore_propensity_total', help: 'Sum of the logged propensities of the explored slots, by row kind and arm (divide by the slot counter for the mean)', labelNames: ['row', 'arm'], registers: [registry] });
 const downloadJobs = new Gauge({ name: 'friendflix_download_jobs', help: 'Offline download jobs by status', labelNames: ['status'], registers: [registry] });
 const downloadDisk = new Gauge({ name: 'friendflix_download_disk_bytes', help: 'Bytes of prepared download files', registers: [registry] });
 const recoIndexItems = new Gauge({ name: 'friendflix_reco_index_items', help: 'Films and series in the recommendation item index', registers: [registry] });
