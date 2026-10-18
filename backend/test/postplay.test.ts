@@ -303,11 +303,16 @@ describe('GET /api/items/:id/postplay: rows and anti-patterns', () => {
 
   it('cached for 60 s per profile + item + user-data version', async () => {
     await pp(owner, SOLO);
+    const cached = (await env.kv.keys('postplay:')).filter((k) => k.includes(SOLO));
     calls = [];
     await pp(owner, SOLO);
-    expect(calls).toEqual([]); // second answer from the cache: no media-server lookup at all
+    expect(calls).toEqual(['item']); // second answer from the cache: only the visibility check reaches the media server
+    expect((await env.kv.keys('postplay:')).filter((k) => k.includes(SOLO))).toEqual(cached);
     env.ctx.jf.userDataVersion = async () => '2';
-    try { await pp(owner, SOLO); expect(calls).toContain('item'); } finally { env.ctx.jf.userDataVersion = async () => '1'; }
+    try {
+      await pp(owner, SOLO);
+      expect((await env.kv.keys('postplay:')).filter((k) => k.includes(SOLO) && k.includes(':2:'))).toHaveLength(1); // a new version: built again
+    } finally { env.ctx.jf.userDataVersion = async () => '1'; }
   });
 
   it('the same hero is not shown to every profile (different tastes, different picks)', async () => {
@@ -360,6 +365,17 @@ describe('GET /api/items/:id/postplay: access', () => {
     expect((await env.app.inject({ url: `/api/items/${SOLO}/postplay` })).statusCode).toBe(401);
     expect((await call(owner, 'GET', `/api/items/${hex(999)}/postplay`)).statusCode).toBe(404);
     expect((await call(owner, 'GET', '/api/items/nope/postplay')).statusCode).toBe(400);
+  });
+  it('a warm cache never answers for a title that is no longer visible: 404 (visibility is checked before the cache)', async () => {
+    expect((await call(owner, 'GET', `/api/items/${ADULT}/postplay`)).statusCode).toBe(200); // warms the 60 s cache
+    expect((await env.kv.keys('postplay:')).some((k) => k.includes(ADULT))).toBe(true);
+    const jf = (env.ctx.jf as unknown as { item: (u: any, id: string) => Promise<ItemDto> });
+    const real = jf.item;
+    jf.item = async (u, id) => { if (id === ADULT) throw new MediaError(404, 'not visible'); return real(u, id); }; // e.g. the admin narrowed the libraries
+    try {
+      expect((await call(owner, 'GET', `/api/items/${ADULT}/postplay`)).statusCode).toBe(404);
+    } finally { jf.item = real; }
+    expect((await call(owner, 'GET', `/api/items/${ADULT}/postplay`)).statusCode).toBe(200);
   });
   it('POSTPLAY_ENABLED=false: 404 disabled, and /api/me says so', async () => {
     env.ctx.cfg = { ...cfg, POSTPLAY_ENABLED: 'false' };

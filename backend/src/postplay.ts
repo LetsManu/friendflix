@@ -452,14 +452,21 @@ export async function buildPostplay(ctx: Ctx, v: Viewer, cur: ItemDto, ver: stri
   };
 }
 
-/** Cached answer of GET /api/items/:id/postplay: 60 s per profile + item + user-data version + home generation (bumpHome drops it). */
+/**
+ * Cached answer of GET /api/items/:id/postplay: 60 s per profile + item + user-data version + home generation (bumpHome drops it).
+ * The visibility check comes first, on every request: a warm cache never answers for a title the profile can no longer see (an admin
+ * narrowed its libraries or its age cap within the 60 s).
+ */
 export async function postplayFor(ctx: Ctx, v: Viewer, itemId: string): Promise<Postplay> {
-  const [ver, gens] = await Promise.all([ctx.jf.userDataVersion(v.user).catch(() => '0'), homeGens(ctx, v.profileId)]);
+  const [cur, ver, gens] = await Promise.all([
+    ctx.jf.item(v.user, itemId), // 404/403: not visible to this profile
+    ctx.jf.userDataVersion(v.user).catch(() => '0'),
+    homeGens(ctx, v.profileId),
+  ]);
+  if (cur.type !== 'Movie' && cur.type !== 'Episode' && cur.type !== 'Series') throw new MediaError(404, 'not a playable title');
   const key = `postplay:${v.profileId}:${itemId}:${ver}:${gens}:${v.suggestions ? 1 : 0}${v.spoilerProtection ? 1 : 0}${v2Active(ctx.cfg) ? 'v2' : ''}`;
   const hit = await ctx.kv.get(key).catch(() => null);
   if (hit) { try { return JSON.parse(hit) as Postplay; } catch { /* recompute */ } }
-  const cur = await ctx.jf.item(v.user, itemId); // 404/403: not visible to this profile
-  if (cur.type !== 'Movie' && cur.type !== 'Episode' && cur.type !== 'Series') throw new MediaError(404, 'not a playable title');
   const out = await buildPostplay(ctx, v, cur, ver);
   await ctx.kv.set(key, JSON.stringify(out), POSTPLAY_TTL).catch(() => undefined);
   return out;
