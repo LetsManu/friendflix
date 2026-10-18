@@ -122,6 +122,24 @@ describe('full pass', () => {
     expect(await idfOf('genre', 'drama')).toMatchObject({ df: 400 });
   });
 
+  it('a title removed mid-pass shifts the later offset pages: the skipped neighbour is re-checked by id and kept (M2)', async () => {
+    lib = Array.from({ length: 450 }, (_, i) => film(i + 1));
+    await full();
+    const orig = env.ctx.jf.libraryFeatures!;
+    // while the pass is at the second page, the first title leaves the library: offset 200 now starts one title later
+    (env.ctx.jf as { libraryFeatures?: unknown }).libraryFeatures = async (start: number, limit: number, opts?: Opts) => {
+      if (start === 200 && !opts?.ids && lib[0]?.id === hex(1)) lib = lib.slice(1);
+      return fake(start, limit, opts);
+    };
+    try { await full(); } finally { (env.ctx.jf as { libraryFeatures?: unknown }).libraryFeatures = orig; }
+    const ids = new Set((await rows()).map((r) => r.item_id));
+    expect(ids.has(hex(201))).toBe(true); // skipped by the pages, found by the re-check
+    expect(ids.size).toBe(450); // the removed title was seen on page 1; its itemRemoved event or the next pass removes it
+    await full();
+    expect((await rows()).length).toBe(449);
+    expect(calls.some((c) => c.opts?.ids?.includes(hex(201)))).toBe(true);
+  });
+
   it('IDF rows of values that no item has any more disappear', async () => {
     lib = [film(1, { genres: ['Western'], tags: ['gunfight'] }), film(2)];
     await full();
@@ -176,6 +194,16 @@ describe('failure, backoff and locking', () => {
     expect(await rows()).toHaveLength(0);
     expect(await recoIndexDue(env.ctx, { pauseMs: 0 })).toBe(false);
     expect(await env.kv.get('reco:idx:running')).toBe('other'); // not ours: left alone
+  });
+
+  it('the heartbeat renews only its own lock: refreshIfEquals never takes over another replica\'s flag (M10)', async () => {
+    await env.kv.set('reco:idx:running', 'other', 300);
+    expect(await env.kv.refreshIfEquals('reco:idx:running', 'mine', 300)).toBe(false);
+    expect(await env.kv.get('reco:idx:running')).toBe('other');
+    expect(await env.kv.refreshIfEquals('reco:idx:running', 'other', 300)).toBe(true);
+    await env.kv.del('reco:idx:running');
+    expect(await env.kv.refreshIfEquals('reco:idx:running', 'mine', 300)).toBe(false);
+    expect(await env.kv.get('reco:idx:running')).toBeNull(); // never resurrected
   });
 
   it('is idle without the capability or the method', async () => {

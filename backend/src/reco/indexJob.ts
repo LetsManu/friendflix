@@ -178,11 +178,38 @@ async function fullPass(ctx: Ctx, fn: FeaturesFn, runStart: Date, pause: number,
   const terms: Array<[string, Record<string, number>]> = [];
   for (const [id, counts] of docs) terms.push([id, topTerms(counts, n, (t) => df.get(t) ?? 0)]);
   await writeTerms(ctx, terms);
+  await beat();
   await replaceTermDf(ctx, n, df, runStart);
+  await beat();
+  // offset pages can skip an item when the library changes during the pass (an addition sorting before the cursor shifts the later
+  // pages): before anything is deleted, the rows the pass did not see are asked for by id, and those that still exist are kept
+  if (!(await recheckUnseen(ctx, fn, runStart, beat))) return false;
   // a complete pass: rows of vanished items go, then the IDF counts what is left
   await ctx.db.query('delete from item_features where updated_at < $1', [runStart]);
   await refreshIdf(ctx, runStart);
   return true;
+}
+
+/** Rows a full pass did not touch: refetched by id; what the library still has is upserted (and so survives the delete). */
+async function recheckUnseen(ctx: Ctx, fn: FeaturesFn, runStart: Date, beat: () => Promise<void>): Promise<boolean> {
+  const unseen = (await ctx.db.query<{ item_id: string }>('select item_id from item_features where updated_at < $1', [runStart])).rows.map((r) => r.item_id);
+  for (let i = 0; i < unseen.length; i += PAGE) {
+    if (stopping) return false; // incomplete: nothing deleted
+    const batch = unseen.slice(i, i + PAGE);
+    const found = await upsertRows(ctx, await fn(0, batch.length, { ids: batch }), runStart);
+    if (found.length) await refreshTermsOf(ctx, found);
+    await beat();
+  }
+  return true;
+}
+
+/** Overview terms of a few items against the stored document frequencies (the item counted once when it is new). */
+async function refreshTermsOf(ctx: Pick<Ctx, 'db'>, items: ItemFeatures[], known: ReadonlySet<string> = new Set(items.map((f) => f.id))): Promise<void> {
+  const n = Number((await ctx.db.query<{ n: string }>('select count(*) n from item_features')).rows[0]?.n ?? 0);
+  const docs = items.map((f) => [f, termCounts(tokenize(text(f)))] as const);
+  const wanted = [...new Set(docs.flatMap(([, c]) => [...c.keys()]))];
+  const stored = new Map((await ctx.db.query<{ value: string; df: number }>("select value, df from item_feature_idf where kind = 'term' and value = any($1::text[])", [wanted])).rows.map((r) => [r.value, r.df]));
+  await writeTerms(ctx, docs.map(([f, counts]) => [f.id, topTerms(counts, n, (t) => (stored.get(t) ?? 0) + (known.has(f.id) ? 0 : 1))]));
 }
 
 /** Terms for items fetched incrementally: stored document frequencies, this item counted once when it is new. */
@@ -191,12 +218,7 @@ async function incrementalPass(ctx: Ctx, fn: FeaturesFn, ids: string[], runStart
     const batch = ids.slice(i, i + PAGE);
     const known = new Set((await ctx.db.query<{ item_id: string }>('select item_id from item_features where item_id = any($1::text[])', [batch])).rows.map((r) => r.item_id));
     const items = await upsertRows(ctx, await fn(0, batch.length, { ids: batch }), runStart);
-    if (!items.length) continue;
-    const n = Number((await ctx.db.query<{ n: string }>('select count(*) n from item_features')).rows[0]?.n ?? 0);
-    const docs = items.map((f) => [f, termCounts(tokenize(text(f)))] as const);
-    const wanted = [...new Set(docs.flatMap(([, c]) => [...c.keys()]))];
-    const stored = new Map((await ctx.db.query<{ value: string; df: number }>("select value, df from item_feature_idf where kind = 'term' and value = any($1::text[])", [wanted])).rows.map((r) => [r.value, r.df]));
-    await writeTerms(ctx, docs.map(([f, counts]) => [f.id, topTerms(counts, n, (t) => (stored.get(t) ?? 0) + (known.has(f.id) ? 0 : 1))]));
+    if (items.length) await refreshTermsOf(ctx, items, known);
   }
   await refreshIdf(ctx, runStart);
 }
@@ -208,10 +230,11 @@ async function run(ctx: Ctx, fn: FeaturesFn, opts: { full: boolean; ids: string[
   // the running flag is also the lock across replicas; a killed process blocks the next pass for minutes, not longer
   if (!(await ctx.kv.setnx(K.running, token, RUNNING_TTL_S).catch(() => true))) return;
   let last = Date.now();
+  // only while the lock is still ours: a pass that stalled past the TTL must not take back a lock another replica holds by now
   const beat = async () => {
     if (Date.now() - last >= HEARTBEAT_MS) {
       last = Date.now();
-      await kvSet(ctx, K.running, token, RUNNING_TTL_S);
+      await ctx.kv.refreshIfEquals(K.running, token, RUNNING_TTL_S).catch(() => false);
     }
   };
   try {
