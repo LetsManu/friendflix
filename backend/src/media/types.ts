@@ -496,9 +496,10 @@ export interface MediaServer {
 
   // ---- R1 (optional): recommendation index. Absent = no item feature index (capabilities.libraryFeatures false).
   /**
-   * one page of the neutral features of the whole library's films and series (admin key, sorted by name then id so pages taken while the
-   * library changes neither skip nor repeat items), a short page = the end. `opts.ids` = only these films / series (callers roll an episode up to
-   * its seriesId; unknown ids and episodes are left out), `opts.savedSince` (ISO) = only items saved at or after it.
+   * one page of the neutral features of the whole library's films and series (admin key, sorted by name then id), a short page = the end.
+   * Offset pages taken while the library changes can skip or repeat an item; the index job re-checks what a full pass did not see before
+   * it deletes anything. `opts.ids` = only these films / series (callers roll an episode up to its seriesId; unknown ids and episodes are
+   * left out), `opts.savedSince` (ISO) = only items saved at or after it.
    */
   libraryFeatures?(start: number, limit: number, opts?: { ids?: string[]; savedSince?: string }): Promise<ItemFeatures[]>;
   /**
