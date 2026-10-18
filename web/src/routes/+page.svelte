@@ -127,7 +127,9 @@
     if (key === 'friends') return [{ key, title: $t('home.rows.friendsRated'), items: friendsRated ?? [], tag: { row: 'friends', engine: becauseEngine } }];
     if (key === 'because') return because ? [{ key, title: $t('home.rows.because', { name: because.name }), items: becauseItems ?? [], tag: { row: 'because', engine: becauseEngine } }] : [];
     const m = /^more:(\d+)$/.exec(key) ? moreRaw[Number(key.slice(5))] : undefined;
-    return m ? [{ key, title: $t('together.because', { name: m.because.name }), items: m.items.filter((i) => !taken.has(i.id)), tag: { row: 'because_more', engine: m.engine ?? becauseEngine } }] : [];
+    const left = m ? m.items.filter((i) => !taken.has(i.id)) : [];
+    // the same floor as the v1 path: a "more" row that shrinks below 4 titles after removing what the first rows show is skipped
+    return m && left.length >= 4 ? [{ key, title: $t('together.because', { name: m.because.name }), items: left, tag: { row: 'because_more', engine: m.engine ?? becauseEngine } }] : [];
   });
   // the first visible row loads its images eagerly with high priority
   $: firstRow = firstNonEmptyTab(['resume', 'next', 'recs', 'friends'] as const, { resume, next: nextOnly, recs, friends: friendsRated });

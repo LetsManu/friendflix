@@ -7,7 +7,8 @@ import { MOVIE, items } from './fixtures.js';
 export const seed = { id: MOVIE.id, name: MOVIE.name };
 export const reason = (...traits: string[]) => ({ seed, traits });
 export const BECAUSE_ITEMS = items.slice(1, 8).map((i, n) => ({ ...i, reason: n === 0 ? reason('director:Ava Nolan', 'genre:Krimi') : reason('genre:Drama') }));
-export const MORE_ITEMS = items.slice(8, 12).map((i) => ({ ...i, reason: { seed: { id: items[7]!.id, name: items[7]!.name }, traits: ['together'] } }));
+// four titles that none of the rows above shows (Bright Valley, items[8], is in Continue watching): the web drops a shorter extra row
+export const MORE_ITEMS = [items[0]!, ...items.slice(9, 12)].map((i) => ({ ...i, reason: { seed: { id: items[7]!.id, name: items[7]!.name }, traits: ['together'] } }));
 
 /** the home page of a v2 server: the "because" row with reasons, one more row, and the ranker's order */
 export async function mockV2Home(page: Page) {
