@@ -74,7 +74,7 @@ class ShellTest {
         InstrumentationRegistry.getInstrumentation().runOnMainSync { block(view) }
     }
 
-    private fun waitFor(what: String, condition: () -> Boolean) {
+    private fun waitFor(what: String, describe: (() -> String)? = null, condition: () -> Boolean) {
         val deadline = System.currentTimeMillis() + 10_000
         while (System.currentTimeMillis() < deadline) {
             var ok = false
@@ -82,7 +82,9 @@ class ShellTest {
             if (ok) return
             Thread.sleep(50)
         }
-        throw AssertionError("timed out waiting for $what")
+        var state = ""
+        if (describe != null) InstrumentationRegistry.getInstrumentation().runOnMainSync { state = " (" + describe() + ")" }
+        throw AssertionError("timed out waiting for $what$state")
     }
 
     /**
@@ -143,10 +145,11 @@ class ShellTest {
             val view = scenario.webView()
             waitFor("first page") { view.title == "one" }
             scenario.onMain { it.evaluateJavascript("location.hash = 'two'", null) }
-            waitFor("second page") { view.title == "two" && view.canGoBack() }
+            val describe = { "title=${view.title} url=${view.url} canGoBack=${view.canGoBack()}" }
+            waitFor("second page", describe) { view.title == "two" && view.canGoBack() }
 
             scenario.onActivity { it.onBackPressedDispatcher.onBackPressed() }
-            waitFor("back to the first page") { view.title == "one" }
+            waitFor("back to the first page", describe) { view.title == "one" }
             assertEquals(Lifecycle.State.RESUMED, scenario.state)
 
             // the history may still hold the entry before "one": walk back to the start, then one more back finishes the activity
