@@ -34,10 +34,7 @@ class ShellActivity : ComponentActivity() {
         enableEdgeToEdge()
         super.onCreate(savedInstanceState)
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
-            override fun handleOnBackPressed() {
-                val view = webView
-                if (view != null && view.canGoBack()) view.goBack() else finish()
-            }
+            override fun handleOnBackPressed() = shellBack(webView) { finish() }
         })
         lifecycleScope.launch {
             val origin = AppSettings.from(applicationContext).serverOrigin.first()
@@ -92,4 +89,9 @@ class ShellActivity : ComponentActivity() {
         const val MAX_RENDER_RESTARTS = 2
         var renderRestarts = 0
     }
+}
+
+/** Android back walks the WebView history; at the first page it leaves the app. */
+internal fun shellBack(view: WebView?, finish: () -> Unit) {
+    if (view != null && view.canGoBack()) view.goBack() else finish()
 }

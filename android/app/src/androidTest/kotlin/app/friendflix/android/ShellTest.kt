@@ -136,31 +136,18 @@ class ShellTest {
         }
     }
 
-    @Test fun backNavigatesHistoryThenFinishes() {
+    /**
+     * Back at the first page leaves the app, on a real WebView. Walking the history is covered by ShellBackTest (unit): offline on the
+     * emulator a loadDataWithBaseURL page gets no history entries (neither from a second load, pushState nor a fragment step).
+     */
+    @Test fun backAtTheFirstPageFinishes() {
         ActivityScenario.launch(ShellActivity::class.java).use { scenario ->
-            // a fragment step adds a history entry without any network request (going back to a loadDataWithBaseURL entry, or a
-            // pushState inside it, does not work offline on the emulator); the title follows the fragment so the test can see it
-            val spa = "<html><head><title>one</title><script>onhashchange = () => { document.title = location.hash ? 'two' : 'one' }</script></head><body>spa</body></html>"
-            scenario.onMain { it.showLocal(spa, "https://friend.example.com/") }
+            scenario.onMain { it.showLocal("<html><head><title>one</title></head><body>one</body></html>", "https://friend.example.com/") }
             val view = scenario.webView()
             waitFor("first page") { view.title == "one" }
-            scenario.onMain { it.evaluateJavascript("location.hash = 'two'", null) }
-            val describe = { "title=${view.title} url=${view.url} canGoBack=${view.canGoBack()}" }
-            waitFor("second page", describe) { view.title == "two" && view.canGoBack() }
-
-            scenario.onActivity { it.onBackPressedDispatcher.onBackPressed() }
-            waitFor("back to the first page", describe) { view.title == "one" }
-            assertEquals(Lifecycle.State.RESUMED, scenario.state)
-
-            // the history may still hold the entry before "one": walk back to the start, then one more back finishes the activity
-            var guard = 0
-            while (guard++ < 5) {
-                var canGoBack = false
-                scenario.onMain { canGoBack = it.canGoBack() }
-                if (!canGoBack) break
-                scenario.onActivity { it.onBackPressedDispatcher.onBackPressed() }
-                Thread.sleep(200)
-            }
+            var canGoBack = true
+            scenario.onMain { canGoBack = it.canGoBack() }
+            assertFalse("a fresh shell has no history to go back to", canGoBack)
             scenario.onActivity { it.onBackPressedDispatcher.onBackPressed() }
             waitForState(scenario, Lifecycle.State.DESTROYED)
         }
