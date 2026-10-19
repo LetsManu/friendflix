@@ -23,7 +23,6 @@ const settings: Translation<typeof de> = {
   moveAll: 'Move all',
   moveAllHint: { one: '{n} value comes from the environment (.env). Move it into the settings, then you can remove it from .env.', other: '{n} values come from the environment (.env). Move them into the settings, then you can remove them from .env.' },
   moveHint: 'Also saved. You can now remove {keys} from .env and restart. Until then the environment value still applies.',
-  moveHintOlder: '{keys} (and older names of this setting)',
   moved: { one: '{n} value moved.', other: '{n} values moved.' },
   movedNone: 'Nothing to move.',
   moveFailed: 'Moving failed.',

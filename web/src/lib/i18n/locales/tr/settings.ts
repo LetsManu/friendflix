@@ -26,7 +26,6 @@ const settings: Translation<typeof de> = {
     other: '{n} değer ortamdan (.env) geliyor. Onları ayarlara taşı, sonra .env’den kaldırabilirsin.',
   },
   moveHint: 'Ayrıca kaydedildi. Artık {keys} değerlerini .env’den kaldırıp yeniden başlatabilirsin. O zamana kadar ortamdaki değer geçerli.',
-  moveHintOlder: '{keys} (ve bu ayarın eski adları)',
   moved: { one: '{n} değer taşındı.', other: '{n} değer taşındı.' },
   movedNone: 'Taşınacak bir şey yok.',
   moveFailed: 'Taşıma başarısız.',

@@ -286,6 +286,17 @@ describe('error levels', () => {
   });
 });
 
+describe('setting names removed in 2.0', () => {
+  it('a SEERR_* name still in the environment → warn config:env with the count (names only), worst stays a health level', async () => {
+    let s = await buildSnapshot(env.ctx, { ...deps(), env: {} });
+    expect(s.issues.some((i) => i.id === 'config:env')).toBe(false);
+    s = await buildSnapshot(env.ctx, { ...deps(), env: { SEERR_URL: 'set', SEERR_API_KEY: 'set', SEERR_URL_FILE: '' } });
+    expect(s.issues.find((i) => i.id === 'config:env')).toEqual({ id: 'config:env', level: 'warn', reason: 'removed_env', fp: issueFp('config:env', 'warn', 'removed_env'), detail: { n: 2 } });
+    expect(s.worst).toBe('ok');
+    expect(JSON.stringify(s)).not.toContain('SEERR');
+  });
+});
+
 describe('approval queue', () => {
   const request = (sub: string, rejected = false) => env.pool.query(
     'insert into approval_requests(id, authentik_sub, email, name, rejected_at) values ($1, $2, $3, $4, $5)',

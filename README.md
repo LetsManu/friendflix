@@ -51,6 +51,8 @@ FriendFlix is a private streaming portal that sits in front of **Jellyfin** (you
    docker compose -f compose.prod.yaml up -d
    ```
 
+   This also starts the **updater**: from then on *Admin → Update* installs new versions itself (channel *Stable* = image tag `latest` by default, no `FF_TAG` needed; only the separate socket proxy sees Docker, never the backend or the web app). Without it: add `-f compose.no-updater.yaml` ([docs/setup.md, Updater](docs/setup.md#updater)).
+
 2. **Read the one-time setup code** from the backend log (the line appears once the backend is up, so repeat after a few seconds if it is empty):
 
    ```bash
@@ -61,7 +63,7 @@ FriendFlix is a private streaming portal that sits in front of **Jellyfin** (you
 
 Afterwards revoke the one-time token in Authentik and make MFA mandatory there ([docs/setup.md, Harden Authentik](docs/setup.md#harden-authentik)). From then on people sign in on FriendFlix's own sign-in page over a wall of covers from your library (`LOGIN_UI`, automatic once Authentik is connected); Authentik still checks every password and second factor behind it, and *Admin → Status → Sign-in* tells you if a flow needs a fix. Every setting can be changed later in *Admin → Settings*, and each change is tested before it is saved. Also worth doing: `./scripts/backup-bootstrap.sh` backs up the generated secrets (see [docs/setup.md](docs/setup.md#7-start-the-stack)). The full walkthrough from an empty server, with the typical errors of every wizard step: **[docs/setup.md](docs/setup.md)**.
 
-Upgrading an existing install? Keep your `.env`; it never sees the wizard ([docs/setup.md §14](docs/setup.md#14-upgrading-to-settings-in-the-database)). `.env` and Docker secrets also remain an advanced option for pinning values ([below](#advanced-configure-by-environment)).
+Upgrading an existing install? Keep your `.env`; it never sees the wizard ([docs/setup.md §14](docs/setup.md#14-upgrading-to-settings-in-the-database)). Coming from 1.x: renamed variables, the updater and `FF_TAG` in [docs/setup.md §16, Upgrade to 2.0](docs/setup.md#16-upgrade-to-20). `.env` and Docker secrets also remain an advanced option for pinning values ([below](#advanced-configure-by-environment)).
 
 ## Invite your friends
 
@@ -209,7 +211,7 @@ Everything below is technical. Installation is covered in [Get started](#get-sta
 
 ### Advanced: configure by environment
 
-A new install needs none of this: the setup wizard and *Admin → Settings* store the settings in the database. `.env` and Docker secrets are for pinning values: what they set wins and shows locked in the wizard and in *Admin → Settings* ([docs/setup.md §15](docs/setup.md#15-advanced-configure-by-environment), [docs/setup.md, settings in the database](docs/setup.md#settings-in-the-database)). Template: [.env.example](.env.example). Every variable can also be read from a file with the `_FILE` suffix (Docker secrets, see [compose.secrets.yaml](compose.secrets.yaml)). Defaults are the ones in [compose.prod.yaml](compose.prod.yaml).
+A new install needs none of this: the setup wizard and *Admin → Settings* store the settings in the database. `.env` and Docker secrets are for pinning values: what they set wins and shows locked in the wizard and in *Admin → Settings* ([docs/setup.md §15](docs/setup.md#15-advanced-configure-by-environment), [docs/setup.md, settings in the database](docs/setup.md#settings-in-the-database)). Any setting can be set this way: compose passes every *Admin → Settings* key through to the backend (one generated block in `compose.prod.yaml`; an unset line changes nothing). Template: [.env.example](.env.example). Every variable can also be read from a file with the `_FILE` suffix (Docker secrets, see [compose.secrets.yaml](compose.secrets.yaml)). Defaults are the ones in [compose.prod.yaml](compose.prod.yaml).
 
 <details>
 <summary>All variables</summary>
@@ -226,11 +228,11 @@ A new install needs none of this: the setup wizard and *Admin → Settings* stor
 | `MEDIA_SERVER` | `jellyfin` | Media server kind: `jellyfin` or `plex` (env only; `compose.plex.yaml` sets `plex`, see [docs/plex.md](docs/plex.md) and [docs/architecture.md](docs/architecture.md)) |
 | `JELLYFIN_URL`, `JELLYFIN_ADMIN_API_KEY` | – (setup wizard) | Internal Jellyfin URL, e.g. `http://jellyfin:8096`, and admin API key (only with `MEDIA_SERVER=jellyfin`) |
 | `PLEX_URL`, `PLEX_TOKEN` | – (setup wizard) | Only with `MEDIA_SERVER=plex`: the Plex address as backend and gateway reach it, e.g. `http://plex.example.com:32400` (address only: no `?…`, `#…` or `user:password@`), and the token of the Plex account FriendFlix uses (encrypted in the database, write-only; `PLEX_TOKEN_FILE` as a Docker secret). Admin → Settings shows them only on a Plex instance; a value here wins and locks the field |
-| `REQUESTS_URL`, `REQUESTS_API_KEY` | – (optional) | Internal URL (bundled: `http://requests:5055`) and API key of the request service; without both, wishes and requests are hidden (older variable names still work, with a deprecation warning) |
+| `REQUESTS_URL`, `REQUESTS_API_KEY` | – (optional) | Internal URL (bundled: `http://requests:5055`) and API key of the request service; without both, wishes and requests are hidden (since 2.0 only these names; the 1.x names are ignored, see [Upgrade to 2.0](docs/setup.md#16-upgrade-to-20)) |
 | `ADMIN_GROUP` | `friendflix-admins` | Authentik group whose members become portal admins |
 | `BIND_ADDR` | `127.0.0.1` | Host address the three ports are published on – never a public interface |
 | `WEB_PORT`, `BACKEND_PORT`, `GATEWAY_PORT` | `3080`, `3081`, `3082` | Host ports for the reverse proxy |
-| `FF_REGISTRY`, `FF_TAG` | `ghcr.io/letsmanu`, `latest` | Image source and release channel: `latest` = stable releases, `nightly` = every green commit on main, `1` / `1.1` / `1.1.0` (or a commit SHA) to pin ([release channels](docs/operations.md#release-kanäle)) |
+| `FF_REGISTRY`, `FF_TAG` | `ghcr.io/letsmanu`, `latest` | Image source and tag. **Only without the updater** (`compose.no-updater.yaml`): `FF_TAG` is then the release channel: `latest` = stable releases, `nightly` = every green commit on main, `2` / `2.0` / `2.0.0` (or `sha-<7>`) to pin ([release channels](docs/setup.md#release-channels-without-the-updater)). With the updater leave it unset: the channel is chosen in *Admin → Update* |
 | `SESSION_TTL_SECONDS`, `SESSION_IDLE_SECONDS` | `28800`, `7200` | Absolute session length (8 h) and idle timeout (2 h) |
 | `TZ` | `Europe/Vienna` | Time zone for scheduled jobs (digest, playback check, backups) |
 | `AUTHENTIK_URL`, `AUTHENTIK_API_TOKEN`, `AUTHENTIK_ENROLL_FLOW` | empty | Invitations that also create the Authentik account (all three needed); URL and token also give the admin user page the two-factor state and *Send password link* |
@@ -262,8 +264,8 @@ A new install needs none of this: the setup wizard and *Admin → Settings* stor
 | `METRICS_TOKEN` | empty | Bearer token for `/metrics` |
 | `PORTAINER_WEBHOOK_URL` or `PORTAINER_URL` + `PORTAINER_API_KEY` + `PORTAINER_STACK_ID` | empty | One-click updates from *Admin → Update* (`PORTAINER_ENDPOINT_ID` default `1`) |
 | `UPDATE_REPO`, `GITHUB_TOKEN` | `LetsManu/friendflix`, empty | Version check; the token only raises the GitHub rate limit |
-| `UPDATE_CHANNEL`, `UPDATE_VERSION` | `stable`, empty | Set with the *Stable / Nightly / Fixed version* switch under *Admin → Update* (stored in the database, no `.env` needed): what the update check compares with and, with the updater, what it installs. Without the updater it never switches images; `FF_TAG` does |
-| `UPDATER_URL`, `UPDATER_COMPOSE_FILES` | `http://updater:7070`, `compose.prod.yaml` | Opt-in updater (profile `updater`, [setup guide](docs/setup.md#updater-optional)): its internal address (env only) and the stack's compose files (with Plex `compose.plex.yaml` makes the default `compose.prod.yaml,compose.plex.yaml`) |
+| `UPDATE_CHANNEL`, `UPDATE_VERSION` | `stable`, empty | Set with the *Stable / Nightly / Fixed version* switch under *Admin → Update* (stored in the database, no `.env` needed): what the update check compares with and, with the updater, what it installs. Without the updater (`compose.no-updater.yaml`) it never switches images; `FF_TAG` does |
+| `UPDATER_URL`, `UPDATER_COMPOSE_FILES`, `UPDATER_PROJECT_DIR` | `http://updater:7070`, empty (automatic), the current directory | The updater (on by default since 2.0, [setup guide](docs/setup.md#updater)): its internal address (env only); the compose files it recreates the stack with (empty = the files the stack was last started with, so `compose.plex.yaml` and other overrides stay in; set it only to force a list, which must then name every file); the stack directory's absolute path, only when compose runs without `PWD` (e.g. `sudo`) |
 | `AUTO_UPDATE`, `AUTO_UPDATE_TIME` | `off`, `04:00` | Automatic updates through the updater: `nightly-window` runs the update job once a night from this time (server time zone); set in *Admin → Update* |
 | `GRAFANA_ADMIN_PASSWORD`, `GRAFANA_PORT`, `PROMETHEUS_RETENTION` | – (required for the monitoring stack), `3083`, `30d` | Optional Prometheus + Grafana (`compose.monitoring.yaml`); no default password |
 | `BACKUP_PATH`, `BACKUP_HOUR`, `BACKUP_KEEP_DAYS`, `BACKUP_RUN_ON_START` | `./backups`, `3`, `14`, `false` | Backup sidecar (profile `backup`) |

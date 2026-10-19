@@ -53,10 +53,8 @@ describe('key classification', () => {
   it("apply === 'restart' exactly for DOWNLOAD_CREATE_PER_HOUR (API_COMPRESSION is read per response: live)", () => {
     expect(SETTINGS.filter((s) => s.apply === 'restart').map((s) => s.key).sort()).toEqual(['DOWNLOAD_CREATE_PER_HOUR']);
   });
-  it('legacy env names', () => {
-    expect(def('REQUESTS_URL').legacyEnv).toEqual(['SEERR_URL']);
-    expect(def('REQUESTS_API_KEY').legacyEnv).toEqual(['SEERR_API_KEY']);
-    expect(SETTINGS.filter((s) => s.legacyEnv).map((s) => s.key).sort()).toEqual(['REQUESTS_API_KEY', 'REQUESTS_URL']);
+  it('no setting has another env name any more (the 1.x SEERR_* names were removed in 2.0)', () => {
+    for (const s of SETTINGS) expect(Object.keys(s), s.key).not.toContain('legacyEnv');
   });
   it('phase-3 keys: all nine shown (the four account-security flows in group signin with the Authentik probe); the spec defaults', () => {
     for (const k of [...VISIBLE3, ...SECURITY3]) expect(def(k).visible, k).not.toBe(false);

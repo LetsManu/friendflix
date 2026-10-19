@@ -68,25 +68,22 @@ describe('resolveConfig', () => {
       const emptyFile = { ...BASE, JELLYFIN_ADMIN_API_KEY: 'from-var', JELLYFIN_ADMIN_API_KEY_FILE: join(dir, 'empty') };
       expect(resolveConfig({ env: emptyFile, rows: [], encKey }).cfg.JELLYFIN_ADMIN_API_KEY).toBeUndefined();
       expect(loadConfig(emptyFile).JELLYFIN_ADMIN_API_KEY).toBeUndefined();
-      // ... and it hides the legacy names, as the new name in either form does
-      const emptyNew = { ...BASE, REQUESTS_API_KEY_FILE: join(dir, 'empty'), SEERR_API_KEY: 'old-var' };
+      const emptyNew = { ...BASE, REQUESTS_API_KEY_FILE: join(dir, 'empty') };
       expect(resolveConfig({ env: emptyNew, rows: [], encKey }).cfg.REQUESTS_API_KEY).toBe(loadConfig(emptyNew).REQUESTS_API_KEY);
       expect(loadConfig(emptyNew).REQUESTS_API_KEY).toBe('');
-      // legacy pair: old_FILE wins over old; the new name in either form wins over both
-      const legacy = { ...BASE, SEERR_API_KEY: 'old-var', SEERR_API_KEY_FILE: file };
-      expect(resolveConfig({ env: legacy, rows: [], encKey }).cfg.REQUESTS_API_KEY).toBe('from-file');
-      expect(loadConfig(legacy).REQUESTS_API_KEY).toBe('from-file');
-      expect(resolveConfig({ env: { ...legacy, REQUESTS_API_KEY: 'new-var' }, rows: [], encKey }).cfg.REQUESTS_API_KEY).toBe('new-var');
-      expect(loadConfig({ ...legacy, REQUESTS_API_KEY: 'new-var' }).REQUESTS_API_KEY).toBe('new-var');
+      // the 1.x names (removed in 2.0) are read by neither, in no form
+      const removed = { ...BASE, SEERR_API_KEY: 'old-var', SEERR_API_KEY_FILE: file };
+      expect(resolveConfig({ env: removed, rows: [], encKey }).cfg.REQUESTS_API_KEY).toBe('');
+      expect(loadConfig(removed).REQUESTS_API_KEY).toBe('');
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
   });
 
-  it('legacy names count as env', () => {
-    const r = resolveConfig({ env: { ...BASE, SEERR_URL: 'http://seerr:5055' }, rows: [row('REQUESTS_URL', 'http://db:5055')], encKey });
-    expect(r.cfg.REQUESTS_URL).toBe('http://seerr:5055');
-    expect(r.sources.REQUESTS_URL).toBe('env');
+  it('a removed 1.x name neither counts as env nor hides the database value', () => {
+    const r = resolveConfig({ env: { ...BASE, SEERR_URL: 'set' }, rows: [row('REQUESTS_URL', 'http://db:5055')], encKey });
+    expect(r.cfg.REQUESTS_URL).toBe('http://db:5055');
+    expect(r.sources.REQUESTS_URL).toBe('db');
   });
 
   it('an env PUBLIC_URL with a path resolves to its origin', () => {

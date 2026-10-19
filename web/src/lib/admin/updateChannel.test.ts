@@ -45,11 +45,11 @@ describe('update channel', () => {
     expect(envLineFor('nightly')).toBe('FF_TAG=nightly');
     expect(envLineFor('pinned', '1.2.3')).toBe('FF_TAG=1.2.3');
     expect(envLineFor('pinned')).toBe('FF_TAG=latest');
-    expect(PULL_COMMAND).toBe('docker compose -f compose.prod.yaml pull && docker compose -f compose.prod.yaml up -d');
+    expect(PULL_COMMAND).toBe('docker compose -f compose.prod.yaml -f compose.no-updater.yaml pull && docker compose -f compose.prod.yaml -f compose.no-updater.yaml up -d');
     expect(pullCommand()).toBe(PULL_COMMAND);
     expect(pullCommand('jellyfin')).toBe(PULL_COMMAND);
     // a Plex stack keeps its override (MEDIA_SERVER=plex) on the pull, or the backend would come back as a Jellyfin instance
-    expect(pullCommand('plex')).toBe('docker compose -f compose.prod.yaml -f compose.plex.yaml pull && docker compose -f compose.prod.yaml -f compose.plex.yaml up -d');
+    expect(pullCommand('plex')).toBe('docker compose -f compose.prod.yaml -f compose.plex.yaml -f compose.no-updater.yaml pull && docker compose -f compose.prod.yaml -f compose.plex.yaml -f compose.no-updater.yaml up -d');
   });
   it('the snippet: selection differs from the running channel, or an update exists', () => {
     expect(showSnippet({ updateAvailable: false, channel: ch() })).toBe(false);

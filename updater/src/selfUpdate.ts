@@ -9,14 +9,15 @@ import { loadConfig } from './config.js';
 import { Docker, execRunner } from './docker.js';
 import { SELF_SERVICE, isTag } from './policy.js';
 
-export async function selfUpdate(env: NodeJS.ProcessEnv, docker?: Pick<Docker, 'up'>): Promise<number> {
+export async function selfUpdate(env: NodeJS.ProcessEnv, docker?: Pick<Docker, 'up'> & Partial<Pick<Docker, 'refreshFiles'>>): Promise<number> {
   const tag = env.FF_TAG;
   if (!isTag(tag)) return 2;
   const d = docker ?? (() => {
     const c = loadConfig(env);
-    return new Docker({ projectDir: c.projectDir, files: c.composeFiles, projectName: c.projectName, repo: c.repo, dockerHost: c.dockerHost }, execRunner);
+    return new Docker({ projectDir: c.projectDir, files: c.composeFiles, autoFiles: c.composeFilesAuto, projectName: c.projectName, repo: c.repo, dockerHost: c.dockerHost }, execRunner);
   })();
   try {
+    await d.refreshFiles?.();
     await d.up(tag, [SELF_SERVICE]);
     return 0;
   } catch {

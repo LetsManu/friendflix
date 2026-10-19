@@ -54,6 +54,20 @@ describe('update job', () => {
     expect(u.log.tail().some((l) => l.endsWith('update succeeded'))).toBe(true);
   });
 
+  it('logs the compose files the job uses; a media server mismatch fails the job before anything is pulled', async () => {
+    const w = world();
+    const { u } = make({ ...w, ops: { ...w.ops, composeFiles: () => ['compose.prod.yaml', 'compose.plex.yaml'] } });
+    u.start('update');
+    await u.idle();
+    expect(u.log.tail().some((l) => l.endsWith('compose files: compose.prod.yaml, compose.plex.yaml'))).toBe(true);
+    const m = world();
+    const { u: u2, store } = make({ ...m, ops: { ...m.ops, images: async () => { throw new StepError('media_server_mismatch'); } } });
+    u2.start('update');
+    await u2.idle();
+    expect(store.state.lastJob).toMatchObject({ state: 'failed', error: 'media_server_mismatch', steps: { pull: 'failed', restart: 'skipped' } });
+    expect(m.calls.filter((c) => c.startsWith('pull') || c.startsWith('up'))).toEqual([]);
+  });
+
   it('a cosign failure aborts before anything is restarted', async () => {
     const w = world({ verifyFails: 'ghcr.io/letsmanu/friendflix-gateway:latest' });
     const { u, store } = make(w);

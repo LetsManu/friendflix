@@ -3,7 +3,7 @@
 <script lang="ts">
   /**
    * Admin → Update: version card, update channel (stable / nightly / fixed version, the .env line to switch), check, update with
-   * confirm + progress steps (Portainer redeploy), changelog. Without the opt-in updater the channel switch only saves
+   * confirm + progress steps (Portainer redeploy), changelog. Without the updater (compose.no-updater.yaml) the channel switch only saves
    * UPDATE_CHANNEL (the images follow FF_TAG); with it (GET /api/admin/updater answers present) the updater card replaces the
    * Portainer card and installs the selected channel itself (UpdaterCard.svelte). The backend never touches Docker.
    */
@@ -78,7 +78,7 @@
   $: sel = u?.channel?.selected ?? 'stable';
   $: nightly = sel === 'nightly';
   $: notes = u?.release?.notes && !nightly ? parseNotes(u.release.notes) : [];
-  /** the opt-in updater answers: it installs the channel itself, no .env line needed */
+  /** the updater answers: it installs the channel itself, no .env line needed */
   let up: UpdaterView | null = null, reauthBack = false;
   $: updater = statusOf(up) !== null;
   $: snippet = u && !updater ? showSnippet(u) : false;

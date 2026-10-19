@@ -28,12 +28,12 @@ test.describe('admin: settings', () => {
     await expect(row.getByRole('button', { name: /übernehmen/ })).toHaveCount(0);
   });
 
-  test('Move all moves every env row and names the legacy names without the old product name', async ({ page, api }) => {
+  test('Move all moves every env row and names KEY and KEY_FILE to remove', async ({ page, api }) => {
     await page.goto('/admin/settings');
     await page.getByRole('button', { name: 'Alle übernehmen' }).click();
     expect(api.settings.imports).toEqual(['all']);
     const req = setting(page, 'Adresse des Anfragen-Dienstes');
-    await expect(req.getByText(/REQUESTS_URL und REQUESTS_URL_FILE \(und ältere Namen dieser Einstellung\)/)).toBeVisible();
+    await expect(req.getByText(/REQUESTS_URL und REQUESTS_URL_FILE aus der \.env/)).toBeVisible();
     await expect(setting(page, 'Öffentliche Adresse').getByText(/Auch gespeichert/)).toBeVisible();
     expect(await page.locator('main').innerText()).not.toMatch(/seerr/i);
   });

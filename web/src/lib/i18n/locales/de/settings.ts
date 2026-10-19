@@ -21,7 +21,6 @@ export default {
   moveAll: 'Alle übernehmen',
   moveAllHint: { one: '{n} Wert kommt aus der Umgebung (.env). Übernimm ihn in die Einstellungen, dann kannst du ihn aus der .env entfernen.', other: '{n} Werte kommen aus der Umgebung (.env). Übernimm sie in die Einstellungen, dann kannst du sie aus der .env entfernen.' },
   moveHint: 'Auch gespeichert. Du kannst jetzt {keys} aus der .env entfernen und neu starten. Bis dahin gilt weiter der Wert aus der Umgebung.',
-  moveHintOlder: '{keys} (und ältere Namen dieser Einstellung)',
   moved: { one: '{n} Wert übernommen.', other: '{n} Werte übernommen.' },
   movedNone: 'Nichts zu übernehmen.',
   moveFailed: 'Übernehmen fehlgeschlagen.',

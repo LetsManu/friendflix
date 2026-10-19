@@ -27,7 +27,6 @@ const settings: Translation<typeof de> = {
     other: '{n} valores vienen del entorno (.env). Trasládalos a los ajustes y después podrás quitarlos del .env.',
   },
   moveHint: 'También guardado. Ya puedes quitar {keys} del .env y reiniciar. Hasta entonces sigue valiendo el valor del entorno.',
-  moveHintOlder: '{keys} (y nombres antiguos de este ajuste)',
   moved: { one: '{n} valor trasladado.', many: '{n} valores trasladados.', other: '{n} valores trasladados.' },
   movedNone: 'No hay nada que trasladar.',
   moveFailed: 'No se pudo trasladar.',

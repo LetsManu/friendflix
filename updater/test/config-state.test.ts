@@ -13,9 +13,14 @@ const SECRET = 'config-test-secret-0123456789';
 describe('updater config', () => {
   it('defaults', () => {
     const c = loadConfig({ INTERNAL_SECRET: SECRET });
-    expect(c).toMatchObject({ port: 7070, projectDir: '/project', composeFiles: ['compose.prod.yaml'], repo: 'LetsManu/friendflix', dockerHost: 'tcp://docker-proxy:2375',
+    expect(c).toMatchObject({ port: 7070, projectDir: '/project', composeFiles: ['compose.prod.yaml'], composeFilesAuto: true, repo: 'LetsManu/friendflix', dockerHost: 'tcp://docker-proxy:2375',
       stateDir: '/state', backendHealthUrl: 'http://backend:3000/health', version: null, gitSha: null });
     expect(c.secret).toBe(SECRET);
+  });
+
+  it('an empty UPDATER_COMPOSE_FILES (compose passes "") means automatic', () => {
+    expect(loadConfig({ INTERNAL_SECRET: SECRET, UPDATER_COMPOSE_FILES: '' })).toMatchObject({ composeFiles: ['compose.prod.yaml'], composeFilesAuto: true });
+    expect(loadConfig({ INTERNAL_SECRET: SECRET, UPDATER_COMPOSE_FILES: ' ' })).toMatchObject({ composeFiles: ['compose.prod.yaml'], composeFilesAuto: true });
   });
 
   it('reads the secret from the bootstrap-gateway volume copy', () => {
@@ -36,7 +41,7 @@ describe('updater config', () => {
     ];
     for (const b of bad) expect(() => loadConfig({ INTERNAL_SECRET: SECRET, ...b }), JSON.stringify(b)).toThrow();
     expect(loadConfig({ INTERNAL_SECRET: SECRET, UPDATER_COMPOSE_FILES: 'compose.prod.yaml, compose.secrets.yaml', UPDATER_PROJECT_DIR: '/srv/friend flix', COMPOSE_PROJECT_NAME: 'ff', GIT_SHA: 'a'.repeat(40), APP_VERSION: '1.1.0' }))
-      .toMatchObject({ composeFiles: ['compose.prod.yaml', 'compose.secrets.yaml'], projectDir: '/srv/friend flix', projectName: 'ff', gitSha: 'a'.repeat(40), version: '1.1.0' });
+      .toMatchObject({ composeFiles: ['compose.prod.yaml', 'compose.secrets.yaml'], composeFilesAuto: false, projectDir: '/srv/friend flix', projectName: 'ff', gitSha: 'a'.repeat(40), version: '1.1.0' });
   });
 });
 
@@ -68,5 +73,9 @@ describe('self-update helper', () => {
     expect(await selfUpdate({ FF_TAG: 'nightly;id' }, d)).toBe(2);
     expect(await selfUpdate({}, d)).toBe(2);
     expect(await selfUpdate({ FF_TAG: 'latest' }, { up: async () => { throw new Error('x'); } })).toBe(1);
+    // the helper first settles on the stack's compose files (as the running updater does)
+    const order: string[] = [];
+    expect(await selfUpdate({ FF_TAG: 'latest' }, { refreshFiles: async () => { order.push('files'); return []; }, up: async () => { order.push('up'); } })).toBe(0);
+    expect(order).toEqual(['files', 'up']);
   });
 });

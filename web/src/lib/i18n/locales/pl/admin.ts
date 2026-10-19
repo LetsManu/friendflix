@@ -233,7 +233,7 @@ const pl: Translation<typeof de> = {
       updateLead: 'Aby pobrać aktualizację, sprawdź tę linię w pliku .env stosu i uruchom polecenie:',
       envLabel: 'Linia w .env',
       cmdLabel: 'Polecenie',
-      note: 'Zmiana działa dopiero po tym poleceniu: FriendFlix nigdy sam nie dotyka Dockera.',
+      note: 'Zmiana działa dopiero po tym poleceniu: bez aktualizatora FriendFlix nigdy sam nie dotyka Dockera (compose.no-updater.yaml pozostawia go wyłączonym).',
       pinned: 'Stała wersja',
       pinnedHint: 'Stała wersja: zostaje dokładnie na tym wydaniu, dopóki jej nie zmienisz.',
       versionLabel: 'Wersja (X.Y.Z)',
@@ -301,6 +301,7 @@ const pl: Translation<typeof de> = {
         interrupted: 'przerwane przez restart',
         self_update_timeout: 'aktualizator nie został zastąpiony',
         unexpected_image: 'nieoczekiwana nazwa obrazu',
+        media_server_mismatch: 'pliki compose uruchomiłyby inny serwer multimediów niż obecnie działający (UPDATER_COMPOSE_FILES bez compose.plex.yaml?), nic nie zostało zrestartowane',
         compose_config: 'nieczytelna konfiguracja compose',
         unknown: 'nieznany błąd',
       },
@@ -593,6 +594,9 @@ const pl: Translation<typeof de> = {
     },
     approvals: {
       pending_approvals: { one: '{n} logowanie czeka na zatwierdzenie', few: '{n} logowania czekają na zatwierdzenie', many: '{n} logowań czeka na zatwierdzenie', other: '{n} logowania czeka na zatwierdzenie' },
+    },
+    config: {
+      removed_env: { one: '{n} stara nazwa zmiennej w .env jest od wersji 2.0 ignorowana: usługa próśb używa teraz REQUESTS_URL i REQUESTS_API_KEY', few: '{n} stare nazwy zmiennych w .env są od wersji 2.0 ignorowane: usługa próśb używa teraz REQUESTS_URL i REQUESTS_API_KEY', many: '{n} starych nazw zmiennych w .env jest od wersji 2.0 ignorowanych: usługa próśb używa teraz REQUESTS_URL i REQUESTS_API_KEY', other: '{n} starej nazwy zmiennej w .env jest od wersji 2.0 ignorowane: usługa próśb używa teraz REQUESTS_URL i REQUESTS_API_KEY' },
     },
   },
 };

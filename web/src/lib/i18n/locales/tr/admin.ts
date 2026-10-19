@@ -213,7 +213,7 @@ const tr: Translation<typeof de> = {
       updateLead: 'Güncellemeyi almak için stack’in .env dosyasındaki bu satırı kontrol et, sonra komutu çalıştır:',
       envLabel: '.env satırı',
       cmdLabel: 'Komut',
-      note: 'Geçiş ancak bu komuttan sonra geçerli olur: FriendFlix Docker’a asla kendisi dokunmaz.',
+      note: 'Geçiş ancak bu komuttan sonra geçerli olur: güncelleyici olmadan FriendFlix Docker’a asla kendisi dokunmaz (compose.no-updater.yaml onu kapalı tutar).',
       pinned: 'Sabit sürüm',
       pinnedHint: 'Sabit sürüm: siz değiştirene kadar tam olarak bu sürümde kalır.',
       versionLabel: 'Sürüm (X.Y.Z)',
@@ -281,6 +281,7 @@ const tr: Translation<typeof de> = {
         interrupted: 'bir yeniden başlatmayla kesildi',
         self_update_timeout: 'güncelleyici değiştirilmedi',
         unexpected_image: 'beklenmeyen imaj adı',
+        media_server_mismatch: 'compose dosyaları şu an çalışandan farklı bir medya sunucusu başlatırdı (UPDATER_COMPOSE_FILES içinde compose.plex.yaml yok mu?), hiçbir şey yeniden başlatılmadı',
         compose_config: 'compose yapılandırması okunamıyor',
         unknown: 'bilinmeyen hata',
       },
@@ -555,6 +556,9 @@ const tr: Translation<typeof de> = {
     },
     approvals: {
       pending_approvals: { one: '{n} giriş onay bekliyor', other: '{n} giriş onay bekliyor' },
+    },
+    config: {
+      removed_env: { one: '.env içindeki {n} eski değişken adı 2.0’dan beri yok sayılıyor: istek hizmeti artık REQUESTS_URL ve REQUESTS_API_KEY kullanıyor', other: '.env içindeki {n} eski değişken adı 2.0’dan beri yok sayılıyor: istek hizmeti artık REQUESTS_URL ve REQUESTS_API_KEY kullanıyor' },
     },
   },
 };

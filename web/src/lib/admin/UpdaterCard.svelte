@@ -2,7 +2,7 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
 <script lang="ts">
   /**
-   * Admin → Update with the opt-in updater (lib/admin/updater.ts): installed / previous tag, "Update now", "Back to previous
+   * Admin → Update with the updater (lib/admin/updater.ts): installed / previous tag, "Update now", "Back to previous
    * version", "Update the updater" (inline confirmation, no dialog), the job's steps with live status, the result of the last
    * job and the automatic updates. A job restarts the backend: failed polls show "reconnecting" and the page picks the result up
    * when it answers again (also after a reload: the updater keeps the last job). A start that needs a recent sign-in goes through

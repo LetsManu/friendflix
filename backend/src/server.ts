@@ -3,7 +3,7 @@
 import { Redis } from 'ioredis';
 import pg from 'pg';
 import { buildApp } from './app.js';
-import { deprecatedEnvNames, loadConfig } from './config.js';
+import { loadConfig, removedEnvNames } from './config.js';
 import { keyFromBase64 } from './crypto.js';
 import { migrate } from './db.js';
 import { createMediaServer, mediaConfigProblems } from './media/index.js';
@@ -75,8 +75,8 @@ const { ctx } = live;
 const app = await buildApp(ctx);
 logTo.app = app.log;
 await app.listen({ port: cfg.PORT, host: '0.0.0.0' });
-// renamed settings that still use their old name (names only, never values)
-for (const msg of deprecatedEnvNames()) app.log.warn(msg);
+// setting names removed in 2.0 that are still set (names only, never values; the admin banner shows them too, health.ts)
+for (const msg of removedEnvNames()) app.log.warn(msg);
 // setup mode (spec Part E): the jobs below ask isOperational on every tick, which reads the cached setup state warmed here; the instance
 // that owns the background jobs prints a new setup code while setup is incomplete (every start replaces the previous one)
 await isSetupComplete(ctx);
@@ -88,7 +88,7 @@ await live.startMedia({ dispatch: (e) => dispatchMediaEvent(ctx, e), log: app.lo
 if (isOperational(ctx)) void reapplyPoliciesOnce(ctx).catch(jobFailed(ctx, app.log, 'role-reapply', 'role policy re-apply failed'));
 pushEnabled(cfg); // validates the VAPID pair once (warns and disables push when invalid)
 const offPush = settings.onChange(['VAPID_PUBLIC_KEY', 'VAPID_PRIVATE_KEY', 'VAPID_SUBJECT', 'PUBLIC_URL'], () => { pushEnabled(settings.current()); });
-// the opt-in updater installs the selected channel: tell it on every change (and once now); a missed call is repeated before each job
+// the updater installs the selected channel: tell it on every change (and once now); a missed call is repeated before each job
 const offUpdater = settings.onChange(['UPDATE_CHANNEL', 'UPDATE_VERSION'], () => { void syncChannel(ctx).catch(() => undefined); });
 void syncChannel(ctx).catch(() => undefined);
 const akMissing = authentikConfigProblem(cfg);
@@ -137,7 +137,7 @@ if (cfg.BACKGROUND_JOBS === 'true') {
   }, 600_000));
   if (downloadsOn()) void startPreparerTick(ctx).catch(jobFailed(ctx, app.log, 'download-prep', 'download prep start failed'));
   timers.push(setInterval(() => { if (op()) void healthTick(ctx); }, 60_000)); // admin health snapshot (kv health:snap); never throws
-  // AUTO_UPDATE=nightly-window through the opt-in updater (one start per day across instances) + the result audit of updater jobs
+  // AUTO_UPDATE=nightly-window through the updater (one start per day across instances) + the result audit of updater jobs
   timers.push(setInterval(() => { if (op()) void autoUpdateTick(ctx).catch(jobFailed(ctx, app.log, 'auto-update', 'auto update tick failed')); }, 60_000));
   if (op()) void healthTick(ctx);
   timers.push(setInterval(() => { if (op()) void langIndexTick(ctx); }, 1800_000)); // self-limits to every 12 h, never throws

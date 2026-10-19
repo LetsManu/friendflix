@@ -29,8 +29,7 @@ describe('upstream adapter selection', () => {
     const files = walk(src).map((f) => f.slice(src.length));
     for (const adapter of ['jellyfin', 'plex']) {
       const importers = files.filter((f) => f !== `upstream/${adapter}.ts` && new RegExp(`from '(\\./|\\.\\./)*(upstream/)?${adapter}\\.js'`).test(readFileSync(src + f, 'utf8')));
-      // gateway.ts re-exports mediaBrowserHeader of the default (Jellyfin) adapter for older callers; nothing else may
-      expect(importers, adapter).toEqual(adapter === 'jellyfin' ? ['gateway.ts', 'upstream/index.ts'] : ['upstream/index.ts']);
+      expect(importers, adapter).toEqual(['upstream/index.ts']);
     }
     expect(readFileSync(`${src}upstream/plex.ts`, 'utf8')).not.toMatch(/from '\.\/jellyfin\.js'/);
     expect(readFileSync(`${src}upstream/jellyfin.ts`, 'utf8')).not.toMatch(/from '\.\/plex\.js'/);

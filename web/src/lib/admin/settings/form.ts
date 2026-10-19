@@ -144,12 +144,8 @@ export const keyHelp = (key: string): string => (hasKey(`settings.keys.${key}.he
 /** a group's note under its title (`settings.groupHelp.<group>`), '' when it has none */
 export const groupHelp = (group: string): string => (hasKey(`settings.groupHelp.${group}`) ? trDynamic(`settings.groupHelp.${group}`) : '');
 
-/** The env names to remove after a move; legacy names of an old product are summarised, not named. */
-export function moveHint(names: readonly string[]): string {
-  const own = names.filter((n) => !/seerr/i.test(n));
-  const list = fmtList(own);
-  return tr('settings.moveHint', { keys: own.length < names.length ? tr('settings.moveHintOlder', { keys: list }) : list });
-}
+/** The env names to remove after a move (KEY and KEY_FILE). */
+export const moveHint = (names: readonly string[]): string => tr('settings.moveHint', { keys: fmtList(names) });
 
 /**
  * Text of a field error code (400 invalid_settings).

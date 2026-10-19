@@ -7,8 +7,8 @@ import { settingsState } from '../mocks/settings.js';
 // command of Admin → Update (a Plex stack keeps compose.plex.yaml). Without a kind (older backend) or on Jellyfin nothing changes.
 type Page = import('@playwright/test').Page;
 const setting = (page: Page, name: string) => page.getByRole('group', { name, exact: true });
-const PLEX_PULL = 'docker compose -f compose.prod.yaml -f compose.plex.yaml pull && docker compose -f compose.prod.yaml -f compose.plex.yaml up -d';
-const JF_PULL = 'docker compose -f compose.prod.yaml pull && docker compose -f compose.prod.yaml up -d';
+const PLEX_PULL = 'docker compose -f compose.prod.yaml -f compose.plex.yaml -f compose.no-updater.yaml pull && docker compose -f compose.prod.yaml -f compose.plex.yaml -f compose.no-updater.yaml up -d';
+const JF_PULL = 'docker compose -f compose.prod.yaml -f compose.no-updater.yaml pull && docker compose -f compose.prod.yaml -f compose.no-updater.yaml up -d';
 
 test.describe('media server kind in the app (Plex)', () => {
   test.beforeEach(({ api }) => { api.asAdmin = true; });

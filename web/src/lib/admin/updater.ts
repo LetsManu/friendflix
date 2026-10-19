@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
 /**
- * Admin → Update with the opt-in updater container (backend/src/updater.ts, GET/POST /api/admin/updater): the job steps
+ * Admin → Update with the updater container (backend/src/updater.ts, GET/POST /api/admin/updater): the job steps
  * (pull → verify → restart → health, rollback when it ran), the result of the last job, and the polling while a job runs
  * (the backend restarts in the middle: failed polls mean "reconnecting", not an error).
  */
