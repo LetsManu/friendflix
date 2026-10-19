@@ -14,6 +14,10 @@ import androidx.core.view.WindowInsetsCompat
 import androidx.lifecycle.lifecycleScope
 import app.friendflix.android.BuildConfig
 import app.friendflix.android.R
+import app.friendflix.android.bridge.Capabilities
+import app.friendflix.android.bridge.NativeBridge
+import app.friendflix.android.bridge.NoDownloadSink
+import app.friendflix.android.bridge.NoPlayerLauncher
 import app.friendflix.android.settings.AppSettings
 import app.friendflix.android.setup.SetupActivity
 import kotlinx.coroutines.flow.first
@@ -42,8 +46,12 @@ class ShellActivity : ComponentActivity() {
                 return@launch
             }
             WebViewFactory.setDebuggable(BuildConfig.DEBUG)
+            val policy = OriginPolicy(origin)
+            // Tasks 6 (downloads) and 8 (player) swap the placeholders and flip their capability flags; until then the web UI keeps
+            // playing and downloading in the page. openSettings is a no-op until the settings screen exists (Task 11).
+            val bridge = NativeBridge(policy, NoPlayerLauncher, NoDownloadSink, Capabilities(play = false, download = false, cast = false), openSettings = {})
             val view = WebViewFactory.create(
-                this@ShellActivity, OriginPolicy(origin), BuildConfig.VERSION_NAME,
+                this@ShellActivity, policy, BuildConfig.VERSION_NAME, bridge,
                 onRenderGone = ::onRenderGone, openExternal = ::openExternal,
             )
             ViewCompat.setOnApplyWindowInsetsListener(view) { v, insets ->

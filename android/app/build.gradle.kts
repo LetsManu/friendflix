@@ -60,6 +60,7 @@ dependencies {
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.activity.ktx)
     implementation(libs.androidx.datastore.preferences)
+    implementation(libs.androidx.webkit)
     implementation(libs.okhttp)
 
     testImplementation(libs.junit)

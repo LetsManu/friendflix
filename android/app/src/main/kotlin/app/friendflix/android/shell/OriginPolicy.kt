@@ -12,6 +12,12 @@ class OriginPolicy(val origin: HttpUrl) {
     private val host = origin.host
     private val port = origin.port
 
+    /** The origin as WebViewCompat.addWebMessageListener wants it: scheme://host[:port] (IPv6 hosts in brackets, default port omitted). */
+    fun originRule(): String {
+        val h = if (':' in host) "[$host]" else host
+        return if (port == 443) "https://$h" else "https://$h:$port"
+    }
+
     fun isAppOrigin(url: Uri): Boolean {
         if (!"https".equals(url.scheme, ignoreCase = true)) return false
         val h = url.host ?: return false

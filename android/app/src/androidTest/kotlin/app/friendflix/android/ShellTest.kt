@@ -156,4 +156,30 @@ class ShellTest {
         while (scenario.state != state && System.currentTimeMillis() < deadline) Thread.sleep(50)
         assertEquals(state, scenario.state)
     }
+
+    @Test fun bridgeAnswersTheAppPageAndIsInvisibleToForeignOrigins() {
+        ActivityScenario.launch(ShellActivity::class.java).use { scenario ->
+            val html = "<html><head><title>b</title></head><body><script>" +
+                "window.__r = null; window.FriendFlixNative.onmessage = function (e) { window.__r = e.data; };" +
+                "window.FriendFlixNative.postMessage(JSON.stringify({id: 'x1', method: 'capabilities', args: {}}));" +
+                "</script></body></html>"
+            scenario.onMain { it.loadDataWithBaseURL("https://friend.example.com/b", html, "text/html", "utf-8", "https://friend.example.com/b") }
+            val view = scenario.webView()
+            var reply: String? = null
+            waitFor("the bridge reply") {
+                view.evaluateJavascript("window.__r") { reply = it }
+                reply != null && reply != "null"
+            }
+            assertTrue(reply.orEmpty().contains("\\\"ok\\\":true"))
+            assertTrue(reply.orEmpty().contains("\\\"play\\\":false"))
+
+            scenario.onMain { it.loadDataWithBaseURL("https://other.evil.test/", "<html><body>x</body></html>", "text/html", "utf-8", "https://other.evil.test/") }
+            var defined: String? = null
+            waitFor("the foreign page") {
+                view.evaluateJavascript("typeof window.FriendFlixNative + ':' + location.origin") { defined = it }
+                defined?.contains("evil.test") == true
+            }
+            assertEquals("\"undefined:https://other.evil.test\"", defined)
+        }
+    }
 }

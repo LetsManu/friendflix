@@ -13,6 +13,8 @@ import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import androidx.core.net.toUri
+import app.friendflix.android.bridge.BridgeInstaller
+import app.friendflix.android.bridge.NativeBridge
 
 object ExternalLinks {
     /** Web links go through a chooser so the user picks the browser; the chooser never names a component of its own. */
@@ -26,6 +28,8 @@ object ExternalLinks {
     private val OPENABLE = setOf("https", "http", "mailto", "tel")
 }
 
+// The androidx.webkit lint rule (pulled in with the bridge dependency) does not see the override below; it is there and returns true.
+@SuppressLint("MissingOnRenderProcessGone")
 class ShellWebViewClient(
     private val policy: OriginPolicy,
     private val onRenderGone: () -> Unit = {},
@@ -73,7 +77,10 @@ class ShellWebViewClient(
 
 object WebViewFactory {
     @SuppressLint("SetJavaScriptEnabled")
-    fun create(context: Context, policy: OriginPolicy, versionName: String, onRenderGone: () -> Unit = {}, openExternal: (Uri) -> Unit): WebView {
+    fun create(
+        context: Context, policy: OriginPolicy, versionName: String, bridge: NativeBridge? = null,
+        onRenderGone: () -> Unit = {}, openExternal: (Uri) -> Unit,
+    ): WebView {
         val view = WebView(context)
         view.settings.apply {
             javaScriptEnabled = true
@@ -87,6 +94,8 @@ object WebViewFactory {
         view.webViewClient = ShellWebViewClient(policy, onRenderGone, openExternal)
         // Downloads go through the native bridge only; a plain WebView download request is dropped.
         view.setDownloadListener { _, _, _, _, _ -> }
+        // Registered before any page loads. Without WebView support there is simply no bridge (the web UI then never offers native paths).
+        if (bridge != null) BridgeInstaller.install(view, policy, bridge)
         return view
     }
 
