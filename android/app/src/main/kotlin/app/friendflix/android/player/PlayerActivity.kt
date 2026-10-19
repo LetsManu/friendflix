@@ -26,7 +26,6 @@ import android.widget.LinearLayout
 import android.widget.PopupMenu
 import android.widget.ProgressBar
 import android.widget.TextView
-import androidx.activity.ComponentActivity
 import androidx.activity.enableEdgeToEdge
 import androidx.annotation.OptIn
 import androidx.core.content.ContextCompat
@@ -35,6 +34,7 @@ import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
+import androidx.fragment.app.FragmentActivity
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.media3.common.C
@@ -48,8 +48,19 @@ import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.session.MediaController
 import androidx.media3.ui.PlayerView
+import androidx.mediarouter.app.MediaRouteButton
 import app.friendflix.android.R
 import app.friendflix.android.bridge.PlayRequest
+import app.friendflix.android.cast.CastConfig
+import app.friendflix.android.cast.CastController
+import app.friendflix.android.cast.CastHost
+import app.friendflix.android.cast.CastServer
+import app.friendflix.android.cast.CastServerApi
+import app.friendflix.android.cast.CastStart
+import app.friendflix.android.cast.IdleReason
+import app.friendflix.android.cast.MediaThreeReceiver
+import app.friendflix.android.cast.ReceiverState
+import app.friendflix.android.cast.TokenAnswer
 import app.friendflix.android.downloads.Downloads
 import app.friendflix.android.downloads.SessionExpired
 import app.friendflix.android.offline.Offline
@@ -58,13 +69,18 @@ import app.friendflix.android.offline.OfflineMedia
 import app.friendflix.android.offline.Prepared
 import app.friendflix.android.settings.AppSettings
 import app.friendflix.android.shell.ShellActivity
+import com.google.android.gms.cast.framework.CastButtonFactory
+import com.google.android.gms.cast.framework.CastContext
 import com.google.common.util.concurrent.ListenableFuture
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import org.json.JSONArray
+import org.json.JSONObject
 import java.io.IOException
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.Executors
@@ -78,9 +94,14 @@ import java.util.concurrent.Executors
  * Streams: `POST /api/playback/info` with the device's caps ([DeviceProfile]); the server decides direct play vs. HLS and applies role
  * caps, kids rules and the stream limit. Downloads: only an [OfflineMedia] from the offline gate; after a recreation / process
  * death the player keeps just the licence id and asks [Offline.prepare] again. Logs carry no titles, URLs, cookies or tokens.
+ *
+ * Chromecast ([CastController], Task 9): the Cast button shows for a stream (never a download) while the server offers casting and a
+ * Cast device is on the network. Picking a device hands the title over through the server's cast token flow; the screen is then the
+ * receiver's remote (the controls drive [MediaThreeReceiver.player]) and only the controller reports. When the cast ends, local
+ * playback continues at the receiver's position. A FragmentActivity because the Cast device dialog is a dialog fragment.
  */
 @OptIn(UnstableApi::class)
-class PlayerActivity : ComponentActivity() {
+class PlayerActivity : FragmentActivity() {
     /** What to play, from the intent or the saved state. */
     private data class Args(
         val itemId: String, val profileId: String, val startMs: Long?, val audio: String?, val subtitle: String?, val licenseId: String?,
@@ -109,6 +130,8 @@ class PlayerActivity : ComponentActivity() {
     private lateinit var qualityButton: Button
     private lateinit var pipButton: ImageButton
     private lateinit var nextButton: ImageButton
+    private lateinit var castButton: MediaRouteButton
+    private lateinit var castStatus: TextView
 
     private lateinit var player: ExoPlayer
     private var controller: ListenableFuture<MediaController>? = null
@@ -152,6 +175,18 @@ class PlayerActivity : ComponentActivity() {
     /** languages of the download's subtitles (index = track) */
     private var offlineSubLangs: List<String> = emptyList()
 
+    // Chromecast
+    private var castLink: MediaThreeReceiver? = null
+    /** the cast endpoints for the playing profile (read on the report thread) */
+    @Volatile private var castServer: CastServer? = null
+    private var cast: CastController? = null
+    /** the server offers casting (cached, then the fresh `/api/cast/config` answer) */
+    private var castEnabled = false
+    /** a Cast device is on the network */
+    private var castDevices = false
+    /** the next local stream starts paused (back from a paused TV) */
+    private var startPaused = false
+
     override fun onCreate(savedInstanceState: Bundle?) {
         enableEdgeToEdge()
         super.onCreate(savedInstanceState)
@@ -177,6 +212,11 @@ class PlayerActivity : ComponentActivity() {
         lifecycleScope.launch { AppSettings.from(applicationContext).backgroundAudio.collect { backgroundAudio = it } }
         ContextCompat.registerReceiver(this, pipReceiver, IntentFilter(ACTION_PIP_TOGGLE), ContextCompat.RECEIVER_NOT_EXPORTED)
         pipButton.visibility = if (pipSupported()) View.VISIBLE else View.GONE
+        lifecycleScope.launch {
+            castEnabled = AppSettings.from(applicationContext).castEnabled.first()
+            updateCastButton()
+        }
+        setUpCast()
 
         // a fresh launch takes the gate's media from the launcher; a restore (or a lost hand-off) runs the gate again
         val handed = if (restored == null) token?.let { Handoff.take(it) } else null
@@ -206,7 +246,8 @@ class PlayerActivity : ComponentActivity() {
         pipButton = view.findViewById(R.id.player_pip)
         nextButton = view.findViewById(R.id.player_next_episode)
         view.findViewById<View>(R.id.player_back).setOnClickListener { finish() }
-        // Task 9 (Chromecast) wires R.id.player_cast; it stays hidden until then.
+        castButton = view.findViewById(R.id.player_cast)
+        castStatus = findViewById(R.id.player_cast_status)
         tracksButton.setOnClickListener { showTracks(it) }
         qualityButton.setOnClickListener { showQuality(it) }
         pipButton.setOnClickListener { enterPip() }
@@ -288,6 +329,7 @@ class PlayerActivity : ComponentActivity() {
                 if (server == null) { showError(getString(R.string.player_error_generic), retry = false); return@launch }
                 val pa = PlayerApi(server, a.profileId)
                 api = pa
+                castServer = CastServerApi(server, a.profileId, pa)
                 if (first) loadTitle(pa, a)
                 val audioLang = if (audioIndex == null) (a.audio ?: seriesPref.first ?: prefs.audioLang).takeIf { it.isNotEmpty() } else null
                 val caps = withContext(Dispatchers.IO) { DeviceProfile.build(applicationContext) }
@@ -312,6 +354,7 @@ class PlayerActivity : ComponentActivity() {
         val it = async { pa.item(a.itemId) }
         val nx = async { pa.next(a.itemId) }
         val segs = async { pa.segments(a.itemId) }
+        val castCfg = async { CastServerApi.config(pa.server, a.profileId) }
         prefs = p.await()
         if (quality == 0L && prefs.quality >= MIN_BITRATE) quality = prefs.quality
         val cur = it.await()
@@ -321,8 +364,14 @@ class PlayerActivity : ComponentActivity() {
         nextItem = next
         val allowed = types.await()
         val f = EpisodeFlow(segs.await().filter { s -> s.type in allowed }, NextKind.of(cur?.type, next != null), prefs.flow, Players.still)
+        val cfg = castCfg.await()
+        // the receiver app id is cached for the Cast framework's next start (it reads its options once per process)
+        if (cfg != null) {
+            try { AppSettings.from(applicationContext).setCastConfig(cfg.enabled, cfg.receiverAppId) } catch (_: IOException) { }
+        }
         withContext(Dispatchers.Main) {
             flow = f
+            if (cfg != null) { castEnabled = cfg.enabled; updateCastButton() }
             Players.still.opened()
             title.text = cur?.seriesName ?: cur?.name.orEmpty()
             subtitle.text = cur?.let { i -> if (i.seriesName != null) episodeLabel(i) else "" }.orEmpty()
@@ -360,11 +409,13 @@ class PlayerActivity : ComponentActivity() {
         player.setMediaSource(MediaSources.network(pa.server.client).createMediaSource(mediaItem), startMs.coerceAtLeast(0))
         applySubtitles()
         player.prepare()
-        player.playWhenReady = true
+        player.playWhenReady = !startPaused
+        startPaused = false
         tracksButton.visibility = if (info.audioTracks.size > 1 || info.subtitles.isNotEmpty()) View.VISIBLE else View.GONE
         qualityButton.visibility = View.VISIBLE
         qualityButton.text = if (direct) getString(R.string.player_quality_original) else qualityLabel(quality)
         flow?.duration = 0.0
+        updateCastButton()
     }
 
     /** detail-page pick > this series' saved choice (when the episode has it) > the profile default (web Player.svelte attach). */
@@ -480,6 +531,12 @@ class PlayerActivity : ComponentActivity() {
         val now = android.os.SystemClock.elapsedRealtime()
         val dt = if (lastTick == 0L) 0L else now - lastTick
         lastTick = now
+        val c = cast
+        if (c != null && c.casting) {
+            // the receiver plays: its position and the controller's reports / renewal; nothing local runs
+            if (now - castPolled >= CAST_POLL_MS) { castPolled = now; castLink?.publish(); c.tick() }
+            return
+        }
         reporter?.tick(background = inBackground)
         if (!(inBackground && !player.playWhenReady)) offlineProgress?.tick()
         if (retries > 0 && player.isPlaying && player.currentPosition > errorAt + STABLE_MS) {
@@ -757,6 +814,170 @@ class PlayerActivity : ComponentActivity() {
         Players.still.noteInteraction()
     }
 
+    // ---- Chromecast ----
+
+    private var castPolled = 0L
+
+    /** The Cast framework (Google Play services) asynchronously; without it there is no Cast button. */
+    private fun setUpCast() {
+        try {
+            CastContext.getSharedInstance(applicationContext, ContextCompat.getMainExecutor(this))
+                .addOnSuccessListener { ctx -> if (!released) attachCast(ctx) }
+                .addOnFailureListener { e -> Log.w(TAG, "cast unavailable ${e.javaClass.simpleName}") }
+        } catch (e: RuntimeException) {
+            Log.w(TAG, "cast unavailable ${e.javaClass.simpleName}")
+        }
+    }
+
+    private fun attachCast(ctx: CastContext) {
+        val media3 = androidx.media3.cast.Cast.getSingletonInstance(applicationContext)
+        if (media3.needsInitialization()) media3.initialize()
+        // the running Cast app: FriendFlix's own receiver unless it is the Default Media Receiver (fixed for this process)
+        val custom = CastConfig.customId(ctx.castOptions.receiverApplicationId).isNotEmpty()
+        val link = MediaThreeReceiver(applicationContext, ctx, custom, castEvents)
+        castLink = link
+        cast = CastController(
+            server = CastServerProxy(), receiver = link, host = castHost, still = Players.still,
+            io = Players.reports, main = ContextCompat.getMainExecutor(this), now = System::currentTimeMillis,
+            schedule = { ms, block -> val r = Runnable(block); handler.postDelayed(r, ms); { handler.removeCallbacks(r) } },
+        )
+        CastButtonFactory.setUpMediaRouteButton(applicationContext, castButton)
+        updateCastButton()
+    }
+
+    /** The server calls for the playing profile (known once a stream started). */
+    private inner class CastServerProxy : CastServer {
+        private fun real() = castServer
+        override fun session(body: JSONObject) = real()?.session(body) ?: TokenAnswer.Failed
+        override fun revoke(castId: String) { real()?.revoke(castId) }
+        override fun report(kind: PlaybackReporter.Kind, body: JSONObject) { real()?.report(kind, body) }
+        override fun next(itemId: String) = real()?.next(itemId)
+        override fun segments(itemId: String) = real()?.segments(itemId) ?: emptyList()
+    }
+
+    /** a stream (never a download), casting offered by the server, a device on the network; always while a cast runs */
+    private fun updateCastButton() {
+        if (!::castButton.isInitialized) return
+        val offline = offlineLicense != null || (::args.isInitialized && args.licenseId != null)
+        val show = castLink != null && (cast?.casting == true || CastController.castable(offline, castEnabled, castDevices))
+        castButton.visibility = if (show) View.VISIBLE else View.GONE
+    }
+
+    private val castEvents = object : MediaThreeReceiver.Events {
+        override fun onDevices(available: Boolean) { castDevices = available; updateCastButton() }
+
+        override fun onSessionStarted() {
+            // the viewer picked a TV (Player.svelte handleCast session-start): the playing stream goes there
+            val c = cast ?: return
+            if (stream == null || c.casting || offlineLicense != null) return
+            val f = flow
+            val started = c.start(CastStart(
+                itemId = args.itemId,
+                positionMs = player.currentPosition.coerceAtLeast(0),
+                audioIndex = audioIndex,
+                subIndex = subIndex,
+                maxBitrate = quality.takeIf { it > 0 },
+                prefsBitrate = prefs.quality.takeIf { it >= MIN_BITRATE },
+                isEpisode = item?.type == "Episode",
+                prefs = prefs.flow,
+                offline = false,
+                segments = f?.segments ?: emptyList(),
+            ))
+            if (started) { stream = null; showCasting() }
+        }
+
+        override fun onSessionEnded() { cast?.onSessionEnded() }
+        override fun onState(st: ReceiverState) { cast?.onReceiver(st) }
+        override fun onMediaEnd(reason: IdleReason, castId: String) { cast?.onMediaEnd(reason, castId) }
+        override fun onSeeked(positionMs: Long) { cast?.onSeeked(positionMs) }
+        override fun onLoadFailed() { cast?.onLoadFailed() }
+        override fun onMessage(m: JSONObject) { cast?.onReceiverMessage(m) }
+    }
+
+    private val castHost = object : CastHost {
+        override fun stopLocal() {
+            // like Player.svelte startCast: the local session's stop, local playback off (the stream slot is free for the token)
+            loadJob?.cancel()
+            reporter?.release()
+            reporter = null
+            retries = 0
+            player.playWhenReady = false
+            player.stop()
+        }
+
+        override fun onCasting(itemId: String) { showCasting() }
+
+        override fun onTitle(item: ItemInfo) {
+            this@PlayerActivity.item = item
+            nextItem = null
+            flow = null
+            audioIndex = null
+            subIndex = null
+            args = args.copy(itemId = item.id, startMs = null, audio = null, subtitle = null)
+            title.text = item.seriesName ?: item.name
+            subtitle.text = if (item.seriesName != null) episodeLabel(item) else ""
+        }
+
+        override fun onFailed(answer: TokenAnswer?) {
+            val text = when (answer) {
+                is TokenAnswer.MaxStreams -> resources.getQuantityString(R.plurals.player_error_max_streams, answer.max, answer.max)
+                TokenAnswer.NeedsTranscode -> getString(R.string.cast_needs_transcode)
+                null -> getString(R.string.cast_load_failed)
+                else -> getString(R.string.cast_failed)
+            }
+            flash(text, 4_000)
+        }
+
+        override fun onReturn(itemId: String, positionMs: Long, play: Boolean, ended: Boolean) {
+            showLocal()
+            if (ended) { finish(); return } // finished on the TV: back to the app, which offers what comes next
+            // the TV's position (and title, after its queue moved on: no flow loaded for it yet) plays on here
+            val same = itemId == args.itemId && flow != null
+            args = args.copy(itemId = itemId, startMs = positionMs)
+            startPaused = !play
+            loading.visibility = View.VISIBLE
+            if (same) startOnline(args, first = false, startMs = positionMs)
+            else { flow = null; nextItem = null; startOnline(args, first = true, startMs = positionMs) }
+        }
+
+        override fun receiverStrings(): JSONObject = JSONObject()
+            .put("next", getString(R.string.player_next))
+            .put("upNext", getString(R.string.cast_up_next, "{label}"))
+            .put("watchCredits", getString(R.string.player_watch_credits))
+            .put("startsIn", JSONArray((1..CastController.COUNTDOWN_SECONDS).map { resources.getQuantityString(R.plurals.cast_starts_in, it, it) }))
+            .put("stillTitle", getString(R.string.player_still_title))
+            .put("stillText", getString(R.string.player_still_text, "{ep}"))
+            .put("keepWatching", getString(R.string.player_keep_watching))
+            .put("skip", JSONObject().put("intro", getString(R.string.player_skip_intro)).put("recap", getString(R.string.player_skip_recap)))
+    }
+
+    /** the screen is the receiver's remote: its controls drive the TV, the local-only buttons go */
+    private fun showCasting() {
+        val link = castLink ?: return
+        loading.visibility = View.GONE
+        hideError()
+        skipButton.visibility = View.GONE
+        nextCard.visibility = View.GONE
+        stillCard.visibility = View.GONE
+        view.player = link.player
+        view.controllerShowTimeoutMs = 0 // a remote: the controls stay
+        view.showController()
+        castStatus.text = link.deviceName?.let { getString(R.string.cast_playing_on, it) } ?: getString(R.string.cast_playing)
+        castStatus.visibility = View.VISIBLE
+        for (b in listOf(tracksButton, qualityButton, pipButton, nextButton)) b.visibility = View.GONE
+        updateCastButton()
+        updatePip()
+    }
+
+    /** back from the TV: the local player is the screen's again */
+    private fun showLocal() {
+        view.player = player
+        view.controllerShowTimeoutMs = CONTROLLER_TIMEOUT_MS
+        castStatus.visibility = View.GONE
+        pipButton.visibility = if (pipSupported()) View.VISIBLE else View.GONE
+        updateCastButton()
+    }
+
     // ---- intents, state, release ----
 
     override fun onNewIntent(intent: Intent) {
@@ -767,6 +988,7 @@ class PlayerActivity : ComponentActivity() {
         if (t == token) return
         token?.let { Players.launcher?.ended(it) }
         token = t
+        if (cast?.casting == true) { cast?.stop(); showLocal() }
         reporter?.release()
         reporter = null
         offlineProgress?.flush()
@@ -820,6 +1042,10 @@ class PlayerActivity : ComponentActivity() {
         if (!::player.isInitialized) return
         handler.removeCallbacksAndMessages(null)
         loadJob?.cancel()
+        cast?.stop() // the player closes: the cast ends with it (the web's pagehide)
+        cast = null
+        castLink?.release()
+        castLink = null
         reporter?.release()
         offlineProgress?.flush()
         player.removeListener(events)
@@ -928,6 +1154,10 @@ class PlayerActivity : ComponentActivity() {
         private const val STATE_QUALITY = "quality"
         private const val ACTION_PIP_TOGGLE = "app.friendflix.android.player.PIP_TOGGLE"
         private const val TICK_MS = 250L
+        /** the receiver's position is mirrored about once a second while casting */
+        private const val CAST_POLL_MS = 1_000L
+        /** activity_player.xml show_timeout */
+        private const val CONTROLLER_TIMEOUT_MS = 3_000
         private const val TICKS_PER_MS = 10_000L
         private const val MAX_RETRIES = 3
         private const val RETRY_BASE_MS = 1_000L

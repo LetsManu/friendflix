@@ -28,6 +28,11 @@
         android:theme="@style/Theme.FriendFlix"
         android:usesCleartextTraffic="false">
 
+        <!-- Chromecast (Task 9): the Cast framework's options (receiver = the server's CAST_RECEIVER_APP_ID as cached, else the Default Media Receiver). -->
+        <meta-data
+            android:name="com.google.android.gms.cast.framework.OPTIONS_PROVIDER_CLASS_NAME"
+            android:value="app.friendflix.android.cast.CastOptionsProvider" />
+
         <activity
             android:name=".shell.ShellActivity"
             android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|keyboardHidden|uiMode|density"

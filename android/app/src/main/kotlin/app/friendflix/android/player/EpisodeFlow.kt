@@ -56,10 +56,11 @@ class StillWatching(private val now: () -> Long) {
     /** An episode was opened: by the countdown (consumed), else by the viewer (an interaction). */
     @Synchronized fun opened() { if (autoplayed) autoplayed = false else noteInteraction() }
 
-    @Synchronized fun shouldAsk(p: FlowPrefs): Boolean {
+    /** Whether "still there?" is due at [at] (default now; the cast queue asks for the expected end of the title, web `shouldAsk(endAt)`). */
+    @Synchronized fun shouldAsk(p: FlowPrefs, at: Long = now()): Boolean {
         if (!p.stillWatching) return false
         val n = if (p.stillWatchingEpisodes > 0) p.stillWatchingEpisodes else 3
-        return chain >= n || now() - lastInteraction >= IDLE_MS
+        return chain >= n || at - lastInteraction >= IDLE_MS
     }
 
     companion object {
@@ -83,7 +84,7 @@ class EpisodeFlow(
     private val prefs: FlowPrefs,
     private val still: StillWatching,
 ) {
-    private val segments = segments.map { it.copy(type = it.type.lowercase()) }
+    val segments = segments.map { it.copy(type = it.type.lowercase()) }
     /** seconds; 0 while unknown */
     var duration = 0.0
     private val autoSkipped = mutableSetOf<Double>()

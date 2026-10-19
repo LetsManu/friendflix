@@ -75,7 +75,7 @@ class ShellActivity : ComponentActivity() {
             val player = object : PlayerLauncher {
                 override fun launch(req: PlayRequest): Boolean { offline.noteProfile(req.profileId); return native.launch(req) }
             }
-            val bridge = NativeBridge(policy, player, sink, Capabilities(play = true, download = true, cast = false), openSettings = {})
+            val bridge = NativeBridge(policy, player, sink, Capabilities(play = true, download = true, cast = true), openSettings = {})
             this@ShellActivity.bridge = bridge
             launch {
                 var last = emptyList<DownloadEntry>()

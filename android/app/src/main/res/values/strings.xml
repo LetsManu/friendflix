@@ -84,6 +84,18 @@
     <string name="player_quality_original">Original</string>
     <string name="player_pip">Picture-in-picture</string>
     <string name="player_cast">Play on TV</string>
+    <!-- Chromecast (texts from the web's player.cast / castBar / watch locales) -->
+    <string name="cast_failed">Casting to Chromecast failed.</string>
+    <string name="cast_needs_transcode">Chromecast needs transcoding – not allowed for your role.</string>
+    <string name="cast_load_failed">The TV could not play this title.</string>
+    <string name="cast_playing_on">Playing on %1$s</string>
+    <string name="cast_playing">Playing on the TV</string>
+    <!-- the TV's next-up card (own receiver); %1$s is replaced by the TV with the episode -->
+    <string name="cast_up_next">Next: %1$s</string>
+    <plurals name="cast_starts_in">
+        <item quantity="one">Next episode starts in %d second</item>
+        <item quantity="other">Next episode starts in %d seconds</item>
+    </plurals>
     <string name="player_skip_intro">Skip intro</string>
     <string name="player_skip_outro">Skip credits</string>
     <string name="player_skip_recap">Skip recap</string>

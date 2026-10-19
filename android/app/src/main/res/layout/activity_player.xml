@@ -27,6 +27,18 @@
         app:show_buffering="when_playing"
         app:show_timeout="3000" />
 
+    <!-- while casting: which TV plays (the controls below drive it) -->
+    <TextView
+        android:id="@+id/player_cast_status"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="center"
+        android:layout_marginHorizontal="24dp"
+        android:gravity="center"
+        android:textColor="@android:color/white"
+        android:textSize="18sp"
+        android:visibility="gone" />
+
     <ProgressBar
         android:id="@+id/player_loading"
         android:layout_width="48dp"

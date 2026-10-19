@@ -17,6 +17,11 @@ webkit = "1.17.1"
 # One Media3 version for every media3-* artifact.
 media3 = "1.11.1"
 work = "2.11.2"
+# Cast framework: the only Google Play services library the app uses (no Firebase, no analytics).
+playServicesCast = "22.3.1"
+# The Cast button (MediaRouteButton) and its device dialog need these; the same versions media3-cast resolves.
+appcompat = "1.6.1"
+mediarouter = "1.8.1"
 
 [libraries]
 kotlin-gradle-plugin = { module = "org.jetbrains.kotlin:kotlin-gradle-plugin", version.ref = "kotlin" }
@@ -33,6 +38,10 @@ media3-exoplayer = { module = "androidx.media3:media3-exoplayer", version.ref = 
 media3-exoplayer-hls = { module = "androidx.media3:media3-exoplayer-hls", version.ref = "media3" }
 media3-ui = { module = "androidx.media3:media3-ui", version.ref = "media3" }
 media3-session = { module = "androidx.media3:media3-session", version.ref = "media3" }
+media3-cast = { module = "androidx.media3:media3-cast", version.ref = "media3" }
+androidx-appcompat = { module = "androidx.appcompat:appcompat", version.ref = "appcompat" }
+androidx-mediarouter = { module = "androidx.mediarouter:mediarouter", version.ref = "mediarouter" }
+play-services-cast-framework = { module = "com.google.android.gms:play-services-cast-framework", version.ref = "playServicesCast" }
 media3-test-utils = { module = "androidx.media3:media3-test-utils", version.ref = "media3" }
 media3-test-utils-robolectric = { module = "androidx.media3:media3-test-utils-robolectric", version.ref = "media3" }
 androidx-work-runtime = { module = "androidx.work:work-runtime-ktx", version.ref = "work" }

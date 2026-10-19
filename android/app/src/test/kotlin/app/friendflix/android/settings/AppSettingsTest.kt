@@ -37,6 +37,16 @@ class AppSettingsTest {
         assertFalse(settings.wifiOnly.first())
         assertFalse(settings.backgroundAudio.first())
         assertEquals(emptySet<String>(), settings.notifyCategories.first())
+        assertEquals("", settings.castReceiverAppId.first())
+        assertFalse(settings.castEnabled.first())
+    }
+
+    @Test fun castConfigIsCachedForTheNextStart() = runBlocking {
+        settings.setCastConfig(enabled = true, receiverAppId = "0123ABCD")
+        assertEquals("0123ABCD", settings.castReceiverAppId.first())
+        assertEquals(true, settings.castEnabled.first())
+        settings.setCastConfig(enabled = true, receiverAppId = "")
+        assertEquals("", settings.castReceiverAppId.first())
     }
 
     @Test fun roundTrip() = runBlocking {

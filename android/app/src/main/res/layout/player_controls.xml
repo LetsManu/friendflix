@@ -5,8 +5,8 @@
 -->
 <!--
   Controller layout of the PlayerView (exo_* ids are bound by Media3: play/pause, ±10 s, seek bar, times). The player_* buttons are
-  FriendFlix's own (back, title, audio + subtitles, quality, picture-in-picture, next episode); player_cast is the hook for Task 9
-  (Chromecast) and stays hidden until then.
+  FriendFlix's own (back, title, audio + subtitles, quality, picture-in-picture, next episode); player_cast is the standard Cast
+  button (MediaRouteButton, the Cast framework's icon), shown only for a castable stream while a Cast device is on the network.
 -->
 <FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools"
@@ -70,13 +70,11 @@
                 tools:text="S1:E3 Episode" />
         </LinearLayout>
 
-        <ImageButton
+        <androidx.mediarouter.app.MediaRouteButton
             android:id="@+id/player_cast"
             android:layout_width="48dp"
             android:layout_height="48dp"
-            android:background="?android:attr/selectableItemBackgroundBorderless"
             android:contentDescription="@string/player_cast"
-            android:src="@drawable/ic_player_tv"
             android:visibility="gone" />
 
         <Button

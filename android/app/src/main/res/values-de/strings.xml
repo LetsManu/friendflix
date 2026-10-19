@@ -81,6 +81,17 @@
     <string name="player_quality_original">Original</string>
     <string name="player_pip">Bild-in-Bild</string>
     <string name="player_cast">Auf dem Fernseher abspielen</string>
+    <!-- Chromecast (Texte aus den Web-Locales player.cast / castBar / watch) -->
+    <string name="cast_failed">Übertragung auf Chromecast fehlgeschlagen.</string>
+    <string name="cast_needs_transcode">Chromecast braucht Transcoding – mit deiner Rolle nicht erlaubt.</string>
+    <string name="cast_load_failed">Der Fernseher konnte diesen Titel nicht abspielen.</string>
+    <string name="cast_playing_on">Wird auf %1$s abgespielt</string>
+    <string name="cast_playing">Wird auf dem Fernseher abgespielt</string>
+    <string name="cast_up_next">Als Nächstes: %1$s</string>
+    <plurals name="cast_starts_in">
+        <item quantity="one">Nächste Folge startet in %d Sekunde</item>
+        <item quantity="other">Nächste Folge startet in %d Sekunden</item>
+    </plurals>
     <string name="player_skip_intro">Intro überspringen</string>
     <string name="player_skip_outro">Abspann überspringen</string>
     <string name="player_skip_recap">Rückblick überspringen</string>
