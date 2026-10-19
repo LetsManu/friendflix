@@ -213,7 +213,7 @@ const it: Translation<typeof de> = {
       updateLead: 'Per ottenere l’aggiornamento, controlla questa riga nel .env dello stack ed esegui il comando:',
       envLabel: 'Riga nel .env',
       cmdLabel: 'Comando',
-      note: 'Il cambio vale solo dopo questo comando: FriendFlix non tocca mai Docker da solo.',
+      note: 'Il cambio vale solo dopo questo comando: senza updater FriendFlix non tocca mai Docker da solo (compose.no-updater.yaml lo lascia spento).',
       pinned: 'Versione fissa',
       pinnedHint: 'Versione fissa: resta esattamente su questa release finché non la cambi.',
       versionLabel: 'Versione (X.Y.Z)',

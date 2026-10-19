@@ -233,7 +233,7 @@ const pl: Translation<typeof de> = {
       updateLead: 'Aby pobrać aktualizację, sprawdź tę linię w pliku .env stosu i uruchom polecenie:',
       envLabel: 'Linia w .env',
       cmdLabel: 'Polecenie',
-      note: 'Zmiana działa dopiero po tym poleceniu: FriendFlix nigdy sam nie dotyka Dockera.',
+      note: 'Zmiana działa dopiero po tym poleceniu: bez aktualizatora FriendFlix nigdy sam nie dotyka Dockera (compose.no-updater.yaml pozostawia go wyłączonym).',
       pinned: 'Stała wersja',
       pinnedHint: 'Stała wersja: zostaje dokładnie na tym wydaniu, dopóki jej nie zmienisz.',
       versionLabel: 'Wersja (X.Y.Z)',

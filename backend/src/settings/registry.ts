@@ -142,7 +142,7 @@ export const SETTINGS: readonly SettingDef[] = [
   setting('POSTPLAY_ENABLED', { kind: 'bool', group: 'recommendations' }),
   // updates
   setting('GITHUB_TOKEN', { kind: 'secret', group: 'updates', probe: 'github' }),
-  // the channel Admin -> Update compares against (stable | nightly | pinned + UPDATE_VERSION); without the opt-in updater the images
+  // the channel Admin -> Update compares against (stable | nightly | pinned + UPDATE_VERSION); without the updater (compose.no-updater.yaml) the images
   // still follow FF_TAG, with it this is what the updater installs
   setting('UPDATE_CHANNEL', { kind: 'enum', group: 'updates' }),
   setting('UPDATE_VERSION', { kind: 'string', group: 'updates' }),

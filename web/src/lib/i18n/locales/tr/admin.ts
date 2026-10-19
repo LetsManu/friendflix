@@ -213,7 +213,7 @@ const tr: Translation<typeof de> = {
       updateLead: 'Güncellemeyi almak için stack’in .env dosyasındaki bu satırı kontrol et, sonra komutu çalıştır:',
       envLabel: '.env satırı',
       cmdLabel: 'Komut',
-      note: 'Geçiş ancak bu komuttan sonra geçerli olur: FriendFlix Docker’a asla kendisi dokunmaz.',
+      note: 'Geçiş ancak bu komuttan sonra geçerli olur: güncelleyici olmadan FriendFlix Docker’a asla kendisi dokunmaz (compose.no-updater.yaml onu kapalı tutar).',
       pinned: 'Sabit sürüm',
       pinnedHint: 'Sabit sürüm: siz değiştirene kadar tam olarak bu sürümde kalır.',
       versionLabel: 'Sürüm (X.Y.Z)',

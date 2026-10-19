@@ -164,12 +164,12 @@ export const configSchema = z.object({
   UPDATE_REPO: z.string().regex(/^[\w.-]+\/[\w.-]+$/).default('LetsManu/friendflix'),
   /**
    * update channel (Admin -> Update): stable (releases), nightly (main) or pinned (UPDATE_VERSION). Without the updater it only
-   * chooses the comparison and the suggested FF_TAG line; with the opt-in updater it is the tag the updater installs.
+   * chooses the comparison and the suggested FF_TAG line; with the updater it is the tag the updater installs.
    */
   UPDATE_CHANNEL: z.preprocess(emptyAsUnset, z.enum(['stable', 'nightly', 'pinned']).default('stable')),
   /** the fixed version of the `pinned` channel (X.Y.Z) */
   UPDATE_VERSION: z.preprocess(emptyAsUnset, z.string().regex(/^(0|[1-9][0-9]{0,3})\.(0|[1-9][0-9]{0,3})\.(0|[1-9][0-9]{0,3})$/).optional()),
-  /** the opt-in updater (compose profile `updater`): internal http URL; unset or unreachable = Admin -> Update shows the manual steps */
+  /** the updater service (compose.prod.yaml; off with compose.no-updater.yaml): internal http URL; unset or unreachable = Admin -> Update shows the manual steps */
   UPDATER_URL: z.preprocess(emptyAsUnset, z.string().regex(/^http:\/\/[a-z0-9][a-z0-9.-]{0,62}(:[0-9]{2,5})?$/).optional()),
   /** automatic updates through the updater: off (default) or once a night at AUTO_UPDATE_TIME (server time zone TZ) */
   AUTO_UPDATE: z.preprocess(emptyAsUnset, z.enum(['off', 'nightly-window']).default('off')),

@@ -212,7 +212,7 @@ export default {
       updateLead: 'Update holen: diese Zeile in der .env des Stacks prüfen und dann den Befehl ausführen:',
       envLabel: 'Zeile in der .env',
       cmdLabel: 'Befehl',
-      note: 'Der Wechsel gilt erst nach diesem Befehl: FriendFlix greift nie selbst auf Docker zu.',
+      note: 'Der Wechsel gilt erst nach diesem Befehl: ohne Updater greift FriendFlix nie selbst auf Docker zu (compose.no-updater.yaml lässt ihn aus).',
       pinned: 'Feste Version',
       pinnedHint: 'Feste Version: bleibt genau auf diesem Release, bis du sie änderst.',
       versionLabel: 'Version (X.Y.Z)',

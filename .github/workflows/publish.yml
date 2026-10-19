@@ -3,7 +3,7 @@
 name: Publish images
 # Does NOT build. Re-tags the image that CI already built and scanned (ghcr.io/<owner>/friendflix-<service>:ci-<git sha>,
 # see the top of ci.yml) to the release tags - same manifest digest, no second build.
-# Release channels (docs/operations.md "Release-Kanäle"; FF_TAG in compose.prod.yaml picks one):
+# Release channels (docs/operations.md "Release-Kanäle"; the updater installs the one chosen in Admin -> Update, without it FF_TAG picks one):
 #   main          nightly + short sha: every green commit on main. Never latest.
 #   vX.Y.Z tag    X.Y.Z, X.Y, X + short sha (cut by release.yml), plus latest only when the tag is the highest plain vX.Y.Z
 #                 (backports and pre-releases never move latest). latest = the stable channel.

@@ -213,7 +213,7 @@ const en: Translation<typeof de> = {
       updateLead: 'To get the update, check this line in the stack\'s .env, then run the command:',
       envLabel: 'Line in .env',
       cmdLabel: 'Command',
-      note: 'The switch only takes effect after this command: FriendFlix never touches Docker itself.',
+      note: 'The switch only takes effect after this command: without the updater FriendFlix never touches Docker itself (compose.no-updater.yaml keeps it off).',
       pinned: 'Fixed version',
       pinnedHint: 'Fixed version: stays on exactly this release until you change it.',
       versionLabel: 'Version (X.Y.Z)',
