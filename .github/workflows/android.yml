@@ -28,12 +28,18 @@ jobs:
         with: { distribution: temurin, java-version: 21 }
       # Gradle cache; the wrapper's distributionSha256Sum is verified by Gradle itself.
       - uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6.4.0
-      - name: Lint, unit tests, unsigned release build
-        run: ./gradlew lint testDebugUnitTest assembleRelease
+      - name: Lint, unit tests, unsigned release build (APK + AAB)
+        run: ./gradlew lint testDebugUnitTest assembleRelease bundleRelease
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: friendflix-android-unsigned-apk
           path: android/app/build/outputs/apk/release/*.apk
+          if-no-files-found: error
+          retention-days: 14
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: friendflix-android-unsigned-aab
+          path: android/app/build/outputs/bundle/release/*.aab
           if-no-files-found: error
           retention-days: 14
   instrumented:
