@@ -99,6 +99,7 @@ function applyEvent(m: { event: string; detail: unknown }) {
 export async function refreshNativeDownloads(): Promise<void> {
   if (!native.available) return;
   const list = await native.downloads();
+  if (!list) return; // no answer: keep what we know
   nativeDownloads.set(new Map(list.map((d) => [d.licenseId, d])));
 }
 
@@ -122,9 +123,10 @@ export const native = {
     const r = await request('download', { ...req });
     return r.timeout ? 'timeout' : r.ok && r.result === true;
   },
-  async downloads(): Promise<NativeDownload[]> {
+  /** the app's downloads; null when the app did not answer (timeout / error), which is not the same as "holds nothing" */
+  async downloads(): Promise<NativeDownload[] | null> {
     const r = await request('downloads');
-    return r.ok && Array.isArray(r.result) ? r.result.map(asEntry).filter((e): e is NativeDownload => e !== null) : [];
+    return r.ok && Array.isArray(r.result) ? r.result.map(asEntry).filter((e): e is NativeDownload => e !== null) : null;
   },
   async deleteDownload(licenseId: string): Promise<boolean> {
     const r = await request('deleteDownload', { licenseId });

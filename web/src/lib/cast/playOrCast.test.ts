@@ -67,9 +67,19 @@ describe('playOrCast', () => {
       expect(playOrCast(e, { id: 'e1', positionTicks: 10_000 }, { audio: 'ger' })).toBe(true);
       expect(e.preventDefault).toHaveBeenCalled();
       expect(nat.tryPlay).toHaveBeenCalledWith({ id: 'e1', positionTicks: 10_000 }, { audio: 'ger' });
-      await Promise.resolve(); await Promise.resolve();
+      await settled();
       expect(nat.goto).not.toHaveBeenCalled();
     });
+
+    /** proves the previous request is finished (pending flag cleared): a tap starts a new request, answered "yes" so it navigates nowhere */
+    const settled = async () => {
+      nat.tryPlay.mockResolvedValue(true);
+      await vi.waitFor(() => {
+        const n = nat.tryPlay.mock.calls.length;
+        playOrCast(tap(), { id: 'probe' });
+        expect(nat.tryPlay.mock.calls.length).toBe(n + 1);
+      });
+    };
 
     it('falls back to the link target (web player) when the app declines', async () => {
       nat.available = true;
@@ -85,7 +95,7 @@ describe('playOrCast', () => {
       playOrCast(tap(), { id: 'e1' });
       nat.href = 'https://x.test/'; // navigated away
       answer(false);
-      await Promise.resolve(); await Promise.resolve();
+      await settled();
       expect(nat.goto).not.toHaveBeenCalled();
     });
 
@@ -100,6 +110,7 @@ describe('playOrCast', () => {
       answer(false);
       await vi.waitFor(() => expect(nat.goto).toHaveBeenCalledTimes(1));
       expect(nat.tryPlay).toHaveBeenCalledTimes(1);
+      await settled();
     });
 
     it('a cast session wins over the native player', () => {

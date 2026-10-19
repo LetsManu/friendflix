@@ -31,7 +31,6 @@ export function playOrCast(e: MouseEvent, item: { id: string; positionTicks?: nu
 
 /** a native play request waits for the app's answer; further taps meanwhile are swallowed (no double start) */
 let pendingPlay = false;
-let playToken = 0;
 
 function playNatively(e: MouseEvent, item: { id: string; positionTicks?: number }, opts?: { audio?: string; subtitle?: string }): boolean {
   if (!native.available) return false;
@@ -41,12 +40,12 @@ function playNatively(e: MouseEvent, item: { id: string; positionTicks?: number 
   if (pendingPlay) return true;
   noteInteraction();
   pendingPlay = true;
-  const token = ++playToken;
   const where = location.href;
-  void tryNativePlay(item, opts).then((ok) => {
-    pendingPlay = false;
-    // the viewer went elsewhere or tapped something newer while the app was thinking: do not drag them to the player now
-    if (!ok && token === playToken && location.href === where) void goto(href);
-  });
+  void tryNativePlay(item, opts)
+    .then((ok) => {
+      // the viewer went elsewhere while the app was thinking: do not drag them to the player now
+      if (!ok && location.href === where) void goto(href);
+    })
+    .finally(() => { pendingPlay = false; });
   return true;
 }

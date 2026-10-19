@@ -66,7 +66,7 @@ describe('native bridge', () => {
   it('without the bridge every call resolves to its fallback', async () => {
     await expect(native.play({ itemId: 'a', profileId: 'p' })).resolves.toBe(false);
     await expect(native.download({ licenseId: 'l', itemId: 'a', profileId: 'p' })).resolves.toBe(false);
-    await expect(native.downloads()).resolves.toEqual([]);
+    await expect(native.downloads()).resolves.toBeNull();
     await expect(native.deleteDownload('l')).resolves.toBe(false);
     await expect(native.capabilities()).resolves.toMatchObject({ play: false, download: false });
     expect(() => native.openSettings()).not.toThrow();
@@ -91,6 +91,13 @@ describe('native bridge', () => {
     const good = { licenseId: 'L', itemId: 'i', state: 'done', progress: 1, bytes: 10, expiresAt: 5 };
     installFake(() => ({ ok: true, result: [good, { licenseId: 5 }, null, 'x'] }));
     await expect(native.downloads()).resolves.toEqual([good]);
+  });
+  it('downloads() is null (not empty) when the app does not answer, and a refresh then keeps the store', async () => {
+    installFake((req) => (req.method === 'downloads' ? { ok: false, error: 'internal' } : { ok: true, result: true }));
+    await expect(native.downloads()).resolves.toBeNull();
+    nativeDownloads.set(new Map([['L', { licenseId: 'L', itemId: 'i', state: 'done', progress: 1, bytes: 1, expiresAt: 1 }]]));
+    await refreshNativeDownloads();
+    expect(get(nativeDownloads).has('L')).toBe(true);
   });
   it('times out to the fallback so the UI never hangs', async () => {
     vi.useFakeTimers();

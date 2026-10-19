@@ -5,7 +5,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const h = vi.hoisted(() => ({
   licenses: [] as any[], me: { profile: { id: 'p-1' } },
   download: vi.fn(async (_r: unknown): Promise<boolean | 'timeout'> => true), refresh: vi.fn(async () => {}),
-  create: vi.fn(), list: vi.fn(async () => [] as Array<{ licenseId: string }>), adopt: vi.fn(async (..._a: unknown[]) => []), discard: vi.fn(async (_id: string) => {}),
+  create: vi.fn(), list: vi.fn(async (): Promise<Array<{ licenseId: string }> | null> => []), adopt: vi.fn(async (..._a: unknown[]) => []), discard: vi.fn(async (_id: string) => {}),
 }));
 vi.mock('#lib/offline/manager', () => ({ createLicenses: h.create, adoptLicenses: h.adopt, discardLicense: h.discard }));
 vi.mock('./bridge', () => ({ native: { download: h.download, downloads: h.list }, refreshNativeDownloads: h.refresh }));
@@ -53,6 +53,23 @@ describe('startNativeDownload', () => {
     h.list.mockResolvedValue([{ licenseId: 'L-1' }]);
     await startNativeDownload(req, true);
     expect(h.list).toHaveBeenCalledTimes(1);
+    expect(h.adopt).toHaveBeenCalledWith([h.licenses[1]], h.me);
+  });
+  it('a timeout followed by no answer from downloads(): the licence is neither adopted nor discarded', async () => {
+    h.download.mockResolvedValue('timeout');
+    h.list.mockResolvedValue(null);
+    await expect(startNativeDownload(req, true)).rejects.toThrow('native_unknown');
+    expect(h.adopt).not.toHaveBeenCalled();
+    expect(h.discard).not.toHaveBeenCalled();
+    expect(h.list).toHaveBeenCalledTimes(1);
+    h.download.mockResolvedValue('timeout');
+    await expect(startNativeDownload(req, false)).rejects.toThrow('native_unknown');
+    expect(h.discard).not.toHaveBeenCalled();
+  });
+  it('unknown ones are left alone while the clearly declined are still handled', async () => {
+    h.download.mockResolvedValueOnce('timeout').mockResolvedValueOnce(false);
+    h.list.mockResolvedValue(null);
+    await expect(startNativeDownload(req, true)).rejects.toThrow('native_unknown');
     expect(h.adopt).toHaveBeenCalledWith([h.licenses[1]], h.me);
   });
   it('a failing licence request surfaces to the caller before anything is handed over', async () => {
