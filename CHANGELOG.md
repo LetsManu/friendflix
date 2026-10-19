@@ -5,6 +5,7 @@ All notable changes, grouped by what you notice. Each release has its own sectio
 ## [Unreleased]
 
 ### Fixes
+- **New device: approval now reaches the waiting screen.** A device approved in Admin (or from another device) stayed on "waiting for approval" until the person signed in again, most visibly in the installed Android app, which keeps its session. The waiting screen now switches to the app within seconds, and at once when the app comes back to the foreground.
 - **Updater: "Update the updater" on the image it already runs no longer fails after three minutes.** When the running updater has the same registry digest as the pulled and verified one, the job ends as succeeded without a restart (compose would leave the container as it is, so no new process could finish the job). Admin -> Update shows the build the backend runs as *Installed* before the updater's first job, instead of "none".
 
 ## [2.0.0] – Brezel – 2026-10-19

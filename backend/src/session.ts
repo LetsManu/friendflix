@@ -99,9 +99,10 @@ export async function authenticate(ctx: Ctx, req: FastifyRequest): Promise<boole
 export function requireUser(ctx: Ctx, opts: { allowPendingDevice?: boolean; allowNoProfile?: boolean; skipProfileHeader?: boolean } = {}) {
   return async (req: FastifyRequest, reply: FastifyReply) => {
     if (!(await authenticate(ctx, req))) return reply.code(401).send({ error: 'unauthenticated' });
-    if (!req.session!.deviceApproved && !opts.allowPendingDevice) {
-      // Re-check: the device may have been approved since the session was created.
-      if (!(await refreshDevice(ctx, req))) return reply.code(403).send({ error: 'device_pending' });
+    if (!req.session!.deviceApproved) {
+      // Re-check: the device may have been approved since the session was created. Routes that allow a pending
+      // device (/api/me is what the waiting screen polls) re-check too, or they keep answering the stale flag.
+      if (!(await refreshDevice(ctx, req)) && !opts.allowPendingDevice) return reply.code(403).send({ error: 'device_pending' });
     }
     const claimed = req.headers['x-ff-profile'];
     if (!opts.skipProfileHeader && typeof claimed === 'string' && claimed && claimed !== req.profile?.id) return reply.code(409).send({ error: 'profile_changed' });
