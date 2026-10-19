@@ -62,6 +62,14 @@ class NativeBridge(
         }
     }
 
+    /** Pushes what changed between two download lists: `download` per new or changed entry, `downloadRemoved` per licence gone. */
+    fun emitDownloadChanges(before: List<DownloadEntry>, after: List<DownloadEntry>) {
+        val old = before.associateBy { it.licenseId }
+        after.forEach { if (old[it.licenseId] != it) emit("download", entry(it)) }
+        val now = after.mapTo(HashSet()) { it.licenseId }
+        before.forEach { if (it.licenseId !in now) emit("downloadRemoved", JSONObject().put("licenseId", it.licenseId)) }
+    }
+
     private fun handle(root: JSONObject): Any {
         if (root.keys().asSequence().any { it !in TOP_KEYS }) throw BadRequest("bad_request")
         val method = root.opt("method") as? String ?: throw BadRequest("bad_request")

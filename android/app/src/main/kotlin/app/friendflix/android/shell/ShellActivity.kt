@@ -16,8 +16,9 @@ import app.friendflix.android.BuildConfig
 import app.friendflix.android.R
 import app.friendflix.android.bridge.Capabilities
 import app.friendflix.android.bridge.NativeBridge
-import app.friendflix.android.bridge.NoDownloadSink
+import app.friendflix.android.bridge.DownloadEntry
 import app.friendflix.android.bridge.NoPlayerLauncher
+import app.friendflix.android.downloads.Downloads
 import app.friendflix.android.settings.AppSettings
 import app.friendflix.android.setup.SetupActivity
 import kotlinx.coroutines.flow.first
@@ -45,10 +46,19 @@ class ShellActivity : ComponentActivity() {
             }
             WebViewFactory.setDebuggable(BuildConfig.DEBUG)
             val policy = OriginPolicy(origin)
-            // Tasks 6 (downloads) and 8 (player) swap the placeholders and flip their capability flags; until then the web UI keeps
-            // playing and downloading in the page. openSettings is a no-op until the settings screen exists (Task 11).
-            val bridge = NativeBridge(policy, NoPlayerLauncher, NoDownloadSink, Capabilities(play = false, download = false, cast = false), openSettings = {})
+            // Task 8 (player) swaps its placeholder and flips its flag; until then the web UI plays in the page.
+            // openSettings is a no-op until the settings screen exists (Task 11).
+            val downloads = Downloads.get(applicationContext).queue
+            downloads.resumeAll() // app start: downloads paused by a sign-out continue (one try; a 401 pauses them again)
+            val bridge = NativeBridge(policy, NoPlayerLauncher, downloads, Capabilities(play = false, download = true, cast = false), openSettings = {})
             this@ShellActivity.bridge = bridge
+            launch {
+                var last = emptyList<DownloadEntry>()
+                downloads.observeWeb().collect { now ->
+                    bridge.emitDownloadChanges(last, now)
+                    last = now
+                }
+            }
             val view = WebViewFactory.create(
                 this@ShellActivity, policy, BuildConfig.VERSION_NAME, bridge,
                 onRenderGone = ::onRenderGone, openExternal = ::openExternal,

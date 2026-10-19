@@ -63,11 +63,13 @@ dependencies {
     implementation(libs.androidx.webkit)
     implementation(libs.okhttp)
     implementation(libs.media3.datasource)
+    implementation(libs.androidx.work.runtime)
 
     testImplementation(libs.junit)
     testImplementation(libs.robolectric)
     testImplementation(libs.androidx.test.core)
     testImplementation(libs.okhttp.mockwebserver)
+    testImplementation(libs.androidx.work.testing)
 
     androidTestImplementation(libs.androidx.test.ext.junit)
     androidTestImplementation(libs.androidx.test.runner)

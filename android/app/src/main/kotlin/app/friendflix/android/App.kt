@@ -3,6 +3,20 @@
 package app.friendflix.android
 
 import android.app.Application
+import android.util.Log
+import androidx.work.Configuration
+import app.friendflix.android.downloads.DownloadQueue
 
-/** Process-wide entry point. Wiring (settings, downloads, notifications) is added by later tasks. */
-class App : Application()
+/**
+ * Process-wide entry point. WorkManager is initialised on demand from here (the default startup initializer is removed in the
+ * manifest), and the download queue listens for storage cards coming and going.
+ */
+class App : Application(), Configuration.Provider {
+    override val workManagerConfiguration: Configuration
+        get() = Configuration.Builder().setMinimumLoggingLevel(if (BuildConfig.DEBUG) Log.INFO else Log.ERROR).build()
+
+    override fun onCreate() {
+        super.onCreate()
+        DownloadQueue.watchVolumes(this)
+    }
+}

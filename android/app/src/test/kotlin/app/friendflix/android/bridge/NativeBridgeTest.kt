@@ -259,4 +259,23 @@ class NativeBridgeTest {
         bridge.emit("download", JSONObject())
         assertEquals(1, reply.sent.size)
     }
+    @Test fun downloadChangesBecomeEvents() {
+        call("capabilities")
+        reply.sent.clear()
+        val a = DownloadEntry("L-1", "I-1", "downloading", 0.5, 50, 9)
+        val b = DownloadEntry("L-2", "I-2", "queued", 0.0, 0, 9)
+        bridge.emitDownloadChanges(emptyList(), listOf(a, b))
+        assertEquals(listOf("L-1", "L-2"), reply.sent.map { it.getJSONObject("detail").getString("licenseId") })
+        assertEquals(0.5, reply.sent[0].getJSONObject("detail").getDouble("progress"), 0.0)
+        reply.sent.clear()
+        bridge.emitDownloadChanges(listOf(a, b), listOf(a.copy(state = "done", progress = 1.0)))
+        assertEquals(2, reply.sent.size)
+        assertEquals("download", reply.sent[0].getString("event"))
+        assertEquals("done", reply.sent[0].getJSONObject("detail").getString("state"))
+        assertEquals("downloadRemoved", reply.sent[1].getString("event"))
+        assertEquals("L-2", reply.sent[1].getJSONObject("detail").getString("licenseId"))
+        reply.sent.clear()
+        bridge.emitDownloadChanges(listOf(a), listOf(a)) // unchanged: nothing
+        assertTrue(reply.sent.isEmpty())
+    }
 }

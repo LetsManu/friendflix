@@ -17,4 +17,10 @@
     <string name="setup_error_app_too_old">Please update the app.</string>
     <string name="setup_error_server_too_old">Please update FriendFlix on the server.</string>
     <string name="open_with">Open with</string>
+    <string name="dl_channel_progress">Downloads</string>
+    <string name="dl_channel_alerts">Download notices</string>
+    <string name="dl_progress_title">Downloading</string>
+    <string name="dl_progress_percent">%1$d %%</string>
+    <string name="dl_signin_title">Sign in again</string>
+    <string name="dl_signin_text">Downloads are paused until you sign in to FriendFlix again.</string>
 </resources>
