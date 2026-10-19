@@ -44,7 +44,7 @@ class ShellActivity : ComponentActivity() {
             WebViewFactory.setDebuggable(BuildConfig.DEBUG)
             val view = WebViewFactory.create(
                 this@ShellActivity, OriginPolicy(origin), BuildConfig.VERSION_NAME,
-                onRenderGone = { recreate() }, openExternal = ::openExternal,
+                onRenderGone = ::onRenderGone, openExternal = ::openExternal,
             )
             ViewCompat.setOnApplyWindowInsetsListener(view) { v, insets ->
                 val bars = insets.getInsets(WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.ime())
@@ -55,6 +55,11 @@ class ShellActivity : ComponentActivity() {
             setContentView(view)
             view.loadUrl(origin.toString())
         }
+    }
+
+    private fun onRenderGone() {
+        // a page that keeps crashing the renderer must not loop: two restarts per process, then leave
+        if (renderRestarts++ < MAX_RENDER_RESTARTS) recreate() else finish()
     }
 
     private fun openExternal(uri: Uri) {
@@ -69,5 +74,10 @@ class ShellActivity : ComponentActivity() {
         webView?.destroy()
         webView = null
         super.onDestroy()
+    }
+
+    private companion object {
+        const val MAX_RENDER_RESTARTS = 2
+        var renderRestarts = 0
     }
 }

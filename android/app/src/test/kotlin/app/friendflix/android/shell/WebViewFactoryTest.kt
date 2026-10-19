@@ -6,6 +6,7 @@ import android.content.Intent
 import android.net.Uri
 import android.webkit.WebResourceRequest
 import android.webkit.WebSettings
+import android.webkit.WebView
 import androidx.test.core.app.ApplicationProvider
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import org.junit.Assert.assertEquals
@@ -82,5 +83,42 @@ class WebViewFactoryTest {
         assertEquals("https://other.evil.test/x", inner.dataString)
         assertTrue(inner.categories.contains(Intent.CATEGORY_BROWSABLE))
         assertNull(inner.component)
+    }
+}
+
+@RunWith(RobolectricTestRunner::class)
+class PageStartedBackstopTest {
+    private val context = ApplicationProvider.getApplicationContext<android.app.Application>()
+    private val policy = OriginPolicy("https://friend.example.com".toHttpUrl())
+
+    private class RecordingWebView(context: android.content.Context) : WebView(context) {
+        var stopped = 0
+        override fun stopLoading() { stopped++; super.stopLoading() }
+    }
+
+    @Test fun foreignOriginIsStoppedAndHandedOut() {
+        val opened = mutableListOf<Uri>()
+        val view = RecordingWebView(context)
+        val client = ShellWebViewClient(policy) { opened += it }
+        client.onPageStarted(view, "https://other.evil.test/post", null)
+        assertEquals(1, view.stopped)
+        assertEquals(listOf("https://other.evil.test/post"), opened.map { it.toString() })
+        assertEquals("https://friend.example.com/", org.robolectric.Shadows.shadowOf(view).lastLoadedUrl)
+    }
+
+    @Test fun appOriginAndBlankDoNothing() {
+        val view = RecordingWebView(context)
+        val client = ShellWebViewClient(policy) { error("must not open") }
+        client.onPageStarted(view, "https://friend.example.com/watch/1", null)
+        client.onPageStarted(view, "about:blank", null)
+        assertEquals(0, view.stopped)
+    }
+
+    @Test fun committedUrlIsRecorded() {
+        val view = RecordingWebView(context)
+        val client = ShellWebViewClient(policy) {}
+        assertNull(client.committedUrl)
+        client.doUpdateVisitedHistory(view, "https://friend.example.com/x", false)
+        assertEquals("https://friend.example.com/x", client.committedUrl)
     }
 }

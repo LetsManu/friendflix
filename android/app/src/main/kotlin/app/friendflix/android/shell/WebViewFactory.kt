@@ -5,12 +5,14 @@ package app.friendflix.android.shell
 import android.annotation.SuppressLint
 import android.content.Context
 import android.content.Intent
+import android.graphics.Bitmap
 import android.net.Uri
 import android.webkit.RenderProcessGoneDetail
 import android.webkit.WebResourceRequest
 import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import androidx.core.net.toUri
 
 object ExternalLinks {
     /** Web links go through a chooser so the user picks the browser; the chooser never names a component of its own. */
@@ -37,6 +39,30 @@ class ShellWebViewClient(
         if (ExternalLinks.isOpenable(uri)) openExternal(uri)
         // javascript:, intent:, file:, content: and the like are dropped, never started.
         return true
+    }
+
+    /** Last main-frame URL the WebView committed to history. Readable from any thread (the JS bridge checks it). */
+    @Volatile
+    var committedUrl: String? = null
+        private set
+
+    override fun doUpdateVisitedHistory(view: WebView, url: String?, isReload: Boolean) {
+        committedUrl = url
+    }
+
+    /**
+     * Backstop for navigations that skip shouldOverrideUrlLoading (form POSTs, some redirects): a foreign origin never stays in
+     * the main frame. The load is cancelled and links are handed out; if a foreign page had already committed, step back or reload.
+     */
+    override fun onPageStarted(view: WebView, url: String?, favicon: Bitmap?) {
+        if (url == null || url == "about:blank") return
+        val uri = url.toUri()
+        if (policy.isAppOrigin(uri)) return
+        view.stopLoading()
+        if (ExternalLinks.isOpenable(uri)) openExternal(uri)
+        val current = view.url
+        if (current != null && policy.isAppOrigin(current.toUri())) return // the app page is still showing: nothing to undo
+        if (view.canGoBack()) view.goBack() else view.loadUrl(policy.origin.toString())
     }
 
     override fun onRenderProcessGone(view: WebView, detail: RenderProcessGoneDetail): Boolean {

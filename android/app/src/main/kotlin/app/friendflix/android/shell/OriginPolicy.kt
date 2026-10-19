@@ -8,7 +8,7 @@ import androidx.core.net.toUri
 import okhttp3.HttpUrl
 
 /** The one origin (scheme + host + port, no subdomains) that counts as "the app". Everything else is external. */
-class OriginPolicy(origin: HttpUrl) {
+class OriginPolicy(val origin: HttpUrl) {
     private val host = origin.host
     private val port = origin.port
 
@@ -19,7 +19,11 @@ class OriginPolicy(origin: HttpUrl) {
         return (if (url.port == -1) 443 else url.port) == port
     }
 
-    /** Is the page currently shown in the top frame from the app origin? (JS bridge and native actions gate on this.) */
+    /**
+     * UI thread only: WebView.getUrl() must not be touched from other threads, so @JavascriptInterface methods must not call this.
+     * The bridge task gates on the committed main-frame URL ([ShellWebViewClient.committedUrl]) instead.
+     *
+     * Is the page currently shown in the top frame from the app origin? */
     fun isMainFrameAppOrigin(view: WebView): Boolean {
         val current = view.url ?: return false
         return isAppOrigin(current.toUri())

@@ -128,12 +128,13 @@ class ShellTest {
     @Test fun backNavigatesHistoryThenFinishes() {
         ActivityScenario.launch(ShellActivity::class.java).use { scenario ->
             scenario.onMain { it.loadDataWithBaseURL("https://friend.example.com/one", page("one"), "text/html", "utf-8", "https://friend.example.com/one") }
-            scenario.onMain { view -> waitFor("first page") { view.title == "one" } }
+            val view = scenario.webView()
+            waitFor("first page") { view.title == "one" }
             scenario.onMain { it.loadDataWithBaseURL("https://friend.example.com/two", page("two"), "text/html", "utf-8", "https://friend.example.com/two") }
-            scenario.onMain { view -> waitFor("second page") { view.title == "two" && view.canGoBack() } }
+            waitFor("second page") { view.title == "two" && view.canGoBack() }
 
             scenario.onActivity { it.onBackPressedDispatcher.onBackPressed() }
-            scenario.onMain { view -> waitFor("back to the first page") { view.title == "one" } }
+            waitFor("back to the first page") { view.title == "one" }
             assertEquals(Lifecycle.State.RESUMED, scenario.state)
 
             // the history may still hold the entry before "one": walk back to the start, then one more back finishes the activity
