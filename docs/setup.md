@@ -24,7 +24,8 @@ Placeholders used throughout: `friend.example.com` (FriendFlix), `auth.example.c
 12. [Verification checklist](#12-verification-checklist)
 13. [Troubleshooting](#13-troubleshooting)
 14. [Upgrading to settings in the database](#14-upgrading-to-settings-in-the-database)
-15. [Advanced: configure by environment](#15-advanced-configure-by-environment)
+15. [Advanced: configure by environment](#15-advanced-configure-by-environment) (incl. [Updater](#updater) and [Release channels without the updater](#release-channels-without-the-updater))
+16. [Upgrade to 2.0](#16-upgrade-to-20)
 
 ## 1. Overview and order of steps
 
@@ -48,7 +49,7 @@ The path: **install** Authentik and Jellyfin (steps 3–4), **start** the stack 
 | 3. Authentik | install it and create its admin account | its address and a one-time superuser API token |
 | 4. Jellyfin | finish Jellyfin's own setup wizard | its internal address and an administrator's username and password (used once) |
 | 5. Request service (optional) | finish its setup wizard | its address and API key (wizard extras, or later) |
-| 6.–7. NPM proxy host, stack | the running portal, no `.env` | – |
+| 6.–7. NPM proxy host, stack | the running portal and its updater, no `.env` | – |
 | 8. Setup wizard | setup code, public address, Jellyfin, Authentik, first admin | – |
 | 9.–10. first steps, invites | harden Authentik, invite friends | – |
 
@@ -175,11 +176,13 @@ Until the setup wizard is finished, anybody who reaches the portal sees the wiza
 docker login ghcr.io -u <github-user>                   # only if the packages are private (PAT with read:packages)
 docker compose -f compose.prod.yaml up -d               # add --profile bundled for the bundled Jellyfin + request service
 docker compose -f compose.prod.yaml logs bootstrap      # file names and actions ("generated"), never values
-docker compose -f compose.prod.yaml ps                  # postgres/redis healthy, backend/gateway/web running
+docker compose -f compose.prod.yaml ps                  # postgres/redis healthy, backend/gateway/web/updater/docker-proxy running
 docker compose -f compose.prod.yaml logs backend | grep "setup code"
 ```
 
 No output yet? `up -d` returns before the backend has started: wait a few seconds and run the last command again; the line appears once the backend is up.
+
+The same `up -d` also starts the **updater** and its socket proxy: from then on *Admin → Update* installs new versions itself (channel *Stable* by default, which is the image tag `latest`; no `FF_TAG` needed). How it works and how to turn it off: [Updater](#updater). With Plex use `-f compose.prod.yaml -f compose.plex.yaml` in every command ([plex.md](plex.md)); to make a plain `docker compose …` do that, put `COMPOSE_FILE=compose.prod.yaml:compose.plex.yaml` into `.env`.
 
 No `.env` is needed. The `bootstrap` service starts first, generates the database and Redis passwords, `APP_ENC_KEY` and `INTERNAL_SECRET` into the Docker volume `friendflix_bootstrap` and exits (`docker compose -f compose.prod.yaml ps -a` shows it as *Exited (0)*); every other service waits for it. If the backend restarts in a loop, read the first error in its log: an invalid variable (the config check names it) or a missing file of the bootstrap volume (see [troubleshooting](#13-troubleshooting)).
 
@@ -238,7 +241,7 @@ Right after the wizard, in Authentik:
 
 ### Settings in the database
 
-*Admin → Settings* shows every setting with its source: **From environment** (`.env`, a `_FILE` secret or an older variable name; locked, the field cannot be edited), **Saved** (the database) or **Default**. The generated values of the *Server* group (`DATABASE_URL`, `REDIS_URL`, `APP_ENC_KEY`, `INTERNAL_SECRET`) show **From startup file**: the `bootstrap` service created them in its volume; they are read-only here. The environment wins over the database, the database over the default.
+*Admin → Settings* shows every setting with its source: **From environment** (`.env` or a `_FILE` secret; locked, the field cannot be edited), **Saved** (the database) or **Default**. The generated values of the *Server* group (`DATABASE_URL`, `REDIS_URL`, `APP_ENC_KEY`, `INTERNAL_SECRET`) show **From startup file**: the `bootstrap` service created them in its volume; they are read-only here. The environment wins over the database, the database over the default.
 
 The in-app sign-in has its own settings under *Admin → Settings → Sign-in* (`LOGIN_UI`, the login and sign-out flow slugs, the slugs of the account page's flows for recovery codes, passkeys, password change and e-mail change, `PASSKEYS_IN_APP`) and *General* (`LOGIN_COVER_WALL`); no `.env` lines are needed. *Admin → Status* shows a Sign-in card that checks the Authentik side. See [authentik.md §10a](authentik.md#10a-in-app-sign-in).
 
@@ -283,7 +286,7 @@ Next: what you get to see and configure as admin is in [section 9](#9-first-step
 | **Chromecast** | On by default (`CAST_ENABLED=true`). Needs an https `PUBLIC_URL` with a publicly valid certificate that the Chromecast can reach, and the `/media/c/` block from `portal.advanced.conf`. | [cast.md](cast.md) |
 | **TV mode** | Nothing to configure: open `https://friend.example.com/tv` on the TV and pair it with the phone. | [tv-mode.md](tv-mode.md) |
 | **Database backups** | `mkdir -p backups && sudo chown 70 backups`, then `docker compose -f compose.prod.yaml --profile backup up -d backup` (`BACKUP_HOUR`, `BACKUP_KEEP_DAYS`, `BACKUP_PATH`). Back up the `bootstrap` volume once with `./scripts/backup-bootstrap.sh` and keep it apart from the dumps; back up Authentik separately ([authentik.md §2.6](authentik.md#26-backups-and-updates)). | [operations.md](operations.md#backups--wiederherstellung) |
-| **One-click updates** | *Admin → Update* redeploys through **Portainer**: either `PORTAINER_WEBHOOK_URL` (stack webhook), or `PORTAINER_URL` + `PORTAINER_API_KEY` + `PORTAINER_STACK_ID` (+ `PORTAINER_ENDPOINT_ID`, default `1`). Use a Portainer user that can only redeploy this one stack. FriendFlix deliberately never gets the Docker socket: **do not mount `/var/run/docker.sock` into any FriendFlix container**, the web app must not be able to control Docker. Without Portainer: the opt-in [updater](#updater-optional) (profile `updater`). | [operations.md](operations.md#updates-aus-dem-portal) |
+| **One-click updates** | *Admin → Update* redeploys through **Portainer**: either `PORTAINER_WEBHOOK_URL` (stack webhook), or `PORTAINER_URL` + `PORTAINER_API_KEY` + `PORTAINER_STACK_ID` (+ `PORTAINER_ENDPOINT_ID`, default `1`). Use a Portainer user that can only redeploy this one stack. FriendFlix deliberately never gets the Docker socket: **do not mount `/var/run/docker.sock` into any FriendFlix container**, the web app must not be able to control Docker. Plain Docker Compose: the [updater](#updater) does it (on by default). | [operations.md](operations.md#updates-aus-dem-portal) |
 | **Monitoring** | `METRICS_TOKEN`, Prometheus/Icinga examples; optional Prometheus + Grafana stack: set `GRAFANA_ADMIN_PASSWORD` (no default) and add `-f compose.monitoring.yaml`. | [monitoring.md](monitoring.md) |
 | **Plan B** | NPM serves `/media/` itself (`auth_request`); then `DOWNLOADS_ENABLED=false`, `CAST_ENABLED=false`. | [operations.md](operations.md#plan-b-npm-liefert-media-direkt-auth_request) |
 
@@ -353,7 +356,7 @@ An existing install upgrades like any update (`docker compose -f compose.prod.ya
    ```
 
 2. **Keep those four in `.env` until that log says `from environment` for each of them.** Removing one earlier makes the service generate a new value: a new database password does not match `pgdata` (Postgres keeps the password it was created with) and a new `APP_ENC_KEY` makes every encrypted value unreadable. Once the log line is there you may remove them, run `up -d` again and check that the log now says `kept`. Then back up the volume (`./scripts/backup-bootstrap.sh`). Leaving them in `.env` works too: `.env` then stays the source and the volume a copy.
-3. **Settings show as locked.** Every setting from `.env` appears in *Admin → Settings* as *From environment* and cannot be edited there. **Move** (per row) or **Move all** copies the values into the database; the row then says which names (also `_FILE` and older names) you can remove from `.env`. The environment keeps winning until you remove them and run `up -d`. The values of the *Server* group stay in `.env`.
+3. **Settings show as locked.** Every setting from `.env` appears in *Admin → Settings* as *From environment* and cannot be edited there. **Move** (per row) or **Move all** copies the values into the database; the row then says which names (also `_FILE`) you can remove from `.env`. The environment keeps winning until you remove them and run `up -d`. The values of the *Server* group stay in `.env`.
 4. **`PUBLIC_URL` with a path or query** (e.g. `https://friend.example.com/ff`) starts with its origin (`https://friend.example.com`) and logs one warning: FriendFlix runs at the root of its host name only. A value saved in *Admin → Settings* must be an origin.
 5. **The request service is optional now.** Without `REQUESTS_URL` and `REQUESTS_API_KEY` the request menus are hidden; reminders still work.
 6. **Keys from *Admin → Data sources*** move into the settings unchanged (same encryption); the page keeps working.
@@ -385,42 +388,85 @@ chmod 600 .env
 | `WEB_PORT`, `BACKEND_PORT`, `GATEWAY_PORT` | – | `3080`, `3081`, `3082` (defaults); change only if taken |
 | `TZ` | – | e.g. `Europe/Vienna`; schedules (digest, playback check, backups) |
 | `METRICS_TOKEN` | – | `openssl rand -hex 24` if you scrape `/metrics` ([monitoring.md](monitoring.md)) |
-| `FF_REGISTRY`, `FF_TAG` | – | `ghcr.io/letsmanu`, `latest`; `FF_TAG` is the [release channel](#release-channels): `latest`, `nightly`, or `1` / `1.1` / `1.1.0` (or a commit SHA) to pin |
+| `FF_REGISTRY`, `FF_TAG` | – | `ghcr.io/letsmanu`, `latest`; **only without the updater**: `FF_TAG` is then the [release channel](#release-channels-without-the-updater) (`latest`, `nightly`, or `2` / `2.0` / `2.0.0` / `sha-<7>` to pin). With the updater leave both unset |
 | `OIDC_ALLOW_INSECURE` | – | `false`; `true` only for tests against an `http://` Authentik, never in production |
 | `POSTGRES_PASSWORD`, `REDIS_PASSWORD`, `APP_ENC_KEY`, `INTERNAL_SECRET` | – | **leave out** on a new install (generated). An existing install keeps them until the volume holds them ([section 14](#14-upgrading-to-settings-in-the-database)) |
 
-Everything else (request service, sessions, downloads, push, ntfy, Portainer) is listed in the [README table](../README.md#advanced-configure-by-environment) and in [.env.example](../.env.example). The webhook secret is generated in *Admin → Settings → General → Webhook secret → Generate new* (or in the wizard's extras) and shown once. Until it is set, the webhooks of Jellyfin and the request service answer 403. After changing `.env`: `docker compose -f compose.prod.yaml up -d` (recreates only what changed).
+Every setting of *Admin → Settings* can be set this way: compose passes each of them through to the backend (the generated block in `compose.prod.yaml`; an unset line changes nothing). Everything else (request service, sessions, downloads, push, ntfy, Portainer) is listed in the [README table](../README.md#advanced-configure-by-environment) and in [.env.example](../.env.example). The webhook secret is generated in *Admin → Settings → General → Webhook secret → Generate new* (or in the wizard's extras) and shown once. Until it is set, the webhooks of Jellyfin and the request service answer 403. After changing `.env`: `docker compose -f compose.prod.yaml up -d` (recreates only what changed).
 
-### Release channels
+### Updater
 
-`FF_TAG` alone decides which images the stack pulls (`compose.prod.yaml`: `…/friendflix-<service>:${FF_TAG:-latest}`):
+Since 2.0 the **updater** is part of the production stack: `docker compose -f compose.prod.yaml up -d` starts it, and FriendFlix updates itself from *Admin → Update*: no `FF_TAG` in `.env`, no command line.
 
-| `FF_TAG` | Channel | Pulls |
-|---|---|---|
-| `latest` (default) | Stable | the highest published release `vX.Y.Z`; backports and pre-releases never move it |
-| `nightly` | Nightly | every commit on `main` that passed CI (tests, scans, reproducible build); newer, less proven |
-| `1` / `1.1` / `1.1.0` | pinned | a major line, a minor line or exactly one release (a short commit SHA pins one build) |
+*Admin → Update* shows the **Updater** card: installed tag, previous version, target. Pick the channel there: *Stable* (the image tag `latest`, the default), *Nightly* (`nightly`) or *Fixed version* (`X.Y.Z`). **Update now** pulls the images of that channel, checks each image's cosign signature against this repository's `publish.yml` on `main` or a release tag, recreates `bootstrap`, `backend`, `gateway` and `web`, and waits up to about three minutes until they are healthy and the backend reports the new build. Any failed signature stops the job before anything restarts; a new build that does not get healthy is rolled back to the previous build automatically. **Back to previous version** goes to the recorded previous build (its `sha-<7>` tag). **Update the updater** (under *The updater itself*) updates only the updater container. Every start needs a recent sign-in, is limited to three per two minutes and is written to the audit log with its result. **Automatic updates** (*Nightly at* 04:00, default off) run the same job once a night.
 
-To switch, change `FF_TAG` in `.env`, then run `docker compose -f compose.prod.yaml pull && docker compose -f compose.prod.yaml up -d`. The switch only takes effect after that: without the opt-in [updater](#updater-optional) FriendFlix never touches Docker itself (the backend never gets the Docker socket). *Admin → Update* shows the channel the install actually runs (a build is a release when its commit is the commit of tag `v<version>`, else a nightly build, shown as `1.1.0-nightly · abc1234`), and its *Stable / Nightly* switch stores `UPDATE_CHANNEL` in the database: what the update check compares with (stable: newer releases with their notes; nightly: newer commits on `main`). When the selection differs from what runs, or an update exists, the page shows the `.env` line and the command to copy. Up to 1.1.0, `latest` also followed `main`: set `FF_TAG=nightly` to keep following it. Details (German): [operations.md, Release-Kanäle](operations.md#release-kanäle).
+What the updater needs (plain Docker Compose on the host; Portainer stacks keep the Portainer button):
 
-### Updater (optional)
+- **Run compose from the stack directory** (`cd /opt/friendflix`): the updater mounts it read-only at the same path (`${PWD}`), so relative paths in the files resolve the same. Where compose does not see `PWD` (e.g. `sudo docker compose …`, some GUIs), put the absolute path into `.env`: `UPDATER_PROJECT_DIR=/opt/friendflix`.
+- **A `.env`, if you have one, must be readable by uid 1000** (the updater reads it read-only): `setfacl -m u:1000:r .env` (or `chmod 644 .env`). Without `.env` there is nothing to do.
+- **The same compose files as your own `up`:** the updater recreates the services with the files the stack was last started with (compose records them on the backend container; `-f …` or `COMPOSE_FILE`), so `compose.plex.yaml`, `compose.secrets.yaml` or `compose.authentik.yaml` stay in. Set `UPDATER_COMPOSE_FILES` (comma-separated names in the stack directory, e.g. `compose.prod.yaml,compose.plex.yaml,compose.authentik.yaml`) only to force a list; it must then name every file of the stack. A job whose files would start another media server than the one running (a Plex stack without `compose.plex.yaml`) is refused before anything changes (*the compose files would start another media server …*).
+- **With `compose.secrets.yaml`** add an override for the updater with `INTERNAL_SECRET_FILE` (it otherwise reads the copy in the `bootstrap-gateway` volume).
 
-With the opt-in **updater** FriendFlix updates itself from *Admin → Update*: no `FF_TAG` in `.env`, no command line. It is off unless you enable it.
-
-**Enable** (production stack, plain Docker Compose on the host; Portainer stacks keep the Portainer button):
-```bash
-cd /opt/friendflix                      # the stack directory with compose.prod.yaml and .env
-setfacl -m u:1000:r .env                # the updater runs as uid 1000 and reads .env read-only (or chmod 644 .env)
-docker compose -f compose.prod.yaml --profile updater up -d
-```
-Keep using `--profile updater` for every later `docker compose … up` (or put `COMPOSE_PROFILES=updater` into `.env`). If the stack uses more compose files, list them all: `UPDATER_COMPOSE_FILES=compose.prod.yaml,compose.authentik.yaml`. Start compose from the stack directory: the updater mounts it read-only at the same path (`${PWD}`), so relative paths in the files resolve the same. With `compose.secrets.yaml` add an override for the updater with `INTERNAL_SECRET_FILE` (it otherwise reads the copy in the `bootstrap-gateway` volume).
-
-*Admin → Update* then shows the **Updater** card: installed tag, previous version, target. **Update now** pulls the images of the selected channel (*Stable* = `latest`, *Nightly* = `nightly`, *Fixed version* = `X.Y.Z`), checks each image's cosign signature against this repository's `publish.yml` on `main` or a release tag, recreates `bootstrap`, `backend`, `gateway` and `web`, and waits up to about three minutes until they are healthy and the backend reports the new build. Any failed signature stops the job before anything restarts; a new build that does not get healthy is rolled back to the previous build automatically. **Back to previous version** goes to the recorded previous build (its `sha-<7>` tag). **Update the updater** (under *The updater itself*) updates only the updater container. Every start needs a recent sign-in, is limited to three per two minutes and is written to the audit log with its result. **Automatic updates** (*Nightly at* 04:00, default off) run the same job once a night.
+**A manual `docker compose up -d`** (e.g. after changing `.env`) brings the images of `FF_TAG` back, which is `latest` when it is unset: fine on *Stable*. On *Nightly* or a *Fixed version* press **Update now** afterwards (or set `FF_TAG` to the same tag in `.env`).
 
 **Security model.** The backend and the web app never get the Docker socket. Only the `docker-proxy` service (a digest-pinned socket proxy) mounts `/var/run/docker.sock`, read-only, on an internal network that only the updater shares; it forwards what `compose pull` / `up` need and refuses exec, build, swarm, secrets, plugins, system, archive and logs. The updater has no published port, runs as uid 1000 with a read-only root file system, `cap_drop: ALL` and `no-new-privileges`, and accepts only five fixed, HMAC-signed requests from the backend (key derived from `INTERNAL_SECRET`, timestamp + nonce, replays refused): no image name, service, tag or command is ever taken from a request. The database, Redis, the media server, the request service and Authentik are never touched.
 
-**Residual risk.** Whoever controls the updater container can create containers through the proxy, which on a Docker host is as good as root on the host, and can read every container's environment and the stack's `.env`. The design keeps that power out of the internet-facing services; it cannot remove it. Details: [security.md, Updater](security.md#updater).
+**Residual risk.** Whoever controls the updater container can create containers through the proxy, which on a Docker host is as good as root on the host, and can read every container's environment and the stack's `.env`. The design keeps that power out of the internet-facing services; it cannot remove it. Details: [security.md, Updater](security.md#updater). If you do not want that, run the stack without it (next section).
 
-**Disable:** `docker compose -f compose.prod.yaml --profile updater stop updater docker-proxy && docker compose -f compose.prod.yaml --profile updater rm -f updater docker-proxy`, then start without the profile. *Admin → Update* falls back to the `.env` line and the command; set `FF_TAG` again if you used *Nightly* or a fixed version (the updater kept the tag in its own state, the volume `updater-state`).
+**Turn it off:** add [`compose.no-updater.yaml`](../compose.no-updater.yaml) to every command (it moves `updater` and `docker-proxy` into the profile `updater`, so they no longer start), and remove the running containers once:
+
+```bash
+docker compose -f compose.prod.yaml stop updater docker-proxy && docker compose -f compose.prod.yaml rm -f updater docker-proxy
+docker compose -f compose.prod.yaml -f compose.no-updater.yaml up -d
+# or once in .env, then plain `docker compose …`:  COMPOSE_FILE=compose.prod.yaml:compose.no-updater.yaml
+#   (with Plex: COMPOSE_FILE=compose.prod.yaml:compose.plex.yaml:compose.no-updater.yaml)
+```
+
+*Admin → Update* then falls back to the `.env` line and the command. If you used *Nightly* or a fixed version, set `FF_TAG` (next section); the updater's own state (volume `friendflix_updater-state`) can be deleted. `--profile updater` turns it on again.
+
+### Release channels without the updater
+
+Only for stacks with `compose.no-updater.yaml`: then `FF_TAG` in `.env` alone decides which images the stack pulls (`compose.prod.yaml`: `…/friendflix-<service>:${FF_TAG:-latest}`):
+
+| `FF_TAG` | Channel | Pulls |
+|---|---|---|
+| unset / `latest` | Stable | the highest published release `vX.Y.Z`; backports and pre-releases never move it |
+| `nightly` | Nightly | every commit on `main` that passed CI (tests, scans, reproducible build); newer, less proven |
+| `2` / `2.0` / `2.0.0` | pinned | a major line, a minor line or exactly one release (`sha-<7 hex>` pins one build) |
+
+To switch, change `FF_TAG` in `.env`, then run `docker compose -f compose.prod.yaml -f compose.no-updater.yaml pull && docker compose -f compose.prod.yaml -f compose.no-updater.yaml up -d`. Without the updater FriendFlix never touches Docker itself. *Admin → Update* shows the channel the install actually runs (a build is a release when its commit is the commit of tag `v<version>`, else a nightly build, shown as `2.0.0-nightly · abc1234`), and its *Stable / Nightly / Fixed version* switch stores `UPDATE_CHANNEL` in the database: what the update check compares with. When the selection differs from what runs, or an update exists, the page shows the `.env` line and the command to copy. Details (German): [operations.md, Release-Kanäle](operations.md#release-kanäle).
 
 **Docker secrets instead of `.env`** (optional): [`compose.secrets.yaml`](../compose.secrets.yaml) reads `APP_ENC_KEY`, `INTERNAL_SECRET`, `WEBHOOK_SECRET`, `OIDC_CLIENT_SECRET`, `JELLYFIN_ADMIN_API_KEY`, `REQUESTS_API_KEY` (file `secrets/requests_api_key`) and `VAPID_PRIVATE_KEY` from files in `secrets/` (all must exist; `touch secrets/vapid_private_key` if you have no push). Start with `docker compose -f compose.prod.yaml -f compose.secrets.yaml up -d`. The files win like environment values (locked in *Admin → Settings*); the copies of `APP_ENC_KEY` and `INTERNAL_SECRET` that the `bootstrap` service generates then stay unused, so back up `secrets/` instead.
+
+## 16. Upgrade to 2.0
+
+2.0 makes the updater the default, keeps `.env` optional and removes names that 1.x still accepted. Everything else (database, volumes, settings, Authentik, the media server) carries over unchanged. Do the steps in this order; every removed name is also in the [CHANGELOG](../CHANGELOG.md) under "Breaking changes / Upgrade to 2.0".
+
+1. **Rename the request service variables** if `.env` (or your own override) still has the 1.x names; 2.0 no longer reads them, the request menus would disappear (the backend logs `SEERR_URL is no longer read since 2.0, use REQUESTS_URL` and the admin banner names the replacement):
+
+   | 1.x | 2.0 |
+   |---|---|
+   | `SEERR_URL=…` | `REQUESTS_URL=…` |
+   | `SEERR_API_KEY=…` | `REQUESTS_API_KEY=…` |
+   | `SEERR_URL_FILE=…` / `SEERR_API_KEY_FILE=…` | `REQUESTS_URL_FILE=…` / `REQUESTS_API_KEY_FILE=…` |
+
+   ```bash
+   sed -i 's/^SEERR_URL=/REQUESTS_URL=/; s/^SEERR_API_KEY=/REQUESTS_API_KEY=/; s/^SEERR_URL_FILE=/REQUESTS_URL_FILE=/; s/^SEERR_API_KEY_FILE=/REQUESTS_API_KEY_FILE=/' .env
+   ```
+   If `.env` already has a `REQUESTS_*` line next to the old one, delete the old line instead. Or, still on 1.x: *Admin → Settings → Move all*, then delete the old lines.
+2. **Backups:** `KEEP_DAYS=…` → `BACKUP_KEEP_DAYS=…` (`sed -i 's/^KEEP_DAYS=/BACKUP_KEEP_DAYS=/' .env`). Until you rename it the backup sidecar keeps every dump and logs the rename on each run.
+3. **Decide about the updater.** It starts with the next `up -d` (no `--profile updater` needed any more; a leftover `COMPOSE_PROFILES=updater` in `.env` is harmless and can go).
+   - *Keep it* (recommended): remove `FF_TAG` from `.env` (`sed -i '/^FF_TAG=/d' .env`) and choose the channel in *Admin → Update*; make `.env` readable for uid 1000 (`setfacl -m u:1000:r .env`). If `UPDATER_COMPOSE_FILES` is set, it must list every file of the stack, or remove it (the updater then takes the files you started the stack with).
+   - *Not wanted*: add `-f compose.no-updater.yaml` to every command, or `COMPOSE_FILE=compose.prod.yaml:compose.no-updater.yaml` to `.env` ([Turn it off](#updater)); `FF_TAG` keeps working as before.
+4. **`FF_TAG` with the updater:** a pin like `FF_TAG=1.1` or `FF_TAG=nightly` only matters for a manual `docker compose up -d`; the updater installs what *Admin → Update* says. Up to 1.1.0 `latest` also followed `main`; from 2.0 it only moves on releases: to keep following `main` choose *Nightly* in *Admin → Update* (without the updater: `FF_TAG=nightly`).
+5. **Settings that `.env` could not set before now can:** compose now passes every *Admin → Settings* key to the backend. If your `.env` has one of `TMDB_API_KEY`, `OMDB_API_KEY`, `HOME_NETWORKS`, `UPDATE_CHANNEL`, `UPDATE_VERSION`, `AUTO_UPDATE`, `AUTO_UPDATE_TIME`, `LOGIN_UI`, `AUTHENTIK_LOGIN_FLOW`, `AUTHENTIK_STATIC_SETUP_FLOW`, `AUTHENTIK_WEBAUTHN_SETUP_FLOW`, `AUTHENTIK_PASSWORD_CHANGE_FLOW`, `AUTHENTIK_INVALIDATION_FLOW`, `AUTHENTIK_EMAIL_CHANGE_FLOW`, `PASSKEYS_IN_APP` or `LOGIN_COVER_WALL`, that value now wins and locks the field; delete the line to keep the value saved in the database.
+6. **Own copies of the compose files:** take `compose.prod.yaml` from 2.0 (your values belong in `.env` or an override, not in the file). An own override that still sets `SEERR_URL` / `SEERR_API_KEY` must use the new names.
+7. **Start:**
+
+   ```bash
+   cd /opt/friendflix
+   docker compose -f compose.prod.yaml pull && docker compose -f compose.prod.yaml up -d    # Plex: -f compose.prod.yaml -f compose.plex.yaml
+   docker compose -f compose.prod.yaml logs backend | grep -i "no longer read"           # empty = nothing left to rename
+   ```
+
+   Then open *Admin → Update*: the **Updater** card shows the installed build. friendflix-plex installs follow [plex.md, Migrating from friendflix-plex](plex.md#migrating-from-friendflix-plex-to-friendflix-20) instead.

@@ -37,7 +37,7 @@ Internet --TLS--> reverse proxy (yours, :443)
 backend --> postgres, redis    (db network, internal: no egress, no host access)
 backend, gateway --> media server (media network, internal)
 backend --> OIDC provider, notification services (egress)
-backend --> updater (updater network, internal; optional profile)  --> docker-proxy (internal) --> Docker socket (read-only)
+backend --> updater (updater network, internal; default, off with compose.no-updater.yaml)  --> docker-proxy (internal) --> Docker socket (read-only)
 ```
 
 Networks and ports are defined in [compose.yaml](../compose.yaml); the diagram and the "press play" flow are in [architecture.md](architecture.md).
@@ -53,7 +53,7 @@ Networks and ports are defined in [compose.yaml](../compose.yaml); the diagram a
 | FriendFlix to identity provider | OIDC discovery and code exchange | Authorization code flow with PKCE (S256), `state` and `nonce`, and a cookie binding the flow to the browser. The IdP is trusted to authenticate users and enforce MFA. |
 | Cast and AirPlay receivers | TV or speaker on the viewer's network to the gateway | The receiver cannot send cookies, so it gets a short-lived, revocable cast token in the URL path. See [cast.md](cast.md). A receiver is untrusted: it only ever holds that token. |
 | Web Push and notification services | Backend to push services, ntfy, Discord | Outbound only; keys and webhook URLs are admin-configured secrets. |
-| Backend to updater (optional) | App to the only component that can change containers | Five fixed actions, HMAC-signed (timestamp + nonce, replays refused); only the updater reaches the socket proxy ([Updater](#updater)). |
+| Backend to updater (default since 2.0; off with `compose.no-updater.yaml`) | App to the only component that can change containers | Five fixed actions, HMAC-signed (timestamp + nonce, replays refused); only the updater reaches the socket proxy ([Updater](#updater)). |
 
 ## Threat model
 
@@ -66,7 +66,7 @@ Networks and ports are defined in [compose.yaml](../compose.yaml); the diagram a
 | Malicious web page or injected script | Act as the user (CSRF/XSS), read tokens | CSRF token, `SameSite=Lax`, `HttpOnly` cookies, strict CSP, `nosniff`, `X-Frame-Options: DENY`. No media token reaches the browser. |
 | Attacker with a stolen database or Redis dump | Read credentials | Media-server passwords and API keys are AES-256-GCM encrypted; PINs are scrypt hashes; Redis holds only SHA-256 hashes of cast tokens; sessions are not persisted. |
 | Compromised dependency or CI | Ship malicious images | Pinned actions and base images, lockfile with `npm ci`, dependency audit, Trivy gate, signed and attested images; the optional updater refuses any image whose cosign signature is not this repository's publish workflow. |
-| Attacker with code execution in the backend | Take over the Docker host | The backend never gets the Docker socket; with the optional updater it can only send five fixed, signed actions that install signed images of this repository ([Updater](#updater)). |
+| Attacker with code execution in the backend | Take over the Docker host | The backend never gets the Docker socket; with the updater (on by default since 2.0) it can only send five fixed, signed actions that install signed images of this repository ([Updater](#updater)). |
 | Malicious or buggy receiver or media server | Abuse the gateway, SSRF-style fetches | Gateway only forwards allowlisted, server-relative paths; absolute and protocol-relative URLs are refused. |
 
 Out of scope for the model: physical access to the host, a malicious admin, and attacks on the media server or IdP themselves.
@@ -266,7 +266,7 @@ A new install has no admin and no sign-in yet, so the first run is protected by 
 
 ## Updater
 
-The optional updater (compose profile `updater`, [setup.md](setup.md#updater-optional)) is the only part of FriendFlix that can change what runs. It is built so that the services an attacker can reach from the internet still cannot.
+The updater (on by default since 2.0, off with `compose.no-updater.yaml`; [setup.md](setup.md#updater)) is the only part of FriendFlix that can change what runs. A job also refuses compose files that would start another media server than the running backend and gateway (a Plex stack is never recreated as Jellyfin), and without `UPDATER_COMPOSE_FILES` it takes the stack's own files from the compose labels of the backend container, accepting only plain file names directly in the stack directory. It is built so that the services an attacker can reach from the internet still cannot.
 
 ```
 backend --signed request--> updater --(internal net)--> docker-proxy --ro--> /var/run/docker.sock
@@ -289,7 +289,7 @@ backend --signed request--> updater --(internal net)--> docker-proxy --ro--> /va
 
 **What the proxy blocks.** Requests to `/exec` (so an exec created under `/containers/<id>/exec` can never be started), `/build`, `/commit`, `/swarm`, `/services`, `/tasks`, `/nodes`, `/secrets`, `/configs`, `/plugins`, `/system` (`df`, prune of everything), `/session`, `/distribution`, `/auth` and `/grpc`, and `/containers/<id>/archive`, `/export`, `/logs`, `/top` and `/changes` answer 403; every path outside the allowlist does too. The socket is mounted read-only into the proxy and the proxy has no published port. What it does **not** block: inside the allowed sections it filters by path and method only, never by body, so `POST /containers/create` with a dangerous body (privileged, host binds), kill / restart / pause of any container, image removal and volume or network changes all pass. That is why the proxy is reachable from the updater alone.
 
-**Disable** by stopping and removing `updater` and `docker-proxy` and starting without the profile; nothing else depends on them.
+**Disable** by adding `compose.no-updater.yaml` to the compose command (or `COMPOSE_FILE`) and removing the running `updater` and `docker-proxy` containers once ([setup.md, Turn it off](setup.md#updater)); nothing else depends on them.
 
 ## Hardening
 
