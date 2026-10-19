@@ -6,6 +6,7 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.util.Log
 import androidx.core.content.ContextCompat
 import androidx.work.BackoffPolicy
 import androidx.work.Constraints
@@ -146,6 +147,36 @@ class DownloadQueue(private val d: Downloads) : DownloadSink {
         d.store.update(licenseId) { it.copy(state = DownloadState.EXPIRED, bytes = 0, subtitles = emptyList()) }
     }
 
+    /** Revoked at an online check (Task 7): the job stops, files deleted, the row stays as `expired` (like the worker's [expire]). */
+    fun revoke(licenseId: String) {
+        d.workManager.cancelUniqueWork(workName(licenseId))
+        expire(licenseId)
+    }
+
+    /**
+     * The download keys were lost (Task 5: RESET, or CREATED while rows exist): every encrypted file on disk is unreadable. Called by
+     * the key source inside its first open, before anything can write with the new keys. Finished downloads go (files, row, and the
+     * licence is given back to the server, as for a user delete); unfinished ones keep their row and restart from byte 0. Expired rows
+     * have no files. Never throws: a failure here must not make the keys unavailable.
+     */
+    fun dropUnreadable() {
+        try {
+            for (r in d.store.all()) {
+                when (r.state) {
+                    DownloadState.EXPIRED -> Unit
+                    DownloadState.DONE -> { deleteFiles(r); delete(r.licenseId) }
+                    else -> {
+                        deleteFiles(r)
+                        d.store.update(r.licenseId) { it.copy(bytes = 0, etag = null, subtitles = emptyList()) }
+                    }
+                }
+            }
+            Log.w(LOG, "download keys were replaced: old downloads removed")
+        } catch (e: RuntimeException) {
+            Log.w(LOG, "removing unreadable downloads failed: ${e.javaClass.simpleName}")
+        }
+    }
+
     /** The server no longer knows the licence (deleted elsewhere): files and row go. */
     internal fun removeGone(licenseId: String) {
         val rec = d.store.remove(licenseId) ?: return
@@ -239,6 +270,7 @@ class DownloadQueue(private val d: Downloads) : DownloadSink {
 
     companion object {
         const val TAG = "ff-download"
+        private const val LOG = "FFDownloadQueue"
         const val UNAVAILABLE = "unavailable"
         internal const val PART = ".part"
         private const val BACKOFF_SECONDS = 30L

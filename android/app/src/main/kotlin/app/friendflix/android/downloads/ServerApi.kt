@@ -73,6 +73,8 @@ data class Licence(
     val backdrop: String?,
     val title: String,
     val expiresAt: Long,
+    /** the offline window the server grants (`validUntil`, epoch ms); 0 when the server did not send one */
+    val validUntil: Long = 0,
 ) {
     val active get() = status == "pending" || status == "fetched"
 }
@@ -86,6 +88,25 @@ sealed interface LicenceAnswer {
 }
 
 enum class CheckAnswer { Valid, Revoked, Wait }
+
+/** `/api/me` as the offline code needs it: the active profile of the WebView session (null before one is picked). */
+data class Me(val profileId: String?)
+
+/** One licence the check renewed: its hard expiry and the new offline window, both epoch ms. */
+data class Renewed(val id: String, val expiresAt: Long, val validUntil: Long)
+
+/** The answer of `POST /api/downloads/check` for a list of ids. */
+data class CheckResult(val valid: List<Renewed>, val revoked: List<String>)
+
+/** The answer of `POST /api/downloads/progress`. */
+sealed interface ProgressAnswer {
+    /** Taken: [skipped] items were not written because the server's own state is newer (or the licence is gone). */
+    data class Taken(val applied: List<String>, val skipped: List<String>) : ProgressAnswer
+    /** The server will never take these events (bad request, downloads switched off): drop them. */
+    data object Rejected : ProgressAnswer
+    /** Try again later (server trouble, another profile active, rate limit). */
+    data object Later : ProgressAnswer
+}
 
 /**
  * The FriendFlix API as the downloader needs it, authenticated only by the WebView's session cookie for [origin].
@@ -120,13 +141,59 @@ class ServerApi(val origin: HttpUrl, base: OkHttpClient, cookies: CookieSource) 
 
     /** `POST /api/downloads/check`: the server's verdict (it also revokes licences the account may no longer hold). */
     fun check(id: String, profileId: String): CheckAnswer {
-        val url = origin.newBuilder().addPathSegments("api/downloads/check").build()
-        val r = post(url, profileId, JSONObject().put("ids", JSONArray().put(id))) ?: return CheckAnswer.Wait
-        val revoked = r.optJSONArray("revoked") ?: return CheckAnswer.Wait
-        val valid = r.optJSONArray("valid") ?: return CheckAnswer.Wait
-        if ((0 until revoked.length()).any { revoked.optString(it) == id }) return CheckAnswer.Revoked
-        if ((0 until valid.length()).any { valid.optJSONObject(it)?.optString("id") == id }) return CheckAnswer.Valid
+        val r = checkAll(listOf(id), profileId) ?: return CheckAnswer.Wait
+        if (id in r.revoked) return CheckAnswer.Revoked
+        if (r.valid.any { it.id == id }) return CheckAnswer.Valid
         return CheckAnswer.Wait
+    }
+
+    /**
+     * `POST /api/downloads/check` for up to 200 ids of [profileId]: every id comes back renewed or revoked. Null when the server could not
+     * answer (any status but 200, or a malformed body): nothing may be concluded from that.
+     */
+    fun checkAll(ids: List<String>, profileId: String): CheckResult? {
+        require(ids.size <= MAX_IDS) { "at most $MAX_IDS ids per check" }
+        val url = origin.newBuilder().addPathSegments("api/downloads/check").build()
+        val r = post(url, profileId, JSONObject().put("ids", JSONArray(ids))) ?: return null
+        val revoked = r.optJSONArray("revoked") ?: return null
+        val valid = r.optJSONArray("valid") ?: return null
+        return try {
+            CheckResult(
+                valid = (0 until valid.length()).map { i ->
+                    val v = valid.getJSONObject(i)
+                    Renewed(v.getString("id"), time(v.get("expiresAt")), time(v.get("validUntil")))
+                },
+                revoked = (0 until revoked.length()).map { revoked.getString(it) },
+            )
+        } catch (_: JSONException) {
+            null
+        } catch (_: DateTimeParseException) {
+            null
+        }
+    }
+
+    /** `GET /api/me`: the session's active profile (and the CSRF token, kept for the next write). */
+    fun me(): Me? {
+        val url = origin.newBuilder().addPathSegments("api/me").build()
+        client.newCall(Request.Builder().url(url).header("accept", "application/json").get().build()).execute().use { r ->
+            if (r.code == 401) throw SessionExpired()
+            if (r.code != 200) return null
+            val j = bodyJson(r) ?: return null
+            j.optString("csrfToken").takeIf { it.isNotEmpty() }?.let { csrf = it }
+            val p = j.optJSONObject("profile")?.optString("id")?.takeIf { it.isNotEmpty() }
+            return Me(p)
+        }
+    }
+
+    /** `POST /api/downloads/progress` with up to 200 offline watch events (`{downloadId,itemId,positionTicks,played,at}`). */
+    fun progress(profileId: String, events: JSONArray): ProgressAnswer {
+        val url = origin.newBuilder().addPathSegments("api/downloads/progress").build()
+        val (code, j) = postStatus(url, profileId, JSONObject().put("events", events)) ?: return ProgressAnswer.Later
+        return when {
+            code == 200 -> ProgressAnswer.Taken(strings(j?.optJSONArray("applied")), strings(j?.optJSONArray("skipped")))
+            code == 400 || code == 404 -> ProgressAnswer.Rejected
+            else -> ProgressAnswer.Later
+        }
     }
 
     /** `POST /api/downloads/:id/fetched`; best effort, true when the server took it. */
@@ -177,7 +244,11 @@ class ServerApi(val origin: HttpUrl, base: OkHttpClient, cookies: CookieSource) 
 
     private fun api(url: HttpUrl, profileId: String) = Request.Builder().url(url).header("accept", "application/json").header("x-ff-profile", profileId)
 
-    private fun post(url: HttpUrl, profileId: String, body: JSONObject): JSONObject? {
+    private fun post(url: HttpUrl, profileId: String, body: JSONObject): JSONObject? =
+        postStatus(url, profileId, body)?.let { (code, j) -> if (code == 200) j ?: JSONObject() else null }
+
+    /** A JSON POST with the CSRF token (refetched once on a csrf 403): status and body, or null when no token could be had. */
+    private fun postStatus(url: HttpUrl, profileId: String, body: JSONObject): Pair<Int, JSONObject?>? {
         repeat(2) { attempt ->
             val token = csrfToken() ?: return null
             val req = api(url, profileId).header("x-csrf-token", token).post(body.toString().toRequestBody(JSON)).build()
@@ -185,11 +256,13 @@ class ServerApi(val origin: HttpUrl, base: OkHttpClient, cookies: CookieSource) 
                 if (r.code == 401) throw SessionExpired()
                 val j = bodyJson(r)
                 if (r.code == 403 && j?.optString("error") == "csrf" && attempt == 0) { csrf = null; return@repeat }
-                return if (r.code == 200) j ?: JSONObject() else null
+                return r.code to j
             }
         }
         return null
     }
+
+    private fun strings(a: JSONArray?): List<String> = if (a == null) emptyList() else (0 until a.length()).mapNotNull { a.optString(it).takeIf { s -> s.isNotEmpty() } }
 
     private fun csrfToken(): String? {
         csrf?.let { return it }
@@ -224,6 +297,7 @@ class ServerApi(val origin: HttpUrl, base: OkHttpClient, cookies: CookieSource) 
             backdrop = if (o.isNull("backdrop")) null else o.optString("backdrop"),
             title = o.optString("title"),
             expiresAt = time(o.get("expiresAt")),
+            validUntil = if (o.has("validUntil") && !o.isNull("validUntil")) time(o.get("validUntil")) else 0,
         )
     } catch (_: JSONException) {
         null
@@ -236,8 +310,10 @@ class ServerApi(val origin: HttpUrl, base: OkHttpClient, cookies: CookieSource) 
         else -> Instant.parse(v.toString()).toEpochMilli()
     }
 
-    private companion object {
-        val JSON = "application/json".toMediaType()
-        const val MAX_JSON = 1L shl 20
+    companion object {
+        private val JSON = "application/json".toMediaType()
+        private const val MAX_JSON = 1L shl 20
+        /** the server takes at most 200 ids / events per request */
+        const val MAX_IDS = 200
     }
 }

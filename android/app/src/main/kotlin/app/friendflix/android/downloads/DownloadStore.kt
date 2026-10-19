@@ -33,6 +33,8 @@ data class SubtitleFile(val lang: String, val file: String)
  * One row of the download table. [file] and the [subtitles] files live in the `downloads` folder of [location]; names are built
  * from the licence id ([DownloadFiles]), never from titles. [title] is only for the offline list (Task 7) and is never logged.
  * [bytes] plaintext bytes on disk, [total] expected size (0 = unknown), [expiresAt]/[lastCheck] epoch ms, [etag] pins resumes.
+ * [validUntil] is the server's offline window (`validUntil` of the licence / check answer, epoch ms, 0 = not known yet): playback
+ * needs an online check after it. [positionMs] is where offline playback stopped (the offline list resumes there).
  */
 data class DownloadRecord(
     val licenseId: String,
@@ -50,6 +52,8 @@ data class DownloadRecord(
     val title: String = "",
     /** why an [DownloadState.ERROR] download stopped: `noSpace` | `io` | `prepFailed` (web message codes), else null */
     val error: String? = null,
+    val validUntil: Long = 0,
+    val positionMs: Long = 0,
 )
 
 /** File names of a download: everything starts with the licence id (so orphans can be found), nothing contains a title. */
@@ -179,6 +183,7 @@ class DownloadStore(private val file: File, private val onWrite: () -> Unit = {}
         .put("subtitles", JSONArray().also { a -> r.subtitles.forEach { a.put(JSONObject().put("lang", it.lang).put("file", it.file)) } })
         .put("expiresAt", r.expiresAt).put("lastCheck", r.lastCheck).put("etag", r.etag ?: JSONObject.NULL)
         .put("location", r.location.name).put("title", r.title).put("error", r.error ?: JSONObject.NULL)
+        .put("validUntil", r.validUntil).put("positionMs", r.positionMs)
 
     private fun fromJson(o: JSONObject): DownloadRecord? = try {
         val subs = o.optJSONArray("subtitles") ?: JSONArray()
@@ -197,6 +202,8 @@ class DownloadStore(private val file: File, private val onWrite: () -> Unit = {}
             location = StorageLocation.entries.firstOrNull { it.name == o.optString("location") } ?: StorageLocation.PHONE,
             title = o.optString("title"),
             error = if (o.isNull("error")) null else o.optString("error").takeIf { it.isNotEmpty() },
+            validUntil = o.optLong("validUntil"),
+            positionMs = o.optLong("positionMs"),
         )
     } catch (_: JSONException) {
         null

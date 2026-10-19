@@ -15,14 +15,23 @@ import androidx.lifecycle.lifecycleScope
 import app.friendflix.android.BuildConfig
 import app.friendflix.android.R
 import app.friendflix.android.bridge.Capabilities
-import app.friendflix.android.bridge.NativeBridge
 import app.friendflix.android.bridge.DownloadEntry
+import app.friendflix.android.bridge.DownloadRequest
+import app.friendflix.android.bridge.DownloadSink
+import app.friendflix.android.bridge.NativeBridge
 import app.friendflix.android.bridge.NoPlayerLauncher
-import app.friendflix.android.downloads.Downloads
+import app.friendflix.android.bridge.PlayRequest
+import app.friendflix.android.bridge.PlayerLauncher
+import app.friendflix.android.offline.NetworkWatch
+import app.friendflix.android.offline.Offline
+import app.friendflix.android.offline.OfflineActivity
+import app.friendflix.android.offline.OfflineGate
 import app.friendflix.android.settings.AppSettings
+import app.friendflix.android.setup.ServerProbe
 import app.friendflix.android.setup.SetupActivity
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import okhttp3.HttpUrl
 
 /** The app: the FriendFlix web UI of the saved server in a locked-down WebView. No saved server yet -> setup first. */
 class ShellActivity : ComponentActivity() {
@@ -30,6 +39,7 @@ class ShellActivity : ComponentActivity() {
     internal var webView: WebView? = null
         private set
     private var bridge: NativeBridge? = null
+    private var watch: NetworkWatch? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         enableEdgeToEdge()
@@ -48,9 +58,20 @@ class ShellActivity : ComponentActivity() {
             val policy = OriginPolicy(origin)
             // Task 8 (player) swaps its placeholder and flips its flag; until then the web UI plays in the page.
             // openSettings is a no-op until the settings screen exists (Task 11).
-            val downloads = Downloads.get(applicationContext).queue
+            val offline = Offline.get(applicationContext)
+            val downloads = offline.downloads.queue
             downloads.resumeAll() // app start: downloads paused by a sign-out continue (one try; a 401 pauses them again)
-            val bridge = NativeBridge(policy, NoPlayerLauncher, downloads, Capabilities(play = false, download = true, cast = false), openSettings = {})
+            offline.startInBackground() // keys, licence check, position sync
+            watch = NetworkWatch(this@ShellActivity) { offline.reconnectInBackground() }.also { it.start() }
+            launch { openOfflineIfUnreachable(origin, offline) }
+            // every hand-over from the web UI names the active profile: the offline list shows that profile's downloads
+            val sink = object : DownloadSink by downloads {
+                override fun enqueue(req: DownloadRequest): Boolean { offline.noteProfile(req.profileId); return downloads.enqueue(req) }
+            }
+            val player = object : PlayerLauncher {
+                override fun launch(req: PlayRequest): Boolean { offline.noteProfile(req.profileId); return NoPlayerLauncher.launch(req) }
+            }
+            val bridge = NativeBridge(policy, player, sink, Capabilities(play = false, download = true, cast = false), openSettings = {})
             this@ShellActivity.bridge = bridge
             launch {
                 var last = emptyList<DownloadEntry>()
@@ -74,6 +95,28 @@ class ShellActivity : ComponentActivity() {
         }
     }
 
+    /** Start-up: a quick probe; the server cannot be used and there is something downloaded to watch → the offline list. */
+    private suspend fun openOfflineIfUnreachable(origin: HttpUrl, offline: Offline) {
+        val result = ServerProbe(appVersion = BuildConfig.VERSION_NAME, timeoutMs = PROBE_TIMEOUT_MS).probe(origin)
+        if (OfflineGate.shouldOpen(result, offline.checker.hasDownloads()) && !isFinishing) startActivity(OfflineActivity.intent(this))
+    }
+
+    override fun onStart() {
+        super.onStart()
+        watch?.start()
+    }
+
+    override fun onStop() {
+        watch?.stop()
+        super.onStop()
+    }
+
+    /** Back from the offline list after a successful reconnect: reload the web UI (it may show the error page). */
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        if (intent.getBooleanExtra(EXTRA_RELOAD, false)) webView?.reload()
+    }
+
     private fun onRenderGone() {
         // a page that keeps crashing the renderer must not loop: two restarts per process, then leave
         if (renderRestarts++ < MAX_RENDER_RESTARTS) recreate() else finish()
@@ -95,9 +138,12 @@ class ShellActivity : ComponentActivity() {
         super.onDestroy()
     }
 
-    private companion object {
-        const val MAX_RENDER_RESTARTS = 2
-        var renderRestarts = 0
+    companion object {
+        /** Intent extra: reload the page (the offline list reconnected). */
+        const val EXTRA_RELOAD = "app.friendflix.android.RELOAD"
+        private const val MAX_RENDER_RESTARTS = 2
+        private const val PROBE_TIMEOUT_MS = 4_000L
+        private var renderRestarts = 0
     }
 }
 

@@ -38,15 +38,20 @@ sealed interface ProbeResult {
     data object Unreachable : ProbeResult
 }
 
-/** Asks `GET /api/version` (public, no cookies) whether the address is a FriendFlix server this app can talk to. */
+/**
+ * Asks `GET /api/version` (public, no cookies) whether the address is a FriendFlix server this app can talk to. [timeoutMs] bounds the
+ * whole call (the shell's start-up reachability check uses a short one).
+ */
 class ServerProbe(
     client: OkHttpClient = OkHttpClient(),
     private val appVersion: String,
     private val minServer: String = MIN_SERVER,
+    timeoutMs: Long = 15_000,
 ) {
     private val client = client.newBuilder()
         .followRedirects(false).followSslRedirects(false)
-        .connectTimeout(10, TimeUnit.SECONDS).readTimeout(10, TimeUnit.SECONDS).callTimeout(15, TimeUnit.SECONDS)
+        .connectTimeout(minOf(10_000, timeoutMs), TimeUnit.MILLISECONDS).readTimeout(minOf(10_000, timeoutMs), TimeUnit.MILLISECONDS)
+        .callTimeout(timeoutMs, TimeUnit.MILLISECONDS)
         .build()
 
     suspend fun probe(origin: HttpUrl): ProbeResult = withContext(Dispatchers.IO) {

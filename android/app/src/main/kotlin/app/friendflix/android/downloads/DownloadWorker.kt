@@ -151,7 +151,12 @@ class DownloadWorker(context: Context, params: WorkerParameters, private val d: 
                 is Verdict.Active -> a.licence
             }
             if (wasPreparing) progressed = true
-            d.store.update(id) { it.copy(title = lic.title, expiresAt = lic.expiresAt, lastCheck = System.currentTimeMillis(), total = lic.bytes ?: it.total) }
+            d.store.update(id) {
+                it.copy(
+                    title = lic.title, expiresAt = lic.expiresAt, lastCheck = System.currentTimeMillis(), total = lic.bytes ?: it.total,
+                    validUntil = if (lic.validUntil > 0) lic.validUntil else it.validUntil,
+                )
+            }
             val url = api.resolve(lic.fileUrl) ?: run {
                 Log.w(TAG, "file url is not on the server's origin")
                 return failed(ERR_IO)

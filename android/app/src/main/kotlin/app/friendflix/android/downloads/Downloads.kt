@@ -23,17 +23,32 @@ fun interface KeySource {
     fun keys(): KeyProvider
 }
 
-/** Opens the Keystore keys once per process, off the main thread; a failed open is retried on the next call. */
-class KeystoreKeySource(private val context: Context) : KeySource {
-    @Volatile private var opened: KeystoreKeyProvider? = null
+/**
+ * Opens keys once per process; a failed open ([KeysUnavailableException]) is retried on the next call. When the opened keys cannot
+ * read the files written before ([unreadable], e.g. the Keystore key was lost), [onOldFilesUnreadable] runs once, inside the open and
+ * before any caller gets the keys: no writer can have used the new keys yet, so every file on disk is an old, unreadable one.
+ */
+open class OpenOnceKeySource<K : KeyProvider>(
+    private val open: () -> K,
+    private val unreadable: (K) -> Boolean,
+    private val onOldFilesUnreadable: () -> Unit,
+) : KeySource {
+    @Volatile private var opened: K? = null
 
     override fun keys(): KeyProvider = opened ?: synchronized(this) {
-        opened ?: KeystoreKeyProvider.open(context).also { opened = it }
+        opened ?: open().also { k ->
+            if (unreadable(k)) onOldFilesUnreadable()
+            opened = k
+        }
     }
 
-    /** The provider if it is already open (Task 7 reads `oldFilesUnreadable` from it). */
-    fun current(): KeystoreKeyProvider? = opened
+    /** The provider if it is already open. */
+    fun current(): K? = opened
 }
+
+/** The Keystore keys (Task 5). Lost keys make the old downloads unreadable: [onOldFilesUnreadable] removes them (Task 7). */
+class KeystoreKeySource(context: Context, onOldFilesUnreadable: () -> Unit) :
+    OpenOnceKeySource<KeystoreKeyProvider>({ KeystoreKeyProvider.open(context) }, { it.oldFilesUnreadable }, onOldFilesUnreadable)
 
 /**
  * Everything the downloader needs, wired once per process ([get]); tests [install] their own. Workers created by WorkManager pick
@@ -78,7 +93,7 @@ class Downloads(
                 store = DownloadStore(File(app.filesDir, "downloads.json")),
                 locations = locations,
                 settings = settings,
-                keys = KeystoreKeySource(app),
+                keys = KeystoreKeySource(app) { d.queue.dropUnreadable() },
                 workManager = WorkManager.getInstance(app),
                 http = OkHttpClient(),
                 cookies = WebViewCookies(),

@@ -21,4 +21,24 @@
     <string name="dl_progress_percent">%1$d %%</string>
     <string name="dl_signin_title">Bitte erneut anmelden</string>
     <string name="dl_signin_text">Downloads sind pausiert, bis du dich wieder bei FriendFlix anmeldest.</string>
+    <string name="offline_title">Offline</string>
+    <string name="offline_lead">Keine Verbindung zu FriendFlix. Deine heruntergeladenen Titel kannst du trotzdem ansehen.</string>
+    <string name="offline_reconnect">Erneut verbinden</string>
+    <string name="offline_still_offline">Immer noch keine Verbindung zum Server.</string>
+    <string name="offline_none">Auf diesem Gerät sind keine Downloads vorhanden.</string>
+    <string name="offline_keys_unavailable">Downloads sind auf diesem Gerät gerade nicht verfügbar. Bitte später noch einmal versuchen.</string>
+    <string name="offline_play">Abspielen</string>
+    <string name="offline_play_failed">Wiedergabe nicht möglich.</string>
+    <string name="offline_meta_unfinished">%1$s · %2$s · nicht fertig</string>
+    <plurals name="offline_days_left">
+        <item quantity="one">noch %d Tag</item>
+        <item quantity="other">noch %d Tage</item>
+    </plurals>
+    <string name="offline_reason_not_done">Noch nicht vollständig heruntergeladen.</string>
+    <string name="offline_reason_expired">Dieser Download ist abgelaufen.</string>
+    <string name="offline_reason_checkin">Bitte kurz online gehen, um den Download zu bestätigen.</string>
+    <string name="offline_reason_clock">Die Uhrzeit des Geräts stimmt nicht. Bitte online gehen, um fortzufahren.</string>
+    <string name="offline_reason_keys">Auf diesem Gerät gerade nicht verfügbar.</string>
+    <string name="offline_reason_storage">Die Speicherkarte mit diesem Download ist nicht eingesetzt.</string>
+    <string name="offline_reason_file_missing">Die Datei wurde auf diesem Gerät nicht gefunden.</string>
 </resources>

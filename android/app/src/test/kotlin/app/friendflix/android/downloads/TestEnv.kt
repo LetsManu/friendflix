@@ -82,6 +82,17 @@ class FakeServer : Dispatcher() {
     var licenceCode = 200
     var licenceError = "not_found"
     var checkRevoked = false
+    /** status of `POST /api/downloads/check` (200 = the verdict below) */
+    var checkCode = 200
+    /** the renewed offline window the check hands out (null = expiresAt, as the server caps it) */
+    var checkValidUntil: Instant? = null
+    /** status of `POST /api/downloads/progress` and the items the server reports as skipped (its own state is newer) */
+    var progressCode = 200
+    var progressSkipped = emptySet<String>()
+    /** Runs when a progress post arrives, before it is answered (an event queued meanwhile). */
+    @Volatile var onProgress: (() -> Unit)? = null
+    /** the profile `/api/me` reports as active */
+    var activeProfile = PROFILE
     var fileCode: Int? = null
     var unauthorized = false
     var subtitles = listOf("de" to "/media/Videos/$ITEM/src/Subtitles/2/0/Stream.vtt", "en" to "/media/Videos/$ITEM/src/Subtitles/3/0/Stream.sup")
@@ -111,12 +122,20 @@ class FakeServer : Dispatcher() {
         if (unauthorized) return json(401, JSONObject().put("error", "unauthenticated"))
         val path = request.url.encodedPath
         return when {
-            path == "/api/me" -> json(200, JSONObject().put("csrfToken", "tok").put("profile", JSONObject().put("id", PROFILE)))
+            path == "/api/me" -> json(200, JSONObject().put("csrfToken", "tok").put("profile", JSONObject().put("id", activeProfile)))
+            path == "/api/downloads/progress" -> {
+                onProgress?.invoke()
+                if (progressCode != 200) return json(progressCode, JSONObject().put("error", "nope"))
+                val ev = JSONObject(request.body!!.utf8()).getJSONArray("events")
+                val items = (0 until ev.length()).map { ev.getJSONObject(it).getString("itemId") }.distinct()
+                json(200, JSONObject().put("applied", JSONArray(items.filter { it !in progressSkipped })).put("skipped", JSONArray(items.filter { it in progressSkipped })))
+            }
+            path == "/api/downloads/check" && checkCode != 200 -> json(checkCode, JSONObject().put("error", "nope"))
             path == "/api/downloads/check" -> {
                 val ids = JSONObject(request.body!!.utf8()).getJSONArray("ids")
                 val all = (0 until ids.length()).map { ids.getString(it) }
                 json(200, JSONObject()
-                    .put("valid", JSONArray().also { a -> if (!checkRevoked) all.forEach { a.put(JSONObject().put("id", it).put("expiresAt", expiresAt.toString()).put("validUntil", expiresAt.toString())) } })
+                    .put("valid", JSONArray().also { a -> if (!checkRevoked) all.forEach { a.put(JSONObject().put("id", it).put("expiresAt", expiresAt.toString()).put("validUntil", (checkValidUntil ?: expiresAt).toString())) } })
                     .put("revoked", JSONArray().also { a -> if (checkRevoked) all.forEach { a.put(it) } }))
             }
             path.endsWith("/fetched") -> json(200, JSONObject().put("ok", true))

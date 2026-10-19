@@ -7,4 +7,6 @@
     <color name="ic_launcher_background">#14161C</color>
     <color name="surface">#14161C</color>
     <color name="error">#FF8A80</color>
+    <color name="warn">#FFB347</color>
+    <color name="row_border">#2B333C</color>
 </resources>
