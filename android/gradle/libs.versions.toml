@@ -14,6 +14,8 @@ robolectric = "4.16.1"
 androidxTestCore = "1.7.0"
 espresso = "3.7.0"
 webkit = "1.17.1"
+# One Media3 version for every media3-* artifact (Task 8 adds the player modules with the same ref).
+media3 = "1.11.1"
 
 [libraries]
 kotlin-gradle-plugin = { module = "org.jetbrains.kotlin:kotlin-gradle-plugin", version.ref = "kotlin" }
@@ -24,6 +26,7 @@ androidx-test-runner = { module = "androidx.test:runner", version.ref = "android
 androidx-activity-ktx = { module = "androidx.activity:activity-ktx", version.ref = "activityKtx" }
 androidx-datastore-preferences = { module = "androidx.datastore:datastore-preferences", version.ref = "datastore" }
 androidx-webkit = { module = "androidx.webkit:webkit", version.ref = "webkit" }
+media3-datasource = { module = "androidx.media3:media3-datasource", version.ref = "media3" }
 okhttp = { module = "com.squareup.okhttp3:okhttp", version.ref = "okhttp" }
 okhttp-mockwebserver = { module = "com.squareup.okhttp3:mockwebserver3", version.ref = "okhttp" }
 robolectric = { module = "org.robolectric:robolectric", version.ref = "robolectric" }

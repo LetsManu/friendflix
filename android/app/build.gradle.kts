@@ -62,6 +62,7 @@ dependencies {
     implementation(libs.androidx.datastore.preferences)
     implementation(libs.androidx.webkit)
     implementation(libs.okhttp)
+    implementation(libs.media3.datasource)
 
     testImplementation(libs.junit)
     testImplementation(libs.robolectric)
