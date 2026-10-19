@@ -94,7 +94,6 @@ class ShellTest {
         loadDataWithBaseURL(base, html, "text/html", "utf-8", base)
     }
 
-    private fun page(title: String) = "<html><head><title>$title</title></head><body>$title</body></html>"
 
     @Test fun externalLinkOpensChooser() {
         intending(hasAction(Intent.ACTION_CHOOSER)).respondWith(Instrumentation.ActivityResult(Activity.RESULT_CANCELED, null))
@@ -137,16 +136,17 @@ class ShellTest {
 
     @Test fun backNavigatesHistoryThenFinishes() {
         ActivityScenario.launch(ShellActivity::class.java).use { scenario ->
-            scenario.onMain { it.showLocal(page("one"), "https://friend.example.com/one") }
+            // a fragment step adds a history entry without any network request (going back to a loadDataWithBaseURL entry, or a
+            // pushState inside it, does not work offline on the emulator); the title follows the fragment so the test can see it
+            val spa = "<html><head><title>one</title><script>onhashchange = () => { document.title = location.hash ? 'two' : 'one' }</script></head><body>spa</body></html>"
+            scenario.onMain { it.showLocal(spa, "https://friend.example.com/") }
             val view = scenario.webView()
             waitFor("first page") { view.title == "one" }
-            // the web app navigates like any SPA, with history.pushState; going back to a loadDataWithBaseURL entry would instead
-            // re-request its https history URL, which does not exist on the emulator
-            scenario.onMain { it.evaluateJavascript("history.pushState({}, '', '/two')", null) }
-            waitFor("second page") { view.url?.endsWith("/two") == true && view.canGoBack() }
+            scenario.onMain { it.evaluateJavascript("location.hash = 'two'", null) }
+            waitFor("second page") { view.title == "two" && view.canGoBack() }
 
             scenario.onActivity { it.onBackPressedDispatcher.onBackPressed() }
-            waitFor("back to the first page") { view.url?.endsWith("/one") == true }
+            waitFor("back to the first page") { view.title == "one" }
             assertEquals(Lifecycle.State.RESUMED, scenario.state)
 
             // the history may still hold the entry before "one": walk back to the start, then one more back finishes the activity
