@@ -52,6 +52,8 @@ export interface MockState {
   reauthLapsed?: boolean;
   /** /api/me `features` (optional services); absent = the field is left out, like an older backend (everything on) */
   features?: { requests?: boolean; postplay?: boolean };
+  /** /api/me `server.kind` (absent = the field is left out, like an older backend: the app treats it as Jellyfin) */
+  serverKind?: 'jellyfin' | 'plex';
   /** 1.1 post-play counters the app sent (POST /api/postplay/event bodies) */
   postplayEvents: Array<Record<string, unknown>>;
   /** the setup wizard (mocks/setup.ts); while it is not complete, /api/me answers 503 setup_required */
@@ -192,7 +194,8 @@ export async function installApi(ctx: BrowserContext, st: MockState): Promise<vo
     }
     if (p === '/api/me' && st.setup && !st.setup.complete) return J({ error: 'setup_required' }, 503);
     if (p === '/api/me') {
-      const base = st.features ? { ...ME, features: st.features } : ME;
+      const withServer = st.serverKind ? { ...ME, server: { kind: st.serverKind } } : ME;
+      const base = st.features ? { ...withServer, features: st.features } : withServer;
       const me = st.asAdmin ? { ...base, role: 'admin', roleLabel: 'Admin', isAdmin: true } : base;
       const s = st.accountSaved;
       return J(s ? { ...me, name: s.name, profile: { ...me.profile, name: s.name.slice(0, 20), avatar: s.avatar } } : me);

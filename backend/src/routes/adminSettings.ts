@@ -7,6 +7,8 @@ import { z } from 'zod';
 import { audit } from '../audit.js';
 import type { Config } from '../config.js';
 import type { Ctx } from '../ctx.js';
+import { addressOnly } from '../media/address.js';
+import { MEDIA_SERVERS, mediaSettings, mediaSetupKeys } from '../media/index.js';
 import { REAUTH_WINDOW_S, recentlyAuthenticated } from '../reauth.js';
 import { requireAdmin } from '../session.js';
 import { resetSourceState } from '../sources/keys.js';
@@ -64,7 +66,8 @@ const holdsRedaction = (v: unknown) => {
   }
 };
 /** a URL value as shown: without userinfo, and ntfy's `auth` query token replaced (they are credentials inside a non-secret value) */
-function shownUrl(v: string): string {
+function shownUrl(v: string, key?: string): string {
+  if (key === 'PLEX_URL') return addressOnly(v); // origin + path only (a pasted ?X-Plex-Token=… never shows, also from an env pin)
   try {
     const u = new URL(v);
     if (!u.username && !u.password && !u.searchParams.has('auth')) return v;
@@ -77,6 +80,11 @@ function shownUrl(v: string): string {
   }
 }
 const envNames = (key: string, legacy: readonly string[] = []) => [key, ...legacy].flatMap((n) => [n, `${n}_FILE`]);
+// the media group lists and accepts only the configured kind's settings (MEDIA_SETUP / mediaSettings via mediaSetupKeys): on Plex
+// no JELLYFIN_* rows, on Jellyfin no PLEX_* rows; another kind's key is `unknown` like a hidden one (MEDIA_SERVER is env-only).
+// MEDIA_KEYS is read once at load: mediaSettings() is static (a fork that makes it dynamic computes it per call)
+const MEDIA_KEYS: ReadonlySet<string> = new Set(mediaSettings().map((d) => d.key));
+const otherMediaKind = (cfg: Config, key: string) => MEDIA_KEYS.has(key) && !mediaSetupKeys(cfg).includes(key);
 
 export async function settingsView(ctx: Ctx): Promise<{ rev: number; pendingRestart: string[]; groups: Array<{ id: SettingGroup | 'server'; items: SettingView[] }> }> {
   const cfg = ctx.cfg as Record<string, unknown>;
@@ -90,7 +98,7 @@ export async function settingsView(ctx: Ctx): Promise<{ rev: number; pendingRest
     const set = isSet(v);
     const row = rows.get(d.key);
     const view: SettingView = {
-      key: d.key, kind: d.kind, source: sources[d.key] ?? 'unset', value: d.secret || !set ? null : d.kind === 'url' ? shownUrl(String(v)) : toStored(d, v), set, apply: d.apply,
+      key: d.key, kind: d.kind, source: sources[d.key] ?? 'unset', value: d.secret || !set ? null : d.kind === 'url' ? shownUrl(String(v), d.key) : toStored(d, v), set, apply: d.apply,
       restartPending: pending.includes(d.key), invalid: invalid.has(d.key), envNames: envNames(d.key, d.legacyEnv), updatedAt: row?.updatedAt ?? null,
     };
     if (d.hint === 'last4' && set) {
@@ -104,7 +112,7 @@ export async function settingsView(ctx: Ctx): Promise<{ rev: number; pendingRest
     if (d.generate) view.generate = d.generate;
     return view;
   };
-  const visible = SETTINGS.filter((d) => d.visible !== false);
+  const visible = SETTINGS.filter((d) => d.visible !== false && !otherMediaKind(ctx.cfg, d.key)); // otherMediaKind
   const groups: Array<{ id: SettingGroup | 'server'; items: SettingView[] }> = SETTING_GROUPS
     .map((id) => ({ id, items: visible.filter((d) => d.group === id).map(item) }))
     .filter((g) => g.items.length);
@@ -141,8 +149,12 @@ const httpUrl = (v: unknown) => {
  * see NO_DESTINATION (a test checks that every secret of the registry is in exactly one of the two).
  */
 const mediaDefs = SETTINGS.filter((d) => d.group === 'media');
+// whether a media setting belongs to a kind: its runRequired evaluated for MEDIA_SERVER=kind (true or absent: every kind)
+const forKind = (d: SettingDef, kind: Config['MEDIA_SERVER']) => (typeof d.runRequired === 'function' ? d.runRequired({ MEDIA_SERVER: kind } as Config) : d.runRequired !== false);
 export const CREDENTIAL_DESTINATIONS: Readonly<Record<string, readonly string[]>> = {
-  ...Object.fromEntries(mediaDefs.filter((d) => d.secret).map((d) => [d.key, mediaDefs.filter((u) => u.kind === 'url').map((u) => u.key)])),
+  // a media credential goes to the URL of its own kind only (paired by the kinds their runRequired names, not by function
+  // identity): PLEX_TOKEN -> PLEX_URL, JELLYFIN_ADMIN_API_KEY -> JELLYFIN_URL; a cross-kind pair would demand re-auth for a key never sent there
+  ...Object.fromEntries(mediaDefs.filter((d) => d.secret).map((d) => [d.key, mediaDefs.filter((u) => u.kind === 'url' && MEDIA_SERVERS.some((k) => forKind(d, k) && forKind(u, k))).map((u) => u.key)])),
   REQUESTS_API_KEY: ['REQUESTS_URL'],
   AUTHENTIK_API_TOKEN: ['AUTHENTIK_URL'],
   PORTAINER_API_KEY: ['PORTAINER_URL'],
@@ -201,7 +213,7 @@ function candidate(ctx: Ctx, values: Record<string, unknown>, opts: { allowedKey
     }
     const def = settingDef(key);
     // env-only, bootstrap and build keys and the hidden (phase 3) entries are not settings of this page
-    if (!def || def.visible === false) {
+    if (!def || def.visible === false || otherMediaKind(ctx.cfg, key)) { // otherMediaKind
       errors[key] = 'unknown';
       continue;
     }
@@ -334,7 +346,10 @@ export function adminSettingsRoutes(app: FastifyInstance, ctx: Ctx) {
 
   app.post('/api/admin/settings/import-env', admin, async (req) => {
     const { keys } = z.object({ keys: z.union([z.literal('all'), z.array(z.string().max(64)).max(100)]) }).parse(req.body);
-    const moved = await ctx.settings.importEnv(keys, req.user!.id);
+    // never another media kind's keys (a stray env var): left out of 'all', refused as `unknown` when named (like PUT)
+    const other = keys === 'all' ? [] : keys.filter((k) => otherMediaKind(ctx.cfg, k));
+    if (other.length) throw new SettingsError(Object.fromEntries(other.map((k) => [k, 'unknown'])));
+    const moved = await ctx.settings.importEnv(keys === 'all' ? SETTINGS.map((d) => d.key).filter((k) => !otherMediaKind(ctx.cfg, k)) : keys, req.user!.id);
     await audit(ctx, req.user!.id, 'settings.import_env', undefined, { keys: moved });
     return { moved };
   });

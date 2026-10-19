@@ -52,6 +52,7 @@ export default {
   },
   probeDetail: {
     redirect: 'Die Adresse leitet weiter; trag die Zieladresse ein.',
+    not_admin: 'Der Token funktioniert, gehört aber nicht dem Besitzer des Plex-Servers; manche Funktionen können eingeschränkt sein.',
     not_found: 'Unter dieser Adresse gibt es den Dienst nicht.',
     upstream_error: 'Der Dienst hat mit einem Fehler geantwortet.',
     incomplete: 'Es fehlen noch Angaben.',
@@ -97,6 +98,10 @@ export default {
     failed: 'Erzeugen fehlgeschlagen.',
     a11y: '{label}: {action}',
   },
+  // a key's own field error text (errorText(code, key)): PLEX_URL refuses ?…, #… and user:pass@ (a pasted ?X-Plex-Token=…)
+  keyErrors: {
+    PLEX_URL: { invalid_url: 'Bitte nur die Serveradresse eingeben: mit http:// oder https://, ohne Benutzername und Passwort und ohne etwas nach ? oder #. Der Token gehört in das Feld Plex-Token.' },
+  },
   /** option labels of the enum settings (an unset LOGIN_UI is "Automatic") */
   options: { auto: 'Automatisch', RECO_ENGINE: { v1: 'v1 (Jellyfin)', v2: 'v2 (eigenes Geschmacksmodell)', shadow: 'Shadow (v2 neben v1)' }, UPDATE_CHANNEL: { stable: 'Stabil', nightly: 'Nightly', pinned: 'Feste Version' }, AUTO_UPDATE: { off: 'Aus', 'nightly-window': 'Nachtfenster' }, LOGIN_UI: { app: 'FriendFlix', authentik: 'Authentik' }, PASSKEYS_IN_APP: { auto: 'Automatisch', off: 'Aus' } },
   keys: {
@@ -123,6 +128,8 @@ export default {
     LOGIN_COVER_WALL: { label: 'Titelbilder hinter der Anmeldung', help: 'Zeigt Cover aus der Bibliothek (nur Altersfreigaben bis 12, nichts ohne Einstufung) hinter der Anmeldung. Die Bilder sind ohne Anmeldung abrufbar.' },
     JELLYFIN_URL: { label: 'Jellyfin-Adresse', help: 'Interne Adresse des Mediaservers, z. B. http://jellyfin:8096.' },
     JELLYFIN_ADMIN_API_KEY: { label: 'Jellyfin-API-Schlüssel (Admin)', help: 'API-Schlüssel mit Admin-Rechten (Jellyfin → Dashboard → API-Schlüssel).' },
+    PLEX_URL: { label: 'Plex-Adresse', help: 'Interne Adresse des Plex-Servers, über die Backend und Medien-Gateway ihn erreichen. Nur die Adresse: Der Token gehört in sein eigenes Feld, nie in die Adresse.' },
+    PLEX_TOKEN: { label: 'Plex-Token', help: 'Token des Plex-Kontos, das FriendFlix nutzt; der Token des Server-Besitzers schaltet alle Funktionen frei. Er wird nur im Backend gespeichert und nie angezeigt.' },
     REQUESTS_URL: { label: 'Adresse des Anfragen-Dienstes', help: 'Optional. Ohne Adresse und Schlüssel sind Wünsche ausgeblendet.' },
     REQUESTS_API_KEY: { label: 'API-Schlüssel des Anfragen-Dienstes', help: 'API-Schlüssel aus den Einstellungen des Anfragen-Dienstes.' },
     NTFY_URL: { label: 'ntfy-Kanal für Ankündigungen', help: 'Gemeinsamer ntfy-Kanal für neue Titel und Hinweise, z. B. https://ntfy.example.com/friendflix.' },

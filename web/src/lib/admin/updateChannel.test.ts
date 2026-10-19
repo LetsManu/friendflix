@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { get } from 'svelte/store';
 import { hasKey, setLocale, tr } from '#lib/i18n';
 import { buildInfo, loadBuild, parseBuild, versionText } from '#lib/version/build';
-import { CHANNELS, PULL_COMMAND, envLineFor, isUpToDate, showSnippet, snippetReason, stepChannel, type ChannelInfo } from './updateChannel';
+import { CHANNELS, PULL_COMMAND, pullCommand, envLineFor, isUpToDate, showSnippet, snippetReason, stepChannel, type ChannelInfo } from './updateChannel';
 
 const ch = (over: Partial<ChannelInfo> = {}): ChannelInfo => ({ selected: 'stable', running: 'stable', build: 'release', label: '1.1.0', locked: false, envLine: 'FF_TAG=latest', ...over });
 
@@ -46,6 +46,10 @@ describe('update channel', () => {
     expect(envLineFor('pinned', '1.2.3')).toBe('FF_TAG=1.2.3');
     expect(envLineFor('pinned')).toBe('FF_TAG=latest');
     expect(PULL_COMMAND).toBe('docker compose -f compose.prod.yaml pull && docker compose -f compose.prod.yaml up -d');
+    expect(pullCommand()).toBe(PULL_COMMAND);
+    expect(pullCommand('jellyfin')).toBe(PULL_COMMAND);
+    // a Plex stack keeps its override (MEDIA_SERVER=plex) on the pull, or the backend would come back as a Jellyfin instance
+    expect(pullCommand('plex')).toBe('docker compose -f compose.prod.yaml -f compose.plex.yaml pull && docker compose -f compose.prod.yaml -f compose.plex.yaml up -d');
   });
   it('the snippet: selection differs from the running channel, or an update exists', () => {
     expect(showSnippet({ updateAvailable: false, channel: ch() })).toBe(false);

@@ -15,6 +15,8 @@ c50a8c4e6ba697ac2e22bd3c16cd4bc8eacd5b1a:web/src/lib/badges.ts:generic-api-key:7
 5c952a1ccca023236043eba3aafa99ed601f8b20:backend/test/about.test.ts:generic-api-key:11
 c0afee0e9f185ea0f700875b3093fe04fcb3f44c:backend/test/sources-keys.test.ts:generic-api-key:6
 c0afee0e9f185ea0f700875b3093fe04fcb3f44c:backend/test/sources-keys.test.ts:generic-api-key:84
+# fake TMDB/OMDb test keys in the Plex detail-page tests (2.0 Plex port)
+0335a69e883a8672709024d8c68ce3328aea5d32:backend/test/plex/about.test.ts:generic-api-key:189
 # test placeholder (backend/test/helpers.ts INTERNAL_SECRET) in the Block 23 user detail test
 eaa804d7cce260a98fd5db716612bf4d5f1e3e50:backend/test/admin-user-detail.test.ts:generic-api-key:176
 # Block 25a test placeholders (settings store, probes, gateway config, sources keys, e2e mock generate answer)

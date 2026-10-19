@@ -5,10 +5,12 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { encrypt } from '../src/crypto.js';
+import { mediaSettings, mediaSetupKeys } from '../src/media/index.js';
 import { pushEnabled } from '../src/push.js';
-import { CREDENTIAL_DESTINATIONS, generateVapidPair, generateWebhookSecret, NO_DESTINATION, needsReauth } from '../src/routes/adminSettings.js';
+import { CREDENTIAL_DESTINATIONS, generateVapidPair, generateWebhookSecret, NO_DESTINATION, needsReauth, redirectsSavedCredential } from '../src/routes/adminSettings.js';
 import { SETTINGS, settingDef } from '../src/settings/registry.js';
 import { ADMIN, cfg, ENC_KEY, fakeHttp, makeEnv, type Handler, type TestEnv } from './helpers.js';
+import { PLEX_TOKEN, PLEX_URL, PlexFake } from './plexfake.js';
 
 // Admin -> Settings API (Block 25, spec Part I): write-only secrets, locked env keys, validation, probes against the candidate config,
 // re-authentication for sensitive keys, env import, generated secrets, audit with key names only, and no secret in any log line.
@@ -386,6 +388,18 @@ describe('saved credentials never go to a new host without re-authentication', (
     }
   });
 
+  it('a saved PLEX_TOKEN never goes to a new PLEX_URL without re-authentication', async () => {
+    expect(CREDENTIAL_DESTINATIONS.PLEX_TOKEN).toEqual(['PLEX_URL']);
+    expect(CREDENTIAL_DESTINATIONS.JELLYFIN_ADMIN_API_KEY).toEqual(['JELLYFIN_URL']); // per kind: no cross-kind pair
+    expect(needsReauth(['PLEX_URL'])).toBe(true);
+    expect(needsReauth(['PLEX_TOKEN'])).toBe(true);
+    const plex = { ...cfg, MEDIA_SERVER: 'plex' as const, PLEX_URL: 'http://plex.example.com:32400', PLEX_TOKEN: 'saved-plex-token' };
+    expect(redirectsSavedCredential(plex, { ...plex, PLEX_URL: `http://${EVIL}:32400` })).toBe(true);
+    expect(redirectsSavedCredential(plex, { ...plex, PLEX_URL: `http://${EVIL}:32400`, PLEX_TOKEN: 'typed-for-the-new-host' })).toBe(false);
+    expect(redirectsSavedCredential(plex, plex)).toBe(false);
+    // through the route: on a Plex instance, see 'the media probe on Plex' (this harness is Jellyfin: PLEX_* are no settings here)
+  });
+
   it('a typed dummy for an env/_FILE credential does not unlock a new destination (Test and PUT)', async () => {
     await h.env.ctx.settings.save({ AUTHENTIK_URL: 'https://auth.example.com' }, null);
     await stale();
@@ -404,7 +418,9 @@ describe('saved credentials never go to a new host without re-authentication', (
     expect(h.hosts).not.toContain(EVIL);
   });
 
-  it.each(Object.entries(CREDENTIAL_DESTINATIONS).flatMap(([cred, dests]) => dests.map((d) => [cred, d] as const)))('%s -> %s', async (cred, dest) => {
+  // only the instance's own media kind (another kind's keys are refused as unknown, see '... only the active media server')
+  const ownKind = ([cred]: [string, readonly string[]]) => !mediaSettings().some((d) => d.key === cred) || mediaSetupKeys(cfg).includes(cred);
+  it.each(Object.entries(CREDENTIAL_DESTINATIONS).filter(ownKind).flatMap(([cred, dests]) => dests.map((d) => [cred, d] as const)))('%s -> %s', async (cred, dest) => {
     // the credential is saved (env or database) and the destination changes
     const c = h.env.ctx.cfg as Record<string, unknown>;
     if (!c[cred]) await h.env.ctx.settings.save({ [cred]: `saved-${cred}` }, null);
@@ -419,6 +435,42 @@ describe('saved credentials never go to a new host without re-authentication', (
     expect(h.hosts).not.toContain(EVIL);
     // the admin typed the credential for the new host themselves: a Test needs no re-authentication
     if (h.env.ctx.settings.sources()[cred] !== 'env') expect((await test(group, { [dest]: url, [cred]: 'typed-credential' })).statusCode).toBe(200);
+  });
+});
+
+// Admin -> Settings lists and accepts only the configured media server kind's settings (MEDIA_SETUP / mediaSettings); the Plex
+// side is in 'the media probe on Plex'
+describe('on Jellyfin, Admin -> Settings shows only the active media server\'s settings', () => {
+  const h = harness({ settingsEnv: { PLEX_URL: 'http://plex.example.com:32400', NTFY_URL: 'https://ntfy.example.com/friendflix' } }); // stray PLEX_URL
+
+  it('import-env: all leaves a stray PLEX_* env key out, naming it -> 400 unknown; nothing of it reaches the database', async () => {
+    const all = await h.as(h.admin, 'POST', '/api/admin/settings/import-env', { keys: 'all' });
+    expect(all.statusCode).toBe(200);
+    expect(all.json().moved).toEqual(['NTFY_URL']);
+    const named = await h.as(h.admin, 'POST', '/api/admin/settings/import-env', { keys: ['PLEX_URL', 'NTFY_URL'] });
+    expect(named.statusCode).toBe(400);
+    expect(named.json()).toMatchObject({ error: 'invalid_settings', errors: { PLEX_URL: 'unknown' } });
+    expect((await h.env.pool.query("select key from settings where key like 'PLEX_%'")).rows).toEqual([]);
+  });
+
+  it('GET has no PLEX_* row; PUT and Test of a PLEX_* key -> 400 unknown, nothing saved, no call out', async () => {
+    const body = (await h.as(h.admin, 'GET', '/api/admin/settings')).json();
+    const media = body.groups.find((g: any) => g.id === 'media').items.map((i: any) => i.key);
+    expect(media).toEqual(['JELLYFIN_URL', 'JELLYFIN_ADMIN_API_KEY']);
+    expect(JSON.stringify(body)).not.toMatch(/PLEX_/);
+    await h.reauth(h.admin);
+    const rev = h.env.ctx.settings.rev();
+    h.hosts.length = 0;
+    h.probe = { 'GET .*': () => ({ json: {} }) };
+    const r = await h.put({ PLEX_URL: 'http://plex.example.com:32400', PLEX_TOKEN: 'plex-token-placeholder' });
+    expect(r.statusCode).toBe(400);
+    expect(r.json()).toEqual({ error: 'invalid_settings', errors: { PLEX_URL: 'unknown', PLEX_TOKEN: 'unknown' } });
+    const t = await h.as(h.admin, 'POST', '/api/admin/settings/test', { group: 'media', values: { PLEX_URL: 'http://plex.example.com:32400' } });
+    expect(t.statusCode).toBe(400);
+    expect(t.json().errors).toEqual({ PLEX_URL: 'unknown' });
+    expect(h.hosts).toEqual([]);
+    expect(h.env.ctx.settings.rev()).toBe(rev);
+    expect((await h.env.pool.query("select key from settings where key like 'PLEX_%'")).rows).toEqual([]);
   });
 });
 
@@ -491,6 +543,240 @@ describe('logs', () => {
       expect(line).not.toContain(short);
       expect(line).not.toContain(generated);
     }
+  });
+});
+
+// import-env on Plex with stray Jellyfin env keys: 'all' leaves them out, naming one is refused like PUT
+describe('import-env on Plex never moves a JELLYFIN_* key', () => {
+  let env: TestEnv;
+  let admin: Sess;
+  beforeAll(async () => {
+    env = await makeEnv({}, {
+      server: 'plex', plexFake: new PlexFake(),
+      settingsEnv: { JELLYFIN_URL: 'http://media.internal:8096', JELLYFIN_ADMIN_API_KEY: 'stray-jf-key-placeholder', NTFY_URL: 'https://ntfy.example.com/friendflix' },
+    });
+    admin = await env.login(ADMIN);
+  });
+  afterAll(() => env.close());
+  const imp = (keys: unknown) => env.app.inject({ method: 'POST', url: '/api/admin/settings/import-env', cookies: admin.cookies, headers: { 'x-csrf-token': admin.csrf }, payload: { keys } });
+
+  it('all moves only the Plex instance\'s own keys; naming a JELLYFIN_* key -> 400 unknown; none reaches the database', async () => {
+    const all = await imp('all');
+    expect(all.statusCode).toBe(200);
+    expect(all.json().moved).toEqual(['NTFY_URL']);
+    const named = await imp(['JELLYFIN_URL']);
+    expect(named.statusCode).toBe(400);
+    expect(named.json()).toMatchObject({ error: 'invalid_settings', errors: { JELLYFIN_URL: 'unknown' } });
+    expect((await imp(['JELLYFIN_ADMIN_API_KEY', 'NTFY_URL'])).json().errors).toEqual({ JELLYFIN_ADMIN_API_KEY: 'unknown' });
+    expect((await env.pool.query("select key from settings where key like 'JELLYFIN_%'")).rows).toEqual([]);
+  });
+});
+
+// the dummy-token trick on Plex: a typed PLEX_TOKEN does not unlock a new PLEX_URL while the real token is an env pin
+describe('a typed dummy for an env-pinned PLEX_TOKEN does not unlock a new PLEX_URL (Test and PUT)', () => {
+  const fake = new PlexFake();
+  const hosts: string[] = [];
+  let env: TestEnv;
+  let admin: Sess;
+  beforeAll(async () => {
+    env = await makeEnv({}, {
+      server: 'plex', plexFake: fake, settingsEnv: { PLEX_TOKEN },
+      ctxPatch: (c) => { c.fetchImpl = (async (i: RequestInfo | URL, init?: RequestInit) => { hosts.push(new URL(String(i)).host); return fake.fetch(i, init); }) as typeof fetch; },
+    });
+    admin = await env.login(ADMIN);
+  });
+  afterAll(() => env.close());
+
+  it('stale session: 401 reauth_required on Test and PUT, nothing sent to the new host', async () => {
+    expect(env.ctx.settings.sources().PLEX_TOKEN).toBe('env');
+    const key = `sess:${admin.cookies.ff_sid}`;
+    await env.kv.set(key, JSON.stringify({ ...JSON.parse((await env.kv.get(key))!), reauthAt: Date.now() - 20 * 60_000 }), 600);
+    const values = { PLEX_URL: 'http://evil.example.com:32400', PLEX_TOKEN: 'dummy' };
+    const as = (method: string, url: string, payload: unknown) => env.app.inject({ method: method as 'PUT', url, cookies: admin.cookies, headers: { 'x-csrf-token': admin.csrf }, payload: payload as object });
+    const t = await as('POST', '/api/admin/settings/test', { group: 'media', values });
+    expect(t.statusCode).toBe(401);
+    expect(t.json()).toEqual({ error: 'reauth_required' });
+    expect((await as('PUT', '/api/admin/settings', { values })).statusCode).toBe(401);
+    expect(hosts).not.toContain('evil.example.com:32400');
+    expect(env.ctx.cfg.PLEX_URL).toBe(PLEX_URL);
+  });
+});
+
+// Admin -> Settings on Plex (MEDIA_SERVER=plex): Test and PUT run MEDIA_SETUP.plex's probe with the candidate values; a shared
+// account's token is a warning that saves, a wrong token or a redirect is refused (force does not help); the token never shows.
+describe('the media probe on Plex', () => {
+  const fake = new PlexFake();
+  const SHARED = 'plex-shared-account-token-placeholder'; // a test placeholder, never a real token
+  const logs: string[] = [];
+  const seen: Array<{ url: string; token?: string }> = [];
+  let answer: ((path: string) => Response | undefined) | undefined;
+  let env: TestEnv;
+  let admin: Sess;
+  beforeAll(async () => {
+    fake.sharedTokens.set(SHARED, 403);
+    env = await makeEnv({}, {
+      server: 'plex', plexFake: fake,
+      ctxPatch: (c) => {
+        c.fetchImpl = (async (i: RequestInfo | URL, init: RequestInit = {}) => {
+          seen.push({ url: String(i), token: (init.headers as Record<string, string> | undefined)?.['X-Plex-Token'] });
+          return answer?.(new URL(String(i)).pathname) ?? fake.fetch(i, init);
+        }) as typeof fetch;
+      },
+      logger: { stream: { write: (m: string) => { logs.push(m); } }, level: 'trace' },
+    });
+    admin = await env.login(ADMIN);
+  });
+  afterAll(() => env.close());
+  const as = (method: string, url: string, payload?: unknown) => env.app.inject({ method: method as 'GET', url, cookies: admin.cookies, headers: { 'x-csrf-token': admin.csrf }, payload: payload as object });
+  const reauth = async () => {
+    const key = `sess:${admin.cookies.ff_sid}`;
+    await env.kv.set(key, JSON.stringify({ ...JSON.parse((await env.kv.get(key))!), reauthAt: Date.now() }), 600);
+  };
+  const test = (values?: Record<string, unknown>) => as('POST', '/api/admin/settings/test', { group: 'media', ...(values ? { values } : {}) });
+  const put = (values: Record<string, unknown>, force?: boolean) => as('PUT', '/api/admin/settings', { values, ...(force === undefined ? {} : { force }) });
+  const noToken = (body: string) => {
+    expect(body).not.toContain(PLEX_TOKEN);
+    expect(body).not.toContain(SHARED);
+  };
+
+  it('GET lists PLEX_TOKEN as set without its value', async () => {
+    const r = await as('GET', '/api/admin/settings');
+    expect(r.statusCode).toBe(200);
+    expect(JSON.stringify(r.json())).toContain('PLEX_TOKEN');
+    noToken(r.body);
+    // the database row (encrypted) shows as set, never its value or a last4 hint
+    const items = new Map<string, any>(r.json().groups.flatMap((g: any) => g.items.map((i: any) => [i.key, i])));
+    expect(items.get('PLEX_TOKEN')).toMatchObject({ source: 'db', set: true, value: null, kind: 'secret' });
+    expect(items.get('PLEX_TOKEN').last4).toBeUndefined();
+    expect(items.get('PLEX_URL')).toMatchObject({ source: 'db', set: true, value: PLEX_URL });
+  });
+
+  it('Test runs the Plex probe with the saved values: ok; the token only in the X-Plex-Token header', async () => {
+    seen.length = 0;
+    const r = await test();
+    expect(r.json()).toEqual({ ok: true, code: 'ok', probe: 'media' });
+    expect(seen.map((x) => new URL(x.url).pathname)).toEqual(['/identity', '/library/sections', '/status/sessions']);
+    expect(seen.map((x) => x.token)).toEqual([undefined, PLEX_TOKEN, PLEX_TOKEN]);
+    for (const x of seen) expect(x.url.startsWith(`${PLEX_URL}/`) && !x.url.includes('?')).toBe(true);
+  });
+
+  it('Test with a candidate token: a shared account is a warning (not_admin), a wrong one unauthorized; nothing is saved', async () => {
+    await reauth();
+    const rev = env.ctx.settings.rev();
+    const warn = await test({ PLEX_TOKEN: SHARED });
+    expect(warn.json()).toEqual({ ok: true, code: 'warning', detail: 'not_admin', probe: 'media' });
+    expect((await test({ PLEX_TOKEN: 'wrong-token-placeholder' })).json()).toEqual({ ok: false, code: 'unauthorized', probe: 'media' });
+    expect(env.ctx.settings.rev()).toBe(rev);
+    expect(env.ctx.cfg.PLEX_TOKEN).toBe(PLEX_TOKEN);
+    noToken(warn.body);
+  });
+
+  it('PUT: a wrong token or a redirecting server is refused even with force; a shared token saves (the warning is no blocker)', async () => {
+    await reauth();
+    const rev = env.ctx.settings.rev();
+    const bad = await put({ PLEX_TOKEN: 'wrong-token-placeholder' }, true);
+    expect(bad.statusCode).toBe(400);
+    expect(bad.json()).toEqual({ error: 'probe_failed', group: 'media', probe: { ok: false, code: 'unauthorized' } });
+    answer = (p) => (p === '/library/sections' ? new Response(null, { status: 302, headers: { location: 'http://elsewhere.example.com/' } }) : undefined);
+    try {
+      seen.length = 0;
+      const redirect = await put({ PLEX_URL: 'http://plex.example.com:32400' }, true);
+      expect(redirect.json()).toEqual({ error: 'probe_failed', group: 'media', probe: { ok: false, code: 'invalid', detail: 'redirect' } });
+      expect(seen.every((x) => new URL(x.url).host === 'plex.example.com:32400')).toBe(true);
+    } finally {
+      answer = undefined;
+    }
+    expect(env.ctx.settings.rev()).toBe(rev);
+    const ok = await put({ PLEX_TOKEN: SHARED });
+    expect(ok.statusCode).toBe(200);
+    expect(env.ctx.cfg.PLEX_TOKEN).toBe(SHARED);
+    noToken(ok.body);
+    expect((await put({ PLEX_TOKEN })).statusCode).toBe(200);
+  });
+
+  it('GET has no JELLYFIN_* row; PUT and Test of a JELLYFIN_* key -> 400 unknown, nothing saved, no call out', async () => {
+    const body = (await as('GET', '/api/admin/settings')).json();
+    expect(body.groups.find((g: any) => g.id === 'media').items.map((i: any) => i.key)).toEqual(['PLEX_URL', 'PLEX_TOKEN']);
+    expect(JSON.stringify(body)).not.toMatch(/JELLYFIN_/);
+    await reauth();
+    const rev = env.ctx.settings.rev();
+    seen.length = 0;
+    const r = await put({ JELLYFIN_URL: 'http://media.internal:8096', JELLYFIN_ADMIN_API_KEY: 'jf-key-placeholder' });
+    expect(r.statusCode).toBe(400);
+    expect(r.json()).toEqual({ error: 'invalid_settings', errors: { JELLYFIN_URL: 'unknown', JELLYFIN_ADMIN_API_KEY: 'unknown' } });
+    const t = await test({ JELLYFIN_ADMIN_API_KEY: 'jf-key-placeholder' });
+    expect(t.statusCode).toBe(400);
+    expect(t.json().errors).toEqual({ JELLYFIN_ADMIN_API_KEY: 'unknown' });
+    expect(seen).toEqual([]);
+    expect(env.ctx.settings.rev()).toBe(rev);
+  });
+
+  it('a saved PLEX_TOKEN never goes to a new PLEX_URL without re-authentication (route)', async () => {
+    const key = `sess:${admin.cookies.ff_sid}`;
+    await env.kv.set(key, JSON.stringify({ ...JSON.parse((await env.kv.get(key))!), reauthAt: Date.now() - 20 * 60_000 }), 600);
+    seen.length = 0;
+    expect((await put({ PLEX_URL: 'http://evil.example.com:32400' })).statusCode).toBe(401);
+    expect((await test({ PLEX_URL: 'http://evil.example.com:32400' })).statusCode).toBe(401);
+    expect(seen).toEqual([]);
+    // the admin typed a token for the new host themselves: a Test needs no re-authentication (the fake refuses that token: a result, not 401)
+    const typed = await test({ PLEX_URL: 'http://plex.example.com:32400', PLEX_TOKEN: 'typed-token-placeholder' });
+    expect(typed.statusCode).toBe(200);
+    expect(typed.json()).toEqual({ ok: false, code: 'unauthorized', probe: 'media' });
+  });
+
+  // Plex's "View XML" links carry the token as ?X-Plex-Token=…; pasted into PLEX_URL it must never be saved
+  // (PLEX_URL is stored unencrypted), shown or passed on
+  const URL_CANARY = 'url-token-canary-placeholder'; // a test placeholder, never a real token
+  const withQuery = [`http://plex.example.com:32400/?X-Plex-Token=${URL_CANARY}`, `http://plex.example.com:32400/library?x-plex-token=${URL_CANARY}`,
+    `http://plex.example.com:32400/#${URL_CANARY}`, `http://friendflix:${URL_CANARY}@plex.example.com:32400`];
+
+  it('PUT and Test of a PLEX_URL with a query, fragment or userinfo -> 400 invalid_url; nothing saved, no call out, never echoed', async () => {
+    await reauth();
+    const rev = env.ctx.settings.rev();
+    seen.length = 0;
+    for (const url of withQuery) {
+      for (const values of [{ PLEX_URL: url }, { PLEX_URL: url, PLEX_TOKEN }]) {
+        const p = await put(values, true);
+        expect(p.statusCode, url).toBe(400);
+        expect(p.json()).toEqual({ error: 'invalid_settings', errors: { PLEX_URL: 'invalid_url' } });
+        const t = await test(values);
+        expect(t.statusCode, url).toBe(400);
+        expect(t.json()).toEqual({ error: 'invalid_settings', errors: { PLEX_URL: 'invalid_url' } });
+        for (const b of [p.body, t.body]) expect(b).not.toContain(URL_CANARY);
+      }
+    }
+    expect(seen).toEqual([]);
+    expect(env.ctx.settings.rev()).toBe(rev);
+    expect(env.ctx.cfg.PLEX_URL).toBe(PLEX_URL);
+    expect(JSON.stringify((await env.pool.query('select * from settings')).rows)).not.toContain(URL_CANARY);
+  });
+
+  it('an env-pinned PLEX_URL with a query shows as origin + path in GET and goes to the gateway without it', async () => {
+    const saved = env.ctx.cfg;
+    try {
+      // the override bypasses the schema (startup refuses such an env pin, see plex/config.test.ts): the layers behind it still hold
+      env.ctx.cfg = { ...saved, PLEX_URL: `http://plex.example.com:32400/plex/?X-Plex-Token=${URL_CANARY}#${URL_CANARY}` };
+      expect(env.ctx.settings.sources().PLEX_URL).toBe('env');
+      const r = await as('GET', '/api/admin/settings');
+      expect(r.statusCode).toBe(200);
+      expect(r.body).not.toContain(URL_CANARY);
+      const item = r.json().groups.flatMap((g: any) => g.items).find((i: any) => i.key === 'PLEX_URL');
+      expect(item).toMatchObject({ source: 'env', set: true, value: 'http://plex.example.com:32400/plex/' });
+      const gw = await env.app.inject({ method: 'GET', url: '/internal/gateway-config', headers: { 'x-internal-secret': env.ctx.cfg.INTERNAL_SECRET } });
+      expect(gw.statusCode).toBe(200);
+      expect(gw.json().upstreamUrl).toBe('http://plex.example.com:32400/plex/');
+      expect(gw.body).not.toContain(URL_CANARY);
+      env.ctx.cfg = { ...saved, PLEX_URL: `http://friendflix:${URL_CANARY}@plex.example.com:32400` };
+      expect((await as('GET', '/api/admin/settings')).body).not.toContain(URL_CANARY);
+    } finally {
+      env.ctx.cfg = saved;
+    }
+  });
+
+  it('no log line carries a Plex token', () => {
+    expect(logs.length).toBeGreaterThan(0);
+    for (const line of logs) noToken(line);
+    for (const line of logs) expect(line).not.toContain(URL_CANARY); // nor a token pasted into PLEX_URL
   });
 });
 

@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { readFileSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { blocksDirectStream, createGateway, normalizeCastPath, normalizePath } from '../src/gateway.js';
 import { checkUpstreamConfig, jellyfinUpstream, selectUpstream, UPSTREAMS, type PlaylistContext, type Upstream } from '../src/upstream/index.js';
@@ -17,11 +17,23 @@ describe('upstream adapter selection', () => {
     for (const v of [undefined, '', '  ', 'jellyfin', 'Jellyfin', ' JELLYFIN ']) expect(selectUpstream(v)).toBe(jellyfinUpstream);
     expect(jellyfinUpstream).toMatchObject({ kind: 'jellyfin', urlEnv: 'JELLYFIN_URL' });
   });
-  // only what this repository guarantees: a fork registers further adapters without touching this test
   it('refuses unknown kinds (a typo never starts a gateway), also prototype keys', () => {
     for (const v of ['not-a-server', '__proto__', 'constructor', 'toString']) expect(() => selectUpstream(v)).toThrow(/unknown MEDIA_SERVER/);
-    expect(Object.keys(UPSTREAMS)).toContain('jellyfin');
+    expect(Object.keys(UPSTREAMS).sort()).toEqual(['jellyfin', 'plex']); // the same kinds as the backend's MEDIA_SERVERS
     expect(UPSTREAMS.jellyfin).toBe(jellyfinUpstream);
+    expect(selectUpstream(' Plex ')).toMatchObject({ kind: 'plex', urlEnv: 'PLEX_URL' });
+  });
+  it('seam: only upstream/index.ts imports an adapter (upstream/jellyfin.ts, upstream/plex.ts); the adapters never import each other', () => {
+    const src = new URL('../src/', import.meta.url).pathname;
+    const walk = (d: string): string[] => readdirSync(d, { withFileTypes: true }).flatMap((e) => (e.isDirectory() ? walk(`${d}${e.name}/`) : e.name.endsWith('.ts') ? [`${d}${e.name}`] : []));
+    const files = walk(src).map((f) => f.slice(src.length));
+    for (const adapter of ['jellyfin', 'plex']) {
+      const importers = files.filter((f) => f !== `upstream/${adapter}.ts` && new RegExp(`from '(\\./|\\.\\./)*(upstream/)?${adapter}\\.js'`).test(readFileSync(src + f, 'utf8')));
+      // gateway.ts re-exports mediaBrowserHeader of the default (Jellyfin) adapter for older callers; nothing else may
+      expect(importers, adapter).toEqual(adapter === 'jellyfin' ? ['gateway.ts', 'upstream/index.ts'] : ['upstream/index.ts']);
+    }
+    expect(readFileSync(`${src}upstream/plex.ts`, 'utf8')).not.toMatch(/from '\.\/jellyfin\.js'/);
+    expect(readFileSync(`${src}upstream/jellyfin.ts`, 'utf8')).not.toMatch(/from '\.\/plex\.js'/);
   });
   it('every registered adapter is selectable by its own kind', () => {
     for (const [k, u] of Object.entries(UPSTREAMS)) expect(selectUpstream(k)).toBe(u);

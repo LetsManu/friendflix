@@ -54,6 +54,13 @@ jobs:
       - run: npm run lint
       - run: npm run spdx:check
       - run: npm run typecheck
+      # one image set for both media servers: npm test runs the Jellyfin and the Plex adapter suites (backend/test/plex against the
+      # fake Plex server, gateway/test/plex.test.ts); this guard fails if a config change ever drops one of them
+      - name: Both media adapter suites are collected
+        run: |
+          test "$(cd backend && npx vitest list --filesOnly | grep -c 'test/plex/')" -ge 20
+          (cd backend && npx vitest list --filesOnly | grep -q 'test/media-seam.test.ts')
+          (cd gateway && npx vitest list --filesOnly | grep -q 'test/plex.test.ts')
       # newest Node: tests run once, with coverage (fails below the thresholds in each vitest.config.ts); other entries run plain tests
       - run: npm test
         if: matrix.node != 26
@@ -177,6 +184,12 @@ jobs:
           docker compose -f compose.prod.yaml --profile backup --profile bundled config -q
           docker compose -f compose.prod.yaml --profile updater config -q
           docker compose -f compose.prod.yaml --profile backup --profile bundled --profile updater config -q
+          docker compose -f compose.prod.yaml -f compose.plex.yaml config -q
+          docker compose -f compose.prod.yaml -f compose.plex.yaml --profile updater config -q
+          docker compose -f compose.yaml -f compose.plex.yaml config -q
+          # the Plex override keeps MEDIA_SERVER=plex and its own compose file in the updater's list
+          docker compose -f compose.prod.yaml -f compose.plex.yaml --profile updater config | grep -q 'UPDATER_COMPOSE_FILES: compose.prod.yaml,compose.plex.yaml'
+          test "$(docker compose -f compose.prod.yaml -f compose.plex.yaml config | grep -c 'MEDIA_SERVER: plex')" = 2
       - name: Compose config with .env.example
         run: |
           cp .env.example .env
@@ -186,6 +199,12 @@ jobs:
           docker compose -f compose.prod.yaml --profile backup --profile bundled config -q
           docker compose -f compose.prod.yaml --profile updater config -q
           docker compose -f compose.prod.yaml --profile backup --profile bundled --profile updater config -q
+          docker compose -f compose.prod.yaml -f compose.plex.yaml config -q
+          docker compose -f compose.prod.yaml -f compose.plex.yaml --profile updater config -q
+          docker compose -f compose.yaml -f compose.plex.yaml config -q
+          # the Plex override keeps MEDIA_SERVER=plex and its own compose file in the updater's list
+          docker compose -f compose.prod.yaml -f compose.plex.yaml --profile updater config | grep -q 'UPDATER_COMPOSE_FILES: compose.prod.yaml,compose.plex.yaml'
+          test "$(docker compose -f compose.prod.yaml -f compose.plex.yaml config | grep -c 'MEDIA_SERVER: plex')" = 2
           rm .env
   docker:
     runs-on: ubuntu-latest

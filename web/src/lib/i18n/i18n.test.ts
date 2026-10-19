@@ -4,13 +4,13 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { get } from 'svelte/store';
 import {
   LOCALES, fmtDate, fmtDateTime, fmtDuration, fmtList, fmtNumber, fmtRelative, fmtTime, getLocale, hasKey, intlLocale, isLocale, loadLocale,
-  keepPageOnSwitch, locale, localeName, pageEpoch, pickLocale, publicLocale, ready, remountPage, setLocale, storedLocale, t, tr, trDynamic,
+  keepPageOnSwitch, locale, localeName, pageEpoch, pickLocale, publicLocale, ready, remountPage, setLocale, setMediaServer, storedLocale, t, tr, trDynamic,
 } from './index';
 import { markParams, richParts } from './rich';
 import de from './locales/de/index';
 import en from './locales/en/index';
 
-afterEach(async () => { await setLocale('de'); });
+afterEach(async () => { setMediaServer('jellyfin'); await setLocale('de'); });
 
 /** every dotted key of a nested dictionary (plural objects count as one key) */
 function keys(o: object, p = ''): string[] {
@@ -136,6 +136,40 @@ describe('i18n core', () => {
     for (const [k, s] of msgs(en)) {
       const base = deMap.get(k) ?? deMap.get(k.replace(/\.(one|few|many|two|zero)$/, '.other'));
       if (base !== undefined) expect(ph(s), k).toBe(ph(base));
+    }
+  });
+});
+
+describe('texts by media server (serverText)', () => {
+  const KEYS = ['admin.banner.svc.empty_media', 'adminContent.health.reason.empty_media', 'reco.admin.engine.v1', 'settings.options.RECO_ENGINE.v1'] as const;
+  it('Jellyfin (default, unknown or missing kind) keeps the plain texts; Plex gets its own', async () => {
+    const plain = KEYS.map((k) => tr(k));
+    const home = tr('shell.nav.home');
+    expect(plain[0]).toContain('Jellyfin neu starten');
+    expect(tr('reco.admin.engine.v1')).toBe('v1 (Jellyfin)');
+    for (const k of [undefined, null, '', 'Plex', '../x', 'jellyfin']) {
+      setMediaServer(k);
+      expect(KEYS.map((x) => tr(x)), String(k)).toEqual(plain);
+    }
+    setMediaServer('plex');
+    expect(tr('admin.banner.svc.empty_media')).toContain('Plex neu starten');
+    expect(tr('adminContent.health.reason.empty_media')).not.toMatch(/jellyfin/i);
+    expect(get(t)('reco.admin.engine.v1')).toBe('v1 (klassisch)');
+    expect(trDynamic('settings.options.RECO_ENGINE.v1')).toBe('v1 (klassisch)');
+    expect(tr('shell.nav.home')).toBe(home); // keys without a variant are unchanged
+    // a language switch keeps the server; every language has the Plex texts
+    for (const { code } of LOCALES) {
+      await setLocale(code);
+      for (const k of KEYS) expect(tr(k), `${code} ${k}`).not.toMatch(/jellyfin/i);
+      expect(tr('admin.banner.svc.empty_media'), code).toContain('Plex');
+    }
+    await setLocale('de');
+    setMediaServer('jellyfin');
+    expect(tr('reco.admin.engine.v1')).toBe('v1 (Jellyfin)');
+  });
+  it('every serverText key is a real key of the plain dictionary', () => {
+    for (const [kind, dict] of Object.entries(de.serverText)) {
+      for (const k of keys(dict)) expect(hasKey(k), `${kind}: ${k}`).toBe(true);
     }
   });
 });
