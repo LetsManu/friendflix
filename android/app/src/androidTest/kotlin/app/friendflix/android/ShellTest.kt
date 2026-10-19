@@ -140,11 +140,13 @@ class ShellTest {
             scenario.onMain { it.showLocal(page("one"), "https://friend.example.com/one") }
             val view = scenario.webView()
             waitFor("first page") { view.title == "one" }
-            scenario.onMain { it.showLocal(page("two"), "https://friend.example.com/two") }
-            waitFor("second page") { view.title == "two" && view.canGoBack() }
+            // the web app navigates like any SPA, with history.pushState; going back to a loadDataWithBaseURL entry would instead
+            // re-request its https history URL, which does not exist on the emulator
+            scenario.onMain { it.evaluateJavascript("history.pushState({}, '', '/two')", null) }
+            waitFor("second page") { view.url?.endsWith("/two") == true && view.canGoBack() }
 
             scenario.onActivity { it.onBackPressedDispatcher.onBackPressed() }
-            waitFor("back to the first page") { view.title == "one" }
+            waitFor("back to the first page") { view.url?.endsWith("/one") == true }
             assertEquals(Lifecycle.State.RESUMED, scenario.state)
 
             // the history may still hold the entry before "one": walk back to the start, then one more back finishes the activity
