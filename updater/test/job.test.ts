@@ -8,11 +8,11 @@ import { DEFAULT_STATE, memoryStore, type State } from '../src/state.js';
 const OLD = 'a'.repeat(40), NEW = 'b'.repeat(40);
 
 /** a fake Docker world: which tag each service runs, which images verify, whether the new build gets healthy */
-function world(o: { verifyFails?: string; healthyTags?: string[]; pullFails?: boolean; upFails?: string; running?: string | null; spawnFails?: boolean } = {}) {
+function world(o: { verifyFails?: string; healthyTags?: string[]; pullFails?: boolean; upFails?: string; running?: string | null; spawnFails?: boolean; digest?: string } = {}) {
   const calls: string[] = [];
   let runningTag = 'old';
   const shaOf = (tag: string) => (tag === 'old' || tag === 'sha-aaaaaaa' ? OLD : NEW);
-  const info = (sha: string): ImageInfo => ({ repoDigests: [], gitSha: sha, version: '1.0.0' });
+  const info = (sha: string): ImageInfo => ({ repoDigests: o.digest ? [o.digest] : [], gitSha: sha, version: '1.0.0' });
   const ops: Ops = {
     images: async (tag, services) => { calls.push(`images ${tag} ${services.join(',')}`); return Object.fromEntries(services.map((s) => [s, `ghcr.io/letsmanu/friendflix-${s === 'bootstrap' ? 'backend' : s}:${tag}`])); },
     pull: async (tag) => { calls.push(`pull ${tag}`); if (o.pullFails) throw new StepError('pull_failed'); },
@@ -188,6 +188,15 @@ describe('update job', () => {
     const s2 = memoryStore({ ...DEFAULT_STATE, lastJob: { ...store.state.lastJob!, state: 'running', step: 'restart', error: null, finishedAt: null } });
     const u2 = new Updater(w.ops, s2, { log: new JobLog() });
     expect(u2.snapshot().lastJob).toMatchObject({ state: 'succeeded', steps: { restart: 'ok' } });
+  });
+
+  it('self-update when the updater already runs that image: succeeds without a restart', async () => {
+    const w = world({ digest: 'ghcr.io/letsmanu/friendflix-updater@sha256:' + 'a'.repeat(64) });
+    const { u, store } = make(w);
+    u.start('self-update');
+    await u.idle();
+    expect(w.calls.some((c) => c.startsWith('spawn'))).toBe(false);
+    expect(store.state.lastJob).toMatchObject({ action: 'self-update', state: 'succeeded', error: null, steps: { pull: 'ok', verify: 'ok', restart: 'skipped' } });
   });
 
   it('self-update with a failing verify or helper never spawns / reports the failure', async () => {

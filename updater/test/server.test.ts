@@ -55,7 +55,7 @@ describe('updater HTTP API', () => {
     const r = await call('GET', '/v1/status');
     expect(r.status).toBe(200);
     expect(r.headers.get('cache-control')).toBe('no-store');
-    expect(await r.json()).toMatchObject({ channel: 'stable', targetTag: 'latest', current: null, previous: null, busy: false, job: null, services: [{ service: 'backend' }], updater: { version: '1.0.0' } });
+    expect(await r.json()).toMatchObject({ channel: 'stable', targetTag: 'latest', current: 'sha-aaaaaaa', previous: null, busy: false, job: null, services: [{ service: 'backend' }], updater: { version: '1.0.0' } });
   });
 
   it('a replayed request is refused', async () => {
