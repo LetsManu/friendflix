@@ -7,6 +7,7 @@ import { ZodError } from 'zod';
 import { timingSafeEqual } from 'node:crypto';
 import { buildInfo } from './channel.js';
 import type { Ctx } from './ctx.js';
+import { MIN_ANDROID } from './version.js';
 import { compressJson } from './compress.js';
 import { newTimingStore, serverTimingHeader, timedDb, timedKv, timingStorage, timingSummary, type TimingStore } from './timing.js';
 import { metricsPlugin } from './metrics.js';
@@ -214,7 +215,7 @@ export async function buildApp(ctx: Ctx, extra: Extra = {}): Promise<FastifyInst
   // release commit or a nightly one (label "1.1.0-nightly · abc1234"); the GitHub lookup is cached and waited for 2.5 s at most
   app.get('/api/version', async () => {
     const { sha, version, codename, build, channel, label } = await buildInfo(ctx, { waitMs: 2500 });
-    return { sha, version, codename, build, channel, label };
+    return { sha, version, codename, build, channel, label, minAndroid: MIN_ANDROID };
   });
   app.get('/health/ready', async (_req, reply) => {
     const checks: Record<string, boolean> = {

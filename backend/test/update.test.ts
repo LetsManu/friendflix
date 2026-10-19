@@ -145,7 +145,7 @@ describe('admin update', () => {
   it('exposes the version unauthenticated', async () => {
     await setup({ APP_VERSION: '1.3.0', APP_CODENAME: 'Arancini' });
     // CUR is no tag commit (the mock answers 404 for the tag): a nightly build
-    expect((await env.app.inject('/api/version')).json()).toEqual({ sha: CUR, version: '1.3.0', codename: 'Arancini', build: 'nightly', channel: 'nightly', label: '1.3.0-nightly · ccccccc' });
+    expect((await env.app.inject('/api/version')).json()).toEqual({ sha: CUR, version: '1.3.0', codename: 'Arancini', build: 'nightly', channel: 'nightly', label: '1.3.0-nightly · ccccccc', minAndroid: '2.0.0' });
     expect((await env.app.inject('/health')).json().version).toBe(CUR.slice(0, 7));
   });
 

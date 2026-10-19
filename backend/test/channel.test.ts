@@ -146,7 +146,7 @@ describe('admin update + /api/version with channels', () => {
     reset();
     const get = await setup({ GIT_SHA: 'dev' });
     expect((await get()).channel).toMatchObject({ build: 'dev', running: null, label: '1.1.0' });
-    expect((await env.app.inject('/api/version')).json()).toEqual({ sha: 'dev', version: '1.1.0', codename: 'Arancini', build: 'dev', channel: null, label: '1.1.0' });
+    expect((await env.app.inject('/api/version')).json()).toEqual({ sha: 'dev', version: '1.1.0', codename: 'Arancini', build: 'dev', channel: null, label: '1.1.0', minAndroid: '2.0.0' });
     expect(calls.some((u) => u.includes('/git/'))).toBe(false);
   });
 
