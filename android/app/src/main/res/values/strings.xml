@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  SPDX-FileCopyrightText: 2026 Manuel Weißböck
+  SPDX-License-Identifier: AGPL-3.0-or-later
+-->
+<resources>
+    <string name="app_name" translatable="false">FriendFlix</string>
+    <string name="setup_title">Connect to your server</string>
+    <string name="setup_hint">Address of your FriendFlix server</string>
+    <string name="setup_address_example" translatable="false">friend.example.com</string>
+    <string name="setup_connect">Connect</string>
+    <string name="setup_error_invalid">That does not look like a server address.</string>
+    <string name="setup_error_insecure">Please use a secure address (https). Plain http is not supported.</string>
+    <string name="setup_error_unreachable">The server could not be reached. Check the address and your connection.</string>
+    <string name="setup_error_tls">The secure connection failed. The server\'s certificate is not trusted.</string>
+    <string name="setup_error_not_friendflix">This address does not answer like a FriendFlix server.</string>
+    <string name="setup_error_app_too_old">Please update the app.</string>
+    <string name="setup_error_server_too_old">Please update FriendFlix on the server.</string>
+    <string name="open_with">Open with</string>
+</resources>
