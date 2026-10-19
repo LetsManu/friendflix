@@ -25,7 +25,10 @@ export interface NativeCapabilities { api: number; play: boolean; download: bool
 export interface NativePlayRequest { itemId: string; profileId: string; startMs?: number; mediaSourceId?: string; audio?: string; subtitle?: string }
 export interface NativeDownloadRequest { licenseId: string; itemId: string; profileId: string }
 export type NativeDownloadState = 'queued' | 'preparing' | 'downloading' | 'paused' | 'done' | 'error' | 'expired';
-export interface NativeDownload { licenseId: string; itemId: string; state: NativeDownloadState; progress: number; bytes: number; expiresAt: number }
+/** why an app download stopped with state 'error' (codes of existing `account.downloads.msg.*` texts) */
+export type NativeDownloadError = 'noSpace' | 'io' | 'prepFailed';
+export interface NativeDownload { licenseId: string; itemId: string; state: NativeDownloadState; progress: number; bytes: number; expiresAt: number; error?: NativeDownloadError }
+const ERRORS = new Set<string>(['noSpace', 'io', 'prepFailed']);
 export interface NativeEvent { event: string; detail: unknown }
 
 interface Port {
@@ -80,7 +83,8 @@ const asEntry = (x: unknown): NativeDownload | null => {
   if (!o || typeof o !== 'object') return null;
   if (typeof o.licenseId !== 'string' || typeof o.itemId !== 'string' || typeof o.state !== 'string' || !STATES.has(o.state)) return null;
   const n = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? v : 0);
-  return { licenseId: o.licenseId, itemId: o.itemId, state: o.state as NativeDownloadState, progress: n(o.progress), bytes: n(o.bytes), expiresAt: n(o.expiresAt) };
+  const error = typeof o.error === 'string' && ERRORS.has(o.error) ? { error: o.error as NativeDownloadError } : {};
+  return { licenseId: o.licenseId, itemId: o.itemId, state: o.state as NativeDownloadState, progress: n(o.progress), bytes: n(o.bytes), expiresAt: n(o.expiresAt), ...error };
 };
 
 /** downloads the app holds, by licence id (kept current by `refreshNativeDownloads` and the app's events) */

@@ -92,6 +92,13 @@ describe('native bridge', () => {
     installFake(() => ({ ok: true, result: [good, { licenseId: 5 }, null, 'x'] }));
     await expect(native.downloads()).resolves.toEqual([good]);
   });
+  it('keeps a known error code of an entry and drops unknown ones', async () => {
+    const base = { licenseId: 'L', itemId: 'i', state: 'error', progress: 0, bytes: 0, expiresAt: 0 };
+    installFake(() => ({ ok: true, result: [{ ...base, error: 'noSpace' }, { ...base, licenseId: 'M', error: 'boom' }] }));
+    const list = await native.downloads();
+    expect(list?.[0]?.error).toBe('noSpace');
+    expect(list?.[1] && 'error' in list[1]).toBe(false);
+  });
   it('downloads() is null (not empty) when the app does not answer, and a refresh then keeps the store', async () => {
     installFake((req) => (req.method === 'downloads' ? { ok: false, error: 'internal' } : { ok: true, result: true }));
     await expect(native.downloads()).resolves.toBeNull();

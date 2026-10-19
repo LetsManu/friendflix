@@ -3,9 +3,11 @@
 package app.friendflix.android.downloads
 
 import androidx.work.ListenableWorker
+import androidx.work.WorkInfo
 import androidx.work.testing.TestListenableWorkerBuilder
 import androidx.work.workDataOf
 import app.friendflix.android.crypto.EncryptedFormat
+import app.friendflix.android.crypto.EncryptedWriter
 import app.friendflix.android.crypto.KeysUnavailableException
 import app.friendflix.android.settings.StorageLocation
 import kotlinx.coroutines.runBlocking
@@ -34,15 +36,29 @@ class DownloadWorkerTest {
     @Before fun setUp() { env = TestEnv(tmp.root) }
     @After fun tearDown() { env.close() }
 
-    private fun run(id: String = LIC, attempt: Int = 0): ListenableWorker.Result = runBlocking {
+    private fun run(id: String = LIC, attempt: Int = 0, round: Int = 0): ListenableWorker.Result = runBlocking {
         TestListenableWorkerBuilder<DownloadWorker>(env.context)
-            .setInputData(workDataOf(DownloadWorker.KEY_LICENSE to id))
+            .setInputData(workDataOf(DownloadWorker.KEY_LICENSE to id, DownloadWorker.KEY_ROUND to round))
             .setRunAttemptCount(attempt)
             .build()
             .doWork()
     }
 
     private fun rec(id: String = LIC) = env.store.get(id)
+
+    /** The follow-up job a run left behind (a fresh request with its own delay), or null. */
+    private fun followUp(id: String = LIC): WorkInfo? =
+        env.workManager.getWorkInfosForUniqueWork(DownloadQueue.workName(id)).get().singleOrNull { it.state == WorkInfo.State.ENQUEUED }
+
+    private fun clearJobs(id: String = LIC) { env.workManager.cancelUniqueWork(DownloadQueue.workName(id)).result.get() }
+
+    /** The run ended and planned a fresh job (backoff under our control), waiting at most [maxDelayMs]. */
+    private fun assertRescheduled(r: ListenableWorker.Result, maxDelayMs: Long = 600_000): WorkInfo {
+        assertEquals(ListenableWorker.Result.success(), r)
+        val w = followUp() ?: throw AssertionError("no follow-up job")
+        assertTrue("delay ${w.initialDelayMillis}", w.initialDelayMillis in 1..maxDelayMs)
+        return w
+    }
 
     @Test fun freshDownloadIsStoredEncryptedWithSubtitlesAndArtwork() {
         env.add()
@@ -152,7 +168,7 @@ class DownloadWorkerTest {
         env.fake.prep = "preparing"
         env.fake.percent = 40
         env.add()
-        assertEquals(ListenableWorker.Result.retry(), run())
+        assertRescheduled(run())
         assertEquals(DownloadState.PREPARING, rec()!!.state)
         assertTrue(env.fake.files().isEmpty())
         val entry = env.deps.queue.list().single()
@@ -172,7 +188,7 @@ class DownloadWorkerTest {
         val len = f.length()
         env.add(env.record(state = DownloadState.DOWNLOADING, etag = env.fake.etag))
         env.fake.fileCode = 404
-        assertEquals(ListenableWorker.Result.retry(), run())
+        assertRescheduled(run())
         assertTrue(f.exists())
         assertEquals(len, f.length())
         assertNotNull(rec())
@@ -214,7 +230,7 @@ class DownloadWorkerTest {
         env.add(env.record(state = DownloadState.DOWNLOADING, etag = env.fake.etag))
         env.fake.licenceCode = 404
         env.fake.licenceError = "downloads_disabled"
-        assertEquals(ListenableWorker.Result.retry(), run())
+        assertRescheduled(run())
         assertTrue(f.exists())
         assertNotNull(rec())
     }
@@ -232,7 +248,7 @@ class DownloadWorkerTest {
         env.add()
         env.fake.licenceCode = 409
         env.fake.licenceError = "profile_changed"
-        assertEquals(ListenableWorker.Result.retry(), run())
+        assertRescheduled(run())
         assertNotNull(rec())
         assertTrue(env.fake.files().isEmpty())
     }
@@ -269,7 +285,7 @@ class DownloadWorkerTest {
         val bytes = f.readBytes()
         env.add(env.record(state = DownloadState.DOWNLOADING, etag = env.fake.etag))
         env.keySource = KeySource { throw KeysUnavailableException("keystore unavailable", null) }
-        assertEquals(ListenableWorker.Result.retry(), run())
+        assertRescheduled(run())
         assertEquals(DownloadState.PAUSED, rec()!!.state)
         assertArrayEquals(bytes, f.readBytes())
         assertTrue(env.fake.requests.isEmpty())
@@ -279,7 +295,7 @@ class DownloadWorkerTest {
         env.partial(1 shl 20, kind = StorageLocation.SD)
         env.add(env.record(state = DownloadState.DOWNLOADING, etag = env.fake.etag, kind = StorageLocation.SD))
         env.volumes.sdMounted = false
-        assertEquals(ListenableWorker.Result.retry(), run())
+        assertRescheduled(run())
         assertNotNull(rec())
         assertTrue(File(File(env.volumes.sd, "downloads"), DownloadFiles.video(LIC)).exists())
         assertTrue(env.fake.requests.isEmpty())
@@ -296,7 +312,7 @@ class DownloadWorkerTest {
     @Test fun serverErrorRetries() {
         env.add()
         env.fake.fileCode = 503
-        assertEquals(ListenableWorker.Result.retry(), run())
+        assertRescheduled(run())
         assertNotNull(rec())
     }
 
@@ -313,5 +329,122 @@ class DownloadWorkerTest {
         assertEquals(ListenableWorker.Result.success(), run())
         assertArrayEquals(env.fake.content, env.plaintext(f))
         assertTrue(f.length() > EncryptedFormat.HEADER_SIZE)
+    }
+    // ---- fix round 1 ----
+
+    @Test fun prepPollingStartsAt30sAndIsCappedAtFiveMinutes() {
+        env.fake.prep = "preparing"
+        env.add()
+        assertEquals(30_000, assertRescheduled(run(round = 0)).initialDelayMillis)
+        clearJobs()
+        assertEquals(60_000, assertRescheduled(run(round = 1)).initialDelayMillis)
+        clearJobs()
+        assertEquals(300_000, assertRescheduled(run(round = 10)).initialDelayMillis)
+    }
+
+    @Test fun failuresWithoutProgressBackOffUpToTenMinutes() {
+        env.add()
+        env.fake.fileCode = 503
+        assertEquals(30_000, assertRescheduled(run(round = 0)).initialDelayMillis)
+        clearJobs()
+        assertEquals(240_000, assertRescheduled(run(round = 3)).initialDelayMillis)
+        clearJobs()
+        assertEquals(600_000, assertRescheduled(run(round = 20)).initialDelayMillis)
+    }
+
+    @Test fun aRunThatMovedBytesForwardResetsTheBackoff() {
+        val mib = 1 shl 20
+        val f = env.partial(mib)
+        env.add(env.record(state = DownloadState.DOWNLOADING, etag = env.fake.etag))
+        val size = env.fake.content.size
+        env.fake.fileResponses += MockResponse.Builder().code(206).setHeader("etag", env.fake.etag!!)
+            .setHeader("content-range", "bytes $mib-${size - 1}/$size").body(Buffer().write(env.fake.content, mib, mib)).build() // cut short
+        assertEquals(30_000, assertRescheduled(run(round = 8)).initialDelayMillis)
+        clearJobs()
+        assertEquals(ListenableWorker.Result.success(), run())
+        assertEquals("bytes=${2 * mib}-", env.fake.files().last().headers["range"]) // the bytes of the cut run were kept
+        assertArrayEquals(env.fake.content, env.plaintext(f))
+    }
+
+    @Test fun preparationBecomingReadyResetsTheBackoff() {
+        env.add(env.record(state = DownloadState.PREPARING))
+        env.fake.fileCode = 503
+        assertEquals(30_000, assertRescheduled(run(round = 7)).initialDelayMillis)
+    }
+
+    @Test fun signOutDuringTheRunIsNotOverwrittenAndPlansNothing() {
+        env.add()
+        env.fake.fileCode = 503
+        env.fake.onFile = { env.store.update(LIC) { it.copy(state = DownloadState.SIGNED_OUT) } } // another worker's 401
+        run()
+        assertEquals(DownloadState.SIGNED_OUT, rec()!!.state)
+        assertNull(followUp())
+    }
+
+    @Test fun revokeDuringTheRunIsNotOverwritten() {
+        env.add()
+        env.fake.fileCode = 503
+        env.fake.onFile = { env.store.update(LIC) { it.copy(state = DownloadState.EXPIRED) } }
+        run()
+        assertEquals(DownloadState.EXPIRED, rec()!!.state)
+        assertNull(followUp())
+    }
+
+    @Test fun a206WithoutEtagIsNotPinnedAndRestarts() {
+        val f = env.partial(2 * (1 shl 20))
+        env.add(env.record(state = DownloadState.DOWNLOADING, etag = env.fake.etag))
+        val size = env.fake.content.size
+        val start = 2 * (1 shl 20)
+        env.fake.fileResponses += MockResponse.Builder().code(206)
+            .setHeader("content-range", "bytes $start-${size - 1}/$size").body(Buffer().write(env.fake.content, start, size - start)).build()
+        assertEquals(ListenableWorker.Result.success(), run())
+        assertNull(env.fake.files()[1].headers["range"])
+        assertArrayEquals(env.fake.content, env.plaintext(f))
+    }
+
+    @Test fun deleteWhileDownloadingStopsAndLeavesNoFile() {
+        env.add()
+        env.fake.onFile = { env.deps.queue.delete(LIC) }
+        assertEquals(ListenableWorker.Result.success(), run())
+        runBlocking { env.deps.queue.awaitScheduled() }
+        assertNull(rec())
+        assertFalse(env.video().exists())
+        assertNull(followUp())
+    }
+
+    @Test fun diskFullFailsWithAReasonInsteadOfRetryingForever() {
+        env.add()
+        env.writerFactory = { _, _ -> throw java.io.IOException("write failed: ENOSPC (No space left on device)") }
+        assertEquals(ListenableWorker.Result.failure(), run())
+        assertEquals(DownloadState.ERROR, rec()!!.state)
+        assertEquals("noSpace", rec()!!.error)
+        assertEquals("noSpace", env.deps.queue.list().single().error)
+        assertNull(followUp())
+    }
+
+    @Test fun unwritableLocationFailsWithIoReason() {
+        env.add()
+        env.writerFactory = { _, _ -> throw java.io.IOException("EACCES (Permission denied)") }
+        assertEquals(ListenableWorker.Result.failure(), run())
+        assertEquals(DownloadState.ERROR, rec()!!.state)
+        assertEquals("io", rec()!!.error)
+        assertNull(followUp())
+    }
+
+    @Test fun notEnoughFreeSpaceIsReportedBeforeFetching() {
+        env.add()
+        env.freeSpace = 1000
+        assertEquals(ListenableWorker.Result.failure(), run())
+        assertEquals(DownloadState.ERROR, rec()!!.state)
+        assertEquals("noSpace", rec()!!.error)
+        assertTrue(env.fake.files().isEmpty())
+    }
+
+    @Test fun bodyWithoutLengthIsCheckedAgainstTheLicenceSize() {
+        env.add()
+        env.fake.fileResponses += MockResponse.Builder().code(200).setHeader("etag", env.fake.etag!!)
+            .chunkedBody(Buffer().write(env.fake.content, 0, 1 shl 20), 64 * 1024).build()
+        assertRescheduled(run())
+        assertFalse(EncryptedWriter(env.video(), env.keys).use { it.isComplete })
     }
 }

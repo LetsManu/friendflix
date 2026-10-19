@@ -87,6 +87,8 @@ class FakeServer : Dispatcher() {
     var subtitles = listOf("de" to "/media/Videos/$ITEM/src/Subtitles/2/0/Stream.vtt", "en" to "/media/Videos/$ITEM/src/Subtitles/3/0/Stream.sup")
     var poster: String? = "/media/Items/$ITEM/Images/Primary?maxWidth=300&quality=85"
     val fileResponses = ConcurrentLinkedQueue<MockResponse>()
+    /** Runs when a /media/d request arrives, before it is answered (e.g. a delete or sign-out racing the transfer). */
+    @Volatile var onFile: (() -> Unit)? = null
     val requests = CopyOnWriteArrayList<RecordedRequest>()
     val subtitleText = "WEBVTT\n\n00:00.000 --> 00:01.000\nHallo\n"
     val posterBytes: ByteArray = Random(2).nextBytes(5000)
@@ -123,7 +125,7 @@ class FakeServer : Dispatcher() {
                 val id = path.removePrefix("/api/downloads/")
                 if (licenceCode != 200) json(licenceCode, JSONObject().put("error", licenceError)) else json(200, licenceJson(id))
             }
-            path.startsWith("/media/d/") -> fileResponses.poll() ?: fileCode?.let { MockResponse.Builder().code(it).body("no").build() } ?: serve(request)
+            path.startsWith("/media/d/") -> onFile?.invoke().let { fileResponses.poll() } ?: fileCode?.let { MockResponse.Builder().code(it).body("no").build() } ?: serve(request)
             path.endsWith(".vtt") -> MockResponse.Builder().body(subtitleText).build()
             path.endsWith(".sup") -> MockResponse.Builder().body(Buffer().write(ByteArray(100))).build()
             path.contains("/Images/") -> MockResponse.Builder().setHeader("content-type", "image/jpeg").body(Buffer().write(posterBytes)).build()
@@ -156,6 +158,9 @@ class TestEnv(root: File) {
     val volumes = FakeVolumes(File(root, "vol"))
     val keys: KeyProvider = TestKeys()
     @Volatile var keySource: KeySource = KeySource { keys }
+    /** Free bytes the volumes report (null = the real free space of the temp folder). */
+    @Volatile var freeSpace: Long? = null
+    @Volatile var writerFactory: (File, KeyProvider) -> EncryptedWriter = { f, k -> EncryptedWriter(f, k) }
     val cookies = FakeCookies()
     val notifier = CountingNotifier()
     val store = DownloadStore(File(root, "downloads.json"))
@@ -170,8 +175,8 @@ class TestEnv(root: File) {
             context, Configuration.Builder().setMinimumLoggingLevel(Log.DEBUG).setExecutor(SynchronousExecutor()).build(),
         )
         workManager = WorkManager.getInstance(context)
-        locations = StorageLocations(volumes) { to -> deps.queue.move(to) }
-        deps = Downloads(context, store, locations, settings, { keySource.keys() }, workManager, OkHttpClient(), cookies, notifier, scope)
+        locations = StorageLocations(volumes, null, { freeSpace ?: it.usableSpace }) { to -> deps.queue.move(to) }
+        deps = Downloads(context, store, locations, settings, { keySource.keys() }, workManager, OkHttpClient(), cookies, notifier, scope) { f, k -> writerFactory(f, k) }
         Downloads.install(deps)
         val origin = server.url("/")
         cookies.jar["${origin.scheme}://${origin.host}:${origin.port}"] = "ff_sid=s3cret"

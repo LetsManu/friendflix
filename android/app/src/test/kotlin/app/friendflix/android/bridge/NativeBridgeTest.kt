@@ -277,5 +277,10 @@ class NativeBridgeTest {
         reply.sent.clear()
         bridge.emitDownloadChanges(listOf(a), listOf(a)) // unchanged: nothing
         assertTrue(reply.sent.isEmpty())
+        bridge.emitDownloadChanges(listOf(a), listOf(a.copy(state = "error", error = "noSpace")))
+        assertEquals("noSpace", reply.sent.single().getJSONObject("detail").getString("error"))
+        reply.sent.clear()
+        bridge.emitDownloadChanges(emptyList(), listOf(a))
+        assertFalse(reply.sent.single().getJSONObject("detail").has("error")) // no reason: no key
     }
 }

@@ -6,6 +6,7 @@ import android.annotation.SuppressLint
 import android.content.Context
 import androidx.annotation.VisibleForTesting
 import androidx.work.WorkManager
+import app.friendflix.android.crypto.EncryptedWriter
 import app.friendflix.android.crypto.KeyProvider
 import app.friendflix.android.crypto.KeystoreKeyProvider
 import app.friendflix.android.crypto.KeysUnavailableException
@@ -49,6 +50,8 @@ class Downloads(
     val cookies: CookieSource,
     val notifier: DownloadNotifier,
     val scope: CoroutineScope,
+    /** Opens the encrypted file a download writes (tests inject failing writers). */
+    val newWriter: (File, KeyProvider) -> EncryptedWriter = { f, k -> EncryptedWriter(f, k) },
 ) {
     val queue = DownloadQueue(this)
 
@@ -69,7 +72,7 @@ class Downloads(
         private fun create(app: Context): Downloads {
             val settings = AppSettings.from(app)
             lateinit var d: Downloads
-            val locations = StorageLocations(StorageLocations.system(app), app) { to -> d.queue.move(to) }
+            val locations = StorageLocations(StorageLocations.system(app), app, null) { to -> d.queue.move(to) }
             d = Downloads(
                 context = app,
                 store = DownloadStore(File(app.filesDir, "downloads.json")),

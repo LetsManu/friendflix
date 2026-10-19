@@ -26,7 +26,8 @@ data class DownloadRequest(val licenseId: String, val itemId: String, val profil
 /**
  * One download as the web UI shows it.
  * [state] is one of queued | preparing | downloading | paused | done | error | expired (the same names the web UI already uses);
- * [progress] is 0.0..1.0; [bytes] the bytes on disk; [expiresAt] epoch milliseconds.
+ * [progress] is 0.0..1.0; [bytes] the bytes on disk; [expiresAt] epoch milliseconds; [error] why an `error` download stopped
+ * (`noSpace` | `io` | `prepFailed`, the web UI's existing message codes), else null (the key is then left out).
  */
 data class DownloadEntry(
     val licenseId: String,
@@ -35,6 +36,7 @@ data class DownloadEntry(
     val progress: Double,
     val bytes: Long,
     val expiresAt: Long,
+    val error: String? = null,
 )
 
 /**

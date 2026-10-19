@@ -52,6 +52,7 @@ class DownloadQueue(private val d: Downloads) : DownloadSink {
             ),
         )
         val cur = d.store.get(req.licenseId) ?: return false
+        if (cur.state == DownloadState.ERROR) d.store.update(req.licenseId) { it.copy(state = DownloadState.QUEUED, error = null) } // handed over again: try again
         resumeSignedOut() // a new hand-over means the user is signed in again
         if (cur.state != DownloadState.DONE && cur.state != DownloadState.EXPIRED) launch { schedule(req.licenseId, ExistingWorkPolicy.KEEP) }
         return true
@@ -63,8 +64,8 @@ class DownloadQueue(private val d: Downloads) : DownloadSink {
         val rec = d.store.remove(licenseId) ?: return false
         d.workManager.cancelUniqueWork(workName(licenseId))
         clearPrep(licenseId)
-        // files go right away (a few unlinks); anything a still-stopping worker leaves behind is an orphan, swept on the next start
-        deleteFiles(rec)
+        // files go off the UI thread; anything a still-stopping worker leaves behind is an orphan, swept on the next start
+        launch { deleteFiles(rec) }
         if (rec.state != DownloadState.EXPIRED) LicenceDeleteWorker.enqueue(d.workManager, deleteName(licenseId), licenseId, rec.profileId)
         return true
     }
@@ -98,7 +99,7 @@ class DownloadQueue(private val d: Downloads) : DownloadSink {
         val rec = d.store.get(licenseId) ?: return
         d.workManager.cancelUniqueWork(workName(licenseId))
         deleteFiles(rec)
-        d.store.update(licenseId) { it.copy(state = DownloadState.QUEUED, bytes = 0, etag = null, subtitles = emptyList()) }
+        d.store.update(licenseId) { it.copy(state = DownloadState.QUEUED, bytes = 0, etag = null, subtitles = emptyList(), error = null) }
         launch { schedule(licenseId, ExistingWorkPolicy.REPLACE) }
     }
 
@@ -173,10 +174,23 @@ class DownloadQueue(private val d: Downloads) : DownloadSink {
         launch { resumed.forEach { schedule(it, ExistingWorkPolicy.KEEP) } }
     }
 
-    private suspend fun schedule(licenseId: String, policy: ExistingWorkPolicy) {
+    /**
+     * Plans the next run of a download as a fresh request after [delayMs] (the worker's own backoff: WorkManager's retry backoff
+     * would keep growing across preparation polls and later blips). APPEND_OR_REPLACE: called from the running job, the new one
+     * starts after it ends. Nothing is planned for a download that is gone, finished, expired or waiting for a sign-in.
+     */
+    internal suspend fun scheduleFollowUp(licenseId: String, round: Int, delayMs: Long): Boolean {
+        val st = d.store.get(licenseId)?.state ?: return false
+        if (st !in UNFINISHED || st in STICKY) return false
+        schedule(licenseId, ExistingWorkPolicy.APPEND_OR_REPLACE, delayMs, round)
+        return true
+    }
+
+    private suspend fun schedule(licenseId: String, policy: ExistingWorkPolicy, delayMs: Long = 0, round: Int = 0) {
         val wifiOnly = d.settings.wifiOnly.first()
         val req = OneTimeWorkRequestBuilder<DownloadWorker>()
-            .setInputData(workDataOf(DownloadWorker.KEY_LICENSE to licenseId))
+            .setInputData(workDataOf(DownloadWorker.KEY_LICENSE to licenseId, DownloadWorker.KEY_ROUND to round))
+            .setInitialDelay(delayMs, TimeUnit.MILLISECONDS)
             .setConstraints(Constraints.Builder().setRequiredNetworkType(if (wifiOnly) NetworkType.UNMETERED else NetworkType.CONNECTED).build())
             .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, BACKOFF_SECONDS, TimeUnit.SECONDS)
             .addTag(TAG)
@@ -185,6 +199,7 @@ class DownloadQueue(private val d: Downloads) : DownloadSink {
     }
 
     private fun sweepOrphans() {
+        if (d.store.loadFailed) return // the rows are unknown: every file could look like an orphan
         for (kind in StorageLocation.entries) {
             val dir = d.locations.dirIfMounted(kind) ?: continue
             for (f in dir.listFiles().orEmpty()) {
@@ -218,7 +233,7 @@ class DownloadQueue(private val d: Downloads) : DownloadSink {
                 r.total > 0 -> (r.bytes.toDouble() / r.total).coerceIn(0.0, 1.0)
                 else -> 0.0
             }
-            DownloadEntry(r.licenseId, r.itemId, state, progress, r.bytes, r.expiresAt)
+            DownloadEntry(r.licenseId, r.itemId, state, progress, r.bytes, r.expiresAt, if (r.state == DownloadState.ERROR) r.error else null)
         }
     }
 
@@ -227,6 +242,8 @@ class DownloadQueue(private val d: Downloads) : DownloadSink {
         const val UNAVAILABLE = "unavailable"
         internal const val PART = ".part"
         private const val BACKOFF_SECONDS = 30L
+        /** States a worker must never overwrite with its own progress (set by a sign-out or a revocation meanwhile). */
+        internal val STICKY = setOf(DownloadState.SIGNED_OUT, DownloadState.EXPIRED)
         private val UNFINISHED = setOf(DownloadState.QUEUED, DownloadState.PREPARING, DownloadState.DOWNLOADING, DownloadState.PAUSED, DownloadState.SIGNED_OUT)
 
         fun workName(licenseId: String) = "dl-$licenseId"

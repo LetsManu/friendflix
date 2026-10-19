@@ -86,6 +86,10 @@ describe('views', () => {
     expect(toView({ licenseId: 'L', itemId: 'i', state: 'preparing', progress: 0.4, bytes: 0, expiresAt: 0 }).prep).toBe(40);
     expect(toView({ licenseId: 'L', itemId: 'i', state: 'done', progress: 1, bytes: 777, expiresAt: 0 })).toMatchObject({ bytesTotal: 777, bytesHave: 777 });
   });
+  it('shows why an app download failed with the existing texts', () => {
+    expect(toView({ licenseId: 'L', itemId: 'i', state: 'error', progress: 0, bytes: 0, expiresAt: 0, error: 'noSpace' }).msg).toBeTruthy();
+    expect(toView({ licenseId: 'L', itemId: 'i', state: 'error', progress: 0, bytes: 0, expiresAt: 0 }).msg).toBeUndefined();
+  });
   it('finds the live download of an item', () => {
     const m = new Map([
       ['A', { licenseId: 'A', itemId: 'i', state: 'expired', progress: 1, bytes: 1, expiresAt: 0 } as const],

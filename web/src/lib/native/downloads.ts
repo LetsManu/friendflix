@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Download hand-off to the app: the page creates the licence (as for a browser download), the app fetches the file.
 import { adoptLicenses, createLicenses, discardLicense, type DlView, type DownloadRequest, type ServerLicense } from '#lib/offline/manager';
+import { tr } from '#lib/i18n';
 import { native, refreshNativeDownloads, type NativeDownload } from './bridge';
 
 /** An app download in the shape the download UI already renders. Totals are derived from the app's byte count and fraction. */
@@ -12,6 +13,7 @@ export function toView(d: NativeDownload): DlView {
     bytesTotal: d.state === 'done' ? d.bytes : total, bytesHave: d.bytes, etag: '', state: d.state, subs: [],
     expiresAt: d.expiresAt, validUntil: d.expiresAt, positionSec: 0, updatedAt: 0,
     prep: d.state === 'preparing' ? Math.round(Math.min(1, d.progress) * 100) : undefined,
+    msg: d.error ? tr(`account.downloads.msg.${d.error}`) : undefined,
   } as DlView;
 }
 

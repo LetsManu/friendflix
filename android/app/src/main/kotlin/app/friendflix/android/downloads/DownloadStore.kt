@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 package app.friendflix.android.downloads
 
+import android.util.Log
 import app.friendflix.android.settings.StorageLocation
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -12,6 +13,7 @@ import org.json.JSONObject
 import java.io.File
 import java.io.FileOutputStream
 import java.io.IOException
+import java.util.concurrent.Executors
 
 /**
  * Lifecycle of one download.
@@ -46,6 +48,8 @@ data class DownloadRecord(
     val etag: String? = null,
     val location: StorageLocation = StorageLocation.PHONE,
     val title: String = "",
+    /** why an [DownloadState.ERROR] download stopped: `noSpace` | `io` | `prepFailed` (web message codes), else null */
+    val error: String? = null,
 )
 
 /** File names of a download: everything starts with the licence id (so orphans can be found), nothing contains a title. */
@@ -62,12 +66,21 @@ object DownloadFiles {
 }
 
 /**
- * The download table: a small JSON file in internal storage (never on the card), rewritten atomically on every change, with the
- * current rows as a [StateFlow]. All writes are serialized; reads are lock-free snapshots.
+ * The download table: a small JSON file in internal storage (never on the card) with the current rows as a [StateFlow].
+ * Changes apply to memory at once (callers on the UI thread never touch the disk) and are persisted in order by one background
+ * thread, always writing the latest snapshot atomically (tmp + fsync + rename). [flush] waits for pending writes.
+ *
+ * A table that cannot be read is renamed aside (`downloads.json.corrupt-<time>`) and [loadFailed] is set: the rows are unknown for
+ * this process, so nothing may treat the files on disk as orphans.
  */
-class DownloadStore(private val file: File) {
+class DownloadStore(private val file: File, private val onWrite: () -> Unit = {}) {
+    var loadFailed: Boolean = false
+        private set
     private val state = MutableStateFlow(load())
     val records: StateFlow<Map<String, DownloadRecord>> = state.asStateFlow()
+    private val writer = Executors.newSingleThreadExecutor { r -> Thread(r, "ff-download-store").apply { isDaemon = true } }
+    @Volatile private var version = 0L
+    private var written = 0L
 
     fun get(licenseId: String): DownloadRecord? = state.value[licenseId]
     fun all(): List<DownloadRecord> = state.value.values.toList()
@@ -84,8 +97,8 @@ class DownloadStore(private val file: File) {
     @Synchronized
     fun update(licenseId: String, change: (DownloadRecord) -> DownloadRecord): DownloadRecord? {
         val cur = state.value[licenseId] ?: return null
-        val next = change(cur)
-        if (next != cur) commit(state.value + (licenseId to next.copy(licenseId = licenseId)))
+        val next = change(cur).copy(licenseId = licenseId)
+        if (next != cur) commit(state.value + (licenseId to next))
         return next
     }
 
@@ -103,9 +116,28 @@ class DownloadStore(private val file: File) {
         return cur
     }
 
+    /** Blocks until every change made so far is on disk (tests, and before the process is expected to end). */
+    fun flush() {
+        writer.submit { persist() }.get()
+    }
+
     private fun commit(next: Map<String, DownloadRecord>) {
-        write(next)
         state.value = next
+        version++
+        writer.execute { persist() }
+    }
+
+    /** Writes the latest snapshot if it is newer than what is on disk. Runs only on the writer thread, so writes are ordered. */
+    private fun persist() {
+        val (v, rows) = synchronized(this) { version to state.value }
+        if (v == written) return
+        try {
+            write(rows)
+            written = v
+            onWrite()
+        } catch (e: IOException) {
+            Log.w(TAG, "download table not saved: ${e.javaClass.simpleName}") // the next change tries again
+        }
     }
 
     private fun write(rows: Map<String, DownloadRecord>) {
@@ -127,10 +159,18 @@ class DownloadStore(private val file: File) {
             val arr = JSONObject(file.readText(Charsets.UTF_8)).getJSONArray("downloads")
             (0 until arr.length()).mapNotNull { fromJson(arr.getJSONObject(it)) }.associateBy { it.licenseId }
         } catch (_: JSONException) {
-            emptyMap() // unreadable table: the files become orphans and are swept; the web UI can hand the licences over again
+            setAside()
         } catch (_: IOException) {
-            emptyMap()
+            setAside()
         }
+    }
+
+    private fun setAside(): Map<String, DownloadRecord> {
+        loadFailed = true
+        val aside = File(file.path + ".corrupt-" + System.currentTimeMillis())
+        if (!file.renameTo(aside)) Log.w(TAG, "unreadable download table could not be kept aside")
+        else Log.w(TAG, "unreadable download table kept aside")
+        return emptyMap()
     }
 
     private fun toJson(r: DownloadRecord) = JSONObject()
@@ -138,7 +178,7 @@ class DownloadStore(private val file: File) {
         .put("bytes", r.bytes).put("total", r.total).put("file", r.file)
         .put("subtitles", JSONArray().also { a -> r.subtitles.forEach { a.put(JSONObject().put("lang", it.lang).put("file", it.file)) } })
         .put("expiresAt", r.expiresAt).put("lastCheck", r.lastCheck).put("etag", r.etag ?: JSONObject.NULL)
-        .put("location", r.location.name).put("title", r.title)
+        .put("location", r.location.name).put("title", r.title).put("error", r.error ?: JSONObject.NULL)
 
     private fun fromJson(o: JSONObject): DownloadRecord? = try {
         val subs = o.optJSONArray("subtitles") ?: JSONArray()
@@ -156,10 +196,14 @@ class DownloadStore(private val file: File) {
             etag = if (o.isNull("etag")) null else o.optString("etag"),
             location = StorageLocation.entries.firstOrNull { it.name == o.optString("location") } ?: StorageLocation.PHONE,
             title = o.optString("title"),
+            error = if (o.isNull("error")) null else o.optString("error").takeIf { it.isNotEmpty() },
         )
     } catch (_: JSONException) {
         null
     }
 
-    private companion object { const val VERSION = 1 }
+    private companion object {
+        const val VERSION = 1
+        const val TAG = "FFDownloadStore"
+    }
 }

@@ -26,6 +26,8 @@ fun interface VolumeSource {
 class StorageLocations(
     private val source: VolumeSource,
     private val context: Context? = null,
+    /** test hook for the free space of a folder; null = ask the system */
+    private val freeSpace: ((File) -> Long)? = null,
     private val onMove: suspend (StorageLocation) -> Unit = {},
 ) {
     /** The phone always, the card when one exists (also while it is unmounted, then with mounted = false). */
@@ -46,6 +48,7 @@ class StorageLocations(
 
     /** Bytes that can be written under [dir], counting cache the system would clear for us (falls back to the plain free space). */
     fun freeBytes(dir: File): Long {
+        freeSpace?.let { return it(dir) }
         val sm = context?.getSystemService(StorageManager::class.java) ?: return dir.usableSpace
         return try { sm.getAllocatableBytes(sm.getUuidForPath(dir)) } catch (_: IOException) { dir.usableSpace }
     }

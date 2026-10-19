@@ -78,10 +78,10 @@ class DownloadQueueTest {
         val sub = File(f.parentFile, DownloadFiles.subtitle(LIC, 0, "vtt")).apply { writeText("x") }
         env.add(env.record(state = DownloadState.DONE).copy(subtitles = listOf(SubtitleFile("de", sub.name))))
         assertTrue(queue.delete(LIC))
+        assertNull(env.store.get(LIC)) // the bridge's answer only needs the in-memory row; files go off the UI thread
+        runBlocking { queue.awaitScheduled() }
         assertFalse(f.exists())
         assertFalse(sub.exists())
-        assertNull(env.store.get(LIC))
-        runBlocking { queue.awaitScheduled() }
         assertEquals(1, env.workManager.getWorkInfosForUniqueWork(DownloadQueue.deleteName(LIC)).get().size)
         assertFalse(queue.delete(LIC))
     }

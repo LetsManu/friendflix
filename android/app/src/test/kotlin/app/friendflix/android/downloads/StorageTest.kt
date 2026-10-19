@@ -43,9 +43,25 @@ class StorageTest {
     @Test fun storeSurvivesReload() {
         env.add(env.record(state = DownloadState.DONE, etag = "\"e\"").copy(title = TITLE, subtitles = listOf(SubtitleFile("de", "x.vtt")), bytes = 5, total = 9, expiresAt = 7, lastCheck = 8))
         assertFalse(env.store.insertIfAbsent(env.record()))
+        env.store.flush()
         val again = DownloadStore(File(tmp.root, "downloads.json"))
         assertEquals(env.store.get(LIC), again.get(LIC))
         assertEquals(DownloadState.DONE, again.get(LIC)!!.state)
+    }
+
+    @Test fun writesAreAsyncButOrdered() {
+        repeat(50) { i -> env.store.update(LIC) { it.copy(bytes = i.toLong()) } ?: env.add(env.record().copy(bytes = i.toLong())) }
+        env.store.flush()
+        assertEquals(49L, DownloadStore(File(tmp.root, "downloads.json")).get(LIC)!!.bytes)
+    }
+
+    @Test fun storeWritesStayOffTheCallingThread() {
+        val calling = Thread.currentThread()
+        val seen = java.util.concurrent.atomic.AtomicReference<Thread>()
+        val store = DownloadStore(File(tmp.root, "other.json")) { seen.set(Thread.currentThread()) }
+        store.insertIfAbsent(env.record())
+        store.flush()
+        assertTrue(seen.get() != null && seen.get() != calling)
     }
 
     @Test fun moveCopiesVerifiesThenDeletesTheSource() = runBlocking {
