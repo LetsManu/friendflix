@@ -596,7 +596,7 @@ const pl: Translation<typeof de> = {
       pending_approvals: { one: '{n} logowanie czeka na zatwierdzenie', few: '{n} logowania czekają na zatwierdzenie', many: '{n} logowań czeka na zatwierdzenie', other: '{n} logowania czeka na zatwierdzenie' },
     },
     config: {
-      removed_env: { one: 'Stara nazwa zmiennej w .env jest od wersji 2.0 ignorowana: usługa próśb używa teraz REQUESTS_URL i REQUESTS_API_KEY', few: '{n} stare nazwy zmiennych w .env są od wersji 2.0 ignorowane: usługa próśb używa teraz REQUESTS_URL i REQUESTS_API_KEY', many: '{n} starych nazw zmiennych w .env jest od wersji 2.0 ignorowanych: usługa próśb używa teraz REQUESTS_URL i REQUESTS_API_KEY', other: '{n} starej nazwy zmiennej w .env jest od wersji 2.0 ignorowane: usługa próśb używa teraz REQUESTS_URL i REQUESTS_API_KEY' },
+      removed_env: { one: '{n} stara nazwa zmiennej w .env jest od wersji 2.0 ignorowana: usługa próśb używa teraz REQUESTS_URL i REQUESTS_API_KEY', few: '{n} stare nazwy zmiennych w .env są od wersji 2.0 ignorowane: usługa próśb używa teraz REQUESTS_URL i REQUESTS_API_KEY', many: '{n} starych nazw zmiennych w .env jest od wersji 2.0 ignorowanych: usługa próśb używa teraz REQUESTS_URL i REQUESTS_API_KEY', other: '{n} starej nazwy zmiennej w .env jest od wersji 2.0 ignorowane: usługa próśb używa teraz REQUESTS_URL i REQUESTS_API_KEY' },
     },
   },
 };

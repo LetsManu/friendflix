@@ -462,7 +462,7 @@ export default {
       pending_approvals: { one: '{n} Anmeldung wartet auf Freigabe', other: '{n} Anmeldungen warten auf Freigabe' },
     },
     config: {
-      removed_env: { one: 'Ein alter Variablenname in der .env wird seit 2.0 ignoriert: der Anfragen-Dienst nutzt jetzt REQUESTS_URL und REQUESTS_API_KEY', other: '{n} alte Variablennamen in der .env werden seit 2.0 ignoriert: der Anfragen-Dienst nutzt jetzt REQUESTS_URL und REQUESTS_API_KEY' },
+      removed_env: { one: '{n} alter Variablenname in der .env wird seit 2.0 ignoriert: der Anfragen-Dienst nutzt jetzt REQUESTS_URL und REQUESTS_API_KEY', other: '{n} alte Variablennamen in der .env werden seit 2.0 ignoriert: der Anfragen-Dienst nutzt jetzt REQUESTS_URL und REQUESTS_API_KEY' },
     },
   },
 } as const;

@@ -558,7 +558,7 @@ const en: Translation<typeof de> = {
       pending_approvals: { one: '{n} sign-in is waiting for approval', other: '{n} sign-ins are waiting for approval' },
     },
     config: {
-      removed_env: { one: 'An old variable name in .env is ignored since 2.0: the request service now uses REQUESTS_URL and REQUESTS_API_KEY', other: '{n} old variable names in .env are ignored since 2.0: the request service now uses REQUESTS_URL and REQUESTS_API_KEY' },
+      removed_env: { one: '{n} old variable name in .env is ignored since 2.0: the request service now uses REQUESTS_URL and REQUESTS_API_KEY', other: '{n} old variable names in .env are ignored since 2.0: the request service now uses REQUESTS_URL and REQUESTS_API_KEY' },
     },
   },
 };

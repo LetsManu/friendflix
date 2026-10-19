@@ -567,7 +567,7 @@ const es: Translation<typeof de> = {
       pending_approvals: { one: '{n} inicio de sesión espera aprobación', many: '{n} inicios de sesión esperan aprobación', other: '{n} inicios de sesión esperan aprobación' },
     },
     config: {
-      removed_env: { one: 'Un nombre de variable antiguo en .env se ignora desde la 2.0: el servicio de solicitudes usa ahora REQUESTS_URL y REQUESTS_API_KEY', many: '{n} nombres de variable antiguos en .env se ignoran desde la 2.0: el servicio de solicitudes usa ahora REQUESTS_URL y REQUESTS_API_KEY', other: '{n} nombres de variable antiguos en .env se ignoran desde la 2.0: el servicio de solicitudes usa ahora REQUESTS_URL y REQUESTS_API_KEY' },
+      removed_env: { one: '{n} nombre de variable antiguo en .env se ignora desde la 2.0: el servicio de solicitudes usa ahora REQUESTS_URL y REQUESTS_API_KEY', many: '{n} nombres de variable antiguos en .env se ignoran desde la 2.0: el servicio de solicitudes usa ahora REQUESTS_URL y REQUESTS_API_KEY', other: '{n} nombres de variable antiguos en .env se ignoran desde la 2.0: el servicio de solicitudes usa ahora REQUESTS_URL y REQUESTS_API_KEY' },
     },
   },
 };

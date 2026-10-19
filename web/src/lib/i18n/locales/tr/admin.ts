@@ -558,7 +558,7 @@ const tr: Translation<typeof de> = {
       pending_approvals: { one: '{n} giriş onay bekliyor', other: '{n} giriş onay bekliyor' },
     },
     config: {
-      removed_env: { one: '.env içindeki eski bir değişken adı 2.0’dan beri yok sayılıyor: istek hizmeti artık REQUESTS_URL ve REQUESTS_API_KEY kullanıyor', other: '.env içindeki {n} eski değişken adı 2.0’dan beri yok sayılıyor: istek hizmeti artık REQUESTS_URL ve REQUESTS_API_KEY kullanıyor' },
+      removed_env: { one: '.env içindeki {n} eski değişken adı 2.0’dan beri yok sayılıyor: istek hizmeti artık REQUESTS_URL ve REQUESTS_API_KEY kullanıyor', other: '.env içindeki {n} eski değişken adı 2.0’dan beri yok sayılıyor: istek hizmeti artık REQUESTS_URL ve REQUESTS_API_KEY kullanıyor' },
     },
   },
 };

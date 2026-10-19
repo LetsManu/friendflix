@@ -567,7 +567,7 @@ const it: Translation<typeof de> = {
       pending_approvals: { one: '{n} accesso in attesa di approvazione', many: '{n} accessi in attesa di approvazione', other: '{n} accessi in attesa di approvazione' },
     },
     config: {
-      removed_env: { one: 'Un vecchio nome di variabile in .env viene ignorato dalla 2.0: il servizio richieste ora usa REQUESTS_URL e REQUESTS_API_KEY', many: '{n} vecchi nomi di variabile in .env vengono ignorati dalla 2.0: il servizio richieste ora usa REQUESTS_URL e REQUESTS_API_KEY', other: '{n} vecchi nomi di variabile in .env vengono ignorati dalla 2.0: il servizio richieste ora usa REQUESTS_URL e REQUESTS_API_KEY' },
+      removed_env: { one: '{n} vecchio nome di variabile in .env viene ignorato dalla 2.0: il servizio richieste ora usa REQUESTS_URL e REQUESTS_API_KEY', many: '{n} vecchi nomi di variabile in .env vengono ignorati dalla 2.0: il servizio richieste ora usa REQUESTS_URL e REQUESTS_API_KEY', other: '{n} vecchi nomi di variabile in .env vengono ignorati dalla 2.0: il servizio richieste ora usa REQUESTS_URL e REQUESTS_API_KEY' },
     },
   },
 };
