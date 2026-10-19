@@ -78,7 +78,7 @@ class LicenseCheckerTest {
     @Test fun eightDaysOfflineRefusesPlayback() {
         val f = done(checkedAgo = 8 * DAY)
         assertEquals(PlayBlock.CHECK_IN, checker.verdict(env.store.get(LIC)!!))
-        assertEquals(PlayResult.Blocked(PlayBlock.CHECK_IN), offline.play(LIC))
+        assertEquals(PlayResult.Blocked(PlayBlock.CHECK_IN), runBlocking { offline.play(LIC) })
         assertTrue("nothing is launched", launcher.requests.isEmpty())
         assertTrue("offline: nothing is deleted", f.exists())
         assertEquals(DownloadState.DONE, env.store.get(LIC)!!.state)
@@ -135,7 +135,7 @@ class LicenseCheckerTest {
         assertNull(checker.verdict(env.store.get(LIC)!!))
         clock -= 2 * 60_000 // now more than 5 min before the last check
         assertEquals(PlayBlock.CLOCK, checker.verdict(env.store.get(LIC)!!))
-        assertEquals(PlayResult.Blocked(PlayBlock.CLOCK), offline.play(LIC))
+        assertEquals(PlayResult.Blocked(PlayBlock.CLOCK), runBlocking { offline.play(LIC) })
         // online again: the server's answer lifts the block
         assertTrue(checker.check() is CheckOutcome.Checked)
         assertNull(checker.verdict(env.store.get(LIC)!!))
@@ -268,7 +268,7 @@ class LicenseCheckerTest {
     @Test fun playHandsTheLocalFileLicenceAndPositionToTheLauncher() {
         val f = done()
         env.store.update(LIC) { it.copy(positionMs = 61_000) }
-        assertEquals(PlayResult.Started, offline.play(LIC))
+        assertEquals(PlayResult.Started, runBlocking { offline.play(LIC) })
         val req = launcher.requests.single()
         assertEquals(ITEM, req.itemId)
         assertEquals(PROFILE, req.profileId)
@@ -282,13 +282,13 @@ class LicenseCheckerTest {
     @Test fun declinedLaunchIsReported() {
         done()
         launcher.answer = false
-        assertEquals(PlayResult.Declined, offline.play(LIC))
+        assertEquals(PlayResult.Declined, runBlocking { offline.play(LIC) })
     }
 
     @Test fun missingFileIsReported() {
         val f = done()
         f.delete()
-        assertEquals(PlayResult.Blocked(PlayBlock.FILE_MISSING), offline.play(LIC))
+        assertEquals(PlayResult.Blocked(PlayBlock.FILE_MISSING), runBlocking { offline.play(LIC) })
     }
 
     @Test fun positionUpdatesTheRecordAndQueuesASync() {

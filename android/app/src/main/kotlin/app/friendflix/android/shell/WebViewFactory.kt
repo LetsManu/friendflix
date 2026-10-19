@@ -33,11 +33,19 @@ object ExternalLinks {
 class ShellWebViewClient(
     private val policy: OriginPolicy,
     private val onRenderGone: () -> Unit = {},
+    /**
+     * The native player for a page load of the watch page (`/watch/<id>`: link, deep link, reload): true = it plays, the WebView
+     * stays where it was; false = the web player loads. In-page navigation (the web UI's own router) never comes through here.
+     */
+    private val onWatch: ((WatchLink) -> Boolean)? = null,
     private val openExternal: (Uri) -> Unit,
 ) : WebViewClient() {
+    /** The watch URL whose native start was declined: its page load goes ahead without asking again. */
+    private var declined: String? = null
+
     override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
         val uri = request.url
-        if (policy.isAppOrigin(uri)) return false
+        if (policy.isAppOrigin(uri)) return request.isForMainFrame && nativeWatch(uri, rememberDecline = true)
         // Frames inside the page are the page's business (CSP governs them); only top-level navigation leaves the app.
         if (!request.isForMainFrame) return false
         if (ExternalLinks.isOpenable(uri)) openExternal(uri)
@@ -61,12 +69,34 @@ class ShellWebViewClient(
     override fun onPageStarted(view: WebView, url: String?, favicon: Bitmap?) {
         if (url == null || url == "about:blank") return
         val uri = url.toUri()
-        if (policy.isAppOrigin(uri)) return
+        if (policy.isAppOrigin(uri)) {
+            // loadUrl / reload / history loads skip shouldOverrideUrlLoading: a watch page is handed to the native player here
+            if (nativeWatch(uri, rememberDecline = false)) {
+                view.stopLoading()
+                if (view.canGoBack()) view.goBack() else view.loadUrl(policy.origin.toString())
+            }
+            return
+        }
         view.stopLoading()
         if (ExternalLinks.isOpenable(uri)) openExternal(uri)
         val current = view.url
         if (current != null && policy.isAppOrigin(current.toUri())) return // the app page is still showing: nothing to undo
         if (view.canGoBack()) view.goBack() else view.loadUrl(policy.origin.toString())
+    }
+
+    /**
+     * True when [uri] is the watch page and the native player took it. A link declined in shouldOverrideUrlLoading is remembered so
+     * that the page load right after it ([onPageStarted]) goes ahead without asking twice.
+     */
+    private fun nativeWatch(uri: Uri, rememberDecline: Boolean): Boolean {
+        val watch = onWatch ?: return false
+        val link = WatchLinks.parse(uri, policy) ?: return false
+        val url = uri.toString()
+        if (declined == url) { declined = null; return false }
+        declined = null
+        if (watch(link)) return true
+        if (rememberDecline) declined = url
+        return false
     }
 
     override fun onRenderProcessGone(view: WebView, detail: RenderProcessGoneDetail): Boolean {
@@ -79,7 +109,7 @@ object WebViewFactory {
     @SuppressLint("SetJavaScriptEnabled")
     fun create(
         context: Context, policy: OriginPolicy, versionName: String, bridge: NativeBridge? = null,
-        onRenderGone: () -> Unit = {}, openExternal: (Uri) -> Unit,
+        onRenderGone: () -> Unit = {}, onWatch: ((WatchLink) -> Boolean)? = null, openExternal: (Uri) -> Unit,
     ): WebView {
         val view = WebView(context)
         view.settings.apply {
@@ -91,7 +121,7 @@ object WebViewFactory {
             safeBrowsingEnabled = true
             userAgentString = "$userAgentString FriendFlixAndroid/$versionName"
         }
-        view.webViewClient = ShellWebViewClient(policy, onRenderGone, openExternal)
+        view.webViewClient = ShellWebViewClient(policy, onRenderGone, onWatch, openExternal)
         // Downloads go through the native bridge only; a plain WebView download request is dropped.
         view.setDownloadListener { _, _, _, _, _ -> }
         // Registered before any page loads. Without WebView support there is simply no bridge (the web UI then never offers native paths).

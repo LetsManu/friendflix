@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 package app.friendflix.android.bridge
 
-import java.io.File
+import app.friendflix.android.offline.OfflineMedia
 
 /**
  * Messages between the web UI and the app. Everything here is plain data: the bridge validates before it builds one of these,
@@ -20,19 +20,11 @@ data class PlayRequest(
     val audio: String?,
     /** preferred subtitle language / track id (same shape as [audio]) */
     val subtitle: String?,
-    /** set when playing a native download from the offline list (never from the bridge): the local encrypted files to play */
+    /**
+     * Set when playing a native download from the offline list (never from the bridge): the local encrypted files to play. Only the
+     * offline gate can make one ([OfflineMedia], `Offline.play` / `Offline.prepare`).
+     */
     val offline: OfflineMedia? = null,
-)
-
-/**
- * A downloaded title as the player gets it (Task 7 offline list → Task 8 player). All files are FFE1-encrypted (read them with
- * `EncryptedDataSource` and the download keys); [licenseId] is what the player reports positions under (`Offline.recordPosition`).
- */
-data class OfflineMedia(
-    val licenseId: String,
-    val video: File,
-    /** text subtitles next to the video: language and encrypted `.vtt` / `.srt` file */
-    val subtitles: List<Pair<String, File>>,
 )
 
 /** Hand over a download whose licence the web UI already created on the server. Task 6 implements [DownloadSink]. */

@@ -44,4 +44,49 @@
     <string name="offline_reason_keys">Not available on this device right now.</string>
     <string name="offline_reason_storage">The storage card with this download is not inserted.</string>
     <string name="offline_reason_file_missing">The file was not found on this device.</string>
+    <!-- native player (Task 8); texts follow the web player's (web/src/lib/i18n/locales/*/player.ts) -->
+    <string name="player_back">Back</string>
+    <string name="player_play">Play</string>
+    <string name="player_pause">Pause</string>
+    <string name="player_back10">10 seconds back</string>
+    <string name="player_forward10">10 seconds forward</string>
+    <string name="player_next">Next episode</string>
+    <string name="player_watch_credits">Watch credits</string>
+    <string name="player_still_title">Still there?</string>
+    <string name="player_still_text">Autoplay is paused. Up next: %1$s</string>
+    <string name="player_keep_watching">Continue watching</string>
+    <string name="player_next_counting">Next episode · in %1$d s</string>
+    <string name="player_quality_changed">Quality: %1$s</string>
+    <plurals name="player_starts_in">
+        <item quantity="one">Next episode starts in %d second</item>
+        <item quantity="other">Next episode starts in %d seconds</item>
+    </plurals>
+    <string name="player_episode_code">S%1$d:E%2$d</string>
+    <string name="player_error_title">Can’t play this</string>
+    <string name="player_error_generic">Can’t play this.</string>
+    <string name="player_error_connection">The connection to the server was lost or the video is damaged.</string>
+    <string name="player_error_signed_out">Please sign in to FriendFlix again.</string>
+    <plurals name="player_error_max_streams">
+        <item quantity="one">At most %d stream at a time is allowed.</item>
+        <item quantity="other">At most %d streams at a time are allowed.</item>
+    </plurals>
+    <string name="player_retry">Try again</string>
+    <string name="player_reconnecting">Connection lost – trying again …</string>
+    <string name="player_reconnected">Connection restored</string>
+    <string name="player_switching_transcode">Switching to transcoding …</string>
+    <string name="player_tracks">Audio and subtitles</string>
+    <string name="player_audio">Audio</string>
+    <string name="player_subtitles">Subtitles</string>
+    <string name="player_subtitles_off">Off</string>
+    <string name="player_lang_saved">Remembered for this series</string>
+    <string name="player_quality">Quality</string>
+    <string name="player_quality_auto">Automatic</string>
+    <string name="player_quality_original">Original</string>
+    <string name="player_pip">Picture-in-picture</string>
+    <string name="player_cast">Play on TV</string>
+    <string name="player_skip_intro">Skip intro</string>
+    <string name="player_skip_outro">Skip credits</string>
+    <string name="player_skip_recap">Skip recap</string>
+    <string name="player_skip_preview">Skip preview</string>
+    <string name="player_skipped_intro">Intro skipped</string>
 </resources>

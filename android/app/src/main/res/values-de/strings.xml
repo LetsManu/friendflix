@@ -41,4 +41,49 @@
     <string name="offline_reason_keys">Auf diesem Gerät gerade nicht verfügbar.</string>
     <string name="offline_reason_storage">Die Speicherkarte mit diesem Download ist nicht eingesetzt.</string>
     <string name="offline_reason_file_missing">Die Datei wurde auf diesem Gerät nicht gefunden.</string>
+    <!-- nativer Player (Task 8); Texte wie im Web-Player (web/src/lib/i18n/locales/*/player.ts) -->
+    <string name="player_back">Zurück</string>
+    <string name="player_play">Abspielen</string>
+    <string name="player_pause">Pause</string>
+    <string name="player_back10">10 Sekunden zurück</string>
+    <string name="player_forward10">10 Sekunden vor</string>
+    <string name="player_next">Nächste Folge</string>
+    <string name="player_watch_credits">Abspann ansehen</string>
+    <string name="player_still_title">Noch da?</string>
+    <string name="player_still_text">Die automatische Wiedergabe ist pausiert. Als Nächstes: %1$s</string>
+    <string name="player_keep_watching">Weiter ansehen</string>
+    <string name="player_next_counting">Nächste Folge · in %1$d s</string>
+    <string name="player_quality_changed">Qualität: %1$s</string>
+    <plurals name="player_starts_in">
+        <item quantity="one">Nächste Folge startet in %d Sekunde</item>
+        <item quantity="other">Nächste Folge startet in %d Sekunden</item>
+    </plurals>
+    <string name="player_episode_code">S%1$d:F%2$d</string>
+    <string name="player_error_title">Wiedergabe nicht möglich</string>
+    <string name="player_error_generic">Wiedergabe nicht möglich.</string>
+    <string name="player_error_connection">Die Verbindung zum Server wurde unterbrochen oder das Video ist beschädigt.</string>
+    <string name="player_error_signed_out">Bitte melde dich wieder bei FriendFlix an.</string>
+    <plurals name="player_error_max_streams">
+        <item quantity="one">Maximal %d gleichzeitiger Stream erlaubt.</item>
+        <item quantity="other">Maximal %d gleichzeitige Streams erlaubt.</item>
+    </plurals>
+    <string name="player_retry">Erneut versuchen</string>
+    <string name="player_reconnecting">Verbindung unterbrochen – neuer Versuch …</string>
+    <string name="player_reconnected">Verbindung wiederhergestellt</string>
+    <string name="player_switching_transcode">Wechsle auf Transcoding …</string>
+    <string name="player_tracks">Audio und Untertitel</string>
+    <string name="player_audio">Audio</string>
+    <string name="player_subtitles">Untertitel</string>
+    <string name="player_subtitles_off">Aus</string>
+    <string name="player_lang_saved">Für diese Serie gemerkt</string>
+    <string name="player_quality">Qualität</string>
+    <string name="player_quality_auto">Automatisch</string>
+    <string name="player_quality_original">Original</string>
+    <string name="player_pip">Bild-in-Bild</string>
+    <string name="player_cast">Auf dem Fernseher abspielen</string>
+    <string name="player_skip_intro">Intro überspringen</string>
+    <string name="player_skip_outro">Abspann überspringen</string>
+    <string name="player_skip_recap">Rückblick überspringen</string>
+    <string name="player_skip_preview">Vorschau überspringen</string>
+    <string name="player_skipped_intro">Intro übersprungen</string>
 </resources>

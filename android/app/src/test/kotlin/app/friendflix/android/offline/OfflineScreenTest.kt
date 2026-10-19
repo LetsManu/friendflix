@@ -72,6 +72,9 @@ class OfflineScreenTest {
         assertEquals(a.getString(R.string.offline_reason_checkin), blocked.text.toString())
         assertFalse(rows[1].findViewById<Button>(R.id.offline_item_play).isEnabled)
         rows[0].findViewById<Button>(R.id.offline_item_play).performClick()
+        // play opens the keys first (off the main thread) when the screen's own open has not finished yet
+        val until = System.currentTimeMillis() + 5_000
+        while (launcher.requests.isEmpty() && System.currentTimeMillis() < until) { ShadowLooper.idleMainLooper(); Thread.sleep(10) }
         val req = launcher.requests.single()
         assertEquals(LIC, req.offline!!.licenseId)
         assertEquals(5_000L, req.startMs)

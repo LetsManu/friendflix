@@ -19,13 +19,13 @@ import app.friendflix.android.bridge.DownloadEntry
 import app.friendflix.android.bridge.DownloadRequest
 import app.friendflix.android.bridge.DownloadSink
 import app.friendflix.android.bridge.NativeBridge
-import app.friendflix.android.bridge.NoPlayerLauncher
 import app.friendflix.android.bridge.PlayRequest
 import app.friendflix.android.bridge.PlayerLauncher
 import app.friendflix.android.offline.NetworkWatch
 import app.friendflix.android.offline.Offline
 import app.friendflix.android.offline.OfflineActivity
 import app.friendflix.android.offline.OfflineGate
+import app.friendflix.android.player.NativePlayerLauncher
 import app.friendflix.android.settings.AppSettings
 import app.friendflix.android.setup.ServerProbe
 import app.friendflix.android.setup.SetupActivity
@@ -56,9 +56,10 @@ class ShellActivity : ComponentActivity() {
             }
             WebViewFactory.setDebuggable(BuildConfig.DEBUG)
             val policy = OriginPolicy(origin)
-            // Task 8 (player) swaps its placeholder and flips its flag; until then the web UI plays in the page.
             // openSettings is a no-op until the settings screen exists (Task 11).
             val offline = Offline.get(applicationContext)
+            val native = NativePlayerLauncher.forApp(applicationContext)
+            offline.launcher = native // the offline list plays through the same player
             val downloads = offline.downloads.queue
             downloads.resumeAll() // app start: downloads paused by a sign-out continue (one try; a 401 pauses them again)
             offline.startInBackground() // keys, licence check, position sync
@@ -69,9 +70,9 @@ class ShellActivity : ComponentActivity() {
                 override fun enqueue(req: DownloadRequest): Boolean { offline.noteProfile(req.profileId); return downloads.enqueue(req) }
             }
             val player = object : PlayerLauncher {
-                override fun launch(req: PlayRequest): Boolean { offline.noteProfile(req.profileId); return NoPlayerLauncher.launch(req) }
+                override fun launch(req: PlayRequest): Boolean { offline.noteProfile(req.profileId); return native.launch(req) }
             }
-            val bridge = NativeBridge(policy, player, sink, Capabilities(play = false, download = true, cast = false), openSettings = {})
+            val bridge = NativeBridge(policy, player, sink, Capabilities(play = true, download = true, cast = false), openSettings = {})
             this@ShellActivity.bridge = bridge
             launch {
                 var last = emptyList<DownloadEntry>()
@@ -82,7 +83,13 @@ class ShellActivity : ComponentActivity() {
             }
             val view = WebViewFactory.create(
                 this@ShellActivity, policy, BuildConfig.VERSION_NAME, bridge,
-                onRenderGone = ::onRenderGone, openExternal = ::openExternal,
+                onRenderGone = ::onRenderGone,
+                // a page load of /watch/<id> (deep link, reload) plays natively too, for the last active profile; none known → web player
+                onWatch = { link ->
+                    val profile = offline.state.lastProfileId
+                    profile != null && native.launch(PlayRequest(link.itemId, profile, link.startMs, null, link.audio, link.subtitle))
+                },
+                openExternal = ::openExternal,
             )
             ViewCompat.setOnApplyWindowInsetsListener(view) { v, insets ->
                 val bars = insets.getInsets(WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.ime())

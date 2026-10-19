@@ -9,7 +9,6 @@ import android.net.Network
 import androidx.annotation.VisibleForTesting
 import app.friendflix.android.bridge.MAX_START_MS
 import app.friendflix.android.bridge.NoPlayerLauncher
-import app.friendflix.android.bridge.OfflineMedia
 import app.friendflix.android.bridge.PlayRequest
 import app.friendflix.android.bridge.PlayerLauncher
 import app.friendflix.android.downloads.Downloads
@@ -19,44 +18,64 @@ import java.io.File
 sealed interface PlayResult {
     /** the player took it */
     data object Started : PlayResult
-    /** the player declined (until Task 8 the app's launcher is a stub that always declines) */
+    /** the player declined */
     data object Declined : PlayResult
     data class Blocked(val reason: PlayBlock) : PlayResult
+}
+
+/** The offline gate's answer: a request carrying a fresh [OfflineMedia], or why the download cannot be played now. */
+sealed interface Prepared {
+    class Ready(val request: PlayRequest) : Prepared
+    data class Blocked(val reason: PlayBlock) : Prepared
 }
 
 /**
  * The offline side of native downloads, wired once per process ([get]; tests [install] their own): licence checks ([checker]), the
  * position / watched queue ([sync]) and playback from the offline list through [launcher].
  *
- * API for Task 8 (player): set [launcher]; report positions with [recordPosition]. Task 11 (menu / notification): open the list with
- * [OfflineActivity.intent].
+ * API for the player (Task 8): [launcher] is the native player; positions go to [recordPosition]; a restored player (process death,
+ * recreation) asks [prepare] again with the licence id it kept and plays only the [OfflineMedia] it gets back. Task 11 (menu /
+ * notification): open the list with [OfflineActivity.intent].
  */
 class Offline(val downloads: Downloads, dir: File, private val now: () -> Long = System::currentTimeMillis) {
     val state = OfflineState(File(dir, "offline-state.json"))
     val sync = SyncQueue(File(dir, "sync-queue.json"))
     val checker = LicenseChecker(downloads, state, sync, now)
-    /** Plays an [OfflineMedia] request. Task 8 sets the real player; until then the stub declines and the list says so. */
+    /** The native player (set by the shell); the stub declines. */
     @Volatile var launcher: PlayerLauncher = NoPlayerLauncher
 
     /** The web UI handed over a play or download for [profileId]: that profile is the active one. */
     fun noteProfile(profileId: String) = state.setProfile(profileId)
 
-    /** Plays a download from the offline list: checks the licence rules again, then hands the local files to [launcher]. */
-    fun play(licenseId: String): PlayResult {
-        val r = downloads.store.get(licenseId) ?: return PlayResult.Blocked(PlayBlock.NOT_DONE)
-        checker.verdict(r)?.let { return PlayResult.Blocked(it) }
+    /**
+     * The offline gate, and the only place an [OfflineMedia] is made: opens the download keys first when they are not open yet (a
+     * Keystore that cannot give them blocks, it never passes), then checks the licence rules ([LicenseChecker.verdict]), the storage
+     * card and the file. Used by [play] and by the player when it is restored.
+     */
+    suspend fun prepare(licenseId: String): Prepared {
+        if (checker.keysAvailable.value != true) checker.openKeys()
+        val r = downloads.store.get(licenseId) ?: return Prepared.Blocked(PlayBlock.NOT_DONE)
+        checker.verdict(r)?.let { return Prepared.Blocked(it) }
         checker.touch()
-        val dir = downloads.queue.dirOf(r) ?: return PlayResult.Blocked(PlayBlock.STORAGE_UNAVAILABLE)
+        val dir = downloads.queue.dirOf(r) ?: return Prepared.Blocked(PlayBlock.STORAGE_UNAVAILABLE)
         val video = File(dir, r.file)
-        if (!video.isFile) return PlayResult.Blocked(PlayBlock.FILE_MISSING)
+        if (!video.isFile) return Prepared.Blocked(PlayBlock.FILE_MISSING)
         val subs = r.subtitles.map { it.lang to File(dir, it.file) }.filter { it.second.isFile }
         val start = r.positionMs.takeIf { it > 0 }?.coerceAtMost(MAX_START_MS)
-        val req = PlayRequest(r.itemId, r.profileId, start, null, null, null, OfflineMedia(licenseId, video, subs))
-        return if (launcher.launch(req)) PlayResult.Started else PlayResult.Declined
+        return Prepared.Ready(PlayRequest(r.itemId, r.profileId, start, null, null, null, OfflineMedia(licenseId, video, subs, Passed)))
     }
 
+    /** Plays a download from the offline list: [prepare], then hands the local files to [launcher]. */
+    suspend fun play(licenseId: String): PlayResult = when (val p = prepare(licenseId)) {
+        is Prepared.Blocked -> PlayResult.Blocked(p.reason)
+        is Prepared.Ready -> if (launcher.launch(p.request)) PlayResult.Started else PlayResult.Declined
+    }
+
+    /** The verdict passed: the one value that can build an [OfflineMedia]. */
+    private data object Passed : OfflineVerdict()
+
     /**
-     * Task 8: the offline player reached [positionMs] (or finished: [played]). Stored on the download (the list resumes there) and
+     * The offline player reached [positionMs] (or finished: [played]). Stored on the download (the list resumes there) and
      * queued for the server, sent on the next start / reconnect.
      */
     fun recordPosition(licenseId: String, positionMs: Long, played: Boolean) {

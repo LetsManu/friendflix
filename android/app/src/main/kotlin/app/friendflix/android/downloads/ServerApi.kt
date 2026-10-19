@@ -114,7 +114,11 @@ sealed interface ProgressAnswer {
  * answers 409 when another profile is active, which is [LicenceAnswer.Wait], never a revocation. Redirects are not followed.
  */
 class ServerApi(val origin: HttpUrl, base: OkHttpClient, cookies: CookieSource) {
-    private val client = base.newBuilder()
+    /**
+     * The origin-only cookie client (session cookie for [origin] only, no redirects). The player streams through it
+     * (media3-datasource-okhttp): the gateway's stream URLs are same-origin, and no other host ever gets the cookie.
+     */
+    val client: OkHttpClient = base.newBuilder()
         .cookieJar(ServerCookieJar(origin, cookies))
         .followRedirects(false).followSslRedirects(false)
         .connectTimeout(20, TimeUnit.SECONDS).readTimeout(60, TimeUnit.SECONDS)
@@ -242,16 +246,31 @@ class ServerApi(val origin: HttpUrl, base: OkHttpClient, cookies: CookieSource) 
         }
     }
 
+    /** `GET` of a same-origin API path (`/api/...`) for [profileId]: status and JSON body (null when not JSON / too large). */
+    fun getJson(path: String, profileId: String): Pair<Int, JSONObject?> {
+        val url = resolve(path) ?: throw IOException("not an app path")
+        client.newCall(api(url, profileId).get().build()).execute().use { r ->
+            if (r.code == 401) throw SessionExpired()
+            return r.code to bodyJson(r)
+        }
+    }
+
+    /** A JSON `POST` / `PUT` of a same-origin API path with the CSRF token: status and body, or null when no token could be had. */
+    fun sendJson(path: String, profileId: String, body: JSONObject, method: String = "POST"): Pair<Int, JSONObject?>? {
+        val url = resolve(path) ?: throw IOException("not an app path")
+        return postStatus(url, profileId, body, method)
+    }
+
     private fun api(url: HttpUrl, profileId: String) = Request.Builder().url(url).header("accept", "application/json").header("x-ff-profile", profileId)
 
     private fun post(url: HttpUrl, profileId: String, body: JSONObject): JSONObject? =
         postStatus(url, profileId, body)?.let { (code, j) -> if (code == 200) j ?: JSONObject() else null }
 
     /** A JSON POST with the CSRF token (refetched once on a csrf 403): status and body, or null when no token could be had. */
-    private fun postStatus(url: HttpUrl, profileId: String, body: JSONObject): Pair<Int, JSONObject?>? {
+    private fun postStatus(url: HttpUrl, profileId: String, body: JSONObject, method: String = "POST"): Pair<Int, JSONObject?>? {
         repeat(2) { attempt ->
             val token = csrfToken() ?: return null
-            val req = api(url, profileId).header("x-csrf-token", token).post(body.toString().toRequestBody(JSON)).build()
+            val req = api(url, profileId).header("x-csrf-token", token).method(method, body.toString().toRequestBody(JSON)).build()
             client.newCall(req).execute().use { r ->
                 if (r.code == 401) throw SessionExpired()
                 val j = bodyJson(r)

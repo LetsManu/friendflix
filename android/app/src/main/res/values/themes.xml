@@ -8,4 +8,10 @@
         <item name="android:windowBackground">@color/surface</item>
         <item name="android:colorBackground">@color/surface</item>
     </style>
+
+    <style name="Theme.FriendFlix.Player">
+        <item name="android:windowBackground">@android:color/black</item>
+        <item name="android:colorBackground">@android:color/black</item>
+        <item name="android:colorAccent">@color/accent</item>
+    </style>
 </resources>

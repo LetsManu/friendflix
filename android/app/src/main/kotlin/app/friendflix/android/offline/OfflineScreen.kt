@@ -147,12 +147,14 @@ class OfflineActivity : ComponentActivity() {
     }
 
     private fun play(licenseId: String) {
-        when (val res = offline.play(licenseId)) {
-            PlayResult.Started -> Unit
-            PlayResult.Declined -> Toast.makeText(this, R.string.offline_play_failed, Toast.LENGTH_SHORT).show()
-            is PlayResult.Blocked -> {
-                Toast.makeText(this, reasonText(res.reason), Toast.LENGTH_LONG).show()
-                render()
+        lifecycleScope.launch {
+            when (val res = offline.play(licenseId)) {
+                PlayResult.Started -> Unit
+                PlayResult.Declined -> Toast.makeText(this@OfflineActivity, R.string.offline_play_failed, Toast.LENGTH_SHORT).show()
+                is PlayResult.Blocked -> {
+                    Toast.makeText(this@OfflineActivity, reasonText(res.reason), Toast.LENGTH_LONG).show()
+                    render()
+                }
             }
         }
     }
