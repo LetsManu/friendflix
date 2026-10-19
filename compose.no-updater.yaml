@@ -1,0 +1,20 @@
+# SPDX-FileCopyrightText: 2026 Manuel Weißböck
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Optional override for compose.prod.yaml: a stack WITHOUT the updater (the 1.x behaviour). Since 2.0 compose.prod.yaml starts the
+# `updater` and `docker-proxy` services by default; this file moves both into the profile `updater`, so they only start with
+# `--profile updater`. Nothing then has the Docker socket, FriendFlix never pulls or restarts images itself, and Admin -> Update shows
+# the .env line (FF_TAG) and the command to run instead (docs/setup.md "Release channels without the updater").
+#
+#   docker compose -f compose.prod.yaml -f compose.no-updater.yaml up -d
+#   (or put COMPOSE_FILE=compose.prod.yaml:compose.no-updater.yaml into .env and use plain `docker compose up -d`;
+#    with Plex: COMPOSE_FILE=compose.prod.yaml:compose.plex.yaml:compose.no-updater.yaml)
+#
+# A stack whose updater already runs: stop and remove it once (a later `up -d` with this file does not do that by itself):
+#   docker compose -f compose.prod.yaml stop updater docker-proxy && docker compose -f compose.prod.yaml rm -f updater docker-proxy
+# Then pin the images with FF_TAG in .env if you used the Nightly channel or a fixed version (the updater kept that choice in its own
+# volume `updater-state`, which stays and can be deleted).
+services:
+  docker-proxy:
+    profiles: [updater]
+  updater:
+    profiles: [updater]
