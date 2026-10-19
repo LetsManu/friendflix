@@ -121,6 +121,17 @@ class EncryptedDataSourceTest {
         ds.close()
     }
 
+    @Test fun otherSchemesAreRejected() {
+        val ds = EncryptedDataSource(keys)
+        for (u in listOf("https://example.invalid/movie.ffe", "content://x/movie.ffe")) {
+            assertThrows(DataSourceException::class.java) { ds.open(DataSpec(Uri.parse(u))) }
+            ds.close()
+        }
+        // A bare path (no scheme) is accepted.
+        assertEquals(data.size.toLong(), ds.open(DataSpec(Uri.parse(file.absolutePath))))
+        ds.close()
+    }
+
     @Test fun factoryCreatesSources() {
         val ds = EncryptedDataSource.Factory(keys).createDataSource()
         ds.open(DataSpec(uri))

@@ -6,10 +6,12 @@ import android.content.Context
 import android.os.Build
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
-import android.security.keystore.StrongBoxUnavailableException
 import androidx.annotation.RequiresApi
 import java.io.File
+import java.security.GeneralSecurityException
 import java.security.KeyStore
+import java.security.ProviderException
+import java.security.UnrecoverableKeyException
 import javax.crypto.KeyGenerator
 import javax.crypto.SecretKey
 
@@ -35,8 +37,8 @@ class KeystoreKeyProvider private constructor(loaded: LoadedKeys) : KeyProvider 
         private const val BLOB_NAME = "ff-dl-v1.keys"
 
         /**
-         * Loads or creates the keys. Blocking (Keystore, disk). Throws only if the Keystore cannot create a key or the blob cannot
-         * be written; a lost or unusable stored key is not an error but [KeyState.RESET].
+         * Loads or creates the keys. Blocking (Keystore, disk). A definitely lost key is not an error but [KeyState.RESET]; anything
+         * possibly transient throws [KeysUnavailableException] and leaves alias and blob alone ("downloads unavailable, retry later").
          */
         @Synchronized
         fun open(context: Context): KeystoreKeyProvider =
@@ -46,21 +48,28 @@ class KeystoreKeyProvider private constructor(loaded: LoadedKeys) : KeyProvider 
 
 /** The wrapping key in the Android Keystore: AES-256-GCM, encrypt|decrypt, no user authentication, StrongBox if the device has it. */
 internal class AndroidKeystoreWrappingKeys(private val alias: String) : WrappingKeyStore {
-    private val keyStore: KeyStore by lazy { KeyStore.getInstance(PROVIDER).apply { load(null) } }
+    private val keyStore: KeyStore by lazy { KeyStore.getInstance(PROVIDER).apply { load(null) } } // failures retried on next access
 
-    @Suppress("TooGenericExceptionCaught") // a broken entry can fail in many ways; all mean "no usable key"
+    /** Null only when the alias is definitely gone or unrecoverable; other Keystore errors are [KeysUnavailableException]. */
+    @Suppress("TooGenericExceptionCaught")
     override fun get(): SecretKey? = try {
-        keyStore.getKey(alias, null) as? SecretKey
-    } catch (_: Exception) {
+        if (!keyStore.containsAlias(alias)) null else keyStore.getKey(alias, null) as? SecretKey
+    } catch (_: UnrecoverableKeyException) {
         null
+    } catch (e: Exception) { // KeyStoreException, ProviderException, I/O from KeyStore.load, ...
+        throw KeysUnavailableException("keystore unavailable", e)
     }
 
+    /** StrongBox first (API 28+); any StrongBox failure falls back to a TEE key. Only the TEE attempt may throw. */
+    @Suppress("TooGenericExceptionCaught")
     override fun create(): SecretKey {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
             try {
                 return generate(strongBox = true)
-            } catch (_: StrongBoxUnavailableException) {
-                // fall through: TEE-backed key
+            } catch (_: ProviderException) { // includes StrongBoxUnavailableException
+                delete()
+            } catch (_: GeneralSecurityException) {
+                delete()
             }
         }
         return generate(strongBox = false)

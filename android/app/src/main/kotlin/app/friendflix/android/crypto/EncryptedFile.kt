@@ -46,8 +46,6 @@ object EncryptedFormat {
     const val TAG_SIZE: Int = 32
     const val HEADER_SIZE: Int = 4 + 1 + 4 + IV_SIZE
 
-    /** Largest chunk size a reader accepts from a header (bounds the per-chunk buffer). */
-    internal const val MAX_CHUNK_SIZE: Int = 16 shl 20
     internal val MAGIC: ByteArray = "FFE1".toByteArray(Charsets.US_ASCII)
     private const val BLOCK = 16
     internal const val CIPHER = "AES/CTR/NoPadding"
@@ -73,12 +71,12 @@ object EncryptedFormat {
     internal fun header(chunkSize: Int, iv: ByteArray): ByteArray =
         ByteBuffer.allocate(HEADER_SIZE).put(MAGIC).put(VERSION.toByte()).putInt(chunkSize).put(iv).array()
 
-    /** Parsed header, or null if [bytes] is not a valid FFE1 v1 header. */
+    /** Parsed header (chunk size, IV), or null unless [bytes] is an FFE1 header with version 1 and chunk size [CHUNK_SIZE]. */
     internal fun parseHeader(bytes: ByteArray): Pair<Int, ByteArray>? {
         if (bytes.size < HEADER_SIZE) return null
         if (!bytes.copyOfRange(0, 4).contentEquals(MAGIC) || bytes[4].toInt() != VERSION) return null
         val chunkSize = ByteBuffer.wrap(bytes, 5, 4).int
-        if (chunkSize <= 0 || chunkSize > MAX_CHUNK_SIZE || chunkSize % BLOCK != 0) return null
+        if (chunkSize != CHUNK_SIZE) return null
         return chunkSize to bytes.copyOfRange(9, 9 + IV_SIZE)
     }
 
@@ -134,24 +132,25 @@ private fun FileChannel.writeFully(src: ByteBuffer, position: Long) {
  * Plaintext is buffered up to one chunk; each full chunk is written as a record by [append]. [finish] writes the final record, fsyncs
  * and closes; only then is the file complete. [close] without [finish] (or a crash) loses the buffered, not yet written plaintext.
  *
- * Resuming (bounded work): the trailing partial record is cut off, then full records are verified from the last one backwards; up to
- * [MAX_BACKTRACK] unverifiable records (e.g. data that never reached the disk before a power loss) are dropped. If none of those
- * verifies (or there is no full record, or the keys changed), the file is started over with a new IV. Records further back are not re-checked here; damage there
- * is caught by the reader ("integrity").
+ * Resuming (bounded work): the trailing partial record is cut off, then full records are verified from the last one backwards. At
+ * most [MAX_BACKTRACK] unverifiable records (e.g. data that never reached the disk before a power loss) are dropped, so at most
+ * MAX_BACKTRACK + 1 records are checked. Writing continues after the first record that verifies. If none does (more garbage than
+ * that, no full record at all, or other keys), the file is started over: truncated, new header, new random IV. Records before the
+ * verified one are not re-checked here; damage there is caught by the reader ("integrity").
  *
  * CTR safety: re-writing a dropped chunk reuses its key + counter. That is safe only because the caller re-fetches the *identical*
  * bytes (same licence file, HTTP Range from [resumeOffset]). The caller must guarantee that; different content (another file,
  * a changed source) must go to a new file / a new EncryptedWriter on a deleted file (new IV).
  *
+ * Errors: any exception from [append] / [finish] (I/O, crypto) leaves the writer failed; further calls throw IllegalStateException.
+ * On an IOException: [close], open a new EncryptedWriter on the same file and continue from its [resumeOffset].
+ *
  * Not thread-safe; one writer per file.
  */
-class EncryptedWriter internal constructor(
-    file: File,
-    keys: KeyProvider,
-    private val chunkSize: Int,
-    random: SecureRandom,
-) : Closeable {
-    constructor(file: File, keys: KeyProvider) : this(file, keys, EncryptedFormat.CHUNK_SIZE, SecureRandom())
+class EncryptedWriter internal constructor(file: File, keys: KeyProvider, random: SecureRandom) : Closeable {
+    constructor(file: File, keys: KeyProvider) : this(file, keys, SecureRandom())
+
+    private val chunkSize = EncryptedFormat.CHUNK_SIZE
 
     private val raf = RandomAccessFile(file, "rw")
     private val channel: FileChannel = raf.channel
@@ -161,6 +160,7 @@ class EncryptedWriter internal constructor(
     private var buffered = 0
     private var nextIndex = 0L
     private var closed = false
+    private var failed = false
     private val crypto: RecordCrypto
 
     /** True once the final record is on disk (after [finish], or when the opened file was already complete). */
@@ -186,8 +186,12 @@ class EncryptedWriter internal constructor(
     fun append(bytes: ByteArray) = append(bytes, 0, bytes.size)
 
     fun append(bytes: ByteArray, off: Int, len: Int) {
-        check(!isComplete && !closed) { "writer finished or closed" }
+        check(!isComplete && !closed && !failed) { "writer finished, closed or failed" }
         require(off >= 0 && len >= 0 && off + len <= bytes.size)
+        failOnError { appendChunks(bytes, off, len) }
+    }
+
+    private fun appendChunks(bytes: ByteArray, off: Int, len: Int) {
         var o = off
         var left = len
         while (left > 0) {
@@ -208,12 +212,25 @@ class EncryptedWriter internal constructor(
             close()
             return
         }
-        check(!closed) { "writer closed" }
-        completeLength = nextIndex * chunkSize + buffered
-        writeRecord(isLast = true)
-        channel.force(true)
-        isComplete = true
+        check(!closed && !failed) { "writer closed or failed" }
+        failOnError {
+            val total = nextIndex * chunkSize + buffered
+            writeRecord(isLast = true)
+            channel.force(true)
+            completeLength = total
+            isComplete = true
+        }
         close()
+    }
+
+    /** After any failure the writer's on-disk state is unknown: it refuses further use (IllegalStateException). */
+    private inline fun failOnError(block: () -> Unit) {
+        try {
+            block()
+        } catch (e: Throwable) {
+            failed = true
+            throw e
+        }
     }
 
     override fun close() {
@@ -241,7 +258,7 @@ class EncryptedWriter internal constructor(
             val head = ByteBuffer.allocate(EncryptedFormat.HEADER_SIZE)
             channel.readFully(head, 0)
             val parsed = EncryptedFormat.parseHeader(head.array())
-            if (parsed != null && parsed.first == chunkSize) {
+            if (parsed != null) {
                 val iv = parsed.second
                 val c = RecordCrypto(keys, iv, chunkSize)
                 val body = size - EncryptedFormat.HEADER_SIZE
@@ -253,13 +270,17 @@ class EncryptedWriter internal constructor(
                     nextIndex = full + 1
                     return c
                 }
+                // Drop at most MAX_BACKTRACK unverifiable trailing records, i.e. check at most MAX_BACKTRACK + 1.
                 var keep = full
-                var dropped = 0
-                while (keep > 0 && dropped < MAX_BACKTRACK && !verifyAt(c, keep - 1, chunkSize, isLast = false)) {
+                var verified = false
+                while (keep > 0 && full - keep <= MAX_BACKTRACK) {
+                    if (verifyAt(c, keep - 1, chunkSize, isLast = false)) {
+                        verified = true
+                        break
+                    }
                     keep--
-                    dropped++
                 }
-                if (keep > 0 && dropped < MAX_BACKTRACK) { // record keep-1 verified
+                if (verified) {
                     channel.truncate(EncryptedFormat.HEADER_SIZE + keep * record)
                     channel.force(true)
                     nextIndex = keep

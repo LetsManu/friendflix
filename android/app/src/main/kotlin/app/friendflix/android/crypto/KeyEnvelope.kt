@@ -2,12 +2,14 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 package app.friendflix.android.crypto
 
+import android.security.keystore.KeyPermanentlyInvalidatedException
 import java.io.File
 import java.io.FileOutputStream
 import java.io.IOException
 import java.nio.file.Files
 import java.nio.file.StandardCopyOption
 import java.security.SecureRandom
+import javax.crypto.BadPaddingException
 import javax.crypto.Cipher
 import javax.crypto.SecretKey
 import javax.crypto.spec.GCMParameterSpec
@@ -18,7 +20,10 @@ import javax.crypto.spec.SecretKeySpec
  * ([AndroidKeystoreWrappingKeys]); tests use a plain JVM key.
  */
 interface WrappingKeyStore {
-    /** The existing wrapping key, or null if there is none (never created, or lost with the app data). Must not throw. */
+    /**
+     * The existing wrapping key, or null if it is *definitely* gone (no such alias, or the entry is unrecoverable). Throws
+     * [KeysUnavailableException] for anything that may be transient (Keystore busy or erroring): the caller then keeps all state.
+     */
     fun get(): SecretKey?
 
     /** Creates (replacing any existing one) and returns a new wrapping key. */
@@ -27,6 +32,12 @@ interface WrappingKeyStore {
     /** Removes the wrapping key if present. Must not throw. */
     fun delete()
 }
+
+/**
+ * The keys exist (or may exist) but cannot be used right now: Keystore error, I/O error reading the key blob, or new keys could not be
+ * created/stored. Nothing was deleted. Callers treat it as "downloads unavailable, retry later" (never as lost keys).
+ */
+class KeysUnavailableException(message: String, cause: Throwable? = null) : IOException(message, cause)
 
 /** How [EnvelopeKeys.load] obtained its keys. */
 enum class KeyState {
@@ -80,12 +91,20 @@ internal object KeyEnvelope {
         }
     }
 
-    /** The (dataKey, macKey) pair, or null if the blob is malformed, of another version, tampered with or wrapped under another key. */
-    @Suppress("TooGenericExceptionCaught") // Keystore failures surface as assorted runtime exceptions; any failure means "unreadable".
-    fun open(blob: ByteArray, wrappingKey: SecretKey): Pair<ByteArray, ByteArray>? {
+    /**
+     * The (dataKey, macKey) pair, or null if the keys are *definitely* lost: blob malformed or of another version, GCM tag mismatch
+     * (tampered / wrapped under another key), or the wrapping key permanently invalidated. Any other failure (provider errors, a generic
+     * InvalidKeyException, which the Keystore also uses for transient errors) throws [KeysUnavailableException].
+     */
+    @Suppress("TooGenericExceptionCaught")
+    fun open(
+        blob: ByteArray,
+        wrappingKey: SecretKey,
+        cipherFactory: () -> Cipher = { Cipher.getInstance(TRANSFORMATION) },
+    ): Pair<ByteArray, ByteArray>? {
         if (blob.size != SIZE || blob[0] != VERSION) return null
         return try {
-            val cipher = Cipher.getInstance(TRANSFORMATION)
+            val cipher = cipherFactory()
             cipher.init(Cipher.DECRYPT_MODE, wrappingKey, GCMParameterSpec(GCM_TAG_BITS, blob, 1, GCM_IV_BYTES))
             cipher.updateAAD(byteArrayOf(VERSION))
             cipher.updateAAD(AAD)
@@ -94,45 +113,63 @@ internal object KeyEnvelope {
             val pair = plain.copyOfRange(0, KEY_BYTES) to plain.copyOfRange(KEY_BYTES, 2 * KEY_BYTES)
             plain.fill(0)
             pair
-        } catch (_: Exception) {
+        } catch (_: BadPaddingException) { // includes AEADBadTagException
             null
+        } catch (_: KeyPermanentlyInvalidatedException) {
+            null
+        } catch (e: Exception) {
+            throw KeysUnavailableException("cannot unwrap keys", e)
         }
     }
 }
 
 /**
- * Loads the data/MAC keys from [blobFile], wrapped under [wrapping]. On first use, or when the stored keys cannot be unwrapped, it
- * generates fresh keys, stores them (atomically) and says so in [LoadedKeys.state]. It never throws for a lost or broken key; it throws
- * only if a new wrapping key cannot be created or the blob cannot be written (Keystore or storage unusable), which callers must treat
- * as "downloads unavailable".
+ * Loads the data/MAC keys from [blobFile], wrapped under [wrapping].
+ *
+ * - blob present and unwraps → [KeyState.LOADED].
+ * - no blob → fresh keys, [KeyState.CREATED] (a stale alias without its blob is replaced).
+ * - definite loss → fresh keys, [KeyState.RESET]: alias missing or unrecoverable, blob malformed / other version, GCM tag mismatch,
+ *   wrapping key permanently invalidated.
+ * - anything possibly transient → [KeysUnavailableException], with blob and alias left untouched: Keystore errors, an I/O error
+ *   reading the blob, or failing to create/store fresh keys.
  */
-class EnvelopeKeys(
+class EnvelopeKeys internal constructor(
     private val blobFile: File,
     private val wrapping: WrappingKeyStore,
-    private val random: SecureRandom = SecureRandom(),
+    private val random: SecureRandom,
+    private val unwrapCipher: () -> Cipher,
 ) {
+    constructor(blobFile: File, wrapping: WrappingKeyStore) : this(blobFile, wrapping, SecureRandom(), DEFAULT_CIPHER)
+
+    internal constructor(blobFile: File, wrapping: WrappingKeyStore, unwrapCipher: () -> Cipher) :
+        this(blobFile, wrapping, SecureRandom(), unwrapCipher)
+
     fun load(): LoadedKeys {
-        if (blobFile.exists()) {
-            val blob = try { blobFile.readBytes() } catch (_: IOException) { null }
-            val wrappingKey = wrapping.get()
-            if (blob != null && wrappingKey != null) {
-                KeyEnvelope.open(blob, wrappingKey)?.let { (data, mac) ->
-                    val keys = toKeys(data, mac)
-                    return LoadedKeys(keys, KeyState.LOADED)
-                }
-            }
-            return fresh(KeyState.RESET)
+        val blob = try {
+            if (blobFile.exists()) blobFile.readBytes() else null
+        } catch (e: IOException) {
+            throw KeysUnavailableException("cannot read key blob", e)
         }
-        return fresh(KeyState.CREATED)
+        if (blob == null) return fresh(KeyState.CREATED)
+        val wrappingKey = wrapping.get() ?: return fresh(KeyState.RESET)
+        val (data, mac) = KeyEnvelope.open(blob, wrappingKey, unwrapCipher) ?: return fresh(KeyState.RESET)
+        return LoadedKeys(toKeys(data, mac), KeyState.LOADED)
     }
 
+    @Suppress("TooGenericExceptionCaught")
     private fun fresh(state: KeyState): LoadedKeys {
-        wrapping.delete()
-        val wrappingKey = wrapping.create()
-        val data = ByteArray(KeyEnvelope.KEY_BYTES).also { random.nextBytes(it) }
-        val mac = ByteArray(KeyEnvelope.KEY_BYTES).also { random.nextBytes(it) }
-        writeAtomically(KeyEnvelope.seal(data, mac, wrappingKey))
-        return LoadedKeys(toKeys(data, mac), state)
+        try {
+            wrapping.delete()
+            val wrappingKey = wrapping.create()
+            val data = ByteArray(KeyEnvelope.KEY_BYTES).also { random.nextBytes(it) }
+            val mac = ByteArray(KeyEnvelope.KEY_BYTES).also { random.nextBytes(it) }
+            writeAtomically(KeyEnvelope.seal(data, mac, wrappingKey))
+            return LoadedKeys(toKeys(data, mac), state)
+        } catch (e: KeysUnavailableException) {
+            throw e
+        } catch (e: Exception) {
+            throw KeysUnavailableException("cannot create keys", e)
+        }
     }
 
     private fun toKeys(data: ByteArray, mac: ByteArray): KeyProvider {
@@ -150,5 +187,9 @@ class EnvelopeKeys(
             out.fd.sync()
         }
         Files.move(tmp.toPath(), blobFile.toPath(), StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING)
+    }
+
+    private companion object {
+        val DEFAULT_CIPHER: () -> Cipher = { Cipher.getInstance("AES/GCM/NoPadding") }
     }
 }

@@ -9,6 +9,7 @@ import java.io.File
 import java.io.IOException
 import java.io.RandomAccessFile
 import java.nio.ByteBuffer
+import java.security.SecureRandom
 import java.util.Random
 import javax.crypto.Cipher
 import javax.crypto.spec.IvParameterSpec
@@ -323,6 +324,86 @@ class EncryptedFileTest {
             w.append(bytes(CHUNK_SIZE + 10))
             assertEquals(CHUNK_SIZE + 10L, w.resumeOffset())
         }
+    }
+
+    private fun fixedIv() = object : SecureRandom() {
+        override fun nextBytes(bytes: ByteArray) { bytes.fill(0x5A) }
+    }
+
+    @Test fun resumedFileIsByteIdenticalToAnUninterruptedWrite() {
+        val data = bytes(3 * CHUNK_SIZE + 999)
+        val straight = File(tmp.root, "straight")
+        EncryptedWriter(straight, keys, fixedIv()).use { appendAll(it, data); it.finish() }
+        val resumed = File(tmp.root, "resumed")
+        EncryptedWriter(resumed, keys, fixedIv()).use { it.append(data, 0, 2 * CHUNK_SIZE + 12345) }
+        RandomAccessFile(resumed, "rw").use { it.seek(it.length()); it.write(bytes(5000)) }
+        EncryptedWriter(resumed, keys, fixedIv()).use { w ->
+            assertEquals(2L * CHUNK_SIZE, w.resumeOffset())
+            appendAll(w, data, 2 * CHUNK_SIZE)
+            w.finish()
+        }
+        assertArrayEquals(straight.readBytes(), resumed.readBytes())
+        assertArrayEquals(readAll(straight), readAll(resumed))
+    }
+
+    private fun crashedWithGarbageTail(name: String, records: Int, garbage: Int): File {
+        val f = File(tmp.root, name)
+        EncryptedWriter(f, keys).use { it.append(bytes(records * CHUNK_SIZE)) }
+        RandomAccessFile(f, "rw").use { raf ->
+            for (i in records - garbage until records) { raf.seek(HEADER_SIZE + i * record); raf.write(ByteArray(CHUNK_SIZE)) }
+        }
+        return f
+    }
+
+    @Test fun resumeDropsExactlyMaxBacktrackRecords() {
+        assertEquals(8, EncryptedWriter.MAX_BACKTRACK)
+        val f = crashedWithGarbageTail("f", 10, EncryptedWriter.MAX_BACKTRACK)
+        val iv = f.readBytes().copyOfRange(9, 25)
+        EncryptedWriter(f, keys).use { w -> assertEquals(2L * CHUNK_SIZE, w.resumeOffset()) }
+        assertEquals(HEADER_SIZE + 2 * record, f.length())
+        assertArrayEquals(iv, f.readBytes().copyOfRange(9, 25))
+    }
+
+    @Test fun resumeBeyondMaxBacktrackStartsOverWithAFreshHeader() {
+        val f = crashedWithGarbageTail("f", 10, EncryptedWriter.MAX_BACKTRACK + 1)
+        val iv = f.readBytes().copyOfRange(9, 25)
+        val data = bytes(CHUNK_SIZE + 5)
+        EncryptedWriter(f, keys).use { w ->
+            assertEquals(0, w.resumeOffset())
+            assertEquals(HEADER_SIZE.toLong(), f.length())
+            appendAll(w, data)
+            w.finish()
+        }
+        val raw = f.readBytes()
+        assertEquals("FFE1", String(raw, 0, 4, Charsets.US_ASCII))
+        assertFalse(iv.contentEquals(raw.copyOfRange(9, 25)))
+        assertArrayEquals(data, readAll(f))
+    }
+
+    @Test fun writerIsUnusableAfterAFailure() {
+        val badKeys = TestKeys(key = SecretKeySpec(ByteArray(5), "AES"), macKey = keys.macKey()) // fails on the first record
+        val w = EncryptedWriter(File(tmp.root, "f"), badKeys)
+        w.append(bytes(10)) // buffered only
+        assertThrows(java.security.GeneralSecurityException::class.java) { w.append(bytes(CHUNK_SIZE)) }
+        assertThrows(IllegalStateException::class.java) { w.append(bytes(1)) }
+        assertThrows(IllegalStateException::class.java) { w.finish() }
+        w.close()
+    }
+
+    @Test fun changedHeaderFieldsAreRejectedAsFormat() {
+        val f = write(bytes(100))
+        patch(f, 4) { 2 } // version
+        expectIo("format") { EncryptedReader(f, keys) }
+        val g = write(bytes(100), "g")
+        patch(g, 7) { 0x08 } // chunk size 0x00100800: a multiple of 16, but not 1 MiB
+        expectIo("format") { EncryptedReader(g, keys) }
+    }
+
+    @Test fun tornFinalRecordOfAtLeastATagIsIntegrity() {
+        // A final record cut short but still >= 32 bytes cannot be told apart from a tampered one: "integrity", not "incomplete".
+        val f = write(bytes(2 * CHUNK_SIZE + 100))
+        RandomAccessFile(f, "rw").use { it.setLength(it.length() - 50) }
+        expectIo("integrity") { EncryptedReader(f, keys) }
     }
 
     @Test fun counterIs128BitBigEndianAddWithCarry() {

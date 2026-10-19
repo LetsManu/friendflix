@@ -2,7 +2,17 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 package app.friendflix.android.crypto
 
+import android.security.keystore.KeyPermanentlyInvalidatedException
 import java.io.File
+import java.security.AlgorithmParameters
+import java.security.InvalidKeyException
+import java.security.Key
+import java.security.ProviderException
+import java.security.SecureRandom
+import java.security.Security
+import java.security.spec.AlgorithmParameterSpec
+import javax.crypto.Cipher
+import javax.crypto.CipherSpi
 import javax.crypto.SecretKey
 import javax.crypto.spec.SecretKeySpec
 import org.junit.Assert.assertArrayEquals
@@ -10,22 +20,53 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertSame
+import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.TemporaryFolder
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
 
-/** The Keystore-independent part of KeystoreKeyProvider: a JVM AES key stands in for the Keystore wrapping key. */
+/**
+ * The Keystore-independent part of KeystoreKeyProvider: a JVM AES key stands in for the Keystore wrapping key. Robolectric only so that
+ * android.security.keystore.KeyPermanentlyInvalidatedException can be constructed.
+ */
+@RunWith(RobolectricTestRunner::class)
 class EnvelopeKeysTest {
     @get:Rule val tmp = TemporaryFolder()
 
     private class FakeWrappingKeys : WrappingKeyStore {
         var key: SecretKey? = null
         var creates = 0
-        override fun get(): SecretKey? = key
+        var transient = false
+        override fun get(): SecretKey? {
+            if (transient) throw KeysUnavailableException("keystore busy")
+            return key
+        }
         override fun create(): SecretKey = SecretKeySpec(TestKeys.random(32), "AES").also { key = it; creates++ }
         override fun delete() { key = null }
     }
+
+    /** A Cipher whose init throws [failure], standing in for Keystore errors. */
+    private class FailingSpi(private val failure: Exception) : CipherSpi() {
+        override fun engineInit(opmode: Int, key: Key?, random: SecureRandom?) = throw failure
+        override fun engineInit(opmode: Int, key: Key?, params: AlgorithmParameterSpec?, random: SecureRandom?) = throw failure
+        override fun engineInit(opmode: Int, key: Key?, params: AlgorithmParameters?, random: SecureRandom?) = throw failure
+        override fun engineSetMode(mode: String?) = Unit
+        override fun engineSetPadding(padding: String?) = Unit
+        override fun engineGetBlockSize() = 16
+        override fun engineGetOutputSize(inputLen: Int) = inputLen
+        override fun engineGetIV(): ByteArray? = null
+        override fun engineGetParameters(): AlgorithmParameters? = null
+        override fun engineUpdate(input: ByteArray?, inputOffset: Int, inputLen: Int): ByteArray = error("unused")
+        override fun engineUpdate(input: ByteArray?, inputOffset: Int, inputLen: Int, output: ByteArray?, outputOffset: Int): Int = error("unused")
+        override fun engineDoFinal(input: ByteArray?, inputOffset: Int, inputLen: Int): ByteArray = error("unused")
+        override fun engineDoFinal(input: ByteArray?, inputOffset: Int, inputLen: Int, output: ByteArray?, outputOffset: Int): Int = error("unused")
+    }
+
+    private class FailingCipher(failure: Exception) : Cipher(FailingSpi(failure), Security.getProviders()[0], "AES/GCM/NoPadding")
 
     private fun blob() = File(tmp.root, "keys.bin")
 
@@ -88,11 +129,21 @@ class EnvelopeKeysTest {
     @Test fun unwrapFailureResets() {
         val store = FakeWrappingKeys()
         EnvelopeKeys(blob(), store).load()
-        store.create() // a different wrapping key under the alias
+        store.create() // a different wrapping key under the alias: GCM tag fails
         assertEquals(KeyState.RESET, EnvelopeKeys(blob(), store).load().state)
 
         blob().writeBytes(byteArrayOf(9, 9, 9)) // corrupt / unknown version
         assertEquals(KeyState.RESET, EnvelopeKeys(blob(), store).load().state)
+        assertEquals(KeyState.LOADED, EnvelopeKeys(blob(), store).load().state)
+    }
+
+    @Test fun permanentlyInvalidatedKeyResets() {
+        val store = FakeWrappingKeys()
+        val first = EnvelopeKeys(blob(), store).load()
+        val reset = EnvelopeKeys(blob(), store, unwrapCipher = { FailingCipher(KeyPermanentlyInvalidatedException()) }).load()
+        assertEquals(KeyState.RESET, reset.state)
+        assertFalse(first.keys.key().encoded.contentEquals(reset.keys.key().encoded))
+        assertEquals(2, store.creates)
         assertEquals(KeyState.LOADED, EnvelopeKeys(blob(), store).load().state)
     }
 
@@ -103,6 +154,50 @@ class EnvelopeKeysTest {
         assertEquals(KeyState.CREATED, loaded.state)
         assertTrue(loaded.oldFilesUnreadable)
         assertEquals(KeyState.LOADED, EnvelopeKeys(blob(), store).load().state)
+    }
+
+    private fun assertTransient(store: FakeWrappingKeys, keys: EnvelopeKeys, before: LoadedKeys) {
+        val blobBefore = blob().takeIf { it.isFile }?.readBytes()
+        val keyBefore = store.key
+        assertThrows(KeysUnavailableException::class.java) { keys.load() }
+        assertSame("wrapping key kept", keyBefore, store.key)
+        if (blobBefore != null) assertArrayEquals("blob kept", blobBefore, blob().readBytes())
+        store.transient = false
+        val after = EnvelopeKeys(blob(), store).load()
+        assertEquals(KeyState.LOADED, after.state)
+        assertFalse(after.oldFilesUnreadable)
+        assertArrayEquals(before.keys.key().encoded, after.keys.key().encoded)
+    }
+
+    @Test fun transientKeystoreLookupKeepsKeys() {
+        val store = FakeWrappingKeys()
+        val before = EnvelopeKeys(blob(), store).load()
+        store.transient = true
+        assertTransient(store, EnvelopeKeys(blob(), store), before)
+    }
+
+    @Test fun transientUnwrapFailureKeepsKeys() {
+        val store = FakeWrappingKeys()
+        val before = EnvelopeKeys(blob(), store).load()
+        for (failure in listOf(ProviderException("busy"), InvalidKeyException("Keystore operation failed"), IllegalStateException("x"))) {
+            assertTransient(store, EnvelopeKeys(blob(), store, unwrapCipher = { FailingCipher(failure) }), before)
+        }
+    }
+
+    @Test fun unreadableBlobKeepsKeys() {
+        val store = FakeWrappingKeys()
+        val before = EnvelopeKeys(blob(), store).load()
+        val saved = blob().readBytes()
+        blob().delete()
+        blob().mkdir() // exists, but reading it fails with an IOException
+        assertThrows(KeysUnavailableException::class.java) { EnvelopeKeys(blob(), store).load() }
+        assertEquals(1, store.creates)
+        assertNotNull(store.key)
+        blob().delete()
+        blob().writeBytes(saved)
+        val after = EnvelopeKeys(blob(), store).load()
+        assertEquals(KeyState.LOADED, after.state)
+        assertArrayEquals(before.keys.key().encoded, after.keys.key().encoded)
     }
 
     @Test fun keysWorkWithTheFileFormat() {

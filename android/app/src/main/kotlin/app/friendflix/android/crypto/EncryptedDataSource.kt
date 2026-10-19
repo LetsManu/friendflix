@@ -14,7 +14,7 @@ import java.io.File
 import java.io.IOException
 
 /**
- * Media3 [DataSource] over an FFE1 file ([EncryptedReader]): `file://` URIs (or bare paths) of downloads. Decrypts on the fly; the
+ * Media3 [DataSource] over an FFE1 file ([EncryptedReader]): `file://` URIs or bare paths only (other schemes are rejected). Decrypts on the fly; the
  * reader keeps the last verified chunk, so sequential reads verify each 1 MiB chunk once. Integrity failures surface as
  * `IOException("integrity")` / `IOException("incomplete")` from [open] or [read], which the player reports as a playback error.
  *
@@ -40,6 +40,10 @@ class EncryptedDataSource(private val keys: KeyProvider) : BaseDataSource(/* isN
     override fun open(dataSpec: DataSpec): Long {
         uri = dataSpec.uri
         transferInitializing(dataSpec)
+        val scheme = dataSpec.uri.scheme
+        if (scheme != null && scheme != "file") {
+            throw DataSourceException(IOException("unsupported scheme"), PlaybackException.ERROR_CODE_FAILED_RUNTIME_CHECK)
+        }
         val path = dataSpec.uri.path ?: throw DataSourceException(PlaybackException.ERROR_CODE_IO_FILE_NOT_FOUND)
         val r = try {
             EncryptedReader(File(path), keys)
