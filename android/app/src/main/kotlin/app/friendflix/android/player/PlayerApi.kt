@@ -55,6 +55,8 @@ sealed interface InfoAnswer {
     data class MaxStreams(val max: Int) : InfoAnswer
     /** another 4xx (not allowed for this profile, not found …): the web player shows its generic error */
     data object Refused : InfoAnswer
+    /** 409 profile_changed / profile_required: the session's active profile is another one (or none) */
+    data object ProfileMismatch : InfoAnswer
     /** 5xx / network / malformed answer: worth a retry */
     data object Retry : InfoAnswer
 }
@@ -70,6 +72,7 @@ class PlayerApi(val server: ServerApi, private val profileId: String) {
         when {
             code == 200 && j != null -> parseInfo(j)?.let { InfoAnswer.Ok(it) } ?: InfoAnswer.Retry
             code == 429 && j?.optString("error") == "max_streams" -> InfoAnswer.MaxStreams(j.optInt("max", 1))
+            code == 409 && j?.optString("error") in PROFILE_ERRORS -> InfoAnswer.ProfileMismatch
             code in 400..499 -> InfoAnswer.Refused
             else -> InfoAnswer.Retry
         }
@@ -147,6 +150,7 @@ class PlayerApi(val server: ServerApi, private val profileId: String) {
 
     companion object {
         val ALL_SEGMENTS = setOf("intro", "outro", "recap", "preview")
+        private val PROFILE_ERRORS = setOf("profile_changed", "profile_required")
 
         fun parseInfo(j: JSONObject): PlaybackInfo? {
             val ps = j.optString("playSessionId").takeIf { it.isNotEmpty() } ?: return null

@@ -173,7 +173,10 @@ class ShellTest {
                 reply != null && reply != "null"
             }
             assertTrue(reply.orEmpty().contains("\\\"ok\\\":true"))
-            assertTrue(reply.orEmpty().contains("\\\"play\\\":false"))
+            // this build plays and downloads natively (Tasks 6 / 8); casting is not native yet (Task 9)
+            assertTrue(reply.orEmpty().contains("\\\"play\\\":true"))
+            assertTrue(reply.orEmpty().contains("\\\"download\\\":true"))
+            assertTrue(reply.orEmpty().contains("\\\"cast\\\":false"))
 
             // The shell would (rightly) cancel a foreign top-level page, which is not what is under test here: show it through a plain client.
             scenario.onMain {

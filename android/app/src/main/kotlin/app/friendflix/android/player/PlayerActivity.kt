@@ -57,6 +57,7 @@ import app.friendflix.android.offline.OfflineActivity
 import app.friendflix.android.offline.OfflineMedia
 import app.friendflix.android.offline.Prepared
 import app.friendflix.android.settings.AppSettings
+import app.friendflix.android.shell.ShellActivity
 import com.google.common.util.concurrent.ListenableFuture
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -143,6 +144,13 @@ class PlayerActivity : ComponentActivity() {
 
     private var backgroundAudio = false
     private var lastTick = 0L
+    /** the screen is stopped and not in picture-in-picture */
+    private var inBackground = false
+    /** elapsedRealtime when playback was paused (null while playing) */
+    private var pausedAt: Long? = null
+    private var verifying = false
+    /** languages of the download's subtitles (index = track) */
+    private var offlineSubLangs: List<String> = emptyList()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         enableEdgeToEdge()
@@ -151,17 +159,20 @@ class PlayerActivity : ComponentActivity() {
         bindViews()
         hideSystemBars()
         val restored = savedInstanceState?.let(::fromState)
+        token = if (restored == null) intent.getStringExtra(EXTRA_TOKEN) else savedInstanceState.getString(EXTRA_TOKEN)
         val a = restored ?: fromIntent(intent)
         if (a == null) { finish(); return }
         args = a
-        token = if (restored == null) intent.getStringExtra(EXTRA_TOKEN) else savedInstanceState.getString(EXTRA_TOKEN)
         audioIndex = savedInstanceState?.takeIf { it.containsKey(STATE_AUDIO) }?.getInt(STATE_AUDIO)
         quality = savedInstanceState?.getLong(STATE_QUALITY) ?: 0L
 
         val open = PendingIntent.getActivity(this, 0, Intent(this, PlayerActivity::class.java), PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
         player = PlayerHolder.acquire(this, open)
         view.player = player
+        player.addListener(events)
         player.addListener(listener)
+        // the media session (notification, lock screen, Bluetooth) may start playback only while it could be heard by choice
+        PlayerHolder.mayPlay = { !inBackground || backgroundAudio || isInPictureInPictureMode }
         controller = PlayerHolder.connect(this) // runs the media session service (notification while playing)
         lifecycleScope.launch { AppSettings.from(applicationContext).backgroundAudio.collect { backgroundAudio = it } }
         ContextCompat.registerReceiver(this, pipReceiver, IntentFilter(ACTION_PIP_TOGGLE), ContextCompat.RECEIVER_NOT_EXPORTED)
@@ -246,8 +257,9 @@ class PlayerActivity : ComponentActivity() {
                 showError(getString(R.string.offline_reason_keys), retry = false)
                 return@launch
             }
-            val record = offline.downloads.store.get(media.licenseId)
+            val record = withContext(Dispatchers.IO) { offline.downloads.store.get(media.licenseId) }
             offlineLicense = media.licenseId
+            offlineSubLangs = media.subtitles.map { it.first }
             title.text = record?.title.orEmpty()
             subtitle.text = ""
             tracksButton.visibility = if (media.subtitles.isEmpty()) View.GONE else View.VISIBLE
@@ -284,6 +296,7 @@ class PlayerActivity : ComponentActivity() {
                     is InfoAnswer.Ok -> attach(pa, r.info, startMs ?: (r.info.resumeTicks / TICKS_PER_MS))
                     is InfoAnswer.MaxStreams -> showError(resources.getQuantityString(R.plurals.player_error_max_streams, r.max, r.max), retry = true)
                     InfoAnswer.Refused -> showError(getString(R.string.player_error_generic), retry = false)
+                    InfoAnswer.ProfileMismatch -> openInWeb(a, startMs)
                     InfoAnswer.Retry -> retryLater(startMs)
                 }
             } catch (_: SessionExpired) {
@@ -396,9 +409,17 @@ class PlayerActivity : ComponentActivity() {
 
     // ---- player events ----
 
+    /** progress reports (shared with the tests, which drive it with a real ExoPlayer) */
+    private val events = PlaybackEvents(
+        reporter = { reporter },
+        offline = { offlineProgress },
+        onPlayRequested = ::checkOfflineAfterLongPause,
+        onEnded = { flow?.onEnded(); render() },
+    )
+
     private val listener = object : Player.Listener {
         override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) {
-            if (playWhenReady) reporter?.onPlay() else { reporter?.onPause(); offlineProgress?.flush() }
+            if (!playWhenReady && pausedAt == null) pausedAt = android.os.SystemClock.elapsedRealtime()
             updatePip()
         }
 
@@ -407,16 +428,6 @@ class PlayerActivity : ComponentActivity() {
         override fun onPlaybackStateChanged(state: Int) {
             loading.visibility = if (state == Player.STATE_BUFFERING && player.playWhenReady && errorBox.visibility != View.VISIBLE) View.VISIBLE else View.GONE
             if (state == Player.STATE_READY) flow?.duration = player.duration.takeIf { it != C.TIME_UNSET }?.let { it / 1000.0 } ?: 0.0
-            if (state == Player.STATE_ENDED) {
-                reporter?.onEnded()
-                offlineProgress?.flush()
-                flow?.onEnded()
-                render()
-            }
-        }
-
-        override fun onPositionDiscontinuity(old: Player.PositionInfo, new: Player.PositionInfo, reason: Int) {
-            if (reason == Player.DISCONTINUITY_REASON_SEEK) { reporter?.onSeeked(); offlineProgress?.flush() }
         }
 
         override fun onTracksChanged(tracks: Tracks) { applySubtitles() }
@@ -469,8 +480,8 @@ class PlayerActivity : ComponentActivity() {
         val now = android.os.SystemClock.elapsedRealtime()
         val dt = if (lastTick == 0L) 0L else now - lastTick
         lastTick = now
-        reporter?.tick()
-        offlineProgress?.tick()
+        reporter?.tick(background = inBackground)
+        if (!(inBackground && !player.playWhenReady)) offlineProgress?.tick()
         if (retries > 0 && player.isPlaying && player.currentPosition > errorAt + STABLE_MS) {
             if (retries > 0) flash(getString(R.string.player_reconnected), 1_500)
             retries = 0
@@ -568,8 +579,7 @@ class PlayerActivity : ComponentActivity() {
                 subs.add(GROUP_SUBS, t.index, 0, t.title).setCheckable(true).setChecked(subIndex == t.index).setOnMenuItemClickListener { setSubtitle(t.index, t.language); true }
             }
         } else {
-            val media = Offline.get(applicationContext).downloads.store.get(offlineLicense ?: "")?.subtitles.orEmpty()
-            media.forEachIndexed { i, t -> subs.add(GROUP_SUBS, i, 0, t.lang).setCheckable(true).setChecked(subIndex == i).setOnMenuItemClickListener { setSubtitle(i, null); true } }
+            offlineSubLangs.forEachIndexed { i, lang -> subs.add(GROUP_SUBS, i, 0, lang).setCheckable(true).setChecked(subIndex == i).setOnMenuItemClickListener { setSubtitle(i, null); true } }
         }
         subs.setGroupCheckable(GROUP_SUBS, true, true)
         menu.show()
@@ -704,7 +714,39 @@ class PlayerActivity : ComponentActivity() {
         reporter?.onBackground()
         offlineProgress?.flush()
         // background audio only with the setting on; picture-in-picture keeps playing anyway
-        if (!isInPictureInPictureMode && !backgroundAudio) player.pause()
+        if (!isInPictureInPictureMode) {
+            inBackground = true
+            if (!backgroundAudio) player.pause()
+        }
+    }
+
+    override fun onStart() {
+        super.onStart()
+        inBackground = false
+    }
+
+    /**
+     * A download paused for a long time (e.g. in the background) and resumed from anywhere (screen, notification, Bluetooth):
+     * the offline rules are checked again before it goes on (the offline window or the licence may have ended meanwhile).
+     */
+    private fun checkOfflineAfterLongPause() {
+        val lic = offlineLicense ?: run { pausedAt = null; return }
+        val since = pausedAt
+        pausedAt = null
+        if (verifying || since == null || android.os.SystemClock.elapsedRealtime() - since < OFFLINE_RECHECK_MS) return
+        verifying = true
+        player.pause()
+        pausedAt = null
+        lifecycleScope.launch {
+            val p = Offline.get(applicationContext).prepare(lic)
+            verifying = false
+            if (p is Prepared.Blocked) {
+                player.stop()
+                showError(getString(OfflineActivity.reasonText(p.reason)), retry = false)
+            } else {
+                player.play()
+            }
+        }
     }
 
     // ---- viewer activity (still watching) ----
@@ -730,6 +772,8 @@ class PlayerActivity : ComponentActivity() {
         offlineProgress?.flush()
         offlineProgress = null
         offlineLicense = null
+        offlineSubLangs = emptyList()
+        pausedAt = null
         stream = null
         attachedAt = null
         flow = null
@@ -770,19 +814,41 @@ class PlayerActivity : ComponentActivity() {
 
     /** Stop report, offline position, player, session and service; the launcher may start this title again. */
     private fun releaseAll() {
-        if (released || !::player.isInitialized) return
+        if (released) return
         released = true
+        token?.let { Players.launcher?.ended(it) } // the same title may be played again right away
+        if (!::player.isInitialized) return
         handler.removeCallbacksAndMessages(null)
         loadJob?.cancel()
         reporter?.release()
         offlineProgress?.flush()
+        player.removeListener(events)
         player.removeListener(listener)
+        PlayerHolder.mayPlay = { true }
         view.player = null
         controller?.let { MediaController.releaseFuture(it) }
         controller = null
         PlayerHolder.release()
         PlaybackSession.stop(applicationContext)
-        token?.let { Players.launcher?.ended(it) }
+    }
+
+    /**
+     * The server's active profile is not the one this request was made for (a stale `/watch` link, a profile switched in another
+     * window): the web UI's own watch page plays it instead, with the session's real profile.
+     */
+    private fun openInWeb(a: Args, startMs: Long?) {
+        val q = listOfNotNull(
+            startMs?.takeIf { it >= 1000 }?.let { "t=${it / 1000}" },
+            a.audio?.let { "audio=$it" },
+            a.subtitle?.let { "sub=$it" },
+        ).joinToString("&")
+        val path = "/watch/${a.itemId}" + if (q.isEmpty()) "" else "?$q"
+        startActivity(
+            Intent(this, ShellActivity::class.java)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+                .putExtra(ShellActivity.EXTRA_WEB_WATCH, path),
+        )
+        finish()
     }
 
     private fun showError(text: String, retry: Boolean) {
@@ -870,6 +936,8 @@ class PlayerActivity : ComponentActivity() {
         private const val MIN_BITRATE = 300_000L
         /** the web OfflinePlayer resumes only past 5 s */
         private const val OFFLINE_MIN_RESUME_MS = 5_000L
+        /** a download paused longer than this is checked against the offline rules again before it plays on */
+        private const val OFFLINE_RECHECK_MS = 5 * 60_000L
         private const val PIP_MIN_RATIO = 0.42f
         private const val PIP_MAX_RATIO = 2.39f
         private const val GROUP_AUDIO = 1

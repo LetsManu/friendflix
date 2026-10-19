@@ -12,7 +12,9 @@ import app.friendflix.android.bridge.NoPlayerLauncher
 import app.friendflix.android.bridge.PlayRequest
 import app.friendflix.android.bridge.PlayerLauncher
 import app.friendflix.android.downloads.Downloads
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.io.File
 
 sealed interface PlayResult {
@@ -52,7 +54,9 @@ class Offline(val downloads: Downloads, dir: File, private val now: () -> Long =
      * Keystore that cannot give them blocks, it never passes), then checks the licence rules ([LicenseChecker.verdict]), the storage
      * card and the file. Used by [play] and by the player when it is restored.
      */
-    suspend fun prepare(licenseId: String): Prepared {
+    suspend fun prepare(licenseId: String): Prepared = withContext(Dispatchers.IO) { gate(licenseId) }
+
+    private suspend fun gate(licenseId: String): Prepared {
         if (checker.keysAvailable.value != true) checker.openKeys()
         val r = downloads.store.get(licenseId) ?: return Prepared.Blocked(PlayBlock.NOT_DONE)
         checker.verdict(r)?.let { return Prepared.Blocked(it) }

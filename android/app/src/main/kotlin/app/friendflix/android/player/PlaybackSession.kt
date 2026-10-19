@@ -27,6 +27,8 @@ object PlayerHolder {
         private set
     @Volatile var session: MediaSession? = null
         private set
+    /** Whether a play command from the session (notification, lock screen, Bluetooth) is followed; set by [PlayerActivity]. */
+    @Volatile var mayPlay: () -> Boolean = { true }
 
     /** The player (created on first use, on the main thread) with its session; [sessionActivity] reopens the player screen. */
     fun acquire(context: Context, sessionActivity: PendingIntent): ExoPlayer {
@@ -39,7 +41,7 @@ object PlayerHolder {
             .setAudioAttributes(AudioAttributes.Builder().setUsage(C.USAGE_MEDIA).setContentType(C.AUDIO_CONTENT_TYPE_MOVIE).build(), true)
             .setHandleAudioBecomingNoisy(true)
             .build()
-        val s = MediaSession.Builder(app, p)
+        val s = MediaSession.Builder(app, GatedPlayer(p) { mayPlay() })
             .setId(SESSION_ID)
             .setSessionActivity(sessionActivity)
             .setCallback(TrustedOnly)

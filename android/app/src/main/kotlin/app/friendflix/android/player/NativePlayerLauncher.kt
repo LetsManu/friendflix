@@ -21,6 +21,8 @@ import java.util.UUID
 class NativePlayerLauncher(
     private val start: (PlayRequest, String) -> Unit,
     private val now: () -> Long = SystemClock::elapsedRealtime,
+    /** a repeated request for the open player: bring it to the front (it may be in picture-in-picture or in the background) */
+    private val reshow: (PlayRequest, String) -> Unit = { _, _ -> },
 ) : PlayerLauncher {
     private data class Key(
         val itemId: String, val profileId: String, val startMs: Long?, val mediaSourceId: String?,
@@ -36,7 +38,10 @@ class NativePlayerLauncher(
         val key = Key(req.itemId, req.profileId, req.startMs, req.mediaSourceId, req.audio, req.subtitle, req.offline?.licenseId)
         val t = now()
         val p = last
-        if (p != null && p.key == key && t - p.at in 0..RETRY_WINDOW_MS) return true
+        if (p != null && p.key == key && t - p.at in 0..RETRY_WINDOW_MS) {
+            try { reshow(req, p.token) } catch (e: RuntimeException) { Log.w(TAG, "player could not be shown (${e.javaClass.simpleName})") }
+            return true
+        }
         val token = UUID.randomUUID().toString()
         return try {
             start(req, token)
@@ -66,15 +71,19 @@ class NativePlayerLauncher(
         fun forApp(context: Context): NativePlayerLauncher = Players.launcher ?: synchronized(this) {
             Players.launcher ?: run {
                 val app = context.applicationContext
-                NativePlayerLauncher(start = { req, token ->
-                    PlayerActivity.Handoff.put(token, req)
-                    try {
-                        app.startActivity(PlayerActivity.intent(app, req, token).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
-                    } catch (e: RuntimeException) {
-                        PlayerActivity.Handoff.take(token)
-                        throw e
-                    }
-                }).also { Players.launcher = it }
+                NativePlayerLauncher(
+                    start = { req, token ->
+                        PlayerActivity.Handoff.put(token, req)
+                        try {
+                            app.startActivity(PlayerActivity.intent(app, req, token).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                        } catch (e: RuntimeException) {
+                            PlayerActivity.Handoff.take(token)
+                            throw e
+                        }
+                    },
+                    // same token: the open player ignores it as a new request and simply comes to the front
+                    reshow = { req, token -> app.startActivity(PlayerActivity.intent(app, req, token).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) },
+                ).also { Players.launcher = it }
             }
         }
     }

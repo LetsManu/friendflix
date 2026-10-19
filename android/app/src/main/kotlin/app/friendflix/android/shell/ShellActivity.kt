@@ -9,6 +9,7 @@ import android.webkit.WebView
 import androidx.activity.ComponentActivity
 import androidx.activity.OnBackPressedCallback
 import androidx.activity.enableEdgeToEdge
+import androidx.core.net.toUri
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.lifecycle.lifecycleScope
@@ -40,6 +41,7 @@ class ShellActivity : ComponentActivity() {
         private set
     private var bridge: NativeBridge? = null
     private var watch: NetworkWatch? = null
+    private var policy: OriginPolicy? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         enableEdgeToEdge()
@@ -56,6 +58,7 @@ class ShellActivity : ComponentActivity() {
             }
             WebViewFactory.setDebuggable(BuildConfig.DEBUG)
             val policy = OriginPolicy(origin)
+            this@ShellActivity.policy = policy
             // openSettings is a no-op until the settings screen exists (Task 11).
             val offline = Offline.get(applicationContext)
             val native = NativePlayerLauncher.forApp(applicationContext)
@@ -122,6 +125,17 @@ class ShellActivity : ComponentActivity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         if (intent.getBooleanExtra(EXTRA_RELOAD, false)) webView?.reload()
+        intent.getStringExtra(EXTRA_WEB_WATCH)?.let(::openWebWatch)
+    }
+
+    /** The native player handed a title back (its profile is not the session's): the web UI's watch page plays it. */
+    private fun openWebWatch(path: String) {
+        val view = webView ?: return
+        val policy = this.policy ?: return
+        val url = policy.origin.resolve(path)?.toString() ?: return
+        if (WatchLinks.parse(url.toUri(), policy) == null) return // only the app's own watch page
+        (view.webViewClient as? ShellWebViewClient)?.allowWebOnce(url)
+        view.loadUrl(url)
     }
 
     private fun onRenderGone() {
@@ -148,6 +162,8 @@ class ShellActivity : ComponentActivity() {
     companion object {
         /** Intent extra: reload the page (the offline list reconnected). */
         const val EXTRA_RELOAD = "app.friendflix.android.RELOAD"
+        /** Intent extra: an app path `/watch/<id>?…` to open in the web player (the native player handed it back). */
+        const val EXTRA_WEB_WATCH = "app.friendflix.android.WEB_WATCH"
         private const val MAX_RENDER_RESTARTS = 2
         private const val PROBE_TIMEOUT_MS = 4_000L
         private var renderRestarts = 0

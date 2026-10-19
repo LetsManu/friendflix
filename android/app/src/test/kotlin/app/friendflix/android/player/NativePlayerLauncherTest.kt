@@ -14,7 +14,8 @@ import org.robolectric.RobolectricTestRunner
 class NativePlayerLauncherTest {
     private var clock = 10_000L
     private val started = mutableListOf<Pair<PlayRequest, String>>()
-    private val launcher = NativePlayerLauncher(start = { req, token -> started += req to token }, now = { clock })
+    private val shown = mutableListOf<String>()
+    private val launcher = NativePlayerLauncher(start = { req, token -> started += req to token }, now = { clock }, reshow = { _, token -> shown += token })
     private val req = PlayRequest(ITEM, PROFILE, startMs = 61_000, mediaSourceId = null, audio = "ger", subtitle = null)
 
     @Test fun aRetriedPlayDoesNotOpenASecondPlayer() {
@@ -22,6 +23,7 @@ class NativePlayerLauncherTest {
         clock += 5_500 // the web gave up after 5 s and asks again
         assertTrue("the retry is answered with true", launcher.launch(req.copy()))
         assertEquals(1, started.size)
+        assertEquals("the open player (maybe in picture-in-picture) comes to the front", listOf(started.single().second), shown)
     }
 
     @Test fun anotherTitleStartsRightAway() {

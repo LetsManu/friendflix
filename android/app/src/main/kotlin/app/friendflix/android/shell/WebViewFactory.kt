@@ -43,6 +43,9 @@ class ShellWebViewClient(
     /** The watch URL whose native start was declined: its page load goes ahead without asking again. */
     private var declined: String? = null
 
+    /** [url] is to load in the web player (the native player handed it back): its next page load is not intercepted. */
+    fun allowWebOnce(url: String) { declined = url }
+
     override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
         val uri = request.url
         if (policy.isAppOrigin(uri)) return request.isForMainFrame && nativeWatch(uri, rememberDecline = true)

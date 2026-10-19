@@ -84,6 +84,16 @@ class WatchInterceptTest {
         assertNull("nothing replaced the load", shadowOf(view).lastLoadedUrl)
     }
 
+    @Test fun aTitleHandedBackLoadsInTheWebPlayer() {
+        // the native player gave the title back (profile mismatch): the shell loads the web watch page without asking again
+        client.allowWebOnce("https://friend.example.com/watch/abc?t=10")
+        client.onPageStarted(view, "https://friend.example.com/watch/abc?t=10", null)
+        assertTrue(asked.isEmpty())
+        // a later load of the same page asks again
+        client.onPageStarted(view, "https://friend.example.com/watch/abc?t=10", null)
+        assertEquals(1, asked.size)
+    }
+
     @Test fun withoutAPlayerNothingIsIntercepted() {
         val plain = ShellWebViewClient(policy, openExternal = { error("must not open") })
         assertFalse(plain.shouldOverrideUrlLoading(view, Req("https://friend.example.com/watch/abc")))

@@ -46,10 +46,22 @@ class PlaybackReporter(
 
     fun onPause() { if (session != null && !stopped) emit(Kind.PROGRESS) }
 
-    fun onSeeked() { if (started) emit(Kind.PROGRESS) }
+    /** Seeks of an ended session (a replay seeks to 0 first) are not reported: the replay's start follows. */
+    fun onSeeked() { if (started && !stopped) emit(Kind.PROGRESS) }
 
-    /** Called about once a second: a progress report when the last one is [INTERVAL_MS] old. */
-    fun tick() { if (started && !stopped && now() - lastSent >= INTERVAL_MS) emit(Kind.PROGRESS) }
+    /**
+     * Called about once a second: a progress report when the last one is [INTERVAL_MS] old (also while paused on screen, like the
+     * web's interval). Paused with the screen in the background ([background]) nothing more is sent: the pause and the background
+     * already reported the position, and a paused title must not keep the stream alive for hours.
+     */
+    fun tick(background: Boolean = false) {
+        if (!started || stopped || now() - lastSent < INTERVAL_MS) return
+        if (background && position().paused) return
+        emit(Kind.PROGRESS)
+    }
+
+    /** The session ended at the end of the title (a play now starts a new one). */
+    val ended: Boolean get() = session != null && stopped
 
     /** The app went to the background (or the screen locked): keep the resume position safe, keep playing. */
     fun onBackground() { if (started && !stopped) emit(Kind.PROGRESS) }
