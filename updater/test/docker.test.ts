@@ -59,6 +59,78 @@ describe('docker command lines', () => {
     await expect(fake(() => ({ stdout: '{}' })).docker.images('1.2.3', ['web'])).rejects.toEqual(new StepError('unexpected_image'));
   });
 
+  it('images: refuses (before any pull) compose files that would recreate a Plex backend or gateway as Jellyfin, and the reverse', async () => {
+    const withEnv = (env: Record<string, Record<string, string> | string[]>) => {
+      const c = JSON.parse(config('latest')) as { services: Record<string, { environment?: unknown }> };
+      for (const [s, e] of Object.entries(env)) c.services[s]!.environment = e;
+      return JSON.stringify(c);
+    };
+    const stack = (rendered: string, running: Record<string, string[] | null>) => fake((c) => {
+      if (c.args.includes('config')) return { stdout: rendered };
+      if (c.args.includes('ps')) return { stdout: Object.keys(running).map((s) => JSON.stringify({ Service: s, Name: `friendflix-${s}-1`, State: s === 'gateway' ? 'exited' : 'running' })).join('\n') };
+      if (c.args[0] === 'container') {
+        const svc = c.args.at(-1)!.replace(/^friendflix-|-1$/g, '');
+        const env = running[svc];
+        return env ? { stdout: JSON.stringify(env) } : { code: 1 };
+      }
+      return {};
+    });
+    const svcs = ['bootstrap', 'backend', 'gateway', 'web'];
+    const plexNow = { backend: ['PATH=/x', 'MEDIA_SERVER=plex'], gateway: ['MEDIA_SERVER=plex'] };
+    // compose.prod.yaml alone (no compose.plex.yaml in UPDATER_COMPOSE_FILES) on a Plex stack
+    const mismatch = stack(withEnv({ backend: { MEDIA_SERVER: 'jellyfin' }, gateway: { MEDIA_SERVER: 'jellyfin' } }), plexNow);
+    await expect(mismatch.docker.images('latest', svcs)).rejects.toEqual(new StepError('media_server_mismatch'));
+    expect(mismatch.calls.some((c) => c.args.includes('pull'))).toBe(false);
+    // only the gateway differs (a stopped container counts too)
+    await expect(stack(withEnv({ backend: { MEDIA_SERVER: 'plex' }, gateway: {} }), plexNow).docker.images('latest', svcs)).rejects.toEqual(new StepError('media_server_mismatch'));
+    // Jellyfin stack whose files now say plex
+    await expect(stack(withEnv({ backend: ['MEDIA_SERVER=plex'], gateway: ['MEDIA_SERVER=plex'] }), { backend: ['PATH=/x'], gateway: [] }).docker.images('latest', svcs)).rejects.toEqual(new StepError('media_server_mismatch'));
+    // same kind: fine (case, spaces and an unset value = jellyfin follow the backend's rule)
+    expect(Object.keys(await stack(withEnv({ backend: { MEDIA_SERVER: ' Plex ' }, gateway: ['MEDIA_SERVER=plex'] }), plexNow).docker.images('latest', svcs))).toEqual(svcs);
+    expect(Object.keys(await stack(withEnv({ backend: { MEDIA_SERVER: 'jellyfin' }, gateway: {} }), { backend: ['MEDIA_SERVER='], gateway: [] }).docker.images('latest', svcs))).toEqual(svcs);
+    // no container yet, or one that cannot be inspected: nothing to compare with
+    expect(Object.keys(await stack(withEnv({ backend: { MEDIA_SERVER: 'jellyfin' } }), {}).docker.images('latest', svcs))).toEqual(svcs);
+    expect(Object.keys(await stack(withEnv({ backend: { MEDIA_SERVER: 'jellyfin' } }), { backend: null }).docker.images('latest', svcs))).toEqual(svcs);
+    // web alone is never compared
+    expect(await stack(withEnv({}), plexNow).docker.images('latest', ['web'])).toEqual({ web: 'ghcr.io/letsmanu/friendflix-web:latest' });
+  });
+
+  it('without UPDATER_COMPOSE_FILES: the files the backend container was started with (compose labels), validated, else the fallback', async () => {
+    const auto = (labels: unknown, opts: { ps?: boolean; code?: number } = {}) => {
+      const calls: Call[] = [];
+      const run: Runner = async (program, args, o) => {
+        calls.push({ program, args: [...args], env: o.env });
+        if (args.includes('ps')) return { code: 0, stderr: '', stdout: opts.ps === false ? '' : JSON.stringify({ Service: 'backend', Name: 'friendflix-backend-1', State: 'running' }) };
+        if (args[0] === 'container') return { code: opts.code ?? 0, stderr: '', stdout: JSON.stringify(labels) };
+        if (args.includes('config')) return { code: 0, stderr: '', stdout: config('latest') };
+        return { code: 0, stdout: '', stderr: '' };
+      };
+      return { calls, docker: new Docker({ projectDir: '/srv/friendflix', files: ['compose.prod.yaml'], autoFiles: true, repo: 'LetsManu/friendflix', dockerHost: 'tcp://docker-proxy:2375' }, run) };
+    };
+    const L = (files: string, dir = '/srv/friendflix') => ({ 'com.docker.compose.project': 'friendflix', 'com.docker.compose.project.working_dir': dir, 'com.docker.compose.project.config_files': files });
+    // a Plex stack started with -f compose.prod.yaml -f compose.plex.yaml (or COMPOSE_FILE): the pull uses both files
+    const plex = auto(L('/srv/friendflix/compose.prod.yaml,/srv/friendflix/compose.plex.yaml'));
+    await plex.docker.images('latest', ['web']);
+    await plex.docker.pull('latest', ['web']);
+    expect(plex.docker.files).toEqual(['compose.prod.yaml', 'compose.plex.yaml']);
+    expect(plex.calls.at(-1)!.args.slice(0, 7)).toEqual(['compose', '--project-directory', '/srv/friendflix', '-f', '/srv/friendflix/compose.prod.yaml', '-f', '/srv/friendflix/compose.plex.yaml']);
+    // anything that does not qualify falls back to the configured list
+    for (const bad of [L('/srv/friendflix/compose.prod.yaml', '/elsewhere'), L('/srv/other/compose.prod.yaml'), L('/srv/friendflix/sub/compose.yaml'), L('/srv/friendflix/../x.yaml'),
+      L('/srv/friendflix/a.yaml,/srv/friendflix/a.yaml'), L(Array.from({ length: 9 }, (_, i) => `/srv/friendflix/c${i}.yaml`).join(',')), L('/srv/friendflix/compose.json'), L(''), {}, null, 'x']) {
+      const d = auto(bad).docker;
+      expect(await d.refreshFiles(), JSON.stringify(bad)).toEqual(['compose.prod.yaml']);
+    }
+    expect(await auto(L('/srv/friendflix/compose.prod.yaml,/srv/friendflix/compose.plex.yaml'), { ps: false }).docker.refreshFiles()).toEqual(['compose.prod.yaml']);
+    expect(await auto(L('/srv/friendflix/compose.prod.yaml,/srv/friendflix/compose.plex.yaml'), { code: 1 }).docker.refreshFiles()).toEqual(['compose.prod.yaml']);
+    // a later refresh follows a changed stack, and an explicit list is never replaced
+    const d = auto(L('/srv/friendflix/compose.prod.yaml , /srv/friendflix/compose.secrets.yaml'));
+    expect(await d.docker.refreshFiles()).toEqual(['compose.prod.yaml', 'compose.secrets.yaml']);
+    const fixed = fake(() => ({ stdout: JSON.stringify(L('/srv/friendflix/compose.prod.yaml')) }));
+    expect(await fixed.docker.refreshFiles()).toEqual(['compose.prod.yaml', 'compose.secrets.yaml']);
+    expect(fixed.calls).toEqual([]);
+    expect(await d.docker.startedWith('../x')).toBeNull();
+  });
+
   it('verify: cosign gets the digest-pinned reference and the publish workflow identity, never a tag', async () => {
     const { calls, docker } = fake((c) => (c.program === 'docker' ? { stdout: `["ghcr.io/letsmanu/friendflix-web@${D}"]\t["GIT_SHA=${'a'.repeat(40)}","APP_VERSION=1.2.3"]\n` } : {}));
     expect(await docker.verify('ghcr.io/letsmanu/friendflix-web:latest')).toBe(true);

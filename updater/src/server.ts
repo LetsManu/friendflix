@@ -128,11 +128,11 @@ export function servicesView(docker: Pick<Docker, 'ps' | 'containerImage' | 'ima
 
 export function start(env: NodeJS.ProcessEnv = process.env): Server {
   const cfg = loadConfig(env);
-  const docker = new Docker({ projectDir: cfg.projectDir, files: cfg.composeFiles, projectName: cfg.projectName, repo: cfg.repo, dockerHost: cfg.dockerHost }, execRunner);
+  const docker = new Docker({ projectDir: cfg.projectDir, files: cfg.composeFiles, autoFiles: cfg.composeFilesAuto, projectName: cfg.projectName, repo: cfg.repo, dockerHost: cfg.dockerHost }, execRunner);
   const ops: Ops = {
     images: (t, s) => docker.images(t, s), pull: (t, s) => docker.pull(t, s), verify: (i) => docker.verify(i), up: (t, s) => docker.up(t, s),
     imageInfo: (r) => docker.imageInfo(r), running: (s) => docker.running(s), spawnSelfUpdate: (t) => docker.spawnSelfUpdate(t),
-    healthy: healthProbe(docker, cfg.backendHealthUrl),
+    healthy: healthProbe(docker, cfg.backendHealthUrl), composeFiles: () => docker.files,
   };
   const updater = new Updater(ops, fileStore(cfg.stateDir));
   const verifier: Verifier = { key: deriveKey(cfg.secret), cache: new ReplayCache(), notBefore: Date.now() };
@@ -142,7 +142,7 @@ export function start(env: NodeJS.ProcessEnv = process.env): Server {
   const server = createServer((req, res) => { void app(req, res).catch(() => { if (!res.headersSent) send(res, 500, { error: 'internal' }); }); });
   server.requestTimeout = 10_000;
   server.headersTimeout = 5_000;
-  server.listen(cfg.port, '0.0.0.0', () => log(`listening on :${cfg.port} (project ${cfg.projectDir}, files ${cfg.composeFiles.join(',')}, repo ${cfg.repo})`));
+  server.listen(cfg.port, '0.0.0.0', () => log(`listening on :${cfg.port} (project ${cfg.projectDir}, files ${cfg.composeFilesAuto ? `as started (fallback ${cfg.composeFiles.join(',')})` : cfg.composeFiles.join(',')}, repo ${cfg.repo})`));
   for (const sig of ['SIGTERM', 'SIGINT'] as const) process.on(sig, () => { server.close(); process.exit(0); });
   return server;
 }

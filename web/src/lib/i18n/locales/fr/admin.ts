@@ -281,6 +281,7 @@ const fr: Translation<typeof de> = {
         interrupted: 'interrompue par un redémarrage',
         self_update_timeout: 'le programme de mise à jour n’a pas été remplacé',
         unexpected_image: 'nom d’image inattendu',
+        media_server_mismatch: 'les fichiers compose démarreraient un autre serveur multimédia que celui en cours (UPDATER_COMPOSE_FILES sans compose.plex.yaml ?), rien n’a été redémarré',
         compose_config: 'configuration compose illisible',
         unknown: 'erreur inconnue',
       },

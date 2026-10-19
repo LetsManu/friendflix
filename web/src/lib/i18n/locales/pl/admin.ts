@@ -301,6 +301,7 @@ const pl: Translation<typeof de> = {
         interrupted: 'przerwane przez restart',
         self_update_timeout: 'aktualizator nie został zastąpiony',
         unexpected_image: 'nieoczekiwana nazwa obrazu',
+        media_server_mismatch: 'pliki compose uruchomiłyby inny serwer multimediów niż obecnie działający (UPDATER_COMPOSE_FILES bez compose.plex.yaml?), nic nie zostało zrestartowane',
         compose_config: 'nieczytelna konfiguracja compose',
         unknown: 'nieznany błąd',
       },

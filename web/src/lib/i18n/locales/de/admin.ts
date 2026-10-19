@@ -280,6 +280,7 @@ export default {
         interrupted: 'durch einen Neustart unterbrochen',
         self_update_timeout: 'der Updater wurde nicht ersetzt',
         unexpected_image: 'unerwarteter Image-Name',
+        media_server_mismatch: 'die Compose-Dateien würden einen anderen Medienserver starten als jetzt läuft (UPDATER_COMPOSE_FILES ohne compose.plex.yaml?), nichts wurde neu gestartet',
         compose_config: 'Compose-Konfiguration nicht lesbar',
         unknown: 'unbekannter Fehler',
       },

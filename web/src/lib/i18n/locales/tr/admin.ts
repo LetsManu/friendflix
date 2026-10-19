@@ -281,6 +281,7 @@ const tr: Translation<typeof de> = {
         interrupted: 'bir yeniden başlatmayla kesildi',
         self_update_timeout: 'güncelleyici değiştirilmedi',
         unexpected_image: 'beklenmeyen imaj adı',
+        media_server_mismatch: 'compose dosyaları şu an çalışandan farklı bir medya sunucusu başlatırdı (UPDATER_COMPOSE_FILES içinde compose.plex.yaml yok mu?), hiçbir şey yeniden başlatılmadı',
         compose_config: 'compose yapılandırması okunamıyor',
         unknown: 'bilinmeyen hata',
       },

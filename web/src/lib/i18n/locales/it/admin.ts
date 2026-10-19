@@ -281,6 +281,7 @@ const it: Translation<typeof de> = {
         interrupted: 'interrotta da un riavvio',
         self_update_timeout: 'l’updater non è stato sostituito',
         unexpected_image: 'nome immagine inatteso',
+        media_server_mismatch: 'i file compose avvierebbero un media server diverso da quello attuale (UPDATER_COMPOSE_FILES senza compose.plex.yaml?), nulla è stato riavviato',
         compose_config: 'configurazione compose illeggibile',
         unknown: 'errore sconosciuto',
       },
