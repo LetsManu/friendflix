@@ -93,7 +93,7 @@ describe('settings with values from env, a secret file and the database', () => 
     expect(items.get('OIDC_CLIENT_SECRET').last4).toBeUndefined();
     expect(items.get('JELLYFIN_ADMIN_API_KEY')).toMatchObject({ source: 'env', set: true, value: null, group: 'media' });
     expect(items.get('PREVIEW_WARM')).toMatchObject({ source: 'env', value: false, kind: 'bool' });
-    expect(items.get('REQUESTS_URL')).toMatchObject({ source: 'db', value: cfg.REQUESTS_URL, envNames: ['REQUESTS_URL', 'REQUESTS_URL_FILE', 'SEERR_URL', 'SEERR_URL_FILE'] });
+    expect(items.get('REQUESTS_URL')).toMatchObject({ source: 'db', value: cfg.REQUESTS_URL, envNames: ['REQUESTS_URL', 'REQUESTS_URL_FILE'] });
     expect(items.get('API_COMPRESSION')).toMatchObject({ apply: 'live', restartPending: false });
     expect(items.get('DOWNLOAD_CREATE_PER_HOUR')).toMatchObject({ apply: 'restart', restartPending: false });
     expect(items.get('HEALTH_DISK_WARN_PCT')).toMatchObject({ min: 50, max: 99 });

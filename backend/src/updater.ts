@@ -5,7 +5,7 @@ import { audit } from './audit.js';
 import type { Ctx } from './ctx.js';
 
 /**
- * Client of the opt-in updater container (updater/, compose profile `updater`; docs/security.md "Updater"). The backend never
+ * Client of the updater container (updater/, on by default since 2.0, off with compose.no-updater.yaml; docs/security.md "Updater"). The backend never
  * gets the Docker socket: it can only ask the updater for five fixed actions, each request HMAC-signed with a key derived from
  * INTERNAL_SECRET (timestamp + nonce; the updater refuses replays and anything outside 60 s). Signing must match
  * updater/src/protocol.ts byte for byte (test-vectors/updater-hmac.json).

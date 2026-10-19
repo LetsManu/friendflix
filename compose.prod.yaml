@@ -2,10 +2,12 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # FriendFlix portal stack - PRODUCTION variant: pulls the prebuilt images from ghcr.io (no build on the server).
 # Images come from .github/workflows/publish.yml. Private packages: docker login ghcr.io -u <user> (PAT with read:packages).
-# Channel / version with FF_TAG in .env: latest = stable releases (default), nightly = every green commit on main, 1 / 1.1 / 1.1.0
-# or a short sha to pin; other owner with FF_REGISTRY=ghcr.io/<owner> (both optional). Admin -> Update shows the line to set.
-# Opt-in updater (`--profile updater`, docs/operations.md "Updater"): Admin -> Update then pulls, verifies (cosign) and restarts
-# the FriendFlix services itself and FF_TAG is no longer needed; only the `docker-proxy` service sees the Docker socket.
+# Updates: the `updater` service (on by default since 2.0, docs/setup.md "Updater") pulls, verifies (cosign) and restarts the
+# FriendFlix services from Admin -> Update; the channel (Stable = `latest`, Nightly, fixed version) is chosen there, no FF_TAG needed.
+# Only the `docker-proxy` service sees the Docker socket (read-only); the backend and the web app never do.
+# Without the updater: add compose.no-updater.yaml (-f compose.prod.yaml -f compose.no-updater.yaml, or COMPOSE_FILE in .env);
+# FF_TAG in .env then picks the images (latest = stable releases, the default; nightly; 2 / 2.0 / 2.0.0 or sha-<7> to pin),
+# FF_REGISTRY=ghcr.io/<owner> another owner (both optional). Admin -> Update shows the line to set.
 # FriendFlix portal stack. A new install needs no .env: `up -d`, then the setup code from the backend log
 # (`logs backend | grep "setup code"`) opens the setup wizard (docs/setup.md); every setting lives in the database (Admin -> Settings).
 # The `bootstrap` service generates the internal secrets into the `bootstrap` volume (back it up, scripts/backup-bootstrap.sh).
@@ -26,8 +28,8 @@ networks:
   media:
     internal: true
   egress: {} # outbound internet for Jellyfin/request service metadata only; nothing is published
-  # updater profile: backend <-> updater (signed requests), updater <-> socket proxy, updater -> ghcr.io / Sigstore (cosign).
-  # Defined always (backend joins `updater`), empty without the profile.
+  # updater: backend <-> updater (signed requests), updater <-> socket proxy, updater -> ghcr.io / Sigstore (cosign).
+  # Defined always (backend joins `updater`); only the backend is on it with compose.no-updater.yaml.
   updater:
     internal: true
   updater-docker:
@@ -108,56 +110,29 @@ services:
     security_opt: ["no-new-privileges:true"]
     # secrets group: reads the bootstrap volume (DATABASE_URL, REDIS_URL, APP_ENC_KEY and INTERNAL_SECRET derive from it)
     group_add: ["10001"]
-    # Every setting below is optional: set in the browser (Admin -> Settings) and stored in the database.
-    # A value set here (.env) still wins and shows locked ("from environment"); the lines only pass existing .env values through.
+    # .env is optional: a new install needs none (setup wizard, then Admin -> Settings). Every line only passes a value from .env
+    # through when one is set there; any setting can still be set in .env to lock it (it then wins over the database and shows
+    # "from environment" in Admin -> Settings). Remove a line from .env (not from here) to manage the setting in the browser again.
     environment:
-      PUBLIC_URL: ${PUBLIC_URL:-}
+      # --- bootstrap (generated into the `bootstrap` volume; existing installs keep their .env values, docs/setup.md section 14) ---
       APP_ENC_KEY: ${APP_ENC_KEY:-}
       INTERNAL_SECRET: ${INTERNAL_SECRET:-}
-      WEBHOOK_SECRET: ${WEBHOOK_SECRET:-}
-      ADMIN_GROUP: ${ADMIN_GROUP:-}
-      SESSION_IDLE_SECONDS: ${SESSION_IDLE_SECONDS:-}
-      SESSION_TTL_SECONDS: ${SESSION_TTL_SECONDS:-}
-      OIDC_ISSUER: ${OIDC_ISSUER:-}
-      OIDC_CLIENT_ID: ${OIDC_CLIENT_ID:-}
-      OIDC_CLIENT_SECRET: ${OIDC_CLIENT_SECRET:-}
-      MEDIA_SERVER: ${MEDIA_SERVER:-jellyfin}
-      JELLYFIN_URL: ${JELLYFIN_URL:-}
-      JELLYFIN_ADMIN_API_KEY: ${JELLYFIN_ADMIN_API_KEY:-}
-      OIDC_ALLOW_INSECURE: ${OIDC_ALLOW_INSECURE:-false}
-      # request service (optional); the two old-name lines below only keep older .env files working (they log a deprecation warning)
-      REQUESTS_URL: ${REQUESTS_URL:-}
-      REQUESTS_API_KEY: ${REQUESTS_API_KEY:-}
-      SEERR_URL: ${SEERR_URL:-}
-      SEERR_API_KEY: ${SEERR_API_KEY:-}
-      NTFY_URL: ${NTFY_URL:-}
-      DISCORD_WEBHOOK_URL: ${DISCORD_WEBHOOK_URL:-}
-      NTFY_BASE_URL: ${NTFY_BASE_URL:-}
-      VAPID_PUBLIC_KEY: ${VAPID_PUBLIC_KEY:-}
-      VAPID_PRIVATE_KEY: ${VAPID_PRIVATE_KEY:-}
-      VAPID_SUBJECT: ${VAPID_SUBJECT:-}
-      # optional external data sources (detail page); can also be saved in the admin UI
-      # TMDB_API_KEY: ${TMDB_API_KEY:-}
-      # OMDB_API_KEY: ${OMDB_API_KEY:-}
+      # --- per container, environment only (not in Admin -> Settings) ---
+      MEDIA_SERVER: ${MEDIA_SERVER:-jellyfin} # jellyfin | plex (compose.plex.yaml)
       TZ: ${TZ:-Europe/Vienna}
       DIGEST_DAY: ${DIGEST_DAY:-0}
       DIGEST_HOUR: ${DIGEST_HOUR:-18}
       METRICS_TOKEN: ${METRICS_TOKEN:-}
-      AUTHENTIK_URL: ${AUTHENTIK_URL:-}
-      AUTHENTIK_API_TOKEN: ${AUTHENTIK_API_TOKEN:-}
-      AUTHENTIK_ENROLL_FLOW: ${AUTHENTIK_ENROLL_FLOW:-}
-      AUTHENTIK_RECOVERY_FLOW: ${AUTHENTIK_RECOVERY_FLOW:-}
-      AUTHENTIK_TOTP_SETUP_FLOW: ${AUTHENTIK_TOTP_SETUP_FLOW:-}
+      OIDC_ALLOW_INSECURE: ${OIDC_ALLOW_INSECURE:-false}
       UPDATE_REPO: ${UPDATE_REPO:-LetsManu/friendflix}
-      GITHUB_TOKEN: ${GITHUB_TOKEN:-}
-      PORTAINER_WEBHOOK_URL: ${PORTAINER_WEBHOOK_URL:-}
-      PORTAINER_URL: ${PORTAINER_URL:-}
-      PORTAINER_API_KEY: ${PORTAINER_API_KEY:-}
-      PORTAINER_STACK_ID: ${PORTAINER_STACK_ID:-}
-      PORTAINER_ENDPOINT_ID: ${PORTAINER_ENDPOINT_ID:-}
-      PLAYBACK_CHECK_HOUR: ${PLAYBACK_CHECK_HOUR:-}
-      PREVIEW_WARM: ${PREVIEW_WARM:-}
-      # recommendation index (docs/discovery.md): weight of each feature group (0-10; 0 = off)
+      # download preparation + cleanup, audio/subtitle language index, media server session polling; false only for extra replicas
+      BACKGROUND_JOBS: ${BACKGROUND_JOBS:-true}
+      # admin health page: gateway address (only /health is called)
+      GATEWAY_URL: ${GATEWAY_URL:-http://gateway:4000}
+      # the updater service; without it (compose.no-updater.yaml) the name does not resolve and Admin -> Update shows the manual steps
+      UPDATER_URL: ${UPDATER_URL:-http://updater:7070}
+      DOWNLOAD_DIR: /data/downloads
+      # recommendation index weights (0-10; 0 = off) and scoring coefficient overrides: expert tuning, docs/discovery.md
       RECO_W_GENRES: ${RECO_W_GENRES:-}
       RECO_W_TAGS: ${RECO_W_TAGS:-}
       RECO_W_STUDIOS: ${RECO_W_STUDIOS:-}
@@ -165,34 +140,80 @@ services:
       RECO_W_TEXT: ${RECO_W_TEXT:-}
       RECO_W_NUMERIC: ${RECO_W_NUMERIC:-}
       RECO_W_COLLECTION: ${RECO_W_COLLECTION:-}
-      # recommendation engine v2: v1 | shadow | v2, decay half-life in days, JSON overrides of the scoring coefficients
-      RECO_ENGINE: ${RECO_ENGINE:-}
-      RECO_HALF_LIFE_DAYS: ${RECO_HALF_LIFE_DAYS:-}
       RECO_COEFFS: ${RECO_COEFFS:-}
-      RECO_EXPLORE: ${RECO_EXPLORE:-}
-      # download preparation + cleanup, audio/subtitle language index, Jellyfin session polling; false only for extra replicas
-      BACKGROUND_JOBS: ${BACKGROUND_JOBS:-true}
-      # gzip/brotli for JSON API responses >= 1 KB; false when the reverse proxy already compresses
+      # removed in 2.0 (use REQUESTS_URL / REQUESTS_API_KEY): only "set" reaches the backend, never the value; the backend then
+      # warns in its log and in the admin banner instead of silently running without the request service
+      SEERR_URL: ${SEERR_URL:+set}
+      SEERR_API_KEY: ${SEERR_API_KEY:+set}
+      # --- media server (Admin -> Settings -> Media server; compose.plex.yaml replaces these with PLEX_URL / PLEX_TOKEN) ---
+      JELLYFIN_URL: ${JELLYFIN_URL:-}
+      JELLYFIN_ADMIN_API_KEY: ${JELLYFIN_ADMIN_API_KEY:-}
+      # >>> Admin -> Settings: every other key of the settings registry (backend/src/settings/registry.ts). Generated, do not edit by
+      # hand: `npm run compose:env` rewrites this block, and the backend tests fail when it is out of date.
+      PUBLIC_URL: ${PUBLIC_URL:-}
+      WEBHOOK_SECRET: ${WEBHOOK_SECRET:-}
       API_COMPRESSION: ${API_COMPRESSION:-}
-      # admin health page: gateway address (only /health is called) and disk / database warning levels
-      GATEWAY_URL: ${GATEWAY_URL:-http://gateway:4000}
-      # opt-in updater (profile `updater`); without the profile the name does not resolve and Admin -> Update shows the manual steps
-      UPDATER_URL: ${UPDATER_URL:-http://updater:7070}
-      HEALTH_DISK_WARN_PCT: ${HEALTH_DISK_WARN_PCT:-}
-      HEALTH_DISK_CRIT_PCT: ${HEALTH_DISK_CRIT_PCT:-}
-      HEALTH_DB_WARN_GB: ${HEALTH_DB_WARN_GB:-}
-      CAST_ENABLED: ${CAST_ENABLED:-}
-      POSTPLAY_ENABLED: ${POSTPLAY_ENABLED:-}
+      OIDC_ISSUER: ${OIDC_ISSUER:-}
+      OIDC_CLIENT_ID: ${OIDC_CLIENT_ID:-}
+      OIDC_CLIENT_SECRET: ${OIDC_CLIENT_SECRET:-}
+      ADMIN_GROUP: ${ADMIN_GROUP:-}
+      AUTHENTIK_URL: ${AUTHENTIK_URL:-}
+      AUTHENTIK_API_TOKEN: ${AUTHENTIK_API_TOKEN:-}
+      AUTHENTIK_ENROLL_FLOW: ${AUTHENTIK_ENROLL_FLOW:-}
+      AUTHENTIK_RECOVERY_FLOW: ${AUTHENTIK_RECOVERY_FLOW:-}
+      AUTHENTIK_TOTP_SETUP_FLOW: ${AUTHENTIK_TOTP_SETUP_FLOW:-}
+      REQUESTS_URL: ${REQUESTS_URL:-}
+      REQUESTS_API_KEY: ${REQUESTS_API_KEY:-}
+      NTFY_URL: ${NTFY_URL:-}
+      NTFY_BASE_URL: ${NTFY_BASE_URL:-}
+      DISCORD_WEBHOOK_URL: ${DISCORD_WEBHOOK_URL:-}
+      VAPID_PUBLIC_KEY: ${VAPID_PUBLIC_KEY:-}
+      VAPID_PRIVATE_KEY: ${VAPID_PRIVATE_KEY:-}
+      VAPID_SUBJECT: ${VAPID_SUBJECT:-}
+      TMDB_API_KEY: ${TMDB_API_KEY:-}
+      OMDB_API_KEY: ${OMDB_API_KEY:-}
       DOWNLOADS_ENABLED: ${DOWNLOADS_ENABLED:-}
       DIRECT_PLAY_REQUIRES_DOWNLOAD: ${DIRECT_PLAY_REQUIRES_DOWNLOAD:-}
-      DOWNLOAD_DIR: /data/downloads
       DOWNLOAD_CACHE_MAX_GB: ${DOWNLOAD_CACHE_MAX_GB:-}
-      DOWNLOAD_PREP_CONCURRENCY: ${DOWNLOAD_PREP_CONCURRENCY:-}
-      DOWNLOAD_CREATE_PER_HOUR: ${DOWNLOAD_CREATE_PER_HOUR:-}
       DOWNLOAD_MIN_FREE_GB: ${DOWNLOAD_MIN_FREE_GB:-}
+      DOWNLOAD_PREP_CONCURRENCY: ${DOWNLOAD_PREP_CONCURRENCY:-}
       DOWNLOAD_PAUSE_STREAMS: ${DOWNLOAD_PAUSE_STREAMS:-}
       DOWNLOAD_FILE_TTL_HOURS: ${DOWNLOAD_FILE_TTL_HOURS:-}
       DOWNLOAD_OFFLINE_GRACE_DAYS: ${DOWNLOAD_OFFLINE_GRACE_DAYS:-}
+      DOWNLOAD_CREATE_PER_HOUR: ${DOWNLOAD_CREATE_PER_HOUR:-}
+      CAST_ENABLED: ${CAST_ENABLED:-}
+      PREVIEW_WARM: ${PREVIEW_WARM:-}
+      HOME_NETWORKS: ${HOME_NETWORKS:-}
+      RECO_ENGINE: ${RECO_ENGINE:-}
+      RECO_EXPLORE: ${RECO_EXPLORE:-}
+      RECO_HALF_LIFE_DAYS: ${RECO_HALF_LIFE_DAYS:-}
+      POSTPLAY_ENABLED: ${POSTPLAY_ENABLED:-}
+      GITHUB_TOKEN: ${GITHUB_TOKEN:-}
+      UPDATE_CHANNEL: ${UPDATE_CHANNEL:-}
+      UPDATE_VERSION: ${UPDATE_VERSION:-}
+      AUTO_UPDATE: ${AUTO_UPDATE:-}
+      AUTO_UPDATE_TIME: ${AUTO_UPDATE_TIME:-}
+      PORTAINER_WEBHOOK_URL: ${PORTAINER_WEBHOOK_URL:-}
+      PORTAINER_URL: ${PORTAINER_URL:-}
+      PORTAINER_API_KEY: ${PORTAINER_API_KEY:-}
+      PORTAINER_STACK_ID: ${PORTAINER_STACK_ID:-}
+      PORTAINER_ENDPOINT_ID: ${PORTAINER_ENDPOINT_ID:-}
+      PLAYBACK_CHECK_HOUR: ${PLAYBACK_CHECK_HOUR:-}
+      HEALTH_DISK_WARN_PCT: ${HEALTH_DISK_WARN_PCT:-}
+      HEALTH_DISK_CRIT_PCT: ${HEALTH_DISK_CRIT_PCT:-}
+      HEALTH_DB_WARN_GB: ${HEALTH_DB_WARN_GB:-}
+      SESSION_TTL_SECONDS: ${SESSION_TTL_SECONDS:-}
+      SESSION_IDLE_SECONDS: ${SESSION_IDLE_SECONDS:-}
+      LOGIN_UI: ${LOGIN_UI:-}
+      AUTHENTIK_LOGIN_FLOW: ${AUTHENTIK_LOGIN_FLOW:-}
+      AUTHENTIK_STATIC_SETUP_FLOW: ${AUTHENTIK_STATIC_SETUP_FLOW:-}
+      AUTHENTIK_WEBAUTHN_SETUP_FLOW: ${AUTHENTIK_WEBAUTHN_SETUP_FLOW:-}
+      AUTHENTIK_PASSWORD_CHANGE_FLOW: ${AUTHENTIK_PASSWORD_CHANGE_FLOW:-}
+      AUTHENTIK_INVALIDATION_FLOW: ${AUTHENTIK_INVALIDATION_FLOW:-}
+      AUTHENTIK_EMAIL_CHANGE_FLOW: ${AUTHENTIK_EMAIL_CHANGE_FLOW:-}
+      PASSKEYS_IN_APP: ${PASSKEYS_IN_APP:-}
+      LOGIN_COVER_WALL: ${LOGIN_COVER_WALL:-}
+      # <<< Admin -> Settings
     # root fs is read-only. PREVIEWS_PATH / DOWNLOADS_PATH: named volume by default, or a host folder
     # (e.g. /mnt/data/friendflix/downloads, must be writable by uid 1000) - see docs/downloads.md "Speicherort"
     volumes:
@@ -204,7 +225,7 @@ services:
       postgres: { condition: service_healthy }
       redis: { condition: service_healthy }
     ports: ["${BIND_ADDR:-127.0.0.1}:${BACKEND_PORT:-3081}:3000"]
-    networks: [front, db, media, egress, updater] # egress: OIDC discovery + ntfy/Discord; updater: the opt-in updater only
+    networks: [front, db, media, egress, updater] # egress: OIDC discovery + ntfy/Discord; updater: the updater service only
 
   gateway:
     image: ${FF_REGISTRY:-ghcr.io/letsmanu}/friendflix-gateway:${FF_TAG:-latest}
@@ -266,7 +287,9 @@ services:
       PGPASSWORD_FILE: ${BACKUP_PGPASSWORD_FILE:-/run/friendflix/postgres_password}
       TZ: ${TZ:-Europe/Vienna}
       BACKUP_HOUR: ${BACKUP_HOUR:-3}
-      BACKUP_KEEP_DAYS: ${BACKUP_KEEP_DAYS:-${KEEP_DAYS:-14}}
+      BACKUP_KEEP_DAYS: ${BACKUP_KEEP_DAYS:-14}
+      # KEEP_DAYS (the 1.x name) is no longer read since 2.0: while it is set without BACKUP_KEEP_DAYS, no dump is pruned (none is lost)
+      KEEP_DAYS_REMOVED: ${KEEP_DAYS:+${BACKUP_KEEP_DAYS:-yes}}
       BACKUP_RUN_ON_START: ${BACKUP_RUN_ON_START:-false}
     volumes: ["${BACKUP_PATH:-./backups}:/backups", "bootstrap:/run/friendflix:ro"]
     entrypoint: ["/bin/sh", "-c"]
@@ -280,7 +303,11 @@ services:
           f=/backups/friendflix-$$(date +%Y%m%d-%H%M).dump
           if pg_dump -h postgres -U friendflix -Fc -f "$$f.tmp" friendflix && [ -s "$$f.tmp" ] \
              && pg_restore --list "$$f.tmp" > /dev/null && mv "$$f.tmp" "$$f"; then
-            find /backups -maxdepth 1 -name 'friendflix-*.dump' -mtime +"$$BACKUP_KEEP_DAYS" -delete
+            if [ "$${KEEP_DAYS_REMOVED:-}" = yes ]; then
+              log "KEEP_DAYS is no longer read (2.0): rename it to BACKUP_KEEP_DAYS in .env; old dumps are kept until then"
+            else
+              find /backups -maxdepth 1 -name 'friendflix-*.dump' -mtime +"$$BACKUP_KEEP_DAYS" -delete
+            fi
             log "OK $$f ($$(wc -c < "$$f") bytes), kept $$(ls /backups/friendflix-*.dump | wc -l) dumps, retention $${BACKUP_KEEP_DAYS}d"
             echo OK > $$S
           else
@@ -310,14 +337,13 @@ services:
       postgres: { condition: service_healthy }
     networks: [db]
 
-  # ---- Opt-in updater: `docker compose -f compose.prod.yaml --profile updater up -d` (docs/operations.md "Updater") ----
-  # The ONLY service with the Docker socket, read-only, on an internal network that only the updater shares. It forwards the
+  # ---- Updater (on by default since 2.0; off: compose.no-updater.yaml, docs/setup.md "Updater") ----
+  # docker-proxy is the ONLY service with the Docker socket, read-only, on an internal network that only the updater shares. It forwards the
   # API sections `compose pull` + `up -d --no-deps` need (containers, images, networks, volumes, info); exec, build, commit,
   # swarm, services, secrets, configs, plugins, system, session, distribution, auth and the container archive/export/logs/
   # top/changes endpoints are refused (403). Third-party image pinned by digest (Dependabot does not see it: bump by hand).
   # haproxy runs as root inside (`user root` + `chroot /` in its config): it keeps only the three capabilities for that.
   docker-proxy:
-    profiles: [updater]
     image: ghcr.io/linuxserver/socket-proxy:3.4.7@sha256:e5d819de59b343c01b2fe7adc7fad3c7a60e5dba08e45f1ac317352bc08599b5
     restart: unless-stopped
     read_only: true
@@ -370,10 +396,10 @@ services:
 
   # Pulls + cosign-verifies + recreates the FriendFlix services (bootstrap, backend, gateway, web) on signed requests from the
   # backend only (INTERNAL_SECRET). No published port. Reads the stack directory read-only at its host path (relative bind paths
-  # resolve the same) and needs it plus .env readable by uid 1000. Never touches the database, Redis, Jellyfin, the request
-  # service or Authentik.
+  # resolve the same) and needs it plus .env (if there is one) readable by uid 1000. Never touches the database, Redis, the media
+  # server, the request service or Authentik. UPDATER_PROJECT_DIR: the stack directory's absolute host path; only needed in .env when
+  # compose runs without PWD in its environment (e.g. `sudo docker compose`, some GUIs), else the current directory is used.
   updater:
-    profiles: [updater]
     image: ${FF_REGISTRY:-ghcr.io/letsmanu}/friendflix-updater:${FF_TAG:-latest}
     pull_policy: always
     restart: unless-stopped
@@ -384,13 +410,16 @@ services:
     group_add: ["10001"] # reads bootstrap-gateway (internal_secret only)
     environment:
       DOCKER_HOST: tcp://docker-proxy:2375
-      UPDATER_PROJECT_DIR: ${PWD:-/project}
-      # extra compose files of this stack (comma-separated names in the stack directory), e.g. compose.prod.yaml,compose.authentik.yaml
-      UPDATER_COMPOSE_FILES: ${UPDATER_COMPOSE_FILES:-compose.prod.yaml}
+      UPDATER_PROJECT_DIR: ${UPDATER_PROJECT_DIR:-${PWD:-/project}}
+      # the compose files the updater uses: unset = the files the stack was last started with (compose records them on the backend
+      # container: -f ... or COMPOSE_FILE, e.g. with compose.plex.yaml / compose.secrets.yaml), compose.prod.yaml when unknown. Set it
+      # (comma-separated names in the stack directory) only to force a list; it must then name EVERY file of the stack. A list that
+      # would start another media server than the one running (Plex without compose.plex.yaml) is refused before anything changes.
+      UPDATER_COMPOSE_FILES: ${UPDATER_COMPOSE_FILES:-}
       UPDATE_REPO: ${UPDATE_REPO:-LetsManu/friendflix}
       INTERNAL_SECRET: ${INTERNAL_SECRET:-} # unset: the copy in the bootstrap-gateway volume
     volumes:
-      - .:${PWD:-/project}:ro
+      - .:${UPDATER_PROJECT_DIR:-${PWD:-/project}}:ro
       - updater-state:/state
       - bootstrap-gateway:/run/friendflix-gateway:ro
     depends_on:
@@ -426,7 +455,7 @@ volumes:
   bootstrap:
   bootstrap-gateway:
   pgdata:
-  updater-state: # channel, installed + previous tag, last job (profile updater)
+  updater-state: # channel, installed + previous tag, last job (updater service)
   previews:
   downloads:
   jellyfin-config:

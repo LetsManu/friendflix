@@ -212,7 +212,7 @@ export default {
       updateLead: 'Update holen: diese Zeile in der .env des Stacks prüfen und dann den Befehl ausführen:',
       envLabel: 'Zeile in der .env',
       cmdLabel: 'Befehl',
-      note: 'Der Wechsel gilt erst nach diesem Befehl: FriendFlix greift nie selbst auf Docker zu.',
+      note: 'Der Wechsel gilt erst nach diesem Befehl: ohne Updater greift FriendFlix nie selbst auf Docker zu (compose.no-updater.yaml lässt ihn aus).',
       pinned: 'Feste Version',
       pinnedHint: 'Feste Version: bleibt genau auf diesem Release, bis du sie änderst.',
       versionLabel: 'Version (X.Y.Z)',
@@ -280,6 +280,7 @@ export default {
         interrupted: 'durch einen Neustart unterbrochen',
         self_update_timeout: 'der Updater wurde nicht ersetzt',
         unexpected_image: 'unerwarteter Image-Name',
+        media_server_mismatch: 'die Compose-Dateien würden einen anderen Medienserver starten als jetzt läuft (UPDATER_COMPOSE_FILES ohne compose.plex.yaml?), nichts wurde neu gestartet',
         compose_config: 'Compose-Konfiguration nicht lesbar',
         unknown: 'unbekannter Fehler',
       },
@@ -459,6 +460,9 @@ export default {
     },
     approvals: {
       pending_approvals: { one: '{n} Anmeldung wartet auf Freigabe', other: '{n} Anmeldungen warten auf Freigabe' },
+    },
+    config: {
+      removed_env: { one: '{n} alter Variablenname in der .env wird seit 2.0 ignoriert: der Anfragen-Dienst nutzt jetzt REQUESTS_URL und REQUESTS_API_KEY', other: '{n} alte Variablennamen in der .env werden seit 2.0 ignoriert: der Anfragen-Dienst nutzt jetzt REQUESTS_URL und REQUESTS_API_KEY' },
     },
   },
 } as const;

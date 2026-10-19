@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { deprecatedEnvNames, loadConfig } from '../src/config.js';
+import { loadConfig, removedEnvNames } from '../src/config.js';
 import { decrypt, encrypt } from '../src/crypto.js';
 import { mediaBrowserHeader } from '../src/jellyfin/client.js';
 import { pollJellyfinSessions } from '../src/routes/internal.js';
@@ -237,41 +237,32 @@ describe('config file secrets', () => {
   });
 });
 
-describe('renamed request service settings', () => {
+describe('request service settings (the 1.x names SEERR_* are removed in 2.0)', () => {
   const base = { PUBLIC_URL: 'https://p.example.com', DATABASE_URL: 'x', REDIS_URL: 'x', APP_ENC_KEY: 'k'.repeat(44), INTERNAL_SECRET: 'i'.repeat(20), OIDC_ISSUER: 'https://a.example.com', OIDC_CLIENT_ID: 'c', OIDC_CLIENT_SECRET: 's', JELLYFIN_URL: 'http://j', JELLYFIN_ADMIN_API_KEY: 'k', WEBHOOK_SECRET: 'w'.repeat(20) };
   it('reads REQUESTS_URL / REQUESTS_API_KEY without any warning', () => {
     const env = { ...base, REQUESTS_URL: 'http://requests:5055', REQUESTS_API_KEY: 'new' };
     const c = loadConfig(env);
     expect([c.REQUESTS_URL, c.REQUESTS_API_KEY]).toEqual(['http://requests:5055', 'new']);
-    expect(deprecatedEnvNames(env)).toEqual([]);
+    expect(removedEnvNames(env)).toEqual([]);
   });
-  it('falls back to the old SEERR_* names and reports them as deprecated (names only)', () => {
-    const env = { ...base, SEERR_URL: 'http://seerr:5055', SEERR_API_KEY: 'old-secret' };
-    const c = loadConfig(env);
-    expect([c.REQUESTS_URL, c.REQUESTS_API_KEY]).toEqual(['http://seerr:5055', 'old-secret']);
-    const msgs = deprecatedEnvNames(env);
-    expect(msgs).toEqual(['SEERR_URL is deprecated, use REQUESTS_URL', 'SEERR_API_KEY is deprecated, use REQUESTS_API_KEY']);
-    expect(msgs.join(' ')).not.toContain('old-secret');
-  });
-  it('the new name wins when both are set (also over the old _FILE variant)', async () => {
+  it('no longer reads SEERR_* (also not the _FILE variants) and names each one that is still set, never its value', async () => {
     const { writeFileSync } = await import('node:fs');
     writeFileSync('/tmp/ff-secret-old-requests', 'old-file\n');
-    const c = loadConfig({ ...base, REQUESTS_URL: 'http://requests:5055', SEERR_URL: 'http://seerr:5055', REQUESTS_API_KEY: 'new', SEERR_API_KEY: 'old', SEERR_API_KEY_FILE: '/tmp/ff-secret-old-requests' });
-    expect([c.REQUESTS_URL, c.REQUESTS_API_KEY]).toEqual(['http://requests:5055', 'new']);
+    const env = { ...base, SEERR_URL: 'http://requests:5055', SEERR_API_KEY: 'old-secret', SEERR_API_KEY_FILE: '/tmp/ff-secret-old-requests' };
+    const c = loadConfig(env);
+    expect([c.REQUESTS_URL, c.REQUESTS_API_KEY]).toEqual(['', '']);
+    const msgs = removedEnvNames(env);
+    expect(msgs).toEqual(['SEERR_URL is no longer read since 2.0, use REQUESTS_URL', 'SEERR_API_KEY is no longer read since 2.0, use REQUESTS_API_KEY',
+      'SEERR_API_KEY_FILE is no longer read since 2.0, use REQUESTS_API_KEY_FILE']);
+    expect(msgs.join(' ')).not.toMatch(/old-secret|old-file|requests:5055/);
+    // compose passes only a marker ("set") or '' for them
+    expect(removedEnvNames({ ...base, SEERR_URL: '', SEERR_API_KEY: 'set' })).toEqual(['SEERR_API_KEY is no longer read since 2.0, use REQUESTS_API_KEY']);
   });
-  it('reads REQUESTS_API_KEY_FILE, and the old SEERR_API_KEY_FILE as fallback', async () => {
+  it('REQUESTS_API_KEY_FILE works; an unset key resolves to \'\' (the request service is optional)', async () => {
     const { writeFileSync } = await import('node:fs');
     writeFileSync('/tmp/ff-secret-new-requests', 'new-file\n');
-    writeFileSync('/tmp/ff-secret-old-requests', 'old-file\n');
-    expect(loadConfig({ ...base, REQUESTS_URL: 'http://requests:5055', REQUESTS_API_KEY_FILE: '/tmp/ff-secret-new-requests', SEERR_API_KEY: 'old' }).REQUESTS_API_KEY).toBe('new-file');
-    const old = { ...base, REQUESTS_URL: 'http://requests:5055', SEERR_API_KEY_FILE: '/tmp/ff-secret-old-requests' };
-    expect(loadConfig(old).REQUESTS_API_KEY).toBe('old-file');
-    expect(deprecatedEnvNames(old)).toEqual(['SEERR_API_KEY_FILE is deprecated, use REQUESTS_API_KEY_FILE']);
-  });
-  it('an empty new value (compose passes "") does not hide the old name', () => {
-    const c = loadConfig({ ...base, REQUESTS_URL: 'http://seerr:5055', REQUESTS_API_KEY: '', SEERR_API_KEY: 'old' });
-    expect(c.REQUESTS_API_KEY).toBe('old');
-    // Block 25: the request service is optional, an unset key resolves to '' (it used to fail the start)
+    expect(loadConfig({ ...base, REQUESTS_URL: 'http://requests:5055', REQUESTS_API_KEY_FILE: '/tmp/ff-secret-new-requests' }).REQUESTS_API_KEY).toBe('new-file');
     expect(loadConfig({ ...base, REQUESTS_URL: 'http://requests:5055' }).REQUESTS_API_KEY).toBe('');
   });
 });
+

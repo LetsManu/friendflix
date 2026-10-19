@@ -213,7 +213,7 @@ const es: Translation<typeof de> = {
       updateLead: 'Para obtener la actualización, revisa esta línea en el .env del stack y ejecuta el comando:',
       envLabel: 'Línea en el .env',
       cmdLabel: 'Comando',
-      note: 'El cambio solo se aplica tras este comando: FriendFlix nunca toca Docker por sí mismo.',
+      note: 'El cambio solo se aplica tras este comando: sin el actualizador, FriendFlix nunca toca Docker por sí mismo (compose.no-updater.yaml lo mantiene apagado).',
       pinned: 'Versión fija',
       pinnedHint: 'Versión fija: se queda exactamente en esta versión hasta que la cambies.',
       versionLabel: 'Versión (X.Y.Z)',
@@ -281,6 +281,7 @@ const es: Translation<typeof de> = {
         interrupted: 'interrumpida por un reinicio',
         self_update_timeout: 'el actualizador no fue reemplazado',
         unexpected_image: 'nombre de imagen inesperado',
+        media_server_mismatch: 'los archivos compose iniciarían otro servidor multimedia distinto del actual (¿UPDATER_COMPOSE_FILES sin compose.plex.yaml?), no se reinició nada',
         compose_config: 'configuración de compose ilegible',
         unknown: 'error desconocido',
       },
@@ -564,6 +565,9 @@ const es: Translation<typeof de> = {
     },
     approvals: {
       pending_approvals: { one: '{n} inicio de sesión espera aprobación', many: '{n} inicios de sesión esperan aprobación', other: '{n} inicios de sesión esperan aprobación' },
+    },
+    config: {
+      removed_env: { one: '{n} nombre de variable antiguo en .env se ignora desde la 2.0: el servicio de solicitudes usa ahora REQUESTS_URL y REQUESTS_API_KEY', many: '{n} nombres de variable antiguos en .env se ignoran desde la 2.0: el servicio de solicitudes usa ahora REQUESTS_URL y REQUESTS_API_KEY', other: '{n} nombres de variable antiguos en .env se ignoran desde la 2.0: el servicio de solicitudes usa ahora REQUESTS_URL y REQUESTS_API_KEY' },
     },
   },
 };

@@ -135,7 +135,7 @@ beforeAll(async () => {
   writeFileSync(join(dlDir, `${D_MISMATCH}.mp4`), dlBody);
   writeFileSync(join(dlDir, `${D_BIG}.mp4`), '');
   truncateSync(join(dlDir, `${D_BIG}.mp4`), 32_000_000);
-  const g = createGateway({ jellyfinUrl: `http://127.0.0.1:${jfp}`, backendUrl: `http://127.0.0.1:${bep}`, internalSecret: 's3cret-s3cret-s3cret', downloadDir: dlDir });
+  const g = createGateway({ upstreamUrl: `http://127.0.0.1:${jfp}`, backendUrl: `http://127.0.0.1:${bep}`, internalSecret: 's3cret-s3cret-s3cret', downloadDir: dlDir });
   gw = g.server;
   gwPort = await listen(gw);
 });

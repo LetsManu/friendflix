@@ -109,11 +109,9 @@ describe('settings texts', () => {
     expect(groupHelp('general')).toBe('');
   });
 
-  it('moveHint names KEY and KEY_FILE and only summarises legacy names', () => {
+  it('moveHint names KEY and KEY_FILE', () => {
     expect(moveHint(['PUBLIC_URL', 'PUBLIC_URL_FILE'])).toContain('PUBLIC_URL und PUBLIC_URL_FILE aus der .env');
-    const legacy = moveHint(['REQUESTS_URL', 'REQUESTS_URL_FILE', 'SEERR_URL', 'SEERR_URL_FILE']);
-    expect(legacy).toContain('REQUESTS_URL und REQUESTS_URL_FILE (und ältere Namen dieser Einstellung)');
-    expect(legacy).not.toMatch(/seerr/i);
+    expect(moveHint(['REQUESTS_URL', 'REQUESTS_URL_FILE'])).toContain('REQUESTS_URL und REQUESTS_URL_FILE aus der .env');
   });
 
   it('error and probe texts, with a fallback for unknown codes', () => {

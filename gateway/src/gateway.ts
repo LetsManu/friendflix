@@ -8,15 +8,11 @@ import { resolve, sep } from 'node:path';
 import { Readable } from 'node:stream';
 import { jellyfinUpstream, type Upstream } from './upstream/index.js';
 
-export { mediaBrowserHeader } from './upstream/jellyfin.js';
-
 export interface GatewayOptions {
   /** media server adapter (allowlist, credential params, auth header); default Jellyfin */
   upstream?: Upstream;
   /** base URL of the media server, or a getter of the current one (remoteConfig); null/invalid = /media/* answers 503 */
   upstreamUrl?: string | (() => string | null);
-  /** @deprecated alias of upstreamUrl */
-  jellyfinUrl?: string;
   backendUrl: string;
   internalSecret: string;
   metricsToken?: string;
@@ -249,7 +245,7 @@ export function sanitizePlaylist(text: string, requestPath: string, strip: Reado
 export function createGateway(opts: GatewayOptions): { server: Server; metrics: () => string } {
   const f = opts.fetchImpl ?? fetch;
   const up = opts.upstream ?? jellyfinUpstream;
-  const upstreamUrl = opts.upstreamUrl ?? opts.jellyfinUrl;
+  const upstreamUrl = opts.upstreamUrl;
   if (!upstreamUrl) throw new Error('gateway: upstreamUrl missing');
   const currentUrl = typeof upstreamUrl === 'function' ? upstreamUrl : (() => { const u = new URL(upstreamUrl).href; return () => u; })();
   /** the media server base for this request (parsed once per URL); null = none yet or not a URL */

@@ -10,7 +10,8 @@
     "start": "node dist/server.js",
     "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.test.json --noEmit",
     "test": "vitest run",
-    "coverage": "vitest run --coverage"
+    "coverage": "vitest run --coverage",
+    "compose:env": "UPDATE_COMPOSE_ENV=1 vitest run test/compose-env.test.ts"
   },
   "dependencies": {
     "@fastify/cookie": "^11.0.1",

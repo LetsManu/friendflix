@@ -79,7 +79,7 @@ function shownUrl(v: string, key?: string): string {
     return v;
   }
 }
-const envNames = (key: string, legacy: readonly string[] = []) => [key, ...legacy].flatMap((n) => [n, `${n}_FILE`]);
+const envNames = (key: string) => [key, `${key}_FILE`];
 // the media group lists and accepts only the configured kind's settings (MEDIA_SETUP / mediaSettings via mediaSetupKeys): on Plex
 // no JELLYFIN_* rows, on Jellyfin no PLEX_* rows; another kind's key is `unknown` like a hidden one (MEDIA_SERVER is env-only).
 // MEDIA_KEYS is read once at load: mediaSettings() is static (a fork that makes it dynamic computes it per call)
@@ -99,7 +99,7 @@ export async function settingsView(ctx: Ctx): Promise<{ rev: number; pendingRest
     const row = rows.get(d.key);
     const view: SettingView = {
       key: d.key, kind: d.kind, source: sources[d.key] ?? 'unset', value: d.secret || !set ? null : d.kind === 'url' ? shownUrl(String(v), d.key) : toStored(d, v), set, apply: d.apply,
-      restartPending: pending.includes(d.key), invalid: invalid.has(d.key), envNames: envNames(d.key, d.legacyEnv), updatedAt: row?.updatedAt ?? null,
+      restartPending: pending.includes(d.key), invalid: invalid.has(d.key), envNames: envNames(d.key), updatedAt: row?.updatedAt ?? null,
     };
     if (d.hint === 'last4' && set) {
       const last4 = sources[d.key] === 'db' ? row?.last4 : String(v).slice(-4);

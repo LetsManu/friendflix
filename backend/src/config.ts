@@ -6,38 +6,19 @@ import { MEDIA_FIELDS, MEDIA_SERVERS } from './media/index.js';
 import { isValidCidr } from './netaddr.js';
 
 /**
- * Renamed settings: new name -> old name. The old name (and its _FILE variant) still works, but only while the new
- * name is unset in both forms; using it logs a deprecation warning at startup (see deprecatedEnvNames).
+ * Setting names removed in 2.0, with the name to use instead. They are no longer read; when one is still set (compose passes only the
+ * word "set" for them, never the value) the backend warns at startup and the admin banner names the replacement (health.ts).
  */
-export const RENAMED_ENV: Readonly<Record<string, string>> = {
-  REQUESTS_URL: 'SEERR_URL',
-  REQUESTS_API_KEY: 'SEERR_API_KEY',
+export const REMOVED_ENV: Readonly<Record<string, string>> = {
+  SEERR_URL: 'REQUESTS_URL',
+  SEERR_API_KEY: 'REQUESTS_API_KEY',
+  SEERR_URL_FILE: 'REQUESTS_URL_FILE',
+  SEERR_API_KEY_FILE: 'REQUESTS_API_KEY_FILE',
 };
 
-/** Copies old setting names onto their new names when the new name is not set (neither VAR nor VAR_FILE). */
-function withRenamedEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
-  const out = { ...env };
-  for (const [now, old] of Object.entries(RENAMED_ENV)) {
-    if (env[now] || env[`${now}_FILE`]) continue; // the new name wins
-    if (env[old]) out[now] = env[old];
-    if (env[`${old}_FILE`]) out[`${now}_FILE`] = env[`${old}_FILE`];
-  }
-  return out;
-}
-
-/**
- * Old setting names that are still set, as "OLD is deprecated, use NEW" messages (names only, never values).
- * Compose passes the old name through next to the new one (which falls back to the old value), so an old name is
- * reported whenever it is set.
- */
-export function deprecatedEnvNames(env: NodeJS.ProcessEnv = process.env): string[] {
-  const out: string[] = [];
-  for (const [now, old] of Object.entries(RENAMED_ENV)) {
-    for (const suffix of ['', '_FILE']) {
-      if (env[`${old}${suffix}`]) out.push(`${old}${suffix} is deprecated, use ${now}${suffix}`);
-    }
-  }
-  return out;
+/** Removed setting names that are still set, as "OLD is no longer read since 2.0, use NEW" messages (names only, never values). */
+export function removedEnvNames(env: NodeJS.ProcessEnv = process.env): string[] {
+  return Object.entries(REMOVED_ENV).filter(([old]) => env[old]).map(([old, now]) => `${old} is no longer read since 2.0, use ${now}`);
 }
 
 /** Reads VAR, or the file referenced by VAR_FILE (Docker secrets). */
@@ -137,7 +118,7 @@ export const configSchema = z.object({
   MEDIA_SERVER: z.enum(MEDIA_SERVERS).default('jellyfin'),
   /** the media server kinds' own fields (Jellyfin: JELLYFIN_URL, JELLYFIN_ADMIN_API_KEY), owned by media/index.ts; see mediaSettings() */
   ...MEDIA_FIELDS,
-  /** the request service, optional: without URL and key ctx.seerr is null and the request UI is hidden (old names SEERR_URL / SEERR_API_KEY still work, see RENAMED_ENV) */
+  /** the request service, optional: without URL and key ctx.seerr is null and the request UI is hidden (the 1.x names are no longer read, see REMOVED_ENV) */
   REQUESTS_URL: setupRequired(z.string().url()),
   REQUESTS_API_KEY: setupRequired(z.string()),
   NTFY_URL: opt, // e.g. https://ntfy.example.com/friendflix
@@ -183,12 +164,12 @@ export const configSchema = z.object({
   UPDATE_REPO: z.string().regex(/^[\w.-]+\/[\w.-]+$/).default('LetsManu/friendflix'),
   /**
    * update channel (Admin -> Update): stable (releases), nightly (main) or pinned (UPDATE_VERSION). Without the updater it only
-   * chooses the comparison and the suggested FF_TAG line; with the opt-in updater it is the tag the updater installs.
+   * chooses the comparison and the suggested FF_TAG line; with the updater it is the tag the updater installs.
    */
   UPDATE_CHANNEL: z.preprocess(emptyAsUnset, z.enum(['stable', 'nightly', 'pinned']).default('stable')),
   /** the fixed version of the `pinned` channel (X.Y.Z) */
   UPDATE_VERSION: z.preprocess(emptyAsUnset, z.string().regex(/^(0|[1-9][0-9]{0,3})\.(0|[1-9][0-9]{0,3})\.(0|[1-9][0-9]{0,3})$/).optional()),
-  /** the opt-in updater (compose profile `updater`): internal http URL; unset or unreachable = Admin -> Update shows the manual steps */
+  /** the updater service (compose.prod.yaml; off with compose.no-updater.yaml): internal http URL; unset or unreachable = Admin -> Update shows the manual steps */
   UPDATER_URL: z.preprocess(emptyAsUnset, z.string().regex(/^http:\/\/[a-z0-9][a-z0-9.-]{0,62}(:[0-9]{2,5})?$/).optional()),
   /** automatic updates through the updater: off (default) or once a night at AUTO_UPDATE_TIME (server time zone TZ) */
   AUTO_UPDATE: z.preprocess(emptyAsUnset, z.enum(['off', 'nightly-window']).default('off')),
@@ -289,7 +270,7 @@ export function publicOrigin(cfg: Pick<Config, 'PUBLIC_URL'>): string | null {
 export const secureCookies = (cfg: Pick<Config, 'PUBLIC_URL'>): boolean => cfg.PUBLIC_URL.startsWith('https://');
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
-  const c = configSchema.parse(withOriginPublicUrl(withFileSecrets(withRenamedEnv(env))));
+  const c = configSchema.parse(withOriginPublicUrl(withFileSecrets(env)));
   // yellow must come before red: a warn level at or above the critical one would never show, so both fall back to the defaults
   if (c.HEALTH_DISK_WARN_PCT >= c.HEALTH_DISK_CRIT_PCT) {
     console.warn(`HEALTH_DISK_WARN_PCT (${c.HEALTH_DISK_WARN_PCT}) must be below HEALTH_DISK_CRIT_PCT (${c.HEALTH_DISK_CRIT_PCT}); using 85 / 95`);

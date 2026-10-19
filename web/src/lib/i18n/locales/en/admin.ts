@@ -213,7 +213,7 @@ const en: Translation<typeof de> = {
       updateLead: 'To get the update, check this line in the stack\'s .env, then run the command:',
       envLabel: 'Line in .env',
       cmdLabel: 'Command',
-      note: 'The switch only takes effect after this command: FriendFlix never touches Docker itself.',
+      note: 'The switch only takes effect after this command: without the updater FriendFlix never touches Docker itself (compose.no-updater.yaml keeps it off).',
       pinned: 'Fixed version',
       pinnedHint: 'Fixed version: stays on exactly this release until you change it.',
       versionLabel: 'Version (X.Y.Z)',
@@ -281,6 +281,7 @@ const en: Translation<typeof de> = {
         interrupted: 'interrupted by a restart',
         self_update_timeout: 'the updater was not replaced',
         unexpected_image: 'unexpected image name',
+        media_server_mismatch: 'the compose files would start another media server than the one running now (UPDATER_COMPOSE_FILES without compose.plex.yaml?), nothing was restarted',
         compose_config: 'compose configuration not readable',
         unknown: 'unknown error',
       },
@@ -555,6 +556,9 @@ const en: Translation<typeof de> = {
     },
     approvals: {
       pending_approvals: { one: '{n} sign-in is waiting for approval', other: '{n} sign-ins are waiting for approval' },
+    },
+    config: {
+      removed_env: { one: '{n} old variable name in .env is ignored since 2.0: the request service now uses REQUESTS_URL and REQUESTS_API_KEY', other: '{n} old variable names in .env are ignored since 2.0: the request service now uses REQUESTS_URL and REQUESTS_API_KEY' },
     },
   },
 };

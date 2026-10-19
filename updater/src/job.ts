@@ -16,6 +16,8 @@ export interface Ops {
   spawnSelfUpdate(tag: string): Promise<void>;
   /** one health round: every FriendFlix service up (and healthy where it has a check), the backend answering with `sha7` */
   healthy(sha7: string | null): Promise<boolean>;
+  /** the compose files the last images() call settled on (file names only; for the job log) */
+  composeFiles?(): readonly string[];
 }
 
 /** In-memory job log: our own fixed messages, tags and error codes only (never command output, never a secret). */
@@ -140,6 +142,8 @@ export class Updater {
   private async prepare(job: Job | null, tag: string, services: readonly string[], step = <T>(n: StepName, f: () => Promise<T>) => (job ? this.step(job, n, f) : f())) {
     const images = await step('pull', async () => {
       const imgs = await this.ops.images(tag, services);
+      const files = this.ops.composeFiles?.();
+      if (files?.length) this.log.add(`compose files: ${files.join(', ')}`);
       await this.ops.pull(tag, services);
       return imgs;
     });

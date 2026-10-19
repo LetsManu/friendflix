@@ -22,8 +22,8 @@ test.describe('admin update channel (desktop)', () => {
     await expect(nightly).toHaveAttribute('aria-checked', 'false');
     // the mock has a newer release: the update snippet with the stable line
     await expect(card.getByLabel('Zeile in der .env')).toHaveValue('FF_TAG=latest');
-    await expect(card.getByLabel('Befehl')).toHaveValue('docker compose -f compose.prod.yaml pull && docker compose -f compose.prod.yaml up -d');
-    await expect(card).toContainText('FriendFlix greift nie selbst auf Docker zu');
+    await expect(card.getByLabel('Befehl')).toHaveValue('docker compose -f compose.prod.yaml -f compose.no-updater.yaml pull && docker compose -f compose.prod.yaml -f compose.no-updater.yaml up -d');
+    await expect(card).toContainText('ohne Updater greift FriendFlix nie selbst auf Docker zu');
 
     await nightly.click();
     await expect(toasts(page).getByText('Kanal Nightly gespeichert.')).toBeVisible();

@@ -3,8 +3,8 @@
 /**
  * Admin → Update, channel part (backend/src/channel.ts): which channel the install runs, the selected one (setting
  * UPDATE_CHANNEL: stable, nightly or a fixed version), and when to show the `.env` line plus the pull command. Without the
- * opt-in updater switching means: change FF_TAG in the stack's .env, then pull and restart; with it the updater installs the
- * selected channel (lib/admin/updater.ts).
+ * updater (compose.no-updater.yaml) switching means: change FF_TAG in the stack's .env, then pull and restart; with it (the default
+ * since 2.0) the updater installs the selected channel (lib/admin/updater.ts).
  */
 import type { BuildKind, Channel } from '#lib/version/build';
 
@@ -13,12 +13,14 @@ export type SelectedChannel = Channel | 'pinned';
 export const CHANNELS: readonly SelectedChannel[] = ['stable', 'nightly', 'pinned'];
 /** X.Y.Z, the same rule as the backend (config.ts UPDATE_VERSION) */
 export const VERSION_RE = /^(0|[1-9][0-9]{0,3})\.(0|[1-9][0-9]{0,3})\.(0|[1-9][0-9]{0,3})$/;
-/** the production stack (compose.prod.yaml); FF_TAG only exists there */
-export const PULL_COMMAND = 'docker compose -f compose.prod.yaml pull && docker compose -f compose.prod.yaml up -d';
+/**
+ * The production stack (compose.prod.yaml; FF_TAG only exists there) as it runs without the updater: the snippet only shows when no
+ * updater answers, and since 2.0 compose.prod.yaml starts the updater unless compose.no-updater.yaml is named, so the command keeps it off.
+ */
+const files = (kind: string) => `-f compose.prod.yaml${kind === 'plex' ? ' -f compose.plex.yaml' : ''} -f compose.no-updater.yaml`;
 /** the pull command of this instance: a Plex stack also names its override (compose.plex.yaml sets MEDIA_SERVER=plex) */
-export const pullCommand = (kind: string = 'jellyfin'): string => (kind === 'plex'
-  ? 'docker compose -f compose.prod.yaml -f compose.plex.yaml pull && docker compose -f compose.prod.yaml -f compose.plex.yaml up -d'
-  : PULL_COMMAND);
+export const pullCommand = (kind: string = 'jellyfin'): string => `docker compose ${files(kind)} pull && docker compose ${files(kind)} up -d`;
+export const PULL_COMMAND = pullCommand('jellyfin');
 
 export interface ChannelInfo { selected: SelectedChannel; version?: string | null; running: Channel | null; build: BuildKind | null; label: string; locked: boolean; envLine: string }
 export interface ChannelState { updateAvailable?: boolean | null; behind?: number | null; channel?: ChannelInfo | null }

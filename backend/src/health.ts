@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { createHash } from 'node:crypto';
 import { stat as fsStat, statfs as fsStatfs } from 'node:fs/promises';
+import { REMOVED_ENV } from './config.js';
 import type { Ctx } from './ctx.js';
 import { recentCount } from './errorlog.js';
 import { pruneTimings } from './playtiming.js';
@@ -15,7 +16,7 @@ import { OMDB_DAILY_BUDGET, PAUSE_KEY, SOURCES, sourceStatus, type SourceName } 
  */
 export type Level = 'ok' | 'warn' | 'err' | 'off';
 export type ServiceId = 'media' | 'postgres' | 'redis' | 'gateway' | 'oidc' | 'requests' | 'tmdb' | 'omdb' | 'playbackCheck';
-export type Reason = 'slow' | 'down' | 'issuer_mismatch' | 'invalid_key' | 'paused' | 'budget' | 'not_set' | 'failed_titles' | 'unavailable' | 'full' | 'low_free' | 'cap' | 'large' | 'server_errors' | 'client_errors' | 'failed_playbacks' | 'empty_media' | 'pending_approvals';
+export type Reason = 'slow' | 'down' | 'issuer_mismatch' | 'invalid_key' | 'paused' | 'budget' | 'not_set' | 'failed_titles' | 'unavailable' | 'full' | 'low_free' | 'cap' | 'large' | 'server_errors' | 'client_errors' | 'failed_playbacks' | 'empty_media' | 'pending_approvals' | 'removed_env';
 export interface ServiceHealth { id: ServiceId; level: Level; reason?: Reason; ms?: number; detail?: { n?: number; pct?: number } }
 export interface DiskHealth {
   id: 'downloads' | 'previews' | 'database'; level: Level; reason?: Reason; totalBytes?: number; freeBytes?: number; usedPct?: number; ownBytes: number; capBytes?: number;
@@ -30,7 +31,7 @@ export interface DiskDeps {
   statfs: (path: string) => Promise<{ bsize: number; blocks: number; bavail: number }>;
   stat: (path: string) => Promise<{ dev: number }>;
 }
-export interface HealthDeps extends Partial<DiskDeps> { fetchImpl?: typeof fetch; timeoutMs?: number }
+export interface HealthDeps extends Partial<DiskDeps> { fetchImpl?: typeof fetch; timeoutMs?: number; env?: NodeJS.ProcessEnv }
 
 const PROBE_TIMEOUT_MS = 3000;
 const SLOW_MS: Partial<Record<ServiceId, number>> = { media: 2000, postgres: 500, redis: 200, gateway: 2000, oidc: 2000 };
@@ -225,7 +226,10 @@ async function pendingApprovals(ctx: Ctx, timeoutMs: number): Promise<number | n
   return o.ok ? o.v : null;
 }
 
-function issuesOf(svcs: ServiceHealth[], dsks: DiskHealth[], errs: ErrorHealth, pending: number | null): HealthIssue[] {
+/** setting names removed in 2.0 that are still set in the backend's environment (config.ts REMOVED_ENV; names counted, never read) */
+export const removedEnvCount = (env: NodeJS.ProcessEnv): number => Object.keys(REMOVED_ENV).filter((k) => env[k]).length;
+
+function issuesOf(svcs: ServiceHealth[], dsks: DiskHealth[], errs: ErrorHealth, pending: number | null, removed = 0): HealthIssue[] {
   const out: HealthIssue[] = [];
   const add = (id: string, level: Level, reason: Reason | undefined, detail?: HealthIssue['detail']) => {
     if ((level === 'warn' || level === 'err') && reason) out.push({ id, level, reason, fp: issueFp(id, level, reason), ...(detail ? { detail } : {}) });
@@ -240,6 +244,8 @@ function issuesOf(svcs: ServiceHealth[], dsks: DiskHealth[], errs: ErrorHealth, 
   if (errs.playback60 >= 3) add('errors:playback', 'warn', 'failed_playbacks', { n: errs.playback60 });
   // a to-do for the admin, not a health problem: shown in the banner, but it does not colour `worst`
   if (pending) add('approvals:pending', 'warn', 'pending_approvals', { n: pending });
+  // a to-do as well: old variable names in .env that 2.0 no longer reads (the request service then runs without them)
+  if (removed) add('config:env', 'warn', 'removed_env', { n: removed });
   return out;
 }
 
@@ -258,7 +264,7 @@ export async function buildSnapshot(ctx: Ctx, deps: HealthDeps = {}): Promise<He
   const fetchImpl = deps.fetchImpl ?? ctx.fetchImpl;
   const d: DiskDeps = { statfs: deps.statfs ?? realStatfs, stat: deps.stat ?? realStat };
   const [svcs, dsks, errs, pending] = await Promise.all([services(ctx, fetchImpl, timeoutMs), disks(ctx, d, timeoutMs), errorHealth(ctx), pendingApprovals(ctx, timeoutMs)]);
-  const issues = issuesOf(svcs, dsks, errs, pending);
+  const issues = issuesOf(svcs, dsks, errs, pending, removedEnvCount(deps.env ?? process.env));
   return { at: new Date().toISOString(), services: svcs, disks: dsks, errors: errs, issues, worst: worstOf([...svcs.map((s) => s.level), ...dsks.map((x) => x.level), errs.level]) };
 }
 

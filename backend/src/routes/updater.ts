@@ -8,7 +8,7 @@ import { requireAdmin } from '../session.js';
 import { UPDATER_ACTIONS, startJob, updaterView, type UpdaterAction } from '../updater.js';
 
 /**
- * Admin -> Update with the opt-in updater. GET: whether an updater answers, its status (channel, installed/previous tag, the job
+ * Admin -> Update with the updater service. GET: whether an updater answers, its status (channel, installed/previous tag, the job
  * with its steps, the last log lines) and the automatic-update setting; without an updater `present: false` and the page keeps
  * the manual steps. POST: one of the three jobs, admin only, after a recent re-authentication, at most 3 per 2 minutes for the
  * whole portal, audited (start and result).

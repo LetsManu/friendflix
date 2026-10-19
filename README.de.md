@@ -51,6 +51,8 @@ FriendFlix ist ein privates Streaming-Portal vor **Jellyfin** (deine Medien) und
    docker compose -f compose.prod.yaml up -d
    ```
 
+   Das startet auch den **Updater**: Ab dann installiert *Admin → Update* neue Versionen selbst (standardmäßig Kanal *Stabil* = Image-Tag `latest`, kein `FF_TAG` nötig; nur der separate Socket-Proxy sieht Docker, nie Backend oder Web-App). Ohne ihn: `-f compose.no-updater.yaml` dazunehmen ([docs/de/setup.md, Updater](docs/de/setup.md#updater)).
+
 2. **Den einmaligen Einrichtungscode** aus dem Backend-Log lesen (die Zeile erscheint, sobald das Backend läuft; bei leerer Ausgabe nach ein paar Sekunden wiederholen):
 
    ```bash
@@ -65,7 +67,7 @@ FriendFlix ist ein privates Streaming-Portal vor **Jellyfin** (deine Medien) und
 
 Danach in Authentik den einmaligen Token widerrufen und MFA zur Pflicht machen ([docs/de/setup.md, Authentik absichern](docs/de/setup.md#authentik-absichern)). Ab dann melden sich alle auf der eigenen Anmeldeseite von FriendFlix an, über einer Wand aus Covern deiner Bibliothek (`LOGIN_UI`, automatisch, sobald Authentik verbunden ist); Authentik prüft dahinter weiter jedes Passwort und jeden zweiten Faktor, und *Admin → Status → Anmeldung* sagt dir, wenn ein Ablauf eine Korrektur braucht. Jede Einstellung lässt sich später unter *Admin → Einstellungen* ändern, und jede Änderung wird vor dem Speichern getestet. Außerdem sinnvoll: `./scripts/backup-bootstrap.sh` sichert die erzeugten Secrets (siehe [docs/de/setup.md](docs/de/setup.md#7-stack-starten)). Die ganze Anleitung vom leeren Server aus, mit den typischen Fehlern jedes Assistenten-Schritts: **[docs/de/setup.md](docs/de/setup.md)**.
 
-Bestehende Installation? Deine `.env` bleibt erhalten; sie sieht den Assistenten nie ([docs/de/setup.md §14](docs/de/setup.md#14-umstieg-auf-einstellungen-in-der-datenbank)). `.env` und Docker-Secrets bleiben außerdem eine fortgeschrittene Option, um Werte festzunageln ([unten](#fortgeschritten-konfiguration-über-die-umgebung)).
+Bestehende Installation? Deine `.env` bleibt erhalten; sie sieht den Assistenten nie ([docs/de/setup.md §14](docs/de/setup.md#14-umstieg-auf-einstellungen-in-der-datenbank)). Von 1.x kommend: umbenannte Variablen, Updater und `FF_TAG` in [docs/de/setup.md §16, Upgrade auf 2.0](docs/de/setup.md#16-upgrade-auf-20). `.env` und Docker-Secrets bleiben außerdem eine fortgeschrittene Option, um Werte festzunageln ([unten](#fortgeschritten-konfiguration-über-die-umgebung)).
 
 *Die Screenshots zeigen die deutsche Oberfläche mit erfundenen Beispieldaten und Platzhalter-Hosts.*
 
@@ -215,7 +217,7 @@ Ab hier wird es technisch. Die Installation steht unter [Loslegen](#loslegen); d
 
 ### Fortgeschritten: Konfiguration über die Umgebung
 
-Eine neue Installation braucht davon nichts: Einrichtungsassistent und *Admin → Einstellungen* speichern die Einstellungen in der Datenbank. `.env` und Docker-Secrets sind dazu da, Werte festzunageln: Was sie setzen, hat Vorrang und ist im Assistenten und unter *Admin → Einstellungen* gesperrt ([docs/de/setup.md §15](docs/de/setup.md#15-fortgeschritten-konfiguration-über-die-umgebung), [docs/de/setup.md, Einstellungen in der Datenbank](docs/de/setup.md#einstellungen-in-der-datenbank)). Vorlage: [.env.example](.env.example). Jede Variable kann mit der Endung `_FILE` auch aus einer Datei gelesen werden (Docker Secrets, siehe [compose.secrets.yaml](compose.secrets.yaml)). Die Standardwerte stammen aus [compose.prod.yaml](compose.prod.yaml).
+Eine neue Installation braucht davon nichts: Einrichtungsassistent und *Admin → Einstellungen* speichern die Einstellungen in der Datenbank. `.env` und Docker-Secrets sind dazu da, Werte festzunageln: Was sie setzen, hat Vorrang und ist im Assistenten und unter *Admin → Einstellungen* gesperrt ([docs/de/setup.md §15](docs/de/setup.md#15-fortgeschritten-konfiguration-über-die-umgebung), [docs/de/setup.md, Einstellungen in der Datenbank](docs/de/setup.md#einstellungen-in-der-datenbank)). Jede Einstellung lässt sich so setzen: Compose reicht jeden Schlüssel aus *Admin → Einstellungen* an das Backend durch (ein generierter Block in `compose.prod.yaml`; eine nicht gesetzte Zeile ändert nichts). Vorlage: [.env.example](.env.example). Jede Variable kann mit der Endung `_FILE` auch aus einer Datei gelesen werden (Docker Secrets, siehe [compose.secrets.yaml](compose.secrets.yaml)). Die Standardwerte stammen aus [compose.prod.yaml](compose.prod.yaml).
 
 <details>
 <summary>Alle Variablen</summary>
@@ -232,11 +234,11 @@ Eine neue Installation braucht davon nichts: Einrichtungsassistent und *Admin �
 | `MEDIA_SERVER` | `jellyfin` | Art des Medienservers: `jellyfin` oder `plex` (nur Umgebung; `compose.plex.yaml` setzt `plex`, siehe [docs/de/plex.md](docs/de/plex.md) und [docs/architecture.md](docs/architecture.md)) |
 | `JELLYFIN_URL`, `JELLYFIN_ADMIN_API_KEY` | – (Einrichtungsassistent) | Interne Jellyfin-URL, z. B. `http://jellyfin:8096`, und Admin-API-Key (nur mit `MEDIA_SERVER=jellyfin`) |
 | `PLEX_URL`, `PLEX_TOKEN` | – (Einrichtungsassistent) | Nur mit `MEDIA_SERVER=plex`: die Plex-Adresse, unter der Backend und Gateway Plex erreichen, z. B. `http://plex.example.com:32400` (nur die Adresse: kein `?…`, `#…` oder `benutzer:passwort@`), und der Token des Plex-Kontos, das FriendFlix nutzt (verschlüsselt in der Datenbank, nur schreibbar; `PLEX_TOKEN_FILE` als Docker-Secret). *Admin → Einstellungen* zeigt sie nur auf einer Plex-Instanz; ein Wert hier gewinnt und sperrt das Feld |
-| `REQUESTS_URL`, `REQUESTS_API_KEY` | – (Pflicht) | Interne URL (mitgeliefert: `http://requests:5055`) und API-Key des Wunsch-Dienstes (ältere Variablennamen funktionieren weiter, mit Hinweis im Log) |
+| `REQUESTS_URL`, `REQUESTS_API_KEY` | – (Pflicht) | Interne URL (mitgeliefert: `http://requests:5055`) und API-Key des Wunsch-Dienstes (seit 2.0 nur diese Namen; die Namen aus 1.x werden ignoriert, siehe [Upgrade auf 2.0](docs/de/setup.md#16-upgrade-auf-20)) |
 | `ADMIN_GROUP` | `friendflix-admins` | Authentik-Gruppe, deren Mitglieder Portal-Admins werden |
 | `BIND_ADDR` | `127.0.0.1` | Host-Adresse für die drei Ports – nie eine öffentliche Schnittstelle |
 | `WEB_PORT`, `BACKEND_PORT`, `GATEWAY_PORT` | `3080`, `3081`, `3082` | Host-Ports für den Reverse Proxy |
-| `FF_REGISTRY`, `FF_TAG` | `ghcr.io/letsmanu`, `latest` | Herkunft und Release-Kanal der Images: `latest` = stabile Releases, `nightly` = jeder grüne Commit auf main, `1` / `1.1` / `1.1.0` (oder Commit-SHA) zum Festnageln ([Release-Kanäle](docs/operations.md#release-kanäle)) |
+| `FF_REGISTRY`, `FF_TAG` | `ghcr.io/letsmanu`, `latest` | Herkunft und Tag der Images. **Nur ohne Updater** (`compose.no-updater.yaml`): `FF_TAG` ist dann der Release-Kanal: `latest` = stabile Releases, `nightly` = jeder grüne Commit auf main, `2` / `2.0` / `2.0.0` (oder `sha-<7>`) zum Festnageln ([Release-Kanäle](docs/de/setup.md#release-kanäle-ohne-updater)). Mit Updater weglassen: den Kanal wählt *Admin → Update* |
 | `SESSION_TTL_SECONDS`, `SESSION_IDLE_SECONDS` | `28800`, `7200` | Maximale Sitzungsdauer (8 h) und Ablauf bei Inaktivität (2 h) |
 | `TZ` | `Europe/Vienna` | Zeitzone für geplante Jobs (Rückblick, Wiedergabe-Check, Backups) |
 | `AUTHENTIK_URL`, `AUTHENTIK_API_TOKEN`, `AUTHENTIK_ENROLL_FLOW` | leer | Einladungen, die auch das Authentik-Konto anlegen (alle drei nötig); URL und Token liefern der Admin-Nutzerseite auch den Zwei-Faktor-Stand und *Passwort-Link senden* |
@@ -267,8 +269,8 @@ Eine neue Installation braucht davon nichts: Einrichtungsassistent und *Admin �
 | `METRICS_TOKEN` | leer | Bearer-Token für `/metrics` |
 | `PORTAINER_WEBHOOK_URL` oder `PORTAINER_URL` + `PORTAINER_API_KEY` + `PORTAINER_STACK_ID` | leer | Updates per Knopfdruck unter *Admin → Update* (`PORTAINER_ENDPOINT_ID` Standard `1`) |
 | `UPDATE_REPO`, `GITHUB_TOKEN` | `LetsManu/friendflix`, leer | Versionsprüfung; das Token hebt nur das GitHub-Limit an |
-| `UPDATE_CHANNEL`, `UPDATE_VERSION` | `stable`, leer | Wird mit dem Schalter *Stabil / Nightly / Feste Version* unter *Admin → Update* gesetzt (in der Datenbank, keine `.env` nötig): womit die Update-Prüfung vergleicht und, mit dem Updater, was er installiert. Ohne Updater wechselt es nie Images, das macht `FF_TAG` |
-| `UPDATER_URL`, `UPDATER_COMPOSE_FILES` | `http://updater:7070`, `compose.prod.yaml` | Opt-in-Updater (Profil `updater`, [Installationsanleitung](docs/de/setup.md#updater-optional)): seine interne Adresse (nur Umgebung) und die Compose-Dateien des Stacks (mit Plex macht `compose.plex.yaml` daraus `compose.prod.yaml,compose.plex.yaml`) |
+| `UPDATE_CHANNEL`, `UPDATE_VERSION` | `stable`, leer | Wird mit dem Schalter *Stabil / Nightly / Feste Version* unter *Admin → Update* gesetzt (in der Datenbank, keine `.env` nötig): womit die Update-Prüfung vergleicht und, mit dem Updater, was er installiert. Ohne Updater (`compose.no-updater.yaml`) wechselt es nie Images, das macht `FF_TAG` |
+| `UPDATER_URL`, `UPDATER_COMPOSE_FILES`, `UPDATER_PROJECT_DIR` | `http://updater:7070`, leer (automatisch), das aktuelle Verzeichnis | Der Updater (seit 2.0 standardmäßig an, [Installationsanleitung](docs/de/setup.md#updater)): seine interne Adresse (nur Umgebung); die Compose-Dateien, mit denen er den Stack neu erstellt (leer = die Dateien, mit denen der Stack zuletzt gestartet wurde, `compose.plex.yaml` und andere Overrides bleiben also drin; nur setzen, um eine Liste zu erzwingen, die dann jede Datei nennen muss); der absolute Pfad des Stack-Verzeichnisses, nur wenn Compose ohne `PWD` läuft (z. B. `sudo`) |
 | `AUTO_UPDATE`, `AUTO_UPDATE_TIME` | `off`, `04:00` | Automatische Updates über den Updater: `nightly-window` startet den Update-Auftrag einmal pro Nacht ab dieser Uhrzeit (Zeitzone des Servers); unter *Admin → Update* einstellbar |
 | `GRAFANA_ADMIN_PASSWORD`, `GRAFANA_PORT`, `PROMETHEUS_RETENTION` | – (Pflicht für den Monitoring-Stack), `3083`, `30d` | Optionales Prometheus + Grafana (`compose.monitoring.yaml`); kein Standardpasswort |
 | `BACKUP_PATH`, `BACKUP_HOUR`, `BACKUP_KEEP_DAYS`, `BACKUP_RUN_ON_START` | `./backups`, `3`, `14`, `false` | Backup-Sidecar (Profil `backup`) |
