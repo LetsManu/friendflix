@@ -213,7 +213,15 @@ export class Updater {
   private async selfUpdate(job: Job): Promise<void> {
     job.steps.health = 'skipped';
     try {
-      await this.prepare(job, job.to, [SELF_SERVICE]);
+      const images = await this.prepare(job, job.to, [SELF_SERVICE]);
+      // already on that image (same registry digest): compose would leave this container as it is and no new process would
+      // ever finish the job, so there is nothing to restart
+      const [now, next] = await Promise.all([this.ops.running(SELF_SERVICE).catch(() => null), this.ops.imageInfo(images[SELF_SERVICE]!).catch(() => null)]);
+      if (now && next && now.repoDigests.some((d) => next.repoDigests.includes(d))) {
+        job.steps.restart = 'skipped';
+        this.log.add('the updater already runs this image');
+        return this.finish(job, 'succeeded', null);
+      }
       await this.step(job, 'restart', () => this.ops.spawnSelfUpdate(job.to));
       job.step = 'restart'; job.steps.restart = 'running'; this.persist();
       // the helper recreates this container: a new process finishes the job (recover()); still here after the timeout = it failed

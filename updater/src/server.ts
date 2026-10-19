@@ -53,12 +53,14 @@ function readBody(req: IncomingMessage): Promise<string | null> {
 
 export async function status(d: AppDeps) {
   const s = d.updater.snapshot();
+  const services = await d.services().catch(() => []);
   return {
     updater: d.self,
     channel: s.channel, version: s.version, targetTag: channelTag(s.channel, s.version),
-    current: s.current, previous: s.previous, busy: d.updater.busy,
+    // before the first job of this updater: the build the backend runs now (its sha-<7> tag)
+    current: s.current ?? services.find((v) => v.service === 'backend')?.sha ?? null, previous: s.previous, busy: d.updater.busy,
     job: s.lastJob, log: d.updater.log.tail(30),
-    services: await d.services().catch(() => []),
+    services,
   };
 }
 

@@ -4,6 +4,9 @@ All notable changes, grouped by what you notice. Each release has its own sectio
 
 ## [Unreleased]
 
+### Fixes
+- **Updater: "Update the updater" on the image it already runs no longer fails after three minutes.** When the running updater has the same registry digest as the pulled and verified one, the job ends as succeeded without a restart (compose would leave the container as it is, so no new process could finish the job). Admin -> Update shows the build the backend runs as *Installed* before the updater's first job, instead of "none".
+
 ## [2.0.0] – Brezel – 2026-10-19
 
 ### Breaking changes / Upgrade to 2.0
