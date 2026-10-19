@@ -247,6 +247,7 @@ Eine neue Installation braucht davon nichts: Einrichtungsassistent und *Admin �
 | `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`, `VAPID_SUBJECT` | leer, leer, `PUBLIC_URL` | Web-Push; nur aktiv, wenn beide Schlüssel gesetzt sind |
 | `DIGEST_DAY`, `DIGEST_HOUR` | `0` (Sonntag), `18` | Zeitplan des Wochenrückblicks; `-1` = aus; im Admin-Bereich änderbar |
 | `CAST_ENABLED` | `true` | Chromecast und AirPlay (braucht eine https-`PUBLIC_URL`); bei Plan B `false` |
+| `CAST_RECEIVER_APP_ID` | – | App-ID des eigenen FriendFlix-Cast-Empfängers (`/cast-receiver/`, in der Google Cast SDK Developer Console registriert): „Nächste Folge“ mit Countdown, „Noch da?“ und Fortschritt auf dem Fernseher; leer = Googles Standard-Empfänger ([docs/de/cast-receiver.md](docs/de/cast-receiver.md)) |
 | `POSTPLAY_ENABLED` | `true` | Der Bildschirm nach einem Film oder der letzten Folge („Du bist auf dem neuesten Stand“, Vorschläge); `false` schaltet ihn für alle ab. Siehe [docs/discovery.md](docs/discovery.md). Auch unter *Admin → Einstellungen → Empfehlungen* änderbar (gilt sofort, ohne Neustart); ein Wert aus der `.env` hat Vorrang und sperrt das Feld dort |
 | `DOWNLOADS_ENABLED` | `true` | Offline-Downloads; bei Plan B `false` |
 | `DOWNLOADS_PATH`, `PREVIEWS_PATH` | Volumes `downloads`, `previews` | Host-Ordner (absoluter Pfad, beschreibbar für uid 1000) für vorbereitete Downloads und Vorschau-Clips |

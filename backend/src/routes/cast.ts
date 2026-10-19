@@ -2,11 +2,12 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
-import { CAST_MAX_BITRATE, CAST_MAX_HEIGHT, castEnabled, castSubtitlePath, castTtlSeconds, castPredecessor, createCast, resolveCastSubtitle, revokeCast } from '../cast.js';
+import { CAST_MAX_BITRATE, CAST_MAX_HEIGHT, CAST_REPORT_RE, castEnabled, castReceiverAppId, castReportToken, castSubtitlePath, castTtlSeconds, castPredecessor, createCast, resolveCastSubtitle, revokeCast, verifyCastReport } from '../cast.js';
 import type { Ctx } from '../ctx.js';
 import { MediaError } from '../media/types.js';
 import { countLive } from '../live.js';
-import { isHomeRequest } from '../netaddr.js';
+import { clientAddress, isHomeRequest } from '../netaddr.js';
+import { playbackReport } from './media.js';
 import { effectiveLimits } from '../limits.js';
 import { remoteBitrateCap } from '../roles.js';
 import { requireUser } from '../session.js';
@@ -15,7 +16,11 @@ import { id32 as itemId } from './_shared.js';
 export function castRoutes(app: FastifyInstance, ctx: Ctx) {
   const pre = { preHandler: requireUser(ctx) };
 
-  app.get('/api/cast/config', pre, async () => ({ enabled: castEnabled(ctx) }));
+  // receiverAppId only when FriendFlix's own receiver is configured: without it the sender keeps the Default Media Receiver
+  app.get('/api/cast/config', pre, async () => {
+    const receiverAppId = castReceiverAppId(ctx);
+    return { enabled: castEnabled(ctx), ...(receiverAppId ? { receiverAppId } : {}) };
+  });
 
   app.post('/api/cast/session', { ...pre, config: { rateLimit: { max: 10, timeWindow: '1 minute' } } }, async (req, reply) => {
     if (!castEnabled(ctx)) return reply.code(404).send({ error: 'cast_disabled' });
@@ -30,6 +35,8 @@ export function castRoutes(app: FastifyInstance, ctx: Ctx) {
       next: z.boolean().optional(),
       /** with `next`: the castId of the cast it follows (must be this device's newest one) */
       after: z.string().regex(/^[0-9a-f]{32}$/).optional(),
+      /** the sender casts to FriendFlix's own receiver: the answer carries its report token (`report`, see cast.ts castReportToken) */
+      receiver: z.boolean().optional(),
     }).parse(req.body);
     const deviceId = req.session!.deviceId;
     if (!deviceId) return reply.code(403).send({ error: 'device_pending' });
@@ -55,10 +62,12 @@ export function castRoutes(app: FastifyInstance, ctx: Ctx) {
       let info = await ctx.jf.playbackInfo(req.jfUser!, b.itemId, opts);
       if (ctx.jf.preparePlayback) info = await ctx.jf.preparePlayback(req.jfUser!, info, opts);
       const ttl = castTtlSeconds(info.runtimeTicks, startTicks);
-      const { ct, imgCt, castId, expiresAt } = await createCast(ctx, {
+      const rec = {
         userId: req.user!.id, profileId: req.profile!.id, deviceId, itemId: b.itemId, mediaSourceId: info.mediaSourceId, playSessionId: info.playSessionId, maxBitrate, title: item.name, via: b.via ?? 'chromecast',
         ...(pred ? { afterPs: pred.playSessionId } : {}),
-      }, ttl, Boolean(item.image));
+      } as const;
+      const { ct, imgCt, castId, expiresAt } = await createCast(ctx, rec, ttl, Boolean(item.image));
+      const report = b.receiver && rec.via === 'chromecast' && castReceiverAppId(ctx) ? castReportToken(ctx, rec, { castId, expiresAt }) : undefined;
       // Jellyfin returns /media/... URLs; the cast variant carries the token in the path: /media/c/<ct>/...
       const absWith = (t: string, u: string) => `${ctx.cfg.PUBLIC_URL.replace(/\/+$/, '')}/media/c/${t}${u.slice('/media'.length)}`;
       const abs = (u: string) => absWith(ct, u);
@@ -84,6 +93,7 @@ export function castRoutes(app: FastifyInstance, ctx: Ctx) {
         // the poster gets its own image-only token: the media token must never appear in a URL the receiver shows or fetches as an image
         imageUrl: imgCt ? absWith(imgCt, `/media/Items/${b.itemId}/Images/Primary?maxWidth=600`) : undefined,
         subtitles: info.subtitles.map((s) => ({ index: s.index, language: s.language, title: s.title, url: subUrl(s.url) })),
+        ...(report ? { report } : {}),
       };
     } catch (e) {
       if (e instanceof MediaError) return reply.code(e.status === 404 ? 404 : e.status === 403 ? 403 : 502).send({ error: 'jellyfin', status: e.status });
@@ -111,6 +121,35 @@ export function castRoutes(app: FastifyInstance, ctx: Ctx) {
       return reply.header('content-type', 'text/vtt; charset=utf-8').send(body);
     } catch (e) {
       if (e instanceof MediaError) return [400, 403, 404].includes(e.status) ? reply.code(404).send({ error: 'not_found' }) : reply.code(502).send({ error: 'jellyfin', status: e.status });
+      throw e;
+    }
+  });
+
+  /**
+   * FriendFlix's own receiver reports the play session of the cast token it plays (no cookie: the report token is the credential,
+   * see cast.ts verifyCastReport). The same report logic as /api/playback/* with the token's account, profile and device, so the
+   * stream limit, kids rules and statistics apply unchanged. Off (404) without CAST_RECEIVER_APP_ID.
+   */
+  app.post('/api/cast/report', { config: { rateLimit: { max: 60, timeWindow: '1 minute' } } }, async (req, reply) => {
+    reply.header('cache-control', 'no-store');
+    if (!castReceiverAppId(ctx)) return reply.code(404).send({ error: 'not_found' });
+    const p = z.object({
+      rt: z.string().regex(CAST_REPORT_RE),
+      event: z.enum(['start', 'progress', 'stop']),
+      positionTicks: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
+      isPaused: z.boolean().default(false),
+    }).safeParse(req.body);
+    if (!p.success) return reply.code(400).send({ error: 'invalid' });
+    const v = await verifyCastReport(ctx, p.data.rt, clientAddress(req));
+    if (!v.ok) return reply.code(v.status).send({ error: v.error });
+    const c = v.claims;
+    try {
+      const kind = p.data.event === 'start' ? 'Playing' : p.data.event === 'stop' ? 'Playing/Stopped' : 'Playing/Progress';
+      const r = await playbackReport(ctx, kind, { itemId: c.i, playSessionId: c.ps, mediaSourceId: c.ms, positionTicks: p.data.positionTicks, isPaused: p.data.isPaused, playMethod: 'Transcode' },
+        { user: v.user, jfUser: v.jfUser, profile: v.prof, deviceId: c.d });
+      return 'error' in r ? reply.code(429).send(r) : r;
+    } catch (e) {
+      if (e instanceof MediaError) return reply.code(e.status === 404 || e.status === 403 ? 404 : 502).send({ error: 'jellyfin', status: e.status });
       throw e;
     }
   });

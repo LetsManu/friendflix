@@ -21,12 +21,12 @@ const def = (key: string) => {
 describe('key classification', () => {
   it('every key of the config schema is in exactly one of SETTINGS, ENV_ONLY_KEYS, BOOTSTRAP_KEYS, BUILD_KEYS', () => {
     const keys = Object.keys(configSchema.shape);
-    expect(keys).toHaveLength(96); // + PLEX_URL, PLEX_TOKEN
+    expect(keys).toHaveLength(97); // + PLEX_URL, PLEX_TOKEN, CAST_RECEIVER_APP_ID
     const classes = [SETTINGS.map((s) => s.key), ENV_ONLY_KEYS, BOOTSTRAP_KEYS, BUILD_KEYS];
     for (const k of keys) expect(classes.filter((c) => c.includes(k)), k).toHaveLength(1);
     expect(classes.flat().sort()).toEqual([...keys].sort()); // nothing outside the schema, no duplicates
-    expect([BOOTSTRAP_KEYS.length, ENV_ONLY_KEYS.length, BUILD_KEYS.length, SETTINGS.length]).toEqual([4, 21, 4, 67]); // + PLEX_URL, PLEX_TOKEN
-    expect(SETTINGS.filter((s) => s.visible !== false)).toHaveLength(67);
+    expect([BOOTSTRAP_KEYS.length, ENV_ONLY_KEYS.length, BUILD_KEYS.length, SETTINGS.length]).toEqual([4, 21, 4, 68]); // + PLEX_URL, PLEX_TOKEN, CAST_RECEIVER_APP_ID
+    expect(SETTINGS.filter((s) => s.visible !== false)).toHaveLength(68);
     expect(SETTINGS.filter((s) => s.visible === false).map((s) => s.key)).toEqual([]);
   });
   it('each setting parses with the config schema field of the same key', () => {
@@ -85,6 +85,9 @@ describe('key classification', () => {
     expect(def('SESSION_TTL_SECONDS').max).toBeUndefined();
     expect(def('DOWNLOAD_PREP_CONCURRENCY')).toMatchObject({ min: 1, max: 4 });
     expect(def('CAST_ENABLED')).toMatchObject({ kind: 'bool', group: 'playback', default: 'true' });
+    expect(def('CAST_RECEIVER_APP_ID')).toMatchObject({ kind: 'string', group: 'playback', apply: 'live' });
+    expect(def('CAST_RECEIVER_APP_ID').schema.parse(' a1b2c3d4 ')).toBe('A1B2C3D4');
+    expect(def('CAST_RECEIVER_APP_ID').schema.safeParse('not-an-id').success).toBe(false);
     expect(def('AUTHENTIK_RECOVERY_FLOW').default).toBe('default-recovery-flow');
     expect(def('AUTHENTIK_TOTP_SETUP_FLOW').default).toBe('default-authenticator-totp-setup');
     expect(def('TMDB_API_KEY')).toMatchObject({ group: 'sources', probe: 'tmdb' });

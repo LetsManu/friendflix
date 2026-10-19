@@ -154,6 +154,7 @@ const settings: Translation<typeof de> = {
     DOWNLOAD_OFFLINE_GRACE_DAYS: { label: 'Çevrimdışı geçerlilik (gün)', help: 'Bir indirmenin bağlantı olmadan oynatılabildiği süre.' },
     DOWNLOAD_CREATE_PER_HOUR: { label: 'Saat başına indirme', help: 'Saat ve oturum başına en fazla yeni indirme sayısı.' },
     CAST_ENABLED: { label: 'Chromecast', help: 'Chromecast cihazlarında oynatma. Geçerli bir https sertifikalı genel adres gerektirir.' },
+    CAST_RECEIVER_APP_ID: { label: 'Cast alıcı uygulama kimliği', help: 'Boş: Chromecast, Google’ın varsayılan alıcısını kullanır. FriendFlix’in kendi alıcısının uygulama kimliğiyle (8 karakter, Google Cast SDK Developer Console’dan, alıcı adresi https://<adresiniz>/cast-receiver/) TV geri sayımlı “Sonraki bölüm”, “Hâlâ orada mısın?” ve “Girişi atla” gösterir ve telefon uykudayken bile ilerlemeyi kaydeder. Bkz. docs/cast-receiver.md.' },
     PREVIEW_WARM: { label: 'Önizlemeleri hazırla', help: 'Boştayken eksik önizleme kliplerini dakikada bir oluşturur.' },
     HOME_NETWORKS: { label: 'Ev ağları', help: 'Ev sayılan ağlar (dışarıdaki bit hızı sınırı yok), virgülle ayrılmış, ör. 192.168.0.0/16.' },
     GITHUB_TOKEN: { label: 'GitHub token’ı', help: 'İsteğe bağlı: yeni sürümleri ararken daha yüksek sorgu sınırı.' },

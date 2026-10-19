@@ -4,6 +4,7 @@ import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import type { Ctx } from '../ctx.js';
 import { MediaError, type ItemDto, type TranscodeReason } from '../media/types.js';
+import type { JfUser, ProfileRow, UserRow } from '../types.js';
 import { methodOf } from '../playstats.js';
 import { clearLive, clearStopped, countLive, getLive, listLive, markStopped, setLive } from '../live.js';
 import { isHomeRequest } from '../netaddr.js';
@@ -49,6 +50,55 @@ const reportBody = z.object({
   subtitleIndex: z.number().int().optional(),
   playMethod: z.enum(['DirectPlay', 'DirectStream', 'Transcode']).optional(),
 });
+
+export type PlaybackKind = 'Playing' | 'Playing/Progress' | 'Playing/Stopped';
+export type PlaybackReportBody = z.infer<typeof reportBody>;
+/** who reports: a signed-in session, or a cast receiver's report token (routes/cast.ts, resolved to the same identity) */
+export interface PlaybackReporter { user: UserRow; jfUser: JfUser; profile?: ProfileRow; deviceId?: string }
+
+/**
+ * start / progress / stop of a play session: live record (stream limit), media server report, statistics hooks.
+ * Shared by /api/playback/* (session) and /api/cast/report (cast receiver, routes/cast.ts); same rules for both.
+ */
+export async function playbackReport(ctx: Ctx, kind: PlaybackKind, b: PlaybackReportBody, who: PlaybackReporter): Promise<{ ok: true } | { error: 'max_streams'; max: number }> {
+  const user = who.user;
+  const ticks = Math.floor(b.positionTicks);
+  let live = await getLive(ctx, user.id, b.playSessionId);
+  let elapsed = true;
+  if (!live) {
+    // Start takes a stream slot. Progress/Stopped after TTL expiry are still forwarded (a sleeping tab must not lose its position)
+    // and rebuild the live record without counting against maxStreams.
+    if (kind === 'Playing') {
+      const role = (await effectiveLimits(ctx, user))!;
+      if ((await countLive(ctx, user.id)) >= role.maxStreams) return { error: 'max_streams', max: role.maxStreams };
+    }
+    const item = await ctx.jf.item(who.jfUser, b.itemId); // access check: the user must be able to see the item
+    elapsed = false;
+    live = {
+      userId: user.id, userName: user.name, profileName: who.profile?.is_owner ? undefined : who.profile?.name, itemId: b.itemId, title: item.name, seriesName: item.seriesName, type: item.type,
+      positionTicks: ticks, runtimeTicks: item.runtimeTicks, isPaused: false, playSessionId: b.playSessionId, updatedAt: Date.now(), source: 'portal',
+    };
+  }
+  const prev = live.updatedAt;
+  live = { ...live, positionTicks: ticks, isPaused: b.isPaused, updatedAt: Date.now() };
+  if (kind === 'Playing' || (kind !== 'Playing/Stopped' && !live.playMethod)) {
+    // Block 22: play method (client) + the reason the server gave at /info time, device and server identity for the admin view
+    const raw = await ctx.kv.get(`pbinfo:${user.id}:${b.playSessionId}`).catch(() => null);
+    let reason: TranscodeReason | undefined;
+    try { reason = (raw ? (JSON.parse(raw) as { reason: TranscodeReason | null }).reason : null) ?? undefined; } catch { reason = undefined; }
+    const playMethod = methodOf(b.playMethod, reason);
+    live = { ...live, playMethod, ...(playMethod === 'transcode' && reason ? { transcodeReason: reason } : {}), deviceId: who.deviceId, serverUserId: who.jfUser.jellyfin_user_id };
+  }
+  await ctx.jf.report(who.jfUser, {
+    event: kind === 'Playing' ? 'start' : kind === 'Playing/Stopped' ? 'stop' : 'progress',
+    itemId: b.itemId, mediaSourceId: b.mediaSourceId, playSessionId: b.playSessionId, positionTicks: ticks, paused: b.isPaused,
+    audioIndex: b.audioIndex, subtitleIndex: b.subtitleIndex, playMethod: b.playMethod,
+  });
+  if (kind === 'Playing/Stopped') { await clearLive(ctx, user.id, b.playSessionId); await markStopped(ctx, user.id, b.playSessionId); }
+  else { if (kind === 'Playing') await clearStopped(ctx, user.id, b.playSessionId); await setLive(ctx, live); }
+  await playbackHooks.run(ctx, { kind, user, live, elapsedMs: elapsed ? Math.min(Date.now() - prev, 30_000) : 0 });
+  return { ok: true };
+}
 
 /** Maps upstream errors to a clean 502/4xx without leaking details. */
 const wrap = <T extends (...a: any[]) => Promise<any>>(fn: T): T => sharedWrap(fn, { zod: 'issues', passthrough: [404, 403] });
@@ -304,46 +354,10 @@ export function mediaRoutes(app: FastifyInstance, ctx: Ctx) {
     return info;
   }));
 
-  const report = (kind: 'Playing' | 'Playing/Progress' | 'Playing/Stopped') =>
+  const report = (kind: PlaybackKind) =>
     wrap(async (req: any, reply: any) => {
-      const b = reportBody.parse(req.body);
-      const user = req.user!;
-      const ticks = Math.floor(b.positionTicks);
-      let live = await getLive(ctx, user.id, b.playSessionId);
-      let elapsed = true;
-      if (!live) {
-        // Start takes a stream slot. Progress/Stopped after TTL expiry are still forwarded (a sleeping tab must not lose its position)
-        // and rebuild the live record without counting against maxStreams.
-        if (kind === 'Playing') {
-          const role = (await effectiveLimits(ctx, user))!;
-          if ((await countLive(ctx, user.id)) >= role.maxStreams) return reply.code(429).send({ error: 'max_streams', max: role.maxStreams });
-        }
-        const item = await ctx.jf.item(req.jfUser!, b.itemId); // access check: the user must be able to see the item
-        elapsed = false;
-        live = {
-          userId: user.id, userName: user.name, profileName: req.profile?.is_owner ? undefined : req.profile?.name, itemId: b.itemId, title: item.name, seriesName: item.seriesName, type: item.type,
-          positionTicks: ticks, runtimeTicks: item.runtimeTicks, isPaused: false, playSessionId: b.playSessionId, updatedAt: Date.now(), source: 'portal',
-        };
-      }
-      const prev = live.updatedAt;
-      live = { ...live, positionTicks: ticks, isPaused: b.isPaused, updatedAt: Date.now() };
-      if (kind === 'Playing' || (kind !== 'Playing/Stopped' && !live.playMethod)) {
-        // Block 22: play method (client) + the reason the server gave at /info time, device and server identity for the admin view
-        const raw = await ctx.kv.get(`pbinfo:${user.id}:${b.playSessionId}`).catch(() => null);
-        let reason: TranscodeReason | undefined;
-        try { reason = (raw ? (JSON.parse(raw) as { reason: TranscodeReason | null }).reason : null) ?? undefined; } catch { reason = undefined; }
-        const playMethod = methodOf(b.playMethod, reason);
-        live = { ...live, playMethod, ...(playMethod === 'transcode' && reason ? { transcodeReason: reason } : {}), deviceId: req.session?.deviceId, serverUserId: req.jfUser?.jellyfin_user_id };
-      }
-      await ctx.jf.report(req.jfUser!, {
-        event: kind === 'Playing' ? 'start' : kind === 'Playing/Stopped' ? 'stop' : 'progress',
-        itemId: b.itemId, mediaSourceId: b.mediaSourceId, playSessionId: b.playSessionId, positionTicks: ticks, paused: b.isPaused,
-        audioIndex: b.audioIndex, subtitleIndex: b.subtitleIndex, playMethod: b.playMethod,
-      });
-      if (kind === 'Playing/Stopped') { await clearLive(ctx, user.id, b.playSessionId); await markStopped(ctx, user.id, b.playSessionId); }
-      else { if (kind === 'Playing') await clearStopped(ctx, user.id, b.playSessionId); await setLive(ctx, live); }
-      await playbackHooks.run(ctx, { kind, user, live, elapsedMs: elapsed ? Math.min(Date.now() - prev, 30_000) : 0 });
-      return { ok: true };
+      const r = await playbackReport(ctx, kind, reportBody.parse(req.body), { user: req.user!, jfUser: req.jfUser!, profile: req.profile, deviceId: req.session?.deviceId });
+      return 'error' in r ? reply.code(429).send(r) : r;
     });
   app.post('/api/playback/start', pre, report('Playing'));
   app.post('/api/playback/progress', pre, report('Playing/Progress'));

@@ -62,9 +62,11 @@ let classes: Set<string>;
 let scripts: Array<{ src: string; async: boolean }>;
 let win: Record<string, any>;
 let castEnabled: boolean | 'error';
+/** /api/cast/config `receiverAppId` ('' = not in the answer, as without CAST_RECEIVER_APP_ID) */
+let appId = '';
 const fetchMock = vi.fn(async (_url: string) => {
   if (castEnabled === 'error') return new Response('{}', { status: 500 });
-  return new Response(JSON.stringify({ enabled: castEnabled }));
+  return new Response(JSON.stringify({ enabled: castEnabled, ...(appId ? { receiverAppId: appId } : {}) }));
 });
 type Cast = typeof import('./cast');
 let C: Cast;
@@ -75,6 +77,7 @@ beforeEach(async () => {
   classes = new Set();
   scripts = [];
   castEnabled = true;
+  appId = '';
   fetchMock.mockClear();
   win = {};
   vi.stubGlobal('navigator', { get userAgent() { return ua; }, get platform() { return platform; }, maxTouchPoints: 0 });
@@ -391,5 +394,72 @@ describe('remote controls', () => {
     C.castSetSubtitle(4);
     C.castSetSubtitle(-1);
     expect(sdk.mediaSession.editTracksInfo.mock.calls.map((c: any[]) => c[0].args[0])).toEqual([[1], []]);
+  });
+});
+
+describe('own receiver (CAST_RECEIVER_APP_ID)', () => {
+  const info: CastInfo = {
+    castId: 'c'.repeat(32), expiresAt: 0, playSessionId: 'ps', mediaSourceId: 'ms', startTime: 0,
+    contentUrl: 'https://p/media/c/TOKEN/Videos/x/master.m3u8', contentType: 'application/x-mpegURL', hlsSegmentFormat: 'ts', title: 'Pilot', subtitles: [],
+    report: 'cmVwb3J0LXRva2VuLWNsYWltcw.' + 'S'.repeat(43),
+  };
+  /** the session with the custom channel methods of the real SDK */
+  const withChannel = (sdk: ReturnType<typeof fakeSdk>) => {
+    const sent: unknown[] = [];
+    let onMsg: ((ns: string, m: string) => void) | null = null;
+    Object.assign(sdk.session, {
+      sendMessage: vi.fn(async (ns: string, m: unknown) => { sent.push([ns, m]); }),
+      addMessageListener: vi.fn((_ns: string, fn: (ns: string, m: string) => void) => { onMsg = fn; }),
+    });
+    sdk.context.current = sdk.session;
+    return { sent, rx: (m: string) => onMsg?.(C.CAST_NS, m) };
+  };
+
+  it('without an app ID: the Default Media Receiver, no receiver flag, no customData, nothing sent on a channel', async () => {
+    const sdk = await connectSdk();
+    const ch = withChannel(sdk);
+    expect(sdk.context.setOptions.mock.calls[0]![0]).toEqual({ receiverApplicationId: 'CC1AD845', autoJoinPolicy: 'origin_scoped' });
+    expect(C.castCustomReceiver()).toBe(false);
+    const b = { itemId: 'x', via: undefined };
+    expect(C.castBody(b)).toBe(b);
+    sdk.fire('sessionstatechanged', { sessionState: 'SESSION_STARTED' });
+    expect(await C.loadOnCast(info)).toBe(true);
+    expect(sdk.session.loadMedia.mock.calls[0]![0].args[0].customData).toBeUndefined();
+    C.castSendMessage({ t: 'x' });
+    expect(ch.sent).toEqual([]);
+    expect((sdk.session as unknown as { addMessageListener: ReturnType<typeof vi.fn> }).addMessageListener).not.toHaveBeenCalled();
+  });
+
+  it('with an app ID: starts that receiver, asks for the report token and hands it over on the private channel only', async () => {
+    appId = 'A1B2C3D4';
+    const sdk = await connectSdk();
+    const ch = withChannel(sdk);
+    expect(sdk.context.setOptions.mock.calls[0]![0]).toMatchObject({ receiverApplicationId: 'A1B2C3D4' });
+    expect(C.castCustomReceiver()).toBe(true);
+    expect(C.castBody({ itemId: 'x' })).toEqual({ itemId: 'x', receiver: true });
+    expect(C.castBody({ itemId: 'x', via: 'airplay' })).toEqual({ itemId: 'x', via: 'airplay' }); // AirPlay never
+    sdk.fire('sessionstatechanged', { sessionState: 'SESSION_STARTED' });
+    expect(await C.loadOnCast(info)).toBe(true);
+    const media = sdk.session.loadMedia.mock.calls[0]![0].args[0];
+    expect(media.customData).toEqual({ ff: { castId: info.castId } });
+    expect(JSON.stringify(media)).not.toContain(info.report!); // never in metadata other senders can read
+    expect(ch.sent).toEqual([[C.CAST_NS, { t: 'tok', castId: info.castId, rt: info.report }]]);
+    // a queued one gets its token too; autoplay false (waits for "still watching?")
+    expect(await C.queueOnCast({ ...info, castId: 'd'.repeat(32), contentUrl: 'https://p/n.m3u8' }, false)).toBe(100);
+    expect(sdk.mediaSession.queueInsertItems.mock.calls[0]![0].args[0][0]).toMatchObject({ autoplay: false });
+    expect(ch.sent).toHaveLength(2);
+    // receiver messages reach the listeners (bad JSON / shapes are dropped)
+    const got: unknown[] = [];
+    const off = C.onReceiverMessage((m) => got.push(m));
+    ch.rx('{"t":"interaction"}'); ch.rx('nope'); ch.rx('{"x":1}');
+    off();
+    ch.rx('{"t":"cancel"}');
+    expect(got).toEqual([{ t: 'interaction' }]);
+  });
+
+  it('an invalid app ID in the answer falls back to the Default Media Receiver', async () => {
+    appId = 'nothex!!';
+    const sdk = await connectSdk();
+    expect(sdk.context.setOptions.mock.calls[0]![0]).toMatchObject({ receiverApplicationId: 'CC1AD845' });
   });
 });

@@ -149,6 +149,7 @@ export default {
     DOWNLOAD_OFFLINE_GRACE_DAYS: { label: 'Offline gültig (Tage)', help: 'So lange lässt sich ein Download ohne Verbindung abspielen.' },
     DOWNLOAD_CREATE_PER_HOUR: { label: 'Downloads pro Stunde', help: 'Höchstzahl neuer Downloads pro Stunde und Sitzung.' },
     CAST_ENABLED: { label: 'Chromecast', help: 'Wiedergabe auf Chromecast-Geräten. Braucht eine öffentliche Adresse mit gültigem https-Zertifikat.' },
+    CAST_RECEIVER_APP_ID: { label: 'Cast-Empfänger-App-ID', help: 'Leer: Chromecast nutzt Googles Standard-Empfänger. Mit der App-ID des eigenen FriendFlix-Empfängers (8 Zeichen, aus der Google Cast SDK Developer Console, Empfänger-Adresse https://<deine Adresse>/cast-receiver/) zeigt der Fernseher „Nächste Folge“ mit Countdown, „Noch da?“ und „Intro überspringen“ und meldet den Fortschritt, auch wenn das Handy schläft. Siehe docs/cast-receiver.md.' },
     PREVIEW_WARM: { label: 'Vorschauen vorbereiten', help: 'Erzeugt im Leerlauf fehlende Vorschau-Clips, einen pro Minute.' },
     HOME_NETWORKS: { label: 'Heimnetze', help: 'Netze, die als Zuhause gelten (keine Bitraten-Grenze für unterwegs), durch Kommas getrennt, z. B. 192.168.0.0/16.' },
     GITHUB_TOKEN: { label: 'GitHub-Token', help: 'Optional: höheres Abruflimit bei der Suche nach neuen Versionen.' },

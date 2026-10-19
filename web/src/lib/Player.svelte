@@ -41,7 +41,7 @@
   import { AudioFxEngine, fxActive, fxBlocked, fxFromPref, fxToPref, loadFx, saveFx, type AudioFx } from '#lib/player/audiofx';
   import { fmtDuration, getLocale, t, tr, type TFn, type TKey } from '#lib/i18n';
   import { animeAudio, animeDefaultApplies, animeSubtitle } from '#lib/player/anime';
-  import { castConfigEnabled, castSetVolume, castState, castToggleMute, initCast, loadOnCast, onCastEvent, requestCastSession, type CastInfo } from '#lib/cast';
+  import { castBody, castConfigEnabled, castSetVolume, castState, castToggleMute, initCast, loadOnCast, onCastEvent, requestCastSession, type CastInfo } from '#lib/cast';
   import { CAST_VIDEO_ATTR, castEngine, castSession, type CastSession } from '#lib/cast/engine';
 
   export let itemId: string;
@@ -410,7 +410,7 @@
   // ---- Chromecast session lifecycle ----
   const castErr = (e: any) => e?.body?.error === 'max_streams' ? tr('player.error.maxStreams', { n: Number(e.body.max) })
     : e?.body?.error === 'transcoding_disabled' ? tr('player.cast.needsTranscode') : tr('player.cast.failed');
-  const castRequest = (pos: number, via?: 'airplay') => api<CastInfo>('/api/cast/session', { method: 'POST', body: { itemId, startTicks: secToTicks(pos), audioIndex, maxBitrate: quality || undefined, via } });
+  const castRequest = (pos: number, via?: 'airplay') => api<CastInfo>('/api/cast/session', { method: 'POST', body: castBody({ itemId, startTicks: secToTicks(pos), audioIndex, maxBitrate: quality || undefined, via }) });
   const castRevoke = (ci: CastInfo | null) => { if (ci) api(`/api/cast/session/${ci.castId}`, { method: 'DELETE' }).catch(() => undefined); };
 
   /** what the cast engine needs to own this title's cast session */

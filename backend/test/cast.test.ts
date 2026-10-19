@@ -719,3 +719,138 @@ describe('cast: FriendFlix-served subtitles (subtitleExtract)', () => {
     expect((await fetchSub(url)).statusCode).toBe(404);
   });
 });
+
+/** FriendFlix's own receiver (CAST_RECEIVER_APP_ID): config, the receiver report token and POST /api/cast/report. */
+describe('cast: own receiver and its report token', () => {
+  const APP = 'A1B2C3D4';
+  const TV = '198.51.100.1'; // authz() pins with this address: the receiver that streams the token
+  let was = '';
+  beforeAll(() => { was = env.ctx.cfg.CAST_RECEIVER_APP_ID; env.ctx.cfg = { ...env.ctx.cfg, CAST_RECEIVER_APP_ID: APP }; });
+  afterAll(() => { env.ctx.cfg = { ...env.ctx.cfg, CAST_RECEIVER_APP_ID: was }; });
+  afterEach(() => { psNext = null; });
+  const me = async () => (await call(admin, 'GET', '/api/me')).json().id as string;
+  /** a cast token for the receiver, already streamed (pinned) by the TV */
+  const cast = async (body: Record<string, unknown> = {}) => {
+    const c = await create(admin, { receiver: true, ...body });
+    expect(c.r.statusCode).toBe(200);
+    expect((await authz({ ct: c.ct, client: TV })).statusCode).toBe(200);
+    return c;
+  };
+  const rep = (rt: string, event: string, extra: Record<string, unknown> = {}, ip = TV) =>
+    env.app.inject({ method: 'POST', url: '/api/cast/report', headers: { 'x-real-ip': ip }, payload: { rt, event, positionTicks: 1_000_000_000, isPaused: false, ...extra } });
+  const clean = async (uid: string) => { for (const k of [...await env.kv.keys(`play:${uid}:`), ...await env.kv.keys(`pstop:${uid}:`)]) await env.kv.del(k); };
+
+  it('config names the app ID only when it is set and casting is on; the token only goes to a receiver sender', async () => {
+    expect((await call(admin, 'GET', '/api/cast/config')).json()).toEqual({ enabled: true, receiverAppId: APP });
+    expect((await create()).j.report).toBeUndefined(); // the Default Media Receiver flow is unchanged
+    expect((await create(admin, { receiver: true, via: 'airplay' })).j.report).toBeUndefined();
+    const { j, ct } = await create(admin, { receiver: true });
+    expect(j.report).toMatch(/^[\w-]+\.[\w-]{43}$/);
+    expect(j.report).not.toContain(ct);
+    const claims = JSON.parse(Buffer.from(j.report.split('.')[0], 'base64url').toString());
+    expect(claims).toMatchObject({ v: 1, c: j.castId, i: ID, ps: j.playSessionId, ms: MS, exp: j.expiresAt });
+    expect(JSON.stringify(claims)).not.toContain(ct);
+    env.ctx.cfg = { ...env.ctx.cfg, CAST_RECEIVER_APP_ID: '' };
+    try {
+      expect((await call(admin, 'GET', '/api/cast/config')).json()).toEqual({ enabled: true });
+      expect((await create(admin, { receiver: true })).j.report).toBeUndefined();
+      expect((await rep(j.report, 'progress')).statusCode).toBe(404);
+    } finally { env.ctx.cfg = { ...env.ctx.cfg, CAST_RECEIVER_APP_ID: APP }; }
+    env.ctx.cfg = { ...env.ctx.cfg, CAST_ENABLED: 'false' };
+    try { expect((await call(admin, 'GET', '/api/cast/config')).json()).toEqual({ enabled: false }); } finally { env.ctx.cfg = { ...env.ctx.cfg, CAST_ENABLED: 'true' }; }
+  });
+
+  it('reports start / progress / stop for its play session without a cookie (same rules as /api/playback/*)', async () => {
+    const uid = await me();
+    await clean(uid);
+    const { j } = await cast();
+    const before = env.jfCalls.length;
+    expect((await rep(j.report, 'start')).statusCode).toBe(200);
+    expect(await getLive(env.ctx, uid, j.playSessionId)).toMatchObject({ itemId: ID, positionTicks: 1_000_000_000, deviceId: expect.any(String) });
+    expect((await rep(j.report, 'progress', { positionTicks: 2_000_000_000, isPaused: true })).statusCode).toBe(200);
+    expect(await getLive(env.ctx, uid, j.playSessionId)).toMatchObject({ positionTicks: 2_000_000_000, isPaused: true });
+    expect((await rep(j.report, 'stop')).statusCode).toBe(200);
+    expect(await getLive(env.ctx, uid, j.playSessionId)).toBeNull();
+    const sent = env.jfCalls.slice(before).filter((c) => c.path.startsWith('/Sessions/Playing')).map((c) => c.path);
+    expect(sent).toEqual(['/Sessions/Playing', '/Sessions/Playing/Progress', '/Sessions/Playing/Stopped']);
+    await clean(uid);
+  });
+
+  it('is bound: tampered claims or signature, another address, a revoked or expired cast token are refused', async () => {
+    const { j } = await cast();
+    const [body, sig] = j.report.split('.') as [string, string];
+    const claims = JSON.parse(Buffer.from(body, 'base64url').toString());
+    const forged = (c: Record<string, unknown>) => `${Buffer.from(JSON.stringify({ ...claims, ...c })).toString('base64url')}.${sig}`;
+    expect((await rep(forged({ i: 'f'.repeat(32) }), 'progress')).statusCode).toBe(401); // another item
+    expect((await rep(forged({ exp: claims.exp + 1 }), 'progress')).statusCode).toBe(401);
+    expect((await rep(`${body}.${'A'.repeat(43)}`, 'progress')).statusCode).toBe(401);
+    expect((await rep(j.report, 'progress', {}, '203.0.113.9')).statusCode).toBe(401); // not the receiver that streams it
+    expect((await rep('x', 'progress')).statusCode).toBe(400);
+    expect((await rep(j.report, 'progress')).statusCode).toBe(200);
+    skipClock(j.expiresAt - Date.now() + 1000);
+    expect((await rep(j.report, 'progress')).statusCode).toBe(401); // past its cap
+    vi.useRealTimers();
+    expect((await call(admin, 'DELETE', `/api/cast/session/${j.castId}`)).statusCode).toBe(200);
+    expect((await rep(j.report, 'progress')).statusCode).toBe(401); // dies with its cast token
+  });
+
+  it('a token never streamed (no pin) and a disabled account or unapproved device report nothing', async () => {
+    const c = await create(admin, { receiver: true });
+    expect((await rep(c.j.report, 'progress')).statusCode).toBe(401);
+    const { j } = await cast();
+    const uid = await me();
+    await env.ctx.db.query('update users set disabled=true where id=$1', [uid]);
+    try { expect((await rep(j.report, 'progress')).statusCode).toBe(401); } finally { await env.ctx.db.query('update users set disabled=false where id=$1', [uid]); }
+    await env.ctx.db.query('update devices set approved=false where user_id=$1', [uid]);
+    try { expect((await rep(j.report, 'progress')).statusCode).toBe(401); } finally { await env.ctx.db.query('update devices set approved=true where user_id=$1', [uid]); }
+  });
+
+  it('keeps the stream limit: a start beyond maxStreams is 429, as for the phone', async () => {
+    const uid = await me();
+    await clean(uid);
+    const was = env.ctx.roles.admin!.maxStreams;
+    env.ctx.roles.admin!.maxStreams = 1;
+    try {
+      const { j } = await cast();
+      await clean(uid);
+      await setLive(env.ctx, { userId: uid, userName: 'a', itemId: ID, title: 't', positionTicks: 0, isPaused: false, playSessionId: 'other-ps-9', updatedAt: Date.now(), source: 'portal' });
+      expect((await rep(j.report, 'start')).statusCode).toBe(429);
+    } finally {
+      env.ctx.roles.admin!.maxStreams = was;
+      await clean(uid);
+    }
+  });
+
+  it('the next-token gate holds: a queued next episode reports nothing while the cast it follows plays, then counts normally', async () => {
+    const uid = await me();
+    await revokeSessions(env.ctx, uid);
+    admin = await env.login();
+    await clean(uid);
+    const cur = await cast();
+    expect((await rep(cur.j.report, 'start')).statusCode).toBe(200);
+    psNext = 'ps-next-0042';
+    const nx = await create(admin, { next: true, after: cur.j.castId, receiver: true });
+    psNext = null;
+    expect(nx.r.statusCode).toBe(200);
+    expect((await authz({ ct: nx.ct, client: TV })).statusCode).toBe(200); // the receiver's preload (inside the overlap)
+    expect((await rep(nx.j.report, 'start')).statusCode).toBe(409);
+    expect(await getLive(env.ctx, uid, 'ps-next-0042')).toBeNull();
+    // the receiver moved on: the ended one's stop, then the next one's start
+    expect((await rep(cur.j.report, 'stop')).statusCode).toBe(200);
+    expect((await rep(nx.j.report, 'start')).statusCode).toBe(200);
+    expect(await countLive(env.ctx, uid)).toBe(1);
+    expect((await rep(nx.j.report, 'stop')).statusCode).toBe(200);
+    await clean(uid);
+  });
+
+  it('never logs the report token', async () => {
+    const lines: string[] = [];
+    const spies = (['log', 'info', 'warn', 'error'] as const).map((k) => vi.spyOn(console, k).mockImplementation((...a: unknown[]) => { lines.push(a.map(String).join(' ')); }));
+    try {
+      const { j } = await cast();
+      await rep(j.report, 'progress');
+      await rep(`${j.report.slice(0, -2)}xx`, 'progress');
+      expect(lines.join('\n')).not.toContain(j.report.split('.')[1]);
+    } finally { spies.forEach((s) => s.mockRestore()); }
+  });
+});

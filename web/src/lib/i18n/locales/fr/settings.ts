@@ -155,6 +155,7 @@ const settings: Translation<typeof de> = {
     DOWNLOAD_OFFLINE_GRACE_DAYS: { label: 'Valable hors ligne (jours)', help: 'Durée pendant laquelle un téléchargement se lit sans connexion.' },
     DOWNLOAD_CREATE_PER_HOUR: { label: 'Téléchargements par heure', help: 'Nombre maximal de nouveaux téléchargements par heure et par session.' },
     CAST_ENABLED: { label: 'Chromecast', help: 'Lecture sur les appareils Chromecast. Nécessite une adresse publique avec un certificat https valide.' },
+    CAST_RECEIVER_APP_ID: { label: 'ID d’application du récepteur Cast', help: 'Vide : Chromecast utilise le récepteur par défaut de Google. Avec l’ID d’application du récepteur FriendFlix (8 caractères, depuis la Google Cast SDK Developer Console, adresse du récepteur https://<votre adresse>/cast-receiver/), la TV affiche « Épisode suivant » avec un compte à rebours, « Toujours là ? » et « Passer l’intro », et enregistre la progression même quand le téléphone est en veille. Voir docs/cast-receiver.md.' },
     PREVIEW_WARM: { label: 'Préparer les aperçus', help: 'Crée au repos les clips d’aperçu manquants, un par minute.' },
     HOME_NETWORKS: { label: 'Réseaux domestiques', help: 'Réseaux considérés comme la maison (pas de limite de débit à distance), séparés par des virgules, p. ex. 192.168.0.0/16.' },
     GITHUB_TOKEN: { label: 'Jeton GitHub', help: 'Facultatif : limite de requêtes plus élevée lors de la recherche de nouvelles versions.' },
