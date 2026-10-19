@@ -5,7 +5,7 @@ import { z } from 'zod';
 /**
  * Device capability block the Android app sends with POST /api/playback/info (`caps`). Everything in it is a claim by the client: it can only
  * widen what the device may direct-play or narrow it further; role caps (height, bitrate, download rights), kids rules and max_streams always
- * win. Unknown values are dropped, oversized lists make the whole block invalid (null), and an invalid block behaves exactly like no block.
+ * win. The lists REPLACE the server's browser defaults, so the app must send complete lists, including mp4 / h264 / aac if it plays them. Unknown values are dropped, oversized lists make the whole block invalid (null), and an invalid block behaves exactly like no block.
  */
 export interface ClientVideoCap { codec: string; maxHeight?: number; profiles?: string[] }
 export interface ClientCaps {
@@ -43,7 +43,7 @@ const videoEntry = z.object({ codec: z.unknown(), maxHeight: z.unknown().optiona
 
 const shape = z.object({
   client: z.literal('android'),
-  appVersion: z.string().regex(SEMVER),
+  appVersion: z.string().max(32).regex(SEMVER),
   containers: list, video: list, audio: list, subtitles: list,
 });
 

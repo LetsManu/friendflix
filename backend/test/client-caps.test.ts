@@ -20,7 +20,7 @@ describe('parseClientCaps', () => {
   });
   it('ignores any other client, malformed shapes and non-strict versions', () => {
     for (const bad of [undefined, null, 'x', 5, [], caps({ client: 'ios' }), caps({ client: undefined }), caps({ appVersion: 'v2.0.0' }), caps({ appVersion: '2.0' }), caps({ appVersion: '2.0.0-beta' }),
-      caps({ appVersion: 2 }), caps({ containers: 'mp4' }), caps({ video: {} }), caps({ audio: undefined }), caps({ subtitles: null })]) expect(parseClientCaps(bad)).toBeNull();
+      caps({ appVersion: 2 }), caps({ appVersion: `1.${'0'.repeat(40)}.0` }), caps({ containers: 'mp4' }), caps({ video: {} }), caps({ audio: undefined }), caps({ subtitles: null })]) expect(parseClientCaps(bad)).toBeNull();
   });
   it('oversized lists make the whole block invalid', () => {
     const many = Array.from({ length: 17 }, () => 'aac');
@@ -155,8 +155,6 @@ describe('POST /api/playback/info with a capability block', () => {
 describe('/api/version', () => {
   it('adds minAndroid and keeps the existing fields', async () => {
     const v = (await env.app.inject('/api/version')).json();
-    expect(v.minAndroid).toBe('2.0.0');
-    expect(v).toEqual(expect.objectContaining({ sha: expect.any(String), version: expect.any(String), codename: expect.any(String), build: expect.any(String), label: expect.any(String) }));
-    expect(Object.keys(v)).toEqual(expect.arrayContaining(['sha', 'version', 'codename', 'channel']));
+    expect(v).toEqual({ sha: expect.any(String), version: expect.any(String), codename: expect.any(String), build: expect.any(String), channel: null, label: expect.any(String), minAndroid: '2.0.0' });
   });
 });

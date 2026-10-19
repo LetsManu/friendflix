@@ -158,6 +158,24 @@ describe('playbackInfo with the Android capability block', () => {
     expect((await h.pb.playbackInfo(ALICE, MOVIE, { ...opts, clientCaps: caps() })).directUrl).toBeDefined();
     expect((await h.pb.playbackInfo(ALICE, MOVIE, { ...opts, clientCaps: caps({ video: [{ codec: 'h264' }] }) })).directUrl).toBeUndefined();
   });
+  it('a transcode with caps keeps the rung bitrate and height box (caps never widen the limit)', async () => {
+    const h = setup();
+    const m = h.fake.meta.get('1')!.Media[0];
+    Object.assign(m, { height: 2160, width: 3840, bitrate: 40_000, videoCodec: 'hevc' });
+    for (const st of m.Part![0]!.Stream as Array<Record<string, unknown>>) if (Number(st.streamType) === 1) st.bitDepth = 10;
+    const q = async (o: Record<string, unknown>) => {
+      const i = await h.pb.playbackInfo(ALICE, MOVIE, { maxBitrate: 60_000_000, clientCaps: caps(), ...o });
+      await h.pb.preparePlayback(ALICE, i, opts);
+      return { i, s: h.fake.sessions.get(i.playSessionId)!.query };
+    };
+    const base = await q({});
+    expect(base.i.directUrl).toBeDefined(); // the app plays 10-bit HEVC in mkv itself
+    for (const o of [{ audioIndex: 2 }, { clientCaps: caps({ containers: ['mp4'] }) }, { noDirect: true }]) {
+      const { i, s } = await q(o);
+      expect(i.directUrl, JSON.stringify(o)).toBeUndefined();
+      expect([s.get('maxVideoBitrate'), s.get('videoResolution')], JSON.stringify(o)).toEqual(['59808', '1920x1080']);
+    }
+  });
   it('transcode reasons follow the app lists', () => {
     const f: ReasonFacts = { container: 'mkv', videoCodec: 'hevc', bitDepth: 10, audioCodec: 'eac3', srcBps: 50_000_000, srcHeight: 2160, maxBitrate: 20_000_000, capReason: 'roleCap' };
     expect(plexTranscodeReason(f)).toBe('videoCodec');

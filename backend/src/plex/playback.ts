@@ -194,7 +194,8 @@ export class PlexPlayback {
     // The Web profile stream-copies compatible sources only without a bitrate limit: send one when the source exceeds the cap, its
     // bitrate is unknown, the video has to be converted anyway, or for cast. A converted stream also gets the rung's height (and the
     // role's height cap), so a 4K source comes out at the chosen quality instead of a size Plex picks itself.
-    const limit = cast || srcBps === 0 || srcBps > opts.maxBitrate || !videoOk;
+    // (the browser decision only: the app's caps decide direct play, never whether a converted stream is limited)
+    const limit = cast || srcBps === 0 || srcBps > opts.maxBitrate || !videoDirect(lc(r.media.videoCodec), bitDepth);
     const boxH = Math.min(limit ? rungHeight(opts.maxBitrate) : Infinity, opts.maxHeight || Infinity);
 
     // a queued next episode's cast gets a cast-only session (mediapaths.ts verifyQueuedSession)
