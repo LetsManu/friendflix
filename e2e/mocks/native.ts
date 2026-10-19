@@ -13,6 +13,8 @@ export interface NativeCfg {
   downloadResult?: boolean;
   /** what downloads() lists */
   downloads?: unknown[];
+  /** answer play after this many ms (default 5) */
+  playDelayMs?: number;
 }
 export interface NativeCall { id: string; method: string; args: Record<string, unknown> }
 
@@ -37,7 +39,7 @@ export async function fakeNativeApp(page: Page, cfg: NativeCfg = {}) {
         const result: Record<string, unknown> = {
           capabilities: { api: 1, ...k.caps }, play: k.playResult, download: k.downloadResult, downloads: k.downloads, deleteDownload: true, openSettings: true,
         };
-        setTimeout(() => emit({ id: req.id, ok: true, result: result[req.method] }), 5);
+        setTimeout(() => emit({ id: req.id, ok: true, result: result[req.method] }), req.method === 'play' && k.playDelayMs ? k.playDelayMs : 5);
       },
       addEventListener(_t: string, l: (e: { data: string }) => void) { listeners.add(l); },
       removeEventListener(_t: string, l: (e: { data: string }) => void) { listeners.delete(l); },

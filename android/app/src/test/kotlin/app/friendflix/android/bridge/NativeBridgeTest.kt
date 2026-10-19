@@ -246,4 +246,17 @@ class NativeBridgeTest {
         assertTrue(NoDownloadSink.list().isEmpty())
         assertFalse(NoDownloadSink.delete("l"))
     }
+
+    @Test fun foreignFramesLearnNothingAboutSizeOrSyntax() {
+        send("x".repeat(5000), from = Uri.parse("https://evil.test"))
+        send("not json", main = false)
+        assertEquals(listOf("forbidden", "forbidden"), reply.sent.map { it.getString("error") })
+    }
+
+    @Test fun detachStopsEvents() {
+        send("""{"id":"r1","method":"capabilities","args":{}}""")
+        bridge.detach()
+        bridge.emit("download", JSONObject())
+        assertEquals(1, reply.sent.size)
+    }
 }

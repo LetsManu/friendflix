@@ -11,17 +11,19 @@ vi.mock('./engine', async () => {
 });
 vi.mock('#lib/ui/toast', () => ({ toast: { info } }));
 vi.mock('#lib/stillwatching', () => ({ noteInteraction }));
-const nat = vi.hoisted(() => ({ available: false, tryPlay: vi.fn(async (..._a: unknown[]) => true), goto: vi.fn(async (..._a: unknown[]) => {}) }));
+const nat = vi.hoisted(() => ({ href: 'https://x.test/item/e1', available: false, tryPlay: vi.fn(async (..._a: unknown[]) => true), goto: vi.fn(async (..._a: unknown[]) => {}) }));
 vi.mock('#lib/native/bridge', () => ({ native: { get available() { return nat.available; } } }));
 vi.mock('#lib/native/play', () => ({ tryNativePlay: nat.tryPlay }));
 vi.mock('$app/navigation', () => ({ goto: nat.goto }));
 
 import { playOrCast } from './playOrCast';
 
+vi.stubGlobal('location', { get href() { return nat.href; } });
+
 const ev = (o: Partial<MouseEvent> = {}) => ({ button: 0, defaultPrevented: false, preventDefault: vi.fn(), ...o }) as unknown as MouseEvent;
 
 describe('playOrCast', () => {
-  beforeEach(() => { (session.current as Writable<unknown>).set(null); playOnTv.mockClear(); info.mockClear(); noteInteraction.mockClear(); nat.available = false; nat.tryPlay.mockClear(); nat.tryPlay.mockResolvedValue(true); nat.goto.mockClear(); });
+  beforeEach(() => { (session.current as Writable<unknown>).set(null); playOnTv.mockClear(); info.mockClear(); noteInteraction.mockClear(); nat.available = false; nat.href = 'https://x.test/item/e1'; nat.tryPlay.mockClear(); nat.tryPlay.mockResolvedValue(true); nat.goto.mockClear(); });
 
   it('does nothing without a session', () => {
     const e = ev();
@@ -74,6 +76,30 @@ describe('playOrCast', () => {
       nat.tryPlay.mockResolvedValue(false);
       playOrCast(tap(), { id: 'e1' });
       await vi.waitFor(() => expect(nat.goto).toHaveBeenCalledWith('/watch/e1?audio=ger'));
+    });
+
+    it('no navigation when the viewer already left the page before the answer', async () => {
+      nat.available = true;
+      let answer!: (v: boolean) => void;
+      nat.tryPlay.mockReturnValue(new Promise<boolean>((r) => { answer = r; }));
+      playOrCast(tap(), { id: 'e1' });
+      nat.href = 'https://x.test/'; // navigated away
+      answer(false);
+      await Promise.resolve(); await Promise.resolve();
+      expect(nat.goto).not.toHaveBeenCalled();
+    });
+
+    it('taps while a request is pending are swallowed (one request, one fallback)', async () => {
+      nat.available = true;
+      let answer!: (v: boolean) => void;
+      nat.tryPlay.mockReturnValue(new Promise<boolean>((r) => { answer = r; }));
+      const second = tap();
+      playOrCast(tap(), { id: 'e1' });
+      expect(playOrCast(second, { id: 'e1' })).toBe(true);
+      expect(second.preventDefault).toHaveBeenCalled();
+      answer(false);
+      await vi.waitFor(() => expect(nat.goto).toHaveBeenCalledTimes(1));
+      expect(nat.tryPlay).toHaveBeenCalledTimes(1);
     });
 
     it('a cast session wins over the native player', () => {

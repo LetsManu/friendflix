@@ -28,6 +28,7 @@ class ShellActivity : ComponentActivity() {
     /** The shell's WebView once the saved server is known (null before, and when setup was started instead). */
     internal var webView: WebView? = null
         private set
+    private var bridge: NativeBridge? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         enableEdgeToEdge()
@@ -50,6 +51,7 @@ class ShellActivity : ComponentActivity() {
             // Tasks 6 (downloads) and 8 (player) swap the placeholders and flip their capability flags; until then the web UI keeps
             // playing and downloading in the page. openSettings is a no-op until the settings screen exists (Task 11).
             val bridge = NativeBridge(policy, NoPlayerLauncher, NoDownloadSink, Capabilities(play = false, download = false, cast = false), openSettings = {})
+            this@ShellActivity.bridge = bridge
             val view = WebViewFactory.create(
                 this@ShellActivity, policy, BuildConfig.VERSION_NAME, bridge,
                 onRenderGone = ::onRenderGone, openExternal = ::openExternal,
@@ -79,6 +81,8 @@ class ShellActivity : ComponentActivity() {
     }
 
     override fun onDestroy() {
+        bridge?.detach() // events and replies are posted through the view: let go of it before it is destroyed
+        bridge = null
         webView?.destroy()
         webView = null
         super.onDestroy()

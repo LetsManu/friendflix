@@ -27,11 +27,11 @@ class NativeBridge(
     @Volatile private var eventSink: ReplySink? = null
 
     fun onMessage(message: String, sourceOrigin: Uri, isMainFrame: Boolean, reply: ReplySink) {
+        // Frame and origin first: a foreign or nested frame learns nothing about the protocol (not even size or syntax errors).
+        if (!isMainFrame || !policy.isAppOrigin(sourceOrigin)) return reply.post(error(forbiddenId(message), "forbidden"))
         if (message.length > MAX_MESSAGE_CHARS) return reply.post(error(null, "too_large"))
         val root = try { JSONObject(message) } catch (_: JSONException) { return reply.post(error(null, "bad_request")) }
-        val id = (root.opt("id") as? String)?.takeIf { REQUEST_ID.matches(it) }
-        if (!isMainFrame || !policy.isAppOrigin(sourceOrigin)) return reply.post(error(id, "forbidden"))
-        if (id == null) return reply.post(error(null, "bad_request"))
+        val id = (root.opt("id") as? String)?.takeIf { REQUEST_ID.matches(it) } ?: return reply.post(error(null, "bad_request"))
         eventSink = reply
         val out = try {
             ok(id, handle(root))
@@ -41,6 +41,15 @@ class NativeBridge(
             error(id, "internal") // a backend that throws must not break the page's request
         }
         reply.post(out)
+    }
+
+    /** Drops the reply target (the page is gone, e.g. the WebView is destroyed) so nothing keeps a dead view alive. */
+    fun detach() { eventSink = null }
+
+    /** Best-effort request id for the `forbidden` answer; never parses oversized input. */
+    private fun forbiddenId(message: String): String? {
+        if (message.length > MAX_MESSAGE_CHARS) return null
+        return try { (JSONObject(message).opt("id") as? String)?.takeIf { REQUEST_ID.matches(it) } } catch (_: JSONException) { null }
     }
 
     /** Pushes an unsolicited event to the page. Silent when no main frame has talked to us yet or the page is gone. */

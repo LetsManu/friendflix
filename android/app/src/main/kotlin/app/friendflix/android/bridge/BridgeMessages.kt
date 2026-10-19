@@ -37,12 +37,20 @@ data class DownloadEntry(
     val expiresAt: Long,
 )
 
-/** Returns true only when playback really started in the native player; false makes the web UI play the title itself. */
+/**
+ * Returns true only when playback really started in the native player; false makes the web UI play the title itself.
+ * Must be idempotent per request: if the answer is slow the web UI gives up after a timeout, falls back to its own player and may
+ * ask again. A repeated identical request must not start a second player.
+ */
 interface PlayerLauncher {
     fun launch(req: PlayRequest): Boolean
 }
 
-/** Returns true only when the download was accepted; false makes the web UI download it in the page instead. */
+/**
+ * Returns true only when the download was accepted; false makes the web UI download it in the page instead.
+ * [enqueue] must be idempotent per licenseId (accepting an already known licence is true, no duplicate): after a timeout the web UI
+ * asks [list] and may re-send, and adopts into the browser only licences the app does not list.
+ */
 interface DownloadSink {
     fun enqueue(req: DownloadRequest): Boolean
     fun list(): List<DownloadEntry>

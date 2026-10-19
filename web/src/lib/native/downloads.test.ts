@@ -4,11 +4,11 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const h = vi.hoisted(() => ({
   licenses: [] as any[], me: { profile: { id: 'p-1' } },
-  download: vi.fn(async (_r: unknown) => true), refresh: vi.fn(async () => {}),
-  create: vi.fn(), adopt: vi.fn(async (..._a: unknown[]) => []), discard: vi.fn(async (_id: string) => {}),
+  download: vi.fn(async (_r: unknown): Promise<boolean | 'timeout'> => true), refresh: vi.fn(async () => {}),
+  create: vi.fn(), list: vi.fn(async () => [] as Array<{ licenseId: string }>), adopt: vi.fn(async (..._a: unknown[]) => []), discard: vi.fn(async (_id: string) => {}),
 }));
 vi.mock('#lib/offline/manager', () => ({ createLicenses: h.create, adoptLicenses: h.adopt, discardLicense: h.discard }));
-vi.mock('./bridge', () => ({ native: { download: h.download }, refreshNativeDownloads: h.refresh }));
+vi.mock('./bridge', () => ({ native: { download: h.download, downloads: h.list }, refreshNativeDownloads: h.refresh }));
 
 import { startNativeDownload, toView, viewForNative } from './downloads';
 
@@ -17,7 +17,7 @@ beforeEach(() => {
   h.licenses = [{ id: 'L-1', itemId: 'i-1', profileId: 'p-1' }, { id: 'L-2', itemId: 'i-2', profileId: '' }];
   h.create.mockReset(); h.create.mockImplementation(async () => ({ licenses: h.licenses, me: h.me }));
   h.download.mockReset(); h.download.mockResolvedValue(true);
-  h.adopt.mockClear(); h.discard.mockClear(); h.refresh.mockClear();
+  h.list.mockClear(); h.list.mockResolvedValue([]); h.adopt.mockClear(); h.discard.mockClear(); h.refresh.mockClear();
 });
 
 describe('startNativeDownload', () => {
@@ -42,6 +42,18 @@ describe('startNativeDownload', () => {
     await expect(startNativeDownload(req, false)).rejects.toThrow('native_declined');
     expect(h.discard.mock.calls.map((c) => c[0])).toEqual(['L-1', 'L-2']);
     expect(h.adopt).not.toHaveBeenCalled();
+  });
+  it('without browser support some accepted + some declined still succeeds; only the declined go back', async () => {
+    h.download.mockResolvedValueOnce(true).mockResolvedValueOnce(false);
+    await expect(startNativeDownload(req, false)).resolves.toBeUndefined();
+    expect(h.discard.mock.calls.map((c) => c[0])).toEqual(['L-2']);
+  });
+  it('a timeout is resolved by asking what the app lists: held licences are not adopted again', async () => {
+    h.download.mockResolvedValue('timeout');
+    h.list.mockResolvedValue([{ licenseId: 'L-1' }]);
+    await startNativeDownload(req, true);
+    expect(h.list).toHaveBeenCalledTimes(1);
+    expect(h.adopt).toHaveBeenCalledWith([h.licenses[1]], h.me);
   });
   it('a failing licence request surfaces to the caller before anything is handed over', async () => {
     h.create.mockRejectedValue(Object.assign(new Error('x'), { status: 429 }));

@@ -34,7 +34,7 @@ export async function tryNativePlay(item: { id: string; positionTicks?: number }
     if (!native.available || !(await nativeCaps()).play) return false;
     const { getMe } = await import('#lib/offline/manager');
     const req = playRequest(item, (await getMe())?.profile?.id, opts);
-    return req ? await native.play(req) : false;
+    return req ? (await native.play(req)) === true : false; // a timeout counts as "not started": the page plays
   } catch {
     return false;
   }

@@ -41,7 +41,7 @@ const hasMarker = () => (typeof navigator !== 'undefined' ? String(navigator.use
 const NO_CAPS: NativeCapabilities = { api: 0, play: false, download: false, cast: false };
 const STATES = new Set<string>(['queued', 'preparing', 'downloading', 'paused', 'done', 'error', 'expired']);
 
-const pending = new Map<string, (m: { ok: boolean; result?: unknown }) => void>();
+const pending = new Map<string, (m: Reply) => void>();
 const wired = new WeakSet<object>();
 let seq = 0;
 
@@ -62,13 +62,14 @@ function wire(p: Port) {
   });
 }
 
-function request(method: string, args: Record<string, unknown> = {}): Promise<{ ok: boolean; result?: unknown }> {
+type Reply = { ok: boolean; result?: unknown; timeout?: boolean };
+function request(method: string, args: Record<string, unknown> = {}): Promise<Reply> {
   const p = native.available ? port() : undefined;
   if (!p) return Promise.resolve({ ok: false });
   wire(p);
   return new Promise((resolve) => {
     const id = `r${++seq}`;
-    const timer = setTimeout(() => { pending.delete(id); resolve({ ok: false }); }, REQUEST_TIMEOUT_MS);
+    const timer = setTimeout(() => { pending.delete(id); resolve({ ok: false, timeout: true }); }, REQUEST_TIMEOUT_MS);
     pending.set(id, (m) => { clearTimeout(timer); resolve(m); });
     try { p.postMessage(JSON.stringify({ id, method, args })); } catch { clearTimeout(timer); pending.delete(id); resolve({ ok: false }); }
   });
@@ -111,15 +112,15 @@ export const native = {
     if (!r.ok || !o || typeof o !== 'object') return { ...NO_CAPS };
     return { api: typeof o.api === 'number' ? o.api : 0, play: o.play === true, download: o.download === true, cast: o.cast === true };
   },
-  /** true = the native player took over; false = play it in the page */
-  async play(req: NativePlayRequest): Promise<boolean> {
+  /** true = the native player took over; false = declined (play it in the page); 'timeout' = no answer in time (the app may still start it) */
+  async play(req: NativePlayRequest): Promise<boolean | 'timeout'> {
     const r = await request('play', { ...req });
-    return r.ok && r.result === true;
+    return r.timeout ? 'timeout' : r.ok && r.result === true;
   },
-  /** true = the app took over the (already created) licence; false = download it in the page */
-  async download(req: NativeDownloadRequest): Promise<boolean> {
+  /** true = the app took over the (already created) licence; false = declined; 'timeout' = no answer (ask `downloads()` before deciding) */
+  async download(req: NativeDownloadRequest): Promise<boolean | 'timeout'> {
     const r = await request('download', { ...req });
-    return r.ok && r.result === true;
+    return r.timeout ? 'timeout' : r.ok && r.result === true;
   },
   async downloads(): Promise<NativeDownload[]> {
     const r = await request('downloads');

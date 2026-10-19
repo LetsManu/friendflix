@@ -3,11 +3,12 @@
 package app.friendflix.android.shell
 
 import android.net.Uri
-import android.webkit.WebView
-import androidx.core.net.toUri
 import okhttp3.HttpUrl
 
-/** The one origin (scheme + host + port, no subdomains) that counts as "the app". Everything else is external. */
+/**
+ * The one origin (scheme + host + port, no subdomains) that counts as "the app". Everything else is external.
+ * The native bridge uses [originRule] to scope the injected object and [isAppOrigin] on the listener's `sourceOrigin` for each message.
+ */
 class OriginPolicy(val origin: HttpUrl) {
     private val host = origin.host
     private val port = origin.port
@@ -23,15 +24,5 @@ class OriginPolicy(val origin: HttpUrl) {
         val h = url.host ?: return false
         if (!h.equals(host, ignoreCase = true)) return false
         return (if (url.port == -1) 443 else url.port) == port
-    }
-
-    /**
-     * UI thread only: WebView.getUrl() must not be touched from other threads, so @JavascriptInterface methods must not call this.
-     * The bridge task gates on the committed main-frame URL ([ShellWebViewClient.committedUrl]) instead.
-     *
-     * Is the page currently shown in the top frame from the app origin? */
-    fun isMainFrameAppOrigin(view: WebView): Boolean {
-        val current = view.url ?: return false
-        return isAppOrigin(current.toUri())
     }
 }

@@ -9,6 +9,7 @@ import android.net.Uri
 import android.webkit.WebResourceRequest
 import android.webkit.WebSettings
 import android.webkit.WebView
+import android.webkit.WebViewClient
 import androidx.lifecycle.Lifecycle
 import androidx.test.core.app.ActivityScenario
 import androidx.test.core.app.ApplicationProvider
@@ -84,6 +85,15 @@ class ShellTest {
         throw AssertionError("timed out waiting for $what")
     }
 
+    /**
+     * Shows local content under [base]. The shell has already started loading the saved server (which does not exist): that load must be
+     * cancelled first, or its error page can land after ours and replace it, and it would sit in the back history.
+     */
+    private fun WebView.showLocal(html: String, base: String) {
+        stopLoading()
+        loadDataWithBaseURL(base, html, "text/html", "utf-8", base)
+    }
+
     private fun page(title: String) = "<html><head><title>$title</title></head><body>$title</body></html>"
 
     @Test fun externalLinkOpensChooser() {
@@ -127,10 +137,10 @@ class ShellTest {
 
     @Test fun backNavigatesHistoryThenFinishes() {
         ActivityScenario.launch(ShellActivity::class.java).use { scenario ->
-            scenario.onMain { it.loadDataWithBaseURL("https://friend.example.com/one", page("one"), "text/html", "utf-8", "https://friend.example.com/one") }
+            scenario.onMain { it.showLocal(page("one"), "https://friend.example.com/one") }
             val view = scenario.webView()
             waitFor("first page") { view.title == "one" }
-            scenario.onMain { it.loadDataWithBaseURL("https://friend.example.com/two", page("two"), "text/html", "utf-8", "https://friend.example.com/two") }
+            scenario.onMain { it.showLocal(page("two"), "https://friend.example.com/two") }
             waitFor("second page") { view.title == "two" && view.canGoBack() }
 
             scenario.onActivity { it.onBackPressedDispatcher.onBackPressed() }
@@ -163,7 +173,7 @@ class ShellTest {
                 "window.__r = null; window.FriendFlixNative.onmessage = function (e) { window.__r = e.data; };" +
                 "window.FriendFlixNative.postMessage(JSON.stringify({id: 'x1', method: 'capabilities', args: {}}));" +
                 "</script></body></html>"
-            scenario.onMain { it.loadDataWithBaseURL("https://friend.example.com/b", html, "text/html", "utf-8", "https://friend.example.com/b") }
+            scenario.onMain { it.showLocal(html, "https://friend.example.com/b") }
             val view = scenario.webView()
             var reply: String? = null
             waitFor("the bridge reply") {
@@ -173,7 +183,11 @@ class ShellTest {
             assertTrue(reply.orEmpty().contains("\\\"ok\\\":true"))
             assertTrue(reply.orEmpty().contains("\\\"play\\\":false"))
 
-            scenario.onMain { it.loadDataWithBaseURL("https://other.evil.test/", "<html><body>x</body></html>", "text/html", "utf-8", "https://other.evil.test/") }
+            // The shell would (rightly) cancel a foreign top-level page, which is not what is under test here: show it through a plain client.
+            scenario.onMain {
+                it.webViewClient = WebViewClient()
+                it.showLocal("<html><body>x</body></html>", "https://other.evil.test/")
+            }
             var defined: String? = null
             waitFor("the foreign page") {
                 view.evaluateJavascript("typeof window.FriendFlixNative + ':' + location.origin") { defined = it }

@@ -67,3 +67,18 @@ jobs:
           disable-animations: true
           working-directory: android
           script: ./gradlew connectedDebugAndroidTest
+      # The emulator step only says "There were failing tests": print the failing tests from the JUnit XML and keep the reports.
+      - name: Show failing instrumented tests
+        if: failure()
+        working-directory: .
+        run: |
+          find android/app/build/outputs/androidTest-results -name '*.xml' -print0 2>/dev/null | xargs -0 -r grep -h -B2 -A25 '<failure' || true
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        if: always()
+        with:
+          name: friendflix-android-instrumented-reports
+          path: |
+            android/app/build/reports/androidTests
+            android/app/build/outputs/androidTest-results
+          if-no-files-found: ignore
+          retention-days: 7

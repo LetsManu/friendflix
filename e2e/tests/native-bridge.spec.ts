@@ -50,6 +50,17 @@ test.describe('in the app', () => {
     await expect(page).toHaveURL(new RegExp('/watch/' + MOVIE.id));
   });
 
+  test('a declined play does not navigate when the viewer already left the page', async ({ page, api: _api }) => {
+    await mockPlayer(page);
+    await fakeNativeApp(page, { playResult: false, playDelayMs: 700 });
+    await page.goto('/item/' + MOVIE.id);
+    await page.getByRole('link', { name: 'Abspielen' }).first().click();
+    await expect.poll(async () => (await nativeCalls(page, 'play')).length).toBe(1);
+    await page.evaluate(() => history.pushState({}, '', '/somewhere-else'));
+    await page.waitForTimeout(1200);
+    await expect(page).toHaveURL(/\/somewhere-else$/);
+  });
+
   test('no play capability: the app is not even asked', async ({ page, api: _api }) => {
     await mockPlayer(page);
     await fakeNativeApp(page, { caps: { play: false, download: false } });

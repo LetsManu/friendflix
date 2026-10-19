@@ -45,7 +45,7 @@ class ShellWebViewClient(
         return true
     }
 
-    /** Last main-frame URL the WebView committed to history. Readable from any thread (the JS bridge checks it). */
+    /** Last main-frame URL the WebView committed to history. Readable from any thread. (The native bridge does not use it: it checks the frame and origin the WebMessageListener reports.) */
     @Volatile
     var committedUrl: String? = null
         private set

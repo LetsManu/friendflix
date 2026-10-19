@@ -29,12 +29,24 @@ export function playOrCast(e: MouseEvent, item: { id: string; positionTicks?: nu
   return true;
 }
 
+/** a native play request waits for the app's answer; further taps meanwhile are swallowed (no double start) */
+let pendingPlay = false;
+let playToken = 0;
+
 function playNatively(e: MouseEvent, item: { id: string; positionTicks?: number }, opts?: { audio?: string; subtitle?: string }): boolean {
   if (!native.available) return false;
   const a = (e.currentTarget as Element | null)?.closest?.('a');
   const href = a?.getAttribute('href') || `/watch/${item.id}`;
   e.preventDefault();
+  if (pendingPlay) return true;
   noteInteraction();
-  void tryNativePlay(item, opts).then((ok) => { if (!ok) void goto(href); });
+  pendingPlay = true;
+  const token = ++playToken;
+  const where = location.href;
+  void tryNativePlay(item, opts).then((ok) => {
+    pendingPlay = false;
+    // the viewer went elsewhere or tapped something newer while the app was thinking: do not drag them to the player now
+    if (!ok && token === playToken && location.href === where) void goto(href);
+  });
   return true;
 }

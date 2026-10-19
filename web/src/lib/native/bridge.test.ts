@@ -97,7 +97,7 @@ describe('native bridge', () => {
     installFake(() => undefined);
     const p = native.play({ itemId: 'a', profileId: 'p' });
     await vi.advanceTimersByTimeAsync(5001);
-    await expect(p).resolves.toBe(false);
+    await expect(p).resolves.toBe('timeout'); // distinct from a decline (false)
   });
   it('concurrent requests are matched by id', async () => {
     const fn = (req: any) => ({ ok: true, result: req.method === 'download' });
