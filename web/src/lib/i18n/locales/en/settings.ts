@@ -54,6 +54,7 @@ const settings: Translation<typeof de> = {
   },
   probeDetail: {
     redirect: 'The address redirects; enter the target address.',
+    not_admin: 'The token works, but it is not the Plex server owner’s token, so some features may be limited.',
     not_found: 'The service does not exist at this address.',
     upstream_error: 'The service answered with an error.',
     incomplete: 'Some details are still missing.',
@@ -99,6 +100,10 @@ const settings: Translation<typeof de> = {
     failed: 'Generating failed.',
     a11y: '{label}: {action}',
   },
+  // a key's own field error text (errorText(code, key)): PLEX_URL refuses ?…, #… and user:pass@ (a pasted ?X-Plex-Token=…)
+  keyErrors: {
+    PLEX_URL: { invalid_url: 'Please enter only the server address: starting with http:// or https://, without user name and password, and nothing after ? or #. The token goes in the Plex token field.' },
+  },
   /** option labels of the enum settings (an unset LOGIN_UI is "Automatic") */
   options: { auto: 'Automatic', RECO_ENGINE: { v1: 'v1 (Jellyfin)', v2: 'v2 (own taste model)', shadow: 'Shadow (v2 beside v1)' }, UPDATE_CHANNEL: { stable: 'Stable', nightly: 'Nightly', pinned: 'Fixed version' }, AUTO_UPDATE: { off: 'Off', 'nightly-window': 'Nightly window' }, LOGIN_UI: { app: 'FriendFlix', authentik: 'Authentik' }, PASSKEYS_IN_APP: { auto: 'Automatic', off: 'Off' } },
   keys: {
@@ -125,6 +130,8 @@ const settings: Translation<typeof de> = {
     LOGIN_COVER_WALL: { label: 'Cover wall behind the sign-in', help: 'Shows covers from the library (age ratings up to 12 only, nothing unrated) behind the sign-in. The images can be fetched without signing in.' },
     JELLYFIN_URL: { label: 'Jellyfin address', help: 'Internal address of the media server, e.g. http://jellyfin:8096.' },
     JELLYFIN_ADMIN_API_KEY: { label: 'Jellyfin API key (admin)', help: 'API key with admin rights (Jellyfin → Dashboard → API keys).' },
+    PLEX_URL: { label: 'Plex address', help: 'Internal address at which the backend and the media gateway reach the Plex server. Only the address: the token goes in its own field, never into the address.' },
+    PLEX_TOKEN: { label: 'Plex token', help: 'Token of the Plex account FriendFlix uses; the server owner’s token unlocks every feature. It is stored only in the backend and never shown.' },
     REQUESTS_URL: { label: 'Request service address', help: 'Optional. Without address and key, requests are hidden.' },
     REQUESTS_API_KEY: { label: 'Request service API key', help: 'API key from the settings of the request service.' },
     NTFY_URL: { label: 'ntfy announcement channel', help: 'Shared ntfy channel for new titles and notices, e.g. https://ntfy.example.com/friendflix.' },

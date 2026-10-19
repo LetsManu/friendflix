@@ -140,13 +140,19 @@ const SERVER: Array<[string, Kind, Source, unknown]> = [
   ['DATABASE_URL', 'secret', 'bootstrap', LEAK], ['REDIS_URL', 'secret', 'bootstrap', null], ['APP_ENC_KEY', 'secret', 'bootstrap', null], ['INTERNAL_SECRET', 'secret', 'bootstrap', null],
 ];
 
-/** non-secret keys whose save needs a recent sign-in (backend adminSettings.ts REAUTH_KEYS, OIDC_* / AUTHENTIK_*, credential destinations) */
-const REAUTH = /^(OIDC_|AUTHENTIK_)|^(LOGIN_UI|ADMIN_GROUP|NTFY_URL|NTFY_BASE_URL|PUBLIC_URL|HOME_NETWORKS|JELLYFIN_URL|REQUESTS_URL|PORTAINER_URL)$/;
+/** the media group of a Plex instance (Admin → Settings shows only the active media server's keys); the Jellyfin keys are not shown */
+const PLEX_MEDIA: Array<[string, Spec]> = [
+  ['PLEX_URL', { kind: 'url', source: 'db', value: 'http://plex.example.com:32400' }],
+  ['PLEX_TOKEN', { kind: 'secret', source: 'db', set: true, last4: 'ZZZZ', leak: LEAK }],
+];
 
-export function settingsState(): SettingsMock {
+/** non-secret keys whose save needs a recent sign-in (backend adminSettings.ts REAUTH_KEYS, OIDC_* / AUTHENTIK_*, credential destinations) */
+const REAUTH = /^(OIDC_|AUTHENTIK_)|^(LOGIN_UI|ADMIN_GROUP|NTFY_URL|NTFY_BASE_URL|PUBLIC_URL|HOME_NETWORKS|JELLYFIN_URL|PLEX_URL|REQUESTS_URL|PORTAINER_URL)$/; // + PLEX_URL
+
+export function settingsState(kind: 'jellyfin' | 'plex' = 'jellyfin'): SettingsMock {
   const groups = GROUPS.map(([id, rows]) => ({
     id,
-    items: rows.map(([key, s]): SettingViewMock => {
+    items: (kind === 'plex' && id === 'media' ? PLEX_MEDIA : rows).map(([key, s]): SettingViewMock => {
       const set = s.set ?? (s.value !== undefined && s.value !== null);
       return {
         key, kind: s.kind, source: s.source ?? 'default', value: s.kind === 'secret' ? (s.leak ?? null) : (s.value ?? null), set, apply: s.apply ?? 'live',
@@ -158,8 +164,8 @@ export function settingsState(): SettingsMock {
   }));
   groups.push({
     id: 'server',
-    items: SERVER.map(([key, kind, source, value]) => ({
-      key, kind, source, value, set: value !== null || source === 'bootstrap', apply: 'restart', restartPending: false, invalid: false, envNames: env(key), updatedAt: null,
+    items: SERVER.map(([key, kind_, source, value]) => ({
+      key, kind: kind_, source, value: key === 'MEDIA_SERVER' ? kind : value, set: value !== null || source === 'bootstrap', apply: 'restart', restartPending: false, invalid: false, envNames: env(key), updatedAt: null,
     })),
   });
   return { rev: 7, groups, reauthRequired: false, probeFail: null, saveErrors: null, testResult: { ok: true, code: 'ok' }, puts: [], tests: [], imports: [] };
@@ -174,6 +180,18 @@ const view = (st: SettingsMock) => ({
 
 type Reply = (b: unknown, status?: number) => Promise<void>;
 
+/**
+ * like the backend's PLEX_URL schema (media/address.ts): an address with a query (a pasted ?X-Plex-Token=…), a fragment or
+ * user:pass@ is invalid_url on PUT and Test (the setup mock uses it too)
+ */
+export function plexUrlErrors(values: Record<string, unknown>): Record<string, string> {
+  const v = values.PLEX_URL;
+  if (typeof v !== 'string' || !v) return {};
+  let bad = /[?#]/.test(v);
+  try { const u = new URL(v); bad ||= !/^https?:$/.test(u.protocol) || Boolean(u.username || u.password); } catch { bad = true; }
+  return bad ? { PLEX_URL: 'invalid_url' } : {};
+}
+
 export function settingsRoute(st: SettingsMock, m: string, p: string, body: any, J: Reply): Promise<void> | null {
   if (p === '/api/admin/settings' && m === 'GET') return J(view(st));
   if (p === '/api/admin/settings' && m === 'PUT') {
@@ -181,6 +199,8 @@ export function settingsRoute(st: SettingsMock, m: string, p: string, body: any,
     st.puts.push(body.force === undefined ? { values } : { values, force: body.force });
     const all = itemsOf(st);
     const find = (k: string) => all.find((x) => x.item.key === k);
+    // the other media kind's key (a stale session) answers 401 like the backend, the web re-authenticates the normal way
+    if (Object.keys(values).some((k) => /^(PLEX|JELLYFIN)_/.test(k) && !find(k))) return J({ error: 'reauth_required' }, 401);
     if (st.reauthRequired && Object.keys(values).some((k) => find(k)?.item.kind === 'secret' || REAUTH.test(k))) return J({ error: 'reauth_required' }, 401);
     if (st.saveErrors) { const errors = st.saveErrors; st.saveErrors = null; return J({ error: 'invalid_settings', errors }, 400); }
     const errors: Record<string, string> = {};
@@ -190,6 +210,7 @@ export function settingsRoute(st: SettingsMock, m: string, p: string, body: any,
       else if (f.item.source === 'env') errors[k] = 'locked';
     }
     for (const [k, v] of Object.entries(values)) if (typeof v === 'string' && /[?&]auth=redacted\b/.test(v)) errors[k] = 'redacted';
+    Object.assign(errors, plexUrlErrors(values));
     if (Object.keys(errors).length) return J({ error: 'invalid_settings', errors }, 400);
     if (st.probeFail && !body.force) return J({ error: 'probe_failed', group: find(Object.keys(values)[0]!)!.group, probe: st.probeFail }, 400);
     for (const [k, v] of Object.entries(values)) {
@@ -209,6 +230,8 @@ export function settingsRoute(st: SettingsMock, m: string, p: string, body: any,
     // the real rule: a saved credential would go to a changed destination
     if (st.reauthRequired && Object.keys(body.values ?? {}).some((k) => REAUTH.test(k))) return J({ error: 'reauth_required' }, 401);
     st.tests.push(body);
+    const bad = plexUrlErrors(body.values ?? {});
+    if (Object.keys(bad).length) return J({ error: 'invalid_settings', errors: bad }, 400);
     return J(st.testResult);
   }
   if (p === '/api/admin/settings/import-env' && m === 'POST') {

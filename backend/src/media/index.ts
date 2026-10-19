@@ -6,7 +6,9 @@ import type { Config } from '../config.js';
 import { JellyfinClient } from '../jellyfin/client.js';
 import { JellyfinService } from '../jellyfin/service.js';
 import type { KV } from '../kv.js';
+import { createPlexMediaServer } from '../plex/index.js';
 import type { SettingDef } from '../settings/registry.js';
+import { isBareHttpUrl } from './address.js';
 import { MEDIA_SETUP } from './setup.js';
 import type { MediaServer } from './types.js';
 
@@ -15,7 +17,7 @@ import type { MediaServer } from './types.js';
  * mediaSettings() and a factory below, and its setup provider to MEDIA_SETUP (media/setup.ts); config.ts (MEDIA_SERVER, the fields), the
  * settings registry and server.ts pick them up from here.
  */
-export const MEDIA_SERVERS = ['jellyfin'] as const;
+export const MEDIA_SERVERS = ['jellyfin', 'plex'] as const;
 export type MediaServerKind = (typeof MEDIA_SERVERS)[number];
 
 /**
@@ -25,14 +27,24 @@ export type MediaServerKind = (typeof MEDIA_SERVERS)[number];
 export const MEDIA_FIELDS = {
   JELLYFIN_URL: z.preprocess((v) => (v === '' ? undefined : v), z.string().url().optional()), // compose passes '' when unset
   JELLYFIN_ADMIN_API_KEY: z.string().optional().transform((v) => (v ? v : undefined)),
+  /** Plex: base URL of the existing Plex Media Server and its admin token (backend + gateway only) */
+  // the address only: a query (Plex's "View XML" links carry ?X-Plex-Token=…), a fragment or user:pass@ is invalid_url (media/address.ts)
+  PLEX_URL: z.preprocess((v) => (v === '' ? undefined : v), z.string().url()
+    .refine(isBareHttpUrl, { message: 'PLEX_URL must be the server address only (no ?query, #fragment or user:pass@; the token goes in PLEX_TOKEN)', params: { code: 'invalid_url' } })
+    .optional()),
+  PLEX_TOKEN: z.string().optional().transform((v) => (v ? v : undefined)),
 };
 
 /** Registry entries of the media server settings (Admin -> Settings "media", wizard step 3); required once setup is complete for their kind. */
 export function mediaSettings(): SettingDef[] {
   const jellyfin = (c: Config) => c.MEDIA_SERVER === 'jellyfin';
+  const plex = (c: Config) => c.MEDIA_SERVER === 'plex';
   return [
     { key: 'JELLYFIN_URL', kind: 'url', group: 'media', schema: MEDIA_FIELDS.JELLYFIN_URL, apply: 'live', probe: 'media', runRequired: jellyfin },
     { key: 'JELLYFIN_ADMIN_API_KEY', kind: 'secret', group: 'media', schema: MEDIA_FIELDS.JELLYFIN_ADMIN_API_KEY, secret: true, apply: 'live', probe: 'media', runRequired: jellyfin },
+    // the Plex server's address and token (encrypted at rest, write-only in the UI; env / PLEX_TOKEN_FILE still win and show locked)
+    { key: 'PLEX_URL', kind: 'url', group: 'media', schema: MEDIA_FIELDS.PLEX_URL, apply: 'live', probe: 'media', runRequired: plex },
+    { key: 'PLEX_TOKEN', kind: 'secret', group: 'media', schema: MEDIA_FIELDS.PLEX_TOKEN, secret: true, apply: 'live', probe: 'media', runRequired: plex },
   ];
 }
 
@@ -55,6 +67,11 @@ export function mediaUrlKey(cfg: Config): string {
   return key;
 }
 
+/** settings the gateway needs besides the URL (MediaSetupProvider.gatewayKeys; Plex: PLEX_TOKEN); none for a kind without. */
+export function mediaGatewayKeys(cfg: Config): readonly string[] {
+  return MEDIA_SETUP[cfg.MEDIA_SERVER]?.gatewayKeys ?? [];
+}
+
 /**
  * What a factory gets. `db` is the backend's shared Postgres pool: implementations that keep state (an id map, sync cursors …) use it
  * instead of opening a pool of their own. Jellyfin ignores it.
@@ -63,6 +80,7 @@ export interface MediaDeps { cfg: Config; kv: KV; db: pg.Pool; encKey: Buffer; f
 
 const factories: Record<MediaServerKind, (d: MediaDeps) => MediaServer> = {
   jellyfin: (d) => new JellyfinService(new JellyfinClient(d.cfg.JELLYFIN_URL!, d.cfg.JELLYFIN_ADMIN_API_KEY!, d.fetchImpl), d.kv, d.encKey),
+  plex: (d) => createPlexMediaServer(d),
 };
 
 export function createMediaServer(d: MediaDeps): MediaServer {

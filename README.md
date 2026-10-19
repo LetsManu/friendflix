@@ -21,6 +21,8 @@
 
 FriendFlix is a private streaming portal that sits in front of **Jellyfin** (your media) and an optional request service. Your friends get a polished, familiar streaming experience on their laptop, phone and TV – with profiles, downloads, watch parties and recommendations from each other. They never see Jellyfin or the request service directly, and you stay in control of who gets in.
 
+**Jellyfin or Plex.** The same images work with **Plex Media Server** too: start with `compose.plex.yaml` (it sets `MEDIA_SERVER=plex`) and enter the Plex address and token in the setup wizard – one server-wide token that never reaches a browser, your friends need no plex.tv account ([docs/plex.md](docs/plex.md)). Coming from the former friendflix-plex images: [migration guide](docs/plex.md#migrating-from-friendflix-plex-to-friendflix-20).
+
 > All titles and artwork in these screenshots are invented and generated for the demo.
 
 ## Contents
@@ -38,7 +40,7 @@ FriendFlix is a private streaming portal that sits in front of **Jellyfin** (you
 - A Linux server or NAS with **Docker** and the **Compose v2** plugin.
 - A domain with HTTPS and a reverse proxy, e.g. **Nginx Proxy Manager**: one proxy host `friend.example.com` → `127.0.0.1:3080`, WebSockets on, plus [deploy/npm/portal.advanced.conf](deploy/npm/portal.advanced.conf) in its *Advanced* tab.
 - **Authentik** for sign-in, installed with its admin account at e.g. `auth.example.com` ([docs/authentik.md §2](docs/authentik.md#2-install-authentik)).
-- **Jellyfin** (your library) with its own setup finished, reachable on the Docker network `friendflix_media` or started with `--profile bundled`. A request service is optional.
+- **Jellyfin** (your library) with its own setup finished, reachable on the Docker network `friendflix_media` or started with `--profile bundled` – or an existing **Plex Media Server** ([docs/plex.md](docs/plex.md)). A request service is optional.
 
 **Quick start.** A new install needs no `.env`; the production stack pulls prebuilt images.
 
@@ -221,8 +223,9 @@ A new install needs none of this: the setup wizard and *Admin → Settings* stor
 | `WEBHOOK_SECRET` | – | Jellyfin/request-service webhooks (≥ 16 chars); *Admin → Settings → General → Generate new*. Unset: the webhooks answer 403 |
 | `OIDC_ISSUER`, `OIDC_CLIENT_ID`, `OIDC_CLIENT_SECRET` | – (setup wizard) | Authentik OIDC provider |
 | `TMDB_API_KEY`, `OMDB_API_KEY` (or `…_FILE`) | empty | Optional extra data for the detail page (links, ratings); or set in *Admin → Data sources*. See [docs/integrations.md](docs/integrations.md#tmdb--omdb-optional) |
-| `MEDIA_SERVER` | `jellyfin` | Media server kind; Jellyfin is the only one in this repository (a fork can add others, see [docs/architecture.md](docs/architecture.md)) |
-| `JELLYFIN_URL`, `JELLYFIN_ADMIN_API_KEY` | – (setup wizard) | Internal Jellyfin URL, e.g. `http://jellyfin:8096`, and admin API key |
+| `MEDIA_SERVER` | `jellyfin` | Media server kind: `jellyfin` or `plex` (env only; `compose.plex.yaml` sets `plex`, see [docs/plex.md](docs/plex.md) and [docs/architecture.md](docs/architecture.md)) |
+| `JELLYFIN_URL`, `JELLYFIN_ADMIN_API_KEY` | – (setup wizard) | Internal Jellyfin URL, e.g. `http://jellyfin:8096`, and admin API key (only with `MEDIA_SERVER=jellyfin`) |
+| `PLEX_URL`, `PLEX_TOKEN` | – (setup wizard) | Only with `MEDIA_SERVER=plex`: the Plex address as backend and gateway reach it, e.g. `http://plex.example.com:32400` (address only: no `?…`, `#…` or `user:password@`), and the token of the Plex account FriendFlix uses (encrypted in the database, write-only; `PLEX_TOKEN_FILE` as a Docker secret). Admin → Settings shows them only on a Plex instance; a value here wins and locks the field |
 | `REQUESTS_URL`, `REQUESTS_API_KEY` | – (optional) | Internal URL (bundled: `http://requests:5055`) and API key of the request service; without both, wishes and requests are hidden (older variable names still work, with a deprecation warning) |
 | `ADMIN_GROUP` | `friendflix-admins` | Authentik group whose members become portal admins |
 | `BIND_ADDR` | `127.0.0.1` | Host address the three ports are published on – never a public interface |
@@ -260,7 +263,7 @@ A new install needs none of this: the setup wizard and *Admin → Settings* stor
 | `PORTAINER_WEBHOOK_URL` or `PORTAINER_URL` + `PORTAINER_API_KEY` + `PORTAINER_STACK_ID` | empty | One-click updates from *Admin → Update* (`PORTAINER_ENDPOINT_ID` default `1`) |
 | `UPDATE_REPO`, `GITHUB_TOKEN` | `LetsManu/friendflix`, empty | Version check; the token only raises the GitHub rate limit |
 | `UPDATE_CHANNEL`, `UPDATE_VERSION` | `stable`, empty | Set with the *Stable / Nightly / Fixed version* switch under *Admin → Update* (stored in the database, no `.env` needed): what the update check compares with and, with the updater, what it installs. Without the updater it never switches images; `FF_TAG` does |
-| `UPDATER_URL`, `UPDATER_COMPOSE_FILES` | `http://updater:7070`, `compose.prod.yaml` | Opt-in updater (profile `updater`, [setup guide](docs/setup.md#updater-optional)): its internal address (env only) and the stack's compose files |
+| `UPDATER_URL`, `UPDATER_COMPOSE_FILES` | `http://updater:7070`, `compose.prod.yaml` | Opt-in updater (profile `updater`, [setup guide](docs/setup.md#updater-optional)): its internal address (env only) and the stack's compose files (with Plex `compose.plex.yaml` makes the default `compose.prod.yaml,compose.plex.yaml`) |
 | `AUTO_UPDATE`, `AUTO_UPDATE_TIME` | `off`, `04:00` | Automatic updates through the updater: `nightly-window` runs the update job once a night from this time (server time zone); set in *Admin → Update* |
 | `GRAFANA_ADMIN_PASSWORD`, `GRAFANA_PORT`, `PROMETHEUS_RETENTION` | – (required for the monitoring stack), `3083`, `30d` | Optional Prometheus + Grafana (`compose.monitoring.yaml`); no default password |
 | `BACKUP_PATH`, `BACKUP_HOUR`, `BACKUP_KEEP_DAYS`, `BACKUP_RUN_ON_START` | `./backups`, `3`, `14`, `false` | Backup sidecar (profile `backup`) |
@@ -323,7 +326,7 @@ flowchart TB
 - Only the proxy is public. `web`, `backend` and `gateway` are published on `127.0.0.1` only; Jellyfin and the request service have no ports at all and live on the internal `media` network, Postgres and Redis on the internal `db` network.
 - All video data (playlists, segments, direct play, images, subtitles, downloads, Chromecast) flows through the gateway: no buffering, HTTP range, Jellyfin tokens only server-side, path allowlist, fixed upstream, bitrate cap per role.
 - Containers run non-root with a read-only root filesystem, `cap_drop: ALL` and `no-new-privileges`. Strict CSP, CSRF tokens, rate limits, audit log.
-- The media server sits behind a neutral interface (`MediaServer` in the backend, an `Upstream` adapter in the gateway, chosen with `MEDIA_SERVER`). Jellyfin is the only implementation here; another server is added mostly with new files – containers, networks, the "press play" walk-through and the seam are in [docs/architecture.md](docs/architecture.md).
+- The media server sits behind a neutral interface (`MediaServer` in the backend, an `Upstream` adapter in the gateway, chosen with `MEDIA_SERVER`). Jellyfin (`backend/src/jellyfin`, `gateway/src/upstream/jellyfin.ts`) and Plex (`backend/src/plex`, `gateway/src/upstream/plex.ts`) are the two implementations, picked at runtime from the same images; nothing outside their folders imports them except the seam index – containers, networks, the "press play" walk-through and the seam are in [docs/architecture.md](docs/architecture.md), the Plex specifics in [docs/plex.md](docs/plex.md).
 - Alternative "Plan B": nginx serves `/media/` itself via `auth_request` – [docs/operations.md](docs/operations.md).
 
 ### Operations
@@ -365,6 +368,7 @@ npm run e2e                                     # Playwright: builds the web app
 | Architecture: containers and networks, press play, media server seam | [docs/architecture.md](docs/architecture.md) |
 | Authentik: installation, provider, flows, invitations | [docs/authentik.md](docs/authentik.md) |
 | Jellyfin, request service, ntfy/Discord, web push | [docs/integrations.md](docs/integrations.md) |
+| Plex Media Server instead of Jellyfin, migration from friendflix-plex | [docs/plex.md](docs/plex.md) |
 | Backups, restore, firewall, updates, image verification, branch protection, Plan B | [docs/operations.md](docs/operations.md) |
 | Monitoring, metrics, Grafana dashboard, Server-Timing, browser errors | [docs/monitoring.md](docs/monitoring.md) |
 | Offline downloads (platforms, storage, limits) | [docs/downloads.md](docs/downloads.md) |
@@ -383,7 +387,7 @@ npm run e2e                                     # Playwright: builds the web app
 - Skip intro needs Jellyfin ≥ 10.10 with media segments (e.g. from the Intro Skipper plugin).
 - Jellyfin, request service and Authentik APIs differ between versions – after upgrades see [docs/operations.md](docs/operations.md) and [docs/integrations.md](docs/integrations.md).
 - Optional: a request service for wishes (bundled as the `requests` container; upstream project: see its `image:` line in [compose.prod.yaml](compose.prod.yaml)) – see [docs/integrations.md](docs/integrations.md). With Jellyfin, profiles are hidden Jellyfin users: turn off the automatic Jellyfin user import in the request service so they do not show up. A media server without Jellyfin accounts gets one local request-service user per FriendFlix account instead.
-- Only Jellyfin is implemented in this repository. Cast & info, scenes and the picture-quality chips need the media server to report credits, chapters and stream details; where it cannot, the UI hides the feature (`capabilities` in `/api/me`).
+- Jellyfin and Plex are implemented (Plex: feature parity table in [docs/plex.md](docs/plex.md)). Cast & info, scenes and the picture-quality chips need the media server to report credits, chapters and stream details; where it cannot, the UI hides the feature (`capabilities` in `/api/me`).
 - "Leaving soon" is an announcement set by an admin; FriendFlix never deletes media. The "Season finale" label is a heuristic (last episode of the newest season is new, the series is no longer continuing). The picture-quality filter reads a background index (`BACKGROUND_JOBS=true`) that fills a little after the first start.
 - Clear voices and Night mode use the browser's audio processing: not available on every device and not while casting. PWA home-screen widgets exist only on Windows 11; shortcuts and the icon badge (not on every iOS version) are what the phone gets instead.
 - With Intel QSV/VAAPI, switch off "VPP Tone mapping" in Jellyfin if the driver has no HDR support; otherwise 4K HDR titles fail.

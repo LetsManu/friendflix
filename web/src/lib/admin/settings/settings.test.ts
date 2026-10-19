@@ -46,6 +46,50 @@ describe('settings texts', () => {
     expect(keyHelp('NOT_A_KEY')).toBe('');
   });
 
+  it('the Plex keys have a label and help in every language, never name a real host, a logo or the old request service', async () => {
+    for (const l of ['de', 'en', 'es', 'fr', 'it', 'pl', 'tr']) {
+      await setLocale(l);
+      const text = ['PLEX_URL', 'PLEX_TOKEN'].flatMap((k) => [keyLabel(k), keyHelp(k)]);
+      for (const t of text) expect(t, l).not.toBe('');
+      expect(keyLabel('PLEX_TOKEN'), l).not.toBe('PLEX_TOKEN');
+      expect(text.join(' '), l).not.toMatch(/seerr|https?:\/\/|plex\.tv/i);
+      // the note of a token that is not the owner's (probe warning not_admin), through Admin → Settings' own text
+      expect(probeText({ ok: true, code: 'warning', detail: 'not_admin' }), l).toContain(tr('settings.probeDetail.not_admin'));
+    }
+  });
+
+  it('the Plex address help names backend and media gateway; the token texts ask for the account FriendFlix uses (owner = every feature)', async () => {
+    for (const l of ['de', 'en', 'es', 'fr', 'it', 'pl', 'tr']) {
+      await setLocale(l);
+      const url = keyHelp('PLEX_URL').toLowerCase();
+      expect(url, l).toContain('backend');
+      expect(url, l).toContain(tr('adminContent.health.svc.gateway').toLowerCase());
+      // the token help and the wizard text say the same: FriendFlix's own account, the owner's token unlocks every feature
+      const [account, owner] = keyHelp('PLEX_TOKEN').split('.')[0]!.split(/\s?;\s/);
+      expect(account, l).toContain('FriendFlix');
+      expect(owner, l).toBeTruthy();
+      expect(tr('setup.media.textPlex'), l).toContain('FriendFlix');
+      expect(tr('setup.media.textPlex'), l).toContain(owner!);
+    }
+  });
+
+  it('PLEX_URL has its own invalid_url text in every language (only the address, the token in its own field); other keys keep the general one', async () => {
+    for (const l of ['de', 'en', 'es', 'fr', 'it', 'pl', 'tr']) {
+      await setLocale(l);
+      const own = errorText('invalid_url', 'PLEX_URL');
+      expect(own, l).not.toBe(errorText('invalid_url'));
+      expect(own, l).toMatch(/\?/);
+      expect(own, l).toMatch(/#/);
+      expect(own, l).not.toMatch(/seerr|plex\.tv|X-Plex-Token/i);
+      expect(errorText('invalid_url', 'JELLYFIN_URL'), l).toBe(errorText('invalid_url'));
+      expect(errorText('locked', 'PLEX_URL'), l).toBe(errorText('locked'));
+    }
+    await setLocale('de');
+    expect(errorText('invalid_url', 'PLEX_URL')).toContain('Bitte nur die Serveradresse eingeben');
+    expect(errorText('invalid_url', 'plex_url')).toBe(errorText('invalid_url'));
+    expect(errorText('<b>', 'PLEX_URL')).toBe('Ungültiger Wert.');
+  });
+
   it('recommendations group: a title, a note that the expert keys stay in .env, engine option labels, in every language', async () => {
     for (const l of ['de', 'en', 'es', 'fr', 'it', 'pl', 'tr']) {
       await setLocale(l);

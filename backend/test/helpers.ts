@@ -6,9 +6,8 @@ import type { Config } from '../src/config.js';
 import { createLiveCtx, type Ctx } from '../src/ctx.js';
 import { keyFromBase64 } from '../src/crypto.js';
 import { migrate } from '../src/db.js';
-import { JellyfinClient } from '../src/jellyfin/client.js';
-import { JellyfinService } from '../src/jellyfin/service.js';
 import { MemoryKV } from '../src/kv.js';
+import { createMediaServer } from '../src/media/index.js';
 import { SeerrClient } from '../src/seerr/client.js';
 import type { OidcClaims } from '../src/oidc.js';
 import { DEFAULT_ROLES } from '../src/roles.js';
@@ -18,6 +17,8 @@ import { updateMeta, writeRows } from '../src/settings/repo.js';
 import { toStored } from '../src/settings/resolve.js';
 import { createSettingsStore, type SettingsStore } from '../src/settings/store.js';
 import { isSetupComplete } from '../src/setup/state.js';
+import { PLEX_TOKEN, PLEX_URL, PlexFake } from './plexfake.js';
+import type { PlexMediaServer } from '../src/plex/service.js';
 
 export const TEST_DB = process.env.TEST_DATABASE_URL ?? 'postgres://postgres@localhost:5433/ff_test';
 export const ENC_KEY = Buffer.alloc(32, 7).toString('base64');
@@ -26,7 +27,7 @@ export const cfg: Config = {
   PORT: 3000, PUBLIC_URL: 'https://portal.example.com', DATABASE_URL: TEST_DB, REDIS_URL: 'redis://x', SESSION_TTL_SECONDS: 600, SESSION_IDLE_SECONDS: 300,
   APP_ENC_KEY: ENC_KEY, INTERNAL_SECRET: 'internal-secret-123456', WEBHOOK_SECRET: 'webhook-secret-123456', ADMIN_GROUP: 'friendflix-admins',
   OIDC_ISSUER: 'https://auth.example.com/', OIDC_CLIENT_ID: 'c', OIDC_CLIENT_SECRET: 's',
-  MEDIA_SERVER: 'jellyfin', JELLYFIN_URL: 'http://jellyfin:8096', JELLYFIN_ADMIN_API_KEY: 'adminkey', REQUESTS_URL: 'http://requests:5055', REQUESTS_API_KEY: 'seerrkey',
+  MEDIA_SERVER: 'jellyfin', JELLYFIN_URL: 'http://jellyfin:8096', JELLYFIN_ADMIN_API_KEY: 'adminkey', PLEX_URL: undefined, PLEX_TOKEN: undefined, REQUESTS_URL: 'http://requests:5055', REQUESTS_API_KEY: 'seerrkey',
   NTFY_URL: undefined, DISCORD_WEBHOOK_URL: undefined, METRICS_TOKEN: undefined, TMDB_API_KEY: undefined, OMDB_API_KEY: undefined, AUTHENTIK_URL: undefined, AUTHENTIK_API_TOKEN: undefined,
   AUTHENTIK_ENROLL_FLOW: undefined, AUTHENTIK_RECOVERY_FLOW: undefined, AUTHENTIK_TOTP_SETUP_FLOW: undefined, ROLE_TEMPLATES: undefined, OIDC_ALLOW_INSECURE: 'false', BACKGROUND_JOBS: 'false',
   RECO_W_GENRES: 1, RECO_W_TAGS: 0.6, RECO_W_STUDIOS: 0.4, RECO_W_PEOPLE: 0.8, RECO_W_TEXT: 1, RECO_W_NUMERIC: 0.3, RECO_W_COLLECTION: 1.5,
@@ -81,6 +82,8 @@ export interface TestEnv {
   kv: MemoryKV;
   login: (claims?: OidcClaims) => Promise<{ cookies: Record<string, string>; csrf: string }>;
   close: () => Promise<void>;
+  /** makeEnv(…, { server: 'plex' }): the Plex implementation (the current ctx.jf, already synced once) and its fake server */
+  plex?: { readonly ms: PlexMediaServer; fake: PlexFake };
 }
 
 export const ADMIN: OidcClaims = { sub: 'sub-admin', email: 'admin@example.com', name: 'Admin', groups: ['friendflix-admins'] };
@@ -156,7 +159,7 @@ export async function testSettings(pool: pg.Pool, c: Config = cfg, extraEnv: Nod
  * A test app over a fresh database. Setup counts as complete unless `setupComplete: false` (the setup gate's own tests): most tests
  * exercise the running app, and a fresh database is otherwise in setup mode (spec Part E).
  */
-export async function makeEnv(extraJf: Record<string, Handler> = {}, extra: Extra & { ctxPatch?: (c: Ctx) => void; seerr?: Record<string, Handler>; settingsEnv?: NodeJS.ProcessEnv; setupComplete?: boolean } = {}): Promise<TestEnv> {
+export async function makeEnv(extraJf: Record<string, Handler> = {}, extra: Extra & { ctxPatch?: (c: Ctx) => void; seerr?: Record<string, Handler>; settingsEnv?: NodeJS.ProcessEnv; setupComplete?: boolean; server?: 'plex'; plexFake?: PlexFake; plexFetch?: (fake: PlexFake) => typeof fetch } = {}): Promise<TestEnv> { // server, plexFake, plexFetch
   const pool = await resetDb();
   if (extra.setupComplete !== false) await updateMeta(pool, { setupCompletedAt: new Date() });
   const kv = new MemoryKV();
@@ -166,11 +169,15 @@ export async function makeEnv(extraJf: Record<string, Handler> = {}, extra: Extr
   const jfFetch = fakeHttp({ ...defaultJellyfin(), ...extraJf }, jfCalls);
   const seerrFetch = fakeHttp(extra.seerr ?? {}, seerrCalls);
   const encKey = keyFromBase64(ENC_KEY);
-  const settings = await testSettings(pool, cfg, extra.settingsEnv);
+  // makeEnv(…, { server: 'plex' }) sets MEDIA_SERVER=plex and PLEX_URL/PLEX_TOKEN as settings; the media factory then
+  // builds the real PlexMediaServer over the fake (plexFetch: a wrapper around fake.fetch, e.g. a transcoder fake)
+  const plexFake = extra.server === 'plex' ? extra.plexFake ?? new PlexFake() : undefined;
+  const settings = await testSettings(pool, plexFake ? { ...cfg, MEDIA_SERVER: 'plex', PLEX_URL, PLEX_TOKEN } : cfg, extra.settingsEnv);
   const live = createLiveCtx({
     settings, kv, db: pool, encKey, fetchImpl: fetch,
     roles: DEFAULT_ROLES,
-    media: (c) => new JellyfinService(new JellyfinClient(c.JELLYFIN_URL!, c.JELLYFIN_ADMIN_API_KEY!, jfFetch), kv, encKey),
+    // the real factory (Jellyfin: the same JellyfinService as before; Plex: PlexMediaServer over the fake)
+    media: (c) => createMediaServer({ cfg: c, kv, db: pool, encKey, fetchImpl: plexFake ? (extra.plexFetch?.(plexFake) ?? plexFake.fetch) : jfFetch }),
     requests: (c) => new SeerrClient(c.REQUESTS_URL, c.REQUESTS_API_KEY, seerrFetch),
     oidc: {
       // silent (the in-app sign-in's authorize): prompt=none, as the real provider sends it
@@ -181,6 +188,9 @@ export async function makeEnv(extraJf: Record<string, Handler> = {}, extra: Extr
     log: { warn: () => {} },
   });
   const { ctx } = live;
+  const plex: TestEnv['plex'] = plexFake ?
+    { get ms() { return ctx.jf as PlexMediaServer; }, fake: plexFake } : undefined;
+  await plex?.ms.sync.run();
   extra.ctxPatch?.(ctx);
   await isSetupComplete(ctx); // warms the cache isOperational reads (server.ts does the same before the timers start)
   const app = await buildApp(ctx, extra);
@@ -196,6 +206,6 @@ export async function makeEnv(extraJf: Record<string, Handler> = {}, extra: Extr
     const me = await app.inject({ url: '/api/me', cookies: { ff_sid: sid } });
     return { cookies: { ff_sid: sid }, csrf: me.json().csrfToken as string };
   };
-  return { ctx, app, pool, jfCalls, seerrCalls, claims, kv, login, close: async () => { await live.close(); await settings.close(); await app.close(); await pool.end(); } };
+  return { ctx, app, pool, jfCalls, seerrCalls, claims, kv, login, plex, close: async () => { await live.close(); await plex?.ms.stop(); await settings.close(); await app.close(); await pool.end(); } }; // plex, plex?.ms.stop()
 }
 

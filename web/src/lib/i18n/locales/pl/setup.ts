@@ -51,6 +51,8 @@ const setup: Translation<typeof de> = {
     create: 'Utwórz klucz API automatycznie',
     created: 'Klucz API utworzony i zapisany.',
     manualText: 'Wpisz adres i klucz API z uprawnieniami administratora. Zapisanie sprawdza połączenie.',
+    textPlex: 'FriendFlix potrzebuje adresu twojego serwera Plex i tokenu konta Plex, którego używa FriendFlix; token właściciela serwera odblokowuje wszystkie funkcje.',
+    manualTextPlex: 'Wpisz adres i token Plex. Test sprawdza połączenie i informuje, czy token należy do właściciela serwera.',
     noAuto: 'Ten serwer multimediów nie ma automatycznej konfiguracji. Wpisz wartości ręcznie.',
   },
   signin: {
@@ -194,6 +196,7 @@ const setup: Translation<typeof de> = {
     warning: 'Sprawdzono, z uwagą:',
   },
   probeDetail: {
+    not_admin: 'Token działa, ale nie należy do właściciela serwera Plex, więc niektóre funkcje mogą być ograniczone.',
     echo_mismatch: 'FriendFlix nie mógł połączyć się sam ze sobą pod tym adresem. Często zdarza się to we własnej sieci (NAT loopback) i nie jest błędem, jeśli adres działa z zewnątrz.',
     insecure: 'Adres używa http://: pliki cookie nie są chronione, a Chromecast i klucze dostępu są wyłączone.',
     not_tested: 'Tego serwera multimediów nie da się sprawdzić automatycznie.',

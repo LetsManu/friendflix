@@ -7,7 +7,7 @@ describe('updater policy', () => {
   it('the service whitelist is FriendFlix only', () => {
     expect([...FF_SERVICES]).toEqual(['bootstrap', 'backend', 'gateway', 'web']);
     expect([...HEALTH_SERVICES]).toEqual(['backend', 'gateway', 'web']);
-    for (const never of ['postgres', 'redis', 'jellyfin', 'requests', 'authentik', 'server', 'docker-proxy']) expect(FF_SERVICES as readonly string[]).not.toContain(never);
+    for (const never of ['postgres', 'redis', 'jellyfin', 'plex', 'requests', 'authentik', 'server', 'docker-proxy']) expect(FF_SERVICES as readonly string[]).not.toContain(never);
   });
 
   it('tags: only latest, nightly, X.Y.Z and sha-<7 hex>', () => {
