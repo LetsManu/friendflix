@@ -566,6 +566,9 @@ const fr: Translation<typeof de> = {
     approvals: {
       pending_approvals: { one: '{n} connexion en attente de validation', many: '{n} connexions en attente de validation', other: '{n} connexions en attente de validation' },
     },
+    config: {
+      removed_env: { one: 'Un ancien nom de variable dans .env est ignoré depuis la 2.0 : le service de demandes utilise désormais REQUESTS_URL et REQUESTS_API_KEY', many: '{n} anciens noms de variable dans .env sont ignorés depuis la 2.0 : le service de demandes utilise désormais REQUESTS_URL et REQUESTS_API_KEY', other: '{n} anciens noms de variable dans .env sont ignorés depuis la 2.0 : le service de demandes utilise désormais REQUESTS_URL et REQUESTS_API_KEY' },
+    },
   },
 };
 export default fr;

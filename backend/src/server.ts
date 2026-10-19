@@ -3,7 +3,7 @@
 import { Redis } from 'ioredis';
 import pg from 'pg';
 import { buildApp } from './app.js';
-import { deprecatedEnvNames, loadConfig } from './config.js';
+import { loadConfig, removedEnvNames } from './config.js';
 import { keyFromBase64 } from './crypto.js';
 import { migrate } from './db.js';
 import { createMediaServer, mediaConfigProblems } from './media/index.js';
@@ -75,8 +75,8 @@ const { ctx } = live;
 const app = await buildApp(ctx);
 logTo.app = app.log;
 await app.listen({ port: cfg.PORT, host: '0.0.0.0' });
-// renamed settings that still use their old name (names only, never values)
-for (const msg of deprecatedEnvNames()) app.log.warn(msg);
+// setting names removed in 2.0 that are still set (names only, never values; the admin banner shows them too, health.ts)
+for (const msg of removedEnvNames()) app.log.warn(msg);
 // setup mode (spec Part E): the jobs below ask isOperational on every tick, which reads the cached setup state warmed here; the instance
 // that owns the background jobs prints a new setup code while setup is incomplete (every start replaces the previous one)
 await isSetupComplete(ctx);

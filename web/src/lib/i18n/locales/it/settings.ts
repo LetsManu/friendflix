@@ -27,7 +27,6 @@ const settings: Translation<typeof de> = {
     other: '{n} valori vengono dall’ambiente (.env). Spostali nelle impostazioni, poi potrai toglierli dal .env.',
   },
   moveHint: 'Anche salvato. Ora puoi togliere {keys} dal .env e riavviare. Fino ad allora vale ancora il valore dell’ambiente.',
-  moveHintOlder: '{keys} (e i nomi precedenti di questa impostazione)',
   moved: { one: '{n} valore spostato.', many: '{n} valori spostati.', other: '{n} valori spostati.' },
   movedNone: 'Niente da spostare.',
   moveFailed: 'Spostamento non riuscito.',

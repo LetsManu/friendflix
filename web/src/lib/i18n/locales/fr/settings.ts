@@ -27,7 +27,6 @@ const settings: Translation<typeof de> = {
     other: '{n} valeurs viennent de l’environnement (.env). Reprends-les dans les paramètres, puis tu pourras les retirer du .env.',
   },
   moveHint: 'Également enregistré. Tu peux maintenant retirer {keys} du .env et redémarrer. D’ici là, la valeur de l’environnement s’applique.',
-  moveHintOlder: '{keys} (et les anciens noms de ce paramètre)',
   moved: { one: '{n} valeur reprise.', many: '{n} valeurs reprises.', other: '{n} valeurs reprises.' },
   movedNone: 'Rien à reprendre.',
   moveFailed: 'La reprise a échoué.',

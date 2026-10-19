@@ -33,9 +33,9 @@ export interface SettingsMock {
 const UPDATED = '2026-10-01T09:30:00Z';
 /** canary: seeded as the `value` of secret rows (the real API sends null); it must never reach the page */
 export const LEAK = 'mock-leak-canary-9f3e';
-const env = (key: string, legacy: string[] = []) => [key, ...legacy].flatMap((n) => [n, `${n}_FILE`]);
+const env = (key: string) => [key, `${key}_FILE`];
 
-interface Spec { /** a value the backend would never send (secrets): the UI must ignore it */ leak?: string; kind: Kind; source?: Source; value?: unknown; set?: boolean; last4?: string; apply?: 'restart'; invalid?: boolean; legacy?: string[]; options?: string[]; optional?: boolean; min?: number; max?: number; generate?: 'webhookSecret' | 'vapidPair' }
+interface Spec { /** a value the backend would never send (secrets): the UI must ignore it */ leak?: string; kind: Kind; source?: Source; value?: unknown; set?: boolean; last4?: string; apply?: 'restart'; invalid?: boolean; options?: string[]; optional?: boolean; min?: number; max?: number; generate?: 'webhookSecret' | 'vapidPair' }
 /** every visible setting of the registry, by group (spec Part A: 48, plus the five of phase 3) */
 const GROUPS: Array<[string, Array<[string, Spec]>]> = [
   ['general', [
@@ -68,8 +68,8 @@ const GROUPS: Array<[string, Array<[string, Spec]>]> = [
     ['JELLYFIN_ADMIN_API_KEY', { kind: 'secret', source: 'unset', set: false, invalid: true }],
   ]],
   ['requests', [
-    ['REQUESTS_URL', { kind: 'url', source: 'env', value: 'http://requests:5055', legacy: ['SEERR_URL'] }],
-    ['REQUESTS_API_KEY', { kind: 'secret', source: 'env', set: true, legacy: ['SEERR_API_KEY'] }],
+    ['REQUESTS_URL', { kind: 'url', source: 'env', value: 'http://requests:5055' }],
+    ['REQUESTS_API_KEY', { kind: 'secret', source: 'env', set: true }],
   ]],
   ['notifications', [
     ['NTFY_URL', { kind: 'url', source: 'db', value: 'https://ntfy.example.com/friendflix?auth=redacted' }],
@@ -156,7 +156,7 @@ export function settingsState(kind: 'jellyfin' | 'plex' = 'jellyfin'): SettingsM
       const set = s.set ?? (s.value !== undefined && s.value !== null);
       return {
         key, kind: s.kind, source: s.source ?? 'default', value: s.kind === 'secret' ? (s.leak ?? null) : (s.value ?? null), set, apply: s.apply ?? 'live',
-        restartPending: false, invalid: s.invalid ?? false, envNames: env(key, s.legacy), updatedAt: s.source === 'db' ? UPDATED : null,
+        restartPending: false, invalid: s.invalid ?? false, envNames: env(key), updatedAt: s.source === 'db' ? UPDATED : null,
         ...(s.last4 ? { last4: s.last4 } : {}), ...(s.options ? { options: s.options } : {}), ...(s.optional ? { optional: true } : {}), ...(s.min !== undefined ? { min: s.min } : {}),
         ...(s.max !== undefined ? { max: s.max } : {}), ...(s.generate ? { generate: s.generate } : {}),
       };

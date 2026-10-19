@@ -28,7 +28,6 @@ const settings: Translation<typeof de> = {
     other: '{n} wartości pochodzi ze środowiska (.env). Przenieś je do ustawień, a potem możesz usunąć je z .env.',
   },
   moveHint: 'Także zapisane. Możesz teraz usunąć {keys} z .env i zrestartować. Do tego czasu obowiązuje wartość ze środowiska.',
-  moveHintOlder: '{keys} (i starsze nazwy tego ustawienia)',
   moved: { one: 'Przeniesiono {n} wartość.', few: 'Przeniesiono {n} wartości.', many: 'Przeniesiono {n} wartości.', other: 'Przeniesiono {n} wartości.' },
   movedNone: 'Nie ma czego przenosić.',
   moveFailed: 'Nie udało się przenieść.',

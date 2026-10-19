@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import type { z } from 'zod';
-import { configSchema, publicUrlSchema, RENAMED_ENV, type Config } from '../config.js';
+import { configSchema, publicUrlSchema, type Config } from '../config.js';
 import { mediaSettings } from '../media/index.js';
 
 export { publicUrlSchema };
@@ -32,8 +32,6 @@ export interface SettingDef {
   apply: 'live' | 'restart';
   /** the group probe run on save and on "Test" */
   probe?: ProbeId;
-  /** old env names, e.g. ['SEERR_URL'] for REQUESTS_URL */
-  legacyEnv?: string[];
   generate?: 'webhookSecret' | 'vapidPair';
   /** must be set once setup is complete */
   runRequired?: boolean | ((cfg: Config) => boolean);
@@ -79,11 +77,9 @@ function setting(key: Key, meta: Meta): SettingDef {
   const schema = configSchema.shape[key] as z.ZodType;
   const derived = fromSchema(schema);
   if (meta.kind === 'bool') delete derived.options;
-  const legacy = RENAMED_ENV[key];
   return {
     key, schema, ...derived, apply: 'live',
     ...(meta.kind === 'secret' ? { secret: true } : {}),
-    ...(legacy ? { legacyEnv: [legacy] } : {}),
     ...meta,
   };
 }

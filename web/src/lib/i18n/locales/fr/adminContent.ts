@@ -201,6 +201,7 @@ const dict: Translation<typeof de> = {
       client_errors: 'Nombreuses erreurs navigateur',
       failed_playbacks: 'Lectures en échec',
       pending_approvals: 'Connexions en attente de validation',
+      removed_env: 'Anciens noms de variable dans .env',
     },
     disks: {
       title: 'Stockage',

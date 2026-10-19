@@ -6,38 +6,19 @@ import { MEDIA_FIELDS, MEDIA_SERVERS } from './media/index.js';
 import { isValidCidr } from './netaddr.js';
 
 /**
- * Renamed settings: new name -> old name. The old name (and its _FILE variant) still works, but only while the new
- * name is unset in both forms; using it logs a deprecation warning at startup (see deprecatedEnvNames).
+ * Setting names removed in 2.0, with the name to use instead. They are no longer read; when one is still set (compose passes only the
+ * word "set" for them, never the value) the backend warns at startup and the admin banner names the replacement (health.ts).
  */
-export const RENAMED_ENV: Readonly<Record<string, string>> = {
-  REQUESTS_URL: 'SEERR_URL',
-  REQUESTS_API_KEY: 'SEERR_API_KEY',
+export const REMOVED_ENV: Readonly<Record<string, string>> = {
+  SEERR_URL: 'REQUESTS_URL',
+  SEERR_API_KEY: 'REQUESTS_API_KEY',
+  SEERR_URL_FILE: 'REQUESTS_URL_FILE',
+  SEERR_API_KEY_FILE: 'REQUESTS_API_KEY_FILE',
 };
 
-/** Copies old setting names onto their new names when the new name is not set (neither VAR nor VAR_FILE). */
-function withRenamedEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
-  const out = { ...env };
-  for (const [now, old] of Object.entries(RENAMED_ENV)) {
-    if (env[now] || env[`${now}_FILE`]) continue; // the new name wins
-    if (env[old]) out[now] = env[old];
-    if (env[`${old}_FILE`]) out[`${now}_FILE`] = env[`${old}_FILE`];
-  }
-  return out;
-}
-
-/**
- * Old setting names that are still set, as "OLD is deprecated, use NEW" messages (names only, never values).
- * Compose passes the old name through next to the new one (which falls back to the old value), so an old name is
- * reported whenever it is set.
- */
-export function deprecatedEnvNames(env: NodeJS.ProcessEnv = process.env): string[] {
-  const out: string[] = [];
-  for (const [now, old] of Object.entries(RENAMED_ENV)) {
-    for (const suffix of ['', '_FILE']) {
-      if (env[`${old}${suffix}`]) out.push(`${old}${suffix} is deprecated, use ${now}${suffix}`);
-    }
-  }
-  return out;
+/** Removed setting names that are still set, as "OLD is no longer read since 2.0, use NEW" messages (names only, never values). */
+export function removedEnvNames(env: NodeJS.ProcessEnv = process.env): string[] {
+  return Object.entries(REMOVED_ENV).filter(([old]) => env[old]).map(([old, now]) => `${old} is no longer read since 2.0, use ${now}`);
 }
 
 /** Reads VAR, or the file referenced by VAR_FILE (Docker secrets). */
@@ -137,7 +118,7 @@ export const configSchema = z.object({
   MEDIA_SERVER: z.enum(MEDIA_SERVERS).default('jellyfin'),
   /** the media server kinds' own fields (Jellyfin: JELLYFIN_URL, JELLYFIN_ADMIN_API_KEY), owned by media/index.ts; see mediaSettings() */
   ...MEDIA_FIELDS,
-  /** the request service, optional: without URL and key ctx.seerr is null and the request UI is hidden (old names SEERR_URL / SEERR_API_KEY still work, see RENAMED_ENV) */
+  /** the request service, optional: without URL and key ctx.seerr is null and the request UI is hidden (the 1.x names are no longer read, see REMOVED_ENV) */
   REQUESTS_URL: setupRequired(z.string().url()),
   REQUESTS_API_KEY: setupRequired(z.string()),
   NTFY_URL: opt, // e.g. https://ntfy.example.com/friendflix
@@ -289,7 +270,7 @@ export function publicOrigin(cfg: Pick<Config, 'PUBLIC_URL'>): string | null {
 export const secureCookies = (cfg: Pick<Config, 'PUBLIC_URL'>): boolean => cfg.PUBLIC_URL.startsWith('https://');
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
-  const c = configSchema.parse(withOriginPublicUrl(withFileSecrets(withRenamedEnv(env))));
+  const c = configSchema.parse(withOriginPublicUrl(withFileSecrets(env)));
   // yellow must come before red: a warn level at or above the critical one would never show, so both fall back to the defaults
   if (c.HEALTH_DISK_WARN_PCT >= c.HEALTH_DISK_CRIT_PCT) {
     console.warn(`HEALTH_DISK_WARN_PCT (${c.HEALTH_DISK_WARN_PCT}) must be below HEALTH_DISK_CRIT_PCT (${c.HEALTH_DISK_CRIT_PCT}); using 85 / 95`);
