@@ -80,7 +80,7 @@ export function srtToVtt(srt: string): string {
     const at = lines.findIndex((l) => l.includes('-->'));
     if (at < 0) return null;
     const timing = lines[at]!.replace(TS, (_m, h: string, mi: string, s: string, ms: string) => `${pad(h, 2)}:${pad(mi, 2)}:${pad(s, 2)}.${ms.padEnd(3, '0')}`);
-    const text = lines.slice(at + 1).map((l) => l.replace(/\{\\[^}]*\}/g, '')).join('\n').replace(/-->/g, '->');
+    const text = lines.slice(at + 1).map((l) => l.replace(/\{\\[^}]*\}/g, '')).join('\n').split('-->').join('->'); // a cue's text must not contain the timing arrow
     const id = at > 0 ? lines.slice(0, at).join(' ').trim() : '';
     return `${id && !id.includes('-->') ? `${id}\n` : ''}${timing}\n${text}`;
   }).filter((c): c is string => c !== null);
