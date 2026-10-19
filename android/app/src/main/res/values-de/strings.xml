@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  SPDX-FileCopyrightText: 2026 Manuel Weißböck
+  SPDX-License-Identifier: AGPL-3.0-or-later
+-->
+<resources>
+    <string name="setup_title">Mit deinem Server verbinden</string>
+    <string name="setup_hint">Adresse deines FriendFlix-Servers</string>
+    <string name="setup_connect">Verbinden</string>
+    <string name="setup_error_invalid">Das sieht nicht wie eine Serveradresse aus.</string>
+    <string name="setup_error_insecure">Bitte eine sichere Adresse (https) verwenden. Reines http wird nicht unterstützt.</string>
+    <string name="setup_error_unreachable">Der Server ist nicht erreichbar. Prüfe die Adresse und deine Verbindung.</string>
+    <string name="setup_error_tls">Die sichere Verbindung ist fehlgeschlagen. Dem Zertifikat des Servers wird nicht vertraut.</string>
+    <string name="setup_error_not_friendflix">Diese Adresse antwortet nicht wie ein FriendFlix-Server.</string>
+    <string name="setup_error_app_too_old">Bitte die App aktualisieren.</string>
+    <string name="setup_error_server_too_old">Bitte FriendFlix auf dem Server aktualisieren.</string>
+    <string name="open_with">Öffnen mit</string>
+</resources>

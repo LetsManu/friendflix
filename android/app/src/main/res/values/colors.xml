@@ -5,4 +5,6 @@
 -->
 <resources>
     <color name="ic_launcher_background">#14161C</color>
+    <color name="surface">#14161C</color>
+    <color name="error">#FF8A80</color>
 </resources>
