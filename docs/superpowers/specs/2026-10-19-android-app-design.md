@@ -62,10 +62,16 @@ fewer server transcodes, downloads a season to the SD card while the screen is o
 - Licences, quotas, role quality caps, preparation on the server, revoke and expiry stay exactly as in docs/downloads.md. The web UI
   creates the licence; the bridge hands the licence id to native.
 - Transfer: WorkManager long-running worker as a foreground service with a progress notification; HTTP Range resume after any
-  interruption (network change, reboot, app killed); runs with the screen off; respects "only on Wi-Fi" (app setting, default on).
+  interruption (network change, reboot, app killed); runs with the screen off, on Wi-Fi and mobile data alike (an optional
+  "Only on Wi-Fi" app setting, default off). Transport is always HTTPS.
 - Storage: app-specific external storage (`getExternalFilesDirs`), the user picks "Phone" or "SD card" in the app settings, with
   free space shown. Files are private to the app (licences and revocation stay enforceable); uninstalling removes them. Moving
   between locations is offered when the setting changes.
+- Encryption at rest: every downloaded file (video, subtitles) is written encrypted, AES-256 in a seekable mode (CTR per file with
+  a random IV, plus an HMAC per chunk to detect tampering), under a key created on the device in the Android Keystore that never
+  leaves it. The player decrypts on the fly through a Media3 `DataSource`; seeking works. Matters most on a portable SD card, which
+  Android does not encrypt: copied to a PC the files are unreadable, and they play only in this app on this phone. Not DRM: a rooted
+  device can reach the key; docs say so. Deleting a licence deletes the file; wiping app data removes the key.
 - Text subtitles (SRT/VTT) and artwork are downloaded with the file. Image subtitles (PGS/VobSub) stay unavailable offline.
 - Offline mode: a native "Downloads" screen (shown when the server is unreachable, or from the menu) lists the active profile's
   downloads and plays them. Watched state and position are queued and synced on reconnect; newer server states win. Offline grace
@@ -96,7 +102,7 @@ fewer server transcodes, downloads a season to the SD card while the screen is o
 
 ## 9. Testing
 
-- Kotlin unit tests (bridge validation, origin checks, licence/expiry logic, download resume, device profile building).
+- Kotlin unit tests (bridge validation, origin checks, licence/expiry logic, download resume, encrypt/decrypt round trip and seek, tamper detection, device profile building).
 - Instrumented tests on an emulator in CI (WebView loads only the origin, bridge refuses other frames, offline screen, player starts
   a local test file).
 - Server / web: unit + e2e for the bridge hand-off (a fake bridge in Playwright), the `client: "android"` capability validation,
