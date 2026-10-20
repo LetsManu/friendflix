@@ -3,6 +3,7 @@
 package app.friendflix.android.notify
 
 import android.Manifest
+import android.annotation.SuppressLint
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
@@ -27,6 +28,7 @@ import kotlinx.coroutines.flow.first
 import okhttp3.HttpUrl
 import org.json.JSONObject
 import java.io.IOException
+import kotlin.coroutines.cancellation.CancellationException
 import java.util.concurrent.TimeUnit
 
 /** One server notification, as much of it as the poller uses. */
@@ -108,7 +110,12 @@ class NotificationPoller(
         val a = body.optJSONArray("notifications") ?: return null
         return (0 until a.length()).mapNotNull { i ->
             val o = a.optJSONObject(i) ?: return@mapNotNull null
-            val id = o.optLong("id", -1).takeIf { it >= 0 } ?: return@mapNotNull null
+            // node-pg hands a bigserial out as a string ("123"); a number is fine too
+            val id = when (val v = o.opt("id")) {
+                is Number -> v.toLong()
+                is String -> v.toLongOrNull()
+                else -> null
+            }?.takeIf { it >= 0 } ?: return@mapNotNull null
             ServerNote(
                 id, o.optString("kind"), o.optString("title"),
                 if (o.isNull("body")) null else o.optString("body").takeIf { it.isNotEmpty() },
@@ -136,6 +143,8 @@ class SystemNotePoster(context: Context) : NotePoster {
         return NotificationManagerCompat.from(app).areNotificationsEnabled()
     }
 
+    // The poller checks canPost() first and treats a SecurityException (permission withdrawn in between) as "keep for later".
+    @SuppressLint("MissingPermission")
     override fun post(note: ServerNote, category: NotifyCategory, path: String?) {
         val id = notificationId(note.id)
         val open = Intent(app, ShellActivity::class.java)
@@ -144,15 +153,10 @@ class SystemNotePoster(context: Context) : NotePoster {
         val b = NotificationCompat.Builder(app, category.channelId)
             .setSmallIcon(android.R.drawable.stat_notify_more)
             .setContentTitle(note.title)
-            .setGroup(category.channelId)
             .setAutoCancel(true)
             .setContentIntent(PendingIntent.getActivity(app, id, open, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT))
         note.body?.let { b.setContentText(it).setStyle(NotificationCompat.BigTextStyle().bigText(it)) }
-        try {
-            NotificationManagerCompat.from(app).notify(id, b.build())
-        } catch (e: SecurityException) {
-            throw e // permission withdrawn in between: the poller keeps this one (and the rest) for later
-        }
+        NotificationManagerCompat.from(app).notify(id, b.build())
     }
 
     companion object {
@@ -167,6 +171,8 @@ class NotificationWorker(context: Context, params: WorkerParameters) : Coroutine
         val d = Downloads.get(applicationContext)
         try {
             NotificationPoller(d.settings, { d.api() }, SystemNotePoster(applicationContext)).poll()
+        } catch (e: CancellationException) {
+            throw e
         } catch (_: Exception) {
             // never a retry storm, whatever went wrong; the next period asks again (no details: they could hold titles)
         }

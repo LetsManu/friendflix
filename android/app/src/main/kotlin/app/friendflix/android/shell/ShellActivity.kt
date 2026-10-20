@@ -139,9 +139,9 @@ class ShellActivity : ComponentActivity() {
      */
     private fun notificationUrl(intent: Intent?): String? {
         val path = intent?.getStringExtra(EXTRA_OPEN_PATH) ?: return null
+        intent.removeExtra(EXTRA_OPEN_PATH) // once: a recreate (or the same intent again) must not navigate again
         val origin = policy?.origin ?: return null
-        val safe = NotifyLinks.safePath(origin, path) ?: return null
-        return origin.resolve(safe)?.toString()
+        return NotifyLinks.urlFor(origin, path)
     }
 
     /** The native player handed a title back (its profile is not the session's): the web UI's watch page plays it. */

@@ -222,6 +222,27 @@ class NotificationPollerTest {
     // ---- links ----
     private val origin = okhttp3.HttpUrl.Builder().scheme("https").host("ff.example").port(8443).build()
 
+    @Test fun stringAndNumberIdsAreBothUnderstood() {
+        // node-pg returns bigserial as a string
+        serve(note(1)); poll()
+        notes = JSONArray()
+            .put(note(14).put("id", "14")).put(note(13)).put(note(12).put("id", "12")).put(note(1).put("id", "oops"))
+        poll()
+        assertEquals(listOf(12L, 13L, 14L), poster.posted.map { it.first.id })
+        assertEquals(14L, lastId())
+    }
+
+    @Test fun pathsThatNormaliseToSchemeRelativeAreRejected() {
+        assertNull(NotifyLinks.safePath(origin, "/.//evil"))
+        assertNull(NotifyLinks.safePath(origin, "/a/..//evil"))
+    }
+
+    @Test fun theTapUrlIsRevalidated() {
+        assertEquals("https://ff.example:8443/requests?x=1", NotifyLinks.urlFor(origin, "/requests?x=1"))
+        assertNull(NotifyLinks.urlFor(origin, "https://evil.example/"))
+        assertNull(NotifyLinks.urlFor(origin, null))
+    }
+
     @Test fun onlyOwnOriginPathsAreAccepted() {
         assertEquals("/requests", NotifyLinks.safePath(origin, "/requests"))
         assertEquals("/watch/abc?t=30", NotifyLinks.safePath(origin, "/watch/abc?t=30#x"))
