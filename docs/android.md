@@ -187,7 +187,7 @@ From then on, every release tag (`vX.Y.Z`, cut by the *Release* workflow) builds
 ### 3. Create the app in the Play Console
 
 1. In the Play Console, *Create app*: name FriendFlix, app (not game), free.
-2. Fill in what Google asks before testing (*Dashboard → Set up your app*): privacy policy URL, app access (testers need a FriendFlix account on your server; give Google's reviewers a test account or explain that access is by invitation), ads (none), content rating, target audience, data safety. For data safety: the app sends what you do only to your own FriendFlix server; it contains no analytics or advertising SDK; Google's Cast SDK sends its own Cast telemetry to Google.
+2. Fill in what Google asks before testing (*Dashboard → Set up your app*): privacy policy URL (the app's policy is [privacy.md](privacy.md); use its GitHub address `https://github.com/LetsManu/friendflix/blob/main/docs/privacy.md`), app access (testers need a FriendFlix account on your server; give Google's reviewers a test account or explain that access is by invitation), ads (none), content rating, target audience, data safety. For data safety: the app sends what you do only to your own FriendFlix server; it contains no analytics or advertising SDK; Google's Cast SDK sends its own Cast telemetry to Google.
 3. *Test and release → Testing → Closed testing → Create track*, then *Create new release*. Play App Signing is on by default for new apps: keep *Google-generated key*.
 4. Upload `friendflix-android-X.Y.Z.aab` from the GitHub Release. The first upload fixes the package name `app.friendflix.android` for good.
 5. Roll the release out to the closed track. Google reviews it (usually hours to a few days).
