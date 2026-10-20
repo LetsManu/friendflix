@@ -67,8 +67,11 @@ interface CastHost {
     fun onTitle(item: ItemInfo)
     /** a token request was refused ([answer]) or the receiver did not load it (null) */
     fun onFailed(answer: TokenAnswer?)
-    /** casting is over: local playback goes on at [positionMs] ([play] = it was playing; [ended] = the title finished on the TV) */
-    fun onReturn(itemId: String, positionMs: Long, play: Boolean, ended: Boolean)
+    /**
+     * casting is over: local playback goes on at [positionMs] (null = unknown, a title picked for the TV that never played there:
+     * the server's resume point); [play] = it was playing; [ended] = the title finished on the TV
+     */
+    fun onReturn(itemId: String, positionMs: Long?, play: Boolean, ended: Boolean)
     /** the own receiver's TV texts in the app's language (engine.ts `receiverStrings`) */
     fun receiverStrings(): JSONObject
 }
@@ -147,6 +150,10 @@ class CastController(
         /** no token of this session was loaded yet (a refused first request plays on locally) */
         var firstStart = true
         val subtitleStyle = start.subtitleStyle
+        /** a title picked for the TV ([playOnTv]) whose token was not loaded yet: no position of it is known */
+        var fresh = false
+        /** the position to hand back */
+        val returnAt: Long? get() = if (fresh) null else positionMs
     }
 
     private var cur: Live? = null
@@ -210,7 +217,7 @@ class CastController(
         s.queueAsked = false; s.noAuto = null
         s.itemId = item.id; s.isEpisode = item.type == "Episode"
         s.audioIndex = null; s.subIndex = null; s.segs = emptyList()
-        s.positionMs = 0; s.durationMs = 0; s.paused = false
+        s.positionMs = 0; s.durationMs = 0; s.paused = false; s.fresh = true
         host.onTitle(item)
         val body = CastBodies.token(item.id, null, null, s.maxBitrate ?: s.prefsBitrate, receiver.custom)
         io.execute {
@@ -231,11 +238,12 @@ class CastController(
             close(s)
             receiver.end()
             host.onFailed(a)
-            host.onReturn(s.itemId, s.positionMs, play = first || !s.paused, ended = false)
+            host.onReturn(s.itemId, s.returnAt, play = first || !s.paused, ended = false)
             return
         }
         val ci = a.info
         s.ci = ci
+        s.fresh = false
         s.firstStart = false
         s.started = false
         s.lastPaused = null
@@ -345,7 +353,7 @@ class CastController(
         if (ci != null) revoke(ci)
         s.ci = null
         close(s)
-        host.onReturn(s.itemId, s.positionMs, play = !s.paused, ended = false)
+        host.onReturn(s.itemId, s.returnAt, play = !s.paused, ended = false)
     }
 
     /** A message from the own receiver (its remote): input on the TV, a cancelled countdown. */

@@ -71,7 +71,7 @@ class PlayerControls(
         fun changeQuality(bps: Long)
         /** what the Episodes panel needs, or null when it is not offered (no episode of a series, a download, nothing loaded) */
         fun episodes(): EpisodesSource?
-        /** plays another title in this player, or on the TV while casting (the per-title state is already reset) */
+        /** plays another title in this player, or on the TV while casting; resets the per-title state ([newTitle], via [TitleSwitch]) */
         fun playItem(id: String)
     }
 
@@ -153,7 +153,7 @@ class PlayerControls(
         episodesButton.visibility = if (show) View.VISIBLE else View.GONE
     }
 
-    /** *Episodes*: a tap on another episode resets the per-title state and plays it (on the TV while casting); the playing one closes. */
+    /** *Episodes*: a tap on another episode plays it through [Host.playItem] (on the TV while casting); the playing one only closes. */
     fun openEpisodes() {
         if (host.inPip()) return
         val src = host.episodes() ?: return
@@ -162,10 +162,7 @@ class PlayerControls(
             activity, activity.lifecycleScope, src.api, src.images, src.seriesId, src.season, src.currentId, episodesCache,
         ) { id ->
             panel.close()
-            if (id != src.currentId) {
-                newTitle()
-                host.playItem(id)
-            }
+            if (id != src.currentId) host.playItem(id)
         }
         panel.show(activity.getString(R.string.player_episodes), content)
     }

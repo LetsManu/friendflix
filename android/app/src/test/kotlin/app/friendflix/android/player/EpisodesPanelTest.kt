@@ -195,6 +195,8 @@ class EpisodesPanelTest {
         shadowOf(Looper.getMainLooper()).idle()
         assertEquals(1, list(v2).childCount)
         assertEquals(before, seen.size)
+        assertEquals("Pilot", cache.find("e11")?.name)
+        assertEquals(null, cache.find("nope"))
     }
 
     @Test fun episodesAreOfferedOnlyForOnlineEpisodesOfASeries() {
@@ -206,8 +208,18 @@ class EpisodesPanelTest {
 
     // ---- through the player bar (PlayerControls) ----
 
+    /** the player screen's side as PlayerActivity has it: a pick goes through [TitleSwitch], which owns the per-title reset */
     private class Host(val local: Player, val source: () -> EpisodesSource?) : PlayerControls.Host {
         val played = mutableListOf<String>()
+        lateinit var controls: PlayerControls
+        private val switch = TitleSwitch(object : TitleSwitch.Steps {
+            override fun newTitle() = controls.newTitle()
+            override fun casting() = false
+            override fun playOnTv(id: String) {}
+            override fun cancelLoad() {}
+            override fun resetLocal() {}
+            override fun startOnline(id: String) { played += id }
+        })
         var pip = false
         override fun active(): Player = local
         override fun casting() = false
@@ -228,7 +240,7 @@ class EpisodesPanelTest {
         override fun quality() = 0L
         override fun changeQuality(bps: Long) {}
         override fun episodes() = source()
-        override fun playItem(id: String) { played += id }
+        override fun playItem(id: String) = switch.play(id)
     }
 
     @Test fun pickResetsTitleState() {
@@ -240,6 +252,7 @@ class EpisodesPanelTest {
             view.player = player
             val host = Host(player) { EpisodesSource(api, images, "ser", 1, "e11") }
             val controls = PlayerControls(activity, view, player, host)
+            host.controls = controls
             controls.showEpisodesButton(true)
             assertEquals(View.VISIBLE, view.findViewById<View>(R.id.player_episodes).visibility)
             controls.setSpeed(1.5f)

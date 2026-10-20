@@ -64,7 +64,7 @@ class CastControllerTest {
     private inner class Host(val onStop: () -> Unit) : CastHost {
         /** what had left the device when the hand-back happened */
         var callsAtReturn: List<String> = emptyList()
-        var returned: Triple<String, Long, Boolean>? = null
+        var returned: Triple<String, Long?, Boolean>? = null
         var returnedEnded = false
         var failed: TokenAnswer? = null
         var failures = 0
@@ -74,7 +74,7 @@ class CastControllerTest {
         override fun onCasting(itemId: String) { casting++ }
         override fun onTitle(item: ItemInfo) { titles += item.id }
         override fun onFailed(answer: TokenAnswer?) { failures++; failed = answer }
-        override fun onReturn(itemId: String, positionMs: Long, play: Boolean, ended: Boolean) {
+        override fun onReturn(itemId: String, positionMs: Long?, play: Boolean, ended: Boolean) {
             returned = Triple(itemId, positionMs, play); returnedEnded = ended; callsAtReturn = calls.map { it.first }
         }
         override fun receiverStrings(): JSONObject = JSONObject().put("next", "Next episode")
@@ -402,6 +402,26 @@ class CastControllerTest {
         assertEquals("ep5", c.itemId)
         assertTrue(c.casting)
         assertEquals(2, host.casting)
+    }
+
+    @Test fun aRefusedTokenForAPickedEpisodeReturnsWithoutAPosition() {
+        val (_, c) = controller()
+        c.start(episode())
+        c.onReceiver(playing("c1", 61_000))
+        answers += TokenAnswer.Failed
+        c.playOnTv(ItemInfo("ep5", "Episode", "Fifth", "Bright Valley", "s1", 1, 5))
+        // the picked episode plays here from the server's resume point, not from 0
+        assertEquals(Triple("ep5", null as Long?, true), host.returned)
+        assertFalse(c.casting)
+    }
+
+    @Test fun aSessionEndBeforeThePickedEpisodeLoadedReturnsWithoutAPosition() {
+        val c = CastController(server, FakeReceiver(false), host, still, io = manualIo, main = direct, now = { clock }, schedule = schedule)
+        c.start(episode()); runIo()
+        c.onReceiver(playing("c1", 61_000))
+        c.playOnTv(ItemInfo("ep5", "Episode", "Fifth", "Bright Valley", "s1", 1, 5)) // its token request is still on its way
+        c.onSessionEnded()
+        assertEquals(Triple("ep5", null as Long?, true), host.returned)
     }
 
     // ---- fix round 1 ----

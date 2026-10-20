@@ -47,6 +47,9 @@ object EpisodesPanel {
     class Cache {
         internal val seasons = HashMap<String, List<Season>>()
         internal val episodes = HashMap<String, List<Episode>>()
+
+        /** a listed episode (its name and numbers while the item itself cannot be fetched) */
+        fun find(id: String): Episode? = episodes.values.firstNotNullOfOrNull { l -> l.firstOrNull { it.id == id } }
     }
 
     /** the Episodes button: an episode of a series, streamed (never for a download) */

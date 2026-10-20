@@ -628,9 +628,22 @@ class PlayerActivity : FragmentActivity() {
      * Another title in this player (the next episode, a pick in the Episodes panel): the per-title state is reset (speed 1, a sleep
      * timer "after this episode" consumed, the title's flow, languages and extras loaded again). While casting it plays on the TV.
      */
-    private fun playItem(id: String) {
-        controls.newTitle()
-        if (cast?.casting == true) { playOnTv(id); return }
+    private fun playItem(id: String) = titleSwitch.play(id)
+
+    private val titleSwitch = TitleSwitch(object : TitleSwitch.Steps {
+        override fun newTitle() = controls.newTitle()
+        override fun casting() = cast?.casting == true
+        override fun playOnTv(id: String) = this@PlayerActivity.playOnTv(id)
+        override fun cancelLoad() { loadJob?.cancel(); loadJob = null; hideError() }
+        override fun resetLocal() = resetForNewTitle()
+        override fun startOnline(id: String) {
+            args = args.copy(itemId = id, startMs = null)
+            loading.visibility = View.VISIBLE
+            startOnline(args, first = true, startMs = null)
+        }
+    })
+
+    private fun resetForNewTitle() {
         reporter?.release()
         reporter = null
         stream = null
@@ -644,9 +657,6 @@ class PlayerActivity : FragmentActivity() {
         player.stop()
         nextCard.visibility = View.GONE
         stillCard.visibility = View.GONE
-        args = args.copy(itemId = id, startMs = null)
-        loading.visibility = View.VISIBLE
-        startOnline(args, first = true, startMs = null)
     }
 
     /** a title picked while casting starts on the TV (the cast session switches its token); the local player stays stopped */
@@ -654,10 +664,11 @@ class PlayerActivity : FragmentActivity() {
         val pa = api
         val cur = item
         lifecycleScope.launch {
+            val ep = controls.episodesCache.find(id)
             val info = pa?.let { withContext(Dispatchers.IO) { runCatching { it.item(id) }.getOrNull() } }
-                ?: ItemInfo(id, "Episode", "", cur?.seriesName, cur?.seriesId, null, null)
-            val c = cast
-            if (c?.casting == true) c.playOnTv(info) else if (!released) playItem(id) // the cast ended meanwhile: here
+                ?: ItemInfo(id, "Episode", ep?.name.orEmpty(), cur?.seriesName, cur?.seriesId, ep?.season, ep?.episode)
+            // the cast ended meanwhile: its hand-back (onReturn) already plays here; the pick is dropped, never a second load
+            cast?.takeIf { it.casting }?.playOnTv(info)
         }
     }
 
@@ -1030,7 +1041,7 @@ class PlayerActivity : FragmentActivity() {
             flash(text, 4_000)
         }
 
-        override fun onReturn(itemId: String, positionMs: Long, play: Boolean, ended: Boolean) {
+        override fun onReturn(itemId: String, positionMs: Long?, play: Boolean, ended: Boolean) {
             showLocal()
             if (ended) { finish(); return } // finished on the TV: back to the app, which offers what comes next
             // the TV's position (and title, after its queue moved on: no flow loaded for it yet) plays on here
