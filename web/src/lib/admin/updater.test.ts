@@ -3,7 +3,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { hasKey, setLocale, tr } from '#lib/i18n';
 import { ApiError } from '#lib/api';
-import { TIME_RE, canRollback, failReason, isRunning, nextPoll, startError, statusOf, visibleSteps, type UpdaterJob, type UpdaterStatus } from './updater';
+import { TIME_RE, canRollback, failReason, foreignMode, foreignText, isRunning, nextPoll, startError, statusOf, visibleSteps, type UpdaterJob, type UpdaterStatus } from './updater';
 
 const job = (over: Partial<UpdaterJob> = {}): UpdaterJob => ({
   id: '0123456789abcdef', action: 'update', state: 'running', step: 'pull', from: 'sha-aaaaaaa', to: 'latest', startedAt: '2026-10-18T04:00:00.000Z', finishedAt: null, error: null,
@@ -41,6 +41,35 @@ describe('updater panel logic', () => {
     for (const bad of ['4:00', '24:00', '12:60', '']) expect(TIME_RE.test(bad)).toBe(false);
   });
 
+  it('a foreign (Portainer) stack: update through Portainer when it is set up, else the manual note; never a rollback', () => {
+    const foreign = status({ stack: 'foreign' });
+    expect(foreignMode({ present: true, status: foreign, portainer: { configured: true, mode: 'webhook' } })).toBe('portainer');
+    expect(foreignMode({ present: true, status: foreign, portainer: { configured: false, mode: null } })).toBe('manual');
+    expect(foreignMode({ present: true, status: foreign })).toBe('manual'); // an older backend without the portainer field
+    expect(foreignMode({ present: true, status: status({ stack: 'own' }), portainer: { configured: true, mode: 'api' } })).toBeNull();
+    expect(foreignMode({ present: true, status: status() })).toBeNull(); // an older updater: no stack field
+    expect(foreignMode({ present: false })).toBeNull();
+    expect(canRollback(foreign)).toBe(false);
+    // an older updater (or one that cannot tell) with Portainer set up: the backend goes through Portainer, so does the page
+    expect(foreignMode({ present: true, status: status(), portainer: { configured: true, mode: 'webhook' } })).toBe('portainer');
+    // started from another directory (sudo, a GUI without PWD): not Portainer, the fix is UPDATER_PROJECT_DIR
+    const wd = status({ stack: 'foreign', stackReason: 'working_dir', stackDir: '/volume1/docker/friendflix', projectDir: '/project' });
+    expect(foreignMode({ present: true, status: wd, portainer: { configured: false, mode: null } })).toBe('workdir');
+    expect(foreignMode({ present: true, status: { ...wd, stackDir: '/data/compose/4' } })).toBe('manual'); // Portainer's directory after all
+    expect(foreignMode({ present: true, status: { ...wd, stackReason: 'portainer' } })).toBe('manual');
+  });
+
+  it('the notes name the directories and the fix', async () => {
+    await setLocale('en');
+    const wd = status({ stack: 'foreign', stackReason: 'working_dir', stackDir: '/volume1/docker/friendflix', projectDir: '/project' });
+    const text = foreignText('workdir', wd);
+    expect(text).toContain('/volume1/docker/friendflix');
+    expect(text).toContain('/project');
+    expect(text).toContain('UPDATER_PROJECT_DIR=/volume1/docker/friendflix');
+    expect(foreignText('manual', wd)).toBe(tr('admin.update.updater.foreign.manual'));
+    expect(foreignText('portainer', wd)).toBe(tr('admin.update.updater.foreign.portainer'));
+  });
+
   it('error texts: known codes, rate limit, unknown codes never shown raw', async () => {
     await setLocale('en');
     expect(failReason('verify_failed')).toBe(tr('admin.update.updater.failReason.verify_failed'));
@@ -50,6 +79,10 @@ describe('updater panel logic', () => {
     expect(startError(new ApiError(409, { error: 'busy' }))).toBe(tr('admin.update.updater.error.busy'));
     expect(startError(new ApiError(409, { error: 'whatever' }))).toBe(tr('admin.update.updater.error.generic'));
     expect(startError(null)).toBe(tr('admin.update.updater.error.generic'));
+    expect(startError(new ApiError(409, { error: 'foreign_stack' }))).toBe(tr('admin.update.updater.error.foreign_stack'));
+    expect(startError(new ApiError(502, { error: 'portainer', status: 500, step: 'webhook' }))).toBe(tr('admin.update.updater.error.portainer'));
+    expect(failReason('foreign_stack')).toBe(tr('admin.update.updater.failReason.foreign_stack'));
+    expect(failReason('config_mismatch')).toBe(tr('admin.update.updater.failReason.config_mismatch'));
   });
 
   it('every updater string exists in all seven languages', async () => {
@@ -59,7 +92,8 @@ describe('updater panel logic', () => {
       'error.no_target', 'error.not_available', 'error.channel_sync_failed', 'error.tooSoon', 'error.generic', 'failReason.verify_failed', 'failReason.pull_failed',
       'failReason.unhealthy', 'failReason.restart_failed', 'failReason.rollback_failed', 'failReason.interrupted', 'failReason.self_update_timeout', 'failReason.unexpected_image', 'failReason.media_server_mismatch',
       'failReason.compose_config', 'failReason.unknown', 'unauthorized', 'invalid', 'log', 'reauthBack', 'auto.title', 'auto.label', 'auto.off', 'auto.window', 'auto.time',
-      'auto.save', 'auto.saved', 'auto.locked', 'auto.hint', 'auto.timeInvalid'];
+      'auto.save', 'auto.saved', 'auto.locked', 'auto.hint', 'auto.timeInvalid', 'foreign.portainer', 'foreign.manual', 'foreign.started', 'foreign.workdir', 'confirm.updatePortainer', 'error.foreign_stack', 'error.portainer',
+      'error.portainer_unreachable', 'failReason.foreign_stack', 'failReason.config_mismatch'];
     for (const l of ['de', 'en', 'es', 'fr', 'it', 'pl', 'tr']) {
       await setLocale(l);
       for (const k of keys) expect(hasKey(`admin.update.updater.${k}`), `${l} ${k}`).toBe(true);

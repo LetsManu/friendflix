@@ -235,6 +235,7 @@ const it: Translation<typeof de> = {
       advanced: 'L’updater stesso',
       confirm: {
         update: 'Aggiornare ora a {tag}? FriendFlix si riavvia brevemente, le riproduzioni in corso si interrompono.',
+        updatePortainer: 'Ridistribuire ora lo stack tramite Portainer? FriendFlix si riavvia brevemente, gli stream in corso vengono interrotti.',
         rollback: 'Tornare a {tag}? FriendFlix si riavvia brevemente.',
         'self-update': 'Aggiornare ora il container updater?',
       },
@@ -271,6 +272,9 @@ const it: Translation<typeof de> = {
         channel_sync_failed: 'L’updater non ha accettato il canale.',
         tooSoon: 'Troppi avvii. Attendi due minuti.',
         generic: 'L’updater ha rifiutato l’operazione.',
+        foreign_stack: 'Questo stack è gestito da Portainer (o da un altro strumento), quindi l’updater non lo ricrea. Imposta il webhook di Portainer in Admin → Impostazioni → Aggiornamenti oppure aggiorna lo stack in Portainer.',
+        portainer: 'Portainer ha rifiutato il nuovo deploy. Controlla webhook o API in Admin → Impostazioni → Aggiornamenti.',
+        portainer_unreachable: 'Portainer non è raggiungibile.',
       },
       failReason: {
         verify_failed: 'verifica delle firme non riuscita, nulla è stato riavviato',
@@ -283,7 +287,15 @@ const it: Translation<typeof de> = {
         unexpected_image: 'nome immagine inatteso',
         media_server_mismatch: 'i file compose avvierebbero un media server diverso da quello attuale (UPDATER_COMPOSE_FILES senza compose.plex.yaml?), nulla è stato riavviato',
         compose_config: 'configurazione compose illeggibile',
+        foreign_stack: 'lo stack è gestito da Portainer (o da un altro strumento), l’updater non lo ricrea; non è stato cambiato nulla',
+        config_mismatch: 'i file compose e il .env pubblicherebbero porte o reti diverse da quelle dei container in esecuzione (variabili impostate altrove, ad es. BIND_ADDR?), nulla è stato riavviato',
         unknown: 'errore sconosciuto',
+      },
+      foreign: {
+        portainer: 'Questo stack è gestito da Portainer. «Aggiorna ora» lo ridistribuisce tramite Portainer (webhook o API da Admin → Impostazioni → Aggiornamenti). L’updater non ricrea mai da solo uno stack di Portainer, quindi tornare alla versione precedente non è disponibile qui.',
+        manual: 'Questo stack è gestito da Portainer (o da un altro strumento), quindi l’updater non lo aggiorna: ricrearlo da qui farebbe perdere le variabili proprie dello stack (ad es. BIND_ADDR). Imposta il webhook di Portainer in Admin → Impostazioni → Aggiornamenti oppure aggiorna lo stack in Portainer.',
+        started: 'Portainer sta ridistribuendo lo stack. FriendFlix si riavvia tra un attimo.',
+        workdir: 'Questo stack è stato avviato da {dir}, ma l’updater vede {projectDir}, quindi non lo ricrea (gli mancherebbe il .env di quella cartella). Scrivi UPDATER_PROJECT_DIR={dir} nel .env in {dir} ed esegui lì una volta docker compose up -d.',
       },
       unauthorized: 'Un updater risponde ma rifiuta la firma: INTERNAL_SECRET è diverso tra backend e updater.',
       invalid: 'L’updater ha inviato una risposta illeggibile.',
@@ -506,6 +518,7 @@ const it: Translation<typeof de> = {
       update: '{actor} ha avviato un aggiornamento',
       updater_start: '{actor} ha avviato un’operazione dell’updater',
       updater_result: 'Operazione dell’updater terminata',
+      update_result: 'Portainer ha risposto al nuovo deploy',
     },
     session: {
       revoke_others: '{actor} si è disconnesso dagli altri dispositivi',

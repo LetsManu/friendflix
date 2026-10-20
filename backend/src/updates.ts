@@ -1,5 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
+import { audit } from './audit.js';
 import { buildInfo, channelUpdate, envLine, type BuildKind, type Channel, type RunningChannel } from './channel.js';
 import type { Ctx } from './ctx.js';
 import { appVersion, codenameFor, compareSemver, parseSemver } from './version.js';
@@ -181,4 +182,24 @@ export async function triggerUpdate(ctx: Ctx, mode: 'webhook' | 'api'): Promise<
     const code = typeof raw === 'string' && /^[A-Z_]{2,40}$/.test(raw) ? raw : undefined;
     return { ...fail(null, 'portainer_unreachable', step), ...(code ? { code } : {}) } as TriggerResult;
   }
+}
+
+/**
+ * The Portainer redeploy, audited twice: system.update before the call (from/to, the mode; it survives Portainer recreating
+ * this backend mid-call) and system.update_result after it (started, or failed with error/step/status/code, never the URL).
+ * `actor` null = the automatic update. Used by Admin -> Update without the updater and by the updater path when the stack is
+ * Portainer's (updater.ts startJob / autoUpdateTick).
+ */
+export async function redeployViaPortainer(ctx: Ctx, actor: string | null, mode: 'webhook' | 'api', info?: UpdateInfo): Promise<TriggerResult> {
+  const i = info ?? await updateInfo(ctx);
+  const auto = actor ? {} : { auto: true };
+  await audit(ctx, actor, 'system.update', undefined, {
+    from: i.current.sha, to: i.latest?.sha ?? null, fromVersion: i.current.version, toVersion: i.release?.version ?? null, mode, ...auto,
+  });
+  const r = await triggerUpdate(ctx, mode);
+  await audit(ctx, actor, 'system.update_result', undefined, {
+    mode, toVersion: i.release?.version ?? null, ...auto,
+    ...(r.ok ? { result: 'started' } : { result: 'failed', error: r.error, step: r.step, status: r.status, ...(r.code ? { code: r.code } : {}) }),
+  });
+  return r;
 }

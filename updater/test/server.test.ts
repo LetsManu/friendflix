@@ -6,7 +6,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import type { ImageInfo } from '../src/docker.js';
 import { Updater, type Ops } from '../src/job.js';
 import { ReplayCache, deriveKey, sign, type Verifier } from '../src/protocol.js';
-import { handler, healthProbe, servicesView } from '../src/server.js';
+import { handler, healthProbe, servicesView, stackView, status } from '../src/server.js';
 import { DEFAULT_STATE, memoryStore } from '../src/state.js';
 
 const key = deriveKey('server-test-secret-0123456789');
@@ -106,6 +106,26 @@ describe('updater HTTP API', () => {
     const big = `{"channel":"stable","x":"${'a'.repeat(2000)}"}`;
     const r = await fetch(`${base}/v1/channel`, { method: 'POST', body: big, headers: { 'content-type': 'application/json' } }).catch(() => null);
     expect(r === null || r.status === 413).toBe(true);
+  });
+
+  it('status says whose stack it is and why (own / foreign / null = could not tell), for the backend and the page', async () => {
+    const b = await (await call('GET', '/v1/status')).json();
+    expect([b.stack, b.stackReason, b.stackDir, b.projectDir]).toEqual([null, null, null, null]); // no stack probe: unknown
+    const info = { stack: 'foreign' as const, reason: 'working_dir' as const, workingDir: '/volume1/docker/friendflix', projectDir: '/project' };
+    const s = await status({ updater, verifier, services: async () => [], self: { version: null, sha: null }, stack: async () => info });
+    expect([s.stack, s.stackReason, s.stackDir, s.projectDir]).toEqual(['foreign', 'working_dir', '/volume1/docker/friendflix', '/project']);
+    expect((await status({ updater, verifier, services: async () => [], self: { version: null, sha: null }, stack: async () => { throw new Error('x'); } })).stack).toBeNull();
+  });
+
+  it('stackView caches the probe and turns a failure into null', async () => {
+    let n = 0, t = 0;
+    const own = { stack: 'own' as const, reason: 'own' as const, workingDir: '/srv/ff', projectDir: '/srv/ff' };
+    const v = stackView({ stackInfo: async () => { n++; return n === 1 ? own : null; } }, 10_000, () => t);
+    expect(await v()).toEqual(own);
+    expect(await v()).toEqual(own);
+    expect(n).toBe(1);
+    t = 20_000;
+    expect(await v()).toBeNull();
   });
 
   it('self-update starts only on its explicit action', async () => {

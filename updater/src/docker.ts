@@ -3,6 +3,7 @@
 import { execFile } from 'node:child_process';
 import { FILE_RE } from './config.js';
 import { FF_SERVICES, SELF_SERVICE, cosignIdentity, expectedImage, isTag, pinnedRef } from './policy.js';
+import { classifyStack, configDrift, type StackInfo, type StackOrigin } from './stack.js';
 
 /** The only two programs the updater starts, never through a shell. */
 export type Program = 'docker' | 'cosign';
@@ -45,26 +46,57 @@ export class Docker {
   get files(): readonly string[] { return this.active; }
 
   /**
-   * Without UPDATER_COMPOSE_FILES: the files the stack was last brought up with, as compose recorded them on the backend container
-   * (labels com.docker.compose.project.config_files + working_dir). So a stack started with compose.plex.yaml, compose.secrets.yaml or
-   * any other override is recreated with the same files. Every entry must be a plain file name directly in the project directory;
-   * anything else (another directory, a path, more than 8 files, no container yet) falls back to the configured list.
+   * Whose stack runs here, from the backend container's compose labels (stack.ts classifyStack): own = started from projectDir,
+   * else foreign (another working directory such as Portainer's /data/compose/<id>, Portainer labels, no labels, no backend
+   * container in this project). Throws compose_config when compose cannot even list the containers.
+   */
+  async origin(): Promise<StackOrigin & { labels: Record<string, unknown> | null }> {
+    const rows = await this.psRows(this.s.files); // the configured files find the same project's containers
+    if (rows === null) throw new StepError('compose_config');
+    const st = rows.find((p) => p.service === 'backend');
+    const labels = st ? await this.labels(st.name) : null;
+    return { ...classifyStack(labels, this.s.projectDir), labels };
+  }
+
+  /** own / foreign and why, for the status (null = could not tell: compose or Docker did not answer) */
+  async stackInfo(): Promise<StackInfo | null> {
+    try {
+      const o = await this.origin();
+      return { stack: o.stack, reason: o.reason, workingDir: o.workingDir, projectDir: this.s.projectDir };
+    } catch { return null; }
+  }
+
+  /**
+   * Refuses a foreign stack (StepError foreign_stack, before anything else runs), then settles on the compose files. Without
+   * UPDATER_COMPOSE_FILES: the files the stack was last brought up with, as compose recorded them on the backend container
+   * (label com.docker.compose.project.config_files). So a stack started with compose.plex.yaml, compose.secrets.yaml or any
+   * other override is recreated with the same files. Every entry must be a plain file name directly in the project directory;
+   * anything else (a path, more than 8 files) falls back to the configured list.
    */
   async refreshFiles(): Promise<readonly string[]> {
-    if (!this.s.autoFiles) return this.active;
-    this.active = this.s.files; // the fallback list finds the same project's containers
-    const st = (await this.ps()).find((p) => p.service === 'backend');
-    this.active = (st ? await this.startedWith(st.name) : null) ?? this.s.files;
+    const o = await this.origin();
+    if (o.stack === 'foreign') throw new StepError('foreign_stack', o.reason);
+    this.active = (this.s.autoFiles ? this.filesOf(o.labels) : null) ?? this.s.files;
     return this.active;
   }
 
   /** the compose file names a container was created with (validated, see refreshFiles); null when they do not qualify */
   async startedWith(container: string): Promise<string[] | null> {
+    return this.filesOf(await this.labels(container));
+  }
+
+  /** a container's labels; null when it cannot be read */
+  private async labels(container: string): Promise<Record<string, unknown> | null> {
     if (!/^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/.test(container)) return null;
     const r = await this.run('docker', ['container', 'inspect', '--format', '{{json .Config.Labels}}', container], { env: this.env(), timeoutMs: MIN });
     if (r.code !== 0) return null;
-    let labels: Record<string, unknown>;
-    try { labels = JSON.parse(r.stdout.trim()) as Record<string, unknown>; } catch { return null; }
+    try {
+      const v = JSON.parse(r.stdout.trim()) as unknown;
+      return v && typeof v === 'object' && !Array.isArray(v) ? v as Record<string, unknown> : null;
+    } catch { return null; }
+  }
+
+  private filesOf(labels: Record<string, unknown> | null): string[] | null {
     const dir = labels?.['com.docker.compose.project.working_dir'], files = labels?.['com.docker.compose.project.config_files'];
     if (dir !== this.s.projectDir || typeof files !== 'string') return null;
     const names = files.split(',').map((f) => f.trim()).filter(Boolean).map((f) => (f.startsWith(`${this.s.projectDir}/`) ? f.slice(this.s.projectDir.length + 1) : ''));
@@ -84,8 +116,8 @@ export class Docker {
     };
   }
 
-  private compose(tag: string | undefined, args: readonly string[], timeoutMs: number): Promise<RunResult> {
-    const base = ['compose', '--project-directory', this.s.projectDir, ...this.active.flatMap((f) => ['-f', `${this.s.projectDir}/${f}`]),
+  private compose(tag: string | undefined, args: readonly string[], timeoutMs: number, files: readonly string[] = this.active): Promise<RunResult> {
+    const base = ['compose', '--project-directory', this.s.projectDir, ...files.flatMap((f) => ['-f', `${this.s.projectDir}/${f}`]),
       ...(this.s.projectName ? ['-p', this.s.projectName] : []), '--profile', 'updater', '--ansi', 'never'];
     return this.run('docker', [...base, ...args], { env: this.env(tag), timeoutMs });
   }
@@ -110,7 +142,31 @@ export class Docker {
       const now = await this.existingMediaServer(svc);
       if (now !== null && now !== mediaServerOf(envEntries(cfg.services?.[svc]?.environment))) throw new StepError('media_server_mismatch');
     }
+    // Recreating must not change what the stack publishes or where it is attached: the compose files plus .env the updater sees
+    // have to render the same ports and networks as the containers run with now (they differ when the stack was started with
+    // other variables, e.g. BIND_ADDR from a shell or a stack manager). Nothing is pulled or restarted otherwise.
+    const ps = await this.ps();
+    for (const svc of services) {
+      const st = ps.find((p) => p.service === svc);
+      const now = st ? await this.runningConfig(st.name) : null;
+      const drift = now ? configDrift(cfg, svc, now) : null;
+      if (drift) throw new StepError('config_mismatch', `${svc} ${drift}`);
+    }
     return out;
+  }
+
+  /** published ports, networks and compose project of an existing container (any state; null when it cannot be read) */
+  async runningConfig(container: string): Promise<{ ports: unknown; networks: unknown; project: string | null } | null> {
+    if (!/^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/.test(container)) return null;
+    const r = await this.run('docker', ['container', 'inspect', '--format', '{{json .HostConfig.PortBindings}}\t{{json .NetworkSettings.Networks}}\t{{json .Config.Labels}}', container],
+      { env: this.env(), timeoutMs: MIN });
+    if (r.code !== 0) return null;
+    const [ports, networks, labels] = r.stdout.trim().split('\t');
+    try {
+      const l = JSON.parse(labels ?? 'null') as Record<string, unknown> | null;
+      const project = l?.['com.docker.compose.project'];
+      return { ports: JSON.parse(ports ?? 'null'), networks: JSON.parse(networks ?? 'null'), project: typeof project === 'string' ? project : null };
+    } catch { return null; }
   }
 
   /** MEDIA_SERVER of the service's existing container (any state; null when there is none or it cannot be read) */
@@ -148,8 +204,13 @@ export class Docker {
   }
 
   async ps(): Promise<ServiceState[]> {
-    const r = await this.compose(undefined, ['ps', '--all', '--format', 'json', ...FF_SERVICES, SELF_SERVICE], MIN);
-    if (r.code !== 0) return [];
+    return (await this.psRows(this.active)) ?? [];
+  }
+
+  /** null when compose fails */
+  private async psRows(files: readonly string[]): Promise<ServiceState[] | null> {
+    const r = await this.compose(undefined, ['ps', '--all', '--format', 'json', ...FF_SERVICES, SELF_SERVICE], MIN, files);
+    if (r.code !== 0) return null;
     // compose prints one JSON object per line (older versions: one array)
     const rows: Array<Record<string, unknown>> = [];
     for (const line of r.stdout.split('\n').map((l) => l.trim()).filter(Boolean)) {
@@ -214,5 +275,6 @@ export function mediaServerOf(entries: ReadonlyArray<readonly [string, string]>)
 
 /** a step failure with a fixed code (the only thing that reaches the log, the state file and the backend) */
 export class StepError extends Error {
-  constructor(readonly code: string) { super(code); }
+  /** `detail`: a fixed hint for the job log (a service name and a constant word, never command output) */
+  constructor(readonly code: string, readonly detail?: string) { super(code); }
 }

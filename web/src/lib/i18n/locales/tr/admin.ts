@@ -235,6 +235,7 @@ const tr: Translation<typeof de> = {
       advanced: 'Güncelleyicinin kendisi',
       confirm: {
         update: 'Şimdi {tag} sürümüne güncellensin mi? FriendFlix kısa süre yeniden başlar, süren oynatmalar kesilir.',
+        updatePortainer: 'Yığın şimdi Portainer üzerinden yeniden dağıtılsın mı? FriendFlix kısa süre yeniden başlar, süren oynatmalar kesilir.',
         rollback: '{tag} sürümüne dönülsün mü? FriendFlix kısa süre yeniden başlar.',
         'self-update': 'Güncelleyici konteyneri şimdi güncellensin mi?',
       },
@@ -271,6 +272,9 @@ const tr: Translation<typeof de> = {
         channel_sync_failed: 'Güncelleyici kanalı kabul etmedi.',
         tooSoon: 'Çok fazla başlatma. Lütfen iki dakika bekleyin.',
         generic: 'Güncelleyici işi reddetti.',
+        foreign_stack: 'Bu yığın Portainer (ya da başka bir araç) tarafından yönetiliyor, bu yüzden güncelleyici onu yeniden oluşturmuyor. Portainer webhook’unu Admin → Ayarlar → Güncellemeler altında ayarla ya da yığını Portainer’da güncelle.',
+        portainer: 'Portainer yeniden dağıtımı reddetti. Admin → Ayarlar → Güncellemeler altında webhook’u veya API’yi kontrol et.',
+        portainer_unreachable: 'Portainer’a ulaşılamıyor.',
       },
       failReason: {
         verify_failed: 'imza doğrulaması başarısız, hiçbir şey yeniden başlatılmadı',
@@ -283,7 +287,15 @@ const tr: Translation<typeof de> = {
         unexpected_image: 'beklenmeyen imaj adı',
         media_server_mismatch: 'compose dosyaları şu an çalışandan farklı bir medya sunucusu başlatırdı (UPDATER_COMPOSE_FILES içinde compose.plex.yaml yok mu?), hiçbir şey yeniden başlatılmadı',
         compose_config: 'compose yapılandırması okunamıyor',
+        foreign_stack: 'yığın Portainer (ya da başka bir araç) tarafından yönetiliyor, güncelleyici onu yeniden oluşturmuyor; hiçbir şey değiştirilmedi',
+        config_mismatch: 'compose dosyaları ve .env, çalışan konteynerlerden farklı portlar veya ağlar yayınlardı (başka yerde ayarlanmış değişkenler, ör. BIND_ADDR?), hiçbir şey yeniden başlatılmadı',
         unknown: 'bilinmeyen hata',
+      },
+      foreign: {
+        portainer: 'Bu yığın Portainer tarafından yönetiliyor. “Şimdi güncelle” onu Portainer üzerinden yeniden dağıtır (Admin → Ayarlar → Güncellemeler’deki webhook veya API). Güncelleyici bir Portainer yığınını asla kendisi yeniden oluşturmaz, bu yüzden önceki sürüme dönmek burada kullanılamaz.',
+        manual: 'Bu yığın Portainer (ya da başka bir araç) tarafından yönetiliyor, bu yüzden güncelleyici onu güncellemiyor: buradan yeniden oluşturmak yığının kendi değişkenlerini (ör. BIND_ADDR) kaybettirirdi. Portainer webhook’unu Admin → Ayarlar → Güncellemeler altında ayarla ya da yığını Portainer’da güncelle.',
+        started: 'Portainer yığını yeniden dağıtıyor. FriendFlix birazdan yeniden başlayacak.',
+        workdir: 'Bu yığın {dir} dizininden başlatıldı, ama güncelleyici {projectDir} dizinini görüyor, bu yüzden onu yeniden oluşturmuyor (o dizindeki .env eksik kalırdı). {dir} içindeki .env dosyasına UPDATER_PROJECT_DIR={dir} yaz ve orada bir kez docker compose up -d çalıştır.',
       },
       unauthorized: 'Bir güncelleyici yanıt veriyor ama imzayı reddediyor: INTERNAL_SECRET backend ile güncelleyici arasında farklı.',
       invalid: 'Güncelleyici okunamayan bir yanıt gönderdi.',
@@ -497,6 +509,7 @@ const tr: Translation<typeof de> = {
       update: '{actor} bir güncelleme başlattı',
       updater_start: '{actor} bir güncelleyici işi başlattı',
       updater_result: 'Güncelleyici işi bitti',
+      update_result: 'Portainer yeniden dağıtıma yanıt verdi',
     },
     session: {
       revoke_others: '{actor} diğer cihazlardaki oturumlarını kapattı',

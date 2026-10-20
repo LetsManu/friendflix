@@ -126,6 +126,7 @@ export class Updater {
       return v;
     } catch (e) {
       job.steps[name] = 'failed'; this.persist();
+      if (e instanceof StepError && e.detail) this.log.add(`step ${name}: ${e.code} (${e.detail})`);
       throw e instanceof StepError ? e : new StepError(`${name}_failed`);
     }
   }

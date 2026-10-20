@@ -19,9 +19,17 @@ export interface UpdaterStatus {
   channel: 'stable' | 'nightly' | 'pinned'; version: string | null; targetTag: string | null;
   current: string | null; previous: string | null; busy: boolean; job: UpdaterJob | null; log: string[];
   services: Array<{ service: string; state: string; health: string; sha: string | null; version: string | null }>;
+  /** own = started from the updater's directory; foreign = Portainer (or another tool) runs it, the updater never recreates it; absent/null = unknown */
+  stack?: 'own' | 'foreign' | null;
+  /** why foreign: working_dir = started from another directory (stackDir) than the updater sees (projectDir); portainer; no_labels */
+  stackReason?: 'own' | 'working_dir' | 'portainer' | 'no_labels' | null;
+  stackDir?: string | null;
+  projectDir?: string | null;
 }
 export interface AutoUpdate { mode: 'off' | 'nightly-window'; time: string; locked: string[] }
-export type UpdaterView = { autoUpdate?: AutoUpdate } & ({ present: false } | { present: true; error: 'unauthorized' | 'invalid_answer' } | { present: true; status: UpdaterStatus });
+/** whether Admin → Settings has the Portainer webhook / API: a foreign stack is then updated through Portainer */
+export interface PortainerSetup { configured: boolean; mode: 'webhook' | 'api' | null }
+export type UpdaterView = { autoUpdate?: AutoUpdate; portainer?: PortainerSetup } & ({ present: false } | { present: true; error: 'unauthorized' | 'invalid_answer' } | { present: true; status: UpdaterStatus });
 
 /** HH:MM like the backend (config.ts AUTO_UPDATE_TIME) */
 export const TIME_RE = /^([01][0-9]|2[0-3]):[0-5][0-9]$/;
@@ -57,5 +65,29 @@ export const RECONNECT_MS = 3_000;
 export const WATCH_MAX_MS = 15 * 60_000;
 export const nextPoll = (reconnecting: boolean): number => (reconnecting ? RECONNECT_MS : POLL_MS);
 
-/** rollback is offered once the updater recorded a previous build and no job runs */
-export const canRollback = (s: UpdaterStatus | null): boolean => Boolean(s?.previous && !s.busy && !isRunning(s.job));
+export type ForeignMode = 'portainer' | 'manual' | 'workdir';
+
+/**
+ * The updater does not recreate this stack (backend updater.ts portainerStack): it says so, or Portainer is set up and the
+ * updater does not confirm the stack as its own (an older updater). "portainer" = "Update now" redeploys through Portainer,
+ * "workdir" = our own stack started from another directory than the updater sees (fix: UPDATER_PROJECT_DIR), "manual" =
+ * Portainer or another tool runs it and nothing can be started here; null = our own stack.
+ */
+export function foreignMode(v: UpdaterView | null): ForeignMode | null {
+  const s = statusOf(v);
+  if (!s) return null;
+  const portainer = Boolean(v?.portainer?.configured);
+  if (s.stack !== 'foreign' && !(portainer && s.stack !== 'own')) return null;
+  if (portainer) return 'portainer';
+  if (s.stackReason === 'working_dir' && s.stackDir && s.projectDir && !/^\/data\/compose\//.test(s.stackDir)) return 'workdir';
+  return 'manual';
+}
+
+/** the note for a foreign stack (workdir names both directories and the line for .env) */
+export function foreignText(mode: ForeignMode, s: UpdaterStatus | null): string {
+  if (mode === 'workdir') return trDynamic('admin.update.updater.foreign.workdir', { dir: s?.stackDir ?? '', projectDir: s?.projectDir ?? '' });
+  return trDynamic(`admin.update.updater.foreign.${mode}`);
+}
+
+/** rollback is offered once the updater recorded a previous build and no job runs (never on a foreign stack: Portainer has no rollback) */
+export const canRollback = (s: UpdaterStatus | null): boolean => Boolean(s?.previous && !s.busy && !isRunning(s.job) && s.stack !== 'foreign');

@@ -20,7 +20,7 @@ import { requireGrownUp } from '../kids.js';
 import { recoIndexState } from '../reco/indexJob.js';
 import { recoStats } from '../reco/engine.js';
 import { requireAdmin, requireOwner } from '../session.js';
-import { portainerMode, triggerUpdate, updateInfo } from '../updates.js';
+import { portainerMode, redeployViaPortainer, updateInfo } from '../updates.js';
 import { MAX_FEATURED } from '../lists.js';
 import { getUserById, reapplyRole } from '../users.js';
 import { FALLBACK_LANGUAGE, LANGUAGES, instanceLanguage, isLanguage, roleLabel, setInstanceLanguage } from '../i18n.js';
@@ -218,9 +218,7 @@ export function adminRoutes(app: FastifyInstance, ctx: Ctx) {
   app.post('/api/admin/update', { ...admin, config: { rateLimit: { max: 1, timeWindow: '2 minutes', keyGenerator: () => 'update' } } }, async (req, reply) => {
     const mode = portainerMode(ctx);
     if (!mode) return reply.code(409).send({ error: 'not_configured' });
-    const info = await updateInfo(ctx);
-    await audit(ctx, req.user!.id, 'system.update', undefined, { from: info.current.sha, to: info.latest?.sha ?? null, fromVersion: info.current.version, toVersion: info.release?.version ?? null, mode });
-    const r = await triggerUpdate(ctx, mode);
+    const r = await redeployViaPortainer(ctx, req.user!.id, mode);
     if (!r.ok) {
       req.log.error({ mode, step: r.step, status: r.status, error: r.error, code: r.code }, 'portainer update failed');
       return reply.code(502).send({ error: r.error, status: r.status, step: r.step, ...(r.code ? { code: r.code } : {}) });
