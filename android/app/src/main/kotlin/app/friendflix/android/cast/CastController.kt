@@ -194,6 +194,34 @@ class CastController(
         return true
     }
 
+    /**
+     * Another title on the TV while casting (the Episodes panel; engine.ts `playOnTv` → `swap` fresh): the queue is cleared, the
+     * playing token's `stop` reported and the token revoked, then a token for [item] at the server's resume point with the default
+     * audio and no subtitle is loaded. False when no cast runs.
+     */
+    fun playOnTv(item: ItemInfo): Boolean {
+        val s = cur ?: return false
+        val my = ++seq
+        s.cancel?.invoke(); s.cancel = null
+        dequeue(s)
+        stopReport(s)
+        val old = s.ci
+        s.ci = null; s.busy = true; s.started = false; s.lastPaused = null; s.hold = false
+        s.queueAsked = false; s.noAuto = null
+        s.itemId = item.id; s.isEpisode = item.type == "Episode"
+        s.audioIndex = null; s.subIndex = null; s.segs = emptyList()
+        s.positionMs = 0; s.durationMs = 0; s.paused = false
+        host.onTitle(item)
+        val body = CastBodies.token(item.id, null, null, s.maxBitrate ?: s.prefsBitrate, receiver.custom)
+        io.execute {
+            if (old != null) server.revoke(old.castId) // after the stop report (same ordered thread)
+            val a = server.session(body)
+            main.execute { loaded(s, my, a) }
+        }
+        loadSegs(s)
+        return true
+    }
+
     private fun loaded(s: Live, my: Int, a: TokenAnswer) {
         if (cur !== s || my != seq) { if (a is TokenAnswer.Ok) revoke(a.info); return }
         s.busy = false

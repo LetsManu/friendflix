@@ -105,6 +105,13 @@
     <string name="player_close">Schließen</string>
     <string name="player_back_to_more">Zurück zu Mehr</string>
     <string name="player_episodes">Folgen</string>
+    <string name="player_episodes_season">Staffel</string>
+    <string name="player_episodes_loading">Folgen werden geladen …</string>
+    <string name="player_episodes_failed">Folgen konnten nicht geladen werden.</string>
+    <string name="player_episodes_none">Keine Folgen.</string>
+    <string name="player_episodes_playing">Läuft gerade</string>
+    <string name="player_duration_hm">%1$d Std. %2$d Min.</string>
+    <string name="player_duration_h">%1$d Std.</string>
     <string name="player_scenes">Szenen</string>
     <string name="player_info">Besetzung &amp; Infos</string>
     <string name="player_off">Aus</string>

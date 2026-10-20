@@ -109,6 +109,15 @@
     <string name="player_close">Close</string>
     <string name="player_back_to_more">Back to More</string>
     <string name="player_episodes">Episodes</string>
+    <!-- Episodes panel (web player.episodes.*) -->
+    <string name="player_episodes_season">Season</string>
+    <string name="player_episodes_loading">Loading episodes …</string>
+    <string name="player_episodes_failed">Episodes could not be loaded.</string>
+    <string name="player_episodes_none">No episodes.</string>
+    <string name="player_episodes_playing">Now playing</string>
+    <!-- run times (web common.duration) -->
+    <string name="player_duration_hm">%1$d h %2$d min</string>
+    <string name="player_duration_h">%1$d h</string>
     <string name="player_scenes">Scenes</string>
     <string name="player_info">Cast &amp; info</string>
     <string name="player_off">Off</string>

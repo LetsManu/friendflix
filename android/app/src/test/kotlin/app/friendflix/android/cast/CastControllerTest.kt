@@ -382,6 +382,28 @@ class CastControllerTest {
         assertEquals("c2", r.loads.last().first)
     }
 
+    @Test fun anEpisodePickedWhileCastingPlaysOnTheTv() {
+        val (r, c) = controller()
+        assertFalse("nothing is cast yet", c.playOnTv(ItemInfo("ep5", "Episode", "Fifth", "Bright Valley", "s1", 1, 5)))
+        c.start(episode())
+        c.onReceiver(playing("c1", 61_000))
+        calls.clear()
+        assertTrue(c.playOnTv(ItemInfo("ep5", "Episode", "Fifth", "Bright Valley", "s1", 1, 5)))
+        // the queued next episode goes first (a new load replaces the receiver's queue), then the playing token
+        assertEquals(listOf("DELETE /api/cast/session/q2", "POST /api/playback/stop", "DELETE /api/cast/session/c1", "POST /api/cast/session"), paths())
+        assertEquals(listOf("q2"), r.removed)
+        val body = calls.last().second!!
+        assertEquals("ep5", body.getString("itemId"))
+        assertFalse("the server's resume point", body.has("startTicks"))
+        assertFalse("default audio", body.has("audioIndex"))
+        assertEquals(8_000_000L, body.getLong("maxBitrate"))
+        assertEquals(Triple("c3", null as Int?, true), r.loads.last())
+        assertEquals(listOf("ep5"), host.titles)
+        assertEquals("ep5", c.itemId)
+        assertTrue(c.casting)
+        assertEquals(2, host.casting)
+    }
+
     // ---- fix round 1 ----
 
     @Test fun theTvSessionEndsAfterAFinishedTitle() {

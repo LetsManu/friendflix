@@ -14,6 +14,7 @@ import androidx.media3.common.Player
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.ui.PlayerView
 import app.friendflix.android.R
+import app.friendflix.android.player.panels.EpisodesSource
 import app.friendflix.android.player.panels.TracksActions
 import app.friendflix.android.player.panels.TracksPanel
 import app.friendflix.android.player.panels.TracksState
@@ -80,6 +81,8 @@ class PlayerControlsTest {
         override fun qualities(): List<Pair<String, Long>>? = if (offline || casting) null else QUALITIES
         override fun quality() = quality
         override fun changeQuality(bps: Long) { qualityChanges += bps; quality = bps }
+        override fun episodes(): EpisodesSource? = null
+        override fun playItem(id: String) {}
     }
 
     @Before fun setUp() {

@@ -12,11 +12,14 @@ import android.widget.TextView
 import androidx.activity.ComponentActivity
 import androidx.activity.OnBackPressedCallback
 import androidx.annotation.OptIn
+import androidx.lifecycle.lifecycleScope
 import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.ui.PlayerView
 import app.friendflix.android.R
 import app.friendflix.android.cast.CastController
+import app.friendflix.android.player.panels.EpisodesPanel
+import app.friendflix.android.player.panels.EpisodesSource
 import app.friendflix.android.player.panels.MoreActions
 import app.friendflix.android.player.panels.MorePanel
 import app.friendflix.android.player.panels.MoreState
@@ -66,10 +69,16 @@ class PlayerControls(
         fun qualities(): List<Pair<String, Long>>?
         fun quality(): Long
         fun changeQuality(bps: Long)
+        /** what the Episodes panel needs, or null when it is not offered (no episode of a series, a download, nothing loaded) */
+        fun episodes(): EpisodesSource?
+        /** plays another title in this player, or on the TV while casting (the per-title state is already reset) */
+        fun playItem(id: String)
     }
 
     val panel = PlayerPanel(activity.findViewById(R.id.player_panel_host))
     val sleep = SleepTimer(now)
+    /** the Episodes panel's seasons and episodes, kept while this player lives */
+    val episodesCache = EpisodesPanel.Cache()
     val chip = QualityChip(view.findViewById(R.id.player_quality_chip)) { host.flash(it, REASON_MS) }
 
     var speed = 1f
@@ -84,6 +93,7 @@ class PlayerControls(
     private val moreBadge: TextView = view.findViewById(R.id.player_more_badge)
     private val sleepDot: View = view.findViewById(R.id.player_more_dot)
     private val castButton: View = view.findViewById(R.id.player_cast)
+    private val episodesButton: View = view.findViewById(R.id.player_episodes)
     private val lockOverlay: View = activity.findViewById(R.id.player_lock)
     private val lockIcon: View = activity.findViewById(R.id.player_lock_icon)
 
@@ -97,6 +107,7 @@ class PlayerControls(
         activity.onBackPressedDispatcher.addCallback(activity, lockedBack)
         view.findViewById<View>(R.id.player_more).setOnClickListener { openMore() }
         view.findViewById<View>(R.id.player_tracks).setOnClickListener { openTracks() }
+        episodesButton.setOnClickListener { openEpisodes() }
         setUpLock()
         // a recreated screen keeps the shared player's speed (and shows its badge)
         local.playbackParameters.speed.takeIf { it != 1f }?.let(::setSpeed)
@@ -135,6 +146,28 @@ class PlayerControls(
             override fun fx(mode: String) { a.fx(mode) }
         }
         panel.show(activity.getString(R.string.player_tracks), TracksPanel.build(activity, state, actions))
+    }
+
+    /** the bar's Episodes button (an episode of a series, streamed: [EpisodesPanel.offered]) */
+    fun showEpisodesButton(show: Boolean) {
+        episodesButton.visibility = if (show) View.VISIBLE else View.GONE
+    }
+
+    /** *Episodes*: a tap on another episode resets the per-title state and plays it (on the TV while casting); the playing one closes. */
+    fun openEpisodes() {
+        if (host.inPip()) return
+        val src = host.episodes() ?: return
+        Players.still.noteInteraction()
+        val content = EpisodesPanel.build(
+            activity, activity.lifecycleScope, src.api, src.images, src.seriesId, src.season, src.currentId, episodesCache,
+        ) { id ->
+            panel.close()
+            if (id != src.currentId) {
+                newTitle()
+                host.playItem(id)
+            }
+        }
+        panel.show(activity.getString(R.string.player_episodes), content)
     }
 
     private val moreActions = object : MoreActions {

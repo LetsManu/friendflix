@@ -15,4 +15,8 @@
     <color name="player_card_border">#3B444E</color>
     <color name="player_scrim">#99000000</color>
     <color name="player_muted">#B8C0C8</color>
+    <!-- Episodes panel: the playing row (web .ep.cur) and the progress track (web .bar) -->
+    <color name="player_row_current">#242B33</color>
+    <color name="player_row_current_border">#46505A</color>
+    <color name="player_progress_track">#33FFFFFF</color>
 </resources>

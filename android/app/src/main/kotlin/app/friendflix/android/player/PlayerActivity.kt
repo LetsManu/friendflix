@@ -61,11 +61,14 @@ import app.friendflix.android.cast.MediaThreeReceiver
 import app.friendflix.android.cast.ReceiverState
 import app.friendflix.android.cast.TokenAnswer
 import app.friendflix.android.downloads.Downloads
+import app.friendflix.android.downloads.ServerApi
 import app.friendflix.android.downloads.SessionExpired
 import app.friendflix.android.offline.Offline
 import app.friendflix.android.offline.OfflineActivity
 import app.friendflix.android.offline.OfflineMedia
 import app.friendflix.android.offline.Prepared
+import app.friendflix.android.player.panels.EpisodesPanel
+import app.friendflix.android.player.panels.EpisodesSource
 import app.friendflix.android.player.panels.SubtitleSearchPanel
 import app.friendflix.android.player.panels.TracksActions
 import app.friendflix.android.player.panels.TracksState
@@ -186,6 +189,9 @@ class PlayerActivity : FragmentActivity() {
     private var verifying = false
     /** languages of the download's subtitles (index = track) */
     private var offlineSubLangs: List<String> = emptyList()
+
+    /** the panels' image loader for the server it was made for */
+    private var images: Pair<ServerApi, ImageLoader>? = null
 
     // Chromecast
     private var castLink: MediaThreeReceiver? = null
@@ -315,6 +321,7 @@ class PlayerActivity : FragmentActivity() {
             title.text = record?.title.orEmpty()
             subtitle.text = ""
             tracksButton.visibility = View.VISIBLE // subtitles and the sound switches
+            controls.showEpisodesButton(false) // a download: nothing from the server
             controls.chip.hide()
             val meta = MediaMetadata.Builder().setTitle(record?.title).build()
             val source = MediaSources.encrypted(keys).createMediaSource(MediaSources.localItem(media.video, media.subtitles, meta))
@@ -392,6 +399,7 @@ class PlayerActivity : FragmentActivity() {
             title.text = cur?.seriesName ?: cur?.name.orEmpty()
             subtitle.text = cur?.let { i -> if (i.seriesName != null) episodeLabel(i) else "" }.orEmpty()
             nextButton.visibility = if (next != null) View.VISIBLE else View.GONE
+            controls.showEpisodesButton(EpisodesPanel.offered(cur?.type, cur?.seriesId, offline = false))
         }
     }
 
@@ -613,7 +621,16 @@ class PlayerActivity : FragmentActivity() {
     private fun goNext(step: EpisodeStep?) {
         if (step == null || !step.goNext) return
         val next = nextItem ?: return
+        playItem(next.id)
+    }
+
+    /**
+     * Another title in this player (the next episode, a pick in the Episodes panel): the per-title state is reset (speed 1, a sleep
+     * timer "after this episode" consumed, the title's flow, languages and extras loaded again). While casting it plays on the TV.
+     */
+    private fun playItem(id: String) {
         controls.newTitle()
+        if (cast?.casting == true) { playOnTv(id); return }
         reporter?.release()
         reporter = null
         stream = null
@@ -627,9 +644,21 @@ class PlayerActivity : FragmentActivity() {
         player.stop()
         nextCard.visibility = View.GONE
         stillCard.visibility = View.GONE
-        args = args.copy(itemId = next.id, startMs = null)
+        args = args.copy(itemId = id, startMs = null)
         loading.visibility = View.VISIBLE
         startOnline(args, first = true, startMs = null)
+    }
+
+    /** a title picked while casting starts on the TV (the cast session switches its token); the local player stays stopped */
+    private fun playOnTv(id: String) {
+        val pa = api
+        val cur = item
+        lifecycleScope.launch {
+            val info = pa?.let { withContext(Dispatchers.IO) { runCatching { it.item(id) }.getOrNull() } }
+                ?: ItemInfo(id, "Episode", "", cur?.seriesName, cur?.seriesId, null, null)
+            val c = cast
+            if (c?.casting == true) c.playOnTv(info) else if (!released) playItem(id) // the cast ended meanwhile: here
+        }
     }
 
     // ---- audio / subtitles / quality (the Tracks and More panels, PlayerControls) ----
@@ -672,6 +701,16 @@ class PlayerActivity : FragmentActivity() {
 
         override fun quality() = quality
         override fun changeQuality(bps: Long) = this@PlayerActivity.changeQuality(bps)
+
+        override fun episodes(): EpisodesSource? {
+            val pa = api ?: return null
+            val cur = item ?: return null
+            if (!EpisodesPanel.offered(cur.type, cur.seriesId, offline())) return null
+            val img = images?.takeIf { it.first === pa.server }?.second ?: ImageLoader(pa.server).also { images = pa.server to it }
+            return EpisodesSource(pa, img, cur.seriesId!!, cur.season, cast?.itemId ?: args.itemId)
+        }
+
+        override fun playItem(id: String) = this@PlayerActivity.playItem(id)
     }
 
     /** *Find subtitles …*: the search panel; a downloaded subtitle reloads playback at the current position (web pickSub). */
@@ -1064,6 +1103,7 @@ class PlayerActivity : FragmentActivity() {
         token = t
         if (cast?.casting == true) { cast?.stop(); showLocal() }
         controls.newTitle()
+        controls.showEpisodesButton(false) // shown again once the new title is known
         reporter?.release()
         reporter = null
         offlineProgress?.flush()
