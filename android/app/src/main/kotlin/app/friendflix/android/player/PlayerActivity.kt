@@ -66,6 +66,7 @@ import app.friendflix.android.offline.Offline
 import app.friendflix.android.offline.OfflineActivity
 import app.friendflix.android.offline.OfflineMedia
 import app.friendflix.android.offline.Prepared
+import app.friendflix.android.player.panels.SubtitleSearchPanel
 import app.friendflix.android.player.panels.TracksActions
 import app.friendflix.android.player.panels.TracksState
 import app.friendflix.android.settings.AppSettings
@@ -150,6 +151,7 @@ class PlayerActivity : FragmentActivity() {
     private var stream: Stream? = null
     private var reporter: PlaybackReporter? = null
     private var api: PlayerApi? = null
+    private var serverCaps = ServerCaps()
     private var prefs = PlayerPrefs()
     private var item: ItemInfo? = null
     private var nextItem: ItemInfo? = null
@@ -364,7 +366,9 @@ class PlayerActivity : FragmentActivity() {
         val nx = async { pa.next(a.itemId) }
         val segs = async { pa.segments(a.itemId) }
         val castCfg = async { CastServerApi.config(pa.server, a.profileId) }
+        val capsJob = async { pa.caps() }
         prefs = p.await()
+        serverCaps = capsJob.await()
         if (quality == 0L && prefs.quality >= MIN_BITRATE) quality = prefs.quality
         val cur = it.await()
         item = cur
@@ -648,7 +652,7 @@ class PlayerActivity : FragmentActivity() {
                 audioIndex = audioIndex,
                 subs = s?.info?.subtitles?.map { it.index to it.title } ?: offlineSubLangs.mapIndexed { i, lang -> i to lang },
                 subIndex = subIndex,
-                canSearch = false, // subtitle search: its own panel (Task 6)
+                canSearch = serverCaps.subtitleSearch && offlineLicense == null && args.licenseId == null && !casting() && api != null,
                 fxMode = fxMode,
                 fxDisabledReason = fxDisabledReason(fx.supported(), casting()),
             )
@@ -657,7 +661,7 @@ class PlayerActivity : FragmentActivity() {
         override val tracksActions = object : TracksActions {
             override fun audio(t: AudioTrack) { changeAudio(t) }
             override fun subtitle(index: Int?) { setSubtitle(index, stream?.info?.subtitles?.firstOrNull { it.index == index }?.language) }
-            override fun search() {}
+            override fun search() { openSubtitleSearch() }
             override fun fx(mode: String) { changeFx(mode) }
         }
 
@@ -668,6 +672,22 @@ class PlayerActivity : FragmentActivity() {
 
         override fun quality() = quality
         override fun changeQuality(bps: Long) = this@PlayerActivity.changeQuality(bps)
+    }
+
+    /** *Find subtitles …*: the search panel; a downloaded subtitle reloads playback at the current position (web pickSub). */
+    private fun openSubtitleSearch() {
+        val pa = api ?: return
+        if (offlineLicense != null || args.licenseId != null || cast?.casting == true || isInPip()) return
+        val lang = TitleLangs.appLang(resources.configuration.locales[0])
+        val itemId = args.itemId
+        controls.panel.show(
+            getString(R.string.player_subs_title),
+            SubtitleSearchPanel.build(this, lifecycleScope, pa, itemId, lang) {
+                controls.panel.close()
+                reload(resumePos())
+                flash(getString(R.string.player_subs_added), 2_500)
+            },
+        )
     }
 
     /** A switch was flipped: applied at once, kept for this profile on the device and saved for the profile (web toggleFx). */

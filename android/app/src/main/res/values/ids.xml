@@ -7,6 +7,10 @@
 <resources>
     <item name="tracks_audio" type="id" />
     <item name="tracks_search" type="id" />
+    <item name="subs_lang" type="id" />
+    <item name="subs_go" type="id" />
+    <item name="subs_msg" type="id" />
+    <item name="subs_results" type="id" />
     <item name="tracks_fx_voices" type="id" />
     <item name="tracks_fx_night" type="id" />
     <item name="more_speed" type="id" />
