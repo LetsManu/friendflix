@@ -40,6 +40,20 @@ data class ItemInfo(
     val episode: Int?,
 )
 
+/** The profile's subtitle look (web stores.ts `SubtitleStyle`; defaults = DEFAULT_PREFS.subtitleStyle, merged like the web). */
+data class SubtitleStyle(val size: String = "m", val color: String = "white", val background: String = "semi", val font: String = "sans") {
+    fun toJson(): JSONObject = JSONObject().put("size", size).put("color", color).put("background", background).put("font", font)
+
+    companion object {
+        fun parse(o: JSONObject?): SubtitleStyle {
+            val d = SubtitleStyle()
+            if (o == null) return d
+            fun str(k: String, def: String) = if (o.isNull(k)) def else o.optString(k).takeIf { it.isNotEmpty() && it.length <= 20 } ?: def
+            return SubtitleStyle(str("size", d.size), str("color", d.color), str("background", d.background), str("font", d.font))
+        }
+    }
+}
+
 /** The profile preferences the player needs (`GET /api/prefs`), defaults = the web's DEFAULT_PREFS. */
 data class PlayerPrefs(
     val flow: FlowPrefs = FlowPrefs(),
@@ -47,6 +61,7 @@ data class PlayerPrefs(
     val subtitleLang: String = "",
     /** saved quality cap in bit/s, 0 = automatic */
     val quality: Long = 0,
+    val subtitleStyle: SubtitleStyle = SubtitleStyle(),
 )
 
 sealed interface InfoAnswer {
@@ -121,6 +136,7 @@ class PlayerApi(val server: ServerApi, private val profileId: String) {
             audioLang = p.optString("audioLang"),
             subtitleLang = p.optString("subtitleLang"),
             quality = p.optLong("quality"),
+            subtitleStyle = SubtitleStyle.parse(p.optJSONObject("subtitleStyle")),
         )
     }
 

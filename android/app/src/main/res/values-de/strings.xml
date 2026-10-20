@@ -84,6 +84,7 @@
     <!-- Chromecast (Texte aus den Web-Locales player.cast / castBar / watch) -->
     <string name="cast_failed">Übertragung auf Chromecast fehlgeschlagen.</string>
     <string name="cast_needs_transcode">Chromecast braucht Transcoding – mit deiner Rolle nicht erlaubt.</string>
+    <string name="cast_device_pending">Dieses Gerät muss erst freigegeben werden, bevor es übertragen kann.</string>
     <string name="cast_load_failed">Der Fernseher konnte diesen Titel nicht abspielen.</string>
     <string name="cast_playing_on">Wird auf %1$s abgespielt</string>
     <string name="cast_playing">Wird auf dem Fernseher abgespielt</string>

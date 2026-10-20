@@ -839,7 +839,8 @@ class PlayerActivity : FragmentActivity() {
         cast = CastController(
             server = CastServerProxy(), receiver = link, host = castHost, still = Players.still,
             io = Players.reports, main = ContextCompat.getMainExecutor(this), now = System::currentTimeMillis,
-            schedule = { ms, block -> val r = Runnable(block); handler.postDelayed(r, ms); { handler.removeCallbacks(r) } },
+            // app-scoped: the session end after a title finished on the TV must outlive this screen (it closes at that moment)
+            schedule = { ms, block -> val r = Runnable(block); Players.castHandler.postDelayed(r, ms); { Players.castHandler.removeCallbacks(r) } },
         )
         CastButtonFactory.setUpMediaRouteButton(applicationContext, castButton)
         updateCastButton()
@@ -882,6 +883,7 @@ class PlayerActivity : FragmentActivity() {
                 prefs = prefs.flow,
                 offline = false,
                 segments = f?.segments ?: emptyList(),
+                subtitleStyle = prefs.subtitleStyle.toJson(),
             ))
             if (started) { stream = null; showCasting() }
         }
@@ -922,6 +924,7 @@ class PlayerActivity : FragmentActivity() {
             val text = when (answer) {
                 is TokenAnswer.MaxStreams -> resources.getQuantityString(R.plurals.player_error_max_streams, answer.max, answer.max)
                 TokenAnswer.NeedsTranscode -> getString(R.string.cast_needs_transcode)
+                TokenAnswer.DevicePending -> getString(R.string.cast_device_pending)
                 null -> getString(R.string.cast_load_failed)
                 else -> getString(R.string.cast_failed)
             }
@@ -934,10 +937,18 @@ class PlayerActivity : FragmentActivity() {
             // the TV's position (and title, after its queue moved on: no flow loaded for it yet) plays on here
             val same = itemId == args.itemId && flow != null
             args = args.copy(itemId = itemId, startMs = positionMs)
-            startPaused = !play
+            // paused when the TV was, and when nobody could hear it (lost TV while the phone is locked, background audio off)
+            startPaused = !play || (inBackground && !backgroundAudio)
             loading.visibility = View.VISIBLE
-            if (same) startOnline(args, first = false, startMs = positionMs)
-            else { flow = null; nextItem = null; startOnline(args, first = true, startMs = positionMs) }
+            val a = args
+            // after the cast token's stop / revoke (queued on the same ordered thread): a one-stream account is not refused (429)
+            Players.reports.execute {
+                handler.post {
+                    if (released || cast?.casting == true) return@post
+                    if (same) startOnline(a, first = false, startMs = positionMs)
+                    else { flow = null; nextItem = null; startOnline(a, first = true, startMs = positionMs) }
+                }
+            }
         }
 
         override fun receiverStrings(): JSONObject = JSONObject()
@@ -1196,6 +1207,8 @@ object Players {
     val still = StillWatching(System::currentTimeMillis)
     /** progress reports leave in order on one thread and outlive the screen (the stop report is sent after it closed) */
     val reports = Executors.newSingleThreadExecutor { r -> Thread(r, "ff-playback-reports").apply { isDaemon = true } }
+    /** main-thread handler that outlives player screens (the cast session's delayed end) */
+    val castHandler = Handler(Looper.getMainLooper())
     /** the app's launcher (set by the shell) */
     @Volatile var launcher: NativePlayerLauncher? = null
 }

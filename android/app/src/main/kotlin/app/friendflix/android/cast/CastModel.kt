@@ -70,6 +70,8 @@ sealed interface TokenAnswer {
     data class MaxStreams(val max: Int) : TokenAnswer
     /** 403 transcoding_disabled: Chromecast always needs the transcoded stream */
     data object NeedsTranscode : TokenAnswer
+    /** 403 device_pending: this device is not approved yet */
+    data object DevicePending : TokenAnswer
     /** anything else (refused, network, the next-token gate said no) */
     data object Failed : TokenAnswer
 }

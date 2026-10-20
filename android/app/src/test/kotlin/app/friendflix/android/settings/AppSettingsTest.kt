@@ -41,6 +41,14 @@ class AppSettingsTest {
         assertFalse(settings.castEnabled.first())
     }
 
+    @Test fun castReceiverIdIsMirroredForTheSynchronousOptionsRead() = runBlocking {
+        val mirrored = mutableListOf<String>()
+        val s2 = AppSettings(PreferenceDataStoreFactory.create(scope = scope) { tmp.newFile("m.preferences_pb") }) { mirrored += it }
+        s2.setCastConfig(enabled = true, receiverAppId = "0123ABCD")
+        s2.setCastConfig(enabled = false, receiverAppId = "")
+        assertEquals(listOf("0123ABCD", ""), mirrored)
+    }
+
     @Test fun castConfigIsCachedForTheNextStart() = runBlocking {
         settings.setCastConfig(enabled = true, receiverAppId = "0123ABCD")
         assertEquals("0123ABCD", settings.castReceiverAppId.first())

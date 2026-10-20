@@ -333,6 +333,17 @@ change settings or act as the user anywhere else.
 `blob:` for the player), no frames, objects or forms, `frame-ancestors 'none'`. The app pages' CSP is unchanged. Sender messages are
 validated field by field (sizes, enums, castId / token shapes) before use; texts are set with `textContent`, never as HTML.
 
+## Android app
+
+**Third-party SDKs.** FriendFlix itself sends no analytics, and the app contains no Firebase, crash-reporting or advertising SDK. The
+only Google Play services library is the Cast SDK (`play-services-cast-framework`, for Chromecast). It brings Google's own Cast
+telemetry (`com.google.android.datatransport`), which reports to Google in the same way as in every app that uses Google Cast.
+Without Google Play services there is no Cast button, and the rest of the app works the same.
+
+**Casting.** The app uses the same `/api/cast/*` token flow as the web sender. The receiver gets the server's token URLs
+unchanged, the own receiver's report token goes only over the private Cast channel, and no cookie ever leaves the app. Downloads are
+never cast.
+
 ## Hardening
 
 What the shipped [compose.yaml](../compose.yaml) and images do:

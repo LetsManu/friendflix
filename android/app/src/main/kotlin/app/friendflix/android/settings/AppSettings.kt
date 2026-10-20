@@ -3,6 +3,7 @@
 package app.friendflix.android.settings
 
 import android.content.Context
+import androidx.core.content.edit
 import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
@@ -20,7 +21,11 @@ enum class StorageLocation { PHONE, SD }
 
 private val Context.dataStore: DataStore<Preferences> by preferencesDataStore(name = "settings")
 
-class AppSettings(private val store: DataStore<Preferences>) {
+/**
+ * App settings (DataStore). [castMirror] receives every stored CAST_RECEIVER_APP_ID too: the Cast framework's options provider runs
+ * synchronously at its start and reads that mirror ([castReceiverAppIdNow]) instead of blocking on DataStore.
+ */
+class AppSettings(private val store: DataStore<Preferences>, private val castMirror: (String) -> Unit = {}) {
     val serverOrigin: Flow<HttpUrl?> = store.data.map { it[SERVER_ORIGIN]?.toHttpUrlOrNull() }
     val storage: Flow<StorageLocation> = store.data.map {
         StorageLocation.entries.firstOrNull { e -> e.name == it[STORAGE] } ?: StorageLocation.PHONE
@@ -44,6 +49,7 @@ class AppSettings(private val store: DataStore<Preferences>) {
     suspend fun setNotifyCategories(value: Set<String>) { store.edit { it[NOTIFY_CATEGORIES] = value } }
     suspend fun setCastConfig(enabled: Boolean, receiverAppId: String) {
         store.edit { it[CAST_ENABLED] = enabled; it[CAST_RECEIVER_APP_ID] = receiverAppId }
+        castMirror(receiverAppId)
     }
 
     companion object {
@@ -55,6 +61,17 @@ class AppSettings(private val store: DataStore<Preferences>) {
         private val CAST_RECEIVER_APP_ID = stringPreferencesKey("castReceiverAppId")
         private val CAST_ENABLED = booleanPreferencesKey("castEnabled")
 
-        fun from(context: Context) = AppSettings(context.applicationContext.dataStore)
+        private const val CAST_MIRROR = "cast"
+
+        fun from(context: Context): AppSettings {
+            val app = context.applicationContext
+            return AppSettings(app.dataStore) { id ->
+                app.getSharedPreferences(CAST_MIRROR, Context.MODE_PRIVATE).edit { putString(CAST_RECEIVER_APP_ID.name, id) }
+            }
+        }
+
+        /** the cached receiver app id, synchronously ("" = none / Default Media Receiver) */
+        fun castReceiverAppIdNow(context: Context): String =
+            context.applicationContext.getSharedPreferences(CAST_MIRROR, Context.MODE_PRIVATE).getString(CAST_RECEIVER_APP_ID.name, "") ?: ""
     }
 }

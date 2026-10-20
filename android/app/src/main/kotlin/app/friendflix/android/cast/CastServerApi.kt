@@ -13,9 +13,6 @@ import com.google.android.gms.cast.framework.CastOptions
 import com.google.android.gms.cast.framework.OptionsProvider
 import com.google.android.gms.cast.framework.SessionProvider
 import com.google.android.gms.cast.framework.media.CastMediaOptions
-import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.runBlocking
-import kotlinx.coroutines.withTimeoutOrNull
 import org.json.JSONObject
 import java.io.IOException
 
@@ -30,6 +27,7 @@ class CastServerApi(private val server: ServerApi, private val profileId: String
             code == 200 && j != null -> CastInfo.parse(j)?.let { TokenAnswer.Ok(it) } ?: TokenAnswer.Failed
             code == 429 && j?.optString("error") == "max_streams" -> TokenAnswer.MaxStreams(j.optInt("max", 1))
             code == 403 && j?.optString("error") == "transcoding_disabled" -> TokenAnswer.NeedsTranscode
+            code == 403 && j?.optString("error") == "device_pending" -> TokenAnswer.DevicePending
             else -> TokenAnswer.Failed
         }
     } catch (_: IOException) {
@@ -68,15 +66,12 @@ class CastServerApi(private val server: ServerApi, private val profileId: String
 /**
  * The Cast framework's options (manifest `OPTIONS_PROVIDER_CLASS_NAME`), read once per process: the receiver is the server's
  * CAST_RECEIVER_APP_ID as cached in [AppSettings] by the last `/api/cast/config` answer (FriendFlix's own receiver), else the Default
- * Media Receiver. A changed id takes effect after the app restarts.
+ * Media Receiver (read from the synchronous mirror [AppSettings.castReceiverAppIdNow]). A changed id takes effect after the app restarts.
  */
 class CastOptionsProvider : OptionsProvider {
     override fun getCastOptions(context: Context): CastOptions {
-        val cached = try {
-            runBlocking { withTimeoutOrNull(READ_TIMEOUT_MS) { AppSettings.from(context).castReceiverAppId.first() } }
-        } catch (_: IOException) {
-            null
-        }
+        // a plain SharedPreferences read (the mirror AppSettings writes): no blocking DataStore read on the framework's start
+        val cached = AppSettings.castReceiverAppIdNow(context)
         return CastOptions.Builder()
             .setReceiverApplicationId(CastConfig.receiverAppId(cached))
             .setStopReceiverApplicationWhenEndingSession(true)
@@ -88,7 +83,6 @@ class CastOptionsProvider : OptionsProvider {
     override fun getAdditionalSessionProviders(context: Context): List<SessionProvider>? = null
 
     private companion object {
-        const val READ_TIMEOUT_MS = 1_000L
         const val PLAYER = "app.friendflix.android.player.PlayerActivity"
     }
 }

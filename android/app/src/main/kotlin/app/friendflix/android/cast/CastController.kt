@@ -9,6 +9,7 @@ import app.friendflix.android.player.Position
 import app.friendflix.android.player.ReportSession
 import app.friendflix.android.player.Segment
 import app.friendflix.android.player.StillWatching
+import app.friendflix.android.player.SubtitleStyle
 import org.json.JSONArray
 import org.json.JSONObject
 import java.util.concurrent.Executor
@@ -87,6 +88,8 @@ data class CastStart(
     /** a native download: the receiver cannot reach local files, it is never cast */
     val offline: Boolean,
     val segments: List<Segment> = emptyList(),
+    /** the profile's subtitle style for the own receiver (web prefs `subtitleStyle`, defaults merged in) */
+    val subtitleStyle: JSONObject? = null,
 )
 
 /**
@@ -141,9 +144,14 @@ class CastController(
         var noAuto: String? = null
         var lastLoop = 0L
         var cancel: (() -> Unit)? = null
+        /** no token of this session was loaded yet (a refused first request plays on locally) */
+        var firstStart = true
+        val subtitleStyle = start.subtitleStyle
     }
 
     private var cur: Live? = null
+    /** the delayed session end after a title finished on the TV (cancel); [stop] ends the session at once instead */
+    private var pendingEnd: (() -> Unit)? = null
     /** bumped by every token switch and session end: an older async step that sees another value gives up */
     private var seq = 0
 
@@ -159,6 +167,7 @@ class CastController(
      */
     fun start(start: CastStart): Boolean {
         if (start.offline || cur != null) return false
+        pendingEnd?.invoke(); pendingEnd = null // a new cast on the still-connected TV
         val s = Live(start)
         cur = s
         val my = ++seq
@@ -176,7 +185,7 @@ class CastController(
         s.busy = false
         if (a !is TokenAnswer.Ok) {
             // the receiver did not get it: local playback at the position (Player.svelte startCast catch)
-            val first = s.ci == null && !s.started
+            val first = s.firstStart
             close(s)
             receiver.end()
             host.onFailed(a)
@@ -185,6 +194,7 @@ class CastController(
         }
         val ci = a.info
         s.ci = ci
+        s.firstStart = false
         s.started = false
         s.lastPaused = null
         s.lastLoop = now()
@@ -276,7 +286,7 @@ class CastController(
         close(s)
         if (finished) {
             // the bar stays a moment on the TV (engine ENDED_HIDE_MS), then the session ends
-            schedule(ENDED_HIDE_MS) { if (cur == null) receiver.end() }
+            pendingEnd = schedule(ENDED_HIDE_MS) { pendingEnd = null; if (cur == null) receiver.end() }
             host.onReturn(s.itemId, s.positionMs, play = false, ended = true)
         } else {
             receiver.end()
@@ -313,7 +323,14 @@ class CastController(
 
     /** The player closes while casting (the web's pagehide): queued token revoked, stop reported, token revoked, receiver stopped. */
     fun stop() {
-        val s = cur ?: return
+        val s = cur ?: run {
+            // a title just finished on the TV and the player closes before its delayed end: the session ends now
+            val p = pendingEnd ?: return
+            pendingEnd = null
+            p()
+            receiver.end()
+            return
+        }
         dequeue(s)
         stopReport(s)
         s.ci?.let(::revoke)
@@ -340,17 +357,23 @@ class CastController(
         val my = seq
         val itemId = s.itemId
         val bitrate = s.maxBitrate ?: s.prefsBitrate
+        val stale = { cur !== s || my != seq || s.busy || s.ci == null }
         io.execute {
-            val next = server.next(itemId)
-            val a = if (next == null) null else server.session(CastBodies.queue(next.id, bitrate, ci.castId, tv))
+            val next = server.next(itemId) ?: return@execute
             main.execute {
-                val stale = cur !== s || my != seq || s.busy || s.ci == null
-                if (next == null || a !is TokenAnswer.Ok) return@execute
-                if (stale || s.noAuto == next.id) { revoke(a.info); return@execute }
-                if (!receiver.queue(a.info, autoplay = if (tv) !ask else true)) { revoke(a.info); return@execute }
-                s.queued = Queued(a.info, next, ask && tv)
-                sendReport(a.info)
-                tvSync(s)
+                // stale or cancelled meanwhile: no token is minted (engine.ts prequeue checks before the request)
+                if (stale() || s.noAuto == next.id) return@execute
+                io.execute {
+                    val a = server.session(CastBodies.queue(next.id, bitrate, ci.castId, tv))
+                    main.execute {
+                        if (a !is TokenAnswer.Ok) return@execute
+                        if (stale() || s.noAuto == next.id) { revoke(a.info); return@execute }
+                        if (!receiver.queue(a.info, autoplay = if (tv) !ask else true)) { revoke(a.info); return@execute }
+                        s.queued = Queued(a.info, next, ask && tv)
+                        sendReport(a.info)
+                        tvSync(s)
+                    }
+                }
             }
         }
     }
@@ -441,7 +464,8 @@ class CastController(
     /** own receiver: texts and countdown length (engine.ts `tvUi`) */
     private fun tvUi(s: Live) {
         if (cur !== s || !receiver.custom) return
-        receiver.send(JSONObject().put("t", "ui").put("strings", host.receiverStrings()).put("countdown", COUNTDOWN_SECONDS))
+        receiver.send(JSONObject().put("t", "ui").put("strings", host.receiverStrings()).put("sub", s.subtitleStyle ?: SubtitleStyle().toJson())
+            .put("countdown", COUNTDOWN_SECONDS))
     }
 
     /** own receiver: segments and the queued next episode of the playing token (engine.ts `tvSync`) */
@@ -478,6 +502,7 @@ class CastController(
         /** nextup.ts COUNTDOWN_SECONDS */
         const val COUNTDOWN_SECONDS = 10
         private const val TICKS_PER_MS = 10_000L
+
 
         /** The cast button is offered: a stream (never a download), casting enabled on the server, a Cast device on the network. */
         fun castable(offline: Boolean, enabled: Boolean, devices: Boolean) = !offline && enabled && devices

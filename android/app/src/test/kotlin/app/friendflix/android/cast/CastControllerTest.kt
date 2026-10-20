@@ -61,7 +61,9 @@ class CastControllerTest {
         override fun end() { ended++ }
     }
 
-    private class Host(val onStop: () -> Unit) : CastHost {
+    private inner class Host(val onStop: () -> Unit) : CastHost {
+        /** what had left the device when the hand-back happened */
+        var callsAtReturn: List<String> = emptyList()
         var returned: Triple<String, Long, Boolean>? = null
         var returnedEnded = false
         var failed: TokenAnswer? = null
@@ -72,7 +74,9 @@ class CastControllerTest {
         override fun onCasting(itemId: String) { casting++ }
         override fun onTitle(item: ItemInfo) { titles += item.id }
         override fun onFailed(answer: TokenAnswer?) { failures++; failed = answer }
-        override fun onReturn(itemId: String, positionMs: Long, play: Boolean, ended: Boolean) { returned = Triple(itemId, positionMs, play); returnedEnded = ended }
+        override fun onReturn(itemId: String, positionMs: Long, play: Boolean, ended: Boolean) {
+            returned = Triple(itemId, positionMs, play); returnedEnded = ended; callsAtReturn = calls.map { it.first }
+        }
         override fun receiverStrings(): JSONObject = JSONObject().put("next", "Next episode")
     }
 
@@ -82,10 +86,29 @@ class CastControllerTest {
         .apply { attach(ReportSession("film", "ps-local", "ms-local", 1, direct = true)); onPlay() }
 
     private val host = Host { local.release() }
+
+    /** a fake-clock scheduler: [advance] runs what is due */
+    private val timers = mutableListOf<Triple<Long, () -> Unit, BooleanArray>>()
+    private val schedule: (Long, () -> Unit) -> (() -> Unit) = { ms, block ->
+        val cancelled = BooleanArray(1)
+        timers += Triple(clock + ms, block, cancelled)
+        ({ cancelled[0] = true })
+    }
+    private fun advance(ms: Long) {
+        clock += ms
+        val due = timers.filter { it.first <= clock }
+        timers -= due.toSet()
+        due.forEach { if (!it.third[0]) it.second() }
+    }
+
+    /** an io thread that runs only when told ([runIo]) */
+    private val pendingIo = ArrayDeque<Runnable>()
+    private val manualIo = Executor { pendingIo += it }
+    private fun runIo() { while (pendingIo.isNotEmpty()) pendingIo.removeFirst().run() }
     private val still = StillWatching { clock }
 
     private fun controller(custom: Boolean = false) = FakeReceiver(custom).let { r ->
-        r to CastController(server, r, host, still, io = direct, main = direct, now = { clock }, schedule = { _, _ -> {} })
+        r to CastController(server, r, host, still, io = direct, main = direct, now = { clock }, schedule = schedule)
     }
 
     private fun info(castId: String, runtimeMin: Long = 30) = CastInfo(
@@ -252,6 +275,8 @@ class CastControllerTest {
         c.onSessionEnded()
         assertEquals(Triple("film", 754_000L, true), host.returned)
         assertFalse(host.returnedEnded)
+        // the hand-back comes after the cast token's stop and revoke (the local info request must not meet a counted stream)
+        assertEquals(listOf("POST /api/playback/stop", "DELETE /api/cast/session/c1"), host.callsAtReturn)
         assertEquals(listOf("POST /api/playback/stop", "DELETE /api/cast/session/c1"), paths())
         assertEquals(754_000L * 10_000, calls[0].second!!.getLong("positionTicks"))
         assertFalse(c.casting)
@@ -332,5 +357,96 @@ class CastControllerTest {
         assertEquals(listOf("POST /api/playback/progress", "POST /api/playback/stop", "DELETE /api/cast/session/c1", "POST /api/cast/session"), paths())
         assertEquals(1_200_000L * 10_000, calls[3].second!!.getLong("startTicks"))
         assertEquals("c2", r.loads.last().first)
+    }
+
+    // ---- fix round 1 ----
+
+    @Test fun theTvSessionEndsAfterAFinishedTitle() {
+        val (r, c) = controller()
+        c.start(film())
+        c.onReceiver(playing("c1", 61_000))
+        c.onReceiver(playing("c1", 30 * 60_000 - 1_000))
+        c.onMediaEnd(IdleReason.FINISHED, "c1")
+        assertEquals("the bar stays a moment", 0, r.ended)
+        advance(CastController.ENDED_HIDE_MS)
+        assertEquals(1, r.ended)
+    }
+
+    @Test fun closingRightAfterTheEndEndsTheTvSessionAtOnce() {
+        val (r, c) = controller()
+        c.start(film())
+        c.onReceiver(playing("c1", 61_000))
+        c.onReceiver(playing("c1", 30 * 60_000 - 1_000))
+        c.onMediaEnd(IdleReason.FINISHED, "c1")
+        assertTrue(host.returnedEnded) // the player screen closes now: its stop() must still end the TV session
+        c.stop()
+        assertEquals(1, r.ended)
+        advance(CastController.ENDED_HIDE_MS)
+        assertEquals("ended once", 1, r.ended)
+    }
+
+    @Test fun theOwnReceiverGetsTheSubtitleStyle() {
+        val (r, c) = controller(custom = true)
+        c.start(film().copy(subtitleStyle = app.friendflix.android.player.SubtitleStyle(size = "l", color = "yellow").toJson()))
+        val ui = r.messages.first { it.optString("t") == "ui" }
+        assertEquals("""{"size":"l","color":"yellow","background":"semi","font":"sans"}""", ui.getJSONObject("sub").toString())
+        assertEquals(CastController.COUNTDOWN_SECONDS, ui.getInt("countdown"))
+        assertEquals("Next episode", ui.getJSONObject("strings").getString("next"))
+        val (r2, c2) = controller(custom = true)
+        c.stop()
+        c2.start(film())
+        assertEquals("""{"size":"m","color":"white","background":"semi","font":"sans"}""", r2.messages.first { it.optString("t") == "ui" }.getJSONObject("sub").toString())
+    }
+
+    @Test fun subtitleStyleMergesTheWebDefaults() {
+        val st = app.friendflix.android.player.SubtitleStyle.parse(JSONObject("""{"size":"s","font":null}"""))
+        assertEquals(app.friendflix.android.player.SubtitleStyle(size = "s"), st)
+        assertEquals(app.friendflix.android.player.SubtitleStyle(), app.friendflix.android.player.SubtitleStyle.parse(null))
+    }
+
+    @Test fun aStaleQueueMintsNoToken() {
+        val r = FakeReceiver(custom = false)
+        val c = CastController(server, r, host, still, io = manualIo, main = direct, now = { clock }, schedule = schedule)
+        c.start(episode())
+        runIo()
+        c.onReceiver(playing("c1", 61_000)) // within the queue window: the next episode is asked for
+        c.stop() // ... and the cast ends before the answer is used
+        runIo()
+        assertTrue("next asked", calls.any { it.first == "GET /api/items/ep1/next" })
+        assertFalse("no next token minted", calls.any { it.second?.optBoolean("next") == true })
+        assertFalse(calls.any { it.first.startsWith("DELETE /api/cast/session/q") })
+    }
+
+    @Test fun aCancelledNextEpisodeMintsNoTokenAgain() {
+        val (_, c) = controller(custom = true)
+        c.start(episode())
+        c.onReceiver(playing("c1", 61_000)) // within the queue window: ep2 is queued (q2)
+        assertEquals(1, calls.count { it.second?.optBoolean("next") == true })
+        c.onReceiverMessage(JSONObject().put("t", "cancel")) // cancelled on the TV: q2 leaves the queue, ep2 must not autoplay
+        assertTrue(calls.any { it.first == "DELETE /api/cast/session/q2" })
+        clock += 55 * 60_000
+        c.tick() // renewal: the new token (c3) asks for its next episode again
+        c.onReceiver(playing("c3", 62_000))
+        assertTrue(calls.count { it.first == "GET /api/items/ep1/next" } >= 2)
+        assertEquals("ep2 was cancelled: no token is minted for it", 1, calls.count { it.second?.optBoolean("next") == true })
+    }
+
+    @Test fun aFailedRenewalOfAPausedTvStaysPaused() {
+        val (_, c) = controller()
+        c.start(film())
+        c.onReceiver(playing("c1", 61_000))
+        c.onReceiver(playing("c1", 300_000, paused = true))
+        answers += TokenAnswer.Failed
+        clock += 55 * 60_000
+        c.tick()
+        assertEquals(Triple("film", 300_000L, false), host.returned)
+        assertEquals(TokenAnswer.Failed, host.failed)
+    }
+
+    @Test fun aDevicePendingRefusalIsHandedToTheScreen() {
+        answers += TokenAnswer.DevicePending
+        val (_, c) = controller()
+        c.start(film())
+        assertEquals(TokenAnswer.DevicePending, host.failed)
     }
 }
