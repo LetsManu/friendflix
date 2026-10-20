@@ -341,7 +341,7 @@ telemetry (`com.google.android.datatransport`), which reports to Google in the s
 Without Google Play services there is no Cast button, and the rest of the app works the same.
 
 **Casting.** The app uses the same `/api/cast/*` token flow as the web sender. The receiver gets the server's token URLs
-unchanged, the own receiver's report token goes only over the private Cast channel, and no cookie ever leaves the app. Downloads are
+unchanged, the own receiver's report token goes only over the private Cast channel, and the session cookie is sent only to the FriendFlix server, never to the TV or the Cast SDK. Downloads are
 never cast.
 
 ## Hardening
