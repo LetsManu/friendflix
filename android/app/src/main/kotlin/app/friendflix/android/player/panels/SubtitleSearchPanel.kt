@@ -107,6 +107,13 @@ object SubtitleSearchPanel {
         return col
     }
 
+    /**
+     * Whether a subtitle added from [panel] (searched for [searchedId]) still concerns playback: the panel is still the open one
+     * ([openPanel]), the title on show is still [playingId] and no cast took over; otherwise the stream is left alone.
+     */
+    fun addedApplies(openPanel: View?, panel: View, searchedId: String, playingId: String, casting: Boolean): Boolean =
+        openPanel === panel && searchedId == playingId && !casting
+
     private fun download(
         ctx: Context, scope: CoroutineScope, api: PlayerApi, itemId: String, r: SubResult,
         setBusy: (Boolean) -> Unit, say: (String?) -> Unit, onAdded: () -> Unit, busy: () -> Boolean,

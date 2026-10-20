@@ -77,12 +77,20 @@ class PlayerApiExtrasTest {
 
     @Test fun prefsReadAudioFxAnimeAndPostplay() {
         routes["GET /api/prefs"] = 200 to """{"prefs":{"audioFx":"night","animeOriginal":true,"postplay":false}}"""
-        val p = api.prefs()
+        val p = api.prefs()!!
         assertEquals("night", p.audioFx)
         assertTrue(p.animeOriginal)
         assertFalse(p.postplay)
         routes["GET /api/prefs"] = 200 to """{"prefs":{"audioFx":"bogus"}}"""
         assertEquals(PlayerPrefs(), api.prefs())
+    }
+
+    /** prefs that could not be loaded are null, never the defaults (which would turn the profile's sound mode off, R2) */
+    @Test fun prefsOfAFailedLoadAreNull() {
+        routes["GET /api/prefs"] = 500 to "{}"
+        assertNull(api.prefs())
+        routes["GET /api/prefs"] = 200 to "{}"
+        assertNull(api.prefs())
     }
 
     @Test fun parseInfoReadsTrickplay() {

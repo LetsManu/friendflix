@@ -104,7 +104,7 @@ The player fills the screen: the status and navigation bars stay hidden, also af
 
 Your *Subtitle appearance* from the web settings (size, colour, background, font) is used for subtitles. With *Anime: original audio with subtitles* on in your profile, an anime series starts in Japanese with subtitles in the app language, unless you chose something else for that series.
 
-**Offline (a download):** *Episodes*, *Scenes*, *Cast & info*, bookmarks, subtitle search, quality, the quality chip, Chromecast and post-play need the server and are hidden. Speed, *Clear voices* and *Night mode* (with your last setting on this phone), subtitles and their style, the sleep timer, lock and picture-in-picture work.
+**Offline (a download):** *Episodes*, *Scenes*, *Cast & info*, bookmarks, subtitle search, quality, the quality chip, Chromecast and post-play need the server and are hidden. Speed, *Clear voices* and *Night mode* (with your last setting on this phone), subtitles (in the default style), the sleep timer, lock and picture-in-picture work.
 
 **While casting:** the phone is the remote for the TV. *Episodes* plays the picked episode on the TV, *Scenes* and bookmarks jump on the TV, a new bookmark takes the TV's position, the sleep timer pauses the TV, and *Cast & info* shows the title the TV plays. Not offered while casting: audio, subtitles, subtitle search, *Clear voices* and *Night mode*, quality and its chip, speed, lock, picture-in-picture and post-play. The Chromecast button stays in the top bar left of *Cast & info*, and More shows *Playing on TV*.
 

@@ -39,7 +39,7 @@ class TrickplayPreview(
     private val sheets = object : LinkedHashMap<String, Sheet>(MAX_SHEETS + 1, 0.75f, true) {
         override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, Sheet>?) = size > MAX_SHEETS
     }
-    /** sheets that could not be had: not asked again by this preview */
+    /** sheets that could not be had: not asked again during this scrub (the next scrub tries them again) */
     private val failed = HashSet<String>()
     /** the frame wanted (null while hidden) and the one on show */
     private var wanted: Pair<String, Frame>? = null
@@ -53,6 +53,7 @@ class TrickplayPreview(
 
     fun show(info: TrickplayInfo, positionMs: Long) {
         if (!usable(info)) { hide(); return }
+        if (wanted == null) failed.clear() // a new scrub (shown from hidden): sheets that failed before are tried again
         val frame = trickplayFrame(info, positionMs)
         wanted = sheetUrl(info, frame.sheet) to frame
         view.visibility = View.VISIBLE

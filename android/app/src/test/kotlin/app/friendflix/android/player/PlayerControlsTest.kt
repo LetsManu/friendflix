@@ -285,6 +285,22 @@ class PlayerControlsTest {
         assertFalse(controls.panel.isOpen)
     }
 
+    /** every panel belongs to the title on show: Tracks (its audio indexes), More, Episodes, subtitle search (its item id) close */
+    @Test fun everyPanelClosesOnATitleSwitch() {
+        host.tracksState = tracks(audio = 2)
+        controls.openTracks()
+        assertTrue(controls.panel.isOpen)
+        controls.newTitle()
+        assertFalse(controls.panel.isOpen)
+        controls.openMore()
+        assertTrue(controls.panel.isOpen)
+        controls.newTitle()
+        assertFalse(controls.panel.isOpen)
+        controls.panel.show("Find subtitles", TextView(activity)) // the activity's own panels (subtitle search) too
+        controls.newTitle()
+        assertFalse(controls.panel.isOpen)
+    }
+
     @Test fun speedIsNotOfferedWhileCasting() {
         host.casting = true
         controls.openMore()

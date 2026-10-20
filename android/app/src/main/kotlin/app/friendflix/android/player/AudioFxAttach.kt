@@ -88,9 +88,18 @@ class AudioFxAttach(
 
         private fun openEffect(sessionId: Int, cfg: DynamicsProcessing.Config): () -> Unit {
             if (Build.VERSION.SDK_INT < Build.VERSION_CODES.P) return {}
-            val dp = DynamicsProcessing(0, sessionId, cfg)
-            dp.enabled = true
-            return { dp.release() }
+            return started(DynamicsProcessing(0, sessionId, cfg), { it.enabled = true }, { it.release() })
+        }
+
+        /** [effect] switched on by [enable]; its release, or (when [enable] throws) released at once and the error passed on */
+        internal fun <T> started(effect: T, enable: (T) -> Unit, release: (T) -> Unit): () -> Unit {
+            try {
+                enable(effect)
+            } catch (e: RuntimeException) {
+                release(effect)
+                throw e
+            }
+            return { release(effect) }
         }
     }
 }

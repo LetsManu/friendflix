@@ -7,8 +7,8 @@
   Controller layout of the PlayerView (exo_* ids are bound by Media3: play/pause, ±10 s, seek bar, times). The player_* buttons are
   FriendFlix's own, in the web player's order: top right the quality chip, Chromecast, Cast & info, audio + subtitles, More (⋯, with
   the speed badge and the sleep-timer dot); bottom right of the duration Episodes, Scenes, next episode. player_cast is the standard
-  Cast button (MediaRouteButton, the Cast framework's icon), first on the right, shown for a castable stream while a Cast device is
-  on the network and always while casting. Quality and picture-in-picture are rows of the More panel. Chapter starts and bookmarks
+  Cast button (MediaRouteButton, the Cast framework's icon), first on the right, shown for a castable stream (whether or not a Cast
+  device has been discovered) and always while casting. Quality and picture-in-picture are rows of the More panel. Chapter starts and bookmarks
   are the time bar's marks (its ad markers, played and unplayed in one colour); player_trickplay is the scrub preview above it.
 -->
 <FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"

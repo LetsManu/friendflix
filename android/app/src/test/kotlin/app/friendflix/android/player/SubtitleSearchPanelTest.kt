@@ -25,6 +25,7 @@ import mockwebserver3.RecordedRequest
 import okhttp3.OkHttpClient
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -136,6 +137,16 @@ class SubtitleSearchPanelTest {
         assertTrue(seen.last { it.method == "POST" }.body!!.utf8().contains("\"subtitleId\":\"a\""))
         shadowOf(Looper.getMainLooper()).idle()
         assertEquals(1, added)
+    }
+
+    /** a download that ends after the panel closed, the title switched or a cast started does not reload the stream */
+    @Test fun anAddedSubtitleAppliesOnlyToThePanelAndTitleItWasFoundFor() {
+        val v = panel()
+        assertTrue(SubtitleSearchPanel.addedApplies(v, v, "it1", "it1", casting = false))
+        assertFalse(SubtitleSearchPanel.addedApplies(null, v, "it1", "it1", casting = false)) // closed (title switch, PiP, cast)
+        assertFalse(SubtitleSearchPanel.addedApplies(View(activity), v, "it1", "it1", casting = false)) // another panel now
+        assertFalse(SubtitleSearchPanel.addedApplies(v, v, "it1", "it2", casting = false)) // another title plays
+        assertFalse(SubtitleSearchPanel.addedApplies(v, v, "it1", "it1", casting = true)) // the TV plays
     }
 
     @Test fun downloadFailureShowsErrorAndKeepsResults() {

@@ -151,6 +151,19 @@ class TrickplayPreviewTest {
         assertNull(shown())
     }
 
+    @Test fun aFailedSheetIsAskedAgainOnTheNextScrub() {
+        sheets.remove("/tp/1.png") // a sheet the server could not give for a moment
+        preview.show(info, 5_500)
+        await { seen.size == 1 && preview.fetches == 1 }
+        Thread.sleep(100)
+        shadowOf(Looper.getMainLooper()).idle()
+        preview.hide() // the scrub ends
+        sheets["/tp/1.png"] = sheet(1)
+        preview.show(info, 5_500) // a new scrub tries it again
+        await { showsColour(colour(1, 1)) }
+        assertEquals(2, preview.fetches)
+    }
+
     @Test fun previewIsSkippedForAnUnusableInfo() {
         for (bad in listOf(info.copy(width = 0), info.copy(height = 0), info.copy(count = 0), info.copy(intervalMs = 0))) {
             preview.show(bad, 1_000)

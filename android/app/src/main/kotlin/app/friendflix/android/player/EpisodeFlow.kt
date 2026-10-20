@@ -94,8 +94,11 @@ class EpisodeFlow(
      */
     var holdAutoplay = false
         set(v) {
+            val was = field
             field = v
             if (v) { stopCountdown(); askStill = false }
+            // switched off while the card shows: its countdown (or "still there?") as if the card had just come
+            else if (was && entered && !dismissed) enterCard()
         }
     private val autoSkipped = mutableSetOf<Double>()
     private var dismissed = false

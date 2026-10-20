@@ -209,8 +209,9 @@ class PlayerApi(val server: ServerApi, private val profileId: String) {
     /** Segment types this server offers skip buttons for (all four when not sent). */
     fun segmentTypes(): Set<String> = caps().segments
 
-    fun prefs(): PlayerPrefs {
-        val p = get("/api/prefs")?.optJSONObject("prefs") ?: return PlayerPrefs()
+    /** The profile's preferences, or null when they could not be loaded (the caller keeps what it has: R2's stored sound mode). */
+    fun prefs(): PlayerPrefs? {
+        val p = get("/api/prefs")?.optJSONObject("prefs") ?: return null
         val d = FlowPrefs()
         return PlayerPrefs(
             flow = FlowPrefs(

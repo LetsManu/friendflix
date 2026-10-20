@@ -120,6 +120,26 @@ class EpisodeFlowTest {
         assertFalse(f.update(1340.0, true, false, 30_000).goNext)
     }
 
+    @Test fun afterEpisodeCancelledInTheCreditsStartsTheCountdownAgain() {
+        val f = flow()
+        f.holdAutoplay = true
+        assertEquals(FlowCard.NextUp(counting = false, secondsLeft = 10), f.update(1300.0, true, false, 0).card)
+        f.holdAutoplay = true // the activity sets it on every tick: no change, nothing happens
+        f.holdAutoplay = false // the sleep timer was switched off while the card shows
+        assertEquals(FlowCard.NextUp(counting = true, secondsLeft = 9), f.update(1301.0, true, false, 1_000).card)
+        assertTrue(f.update(1310.0, true, false, 9_000).goNext)
+    }
+
+    @Test fun afterEpisodeCancelledInTheCreditsAsksStillThereWhenDue() {
+        still.opened()
+        clock += 90 * 60_000L // idle for 90 min
+        val f = flow()
+        f.holdAutoplay = true
+        assertEquals(FlowCard.NextUp(counting = false, secondsLeft = 10), f.update(1300.0, true, false, 0).card)
+        f.holdAutoplay = false
+        assertEquals(FlowCard.StillThere, f.update(1301.0, true, false, 1_000).card)
+    }
+
     @Test fun moviesAndLastEpisodesShowNoCard() {
         assertEquals(FlowCard.Hidden, flow(kind = NextKind.MOVIE).update(1430.0, true, false, 0).card)
         assertEquals(FlowCard.Hidden, flow(kind = NextKind.NONE).update(1430.0, true, false, 0).card)

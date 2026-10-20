@@ -102,10 +102,11 @@ import java.util.concurrent.Executors
  * The bar's panels (Tracks, More with speed, quality, sleep timer, lock, picture-in-picture, Play on TV), the quality chip and the
  * lock live in [PlayerControls]; this screen supplies the playback side ([controlsHost]).
  *
- * Chromecast ([CastController], Task 9): the Cast button shows for a stream (never a download) while the server offers casting and a
- * Cast device is on the network. Picking a device hands the title over through the server's cast token flow; the screen is then the
- * receiver's remote (the controls drive [MediaThreeReceiver.player]) and only the controller reports. When the cast ends, local
- * playback continues at the receiver's position. A FragmentActivity because the Cast device dialog is a dialog fragment.
+ * Chromecast ([CastController], Task 9): the Cast button shows for a stream (never a download) while the server offers casting,
+ * whether or not a Cast device has been discovered (the chooser says when none is found). Picking a device hands the title over
+ * through the server's cast token flow; the screen is then the receiver's remote (the controls drive [MediaThreeReceiver.player])
+ * and only the controller reports. When the cast ends, local playback continues at the receiver's position. A FragmentActivity
+ * because the Cast device dialog is a dialog fragment.
  */
 @OptIn(UnstableApi::class)
 class PlayerActivity : FragmentActivity() {
@@ -367,7 +368,11 @@ class PlayerActivity : FragmentActivity() {
         }
     }
 
-    /** First start of a title: preferences, item, next episode, segments and the series' language choice, in parallel. */
+    /**
+     * First start of a title: preferences, item, next episode, segments and the series' language choice, in parallel. The answers
+     * are gathered on the IO dispatcher and applied on the main thread only if this load is still the current one (a newer title's
+     * load cancels it). Preferences that could not be loaded leave the current ones (subtitle look, sound mode) as they are.
+     */
     private suspend fun loadTitle(pa: PlayerApi, a: Args) = withContext(Dispatchers.IO) {
         val p = async { pa.prefs() }
         val types = async { pa.segmentTypes() }
@@ -376,32 +381,38 @@ class PlayerActivity : FragmentActivity() {
         val segs = async { pa.segments(a.itemId) }
         val castCfg = async { CastServerApi.config(pa.server, a.profileId) }
         val capsJob = async { pa.caps() }
-        prefs = p.await()
-        serverCaps = capsJob.await()
-        if (quality == 0L && prefs.quality >= MIN_BITRATE) quality = prefs.quality
+        val loaded = p.await()
+        val pr = loaded ?: prefs
+        val caps = capsJob.await()
         val cur = it.await()
-        item = cur
-        val pref = if (cur?.type == "Episode") pa.langPref(cur.seriesId ?: a.itemId, anime = prefs.animeOriginal) else LangPref(null, null, false)
-        langs = TitleLangs(prefs, pref, TitleLangs.appLang(resources.configuration.locales[0]), a.audio, a.subtitle)
+        val pref = if (cur?.type == "Episode") pa.langPref(cur.seriesId ?: a.itemId, anime = pr.animeOriginal) else LangPref(null, null, false)
+        val titleLangs = TitleLangs(pr, pref, TitleLangs.appLang(resources.configuration.locales[0]), a.audio, a.subtitle)
         val next: ItemInfo? = if (cur?.type == "Episode") nx.await() else { nx.cancel(); null }
-        nextItem = next
         val allowed = types.await()
-        val f = EpisodeFlow(segs.await().filter { s -> s.type in allowed }, NextKind.of(cur?.type, next != null), prefs.flow, Players.still)
+        val f = EpisodeFlow(segs.await().filter { s -> s.type in allowed }, NextKind.of(cur?.type, next != null), pr.flow, Players.still)
         val cfg = castCfg.await()
         // the receiver app id is cached for the Cast framework's next start (it reads its options once per process)
         if (cfg != null) {
             try { AppSettings.from(applicationContext).setCastConfig(cfg.enabled, cfg.receiverAppId) } catch (_: IOException) { }
         }
         withContext(Dispatchers.Main) {
+            prefs = pr
+            serverCaps = caps
+            if (quality == 0L && pr.quality >= MIN_BITRATE) quality = pr.quality
+            item = cur
+            langs = titleLangs
+            nextItem = next
             flow = f
             postPlay = PostPlayFlow(a.itemId, movie = cur?.type == "Movie")
             if (cfg != null) castEnabled = cfg.enabled
-            view.subtitleView?.let { v -> applyCaptionLook(v, prefs.subtitleStyle) }
-            if (!fxTouched) setFx(prefs.audioFx) // the server's mode wins until a switch is flipped here (web adoptFxPref)
+            if (loaded != null) {
+                view.subtitleView?.let { v -> applyCaptionLook(v, loaded.subtitleStyle) }
+                if (!fxTouched) setFx(loaded.audioFx) // the server's mode wins until a switch is flipped here (web adoptFxPref)
+            }
             Players.still.opened()
             title.text = cur?.seriesName ?: cur?.name.orEmpty()
             subtitle.text = cur?.let { i -> if (i.seriesName != null) episodeLabel(i) else "" }.orEmpty()
-            controls.loadTitleExtras(pa, a.itemId, serverCaps.chapters) // Scenes, bookmarks and their marks
+            controls.loadTitleExtras(pa, a.itemId, caps.chapters) // Scenes, bookmarks and their marks
             updateBar() // Episodes, next episode, Chromecast
         }
     }
@@ -728,6 +739,7 @@ class PlayerActivity : FragmentActivity() {
         }
     })
 
+    /** the local per-title state goes (a title switched in this player, and a new intent with its own extras, [onNewIntent]) */
     private fun resetForNewTitle() {
         reporter?.release()
         reporter = null
@@ -854,14 +866,15 @@ class PlayerActivity : FragmentActivity() {
         if (offlineLicense != null || args.licenseId != null || cast?.casting == true || isInPip()) return
         val lang = TitleLangs.appLang(resources.configuration.locales[0])
         val itemId = args.itemId
-        controls.panel.show(
-            getString(R.string.player_subs_title),
-            SubtitleSearchPanel.build(this, lifecycleScope, pa, itemId, lang) {
-                controls.panel.close()
-                reload(resumePos())
-                flash(getString(R.string.player_subs_added), 2_500)
-            },
-        )
+        lateinit var content: View
+        content = SubtitleSearchPanel.build(this, lifecycleScope, pa, itemId, lang) {
+            // closed, another title or a cast meanwhile: the subtitle is the server's now, the stream on show is left alone
+            if (!SubtitleSearchPanel.addedApplies(controls.panel.content, content, itemId, args.itemId, cast?.casting == true)) return@build
+            controls.panel.close()
+            reload(resumePos())
+            flash(getString(R.string.player_subs_added), 2_500)
+        }
+        controls.panel.show(getString(R.string.player_subs_title), content)
     }
 
     /** A switch was flipped: applied at once, kept for this profile on the device and saved for the profile (web toggleFx). */
@@ -1106,9 +1119,6 @@ class PlayerActivity : FragmentActivity() {
     }
 
     private val castEvents = object : MediaThreeReceiver.Events {
-        /** the button does not wait for a discovered TV (Task 12): a tap without one opens the chooser, which says none was found */
-        override fun onDevices(available: Boolean) {}
-
         override fun onSessionStarted() {
             // the viewer picked a TV (Player.svelte handleCast session-start): the playing stream goes there
             val c = cast ?: return
@@ -1190,7 +1200,10 @@ class PlayerActivity : FragmentActivity() {
             // after the cast token's stop / revoke (queued on the same ordered thread): a one-stream account is not refused (429)
             Players.reports.execute {
                 handler.post {
-                    if (released || cast?.casting == true) return@post
+                    // closed, casting again, or another title started meanwhile (a new intent, a pick): that one plays
+                    if (released || cast?.casting == true || args !== a) return@post
+                    reporter?.release() // a session started meanwhile is replaced: its stop is reported
+                    reporter = null
                     if (same) startOnline(a, first = false, startMs = positionMs)
                     else { flow = null; nextItem = null; startOnline(a, first = true, startMs = positionMs) }
                 }
@@ -1247,26 +1260,17 @@ class PlayerActivity : FragmentActivity() {
         token = t
         if (cast?.casting == true) { cast?.stop(); showLocal() }
         controls.newTitle()
-        reporter?.release()
-        reporter = null
         offlineProgress?.flush()
         offlineProgress = null
         offlineLicense = null
         offlineSubLangs = emptyList()
         pausedAt = null
-        stream = null
-        attachedAt = null
-        flow = null
-        postPlay = null
         item = null // Episodes shows again once the new title is known
-        nextItem = null
-        langs = null
-        audioIndex = null
-        forcedHls = false
-        retries = 0
-        player.stop()
-        ppCard.visibility = View.GONE
+        resetForNewTitle() // the per-title state, as for a title switched in this player
         args = a
+        // the new request's profile (maybe another one): its last mode on this device until its prefs load; no switch flipped yet
+        fxTouched = false
+        setFx(FxStore.load(this, a.profileId))
         updateBar()
         start(a, handed?.offline)
     }

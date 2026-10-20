@@ -105,6 +105,20 @@ class AudioFxAttachTest {
         a.release()
     }
 
+    /** an effect created but refused when switched on is released right away (no leaked DynamicsProcessing) */
+    @Test fun anEffectThatCannotBeSwitchedOnIsReleased() {
+        val released = mutableListOf<String>()
+        try {
+            AudioFxAttach.started("dp", { throw IllegalStateException("enable") }, { released += it })
+            throw AssertionError("the enable error is passed on")
+        } catch (_: IllegalStateException) { }
+        assertEquals(listOf("dp"), released)
+        val release = AudioFxAttach.started("dp2", {}, { released += it })
+        assertEquals(listOf("dp"), released) // switched on: released only when asked
+        release()
+        assertEquals(listOf("dp", "dp2"), released)
+    }
+
     @Test fun lastModeIsKeptPerProfile() {
         val ctx = ApplicationProvider.getApplicationContext<Context>()
         assertEquals("off", FxStore.load(ctx, "p1"))

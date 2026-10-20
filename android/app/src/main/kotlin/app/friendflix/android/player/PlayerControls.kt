@@ -441,12 +441,14 @@ class PlayerControls(
     }
 
     /**
-     * a new title plays: speed back to 1; a sleep timer "after this episode" was meant for the previous one; its chapters, bookmarks,
-     * marks and trickplay go (the new title's are loaded with it, [loadTitleExtras])
+     * a new title plays: speed back to 1; a sleep timer "after this episode" was meant for the previous one; an open panel closes
+     * (Tracks has the old audio tracks, subtitle search the old item id); its chapters, bookmarks, marks and trickplay go (the new
+     * title's are loaded with it, [loadTitleExtras])
      */
     fun newTitle() {
         if (speed != 1f) setSpeed(1f)
         if (sleep.afterEpisode) { sleep.off(); showSleep() }
+        panel.close()
         clearTitleExtras()
     }
 
@@ -509,6 +511,7 @@ class PlayerControls(
         extrasJob = null
         extrasLoaded = false
         setTrickplay(null)
+        preview = null // the next title's scrub starts with a fresh preview (no sheets or failures of this one)
         bookmarks = emptyList()
         setChapters(emptyList())
     }
