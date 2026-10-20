@@ -4,6 +4,9 @@ All notable changes, grouped by what you notice. Each release has its own sectio
 
 ## [Unreleased]
 
+### Android app
+- **The native player has the web player's controls.** *Episodes* switches episodes in the player; *Scenes* lists the chapters, and chapters and bookmarks are marked on the seek bar, with a preview picture while you drag it. *Cast & info* shows the cast and crew and opens a person's other titles. *Audio and subtitles* adds *Find subtitles …*, *Clear voices* and *Night mode* (Android 9+). *More* has playback speed, bookmarks with *Share scene*, quality, a sleep timer (also *After this episode*), *Lock controls*, picture-in-picture and *Play on TV*. A quality chip says *Original* or *Converted · 1080p* and why. At the end of a title the post-play screen or *More like this* opens, as in the web; your subtitle style and the anime default apply. Downloads hide what needs the server; while casting, *Episodes*, *Scenes*, bookmarks, the sleep timer and *Cast & info* act on the TV. Guide: [docs/android.md, Player](docs/android.md#player).
+
 ## [2.1.1] – Brezel – 2026-10-20
 
 ### Android app

@@ -18,6 +18,7 @@ Everything else (browsing, profiles, watch parties, requests, settings of your a
 - [Install](#install)
 - [First start](#first-start)
 - [App settings](#app-settings)
+- [Player](#player)
 - [Downloads and storage](#downloads-and-storage)
 - [Encryption at rest and its limits](#encryption-at-rest-and-its-limits)
 - [Offline](#offline)
@@ -70,6 +71,40 @@ Open them in the web UI under **Settings → App on this device → Open app set
 | Version | The app version (the same as the server release it belongs to). |
 
 Everything else, such as playback languages, subtitles, autoplay and the default download quality, is set in the web UI as usual.
+
+## Player
+
+The native player has the buttons of the web player's control bar, in the same order. Buttons that need the server only show when the server offers that feature.
+
+**Top bar** (from the right: *More*, *Audio and subtitles*, *Cast & info*, the Chromecast button, the quality chip):
+
+- **More (⋯):**
+  - *Playback speed:* 0.5× to 2×. It is not saved: every title starts at 1×. A badge on the button shows a speed other than 1×.
+  - *Bookmarks:* *Share scene* shares a link to the current position with Android's share sheet. You can add a bookmark with a short note (up to 140 characters), tap one to jump there, or remove it.
+  - *Quality:* the quality choices that used to be in the top bar.
+  - *Sleep timer:* off, 15, 30, 45 or 60 minutes, or *After this episode*. When it runs out, playback pauses with the note *Sleep timer: playback paused*. A dot on the button shows that a timer runs, and the time left is shown in More. *After this episode* stops the next episode from starting. The timer keeps running with background audio.
+  - *Lock controls:* hides every control and ignores touches, so that nothing happens by accident. Only a lock icon stays; hold it for a moment to unlock. A short tap, or Android back, shows *Press and hold to unlock*.
+  - *Picture-in-picture:* the same small window you get with Home while playing.
+  - *Play on TV* / *Playing on TV:* the Chromecast choice, shown when a Cast device is available or connected.
+- **Audio and subtitles:** the audio track and subtitles as before, plus:
+  - *Find subtitles …* when your server allows subtitle search and your role may use it. Pick a language, then a result. The player reloads at the same position and says *Subtitles added – pick them in the menu*.
+  - *Clear voices* (dialogue stands out from music and effects) and *Night mode* (loud scenes quieter, quiet ones louder). They need Android 9 or newer; on Android 8 they are greyed out with a note. The setting is saved for your profile, like in the web player.
+- **Cast & info:** cast, guest stars, crew, studios and genres of the title, with pictures. A tap on a person lists their other titles, and a tap on a title closes the player and opens that title's page in the app.
+- **Quality chip:** *Original* when the file plays as it is, or *Converted · 1080p* when the server converts it. A tap says why, for example the network, a limit for your role, or a codec the phone cannot play.
+
+**Bottom bar:**
+
+- **Episodes** (episodes of a series only): the seasons and their episodes, with progress. A tap plays that episode in the same player.
+- **Scenes** (when the server has chapters): the chapters, with pictures where the server has them. A tap jumps there. Chapter starts and your bookmarks are marked on the seek bar.
+- **Seek bar:** while you drag it, a small preview picture shows the frame at that point, when the server offers previews.
+
+**At the end of a title:** when post-play is on (on the server and in your profile) and no next episode follows, a card *Done? See what's next* appears near the end. At the end the *What's next?* screen opens with rows of suggestions: *Play* starts the next part in the player, and a tap on a title opens its page. For a movie without post-play, *More like this* shows three similar titles. In picture-in-picture the screen waits until you open the player again. The player never closes by itself at the end.
+
+Your *Subtitle appearance* from the web settings (size, colour, background, font) is used for subtitles. With *Anime: original audio with subtitles* on in your profile, an anime series starts in Japanese with subtitles in the app language, unless you chose something else for that series.
+
+**Offline (a download):** *Episodes*, *Scenes*, *Cast & info*, bookmarks, subtitle search, quality, the quality chip, Chromecast and post-play need the server and are hidden. Speed, *Clear voices* and *Night mode* (with your last setting on this phone), subtitles and their style, the sleep timer, lock and picture-in-picture work.
+
+**While casting:** the phone is the remote for the TV. *Episodes* plays the picked episode on the TV, *Scenes* and bookmarks jump on the TV, a new bookmark takes the TV's position, the sleep timer pauses the TV, and *Cast & info* shows the title the TV plays. Not offered while casting: audio, subtitles, subtitle search, *Clear voices* and *Night mode*, quality and its chip, speed, lock, picture-in-picture and post-play. The Chromecast button stays first on the right of the top bar, and More shows *Playing on TV*.
 
 ## Downloads and storage
 
@@ -128,7 +163,7 @@ In the native player a Cast button appears when a Chromecast or Google TV is on 
 - The next episode is queued on the TV when autoplay allows it; the phone keeps the controls, also on the lock screen.
 - Stopping the cast continues on the phone where the TV was. Closing the player stops the cast.
 - Downloads are never cast; the Cast button is hidden while you play one.
-- Audio, subtitle and quality changes are not offered while casting; choose them before.
+- Audio, subtitle and quality changes, speed, subtitle search, *Clear voices* and *Night mode* are not offered while casting; choose them before. *Episodes*, *Scenes*, bookmarks, the sleep timer and *Cast & info* act on the TV ([Player](#player)).
 - The Cast feature comes from Google's Cast SDK, which brings Google's own Cast telemetry (it reports to Google as in every app that uses Google Cast). FriendFlix itself sends no analytics. On a phone without Google Play services there is no Cast button; everything else works. Details: [security.md, Android app](security.md#android-app).
 
 ## Troubleshooting
@@ -270,28 +305,46 @@ Unit tests and the emulator in CI cover the logic; these points need a real phon
 32. Rotate and resize (split screen): playback continues without a new session. Replay a finished episode from the end → the admin's now-playing shows it again, and a stop is reported when leaving.
 33. A direct-played MKV with embedded text subtitles: they are not offered (only the server's WebVTT); check that the server lists them as external subtitles.
 
+**Player controls**
+34. The bar: top bar from the right *More*, *Audio and subtitles*, *Cast & info*, the Chromecast button, the quality chip; bottom bar *Episodes*, *Scenes*, next episode. The bar looks right in portrait and landscape and on a tablet.
+35. Episodes: on an episode the panel opens on the current season, with progress and a mark on the playing one; a movie has no *Episodes* button. Pick another episode: it plays in the same player, speed is back to 1×, a sleep timer *After this episode* is cleared, and its scenes and bookmarks load.
+36. Scenes and marks: a title with chapters shows *Scenes* with pictures; a tap jumps there and closes the panel. Chapter starts and bookmarks are marks on the seek bar. A title without chapters has no *Scenes* button.
+37. Preview while scrubbing: drag the seek bar; a picture above the thumb follows. Check a long movie whose server previews use large sheets: the preview keeps up, the app does not slow down or crash. A server without previews: no picture, seeking works.
+38. Cast & info: the panel shows the title line, cast, crew and genres with pictures. A tap on a person lists their titles; a tap on a title closes the player and opens its page in the app.
+39. Audio and subtitles, *Find subtitles …*: pick German, pick a result: the player reloads at the same position and says *Subtitles added – pick them in the menu*; the new subtitle is in the list. A guest, or a server without subtitle search: no row. No result and provider errors show the web's texts.
+40. *Clear voices* and *Night mode* on Android 9 or newer: the sound changes audibly; the web player shows the same setting for the profile. On Android 8 the switches are greyed out with *Not available on this device*. While casting the *Audio and subtitles* button is gone.
+41. More, speed: 1.5× shows a badge on More; the next episode starts at 1×. More, bookmarks: *Share scene* opens Android's share sheet with a `/watch/<id>?t=` link; add a bookmark with a note, tap it to jump, remove it. More, quality: pick 720p; the chip shows *Converted · 720p*.
+42. Sleep timer: 15 minutes shows a dot on More and the time left in More; when it runs out playback pauses with *Sleep timer: playback paused*. *After this episode* on the phone: no next-episode countdown, playback pauses at the end. *After this episode* while casting: the TV stops at the end of the episode and does not move on.
+43. Lock controls: touches do nothing; Android back shows *Press and hold to unlock* and keeps the player; holding the lock icon unlocks.
+44. More, picture-in-picture: the small window opens; an open panel closes and no panel shows in the window.
+45. Quality chip: *Original* for a direct file; a converted stream shows the reason on a tap.
+46. Post-play: a movie with post-play on: *Done? See what's next* near the end, the *What's next?* screen at the end; *Play* on the next part plays it in the player, a title opens its page. A movie without post-play: *More like this* with three titles. Let a title end in picture-in-picture: the screen shows once the player is opened again. The player never closes by itself at the end.
+47. Offline (a download): no *Episodes*, *Scenes*, *Cast & info*, bookmarks, *Find subtitles …*, quality, chip or Chromecast button; speed, sleep timer, lock, subtitles, *Clear voices* and *Night mode* work.
+
 **Chromecast**
-34. A Cast device on the Wi-Fi and casting enabled → the Cast icon shows in the player. No device → no icon. Playing a download → never an icon.
-35. Tap the icon, pick the TV: the phone shows "Playing on …" and its controls drive the TV; the admin's "now playing" shows the local session stopped and the cast session started.
-36. Default Media Receiver (no `CAST_RECEIVER_APP_ID`): plays from the phone's position with the chosen subtitle; pause and seek work; progress shows in the admin view.
-37. Own receiver: set `CAST_RECEIVER_APP_ID`, open a title once, restart the app, cast: the own receiver starts, its reports arrive, its next-up card is in the app's language.
-38. Episode with autoplay: about 40 min before the end the next episode is queued; at the end the TV moves on by itself, also with the phone locked, and the phone's title updates.
-39. Stop casting from the Cast dialog → local playback continues at the TV's position (paused if the TV was paused). Turn the TV off or cut its network → the phone takes over at the last position. Close the player while casting → the TV stops.
-40. Account at its stream limit → casting shows the limit and local playback goes on. A role without transcoding → "Chromecast needs transcoding …".
-41. Cast for over 50 min, also with the phone locked → the TV keeps playing after a short reload (token renewal; if it stops, check whether Doze suspended the app).
-42. Notification and lock screen controls while casting work; tapping brings the player back. Kill the app while casting: the TV may play on until the token expires; reopening starts nothing by itself.
-43. The player's menus and the Cast dialog look right in light and dark system mode.
+48. A Cast device on the Wi-Fi and casting enabled → the Cast icon shows in the player. No device → no icon. Playing a download → never an icon.
+49. Tap the icon, pick the TV: the phone shows "Playing on …" and its controls drive the TV; the admin's "now playing" shows the local session stopped and the cast session started.
+50. Default Media Receiver (no `CAST_RECEIVER_APP_ID`): plays from the phone's position with the chosen subtitle; pause and seek work; progress shows in the admin view.
+51. Own receiver: set `CAST_RECEIVER_APP_ID`, open a title once, restart the app, cast: the own receiver starts, its reports arrive, its next-up card is in the app's language.
+52. Episode with autoplay: about 40 min before the end the next episode is queued; at the end the TV moves on by itself, also with the phone locked, and the phone's title updates.
+53. Stop casting from the Cast dialog → local playback continues at the TV's position (paused if the TV was paused). Turn the TV off or cut its network → the phone takes over at the last position. Close the player while casting → the TV stops.
+54. Account at its stream limit → casting shows the limit and local playback goes on. A role without transcoding → "Chromecast needs transcoding …".
+55. Cast for over 50 min, also with the phone locked → the TV keeps playing after a short reload (token renewal; if it stops, check whether Doze suspended the app).
+56. Notification and lock screen controls while casting work; tapping brings the player back. Kill the app while casting: the TV may play on until the token expires; reopening starts nothing by itself.
+57. The player's menus and the Cast dialog look right in light and dark system mode.
+58. While casting: *Episodes* plays the picked episode on the TV; *Scenes* and a bookmark jump on the TV; a new bookmark takes the TV's position; *Cast & info* shows the TV's title, also after the TV moved on to the next episode. *Audio and subtitles*, the quality chip, the next-episode button, speed, quality, lock and picture-in-picture are gone. The Chromecast button stays first on the right and More shows *Playing on TV*.
+59. Stop casting: *Audio and subtitles*, the quality chip and the next-episode button are back.
 
 **Notifications**
-44. Fresh install, signed in: no flood on the first poll. Create a notification on the server (for example an invite) and see it within roughly 10–20 min (Android may delay it further). Check the channel names in Android's settings in German and English.
-45. Tap: the shell opens the right page; a `/watch/…` link opens the native player; with the app already open the page changes in place.
-46. Switch a category off in the app settings: nothing of it is posted. Revoke the permission: no crash, and the items appear after allowing it again.
-47. Session expires on the server: no notification and no more polling; open the app, sign in: polling resumes.
+60. Fresh install, signed in: no flood on the first poll. Create a notification on the server (for example an invite) and see it within roughly 10–20 min (Android may delay it further). Check the channel names in Android's settings in German and English.
+61. Tap: the shell opens the right page; a `/watch/…` link opens the native player; with the app already open the page changes in place.
+62. Switch a category off in the app settings: nothing of it is posted. Revoke the permission: no crash, and the items appear after allowing it again.
+63. Session expires on the server: no notification and no more polling; open the app, sign in: polling resumes.
 
 **App settings**
-48. Change the server to a second test server: the warning names the new address; afterwards the downloads are gone, the old server shows the licences returned and the session ended, and setup checks the new address (a typo stays on the setup screen with the address filled in).
-49. Sign out of this device: after the confirmation the app shows the sign-in page; downloads and their files are gone (also on the SD card), the next download works (new keys), and the old session no longer works on the server.
-50. Android's app info → the gear icon opens the app settings; the version shown matches the release.
+64. Change the server to a second test server: the warning names the new address; afterwards the downloads are gone, the old server shows the licences returned and the session ended, and setup checks the new address (a typo stays on the setup screen with the address filled in).
+65. Sign out of this device: after the confirmation the app shows the sign-in page; downloads and their files are gone (also on the SD card), the next download works (new keys), and the old session no longer works on the server.
+66. Android's app info → the gear icon opens the app settings; the version shown matches the release.
 
 ## Building it yourself
 

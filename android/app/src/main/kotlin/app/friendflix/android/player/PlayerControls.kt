@@ -41,13 +41,90 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
 import kotlinx.coroutines.launch
 
+/** The Cast framework's side of the bar: attached ([ready]), the server offers casting ([enabled]), a device is on the network ([devices]). */
+data class CastUi(val ready: Boolean, val enabled: Boolean, val devices: Boolean)
+
 /**
- * The Cast situation for the bar: the Cast framework is attached ([ready]), the server offers casting ([enabled]), a device is
- * on the network ([devices]), a cast runs ([casting]), a download plays ([offline]).
+ * What the bar is decided from ([barState]). The activity gives the playback side ([PlayerControls.Host.bar]); [PlayerControls]
+ * adds its own: the Cast framework ([cast]), the title's chapters ([chapters]) and whether the title's extras are loaded ([extras]).
  */
-data class CastUi(val ready: Boolean, val enabled: Boolean, val devices: Boolean, val casting: Boolean, val offline: Boolean) {
-    /** the Chromecast button and the More row: for a castable stream with a device around, and always while a cast runs */
-    val show: Boolean get() = ready && (casting || CastController.castable(offline, enabled, devices))
+data class BarFacts(
+    /** a download plays (no server) */
+    val offline: Boolean = false,
+    /** a cast session plays on a TV; the screen is its remote */
+    val casting: Boolean = false,
+    /** a stream or a download is attached (Tracks has something to show) */
+    val loaded: Boolean = false,
+    /** the title on show is an episode of a series */
+    val episode: Boolean = false,
+    /** the title on show has a next episode */
+    val hasNext: Boolean = false,
+    /** the server answers for the title on show (Cast & info, bookmarks) */
+    val server: Boolean = false,
+    /** the local stream's quality is known (the chip has something to say) */
+    val chip: Boolean = false,
+    /** the local stream offers quality rungs */
+    val qualities: Boolean = false,
+    /** the server allows subtitle search (capability) */
+    val subtitleSearch: Boolean = false,
+    /** the device runs audio effects (Android 9+) */
+    val fxSupported: Boolean = true,
+    val pipSupported: Boolean = true,
+    val cast: CastUi = CastUi(ready = false, enabled = false, devices = false),
+    val chapters: Boolean = false,
+    val extras: Boolean = false,
+)
+
+/** What the bar, More and Tracks offer: one rule for every button ([barState]). [castRow]: null = no row, true = *Playing on TV*. */
+data class BarState(
+    val tracks: Boolean,
+    val next: Boolean,
+    val episodes: Boolean,
+    val scenes: Boolean,
+    val info: Boolean,
+    val chip: Boolean,
+    val castButton: Boolean,
+    val castStatus: Boolean,
+    val speed: Boolean,
+    val quality: Boolean,
+    val bookmarks: Boolean,
+    val lock: Boolean,
+    val pip: Boolean,
+    val castRow: Boolean?,
+    val subtitleSearch: Boolean,
+    /** a string resource saying why Clear voices / Night mode are off, or null */
+    val fxDisabledReason: Int?,
+)
+
+/**
+ * The bar's rule (spec §3 offline, §4a Chromecast). A download hides what needs the server: Episodes, Scenes, Cast & info,
+ * bookmarks, subtitle search, quality, the chip and Chromecast; speed, audio effects, subtitles, sleep timer and lock stay.
+ * While casting the screen is the TV's remote: Episodes, Scenes, Cast & info, bookmarks and the sleep timer act on the TV; audio,
+ * subtitles, quality (and its chip: there is no quality answer for the TV's stream), speed, audio effects, subtitle search, lock,
+ * picture-in-picture and the next-episode button (the TV's queue moves on by itself) are not offered.
+ */
+fun barState(f: BarFacts): BarState {
+    val online = !f.offline
+    val local = !f.casting
+    val castButton = f.cast.ready && (f.casting || CastController.castable(f.offline, f.cast.enabled, f.cast.devices))
+    return BarState(
+        tracks = f.loaded && local,
+        next = f.hasNext && online && local,
+        episodes = f.episode && online,
+        scenes = f.chapters && online,
+        info = f.extras && f.server && online,
+        chip = f.chip && online && local,
+        castButton = castButton,
+        castStatus = f.casting,
+        speed = local,
+        quality = f.qualities && online && local,
+        bookmarks = f.server && online,
+        lock = local,
+        pip = local && f.pipSupported,
+        castRow = if (castButton) f.casting else null,
+        subtitleSearch = f.subtitleSearch && f.server && online && local,
+        fxDisabledReason = fxDisabledReason(f.fxSupported, f.casting),
+    )
 }
 
 /** What the Bookmarks panel needs: the API and the title on show (the TV's while casting). */
@@ -101,6 +178,11 @@ class PlayerControls(
         fun info(): InfoSource? = null
         /** closes the player and opens the title's page (`/item/<id>`) in the app's web UI */
         fun openTitle(id: String) {}
+        /** the playback side of the bar's rule ([barState]); the default reads it from the answers above */
+        fun bar(): BarFacts = BarFacts(
+            offline = offline(), casting = casting(), loaded = tracks() != null, episode = episodes() != null,
+            server = info() != null || bookmarks() != null, qualities = qualities() != null, pipSupported = pipSupported(),
+        )
     }
 
     val panel = PlayerPanel(activity.findViewById(R.id.player_panel_host))
@@ -115,7 +197,9 @@ class PlayerControls(
         private set
 
     private var sleepMinutes = 0
-    private var cast = CastUi(ready = false, enabled = false, devices = false, casting = false, offline = false)
+    private var cast = CastUi(ready = false, enabled = false, devices = false)
+    /** the title's extras (chapters, bookmarks) belong to the title on show: Cast & info follows it */
+    private var extrasLoaded = false
     private val handler = Handler(Looper.getMainLooper())
 
     private val moreBadge: TextView = view.findViewById(R.id.player_more_badge)
@@ -124,6 +208,9 @@ class PlayerControls(
     private val episodesButton: View = view.findViewById(R.id.player_episodes)
     private val scenesButton: View = view.findViewById(R.id.player_scenes)
     private val infoButton: View = view.findViewById(R.id.player_info)
+    private val tracksButton: View = view.findViewById(R.id.player_tracks)
+    private val nextButton: View = view.findViewById(R.id.player_next_episode)
+    private val castStatus: View = activity.findViewById(R.id.player_cast_status)
     private val timeBar: DefaultTimeBar = view.findViewById(androidx.media3.ui.R.id.exo_progress)
     private val previewView: ImageView = view.findViewById(R.id.player_trickplay)
     /** the trickplay preview follows the scrub (declared before init, which registers it) */
@@ -159,26 +246,27 @@ class PlayerControls(
     fun openMore() {
         if (host.inPip()) return
         Players.still.noteInteraction()
-        val casting = host.casting()
+        val bar = state()
         val state = MoreState(
             speed = speed,
-            showSpeed = !casting,
-            bookmarks = !host.offline() && host.bookmarks() != null,
-            qualities = if (host.offline() || casting) null else host.qualities(),
+            showSpeed = bar.speed,
+            bookmarks = bar.bookmarks && host.bookmarks() != null,
+            qualities = if (bar.quality) host.qualities() else null,
             quality = host.quality(),
             sleepMinutes = sleepMinutes,
             sleepAfterEpisode = sleep.afterEpisode,
             sleepLeftMs = sleep.remainingMs(),
-            canLock = !casting,
-            canPip = !casting && host.pipSupported(),
-            cast = if (cast.show) cast.casting else null,
+            canLock = bar.lock,
+            canPip = bar.pip,
+            cast = bar.castRow,
         )
         panel.show(activity.getString(R.string.player_more), MorePanel.build(activity, state, moreActions))
     }
 
     fun openTracks() {
-        if (host.inPip() || host.casting()) return
-        val state = host.tracks() ?: return
+        val bar = state()
+        if (host.inPip() || !bar.tracks) return
+        val state = host.tracks()?.copy(canSearch = bar.subtitleSearch, fxDisabledReason = bar.fxDisabledReason) ?: return
         Players.still.noteInteraction()
         val a = host.tracksActions
         val actions = object : TracksActions {
@@ -188,11 +276,6 @@ class PlayerControls(
             override fun fx(mode: String) { a.fx(mode) }
         }
         panel.show(activity.getString(R.string.player_tracks), TracksPanel.build(activity, state, actions))
-    }
-
-    /** the bar's Episodes button (an episode of a series, streamed: [EpisodesPanel.offered]) */
-    fun showEpisodesButton(show: Boolean) {
-        episodesButton.visibility = if (show) View.VISIBLE else View.GONE
     }
 
     /** *Episodes*: a tap on another episode plays it through [Host.playItem] (on the TV while casting); the playing one only closes. */
@@ -241,9 +324,10 @@ class PlayerControls(
         panel.show(activity.getString(R.string.player_bookmarks), content)
     }
 
-    /** the top bar's Cast & info button: streamed titles only (never a download) */
+    /** the title on show's extras are known ([loadTitleExtras]): Cast & info shows for a streamed title (never a download) */
     fun showInfoButton(show: Boolean) {
-        infoButton.visibility = if (show && !host.offline()) View.VISIBLE else View.GONE
+        extrasLoaded = show
+        updateBar()
     }
 
     /** *Cast & info*: the title on show (the TV's while casting); a title tapped in it is opened in the app's web UI */
@@ -378,7 +462,7 @@ class PlayerControls(
     /** the Scenes button shows only with chapters (never for a download) */
     fun setChapters(list: List<Chapter>) {
         chapters = list
-        scenesButton.visibility = if (list.isNotEmpty() && !host.offline()) View.VISIBLE else View.GONE
+        updateBar()
         updateMarks()
     }
 
@@ -399,7 +483,7 @@ class PlayerControls(
         extrasPanel = null
         extrasJob?.cancel()
         extrasJob = null
-        infoButton.visibility = View.GONE
+        extrasLoaded = false
         setTrickplay(null)
         bookmarks = emptyList()
         setChapters(emptyList())
@@ -526,15 +610,38 @@ class PlayerControls(
         panel.close()
         unlock(announce = false)
         if (speed != 1f) setSpeed(1f)
+        updateBar()
         view.showController()
     }
 
-    // ---- Chromecast ----
+    // ---- the bar's rule ----
 
+    /** the Cast framework's side (attached, casting offered, devices around); the bar follows */
     fun updateCast(ui: CastUi) {
         cast = ui
-        castButton.visibility = if (ui.show) View.VISIBLE else View.GONE
+        updateBar()
     }
+
+    /** what the bar offers now ([barState] of the activity's facts and the controls' own) */
+    fun state(): BarState = barState(host.bar().copy(cast = cast, chapters = chapters.isNotEmpty(), extras = extrasLoaded))
+
+    /**
+     * The one place the bar's buttons are shown or hidden: the activity calls it whenever offline / casting / the title's data
+     * change (start, a stream attached, a cast started or ended, a title switch); open panels read the same [state].
+     */
+    fun updateBar() {
+        val s = state()
+        show(tracksButton, s.tracks)
+        show(nextButton, s.next)
+        show(episodesButton, s.episodes)
+        show(scenesButton, s.scenes)
+        show(infoButton, s.info)
+        show(castButton, s.castButton)
+        show(castStatus, s.castStatus)
+        chip.show(s.chip)
+    }
+
+    private fun show(v: View, on: Boolean) { v.visibility = if (on) View.VISIBLE else View.GONE }
 
     fun release() {
         handler.removeCallbacksAndMessages(null)

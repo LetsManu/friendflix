@@ -211,18 +211,22 @@ class EpisodesPanelTest {
     /** the player screen's side as PlayerActivity has it: a pick goes through [TitleSwitch], which owns the per-title reset */
     private class Host(val local: Player, val source: () -> EpisodesSource?) : PlayerControls.Host {
         val played = mutableListOf<String>()
+        val onTv = mutableListOf<String>()
+        var casting = false
+        /** the title on show is an episode of a series (the activity's EpisodesPanel.offered) */
+        var offered = true
         lateinit var controls: PlayerControls
         private val switch = TitleSwitch(object : TitleSwitch.Steps {
             override fun newTitle() = controls.newTitle()
-            override fun casting() = false
-            override fun playOnTv(id: String) {}
+            override fun casting() = casting
+            override fun playOnTv(id: String) { onTv += id }
             override fun cancelLoad() {}
             override fun resetLocal() {}
             override fun startOnline(id: String) { played += id }
         })
         var pip = false
         override fun active(): Player = local
-        override fun casting() = false
+        override fun casting() = casting
         override fun offline() = false
         override fun inPip() = pip
         override fun flash(text: String, ms: Long) {}
@@ -239,7 +243,7 @@ class EpisodesPanelTest {
         override fun qualities(): List<Pair<String, Long>>? = null
         override fun quality() = 0L
         override fun changeQuality(bps: Long) {}
-        override fun episodes() = source()
+        override fun episodes() = if (offered) source() else null
         override fun playItem(id: String) = switch.play(id)
     }
 
@@ -253,7 +257,7 @@ class EpisodesPanelTest {
             val host = Host(player) { EpisodesSource(api, images, "ser", 1, "e11") }
             val controls = PlayerControls(activity, view, player, host)
             host.controls = controls
-            controls.showEpisodesButton(true)
+            controls.updateBar()
             assertEquals(View.VISIBLE, view.findViewById<View>(R.id.player_episodes).visibility)
             controls.setSpeed(1.5f)
             controls.sleep.setAfterEpisode()
@@ -273,11 +277,37 @@ class EpisodesPanelTest {
             assertEquals(listOf("e12"), host.played)
             assertEquals(1f, player.playbackParameters.speed)
             assertFalse(controls.sleep.afterEpisode) // "after this episode" was meant for the one left
-            controls.showEpisodesButton(false)
+            host.offered = false
+            controls.updateBar()
             assertEquals(View.GONE, view.findViewById<View>(R.id.player_episodes).visibility)
             host.pip = true
             controls.openEpisodes()
             assertFalse(controls.panel.isOpen)
+        } finally {
+            player.release()
+        }
+    }
+
+    @Test fun aPickWhileCastingStartsTheTv() {
+        routes["GET /api/items/ser/seasons"] = 200 to twoSeasons
+        routes["GET /api/items/ser/episodes?seasonId=s1"] = 200 to eps(ep("e11", 1, 1, "Pilot"), ep("e12", 1, 2, "Next"))
+        val view = activity.findViewById<PlayerView>(R.id.player_view)
+        val player = ExoPlayer.Builder(activity).build()
+        try {
+            view.player = player
+            val host = Host(player) { EpisodesSource(api, images, "ser", 1, "e11") }
+            host.casting = true
+            val controls = PlayerControls(activity, view, player, host)
+            host.controls = controls
+            controls.updateBar()
+            val button = view.findViewById<View>(R.id.player_episodes)
+            assertEquals(View.VISIBLE, button.visibility) // Episodes stays while casting
+            button.performClick()
+            val content = activity.findViewById<View>(R.id.player_panel_content)
+            await { content.findViewById<ViewGroup>(R.id.episodes_list)?.childCount == 2 }
+            content.findViewById<ViewGroup>(R.id.episodes_list).getChildAt(1).performClick()
+            assertEquals(listOf("e12"), host.onTv) // on the TV, never locally
+            assertEquals(emptyList<String>(), host.played)
         } finally {
             player.release()
         }

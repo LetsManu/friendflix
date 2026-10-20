@@ -16,6 +16,8 @@ val QUALITIES = listOf("1080p" to 8_000_000L, "720p" to 4_000_000L, "480p" to 1_
 class QualityChip(private val view: TextView, private val show: (String) -> Unit) {
     private var direct = false
     private var reason: String? = null
+    /** a stream's quality was bound: the chip has something to say */
+    private var bound = false
 
     init {
         view.setOnClickListener {
@@ -23,14 +25,20 @@ class QualityChip(private val view: TextView, private val show: (String) -> Unit
         }
     }
 
-    /** [maxBitrate] = the stream's bit rate (its rung is shown); [reason] = the server's `transcodeReason`. */
+    /**
+     * [maxBitrate] = the stream's bit rate (its rung is shown); [reason] = the server's `transcodeReason`. Whether it shows is the
+     * bar's rule ([show], from [PlayerControls.updateBar]).
+     */
     fun bind(direct: Boolean, maxBitrate: Long, reason: String?) {
         this.direct = direct
         this.reason = reason
+        bound = true
         view.text = if (direct) view.context.getString(R.string.player_quality_original) else view.context.getString(R.string.player_chip_converted, rungLabel(maxBitrate))
         view.contentDescription = view.context.getString(R.string.player_chip_label) + ": " + view.text
-        view.visibility = View.VISIBLE
     }
+
+    /** shown when the bar offers it ([BarState.chip]) and a stream was bound */
+    fun show(on: Boolean) { view.visibility = if (on && bound) View.VISIBLE else View.GONE }
 
     fun hide() { view.visibility = View.GONE }
 

@@ -63,6 +63,9 @@ class PlayerControlsTest {
         var quality = 0L
         val qualityChanges = mutableListOf<Long>()
         var tracksState: TracksState? = null
+        /** the activity's facts for the bar; null = derived from the fake's other answers (the interface default) */
+        var facts: BarFacts? = null
+        override fun bar(): BarFacts = facts ?: super.bar()
         override fun active(): Player = local
         override fun casting() = casting
         override fun offline() = offline
@@ -163,26 +166,27 @@ class PlayerControlsTest {
     // ---- Chromecast ----
 
     @Test fun moreShowsPlayOnTvOnlyWithCastDevices() {
-        controls.updateCast(CastUi(ready = true, enabled = true, devices = false, casting = false, offline = false))
+        controls.updateCast(CastUi(ready = true, enabled = true, devices = false))
         controls.openMore()
         assertNull(panelView(R.id.more_cast))
         controls.panel.close()
 
-        controls.updateCast(CastUi(ready = true, enabled = true, devices = true, casting = false, offline = false))
+        controls.updateCast(CastUi(ready = true, enabled = true, devices = true))
         controls.openMore()
         val row = panelView<View>(R.id.more_cast)
         assertNotNull(row)
         assertTrue(texts(row!!).contains(activity.getString(R.string.player_cast)))
         controls.panel.close()
 
-        controls.updateCast(CastUi(ready = true, enabled = true, devices = false, casting = true, offline = false))
+        host.casting = true
+        controls.updateCast(CastUi(ready = true, enabled = true, devices = false))
         controls.openMore()
         assertTrue(texts(panelView<View>(R.id.more_cast)!!).contains(activity.getString(R.string.player_cast_playing)))
     }
 
     @Test fun chromecastButtonStaysFirstOnTheRightOfTheTopBar() {
         val cast = view.findViewById<View>(R.id.player_cast)
-        controls.updateCast(CastUi(ready = true, enabled = true, devices = true, casting = false, offline = false))
+        controls.updateCast(CastUi(ready = true, enabled = true, devices = true))
         assertEquals(View.VISIBLE, cast.visibility)
         val bar = view.findViewById<ViewGroup>(R.id.player_top_bar)
         val order = (0 until bar.childCount).map { bar.getChildAt(it).id }
@@ -190,11 +194,14 @@ class PlayerControlsTest {
             listOf(R.id.player_quality_chip, R.id.player_cast, R.id.player_info, R.id.player_tracks, R.id.player_more_wrap),
             order.dropWhile { it != R.id.player_quality_chip },
         )
-        controls.updateCast(CastUi(ready = true, enabled = true, devices = false, casting = false, offline = false))
+        controls.updateCast(CastUi(ready = true, enabled = true, devices = false))
         assertEquals(View.GONE, cast.visibility)
-        controls.updateCast(CastUi(ready = true, enabled = true, devices = false, casting = true, offline = false))
+        host.casting = true
+        controls.updateCast(CastUi(ready = true, enabled = true, devices = false))
         assertEquals(View.VISIBLE, cast.visibility) // always while a cast runs
-        controls.updateCast(CastUi(ready = true, enabled = true, devices = true, casting = false, offline = true))
+        host.casting = false
+        host.offline = true
+        controls.updateCast(CastUi(ready = true, enabled = true, devices = true))
         assertEquals(View.GONE, cast.visibility) // never for a download
     }
 
@@ -445,6 +452,125 @@ class PlayerControlsTest {
     @Test fun tracksSearchRowOnlyWhenAllowed() {
         assertNull(TracksPanel.build(activity, tracks(audio = 1), NoTracks).findViewById(R.id.tracks_search))
         assertNotNull(TracksPanel.build(activity, tracks(audio = 1).copy(canSearch = true), NoTracks).findViewById(R.id.tracks_search))
+    }
+
+    // ---- one rule for the bar: offline and casting (barState) ----
+
+    /** everything the server and a stream could offer, on a phone with a Cast device around */
+    private val all = BarFacts(
+        loaded = true, episode = true, hasNext = true, server = true, chip = true, qualities = true, subtitleSearch = true,
+        fxSupported = true, pipSupported = true, cast = CastUi(ready = true, enabled = true, devices = true), chapters = true, extras = true,
+    )
+
+    @Test fun barStateStreamingOffersEverything() {
+        val s = barState(all)
+        assertTrue(s.tracks && s.next && s.episodes && s.scenes && s.info && s.chip && s.castButton)
+        assertTrue(s.speed && s.quality && s.bookmarks && s.lock && s.pip && s.subtitleSearch)
+        assertEquals(false, s.castRow) // Play on TV
+        assertFalse(s.castStatus)
+        assertNull(s.fxDisabledReason)
+    }
+
+    @Test fun barStateOfflineHidesWhatNeedsTheServer() {
+        val s = barState(all.copy(offline = true))
+        assertFalse(s.episodes); assertFalse(s.scenes); assertFalse(s.info); assertFalse(s.bookmarks); assertFalse(s.subtitleSearch)
+        assertFalse(s.quality); assertFalse(s.chip); assertFalse(s.next)
+        assertFalse(s.castButton); assertNull(s.castRow) // never for a download
+        // what works without the server stays
+        assertTrue(s.tracks && s.speed && s.lock && s.pip)
+        assertNull(s.fxDisabledReason) // the last known sound mode (R2)
+    }
+
+    @Test fun barStateCastingKeepsTheTvControlsAndDropsTheLocalOnes() {
+        val s = barState(all.copy(casting = true))
+        // not offered while casting (spec 4a)
+        assertFalse(s.speed); assertFalse(s.quality); assertFalse(s.subtitleSearch); assertFalse(s.tracks); assertFalse(s.chip)
+        assertFalse(s.lock); assertFalse(s.pip); assertFalse(s.next)
+        assertEquals(R.string.player_fx_casting, s.fxDisabledReason)
+        // they act on the TV
+        assertTrue(s.episodes && s.scenes && s.info && s.bookmarks)
+        // the Chromecast button, the Playing on TV row and the status line
+        assertTrue(s.castButton)
+        assertEquals(true, s.castRow)
+        assertTrue(s.castStatus)
+        assertTrue(barState(all.copy(casting = true, cast = CastUi(ready = true, enabled = false, devices = false))).castButton)
+    }
+
+    @Test fun barStateFxOnOldAndroidHasTheUnsupportedNote() {
+        assertEquals(R.string.player_fx_unsupported, barState(all.copy(fxSupported = false)).fxDisabledReason)
+        assertNotNull(barState(all.copy(fxSupported = false, casting = true)).fxDisabledReason)
+    }
+
+    @Test fun offlinePlaybackHidesTheServerButtonsAndKeepsSpeedSleepLock() {
+        host.offline = true
+        host.facts = all.copy(offline = true)
+        host.tracksState = tracks(audio = 1).copy(canSearch = true)
+        controls.setChapters(listOf(Chapter(0.0, "A", null), Chapter(60.0, "B", null)))
+        controls.showInfoButton(true)
+        controls.updateCast(CastUi(ready = true, enabled = true, devices = true))
+        for (id in listOf(R.id.player_episodes, R.id.player_scenes, R.id.player_info, R.id.player_cast, R.id.player_quality_chip, R.id.player_next_episode)) {
+            assertEquals(activity.resources.getResourceEntryName(id), View.GONE, view.findViewById<View>(id).visibility)
+        }
+        assertEquals(View.VISIBLE, view.findViewById<View>(R.id.player_tracks).visibility)
+        controls.openMore()
+        assertNull(panelView(R.id.more_bookmarks))
+        assertNull(panelView(R.id.more_quality))
+        assertNull(panelView(R.id.more_cast))
+        assertNotNull(panelView(R.id.more_speed))
+        assertNotNull(panelView(R.id.more_sleep))
+        assertNotNull(panelView(R.id.more_lock))
+        controls.openTracks()
+        assertNull(panelView(R.id.tracks_search)) // no subtitle search for a download
+        assertTrue(panelView<SwitchCompat>(R.id.tracks_fx_voices)!!.isEnabled)
+    }
+
+    @Test fun castingBarFollowsTheTvAndComesBackLocally() {
+        host.tracksState = tracks(audio = 2)
+        host.facts = all
+        controls.chip.bind(direct = true, maxBitrate = 0, reason = null)
+        controls.showInfoButton(true)
+        controls.updateCast(CastUi(ready = true, enabled = true, devices = true))
+        val ids = listOf(R.id.player_tracks, R.id.player_next_episode, R.id.player_quality_chip, R.id.player_episodes, R.id.player_info, R.id.player_cast)
+        assertEquals(ids.map { View.VISIBLE }, ids.map { view.findViewById<View>(it).visibility })
+        assertEquals(View.GONE, activity.findViewById<View>(R.id.player_cast_status).visibility)
+
+        host.casting = true
+        host.facts = all.copy(casting = true)
+        controls.onCasting()
+        fun vis(id: Int) = view.findViewById<View>(id).visibility
+        assertEquals(View.GONE, vis(R.id.player_tracks)) // audio, subtitles, search, sound: not while casting
+        assertEquals(View.GONE, vis(R.id.player_next_episode)) // the TV's queue moves on by itself
+        assertEquals(View.GONE, vis(R.id.player_quality_chip)) // no quality answer for the TV's stream
+        assertEquals(View.VISIBLE, vis(R.id.player_episodes)) // a pick plays on the TV
+        assertEquals(View.VISIBLE, vis(R.id.player_info)) // the TV's title
+        assertEquals(View.VISIBLE, vis(R.id.player_cast)) // first on the right
+        assertEquals(View.VISIBLE, activity.findViewById<View>(R.id.player_cast_status).visibility)
+        controls.openTracks()
+        assertFalse(controls.panel.isOpen)
+        controls.openMore()
+        assertNull(panelView(R.id.more_speed))
+        assertNull(panelView(R.id.more_quality))
+        assertNull(panelView(R.id.more_lock))
+        assertNull(panelView(R.id.more_pip))
+        assertNotNull(panelView(R.id.more_sleep))
+        assertTrue(texts(panelView<View>(R.id.more_cast)!!).contains(activity.getString(R.string.player_cast_playing)))
+        controls.panel.close()
+
+        host.casting = false
+        host.facts = all
+        controls.updateBar()
+        assertEquals(ids.map { View.VISIBLE }, ids.map { view.findViewById<View>(it).visibility })
+        assertEquals(View.GONE, activity.findViewById<View>(R.id.player_cast_status).visibility)
+    }
+
+    @Test fun chipShowsOnlyOnceTheStreamIsKnown() {
+        host.facts = all.copy(chip = false)
+        controls.updateBar()
+        assertEquals(View.GONE, view.findViewById<View>(R.id.player_quality_chip).visibility)
+        controls.chip.bind(direct = false, maxBitrate = 4_000_000L, reason = "network")
+        host.facts = all
+        controls.updateBar()
+        assertEquals(View.VISIBLE, view.findViewById<View>(R.id.player_quality_chip).visibility)
     }
 
     // ---- helpers ----
