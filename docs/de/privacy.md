@@ -35,9 +35,9 @@ Nichts davon landet in Android-Cloud-Backups oder in der Übertragung auf ein ne
 
 ## Daten löschen
 
-- **Einstellungen → Von diesem Gerät abmelden** löscht alle Downloads, ihre Schlüssel, Cookies und gespeicherten Webdaten auf dem Handy.
+- **Einstellungen → Auf diesem Gerät abmelden** löscht alle Downloads, ihre Schlüssel, Cookies und gespeicherten Webdaten auf dem Handy.
 - Beim Deinstallieren wird alles gelöscht, was die App auf dem Handy gespeichert hat.
-- Dein Konto auf dem Server und die dort gespeicherten Daten löscht, wer den Server betreibt. Frag dort nach.
+- Dein Konto auf dem Server und die dort gespeicherten Daten: selbst löschen unter **Mein Bereich → Konto → Konto löschen** oder den Betreiber des Servers bitten. Ablauf und was bleibt: [account-deletion.md](account-deletion.md).
 
 ## Kinder
 
