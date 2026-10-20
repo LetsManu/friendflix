@@ -92,6 +92,13 @@ describe('native bridge', () => {
     installFake(() => ({ ok: true, result: [good, { licenseId: 5 }, null, 'x'] }));
     await expect(native.downloads()).resolves.toEqual([good]);
   });
+  it('keeps the title and a well-formed profile id of an entry', async () => {
+    const base = { licenseId: 'L', itemId: 'i', state: 'done', progress: 1, bytes: 1, expiresAt: 1 };
+    installFake(() => ({ ok: true, result: [{ ...base, title: 'Alpha', profileId: 'p-1' }, { ...base, licenseId: 'M', title: 5, profileId: '../x' }] }));
+    const list = await native.downloads();
+    expect(list?.[0]).toMatchObject({ title: 'Alpha', profileId: 'p-1' });
+    expect(list?.[1] && ('title' in list[1] || 'profileId' in list[1])).toBe(false);
+  });
   it('keeps a known error code of an entry and drops unknown ones', async () => {
     const base = { licenseId: 'L', itemId: 'i', state: 'error', progress: 0, bytes: 0, expiresAt: 0 };
     installFake(() => ({ ok: true, result: [{ ...base, error: 'noSpace' }, { ...base, licenseId: 'M', error: 'boom' }] }));

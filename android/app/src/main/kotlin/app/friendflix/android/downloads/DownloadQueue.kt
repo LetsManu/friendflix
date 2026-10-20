@@ -99,9 +99,9 @@ class DownloadQueue(private val d: Downloads) : DownloadSink {
     fun redownload(licenseId: String) {
         val rec = d.store.get(licenseId) ?: return
         d.workManager.cancelUniqueWork(workName(licenseId))
-        deleteFiles(rec)
         d.store.update(licenseId) { it.copy(state = DownloadState.QUEUED, bytes = 0, etag = null, subtitles = emptyList(), error = null) }
-        launch { schedule(licenseId, ExistingWorkPolicy.REPLACE) }
+        // callable from the UI thread (the player): the files go on the queue's scope, before the new job is planned
+        launch { deleteFiles(rec); schedule(licenseId, ExistingWorkPolicy.REPLACE) }
     }
 
     /** Re-plans every unfinished job (e.g. after the Wi-Fi-only setting changed); a running transfer resumes by Range. */
@@ -264,7 +264,10 @@ class DownloadQueue(private val d: Downloads) : DownloadSink {
                 r.total > 0 -> (r.bytes.toDouble() / r.total).coerceIn(0.0, 1.0)
                 else -> 0.0
             }
-            DownloadEntry(r.licenseId, r.itemId, state, progress, r.bytes, r.expiresAt, if (r.state == DownloadState.ERROR) r.error else null)
+            DownloadEntry(
+                r.licenseId, r.itemId, state, progress, r.bytes, r.expiresAt, if (r.state == DownloadState.ERROR) r.error else null,
+                title = r.title, profileId = r.profileId,
+            )
         }
     }
 

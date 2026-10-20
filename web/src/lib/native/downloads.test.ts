@@ -10,7 +10,7 @@ const h = vi.hoisted(() => ({
 vi.mock('#lib/offline/manager', () => ({ createLicenses: h.create, adoptLicenses: h.adopt, discardLicense: h.discard }));
 vi.mock('./bridge', () => ({ native: { download: h.download, downloads: h.list }, refreshNativeDownloads: h.refresh }));
 
-import { startNativeDownload, toView, viewForNative } from './downloads';
+import { nativeList, startNativeDownload, toView, viewForNative } from './downloads';
 
 const req = { itemId: 'i-1', quality: 'hd' as const, subLangs: [] };
 beforeEach(() => {
@@ -97,5 +97,20 @@ describe('views', () => {
     ]);
     expect(viewForNative(m, 'i')?.id).toBe('B');
     expect(viewForNative(m, 'other')).toBeUndefined();
+  });
+  it('lists the active profile\'s app downloads for the downloads page, expired ones included, with the server\'s series details', () => {
+    const m = new Map([
+      ['A', { licenseId: 'A', itemId: 'i1', state: 'expired', progress: 1, bytes: 1, expiresAt: 0, title: 'Old', profileId: 'p-1' } as const],
+      ['B', { licenseId: 'B', itemId: 'i2', state: 'done', progress: 1, bytes: 1, expiresAt: 0, title: 'Pilot', profileId: 'p-1' } as const],
+      ['C', { licenseId: 'C', itemId: 'i3', state: 'done', progress: 1, bytes: 1, expiresAt: 0, title: 'Other', profileId: 'p-2' } as const],
+      ['D', { licenseId: 'D', itemId: 'i4', state: 'queued', progress: 0, bytes: 0, expiresAt: 0 } as const],
+    ]);
+    const meta = new Map([['B', { title: 'Pilot', seriesName: 'Show', season: 1, episode: 2 }], ['D', { title: 'Later', seriesName: null, season: null, episode: null }]]);
+    const list = nativeList(m, 'p-1', meta);
+    expect(list.map((v) => v.id)).toEqual(['A', 'B', 'D']);
+    expect(list[0]).toMatchObject({ state: 'expired', title: 'Old' });
+    expect(list[1]).toMatchObject({ seriesName: 'Show', s: 1, e: 2, title: 'Pilot' });
+    expect(list[2]!.title).toBe('Later');
+    expect(nativeList(m, undefined).map((v) => v.id)).toEqual(['A', 'B', 'C', 'D']);
   });
 });

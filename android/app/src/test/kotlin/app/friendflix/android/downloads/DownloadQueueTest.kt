@@ -121,6 +121,7 @@ class DownloadQueueTest {
         val f = env.complete()
         env.add(env.record(state = DownloadState.DONE, etag = env.fake.etag))
         queue.redownload(LIC)
+        runBlocking { queue.awaitScheduled() }
         assertFalse(f.exists())
         assertEquals(DownloadState.QUEUED, env.store.get(LIC)!!.state)
         assertNull(env.store.get(LIC)!!.etag)

@@ -9,12 +9,34 @@ import { native, refreshNativeDownloads, type NativeDownload } from './bridge';
 export function toView(d: NativeDownload): DlView {
   const total = d.progress > 0 ? Math.round(d.bytes / Math.min(1, d.progress)) : 0;
   return {
-    id: d.licenseId, itemId: d.itemId, profileId: '', profileName: '', title: '', quality: 'hd',
+    id: d.licenseId, itemId: d.itemId, profileId: d.profileId ?? '', profileName: '', title: d.title ?? '', quality: 'hd',
     bytesTotal: d.state === 'done' ? d.bytes : total, bytesHave: d.bytes, etag: '', state: d.state, subs: [],
     expiresAt: d.expiresAt, validUntil: d.expiresAt, positionSec: 0, updatedAt: 0,
     prep: d.state === 'preparing' ? Math.round(Math.min(1, d.progress) * 100) : undefined,
     msg: d.error ? tr(`account.downloads.msg.${d.error}`) : undefined,
   } as DlView;
+}
+
+/** What the server knows of a licence that the app does not (series, season, episode); from GET /api/downloads, best effort. */
+export type LicenseMeta = Pick<ServerLicense, 'title' | 'seriesName' | 'season' | 'episode'>;
+
+/**
+ * The app's downloads for the downloads page: the active profile's (rows without a known profile too), expired ones included so they
+ * can be removed, with the server's series details where it still lists the licence.
+ */
+export function nativeList(m: Map<string, NativeDownload>, profileId: string | undefined, meta: Map<string, LicenseMeta> = new Map()): DlView[] {
+  const out: DlView[] = [];
+  for (const d of m.values()) {
+    if (profileId && d.profileId && d.profileId !== profileId) continue;
+    const v = toView(d);
+    const l = meta.get(d.licenseId);
+    if (l) {
+      if (!v.title) v.title = l.title;
+      if (l.seriesName) { v.seriesName = l.seriesName; v.s = l.season ?? undefined; v.e = l.episode ?? undefined; v.title = l.title || v.title; }
+    }
+    out.push(v);
+  }
+  return out;
 }
 
 export const viewForNative = (m: Map<string, NativeDownload>, itemId: string): DlView | undefined => {

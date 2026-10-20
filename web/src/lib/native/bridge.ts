@@ -27,7 +27,11 @@ export interface NativeDownloadRequest { licenseId: string; itemId: string; prof
 export type NativeDownloadState = 'queued' | 'preparing' | 'downloading' | 'paused' | 'done' | 'error' | 'expired';
 /** why an app download stopped with state 'error' (codes of existing `account.downloads.msg.*` texts) */
 export type NativeDownloadError = 'noSpace' | 'io' | 'prepFailed';
-export interface NativeDownload { licenseId: string; itemId: string; state: NativeDownloadState; progress: number; bytes: number; expiresAt: number; error?: NativeDownloadError }
+export interface NativeDownload {
+  licenseId: string; itemId: string; state: NativeDownloadState; progress: number; bytes: number; expiresAt: number; error?: NativeDownloadError;
+  /** the licence's title as the app stored it ('' until known) and the profile that started it ('' = unknown); both optional in the protocol */
+  title?: string; profileId?: string;
+}
 const ERRORS = new Set<string>(['noSpace', 'io', 'prepFailed']);
 export interface NativeEvent { event: string; detail: unknown }
 
@@ -84,7 +88,9 @@ const asEntry = (x: unknown): NativeDownload | null => {
   if (typeof o.licenseId !== 'string' || typeof o.itemId !== 'string' || typeof o.state !== 'string' || !STATES.has(o.state)) return null;
   const n = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? v : 0);
   const error = typeof o.error === 'string' && ERRORS.has(o.error) ? { error: o.error as NativeDownloadError } : {};
-  return { licenseId: o.licenseId, itemId: o.itemId, state: o.state as NativeDownloadState, progress: n(o.progress), bytes: n(o.bytes), expiresAt: n(o.expiresAt), ...error };
+  const title = typeof o.title === 'string' && o.title.length <= 500 ? { title: o.title } : {};
+  const profileId = typeof o.profileId === 'string' && /^[A-Za-z0-9-]{1,64}$/.test(o.profileId) ? { profileId: o.profileId } : {};
+  return { licenseId: o.licenseId, itemId: o.itemId, state: o.state as NativeDownloadState, progress: n(o.progress), bytes: n(o.bytes), expiresAt: n(o.expiresAt), ...error, ...title, ...profileId };
 };
 
 /** downloads the app holds, by licence id (kept current by `refreshNativeDownloads` and the app's events) */

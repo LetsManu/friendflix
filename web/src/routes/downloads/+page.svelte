@@ -4,28 +4,47 @@
   import { onMount } from 'svelte';
   import { api, type Me } from '#lib/api';
   import Icon from '#lib/Icon.svelte';
-  import { downloads, initManager, getSupport, pause, progressPct, refreshStorage, removeDownload, resume, stateLabel, storageInfo, checkIn, type DlView } from '#lib/offline/manager';
+  import { downloads, initManager, getSupport, pause, progressPct, refreshStorage, removeDownload, resume, stateLabel, storageInfo, checkIn, type DlView, type ServerLicense } from '#lib/offline/manager';
   import { SUPPORT_HINT, isIos, persist, type Support } from '#lib/offline/opfs';
   import { daysLeft } from '#lib/offline/license';
   import { fmtBytes } from '#lib/offline/size';
   import { intlLocale, t, tr } from '#lib/i18n';
+  import { goto } from '$app/navigation';
+  import { native, nativeDownloads, refreshNativeDownloads } from '#lib/native/bridge';
+  import { nativeCaps, tryNativePlay } from '#lib/native/play';
+  import { nativeList, type LicenseMeta } from '#lib/native/downloads';
+  import { allowWebWatchOnce } from '#lib/native/watch';
 
   let support: Support = { ok: false };
   let me: Me | null = null, ready = false;
   let quality = 'hd', persistMsg = '', ios = false;
+  /** inside the Android app with native downloads: the list is the app's (it holds the files), not this browser's */
+  let nativeMode = false;
+  /** series details of the app's licences, from the server (the app knows only the title) */
+  let meta = new Map<string, LicenseMeta>();
 
   onMount(async () => {
+    try { quality = localStorage.getItem('ff_dl_quality') ?? 'hd'; } catch { /* ignore */ }
+    if (native.available && (await nativeCaps()).download) {
+      nativeMode = true;
+      me = await api<Me>('/api/me').catch(() => null);
+      if (me?.downloads?.allowed) {
+        await refreshNativeDownloads();
+        void api<{ downloads: ServerLicense[] }>('/api/downloads').then((r) => { meta = new Map(r.downloads.map((l) => [l.id, l])); }).catch(() => undefined);
+      }
+      ready = true;
+      return;
+    }
     support = await getSupport();
     ios = isIos();
     me = await api<Me>('/api/me').catch(() => null);
-    try { quality = localStorage.getItem('ff_dl_quality') ?? 'hd'; } catch { /* ignore */ }
     if (support.ok) { await initManager(); void refreshStorage(); void checkIn(); }
     ready = true;
   });
   function setQuality(q: string) { quality = q; try { localStorage.setItem('ff_dl_quality', q); } catch { /* ignore */ } }
   async function askPersist() { persistMsg = (await persist()) ? tr('account.downloads.persisted') : tr('account.downloads.persistDenied'); void refreshStorage(); }
 
-  $: list = [...$downloads.values()].filter((v) => v.profileId === (me?.profile?.id ?? v.profileId));
+  $: list = nativeMode ? nativeList($nativeDownloads, me?.profile?.id, meta) : [...$downloads.values()].filter((v) => v.profileId === (me?.profile?.id ?? v.profileId));
   $: groups = Object.values(list.reduce<Record<string, { name: string; items: DlView[] }>>((acc, v) => {
     const k = v.seriesName ?? '\u0000Filme';
     (acc[k] ??= { name: v.seriesName ?? tr('account.downloads.movies'), items: [] }).items.push(v);
@@ -35,16 +54,36 @@
   $: used = list.reduce((n, v) => n + v.bytesHave, 0);
   $: total = $storageInfo.quota;
   $: barPct = total ? Math.min(100, (used / total) * 100) : 0;
-  const label = (v: DlView) => (v.seriesName ? `S${v.s ?? '?'}:E${v.e ?? '?'} · ${v.title}` : v.title);
+  const label = (v: DlView) => (v.seriesName ? `S${v.s ?? '?'}:E${v.e ?? '?'} · ${v.title}` : v.title || '…');
+  const finished = (v: DlView) => v.state === 'done' || v.state === 'expired';
   const busy = (v: DlView) => v.state === 'queued' || v.state === 'preparing' || v.state === 'downloading';
   let confirmAll = false;
-  async function wipe() { confirmAll = false; await Promise.all(list.map((v) => removeDownload(v.id))); }
+  /** the app's downloads are removed by the app (an expired one too); the browser's by the page's own downloader */
+  async function remove(id: string) {
+    if (!nativeMode) return removeDownload(id);
+    await native.deleteDownload(id);
+    await refreshNativeDownloads();
+  }
+  async function wipe() { confirmAll = false; await Promise.all(list.map((v) => remove(v.id))); }
+  /** the app's player plays it; a "no" opens the web player once */
+  let starting = false;
+  async function playNative(v: DlView) {
+    if (starting) return;
+    starting = true;
+    const where = location.href;
+    try {
+      if (!(await tryNativePlay({ id: v.itemId })) && location.href === where) {
+        allowWebWatchOnce(`/watch/${v.itemId}`);
+        await goto(`/watch/${v.itemId}`);
+      }
+    } finally { starting = false; }
+  }
 </script>
 
 <svelte:head><title>{$t('common.pageTitle', { page: $t('account.downloads.pageTitle') })}</title></svelte:head>
 <h1>{$t('account.downloads.title')}</h1>
 {#if !ready}<div class="skeleton" style="height:10rem"></div>
-{:else if !support.ok}
+{:else if !nativeMode && !support.ok}
   <p class="muted">{SUPPORT_HINT[support.reason ?? 'no-opfs']}</p>
 {:else if me && !me.downloads?.allowed}
   <p class="muted">{$t('account.downloads.notAllowed')}</p>
@@ -64,6 +103,17 @@
       <a class="btn light find" href="/browse/movies">{$t('account.downloads.emptyFind')}</a>
     </div>
   {/if}
+ {#if nativeMode}
+  <section class="panel store">
+    <div class="flex">
+      <label>{$t('account.downloads.defaultQuality')}
+        <select value={quality} on:change={(e) => setQuality(e.currentTarget.value)}>
+          <option value="sd">{$t('account.downloads.qualities.sd')}</option><option value="hd">{$t('account.downloads.qualities.hd')}</option><option value="fhd">{$t('account.downloads.qualities.fhd')}</option><option value="original">{$t('account.downloads.qualities.original')}</option>
+        </select>
+      </label>
+    </div>
+  </section>
+ {:else}
   <section class="panel store">
     <div class="bar" role="progressbar" aria-label={$t('account.downloads.storageAria')} aria-valuenow={Math.round(barPct)} aria-valuemin="0" aria-valuemax="100"><i style="width:{barPct}%"></i></div>
     <p>{$t('account.downloads.storageUsed', { used: fmtBytes(used), total: fmtBytes(total) })}{#if me?.downloads?.max}{$t('account.downloads.maxDownloads', { n: me.downloads.max })}{/if}</p>
@@ -79,6 +129,7 @@
     <p class="muted small">{$t('account.downloads.note')}</p>
     {#if ios}<p class="muted small ios-note">{$t('account.downloads.iosKeepOpen')}</p>{/if}
   </section>
+ {/if}
 
   {#if list.length}
     {#each groups as g (g.name)}
@@ -92,10 +143,11 @@
               {#if busy(v) || v.state === 'paused'}<div class="bar slim" role="progressbar" aria-label={$t('account.downloads.progress')} aria-valuenow={v.state === 'preparing' ? v.prep ?? 0 : progressPct(v)} aria-valuemin="0" aria-valuemax="100"><i style="width:{v.state === 'preparing' ? v.prep ?? 0 : progressPct(v)}%"></i></div>{/if}
             </div>
             <div class="acts">
-              {#if v.state === 'done'}<a class="btn" href="/offline?play={v.id}"><Icon name="play" size={18} />{$t('account.downloads.play')}</a>{/if}
-              {#if v.state === 'downloading'}<button class="sec" on:click={() => pause(v.id)}><Icon name="pause" size={18} />{$t('account.downloads.pause')}</button>{/if}
-              {#if v.state === 'paused' || v.state === 'error'}<button class="sec" on:click={() => resume(v.id)}><Icon name="play" size={18} />{$t('account.downloads.resume')}</button>{/if}
-              <button class="icon-btn" aria-label={$t('account.downloads.removeAria', { action: v.state === 'done' ? $t('account.downloads.delete') : $t('account.downloads.cancel'), title: label(v) })} title={v.state === 'done' ? $t('account.downloads.delete') : $t('account.downloads.cancel')} on:click={() => removeDownload(v.id)}><Icon name="x" size={20} /></button>
+              {#if v.state === 'done' && nativeMode}<a class="btn" href="/watch/{v.itemId}" on:click|preventDefault={() => playNative(v)}><Icon name="play" size={18} />{$t('account.downloads.play')}</a>
+              {:else if v.state === 'done'}<a class="btn" href="/offline?play={v.id}"><Icon name="play" size={18} />{$t('account.downloads.play')}</a>{/if}
+              {#if v.state === 'downloading' && !nativeMode}<button class="sec" on:click={() => pause(v.id)}><Icon name="pause" size={18} />{$t('account.downloads.pause')}</button>{/if}
+              {#if (v.state === 'paused' || v.state === 'error') && !nativeMode}<button class="sec" on:click={() => resume(v.id)}><Icon name="play" size={18} />{$t('account.downloads.resume')}</button>{/if}
+              <button class="icon-btn" aria-label={$t('account.downloads.removeAria', { action: finished(v) ? $t('account.downloads.delete') : $t('account.downloads.cancel'), title: label(v) })} title={finished(v) ? $t('account.downloads.delete') : $t('account.downloads.cancel')} on:click={() => remove(v.id)}><Icon name="x" size={20} /></button>
             </div>
           </li>
         {/each}

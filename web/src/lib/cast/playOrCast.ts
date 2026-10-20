@@ -13,6 +13,7 @@ import { get } from 'svelte/store';
 import { goto } from '$app/navigation';
 import { native } from '#lib/native/bridge';
 import { tryNativePlay } from '#lib/native/play';
+import { allowWebWatchOnce } from '#lib/native/watch';
 import { tr } from '#lib/i18n';
 import { noteInteraction } from '#lib/stillwatching';
 import { toast } from '#lib/ui/toast';
@@ -44,7 +45,7 @@ function playNatively(e: MouseEvent, item: { id: string; positionTicks?: number 
   void tryNativePlay(item, opts)
     .then((ok) => {
       // the viewer went elsewhere while the app was thinking: do not drag them to the player now
-      if (!ok && location.href === where) void goto(href);
+      if (!ok && location.href === where) { allowWebWatchOnce(href); void goto(href); }
     })
     .finally(() => { pendingPlay = false; });
   return true;

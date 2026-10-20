@@ -85,7 +85,7 @@ class NativeBridgeTest {
     }
 
     @Test fun downloadsListsEntries() {
-        downloads.entries = listOf(DownloadEntry("L-1", "i-1", "downloading", 0.5, 1234L, 1_900_000_000_000L))
+        downloads.entries = listOf(DownloadEntry("L-1", "i-1", "downloading", 0.5, 1234L, 1_900_000_000_000L, title = "Alpha", profileId = "p-1"))
         call("downloads")
         val e = reply.sent.single().getJSONArray("result").getJSONObject(0)
         assertEquals("L-1", e.getString("licenseId"))
@@ -94,6 +94,8 @@ class NativeBridgeTest {
         assertEquals(0.5, e.getDouble("progress"), 0.0)
         assertEquals(1234L, e.getLong("bytes"))
         assertEquals(1_900_000_000_000L, e.getLong("expiresAt"))
+        assertEquals("Alpha", e.getString("title"))
+        assertEquals("p-1", e.getString("profileId"))
     }
 
     @Test fun deleteDownloadGoesToTheSink() {

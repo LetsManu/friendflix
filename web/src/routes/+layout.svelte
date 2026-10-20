@@ -3,6 +3,7 @@
 <script lang="ts">
   import '../app.css';
   import { onMount, tick } from 'svelte';
+  import { get } from 'svelte/store';
   import { afterNavigate, beforeNavigate, goto, onNavigate } from '$app/navigation';
   import { pageStore } from '#lib/page';
   const page = pageStore();
@@ -13,6 +14,7 @@
   import CastBar from '#lib/cast/CastBar.svelte';
   import { barVisible } from '#lib/cast/bar';
   import { castEngine, castSession } from '#lib/cast/engine';
+  import { interceptWatch } from '#lib/native/watch';
   import { bindCastMediaSession } from '#lib/cast/mediasession';
   import { avatarBg, initial } from '#lib/avatars';
   import { cachedCalm, loadList, loadPrefs, prefs } from '#lib/stores';
@@ -240,6 +242,12 @@
   // reload, closing the tab: willUnload sends keepalive requests); a pagehide listener in lib/ui/action.ts covers the rest
   beforeNavigate(({ from, to, willUnload }) => {
     if (willUnload || from?.url.pathname !== to?.url.pathname) flushDeferred(willUnload);
+  });
+
+  // ---- Android app: a watch page reached inside the page (episode cards, history, cast bar, goto) plays in the native player ----
+  beforeNavigate((nav) => {
+    const c = get(castSession);
+    interceptWatch(nav, (u) => void goto(u.pathname + u.search), { castActive: Boolean(c && c.state !== 'failed') });
   });
 
   // ---- TV focus memory: coming back (Back key) puts the focus on the card you left, a new page focuses its first element ----

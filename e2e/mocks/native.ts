@@ -36,6 +36,8 @@ export async function fakeNativeApp(page: Page, cfg: NativeCfg = {}) {
         const req = JSON.parse(s);
         w.__nativeCalls.push(req);
         const k = w.__nativeCfg;
+        // like the app: a deleted download is gone from the next listing
+        if (req.method === 'deleteDownload') k.downloads = (k.downloads as Array<{ licenseId?: string }>).filter((d) => d.licenseId !== req.args?.licenseId);
         const result: Record<string, unknown> = {
           capabilities: { api: 1, ...k.caps }, play: k.playResult, download: k.downloadResult, downloads: k.downloads, deleteDownload: true, openSettings: true,
         };

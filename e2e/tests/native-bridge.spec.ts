@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { expect, test } from '../fixtures.js';
-import { ME, MOVIE } from '../mocks/fixtures.js';
+import { ME, MOVIE, episodes } from '../mocks/fixtures.js';
 import { mockPlayer } from '../mocks/scenes.js';
 import { APP_UA, fakeNativeApp, nativeCalls } from '../mocks/native.js';
 import type { Page } from '@playwright/test';
@@ -121,6 +121,77 @@ test.describe('in the app', () => {
     await page.goto('/settings');
     await expect(page.getByRole('heading', { level: 1 })).toBeVisible();
     await expect(page.getByRole('button', { name: 'App-Einstellungen öffnen' })).toHaveCount(0);
+  });
+});
+
+test.describe('downloads page in the app', () => {
+  test.use({ userAgent: APP_UA });
+  const app = (over: Record<string, unknown>) => ({ itemId: MOVIE.id, progress: 1, bytes: 2e9, expiresAt: Date.now() + 5 * 864e5, profileId: 'p1', ...over });
+
+  test('lists the app\'s downloads (not the browser\'s), plays through the app and removes an expired one', async ({ page, api: _api }) => {
+    await mockDownloads(page);
+    await mockPlayer(page);
+    await fakeNativeApp(page, { downloads: [
+      app({ licenseId: 'lic-1', state: 'done', title: MOVIE.name }),
+      app({ licenseId: 'lic-old', itemId: episodes[1]!.id, state: 'expired', title: 'Alter Download', expiresAt: Date.now() - 864e5 }),
+      app({ licenseId: 'lic-other', state: 'done', title: 'Anderes Profil', profileId: 'p2' }),
+    ] });
+    await page.goto('/downloads');
+    const row = (name: string) => page.locator('li.item').filter({ hasText: name });
+    await expect(row(MOVIE.name)).toContainText('Heruntergeladen');
+    await expect(row('Alter Download')).toContainText('Abgelaufen');
+    await expect(row('Anderes Profil')).toHaveCount(0); // another profile's download
+    await expect(page.getByText('Gerätespeicher', { exact: false })).toHaveCount(0); // the browser's storage is not the app's
+
+    await row(MOVIE.name).getByRole('link', { name: 'Abspielen' }).click();
+    await expect.poll(async () => (await nativeCalls(page, 'play')).length).toBe(1);
+    expect((await nativeCalls(page, 'play'))[0]!.args).toEqual({ itemId: MOVIE.id, profileId: 'p1' });
+    await expect(page).toHaveURL(/\/downloads$/);
+
+    await row('Alter Download').getByRole('button', { name: /Löschen: Alter Download/ }).click();
+    await expect.poll(async () => (await nativeCalls(page, 'deleteDownload')).map((c) => c.args)).toEqual([{ licenseId: 'lic-old' }]);
+    await expect(row('Alter Download')).toHaveCount(0);
+    await expect(row(MOVIE.name)).toHaveCount(1);
+  });
+});
+
+test.describe('watch links inside the page', () => {
+  async function favouriteEpisode(page: Page) {
+    await page.route(/\/api\/library\/items\?filter=favorites/, (r) => r.fulfill({ json: { items: [episodes[1]], total: 1 } }));
+  }
+
+  test.describe('in the app', () => {
+    test.use({ userAgent: APP_UA });
+    test('an episode card goes to the native player and the page stays', async ({ page, api: _api }) => {
+      await favouriteEpisode(page);
+      await mockPlayer(page);
+      await fakeNativeApp(page);
+      await page.goto('/favorites');
+      await page.locator(`a.thumb[href="/watch/${episodes[1]!.id}"]`).click();
+      await expect.poll(async () => (await nativeCalls(page, 'play')).length).toBe(1);
+      expect((await nativeCalls(page, 'play'))[0]!.args).toEqual({ itemId: episodes[1]!.id, profileId: 'p1' });
+      await page.waitForTimeout(300);
+      await expect(page).toHaveURL(/\/favorites$/);
+    });
+    test('declined: the web player opens, asked only once', async ({ page, api: _api }) => {
+      await favouriteEpisode(page);
+      await mockPlayer(page);
+      await fakeNativeApp(page, { playResult: false });
+      await page.goto('/favorites');
+      await page.locator(`a.thumb[href="/watch/${episodes[1]!.id}"]`).click();
+      await expect(page).toHaveURL(new RegExp('/watch/' + episodes[1]!.id));
+      expect(await nativeCalls(page, 'play')).toHaveLength(1);
+    });
+  });
+
+  test('in a browser the episode card opens the web player as before', async ({ page, api: _api }) => {
+    await favouriteEpisode(page);
+    await mockPlayer(page);
+    await fakeNativeApp(page); // the object without the app's user agent is ignored
+    await page.goto('/favorites');
+    await page.locator(`a.thumb[href="/watch/${episodes[1]!.id}"]`).click();
+    await expect(page).toHaveURL(new RegExp('/watch/' + episodes[1]!.id));
+    expect(await nativeCalls(page)).toEqual([]);
   });
 });
 

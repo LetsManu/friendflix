@@ -119,6 +119,7 @@ class NativeBridge(
     private fun entry(e: DownloadEntry) = JSONObject()
         .put("licenseId", e.licenseId).put("itemId", e.itemId).put("state", e.state)
         .put("progress", e.progress).put("bytes", e.bytes).put("expiresAt", e.expiresAt)
+        .put("title", e.title).put("profileId", e.profileId)
         .also { o -> e.error?.let { o.put("error", it) } }
 
     // ---- validation: anything unexpected is a BadRequest, never coerced ----

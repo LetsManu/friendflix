@@ -44,6 +44,10 @@ data class DownloadEntry(
     val bytes: Long,
     val expiresAt: Long,
     val error: String? = null,
+    /** the title the server gave the licence ("" until its details arrived); shown on the web UI's downloads page */
+    val title: String = "",
+    /** the profile that started the download (the web UI's downloads page lists the active profile's) */
+    val profileId: String = "",
 )
 
 /**
