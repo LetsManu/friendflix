@@ -61,7 +61,7 @@ Du öffnest sie in der Weboberfläche unter **Einstellungen → App auf diesem G
 | Ton im Hintergrund | Standardmäßig aus. Ist es an, läuft der Ton bei ausgeschaltetem Bildschirm oder in einer anderen App weiter, mit Steuerung in der Benachrichtigung und auf dem Sperrbildschirm. Ist es aus, pausiert die Wiedergabe (Bild-im-Bild geht trotzdem). |
 | Benachrichtigungen | Zeigt, ob die App dich benachrichtigen darf, mit **Benachrichtigungen erlauben**, wenn nicht. Vier Kategorien lassen sich ein- und ausschalten: *Neue Folgen und Titel*, *Anfragen*, *Konto und Zugang*, *Sonstiges*. |
 | Downloads auf diesem Gerät | Öffnet die Offline-Liste. |
-| Auf diesem Gerät abmelden | Nach einer Rückfrage: beendet deine Sitzung auf dem Server (wenn erreichbar), gibt die Lizenzen zurück, löscht alle Downloads auf diesem Gerät und die Schlüssel, mit denen sie verschlüsselt sind, leert die Cookies und gespeicherten Webdaten der App und vergisst, welche Benachrichtigungen du schon gesehen hast. Dein Konto, deine Profile und dein Verlauf bleiben, wie sie sind. |
+| Auf diesem Gerät abmelden | Nach einer Rückfrage: schließt einen offenen Player, beendet deine Sitzung auf dem Server (wenn erreichbar), gibt die Lizenzen zurück, löscht alle Downloads auf diesem Gerät und die Schlüssel, mit denen sie verschlüsselt sind, leert die Cookies und gespeicherten Webdaten der App und vergisst, welche Benachrichtigungen du schon gesehen hast. Dein Konto, deine Profile und dein Verlauf bleiben, wie sie sind. |
 | Version | Die App-Version (dieselbe wie das Server-Release, zu dem sie gehört). |
 
 Alles andere, etwa Wiedergabesprachen, Untertitel, Autoplay und die Standardqualität für Downloads, stellst du wie gewohnt in der Weboberfläche ein.
@@ -261,4 +261,18 @@ cd android
 ./gradlew lint testDebugUnitTest assembleDebug    # Debug-APK in app/build/outputs/apk/debug/
 ```
 
-Release-Builds (`assembleRelease`, `bundleRelease`) sind unsigniert, solange die drei Umgebungsvariablen `ANDROID_UPLOAD_*` des Release-Workflows nicht gesetzt sind. Die Version kommt aus `version.json` oben im Repository. Sicherheitshinweise zur App: [security.md, Android app](../security.md#android-app).
+Release-Builds (`assembleRelease`, `bundleRelease`) sind unsigniert, solange nicht alle drei Signatur-Umgebungsvariablen gesetzt sind (`android/app/build.gradle.kts` liest sie; der Release-Workflow setzt sie aus den Secrets):
+
+| Gradle-Umgebungsvariable | Wert |
+|---|---|
+| `ANDROID_UPLOAD_KEYSTORE_FILE` | der **Pfad** der Keystore-Datei (`.jks`), nicht base64 |
+| `ANDROID_UPLOAD_KEY_PASSWORD` | das Passwort für Keystore und Schlüssel |
+| `ANDROID_UPLOAD_KEY_ALIAS` | der Alias des Schlüssels |
+
+```sh
+read -rs ANDROID_UPLOAD_KEY_PASSWORD && export ANDROID_UPLOAD_KEY_PASSWORD   # fragt nach dem Passwort, hält es aus dem Shell-Verlauf
+ANDROID_UPLOAD_KEYSTORE_FILE=$HOME/keys/friendflix-upload.jks ANDROID_UPLOAD_KEY_ALIAS=upload \
+  ./gradlew bundleRelease assembleRelease
+```
+
+Das GitHub-Secret `ANDROID_UPLOAD_KEYSTORE` ist etwas anderes: derselbe Keystore als base64, den der Workflow in eine temporäre Datei entpackt und als `ANDROID_UPLOAD_KEYSTORE_FILE` übergibt. Die Version kommt aus `version.json` oben im Repository. Sicherheitshinweise zur App: [security.md, Android app](../security.md#android-app).

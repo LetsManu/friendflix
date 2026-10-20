@@ -81,6 +81,8 @@ class FakeServer : Dispatcher() {
     var expiresAt: Instant = Instant.now().plusSeconds(7 * 86400)
     var licenceCode = 200
     var licenceError = "not_found"
+    /** status of `DELETE /api/downloads/:id` per licence (default 200) */
+    val deleteCodes = mutableMapOf<String, Int>()
     var checkRevoked = false
     /** status of `POST /api/downloads/check` (200 = the verdict below) */
     var checkCode = 200
@@ -140,7 +142,8 @@ class FakeServer : Dispatcher() {
                     .put("revoked", JSONArray().also { a -> if (checkRevoked) all.forEach { a.put(it) } }))
             }
             path.endsWith("/fetched") -> json(200, JSONObject().put("ok", true))
-            path.startsWith("/api/downloads/") && request.method == "DELETE" -> json(200, JSONObject().put("ok", true))
+            path.startsWith("/api/downloads/") && request.method == "DELETE" ->
+                json(deleteCodes[path.removePrefix("/api/downloads/")] ?: 200, JSONObject().put("ok", true))
             path.startsWith("/api/downloads/") -> {
                 val id = path.removePrefix("/api/downloads/")
                 if (licenceCode != 200) json(licenceCode, JSONObject().put("error", licenceError)) else json(200, licenceJson(id))

@@ -77,7 +77,15 @@ class DeviceResetTest {
 
     @After fun tearDown() { env.close() }
 
-    private fun reset() = DeviceReset(env.context, offline, web = { webCleared.incrementAndGet() }, wipeKeys = { keysWiped.incrementAndGet() })
+    /** what happened, in order: "stop" (players closed, with what was still there), "web" (cookies cleared) */
+    private val timeline = java.util.concurrent.CopyOnWriteArrayList<String>()
+
+    private fun reset() = DeviceReset(
+        env.context, offline,
+        web = { webCleared.incrementAndGet(); timeline += "web after ${env.fake.requests.lastOrNull()?.url?.encodedPath}" },
+        wipeKeys = { keysWiped.incrementAndGet() },
+        stopPlayback = { timeline += "stop rows=${env.store.all().size} requests=${env.fake.requests.size}" },
+    )
 
     private fun downloadFiles(): List<String> =
         listOf(env.dir(StorageLocation.PHONE), env.dir(StorageLocation.SD)).flatMap { File(it, "downloads").listFiles().orEmpty().map(File::getName) }
@@ -113,6 +121,28 @@ class DeviceResetTest {
         assertEquals("/auth/logout", last.url.encodedPath)
         assertEquals("tok", last.headers["x-csrf-token"])
         assertEquals("ff_sid=s3cret", last.headers["cookie"])
+    }
+
+    @Test fun playersStopFirstAndTheCookieGoesAfterTheLogout() = runBlocking {
+        reset().signOut()
+        assertEquals(listOf("stop rows=2 requests=0", "web after /auth/logout"), timeline)
+    }
+
+    @Test fun aRefusedLicenceStillReturnsTheOthersAndEndsTheSession() = runBlocking {
+        env.fake.deleteCodes[LIC] = 409 // another profile is active
+        reset().signOut()
+        assertEquals(setOf("/api/downloads/$LIC", "/api/downloads/$LIC2"), env.fake.requests.filter { it.method == "DELETE" }.map { it.url.encodedPath }.toSet())
+        assertEquals("/auth/logout", env.fake.requests.last().url.encodedPath)
+        assertLocalStateGone()
+    }
+
+    @Test fun aFailingStepStillClearsTheCookies() {
+        val broken = DeviceReset(env.context, offline, web = { webCleared.incrementAndGet() }, wipeKeys = { throw IllegalStateException("keystore") }, stopPlayback = {})
+        val thrown = runCatching { runBlocking { broken.signOut() } }.exceptionOrNull()
+        assertTrue(thrown is IllegalStateException)
+        assertEquals(1, webCleared.get())
+        val poll = env.workManager.getWorkInfosForUniqueWork(NotificationScheduler.WORK_NAME).get()
+        assertTrue(poll.any { it.state == WorkInfo.State.ENQUEUED })
     }
 
     @Test fun anExpiredRowIsNotGivenBack() = runBlocking {

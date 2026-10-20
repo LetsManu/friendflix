@@ -61,7 +61,7 @@ Open them in the web UI under **Settings → App on this device → Open app set
 | Background audio | Off by default. When on, the sound keeps playing with the screen off or in another app, with controls in the notification and on the lock screen. When off, playback pauses (picture-in-picture still works). |
 | Notifications | Shows whether the app may notify you, with **Allow notifications** when it may not. Four categories can be switched on and off: *New episodes and titles*, *Requests*, *Account and access*, *Other*. |
 | Downloads on this device | Opens the offline list. |
-| Sign out of this device | After a confirmation: ends your session on the server (when reachable), gives the licences back, deletes every download on this device and the keys that encrypt them, clears the app's cookies and stored web data, and forgets which notifications you have seen. Your account, profiles and watch history stay as they are. |
+| Sign out of this device | After a confirmation: closes the player if one is open, ends your session on the server (when reachable), gives the licences back, deletes every download on this device and the keys that encrypt them, clears the app's cookies and stored web data, and forgets which notifications you have seen. Your account, profiles and watch history stay as they are. |
 | Version | The app version (the same as the server release it belongs to). |
 
 Everything else, such as playback languages, subtitles, autoplay and the default download quality, is set in the web UI as usual.
@@ -261,4 +261,18 @@ cd android
 ./gradlew lint testDebugUnitTest assembleDebug    # debug APK in app/build/outputs/apk/debug/
 ```
 
-Release builds (`assembleRelease`, `bundleRelease`) are unsigned unless the three `ANDROID_UPLOAD_*` environment variables of the release workflow are set. The version comes from `version.json` at the top of the repository. Security notes for the app: [security.md, Android app](security.md#android-app).
+Release builds (`assembleRelease`, `bundleRelease`) are unsigned unless all three signing environment variables are set (`android/app/build.gradle.kts` reads them; the release workflow sets them from the secrets):
+
+| Gradle environment variable | Value |
+|---|---|
+| `ANDROID_UPLOAD_KEYSTORE_FILE` | the **path** of the keystore file (`.jks`), not base64 |
+| `ANDROID_UPLOAD_KEY_PASSWORD` | the store and key password |
+| `ANDROID_UPLOAD_KEY_ALIAS` | the key's alias |
+
+```sh
+read -rs ANDROID_UPLOAD_KEY_PASSWORD && export ANDROID_UPLOAD_KEY_PASSWORD   # asks for the password, keeps it out of the shell history
+ANDROID_UPLOAD_KEYSTORE_FILE=$HOME/keys/friendflix-upload.jks ANDROID_UPLOAD_KEY_ALIAS=upload \
+  ./gradlew bundleRelease assembleRelease
+```
+
+The GitHub secret `ANDROID_UPLOAD_KEYSTORE` is something else: the same keystore as base64, which the workflow decodes into a temporary file and passes as `ANDROID_UPLOAD_KEYSTORE_FILE`. The version comes from `version.json` at the top of the repository. Security notes for the app: [security.md, Android app](security.md#android-app).

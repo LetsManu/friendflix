@@ -5,6 +5,7 @@ package app.friendflix.android.settings
 import android.app.AlertDialog
 import android.content.ActivityNotFoundException
 import android.content.Context
+import android.content.DialogInterface
 import android.content.Intent
 import android.os.Bundle
 import android.text.InputType
@@ -181,7 +182,7 @@ class SettingsActivity : ComponentActivity() {
             }
             .setNegativeButton(R.string.settings_move_no) { _, _ -> lifecycleScope.launch { settings.setStorage(to); renderStorage() } }
             .setOnCancelListener { lifecycleScope.launch { renderStorage() } }
-            .show()
+            .showGuarded()
     }
 
     // ---- notifications ----
@@ -223,7 +224,7 @@ class SettingsActivity : ComponentActivity() {
             .setView(input)
             .setPositiveButton(R.string.setup_connect) { _, _ -> onNewAddress(input.text.toString()) }
             .setNegativeButton(R.string.settings_cancel, null)
-            .show()
+            .showGuarded()
     }
 
     private fun onNewAddress(text: String) {
@@ -240,7 +241,7 @@ class SettingsActivity : ComponentActivity() {
             .setMessage(getString(R.string.settings_server_confirm, display(next)))
             .setPositiveButton(R.string.settings_server_confirm_yes) { _, _ -> changeServer(next) }
             .setNegativeButton(R.string.settings_cancel, null)
-            .show()
+            .showGuarded()
     }
 
     private fun changeServer(next: HttpUrl) = runBusy({ it.leaveServer() }) { app ->
@@ -257,7 +258,7 @@ class SettingsActivity : ComponentActivity() {
             .setMessage(R.string.settings_sign_out_confirm)
             .setPositiveButton(R.string.settings_sign_out_yes) { _, _ -> signOut() }
             .setNegativeButton(R.string.settings_cancel, null)
-            .show()
+            .showGuarded()
     }
 
     // a fresh shell afterwards: the web UI of the same server, now on its sign-in page
@@ -296,6 +297,13 @@ class SettingsActivity : ComponentActivity() {
     private fun setEnabled(v: View, on: Boolean) {
         v.isEnabled = on
         if (v is android.view.ViewGroup) for (i in 0 until v.childCount) setEnabled(v.getChildAt(i), on)
+    }
+
+    /** Shows the dialog with its buttons refusing touches through an overlay (the screen is exported; tapjacking). */
+    private fun AlertDialog.Builder.showGuarded(): AlertDialog = show().also { d ->
+        listOf(DialogInterface.BUTTON_POSITIVE, DialogInterface.BUTTON_NEGATIVE, DialogInterface.BUTTON_NEUTRAL)
+            .forEach { d.getButton(it)?.filterTouchesWhenObscured = true }
+        d.window?.decorView?.filterTouchesWhenObscured = true
     }
 
     companion object {

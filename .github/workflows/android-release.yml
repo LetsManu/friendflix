@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # The signed Android app for a release: on a vX.Y.Z tag, build the AAB (for the Play Console) and the APK (fallback download),
 # both signed with the upload key, and attach them plus their SHA-256 sums to that tag's GitHub Release (created by release.yml).
-# Called by CI for v* tags (push, or release.yml's dispatch), after the secret scan passed. workflow_dispatch on a tag is the
+# Called by CI for v* tags (push, or release.yml's dispatch), after its tests, e2e and the secret scan passed. workflow_dispatch on a tag is the
 # manual retry (e.g. after adding the secrets to an existing release); on anything but a v* tag the job does not run.
 # Signing: the upload key lives only in three repository secrets (docs/android.md "Owner steps"):
 #   ANDROID_UPLOAD_KEYSTORE      the keystore file, base64
@@ -72,10 +72,8 @@ jobs:
           ANDROID_UPLOAD_KEY_ALIAS: ${{ secrets.ANDROID_UPLOAD_KEY_ALIAS }}
         run: ./gradlew --no-build-cache lint testDebugUnitTest bundleRelease assembleRelease
       - name: Delete the upload key
-        if: always() && env.HAS_KEY == 'true'
-        run: |
-          rm -f "$RUNNER_TEMP/upload.jks"
-          (cd android && ./gradlew --stop) || true
+        if: always()
+        run: rm -f "$RUNNER_TEMP/upload.jks"
       - name: Check the signatures, name the files, checksums
         if: env.HAS_KEY == 'true'
         env:

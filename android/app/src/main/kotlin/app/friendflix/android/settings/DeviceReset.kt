@@ -13,6 +13,7 @@ import app.friendflix.android.downloads.OpenOnceKeySource
 import app.friendflix.android.downloads.ServerApi
 import app.friendflix.android.notify.NotificationScheduler
 import app.friendflix.android.offline.Offline
+import app.friendflix.android.player.PlayerReset
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.suspendCancellableCoroutine
@@ -48,11 +49,13 @@ object SystemWebSession : WebSession {
  * Leaving this device's FriendFlix state behind: "sign out of this device" ([signOut]) and a server address change ([leaveServer]).
  *
  * Both, in this order:
+ * 0. every player screen closes ([PlayerReset]), its stop report still sent with the cookie;
  * 1. every WorkManager job is cancelled (downloads, licence returns, the notification poll) and waited for;
  * 2. the download rows go, and every file in the app's download folders on every mounted volume is deleted;
  * 3. online, best effort, while the session cookie still exists: each licence is given back to the server it came from
- *    (`DELETE /api/downloads/:id`), then the session is ended there (`POST /auth/logout`). The first network failure, 401 or the
- *    [budgetMs] ends this step: an unreachable server simply keeps the licences until they run out;
+ *    (`DELETE /api/downloads/:id`; one the server refuses stays there until it runs out), then the session is ended there
+ *    (`POST /auth/logout`). A network failure, 401 or the [budgetMs] ends this step: an unreachable server simply keeps the
+ *    licences until they run out;
  * 4. the queued offline positions, the offline state (profile, last check, clock guard) and the notification poller's last seen id;
  * 5. the WebView's cookies and web storage;
  * 6. the notification poll is scheduled again (it does nothing until someone signs in).
@@ -68,25 +71,39 @@ class DeviceReset(
     private val wipeKeys: () -> Unit = { KeystoreKeyProvider.wipe(context) },
     private val budgetMs: Long = BUDGET_MS,
     private val now: () -> Long = System::currentTimeMillis,
+    /** closes every player (stop reports still with the cookie) before anything is cleared */
+    private val stopPlayback: suspend () -> Unit = { PlayerReset.stopAll(context) },
 ) {
     private val d = offline.downloads
 
     suspend fun signOut() = withContext(Dispatchers.IO) {
-        leave()
-        wipeKeys()
-        (d.keys as? OpenOnceKeySource<*>)?.forget()
-        d.settings.forgetSession()
-        finish()
+        try {
+            leave()
+            wipeKeys()
+            (d.keys as? OpenOnceKeySource<*>)?.forget()
+            d.settings.forgetSession()
+        } finally {
+            finish() // the session cookie goes whatever else failed
+        }
     }
 
     suspend fun leaveServer() = withContext(Dispatchers.IO) {
-        leave()
-        d.settings.forgetServer()
-        d.settings.clearServerOrigin()
-        finish()
+        try {
+            leave()
+            d.settings.forgetServer()
+            d.settings.clearServerOrigin()
+        } finally {
+            finish()
+        }
     }
 
     private suspend fun leave() {
+        try {
+            stopPlayback()
+        } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
+            Log.w(TAG, "stopping playback: ${e.javaClass.simpleName}")
+        }
         val wm = d.workManager
         try {
             wm.cancelAllWork().result.get(CANCEL_WAIT_S, TimeUnit.SECONDS)
@@ -98,6 +115,7 @@ class DeviceReset(
         deleteAllFiles()
         giveBack(rows.filter { it.state != DownloadState.EXPIRED }.map { it.licenseId to it.profileId })
         d.store.flush()
+        deleteAllFiles() // again: a worker that was mid-chunk when it was cancelled may have written once more
         offline.sync.clear()
         offline.sync.flushToDisk()
         offline.state.clear()
@@ -105,10 +123,13 @@ class DeviceReset(
     }
 
     private suspend fun finish() {
-        web.clear()
-        d.notifier.clearSessionExpired()
-        NotificationManagerCompat.from(context).cancelAll() // the old account's notices must not stay in the shade
-        NotificationScheduler.schedule(context, d.workManager)
+        try {
+            web.clear()
+        } finally {
+            d.notifier.clearSessionExpired()
+            NotificationManagerCompat.from(context).cancelAll() // the old account's notices must not stay in the shade
+            NotificationScheduler.schedule(context, d.workManager)
+        }
     }
 
     /** Everything in our download folders (rows, orphans and partial files alike): after a reset nothing there belongs to anyone. */
@@ -125,11 +146,12 @@ class DeviceReset(
         val deadline = now() + budgetMs
         try {
             for ((id, profile) in licences) {
-                if (now() > deadline) return
-                api.deleteLicence(id, profile) ?: return // no CSRF token or a server error: it is not answering normally
+                if (now() > deadline) break
+                // null (409 other profile active, 403, 5xx): this licence stays until it runs out; the others are still returned
+                api.deleteLicence(id, profile)
             }
             if (now() <= deadline) api.logout()
-        } catch (e: IOException) { // includes SessionExpired: nothing more to end there
+        } catch (e: IOException) { // unreachable, or SessionExpired: there is no session left to end
             Log.i(TAG, "server not reached while signing out: ${e.javaClass.simpleName}")
         }
     }

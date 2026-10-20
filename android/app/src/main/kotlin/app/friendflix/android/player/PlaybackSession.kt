@@ -16,6 +16,13 @@ import androidx.media3.session.MediaSession
 import androidx.media3.session.MediaSessionService
 import androidx.media3.session.SessionToken
 import com.google.common.util.concurrent.ListenableFuture
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.withContext
+import java.util.concurrent.CopyOnWriteArraySet
+import java.util.concurrent.TimeUnit
 
 /**
  * The one player of the process and its media session (lock screen, notification, Bluetooth / headset buttons). [PlayerActivity]
@@ -95,4 +102,39 @@ class PlaybackSession : MediaSessionService() {
     companion object {
         fun stop(context: Context) { context.stopService(Intent(context, PlaybackSession::class.java)) }
     }
+}
+
+/**
+ * "This device leaves its account" (sign-out of this device, server change; [app.friendflix.android.settings.DeviceReset]): every
+ * player screen closes as if the person closed it (stop report, offline position, cast stop), then the player, its session and the
+ * media session service go. [epoch] counts the resets. [stopAll] waits until the stop reports have left, so they still carry the
+ * session cookie that the reset clears afterwards.
+ */
+object PlayerReset {
+    private val count = MutableStateFlow(0L)
+    val epoch: StateFlow<Long> = count.asStateFlow()
+    private val screens = CopyOnWriteArraySet<() -> Unit>()
+
+    /** A player screen: [close] runs on the main thread at a reset. */
+    fun listen(close: () -> Unit) { screens += close }
+    fun unlisten(close: () -> Unit) { screens -= close }
+
+    suspend fun stopAll(context: Context) {
+        val app = context.applicationContext
+        withContext(Dispatchers.Main) {
+            count.value++
+            screens.toList().forEach { it() }
+            PlayerHolder.release() // no screen (or one that already let go): the session must not outlive the account
+            PlaybackSession.stop(app)
+        }
+        withContext(Dispatchers.IO) {
+            try {
+                Players.reports.submit {}.get(REPORT_WAIT_S, TimeUnit.SECONDS)
+            } catch (_: Exception) {
+                // a stuck report must not stop the reset
+            }
+        }
+    }
+
+    private const val REPORT_WAIT_S = 5L
 }

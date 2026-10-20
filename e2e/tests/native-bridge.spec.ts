@@ -112,6 +112,16 @@ test.describe('in the app', () => {
     await expect.poll(async () => (await nativeCalls(page, 'openSettings')).length).toBe(1);
     expect((await nativeCalls(page, 'openSettings'))[0]!.args).toEqual({});
   });
+
+  test('a kids profile does not get the app settings', async ({ page, api: _api }) => {
+    const KID = { ...ME, profileCount: 2, kids: true, onboarded: true, profile: { id: 'p3', name: 'Mia', avatar: 'pink', isOwner: false, kids: true, maxRating: 6 } };
+    await page.route('**/api/me', (r) => r.fulfill({ json: KID }));
+    await page.addInitScript(() => { localStorage.setItem('ff-intro:p3', JSON.stringify({ show: false, sound: false })); sessionStorage.setItem('ff-profile-picked', '1'); });
+    await fakeNativeApp(page);
+    await page.goto('/settings');
+    await expect(page.getByRole('heading', { level: 1 })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'App-Einstellungen öffnen' })).toHaveCount(0);
+  });
 });
 
 test.describe('outside the app', () => {

@@ -378,7 +378,7 @@ or a debugger on an unlocked phone can reach them. File sizes reveal the approxi
 period and revocation are enforced by the server and checked by the app (with a guard against turning the clock back), which stops
 honest misuse, not a determined owner of a rooted phone.
 
-**Leaving a device.** *Sign out of this device* ends the session on the server (`POST /auth/logout`, when reachable), returns the
+**Leaving a device.** *Sign out of this device* first closes any open player (its stop report still goes out), then ends the session on the server (`POST /auth/logout`, when reachable), returns the
 licences, deletes every download file, the download rows, the queued offline positions and the Keystore key, and clears the
 WebView's cookies and web storage. Changing the server address does the same for the old server but keeps the Keystore key (it
 belongs to the device). Uninstalling or clearing the app's data removes everything as well.

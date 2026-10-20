@@ -106,7 +106,7 @@
       <small class="muted">{$t('account.language.instanceSettingHint')}</small></div>
   {/if}
 </section>
-{#if inApp}
+{#if inApp && !$kidsMode}<!-- kids profiles: not the device's sign-out or storage -->
   <section class="panel form" id="app" aria-labelledby="apph">
     <h2 id="apph">{$t('account.settings.app.title')}</h2>
     <p class="muted">{$t('account.settings.app.hint')}</p>

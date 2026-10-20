@@ -202,6 +202,7 @@ class PlayerActivity : FragmentActivity() {
         quality = savedInstanceState?.getLong(STATE_QUALITY) ?: 0L
 
         val open = PendingIntent.getActivity(this, 0, Intent(this, PlayerActivity::class.java), PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
+        PlayerReset.listen(closeOnReset) // signed out of this device / another server: this screen closes like a normal close
         player = PlayerHolder.acquire(this, open)
         view.player = player
         player.addListener(events)
@@ -1034,6 +1035,8 @@ class PlayerActivity : FragmentActivity() {
         outState.putLong(STATE_QUALITY, quality)
     }
 
+    private val closeOnReset: () -> Unit = { finish() }
+
     override fun finish() {
         releaseAll()
         super.finish()
@@ -1049,6 +1052,7 @@ class PlayerActivity : FragmentActivity() {
     private fun releaseAll() {
         if (released) return
         released = true
+        PlayerReset.unlisten(closeOnReset)
         token?.let { Players.launcher?.ended(it) } // the same title may be played again right away
         if (!::player.isInitialized) return
         handler.removeCallbacksAndMessages(null)
