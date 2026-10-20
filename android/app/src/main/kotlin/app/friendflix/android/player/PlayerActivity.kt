@@ -361,7 +361,7 @@ class PlayerActivity : FragmentActivity() {
         if (quality == 0L && prefs.quality >= MIN_BITRATE) quality = prefs.quality
         val cur = it.await()
         item = cur
-        seriesPref = if (cur?.type == "Episode") pa.langPref(cur.seriesId ?: a.itemId) else null to null
+        seriesPref = if (cur?.type == "Episode") pa.langPref(cur.seriesId ?: a.itemId).let { it.audio to it.subtitle } else null to null
         val next: ItemInfo? = if (cur?.type == "Episode") nx.await() else { nx.cancel(); null }
         nextItem = next
         val allowed = types.await()
