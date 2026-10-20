@@ -2,13 +2,18 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 package app.friendflix.android.player
 
+import android.app.Activity
 import android.app.Application
 import android.content.Context
 import android.content.Intent
 import android.content.res.Configuration
 import android.view.View
 import android.view.ViewGroup
+import android.view.WindowInsets
 import android.widget.TextView
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
 import androidx.media3.session.MediaSessionService
 import androidx.test.core.app.ApplicationProvider
 import app.friendflix.android.R
@@ -89,10 +94,57 @@ class PlayerActivityBarTest {
         val offline = barFacts(launch(intent("it1", "t2", license = "lic1")))
         assertTrue(offline.offline)
         // with everything a server and a title could offer, the download's facts still hide the server's buttons
-        val s = barState(offline.copy(server = true, episode = true, chapters = true, extras = true, qualities = true, chip = true, subtitleSearch = true, hasNext = true, cast = CastUi(ready = true, enabled = true, devices = true)))
+        val s = barState(offline.copy(server = true, episode = true, chapters = true, extras = true, qualities = true, chip = true, subtitleSearch = true, hasNext = true, cast = CastUi(ready = true, enabled = true)))
         assertFalse(s.episodes || s.scenes || s.info || s.bookmarks || s.subtitleSearch || s.quality || s.chip || s.castButton || s.next)
-        val o = barState(online.copy(server = true, episode = true, chapters = true, extras = true, qualities = true, chip = true, subtitleSearch = true, hasNext = true, cast = CastUi(ready = true, enabled = true, devices = true)))
+        val o = barState(online.copy(server = true, episode = true, chapters = true, extras = true, qualities = true, chip = true, subtitleSearch = true, hasNext = true, cast = CastUi(ready = true, enabled = true)))
         assertTrue(o.episodes && o.scenes && o.info && o.bookmarks && o.subtitleSearch && o.quality && o.chip && o.castButton && o.next)
+    }
+
+    // ---- fullscreen: the system bars (Task 12) ----
+
+    @Test fun systemBarsAreHiddenFromTheStart() {
+        val a = launch(intent("it1", "t1"))
+        assertFalse(a.systemBarsRequested())
+        assertEquals(
+            WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE,
+            WindowCompat.getInsetsController(a.window, a.window.decorView).systemBarsBehavior,
+        )
+    }
+
+    @Test fun systemBarsAreHiddenAgainOnResume() {
+        val a = launch(intent("it1", "t1"))
+        a.showSystemBars() // e.g. back from another app or the notification shade
+        ac!!.pause().stop().restart().start().resume()
+        ShadowLooper.idleMainLooper()
+        assertFalse(a.systemBarsRequested())
+    }
+
+    @Test fun systemBarsAreHiddenAgainWhenTheWindowRegainsFocus() {
+        val a = launch(intent("it1", "t1"))
+        a.showSystemBars()
+        a.onWindowFocusChanged(false)
+        assertTrue(a.systemBarsRequested()) // never shown or hidden by losing focus
+        a.onWindowFocusChanged(true)
+        assertFalse(a.systemBarsRequested())
+    }
+
+    @Test fun systemBarsAreHiddenAgainAfterPictureInPicture() {
+        val a = launch(intent("it1", "t1"))
+        a.onPictureInPictureModeChanged(true, Configuration())
+        a.showSystemBars()
+        a.onPictureInPictureModeChanged(false, Configuration())
+        assertFalse(a.systemBarsRequested())
+    }
+
+    // ---- Chromecast without Google Play services ----
+
+    /** a phone without Google Play services (as Robolectric): no Cast context, so no Chromecast button and no *Play on TV* */
+    @Test fun noCastContextNoChromecastButton() {
+        val a = launch(intent("it1", "t1"))
+        assertEquals(View.GONE, a.findViewById<View>(R.id.player_cast).visibility)
+        a.findViewById<View>(R.id.player_more).performClick()
+        assertTrue(a.panelOpen())
+        assertEquals(null, a.panelView(R.id.more_cast))
     }
 
     private fun barFacts(a: PlayerActivity): BarFacts {
@@ -112,4 +164,15 @@ class PlayerActivityBarTest {
         c!!.performClick()
         ShadowLooper.idleMainLooper()
     }
+}
+
+/** shows the status and navigation bars as the system would (a swipe, a dialog, another app) */
+internal fun Activity.showSystemBars() =
+    WindowCompat.getInsetsController(window, window.decorView).show(WindowInsetsCompat.Type.systemBars())
+
+/** the window asks for the status or navigation bar to be visible (Android 11+ insets controller's requested types) */
+internal fun Activity.systemBarsRequested(): Boolean {
+    val c = window.insetsController!!
+    val types = c.javaClass.getMethod("getRequestedVisibleTypes").invoke(c) as Int
+    return types and WindowInsets.Type.systemBars() != 0
 }

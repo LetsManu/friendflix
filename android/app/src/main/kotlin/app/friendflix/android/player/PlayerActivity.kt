@@ -29,9 +29,7 @@ import androidx.annotation.OptIn
 import androidx.core.content.ContextCompat
 import androidx.core.net.toUri
 import androidx.core.view.ViewCompat
-import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
-import androidx.core.view.WindowInsetsControllerCompat
 import androidx.fragment.app.FragmentActivity
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
@@ -202,8 +200,6 @@ class PlayerActivity : FragmentActivity() {
     private var cast: CastController? = null
     /** the server offers casting (cached, then the fresh `/api/cast/config` answer) */
     private var castEnabled = false
-    /** a Cast device is on the network */
-    private var castDevices = false
     /** the next local stream starts paused (back from a paused TV) */
     private var startPaused = false
 
@@ -212,7 +208,7 @@ class PlayerActivity : FragmentActivity() {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_player)
         bindViews()
-        hideSystemBars()
+        hideSystemBars(window)
         val restored = savedInstanceState?.let(::fromState)
         token = if (restored == null) intent.getStringExtra(EXTRA_TOKEN) else savedInstanceState.getString(EXTRA_TOKEN)
         val a = restored ?: fromIntent(intent)
@@ -287,11 +283,15 @@ class PlayerActivity : FragmentActivity() {
         }
     }
 
-    private fun hideSystemBars() {
-        WindowCompat.getInsetsController(window, window.decorView).apply {
-            systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
-            hide(WindowInsetsCompat.Type.systemBars())
-        }
+    /** fullscreen again whenever the screen comes back (from another app, the notification shade, a dialog of the system) */
+    override fun onResume() {
+        super.onResume()
+        hideSystemBars(window)
+    }
+
+    override fun onWindowFocusChanged(hasFocus: Boolean) {
+        super.onWindowFocusChanged(hasFocus)
+        if (hasFocus) hideSystemBars(window)
     }
 
     // ---- what to play ----
@@ -999,6 +999,8 @@ class PlayerActivity : FragmentActivity() {
         if (isInPictureInPictureMode) ppCard.visibility = View.GONE
         // the picture-in-picture window was closed (not expanded): playback ends with it
         if (!isInPictureInPictureMode && !lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)) { finish(); return }
+        // expanded again: fullscreen
+        if (!isInPictureInPictureMode) hideSystemBars(window)
         // expanded again: a post-play screen held while in the small window shows now, if the title is still at its end
         if (!isInPictureInPictureMode) postPlay?.let { pp -> pp.release(player.playbackState == Player.STATE_ENDED)?.let { onPostPlayEnd(pp, it) } }
     }
@@ -1100,11 +1102,12 @@ class PlayerActivity : FragmentActivity() {
      */
     private fun updateBar() {
         if (!::controls.isInitialized || !::args.isInitialized) return
-        controls.updateCast(CastUi(ready = castLink != null, enabled = castEnabled, devices = castDevices))
+        controls.updateCast(CastUi(ready = castLink != null, enabled = castEnabled))
     }
 
     private val castEvents = object : MediaThreeReceiver.Events {
-        override fun onDevices(available: Boolean) { castDevices = available; updateBar() }
+        /** the button does not wait for a discovered TV (Task 12): a tap without one opens the chooser, which says none was found */
+        override fun onDevices(available: Boolean) {}
 
         override fun onSessionStarted() {
             // the viewer picked a TV (Player.svelte handleCast session-start): the playing stream goes there

@@ -24,6 +24,9 @@ class PlayerPanel(private val root: FrameLayout) {
     private var frame: View? = null
     private var onClose: (() -> Unit)? = null
 
+    /** runs after every close (the player hides the system bars again: a panel's keyboard may have brought them) */
+    var onClosed: (() -> Unit)? = null
+
     /** the open panel's content (null when none is open) */
     var content: View? = null
         private set
@@ -66,6 +69,7 @@ class PlayerPanel(private val root: FrameLayout) {
         val cb = onClose
         onClose = null
         cb?.invoke()
+        onClosed?.invoke()
         return true
     }
 

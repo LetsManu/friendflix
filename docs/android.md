@@ -76,6 +76,8 @@ Everything else, such as playback languages, subtitles, autoplay and the default
 
 The native player has the buttons of the web player's control bar, in the same order. Buttons that need the server only show when the server offers that feature.
 
+The player fills the screen: the status and navigation bars stay hidden, also after a panel, picture-in-picture or another app. Swipe from the edge of the screen to show them for a moment.
+
 **Top bar** (from the right: *More*, *Audio and subtitles*, *Cast & info*, the Chromecast button, the quality chip):
 
 - **More (⋯):**
@@ -85,7 +87,7 @@ The native player has the buttons of the web player's control bar, in the same o
   - *Sleep timer:* off, 15, 30, 45 or 60 minutes, or *After this episode*. When it runs out, playback pauses with the note *Sleep timer: playback paused*. A dot on the button shows that a timer runs, and the time left is shown in More. *After this episode* stops the next episode from starting. The timer keeps running with background audio.
   - *Lock controls:* hides every control and ignores touches, so that nothing happens by accident. Only a lock icon stays; hold it for a moment to unlock. A short tap, or Android back, shows *Press and hold to unlock*.
   - *Picture-in-picture:* the same small window you get with Home while playing.
-  - *Play on TV* / *Playing on TV:* the Chromecast choice, shown when a Cast device is available or connected.
+  - *Play on TV* / *Playing on TV:* the Chromecast choice, shown whenever the phone can cast (online, Google Play services, casting enabled on the server), also before a TV has been found, and while casting.
 - **Audio and subtitles:** the audio track and subtitles as before, plus:
   - *Find subtitles …* when your server allows subtitle search (a guest sees the row with *Not allowed for your role.*). Pick a language, then a result. The player reloads at the same position and says *Subtitles added – pick them in the menu*.
   - *Clear voices* (dialogue stands out from music and effects) and *Night mode* (loud scenes quieter, quiet ones louder). They need Android 9 or newer; on Android 8 they are greyed out with a note. The setting is saved for your profile, like in the web player.
@@ -157,7 +159,7 @@ Download notifications (progress, *sign in again*) never show titles.
 
 ## Chromecast
 
-In the native player a Cast button appears when a Chromecast or Google TV is on the same Wi-Fi and your server allows casting.
+In the native player the Cast button shows whenever the phone can cast: your server allows casting and the phone has Google Play services. It does not wait for a TV: tap it to pick a Chromecast or Google TV on the same Wi-Fi; if none is found, the list says so.
 
 - Casting uses the same short-lived cast tokens as the web UI. If the server sets `CAST_RECEIVER_APP_ID`, the TV runs FriendFlix's own receiver, otherwise Google's Default Media Receiver ([cast.md](cast.md)). The app reads that setting when it starts, so after a change restart the app.
 - The next episode is queued on the TV when autoplay allows it; the phone keeps the controls, also on the lock screen.
@@ -179,7 +181,7 @@ In the native player a Cast button appears when a Chromecast or Google TV is on 
 | *The device clock is wrong.* | The clock was turned back. Set the time automatically and go online once. |
 | *Not available on this device right now.* | Android's Keystore did not answer. Try again in a moment or restart the phone; nothing is deleted. |
 | No notifications | Allowed in the app settings? Category switched on? Battery optimization for FriendFlix in Android's settings can delay them further. Wait at least 20 minutes after something happened. |
-| No Cast button | Same Wi-Fi as the TV? Casting enabled on the server? Google Play services installed? Playing a download? |
+| No Cast button / no TV in the list | Same Wi-Fi as the TV? Casting enabled on the server? Google Play services installed? Playing a download? If the server's `CAST_RECEIVER_APP_ID` names a receiver that is not published in the Google Cast console, only TVs registered there as test devices appear in the list. |
 | *At most N streams at a time are allowed.* | Your account's stream limit is reached (other devices, or a cast still running). Stop one. |
 | The APK does not install over the Play version (or the other way round) | Different signatures, see [Install](#install). Uninstall first. |
 | Something else | Open the same page in a browser: if it fails there too, it is the server. Sign out of this device and sign in again as a last resort (downloads are deleted). |
@@ -306,7 +308,7 @@ Unit tests and the emulator in CI cover the logic; these points need a real phon
 33. A direct-played MKV with embedded text subtitles: they are not offered (only the server's WebVTT); check that the server lists them as external subtitles.
 
 **Player controls**
-34. The bar: top bar from the right *More*, *Audio and subtitles*, *Cast & info*, the Chromecast button, the quality chip; bottom bar *Episodes*, *Scenes*, next episode. The bar looks right in portrait and landscape and on a tablet.
+34. The bar: top bar from the right *More*, *Audio and subtitles*, *Cast & info*, the Chromecast button, the quality chip; bottom bar *Episodes*, *Scenes*, next episode. The bar looks right in portrait and landscape and on a tablet. The status and navigation bars stay hidden; after a swipe from the edge, a closed panel, picture-in-picture, or Home and back they hide again.
 35. Episodes: on an episode the panel opens on the current season, with progress and a mark on the playing one; a movie has no *Episodes* button. Pick another episode: it plays in the same player, speed is back to 1×, a sleep timer *After this episode* is cleared, and its scenes and bookmarks load.
 36. Scenes and marks: a title with chapters shows *Scenes* with pictures; a tap jumps there and closes the panel. Chapter starts and bookmarks are marks on the seek bar. A title without chapters has no *Scenes* button.
 37. Preview while scrubbing: drag the seek bar; a picture above the thumb follows. Check a long movie whose server previews use large sheets: the preview keeps up, the app does not slow down or crash. A server without previews: no picture, seeking works.
@@ -322,7 +324,7 @@ Unit tests and the emulator in CI cover the logic; these points need a real phon
 47. Offline (a download): no *Episodes*, *Scenes*, *Cast & info*, bookmarks, *Find subtitles …*, quality, chip or Chromecast button; speed, sleep timer, lock, subtitles, *Clear voices* and *Night mode* work.
 
 **Chromecast**
-48. A Cast device on the Wi-Fi and casting enabled → the Cast icon shows in the player. No device → no icon. Playing a download → never an icon.
+48. Casting enabled on the server → the Cast icon shows in the player, also with no TV on the Wi-Fi (a tap opens the list, which says no device was found); More shows *Play on TV*. Casting disabled on the server or a phone without Google Play services → no icon. Playing a download → never an icon.
 49. Tap the icon, pick the TV: the phone shows "Playing on …" and its controls drive the TV; the admin's "now playing" shows the local session stopped and the cast session started.
 50. Default Media Receiver (no `CAST_RECEIVER_APP_ID`): plays from the phone's position with the chosen subtitle; pause and seek work; progress shows in the admin view.
 51. Own receiver: set `CAST_RECEIVER_APP_ID`, open a title once, restart the app, cast: the own receiver starts, its reports arrive, its next-up card is in the app's language.

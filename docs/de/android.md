@@ -76,6 +76,8 @@ Alles andere, etwa Wiedergabesprachen, Untertitel, Autoplay und die Standardqual
 
 Der native Player hat die Knöpfe der Steuerleiste des Web-Players, in derselben Reihenfolge. Knöpfe, die den Server brauchen, erscheinen nur, wenn der Server die Funktion anbietet.
 
+Der Player füllt den Bildschirm: Status- und Navigationsleiste bleiben ausgeblendet, auch nach einem Menü, Bild-in-Bild oder einer anderen App. Wische vom Bildschirmrand, um sie kurz einzublenden.
+
 **Obere Leiste** (von rechts: *Mehr*, *Audio und Untertitel*, *Besetzung & Infos*, der Chromecast-Knopf, der Qualitäts-Chip):
 
 - **Mehr (⋯):**
@@ -85,7 +87,7 @@ Der native Player hat die Knöpfe der Steuerleiste des Web-Players, in derselben
   - *Schlaf-Timer:* aus, 15, 30, 45 oder 60 Minuten oder *Nach dieser Folge*. Läuft er ab, pausiert die Wiedergabe mit dem Hinweis *Schlaf-Timer: Wiedergabe pausiert*. Ein Punkt am Knopf zeigt einen laufenden Timer, die Restzeit steht in Mehr. *Nach dieser Folge* verhindert, dass die nächste Folge startet. Der Timer läuft auch mit Ton im Hintergrund weiter.
   - *Bedienung sperren:* blendet alle Bedienelemente aus und ignoriert Berührungen, damit nichts aus Versehen passiert. Nur ein Schloss bleibt; halte es kurz gedrückt, um zu entsperren. Ein kurzes Tippen oder Android-Zurück zeigt *Zum Entsperren gedrückt halten*.
   - *Bild-in-Bild:* dasselbe kleine Fenster wie mit Home während der Wiedergabe.
-  - *Auf dem Fernseher abspielen* / *Läuft auf dem Fernseher:* die Chromecast-Wahl, sichtbar, wenn ein Cast-Gerät verfügbar oder verbunden ist.
+  - *Auf dem Fernseher abspielen* / *Läuft auf dem Fernseher:* die Chromecast-Wahl, sichtbar, sobald das Handy casten kann (online, Google-Play-Dienste, Casting auf dem Server erlaubt), auch bevor ein Fernseher gefunden wurde, und beim Casting.
 - **Audio und Untertitel:** Tonspur und Untertitel wie bisher, dazu:
   - *Untertitel suchen …*, wenn dein Server die Untertitelsuche erlaubt (ein Gast sieht die Zeile mit *Mit deiner Rolle nicht erlaubt.*). Sprache wählen, dann ein Ergebnis. Der Player lädt an derselben Position neu und meldet *Untertitel hinzugefügt – im Menü auswählen*.
   - *Klare Stimmen* (Dialoge heben sich von Musik und Effekten ab) und *Nachtmodus* (laute Szenen leiser, leise lauter). Sie brauchen Android 9 oder neuer; auf Android 8 sind sie mit einem Hinweis ausgegraut. Die Einstellung wird für dein Profil gespeichert, wie im Web-Player.
@@ -157,7 +159,7 @@ Download-Benachrichtigungen (Fortschritt, *Bitte erneut anmelden*) zeigen nie Ti
 
 ## Chromecast
 
-Im nativen Player erscheint ein Cast-Symbol, wenn ein Chromecast oder Google TV im selben WLAN ist und dein Server Casting erlaubt.
+Im nativen Player erscheint das Cast-Symbol, sobald das Handy casten kann: Dein Server erlaubt Casting und das Handy hat die Google-Play-Dienste. Es wartet nicht auf einen Fernseher: Tippe es an und wähle einen Chromecast oder Google TV im selben WLAN; wird keiner gefunden, sagt es die Liste.
 
 - Casting nutzt dieselben kurzlebigen Cast-Tokens wie die Weboberfläche. Setzt der Server `CAST_RECEIVER_APP_ID`, läuft auf dem Fernseher der eigene Receiver von FriendFlix, sonst Googles Default Media Receiver ([cast.md](../cast.md)). Die App liest diese Einstellung beim Start; nach einer Änderung die App neu starten.
 - Die nächste Folge wird auf dem Fernseher eingereiht, wenn Autoplay es erlaubt; das Handy behält die Steuerung, auch auf dem Sperrbildschirm.
@@ -179,7 +181,7 @@ Im nativen Player erscheint ein Cast-Symbol, wenn ein Chromecast oder Google TV 
 | *Die Uhrzeit des Geräts stimmt nicht.* | Die Uhr wurde zurückgestellt. Uhrzeit automatisch einstellen und einmal online gehen. |
 | *Auf diesem Gerät gerade nicht verfügbar.* | Androids Keystore hat nicht geantwortet. Gleich noch einmal versuchen oder das Handy neu starten; nichts wird gelöscht. |
 | Keine Benachrichtigungen | In den App-Einstellungen erlaubt? Kategorie an? Die Akku-Optimierung für FriendFlix in den Android-Einstellungen kann sie weiter verzögern. Nach einem Ereignis mindestens 20 Minuten warten. |
-| Kein Cast-Symbol | Gleiches WLAN wie der Fernseher? Casting auf dem Server erlaubt? Google-Play-Dienste installiert? Läuft gerade ein Download? |
+| Kein Cast-Symbol / kein Fernseher in der Liste | Gleiches WLAN wie der Fernseher? Casting auf dem Server erlaubt? Google-Play-Dienste installiert? Läuft gerade ein Download? Nennt `CAST_RECEIVER_APP_ID` des Servers einen Receiver, der in der Google-Cast-Konsole nicht veröffentlicht ist, erscheinen in der Liste nur Fernseher, die dort als Testgeräte eingetragen sind. |
 | *Maximal N gleichzeitige Streams erlaubt.* | Das Stream-Limit deines Kontos ist erreicht (andere Geräte oder ein noch laufendes Casting). Beende einen. |
 | Die APK lässt sich nicht über die Play-Version installieren (oder umgekehrt) | Unterschiedliche Signaturen, siehe [Installieren](#installieren). Erst deinstallieren. |
 | Etwas anderes | Dieselbe Seite im Browser öffnen: Klappt es dort auch nicht, liegt es am Server. Als letzter Schritt auf diesem Gerät abmelden und wieder anmelden (die Downloads werden gelöscht). |
@@ -306,7 +308,7 @@ Unit-Tests und der Emulator in der CI decken die Logik ab; diese Punkte brauchen
 33. Eine direkt abgespielte MKV mit eingebetteten Text-Untertiteln: Sie werden nicht angeboten (nur das WebVTT des Servers); prüfen, ob der Server sie als externe Untertitel listet.
 
 **Bedienung im Player**
-34. Die Leiste: oben von rechts *Mehr*, *Audio und Untertitel*, *Besetzung & Infos*, der Chromecast-Knopf, der Qualitäts-Chip; unten *Folgen*, *Szenen*, nächste Folge. Die Leiste sieht im Hoch- und Querformat und auf einem Tablet richtig aus.
+34. Die Leiste: oben von rechts *Mehr*, *Audio und Untertitel*, *Besetzung & Infos*, der Chromecast-Knopf, der Qualitäts-Chip; unten *Folgen*, *Szenen*, nächste Folge. Die Leiste sieht im Hoch- und Querformat und auf einem Tablet richtig aus. Status- und Navigationsleiste bleiben ausgeblendet; nach einem Wischen vom Rand, einem geschlossenen Menü, Bild-in-Bild oder Home und zurück verschwinden sie wieder.
 35. Folgen: Bei einer Folge öffnet sich das Panel bei der aktuellen Staffel, mit Fortschritt und einer Markierung an der laufenden Folge; ein Film hat keinen Knopf *Folgen*. Eine andere Folge wählen: Sie spielt im selben Player, das Tempo ist wieder 1×, ein Schlaf-Timer *Nach dieser Folge* ist aufgehoben, und ihre Szenen und Lesezeichen laden.
 36. Szenen und Markierungen: Ein Titel mit Kapiteln zeigt *Szenen* mit Bildern; ein Tipp springt dorthin und schließt das Panel. Kapitelanfänge und Lesezeichen sind Markierungen auf der Zeitleiste. Ein Titel ohne Kapitel hat keinen Knopf *Szenen*.
 37. Vorschau beim Ziehen: die Zeitleiste ziehen; ein Bild über dem Regler folgt. Einen langen Film prüfen, dessen Vorschaubilder auf dem Server große Bögen haben: Die Vorschau kommt mit, die App wird nicht langsam und stürzt nicht ab. Ein Server ohne Vorschaubilder: kein Bild, Springen geht.
@@ -322,7 +324,7 @@ Unit-Tests und der Emulator in der CI decken die Logik ab; diese Punkte brauchen
 47. Offline (ein Download): kein *Folgen*, *Szenen*, *Besetzung & Infos*, keine Lesezeichen, kein *Untertitel suchen …*, keine Qualität, kein Chip und kein Chromecast-Knopf; Tempo, Schlaf-Timer, Sperre, Untertitel, *Klare Stimmen* und *Nachtmodus* gehen.
 
 **Chromecast**
-48. Ein Cast-Gerät im WLAN und Casting erlaubt → das Cast-Symbol erscheint im Player. Kein Gerät → kein Symbol. Ein Download läuft → nie ein Symbol.
+48. Casting auf dem Server erlaubt → das Cast-Symbol erscheint im Player, auch ohne Fernseher im WLAN (Antippen öffnet die Liste, die sagt, dass kein Gerät gefunden wurde); Mehr zeigt *Auf dem Fernseher abspielen*. Casting auf dem Server aus oder ein Handy ohne Google-Play-Dienste → kein Symbol. Ein Download läuft → nie ein Symbol.
 49. Symbol antippen, Fernseher wählen: Das Handy zeigt „Wird auf … abgespielt" und steuert den Fernseher; „Läuft gerade" beim Admin zeigt die lokale Sitzung gestoppt und die Cast-Sitzung gestartet.
 50. Default Media Receiver (ohne `CAST_RECEIVER_APP_ID`): spielt ab der Position des Handys mit dem gewählten Untertitel; Pause und Springen gehen; der Fortschritt erscheint beim Admin.
 51. Eigener Receiver: `CAST_RECEIVER_APP_ID` setzen, einen Titel einmal öffnen, App neu starten, casten: Der eigene Receiver startet, seine Meldungen kommen an, seine Nächste-Folge-Karte ist in der Sprache der App.

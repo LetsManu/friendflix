@@ -554,7 +554,10 @@ class CastController(
         private const val TICKS_PER_MS = 10_000L
 
 
-        /** The cast button is offered: a stream (never a download), casting enabled on the server, a Cast device on the network. */
-        fun castable(offline: Boolean, enabled: Boolean, devices: Boolean) = !offline && enabled && devices
+        /**
+         * The cast button is offered: a stream (never a download) and casting enabled on the server, whether or not a TV has been
+         * discovered yet (the route chooser says when none is found).
+         */
+        fun castable(offline: Boolean, enabled: Boolean) = !offline && enabled
     }
 }

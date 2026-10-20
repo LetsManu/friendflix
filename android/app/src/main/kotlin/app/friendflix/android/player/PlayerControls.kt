@@ -9,11 +9,15 @@ import android.os.Looper
 import android.os.SystemClock
 import android.view.MotionEvent
 import android.view.View
+import android.view.Window
 import android.widget.ImageView
 import android.widget.TextView
 import androidx.activity.ComponentActivity
 import androidx.activity.OnBackPressedCallback
 import androidx.annotation.OptIn
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
 import androidx.lifecycle.lifecycleScope
 import androidx.media3.common.C
 import androidx.media3.common.Player
@@ -41,8 +45,22 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
 import kotlinx.coroutines.launch
 
-/** The Cast framework's side of the bar: attached ([ready]), the server offers casting ([enabled]), a device is on the network ([devices]). */
-data class CastUi(val ready: Boolean, val enabled: Boolean, val devices: Boolean)
+/**
+ * The Cast framework's side of the bar: attached ([ready]: Google Play services gave a Cast context) and the server offers casting
+ * ([enabled], `/api/cast/config`). Whether a TV has been discovered does not matter: the route chooser says when none is found.
+ */
+data class CastUi(val ready: Boolean, val enabled: Boolean)
+
+/**
+ * Fullscreen: the status and navigation bars hidden; a swipe from the edge shows them for a moment and they hide again by
+ * themselves. The player never shows them itself; the system does while the screen is in the background.
+ */
+fun hideSystemBars(window: Window) {
+    WindowCompat.getInsetsController(window, window.decorView).apply {
+        systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+        hide(WindowInsetsCompat.Type.systemBars())
+    }
+}
 
 /**
  * What the bar is decided from ([barState]). The activity gives the playback side ([PlayerControls.Host.bar]); [PlayerControls]
@@ -70,7 +88,7 @@ data class BarFacts(
     /** the device runs audio effects (Android 9+) */
     val fxSupported: Boolean = true,
     val pipSupported: Boolean = true,
-    val cast: CastUi = CastUi(ready = false, enabled = false, devices = false),
+    val cast: CastUi = CastUi(ready = false, enabled = false),
     val chapters: Boolean = false,
     val extras: Boolean = false,
 )
@@ -106,7 +124,7 @@ data class BarState(
 fun barState(f: BarFacts): BarState {
     val online = !f.offline
     val local = !f.casting
-    val castButton = f.cast.ready && (f.casting || CastController.castable(f.offline, f.cast.enabled, f.cast.devices))
+    val castButton = f.cast.ready && (f.casting || CastController.castable(f.offline, f.cast.enabled))
     return BarState(
         tracks = f.loaded && local,
         next = f.hasNext && online && local,
@@ -200,7 +218,7 @@ class PlayerControls(
         private set
 
     private var sleepMinutes = 0
-    private var cast = CastUi(ready = false, enabled = false, devices = false)
+    private var cast = CastUi(ready = false, enabled = false)
     /** the title's extras (chapters, bookmarks) belong to the title on show: Cast & info follows it */
     private var extrasLoaded = false
     private val handler = Handler(Looper.getMainLooper())
@@ -239,6 +257,9 @@ class PlayerControls(
         scenesButton.setOnClickListener { openScenes() }
         infoButton.setOnClickListener { openInfo() }
         timeBar.addListener(scrub)
+        // fullscreen again once a panel closed or the controller hid (a swipe, a keyboard or the system may have shown the bars)
+        panel.onClosed = { hideSystemBars(activity.window) }
+        view.setControllerVisibilityListener(PlayerView.ControllerVisibilityListener { v -> if (v != View.VISIBLE) hideSystemBars(activity.window) })
         setUpLock()
         // a recreated screen keeps the shared player's speed (and shows its badge)
         local.playbackParameters.speed.takeIf { it != 1f }?.let(::setSpeed)
@@ -619,7 +640,7 @@ class PlayerControls(
 
     // ---- the bar's rule ----
 
-    /** the Cast framework's side (attached, casting offered, devices around); the bar follows */
+    /** the Cast framework's side (attached, casting offered by the server); the bar follows */
     fun updateCast(ui: CastUi) {
         cast = ui
         updateBar()

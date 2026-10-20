@@ -251,10 +251,9 @@ class CastControllerTest {
     // ---- offline, hand-over ----
 
     @Test fun offlineMediaCannotBeCast() {
-        assertFalse(CastController.castable(offline = true, enabled = true, devices = true))
-        assertFalse(CastController.castable(offline = false, enabled = false, devices = true))
-        assertFalse(CastController.castable(offline = false, enabled = true, devices = false))
-        assertTrue(CastController.castable(offline = false, enabled = true, devices = true))
+        assertFalse(CastController.castable(offline = true, enabled = true))
+        assertFalse(CastController.castable(offline = false, enabled = false))
+        assertTrue(CastController.castable(offline = false, enabled = true)) // with or without a discovered TV
         val (r, c) = controller()
         calls.clear()
         assertFalse(c.start(film(offline = true)))

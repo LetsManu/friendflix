@@ -6,6 +6,8 @@ All notable changes, grouped by what you notice. Each release has its own sectio
 
 ### Android app
 - **The native player has the web player's controls.** *Episodes* switches episodes in the player; *Scenes* lists the chapters, and chapters and bookmarks are marked on the seek bar, with a preview picture while you drag it. *Cast & info* shows the cast and crew and opens a person's other titles. *Audio and subtitles* adds *Find subtitles …*, *Clear voices* and *Night mode* (Android 9+). *More* has playback speed, bookmarks with *Share scene*, quality, a sleep timer (also *After this episode*), *Lock controls*, picture-in-picture and *Play on TV*. A quality chip says *Original* or *Converted · 1080p* and why. At the end of a title the post-play screen or *More like this* opens, as in the web; your subtitle style and the anime default apply. Downloads hide what needs the server; while casting, *Episodes*, *Scenes*, bookmarks, the sleep timer and *Cast & info* act on the TV. Guide: [docs/android.md, Player](docs/android.md#player).
+- **The player stays fullscreen.** The navigation bar no longer stays on screen in the player; the status and navigation bars hide again after a swipe, a menu, picture-in-picture or another app.
+- **The Chromecast button is always there when you can cast** (online, Google Play services, casting enabled on the server), also before a TV has been found; a tap with no TV around says that no device was found.
 
 ## [2.1.1] – Brezel – 2026-10-20
 
