@@ -162,6 +162,20 @@ class CastController(
     val itemId: String? get() = cur?.itemId
 
     /**
+     * Sleep timer "after this episode" (engine.ts `mayAutoplay` sleepAfterEpisode): nothing is queued after the playing title, an
+     * episode already queued is taken off again, so the TV stops at the end. Switched off, the next episode is queued again.
+     */
+    var sleepAfterEpisode = false
+        set(v) {
+            if (field == v) return
+            field = v
+            val s = cur ?: return
+            if (v) dequeue(s)
+            s.queueAsked = false
+            if (!v) atPosition(s)
+        }
+
+    /**
      * Local playback → receiver. False when nothing can be cast (a download, or already casting); true once the hand-over started
      * (its outcome comes through [CastHost]).
      */
@@ -353,11 +367,11 @@ class CastController(
         val ask = still.shouldAsk(s.prefs, endAt)
         val tv = receiver.custom
         // the own receiver asks "still watching?" itself (the queued episode waits paused): only that does not block it
-        if (!s.prefs.autoplayNext || (ask && !tv)) return
+        if (sleepAfterEpisode || !s.prefs.autoplayNext || (ask && !tv)) return
         val my = seq
         val itemId = s.itemId
         val bitrate = s.maxBitrate ?: s.prefsBitrate
-        val stale = { cur !== s || my != seq || s.busy || s.ci == null }
+        val stale = { cur !== s || my != seq || s.busy || s.ci == null || sleepAfterEpisode }
         io.execute {
             val next = server.next(itemId) ?: return@execute
             main.execute {

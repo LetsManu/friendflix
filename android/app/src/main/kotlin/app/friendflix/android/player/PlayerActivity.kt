@@ -161,7 +161,8 @@ class PlayerActivity : FragmentActivity() {
     private var forcedHls = false
     private var retries = 0
     private var errorAt = 0L
-    private var seriesPref: Pair<String?, String?> = null to null
+    /** the title's start languages (detail pick, series choice, anime default, profile defaults); set by [loadTitle] */
+    private var langs: TitleLangs? = null
     /** ms the current stream was started at (null before the first one) */
     private var attachedAt: Long? = null
 
@@ -170,8 +171,11 @@ class PlayerActivity : FragmentActivity() {
     private var offlineProgress: OfflineProgress? = null
 
     private var backgroundAudio = false
-    /** the sound mode of the Tracks panel's switches (applied to the audio by Task 5's audio effects) */
+    /** the sound mode of the Tracks panel's switches, on the player's audio session through [fx] */
     private var fxMode = "off"
+    /** the viewer flipped a switch here: the server's mode no longer replaces it (web fxTouched) */
+    private var fxTouched = false
+    private val fx = AudioFxAttach()
     private var lastTick = 0L
     /** the screen is stopped and not in picture-in-picture */
     private var inBackground = false
@@ -214,6 +218,9 @@ class PlayerActivity : FragmentActivity() {
         player.addListener(events)
         player.addListener(listener)
         controls = PlayerControls(this, view, player, controlsHost)
+        view.subtitleView?.let { applyCaptionLook(it, prefs.subtitleStyle) }
+        // the last mode of this profile on this device (offline playback has no server prefs); the server's replaces it once loaded
+        setFx(FxStore.load(this, args.profileId))
         // the media session (notification, lock screen, Bluetooth) may start playback only while it could be heard by choice
         PlayerHolder.mayPlay = { !inBackground || backgroundAudio || isInPictureInPictureMode }
         controller = PlayerHolder.connect(this) // runs the media session service (notification while playing)
@@ -333,7 +340,7 @@ class PlayerActivity : FragmentActivity() {
                 api = pa
                 castServer = CastServerApi(server, a.profileId, pa)
                 if (first) loadTitle(pa, a)
-                val audioLang = if (audioIndex == null) (a.audio ?: seriesPref.first ?: prefs.audioLang).takeIf { it.isNotEmpty() } else null
+                val audioLang = if (audioIndex == null) titleLangs(a).audioLang() else null
                 val caps = withContext(Dispatchers.IO) { DeviceProfile.build(applicationContext) }
                 val body = PlayerApi.infoBody(a.itemId, startMs, audioIndex, quality.takeIf { it > 0 }, manual = quality > 0, audioLang = audioLang, caps = caps)
                 when (val r = withContext(Dispatchers.IO) { pa.info(body) }) {
@@ -361,7 +368,8 @@ class PlayerActivity : FragmentActivity() {
         if (quality == 0L && prefs.quality >= MIN_BITRATE) quality = prefs.quality
         val cur = it.await()
         item = cur
-        seriesPref = if (cur?.type == "Episode") pa.langPref(cur.seriesId ?: a.itemId).let { it.audio to it.subtitle } else null to null
+        val pref = if (cur?.type == "Episode") pa.langPref(cur.seriesId ?: a.itemId, anime = prefs.animeOriginal) else LangPref(null, null, false)
+        langs = TitleLangs(prefs, pref, TitleLangs.appLang(resources.configuration.locales[0]), a.audio, a.subtitle)
         val next: ItemInfo? = if (cur?.type == "Episode") nx.await() else { nx.cancel(); null }
         nextItem = next
         val allowed = types.await()
@@ -374,6 +382,8 @@ class PlayerActivity : FragmentActivity() {
         withContext(Dispatchers.Main) {
             flow = f
             if (cfg != null) { castEnabled = cfg.enabled; updateCastButton() }
+            view.subtitleView?.let { v -> applyCaptionLook(v, prefs.subtitleStyle) }
+            if (!fxTouched) setFx(prefs.audioFx) // the server's mode wins until a switch is flipped here (web adoptFxPref)
             Players.still.opened()
             title.text = cur?.seriesName ?: cur?.name.orEmpty()
             subtitle.text = cur?.let { i -> if (i.seriesName != null) episodeLabel(i) else "" }.orEmpty()
@@ -407,7 +417,7 @@ class PlayerActivity : FragmentActivity() {
         )
         reporter = rep
         rep.attach(ReportSession(args.itemId, info.playSessionId, info.mediaSourceId, audioIndex, direct))
-        subIndex = pickSubtitle(info)
+        subIndex = titleLangs(args).subtitle(info, audioIndex)
         player.setMediaSource(MediaSources.network(pa.server.client).createMediaSource(mediaItem), startMs.coerceAtLeast(0))
         applySubtitles()
         player.prepare()
@@ -419,17 +429,8 @@ class PlayerActivity : FragmentActivity() {
         updateCastButton()
     }
 
-    /** detail-page pick > this series' saved choice (when the episode has it) > the profile default (web Player.svelte attach). */
-    private fun pickSubtitle(info: PlaybackInfo): Int? {
-        val want = when {
-            args.subtitle == "off" -> null
-            args.subtitle != null -> args.subtitle
-            seriesPref.second == "off" -> null
-            seriesPref.second != null && info.subtitles.any { it.language == seriesPref.second } -> seriesPref.second
-            else -> prefs.subtitleLang.takeIf { it.isNotEmpty() }
-        } ?: return null
-        return info.subtitles.firstOrNull { it.language == want }?.index
-    }
+    /** the languages of [loadTitle], or the detail pick and profile defaults when the title's start was not loaded here */
+    private fun titleLangs(a: Args) = langs ?: TitleLangs(prefs, LangPref(null, null, false), TitleLangs.appLang(resources.configuration.locales[0]), a.audio, a.subtitle)
 
     /**
      * Where a new session should start: the current position once this stream played, else where it was started (a retry before
@@ -466,7 +467,7 @@ class PlayerActivity : FragmentActivity() {
         reporter = { reporter },
         offline = { offlineProgress },
         onPlayRequested = ::checkOfflineAfterLongPause,
-        onEnded = { flow?.onEnded(); render() },
+        onEnded = { flow?.onEnded(); controls.titleEnded(); render() },
     )
 
     private val listener = object : Player.Listener {
@@ -483,6 +484,8 @@ class PlayerActivity : FragmentActivity() {
         }
 
         override fun onTracksChanged(tracks: Tracks) { applySubtitles() }
+
+        override fun onAudioSessionIdChanged(audioSessionId: Int) { applyFx() }
 
         override fun onVideoSizeChanged(videoSize: VideoSize) { updatePip() }
 
@@ -536,6 +539,7 @@ class PlayerActivity : FragmentActivity() {
         val c = cast
         if (c != null && c.casting) {
             // the receiver plays: its position and the controller's reports / renewal; nothing local runs
+            c.sleepAfterEpisode = controls.sleep.afterEpisode // the TV stops after its episode
             if (now - castPolled >= CAST_POLL_MS) { castPolled = now; castLink?.publish(); c.tick() }
             return
         }
@@ -546,6 +550,7 @@ class PlayerActivity : FragmentActivity() {
             retries = 0
         }
         val f = flow ?: run { skipButton.visibility = View.GONE; nextCard.visibility = View.GONE; stillCard.visibility = View.GONE; return }
+        f.holdAutoplay = controls.sleep.afterEpisode
         val cur = player.currentPosition / 1000.0
         f.autoSkip(cur)?.let { target ->
             player.seekTo((target * 1000).toLong())
@@ -573,7 +578,11 @@ class PlayerActivity : FragmentActivity() {
         if (c is FlowCard.NextUp && next != null && !inPip) {
             nextCard.visibility = View.VISIBLE
             nextTitle.text = episodeLabel(next)
-            nextLabel.text = if (c.counting) getString(R.string.player_next_counting, c.secondsLeft) else getString(R.string.player_next)
+            nextLabel.text = when {
+                c.counting -> getString(R.string.player_next_counting, c.secondsLeft)
+                controls.sleep.afterEpisode -> getString(R.string.player_next_pause_after)
+                else -> getString(R.string.player_next)
+            }
             nextSeconds.text = if (c.counting) c.secondsLeft.toString() else ""
             // reduced motion (animations off): the number only, no moving ring
             val ring = c.counting && ValueAnimator.areAnimatorsEnabled()
@@ -607,6 +616,7 @@ class PlayerActivity : FragmentActivity() {
         attachedAt = null
         flow = null
         nextItem = null
+        langs = null
         audioIndex = null
         forcedHls = false
         retries = 0
@@ -640,7 +650,7 @@ class PlayerActivity : FragmentActivity() {
                 subIndex = subIndex,
                 canSearch = false, // subtitle search: its own panel (Task 6)
                 fxMode = fxMode,
-                fxDisabledReason = if (Build.VERSION.SDK_INT < Build.VERSION_CODES.P) R.string.player_fx_unsupported else null,
+                fxDisabledReason = fxDisabledReason(fx.supported(), casting()),
             )
         }
 
@@ -648,7 +658,7 @@ class PlayerActivity : FragmentActivity() {
             override fun audio(t: AudioTrack) { changeAudio(t) }
             override fun subtitle(index: Int?) { setSubtitle(index, stream?.info?.subtitles?.firstOrNull { it.index == index }?.language) }
             override fun search() {}
-            override fun fx(mode: String) { fxMode = mode }
+            override fun fx(mode: String) { changeFx(mode) }
         }
 
         override fun qualities(): List<Pair<String, Long>>? {
@@ -658,6 +668,31 @@ class PlayerActivity : FragmentActivity() {
 
         override fun quality() = quality
         override fun changeQuality(bps: Long) = this@PlayerActivity.changeQuality(bps)
+    }
+
+    /** A switch was flipped: applied at once, kept for this profile on the device and saved for the profile (web toggleFx). */
+    private fun changeFx(mode: String) {
+        val old = fxMode
+        fxTouched = true
+        setFx(mode)
+        api?.let { pa ->
+            lifecycleScope.launch(Dispatchers.IO) {
+                try { pa.saveAudioFx(mode) } catch (_: SessionExpired) { } // offline / failed: still remembered on this device
+            }
+        }
+        fxToggle(old, mode)?.let { (name, on) -> flash(getString(if (on) R.string.player_fx_on else R.string.player_fx_off, getString(name)), 1_400) }
+    }
+
+    private fun setFx(mode: String) {
+        fxMode = mode
+        FxStore.save(this, args.profileId, mode)
+        applyFx()
+    }
+
+    /** the sound mode on the local player's audio session; nothing while casting (the TV plays) */
+    private fun applyFx() {
+        if (released) return
+        if (cast?.casting == true) fx.release() else fx.apply(player.audioSessionId, fxMode)
     }
 
     private fun changeAudio(t: AudioTrack) {
@@ -977,12 +1012,13 @@ class PlayerActivity : FragmentActivity() {
         stillCard.visibility = View.GONE
         view.player = link.player
         view.controllerShowTimeoutMs = 0 // a remote: the controls stay
+        controls.onCasting() // first: a lock is lifted, else the controller could not show
         view.showController()
         castStatus.text = link.deviceName?.let { getString(R.string.cast_playing_on, it) } ?: getString(R.string.cast_playing)
         castStatus.visibility = View.VISIBLE
         for (b in listOf(tracksButton, nextButton)) b.visibility = View.GONE
         controls.chip.hide()
-        controls.onCasting()
+        applyFx()
         updateCastButton()
         updatePip()
     }
@@ -993,6 +1029,7 @@ class PlayerActivity : FragmentActivity() {
         view.controllerShowTimeoutMs = CONTROLLER_TIMEOUT_MS
         castStatus.visibility = View.GONE
         updateCastButton()
+        applyFx()
     }
 
     // ---- intents, state, release ----
@@ -1018,6 +1055,7 @@ class PlayerActivity : FragmentActivity() {
         attachedAt = null
         flow = null
         nextItem = null
+        langs = null
         audioIndex = null
         forcedHls = false
         retries = 0
@@ -1063,6 +1101,7 @@ class PlayerActivity : FragmentActivity() {
         if (!::player.isInitialized) return
         handler.removeCallbacksAndMessages(null)
         controls.release()
+        fx.release()
         loadJob?.cancel()
         cast?.stop() // the player closes: the cast ends with it (the web's pagehide)
         cast = null

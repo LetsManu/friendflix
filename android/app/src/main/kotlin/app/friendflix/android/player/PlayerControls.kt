@@ -10,6 +10,7 @@ import android.view.MotionEvent
 import android.view.View
 import android.widget.TextView
 import androidx.activity.ComponentActivity
+import androidx.activity.OnBackPressedCallback
 import androidx.annotation.OptIn
 import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
@@ -86,8 +87,14 @@ class PlayerControls(
     private val lockOverlay: View = activity.findViewById(R.id.player_lock)
     private val lockIcon: View = activity.findViewById(R.id.player_lock_icon)
 
+    /** Back while locked only says how to unlock (enabled only while locked; the player stays) */
+    private val lockedBack = object : OnBackPressedCallback(false) {
+        override fun handleOnBackPressed() { host.flash(activity.getString(R.string.player_lock_hold), FLASH_MS) }
+    }
+
     init {
         activity.onBackPressedDispatcher.addCallback(activity, panel.back)
+        activity.onBackPressedDispatcher.addCallback(activity, lockedBack)
         view.findViewById<View>(R.id.player_more).setOnClickListener { openMore() }
         view.findViewById<View>(R.id.player_tracks).setOnClickListener { openTracks() }
         setUpLock()
@@ -188,9 +195,10 @@ class PlayerControls(
         moreBadge.visibility = if (rate != 1f) View.VISIBLE else View.GONE
     }
 
-    /** a new title plays: speed back to 1 */
+    /** a new title plays: speed back to 1; a sleep timer "after this episode" was meant for the previous one */
     fun newTitle() {
         if (speed != 1f) setSpeed(1f)
+        if (sleep.afterEpisode) { sleep.off(); showSleep() }
     }
 
     // ---- sleep timer ----
@@ -205,6 +213,13 @@ class PlayerControls(
         showSleep()
     }
 
+    /** The title ended: with the sleep timer "after this episode" playback pauses there (no next episode starts). */
+    fun titleEnded() {
+        if (!sleep.afterEpisode) return
+        host.pauseActive()
+        host.flash(activity.getString(R.string.player_sleep_paused), SLEEP_FLASH_MS)
+    }
+
     private fun showSleep() {
         val left = sleep.remainingMs()
         sleepDot.visibility = if (left != null) View.VISIBLE else View.GONE
@@ -216,6 +231,7 @@ class PlayerControls(
     fun lock() {
         if (locked || host.inPip()) return
         locked = true
+        lockedBack.isEnabled = true
         panel.close()
         view.useController = false
         lockOverlay.visibility = View.VISIBLE
@@ -225,6 +241,7 @@ class PlayerControls(
     fun unlock(announce: Boolean = true) {
         if (!locked) return
         locked = false
+        lockedBack.isEnabled = false
         handler.removeCallbacks(unlockHeld)
         lockOverlay.visibility = View.GONE
         view.useController = !host.inPip()
@@ -272,11 +289,15 @@ class PlayerControls(
         unlock(announce = false)
     }
 
-    /** a cast started: the screen becomes the TV's remote (no panel left open, no lock, the local speed back to 1) */
+    /**
+     * A cast started: the screen becomes the TV's remote (no panel left open, no lock, the local speed back to 1, the controller
+     * shown); the sleep timer goes on and acts on the TV.
+     */
     fun onCasting() {
         panel.close()
         unlock(announce = false)
-        newTitle()
+        if (speed != 1f) setSpeed(1f)
+        view.showController()
     }
 
     // ---- Chromecast ----

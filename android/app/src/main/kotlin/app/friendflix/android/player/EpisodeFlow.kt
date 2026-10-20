@@ -87,6 +87,16 @@ class EpisodeFlow(
     val segments = segments.map { it.copy(type = it.type.lowercase()) }
     /** seconds; 0 while unknown */
     var duration = 0.0
+
+    /**
+     * Sleep timer "after this episode" (web `mayAutoplay` sleepAfterEpisode): the card shows without a countdown and without
+     * "still there?", so the title ends and stays there; a running countdown stops.
+     */
+    var holdAutoplay = false
+        set(v) {
+            field = v
+            if (v) { stopCountdown(); askStill = false }
+        }
     private val autoSkipped = mutableSetOf<Double>()
     private var dismissed = false
     private var entered = false
@@ -140,8 +150,8 @@ class EpisodeFlow(
     private fun enterCard() {
         entered = true
         if (kind != NextKind.EPISODE) return
-        if (prefs.autoplayNext && still.shouldAsk(prefs)) { askStill = true; return }
-        if (prefs.autoplayNext && !askStill) startCountdown()
+        if (prefs.autoplayNext && !holdAutoplay && still.shouldAsk(prefs)) { askStill = true; return }
+        if (prefs.autoplayNext && !holdAutoplay && !askStill) startCountdown()
     }
 
     private fun leaveCard() { entered = false; stopCountdown(); askStill = false }

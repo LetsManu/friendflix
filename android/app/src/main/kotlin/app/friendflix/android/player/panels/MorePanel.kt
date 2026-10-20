@@ -47,8 +47,16 @@ object MorePanel {
     val SLEEP_MINUTES = listOf(15, 30, 45, 60)
 
     fun build(ctx: Context, state: MoreState, actions: MoreActions): View {
-        val box = FrameLayout(ctx)
         lateinit var main: View
+        // Back in a sub-list returns to the main list, Back on the main list closes the panel (PlayerPanel)
+        val box = object : FrameLayout(ctx), BackAware {
+            override fun back(): Boolean {
+                if (getChildAt(0) === main) return false
+                removeAllViews()
+                addView(main)
+                return true
+            }
+        }
         fun open(list: View) { box.removeAllViews(); box.addView(list) }
         fun backToMain() = open(main)
         fun sub(title: Int, rows: (LinearLayout) -> Unit): View = PanelRows.column(ctx).also { col ->

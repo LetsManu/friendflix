@@ -209,6 +209,29 @@ class CastControllerTest {
         assertFalse(calls.any { it.second?.optBoolean("next") == true })
     }
 
+    @Test fun sleepAfterThisEpisodeQueuesNothingOnTheTv() {
+        val (r, c) = controller()
+        c.start(episode())
+        c.sleepAfterEpisode = true
+        c.onReceiver(playing("c1", 30 * 60_000 - 60_000))
+        assertTrue(r.queued.isEmpty())
+        assertFalse(calls.any { it.second?.optBoolean("next") == true })
+    }
+
+    @Test fun sleepAfterThisEpisodeTakesTheQueuedEpisodeOffAgain() {
+        val (r, c) = controller()
+        c.start(episode())
+        c.onReceiver(playing("c1", 30 * 60_000 - 60_000))
+        assertEquals(listOf("q2" to true), r.queued)
+        c.sleepAfterEpisode = true
+        assertEquals(listOf("q2"), r.removed)
+        assertTrue(paths().contains("DELETE /api/cast/session/q2"))
+        // switched off again: the next episode is queued once more
+        c.sleepAfterEpisode = false
+        c.onReceiver(playing("c1", 30 * 60_000 - 50_000))
+        assertEquals(2, r.queued.size)
+    }
+
     @Test fun theReceiverMovingOnStopsAndRevokesTheEndedToken() {
         val (_, c) = controller()
         c.start(episode())

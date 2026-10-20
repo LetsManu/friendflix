@@ -6,7 +6,9 @@ import android.graphics.Color
 import android.graphics.Typeface
 import androidx.media3.ui.CaptionStyleCompat
 import androidx.media3.ui.SubtitleView
+import androidx.test.core.app.ApplicationProvider
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertSame
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -52,5 +54,21 @@ class SubtitleLookTest {
     @Test fun unknownValuesFallBackToDefaults() {
         val l = look("huge", "pink", "glow", "comic")
         assertEquals(look(), l)
+    }
+
+    /** what the subtitle view holds (it has no getters) */
+    private fun <T> SubtitleView.field(name: String): T {
+        val f = SubtitleView::class.java.getDeclaredField(name)
+        f.isAccessible = true
+        @Suppress("UNCHECKED_CAST")
+        return f.get(this) as T
+    }
+
+    @Test fun profileStyleGoesToTheSubtitleView() {
+        val v = SubtitleView(ApplicationProvider.getApplicationContext())
+        applyCaptionLook(v, SubtitleStyle(size = "xl", color = "yellow"))
+        assertEquals(Color.parseColor("#FFE14D"), v.field<CaptionStyleCompat>("style").foregroundColor)
+        assertEquals(SubtitleView.DEFAULT_TEXT_SIZE_FRACTION * 1.9f, v.field<Float>("defaultTextSize"), 1e-6f)
+        assertFalse(v.field<Boolean>("applyEmbeddedStyles"))
     }
 }

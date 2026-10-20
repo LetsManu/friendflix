@@ -133,6 +133,10 @@
     <string name="player_fx_night">Nachtmodus</string>
     <string name="player_fx_night_hint">Laute Stellen leiser, leise lauter</string>
     <string name="player_fx_unsupported">Auf diesem Gerät nicht verfügbar</string>
+    <string name="player_fx_casting">Beim Streamen auf ein anderes Gerät nicht verfügbar</string>
+    <string name="player_fx_on">%1$s an</string>
+    <string name="player_fx_off">%1$s aus</string>
+    <string name="player_next_pause_after">Nächste Folge · Pause nach dieser Folge</string>
     <string name="player_chip_label">Wiedergabeart</string>
     <string name="player_chip_converted">Umgewandelt · %1$s</string>
     <string name="player_quality_direct_info">Direkte Wiedergabe ohne Umwandlung</string>

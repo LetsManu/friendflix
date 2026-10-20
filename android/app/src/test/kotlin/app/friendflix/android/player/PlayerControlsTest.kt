@@ -134,6 +134,29 @@ class PlayerControlsTest {
         assertFalse(controls.panel.isOpen)
     }
 
+    @Test fun backInAMoreSubListReturnsToTheMainListFirst() {
+        controls.openMore()
+        click(panelView(R.id.more_sleep)!!)
+        assertNotNull(panelView(R.id.more_back))
+        activity.onBackPressedDispatcher.onBackPressed()
+        assertTrue(controls.panel.isOpen)
+        assertNull(panelView(R.id.more_back))
+        assertNotNull(panelView(R.id.more_sleep))
+        activity.onBackPressedDispatcher.onBackPressed()
+        assertFalse(controls.panel.isOpen)
+        assertFalse(activity.isFinishing)
+    }
+
+    @Test fun castingStartUnlocksAndShowsTheController() {
+        controls.lock()
+        view.hideController()
+        controls.onCasting()
+        ShadowLooper.idleMainLooper(1, TimeUnit.SECONDS)
+        assertTrue(view.useController)
+        assertTrue(view.isControllerFullyVisible)
+        assertEquals(View.GONE, activity.findViewById<View>(R.id.player_lock).visibility)
+    }
+
     // ---- Chromecast ----
 
     @Test fun moreShowsPlayOnTvOnlyWithCastDevices() {
@@ -270,6 +293,31 @@ class PlayerControlsTest {
         assertNull(controls.sleep.remainingMs())
     }
 
+    @Test fun sleepAfterEpisodePausesAtTheEndAndANewTitleConsumesIt() {
+        controls.openMore()
+        click(panelView(R.id.more_sleep)!!)
+        clickText(activity.getString(R.string.player_sleep_after_episode_option))
+        controls.onCasting() // the TV plays on: the choice goes with it
+        assertTrue(controls.sleep.afterEpisode)
+        controls.titleEnded()
+        assertEquals(1, host.activePaused)
+        assertEquals(activity.getString(R.string.player_sleep_paused), host.flashes.last())
+        controls.newTitle()
+        assertFalse(controls.sleep.afterEpisode)
+        controls.titleEnded() // nothing chosen any more: the end is left alone
+        assertEquals(1, host.activePaused)
+    }
+
+    @Test fun aMinuteTimerOutlivesANewTitle() {
+        controls.openMore()
+        click(panelView(R.id.more_sleep)!!)
+        clickText(activity.getString(R.string.player_minutes, 30))
+        controls.newTitle()
+        assertEquals(30 * 60_000L, controls.sleep.remainingMs())
+        controls.titleEnded()
+        assertEquals(0, host.activePaused)
+    }
+
     // ---- lock ----
 
     @Test fun lockHidesTheControllerAndALongPressRestoresIt() {
@@ -293,6 +341,17 @@ class PlayerControlsTest {
         assertTrue(view.useController)
         assertEquals(View.GONE, overlay.visibility)
         touch(icon, MotionEvent.ACTION_UP)
+    }
+
+    @Test fun backWhileLockedShowsTheHintAndKeepsThePlayer() {
+        controls.lock()
+        activity.onBackPressedDispatcher.onBackPressed()
+        assertFalse(activity.isFinishing)
+        assertTrue(controls.locked)
+        assertEquals(activity.getString(R.string.player_lock_hold), host.flashes.last())
+        controls.unlock()
+        activity.onBackPressedDispatcher.onBackPressed()
+        assertTrue(activity.isFinishing)
     }
 
     @Test fun lockIsLiftedForPictureInPicture() {

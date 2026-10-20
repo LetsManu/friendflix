@@ -137,6 +137,10 @@
     <string name="player_fx_night">Night mode</string>
     <string name="player_fx_night_hint">Loud parts quieter, quiet parts louder</string>
     <string name="player_fx_unsupported">Not available on this device</string>
+    <string name="player_fx_casting">Not available while casting to another device</string>
+    <string name="player_fx_on">%1$s on</string>
+    <string name="player_fx_off">%1$s off</string>
+    <string name="player_next_pause_after">Next episode · pause after this episode</string>
     <string name="player_chip_label">Playback type</string>
     <string name="player_chip_converted">Converted · %1$s</string>
     <string name="player_quality_direct_info">Direct playback, no conversion</string>

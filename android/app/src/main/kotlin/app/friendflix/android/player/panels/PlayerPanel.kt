@@ -30,9 +30,12 @@ class PlayerPanel(private val root: FrameLayout) {
 
     val isOpen: Boolean get() = content != null
 
-    /** Back closes the open panel first (enabled only while one is open). */
+    /** Back closes the open panel first (enabled only while one is open); a panel with its own levels ([BackAware]) steps back first. */
     val back = object : OnBackPressedCallback(false) {
-        override fun handleOnBackPressed() { close() }
+        override fun handleOnBackPressed() {
+            if ((content as? BackAware)?.back() == true) return
+            close()
+        }
     }
 
     /** Shows [content] under [title]; an open panel is replaced (its [onClose] runs first). */
@@ -77,6 +80,11 @@ class PlayerPanel(private val root: FrameLayout) {
         frame = f
         return f
     }
+}
+
+/** A panel content with levels (More → Speed / Quality / Sleep timer): [back] steps up one level, false on the top level. */
+interface BackAware {
+    fun back(): Boolean
 }
 
 /**

@@ -48,3 +48,12 @@ fun captionLook(s: SubtitleStyle): CaptionLook {
     }
     return CaptionLook(fg.toColorInt(), bg, edge, Color.BLACK, face, size * SubtitleView.DEFAULT_TEXT_SIZE_FRACTION)
 }
+
+/** The profile's subtitle look on Media3's subtitle view; the files' own styling is ignored, as the web's cue CSS overrides it. */
+@OptIn(UnstableApi::class)
+fun applyCaptionLook(view: SubtitleView, s: SubtitleStyle) {
+    val l = captionLook(s)
+    view.setApplyEmbeddedStyles(false)
+    view.setStyle(CaptionStyleCompat(l.foreground, l.background, Color.TRANSPARENT, l.edgeType, l.edgeColor, l.typeface))
+    view.setFractionalTextSize(l.fractionalSize)
+}
