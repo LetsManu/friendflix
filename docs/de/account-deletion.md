@@ -2,7 +2,7 @@
 
 *English: [../account-deletion.md](../account-deletion.md)*
 
-App: FriendFlix für Android (`app.friendflix.android`), veröffentlicht von Manuel Weißböck.
+App: FriendFlix für Android (`com.friendflix`), veröffentlicht von Manuel Weißböck.
 
 Jeden FriendFlix-Server betreibt jemand selbst (du, dein Haushalt oder ein Freund). Dein Konto und seine Daten liegen **nur auf diesem Server**. Der Herausgeber der App hat kein Konto von dir und keine Daten über dich, gelöscht wird deshalb auf deinem Server.
 

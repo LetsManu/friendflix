@@ -2,7 +2,7 @@
 
 *Deutsch: [de/account-deletion.md](de/account-deletion.md)*
 
-App: FriendFlix for Android (`app.friendflix.android`), published by Manuel Weißböck.
+App: FriendFlix for Android (`com.friendflix`), published by Manuel Weißböck.
 
 Every FriendFlix server is run by its own operator (you, your household or a friend). Your account and its data live **only on that server**. The publisher of the app has no account of yours and holds no data about you, so the deletion is done on your server.
 

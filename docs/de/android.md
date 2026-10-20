@@ -76,7 +76,7 @@ Alles andere, etwa Wiedergabesprachen, Untertitel, Autoplay und die Standardqual
 Du startest einen Download in der Weboberfläche wie im Browser: Der Server legt die Lizenz mit Qualität und Ablauf an (siehe [downloads.md](../downloads.md)), die App übernimmt die Übertragung.
 
 - Downloads laufen als Hintergrundaufgaben und gehen weiter, wenn die App geschlossen wird, das Netz abbricht oder das Handy neu startet; eine unterbrochene Datei macht dort weiter, wo sie aufgehört hat. Während eine Datei lädt, zeigt Android eine Benachrichtigung mit dem Fortschritt (ohne Titel).
-- Die Dateien liegen im eigenen Ordner der App auf dem Telefon oder der SD-Karte (`Android/data/app.friendflix.android/files/downloads`). Die App braucht keine Speicherberechtigung. Andere Apps können die Dateien nicht nutzen, und mit der App werden sie deinstalliert.
+- Die Dateien liegen im eigenen Ordner der App auf dem Telefon oder der SD-Karte (`Android/data/com.friendflix/files/downloads`). Die App braucht keine Speicherberechtigung. Andere Apps können die Dateien nicht nutzen, und mit der App werden sie deinstalliert.
 - Text-Untertitel (SRT, VTT) und das Poster werden mit dem Titel geladen. Bild-Untertitel (PGS, VobSub) gibt es offline nicht.
 - Wird die Karte mit einem Download herausgenommen, steht er auf pausiert und geht weiter, sobald die Karte zurück ist.
 - Endet die Sitzung auf dem Server (anderswo abgemeldet, abgelaufen), pausieren die Downloads mit dem Hinweis *Bitte erneut anmelden* und gehen nach der nächsten Anmeldung weiter.
@@ -189,7 +189,7 @@ Ab dann baut jeder Release-Tag (`vX.Y.Z`, erstellt vom Workflow *Release*) in de
 1. In der Play Console *App erstellen*: Name FriendFlix, App (kein Spiel), kostenlos. Die Grafiken für den Store-Eintrag (App-Symbol 512×512, Vorstellungsgrafik 1024×500, drei Handy-Screenshots 1080×1920 mit erfundenen Titeln) liegen in `android/play-listing/`; `android/play-listing/src/render.sh` erzeugt sie neu aus den README-Screenshots und dem Logo.
 2. Fülle aus, was Google vor dem Testen verlangt (*Dashboard → App einrichten*): URL der Datenschutzerklärung (die der App ist [privacy.md](privacy.md); nimm ihre GitHub-Adresse `https://github.com/LetsManu/friendflix/blob/main/docs/privacy.md`), App-Zugriff (Tester brauchen ein FriendFlix-Konto auf deinem Server; gib Googles Prüfern ein Testkonto oder erkläre, dass der Zugang nur per Einladung geht), Werbung (keine), Einstufung des Inhalts, Zielgruppe, Datensicherheit. Für die Datensicherheit: Die App schickt, was du tust, nur an deinen eigenen FriendFlix-Server; sie enthält kein Analyse- oder Werbe-SDK; Googles Cast SDK sendet seine eigene Cast-Telemetrie an Google.
 3. *Testen und veröffentlichen → Tests → Geschlossener Test → Track erstellen*, dann *Neuen Release erstellen*. Play App Signing ist für neue Apps standardmäßig an: *Von Google generierter Schlüssel* beibehalten.
-4. Lade `friendflix-android-X.Y.Z.aab` aus dem GitHub-Release hoch. Der erste Upload legt den Paketnamen `app.friendflix.android` endgültig fest.
+4. Lade `friendflix-android-X.Y.Z.aab` aus dem GitHub-Release hoch. Der erste Upload legt den Paketnamen `com.friendflix` endgültig fest.
 5. Veröffentliche den Release im geschlossenen Track. Google prüft ihn (meist Stunden bis einige Tage).
 
 ### 4. Tester hinzufügen
@@ -210,7 +210,7 @@ Die App nutzt für Passkeys (WebAuthn) den App-Modus des WebViews: Androids Anme
     "relation": ["delegate_permission/common.get_login_creds"],
     "target": {
       "namespace": "android_app",
-      "package_name": "app.friendflix.android",
+      "package_name": "com.friendflix",
       "sha256_cert_fingerprints": [
         "<SHA-256 DES PLAY-APP-SIGNATURSCHLÜSSELS>",
         "<SHA-256 DEINES UPLOAD-SCHLÜSSELS>"
@@ -237,7 +237,7 @@ Unit-Tests und der Emulator in der CI decken die Logik ab; diese Punkte brauchen
 5. PIN vergessen: *PIN vergessen* auf dem PIN-Bildschirm eines Profils meldet dich beim Identitätsanbieter in der App erneut an und kehrt zum Festlegen einer neuen PIN zurück.
 6. Passkeys: Mit veröffentlichter `assetlinks.json` (Betreiber-Schritt 5) auf der Anmeldeseite mit einem Passkey anmelden. Ohne sie wird kein Passkey angeboten, und die Anmeldung mit Passwort funktioniert.
 7. Ein Titel im Web-Player (zum Beispiel nachdem der native Player ihn zurückgegeben hat): Der Vollbild-Knopf füllt den Bildschirm ohne Systemleisten; Androids Zurück beendet zuerst das Vollbild.
-8. `adb shell am start -n app.friendflix.android/.shell.ShellActivity --es app.friendflix.android.OPEN_PATH /requests` öffnet die Startseite, nicht `/requests`; ein Tipp auf eine Benachrichtigung öffnet weiter ihre Seite (er nutzt den nicht exportierten Einstieg).
+8. `adb shell am start -n com.friendflix/app.friendflix.android.shell.ShellActivity --es app.friendflix.android.OPEN_PATH /requests` öffnet die Startseite, nicht `/requests`; ein Tipp auf eine Benachrichtigung öffnet weiter ihre Seite (er nutzt den nicht exportierten Einstieg).
 9. Android 13+: Die Benachrichtigungs-Berechtigung wird beim ersten Start einmal erfragt und nie wieder von selbst; *Benachrichtigungen erlauben* in den App-Einstellungen fragt erneut oder öffnet nach zwei Ablehnungen die Android-Einstellungen.
 
 **Downloads und Speicher**
