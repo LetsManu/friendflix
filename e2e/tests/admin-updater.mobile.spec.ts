@@ -9,6 +9,19 @@ test.describe('admin update with the opt-in updater (phone)', () => {
   // the fake backend answers 502 while it "restarts" during a job
   test.use({ allowedConsole: /status of 502 \(Bad Gateway\)/ });
 
+  test('320 px: the Portainer note fits', async ({ page, api }) => {
+    api.updater = { ...updaterState(true), stack: 'foreign' };
+    await page.setViewportSize({ width: 320, height: 740 });
+    await page.goto('/admin/update');
+    const note = page.getByRole('region', { name: 'Updater' }).locator('[data-foreign="manual"]');
+    await expect(note).toBeVisible();
+    await page.waitForLoadState('networkidle');
+    await expect.poll(() => noHorizontalOverflow(page)).toBe(true);
+    const box = (await note.boundingBox())!;
+    expect(box.x).toBeGreaterThanOrEqual(0);
+    expect(box.x + box.width).toBeLessThanOrEqual(320);
+  });
+
   for (const width of [390, 320]) {
     test(`${width} px: progress, rollback button and the fixed-version form fit, nothing overflows`, async ({ page, api }) => {
       api.updater = { ...updaterState(true), outcome: 'rolled_back', downPolls: 1 };

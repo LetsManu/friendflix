@@ -1,5 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
+import { audit } from './audit.js';
 import { buildInfo, channelUpdate, envLine, type BuildKind, type Channel, type RunningChannel } from './channel.js';
 import type { Ctx } from './ctx.js';
 import { appVersion, codenameFor, compareSemver, parseSemver } from './version.js';
@@ -181,4 +182,16 @@ export async function triggerUpdate(ctx: Ctx, mode: 'webhook' | 'api'): Promise<
     const code = typeof raw === 'string' && /^[A-Z_]{2,40}$/.test(raw) ? raw : undefined;
     return { ...fail(null, 'portainer_unreachable', step), ...(code ? { code } : {}) } as TriggerResult;
   }
+}
+
+/**
+ * The Portainer redeploy with its audit entry (system.update: from/to and the mode); `actor` null = the automatic update. Used by
+ * Admin -> Update without the updater and by the updater path when the stack is Portainer's (updater.ts startJob / autoUpdateTick).
+ */
+export async function redeployViaPortainer(ctx: Ctx, actor: string | null, mode: 'webhook' | 'api', info?: UpdateInfo): Promise<TriggerResult> {
+  const i = info ?? await updateInfo(ctx);
+  await audit(ctx, actor, 'system.update', undefined, {
+    from: i.current.sha, to: i.latest?.sha ?? null, fromVersion: i.current.version, toVersion: i.release?.version ?? null, mode, ...(actor ? {} : { auto: true }),
+  });
+  return triggerUpdate(ctx, mode);
 }

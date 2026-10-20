@@ -128,6 +128,40 @@ test.describe('admin update with the opt-in updater (desktop)', () => {
     await expect(card(page).locator('[data-updater]')).toContainText('1.2.3');
   });
 
+  test('a Portainer stack without the webhook: the page says so up front, nothing can be started here', async ({ page, api }) => {
+    api.updater = { ...updaterState(true), stack: 'foreign' };
+    await page.goto('/admin/update');
+    const note = card(page).locator('[data-foreign="manual"]');
+    await expect(note).toHaveAttribute('role', 'alert');
+    await expect(note).toContainText('von Portainer (oder einem anderen Werkzeug) verwaltet');
+    await expect(note).toContainText('Admin → Einstellungen → Updates');
+    await expect(card(page).getByRole('button', { name: 'Jetzt aktualisieren' })).toBeDisabled();
+    await expect(card(page).getByRole('button', { name: 'Zurück zur vorherigen Version' })).toBeDisabled();
+    await card(page).getByText('Updater selbst').click();
+    await expect(card(page).getByRole('button', { name: 'Updater aktualisieren' })).toBeDisabled();
+    expect(api.updater.posts).toEqual([]);
+  });
+
+  test('a Portainer stack with the webhook: "update now" redeploys through Portainer', async ({ page, api }) => {
+    api.updater = { ...updaterState(true), stack: 'foreign', portainer: true };
+    await page.goto('/admin/update');
+    await expect(card(page).locator('[data-foreign="portainer"]')).toContainText('über Portainer neu');
+    await expect(card(page).getByRole('button', { name: 'Zurück zur vorherigen Version' })).toBeDisabled();
+    await card(page).getByRole('button', { name: 'Jetzt aktualisieren' }).click();
+    await card(page).getByRole('button', { name: 'Ja, starten' }).click();
+    await expect(toasts(page).getByText('Portainer deployt den Stack neu.')).toBeVisible();
+    expect(api.updater.posts).toEqual(['update']);
+    await expect(card(page).locator('ol.steps')).toHaveCount(0); // no updater job to follow
+  });
+
+  test('a job refused because the ports would change says so', async ({ page, api }) => {
+    api.updater = updaterState(true);
+    api.updater.job = { id: '0123456789abcdef', action: 'update', state: 'failed', step: 'pull', from: 'sha-c0be6c5', to: 'latest', startedAt: '2026-10-20T02:00:00.000Z',
+      finishedAt: '2026-10-20T02:00:05.000Z', error: 'config_mismatch', steps: { pull: 'failed', verify: 'skipped', restart: 'skipped', health: 'skipped', rollback: 'skipped' } };
+    await page.goto('/admin/update');
+    await expect(card(page).locator('[data-result="failed"]')).toContainText('andere Ports oder Netzwerke');
+  });
+
   test('an updater that refuses the signature is reported', async ({ page, api }) => {
     api.updater = updaterState('unauthorized');
     await page.goto('/admin/update');
