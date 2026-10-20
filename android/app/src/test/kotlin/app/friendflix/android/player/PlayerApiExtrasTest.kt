@@ -160,7 +160,10 @@ class PlayerApiExtrasTest {
         )
         routes["GET /api/items/i1/similar"] = 200 to """{"items":[{"id":"m3","name":"Alike","type":"Movie","year":2001,"image":true}]}"""
         assertEquals(listOf("m3"), api.similar("i1")!!.map { it.id })
-        assertNull(api.personTitles("nobody"))
+        assertEquals(emptyList<Title>(), api.personTitles("nobody")) // 404: nothing visible to this profile
+        routes["GET /api/people/broken"] = 500 to """{"error":"x"}"""
+        assertNull(api.personTitles("broken"))
+        assertNull(api.personTitles("../x"))
         assertNull(api.similar("nobody"))
     }
 

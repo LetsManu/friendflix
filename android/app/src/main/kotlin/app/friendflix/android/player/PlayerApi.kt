@@ -115,6 +115,8 @@ data class CastInfo(
     val creators: List<Person>,
     val studios: List<String>,
     val genres: List<String>,
+    /** the series of an episode (a person's titles leave it out) */
+    val seriesId: String? = null,
 )
 
 data class Title(val id: String, val name: String, val type: String?, val year: Int?, val image: String?)
@@ -273,6 +275,7 @@ class PlayerApi(val server: ServerApi, private val profileId: String) {
     }
 
     fun castInfo(itemId: String): CastInfo? {
+        if (!validId(itemId)) return null
         val j = get("/api/items/$itemId/castinfo") ?: return null
         val it = j.optJSONObject("item") ?: return null
         fun people(k: String) = j.optJSONArray(k)?.let { a -> objects(a).mapNotNull(::parsePerson) } ?: emptyList()
@@ -284,11 +287,24 @@ class PlayerApi(val server: ServerApi, private val profileId: String) {
             communityRating = if (it.has("communityRating") && !it.isNull("communityRating")) it.optDouble("communityRating") else null,
             cast = people("cast"), guests = people("guests"), directors = people("directors"), writers = people("writers"), creators = people("creators"),
             studios = strings("studios"), genres = strings("genres"),
+            seriesId = str(it, "seriesId"),
         )
     }
 
-    /** The titles (movies, series) a person appears in (`GET /api/people/:id`). */
-    fun personTitles(personId: String): List<Title>? = titles(get("/api/people/$personId"))
+    /** The titles (movies, series) a person appears in (`GET /api/people/:id`); 404 = none visible to this profile (empty), null = failed. */
+    fun personTitles(personId: String): List<Title>? {
+        if (!validId(personId)) return null
+        val j = try {
+            val (code, body) = server.getJson("/api/people/$personId", profileId)
+            if (code == 404) return emptyList()
+            if (code == 200) body else null
+        } catch (e: SessionExpired) {
+            throw e
+        } catch (_: IOException) {
+            null
+        }
+        return titles(j)
+    }
 
     fun similar(itemId: String): List<Title>? = titles(get("/api/items/$itemId/similar"))
 
@@ -377,6 +393,9 @@ class PlayerApi(val server: ServerApi, private val profileId: String) {
     }
 
     companion object {
+        private val ID = Regex("[A-Za-z0-9_-]{1,64}")
+        private fun validId(id: String) = ID.matches(id)
+
         val ALL_SEGMENTS = setOf("intro", "outro", "recap", "preview")
         private val AUDIO_FX = setOf("off", "voices", "night", "both")
         private val PROFILE_ERRORS = setOf("profile_changed", "profile_required")

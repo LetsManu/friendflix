@@ -1232,11 +1232,11 @@ class PlayerActivity : FragmentActivity() {
 
     /** A title tapped in Cast & info: the player closes and the shell's web UI opens its page (the web's `/item/<id>`). */
     private fun openTitle(id: String) {
-        if (!Regex("[A-Za-z0-9_-]{1,64}").matches(id)) return
+        val path = ShellIntents.titlePath(id) ?: return
         startActivity(
             ShellIntents.internal(this)
                 .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
-                .putExtra(ShellActivity.EXTRA_OPEN_PATH, "/item/$id"),
+                .putExtra(ShellActivity.EXTRA_OPEN_PATH, path),
         )
         finish()
     }

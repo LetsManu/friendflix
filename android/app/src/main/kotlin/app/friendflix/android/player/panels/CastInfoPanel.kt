@@ -81,15 +81,12 @@ object CastInfoPanel {
                 val r = withContext(Dispatchers.IO) { runCatching { api.personTitles(p.id) }.getOrNull() }
                 if (my != seq) return@launch
                 if (r == null) { msg.text = ctx.getString(R.string.player_info_person_failed); return@launch }
-                val others: List<Title> = r.filter { it.id != itemId }.take(MAX_TITLES)
+                val others: List<Title> = r.filter { it.id != itemId && it.id != info?.seriesId }.take(MAX_TITLES)
                 if (others.isEmpty()) { msg.text = ctx.getString(R.string.player_info_person_none); return@launch }
                 content.removeView(msg)
                 for (t in others) {
                     val label = if (t.year != null) "${t.name} (${t.year})" else t.name
-                    content.addView(row(t.name, t.year?.toString(), t.image, label) { onOpenTitle(t.id) }.also {
-                        it.findViewById<TextView>(R.id.pi_name).text = label
-                        it.findViewById<TextView>(R.id.pi_role).visibility = View.GONE
-                    })
+                    content.addView(row(label, null, t.image, label) { onOpenTitle(t.id) })
                 }
             }
         }
