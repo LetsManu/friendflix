@@ -9,6 +9,7 @@ import android.webkit.WebView
 import androidx.activity.ComponentActivity
 import androidx.activity.OnBackPressedCallback
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.net.toUri
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
@@ -30,6 +31,8 @@ import app.friendflix.android.offline.OfflineActivity
 import app.friendflix.android.offline.OfflineGate
 import app.friendflix.android.player.NativePlayerLauncher
 import app.friendflix.android.settings.AppSettings
+import app.friendflix.android.settings.NotifyPermission
+import app.friendflix.android.settings.SettingsActivity
 import app.friendflix.android.setup.ServerProbe
 import app.friendflix.android.setup.SetupActivity
 import kotlinx.coroutines.flow.first
@@ -44,6 +47,7 @@ class ShellActivity : ComponentActivity() {
     private var bridge: NativeBridge? = null
     private var watch: NetworkWatch? = null
     private var policy: OriginPolicy? = null
+    private val askNotify = registerForActivityResult(ActivityResultContracts.RequestPermission()) { }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         enableEdgeToEdge()
@@ -61,7 +65,6 @@ class ShellActivity : ComponentActivity() {
             WebViewFactory.setDebuggable(BuildConfig.DEBUG)
             val policy = OriginPolicy(origin)
             this@ShellActivity.policy = policy
-            // openSettings is a no-op until the settings screen exists (Task 11).
             val offline = Offline.get(applicationContext)
             val native = NativePlayerLauncher.forApp(applicationContext)
             offline.launcher = native // the offline list plays through the same player
@@ -70,6 +73,8 @@ class ShellActivity : ComponentActivity() {
             offline.startInBackground() // keys, licence check, position sync
             watch = NetworkWatch(this@ShellActivity) { offline.reconnectInBackground() }.also { it.start() }
             launch { openOfflineIfUnreachable(origin, offline) }
+            // the first start with a server asks for the notification permission once (Android 13+); after that only the settings screen does
+            launch { NotifyPermission.askOnce(this@ShellActivity, AppSettings.from(applicationContext), askNotify) }
             // every hand-over from the web UI names the active profile: the offline list shows that profile's downloads
             val sink = object : DownloadSink by downloads {
                 override fun enqueue(req: DownloadRequest): Boolean { offline.noteProfile(req.profileId); return downloads.enqueue(req) }
@@ -77,7 +82,7 @@ class ShellActivity : ComponentActivity() {
             val player = object : PlayerLauncher {
                 override fun launch(req: PlayRequest): Boolean { offline.noteProfile(req.profileId); return native.launch(req) }
             }
-            val bridge = NativeBridge(policy, player, sink, Capabilities(play = true, download = true, cast = true), openSettings = {})
+            val bridge = NativeBridge(policy, player, sink, Capabilities(play = true, download = true, cast = true), openSettings = ::openSettings)
             this@ShellActivity.bridge = bridge
             launch {
                 var last = emptyList<DownloadEntry>()
@@ -152,6 +157,11 @@ class ShellActivity : ComponentActivity() {
         if (WatchLinks.parse(url.toUri(), policy) == null) return // only the app's own watch page
         (view.webViewClient as? ShellWebViewClient)?.allowWebOnce(url)
         view.loadUrl(url)
+    }
+
+    /** The web UI asked for the app's settings (bridge `openSettings()`). */
+    private fun openSettings() {
+        if (!isFinishing) startActivity(SettingsActivity.intent(this))
     }
 
     private fun onRenderGone() {

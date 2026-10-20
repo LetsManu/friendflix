@@ -53,6 +53,15 @@ class OfflineState(file: File, onWrite: () -> Unit = {}) {
         save()
     }
 
+    /** Forgets everything (sign-out of this device / another server): no profile, no check, no time seen. */
+    @Synchronized
+    fun clear() {
+        profile = null
+        seen = 0
+        checked = 0
+        save()
+    }
+
     fun flush() = store.flush()
 
     private fun save() = store.save(JSONObject().put("version", 1).put("lastProfileId", profile ?: JSONObject.NULL).put("maxSeen", seen).put("lastCheck", checked))

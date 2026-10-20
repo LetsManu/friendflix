@@ -164,6 +164,8 @@ An app-like layout with a bottom tab bar, a preview sheet when you tap a poster,
 
 **Downloads for the train and the plane:** download movies and episodes (or the next few episodes of a show in one go) and watch them offline in the browser. Progress syncs back the next time you are online. Per-device licences with expiry; works in Chrome, Edge, Firefox, Safari 17+ and as a home-screen app on iOS 17+. On Android (Chrome, Edge) downloads keep going in the background, even with the app closed; on iPhone they pause while the app is in the background and continue as soon as it is open again.
 
+**Android app:** FriendFlix as an app for Android 8.0 and newer, shared through a Google Play closed test (or as an APK on each release). It shows the same web UI and adds a native player (direct play, picture-in-picture, background audio), downloads in the background to the phone or an SD card, stored encrypted and playable offline, Chromecast, and notifications that the app fetches from your server itself – no Google push service, no analytics. Install, settings, security and the owner's signing steps: [docs/android.md](docs/android.md).
+
 <p align="center"><img src="docs/images/en/downloads.jpg" alt="Downloads page with finished, paused and preparing downloads" width="700"></p>
 
 **Seven languages:** the interface speaks **English, German, French, Spanish, Italian, Turkish and Polish**. Every profile picks its own language; on first login FriendFlix asks once and suggests the browser language. The admin sets the default language for the whole instance.
@@ -376,6 +378,7 @@ npm run e2e                                     # Playwright: builds the web app
 | Offline downloads (platforms, storage, limits) | [docs/downloads.md](docs/downloads.md) |
 | TV mode and phone remote | [docs/tv-mode.md](docs/tv-mode.md) |
 | Chromecast and AirPlay | [docs/cast.md](docs/cast.md) |
+| Android app: install, settings, offline, notifications, signing and Google Play | [docs/android.md](docs/android.md) |
 | Search and discovery API, labels, leaving soon, quality, kids rules | [docs/discovery.md](docs/discovery.md) |
 | Themed lists, calm mode, sound in the player, phone shortcuts and badge | [docs/personal.md](docs/personal.md) |
 | UI kit and admin shell | [docs/ui-kit.md](docs/ui-kit.md) |

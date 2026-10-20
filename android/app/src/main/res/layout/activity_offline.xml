@@ -35,6 +35,13 @@
             android:layout_marginTop="16dp"
             android:text="@string/offline_reconnect" />
 
+        <Button
+            android:id="@+id/offline_settings"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:text="@string/settings_open" />
+
         <ProgressBar
             android:id="@+id/offline_progress"
             style="?android:attr/progressBarStyleSmall"

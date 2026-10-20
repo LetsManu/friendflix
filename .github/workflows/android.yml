@@ -2,7 +2,8 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # Android app CI: lint, unit tests and an unsigned release build (APK uploaded as artifact) on every PR that touches the
 # app, the web bridge it talks to, or this workflow. The instrumented tests run on an API 34 emulator (GitHub only; there is
-# no emulator in the local sandbox). Signing keys live only in GitHub secrets and are used by the release workflow, never here.
+# no emulator in the local sandbox). Signing keys live only in GitHub secrets and are used by android-release.yml (v* tags,
+# called from ci.yml), never here.
 # The app version comes from ../version.json at build time (android/buildSrc), so release bumps need no Android change.
 name: Android
 on:

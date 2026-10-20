@@ -80,6 +80,20 @@ class OfflineScreenTest {
         assertEquals(5_000L, req.startMs)
     }
 
+    @Test fun daysLeftIsTheOfflineWindowNotOnlyTheExpiry() {
+        // expires in 3 days, but the offline grace ends in 2: the list says 2
+        env.store.update(LIC) { it.copy(validUntil = now + 2 * DAY - 60_000) }
+        withScreen { a ->
+            assertTrue(rows(a)[0].findViewById<TextView>(R.id.offline_item_meta).text.contains("2 days left"))
+        }
+    }
+
+    @Test fun theSettingsEntryOpensTheSettings() = withScreen { a ->
+        a.findViewById<Button>(R.id.offline_settings).performClick()
+        val next = org.robolectric.Shadows.shadowOf(a).nextStartedActivity
+        assertEquals(app.friendflix.android.settings.SettingsActivity::class.java.name, next.component?.className)
+    }
+
     @Test fun keysUnavailableShowsTheNoticeAndKeepsTheList() {
         env.keySource = KeySource { throw KeysUnavailableException("busy") }
         runBlocking { offline.checker.openKeys() }

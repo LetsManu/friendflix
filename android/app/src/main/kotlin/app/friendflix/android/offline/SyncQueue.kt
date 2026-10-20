@@ -92,6 +92,13 @@ class SyncQueue(file: File, onWrite: () -> Unit = {}) {
         }
     }
 
+    /** Drops everything queued (sign-out of this device / another server: the positions belong to the old account). */
+    @Synchronized
+    fun clear() {
+        events.clear()
+        save()
+    }
+
     /** Blocks until every change so far is on disk. */
     fun flushToDisk() = store.flush()
 

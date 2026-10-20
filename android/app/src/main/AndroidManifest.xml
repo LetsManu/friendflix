@@ -48,10 +48,27 @@
             android:exported="false"
             android:windowSoftInputMode="adjustResize" />
 
+        <!-- singleTop: a second start probe (or a tap in settings) reuses the open list instead of stacking another one -->
         <activity
             android:name=".offline.OfflineActivity"
             android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|keyboardHidden"
-            android:exported="false" />
+            android:exported="false"
+            android:launchMode="singleTop" />
+
+        <!--
+          The app's own settings (Task 11). Exported only for the system's "app settings" entry on the app info screen
+          (APPLICATION_PREFERENCES); every destructive action on it asks for a confirmation first.
+        -->
+        <activity
+            android:name=".settings.SettingsActivity"
+            android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|keyboardHidden"
+            android:exported="true"
+            android:label="@string/settings_title">
+            <intent-filter>
+                <action android:name="android.intent.action.APPLICATION_PREFERENCES" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+        </activity>
 
         <!--
           The native player (Task 8). Own task so picture-in-picture and the shell do not fight over one task; singleTask so a

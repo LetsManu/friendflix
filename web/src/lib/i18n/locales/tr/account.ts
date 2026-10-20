@@ -82,6 +82,7 @@ const tr: Translation<typeof de> = {
   },
   settings: {
     pageTitle: 'Ayarlar',
+    app: { title: 'Bu cihazdaki uygulama', hint: 'İndirmelerin konumu, yalnızca Wi-Fi, arka planda ses, bildirimler ve bu cihazda oturumu kapatma uygulamada ayarlanır.', open: 'Uygulama ayarlarını aç' },
     title: 'Oynatma ayarları',
     lead: 'Tüm cihazlarında geçerlidir. Yalnızca seni etkiler.',
     autoplayNext: 'Sonraki bölümü otomatik başlat',

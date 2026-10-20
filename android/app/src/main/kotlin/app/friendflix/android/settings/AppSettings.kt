@@ -47,6 +47,8 @@ class AppSettings(private val store: DataStore<Preferences>, private val castMir
     val castReceiverAppId: Flow<String> = store.data.map { it[CAST_RECEIVER_APP_ID] ?: "" }
     /** the server offers casting (`/api/cast/config` `enabled`) as last seen */
     val castEnabled: Flow<Boolean> = store.data.map { it[CAST_ENABLED] ?: false }
+    /** The app asked for the notification permission once on its own (it never asks again unprompted; the settings screen can). */
+    val notifyPermissionAsked: Flow<Boolean> = store.data.map { it[NOTIFY_PERMISSION_ASKED] ?: false }
 
     suspend fun setServerOrigin(origin: HttpUrl) { store.edit { it[SERVER_ORIGIN] = origin.origin() } }
     suspend fun clearServerOrigin() { store.edit { it.remove(SERVER_ORIGIN) } }
@@ -56,6 +58,20 @@ class AppSettings(private val store: DataStore<Preferences>, private val castMir
     suspend fun setNotifyCategories(value: Set<String>) { store.edit { it[NOTIFY_CATEGORIES] = value } }
     suspend fun setNotifyLastId(origin: String, id: Long) { store.edit { it[NOTIFY_LAST_ORIGIN] = origin; it[NOTIFY_LAST_ID] = id } }
     suspend fun setNotifyPaused(value: Boolean) { store.edit { it[NOTIFY_PAUSED] = value } }
+    suspend fun setNotifyPermissionAsked() { store.edit { it[NOTIFY_PERMISSION_ASKED] = true } }
+
+    /** Signed out of this device: the poller starts over (the next account on this server must not inherit the last seen id). */
+    suspend fun forgetSession() { store.edit { it.remove(NOTIFY_LAST_ID); it.remove(NOTIFY_LAST_ORIGIN); it.remove(NOTIFY_PAUSED) } }
+
+    /** Another server: [forgetSession] plus what was learned about the old server (its cast configuration). Choices stay. */
+    suspend fun forgetServer() {
+        store.edit {
+            it.remove(NOTIFY_LAST_ID); it.remove(NOTIFY_LAST_ORIGIN); it.remove(NOTIFY_PAUSED)
+            it.remove(CAST_ENABLED); it.remove(CAST_RECEIVER_APP_ID)
+        }
+        castMirror("")
+    }
+
     suspend fun setCastConfig(enabled: Boolean, receiverAppId: String) {
         store.edit { it[CAST_ENABLED] = enabled; it[CAST_RECEIVER_APP_ID] = receiverAppId }
         castMirror(receiverAppId)
@@ -72,6 +88,7 @@ class AppSettings(private val store: DataStore<Preferences>, private val castMir
         private val NOTIFY_PAUSED = booleanPreferencesKey("notifyPaused")
         private val CAST_RECEIVER_APP_ID = stringPreferencesKey("castReceiverAppId")
         private val CAST_ENABLED = booleanPreferencesKey("castEnabled")
+        private val NOTIFY_PERMISSION_ASKED = booleanPreferencesKey("notifyPermissionAsked")
 
         private const val CAST_MIRROR = "cast"
 

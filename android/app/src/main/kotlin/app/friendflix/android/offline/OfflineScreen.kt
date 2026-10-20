@@ -23,6 +23,7 @@ import app.friendflix.android.R
 import app.friendflix.android.downloads.DownloadRecord
 import app.friendflix.android.downloads.DownloadState
 import app.friendflix.android.settings.AppSettings
+import app.friendflix.android.settings.SettingsActivity
 import app.friendflix.android.setup.ProbeResult
 import app.friendflix.android.setup.ServerProbe
 import app.friendflix.android.shell.ShellActivity
@@ -35,7 +36,7 @@ import kotlin.math.ceil
 /**
  * The offline list (plain views, like the setup screen): the last active profile's downloads with size, days left and why one cannot
  * play; Play hands the local files to [Offline.launcher]. Opened by the shell when the server cannot be reached at start and there is
- * something to watch, or through [intent] (Task 11: menu / notification). Reconnect probes the server and goes back to the web UI.
+ * something to watch, or through [intent] (the settings screen). Reconnect probes the server and goes back to the web UI.
  * It never calls the API itself except through the licence checker on reconnect, and never shows or logs anything but the titles here.
  */
 class OfflineActivity : ComponentActivity() {
@@ -62,6 +63,7 @@ class OfflineActivity : ComponentActivity() {
         reconnect = findViewById(R.id.offline_reconnect)
         progress = findViewById(R.id.offline_progress)
         reconnect.setOnClickListener { reconnect() }
+        findViewById<Button>(R.id.offline_settings).setOnClickListener { startActivity(SettingsActivity.intent(this)) }
         watch = NetworkWatch(this) { offline.reconnectInBackground() }
         val queue = offline.downloads.queue
         lifecycleScope.launch {
@@ -141,7 +143,8 @@ class OfflineActivity : ComponentActivity() {
 
     private fun meta(r: DownloadRecord, now: Long): String {
         val size = Formatter.formatShortFileSize(this, if (r.total > 0) r.total else r.bytes)
-        val days = maxOf(0, ceil((r.expiresAt - now) / DAY_MS.toDouble()).toInt())
+        // the offline window: the licence's expiry or the end of the offline grace, whichever comes first
+        val days = maxOf(0, ceil((minOf(r.expiresAt, offline.checker.window(r)) - now) / DAY_MS.toDouble()).toInt())
         val left = resources.getQuantityString(R.plurals.offline_days_left, days, days)
         return getString(if (r.state == DownloadState.DONE) R.string.offline_meta else R.string.offline_meta_unfinished, size, left)
     }
@@ -163,8 +166,9 @@ class OfflineActivity : ComponentActivity() {
         private const val DAY_MS = 86_400_000L
         private const val PROBE_TIMEOUT_MS = 5_000L
 
-        /** Opens the offline list (Task 11 menu / notification). */
-        fun intent(context: Context): Intent = Intent(context, OfflineActivity::class.java)
+        /** Opens the offline list; an open one is reused (also one below the settings screen, which then closes). */
+        fun intent(context: Context): Intent =
+            Intent(context, OfflineActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
 
         fun reasonText(b: PlayBlock): Int = when (b) {
             PlayBlock.NOT_DONE -> R.string.offline_reason_not_done

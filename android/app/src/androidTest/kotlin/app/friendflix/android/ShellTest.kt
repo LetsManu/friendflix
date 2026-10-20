@@ -50,7 +50,11 @@ class ShellTest {
     }
 
     @Before fun saveServer() {
-        runBlocking { AppSettings.from(ApplicationProvider.getApplicationContext()).setServerOrigin("https://friend.example.com".toHttpUrl()) }
+        runBlocking {
+            val settings = AppSettings.from(ApplicationProvider.getApplicationContext())
+            settings.setServerOrigin("https://friend.example.com".toHttpUrl())
+            settings.setNotifyPermissionAsked() // the one-time notification permission dialog would cover the shell
+        }
         Intents.init()
     }
 

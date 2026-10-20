@@ -102,9 +102,26 @@ test.describe('in the app', () => {
     await expect(page.getByRole('dialog', { name: 'Herunterladen' })).toBeHidden();
     await expect.poll(() => storedDownloads(page)).toBe(1); // adopted by the page's own downloader
   });
+
+  test('the settings page opens the app\'s own settings', async ({ page, api: _api }) => {
+    await fakeNativeApp(page);
+    await page.goto('/settings');
+    const open = page.getByRole('button', { name: 'App-Einstellungen öffnen' });
+    await expect(page.getByRole('heading', { name: 'App auf diesem Gerät' })).toBeVisible();
+    await open.click();
+    await expect.poll(async () => (await nativeCalls(page, 'openSettings')).length).toBe(1);
+    expect((await nativeCalls(page, 'openSettings'))[0]!.args).toEqual({});
+  });
 });
 
 test.describe('outside the app', () => {
+  test('the settings page has no app section in a browser', async ({ page, api: _api }) => {
+    await fakeNativeApp(page);
+    await page.goto('/settings');
+    await expect(page.getByRole('heading', { level: 1 })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'App-Einstellungen öffnen' })).toHaveCount(0);
+  });
+
   test('a page with the object but a normal browser UA ignores the bridge', async ({ page, api: _api }) => {
     await mockPlayer(page);
     await fakeNativeApp(page);

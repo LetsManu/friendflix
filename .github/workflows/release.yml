@@ -130,4 +130,5 @@ jobs:
             echo "### Released $TAG $CODENAME"
             [ "$RESUME" = true ] && echo "Resumed: the tag already existed, only the GitHub Release / CI were (re)started."
             echo "CI builds $TAG; images are published as X.Y.Z, X.Y, X (and latest if it is the highest version) once every check passed."
+            echo "CI also attaches the signed Android app (AAB + APK) to the release when the upload key secrets are set (android-release.yml)."
           } >> "$GITHUB_STEP_SUMMARY"

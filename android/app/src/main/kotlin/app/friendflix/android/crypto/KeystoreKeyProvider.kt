@@ -43,6 +43,16 @@ class KeystoreKeyProvider private constructor(loaded: LoadedKeys) : KeyProvider 
         @Synchronized
         fun open(context: Context): KeystoreKeyProvider =
             KeystoreKeyProvider(EnvelopeKeys(File(context.noBackupFilesDir, BLOB_NAME), AndroidKeystoreWrappingKeys(ALIAS)).load())
+
+        /**
+         * Sign-out of this device: deletes the Keystore alias and the wrapped key blob. Whatever is still encrypted with them is
+         * unreadable for good; the next [open] creates fresh keys. Call only after the downloads are gone.
+         */
+        @Synchronized
+        fun wipe(context: Context) {
+            AndroidKeystoreWrappingKeys(ALIAS).delete()
+            File(context.noBackupFilesDir, BLOB_NAME).delete()
+        }
     }
 }
 

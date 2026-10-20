@@ -170,6 +170,8 @@ App-artige Oberfläche mit Tab-Leiste unten, einer Vorschau beim Antippen eines 
 
 **Downloads für Zug und Flugzeug:** Filme und Folgen herunterladen (bei Serien auch gleich die nächsten Folgen) und offline im Browser ansehen. Der Fortschritt wird beim nächsten Online-Sein abgeglichen. Lizenzen pro Gerät mit Ablaufdatum; funktioniert in Chrome, Edge, Firefox, Safari 17+ und als Home-Bildschirm-App auf iOS 17+. Auf Android (Chrome, Edge) laden Downloads auch im Hintergrund und bei geschlossener App weiter; auf dem iPhone pausieren sie, solange die App im Hintergrund ist, und laufen beim Öffnen sofort weiter.
 
+**Android-App:** FriendFlix als App für Android ab 8.0, geteilt über einen geschlossenen Test bei Google Play (oder als APK an jedem Release). Sie zeigt dieselbe Weboberfläche und bringt einen nativen Player (Direktwiedergabe, Bild-im-Bild, Ton im Hintergrund), Downloads im Hintergrund aufs Telefon oder eine SD-Karte, verschlüsselt gespeichert und offline abspielbar, Chromecast und Benachrichtigungen, die die App selbst bei deinem Server abholt – ohne Push-Dienst von Google, ohne Analyse. Installation, Einstellungen, Sicherheit und die Signatur-Schritte für den Betreiber: [docs/de/android.md](docs/de/android.md).
+
 <p align="center"><img src="docs/images/de/downloads.jpg" alt="Downloads-Seite mit fertigen, pausierten und vorbereiteten Downloads" width="700"></p>
 
 **Sieben Sprachen:** Die Oberfläche spricht **Deutsch, Englisch, Französisch, Spanisch, Italienisch, Türkisch und Polnisch**. Jedes Profil wählt seine eigene Sprache; beim ersten Login fragt FriendFlix einmal nach und schlägt die Browsersprache vor. Der Admin legt die Standardsprache der ganzen Instanz fest.
@@ -382,6 +384,7 @@ npm run e2e                                     # Playwright: baut die Web-App u
 | Offline-Downloads (Plattformen, Speicher, Grenzen) | [docs/downloads.md](docs/downloads.md) |
 | TV-Modus und Handy als Fernbedienung | [docs/tv-mode.md](docs/tv-mode.md) |
 | Chromecast und AirPlay | [docs/cast.md](docs/cast.md) |
+| Android-App: Installation, Einstellungen, Offline, Benachrichtigungen, Signatur und Google Play | [docs/de/android.md](docs/de/android.md) |
 | Such- und Entdecken-API, Labels, Bald weg, Qualität, Regeln für Kinderprofile | [docs/discovery.md](docs/discovery.md) |
 | Themenlisten, Ruhiger Modus, Klang im Player, Handy-Verknüpfungen und Badge | [docs/personal.md](docs/personal.md) |
 | UI-Kit und Admin-Rahmen | [docs/ui-kit.md](docs/ui-kit.md) |

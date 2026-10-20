@@ -189,6 +189,18 @@ class ServerApi(val origin: HttpUrl, base: OkHttpClient, cookies: CookieSource) 
         }
     }
 
+    /**
+     * `POST /auth/logout` (the web UI's sign-out): ends this session on the server, so the cookie is worthless even if a copy
+     * survived. True when the server ended it or it was already gone (401).
+     */
+    fun logout(): Boolean {
+        val url = origin.newBuilder().addPathSegments("auth/logout").build()
+        val token = try { csrfToken() } catch (_: SessionExpired) { return true } ?: return false
+        val req = Request.Builder().url(url).header("accept", "application/json").header("x-csrf-token", token)
+            .post(JSONObject().toString().toRequestBody(JSON)).build()
+        client.newCall(req).execute().use { r -> return r.code == 200 || r.code == 401 }
+    }
+
     /** `POST /api/downloads/progress` with up to 200 offline watch events (`{downloadId,itemId,positionTicks,played,at}`). */
     fun progress(profileId: String, events: JSONArray): ProgressAnswer {
         val url = origin.newBuilder().addPathSegments("api/downloads/progress").build()

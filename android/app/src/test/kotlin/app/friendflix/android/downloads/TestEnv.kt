@@ -122,6 +122,7 @@ class FakeServer : Dispatcher() {
         if (unauthorized) return json(401, JSONObject().put("error", "unauthenticated"))
         val path = request.url.encodedPath
         return when {
+            path == "/auth/logout" -> json(200, JSONObject().put("status", "ok"))
             path == "/api/me" -> json(200, JSONObject().put("csrfToken", "tok").put("profile", JSONObject().put("id", activeProfile)))
             path == "/api/downloads/progress" -> {
                 onProgress?.invoke()

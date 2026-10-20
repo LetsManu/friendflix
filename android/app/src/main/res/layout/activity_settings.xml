@@ -1,0 +1,162 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  SPDX-FileCopyrightText: 2026 Manuel Weißböck
+  SPDX-License-Identifier: AGPL-3.0-or-later
+-->
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/settings_root"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:fillViewport="true">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:padding="24dp">
+
+        <TextView
+            android:id="@+id/settings_heading"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="@string/settings_title"
+            android:textAppearance="?android:attr/textAppearanceLarge" />
+
+        <ProgressBar
+            android:id="@+id/settings_progress"
+            style="?android:attr/progressBarStyleSmall"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:visibility="gone" />
+
+        <!-- server -->
+        <TextView
+            android:id="@+id/settings_server_heading"
+            style="@style/SettingsSection"
+            android:text="@string/settings_server" />
+
+        <TextView
+            android:id="@+id/settings_server_value"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:textIsSelectable="true" />
+
+        <Button
+            android:id="@+id/settings_server_change"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:text="@string/settings_server_change" />
+
+        <!-- downloads -->
+        <TextView
+            android:id="@+id/settings_storage_heading"
+            style="@style/SettingsSection"
+            android:text="@string/settings_storage" />
+
+        <RadioGroup
+            android:id="@+id/settings_storage"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content" />
+
+        <CheckBox
+            android:id="@+id/settings_wifi_only"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:minHeight="48dp"
+            android:text="@string/settings_wifi_only" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="@string/settings_wifi_only_hint"
+            android:textAppearance="?android:attr/textAppearanceSmall" />
+
+        <!-- playback -->
+        <TextView
+            android:id="@+id/settings_playback_heading"
+            style="@style/SettingsSection"
+            android:text="@string/settings_playback" />
+
+        <CheckBox
+            android:id="@+id/settings_background_audio"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:minHeight="48dp"
+            android:text="@string/settings_background_audio" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="@string/settings_background_audio_hint"
+            android:textAppearance="?android:attr/textAppearanceSmall" />
+
+        <!-- notifications -->
+        <TextView
+            android:id="@+id/settings_notify_heading"
+            style="@style/SettingsSection"
+            android:text="@string/settings_notifications" />
+
+        <TextView
+            android:id="@+id/settings_notify_status"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:accessibilityLiveRegion="polite" />
+
+        <Button
+            android:id="@+id/settings_notify_allow"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:text="@string/settings_notify_allow" />
+
+        <LinearLayout
+            android:id="@+id/settings_notify_categories"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:orientation="vertical" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="@string/settings_notify_hint"
+            android:textAppearance="?android:attr/textAppearanceSmall" />
+
+        <!-- this device -->
+        <TextView
+            android:id="@+id/settings_device_heading"
+            style="@style/SettingsSection"
+            android:text="@string/settings_device" />
+
+        <Button
+            android:id="@+id/settings_offline"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="@string/settings_open_downloads" />
+
+        <Button
+            android:id="@+id/settings_sign_out"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:text="@string/settings_sign_out"
+            android:textColor="@color/error" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="@string/settings_sign_out_hint"
+            android:textAppearance="?android:attr/textAppearanceSmall" />
+
+        <TextView
+            android:id="@+id/settings_version"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="24dp"
+            android:textAppearance="?android:attr/textAppearanceSmall"
+            android:textIsSelectable="true" />
+    </LinearLayout>
+</ScrollView>

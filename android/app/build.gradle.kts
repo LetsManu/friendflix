@@ -25,8 +25,26 @@ android {
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
+    // Release signing with the upload key, only when the release workflow provides it (env vars, never a file in the repo):
+    // ANDROID_UPLOAD_KEYSTORE_FILE (path of the decoded keystore), ANDROID_UPLOAD_KEY_PASSWORD (store and key), ANDROID_UPLOAD_KEY_ALIAS.
+    // Without them release builds stay unsigned (PR CI, local builds); debug builds always use the debug key.
+    val uploadKeystore = providers.environmentVariable("ANDROID_UPLOAD_KEYSTORE_FILE").orNull?.takeIf { it.isNotBlank() }
+    val uploadPassword = providers.environmentVariable("ANDROID_UPLOAD_KEY_PASSWORD").orNull?.takeIf { it.isNotEmpty() }
+    val uploadAlias = providers.environmentVariable("ANDROID_UPLOAD_KEY_ALIAS").orNull?.takeIf { it.isNotBlank() }
+    val upload = if (uploadKeystore != null && uploadPassword != null && uploadAlias != null) {
+        signingConfigs.create("upload") {
+            storeFile = file(uploadKeystore)
+            storePassword = uploadPassword
+            keyAlias = uploadAlias
+            keyPassword = uploadPassword
+        }
+    } else {
+        null
+    }
+
     buildTypes {
         release {
+            if (upload != null) signingConfig = upload
             isMinifyEnabled = true
             isShrinkResources = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")

@@ -120,6 +120,14 @@ class DownloadStore(private val file: File, private val onWrite: () -> Unit = {}
         return cur
     }
 
+    /** Removes every row at once (one write) and returns them: signing out of this device / changing the server. */
+    @Synchronized
+    fun clear(): List<DownloadRecord> {
+        val cur = state.value.values.toList()
+        if (cur.isNotEmpty()) commit(emptyMap())
+        return cur
+    }
+
     /** Blocks until every change made so far is on disk (tests, and before the process is expected to end). */
     fun flush() {
         writer.submit { persist() }.get()

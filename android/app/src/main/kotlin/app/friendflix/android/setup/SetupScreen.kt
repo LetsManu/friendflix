@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 package app.friendflix.android.setup
 
+import android.content.Context
 import android.content.Intent
 import android.os.Bundle
 import android.view.inputmethod.EditorInfo
@@ -50,6 +51,11 @@ class SetupActivity : ComponentActivity() {
         address.setOnEditorActionListener { _, action, _ ->
             if (action == EditorInfo.IME_ACTION_GO) { submit(); true } else false
         }
+        // from the settings screen's server change: the new address, checked right away
+        intent.getStringExtra(EXTRA_ADDRESS)?.let { a ->
+            address.setText(a)
+            if (savedInstanceState == null) submit()
+        }
     }
 
     private fun submit() {
@@ -87,4 +93,11 @@ class SetupActivity : ComponentActivity() {
     }
 
     private fun show(message: Int) { status.setText(message) }
+
+    companion object {
+        private const val EXTRA_ADDRESS = "app.friendflix.android.SETUP_ADDRESS"
+
+        /** Setup with [address] filled in and checked at once (a server change from the settings screen). */
+        fun intent(context: Context, address: String): Intent = Intent(context, SetupActivity::class.java).putExtra(EXTRA_ADDRESS, address)
+    }
 }

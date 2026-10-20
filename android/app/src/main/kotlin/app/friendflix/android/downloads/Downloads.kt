@@ -44,6 +44,9 @@ open class OpenOnceKeySource<K : KeyProvider>(
 
     /** The provider if it is already open. */
     fun current(): K? = opened
+
+    /** The keys were wiped (sign-out of this device): the next [keys] call opens (creates) them again. */
+    fun forget() { synchronized(this) { opened = null } }
 }
 
 /** The Keystore keys (Task 5). Lost keys make the old downloads unreadable: [onOldFilesUnreadable] removes them (Task 7). */

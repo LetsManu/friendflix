@@ -14,6 +14,7 @@
   import { kidsMode } from '#lib/kids';
   import { features } from '#lib/capabilities';
   import { homeCache } from '#lib/home';
+  import { native } from '#lib/native/bridge';
 
   /** audio/subtitle track languages (ISO 639-2 as Jellyfin reports them; names in the UI language) */
   const LANGS = ['ger', 'eng', 'fre', 'spa', 'ita', 'jpn'];
@@ -40,7 +41,10 @@
     catch { instMsg = tr('account.language.saveFailed'); }
     instBusy = false;
   }
+  /** inside the Android app: its own settings (storage, Wi-Fi only, notifications, sign out of this device) open natively */
+  let inApp = false;
   onMount(() => {
+    inApp = native.available;
     api<Me>('/api/me').then((m) => { me = m; owner = Boolean(m.profile?.isOwner); if (isLocale(m.defaultLanguage)) instLang = m.defaultLanguage; }).catch(() => undefined);
     // only fields that changed in the store are taken over (a language switch must not discard unsaved edits)
     let prev: Prefs | null = null;
@@ -102,6 +106,13 @@
       <small class="muted">{$t('account.language.instanceSettingHint')}</small></div>
   {/if}
 </section>
+{#if inApp}
+  <section class="panel form" id="app" aria-labelledby="apph">
+    <h2 id="apph">{$t('account.settings.app.title')}</h2>
+    <p class="muted">{$t('account.settings.app.hint')}</p>
+    <div><button type="button" class="sec" on:click={() => native.openSettings()}>{$t('account.settings.app.open')}</button></div>
+  </section>
+{/if}
 <h1>{$t('account.settings.title')}</h1>
 <p class="muted">{$t('account.settings.lead')}</p>
 <!-- kids profiles: only language and playback languages / subtitle look (nothing social, nothing account-wide) -->
