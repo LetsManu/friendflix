@@ -108,12 +108,7 @@ class EpisodeFlow(
     fun skipGoesNext(s: Segment, hasNext: Boolean): Boolean = s.type == "preview" && duration > 0 && s.endSec >= duration - 3 && hasNext
 
     /** Second the credits begin (Infinity while the duration is unknown). */
-    fun creditsStart(): Double {
-        if (duration <= 0) return Double.POSITIVE_INFINITY
-        val fallback = maxOf(0.0, duration - LAST_SECONDS)
-        val seg = segments.filter { (it.type == "outro" || it.type == "credits") && it.startSec > 0 && it.startSec < duration }.minByOrNull { it.startSec }
-        return if (seg != null && seg.startSec >= duration / 2) seg.startSec else fallback
-    }
+    fun creditsStart(): Double = creditsStartSec(duration, segments)
 
     /**
      * Called about every 100 ms - 1 s with the position, whether the title plays / has ended, and the ms since the last call.
