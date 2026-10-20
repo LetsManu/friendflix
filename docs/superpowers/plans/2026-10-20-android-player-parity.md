@@ -232,3 +232,20 @@
 - [ ] **Step 1: Failing tests** — offline playback: Episodes, Scenes, Cast & info, bookmarks row, subtitle search hidden, speed/sleep/lock shown; casting: speed, fx, subtitle search, quality and audio/subtitle changes hidden or disabled, Episodes pick starts the TV, Chromecast button and *Playing on TV* row present.
 - [ ] **Step 2–4:** run / implement / run (all `testDebugUnitTest`, lint).
 - [ ] **Step 5: Commit** `android: player controls follow offline and Chromecast state; docs`.
+
+### Task 12: Fullscreen system bars and an always-visible Chromecast button (owner report 2026-10-20)
+
+The owner saw on a phone: the Android navigation bar stays visible in the player, and the Chromecast button was missing.
+
+**Files:**
+- Modify: `P/PlayerActivity.kt` (system bars), `P/PlayerControls.kt` / `CastUi` (cast visibility rule), `docs/android.md` + `docs/de/android.md` (Chromecast troubleshooting)
+- Test: `T/PlayerControlsTest.kt` (extend), a system-bars test in the same style
+
+**Rules:**
+- System bars: hidden (immersive, `BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE`, status + navigation) not only in `onCreate` but again in `onResume`, in `onWindowFocusChanged(hasFocus = true)`, after leaving picture-in-picture, after a panel/dialog closes, and when the controller hides. Never shown by the player itself except while the activity is in the background.
+- Chromecast button: shown whenever casting is possible in principle — online, Google Play services available (the Cast context exists), and the server allows casting (`/api/cast/config` enabled) — even when no device has been discovered yet; a tap then opens the route chooser, which says when no TV is found. The More row *Play on TV* follows the same rule. Hidden offline and on phones without Google Play services.
+- Docs: troubleshooting row "No Cast button / no TV in the list": same Wi-Fi, casting enabled on the server, and when `CAST_RECEIVER_APP_ID` names an unpublished receiver, only TVs registered as test devices in the Google Cast console appear.
+
+- [ ] **Step 1: Failing tests** — after `onResume`/focus regain the insets controller hid `systemBars()`; Chromecast button visible with cast enabled and no devices; hidden offline; hidden when the Cast context is missing.
+- [ ] **Step 2–4:** run / implement / run (all `testDebugUnitTest`, lint).
+- [ ] **Step 5: Commit** `android: player stays fullscreen; Chromecast button whenever casting is possible`.
