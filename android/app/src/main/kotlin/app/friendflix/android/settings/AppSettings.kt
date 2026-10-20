@@ -28,6 +28,11 @@ private val Context.dataStore: DataStore<Preferences> by preferencesDataStore(na
  */
 class AppSettings(private val store: DataStore<Preferences>, private val castMirror: (String) -> Unit = {}) {
     val serverOrigin: Flow<HttpUrl?> = store.data.map { it[SERVER_ORIGIN]?.toHttpUrlOrNull() }
+    /**
+     * The server's sign-in page origin (`authOrigin` of /api/version) as last seen, or null: the one other origin the shell's WebView may
+     * show in its main frame (never with the bridge or native cookies). Saved at setup, refreshed at every app start.
+     */
+    val authOrigin: Flow<HttpUrl?> = store.data.map { it[AUTH_ORIGIN]?.toHttpUrlOrNull() }
     val storage: Flow<StorageLocation> = store.data.map {
         StorageLocation.entries.firstOrNull { e -> e.name == it[STORAGE] } ?: StorageLocation.PHONE
     }
@@ -51,7 +56,10 @@ class AppSettings(private val store: DataStore<Preferences>, private val castMir
     val notifyPermissionAsked: Flow<Boolean> = store.data.map { it[NOTIFY_PERMISSION_ASKED] ?: false }
 
     suspend fun setServerOrigin(origin: HttpUrl) { store.edit { it[SERVER_ORIGIN] = origin.origin() } }
-    suspend fun clearServerOrigin() { store.edit { it.remove(SERVER_ORIGIN) } }
+    suspend fun clearServerOrigin() { store.edit { it.remove(SERVER_ORIGIN); it.remove(AUTH_ORIGIN) } }
+    suspend fun setAuthOrigin(origin: HttpUrl?) {
+        store.edit { if (origin == null) it.remove(AUTH_ORIGIN) else it[AUTH_ORIGIN] = origin.origin() }
+    }
     suspend fun setStorage(value: StorageLocation) { store.edit { it[STORAGE] = value.name } }
     suspend fun setWifiOnly(value: Boolean) { store.edit { it[WIFI_ONLY] = value } }
     suspend fun setBackgroundAudio(value: Boolean) { store.edit { it[BACKGROUND_AUDIO] = value } }
@@ -67,7 +75,7 @@ class AppSettings(private val store: DataStore<Preferences>, private val castMir
     suspend fun forgetServer() {
         store.edit {
             it.remove(NOTIFY_LAST_ID); it.remove(NOTIFY_LAST_ORIGIN); it.remove(NOTIFY_PAUSED)
-            it.remove(CAST_ENABLED); it.remove(CAST_RECEIVER_APP_ID)
+            it.remove(CAST_ENABLED); it.remove(CAST_RECEIVER_APP_ID); it.remove(AUTH_ORIGIN)
         }
         castMirror("")
     }
@@ -79,6 +87,7 @@ class AppSettings(private val store: DataStore<Preferences>, private val castMir
 
     companion object {
         private val SERVER_ORIGIN = stringPreferencesKey("serverOrigin")
+        private val AUTH_ORIGIN = stringPreferencesKey("authOrigin")
         private val STORAGE = stringPreferencesKey("storage")
         private val WIFI_ONLY = booleanPreferencesKey("wifiOnly")
         private val BACKGROUND_AUDIO = booleanPreferencesKey("backgroundAudio")

@@ -5,6 +5,7 @@ package app.friendflix.android.setup
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.HttpUrl
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import org.json.JSONObject
@@ -30,7 +31,8 @@ data class Semver(val major: Int, val minor: Int, val patch: Int) : Comparable<S
 }
 
 sealed interface ProbeResult {
-    data class Ok(val serverVersion: String) : ProbeResult
+    /** [authOrigin]: the server's sign-in page origin (`authOrigin`, https only), or null when it names none or an unusable one. */
+    data class Ok(val serverVersion: String, val authOrigin: HttpUrl? = null) : ProbeResult
     data object NotFriendFlix : ProbeResult
     data object AppTooOld : ProbeResult
     data object ServerTooOld : ProbeResult
@@ -68,7 +70,7 @@ class ServerProbe(
         }
     }
 
-    // FriendFlix answers {sha, version, codename, build, channel, label}; minAndroid (added by a later server) is optional.
+    // FriendFlix answers {sha, version, codename, build, channel, label}; minAndroid and authOrigin (added by a later server) are optional.
     private fun evaluate(body: String): ProbeResult {
         val json = try { JSONObject(body) } catch (_: Exception) { return ProbeResult.NotFriendFlix }
         val sha = json.optString("sha", "")
@@ -80,10 +82,21 @@ class ServerProbe(
         if (app != null && minAndroid != null && app < minAndroid) return ProbeResult.AppTooOld
         val min = Semver.parse(minServer)
         if (min != null && server < min) return ProbeResult.ServerTooOld
-        return ProbeResult.Ok(version)
+        return ProbeResult.Ok(version, authOriginOf(json.optString("authOrigin", "")))
     }
 
-    private companion object {
-        const val MAX_BODY = 64L * 1024
+    companion object {
+        private const val MAX_BODY = 64L * 1024
+
+        /**
+         * `authOrigin` as an origin the shell may show: https, a host, and nothing after it (no path, query, fragment or user info).
+         * Anything else is null (the shell then shows only the app itself, as before).
+         */
+        fun authOriginOf(text: String): HttpUrl? {
+            if (text.isEmpty() || !text.startsWith("https://", ignoreCase = true)) return null
+            val url = text.toHttpUrlOrNull() ?: return null
+            if (url.username.isNotEmpty() || url.password.isNotEmpty() || url.encodedPath != "/" || url.query != null || url.fragment != null) return null
+            return url
+        }
     }
 }

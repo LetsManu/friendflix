@@ -67,7 +67,7 @@ class SetupActivity : ComponentActivity() {
         lifecycleScope.launch {
             val result = probe.probe(origin)
             if (result is ProbeResult.Ok) {
-                AppSettings.from(applicationContext).setServerOrigin(origin)
+                AppSettings.from(applicationContext).run { setServerOrigin(origin); setAuthOrigin(result.authOrigin) }
                 startActivity(Intent(this@SetupActivity, ShellActivity::class.java))
                 finish()
                 return@launch

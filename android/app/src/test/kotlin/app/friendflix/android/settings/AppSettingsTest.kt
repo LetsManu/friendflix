@@ -69,4 +69,15 @@ class AppSettingsTest {
         assertEquals(true, settings.backgroundAudio.first())
         assertEquals(setOf("new", "request"), settings.notifyCategories.first())
     }
+
+    @Test fun authOriginIsStoredAndForgottenWithTheServer() = runBlocking {
+        assertEquals(null, settings.authOrigin.first())
+        settings.setAuthOrigin("https://auth.example.com:8443".toHttpUrl())
+        assertEquals("https://auth.example.com:8443/", settings.authOrigin.first().toString())
+        settings.setAuthOrigin(null)
+        assertEquals(null, settings.authOrigin.first())
+        settings.setAuthOrigin("https://auth.example.com".toHttpUrl())
+        settings.forgetServer()
+        assertEquals(null, settings.authOrigin.first())
+    }
 }

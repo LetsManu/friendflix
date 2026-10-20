@@ -43,6 +43,16 @@ class ShellWebViewClient(
     /** The watch URL whose native start was declined: its page load goes ahead without asking again. */
     private var declined: String? = null
 
+    /**
+     * The server's sign-in page (`authOrigin` of /api/version: the identity provider), or null. The one other origin the main frame may
+     * show, so that sign-in, re-authentication and the forgotten-PIN reset finish inside the app. Exact scheme + host + port, https
+     * only. It never gets the bridge (the message listener is scoped to the app origin) and never sees the native cookie jar.
+     */
+    @Volatile
+    var authOrigin: OriginPolicy? = null
+
+    private fun isAuthOrigin(uri: Uri): Boolean = authOrigin?.isAppOrigin(uri) == true
+
     /** [url] is to load in the web player (the native player handed it back): its next page load is not intercepted. */
     fun allowWebOnce(url: String) { declined = url }
 
@@ -51,6 +61,7 @@ class ShellWebViewClient(
         if (policy.isAppOrigin(uri)) return request.isForMainFrame && nativeWatch(uri, rememberDecline = true)
         // Frames inside the page are the page's business (CSP governs them); only top-level navigation leaves the app.
         if (!request.isForMainFrame) return false
+        if (isAuthOrigin(uri)) return false // sign-in at the identity provider stays in the app
         if (ExternalLinks.isOpenable(uri)) openExternal(uri)
         // javascript:, intent:, file:, content: and the like are dropped, never started.
         return true
@@ -66,8 +77,8 @@ class ShellWebViewClient(
     }
 
     /**
-     * Backstop for navigations that skip shouldOverrideUrlLoading (form POSTs, some redirects): a foreign origin never stays in
-     * the main frame. The load is cancelled and links are handed out; if a foreign page had already committed, step back or reload.
+     * Backstop for navigations that skip shouldOverrideUrlLoading (form POSTs, some redirects): a foreign origin (anything but the app
+     * and [authOrigin]) never stays in the main frame. The load is cancelled and links are handed out; if a foreign page had already committed, step back or reload.
      */
     override fun onPageStarted(view: WebView, url: String?, favicon: Bitmap?) {
         if (url == null || url == "about:blank") return
@@ -80,10 +91,12 @@ class ShellWebViewClient(
             }
             return
         }
+        if (isAuthOrigin(uri)) return
         view.stopLoading()
         if (ExternalLinks.isOpenable(uri)) openExternal(uri)
         val current = view.url
-        if (current != null && policy.isAppOrigin(current.toUri())) return // the app page is still showing: nothing to undo
+        // the app (or the sign-in page) is still showing: nothing to undo
+        if (current != null && current.toUri().let { policy.isAppOrigin(it) || isAuthOrigin(it) }) return
         if (view.canGoBack()) view.goBack() else view.loadUrl(policy.origin.toString())
     }
 
@@ -111,7 +124,7 @@ class ShellWebViewClient(
 object WebViewFactory {
     @SuppressLint("SetJavaScriptEnabled")
     fun create(
-        context: Context, policy: OriginPolicy, versionName: String, bridge: NativeBridge? = null,
+        context: Context, policy: OriginPolicy, versionName: String, bridge: NativeBridge? = null, authOrigin: OriginPolicy? = null,
         onRenderGone: () -> Unit = {}, onWatch: ((WatchLink) -> Boolean)? = null, openExternal: (Uri) -> Unit,
     ): WebView {
         val view = WebView(context)
@@ -124,7 +137,7 @@ object WebViewFactory {
             safeBrowsingEnabled = true
             userAgentString = "$userAgentString FriendFlixAndroid/$versionName"
         }
-        view.webViewClient = ShellWebViewClient(policy, onRenderGone, onWatch, openExternal)
+        view.webViewClient = ShellWebViewClient(policy, onRenderGone, onWatch, openExternal).also { it.authOrigin = authOrigin }
         // Downloads go through the native bridge only; a plain WebView download request is dropped.
         view.setDownloadListener { _, _, _, _, _ -> }
         // Registered before any page loads. Without WebView support there is simply no bridge (the web UI then never offers native paths).

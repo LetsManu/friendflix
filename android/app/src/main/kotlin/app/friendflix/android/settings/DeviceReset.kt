@@ -9,6 +9,7 @@ import android.webkit.WebStorage
 import androidx.core.app.NotificationManagerCompat
 import app.friendflix.android.crypto.KeystoreKeyProvider
 import app.friendflix.android.downloads.DownloadState
+import app.friendflix.android.downloads.LicenceDeleteWorker
 import app.friendflix.android.downloads.OpenOnceKeySource
 import app.friendflix.android.downloads.ServerApi
 import app.friendflix.android.notify.NotificationScheduler
@@ -29,8 +30,9 @@ fun interface WebSession {
 }
 
 /**
- * The real WebView stores. The WebView only ever shows the configured origin (every other link opens in the browser), so removing
- * all cookies and all web storage removes exactly that origin's session and data.
+ * The real WebView stores. The WebView only ever shows the configured origin and, while signing in, the server's identity provider
+ * (every other link opens in the browser), so removing all cookies and all web storage removes that origin's session and data and the
+ * WebView's sign-in at the identity provider.
  */
 object SystemWebSession : WebSession {
     override suspend fun clear() = withContext(Dispatchers.Main) {
@@ -50,7 +52,8 @@ object SystemWebSession : WebSession {
  *
  * Both, in this order:
  * 0. every player screen closes ([PlayerReset]), its stop report still sent with the cookie;
- * 1. every WorkManager job is cancelled (downloads, licence returns, the notification poll) and waited for;
+ * 1. every WorkManager job is cancelled (downloads, storage moves, licence returns, the notification poll) and waited for; licence
+ *    returns that had not run yet are remembered and given back in step 3 (afterwards there is no session for them);
  * 2. the download rows go, and every file in the app's download folders on every mounted volume is deleted;
  * 3. online, best effort, while the session cookie still exists: each licence is given back to the server it came from
  *    (`DELETE /api/downloads/:id`; one the server refuses stays there until it runs out), then the session is ended there
@@ -105,6 +108,14 @@ class DeviceReset(
             Log.w(TAG, "stopping playback: ${e.javaClass.simpleName}")
         }
         val wm = d.workManager
+        // licence returns the user started (a deleted download) and that have not run yet: given back below with the others
+        val queuedReturns = try {
+            LicenceDeleteWorker.pending(wm)
+        } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
+            Log.w(TAG, "reading queued licence returns: ${e.javaClass.simpleName}")
+            emptyList()
+        }
         try {
             wm.cancelAllWork().result.get(CANCEL_WAIT_S, TimeUnit.SECONDS)
         } catch (e: Exception) {
@@ -113,7 +124,8 @@ class DeviceReset(
         val rows = d.store.clear()
         rows.forEach { d.queue.clearPrep(it.licenseId) }
         deleteAllFiles()
-        giveBack(rows.filter { it.state != DownloadState.EXPIRED }.map { it.licenseId to it.profileId })
+        val held = rows.filter { it.state != DownloadState.EXPIRED }.map { it.licenseId to it.profileId }
+        giveBack((held + queuedReturns).distinctBy { it.first })
         d.store.flush()
         deleteAllFiles() // again: a worker that was mid-chunk when it was cancelled may have written once more
         offline.sync.clear()

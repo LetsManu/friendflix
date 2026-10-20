@@ -12,6 +12,7 @@ import app.friendflix.android.downloads.Downloads
 import app.friendflix.android.downloads.ITEM
 import app.friendflix.android.downloads.LIC
 import app.friendflix.android.downloads.LIC2
+import app.friendflix.android.downloads.LicenceDeleteWorker
 import app.friendflix.android.downloads.OpenOnceKeySource
 import app.friendflix.android.downloads.PROFILE
 import app.friendflix.android.downloads.TestEnv
@@ -126,6 +127,19 @@ class DeviceResetTest {
     @Test fun playersStopFirstAndTheCookieGoesAfterTheLogout() = runBlocking {
         reset().signOut()
         assertEquals(listOf("stop rows=2 requests=0", "web after /auth/logout"), timeline)
+    }
+
+    @Test fun aQueuedLicenceReturnIsGivenBackBeforeTheSessionEnds() = runBlocking {
+        // a download deleted earlier whose licence return has not run yet (it waits for a network)
+        LicenceDeleteWorker.enqueue(env.workManager, "del-lic-old", "lic-old", PROFILE)
+        assertEquals(listOf("lic-old" to PROFILE), LicenceDeleteWorker.pending(env.workManager))
+        assertTrue(env.fake.requests.none { it.url.encodedPath == "/api/downloads/lic-old" })
+        reset().signOut()
+        val deletes = env.fake.requests.filter { it.method == "DELETE" }.map { it.url.encodedPath }.toSet()
+        assertEquals(setOf("/api/downloads/$LIC", "/api/downloads/$LIC2", "/api/downloads/lic-old"), deletes)
+        assertEquals("ff_sid=s3cret", env.fake.requests.first { it.url.encodedPath == "/api/downloads/lic-old" }.headers["cookie"])
+        assertEquals("/auth/logout", env.fake.requests.last().url.encodedPath)
+        assertEquals(emptyList<Pair<String, String>>(), LicenceDeleteWorker.pending(env.workManager))
     }
 
     @Test fun aRefusedLicenceStillReturnsTheOthersAndEndsTheSession() = runBlocking {

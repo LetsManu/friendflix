@@ -33,6 +33,7 @@ import app.friendflix.android.player.NativePlayerLauncher
 import app.friendflix.android.settings.AppSettings
 import app.friendflix.android.settings.NotifyPermission
 import app.friendflix.android.settings.SettingsActivity
+import app.friendflix.android.setup.ProbeResult
 import app.friendflix.android.setup.ServerProbe
 import app.friendflix.android.setup.SetupActivity
 import kotlinx.coroutines.flow.first
@@ -56,12 +57,15 @@ class ShellActivity : ComponentActivity() {
             override fun handleOnBackPressed() = shellBack(webView) { finish() }
         })
         lifecycleScope.launch {
-            val origin = AppSettings.from(applicationContext).serverOrigin.first()
+            val settings = AppSettings.from(applicationContext)
+            val origin = settings.serverOrigin.first()
             if (origin == null) {
                 startActivity(Intent(this@ShellActivity, SetupActivity::class.java))
                 finish()
                 return@launch
             }
+            // read before the start-up probe is launched: from here to the WebView nothing suspends, so the probe's fresher answer lands last
+            val storedAuth = settings.authOrigin.first()
             WebViewFactory.setDebuggable(BuildConfig.DEBUG)
             val policy = OriginPolicy(origin)
             this@ShellActivity.policy = policy
@@ -93,6 +97,7 @@ class ShellActivity : ComponentActivity() {
             }
             val view = WebViewFactory.create(
                 this@ShellActivity, policy, BuildConfig.VERSION_NAME, bridge,
+                authOrigin = storedAuth?.let(::OriginPolicy),
                 onRenderGone = ::onRenderGone,
                 // a page load of /watch/<id> (deep link, reload) plays natively too, for the last active profile; none known → web player
                 onWatch = { link ->
@@ -112,9 +117,16 @@ class ShellActivity : ComponentActivity() {
         }
     }
 
-    /** Start-up: a quick probe; the server cannot be used and there is something downloaded to watch → the offline list. */
+    /**
+     * Start-up: a quick probe; the server cannot be used and there is something downloaded to watch → the offline list. A good answer
+     * refreshes the sign-in page origin the WebView may show (the server's identity provider may have moved).
+     */
     private suspend fun openOfflineIfUnreachable(origin: HttpUrl, offline: Offline) {
         val result = ServerProbe(appVersion = BuildConfig.VERSION_NAME, timeoutMs = PROBE_TIMEOUT_MS).probe(origin)
+        if (result is ProbeResult.Ok) {
+            AppSettings.from(applicationContext).setAuthOrigin(result.authOrigin)
+            (webView?.webViewClient as? ShellWebViewClient)?.authOrigin = result.authOrigin?.let(::OriginPolicy)
+        }
         if (OfflineGate.shouldOpen(result, offline.checker.hasDownloads()) && !isFinishing) startActivity(OfflineActivity.intent(this))
     }
 

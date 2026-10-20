@@ -3,6 +3,7 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { parseClientCaps } from '../src/media/clientCaps.js';
 import { MIN_ANDROID, parseSemver } from '../src/version.js';
+import { authOrigin } from '../src/oidc.js';
 import { makeEnv, type TestEnv } from './helpers.js';
 
 const ID = 'a'.repeat(32);
@@ -49,6 +50,15 @@ describe('/api/version', () => {
   it('minAndroid is a strict x.y.z next to the version constant', () => {
     expect(MIN_ANDROID).toBe('2.0.0');
     expect(parseSemver(MIN_ANDROID)).toEqual([2, 0, 0]);
+  });
+  it('authOrigin is the OIDC issuer origin, or null without an external sign-in page', () => {
+    const app = 'https://friend.example.com';
+    expect(authOrigin({ OIDC_ISSUER: 'https://auth.example.com/application/o/friendflix/', PUBLIC_URL: app })).toBe('https://auth.example.com');
+    expect(authOrigin({ OIDC_ISSUER: 'https://auth.example.com:8443/application/o/ff/', PUBLIC_URL: app })).toBe('https://auth.example.com:8443');
+    expect(authOrigin({ OIDC_ISSUER: '', PUBLIC_URL: app })).toBeNull();
+    expect(authOrigin({ OIDC_ISSUER: 'not a url', PUBLIC_URL: app })).toBeNull();
+    expect(authOrigin({ OIDC_ISSUER: 'https://friend.example.com/application/o/ff/', PUBLIC_URL: app })).toBeNull();
+    expect(authOrigin({ OIDC_ISSUER: 'https://auth.example.com/', PUBLIC_URL: '' })).toBe('https://auth.example.com');
   });
 });
 
@@ -155,6 +165,6 @@ describe('POST /api/playback/info with a capability block', () => {
 describe('/api/version', () => {
   it('adds minAndroid and keeps the existing fields', async () => {
     const v = (await env.app.inject('/api/version')).json();
-    expect(v).toEqual({ sha: expect.any(String), version: expect.any(String), codename: expect.any(String), build: expect.any(String), channel: null, label: expect.any(String), minAndroid: '2.0.0' });
+    expect(v).toEqual({ sha: expect.any(String), version: expect.any(String), codename: expect.any(String), build: expect.any(String), channel: null, label: expect.any(String), minAndroid: '2.0.0', authOrigin: 'https://auth.example.com' });
   });
 });

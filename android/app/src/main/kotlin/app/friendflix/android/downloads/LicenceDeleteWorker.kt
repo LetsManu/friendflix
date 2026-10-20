@@ -46,14 +46,29 @@ class LicenceDeleteWorker(context: Context, params: WorkerParameters, private va
         private const val KEY_ID = "licenseId"
         private const val KEY_PROFILE = "profileId"
         private const val MAX_ATTEMPTS = 5
+        /** every licence return carries this tag, plus its licence and profile as tags ([pending] reads them back) */
+        const val TAG = "ff-licence-return"
+        private const val TAG_ID = "ff-licence-return:id:"
+        private const val TAG_PROFILE = "ff-licence-return:profile:"
 
         fun enqueue(wm: WorkManager, name: String, licenseId: String, profileId: String) {
             val req = OneTimeWorkRequestBuilder<LicenceDeleteWorker>()
                 .setInputData(workDataOf(KEY_ID to licenseId, KEY_PROFILE to profileId))
+                .addTag(TAG).addTag(TAG_ID + licenseId).addTag(TAG_PROFILE + profileId)
                 .setConstraints(Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build())
                 .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 60, TimeUnit.SECONDS)
                 .build()
             wm.enqueueUniqueWork(name, ExistingWorkPolicy.KEEP, req)
         }
+
+        /**
+         * The licence returns still waiting to run (licenceId to profileId), read from their tags. A sign-out cancels all work and
+         * gives these back itself while the session cookie still exists (a return left queued would only meet a 401 afterwards).
+         */
+        fun pending(wm: WorkManager): List<Pair<String, String>> = wm.getWorkInfosByTag(TAG).get().filter { !it.state.isFinished }.mapNotNull { info ->
+            val id = info.tags.firstOrNull { it.startsWith(TAG_ID) }?.removePrefix(TAG_ID) ?: return@mapNotNull null
+            val profile = info.tags.firstOrNull { it.startsWith(TAG_PROFILE) }?.removePrefix(TAG_PROFILE) ?: return@mapNotNull null
+            id to profile
+        }.distinctBy { it.first }
     }
 }

@@ -40,6 +40,20 @@ export interface OidcProvider {
   reset?(): void;
 }
 
+/**
+ * The identity provider's origin (scheme://host[:port]) the browser is sent to for sign-in, re-authentication and the forgotten-PIN
+ * reset: the origin of OIDC_ISSUER (its authorize endpoint lives there). Null when no issuer is set, it is not a URL, or it is the app's
+ * own origin (no external sign-in page). Public in /api/version so the Android app can let exactly this one origin into its WebView.
+ */
+export function authOrigin(cfg: Pick<Config, 'OIDC_ISSUER' | 'PUBLIC_URL'>): string | null {
+  let issuer: URL;
+  try { issuer = new URL(cfg.OIDC_ISSUER); } catch { return null; }
+  if (issuer.protocol !== 'https:' && issuer.protocol !== 'http:') return null;
+  let app: string | null = null;
+  try { app = new URL(cfg.PUBLIC_URL).origin; } catch { /* no public URL yet */ }
+  return issuer.origin === app ? null : issuer.origin;
+}
+
 /** after a failed discovery, logins answer 503 at once for this long before the next attempt */
 export const OIDC_RETRY_MS = 30_000;
 

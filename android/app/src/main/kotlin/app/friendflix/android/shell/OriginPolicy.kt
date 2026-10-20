@@ -6,7 +6,8 @@ import android.net.Uri
 import okhttp3.HttpUrl
 
 /**
- * The one origin (scheme + host + port, no subdomains) that counts as "the app". Everything else is external.
+ * The one origin (scheme + host + port, no subdomains) that counts as "the app". Everything else is external. (The shell also uses one
+ * for the server's sign-in page origin: the same exact comparison, but that one never scopes the bridge or the cookie jar.)
  * The native bridge uses [originRule] to scope the injected object and [isAppOrigin] on the listener's `sourceOrigin` for each message.
  */
 class OriginPolicy(val origin: HttpUrl) {

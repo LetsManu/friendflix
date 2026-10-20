@@ -131,6 +131,12 @@ class NativeBridgeTest {
         }
     }
 
+    @Test fun theSignInPageOriginIsRejectedLikeAnyOther() {
+        // the shell lets the server's identity provider into the main frame; the bridge stays app-origin only
+        send("""{"id":"r1","method":"downloads","args":{}}""", from = Uri.parse("https://auth.example.com"))
+        assertRejected("auth")
+    }
+
     @Test fun subFramesAreRejected() {
         send("""{"id":"r1","method":"play","args":{"itemId":"a","profileId":"p"}}""", main = false)
         assertRejected("subframe")
