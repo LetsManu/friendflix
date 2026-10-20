@@ -102,6 +102,23 @@ Speed, audio effects, subtitle style, sleep timer and lock work offline (audio e
   closes the player and opens its page in the app; *Play* on the `next` or `sequel` entry plays it in the player. It sends the same
   `POST /api/postplay/event` events as the web. For a movie without post-play: "More like this" with three titles from `/similar`.
 
+## 4a. Chromecast stays a first-class part of the player
+
+Chromecast is a must for the app. Nothing in this work removes or hides it:
+
+- The Chromecast button stays in the top bar, first on the right, as today. More (⋯) also gets a *Play on TV* / *Playing on TV*
+  entry (the web's cast row), shown when a Cast device is available or connected.
+- While casting, the new controls act on the TV session:
+  - Episodes plays the picked episode on the TV, through the cast queue the next-episode flow already uses.
+  - Scenes and bookmarks seek the TV, and a new bookmark takes the TV's position.
+  - The sleep timer pauses the TV.
+  - Cast & info and the quality chip show the cast title.
+- Not offered while casting, as today or as in the web: changing audio, subtitles or quality, speed, Clear voices and Night
+  mode, subtitle search, and post-play.
+- The subtitle style keeps going to the receiver (it already does).
+- A Robolectric test checks that the Chromecast button and the More entry are present when a Cast device is available, and that
+  the controls listed above switch to the cast player while a cast session runs.
+
 ## 5. Code structure
 
 `PlayerActivity.kt` is 1,219 lines; the new features go into their own files under `player/`, and the activity only wires them:
