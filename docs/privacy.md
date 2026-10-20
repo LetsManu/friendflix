@@ -37,7 +37,7 @@ None of this is included in Android cloud backups or device-to-device transfers.
 
 - **Settings → Sign out of this device** deletes every download, its keys, cookies and stored web data on the phone.
 - Uninstalling the app deletes everything the app stored on the phone.
-- Your account on the server, and the data stored there, is deleted by the operator of that server. Ask them.
+- Your account on the server and the data stored there: delete it yourself under **My space → Account → Delete account** or ask the server's operator. Steps and what is kept: [account-deletion.md](account-deletion.md).
 
 ## Children
 
