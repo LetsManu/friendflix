@@ -8,6 +8,7 @@ import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
+import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.core.stringSetPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
@@ -33,6 +34,12 @@ class AppSettings(private val store: DataStore<Preferences>, private val castMir
     val wifiOnly: Flow<Boolean> = store.data.map { it[WIFI_ONLY] ?: false }
     val backgroundAudio: Flow<Boolean> = store.data.map { it[BACKGROUND_AUDIO] ?: false }
     val notifyCategories: Flow<Set<String>> = store.data.map { it[NOTIFY_CATEGORIES] ?: emptySet() }
+    /** The categories the user chose, or null while nothing was chosen yet (the notification poller then treats every category as on). */
+    val notifyCategoriesChosen: Flow<Set<String>?> = store.data.map { it[NOTIFY_CATEGORIES] }
+    /** The newest server notification id the poller has dealt with, for [origin] only (another server numbers its own); null = none yet. */
+    fun notifyLastId(origin: String): Flow<Long?> = store.data.map { p -> p[NOTIFY_LAST_ID]?.takeIf { p[NOTIFY_LAST_ORIGIN] == origin } }
+    /** The poller met a 401 and stays quiet until the app is opened again. */
+    val notifyPaused: Flow<Boolean> = store.data.map { it[NOTIFY_PAUSED] ?: false }
     /**
      * The server's CAST_RECEIVER_APP_ID as last seen (`/api/cast/config`; "" = Default Media Receiver). The Cast framework reads its
      * options once per process, so a changed id takes effect after the app restarts.
@@ -47,6 +54,8 @@ class AppSettings(private val store: DataStore<Preferences>, private val castMir
     suspend fun setWifiOnly(value: Boolean) { store.edit { it[WIFI_ONLY] = value } }
     suspend fun setBackgroundAudio(value: Boolean) { store.edit { it[BACKGROUND_AUDIO] = value } }
     suspend fun setNotifyCategories(value: Set<String>) { store.edit { it[NOTIFY_CATEGORIES] = value } }
+    suspend fun setNotifyLastId(origin: String, id: Long) { store.edit { it[NOTIFY_LAST_ORIGIN] = origin; it[NOTIFY_LAST_ID] = id } }
+    suspend fun setNotifyPaused(value: Boolean) { store.edit { it[NOTIFY_PAUSED] = value } }
     suspend fun setCastConfig(enabled: Boolean, receiverAppId: String) {
         store.edit { it[CAST_ENABLED] = enabled; it[CAST_RECEIVER_APP_ID] = receiverAppId }
         castMirror(receiverAppId)
@@ -58,6 +67,9 @@ class AppSettings(private val store: DataStore<Preferences>, private val castMir
         private val WIFI_ONLY = booleanPreferencesKey("wifiOnly")
         private val BACKGROUND_AUDIO = booleanPreferencesKey("backgroundAudio")
         private val NOTIFY_CATEGORIES = stringSetPreferencesKey("notifyCategories")
+        private val NOTIFY_LAST_ID = longPreferencesKey("notifyLastId")
+        private val NOTIFY_LAST_ORIGIN = stringPreferencesKey("notifyLastOrigin")
+        private val NOTIFY_PAUSED = booleanPreferencesKey("notifyPaused")
         private val CAST_RECEIVER_APP_ID = stringPreferencesKey("castReceiverAppId")
         private val CAST_ENABLED = booleanPreferencesKey("castEnabled")
 

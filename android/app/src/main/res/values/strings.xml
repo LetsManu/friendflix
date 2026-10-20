@@ -102,4 +102,8 @@
     <string name="player_skip_recap">Skip recap</string>
     <string name="player_skip_preview">Skip preview</string>
     <string name="player_skipped_intro">Intro skipped</string>
+    <string name="notify_cat_new">New episodes and titles</string>
+    <string name="notify_cat_requests">Requests</string>
+    <string name="notify_cat_account">Account and access</string>
+    <string name="notify_cat_other">Other</string>
 </resources>

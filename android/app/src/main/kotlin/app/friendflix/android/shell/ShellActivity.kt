@@ -22,6 +22,8 @@ import app.friendflix.android.bridge.DownloadSink
 import app.friendflix.android.bridge.NativeBridge
 import app.friendflix.android.bridge.PlayRequest
 import app.friendflix.android.bridge.PlayerLauncher
+import app.friendflix.android.notify.NotificationScheduler
+import app.friendflix.android.notify.NotifyLinks
 import app.friendflix.android.offline.NetworkWatch
 import app.friendflix.android.offline.Offline
 import app.friendflix.android.offline.OfflineActivity
@@ -101,7 +103,7 @@ class ShellActivity : ComponentActivity() {
             }
             webView = view
             setContentView(view)
-            view.loadUrl(origin.toString())
+            view.loadUrl(notificationUrl(intent) ?: origin.toString())
         }
     }
 
@@ -114,6 +116,8 @@ class ShellActivity : ComponentActivity() {
     override fun onStart() {
         super.onStart()
         watch?.start()
+        // the app is open: notification polling that a 401 stopped continues (the person can sign in again now)
+        lifecycleScope.launch { NotificationScheduler.rearm(applicationContext) }
     }
 
     override fun onStop() {
@@ -126,6 +130,18 @@ class ShellActivity : ComponentActivity() {
         super.onNewIntent(intent)
         if (intent.getBooleanExtra(EXTRA_RELOAD, false)) webView?.reload()
         intent.getStringExtra(EXTRA_WEB_WATCH)?.let(::openWebWatch)
+        notificationUrl(intent)?.let { webView?.loadUrl(it) } // a tap on a server notification (a /watch link goes native via the page-start hook)
+    }
+
+    /**
+     * The page a notification tap asks for: the intent's path re-validated as an absolute path of the app origin (an extra is just
+     * data, whoever sent it), or null.
+     */
+    private fun notificationUrl(intent: Intent?): String? {
+        val path = intent?.getStringExtra(EXTRA_OPEN_PATH) ?: return null
+        val origin = policy?.origin ?: return null
+        val safe = NotifyLinks.safePath(origin, path) ?: return null
+        return origin.resolve(safe)?.toString()
     }
 
     /** The native player handed a title back (its profile is not the session's): the web UI's watch page plays it. */
@@ -164,6 +180,8 @@ class ShellActivity : ComponentActivity() {
         const val EXTRA_RELOAD = "app.friendflix.android.RELOAD"
         /** Intent extra: an app path `/watch/<id>?…` to open in the web player (the native player handed it back). */
         const val EXTRA_WEB_WATCH = "app.friendflix.android.WEB_WATCH"
+        /** Intent extra: an app path `/…` a server notification opens (validated again on arrival). */
+        const val EXTRA_OPEN_PATH = "app.friendflix.android.OPEN_PATH"
         private const val MAX_RENDER_RESTARTS = 2
         private const val PROBE_TIMEOUT_MS = 4_000L
         private var renderRestarts = 0

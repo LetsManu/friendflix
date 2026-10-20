@@ -98,4 +98,8 @@
     <string name="player_skip_recap">Rückblick überspringen</string>
     <string name="player_skip_preview">Vorschau überspringen</string>
     <string name="player_skipped_intro">Intro übersprungen</string>
+    <string name="notify_cat_new">Neue Folgen und Titel</string>
+    <string name="notify_cat_requests">Anfragen</string>
+    <string name="notify_cat_account">Konto und Zugang</string>
+    <string name="notify_cat_other">Sonstiges</string>
 </resources>

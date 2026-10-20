@@ -6,6 +6,7 @@ import android.app.Application
 import android.util.Log
 import androidx.work.Configuration
 import app.friendflix.android.downloads.DownloadQueue
+import app.friendflix.android.notify.NotificationScheduler
 
 /**
  * Process-wide entry point. WorkManager is initialised on demand from here (the default startup initializer is removed in the
@@ -18,5 +19,6 @@ class App : Application(), Configuration.Provider {
     override fun onCreate() {
         super.onCreate()
         DownloadQueue.watchVolumes(this)
+        NotificationScheduler.schedule(this) // KEEP: the periodic poll exists once; it does nothing while no server is set up
     }
 }
