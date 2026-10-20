@@ -400,6 +400,7 @@ class PlayerActivity : FragmentActivity() {
             subtitle.text = cur?.let { i -> if (i.seriesName != null) episodeLabel(i) else "" }.orEmpty()
             nextButton.visibility = if (next != null) View.VISIBLE else View.GONE
             controls.showEpisodesButton(EpisodesPanel.offered(cur?.type, cur?.seriesId, offline = false))
+            controls.loadTitleExtras(pa, a.itemId, serverCaps.chapters) // Scenes, bookmarks and their marks
         }
     }
 
@@ -437,6 +438,7 @@ class PlayerActivity : FragmentActivity() {
         startPaused = false
         tracksButton.visibility = View.VISIBLE // audio, subtitles and the sound switches
         controls.chip.bind(direct, info.maxBitrate.takeIf { it > 0 } ?: quality, info.transcodeReason)
+        controls.setTrickplay(info.trickplay.takeIf { serverCaps.trickplay })
         flow?.duration = 0.0
         updateCastButton()
     }
@@ -717,12 +719,22 @@ class PlayerActivity : FragmentActivity() {
             val pa = api ?: return null
             val cur = item ?: return null
             if (!EpisodesPanel.offered(cur.type, cur.seriesId, offline())) return null
-            val img = images?.takeIf { it.first === pa.server }?.second ?: ImageLoader(pa.server).also { images = pa.server to it }
-            return EpisodesSource(pa, img, cur.seriesId!!, cur.season, cast?.itemId ?: args.itemId)
+            return EpisodesSource(pa, imageLoader(pa), cur.seriesId!!, cur.season, cast?.itemId ?: args.itemId)
         }
 
         override fun playItem(id: String) = this@PlayerActivity.playItem(id)
+
+        override fun images(): ImageLoader? = api?.let(::imageLoader)
+
+        override fun bookmarks(): BookmarksSource? {
+            val pa = api ?: return null
+            return if (offline()) null else BookmarksSource(pa, cast?.itemId ?: args.itemId)
+        }
     }
+
+    /** the panels' image loader for [pa]'s server (one per server, so its cache is shared by the panels and the preview) */
+    private fun imageLoader(pa: PlayerApi): ImageLoader =
+        images?.takeIf { it.first === pa.server }?.second ?: ImageLoader(pa.server).also { images = pa.server to it }
 
     /** *Find subtitles …*: the search panel; a downloaded subtitle reloads playback at the current position (web pickSub). */
     private fun openSubtitleSearch() {
@@ -1028,6 +1040,8 @@ class PlayerActivity : FragmentActivity() {
             args = args.copy(itemId = item.id, startMs = null, audio = null, subtitle = null)
             title.text = item.seriesName ?: item.name
             subtitle.text = if (item.seriesName != null) episodeLabel(item) else ""
+            // the TV's new title: its scenes and bookmarks (seeks and new bookmarks go to the TV)
+            api?.let { controls.loadTitleExtras(it, item.id, serverCaps.chapters) } ?: controls.clearTitleExtras()
         }
 
         override fun onFailed(answer: TokenAnswer?) {

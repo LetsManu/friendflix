@@ -13,7 +13,8 @@ import java.util.Locale
 /**
  * What the More panel offers. [showSpeed] false while casting; [qualities] the quality rungs (label, bit/s) or null when quality
  * is not offered (offline, casting), [quality] the chosen one (0 = automatic); [sleepMinutes] the running minute timer (0 = none),
- * [sleepLeftMs] its time left; [cast] null = no cast row, else whether a cast runs ("Playing on TV").
+ * [sleepLeftMs] its time left; [cast] null = no cast row, else whether a cast runs ("Playing on TV"); [bookmarks] the Bookmarks row
+ * (streams only, never offline).
  */
 data class MoreState(
     val speed: Float,
@@ -26,9 +27,12 @@ data class MoreState(
     val canLock: Boolean,
     val canPip: Boolean,
     val cast: Boolean?,
+    val bookmarks: Boolean = false,
 )
 
 interface MoreActions {
+    /** the Bookmarks panel (share scene, note, list) */
+    fun bookmarks()
     fun speed(rate: Float)
     fun quality(bps: Long)
     /** a minute timer; 0 = off */
@@ -41,7 +45,7 @@ interface MoreActions {
 
 /**
  * The web player's More (⋯) menu: Speed, Quality and Sleep timer open their lists in the same panel (with a row back to More),
- * then Lock controls, Picture-in-picture and Play on TV / Playing on TV.
+ * Bookmarks opens its own panel, then Lock controls, Picture-in-picture and Play on TV / Playing on TV.
  */
 object MorePanel {
     val SLEEP_MINUTES = listOf(15, 30, 45, 60)
@@ -75,6 +79,12 @@ object MorePanel {
                     },
                     id = R.id.more_speed, icon = R.drawable.ic_player_speed,
                     detail = if (state.speed != 1f) rate(ctx, state.speed) else null, chevron = true,
+                ))
+            }
+            if (state.bookmarks) {
+                col.addView(PanelRows.item(
+                    ctx, ctx.getString(R.string.player_bookmarks), actions::bookmarks,
+                    id = R.id.more_bookmarks, icon = R.drawable.ic_player_bookmark, chevron = true,
                 ))
             }
             val qualities = state.qualities

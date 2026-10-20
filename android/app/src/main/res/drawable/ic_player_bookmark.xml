@@ -3,10 +3,8 @@
   SPDX-FileCopyrightText: 2026 Manuel Weißböck
   SPDX-License-Identifier: AGPL-3.0-or-later
 -->
-<!-- the Bookmarks row of the More panel (filled in with the bookmarks panel) -->
+<!-- the Bookmarks row of the More panel and the add button of the Bookmarks panel -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
-    xmlns:tools="http://schemas.android.com/tools"
-    tools:ignore="UnusedResources"
     android:width="24dp"
     android:height="24dp"
     android:viewportWidth="24"

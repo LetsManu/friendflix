@@ -113,6 +113,23 @@
     <string name="player_duration_hm">%1$d Std. %2$d Min.</string>
     <string name="player_duration_h">%1$d Std.</string>
     <string name="player_scenes">Szenen</string>
+    <plurals name="player_scenes_count">
+        <item quantity="one">%d Szene</item>
+        <item quantity="other">%d Szenen</item>
+    </plurals>
+    <string name="player_scenes_chapter">Kapitel %1$d</string>
+    <string name="player_scenes_current">Läuft gerade</string>
+    <string name="player_scenes_jump">%1$s, ab %2$s</string>
+    <string name="player_bookmarks">Lesezeichen</string>
+    <string name="player_bookmark_title">Lesezeichen</string>
+    <string name="player_bookmark_set">Lesezeichen gesetzt</string>
+    <string name="player_bookmark_failed">Lesezeichen konnte nicht gespeichert werden</string>
+    <string name="player_bookmark_too_many">Du hast schon 500 Lesezeichen.</string>
+    <string name="player_bookmark_share">Szene teilen (%1$s)</string>
+    <string name="player_bookmark_note">Notiz (optional)</string>
+    <string name="player_bookmark_add">Lesezeichen setzen</string>
+    <string name="player_bookmark_remove">Lesezeichen löschen</string>
+    <string name="player_bookmark_none">Noch keine Lesezeichen.</string>
     <string name="player_info">Besetzung &amp; Infos</string>
     <string name="player_off">Aus</string>
     <string name="player_speed">Wiedergabetempo</string>

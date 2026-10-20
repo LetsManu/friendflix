@@ -8,9 +8,11 @@
   FriendFlix's own, in the web player's order: top right the quality chip, Chromecast, Cast & info, audio + subtitles, More (⋯, with
   the speed badge and the sleep-timer dot); bottom right of the duration Episodes, Scenes, next episode. player_cast is the standard
   Cast button (MediaRouteButton, the Cast framework's icon), first on the right, shown for a castable stream while a Cast device is
-  on the network and always while casting. Quality and picture-in-picture are rows of the More panel.
+  on the network and always while casting. Quality and picture-in-picture are rows of the More panel. Chapter starts and bookmarks
+  are the time bar's marks (its ad markers, played and unplayed in one colour); player_trickplay is the scrub preview above it.
 -->
 <FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
     xmlns:tools="http://schemas.android.com/tools"
     android:id="@+id/player_controls_root"
     android:layout_width="match_parent"
@@ -195,6 +197,19 @@
             android:src="@drawable/ic_player_ffwd" />
     </LinearLayout>
 
+    <ImageView
+        android:id="@+id/player_trickplay"
+        android:layout_width="168dp"
+        android:layout_height="wrap_content"
+        android:layout_gravity="bottom|start"
+        android:layout_marginBottom="64dp"
+        android:adjustViewBounds="true"
+        android:background="@android:color/black"
+        android:importantForAccessibility="no"
+        android:padding="1dp"
+        android:scaleType="fitCenter"
+        android:visibility="gone" />
+
     <LinearLayout
         android:id="@+id/player_bottom_bar"
         android:layout_width="match_parent"
@@ -220,7 +235,9 @@
             android:layout_height="40dp"
             android:layout_marginStart="12dp"
             android:layout_marginEnd="12dp"
-            android:layout_weight="1" />
+            android:layout_weight="1"
+            app:ad_marker_color="#E6FFFFFF"
+            app:played_ad_marker_color="#E6FFFFFF" />
 
         <TextView
             android:id="@id/exo_duration"

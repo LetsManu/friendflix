@@ -3,7 +3,7 @@
   SPDX-FileCopyrightText: 2026 Manuel Weißböck
   SPDX-License-Identifier: AGPL-3.0-or-later
 -->
-<!-- ids of the rows the player panels build in code (TracksPanel, MorePanel) -->
+<!-- ids of the rows the player panels build in code (TracksPanel, MorePanel, ScenesPanel, BookmarksPanel) -->
 <resources>
     <item name="tracks_audio" type="id" />
     <item name="tracks_search" type="id" />
@@ -24,4 +24,12 @@
     <item name="more_pip" type="id" />
     <item name="more_cast" type="id" />
     <item name="more_back" type="id" />
+    <item name="scenes_list" type="id" />
+    <item name="bookmarks_share" type="id" />
+    <item name="bookmarks_note" type="id" />
+    <item name="bookmarks_add" type="id" />
+    <item name="bookmarks_msg" type="id" />
+    <item name="bookmarks_list" type="id" />
+    <item name="bookmarks_remove" type="id" />
+    <item name="more_bookmarks" type="id" />
 </resources>

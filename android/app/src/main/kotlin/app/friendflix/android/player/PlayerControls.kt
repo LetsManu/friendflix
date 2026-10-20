@@ -3,30 +3,42 @@
 package app.friendflix.android.player
 
 import android.annotation.SuppressLint
+import android.content.ActivityNotFoundException
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
 import android.view.MotionEvent
 import android.view.View
+import android.widget.ImageView
 import android.widget.TextView
 import androidx.activity.ComponentActivity
 import androidx.activity.OnBackPressedCallback
 import androidx.annotation.OptIn
 import androidx.lifecycle.lifecycleScope
+import androidx.media3.common.C
 import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
+import androidx.media3.ui.DefaultTimeBar
 import androidx.media3.ui.PlayerView
+import androidx.media3.ui.TimeBar
 import app.friendflix.android.R
 import app.friendflix.android.cast.CastController
+import app.friendflix.android.player.panels.BookmarksPanel
 import app.friendflix.android.player.panels.EpisodesPanel
 import app.friendflix.android.player.panels.EpisodesSource
 import app.friendflix.android.player.panels.MoreActions
 import app.friendflix.android.player.panels.MorePanel
 import app.friendflix.android.player.panels.MoreState
+import app.friendflix.android.player.panels.PanelRows
 import app.friendflix.android.player.panels.PlayerPanel
+import app.friendflix.android.player.panels.ScenesPanel
 import app.friendflix.android.player.panels.TracksActions
 import app.friendflix.android.player.panels.TracksPanel
 import app.friendflix.android.player.panels.TracksState
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.async
+import kotlinx.coroutines.launch
 
 /**
  * The Cast situation for the bar: the Cast framework is attached ([ready]), the server offers casting ([enabled]), a device is
@@ -37,10 +49,14 @@ data class CastUi(val ready: Boolean, val enabled: Boolean, val devices: Boolean
     val show: Boolean get() = ready && (casting || CastController.castable(offline, enabled, devices))
 }
 
+/** What the Bookmarks panel needs: the API and the title on show (the TV's while casting). */
+data class BookmarksSource(val api: PlayerApi, val itemId: String)
+
 /**
  * The player bar's own controls (web Player.svelte bar), kept out of [PlayerActivity]: the panel host with the Tracks and More
  * panels, the speed (badge on More), the sleep timer (dot on More, checked by the activity's tick), lock controls, the quality
- * chip and the Chromecast button / *Play on TV* row. The activity supplies the playback side through [Host].
+ * chip, the Chromecast button / *Play on TV* row, and the title's extras: Scenes (chapters), Bookmarks, their marks on the seek bar
+ * and the trickplay preview while scrubbing. The activity supplies the playback side through [Host].
  */
 @OptIn(UnstableApi::class)
 class PlayerControls(
@@ -73,6 +89,10 @@ class PlayerControls(
         fun episodes(): EpisodesSource?
         /** plays another title in this player, or on the TV while casting; resets the per-title state ([newTitle], via [TitleSwitch]) */
         fun playItem(id: String)
+        /** the panels' image loader (chapter stills, trickplay sheets), or null without a server */
+        fun images(): ImageLoader? = null
+        /** what the Bookmarks panel needs, or null when bookmarks are not offered (a download, nothing loaded) */
+        fun bookmarks(): BookmarksSource? = null
     }
 
     val panel = PlayerPanel(activity.findViewById(R.id.player_panel_host))
@@ -94,6 +114,15 @@ class PlayerControls(
     private val sleepDot: View = view.findViewById(R.id.player_more_dot)
     private val castButton: View = view.findViewById(R.id.player_cast)
     private val episodesButton: View = view.findViewById(R.id.player_episodes)
+    private val scenesButton: View = view.findViewById(R.id.player_scenes)
+    private val timeBar: DefaultTimeBar = view.findViewById(androidx.media3.ui.R.id.exo_progress)
+    private val previewView: ImageView = view.findViewById(R.id.player_trickplay)
+    /** the trickplay preview follows the scrub (declared before init, which registers it) */
+    private val scrub = object : TimeBar.OnScrubListener {
+        override fun onScrubStart(timeBar: TimeBar, position: Long) = scrubAt(position)
+        override fun onScrubMove(timeBar: TimeBar, position: Long) = scrubAt(position)
+        override fun onScrubStop(timeBar: TimeBar, position: Long, canceled: Boolean) { preview?.hide() }
+    }
     private val lockOverlay: View = activity.findViewById(R.id.player_lock)
     private val lockIcon: View = activity.findViewById(R.id.player_lock_icon)
 
@@ -108,6 +137,8 @@ class PlayerControls(
         view.findViewById<View>(R.id.player_more).setOnClickListener { openMore() }
         view.findViewById<View>(R.id.player_tracks).setOnClickListener { openTracks() }
         episodesButton.setOnClickListener { openEpisodes() }
+        scenesButton.setOnClickListener { openScenes() }
+        timeBar.addListener(scrub)
         setUpLock()
         // a recreated screen keeps the shared player's speed (and shows its badge)
         local.playbackParameters.speed.takeIf { it != 1f }?.let(::setSpeed)
@@ -122,6 +153,7 @@ class PlayerControls(
         val state = MoreState(
             speed = speed,
             showSpeed = !casting,
+            bookmarks = !host.offline() && host.bookmarks() != null,
             qualities = if (host.offline() || casting) null else host.qualities(),
             quality = host.quality(),
             sleepMinutes = sleepMinutes,
@@ -167,7 +199,43 @@ class PlayerControls(
         panel.show(activity.getString(R.string.player_episodes), content)
     }
 
+    /** *Scenes*: a tap seeks the active player (the TV while casting) to the chapter's start and closes the panel */
+    fun openScenes() {
+        if (host.inPip() || host.offline() || chapters.isEmpty()) return
+        Players.still.noteInteraction()
+        val content = ScenesPanel.build(
+            activity, activity.lifecycleScope, host.images(), chapters, host.active().currentPosition.coerceAtLeast(0) / 1000.0,
+        ) { sec ->
+            panel.close()
+            host.active().seekTo((sec * 1000).toLong())
+        }
+        panel.show(activity.getString(R.string.player_scenes), content)
+    }
+
+    /** *Bookmarks* (More): positions and seeks are the active player's (a new bookmark takes the TV's position while casting) */
+    fun openBookmarks() {
+        if (host.inPip() || host.offline()) return
+        val src = host.bookmarks() ?: return
+        Players.still.noteInteraction()
+        val content = BookmarksPanel.build(
+            activity, activity.lifecycleScope, src.api, src.itemId,
+            positionMs = { host.active().currentPosition.coerceAtLeast(0) },
+            onSeek = { ms -> panel.close(); host.active().seekTo(ms) },
+            onShare = ::share,
+        ) { list ->
+            // a list of the title left meanwhile never marks the new one
+            if (host.bookmarks()?.itemId == src.itemId) setBookmarks(list)
+        }
+        panel.show(activity.getString(R.string.player_bookmarks), content)
+    }
+
+    private fun share(url: String) {
+        try { activity.startActivity(BookmarksPanel.shareIntent(url)) } catch (_: ActivityNotFoundException) { }
+    }
+
     private val moreActions = object : MoreActions {
+        override fun bookmarks() = openBookmarks()
+
         override fun speed(rate: Float) {
             panel.close()
             setSpeed(rate)
@@ -225,10 +293,94 @@ class PlayerControls(
         moreBadge.visibility = if (rate != 1f) View.VISIBLE else View.GONE
     }
 
-    /** a new title plays: speed back to 1; a sleep timer "after this episode" was meant for the previous one */
+    /**
+     * a new title plays: speed back to 1; a sleep timer "after this episode" was meant for the previous one; its chapters, bookmarks,
+     * marks and trickplay go (the new title's are loaded with it, [loadTitleExtras])
+     */
     fun newTitle() {
         if (speed != 1f) setSpeed(1f)
         if (sleep.afterEpisode) { sleep.off(); showSleep() }
+        clearTitleExtras()
+    }
+
+    // ---- scenes, bookmarks, marks, trickplay ----
+
+    /** the title's chapters (normalised; empty = none or not loaded) */
+    var chapters: List<Chapter> = emptyList()
+        private set
+    /** the title's bookmarks (the seek bar marks them) */
+    var bookmarks: List<Bookmark> = emptyList()
+        private set
+    /** the seek bar's marks: chapter starts and bookmarks ([seekMarksMs]) */
+    var marksMs = LongArray(0)
+        private set
+    private var trickplay: TrickplayInfo? = null
+    private var preview: TrickplayPreview? = null
+    private var extrasJob: Job? = null
+
+    /**
+     * A title starts (where the activity loads the title): its chapters (when the server has them, [withChapters]) and bookmarks
+     * are loaded on the IO dispatcher; a failure only leaves them out. Nothing for a download.
+     */
+    fun loadTitleExtras(api: PlayerApi, itemId: String, withChapters: Boolean) {
+        clearTitleExtras()
+        if (host.offline()) return
+        extrasJob = activity.lifecycleScope.launch {
+            val ch = async(Dispatchers.IO) { if (withChapters) runCatching { api.chapters(itemId) }.getOrNull() else null }
+            val bm = async(Dispatchers.IO) { runCatching { api.bookmarks(itemId) }.getOrNull() }
+            setChapters(normaliseChapters(ch.await().orEmpty()))
+            setBookmarks(bm.await().orEmpty())
+        }
+    }
+
+    /** the Scenes button shows only with chapters (never for a download) */
+    fun setChapters(list: List<Chapter>) {
+        chapters = list
+        scenesButton.visibility = if (list.isNotEmpty() && !host.offline()) View.VISIBLE else View.GONE
+        updateMarks()
+    }
+
+    fun setBookmarks(list: List<Bookmark>) {
+        bookmarks = list
+        updateMarks()
+    }
+
+    /** the stream's trickplay (null: none, or the server does not offer it) */
+    fun setTrickplay(info: TrickplayInfo?) {
+        trickplay = info?.takeIf(TrickplayPreview::usable)
+        if (trickplay == null) preview?.hide()
+    }
+
+    fun clearTitleExtras() {
+        extrasJob?.cancel()
+        extrasJob = null
+        setTrickplay(null)
+        bookmarks = emptyList()
+        setChapters(emptyList())
+    }
+
+    private fun updateMarks() {
+        marksMs = seekMarksMs(chapters, bookmarks)
+        // PlayerView keeps these next to the media's own ad groups across its updates; played = unplayed colour (layout)
+        view.setExtraAdGroupMarkers(marksMs, BooleanArray(marksMs.size))
+    }
+
+    private fun scrubAt(positionMs: Long) {
+        val info = trickplay ?: return
+        if (host.inPip()) return
+        val p = preview ?: host.images()?.let { TrickplayPreview(previewView, it, activity.lifecycleScope) }?.also { preview = it } ?: return
+        p.show(info, positionMs)
+        placePreview(positionMs)
+    }
+
+    /** above the thumb, kept inside the time bar at both ends (web tipLeft) */
+    private fun placePreview(positionMs: Long) {
+        val duration = host.active().duration.takeIf { it != C.TIME_UNSET && it > 0 } ?: return
+        val barStart = (timeBar.parent as View).left + timeBar.left
+        val w = previewView.width.takeIf { it > 0 } ?: PanelRows.dp(activity, TrickplayPreview.WIDTH_DP)
+        val center = barStart + timeBar.width * (positionMs.coerceIn(0, duration).toFloat() / duration)
+        val max = (barStart + timeBar.width - w).coerceAtLeast(barStart)
+        previewView.translationX = (center - w / 2f).coerceIn(barStart.toFloat(), max.toFloat())
     }
 
     // ---- sleep timer ----
@@ -316,6 +468,7 @@ class PlayerControls(
     fun onPip(inPip: Boolean) {
         if (!inPip) return
         panel.close()
+        preview?.hide()
         unlock(announce = false)
     }
 
@@ -339,6 +492,8 @@ class PlayerControls(
 
     fun release() {
         handler.removeCallbacksAndMessages(null)
+        extrasJob?.cancel()
+        timeBar.removeListener(scrub)
         panel.close()
     }
 

@@ -119,6 +119,25 @@
     <string name="player_duration_hm">%1$d h %2$d min</string>
     <string name="player_duration_h">%1$d h</string>
     <string name="player_scenes">Scenes</string>
+    <!-- Scenes panel (web scenes.chapters.*) -->
+    <plurals name="player_scenes_count">
+        <item quantity="one">%d scene</item>
+        <item quantity="other">%d scenes</item>
+    </plurals>
+    <string name="player_scenes_chapter">Chapter %1$d</string>
+    <string name="player_scenes_current">Now playing</string>
+    <string name="player_scenes_jump">%1$s, from %2$s</string>
+    <!-- Bookmarks (web player.bookmark.*; "too many" for the server's 409 too_many_bookmarks) -->
+    <string name="player_bookmarks">Bookmarks</string>
+    <string name="player_bookmark_title">Bookmark</string>
+    <string name="player_bookmark_set">Bookmark added</string>
+    <string name="player_bookmark_failed">Couldn’t save the bookmark</string>
+    <string name="player_bookmark_too_many">You already have 500 bookmarks.</string>
+    <string name="player_bookmark_share">Share scene (%1$s)</string>
+    <string name="player_bookmark_note">Note (optional)</string>
+    <string name="player_bookmark_add">Add bookmark</string>
+    <string name="player_bookmark_remove">Delete bookmark</string>
+    <string name="player_bookmark_none">No bookmarks yet.</string>
     <string name="player_info">Cast &amp; info</string>
     <string name="player_off">Off</string>
     <string name="player_speed">Playback speed</string>
