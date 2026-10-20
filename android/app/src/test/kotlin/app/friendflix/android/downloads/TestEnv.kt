@@ -95,6 +95,8 @@ class FakeServer : Dispatcher() {
     @Volatile var onProgress: (() -> Unit)? = null
     /** the profile `/api/me` reports as active */
     var activeProfile = PROFILE
+    /** whether that profile is a kids profile (`profile.kids`) */
+    var activeKids = false
     var fileCode: Int? = null
     var unauthorized = false
     var subtitles = listOf("de" to "/media/Videos/$ITEM/src/Subtitles/2/0/Stream.vtt", "en" to "/media/Videos/$ITEM/src/Subtitles/3/0/Stream.sup")
@@ -125,7 +127,7 @@ class FakeServer : Dispatcher() {
         val path = request.url.encodedPath
         return when {
             path == "/auth/logout" -> json(200, JSONObject().put("status", "ok"))
-            path == "/api/me" -> json(200, JSONObject().put("csrfToken", "tok").put("profile", JSONObject().put("id", activeProfile)))
+            path == "/api/me" -> json(200, JSONObject().put("csrfToken", "tok").put("profile", JSONObject().put("id", activeProfile).put("kids", activeKids)))
             path == "/api/downloads/progress" -> {
                 onProgress?.invoke()
                 if (progressCode != 200) return json(progressCode, JSONObject().put("error", "nope"))

@@ -14,6 +14,7 @@ import androidx.work.testing.TestListenableWorkerBuilder
 import app.friendflix.android.downloads.ServerApi
 import app.friendflix.android.downloads.TestEnv
 import app.friendflix.android.shell.ShellActivity
+import app.friendflix.android.shell.ShellIntents
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.flow.first
 import mockwebserver3.Dispatcher
@@ -262,7 +263,8 @@ class NotificationPollerTest {
         val n = shadowOf(nm).allNotifications.single()
         assertEquals(NotifyCategory.NEW.channelId, n.channelId)
         val intent = shadowOf(n.contentIntent).savedIntent
-        assertEquals(ShellActivity::class.java.name, intent.component!!.className)
+        // the shell's non-exported entry: the exported launcher one ignores the path
+        assertEquals(ShellIntents.INTERNAL, intent.component!!.className)
         assertEquals("/requests", intent.getStringExtra(ShellActivity.EXTRA_OPEN_PATH))
         assertNull(intent.data)
         assertEquals(setOf(ShellActivity.EXTRA_OPEN_PATH), intent.extras!!.keySet())

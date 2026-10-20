@@ -43,6 +43,15 @@
             </intent-filter>
         </activity>
 
+        <!--
+          The shell for the app's own hand-overs only (notification taps, the player handing a title back, the offline list's
+          reconnect): not exported, so only the app can start it. The exported launcher entry above ignores those extras.
+        -->
+        <activity-alias
+            android:name=".shell.ShellInternal"
+            android:exported="false"
+            android:targetActivity=".shell.ShellActivity" />
+
         <activity
             android:name=".setup.SetupActivity"
             android:exported="false"

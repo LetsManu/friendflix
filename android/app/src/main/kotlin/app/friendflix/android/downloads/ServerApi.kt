@@ -90,7 +90,8 @@ sealed interface LicenceAnswer {
 enum class CheckAnswer { Valid, Revoked, Wait }
 
 /** `/api/me` as the offline code needs it: the active profile of the WebView session (null before one is picked). */
-data class Me(val profileId: String?)
+/** [kids]: the active profile is a kids profile (`profile.kids`). */
+data class Me(val profileId: String?, val kids: Boolean = false)
 
 /** One licence the check renewed: its hard expiry and the new offline window, both epoch ms. */
 data class Renewed(val id: String, val expiresAt: Long, val validUntil: Long)
@@ -184,8 +185,9 @@ class ServerApi(val origin: HttpUrl, base: OkHttpClient, cookies: CookieSource) 
             if (r.code != 200) return null
             val j = bodyJson(r) ?: return null
             j.optString("csrfToken").takeIf { it.isNotEmpty() }?.let { csrf = it }
-            val p = j.optJSONObject("profile")?.optString("id")?.takeIf { it.isNotEmpty() }
-            return Me(p)
+            val profile = j.optJSONObject("profile")
+            val p = profile?.optString("id")?.takeIf { it.isNotEmpty() }
+            return Me(p, profile?.optBoolean("kids", false) == true)
         }
     }
 

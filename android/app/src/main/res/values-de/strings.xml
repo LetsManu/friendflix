@@ -28,6 +28,8 @@
     <string name="offline_none">Auf diesem Gerät sind keine Downloads vorhanden.</string>
     <string name="offline_keys_unavailable">Downloads sind auf diesem Gerät gerade nicht verfügbar. Bitte später noch einmal versuchen.</string>
     <string name="offline_play">Abspielen</string>
+    <string name="offline_remove">Entfernen</string>
+    <string name="offline_remove_confirm">„%1$s“ von diesem Gerät entfernen?</string>
     <string name="offline_play_failed">Wiedergabe nicht möglich.</string>
     <string name="offline_meta_unfinished">%1$s · %2$s · nicht fertig</string>
     <plurals name="offline_days_left">

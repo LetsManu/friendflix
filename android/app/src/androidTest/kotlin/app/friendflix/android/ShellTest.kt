@@ -21,6 +21,8 @@ import androidx.test.espresso.intent.matcher.IntentMatchers.hasData
 import androidx.test.espresso.intent.matcher.IntentMatchers.hasExtra
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
+import androidx.webkit.WebSettingsCompat
+import androidx.webkit.WebViewFeature
 import app.friendflix.android.settings.AppSettings
 import app.friendflix.android.shell.ShellActivity
 import kotlinx.coroutines.runBlocking
@@ -128,6 +130,10 @@ class ShellTest {
                 assertFalse(view.settings.allowContentAccess)
                 assertEquals(WebSettings.MIXED_CONTENT_NEVER_ALLOW, view.settings.mixedContentMode)
                 assertTrue(view.settings.userAgentString.endsWith(" FriendFlixAndroid/${BuildConfig.VERSION_NAME}"))
+                // passkeys through Android's credential manager where the WebView supports it
+                if (WebViewFeature.isFeatureSupported(WebViewFeature.WEB_AUTHENTICATION)) {
+                    assertEquals(WebSettingsCompat.WEB_AUTHENTICATION_SUPPORT_FOR_APP, WebSettingsCompat.getWebAuthenticationSupport(view.settings))
+                }
             }
         }
     }

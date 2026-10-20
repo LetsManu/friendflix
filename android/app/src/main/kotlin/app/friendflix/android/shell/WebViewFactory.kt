@@ -13,6 +13,8 @@ import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import androidx.core.net.toUri
+import androidx.webkit.WebSettingsCompat
+import androidx.webkit.WebViewFeature
 import app.friendflix.android.bridge.BridgeInstaller
 import app.friendflix.android.bridge.NativeBridge
 
@@ -121,11 +123,28 @@ class ShellWebViewClient(
     }
 }
 
+/**
+ * Passkeys (WebAuthn) in the WebView, where its provider supports it: in app mode the WebView asks Android's credential manager, which
+ * gives the page only passkeys of a relying party that has linked this app (Digital Asset Links, see docs/android.md). Without that
+ * link, or on an older WebView, passkey sign-in is simply not offered and password sign-in works as before.
+ */
+object Passkeys {
+    fun enable(
+        settings: WebSettings,
+        supported: Boolean = WebViewFeature.isFeatureSupported(WebViewFeature.WEB_AUTHENTICATION),
+        set: (WebSettings, Int) -> Unit = WebSettingsCompat::setWebAuthenticationSupport,
+    ): Boolean {
+        if (!supported) return false
+        set(settings, WebSettingsCompat.WEB_AUTHENTICATION_SUPPORT_FOR_APP)
+        return true
+    }
+}
+
 object WebViewFactory {
     @SuppressLint("SetJavaScriptEnabled")
     fun create(
         context: Context, policy: OriginPolicy, versionName: String, bridge: NativeBridge? = null, authOrigin: OriginPolicy? = null,
-        onRenderGone: () -> Unit = {}, onWatch: ((WatchLink) -> Boolean)? = null, openExternal: (Uri) -> Unit,
+        onRenderGone: () -> Unit = {}, onWatch: ((WatchLink) -> Boolean)? = null, fullscreen: FullscreenVideo? = null, openExternal: (Uri) -> Unit,
     ): WebView {
         val view = WebView(context)
         view.settings.apply {
@@ -137,7 +156,9 @@ object WebViewFactory {
             safeBrowsingEnabled = true
             userAgentString = "$userAgentString FriendFlixAndroid/$versionName"
         }
+        Passkeys.enable(view.settings)
         view.webViewClient = ShellWebViewClient(policy, onRenderGone, onWatch, openExternal).also { it.authOrigin = authOrigin }
+        view.webChromeClient = ShellChromeClient(fullscreen)
         // Downloads go through the native bridge only; a plain WebView download request is dropped.
         view.setDownloadListener { _, _, _, _, _ -> }
         // Registered before any page loads. Without WebView support there is simply no bridge (the web UI then never offers native paths).

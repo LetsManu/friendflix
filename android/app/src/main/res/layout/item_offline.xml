@@ -44,4 +44,12 @@
         android:layout_height="wrap_content"
         android:layout_marginStart="12dp"
         android:text="@string/offline_play" />
+
+    <Button
+        android:id="@+id/offline_item_remove"
+        style="?android:attr/borderlessButtonStyle"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginStart="4dp"
+        android:text="@string/offline_remove" />
 </LinearLayout>

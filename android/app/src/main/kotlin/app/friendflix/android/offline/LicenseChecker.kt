@@ -136,8 +136,9 @@ class LicenseChecker(
     }
 
     private fun doCheck(api: ServerApi): CheckOutcome {
-        val profile = api.me()?.profileId ?: return CheckOutcome.Wait
-        state.setProfile(profile)
+        val me = api.me() ?: return CheckOutcome.Wait
+        val profile = me.profileId ?: return CheckOutcome.Wait
+        state.setProfile(profile, me.kids)
         val ids = d.store.all().filter { it.profileId == profile && it.state != DownloadState.EXPIRED }.map { it.licenseId }
         if (ids.isEmpty()) return CheckOutcome.NothingToCheck
         var valid = 0

@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 package app.friendflix.android.offline
 
+import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
 
@@ -9,6 +10,8 @@ import java.io.File
  * What the offline code remembers between runs (`filesDir/offline-state.json`):
  * - [lastProfileId]: the last active profile (from `/api/me` at every online check, and from the profile id of every play / download
  *   hand-over from the web UI). The offline list shows only its downloads, like the web's `lastProfileId`.
+ * - [lastProfileKids]: whether that profile is a kids profile, as `/api/me` said at an online check (kids profiles are remembered by id,
+ *   so a hand-over that names a profile seen before keeps its flag; a profile never checked online counts as not kids).
  * - [lastCheck]: the device time of the last successful online licence check.
  * - [maxSeen]: the highest device time the app has seen (start, offline list, playback); with [lastCheck] it guards against a clock that
  *   was turned back.
@@ -16,6 +19,7 @@ import java.io.File
 class OfflineState(file: File, onWrite: () -> Unit = {}) {
     private val store = JsonFile(file, onWrite)
     private var profile: String?
+    private var kids: Set<String>
     private var seen: Long
     private var checked: Long
 
@@ -24,16 +28,21 @@ class OfflineState(file: File, onWrite: () -> Unit = {}) {
         profile = o?.takeUnless { it.isNull("lastProfileId") }?.optString("lastProfileId")?.takeIf { it.isNotEmpty() }
         seen = o?.optLong("maxSeen") ?: 0
         checked = o?.optLong("lastCheck") ?: 0
+        kids = o?.optJSONArray("kidsProfiles")?.let { a -> (0 until a.length()).mapNotNull { a.optString(it).takeIf { s -> s.isNotEmpty() } }.toSet() } ?: emptySet()
     }
 
     val lastProfileId: String? @Synchronized get() = profile
+    val lastProfileKids: Boolean @Synchronized get() = profile != null && profile in kids
     val maxSeen: Long @Synchronized get() = seen
     val lastCheck: Long @Synchronized get() = checked
 
+    /** [isKids]: what `/api/me` said about the profile (null = not known here, e.g. a hand-over from the web UI: the last answer stays). */
     @Synchronized
-    fun setProfile(id: String) {
-        if (id == profile) return
+    fun setProfile(id: String, isKids: Boolean? = null) {
+        val nextKids = when (isKids) { null -> kids; true -> kids + id; false -> kids - id }
+        if (id == profile && nextKids == kids) return
         profile = id
+        kids = nextKids
         save()
     }
 
@@ -57,6 +66,7 @@ class OfflineState(file: File, onWrite: () -> Unit = {}) {
     @Synchronized
     fun clear() {
         profile = null
+        kids = emptySet()
         seen = 0
         checked = 0
         save()
@@ -64,5 +74,8 @@ class OfflineState(file: File, onWrite: () -> Unit = {}) {
 
     fun flush() = store.flush()
 
-    private fun save() = store.save(JSONObject().put("version", 1).put("lastProfileId", profile ?: JSONObject.NULL).put("maxSeen", seen).put("lastCheck", checked))
+    private fun save() = store.save(
+        JSONObject().put("version", 1).put("lastProfileId", profile ?: JSONObject.NULL).put("maxSeen", seen).put("lastCheck", checked)
+            .put("kidsProfiles", JSONArray(kids.sorted())),
+    )
 }

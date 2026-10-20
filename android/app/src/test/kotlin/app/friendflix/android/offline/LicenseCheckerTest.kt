@@ -48,10 +48,12 @@ class LicenseCheckerTest {
     private var clock = 1_800_000_000_000L
     private val launcher = FakeLauncher()
     private val checker get() = offline.checker
+    private lateinit var stateDir: File
 
     @Before fun setUp() {
         env = TestEnv(tmp.newFolder("env"))
-        offline = Offline(env.deps, tmp.newFolder("state")) { clock }
+        stateDir = tmp.newFolder("state")
+        offline = Offline(env.deps, stateDir) { clock }
         offline.launcher = launcher
         env.fake.expiresAt = Instant.ofEpochMilli(clock + 30 * DAY)
     }
@@ -101,6 +103,26 @@ class LicenseCheckerTest {
         env.store.update(LIC) { it.copy(expiresAt = clock - 1) }
         assertEquals(PlayBlock.EXPIRED, checker.verdict(env.store.get(LIC)!!))
         assertTrue(f.exists())
+    }
+
+    @Test fun onlineCheckRemembersWhetherTheProfileIsAKidsProfile() = runBlocking {
+        done()
+        env.fake.activeKids = true
+        checker.check()
+        assertTrue(offline.state.lastProfileKids)
+        offline.noteProfile("other-profile") // a hand-over from the web UI for a profile never checked online
+        assertFalse(offline.state.lastProfileKids)
+        offline.noteProfile(PROFILE) // back: what the server said is still known
+        assertTrue(offline.state.lastProfileKids)
+        env.fake.activeKids = false
+        checker.check()
+        assertFalse(offline.state.lastProfileKids)
+        // kept on disk
+        offline.state.flush()
+        env.fake.activeKids = true
+        checker.check()
+        offline.state.flush()
+        assertTrue(OfflineState(File(stateDir, "offline-state.json")).lastProfileKids)
     }
 
     @Test fun onlineCheckRevokedDeletesTheFile() = runBlocking {

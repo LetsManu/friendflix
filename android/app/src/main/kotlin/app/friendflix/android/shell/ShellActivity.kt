@@ -2,9 +2,15 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 package app.friendflix.android.shell
 
+import android.content.ComponentName
+import android.content.Context
 import android.content.Intent
 import android.net.Uri
+import android.graphics.Color
 import android.os.Bundle
+import android.view.View
+import android.view.ViewGroup
+import android.widget.FrameLayout
 import android.webkit.WebView
 import androidx.activity.ComponentActivity
 import androidx.activity.OnBackPressedCallback
@@ -48,13 +54,17 @@ class ShellActivity : ComponentActivity() {
     private var bridge: NativeBridge? = null
     private var watch: NetworkWatch? = null
     private var policy: OriginPolicy? = null
+    private var fullscreen: FullscreenVideo? = null
     private val askNotify = registerForActivityResult(ActivityResultContracts.RequestPermission()) { }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         enableEdgeToEdge()
         super.onCreate(savedInstanceState)
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
-            override fun handleOnBackPressed() = shellBack(webView) { finish() }
+            override fun handleOnBackPressed() {
+                val f = fullscreen
+                if (f != null && f.isShowing) f.exit() else shellBack(webView) { finish() }
+            }
         })
         lifecycleScope.launch {
             val settings = AppSettings.from(applicationContext)
@@ -95,6 +105,8 @@ class ShellActivity : ComponentActivity() {
                     last = now
                 }
             }
+            val fullscreenLayer = FrameLayout(this@ShellActivity).apply { setBackgroundColor(Color.BLACK); visibility = View.GONE }
+            val fs = FullscreenVideo(fullscreenLayer, window).also { fullscreen = it }
             val view = WebViewFactory.create(
                 this@ShellActivity, policy, BuildConfig.VERSION_NAME, bridge,
                 authOrigin = storedAuth?.let(::OriginPolicy),
@@ -104,6 +116,7 @@ class ShellActivity : ComponentActivity() {
                     val profile = offline.state.lastProfileId
                     profile != null && native.launch(PlayRequest(link.itemId, profile, link.startMs, null, link.audio, link.subtitle))
                 },
+                fullscreen = fs,
                 openExternal = ::openExternal,
             )
             ViewCompat.setOnApplyWindowInsetsListener(view) { v, insets ->
@@ -112,8 +125,13 @@ class ShellActivity : ComponentActivity() {
                 insets
             }
             webView = view
-            setContentView(view)
-            view.loadUrl(notificationUrl(intent) ?: origin.toString())
+            setContentView(
+                FrameLayout(this@ShellActivity).apply {
+                    addView(view, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+                    addView(fullscreenLayer, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+                },
+            )
+            view.loadUrl((if (ShellIntents.isInternal(intent)) notificationUrl(intent) else null) ?: origin.toString())
         }
     }
 
@@ -145,6 +163,8 @@ class ShellActivity : ComponentActivity() {
     /** Back from the offline list after a successful reconnect: reload the web UI (it may show the error page). */
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
+        // the extras below are the app's own hand-overs: only honoured when they came through the non-exported entry
+        if (!ShellIntents.isInternal(intent)) return
         if (intent.getBooleanExtra(EXTRA_RELOAD, false)) webView?.reload()
         intent.getStringExtra(EXTRA_WEB_WATCH)?.let(::openWebWatch)
         notificationUrl(intent)?.let { webView?.loadUrl(it) } // a tap on a server notification (a /watch link goes native via the page-start hook)
@@ -192,6 +212,8 @@ class ShellActivity : ComponentActivity() {
     override fun onDestroy() {
         bridge?.detach() // events and replies are posted through the view: let go of it before it is destroyed
         bridge = null
+        fullscreen?.hide()
+        fullscreen = null
         webView?.destroy()
         webView = null
         super.onDestroy()
@@ -208,6 +230,20 @@ class ShellActivity : ComponentActivity() {
         private const val PROBE_TIMEOUT_MS = 4_000L
         private var renderRestarts = 0
     }
+}
+
+/**
+ * The shell has two entries: the exported launcher one (ShellActivity itself; any app can start it, so its extras are ignored) and the
+ * non-exported alias `ShellInternal` that the app's own hand-overs use (notification taps, the player's hand-back, the offline list).
+ */
+object ShellIntents {
+    const val INTERNAL = "app.friendflix.android.shell.ShellInternal"
+
+    /** An intent for the shell's internal entry (extras are added by the caller). */
+    fun internal(context: Context): Intent = Intent().setComponent(ComponentName(context.packageName, INTERNAL))
+
+    /** True when [intent] reached the shell through the internal entry (the component is the alias, which only the app can start). */
+    fun isInternal(intent: Intent?): Boolean = intent?.component?.className == INTERNAL
 }
 
 /** Android back walks the WebView history; at the first page it leaves the app. */

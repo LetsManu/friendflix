@@ -24,6 +24,7 @@ import app.friendflix.android.downloads.ServerApi
 import app.friendflix.android.downloads.SessionExpired
 import app.friendflix.android.settings.AppSettings
 import app.friendflix.android.shell.ShellActivity
+import app.friendflix.android.shell.ShellIntents
 import kotlinx.coroutines.flow.first
 import okhttp3.HttpUrl
 import org.json.JSONObject
@@ -147,7 +148,7 @@ class SystemNotePoster(context: Context) : NotePoster {
     @SuppressLint("MissingPermission")
     override fun post(note: ServerNote, category: NotifyCategory, path: String?) {
         val id = notificationId(note.id)
-        val open = Intent(app, ShellActivity::class.java)
+        val open = ShellIntents.internal(app)
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
         if (path != null) open.putExtra(ShellActivity.EXTRA_OPEN_PATH, path)
         val b = NotificationCompat.Builder(app, category.channelId)

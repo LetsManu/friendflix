@@ -30,6 +30,8 @@
     <string name="offline_none">There are no downloads on this device.</string>
     <string name="offline_keys_unavailable">Downloads are not available on this device right now. Please try again later.</string>
     <string name="offline_play">Play</string>
+    <string name="offline_remove">Remove</string>
+    <string name="offline_remove_confirm">Remove “%1$s” from this device?</string>
     <string name="offline_play_failed">Can’t play this.</string>
     <string name="offline_meta" translatable="false">%1$s · %2$s</string>
     <string name="offline_meta_unfinished">%1$s · %2$s · not finished</string>

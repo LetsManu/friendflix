@@ -69,6 +69,7 @@ import app.friendflix.android.offline.OfflineMedia
 import app.friendflix.android.offline.Prepared
 import app.friendflix.android.settings.AppSettings
 import app.friendflix.android.shell.ShellActivity
+import app.friendflix.android.shell.ShellIntents
 import com.google.android.gms.cast.framework.CastButtonFactory
 import com.google.android.gms.cast.framework.CastContext
 import com.google.common.util.concurrent.ListenableFuture
@@ -1085,7 +1086,7 @@ class PlayerActivity : FragmentActivity() {
         ).joinToString("&")
         val path = "/watch/${a.itemId}" + if (q.isEmpty()) "" else "?$q"
         startActivity(
-            Intent(this, ShellActivity::class.java)
+            ShellIntents.internal(this)
                 .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
                 .putExtra(ShellActivity.EXTRA_WEB_WATCH, path),
         )
