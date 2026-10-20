@@ -347,6 +347,9 @@ server itself (it is your server and controls the web UI the app shows).
 **One origin.** At the first start the user enters one HTTPS address; the app checks `GET /api/version` before saving it. The
 WebView loads only that origin (scheme, host and port must match, no subdomains). Every other navigation opens in the system
 browser, plain WebView downloads are dropped, and `/watch` links are only handed to the native player from the app origin.
+The one other origin the WebView may show is the server's identity provider (`authOrigin` in `/api/version`, the OIDC issuer's
+origin, exact scheme + host + port, https only, main frame only) so that sign-in, re-authentication and the forgotten-PIN reset finish
+in the app; it never gets the bridge or the native cookie jar.
 
 **WebView hardening.** JavaScript and DOM storage on (the web UI needs them); file and content access off; mixed content never
 allowed; Safe Browsing on; remote debugging only in debug builds. The network security config allows no cleartext and trusts only
@@ -366,8 +369,10 @@ port), follows no redirects, and sends state-changing requests with the session'
 server, the TV, the Cast SDK or any other host, and it is never logged.
 
 **Other apps.** Exported are only the launcher screen and the settings screen (for Android's "app settings" entry); every
-destructive setting asks for a confirmation first. Services, the media session and the WorkManager jobs are not exported. A
-notification tap carries only a path, which the shell validates again as a path of the app origin; pending intents are immutable.
+destructive setting asks for a confirmation first. The launcher entry ignores the shell's internal extras (page to open, web-player
+hand-back, reload): the app's own hand-overs use a non-exported entry (`ShellInternal`). Services, the media session and the
+WorkManager jobs are not exported. A notification tap carries only a path, which the shell validates again as a path of the app
+origin; pending intents are immutable.
 Downloads live in the app-specific folders (no storage permission), which other apps cannot read on current Android versions.
 
 **Encryption at rest and its limits.** Every downloaded file is encrypted (AES-256-CTR with a random IV per file, HMAC-SHA256 per
@@ -378,13 +383,16 @@ or a debugger on an unlocked phone can reach them. File sizes reveal the approxi
 period and revocation are enforced by the server and checked by the app (with a guard against turning the clock back), which stops
 honest misuse, not a determined owner of a rooted phone.
 
-**Leaving a device.** *Sign out of this device* first closes any open player (its stop report still goes out), then ends the session on the server (`POST /auth/logout`, when reachable), returns the
-licences, deletes every download file, the download rows, the queued offline positions and the Keystore key, and clears the
-WebView's cookies and web storage. Changing the server address does the same for the old server but keeps the Keystore key (it
+**Leaving a device.** *Sign out of this device*, in this order: closes any open player (its stop report still goes out); cancels
+the background jobs (downloads, storage moves, licence returns, the notification poll), remembering licence returns that had not
+run yet; deletes the download rows and every download file; while the session cookie still exists, returns the licences (also the
+remembered ones) and then ends the session on the server (`POST /auth/logout`, when reachable); clears the queued offline positions,
+the offline state and the notification poller's last seen id; deletes the Keystore key; and finally clears the WebView's cookies
+and web storage (which also ends the WebView's sign-in at the identity provider) and plans the notification poll again. Changing the server address does the same for the old server but keeps the Keystore key (it
 belongs to the device). Uninstalling or clearing the app's data removes everything as well.
 
-**Notifications and logs.** The poller reads `GET /api/notifications` in the background with the session cookie, at most every
-15 minutes, and stops after a 401 until the app is opened. The server's notification text can contain titles and is shown as
+**Notifications and logs.** The poller reads `GET /api/notifications` in the background with the session cookie, about every
+10–20 minutes (Android may delay it further), and stops after a 401 until the app is opened. The server's notification text can contain titles and is shown as
 Android shows notifications (the lock screen setting decides). The app's own download notices and logs carry no titles, cookies or
 URLs with tokens; the app's logs name only error codes and exception classes. Media3's internal error logs can include the server's
 host in a stack trace.

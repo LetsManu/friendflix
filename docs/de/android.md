@@ -7,7 +7,7 @@ Die Android-App ist FriendFlix für die Hosentasche: dieselbe Weboberfläche wie
 - **Player:** ein nativer Player (Media3) mit Direktwiedergabe, wenn das Handy die Datei selbst abspielen kann, Bild-im-Bild, Steuerung auf dem Sperrbildschirm und per Bluetooth und auf Wunsch Ton im Hintergrund.
 - **Downloads:** Filme und Folgen laden im Hintergrund, auch bei ausgeschaltetem Bildschirm, aufs Telefon oder auf eine SD-Karte und werden verschlüsselt gespeichert. Ist der Server nicht erreichbar, öffnet die App eine Liste deiner Downloads zum Offline-Schauen.
 - **Chromecast** aus dem nativen Player.
-- **Benachrichtigungen** zu neuen Folgen, Anfragen und deinem Konto, die die App alle 15 bis 30 Minuten selbst abholt (ohne Push-Dienst von Google).
+- **Benachrichtigungen** zu neuen Folgen, Anfragen und deinem Konto, die die App etwa alle 10–20 Minuten selbst abholt (Android kann das weiter verzögern; ohne Push-Dienst von Google).
 
 Alles andere (Stöbern, Profile, Watch-Partys, Anfragen, Einstellungen deines Kontos) ist die Weboberfläche und passt deshalb immer zur Version deines Servers.
 
@@ -44,10 +44,14 @@ Alles andere (Stöbern, Profile, Watch-Partys, Anfragen, Einstellungen deines Ko
 
 1. Gib die Adresse deines FriendFlix-Servers ein, zum Beispiel `friend.example.com` (`https://` ergänzt die App; reines `http` wird abgelehnt).
 2. Die App prüft, ob die Adresse wie ein passender FriendFlix-Server antwortet (`GET /api/version`). Wenn nicht, sagt sie warum: nicht erreichbar, Zertifikat nicht vertrauenswürdig, kein FriendFlix-Server oder welche Seite ein Update braucht.
-3. Melde dich genau wie im Browser an (Anmeldung in der App oder deine Anmeldeseite). Gibt dein Server neue Geräte erst frei, erscheint das Handy beim Admin als neues Gerät, wie ein Browser auch.
+3. Melde dich genau wie im Browser an, in der App: mit der Anmeldung in der App oder auf der Anmeldeseite deines Servers bei seinem Identitätsanbieter (zum Beispiel Authentik). Die erneute Anmeldung für die Kontosicherheit und *PIN vergessen* funktionieren genauso. Gibt dein Server neue Geräte erst frei, erscheint das Handy beim Admin als neues Gerät, wie ein Browser auch.
 4. Ab Android 13 fragt die App **einmal**, ob sie Benachrichtigungen zeigen darf. Sagst du nein, fragt sie nicht noch einmal; erlauben kannst du sie später in den App-Einstellungen.
 
-Die App öffnet nur die Adresse deines Servers. Jeder andere Link (Trailer, IMDb, Hilfeseiten) öffnet sich in deinem normalen Browser.
+Die App öffnet nur die Adresse deines Servers und, zum Anmelden, die Anmeldeseite deines Servers (die Adresse des Identitätsanbieters, die der Server in `GET /api/version` als `authOrigin` nennt; die App liest sie bei der Einrichtung und bei jedem Start). Jeder andere Link (Trailer, IMDb, Hilfeseiten) öffnet sich in deinem normalen Browser. Die Anmeldeseite bekommt nie die nativen Funktionen der App, und die eigenen Anfragen der App (Player, Downloads, Benachrichtigungen) schicken deine Sitzung nie dorthin.
+
+**Passkeys.** Wo das WebView des Handys es kann, reicht die App Passkey-Anfragen an Androids Anmeldedaten-Verwaltung weiter. Android bietet einen Passkey nur einer App an, die die Website des Passkeys mit sich verknüpft hat (Digital Asset Links); in der App gehen Passkeys also nach dem Betreiber-Schritt [5. Passkeys in der App](#5-passkeys-in-der-app-optional). Ohne ihn meldest du dich wie gewohnt mit Passwort (und zweitem Faktor) an.
+
+**Vollbild.** Der Vollbild-Knopf des Web-Players füllt den Bildschirm und blendet die Systemleisten aus; Androids Zurück beendet das Vollbild.
 
 ## App-Einstellungen
 
@@ -61,6 +65,7 @@ Du öffnest sie in der Weboberfläche unter **Einstellungen → App auf diesem G
 | Ton im Hintergrund | Standardmäßig aus. Ist es an, läuft der Ton bei ausgeschaltetem Bildschirm oder in einer anderen App weiter, mit Steuerung in der Benachrichtigung und auf dem Sperrbildschirm. Ist es aus, pausiert die Wiedergabe (Bild-im-Bild geht trotzdem). |
 | Benachrichtigungen | Zeigt, ob die App dich benachrichtigen darf, mit **Benachrichtigungen erlauben**, wenn nicht. Vier Kategorien lassen sich ein- und ausschalten: *Neue Folgen und Titel*, *Anfragen*, *Konto und Zugang*, *Sonstiges*. |
 | Downloads auf diesem Gerät | Öffnet die Offline-Liste. |
+| (Kinderprofile) | Die Offline-Liste hat keinen Einstellungen-Knopf, solange zuletzt ein Kinderprofil genutzt wurde (das erfährt die App bei jedem Start mit Netz), so wie die Weboberfläche den Eintrag ausblendet. Androids App-Info (das Zahnrad) öffnet die Einstellungen trotzdem: Das ist der Weg für den Besitzer des Geräts. |
 | Auf diesem Gerät abmelden | Nach einer Rückfrage: schließt einen offenen Player, beendet deine Sitzung auf dem Server (wenn erreichbar), gibt die Lizenzen zurück, löscht alle Downloads auf diesem Gerät und die Schlüssel, mit denen sie verschlüsselt sind, leert die Cookies und gespeicherten Webdaten der App und vergisst, welche Benachrichtigungen du schon gesehen hast. Dein Konto, deine Profile und dein Verlauf bleiben, wie sie sind. |
 | Version | Die App-Version (dieselbe wie das Server-Release, zu dem sie gehört). |
 
@@ -75,7 +80,8 @@ Du startest einen Download in der Weboberfläche wie im Browser: Der Server legt
 - Text-Untertitel (SRT, VTT) und das Poster werden mit dem Titel geladen. Bild-Untertitel (PGS, VobSub) gibt es offline nicht.
 - Wird die Karte mit einem Download herausgenommen, steht er auf pausiert und geht weiter, sobald die Karte zurück ist.
 - Endet die Sitzung auf dem Server (anderswo abgemeldet, abgelaufen), pausieren die Downloads mit dem Hinweis *Bitte erneut anmelden* und gehen nach der nächsten Anmeldung weiter.
-- Löschst du einen Download in der App, geht die Lizenz an den Server zurück und zählt nicht mehr gegen dein Limit.
+- Die Seite **Downloads** der Weboberfläche (auch *Zu den Downloads* bei einem Titel) zeigt die Downloads der App für das aktive Profil, mit Abspielen (nativer Player) und Löschen, auch für abgelaufene.
+- Löschst du einen Download in der App (auf der Seite Downloads oder mit **Entfernen** in der Offline-Liste), geht die Lizenz an den Server zurück und zählt nicht mehr gegen dein Limit. Ein abgelaufener Download lässt sich genauso entfernen.
 
 ## Verschlüsselung der Dateien und ihre Grenzen
 
@@ -98,13 +104,14 @@ Startet die App und der Server ist nicht erreichbar (kein Netz, Flugmodus, Serve
 - Die Offline-Frist ist `DOWNLOAD_OFFLINE_GRACE_DAYS` des Servers (Standard 7 Tage) nach der letzten Online-Prüfung. Danach bittet ein Download, kurz online zu gehen; eine Prüfung verlängert ihn.
 - Wurde die Uhr des Handys zurückgestellt, wird die Wiedergabe bis zur nächsten Online-Prüfung abgelehnt.
 - Positionen und „gesehen" werden auf dem Handy gespeichert und beim nächsten Start oder sobald das Netz zurück ist an den Server geschickt. Ein neuerer Stand auf dem Server gewinnt.
+- **Entfernen** in einer Zeile löscht diesen Download nach einer Rückfrage vom Handy (auch einen abgelaufenen).
 - **Erneut verbinden** prüft den Server und kehrt zur Weboberfläche zurück. Auf dem Server widerrufene Lizenzen (Gerät entfernt, Rolle geändert, Konto deaktiviert) löschen bei dieser Prüfung die Dateien.
 
 ## Benachrichtigungen
 
 Server-Benachrichtigungen (eine neue Folge einer Serie, der du folgst, eine erledigte Anfrage, ein freigegebenes Gerät, Einladungen und so weiter) erreichen das Handy ohne fremden Push-Dienst:
 
-- Eine Hintergrundaufgabe fragt deinen Server etwa alle 15 bis 30 Minuten nach neuen Benachrichtigungen (`GET /api/notifications`, mit der Sitzung der App). Den genauen Zeitpunkt bestimmt Android, im Energiesparmodus oder Doze auch später; es ist nicht sofort.
+- Eine Hintergrundaufgabe fragt deinen Server etwa alle 10–20 Minuten nach neuen Benachrichtigungen (`GET /api/notifications`, mit der Sitzung der App; Android kann das weiter verzögern). Den genauen Zeitpunkt bestimmt Android, im Energiesparmodus oder Doze noch später; es ist nicht sofort.
 - Nur Neues wird gezeigt. Der erste Lauf nach der Anmeldung zeigt nichts (er merkt sich nur, was da ist), und was du in der Weboberfläche schon gelesen hast, wird übersprungen. Die App markiert auf dem Server nichts als gelesen.
 - Ein Tipp auf die Benachrichtigung öffnet die passende Seite in der App; ein Link zu einem Titel spielt ihn im nativen Player.
 - Jede Kategorie ist ein eigener Android-Benachrichtigungskanal; Ton und Wichtigkeit lassen sich je Kategorie auch in den Android-Einstellungen ändern.
@@ -136,7 +143,7 @@ Im nativen Player erscheint ein Cast-Symbol, wenn ein Chromecast oder Google TV 
 | *Bitte kurz online gehen, um den Download zu bestätigen.* | Das Offline-Fenster ist vorbei. Einmal verbinden; die Prüfung verlängert es. |
 | *Die Uhrzeit des Geräts stimmt nicht.* | Die Uhr wurde zurückgestellt. Uhrzeit automatisch einstellen und einmal online gehen. |
 | *Auf diesem Gerät gerade nicht verfügbar.* | Androids Keystore hat nicht geantwortet. Gleich noch einmal versuchen oder das Handy neu starten; nichts wird gelöscht. |
-| Keine Benachrichtigungen | In den App-Einstellungen erlaubt? Kategorie an? Die Akku-Optimierung für FriendFlix in den Android-Einstellungen kann sie weiter verzögern. Nach einem Ereignis mindestens 30 Minuten warten. |
+| Keine Benachrichtigungen | In den App-Einstellungen erlaubt? Kategorie an? Die Akku-Optimierung für FriendFlix in den Android-Einstellungen kann sie weiter verzögern. Nach einem Ereignis mindestens 20 Minuten warten. |
 | Kein Cast-Symbol | Gleiches WLAN wie der Fernseher? Casting auf dem Server erlaubt? Google-Play-Dienste installiert? Läuft gerade ein Download? |
 | *Maximal N gleichzeitige Streams erlaubt.* | Das Stream-Limit deines Kontos ist erreicht (andere Geräte oder ein noch laufendes Casting). Beende einen. |
 | Die APK lässt sich nicht über die Play-Version installieren (oder umgekehrt) | Unterschiedliche Signaturen, siehe [Installieren](#installieren). Erst deinstallieren. |
@@ -193,6 +200,31 @@ Ab dann baut jeder Release-Tag (`vX.Y.Z`, erstellt vom Workflow *Release*) in de
 
 Ein geschlossener Test reicht für Haushalt und Freunde; die App braucht keinen öffentlichen Eintrag im Play Store.
 
+### 5. Passkeys in der App (optional)
+
+Die App nutzt für Passkeys (WebAuthn) den App-Modus des WebViews: Androids Anmeldedaten-Verwaltung gibt einen Passkey nur dann an die App, wenn die **Relying Party** des Passkeys (seine RP-ID, die Domain, zu der die Passkeys gehören; bei Authentik in der WebAuthn-Authenticator-Stage eingestellt, meist der Host der Anmeldeseite oder die gemeinsame übergeordnete Domain) die App verknüpft hat. Lege diese Datei unter `https://<rp-id>/.well-known/assetlinks.json` ab (zum Beispiel `https://auth.example.com/.well-known/assetlinks.json`), ausgeliefert als `application/json` ohne Weiterleitung:
+
+```json
+[
+  {
+    "relation": ["delegate_permission/common.get_login_creds"],
+    "target": {
+      "namespace": "android_app",
+      "package_name": "app.friendflix.android",
+      "sha256_cert_fingerprints": [
+        "<SHA-256 DES PLAY-APP-SIGNATURSCHLÜSSELS>",
+        "<SHA-256 DEINES UPLOAD-SCHLÜSSELS>"
+      ]
+    }
+  }
+]
+```
+
+- *Play-App-Signaturschlüssel*: Play Console → *Testen und veröffentlichen* → *App-Integrität* → *Zertifikat des App-Signaturschlüssels*, SHA-256 (damit ist die App aus Google Play signiert).
+- *Upload-Schlüssel*: `keytool -list -v -keystore friendflix-upload.jks -alias upload` (damit ist die APK aus dem GitHub-Release signiert). Beide Fingerabdrücke haben die Form `AA:BB:…` (32 Paare).
+
+Fehlt die Datei oder stimmt sie nicht, bietet die App einfach keine Passkeys an; die Anmeldung mit Passwort funktioniert in jedem Fall.
+
 ## Prüfliste auf einem echten Gerät
 
 Unit-Tests und der Emulator in der CI decken die Logik ab; diese Punkte brauchen ein echtes Handy (gesammelt aus den Entwicklungsnotizen der App). Nimm einen Testserver, eine SD-Karte, wenn das Handy einen Steckplatz hat, einen Chromecast und Bluetooth-Kopfhörer.
@@ -200,57 +232,66 @@ Unit-Tests und der Emulator in der CI decken die Logik ab; diese Punkte brauchen
 **Installation und Hülle**
 1. Frische Installation, erster Start: Die Einrichtung nimmt `friend.example.com` an und lehnt `http://`, einen falschen Host und einen Server mit selbstsigniertem Zertifikat mit der passenden Meldung ab.
 2. Anmelden (Anmeldung in der App und deine Anmeldeseite). Externe Links öffnen sich im Browser; Androids Zurück geht durch den Verlauf der Weboberfläche und verlässt die App auf der Startseite.
-3. Android 13+: Die Benachrichtigungs-Berechtigung wird beim ersten Start einmal erfragt und nie wieder von selbst; *Benachrichtigungen erlauben* in den App-Einstellungen fragt erneut oder öffnet nach zwei Ablehnungen die Android-Einstellungen.
+3. Klassische Anmeldung über den Identitätsanbieter: Auf einem Server, dessen Anmeldeseite der Identitätsanbieter ist (`LOGIN_UI=authentik` oder `/auth/login?classic=1`), öffnet sich die Anmeldeseite in der App, und nach dem Anmelden bist du zurück in der Weboberfläche; kein Browser öffnet sich. Ein Link auf der Anmeldeseite zu einer anderen Website öffnet sich im Browser.
+4. Erneute Anmeldung (z. B. Kontosicherheit): Eine Aktion, die eine erneute Anmeldung verlangt, öffnet den Identitätsanbieter in der App und kehrt zur Seite zurück.
+5. PIN vergessen: *PIN vergessen* auf dem PIN-Bildschirm eines Profils meldet dich beim Identitätsanbieter in der App erneut an und kehrt zum Festlegen einer neuen PIN zurück.
+6. Passkeys: Mit veröffentlichter `assetlinks.json` (Betreiber-Schritt 5) auf der Anmeldeseite mit einem Passkey anmelden. Ohne sie wird kein Passkey angeboten, und die Anmeldung mit Passwort funktioniert.
+7. Ein Titel im Web-Player (zum Beispiel nachdem der native Player ihn zurückgegeben hat): Der Vollbild-Knopf füllt den Bildschirm ohne Systemleisten; Androids Zurück beendet zuerst das Vollbild.
+8. `adb shell am start -n app.friendflix.android/.shell.ShellActivity --es app.friendflix.android.OPEN_PATH /requests` öffnet die Startseite, nicht `/requests`; ein Tipp auf eine Benachrichtigung öffnet weiter ihre Seite (er nutzt den nicht exportierten Einstieg).
+9. Android 13+: Die Benachrichtigungs-Berechtigung wird beim ersten Start einmal erfragt und nie wieder von selbst; *Benachrichtigungen erlauben* in den App-Einstellungen fragt erneut oder öffnet nach zwei Ablehnungen die Android-Einstellungen.
 
 **Downloads und Speicher**
-4. Einen Film über mobile Daten und über WLAN laden; mit *Nur über WLAN herunterladen* wartet er, bis WLAN zurück ist.
-5. Bildschirm aus während eines Downloads: Er läuft mit der Fortschritts-Benachrichtigung weiter (ohne Titel darin). App in den letzten Apps schließen, Handy neu starten: Er macht dort weiter, wo er war.
-6. Flugmodus mitten im Download: Er pausiert und geht danach von selbst weiter.
-7. SD-Karte: In den Einstellungen wählen, während Downloads auf dem Telefon liegen, und *Verschieben* nehmen; sie wandern und spielen weiter. Karte herausnehmen: Die Downloads stehen auf pausiert; wieder einsetzen: Sie gehen weiter. Eine Datei von der Karte auf einen Computer kopieren: unlesbar.
-8. In der Weboberfläche auf einem anderen Gerät abmelden (Sitzung endet): Downloads pausieren mit *Bitte erneut anmelden*; nach dem Anmelden gehen sie weiter.
-9. Einen Download in der App löschen: Die Lizenz verschwindet auf dem Server (Konto → Downloads im Browser).
+10. Einen Film über mobile Daten und über WLAN laden; mit *Nur über WLAN herunterladen* wartet er, bis WLAN zurück ist.
+11. Bildschirm aus während eines Downloads: Er läuft mit der Fortschritts-Benachrichtigung weiter (ohne Titel darin). App in den letzten Apps schließen, Handy neu starten: Er macht dort weiter, wo er war.
+12. Flugmodus mitten im Download: Er pausiert und geht danach von selbst weiter.
+13. SD-Karte: In den Einstellungen wählen, während Downloads auf dem Telefon liegen, und *Verschieben* nehmen; sie wandern und spielen weiter. Karte herausnehmen: Die Downloads stehen auf pausiert; wieder einsetzen: Sie gehen weiter. Eine Datei von der Karte auf einen Computer kopieren: unlesbar.
+14. In der Weboberfläche auf einem anderen Gerät abmelden (Sitzung endet): Downloads pausieren mit *Bitte erneut anmelden*; nach dem Anmelden gehen sie weiter.
+15. Einen Download in der App löschen: Die Lizenz verschwindet auf dem Server (Konto → Downloads im Browser).
+16. Die Seite Downloads der Weboberfläche in der App (auch *Zu den Downloads* bei einem Titel): Sie zeigt die Downloads der App für das aktive Profil (keine Speicheranzeige des Browsers), Abspielen öffnet den nativen Player, das X entfernt einen Download, auch einen abgelaufenen.
+17. Offline-Liste: **Entfernen** in einer Zeile fragt erst nach, dann ist der Download weg (auch ein abgelaufener). Wurde zuletzt ein Kinderprofil genutzt (die App einmal online damit öffnen), zeigt die Offline-Liste keinen Einstellungen-Knopf; das Zahnrad in Androids App-Info öffnet die Einstellungen weiterhin.
 
 **Offline**
-10. Flugmodus, App mit fertigen Downloads starten: Die Offline-Liste öffnet sich (nur einmal, auch wenn die Startprüfung erneut läuft), zeigt die Tage als Offline-Fenster und spielt ab.
-11. Eine Weile offline schauen, online gehen: Die Position steht im Web. Uhr einen Tag zurückstellen: Wiedergabe abgelehnt bis zur nächsten Online-Prüfung. Länger als die Offline-Frist offline bleiben: *Bitte kurz online gehen*.
-12. Das Gerät auf dem Server widerrufen, wieder verbinden: Die Dateien werden gelöscht.
+18. Flugmodus, App mit fertigen Downloads starten: Die Offline-Liste öffnet sich (nur einmal, auch wenn die Startprüfung erneut läuft), zeigt die Tage als Offline-Fenster und spielt ab.
+19. Eine Weile offline schauen, online gehen: Die Position steht im Web. Uhr einen Tag zurückstellen: Wiedergabe abgelehnt bis zur nächsten Online-Prüfung. Länger als die Offline-Frist offline bleiben: *Bitte kurz online gehen*.
+20. Das Gerät auf dem Server widerrufen, wieder verbinden: Die Dateien werden gelöscht.
 
 **Player**
-13. Aus der Weboberfläche abspielen (Detailseite, Folgenliste, Hero): Der native Player öffnet sich. Doppeltippen oder ein erneuter Versuch nach 5 s öffnet keinen zweiten Player.
-14. Direktwiedergabe einer H.264-MP4. HEVC 10 Bit auf einem Handy mit HEVC-Hardware → direkt (Admin „Läuft gerade" sagt direkt), auf einem Handy ohne → Transcode.
-15. Tonspur wechseln → neue Sitzung (ein Stopp und ein Start in der Admin-Ansicht), die Wahl wird für die Serie gemerkt. Untertitel an/aus, die Serienwahl wird gemerkt. Qualität wählen → Transcode in dieser Stufe.
-16. Folge mit Intro: Der Überspringen-Knopf erscheint im Bereich; mit automatischem Überspringen springt sie einmal. Beim Abspann: die Nächste-Folge-Karte und ein 10-s-Countdown, der bei Pause wartet. „Abspann ansehen" bringt die Karte am Ende zurück. Drei Autoplays → „Noch da?".
-17. Fortsetzen: bei Minute 10 stoppen, wieder öffnen → es geht dort weiter. Das Web zeigt dieselbe Position.
-18. Home während der Wiedergabe → Bild-im-Bild (ab Android 12 automatisch; älter bei Home). Play/Pause im Bild-im-Bild geht. Schließen stoppt die Wiedergabe und meldet einen Stopp.
-19. Ton im Hintergrund aus: Bildschirm aus oder Home ohne Bild-im-Bild → Pause; bei ausgeschaltetem Bildschirm pausieren, dann Play per Bluetooth oder in der Benachrichtigung → nichts passiert; zurück auf dem Bildschirm geht Play. Ton im Hintergrund an → der Ton läuft mit Benachrichtigung weiter; Play/Pause auf dem Sperrbildschirm und per Bluetooth gehen.
-20. Ein Konto am Stream-Limit → „Maximal N gleichzeitige Streams …". Kinderprofil → die Ablehnung des Servers zeigt den allgemeinen Fehler.
-21. Offline-Liste → einen Download abspielen: spielt, springt, die Position wird beim Verbinden übertragen. App beim Abspielen eines Offline-Titels beenden, aus den letzten Apps wieder öffnen → die Offline-Prüfung läuft erneut. Einen Offline-Titel länger als 5 min im Hintergrund pausieren und über die Benachrichtigung fortsetzen → die Prüfung läuft erneut (abgelehnt nach dem Offline-Fenster).
-22. `https://friend.example.com/watch/<id>` über Neuladen oder einen Link öffnen → der native Player öffnet sich, die Weboberfläche bleibt auf der vorigen Seite. Ist noch kein Profil bekannt → der Web-Player lädt. Ein Watch-Link, während die Weboberfläche ein anderes Profil nutzt → der Player schließt und die Web-Wiedergabeseite spielt.
-23. Drehen und Größe ändern (geteilter Bildschirm): Die Wiedergabe läuft ohne neue Sitzung weiter. Eine fertige Folge vom Ende neu starten → „Läuft gerade" beim Admin zeigt sie wieder, und beim Verlassen wird ein Stopp gemeldet.
-24. Eine direkt abgespielte MKV mit eingebetteten Text-Untertiteln: Sie werden nicht angeboten (nur das WebVTT des Servers); prüfen, ob der Server sie als externe Untertitel listet.
+21. Aus der Weboberfläche abspielen (Detailseite, Folgenliste, Hero): Der native Player öffnet sich. Doppeltippen oder ein erneuter Versuch nach 5 s öffnet keinen zweiten Player.
+22. Folgen-Karten (Favoriten, Suche, eine Bibliotheksseite), die Verlaufsseite und *Hier abspielen* in der Cast-Leiste: Der native Player öffnet sich, die Weboberfläche bleibt auf ihrer Seite. Mit einem Profil, das der native Player zurückgibt, öffnet sich einmal der Web-Player (keine zweite Rückfrage).
+23. Direktwiedergabe einer H.264-MP4. HEVC 10 Bit auf einem Handy mit HEVC-Hardware → direkt (Admin „Läuft gerade" sagt direkt), auf einem Handy ohne → Transcode.
+24. Tonspur wechseln → neue Sitzung (ein Stopp und ein Start in der Admin-Ansicht), die Wahl wird für die Serie gemerkt. Untertitel an/aus, die Serienwahl wird gemerkt. Qualität wählen → Transcode in dieser Stufe.
+25. Folge mit Intro: Der Überspringen-Knopf erscheint im Bereich; mit automatischem Überspringen springt sie einmal. Beim Abspann: die Nächste-Folge-Karte und ein 10-s-Countdown, der bei Pause wartet. „Abspann ansehen" bringt die Karte am Ende zurück. Drei Autoplays → „Noch da?".
+26. Fortsetzen: bei Minute 10 stoppen, wieder öffnen → es geht dort weiter. Das Web zeigt dieselbe Position.
+27. Home während der Wiedergabe → Bild-im-Bild (ab Android 12 automatisch; älter bei Home). Play/Pause im Bild-im-Bild geht. Schließen stoppt die Wiedergabe und meldet einen Stopp.
+28. Ton im Hintergrund aus: Bildschirm aus oder Home ohne Bild-im-Bild → Pause; bei ausgeschaltetem Bildschirm pausieren, dann Play per Bluetooth oder in der Benachrichtigung → nichts passiert; zurück auf dem Bildschirm geht Play. Ton im Hintergrund an → der Ton läuft mit Benachrichtigung weiter; Play/Pause auf dem Sperrbildschirm und per Bluetooth gehen.
+29. Ein Konto am Stream-Limit → „Maximal N gleichzeitige Streams …". Kinderprofil → die Ablehnung des Servers zeigt den allgemeinen Fehler.
+30. Offline-Liste → einen Download abspielen: spielt, springt, die Position wird beim Verbinden übertragen. App beim Abspielen eines Offline-Titels beenden, aus den letzten Apps wieder öffnen → die Offline-Prüfung läuft erneut. Einen Offline-Titel länger als 5 min im Hintergrund pausieren und über die Benachrichtigung fortsetzen → die Prüfung läuft erneut (abgelehnt nach dem Offline-Fenster).
+31. `https://friend.example.com/watch/<id>` über Neuladen oder einen Link öffnen → der native Player öffnet sich, die Weboberfläche bleibt auf der vorigen Seite. Ist noch kein Profil bekannt → der Web-Player lädt. Ein Watch-Link, während die Weboberfläche ein anderes Profil nutzt → der Player schließt und die Web-Wiedergabeseite spielt.
+32. Drehen und Größe ändern (geteilter Bildschirm): Die Wiedergabe läuft ohne neue Sitzung weiter. Eine fertige Folge vom Ende neu starten → „Läuft gerade" beim Admin zeigt sie wieder, und beim Verlassen wird ein Stopp gemeldet.
+33. Eine direkt abgespielte MKV mit eingebetteten Text-Untertiteln: Sie werden nicht angeboten (nur das WebVTT des Servers); prüfen, ob der Server sie als externe Untertitel listet.
 
 **Chromecast**
-25. Ein Cast-Gerät im WLAN und Casting erlaubt → das Cast-Symbol erscheint im Player. Kein Gerät → kein Symbol. Ein Download läuft → nie ein Symbol.
-26. Symbol antippen, Fernseher wählen: Das Handy zeigt „Wird auf … abgespielt" und steuert den Fernseher; „Läuft gerade" beim Admin zeigt die lokale Sitzung gestoppt und die Cast-Sitzung gestartet.
-27. Default Media Receiver (ohne `CAST_RECEIVER_APP_ID`): spielt ab der Position des Handys mit dem gewählten Untertitel; Pause und Springen gehen; der Fortschritt erscheint beim Admin.
-28. Eigener Receiver: `CAST_RECEIVER_APP_ID` setzen, einen Titel einmal öffnen, App neu starten, casten: Der eigene Receiver startet, seine Meldungen kommen an, seine Nächste-Folge-Karte ist in der Sprache der App.
-29. Folge mit Autoplay: etwa 40 min vor dem Ende wird die nächste Folge eingereiht; am Ende macht der Fernseher von selbst weiter, auch mit gesperrtem Handy, und der Titel auf dem Handy wechselt.
-30. Casting im Cast-Dialog beenden → das Handy spielt an der Position des Fernsehers weiter (pausiert, wenn der Fernseher pausiert war). Fernseher aus oder sein Netz weg → das Handy übernimmt an der letzten Position. Player beim Casting schließen → der Fernseher stoppt.
-31. Konto am Stream-Limit → Casting zeigt das Limit und die lokale Wiedergabe läuft weiter. Eine Rolle ohne Transcoding → „Chromecast braucht Transcoding …".
-32. Länger als 50 min casten, auch mit gesperrtem Handy → der Fernseher spielt nach kurzem Nachladen weiter (Token-Erneuerung; stoppt er, prüfen, ob Doze die App angehalten hat).
-33. Steuerung in Benachrichtigung und Sperrbildschirm beim Casting geht; ein Tipp bringt den Player zurück. App beim Casting beenden: Der Fernseher spielt eventuell weiter, bis das Token abläuft; erneutes Öffnen startet nichts von selbst.
-34. Die Menüs des Players und der Cast-Dialog sehen im hellen und dunklen Systemmodus richtig aus.
+34. Ein Cast-Gerät im WLAN und Casting erlaubt → das Cast-Symbol erscheint im Player. Kein Gerät → kein Symbol. Ein Download läuft → nie ein Symbol.
+35. Symbol antippen, Fernseher wählen: Das Handy zeigt „Wird auf … abgespielt" und steuert den Fernseher; „Läuft gerade" beim Admin zeigt die lokale Sitzung gestoppt und die Cast-Sitzung gestartet.
+36. Default Media Receiver (ohne `CAST_RECEIVER_APP_ID`): spielt ab der Position des Handys mit dem gewählten Untertitel; Pause und Springen gehen; der Fortschritt erscheint beim Admin.
+37. Eigener Receiver: `CAST_RECEIVER_APP_ID` setzen, einen Titel einmal öffnen, App neu starten, casten: Der eigene Receiver startet, seine Meldungen kommen an, seine Nächste-Folge-Karte ist in der Sprache der App.
+38. Folge mit Autoplay: etwa 40 min vor dem Ende wird die nächste Folge eingereiht; am Ende macht der Fernseher von selbst weiter, auch mit gesperrtem Handy, und der Titel auf dem Handy wechselt.
+39. Casting im Cast-Dialog beenden → das Handy spielt an der Position des Fernsehers weiter (pausiert, wenn der Fernseher pausiert war). Fernseher aus oder sein Netz weg → das Handy übernimmt an der letzten Position. Player beim Casting schließen → der Fernseher stoppt.
+40. Konto am Stream-Limit → Casting zeigt das Limit und die lokale Wiedergabe läuft weiter. Eine Rolle ohne Transcoding → „Chromecast braucht Transcoding …".
+41. Länger als 50 min casten, auch mit gesperrtem Handy → der Fernseher spielt nach kurzem Nachladen weiter (Token-Erneuerung; stoppt er, prüfen, ob Doze die App angehalten hat).
+42. Steuerung in Benachrichtigung und Sperrbildschirm beim Casting geht; ein Tipp bringt den Player zurück. App beim Casting beenden: Der Fernseher spielt eventuell weiter, bis das Token abläuft; erneutes Öffnen startet nichts von selbst.
+43. Die Menüs des Players und der Cast-Dialog sehen im hellen und dunklen Systemmodus richtig aus.
 
 **Benachrichtigungen**
-35. Frische Installation, angemeldet: keine Flut beim ersten Abruf. Eine Benachrichtigung auf dem Server erzeugen (zum Beispiel eine Einladung) und sie nach etwa 15–30 min sehen. Die Kanalnamen in den Android-Einstellungen auf Deutsch und Englisch prüfen.
-36. Antippen: Die Hülle öffnet die richtige Seite; ein `/watch/…`-Link öffnet den nativen Player; ist die App schon offen, wechselt die Seite an Ort und Stelle.
-37. Eine Kategorie in den App-Einstellungen ausschalten: Davon wird nichts mehr gezeigt. Berechtigung entziehen: kein Absturz, und die Einträge erscheinen nach erneutem Erlauben.
-38. Sitzung läuft auf dem Server ab: keine Benachrichtigung und kein weiteres Abfragen; App öffnen, anmelden: Das Abfragen geht weiter.
+44. Frische Installation, angemeldet: keine Flut beim ersten Abruf. Eine Benachrichtigung auf dem Server erzeugen (zum Beispiel eine Einladung) und sie nach etwa 10–20 min sehen (Android kann das weiter verzögern). Die Kanalnamen in den Android-Einstellungen auf Deutsch und Englisch prüfen.
+45. Antippen: Die Hülle öffnet die richtige Seite; ein `/watch/…`-Link öffnet den nativen Player; ist die App schon offen, wechselt die Seite an Ort und Stelle.
+46. Eine Kategorie in den App-Einstellungen ausschalten: Davon wird nichts mehr gezeigt. Berechtigung entziehen: kein Absturz, und die Einträge erscheinen nach erneutem Erlauben.
+47. Sitzung läuft auf dem Server ab: keine Benachrichtigung und kein weiteres Abfragen; App öffnen, anmelden: Das Abfragen geht weiter.
 
 **App-Einstellungen**
-39. Den Server auf einen zweiten Testserver wechseln: Die Warnung nennt die neue Adresse; danach sind die Downloads weg, der alte Server zeigt die Lizenzen zurückgegeben und die Sitzung beendet, und die Einrichtung prüft die neue Adresse (ein Tippfehler bleibt mit ausgefüllter Adresse in der Einrichtung).
-40. Auf diesem Gerät abmelden: Nach der Rückfrage zeigt die App die Anmeldeseite; Downloads und ihre Dateien sind weg (auch auf der SD-Karte), der nächste Download klappt (neue Schlüssel), und die alte Sitzung gilt auf dem Server nicht mehr.
-41. Androids App-Info → das Zahnrad öffnet die App-Einstellungen; die angezeigte Version passt zum Release.
+48. Den Server auf einen zweiten Testserver wechseln: Die Warnung nennt die neue Adresse; danach sind die Downloads weg, der alte Server zeigt die Lizenzen zurückgegeben und die Sitzung beendet, und die Einrichtung prüft die neue Adresse (ein Tippfehler bleibt mit ausgefüllter Adresse in der Einrichtung).
+49. Auf diesem Gerät abmelden: Nach der Rückfrage zeigt die App die Anmeldeseite; Downloads und ihre Dateien sind weg (auch auf der SD-Karte), der nächste Download klappt (neue Schlüssel), und die alte Sitzung gilt auf dem Server nicht mehr.
+50. Androids App-Info → das Zahnrad öffnet die App-Einstellungen; die angezeigte Version passt zum Release.
 
 ## Selbst bauen
 
