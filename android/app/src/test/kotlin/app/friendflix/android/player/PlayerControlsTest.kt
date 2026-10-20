@@ -277,7 +277,7 @@ class PlayerControlsTest {
         assertEquals(activity.getString(R.string.player_quality_reason_other), host.flashes.last())
         controls.chip.bind(direct = true, maxBitrate = 0, reason = null)
         assertEquals(activity.getString(R.string.player_quality_original), chip.text.toString())
-        controls.chip.hide()
+        controls.chip.show(false)
         assertEquals(View.GONE, chip.visibility)
     }
 

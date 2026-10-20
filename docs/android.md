@@ -87,7 +87,7 @@ The native player has the buttons of the web player's control bar, in the same o
   - *Picture-in-picture:* the same small window you get with Home while playing.
   - *Play on TV* / *Playing on TV:* the Chromecast choice, shown when a Cast device is available or connected.
 - **Audio and subtitles:** the audio track and subtitles as before, plus:
-  - *Find subtitles …* when your server allows subtitle search and your role may use it. Pick a language, then a result. The player reloads at the same position and says *Subtitles added – pick them in the menu*.
+  - *Find subtitles …* when your server allows subtitle search (a guest sees the row with *Not allowed for your role.*). Pick a language, then a result. The player reloads at the same position and says *Subtitles added – pick them in the menu*.
   - *Clear voices* (dialogue stands out from music and effects) and *Night mode* (loud scenes quieter, quiet ones louder). They need Android 9 or newer; on Android 8 they are greyed out with a note. The setting is saved for your profile, like in the web player.
 - **Cast & info:** cast, guest stars, crew, studios and genres of the title, with pictures. A tap on a person lists their other titles, and a tap on a title closes the player and opens that title's page in the app.
 - **Quality chip:** *Original* when the file plays as it is, or *Converted · 1080p* when the server converts it. A tap says why, for example the network, a limit for your role, or a codec the phone cannot play.
@@ -104,7 +104,7 @@ Your *Subtitle appearance* from the web settings (size, colour, background, font
 
 **Offline (a download):** *Episodes*, *Scenes*, *Cast & info*, bookmarks, subtitle search, quality, the quality chip, Chromecast and post-play need the server and are hidden. Speed, *Clear voices* and *Night mode* (with your last setting on this phone), subtitles and their style, the sleep timer, lock and picture-in-picture work.
 
-**While casting:** the phone is the remote for the TV. *Episodes* plays the picked episode on the TV, *Scenes* and bookmarks jump on the TV, a new bookmark takes the TV's position, the sleep timer pauses the TV, and *Cast & info* shows the title the TV plays. Not offered while casting: audio, subtitles, subtitle search, *Clear voices* and *Night mode*, quality and its chip, speed, lock, picture-in-picture and post-play. The Chromecast button stays first on the right of the top bar, and More shows *Playing on TV*.
+**While casting:** the phone is the remote for the TV. *Episodes* plays the picked episode on the TV, *Scenes* and bookmarks jump on the TV, a new bookmark takes the TV's position, the sleep timer pauses the TV, and *Cast & info* shows the title the TV plays. Not offered while casting: audio, subtitles, subtitle search, *Clear voices* and *Night mode*, quality and its chip, speed, lock, picture-in-picture and post-play. The Chromecast button stays in the top bar left of *Cast & info*, and More shows *Playing on TV*.
 
 ## Downloads and storage
 
@@ -311,7 +311,7 @@ Unit tests and the emulator in CI cover the logic; these points need a real phon
 36. Scenes and marks: a title with chapters shows *Scenes* with pictures; a tap jumps there and closes the panel. Chapter starts and bookmarks are marks on the seek bar. A title without chapters has no *Scenes* button.
 37. Preview while scrubbing: drag the seek bar; a picture above the thumb follows. Check a long movie whose server previews use large sheets: the preview keeps up, the app does not slow down or crash. A server without previews: no picture, seeking works.
 38. Cast & info: the panel shows the title line, cast, crew and genres with pictures. A tap on a person lists their titles; a tap on a title closes the player and opens its page in the app.
-39. Audio and subtitles, *Find subtitles …*: pick German, pick a result: the player reloads at the same position and says *Subtitles added – pick them in the menu*; the new subtitle is in the list. A guest, or a server without subtitle search: no row. No result and provider errors show the web's texts.
+39. Audio and subtitles, *Find subtitles …*: pick German, pick a result: the player reloads at the same position and says *Subtitles added – pick them in the menu*; the new subtitle is in the list. A server without subtitle search: no row. A guest: the row shows *Not allowed for your role.* No result and provider errors show the web's texts.
 40. *Clear voices* and *Night mode* on Android 9 or newer: the sound changes audibly; the web player shows the same setting for the profile. On Android 8 the switches are greyed out with *Not available on this device*. While casting the *Audio and subtitles* button is gone.
 41. More, speed: 1.5× shows a badge on More; the next episode starts at 1×. More, bookmarks: *Share scene* opens Android's share sheet with a `/watch/<id>?t=` link; add a bookmark with a note, tap it to jump, remove it. More, quality: pick 720p; the chip shows *Converted · 720p*.
 42. Sleep timer: 15 minutes shows a dot on More and the time left in More; when it runs out playback pauses with *Sleep timer: playback paused*. *After this episode* on the phone: no next-episode countdown, playback pauses at the end. *After this episode* while casting: the TV stops at the end of the episode and does not move on.
@@ -332,7 +332,7 @@ Unit tests and the emulator in CI cover the logic; these points need a real phon
 55. Cast for over 50 min, also with the phone locked → the TV keeps playing after a short reload (token renewal; if it stops, check whether Doze suspended the app).
 56. Notification and lock screen controls while casting work; tapping brings the player back. Kill the app while casting: the TV may play on until the token expires; reopening starts nothing by itself.
 57. The player's menus and the Cast dialog look right in light and dark system mode.
-58. While casting: *Episodes* plays the picked episode on the TV; *Scenes* and a bookmark jump on the TV; a new bookmark takes the TV's position; *Cast & info* shows the TV's title, also after the TV moved on to the next episode. *Audio and subtitles*, the quality chip, the next-episode button, speed, quality, lock and picture-in-picture are gone. The Chromecast button stays first on the right and More shows *Playing on TV*.
+58. While casting: *Episodes* plays the picked episode on the TV; *Scenes* and a bookmark jump on the TV; a new bookmark takes the TV's position; *Cast & info* shows the TV's title, also after the TV moved on to the next episode. *Audio and subtitles*, the quality chip, the next-episode button, speed, quality, lock and picture-in-picture are gone. The Chromecast button stays in the top bar left of *Cast & info* and More shows *Playing on TV*.
 59. Stop casting: *Audio and subtitles*, the quality chip and the next-episode button are back.
 
 **Notifications**

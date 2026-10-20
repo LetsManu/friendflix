@@ -159,7 +159,10 @@ class PlayerControls(
         fun enterPip()
         /** pauses what plays: the local player, or the TV while casting */
         fun pauseActive()
-        /** the Tracks panel's state, or null when nothing plays yet */
+        /**
+         * the Tracks panel's state, or null when nothing plays yet; its `canSearch` and `fxDisabledReason` are overwritten by
+         * [openTracks] from the bar's rule ([BarState.subtitleSearch], [BarState.fxDisabledReason])
+         */
         fun tracks(): TracksState?
         val tracksActions: TracksActions
         /** the quality rungs offered, or null when quality is not offered (offline, casting, no stream) */

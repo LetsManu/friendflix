@@ -10,14 +10,12 @@ import android.view.View
 import android.view.ViewGroup
 import android.widget.TextView
 import androidx.media3.session.MediaSessionService
-import androidx.media3.ui.PlayerView
 import androidx.test.core.app.ApplicationProvider
 import app.friendflix.android.R
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
-import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -58,7 +56,6 @@ class PlayerActivityBarTest {
 
     private fun PlayerActivity.panelOpen() = (findViewById<ViewGroup>(R.id.player_panel_content)?.childCount ?: 0) > 0
     private fun PlayerActivity.panelView(id: Int): View? = findViewById<View>(R.id.player_panel_content)?.findViewById(id)
-    private fun PlayerActivity.bar(id: Int) = findViewById<PlayerView>(R.id.player_view).findViewById<View>(id).visibility
 
     @Test fun pictureInPictureClosesAnOpenPanel() {
         val a = launch(intent("it1", "t1"))
@@ -81,18 +78,26 @@ class PlayerActivityBarTest {
         assertEquals(View.GONE, badge.visibility) // speed back to 1 for the new title
     }
 
-    @Test fun aDownloadHasNoServerButtons() {
-        val a = launch(intent("it1", "t1", license = "lic1"))
-        for (id in listOf(R.id.player_episodes, R.id.player_scenes, R.id.player_info, R.id.player_cast, R.id.player_quality_chip, R.id.player_next_episode)) {
-            assertEquals(a.resources.getResourceEntryName(id), View.GONE, a.bar(id))
-        }
-        a.findViewById<View>(R.id.player_more).performClick()
-        assertNull(a.panelView(R.id.more_bookmarks))
-        assertNull(a.panelView(R.id.more_quality))
-        assertNull(a.panelView(R.id.more_cast))
-        assertNotNull(a.panelView(R.id.more_speed))
-        assertNotNull(a.panelView(R.id.more_sleep))
-        assertNotNull(a.panelView(R.id.more_lock))
+    /**
+     * The activity's facts for the bar ([PlayerControls.Host.bar]) say "offline" exactly for a download (a licence id), from the
+     * start on; [barState] then hides what needs the server (PlayerControlsTest covers the rule with a server and a title).
+     */
+    @Test fun aLicenceMakesTheBarOffline() {
+        val online = barFacts(launch(intent("it1", "t1")))
+        assertFalse(online.offline)
+        ac!!.get().finish()
+        val offline = barFacts(launch(intent("it1", "t2", license = "lic1")))
+        assertTrue(offline.offline)
+        // with everything a server and a title could offer, the download's facts still hide the server's buttons
+        val s = barState(offline.copy(server = true, episode = true, chapters = true, extras = true, qualities = true, chip = true, subtitleSearch = true, hasNext = true, cast = CastUi(ready = true, enabled = true, devices = true)))
+        assertFalse(s.episodes || s.scenes || s.info || s.bookmarks || s.subtitleSearch || s.quality || s.chip || s.castButton || s.next)
+        val o = barState(online.copy(server = true, episode = true, chapters = true, extras = true, qualities = true, chip = true, subtitleSearch = true, hasNext = true, cast = CastUi(ready = true, enabled = true, devices = true)))
+        assertTrue(o.episodes && o.scenes && o.info && o.bookmarks && o.subtitleSearch && o.quality && o.chip && o.castButton && o.next)
+    }
+
+    private fun barFacts(a: PlayerActivity): BarFacts {
+        val f = PlayerActivity::class.java.getDeclaredField("controlsHost").apply { isAccessible = true }
+        return (f.get(a) as PlayerControls.Host).bar()
     }
 
     private fun clickText(a: PlayerActivity, text: String) {

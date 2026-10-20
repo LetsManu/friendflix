@@ -40,8 +40,6 @@ class QualityChip(private val view: TextView, private val show: (String) -> Unit
     /** shown when the bar offers it ([BarState.chip]) and a stream was bound */
     fun show(on: Boolean) { view.visibility = if (on && bound) View.VISIBLE else View.GONE }
 
-    fun hide() { view.visibility = View.GONE }
-
     companion object {
         /** the rung of a bit rate by threshold, like the server's rung height (web rungKey: a 20 Mbit/s transcode is 1080p) */
         fun rungLabel(bps: Long): String = QUALITIES.firstOrNull { bps >= it.second }?.first ?: QUALITIES.last().first
