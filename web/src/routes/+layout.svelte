@@ -361,7 +361,13 @@
     try { const m = await api<Me>('/api/me'); if (m.deviceApproved) { location.reload(); return true; } } catch { /* retry on the next tick */ } finally { checking = false; }
     return false;
   }
-  function watchApproval() { const t = setInterval(checkApproval, 4000); return () => clearInterval(t); }
+  function watchApproval() {
+    const t = setInterval(checkApproval, 4000);
+    // an installed app that comes back to the foreground checks at once instead of waiting for the next (throttled) tick
+    const onVisible = () => { if (document.visibilityState === 'visible') void checkApproval(); };
+    document.addEventListener('visibilitychange', onVisible);
+    return () => { clearInterval(t); document.removeEventListener('visibilitychange', onVisible); };
+  }
 
   async function boot() {
     if (!publicPage) {
