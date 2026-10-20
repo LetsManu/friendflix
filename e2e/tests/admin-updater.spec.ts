@@ -148,10 +148,31 @@ test.describe('admin update with the opt-in updater (desktop)', () => {
     await expect(card(page).locator('[data-foreign="portainer"]')).toContainText('über Portainer neu');
     await expect(card(page).getByRole('button', { name: 'Zurück zur vorherigen Version' })).toBeDisabled();
     await card(page).getByRole('button', { name: 'Jetzt aktualisieren' }).click();
+    await expect(card(page).getByRole('group', { name: /über Portainer neu deployen/ })).toBeVisible();
     await card(page).getByRole('button', { name: 'Ja, starten' }).click();
     await expect(toasts(page).getByText('Portainer deployt den Stack neu.')).toBeVisible();
     expect(api.updater.posts).toEqual(['update']);
     await expect(card(page).locator('ol.steps')).toHaveCount(0); // no updater job to follow
+  });
+
+  test('our own stack started from another directory: the note names both directories and UPDATER_PROJECT_DIR, not Portainer', async ({ page, api }) => {
+    api.updater = { ...updaterState(true), stack: 'foreign', stackReason: 'working_dir', stackDir: '/volume1/docker/friendflix', projectDir: '/project' };
+    await page.goto('/admin/update');
+    const note = card(page).locator('[data-foreign="workdir"]');
+    await expect(note).toContainText('aus /volume1/docker/friendflix gestartet');
+    await expect(note).toContainText('/project');
+    await expect(note).toContainText('UPDATER_PROJECT_DIR=/volume1/docker/friendflix');
+    await expect(note).not.toContainText('Portainer');
+    await expect(card(page).getByRole('button', { name: 'Jetzt aktualisieren' })).toBeDisabled();
+  });
+
+  test('an updater without the stack field and the Portainer webhook set: the update goes through Portainer', async ({ page, api }) => {
+    api.updater = { ...updaterState(true), portainer: true };
+    await page.goto('/admin/update');
+    await expect(card(page).locator('[data-foreign="portainer"]')).toBeVisible();
+    await card(page).getByRole('button', { name: 'Jetzt aktualisieren' }).click();
+    await card(page).getByRole('button', { name: 'Ja, starten' }).click();
+    await expect(toasts(page).getByText('Portainer deployt den Stack neu.')).toBeVisible();
   });
 
   test('a job refused because the ports would change says so', async ({ page, api }) => {

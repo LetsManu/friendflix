@@ -255,6 +255,7 @@ const pl: Translation<typeof de> = {
       advanced: 'Sam aktualizator',
       confirm: {
         update: 'Zaktualizować teraz do {tag}? FriendFlix na chwilę się zrestartuje, trwające odtwarzania zostaną przerwane.',
+        updatePortainer: 'Wdrożyć teraz stos ponownie przez Portainer? FriendFlix na chwilę się zrestartuje, trwające odtwarzania zostaną przerwane.',
         rollback: 'Wrócić do {tag}? FriendFlix na chwilę się zrestartuje.',
         'self-update': 'Zaktualizować teraz kontener aktualizatora?',
       },
@@ -314,6 +315,7 @@ const pl: Translation<typeof de> = {
         portainer: 'Tym stosem zarządza Portainer. „Aktualizuj teraz” wdraża go ponownie przez Portainer (webhook lub API z Admin → Ustawienia → Aktualizacje). Aktualizator nigdy sam nie odtwarza stosu Portainera, dlatego powrót do poprzedniej wersji nie jest tu dostępny.',
         manual: 'Tym stosem zarządza Portainer (lub inne narzędzie), dlatego aktualizator go nie aktualizuje: odtworzenie go stąd usunęłoby własne zmienne stosu (np. BIND_ADDR). Ustaw webhook Portainera w Admin → Ustawienia → Aktualizacje albo zaktualizuj stos w Portainerze.',
         started: 'Portainer ponownie wdraża stos. FriendFlix za chwilę uruchomi się ponownie.',
+        workdir: 'Ten stos uruchomiono z {dir}, ale aktualizator widzi {projectDir}, dlatego go nie odtwarza (brakowałoby mu pliku .env z tego katalogu). Wpisz UPDATER_PROJECT_DIR={dir} do .env w {dir} i uruchom tam raz docker compose up -d.',
       },
       unauthorized: 'Aktualizator odpowiada, ale odrzuca podpis: INTERNAL_SECRET różni się między backendem a aktualizatorem.',
       invalid: 'Aktualizator wysłał nieczytelną odpowiedź.',
@@ -545,6 +547,7 @@ const pl: Translation<typeof de> = {
       update: '{actor} uruchomił(a) aktualizację',
       updater_start: '{actor} uruchomił(a) zadanie aktualizatora',
       updater_result: 'Zadanie aktualizatora zakończone',
+      update_result: 'Portainer odpowiedział na ponowne wdrożenie',
     },
     session: {
       revoke_others: '{actor} wylogował(a) się na innych urządzeniach',

@@ -235,6 +235,7 @@ const fr: Translation<typeof de> = {
       advanced: 'Le programme de mise à jour lui-même',
       confirm: {
         update: 'Mettre à jour vers {tag} maintenant ? FriendFlix redémarre brièvement, les lectures en cours sont interrompues.',
+        updatePortainer: 'Redéployer la stack via Portainer maintenant ? FriendFlix redémarre brièvement, les lectures en cours sont interrompues.',
         rollback: 'Revenir à {tag} ? FriendFlix redémarre brièvement.',
         'self-update': 'Mettre à jour le conteneur de mise à jour maintenant ?',
       },
@@ -294,6 +295,7 @@ const fr: Translation<typeof de> = {
         portainer: 'Cette stack est gérée par Portainer. « Mettre à jour maintenant » la redéploie via Portainer (webhook ou API depuis Admin → Paramètres → Mises à jour). Le programme de mise à jour ne recrée jamais lui-même une stack Portainer, le retour à la version précédente n’est donc pas disponible ici.',
         manual: 'Cette stack est gérée par Portainer (ou un autre outil), le programme de mise à jour ne la met donc pas à jour : la recréer d’ici ferait perdre les variables propres à la stack (p. ex. BIND_ADDR). Configure le webhook Portainer dans Admin → Paramètres → Mises à jour, ou mets à jour la stack dans Portainer.',
         started: 'Portainer redéploie la stack. FriendFlix redémarre dans un instant.',
+        workdir: 'Cette stack a été démarrée depuis {dir}, mais le programme de mise à jour voit {projectDir}, il ne la recrée donc pas (il lui manquerait le .env de ce répertoire). Ajoute UPDATER_PROJECT_DIR={dir} au .env de {dir} et lance une fois docker compose up -d à cet endroit.',
       },
       unauthorized: 'Un programme de mise à jour répond mais refuse la signature : INTERNAL_SECRET diffère entre le backend et le programme de mise à jour.',
       invalid: 'Le programme de mise à jour a envoyé une réponse illisible.',
@@ -516,6 +518,7 @@ const fr: Translation<typeof de> = {
       update: '{actor} a lancé une mise à jour',
       updater_start: '{actor} a lancé une tâche de mise à jour',
       updater_result: 'Tâche de mise à jour terminée',
+      update_result: 'Portainer a répondu au redéploiement',
     },
     session: {
       revoke_others: '{actor} s’est déconnecté(e) des autres appareils',

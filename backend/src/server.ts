@@ -138,7 +138,7 @@ if (cfg.BACKGROUND_JOBS === 'true') {
   if (downloadsOn()) void startPreparerTick(ctx).catch(jobFailed(ctx, app.log, 'download-prep', 'download prep start failed'));
   timers.push(setInterval(() => { if (op()) void healthTick(ctx); }, 60_000)); // admin health snapshot (kv health:snap); never throws
   // AUTO_UPDATE=nightly-window through the updater (one start per day across instances) + the result audit of updater jobs
-  timers.push(setInterval(() => { if (op()) void autoUpdateTick(ctx).catch(jobFailed(ctx, app.log, 'auto-update', 'auto update tick failed')); }, 60_000));
+  timers.push(setInterval(() => { if (op()) void autoUpdateTick(ctx, new Date(), app.log).catch(jobFailed(ctx, app.log, 'auto-update', 'auto update tick failed')); }, 60_000));
   if (op()) void healthTick(ctx);
   timers.push(setInterval(() => { if (op()) void langIndexTick(ctx); }, 1800_000)); // self-limits to every 12 h, never throws
   if (op()) void langIndexTick(ctx);

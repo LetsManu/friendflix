@@ -235,6 +235,7 @@ const es: Translation<typeof de> = {
       advanced: 'El propio actualizador',
       confirm: {
         update: '¿Actualizar ahora a {tag}? FriendFlix se reinicia un momento y las reproducciones en curso se interrumpen.',
+        updatePortainer: '¿Volver a desplegar la pila a través de Portainer ahora? FriendFlix se reinicia brevemente y las reproducciones en curso se interrumpen.',
         rollback: '¿Volver a {tag}? FriendFlix se reinicia un momento.',
         'self-update': '¿Actualizar ahora el contenedor actualizador?',
       },
@@ -294,6 +295,7 @@ const es: Translation<typeof de> = {
         portainer: 'Esta pila la gestiona Portainer. «Actualizar ahora» la vuelve a desplegar a través de Portainer (webhook o API de Admin → Ajustes → Actualizaciones). El actualizador nunca vuelve a crear por sí mismo una pila de Portainer, así que volver a la versión anterior no está disponible aquí.',
         manual: 'Esta pila la gestiona Portainer (u otra herramienta), por eso el actualizador no la actualiza: al volver a crearla desde aquí se perderían las variables propias de la pila (p. ej. BIND_ADDR). Configura el webhook de Portainer en Admin → Ajustes → Actualizaciones o actualiza la pila en Portainer.',
         started: 'Portainer está volviendo a desplegar la pila. FriendFlix se reiniciará en un momento.',
+        workdir: 'Esta pila se inició desde {dir}, pero el actualizador ve {projectDir}, por eso no la vuelve a crear (le faltaría el .env de ese directorio). Pon UPDATER_PROJECT_DIR={dir} en el .env de {dir} y ejecuta allí docker compose up -d una vez.',
       },
       unauthorized: 'Un actualizador responde pero rechaza la firma: INTERNAL_SECRET es distinto en el backend y en el actualizador.',
       invalid: 'El actualizador envió una respuesta ilegible.',
@@ -516,6 +518,7 @@ const es: Translation<typeof de> = {
       update: '{actor} inició una actualización',
       updater_start: '{actor} inició una tarea del actualizador',
       updater_result: 'Tarea del actualizador terminada',
+      update_result: 'Portainer respondió al redespliegue',
     },
     session: {
       revoke_others: '{actor} cerró sesión en otros dispositivos',

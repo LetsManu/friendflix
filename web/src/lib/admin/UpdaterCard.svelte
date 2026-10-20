@@ -24,7 +24,7 @@
   import { busyKeys, errorText, runAction } from '#lib/ui/action';
   import { toast } from '#lib/ui/toast';
   import {
-    TIME_RE, WATCH_MAX_MS, canRollback, failReason, foreignMode, isRunning, nextPoll, startError, statusOf, visibleSteps,
+    TIME_RE, WATCH_MAX_MS, canRollback, failReason, foreignMode, foreignText, isRunning, nextPoll, startError, statusOf, visibleSteps,
     type StepState, type UpdaterAction, type UpdaterJob, type UpdaterView,
   } from './updater';
 
@@ -38,6 +38,8 @@
   $: running = isRunning(job);
   /** Portainer's stack: "portainer" = the update goes through Portainer, "manual" = nothing to start here */
   $: foreign = foreignMode(view);
+  // $t: re-rendered on a language switch
+  $: foreignNote = foreign ? (void $t, foreignText(foreign, s)) : '';
   let confirming: UpdaterAction | null = null;
   let reconnecting = false, watchTimeout = false;
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -89,6 +91,9 @@
     toast.error(startError(res.error));
   }
 
+  /** "update" through Portainer asks about a Portainer redeploy, not about the updater's tag */
+  const confirmKey = (a: UpdaterAction, f: typeof foreign) =>
+    (a === 'update' && f === 'portainer' ? 'admin.update.updater.confirm.updatePortainer' : `admin.update.updater.confirm.${a}`) as 'admin.update.updater.confirm.update';
   const confirmTag = (a: UpdaterAction) => (a === 'rollback' ? s?.previous : s?.targetTag) ?? '';
   const stepTone = (st: StepState) => (st === 'ok' ? 'ok' : st === 'failed' ? 'err' : st === 'running' ? 'warn' : 'muted');
   $: elapsed = t0 ? Math.max(0, Math.round((now - t0) / 1000)) : 0;
@@ -118,8 +123,8 @@
     <p class="banner warn" role="alert"><Icon name="alert" size={18} />{view.error === 'unauthorized' ? $t('admin.update.updater.unauthorized') : $t('admin.update.updater.invalid')}</p>
   {:else if s}
     {#if foreign}
-      <p class="banner" class:warn={foreign === 'manual'} role={foreign === 'manual' ? 'alert' : 'note'} data-foreign={foreign}>
-        <Icon name={foreign === 'manual' ? 'alert' : 'info'} size={18} />{$t(`admin.update.updater.foreign.${foreign}` as 'admin.update.updater.foreign.manual')}
+      <p class="banner" class:warn={foreign !== 'portainer'} role={foreign !== 'portainer' ? 'alert' : 'note'} data-foreign={foreign}>
+        <Icon name={foreign !== 'portainer' ? 'alert' : 'info'} size={18} />{foreignNote}
       </p>
     {/if}
     <dl class="ver" data-updater>
@@ -129,8 +134,8 @@
     </dl>
 
     {#if confirming}
-      <div class="confirm" role="group" aria-label={$t(`admin.update.updater.confirm.${confirming}` as 'admin.update.updater.confirm.update', { tag: confirmTag(confirming) })}>
-        <p>{$t(`admin.update.updater.confirm.${confirming}` as 'admin.update.updater.confirm.update', { tag: confirmTag(confirming) })}</p>
+      <div class="confirm" role="group" aria-label={$t(confirmKey(confirming, foreign), { tag: confirmTag(confirming) })}>
+        <p>{$t(confirmKey(confirming, foreign), { tag: confirmTag(confirming) })}</p>
         <div class="row">
           <Button variant={confirming === 'self-update' ? 'primary' : 'danger'} icon="check" on:click={() => confirming && start(confirming)}>{$t('admin.update.updater.confirmGo')}</Button>
           <Button variant="secondary" on:click={() => (confirming = null)}>{$t('admin.update.updater.cancel')}</Button>
@@ -138,8 +143,8 @@
       </div>
     {:else}
       <div class="row actions">
-        <Button icon="download" pending={$busyKeys.has('updater:update')} disabled={running || s.busy || !s.targetTag || foreign === 'manual'} on:click={() => (confirming = 'update')}>{$t('admin.update.updater.updateNow')}</Button>
-        <Button variant="secondary" icon="arrow-left" pending={$busyKeys.has('updater:rollback')} disabled={!canRollback(s)} on:click={() => (confirming = 'rollback')}>{$t('admin.update.updater.rollback')}</Button>
+        <Button icon="download" pending={$busyKeys.has('updater:update')} disabled={running || s.busy || !s.targetTag || (foreign !== null && foreign !== 'portainer')} on:click={() => (confirming = 'update')}>{$t('admin.update.updater.updateNow')}</Button>
+        <Button variant="secondary" icon="arrow-left" pending={$busyKeys.has('updater:rollback')} disabled={!canRollback(s) || foreign !== null} on:click={() => (confirming = 'rollback')}>{$t('admin.update.updater.rollback')}</Button>
       </div>
     {/if}
 

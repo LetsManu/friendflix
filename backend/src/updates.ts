@@ -185,13 +185,21 @@ export async function triggerUpdate(ctx: Ctx, mode: 'webhook' | 'api'): Promise<
 }
 
 /**
- * The Portainer redeploy with its audit entry (system.update: from/to and the mode); `actor` null = the automatic update. Used by
- * Admin -> Update without the updater and by the updater path when the stack is Portainer's (updater.ts startJob / autoUpdateTick).
+ * The Portainer redeploy, audited twice: system.update before the call (from/to, the mode; it survives Portainer recreating
+ * this backend mid-call) and system.update_result after it (started, or failed with error/step/status/code, never the URL).
+ * `actor` null = the automatic update. Used by Admin -> Update without the updater and by the updater path when the stack is
+ * Portainer's (updater.ts startJob / autoUpdateTick).
  */
 export async function redeployViaPortainer(ctx: Ctx, actor: string | null, mode: 'webhook' | 'api', info?: UpdateInfo): Promise<TriggerResult> {
   const i = info ?? await updateInfo(ctx);
+  const auto = actor ? {} : { auto: true };
   await audit(ctx, actor, 'system.update', undefined, {
-    from: i.current.sha, to: i.latest?.sha ?? null, fromVersion: i.current.version, toVersion: i.release?.version ?? null, mode, ...(actor ? {} : { auto: true }),
+    from: i.current.sha, to: i.latest?.sha ?? null, fromVersion: i.current.version, toVersion: i.release?.version ?? null, mode, ...auto,
   });
-  return triggerUpdate(ctx, mode);
+  const r = await triggerUpdate(ctx, mode);
+  await audit(ctx, actor, 'system.update_result', undefined, {
+    mode, toVersion: i.release?.version ?? null, ...auto,
+    ...(r.ok ? { result: 'started' } : { result: 'failed', error: r.error, step: r.step, status: r.status, ...(r.code ? { code: r.code } : {}) }),
+  });
+  return r;
 }

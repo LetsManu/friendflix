@@ -235,6 +235,7 @@ const en: Translation<typeof de> = {
       advanced: 'The updater itself',
       confirm: {
         update: 'Update to {tag} now? FriendFlix restarts briefly, running streams are interrupted.',
+        updatePortainer: 'Redeploy the stack through Portainer now? FriendFlix restarts briefly, running streams are interrupted.',
         rollback: 'Go back to {tag}? FriendFlix restarts briefly.',
         'self-update': 'Update the updater container now?',
       },
@@ -294,6 +295,7 @@ const en: Translation<typeof de> = {
         portainer: 'This stack is managed by Portainer. “Update now” redeploys it through Portainer (webhook or API from Admin → Settings → Updates). The updater never recreates a Portainer stack itself, so going back to the previous version is not available here.',
         manual: 'This stack is managed by Portainer (or another tool), so the updater does not update it: recreating it from here would lose the stack’s own variables (e.g. BIND_ADDR). Set the Portainer webhook in Admin → Settings → Updates, or update the stack in Portainer.',
         started: 'Portainer is redeploying the stack. FriendFlix restarts in a moment.',
+        workdir: 'This stack was started from {dir}, but the updater looks at {projectDir}, so it does not recreate it (it would miss that directory’s .env). Put UPDATER_PROJECT_DIR={dir} into the .env in {dir} and run docker compose up -d there once.',
       },
       unauthorized: 'An updater answers but refuses the signature: INTERNAL_SECRET differs between backend and updater.',
       invalid: 'The updater sent an unreadable answer.',
@@ -507,6 +509,7 @@ const en: Translation<typeof de> = {
       update: '{actor} started an update',
       updater_start: '{actor} started an updater job',
       updater_result: 'Updater job finished',
+      update_result: 'Portainer redeploy answered',
     },
     session: {
       revoke_others: '{actor} signed out on other devices',

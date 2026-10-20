@@ -96,6 +96,10 @@ describe('updater signing', () => {
     expect(parseStatus({ channel: 'stable', stack: 'foreign' })!.stack).toBe('foreign');
     expect(parseStatus({ channel: 'stable', stack: 'own' })!.stack).toBe('own');
     expect(parseStatus({ channel: 'stable', stack: '<b>' })!.stack).toBeNull();
+    // why, and the two directories (host paths; anything but a plain absolute path is dropped)
+    expect(parseStatus({ channel: 'stable', stack: 'foreign', stackReason: 'working_dir', stackDir: '/volume1/docker/friendflix', projectDir: '/project' })).toMatchObject(
+      { stack: 'foreign', stackReason: 'working_dir', stackDir: '/volume1/docker/friendflix', projectDir: '/project' });
+    expect(parseStatus({ channel: 'stable', stackReason: 'evil', stackDir: '/x/<script>', projectDir: 'relative' })).toMatchObject({ stackReason: null, stackDir: null, projectDir: null });
   });
 });
 
@@ -170,26 +174,48 @@ describe('settings and automatic updates', () => {
     expect(fake.portainer).toEqual([]);
   });
 
-  it('a foreign stack with the Portainer webhook: a new version redeploys through Portainer, once per version', async () => {
+  it('a foreign stack with the Portainer webhook: a new version redeploys through Portainer, once per version; a failure is logged and retried the next night', async () => {
     const at = (h: number, m: number, d: number) => new Date(2026, 9, d, h, m);
+    const warns: Array<[object, string]> = [];
+    const log = { warn: (o: object, m: string) => { warns.push([o, m]); } };
+    const tick = (d: Date) => autoUpdateTick(env.ctx, d, log);
     setCfg({ AUTO_UPDATE: 'nightly-window', AUTO_UPDATE_TIME: '02:00', PORTAINER_WEBHOOK_URL: HOOK });
     fake.stack = 'foreign';
     // nothing newer than the installed version: nothing redeployed
-    expect(await autoUpdateTick(env.ctx, at(2, 1, 22))).toBe('current');
+    expect(await tick(at(2, 1, 22))).toBe('current');
     expect(fake.portainer).toEqual([]);
     fake.release = 'v99.0.0';
-    expect(await autoUpdateTick(env.ctx, at(2, 1, 23))).toBe('started');
+    expect(await tick(at(2, 1, 23))).toBe('started');
     expect(fake.portainer).toEqual([{ method: 'POST', url: HOOK }]);
     expect(fake.calls.filter((c) => c.method === 'POST')).toEqual([]); // the updater never runs a job on a foreign stack
+    // audited before the call and with its outcome after it
     expect((await audits('system.update')).at(-1)).toMatchObject({ actor: null, meta: { mode: 'webhook', toVersion: '99.0.0', auto: true } });
-    // the next nights: the same version is not redeployed again (also when Portainer failed or the stack pins another tag)
-    expect(await autoUpdateTick(env.ctx, at(2, 1, 24))).toBe('done');
+    expect((await audits('system.update_result')).at(-1)).toMatchObject({ actor: null, meta: { mode: 'webhook', toVersion: '99.0.0', auto: true, result: 'started' } });
+    // the next nights: a version that was redeployed is not redeployed again (also when the stack pins another tag)
+    expect(await tick(at(2, 1, 24))).toBe('done');
     expect(fake.portainer.length).toBe(1);
+    // Portainer refuses: logged (never the URL), audited as failed, one attempt per night, tried again the next night
     fake.release = 'v99.0.1';
     fake.portainerStatus = 500;
-    expect(await autoUpdateTick(env.ctx, at(2, 1, 25))).toBe('failed');
-    expect(await autoUpdateTick(env.ctx, at(2, 1, 26))).toBe('done');
-    expect(fake.portainer.length).toBe(2);
+    expect(await tick(at(2, 1, 25))).toBe('failed');
+    expect(await tick(at(2, 5, 25))).toBe('done');
+    expect(warns).toEqual([[{ mode: 'webhook', step: 'webhook', status: 500 }, 'automatic update through Portainer failed']]);
+    expect(JSON.stringify(warns)).not.toContain('0e1d2c3b');
+    expect((await audits('system.update_result')).at(-1)).toMatchObject({ actor: null, meta: { toVersion: '99.0.1', result: 'failed', error: 'portainer', step: 'webhook', status: 500 } });
+    fake.portainerStatus = 204;
+    expect(await tick(at(2, 1, 26))).toBe('started');
+    expect(await tick(at(2, 1, 27))).toBe('done');
+    expect(fake.portainer.length).toBe(3);
+  });
+
+  it('an updater from before the stack field on a Portainer-configured install: the update goes through Portainer, never the old updater', async () => {
+    const at = (h: number, m: number, d: number) => new Date(2026, 9, d, h, m);
+    setCfg({ AUTO_UPDATE: 'nightly-window', AUTO_UPDATE_TIME: '02:00', PORTAINER_WEBHOOK_URL: HOOK });
+    fake.stack = undefined;
+    fake.release = 'v98.0.0';
+    expect(await autoUpdateTick(env.ctx, at(2, 1, 28))).toBe('started');
+    expect(fake.portainer).toEqual([{ method: 'POST', url: HOOK }]);
+    expect(fake.calls.filter((c) => c.method === 'POST')).toEqual([]);
   });
 });
 
@@ -318,6 +344,16 @@ describe('POST /api/admin/updater/:action', () => {
     }
     expect(fake.calls.filter((c) => c.method === 'POST')).toEqual([]);
     expect(fake.portainer).toEqual([]);
+  });
+
+  it('an updater without the stack field (or that cannot tell) and Portainer configured: treated as Portainer\'s stack', async () => {
+    await stamp();
+    e2.ctx.cfg = { ...e2.ctx.cfg, PORTAINER_WEBHOOK_URL: HOOK };
+    const r = await post('update');
+    expect([r.statusCode, r.json()]).toEqual([202, { portainer: { mode: 'webhook' } }]);
+    expect(fake.calls.filter((c) => c.method === 'POST')).toEqual([]);
+    for (const a of ['rollback', 'self-update']) expect((await post(a)).json(), a).toEqual({ error: 'foreign_stack' });
+    expect(fake.calls.filter((c) => c.method === 'POST')).toEqual([]);
   });
 
   it('our own stack: unchanged, the updater runs the job (also with Portainer configured)', async () => {
