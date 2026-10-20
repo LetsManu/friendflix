@@ -4,7 +4,7 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import { pathToFileURL } from 'node:url';
 import { loadConfig } from './config.js';
 import { Docker, execRunner, type ImageInfo, type ServiceState } from './docker.js';
-import type { StackKind } from './stack.js';
+import type { StackInfo } from './stack.js';
 import { Updater, type Ops } from './job.js';
 import { FF_SERVICES, HEALTH_SERVICES, SELF_SERVICE, channelTag, parseChannelBody, shaTag } from './policy.js';
 import { ReplayCache, deriveKey, verify, type Verifier } from './protocol.js';
@@ -28,8 +28,8 @@ export interface AppDeps {
   /** what runs now, per service (cached by the caller) */
   services: () => Promise<ServiceView[]>;
   self: { version: string | null; sha: string | null };
-  /** own / foreign (stack.ts; null = could not tell), cached by the caller; absent in tests = null */
-  stack?: () => Promise<StackKind | null>;
+  /** own / foreign and why (stack.ts; null = could not tell), cached by the caller; absent in tests = null */
+  stack?: () => Promise<StackInfo | null>;
   /** auth refusals etc. (codes only) */
   warn?: (msg: string) => void;
 }
@@ -64,8 +64,9 @@ export async function status(d: AppDeps) {
     current: s.current ?? services.find((v) => v.service === 'backend')?.sha ?? null, previous: s.previous, busy: d.updater.busy,
     job: s.lastJob, log: d.updater.log.tail(30),
     services,
-    // foreign: started by another tool (Portainer); the updater refuses to recreate it, the backend redeploys through Portainer
-    stack,
+    // foreign: started by another tool (Portainer) or from another directory; the updater refuses to recreate it, the backend
+    // redeploys through Portainer when it is set up. stackDir / projectDir (host paths, no secret) let the page name the fix.
+    stack: stack?.stack ?? null, stackReason: stack?.reason ?? null, stackDir: stack?.workingDir ?? null, projectDir: stack?.projectDir ?? null,
   };
 }
 
@@ -133,12 +134,12 @@ export function servicesView(docker: Pick<Docker, 'ps' | 'containerImage' | 'ima
   };
 }
 
-/** own / foreign, cached like the service view (each probe costs a compose ps and an inspect) */
-export function stackView(docker: Pick<Docker, 'stackKind'>, ttlMs = 10_000, now: () => number = Date.now): () => Promise<StackKind | null> {
-  let cache: { at: number; v: StackKind | null } | null = null;
+/** own / foreign and why, cached like the service view (each probe costs a compose ps and an inspect) */
+export function stackView(docker: Pick<Docker, 'stackInfo'>, ttlMs = 10_000, now: () => number = Date.now): () => Promise<StackInfo | null> {
+  let cache: { at: number; v: StackInfo | null } | null = null;
   return async () => {
     if (cache && now() - cache.at < ttlMs) return cache.v;
-    const v = await docker.stackKind().catch(() => null);
+    const v = await docker.stackInfo().catch(() => null);
     cache = { at: now(), v };
     return v;
   };

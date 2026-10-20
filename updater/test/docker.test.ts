@@ -250,9 +250,12 @@ describe('foreign stacks and config drift: refused before anything is pulled or 
     const broken = fake((c) => (c.args.includes('ps') ? { code: 1 } : undefined));
     await expect(broken.docker.images('latest', FF)).rejects.toEqual(new StepError('compose_config'));
     expect(touched(broken.calls)).toEqual([]);
-    expect(await broken.docker.stackKind()).toBeNull();
-    expect(await fake().docker.stackKind()).toBe('own');
-    expect(await fake((c) => running(c, { labels: PORTAINER })).docker.stackKind()).toBe('foreign');
+    expect(await broken.docker.stackInfo()).toBeNull();
+    expect(await fake().docker.stackInfo()).toEqual({ stack: 'own', reason: 'own', workingDir: '/srv/friendflix', projectDir: '/srv/friendflix' });
+    expect(await fake((c) => running(c, { labels: PORTAINER })).docker.stackInfo()).toEqual({ stack: 'foreign', reason: 'portainer', workingDir: '/data/compose/12', projectDir: '/srv/friendflix' });
+    // started without PWD (sudo, a GUI): the label holds the host path, the updater looks at another one
+    expect(await fake((c) => running(c, { labels: { ...LABELS, 'com.docker.compose.project.working_dir': '/volume1/docker/friendflix' } })).docker.stackInfo())
+      .toEqual({ stack: 'foreign', reason: 'working_dir', workingDir: '/volume1/docker/friendflix', projectDir: '/srv/friendflix' });
   });
 
   it('the incident: the files render 127.0.0.1 (BIND_ADDR default) while the containers publish on the NAS address: config_mismatch, nothing pulled', async () => {

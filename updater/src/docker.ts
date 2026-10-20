@@ -3,7 +3,7 @@
 import { execFile } from 'node:child_process';
 import { FILE_RE } from './config.js';
 import { FF_SERVICES, SELF_SERVICE, cosignIdentity, expectedImage, isTag, pinnedRef } from './policy.js';
-import { classifyStack, configDrift, type StackKind, type StackOrigin } from './stack.js';
+import { classifyStack, configDrift, type StackInfo, type StackOrigin } from './stack.js';
 
 /** The only two programs the updater starts, never through a shell. */
 export type Program = 'docker' | 'cosign';
@@ -58,9 +58,12 @@ export class Docker {
     return { ...classifyStack(labels, this.s.projectDir), labels };
   }
 
-  /** own / foreign for the status (null = could not tell: compose or Docker did not answer) */
-  async stackKind(): Promise<StackKind | null> {
-    try { return (await this.origin()).stack; } catch { return null; }
+  /** own / foreign and why, for the status (null = could not tell: compose or Docker did not answer) */
+  async stackInfo(): Promise<StackInfo | null> {
+    try {
+      const o = await this.origin();
+      return { stack: o.stack, reason: o.reason, workingDir: o.workingDir, projectDir: this.s.projectDir };
+    } catch { return null; }
   }
 
   /**

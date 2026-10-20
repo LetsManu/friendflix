@@ -17,9 +17,14 @@ export interface StackOrigin {
   stack: StackKind;
   /** the tool that manages a foreign stack, when it can be told */
   manager: 'portainer' | null;
-  /** fixed reason (job log only): own, no_labels, working_dir, portainer */
-  reason: 'own' | 'no_labels' | 'working_dir' | 'portainer';
+  /** fixed reason (job log, status): own, no_labels, working_dir, portainer */
+  reason: StackReason;
+  /** the directory compose recorded (label working_dir), when it is a plain absolute path; for the admin's hint */
+  workingDir: string | null;
 }
+export type StackReason = 'own' | 'no_labels' | 'working_dir' | 'portainer';
+/** what /v1/status reports */
+export interface StackInfo { stack: StackKind; reason: StackReason; workingDir: string | null; projectDir: string }
 
 const WD = 'com.docker.compose.project.working_dir';
 const stripSlash = (p: string) => p.replace(/(.)\/+$/, '$1');
@@ -30,14 +35,17 @@ const stripSlash = (p: string) => p.replace(/(.)\/+$/, '$1');
  * labels at all: foreign.
  */
 export function classifyStack(labels: unknown, projectDir: string): StackOrigin {
-  if (!labels || typeof labels !== 'object' || Array.isArray(labels)) return { stack: 'foreign', manager: null, reason: 'no_labels' };
+  if (!labels || typeof labels !== 'object' || Array.isArray(labels)) return { stack: 'foreign', manager: null, reason: 'no_labels', workingDir: null };
   const l = labels as Record<string, unknown>;
   const wd = typeof l[WD] === 'string' ? stripSlash(l[WD] as string) : '';
-  const portainer = /^\/data\/compose\/[^/]+/.test(wd) || Object.keys(l).some((k) => k.startsWith('io.portainer.') || k === 'com.docker.stack.namespace');
-  if (portainer) return { stack: 'foreign', manager: 'portainer', reason: 'portainer' };
-  if (!wd) return { stack: 'foreign', manager: null, reason: 'no_labels' };
-  if (wd !== stripSlash(projectDir)) return { stack: 'foreign', manager: null, reason: 'working_dir' };
-  return { stack: 'own', manager: null, reason: 'own' };
+  const workingDir = /^\/[A-Za-z0-9._/ -]{0,250}$/.test(wd) ? wd : null;
+  const own = wd !== '' && wd === stripSlash(projectDir);
+  // /data/compose/<id> only marks Portainer when it is not the updater's own directory (an install that really lives there is own)
+  const portainer = (!own && /^\/data\/compose\/[^/]+/.test(wd)) || Object.keys(l).some((k) => k.startsWith('io.portainer.') || k === 'com.docker.stack.namespace');
+  if (portainer) return { stack: 'foreign', manager: 'portainer', reason: 'portainer', workingDir };
+  if (!wd) return { stack: 'foreign', manager: null, reason: 'no_labels', workingDir: null };
+  if (!own) return { stack: 'foreign', manager: null, reason: 'working_dir', workingDir };
+  return { stack: 'own', manager: null, reason: 'own', workingDir };
 }
 
 /** "" and 0.0.0.0 both mean every IPv4 address to Docker; IPv6 may come with brackets */

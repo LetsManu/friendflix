@@ -11,23 +11,25 @@ const L = (over: Record<string, string> = {}) => ({
 
 describe('classifyStack: whose stack is this', () => {
   it('own: the backend container was created from the updater\'s project directory (a trailing slash is the same directory)', () => {
-    expect(classifyStack(L(), DIR)).toEqual({ stack: 'own', manager: null, reason: 'own' });
+    expect(classifyStack(L(), DIR)).toEqual({ stack: 'own', manager: null, reason: 'own', workingDir: DIR });
     expect(classifyStack(L({ 'com.docker.compose.project.working_dir': `${DIR}/` }), DIR).stack).toBe('own');
   });
 
   it('a different working directory alone makes it foreign', () => {
-    expect(classifyStack(L({ 'com.docker.compose.project.working_dir': '/opt/other' }), DIR)).toEqual({ stack: 'foreign', manager: null, reason: 'working_dir' });
+    expect(classifyStack(L({ 'com.docker.compose.project.working_dir': '/opt/other' }), DIR)).toEqual({ stack: 'foreign', manager: null, reason: 'working_dir', workingDir: '/opt/other' });
+    // the path is reported only in a plain form (it reaches the admin page)
+    expect(classifyStack(L({ 'com.docker.compose.project.working_dir': '/opt/<b>' }), DIR)).toMatchObject({ reason: 'working_dir', workingDir: null });
     expect(classifyStack(L({ 'com.docker.compose.project.working_dir': `${DIR}/sub` }), DIR).stack).toBe('foreign');
     expect(classifyStack(L({ 'com.docker.compose.project.working_dir': '/srv/friendflix2' }), DIR).stack).toBe('foreign');
   });
 
   it('Portainer: its compose directory (/data/compose/<id>), or Portainer / swarm stack labels, even with a matching directory', () => {
     expect(classifyStack(L({ 'com.docker.compose.project.working_dir': '/data/compose/12', 'com.docker.compose.project.config_files': '/data/compose/12/docker-compose.yml' }), DIR))
-      .toEqual({ stack: 'foreign', manager: 'portainer', reason: 'portainer' });
-    expect(classifyStack(L({ 'io.portainer.accesscontrol.teams': 'x' }), DIR)).toEqual({ stack: 'foreign', manager: 'portainer', reason: 'portainer' });
+      .toEqual({ stack: 'foreign', manager: 'portainer', reason: 'portainer', workingDir: '/data/compose/12' });
+    expect(classifyStack(L({ 'io.portainer.accesscontrol.teams': 'x' }), DIR)).toMatchObject({ stack: 'foreign', manager: 'portainer', reason: 'portainer' });
     expect(classifyStack(L({ 'com.docker.stack.namespace': 'friendflix' }), DIR)).toMatchObject({ stack: 'foreign', reason: 'portainer' });
-    // the updater pointed at Portainer's own directory: still Portainer's stack (its variables live in Portainer's stack.env)
-    expect(classifyStack(L({ 'com.docker.compose.project.working_dir': '/data/compose/3' }), '/data/compose/3')).toMatchObject({ stack: 'foreign', manager: 'portainer' });
+    // the /data/compose marker only matters for a directory other than the updater's own (an install that really lives there is own)
+    expect(classifyStack(L({ 'com.docker.compose.project.working_dir': '/data/compose/3' }), '/data/compose/3')).toMatchObject({ stack: 'own', reason: 'own' });
   });
 
   it('missing or unreadable labels: foreign', () => {
