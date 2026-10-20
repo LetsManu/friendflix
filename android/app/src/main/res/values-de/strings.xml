@@ -124,7 +124,7 @@
     <string name="player_bookmark_title">Lesezeichen</string>
     <string name="player_bookmark_set">Lesezeichen gesetzt</string>
     <string name="player_bookmark_failed">Lesezeichen konnte nicht gespeichert werden</string>
-    <string name="player_bookmark_too_many">Du hast schon 500 Lesezeichen.</string>
+    <string name="player_bookmark_too_many">Du hast zu viele Lesezeichen. Lösche zuerst welche.</string>
     <string name="player_bookmark_share">Szene teilen (%1$s)</string>
     <string name="player_bookmark_note">Notiz (optional)</string>
     <string name="player_bookmark_add">Lesezeichen setzen</string>

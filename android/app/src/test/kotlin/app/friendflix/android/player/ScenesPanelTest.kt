@@ -157,4 +157,15 @@ class ScenesPanelTest {
         assertEquals(listOf(300_000L), host.seeks)
         assertFalse(controls.panel.isOpen)
     }
+
+    @Test fun anOpenScenesPanelClosesOnATitleSwitchButMoreStays() = withControls { controls, _, _ ->
+        controls.setChapters(chapters)
+        controls.openScenes()
+        assertTrue(controls.panel.isOpen)
+        controls.newTitle() // its chapter times belong to the title left
+        assertFalse(controls.panel.isOpen)
+        controls.openMore()
+        controls.clearTitleExtras() // e.g. the TV moved on: a panel that is not the title's stays
+        assertTrue(controls.panel.isOpen)
+    }
 }

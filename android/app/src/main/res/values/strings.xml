@@ -132,7 +132,7 @@
     <string name="player_bookmark_title">Bookmark</string>
     <string name="player_bookmark_set">Bookmark added</string>
     <string name="player_bookmark_failed">Couldn’t save the bookmark</string>
-    <string name="player_bookmark_too_many">You already have 500 bookmarks.</string>
+    <string name="player_bookmark_too_many">You have too many bookmarks. Remove some first.</string>
     <string name="player_bookmark_share">Share scene (%1$s)</string>
     <string name="player_bookmark_note">Note (optional)</string>
     <string name="player_bookmark_add">Add bookmark</string>

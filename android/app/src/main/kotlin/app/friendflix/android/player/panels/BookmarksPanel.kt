@@ -32,7 +32,7 @@ import kotlinx.coroutines.withContext
  * The web player's *Bookmarks* menu (Player.svelte `menu === 'scenes'`): *Share scene (12:34)* ([onShare] gets the watch link at
  * the current position), a note (max 140) with an add button, then the title's bookmarks (time and note); a tap calls [onSeek]
  * (ms), ✕ deletes it. [positionMs] is the active player's position (the TV's while casting). Every fresh list goes to [onChanged]
- * (the seek bar's marks). Requests run on the IO dispatcher from [scope]; a failed add shows the web's text in the panel.
+ * (the seek bar's marks). Requests run on the IO dispatcher from [scope]; a failed add or delete shows the web's text in the panel.
  */
 object BookmarksPanel {
     const val NOTE_MAX = 140
@@ -105,7 +105,8 @@ object BookmarksPanel {
             list.removeAllViews()
             for (b in items) list.addView(row(ctx, b, { onSeek(b.positionSec * 1000L) }) {
                 scope.launch {
-                    withContext(Dispatchers.IO) { runCatching { api.removeBookmark(b.id) } }
+                    val ok = withContext(Dispatchers.IO) { runCatching { api.removeBookmark(b.id) }.getOrDefault(false) }
+                    say(if (ok) null else ctx.getString(R.string.player_bookmark_failed))
                     reload()
                 }
             })

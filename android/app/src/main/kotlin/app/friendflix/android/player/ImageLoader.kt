@@ -36,10 +36,28 @@ class ImageLoader(private val server: ServerApi, private val maxBytes: Int = 4 *
                 null // includes SessionExpired: the player's own requests handle sign-out
             } catch (_: RuntimeException) {
                 null
+            } catch (_: OutOfMemoryError) {
+                null // an image too large for the heap is just not shown
             }
         } ?: return null
         cache.put(key, bmp)
         return bmp
+    }
+
+    /** The raw bytes of a same-origin image of at most [max] bytes (trickplay sheets, decoded per tile), uncached; null on failure. */
+    suspend fun bytes(path: String, max: Int): ByteArray? {
+        val url = server.resolve(path) ?: return null
+        return withContext(Dispatchers.IO) {
+            try {
+                server.small(url, max)
+            } catch (_: IOException) {
+                null
+            } catch (_: RuntimeException) {
+                null
+            } catch (_: OutOfMemoryError) {
+                null
+            }
+        }
     }
 
     /**

@@ -209,6 +209,7 @@ class PlayerControls(
             panel.close()
             host.active().seekTo((sec * 1000).toLong())
         }
+        extrasPanel = content
         panel.show(activity.getString(R.string.player_scenes), content)
     }
 
@@ -226,6 +227,7 @@ class PlayerControls(
             // a list of the title left meanwhile never marks the new one
             if (host.bookmarks()?.itemId == src.itemId) setBookmarks(list)
         }
+        extrasPanel = content
         panel.show(activity.getString(R.string.player_bookmarks), content)
     }
 
@@ -317,6 +319,8 @@ class PlayerControls(
     private var trickplay: TrickplayInfo? = null
     private var preview: TrickplayPreview? = null
     private var extrasJob: Job? = null
+    /** the open Scenes or Bookmarks panel: it belongs to the title on show */
+    private var extrasPanel: View? = null
 
     /**
      * A title starts (where the activity loads the title): its chapters (when the server has them, [withChapters]) and bookmarks
@@ -351,7 +355,10 @@ class PlayerControls(
         if (trickplay == null) preview?.hide()
     }
 
+    /** the title's extras go; an open Scenes or Bookmarks panel (old chapter times, old item id) closes with them */
     fun clearTitleExtras() {
+        if (extrasPanel != null && panel.content === extrasPanel) panel.close()
+        extrasPanel = null
         extrasJob?.cancel()
         extrasJob = null
         setTrickplay(null)

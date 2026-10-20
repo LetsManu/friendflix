@@ -144,6 +144,17 @@ class BookmarksPanelTest {
         assertEquals(listOf(Bookmark("b2", 3725, "Fight")), changed.last())
     }
 
+    @Test fun aFailedDeleteShowsTheError() {
+        routes["GET /api/bookmarks"] = 200 to """{"bookmarks":[{"id":"b1","position":60}]}"""
+        val v = panel()
+        await { list(v).childCount == 1 }
+        routes["DELETE /api/bookmarks/b1"] = 500 to """{"error":"x"}"""
+        list(v).getChildAt(0).findViewById<View>(R.id.bookmarks_remove).performClick()
+        await { msg(v).text.toString() == activity.getString(R.string.player_bookmark_failed) }
+        assertEquals(View.VISIBLE, msg(v).visibility)
+        assertEquals(1, list(v).childCount)
+    }
+
     @Test fun shareIntentTextEqualsShareUrl() {
         val v = panel()
         val row = v.findViewById<View>(R.id.bookmarks_share)
@@ -191,6 +202,11 @@ class BookmarksPanelTest {
             assertEquals(listOf(Bookmark("b1", 99, null)), controls.bookmarks) // the marks follow
             content.findViewById<ViewGroup>(R.id.bookmarks_list).getChildAt(0).performClick()
             assertEquals(listOf(99_000L), host.seeks) // seeks the TV
+            assertTrue(!controls.panel.isOpen)
+            // a title switch closes an open Bookmarks panel: an add there would go to the title left
+            controls.openBookmarks()
+            assertTrue(controls.panel.isOpen)
+            controls.newTitle()
             assertTrue(!controls.panel.isOpen)
         } finally {
             player.release()
