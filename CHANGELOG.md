@@ -4,6 +4,8 @@ All notable changes, grouped by what you notice. Each release has its own sectio
 
 ## [Unreleased]
 
+## [2.1.0] – Brezel – 2026-10-20
+
 ### Android app
 - **New: FriendFlix for Android** (Android 8.0+, package `app.friendflix.android`, version = server version). The app shows your server's web UI in a locked-down WebView (one HTTPS origin, every other link in the browser, no cleartext, no user CAs) and does four things natively: the player, downloads, Chromecast and notifications. First start asks for the address and checks `GET /api/version`; sign-in, device approval and revoke work as for any browser. Shared through a Google Play closed test; every release also carries a signed APK. Guide: [docs/android.md](docs/android.md) ([Deutsch](docs/de/android.md)).
 - **Native player (Media3):** direct play when the phone can decode the file, otherwise the server's transcode; audio, subtitle and quality menus; skip intro, next-up card, autoplay and "Still there?" like the web player; picture-in-picture, lock screen and Bluetooth controls, optional background audio. Play buttons and `/watch` links in the web UI hand over to it; when it cannot play, the web player takes over.
