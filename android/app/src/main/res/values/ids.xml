@@ -32,4 +32,6 @@
     <item name="bookmarks_list" type="id" />
     <item name="bookmarks_remove" type="id" />
     <item name="more_bookmarks" type="id" />
+    <item name="info_back" type="id" />
+    <item name="info_content" type="id" />
 </resources>

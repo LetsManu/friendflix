@@ -24,6 +24,7 @@ import androidx.media3.ui.TimeBar
 import app.friendflix.android.R
 import app.friendflix.android.cast.CastController
 import app.friendflix.android.player.panels.BookmarksPanel
+import app.friendflix.android.player.panels.CastInfoPanel
 import app.friendflix.android.player.panels.EpisodesPanel
 import app.friendflix.android.player.panels.EpisodesSource
 import app.friendflix.android.player.panels.MoreActions
@@ -51,6 +52,9 @@ data class CastUi(val ready: Boolean, val enabled: Boolean, val devices: Boolean
 
 /** What the Bookmarks panel needs: the API and the title on show (the TV's while casting). */
 data class BookmarksSource(val api: PlayerApi, val itemId: String)
+
+/** What the Cast & info panel needs: the API, the image loader and the title on show (the TV's while casting). */
+data class InfoSource(val api: PlayerApi, val images: ImageLoader?, val itemId: String)
 
 /**
  * The player bar's own controls (web Player.svelte bar), kept out of [PlayerActivity]: the panel host with the Tracks and More
@@ -93,6 +97,10 @@ class PlayerControls(
         fun images(): ImageLoader? = null
         /** what the Bookmarks panel needs, or null when bookmarks are not offered (a download, nothing loaded) */
         fun bookmarks(): BookmarksSource? = null
+        /** what the Cast & info panel needs, or null when it is not offered (a download, nothing loaded) */
+        fun info(): InfoSource? = null
+        /** closes the player and opens the title's page (`/item/<id>`) in the app's web UI */
+        fun openTitle(id: String) {}
     }
 
     val panel = PlayerPanel(activity.findViewById(R.id.player_panel_host))
@@ -115,6 +123,7 @@ class PlayerControls(
     private val castButton: View = view.findViewById(R.id.player_cast)
     private val episodesButton: View = view.findViewById(R.id.player_episodes)
     private val scenesButton: View = view.findViewById(R.id.player_scenes)
+    private val infoButton: View = view.findViewById(R.id.player_info)
     private val timeBar: DefaultTimeBar = view.findViewById(androidx.media3.ui.R.id.exo_progress)
     private val previewView: ImageView = view.findViewById(R.id.player_trickplay)
     /** the trickplay preview follows the scrub (declared before init, which registers it) */
@@ -138,6 +147,7 @@ class PlayerControls(
         view.findViewById<View>(R.id.player_tracks).setOnClickListener { openTracks() }
         episodesButton.setOnClickListener { openEpisodes() }
         scenesButton.setOnClickListener { openScenes() }
+        infoButton.setOnClickListener { openInfo() }
         timeBar.addListener(scrub)
         setUpLock()
         // a recreated screen keeps the shared player's speed (and shows its badge)
@@ -229,6 +239,21 @@ class PlayerControls(
         }
         extrasPanel = content
         panel.show(activity.getString(R.string.player_bookmarks), content)
+    }
+
+    /** the top bar's Cast & info button: streamed titles only (never a download) */
+    fun showInfoButton(show: Boolean) {
+        infoButton.visibility = if (show && !host.offline()) View.VISIBLE else View.GONE
+    }
+
+    /** *Cast & info*: the title on show (the TV's while casting); a title tapped in it is opened in the app's web UI */
+    fun openInfo() {
+        if (host.inPip() || host.offline()) return
+        val src = host.info() ?: return
+        Players.still.noteInteraction()
+        val content = CastInfoPanel.build(activity, activity.lifecycleScope, src.api, src.images, src.itemId) { id -> host.openTitle(id) }
+        extrasPanel = content
+        panel.show(activity.getString(R.string.player_info), content)
     }
 
     private fun share(url: String) {
@@ -329,6 +354,7 @@ class PlayerControls(
     fun loadTitleExtras(api: PlayerApi, itemId: String, withChapters: Boolean) {
         clearTitleExtras()
         if (host.offline()) return
+        showInfoButton(true)
         extrasJob = activity.lifecycleScope.launch {
             val ch = async(Dispatchers.IO) { if (withChapters) runCatching { api.chapters(itemId) }.getOrNull() else null }
             val bm = async(Dispatchers.IO) { runCatching { api.bookmarks(itemId) }.getOrNull() }
@@ -361,6 +387,7 @@ class PlayerControls(
         extrasPanel = null
         extrasJob?.cancel()
         extrasJob = null
+        infoButton.visibility = View.GONE
         setTrickplay(null)
         bookmarks = emptyList()
         setChapters(emptyList())

@@ -35,6 +35,7 @@ internal class ExtrasTestHost(local: Player) : PlayerControls.Host {
     var casting = false
     var offline = false
     var bookmarkSource: BookmarksSource? = null
+    var infoSource: InfoSource? = null
     var imageLoader: ImageLoader? = null
     private val tv = object : ForwardingPlayer(local) {
         override fun seekTo(positionMs: Long) { seeks += positionMs }
@@ -62,6 +63,7 @@ internal class ExtrasTestHost(local: Player) : PlayerControls.Host {
     override fun playItem(id: String) {}
     override fun images(): ImageLoader? = imageLoader
     override fun bookmarks(): BookmarksSource? = bookmarkSource
+    override fun info(): InfoSource? = infoSource
 }
 
 @RunWith(RobolectricTestRunner::class)

@@ -730,6 +730,13 @@ class PlayerActivity : FragmentActivity() {
             val pa = api ?: return null
             return if (offline()) null else BookmarksSource(pa, cast?.itemId ?: args.itemId)
         }
+
+        override fun info(): InfoSource? {
+            val pa = api ?: return null
+            return if (offline()) null else InfoSource(pa, imageLoader(pa), cast?.itemId ?: args.itemId)
+        }
+
+        override fun openTitle(id: String) = this@PlayerActivity.openTitle(id)
     }
 
     /** the panels' image loader for [pa]'s server (one per server, so its cache is shared by the panels and the preview) */
@@ -1219,6 +1226,17 @@ class PlayerActivity : FragmentActivity() {
             ShellIntents.internal(this)
                 .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
                 .putExtra(ShellActivity.EXTRA_WEB_WATCH, path),
+        )
+        finish()
+    }
+
+    /** A title tapped in Cast & info: the player closes and the shell's web UI opens its page (the web's `/item/<id>`). */
+    private fun openTitle(id: String) {
+        if (!Regex("[A-Za-z0-9_-]{1,64}").matches(id)) return
+        startActivity(
+            ShellIntents.internal(this)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+                .putExtra(ShellActivity.EXTRA_OPEN_PATH, "/item/$id"),
         )
         finish()
     }

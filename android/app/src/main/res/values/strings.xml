@@ -139,6 +139,25 @@
     <string name="player_bookmark_remove">Delete bookmark</string>
     <string name="player_bookmark_none">No bookmarks yet.</string>
     <string name="player_info">Cast &amp; info</string>
+    <!-- Cast & info panel (web scenes.info.* / scenes.person.*) -->
+    <string name="player_info_cast">Cast</string>
+    <string name="player_info_guests">Guest stars</string>
+    <string name="player_info_directors">Director</string>
+    <string name="player_info_writers">Writers</string>
+    <string name="player_info_creators">Created by</string>
+    <string name="player_info_studio">Studio</string>
+    <string name="player_info_genres">Genres</string>
+    <string name="player_info_as">as %1$s</string>
+    <string name="player_info_loading">Loading cast …</string>
+    <string name="player_info_failed">Couldn’t load cast &amp; info.</string>
+    <string name="player_info_none">No cast details for this title.</string>
+    <string name="player_info_person">%1$s, show more titles</string>
+    <string name="player_info_person_role">plays %1$s</string>
+    <string name="player_info_person_more">More with %1$s</string>
+    <string name="player_info_person_loading">Loading titles …</string>
+    <string name="player_info_person_none">No other titles in your library.</string>
+    <string name="player_info_person_failed">Couldn’t load the titles.</string>
+    <string name="player_info_person_back">Back to the cast</string>
     <string name="player_off">Off</string>
     <string name="player_speed">Playback speed</string>
     <string name="player_speed_rate">%1$s×</string>

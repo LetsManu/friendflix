@@ -131,6 +131,25 @@
     <string name="player_bookmark_remove">Lesezeichen löschen</string>
     <string name="player_bookmark_none">Noch keine Lesezeichen.</string>
     <string name="player_info">Besetzung &amp; Infos</string>
+    <!-- Besetzung & Infos (web scenes.info.* / scenes.person.*) -->
+    <string name="player_info_cast">Besetzung</string>
+    <string name="player_info_guests">Gaststars</string>
+    <string name="player_info_directors">Regie</string>
+    <string name="player_info_writers">Drehbuch</string>
+    <string name="player_info_creators">Idee</string>
+    <string name="player_info_studio">Studio</string>
+    <string name="player_info_genres">Genres</string>
+    <string name="player_info_as">als %1$s</string>
+    <string name="player_info_loading">Besetzung wird geladen …</string>
+    <string name="player_info_failed">Besetzung und Infos konnten nicht geladen werden.</string>
+    <string name="player_info_none">Zu diesem Titel gibt es keine Angaben zur Besetzung.</string>
+    <string name="player_info_person">%1$s, mehr Titel anzeigen</string>
+    <string name="player_info_person_role">spielt %1$s</string>
+    <string name="player_info_person_more">Mehr mit %1$s</string>
+    <string name="player_info_person_loading">Titel werden geladen …</string>
+    <string name="player_info_person_none">Keine weiteren Titel in deiner Bibliothek.</string>
+    <string name="player_info_person_failed">Die Titel konnten nicht geladen werden.</string>
+    <string name="player_info_person_back">Zurück zur Besetzung</string>
     <string name="player_off">Aus</string>
     <string name="player_speed">Wiedergabetempo</string>
     <string name="player_speed_rate">%1$s×</string>
