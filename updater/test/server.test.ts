@@ -6,7 +6,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import type { ImageInfo } from '../src/docker.js';
 import { Updater, type Ops } from '../src/job.js';
 import { ReplayCache, deriveKey, sign, type Verifier } from '../src/protocol.js';
-import { handler, healthProbe, servicesView } from '../src/server.js';
+import { handler, healthProbe, servicesView, stackView, status } from '../src/server.js';
 import { DEFAULT_STATE, memoryStore } from '../src/state.js';
 
 const key = deriveKey('server-test-secret-0123456789');
@@ -106,6 +106,23 @@ describe('updater HTTP API', () => {
     const big = `{"channel":"stable","x":"${'a'.repeat(2000)}"}`;
     const r = await fetch(`${base}/v1/channel`, { method: 'POST', body: big, headers: { 'content-type': 'application/json' } }).catch(() => null);
     expect(r === null || r.status === 413).toBe(true);
+  });
+
+  it('status says whose stack it is (own / foreign / null = could not tell), for the backend to choose Portainer up front', async () => {
+    expect((await (await call('GET', '/v1/status')).json()).stack).toBeNull(); // no stack probe: unknown
+    const s = await status({ updater, verifier, services: async () => [], self: { version: null, sha: null }, stack: async () => 'foreign' });
+    expect(s.stack).toBe('foreign');
+    expect((await status({ updater, verifier, services: async () => [], self: { version: null, sha: null }, stack: async () => { throw new Error('x'); } })).stack).toBeNull();
+  });
+
+  it('stackView caches the probe and turns a failure into null', async () => {
+    let n = 0, t = 0;
+    const v = stackView({ stackKind: async () => { n++; return n === 1 ? 'own' : null; } }, 10_000, () => t);
+    expect(await v()).toBe('own');
+    expect(await v()).toBe('own');
+    expect(n).toBe(1);
+    t = 20_000;
+    expect(await v()).toBeNull();
   });
 
   it('self-update starts only on its explicit action', async () => {

@@ -4,6 +4,7 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import { pathToFileURL } from 'node:url';
 import { loadConfig } from './config.js';
 import { Docker, execRunner, type ImageInfo, type ServiceState } from './docker.js';
+import type { StackKind } from './stack.js';
 import { Updater, type Ops } from './job.js';
 import { FF_SERVICES, HEALTH_SERVICES, SELF_SERVICE, channelTag, parseChannelBody, shaTag } from './policy.js';
 import { ReplayCache, deriveKey, verify, type Verifier } from './protocol.js';
@@ -27,6 +28,8 @@ export interface AppDeps {
   /** what runs now, per service (cached by the caller) */
   services: () => Promise<ServiceView[]>;
   self: { version: string | null; sha: string | null };
+  /** own / foreign (stack.ts; null = could not tell), cached by the caller; absent in tests = null */
+  stack?: () => Promise<StackKind | null>;
   /** auth refusals etc. (codes only) */
   warn?: (msg: string) => void;
 }
@@ -53,7 +56,7 @@ function readBody(req: IncomingMessage): Promise<string | null> {
 
 export async function status(d: AppDeps) {
   const s = d.updater.snapshot();
-  const services = await d.services().catch(() => []);
+  const [services, stack] = await Promise.all([d.services().catch(() => []), d.stack ? d.stack().catch(() => null) : Promise.resolve(null)]);
   return {
     updater: d.self,
     channel: s.channel, version: s.version, targetTag: channelTag(s.channel, s.version),
@@ -61,6 +64,8 @@ export async function status(d: AppDeps) {
     current: s.current ?? services.find((v) => v.service === 'backend')?.sha ?? null, previous: s.previous, busy: d.updater.busy,
     job: s.lastJob, log: d.updater.log.tail(30),
     services,
+    // foreign: started by another tool (Portainer); the updater refuses to recreate it, the backend redeploys through Portainer
+    stack,
   };
 }
 
@@ -128,6 +133,17 @@ export function servicesView(docker: Pick<Docker, 'ps' | 'containerImage' | 'ima
   };
 }
 
+/** own / foreign, cached like the service view (each probe costs a compose ps and an inspect) */
+export function stackView(docker: Pick<Docker, 'stackKind'>, ttlMs = 10_000, now: () => number = Date.now): () => Promise<StackKind | null> {
+  let cache: { at: number; v: StackKind | null } | null = null;
+  return async () => {
+    if (cache && now() - cache.at < ttlMs) return cache.v;
+    const v = await docker.stackKind().catch(() => null);
+    cache = { at: now(), v };
+    return v;
+  };
+}
+
 export function start(env: NodeJS.ProcessEnv = process.env): Server {
   const cfg = loadConfig(env);
   const docker = new Docker({ projectDir: cfg.projectDir, files: cfg.composeFiles, autoFiles: cfg.composeFilesAuto, projectName: cfg.projectName, repo: cfg.repo, dockerHost: cfg.dockerHost }, execRunner);
@@ -140,7 +156,7 @@ export function start(env: NodeJS.ProcessEnv = process.env): Server {
   const verifier: Verifier = { key: deriveKey(cfg.secret), cache: new ReplayCache(), notBefore: Date.now() };
   const services = servicesView(docker);
   const log = (msg: string) => console.log(`${new Date().toISOString()} updater: ${msg}`);
-  const app = handler({ updater, verifier, services, self: { version: cfg.version, sha: cfg.gitSha }, warn: log });
+  const app = handler({ updater, verifier, services, stack: stackView(docker), self: { version: cfg.version, sha: cfg.gitSha }, warn: log });
   const server = createServer((req, res) => { void app(req, res).catch(() => { if (!res.headersSent) send(res, 500, { error: 'internal' }); }); });
   server.requestTimeout = 10_000;
   server.headersTimeout = 5_000;

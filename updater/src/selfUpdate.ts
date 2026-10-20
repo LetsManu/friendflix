@@ -3,13 +3,13 @@
 /**
  * The one-shot helper of a self-update (`docker compose run --rm updater node updater/dist/selfUpdate.js`): a sibling
  * container of the updater service, already on the new (pulled and cosign-verified) image, recreates the updater service and
- * exits. It takes no input but FF_TAG, which must be a valid tag.
+ * exits. It takes no input but FF_TAG, which must be a valid tag; a foreign stack or a config drift recreates nothing.
  */
 import { loadConfig } from './config.js';
 import { Docker, execRunner } from './docker.js';
 import { SELF_SERVICE, isTag } from './policy.js';
 
-export async function selfUpdate(env: NodeJS.ProcessEnv, docker?: Pick<Docker, 'up'> & Partial<Pick<Docker, 'refreshFiles'>>): Promise<number> {
+export async function selfUpdate(env: NodeJS.ProcessEnv, docker?: Pick<Docker, 'up'> & Partial<Pick<Docker, 'images'>>): Promise<number> {
   const tag = env.FF_TAG;
   if (!isTag(tag)) return 2;
   const d = docker ?? (() => {
@@ -17,7 +17,9 @@ export async function selfUpdate(env: NodeJS.ProcessEnv, docker?: Pick<Docker, '
     return new Docker({ projectDir: c.projectDir, files: c.composeFiles, autoFiles: c.composeFilesAuto, projectName: c.projectName, repo: c.repo, dockerHost: c.dockerHost }, execRunner);
   })();
   try {
-    await d.refreshFiles?.();
+    // the same checks as the running updater, once more right before the recreate: the stack's own compose files, our own
+    // stack (never a Portainer one), unchanged ports and networks, this repository's image
+    await d.images?.(tag, [SELF_SERVICE]);
     await d.up(tag, [SELF_SERVICE]);
     return 0;
   } catch {
