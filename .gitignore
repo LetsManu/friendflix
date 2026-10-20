@@ -11,6 +11,10 @@ logs/
 secrets/
 *.pem
 *.key
+*.jks
+*.keystore
+*.p12
+upload.b64
 *.sql
 *.dump
 plan-b.local.conf
