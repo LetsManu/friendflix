@@ -23,7 +23,6 @@ import android.view.View
 import android.widget.Button
 import android.widget.ImageButton
 import android.widget.LinearLayout
-import android.widget.PopupMenu
 import android.widget.ProgressBar
 import android.widget.TextView
 import androidx.activity.enableEdgeToEdge
@@ -67,6 +66,8 @@ import app.friendflix.android.offline.Offline
 import app.friendflix.android.offline.OfflineActivity
 import app.friendflix.android.offline.OfflineMedia
 import app.friendflix.android.offline.Prepared
+import app.friendflix.android.player.panels.TracksActions
+import app.friendflix.android.player.panels.TracksState
 import app.friendflix.android.settings.AppSettings
 import app.friendflix.android.shell.ShellActivity
 import app.friendflix.android.shell.ShellIntents
@@ -95,6 +96,9 @@ import java.util.concurrent.Executors
  * Streams: `POST /api/playback/info` with the device's caps ([DeviceProfile]); the server decides direct play vs. HLS and applies role
  * caps, kids rules and the stream limit. Downloads: only an [OfflineMedia] from the offline gate; after a recreation / process
  * death the player keeps just the licence id and asks [Offline.prepare] again. Logs carry no titles, URLs, cookies or tokens.
+ *
+ * The bar's panels (Tracks, More with speed, quality, sleep timer, lock, picture-in-picture, Play on TV), the quality chip and the
+ * lock live in [PlayerControls]; this screen supplies the playback side ([controlsHost]).
  *
  * Chromecast ([CastController], Task 9): the Cast button shows for a stream (never a download) while the server offers casting and a
  * Cast device is on the network. Picking a device hands the title over through the server's cast token flow; the screen is then the
@@ -128,13 +132,12 @@ class PlayerActivity : FragmentActivity() {
     private lateinit var title: TextView
     private lateinit var subtitle: TextView
     private lateinit var tracksButton: ImageButton
-    private lateinit var qualityButton: Button
-    private lateinit var pipButton: ImageButton
     private lateinit var nextButton: ImageButton
     private lateinit var castButton: MediaRouteButton
     private lateinit var castStatus: TextView
 
     private lateinit var player: ExoPlayer
+    private lateinit var controls: PlayerControls
     private var controller: ListenableFuture<MediaController>? = null
     private val handler = Handler(Looper.getMainLooper())
 
@@ -167,6 +170,8 @@ class PlayerActivity : FragmentActivity() {
     private var offlineProgress: OfflineProgress? = null
 
     private var backgroundAudio = false
+    /** the sound mode of the Tracks panel's switches (applied to the audio by Task 5's audio effects) */
+    private var fxMode = "off"
     private var lastTick = 0L
     /** the screen is stopped and not in picture-in-picture */
     private var inBackground = false
@@ -208,12 +213,12 @@ class PlayerActivity : FragmentActivity() {
         view.player = player
         player.addListener(events)
         player.addListener(listener)
+        controls = PlayerControls(this, view, player, controlsHost)
         // the media session (notification, lock screen, Bluetooth) may start playback only while it could be heard by choice
         PlayerHolder.mayPlay = { !inBackground || backgroundAudio || isInPictureInPictureMode }
         controller = PlayerHolder.connect(this) // runs the media session service (notification while playing)
         lifecycleScope.launch { AppSettings.from(applicationContext).backgroundAudio.collect { backgroundAudio = it } }
         ContextCompat.registerReceiver(this, pipReceiver, IntentFilter(ACTION_PIP_TOGGLE), ContextCompat.RECEIVER_NOT_EXPORTED)
-        pipButton.visibility = if (pipSupported()) View.VISIBLE else View.GONE
         lifecycleScope.launch {
             castEnabled = AppSettings.from(applicationContext).castEnabled.first()
             updateCastButton()
@@ -244,15 +249,10 @@ class PlayerActivity : FragmentActivity() {
         title = view.findViewById(R.id.player_title)
         subtitle = view.findViewById(R.id.player_subtitle)
         tracksButton = view.findViewById(R.id.player_tracks)
-        qualityButton = view.findViewById(R.id.player_quality)
-        pipButton = view.findViewById(R.id.player_pip)
         nextButton = view.findViewById(R.id.player_next_episode)
         view.findViewById<View>(R.id.player_back).setOnClickListener { finish() }
         castButton = view.findViewById(R.id.player_cast)
         castStatus = findViewById(R.id.player_cast_status)
-        tracksButton.setOnClickListener { showTracks(it) }
-        qualityButton.setOnClickListener { showQuality(it) }
-        pipButton.setOnClickListener { enterPip() }
         nextButton.setOnClickListener { goNext(flow?.goNow()) }
         skipButton.setOnClickListener { doSkip() }
         findViewById<View>(R.id.player_next_go).setOnClickListener { goNext(flow?.goNow()) }
@@ -305,8 +305,8 @@ class PlayerActivity : FragmentActivity() {
             offlineSubLangs = media.subtitles.map { it.first }
             title.text = record?.title.orEmpty()
             subtitle.text = ""
-            tracksButton.visibility = if (media.subtitles.isEmpty()) View.GONE else View.VISIBLE
-            qualityButton.visibility = View.GONE
+            tracksButton.visibility = View.VISIBLE // subtitles and the sound switches
+            controls.chip.hide()
             val meta = MediaMetadata.Builder().setTitle(record?.title).build()
             val source = MediaSources.encrypted(keys).createMediaSource(MediaSources.localItem(media.video, media.subtitles, meta))
             player.setMediaSource(source, a.startMs?.takeIf { it > OFFLINE_MIN_RESUME_MS } ?: 0L)
@@ -413,9 +413,8 @@ class PlayerActivity : FragmentActivity() {
         player.prepare()
         player.playWhenReady = !startPaused
         startPaused = false
-        tracksButton.visibility = if (info.audioTracks.size > 1 || info.subtitles.isNotEmpty()) View.VISIBLE else View.GONE
-        qualityButton.visibility = View.VISIBLE
-        qualityButton.text = if (direct) getString(R.string.player_quality_original) else qualityLabel(quality)
+        tracksButton.visibility = View.VISIBLE // audio, subtitles and the sound switches
+        controls.chip.bind(direct, info.maxBitrate.takeIf { it > 0 } ?: quality, info.transcodeReason)
         flow?.duration = 0.0
         updateCastButton()
     }
@@ -533,6 +532,7 @@ class PlayerActivity : FragmentActivity() {
         val now = android.os.SystemClock.elapsedRealtime()
         val dt = if (lastTick == 0L) 0L else now - lastTick
         lastTick = now
+        controls.tick() // the sleep timer runs while casting too (it pauses the TV)
         val c = cast
         if (c != null && c.casting) {
             // the receiver plays: its position and the controller's reports / renewal; nothing local runs
@@ -600,6 +600,7 @@ class PlayerActivity : FragmentActivity() {
     private fun goNext(step: EpisodeStep?) {
         if (step == null || !step.goNext) return
         val next = nextItem ?: return
+        controls.newTitle()
         reporter?.release()
         reporter = null
         stream = null
@@ -617,31 +618,46 @@ class PlayerActivity : FragmentActivity() {
         startOnline(args, first = true, startMs = null)
     }
 
-    // ---- audio / subtitles / quality ----
+    // ---- audio / subtitles / quality (the Tracks and More panels, PlayerControls) ----
 
-    private fun showTracks(anchor: View) {
-        Players.still.noteInteraction()
-        val menu = PopupMenu(this, anchor)
-        val s = stream
-        if (s != null && s.info.audioTracks.size > 1) {
-            val audio = menu.menu.addSubMenu(0, 0, 0, R.string.player_audio)
-            val current = audioIndex ?: s.info.audioTracks.firstOrNull { it.isDefault }?.index
-            for (t in s.info.audioTracks) {
-                audio.add(GROUP_AUDIO, t.index, 0, t.title).setCheckable(true).setChecked(t.index == current).setOnMenuItemClickListener { changeAudio(t); true }
-            }
-            audio.setGroupCheckable(GROUP_AUDIO, true, true)
+    private val controlsHost = object : PlayerControls.Host {
+        override fun active(): Player = view.player ?: player
+        override fun casting() = cast?.casting == true
+        override fun offline() = offlineLicense != null || args.licenseId != null
+        override fun inPip() = isInPip()
+        override fun flash(text: String, ms: Long) = this@PlayerActivity.flash(text, ms)
+        override fun pipSupported() = this@PlayerActivity.pipSupported()
+        override fun enterPip() = this@PlayerActivity.enterPip()
+        override fun pauseActive() { active().pause() }
+
+        override fun tracks(): TracksState? {
+            val s = stream
+            if (s == null && offlineLicense == null) return null
+            return TracksState(
+                audio = s?.info?.audioTracks.orEmpty(),
+                audioIndex = audioIndex,
+                subs = s?.info?.subtitles?.map { it.index to it.title } ?: offlineSubLangs.mapIndexed { i, lang -> i to lang },
+                subIndex = subIndex,
+                canSearch = false, // subtitle search: its own panel (Task 6)
+                fxMode = fxMode,
+                fxDisabledReason = if (Build.VERSION.SDK_INT < Build.VERSION_CODES.P) R.string.player_fx_unsupported else null,
+            )
         }
-        val subs = menu.menu.addSubMenu(0, 1, 1, R.string.player_subtitles)
-        subs.add(GROUP_SUBS, OFF, 0, R.string.player_subtitles_off).setCheckable(true).setChecked(subIndex == null).setOnMenuItemClickListener { setSubtitle(null, null); true }
-        if (s != null) {
-            for (t in s.info.subtitles) {
-                subs.add(GROUP_SUBS, t.index, 0, t.title).setCheckable(true).setChecked(subIndex == t.index).setOnMenuItemClickListener { setSubtitle(t.index, t.language); true }
-            }
-        } else {
-            offlineSubLangs.forEachIndexed { i, lang -> subs.add(GROUP_SUBS, i, 0, lang).setCheckable(true).setChecked(subIndex == i).setOnMenuItemClickListener { setSubtitle(i, null); true } }
+
+        override val tracksActions = object : TracksActions {
+            override fun audio(t: AudioTrack) { changeAudio(t) }
+            override fun subtitle(index: Int?) { setSubtitle(index, stream?.info?.subtitles?.firstOrNull { it.index == index }?.language) }
+            override fun search() {}
+            override fun fx(mode: String) { fxMode = mode }
         }
-        subs.setGroupCheckable(GROUP_SUBS, true, true)
-        menu.show()
+
+        override fun qualities(): List<Pair<String, Long>>? {
+            val s = stream ?: return null
+            return QUALITIES.filter { (_, bps) -> s.info.roleMaxBitrate == null || bps < s.info.roleMaxBitrate }
+        }
+
+        override fun quality() = quality
+        override fun changeQuality(bps: Long) = this@PlayerActivity.changeQuality(bps)
     }
 
     private fun changeAudio(t: AudioTrack) {
@@ -684,19 +700,6 @@ class PlayerActivity : FragmentActivity() {
         }
         val p = b.build()
         if (p != player.trackSelectionParameters) player.trackSelectionParameters = p
-    }
-
-    private fun showQuality(anchor: View) {
-        Players.still.noteInteraction()
-        val s = stream ?: return
-        val menu = PopupMenu(this, anchor)
-        val rungs = QUALITIES.filter { (_, bps) -> s.info.roleMaxBitrate == null || bps < s.info.roleMaxBitrate }
-        menu.menu.add(GROUP_QUALITY, 0, 0, R.string.player_quality_auto).setCheckable(true).setChecked(quality == 0L).setOnMenuItemClickListener { changeQuality(0); true }
-        rungs.forEachIndexed { i, (label, bps) ->
-            menu.menu.add(GROUP_QUALITY, i + 1, i + 1, label).setCheckable(true).setChecked(quality == bps).setOnMenuItemClickListener { changeQuality(bps); true }
-        }
-        menu.menu.setGroupCheckable(GROUP_QUALITY, true, true)
-        menu.show()
     }
 
     private fun changeQuality(bps: Long) {
@@ -760,7 +763,8 @@ class PlayerActivity : FragmentActivity() {
 
     override fun onPictureInPictureModeChanged(isInPictureInPictureMode: Boolean, newConfig: Configuration) {
         super.onPictureInPictureModeChanged(isInPictureInPictureMode, newConfig)
-        view.useController = !isInPictureInPictureMode
+        controls.onPip(isInPictureInPictureMode)
+        view.useController = !isInPictureInPictureMode && !controls.locked
         if (isInPictureInPictureMode) view.hideController()
         render()
         // the picture-in-picture window was closed (not expanded): playback ends with it
@@ -860,10 +864,9 @@ class PlayerActivity : FragmentActivity() {
 
     /** a stream (never a download), casting offered by the server, a device on the network; always while a cast runs */
     private fun updateCastButton() {
-        if (!::castButton.isInitialized) return
+        if (!::controls.isInitialized) return
         val offline = offlineLicense != null || (::args.isInitialized && args.licenseId != null)
-        val show = castLink != null && (cast?.casting == true || CastController.castable(offline, castEnabled, castDevices))
-        castButton.visibility = if (show) View.VISIBLE else View.GONE
+        controls.updateCast(CastUi(ready = castLink != null, enabled = castEnabled, devices = castDevices, casting = cast?.casting == true, offline = offline))
     }
 
     private val castEvents = object : MediaThreeReceiver.Events {
@@ -977,7 +980,9 @@ class PlayerActivity : FragmentActivity() {
         view.showController()
         castStatus.text = link.deviceName?.let { getString(R.string.cast_playing_on, it) } ?: getString(R.string.cast_playing)
         castStatus.visibility = View.VISIBLE
-        for (b in listOf(tracksButton, qualityButton, pipButton, nextButton)) b.visibility = View.GONE
+        for (b in listOf(tracksButton, nextButton)) b.visibility = View.GONE
+        controls.chip.hide()
+        controls.onCasting()
         updateCastButton()
         updatePip()
     }
@@ -987,7 +992,6 @@ class PlayerActivity : FragmentActivity() {
         view.player = player
         view.controllerShowTimeoutMs = CONTROLLER_TIMEOUT_MS
         castStatus.visibility = View.GONE
-        pipButton.visibility = if (pipSupported()) View.VISIBLE else View.GONE
         updateCastButton()
     }
 
@@ -1002,6 +1006,7 @@ class PlayerActivity : FragmentActivity() {
         token?.let { Players.launcher?.ended(it) }
         token = t
         if (cast?.casting == true) { cast?.stop(); showLocal() }
+        controls.newTitle()
         reporter?.release()
         reporter = null
         offlineProgress?.flush()
@@ -1057,6 +1062,7 @@ class PlayerActivity : FragmentActivity() {
         token?.let { Players.launcher?.ended(it) } // the same title may be played again right away
         if (!::player.isInitialized) return
         handler.removeCallbacksAndMessages(null)
+        controls.release()
         loadJob?.cancel()
         cast?.stop() // the player closes: the cast ends with it (the web's pagehide)
         cast = null
@@ -1186,12 +1192,6 @@ class PlayerActivity : FragmentActivity() {
         private const val OFFLINE_RECHECK_MS = 5 * 60_000L
         private const val PIP_MIN_RATIO = 0.42f
         private const val PIP_MAX_RATIO = 2.39f
-        private const val GROUP_AUDIO = 1
-        private const val GROUP_SUBS = 2
-        private const val GROUP_QUALITY = 3
-        private const val OFF = 10_000
-        /** web lib/player/abr.ts LADDER (finite rungs) */
-        private val QUALITIES = listOf("1080p" to 8_000_000L, "720p" to 4_000_000L, "480p" to 1_500_000L, "360p" to 800_000L)
 
         fun intent(context: Context, req: PlayRequest, token: String): Intent = Intent(context, PlayerActivity::class.java)
             .putExtra(EXTRA_ITEM, req.itemId)

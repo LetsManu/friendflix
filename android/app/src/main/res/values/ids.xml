@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  SPDX-FileCopyrightText: 2026 Manuel Weißböck
+  SPDX-License-Identifier: AGPL-3.0-or-later
+-->
+<!-- ids of the rows the player panels build in code (TracksPanel, MorePanel) -->
+<resources>
+    <item name="tracks_audio" type="id" />
+    <item name="tracks_search" type="id" />
+    <item name="tracks_fx_voices" type="id" />
+    <item name="tracks_fx_night" type="id" />
+    <item name="more_speed" type="id" />
+    <item name="more_quality" type="id" />
+    <item name="more_sleep" type="id" />
+    <item name="more_sleep_left" type="id" />
+    <item name="more_lock" type="id" />
+    <item name="more_pip" type="id" />
+    <item name="more_cast" type="id" />
+    <item name="more_back" type="id" />
+</resources>

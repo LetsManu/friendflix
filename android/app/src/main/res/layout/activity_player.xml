@@ -286,4 +286,28 @@
         android:paddingBottom="8dp"
         android:textColor="@android:color/white"
         android:visibility="gone" />
+
+    <!-- the panels (Tracks, More, …): a bottom sheet over the playing video, see PlayerPanel -->
+    <FrameLayout
+        android:id="@+id/player_panel_host"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent" />
+
+    <!-- locked controls: takes every touch; only the lock (held 0.6 s) unlocks -->
+    <FrameLayout
+        android:id="@+id/player_lock"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:visibility="gone">
+
+        <ImageButton
+            android:id="@+id/player_lock_icon"
+            android:layout_width="56dp"
+            android:layout_height="56dp"
+            android:layout_gravity="top|center_horizontal"
+            android:layout_marginTop="24dp"
+            android:background="@drawable/player_card"
+            android:contentDescription="@string/player_lock_unlock"
+            android:src="@drawable/ic_player_lock" />
+    </FrameLayout>
 </FrameLayout>
