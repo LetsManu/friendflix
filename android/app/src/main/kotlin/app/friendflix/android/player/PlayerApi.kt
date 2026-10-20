@@ -443,7 +443,6 @@ class PlayerApi(val server: ServerApi, private val profileId: String) {
         private fun int(o: JSONObject, k: String) = if (o.has(k) && !o.isNull(k)) o.optInt(k) else null
 
         /** The item's poster path when the server says it has one (`image: true`), like web `img()`. */
-        /** the same-origin poster path of an item that has one (`image: true`) */
         internal fun imageOf(o: JSONObject, width: Int): String? =
             if (o.optBoolean("image", false)) o.optString("id").takeIf { it.isNotEmpty() }?.let { "/media/Items/$it/Images/Primary?maxWidth=$width&quality=85" } else null
 

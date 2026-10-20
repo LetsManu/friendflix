@@ -131,6 +131,7 @@ class PlayerActivity : FragmentActivity() {
     private lateinit var stillCard: LinearLayout
     private lateinit var stillText: TextView
     private lateinit var ppCard: LinearLayout
+    private lateinit var ppOpen: Button
     private lateinit var errorBox: LinearLayout
     private lateinit var errorText: TextView
     private lateinit var errorRetry: Button
@@ -262,6 +263,7 @@ class PlayerActivity : FragmentActivity() {
         stillCard = findViewById(R.id.player_still)
         stillText = findViewById(R.id.player_still_text)
         ppCard = findViewById(R.id.player_postplay)
+        ppOpen = findViewById(R.id.player_postplay_open)
         errorBox = findViewById(R.id.player_error)
         errorText = findViewById(R.id.player_error_text)
         errorRetry = findViewById(R.id.player_error_retry)
@@ -280,7 +282,7 @@ class PlayerActivity : FragmentActivity() {
         findViewById<View>(R.id.player_still_go).setOnClickListener { goNext(flow?.keepWatching()) }
         findViewById<View>(R.id.player_still_back).setOnClickListener { finish() }
         findViewById<View>(R.id.player_postplay_close).setOnClickListener { postPlay?.closeCard(); ppCard.visibility = View.GONE }
-        findViewById<View>(R.id.player_postplay_open).setOnClickListener { postPlay?.let { pp -> pp.openCard()?.let { onPostPlayEnd(pp, it) } } }
+        ppOpen.setOnClickListener { postPlay?.let { pp -> pp.openCard()?.let { onPostPlayEnd(pp, it) } ?: updatePostPlay(player.currentPosition / 1000.0) } }
         findViewById<View>(R.id.player_error_back).setOnClickListener { finish() }
         errorRetry.setOnClickListener { retries = 0; hideError(); reload(resumePos()) }
         ViewCompat.setOnApplyWindowInsetsListener(findViewById(R.id.player_root)) { v, insets ->
@@ -599,8 +601,11 @@ class PlayerActivity : FragmentActivity() {
         val at = postplayAtSec(f.duration, f.segments, controls.chapters)
         val wanted = ppWanted()
         pp.fetch(wanted, curSec, at)?.let { fetchPostPlay(pp, it) }
-        val show = pp.card(wanted, curSec, at) && !isInPip() && errorBox.visibility != View.VISIBLE
+        val show = pp.card(wanted, curSec, at) && !isInPip() && errorBox.visibility != View.VISIBLE && !controls.panel.isOpen
         ppCard.visibility = if (show) View.VISIBLE else View.GONE
+        // tapped before the answer arrived: the web's loading text until the screen opens
+        ppOpen.text = getString(if (pp.opening) R.string.player_postplay_loading else R.string.player_postplay_title)
+        ppOpen.isEnabled = !pp.opening
     }
 
     private fun fetchPostPlay(pp: PostPlayFlow, what: PostPlayFlow.Fetch) {
@@ -623,7 +628,7 @@ class PlayerActivity : FragmentActivity() {
         }
     }
 
-    /** the title ended here (never on the TV): the post-play screen, "More like this", or the player closes as before */
+    /** the title ended here (never on the TV): the post-play screen or "More like this"; else the player stays (it never closes itself) */
     private fun onTitleEnded() {
         val pp = postPlay ?: return
         if (cast?.casting == true) return
@@ -634,20 +639,21 @@ class PlayerActivity : FragmentActivity() {
 
     private fun onPostPlayEnd(pp: PostPlayFlow, end: PostPlayFlow.End) {
         if (released || postPlay !== pp || cast?.casting == true) return
+        // no panel in picture-in-picture: the screen waits until the window is expanded (and nothing is counted as shown)
+        if ((end is PostPlayFlow.End.Open || end is PostPlayFlow.End.More) && isInPip()) { pp.hold(end); return }
         when (end) {
-            is PostPlayFlow.End.Open -> openPostPlay(end.data)
+            is PostPlayFlow.End.Open -> if (openPostPlay(end.data)) pp.shown()
             is PostPlayFlow.End.More -> api?.let { pa ->
-                controls.showTitlePanel(getString(R.string.player_more_like_this), PostPlayPanel.more(this, lifecycleScope, imageLoader(pa), end.titles, ::openTitle))
+                if (controls.showTitlePanel(getString(R.string.player_more_like_this), PostPlayPanel.more(this, lifecycleScope, imageLoader(pa), end.titles, ::openTitle))) pp.shown()
             }
-            PostPlayFlow.End.Finish -> finish()
             PostPlayFlow.End.Failed -> { ppCard.visibility = View.GONE; flash(getString(R.string.player_postplay_error), ERROR_FLASH_MS) }
             PostPlayFlow.End.Wait, PostPlayFlow.End.Stay -> Unit
         }
     }
 
     /** the post-play screen over the finished (or paused) title; a title played from it goes through [playItem] */
-    private fun openPostPlay(data: JSONObject) {
-        val pa = api ?: return
+    private fun openPostPlay(data: JSONObject): Boolean {
+        val pa = api ?: return false
         ppCard.visibility = View.GONE
         if (player.playWhenReady) player.pause() // web openPostplay: nothing plays under the screen
         lateinit var content: View
@@ -658,7 +664,7 @@ class PlayerActivity : FragmentActivity() {
             spoilerProtection = prefs.spoilerProtection,
             onBack = { controls.panel.close() },
         )
-        controls.showTitlePanel(getString(R.string.player_postplay_title), content) { PostPlayPanel.closed(content) }
+        return controls.showTitlePanel(getString(R.string.player_postplay_title), content) { PostPlayPanel.closed(content) }
     }
 
     private fun render(card: FlowCard? = null) {
@@ -981,7 +987,9 @@ class PlayerActivity : FragmentActivity() {
         render()
         if (isInPictureInPictureMode) ppCard.visibility = View.GONE
         // the picture-in-picture window was closed (not expanded): playback ends with it
-        if (!isInPictureInPictureMode && !lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)) finish()
+        if (!isInPictureInPictureMode && !lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)) { finish(); return }
+        // expanded again: a post-play screen held while in the small window shows now, if the title is still at its end
+        if (!isInPictureInPictureMode) postPlay?.let { pp -> pp.release(player.playbackState == Player.STATE_ENDED)?.let { onPostPlayEnd(pp, it) } }
     }
 
     override fun onStop() {

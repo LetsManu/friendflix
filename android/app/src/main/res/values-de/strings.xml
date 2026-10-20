@@ -281,6 +281,7 @@
     <string name="player_postplay_why_friends">Von Freunden gut bewertet</string>
     <string name="player_postplay_spoiler">Ungesehene Folge: Vorschau ausgeblendet</string>
     <string name="player_postplay_episode">S%1$s:E%2$s · %3$s</string>
+    <string name="player_postplay_loading">Vorschläge werden geladen …</string>
     <string name="player_postplay_error">Die Vorschläge konnten nicht geladen werden.</string>
     <string name="player_postplay_empty">Gerade haben wir keine Vorschläge für dich.</string>
     <string name="player_more_like_this">Mehr davon</string>

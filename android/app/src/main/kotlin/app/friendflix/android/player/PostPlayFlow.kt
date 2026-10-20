@@ -16,7 +16,9 @@ fun postplayWanted(type: String?, hasNextEpisode: Boolean, feature: Boolean, pre
  * The end of one title (routes/watch/[id] `ppCard` / `prefetchPostplay` / `onEnded` / `loadSimilar`): from the post-play time the
  * "Done? See what's next" card shows and the answer of `/postplay` is fetched; at the end the screen opens by itself. A film
  * without post-play gets "More like this" ([MAX_SIMILAR] titles of `/similar`, itself left out) at the end. With nothing to show
- * (the request failed, no similar titles) the player closes as before. Nothing ever starts playing by itself.
+ * (the request failed, no similar titles) the player stays on the ended title as before; it never closes itself (ruling R9).
+ * In picture-in-picture a screen is held ([hold]) and shown once the window is expanded while the title is still ended
+ * ([release]). Nothing ever starts playing by itself.
  */
 class PostPlayFlow(private val itemId: String, private val movie: Boolean) {
     enum class Fetch { POSTPLAY, SIMILAR }
@@ -25,11 +27,9 @@ class PostPlayFlow(private val itemId: String, private val movie: Boolean) {
     sealed interface End {
         data class Open(val data: JSONObject) : End
         data class More(val titles: List<Title>) : End
-        /** nothing to show: the player closes, as before */
-        data object Finish : End
         /** the answer is on its way (the end acts once it arrives) */
         data object Wait : End
-        /** an episode without post-play: the screen stays as before */
+        /** nothing to show (an episode without post-play, a failed answer, no similar titles): the player stays as before */
         data object Stay : End
         /** the card was tapped and the answer failed: the web's error text */
         data object Failed : End
@@ -43,8 +43,10 @@ class PostPlayFlow(private val itemId: String, private val movie: Boolean) {
     private var similar: List<Title>? = null
     private var similarLoading = false
     private var cardClosed = false
-    /** the screen was opened (the card goes for good, like the web's ppCardClosed after it) */
+    /** the screen was shown ([shown]; the card goes for good, like the web's ppCardClosed after it) */
     private var opened = false
+    /** a screen due while in picture-in-picture */
+    private var held: End? = null
     private var ended = false
     /** the end waits for an answer; the value is whether post-play was wanted then */
     private var pendingEnd: Boolean? = null
@@ -71,9 +73,7 @@ class PostPlayFlow(private val itemId: String, private val movie: Boolean) {
         if (d == null) failed = true else data = d
         if (pendingOpen) {
             pendingOpen = false
-            if (d == null) return End.Failed
-            opened = true
-            return End.Open(d)
+            return if (d == null) End.Failed else End.Open(d)
         }
         return pendingEnd?.let { endAction(it) }
     }
@@ -87,10 +87,26 @@ class PostPlayFlow(private val itemId: String, private val movie: Boolean) {
 
     /** "What's next?" on the card: the screen, or null while the answer is on its way (it opens when it arrives). */
     fun openCard(): End? {
-        data?.let { opened = true; return End.Open(it) }
+        data?.let { return End.Open(it) }
         if (failed) return End.Failed
         pendingOpen = true
         return null
+    }
+
+    /** the card was tapped and the answer is on its way ("Loading suggestions …" on the card) */
+    val opening: Boolean get() = pendingOpen
+
+    /** The screen of an [End.Open] / [End.More] is on show: the card goes. */
+    fun shown() { opened = true; held = null }
+
+    /** An [End.Open] / [End.More] came while in picture-in-picture (no panel there): kept for [release]. */
+    fun hold(end: End) { if (end is End.Open || end is End.More) held = end }
+
+    /** Back from picture-in-picture: the held screen, when the title is [stillEnded] (else it is dropped). */
+    fun release(stillEnded: Boolean): End? {
+        val h = held
+        held = null
+        return if (stillEnded) h else null
     }
 
     /** "Hide this hint" on the card */
@@ -105,14 +121,14 @@ class PostPlayFlow(private val itemId: String, private val movie: Boolean) {
     private fun endAction(wanted: Boolean): End {
         pendingEnd = null
         if (wanted) {
-            data?.let { opened = true; return End.Open(it) }
-            if (failed) return End.Finish
+            data?.let { return End.Open(it) }
+            if (failed) return End.Stay
             pendingEnd = true
             return End.Wait
         }
         if (!movie) return End.Stay
         val s = similar ?: run { pendingEnd = false; return End.Wait }
-        return if (s.isEmpty()) End.Finish else End.More(s)
+        return if (s.isEmpty()) End.Stay else End.More(s)
     }
 
     companion object {

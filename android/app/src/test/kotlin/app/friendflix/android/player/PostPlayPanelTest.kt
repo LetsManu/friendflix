@@ -108,7 +108,40 @@ class PostPlayPanelTest {
         val d = data("movie_end")
         f.loaded(d)
         assertEquals(PostPlayFlow.End.Open(d), f.onEnded(wanted = true))
+        f.shown()
         assertFalse(f.card(true, 6000.0, 5700.0)) // the screen is open: no card under it
+    }
+
+    @Test fun endInPipIsHeldUntilTheWindowIsExpanded() {
+        val f = PostPlayFlow("m1", movie = true)
+        f.fetch(true, 5800.0, 5700.0)
+        val d = data("movie_end")
+        f.loaded(d)
+        val end = f.onEnded(wanted = true)
+        f.hold(end) // in picture-in-picture: no panel, nothing counted as shown
+        assertEquals(PostPlayFlow.End.Open(d), f.release(stillEnded = true)) // expanded at the end: the screen now
+        assertNull(f.release(stillEnded = true)) // once
+        f.hold(end)
+        assertNull(f.release(stillEnded = false)) // replayed meanwhile: dropped
+        // "More like this" is held the same way
+        val g = PostPlayFlow("m1", movie = true)
+        g.fetch(false, 5800.0, 5700.0)
+        g.similarLoaded(listOf(Title("a", "A", "Movie", null, null)))
+        val more = g.onEnded(wanted = false)
+        g.hold(more)
+        assertEquals(more, g.release(stillEnded = true))
+        g.hold(PostPlayFlow.End.Stay) // only a screen is held
+        assertNull(g.release(stillEnded = true))
+    }
+
+    @Test fun earlyCardTapWaitsWithTheLoadingText() {
+        val f = PostPlayFlow("m1", movie = true)
+        f.fetch(true, 5800.0, 5700.0)
+        assertNull(f.openCard())
+        assertTrue(f.opening)
+        val d = data("movie_end")
+        assertEquals(PostPlayFlow.End.Open(d), f.loaded(d))
+        assertFalse(f.opening)
     }
 
     @Test fun endBeforeTheAnswerOpensOnceItArrives() {
@@ -151,11 +184,11 @@ class PostPlayPanelTest {
         assertEquals(listOf("b"), opened)
     }
 
-    @Test fun movieWithoutPostplayOrSimilarFinishesAsToday() {
+    @Test fun movieWithoutPostplayOrSimilarStaysOnTheEndedTitle() {
         val f = PostPlayFlow("m1", movie = true)
         f.fetch(false, 5800.0, 5700.0)
         f.similarLoaded(null)
-        assertEquals(PostPlayFlow.End.Finish, f.onEnded(wanted = false))
+        assertEquals(PostPlayFlow.End.Stay, f.onEnded(wanted = false)) // R9: the player never closes itself
     }
 
     @Test fun postplayFailureShowsError() {
@@ -163,7 +196,7 @@ class PostPlayPanelTest {
         f.fetch(true, 5800.0, 5700.0)
         assertNull(f.loaded(null)) // nothing pending
         assertFalse(f.card(true, 5900.0, 5700.0)) // no card, no empty panel
-        assertEquals(PostPlayFlow.End.Finish, f.onEnded(wanted = true)) // the player finishes as today
+        assertEquals(PostPlayFlow.End.Stay, f.onEnded(wanted = true)) // no panel; the player stays (R9)
         // a tap on the card while the answer was on its way: the web's error text instead of an empty screen
         val g = PostPlayFlow("m1", movie = true)
         g.fetch(true, 5800.0, 5700.0)

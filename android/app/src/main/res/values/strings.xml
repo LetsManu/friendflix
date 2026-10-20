@@ -288,6 +288,7 @@
     <string name="player_postplay_why_friends">Rated highly by friends</string>
     <string name="player_postplay_spoiler">Unwatched episode: preview hidden</string>
     <string name="player_postplay_episode">S%1$s:E%2$s · %3$s</string>
+    <string name="player_postplay_loading">Loading suggestions …</string>
     <string name="player_postplay_error">The suggestions could not be loaded.</string>
     <string name="player_postplay_empty">We have no suggestions for you right now.</string>
     <string name="player_more_like_this">More like this</string>
