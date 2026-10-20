@@ -1,0 +1,111 @@
+# SPDX-FileCopyrightText: 2026 Manuel Weißböck
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# The signed Android app for a release: on a vX.Y.Z tag, build the AAB (for the Play Console) and the APK (fallback download),
+# both signed with the upload key, and attach them plus their SHA-256 sums to that tag's GitHub Release (created by release.yml).
+# Called by CI for v* tags (push, or release.yml's dispatch), after its tests, e2e and the secret scan passed. workflow_dispatch on a tag is the
+# manual retry (e.g. after adding the secrets to an existing release); on anything but a v* tag the job does not run.
+# Signing: the upload key lives only in three repository secrets (docs/android.md "Owner steps"):
+#   ANDROID_UPLOAD_KEYSTORE      the keystore file, base64
+#   ANDROID_UPLOAD_KEY_PASSWORD  store and key password
+#   ANDROID_UPLOAD_KEY_ALIAS     the key's alias
+# Without all three the job only leaves a notice (forks, a repo before the owner set them up). The keystore is decoded to
+# $RUNNER_TEMP (mode 600) for the Gradle run and deleted right after it; nothing prints a secret. Gradle reads the signing
+# config from environment variables only (android/app/build.gradle.kts), so PR builds and local builds stay unsigned.
+# Play App Signing re-signs what Google Play delivers; the APK on the release keeps the upload key's signature.
+# versionName / versionCode come from version.json (android/buildSrc); the job refuses a tag that does not match it.
+name: Android release
+on:
+  workflow_call:
+    secrets:
+      ANDROID_UPLOAD_KEYSTORE: { required: false }
+      ANDROID_UPLOAD_KEY_PASSWORD: { required: false }
+      ANDROID_UPLOAD_KEY_ALIAS: { required: false }
+  workflow_dispatch:
+permissions: { contents: read }
+jobs:
+  android-release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    permissions:
+      contents: write # attach the files to the GitHub Release of this tag
+    env:
+      HAS_KEY: ${{ secrets.ANDROID_UPLOAD_KEYSTORE != '' && secrets.ANDROID_UPLOAD_KEY_PASSWORD != '' && secrets.ANDROID_UPLOAD_KEY_ALIAS != '' }}
+    steps:
+      - name: Upload key present?
+        if: env.HAS_KEY != 'true'
+        run: echo "::notice title=Android release skipped::The secrets ANDROID_UPLOAD_KEYSTORE, ANDROID_UPLOAD_KEY_PASSWORD and ANDROID_UPLOAD_KEY_ALIAS are not all set, so no signed app is attached to $GITHUB_REF_NAME (docs/android.md, Owner steps)."
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        if: env.HAS_KEY == 'true'
+        with: { persist-credentials: false }
+      - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
+        if: env.HAS_KEY == 'true'
+        with: { distribution: temurin, java-version: 21 }
+      # release artifacts are built from scratch: no Gradle cache is restored (or saved) for them
+      - uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6.4.0
+        if: env.HAS_KEY == 'true'
+        with: { cache-disabled: true }
+      - name: Tag matches version.json
+        if: env.HAS_KEY == 'true'
+        id: version
+        run: |
+          set -euo pipefail
+          version=$(jq -er .version version.json)
+          if [ "v$version" != "$GITHUB_REF_NAME" ]; then
+            echo "::error::tag $GITHUB_REF_NAME does not match version.json ($version)"; exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+      - name: Decode the upload key
+        if: env.HAS_KEY == 'true'
+        env:
+          KEYSTORE_B64: ${{ secrets.ANDROID_UPLOAD_KEYSTORE }}
+        run: |
+          set -euo pipefail
+          umask 077
+          printf '%s' "$KEYSTORE_B64" | base64 --decode > "$RUNNER_TEMP/upload.jks"
+          echo "ANDROID_UPLOAD_KEYSTORE_FILE=$RUNNER_TEMP/upload.jks" >> "$GITHUB_ENV"
+      - name: Lint, unit tests, signed AAB + APK
+        if: env.HAS_KEY == 'true'
+        working-directory: android
+        env:
+          ANDROID_UPLOAD_KEY_PASSWORD: ${{ secrets.ANDROID_UPLOAD_KEY_PASSWORD }}
+          ANDROID_UPLOAD_KEY_ALIAS: ${{ secrets.ANDROID_UPLOAD_KEY_ALIAS }}
+        run: ./gradlew --no-build-cache lint testDebugUnitTest bundleRelease assembleRelease
+      - name: Delete the upload key
+        if: always()
+        run: rm -f "$RUNNER_TEMP/upload.jks"
+      - name: Check the signatures, name the files, checksums
+        if: env.HAS_KEY == 'true'
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          apk=android/app/build/outputs/apk/release/app-release.apk
+          aab=android/app/build/outputs/bundle/release/app-release.aab
+          tools=$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -n 1)
+          "$tools/apksigner" verify "$apk"
+          jarsigner -verify "$aab" | grep -q '^jar verified' || { echo "::error::the AAB is not signed"; exit 1; }
+          mkdir -p "$RUNNER_TEMP/dist"
+          cp "$apk" "$RUNNER_TEMP/dist/friendflix-android-$VERSION.apk"
+          cp "$aab" "$RUNNER_TEMP/dist/friendflix-android-$VERSION.aab"
+          (cd "$RUNNER_TEMP/dist" && sha256sum friendflix-android-* > "friendflix-android-$VERSION.sha256")
+          cat "$RUNNER_TEMP/dist/friendflix-android-$VERSION.sha256"
+      # release.yml creates the GitHub Release right after pushing the tag; a run that started from that push may get here first
+      - name: Attach to the GitHub Release
+        if: env.HAS_KEY == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          for _ in $(seq 1 30); do
+            gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1 && break
+            sleep 20
+          done
+          if ! gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "::error::no GitHub Release for $GITHUB_REF_NAME after 10 minutes; create it (release.yml resume), then re-run this workflow on the tag"; exit 1
+          fi
+          gh release upload "$GITHUB_REF_NAME" "$RUNNER_TEMP"/dist/* --repo "$GITHUB_REPOSITORY" --clobber
+          {
+            echo "### Android app $GITHUB_REF_NAME"
+            echo "Signed AAB + APK attached to the release (upload the AAB in the Play Console's closed testing track)."
+          } >> "$GITHUB_STEP_SUMMARY"

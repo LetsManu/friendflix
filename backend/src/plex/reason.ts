@@ -19,11 +19,35 @@
  * Server reasons outrank caps as upstream does; the container ranks below the cap because Plex re-encodes the video for a bitrate cap
  * (the container is then no longer the reason). The cap's reason comes from routes/media.ts (PlaybackOptions.capReason).
  */
+import { isTenBitProfile, type ClientCaps } from '../media/clientCaps.js';
 import type { PlaybackOptions, TranscodeReason } from '../media/types.js';
 
 export const BROWSER_CONTAINER = /(^|,)(mp4|m4v|mov|webm)(,|$)/i;
 export const DIRECT_VIDEO = new Set(['h264', 'vp9', 'av1']);
 export const DIRECT_AUDIO = new Set(['aac', 'mp3', 'opus', 'flac']);
+
+/**
+ * What the Android app says it can direct-play (PlaybackOptions.clientCaps); each list replaces the browser default when non-empty.
+ * Plain arrays: it is stored with the session (ReasonFacts) as JSON.
+ */
+export interface DirectAllow { containers?: string[]; video?: string[]; audio?: string[]; tenBit: string[] }
+
+export function directAllow(caps: ClientCaps | null | undefined): DirectAllow | undefined {
+  if (!caps) return undefined;
+  return {
+    containers: caps.containers.length ? caps.containers : undefined,
+    video: caps.video.length ? caps.video.map((v) => v.codec) : undefined,
+    audio: caps.audio.length ? caps.audio : undefined,
+    tenBit: caps.video.filter((v) => v.profiles?.some(isTenBitProfile)).map((v) => v.codec),
+  };
+}
+
+/** Plex reports "hevc"/"h264"/"mkv"/"matroska,webm": the same names as the caps, apart from Matroska's container alias. */
+const containerNames = (c: string) => c.toLowerCase().split(',').map((x) => (x.trim() === 'matroska' ? 'mkv' : x.trim()));
+export const containerDirect = (container: string, a?: DirectAllow) => (a?.containers ? containerNames(container).some((c) => a.containers!.includes(c)) : BROWSER_CONTAINER.test(container));
+export const videoDirect = (codec: string, bitDepth: number, a?: DirectAllow) =>
+  (a?.video ? a.video.includes(codec.toLowerCase()) : DIRECT_VIDEO.has(codec.toLowerCase())) && bitDepth <= (a?.tenBit.includes(codec.toLowerCase()) ? 10 : 8);
+export const audioDirect = (codec: string, a?: DirectAllow) => (a?.audio ? a.audio : [...DIRECT_AUDIO]).includes(codec.toLowerCase());
 
 /** What playbackInfo() knows about the source; stored with the session so preparePlayback() can refine it with the decision. */
 export interface ReasonFacts {
@@ -39,6 +63,8 @@ export interface ReasonFacts {
   maxHeight?: number | null;
   audioIndex?: number;
   capReason?: PlaybackOptions['capReason'];
+  /** the Android app's direct-play lists, when it sent a capability block */
+  allow?: DirectAllow;
 }
 
 /** Stream decisions of a Plex decision answer; undefined = not reported. */
@@ -70,14 +96,14 @@ export function parseDecision(json: unknown): PlexDecision {
 
 export function plexTranscodeReason(f: ReasonFacts, d: PlexDecision = {}): TranscodeReason {
   const cap = f.capReason ?? 'network';
-  const badVideo = !DIRECT_VIDEO.has(lc(f.videoCodec)) || f.bitDepth > 8;
-  const badAudio = Boolean(f.audioCodec) && !DIRECT_AUDIO.has(lc(f.audioCodec));
+  const badVideo = !videoDirect(f.videoCodec, f.bitDepth, f.allow);
+  const badAudio = Boolean(f.audioCodec) && !audioDirect(f.audioCodec, f.allow);
   if (badVideo && d.video !== 'copy') return 'videoCodec';
   if (badAudio && d.audio !== 'copy') return 'audioCodec';
   if (f.srcBps > f.maxBitrate) return cap;
   // audio converted although the codec plays in a browser (channel count, a profile the Web client rejects)
   if (d.audio === 'transcode') return 'audioCodec';
-  if (!BROWSER_CONTAINER.test(f.container)) return 'container';
+  if (!containerDirect(f.container, f.allow)) return 'container';
   if (f.audioIndex !== undefined) return 'audioTrack';
   if (!f.srcBps && d.video === 'transcode') return cap;
   if (f.maxHeight && f.srcHeight > f.maxHeight) return 'height';

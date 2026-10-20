@@ -3,12 +3,17 @@
   SPDX-FileCopyrightText: 2026 Manuel Weißböck
   SPDX-License-Identifier: AGPL-3.0-or-later
 -->
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
 
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- Noticing a reconnect (licence check + position sync, Task 7). -->
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+    <!-- The player's media session service while it plays (notification, lock screen, background audio when the setting is on). -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
     <!-- No storage permission: downloads live in app-specific (external) directories. -->
 
     <application
@@ -23,6 +28,11 @@
         android:theme="@style/Theme.FriendFlix"
         android:usesCleartextTraffic="false">
 
+        <!-- Chromecast (Task 9): the Cast framework's options (receiver = the server's CAST_RECEIVER_APP_ID as cached, else the Default Media Receiver). -->
+        <meta-data
+            android:name="com.google.android.gms.cast.framework.OPTIONS_PROVIDER_CLASS_NAME"
+            android:value="app.friendflix.android.cast.CastOptionsProvider" />
+
         <activity
             android:name=".shell.ShellActivity"
             android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|keyboardHidden|uiMode|density"
@@ -33,10 +43,84 @@
             </intent-filter>
         </activity>
 
+        <!--
+          The shell for the app's own hand-overs only (notification taps, the player handing a title back, the offline list's
+          reconnect): not exported, so only the app can start it. The exported launcher entry above ignores those extras.
+        -->
+        <activity-alias
+            android:name=".shell.ShellInternal"
+            android:exported="false"
+            android:targetActivity=".shell.ShellActivity" />
+
         <activity
             android:name=".setup.SetupActivity"
             android:exported="false"
             android:windowSoftInputMode="adjustResize" />
+
+        <!-- singleTop: a second start probe (or a tap in settings) reuses the open list instead of stacking another one -->
+        <activity
+            android:name=".offline.OfflineActivity"
+            android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|keyboardHidden"
+            android:exported="false"
+            android:launchMode="singleTop" />
+
+        <!--
+          The app's own settings (Task 11). Exported only for the system's "app settings" entry on the app info screen
+          (APPLICATION_PREFERENCES); every destructive action on it asks for a confirmation first.
+        -->
+        <activity
+            android:name=".settings.SettingsActivity"
+            android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|keyboardHidden"
+            android:exported="true"
+            android:label="@string/settings_title">
+            <intent-filter>
+                <action android:name="android.intent.action.APPLICATION_PREFERENCES" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+        </activity>
+
+        <!--
+          The native player (Task 8). Own task so picture-in-picture and the shell do not fight over one task; singleTask so a
+          second play request reaches the open player (onNewIntent) instead of opening another one.
+        -->
+        <activity
+            android:name=".player.PlayerActivity"
+            android:autoRemoveFromRecents="true"
+            android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|keyboardHidden|keyboard|navigation|uiMode|density"
+            android:exported="false"
+            android:launchMode="singleTask"
+            android:resizeableActivity="true"
+            android:supportsPictureInPicture="true"
+            android:taskAffinity="app.friendflix.android.player"
+            android:theme="@style/Theme.FriendFlix.Player" />
+
+        <!-- Media session (Media3): notification, lock screen, Bluetooth / headset buttons. Only the app connects to it. -->
+        <service
+            android:name=".player.PlaybackSession"
+            android:exported="false"
+            android:foregroundServiceType="mediaPlayback">
+            <intent-filter>
+                <action android:name="androidx.media3.session.MediaSessionService" />
+            </intent-filter>
+        </service>
+
+        <!-- Downloads run as WorkManager jobs; while a file transfers the job is a dataSync foreground service. -->
+        <service
+            android:name="androidx.work.impl.foreground.SystemForegroundService"
+            android:foregroundServiceType="dataSync"
+            tools:node="merge" />
+
+        <!-- WorkManager is initialised on demand (App implements Configuration.Provider). -->
+        <provider
+            android:name="androidx.startup.InitializationProvider"
+            android:authorities="${applicationId}.androidx-startup"
+            android:exported="false"
+            tools:node="merge">
+            <meta-data
+                android:name="androidx.work.WorkManagerInitializer"
+                android:value="androidx.startup"
+                tools:node="remove" />
+        </provider>
     </application>
 
 </manifest>

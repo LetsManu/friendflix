@@ -333,6 +333,83 @@ change settings or act as the user anywhere else.
 `blob:` for the player), no frames, objects or forms, `frame-ancestors 'none'`. The app pages' CSP is unchanged. Sender messages are
 validated field by field (sizes, enums, castId / token shapes) before use; texts are set with `textContent`, never as HTML.
 
+## Android app
+
+The Android app ([android.md](android.md)) is a WebView shell around the web UI with a native player, downloader, Cast sender and
+notification poller. It adds no new account, token or server endpoint: the server treats it as one more device with the normal
+session cookie, so device approval, device revoke, account disable and sign-out work unchanged.
+
+**Threat model.** What the app guards: the session cookie, the downloaded files, and the native functions the page can reach.
+From whom: other web origins (links, embedded frames, a compromised third-party page), other apps on the phone, someone who gets
+hold of the SD card or a copied file, and a network attacker. Out of scope: an attacker with root on the phone, and the configured
+server itself (it is your server and controls the web UI the app shows).
+
+**One origin.** At the first start the user enters one HTTPS address; the app checks `GET /api/version` before saving it. The
+WebView loads only that origin (scheme, host and port must match, no subdomains). Every other navigation opens in the system
+browser, plain WebView downloads are dropped, and `/watch` links are only handed to the native player from the app origin.
+The one other origin the WebView may show is the server's identity provider (`authOrigin` in `/api/version`, the OIDC issuer's
+origin, exact scheme + host + port, https only, main frame only) so that sign-in, re-authentication and the forgotten-PIN reset finish
+in the app; it never gets the bridge or the native cookie jar.
+
+**WebView hardening.** JavaScript and DOM storage on (the web UI needs them); file and content access off; mixed content never
+allowed; Safe Browsing on; remote debugging only in debug builds. The network security config allows no cleartext and trusts only
+the system CAs (no user-installed CAs, also in debug builds). `allowBackup` is off and the backup and data-transfer rules exclude
+everything, so cookies, settings and keys never go into a cloud or device-to-device backup.
+
+**The bridge.** `window.FriendFlixNative` is registered with `WebViewCompat.addWebMessageListener` for the app origin only (no
+`addJavascriptInterface`, so other origins and frames get no object at all). Every message is checked again: the sender's origin
+must be the app origin and the sender must be the main frame, otherwise the answer is `forbidden` and the frame is never used as a
+reply target. Messages are size-capped JSON with a fixed method list (`capabilities`, `play`, `download`, `downloads`,
+`deleteDownload`, `openSettings`); ids, numbers and fields are validated and unknown fields refused. Nothing in it reads files,
+cookies or other origins: `play` and `download` take ids that the server checks again on every request.
+
+**Cookie reuse, origin only.** The player, the downloader, the notification poller and the Cast sender call the server with the
+WebView's session cookie. Their HTTP client has a cookie jar that hands the cookie out only for the exact app origin (scheme, host,
+port), follows no redirects, and sends state-changing requests with the session's CSRF token. The cookie never goes to the media
+server, the TV, the Cast SDK or any other host, and it is never logged.
+
+**Other apps.** Exported are only the launcher screen and the settings screen (for Android's "app settings" entry); every
+destructive setting asks for a confirmation first. The launcher entry ignores the shell's internal extras (page to open, web-player
+hand-back, reload): the app's own hand-overs use a non-exported entry (`ShellInternal`). Services, the media session and the
+WorkManager jobs are not exported. A notification tap carries only a path, which the shell validates again as a path of the app
+origin; pending intents are immutable.
+Downloads live in the app-specific folders (no storage permission), which other apps cannot read on current Android versions.
+
+**Encryption at rest and its limits.** Every downloaded file is encrypted (AES-256-CTR with a random IV per file, HMAC-SHA256 per
+1 MiB chunk over IV, index and an end marker, so changed, reordered, cut or appended chunks are refused). The data and MAC keys are
+random, wrapped by an Android Keystore key (StrongBox when available) and stored in `noBackupFilesDir`. A file copied off the phone
+or the SD card is unreadable. It is **not DRM**: while the app runs the unwrapped keys are in process memory, and anyone with root
+or a debugger on an unlocked phone can reach them. File sizes reveal the approximate length. Licence expiry, the offline grace
+period and revocation are enforced by the server and checked by the app (with a guard against turning the clock back), which stops
+honest misuse, not a determined owner of a rooted phone.
+
+**Leaving a device.** *Sign out of this device*, in this order: closes any open player (its stop report still goes out); cancels
+the background jobs (downloads, storage moves, licence returns, the notification poll), remembering licence returns that had not
+run yet; deletes the download rows and every download file; while the session cookie still exists, returns the licences (also the
+remembered ones) and then ends the session on the server (`POST /auth/logout`, when reachable); clears the queued offline positions,
+the offline state and the notification poller's last seen id; deletes the Keystore key; and finally clears the WebView's cookies
+and web storage (which also ends the WebView's sign-in at the identity provider) and plans the notification poll again. Changing the server address does the same for the old server but keeps the Keystore key (it
+belongs to the device). Uninstalling or clearing the app's data removes everything as well.
+
+**Notifications and logs.** The poller reads `GET /api/notifications` in the background with the session cookie, about every
+10–20 minutes (Android may delay it further), and stops after a 401 until the app is opened. The server's notification text can contain titles and is shown as
+Android shows notifications (the lock screen setting decides). The app's own download notices and logs carry no titles, cookies or
+URLs with tokens; the app's logs name only error codes and exception classes. Media3's internal error logs can include the server's
+host in a stack trace.
+
+**Release signing.** Release AABs and APKs are signed in CI with the upload key from three repository secrets, decoded to the
+runner's temp folder for the build only and deleted right after it (`.github/workflows/android-release.yml`); pull requests build
+unsigned. Google Play re-signs the app it delivers with the Play App Signing key, which never leaves Google.
+
+**Third-party SDKs.** FriendFlix itself sends no analytics, and the app contains no Firebase, crash-reporting or advertising SDK. The
+only Google Play services library is the Cast SDK (`play-services-cast-framework`, for Chromecast). It brings Google's own Cast
+telemetry (`com.google.android.datatransport`), which reports to Google in the same way as in every app that uses Google Cast.
+Without Google Play services there is no Cast button, and the rest of the app works the same.
+
+**Casting.** The app uses the same `/api/cast/*` token flow as the web sender. The receiver gets the server's token URLs
+unchanged, the own receiver's report token goes only over the private Cast channel, and the session cookie is sent only to the FriendFlix server, never to the TV or the Cast SDK. Downloads are
+never cast.
+
 ## Hardening
 
 What the shipped [compose.yaml](../compose.yaml) and images do:

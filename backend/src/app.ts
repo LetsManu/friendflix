@@ -7,6 +7,8 @@ import { ZodError } from 'zod';
 import { timingSafeEqual } from 'node:crypto';
 import { buildInfo } from './channel.js';
 import type { Ctx } from './ctx.js';
+import { MIN_ANDROID } from './version.js';
+import { authOrigin } from './oidc.js';
 import { compressJson } from './compress.js';
 import { newTimingStore, serverTimingHeader, timedDb, timedKv, timingStorage, timingSummary, type TimingStore } from './timing.js';
 import { metricsPlugin } from './metrics.js';
@@ -211,10 +213,11 @@ export async function buildApp(ctx: Ctx, extra: Extra = {}): Promise<FastifyInst
   app.get('/health', async () => ({ status: 'ok', version: ctx.cfg.GIT_SHA.slice(0, 7) }));
   // unauthenticated: the update page polls it while the backend restarts
   // public and harmless (the web footer shows the same): release version, codename, build sha, and whether the build is the
-  // release commit or a nightly one (label "1.1.0-nightly · abc1234"); the GitHub lookup is cached and waited for 2.5 s at most
+  // release commit or a nightly one (label "1.1.0-nightly · abc1234"); the GitHub lookup is cached and waited for 2.5 s at most.
+  // authOrigin: the sign-in page's origin (already visible in every login redirect); the Android app lets only it and the app into its WebView
   app.get('/api/version', async () => {
     const { sha, version, codename, build, channel, label } = await buildInfo(ctx, { waitMs: 2500 });
-    return { sha, version, codename, build, channel, label };
+    return { sha, version, codename, build, channel, label, minAndroid: MIN_ANDROID, authOrigin: authOrigin(ctx.cfg) };
   });
   app.get('/health/ready', async (_req, reply) => {
     const checks: Record<string, boolean> = {

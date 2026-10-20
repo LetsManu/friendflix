@@ -1,0 +1,198 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  SPDX-FileCopyrightText: 2026 Manuel Weißböck
+  SPDX-License-Identifier: AGPL-3.0-or-later
+-->
+<!--
+  Controller layout of the PlayerView (exo_* ids are bound by Media3: play/pause, ±10 s, seek bar, times). The player_* buttons are
+  FriendFlix's own (back, title, audio + subtitles, quality, picture-in-picture, next episode); player_cast is the standard Cast
+  button (MediaRouteButton, the Cast framework's icon), shown only for a castable stream while a Cast device is on the network.
+-->
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:id="@+id/player_controls_root"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent">
+
+    <View
+        android:layout_width="match_parent"
+        android:layout_height="120dp"
+        android:layout_gravity="top"
+        android:background="@drawable/player_scrim_top" />
+
+    <View
+        android:layout_width="match_parent"
+        android:layout_height="140dp"
+        android:layout_gravity="bottom"
+        android:background="@drawable/player_scrim_bottom" />
+
+    <LinearLayout
+        android:id="@+id/player_top_bar"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_gravity="top"
+        android:gravity="center_vertical"
+        android:orientation="horizontal"
+        android:padding="8dp">
+
+        <ImageButton
+            android:id="@+id/player_back"
+            android:layout_width="48dp"
+            android:layout_height="48dp"
+            android:background="?android:attr/selectableItemBackgroundBorderless"
+            android:contentDescription="@string/player_back"
+            android:src="@drawable/ic_player_back" />
+
+        <LinearLayout
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="8dp"
+            android:layout_weight="1"
+            android:orientation="vertical">
+
+            <TextView
+                android:id="@+id/player_title"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:ellipsize="end"
+                android:maxLines="1"
+                android:textColor="@android:color/white"
+                android:textStyle="bold"
+                tools:text="Series" />
+
+            <TextView
+                android:id="@+id/player_subtitle"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:ellipsize="end"
+                android:maxLines="1"
+                android:textColor="@color/player_muted"
+                tools:text="S1:E3 Episode" />
+        </LinearLayout>
+
+        <androidx.mediarouter.app.MediaRouteButton
+            android:id="@+id/player_cast"
+            android:layout_width="48dp"
+            android:layout_height="48dp"
+            android:contentDescription="@string/player_cast"
+            android:visibility="gone" />
+
+        <Button
+            android:id="@+id/player_quality"
+            android:layout_width="wrap_content"
+            android:layout_height="48dp"
+            android:background="?android:attr/selectableItemBackground"
+            android:contentDescription="@string/player_quality"
+            android:minWidth="48dp"
+            android:paddingStart="8dp"
+            android:paddingEnd="8dp"
+            android:textAllCaps="false"
+            android:textColor="@android:color/white"
+            android:visibility="gone" />
+
+        <ImageButton
+            android:id="@+id/player_tracks"
+            android:layout_width="48dp"
+            android:layout_height="48dp"
+            android:background="?android:attr/selectableItemBackgroundBorderless"
+            android:contentDescription="@string/player_tracks"
+            android:src="@drawable/ic_player_tracks"
+            android:visibility="gone" />
+
+        <ImageButton
+            android:id="@+id/player_pip"
+            android:layout_width="48dp"
+            android:layout_height="48dp"
+            android:background="?android:attr/selectableItemBackgroundBorderless"
+            android:contentDescription="@string/player_pip"
+            android:src="@drawable/ic_player_pip"
+            android:visibility="gone" />
+    </LinearLayout>
+
+    <LinearLayout
+        android:id="@+id/player_center"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="center"
+        android:gravity="center"
+        android:orientation="horizontal">
+
+        <ImageButton
+            android:id="@id/exo_rew"
+            android:layout_width="64dp"
+            android:layout_height="64dp"
+            android:background="?android:attr/selectableItemBackgroundBorderless"
+            android:contentDescription="@string/player_back10"
+            android:padding="12dp"
+            android:scaleType="fitCenter"
+            android:src="@drawable/ic_player_rew" />
+
+        <ImageButton
+            android:id="@id/exo_play_pause"
+            android:layout_width="80dp"
+            android:layout_height="80dp"
+            android:layout_marginStart="24dp"
+            android:layout_marginEnd="24dp"
+            android:background="?android:attr/selectableItemBackgroundBorderless"
+            android:contentDescription="@string/player_play"
+            android:padding="12dp"
+            android:scaleType="fitCenter"
+            android:src="@drawable/ic_player_play" />
+
+        <ImageButton
+            android:id="@id/exo_ffwd"
+            android:layout_width="64dp"
+            android:layout_height="64dp"
+            android:background="?android:attr/selectableItemBackgroundBorderless"
+            android:contentDescription="@string/player_forward10"
+            android:padding="12dp"
+            android:scaleType="fitCenter"
+            android:src="@drawable/ic_player_ffwd" />
+    </LinearLayout>
+
+    <LinearLayout
+        android:id="@+id/player_bottom_bar"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_gravity="bottom"
+        android:gravity="center_vertical"
+        android:orientation="horizontal"
+        android:paddingStart="16dp"
+        android:paddingEnd="8dp"
+        android:paddingBottom="16dp">
+
+        <TextView
+            android:id="@id/exo_position"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:fontFeatureSettings="tnum"
+            android:textColor="@android:color/white"
+            tools:text="12:34" />
+
+        <androidx.media3.ui.DefaultTimeBar
+            android:id="@id/exo_progress"
+            android:layout_width="0dp"
+            android:layout_height="40dp"
+            android:layout_marginStart="12dp"
+            android:layout_marginEnd="12dp"
+            android:layout_weight="1" />
+
+        <TextView
+            android:id="@id/exo_duration"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:fontFeatureSettings="tnum"
+            android:textColor="@android:color/white"
+            tools:text="45:00" />
+
+        <ImageButton
+            android:id="@+id/player_next_episode"
+            android:layout_width="48dp"
+            android:layout_height="48dp"
+            android:layout_marginStart="8dp"
+            android:background="?android:attr/selectableItemBackgroundBorderless"
+            android:contentDescription="@string/player_next"
+            android:src="@drawable/ic_player_next"
+            android:visibility="gone" />
+    </LinearLayout>
+</FrameLayout>

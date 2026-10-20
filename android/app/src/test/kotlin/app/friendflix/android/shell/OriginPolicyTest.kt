@@ -4,6 +4,7 @@ package app.friendflix.android.shell
 
 import android.net.Uri
 import okhttp3.HttpUrl.Companion.toHttpUrl
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -48,5 +49,12 @@ class OriginPolicyTest {
         val p = OriginPolicy("https://friend.example.com:8443".toHttpUrl())
         assertTrue(p.isAppOrigin(Uri.parse("https://friend.example.com:8443/x")))
         assertFalse(p.isAppOrigin(Uri.parse("https://friend.example.com/x")))
+    }
+
+    @Test
+    fun originRuleForTheListener() {
+        assertEquals("https://friend.example.com", policy.originRule())
+        assertEquals("https://friend.example.com:8443", OriginPolicy("https://friend.example.com:8443".toHttpUrl()).originRule())
+        assertEquals("https://[::1]:8443", OriginPolicy("https://[::1]:8443".toHttpUrl()).originRule())
     }
 }

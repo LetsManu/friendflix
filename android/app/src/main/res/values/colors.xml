@@ -7,4 +7,12 @@
     <color name="ic_launcher_background">#14161C</color>
     <color name="surface">#14161C</color>
     <color name="error">#FF8A80</color>
+    <color name="warn">#FFB347</color>
+    <color name="row_border">#2B333C</color>
+    <!-- player: the web UI's coral accent (acc token), card surfaces like the web's next-up card -->
+    <color name="accent">#FF4F6D</color>
+    <color name="player_card">#F0101418</color>
+    <color name="player_card_border">#3B444E</color>
+    <color name="player_scrim">#99000000</color>
+    <color name="player_muted">#B8C0C8</color>
 </resources>

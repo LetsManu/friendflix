@@ -81,6 +81,8 @@ export default {
   },
   settings: {
     pageTitle: 'Einstellungen',
+    /** the Android app's own settings (shown only inside the app) */
+    app: { title: 'App auf diesem Gerät', hint: 'Speicherort der Downloads, nur über WLAN, Ton im Hintergrund, Benachrichtigungen und das Abmelden auf diesem Gerät stellst du in der App ein.', open: 'App-Einstellungen öffnen' },
     title: 'Wiedergabe-Einstellungen',
     lead: 'Gelten auf allen deinen Geräten. Sie betreffen nur dich.',
     autoplayNext: 'Nächste Folge automatisch starten',

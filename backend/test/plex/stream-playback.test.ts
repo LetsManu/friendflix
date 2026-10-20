@@ -3,6 +3,7 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { MemoryKV } from '../../src/kv.js';
+import { parseClientCaps } from '../../src/media/clientCaps.js';
 import { MediaError, type ItemDto, type MediaUser } from '../../src/media/types.js';
 import { PlexClient } from '../../src/plex/client.js';
 import { fmp4Playlist, splitFmp4, VIRTUAL_RE } from '../../src/plex/downloads.js';
@@ -134,6 +135,56 @@ describe('playbackInfo', () => {
     }
     expect((await pb.playbackInfo(ALICE, MOVIE, { ...opts, maxHeight: 720 })).directUrl).toBeDefined(); // 360p source within cap
     expect((await pb.playbackInfo(ALICE, MOVIE, { ...opts, cast: true })).subtitles.map((x) => x.url)).toEqual(info.subtitles.map((x) => x.url)); // signed for the receiver by the cast route
+  });
+});
+
+describe('playbackInfo with the Android capability block', () => {
+  const caps = (o: Record<string, unknown> = {}) => parseClientCaps({ client: 'android', appVersion: '2.0.0', containers: ['mkv', 'mp4'], video: [{ codec: 'h264' }, { codec: 'hevc', profiles: ['main 10'] }], audio: ['aac', 'eac3'], subtitles: [], ...o });
+  it('the app direct-plays what it lists (mkv here), and the role caps still win', async () => {
+    const { pb } = setup();
+    const withCaps = { ...opts, clientCaps: caps() };
+    expect((await pb.playbackInfo(ALICE, MOVIE, opts)).directUrl).toBeUndefined(); // browser: mkv transcodes
+    expect((await pb.playbackInfo(ALICE, MOVIE, withCaps)).directUrl).toMatch(new RegExp(`^/media/Videos/${MOVIE}/stream\\?`));
+    for (const o of [{ cast: true }, { noDirect: true }, { maxHeight: 240 }, { audioIndex: 2 }, { maxBitrate: 1_000_000 }]) {
+      expect((await pb.playbackInfo(ALICE, MOVIE, { ...withCaps, ...o })).directUrl, JSON.stringify(o)).toBeUndefined();
+    }
+  });
+  it('a codec or container the app did not list still transcodes; 10-bit needs a 10-bit profile', async () => {
+    const { pb } = setup();
+    expect((await pb.playbackInfo(ALICE, MOVIE, { ...opts, clientCaps: caps({ containers: ['mp4'] }) })).directUrl).toBeUndefined();
+    expect((await pb.playbackInfo(ALICE, MOVIE, { ...opts, clientCaps: caps({ audio: ['mp3'] }) })).directUrl).toBeUndefined();
+    const h = setup(); // the metadata is read once per setup: a fresh one for the converted source
+    Object.assign(h.fake.meta.get('1')!.Media[0], { videoCodec: 'hevc' });
+    expect((await h.pb.playbackInfo(ALICE, MOVIE, { ...opts, clientCaps: caps() })).directUrl).toBeDefined();
+    expect((await h.pb.playbackInfo(ALICE, MOVIE, { ...opts, clientCaps: caps({ video: [{ codec: 'h264' }] }) })).directUrl).toBeUndefined();
+  });
+  it('a transcode with caps keeps the rung bitrate and height box (caps never widen the limit)', async () => {
+    const h = setup();
+    const m = h.fake.meta.get('1')!.Media[0];
+    Object.assign(m, { height: 2160, width: 3840, bitrate: 40_000, videoCodec: 'hevc' });
+    for (const st of m.Part![0]!.Stream as Array<Record<string, unknown>>) if (Number(st.streamType) === 1) st.bitDepth = 10;
+    const q = async (o: Record<string, unknown>) => {
+      const i = await h.pb.playbackInfo(ALICE, MOVIE, { maxBitrate: 60_000_000, clientCaps: caps(), ...o });
+      await h.pb.preparePlayback(ALICE, i, opts);
+      return { i, s: h.fake.sessions.get(i.playSessionId)!.query };
+    };
+    const base = await q({});
+    expect(base.i.directUrl).toBeDefined(); // the app plays 10-bit HEVC in mkv itself
+    for (const o of [{ audioIndex: 2 }, { clientCaps: caps({ containers: ['mp4'] }) }, { noDirect: true }]) {
+      const { i, s } = await q(o);
+      expect(i.directUrl, JSON.stringify(o)).toBeUndefined();
+      expect([s.get('maxVideoBitrate'), s.get('videoResolution')], JSON.stringify(o)).toEqual(['59808', '1920x1080']);
+    }
+  });
+  it('transcode reasons follow the app lists', () => {
+    const f: ReasonFacts = { container: 'mkv', videoCodec: 'hevc', bitDepth: 10, audioCodec: 'eac3', srcBps: 50_000_000, srcHeight: 2160, maxBitrate: 20_000_000, capReason: 'roleCap' };
+    expect(plexTranscodeReason(f)).toBe('videoCodec');
+    const allow = { containers: ['mkv'], video: ['hevc'], audio: ['eac3'], tenBit: ['hevc'] };
+    expect(plexTranscodeReason({ ...f, allow })).toBe('roleCap');
+    expect(plexTranscodeReason({ ...f, allow: { ...allow, tenBit: [] } })).toBe('videoCodec');
+    expect(plexTranscodeReason({ ...f, allow: { ...allow, audio: ['aac'] } })).toBe('audioCodec');
+    expect(plexTranscodeReason({ ...f, srcBps: 1, allow: { ...allow, containers: ['mp4'] } })).toBe('container');
+    expect(plexTranscodeReason({ ...f, container: 'matroska,webm', srcBps: 1, allow })).toBe('other');
   });
 });
 

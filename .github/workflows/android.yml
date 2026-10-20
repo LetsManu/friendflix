@@ -2,7 +2,8 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # Android app CI: lint, unit tests and an unsigned release build (APK uploaded as artifact) on every PR that touches the
 # app, the web bridge it talks to, or this workflow. The instrumented tests run on an API 34 emulator (GitHub only; there is
-# no emulator in the local sandbox). Signing keys live only in GitHub secrets and are used by the release workflow, never here.
+# no emulator in the local sandbox). Signing keys live only in GitHub secrets and are used by android-release.yml (v* tags,
+# called from ci.yml), never here.
 # The app version comes from ../version.json at build time (android/buildSrc), so release bumps need no Android change.
 name: Android
 on:
@@ -67,3 +68,18 @@ jobs:
           disable-animations: true
           working-directory: android
           script: ./gradlew connectedDebugAndroidTest
+      # The emulator step only says "There were failing tests": print the failing tests from the JUnit XML and keep the reports.
+      - name: Show failing instrumented tests
+        if: failure()
+        working-directory: .
+        run: |
+          find android/app/build/outputs/androidTest-results -name '*.xml' -print0 2>/dev/null | xargs -0 -r grep -h -B2 -A25 '<failure' || true
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        if: always()
+        with:
+          name: friendflix-android-instrumented-reports
+          path: |
+            android/app/build/reports/androidTests
+            android/app/build/outputs/androidTest-results
+          if-no-files-found: ignore
+          retention-days: 7

@@ -2,49 +2,122 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 package app.friendflix.android.shell
 
+import android.content.ComponentName
+import android.content.Context
 import android.content.Intent
 import android.net.Uri
+import android.graphics.Color
 import android.os.Bundle
+import android.view.View
+import android.view.ViewGroup
+import android.widget.FrameLayout
 import android.webkit.WebView
 import androidx.activity.ComponentActivity
 import androidx.activity.OnBackPressedCallback
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.core.net.toUri
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.lifecycle.lifecycleScope
 import app.friendflix.android.BuildConfig
 import app.friendflix.android.R
+import app.friendflix.android.bridge.Capabilities
+import app.friendflix.android.bridge.DownloadEntry
+import app.friendflix.android.bridge.DownloadRequest
+import app.friendflix.android.bridge.DownloadSink
+import app.friendflix.android.bridge.NativeBridge
+import app.friendflix.android.bridge.PlayRequest
+import app.friendflix.android.bridge.PlayerLauncher
+import app.friendflix.android.notify.NotificationScheduler
+import app.friendflix.android.notify.NotifyLinks
+import app.friendflix.android.offline.NetworkWatch
+import app.friendflix.android.offline.Offline
+import app.friendflix.android.offline.OfflineActivity
+import app.friendflix.android.offline.OfflineGate
+import app.friendflix.android.player.NativePlayerLauncher
 import app.friendflix.android.settings.AppSettings
+import app.friendflix.android.settings.NotifyPermission
+import app.friendflix.android.settings.SettingsActivity
+import app.friendflix.android.setup.ProbeResult
+import app.friendflix.android.setup.ServerProbe
 import app.friendflix.android.setup.SetupActivity
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import okhttp3.HttpUrl
 
 /** The app: the FriendFlix web UI of the saved server in a locked-down WebView. No saved server yet -> setup first. */
 class ShellActivity : ComponentActivity() {
     /** The shell's WebView once the saved server is known (null before, and when setup was started instead). */
     internal var webView: WebView? = null
         private set
+    private var bridge: NativeBridge? = null
+    private var watch: NetworkWatch? = null
+    private var policy: OriginPolicy? = null
+    private var fullscreen: FullscreenVideo? = null
+    private val askNotify = registerForActivityResult(ActivityResultContracts.RequestPermission()) { }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         enableEdgeToEdge()
         super.onCreate(savedInstanceState)
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
             override fun handleOnBackPressed() {
-                val view = webView
-                if (view != null && view.canGoBack()) view.goBack() else finish()
+                val f = fullscreen
+                if (f != null && f.isShowing) f.exit() else shellBack(webView) { finish() }
             }
         })
         lifecycleScope.launch {
-            val origin = AppSettings.from(applicationContext).serverOrigin.first()
+            val settings = AppSettings.from(applicationContext)
+            val origin = settings.serverOrigin.first()
             if (origin == null) {
                 startActivity(Intent(this@ShellActivity, SetupActivity::class.java))
                 finish()
                 return@launch
             }
+            // read before the start-up probe is launched: from here to the WebView nothing suspends, so the probe's fresher answer lands last
+            val storedAuth = settings.authOrigin.first()
             WebViewFactory.setDebuggable(BuildConfig.DEBUG)
+            val policy = OriginPolicy(origin)
+            this@ShellActivity.policy = policy
+            val offline = Offline.get(applicationContext)
+            val native = NativePlayerLauncher.forApp(applicationContext)
+            offline.launcher = native // the offline list plays through the same player
+            val downloads = offline.downloads.queue
+            downloads.resumeAll() // app start: downloads paused by a sign-out continue (one try; a 401 pauses them again)
+            offline.startInBackground() // keys, licence check, position sync
+            watch = NetworkWatch(this@ShellActivity) { offline.reconnectInBackground() }.also { it.start() }
+            launch { openOfflineIfUnreachable(origin, offline) }
+            // the first start with a server asks for the notification permission once (Android 13+); after that only the settings screen does
+            launch { NotifyPermission.askOnce(this@ShellActivity, AppSettings.from(applicationContext), askNotify) }
+            // every hand-over from the web UI names the active profile: the offline list shows that profile's downloads
+            val sink = object : DownloadSink by downloads {
+                override fun enqueue(req: DownloadRequest): Boolean { offline.noteProfile(req.profileId); return downloads.enqueue(req) }
+            }
+            val player = object : PlayerLauncher {
+                override fun launch(req: PlayRequest): Boolean { offline.noteProfile(req.profileId); return native.launch(req) }
+            }
+            val bridge = NativeBridge(policy, player, sink, Capabilities(play = true, download = true, cast = true), openSettings = ::openSettings)
+            this@ShellActivity.bridge = bridge
+            launch {
+                var last = emptyList<DownloadEntry>()
+                downloads.observeWeb().collect { now ->
+                    bridge.emitDownloadChanges(last, now)
+                    last = now
+                }
+            }
+            val fullscreenLayer = FrameLayout(this@ShellActivity).apply { setBackgroundColor(Color.BLACK); visibility = View.GONE }
+            val fs = FullscreenVideo(fullscreenLayer, window).also { fullscreen = it }
             val view = WebViewFactory.create(
-                this@ShellActivity, OriginPolicy(origin), BuildConfig.VERSION_NAME,
-                onRenderGone = ::onRenderGone, openExternal = ::openExternal,
+                this@ShellActivity, policy, BuildConfig.VERSION_NAME, bridge,
+                authOrigin = storedAuth?.let(::OriginPolicy),
+                onRenderGone = ::onRenderGone,
+                // a page load of /watch/<id> (deep link, reload) plays natively too, for the last active profile; none known → web player
+                onWatch = { link ->
+                    val profile = offline.state.lastProfileId
+                    profile != null && native.launch(PlayRequest(link.itemId, profile, link.startMs, null, link.audio, link.subtitle))
+                },
+                fullscreen = fs,
+                openExternal = ::openExternal,
             )
             ViewCompat.setOnApplyWindowInsetsListener(view) { v, insets ->
                 val bars = insets.getInsets(WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.ime())
@@ -52,9 +125,75 @@ class ShellActivity : ComponentActivity() {
                 insets
             }
             webView = view
-            setContentView(view)
-            view.loadUrl(origin.toString())
+            setContentView(
+                FrameLayout(this@ShellActivity).apply {
+                    addView(view, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+                    addView(fullscreenLayer, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+                },
+            )
+            view.loadUrl((if (ShellIntents.isInternal(intent)) notificationUrl(intent) else null) ?: origin.toString())
         }
+    }
+
+    /**
+     * Start-up: a quick probe; the server cannot be used and there is something downloaded to watch → the offline list. A good answer
+     * refreshes the sign-in page origin the WebView may show (the server's identity provider may have moved).
+     */
+    private suspend fun openOfflineIfUnreachable(origin: HttpUrl, offline: Offline) {
+        val result = ServerProbe(appVersion = BuildConfig.VERSION_NAME, timeoutMs = PROBE_TIMEOUT_MS).probe(origin)
+        if (result is ProbeResult.Ok) {
+            AppSettings.from(applicationContext).setAuthOrigin(result.authOrigin)
+            (webView?.webViewClient as? ShellWebViewClient)?.authOrigin = result.authOrigin?.let(::OriginPolicy)
+        }
+        if (OfflineGate.shouldOpen(result, offline.checker.hasDownloads()) && !isFinishing) startActivity(OfflineActivity.intent(this))
+    }
+
+    override fun onStart() {
+        super.onStart()
+        watch?.start()
+        // the app is open: notification polling that a 401 stopped continues (the person can sign in again now)
+        lifecycleScope.launch { NotificationScheduler.rearm(applicationContext) }
+    }
+
+    override fun onStop() {
+        watch?.stop()
+        super.onStop()
+    }
+
+    /** Back from the offline list after a successful reconnect: reload the web UI (it may show the error page). */
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        // the extras below are the app's own hand-overs: only honoured when they came through the non-exported entry
+        if (!ShellIntents.isInternal(intent)) return
+        if (intent.getBooleanExtra(EXTRA_RELOAD, false)) webView?.reload()
+        intent.getStringExtra(EXTRA_WEB_WATCH)?.let(::openWebWatch)
+        notificationUrl(intent)?.let { webView?.loadUrl(it) } // a tap on a server notification (a /watch link goes native via the page-start hook)
+    }
+
+    /**
+     * The page a notification tap asks for: the intent's path re-validated as an absolute path of the app origin (an extra is just
+     * data, whoever sent it), or null.
+     */
+    private fun notificationUrl(intent: Intent?): String? {
+        val path = intent?.getStringExtra(EXTRA_OPEN_PATH) ?: return null
+        intent.removeExtra(EXTRA_OPEN_PATH) // once: a recreate (or the same intent again) must not navigate again
+        val origin = policy?.origin ?: return null
+        return NotifyLinks.urlFor(origin, path)
+    }
+
+    /** The native player handed a title back (its profile is not the session's): the web UI's watch page plays it. */
+    private fun openWebWatch(path: String) {
+        val view = webView ?: return
+        val policy = this.policy ?: return
+        val url = policy.origin.resolve(path)?.toString() ?: return
+        if (WatchLinks.parse(url.toUri(), policy) == null) return // only the app's own watch page
+        (view.webViewClient as? ShellWebViewClient)?.allowWebOnce(url)
+        view.loadUrl(url)
+    }
+
+    /** The web UI asked for the app's settings (bridge `openSettings()`). */
+    private fun openSettings() {
+        if (!isFinishing) startActivity(SettingsActivity.intent(this))
     }
 
     private fun onRenderGone() {
@@ -71,13 +210,43 @@ class ShellActivity : ComponentActivity() {
     }
 
     override fun onDestroy() {
+        bridge?.detach() // events and replies are posted through the view: let go of it before it is destroyed
+        bridge = null
+        fullscreen?.hide()
+        fullscreen = null
         webView?.destroy()
         webView = null
         super.onDestroy()
     }
 
-    private companion object {
-        const val MAX_RENDER_RESTARTS = 2
-        var renderRestarts = 0
+    companion object {
+        /** Intent extra: reload the page (the offline list reconnected). */
+        const val EXTRA_RELOAD = "app.friendflix.android.RELOAD"
+        /** Intent extra: an app path `/watch/<id>?…` to open in the web player (the native player handed it back). */
+        const val EXTRA_WEB_WATCH = "app.friendflix.android.WEB_WATCH"
+        /** Intent extra: an app path `/…` a server notification opens (validated again on arrival). */
+        const val EXTRA_OPEN_PATH = "app.friendflix.android.OPEN_PATH"
+        private const val MAX_RENDER_RESTARTS = 2
+        private const val PROBE_TIMEOUT_MS = 4_000L
+        private var renderRestarts = 0
     }
+}
+
+/**
+ * The shell has two entries: the exported launcher one (ShellActivity itself; any app can start it, so its extras are ignored) and the
+ * non-exported alias `ShellInternal` that the app's own hand-overs use (notification taps, the player's hand-back, the offline list).
+ */
+object ShellIntents {
+    const val INTERNAL = "app.friendflix.android.shell.ShellInternal"
+
+    /** An intent for the shell's internal entry (extras are added by the caller). */
+    fun internal(context: Context): Intent = Intent().setComponent(ComponentName(context.packageName, INTERNAL))
+
+    /** True when [intent] reached the shell through the internal entry (the component is the alias, which only the app can start). */
+    fun isInternal(intent: Intent?): Boolean = intent?.component?.className == INTERNAL
+}
+
+/** Android back walks the WebView history; at the first page it leaves the app. */
+internal fun shellBack(view: WebView?, finish: () -> Unit) {
+    if (view != null && view.canGoBack()) view.goBack() else finish()
 }

@@ -81,6 +81,7 @@ const en: Translation<typeof de> = {
   },
   settings: {
     pageTitle: 'Settings',
+    app: { title: 'App on this device', hint: 'Download storage, Wi-Fi only, background audio, notifications and signing out of this device are set in the app.', open: 'Open app settings' },
     title: 'Playback settings',
     lead: 'They apply on all your devices and only affect you.',
     autoplayNext: 'Autoplay next episode',
