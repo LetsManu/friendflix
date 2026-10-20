@@ -76,7 +76,7 @@ Everything else, such as playback languages, subtitles, autoplay and the default
 You start a download in the web UI as in the browser: the server creates the licence with its quality and expiry (see [downloads.md](downloads.md)), and the app takes over the transfer.
 
 - Downloads run as background jobs and continue after the app is closed, the network drops, or the phone restarts; an interrupted file resumes where it stopped. While a file transfers, Android shows a notification with the progress (without the title).
-- Files live in the app's own folder on the phone or the SD card (`Android/data/app.friendflix.android/files/downloads`). The app needs no storage permission. Other apps cannot use the files, and uninstalling the app removes them.
+- Files live in the app's own folder on the phone or the SD card (`Android/data/com.friendflix/files/downloads`). The app needs no storage permission. Other apps cannot use the files, and uninstalling the app removes them.
 - Text subtitles (SRT, VTT) and the poster are downloaded with the title. Image subtitles (PGS, VobSub) are not available offline.
 - When the card holding a download is taken out, the download shows as paused and continues when the card is back.
 - If the session on the server ends (signed out elsewhere, expired), downloads pause with a *Sign in again* notice and continue after the next sign-in.
@@ -189,7 +189,7 @@ From then on, every release tag (`vX.Y.Z`, cut by the *Release* workflow) builds
 1. In the Play Console, *Create app*: name FriendFlix, app (not game), free.
 2. Fill in what Google asks before testing (*Dashboard → Set up your app*): privacy policy URL (the app's policy is [privacy.md](privacy.md); use its GitHub address `https://github.com/LetsManu/friendflix/blob/main/docs/privacy.md`), app access (testers need a FriendFlix account on your server; give Google's reviewers a test account or explain that access is by invitation), ads (none), content rating, target audience, data safety. For data safety: the app sends what you do only to your own FriendFlix server; it contains no analytics or advertising SDK; Google's Cast SDK sends its own Cast telemetry to Google.
 3. *Test and release → Testing → Closed testing → Create track*, then *Create new release*. Play App Signing is on by default for new apps: keep *Google-generated key*.
-4. Upload `friendflix-android-X.Y.Z.aab` from the GitHub Release. The first upload fixes the package name `app.friendflix.android` for good.
+4. Upload `friendflix-android-X.Y.Z.aab` from the GitHub Release. The first upload fixes the package name `com.friendflix` for good.
 5. Roll the release out to the closed track. Google reviews it (usually hours to a few days).
 
 ### 4. Add testers
@@ -210,7 +210,7 @@ The app uses the WebView's app mode for passkeys (WebAuthn): Android's credentia
     "relation": ["delegate_permission/common.get_login_creds"],
     "target": {
       "namespace": "android_app",
-      "package_name": "app.friendflix.android",
+      "package_name": "com.friendflix",
       "sha256_cert_fingerprints": [
         "<SHA-256 OF THE PLAY APP SIGNING KEY>",
         "<SHA-256 OF YOUR UPLOAD KEY>"
@@ -237,7 +237,7 @@ Unit tests and the emulator in CI cover the logic; these points need a real phon
 5. Forgot PIN: *Forgot PIN* on a profile's PIN screen signs in again at the identity provider inside the app and comes back to set a new PIN.
 6. Passkeys: with `assetlinks.json` published (owner step 5), sign in with a passkey on the sign-in page. Without it no passkey is offered and password sign-in works.
 7. A title in the web player (for example after the native player handed it back): the fullscreen button fills the screen without system bars; Android back leaves fullscreen first.
-8. `adb shell am start -n app.friendflix.android/.shell.ShellActivity --es app.friendflix.android.OPEN_PATH /requests` opens the start page, not `/requests`; a notification tap still opens its page (it uses the non-exported entry).
+8. `adb shell am start -n com.friendflix/app.friendflix.android.shell.ShellActivity --es app.friendflix.android.OPEN_PATH /requests` opens the start page, not `/requests`; a notification tap still opens its page (it uses the non-exported entry).
 9. Android 13+: the notification permission is asked once on the first start, never again by itself; *Allow notifications* in the app settings asks again or opens Android's settings after two refusals.
 
 **Downloads and storage**

@@ -2,7 +2,7 @@
 
 *English: [../privacy.md](../privacy.md)*
 
-Stand: 20. Oktober 2026. App: FriendFlix (`app.friendflix.android`), veröffentlicht von Manuel Weißböck.
+Stand: 20. Oktober 2026. App: FriendFlix (`com.friendflix`), veröffentlicht von Manuel Weißböck.
 
 ## Kurz gesagt
 

@@ -5,6 +5,7 @@ All notable changes, grouped by what you notice. Each release has its own sectio
 ## [Unreleased]
 
 ### Android app
+- **App id is now `com.friendflix`** (was `app.friendflix.android`), matching the app in Google Play. No APK with the old id was ever attached to a release, so nobody has to reinstall.
 - **Account deletion page** for the Play Console's deletion link: [docs/account-deletion.md](docs/account-deletion.md) ([Deutsch](docs/de/account-deletion.md)).
 - **Privacy policy** for the app, linked from the Play Console listing: [docs/privacy.md](docs/privacy.md) ([Deutsch](docs/de/privacy.md)).
 

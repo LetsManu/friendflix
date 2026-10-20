@@ -2,7 +2,7 @@
 
 *Deutsch: [de/privacy.md](de/privacy.md)*
 
-Effective: 20 October 2026. App: FriendFlix (`app.friendflix.android`), published by Manuel Weißböck.
+Effective: 20 October 2026. App: FriendFlix (`com.friendflix`), published by Manuel Weißböck.
 
 ## In short
 
