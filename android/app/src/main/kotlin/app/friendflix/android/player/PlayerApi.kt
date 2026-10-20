@@ -73,6 +73,8 @@ data class PlayerPrefs(
     val animeOriginal: Boolean = false,
     /** post-play suggestions switched on for the profile */
     val postplay: Boolean = true,
+    /** unwatched episodes show no picture (web spoiler.ts) */
+    val spoilerProtection: Boolean = false,
 )
 
 /** What this server / account offers the player (`/api/me`); a flag that is not sent counts as true, like the web. */
@@ -224,6 +226,7 @@ class PlayerApi(val server: ServerApi, private val profileId: String) {
             audioFx = p.optString("audioFx").takeIf { it in AUDIO_FX } ?: "off",
             animeOriginal = p.optBoolean("animeOriginal", false),
             postplay = p.optBoolean("postplay", true),
+            spoilerProtection = p.optBoolean("spoilerProtection", false),
         )
     }
 
@@ -440,7 +443,8 @@ class PlayerApi(val server: ServerApi, private val profileId: String) {
         private fun int(o: JSONObject, k: String) = if (o.has(k) && !o.isNull(k)) o.optInt(k) else null
 
         /** The item's poster path when the server says it has one (`image: true`), like web `img()`. */
-        private fun imageOf(o: JSONObject, width: Int): String? =
+        /** the same-origin poster path of an item that has one (`image: true`) */
+        internal fun imageOf(o: JSONObject, width: Int): String? =
             if (o.optBoolean("image", false)) o.optString("id").takeIf { it.isNotEmpty() }?.let { "/media/Items/$it/Images/Primary?maxWidth=$width&quality=85" } else null
 
         private fun lang(o: JSONObject) = if (o.isNull("language")) null else o.optString("language").takeIf { it.isNotEmpty() }

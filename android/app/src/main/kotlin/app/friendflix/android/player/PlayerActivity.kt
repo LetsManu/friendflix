@@ -69,6 +69,7 @@ import app.friendflix.android.offline.OfflineMedia
 import app.friendflix.android.offline.Prepared
 import app.friendflix.android.player.panels.EpisodesPanel
 import app.friendflix.android.player.panels.EpisodesSource
+import app.friendflix.android.player.panels.PostPlayPanel
 import app.friendflix.android.player.panels.SubtitleSearchPanel
 import app.friendflix.android.player.panels.TracksActions
 import app.friendflix.android.player.panels.TracksState
@@ -129,6 +130,7 @@ class PlayerActivity : FragmentActivity() {
     private lateinit var nextRing: ProgressBar
     private lateinit var stillCard: LinearLayout
     private lateinit var stillText: TextView
+    private lateinit var ppCard: LinearLayout
     private lateinit var errorBox: LinearLayout
     private lateinit var errorText: TextView
     private lateinit var errorRetry: Button
@@ -159,6 +161,8 @@ class PlayerActivity : FragmentActivity() {
     private var item: ItemInfo? = null
     private var nextItem: ItemInfo? = null
     private var flow: EpisodeFlow? = null
+    /** the post-play card, screen and "More like this" of the title on show ([PostPlayFlow]); null until it is loaded */
+    private var postPlay: PostPlayFlow? = null
     private var audioIndex: Int? = null
     /** the viewer's subtitle choice: null = off; the wanted index is applied once the tracks are known */
     private var subIndex: Int? = null
@@ -257,6 +261,7 @@ class PlayerActivity : FragmentActivity() {
         nextRing = findViewById(R.id.player_next_ring)
         stillCard = findViewById(R.id.player_still)
         stillText = findViewById(R.id.player_still_text)
+        ppCard = findViewById(R.id.player_postplay)
         errorBox = findViewById(R.id.player_error)
         errorText = findViewById(R.id.player_error_text)
         errorRetry = findViewById(R.id.player_error_retry)
@@ -274,6 +279,8 @@ class PlayerActivity : FragmentActivity() {
         findViewById<View>(R.id.player_next_credits).setOnClickListener { flow?.watchCredits(); render() }
         findViewById<View>(R.id.player_still_go).setOnClickListener { goNext(flow?.keepWatching()) }
         findViewById<View>(R.id.player_still_back).setOnClickListener { finish() }
+        findViewById<View>(R.id.player_postplay_close).setOnClickListener { postPlay?.closeCard(); ppCard.visibility = View.GONE }
+        findViewById<View>(R.id.player_postplay_open).setOnClickListener { postPlay?.let { pp -> pp.openCard()?.let { onPostPlayEnd(pp, it) } } }
         findViewById<View>(R.id.player_error_back).setOnClickListener { finish() }
         errorRetry.setOnClickListener { retries = 0; hideError(); reload(resumePos()) }
         ViewCompat.setOnApplyWindowInsetsListener(findViewById(R.id.player_root)) { v, insets ->
@@ -392,6 +399,7 @@ class PlayerActivity : FragmentActivity() {
         }
         withContext(Dispatchers.Main) {
             flow = f
+            postPlay = PostPlayFlow(a.itemId, movie = cur?.type == "Movie")
             if (cfg != null) { castEnabled = cfg.enabled; updateCastButton() }
             view.subtitleView?.let { v -> applyCaptionLook(v, prefs.subtitleStyle) }
             if (!fxTouched) setFx(prefs.audioFx) // the server's mode wins until a switch is flipped here (web adoptFxPref)
@@ -481,7 +489,7 @@ class PlayerActivity : FragmentActivity() {
         reporter = { reporter },
         offline = { offlineProgress },
         onPlayRequested = ::checkOfflineAfterLongPause,
-        onEnded = { flow?.onEnded(); controls.titleEnded(); render() },
+        onEnded = { flow?.onEnded(); controls.titleEnded(); render(); onTitleEnded() },
     )
 
     private val listener = object : Player.Listener {
@@ -563,7 +571,7 @@ class PlayerActivity : FragmentActivity() {
             if (retries > 0) flash(getString(R.string.player_reconnected), 1_500)
             retries = 0
         }
-        val f = flow ?: run { skipButton.visibility = View.GONE; nextCard.visibility = View.GONE; stillCard.visibility = View.GONE; return }
+        val f = flow ?: run { skipButton.visibility = View.GONE; nextCard.visibility = View.GONE; stillCard.visibility = View.GONE; ppCard.visibility = View.GONE; return }
         f.holdAutoplay = controls.sleep.afterEpisode
         val cur = player.currentPosition / 1000.0
         f.autoSkip(cur)?.let { target ->
@@ -573,6 +581,84 @@ class PlayerActivity : FragmentActivity() {
         val step = f.update(cur, player.isPlaying, player.playbackState == Player.STATE_ENDED, dt)
         if (step.goNext) { goNext(step); return }
         render(step.card)
+        updatePostPlay(cur)
+    }
+
+    // ---- post-play (web watch page ppCard / prefetchPostplay / onEnded / loadSimilar) ----
+
+    private fun ppWanted(): Boolean = postplayWanted(
+        item?.type, hasNextEpisode = nextItem != null, feature = serverCaps.postplay, pref = prefs.postplay,
+        casting = cast?.casting == true, online = api != null && offlineLicense == null && args.licenseId == null,
+    )
+
+    /** the card from the post-play time on; the answer (or a film's similar titles) is fetched from then */
+    private fun updatePostPlay(curSec: Double) {
+        val pp = postPlay
+        val f = flow
+        if (pp == null || f == null) { ppCard.visibility = View.GONE; return }
+        val at = postplayAtSec(f.duration, f.segments, controls.chapters)
+        val wanted = ppWanted()
+        pp.fetch(wanted, curSec, at)?.let { fetchPostPlay(pp, it) }
+        val show = pp.card(wanted, curSec, at) && !isInPip() && errorBox.visibility != View.VISIBLE
+        ppCard.visibility = if (show) View.VISIBLE else View.GONE
+    }
+
+    private fun fetchPostPlay(pp: PostPlayFlow, what: PostPlayFlow.Fetch) {
+        val pa = api ?: return
+        val id = args.itemId
+        lifecycleScope.launch {
+            val end = when (what) {
+                PostPlayFlow.Fetch.POSTPLAY -> {
+                    val d = withContext(Dispatchers.IO) { runCatching { pa.postplay(id) }.getOrNull() }
+                    if (postPlay !== pp) return@launch // another title meanwhile
+                    pp.loaded(d)
+                }
+                PostPlayFlow.Fetch.SIMILAR -> {
+                    val list = withContext(Dispatchers.IO) { runCatching { pa.similar(id) }.getOrNull() }
+                    if (postPlay !== pp) return@launch
+                    pp.similarLoaded(list)
+                }
+            }
+            end?.let { onPostPlayEnd(pp, it) }
+        }
+    }
+
+    /** the title ended here (never on the TV): the post-play screen, "More like this", or the player closes as before */
+    private fun onTitleEnded() {
+        val pp = postPlay ?: return
+        if (cast?.casting == true) return
+        val end = pp.onEnded(ppWanted())
+        if (end == PostPlayFlow.End.Wait) { updatePostPlay(player.currentPosition / 1000.0); return } // acts once the answer is in
+        onPostPlayEnd(pp, end)
+    }
+
+    private fun onPostPlayEnd(pp: PostPlayFlow, end: PostPlayFlow.End) {
+        if (released || postPlay !== pp || cast?.casting == true) return
+        when (end) {
+            is PostPlayFlow.End.Open -> openPostPlay(end.data)
+            is PostPlayFlow.End.More -> api?.let { pa ->
+                controls.showTitlePanel(getString(R.string.player_more_like_this), PostPlayPanel.more(this, lifecycleScope, imageLoader(pa), end.titles, ::openTitle))
+            }
+            PostPlayFlow.End.Finish -> finish()
+            PostPlayFlow.End.Failed -> { ppCard.visibility = View.GONE; flash(getString(R.string.player_postplay_error), ERROR_FLASH_MS) }
+            PostPlayFlow.End.Wait, PostPlayFlow.End.Stay -> Unit
+        }
+    }
+
+    /** the post-play screen over the finished (or paused) title; a title played from it goes through [playItem] */
+    private fun openPostPlay(data: JSONObject) {
+        val pa = api ?: return
+        ppCard.visibility = View.GONE
+        if (player.playWhenReady) player.pause() // web openPostplay: nothing plays under the screen
+        lateinit var content: View
+        content = PostPlayPanel.build(
+            this, lifecycleScope, pa, imageLoader(pa), data,
+            onPlay = { id -> controls.panel.close(); playItem(id) },
+            onOpenTitle = ::openTitle,
+            spoilerProtection = prefs.spoilerProtection,
+            onBack = { controls.panel.close() },
+        )
+        controls.showTitlePanel(getString(R.string.player_postplay_title), content) { PostPlayPanel.closed(content) }
     }
 
     private fun render(card: FlowCard? = null) {
@@ -651,6 +737,7 @@ class PlayerActivity : FragmentActivity() {
         stream = null
         attachedAt = null
         flow = null
+        postPlay = null
         nextItem = null
         langs = null
         audioIndex = null
@@ -659,6 +746,7 @@ class PlayerActivity : FragmentActivity() {
         player.stop()
         nextCard.visibility = View.GONE
         stillCard.visibility = View.GONE
+        ppCard.visibility = View.GONE
     }
 
     /** a title picked while casting starts on the TV (the cast session switches its token); the local player stays stopped */
@@ -891,6 +979,7 @@ class PlayerActivity : FragmentActivity() {
         view.useController = !isInPictureInPictureMode && !controls.locked
         if (isInPictureInPictureMode) view.hideController()
         render()
+        if (isInPictureInPictureMode) ppCard.visibility = View.GONE
         // the picture-in-picture window was closed (not expanded): playback ends with it
         if (!isInPictureInPictureMode && !lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)) finish()
     }
@@ -1042,6 +1131,7 @@ class PlayerActivity : FragmentActivity() {
             this@PlayerActivity.item = item
             nextItem = null
             flow = null
+            postPlay = null
             audioIndex = null
             subIndex = null
             args = args.copy(itemId = item.id, startMs = null, audio = null, subtitle = null)
@@ -1101,6 +1191,7 @@ class PlayerActivity : FragmentActivity() {
         skipButton.visibility = View.GONE
         nextCard.visibility = View.GONE
         stillCard.visibility = View.GONE
+        ppCard.visibility = View.GONE
         view.player = link.player
         view.controllerShowTimeoutMs = 0 // a remote: the controls stay
         controls.onCasting() // first: a lock is lifted, else the controller could not show
@@ -1146,12 +1237,14 @@ class PlayerActivity : FragmentActivity() {
         stream = null
         attachedAt = null
         flow = null
+        postPlay = null
         nextItem = null
         langs = null
         audioIndex = null
         forcedHls = false
         retries = 0
         player.stop()
+        ppCard.visibility = View.GONE
         args = a
         start(a, handed?.offline)
     }
@@ -1249,6 +1342,7 @@ class PlayerActivity : FragmentActivity() {
         skipButton.visibility = View.GONE
         nextCard.visibility = View.GONE
         stillCard.visibility = View.GONE
+        ppCard.visibility = View.GONE
         updatePip()
     }
 
@@ -1334,6 +1428,7 @@ class PlayerActivity : FragmentActivity() {
         private const val OFFLINE_RECHECK_MS = 5 * 60_000L
         private const val PIP_MIN_RATIO = 0.42f
         private const val PIP_MAX_RATIO = 2.39f
+        private const val ERROR_FLASH_MS = 2_500L
 
         fun intent(context: Context, req: PlayRequest, token: String): Intent = Intent(context, PlayerActivity::class.java)
             .putExtra(EXTRA_ITEM, req.itemId)

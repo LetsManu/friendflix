@@ -3,7 +3,7 @@
   SPDX-FileCopyrightText: 2026 Manuel Weißböck
   SPDX-License-Identifier: AGPL-3.0-or-later
 -->
-<resources>
+<resources xmlns:tools="http://schemas.android.com/tools">
     <string name="setup_title">Mit deinem Server verbinden</string>
     <string name="setup_hint">Adresse deines FriendFlix-Servers</string>
     <string name="setup_connect">Verbinden</string>
@@ -251,4 +251,37 @@
     <string name="settings_sign_out_yes">Abmelden und löschen</string>
     <string name="settings_cancel">Abbrechen</string>
     <string name="settings_version">Version %1$s (%2$d)</string>
+
+    <!-- Post-play (web postplay.ts) und „Mehr davon“ (web player.watch.more) -->
+    <string name="player_postplay_card">Fertig? Sieh dir an, was als Nächstes kommt</string>
+    <string name="player_postplay_title">Was als Nächstes?</string>
+    <string name="player_postplay_card_close">Hinweis ausblenden</string>
+    <string name="player_postplay_just_watched">Gerade gesehen · %1$s</string>
+    <string name="player_postplay_head_movie_end">Du hast „%1$s“ gesehen</string>
+    <string name="player_postplay_head_series_finished">Du hast „%1$s“ zu Ende geschaut</string>
+    <string name="player_postplay_head_caught_up">Du bist auf dem neuesten Stand</string>
+    <string name="player_postplay_head_gap">Folge %1$s ist noch ungesehen</string>
+    <string name="player_postplay_head_next_part">Als Nächstes in „%1$s“: %2$s</string>
+    <string name="player_postplay_head_next_episode">Als Nächstes: %1$s</string>
+    <string name="player_postplay_sub_caught_up">Alle verfügbaren Folgen von „%1$s“ gesehen.</string>
+    <string name="player_postplay_sub_next_air">Nächste Folge am %1$s</string>
+    <string name="player_postplay_sub_no_date">Für die nächste Folge gibt es noch keinen Termin.</string>
+    <string name="player_postplay_sub_gap">„%1$s“: Diese Folge hast du übersprungen.</string>
+    <string name="player_postplay_play_title">„%1$s“ abspielen</string>
+    <!-- the web's wording (postplay.action.jumpBack); lint takes "Zu Folge" for "zufolge" -->
+    <string name="player_postplay_jump_back" tools:ignore="Typos">Zu Folge %1$s springen</string>
+    <string name="player_postplay_back">Zurück zum Titel</string>
+    <string name="player_postplay_row_continuation">Weiter geht’s</string>
+    <string name="player_postplay_row_transition">Was andere nach „%1$s“ schauen</string>
+    <string name="player_postplay_row_universe">Aus derselben Welt: %1$s</string>
+    <string name="player_postplay_row_because">Weil du „%1$s“ gesehen hast</string>
+    <string name="player_postplay_row_friends">Deinen Freunden hat das gefallen</string>
+    <string name="player_postplay_row_taste">Passt zu deinem Geschmack</string>
+    <string name="player_postplay_why_seed">Wegen „%1$s“</string>
+    <string name="player_postplay_why_friends">Von Freunden gut bewertet</string>
+    <string name="player_postplay_spoiler">Ungesehene Folge: Vorschau ausgeblendet</string>
+    <string name="player_postplay_episode">S%1$s:E%2$s · %3$s</string>
+    <string name="player_postplay_error">Die Vorschläge konnten nicht geladen werden.</string>
+    <string name="player_postplay_empty">Gerade haben wir keine Vorschläge für dich.</string>
+    <string name="player_more_like_this">Mehr davon</string>
 </resources>

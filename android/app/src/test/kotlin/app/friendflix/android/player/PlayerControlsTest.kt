@@ -223,6 +223,21 @@ class PlayerControlsTest {
         assertEquals(View.GONE, badge.visibility)
     }
 
+    @Test fun titlePanelClosesOnATitleSwitchAndInPip() {
+        var closed = 0
+        controls.showTitlePanel("What’s next?", TextView(activity)) { closed++ }
+        assertTrue(controls.panel.isOpen)
+        controls.newTitle() // the post-play screen belongs to the finished title
+        assertFalse(controls.panel.isOpen)
+        assertEquals(1, closed)
+        controls.showTitlePanel("What’s next?", TextView(activity))
+        controls.onCasting()
+        assertFalse(controls.panel.isOpen)
+        host.pip = true
+        assertFalse(controls.showTitlePanel("What’s next?", TextView(activity))) // never in picture-in-picture
+        assertFalse(controls.panel.isOpen)
+    }
+
     @Test fun speedIsNotOfferedWhileCasting() {
         host.casting = true
         controls.openMore()

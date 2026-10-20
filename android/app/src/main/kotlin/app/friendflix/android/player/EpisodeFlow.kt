@@ -76,7 +76,7 @@ class StillWatching(private val now: () -> Long) {
  * - at the credits an episode with a next one shows the next-up card; with autoplay on (and no "still there?") a [COUNTDOWN_MS]
  *   countdown runs only while the title plays (or has ended); seeking out of the credits hides the card and stops it
  * - "still there?" replaces the countdown when [StillWatching.shouldAsk]
- * Films get no card here (the web's "more like this" / post-play screen stay in the web UI).
+ * Films get no card here (the post-play card and screen and "More like this" are [PostPlayFlow]).
  */
 class EpisodeFlow(
     segments: List<Segment>,

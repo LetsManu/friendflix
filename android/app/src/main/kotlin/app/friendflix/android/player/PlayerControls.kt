@@ -256,6 +256,18 @@ class PlayerControls(
         panel.show(activity.getString(R.string.player_info), content)
     }
 
+    /**
+     * A panel of the title on show that the activity builds (the post-play screen, "More like this"): it closes with a title switch
+     * ([clearTitleExtras]) like Scenes and Bookmarks; never in picture-in-picture (false then).
+     */
+    fun showTitlePanel(title: CharSequence, content: View, onClose: () -> Unit = {}): Boolean {
+        if (host.inPip()) return false
+        unlock(announce = false) // the title is over: the viewer needs the screen
+        extrasPanel = content
+        panel.show(title, content, onClose)
+        return true
+    }
+
     private fun share(url: String) {
         try { activity.startActivity(BookmarksPanel.shareIntent(url)) } catch (_: ActivityNotFoundException) { }
     }

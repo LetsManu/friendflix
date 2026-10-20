@@ -34,4 +34,12 @@
     <item name="more_bookmarks" type="id" />
     <item name="info_back" type="id" />
     <item name="info_content" type="id" />
+    <item name="postplay_content" type="id" />
+    <item name="postplay_head" type="id" />
+    <item name="postplay_play" type="id" />
+    <item name="postplay_back" type="id" />
+    <item name="postplay_rows" type="id" />
+    <item name="postplay_row_items" type="id" />
+    <item name="postplay_similar" type="id" />
+    <item name="postplay_empty" type="id" />
 </resources>
