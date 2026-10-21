@@ -10,7 +10,7 @@ const steps = (page: import('@playwright/test').Page) => card(page).locator('ol.
 test.describe('admin update with the opt-in updater (desktop)', () => {
   test.beforeEach(({ api }) => { api.asAdmin = true; });
   // the fake backend answers 502 while it "restarts" during a job
-  test.use({ allowedConsole: /status of (502 \(Bad Gateway\)|401 \(Unauthorized\))/ });
+  test.use({ allowedConsole: /status of 502 \(Bad Gateway\)/ });
 
   test('without an updater the page keeps the manual steps', async ({ page }) => {
     await page.goto('/admin/update');

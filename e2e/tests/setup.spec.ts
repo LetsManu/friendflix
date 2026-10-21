@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import type { Page } from '@playwright/test';
 import { expect, test } from '../fixtures.js';
+import { done, installLogin, loginState, password } from '../mocks/login.js';
 import { SETUP_CODE, setupState } from '../mocks/setup.js';
 
 // The setup wizard (/setup, spec Part F): a new install without users answers 503 setup_required, the wizard opens with the code from
@@ -304,6 +305,74 @@ test.describe('setup extras (/setup/extras)', () => {
     await page.getByRole('button', { name: 'Fertig' }).click();
     await expect(page).toHaveURL(/127\.0\.0\.1:\d+\/$/);
     expect(api.settings.puts).toEqual([]);
+  });
+
+  test.describe('re-authentication in place', () => {
+    test.use({ allowedConsole: /status of 401/ }); // the first try answers 401 reauth_required
+
+    test('extras: once the setup sign-in ran out, save, push keys and the webhook secret ask for the sign-in in place, then run once more', async ({ page, api }) => {
+      const webhook = api.settings.groups.find((g) => g.id === 'general')!.items.find((i) => i.key === 'WEBHOOK_SECRET')!;
+      webhook.set = false; webhook.source = 'unset';
+      const st = loginState({ starts: [() => ({ body: password('admin') })], answers: [() => { api.settings.reauthRequired = false; return { body: done('') }; }] });
+      await installLogin(page.context(), st);
+      let classic = 0, generates = 0;
+      page.on('request', (r) => {
+        const p = new URL(r.url()).pathname;
+        if (p === '/auth/reauth') classic++;
+        if (p === '/api/admin/settings/generate') generates++;
+      });
+      const dlg = page.getByRole('dialog', { name: 'Erneut anmelden' });
+      const signIn = async () => {
+        await dlg.getByLabel('Passwort', { exact: true }).fill('hunter2-fixture');
+        await dlg.getByRole('button', { name: 'Anmelden' }).click();
+        await expect(dlg).toHaveCount(0);
+      };
+      await page.goto('/setup/extras');
+      // save
+      api.settings.reauthRequired = true;
+      const sources = page.locator('section', { has: page.getByRole('heading', { level: 2, name: 'Datenquellen' }) });
+      await sources.getByRole('button', { name: 'OMDb-API-Schlüssel ersetzen' }).click();
+      await sources.getByLabel('Neuer Wert').fill('omdb-placeholder');
+      await sources.getByRole('button', { name: 'Speichern' }).click();
+      await signIn();
+      await expect(sources.getByText('Erledigt', { exact: true })).toBeVisible();
+      expect(api.settings.puts).toEqual([{ values: { OMDB_API_KEY: 'omdb-placeholder' } }, { values: { OMDB_API_KEY: 'omdb-placeholder' } }]);
+      // push keys
+      api.settings.reauthRequired = true;
+      const push = page.locator('section', { has: page.getByRole('heading', { level: 2, name: 'Push-Mitteilungen' }) });
+      await push.getByRole('button', { name: 'Push-Schlüssel erzeugen' }).click();
+      await signIn();
+      await expect(push.getByText('Gesetzt', { exact: true })).toBeVisible();
+      expect(generates).toBe(2);
+      // webhook secret
+      api.settings.reauthRequired = true;
+      const hooks = page.locator('section', { has: page.getByRole('heading', { level: 2, name: 'Webhooks' }) });
+      await hooks.getByRole('button', { name: 'Webhook-Geheimnis erzeugen' }).click();
+      await signIn();
+      await expect(hooks.getByLabel('Webhook-Geheimnis')).toHaveValue(/^[0-9a-f]{64}$/);
+      expect(generates).toBe(4);
+      expect(st.calls.filter((c) => c.path === '/auth/flow/start')).toHaveLength(3);
+      expect(classic).toBe(0);
+      await expect(page).toHaveURL(/\/setup\/extras$/);
+    });
+
+    test('extras: still refused right after the sign-in says the sign-in could not be confirmed; no second round', async ({ page, api }) => {
+      api.settings.reauthRequired = true; // stays: the backend keeps refusing
+      const st = loginState({ starts: [() => ({ body: password('admin') })], answers: [{ body: done('') }] });
+      await installLogin(page.context(), st);
+      await page.goto('/setup/extras');
+      const sources = page.locator('section', { has: page.getByRole('heading', { level: 2, name: 'Datenquellen' }) });
+      await sources.getByRole('button', { name: 'OMDb-API-Schlüssel ersetzen' }).click();
+      await sources.getByLabel('Neuer Wert').fill('omdb-placeholder');
+      await sources.getByRole('button', { name: 'Speichern' }).click();
+      const dlg = page.getByRole('dialog', { name: 'Erneut anmelden' });
+      await dlg.getByLabel('Passwort', { exact: true }).fill('hunter2-fixture');
+      await dlg.getByRole('button', { name: 'Anmelden' }).click();
+      await expect(page.getByRole('region', { name: 'Hinweise' }).getByText('Die Anmeldung konnte nicht bestätigt werden. Bitte versuch es noch einmal.')).toBeVisible();
+      await expect(dlg).toHaveCount(0);
+      expect(st.calls.filter((c) => c.path === '/auth/flow/start')).toHaveLength(1);
+      expect(api.settings.puts).toHaveLength(2);
+    });
   });
 
   test('extras: a card saves only its own changed keys', async ({ page, api }) => {

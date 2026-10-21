@@ -206,6 +206,60 @@ test.describe('admin: settings', () => {
     expect(await page.evaluate(() => sessionStorage.getItem('ff_settings_pending'))).toBeNull();
   });
 
+  test('re-authentication in place for "Generate": confirmed once, signed in, generated once more (no second confirmation)', async ({ page, api }) => {
+    api.settings.reauthRequired = true;
+    await installLogin(page.context(), loginState({ starts: [{ body: password('admin') }], answers: [() => { api.settings.reauthRequired = false; return { body: done('') }; }] }));
+    let generates = 0, confirms = 0;
+    page.on('request', (r) => { if (new URL(r.url()).pathname === '/api/admin/settings/generate') generates++; });
+    await page.goto('/admin/settings');
+    const row = setting(page, 'Webhook-Geheimnis');
+    await row.getByRole('button', { name: 'Webhook-Geheimnis: Neu erzeugen' }).click();
+    const ask = page.getByRole('alertdialog');
+    await ask.getByRole('button', { name: 'Neu erzeugen' }).click();
+    confirms++;
+    const dlg = page.getByRole('dialog', { name: 'Erneut anmelden' });
+    await dlg.getByLabel('Passwort', { exact: true }).fill('hunter2-fixture');
+    await dlg.getByRole('button', { name: 'Anmelden' }).click();
+    await expect(row.getByLabel('Neues Webhook-Geheimnis')).toHaveValue(/^0f1e2d3c/);
+    await expect(ask).toHaveCount(0);
+    expect([generates, confirms]).toEqual([2, 1]);
+  });
+
+  test('the dialog\'s "confirm with a passkey instead" goes through /auth/reauth back to this page, the change kept for it', async ({ page, api }) => {
+    api.settings.reauthRequired = true;
+    await installLogin(page.context(), loginState({ starts: [{ body: password('admin') }] }));
+    let next: string | null = null;
+    await page.route('**/auth/reauth?**', (r) => {
+      next = new URL(r.request().url()).searchParams.get('next');
+      return r.fulfill({ status: 200, contentType: 'text/html', body: '<p>sign in</p>' });
+    });
+    await page.goto('/admin/settings');
+    await setting(page, 'Admin-Gruppe').getByRole('textbox').fill('ff-admins');
+    await card(page, 'Anmeldung').getByRole('button', { name: 'Speichern' }).click();
+    const stash = page.evaluate(() => sessionStorage.getItem('ff_settings_pending'));
+    expect(await stash).toContain('ff-admins');
+    await page.getByRole('dialog', { name: 'Erneut anmelden' }).getByRole('button', { name: 'Stattdessen mit Passkey bestätigen' }).click();
+    await expect.poll(() => next).toBe('/admin/settings?resume=1');
+  });
+
+  test('each request opens a fresh dialog: closed once, the next save starts a new sign-in', async ({ page, api }) => {
+    api.settings.reauthRequired = true;
+    const st = loginState({ starts: [() => ({ body: password('admin') })] });
+    await installLogin(page.context(), st);
+    await page.goto('/admin/settings');
+    await setting(page, 'Admin-Gruppe').getByRole('textbox').fill('ff-admins');
+    const dlg = page.getByRole('dialog', { name: 'Erneut anmelden' });
+    for (let i = 1; i <= 2; i++) {
+      await card(page, 'Anmeldung').getByRole('button', { name: 'Speichern' }).click();
+      await expect(dlg.getByLabel('Passwort', { exact: true })).toHaveValue('');
+      await dlg.getByLabel('Passwort', { exact: true }).fill(`typed-${i}`);
+      await page.keyboard.press('Escape');
+      await expect(dlg).toHaveCount(0);
+    }
+    expect(st.calls.filter((c) => c.path === '/auth/flow/start')).toHaveLength(2);
+    expect(api.settings.puts).toHaveLength(2);
+  });
+
   test('re-authentication (classic): a non-secret change is restored and saved after the sign-in', async ({ page, api }) => {
     await classicSignIn(page);
     api.settings.reauthRequired = true;

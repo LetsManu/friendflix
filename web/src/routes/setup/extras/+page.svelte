@@ -71,8 +71,8 @@
   }
 
   /** a refused action that needs a recent sign-in: sign in again in place, then the action once more (a second refusal is an error) */
-  async function signInAgain(again: boolean, retry: () => Promise<void>, failed: string): Promise<void> {
-    if (!again) { toast.error(failed); return; }
+  async function signInAgain(again: boolean, retry: () => Promise<void>): Promise<void> {
+    if (!again) { toast.error(tr('account.account.reauthFailed')); return; }
     if (await reauthenticate(SELF)) await retry();
   }
 
@@ -88,7 +88,7 @@
       await load();
       return;
     }
-    if (isReauthError(res.error)) return signInAgain(again, () => save(card, keys, false), tr('setup.extras.saveFailed'));
+    if (isReauthError(res.error)) return signInAgain(again, () => save(card, keys, false));
     const fe = fieldErrors(res.error), pf = probeFailure(res.error);
     if (fe) errors = { ...errors, ...fe };
     if (pf) notes = { ...notes, [card]: tr('settings.probeFailed', { reason: probeText(pf) }) };
@@ -111,7 +111,7 @@
     // only the public key comes back; it is not shown either: "set" says enough
     const res = await runAction({ key: 'extras:push', run: () => generate('vapidPair'), success: tr('setup.extras.cards.push.done'), error: false });
     if (res.ok) await load();
-    else if (isReauthError(res.error)) await signInAgain(again, () => runGenPush(false), tr('setup.extras.cards.push.failed'));
+    else if (isReauthError(res.error)) await signInAgain(again, () => runGenPush(false));
     else if (!res.skipped) toast.error(tr('setup.extras.cards.push.failed'));
   }
 
@@ -125,7 +125,7 @@
   async function runGenWebhook(again = true): Promise<void> {
     const res = await runAction({ key: 'extras:webhook', run: () => generate('webhookSecret'), error: false });
     if (res.ok && res.value) { secret = res.value.secret; await load(); return; }
-    if (isReauthError(res.error)) return signInAgain(again, () => runGenWebhook(false), tr('setup.extras.cards.webhooks.failed'));
+    if (isReauthError(res.error)) return signInAgain(again, () => runGenWebhook(false));
     if (!res.skipped) toast.error(tr('setup.extras.cards.webhooks.failed'));
   }
 
