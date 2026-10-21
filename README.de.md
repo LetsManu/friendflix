@@ -241,7 +241,7 @@ Eine neue Installation braucht davon nichts: Einrichtungsassistent und *Admin �
 | `BIND_ADDR` | `127.0.0.1` | Host-Adresse für die drei Ports – nie eine öffentliche Schnittstelle |
 | `WEB_PORT`, `BACKEND_PORT`, `GATEWAY_PORT` | `3080`, `3081`, `3082` | Host-Ports für den Reverse Proxy |
 | `FF_REGISTRY`, `FF_TAG` | `ghcr.io/letsmanu`, `latest` | Herkunft und Tag der Images. **Nur ohne Updater** (`compose.no-updater.yaml`): `FF_TAG` ist dann der Release-Kanal: `latest` = stabile Releases, `nightly` = jeder grüne Commit auf main, `2` / `2.0` / `2.0.0` (oder `sha-<7>`) zum Festnageln ([Release-Kanäle](docs/de/setup.md#release-kanäle-ohne-updater)). Mit Updater weglassen: den Kanal wählt *Admin → Update* |
-| `SESSION_TTL_SECONDS`, `SESSION_IDLE_SECONDS` | `28800`, `7200` | Maximale Sitzungsdauer (8 h) und Ablauf bei Inaktivität (2 h) |
+| `SESSION_TTL_SECONDS`, `SESSION_IDLE_SECONDS` | `7776000`, `7776000` | Maximale Sitzungsdauer und Ablauf bei Inaktivität (beide 90 Tage) |
 | `TZ` | `Europe/Vienna` | Zeitzone für geplante Jobs (Rückblick, Wiedergabe-Check, Backups) |
 | `AUTHENTIK_URL`, `AUTHENTIK_API_TOKEN`, `AUTHENTIK_ENROLL_FLOW` | leer | Einladungen, die auch das Authentik-Konto anlegen (alle drei nötig); URL und Token liefern der Admin-Nutzerseite auch den Zwei-Faktor-Stand und *Passwort-Link senden* |
 | `AUTHENTIK_RECOVERY_FLOW`, `AUTHENTIK_TOTP_SETUP_FLOW` | `default-recovery-flow`, `default-authenticator-totp-setup` | Wiederherstellungs-Flow, dessen E-Mail-Stage den Passwort-Link sendet (Authentik 2024.4 oder neuer); der zweite ist reserviert. Siehe [docs/de/authentik.md](docs/de/authentik.md#10-passwort-wiederherstellung-per-e-mail) |
