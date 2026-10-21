@@ -40,14 +40,21 @@ describe('migration 42: old session defaults', () => {
     await migrate(pool);
     expect(await stored()).toEqual({ CAST_ENABLED: false });
     expect((await readRows(pool)).rev).toBeGreaterThan(before);
+    // audited like a save, by the system (no actor), key names only
+    expect((await pool.query("select actor, target, meta from audit_log where action = 'settings.update'")).rows)
+      .toEqual([{ actor: null, target: null, meta: { keys: ['SESSION_IDLE_SECONDS', 'SESSION_TTL_SECONDS'], reason: 'session_defaults' } }]);
   });
 
   it('a value the admin chose stays (also the other key\'s old default, and a string form is matched exactly)', async () => {
-    await pool.query('delete from settings');
+    await pool.query('delete from settings; delete from audit_log');
     await writeRows(pool, encKey, { SESSION_TTL_SECONDS: 7200, SESSION_IDLE_SECONDS: 28800 }, null);
+    const rev = (await readRows(pool)).rev;
     await rewind();
     await migrate(pool);
     expect(await stored()).toEqual({ SESSION_TTL_SECONDS: 7200, SESSION_IDLE_SECONDS: 28800 });
+    // nothing removed: no revision, no audit entry
+    expect((await readRows(pool)).rev).toBe(rev);
+    expect((await pool.query("select 1 from audit_log where action = 'settings.update'")).rowCount).toBe(0);
 
     await pool.query('delete from settings');
     await writeRows(pool, encKey, { SESSION_TTL_SECONDS: 28801, SESSION_IDLE_SECONDS: 3600 }, null);

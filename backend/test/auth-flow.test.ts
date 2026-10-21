@@ -822,6 +822,39 @@ describe('/auth/flow recovery (Task 5)', () => {
     expect((await resumed()).step).toEqual({ stage: 'expired' });
   });
 
+  it('a finished password reset signs out every session of that account (found by its Authentik username), audited', async () => {
+    // the account the link belongs to: pending_user "anna" is the Authentik user whose uid is the admin's sub
+    const users = { 'GET /api/v3/core/users/': () => new Response(JSON.stringify({ pagination: { next: 0 }, results: [{ pk: 5, username: 'anna', email: 'admin@example.com', uid: 'sub-admin' }] }), { headers: { 'content-type': 'application/json' } }) };
+    const a = await env.login();
+    const c = await env.login(); // a second device of the same account
+    await env.pool.query("delete from audit_log where action = 'session.revoke_others'");
+    ak = fakeAuthentik(resumeStages(), { ...flowsRoute, ...users });
+    env.ctx.fetchImpl = ak.fetch;
+    const { b, step } = await resumed();
+    // the reset is not done yet: nothing is revoked
+    expect(await env.kv.get(`sess:${a.cookies.ff_sid}`)).toBeTruthy();
+    const r = await b.post('answer', { step: step.step, stage: 'prompt', password: NEW_PW, password_repeat: NEW_PW });
+    expect(r.json()).toEqual({ stage: 'done', next: '/login?reset=1' });
+    expect(await env.kv.get(`sess:${a.cookies.ff_sid}`)).toBeNull();
+    expect(await env.kv.get(`sess:${c.cookies.ff_sid}`)).toBeNull();
+    const userId = (await env.pool.query("select id from users where authentik_sub = 'sub-admin'")).rows[0].id;
+    expect((await env.pool.query("select actor, target, meta from audit_log where action = 'session.revoke_others'")).rows)
+      .toEqual([{ actor: userId, target: userId, meta: { sessions: 2, reason: 'password_reset' } }]);
+    await env.pool.query("delete from audit_log where action = 'login'"); // the logins above are this test's own
+  });
+
+  it('a password reset whose account is not found (or Authentik\'s API refuses) still finishes; nothing else is revoked', async () => {
+    const a = await env.login();
+    const none = { 'GET /api/v3/core/users/': () => new Response('{"detail":"no"}', { status: 403, headers: { 'content-type': 'application/json' } }) };
+    ak = fakeAuthentik(resumeStages(), { ...flowsRoute, ...none });
+    env.ctx.fetchImpl = ak.fetch;
+    const { b, step } = await resumed();
+    const r = await b.post('answer', { step: step.step, stage: 'prompt', password: NEW_PW, password_repeat: NEW_PW });
+    expect(r.json()).toEqual({ stage: 'done', next: '/login?reset=1' });
+    expect(await env.kv.get(`sess:${a.cookies.ff_sid}`)).toBeTruthy();
+    await env.pool.query("delete from audit_log where action = 'login'");
+  });
+
   it('recovery end → done next=/login?reset=1, no session cookie, invalidation called', async () => {
     useFake(resumeStages());
     const { b, step } = await resumed();

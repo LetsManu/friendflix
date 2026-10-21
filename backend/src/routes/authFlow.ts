@@ -44,6 +44,7 @@ import {
   FlowFieldError, type FlowError, type FlowInternal, type FlowStage, type FlowStep, MAX_PENDING_USER, stepErrors, toAnswer, toStep,
   type UnavailableReason,
 } from '../flowSteps.js';
+import { revokeSessions } from '../devices.js';
 import { lookupInvite } from '../invites.js';
 import { type LoginOutcome, resolveLogin } from '../loginFinish.js';
 import type { OidcClaims } from '../oidc.js';
@@ -229,6 +230,38 @@ async function reauthEnd(ctx: Ctx, req: FastifyRequest, jar: Jar): Promise<'ok' 
   return r === 'mismatch' ? { stage: 'denied' } : r === 'revoked' ? { stage: 'expired' } : { stage: 'unavailable' };
 }
 
+/** ends the account's portal sessions after a password change (all but `keepSid`) or reset (all), audited like "sign out other devices" */
+async function passwordSignOut(ctx: Ctx, userId: string, reason: 'password_change' | 'password_reset', keepSid?: string): Promise<void> {
+  const n = await revokeSessions(ctx, userId, undefined, keepSid);
+  await audit(ctx, userId, 'session.revoke_others', userId, { sessions: n, reason });
+}
+
+/**
+ * After a finished password reset: the portal accounts behind the recovery's identifier (the Authentik username the link names, or what
+ * the person typed): by username, else by e-mail through Authentik's API, else a portal account with that e-mail. A lookup failure never
+ * fails the reset (it is done at Authentik); it is logged by code only.
+ */
+async function signOutAfterReset(ctx: Ctx, req: FastifyRequest, identifier: string | undefined): Promise<void> {
+  if (!identifier) return;
+  try {
+    const subs: string[] = [];
+    const byName = await akUserByUsername(ctx, identifier).catch(() => null);
+    if (byName) subs.push(...byName.subs);
+    else if (identifier.includes('@')) {
+      const byMail = await akUsersByEmail(ctx, identifier).catch(() => []);
+      for (const u of byMail) subs.push(...((await akUserByUsername(ctx, u.username).catch(() => null))?.subs ?? []));
+    }
+    const ids = new Set<string>();
+    if (subs.length) for (const r of (await ctx.db.query<{ id: string }>('select id from users where authentik_sub = any($1)', [subs])).rows) ids.add(r.id);
+    if (!ids.size && identifier.includes('@')) {
+      for (const r of (await ctx.db.query<{ id: string }>('select id from users where lower(email) = lower($1)', [identifier])).rows) ids.add(r.id);
+    }
+    for (const id of ids) await passwordSignOut(ctx, id, 'password_reset');
+  } catch (err) {
+    req.log.warn({ route: req.routeOptions.url ?? 'unmatched', code: errCode(err) }, 'sign-out after password reset failed');
+  }
+}
+
 /** setup-static: the old recovery codes go once the new ones are confirmed (U4: a second run adds a device, the old codes stay valid) */
 async function removeOldStatic(ctx: Ctx, req: FastifyRequest, jar: Jar): Promise<void> {
   const user = jar.userId ? await getUserById(ctx, jar.userId) : null;
@@ -268,17 +301,22 @@ async function confirmEmail(ctx: Ctx, jar: Jar): Promise<FlowStep> {
  * - `login`/`enroll`: the silent authorize yields the person's claims, and `resolveLogin` applies exactly the classic callback's rules
  *   (approval, invites incl. the enrolment's, the admin group, deletion/restore, locks, ended access) and issues the session (`ui:'app'`).
  *   Never during setup (defence in depth behind the gate, T4-e): the first admin is created only by `/auth/callback` with the setup session.
- * - `recovery`: no session; the person signs in with the new password.
+ * - `recovery`: no session; the person signs in with the new password. Every portal session of the account ends (a stolen cookie must
+ *   not outlive the old password; sessions last up to 90 days).
  * - `reauth` (without `then`): the silent authorize must name the session's own person (stampReauth, shared with the classic callback);
  *   the session is stamped, no new session is created. A foreign person → `denied`.
- * - `setup-*`, `change-password`: the account's changes are done; `setup-static` also removes the codes that existed before.
+ * - `setup-*`, `change-password`: the account's changes are done; `setup-static` also removes the codes that existed before; a password
+ *   change signs out the account's other sessions (this one stays).
  * - `email-confirm`: the e-mail link's flow ended; the address Authentik now holds becomes the account's e-mail (confirmEmail).
  * Whatever happens, the Authentik session the flow created is ended and the jar dropped (the FriendFlix session, if any, is issued first).
  * A `reauth` jar with `then` does not come here: the routes continue it in the same Authentik session.
  */
 export async function completeFlow(ctx: Ctx, req: FastifyRequest, reply: FastifyReply, flowId: string, jar: Jar): Promise<FlowStep> {
   try {
-    if (jar.kind === 'recovery' || jar.kind === 'recovery-resume') return { stage: 'done', next: RECOVERY_DONE };
+    if (jar.kind === 'recovery' || jar.kind === 'recovery-resume') {
+      await signOutAfterReset(ctx, req, jar.identifier);
+      return { stage: 'done', next: RECOVERY_DONE };
+    }
     if (jar.kind === 'email-confirm') return await confirmEmail(ctx, jar);
     if (jar.kind === 'reauth') {
       const r = await reauthEnd(ctx, req, jar);
@@ -288,6 +326,7 @@ export async function completeFlow(ctx: Ctx, req: FastifyRequest, reply: Fastify
       if (jar.kind === 'setup-static') await removeOldStatic(ctx, req, jar);
       const user = jar.userId ? await getUserById(ctx, jar.userId) : null;
       if (user) await akForget(ctx, user.authentik_sub); // the account page shows the new factor
+      if (user && jar.kind === 'change-password') await passwordSignOut(ctx, user.id, 'password_change', req.cookies[SESSION_COOKIE]);
       return { stage: 'done', next: ACCOUNT_NEXT };
     }
     if (jar.kind !== 'login' && jar.kind !== 'enroll') return { stage: 'unavailable' }; // change-email ends at its e-mail stage, not here
