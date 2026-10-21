@@ -8,7 +8,6 @@
    * Portainer card and installs the selected channel itself (UpdaterCard.svelte). The backend never touches Docker.
    */
   import { onDestroy, onMount } from 'svelte';
-  import { goto } from '$app/navigation';
   import { api } from '#lib/api';
   import Icon from '#lib/Icon.svelte';
   import { fmtDateTime, fmtRelative, hasKey, t, tr, trDynamic } from '#lib/i18n';
@@ -79,7 +78,7 @@
   $: nightly = sel === 'nightly';
   $: notes = u?.release?.notes && !nightly ? parseNotes(u.release.notes) : [];
   /** the updater answers: it installs the channel itself, no .env line needed */
-  let up: UpdaterView | null = null, reauthBack = false;
+  let up: UpdaterView | null = null;
   $: updater = statusOf(up) !== null;
   $: snippet = u && !updater ? showSnippet(u) : false;
   /** the fixed-version form: open while "Fixed version" is selected, or picked without a saved version yet */
@@ -178,13 +177,6 @@
   }
   function stop() { clearInterval(timer); timer = undefined; }
   onMount(() => {
-    // back from the sign-in a start needed (UpdaterCard): say so once; the job is started again by the person, never on its own
-    const url = new URL(location.href);
-    if (url.searchParams.get('reauth') === '1') {
-      reauthBack = true;
-      url.searchParams.delete('reauth');
-      void goto(url.pathname + url.search + url.hash, { shallow: true, replace: true });
-    }
     void load();
   });
   onDestroy(stop);
@@ -283,7 +275,7 @@
   {/if}
 
   {#if up?.present}
-    <UpdaterCard view={up} {reauthBack} on:finished={() => { void load(); }} />
+    <UpdaterCard view={up} on:finished={() => { void load(); }} />
   {:else}
   <AdminCard title={$t('adminContent.update.applyTitle')}>
     {#if !u.portainer.configured}

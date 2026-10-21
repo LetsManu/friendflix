@@ -300,7 +300,6 @@ const en: Translation<typeof de> = {
       unauthorized: 'An updater answers but refuses the signature: INTERNAL_SECRET differs between backend and updater.',
       invalid: 'The updater sent an unreadable answer.',
       log: 'Log',
-      reauthBack: 'Signed in again. Please start the job once more.',
       auto: {
         title: 'Automatic updates',
         label: 'Automatic updates',

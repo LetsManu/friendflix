@@ -299,7 +299,6 @@ export default {
       unauthorized: 'Ein Updater antwortet, lehnt aber die Signatur ab: INTERNAL_SECRET unterscheidet sich zwischen Backend und Updater.',
       invalid: 'Der Updater hat eine unlesbare Antwort geschickt.',
       log: 'Protokoll',
-      reauthBack: 'Erneut angemeldet. Bitte den Auftrag noch einmal starten.',
       auto: {
         title: 'Automatische Updates',
         label: 'Automatische Updates',

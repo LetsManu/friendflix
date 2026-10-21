@@ -29,26 +29,20 @@ test.describe('admin: data sources', () => {
     expect(stored).not.toContain('sekret-key-wxyzabcd');
   });
 
-  test('save and remove without a recent sign-in go through /auth/reauth and back to /admin/sources; the key is not kept', async ({ page }) => {
-    await page.route('**/api/admin/sources/*', (r) => (['PUT', 'DELETE'].includes(r.request().method())
-      ? r.fulfill({ status: 401, json: { error: 'reauth_required' } }) : r.fallback()));
-    const nexts: Array<string | null> = [];
-    const urls: string[] = [];
-    await page.route('**/auth/reauth?**', (r) => {
-      urls.push(r.request().url());
-      nexts.push(new URL(r.request().url()).searchParams.get('next'));
-      return r.fulfill({ status: 200, contentType: 'text/html', body: '<p>sign in</p>' });
-    });
+  test('save and remove need no second sign-in: no dialog, no redirect', async ({ page }) => {
+    let reauth = 0;
+    page.on('request', (r) => { const p = new URL(r.url()).pathname; if (p === '/auth/reauth' || p.startsWith('/auth/flow/')) reauth++; });
     await page.goto('/admin/sources');
-    await card(page, 'TMDB').getByLabel('Neuer Schlüssel').fill('sekret-key-reauth99');
-    await card(page, 'TMDB').getByRole('button', { name: 'Speichern' }).click();
-    await expect.poll(() => nexts).toEqual(['/admin/sources']);
-    expect(urls.join('\n')).not.toContain('sekret-key-reauth99');
-    expect(await page.evaluate(() => JSON.stringify([{ ...localStorage }, { ...sessionStorage }]))).not.toContain('sekret-key-reauth99');
-    await page.goto('/admin/sources');
-    await card(page, 'OMDb').getByRole('button', { name: 'Entfernen' }).click();
+    const tmdb = card(page, 'TMDB');
+    await tmdb.getByLabel('Neuer Schlüssel').fill('sekret-key-wxyzabcd');
+    await tmdb.getByRole('button', { name: 'Speichern' }).click();
+    await expect(toasts(page).getByText('Schlüssel gespeichert.')).toBeVisible();
+    await tmdb.getByRole('button', { name: 'Entfernen' }).click();
     await page.getByRole('alertdialog').or(page.getByRole('dialog')).getByRole('button', { name: 'Entfernen' }).click();
-    await expect.poll(() => nexts).toEqual(['/admin/sources', '/admin/sources']);
+    await expect(tmdb.getByText('Nicht gesetzt')).toBeVisible();
+    await expect(page.getByRole('dialog', { name: 'Erneut anmelden' })).toHaveCount(0);
+    expect(reauth).toBe(0);
+    await expect(page).toHaveURL(/\/admin\/sources$/);
   });
 
   test('failed save keeps the typed key and shows an error', async ({ page }) => {

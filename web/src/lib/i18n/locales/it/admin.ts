@@ -300,7 +300,6 @@ const it: Translation<typeof de> = {
       unauthorized: 'Un updater risponde ma rifiuta la firma: INTERNAL_SECRET è diverso tra backend e updater.',
       invalid: 'L’updater ha inviato una risposta illeggibile.',
       log: 'Registro',
-      reauthBack: 'Accesso rinnovato. Avvia di nuovo l’operazione.',
       auto: {
         title: 'Aggiornamenti automatici',
         label: 'Aggiornamenti automatici',

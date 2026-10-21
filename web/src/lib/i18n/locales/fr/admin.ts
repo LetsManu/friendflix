@@ -300,7 +300,6 @@ const fr: Translation<typeof de> = {
       unauthorized: 'Un programme de mise à jour répond mais refuse la signature : INTERNAL_SECRET diffère entre le backend et le programme de mise à jour.',
       invalid: 'Le programme de mise à jour a envoyé une réponse illisible.',
       log: 'Journal',
-      reauthBack: 'Reconnecté. Relance la tâche.',
       auto: {
         title: 'Mises à jour automatiques',
         label: 'Mises à jour automatiques',

@@ -16,8 +16,6 @@ export interface UpdaterMock {
   log: string[];
   /** POSTed actions */
   posts: string[];
-  /** POST answers 401 reauth_required */
-  reauthRequired: boolean;
   outcome: 'succeeded' | 'rolled_back';
   downPolls: number;
   tick: number;
@@ -33,7 +31,7 @@ export interface UpdaterMock {
 type Reply = (b: unknown, status?: number) => Promise<void>;
 
 export function updaterState(present: UpdaterMock['present'] = false): UpdaterMock {
-  return { present, current: 'latest', previous: 'sha-a1b2c3d', job: null, log: ['2026-10-17T04:00:00.000Z update succeeded'], posts: [], reauthRequired: false, outcome: 'succeeded', downPolls: 2, tick: 0 };
+  return { present, current: 'latest', previous: 'sha-a1b2c3d', job: null, log: ['2026-10-17T04:00:00.000Z update succeeded'], posts: [], outcome: 'succeeded', downPolls: 2, tick: 0 };
 }
 
 const value = (s: SettingsMock, key: string) => s.groups.flatMap((g) => g.items).find((i) => i.key === key);
@@ -80,7 +78,6 @@ export function updaterRoute(u: UpdaterMock | null, settings: SettingsMock, m: s
   const mm = p.match(/^\/api\/admin\/updater\/(update|rollback|self-update)$/);
   if (mm && m === 'POST') {
     if (!u || !u.present) return J({ error: 'not_available' }, 409);
-    if (u.reauthRequired) return J({ error: 'reauth_required' }, 401);
     u.posts.push(mm[1]!);
     // Portainer's stack: the backend hands an update to Portainer, refuses everything else (backend/src/updater.ts startJob)
     if (u.stack === 'foreign' || (u.portainer && u.stack !== 'own')) return mm[1] === 'update' && u.portainer ? J({ portainer: { mode: 'webhook' } }, 202) : J({ error: 'foreign_stack' }, 409);

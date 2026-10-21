@@ -91,7 +91,7 @@ describe('updater panel logic', () => {
       'state.failed', 'state.skipped', 'running', 'reconnecting', 'watchTimeout', 'lastJob', 'result.succeeded', 'result.rolled_back', 'result.failed', 'error.busy', 'error.no_previous',
       'error.no_target', 'error.not_available', 'error.channel_sync_failed', 'error.tooSoon', 'error.generic', 'failReason.verify_failed', 'failReason.pull_failed',
       'failReason.unhealthy', 'failReason.restart_failed', 'failReason.rollback_failed', 'failReason.interrupted', 'failReason.self_update_timeout', 'failReason.unexpected_image', 'failReason.media_server_mismatch',
-      'failReason.compose_config', 'failReason.unknown', 'unauthorized', 'invalid', 'log', 'reauthBack', 'auto.title', 'auto.label', 'auto.off', 'auto.window', 'auto.time',
+      'failReason.compose_config', 'failReason.unknown', 'unauthorized', 'invalid', 'log', 'auto.title', 'auto.label', 'auto.off', 'auto.window', 'auto.time',
       'auto.save', 'auto.saved', 'auto.locked', 'auto.hint', 'auto.timeInvalid', 'foreign.portainer', 'foreign.manual', 'foreign.started', 'foreign.workdir', 'confirm.updatePortainer', 'error.foreign_stack', 'error.portainer',
       'error.portainer_unreachable', 'failReason.foreign_stack', 'failReason.config_mismatch'];
     for (const l of ['de', 'en', 'es', 'fr', 'it', 'pl', 'tr']) {

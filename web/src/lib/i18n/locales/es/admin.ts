@@ -300,7 +300,6 @@ const es: Translation<typeof de> = {
       unauthorized: 'Un actualizador responde pero rechaza la firma: INTERNAL_SECRET es distinto en el backend y en el actualizador.',
       invalid: 'El actualizador envió una respuesta ilegible.',
       log: 'Registro',
-      reauthBack: 'Sesión iniciada de nuevo. Inicia la tarea otra vez.',
       auto: {
         title: 'Actualizaciones automáticas',
         label: 'Actualizaciones automáticas',

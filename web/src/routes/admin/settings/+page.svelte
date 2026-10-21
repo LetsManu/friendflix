@@ -3,16 +3,18 @@
 <script lang="ts">
   /**
    * Admin → Einstellungen (spec Part I): the settings store by group, the read-only server values, env import, restart banner, live
-   * tests. A save sends only the fields that changed (a shown value may be redacted). A save that needs a recent sign-in stashes the
-   * change without secrets and the action (save or test, with "Save anyway") (form.ts), goes through /auth/reauth and comes back with
-   * ?resume=1: the change is restored and, when nothing had to be left out, exactly that action runs once more. A resumed action that
-   * still needs a sign-in shows an error instead of another round trip. An edited URL that still carries the backend's redaction
+   * tests. A save sends only the fields that changed (a shown value may be redacted). An action that needs a recent sign-in asks for
+   * it in place (lib/account/reauth.ts: the in-app dialog) and then runs exactly that action once more, with everything still typed.
+   * For the redirect (no in-app sign-in, or the dialog's passkey / classic link) the change without secrets and the action (save or
+   * test, with "Save anyway") are stashed first (form.ts); /auth/reauth comes back with ?resume=1: the change is restored and, when
+   * nothing had to be left out, that action runs once more. A repeated action that still needs a sign-in shows an error instead of
+   * another round. An edited URL that still carries the backend's redaction
    * marker is refused before anything is sent (it would replace the real token).
    */
   import { onMount, tick } from 'svelte';
   import { goto } from '$app/navigation';
   import Icon from '#lib/Icon.svelte';
-  import { isReauthError, startReauth } from '#lib/account/reauth';
+  import { isReauthError, reauthenticate } from '#lib/account/reauth';
   import AdminCard from '#lib/adminContent/AdminCard.svelte';
   import { fmtList, t, tr } from '#lib/i18n';
   import { busyKeys, runAction } from '#lib/ui/action';
@@ -90,16 +92,23 @@
     if (errors[key]) { delete errors[key]; errors = errors; }
   }
 
-  /** a refused action that needs a recent sign-in: keep the group's change (without secrets) and the action, go through the sign-in */
-  function reauth(target: { action: PendingAction; group: SettingGroup; force?: boolean } | null) {
+  /**
+   * A refused action that needs a recent sign-in: sign in again in place, then `retry` (the same action) once. The group's change
+   * (without secrets) and the action are stashed for the redirect paths and dropped again when the dialog answers.
+   */
+  async function reauth(target: { action: PendingAction; group: SettingGroup; force?: boolean } | null, retry: () => Promise<unknown>) {
     if (resuming) {
-      // the sign-in just happened and the backend still refuses: no second round trip
+      // the sign-in just happened and the backend still refuses: no second round
       clearPending();
       resumeNotice = 'failed';
       return;
     }
     if (target) stashPending(target.action, target.group, itemsOf(target.group), edits, { force: target.force });
-    startReauth(target ? RESUME : '/admin/settings');
+    const ok = await reauthenticate(target ? RESUME : '/admin/settings');
+    if (target) clearPending();
+    if (!ok) return;
+    resuming = true;
+    try { await retry(); } finally { resuming = false; }
   }
   /** refuses edited URLs that still carry the redaction marker; true when something was refused */
   function refuseRedacted(group: SettingGroup): boolean {
@@ -109,7 +118,7 @@
     return true;
   }
 
-  async function save(group: SettingGroup, force = false) {
+  async function save(group: SettingGroup, force = false): Promise<void> {
     const values = changesOf(group);
     if (!Object.keys(values).length || refuseRedacted(group)) return;
     probes = { ...probes, [group]: undefined };
@@ -128,7 +137,7 @@
       if (note) probes = { ...probes, [group]: { result: note, save: false } };
       return;
     }
-    if (isReauthError(res.error)) return reauth({ action: 'save', group, force });
+    if (isReauthError(res.error)) return reauth({ action: 'save', group, force }, () => save(group, force));
     const fe = fieldErrors(res.error);
     const pf = probeFailure(res.error);
     if (fe) errors = { ...errors, ...fe };
@@ -136,13 +145,13 @@
     else toast.error(tr('settings.saveFailed'));
   }
 
-  async function test(group: SettingGroup) {
+  async function test(group: SettingGroup): Promise<void> {
     probes = { ...probes, [group]: undefined };
     if (refuseRedacted(group)) return;
     const values = changesOf(group);
     const res = await runAction({ key: `set:test:${group}`, run: () => testGroup(group, values), error: false });
     if (res.ok && res.value) { probes = { ...probes, [group]: { result: res.value, save: false } }; return; }
-    if (isReauthError(res.error)) return reauth({ action: 'test', group });
+    if (isReauthError(res.error)) return reauth({ action: 'test', group }, () => test(group));
     const fe = fieldErrors(res.error);
     if (fe) errors = { ...errors, ...fe };
     toast.error(tr('settings.testFailed'));
@@ -164,6 +173,10 @@
       danger: true, confirmLabel: tr(`settings.generate.${what}`),
     });
     if (!ok) return;
+    await runGenerate(item);
+  }
+  async function runGenerate(item: SettingView): Promise<void> {
+    const what = item.generate!;
     const res = await runAction({
       key: `set:gen:${item.key}`, run: (): Promise<{ secret: string } | { publicKey: string }> => (what === 'webhookSecret' ? generate('webhookSecret') : generate('vapidPair')),
       success: what === 'webhookSecret' ? undefined : tr('settings.generate.done'), error: false,
@@ -173,7 +186,7 @@
       await load();
       return;
     }
-    if (isReauthError(res.error)) return reauth(null);
+    if (isReauthError(res.error)) return reauth(null, () => runGenerate(item));
     toast.error(tr('settings.generate.failed'));
   }
 </script>

@@ -300,7 +300,6 @@ const tr: Translation<typeof de> = {
       unauthorized: 'Bir güncelleyici yanıt veriyor ama imzayı reddediyor: INTERNAL_SECRET backend ile güncelleyici arasında farklı.',
       invalid: 'Güncelleyici okunamayan bir yanıt gönderdi.',
       log: 'Günlük',
-      reauthBack: 'Yeniden oturum açıldı. Lütfen işi bir kez daha başlatın.',
       auto: {
         title: 'Otomatik güncellemeler',
         label: 'Otomatik güncellemeler',

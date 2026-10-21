@@ -5,14 +5,15 @@
    * The in-app re-authentication as a modal (account page): `start {kind:'reauth', then?}` and the flow's steps inline (password, second
    * factor, then the follow-up flow's own steps: authenticator app, recovery codes, passkey, new password, new e-mail). The step components
    * only emit events, so this dialog decides what happens: `done` (the flow finished: the parent reloads / retries its action) and `close`
-   * (given up: the attempt is cancelled at the server, Authentik's session too). "Passkey verwenden" is phase 2's redirect re-auth.
+   * (given up: the attempt is cancelled at the server, Authentik's session too). "Passkey verwenden" is phase 2's redirect re-auth, back
+   * to `next`; without a follow-up flow the classic fallback is that redirect too (the identity provider's forced sign-in).
    * A role=dialog with a name; Escape and the backdrop close it; Tab stays inside.
    */
   import { createEventDispatcher, onMount } from 'svelte';
   import { dialogKeys } from '#lib/actions';
   import { t, type TKey } from '#lib/i18n';
   import Icon from '#lib/Icon.svelte';
-  import { startReauth } from '#lib/account/reauth';
+  import { reauthHref, startReauth } from '#lib/account/reauth';
   import Mfa from './Mfa.svelte';
   import Notice from './Notice.svelte';
   import PasskeySetup from './PasskeySetup.svelte';
@@ -28,6 +29,8 @@
   export let then: ThenKind | undefined = undefined;
   /** Authentik's own settings page: where an account change continues when it cannot run here (null: not known) */
   export let manageUrl: string | null = null;
+  /** where the redirect re-authentication comes back to (the passkey link; without `then` also the classic fallback); null: the account page */
+  export let next: string | null = null;
 
   const dispatch = createEventDispatcher<{ done: void; close: void }>();
   const portal = (node: HTMLElement) => { document.body.appendChild(node); return { destroy() { node.remove(); } }; };
@@ -38,7 +41,7 @@
   /** null while loading */
   let view: FlowReply | null = null;
   let finished = false;
-  let classic = then && manageUrl ? manageUrl : classicHref();
+  let classic = then && manageUrl ? manageUrl : !then && next ? reauthHref(next) : classicHref();
   /** the label of the fallback link: Authentik's settings page for an account change, else its sign-in page */
   $: classicLabel = (then && manageUrl && classic === manageUrl ? 'login.sec.manageClassic' : null) as TKey | null;
   /** a precise text for the notice (a refusal or an unavailable reason); null keeps the notice's own */
@@ -110,7 +113,7 @@
     <p class="loading muted" role="status">{$t('login.sec.loading')}</p>
   {:else if view.stage === 'password'}
     <Password step={view} classicHref={classic} canRestart={false} on:next={(e) => show(e.detail)} on:done={() => show({ stage: 'done', next: '' })} />
-    <button class="af-link alt" type="button" on:click={() => startReauth('/me/account')}>{$t('login.sec.usePasskey')}</button>
+    <button class="af-link alt" type="button" on:click={() => startReauth(next ?? '/me/account')}>{$t('login.sec.usePasskey')}</button>
   {:else if view.stage === 'mfa'}
     <Mfa step={view} classicHref={classic} on:next={(e) => show(e.detail)} on:done={() => show({ stage: 'done', next: '' })} />
   {:else if view.stage === 'totp-setup'}
