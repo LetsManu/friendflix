@@ -273,7 +273,7 @@ const en: Translation<typeof de> = {
     linkWarn: 'This code came from a link. Only pair if <b>{code}</b> is showing on your TV right now – otherwise someone else could get access to your account.',
     codeLabel: 'Code from the TV',
     pairButton: 'Pair',
-    pairNote: 'The TV stays signed in for 30 days (7 days without use) and is listed under “Devices”, where you can block it at any time.',
+    pairNote: 'The TV stays signed in for 90 days and is listed under “Devices”, where you can block it at any time.',
   },
   tv: {
     pageTitle: 'Connect TV',

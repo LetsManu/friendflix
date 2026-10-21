@@ -35,7 +35,7 @@ describe('resolveConfig', () => {
     const c = resolveConfig({ env: BASE, rows: [], encKey });
     expect(c.cfg.JELLYFIN_URL).toBeUndefined();
     expect(c.sources.JELLYFIN_URL).toBe('unset');
-    expect(c.cfg.SESSION_TTL_SECONDS).toBe(28800);
+    expect(c.cfg.SESSION_TTL_SECONDS).toBe(7_776_000);
     expect(c.sources.SESSION_TTL_SECONDS).toBe('default');
     expect(c.cfg.OIDC_ISSUER).toBe(''); // run-required keys are '' while unset
     expect(c.sources.OIDC_ISSUER).toBe('unset');
@@ -103,7 +103,7 @@ describe('resolveConfig', () => {
 
   it('a row failing its schema is ignored: the default is used and the key is invalid', () => {
     const r = resolveConfig({ env: BASE, rows: [row('SESSION_TTL_SECONDS', -5), row('CAST_ENABLED', false), row('HOME_NETWORKS', ['10.0.0.0/8'])], encKey });
-    expect(r.cfg.SESSION_TTL_SECONDS).toBe(28800);
+    expect(r.cfg.SESSION_TTL_SECONDS).toBe(7_776_000);
     expect(r.sources.SESSION_TTL_SECONDS).toBe('default');
     expect(r.invalid).toEqual(['SESSION_TTL_SECONDS']);
     expect(r.cfg.CAST_ENABLED).toBe('false'); // stored typed, Config keeps its string enum

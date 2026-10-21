@@ -48,7 +48,7 @@ describe('TV pairing', () => {
     expect(claim.statusCode).toBe(200);
     const sid = claim.cookies.find((x) => x.name === 'ff_sid')!;
     expect(sid.httpOnly).toBe(true);
-    expect(sid.maxAge).toBe(30 * 86400);
+    expect(sid.maxAge).toBe(90 * 86400);
     const tv = { ff_sid: sid.value };
     const who = await env.app.inject({ url: '/api/me', cookies: tv });
     expect(who.json()).toMatchObject({ name: 'Admin', deviceApproved: true, tv: true });
@@ -60,12 +60,12 @@ describe('TV pairing', () => {
     expect((await env.pool.query("select title, link from notifications where kind='tv_paired'")).rows[0]).toMatchObject({ link: '/devices' });
   });
 
-  it('TV sessions are long-lived (30 days) while phone sessions follow the normal limits', async () => {
+  it('TV sessions are long-lived (90 days, also without use) while phone sessions follow the normal limits', async () => {
     const c = (await post('/api/tv/code')).json();
     await post('/api/tv/pair', { code: c.code }, me);
     const sid = (await post('/api/tv/claim', { code: c.code, pollToken: c.pollToken })).cookies.find((x) => x.name === 'ff_sid')!.value;
     const sess = JSON.parse((await env.kv.get(`sess:${sid}`))!);
-    expect(sess).toMatchObject({ ttl: 30 * 86400, idle: 7 * 86400, deviceApproved: true });
+    expect(sess).toMatchObject({ ttl: 90 * 86400, idle: 90 * 86400, deviceApproved: true });
   });
 
   it('rejects a wrong poll token and unknown/expired codes; cannot claim for somebody else', async () => {

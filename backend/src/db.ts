@@ -797,6 +797,17 @@ export const MIGRATIONS: string[] = [
     n int not null
   );
   `,
+  // 42: sessions last 90 days now (config.ts). A stored session lifetime that is exactly the old default (8 h absolute, 2 h idle; e.g.
+  // copied from the old compose default with "Move to settings") is removed, so the new default applies; any other value was chosen
+  // by an admin and stays. It runs once: setting 8 h again afterwards is kept. The rev bump makes running instances reload.
+  `
+  with removed as (
+    delete from settings
+      where (key = 'SESSION_TTL_SECONDS' and value in ('28800'::jsonb, '"28800"'::jsonb))
+         or (key = 'SESSION_IDLE_SECONDS' and value in ('7200'::jsonb, '"7200"'::jsonb))
+      returning key)
+  update settings_meta set rev = rev + 1 where id = 1 and exists (select 1 from removed);
+  `,
 ];
 
 export async function migrate(pool: pg.Pool): Promise<void> {
