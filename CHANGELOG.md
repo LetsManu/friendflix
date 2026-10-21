@@ -4,6 +4,8 @@ All notable changes, grouped by what you notice. Each release has its own sectio
 
 ## [Unreleased]
 
+## [2.2.1] – Brezel – 2026-10-21
+
 ### Android app
 - **The header no longer sits under the status bar.** The page now starts below the clock and battery icons, on the page's own background, with light icons.
 - **Resume where you stopped, on any device.** A title started in the app now continues at the position the server knows, also when you watched further on the web or a TV meanwhile (the app used the position the page had loaded earlier).
