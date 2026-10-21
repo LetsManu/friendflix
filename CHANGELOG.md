@@ -4,6 +4,8 @@ All notable changes, grouped by what you notice. Each release has its own sectio
 
 ## [Unreleased]
 
+## [2.2.0] – Brezel – 2026-10-21
+
 ### Sign-in
 - **Stay signed in up to 90 days.** Sessions now last 90 days, also without use (were 8 hours, and 2 hours without activity); paired TVs 90 days too (were 30, and 7 without use). Signing out, *sign out everywhere*, revoking a device and disabling an account still end sessions at once. Both limits stay editable under *Admin → Settings → Sessions*; paired TVs keep their own 90 days whatever the setting. **Upgrade note:** a stored value that is exactly the old default (8 h / 2 h, e.g. moved from the environment with *Move to settings*) switches to 90 days; any other value you set stays. A value still passed through the environment (an own compose file or `.env` with `SESSION_TTL_SECONDS` / `SESSION_IDLE_SECONDS`) keeps winning: remove it to get the new default. Disabling someone only in Authentik no longer ends their FriendFlix session soon: it can run for up to 90 days, so disable them under *Admin → Users* (or use *Sign out everywhere* there) to lock them out at once.
 - **A password change signs out your other devices.** Changing your password in FriendFlix ends your sessions on all other devices (this one stays signed in); resetting a forgotten password ends all of them.
