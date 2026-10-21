@@ -4,6 +4,13 @@ All notable changes, grouped by what you notice. Each release has its own sectio
 
 ## [Unreleased]
 
+### Android app
+- **The header no longer sits under the status bar.** The page now starts below the clock and battery icons, on the page's own background, with light icons.
+- **Resume where you stopped, on any device.** A title started in the app now continues at the position the server knows, also when you watched further on the web or a TV meanwhile (the app used the position the page had loaded earlier).
+
+### Home
+- **Continue watching is up to date when you come back.** Returning to the home page (closing the app's player, switching back to the tab) re-reads *Continue watching* and *Next episode*.
+
 ## [2.2.0] – Brezel – 2026-10-21
 
 ### Sign-in

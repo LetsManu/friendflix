@@ -57,6 +57,19 @@ test.describe('home first screen in one request', () => {
     await expect(row(page, 'Weiterschauen').locator('article.card')).toHaveCount(1);
   });
 
+  test('back in front (native player closed, watched elsewhere): Weiterschauen is read again', async ({ page, api }) => {
+    await page.goto('/');
+    const resume = row(page, 'Weiterschauen');
+    await expect(resume.locator('article.card')).toHaveCount(2);
+    api.resumeGone.add(episodes[0]!.id); // finished on another device meanwhile
+    await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')));
+    await page.waitForTimeout(300);
+    await expect(resume.locator('article.card'), 'not more often than every 5 s').toHaveCount(2);
+    await page.waitForTimeout(5000);
+    await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')));
+    await expect(resume.locator('article.card')).toHaveCount(1);
+  });
+
   test('a part the server flagged as failed is loaded the old way, the rest still renders', async ({ page }) => {
     const seen = watchApi(page);
     await page.route('**/api/home', (r) => r.fulfill({ json: {

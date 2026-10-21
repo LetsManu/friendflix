@@ -105,6 +105,22 @@
       void cached('genres', () => load('/api/library/genres').then((r) => (r.genres as string[]).slice(0, 8)), (v) => (genres = v), () => undefined);
     }));
   });
+  // Back in front (the app's native player closed, or this tab after watching on another device): the progress rows are re-read,
+  // at most every 5 s. pageshow with persisted: a page restored from the back/forward cache.
+  let rowsAt = 0;
+  function refreshProgress() {
+    if (document.hidden || Date.now() - rowsAt < 5000) return;
+    rowsAt = Date.now();
+    loaders.resume();
+    loaders.nextup();
+  }
+  const onPageShow = (e: PageTransitionEvent) => { if (e.persisted) refreshProgress(); };
+  onMount(() => {
+    rowsAt = Date.now(); // the first screen just loaded them
+    document.addEventListener('visibilitychange', refreshProgress);
+    window.addEventListener('pageshow', onPageShow);
+    return () => { document.removeEventListener('visibilitychange', refreshProgress); window.removeEventListener('pageshow', onPageShow); };
+  });
   async function removeResume(id: string) {
     const prev = resume;
     resume = resume ? resume.filter((i) => i.id !== id) : resume; // optimistic
