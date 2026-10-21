@@ -242,6 +242,11 @@ object ShellIntents {
     /** An intent for the shell's internal entry (extras are added by the caller). */
     fun internal(context: Context): Intent = Intent().setComponent(ComponentName(context.packageName, INTERNAL))
 
+    private val TITLE_ID = Regex("[A-Za-z0-9_-]{1,64}")
+
+    /** The web's detail page path for a title [id] (`/item/<id>`), or null for an id that is not a plain id. */
+    fun titlePath(id: String): String? = if (TITLE_ID.matches(id)) "/item/$id" else null
+
     /** True when [intent] reached the shell through the internal entry (the component is the alias, which only the app can start). */
     fun isInternal(intent: Intent?): Boolean = intent?.component?.className == INTERNAL
 }

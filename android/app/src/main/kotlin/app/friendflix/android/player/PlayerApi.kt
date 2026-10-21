@@ -7,12 +7,16 @@ import app.friendflix.android.downloads.SessionExpired
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.IOException
+import java.net.URLEncoder
 
 /** An audio track of the playback answer. */
 data class AudioTrack(val index: Int, val title: String, val language: String?, val isDefault: Boolean)
 
 /** A text subtitle of the playback answer: a same-origin WebVTT URL served by FriendFlix / the media server. */
 data class SubtitleTrack(val index: Int, val title: String, val language: String?, val url: String, val isDefault: Boolean)
+
+/** Timeline preview sheets of the playback answer: `url` has `{n}` = sheet index, thumbnails are [intervalMs] apart. */
+data class TrickplayInfo(val width: Int, val height: Int, val tileWidth: Int, val tileHeight: Int, val count: Int, val intervalMs: Long, val url: String)
 
 /** `POST /api/playback/info` as the player uses it (backend media/types.ts PlaybackDto). */
 data class PlaybackInfo(
@@ -27,6 +31,7 @@ data class PlaybackInfo(
     val transcodeReason: String?,
     val audioTracks: List<AudioTrack>,
     val subtitles: List<SubtitleTrack>,
+    val trickplay: TrickplayInfo? = null,
 )
 
 /** The title being played (`GET /api/items/:id` → item, or `/next`). */
@@ -62,7 +67,74 @@ data class PlayerPrefs(
     /** saved quality cap in bit/s, 0 = automatic */
     val quality: Long = 0,
     val subtitleStyle: SubtitleStyle = SubtitleStyle(),
+    /** sound processing: off | voices | night | both */
+    val audioFx: String = "off",
+    /** anime: original audio with subtitles by default */
+    val animeOriginal: Boolean = false,
+    /** post-play suggestions switched on for the profile */
+    val postplay: Boolean = true,
+    /** unwatched episodes show no picture (web spoiler.ts) */
+    val spoilerProtection: Boolean = false,
 )
+
+/** What this server / account offers the player (`/api/me`); a flag that is not sent counts as true, like the web. */
+data class ServerCaps(
+    val chapters: Boolean = true,
+    val trickplay: Boolean = true,
+    val subtitleSearch: Boolean = true,
+    val postplay: Boolean = true,
+    val segments: Set<String> = PlayerApi.ALL_SEGMENTS,
+    val role: String? = null,
+)
+
+data class Season(val id: String, val name: String, val index: Int?)
+
+data class Episode(
+    val id: String,
+    val name: String,
+    val season: Int?,
+    val episode: Int?,
+    val image: String?,
+    val runtimeTicks: Long,
+    val positionTicks: Long,
+    val played: Boolean,
+)
+
+/** A chapter as the server sends it: [startSec] in seconds, [image] a same-origin path. */
+data class Chapter(val startSec: Double, val name: String, val image: String?)
+
+data class Person(val id: String, val name: String, val image: String?, val role: String?)
+
+data class CastInfo(
+    val name: String,
+    val year: Int?,
+    val rating: String?,
+    val communityRating: Double?,
+    val cast: List<Person>,
+    val guests: List<Person>,
+    val directors: List<Person>,
+    val writers: List<Person>,
+    val creators: List<Person>,
+    val studios: List<String>,
+    val genres: List<String>,
+    /** the series of an episode (a person's titles leave it out) */
+    val seriesId: String? = null,
+)
+
+data class Title(val id: String, val name: String, val type: String?, val year: Int?, val image: String?)
+
+data class Bookmark(val id: String, val positionSec: Int, val note: String?)
+
+data class SubResult(val id: String, val name: String, val provider: String, val downloads: Int)
+
+/** The series' saved audio / subtitle choice; [anime] only when asked for (`?anime=1`). */
+data class LangPref(val audio: String?, val subtitle: String?, val anime: Boolean)
+
+/** A server answer that can fail with a status: [Err.error] is the body's `error` code, [Err.code] 0 on network trouble. */
+sealed interface ApiResult<out T> {
+    data class Ok<T>(val value: T) : ApiResult<T>
+    data class Err(val code: Int, val error: String?) : ApiResult<Nothing>
+}
 
 sealed interface InfoAnswer {
     data class Ok(val info: PlaybackInfo) : InfoAnswer
@@ -116,15 +188,30 @@ class PlayerApi(val server: ServerApi, private val profileId: String) {
         }
     }
 
-    /** Segment types this server offers skip buttons for (`/api/me` server.capabilities.segments; all four when not sent). */
-    fun segmentTypes(): Set<String> {
-        val caps = get("/api/me")?.optJSONObject("server")?.optJSONObject("capabilities") ?: return ALL_SEGMENTS
-        val a = caps.optJSONArray("segments") ?: return ALL_SEGMENTS
-        return (0 until a.length()).mapNotNull { a.optString(it).takeIf { s -> s.isNotEmpty() }?.lowercase() }.toSet()
+    /** One `/api/me` read: capability flags, post-play feature and role. Any trouble (or a missing flag) means "available". */
+    fun caps(): ServerCaps {
+        val me = get("/api/me") ?: return ServerCaps()
+        val c = me.optJSONObject("server")?.optJSONObject("capabilities")
+        fun flag(o: JSONObject?, k: String) = if (o == null || !o.has(k) || o.isNull(k)) true else o.optBoolean(k, true)
+        val seg = c?.optJSONArray("segments")
+        val role = (if (me.isNull("role")) null else me.optString("role").takeIf { it.isNotEmpty() })
+            ?: me.optJSONObject("user")?.optString("role")?.takeIf { it.isNotEmpty() }
+        return ServerCaps(
+            chapters = flag(c, "chapters"),
+            trickplay = flag(c, "trickplay"),
+            subtitleSearch = flag(c, "subtitleSearch"),
+            postplay = flag(me.optJSONObject("features"), "postplay"),
+            segments = if (seg == null) ALL_SEGMENTS else (0 until seg.length()).mapNotNull { seg.optString(it).takeIf { s -> s.isNotEmpty() }?.lowercase() }.toSet(),
+            role = role,
+        )
     }
 
-    fun prefs(): PlayerPrefs {
-        val p = get("/api/prefs")?.optJSONObject("prefs") ?: return PlayerPrefs()
+    /** Segment types this server offers skip buttons for (all four when not sent). */
+    fun segmentTypes(): Set<String> = caps().segments
+
+    /** The profile's preferences, or null when they could not be loaded (the caller keeps what it has: R2's stored sound mode). */
+    fun prefs(): PlayerPrefs? {
+        val p = get("/api/prefs")?.optJSONObject("prefs") ?: return null
         val d = FlowPrefs()
         return PlayerPrefs(
             flow = FlowPrefs(
@@ -137,14 +224,18 @@ class PlayerApi(val server: ServerApi, private val profileId: String) {
             subtitleLang = p.optString("subtitleLang"),
             quality = p.optLong("quality"),
             subtitleStyle = SubtitleStyle.parse(p.optJSONObject("subtitleStyle")),
+            audioFx = p.optString("audioFx").takeIf { it in AUDIO_FX } ?: "off",
+            animeOriginal = p.optBoolean("animeOriginal", false),
+            postplay = p.optBoolean("postplay", true),
+            spoilerProtection = p.optBoolean("spoilerProtection", false),
         )
     }
 
-    /** This series' saved audio / subtitle choice (`GET /api/series/:id/langpref`; an episode id resolves to its series). */
-    fun langPref(seriesOrItem: String): Pair<String?, String?> {
-        val j = get("/api/series/$seriesOrItem/langpref") ?: return null to null
+    /** This series' saved audio / subtitle choice (`GET /api/series/:id/langpref`; an episode id resolves to its series). [anime] also asks whether it is an anime. */
+    fun langPref(seriesOrItem: String, anime: Boolean = false): LangPref {
+        val j = get("/api/series/$seriesOrItem/langpref" + if (anime) "?anime=1" else "") ?: return LangPref(null, null, false)
         fun s(k: String) = if (j.isNull(k)) null else j.optString(k).takeIf { it.isNotEmpty() }
-        return s("audio") to s("subtitle")
+        return LangPref(s("audio"), s("subtitle"), j.optBoolean("anime", false))
     }
 
     /** Remembers the viewer's audio / subtitle pick for the series (`PUT /api/series/:id/langpref`), best effort. */
@@ -153,6 +244,119 @@ class PlayerApi(val server: ServerApi, private val profileId: String) {
         server.sendJson("/api/series/$seriesId/langpref", profileId, b, method = "PUT")?.first == 200
     } catch (_: IOException) {
         false
+    }
+
+    /** The profile's sound processing (`PUT /api/prefs/audiofx`), best effort. */
+    fun saveAudioFx(mode: String): Boolean = send("PUT", "/api/prefs/audiofx", JSONObject().put("audioFx", mode)) is ApiResult.Ok
+
+    fun seasons(seriesId: String): List<Season>? = get("/api/items/$seriesId/seasons")?.optJSONArray("items")?.let { a ->
+        objects(a).mapNotNull { o ->
+            val id = o.optString("id").takeIf { it.isNotEmpty() } ?: return@mapNotNull null
+            Season(id, o.optString("name"), int(o, "indexNumber"))
+        }
+    }
+
+    fun episodes(seriesId: String, seasonId: String?): List<Episode>? {
+        val q = if (seasonId != null) "?seasonId=" + URLEncoder.encode(seasonId, "UTF-8") else ""
+        return get("/api/items/$seriesId/episodes$q")?.optJSONArray("items")?.let { a ->
+            objects(a).mapNotNull { o ->
+                val id = o.optString("id").takeIf { it.isNotEmpty() } ?: return@mapNotNull null
+                Episode(
+                    id, o.optString("name"), int(o, "parentIndexNumber"), int(o, "indexNumber"), imageOf(o, 400),
+                    o.optLong("runtimeTicks"), o.optLong("positionTicks"), o.optBoolean("played"),
+                )
+            }
+        }
+    }
+
+    /** Raw chapters (`start` in seconds); normalising is up to the caller. Empty when the server has none. */
+    fun chapters(itemId: String): List<Chapter>? = get("/api/items/$itemId/chapters")?.let { j ->
+        val a = j.optJSONArray("chapters") ?: return@let emptyList()
+        objects(a).mapNotNull { o ->
+            val s = o.optDouble("start", Double.NaN)
+            if (s.isNaN()) null else Chapter(s, o.optString("name"), str(o, "image"))
+        }
+    }
+
+    fun castInfo(itemId: String): CastInfo? {
+        if (!validId(itemId)) return null
+        val j = get("/api/items/$itemId/castinfo") ?: return null
+        val it = j.optJSONObject("item") ?: return null
+        fun people(k: String) = j.optJSONArray(k)?.let { a -> objects(a).mapNotNull(::parsePerson) } ?: emptyList()
+        fun strings(k: String) = j.optJSONArray(k)?.let { a -> (0 until a.length()).mapNotNull { i -> a.optString(i).takeIf { s -> s.isNotEmpty() } } } ?: emptyList()
+        return CastInfo(
+            name = it.optString("name"),
+            year = int(it, "year"),
+            rating = str(it, "rating"),
+            communityRating = if (it.has("communityRating") && !it.isNull("communityRating")) it.optDouble("communityRating") else null,
+            cast = people("cast"), guests = people("guests"), directors = people("directors"), writers = people("writers"), creators = people("creators"),
+            studios = strings("studios"), genres = strings("genres"),
+            seriesId = str(it, "seriesId"),
+        )
+    }
+
+    /** The titles (movies, series) a person appears in (`GET /api/people/:id`); 404 = none visible to this profile (empty), null = failed. */
+    fun personTitles(personId: String): List<Title>? {
+        if (!validId(personId)) return null
+        val j = try {
+            val (code, body) = server.getJson("/api/people/$personId", profileId)
+            if (code == 404) return emptyList()
+            if (code == 200) body else null
+        } catch (e: SessionExpired) {
+            throw e
+        } catch (_: IOException) {
+            null
+        }
+        return titles(j)
+    }
+
+    fun similar(itemId: String): List<Title>? = titles(get("/api/items/$itemId/similar"))
+
+    fun bookmarks(itemId: String): List<Bookmark>? = get("/api/bookmarks?itemId=" + URLEncoder.encode(itemId, "UTF-8"))?.optJSONArray("bookmarks")?.let { a ->
+        objects(a).mapNotNull { o ->
+            val id = o.optString("id").takeIf { it.isNotEmpty() } ?: return@mapNotNull null
+            Bookmark(id, o.optInt("position"), str(o, "note"))
+        }
+    }
+
+    /** `POST /api/bookmarks`: the new bookmark's id; 409 `too_many_bookmarks` when the profile's 500 are used. */
+    fun addBookmark(itemId: String, positionSec: Int, note: String?): ApiResult<String> {
+        val b = JSONObject().put("itemId", itemId).put("position", positionSec)
+        note?.takeIf { it.isNotEmpty() }?.let { b.put("note", it) }
+        return when (val r = send("POST", "/api/bookmarks", b)) {
+            is ApiResult.Err -> r
+            is ApiResult.Ok -> r.value.optString("id").takeIf { it.isNotEmpty() }?.let { ApiResult.Ok(it) } ?: ApiResult.Err(200, null)
+        }
+    }
+
+    fun removeBookmark(id: String): Boolean = send("DELETE", "/api/bookmarks/" + URLEncoder.encode(id, "UTF-8"), JSONObject()) is ApiResult.Ok
+
+    /** `GET /api/items/:id/subtitles/search?lang=<3 letters>`; 403 for guests, 502 `subtitle_provider_unavailable`. */
+    fun searchSubtitles(itemId: String, lang3: String): ApiResult<List<SubResult>> =
+        when (val r = request("GET", "/api/items/$itemId/subtitles/search?lang=" + URLEncoder.encode(lang3, "UTF-8"), null)) {
+            is ApiResult.Err -> r
+            is ApiResult.Ok -> ApiResult.Ok(
+                r.value.optJSONArray("results")?.let { a ->
+                    objects(a).mapNotNull { o ->
+                        val id = o.optString("id").takeIf { it.isNotEmpty() } ?: return@mapNotNull null
+                        SubResult(id, o.optString("name"), o.optString("provider"), o.optInt("downloads"))
+                    }
+                } ?: emptyList(),
+            )
+        }
+
+    fun downloadSubtitle(itemId: String, subtitleId: String): ApiResult<Unit> =
+        when (val r = send("POST", "/api/items/$itemId/subtitles/download", JSONObject().put("subtitleId", subtitleId))) {
+            is ApiResult.Err -> r
+            is ApiResult.Ok -> ApiResult.Ok(Unit)
+        }
+
+    /** The post-play answer, raw (parsed by the post-play screen); null when off, not allowed or failing. */
+    fun postplay(itemId: String): JSONObject? = get("/api/items/$itemId/postplay")
+
+    /** `POST /api/postplay/event`, best effort. */
+    fun postplayEvent(body: JSONObject) {
+        try { server.sendJson("/api/postplay/event", profileId, body) } catch (_: IOException) { }
     }
 
     private fun get(path: String): JSONObject? = try {
@@ -164,8 +368,40 @@ class PlayerApi(val server: ServerApi, private val profileId: String) {
         null
     }
 
+    private fun send(method: String, path: String, body: JSONObject): ApiResult<JSONObject> = request(method, path, body)
+
+    /** GET (body null) or a CSRF-protected write: 200 → Ok(body or {}), else Err(status, body.error); network trouble → Err(0, null). */
+    private fun request(method: String, path: String, body: JSONObject?): ApiResult<JSONObject> = try {
+        val r = if (body == null) server.getJson(path, profileId) else server.sendJson(path, profileId, body, method = method)
+        when {
+            r == null -> ApiResult.Err(0, null)
+            r.first == 200 -> ApiResult.Ok(r.second ?: JSONObject())
+            else -> ApiResult.Err(r.first, r.second?.optString("error")?.takeIf { it.isNotEmpty() })
+        }
+    } catch (e: SessionExpired) {
+        throw e
+    } catch (_: IOException) {
+        ApiResult.Err(0, null)
+    }
+
+    private fun titles(j: JSONObject?): List<Title>? = j?.optJSONArray("items")?.let { a ->
+        objects(a).mapNotNull { o ->
+            val id = o.optString("id").takeIf { it.isNotEmpty() } ?: return@mapNotNull null
+            Title(id, o.optString("name"), str(o, "type"), int(o, "year"), imageOf(o, 300))
+        }
+    }
+
+    private fun parsePerson(o: JSONObject): Person? {
+        val id = o.optString("id").takeIf { it.isNotEmpty() } ?: return null
+        return Person(id, o.optString("name"), imageOf(o, 300), str(o, "role"))
+    }
+
     companion object {
+        private val ID = Regex("[A-Za-z0-9_-]{1,64}")
+        private fun validId(id: String) = ID.matches(id)
+
         val ALL_SEGMENTS = setOf("intro", "outro", "recap", "preview")
+        private val AUDIO_FX = setOf("off", "voices", "night", "both")
         private val PROFILE_ERRORS = setOf("profile_changed", "profile_required")
 
         fun parseInfo(j: JSONObject): PlaybackInfo? {
@@ -191,8 +427,25 @@ class PlayerApi(val server: ServerApi, private val profileId: String) {
                     val url = o.optString("url").takeIf { it.isNotEmpty() } ?: return@mapNotNull null
                     SubtitleTrack(o.optInt("index"), o.optString("title"), lang(o), url, o.optBoolean("isDefault"))
                 },
+                trickplay = j.optJSONObject("trickplay")?.let(::parseTrickplay),
             )
         }
+
+        private fun parseTrickplay(o: JSONObject): TrickplayInfo? {
+            val url = o.optString("url").takeIf { it.isNotEmpty() } ?: return null
+            val w = o.optInt("width"); val h = o.optInt("height"); val tw = o.optInt("tileWidth"); val th = o.optInt("tileHeight")
+            val count = o.optInt("count"); val interval = o.optLong("interval")
+            if (w <= 0 || h <= 0 || tw <= 0 || th <= 0 || count <= 0 || interval <= 0) return null
+            return TrickplayInfo(w, h, tw, th, count, interval, url)
+        }
+
+        private fun str(o: JSONObject, k: String) = if (o.isNull(k)) null else o.optString(k).takeIf { it.isNotEmpty() }
+
+        private fun int(o: JSONObject, k: String) = if (o.has(k) && !o.isNull(k)) o.optInt(k) else null
+
+        /** The item's poster path when the server says it has one (`image: true`), like web `img()`. */
+        internal fun imageOf(o: JSONObject, width: Int): String? =
+            if (o.optBoolean("image", false)) o.optString("id").takeIf { it.isNotEmpty() }?.let { "/media/Items/$it/Images/Primary?maxWidth=$width&quality=85" } else null
 
         private fun lang(o: JSONObject) = if (o.isNull("language")) null else o.optString("language").takeIf { it.isNotEmpty() }
 

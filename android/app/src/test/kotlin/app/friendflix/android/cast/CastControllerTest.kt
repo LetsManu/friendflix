@@ -64,7 +64,7 @@ class CastControllerTest {
     private inner class Host(val onStop: () -> Unit) : CastHost {
         /** what had left the device when the hand-back happened */
         var callsAtReturn: List<String> = emptyList()
-        var returned: Triple<String, Long, Boolean>? = null
+        var returned: Triple<String, Long?, Boolean>? = null
         var returnedEnded = false
         var failed: TokenAnswer? = null
         var failures = 0
@@ -74,7 +74,7 @@ class CastControllerTest {
         override fun onCasting(itemId: String) { casting++ }
         override fun onTitle(item: ItemInfo) { titles += item.id }
         override fun onFailed(answer: TokenAnswer?) { failures++; failed = answer }
-        override fun onReturn(itemId: String, positionMs: Long, play: Boolean, ended: Boolean) {
+        override fun onReturn(itemId: String, positionMs: Long?, play: Boolean, ended: Boolean) {
             returned = Triple(itemId, positionMs, play); returnedEnded = ended; callsAtReturn = calls.map { it.first }
         }
         override fun receiverStrings(): JSONObject = JSONObject().put("next", "Next episode")
@@ -209,6 +209,29 @@ class CastControllerTest {
         assertFalse(calls.any { it.second?.optBoolean("next") == true })
     }
 
+    @Test fun sleepAfterThisEpisodeQueuesNothingOnTheTv() {
+        val (r, c) = controller()
+        c.start(episode())
+        c.sleepAfterEpisode = true
+        c.onReceiver(playing("c1", 30 * 60_000 - 60_000))
+        assertTrue(r.queued.isEmpty())
+        assertFalse(calls.any { it.second?.optBoolean("next") == true })
+    }
+
+    @Test fun sleepAfterThisEpisodeTakesTheQueuedEpisodeOffAgain() {
+        val (r, c) = controller()
+        c.start(episode())
+        c.onReceiver(playing("c1", 30 * 60_000 - 60_000))
+        assertEquals(listOf("q2" to true), r.queued)
+        c.sleepAfterEpisode = true
+        assertEquals(listOf("q2"), r.removed)
+        assertTrue(paths().contains("DELETE /api/cast/session/q2"))
+        // switched off again: the next episode is queued once more
+        c.sleepAfterEpisode = false
+        c.onReceiver(playing("c1", 30 * 60_000 - 50_000))
+        assertEquals(2, r.queued.size)
+    }
+
     @Test fun theReceiverMovingOnStopsAndRevokesTheEndedToken() {
         val (_, c) = controller()
         c.start(episode())
@@ -228,10 +251,9 @@ class CastControllerTest {
     // ---- offline, hand-over ----
 
     @Test fun offlineMediaCannotBeCast() {
-        assertFalse(CastController.castable(offline = true, enabled = true, devices = true))
-        assertFalse(CastController.castable(offline = false, enabled = false, devices = true))
-        assertFalse(CastController.castable(offline = false, enabled = true, devices = false))
-        assertTrue(CastController.castable(offline = false, enabled = true, devices = true))
+        assertFalse(CastController.castable(offline = true, enabled = true))
+        assertFalse(CastController.castable(offline = false, enabled = false))
+        assertTrue(CastController.castable(offline = false, enabled = true)) // with or without a discovered TV
         val (r, c) = controller()
         calls.clear()
         assertFalse(c.start(film(offline = true)))
@@ -357,6 +379,48 @@ class CastControllerTest {
         assertEquals(listOf("POST /api/playback/progress", "POST /api/playback/stop", "DELETE /api/cast/session/c1", "POST /api/cast/session"), paths())
         assertEquals(1_200_000L * 10_000, calls[3].second!!.getLong("startTicks"))
         assertEquals("c2", r.loads.last().first)
+    }
+
+    @Test fun anEpisodePickedWhileCastingPlaysOnTheTv() {
+        val (r, c) = controller()
+        assertFalse("nothing is cast yet", c.playOnTv(ItemInfo("ep5", "Episode", "Fifth", "Bright Valley", "s1", 1, 5)))
+        c.start(episode())
+        c.onReceiver(playing("c1", 61_000))
+        calls.clear()
+        assertTrue(c.playOnTv(ItemInfo("ep5", "Episode", "Fifth", "Bright Valley", "s1", 1, 5)))
+        // the queued next episode goes first (a new load replaces the receiver's queue), then the playing token
+        assertEquals(listOf("DELETE /api/cast/session/q2", "POST /api/playback/stop", "DELETE /api/cast/session/c1", "POST /api/cast/session"), paths())
+        assertEquals(listOf("q2"), r.removed)
+        val body = calls.last().second!!
+        assertEquals("ep5", body.getString("itemId"))
+        assertFalse("the server's resume point", body.has("startTicks"))
+        assertFalse("default audio", body.has("audioIndex"))
+        assertEquals(8_000_000L, body.getLong("maxBitrate"))
+        assertEquals(Triple("c3", null as Int?, true), r.loads.last())
+        assertEquals(listOf("ep5"), host.titles)
+        assertEquals("ep5", c.itemId)
+        assertTrue(c.casting)
+        assertEquals(2, host.casting)
+    }
+
+    @Test fun aRefusedTokenForAPickedEpisodeReturnsWithoutAPosition() {
+        val (_, c) = controller()
+        c.start(episode())
+        c.onReceiver(playing("c1", 61_000))
+        answers += TokenAnswer.Failed
+        c.playOnTv(ItemInfo("ep5", "Episode", "Fifth", "Bright Valley", "s1", 1, 5))
+        // the picked episode plays here from the server's resume point, not from 0
+        assertEquals(Triple("ep5", null as Long?, true), host.returned)
+        assertFalse(c.casting)
+    }
+
+    @Test fun aSessionEndBeforeThePickedEpisodeLoadedReturnsWithoutAPosition() {
+        val c = CastController(server, FakeReceiver(false), host, still, io = manualIo, main = direct, now = { clock }, schedule = schedule)
+        c.start(episode()); runIo()
+        c.onReceiver(playing("c1", 61_000))
+        c.playOnTv(ItemInfo("ep5", "Episode", "Fifth", "Bright Valley", "s1", 1, 5)) // its token request is still on its way
+        c.onSessionEnded()
+        assertEquals(Triple("ep5", null as Long?, true), host.returned)
     }
 
     // ---- fix round 1 ----

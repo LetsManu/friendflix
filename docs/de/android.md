@@ -18,6 +18,7 @@ Alles andere (Stöbern, Profile, Watch-Partys, Anfragen, Einstellungen deines Ko
 - [Installieren](#installieren)
 - [Erster Start](#erster-start)
 - [App-Einstellungen](#app-einstellungen)
+- [Player](#player)
 - [Downloads und Speicher](#downloads-und-speicher)
 - [Verschlüsselung der Dateien und ihre Grenzen](#verschlüsselung-der-dateien-und-ihre-grenzen)
 - [Offline](#offline)
@@ -71,6 +72,42 @@ Du öffnest sie in der Weboberfläche unter **Einstellungen → App auf diesem G
 
 Alles andere, etwa Wiedergabesprachen, Untertitel, Autoplay und die Standardqualität für Downloads, stellst du wie gewohnt in der Weboberfläche ein.
 
+## Player
+
+Der native Player hat die Knöpfe der Steuerleiste des Web-Players, in derselben Reihenfolge. Knöpfe, die den Server brauchen, erscheinen nur, wenn der Server die Funktion anbietet.
+
+Der Player füllt den Bildschirm: Status- und Navigationsleiste bleiben ausgeblendet, auch nach einem Menü, Bild-in-Bild oder einer anderen App. Wische vom Bildschirmrand, um sie kurz einzublenden.
+
+**Obere Leiste** (von rechts: *Mehr*, *Audio und Untertitel*, *Besetzung & Infos*, der Chromecast-Knopf, der Qualitäts-Chip):
+
+- **Mehr (⋯):**
+  - *Wiedergabetempo:* 0,5× bis 2×. Es wird nicht gespeichert: Jeder Titel beginnt mit 1×. Eine kleine Anzeige am Knopf zeigt ein Tempo außer 1×.
+  - *Lesezeichen:* *Szene teilen* teilt einen Link auf die aktuelle Position über das Teilen-Menü von Android. Du kannst ein Lesezeichen mit kurzer Notiz (bis 140 Zeichen) anlegen, eines antippen, um dorthin zu springen, oder es entfernen.
+  - *Qualität:* die Qualitätsauswahl, die vorher in der oberen Leiste war.
+  - *Schlaf-Timer:* aus, 15, 30, 45 oder 60 Minuten oder *Nach dieser Folge*. Läuft er ab, pausiert die Wiedergabe mit dem Hinweis *Schlaf-Timer: Wiedergabe pausiert*. Ein Punkt am Knopf zeigt einen laufenden Timer, die Restzeit steht in Mehr. *Nach dieser Folge* verhindert, dass die nächste Folge startet. Der Timer läuft auch mit Ton im Hintergrund weiter.
+  - *Bedienung sperren:* blendet alle Bedienelemente aus und ignoriert Berührungen, damit nichts aus Versehen passiert. Nur ein Schloss bleibt; halte es kurz gedrückt, um zu entsperren. Ein kurzes Tippen oder Android-Zurück zeigt *Zum Entsperren gedrückt halten*.
+  - *Bild-in-Bild:* dasselbe kleine Fenster wie mit Home während der Wiedergabe.
+  - *Auf dem Fernseher abspielen* / *Läuft auf dem Fernseher:* die Chromecast-Wahl, sichtbar, sobald das Handy casten kann (online, Google-Play-Dienste, Casting auf dem Server erlaubt), auch bevor ein Fernseher gefunden wurde, und beim Casting.
+- **Audio und Untertitel:** Tonspur und Untertitel wie bisher, dazu:
+  - *Untertitel suchen …*, wenn dein Server die Untertitelsuche erlaubt (ein Gast sieht die Zeile mit *Mit deiner Rolle nicht erlaubt.*). Sprache wählen, dann ein Ergebnis. Der Player lädt an derselben Position neu und meldet *Untertitel hinzugefügt – im Menü auswählen*.
+  - *Klare Stimmen* (Dialoge heben sich von Musik und Effekten ab) und *Nachtmodus* (laute Szenen leiser, leise lauter). Sie brauchen Android 9 oder neuer; auf Android 8 sind sie mit einem Hinweis ausgegraut. Die Einstellung wird für dein Profil gespeichert, wie im Web-Player.
+- **Besetzung & Infos:** Besetzung, Gaststars, Crew, Studios und Genres des Titels, mit Bildern. Ein Tipp auf eine Person zeigt ihre anderen Titel, ein Tipp auf einen Titel schließt den Player und öffnet die Seite des Titels in der App.
+- **Qualitäts-Chip:** *Original*, wenn die Datei unverändert läuft, oder *Umgewandelt · 1080p*, wenn der Server sie umwandelt. Ein Tipp sagt warum, zum Beispiel das Netz, ein Limit deiner Rolle oder ein Codec, den das Handy nicht abspielen kann.
+
+**Untere Leiste:**
+
+- **Folgen** (nur bei Folgen einer Serie): die Staffeln und ihre Folgen, mit Fortschritt. Ein Tipp spielt die Folge im selben Player.
+- **Szenen** (wenn der Server Kapitel hat): die Kapitel, mit Bildern, wo der Server welche hat. Ein Tipp springt dorthin. Kapitelanfänge und deine Lesezeichen sind auf der Zeitleiste markiert.
+- **Zeitleiste:** Beim Ziehen zeigt ein kleines Vorschaubild das Bild an dieser Stelle, wenn der Server Vorschaubilder anbietet.
+
+**Am Ende eines Titels:** Ist Post-Play an (auf dem Server und in deinem Profil) und folgt keine nächste Folge, erscheint kurz vor dem Ende eine Karte *Fertig? Sieh dir an, was als Nächstes kommt*. Am Ende öffnet sich die Seite *Was als Nächstes?* mit Reihen von Vorschlägen: *Abspielen* startet den nächsten Teil im Player, ein Tipp auf einen Titel öffnet seine Seite. Bei einem Film ohne Post-Play zeigt *Mehr davon* drei ähnliche Titel. Im Bild-in-Bild wartet die Seite, bis du den Player wieder öffnest. Der Player schließt sich am Ende nie von selbst.
+
+Deine *Untertitel-Darstellung* aus den Web-Einstellungen (Größe, Farbe, Hintergrund, Schrift) gilt für die Untertitel. Mit *Anime: Originalton mit Untertiteln* in deinem Profil beginnt eine Anime-Serie auf Japanisch mit Untertiteln in der Sprache der App, außer du hast für diese Serie etwas anderes gewählt.
+
+**Offline (ein Download):** *Folgen*, *Szenen*, *Besetzung & Infos*, Lesezeichen, Untertitelsuche, Qualität, der Qualitäts-Chip, Chromecast und Post-Play brauchen den Server und sind ausgeblendet. Tempo, *Klare Stimmen* und *Nachtmodus* (mit deiner letzten Einstellung auf diesem Handy), Untertitel (in der Standarddarstellung), Schlaf-Timer, Sperre und Bild-in-Bild funktionieren.
+
+**Beim Casting:** Das Handy ist die Fernbedienung für den Fernseher. *Folgen* spielt die gewählte Folge auf dem Fernseher, *Szenen* und Lesezeichen springen auf dem Fernseher, ein neues Lesezeichen nimmt die Position des Fernsehers, der Schlaf-Timer pausiert den Fernseher, und *Besetzung & Infos* zeigt den Titel, den der Fernseher spielt. Beim Casting nicht angeboten: Ton, Untertitel, Untertitelsuche, *Klare Stimmen* und *Nachtmodus*, Qualität und ihr Chip, Tempo, Sperre, Bild-in-Bild und Post-Play. Der Chromecast-Knopf bleibt in der oberen Leiste links neben *Besetzung & Infos*, und Mehr zeigt *Läuft auf dem Fernseher*.
+
 ## Downloads und Speicher
 
 Du startest einen Download in der Weboberfläche wie im Browser: Der Server legt die Lizenz mit Qualität und Ablauf an (siehe [downloads.md](../downloads.md)), die App übernimmt die Übertragung.
@@ -122,13 +159,13 @@ Download-Benachrichtigungen (Fortschritt, *Bitte erneut anmelden*) zeigen nie Ti
 
 ## Chromecast
 
-Im nativen Player erscheint ein Cast-Symbol, wenn ein Chromecast oder Google TV im selben WLAN ist und dein Server Casting erlaubt.
+Im nativen Player erscheint das Cast-Symbol, sobald das Handy casten kann: Dein Server erlaubt Casting und das Handy hat die Google-Play-Dienste. Es wartet nicht auf einen Fernseher: Tippe es an und wähle einen Chromecast oder Google TV im selben WLAN; wird keiner gefunden, sagt es die Liste.
 
 - Casting nutzt dieselben kurzlebigen Cast-Tokens wie die Weboberfläche. Setzt der Server `CAST_RECEIVER_APP_ID`, läuft auf dem Fernseher der eigene Receiver von FriendFlix, sonst Googles Default Media Receiver ([cast.md](../cast.md)). Die App liest diese Einstellung beim Start; nach einer Änderung die App neu starten.
 - Die nächste Folge wird auf dem Fernseher eingereiht, wenn Autoplay es erlaubt; das Handy behält die Steuerung, auch auf dem Sperrbildschirm.
 - Beendest du das Casting, geht es auf dem Handy dort weiter, wo der Fernseher war. Schließt du den Player, endet das Casting.
 - Downloads werden nie gecastet; beim Abspielen eines Downloads ist das Cast-Symbol ausgeblendet.
-- Ton-, Untertitel- und Qualitätswechsel gibt es während des Castings nicht; wähle sie vorher.
+- Ton-, Untertitel- und Qualitätswechsel, Tempo, Untertitelsuche, *Klare Stimmen* und *Nachtmodus* gibt es während des Castings nicht; wähle sie vorher. *Folgen*, *Szenen*, Lesezeichen, der Schlaf-Timer und *Besetzung & Infos* wirken auf den Fernseher ([Player](#player)).
 - Die Cast-Funktion kommt aus Googles Cast SDK, das Googles eigene Cast-Telemetrie mitbringt (sie meldet an Google wie in jeder App mit Google Cast). FriendFlix selbst sendet keine Analysedaten. Auf einem Handy ohne Google-Play-Dienste gibt es kein Cast-Symbol; alles andere funktioniert. Einzelheiten: [security.md, Android app](../security.md#android-app).
 
 ## Fehlersuche
@@ -144,7 +181,7 @@ Im nativen Player erscheint ein Cast-Symbol, wenn ein Chromecast oder Google TV 
 | *Die Uhrzeit des Geräts stimmt nicht.* | Die Uhr wurde zurückgestellt. Uhrzeit automatisch einstellen und einmal online gehen. |
 | *Auf diesem Gerät gerade nicht verfügbar.* | Androids Keystore hat nicht geantwortet. Gleich noch einmal versuchen oder das Handy neu starten; nichts wird gelöscht. |
 | Keine Benachrichtigungen | In den App-Einstellungen erlaubt? Kategorie an? Die Akku-Optimierung für FriendFlix in den Android-Einstellungen kann sie weiter verzögern. Nach einem Ereignis mindestens 20 Minuten warten. |
-| Kein Cast-Symbol | Gleiches WLAN wie der Fernseher? Casting auf dem Server erlaubt? Google-Play-Dienste installiert? Läuft gerade ein Download? |
+| Kein Cast-Symbol / kein Fernseher in der Liste | Gleiches WLAN wie der Fernseher? Casting auf dem Server erlaubt? Google-Play-Dienste installiert? Läuft gerade ein Download? Nennt `CAST_RECEIVER_APP_ID` des Servers einen Receiver, der in der Google-Cast-Konsole nicht veröffentlicht ist, erscheinen in der Liste nur Fernseher, die dort als Testgeräte eingetragen sind. |
 | *Maximal N gleichzeitige Streams erlaubt.* | Das Stream-Limit deines Kontos ist erreicht (andere Geräte oder ein noch laufendes Casting). Beende einen. |
 | Die APK lässt sich nicht über die Play-Version installieren (oder umgekehrt) | Unterschiedliche Signaturen, siehe [Installieren](#installieren). Erst deinstallieren. |
 | Etwas anderes | Dieselbe Seite im Browser öffnen: Klappt es dort auch nicht, liegt es am Server. Als letzter Schritt auf diesem Gerät abmelden und wieder anmelden (die Downloads werden gelöscht). |
@@ -270,28 +307,46 @@ Unit-Tests und der Emulator in der CI decken die Logik ab; diese Punkte brauchen
 32. Drehen und Größe ändern (geteilter Bildschirm): Die Wiedergabe läuft ohne neue Sitzung weiter. Eine fertige Folge vom Ende neu starten → „Läuft gerade" beim Admin zeigt sie wieder, und beim Verlassen wird ein Stopp gemeldet.
 33. Eine direkt abgespielte MKV mit eingebetteten Text-Untertiteln: Sie werden nicht angeboten (nur das WebVTT des Servers); prüfen, ob der Server sie als externe Untertitel listet.
 
+**Bedienung im Player**
+34. Die Leiste: oben von rechts *Mehr*, *Audio und Untertitel*, *Besetzung & Infos*, der Chromecast-Knopf, der Qualitäts-Chip; unten *Folgen*, *Szenen*, nächste Folge. Die Leiste sieht im Hoch- und Querformat und auf einem Tablet richtig aus. Status- und Navigationsleiste bleiben ausgeblendet; nach einem Wischen vom Rand, einem geschlossenen Menü, Bild-in-Bild oder Home und zurück verschwinden sie wieder.
+35. Folgen: Bei einer Folge öffnet sich das Panel bei der aktuellen Staffel, mit Fortschritt und einer Markierung an der laufenden Folge; ein Film hat keinen Knopf *Folgen*. Eine andere Folge wählen: Sie spielt im selben Player, das Tempo ist wieder 1×, ein Schlaf-Timer *Nach dieser Folge* ist aufgehoben, und ihre Szenen und Lesezeichen laden.
+36. Szenen und Markierungen: Ein Titel mit Kapiteln zeigt *Szenen* mit Bildern; ein Tipp springt dorthin und schließt das Panel. Kapitelanfänge und Lesezeichen sind Markierungen auf der Zeitleiste. Ein Titel ohne Kapitel hat keinen Knopf *Szenen*.
+37. Vorschau beim Ziehen: die Zeitleiste ziehen; ein Bild über dem Regler folgt. Einen langen Film prüfen, dessen Vorschaubilder auf dem Server große Bögen haben: Die Vorschau kommt mit, die App wird nicht langsam und stürzt nicht ab. Ein Server ohne Vorschaubilder: kein Bild, Springen geht.
+38. Besetzung & Infos: Das Panel zeigt die Titelzeile, Besetzung, Crew und Genres mit Bildern. Ein Tipp auf eine Person zeigt ihre Titel; ein Tipp auf einen Titel schließt den Player und öffnet seine Seite in der App.
+39. Audio und Untertitel, *Untertitel suchen …*: Deutsch wählen, ein Ergebnis wählen: Der Player lädt an derselben Position neu und meldet *Untertitel hinzugefügt – im Menü auswählen*; der neue Untertitel steht in der Liste. Ein Server ohne Untertitelsuche: keine Zeile. Ein Gast: Die Zeile zeigt *Mit deiner Rolle nicht erlaubt.* Kein Ergebnis und Fehler des Anbieters zeigen die Texte des Webs.
+40. *Klare Stimmen* und *Nachtmodus* ab Android 9: Der Ton ändert sich hörbar; der Web-Player zeigt für das Profil dieselbe Einstellung. Auf Android 8 sind die Schalter ausgegraut mit *Auf diesem Gerät nicht verfügbar*. Beim Casting ist der Knopf *Audio und Untertitel* weg.
+41. Mehr, Tempo: 1,5× zeigt eine kleine Anzeige am Knopf Mehr; die nächste Folge beginnt mit 1×. Mehr, Lesezeichen: *Szene teilen* öffnet das Teilen-Menü von Android mit einem Link `/watch/<id>?t=`; ein Lesezeichen mit Notiz anlegen, antippen zum Springen, entfernen. Mehr, Qualität: 720p wählen; der Chip zeigt *Umgewandelt · 720p*.
+42. Schlaf-Timer: 15 Minuten zeigen einen Punkt an Mehr und die Restzeit in Mehr; läuft er ab, pausiert die Wiedergabe mit *Schlaf-Timer: Wiedergabe pausiert*. *Nach dieser Folge* auf dem Handy: kein Countdown zur nächsten Folge, die Wiedergabe pausiert am Ende. *Nach dieser Folge* beim Casting: Der Fernseher stoppt am Ende der Folge und macht nicht weiter.
+43. Bedienung sperren: Berührungen bewirken nichts; Android-Zurück zeigt *Zum Entsperren gedrückt halten* und der Player bleibt; das Schloss gedrückt halten entsperrt.
+44. Mehr, Bild-in-Bild: Das kleine Fenster öffnet sich; ein offenes Panel schließt sich, im Fenster erscheint kein Panel.
+45. Qualitäts-Chip: *Original* bei einer direkten Datei; ein umgewandelter Stream zeigt beim Tippen den Grund.
+46. Post-Play: ein Film mit Post-Play: *Fertig? Sieh dir an, was als Nächstes kommt* kurz vor dem Ende, die Seite *Was als Nächstes?* am Ende; *Abspielen* beim nächsten Teil spielt ihn im Player, ein Titel öffnet seine Seite. Ein Film ohne Post-Play: *Mehr davon* mit drei Titeln. Einen Titel im Bild-in-Bild enden lassen: Die Seite erscheint, sobald der Player wieder geöffnet ist. Der Player schließt sich am Ende nie von selbst.
+47. Offline (ein Download): kein *Folgen*, *Szenen*, *Besetzung & Infos*, keine Lesezeichen, kein *Untertitel suchen …*, keine Qualität, kein Chip und kein Chromecast-Knopf; Tempo, Schlaf-Timer, Sperre, Untertitel, *Klare Stimmen* und *Nachtmodus* gehen.
+
 **Chromecast**
-34. Ein Cast-Gerät im WLAN und Casting erlaubt → das Cast-Symbol erscheint im Player. Kein Gerät → kein Symbol. Ein Download läuft → nie ein Symbol.
-35. Symbol antippen, Fernseher wählen: Das Handy zeigt „Wird auf … abgespielt" und steuert den Fernseher; „Läuft gerade" beim Admin zeigt die lokale Sitzung gestoppt und die Cast-Sitzung gestartet.
-36. Default Media Receiver (ohne `CAST_RECEIVER_APP_ID`): spielt ab der Position des Handys mit dem gewählten Untertitel; Pause und Springen gehen; der Fortschritt erscheint beim Admin.
-37. Eigener Receiver: `CAST_RECEIVER_APP_ID` setzen, einen Titel einmal öffnen, App neu starten, casten: Der eigene Receiver startet, seine Meldungen kommen an, seine Nächste-Folge-Karte ist in der Sprache der App.
-38. Folge mit Autoplay: etwa 40 min vor dem Ende wird die nächste Folge eingereiht; am Ende macht der Fernseher von selbst weiter, auch mit gesperrtem Handy, und der Titel auf dem Handy wechselt.
-39. Casting im Cast-Dialog beenden → das Handy spielt an der Position des Fernsehers weiter (pausiert, wenn der Fernseher pausiert war). Fernseher aus oder sein Netz weg → das Handy übernimmt an der letzten Position. Player beim Casting schließen → der Fernseher stoppt.
-40. Konto am Stream-Limit → Casting zeigt das Limit und die lokale Wiedergabe läuft weiter. Eine Rolle ohne Transcoding → „Chromecast braucht Transcoding …".
-41. Länger als 50 min casten, auch mit gesperrtem Handy → der Fernseher spielt nach kurzem Nachladen weiter (Token-Erneuerung; stoppt er, prüfen, ob Doze die App angehalten hat).
-42. Steuerung in Benachrichtigung und Sperrbildschirm beim Casting geht; ein Tipp bringt den Player zurück. App beim Casting beenden: Der Fernseher spielt eventuell weiter, bis das Token abläuft; erneutes Öffnen startet nichts von selbst.
-43. Die Menüs des Players und der Cast-Dialog sehen im hellen und dunklen Systemmodus richtig aus.
+48. Casting auf dem Server erlaubt → das Cast-Symbol erscheint im Player, auch ohne Fernseher im WLAN (Antippen öffnet die Liste, die sagt, dass kein Gerät gefunden wurde); Mehr zeigt *Auf dem Fernseher abspielen*. Casting auf dem Server aus oder ein Handy ohne Google-Play-Dienste → kein Symbol. Ein Download läuft → nie ein Symbol.
+49. Symbol antippen, Fernseher wählen: Das Handy zeigt „Wird auf … abgespielt" und steuert den Fernseher; „Läuft gerade" beim Admin zeigt die lokale Sitzung gestoppt und die Cast-Sitzung gestartet.
+50. Default Media Receiver (ohne `CAST_RECEIVER_APP_ID`): spielt ab der Position des Handys mit dem gewählten Untertitel; Pause und Springen gehen; der Fortschritt erscheint beim Admin.
+51. Eigener Receiver: `CAST_RECEIVER_APP_ID` setzen, einen Titel einmal öffnen, App neu starten, casten: Der eigene Receiver startet, seine Meldungen kommen an, seine Nächste-Folge-Karte ist in der Sprache der App.
+52. Folge mit Autoplay: etwa 40 min vor dem Ende wird die nächste Folge eingereiht; am Ende macht der Fernseher von selbst weiter, auch mit gesperrtem Handy, und der Titel auf dem Handy wechselt.
+53. Casting im Cast-Dialog beenden → das Handy spielt an der Position des Fernsehers weiter (pausiert, wenn der Fernseher pausiert war). Fernseher aus oder sein Netz weg → das Handy übernimmt an der letzten Position. Player beim Casting schließen → der Fernseher stoppt.
+54. Konto am Stream-Limit → Casting zeigt das Limit und die lokale Wiedergabe läuft weiter. Eine Rolle ohne Transcoding → „Chromecast braucht Transcoding …".
+55. Länger als 50 min casten, auch mit gesperrtem Handy → der Fernseher spielt nach kurzem Nachladen weiter (Token-Erneuerung; stoppt er, prüfen, ob Doze die App angehalten hat).
+56. Steuerung in Benachrichtigung und Sperrbildschirm beim Casting geht; ein Tipp bringt den Player zurück. App beim Casting beenden: Der Fernseher spielt eventuell weiter, bis das Token abläuft; erneutes Öffnen startet nichts von selbst.
+57. Die Menüs des Players und der Cast-Dialog sehen im hellen und dunklen Systemmodus richtig aus.
+58. Beim Casting: *Folgen* spielt die gewählte Folge auf dem Fernseher; *Szenen* und ein Lesezeichen springen auf dem Fernseher; ein neues Lesezeichen nimmt die Position des Fernsehers; *Besetzung & Infos* zeigt den Titel des Fernsehers, auch nachdem er zur nächsten Folge weitergegangen ist. *Audio und Untertitel*, der Qualitäts-Chip, der Knopf für die nächste Folge, Tempo, Qualität, Sperre und Bild-in-Bild sind weg. Der Chromecast-Knopf bleibt in der oberen Leiste links neben *Besetzung & Infos*, und Mehr zeigt *Läuft auf dem Fernseher*.
+59. Casting beenden: *Audio und Untertitel*, der Qualitäts-Chip und der Knopf für die nächste Folge sind wieder da.
 
 **Benachrichtigungen**
-44. Frische Installation, angemeldet: keine Flut beim ersten Abruf. Eine Benachrichtigung auf dem Server erzeugen (zum Beispiel eine Einladung) und sie nach etwa 10–20 min sehen (Android kann das weiter verzögern). Die Kanalnamen in den Android-Einstellungen auf Deutsch und Englisch prüfen.
-45. Antippen: Die Hülle öffnet die richtige Seite; ein `/watch/…`-Link öffnet den nativen Player; ist die App schon offen, wechselt die Seite an Ort und Stelle.
-46. Eine Kategorie in den App-Einstellungen ausschalten: Davon wird nichts mehr gezeigt. Berechtigung entziehen: kein Absturz, und die Einträge erscheinen nach erneutem Erlauben.
-47. Sitzung läuft auf dem Server ab: keine Benachrichtigung und kein weiteres Abfragen; App öffnen, anmelden: Das Abfragen geht weiter.
+60. Frische Installation, angemeldet: keine Flut beim ersten Abruf. Eine Benachrichtigung auf dem Server erzeugen (zum Beispiel eine Einladung) und sie nach etwa 10–20 min sehen (Android kann das weiter verzögern). Die Kanalnamen in den Android-Einstellungen auf Deutsch und Englisch prüfen.
+61. Antippen: Die Hülle öffnet die richtige Seite; ein `/watch/…`-Link öffnet den nativen Player; ist die App schon offen, wechselt die Seite an Ort und Stelle.
+62. Eine Kategorie in den App-Einstellungen ausschalten: Davon wird nichts mehr gezeigt. Berechtigung entziehen: kein Absturz, und die Einträge erscheinen nach erneutem Erlauben.
+63. Sitzung läuft auf dem Server ab: keine Benachrichtigung und kein weiteres Abfragen; App öffnen, anmelden: Das Abfragen geht weiter.
 
 **App-Einstellungen**
-48. Den Server auf einen zweiten Testserver wechseln: Die Warnung nennt die neue Adresse; danach sind die Downloads weg, der alte Server zeigt die Lizenzen zurückgegeben und die Sitzung beendet, und die Einrichtung prüft die neue Adresse (ein Tippfehler bleibt mit ausgefüllter Adresse in der Einrichtung).
-49. Auf diesem Gerät abmelden: Nach der Rückfrage zeigt die App die Anmeldeseite; Downloads und ihre Dateien sind weg (auch auf der SD-Karte), der nächste Download klappt (neue Schlüssel), und die alte Sitzung gilt auf dem Server nicht mehr.
-50. Androids App-Info → das Zahnrad öffnet die App-Einstellungen; die angezeigte Version passt zum Release.
+64. Den Server auf einen zweiten Testserver wechseln: Die Warnung nennt die neue Adresse; danach sind die Downloads weg, der alte Server zeigt die Lizenzen zurückgegeben und die Sitzung beendet, und die Einrichtung prüft die neue Adresse (ein Tippfehler bleibt mit ausgefüllter Adresse in der Einrichtung).
+65. Auf diesem Gerät abmelden: Nach der Rückfrage zeigt die App die Anmeldeseite; Downloads und ihre Dateien sind weg (auch auf der SD-Karte), der nächste Download klappt (neue Schlüssel), und die alte Sitzung gilt auf dem Server nicht mehr.
+66. Androids App-Info → das Zahnrad öffnet die App-Einstellungen; die angezeigte Version passt zum Release.
 
 ## Selbst bauen
 

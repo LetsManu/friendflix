@@ -21,9 +21,7 @@ import android.util.Log
 import android.util.Rational
 import android.view.View
 import android.widget.Button
-import android.widget.ImageButton
 import android.widget.LinearLayout
-import android.widget.PopupMenu
 import android.widget.ProgressBar
 import android.widget.TextView
 import androidx.activity.enableEdgeToEdge
@@ -31,9 +29,7 @@ import androidx.annotation.OptIn
 import androidx.core.content.ContextCompat
 import androidx.core.net.toUri
 import androidx.core.view.ViewCompat
-import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
-import androidx.core.view.WindowInsetsControllerCompat
 import androidx.fragment.app.FragmentActivity
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
@@ -62,11 +58,18 @@ import app.friendflix.android.cast.MediaThreeReceiver
 import app.friendflix.android.cast.ReceiverState
 import app.friendflix.android.cast.TokenAnswer
 import app.friendflix.android.downloads.Downloads
+import app.friendflix.android.downloads.ServerApi
 import app.friendflix.android.downloads.SessionExpired
 import app.friendflix.android.offline.Offline
 import app.friendflix.android.offline.OfflineActivity
 import app.friendflix.android.offline.OfflineMedia
 import app.friendflix.android.offline.Prepared
+import app.friendflix.android.player.panels.EpisodesPanel
+import app.friendflix.android.player.panels.EpisodesSource
+import app.friendflix.android.player.panels.PostPlayPanel
+import app.friendflix.android.player.panels.SubtitleSearchPanel
+import app.friendflix.android.player.panels.TracksActions
+import app.friendflix.android.player.panels.TracksState
 import app.friendflix.android.settings.AppSettings
 import app.friendflix.android.shell.ShellActivity
 import app.friendflix.android.shell.ShellIntents
@@ -96,10 +99,14 @@ import java.util.concurrent.Executors
  * caps, kids rules and the stream limit. Downloads: only an [OfflineMedia] from the offline gate; after a recreation / process
  * death the player keeps just the licence id and asks [Offline.prepare] again. Logs carry no titles, URLs, cookies or tokens.
  *
- * Chromecast ([CastController], Task 9): the Cast button shows for a stream (never a download) while the server offers casting and a
- * Cast device is on the network. Picking a device hands the title over through the server's cast token flow; the screen is then the
- * receiver's remote (the controls drive [MediaThreeReceiver.player]) and only the controller reports. When the cast ends, local
- * playback continues at the receiver's position. A FragmentActivity because the Cast device dialog is a dialog fragment.
+ * The bar's panels (Tracks, More with speed, quality, sleep timer, lock, picture-in-picture, Play on TV), the quality chip and the
+ * lock live in [PlayerControls]; this screen supplies the playback side ([controlsHost]).
+ *
+ * Chromecast ([CastController], Task 9): the Cast button shows for a stream (never a download) while the server offers casting,
+ * whether or not a Cast device has been discovered (the chooser says when none is found). Picking a device hands the title over
+ * through the server's cast token flow; the screen is then the receiver's remote (the controls drive [MediaThreeReceiver.player])
+ * and only the controller reports. When the cast ends, local playback continues at the receiver's position. A FragmentActivity
+ * because the Cast device dialog is a dialog fragment.
  */
 @OptIn(UnstableApi::class)
 class PlayerActivity : FragmentActivity() {
@@ -121,20 +128,19 @@ class PlayerActivity : FragmentActivity() {
     private lateinit var nextRing: ProgressBar
     private lateinit var stillCard: LinearLayout
     private lateinit var stillText: TextView
+    private lateinit var ppCard: LinearLayout
+    private lateinit var ppOpen: Button
     private lateinit var errorBox: LinearLayout
     private lateinit var errorText: TextView
     private lateinit var errorRetry: Button
     private lateinit var toast: TextView
     private lateinit var title: TextView
     private lateinit var subtitle: TextView
-    private lateinit var tracksButton: ImageButton
-    private lateinit var qualityButton: Button
-    private lateinit var pipButton: ImageButton
-    private lateinit var nextButton: ImageButton
     private lateinit var castButton: MediaRouteButton
     private lateinit var castStatus: TextView
 
     private lateinit var player: ExoPlayer
+    private lateinit var controls: PlayerControls
     private var controller: ListenableFuture<MediaController>? = null
     private val handler = Handler(Looper.getMainLooper())
 
@@ -147,10 +153,13 @@ class PlayerActivity : FragmentActivity() {
     private var stream: Stream? = null
     private var reporter: PlaybackReporter? = null
     private var api: PlayerApi? = null
+    private var serverCaps = ServerCaps()
     private var prefs = PlayerPrefs()
     private var item: ItemInfo? = null
     private var nextItem: ItemInfo? = null
     private var flow: EpisodeFlow? = null
+    /** the post-play card, screen and "More like this" of the title on show ([PostPlayFlow]); null until it is loaded */
+    private var postPlay: PostPlayFlow? = null
     private var audioIndex: Int? = null
     /** the viewer's subtitle choice: null = off; the wanted index is applied once the tracks are known */
     private var subIndex: Int? = null
@@ -158,7 +167,8 @@ class PlayerActivity : FragmentActivity() {
     private var forcedHls = false
     private var retries = 0
     private var errorAt = 0L
-    private var seriesPref: Pair<String?, String?> = null to null
+    /** the title's start languages (detail pick, series choice, anime default, profile defaults); set by [loadTitle] */
+    private var langs: TitleLangs? = null
     /** ms the current stream was started at (null before the first one) */
     private var attachedAt: Long? = null
 
@@ -167,6 +177,11 @@ class PlayerActivity : FragmentActivity() {
     private var offlineProgress: OfflineProgress? = null
 
     private var backgroundAudio = false
+    /** the sound mode of the Tracks panel's switches, on the player's audio session through [fx] */
+    private var fxMode = "off"
+    /** the viewer flipped a switch here: the server's mode no longer replaces it (web fxTouched) */
+    private var fxTouched = false
+    private val fx = AudioFxAttach()
     private var lastTick = 0L
     /** the screen is stopped and not in picture-in-picture */
     private var inBackground = false
@@ -176,6 +191,9 @@ class PlayerActivity : FragmentActivity() {
     /** languages of the download's subtitles (index = track) */
     private var offlineSubLangs: List<String> = emptyList()
 
+    /** the panels' image loader for the server it was made for */
+    private var images: Pair<ServerApi, ImageLoader>? = null
+
     // Chromecast
     private var castLink: MediaThreeReceiver? = null
     /** the cast endpoints for the playing profile (read on the report thread) */
@@ -183,8 +201,6 @@ class PlayerActivity : FragmentActivity() {
     private var cast: CastController? = null
     /** the server offers casting (cached, then the fresh `/api/cast/config` answer) */
     private var castEnabled = false
-    /** a Cast device is on the network */
-    private var castDevices = false
     /** the next local stream starts paused (back from a paused TV) */
     private var startPaused = false
 
@@ -193,7 +209,7 @@ class PlayerActivity : FragmentActivity() {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_player)
         bindViews()
-        hideSystemBars()
+        hideSystemBars(window)
         val restored = savedInstanceState?.let(::fromState)
         token = if (restored == null) intent.getStringExtra(EXTRA_TOKEN) else savedInstanceState.getString(EXTRA_TOKEN)
         val a = restored ?: fromIntent(intent)
@@ -208,15 +224,18 @@ class PlayerActivity : FragmentActivity() {
         view.player = player
         player.addListener(events)
         player.addListener(listener)
+        controls = PlayerControls(this, view, player, controlsHost)
+        view.subtitleView?.let { applyCaptionLook(it, prefs.subtitleStyle) }
+        // the last mode of this profile on this device (offline playback has no server prefs); the server's replaces it once loaded
+        setFx(FxStore.load(this, args.profileId))
         // the media session (notification, lock screen, Bluetooth) may start playback only while it could be heard by choice
         PlayerHolder.mayPlay = { !inBackground || backgroundAudio || isInPictureInPictureMode }
         controller = PlayerHolder.connect(this) // runs the media session service (notification while playing)
         lifecycleScope.launch { AppSettings.from(applicationContext).backgroundAudio.collect { backgroundAudio = it } }
         ContextCompat.registerReceiver(this, pipReceiver, IntentFilter(ACTION_PIP_TOGGLE), ContextCompat.RECEIVER_NOT_EXPORTED)
-        pipButton.visibility = if (pipSupported()) View.VISIBLE else View.GONE
         lifecycleScope.launch {
             castEnabled = AppSettings.from(applicationContext).castEnabled.first()
-            updateCastButton()
+            updateBar()
         }
         setUpCast()
 
@@ -237,28 +256,25 @@ class PlayerActivity : FragmentActivity() {
         nextRing = findViewById(R.id.player_next_ring)
         stillCard = findViewById(R.id.player_still)
         stillText = findViewById(R.id.player_still_text)
+        ppCard = findViewById(R.id.player_postplay)
+        ppOpen = findViewById(R.id.player_postplay_open)
         errorBox = findViewById(R.id.player_error)
         errorText = findViewById(R.id.player_error_text)
         errorRetry = findViewById(R.id.player_error_retry)
         toast = findViewById(R.id.player_toast)
         title = view.findViewById(R.id.player_title)
         subtitle = view.findViewById(R.id.player_subtitle)
-        tracksButton = view.findViewById(R.id.player_tracks)
-        qualityButton = view.findViewById(R.id.player_quality)
-        pipButton = view.findViewById(R.id.player_pip)
-        nextButton = view.findViewById(R.id.player_next_episode)
         view.findViewById<View>(R.id.player_back).setOnClickListener { finish() }
         castButton = view.findViewById(R.id.player_cast)
         castStatus = findViewById(R.id.player_cast_status)
-        tracksButton.setOnClickListener { showTracks(it) }
-        qualityButton.setOnClickListener { showQuality(it) }
-        pipButton.setOnClickListener { enterPip() }
-        nextButton.setOnClickListener { goNext(flow?.goNow()) }
+        view.findViewById<View>(R.id.player_next_episode).setOnClickListener { goNext(flow?.goNow()) }
         skipButton.setOnClickListener { doSkip() }
         findViewById<View>(R.id.player_next_go).setOnClickListener { goNext(flow?.goNow()) }
         findViewById<View>(R.id.player_next_credits).setOnClickListener { flow?.watchCredits(); render() }
         findViewById<View>(R.id.player_still_go).setOnClickListener { goNext(flow?.keepWatching()) }
         findViewById<View>(R.id.player_still_back).setOnClickListener { finish() }
+        findViewById<View>(R.id.player_postplay_close).setOnClickListener { postPlay?.closeCard(); ppCard.visibility = View.GONE }
+        ppOpen.setOnClickListener { postPlay?.let { pp -> pp.openCard()?.let { onPostPlayEnd(pp, it) } ?: updatePostPlay(player.currentPosition / 1000.0) } }
         findViewById<View>(R.id.player_error_back).setOnClickListener { finish() }
         errorRetry.setOnClickListener { retries = 0; hideError(); reload(resumePos()) }
         ViewCompat.setOnApplyWindowInsetsListener(findViewById(R.id.player_root)) { v, insets ->
@@ -268,11 +284,15 @@ class PlayerActivity : FragmentActivity() {
         }
     }
 
-    private fun hideSystemBars() {
-        WindowCompat.getInsetsController(window, window.decorView).apply {
-            systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
-            hide(WindowInsetsCompat.Type.systemBars())
-        }
+    /** fullscreen again whenever the screen comes back (from another app, the notification shade, a dialog of the system) */
+    override fun onResume() {
+        super.onResume()
+        hideSystemBars(window)
+    }
+
+    override fun onWindowFocusChanged(hasFocus: Boolean) {
+        super.onWindowFocusChanged(hasFocus)
+        if (hasFocus) hideSystemBars(window)
     }
 
     // ---- what to play ----
@@ -305,8 +325,6 @@ class PlayerActivity : FragmentActivity() {
             offlineSubLangs = media.subtitles.map { it.first }
             title.text = record?.title.orEmpty()
             subtitle.text = ""
-            tracksButton.visibility = if (media.subtitles.isEmpty()) View.GONE else View.VISIBLE
-            qualityButton.visibility = View.GONE
             val meta = MediaMetadata.Builder().setTitle(record?.title).build()
             val source = MediaSources.encrypted(keys).createMediaSource(MediaSources.localItem(media.video, media.subtitles, meta))
             player.setMediaSource(source, a.startMs?.takeIf { it > OFFLINE_MIN_RESUME_MS } ?: 0L)
@@ -321,6 +339,7 @@ class PlayerActivity : FragmentActivity() {
                 durationMs = { player.duration.takeIf { it != C.TIME_UNSET } ?: 0L },
             )
             flow = null
+            updateBar() // a download: subtitles, sound, speed, sleep timer and lock; nothing from the server
         }
     }
 
@@ -333,7 +352,7 @@ class PlayerActivity : FragmentActivity() {
                 api = pa
                 castServer = CastServerApi(server, a.profileId, pa)
                 if (first) loadTitle(pa, a)
-                val audioLang = if (audioIndex == null) (a.audio ?: seriesPref.first ?: prefs.audioLang).takeIf { it.isNotEmpty() } else null
+                val audioLang = if (audioIndex == null) titleLangs(a).audioLang() else null
                 val caps = withContext(Dispatchers.IO) { DeviceProfile.build(applicationContext) }
                 val body = PlayerApi.infoBody(a.itemId, startMs, audioIndex, quality.takeIf { it > 0 }, manual = quality > 0, audioLang = audioLang, caps = caps)
                 when (val r = withContext(Dispatchers.IO) { pa.info(body) }) {
@@ -349,7 +368,11 @@ class PlayerActivity : FragmentActivity() {
         }
     }
 
-    /** First start of a title: preferences, item, next episode, segments and the series' language choice, in parallel. */
+    /**
+     * First start of a title: preferences, item, next episode, segments and the series' language choice, in parallel. The answers
+     * are gathered on the IO dispatcher and applied on the main thread only if this load is still the current one (a newer title's
+     * load cancels it). Preferences that could not be loaded leave the current ones (subtitle look, sound mode) as they are.
+     */
     private suspend fun loadTitle(pa: PlayerApi, a: Args) = withContext(Dispatchers.IO) {
         val p = async { pa.prefs() }
         val types = async { pa.segmentTypes() }
@@ -357,27 +380,40 @@ class PlayerActivity : FragmentActivity() {
         val nx = async { pa.next(a.itemId) }
         val segs = async { pa.segments(a.itemId) }
         val castCfg = async { CastServerApi.config(pa.server, a.profileId) }
-        prefs = p.await()
-        if (quality == 0L && prefs.quality >= MIN_BITRATE) quality = prefs.quality
+        val capsJob = async { pa.caps() }
+        val loaded = p.await()
+        val pr = loaded ?: prefs
+        val caps = capsJob.await()
         val cur = it.await()
-        item = cur
-        seriesPref = if (cur?.type == "Episode") pa.langPref(cur.seriesId ?: a.itemId) else null to null
+        val pref = if (cur?.type == "Episode") pa.langPref(cur.seriesId ?: a.itemId, anime = pr.animeOriginal) else LangPref(null, null, false)
+        val titleLangs = TitleLangs(pr, pref, TitleLangs.appLang(resources.configuration.locales[0]), a.audio, a.subtitle)
         val next: ItemInfo? = if (cur?.type == "Episode") nx.await() else { nx.cancel(); null }
-        nextItem = next
         val allowed = types.await()
-        val f = EpisodeFlow(segs.await().filter { s -> s.type in allowed }, NextKind.of(cur?.type, next != null), prefs.flow, Players.still)
+        val f = EpisodeFlow(segs.await().filter { s -> s.type in allowed }, NextKind.of(cur?.type, next != null), pr.flow, Players.still)
         val cfg = castCfg.await()
         // the receiver app id is cached for the Cast framework's next start (it reads its options once per process)
         if (cfg != null) {
             try { AppSettings.from(applicationContext).setCastConfig(cfg.enabled, cfg.receiverAppId) } catch (_: IOException) { }
         }
         withContext(Dispatchers.Main) {
+            prefs = pr
+            serverCaps = caps
+            if (quality == 0L && pr.quality >= MIN_BITRATE) quality = pr.quality
+            item = cur
+            langs = titleLangs
+            nextItem = next
             flow = f
-            if (cfg != null) { castEnabled = cfg.enabled; updateCastButton() }
+            postPlay = PostPlayFlow(a.itemId, movie = cur?.type == "Movie")
+            if (cfg != null) castEnabled = cfg.enabled
+            if (loaded != null) {
+                view.subtitleView?.let { v -> applyCaptionLook(v, loaded.subtitleStyle) }
+                if (!fxTouched) setFx(loaded.audioFx) // the server's mode wins until a switch is flipped here (web adoptFxPref)
+            }
             Players.still.opened()
             title.text = cur?.seriesName ?: cur?.name.orEmpty()
             subtitle.text = cur?.let { i -> if (i.seriesName != null) episodeLabel(i) else "" }.orEmpty()
-            nextButton.visibility = if (next != null) View.VISIBLE else View.GONE
+            controls.loadTitleExtras(pa, a.itemId, caps.chapters) // Scenes, bookmarks and their marks
+            updateBar() // Episodes, next episode, Chromecast
         }
     }
 
@@ -407,30 +443,20 @@ class PlayerActivity : FragmentActivity() {
         )
         reporter = rep
         rep.attach(ReportSession(args.itemId, info.playSessionId, info.mediaSourceId, audioIndex, direct))
-        subIndex = pickSubtitle(info)
+        subIndex = titleLangs(args).subtitle(info, audioIndex)
         player.setMediaSource(MediaSources.network(pa.server.client).createMediaSource(mediaItem), startMs.coerceAtLeast(0))
         applySubtitles()
         player.prepare()
         player.playWhenReady = !startPaused
         startPaused = false
-        tracksButton.visibility = if (info.audioTracks.size > 1 || info.subtitles.isNotEmpty()) View.VISIBLE else View.GONE
-        qualityButton.visibility = View.VISIBLE
-        qualityButton.text = if (direct) getString(R.string.player_quality_original) else qualityLabel(quality)
+        controls.chip.bind(direct, info.maxBitrate.takeIf { it > 0 } ?: quality, info.transcodeReason)
+        controls.setTrickplay(info.trickplay.takeIf { serverCaps.trickplay })
         flow?.duration = 0.0
-        updateCastButton()
+        updateBar() // Tracks, the quality chip, Chromecast
     }
 
-    /** detail-page pick > this series' saved choice (when the episode has it) > the profile default (web Player.svelte attach). */
-    private fun pickSubtitle(info: PlaybackInfo): Int? {
-        val want = when {
-            args.subtitle == "off" -> null
-            args.subtitle != null -> args.subtitle
-            seriesPref.second == "off" -> null
-            seriesPref.second != null && info.subtitles.any { it.language == seriesPref.second } -> seriesPref.second
-            else -> prefs.subtitleLang.takeIf { it.isNotEmpty() }
-        } ?: return null
-        return info.subtitles.firstOrNull { it.language == want }?.index
-    }
+    /** the languages of [loadTitle], or the detail pick and profile defaults when the title's start was not loaded here */
+    private fun titleLangs(a: Args) = langs ?: TitleLangs(prefs, LangPref(null, null, false), TitleLangs.appLang(resources.configuration.locales[0]), a.audio, a.subtitle)
 
     /**
      * Where a new session should start: the current position once this stream played, else where it was started (a retry before
@@ -467,7 +493,7 @@ class PlayerActivity : FragmentActivity() {
         reporter = { reporter },
         offline = { offlineProgress },
         onPlayRequested = ::checkOfflineAfterLongPause,
-        onEnded = { flow?.onEnded(); render() },
+        onEnded = { flow?.onEnded(); controls.titleEnded(); render(); onTitleEnded() },
     )
 
     private val listener = object : Player.Listener {
@@ -484,6 +510,8 @@ class PlayerActivity : FragmentActivity() {
         }
 
         override fun onTracksChanged(tracks: Tracks) { applySubtitles() }
+
+        override fun onAudioSessionIdChanged(audioSessionId: Int) { applyFx() }
 
         override fun onVideoSizeChanged(videoSize: VideoSize) { updatePip() }
 
@@ -533,9 +561,11 @@ class PlayerActivity : FragmentActivity() {
         val now = android.os.SystemClock.elapsedRealtime()
         val dt = if (lastTick == 0L) 0L else now - lastTick
         lastTick = now
+        controls.tick() // the sleep timer runs while casting too (it pauses the TV)
         val c = cast
         if (c != null && c.casting) {
             // the receiver plays: its position and the controller's reports / renewal; nothing local runs
+            c.sleepAfterEpisode = controls.sleep.afterEpisode // the TV stops after its episode
             if (now - castPolled >= CAST_POLL_MS) { castPolled = now; castLink?.publish(); c.tick() }
             return
         }
@@ -545,7 +575,8 @@ class PlayerActivity : FragmentActivity() {
             if (retries > 0) flash(getString(R.string.player_reconnected), 1_500)
             retries = 0
         }
-        val f = flow ?: run { skipButton.visibility = View.GONE; nextCard.visibility = View.GONE; stillCard.visibility = View.GONE; return }
+        val f = flow ?: run { skipButton.visibility = View.GONE; nextCard.visibility = View.GONE; stillCard.visibility = View.GONE; ppCard.visibility = View.GONE; return }
+        f.holdAutoplay = controls.sleep.afterEpisode
         val cur = player.currentPosition / 1000.0
         f.autoSkip(cur)?.let { target ->
             player.seekTo((target * 1000).toLong())
@@ -554,6 +585,88 @@ class PlayerActivity : FragmentActivity() {
         val step = f.update(cur, player.isPlaying, player.playbackState == Player.STATE_ENDED, dt)
         if (step.goNext) { goNext(step); return }
         render(step.card)
+        updatePostPlay(cur)
+    }
+
+    // ---- post-play (web watch page ppCard / prefetchPostplay / onEnded / loadSimilar) ----
+
+    private fun ppWanted(): Boolean = postplayWanted(
+        item?.type, hasNextEpisode = nextItem != null, feature = serverCaps.postplay, pref = prefs.postplay,
+        casting = cast?.casting == true, online = api != null && offlineLicense == null && args.licenseId == null,
+    )
+
+    /** the card from the post-play time on; the answer (or a film's similar titles) is fetched from then */
+    private fun updatePostPlay(curSec: Double) {
+        val pp = postPlay
+        val f = flow
+        if (pp == null || f == null) { ppCard.visibility = View.GONE; return }
+        val at = postplayAtSec(f.duration, f.segments, controls.chapters)
+        val wanted = ppWanted()
+        pp.fetch(wanted, curSec, at)?.let { fetchPostPlay(pp, it) }
+        val show = pp.card(wanted, curSec, at) && !isInPip() && errorBox.visibility != View.VISIBLE && !controls.panel.isOpen
+        ppCard.visibility = if (show) View.VISIBLE else View.GONE
+        // tapped before the answer arrived: the web's loading text until the screen opens
+        ppOpen.text = getString(if (pp.opening) R.string.player_postplay_loading else R.string.player_postplay_title)
+        ppOpen.isEnabled = !pp.opening
+    }
+
+    private fun fetchPostPlay(pp: PostPlayFlow, what: PostPlayFlow.Fetch) {
+        val pa = api ?: return
+        val id = args.itemId
+        lifecycleScope.launch {
+            val end = when (what) {
+                PostPlayFlow.Fetch.POSTPLAY -> {
+                    val d = withContext(Dispatchers.IO) { runCatching { pa.postplay(id) }.getOrNull() }
+                    if (postPlay !== pp) return@launch // another title meanwhile
+                    pp.loaded(d)
+                }
+                PostPlayFlow.Fetch.SIMILAR -> {
+                    val list = withContext(Dispatchers.IO) { runCatching { pa.similar(id) }.getOrNull() }
+                    if (postPlay !== pp) return@launch
+                    pp.similarLoaded(list)
+                }
+            }
+            end?.let { onPostPlayEnd(pp, it) }
+        }
+    }
+
+    /** the title ended here (never on the TV): the post-play screen or "More like this"; else the player stays (it never closes itself) */
+    private fun onTitleEnded() {
+        val pp = postPlay ?: return
+        if (cast?.casting == true) return
+        val end = pp.onEnded(ppWanted())
+        if (end == PostPlayFlow.End.Wait) { updatePostPlay(player.currentPosition / 1000.0); return } // acts once the answer is in
+        onPostPlayEnd(pp, end)
+    }
+
+    private fun onPostPlayEnd(pp: PostPlayFlow, end: PostPlayFlow.End) {
+        if (released || postPlay !== pp || cast?.casting == true) return
+        // no panel in picture-in-picture: the screen waits until the window is expanded (and nothing is counted as shown)
+        if ((end is PostPlayFlow.End.Open || end is PostPlayFlow.End.More) && isInPip()) { pp.hold(end); return }
+        when (end) {
+            is PostPlayFlow.End.Open -> if (openPostPlay(end.data)) pp.shown()
+            is PostPlayFlow.End.More -> api?.let { pa ->
+                if (controls.showTitlePanel(getString(R.string.player_more_like_this), PostPlayPanel.more(this, lifecycleScope, imageLoader(pa), end.titles, ::openTitle))) pp.shown()
+            }
+            PostPlayFlow.End.Failed -> { ppCard.visibility = View.GONE; flash(getString(R.string.player_postplay_error), ERROR_FLASH_MS) }
+            PostPlayFlow.End.Wait, PostPlayFlow.End.Stay -> Unit
+        }
+    }
+
+    /** the post-play screen over the finished (or paused) title; a title played from it goes through [playItem] */
+    private fun openPostPlay(data: JSONObject): Boolean {
+        val pa = api ?: return false
+        ppCard.visibility = View.GONE
+        if (player.playWhenReady) player.pause() // web openPostplay: nothing plays under the screen
+        lateinit var content: View
+        content = PostPlayPanel.build(
+            this, lifecycleScope, pa, imageLoader(pa), data,
+            onPlay = { id -> controls.panel.close(); playItem(id) },
+            onOpenTitle = ::openTitle,
+            spoilerProtection = prefs.spoilerProtection,
+            onBack = { controls.panel.close() },
+        )
+        return controls.showTitlePanel(getString(R.string.player_postplay_title), content) { PostPlayPanel.closed(content) }
     }
 
     private fun render(card: FlowCard? = null) {
@@ -573,7 +686,11 @@ class PlayerActivity : FragmentActivity() {
         if (c is FlowCard.NextUp && next != null && !inPip) {
             nextCard.visibility = View.VISIBLE
             nextTitle.text = episodeLabel(next)
-            nextLabel.text = if (c.counting) getString(R.string.player_next_counting, c.secondsLeft) else getString(R.string.player_next)
+            nextLabel.text = when {
+                c.counting -> getString(R.string.player_next_counting, c.secondsLeft)
+                controls.sleep.afterEpisode -> getString(R.string.player_next_pause_after)
+                else -> getString(R.string.player_next)
+            }
             nextSeconds.text = if (c.counting) c.secondsLeft.toString() else ""
             // reduced motion (animations off): the number only, no moving ring
             val ring = c.counting && ValueAnimator.areAnimatorsEnabled()
@@ -600,48 +717,189 @@ class PlayerActivity : FragmentActivity() {
     private fun goNext(step: EpisodeStep?) {
         if (step == null || !step.goNext) return
         val next = nextItem ?: return
+        playItem(next.id)
+    }
+
+    /**
+     * Another title in this player (the next episode, a pick in the Episodes panel): the per-title state is reset (speed 1, a sleep
+     * timer "after this episode" consumed, the title's flow, languages and extras loaded again). While casting it plays on the TV.
+     */
+    private fun playItem(id: String) = titleSwitch.play(id)
+
+    private val titleSwitch = TitleSwitch(object : TitleSwitch.Steps {
+        override fun newTitle() = controls.newTitle()
+        override fun casting() = cast?.casting == true
+        override fun playOnTv(id: String) = this@PlayerActivity.playOnTv(id)
+        override fun cancelLoad() { loadJob?.cancel(); loadJob = null; hideError() }
+        override fun resetLocal() = resetForNewTitle()
+        override fun startOnline(id: String) {
+            args = args.copy(itemId = id, startMs = null)
+            loading.visibility = View.VISIBLE
+            startOnline(args, first = true, startMs = null)
+        }
+    })
+
+    /** the local per-title state goes (a title switched in this player, and a new intent with its own extras, [onNewIntent]) */
+    private fun resetForNewTitle() {
         reporter?.release()
         reporter = null
         stream = null
         attachedAt = null
         flow = null
+        postPlay = null
         nextItem = null
+        langs = null
         audioIndex = null
         forcedHls = false
         retries = 0
         player.stop()
         nextCard.visibility = View.GONE
         stillCard.visibility = View.GONE
-        args = args.copy(itemId = next.id, startMs = null)
-        loading.visibility = View.VISIBLE
-        startOnline(args, first = true, startMs = null)
+        ppCard.visibility = View.GONE
+        updateBar()
     }
 
-    // ---- audio / subtitles / quality ----
+    /** a title picked while casting starts on the TV (the cast session switches its token); the local player stays stopped */
+    private fun playOnTv(id: String) {
+        val pa = api
+        val cur = item
+        lifecycleScope.launch {
+            val ep = controls.episodesCache.find(id)
+            val info = pa?.let { withContext(Dispatchers.IO) { runCatching { it.item(id) }.getOrNull() } }
+                ?: ItemInfo(id, "Episode", ep?.name.orEmpty(), cur?.seriesName, cur?.seriesId, ep?.season, ep?.episode)
+            // the cast ended meanwhile: its hand-back (onReturn) already plays here; the pick is dropped, never a second load
+            cast?.takeIf { it.casting }?.playOnTv(info)
+        }
+    }
 
-    private fun showTracks(anchor: View) {
-        Players.still.noteInteraction()
-        val menu = PopupMenu(this, anchor)
-        val s = stream
-        if (s != null && s.info.audioTracks.size > 1) {
-            val audio = menu.menu.addSubMenu(0, 0, 0, R.string.player_audio)
-            val current = audioIndex ?: s.info.audioTracks.firstOrNull { it.isDefault }?.index
-            for (t in s.info.audioTracks) {
-                audio.add(GROUP_AUDIO, t.index, 0, t.title).setCheckable(true).setChecked(t.index == current).setOnMenuItemClickListener { changeAudio(t); true }
-            }
-            audio.setGroupCheckable(GROUP_AUDIO, true, true)
+    // ---- audio / subtitles / quality (the Tracks and More panels, PlayerControls) ----
+
+    private val controlsHost = object : PlayerControls.Host {
+        override fun active(): Player = view.player ?: player
+        override fun casting() = cast?.casting == true
+        override fun offline() = offlineLicense != null || args.licenseId != null
+        override fun inPip() = isInPip()
+        override fun flash(text: String, ms: Long) = this@PlayerActivity.flash(text, ms)
+        override fun pipSupported() = this@PlayerActivity.pipSupported()
+        override fun enterPip() = this@PlayerActivity.enterPip()
+        override fun pauseActive() { active().pause() }
+
+        override fun tracks(): TracksState? {
+            val s = stream
+            if (s == null && offlineLicense == null) return null
+            return TracksState(
+                audio = s?.info?.audioTracks.orEmpty(),
+                audioIndex = audioIndex,
+                subs = s?.info?.subtitles?.map { it.index to it.title } ?: offlineSubLangs.mapIndexed { i, lang -> i to lang },
+                subIndex = subIndex,
+                // the bar's rule decides these (PlayerControls.openTracks, from bar())
+                canSearch = false,
+                fxMode = fxMode,
+                fxDisabledReason = null,
+            )
         }
-        val subs = menu.menu.addSubMenu(0, 1, 1, R.string.player_subtitles)
-        subs.add(GROUP_SUBS, OFF, 0, R.string.player_subtitles_off).setCheckable(true).setChecked(subIndex == null).setOnMenuItemClickListener { setSubtitle(null, null); true }
-        if (s != null) {
-            for (t in s.info.subtitles) {
-                subs.add(GROUP_SUBS, t.index, 0, t.title).setCheckable(true).setChecked(subIndex == t.index).setOnMenuItemClickListener { setSubtitle(t.index, t.language); true }
-            }
-        } else {
-            offlineSubLangs.forEachIndexed { i, lang -> subs.add(GROUP_SUBS, i, 0, lang).setCheckable(true).setChecked(subIndex == i).setOnMenuItemClickListener { setSubtitle(i, null); true } }
+
+        override val tracksActions = object : TracksActions {
+            override fun audio(t: AudioTrack) { changeAudio(t) }
+            override fun subtitle(index: Int?) { setSubtitle(index, stream?.info?.subtitles?.firstOrNull { it.index == index }?.language) }
+            override fun search() { openSubtitleSearch() }
+            override fun fx(mode: String) { changeFx(mode) }
         }
-        subs.setGroupCheckable(GROUP_SUBS, true, true)
-        menu.show()
+
+        override fun qualities(): List<Pair<String, Long>>? {
+            val s = stream ?: return null
+            return QUALITIES.filter { (_, bps) -> s.info.roleMaxBitrate == null || bps < s.info.roleMaxBitrate }
+        }
+
+        override fun quality() = quality
+        override fun changeQuality(bps: Long) = this@PlayerActivity.changeQuality(bps)
+
+        override fun episodes(): EpisodesSource? {
+            val pa = api ?: return null
+            val cur = item ?: return null
+            if (!EpisodesPanel.offered(cur.type, cur.seriesId, offline())) return null
+            return EpisodesSource(pa, imageLoader(pa), cur.seriesId!!, cur.season, cast?.itemId ?: args.itemId)
+        }
+
+        override fun playItem(id: String) = this@PlayerActivity.playItem(id)
+
+        override fun images(): ImageLoader? = api?.let(::imageLoader)
+
+        override fun bookmarks(): BookmarksSource? {
+            val pa = api ?: return null
+            return if (offline()) null else BookmarksSource(pa, cast?.itemId ?: args.itemId)
+        }
+
+        override fun info(): InfoSource? {
+            val pa = api ?: return null
+            return if (offline()) null else InfoSource(pa, imageLoader(pa), cast?.itemId ?: args.itemId)
+        }
+
+        override fun openTitle(id: String) = this@PlayerActivity.openTitle(id)
+
+        /** the playback side of the bar's one rule ([barState]); [updateBar] applies it */
+        override fun bar(): BarFacts {
+            val cur = item
+            return BarFacts(
+                offline = offline(),
+                casting = casting(),
+                loaded = stream != null || offlineLicense != null,
+                episode = cur != null && EpisodesPanel.offered(cur.type, cur.seriesId, offline = false),
+                hasNext = nextItem != null,
+                server = api != null,
+                chip = stream != null,
+                qualities = stream != null,
+                subtitleSearch = serverCaps.subtitleSearch,
+                fxSupported = fx.supported(),
+                pipSupported = pipSupported(),
+            )
+        }
+    }
+
+    /** the panels' image loader for [pa]'s server (one per server, so its cache is shared by the panels and the preview) */
+    private fun imageLoader(pa: PlayerApi): ImageLoader =
+        images?.takeIf { it.first === pa.server }?.second ?: ImageLoader(pa.server).also { images = pa.server to it }
+
+    /** *Find subtitles …*: the search panel; a downloaded subtitle reloads playback at the current position (web pickSub). */
+    private fun openSubtitleSearch() {
+        val pa = api ?: return
+        if (offlineLicense != null || args.licenseId != null || cast?.casting == true || isInPip()) return
+        val lang = TitleLangs.appLang(resources.configuration.locales[0])
+        val itemId = args.itemId
+        lateinit var content: View
+        content = SubtitleSearchPanel.build(this, lifecycleScope, pa, itemId, lang) {
+            // closed, another title or a cast meanwhile: the subtitle is the server's now, the stream on show is left alone
+            if (!SubtitleSearchPanel.addedApplies(controls.panel.content, content, itemId, args.itemId, cast?.casting == true)) return@build
+            controls.panel.close()
+            reload(resumePos())
+            flash(getString(R.string.player_subs_added), 2_500)
+        }
+        controls.panel.show(getString(R.string.player_subs_title), content)
+    }
+
+    /** A switch was flipped: applied at once, kept for this profile on the device and saved for the profile (web toggleFx). */
+    private fun changeFx(mode: String) {
+        val old = fxMode
+        fxTouched = true
+        setFx(mode)
+        api?.let { pa ->
+            lifecycleScope.launch(Dispatchers.IO) {
+                try { pa.saveAudioFx(mode) } catch (_: SessionExpired) { } // offline / failed: still remembered on this device
+            }
+        }
+        fxToggle(old, mode)?.let { (name, on) -> flash(getString(if (on) R.string.player_fx_on else R.string.player_fx_off, getString(name)), 1_400) }
+    }
+
+    private fun setFx(mode: String) {
+        fxMode = mode
+        FxStore.save(this, args.profileId, mode)
+        applyFx()
+    }
+
+    /** the sound mode on the local player's audio session; nothing while casting (the TV plays) */
+    private fun applyFx() {
+        if (released) return
+        if (cast?.casting == true) fx.release() else fx.apply(player.audioSessionId, fxMode)
     }
 
     private fun changeAudio(t: AudioTrack) {
@@ -684,19 +942,6 @@ class PlayerActivity : FragmentActivity() {
         }
         val p = b.build()
         if (p != player.trackSelectionParameters) player.trackSelectionParameters = p
-    }
-
-    private fun showQuality(anchor: View) {
-        Players.still.noteInteraction()
-        val s = stream ?: return
-        val menu = PopupMenu(this, anchor)
-        val rungs = QUALITIES.filter { (_, bps) -> s.info.roleMaxBitrate == null || bps < s.info.roleMaxBitrate }
-        menu.menu.add(GROUP_QUALITY, 0, 0, R.string.player_quality_auto).setCheckable(true).setChecked(quality == 0L).setOnMenuItemClickListener { changeQuality(0); true }
-        rungs.forEachIndexed { i, (label, bps) ->
-            menu.menu.add(GROUP_QUALITY, i + 1, i + 1, label).setCheckable(true).setChecked(quality == bps).setOnMenuItemClickListener { changeQuality(bps); true }
-        }
-        menu.menu.setGroupCheckable(GROUP_QUALITY, true, true)
-        menu.show()
     }
 
     private fun changeQuality(bps: Long) {
@@ -760,11 +1005,17 @@ class PlayerActivity : FragmentActivity() {
 
     override fun onPictureInPictureModeChanged(isInPictureInPictureMode: Boolean, newConfig: Configuration) {
         super.onPictureInPictureModeChanged(isInPictureInPictureMode, newConfig)
-        view.useController = !isInPictureInPictureMode
+        controls.onPip(isInPictureInPictureMode)
+        view.useController = !isInPictureInPictureMode && !controls.locked
         if (isInPictureInPictureMode) view.hideController()
         render()
+        if (isInPictureInPictureMode) ppCard.visibility = View.GONE
         // the picture-in-picture window was closed (not expanded): playback ends with it
-        if (!isInPictureInPictureMode && !lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)) finish()
+        if (!isInPictureInPictureMode && !lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)) { finish(); return }
+        // expanded again: fullscreen
+        if (!isInPictureInPictureMode) hideSystemBars(window)
+        // expanded again: a post-play screen held while in the small window shows now, if the title is still at its end
+        if (!isInPictureInPictureMode) postPlay?.let { pp -> pp.release(player.playbackState == Player.STATE_ENDED)?.let { onPostPlayEnd(pp, it) } }
     }
 
     override fun onStop() {
@@ -845,7 +1096,7 @@ class PlayerActivity : FragmentActivity() {
             schedule = { ms, block -> val r = Runnable(block); Players.castHandler.postDelayed(r, ms); { Players.castHandler.removeCallbacks(r) } },
         )
         CastButtonFactory.setUpMediaRouteButton(applicationContext, castButton)
-        updateCastButton()
+        updateBar()
     }
 
     /** The server calls for the playing profile (known once a stream started). */
@@ -858,17 +1109,16 @@ class PlayerActivity : FragmentActivity() {
         override fun segments(itemId: String) = real()?.segments(itemId) ?: emptyList()
     }
 
-    /** a stream (never a download), casting offered by the server, a device on the network; always while a cast runs */
-    private fun updateCastButton() {
-        if (!::castButton.isInitialized) return
-        val offline = offlineLicense != null || (::args.isInitialized && args.licenseId != null)
-        val show = castLink != null && (cast?.casting == true || CastController.castable(offline, castEnabled, castDevices))
-        castButton.visibility = if (show) View.VISIBLE else View.GONE
+    /**
+     * The bar follows offline, casting, the server's capabilities and the title's data, in one rule ([barState] via
+     * [PlayerControls.updateBar]); called whenever one of them changes.
+     */
+    private fun updateBar() {
+        if (!::controls.isInitialized || !::args.isInitialized) return
+        controls.updateCast(CastUi(ready = castLink != null, enabled = castEnabled))
     }
 
     private val castEvents = object : MediaThreeReceiver.Events {
-        override fun onDevices(available: Boolean) { castDevices = available; updateCastButton() }
-
         override fun onSessionStarted() {
             // the viewer picked a TV (Player.svelte handleCast session-start): the playing stream goes there
             val c = cast ?: return
@@ -915,11 +1165,15 @@ class PlayerActivity : FragmentActivity() {
             this@PlayerActivity.item = item
             nextItem = null
             flow = null
+            postPlay = null
             audioIndex = null
             subIndex = null
             args = args.copy(itemId = item.id, startMs = null, audio = null, subtitle = null)
             title.text = item.seriesName ?: item.name
             subtitle.text = if (item.seriesName != null) episodeLabel(item) else ""
+            // the TV's new title: its scenes and bookmarks (seeks and new bookmarks go to the TV)
+            api?.let { controls.loadTitleExtras(it, item.id, serverCaps.chapters) } ?: controls.clearTitleExtras()
+            updateBar() // Episodes and Cast & info follow the TV's title
         }
 
         override fun onFailed(answer: TokenAnswer?) {
@@ -933,7 +1187,7 @@ class PlayerActivity : FragmentActivity() {
             flash(text, 4_000)
         }
 
-        override fun onReturn(itemId: String, positionMs: Long, play: Boolean, ended: Boolean) {
+        override fun onReturn(itemId: String, positionMs: Long?, play: Boolean, ended: Boolean) {
             showLocal()
             if (ended) { finish(); return } // finished on the TV: back to the app, which offers what comes next
             // the TV's position (and title, after its queue moved on: no flow loaded for it yet) plays on here
@@ -946,7 +1200,10 @@ class PlayerActivity : FragmentActivity() {
             // after the cast token's stop / revoke (queued on the same ordered thread): a one-stream account is not refused (429)
             Players.reports.execute {
                 handler.post {
-                    if (released || cast?.casting == true) return@post
+                    // closed, casting again, or another title started meanwhile (a new intent, a pick): that one plays
+                    if (released || cast?.casting == true || args !== a) return@post
+                    reporter?.release() // a session started meanwhile is replaced: its stop is reported
+                    reporter = null
                     if (same) startOnline(a, first = false, startMs = positionMs)
                     else { flow = null; nextItem = null; startOnline(a, first = true, startMs = positionMs) }
                 }
@@ -972,13 +1229,14 @@ class PlayerActivity : FragmentActivity() {
         skipButton.visibility = View.GONE
         nextCard.visibility = View.GONE
         stillCard.visibility = View.GONE
+        ppCard.visibility = View.GONE
         view.player = link.player
         view.controllerShowTimeoutMs = 0 // a remote: the controls stay
+        controls.onCasting() // first: a lock is lifted, else the controller could not show
         view.showController()
         castStatus.text = link.deviceName?.let { getString(R.string.cast_playing_on, it) } ?: getString(R.string.cast_playing)
-        castStatus.visibility = View.VISIBLE
-        for (b in listOf(tracksButton, qualityButton, pipButton, nextButton)) b.visibility = View.GONE
-        updateCastButton()
+        applyFx()
+        updateBar()
         updatePip()
     }
 
@@ -986,9 +1244,8 @@ class PlayerActivity : FragmentActivity() {
     private fun showLocal() {
         view.player = player
         view.controllerShowTimeoutMs = CONTROLLER_TIMEOUT_MS
-        castStatus.visibility = View.GONE
-        pipButton.visibility = if (pipSupported()) View.VISIBLE else View.GONE
-        updateCastButton()
+        updateBar()
+        applyFx()
     }
 
     // ---- intents, state, release ----
@@ -1002,22 +1259,19 @@ class PlayerActivity : FragmentActivity() {
         token?.let { Players.launcher?.ended(it) }
         token = t
         if (cast?.casting == true) { cast?.stop(); showLocal() }
-        reporter?.release()
-        reporter = null
+        controls.newTitle()
         offlineProgress?.flush()
         offlineProgress = null
         offlineLicense = null
         offlineSubLangs = emptyList()
         pausedAt = null
-        stream = null
-        attachedAt = null
-        flow = null
-        nextItem = null
-        audioIndex = null
-        forcedHls = false
-        retries = 0
-        player.stop()
+        item = null // Episodes shows again once the new title is known
+        resetForNewTitle() // the per-title state, as for a title switched in this player
         args = a
+        // the new request's profile (maybe another one): its last mode on this device until its prefs load; no switch flipped yet
+        fxTouched = false
+        setFx(FxStore.load(this, a.profileId))
+        updateBar()
         start(a, handed?.offline)
     }
 
@@ -1057,6 +1311,8 @@ class PlayerActivity : FragmentActivity() {
         token?.let { Players.launcher?.ended(it) } // the same title may be played again right away
         if (!::player.isInitialized) return
         handler.removeCallbacksAndMessages(null)
+        controls.release()
+        fx.release()
         loadJob?.cancel()
         cast?.stop() // the player closes: the cast ends with it (the web's pagehide)
         cast = null
@@ -1093,6 +1349,17 @@ class PlayerActivity : FragmentActivity() {
         finish()
     }
 
+    /** A title tapped in Cast & info: the player closes and the shell's web UI opens its page (the web's `/item/<id>`). */
+    private fun openTitle(id: String) {
+        val path = ShellIntents.titlePath(id) ?: return
+        startActivity(
+            ShellIntents.internal(this)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+                .putExtra(ShellActivity.EXTRA_OPEN_PATH, path),
+        )
+        finish()
+    }
+
     private fun showError(text: String, retry: Boolean) {
         loading.visibility = View.GONE
         errorText.text = text
@@ -1101,6 +1368,7 @@ class PlayerActivity : FragmentActivity() {
         skipButton.visibility = View.GONE
         nextCard.visibility = View.GONE
         stillCard.visibility = View.GONE
+        ppCard.visibility = View.GONE
         updatePip()
     }
 
@@ -1186,12 +1454,7 @@ class PlayerActivity : FragmentActivity() {
         private const val OFFLINE_RECHECK_MS = 5 * 60_000L
         private const val PIP_MIN_RATIO = 0.42f
         private const val PIP_MAX_RATIO = 2.39f
-        private const val GROUP_AUDIO = 1
-        private const val GROUP_SUBS = 2
-        private const val GROUP_QUALITY = 3
-        private const val OFF = 10_000
-        /** web lib/player/abr.ts LADDER (finite rungs) */
-        private val QUALITIES = listOf("1080p" to 8_000_000L, "720p" to 4_000_000L, "480p" to 1_500_000L, "360p" to 800_000L)
+        private const val ERROR_FLASH_MS = 2_500L
 
         fun intent(context: Context, req: PlayRequest, token: String): Intent = Intent(context, PlayerActivity::class.java)
             .putExtra(EXTRA_ITEM, req.itemId)

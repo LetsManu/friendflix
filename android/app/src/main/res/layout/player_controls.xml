@@ -5,10 +5,14 @@
 -->
 <!--
   Controller layout of the PlayerView (exo_* ids are bound by Media3: play/pause, ±10 s, seek bar, times). The player_* buttons are
-  FriendFlix's own (back, title, audio + subtitles, quality, picture-in-picture, next episode); player_cast is the standard Cast
-  button (MediaRouteButton, the Cast framework's icon), shown only for a castable stream while a Cast device is on the network.
+  FriendFlix's own, in the web player's order: top right the quality chip, Chromecast, Cast & info, audio + subtitles, More (⋯, with
+  the speed badge and the sleep-timer dot); bottom right of the duration Episodes, Scenes, next episode. player_cast is the standard
+  Cast button (MediaRouteButton, the Cast framework's icon), first on the right, shown for a castable stream (whether or not a Cast
+  device has been discovered) and always while casting. Quality and picture-in-picture are rows of the More panel. Chapter starts and bookmarks
+  are the time bar's marks (its ad markers, played and unplayed in one colour); player_trickplay is the scrub preview above it.
 -->
 <FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
     xmlns:tools="http://schemas.android.com/tools"
     android:id="@+id/player_controls_root"
     android:layout_width="match_parent"
@@ -70,6 +74,24 @@
                 tools:text="S1:E3 Episode" />
         </LinearLayout>
 
+        <TextView
+            android:id="@+id/player_quality_chip"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginEnd="4dp"
+            android:background="@drawable/player_chip"
+            android:focusable="true"
+            android:minHeight="28dp"
+            android:gravity="center"
+            android:paddingStart="10dp"
+            android:paddingEnd="10dp"
+            android:textColor="#FFE8E8E8"
+            android:textSize="12sp"
+            android:tooltipText="@string/player_chip_label"
+            android:visibility="gone"
+            tools:text="Original"
+            tools:visibility="visible" />
+
         <androidx.mediarouter.app.MediaRouteButton
             android:id="@+id/player_cast"
             android:layout_width="48dp"
@@ -77,17 +99,13 @@
             android:contentDescription="@string/player_cast"
             android:visibility="gone" />
 
-        <Button
-            android:id="@+id/player_quality"
-            android:layout_width="wrap_content"
+        <ImageButton
+            android:id="@+id/player_info"
+            android:layout_width="48dp"
             android:layout_height="48dp"
-            android:background="?android:attr/selectableItemBackground"
-            android:contentDescription="@string/player_quality"
-            android:minWidth="48dp"
-            android:paddingStart="8dp"
-            android:paddingEnd="8dp"
-            android:textAllCaps="false"
-            android:textColor="@android:color/white"
+            android:background="?android:attr/selectableItemBackgroundBorderless"
+            android:contentDescription="@string/player_info"
+            android:src="@drawable/ic_player_info"
             android:visibility="gone" />
 
         <ImageButton
@@ -99,14 +117,43 @@
             android:src="@drawable/ic_player_tracks"
             android:visibility="gone" />
 
-        <ImageButton
-            android:id="@+id/player_pip"
+        <FrameLayout
+            android:id="@+id/player_more_wrap"
             android:layout_width="48dp"
-            android:layout_height="48dp"
-            android:background="?android:attr/selectableItemBackgroundBorderless"
-            android:contentDescription="@string/player_pip"
-            android:src="@drawable/ic_player_pip"
-            android:visibility="gone" />
+            android:layout_height="48dp">
+
+            <ImageButton
+                android:id="@+id/player_more"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:background="?android:attr/selectableItemBackgroundBorderless"
+                android:contentDescription="@string/player_more"
+                android:src="@drawable/ic_player_more" />
+
+            <TextView
+                android:id="@+id/player_more_badge"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_gravity="top|end"
+                android:background="@drawable/player_badge"
+                android:importantForAccessibility="no"
+                android:paddingStart="4dp"
+                android:paddingEnd="4dp"
+                android:textColor="@android:color/white"
+                android:textSize="11sp"
+                android:textStyle="bold"
+                android:visibility="gone"
+                tools:text="1.5×" />
+
+            <View
+                android:id="@+id/player_more_dot"
+                android:layout_width="8dp"
+                android:layout_height="8dp"
+                android:layout_gravity="bottom|end"
+                android:layout_margin="8dp"
+                android:background="@drawable/player_badge"
+                android:visibility="gone" />
+        </FrameLayout>
     </LinearLayout>
 
     <LinearLayout
@@ -150,6 +197,19 @@
             android:src="@drawable/ic_player_ffwd" />
     </LinearLayout>
 
+    <ImageView
+        android:id="@+id/player_trickplay"
+        android:layout_width="168dp"
+        android:layout_height="wrap_content"
+        android:layout_gravity="bottom|start"
+        android:layout_marginBottom="64dp"
+        android:adjustViewBounds="true"
+        android:background="@android:color/black"
+        android:importantForAccessibility="no"
+        android:padding="1dp"
+        android:scaleType="fitCenter"
+        android:visibility="gone" />
+
     <LinearLayout
         android:id="@+id/player_bottom_bar"
         android:layout_width="match_parent"
@@ -175,7 +235,9 @@
             android:layout_height="40dp"
             android:layout_marginStart="12dp"
             android:layout_marginEnd="12dp"
-            android:layout_weight="1" />
+            android:layout_weight="1"
+            app:ad_marker_color="#E6FFFFFF"
+            app:played_ad_marker_color="#E6FFFFFF" />
 
         <TextView
             android:id="@id/exo_duration"
@@ -184,6 +246,25 @@
             android:fontFeatureSettings="tnum"
             android:textColor="@android:color/white"
             tools:text="45:00" />
+
+        <ImageButton
+            android:id="@+id/player_episodes"
+            android:layout_width="48dp"
+            android:layout_height="48dp"
+            android:layout_marginStart="8dp"
+            android:background="?android:attr/selectableItemBackgroundBorderless"
+            android:contentDescription="@string/player_episodes"
+            android:src="@drawable/ic_player_episodes"
+            android:visibility="gone" />
+
+        <ImageButton
+            android:id="@+id/player_scenes"
+            android:layout_width="48dp"
+            android:layout_height="48dp"
+            android:background="?android:attr/selectableItemBackgroundBorderless"
+            android:contentDescription="@string/player_scenes"
+            android:src="@drawable/ic_player_scenes"
+            android:visibility="gone" />
 
         <ImageButton
             android:id="@+id/player_next_episode"
