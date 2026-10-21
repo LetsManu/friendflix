@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { expect, test } from '../fixtures.js';
 import { healthOk, loginCheckOk } from '../mocks/admin.js';
+import { done, installLogin, loginState, password } from '../mocks/login.js';
 
 const GiB = 1024 ** 3;
 const ID = 'ab'.repeat(16);
@@ -221,5 +222,49 @@ test.describe('admin health page', () => {
     await expect(card.getByRole('switch', { name: 'Titelbilder hinter der Anmeldung' })).toBeDisabled();
     await expect(card.getByText('Gesperrt (kommt aus der Umgebung)')).toBeVisible();
     await expect(card.getByText('Alles in Ordnung.')).toBeVisible();
+  });
+});
+
+test.describe('Authentik repair: re-authentication', () => {
+  test.use({ allowedConsole: /status of 401/ });
+  const refuseOnce = async (page: import('@playwright/test').Page) => {
+    let first = true;
+    await page.route('**/api/admin/authentik/repair', (r) => {
+      if (!first) return r.fallback();
+      first = false;
+      return r.fulfill({ status: 401, json: { error: 'reauth_required' } });
+    });
+  };
+  const runRepair = async (page: import('@playwright/test').Page) => {
+    const form = page.getByRole('region', { name: 'Anmeldung', exact: true }).getByRole('form', { name: 'Authentik-Einrichtung reparieren' });
+    await form.getByLabel('Authentik-Admin-Token (Superuser, einmalig)').fill('ak-admin-placeholder-e2e');
+    await form.getByRole('button', { name: 'Reparieren' }).click();
+    return form;
+  };
+  test.beforeEach(({ api }) => {
+    api.asAdmin = true;
+    api.admin.loginCheck = { ...loginCheckOk(), warnings: ['token:invalid'], serviceToken: { token: 'invalid', missing: [] } };
+  });
+
+  test('in place: the sign-in dialog, then the repair runs once with the typed token', async ({ page, api }) => {
+    await refuseOnce(page);
+    await installLogin(page.context(), loginState({ starts: [{ body: password('admin') }], answers: [{ body: done('') }] }));
+    await page.goto('/admin/status');
+    const form = await runRepair(page);
+    const dlg = page.getByRole('dialog', { name: 'Erneut anmelden' });
+    await dlg.getByLabel('Passwort', { exact: true }).fill('hunter2-fixture');
+    await dlg.getByRole('button', { name: 'Anmelden' }).click();
+    await expect(form.getByRole('status')).toHaveText('Authentik-Einrichtung repariert. Das neue Dienst-Token wurde gespeichert.');
+    expect(api.admin.repairs).toEqual([{ token: 'ak-admin-placeholder-e2e' }]);
+  });
+
+  test('classic sign-in mode: the forced sign-in at /auth/reauth, back to /admin/status (never the plain sign-in page)', async ({ page }) => {
+    await refuseOnce(page);
+    await page.route('**/auth/flow/config', (r) => r.fulfill({ json: { mode: 'authentik', recovery: false, enroll: false } }));
+    let next: string | null = null;
+    await page.route('**/auth/reauth?**', (r) => { next = new URL(r.request().url()).searchParams.get('next'); return r.fulfill({ status: 200, contentType: 'text/html', body: '<p>sign in</p>' }); });
+    await page.goto('/admin/status');
+    await runRepair(page);
+    await expect.poll(() => next).toBe('/admin/status');
   });
 });

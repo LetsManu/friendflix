@@ -42,6 +42,7 @@
   import ToastHost from '#lib/ui/ToastHost.svelte';
   import { flushDeferred } from '#lib/ui/action';
   import ConfirmHost from '#lib/ui/ConfirmHost.svelte';
+  import ReauthHost from '#lib/auth/ReauthHost.svelte';
   import HealthBanner from '#lib/admin/HealthBanner.svelte';
   import { startBanner } from '#lib/admin/banner';
   import { saveLanguage } from '#lib/stores';
@@ -601,9 +602,10 @@
 {:else}
   <main id="main" class="boot"><span class="logo"><Logo wordmark size={44} /></span><div class="spin" aria-label={$t('shell.booting')} role="status"></div></main>
 {/if}
-<!-- app-wide toasts + confirm dialog (lib/ui); mounted once, outside the page so they survive navigation -->
+<!-- app-wide toasts + confirm dialog (lib/ui) + the in-app re-authentication (lib/account/reauth.ts); mounted once, outside the page so they survive navigation -->
 <ToastHost />
 <ConfirmHost />
+<ReauthHost />
 
 <style>
   .offbar { position: fixed; z-index: 80; left: 0; right: 0; bottom: calc(56px + var(--safe-bottom) + var(--castbar-h)); background: #242b33; padding: .6rem var(--pad-x); text-align: center; font-size: .9rem; }

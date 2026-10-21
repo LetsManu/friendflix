@@ -56,7 +56,37 @@ test.describe('security section (/me/account)', () => {
   });
 
   test.describe('stale re-authentication', () => {
-  test.use({ allowedConsole: /status of 401/ });
+  test.use({ allowedConsole: /status of (401|409)/ }); // 409: a flow start answered "classic"
+  test('classic sign-in mode: a stale removal goes through the forced sign-in back to /me/account (never the plain sign-in page)', async ({ page, api }) => {
+    api.securityStale = true;
+    let next: string | null = null;
+    await page.route('**/auth/reauth?**', (r) => { next = new URL(r.request().url()).searchParams.get('next'); return r.fulfill({ status: 200, contentType: 'text/html', body: '<p>sign in</p>' }); });
+    await open(page, loginState({ config: { body: { mode: 'authentik', recovery: false, enroll: false } } }));
+    await security(page).getByRole('button', { name: 'Pixel 8 entfernen' }).click();
+    await page.getByRole('alertdialog').getByRole('button', { name: 'Entfernen' }).click();
+    await expect.poll(() => next).toBe('/me/account');
+    expect(api.securityDeleted).toEqual([]);
+  });
+
+  test('a flow FriendFlix cannot show (409 classic): the dialog\'s fallback is the forced sign-in, not the plain sign-in page', async ({ page, api }) => {
+    api.securityStale = true;
+    await open(page, loginState({ starts: [{ status: 409, body: { error: 'classic' } }] }));
+    await security(page).getByRole('button', { name: 'Pixel 8 entfernen' }).click();
+    await page.getByRole('alertdialog').getByRole('button', { name: 'Entfernen' }).click();
+    await expect(dialog(page).getByRole('link').first()).toHaveAttribute('href', '/auth/reauth?next=%2Fme%2Faccount');
+  });
+
+  test('still refused right after the sign-in: an error, no second round', async ({ page, api }) => {
+    api.securityStale = true;
+    const st = loginState({ starts: [{ body: password('anna') }], answers: [{ body: done('/me/account') }] });
+    await open(page, st);
+    await security(page).getByRole('button', { name: 'Pixel 8 entfernen' }).click();
+    await page.getByRole('alertdialog').getByRole('button', { name: 'Entfernen' }).click();
+    await typePassword(page);
+    await expect(security(page).getByRole('alert')).toHaveText('Die Anmeldung konnte nicht bestätigt werden. Bitte versuch es noch einmal.');
+    expect(st.calls.filter((c) => c.path === '/auth/flow/start')).toHaveLength(1);
+  });
+
   test('remove asks for re-auth when stale, then removes', async ({ page, api }) => {
     api.securityStale = true;
     const st = loginState({ starts: [{ body: password('anna') }], answers: [() => { api.securityStale = false; return { body: done('/me/account') }; }] });

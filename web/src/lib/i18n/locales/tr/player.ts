@@ -273,7 +273,7 @@ const tr: Translation<typeof de> = {
     linkWarn: 'Bu kod bir bağlantıyla geldi. Yalnızca <b>{code}</b> şu anda televizyonunda aynen yazıyorsa eşleştir – aksi halde bir başkası hesabına erişebilir.',
     codeLabel: 'Televizyondaki kod',
     pairButton: 'Eşleştir',
-    pairNote: 'Televizyon 30 gün oturum açık kalır (kullanılmazsa 7 gün) ve “Cihazlar” altında görünür – oradan istediğin zaman engelleyebilirsin.',
+    pairNote: 'Televizyon 90 gün oturum açık kalır ve “Cihazlar” altında görünür – oradan istediğin zaman engelleyebilirsin.',
   },
   tv: {
     pageTitle: 'Televizyonu bağla',

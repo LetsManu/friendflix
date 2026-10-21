@@ -5,15 +5,14 @@
    * Admin → Update with the updater (lib/admin/updater.ts): installed / previous tag, "Update now", "Back to previous
    * version", "Update the updater" (inline confirmation, no dialog), the job's steps with live status, the result of the last
    * job and the automatic updates. A job restarts the backend: failed polls show "reconnecting" and the page picks the result up
-   * when it answers again (also after a reload: the updater keeps the last job). A start that needs a recent sign-in goes through
-   * /auth/reauth and comes back with ?reauth=1 (the person starts the job again; nothing restarts on its own). A Portainer stack
+   * when it answers again (also after a reload: the updater keeps the last job). An admin session is enough to start a job or to
+   * change the automatic updates (no second sign-in). A Portainer stack
    * (status.stack foreign) is never recreated by the updater: a note up front, "Update now" goes through Portainer when it is set up.
    */
   import { createEventDispatcher, onDestroy, onMount } from 'svelte';
   import { api } from '#lib/api';
   import Icon from '#lib/Icon.svelte';
   import { fmtDateTime, t, tr } from '#lib/i18n';
-  import { isReauthError, startReauth } from '#lib/account/reauth';
   import AdminCard from '#lib/adminContent/AdminCard.svelte';
   import { saveSettings } from '#lib/admin/settings/api';
   import Button from '#lib/ui/Button.svelte';
@@ -29,8 +28,6 @@
   } from './updater';
 
   export let view: UpdaterView;
-  /** shown once after coming back from the sign-in */
-  export let reauthBack = false;
   const dispatch = createEventDispatcher<{ finished: void }>();
 
   $: s = statusOf(view);
@@ -87,7 +84,6 @@
       watch();
       return;
     }
-    if (isReauthError(res.error)) { startReauth('/admin/update?reauth=1'); return; }
     toast.error(startError(res.error));
   }
 
@@ -117,7 +113,6 @@
 
 <AdminCard title={$t('admin.update.updater.title')}>
   <p class="muted intro">{$t('admin.update.updater.intro')}</p>
-  {#if reauthBack}<p class="banner" role="status"><Icon name="check" size={18} />{$t('admin.update.updater.reauthBack')}</p>{/if}
 
   {#if view.present && 'error' in view}
     <p class="banner warn" role="alert"><Icon name="alert" size={18} />{view.error === 'unauthorized' ? $t('admin.update.updater.unauthorized') : $t('admin.update.updater.invalid')}</p>

@@ -8,10 +8,9 @@
    */
   import { onMount } from 'svelte';
   import Icon from '#lib/Icon.svelte';
-  import { fmtDateTime, t, trDynamic, type TKey } from '#lib/i18n';
+  import { fmtDateTime, t, tr, trDynamic, type TKey } from '#lib/i18n';
   import { failClassText, loadLoginCheck, loginWarningText, repairAuthentik, type LoginCheck, type RepairResult } from './health';
-  import { isReauthError } from '#lib/account/reauth';
-  import ReauthDialog from '#lib/auth/ReauthDialog.svelte';
+  import { isReauthError, reauthenticate } from '#lib/account/reauth';
   import { loadSettings, saveSettings } from './settings/api';
   import { errorText } from '#lib/ui/action';
   import Button from '#lib/ui/Button.svelte';
@@ -23,8 +22,8 @@
   let check: LoginCheck | null = null, failed = false;
   let wall: { on: boolean; locked: boolean } | null = null;
   let saving = false;
-  /** the repair form: the one-time admin token (emptied once used), the run, its result and a re-auth before it */
-  let repairToken = '', repairing = false, repair: RepairResult | null = null, repairErr = '', reauth = false;
+  /** the repair form: the one-time admin token (emptied once used), the run and its result; a refused run asks for the sign-in in place */
+  let repairToken = '', repairing = false, repair: RepairResult | null = null, repairErr = '';
   $: needsRepair = Boolean(check && check.warnings.some((w) => w === 'token:invalid' || w.startsWith('permission:') || w === 'optional:change-email'));
   const STEP_KEY = (id: string) => `setup.ak.step.${id}`;
   const failLine = (f: NonNullable<LoginCheck['lastFailures']>[number]) =>
@@ -40,19 +39,21 @@
   /** e-mail change is optional: a missing flow is shown as "optional", not as an error */
   const isOptional = (f: { kind: string; state: string }) => f.kind === 'change-email' && f.state === 'missing';
 
-  async function runRepair(again = true) {
+  async function runRepair(again = true): Promise<void> {
     const token = repairToken.trim();
     if (!token || repairing) return;
     repairing = true; repairErr = ''; repair = null;
+    let signIn = false;
     try {
       repair = await repairAuthentik(token);
       if (repair.check) check = repair.check;
       repairToken = '';
     } catch (e) {
-      if (isReauthError(e) && again) { reauth = true; return; }
-      repairToken = '';
-      repairErr = errorText(e);
+      // the token stays typed for the repeat after the sign-in (the classic redirect leaves the page, it is not kept)
+      if (isReauthError(e) && again) signIn = true;
+      else { repairToken = ''; repairErr = isReauthError(e) ? tr('account.account.reauthFailed') : errorText(e); }
     } finally { repairing = false; }
+    if (signIn && (await reauthenticate('/admin/status'))) await runRepair(false);
   }
   async function recheck() {
     try { check = await loadLoginCheck(true); } catch (e) { toast.error(errorText(e)); }
@@ -160,9 +161,6 @@
         {/if}
       </form>
     {/if}
-  {/if}
-  {#if reauth}
-    <ReauthDialog on:done={() => { reauth = false; void runRepair(false); }} on:close={() => { reauth = false; repairing = false; }} />
   {/if}
   {#if wall}
     <div class="box cover">

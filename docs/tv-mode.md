@@ -8,7 +8,7 @@ Das ist auch die Lösung für Fernseher ohne AirPlay und ohne Chromecast; wer Ai
 ## Einrichten (einmalig pro Fernseher)
 1. Auf dem Fernseher im Browser `https://portal.<domain>/tv` öffnen (als Lesezeichen/Startseite speichern). Es erscheinen ein **Code** (`ABCD-EFGH`) und ein QR-Code.
 2. Auf dem Handy (eingeloggt): **Menü → Fernbedienung**, Code eingeben, **Koppeln** (oder QR-Code scannen – der Code ist dann schon eingetragen; bestätigt wird trotzdem von Hand).
-3. Der Fernseher meldet sich selbst an und öffnet die Startseite im TV-Modus. Er bleibt 30 Tage angemeldet (7 Tage ohne Nutzung) und erscheint unter **Geräte** als „Fernseher (TV-Modus)“.
+3. Der Fernseher meldet sich selbst an und öffnet die Startseite im TV-Modus. Er bleibt 90 Tage angemeldet und erscheint unter **Geräte** als „Fernseher (TV-Modus)“.
 
 Abmelden am Fernseher: Profil-Menü → Abmelden (danach wieder Kopplungs-Bildschirm) oder am Handy unter *Geräte* entfernen – das beendet die Sitzung **und** trennt die Verbindung sofort.
 

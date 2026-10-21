@@ -100,10 +100,10 @@ export const configSchema = z.object({
   PUBLIC_URL: setupRequired(publicUrlSchema),
   DATABASE_URL: z.string().min(1),
   REDIS_URL: z.string().min(1),
-  /** absolute session lifetime */
-  SESSION_TTL_SECONDS: z.coerce.number().int().positive().default(8 * 3600),
-  /** sessions without any authenticated request for this long expire (sliding) */
-  SESSION_IDLE_SECONDS: z.coerce.number().int().positive().default(2 * 3600),
+  /** absolute session lifetime (90 days: stay signed in like a streaming service; until 2.1 it was 8 h, migration 42) */
+  SESSION_TTL_SECONDS: z.coerce.number().int().positive().default(90 * 86400),
+  /** sessions without any authenticated request for this long expire (sliding; 90 days, until 2.1 it was 2 h) */
+  SESSION_IDLE_SECONDS: z.coerce.number().int().positive().default(90 * 86400),
   /** base64 of 32 random bytes: encrypts Jellyfin passwords/tokens at rest. */
   APP_ENC_KEY: z.string().min(43),
   /** Shared secret between backend and gateway (never reaches browsers). */

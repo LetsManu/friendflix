@@ -5,7 +5,6 @@ import { z } from 'zod';
 import { audit } from '../audit.js';
 import type { Ctx } from '../ctx.js';
 import { clearSourceFailures, getSourceKey, removeSourceKey, resetSourceState, setSourceKey, sourceStatus, SOURCES, type SourceName } from '../sources/keys.js';
-import { REAUTH_WINDOW_S, recentlyAuthenticated } from '../reauth.js';
 import { requireAdmin } from '../session.js';
 
 export type SourceTestResult = { ok: true } | { ok: false; error: 'not_set' | 'invalid_key' | 'unreachable' | 'budget' };
@@ -21,13 +20,11 @@ export function sourceRoutes(app: FastifyInstance, ctx: Ctx, test?: SourceTester
   app.get('/api/admin/sources', admin, async () => ({ sources: await Promise.all(SOURCES.map((n) => sourceStatus(ctx, n))) }));
   app.get('/api/admin/sources/:name', admin, async (req) => sourceStatus(ctx, nameOf(req)));
 
-  // replacing or removing a key changes a secret: a sign-in at most 10 minutes old, like saving a secret in Admin -> Settings
-  const reauthRequired = { error: 'reauth_required' } as const;
+  // replacing or removing a data-source key needs an admin session only (no re-authentication); both are audited
 
   app.put('/api/admin/sources/:name', admin, async (req, reply) => {
     const name = nameOf(req);
     const { key } = z.object({ key: keySchema }).parse(req.body);
-    if (!recentlyAuthenticated(req.session!, REAUTH_WINDOW_S)) return reply.code(401).send(reauthRequired);
     if ((await getSourceKey(ctx, name))?.from === 'file') return reply.code(409).send({ error: 'from_file' });
     await setSourceKey(ctx, name, key, req.user!.id);
     await resetSourceState(ctx, name);
@@ -37,7 +34,6 @@ export function sourceRoutes(app: FastifyInstance, ctx: Ctx, test?: SourceTester
 
   app.delete('/api/admin/sources/:name', admin, async (req, reply) => {
     const name = nameOf(req);
-    if (!recentlyAuthenticated(req.session!, REAUTH_WINDOW_S)) return reply.code(401).send(reauthRequired);
     if ((await getSourceKey(ctx, name))?.from === 'file') return reply.code(409).send({ error: 'from_file' });
     await removeSourceKey(ctx, name, req.user!.id);
     await resetSourceState(ctx, name);

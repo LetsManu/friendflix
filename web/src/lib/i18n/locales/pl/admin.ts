@@ -320,7 +320,6 @@ const pl: Translation<typeof de> = {
       unauthorized: 'Aktualizator odpowiada, ale odrzuca podpis: INTERNAL_SECRET różni się między backendem a aktualizatorem.',
       invalid: 'Aktualizator wysłał nieczytelną odpowiedź.',
       log: 'Dziennik',
-      reauthBack: 'Zalogowano ponownie. Uruchom zadanie jeszcze raz.',
       auto: {
         title: 'Automatyczne aktualizacje',
         label: 'Automatyczne aktualizacje',

@@ -5,8 +5,9 @@
    * /me/account, delete the account: a dialog that offers the export first, explains the 7 days (restore by signing in
    * again), that it signs out every device at once and that the sign-in account is deactivated only when the deletion is
    * final. Deleting needs a recent sign-in: the button always asks the backend
-   * first (the last admin is refused before any sign-in); a 401 reauth_required goes through /auth/reauth and comes back as
-   * `?delete=1`, which opens the dialog again. On success the session is gone: the dialog
+   * first (the last admin is refused before any sign-in); a 401 reauth_required asks for the sign-in in place (lib/account/reauth.ts:
+   * the in-app dialog, then the deletion is sent once more) or, without the in-app sign-in, goes through /auth/reauth and comes back
+   * as `?delete=1`, which opens the dialog again. On success the session is gone: the dialog
    * shows the date, then the page leaves for `/`. The last admin is refused (400 last_admin).
    */
   import { onMount, tick } from 'svelte';
@@ -17,7 +18,7 @@
   import { errorText } from '#lib/ui/action';
   import Button from '#lib/ui/Button.svelte';
   import { EXPORT_URL } from './DataCard.svelte';
-  import { isReauthError, startReauth } from './reauth';
+  import { isReauthError, reauthenticate } from './reauth';
 
   export let account: Account;
 
@@ -51,7 +52,8 @@
     void show();
   });
 
-  async function remove() {
+  /** again: false for the repeat after a re-authentication (another reauth_required is an error, not a new round) */
+  async function remove(again = true): Promise<void> {
     if (busy) return;
     busy = true; err = '';
     try {
@@ -61,7 +63,12 @@
       okBtn?.focus();
     } catch (e) {
       busy = false;
-      if (isReauthError(e)) return startReauth(NEXT); // no recent sign-in (or the window ran out meanwhile)
+      if (isReauthError(e)) {
+        // no recent sign-in (or the window ran out meanwhile): sign in again here, then delete once more
+        if (!again) { err = tr('account.account.reauthFailed'); return; }
+        if (await reauthenticate(NEXT)) return remove(false);
+        return;
+      }
       err = e instanceof ApiError && (e.body as { error?: string } | null)?.error === 'last_admin' ? tr('account.account.delete.lastAdmin') : errorText(e);
     }
   }
@@ -96,7 +103,7 @@
       {#if err}<p class="err" role="alert">{err}</p>{/if}
       <div class="acts end">
         <button type="button" class="sec" bind:this={cancelBtn} on:click={close}>{$t('account.account.delete.cancel')}</button>
-        <Button variant="danger" solid pending={busy} on:click={remove}>{$t('account.account.delete.confirm')}</Button>
+        <Button variant="danger" solid pending={busy} on:click={() => remove()}>{$t('account.account.delete.confirm')}</Button>
       </div>
     {/if}
   </div>

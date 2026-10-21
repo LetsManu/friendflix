@@ -262,18 +262,26 @@ describe('POST /api/admin/updater/:action', () => {
   });
   afterAll(() => e2?.close());
 
-  it('non-admins are refused; an admin needs a recent re-authentication', async () => {
+  it('non-admins are refused; an admin session is enough (no re-authentication), unknown actions are 404', async () => {
     await e2.pool.query("insert into users(id, authentik_sub, email, name, role, jellyfin_user_id, jellyfin_username, jellyfin_pw_enc) values (gen_random_uuid(), 'sub-dora', 'dora@example.com', 'Dora', 'friend', $1, 'Dora', $2)", ['d'.repeat(32), encrypt(e2.ctx.encKey, 'pw')]);
     const dora = await e2.login(DORA);
     expect((await e2.app.inject({ method: 'POST', url: '/api/admin/updater/update', cookies: dora.cookies, headers: { 'x-csrf-token': dora.csrf } })).statusCode).toBe(403);
-    a2 = await e2.login(ADMIN);
-    const r = await post('update');
-    expect(r.statusCode).toBe(401);
-    expect(r.json()).toEqual({ error: 'reauth_required' });
-    await stamp(Date.now() - 11 * 60_000);
-    expect((await post('update')).statusCode).toBe(401);
-    expect((await post('exec')).statusCode).toBe(404);
     expect(fake.calls).toEqual([]);
+    expect((await post('exec')).statusCode).toBe(404);
+    a2 = await e2.login(ADMIN);
+    // a sign-in long ago (no reauthAt stamp, or an old one): the job starts and is audited all the same
+    await stamp(Date.now() - 11 * 60_000);
+    const r = await post('update');
+    expect(r.statusCode).toBe(202);
+    expect(r.json().job).toMatchObject({ id: JOB_ID, action: 'update' });
+    expect((await e2.pool.query("select 1 from audit_log where action='system.updater_start'")).rowCount).toBe(1);
+  });
+
+  it('the automatic-update switch saves with an admin session only (no re-authentication)', async () => {
+    const r = await e2.app.inject({ method: 'PUT', url: '/api/admin/settings', cookies: a2.cookies, headers: { 'x-csrf-token': a2.csrf },
+      payload: { values: { AUTO_UPDATE: 'nightly-window', AUTO_UPDATE_TIME: '03:30' } } });
+    expect(r.statusCode).toBe(200);
+    expect(e2.ctx.cfg).toMatchObject({ AUTO_UPDATE: 'nightly-window', AUTO_UPDATE_TIME: '03:30' });
   });
 
   it('update: the channel is sent first, then the job starts; start and result are audited once', async () => {

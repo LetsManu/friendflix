@@ -293,7 +293,7 @@ const pl: Translation<typeof de> = {
     linkWarn: 'Ten kod pochodzi z linku. Paruj tylko wtedy, gdy <b>{code}</b> dokładnie tak widnieje teraz na Twoim telewizorze – w przeciwnym razie ktoś inny mógłby uzyskać dostęp do Twojego konta.',
     codeLabel: 'Kod z telewizora',
     pairButton: 'Sparuj',
-    pairNote: 'Telewizor pozostaje zalogowany przez 30 dni (7 dni bez użycia) i pojawia się w sekcji „Urządzenia” – możesz go tam w każdej chwili zablokować.',
+    pairNote: 'Telewizor pozostaje zalogowany przez 90 dni i pojawia się w sekcji „Urządzenia” – możesz go tam w każdej chwili zablokować.',
   },
   tv: {
     pageTitle: 'Połącz telewizor',

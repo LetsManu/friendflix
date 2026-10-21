@@ -9,8 +9,8 @@ const steps = (page: import('@playwright/test').Page) => card(page).locator('ol.
 
 test.describe('admin update with the opt-in updater (desktop)', () => {
   test.beforeEach(({ api }) => { api.asAdmin = true; });
-  // the fake backend answers 502 while it "restarts" during a job, and 401 reauth_required before a sign-in
-  test.use({ allowedConsole: /status of (502 \(Bad Gateway\)|401 \(Unauthorized\))/ });
+  // the fake backend answers 502 while it "restarts" during a job
+  test.use({ allowedConsole: /status of 502 \(Bad Gateway\)/ });
 
   test('without an updater the page keeps the manual steps', async ({ page }) => {
     await page.goto('/admin/update');
@@ -72,21 +72,16 @@ test.describe('admin update with the opt-in updater (desktop)', () => {
     await expect(card(page).getByRole('button', { name: 'Zurück zur vorherigen Version' })).toBeDisabled();
   });
 
-  test('a start that needs a recent sign-in goes through /auth/reauth and says so on return', async ({ page, api }) => {
-    api.updater = { ...updaterState(true), reauthRequired: true };
-    let next: string | null = null;
-    await page.route('**/auth/reauth?**', (r) => {
-      next = new URL(r.request().url()).searchParams.get('next');
-      api.updater!.reauthRequired = false;
-      return r.fulfill({ status: 302, headers: { location: next ?? '/' } });
-    });
+  test('a start needs no second sign-in: the job starts right away, no dialog, no redirect', async ({ page, api }) => {
+    api.updater = updaterState(true);
+    let reauth = 0;
+    page.on('request', (r) => { const p = new URL(r.url()).pathname; if (p === '/auth/reauth' || p.startsWith('/auth/flow/')) reauth++; });
     await page.goto('/admin/update');
     await card(page).getByRole('button', { name: 'Jetzt aktualisieren' }).click();
     await card(page).getByRole('button', { name: 'Ja, starten' }).click();
-    await expect.poll(() => next).toBe('/admin/update?reauth=1');
-    await expect(card(page)).toContainText('Erneut angemeldet');
-    await expect(page).toHaveURL(/\/admin\/update$/);
-    expect(api.updater.posts).toEqual([]); // nothing restarted on its own
+    await expect.poll(() => api.updater!.posts).toEqual(['update']);
+    await expect(page.getByRole('dialog', { name: 'Erneut anmelden' })).toHaveCount(0);
+    expect(reauth).toBe(0);
   });
 
   test('a running job is picked up after a reload; the updater itself; automatic updates', async ({ page, api }) => {

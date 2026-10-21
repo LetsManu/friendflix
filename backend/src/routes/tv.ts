@@ -12,8 +12,9 @@ import { COOKIE, newSession, rand, requireUser, saveSession, authenticate } from
 
 const ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // no 0/O/1/I: readable from across the room
 const TTL = 600;
-const TV_SESSION_SECONDS = 30 * 86400;
-const TV_IDLE_SECONDS = 7 * 86400;
+/** a paired TV stays signed in for 90 days, also without use (like a phone session with the default settings; Devices revokes it) */
+const TV_SESSION_SECONDS = 90 * 86400;
+const TV_IDLE_SECONDS = 90 * 86400;
 
 const norm = (c: string) => c.toUpperCase().replace(/[^A-Z0-9]/g, '');
 const hash = (s: string) => createHash('sha256').update(s).digest();
