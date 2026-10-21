@@ -237,6 +237,16 @@ Ab dann baut jeder Release-Tag (`vX.Y.Z`, erstellt vom Workflow *Release*) in de
 
 Ein geschlossener Test reicht für Haushalt und Freunde; die App braucht keinen öffentlichen Eintrag im Play Store.
 
+### 4a. Automatischer Upload zu Google Play (optional)
+
+Mit einem Dienstkonto für die Play Console lädt jeder Release-Tag seine AAB auch in den geschlossenen Test-Track hoch und rollt sie für die Tester aus, mit den *Android app*-Zeilen des Changelogs als Versionshinweisen (Englisch; Play zeigt sie in jeder Sprache). Ohne Dienstkonto lädst du die AAB wie in Schritt 3 von Hand hoch.
+
+1. In der Google Cloud Console (das mit deiner Play Console verknüpfte Projekt oder ein neues): *IAM & Verwaltung → Dienstkonten → Dienstkonto erstellen*, dort sind keine Rollen nötig; aktiviere für das Projekt außerdem die *Google Play Android Developer API* (*APIs & Dienste → Bibliothek*). Öffne das Dienstkonto, *Schlüssel → Schlüssel hinzufügen → JSON*, und bewahre die heruntergeladene Datei sicher auf.
+2. In der Play Console: *Nutzer und Berechtigungen → Neue Nutzer einladen*, die E-Mail-Adresse des Dienstkontos eintragen und unter *App-Berechtigungen* FriendFlix mit *Für Test-Tracks veröffentlichen* (und *App-Informationen ansehen*) hinzufügen.
+3. Im Repository: das Secret `PLAY_SERVICE_ACCOUNT_JSON` mit der ganzen JSON-Datei als Wert (`gh secret set PLAY_SERVICE_ACCOUNT_JSON < key.json`, danach die lokale Datei löschen oder im Passwortmanager ablegen). Heißt dein geschlossener Track nicht `alpha` (*Testen und veröffentlichen → Tests → Geschlossener Test*, der Name des Tracks), setze die Repository-Variable `PLAY_TRACK` auf seinen Namen.
+
+Der Upload läuft im Job *Android release*, nachdem die signierte AAB am GitHub-Release hängt; scheitert er, schlägt der Job fehl, und *Actions → Android release → Run workflow* auf dem Tag versucht es erneut. Google prüft jede Version weiterhin, bevor die Tester sie bekommen.
+
 ### 5. Passkeys in der App (optional)
 
 Die App nutzt für Passkeys (WebAuthn) den App-Modus des WebViews: Androids Anmeldedaten-Verwaltung gibt einen Passkey nur dann an die App, wenn die **Relying Party** des Passkeys (seine RP-ID, die Domain, zu der die Passkeys gehören; bei Authentik in der WebAuthn-Authenticator-Stage eingestellt, meist der Host der Anmeldeseite oder die gemeinsame übergeordnete Domain) die App verknüpft hat. Lege diese Datei unter `https://<rp-id>/.well-known/assetlinks.json` ab (zum Beispiel `https://auth.example.com/.well-known/assetlinks.json`), ausgeliefert als `application/json` ohne Weiterleitung:

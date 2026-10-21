@@ -8,6 +8,9 @@
 #   ANDROID_UPLOAD_KEYSTORE      the keystore file, base64
 #   ANDROID_UPLOAD_KEY_PASSWORD  store and key password
 #   ANDROID_UPLOAD_KEY_ALIAS     the key's alias
+# Google Play (optional): with PLAY_SERVICE_ACCOUNT_JSON (a Play Console service account's JSON key) the AAB is also uploaded to
+# the closed testing track (repository variable PLAY_TRACK, default alpha) and rolled out to its testers, with the version's
+# "Android app" CHANGELOG lines as release notes (en-US, max 500 characters). Without the secret this part only leaves a notice.
 # Without all three the job only leaves a notice (forks, a repo before the owner set them up). The keystore is decoded to
 # $RUNNER_TEMP (mode 600) for the Gradle run and deleted right after it; nothing prints a secret. Gradle reads the signing
 # config from environment variables only (android/app/build.gradle.kts), so PR builds and local builds stay unsigned.
@@ -20,6 +23,7 @@ on:
       ANDROID_UPLOAD_KEYSTORE: { required: false }
       ANDROID_UPLOAD_KEY_PASSWORD: { required: false }
       ANDROID_UPLOAD_KEY_ALIAS: { required: false }
+      PLAY_SERVICE_ACCOUNT_JSON: { required: false }
   workflow_dispatch:
 permissions: { contents: read }
 jobs:
@@ -31,6 +35,7 @@ jobs:
       contents: write # attach the files to the GitHub Release of this tag
     env:
       HAS_KEY: ${{ secrets.ANDROID_UPLOAD_KEYSTORE != '' && secrets.ANDROID_UPLOAD_KEY_PASSWORD != '' && secrets.ANDROID_UPLOAD_KEY_ALIAS != '' }}
+      HAS_PLAY: ${{ secrets.PLAY_SERVICE_ACCOUNT_JSON != '' }}
     steps:
       - name: Upload key present?
         if: env.HAS_KEY != 'true'
@@ -109,3 +114,52 @@ jobs:
             echo "### Android app $GITHUB_REF_NAME"
             echo "Signed AAB + APK attached to the release (upload the AAB in the Play Console's closed testing track)."
           } >> "$GITHUB_STEP_SUMMARY"
+      - name: Google Play key present?
+        if: env.HAS_KEY == 'true' && env.HAS_PLAY != 'true'
+        run: echo "::notice title=Google Play upload skipped::The secret PLAY_SERVICE_ACCOUNT_JSON is not set; upload friendflix-android-${{ steps.version.outputs.version }}.aab in the Play Console by hand (docs/android.md, Owner steps)."
+      - name: Release notes for Google Play
+        if: env.HAS_KEY == 'true' && env.HAS_PLAY == 'true'
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/whatsnew"
+          python3 - "$VERSION" "$RUNNER_TEMP/whatsnew/whatsnew-en-US" <<'PY'
+          import re, sys
+          version, out = sys.argv[1], sys.argv[2]
+          text = open('CHANGELOG.md', encoding='utf-8').read()
+          m = re.search(r'^## \[' + re.escape(version) + r'\][^\n]*\n(.*?)(?=^## \[|\Z)', text, re.S | re.M)
+          sec = re.search(r'^### Android app\n(.*?)(?=^### |\Z)', m.group(1), re.S | re.M) if m else None
+          lines = []
+          for raw in (sec.group(1).splitlines() if sec else []):
+              if not raw.startswith('- '):
+                  continue
+              t = raw[2:]
+              t = re.sub(r'\[([^\]]*)\]\([^)]*\)', r'\1', t)   # links -> their text
+              t = re.sub(r'[*`]', '', t).strip()
+              t = re.sub(r'\s*\([^()]*\)', '', t)   # drop parentheses (details, "Deutsch")
+              t = re.split(r'(?<=[.!?])\s', t, maxsplit=1)[0]   # first sentence
+              lines.append('• ' + (t if len(t) <= 160 else t[:157].rstrip() + '…'))
+          notes = ''
+          for l in lines:  # whole lines only, Play allows 500 characters
+              if len(notes) + len(l) + 1 > 500:
+                  break
+              notes += l + '\n'
+          open(out, 'w', encoding='utf-8').write(notes.strip() or 'Fixes and improvements.')
+          PY
+          cat "$RUNNER_TEMP/whatsnew/whatsnew-en-US"
+      - name: Upload to Google Play (closed testing)
+        if: env.HAS_KEY == 'true' && env.HAS_PLAY == 'true'
+        uses: r0adkll/upload-google-play@e738b9dd8f2476ea806d921b64aacd24f34515a5 # v1.1.5
+        with:
+          serviceAccountJsonPlainText: ${{ secrets.PLAY_SERVICE_ACCOUNT_JSON }}
+          packageName: com.friendflix
+          releaseFiles: ${{ runner.temp }}/dist/friendflix-android-${{ steps.version.outputs.version }}.aab
+          releaseName: ${{ steps.version.outputs.version }}
+          track: ${{ vars.PLAY_TRACK || 'alpha' }}
+          status: completed
+          whatsNewDirectory: ${{ runner.temp }}/whatsnew
+          mappingFile: android/app/build/outputs/mapping/release/mapping.txt
+      - name: Google Play summary
+        if: env.HAS_KEY == 'true' && env.HAS_PLAY == 'true'
+        run: echo "Uploaded to Google Play, track ${{ vars.PLAY_TRACK || 'alpha' }}, rolled out to its testers." >> "$GITHUB_STEP_SUMMARY"
