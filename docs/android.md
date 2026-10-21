@@ -237,6 +237,16 @@ From then on, every release tag (`vX.Y.Z`, cut by the *Release* workflow) builds
 
 Closed testing is enough for a household and friends; the app does not need a public Play Store listing.
 
+### 4a. Automatic upload to Google Play (optional)
+
+With a Play Console service account, every release tag also uploads its AAB to the closed testing track and rolls it out to the testers, with the release's *Android app* changelog lines as release notes (English; Play shows them to every language). Without it, upload the AAB by hand as in step 3.
+
+1. In the Google Cloud console (the project linked to your Play Console, or a new one): *IAM & Admin → Service accounts → Create service account*, no roles needed there; also enable the *Google Play Android Developer API* for that project (*APIs & Services → Library*). Open the service account, *Keys → Add key → JSON*, and keep the downloaded file safe.
+2. In the Play Console: *Users and permissions → Invite new users*, enter the service account's e-mail address, and under *App permissions* add FriendFlix with *Release to testing tracks* (and *View app information*).
+3. In the repository: the secret `PLAY_SERVICE_ACCOUNT_JSON` with the whole JSON file as its value (`gh secret set PLAY_SERVICE_ACCOUNT_JSON < key.json`, then delete the local file or keep it in your password manager). If your closed track is not called `alpha` (*Test and release → Testing → Closed testing*, the track's name), set the repository variable `PLAY_TRACK` to its name.
+
+The upload runs in the *Android release* job after the signed AAB is attached to the GitHub Release; a failed upload fails that job, and *Actions → Android release → Run workflow* on the tag retries it. Google still reviews each release before testers get it.
+
 ### 5. Passkeys in the app (optional)
 
 The app uses the WebView's app mode for passkeys (WebAuthn): Android's credential manager hands a passkey to the app only when the passkey's **relying party** (its RP ID, the domain the passkeys belong to; with Authentik this is set on the WebAuthn authenticator stage, usually the sign-in host or the shared parent domain) has linked the app. Publish this file at `https://<rp-id>/.well-known/assetlinks.json` (for example `https://auth.example.com/.well-known/assetlinks.json`), served as `application/json` without redirects:
