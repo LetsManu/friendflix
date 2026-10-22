@@ -4,6 +4,8 @@ All notable changes, grouped by what you notice. Each release has its own sectio
 
 ## [Unreleased]
 
+## [2.3.0] – Brezel – 2026-10-22
+
 ### Windows app
 - **New: FriendFlix for Windows** (Windows 10 22H2 and 11). The app shows your server's web UI in a locked-down window and plays titles in a native player (mpv) with FriendFlix's own controls: audio and subtitle choices that are remembered per series, chapters, preview pictures on the seek bar, skip intro and recap, next episode with a countdown, and keyboard and media keys. It plays almost every file as it is (AC3, DTS, TrueHD, HEVC, image subtitles), resumes where you stopped and keeps *Continue watching* in sync with web, Android and TV. No downloads and no Chromecast in this version.
 - **Installer from the GitHub Release** (`.exe`, or `.msi` for managed PCs). Windows SmartScreen warns because there is no paid signing certificate: *More info → Run anyway*.
