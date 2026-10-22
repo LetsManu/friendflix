@@ -100,13 +100,54 @@ pub fn start(app: &AppHandle, req: PlayRequest) -> bool {
     }
 }
 
-/// The app quits: ask a running mpv to quit too (it would otherwise outlive the app).
+/// Polls `done` every 50 ms until it holds or `cap` passed; whether it held.
+pub fn wait_for(cap: std::time::Duration, mut done: impl FnMut() -> bool) -> bool {
+    let until = std::time::Instant::now() + cap;
+    loop {
+        if done() {
+            return true;
+        }
+        if std::time::Instant::now() >= until {
+            return false;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+}
+
+/// The app quits: ask a running mpv to quit too (it would otherwise outlive the app) and give the player thread up to
+/// 3 s to send its Stop report and clean up. Runs on the main thread, so it never waits longer than that.
 pub fn stop() {
     #[cfg(windows)]
     {
         let ipc = running().as_ref().and_then(|r| r.ipc.clone());
         if let Some(ipc) = ipc {
-            let _ = ipc.command(serde_json::json!(["quit"]));
+            ipc.send(serde_json::json!(["quit"]));
         }
+    }
+    if running().is_some() {
+        wait_for(std::time::Duration::from_secs(3), || running().is_none());
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::{Duration, Instant};
+
+    #[test]
+    fn wait_for_is_bounded() {
+        let mut n = 0;
+        assert!(wait_for(Duration::from_secs(2), || {
+            n += 1;
+            n >= 3
+        }));
+        assert_eq!(n, 3);
+        let t = Instant::now();
+        assert!(!wait_for(Duration::from_millis(200), || false));
+        let took = t.elapsed();
+        assert!(
+            took >= Duration::from_millis(200) && took < Duration::from_secs(1),
+            "{took:?}"
+        );
     }
 }

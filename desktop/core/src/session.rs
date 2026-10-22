@@ -88,6 +88,8 @@ impl MpvEvent {
 pub trait Player {
     fn command(&self, v: Value) -> Result<Value, PlayerError>;
     fn events(&self) -> Receiver<MpvEvent>;
+    /// After the pipe closed: whether mpv exited with status 0 (the viewer quit it), waiting briefly for the exit.
+    fn exited_cleanly(&self) -> bool;
 }
 
 /// The server calls of a session (implemented by `ServerApi`).
@@ -128,6 +130,9 @@ impl<T: Player + ?Sized> Player for &T {
     }
     fn events(&self) -> Receiver<MpvEvent> {
         (**self).events()
+    }
+    fn exited_cleanly(&self) -> bool {
+        (**self).exited_cleanly()
     }
 }
 
@@ -305,6 +310,8 @@ const MAX_RELOADS: u32 = 3;
 const BACKOFF_MS: [u64; 3] = [1_000, 2_000, 4_000];
 /// How often `run` wakes without an mpv event.
 const TICK_MS: u64 = 250;
+/// How long after the session's own seek mpv's `seek` event is taken as that seek.
+const OWN_SEEK_MS: u64 = 2_000;
 /// The range of a saved quality cap the server accepts (Android `infoBody`).
 const BITRATES: std::ops::RangeInclusive<i64> = 300_000..=200_000_000;
 /// The skin's mpv script name (`friendflix.lua`).
@@ -399,6 +406,8 @@ pub struct Session<P: Player, A: Api, H: Host, C: Clock> {
     next_cancelled: bool,
     ask_still: bool,
     auto_skipped: Option<u64>,
+    /// a seek the session issued itself: the next `seek` event (until this time) is not the viewer's
+    own_seek_until: Option<u64>,
     // trickplay
     sheets: SheetCache,
     /// the tile files written so far (two at most, used in turn) and the frame in the last one
@@ -471,6 +480,7 @@ impl<P: Player, A: Api, H: Host, C: Clock> Session<P, A, H, C> {
             next_cancelled: false,
             ask_still: false,
             auto_skipped: None,
+            own_seek_until: None,
             sheets: SheetCache::new(),
             previews: vec![],
             preview_last: None,
@@ -504,7 +514,14 @@ impl<P: Player, A: Api, H: Host, C: Clock> Session<P, A, H, C> {
             match events.recv_timeout(Duration::from_millis(TICK_MS)) {
                 Ok(ev) => self.handle(ev),
                 Err(RecvTimeoutError::Timeout) => {}
-                Err(RecvTimeoutError::Disconnected) => self.crashed(),
+                // mpv's IPC closes the pipe on shutdown without an event: the exit status tells a quit from a crash
+                Err(RecvTimeoutError::Disconnected) => {
+                    if self.player.exited_cleanly() {
+                        self.close(false);
+                    } else {
+                        self.crashed();
+                    }
+                }
             }
             self.tick();
         }
@@ -543,7 +560,10 @@ impl<P: Player, A: Api, H: Host, C: Clock> Session<P, A, H, C> {
             MpvEvent::Seek => {
                 if self.opening_since.is_none() {
                     let now = self.now();
-                    self.still.on_interaction(now);
+                    let own = self.own_seek_until.take().is_some_and(|t| now <= t);
+                    if !own {
+                        self.still.on_interaction(now);
+                    }
                     if let Some(k) = self.report.event(now) {
                         self.send_report(k);
                     }
@@ -768,18 +788,18 @@ impl<P: Player, A: Api, H: Host, C: Clock> Session<P, A, H, C> {
     fn attach(&mut self, mut info: PlaybackInfo, start_ms: Option<u64>) {
         let start = start_ms.unwrap_or((info.resume_ticks.max(0) / TICKS_PER_MS) as u64);
         let origin = &self.cfg.origin;
-        info.direct_url = info
-            .direct_url
-            .as_deref()
-            .and_then(|u| origin.resolve(u))
-            .filter(|_| !self.force_hls);
+        info.direct_url = info.direct_url.as_deref().and_then(|u| origin.resolve(u));
+        if info.direct_url.is_some() {
+            // the server allows the original for this title: the quality menu offers it even on HLS
+            self.direct_allowed = true;
+        }
+        if self.force_hls {
+            info.direct_url = None;
+        }
         info.hls_url = origin.resolve(&info.hls_url).unwrap_or_default();
         let Some(stream) = first_stream(&info, origin) else {
             return self.fail(GENERIC.into());
         };
-        if stream.direct {
-            self.direct_allowed = true;
-        }
         if info.audio_index.is_some() {
             self.audio_index = info.audio_index;
         }
@@ -800,7 +820,9 @@ impl<P: Player, A: Api, H: Host, C: Clock> Session<P, A, H, C> {
         self.load(&url, start);
     }
 
-    /// The cookie and the profile header go to mpv only here, before any `loadfile`.
+    /// The cookie and the profile header go to mpv only here, before any `loadfile`. mpv sends these headers with every
+    /// HTTP request it makes, so it must only ever be given server URLs: the stream, subtitle (`sub-add`) and trickplay
+    /// URLs are all resolved with `Origin::resolve` (on-origin only) first; nothing else is loaded.
     fn set_headers(&self) {
         let mut h = vec![];
         if header_safe(&self.cfg.cookie) {
@@ -829,7 +851,6 @@ impl<P: Player, A: Api, H: Host, C: Clock> Session<P, A, H, C> {
     fn switch_to_hls(&mut self, reason: &'static str) {
         self.fallback_reason = Some(reason);
         self.force_hls = true;
-        self.direct_allowed = false;
         let hls = self
             .info
             .as_ref()
@@ -998,6 +1019,10 @@ impl<P: Player, A: Api, H: Host, C: Clock> Session<P, A, H, C> {
 
     fn on_playing(&mut self) {
         let now = self.now();
+        if self.reconnecting {
+            // the stall is over: the next one gets its own 3 tries
+            self.reloads = 0;
+        }
         self.reconnecting = false;
         self.buffering_since = None;
         if let Some(t0) = self.opening_since.take() {
@@ -1041,7 +1066,9 @@ impl<P: Player, A: Api, H: Host, C: Clock> Session<P, A, H, C> {
                 }
                 self.reconnect();
             }
-            // stop (our own loadfile replace), quit, redirect
+            // the viewer quit mpv (window closed, `q`)
+            "quit" => self.close(false),
+            // stop (our own loadfile replace), redirect
             _ => {}
         }
     }
@@ -1135,7 +1162,8 @@ impl<P: Player, A: Api, H: Host, C: Clock> Session<P, A, H, C> {
         }
     }
 
-    fn seek(&self, ms: u64) {
+    fn seek(&mut self, ms: u64) {
+        self.own_seek_until = Some(self.now() + OWN_SEEK_MS);
         let _ = self
             .player
             .command(json!(["seek", secs(ms), "absolute+exact"]));
@@ -1253,8 +1281,12 @@ impl<P: Player, A: Api, H: Host, C: Clock> Session<P, A, H, C> {
             return;
         }
         let direct = self.stream.as_ref().is_some_and(|s| s.direct);
-        if wanted == self.quality && !direct {
+        // the same choice again changes nothing, except "Original" while a converted stream plays
+        if wanted == self.quality && (wanted.is_some() || direct) {
             return;
+        }
+        if wanted.is_none() {
+            self.force_hls = false; // the viewer asks for the original again
         }
         self.quality = wanted;
         self.switch_stream();
@@ -1518,19 +1550,20 @@ impl<P: Player, A: Api, H: Host, C: Clock> Session<P, A, H, C> {
 
     /// The web player takes over (409 profile): `/watch/<id>` with the start position and the link's tracks.
     fn open_web(&mut self, start_ms: Option<u64>) {
-        let mut q = vec![];
+        let mut q = url::form_urlencoded::Serializer::new(String::new());
         if let Some(ms) = start_ms.filter(|ms| *ms >= 1000) {
-            q.push(format!("t={}", ms / 1000));
+            q.append_pair("t", &(ms / 1000).to_string());
         }
         if let Some(a) = &self.want_audio {
-            q.push(format!("audio={a}"));
+            q.append_pair("audio", a);
         }
         if let Some(s) = &self.want_sub {
-            q.push(format!("sub={s}"));
+            q.append_pair("sub", s);
         }
+        let q = q.finish();
         let mut path = format!("/watch/{}", self.item_id);
         if !q.is_empty() {
-            path = format!("{path}?{}", q.join("&"));
+            path = format!("{path}?{q}");
         }
         let _ = self.player.command(json!(["quit"]));
         self.host
@@ -1571,6 +1604,7 @@ mod tests {
         log: RefCell<Vec<Value>>,
         tracks: Value,
         rx: RefCell<Option<Receiver<MpvEvent>>>,
+        clean_exit: Cell<bool>,
     }
 
     impl FakePlayer {
@@ -1585,6 +1619,7 @@ mod tests {
                 log: RefCell::new(vec![]),
                 tracks,
                 rx: RefCell::new(Some(rx)),
+                clean_exit: Cell::new(false),
             };
             (p, tx)
         }
@@ -1625,6 +1660,9 @@ mod tests {
         }
         fn events(&self) -> Receiver<MpvEvent> {
             self.rx.borrow_mut().take().expect("events taken once")
+        }
+        fn exited_cleanly(&self) -> bool {
+            self.clean_exit.get()
         }
     }
 
@@ -1700,6 +1738,8 @@ mod tests {
         sessions: Cell<u32>,
         trickplay: Option<TrickplayInfo>,
         sheet: Option<Vec<u8>>,
+        segments: Vec<Segment>,
+        hls_only: bool,
         fetched: RefCell<Vec<String>>,
     }
 
@@ -1721,6 +1761,8 @@ mod tests {
                 sessions: Cell::new(0),
                 trickplay: None,
                 sheet: None,
+                segments: vec![],
+                hls_only: false,
                 fetched: RefCell::new(vec![]),
             }
         }
@@ -1746,6 +1788,9 @@ mod tests {
             self.sessions.set(self.sessions.get() + 1);
             let mut i = info(&format!("ps{}", self.sessions.get()));
             i.trickplay = self.trickplay.clone();
+            if self.hls_only {
+                i.direct_url = None;
+            }
             InfoAnswer::Ok(i)
         }
         fn report(&self, kind: ReportKind, body: &Value) -> Result<(), ApiError> {
@@ -1763,7 +1808,7 @@ mod tests {
             Ok(self.next.get(id).cloned().flatten())
         }
         fn segments(&self, _id: &str) -> Result<Vec<Segment>, ApiError> {
-            Ok(vec![])
+            Ok(self.segments.clone())
         }
         fn chapters(&self, _id: &str) -> Result<Vec<Chapter>, ApiError> {
             Ok(vec![])
@@ -2092,14 +2137,91 @@ mod tests {
 
     #[test]
     fn window_closed_is_a_normal_stop() {
-        let rig = Rig::new(FakeApi::new());
+        // mpv's IPC never forwards `shutdown`: closing the window is `end-file quit`, then the pipe closes
+        let (player, tx) = FakePlayer::new();
+        let (api, host, clock) = (FakeApi::new(), FakeHost::default(), FakeClock::default());
+        for ev in [
+            MpvEvent::FileLoaded,
+            prop("duration", json!(100.0)),
+            MpvEvent::PlaybackRestart,
+            prop("time-pos", json!(5.0)),
+            MpvEvent::EndFile {
+                reason: "quit".into(),
+            },
+        ] {
+            tx.send(ev).unwrap();
+        }
+        drop(tx);
+        let s = Session::new(config(), req("e1"), &player, &api, &host, &clock);
+        assert_eq!(s.run(), Outcome::Closed);
+        assert_eq!(api.stops().len(), 1);
+        assert!(host.names().is_empty(), "no crash dialog");
+    }
+
+    #[test]
+    fn eof_without_end_file_uses_the_exit_status() {
+        // e.g. `q` while idle (still-watching question, no file loaded): only the exit status tells
+        for (clean, outcome, events) in [
+            (true, Outcome::Closed, vec![]),
+            (
+                false,
+                Outcome::Crashed,
+                vec!["ff-player-crashed".to_string()],
+            ),
+        ] {
+            let (player, tx) = FakePlayer::new();
+            player.clean_exit.set(clean);
+            let (api, host, clock) = (FakeApi::new(), FakeHost::default(), FakeClock::default());
+            for ev in [MpvEvent::FileLoaded, MpvEvent::PlaybackRestart] {
+                tx.send(ev).unwrap();
+            }
+            drop(tx);
+            let s = Session::new(config(), req("e1"), &player, &api, &host, &clock);
+            assert_eq!(s.run(), outcome);
+            assert_eq!(api.stops().len(), 1, "Stop once either way");
+            assert_eq!(host.names(), events);
+        }
+    }
+
+    #[test]
+    fn own_skip_seeks_are_not_interactions() {
+        let mut api = FakeApi::new();
+        api.prefs.flow = FlowPrefs {
+            autoplay_next: true,
+            auto_skip_intro: true,
+            still_watching: true,
+            still_watching_episodes: 3,
+        };
+        api.segments = vec![Segment {
+            kind: "intro".into(),
+            start_sec: 0.0,
+            end_sec: 30.0,
+        }];
+        for (a, b) in [("e1", 2), ("e2", 3), ("e3", 4), ("e4", 5)] {
+            api.next
+                .insert(a.into(), Some(episode(&format!("e{b}"), b, "x")));
+        }
+        let rig = Rig::new(api);
         let mut s = rig.session(req("e1"));
         s.start();
-        playing(&mut s, 5.0, 100.0);
-        s.handle(MpvEvent::Shutdown);
-        assert_eq!(s.outcome(), Some(&Outcome::Closed));
-        assert_eq!(rig.api.stops().len(), 1);
-        assert!(rig.host.names().is_empty());
+        for n in 1..=4 {
+            playing(&mut s, 10.0, 100.0);
+            s.tick(); // auto-skips the intro
+            assert!(rig.player.has(json!(["seek", "30.000", "absolute+exact"])));
+            s.handle(MpvEvent::Seek); // mpv's event for our own seek
+            s.handle(prop("time-pos", json!(80.0)));
+            s.tick();
+            rig.clock.advance(10_000);
+            s.tick();
+            if n < 4 {
+                assert_eq!(rig.player.loadfiles().len(), n + 1, "autoplay {n}");
+            }
+        }
+        assert_eq!(rig.player.loadfiles().len(), 4, "the 4th episode asks");
+        assert_eq!(rig.player.state()["askStillWatching"], true);
+        // "Yes" plays on
+        s.handle(action(json!({"a": "stillYes"})));
+        assert_eq!(rig.player.loadfiles().len(), 5);
     }
 
     #[test]
@@ -2300,11 +2422,14 @@ mod tests {
 
     #[test]
     fn stall_reloads_three_times_then_fails() {
-        let rig = Rig::new(FakeApi::new());
+        let mut api = FakeApi::new();
+        api.hls_only = true;
+        let rig = Rig::new(api);
         let mut s = rig.session(req("e1"));
         s.start();
         playing(&mut s, 50.0, 1_000.0);
-        for n in 1..=3 {
+        // stalls that recover: each one gets its own 3 tries
+        for n in 1..=4 {
             s.handle(prop("paused-for-cache", json!(true)));
             rig.clock.advance(15_001);
             s.tick();
@@ -2314,11 +2439,55 @@ mod tests {
             s.handle(MpvEvent::PlaybackRestart);
             assert_eq!(rig.player.state()["reconnecting"], false);
         }
+        // one stall that does not recover: 3 reloads, then the error
         s.handle(prop("paused-for-cache", json!(true)));
+        for n in 1..=3 {
+            rig.clock.advance(15_001);
+            s.tick();
+            assert_eq!(rig.player.loadfiles().len(), 5 + n, "reload {n}");
+        }
+        assert_eq!(s.outcome(), None);
         rig.clock.advance(15_001);
         s.tick();
         assert!(matches!(s.outcome(), Some(Outcome::Failed(_))));
         assert!(rig.player.has(json!(["quit"])));
+    }
+
+    #[test]
+    fn original_offered_on_a_converted_stream() {
+        let rig = Rig::new(FakeApi::new());
+        let mut s = rig.session(req("e1"));
+        s.start();
+        s.handle(MpvEvent::FileLoaded);
+        s.handle(MpvEvent::EndFile {
+            reason: "error".into(),
+        });
+        let st = rig.player.state();
+        assert_eq!(st["qualities"][0]["id"], "orig", "{st}");
+        s.handle(action(json!({"a": "quality", "id": "orig"})));
+        let loads = rig.player.loadfiles();
+        assert_eq!(loads.last().unwrap()["url"], format!("{BASE}/media/d?x=1"));
+        assert_eq!(rig.player.state()["chip"], "Original");
+    }
+
+    #[test]
+    fn web_path_query_is_encoded() {
+        let api = FakeApi::new();
+        api.infos
+            .borrow_mut()
+            .push_back(InfoAnswer::ProfileMismatch);
+        let rig = Rig::new(api);
+        let mut r = req("e1");
+        r.audio = Some("a b&c".into());
+        r.subtitle = Some("x=y".into());
+        let mut s = rig.session(r);
+        s.start();
+        assert_eq!(
+            s.outcome(),
+            Some(&Outcome::OpenInWeb(
+                "/watch/e1?audio=a+b%26c&sub=x%3Dy".into()
+            ))
+        );
     }
 
     fn jpeg(w: u32, h: u32) -> Vec<u8> {

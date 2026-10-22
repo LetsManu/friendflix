@@ -195,6 +195,11 @@ mod pipe {
             }
         }
 
+        /// Sends a command without waiting for the answer (`request_id` 0: mpv's reply is ignored).
+        pub fn send(&self, args: Value) {
+            let _ = self.out.send(json!({"command": args}).to_string());
+        }
+
         fn forget(&self, id: u64) {
             if let Ok(mut p) = self.pending.lock() {
                 p.remove(&id);

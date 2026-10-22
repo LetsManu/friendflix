@@ -68,8 +68,9 @@ pub use imp::{run, tell_async};
 
 #[cfg(windows)]
 mod imp {
+    use std::process::Child;
     use std::sync::{Arc, Mutex};
-    use std::time::{Duration, Instant};
+    use std::time::Duration;
 
     use friendflix_core::api::ServerApi;
     use friendflix_core::bridge::PlayRequest;
@@ -94,16 +95,34 @@ mod imp {
 
     const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
     const EXIT_WAIT: Duration = Duration::from_secs(3);
+    /// After the pipe closed, how long to wait for mpv's exit status.
+    const EXIT_STATUS_WAIT: Duration = Duration::from_secs(2);
     const TITLE: &str = "FriendFlix";
 
-    struct IpcPlayer(Arc<Ipc>);
+    /// The pipe plus the mpv child, whose exit status tells a quit from a crash once the pipe closed.
+    struct IpcPlayer {
+        ipc: Arc<Ipc>,
+        child: Arc<Mutex<Child>>,
+    }
 
     impl Player for IpcPlayer {
         fn command(&self, v: Value) -> Result<Value, PlayerError> {
-            self.0.command(v)
+            self.ipc.command(v)
         }
         fn events(&self) -> std::sync::mpsc::Receiver<MpvEvent> {
-            self.0.events()
+            self.ipc.events()
+        }
+        fn exited_cleanly(&self) -> bool {
+            let mut status = None;
+            crate::player::wait_for(EXIT_STATUS_WAIT, || {
+                status = self
+                    .child
+                    .lock()
+                    .ok()
+                    .and_then(|mut c| c.try_wait().ok().flatten());
+                status.is_some()
+            });
+            status.is_some_and(|s| s.success())
         }
     }
 
@@ -235,10 +254,14 @@ mod imp {
             app: app.clone(),
             after: Mutex::new(After::Nothing),
         };
-        let outcome =
-            Session::new(cfg, req, IpcPlayer(ipc), api, &host, MonotonicClock::new()).run();
+        let child = Arc::new(Mutex::new(child));
+        let player = IpcPlayer {
+            ipc,
+            child: child.clone(),
+        };
+        let outcome = Session::new(cfg, req, player, api, &host, MonotonicClock::new()).run();
         log::info!("player ended: {}", outcome_name(&outcome));
-        wait_or_kill(&mut child);
+        wait_or_kill(&child);
         if let Some(t) = temp {
             let _ = std::fs::remove_dir_all(t);
         }
@@ -260,16 +283,14 @@ mod imp {
         }
     }
 
-    fn wait_or_kill(child: &mut std::process::Child) {
-        let until = Instant::now() + EXIT_WAIT;
-        while Instant::now() < until {
-            if let Ok(Some(_)) = child.try_wait() {
-                return;
-            }
-            std::thread::sleep(Duration::from_millis(100));
+    fn wait_or_kill(child: &Mutex<Child>) {
+        let Ok(mut child) = child.lock() else {
+            return;
+        };
+        if !crate::player::wait_for(EXIT_WAIT, || matches!(child.try_wait(), Ok(Some(_)))) {
+            let _ = child.kill();
+            let _ = child.wait();
         }
-        let _ = child.kill();
-        let _ = child.wait();
     }
 
     fn navigate(app: &AppHandle, server: &Origin, path: &str) {

@@ -183,6 +183,11 @@ mod tests {
             Some("https://friend.example.com/s.vtt")
         );
         for bad in [
+            "\\\\evil.test/x",
+            "/\\evil.test/x",
+            "https:\\\\evil.test",
+            "//evil.test/x",
+            "\t//evil.test",
             "//evil.example.net/x",
             "https://evil.example.net/x",
             "http://friend.example.com/x",
