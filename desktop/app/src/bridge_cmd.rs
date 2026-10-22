@@ -56,10 +56,8 @@ pub async fn bridge_message(
         return Err("invalid".into());
     };
     if let Request::Play(p) = &req {
-        let state = app.state::<AppState>();
-        let mut s = state.settings();
-        s.set_last_profile(&p.profile_id);
-        state.store(s);
+        app.state::<AppState>()
+            .update(|s| s.set_last_profile(&p.profile_id));
     }
     Ok(answer(
         &id,
@@ -67,6 +65,23 @@ pub async fn bridge_message(
         |p| play(&app, p),
         || shell::open_settings(&app),
     ))
+}
+
+/// The script that hands `{event, detail}` to the page. It checks the origin again in the page, so a navigation between
+/// the Rust check and the eval (e.g. to the sign-in origin) never receives the payload. The message is one JSON string
+/// literal with `<`, U+2028 and U+2029 escaped.
+pub fn deliver_script(server: &Origin, event: &str, detail: &Value) -> String {
+    let msg = json!({"event": event, "detail": detail}).to_string();
+    let literal = Value::String(msg)
+        .to_string()
+        .replace('<', "\\u003c")
+        .replace('\u{2028}', "\\u2028")
+        .replace('\u{2029}', "\\u2029");
+    let origin = Value::String(server.web()).to_string();
+    let d = shell::DELIVER;
+    format!(
+        "(function () {{ if (window.location.origin === {origin} && typeof window.{d} === \"function\") window.{d}({literal}); }})();"
+    )
 }
 
 /// Sends an unsolicited `{event, detail}` message to the main window's page, only while it shows the server origin.
@@ -82,9 +97,7 @@ pub fn send_event(app: &AppHandle, event: &str, detail: Value) {
     if !allowed(&url, &server) {
         return;
     }
-    let msg = json!({"event": event, "detail": detail}).to_string();
-    let arg = serde_json::to_string(&msg).unwrap_or_default();
-    let _ = window.eval(format!("window.{0} && window.{0}({arg})", shell::DELIVER));
+    let _ = window.eval(deliver_script(&server, event, &detail));
 }
 
 #[cfg(test)]
@@ -115,6 +128,30 @@ mod tests {
         let lan = Origin::parse("http://192.0.2.5:8096").unwrap();
         assert!(allowed("http://192.0.2.5:8096/x", &lan));
         assert!(!allowed("http://192.0.2.5/x", &lan));
+    }
+
+    #[test]
+    fn deliver_script_rechecks_origin_and_escapes() {
+        let server = Origin::parse("https://friend.example.com").unwrap();
+        let detail = json!({"t": "</script><script>alert(1)</script>", "q": "a\"b'c\\d", "ls": "x\u{2028}y\u{2029}z"});
+        let js = deliver_script(&server, "ff-state", &detail);
+        assert!(
+            js.contains(r#"window.location.origin === "https://friend.example.com""#),
+            "{js}"
+        );
+        assert!(!js.contains(":443"));
+        assert!(
+            !js.contains("</script>") && !js.contains('\u{2028}') && !js.contains('\u{2029}'),
+            "{js}"
+        );
+        let call = format!("window.{}(", crate::shell::DELIVER);
+        let start = js.find(&call).unwrap() + call.len();
+        let end = js.rfind("); })();").unwrap();
+        let msg: String = serde_json::from_str(&js[start..end]).expect("one JSON string literal");
+        assert_eq!(
+            json_of(&msg),
+            json!({"event": "ff-state", "detail": detail})
+        );
     }
 
     fn json_of(s: &str) -> Value {

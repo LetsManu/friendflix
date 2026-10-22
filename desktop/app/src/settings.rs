@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! The remembered settings (spec §5) in `%APPDATA%\FriendFlix\settings.json`. A missing or unreadable file means the
 //! defaults; unknown fields are ignored; an address that is not a valid origin is dropped.
+use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use friendflix_core::origin::{parse_auth, Origin};
@@ -69,20 +70,10 @@ fn valid_profile(id: &str) -> bool {
 }
 
 impl Settings {
-    /// `%APPDATA%\FriendFlix\settings.json` (defaults when there is none or it cannot be read).
+    /// `%APPDATA%\FriendFlix\settings.json` (defaults when there is none or it cannot be read). Saving goes through
+    /// `AppState::update`.
     pub fn load() -> Settings {
         path().map_or_else(Settings::default, |p| Settings::load_from(&p))
-    }
-
-    pub fn save(&self) {
-        match path() {
-            Some(p) => {
-                if let Err(e) = self.save_to(&p) {
-                    log::warn!("settings not saved: {e}");
-                }
-            }
-            None => log::warn!("settings not saved: no settings folder"),
-        }
     }
 
     pub fn load_from(path: &Path) -> Settings {
@@ -92,14 +83,18 @@ impl Settings {
         parsed.map_or_else(Settings::default, Settings::sanitized)
     }
 
-    /// Writes a temporary file next to the target and renames it over, so a crash never leaves half a file.
+    /// Writes a temporary file next to the target, flushes it to disk and renames it over, so a crash never leaves half a
+    /// file. Callers serialise writes (`AppState::update` holds its lock across the save).
     pub fn save_to(&self, path: &Path) -> std::io::Result<()> {
         if let Some(dir) = path.parent() {
             std::fs::create_dir_all(dir)?;
         }
         let tmp = path.with_extension("json.tmp");
         let text = serde_json::to_string_pretty(self).map_err(std::io::Error::other)?;
-        std::fs::write(&tmp, text)?;
+        let mut f = std::fs::File::create(&tmp)?;
+        f.write_all(text.as_bytes())?;
+        f.sync_all()?;
+        drop(f);
         std::fs::rename(&tmp, path)
     }
 

@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! The main window around the server's web app, the bundled setup and settings pages, the origin lock (navigation,
 //! new windows, the bridge's init script and runtime capability) and `friendflix://watch/<id>` links.
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Mutex;
 
@@ -21,7 +22,7 @@ use tauri::{
 use tauri_plugin_autostart::ManagerExt as _;
 
 use crate::bridge_cmd;
-use crate::settings::{Settings, UiSettings, WindowState};
+use crate::settings::{self, Settings, UiSettings, WindowState};
 use crate::tray;
 
 /// The global the init script defines for unsolicited events (`bridge_cmd::send_event`).
@@ -33,29 +34,48 @@ const REMOTE_TEMPLATE: &str = include_str!("../capabilities/remote.json");
 /// re-created when the server changes (its init script names the server origin), so each one gets a new label.
 pub struct AppState {
     settings: Mutex<Settings>,
+    /// where the settings are saved (None: nowhere, e.g. no %APPDATA%)
+    path: Option<PathBuf>,
     main_label: Mutex<String>,
     created: AtomicU32,
 }
 
 impl AppState {
     pub fn new(settings: Settings) -> AppState {
+        AppState::with_path(settings, settings::path())
+    }
+
+    pub fn with_path(settings: Settings, path: Option<PathBuf>) -> AppState {
         AppState {
             settings: Mutex::new(settings),
+            path,
             main_label: Mutex::new(String::new()),
             created: AtomicU32::new(0),
         }
     }
 
     pub fn settings(&self) -> Settings {
-        self.settings.lock().map(|s| s.clone()).unwrap_or_default()
+        self.settings
+            .lock()
+            .map(|s| s.clone())
+            .unwrap_or_else(|p| p.into_inner().clone())
     }
 
-    /// Keeps and saves the settings.
-    pub fn store(&self, s: Settings) {
-        s.save();
-        if let Ok(mut g) = self.settings.lock() {
-            *g = s;
+    /// The only way to change the settings: `change` runs and the result is saved while the lock is held, so concurrent
+    /// changes (commands on the async pool, window events on the main thread) never lose each other or interleave writes.
+    /// Returns the settings after the change.
+    pub fn update(&self, change: impl FnOnce(&mut Settings)) -> Settings {
+        let mut guard = self.settings.lock().unwrap_or_else(|p| p.into_inner());
+        change(&mut guard);
+        match &self.path {
+            Some(p) => {
+                if let Err(e) = guard.save_to(p) {
+                    log::warn!("settings not saved: {e}");
+                }
+            }
+            None => log::warn!("settings not saved: no settings folder"),
         }
+        guard.clone()
     }
 
     pub fn main_label(&self) -> String {
@@ -251,25 +271,26 @@ pub fn is_main(window: &Window) -> bool {
 /// Remembers the main window's size, position and maximised state (a maximised window keeps its last normal bounds).
 pub fn remember_window(app: &AppHandle) {
     let Some(w) = main_window(app) else { return };
-    let state = app.state::<AppState>();
-    let mut s = state.settings();
     let maximized = w.is_maximized().unwrap_or(false);
-    let ws = match (maximized, s.window, w.outer_position(), w.inner_size()) {
-        (true, Some(old), _, _) => WindowState {
-            maximized: true,
-            ..old
-        },
-        (_, _, Ok(p), Ok(sz)) if !w.is_minimized().unwrap_or(false) => WindowState {
-            x: p.x,
-            y: p.y,
-            width: sz.width,
-            height: sz.height,
-            maximized,
-        },
-        _ => return,
-    };
-    s.window = Some(ws);
-    state.store(s);
+    let minimized = w.is_minimized().unwrap_or(false);
+    let (pos, size) = (w.outer_position(), w.inner_size());
+    app.state::<AppState>().update(|s| {
+        let ws = match (maximized, s.window, pos, size) {
+            (true, Some(old), _, _) => WindowState {
+                maximized: true,
+                ..old
+            },
+            (_, _, Ok(p), Ok(sz)) if !minimized => WindowState {
+                x: p.x,
+                y: p.y,
+                width: sz.width,
+                height: sz.height,
+                maximized,
+            },
+            _ => return,
+        };
+        s.window = Some(ws);
+    });
 }
 
 fn restore(w: &WebviewWindow, ws: Option<WindowState>) {
@@ -352,9 +373,6 @@ fn open_main_at(app: &AppHandle, s: &Settings, start: Option<Url>) {
             }
         }
     }
-    if let Ok(mut l) = state.main_label.lock() {
-        *l = label.clone();
-    }
     let version = app.package_info().version.to_string();
     // the runtime version is WebView2's on Windows (other platforms are development builds only)
     let runtime = if cfg!(windows) {
@@ -380,14 +398,18 @@ fn open_main_at(app: &AppHandle, s: &Settings, start: Option<Url>) {
     }
     match builder.build() {
         Ok(w) => {
+            if let Ok(mut l) = state.main_label.lock() {
+                *l = label;
+            }
             restore(&w, geometry);
             let _ = w.show();
             let _ = w.set_focus();
+            if let Some(old) = old {
+                let _ = old.destroy();
+            }
         }
+        // the old window (and its label) stays the main window
         Err(e) => log::error!("main window not created: {e}"),
-    }
-    if let Some(old) = old {
-        let _ = old.destroy();
     }
 }
 
@@ -491,16 +513,16 @@ pub async fn probe_server(app: AppHandle, address: String) -> Result<ProbeOk, St
         .await
         .map_err(|_| probe_message(ProbeError::Unreachable).to_string())?;
     let ok = answer.map_err(|e| probe_message(e).to_string())?;
-    let state = app.state::<AppState>();
-    let mut s = state.settings();
     let (server, auth) = (Some(origin.web()), ok.auth_origin.map(|a| a.web()));
-    let changed = s.server != server || s.auth_origin != auth;
-    if s.server != server {
-        s.last_profile = None;
-    }
-    s.server = server;
-    s.auth_origin = auth;
-    state.store(s.clone());
+    let mut changed = false;
+    let s = app.state::<AppState>().update(|s| {
+        changed = s.server != server || s.auth_origin != auth;
+        if s.server != server {
+            s.last_profile = None;
+        }
+        s.server = server;
+        s.auth_origin = auth;
+    });
     log::info!("server set to {} (version {})", origin.web(), ok.version);
     tray::set_server(&app, s.server.as_deref());
     if changed || main_window(&app).is_none_or(|w| w.url().is_ok_and(|u| is_local(&u))) {
@@ -521,8 +543,7 @@ pub fn get_settings(state: State<'_, AppState>) -> UiSettings {
 #[tauri::command]
 pub async fn set_settings(app: AppHandle, settings: UiSettings) -> Result<UiSettings, String> {
     let state = app.state::<AppState>();
-    let mut s = state.settings();
-    if settings.autostart != s.autostart {
+    if settings.autostart != state.settings().autostart {
         let launcher = app.autolaunch();
         let done = if settings.autostart {
             launcher.enable()
@@ -534,9 +555,7 @@ pub async fn set_settings(app: AppHandle, settings: UiSettings) -> Result<UiSett
             return Err("Start with Windows could not be changed.".into());
         }
     }
-    s.apply(&settings);
-    state.store(s.clone());
-    Ok(s.ui())
+    Ok(state.update(|s| s.apply(&settings)).ui())
 }
 
 #[cfg(test)]
@@ -548,6 +567,56 @@ mod tests {
 
     fn server() -> Origin {
         Origin::parse("https://friend.example.com").unwrap()
+    }
+
+    #[test]
+    fn concurrent_updates_all_land() {
+        use std::sync::atomic::AtomicBool;
+        use std::sync::Arc;
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("FriendFlix").join("settings.json");
+        let state = Arc::new(AppState::with_path(Settings::default(), Some(p.clone())));
+        let stop = Arc::new(AtomicBool::new(false));
+        let reader = {
+            let (p, stop) = (p.clone(), stop.clone());
+            std::thread::spawn(move || {
+                let mut reads = 0;
+                while !stop.load(Ordering::SeqCst) {
+                    if let Ok(b) = std::fs::read(&p) {
+                        serde_json::from_slice::<Settings>(&b)
+                            .expect("settings.json always parses");
+                        reads += 1;
+                    }
+                }
+                reads
+            })
+        };
+        let writers: Vec<_> = (0..8)
+            .map(|_| {
+                let state = state.clone();
+                std::thread::spawn(move || {
+                    for _ in 0..50 {
+                        state.update(|s| {
+                            let w = s.window.get_or_insert(WindowState {
+                                x: 0,
+                                y: 0,
+                                width: 800,
+                                height: 600,
+                                maximized: false,
+                            });
+                            w.x += 1;
+                        });
+                    }
+                })
+            })
+            .collect();
+        for w in writers {
+            w.join().unwrap();
+        }
+        stop.store(true, Ordering::SeqCst);
+        assert!(reader.join().unwrap() > 0);
+        assert_eq!(state.settings().window.unwrap().x, 400);
+        assert_eq!(Settings::load_from(&p).window.unwrap().x, 400);
     }
 
     #[test]
