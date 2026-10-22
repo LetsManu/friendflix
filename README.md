@@ -166,6 +166,8 @@ An app-like layout with a bottom tab bar, a preview sheet when you tap a poster,
 
 **Android app:** FriendFlix as an app for Android 8.0 and newer, shared through a Google Play closed test (or as an APK on each release). It shows the same web UI and adds a native player (direct play, picture-in-picture, background audio), downloads in the background to the phone or an SD card, stored encrypted and playable offline, Chromecast, and notifications that the app fetches from your server itself – no Google push service, no analytics. Install, settings, security and the owner's signing steps: [docs/android.md](docs/android.md).
 
+**Windows app:** FriendFlix as a program for Windows 10 and 11, installed from the GitHub Release. It shows the same web UI and adds a native mpv player that plays almost every file directly (AC3, DTS, TrueHD, HEVC, image subtitles), with FriendFlix's own controls, resume and progress in sync with web, Android and TV, tray icon and automatic updates. No downloads, no Chromecast. Install, player keys, troubleshooting and the owner's update-signing steps: [docs/windows.md](docs/windows.md).
+
 <p align="center"><img src="docs/images/en/downloads.jpg" alt="Downloads page with finished, paused and preparing downloads" width="700"></p>
 
 **Seven languages:** the interface speaks **English, German, French, Spanish, Italian, Turkish and Polish**. Every profile picks its own language; on first login FriendFlix asks once and suggests the browser language. The admin sets the default language for the whole instance.
@@ -379,6 +381,7 @@ npm run e2e                                     # Playwright: builds the web app
 | TV mode and phone remote | [docs/tv-mode.md](docs/tv-mode.md) |
 | Chromecast and AirPlay | [docs/cast.md](docs/cast.md) |
 | Android app: install, settings, offline, notifications, signing and Google Play | [docs/android.md](docs/android.md) |
+| Windows app: install, player keys, updates, troubleshooting, update signing | [docs/windows.md](docs/windows.md) |
 | Search and discovery API, labels, leaving soon, quality, kids rules | [docs/discovery.md](docs/discovery.md) |
 | Themed lists, calm mode, sound in the player, phone shortcuts and badge | [docs/personal.md](docs/personal.md) |
 | UI kit and admin shell | [docs/ui-kit.md](docs/ui-kit.md) |

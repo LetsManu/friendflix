@@ -14,7 +14,8 @@
 # DAST: `dast` runs an OWASP ZAP baseline scan against the built web app (rules: .zap/rules.tsv).
 # workflow_dispatch: release.yml starts CI for the new vX.Y.Z tag (its own pushes use GITHUB_TOKEN and trigger nothing);
 # a dispatch behaves like a push of that ref, but only main and v* tags are ever published.
-# v* tags also get the signed Android app attached to their GitHub Release (android-release.yml).
+# v* tags also get the signed Android app (android-release.yml) and the Windows app (desktop-release.yml) attached to their
+# GitHub Release.
 # Images carry APP_VERSION / APP_CODENAME from version.json next to GIT_SHA.
 # Reproducible builds (docs/reproducible-builds.md): SOURCE_DATE_EPOCH = commit time, rewrite-timestamp=true, pinned
 # BuildKit (BUILDKIT_IMAGE), BUILD_TIME and the `created` label derived from the commit time; the published candidate is
@@ -170,6 +171,40 @@ jobs:
         with: { fetch-depth: 0 }
       - uses: gitleaks/gitleaks-action@e0c47f4f8be36e29cdc102c57e68cb5cbf0e8d1e # v3
         env: { GITHUB_TOKEN: "${{ secrets.GITHUB_TOKEN }}" }
+  # The Windows app's platform-independent core (origin policy, bridge protocol); the Tauri app itself is built elsewhere.
+  desktop-core:
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: desktop } }
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Rust toolchain (from rust-toolchain.toml)
+        run: rustup toolchain install --profile minimal
+      - run: cargo fmt --check
+      - run: cargo clippy --locked -p friendflix-core -- -D warnings
+      - run: cargo test --locked -p friendflix-core
+      - name: mpv control skin (Lua)
+        working-directory: .
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y lua5.4 luajit
+          lua5.4 desktop/player/test/layout_test.lua
+          luac5.4 -p desktop/player/layout.lua desktop/player/friendflix.lua
+          # the pinned mpv embeds LuaJIT (Lua 5.1 syntax: no //, no bitwise operators, no goto)
+          luajit desktop/player/test/layout_test.lua
+          for f in desktop/player/layout.lua desktop/player/friendflix.lua; do luajit -bl "$f" > /dev/null; done
+  # The Windows app (desktop/app, Tauri 2 + WebView2): lint, unit tests and a debug build on Windows. No installer and no
+  # mpv here; the signed release build is desktop-release.yml.
+  desktop-app:
+    runs-on: windows-latest
+    timeout-minutes: 45
+    defaults: { run: { working-directory: desktop } }
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Rust toolchain (from rust-toolchain.toml)
+        run: rustup toolchain install --profile minimal
+      - run: cargo clippy --locked -p friendflix-app -- -D warnings
+      - run: cargo test --locked -p friendflix-app
+      - run: cargo build --locked -p friendflix-app
   # A new install needs no .env, an existing one keeps working with its .env: both compose files must render either way,
   # with and without the opt-in profiles (backup, bundled) and with and without the updater (compose.no-updater.yaml)
   compose:
@@ -413,6 +448,17 @@ jobs:
       ANDROID_UPLOAD_KEY_PASSWORD: ${{ secrets.ANDROID_UPLOAD_KEY_PASSWORD }}
       ANDROID_UPLOAD_KEY_ALIAS: ${{ secrets.ANDROID_UPLOAD_KEY_ALIAS }}
       PLAY_SERVICE_ACCOUNT_JSON: ${{ secrets.PLAY_SERVICE_ACCOUNT_JSON }}
+  # vX.Y.Z tags: the Windows app (setup .exe + .msi with the pinned mpv) on the tag's GitHub Release, signed for self-update
+  # with latest.json when the update key secrets exist (otherwise unsigned with updates off, and a notice), and only after
+  # the tests, e2e, the secret scan and the desktop jobs passed. contents: write only here, for the release upload.
+  desktop-release:
+    if: startsWith(github.ref, 'refs/tags/v') && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    needs: [test, e2e, secrets, desktop-core, desktop-app]
+    permissions: { contents: write }
+    uses: ./.github/workflows/desktop-release.yml
+    secrets:
+      TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+      TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
   # images are only published after every check above passed (main -> nightly + sha, v* tags -> semver + latest for the highest)
   # signing/attesting (id-token, attestations) happens only here, i.e. only on push events
   publish:

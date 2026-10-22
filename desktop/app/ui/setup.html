@@ -1,0 +1,25 @@
+<!doctype html>
+<!-- SPDX-FileCopyrightText: 2026 Manuel Weißböck -->
+<!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>FriendFlix</title>
+  <link rel="stylesheet" href="ui.css">
+  <script src="ui.js"></script>
+</head>
+<body data-page="setup">
+  <main>
+    <p class="brand">Friend<span>Flix</span></p>
+    <h1>Connect to your server</h1>
+    <p>Enter the address of the FriendFlix server you were invited to, for example friend.example.com.</p>
+    <form id="form" novalidate>
+      <label for="address">Server address</label>
+      <input id="address" type="text" inputmode="url" autocomplete="url" spellcheck="false" autocapitalize="off" placeholder="friend.example.com" maxlength="2048">
+      <button id="connect" type="submit">Connect</button>
+      <div id="status" class="status" role="status" aria-live="polite"></div>
+    </form>
+  </main>
+</body>
+</html>

@@ -172,6 +172,8 @@ App-artige Oberfläche mit Tab-Leiste unten, einer Vorschau beim Antippen eines 
 
 **Android-App:** FriendFlix als App für Android ab 8.0, geteilt über einen geschlossenen Test bei Google Play (oder als APK an jedem Release). Sie zeigt dieselbe Weboberfläche und bringt einen nativen Player (Direktwiedergabe, Bild-im-Bild, Ton im Hintergrund), Downloads im Hintergrund aufs Telefon oder eine SD-Karte, verschlüsselt gespeichert und offline abspielbar, Chromecast und Benachrichtigungen, die die App selbst bei deinem Server abholt – ohne Push-Dienst von Google, ohne Analyse. Installation, Einstellungen, Sicherheit und die Signatur-Schritte für den Betreiber: [docs/de/android.md](docs/de/android.md).
 
+**Windows-App:** FriendFlix als Programm für Windows 10 und 11, installiert aus dem GitHub-Release. Es zeigt dieselbe Weboberfläche und bringt einen nativen mpv-Player, der fast jede Datei direkt abspielt (AC3, DTS, TrueHD, HEVC, Bild-Untertitel), mit FriendFlix' eigener Bedienung, Fortsetzen und Fortschritt im Gleichklang mit Web, Android und TV, Tray-Symbol und automatischen Updates. Keine Downloads, kein Chromecast. Installation, Player-Tasten, Fehlersuche und die Update-Signatur-Schritte für den Betreiber: [docs/de/windows.md](docs/de/windows.md).
+
 <p align="center"><img src="docs/images/de/downloads.jpg" alt="Downloads-Seite mit fertigen, pausierten und vorbereiteten Downloads" width="700"></p>
 
 **Sieben Sprachen:** Die Oberfläche spricht **Deutsch, Englisch, Französisch, Spanisch, Italienisch, Türkisch und Polnisch**. Jedes Profil wählt seine eigene Sprache; beim ersten Login fragt FriendFlix einmal nach und schlägt die Browsersprache vor. Der Admin legt die Standardsprache der ganzen Instanz fest.
@@ -385,6 +387,7 @@ npm run e2e                                     # Playwright: baut die Web-App u
 | TV-Modus und Handy als Fernbedienung | [docs/tv-mode.md](docs/tv-mode.md) |
 | Chromecast und AirPlay | [docs/cast.md](docs/cast.md) |
 | Android-App: Installation, Einstellungen, Offline, Benachrichtigungen, Signatur und Google Play | [docs/de/android.md](docs/de/android.md) |
+| Windows-App: Installation, Player-Tasten, Updates, Fehlersuche, Update-Signatur | [docs/de/windows.md](docs/de/windows.md) |
 | Such- und Entdecken-API, Labels, Bald weg, Qualität, Regeln für Kinderprofile | [docs/discovery.md](docs/discovery.md) |
 | Themenlisten, Ruhiger Modus, Klang im Player, Handy-Verknüpfungen und Badge | [docs/personal.md](docs/personal.md) |
 | UI-Kit und Admin-Rahmen | [docs/ui-kit.md](docs/ui-kit.md) |

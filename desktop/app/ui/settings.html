@@ -1,0 +1,47 @@
+<!doctype html>
+<!-- SPDX-FileCopyrightText: 2026 Manuel Weißböck -->
+<!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>FriendFlix settings</title>
+  <link rel="stylesheet" href="ui.css">
+  <script src="ui.js"></script>
+</head>
+<body data-page="settings">
+  <main>
+    <h1>Settings</h1>
+
+    <h2>Server</h2>
+    <div class="panel">
+      <div id="current" class="current"></div>
+      <form id="form" novalidate>
+        <label for="address">New server address</label>
+        <input id="address" type="text" inputmode="url" autocomplete="url" spellcheck="false" autocapitalize="off" placeholder="friend.example.com" maxlength="2048">
+        <button id="change" type="submit">Check and use</button>
+        <div id="server-status" class="status" role="status" aria-live="polite"></div>
+      </form>
+    </div>
+
+    <h2>Updates</h2>
+    <fieldset class="panel" aria-label="Updates">
+      <div class="row"><input id="updates-auto" type="radio" name="updates" value="auto"><label for="updates-auto">Install updates automatically on the next start</label></div>
+      <div class="row"><input id="updates-ask" type="radio" name="updates" value="ask"><label for="updates-ask">Ask me first</label></div>
+    </fieldset>
+
+    <h2>Player</h2>
+    <div class="panel">
+      <div class="row"><input id="hwdec" type="checkbox"><label for="hwdec">Use hardware decoding (turn off if videos show artefacts)</label></div>
+      <div class="row"><input id="fullscreen" type="checkbox"><label for="fullscreen">Start the player in fullscreen</label></div>
+    </div>
+
+    <h2>Windows</h2>
+    <div class="panel">
+      <div class="row"><input id="autostart" type="checkbox"><label for="autostart">Start FriendFlix with Windows</label></div>
+    </div>
+
+    <div id="status" class="status" role="status" aria-live="polite"></div>
+  </main>
+</body>
+</html>
