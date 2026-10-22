@@ -16,7 +16,14 @@ pub fn scrub(text: &str) -> String {
     static SID: OnceLock<Regex> = OnceLock::new();
     let t = re(&URL, r#"(?i)https?://[^\s"'<>]+"#).replace_all(text, |c: &Captures| {
         let url = &c[0];
-        url.find(['?', '#']).map_or(url, |i| &url[..i]).to_string()
+        let url = url.find(['?', '#']).map_or(url, |i| &url[..i]);
+        // drop userinfo (`user:pass@`) from the authority
+        let rest = url.find("://").map_or(0, |i| i + 3);
+        let end = url[rest..].find('/').map_or(url.len(), |i| rest + i);
+        match url[rest..end].rfind('@') {
+            Some(at) => format!("{}{}", &url[..rest], &url[rest + at + 1..]),
+            None => url.to_string(),
+        }
     });
     let t = re(&COOKIE, r"(?i)(cookie:[ \t]*)[^\r\n]*").replace_all(&t, "${1}***");
     re(&SID, r#"(?i)(ff_sid=)[^\s;&"',]*"#)
@@ -44,6 +51,11 @@ mod tests {
             "Cookie: ***\nnext line"
         );
         assert_eq!(scrub("cookie: x"), "cookie: ***");
+        assert_eq!(
+            scrub("at https://u:p@friend.example.com/x?y#z."),
+            "at https://friend.example.com/x"
+        );
+        assert_eq!(scrub("http://u:p@192.0.2.1:8096"), "http://192.0.2.1:8096");
         assert_eq!(scrub("plain text, no url"), "plain text, no url");
         assert!(!scrub("https://a.example.com/p?ff_sid=zzz").contains("zzz"));
     }

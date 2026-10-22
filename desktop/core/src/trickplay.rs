@@ -14,14 +14,15 @@ pub struct Frame {
 
 pub fn frame(t_ms: u64, tp: &TrickplayInfo) -> Frame {
     let last = (tp.count - 1).max(0) as u64;
-    let idx = (t_ms / tp.interval_ms.max(1) as u64).min(last) as u32;
-    let per = (tp.tile_width * tp.tile_height).max(1) as u32;
-    let cols = tp.tile_width.max(1) as u32;
+    let idx = (t_ms / tp.interval_ms.max(1) as u64).min(last);
+    let cols = tp.tile_width.max(1) as u64;
+    let per = cols * tp.tile_height.max(1) as u64;
     let within = idx % per;
+    let px = |v: u64, size: i32| (v * size.max(0) as u64).min(u32::MAX as u64) as u32;
     Frame {
-        sheet: idx / per,
-        x: (within % cols) * tp.width.max(0) as u32,
-        y: (within / cols) * tp.height.max(0) as u32,
+        sheet: (idx / per).min(u32::MAX as u64) as u32,
+        x: px(within % cols, tp.width),
+        y: px(within / cols, tp.height),
     }
 }
 
@@ -30,7 +31,14 @@ pub fn sheet_url(tp: &TrickplayInfo, sheet: u32) -> String {
 }
 
 pub fn tile_bgra(jpeg: &[u8], f: &Frame, w: u32, h: u32) -> Option<Vec<u8>> {
-    let img = image::load_from_memory_with_format(jpeg, image::ImageFormat::Jpeg).ok()?;
+    let mut limits = image::Limits::default();
+    limits.max_image_width = Some(MAX_SHEET_SIDE);
+    limits.max_image_height = Some(MAX_SHEET_SIDE);
+    limits.max_alloc = Some(MAX_SHEET_ALLOC);
+    let mut reader =
+        image::ImageReader::with_format(std::io::Cursor::new(jpeg), image::ImageFormat::Jpeg);
+    reader.limits(limits);
+    let img = reader.decode().ok()?;
     let right = f.x.checked_add(w)?;
     let bottom = f.y.checked_add(h)?;
     if w == 0 || h == 0 || right > img.width() || bottom > img.height() {
@@ -43,6 +51,9 @@ pub fn tile_bgra(jpeg: &[u8], f: &Frame, w: u32, h: u32) -> Option<Vec<u8>> {
     Some(out)
 }
 
+/// decode limits for a sheet from the network
+const MAX_SHEET_SIDE: u32 = 8192;
+const MAX_SHEET_ALLOC: u64 = 256 * 1024 * 1024;
 const MAX_SHEETS: usize = 8;
 
 pub struct SheetCache {
@@ -215,6 +226,41 @@ mod tests {
         )
         .is_none());
         assert!(tile_bgra(b"nope", &f, 16, 16).is_none());
+    }
+
+    #[test]
+    fn frame_huge_values_do_not_panic() {
+        let t = TrickplayInfo {
+            width: i32::MAX,
+            height: i32::MAX,
+            tile_width: i32::MAX,
+            tile_height: i32::MAX,
+            count: i32::MAX,
+            interval_ms: 1,
+            url: String::new(),
+        };
+        let _ = frame(u64::MAX, &t);
+        let _ = frame(1 << 40, &t);
+    }
+
+    #[test]
+    fn tile_bgra_refuses_oversized_sheet() {
+        let rgb = vec![0u8; 9000 * 3];
+        let mut jpeg = Vec::new();
+        JpegEncoder::new(&mut jpeg)
+            .write_image(&rgb, 9000, 1, ExtendedColorType::Rgb8)
+            .unwrap();
+        assert!(tile_bgra(
+            &jpeg,
+            &Frame {
+                sheet: 0,
+                x: 0,
+                y: 0
+            },
+            16,
+            1
+        )
+        .is_none());
     }
 
     #[test]
