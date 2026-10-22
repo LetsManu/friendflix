@@ -180,8 +180,8 @@ jobs:
       - name: Rust toolchain (from rust-toolchain.toml)
         run: rustup toolchain install --profile minimal
       - run: cargo fmt --check
-      - run: cargo clippy -p friendflix-core -- -D warnings
-      - run: cargo test -p friendflix-core
+      - run: cargo clippy --locked -p friendflix-core -- -D warnings
+      - run: cargo test --locked -p friendflix-core
       - name: mpv control skin (Lua)
         working-directory: .
         run: |
@@ -201,9 +201,9 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - name: Rust toolchain (from rust-toolchain.toml)
         run: rustup toolchain install --profile minimal
-      - run: cargo clippy -p friendflix-app -- -D warnings
-      - run: cargo test -p friendflix-app
-      - run: cargo build -p friendflix-app
+      - run: cargo clippy --locked -p friendflix-app -- -D warnings
+      - run: cargo test --locked -p friendflix-app
+      - run: cargo build --locked -p friendflix-app
   # A new install needs no .env, an existing one keeps working with its .env: both compose files must render either way,
   # with and without the opt-in profiles (backup, bundled) and with and without the updater (compose.no-updater.yaml)
   compose:

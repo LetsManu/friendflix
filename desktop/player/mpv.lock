@@ -3,17 +3,18 @@
 # The mpv build the Windows app ships (spec §6). desktop/scripts/fetch-mpv.ps1 downloads `url`, refuses it unless its
 # SHA-256 equals `sha256`, and extracts mpv.exe (plus d3dcompiler_43.dll and licence texts) into desktop/app/mpv.
 #
-# Build:  shinchiro/mpv-winbuild-cmake release 20261020 (2026-10-20), mpv git 6a262d11f6, x86_64 (the baseline x86-64
-#         build, not -v3, so it runs on every 64-bit PC), 32.4 MB.
-# Lua:    these builds link LuaJIT into mpv.exe (luajit is in the build's package list; there is no lua5x.dll), so the
-#         skin (friendflix.lua, layout.lua) must stay LuaJIT / Lua 5.1 compatible; the desktop-core CI job checks it.
+# Build:  shinchiro's mpv-winbuild-cmake build of 2026-10-18, mpv v0.41.0-1205-g01e2533f3 (git master), x86_64 (the
+#         baseline x86-64 build, not -v3, so it runs on every 64-bit PC), 34.0 MB. Downloaded from shinchiro's
+#         SourceForge project (mpv-player-windows/64bit), which keeps old builds; the GitHub releases of
+#         shinchiro/mpv-winbuild-cmake are deleted after about 30 days. The MD5 SourceForge lists matched the download.
+# Lua:    LuaJIT 2.1 is linked into mpv.exe (its strings name "LuaJIT 2.1.1792109291"; the archive has no lua5x.dll /
+#         lua51.dll and mpv.exe imports none), so the skin (friendflix.lua, layout.lua) must stay LuaJIT / Lua 5.1
+#         compatible; the desktop-core CI job checks it.
+# Archive: mpv.exe, mpv.com, d3dcompiler_43.dll, doc/, installer/, mpv/fonts.conf and .bat helpers; no licence files.
+#         mpv.exe imports vulkan-1.dll, which the GPU drivers install (as with every shinchiro build).
 # Licence: GPL-2.0-or-later (mpv with GPL libraries); the texts are in desktop/player/licenses/.
-# Re-pin: GitHub keeps only the last ~30 of these releases, so this URL stops working about a month after the pin.
-#         Pick a current mpv-x86_64-<date>-git-<sha>.7z from the releases page, set url and sha256 (sha256sum of the
-#         downloaded file), and update the Build line above.
-#
-# TODO(owner): sha256 is not filled in. The pin was made where GitHub release downloads were blocked, so the file could
-# not be hashed; a hash taken from anywhere but the downloaded file must not be used. Until it is set, fetch-mpv.ps1 and
-# the desktop-release workflow fail on purpose.
-url=https://github.com/shinchiro/mpv-winbuild-cmake/releases/download/20261020/mpv-x86_64-20261020-git-6a262d11f6.7z
-sha256=TODO
+# Re-pin: pick a current mpv-x86_64-<date>-git-<sha>.7z from https://sourceforge.net/projects/mpv-player-windows/files/64bit/,
+#         set url (downloads.sourceforge.net form) and sha256 (sha256sum of the downloaded file), and update the lines
+#         above (mpv version: `strings mpv.exe | grep '^mpv v'`; Lua: `strings mpv.exe | grep LuaJIT`).
+url=https://downloads.sourceforge.net/project/mpv-player-windows/64bit/mpv-x86_64-20261018-git-01e2533f31.7z
+sha256=d7157567a2fd88e46f739d2e8b8e6c02d2ad812db04547b45c59a2800821991f

@@ -4,8 +4,10 @@
 //! download is checked against the public key built into the app (a bad signature is refused and logged).
 //! - "Automatic" installs a found update at the next app start (the check at start installs it at once).
 //! - "Ask first" sends `ff-update-available {version}` to the main window; the init script's banner (local text, see
-//!   `update_banner.js`) offers *Install and restart*. The click comes back through `bridge_message` with a token that only
-//!   the init script knows, so the server page gains nothing it can call on its own.
+//!   `update_banner.js`) offers *Install and restart*. The click comes back through `bridge_message` with this run's token.
+//!   The page cannot reach the token before the first real click, but may catch it then (Tauri's IPC goes through
+//!   page-global functions). So the guarantee is: the page can at most re-trigger the signed, pending install of the
+//!   version the viewer already clicked (one version per run, `click_allowed`), never while the player runs.
 //! - Nothing is installed while the player runs.
 //!
 //! A build whose `plugins.updater` still holds the placeholder key (or has no endpoint) has updates turned off: the
@@ -47,8 +49,27 @@ pub fn enabled(config: Option<&Value>) -> bool {
     };
     let key = c.get("pubkey").and_then(Value::as_str).map(str::trim);
     let endpoints = c.get("endpoints").and_then(Value::as_array);
-    key.is_some_and(|k| !k.is_empty() && k != PLACEHOLDER)
-        && endpoints.is_some_and(|e| !e.is_empty())
+    key.is_some_and(public_key) && endpoints.is_some_and(|e| !e.is_empty())
+}
+
+/// A Tauri updater public key as `tauri signer generate` writes it: base64 of the minisign public key file
+/// (`untrusted comment: …` and the key line).
+pub fn public_key(text: &str) -> bool {
+    use base64::Engine as _;
+    let Ok(raw) = base64::engine::general_purpose::STANDARD.decode(text.trim()) else {
+        return false;
+    };
+    let Ok(file) = String::from_utf8(raw) else {
+        return false;
+    };
+    file.starts_with("untrusted comment:") && minisign_verify::PublicKey::decode(&file).is_ok()
+}
+
+/// What `desktop/app/updater.pub` may hold: the placeholder (updates off) or a public key (checked by a test, which
+/// the release workflow runs before it builds).
+#[cfg(test)]
+pub fn key_file_ok(text: &str) -> bool {
+    text.trim() == PLACEHOLDER || public_key(text)
 }
 
 /// A version as `version.json` writes it (`X.Y.Z`); anything else is never announced.
@@ -78,6 +99,11 @@ impl Click {
             version: v.get("version")?.as_str()?.to_string(),
         })
     }
+}
+
+/// After the first click of a run, only clicks for that same version count (the token may be known to the page by then).
+pub fn click_allowed(first_clicked: Option<&str>, version: &str) -> bool {
+    first_clicked.is_none_or(|v| v == version)
 }
 
 /// What a click led to; the banner shows its own text for each.
@@ -140,8 +166,14 @@ fn mode(app: &AppHandle) -> UpdateMode {
 
 /// Starts the update checks (at start, then every 24 h) on their own thread; does nothing when updates are off.
 pub fn schedule(app: &AppHandle) {
-    if !enabled(app.config().plugins.0.get("updater")) {
-        log::info!("updates are off in this build (no update key)");
+    let config = app.config().plugins.0.get("updater");
+    if !enabled(config) {
+        let key = config.and_then(|c| c.get("pubkey")).and_then(Value::as_str);
+        if key.is_some_and(|k| k.trim() != PLACEHOLDER && !k.trim().is_empty()) {
+            log::error!("updates are off in this build: its update key is not a public key");
+        } else {
+            log::info!("updates are off in this build (no update key)");
+        }
         return;
     }
     let app = app.clone();
@@ -221,6 +253,15 @@ pub async fn on_click(app: &AppHandle, click: Click) -> Outcome {
     let Some(update) = update.filter(|u| u.version == click.version) else {
         return Outcome::NotPending;
     };
+    {
+        static CLICKED: Mutex<Option<String>> = Mutex::new(None);
+        let mut first = CLICKED.lock().unwrap_or_else(|p| p.into_inner());
+        if !click_allowed(first.as_deref(), &click.version) {
+            log::warn!("update click refused: another version was clicked in this run");
+            return Outcome::NotPending;
+        }
+        first.get_or_insert_with(|| click.version.clone());
+    }
     install(update, mode(app), true).await
 }
 
@@ -290,8 +331,12 @@ mod tests {
     #[test]
     fn updates_need_a_real_key_and_an_endpoint() {
         let url = "https://github.com/LetsManu/friendflix/releases/latest/download/latest.json";
-        let on = json!({"endpoints": [url], "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk="});
+        let on = json!({"endpoints": [url], "pubkey": sample_key()});
         assert!(enabled(Some(&on)));
+        // anything that is not a key leaves updates off
+        assert!(!enabled(Some(
+            &json!({"endpoints": [url], "pubkey": "dW50cnVzdGVk"})
+        )));
         assert!(!enabled(None));
         assert!(!enabled(Some(
             &json!({"endpoints": [url], "pubkey": PLACEHOLDER})
@@ -319,8 +364,44 @@ mod tests {
         assert!(!enabled(Some(up)));
         // the release workflow turns the artifacts on only with a key (unsigned builds must still bundle)
         assert_eq!(conf["bundle"]["createUpdaterArtifacts"], json!(false));
-        let key = include_str!("../updater.pub").trim();
-        assert_eq!(key, PLACEHOLDER, "with a real key, drop this line");
+        // the owner replaces the placeholder with the real key (docs/windows.md); either is fine, nothing else
+        assert!(key_file_ok(include_str!("../updater.pub")));
+    }
+
+    /// A key in the shape `tauri signer generate` writes (made-up key bytes).
+    fn sample_key() -> String {
+        use base64::Engine as _;
+        let raw: Vec<u8> = [b"Ed".as_slice(), &[7u8; 8], &[42u8; 32]].concat();
+        let b64 = base64::engine::general_purpose::STANDARD;
+        let file = format!(
+            "untrusted comment: minisign public key: 0707070707070707\n{}\n",
+            b64.encode(raw)
+        );
+        b64.encode(file)
+    }
+
+    #[test]
+    fn key_file_is_the_placeholder_or_a_public_key() {
+        use base64::Engine as _;
+        let b64 = |s: &str| base64::engine::general_purpose::STANDARD.encode(s);
+        assert!(key_file_ok("REPLACE_WITH_PUBLIC_KEY\n"));
+        assert!(key_file_ok(&sample_key()));
+        assert!(key_file_ok(&format!("{}\r\n", sample_key())));
+        assert!(public_key(&sample_key()));
+        assert!(!public_key(PLACEHOLDER));
+        for bad in [
+            String::new(),
+            "hello".into(),
+            "REPLACE_WITH_PUBLIC_KEY extra".into(),
+            b64("hello"),
+            b64("untrusted comment: minisign public key: 00\nnot-base64!\n"),
+            b64("untrusted comment: x\nRWQ=\n"),
+            // a secret key file must never be taken for the public one
+            b64("untrusted comment: rsign encrypted secret key\nRWRTY0Iy\n"),
+            format!("{}{}", sample_key(), "x"),
+        ] {
+            assert!(!key_file_ok(&bad), "{bad}");
+        }
     }
 
     #[test]
@@ -365,6 +446,13 @@ mod tests {
         ] {
             assert_eq!(Click::parse(bad), None, "{bad}");
         }
+    }
+
+    #[test]
+    fn one_clicked_version_per_run() {
+        assert!(click_allowed(None, "2.3.0"));
+        assert!(click_allowed(Some("2.3.0"), "2.3.0"));
+        assert!(!click_allowed(Some("2.3.0"), "2.4.0"));
     }
 
     #[test]

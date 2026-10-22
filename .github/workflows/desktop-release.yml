@@ -84,7 +84,7 @@ jobs:
         run: rustup toolchain install --profile minimal
       - name: App unit tests
         working-directory: desktop
-        run: cargo test -p friendflix-app
+        run: cargo test --locked -p friendflix-app
       - name: Fetch the pinned mpv
         shell: pwsh
         run: ./desktop/scripts/fetch-mpv.ps1 -Dest desktop/app/mpv
@@ -93,7 +93,9 @@ jobs:
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ steps.updates.outputs.signed == 'true' && secrets.TAURI_SIGNING_PRIVATE_KEY || '' }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ steps.updates.outputs.signed == 'true' && secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD || '' }}
-        run: npx --yes @tauri-apps/cli@2 build --ci --config "$RUNNER_TEMP/tauri.release.json"
+        # the CLI release that goes with the tauri crate in Cargo.lock (tauri 2.12.5 / tauri-utils 2.10.2); bump both together.
+        # After `--`: arguments for cargo build (Cargo.lock as committed).
+        run: npx --yes @tauri-apps/cli@2.12.3 build --ci --config "$RUNNER_TEMP/tauri.release.json" -- --locked
       - name: Name the files, latest.json, checksums
         env:
           VERSION: ${{ steps.version.outputs.version }}

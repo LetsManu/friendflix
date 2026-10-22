@@ -27,9 +27,10 @@ foreach ($line in Get-Content -LiteralPath $lockFile -Encoding utf8) {
 }
 $url = $lock['url']
 $sha256 = $lock['sha256']
-$prefix = 'https://github.com/shinchiro/mpv-winbuild-cmake/releases/download/'
-if (-not $url -or -not $url.StartsWith($prefix) -or $url -notmatch '/mpv-x86_64-[0-9]{8}-git-[0-9a-f]+\.7z$') {
-  Fail "mpv.lock: url must be a $prefix<tag>/mpv-x86_64-<date>-git-<sha>.7z asset"
+# shinchiro's SourceForge project only, the baseline x86_64 build
+$prefix = 'https://downloads.sourceforge.net/project/mpv-player-windows/64bit/'
+if (-not $url -or $url -notmatch ('^' + [regex]::Escape($prefix) + 'mpv-x86_64-[0-9]{8}-git-[0-9a-f]+\.7z$')) {
+  Fail ("mpv.lock: url must be $prefix" + 'mpv-x86_64-<date>-git-<sha>.7z')
 }
 if (-not $sha256 -or $sha256 -notmatch '^[0-9a-f]{64}$') {
   Fail "mpv.lock: sha256 is not set ('$sha256'). Download $url, put its SHA-256 (64 lowercase hex digits) into desktop/player/mpv.lock and commit it."
@@ -43,7 +44,8 @@ try {
   $done = $false
   for ($try = 1; $try -le 3 -and -not $done; $try++) {
     try {
-      Invoke-WebRequest -Uri $url -OutFile $archive -UseBasicParsing -MaximumRedirection 5
+      # a non-browser user agent: SourceForge answers browsers with an HTML download page
+      Invoke-WebRequest -Uri $url -OutFile $archive -UseBasicParsing -MaximumRedirection 10 -UserAgent 'FriendFlix-fetch-mpv'
       $done = $true
     } catch {
       Write-Host "download attempt $try failed: $($_.Exception.Message)"
@@ -90,7 +92,7 @@ try {
     ''
     'Source code:'
     "  mpv:          https://github.com/mpv-player/mpv (commit $commit)"
-    "  build recipe: https://github.com/shinchiro/mpv-winbuild-cmake (the release of $name lists every library and version)"
+    '  build recipe: https://github.com/shinchiro/mpv-winbuild-cmake (lists every library in the build)'
     "  this build:   $url"
     "  SHA-256:      $sha256"
   ) | Set-Content -LiteralPath (Join-Path $licences 'mpv-NOTICE.txt') -Encoding utf8

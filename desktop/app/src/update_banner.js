@@ -3,9 +3,11 @@
 // The update banner ("Ask first", spec §5): a fragment of the init script (shell::init_script, inside its function, after
 // the origin check). The app sends `ff-update-available {version}`; the banner shows local text in a closed shadow root,
 // and *Install and restart* (a real click only) sends `{ffUpdate: "install", token, version}` through bridge_message.
-// The token exists only in this script, so the server page cannot ask for an install by itself; the DOM and invoke
-// helpers are taken before any page script runs.
-/* global window, document, Document, Element, EventTarget, Node */
+// The token is not in the page's reach before the first real click, but it is no secret from a hostile page after
+// that: the click travels through Tauri's IPC, which uses page-global functions (fetch, JSON) the page can replace. So
+// the guarantee is narrower: the page can at most re-trigger the one signed update that is pending and that the viewer
+// already asked to install, never another version and never while the player runs (updater.rs checks all three). The
+// DOM helpers are taken before any page script runs, so the page cannot fake the click itself.
 var updToken = "@TOKEN@";
 var updApply = Reflect.apply;
 var updCreate = Document.prototype.createElement;
