@@ -569,4 +569,20 @@ mod tests {
         );
         assert_eq!(a.item("bad/id"), Err(ApiError::Malformed));
     }
+
+    #[test]
+    fn redirects_are_not_followed() {
+        let server = MockServer::start();
+        server.mock(|when, then| {
+            when.method(GET).path("/api/prefs");
+            then.status(302).header("location", "http://192.0.2.9/x");
+        });
+        server.mock(|when, then| {
+            when.method(GET).path("/r.vtt");
+            then.status(302).header("location", "http://192.0.2.9/x");
+        });
+        let a = api(&server);
+        assert_eq!(a.prefs().err(), Some(ApiError::Status(302)));
+        assert_eq!(a.bytes(&server.url("/r.vtt")), Err(ApiError::Status(302)));
+    }
 }

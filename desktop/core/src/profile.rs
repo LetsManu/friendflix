@@ -50,5 +50,15 @@ mod tests {
         );
         assert_eq!(p["client"], "windows");
         assert_eq!(p["appVersion"], env!("CARGO_PKG_VERSION"));
+        // the server's shape: strict x.y.z (max 32 chars), every list at most 16 entries
+        let v = p["appVersion"].as_str().unwrap();
+        let parts: Vec<&str> = v.split('.').collect();
+        assert!(v.len() <= 32 && parts.len() == 3);
+        assert!(parts.iter().all(|n| !n.is_empty()
+            && n.bytes().all(|b| b.is_ascii_digit())
+            && (*n == "0" || !n.starts_with('0'))));
+        for k in ["containers", "video", "audio", "subtitles"] {
+            assert!(p[k].as_array().unwrap().len() <= 16, "{k}");
+        }
     }
 }
