@@ -17,6 +17,7 @@ export const LICENSE = 'SPDX-License-Identifier: AGPL-3.0-or-later';
 export function styleFor(path) {
   const base = path.split('/').pop() ?? '';
   if (/\.(ts|js|mjs|cjs|rs)$/.test(base)) return { pre: '// ', post: '' };
+  if (/\.lua$/.test(base)) return { pre: '-- ', post: '' };
   if (/\.css$/.test(base)) return { pre: '/* ', post: ' */' };
   if (/\.(svelte|html)$/.test(base)) return { pre: '<!-- ', post: ' -->' };
   if (/\.(sh|ya?ml|conf|toml)$/.test(base) || base === 'Dockerfile' || path.startsWith('githooks/')) return { pre: '# ', post: '' };

@@ -9,6 +9,7 @@ test('comment style per file type', () => {
   assert.deepEqual(styleFor('backend/src/app.ts'), { pre: '// ', post: '' });
   assert.deepEqual(styleFor('web/src/lib/Player.svelte'), { pre: '<!-- ', post: ' -->' });
   assert.deepEqual(styleFor('web/src/app.css'), { pre: '/* ', post: ' */' });
+  assert.deepEqual(styleFor('desktop/player/friendflix.lua'), { pre: '-- ', post: '' });
   assert.deepEqual(styleFor('backend/Dockerfile'), { pre: '# ', post: '' });
   assert.deepEqual(styleFor('compose.yaml'), { pre: '# ', post: '' });
   assert.equal(styleFor('package.json'), null);

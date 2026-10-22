@@ -181,6 +181,12 @@ jobs:
       - run: cargo fmt --check
       - run: cargo clippy -p friendflix-core -- -D warnings
       - run: cargo test -p friendflix-core
+      - name: mpv control skin (Lua)
+        working-directory: .
+        run: |
+          sudo apt-get install -y lua5.4
+          lua5.4 desktop/player/test/layout_test.lua
+          luac5.4 -p desktop/player/layout.lua desktop/player/friendflix.lua
   # A new install needs no .env, an existing one keeps working with its .env: both compose files must render either way,
   # with and without the opt-in profiles (backup, bundled) and with and without the updater (compose.no-updater.yaml)
   compose:
