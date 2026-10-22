@@ -60,6 +60,17 @@ impl Origin {
         format!("{}{sep}{path}", self.as_str())
     }
 
+    /// A server URL (the server sends paths like `/media/...`) made absolute against this origin, kept only when the
+    /// result is on exactly this origin (a `//host` or absolute foreign URL gives `None`).
+    pub fn resolve(&self, url: &str) -> Option<String> {
+        if url.trim().is_empty() {
+            return None;
+        }
+        let base = Url::parse(&format!("{}/", self.web())).ok()?;
+        let u = base.join(url).ok()?;
+        self.matches(u.as_str()).then(|| u.to_string())
+    }
+
     /// The web (`location.origin`) form: the port only when it is not the scheme's default. Use it where a browser's
     /// origin string is compared or a cookie URL is built; compare URLs with `matches`.
     pub fn web(&self) -> String {
@@ -158,6 +169,34 @@ mod tests {
         );
         let w = Origin::parse("http://192.0.2.5:8096").unwrap();
         assert!(w.matches(&w.web()));
+    }
+
+    #[test]
+    fn resolve_keeps_only_this_origin() {
+        let o = Origin::parse("https://friend.example.com").unwrap();
+        assert_eq!(
+            o.resolve("/media/Videos/a/stream?x=1").as_deref(),
+            Some("https://friend.example.com/media/Videos/a/stream?x=1")
+        );
+        assert_eq!(
+            o.resolve("https://friend.example.com:443/s.vtt").as_deref(),
+            Some("https://friend.example.com/s.vtt")
+        );
+        for bad in [
+            "//evil.example.net/x",
+            "https://evil.example.net/x",
+            "http://friend.example.com/x",
+            "https://u:p@friend.example.com/x",
+            "javascript:alert(1)",
+            "",
+        ] {
+            assert_eq!(o.resolve(bad), None, "{bad}");
+        }
+        let lan = Origin::parse("http://192.0.2.5:8096").unwrap();
+        assert_eq!(
+            lan.resolve("media/h.m3u8").as_deref(),
+            Some("http://192.0.2.5:8096/media/h.m3u8")
+        );
     }
 
     #[test]

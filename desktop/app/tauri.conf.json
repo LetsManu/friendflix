@@ -19,6 +19,11 @@
     "active": true,
     "targets": ["nsis", "msi"],
     "publisher": "FriendFlix",
+    "resources": {
+      "../player/friendflix.lua": "friendflix.lua",
+      "../player/layout.lua": "layout.lua",
+      "mpv/": "mpv/"
+    },
     "shortDescription": "FriendFlix for Windows",
     "icon": [
       "icons/32x32.png",

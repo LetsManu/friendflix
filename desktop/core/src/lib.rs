@@ -10,5 +10,6 @@ pub mod origin;
 pub mod playback;
 pub mod probe;
 pub mod profile;
+pub mod session;
 pub mod subs;
 pub mod trickplay;

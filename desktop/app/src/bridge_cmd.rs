@@ -35,9 +35,9 @@ pub fn answer(
     }
 }
 
-/// Hands a play request to the player. Task 8 replaces this with `player::start`; until then the web player plays.
-pub fn play(_app: &AppHandle, _req: PlayRequest) -> bool {
-    false
+/// Hands a play request to the native player (`false`: the page plays it in the web player).
+pub fn play(app: &AppHandle, req: PlayRequest) -> bool {
+    crate::player::start(app, req)
 }
 
 #[tauri::command]
@@ -55,10 +55,6 @@ pub async fn bridge_message(
     let Some((id, req)) = bridge::parse(&msg) else {
         return Err("invalid".into());
     };
-    if let Request::Play(p) = &req {
-        app.state::<AppState>()
-            .update(|s| s.set_last_profile(&p.profile_id));
-    }
     Ok(answer(
         &id,
         req,
@@ -85,7 +81,7 @@ pub fn deliver_script(server: &Origin, event: &str, detail: &Value) -> String {
 }
 
 /// Sends an unsolicited `{event, detail}` message to the main window's page, only while it shows the server origin.
-#[allow(dead_code)] // used by the player (Task 8)
+#[cfg_attr(not(windows), allow(dead_code))] // the player's events (Windows only)
 pub fn send_event(app: &AppHandle, event: &str, detail: Value) {
     let Some(window) = shell::main_window(app) else {
         return;

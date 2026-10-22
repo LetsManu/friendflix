@@ -1,11 +1,12 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! FriendFlix for Windows: a window around the server's web app with a narrow native bridge (see `shell` and
-//! `bridge_cmd`); the player (mpv) and the updater come with their own modules.
+//! `bridge_cmd`) and the mpv player host (`player`); the updater comes with its own module.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod bridge_cmd;
 mod logging;
+mod player;
 mod settings;
 mod shell;
 mod tray;
@@ -57,6 +58,7 @@ fn main() {
             // closing the main window quits the app (the tray stays only while the window is open)
             if let WindowEvent::CloseRequested { .. } = event {
                 if shell::is_main(window) {
+                    player::stop();
                     shell::remember_window(window.app_handle());
                     window.app_handle().exit(0);
                 }
