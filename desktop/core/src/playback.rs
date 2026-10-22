@@ -14,8 +14,10 @@ const PROGRESS_EVERY_MS: u64 = 10_000;
 const NEXT_CARD_BEFORE_END_MS: u64 = 25_000;
 /// Countdown on the next-episode card.
 pub const COUNTDOWN_MS: u64 = 10_000;
-/// Auto-advances in a row before "still watching?" asks.
-const STILL_WATCHING_AFTER: u8 = 3;
+/// Auto-advances in a row before "still watching?" asks, when the pref is 0.
+const STILL_WATCHING_DEFAULT: u32 = 3;
+/// "Still watching?" also asks after this long without an interaction.
+const STILL_WATCHING_IDLE_MS: u64 = 90 * 60_000;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Stream {
@@ -78,7 +80,11 @@ impl ReportClock {
         Self::default()
     }
 
+    /// Idempotent while running: a second call keeps the clock as it is.
     pub fn start(&mut self, now_ms: u64) -> ReportKind {
+        if self.started && !self.stopped {
+            return ReportKind::Start;
+        }
         self.started = true;
         self.stopped = false;
         self.last_ms = now_ms;
@@ -97,9 +103,13 @@ impl ReportClock {
     }
 
     /// Pause, resume or seek: report now and restart the 10 s clock.
-    pub fn event(&mut self, now_ms: u64) -> ReportKind {
+    /// `None` before `start` and after `stop`.
+    pub fn event(&mut self, now_ms: u64) -> Option<ReportKind> {
+        if !self.started || self.stopped {
+            return None;
+        }
         self.last_ms = now_ms;
-        ReportKind::Progress
+        Some(ReportKind::Progress)
     }
 
     pub fn stop(&mut self) -> Option<ReportKind> {
@@ -128,25 +138,50 @@ pub fn next_card_at_ms(duration_ms: u64, segments: &[Segment]) -> u64 {
     }
 }
 
-/// Counts episodes that started on their own; at the third one the player asks.
-#[derive(Debug, Default)]
+/// Mirror of the web's `shouldAsk`: ask when enabled and either the chain of unattended autoplays reached the
+/// configured count (default 3) or the last real interaction is 90 minutes old. An interaction resets both.
+#[derive(Debug)]
 pub struct StillWatching {
-    auto_in_a_row: u8,
+    enabled: bool,
+    episodes: u32,
+    auto_in_a_row: u32,
+    last_interaction_ms: u64,
 }
 
 impl StillWatching {
-    /// `true` means ask "still watching?".
-    pub fn on_auto_advance(&mut self) -> bool {
+    /// `episodes` is the pref `stillWatchingEpisodes`; 0 or less means 3.
+    pub fn new(enabled: bool, episodes: i32, now_ms: u64) -> Self {
+        Self {
+            enabled,
+            episodes: u32::try_from(episodes)
+                .ok()
+                .filter(|n| *n > 0)
+                .unwrap_or(STILL_WATCHING_DEFAULT),
+            auto_in_a_row: 0,
+            last_interaction_ms: now_ms,
+        }
+    }
+
+    /// The next episode started by itself.
+    pub fn on_auto_advance(&mut self) {
         self.auto_in_a_row = self.auto_in_a_row.saturating_add(1);
-        self.auto_in_a_row >= STILL_WATCHING_AFTER
     }
 
-    pub fn on_interaction(&mut self) {
+    pub fn on_interaction(&mut self, now_ms: u64) {
         self.auto_in_a_row = 0;
+        self.last_interaction_ms = now_ms;
     }
 
-    pub fn on_answer_yes(&mut self) {
-        self.auto_in_a_row = 0;
+    /// Answering "yes" counts as an interaction.
+    pub fn on_answer_yes(&mut self, now_ms: u64) {
+        self.on_interaction(now_ms);
+    }
+
+    /// `true` means ask "still watching?".
+    pub fn should_ask(&self, now_ms: u64) -> bool {
+        self.enabled
+            && (self.auto_in_a_row >= self.episodes
+                || now_ms.saturating_sub(self.last_interaction_ms) >= STILL_WATCHING_IDLE_MS)
     }
 }
 
@@ -275,10 +310,10 @@ mod tests {
         assert_eq!(c.tick(11_000, false), Some(ReportKind::Progress));
         assert_eq!(c.tick(12_000, false), None);
         assert_eq!(c.tick(21_000, true), None); // paused: nothing
-        assert_eq!(c.event(21_500), ReportKind::Progress); // pause/resume/seek resets
+        assert_eq!(c.event(21_500), Some(ReportKind::Progress)); // pause/resume/seek resets
         assert_eq!(c.tick(31_000, false), None);
         assert_eq!(c.tick(31_500, false), Some(ReportKind::Progress));
-        assert_eq!(c.event(33_000), ReportKind::Progress); // seek
+        assert_eq!(c.event(33_000), Some(ReportKind::Progress)); // seek
         assert_eq!(c.tick(42_999, false), None);
         assert_eq!(c.tick(43_000, false), Some(ReportKind::Progress));
         assert_eq!(c.stop(), Some(ReportKind::Stop));
@@ -344,19 +379,65 @@ mod tests {
         assert!(skip_button(20_000, &segs[..1], &["Intro".to_string()], 600_000).is_some());
     }
 
+    const MIN: u64 = 60_000;
+
     #[test]
     fn still_watching_after_three() {
-        let mut s = StillWatching::default();
-        assert!(!s.on_auto_advance());
-        assert!(!s.on_auto_advance());
-        assert!(s.on_auto_advance());
-        s.on_answer_yes();
-        assert!(!s.on_auto_advance());
-        assert!(!s.on_auto_advance());
-        s.on_interaction();
-        assert!(!s.on_auto_advance());
-        assert!(!s.on_auto_advance());
-        assert!(s.on_auto_advance());
+        let mut s = StillWatching::new(true, 0, 0); // 0 means the default, 3
+        s.on_auto_advance();
+        s.on_auto_advance();
+        assert!(!s.should_ask(MIN));
+        s.on_auto_advance();
+        assert!(s.should_ask(MIN));
+        s.on_answer_yes(2 * MIN);
+        assert!(!s.should_ask(2 * MIN));
+    }
+
+    #[test]
+    fn still_watching_configured_count() {
+        let mut s = StillWatching::new(true, 2, 0);
+        s.on_auto_advance();
+        assert!(!s.should_ask(MIN));
+        s.on_auto_advance();
+        assert!(s.should_ask(MIN));
+    }
+
+    #[test]
+    fn still_watching_disabled_never_asks() {
+        let mut s = StillWatching::new(false, 1, 0);
+        s.on_auto_advance();
+        assert!(!s.should_ask(1_000 * MIN));
+    }
+
+    #[test]
+    fn still_watching_idle_90_minutes() {
+        let s = StillWatching::new(true, 3, 0);
+        assert!(!s.should_ask(90 * MIN - 1));
+        assert!(s.should_ask(90 * MIN));
+    }
+
+    #[test]
+    fn still_watching_interaction_resets_chain_and_idle() {
+        let mut s = StillWatching::new(true, 2, 0);
+        s.on_auto_advance();
+        s.on_auto_advance();
+        s.on_interaction(80 * MIN);
+        assert!(!s.should_ask(80 * MIN)); // chain reset
+        assert!(!s.should_ask(169 * MIN)); // idle clock restarted
+        assert!(s.should_ask(170 * MIN));
+    }
+
+    #[test]
+    fn report_clock_event_only_while_running() {
+        let mut c = ReportClock::new();
+        assert_eq!(c.event(500), None); // before start
+        assert_eq!(c.start(1_000), ReportKind::Start);
+        assert_eq!(c.event(2_000), Some(ReportKind::Progress));
+        // a second start while running changes nothing
+        assert_eq!(c.start(3_000), ReportKind::Start);
+        assert_eq!(c.tick(12_000, false), Some(ReportKind::Progress)); // 10 s after the event at 2_000
+        assert_eq!(c.stop(), Some(ReportKind::Stop));
+        assert_eq!(c.event(13_000), None); // after stop
     }
 
     #[test]
