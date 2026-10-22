@@ -4,7 +4,10 @@
 
 pub mod api;
 pub mod bridge;
+pub mod logs;
 pub mod model;
 pub mod origin;
 pub mod playback;
 pub mod profile;
+pub mod subs;
+pub mod trickplay;
