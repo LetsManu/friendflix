@@ -16,10 +16,10 @@ export const LICENSE = 'SPDX-License-Identifier: AGPL-3.0-or-later';
 /** comment style per file, or null when the file gets no header (data, images, docs) */
 export function styleFor(path) {
   const base = path.split('/').pop() ?? '';
-  if (/\.(ts|js|mjs|cjs)$/.test(base)) return { pre: '// ', post: '' };
+  if (/\.(ts|js|mjs|cjs|rs)$/.test(base)) return { pre: '// ', post: '' };
   if (/\.css$/.test(base)) return { pre: '/* ', post: ' */' };
   if (/\.(svelte|html)$/.test(base)) return { pre: '<!-- ', post: ' -->' };
-  if (/\.(sh|ya?ml|conf)$/.test(base) || base === 'Dockerfile' || path.startsWith('githooks/')) return { pre: '# ', post: '' };
+  if (/\.(sh|ya?ml|conf|toml)$/.test(base) || base === 'Dockerfile' || path.startsWith('githooks/')) return { pre: '# ', post: '' };
   return null;
 }
 

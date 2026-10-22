@@ -1,0 +1,13 @@
+# SPDX-FileCopyrightText: 2026 Manuel Weißböck
+# SPDX-License-Identifier: AGPL-3.0-or-later
+[package]
+name = "friendflix-core"
+version = "0.1.0"
+edition = "2021"
+license = "AGPL-3.0-or-later"
+publish = false
+
+[dependencies]
+regex = "1"
+serde_json = "1"
+url = "2"
