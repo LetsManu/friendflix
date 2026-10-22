@@ -16,7 +16,7 @@ espresso = "3.7.0"
 webkit = "1.17.1"
 # One Media3 version for every media3-* artifact.
 media3 = "1.11.1"
-work = "2.11.2"
+work = "2.12.0"
 # Cast framework: the only Google Play services library the app uses (no Firebase, no analytics).
 playServicesCast = "22.3.1"
 # The Cast button (MediaRouteButton) and its device dialog need these; the same versions media3-cast resolves.
