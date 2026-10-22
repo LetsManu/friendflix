@@ -11,6 +11,7 @@ use serde_json::{json, Value};
 use tauri::{AppHandle, Manager, Webview};
 
 use crate::shell::{self, AppState};
+use crate::updater;
 
 /// The bridge exists only on exactly the server origin (scheme, host, port; no user info).
 pub fn allowed(webview_url: &str, server: &Origin) -> bool {
@@ -52,6 +53,10 @@ pub async fn bridge_message(
         log::warn!("bridge call refused from {}", scrub(&url));
         return Err("refused".into());
     }
+    // the update banner's click (init script, token-checked in `updater`); not part of the page's bridge protocol
+    if let Some(click) = updater::Click::parse(&msg) {
+        return Ok(updater::on_click(&app, click).await.reply());
+    }
     let Some((id, req)) = bridge::parse(&msg) else {
         return Err("invalid".into());
     };
@@ -81,7 +86,6 @@ pub fn deliver_script(server: &Origin, event: &str, detail: &Value) -> String {
 }
 
 /// Sends an unsolicited `{event, detail}` message to the main window's page, only while it shows the server origin.
-#[cfg_attr(not(windows), allow(dead_code))] // the player's events (Windows only)
 pub fn send_event(app: &AppHandle, event: &str, detail: Value) {
     let Some(window) = shell::main_window(app) else {
         return;

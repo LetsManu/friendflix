@@ -14,7 +14,8 @@
 # DAST: `dast` runs an OWASP ZAP baseline scan against the built web app (rules: .zap/rules.tsv).
 # workflow_dispatch: release.yml starts CI for the new vX.Y.Z tag (its own pushes use GITHUB_TOKEN and trigger nothing);
 # a dispatch behaves like a push of that ref, but only main and v* tags are ever published.
-# v* tags also get the signed Android app attached to their GitHub Release (android-release.yml).
+# v* tags also get the signed Android app (android-release.yml) and the Windows app (desktop-release.yml) attached to their
+# GitHub Release.
 # Images carry APP_VERSION / APP_CODENAME from version.json next to GIT_SHA.
 # Reproducible builds (docs/reproducible-builds.md): SOURCE_DATE_EPOCH = commit time, rewrite-timestamp=true, pinned
 # BuildKit (BUILDKIT_IMAGE), BUILD_TIME and the `created` label derived from the commit time; the published candidate is
@@ -446,6 +447,17 @@ jobs:
       ANDROID_UPLOAD_KEY_PASSWORD: ${{ secrets.ANDROID_UPLOAD_KEY_PASSWORD }}
       ANDROID_UPLOAD_KEY_ALIAS: ${{ secrets.ANDROID_UPLOAD_KEY_ALIAS }}
       PLAY_SERVICE_ACCOUNT_JSON: ${{ secrets.PLAY_SERVICE_ACCOUNT_JSON }}
+  # vX.Y.Z tags: the Windows app (setup .exe + .msi with the pinned mpv) on the tag's GitHub Release, signed for self-update
+  # with latest.json when the update key secrets exist (otherwise unsigned with updates off, and a notice), and only after
+  # the tests, e2e, the secret scan and the desktop jobs passed. contents: write only here, for the release upload.
+  desktop-release:
+    if: startsWith(github.ref, 'refs/tags/v') && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    needs: [test, e2e, secrets, desktop-core, desktop-app]
+    permissions: { contents: write }
+    uses: ./.github/workflows/desktop-release.yml
+    secrets:
+      TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+      TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
   # images are only published after every check above passed (main -> nightly + sha, v* tags -> semver + latest for the highest)
   # signing/attesting (id-token, attestations) happens only here, i.e. only on push events
   publish:

@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! FriendFlix for Windows: a window around the server's web app with a narrow native bridge (see `shell` and
-//! `bridge_cmd`) and the mpv player host (`player`); the updater comes with its own module.
+//! `bridge_cmd`) and the mpv player host (`player`); `updater` keeps it up to date.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod bridge_cmd;
@@ -10,6 +10,7 @@ mod player;
 mod settings;
 mod shell;
 mod tray;
+mod updater;
 
 use tauri::{Manager, WindowEvent};
 
@@ -30,6 +31,7 @@ fn main() {
             tauri_plugin_autostart::MacosLauncher::LaunchAgent,
             None,
         ))
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(AppState::new(settings))
         .invoke_handler(tauri::generate_handler![
             bridge_cmd::bridge_message,
@@ -52,6 +54,7 @@ fn main() {
             tray::create(handle, s.server.as_deref())?;
             let args: Vec<String> = std::env::args().skip(1).collect();
             shell::start(handle, &s, &args);
+            updater::schedule(handle);
             Ok(())
         })
         .on_window_event(|window, event| {

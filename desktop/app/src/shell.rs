@@ -14,7 +14,7 @@ use serde::Serialize;
 use serde_json::{json, Value};
 use tauri::utils::acl::capability::CapabilityFile;
 use tauri::utils::acl::RemoteUrlPattern;
-use tauri::webview::NewWindowResponse;
+use tauri::webview::{NewWindowResponse, PageLoadEvent};
 use tauri::{
     AppHandle, Manager, PhysicalPosition, PhysicalSize, State, Url, WebviewUrl, WebviewWindow,
     WebviewWindowBuilder, Window,
@@ -153,7 +153,8 @@ pub fn user_agent(webview: Option<&str>, app: &str) -> String {
     }
 }
 
-/// Defines `window.FriendFlixNative` (`postMessage` + `message` events) only when the page is on the server origin.
+/// Defines `window.FriendFlixNative` (`postMessage` + `message` events) only when the page is on the server origin, and
+/// the update banner (`updater`), which handles `ff-update-available` itself.
 pub fn init_script(server: &Origin) -> String {
     let origin = Value::String(server.web()).to_string();
     let deliver = Value::String(DELIVER.into()).to_string();
@@ -163,7 +164,8 @@ pub fn init_script(server: &Origin) -> String {
   if (window.location.origin !== {origin} || window.FriendFlixNative) return;
   var target = new EventTarget();
   function deliver(data) {{
-    if (typeof data === "string") target.dispatchEvent(new MessageEvent("message", {{ data: data }}));
+    if (typeof data !== "string" || updateBanner(data)) return;
+    target.dispatchEvent(new MessageEvent("message", {{ data: data }}));
   }}
   var port = {{
     postMessage: function (s) {{
@@ -176,8 +178,10 @@ pub fn init_script(server: &Origin) -> String {
   }};
   Object.defineProperty(window, "FriendFlixNative", {{ value: Object.freeze(port) }});
   Object.defineProperty(window, {deliver}, {{ value: deliver }});
+{banner}
 }})();
-"#
+"#,
+        banner = crate::updater::banner_script()
     )
 }
 
@@ -381,7 +385,7 @@ fn open_main_at(app: &AppHandle, s: &Settings, start: Option<Url>) {
         None
     };
     let ua = user_agent(runtime.as_deref(), &version);
-    let (nav, popup) = (app.clone(), app.clone());
+    let (nav, popup, loaded) = (app.clone(), app.clone(), app.clone());
     let mut builder = WebviewWindowBuilder::new(app, &label, url)
         .title("FriendFlix")
         .inner_size(1280.0, 800.0)
@@ -392,6 +396,12 @@ fn open_main_at(app: &AppHandle, s: &Settings, start: Option<Url>) {
         .on_new_window(move |u, _| {
             on_main_new_window(&popup, &u);
             NewWindowResponse::Deny
+        })
+        // a pending update's banner comes back after every page load ("Ask first")
+        .on_page_load(move |_, p| {
+            if p.event() == PageLoadEvent::Finished {
+                crate::updater::announce(&loaded);
+            }
         });
     if let Some(o) = &server {
         builder = builder.initialization_script(init_script(o));
@@ -700,6 +710,11 @@ mod tests {
             "{js}"
         );
         assert!(js.contains("bridge_message") && js.contains("FriendFlixNative"));
+        // the banner lives after the origin check, inside the same function
+        let check = js.find("location.origin !==").unwrap();
+        let banner = js.find("function updateBanner").unwrap();
+        assert!(check < banner && banner < js.rfind("})();").unwrap());
+        assert!(js.contains(crate::updater::token()));
         assert!(!js.contains(":443"));
         let lan = init_script(&Origin::parse("http://192.0.2.5:8096").unwrap());
         assert!(lan.contains(r#""http://192.0.2.5:8096""#));

@@ -18,6 +18,7 @@
   "bundle": {
     "active": true,
     "targets": ["nsis", "msi"],
+    "createUpdaterArtifacts": false,
     "publisher": "FriendFlix",
     "resources": {
       "../player/friendflix.lua": "friendflix.lua",
@@ -39,6 +40,11 @@
       "desktop": {
         "schemes": ["friendflix"]
       }
+    },
+    "updater": {
+      "endpoints": ["https://github.com/LetsManu/friendflix/releases/latest/download/latest.json"],
+      "pubkey": "REPLACE_WITH_PUBLIC_KEY",
+      "windows": { "installMode": "passive" }
     }
   }
 }

@@ -1,0 +1,162 @@
+# SPDX-FileCopyrightText: 2026 Manuel Weißböck
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# The Windows app for a release (spec §7): on a vX.Y.Z tag, build desktop/app with the pinned mpv (desktop/player/mpv.lock,
+# SHA-256 checked) into the NSIS setup .exe and the .msi, and attach them plus SHA256SUMS-windows.txt to that tag's GitHub
+# Release (created by release.yml).
+# Called by CI for v* tags (push, or release.yml's dispatch), after its tests, e2e, the secret scan and the desktop jobs
+# passed. workflow_dispatch on a tag is the manual retry; on anything but a v* tag the job does not run.
+# Self-update (spec §5): the app's updater reads latest.json from the latest release and checks each download against the
+# public key built into the app (desktop/app/updater.pub). Signing needs two repository secrets (docs/windows.md, Owner steps):
+#   TAURI_SIGNING_PRIVATE_KEY           the key from `npx @tauri-apps/cli signer generate`
+#   TAURI_SIGNING_PRIVATE_KEY_PASSWORD  its password
+# With the secret and a real public key in updater.pub, Tauri signs both installers (createUpdaterArtifacts), and the
+# release gets their .sig files and latest.json. Without either, the installers are built unsigned for the updater, with
+# updates turned off in that build (no endpoint), no .sig and no latest.json, and the job leaves a notice. The key only
+# reaches the Tauri build step through its environment; nothing prints it.
+# The app's version is version.json's; the job refuses a tag that does not match it.
+name: Windows app release
+on:
+  workflow_call:
+    secrets:
+      TAURI_SIGNING_PRIVATE_KEY: { required: false }
+      TAURI_SIGNING_PRIVATE_KEY_PASSWORD: { required: false }
+  workflow_dispatch:
+permissions: { contents: read }
+jobs:
+  desktop-release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: windows-latest
+    timeout-minutes: 60
+    permissions:
+      contents: write # attach the files to the GitHub Release of this tag
+    defaults: { run: { shell: bash } }
+    env:
+      HAS_SIGNING_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY != '' }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with: { persist-credentials: false }
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with: { node-version: 26 }
+      - name: Tag matches version.json
+        id: version
+        run: |
+          set -euo pipefail
+          version=$(node -p 'require("./version.json").version')
+          if [ "v$version" != "$GITHUB_REF_NAME" ]; then
+            echo "::error::tag $GITHUB_REF_NAME does not match version.json ($version)"; exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+      - name: mpv pin is complete
+        run: |
+          set -euo pipefail
+          sha=$(sed -n 's/^sha256=//p' desktop/player/mpv.lock)
+          if ! printf '%s' "$sha" | grep -Eq '^[0-9a-f]{64}$'; then
+            echo "::error title=mpv not pinned::desktop/player/mpv.lock has no SHA-256 (sha256=$sha). Download its url, put the file's SHA-256 into the lock and commit it; no Windows app is built until then."
+            exit 1
+          fi
+      - name: Updates on or off
+        id: updates
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          key=$(tr -d '\r\n\t ' < desktop/app/updater.pub)
+          if [ -z "$key" ] || [ "$key" = REPLACE_WITH_PUBLIC_KEY ]; then
+            echo "::notice title=Windows updates off::desktop/app/updater.pub holds no public key yet, so the $GITHUB_REF_NAME installers have updates turned off and no .sig or latest.json is attached (docs/windows.md, Owner steps)."
+            signed=false
+          elif [ "$HAS_SIGNING_KEY" != true ]; then
+            echo "::notice title=Windows updates off::The secret TAURI_SIGNING_PRIVATE_KEY is not set, so the $GITHUB_REF_NAME installers are unsigned for the updater, have updates turned off and no .sig or latest.json is attached (docs/windows.md, Owner steps)."
+            signed=false
+          else
+            signed=true
+          fi
+          # merged over tauri.conf.json by the Tauri CLI (JSON merge patch: the endpoint list is replaced)
+          KEY="$key" SIGNED="$signed" node -e '
+            const signed = process.env.SIGNED === "true";
+            const conf = { version: process.env.VERSION };
+            conf.bundle = { createUpdaterArtifacts: signed };
+            conf.plugins = { updater: signed ? { pubkey: process.env.KEY } : { endpoints: [] } };
+            require("fs").writeFileSync(process.argv[1], JSON.stringify(conf, null, 2));
+          ' "$RUNNER_TEMP/tauri.release.json"
+          echo "signed=$signed" >> "$GITHUB_OUTPUT"
+      - name: Rust toolchain (from rust-toolchain.toml)
+        working-directory: desktop
+        run: rustup toolchain install --profile minimal
+      - name: App unit tests
+        working-directory: desktop
+        run: cargo test -p friendflix-app
+      - name: Fetch the pinned mpv
+        shell: pwsh
+        run: ./desktop/scripts/fetch-mpv.ps1 -Dest desktop/app/mpv
+      - name: Build the installers
+        working-directory: desktop/app
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ steps.updates.outputs.signed == 'true' && secrets.TAURI_SIGNING_PRIVATE_KEY || '' }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ steps.updates.outputs.signed == 'true' && secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD || '' }}
+        run: npx --yes @tauri-apps/cli@2 build --ci --config "$RUNNER_TEMP/tauri.release.json"
+      - name: Name the files, latest.json, checksums
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          SIGNED: ${{ steps.updates.outputs.signed }}
+        run: |
+          set -euo pipefail
+          bundle=desktop/target/release/bundle
+          exe="$bundle/nsis/FriendFlix_${VERSION}_x64-setup.exe"
+          msi=$(find "$bundle/msi" -maxdepth 1 -name "FriendFlix_${VERSION}_x64_*.msi" | head -n 1)
+          [ -f "$exe" ] || { echo "::error::no NSIS installer at $exe"; ls -R "$bundle"; exit 1; }
+          [ -n "$msi" ] || { echo "::error::no .msi in $bundle/msi"; ls -R "$bundle"; exit 1; }
+          dist="$RUNNER_TEMP/dist"
+          mkdir -p "$dist"
+          cp "$exe" "$msi" "$dist/"
+          if [ "$SIGNED" = true ]; then
+            for f in "$exe" "$msi"; do
+              [ -s "$f.sig" ] || { echo "::error::no update signature $f.sig"; exit 1; }
+              cp "$f.sig" "$dist/"
+            done
+            # the updater picks windows-x86_64-<nsis|msi> by how the app was installed, else windows-x86_64
+            EXE="$(basename "$exe")" MSI="$(basename "$msi")" DIST="$dist" node -e '
+              const fs = require("fs"), path = require("path");
+              const { VERSION, EXE, MSI, DIST, GITHUB_REPOSITORY, GITHUB_REF_NAME } = process.env;
+              const base = `https://github.com/${GITHUB_REPOSITORY}/releases/download/${GITHUB_REF_NAME}/`;
+              const entry = (name) => ({
+                signature: fs.readFileSync(path.join(DIST, name + ".sig"), "utf8").trim(),
+                url: base + encodeURIComponent(name),
+              });
+              const latest = {
+                version: VERSION,
+                notes: `FriendFlix ${VERSION}: see the release notes on GitHub.`,
+                pub_date: new Date().toISOString().replace(/\.\d{3}Z$/, "Z"),
+                platforms: {
+                  "windows-x86_64-nsis": entry(EXE),
+                  "windows-x86_64-msi": entry(MSI),
+                  "windows-x86_64": entry(EXE),
+                },
+              };
+              fs.writeFileSync(path.join(DIST, "latest.json"), JSON.stringify(latest, null, 2) + "\n");
+            '
+          fi
+          (cd "$dist" && sha256sum -- * > SHA256SUMS-windows.txt)
+          cat "$dist/SHA256SUMS-windows.txt"
+      # release.yml creates the GitHub Release right after pushing the tag; a run that started from that push may get here first
+      - name: Attach to the GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SIGNED: ${{ steps.updates.outputs.signed }}
+        run: |
+          set -euo pipefail
+          for _ in $(seq 1 30); do
+            gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1 && break
+            sleep 20
+          done
+          if ! gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "::error::no GitHub Release for $GITHUB_REF_NAME after 10 minutes; create it (release.yml resume), then re-run this workflow on the tag"; exit 1
+          fi
+          gh release upload "$GITHUB_REF_NAME" "$RUNNER_TEMP"/dist/* --repo "$GITHUB_REPOSITORY" --clobber
+          {
+            echo "### Windows app $GITHUB_REF_NAME"
+            if [ "$SIGNED" = true ]; then
+              echo "Setup .exe and .msi attached, signed for self-update, with latest.json and SHA256SUMS-windows.txt."
+            else
+              echo "Setup .exe and .msi attached with SHA256SUMS-windows.txt; updates are off in this build (no update key)."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"

@@ -27,20 +27,25 @@ struct Running {
 
 static RUNNING: Mutex<Option<Running>> = Mutex::new(None);
 
-fn running() -> MutexGuard<'static, Option<Running>> {
+fn slot() -> MutexGuard<'static, Option<Running>> {
     RUNNING.lock().unwrap_or_else(|p| p.into_inner())
 }
 
 #[cfg(windows)]
 fn set_running(pid: u32, ipc: Option<std::sync::Arc<ipc::Ipc>>) {
-    if let Some(r) = running().as_mut() {
+    if let Some(r) = slot().as_mut() {
         r.pid = Some(pid);
         r.ipc = ipc;
     }
 }
 
+/// Whether a player runs (or is starting); the updater never installs then.
+pub fn running() -> bool {
+    slot().is_some()
+}
+
 fn clear_running() {
-    *running() = None;
+    *slot() = None;
 }
 
 /// The bridge's `play`: `true` when the native player takes the title. While a player runs, it is focused instead
@@ -53,7 +58,7 @@ pub fn start(app: &AppHandle, req: PlayRequest) -> bool {
         return false;
     };
     #[cfg_attr(not(windows), allow(unused_mut))] // filled on Windows only
-    let mut slot = running();
+    let mut slot = slot();
     if let Some(r) = slot.as_ref() {
         if let Some(pid) = r.pid {
             mpv::focus(pid);
@@ -119,13 +124,13 @@ pub fn wait_for(cap: std::time::Duration, mut done: impl FnMut() -> bool) -> boo
 pub fn stop() {
     #[cfg(windows)]
     {
-        let ipc = running().as_ref().and_then(|r| r.ipc.clone());
+        let ipc = slot().as_ref().and_then(|r| r.ipc.clone());
         if let Some(ipc) = ipc {
             ipc.send(serde_json::json!(["quit"]));
         }
     }
-    if running().is_some() {
-        wait_for(std::time::Duration::from_secs(3), || running().is_none());
+    if slot().is_some() {
+        wait_for(std::time::Duration::from_secs(3), || slot().is_none());
     }
 }
 
