@@ -38,7 +38,7 @@ Danach findest du FriendFlix im Startmenü. Zum Deinstallieren nimm *Einstellung
 
 ## Erster Start
 
-1. Gib die Adresse deines FriendFlix-Servers ein, zum Beispiel `friend.example.com` (`https://` wird ergänzt; reines `http` wird abgelehnt).
+1. Gib die Adresse deines FriendFlix-Servers ein, zum Beispiel `friend.example.com` (`https://` wird ergänzt). Reine `http://`-Adressen gehen auch, für einen Server im Heimnetz wie in der Android-App, aber `https` wird dringend empfohlen: über `http` geht das Sitzungs-Cookie unverschlüsselt durchs Netz.
 2. Die App prüft, ob die Adresse wie ein passender FriendFlix-Server antwortet (`GET /api/version`). Wenn nicht, sagt sie warum.
 3. Melde dich genau wie im Browser an, in der App: mit der Anmeldung in der App oder mit der Anmeldeseite deines Servers bei seinem Identity-Provider (zum Beispiel Authentik unter `auth.example.com`), mit Passkey, wo dein Provider ihn anbietet. Gibt dein Server neue Geräte frei, erscheint der PC als neues Gerät zur Freigabe durch den Admin.
 

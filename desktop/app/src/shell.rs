@@ -332,15 +332,32 @@ pub fn open_main(app: &AppHandle, s: &Settings) {
     open_main_at(app, s, None);
 }
 
-/// First start: a `friendflix://watch/<id>` argument plays the title or opens the window right on `/watch/<id>` (a
-/// navigation just after creating the window would race its first load).
+/// First start: a `friendflix://watch/<id>` argument plays the title (after the main window exists: the player reads
+/// the session cookie from it) or opens the window right on `/watch/<id>` (a navigation just after creating the window
+/// would race its first load).
 pub fn start(app: &AppHandle, s: &Settings, args: &[String]) {
-    let target = args
-        .iter()
-        .rev()
-        .find_map(|a| watch_id(a))
-        .and_then(|id| watch_target(app, &id));
-    open_main_at(app, s, target);
+    let watch = args.iter().rev().find_map(|a| watch_id(a));
+    let server = s.server_origin();
+    let ready = watch.is_some() && crate::player::available(app);
+    let watch_url = |id: &str| {
+        server
+            .as_ref()
+            .and_then(|o| Url::parse(&format!("{}/watch/{id}", o.web())).ok())
+    };
+    match cold_start(server.is_some(), watch, s.last_profile.clone(), ready) {
+        ColdStart::Open => open_main_at(app, s, None),
+        ColdStart::OpenAt(id) => open_main_at(app, s, watch_url(&id)),
+        ColdStart::OpenThenPlay(req) => {
+            let id = req.item_id.clone();
+            open_main_at(app, s, None);
+            // the player declined after all (rare): the web player, as a navigation of the new window
+            if !bridge_cmd::play(app, req) {
+                if let (Some(url), Some(w)) = (watch_url(&id), main_window(app)) {
+                    let _ = w.navigate(url);
+                }
+            }
+        }
+    }
 }
 
 fn open_main_at(app: &AppHandle, s: &Settings, start: Option<Url>) {
@@ -456,6 +473,41 @@ pub fn open_settings(app: &AppHandle) {
         .build();
     if let Err(e) = built {
         log::error!("settings window not created: {e}");
+    }
+}
+
+/// What a first start with a `friendflix://watch/<id>` argument does.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ColdStart {
+    /// the normal start page
+    Open,
+    /// the window opens right on `/watch/<id>` (the web player)
+    OpenAt(String),
+    /// the window opens first (the player reads its cookies), then the native player starts this request
+    OpenThenPlay(PlayRequest),
+}
+
+/// The cold-start plan: the native player only with a server, a known profile and a player that can start; else the
+/// web player. The main window always exists before the player starts.
+pub fn cold_start(
+    server: bool,
+    watch: Option<String>,
+    profile: Option<String>,
+    player_ready: bool,
+) -> ColdStart {
+    let Some(id) = watch.filter(|_| server) else {
+        return ColdStart::Open;
+    };
+    match profile.filter(|_| player_ready) {
+        Some(profile_id) => ColdStart::OpenThenPlay(PlayRequest {
+            item_id: id,
+            profile_id,
+            start_ms: None,
+            media_source_id: None,
+            audio: None,
+            subtitle: None,
+        }),
+        None => ColdStart::OpenAt(id),
     }
 }
 
@@ -775,6 +827,29 @@ mod tests {
             assert!(!p.test(&"http://[::2]:8096/x".parse().unwrap()));
             assert!(!p.test(&"http://friend.example.com:8096/x".parse().unwrap()));
         }
+    }
+
+    #[test]
+    fn cold_start_opens_the_window_before_the_player() {
+        let id = || Some("abc-1".to_string());
+        let prof = || Some("p1".to_string());
+        assert_eq!(cold_start(true, None, prof(), true), ColdStart::Open);
+        assert_eq!(cold_start(false, id(), prof(), true), ColdStart::Open);
+        match cold_start(true, id(), prof(), true) {
+            ColdStart::OpenThenPlay(r) => {
+                assert_eq!((r.item_id.as_str(), r.profile_id.as_str()), ("abc-1", "p1"));
+                assert_eq!(r.start_ms, None);
+            }
+            other => panic!("{other:?}"),
+        }
+        assert_eq!(
+            cold_start(true, id(), None, true),
+            ColdStart::OpenAt("abc-1".into())
+        );
+        assert_eq!(
+            cold_start(true, id(), prof(), false),
+            ColdStart::OpenAt("abc-1".into())
+        );
     }
 
     #[test]

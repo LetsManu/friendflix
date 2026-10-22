@@ -36,7 +36,7 @@ FriendFlix is then in the Start menu. To uninstall use *Settings → Apps → In
 
 ## First start
 
-1. Enter the address of your FriendFlix server, for example `friend.example.com` (`https://` is added for you; plain `http` is refused).
+1. Enter the address of your FriendFlix server, for example `friend.example.com` (`https://` is added for you). Plain `http://` addresses work too, for a server in your home network as in the Android app, but `https` is strongly recommended: over `http` the session cookie travels unencrypted through the network.
 2. The app checks that the address answers like a compatible FriendFlix server (`GET /api/version`). If not, it says why.
 3. Sign in exactly as in the browser, inside the app: the in-app sign-in, or your server's sign-in page at its identity provider (for example Authentik at `auth.example.com`), with a passkey where your provider offers one. If your server approves new devices, the PC shows up as a new device for the admin to approve.
 

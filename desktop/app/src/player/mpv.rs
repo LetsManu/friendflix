@@ -63,7 +63,8 @@ pub fn args(paths: &Paths, pipe: &str, s: &Settings) -> Vec<String> {
         format!("--script={}", paths.script.display()),
         "--ytdl=no".into(),
         format!("--input-ipc-server={pipe}"),
-        "--demuxer-lavf-o=protocol_whitelist=[http,https,tls,tcp,crypto,file]".into(),
+        // no `file`: the trickplay tiles reach mpv through `overlay-add`, which reads the file itself, not via lavf
+        "--demuxer-lavf-o=protocol_whitelist=[http,https,tls,tcp,crypto]".into(),
         "--media-controls=yes".into(),
         "--osc=no".into(),
         on(s.hwdec, "--hwdec=auto-safe", "--hwdec=no"),
@@ -159,7 +160,7 @@ mod tests {
                 script.as_str(),
                 "--ytdl=no",
                 r"--input-ipc-server=\\.\pipe\friendflix-0123456789abcdef0123456789abcdef",
-                "--demuxer-lavf-o=protocol_whitelist=[http,https,tls,tcp,crypto,file]",
+                "--demuxer-lavf-o=protocol_whitelist=[http,https,tls,tcp,crypto]",
                 "--media-controls=yes",
                 "--osc=no",
                 "--hwdec=auto-safe",

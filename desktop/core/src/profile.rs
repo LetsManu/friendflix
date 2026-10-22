@@ -6,6 +6,23 @@ use serde_json::{json, Value};
 
 pub const CONTAINERS: [&str; 8] = ["mkv", "mp4", "m4v", "mov", "webm", "avi", "ts", "m2ts"];
 pub const VIDEO: [&str; 6] = ["h264", "hevc", "av1", "vp9", "mpeg2video", "vc1"];
+
+/// Video profiles per codec, in Android's names (`DeviceProfile.kt` for a decoder with 10-bit support): mpv decodes
+/// 10-bit H.264/HEVC/AV1 (in software where the GPU cannot). A "10" profile is what the server's `isTenBitProfile`
+/// reads to let 10-bit sources play direct. Codecs without an entry send no profiles (no restriction).
+fn profiles(codec: &str) -> &'static [&'static str] {
+    match codec {
+        "h264" => &[
+            "baseline",
+            "constrained baseline",
+            "main",
+            "high",
+            "high 10",
+        ],
+        "hevc" | "av1" => &["main", "main 10"],
+        _ => &[],
+    }
+}
 pub const AUDIO: [&str; 10] = [
     "aac", "ac3", "eac3", "dts", "truehd", "flac", "opus", "mp3", "vorbis", "pcm",
 ];
@@ -16,7 +33,13 @@ pub fn device_profile() -> Value {
         "client": "windows",
         "appVersion": env!("CARGO_PKG_VERSION"),
         "containers": CONTAINERS,
-        "video": VIDEO.iter().map(|c| json!({ "codec": c })).collect::<Vec<_>>(),
+        "video": VIDEO
+            .iter()
+            .map(|c| match profiles(c) {
+                [] => json!({ "codec": c }),
+                p => json!({ "codec": c, "profiles": p }),
+            })
+            .collect::<Vec<_>>(),
         "audio": AUDIO,
         "subtitles": SUBTITLES,
     })
@@ -33,13 +56,28 @@ mod tests {
             p["containers"],
             json!(["mkv", "mp4", "m4v", "mov", "webm", "avi", "ts", "m2ts"])
         );
+        // mpv decodes 10-bit everywhere (software fallback): profiles as Android sends them for a 10-bit decoder, so the
+        // server's isTenBitProfile lets 10-bit HEVC/AV1/H.264 play direct
         assert_eq!(
             p["video"],
             json!([
-                {"codec":"h264"},{"codec":"hevc"},{"codec":"av1"},
+                {"codec":"h264","profiles":["baseline","constrained baseline","main","high","high 10"]},
+                {"codec":"hevc","profiles":["main","main 10"]},
+                {"codec":"av1","profiles":["main","main 10"]},
                 {"codec":"vp9"},{"codec":"mpeg2video"},{"codec":"vc1"}
             ])
         );
+        let profile = regex::Regex::new(r"^[a-z0-9][a-z0-9 ._-]{0,31}$").unwrap(); // the server's PROFILE
+        for v in p["video"].as_array().unwrap() {
+            if let Some(ps) = v.get("profiles") {
+                let ps = ps.as_array().unwrap();
+                assert!(ps.len() <= 16);
+                assert!(
+                    ps.iter().all(|x| profile.is_match(x.as_str().unwrap())),
+                    "{v}"
+                );
+            }
+        }
         assert_eq!(
             p["audio"],
             json!(["aac", "ac3", "eac3", "dts", "truehd", "flac", "opus", "mp3", "vorbis", "pcm"])

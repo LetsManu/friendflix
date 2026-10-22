@@ -65,6 +65,34 @@ pub struct UiSettings {
     pub autostart: bool,
 }
 
+const RENAME_TRIES: u32 = 8;
+const RENAME_BACKOFF: std::time::Duration = std::time::Duration::from_millis(15);
+
+/// On Windows a rename over a file someone has open (a reader, an antivirus scan) can fail for a moment with access
+/// denied or a sharing violation: retry a few times with a growing pause; other errors are returned at once.
+fn retry_rename(
+    mut rename: impl FnMut() -> std::io::Result<()>,
+    tries: u32,
+    backoff: std::time::Duration,
+) -> std::io::Result<()> {
+    const ERROR_SHARING_VIOLATION: i32 = 32;
+    let mut attempt = 1;
+    loop {
+        match rename() {
+            Ok(()) => return Ok(()),
+            Err(e)
+                if attempt < tries
+                    && (e.kind() == std::io::ErrorKind::PermissionDenied
+                        || e.raw_os_error() == Some(ERROR_SHARING_VIOLATION)) =>
+            {
+                std::thread::sleep(backoff * attempt);
+                attempt += 1;
+            }
+            Err(e) => return Err(e),
+        }
+    }
+}
+
 fn valid_profile(id: &str) -> bool {
     (1..=64).contains(&id.len()) && id.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-')
 }
@@ -95,7 +123,7 @@ impl Settings {
         f.write_all(text.as_bytes())?;
         f.sync_all()?;
         drop(f);
-        std::fs::rename(&tmp, path)
+        retry_rename(|| std::fs::rename(&tmp, path), RENAME_TRIES, RENAME_BACKOFF)
     }
 
     /// Addresses in their normalised web form; anything unusable is dropped.
@@ -163,6 +191,49 @@ pub fn path() -> Option<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn rename_retries_transient_errors_only() {
+        use std::io::{Error, ErrorKind};
+        use std::time::Duration;
+        let mut calls = 0;
+        let r = retry_rename(
+            || {
+                calls += 1;
+                match calls {
+                    1 => Err(Error::from(ErrorKind::PermissionDenied)),
+                    2 => Err(Error::from_raw_os_error(32)), // ERROR_SHARING_VIOLATION
+                    _ => Ok(()),
+                }
+            },
+            8,
+            Duration::from_millis(1),
+        );
+        assert!(r.is_ok());
+        assert_eq!(calls, 3);
+        let mut calls = 0;
+        let r = retry_rename(
+            || {
+                calls += 1;
+                Err(Error::from(ErrorKind::NotFound))
+            },
+            8,
+            Duration::from_millis(1),
+        );
+        assert_eq!(r.unwrap_err().kind(), ErrorKind::NotFound);
+        assert_eq!(calls, 1, "no retry for other errors");
+        let mut calls = 0;
+        let r = retry_rename(
+            || {
+                calls += 1;
+                Err(Error::from(ErrorKind::PermissionDenied))
+            },
+            3,
+            Duration::from_millis(1),
+        );
+        assert!(r.is_err());
+        assert_eq!(calls, 3, "bounded");
+    }
 
     #[test]
     fn defaults() {

@@ -12,7 +12,7 @@ mod shell;
 mod tray;
 mod updater;
 
-use tauri::{Manager, WindowEvent};
+use tauri::{Manager, RunEvent, WindowEvent};
 
 use crate::settings::Settings;
 use crate::shell::AppState;
@@ -67,6 +67,13 @@ fn main() {
                 }
             }
         })
-        .run(tauri::generate_context!())
-        .expect("FriendFlix could not start");
+        .build(tauri::generate_context!())
+        .expect("FriendFlix could not start")
+        .run(|_app, event| {
+            // every way out (window, tray, updater restart, system): mpv must not outlive the app, and its Stop
+            // report goes out first (bounded to 3 s; a no-op when no player runs)
+            if let RunEvent::ExitRequested { .. } = event {
+                player::stop();
+            }
+        });
 }

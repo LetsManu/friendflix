@@ -185,6 +185,7 @@ jobs:
       - name: mpv control skin (Lua)
         working-directory: .
         run: |
+          sudo apt-get update
           sudo apt-get install -y lua5.4 luajit
           lua5.4 desktop/player/test/layout_test.lua
           luac5.4 -p desktop/player/layout.lua desktop/player/friendflix.lua
@@ -439,7 +440,7 @@ jobs:
   # contents: write only here, for the release upload.
   android-release:
     if: startsWith(github.ref, 'refs/tags/v') && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
-    needs: [test, e2e, secrets, desktop-core, desktop-app]
+    needs: [test, e2e, secrets]
     permissions: { contents: write }
     uses: ./.github/workflows/android-release.yml
     secrets:
@@ -462,6 +463,6 @@ jobs:
   # signing/attesting (id-token, attestations) happens only here, i.e. only on push events
   publish:
     if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')))
-    needs: [test, e2e, dast, secrets, docker, reproducible, desktop-core, desktop-app]
+    needs: [test, e2e, dast, secrets, docker, reproducible]
     permissions: { contents: read, packages: write, id-token: write, attestations: write }
     uses: ./.github/workflows/publish.yml

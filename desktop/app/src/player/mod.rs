@@ -48,6 +48,22 @@ fn clear_running() {
     *slot() = None;
 }
 
+/// The bundled player's files (Windows only; elsewhere the web player plays).
+fn paths(app: &AppHandle) -> Result<mpv::Paths, String> {
+    if !cfg!(windows) {
+        return Err("the native player runs on Windows only".into());
+    }
+    app.path()
+        .resource_dir()
+        .map_err(|e| e.to_string())
+        .and_then(|dir| mpv::Paths::resolve(&dir))
+}
+
+/// Whether `start` can start the native player (Windows, mpv bundled).
+pub fn available(app: &AppHandle) -> bool {
+    paths(app).is_ok()
+}
+
 /// The bridge's `play`: `true` when the native player takes the title. While a player runs, it is focused instead
 /// (and `true` keeps the page from playing it too). The profile is remembered for `friendflix://watch` links.
 pub fn start(app: &AppHandle, req: PlayRequest) -> bool {
@@ -67,12 +83,7 @@ pub fn start(app: &AppHandle, req: PlayRequest) -> bool {
     }
     #[cfg(windows)]
     {
-        let paths = match app
-            .path()
-            .resource_dir()
-            .map_err(|e| e.to_string())
-            .and_then(|dir| mpv::Paths::resolve(&dir))
-        {
+        let paths = match paths(app) {
             Ok(p) => p,
             Err(e) => {
                 log::error!("player not started: {e}");

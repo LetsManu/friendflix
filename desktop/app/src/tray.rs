@@ -45,6 +45,7 @@ pub fn create(app: &AppHandle, server: Option<&str>) -> tauri::Result<()> {
             "open" => shell::focus_main(app),
             "settings" => shell::open_settings(app),
             "quit" => {
+                crate::player::stop();
                 shell::remember_window(app);
                 app.exit(0);
             }
