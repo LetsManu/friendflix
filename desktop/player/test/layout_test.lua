@@ -46,6 +46,40 @@ local function test_should_hide()
   assert(L.should_hide(20, 8, true) == false, 'paused stays shown')
 end
 
+local function test_idiv_num()
+  assert(L.idiv(7, 2) == 3 and L.idiv(-7, 2) == -4 and L.idiv(8, 2) == 4)
+  assert(L.num(nil) == 0 and L.num('x') == 0 and L.num('5') == 5 and L.num({}) == 0 and L.num(3.5) == 3.5)
+  assert(L.num(0/0) == 0 and L.num(math.huge) == 0, 'nan and inf are not numbers here')
+end
+
+local function test_clip_utf8()
+  assert(L.clip('abc', 5) == 'abc')
+  assert(L.clip('abcdef', 4) == 'abc…')
+  local jp = '進撃の巨人 第一話 始まり'
+  local c = L.clip(jp, 6) -- characters, not bytes
+  assert(c == '進撃の巨人…', c)
+  assert(L.clip(jp, 100) == jp)
+  assert(L.clip(nil, 4) == '')
+  assert(L.utf8_len(jp) == 13 and L.utf8_len('abc') == 3)
+end
+
+local function test_esc()
+  assert(L.esc('a{b}c') == 'a(b)c')
+  assert(L.esc('a\\Nb') == 'a\\\u{2060}Nb', 'backslash gets U+2060 after it')
+  assert(L.esc('x\ny') == 'x y')
+  assert(L.esc(nil) == '')
+end
+
+local function test_list()
+  local r = L.list({ { t = 1 }, 'str', 5, { t = 2 }, false })
+  assert(#r == 2 and r[2].t == 2, 'only table entries survive')
+  assert(#L.list(nil) == 0 and #L.list('x') == 0)
+end
+
+test_idiv_num()
+test_clip_utf8()
+test_esc()
+test_list()
 test_fmt_time()
 test_seek_to_time()
 test_chapter_marks()

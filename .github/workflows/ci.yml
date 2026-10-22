@@ -184,9 +184,12 @@ jobs:
       - name: mpv control skin (Lua)
         working-directory: .
         run: |
-          sudo apt-get install -y lua5.4
+          sudo apt-get install -y lua5.4 luajit
           lua5.4 desktop/player/test/layout_test.lua
           luac5.4 -p desktop/player/layout.lua desktop/player/friendflix.lua
+          # the pinned mpv embeds LuaJIT (Lua 5.1 syntax: no //, no bitwise operators, no goto)
+          luajit desktop/player/test/layout_test.lua
+          for f in desktop/player/layout.lua desktop/player/friendflix.lua; do luajit -bl "$f" > /dev/null; done
   # A new install needs no .env, an existing one keeps working with its .env: both compose files must render either way,
   # with and without the opt-in profiles (backup, bundled) and with and without the updater (compose.no-updater.yaml)
   compose:
