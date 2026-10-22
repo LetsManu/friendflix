@@ -190,6 +190,19 @@ jobs:
           # the pinned mpv embeds LuaJIT (Lua 5.1 syntax: no //, no bitwise operators, no goto)
           luajit desktop/player/test/layout_test.lua
           for f in desktop/player/layout.lua desktop/player/friendflix.lua; do luajit -bl "$f" > /dev/null; done
+  # The Windows app (desktop/app, Tauri 2 + WebView2): lint, unit tests and a debug build on Windows. No installer and no
+  # mpv here; the signed release build is desktop-release.yml.
+  desktop-app:
+    runs-on: windows-latest
+    timeout-minutes: 45
+    defaults: { run: { working-directory: desktop } }
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Rust toolchain (from rust-toolchain.toml)
+        run: rustup toolchain install --profile minimal
+      - run: cargo clippy -p friendflix-app -- -D warnings
+      - run: cargo test -p friendflix-app
+      - run: cargo build -p friendflix-app
   # A new install needs no .env, an existing one keeps working with its .env: both compose files must render either way,
   # with and without the opt-in profiles (backup, bundled) and with and without the updater (compose.no-updater.yaml)
   compose:
@@ -425,7 +438,7 @@ jobs:
   # contents: write only here, for the release upload.
   android-release:
     if: startsWith(github.ref, 'refs/tags/v') && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
-    needs: [test, e2e, secrets, desktop-core]
+    needs: [test, e2e, secrets, desktop-core, desktop-app]
     permissions: { contents: write }
     uses: ./.github/workflows/android-release.yml
     secrets:
@@ -437,6 +450,6 @@ jobs:
   # signing/attesting (id-token, attestations) happens only here, i.e. only on push events
   publish:
     if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')))
-    needs: [test, e2e, dast, secrets, docker, reproducible, desktop-core]
+    needs: [test, e2e, dast, secrets, docker, reproducible, desktop-core, desktop-app]
     permissions: { contents: read, packages: write, id-token: write, attestations: write }
     uses: ./.github/workflows/publish.yml

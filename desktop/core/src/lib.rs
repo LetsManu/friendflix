@@ -8,6 +8,7 @@ pub mod logs;
 pub mod model;
 pub mod origin;
 pub mod playback;
+pub mod probe;
 pub mod profile;
 pub mod subs;
 pub mod trickplay;

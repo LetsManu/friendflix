@@ -1,0 +1,9 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "local",
+  "description": "The bundled setup and settings pages: only the settings commands.",
+  "local": true,
+  "windows": ["main*", "settings"],
+  "platforms": ["windows", "linux", "macOS"],
+  "permissions": ["allow-probe-server", "allow-get-settings", "allow-set-settings"]
+}

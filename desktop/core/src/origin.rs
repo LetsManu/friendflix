@@ -60,6 +60,20 @@ impl Origin {
         format!("{}{sep}{path}", self.as_str())
     }
 
+    /// The web (`location.origin`) form: the port only when it is not the scheme's default. Use it where a browser's
+    /// origin string is compared or a cookie URL is built; compare URLs with `matches`.
+    pub fn web(&self) -> String {
+        let default = matches!(
+            (self.scheme.as_str(), self.port),
+            ("https", 443) | ("http", 80)
+        );
+        if default {
+            format!("{}://{}", self.scheme, self.host)
+        } else {
+            self.as_str()
+        }
+    }
+
     pub fn as_str(&self) -> String {
         format!("{}://{}:{}", self.scheme, self.host, self.port)
     }
@@ -122,6 +136,28 @@ mod tests {
         }
         assert_eq!(o.join("/api/x"), "https://friend.example.com:443/api/x");
         assert_eq!(o.join("api/x"), "https://friend.example.com:443/api/x");
+    }
+
+    #[test]
+    fn web_form_omits_default_port() {
+        let o = |s: &str| Origin::parse(s).unwrap().web();
+        assert_eq!(o("friend.example.com"), "https://friend.example.com");
+        assert_eq!(
+            o("https://friend.example.com:443/x"),
+            "https://friend.example.com"
+        );
+        assert_eq!(o("http://192.0.2.5:80"), "http://192.0.2.5");
+        assert_eq!(o("http://192.0.2.5:8096"), "http://192.0.2.5:8096");
+        assert_eq!(
+            o("https://friend.example.com:80"),
+            "https://friend.example.com:80"
+        );
+        assert_eq!(
+            o("https://FRIEND.example.com"),
+            "https://friend.example.com"
+        );
+        let w = Origin::parse("http://192.0.2.5:8096").unwrap();
+        assert!(w.matches(&w.web()));
     }
 
     #[test]
