@@ -48,7 +48,7 @@ Some models turn developer mode off after a reboot. If the install says it canno
 
 Only the PC that creates the certificate needs the full Tizen Studio; the PC that only installs needs just the command-line tools `sdb` and `tizen`.
 
-1. Install **Tizen Studio** from [developer.tizen.org](https://developer.tizen.org/development/tizen-studio/download) (the installer with the IDE, or the CLI-only installer). The install script looks for `sdb` and `tizen` on the `PATH`, in `$TIZEN_STUDIO` and in `~/tizen-studio` (on Windows also `C:\tizen-studio`).
+1. Install **Tizen Studio** from [developer.tizen.org](https://developer.tizen.org/development/tizen-studio/download) (the installer with the IDE, or the CLI-only installer). **Create the certificates with Tizen Studio 6.1**: that is the version of the command-line tool the release job uses, and a p12 file created by a newer Tizen Studio (with a newer Java, which writes AES-encrypted p12 files) may fail to sign. The install script looks for `sdb` and `tizen` on the `PATH`, in `$TIZEN_STUDIO` and in `~/tizen-studio` (on Windows also `C:\tizen-studio`).
 2. Open Tizen Studio's **Package Manager** and, under *Extension SDK*, install **Samsung Certificate Extension**. Restart Tizen Studio.
 3. Sign in with a **Samsung account** when the certificate dialog asks for it.
 
@@ -134,13 +134,15 @@ The scripts download the `.wgt` and `SHA256SUMS-tizen.txt` from the GitHub Relea
 ./tizen/install.sh 192.0.2.50 --version v2.4.0 # a specific release
 ```
 
-**Windows (PowerShell):**
+**Windows (PowerShell):** run it from a clone of the repository (the scripts are in its `tizen` folder).
 
 ```powershell
-.\tizen\install.ps1 192.0.2.50 -Probe
-.\tizen\install.ps1 192.0.2.50
-.\tizen\install.ps1 192.0.2.50 -Version v2.4.0
+powershell -ExecutionPolicy Bypass -File .\tizen\install.ps1 192.0.2.50 -Probe
+powershell -ExecutionPolicy Bypass -File .\tizen\install.ps1 192.0.2.50
+powershell -ExecutionPolicy Bypass -File .\tizen\install.ps1 192.0.2.50 -Version v2.4.0
 ```
+
+`-ExecutionPolicy Bypass` only applies to this one call; without it Windows may refuse to run the script.
 
 | Argument | Meaning |
 |---|---|
@@ -160,7 +162,7 @@ On the first start the app asks for your server's address, for example `friend.e
 - Only `https://` works; `https://` is added for you. A plain `http://` address is refused (the TV carries a sign-in cookie).
 - The app checks that the address answers like a FriendFlix server (`GET /api/version`, which the server answers for everyone, with CORS `*`, because it only holds public information). If not, it says why.
 - The address is remembered. At the next start the app shows *Opening <address>* for a moment and opens your server's TV mode. If the TV is not paired yet, it shows the pairing code as usual: pair it as described in [tv-mode.md](tv-mode.md).
-- **To change the address:** hold the **red key** for one second while the app starts (or while it shows *Opening*). It forgets the stored server and shows the form again.
+- **To change the address:** hold the **red key** for one second while the app shows *Opening <address>* (it stays for 3 seconds before it opens your server). It forgets the stored server and shows the form again.
 - **Return** on the remote leaves the app (with the keyboard open it closes the keyboard first).
 
 ## The probe and how to read its line
@@ -183,6 +185,7 @@ FFPROBE v1 avplay=ok play=ok:2310ms keys=ok app=ok tizen=6.5 model=QE55Q80B
 | `avplay` | `ok`, `missing` | `ok`: the TV's AVPlay player exists on the server page. `missing`: it does not, and the play check is skipped. |
 | `play` | `ok:<ms>ms` | AVPlay started a FriendFlix stream and reached *playing* after that many milliseconds. |
 | | `error:unpaired` | The TV is not paired for TV mode, so there was nothing to play. Pair it and run again. |
+| | `error:profile` | No profile is chosen on the TV (or it was switched elsewhere). Pick the profile on the TV, then reopen the probe app. |
 | | `error:info` | The stream lookup failed (no title, server answered with an error, offline). |
 | | `error:open` | AVPlay refused the stream address (an exception without an error name). |
 | | `error:play` | AVPlay was prepared, but starting playback raised an exception without a name. |
@@ -190,10 +193,12 @@ FFPROBE v1 avplay=ok play=ok:2310ms keys=ok app=ok tizen=6.5 model=QE55Q80B
 | | `error:timeout` | No playback within 15 seconds. |
 | | `error:<code>` | AVPlay's own error name (for example `PLAYER_ERROR_INVALID_OPERATION`); `unknown` when none came. |
 | | `skipped` | Not tried, because `avplay=missing`. |
-| `keys` | `ok`, `error`, `timeout` | `ok`: the ⏯ key was registered and a press arrived. `error`: the key could not be registered. `timeout`: no press within 20 seconds (try again and press sooner). |
+| `keys` | `ok`, `error`, `timeout`, `skipped` | `skipped`: not tried, because the server page did not run inside the app (see `tizen=missing`). `ok`: the ⏯ key was registered and a press arrived. `error`: the key could not be registered. `timeout`: no press within 20 seconds (try again and press sooner). |
 | `app` | `ok`, `missing` | Whether the Tizen application API is available. |
-| `tizen` | version or `?` | The platform version of the TV, for example `6.5`. |
+| `tizen` | version, `?` or `missing` | The platform version of the TV, for example `6.5`. `?`: the version could not be read. `missing`: the server page did not get the TV's `tizen` object, so it does not run inside the app (the line is then `play=skipped keys=skipped app=missing`). Send the line anyway. |
 | `model` | name or `?` | The TV's model, for example `QE55Q80B`. |
+
+**No probe screen at all** (the server page shows, but never a *Testing playback...* screen or a line): report `no-probe-screen`.
 
 The result that matters most is `avplay=ok play=ok:...`. Whatever the line says, send it complete: other values still tell which parts need another approach.
 
@@ -210,9 +215,11 @@ The app does not update itself (a developer-mode app cannot). After a new releas
 - **The release has no `.wgt` files:** the four secrets were not all set when the tag was built (*Actions → Samsung TV app release* shows the notice). Add them and run the workflow on the tag by hand. If the job fails with "password has characters the Tizen CLI cannot take", see the [password limits](#pc-tizen-studio-and-the-samsung-certificate).
 - **The job cannot read the p12:** if you converted the file with OpenSSL 3, export it again with `-legacy`.
 - **"SHA-256 mismatch":** the download is damaged or was replaced; the script installs nothing. Try again; if it persists, look at the release's files.
-- **Wrong script on Windows:** run `install.ps1` in PowerShell. If scripts are blocked: `powershell -ExecutionPolicy Bypass -File .\tizen\install.ps1 192.0.2.50`.
+- **Wrong script on Windows:** run `install.ps1` in PowerShell from a clone of the repository. If scripts are blocked: `powershell -ExecutionPolicy Bypass -File .\tizen\install.ps1 192.0.2.50`.
 - **"not an IPv4 address":** use the TV's address from its network settings, not a name.
 - **"Cannot reach that server" on the TV:** the address, the TV's network, and that the server runs. "That address answered, but it is not a FriendFlix server" means another service answers there (a router page, a proxy login).
 - **"Plain http:// addresses are not allowed":** put the server behind HTTPS (see [setup.md](setup.md)).
+- **The probe shows `error:profile`:** pick the profile on the TV, then reopen the probe app.
+- **The probe shows `tizen=missing`:** the server page ran outside the app's Tizen environment. Send the line to the project owner.
 - **The probe shows `error:unpaired`:** pair the TV ([tv-mode.md](tv-mode.md)) and run the probe again.
 - **Wrong server address stored:** hold the red key while the app starts.

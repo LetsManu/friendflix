@@ -128,8 +128,12 @@ try {
     Show-Hints; exit 1
   }
   Write-Host "Installing on $device ($serial)"
-  $out = (& $tizen install -n $wgt -t $device 2>&1 | Out-String)
-  $rc = $LASTEXITCODE
+  # tizen.bat breaks on paths with spaces (a user name with a space): run from the temp dir with the bare file name
+  Push-Location -LiteralPath $tmp
+  try {
+    $out = (& $tizen install -n $file -t $device 2>&1 | Out-String)
+    $rc = $LASTEXITCODE
+  } finally { Pop-Location }
   Write-Host $out
   # the Tizen CLI can exit 0 after a failed install; its output decides
   if ($rc -ne 0 -or $out -match '(?i)install failed|error') { Show-Hints; exit 1 }

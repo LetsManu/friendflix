@@ -4,7 +4,7 @@
      small strip at the bottom instead, so the pairing code stays usable; the pairing redirect starts the probe again full screen. -->
 <script lang="ts">
   import { onDestroy, onMount } from 'svelte';
-  import { endProbe, formatProbe, realDeps, runProbe, shouldProbe, type ProbeStage } from './probe';
+  import { endProbe, failedProbeLine, formatProbe, missingTizenLine, realDeps, runProbe, shouldEndProbe, shouldProbe, type ProbeStage } from './probe';
 
   export let compact = false;
   let on = false, stage: ProbeStage = 'play', line = '', closed = false;
@@ -13,14 +13,18 @@
   function onKey(e: KeyboardEvent) {
     if (!on || stage !== 'done' || !isBack(e)) return;
     e.preventDefault(); e.stopPropagation();
-    endProbe(); closed = true; on = false;
+    if (shouldEndProbe(compact, line)) endProbe(); // the strip on the pairing page only hides itself while unpaired: the full-screen probe runs after pairing
+    closed = true; on = false;
   }
 
   onMount(() => {
+    const missing = missingTizenLine();
+    if (missing) { line = missing; stage = 'done'; on = true; return; } // text only: nothing else is switched on
     if (!shouldProbe()) return;
     on = true;
     window.addEventListener('keydown', onKey, true);
-    void runProbe(realDeps(), (s) => (stage = s)).then((r) => { if (!closed) line = formatProbe(r); });
+    void runProbe(realDeps(), (s) => (stage = s)).then((r) => { if (!closed) line = formatProbe(r); })
+      .catch(() => { if (!closed) { line = failedProbeLine(); stage = 'done'; } });
   });
   onDestroy(() => { if (typeof window !== 'undefined') window.removeEventListener('keydown', onKey, true); });
 </script>

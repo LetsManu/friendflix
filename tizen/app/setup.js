@@ -16,7 +16,7 @@ const AUTH_KEY = 'ff.authOrigin';
 const RED_KEY_CODE = 403; // ColorF0Red
 const RETURN_KEY_CODE = 10009;
 const RED_HOLD_MS = 1000;
-const OPEN_DELAY_MS = 1500; // time to hold red before the stored server is opened
+const OPEN_DELAY_MS = 3000; // time to hold red (RED_HOLD_MS) before the stored server is opened; must stay well above it
 const PROBE_TIMEOUT_MS = 15000;
 
 const probe = document.body.dataset.probe === '1';

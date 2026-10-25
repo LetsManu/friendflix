@@ -16,9 +16,12 @@ export const PRIVILEGES = [
   'http://tizen.org/privilege/application.launch',
 ];
 
+/** only the probe reads the TV model (webapis.productinfo) for its line */
+export const PROBE_PRIVILEGES = [...PRIVILEGES, 'http://developer.samsung.com/privilege/productinfo'];
+
 export const APPS = [
-  { dir: 'app', id: 'FrFlixTV01.FriendFlix', pkg: 'FrFlixTV01', name: 'FriendFlix' },
-  { dir: 'probe', id: 'FrFlixPRB1.FriendFlixProbe', pkg: 'FrFlixPRB1', name: 'FriendFlix Probe' },
+  { dir: 'app', id: 'FrFlixTV01.FriendFlix', pkg: 'FrFlixTV01', name: 'FriendFlix', privileges: PRIVILEGES },
+  { dir: 'probe', id: 'FrFlixPRB1.FriendFlixProbe', pkg: 'FrFlixPRB1', name: 'FriendFlix Probe', privileges: PROBE_PRIVILEGES },
 ];
 
 const attr = (tag, name) => new RegExp(`\\b${name}="([^"]*)"`).exec(tag)?.[1];
@@ -43,10 +46,11 @@ export function checkConfig(xml, app) {
   if (!/<name>\s*([^<]*?)\s*<\/name>/.test(body) || /<name>\s*([^<]*?)\s*<\/name>/.exec(body)?.[1] !== app.name) problems.push(`<name> must be "${app.name}"`);
   if (!/<content\s+src="index\.html"\s*\/>/.test(body)) problems.push('<content src="index.html"/> missing');
   if (!/<icon\s+src="icon\.png"\s*\/>/.test(body)) problems.push('<icon src="icon.png"/> missing');
-  for (const p of PRIVILEGES) if (!body.includes(`<tizen:privilege name="${p}"/>`)) problems.push(`privilege missing: ${p}`);
+  const allowed = app.privileges ?? PRIVILEGES;
+  for (const p of allowed) if (!body.includes(`<tizen:privilege name="${p}"/>`)) problems.push(`privilege missing: ${p}`);
   for (const p of body.match(/<tizen:privilege\s+name="[^"]*"/g) ?? []) {
     const name = /name="([^"]*)"/.exec(p)?.[1];
-    if (!PRIVILEGES.includes(name)) problems.push(`unexpected privilege: ${name}`);
+    if (!allowed.includes(name)) problems.push(`unexpected privilege: ${name}`);
   }
   const setting = /<tizen:setting\b[^>]*>/.exec(body)?.[0] ?? '';
   const want = { 'screen-orientation': 'landscape', 'context-menu': 'disable', 'background-support': 'disable', encryption: 'disable', 'install-location': 'auto', 'hwkey-event': 'enable' };

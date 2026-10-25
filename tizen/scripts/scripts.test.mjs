@@ -63,6 +63,9 @@ esac
 exit 0`);
   // tizen: install (exit code / output from the environment), package (writes <name>.wgt into -o, records the build dir)
   shim('tizen', `if [ "$1" = install ]; then
+  # the real tizen.bat chokes on paths with spaces: the file must be a bare name found in the working directory
+  case "$3" in */* | *\\\\*) echo "install failed: path given: $3"; exit 1 ;; esac
+  [ -f "$3" ] || { echo "install failed: $3 not in the working directory"; exit 1; }
   echo "$TIZEN_INSTALL_OUT"; exit "\${TIZEN_INSTALL_RC:-0}"
 fi
 if [ "$1" = package ]; then
@@ -110,13 +113,13 @@ test('install.sh: latest release, hash checked, sdb connect + tizen install on t
   assert.match(r.out, /v1\.2\.3/);
   assert.equal(r.calls[0], 'sdb connect 192.0.2.10:26101');
   assert.equal(r.calls[1], 'sdb devices');
-  assert.match(r.calls[2], /^tizen install -n \S+\/FriendFlix-1\.2\.3\.wgt -t QE55Q80BAT$/);
+  assert.match(r.calls[2], /^tizen install -n FriendFlix-1\.2\.3\.wgt -t QE55Q80BAT$/);
 });
 
 test('install.sh: --probe and --version pick the file and the tag', async () => {
   let r = await installSh(['192.0.2.10', '--probe', '--version', 'v1.2.0', '--base-url', base]);
   assert.equal(r.code, 0, r.out);
-  assert.match(r.calls.at(-1), /FriendFlix-probe-1\.2\.0\.wgt -t QE55Q80BAT$/);
+  assert.match(r.calls.at(-1), /^tizen install -n FriendFlix-probe-1\.2\.0\.wgt -t QE55Q80BAT$/);
   r = await installSh(['--version', '1.2.0', '192.0.2.10', '--base-url', base]);
   assert.equal(r.code, 0, r.out);
   assert.match(r.calls.at(-1), /FriendFlix-1\.2\.0\.wgt/);
@@ -246,10 +249,10 @@ test('install.ps1: the same install cases (pwsh)', { skip: !hasPwsh && 'pwsh not
   r = await ps(['192.0.2.10', '-BaseUrl', base]);
   assert.equal(r.code, 0, r.out);
   assert.equal(r.calls[0], 'sdb connect 192.0.2.10:26101');
-  assert.match(r.calls.at(-1), /FriendFlix-1\.2\.3\.wgt -t QE55Q80BAT$/);
+  assert.match(r.calls.at(-1), /^tizen install -n FriendFlix-1\.2\.3\.wgt -t QE55Q80BAT$/);
   r = await ps(['192.0.2.10', '-Probe', '-Version', 'v1.2.0', '-BaseUrl', base]);
   assert.equal(r.code, 0, r.out);
-  assert.match(r.calls.at(-1), /FriendFlix-probe-1\.2\.0\.wgt -t QE55Q80BAT$/);
+  assert.match(r.calls.at(-1), /^tizen install -n FriendFlix-probe-1\.2\.0\.wgt -t QE55Q80BAT$/);
   r = await ps(['192.0.2.10', '-BaseUrl', base], { TIZEN_INSTALL_RC: '1' });
   assert.notEqual(r.code, 0);
   assert.match(r.out, /DUID/);

@@ -22,3 +22,22 @@ test('check-config catches missing pieces', () => {
   assert.ok(bad('<tizen:allow-navigation>*</tizen:allow-navigation>', '<tizen:allow-navigation>friend.example.com</tizen:allow-navigation>').length > 0);
   assert.ok(bad(' version="0.0.0"', ' version="x"').length > 0);
 });
+
+test('the probe (and only the probe) declares the productinfo privilege', () => {
+  const PI = 'http://developer.samsung.com/privilege/productinfo';
+  const [app, probe] = APPS;
+  assert.ok(xml('probe').includes(`<tizen:privilege name="${PI}"/>`));
+  assert.ok(!xml('app').includes(PI));
+  // the app must not carry it, the probe must
+  const addTo = (x) => x.replace('</widget>', `  <tizen:privilege name="${PI}"/>\n</widget>`);
+  assert.ok(checkConfig(addTo(xml('app')), app).some((p) => p.includes(PI)));
+  assert.ok(checkConfig(xml('probe').replace(`<tizen:privilege name="${PI}"/>`, ''), probe).some((p) => p.includes(PI)));
+});
+
+test('the Opening screen lasts well beyond the 1 s red-key hold', () => {
+  const js = readFileSync(new URL('./app/setup.js', import.meta.url), 'utf8');
+  const hold = Number(/RED_HOLD_MS = (\d+)/.exec(js)?.[1]);
+  const open = Number(/OPEN_DELAY_MS = (\d+)/.exec(js)?.[1]);
+  assert.equal(hold, 1000);
+  assert.ok(open >= 3000, `OPEN_DELAY_MS is ${open}`);
+});

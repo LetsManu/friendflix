@@ -102,7 +102,8 @@ if [ -z "$device" ]; then
 fi
 echo "Installing on $device ($serial)"
 set +e
-out=$("$tizen" install -n "$tmp/$file" -t "$device" 2>&1)
+# a bare file name from inside the temp dir: on Windows tizen.bat breaks on paths with spaces (parity with install.ps1)
+out=$(cd "$tmp" && "$tizen" install -n "$file" -t "$device" 2>&1)
 rc=$?
 set -e
 printf '%s\n' "$out"
