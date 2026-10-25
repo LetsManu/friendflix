@@ -5,7 +5,7 @@
 // install.ps1 runs the same install cases when pwsh is on PATH.
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { execFile } from 'node:child_process';
+import { execFile, execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { createServer } from 'node:http';
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
@@ -80,6 +80,11 @@ after(() => {
   server?.close();
   rmSync(work, { recursive: true, force: true });
 });
+
+// checked synchronously while the file loads: a top-level await here would let the earlier tests finish and the `after`
+// hook delete the work dir before this test is registered
+let hasPwsh = false;
+try { execFileSync('pwsh', ['-NoProfile', '-Command', 'exit 0'], { stdio: 'ignore' }); hasPwsh = true; } catch { /* not installed */ }
 
 const DEVICE = '192.0.2.10:26101\tdevice\t\tQE55Q80BAT';
 
@@ -239,7 +244,6 @@ test('the pinned Tizen CLI lock is complete', () => {
   assert.match(text, /^sha256=[0-9a-f]{64}$/m);
 });
 
-const hasPwsh = await new Promise((resolve) => execFile('pwsh', ['-NoProfile', '-Command', 'exit 0'], (err) => resolve(!err)));
 
 test('install.ps1: the same install cases (pwsh)', { skip: !hasPwsh && 'pwsh not on PATH' }, async () => {
   const ps = (args, env) => run('pwsh', ['-NoProfile', '-File', join(tizenDir, 'install.ps1'), ...args], env);
