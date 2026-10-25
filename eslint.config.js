@@ -22,4 +22,15 @@ export default tseslint.config(
       globals: { window: 'readonly', document: 'readonly', Document: 'readonly', Element: 'readonly', EventTarget: 'readonly', Node: 'readonly' },
     },
   },
+  {
+    // the Tizen shells: browser modules for Chromium 85 (Tizen 6.5) plus node tests and the config check
+    files: ['tizen/**/*.{js,mjs}'],
+    languageOptions: {
+      sourceType: 'module',
+      globals: {
+        window: 'readonly', document: 'readonly', localStorage: 'readonly', fetch: 'readonly', AbortController: 'readonly',
+        URL: 'readonly', URLSearchParams: 'readonly', setTimeout: 'readonly', clearTimeout: 'readonly',
+      },
+    },
+  },
 );

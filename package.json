@@ -16,7 +16,8 @@
     "e2e": "playwright test -c e2e/playwright.config.ts",
     "spdx:check": "node scripts/spdx.mjs --check",
     "spdx:fix": "node scripts/spdx.mjs --fix",
-    "compose:env": "npm run compose:env -w backend"
+    "compose:env": "npm run compose:env -w backend",
+    "test:tizen": "node --test tizen/shared/*.test.mjs tizen/*.test.mjs"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",

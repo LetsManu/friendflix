@@ -171,6 +171,16 @@ jobs:
         with: { fetch-depth: 0 }
       - uses: gitleaks/gitleaks-action@e0c47f4f8be36e29cdc102c57e68cb5cbf0e8d1e # v3
         env: { GITHUB_TOKEN: "${{ secrets.GITHUB_TOKEN }}" }
+  # The Samsung TV (Tizen) shells: config.xml checks (ids, privileges, required version, icon) and the setup-core tests. Not a
+  # dependency of publish or android-release; the signed .wgt build is tizen-release.
+  tizen-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with: { node-version: 22 }
+      - run: node tizen/check-config.mjs
+      - run: npm run test:tizen
   # The Windows app's platform-independent core (origin policy, bridge protocol); the Tauri app itself is built elsewhere.
   desktop-core:
     runs-on: ubuntu-latest

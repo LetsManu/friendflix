@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- SPDX-FileCopyrightText: 2026 Manuel Weißböck -->
+<!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
+<!--
+  FriendFlix Probe: the phase-0 test app. Same setup page; opens /tv?probe=1 to report what AVPlay can do on this TV.
+  The version is a placeholder: the package script (Task 4) stamps version.json's version into the built copy.
+
+  Navigation lock: Tizen reads config.xml only at install time, so the list of allowed hosts cannot follow the server the
+  person types in later. allow-navigation is therefore "*", and the lock is enforced in code instead:
+    - index.html / setup.js only navigates to the stored server after normaliseServer() accepted it (https only);
+    - on the server page, the web app (isTizenApp(), web/src/lib/tizen/navlock.ts) makes links to other origins inert,
+      except the sign-in origin the server names in /api/version.
+  access origin="*" lets the local setup page ask the server's /api/version (a cross-origin request from the app's own origin).
+-->
+<widget xmlns="http://www.w3.org/ns/widgets" xmlns:tizen="http://tizen.org/ns/widgets" id="https://friendflix.example.com/FrFlixPRB1" version="0.0.0" viewmodes="maximized">
+  <tizen:application id="FrFlixPRB1.FriendFlixProbe" package="FrFlixPRB1" required_version="6.5"/>
+  <content src="index.html"/>
+  <icon src="icon.png"/>
+  <name>FriendFlix Probe</name>
+  <tizen:privilege name="http://tizen.org/privilege/internet"/>
+  <tizen:privilege name="http://tizen.org/privilege/tv.inputdevice"/>
+  <tizen:privilege name="http://developer.samsung.com/privilege/avplay"/>
+  <tizen:privilege name="http://tizen.org/privilege/application.launch"/>
+  <tizen:setting screen-orientation="landscape" context-menu="disable" background-support="disable" encryption="disable" install-location="auto" hwkey-event="enable"/>
+  <access origin="*" subdomains="true"/>
+  <tizen:allow-navigation>*</tizen:allow-navigation>
+</widget>

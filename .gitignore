@@ -25,3 +25,7 @@ volumes/
 .DS_Store
 e2e/test-results/
 e2e/playwright-report/
+
+# Tizen: build-time copies of the shared sources (the package script puts them next to each app)
+tizen/*/setup-core.js
+tizen/probe/setup.js
