@@ -168,6 +168,8 @@ An app-like layout with a bottom tab bar, a preview sheet when you tap a poster,
 
 **Windows app:** FriendFlix as a program for Windows 10 and 11, installed from the GitHub Release. It shows the same web UI and adds a native mpv player that plays almost every file directly (AC3, DTS, TrueHD, HEVC, image subtitles), with FriendFlix's own controls, resume and progress in sync with web, Android and TV, tray icon and automatic updates. No downloads, no Chromecast. Install, player keys, troubleshooting and the owner's update-signing steps: [docs/windows.md](docs/windows.md).
 
+**Samsung TV app:** FriendFlix for Samsung smart TVs (Tizen 6.5 and newer), installed from your PC over developer mode with a Samsung certificate. This first version is a probe build plus the app shell (server address, then your TV mode); the player follows once the probe shows what the TV can play. Setup, certificate and the probe: [docs/tizen.md](docs/tizen.md).
+
 <p align="center"><img src="docs/images/en/downloads.jpg" alt="Downloads page with finished, paused and preparing downloads" width="700"></p>
 
 **Seven languages:** the interface speaks **English, German, French, Spanish, Italian, Turkish and Polish**. Every profile picks its own language; on first login FriendFlix asks once and suggests the browser language. The admin sets the default language for the whole instance.
@@ -382,6 +384,7 @@ npm run e2e                                     # Playwright: builds the web app
 | Chromecast and AirPlay | [docs/cast.md](docs/cast.md) |
 | Android app: install, settings, offline, notifications, signing and Google Play | [docs/android.md](docs/android.md) |
 | Windows app: install, player keys, updates, troubleshooting, update signing | [docs/windows.md](docs/windows.md) |
+| Samsung TV app: developer mode, certificate, install script, probe | [docs/tizen.md](docs/tizen.md) |
 | Search and discovery API, labels, leaving soon, quality, kids rules | [docs/discovery.md](docs/discovery.md) |
 | Themed lists, calm mode, sound in the player, phone shortcuts and badge | [docs/personal.md](docs/personal.md) |
 | UI kit and admin shell | [docs/ui-kit.md](docs/ui-kit.md) |

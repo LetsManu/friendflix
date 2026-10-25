@@ -4,6 +4,9 @@ All notable changes, grouped by what you notice. Each release has its own sectio
 
 ## [Unreleased]
 
+### Samsung TV app
+- **Probe build for Samsung TVs.** A small test app (FriendFlix Probe) for Samsung smart TVs from 2022 on (Tizen 6.5 and newer) that checks whether the TV's own video player can play your server's streams and shows one line with the result. It comes with the FriendFlix app shell, which asks for your server's address and opens its TV mode. The player follows in a later release, after the probe. Both are installed from a PC with an install script (the TV in developer mode, signed with the owner's Samsung certificate); they do not update themselves. Setup and how to read the probe: [docs/tizen.md](docs/tizen.md).
+
 ## [2.3.0] – Brezel – 2026-10-22
 
 ### Windows app

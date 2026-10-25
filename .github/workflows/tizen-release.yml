@@ -1,0 +1,123 @@
+# SPDX-FileCopyrightText: 2026 Manuel Weißböck
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# The Samsung TV app for a release (spec §8): on a vX.Y.Z tag, package tizen/app and tizen/probe with the pinned Tizen CLI
+# (tizen/tizen-cli.lock, SHA-256 checked), signed with the owner's Samsung certificates, and attach
+# FriendFlix-<version>.wgt, FriendFlix-probe-<version>.wgt and SHA256SUMS-tizen.txt to that tag's GitHub Release (created by
+# release.yml).
+# Called by CI for v* tags (push, or release.yml's dispatch), after its tests, e2e, the secret scan and tizen-check passed.
+# Not a dependency of publish or android-release. workflow_dispatch on a tag is the manual retry (e.g. after adding the
+# secrets, or after re-signing with a new TV's DUID); on anything but a v* tag the job does not run.
+# Signing: the Samsung author and distributor certificates live only in four repository secrets (docs/tizen.md, Owner steps):
+#   TIZEN_AUTHOR_P12            the author certificate (author.p12), base64
+#   TIZEN_AUTHOR_PASSWORD       its password
+#   TIZEN_DISTRIBUTOR_P12       the distributor certificate (distributor.p12, lists the TVs' DUIDs), base64
+#   TIZEN_DISTRIBUTOR_PASSWORD  its password
+# Without all four the job builds nothing and only leaves a notice (forks, a repo before the owner set them up). The p12
+# files are decoded to $RUNNER_TEMP (mode 600) and, with the CLI's security profile, deleted in an always() step. The
+# passwords only reach the profile step through its environment and are masked; nothing prints a secret.
+# The app's version is version.json's (stamped into config.xml by tizen/scripts/package.sh); the job refuses a tag that
+# does not match it.
+name: Samsung TV app release
+on:
+  workflow_call:
+    secrets:
+      TIZEN_AUTHOR_P12: { required: false }
+      TIZEN_AUTHOR_PASSWORD: { required: false }
+      TIZEN_DISTRIBUTOR_P12: { required: false }
+      TIZEN_DISTRIBUTOR_PASSWORD: { required: false }
+  workflow_dispatch:
+permissions: { contents: read }
+jobs:
+  tizen-release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: write # attach the files to the GitHub Release of this tag
+    env:
+      HAS_CERTS: ${{ secrets.TIZEN_AUTHOR_P12 != '' && secrets.TIZEN_AUTHOR_PASSWORD != '' && secrets.TIZEN_DISTRIBUTOR_P12 != '' && secrets.TIZEN_DISTRIBUTOR_PASSWORD != '' }}
+    steps:
+      - name: Certificates present?
+        if: env.HAS_CERTS != 'true'
+        run: echo "::notice title=Samsung TV app release skipped::The secrets TIZEN_AUTHOR_P12, TIZEN_AUTHOR_PASSWORD, TIZEN_DISTRIBUTOR_P12 and TIZEN_DISTRIBUTOR_PASSWORD are not all set, so no signed TV app is attached to $GITHUB_REF_NAME (docs/tizen.md, Owner steps)."
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        if: env.HAS_CERTS == 'true'
+        with: { persist-credentials: false }
+      - name: Tag matches version.json
+        if: env.HAS_CERTS == 'true'
+        id: version
+        run: |
+          set -euo pipefail
+          version=$(jq -er .version version.json)
+          if [ "v$version" != "$GITHUB_REF_NAME" ]; then
+            echo "::error::tag $GITHUB_REF_NAME does not match version.json ($version)"; exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+      # fails loudly when tizen/tizen-cli.lock holds no SHA-256 or the download does not match it
+      - name: Install the pinned Tizen CLI
+        if: env.HAS_CERTS == 'true'
+        run: bash tizen/scripts/install-cli.sh "$RUNNER_TEMP/tizen-studio"
+      - name: Security profile from the Samsung certificates
+        if: env.HAS_CERTS == 'true'
+        env:
+          AUTHOR_P12_B64: ${{ secrets.TIZEN_AUTHOR_P12 }}
+          DIST_P12_B64: ${{ secrets.TIZEN_DISTRIBUTOR_P12 }}
+          AUTHOR_PW: ${{ secrets.TIZEN_AUTHOR_PASSWORD }}
+          DIST_PW: ${{ secrets.TIZEN_DISTRIBUTOR_PASSWORD }}
+        run: |
+          set -euo pipefail
+          echo "::add-mask::$AUTHOR_PW"
+          echo "::add-mask::$DIST_PW"
+          umask 077
+          certs="$RUNNER_TEMP/tizen-certs"
+          mkdir -p "$certs"
+          printf '%s' "$AUTHOR_P12_B64" | base64 --decode > "$certs/author.p12"
+          printf '%s' "$DIST_P12_B64" | base64 --decode > "$certs/distributor.p12"
+          # runs `tizen security-profiles add -n friendflix -a author.p12 -p "$AUTHOR_PW" -d distributor.p12 -dp "$DIST_PW"`
+          # (passwords from this step's environment) and stores them where a runner without a keyring can read them
+          bash tizen/scripts/add-profile.sh friendflix "$certs/author.p12" "$certs/distributor.p12"
+      - name: Package and sign app + probe
+        if: env.HAS_CERTS == 'true'
+        run: |
+          set -euo pipefail
+          dist="$RUNNER_TEMP/dist"
+          bash tizen/scripts/package.sh app "$dist" --sign
+          bash tizen/scripts/package.sh probe "$dist" --sign
+          for f in "$dist"/*.wgt; do
+            listing=$(unzip -l "$f")
+            for need in config.xml index.html setup.js setup-core.js icon.png author-signature.xml signature1.xml; do
+              grep -q " $need\$" <<< "$listing" || { echo "::error::$need missing in $(basename "$f")"; exit 1; }
+            done
+          done
+      - name: Delete the certificates and the security profile
+        if: always()
+        run: |
+          rm -rf "$RUNNER_TEMP/tizen-certs"
+          if [ -n "${TIZEN_STUDIO_DATA:-}" ]; then rm -rf "$TIZEN_STUDIO_DATA/profile" "$TIZEN_STUDIO_DATA/keystore"; fi
+      - name: Checksums
+        if: env.HAS_CERTS == 'true'
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP/dist"
+          sha256sum -- *.wgt > SHA256SUMS-tizen.txt
+          cat SHA256SUMS-tizen.txt
+      # release.yml creates the GitHub Release right after pushing the tag; a run that started from that push may get here first
+      - name: Attach to the GitHub Release
+        if: env.HAS_CERTS == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          for _ in $(seq 1 30); do
+            gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1 && break
+            sleep 20
+          done
+          if ! gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "::error::no GitHub Release for $GITHUB_REF_NAME after 10 minutes; create it (release.yml resume), then re-run this workflow on the tag"; exit 1
+          fi
+          gh release upload "$GITHUB_REF_NAME" "$RUNNER_TEMP"/dist/* --repo "$GITHUB_REPOSITORY" --clobber
+          {
+            echo "### Samsung TV app $GITHUB_REF_NAME"
+            echo "Signed FriendFlix and FriendFlix Probe (.wgt) attached with SHA256SUMS-tizen.txt."
+            echo "Install with tizen/install.sh or tizen/install.ps1 (docs/tizen.md); a TV installs it only if its DUID is in the distributor certificate."
+          } >> "$GITHUB_STEP_SUMMARY"

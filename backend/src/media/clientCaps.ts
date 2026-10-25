@@ -3,13 +3,13 @@
 import { z } from 'zod';
 
 /**
- * Device capability block the Android or Windows app sends with POST /api/playback/info (`caps`). Everything in it is a claim by the client: it can only
+ * Device capability block the Android, Windows or Samsung TV (Tizen) app sends with POST /api/playback/info (`caps`). Everything in it is a claim by the client: it can only
  * widen what the device may direct-play or narrow it further; role caps (height, bitrate, download rights), kids rules and max_streams always
  * win. The lists REPLACE the server's browser defaults, so the app must send complete lists, including mp4 / h264 / aac if it plays them. Unknown values are dropped, oversized lists make the whole block invalid (null), and an invalid block behaves exactly like no block.
  */
 export interface ClientVideoCap { codec: string; maxHeight?: number; profiles?: string[] }
 export interface ClientCaps {
-  client: 'android' | 'windows';
+  client: 'android' | 'windows' | 'tizen';
   /** strict x.y.z */
   appVersion: string;
   containers: string[];
@@ -42,12 +42,12 @@ function allowed(raw: unknown[], allow: ReadonlySet<string>): string[] {
 const videoEntry = z.object({ codec: z.unknown(), maxHeight: z.unknown().optional(), profiles: z.unknown().optional() });
 
 const shape = z.object({
-  client: z.enum(['android', 'windows']),
+  client: z.enum(['android', 'windows', 'tizen']),
   appVersion: z.string().max(32).regex(SEMVER),
   containers: list, video: list, audio: list, subtitles: list,
 });
 
-/** Validates the capability block; null when absent, not an Android or Windows block, malformed or oversized, or when nothing valid is left in it. */
+/** Validates the capability block; null when absent, not an app block, malformed or oversized, or when nothing valid is left in it. */
 export function parseClientCaps(body: unknown): ClientCaps | null {
   const r = shape.safeParse(body);
   if (!r.success) return null;

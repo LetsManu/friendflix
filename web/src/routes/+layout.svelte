@@ -46,6 +46,9 @@
   import HealthBanner from '#lib/admin/HealthBanner.svelte';
   import { startBanner } from '#lib/admin/banner';
   import { saveLanguage } from '#lib/stores';
+  import ProbeOverlay from '#lib/tizen/ProbeOverlay.svelte';
+  import { isTizenApp } from '#lib/tizen/detect';
+  import { installNavLock } from '#lib/tizen/navlock';
   import { PLAY_ART_NAME, playTransition, takePlayArt } from '#lib/player/transition';
 
   let me: Me | null = null;
@@ -348,6 +351,7 @@
     const unwarm = () => evs.forEach((t) => document.removeEventListener(t, warm));
     evs.forEach((t) => document.addEventListener(t, warm, { passive: true }));
     stops.push(unwarm);
+    if (isTizenApp()) stops.push(installNavLock()); // the TV app never leaves for a foreign site (lib/tizen/navlock.ts)
     const flag = new URLSearchParams(location.search).get('tv');
     if (flag === '1') sessionStorage.setItem('ff_tv', '1'); else if (flag === '0') sessionStorage.removeItem('ff_tv');
     online = navigator.onLine;
@@ -602,6 +606,8 @@
 {:else}
   <main id="main" class="boot"><span class="logo"><Logo wordmark size={44} /></span><div class="spin" aria-label={$t('shell.booting')} role="status"></div></main>
 {/if}
+<!-- Samsung TV app: the phase-0 probe screen (only with probe=1 inside the app; a strip on the pairing page, full screen after pairing) -->
+<ProbeOverlay compact={path === '/tv'} />
 <!-- app-wide toasts + confirm dialog (lib/ui) + the in-app re-authentication (lib/account/reauth.ts); mounted once, outside the page so they survive navigation -->
 <ToastHost />
 <ConfirmHost />
