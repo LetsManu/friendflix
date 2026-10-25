@@ -26,10 +26,22 @@ export const APPS = [
 
 const attr = (tag, name) => new RegExp(`\\b${name}="([^"]*)"`).exec(tag)?.[1];
 
+/** the text without XML comments; repeated until stable, so a comment hidden inside another can't survive */
+export function stripComments(xml) {
+  let out = xml, prev;
+  do { prev = out; out = out.replace(/<!--[\s\S]*?-->/g, ''); } while (out !== prev);
+  return out;
+}
+
+/** the privilege names a config.xml declares (comments ignored) */
+export function privilegesOf(xml) {
+  return new Set([...stripComments(xml).matchAll(/<tizen:privilege\s+name="([^"]*)"\s*\/>/g)].map((m) => m[1]));
+}
+
 /** problems found in one config.xml text (empty = fine) */
 export function checkConfig(xml, app) {
   const problems = [];
-  const body = xml.replace(/<!--[\s\S]*?-->/g, '');
+  const body = stripComments(xml);
   const application = /<tizen:application\b[^>]*>/.exec(body)?.[0];
   if (!application) problems.push('missing <tizen:application>');
   else {
@@ -47,11 +59,9 @@ export function checkConfig(xml, app) {
   if (!/<content\s+src="index\.html"\s*\/>/.test(body)) problems.push('<content src="index.html"/> missing');
   if (!/<icon\s+src="icon\.png"\s*\/>/.test(body)) problems.push('<icon src="icon.png"/> missing');
   const allowed = app.privileges ?? PRIVILEGES;
-  for (const p of allowed) if (!body.includes(`<tizen:privilege name="${p}"/>`)) problems.push(`privilege missing: ${p}`);
-  for (const p of body.match(/<tizen:privilege\s+name="[^"]*"/g) ?? []) {
-    const name = /name="([^"]*)"/.exec(p)?.[1];
-    if (!allowed.includes(name)) problems.push(`unexpected privilege: ${name}`);
-  }
+  const declared = privilegesOf(body);
+  for (const p of allowed) if (!declared.has(p)) problems.push(`privilege missing: ${p}`);
+  for (const name of declared) if (!allowed.includes(name)) problems.push(`unexpected privilege: ${name}`);
   const setting = /<tizen:setting\b[^>]*>/.exec(body)?.[0] ?? '';
   const want = { 'screen-orientation': 'landscape', 'context-menu': 'disable', 'background-support': 'disable', encryption: 'disable', 'install-location': 'auto', 'hwkey-event': 'enable' };
   for (const [k, v] of Object.entries(want)) if (attr(setting, k) !== v) problems.push(`tizen:setting ${k} must be "${v}"`);

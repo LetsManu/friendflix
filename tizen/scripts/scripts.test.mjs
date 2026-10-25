@@ -86,6 +86,8 @@ after(() => {
 let hasPwsh = false;
 try { execFileSync('pwsh', ['-NoProfile', '-Command', 'exit 0'], { stdio: 'ignore' }); hasPwsh = true; } catch { /* not installed */ }
 
+const escapeRx = (text) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
 const DEVICE = '192.0.2.10:26101\tdevice\t\tQE55Q80BAT';
 
 function run(cmd, args, env = {}) {
@@ -185,7 +187,7 @@ test('package.sh: builds a copy with setup-core.js (and setup.js for the probe),
   assert.ok(!existsSync(join(out, 'Whatever.wgt')));
   const listing = readFileSync(join(work, 'seen-app.txt'), 'utf8').split('\n');
   for (const f of ['config.xml', 'index.html', 'setup.js', 'setup-core.js', 'setup.css', 'icon.png']) assert.ok(listing.includes(f), f);
-  assert.match(readFileSync(join(work, 'seen-app.xml'), 'utf8'), new RegExp(`<widget [^>]*version="${version.replace(/\./g, '\\.')}"`));
+  assert.match(readFileSync(join(work, 'seen-app.xml'), 'utf8'), new RegExp(`<widget [^>]*version="${escapeRx(version)}"`));
 
   const pout = join(work, 'out-probe');
   r = await packageSh(['probe', pout, '--sign']);
