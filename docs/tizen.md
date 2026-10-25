@@ -2,13 +2,13 @@
 
 **English** · [Deutsch](de/tizen.md)
 
-The Samsung TV app is FriendFlix as an app on a Samsung smart TV (Tizen 6.5 or newer, roughly 2021 models and later): a thin shell that asks for your server's address once and then opens the [TV mode](tv-mode.md) of your server, full screen. Everything you see is the web UI, so it always matches your server's version.
+The Samsung TV app is FriendFlix as an app on a Samsung smart TV (Tizen 6.5 or newer, that is 2022 models and later): a thin shell that asks for your server's address once and then opens the [TV mode](tv-mode.md) of your server, full screen. Everything you see is the web UI, so it always matches your server's version.
 
 **Where this version stands.** This first release is the **probe build** plus the app shell. The probe is a small test app that finds out whether the TV's own video player (AVPlay) can play FriendFlix streams. The player itself, with the remote's keys and the capability list for AVPlay, comes in a following release, after the probe result is in. Until then the probe is what you can try. The Samsung app store is out of scope: the app is installed from your PC onto TVs you name.
 
 **How it works, in short.** Samsung only lets a TV run apps that are signed with a certificate listing that TV's ID (its DUID). So the owner makes a Samsung certificate once, puts it into four GitHub secrets, and every release gets signed `.wgt` files. Then someone runs the install script on a PC in the same network as the TV. The app does **not** update itself: after a new release, run the install script again.
 
-**Requirements:** a Samsung TV of the 2021 model year or newer (Tizen 6.5+); a Windows, macOS or Linux PC in the same network as the TV; a FriendFlix server reachable over HTTPS with a certificate from a public CA, on the release that ships the Samsung TV app (see the [changelog](../CHANGELOG.md)) or newer; the TV paired for TV mode ([tv-mode.md](tv-mode.md)).
+**Requirements:** a Samsung TV of the 2022 model year or newer (Tizen 6.5+; 2021 models run Tizen 6.0 and are not supported); a Windows, macOS or Linux PC in the same network as the TV; a FriendFlix server reachable over HTTPS with a certificate from a public CA, on the release that ships the Samsung TV app (see the [changelog](../CHANGELOG.md)) or newer; the TV paired for TV mode ([tv-mode.md](tv-mode.md)).
 
 ## Contents
 
@@ -68,7 +68,7 @@ In Tizen Studio open **Tools → Certificate Manager** and create a certificate 
 3. For the **distributor certificate** choose *Public* privilege level, and add the **DUID** of every TV that should run the app (the DUID from above; more can follow, see [Friends' TVs](#friends-tvs)).
 4. Finish. Tizen Studio writes the two files `author.p12` and `distributor.p12` into its data folder (typically `~/SamsungCertificate/<profile name>/` or `C:\Users\<you>\SamsungCertificate\<profile name>\`).
 
-**Password limits.** The release signs through the Tizen command-line tool, which cannot take every character. Each of the two certificate passwords must be printable ASCII (letters, digits and the usual symbols), **without** `'` (single quote), `*`, `?`, `[`, and without a leading, trailing or double space. The release job stops with a clear message when a password does not fit. Use a fresh, long, random password with letters and digits to be safe, and change the certificate's password in Certificate Manager if needed.
+**Password limits.** The release signs through the Tizen command-line tool, which cannot take every character. Each of the two certificate passwords must be printable ASCII (letters, digits and the usual symbols), **without** `'` (single quote), `*`, `?`, `[`, and without a leading, trailing or double space. The release job stops with a clear message when a password does not fit. Create the certificates with a fitting password from the start: a long random one with letters and digits. Certificate Manager may not let you change the password of an existing p12, in which case you create the certificate again.
 
 **OpenSSL 3.** If you re-export or convert a p12 file yourself with OpenSSL 3, add `-legacy` (`openssl pkcs12 -legacy ...`); otherwise the Tizen tool (which uses an older Java) cannot read the file.
 
@@ -97,15 +97,15 @@ gh secret set TIZEN_DISTRIBUTOR_PASSWORD
 **Windows (PowerShell):**
 
 ```powershell
-[Convert]::ToBase64String([IO.File]::ReadAllBytes("author.p12")) | gh secret set TIZEN_AUTHOR_P12
-[Convert]::ToBase64String([IO.File]::ReadAllBytes("distributor.p12")) | gh secret set TIZEN_DISTRIBUTOR_P12
+gh secret set TIZEN_AUTHOR_P12 --body ([Convert]::ToBase64String([IO.File]::ReadAllBytes('author.p12')))
+gh secret set TIZEN_DISTRIBUTOR_P12 --body ([Convert]::ToBase64String([IO.File]::ReadAllBytes('distributor.p12')))
 gh secret set TIZEN_AUTHOR_PASSWORD
 gh secret set TIZEN_DISTRIBUTOR_PASSWORD
 ```
 
-`gh secret set NAME` without input asks for the value. Without `gh` copy the base64 text into the web form.
+`gh secret set NAME` without input asks for the value. `gh` needs `gh auth login` once and must run inside your clone of the repository (or add `--repo LetsManu/friendflix`). Without `gh` copy the base64 text into the web form.
 
-**Keep the p12 files and passwords** in your password manager as well, and never commit them. Whoever holds both can sign apps for the TVs listed in the distributor certificate.
+**Keep the p12 files and passwords** in your password manager as well, and never commit them. Never paste a p12 file or a password into a chat, an issue or a file in the repository. Whoever holds both can sign apps for the TVs listed in the distributor certificate.
 
 **All four are needed.** The release workflow `tizen-release` runs on every `vX.Y.Z` tag; when one of the four secrets is missing it only writes a notice (*Samsung TV app release skipped*) and attaches nothing, and the rest of the release is not affected. To sign a release that already exists (for example after adding the secrets), run the workflow *Samsung TV app release* by hand (*Actions → Run workflow*) and choose the tag.
 
@@ -115,7 +115,7 @@ The files on the release are `FriendFlix-<version>.wgt`, `FriendFlix-probe-<vers
 
 A TV runs the app only if its DUID is in the distributor certificate that signed the `.wgt`. To add a friend's TV:
 
-1. Put the TV in developer mode with your PC's IP as Host PC IP, and read its DUID (see above); or ask the friend to read it with the Device Manager.
+1. Install needs a PC on the friend's network: the TV's developer mode points to that PC's IP. Put the TV in developer mode with that PC's IP as Host PC IP, and read its DUID (see above); or ask the friend to read it with the Device Manager.
 2. In Tizen Studio's **Certificate Manager** open your certificate profile, add the DUID to the distributor certificate and finish (it creates a new `distributor.p12`).
 3. Update the GitHub secrets `TIZEN_DISTRIBUTOR_P12` (and the password, if you changed it).
 4. Cut the next release, or re-run *Samsung TV app release* on the latest tag. Then install from that release.
@@ -167,7 +167,7 @@ On the first start the app asks for your server's address, for example `friend.e
 
 The probe decides how the player is built, so please run it on the TV you want to use.
 
-1. [Install the probe](#install-on-the-tv) (`--probe` / `-Probe`) and open **FriendFlix Probe** from the TV's Apps.
+1. [Install the probe](#install-on-the-tv) (`--probe` / `-Probe`) and open **FriendFlix Probe** from the TV's Apps. The first start shows the same server-address form: enter your server's address ([First start](#first-start-the-server-address)).
 2. **Pair the TV for TV mode first**, if it is not yet (the probe starts the pairing page; [tv-mode.md](tv-mode.md)). The play check needs a paired TV, because it plays a title from your library with the TV's own session. On the pairing page the probe shows as a small strip at the bottom; after pairing it starts again full screen.
 3. The screen says **Testing playback...** (the TV tries to play the first *Continue watching* title, else your newest film or episode, for up to 15 seconds), then **Press ⏯ now**. Press the play/pause key on the remote within 20 seconds.
 4. The screen shows **one line**. **Send the whole line to the project owner** (read it out or take a photo of the screen). **Back** closes the screen.
@@ -184,7 +184,9 @@ FFPROBE v1 avplay=ok play=ok:2310ms keys=ok app=ok tizen=6.5 model=QE55Q80B
 | `play` | `ok:<ms>ms` | AVPlay started a FriendFlix stream and reached *playing* after that many milliseconds. |
 | | `error:unpaired` | The TV is not paired for TV mode, so there was nothing to play. Pair it and run again. |
 | | `error:info` | The stream lookup failed (no title, server answered with an error, offline). |
-| | `error:open` | AVPlay refused the stream address. |
+| | `error:open` | AVPlay refused the stream address (an exception without an error name). |
+| | `error:play` | AVPlay was prepared, but starting playback raised an exception without a name. |
+| | `error:prepare` | Preparing the stream failed without an error name. |
 | | `error:timeout` | No playback within 15 seconds. |
 | | `error:<code>` | AVPlay's own error name (for example `PLAYER_ERROR_INVALID_OPERATION`); `unknown` when none came. |
 | | `skipped` | Not tried, because `avplay=missing`. |

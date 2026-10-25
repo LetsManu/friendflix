@@ -2,13 +2,13 @@
 
 [English](../tizen.md) · **Deutsch**
 
-Die Samsung-TV-App ist FriendFlix als App auf einem Samsung-Smart-TV (Tizen 6.5 oder neuer, etwa Modelle ab 2021): eine schlanke Hülle, die einmal nach der Adresse deines Servers fragt und dann den [TV-Modus](../tv-mode.md) deines Servers im Vollbild öffnet. Alles, was du siehst, ist die Weboberfläche, sie passt also immer zur Version deines Servers.
+Die Samsung-TV-App ist FriendFlix als App auf einem Samsung-Smart-TV (Tizen 6.5 oder neuer, das heißt Modelle ab 2022): eine schlanke Hülle, die einmal nach der Adresse deines Servers fragt und dann den [TV-Modus](../tv-mode.md) deines Servers im Vollbild öffnet. Alles, was du siehst, ist die Weboberfläche, sie passt also immer zur Version deines Servers.
 
 **Stand dieser Version.** Dieser erste Release ist der **Probe-Build** plus die App-Hülle. Die Probe ist eine kleine Test-App, die herausfindet, ob der eigene Videoplayer des Fernsehers (AVPlay) FriendFlix-Streams abspielen kann. Der Player selbst, mit den Fernbedienungstasten und der Fähigkeitenliste für AVPlay, kommt in einem folgenden Release, wenn das Probe-Ergebnis vorliegt. Bis dahin kannst du die Probe ausprobieren. Der Samsung-App-Store ist nicht vorgesehen: Die App wird von deinem PC aus auf Fernseher installiert, die du auswählst.
 
 **So funktioniert es, kurz.** Samsung lässt auf einem Fernseher nur Apps laufen, die mit einem Zertifikat signiert sind, das die Kennung dieses Fernsehers (seine DUID) enthält. Der Betreiber erstellt deshalb einmal ein Samsung-Zertifikat, legt es in vier GitHub-Secrets, und jeder Release bekommt signierte `.wgt`-Dateien. Danach führt jemand das Installationsskript auf einem PC im selben Netzwerk wie der Fernseher aus. Die App aktualisiert sich **nicht** selbst: Nach einem neuen Release führst du das Installationsskript erneut aus.
 
-**Voraussetzungen:** ein Samsung-Fernseher ab Modelljahr 2021 (Tizen 6.5+); ein Windows-, macOS- oder Linux-PC im selben Netzwerk wie der Fernseher; ein FriendFlix-Server, der per HTTPS mit einem Zertifikat einer öffentlichen CA erreichbar ist, in der Version, die die Samsung-TV-App ausliefert (siehe [Änderungsprotokoll](../../CHANGELOG.md)) oder neuer; der Fernseher für den TV-Modus gekoppelt ([tv-mode.md](../tv-mode.md)).
+**Voraussetzungen:** ein Samsung-Fernseher ab Modelljahr 2022 (Tizen 6.5+; Modelle von 2021 laufen mit Tizen 6.0 und werden nicht unterstützt); ein Windows-, macOS- oder Linux-PC im selben Netzwerk wie der Fernseher; ein FriendFlix-Server, der per HTTPS mit einem Zertifikat einer öffentlichen CA erreichbar ist, in der Version, die die Samsung-TV-App ausliefert (siehe [Änderungsprotokoll](../../CHANGELOG.md)) oder neuer; der Fernseher für den TV-Modus gekoppelt ([tv-mode.md](../tv-mode.md)).
 
 Die Oberflächen des Fernsehers und von Tizen Studio stehen hier mit ihren üblichen deutschen oder englischen Beschriftungen; die App selbst und die Probe sind englisch.
 
@@ -70,7 +70,7 @@ Die DUID kennzeichnet den Fernseher. Zwei Wege:
 3. Wähle für das **Distributor-Zertifikat** die Berechtigungsstufe *Public* und füge die **DUID** jedes Fernsehers hinzu, auf dem die App laufen soll (die DUID von oben; weitere können folgen, siehe [Fernseher von Freunden](#fernseher-von-freunden)).
 4. Schließe ab. Tizen Studio schreibt die beiden Dateien `author.p12` und `distributor.p12` in seinen Datenordner (typisch `~/SamsungCertificate/<Profilname>/` oder `C:\Users\<du>\SamsungCertificate\<Profilname>\`).
 
-**Passwort-Grenzen.** Der Release signiert über das Tizen-Kommandozeilenwerkzeug, das nicht jedes Zeichen verträgt. Beide Zertifikatspasswörter müssen aus druckbarem ASCII bestehen (Buchstaben, Ziffern und die üblichen Sonderzeichen), **ohne** `'` (einfaches Anführungszeichen), `*`, `?`, `[` und ohne Leerzeichen am Anfang, am Ende oder zwei hintereinander. Der Release-Job bricht mit einer klaren Meldung ab, wenn ein Passwort nicht passt. Nimm zur Sicherheit ein neues, langes, zufälliges Passwort aus Buchstaben und Ziffern und ändere das Passwort des Zertifikats bei Bedarf im Certificate Manager.
+**Passwort-Grenzen.** Der Release signiert über das Tizen-Kommandozeilenwerkzeug, das nicht jedes Zeichen verträgt. Beide Zertifikatspasswörter müssen aus druckbarem ASCII bestehen (Buchstaben, Ziffern und die üblichen Sonderzeichen), **ohne** `'` (einfaches Anführungszeichen), `*`, `?`, `[` und ohne Leerzeichen am Anfang, am Ende oder zwei hintereinander. Der Release-Job bricht mit einer klaren Meldung ab, wenn ein Passwort nicht passt. Erstelle die Zertifikate gleich mit einem passenden Passwort: einem langen, zufälligen aus Buchstaben und Ziffern. Der Certificate Manager erlaubt es womöglich nicht, das Passwort einer bestehenden p12 zu ändern; dann erstellst du das Zertifikat neu.
 
 **OpenSSL 3.** Exportierst oder konvertierst du eine p12-Datei selbst mit OpenSSL 3, hänge `-legacy` an (`openssl pkcs12 -legacy ...`); sonst kann das Tizen-Werkzeug (mit älterem Java) die Datei nicht lesen.
 
@@ -99,15 +99,15 @@ gh secret set TIZEN_DISTRIBUTOR_PASSWORD
 **Windows (PowerShell):**
 
 ```powershell
-[Convert]::ToBase64String([IO.File]::ReadAllBytes("author.p12")) | gh secret set TIZEN_AUTHOR_P12
-[Convert]::ToBase64String([IO.File]::ReadAllBytes("distributor.p12")) | gh secret set TIZEN_DISTRIBUTOR_P12
+gh secret set TIZEN_AUTHOR_P12 --body ([Convert]::ToBase64String([IO.File]::ReadAllBytes('author.p12')))
+gh secret set TIZEN_DISTRIBUTOR_P12 --body ([Convert]::ToBase64String([IO.File]::ReadAllBytes('distributor.p12')))
 gh secret set TIZEN_AUTHOR_PASSWORD
 gh secret set TIZEN_DISTRIBUTOR_PASSWORD
 ```
 
-`gh secret set NAME` ohne Eingabe fragt nach dem Wert. Ohne `gh` kopierst du den Base64-Text ins Webformular.
+`gh secret set NAME` ohne Eingabe fragt nach dem Wert. `gh` braucht einmal `gh auth login` und muss in deinem Klon des Repositorys laufen (oder mit `--repo LetsManu/friendflix`). Ohne `gh` kopierst du den Base64-Text ins Webformular.
 
-**Bewahre die p12-Dateien und Passwörter** zusätzlich in deinem Passwortmanager auf und committe sie nie. Wer beides hat, kann Apps für die im Distributor-Zertifikat eingetragenen Fernseher signieren.
+**Bewahre die p12-Dateien und Passwörter** zusätzlich in deinem Passwortmanager auf und committe sie nie. Füge nie eine p12-Datei oder ein Passwort in einen Chat, ein Issue oder eine Datei im Repository ein. Wer beides hat, kann Apps für die im Distributor-Zertifikat eingetragenen Fernseher signieren.
 
 **Alle vier sind nötig.** Der Release-Workflow `tizen-release` läuft bei jedem `vX.Y.Z`-Tag; fehlt eines der vier Secrets, schreibt er nur einen Hinweis (*Samsung TV app release skipped*) und hängt nichts an; der übrige Release bleibt unberührt. Um einen bestehenden Release nachträglich zu signieren (zum Beispiel nach dem Anlegen der Secrets), starte den Workflow *Samsung TV app release* von Hand (*Actions → Run workflow*) und wähle den Tag.
 
@@ -117,7 +117,7 @@ Die Dateien am Release sind `FriendFlix-<Version>.wgt`, `FriendFlix-probe-<Versi
 
 Ein Fernseher führt die App nur aus, wenn seine DUID in dem Distributor-Zertifikat steht, das die `.wgt` signiert hat. So fügst du den Fernseher eines Freundes hinzu:
 
-1. Versetze den Fernseher in den Entwicklermodus mit der IP deines PCs als Host-PC-IP und lies seine DUID (siehe oben), oder bitte den Freund, sie mit dem Device Manager zu lesen.
+1. Zum Installieren brauchst du einen PC im Netzwerk des Freundes: Der Entwicklermodus des Fernsehers zeigt auf die IP dieses PCs. Versetze den Fernseher in den Entwicklermodus mit der IP dieses PCs als Host-PC-IP und lies seine DUID (siehe oben), oder bitte den Freund, sie mit dem Device Manager zu lesen.
 2. Öffne im **Certificate Manager** von Tizen Studio dein Zertifikatsprofil, füge die DUID dem Distributor-Zertifikat hinzu und schließe ab (es entsteht eine neue `distributor.p12`).
 3. Aktualisiere das GitHub-Secret `TIZEN_DISTRIBUTOR_P12` (und das Passwort, falls du es geändert hast).
 4. Erstelle den nächsten Release oder starte *Samsung TV app release* erneut auf dem neuesten Tag. Installiere dann aus diesem Release.
@@ -169,7 +169,7 @@ Beim ersten Start fragt die App nach der Adresse deines Servers, zum Beispiel `f
 
 Die Probe entscheidet, wie der Player gebaut wird; führe sie bitte auf dem Fernseher aus, den du nutzen willst.
 
-1. [Installiere die Probe](#auf-dem-fernseher-installieren) (`--probe` / `-Probe`) und öffne **FriendFlix Probe** unter Apps am Fernseher.
+1. [Installiere die Probe](#auf-dem-fernseher-installieren) (`--probe` / `-Probe`) und öffne **FriendFlix Probe** unter Apps am Fernseher. Der erste Start zeigt dasselbe Formular für die Serveradresse: gib die Adresse deines Servers ein ([Erster Start](#erster-start-die-serveradresse)).
 2. **Koppele den Fernseher zuerst für den TV-Modus**, falls noch nicht geschehen (die Probe startet die Kopplungsseite; [tv-mode.md](../tv-mode.md)). Der Abspieltest braucht einen gekoppelten Fernseher, weil er einen Titel aus deiner Bibliothek mit der Sitzung des Fernsehers abspielt. Auf der Kopplungsseite erscheint die Probe als kleiner Streifen unten; nach dem Koppeln startet sie erneut im Vollbild.
 3. Der Bildschirm zeigt **Testing playback…** (der Fernseher versucht bis zu 15 Sekunden lang, den ersten Titel aus *Weiterschauen* abzuspielen, sonst deinen neuesten Film oder deine neueste Folge), dann **Press ⏯ now**. Drücke innerhalb von 20 Sekunden die Wiedergabe/Pause-Taste der Fernbedienung.
 4. Der Bildschirm zeigt **eine Zeile**. **Schicke die ganze Zeile an den Betreiber des Projekts** (vorlesen oder den Bildschirm fotografieren). **Zurück** schließt den Bildschirm.
@@ -186,7 +186,9 @@ FFPROBE v1 avplay=ok play=ok:2310ms keys=ok app=ok tizen=6.5 model=QE55Q80B
 | `play` | `ok:<ms>ms` | AVPlay hat einen FriendFlix-Stream gestartet und nach so vielen Millisekunden die Wiedergabe erreicht. |
 | | `error:unpaired` | Der Fernseher ist nicht für den TV-Modus gekoppelt, es gab also nichts abzuspielen. Koppeln und erneut ausführen. |
 | | `error:info` | Die Stream-Abfrage ist fehlgeschlagen (kein Titel, Fehlerantwort des Servers, offline). |
-| | `error:open` | AVPlay hat die Stream-Adresse abgelehnt. |
+| | `error:open` | AVPlay hat die Stream-Adresse abgelehnt (eine Ausnahme ohne Fehlernamen). |
+| | `error:play` | AVPlay war vorbereitet, aber das Starten der Wiedergabe löste eine Ausnahme ohne Namen aus. |
+| | `error:prepare` | Das Vorbereiten des Streams schlug ohne Fehlernamen fehl. |
 | | `error:timeout` | Keine Wiedergabe innerhalb von 15 Sekunden. |
 | | `error:<code>` | Der eigene Fehlername von AVPlay (zum Beispiel `PLAYER_ERROR_INVALID_OPERATION`); `unknown`, wenn keiner kam. |
 | | `skipped` | Nicht versucht, weil `avplay=missing`. |
