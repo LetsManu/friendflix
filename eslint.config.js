@@ -33,4 +33,9 @@ export default tseslint.config(
       },
     },
   },
+  {
+    // the Tizen shells' page scripts: classic scripts (file:// pages load no modules)
+    files: ['tizen/app/setup.js', 'tizen/shared/setup-core.js'],
+    languageOptions: { sourceType: 'script' },
+  },
 );

@@ -2,7 +2,12 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { normaliseServer, checkVersionAnswer, watchUrl } from './setup-core.js';
+import { readFileSync } from 'node:fs';
+
+// setup-core.js is a classic script that fills window.FFSetupCore; evaluate it here with a stand-in window
+const win = {};
+new Function('window', 'URL', readFileSync(new URL('./setup-core.js', import.meta.url), 'utf8'))(win, URL);
+const { normaliseServer, checkVersionAnswer, watchUrl } = win.FFSetupCore;
 
 test('normalise_addresses', () => {
   assert.deepEqual(normaliseServer('  Friend.Example.com/ '), { ok: true, origin: 'https://friend.example.com' });

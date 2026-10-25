@@ -1,9 +1,15 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // The server setup page of the Tizen shells (app and probe; the probe gets a build-time copy of this file, setup.css and
-// setup-core.js, see Task 4). A stored server is opened at once; otherwise a TV-sized form asks for the address and checks it
+// setup-core.js, see Task 4); setup-core.js is loaded before it, both as plain scripts. A stored server is opened at once; otherwise a TV-sized form asks for the address and checks it
 // with GET /api/version before storing it.
-import { normaliseServer, checkVersionAnswer, watchUrl } from './setup-core.js';
+(function () {
+'use strict';
+// classic script (no module loading from file://); setup-core.js is loaded before it and sets window.FFSetupCore
+var core = window.FFSetupCore;
+var normaliseServer = core.normaliseServer;
+var checkVersionAnswer = core.checkVersionAnswer;
+var watchUrl = core.watchUrl;
 
 const SERVER_KEY = 'ff.server';
 const AUTH_KEY = 'ff.authOrigin';
@@ -111,6 +117,8 @@ document.addEventListener('keydown', (e) => {
     return;
   }
   if (e.keyCode === RETURN_KEY_CODE) {
+    // Return closes the TV keyboard first (blur); with the focus elsewhere it leaves the app
+    if (document.activeElement === input) { input.blur(); button.focus(); e.preventDefault(); return; }
     try { window.tizen.application.getCurrentApplication().exit(); } catch { /* not on a TV */ }
     return;
   }
@@ -133,3 +141,4 @@ const params = new URLSearchParams(window.location.search);
 const stored = normaliseServer(store.get(SERVER_KEY));
 if (stored.ok && params.get('change') !== '1') showOpening(stored.origin);
 else showForm(stored.ok ? stored.origin : '');
+})();
