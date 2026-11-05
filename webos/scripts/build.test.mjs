@@ -1,8 +1,8 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { test } from 'node:test';
+import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { chmodSync, existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdtempSync, rmSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -13,7 +13,9 @@ import { ipkName, stage } from '../build.mjs';
 const root = fileURLToPath(new URL('../..', import.meta.url));
 const buildScript = join(root, 'webos/build.mjs');
 const version = JSON.parse(readFileSync(join(root, 'version.json'), 'utf8')).version;
-const tmp = () => mkdtempSync(join(tmpdir(), 'ff-webos-build-'));
+const made = [];
+const tmp = () => { const d = mkdtempSync(join(tmpdir(), 'ff-webos-build-')); made.push(d); return d; };
+after(() => { for (const d of made) rmSync(d, { recursive: true, force: true }); });
 
 /** a directory holding a fake `ares-package` that writes the given file names into its -o directory */
 function fakeAres(ipks) {
@@ -68,4 +70,5 @@ test('CLI fails when ares-package writes two .ipk files', () => {
 test('CLI fails on an unknown package name', () => {
   const r = spawnSync(process.execPath, [buildScript, 'nope', tmp()], { encoding: 'utf8' });
   assert.equal(r.status, 1);
+  assert.match(r.stderr, /unknown package/);
 });

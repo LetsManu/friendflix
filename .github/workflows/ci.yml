@@ -218,20 +218,13 @@ jobs:
       - run: npm run test:webos
       - run: npm run test:tvshared
       - name: Install the pinned ares CLI
-        run: npm ci --prefix webos
+        run: npm ci --prefix webos --ignore-scripts --no-audit --no-fund
       - name: Build app and probe
         run: |
           set -euo pipefail
           node webos/build.mjs app "$RUNNER_TEMP/ipk"
           node webos/build.mjs probe "$RUNNER_TEMP/ipk"
-          for f in "$RUNNER_TEMP"/ipk/*.ipk; do
-            work=$(mktemp -d)
-            (cd "$work" && ar x "$f")
-            listing=$(tar tzf "$work/data.tar.gz")
-            echo "$(basename "$f")"; echo "$listing"
-            for need in appinfo.json index.html setup.js setup-core.js icon.png; do
-              grep -q "/$need\$" <<< "$listing" || { echo "::error::$need missing in $(basename "$f")"; exit 1; }
-            done
+          bash webos/scripts/check-ipk.sh "$RUNNER_TEMP/ipk"
           done
   # The Windows app's platform-independent core (origin policy, bridge protocol); the Tauri app itself is built elsewhere.
   desktop-core:
