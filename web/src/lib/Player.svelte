@@ -303,7 +303,7 @@
       video.src = info.directUrl!;
       video.addEventListener('loadedmetadata', seek, { once: true });
       // LG: an original the TV cannot decode may stay black without an error; no picture in time -> the converted stream, once
-      if (isLgApp() && !rec.forcedHls) cancelFirstFrame = watchFirstFrame(video, FIRST_FRAME_MS, () => { if (my === attachSeq && !rec.forcedHls && !error && !reconnecting && !handedOff && !remote && !airOn) forceHls(resumePos()); });
+      if (isLgApp() && !rec.forcedHls) cancelFirstFrame = watchFirstFrame(video, FIRST_FRAME_MS, () => { if (my === attachSeq && !rec.forcedHls && !error && !reconnecting && !handedOff && !remote && !airOn) forceHls(resumePos()); }, { running: wantAutoplay });
     } else if (H?.isSupported()) {
       const HC = H;
       hls = new HC(hlsConfig(startSec));

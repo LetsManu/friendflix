@@ -4,12 +4,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { FIRST_FRAME_MS, watchFirstFrame as watch } from './firstframe';
 
 type Fake = ReturnType<typeof fakeVideo>;
-const watchFirstFrame = (v: Fake, ms: number, cb: () => void) => watch(v as unknown as Parameters<typeof watch>[0], ms, cb);
+const watchFirstFrame = (v: Fake, ms: number, cb: () => void, opts?: { running: boolean }) => watch(v as unknown as Parameters<typeof watch>[0], ms, cb, opts);
 
 function fakeVideo() {
   const l = new Map<string, Set<() => void>>();
   const v = {
-    paused: false,
+    paused: true,
     addEventListener: (t: string, f: () => void) => { (l.get(t) ?? l.set(t, new Set()).get(t)!).add(f); },
     removeEventListener: (t: string, f: () => void) => { l.get(t)?.delete(f); },
     emit: (t: string) => [...(l.get(t) ?? [])].forEach((f) => f()),
@@ -61,15 +61,33 @@ describe('watchFirstFrame', () => {
     expect(v.count()).toBe(0);
   });
 
-  it('starts paused: no clock until play', () => {
+  it('armed with running:false waits for play', () => {
     const v = fakeVideo(), cb = vi.fn();
-    v.paused = true;
-    watchFirstFrame(v, FIRST_FRAME_MS, cb);
+    watchFirstFrame(v, FIRST_FRAME_MS, cb, { running: false });
     vi.advanceTimersByTime(60_000);
     expect(cb).not.toHaveBeenCalled();
-    v.paused = false; v.emit('play');
+    v.emit('play');
     vi.advanceTimersByTime(10_000);
     expect(cb).toHaveBeenCalledTimes(1);
+  });
+
+  it('armed on a paused element with running:true fires at 10 s without a play event', () => {
+    const v = fakeVideo(), cb = vi.fn();
+    expect(v.paused).toBe(true);
+    watchFirstFrame(v, FIRST_FRAME_MS, cb, { running: true });
+    vi.advanceTimersByTime(9_999);
+    expect(cb).not.toHaveBeenCalled();
+    vi.advanceTimersByTime(1);
+    expect(cb).toHaveBeenCalledTimes(1);
+  });
+
+  it('a pause event after arming holds the clock', () => {
+    const v = fakeVideo(), cb = vi.fn();
+    watchFirstFrame(v, FIRST_FRAME_MS, cb, { running: true });
+    vi.advanceTimersByTime(4_000);
+    v.emit('pause');
+    vi.advanceTimersByTime(60_000);
+    expect(cb).not.toHaveBeenCalled();
   });
 
   it('cancel before 10 s means no call', () => {
