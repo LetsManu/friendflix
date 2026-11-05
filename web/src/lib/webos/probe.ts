@@ -14,7 +14,8 @@
  * sends a progress report; the one stop report carries the title's resume point (lib/tvprobe/target.ts).
  *
  * The home check leaves the page: the result so far is stored in sessionStorage `ff.lgProbe`, goToAppHome() walks back to the
- * app's local start page, and that page opens the probe URL again with `&home=ok`, which restores the line. Everything the probe
+ * app's local start page, and that page opens the probe URL again with `&home=ok`, which restores the line. The hint is also read
+ * from sessionStorage `ff.lgProbeHome` (lib/webos/probehome.ts), because a paired TV's /tv page may redirect to / and drop it from the URL. Everything the probe
  * touches is injected through LgProbeDeps so the tests need no TV.
  */
 import { loadHls } from '#lib/player/hls';
@@ -22,6 +23,7 @@ import { fetchProbeTarget, type ProbeTarget } from '#lib/tvprobe/target';
 import { confirmedTypes, lgCaps, type MediaProbe } from './caps';
 import { isLgApp, webosVersion, type LgWin } from './detect';
 import { goToAppHome } from './home';
+import { HOME_HINT_KEY, rememberLgProbeHome } from './probehome';
 
 export const PLAY_TIMEOUT_MS = 15_000;
 export const KEY_TIMEOUT_MS = 20_000;
@@ -162,8 +164,15 @@ function store(deps: LgProbeDeps, r: LgProbeResult, stage: Stored['stage']): boo
 }
 const strip = ({ stage: _s, ...r }: Stored): LgProbeResult => r;
 
+function homeHint(deps: LgProbeDeps): string | null {
+  try { return deps.storage?.getItem(HOME_HINT_KEY) ?? null; } catch { return null; }
+}
+function clearHomeHint(deps: LgProbeDeps): void {
+  try { deps.storage?.removeItem(HOME_HINT_KEY); } catch { /* blocked */ }
+}
+
 export async function runLgProbe(deps: LgProbeDeps, onStage: (s: LgProbeStage, detail?: string) => void = () => undefined): Promise<LgProbeResult> {
-  const homeParam = new URLSearchParams(deps.search).get('home');
+  const homeParam = new URLSearchParams(deps.search).get('home') ?? homeHint(deps);
   const stored = readStored(deps);
   if (stored) {
     // back from the home check (home=ok), or the same page again after a reload (/tv sends a paired TV to /): never play again
@@ -171,7 +180,7 @@ export async function runLgProbe(deps: LgProbeDeps, onStage: (s: LgProbeStage, d
     if (homeParam === 'ok') home = 'ok';
     else if (stored.stage === 'home') home = 'fail'; // left, but landed on a server page instead of the start page
     const r = { ...strip(stored), home };
-    store(deps, r, 'done');
+    if (store(deps, r, 'done')) clearHomeHint(deps); // the stored result now carries home: the hint has done its job
     onStage('done');
     return r;
   }
@@ -215,6 +224,7 @@ export async function runLgProbe(deps: LgProbeDeps, onStage: (s: LgProbeStage, d
   if (homeParam !== null) {
     // the start page already sent us back here, but nothing was stored: the way home works, do not leave again
     r.home = homeParam === 'ok' ? 'ok' : 'skipped';
+    clearHomeHint(deps);
     onStage('done');
     return r;
   }
@@ -232,6 +242,7 @@ export async function runLgProbe(deps: LgProbeDeps, onStage: (s: LgProbeStage, d
 /** the overlay runs only inside the LG app and only with probe=1 (remembered for the session, so it survives the pairing redirect) */
 export function shouldLgProbe(win: LgWin = window): boolean {
   if (!isLgApp(win)) return false;
+  rememberLgProbeHome(win);
   try {
     if (new URLSearchParams(win.location?.search ?? '').get('probe') === '1') { win.sessionStorage?.setItem(PROBE_FLAG, '1'); return true; }
     return win.sessionStorage?.getItem(PROBE_FLAG) === '1';
@@ -239,7 +250,7 @@ export function shouldLgProbe(win: LgWin = window): boolean {
 }
 /** Back on the result: the probe and its stored result end for this session */
 export function endLgProbe(win: { sessionStorage?: Pick<Storage, 'removeItem'> } = window) {
-  try { win.sessionStorage?.removeItem(PROBE_FLAG); win.sessionStorage?.removeItem(RESULT_KEY); } catch { /* ignore */ }
+  try { win.sessionStorage?.removeItem(PROBE_FLAG); win.sessionStorage?.removeItem(RESULT_KEY); win.sessionStorage?.removeItem(HOME_HINT_KEY); } catch { /* ignore */ }
 }
 /** Back closes the probe for good, except from the compact strip on the pairing page while the TV is unpaired (the full-screen probe must still run after pairing) */
 export function shouldEndLgProbe(compact: boolean, line: string): boolean {

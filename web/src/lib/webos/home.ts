@@ -44,3 +44,19 @@ export function goToAppHome(win: HomeWin = window): boolean {
   win.history.go?.(steps);
   return true;
 }
+
+/** how long Change server waits for the page to go away before it shows the blue-key hint */
+export const HOME_LEAVE_MS = 1500;
+
+/**
+ * "Change server": back to the app's start page. When the way is unknown, or the page is still there after HOME_LEAVE_MS (Chromium
+ * keeps at most 50 history entries, so the start page may have been pruned and history.go() lands on a server page or nowhere),
+ * `onStuck` shows the blue-key hint.
+ */
+export function changeServerViaHome(onStuck: () => void, win: HomeWin & { addEventListener(type: 'pagehide', fn: () => void): void; removeEventListener(type: 'pagehide', fn: () => void): void } = window): void {
+  if (HOME_ROUTE !== 'history' || !goToAppHome(win)) { onStuck(); return; }
+  let left = false;
+  const hide = () => { left = true; };
+  win.addEventListener('pagehide', hide);
+  setTimeout(() => { win.removeEventListener('pagehide', hide); if (!left) onStuck(); }, HOME_LEAVE_MS);
+}

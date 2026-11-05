@@ -145,6 +145,28 @@ test.describe('LG app', () => {
   });
 });
 
+test('LG app, unpaired: Back on the pairing page goes back to the start page', async ({ page, api: _api }) => {
+  await asLgApp(page);
+  await page.route('**/api/tv/code', (r) => r.fulfill({ json: { code: 'ABCD12', pollToken: 'p', expiresIn: 600 } }));
+  await page.route('**/api/tv/claim', (r) => r.fulfill({ json: { status: 'pending' } }));
+  await page.goto('data:text/html,<title>start</title><p>start page</p>'); // stands in for the app's local file:// start page
+  await page.goto('/tv?ff_app=webos');
+  await expect(page.locator('main.pair')).toBeVisible();
+  await press(page, 461);
+  await expect(page).toHaveURL(/^data:text\/html/);
+});
+
+test('a plain browser on the unpaired pairing page ignores the LG Back key', async ({ page, api: _api }) => {
+  await page.route('**/api/tv/code', (r) => r.fulfill({ json: { code: 'ABCD12', pollToken: 'p', expiresIn: 600 } }));
+  await page.route('**/api/tv/claim', (r) => r.fulfill({ json: { status: 'pending' } }));
+  await page.goto('data:text/html,<title>start</title><p>start page</p>');
+  await page.goto('/tv?ff_app=webos');
+  await expect(page.locator('main.pair')).toBeVisible();
+  await press(page, 461);
+  await page.waitForTimeout(500);
+  await expect(page).toHaveURL(/\/tv\?ff_app=webos$/);
+});
+
 test('a normal browser sends no caps, even with ff_app=webos', async ({ page, api: _api }) => {
   await pairedTv(page);
   const bodies = await playerWithInfo(page);

@@ -5,7 +5,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 vi.mock('./caps', async (orig) => ({ ...(await orig<typeof import('./caps')>()), lgCaps: vi.fn(() => null) }));
 import { fetchProbeTarget } from '#lib/tvprobe/target';
 import { CANDIDATES, lgCaps } from './caps';
-import { failedLgProbeLine, formatLgProbe, realLgDeps, runLgProbe, shouldLgProbe, type LgProbeDeps, type LgProbeStage, type ProbeVideo } from './probe';
+import { endLgProbe, failedLgProbeLine, formatLgProbe, realLgDeps, runLgProbe, shouldLgProbe, type LgProbeDeps, type LgProbeStage, type ProbeVideo } from './probe';
+import { HOME_HINT_KEY, rememberLgProbeHome } from './probehome';
 
 type Mode = 'ok' | 'never' | 'error';
 /** a fake <video>: 'ok' fires loadeddata and playing on play(), 'error' fires error with MediaError code 3 */
@@ -190,6 +191,22 @@ describe('runLgProbe', () => {
     expect(m.stages).toEqual(['done']);
     expect(JSON.parse(m.store.get('ff.lgProbe')!)).toMatchObject({ home: 'ok', stage: 'done' }); // kept for the reload /tv makes to /
   });
+  it('home=ok from the sessionStorage hint (the /tv redirect dropped it from the URL) restores home=ok and clears the hint', async () => {
+    const stored = { ...SPEC, home: 'fail', stage: 'home' };
+    const m = mk({ search: '', stored: { 'ff.lgProbe': JSON.stringify(stored), [HOME_HINT_KEY]: 'ok' } });
+    const r = await runLgProbe(m.deps, m.onStage);
+    expect(r.home).toBe('ok');
+    expect(m.deps.fetchTarget).not.toHaveBeenCalled();
+    expect(JSON.parse(m.store.get('ff.lgProbe')!)).toMatchObject({ home: 'ok', stage: 'done' });
+    expect(m.store.has(HOME_HINT_KEY)).toBe(false);
+  });
+  it('the hint without a stored result also counts, and does not leave again', async () => {
+    const m = mk({ search: '?probe=1', stored: { [HOME_HINT_KEY]: 'ok' } });
+    const r = await run(m);
+    expect(r.home).toBe('ok');
+    expect(m.deps.goHome).not.toHaveBeenCalled();
+    expect(m.store.has(HOME_HINT_KEY)).toBe(false);
+  });
   it('a finished stored result is shown again after a reload without home=ok, with no playback', async () => {
     const stored = { ...SPEC, home: 'ok', stage: 'done' };
     const m = mk({ search: '', stored: { 'ff.lgProbe': JSON.stringify(stored) } });
@@ -258,6 +275,39 @@ describe('shouldLgProbe', () => {
     expect(shouldLgProbe(w({ ua: LG, search: '?ff_app=webos' }))).toBe(false);
     expect(shouldLgProbe(w({ ua: LG, search: '?probe=1' }))).toBe(false); // the LG browser is not the app
     expect(shouldLgProbe(w({ search: '?ff_app=webos&probe=1' }))).toBe(false);
+  });
+});
+
+describe('rememberLgProbeHome', () => {
+  const LG = 'Mozilla/5.0 (Web0S; Linux/SmartTV) webOSTV/6.0';
+  const w = (ua: string, search: string) => {
+    const m = new Map<string, string>();
+    return { navigator: { userAgent: ua }, location: { search }, sessionStorage: { getItem: (k: string) => m.get(k) ?? null, setItem: (k: string, v: string) => void m.set(k, v), removeItem: (k: string) => void m.delete(k) }, m };
+  };
+  it('copies home= from the URL into sessionStorage inside the LG app', () => {
+    const a = w(LG, '?probe=1&ff_app=webos&home=ok');
+    rememberLgProbeHome(a);
+    expect(a.m.get(HOME_HINT_KEY)).toBe('ok');
+  });
+  it('shouldLgProbe copies it too', () => {
+    const a = w(LG, '?probe=1&ff_app=webos&home=ok');
+    expect(shouldLgProbe(a)).toBe(true);
+    expect(a.m.get(HOME_HINT_KEY)).toBe('ok');
+  });
+  it('does nothing without home=, outside the LG app, or without a window', () => {
+    const a = w(LG, '?probe=1&ff_app=webos');
+    rememberLgProbeHome(a);
+    expect(a.m.has(HOME_HINT_KEY)).toBe(false);
+    const b = w('Mozilla/5.0 Chrome/120', '?probe=1&ff_app=webos&home=ok');
+    rememberLgProbeHome(b);
+    expect(b.m.has(HOME_HINT_KEY)).toBe(false);
+    expect(() => rememberLgProbeHome(undefined)).not.toThrow();
+  });
+  it('endLgProbe clears it', () => {
+    const a = w(LG, '?ff_app=webos&home=ok');
+    rememberLgProbeHome(a);
+    endLgProbe(a);
+    expect(a.m.has(HOME_HINT_KEY)).toBe(false);
   });
 });
 

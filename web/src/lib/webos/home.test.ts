@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { describe, expect, it, vi } from 'vitest';
-import { goToAppHome, HIST_BASE_KEY, recordHistoryBase, stepsToAppHome } from './home';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { changeServerViaHome, goToAppHome, HIST_BASE_KEY, HOME_LEAVE_MS, recordHistoryBase, stepsToAppHome } from './home';
 
 function store(init: Record<string, string> = {}) {
   const m = new Map(Object.entries(init));
@@ -45,5 +45,48 @@ describe('goToAppHome', () => {
     const bad = { getItem: () => { throw new Error('blocked'); }, setItem: () => undefined };
     expect(goToAppHome({ history: { length: 7, go }, sessionStorage: bad })).toBe(false);
     expect(go).not.toHaveBeenCalled();
+  });
+});
+
+describe('changeServerViaHome', () => {
+  afterEach(() => vi.useRealTimers());
+  const mkWin = (o: { length: number; base?: string }) => {
+    const ls = new Map<string, () => void>();
+    return {
+      history: { length: o.length, go: vi.fn() },
+      sessionStorage: store(o.base === undefined ? {} : { [HIST_BASE_KEY]: o.base }),
+      addEventListener: (t: string, f: () => void) => void ls.set(t, f),
+      removeEventListener: (t: string) => void ls.delete(t),
+      fire: (t: string) => ls.get(t)?.(),
+      ls,
+    };
+  };
+  it('is 1.5 s', () => expect(HOME_LEAVE_MS).toBe(1500));
+  it('the way is unknown: the hint at once, no navigation', () => {
+    const w = mkWin({ length: 4 }), stuck = vi.fn();
+    changeServerViaHome(stuck, w);
+    expect(stuck).toHaveBeenCalledOnce();
+    expect(w.history.go).not.toHaveBeenCalled();
+  });
+  it('goes back and stays quiet when the page is left (pagehide)', () => {
+    vi.useFakeTimers();
+    const w = mkWin({ length: 5, base: '2' }), stuck = vi.fn();
+    changeServerViaHome(stuck, w);
+    expect(w.history.go).toHaveBeenCalledWith(-4);
+    w.fire('pagehide');
+    vi.advanceTimersByTime(HOME_LEAVE_MS);
+    expect(stuck).not.toHaveBeenCalled();
+    expect(w.ls.has('pagehide')).toBe(false);
+  });
+  it('the page is still there after 1.5 s (the start page was pruned from the history): the hint', () => {
+    vi.useFakeTimers();
+    const w = mkWin({ length: 50, base: '2' }), stuck = vi.fn();
+    changeServerViaHome(stuck, w);
+    expect(w.history.go).toHaveBeenCalled();
+    vi.advanceTimersByTime(HOME_LEAVE_MS - 1);
+    expect(stuck).not.toHaveBeenCalled();
+    vi.advanceTimersByTime(1);
+    expect(stuck).toHaveBeenCalledOnce();
+    expect(w.ls.has('pagehide')).toBe(false);
   });
 });

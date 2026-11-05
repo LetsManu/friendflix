@@ -51,7 +51,8 @@
   import { isTizenApp } from '#lib/tizen/detect';
   import { installNavLock } from '#lib/tizen/navlock';
   import { exitLgApp, isLgApp, shouldExitOnBack } from '#lib/webos/detect';
-  import { goToAppHome, HOME_ROUTE, recordHistoryBase } from '#lib/webos/home';
+  import { changeServerViaHome, recordHistoryBase } from '#lib/webos/home';
+  import { rememberLgProbeHome } from '#lib/webos/probehome';
   import { toast } from '#lib/ui/toast';
   import { PLAY_ART_NAME, playTransition, takePlayArt } from '#lib/player/transition';
 
@@ -164,8 +165,7 @@
   const logout = () => doLogout(me?.tv);
   const changeServer = () => {
     menu = false;
-    if (HOME_ROUTE === 'history' && goToAppHome()) return;
-    toast.info($t('shell.account.changeServerBlue'));
+    changeServerViaHome(() => toast.info($t('shell.account.changeServerBlue'))); // the hint when the start page cannot be reached
   };
   async function surprise() {
     menu = false;
@@ -236,6 +236,8 @@
       const typing = el && (isEditable(el) || el.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName));
       if (!typing || e.key !== '/') { e.preventDefault(); openSearch(); return; }
     }
+    // LG app, unpaired pairing page (not yet TV mode): Back returns to the app's start page, which shows the setup form
+    if (!tv && path === '/tv' && isBackKey(e) && isLgApp()) { e.preventDefault(); history.back(); return; }
     const back = e.key === 'Escape' || (tv && isBackKey(e));
     if (!back) return;
     if (menu || bell || cats) { menu = bell = cats = false; if (tv) e.preventDefault(); return; } // dropdowns close first
@@ -364,7 +366,7 @@
     evs.forEach((t) => document.addEventListener(t, warm, { passive: true }));
     stops.push(unwarm);
     lgApp = isLgApp();
-    if (lgApp) recordHistoryBase();
+    if (lgApp) { recordHistoryBase(); rememberLgProbeHome(); }
     if (isTizenApp() || isLgApp()) stops.push(installNavLock()); // the TV app never leaves for a foreign site (lib/tizen/navlock.ts)
     const flag = new URLSearchParams(location.search).get('tv');
     if (flag === '1') sessionStorage.setItem('ff_tv', '1'); else if (flag === '0') sessionStorage.removeItem('ff_tv');
