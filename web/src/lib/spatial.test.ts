@@ -313,6 +313,27 @@ describe('startSpatial', () => {
       expect(id()).toBe('a');
     });
 
+    it('after a key press, hover waits for a real pointer move (scrolling sends synthetic pointer events)', () => {
+      const g = grid();
+      const move = (target: unknown, movementX = 0, movementY = 0) => dl.get('pointermove')?.({ target, movementX, movementY });
+      g.a.focus();
+      startSpatial(() => true);
+      key('ArrowRight');
+      expect(id()).toBe('b');
+      over(g.e); // the page scrolled under a resting pointer: not the viewer's choice
+      move(g.e); // synthetic move without movement
+      expect(id()).toBe('b');
+      move(g.e, 3, 0); // the viewer moves the pointer: hover is back, and the element under it takes the focus
+      expect(id()).toBe('e');
+      over(g.f);
+      expect(id()).toBe('f');
+      move(g.a, 0, 2); // ordinary moves while hover is active do not refocus by themselves
+      expect(id()).toBe('f');
+      key('Enter'); // any key suspends hover again
+      over(g.a);
+      expect(id()).toBe('f');
+    });
+
     it('leaves text fields alone (no on-screen keyboard on hover) and is removed by stop', () => {
       const g = grid();
       const input = new El('input', { type: 'text', id: 'in' }).at(0, 300);
@@ -323,6 +344,7 @@ describe('startSpatial', () => {
       expect(id()).toBe('a');
       stop();
       expect(dl.has('pointerover')).toBe(false);
+      expect(dl.has('pointermove')).toBe(false);
       over(g.b);
       expect(id()).toBe('a');
     });

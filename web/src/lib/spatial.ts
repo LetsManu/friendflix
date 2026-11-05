@@ -102,7 +102,11 @@ export function move(dir: Dir, retried = false): boolean {
  * `enabled` lets the page opt out (the player handles its own keys unless a control has the focus).
  */
 export function startSpatial(enabled: () => boolean): () => void {
+  // after a key press the page may scroll under a resting pointer, and Chromium then sends synthetic pointer events (no movement):
+  // hover stays off from any keydown until the pointer really moves
+  let keyDriven = false;
   const onKey = (e: KeyboardEvent) => {
+    keyDriven = true;
     const dir = DIRS[e.key];
     if (!dir || e.altKey || e.ctrlKey || e.metaKey || e.shiftKey || !enabled()) return;
     const active = document.activeElement;
@@ -111,17 +115,27 @@ export function startSpatial(enabled: () => boolean): () => void {
     if (move(dir)) e.stopPropagation();
   };
   // Magic Remote: hovering a card moves the keyboard focus there, so the arrows continue from the pointer (no scrolling)
-  const onOver = (e: Event) => {
-    if (!enabled() || !(e.target instanceof HTMLElement)) return;
-    let el: HTMLElement | null = e.target.closest<HTMLElement>(FOCUSABLE);
+  const hoverFocus = (target: EventTarget | null) => {
+    if (!enabled() || !(target instanceof HTMLElement)) return;
+    let el: HTMLElement | null = target.closest<HTMLElement>(FOCUSABLE);
     while (el && !usable(el)) el = el.parentElement?.closest<HTMLElement>(FOCUSABLE) ?? null;
     // text fields are skipped: focusing one would pop up the on-screen keyboard
     if (el && el !== document.activeElement && !isEditable(el)) el.focus({ preventScroll: true });
   };
+  const onOver = (e: Event) => { if (!keyDriven) hoverFocus(e.target); };
+  // the first real move after keys: hover is back, and the element under the pointer (entered while hover was off) takes the focus
+  const onMove = (e: Event) => {
+    const p = e as PointerEvent;
+    if (!keyDriven || (!p.movementX && !p.movementY)) return;
+    keyDriven = false;
+    hoverFocus(p.target);
+  };
   window.addEventListener('keydown', onKey, true);
   document.addEventListener('pointerover', onOver);
+  document.addEventListener('pointermove', onMove);
   return () => {
     window.removeEventListener('keydown', onKey, true);
     document.removeEventListener('pointerover', onOver);
+    document.removeEventListener('pointermove', onMove);
   };
 }
