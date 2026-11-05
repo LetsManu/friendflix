@@ -9,14 +9,14 @@
   with the Developer Mode passphrase (sent on stdin only, never on a command line) and installs and launches the app.
   Works in Windows PowerShell 5.1 and pwsh 7.
 .EXAMPLE
-  .\install.ps1 192.168.1.50
+  .\install.ps1 192.0.2.10
 .EXAMPLE
-  .\install.ps1 192.168.1.50 -Probe -Version v2.4.0
+  .\install.ps1 192.0.2.10 -Probe -Version v2.4.0
 #>
 [CmdletBinding()]
 param(
   [Parameter(Position = 0)] [string] $TvIp,
-  # the Developer Mode app's passphrase (asked for, hidden, when left out)
+  # the Developer Mode app's passphrase; better leave it out (it stays in the shell history) and be asked, hidden
   [Parameter(Position = 1)] [string] $Passphrase,
   # install FriendFlix Test (the test app) instead of FriendFlix
   [switch] $Probe,
@@ -38,7 +38,8 @@ function Show-Usage([string] $why) {
   [Console]::Error.WriteLine(@'
 Usage: .\install.ps1 <TvIp> [Passphrase] [-Probe] [-Ipk <file>] [-Version vX.Y.Z]
   <TvIp>             the TV's IP address (TV: Settings > Network > your connection)
-  [Passphrase]       the Developer Mode app's passphrase (asked for, hidden, when left out)
+  [Passphrase]       the Developer Mode app's passphrase. Better leave it out: it would stay in your shell history,
+                     and you are asked for it instead (hidden)
   -Probe             install FriendFlix Test (the test app) instead of FriendFlix
   -Ipk <file>        install this .ipk instead of downloading a release
   -Version vX.Y.Z    a specific release (default: the latest)
@@ -75,6 +76,7 @@ if ($null -eq $nodeMajor -or $nodeMajor -lt 20) { Fail 'Node.js 20 or newer is n
 
 # the passphrase stays in memory: it goes to ares on stdin only, and is never printed or written anywhere
 if (-not $Passphrase) {
+  if (-not [Environment]::UserInteractive -or [Console]::IsInputRedirected) { Show-Usage 'no passphrase given and no terminal to ask on' }
   $secure = Read-Host -AsSecureString "Developer Mode passphrase (shown in the TV's Developer Mode app)"
   $bstr = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($secure)
   try { $Passphrase = [Runtime.InteropServices.Marshal]::PtrToStringBSTR($bstr) }
@@ -84,30 +86,32 @@ if (-not $Passphrase) { Show-Usage 'the passphrase is empty' }
 
 if ($Probe) { $appId = 'com.friendflix.tv.probe'; $title = 'FriendFlix Test' } else { $appId = 'com.friendflix.tv'; $title = 'FriendFlix' }
 
+$isWin = ($PSVersionTable.PSVersion.Major -lt 6) -or $IsWindows # 5.1 has no $IsWindows and only runs on Windows
 if (-not $AresDir) {
   $cacheRoot = if ($env:LOCALAPPDATA) { $env:LOCALAPPDATA } elseif ($env:XDG_CACHE_HOME) { $env:XDG_CACHE_HOME } else { Join-Path $HOME '.cache' }
   $cache = Join-Path $cacheRoot 'friendflix-webos'
-  $want = (& node -p 'Object.values(require(process.argv[1]).devDependencies)[0]' (Join-Path $PSScriptRoot 'package.json') | Select-Object -First 1)
-  $have = $null
-  $installed = Join-Path $cache 'node_modules\@webos-tools\cli\package.json'
-  if (Test-Path -LiteralPath $installed) { try { $have = (& node -p 'require(process.argv[1]).version' $installed 2>$null | Select-Object -First 1) } catch { $have = $null } }
-  if ($have -ne $want) {
+  $want = (& node -p 'require(process.argv[1]).devDependencies["@webos-tools/cli"]' (Join-Path $PSScriptRoot 'package.json') | Select-Object -First 1)
+  $marker = Join-Path $cache ".ff-installed-$want"
+  $npmCmd = if ($isWin) { 'npm.cmd' } else { 'npm' }
+  if (-not (Test-Path -LiteralPath $marker)) {
     Write-Host "Installing the webOS CLI $want into $cache"
     New-Item -ItemType Directory -Force -Path $cache | Out-Null
+    Get-ChildItem -LiteralPath $cache -Filter '.ff-installed-*' -Force | Remove-Item -Force
     Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'package.json'), (Join-Path $PSScriptRoot 'package-lock.json') -Destination $cache -Force
     Push-Location -LiteralPath $cache
     try {
       $ErrorActionPreference = 'Continue'
-      & npm.cmd ci --ignore-scripts --no-audit --no-fund
+      & $npmCmd ci --ignore-scripts --no-audit --no-fund
       $npmRc = $LASTEXITCODE
       $ErrorActionPreference = 'Stop'
     } finally { Pop-Location }
     if ($npmRc -ne 0) { Fail 'installing the webOS CLI failed' }
+    New-Item -ItemType File -Path $marker -Force | Out-Null # only after a complete install
   }
   $AresDir = Join-Path $cache 'node_modules\.bin'
 }
 function Find-Ares([string] $name) {
-  foreach ($f in @("$name.cmd", $name)) {
+  foreach ($f in $(if ($isWin) { @("$name.cmd", $name) } else { @($name) })) {
     $p = Join-Path $AresDir $f
     if (Test-Path -LiteralPath $p -PathType Leaf) { return $p }
   }

@@ -13,7 +13,8 @@ usage() {
   cat >&2 <<'EOF2'
 Usage: install.sh <tv-ip> [passphrase] [--probe] [--ipk <file>] [--version vX.Y.Z]
   <tv-ip>            the TV's IP address (TV: Settings > Network > your connection)
-  [passphrase]       the Developer Mode app's passphrase (asked for, hidden, when left out)
+  [passphrase]       the Developer Mode app's passphrase. Better leave it out: it would stay in your shell history,
+                     and you are asked for it instead (hidden)
   --probe            install FriendFlix Test (the test app) instead of FriendFlix
   --ipk <file>       install this .ipk instead of downloading a release
   --version vX.Y.Z   a specific release (default: the latest)
@@ -76,14 +77,16 @@ if [ -n "$probe" ]; then app_id=com.friendflix.tv.probe title='FriendFlix Test';
 here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 if [ -z "$ares_dir" ]; then
   cache=${XDG_CACHE_HOME:-$HOME/.cache}/friendflix-webos
-  want=$(node -p 'Object.values(require(process.argv[1]).devDependencies)[0]' "$here/package.json")
-  have=$(node -p 'require(process.argv[1]).version' "$cache/node_modules/@webos-tools/cli/package.json" 2> /dev/null || true)
-  if [ "$have" != "$want" ]; then
+  want=$(node -p 'require(process.argv[1]).devDependencies["@webos-tools/cli"]' "$here/package.json")
+  marker=$cache/.ff-installed-$want
+  if [ ! -f "$marker" ]; then
     command -v npm > /dev/null || { echo "npm is needed (it comes with Node.js)" >&2; exit 1; }
     echo "Installing the webOS CLI $want into $cache"
     mkdir -p "$cache"
     cp "$here/package.json" "$here/package-lock.json" "$cache/"
+    rm -f "$cache"/.ff-installed-*
     (cd "$cache" && npm ci --ignore-scripts --no-audit --no-fund) || { echo "installing the webOS CLI failed" >&2; exit 1; }
+    : > "$marker" # only after a complete install, so an interrupted one is redone
   fi
   ares_dir=$cache/node_modules/.bin
 fi
