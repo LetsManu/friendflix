@@ -36,7 +36,7 @@ The LG TV app is FriendFlix as an app on an LG smart TV with webOS (webOS 22 or 
 An LG TV installs your own apps only through the Developer Mode app.
 
 1. On the TV open the **LG Content Store** and install the app **Developer Mode**.
-2. Open it and sign in with an **LG developer account** (free; create one on LG's webOS developer site if you have none).
+2. Open it and sign in with an **LG developer account** (free; create one on [LG's webOS TV developer site](https://webostv.developer.lge.com/) if you have none).
 3. Set **Dev Mode Status** to **On**. The TV restarts.
 4. Open the Developer Mode app again and turn **Key Server** on.
 5. Note the **passphrase** the app shows, and the TV's IP address (*Settings → Network → your connection*), for example `192.0.2.10`. You give both to the install script.
@@ -92,7 +92,7 @@ The FriendFlix scripts never write your passphrase anywhere: it is not printed, 
 
 LG's own tool is different. `ares-novacom`, which fetches the TV's SSH key, **stores the passphrase in its device file** `novacom-devices.json` in your user's ares config folder, because it needs the passphrase to unlock the TV's key on every later call (install, launch). So after an install, the passphrase sits in that file on the PC. It is only useful while Developer Mode is on and the key server is running, and it changes when you switch the key server off and on, but treat the file like a password: do not share your home folder, and remove the entry when you no longer need it.
 
-To remove it, run LG's tool from the cache's `node_modules/.bin` folder:
+The file is `novacom-devices.json` inside the `.webos` folder of your user account: `~/.webos/` on Linux and macOS, `%APPDATA%\.webos\` on Windows (there may be a profile subfolder inside). The safe way to remove the entry is LG's own tool, so run it from the cache's `node_modules/.bin` folder:
 
 ```sh
 ~/.cache/friendflix-webos/node_modules/.bin/ares-setup-device --remove friendflix-tv
@@ -172,15 +172,16 @@ FFPROBE v1 tv=webos os=25 direct=ok:1840ms hls=ok nativehls=ok palm=yes home=ok 
 | `os` | number | The webOS version, for example `25`. |
 | `direct` | `ok:<ms>ms` | A real direct play of the test title started (first picture) after that many milliseconds. |
 | | `error:nodirect` | The server offered no direct stream for the test title. Not a TV problem: try with another title, or check the library. |
+| | `error:unknown` | The check itself crashed before it could report a reason. |
 | | `error:<reason>` | Direct play failed for that reason (for example a timeout or a player error). |
 | `hls` | `ok`, `error:<code>` | Whether the converted stream plays through hls.js. |
 | `nativehls` | `ok`, `error:<code>` | Whether it plays through the TV's own HLS. Together with `hls`, this decides the **HLS route**: hls.js, or the TV's native HLS if hls.js fails. |
 | `palm` | `yes`, `no` | Whether the TV's `PalmSystem` is present. Decides the **exit method**: `platformBack()` when present, else `window.close()`. |
 | `home` | `ok`, `fail`, `skipped` | Whether history back reaches the local start page. Decides the **Change server route**: `fail` switches to the blue-key fallback. `skipped` while the TV is unpaired. |
 | `keys` | `ok`, `missing:<names>`, `skipped` | Whether the play/pause and red keys arrived. `missing` lists the ones that did not. `skipped` while unpaired. |
-| `video` | codecs | The video codecs the TV confirmed; a `+10` after a codec means 10-bit is confirmed. Decides the **final format list**. |
-| `audio` | codecs | The audio codecs the TV confirmed. Decides the final format list. |
-| `containers` | list | The containers the TV confirmed. Decides the final format list. |
+| `video` | codecs | The video codecs the TV confirmed; a `+10` after a codec means 10-bit is confirmed; `-` means nothing was confirmed. Decides the **final format list**. |
+| `audio` | codecs | The audio codecs the TV confirmed (`-`: nothing confirmed). Decides the final format list. |
+| `containers` | list | The containers the TV confirmed (`-`: nothing confirmed). Decides the final format list. |
 
 Whatever the line says, send it complete: other values still tell which parts need another approach. The test app stays a diagnostic tool on each release.
 

@@ -4,7 +4,7 @@
 
 ## What LG asks for
 
-- **An LG Seller Lounge account.** Register as a developer or company; apps are submitted and tracked there.
+- **An LG Seller Lounge account.** Register at [LG Seller Lounge](https://seller.lgappstv.com/) as a developer or company; apps are submitted and tracked there.
 - **The `.ipk` package.** The release package `FriendFlix-<version>.ipk`. Developer-mode packages are unsigned; LG signs store apps itself.
 - **Store images.** App icon and screenshots in the sizes the Seller Lounge asks for at submission time.
 - **A UX scenario document.** A short document that walks through the app's screens and how the remote is used.

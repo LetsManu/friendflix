@@ -36,7 +36,7 @@ Die LG-TV-App ist FriendFlix als App auf einem LG-Smart-TV mit webOS (webOS 22 o
 Ein LG-Fernseher installiert eigene Apps nur über die App „Developer Mode“.
 
 1. Öffne am Fernseher den **LG Content Store** und installiere die App **Developer Mode**.
-2. Öffne sie und melde dich mit einem **LG-Entwicklerkonto** an (kostenlos; auf der webOS-Entwicklerseite von LG kannst du eins anlegen).
+2. Öffne sie und melde dich mit einem **LG-Entwicklerkonto** an (kostenlos; auf der [webOS-TV-Entwicklerseite von LG](https://webostv.developer.lge.com/) kannst du eins anlegen).
 3. Stelle **Dev Mode Status** auf **On**. Der Fernseher startet neu.
 4. Öffne die App Developer Mode erneut und schalte den **Key Server** ein.
 5. Notiere die **Passphrase**, die die App zeigt, und die IP-Adresse des Fernsehers (*Einstellungen → Netzwerk → deine Verbindung*), zum Beispiel `192.0.2.10`. Beides gibst du dem Installationsskript.
@@ -92,7 +92,7 @@ Die FriendFlix-Skripte schreiben deine Passphrase nirgends hin: Sie wird weder a
 
 Das LG-Werkzeug selbst verhält sich anders. `ares-novacom`, das den SSH-Schlüssel des Fernsehers holt, **speichert die Passphrase in seiner Geräte-Datei** `novacom-devices.json` im ares-Konfigurationsordner deines Benutzerkontos, weil es sie bei jedem späteren Aufruf (Installieren, Starten) braucht, um den Schlüssel des Fernsehers zu entsperren. Nach einer Installation liegt die Passphrase also in dieser Datei auf dem PC. Sie nützt nur, solange der Entwicklermodus an ist und der Key Server läuft, und sie ändert sich, wenn du den Key Server aus- und einschaltest. Behandle die Datei trotzdem wie ein Passwort: Gib deinen Home-Ordner nicht weiter und entferne den Eintrag, wenn du ihn nicht mehr brauchst.
 
-Zum Entfernen führst du das LG-Werkzeug aus dem Ordner `node_modules/.bin` des Caches aus:
+Die Datei heißt `novacom-devices.json` und liegt im Ordner `.webos` deines Benutzerkontos: `~/.webos/` unter Linux und macOS, `%APPDATA%\.webos\` unter Windows (darin kann es einen Profil-Unterordner geben). Der sichere Weg zum Entfernen des Eintrags ist das LG-Werkzeug selbst; führe es aus dem Ordner `node_modules/.bin` des Caches aus:
 
 ```sh
 ~/.cache/friendflix-webos/node_modules/.bin/ares-setup-device --remove friendflix-tv
@@ -172,15 +172,16 @@ FFPROBE v1 tv=webos os=25 direct=ok:1840ms hls=ok nativehls=ok palm=yes home=ok 
 | `os` | Zahl | Die webOS-Version, zum Beispiel `25`. |
 | `direct` | `ok:<ms>ms` | Ein echtes Direct Play des Testtitels hat nach so vielen Millisekunden das erste Bild gezeigt. |
 | | `error:nodirect` | Der Server hat für den Testtitel keinen Direct-Stream angeboten. Kein Fernseherproblem: anderen Titel versuchen oder die Bibliothek prüfen. |
+| | `error:unknown` | Die Prüfung selbst ist abgestürzt, bevor sie einen Grund melden konnte. |
 | | `error:<grund>` | Direct Play ist aus diesem Grund fehlgeschlagen (zum Beispiel Zeitüberschreitung oder Player-Fehler). |
 | `hls` | `ok`, `error:<code>` | Ob der umgewandelte Stream über hls.js läuft. |
 | `nativehls` | `ok`, `error:<code>` | Ob er über das eigene HLS des Fernsehers läuft. Zusammen mit `hls` entscheidet das den **HLS-Weg**: hls.js oder, wenn hls.js scheitert, das native HLS des Fernsehers. |
 | `palm` | `yes`, `no` | Ob das `PalmSystem` des Fernsehers vorhanden ist. Entscheidet die **Beenden-Methode**: `platformBack()`, wenn vorhanden, sonst `window.close()`. |
 | `home` | `ok`, `fail`, `skipped` | Ob „Zurück im Verlauf“ die lokale Startseite erreicht. Entscheidet den **Weg für „Server ändern“**: `fail` schaltet auf die Ersatzlösung mit der blauen Taste um. `skipped`, solange der Fernseher nicht gekoppelt ist. |
 | `keys` | `ok`, `missing:<namen>`, `skipped` | Ob Play/Pause und die rote Taste angekommen sind. `missing` nennt die fehlenden. `skipped`, solange nicht gekoppelt. |
-| `video` | Codecs | Die Videocodecs, die der Fernseher bestätigt hat; ein `+10` hinter einem Codec heißt: 10-Bit bestätigt. Entscheidet die **endgültige Formatliste**. |
-| `audio` | Codecs | Die Audiocodecs, die der Fernseher bestätigt hat. Entscheidet die Formatliste. |
-| `containers` | Liste | Die Container, die der Fernseher bestätigt hat. Entscheidet die Formatliste. |
+| `video` | Codecs | Die Videocodecs, die der Fernseher bestätigt hat; ein `+10` hinter einem Codec heißt: 10-Bit bestätigt; `-` heißt: nichts bestätigt. Entscheidet die **endgültige Formatliste**. |
+| `audio` | Codecs | Die Audiocodecs, die der Fernseher bestätigt hat (`-`: nichts bestätigt). Entscheidet die Formatliste. |
+| `containers` | Liste | Die Container, die der Fernseher bestätigt hat (`-`: nichts bestätigt). Entscheidet die Formatliste. |
 
 Was auch immer die Zeile sagt, schicke sie vollständig: Auch die übrigen Werte zeigen, welche Teile einen anderen Ansatz brauchen. Die Test-App bleibt bei jedem Release ein Diagnosewerkzeug.
 
