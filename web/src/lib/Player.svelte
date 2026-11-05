@@ -14,7 +14,7 @@
   import { isBackKey } from '#lib/spatial';
   import { isLgApp } from '#lib/webos/detect';
   import { normaliseLgKey } from '#lib/webos/keys';
-  import { isTypingTarget, nextSubtitle, resolveKey, SHORTCUTS, type KeyAction } from '#lib/player/keymap';
+  import { isTypingTarget, nextSubtitle, resolveKey, SHORTCUTS, toggleSubtitle, type KeyAction } from '#lib/player/keymap';
   import { BRIGHTNESS_MIN, brightnessPct, classifyMove, levelFromDrag, registerTap, scrubTarget, TAP_WINDOW, volumeSettable, zoneOf, type Axis, type TapState, type Zone } from '#lib/player/gestures';
   import { creditsStart } from '#lib/player/nextup';
   import { postplayStart } from '#lib/postplay';
@@ -614,8 +614,11 @@
     await load(pos);
     video?.play().catch(() => undefined);
   }
+  /** the last subtitle track that was on (-1 = none yet): the LG red key turns this one back on */
+  let lastSubIndex = -1;
   function setSubtitle(i: number, remember = true) {
     subIndex = i;
+    if (i !== -1) lastSubIndex = i;
     if (remember) { const lang = i === -1 ? 'off' : subOpts.find((x) => x.index === i)?.language; if (lang && lang !== 'und') rememberLang({ subtitle: lang }); }
     if (remote) castEngine.setSubtitle(i);
     [...(video?.textTracks ?? [])].forEach((t) => (t.mode = t.id === `sub-${i}` ? 'showing' : 'disabled'));
@@ -882,6 +885,7 @@
       case 'mute': toggleMute(); flash(muted ? tr('player.mute') : tr('player.unmute'), 700); break;
       case 'fullscreen': toggleFullscreen(); break;
       case 'subtitles': cycleSubtitles(); break;
+      case 'subtitleToggle': toggleSubtitles(); break;
       case 'skip': if (skip && allowed()) doSkip(); break;
       case 'next': if (hasNext && allowed()) goNext(); else flash(tr('player.noNext')); break;
       case 'help': help = !help; break;
@@ -901,11 +905,19 @@
     setSubtitle(i);
     flash(i === -1 ? tr('player.subs.off') : tr('player.subs.on', { name: info.subtitles.find((x) => x.index === i)?.title ?? '' }), 1500);
   }
+  /** LG red key: subtitles on (the last used track, else the first) / off */
+  function toggleSubtitles() {
+    if (!info?.subtitles.length) { flash(tr('player.subs.none')); return; }
+    const i = toggleSubtitle(subIndex, lastSubIndex, info.subtitles.map((x) => x.index));
+    setSubtitle(i);
+    flash(i === -1 ? tr('player.subs.off') : tr('player.subs.on', { name: info.subtitles.find((x) => x.index === i)?.title ?? '' }), 1500);
+  }
   function onKey(e: KeyboardEvent) {
     const t = e.target as HTMLElement;
     if (!video || isTypingTarget(t)) return;
     if ((t.tagName === 'BUTTON' || t.tagName === 'A') && (e.key === ' ' || e.key === 'Enter')) return; // the focused control keeps Space/Enter
-    const a = resolveKey(isLgApp() ? { key: normaliseLgKey(e), ctrlKey: e.ctrlKey, metaKey: e.metaKey, altKey: e.altKey, shiftKey: e.shiftKey } : e, { tv: tvMode(), onBody: t === document.body || t === stage, hasSkip: Boolean(skip), hasNext, overlayOpen: overlayOpen(), peekOpen: peek });
+    const lg = isLgApp();
+    const a = resolveKey(lg ? { key: normaliseLgKey(e), ctrlKey: e.ctrlKey, metaKey: e.metaKey, altKey: e.altKey, shiftKey: e.shiftKey } : e, { tv: tvMode(), onBody: t === document.body || t === stage, hasSkip: Boolean(skip), hasNext, overlayOpen: overlayOpen(), peekOpen: peek, lg });
     wake();
     if (!a) return;
     e.preventDefault();

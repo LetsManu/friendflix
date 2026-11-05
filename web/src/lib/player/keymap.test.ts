@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { describe, expect, it } from 'vitest';
-import { isTypingTarget, nextSubtitle, resolveKey, type KeyContext } from './keymap';
+import { isTypingTarget, nextSubtitle, resolveKey, toggleSubtitle, type KeyContext } from './keymap';
 
 const ctx: KeyContext = { tv: false, onBody: true, hasSkip: false, hasNext: true, overlayOpen: false };
 const r = (key: string, c: Partial<KeyContext> = {}, m: object = {}) => resolveKey({ key, ...m }, { ...ctx, ...c });
@@ -50,12 +50,19 @@ describe('resolveKey', () => {
     expect(r('Enter', { tv: true, hasSkip: true })).toEqual({ type: 'skip' }); expect(r('Enter', { tv: true })).toEqual({ type: 'toggle' });
   });
   it('TV mode leaves digits, c, s, n, ? alone', () => { for (const k of ['0', '5', 'c', 's', 'n', '?']) expect(r(k, { tv: true, hasSkip: true })).toBeNull(); });
-  it('LG colour and stop keys (TV)', () => {
-    expect(r('ColorF0Red', { tv: true })).toEqual({ type: 'subtitles' });
-    expect(r('ColorF1Green', { tv: true })).toEqual({ type: 'audioMenu' });
-    expect(r('MediaStop', { tv: true })).toEqual({ type: 'stop' });
+  it('LG colour and stop keys (TV, LG app)', () => {
+    expect(r('ColorF0Red', { tv: true, lg: true })).toEqual({ type: 'subtitleToggle' });
+    expect(r('ColorF1Green', { tv: true, lg: true })).toEqual({ type: 'audioMenu' });
+    expect(r('MediaStop', { tv: true, lg: true })).toEqual({ type: 'stop' });
     expect(r('MediaFastForward', { tv: true })).toEqual({ type: 'seek', by: 30 });
     expect(r('MediaRewind', { tv: true })).toEqual({ type: 'seek', by: -30 });
+  });
+  it('the LG-only keys do nothing outside the LG app (Tizen, browsers)', () => {
+    for (const k of ['ColorF0Red', 'ColorF1Green', 'MediaStop']) {
+      expect(r(k, { tv: true })).toBeNull();
+      expect(r(k)).toBeNull();
+      expect(r(k, { tv: true, lg: false })).toBeNull();
+    }
   });
   it('media keys', () => {
     expect(r('MediaPlayPause')).toEqual({ type: 'toggle' }); expect(r('MediaFastForward')).toEqual({ type: 'seek', by: 30 });
@@ -68,6 +75,15 @@ describe('nextSubtitle', () => {
     expect(nextSubtitle(-1, [3, 5])).toBe(3); expect(nextSubtitle(3, [3, 5])).toBe(5); expect(nextSubtitle(5, [3, 5])).toBe(-1);
   });
   it('stays off without tracks and recovers from unknown tracks', () => { expect(nextSubtitle(-1, [])).toBe(-1); expect(nextSubtitle(9, [3])).toBe(-1); });
+});
+
+describe('toggleSubtitle', () => {
+  it('off -> the last used track when it still exists', () => { expect(toggleSubtitle(-1, 5, [3, 5])).toBe(5); });
+  it('off -> the first track without a last used one, or when it is gone', () => {
+    expect(toggleSubtitle(-1, -1, [3, 5])).toBe(3); expect(toggleSubtitle(-1, 9, [3, 5])).toBe(3);
+  });
+  it('on -> off', () => { expect(toggleSubtitle(5, 5, [3, 5])).toBe(-1); expect(toggleSubtitle(3, 5, [3, 5])).toBe(-1); });
+  it('stays off without tracks', () => { expect(toggleSubtitle(-1, 3, [])).toBe(-1); });
 });
 
 describe('isTypingTarget', () => {
