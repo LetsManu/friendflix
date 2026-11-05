@@ -47,6 +47,7 @@
   import { startBanner } from '#lib/admin/banner';
   import { saveLanguage } from '#lib/stores';
   import ProbeOverlay from '#lib/tizen/ProbeOverlay.svelte';
+  import LgProbeOverlay from '#lib/webos/ProbeOverlay.svelte';
   import { isTizenApp } from '#lib/tizen/detect';
   import { installNavLock } from '#lib/tizen/navlock';
   import { exitLgApp, isLgApp, shouldExitOnBack } from '#lib/webos/detect';
@@ -619,6 +620,7 @@
 {/if}
 <!-- Samsung TV app: the phase-0 probe screen (only with probe=1 inside the app; a strip on the pairing page, full screen after pairing) -->
 <ProbeOverlay compact={path === '/tv'} />
+{#if isLgApp()}<LgProbeOverlay compact={path === '/tv'} />{/if}
 <!-- app-wide toasts + confirm dialog (lib/ui) + the in-app re-authentication (lib/account/reauth.ts); mounted once, outside the page so they survive navigation -->
 <ToastHost />
 <ConfirmHost />
