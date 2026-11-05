@@ -43,11 +43,11 @@ function boot({ probe = false, local = {}, session = {}, search = '', navType = 
     location, close() { calls.closed++; },
     PalmSystem: palm === false ? undefined : { platformBack() { calls.back++; } },
   };
-  new Function('window', coreSrc)(win);
+  const fetchFn = (url, opts) => { calls.fetch.push(url); return fetchImpl(url, opts); };
+  new Function('window', 'fetch', 'AbortController', 'setTimeout', 'clearTimeout', coreSrc)(win, fetchFn, AbortController, setTimeout, clearTimeout);
   const localStorage = memoryStore(local);
   const sessionStorage = memoryStore(session);
   const performance = { getEntriesByType: () => [{ type: navType }] };
-  const fetchFn = (url, opts) => { calls.fetch.push(url); return fetchImpl(url, opts); };
   new Function('window', 'document', 'localStorage', 'sessionStorage', 'performance', 'fetch', 'AbortController', 'URLSearchParams', 'setTimeout', 'clearTimeout', setupSrc)(
     win, doc, localStorage, sessionStorage, performance, fetchFn, AbortController, URLSearchParams, setTimeout, clearTimeout);
   const key = (keyCode, key2 = '') => {
@@ -116,6 +116,17 @@ test('Retry calls fetch again and opens the server when it answers', async () =>
   await flush();
   assert.equal(t.calls.fetch.length, 2);
   assert.equal(t.location.href, SERVER + '/tv?ff_app=webos');
+});
+
+test('a second Retry during a running check does not fetch again', async () => {
+  let n = 0;
+  const t = boot({ local: { 'ff.server': SERVER }, fetchImpl: () => (n++ === 0 ? failFetch() : new Promise(() => {})) });
+  await flush();
+  t.els.retry.click();
+  await flush();
+  t.els.retry.click();
+  await flush();
+  assert.equal(t.calls.fetch.length, 2);
 });
 
 test('Change server shows the form prefilled with the stored address', async () => {

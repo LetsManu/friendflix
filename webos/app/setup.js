@@ -9,14 +9,12 @@
 // classic script (no module loading from file://); setup-core.js is loaded before it and sets window.FFSetupCore
 var core = window.FFSetupCore;
 var normaliseServer = core.normaliseServer;
-var checkVersionAnswer = core.checkVersionAnswer;
 var watchUrl = core.watchUrl;
 
 const SERVER_KEY = 'ff.server';
 const AUTH_KEY = 'ff.authOrigin';
 const HOME_KEY = 'ff.homeTest'; // sessionStorage: the probe left this page for the server and expects to come back
 const BACK_KEY_CODE = 461;
-const PROBE_TIMEOUT_MS = 15000;
 
 const probe = document.body.dataset.probe === '1';
 const $ = (id) => document.getElementById(id);
@@ -36,13 +34,8 @@ function makeStore(area) {
 const store = makeStore(function () { return localStorage; });
 const session = makeStore(function () { return sessionStorage; });
 
-const MESSAGES = {
-  empty: 'Enter the address of your FriendFlix server.',
-  http: 'Plain http:// addresses are not allowed. Use an https:// address.',
-  invalid: 'That does not look like a server address. Try something like friend.example.com.',
-  unreachable: 'Cannot reach that server. Check the address, the TV network and that the server is running.',
-  notFriendflix: 'That address answered, but it is not a FriendFlix server.',
-};
+const MESSAGES = core.MESSAGES;
+const askVersion = core.askVersion;
 
 /** which page to start in: the form, or a check of the stored server */
 function startMode(navType, stored, params) {
@@ -63,23 +56,6 @@ function open(origin, extra) {
   window.location.href = watchUrl(origin, probe, 'webos') + (extra || '');
 }
 
-async function askVersion(origin) {
-  const ctl = typeof AbortController === 'function' ? new AbortController() : null;
-  const timer = setTimeout(function () { if (ctl) ctl.abort(); }, PROBE_TIMEOUT_MS);
-  try {
-    const r = await fetch(origin + '/api/version', { cache: 'no-store', credentials: 'omit', redirect: 'error', signal: ctl ? ctl.signal : undefined });
-    if (r.status !== 200) return { ok: false, reason: 'notFriendflix' };
-    let json;
-    try { json = await r.json(); } catch { return { ok: false, reason: 'notFriendflix' }; }
-    const answer = checkVersionAnswer(json);
-    return answer.ok ? answer : { ok: false, reason: 'notFriendflix' };
-  } catch {
-    return { ok: false, reason: 'unreachable' };
-  } finally {
-    clearTimeout(timer);
-  }
-}
-
 function showForm(prefill) {
   show('form');
   if (prefill) input.value = prefill;
@@ -95,7 +71,13 @@ function showFailure(origin, reason) {
 }
 
 /** check the stored server; open it, or show the error card */
+let checking = false;
 async function checkStored(origin) {
+  if (checking) return;
+  checking = true;
+  try { await runCheck(origin); } finally { checking = false; }
+}
+async function runCheck(origin) {
   $('checking-text').textContent = 'Opening ' + origin;
   show('checking');
   const answer = await askVersion(origin);

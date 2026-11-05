@@ -8,7 +8,7 @@ import { createRequire } from 'node:module';
 import console from 'node:console';
 import { fileURLToPath } from 'node:url';
 
-const { chromium } = createRequire(import.meta.url)('playwright');
+const { chromium } = createRequire(import.meta.url)('@playwright/test');
 const root = fileURLToPath(new URL('../../', import.meta.url));
 const svg = readFileSync(root + 'web/static/logo-icon.svg', 'utf8');
 const BG = '#0b0b10';

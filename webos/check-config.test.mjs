@@ -37,6 +37,13 @@ test('each rule fails on its own', () => {
   assert.deepEqual(Object.keys(good).sort(), [...ALLOWED_KEYS].sort());
 });
 
+test('the rule set follows the declared id; an unknown id is a problem', () => {
+  const good = info(appDir);
+  assert.match(checkAppinfo({ ...good, id: 'com.example.tv' }, appDir)[0], /id is "com.example.tv"/);
+  assert.ok(checkAppinfo({ ...good, id: 'com.friendflix.tv.probe' }, appDir).some((p) => /title/.test(p)));
+  assert.deepEqual(checkAppinfo(info(probeDir), probeDir), []);
+});
+
 test('icon sizes and a missing splash are reported', () => {
   const dir = mkdtempSync(join(tmpdir(), 'ff-webos-'));
   try {

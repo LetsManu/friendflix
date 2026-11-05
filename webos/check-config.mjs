@@ -6,7 +6,7 @@
 import { existsSync, readFileSync } from 'node:fs';
 import console from 'node:console';
 import process from 'node:process';
-import { basename, dirname, join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 /** the exact key set of an appinfo.json */
@@ -44,11 +44,12 @@ function checkImage(dir, file, width, height, problems) {
 /** problems found in one parsed appinfo.json (empty = fine); `dir` is the folder holding it and its images */
 export function checkAppinfo(json, dir) {
   const problems = [];
-  const app = APPS[basename(dir)] ?? APPS.app;
   if (json === null || typeof json !== 'object' || Array.isArray(json)) return ['appinfo.json is not an object'];
+  // the rules follow the id the file declares; an id that is neither of ours is itself the problem
+  const app = Object.values(APPS).find((a) => a.id === json.id);
+  if (!app) return [`id is "${json.id}", expected "${APPS.app.id}" or "${APPS.probe.id}"`];
   for (const k of Object.keys(json)) if (!ALLOWED_KEYS.includes(k)) problems.push(`unknown key "${k}"`);
   for (const k of ALLOWED_KEYS) if (!(k in json)) problems.push(`key "${k}" missing`);
-  if (json.id !== app.id) problems.push(`id is "${json.id}", expected "${app.id}"`);
   if (json.title !== app.title) problems.push(`title is "${json.title}", expected "${app.title}"`);
   if (typeof json.version !== 'string' || !/^\d+\.\d+\.\d+$/.test(json.version)) problems.push('version must be X.Y.Z');
   for (const [k, v] of Object.entries(FIXED)) if (k in json && json[k] !== v) problems.push(`${k} must be ${JSON.stringify(v)}`);
