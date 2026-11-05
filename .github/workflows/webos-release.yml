@@ -1,0 +1,78 @@
+# SPDX-FileCopyrightText: 2026 Manuel Weißböck
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# The LG webOS TV app for a release: on a vX.Y.Z tag, package webos/app and webos/probe with the pinned LG ares CLI
+# (webos/package-lock.json) into developer-mode .ipk files and attach FriendFlix-<version>.ipk,
+# FriendFlix-probe-<version>.ipk and SHA256SUMS-webos.txt to that tag's GitHub Release (created by release.yml).
+# Called by CI for v* tags (push, or release.yml's dispatch), after its tests, e2e, the secret scan and webos-check passed.
+# Not a dependency of publish or android-release. workflow_dispatch on a tag is the manual retry; on anything but a v* tag
+# the job does not run. Needs no secrets: developer-mode packages are not signed.
+# The app's version is version.json's (stamped into appinfo.json by webos/build.mjs); the job refuses a tag that does not
+# match it.
+name: LG webOS TV app release
+on:
+  workflow_call:
+  workflow_dispatch:
+permissions: { contents: read }
+jobs:
+  webos-release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: write # attach the files to the GitHub Release of this tag
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with: { persist-credentials: false }
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with: { node-version: 22 }
+      - name: Tag matches version.json
+        id: version
+        run: |
+          set -euo pipefail
+          version=$(jq -er .version version.json)
+          if [ "v$version" != "$GITHUB_REF_NAME" ]; then
+            echo "::error::tag $GITHUB_REF_NAME does not match version.json ($version)"; exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+      - name: Install the pinned ares CLI
+        run: npm ci --prefix webos
+      - name: Package app + probe
+        run: |
+          set -euo pipefail
+          dist="$RUNNER_TEMP/dist"
+          node webos/build.mjs app "$dist"
+          node webos/build.mjs probe "$dist"
+          for f in "$dist"/*.ipk; do
+            work=$(mktemp -d)
+            (cd "$work" && ar x "$f")
+            listing=$(tar tzf "$work/data.tar.gz")
+            echo "$(basename "$f")"; echo "$listing"
+            for need in appinfo.json index.html setup.js setup-core.js icon.png; do
+              grep -q "/$need\$" <<< "$listing" || { echo "::error::$need missing in $(basename "$f")"; exit 1; }
+            done
+          done
+      - name: Checksums
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP/dist"
+          sha256sum -- *.ipk > SHA256SUMS-webos.txt
+          cat SHA256SUMS-webos.txt
+      # release.yml creates the GitHub Release right after pushing the tag; a run that started from that push may get here first
+      - name: Attach to the GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          for _ in $(seq 1 30); do
+            gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1 && break
+            sleep 20
+          done
+          if ! gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "::error::no GitHub Release for $GITHUB_REF_NAME after 10 minutes; create it (release.yml resume), then re-run this workflow on the tag"; exit 1
+          fi
+          gh release upload "$GITHUB_REF_NAME" "$RUNNER_TEMP"/dist/* --repo "$GITHUB_REPOSITORY" --clobber
+          {
+            echo "### LG webOS TV app $GITHUB_REF_NAME"
+            echo "FriendFlix and FriendFlix Test (.ipk, developer mode) attached with SHA256SUMS-webos.txt."
+            echo "Install them on a TV in Developer Mode with ares-install."
+          } >> "$GITHUB_STEP_SUMMARY"

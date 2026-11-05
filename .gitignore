@@ -32,4 +32,5 @@ e2e/playwright-report/
 # webOS: the same shared source, copied next to each app by the package script
 /webos/app/setup-core.js
 /webos/probe/setup-core.js
+/webos/node_modules
 /tizen/probe/setup.js

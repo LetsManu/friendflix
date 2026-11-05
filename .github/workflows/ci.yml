@@ -204,6 +204,35 @@ jobs:
               grep -q " $need\$" <<< "$listing" || { echo "::error::$need missing in $(basename "$f")"; exit 1; }
             done
           done
+  # The LG webOS TV shells: appinfo.json checks, the setup-core and script tests, and an .ipk of app and probe built with the
+  # pinned LG ares CLI (webos/package.json, installed outside the root workspaces) to catch packaging errors. No secrets
+  # and no signing; developer-mode packages. Not a dependency of publish or android-release; the release build is webos-release.
+  webos-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with: { persist-credentials: false }
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with: { node-version: 22 }
+      - run: node webos/check-config.mjs
+      - run: npm run test:webos
+      - run: npm run test:tvshared
+      - name: Install the pinned ares CLI
+        run: npm ci --prefix webos
+      - name: Build app and probe
+        run: |
+          set -euo pipefail
+          node webos/build.mjs app "$RUNNER_TEMP/ipk"
+          node webos/build.mjs probe "$RUNNER_TEMP/ipk"
+          for f in "$RUNNER_TEMP"/ipk/*.ipk; do
+            work=$(mktemp -d)
+            (cd "$work" && ar x "$f")
+            listing=$(tar tzf "$work/data.tar.gz")
+            echo "$(basename "$f")"; echo "$listing"
+            for need in appinfo.json index.html setup.js setup-core.js icon.png; do
+              grep -q "/$need\$" <<< "$listing" || { echo "::error::$need missing in $(basename "$f")"; exit 1; }
+            done
+          done
   # The Windows app's platform-independent core (origin policy, bridge protocol); the Tauri app itself is built elsewhere.
   desktop-core:
     runs-on: ubuntu-latest
@@ -505,6 +534,14 @@ jobs:
       TIZEN_AUTHOR_PASSWORD: ${{ secrets.TIZEN_AUTHOR_PASSWORD }}
       TIZEN_DISTRIBUTOR_P12: ${{ secrets.TIZEN_DISTRIBUTOR_P12 }}
       TIZEN_DISTRIBUTOR_PASSWORD: ${{ secrets.TIZEN_DISTRIBUTOR_PASSWORD }}
+  # vX.Y.Z tags: the LG webOS TV app (FriendFlix + Test .ipk, developer mode, no signing and no secrets) on the tag's GitHub
+  # Release, only after the tests, e2e, the secret scan and webos-check passed. Not in the needs of publish or
+  # android-release. contents: write only here, for the upload.
+  webos-release:
+    if: startsWith(github.ref, 'refs/tags/v') && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    needs: [test, e2e, secrets, webos-check]
+    permissions: { contents: write }
+    uses: ./.github/workflows/webos-release.yml
   # images are only published after every check above passed (main -> nightly + sha, v* tags -> semver + latest for the highest)
   # signing/attesting (id-token, attestations) happens only here, i.e. only on push events
   publish:
