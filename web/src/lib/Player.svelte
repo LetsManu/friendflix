@@ -32,7 +32,7 @@
   import QualityChip from '#lib/player/QualityChip.svelte';
   import { speedLabel, SPEEDS } from '#lib/player/bar';
   import { lgCaps } from '#lib/webos/caps';
-  import { FIRST_FRAME_MS, watchFirstFrame } from '#lib/player/firstframe';
+  import { firstFrameMs, watchFirstFrame } from '#lib/player/firstframe';
   import { firstPlaybackRequest, playbackInfoBody, type InfoBody, type PlaybackDto } from '#lib/player/infobody';
   import { holdPrefetch, takePrefetched } from '#lib/player/prefetch';
   import { createTiming, deviceClass, effectiveType, sendTiming } from '#lib/player/timing';
@@ -303,7 +303,7 @@
       video.src = info.directUrl!;
       video.addEventListener('loadedmetadata', seek, { once: true });
       // LG: an original the TV cannot decode may stay black without an error; no picture in time -> the converted stream, once
-      if (isLgApp() && !rec.forcedHls) cancelFirstFrame = watchFirstFrame(video, FIRST_FRAME_MS, () => { if (my === attachSeq && !rec.forcedHls && !error && !reconnecting && !handedOff && !remote && !airOn) forceHls(resumePos()); }, { running: wantAutoplay });
+      if (isLgApp() && !rec.forcedHls) cancelFirstFrame = watchFirstFrame(video, firstFrameMs(), () => { if (my === attachSeq && !rec.forcedHls && !error && !reconnecting && !handedOff && !remote && !airOn) forceHls(resumePos(), true); }, { running: wantAutoplay });
     } else if (H?.isSupported()) {
       const HC = H;
       hls = new HC(hlsConfig(startSec));
@@ -344,7 +344,8 @@
   const resumePos = () => Math.max(lastPos, video && video.currentTime > 0 ? video.currentTime : 0);
   const lowerStep = () => lowerQuality(QUALITIES.map(([, b]) => b).filter((b) => b < (info?.roleMaxBitrate ?? Infinity)), quality, info?.maxBitrate ?? 0);
   let retryViaLoad = false;
-  function forceHls(pos: number) { rec.forcedHls = true; errPos = pos; flash(tr('player.switchingTranscode'), 2500); wantAutoplay = !paused; void load(pos); }
+  /** keepIntent: the first-frame watcher fires before `canplay` ever came (the element is still paused), so a pending play intent survives the switch */
+  function forceHls(pos: number, keepIntent = false) { rec.forcedHls = true; errPos = pos; flash(tr('player.switchingTranscode'), 2500); wantAutoplay = keepIntent ? wantAutoplay || !paused : !paused; void load(pos); }
   function recover(kind: ErrorKind, viaLoad = false) {
     if (handedOff || airOn || airInfo || airState.busy) return;
     retryViaLoad = viaLoad;

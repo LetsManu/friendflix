@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { FIRST_FRAME_MS, watchFirstFrame as watch } from './firstframe';
+import { FIRST_FRAME_MS, firstFrameMs, watchFirstFrame as watch } from './firstframe';
 
 type Fake = ReturnType<typeof fakeVideo>;
 const watchFirstFrame = (v: Fake, ms: number, cb: () => void, opts?: { running: boolean }) => watch(v as unknown as Parameters<typeof watch>[0], ms, cb, opts);
@@ -98,5 +98,13 @@ describe('watchFirstFrame', () => {
     vi.advanceTimersByTime(60_000);
     expect(cb).not.toHaveBeenCalled();
     expect(v.count()).toBe(0);
+  });
+});
+
+describe('firstFrameMs', () => {
+  it('is FIRST_FRAME_MS without an override', () => { expect(firstFrameMs({})).toBe(FIRST_FRAME_MS); expect(firstFrameMs(undefined)).toBe(FIRST_FRAME_MS); });
+  it('takes a positive finite __ffFirstFrameMs (tests shorten the deadline)', () => { expect(firstFrameMs({ __ffFirstFrameMs: 800 })).toBe(800); });
+  it('ignores a bad override', () => {
+    for (const v of [0, -5, Infinity, NaN, '800', null]) expect(firstFrameMs({ __ffFirstFrameMs: v })).toBe(FIRST_FRAME_MS);
   });
 });

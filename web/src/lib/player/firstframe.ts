@@ -5,6 +5,12 @@
 
 export const FIRST_FRAME_MS = 10_000;
 
+/** The deadline in use: FIRST_FRAME_MS, unless the page set a positive `__ffFirstFrameMs` (end-to-end tests shorten the wait). */
+export function firstFrameMs(g: unknown = typeof globalThis === 'undefined' ? undefined : globalThis): number {
+  const v = (g as { __ffFirstFrameMs?: unknown } | undefined)?.__ffFirstFrameMs;
+  return typeof v === 'number' && Number.isFinite(v) && v > 0 ? v : FIRST_FRAME_MS;
+}
+
 /** Fires `onTimeout` once after `ms` of playing time unless `loadeddata` or `playing` arrives first. Returns a cancel function. */
 export function watchFirstFrame(video: Pick<HTMLVideoElement, 'addEventListener' | 'removeEventListener'>, ms: number, onTimeout: () => void, opts: { running: boolean } = { running: true }): () => void {
   let done = false, left = ms, startedAt = 0;

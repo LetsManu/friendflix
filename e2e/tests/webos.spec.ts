@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import type { Page } from '@playwright/test';
 import { ME, MOVIE } from '../mocks/fixtures.js';
+import { HLS_INIT, HLS_PLAYLIST, HLS_SEGMENTS } from '../mocks/hls.js';
 import { mockPlayer, videoReady } from '../mocks/scenes.js';
 import { asLgApp } from '../mocks/webos.js';
 import { expect, test } from '../fixtures.js';
@@ -92,6 +93,46 @@ test.describe('LG app', () => {
     await videoReady(page);
     await press(page, 404);
     await expect(page.getByRole('dialog', { name: 'Audio und Untertitel' })).toBeVisible();
+  });
+
+  test('a direct stream without a picture switches to the converted stream and keeps playing', async ({ page, api: _api }) => {
+    await asLgApp(page);
+    await mockPlayer(page);
+    await page.addInitScript(() => { (window as unknown as { __ffFirstFrameMs: number }).__ffFirstFrameMs = 1500; }); // the 10 s deadline, shortened
+    const bodies: Array<Record<string, any>> = [];
+    await page.route('**/api/playback/info', (r) => {
+      bodies.push(r.request().postDataJSON());
+      return r.fulfill({ json: {
+        directUrl: '/media/never.mp4', hlsUrl: '/media/hls/4000000/out.m3u8', resumeTicks: 0, mediaSourceId: 'ms1', playSessionId: `ps${bodies.length}`,
+        maxBitrate: 60_000_000, roleMaxBitrate: 60_000_000, audioTracks: [], subtitles: [],
+      } });
+    });
+    await page.route('**/media/never.mp4', () => { /* the original never answers: no picture, no error */ });
+    await page.route('**/media/hls/**', (r) => {
+      const file = new URL(r.request().url()).pathname.split('/').pop()!;
+      const seg = /^s(\d+)\.m4s$/.exec(file);
+      if (file === 'out.m3u8') return r.fulfill({ contentType: 'application/vnd.apple.mpegurl', body: HLS_PLAYLIST });
+      if (file === 'init.mp4') return r.fulfill({ contentType: 'video/mp4', body: HLS_INIT });
+      if (seg) return r.fulfill({ contentType: 'video/mp4', body: HLS_SEGMENTS[Number(seg[1])]! }).catch(() => undefined);
+      return r.fulfill({ status: 404 });
+    });
+    await page.goto('/watch/' + MOVIE.id + '?ff_app=webos');
+    await expect.poll(() => page.evaluate(() => document.querySelector('video')?.src ?? '')).toMatch(/never\.mp4$/);
+    // the watcher gives up on the original: the converted stream (hls.js, a blob: source) plays without a key press
+    await expect.poll(() => page.evaluate(() => document.querySelector('video')?.src ?? ''), { timeout: 10_000 }).toMatch(/^blob:/);
+    await expect.poll(() => isPaused(page), { timeout: 10_000 }).toBe(false);
+    await expect.poll(() => time(page), { timeout: 10_000 }).toBeGreaterThan(0.5);
+    expect(bodies.length).toBe(2);
+  });
+
+  test('Stop leaves the player', async ({ page, api: _api }) => {
+    await asLgApp(page);
+    await playerWithInfo(page);
+    await page.goto('/');
+    await page.goto('/watch/' + MOVIE.id + '?ff_app=webos');
+    await videoReady(page);
+    await press(page, 413);
+    await expect(page).not.toHaveURL(/\/watch\//);
   });
 
   test('POST /api/playback/info carries the LG capability block', async ({ page, api: _api }) => {
