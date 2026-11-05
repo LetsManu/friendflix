@@ -24,18 +24,18 @@ export default tseslint.config(
   },
   {
     // the TV shells (Tizen, shared): browser modules for Chromium 85 (Tizen 6.5) plus node tests and the config check
-    files: ['tizen/**/*.{js,mjs}', 'tv-shared/**/*.{js,mjs}'],
+    files: ['tizen/**/*.{js,mjs}', 'tv-shared/**/*.{js,mjs}', 'webos/**/*.{js,mjs}'],
     languageOptions: {
       sourceType: 'module',
       globals: {
         window: 'readonly', document: 'readonly', localStorage: 'readonly', fetch: 'readonly', AbortController: 'readonly',
-        URL: 'readonly', URLSearchParams: 'readonly', setTimeout: 'readonly', clearTimeout: 'readonly',
+        URL: 'readonly', URLSearchParams: 'readonly', sessionStorage: 'readonly', performance: 'readonly', setTimeout: 'readonly', clearTimeout: 'readonly',
       },
     },
   },
   {
     // the Tizen shells' page scripts: classic scripts (file:// pages load no modules)
-    files: ['tizen/app/setup.js', 'tv-shared/setup-core.js'],
+    files: ['tizen/app/setup.js', 'webos/app/setup.js', 'tv-shared/setup-core.js'],
     languageOptions: { sourceType: 'script' },
   },
 );
