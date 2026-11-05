@@ -50,6 +50,13 @@ describe('resolveKey', () => {
     expect(r('Enter', { tv: true, hasSkip: true })).toEqual({ type: 'skip' }); expect(r('Enter', { tv: true })).toEqual({ type: 'toggle' });
   });
   it('TV mode leaves digits, c, s, n, ? alone', () => { for (const k of ['0', '5', 'c', 's', 'n', '?']) expect(r(k, { tv: true, hasSkip: true })).toBeNull(); });
+  it('LG colour and stop keys (TV)', () => {
+    expect(r('ColorF0Red', { tv: true })).toEqual({ type: 'subtitles' });
+    expect(r('ColorF1Green', { tv: true })).toEqual({ type: 'audioMenu' });
+    expect(r('MediaStop', { tv: true })).toEqual({ type: 'stop' });
+    expect(r('MediaFastForward', { tv: true })).toEqual({ type: 'seek', by: 30 });
+    expect(r('MediaRewind', { tv: true })).toEqual({ type: 'seek', by: -30 });
+  });
   it('media keys', () => {
     expect(r('MediaPlayPause')).toEqual({ type: 'toggle' }); expect(r('MediaFastForward')).toEqual({ type: 'seek', by: 30 });
     expect(r('MediaTrackNext')).toEqual({ type: 'next' }); expect(r('MediaTrackNext', { hasNext: false })).toBeNull();

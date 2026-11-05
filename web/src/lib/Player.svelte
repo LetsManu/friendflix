@@ -12,6 +12,8 @@
   import { noteInteraction } from '#lib/stillwatching';
   import { nowPlaying } from '#lib/remote';
   import { isBackKey } from '#lib/spatial';
+  import { isLgApp } from '#lib/webos/detect';
+  import { normaliseLgKey } from '#lib/webos/keys';
   import { isTypingTarget, nextSubtitle, resolveKey, SHORTCUTS, type KeyAction } from '#lib/player/keymap';
   import { BRIGHTNESS_MIN, brightnessPct, classifyMove, levelFromDrag, registerTap, scrubTarget, TAP_WINDOW, volumeSettable, zoneOf, type Axis, type TapState, type Zone } from '#lib/player/gestures';
   import { creditsStart } from '#lib/player/nextup';
@@ -880,6 +882,8 @@
       case 'escape': menu = ''; subDlg = false; help = false; if (showXray) closeCastInfo(); peek = false; break;
       case 'peek': if (peek) openCastInfo(true); else openPeek(); break;
       case 'castInfo': openCastInfo(true); break;
+      case 'audioMenu': menu = 'tracks'; wake(); break;
+      case 'stop': dispatch('back'); break; // the watch page leaves like its Back key; onDestroy sends the stop report
     }
   }
   function cycleSubtitles() {
@@ -892,7 +896,7 @@
     const t = e.target as HTMLElement;
     if (!video || isTypingTarget(t)) return;
     if ((t.tagName === 'BUTTON' || t.tagName === 'A') && (e.key === ' ' || e.key === 'Enter')) return; // the focused control keeps Space/Enter
-    const a = resolveKey(e, { tv: tvMode(), onBody: t === document.body || t === stage, hasSkip: Boolean(skip), hasNext, overlayOpen: overlayOpen(), peekOpen: peek });
+    const a = resolveKey(isLgApp() ? { key: normaliseLgKey(e), ctrlKey: e.ctrlKey, metaKey: e.metaKey, altKey: e.altKey, shiftKey: e.shiftKey } : e, { tv: tvMode(), onBody: t === document.body || t === stage, hasSkip: Boolean(skip), hasNext, overlayOpen: overlayOpen(), peekOpen: peek });
     wake();
     if (!a) return;
     e.preventDefault();

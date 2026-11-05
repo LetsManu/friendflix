@@ -9,7 +9,9 @@ export type KeyAction =
   | { type: 'subtitles' } | { type: 'skip' } | { type: 'next' } | { type: 'help' } | { type: 'escape' }
   | { type: 'tvControls' } | { type: 'pip' } | { type: 'speed'; delta: 1 | -1 }
   /** "Besetzung & Infos": quick peek while playing (I, TV: up, remote Info) / the full panel from an open peek (OK, I) */
-  | { type: 'peek' } | { type: 'castInfo' };
+  | { type: 'peek' } | { type: 'castInfo' }
+  /** remote green key: audio/subtitle tracks menu; remote stop key: leave the player like Back */
+  | { type: 'audioMenu' } | { type: 'stop' };
 
 export interface KeyInput { key: string; ctrlKey?: boolean; metaKey?: boolean; altKey?: boolean; shiftKey?: boolean }
 export interface KeyContext {
@@ -42,6 +44,9 @@ export function resolveKey(e: KeyInput, c: KeyContext): KeyAction | null {
   if (k === 'mediapause') return { type: 'pause' };
   if (k === 'mediafastforward') return { type: 'seek', by: 30 };
   if (k === 'mediarewind') return { type: 'seek', by: -30 };
+  if (k === 'mediastop') return { type: 'stop' };
+  if (k === 'colorf0red') return { type: 'subtitles' };
+  if (k === 'colorf1green') return { type: 'audioMenu' };
   if (k === 'mediatracknext') return c.hasNext ? { type: 'next' } : null;
   if (k === 'arrowleft' || k === 'j') return { type: 'seek', by: -10 };
   if (k === 'arrowright' || k === 'l') return { type: 'seek', by: 10 };
