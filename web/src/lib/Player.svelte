@@ -238,6 +238,7 @@
   };
   let cancelFirstFrame = () => {};
   async function load(startSec?: number) {
+    cancelFirstFrame();
     error = ''; errNote = '';
     // a retry / track reload continues the running session (its clock keeps going); a quality switch starts a new one, flagged
     if (!timing.active && !partyMode && !remote) timing.begin(switching);
@@ -302,7 +303,7 @@
       video.src = info.directUrl!;
       video.addEventListener('loadedmetadata', seek, { once: true });
       // LG: an original the TV cannot decode may stay black without an error; no picture in time -> the converted stream, once
-      if (isLgApp() && !rec.forcedHls) cancelFirstFrame = watchFirstFrame(video, FIRST_FRAME_MS, () => { if (my === attachSeq && !rec.forcedHls) forceHls(resumePos()); });
+      if (isLgApp() && !rec.forcedHls) cancelFirstFrame = watchFirstFrame(video, FIRST_FRAME_MS, () => { if (my === attachSeq && !rec.forcedHls && !error && !reconnecting && !handedOff && !remote && !airOn) forceHls(resumePos()); });
     } else if (H?.isSupported()) {
       const HC = H;
       hls = new HC(hlsConfig(startSec));
@@ -347,6 +348,7 @@
   function recover(kind: ErrorKind, viaLoad = false) {
     if (handedOff || airOn || airInfo || airState.busy) return;
     retryViaLoad = viaLoad;
+    cancelFirstFrame();
     // the first retry already failed: the line is the problem, not a hiccup -> a lower rung (none = cooldown or 360p: the usual retries go on and end in giveUp)
     if (kind === 'network' && !viaLoad && abr && !switching && rec.networkTries >= 1) {
       const nd = abr.onNetworkError(), step = networkStep(nd);
@@ -367,7 +369,7 @@
     else if (d.do === 'lower-quality') { rec.loweredQuality = true; errPos = pos; const q = lowerStep(); if (q) { wantAutoplay = !paused; abr = makeAbr(q, quality ? q : undefined); void changeQuality(q, 'abr', 3000, tr('player.quality.stepDown', { q: rungLabel(q) })); } else giveUp(); }
     else giveUp();
   }
-  function giveUp() { clearTimeout(retryT); reconnecting = 0; waiting = false; errTitle = tr('player.error.title'); error = errNote || tr('player.error.connection'); hls?.stopLoad(); reportFatal(); }
+  function giveUp() { cancelFirstFrame(); clearTimeout(retryT); reconnecting = 0; waiting = false; errTitle = tr('player.error.title'); error = errNote || tr('player.error.connection'); hls?.stopLoad(); reportFatal(); }
   // Block 22: a playback that ends in an error is reported once per play session (admin health page, grouped by title)
   let lastErrCode = '', reportedFor = '';
   function reportFatal() {
