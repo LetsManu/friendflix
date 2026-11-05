@@ -110,6 +110,18 @@ export function startSpatial(enabled: () => boolean): () => void {
     e.preventDefault(); // the focus moves, the page does not scroll by itself
     if (move(dir)) e.stopPropagation();
   };
+  // Magic Remote: hovering a card moves the keyboard focus there, so the arrows continue from the pointer (no scrolling)
+  const onOver = (e: Event) => {
+    if (!enabled() || !(e.target instanceof HTMLElement)) return;
+    let el: HTMLElement | null = e.target.closest<HTMLElement>(FOCUSABLE);
+    while (el && !usable(el)) el = el.parentElement?.closest<HTMLElement>(FOCUSABLE) ?? null;
+    // text fields are skipped: focusing one would pop up the on-screen keyboard
+    if (el && el !== document.activeElement && !isEditable(el)) el.focus({ preventScroll: true });
+  };
   window.addEventListener('keydown', onKey, true);
-  return () => window.removeEventListener('keydown', onKey, true);
+  document.addEventListener('pointerover', onOver);
+  return () => {
+    window.removeEventListener('keydown', onKey, true);
+    document.removeEventListener('pointerover', onOver);
+  };
 }

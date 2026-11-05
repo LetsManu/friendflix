@@ -13,6 +13,7 @@ class El {
   classes = new Set<string>();
   children: El[] = [];
   parent: El | null = null;
+  get parentElement() { return this.parent; }
   rect = { left: 0, top: 0, width: 100, height: 50 };
   isContentEditable = false;
   type = '';
@@ -60,14 +61,16 @@ function matchOne(el: El, sel: string): boolean {
   return true;
 }
 
-let doc: { activeElement: El | null; body: El; documentElement: El & { scrollHeight: number }; querySelector: (s: string) => El | null };
+let doc: { activeElement: El | null; addEventListener: (t: string, f: (e: unknown) => void) => void; removeEventListener: (t: string) => void; body: El; documentElement: El & { scrollHeight: number }; querySelector: (s: string) => El | null };
+const dl = new Map<string, (e: unknown) => void>();
 let win: { scrollY: number; innerHeight: number; scrollBy: ReturnType<typeof vi.fn>; listeners: Map<string, (e: unknown) => void>; addEventListener: (t: string, f: (e: unknown) => void) => void; removeEventListener: (t: string) => void };
 
 beforeEach(() => {
+  dl.clear();
   const body = new El('body');
   const html = Object.assign(new El('html'), { scrollHeight: 1000 });
   html.add(body);
-  doc = { activeElement: body, body, documentElement: html, querySelector: (s) => html.querySelector(s) };
+  doc = { addEventListener: (t, f) => dl.set(t, f), removeEventListener: (t) => dl.delete(t), activeElement: body, body, documentElement: html, querySelector: (s) => html.querySelector(s) };
   win = { scrollY: 0, innerHeight: 800, scrollBy: vi.fn(), listeners: new Map(), addEventListener: (t, f) => win.listeners.set(t, f), removeEventListener: (t) => win.listeners.delete(t) };
   vi.stubGlobal('HTMLElement', El);
   vi.stubGlobal('document', doc);
@@ -274,5 +277,54 @@ describe('startSpatial', () => {
     const end = key('ArrowDown'); // nothing further: default prevented, but the event is passed on
     expect(end.preventDefault).toHaveBeenCalled();
     expect(end.stopPropagation).not.toHaveBeenCalled();
+  });
+
+  describe('pointer hover (Magic Remote)', () => {
+    const over = (target: unknown) => dl.get('pointerover')?.({ target });
+
+    it('moves the focus to the hovered card without scrolling, and the arrows continue from there', () => {
+      const g = grid();
+      const inner = new El('span').at(0, 0);
+      g.e.add(inner);
+      startSpatial(() => true);
+      over(inner); // hovering something inside the card link
+      expect(id()).toBe('e');
+      expect(g.e.focus).toHaveBeenCalledWith({ preventScroll: true });
+      expect(g.e.scrollIntoView).not.toHaveBeenCalled();
+      key('ArrowRight');
+      expect(id()).toBe('f');
+    });
+
+    it('does nothing while disabled, over non-focusable areas, or over unusable elements', () => {
+      const g = grid();
+      const blank = new El('div').at(500, 500);
+      doc.body.add(blank);
+      g.a.focus();
+      let on = false;
+      startSpatial(() => on);
+      over(g.e);
+      expect(id()).toBe('a');
+      on = true;
+      over(blank);
+      over(null);
+      expect(id()).toBe('a');
+      g.e.rect = { left: 0, top: 0, width: 0, height: 0 };
+      over(g.e);
+      expect(id()).toBe('a');
+    });
+
+    it('leaves text fields alone (no on-screen keyboard on hover) and is removed by stop', () => {
+      const g = grid();
+      const input = new El('input', { type: 'text', id: 'in' }).at(0, 300);
+      doc.body.add(input);
+      g.a.focus();
+      const stop = startSpatial(() => true);
+      over(input);
+      expect(id()).toBe('a');
+      stop();
+      expect(dl.has('pointerover')).toBe(false);
+      over(g.b);
+      expect(id()).toBe('a');
+    });
   });
 });
