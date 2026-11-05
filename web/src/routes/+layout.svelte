@@ -62,6 +62,8 @@
   if (early) setActiveProfile(bootProfile); // early requests carry the profile this tab ran with (a switch elsewhere answers 409 → reload without early render)
   /** TV mode: big UI, D-pad navigation. On for paired televisions; `?tv=1` previews it in any browser (`?tv=0` ends the preview). */
   let tv = false, replaced = false;
+  /** inside the LG app; set on mount (the server render has no window) */
+  let lgApp = false;
   let pending = false, checking = false;
   let notes: Array<{ id: number; title: string; link?: string; read: boolean }> = [];
   let scrolled = false, menu = false, bell = false, cats = false, help = false;
@@ -361,7 +363,8 @@
     const unwarm = () => evs.forEach((t) => document.removeEventListener(t, warm));
     evs.forEach((t) => document.addEventListener(t, warm, { passive: true }));
     stops.push(unwarm);
-    if (isLgApp()) recordHistoryBase();
+    lgApp = isLgApp();
+    if (lgApp) recordHistoryBase();
     if (isTizenApp() || isLgApp()) stops.push(installNavLock()); // the TV app never leaves for a foreign site (lib/tizen/navlock.ts)
     const flag = new URLSearchParams(location.search).get('tv');
     if (flag === '1') sessionStorage.setItem('ff_tv', '1'); else if (flag === '0') sessionStorage.removeItem('ff_tv');
@@ -543,7 +546,7 @@
             <button class="plain" role="menuitem" on:click={openHelp}><Icon name="info" size={18} />{$t('shell.menu.help')}</button>
             {#if admin}<a href="/admin" role="menuitem"><Icon name="shield" size={18} />{$t('shell.menu.admin')}</a>{/if}
             <hr />
-            {#if isLgApp()}<button class="plain" role="menuitem" on:click={changeServer}>{$t('shell.account.changeServer')}</button>{/if}
+            {#if lgApp}<button class="plain" role="menuitem" on:click={changeServer}>{$t('shell.account.changeServer')}</button>{/if}
             <button class="plain out" role="menuitem" on:click={logout}>{$t('shell.account.logout')}</button>
           </div>
         {/if}
@@ -620,7 +623,7 @@
 {/if}
 <!-- Samsung TV app: the phase-0 probe screen (only with probe=1 inside the app; a strip on the pairing page, full screen after pairing) -->
 <ProbeOverlay compact={path === '/tv'} />
-{#if isLgApp()}<LgProbeOverlay compact={path === '/tv'} />{/if}
+{#if lgApp}<LgProbeOverlay compact={path === '/tv'} />{/if}
 <!-- app-wide toasts + confirm dialog (lib/ui) + the in-app re-authentication (lib/account/reauth.ts); mounted once, outside the page so they survive navigation -->
 <ToastHost />
 <ConfirmHost />

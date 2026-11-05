@@ -72,3 +72,12 @@ describe('shouldExitOnBack', () => {
   it('does not exit with a modal open', () => expect(shouldExitOnBack({ ...base, modalId: 'abc' })).toBe(false));
   it('does not exit while typing', () => expect(shouldExitOnBack({ ...base, editable: true })).toBe(false));
 });
+
+describe('without a window (server render, prerender)', () => {
+  it('isLgApp is false, webosVersion is null, exitLgApp does nothing; none throws', () => {
+    expect(typeof window).toBe('undefined');
+    expect(isLgApp()).toBe(false);
+    expect(webosVersion()).toBeNull();
+    expect(() => exitLgApp()).not.toThrow();
+  });
+});

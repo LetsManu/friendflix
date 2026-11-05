@@ -18,9 +18,11 @@ export interface LgWin {
 }
 
 const ua = (win: LgWin) => win.navigator?.userAgent ?? '';
+/** the page's window, or undefined during the server render / prerender (no window there) */
+const pageWin = (): LgWin | undefined => (typeof window === 'undefined' ? undefined : window);
 
-export function isLgApp(win: LgWin = window): boolean {
-  if (!ua(win).includes(UA_TOKEN)) return false;
+export function isLgApp(win: LgWin | undefined = pageWin()): boolean {
+  if (!win || !ua(win).includes(UA_TOKEN)) return false;
   let stored = false;
   try { stored = win.sessionStorage?.getItem(SESSION_KEY) === 'webos'; } catch { /* storage blocked */ }
   if (stored) return true;
@@ -30,7 +32,8 @@ export function isLgApp(win: LgWin = window): boolean {
 }
 
 /** the webOS TV version from the user agent ("webOSTV/6.0", or "webOS.TV-2025" as '25'), else null */
-export function webosVersion(win: LgWin = window): string | null {
+export function webosVersion(win: LgWin | undefined = pageWin()): string | null {
+  if (!win) return null;
   const s = ua(win);
   const tv = /webOSTV\/(\d+(?:\.\d+)?)/.exec(s)?.[1];
   if (tv) return tv;
@@ -39,7 +42,8 @@ export function webosVersion(win: LgWin = window): string | null {
 }
 
 /** leave the app (Back on the home screen); never throws */
-export function exitLgApp(win: LgWin = window): void {
+export function exitLgApp(win: LgWin | undefined = pageWin()): void {
+  if (!win) return;
   try {
     if (typeof win.PalmSystem?.platformBack === 'function') win.PalmSystem.platformBack();
     else win.close?.();
