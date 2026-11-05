@@ -13,7 +13,8 @@ export interface LgWin {
   navigator?: { userAgent?: string };
   location?: { search?: string };
   sessionStorage?: Pick<Storage, 'getItem' | 'setItem'>;
-  PalmSystem?: { platformBack?: () => void };
+  /** deviceInfo: a JSON string with platformVersion (e.g. "6.3.1") */
+  PalmSystem?: { platformBack?: () => void; deviceInfo?: unknown };
   close?: () => void;
 }
 
@@ -31,23 +32,31 @@ export function isLgApp(win: LgWin | undefined = pageWin()): boolean {
   return true;
 }
 
-/** the webOS TV version from the user agent ("webOSTV/6.0", or "webOS.TV-2025" as '25'), else null */
+/**
+ * the webOS TV version from the user agent ("webOSTV/6.0", or "webOS.TV-2025" as '25'); without a token, PalmSystem.deviceInfo's
+ * platformVersion ("6.3.1" -> '6.3', "23" -> '23'); else null
+ */
 export function webosVersion(win: LgWin | undefined = pageWin()): string | null {
   if (!win) return null;
   const s = ua(win);
   const tv = /webOSTV\/(\d+(?:\.\d+)?)/.exec(s)?.[1];
   if (tv) return tv;
   const year = /webOS\.TV-(\d{4})/.exec(s)?.[1];
-  return year ? year.slice(-2) : null;
+  if (year) return year.slice(-2);
+  try {
+    const raw = win.PalmSystem?.deviceInfo;
+    const pv = (typeof raw === 'string' ? JSON.parse(raw) : raw)?.platformVersion;
+    return /^(\d+(?:\.\d+)?)/.exec(typeof pv === 'string' ? pv : '')?.[1] ?? null;
+  } catch { return null; }
 }
 
 /** leave the app (Back on the home screen); never throws */
 export function exitLgApp(win: LgWin | undefined = pageWin()): void {
   if (!win) return;
   try {
-    if (typeof win.PalmSystem?.platformBack === 'function') win.PalmSystem.platformBack();
-    else win.close?.();
-  } catch { /* nothing more to try */ }
+    if (typeof win.PalmSystem?.platformBack === 'function') { win.PalmSystem.platformBack(); return; }
+  } catch { /* platformBack failed: try close() */ }
+  try { win.close?.(); } catch { /* nothing more to try */ }
 }
 
 /** Back on the TV home screen leaves the app, but only when nothing else wants the key (modal, dropdown, text field) */

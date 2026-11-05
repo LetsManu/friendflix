@@ -40,6 +40,17 @@ describe('webosVersion', () => {
   it('maps webOS.TV-2025 to 25', () => {
     expect(webosVersion(win({ ua: 'Mozilla/5.0 (Web0S; Linux/SmartTV) Chrome/120 webOS.TV-2025 Safari' }))).toBe('25');
   });
+  it('falls back to PalmSystem.deviceInfo platformVersion (first two dot parts, else the major)', () => {
+    const palm = (deviceInfo: unknown): LgWin => ({ ...win({ ua: APP_UA }), PalmSystem: { deviceInfo } as LgWin['PalmSystem'] });
+    expect(webosVersion(palm(JSON.stringify({ platformVersion: '6.3.1', modelName: 'X' })))).toBe('6.3');
+    expect(webosVersion(palm(JSON.stringify({ platformVersion: '23' })))).toBe('23');
+    expect(webosVersion(palm(JSON.stringify({ platformVersion: 'x' })))).toBeNull();
+    expect(webosVersion(palm('{not json'))).toBeNull();
+    expect(webosVersion(palm(JSON.stringify({})))).toBeNull();
+    expect(webosVersion(palm(undefined))).toBeNull();
+    // the user agent token wins
+    expect(webosVersion({ ...palm(JSON.stringify({ platformVersion: '6.3.1' })), navigator: { userAgent: 'Mozilla/5.0 (Web0S) webOSTV/22' } })).toBe('22');
+  });
   it('is null otherwise', () => {
     expect(webosVersion(win())).toBeNull();
     expect(webosVersion(win({ ua: APP_UA }))).toBeNull();
@@ -58,9 +69,15 @@ describe('exitLgApp', () => {
     exitLgApp({ close });
     expect(close).toHaveBeenCalledOnce();
   });
+  it('falls back to close when platformBack throws', () => {
+    const close = vi.fn();
+    exitLgApp({ PalmSystem: { platformBack: () => { throw new Error('x'); } }, close });
+    expect(close).toHaveBeenCalledOnce();
+  });
   it('never throws', () => {
     expect(() => exitLgApp({})).not.toThrow();
     expect(() => exitLgApp({ PalmSystem: { platformBack: () => { throw new Error('x'); } } })).not.toThrow();
+    expect(() => exitLgApp({ PalmSystem: { platformBack: () => { throw new Error('x'); } }, close: () => { throw new Error('y'); } })).not.toThrow();
   });
 });
 
