@@ -49,6 +49,7 @@
   import ProbeOverlay from '#lib/tizen/ProbeOverlay.svelte';
   import { isTizenApp } from '#lib/tizen/detect';
   import { installNavLock } from '#lib/tizen/navlock';
+  import { exitLgApp, isLgApp, shouldExitOnBack } from '#lib/webos/detect';
   import { PLAY_ART_NAME, playTransition, takePlayArt } from '#lib/player/transition';
 
   let me: Me | null = null;
@@ -231,7 +232,8 @@
     // TV: Back/Escape walks one step back (the detail popup closes itself on Escape; the player handles its own keys)
     if (tv && !watchPage && !(e.key === 'Escape' && $page.state.modalId) && !isEditable(e.target as Element)) {
       e.preventDefault();
-      if (path !== '/' || $page.state.modalId) history.back();
+      if (isLgApp() && shouldExitOnBack({ path, modalId: $page.state.modalId, dropdownOpen: false, editable: false })) exitLgApp(); // Back on home leaves the LG app
+      else if (path !== '/' || $page.state.modalId) history.back();
     }
   }
 
@@ -351,7 +353,7 @@
     const unwarm = () => evs.forEach((t) => document.removeEventListener(t, warm));
     evs.forEach((t) => document.addEventListener(t, warm, { passive: true }));
     stops.push(unwarm);
-    if (isTizenApp()) stops.push(installNavLock()); // the TV app never leaves for a foreign site (lib/tizen/navlock.ts)
+    if (isTizenApp() || isLgApp()) stops.push(installNavLock()); // the TV app never leaves for a foreign site (lib/tizen/navlock.ts)
     const flag = new URLSearchParams(location.search).get('tv');
     if (flag === '1') sessionStorage.setItem('ff_tv', '1'); else if (flag === '0') sessionStorage.removeItem('ff_tv');
     online = navigator.onLine;
