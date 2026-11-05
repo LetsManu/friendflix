@@ -53,3 +53,11 @@ test('watchUrl', () => {
   assert.equal(watchUrl('https://friend.example.com', false), 'https://friend.example.com/tv?ff_app=tizen');
   assert.equal(watchUrl('https://friend.example.com', true), 'https://friend.example.com/tv?ff_app=tizen&probe=1');
 });
+
+test('watchUrl: app marker defaults to tizen', () => {
+  assert.equal(win.FFSetupCore.watchUrl('https://friend.example.com', false), 'https://friend.example.com/tv?ff_app=tizen');
+});
+
+test('watchUrl: webos marker, probe flag', () => {
+  assert.equal(win.FFSetupCore.watchUrl('https://friend.example.com', true, 'webos'), 'https://friend.example.com/tv?ff_app=webos&probe=1');
+});

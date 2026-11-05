@@ -17,7 +17,8 @@
     "spdx:check": "node scripts/spdx.mjs --check",
     "spdx:fix": "node scripts/spdx.mjs --fix",
     "compose:env": "npm run compose:env -w backend",
-    "test:tizen": "node --test tizen/shared/*.test.mjs tizen/*.test.mjs tizen/scripts/*.test.mjs"
+    "test:tvshared": "node --test tv-shared/*.test.mjs",
+    "test:tizen": "node --test tizen/*.test.mjs tizen/scripts/*.test.mjs"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",

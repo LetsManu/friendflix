@@ -184,6 +184,7 @@ jobs:
         with: { node-version: 22 }
       - run: node tizen/check-config.mjs
       - run: npm run test:tizen
+      - run: npm run test:tvshared
       - name: Install the pinned Tizen CLI
         run: bash tizen/scripts/install-cli.sh "$RUNNER_TEMP/tizen-studio"
       - name: Unsigned package (throwaway author certificate)

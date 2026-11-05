@@ -60,9 +60,9 @@ function checkVersionAnswer(json) {
   return { ok: true, authOrigin: authOriginOf(o.authOrigin) };
 }
 
-/** The page the shell opens: the TV mode, marked as the Tizen app (and as the probe run for the probe app). */
-function watchUrl(origin, probe) {
-  return origin + '/tv?ff_app=tizen' + (probe ? '&probe=1' : '');
+/** The page the shell opens: the TV mode, marked with the app ('webos' or, by default, 'tizen'), plus the probe flag for a probe run. */
+function watchUrl(origin, probe, app) {
+  return origin + '/tv?ff_app=' + (app === 'webos' ? 'webos' : 'tizen') + (probe ? '&probe=1' : '');
 }
 
 root.FFSetupCore = { normaliseServer: normaliseServer, checkVersionAnswer: checkVersionAnswer, watchUrl: watchUrl };
