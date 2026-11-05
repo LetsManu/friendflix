@@ -31,6 +31,7 @@
   import { BandwidthEstimator, loadStoredEstimate, storeEstimate } from '#lib/player/bandwidth';
   import QualityChip from '#lib/player/QualityChip.svelte';
   import { speedLabel, SPEEDS } from '#lib/player/bar';
+  import { lgCaps } from '#lib/webos/caps';
   import { firstPlaybackRequest, playbackInfoBody, type InfoBody, type PlaybackDto } from '#lib/player/infobody';
   import { holdPrefetch, takePrefetched } from '#lib/player/prefetch';
   import { createTiming, deviceClass, effectiveType, sendTiming } from '#lib/player/timing';
@@ -248,7 +249,7 @@
     const audioLang = fr?.body.audioLang;
     if (first) reqHint = quality ? 'manual' : 'network'; // a saved quality is a pick, otherwise the network chooses
     const sentBps = wantBps();
-    const body: InfoBody = playbackInfoBody({ itemId, startSec, audioIndex, bps: sentBps, hint: reqHint, audioLang });
+    const body: InfoBody = playbackInfoBody({ itemId, startSec, audioIndex, bps: sentBps, hint: reqHint, audioLang, caps: lgCaps() });
     const ask = () => api<Info | null>('/api/playback/info', { method: 'POST', body });
     // hovered/focused play button: its request is (usually) already answered; a failed prefetch is simply asked again
     const pre = first ? takePrefetched(itemId, body) : null;
