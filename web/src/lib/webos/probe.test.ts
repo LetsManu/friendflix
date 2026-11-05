@@ -1,9 +1,11 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+vi.mock('./caps', async (orig) => ({ ...(await orig<typeof import('./caps')>()), lgCaps: vi.fn(() => null) }));
 import { fetchProbeTarget } from '#lib/tvprobe/target';
-import { CANDIDATES } from './caps';
-import { failedLgProbeLine, formatLgProbe, runLgProbe, shouldLgProbe, type LgProbeDeps, type LgProbeStage, type ProbeVideo } from './probe';
+import { CANDIDATES, lgCaps } from './caps';
+import { failedLgProbeLine, formatLgProbe, realLgDeps, runLgProbe, shouldLgProbe, type LgProbeDeps, type LgProbeStage, type ProbeVideo } from './probe';
 
 type Mode = 'ok' | 'never' | 'error';
 /** a fake <video>: 'ok' fires loadeddata and playing on play(), 'error' fires error with MediaError code 3 */
@@ -30,7 +32,7 @@ function fakeVideo(mode: () => Mode, log: string[]) {
 function mk(o: {
   direct?: Mode; hls?: Mode | { error: string } | { reject: string }; nativehls?: Mode;
   keys?: { playpause?: boolean; red?: boolean }; search?: string; stored?: Record<string, string>; home?: boolean;
-  target?: 'ok' | 'unpaired';
+  target?: 'ok' | 'unpaired'; noDirect?: boolean; media?: string[];
 } = {}) {
   const log: string[] = [];
   const store = new Map<string, string>(Object.entries(o.stored ?? {}));
@@ -39,12 +41,13 @@ function mk(o: {
   let t = 1000;
   const hlsMode = o.hls ?? 'ok';
   const deps: LgProbeDeps = {
-    media: { canPlayType: (m) => (m === CANDIDATES.video.h264[2]!.mime || m === CANDIDATES.audio.aac || m === CANDIDATES.containers.mp4 ? 'maybe' : '') },
+    media: { canPlayType: (m) => ((o.media ?? [CANDIDATES.video.h264[2]!.mime, CANDIDATES.audio.aac, CANDIDATES.containers.mp4]).includes(m) ? 'maybe' : '') },
     os: '25',
     palm: true,
     fetchTarget: vi.fn(async () => {
       if (o.target === 'unpaired') throw Object.assign(new Error('u'), { code: 'unpaired' });
-      return { url: 'https://friend.example.com/d.mp4', hlsUrl: 'https://friend.example.com/h.m3u8', report };
+      if (o.noDirect) return { url: 'https://friend.example.com/h.m3u8', hlsUrl: 'https://friend.example.com/h.m3u8', direct: false, report };
+      return { url: 'https://friend.example.com/d.mp4', hlsUrl: 'https://friend.example.com/h.m3u8', direct: true, report };
     }),
     now: () => (t += 1840),
     createVideo: fakeVideo(() => (current === 'direct' ? o.direct ?? 'ok' : current === 'hls' ? (typeof hlsMode === 'string' ? hlsMode : 'never') : o.nativehls ?? 'ok'), log),
@@ -89,6 +92,11 @@ describe('formatLgProbe', () => {
       'FFPROBE v1 tv=webos os=25 direct=ok:1840ms hls=ok nativehls=ok palm=yes home=ok keys=ok video=h264,hevc,av1,vp9 audio=aac,ac3,eac3,mp3,flac,opus containers=mkv,mp4,ts,webm',
     );
   });
+  it('prints the 10-bit suffix where the runner set it', () => {
+    expect(formatLgProbe({ ...SPEC, video: ['h264+10', 'hevc+10', 'av1', 'vp9'], audio: [...SPEC.audio], containers: [...SPEC.containers] })).toBe(
+      'FFPROBE v1 tv=webos os=25 direct=ok:1840ms hls=ok nativehls=ok palm=yes home=ok keys=ok video=h264+10,hevc+10,av1,vp9 audio=aac,ac3,eac3,mp3,flac,opus containers=mkv,mp4,ts,webm',
+    );
+  });
   it('an empty list prints -', () => {
     expect(formatLgProbe({ ...SPEC, video: [], audio: [], containers: [] })).toMatch(/ video=- audio=- containers=-$/);
   });
@@ -125,6 +133,20 @@ describe('runLgProbe', () => {
     expect(r.hls).toBe('ok');
     expect(m.log[1]).toBe('remove');
   });
+  it('no direct URL from the server gives direct=error:nodirect and plays nothing for that check', async () => {
+    const m = mk({ noDirect: true });
+    const r = await run(m);
+    expect(r.direct).toBe('error:nodirect');
+    expect(r.hls).toBe('ok');
+    expect(r.nativehls).toBe('ok');
+    expect(m.log).toEqual(['hls:https://friend.example.com/h.m3u8', 'play:', 'hls:destroy', 'remove', 'play:https://friend.example.com/h.m3u8', 'remove']);
+    expect(m.report).toHaveBeenCalledTimes(1);
+  });
+  it('video= marks a codec with +10 when any 10-bit profile of it is confirmed', async () => {
+    const v = CANDIDATES.video;
+    const m = mk({ media: [v.h264[0]!.mime, v.h264[4]!.mime, v.hevc[1]!.mime, v.av1[0]!.mime, v.vp9[0]!.mime] });
+    expect((await run(m)).video).toEqual(['h264+10', 'hevc+10', 'av1', 'vp9']);
+  });
   it('a media error gives its name', async () => {
     expect((await run(mk({ nativehls: 'error' }))).nativehls).toBe('error:decode');
   });
@@ -145,7 +167,7 @@ describe('runLgProbe', () => {
     await vi.advanceTimersByTimeAsync(10);
     expect(m.deps.goHome).toHaveBeenCalledTimes(1);
     const stored = JSON.parse(m.store.get('ff.lgProbe')!);
-    expect(stored).toMatchObject({ direct: 'ok:1840ms', keys: 'ok', video: ['h264'] });
+    expect(stored).toMatchObject({ direct: 'ok:1840ms', keys: 'ok', video: ['h264'], stage: 'home' }); // the restore path reads stage
     await vi.advanceTimersByTimeAsync(3_100);
     expect((await p).home).toBe('fail'); // the page was still there after 3 s
   });
@@ -236,5 +258,32 @@ describe('shouldLgProbe', () => {
     expect(shouldLgProbe(w({ ua: LG, search: '?ff_app=webos' }))).toBe(false);
     expect(shouldLgProbe(w({ ua: LG, search: '?probe=1' }))).toBe(false); // the LG browser is not the app
     expect(shouldLgProbe(w({ search: '?ff_app=webos&probe=1' }))).toBe(false);
+  });
+});
+
+describe('realLgDeps', () => {
+  it('fetchTarget sends the lgCaps() block in the /api/playback/info body', async () => {
+    const caps = { client: 'webos', appVersion: '1.0.0', containers: ['mp4'], video: [{ codec: 'h264' }], audio: ['aac'], subtitles: ['srt'] };
+    vi.mocked(lgCaps).mockReturnValue(caps as any);
+    const json = (status: number, body: unknown) => ({ status, ok: status < 400, json: async () => body });
+    const bodies: Record<string, unknown> = {};
+    const fetchImpl = (async (path: string, init: any) => {
+      if (init?.body) bodies[path] = JSON.parse(init.body);
+      if (path === '/api/me') return json(200, { tv: true, csrfToken: 't' });
+      if (path === '/api/library/resume') return json(200, { items: [{ id: 'i1' }] });
+      return json(200, { playSessionId: 'ps', mediaSourceId: 'ms', directUrl: '/d.mp4', hlsUrl: '/h.m3u8' });
+    }) as unknown as typeof fetch;
+    const win = {
+      location: { origin: 'https://friend.example.com', search: '?ff_app=webos&probe=1' },
+      navigator: { userAgent: 'Mozilla/5.0 (Web0S; Linux/SmartTV) webOSTV/6.0' },
+      document: { createElement: () => ({ canPlayType: () => '' }) },
+      sessionStorage: { getItem: () => null, setItem: () => undefined, removeItem: () => undefined },
+    } as any;
+    const deps = realLgDeps(win, fetchImpl);
+    expect(deps.os).toBe('6.0');
+    const t = await deps.fetchTarget();
+    expect(t.direct).toBe(true);
+    expect(bodies['/api/playback/info']).toEqual({ itemId: 'i1', reasonHint: 'network', caps });
+    vi.mocked(lgCaps).mockReturnValue(null);
   });
 });

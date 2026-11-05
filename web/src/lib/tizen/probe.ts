@@ -29,7 +29,7 @@ export interface TizenLike {
   application?: { getCurrentApplication?: () => unknown };
   systeminfo?: { getCapability?: (key: string) => string };
 }
-/** what the play check needs: the stream URL and the function that tells the server the play session ended (the Samsung probe ignores hlsUrl) */
+/** what the play check needs: the stream URL and the function that tells the server the play session ended (the Samsung probe ignores hlsUrl and direct) */
 export type { ProbeTarget };
 export interface ProbeDeps {
   webapis?: WebApisLike;

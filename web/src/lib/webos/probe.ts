@@ -6,8 +6,9 @@
  * start page ("Change server"), and condenses the answer into ONE line the owner can read out or photograph:
  *
  *   FFPROBE v1 tv=webos os=<ver|?> direct=<ok:<ms>ms|error:<code>> hls=<ok|error:<code>> nativehls=<ok|error:<code>>
- *     palm=<yes|no> home=<ok|fail|skipped> keys=<ok|missing:<names>|skipped> video=<codecs|-> audio=<codecs|-> containers=<list|->
+ *     palm=<yes|no> home=<ok|fail|skipped> keys=<ok|missing:<names>|skipped> video=<codec[+10],…|-> audio=<codecs|-> containers=<list|->
  *
+ * `video=` lists codecs, `+10` when a 10-bit profile of it is confirmed. `direct=error:nodirect`: the server offered no direct URL.
  * A playback `error:<code>` is `timeout` (no picture within 15 s), `unpaired`, `profile`, `info` (the lookup failed), a media error
  * (`aborted`, `network`, `decode`, `format`), an hls.js error name, or `unsupported` / `load` (hls.js cannot run). The probe never
  * sends a progress report; the one stop report carries the title's resume point (lib/tvprobe/target.ts).
@@ -126,6 +127,19 @@ async function report(target: ProbeTarget): Promise<void> {
   clearTimeout(giveUp);
 }
 
+/** a profile name with a standalone 10 ('main 10', 'high 10') */
+export const isTenBitProfile = (profile: string) => /(^|\s)10(\s|$)/.test(profile);
+/** `codec:profile` entries -> one token per codec in order, with `+10` when any 10-bit profile of it is confirmed */
+export function videoTokens(entries: string[]): string[] {
+  const ten = new Map<string, boolean>();
+  for (const e of entries) {
+    const i = e.indexOf(':');
+    const codec = i < 0 ? e : e.slice(0, i);
+    ten.set(codec, (ten.get(codec) ?? false) || (i >= 0 && isTenBitProfile(e.slice(i + 1))));
+  }
+  return [...ten].map(([c, t]) => (t ? `${c}+10` : c));
+}
+
 type Stored = LgProbeResult & { stage: 'home' | 'done' };
 const strs = (a: unknown): a is string[] => Array.isArray(a) && a.every((x) => typeof x === 'string');
 
@@ -166,7 +180,7 @@ export async function runLgProbe(deps: LgProbeDeps, onStage: (s: LgProbeStage, d
   const t = confirmedTypes(deps.media);
   const r: LgProbeResult = {
     os: token(deps.os, '?'), direct: 'skipped', hls: 'skipped', nativehls: 'skipped', palm: deps.palm ? 'yes' : 'no', home: 'skipped', keys: 'skipped',
-    video: [...new Set(t.video.map((s) => s.split(':')[0]!))], audio: t.audio, containers: t.containers,
+    video: videoTokens(t.video), audio: t.audio, containers: t.containers,
   };
 
   onStage('direct');
@@ -178,7 +192,8 @@ export async function runLgProbe(deps: LgProbeDeps, onStage: (s: LgProbeStage, d
   if (target) {
     const tg = target;
     try {
-      r.direct = await playCheck(deps, async (v) => { v.src = tg.url; return undefined; });
+      // without a direct URL the server chose the converted stream: playing tg.url would be an HLS check reported as direct
+      r.direct = tg.direct ? await playCheck(deps, async (v) => { v.src = tg.url; return undefined; }) : 'error:nodirect';
       onStage('hls');
       r.hls = (await playCheck(deps, (v, fail) => deps.startHls(v, tg.hlsUrl, fail))).replace(/^ok:.*/, 'ok');
       onStage('hls', 'native');

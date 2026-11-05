@@ -11,8 +11,9 @@
   let on = false, stage: LgProbeStage = 'formats', detail = '', line = '', closed = false;
 
   function onKey(e: KeyboardEvent) {
-    if (!on || stage !== 'done' || !isBackKey(e)) return;
-    e.preventDefault(); e.stopPropagation();
+    if (!on || !isBackKey(e)) return;
+    e.preventDefault(); e.stopPropagation(); // also while running: Back must not reach the layout, which leaves the app on /
+    if (stage !== 'done') return;
     if (shouldEndLgProbe(compact, line)) endLgProbe(); // the strip on the pairing page only hides itself while unpaired: the full-screen probe runs after pairing
     closed = true; on = false;
   }

@@ -25,6 +25,7 @@ describe('fetchProbeTarget', () => {
     const t = await fetchProbeTarget(s.win, s.fetchImpl);
     expect(t.url).toBe('https://friend.example.com/media/x.mp4');
     expect(t.hlsUrl).toBe('https://friend.example.com/h.m3u8');
+    expect(t.direct).toBe(true);
     expect(s.calls.find((c) => c.path === '/api/playback/info')!.init.headers['x-csrf-token']).toBe('tok-1');
     await t.report();
     const stop = s.calls.find((c) => c.path === '/api/playback/stop')!;
@@ -40,6 +41,7 @@ describe('fetchProbeTarget', () => {
     const s = setup({}, { directUrl: undefined });
     const t = await fetchProbeTarget(s.win, s.fetchImpl);
     expect(t.url).toBe('https://friend.example.com/h.m3u8');
+    expect(t.direct).toBe(false);
     await t.report();
     expect(s.body('/api/playback/stop').playMethod).toBe('Transcode');
   });

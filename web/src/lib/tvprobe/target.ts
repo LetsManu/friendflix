@@ -7,8 +7,8 @@
  */
 import { getActiveProfile, getCsrf, setCsrf } from '#lib/api';
 
-/** the stream URLs and the function that tells the server the play session ended */
-export interface ProbeTarget { url: string; hlsUrl: string; report: () => Promise<unknown> }
+/** the stream URLs (`url` falls back to the converted stream; `direct` says whether it is the original file) and the function that tells the server the play session ended */
+export interface ProbeTarget { url: string; hlsUrl: string; direct: boolean; report: () => Promise<unknown> }
 
 interface ItemRef { id: string }
 interface InfoAnswer { playSessionId: string; mediaSourceId: string; directUrl?: string; hlsUrl: string; resumeTicks?: number }
@@ -50,6 +50,7 @@ export async function fetchProbeTarget(win: { location: { origin: string } }, fe
   return {
     url: abs(info.directUrl ?? info.hlsUrl),
     hlsUrl: abs(info.hlsUrl),
+    direct: Boolean(info.directUrl),
     // the stop report stores a position for the owner's title: send the resume point back, never a made-up 0 (that would reset it)
     report: () => call('/api/playback/stop', 'POST', { itemId, playSessionId: info.playSessionId, mediaSourceId: info.mediaSourceId, positionTicks: info.resumeTicks ?? 0, isPaused: false, playMethod }),
   };

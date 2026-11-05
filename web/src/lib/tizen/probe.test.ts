@@ -35,7 +35,7 @@ function mk(o: { av?: ReturnType<typeof avplay> | null; key?: boolean; app?: boo
     fetchInfo: vi.fn(async () => {
       if (o.target === 'unpaired') throw Object.assign(new Error('u'), { code: 'unpaired' });
       if (o.target === 'fail') throw new Error('boom');
-      return { url: 'https://friend.example.com/s.mp4', hlsUrl: 'https://friend.example.com/s.m3u8', report };
+      return { url: 'https://friend.example.com/s.mp4', hlsUrl: 'https://friend.example.com/s.m3u8', direct: true, report };
     }),
     now: () => (t += 1155),
     waitKey: vi.fn(async () => o.key !== false),
