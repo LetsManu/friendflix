@@ -23,6 +23,8 @@ interface Variant { profile: string; mime: string }
 export const CANDIDATES = {
   video: {
     h264: [
+      { profile: 'constrained baseline', mime: 'video/mp4; codecs="avc1.42E01E"' },
+      { profile: 'baseline', mime: 'video/mp4; codecs="avc1.42001E"' },
       { profile: 'main', mime: 'video/mp4; codecs="avc1.4D4033"' },
       { profile: 'high', mime: 'video/mp4; codecs="avc1.640033"' },
       { profile: 'high 10', mime: 'video/mp4; codecs="avc1.6E0033"' },
@@ -37,7 +39,7 @@ export const CANDIDATES = {
     ],
     vp9: [{ profile: 'profile 0', mime: 'video/webm; codecs="vp09.00.51.08"' }],
     mpeg2video: [{ profile: 'main', mime: 'video/mpeg' }],
-  } as Record<string, Variant[]>,
+  } satisfies Record<string, Variant[]>,
   audio: {
     aac: 'audio/mp4; codecs="mp4a.40.2"',
     ac3: 'audio/mp4; codecs="ac-3"',
@@ -46,7 +48,7 @@ export const CANDIDATES = {
     flac: 'audio/flac',
     opus: 'audio/webm; codecs="opus"',
     vorbis: 'audio/webm; codecs="vorbis"',
-  } as Record<string, string>,
+  } satisfies Record<string, string>,
   containers: {
     mkv: 'video/x-matroska',
     mp4: 'video/mp4',
@@ -54,9 +56,9 @@ export const CANDIDATES = {
     mov: 'video/quicktime',
     ts: 'video/mp2t',
     webm: 'video/webm',
-  } as Record<string, string>,
+  } satisfies Record<string, string>,
   subtitles: ['srt', 'ass', 'ssa', 'vtt'],
-} as const;
+};
 
 /** true when the TV confirms this MIME type; a throwing probe counts as "no" */
 function confirms(m: MediaProbe, mime: string): boolean {
