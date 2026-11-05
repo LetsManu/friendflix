@@ -50,6 +50,8 @@
   import { isTizenApp } from '#lib/tizen/detect';
   import { installNavLock } from '#lib/tizen/navlock';
   import { exitLgApp, isLgApp, shouldExitOnBack } from '#lib/webos/detect';
+  import { goToAppHome, HOME_ROUTE, recordHistoryBase } from '#lib/webos/home';
+  import { toast } from '#lib/ui/toast';
   import { PLAY_ART_NAME, playTransition, takePlayArt } from '#lib/player/transition';
 
   let me: Me | null = null;
@@ -157,6 +159,11 @@
     if (bell && unread) { await api('/api/notifications/read', { method: 'POST' }); setTimeout(loadNotes, 1500); }
   }
   const logout = () => doLogout(me?.tv);
+  const changeServer = () => {
+    menu = false;
+    if (HOME_ROUTE === 'history' && goToAppHome()) return;
+    toast.info($t('shell.account.changeServerBlue'));
+  };
   async function surprise() {
     menu = false;
     try { goto(`/item/${(await api('/api/library/random?type=Movie')).item.id}`); } catch { goto('/browse/movies'); }
@@ -353,6 +360,7 @@
     const unwarm = () => evs.forEach((t) => document.removeEventListener(t, warm));
     evs.forEach((t) => document.addEventListener(t, warm, { passive: true }));
     stops.push(unwarm);
+    if (isLgApp()) recordHistoryBase();
     if (isTizenApp() || isLgApp()) stops.push(installNavLock()); // the TV app never leaves for a foreign site (lib/tizen/navlock.ts)
     const flag = new URLSearchParams(location.search).get('tv');
     if (flag === '1') sessionStorage.setItem('ff_tv', '1'); else if (flag === '0') sessionStorage.removeItem('ff_tv');
@@ -534,6 +542,7 @@
             <button class="plain" role="menuitem" on:click={openHelp}><Icon name="info" size={18} />{$t('shell.menu.help')}</button>
             {#if admin}<a href="/admin" role="menuitem"><Icon name="shield" size={18} />{$t('shell.menu.admin')}</a>{/if}
             <hr />
+            {#if isLgApp()}<button class="plain" role="menuitem" on:click={changeServer}>{$t('shell.account.changeServer')}</button>{/if}
             <button class="plain out" role="menuitem" on:click={logout}>{$t('shell.account.logout')}</button>
           </div>
         {/if}

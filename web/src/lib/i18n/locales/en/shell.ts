@@ -53,6 +53,8 @@ const en: Translation<typeof de> = {
     withPin: 'with PIN',
     manageProfiles: 'Edit profiles',
     logout: 'Sign out of FriendFlix',
+    changeServer: 'Change server',
+    changeServerBlue: 'Restart the app and press the blue button to change the server.',
   },
   menu: {
     me: 'My space',

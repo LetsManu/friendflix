@@ -59,6 +59,8 @@ const pl: Translation<typeof de> = {
     withPin: 'z kodem PIN',
     manageProfiles: 'Edytuj profile',
     logout: 'Wyloguj z FriendFlix',
+    changeServer: 'Zmień serwer',
+    changeServerBlue: 'Uruchom aplikację ponownie i naciśnij niebieski przycisk, aby zmienić serwer.',
   },
   menu: {
     me: 'Moja strefa',

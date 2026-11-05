@@ -54,6 +54,8 @@ export default {
     withPin: 'mit PIN',
     manageProfiles: 'Profile bearbeiten',
     logout: 'Von FriendFlix abmelden',
+    changeServer: 'Server wechseln',
+    changeServerBlue: 'App neu starten und die blaue Taste drücken, um den Server zu wechseln.',
   },
   /** link labels of the avatar menu, /me and the footer (lib/menu.ts) */
   menu: {
