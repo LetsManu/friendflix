@@ -18,7 +18,7 @@ Die LG-TV-App ist FriendFlix als App auf einem LG-Smart-TV mit webOS (webOS 22 o
 - [Die 50-Stunden-Sitzung](#die-50-stunden-sitzung)
 - [Die Fernbedienung](#die-fernbedienung)
 - [Was Direct Play abdeckt](#was-direct-play-abdeckt)
-- [Server ändern](#server-ändern)
+- [Server wechseln](#server-wechseln)
 - [Die Probe und wie du ihre Zeile liest](#die-probe-und-wie-du-ihre-zeile-liest)
 - [Offene Punkte / Prüfungen beim ersten Start](#offene-punkte--prüfungen-beim-ersten-start)
 - [Updates](#updates)
@@ -111,8 +111,8 @@ Beim ersten Start fragt die App nach der Adresse deines Servers, zum Beispiel `f
 - Gib sie mit der Tastatur des Fernsehers oder der Magic Remote ein; die Pfeiltasten wechseln zwischen Feld und **Verbinden**.
 - Nur `https://` funktioniert; `https://` wird für dich ergänzt. Eine reine `http://`-Adresse wird abgelehnt (der Fernseher trägt ein Anmelde-Cookie).
 - Die App prüft, ob die Adresse wie ein FriendFlix-Server antwortet (`GET /api/version`). Wenn nicht, sagt sie warum.
-- Die Adresse wird gemerkt. Beim nächsten Start öffnet die App den TV-Modus deines Servers. Ist der Fernseher noch nicht gekoppelt, zeigt er wie üblich den Kopplungscode: Koppeln wie in [tv-mode.md](../tv-mode.md) beschrieben.
-- Ist der Server beim Start nicht erreichbar, bietet eine Fehlerkarte **Erneut versuchen** und **Server ändern** an.
+- Die Adresse wird gemerkt. Beim nächsten Start zeigt die App 1,5 Sekunden lang ihr Logo mit *Blue key: change server* (blaue Taste: Server wechseln) und öffnet dann den TV-Modus deines Servers (siehe [Server wechseln](#server-wechseln)). Ist der Fernseher noch nicht gekoppelt, zeigt er wie üblich den Kopplungscode: Koppeln wie in [tv-mode.md](../tv-mode.md) beschrieben. **Zurück** auf dem Kopplungsbildschirm führt zum ausgefüllten Adressformular; Zurück dort beendet die App.
+- Ist der Server beim Start nicht erreichbar, bietet eine Fehlerkarte **Retry** (erneut versuchen) und **Change server** (Server wechseln) an; die Startseite ist nur englisch.
 
 ## Die 50-Stunden-Sitzung
 
@@ -147,9 +147,12 @@ Die App sagt dem Server, was der Fernseher abspielen kann, und der Server schick
 
 Erscheint bei Direct Play innerhalb von **10 Sekunden** kein Bild, wechselt der Player einmal an derselben Position auf den umgewandelten Stream. Ein Dekodierfehler tut dasselbe. Bestätigt der Fernseher gar nichts, schickt die App keine Liste, und der Server behandelt den Fernseher wie einen einfachen Browser. Die Qualitätsanzeige des Players zeigt bei Direct Play *Original*.
 
-## Server ändern
+## Server wechseln
 
-Öffne das Konto-Menü und wähle **Server ändern**. Die App geht über den Browserverlauf zurück zu ihrer Startseite und zeigt das Adressformular wieder. Funktioniert dieser Weg an deinem Fernseher nicht (`home=fail` der Probe), zeigt die Startseite stattdessen kurz das Logo mit *Blaue Taste: Server ändern*, und die blaue Taste öffnet das Formular.
+Zwei Wege führen zum Adressformular, ausgefüllt mit der aktuellen Adresse:
+
+- **Konto-Menü → Server wechseln.** Die App geht über den Browserverlauf zurück zu ihrer Startseite und zeigt das Formular. Der Fernseher behält nur die letzten 50 Seiten im Verlauf; nach langer Nutzung kann die Startseite daher fehlen (`home=fail` der Probe bedeutet dasselbe). Ist die App nach 1,5 Sekunden noch auf deinem Server, sagt sie das: App neu starten und die blaue Taste nehmen.
+- **Blaue Taste beim Start.** Jeder Start mit gespeicherter Adresse zeigt 1,5 Sekunden lang das Logo mit *Blue key: change server*, bevor die App deinen Server öffnet. Drückst du in dieser Zeit die **blaue** Taste (406), erscheint stattdessen das Formular.
 
 ## Die Probe und wie du ihre Zeile liest
 
@@ -177,7 +180,7 @@ FFPROBE v1 tv=webos os=25 direct=ok:1840ms hls=ok nativehls=ok palm=yes home=ok 
 | `hls` | `ok`, `error:<code>` | Ob der umgewandelte Stream über hls.js läuft. |
 | `nativehls` | `ok`, `error:<code>` | Ob er über das eigene HLS des Fernsehers läuft. Zusammen mit `hls` entscheidet das den **HLS-Weg**: hls.js oder, wenn hls.js scheitert, das native HLS des Fernsehers. |
 | `palm` | `yes`, `no` | Ob das `PalmSystem` des Fernsehers vorhanden ist. Entscheidet die **Beenden-Methode**: `platformBack()`, wenn vorhanden, sonst `window.close()`. |
-| `home` | `ok`, `fail`, `skipped` | Ob „Zurück im Verlauf“ die lokale Startseite erreicht. Entscheidet den **Weg für „Server ändern“**: `fail` schaltet auf die Ersatzlösung mit der blauen Taste um. `skipped`, solange der Fernseher nicht gekoppelt ist. |
+| `home` | `ok`, `fail`, `skipped` | Ob „Zurück im Verlauf“ die lokale Startseite erreicht. Entscheidet den **Weg für „Server wechseln“**: Bei `fail` erreicht der Menüeintrag die Startseite nicht, dann ist die blaue Taste beim Start der Weg. `skipped`, solange der Fernseher nicht gekoppelt ist. |
 | `keys` | `ok`, `missing:<namen>`, `skipped` | Ob Play/Pause und die rote Taste angekommen sind. `missing` nennt die fehlenden. `skipped`, solange nicht gekoppelt. |
 | `video` | Codecs | Die Videocodecs, die der Fernseher bestätigt hat; ein `+10` hinter einem Codec heißt: 10-Bit bestätigt; `-` heißt: nichts bestätigt. Entscheidet die **endgültige Formatliste**. |
 | `audio` | Codecs | Die Audiocodecs, die der Fernseher bestätigt hat (`-`: nichts bestätigt). Entscheidet die Formatliste. |
@@ -191,9 +194,9 @@ Das ließ sich nur an einem echten Fernseher prüfen und ist noch unbestätigt. 
 
 - **Verstecktes Testvideo.** Die Probe verlässt sich darauf, dass ein kaum sichtbares Video mit 2×2 Pixeln auf webOS dekodiert. Wenn nicht, meldet die Wiedergabeprüfung der Probe falsch.
 - **Native HLS-Ereignisse.** Ob der eigene HLS-Player des Fernsehers die Ereignisse auslöst, auf die der Player wartet.
-- **Server ändern über den Verlauf.** Die Startseite erkennt „durch Zurückgehen erreicht“ am Navigationstyp `back_forward`. Ob webOS ihn meldet, ist unbestätigt; das Feld `home` der Probe und die Ersatzlösung mit der blauen Taste fangen das ab.
+- **Server wechseln über den Verlauf.** Die Startseite erkennt „durch Zurückgehen erreicht“ am Navigationstyp `back_forward`; eine aus dem Back/Forward-Cache wiederhergestellte Seite (`pageshow` mit `persisted`) zählt genauso. Ob webOS das meldet, ist unbestätigt; das Feld `home` der Probe und die blaue Taste beim Start fangen das ab.
 - **Nicht dekodierbare Originale.** Ob eine Datei, die der Fernseher nicht dekodieren kann, trotzdem `loadeddata` auslösen kann. Dann bliebe das Bild schwarz, und der 10-Sekunden-Wechsel auf den umgewandelten Stream würde nicht starten.
-- **Magic-Remote-Hover nach dem Scrollen.** Ob der Zeiger den Fokus nach einem mit den Pfeiltasten ausgelösten Scrollen richtig bewegt.
+- **Magic-Remote-Hover nach dem Scrollen.** Nach jedem Tastendruck bewegt das Darüberfahren den Fokus erst wieder, wenn sich der Zeiger wirklich bewegt (ein Zeigerereignis mit Bewegung). So übernimmt nach einem Scrollen mit den Pfeiltasten nicht das Element den Fokus, das unter dem ruhenden Zeiger landet. Ob webOS diese Bewegung für die Magic Remote meldet, ist unbestätigt.
 - **`install.ps1` unter Windows.** Es wurde nie auf einem echten Windows-PC ausgeführt; das Linux/macOS-Skript schon. Schlägt es fehl, melde bitte die Meldung.
 
 ## Updates
@@ -212,4 +215,4 @@ Die App aktualisiert sich nicht selbst (das kann eine Entwicklermodus-App nicht)
 - **„not an IPv4 address“:** Nimm die Adresse aus den Netzwerkeinstellungen des Fernsehers, keinen Namen.
 - **Windows blockiert das Skript:** Führe es wie oben mit `-ExecutionPolicy Bypass` aus.
 - **Das Release hat keine `.ipk`-Dateien:** Der Release-Job lief für diesen Tag nicht. Sieh dir den *Actions*-Lauf des Releases an.
-- **Falsche Serveradresse gespeichert:** Nutze [Server ändern](#server-ändern).
+- **Falsche Serveradresse gespeichert:** Nutze [Server wechseln](#server-wechseln).

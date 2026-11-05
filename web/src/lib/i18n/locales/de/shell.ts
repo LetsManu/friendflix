@@ -55,7 +55,7 @@ export default {
     manageProfiles: 'Profile bearbeiten',
     logout: 'Von FriendFlix abmelden',
     changeServer: 'Server wechseln',
-    changeServerBlue: 'App neu starten und die blaue Taste drücken, um den Server zu wechseln.',
+    changeServerBlue: 'Die Startseite war nicht erreichbar. Starte die App neu und drücke die blaue Taste, solange das Logo zu sehen ist.',
   },
   /** link labels of the avatar menu, /me and the footer (lib/menu.ts) */
   menu: {

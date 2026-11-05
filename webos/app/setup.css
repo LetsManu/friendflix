@@ -12,6 +12,8 @@ button:focus { background: #e50914; }
 button[disabled] { opacity: 0.5; }
 .error { min-height: 48px; margin: 22px 0 0; font-size: 32px; color: #ff8a8a; }
 .hint { font-size: 28px; color: #8a8a99; margin-top: 40px; }
+#opening img { display: block; width: 240px; height: 240px; border-radius: 40px; }
+#opening-text { font-size: 40px; color: #b9b9c6; margin: 40px 0 0; }
 #checking-text { font-size: 44px; margin: 0; word-break: break-all; }
 .card { margin-top: 20px; }
 .actions { display: flex; gap: 40px; }

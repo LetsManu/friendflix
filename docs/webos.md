@@ -111,7 +111,7 @@ On the first start the app asks for your server's address, for example `friend.e
 - Enter it with the TV's keyboard or the Magic Remote; the arrow keys move between the field and **Connect**.
 - Only `https://` works; `https://` is added for you. A plain `http://` address is refused (the TV carries a sign-in cookie).
 - The app checks that the address answers like a FriendFlix server (`GET /api/version`). If not, it says why.
-- The address is remembered. At the next start the app opens your server's TV mode. If the TV is not paired yet, it shows the pairing code as usual: pair it as described in [tv-mode.md](tv-mode.md).
+- The address is remembered. At the next start the app shows its logo with *Blue key: change server* for 1.5 seconds, then opens your server's TV mode (see [Change server](#change-server)). If the TV is not paired yet, it shows the pairing code as usual: pair it as described in [tv-mode.md](tv-mode.md). **Back** on the pairing screen returns to the address form, filled in; Back there exits the app.
 - If the server cannot be reached at start, an error card offers **Retry** and **Change server**.
 
 ## The 50-hour session
@@ -149,7 +149,10 @@ If no picture appears within **10 seconds** on direct play, the player switches 
 
 ## Change server
 
-Open the account menu and choose **Change server**. The app goes back to its start page through the browser history and shows the address form again. If that route turns out not to work on your TV (the probe's `home=fail`), the start page instead shows the logo for a moment with *Blue key: change server*, and the blue key opens the form.
+Two ways lead to the address form, filled in with the current address:
+
+- **Account menu → Change server.** The app goes back to its start page through the browser history and shows the form. The TV keeps only the last 50 pages of history, so after long use the start page may be gone (the probe's `home=fail` means the same). If the app is still on your server after 1.5 seconds, it says so: restart the app and use the blue key.
+- **Blue key at start.** Every start with a stored address shows the logo with *Blue key: change server* for 1.5 seconds before the app opens your server. Press the **blue** key (406) during that time to get the form instead.
 
 ## The probe and how to read its line
 
@@ -177,7 +180,7 @@ FFPROBE v1 tv=webos os=25 direct=ok:1840ms hls=ok nativehls=ok palm=yes home=ok 
 | `hls` | `ok`, `error:<code>` | Whether the converted stream plays through hls.js. |
 | `nativehls` | `ok`, `error:<code>` | Whether it plays through the TV's own HLS. Together with `hls`, this decides the **HLS route**: hls.js, or the TV's native HLS if hls.js fails. |
 | `palm` | `yes`, `no` | Whether the TV's `PalmSystem` is present. Decides the **exit method**: `platformBack()` when present, else `window.close()`. |
-| `home` | `ok`, `fail`, `skipped` | Whether history back reaches the local start page. Decides the **Change server route**: `fail` switches to the blue-key fallback. `skipped` while the TV is unpaired. |
+| `home` | `ok`, `fail`, `skipped` | Whether history back reaches the local start page. Decides the **Change server route**: with `fail`, the menu entry cannot reach the start page and the blue key at start is the way. `skipped` while the TV is unpaired. |
 | `keys` | `ok`, `missing:<names>`, `skipped` | Whether the play/pause and red keys arrived. `missing` lists the ones that did not. `skipped` while unpaired. |
 | `video` | codecs | The video codecs the TV confirmed; a `+10` after a codec means 10-bit is confirmed; `-` means nothing was confirmed. Decides the **final format list**. |
 | `audio` | codecs | The audio codecs the TV confirmed (`-`: nothing confirmed). Decides the final format list. |
@@ -191,9 +194,9 @@ These could only be checked on a real TV and are still unverified. If something 
 
 - **Hidden test video.** The probe relies on a near-invisible 2x2 pixel video decoding on webOS. If it does not, the probe's play check misreports.
 - **Native HLS events.** Whether the TV's own HLS player fires the events the player waits for.
-- **Change server via history.** The start page detects "reached by going back" through the navigation type `back_forward`. Whether webOS reports that is unverified; the probe's `home` field and the blue-key fallback cover it.
+- **Change server via history.** The start page detects "reached by going back" through the navigation type `back_forward`. A page restored from the back/forward cache (`pageshow` with `persisted`) counts the same. Whether webOS reports either is unverified; the probe's `home` field and the blue key at start cover it.
 - **Undecodable originals.** Whether a file the TV cannot decode can still fire `loadeddata`. If so, the picture stays black and the 10-second fallback to the converted stream would not start.
-- **Magic Remote hover after scrolling.** Whether the pointer moves focus correctly after a scroll made with the arrow keys.
+- **Magic Remote hover after scrolling.** After any key press, hovering moves the focus again only once the pointer really moves (a pointer event with movement), so a scroll made with the arrow keys does not hand the focus to whatever lands under the resting pointer. Whether webOS reports that movement for the Magic Remote is unverified.
 - **`install.ps1` on Windows.** It was never run on a real Windows PC; the Linux/macOS script was exercised. If it fails, please report the message.
 
 ## Updates

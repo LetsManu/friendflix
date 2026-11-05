@@ -33,7 +33,7 @@ Die [LG-TV-App](webos.md) versteht im Player zusätzlich diese Tasten (außerhal
 | Grün (404) | Audio-Menü öffnen |
 | Zurück (461) | überall eine Ebene zurück; **auf der Startseite des TV-Modus beendet es die App** |
 
-Der Zeiger der Magic Remote bewegt den Fokus: Fährst du über eine Kachel, springt der Fokusrahmen dorthin, die Pfeiltasten machen von da aus weiter. Im Konto-Menü der App gibt es **Server ändern**.
+Der Zeiger der Magic Remote bewegt den Fokus: Fährst du über eine Kachel, springt der Fokusrahmen dorthin, die Pfeiltasten machen von da aus weiter. Im Konto-Menü der App gibt es **Server wechseln**; beim Start öffnet die blaue Taste, solange das Logo zu sehen ist, das Adressformular.
 
 Startet der Browser die Wiedergabe ohne vorherigen Tastendruck (z. B. wenn das Handy etwas schickt), beginnt sie **stumm** mit Hinweis; die erste Taste schaltet den Ton ein.
 

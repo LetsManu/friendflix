@@ -25,7 +25,22 @@ function makeEl(id) {
   };
 }
 
-/** evaluates setup-core.js and setup.js against a stand-in page */
+/** manual timers for setup.js (the 1.5 s blue-key window): advance(ms) runs what is due */
+function fakeTimers() {
+  let now = 0, seq = 0;
+  const due = new Map();
+  return {
+    setTimeout: (f, ms = 0) => { const id = ++seq; due.set(id, { at: now + ms, f }); return id; },
+    clearTimeout: (id) => { due.delete(id); },
+    advance(ms) {
+      now += ms;
+      for (const [id, t] of [...due].sort((a, b) => a[1].at - b[1].at)) if (t.at <= now && due.has(id)) { due.delete(id); t.f(); }
+    },
+    pending: () => due.size,
+  };
+}
+
+/** evaluates setup-core.js and setup.js against a stand-in page (setup.js runs on manual timers: `advance`, `pass`) */
 function boot({ probe = false, local = {}, session = {}, search = '', navType = 'navigate', fetchImpl, palm = null } = {}) {
   const ids = ['opening', 'opening-text', 'form', 'server', 'connect', 'error', 'checking', 'checking-text', 'failure', 'failure-text', 'retry', 'change'];
   const els = Object.fromEntries(ids.map((id) => [id, makeEl(id)]));
@@ -39,8 +54,10 @@ function boot({ probe = false, local = {}, session = {}, search = '', navType = 
   for (const e of Object.values(els)) e.doc = doc;
   const calls = { fetch: [], closed: 0, back: 0 };
   const location = { href: 'file:///start/index.html', search };
+  const winListeners = {};
   const win = {
     location, close() { calls.closed++; },
+    addEventListener(t, f) { (winListeners[t] ||= []).push(f); },
     PalmSystem: palm === false ? undefined : { platformBack() { calls.back++; } },
   };
   const fetchFn = (url, opts) => { calls.fetch.push(url); return fetchImpl(url, opts); };
@@ -48,14 +65,18 @@ function boot({ probe = false, local = {}, session = {}, search = '', navType = 
   const localStorage = memoryStore(local);
   const sessionStorage = memoryStore(session);
   const performance = { getEntriesByType: () => [{ type: navType }] };
+  const timers = fakeTimers();
   new Function('window', 'document', 'localStorage', 'sessionStorage', 'performance', 'fetch', 'AbortController', 'URLSearchParams', 'setTimeout', 'clearTimeout', setupSrc)(
-    win, doc, localStorage, sessionStorage, performance, fetchFn, AbortController, URLSearchParams, setTimeout, clearTimeout);
+    win, doc, localStorage, sessionStorage, performance, fetchFn, AbortController, URLSearchParams, timers.setTimeout, timers.clearTimeout);
   const key = (keyCode, key2 = '') => {
     const ev = { keyCode, key: key2, prevented: false, preventDefault() { this.prevented = true; } };
     for (const f of docListeners.keydown || []) f(ev);
     return ev;
   };
-  return { els, doc, win, location, calls, localStorage, sessionStorage, key, setup: win.FFWebosSetup };
+  const fire = (t, ev) => { for (const f of winListeners[t] || []) f(ev); };
+  /** the blue-key window passes, then the check runs */
+  const pass = async () => { timers.advance(1500); await flush(); };
+  return { els, doc, win, location, calls, localStorage, sessionStorage, key, fire, timers, pass, setup: win.FFWebosSetup };
 }
 
 const goodAnswer = { sha: 'abc1234', version: '2.3.0', codename: 'Brezel', build: 'x', channel: 'stable', label: '2.3.0' };
@@ -77,7 +98,7 @@ test('startMode', () => {
 
 test('a stored server is checked and opened as the webOS TV page', async () => {
   const t = boot({ local: { 'ff.server': SERVER }, fetchImpl: okFetch });
-  await flush();
+  await t.pass();
   assert.deepEqual(t.calls.fetch, [SERVER + '/api/version']);
   assert.equal(t.location.href, SERVER + '/tv?ff_app=webos');
   assert.equal(t.localStorage.getItem('ff.server'), SERVER);
@@ -85,7 +106,7 @@ test('a stored server is checked and opened as the webOS TV page', async () => {
 
 test('unreachable stored server shows the error card', async () => {
   const t = boot({ local: { 'ff.server': SERVER }, fetchImpl: failFetch });
-  await flush();
+  await t.pass();
   assert.equal(t.els.failure.hidden, false);
   assert.equal(t.els.form.hidden, true);
   assert.equal(t.els.checking.hidden, true);
@@ -102,7 +123,7 @@ test('unreachable stored server shows the error card', async () => {
 
 test('a non-FriendFlix answer shows the error card too', async () => {
   const t = boot({ local: { 'ff.server': SERVER }, fetchImpl: async () => ({ status: 200, json: async () => ({ hello: 1 }) }) });
-  await flush();
+  await t.pass();
   assert.equal(t.els.failure.hidden, false);
   assert.match(t.els['failure-text'].textContent, /not a FriendFlix server/);
 });
@@ -110,7 +131,7 @@ test('a non-FriendFlix answer shows the error card too', async () => {
 test('Retry calls fetch again and opens the server when it answers', async () => {
   let n = 0;
   const t = boot({ local: { 'ff.server': SERVER }, fetchImpl: async () => (n++ === 0 ? failFetch() : okFetch()) });
-  await flush();
+  await t.pass();
   assert.equal(t.calls.fetch.length, 1);
   t.els.retry.click();
   await flush();
@@ -121,7 +142,7 @@ test('Retry calls fetch again and opens the server when it answers', async () =>
 test('a second Retry during a running check does not fetch again', async () => {
   let n = 0;
   const t = boot({ local: { 'ff.server': SERVER }, fetchImpl: () => (n++ === 0 ? failFetch() : new Promise(() => {})) });
-  await flush();
+  await t.pass();
   t.els.retry.click();
   await flush();
   t.els.retry.click();
@@ -131,7 +152,7 @@ test('a second Retry during a running check does not fetch again', async () => {
 
 test('Change server shows the form prefilled with the stored address', async () => {
   const t = boot({ local: { 'ff.server': SERVER }, fetchImpl: failFetch });
-  await flush();
+  await t.pass();
   t.els.change.click();
   assert.equal(t.els.form.hidden, false);
   assert.equal(t.els.failure.hidden, true);
@@ -181,7 +202,7 @@ test('Back elsewhere calls PalmSystem.platformBack, else closes the window', asy
   t.key(461);
   assert.equal(t.calls.back, 1);
   const f = boot({ local: { 'ff.server': SERVER }, fetchImpl: failFetch });
-  await flush();
+  await f.pass();
   f.key(461);
   assert.equal(f.calls.back, 1);
   const g = boot({ palm: false, fetchImpl: okFetch });
@@ -198,7 +219,7 @@ test('arrows move between the field and Connect, and between the error card butt
   t.key(38, 'ArrowUp');
   assert.equal(t.doc.activeElement, t.els.server);
   const f = boot({ local: { 'ff.server': SERVER }, fetchImpl: failFetch });
-  await flush();
+  await f.pass();
   f.key(39, 'ArrowRight');
   assert.equal(f.doc.activeElement, f.els.change);
   f.key(37, 'ArrowLeft');
@@ -223,4 +244,82 @@ test('the app page ignores the home flag and shows the form on back_forward', ()
   const t = boot({ local: { 'ff.server': SERVER }, session: { 'ff.homeTest': '1' }, navType: 'back_forward', fetchImpl: okFetch });
   assert.equal(t.els.form.hidden, false);
   assert.equal(t.location.href, 'file:///start/index.html');
+});
+
+test('a stored server: the logo with "Blue key: change server" for 1.5 s, then the check', async () => {
+  const t = boot({ local: { 'ff.server': SERVER }, fetchImpl: okFetch });
+  assert.equal(t.els.opening.hidden, false);
+  assert.equal(t.els.form.hidden, true);
+  assert.equal(t.els.checking.hidden, true);
+  assert.equal(t.els['opening-text'].textContent, 'Blue key: change server');
+  t.timers.advance(1499);
+  await flush();
+  assert.equal(t.calls.fetch.length, 0, 'nothing is checked during the window');
+  t.timers.advance(1);
+  await flush();
+  assert.deepEqual(t.calls.fetch, [SERVER + '/api/version']);
+  assert.equal(t.location.href, SERVER + '/tv?ff_app=webos');
+  const html = readFileSync(new URL('./app/index.html', import.meta.url), 'utf8');
+  assert.match(html, /<section id="opening"[^>]*hidden>[\s\S]*<img [^>]*src="icon-400.png"[\s\S]*Blue key: change server/);
+});
+
+test('the blue key (406) during the window opens the setup form, prefilled, and checks nothing', async () => {
+  const t = boot({ local: { 'ff.server': SERVER }, fetchImpl: okFetch });
+  const ev = t.key(406);
+  assert.equal(ev.prevented, true);
+  assert.equal(t.els.form.hidden, false);
+  assert.equal(t.els.opening.hidden, true);
+  assert.equal(t.els.server.value, SERVER);
+  assert.equal(t.doc.activeElement, t.els.server);
+  await t.pass();
+  assert.equal(t.calls.fetch.length, 0);
+  assert.equal(t.location.href, 'file:///start/index.html');
+  assert.equal(t.timers.pending(), 0);
+});
+
+test('the blue key after the window does nothing', async () => {
+  const t = boot({ local: { 'ff.server': SERVER }, fetchImpl: failFetch });
+  await t.pass();
+  t.key(406);
+  assert.equal(t.els.failure.hidden, false);
+  assert.equal(t.els.form.hidden, true);
+});
+
+test('the form modes have no window: back_forward, ?change=1 and no server show the form at once', () => {
+  for (const o of [{ local: { 'ff.server': SERVER }, navType: 'back_forward' }, { local: { 'ff.server': SERVER }, search: '?change=1' }, {}]) {
+    const t = boot({ ...o, fetchImpl: okFetch });
+    assert.equal(t.els.form.hidden, false);
+    assert.equal(t.els.opening.hidden, true);
+    assert.equal(t.timers.pending(), 0);
+  }
+});
+
+test('the probe opens a stored server at once (no window)', async () => {
+  const t = boot({ probe: true, local: { 'ff.server': SERVER }, fetchImpl: okFetch });
+  assert.equal(t.els.opening.hidden, true);
+  await flush();
+  assert.deepEqual(t.calls.fetch, [SERVER + '/api/version']);
+  assert.equal(t.location.href, SERVER + '/tv?ff_app=webos&probe=1');
+});
+
+test('a page restored from the back/forward cache (pageshow persisted) is routed like back_forward', async () => {
+  const t = boot({ local: { 'ff.server': SERVER }, fetchImpl: okFetch });
+  await t.pass();
+  assert.equal(t.location.href, SERVER + '/tv?ff_app=webos');
+  t.location.href = 'file:///start/index.html'; // Change server walked back; the cached page shows again without running its script
+  t.fire('pageshow', { persisted: false });
+  assert.equal(t.els.form.hidden, true, 'an ordinary pageshow changes nothing');
+  t.fire('pageshow', { persisted: true });
+  assert.equal(t.els.form.hidden, false);
+  assert.equal(t.els.checking.hidden, true);
+  assert.equal(t.els.server.value, SERVER);
+  await t.pass();
+  assert.equal(t.calls.fetch.length, 1, 'no new check');
+  // the probe: the restored page re-opens the server with home=ok, like back_forward
+  const p = boot({ probe: true, local: { 'ff.server': SERVER }, fetchImpl: okFetch });
+  await flush();
+  assert.equal(p.sessionStorage.getItem('ff.homeTest'), '1');
+  p.fire('pageshow', { persisted: true });
+  assert.equal(p.location.href, SERVER + '/tv?ff_app=webos&probe=1&home=ok');
+  assert.equal(p.sessionStorage.getItem('ff.homeTest'), null);
 });

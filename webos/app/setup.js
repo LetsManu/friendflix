@@ -2,8 +2,10 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // The server setup page of the webOS shells (app and probe; the probe gets build-time copies of this file, setup.css and
 // setup-core.js). setup-core.js is loaded before it, both as plain scripts. A stored server is checked with GET /api/version
-// and opened; if that fails an error card offers Retry and Change server. Without a stored server (or on Change server /
-// a back navigation) a TV-sized form asks for the address and checks it before storing it.
+// and opened; if that fails an error card offers Retry and Change server. In the app (not the probe) the logo with "Blue key:
+// change server" shows for 1.5 s first; the blue key (406) in that window opens the form instead. Without a stored server (or on
+// Change server / a back navigation, also a page restored from the back/forward cache) a TV-sized form asks for the address and
+// checks it before storing it.
 (function () {
 'use strict';
 // classic script (no module loading from file://); setup-core.js is loaded before it and sets window.FFSetupCore
@@ -15,10 +17,15 @@ const SERVER_KEY = 'ff.server';
 const AUTH_KEY = 'ff.authOrigin';
 const HOME_KEY = 'ff.homeTest'; // sessionStorage: the probe left this page for the server and expects to come back
 const BACK_KEY_CODE = 461;
+const BLUE_KEY_CODE = 406;
+/** the blue-key window before a stored server is checked and opened (app only) */
+const BLUE_WINDOW_MS = 1500;
 
 const probe = document.body.dataset.probe === '1';
 const $ = (id) => document.getElementById(id);
-const sections = { checking: $('checking'), failure: $('failure'), form: $('form') };
+// the probe page has no #opening section (it never waits for the blue key)
+const sections = { opening: $('opening'), checking: $('checking'), failure: $('failure'), form: $('form') };
+if (!sections.opening) delete sections.opening;
 const input = $('server');
 const button = $('connect');
 const retry = $('retry');
@@ -56,7 +63,22 @@ function open(origin, extra) {
   window.location.href = watchUrl(origin, probe, 'webos') + (extra || '');
 }
 
+let blueTimer = null;
+function endBlueWindow() {
+  if (blueTimer !== null) clearTimeout(blueTimer);
+  blueTimer = null;
+}
+/** app start with a stored server: the logo and the blue-key hint, then the check */
+function showOpening(origin) {
+  if (!sections.opening) { checkStored(origin); return; }
+  $('opening-text').textContent = 'Blue key: change server';
+  show('opening');
+  endBlueWindow();
+  blueTimer = setTimeout(function () { blueTimer = null; checkStored(origin); }, BLUE_WINDOW_MS);
+}
+
 function showForm(prefill) {
+  endBlueWindow();
   show('form');
   if (prefill) input.value = prefill;
   input.focus();
@@ -110,7 +132,14 @@ function exitApp() {
 }
 
 document.addEventListener('keydown', function (e) {
+  if (e.keyCode === BLUE_KEY_CODE && blueTimer !== null) {
+    // the blue key while the logo shows: change server instead of opening it
+    e.preventDefault();
+    showForm(stored.ok ? stored.origin : '');
+    return;
+  }
   if (e.keyCode === BACK_KEY_CODE) {
+    endBlueWindow(); // Back while the logo shows leaves the app, the server is not opened
     // Back closes the TV keyboard first (blur); with the focus elsewhere it leaves the app
     if (!sections.form.hidden && document.activeElement === input) { input.blur(); button.focus(); e.preventDefault(); return; }
     exitApp();
@@ -142,13 +171,19 @@ const navType = navigationType();
 const params = new URLSearchParams(window.location.search);
 const storedText = store.get(SERVER_KEY);
 const stored = normaliseServer(storedText);
-if (probe && navType === 'back_forward' && stored.ok && session.get(HOME_KEY) === '1') {
-  // the server-side probe sent us back here (Task 9 contract): open it again, marked as the home-button test result
-  session.set(HOME_KEY, null);
-  open(stored.origin, '&home=ok');
-} else if (startMode(navType, storedText, params) === 'check') {
-  checkStored(stored.origin);
-} else {
-  showForm(stored.ok ? stored.origin : '');
+function route(type) {
+  if (probe && type === 'back_forward' && stored.ok && session.get(HOME_KEY) === '1') {
+    // the server-side probe sent us back here (Task 9 contract): open it again, marked as the home-button test result
+    session.set(HOME_KEY, null);
+    open(stored.origin, '&home=ok');
+  } else if (startMode(type, storedText, params) === 'check') {
+    if (probe) checkStored(stored.origin); // the probe opens at once
+    else showOpening(stored.origin);
+  } else {
+    showForm(stored.ok ? stored.origin : '');
+  }
 }
+route(navType);
+// a page restored from the back/forward cache does not run this script again: route it like a back navigation
+window.addEventListener('pageshow', function (e) { if (e && e.persisted) route('back_forward'); });
 })();
