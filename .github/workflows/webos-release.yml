@@ -6,34 +6,33 @@
 # Called by CI for v* tags (push, or release.yml's dispatch), after its tests, e2e, the secret scan and webos-check passed.
 # Not a dependency of publish or android-release. workflow_dispatch on a tag is the manual retry; on anything but a v* tag
 # the job does not run. Needs no secrets: developer-mode packages are not signed.
-# The app's version is version.json's (stamped into appinfo.json by webos/build.mjs); the job refuses a tag that does not
-# match it.
+# The app's version is version.json's (stamped into appinfo.json by webos/build.mjs); the build refuses a tag that does not
+# match it. Two jobs: `build` (read-only token) runs the npm install and the packaging and hands the files over as a workflow
+# artifact; only `upload` (no checkout, no npm) holds contents: write, to attach them to the release.
 name: LG webOS TV app release
 on:
   workflow_call:
   workflow_dispatch:
 permissions: { contents: read }
 jobs:
-  webos-release:
+  build:
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 20
     permissions:
-      contents: write # attach the files to the GitHub Release of this tag
+      contents: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with: { persist-credentials: false }
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with: { node-version: 22 }
       - name: Tag matches version.json
-        id: version
         run: |
           set -euo pipefail
           version=$(jq -er .version version.json)
           if [ "v$version" != "$GITHUB_REF_NAME" ]; then
             echo "::error::tag $GITHUB_REF_NAME does not match version.json ($version)"; exit 1
           fi
-          echo "version=$version" >> "$GITHUB_OUTPUT"
       - name: Install the pinned ares CLI
         run: npm ci --prefix webos --ignore-scripts --no-audit --no-fund
       - name: Package app + probe
@@ -49,6 +48,24 @@ jobs:
           cd "$RUNNER_TEMP/dist"
           sha256sum -- *.ipk > SHA256SUMS-webos.txt
           cat SHA256SUMS-webos.txt
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: webos-dist
+          path: ${{ runner.temp }}/dist/
+          if-no-files-found: error
+          retention-days: 7
+  upload:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: write # attach the files to the GitHub Release of this tag
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: webos-dist
+          path: ${{ runner.temp }}/dist
       # release.yml creates the GitHub Release right after pushing the tag; a run that started from that push may get here first
       - name: Attach to the GitHub Release
         env:
