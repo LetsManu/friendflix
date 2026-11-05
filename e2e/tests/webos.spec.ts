@@ -44,7 +44,7 @@ test.describe('LG app', () => {
     await playerWithInfo(page); // the TV home warms the playback info of its hero title
     await page.goto('/?ff_app=webos');
     await expect(page.locator('html.tv')).toHaveCount(1);
-    await page.waitForLoadState('networkidle');
+    await expect(page.locator('button.avatar')).toBeEnabled(); // the profile is loaded: the shell listens
     await press(page, 461);
     await expect.poll(lg.backCalls).toBe(1);
   });
@@ -53,13 +53,16 @@ test.describe('LG app', () => {
     const lg = await asLgApp(page);
     await playerWithInfo(page); // the TV home warms the playback info of its hero title
     await page.goto('/?ff_app=webos');
-    await page.waitForLoadState('networkidle');
     const avatar = page.locator('button.avatar');
+    await expect(avatar).toBeEnabled(); // the profile is loaded: the shell listens
     await avatar.click();
     await expect(avatar).toHaveAttribute('aria-expanded', 'true');
     await press(page, 461);
     await expect(avatar).toHaveAttribute('aria-expanded', 'false');
+    // the dropdown is closed and nothing left yet; a second Back (now nothing else wants it) leaves exactly once
     expect(await lg.backCalls()).toBe(0);
+    await press(page, 461);
+    await expect.poll(lg.backCalls).toBe(1);
   });
 
   test('remote keys control the player (key is Unidentified, keyCode decides)', async ({ page, api: _api }) => {
@@ -82,6 +85,15 @@ test.describe('LG app', () => {
     await expect.poll(() => subShowing(page)).toBe(!before);
   });
 
+  test('green key opens the audio and subtitle menu', async ({ page, api: _api }) => {
+    await asLgApp(page);
+    await playerWithInfo(page);
+    await page.goto('/watch/' + MOVIE.id + '?ff_app=webos');
+    await videoReady(page);
+    await press(page, 404);
+    await expect(page.getByRole('dialog', { name: 'Audio und Untertitel' })).toBeVisible();
+  });
+
   test('POST /api/playback/info carries the LG capability block', async ({ page, api: _api }) => {
     await asLgApp(page);
     const bodies = await playerWithInfo(page);
@@ -96,6 +108,14 @@ test('a normal browser sends no caps, even with ff_app=webos', async ({ page, ap
   await pairedTv(page);
   const bodies = await playerWithInfo(page);
   await page.goto('/watch/' + MOVIE.id + '?ff_app=webos');
+  await videoReady(page);
+  expect(bodies.length).toBeGreaterThan(0);
+  expect(bodies[0]).not.toHaveProperty('caps');
+});
+
+test('a plain desktop browser (no ff_app, no PalmSystem) sends no caps', async ({ page, api: _api }) => {
+  const bodies = await playerWithInfo(page);
+  await page.goto('/watch/' + MOVIE.id);
   await videoReady(page);
   expect(bodies.length).toBeGreaterThan(0);
   expect(bodies[0]).not.toHaveProperty('caps');
