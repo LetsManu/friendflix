@@ -32,6 +32,7 @@
   import QualityChip from '#lib/player/QualityChip.svelte';
   import { speedLabel, SPEEDS } from '#lib/player/bar';
   import { lgCaps } from '#lib/webos/caps';
+  import { FIRST_FRAME_MS, watchFirstFrame } from '#lib/player/firstframe';
   import { firstPlaybackRequest, playbackInfoBody, type InfoBody, type PlaybackDto } from '#lib/player/infobody';
   import { holdPrefetch, takePrefetched } from '#lib/player/prefetch';
   import { createTiming, deviceClass, effectiveType, sendTiming } from '#lib/player/timing';
@@ -235,6 +236,7 @@
     const i = x as Partial<Info> | null;
     return Boolean(i && typeof i.playSessionId === 'string' && typeof i.resumeTicks === 'number' && Array.isArray(i.audioTracks) && Array.isArray(i.subtitles) && (i.directUrl || i.hlsUrl));
   };
+  let cancelFirstFrame = () => {};
   async function load(startSec?: number) {
     error = ''; errNote = '';
     // a retry / track reload continues the running session (its clock keeps going); a quality switch starts a new one, flagged
@@ -285,6 +287,7 @@
     const my = ++attachSeq, cur = info;
     sessionPlaying = false; resetStall(); // the first buffering of each stream is a start, not a stall
     hls?.destroy(); hls = null;
+    cancelFirstFrame();
     const useDirect = info.directUrl && audioIndex === undefined && !rec.forcedHls && video.canPlayType('video/mp4');
     mode = useDirect ? 'direct' : 'hls';
     timing.mode(useDirect ? 'direct' : 'hls');
@@ -298,6 +301,8 @@
     if (useDirect) {
       video.src = info.directUrl!;
       video.addEventListener('loadedmetadata', seek, { once: true });
+      // LG: an original the TV cannot decode may stay black without an error; no picture in time -> the converted stream, once
+      if (isLgApp() && !rec.forcedHls) cancelFirstFrame = watchFirstFrame(video, FIRST_FRAME_MS, () => { if (my === attachSeq && !rec.forcedHls) forceHls(resumePos()); });
     } else if (H?.isSupported()) {
       const HC = H;
       hls = new HC(hlsConfig(startSec));
@@ -338,6 +343,7 @@
   const resumePos = () => Math.max(lastPos, video && video.currentTime > 0 ? video.currentTime : 0);
   const lowerStep = () => lowerQuality(QUALITIES.map(([, b]) => b).filter((b) => b < (info?.roleMaxBitrate ?? Infinity)), quality, info?.maxBitrate ?? 0);
   let retryViaLoad = false;
+  function forceHls(pos: number) { rec.forcedHls = true; errPos = pos; flash(tr('player.switchingTranscode'), 2500); wantAutoplay = !paused; void load(pos); }
   function recover(kind: ErrorKind, viaLoad = false) {
     if (handedOff || airOn || airInfo || airState.busy) return;
     retryViaLoad = viaLoad;
@@ -357,7 +363,7 @@
       rec.networkTries = d.attempt; reconnecting = d.attempt; errPos = pos; waiting = true;
       clearTimeout(retryT); retryT = setTimeout(() => retryNow(pos), d.delay);
     } else if (d.do === 'recover-media') { rec.mediaRecovered = true; errPos = pos; hls?.recoverMediaError(); }
-    else if (d.do === 'force-hls') { rec.forcedHls = true; errPos = pos; flash(tr('player.switchingTranscode'), 2500); wantAutoplay = !paused; load(pos); }
+    else if (d.do === 'force-hls') forceHls(pos);
     else if (d.do === 'lower-quality') { rec.loweredQuality = true; errPos = pos; const q = lowerStep(); if (q) { wantAutoplay = !paused; abr = makeAbr(q, quality ? q : undefined); void changeQuality(q, 'abr', 3000, tr('player.quality.stepDown', { q: rungLabel(q) })); } else giveUp(); }
     else giveUp();
   }
@@ -1129,6 +1135,7 @@
     };
   });
   onDestroy(() => {
+    cancelFirstFrame();
     clearInterval(tvTick);
     clearTimeout(peekT); clearTimeout(posterT); fxEngine?.destroy();
     persistEstimate(); clearInterval(abrTimer); clearInterval(bwTimer); clearTimeout(stallT);
