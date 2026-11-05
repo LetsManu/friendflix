@@ -43,7 +43,6 @@ jobs:
           node webos/build.mjs app "$dist"
           node webos/build.mjs probe "$dist"
           bash webos/scripts/check-ipk.sh "$dist"
-          done
       - name: Checksums
         run: |
           set -euo pipefail

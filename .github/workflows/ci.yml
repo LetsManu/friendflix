@@ -225,7 +225,6 @@ jobs:
           node webos/build.mjs app "$RUNNER_TEMP/ipk"
           node webos/build.mjs probe "$RUNNER_TEMP/ipk"
           bash webos/scripts/check-ipk.sh "$RUNNER_TEMP/ipk"
-          done
   # The Windows app's platform-independent core (origin policy, bridge protocol); the Tauri app itself is built elsewhere.
   desktop-core:
     runs-on: ubuntu-latest

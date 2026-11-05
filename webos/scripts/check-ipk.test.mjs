@@ -37,7 +37,7 @@ test('check-ipk passes when every required file is present', () => {
 test('check-ipk fails naming a missing file', () => {
   const r = spawnSync('bash', [script, craft(ALL.filter((f) => f !== 'setup-core.js'))], { encoding: 'utf8' });
   assert.equal(r.status, 1);
-  assert.match(r.stderr, /setup-core\.js missing in x\.ipk/);
+  assert.match(r.stdout, /setup-core\.js missing in x\.ipk/);
 });
 
 test('check-ipk fails on a directory without .ipk files', () => {

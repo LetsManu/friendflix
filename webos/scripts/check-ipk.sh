@@ -8,7 +8,7 @@ set -euo pipefail
 [ $# -eq 1 ] || { echo "Usage: check-ipk.sh <dir>" >&2; exit 2; }
 shopt -s nullglob
 ipks=("$1"/*.ipk)
-[ ${#ipks[@]} -gt 0 ] || { echo "::error::no .ipk in $1" >&2; exit 1; }
+[ ${#ipks[@]} -gt 0 ] || { echo "::error::no .ipk in $1"; exit 1; }
 for f in "${ipks[@]}"; do
   work=$(mktemp -d)
   (cd "$work" && ar x "$f")
@@ -16,6 +16,6 @@ for f in "${ipks[@]}"; do
   rm -rf "$work"
   echo "$(basename "$f")"; echo "$listing"
   for need in appinfo.json index.html setup.js setup-core.js icon.png; do
-    grep -q "/$need\$" <<< "$listing" || { echo "::error::$need missing in $(basename "$f")" >&2; exit 1; }
+    grep -q "/$need\$" <<< "$listing" || { echo "::error::$need missing in $(basename "$f")"; exit 1; }
   done
 done
