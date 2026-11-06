@@ -77,8 +77,16 @@ export function confirmedTypes(m: MediaProbe | null): { video: string[]; audio: 
   };
 }
 
+/**
+ * Containers LG's player plays from a URL although the browser engine answers "" when asked (owner's probe on an
+ * LG 43QNED82A6B, webOS 25: containers=mp4,m4v,ts,webm, so every MKV was transcoded). Added once anything else is
+ * confirmed; a file that still fails is caught by the 10 s first-frame fallback (lib/player/firstframe.ts).
+ */
+export const ASSUMED_CONTAINERS: readonly string[] = ['mkv'];
+
 export function buildLgCaps(m: MediaProbe | null, appVersion: string): ClientCapsBody | null {
-  const t = confirmedTypes(m);
+  const confirmed = confirmedTypes(m);
+  const t = { ...confirmed, containers: confirmed.containers.length ? [...new Set([...ASSUMED_CONTAINERS, ...confirmed.containers])] : [] };
   const video: ClientCapsBody['video'] = [];
   for (const codec of Object.keys(CANDIDATES.video)) {
     const profiles = t.video.filter((s) => s.startsWith(`${codec}:`)).map((s) => s.slice(codec.length + 1));

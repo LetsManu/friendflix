@@ -67,12 +67,12 @@ powershell -ExecutionPolicy Bypass -File .\webos\install.ps1 192.0.2.10 -Ipk .\F
 
 `-ExecutionPolicy Bypass` only applies to this one call; without it Windows may refuse to run the script.
 
-The full forms are `webos/install.sh <tv-ip> [passphrase] [--probe] [--ipk <file>] [--version vX.Y.Z]` and `webos/install.ps1 <TvIp> [Passphrase] [-Probe] [-Ipk <file>] [-Version vX.Y.Z]`.
+The full forms are `webos/install.sh <tv-ip> [passphrase] [--probe] [--ipk <file>] [--version vX.Y.Z]` and `webos/install.ps1 <TvIp> [-Probe] [-Ipk <file>] [-Version vX.Y.Z]`.
 
 | Argument | Meaning |
 |---|---|
 | `<tv-ip>` / `<TvIp>` | The TV's IPv4 address. Required. |
-| `[passphrase]` / `[Passphrase]` | The Developer Mode passphrase. **Leave it out**: the script then asks for it, hidden. On the command line it would stay in your shell history. |
+| `[passphrase]` (install.sh only) | The Developer Mode passphrase. **Leave it out**: the script then asks for it, hidden. On the command line it would stay in your shell history. `install.ps1` takes no passphrase: LG's tool asks for it itself at `input passphrase:` (the typed characters are visible there). |
 | `--probe` / `-Probe` | Install **FriendFlix Test** (the test app) instead of FriendFlix. |
 | `--ipk <file>` / `-Ipk <file>` | Install this `.ipk` instead of downloading a release. |
 | `--version vX.Y.Z` / `-Version vX.Y.Z` | A specific release. Without it, the latest. |
@@ -88,7 +88,7 @@ Exit codes: `0` installed; `1` it failed (the script prints hints); `2` the argu
 
 ## The passphrase and where it is stored
 
-The FriendFlix scripts never write your passphrase anywhere: it is not printed, not logged and not saved by them. They hand it to LG's tool on standard input only, never on a command line.
+The FriendFlix scripts never write your passphrase anywhere: it is not printed, not logged and not saved by them. `install.sh` hands it to LG's tool on standard input only, never on a command line; with `install.ps1` you type it straight into LG's tool, so the script never sees it.
 
 LG's own tool is different. `ares-novacom`, which fetches the TV's SSH key, **stores the passphrase in its device file** `novacom-devices.json` in your user's ares config folder, because it needs the passphrase to unlock the TV's key on every later call (install, launch). So after an install, the passphrase sits in that file on the PC. It is only useful while Developer Mode is on and the key server is running, and it changes when you switch the key server off and on, but treat the file like a password: do not share your home folder, and remove the entry when you no longer need it.
 
@@ -138,7 +138,7 @@ In the player (the keys are ignored elsewhere):
 
 The app tells the server what the TV can play, and the server then sends the original file instead of converting it. The app sends **only formats the TV confirms** about itself (`canPlayType` / `MediaSource`); a format the TV does not confirm is simply not offered, and the server converts it. Candidates:
 
-- containers: MKV, MP4, M4V, MOV, TS, WebM;
+- containers: MKV, MP4, M4V, MOV, TS, WebM. MKV is always offered once the TV confirms any other format: LG's player plays MKV from a URL, but the browser engine answers "no" when asked (probe on webOS 25). An MKV that still shows no picture switches to the converted stream after 10 s;
 - video: H.264, HEVC, AV1, VP9, MPEG-2 (up to 2160p), with the profiles the TV confirms (such as 10-bit);
 - audio: AAC, AC3, E-AC3, MP3, FLAC, Opus, Vorbis;
 - subtitles: SRT, ASS, SSA, VTT (drawn by the player, as everywhere).
@@ -151,7 +151,7 @@ If no picture appears within **10 seconds** on direct play, the player switches 
 
 Two ways lead to the address form, filled in with the current address:
 
-- **Account menu → Change server.** The app goes back to its start page through the browser history and shows the form. The TV keeps only the last 50 pages of history, so after long use the start page may be gone (the probe's `home=fail` means the same). If the app is still on your server after 1.5 seconds, it says so: restart the app and use the blue key.
+- **Account menu → Change server.** On webOS 25 the way back through the browser history does not reach the app's start page (the probe on an LG 43QNED82A6B reported `home=fail`), so the entry tells you to restart the app and use the blue key.
 - **Blue key at start.** Every start with a stored address shows the logo with *Blue key: change server* for 1.5 seconds before the app opens your server. Press the **blue** key (406) during that time to get the form instead.
 
 ## The probe and how to read its line

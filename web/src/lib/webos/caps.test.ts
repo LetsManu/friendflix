@@ -75,3 +75,18 @@ describe('lgCaps', () => {
     expect(lgCaps()).not.toBe(a);
   });
 });
+
+describe('ASSUMED_CONTAINERS (owner probe: webOS 25 answered no for MKV)', () => {
+  const only = (ok: string[]): MediaProbe => ({ canPlayType: (t) => (ok.some((o) => t.includes(o)) ? 'probably' : '') });
+  it('adds mkv when the TV confirms other formats but denies matroska', () => {
+    const c = buildLgCaps(only(['video/mp4', 'avc1', 'mp4a']), '2.4.0')!;
+    expect(c.containers).toContain('mkv');
+    expect(c.containers).toContain('mp4');
+  });
+  it('adds nothing when the TV confirms no container (no block at all stays no block)', () => {
+    expect(buildLgCaps(only([]), '2.4.0')).toBeNull();
+  });
+  it('the probe still reports what the TV itself answers', () => {
+    expect(confirmedTypes(only(['video/mp4'])).containers).not.toContain('mkv');
+  });
+});
