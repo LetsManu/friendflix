@@ -54,6 +54,8 @@ const tr: Translation<typeof de> = {
     withPin: 'PIN korumalı',
     manageProfiles: 'Profilleri düzenle',
     logout: 'FriendFlix oturumunu kapat',
+    changeServer: 'Sunucuyu değiştir',
+    changeServerBlue: 'Başlangıç sayfasına ulaşılamadı. Uygulamayı yeniden başlatın ve logo görünürken mavi tuşa basın.',
   },
   menu: {
     me: 'Alanım',

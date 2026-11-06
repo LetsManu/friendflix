@@ -2,7 +2,7 @@
   "name": "friendflix",
   "private": true,
   "type": "module",
-  "version": "2.2.1",
+  "version": "2.4.0",
   "license": "AGPL-3.0-or-later",
   "engines": { "node": ">=22" },
   "workspaces": ["backend", "gateway", "web", "updater"],
@@ -16,7 +16,10 @@
     "e2e": "playwright test -c e2e/playwright.config.ts",
     "spdx:check": "node scripts/spdx.mjs --check",
     "spdx:fix": "node scripts/spdx.mjs --fix",
-    "compose:env": "npm run compose:env -w backend"
+    "compose:env": "npm run compose:env -w backend",
+    "test:tvshared": "node --test tv-shared/*.test.mjs",
+    "test:tizen": "node --test tizen/*.test.mjs tizen/scripts/*.test.mjs",
+    "test:webos": "node --test webos/*.test.mjs webos/scripts/*.test.mjs"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
