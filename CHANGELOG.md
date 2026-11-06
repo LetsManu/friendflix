@@ -4,6 +4,17 @@ All notable changes, grouped by what you notice. Each release has its own sectio
 
 ## [Unreleased]
 
+### LG TV app
+- **Install script asks ares for the passphrase.** `install.ps1` no longer takes the Developer Mode passphrase as an argument; ares prompts for it in the terminal. On Windows PowerShell the piped passphrase was garbled, so the key download failed with "All configured authentication methods failed". A passphrase given the old way is ignored with a note.
+- **MKV plays directly.** The LG app always offers MKV, even when the TV's own check does not list it (the probe on a test TV played MKV natively), so these files are no longer converted.
+- **Change server on the blue key.** The blue remote key opens the start page where you change the server address.
+
+### Security and maintenance
+- Desktop app: the updater's zip library goes from 4.6 to 9.4 (security alerts).
+- Updated dependencies: fastify 5.12.8, fast-uri, ip-address 10.7.6 and the npm group; Node base images; desktop lru 0.19.
+- Android app: built against Android 17 (API 37) with okhttp 5.5.1 (blocks the compromised eMudhra certificates), androidx.core 1.19, appcompat 1.8, datastore 1.3, Google Cast 23 and Android Gradle plugin 9.5; it still targets Android 16, so nothing changes on the device.
+- CI: the Gradle wrapper is checked against Gradle's checksums, the Android build also runs on main, and two flaky tests are fixed.
+
 ## [2.4.0] – Brezel – 2026-11-06
 
 ### Samsung TV app
