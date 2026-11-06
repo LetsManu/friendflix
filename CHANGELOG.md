@@ -4,8 +4,13 @@ All notable changes, grouped by what you notice. Each release has its own sectio
 
 ## [Unreleased]
 
+## [2.4.0] – Brezel – 2026-11-06
+
 ### Samsung TV app
 - **Probe build for Samsung TVs.** A small test app (FriendFlix Probe) for Samsung smart TVs from 2022 on (Tizen 6.5 and newer) that checks whether the TV's own video player can play your server's streams and shows one line with the result. It comes with the FriendFlix app shell, which asks for your server's address and opens its TV mode. The player follows in a later release, after the probe. Both are installed from a PC with an install script (the TV in developer mode, signed with the owner's Samsung certificate); they do not update themselves. Setup and how to read the probe: [docs/tizen.md](docs/tizen.md).
+
+### LG TV app
+- **New: FriendFlix for LG TVs** (webOS 22 and newer). An app shell that asks for your server's address once and opens its TV mode, installed from a PC over Developer Mode with an install script (no certificate; the app does not update itself and Developer Mode needs **Extend** every 50 hours). It tells the server what the TV can play, so files the TV handles itself are played directly; DTS and TrueHD are still converted. Remote keys for play, pause, stop, ±30 s, subtitles (red) and audio (green), Magic Remote pointer, and **Change server** in the account menu. A test app prints one line about what the TV can do. Setup and troubleshooting: [docs/webos.md](docs/webos.md); the later store submission: [docs/webos-store.md](docs/webos-store.md).
 
 ## [2.3.0] – Brezel – 2026-10-22
 

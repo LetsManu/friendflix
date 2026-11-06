@@ -21,7 +21,15 @@ export const PLEX_TOKEN = 'plex-admin-token-SECRET-1234';
 export const PLEX_TEST_SECRET = 'x'.repeat(32); // fixed HMAC key for tests only
 
 const FIX = join(dirname(fileURLToPath(import.meta.url)), 'plex', 'fixtures');
-export const fixture = (name: string): any => JSON.parse(readFileSync(join(FIX, `${name}.json`), 'utf8'));
+/**
+ * The fixtures were recorded in October 2026; their "added" / "updated" times (unix seconds) are moved so that the fake's base time
+ * 1791900000 lands one day before the test run. Everything keeps its order and spacing, and date windows such as the 14-day "new"
+ * label (src/fresh.ts NEW_DAYS) or recent-arrival candidates hold whatever day the tests run on (fixed dates expired after two weeks).
+ */
+const BASE = 1791900000;
+export const TIME_SHIFT = Math.floor(Date.now() / 1000) - 86_400 - BASE;
+const shiftTimes = (key: string, v: unknown) => ((key === 'addedAt' || key === 'updatedAt') && typeof v === 'number' ? v + TIME_SHIFT : v);
+export const fixture = (name: string): any => JSON.parse(readFileSync(join(FIX, `${name}.json`), 'utf8'), shiftTimes);
 const meta = (name: string): Array<Record<string, any>> => fixture(name).MediaContainer.Metadata ?? [];
 const clone = <T>(o: T): T => JSON.parse(JSON.stringify(o)) as T;
 
@@ -88,7 +96,7 @@ export class PlexFake {
     const base = clone(this.items.get('1')!);
     const m: Record<string, any> = {
       ...base, ratingKey: rk, key: `/library/metadata/${rk}`, guid: `local://${rk}`, title: o.title, year: o.year ?? 2020, librarySectionID: o.sectionId ?? 1,
-      addedAt: o.addedAt ?? 1791900000 + Number(rk), updatedAt: 1791900000 + Number(rk), thumb: `/library/metadata/${rk}/thumb/1791900000`, art: `/library/metadata/${rk}/art/1791900000`,
+      addedAt: (o.addedAt ?? BASE + Number(rk)) + TIME_SHIFT, updatedAt: BASE + Number(rk) + TIME_SHIFT, thumb: `/library/metadata/${rk}/thumb/1791900000`, art: `/library/metadata/${rk}/art/1791900000`,
       summary: o.summary ?? '',
     };
     if (o.rating === undefined) delete m.contentRating;
@@ -122,7 +130,7 @@ export class PlexFake {
       const rk = String(this.nextKey++);
       const e: Record<string, any> = {
         ...clone(this.items.get('6')!), ratingKey: rk, key: `/library/metadata/${rk}`, parentRatingKey: season, grandparentRatingKey: show, grandparentTitle: o.title,
-        index: n, parentIndex: 1, librarySectionID: sec, title: `Episode ${n}`, addedAt: 1791900000 + n, updatedAt: 1791900000 + n,
+        index: n, parentIndex: 1, librarySectionID: sec, title: `Episode ${n}`, addedAt: BASE + n + TIME_SHIFT, updatedAt: BASE + n + TIME_SHIFT,
         ...(o.aired ? { originallyAvailableAt: o.aired } : {}),
       };
       if (o.episodeRating === undefined) delete e.contentRating;
@@ -161,7 +169,7 @@ export class PlexFake {
     const rk = String(this.nextKey++);
     const base = clone(fixture('collections_list').MediaContainer.Metadata[0]);
     this.items.set(rk, { ...base, ratingKey: rk, key: `/library/collections/${rk}/children`, guid: `collection://c-${rk}`, title, librarySectionID: sectionId,
-      childCount: members.length, thumb: `/library/collections/${rk}/composite/1791800022?width=400&height=600`, addedAt: 1791800022, updatedAt: 1791800022 });
+      childCount: members.length, thumb: `/library/collections/${rk}/composite/1791800022?width=400&height=600`, addedAt: 1791800022 + TIME_SHIFT, updatedAt: 1791800022 + TIME_SHIFT });
     this.members.set(rk, [...members]);
     return rk;
   }

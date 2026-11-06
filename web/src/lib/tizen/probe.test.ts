@@ -35,7 +35,7 @@ function mk(o: { av?: ReturnType<typeof avplay> | null; key?: boolean; app?: boo
     fetchInfo: vi.fn(async () => {
       if (o.target === 'unpaired') throw Object.assign(new Error('u'), { code: 'unpaired' });
       if (o.target === 'fail') throw new Error('boom');
-      return { url: 'https://friend.example.com/s.mp4', report };
+      return { url: 'https://friend.example.com/s.mp4', hlsUrl: 'https://friend.example.com/s.m3u8', direct: true, report };
     }),
     now: () => (t += 1155),
     waitKey: vi.fn(async () => o.key !== false),
@@ -149,44 +149,23 @@ describe('probe surface, report timeout, profile', () => {
 });
 
 describe('realDeps lookup', () => {
-  const json = (status: number, body: unknown) => ({ status, ok: status < 400, json: async () => body });
-  function setup(over: Record<string, () => unknown> = {}, info: Record<string, unknown> = {}) {
+  // the lookup itself (pairing, profile, item pick, resume point) is tested in lib/tvprobe/target.test.ts
+  it('uses the shared probe target without a caps block', async () => {
+    const json = (status: number, body: unknown) => ({ status, ok: status < 400, json: async () => body });
     const calls: { path: string; init: any }[] = [];
     const answers: Record<string, () => unknown> = {
       '/api/me': () => json(200, { tv: true, csrfToken: 'tok-1' }),
       '/api/library/resume': () => json(200, { items: [{ id: 'i1' }] }),
-      '/api/playback/info': () => json(200, { playSessionId: 'ps', mediaSourceId: 'ms', directUrl: '/media/x.mp4', hlsUrl: '/h.m3u8', ...info }),
+      '/api/playback/info': () => json(200, { playSessionId: 'ps', mediaSourceId: 'ms', directUrl: '/media/x.mp4', hlsUrl: '/h.m3u8', resumeTicks: 7 }),
       '/api/playback/stop': () => json(204, null),
-      ...over,
     };
     const fetchImpl = (async (path: string, init: any) => { calls.push({ path, init }); return answers[path]!(); }) as unknown as typeof fetch;
     const win = { location: { origin: 'https://friend.example.com' }, document: {}, addEventListener() {}, removeEventListener() {} } as any;
-    return { calls, deps: realDeps(win, fetchImpl) };
-  }
-  it('takes the CSRF token from its own /api/me answer and sends the title\'s resume point in the stop report', async () => {
-    const { calls, deps } = setup({}, { resumeTicks: 4_200_000_000 });
-    const t = await deps.fetchInfo();
+    const t = await realDeps(win, fetchImpl).fetchInfo();
     expect(t.url).toBe('https://friend.example.com/media/x.mp4');
-    expect(calls.find((c) => c.path === '/api/playback/info')!.init.headers['x-csrf-token']).toBe('tok-1');
+    expect(JSON.parse(calls.find((c) => c.path === '/api/playback/info')!.init.body)).toEqual({ itemId: 'i1', reasonHint: 'network' });
     await t.report();
-    const stop = calls.find((c) => c.path === '/api/playback/stop')!;
-    expect(stop.init.headers['x-csrf-token']).toBe('tok-1');
-    expect(JSON.parse(stop.init.body)).toMatchObject({ itemId: 'i1', playSessionId: 'ps', positionTicks: 4_200_000_000 });
-  });
-  it('sends 0 when the info has no resume point', async () => {
-    const { calls, deps } = setup();
-    await (await deps.fetchInfo()).report();
-    expect(JSON.parse(calls.find((c) => c.path === '/api/playback/stop')!.init.body).positionTicks).toBe(0);
-  });
-  it('maps 409 profile_required / profile_changed to code profile without any redirect', async () => {
-    for (const [path, error] of [['/api/library/resume', 'profile_required'], ['/api/playback/info', 'profile_changed']] as const) {
-      const { deps } = setup({ [path]: () => json(409, { error }) });
-      await expect(deps.fetchInfo()).rejects.toMatchObject({ code: 'profile' });
-    }
-  });
-  it('an unpaired TV rejects with code unpaired', async () => {
-    const { deps } = setup({ '/api/me': () => json(200, { tv: false }) });
-    await expect(deps.fetchInfo()).rejects.toMatchObject({ code: 'unpaired' });
+    expect(JSON.parse(calls.find((c) => c.path === '/api/playback/stop')!.init.body)).toMatchObject({ itemId: 'i1', positionTicks: 7 });
   });
 });
 
