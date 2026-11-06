@@ -12,7 +12,7 @@ Make FriendFlix comfortable on a TV with a D-pad remote (LG Magic Remote 2025, S
 - Own look: FriendFlix colours, logo and type. No other service's names, logos or red-on-black branding. Never "Netflix" in user-facing text.
 - Safe area: 96 px left/right, 54 px top/bottom at 1080p (scale with `vw`/`vh`).
 - Text ≥ 28 px at 1080p for body copy on TV; focus targets ≥ 54 px tall.
-- Exactly one focused element. Focus = `scale(1.08)` + 3 px accent ring. Nothing else changes on focus.
+- Exactly one focused element. Focus = `scale(1.08)` + 3 px white ring. Nothing else changes on focus.
 - Animate only `transform` and `opacity`. No `backdrop-filter`/`filter: blur` on TV (old webOS GPUs).
 - Lazy images; at most two cards beyond the visible edge load eagerly.
 - All interaction works with arrows, OK and Back. The Magic Remote pointer is a bonus, never required.
@@ -68,23 +68,41 @@ Make FriendFlix comfortable on a TV with a D-pad remote (LG Magic Remote 2025, S
   - More info: full cast, details tab content, ratings line.
 - Hidden on TV: friends strip, comments, download, share. Back on the detail page goes to the previous page (not the rail).
 
-## 4. Player menus
+## 4. Player
 
-- Existing TV keys stay (OK play/pause, ◀/▶ seek with hold acceleration, wheel ±10 s, Channel ▲ next).
-- ▼ while the control bar is visible opens a **bottom panel** with tabs: Episodes (series only) · Audio & subtitles · Speed · Quality. ◀/▶ on the tab strip switch tabs, ▼ enters the tab.
-  - Episodes: horizontal row of 16:9 stills of the current season; OK plays.
-  - Audio & subtitles: two vertical lists side by side, items ≥ 56 px; OK applies at once.
-  - Speed / Quality: vertical list, same behaviour.
-- The panel replaces the TV use of the popup menus (`menu` state); desktop keeps the popups.
-- Back closes the panel, then the bar, then leaves the player.
-- Skip intro / Next episode stay large buttons bottom right; when shown they take focus once.
-- The panel counts as "menu open" for the auto-hide timer.
+- **Controls layout:** top left ← Back + title (series: "S2 E4 · episode name"). Bottom: wide progress bar with chapter marks and remaining time on the right ("−23:41"). Under it a row of labelled icon buttons (each ≥ 56 px): Episodes (series) · Next episode (when there is one) · Audio & subtitles · Speed · Quality. Bar and row slide in from below, title fades in (transform/opacity only). Controls hide after 5 s (existing `hideMs`).
+- **Seek preview:** with focus on the progress bar, ◀/▶ do not seek at once; they move a preview marker with the trickplay thumbnail (`trickFrame`) and the target time above it (hold acceleration 10 → 30 → 60 s from #229). OK or 1 s without a key commits the seek; Back cancels and keeps the position. Video keeps playing meanwhile. Without trickplay: time + chapter name only. Wheel ±10 s and Channel ▲ keep their direct behaviour.
+- **Keys:** OK while playing = play/pause (as now). Any arrow while playing shows the controls with focus on the progress bar. ▼ from the bar goes to the button row, ◀/▶ along it, OK opens:
+  - Episodes: full-screen overlay, seasons list left, row of 16:9 episode stills right (with progress), current episode focused.
+  - Audio & subtitles: two vertical lists side by side, OK applies at once.
+  - Speed / Quality: small vertical list above the button.
+  - Next episode: plays it.
+- **Back order:** open menu → seek preview → controls → leave the player.
+- **Pause screen:** after 8 s paused without a key, the picture dims and a block shows on the left: "You're watching", logo or title, S/E, 3-line synopsis. Any key returns to the normal controls. Calm mode: no dimming, no block.
+- Unchanged: Skip intro / recap big buttons bottom right (take focus once when shown, OK presses), post-play screen, X-ray cast info (blue key while paused on TV).
+- The green key opens Audio & subtitles. The popup menus stay for desktop; on TV the row + overlays replace them.
+
+## 5. Visual design (TV only)
+
+Close to current TV streaming apps in layout, feel and motion; brand elements stay FriendFlix's own.
+
+- Background `#000` (`--bg` under `html.tv`), strong black gradients on the left and bottom of every backdrop.
+- Focus: 3 px white ring + `scale(1.08)` (replaces the coral ring on TV).
+- Buttons: primary (Play) solid white with black text; secondary semi-transparent grey (`rgba(109,109,110,.7)`) with white text; 4 px radius, not pills; ≥ 56 px tall.
+- Type: Inter 800 with tight letter spacing for titles; row titles white, bold, ~1.5rem, aligned with the first card's edge.
+- Cards: 4 px radius, no shadow, no frame; only the focused card grows.
+- Eyebrow above the title logo: "SERIES" / "FILM" in spaced capitals, no brand symbol.
+- Card labels ("New episode", "Top 10") as a small block on the bottom edge in coral (`--acc-fill`).
+- Progress bars thin, coral.
+- Rail: white/grey icons, active page marked with a coral dot; expanded state is a black gradient over the content, not a panel.
+- Motion: 200–250 ms ease-out; focus scale and crossfades only; no bounce.
+- Stays own: coral accent `#ff4f6d` (not another service's red), FriendFlix logo, no letter-mark above titles, Inter font, no intro sound, no other service's name.
 
 ## Testing
 
 - Recommendation engine: TV home shows the same row keys in the same order as desktop for the same `/api/home` response; reco impressions/clicks are still reported per row and engine; the focus tile shows the focused title's reason.
-- Unit tests for the pure parts: rail open/close state machine, focus-tile debounce, row focus position, detail button list builder (which buttons for which item), player panel tab/back order.
-- Playwright `webos.spec.ts` (TV mode via the LG marker) and a `?tv=1` desktop run: rail open/close with ◀/Back, OK on a rail item navigates, focus tile changes after resting on a card, ▼ moves rows, detail button list order and sub-screen Back, player ▼ opens the panel and Back order.
+- Unit tests for the pure parts: rail open/close state machine, focus-tile debounce, row focus position, detail button list builder (which buttons for which item), player seek-preview state machine, player Back order, pause-screen timing.
+- Playwright `webos.spec.ts` (TV mode via the LG marker) and a `?tv=1` desktop run: rail open/close with ◀/Back, OK on a rail item navigates, focus tile changes after resting on a card, ▼ moves rows, detail button list order and sub-screen Back, player seek preview (◀ moves the marker, Back cancels, OK commits), button row and overlays, Back order, pause screen after 8 s.
 - Visual check screenshots at 1920×1080 for home, detail, episodes, player panel.
 - No regressions: existing desktop/phone e2e suites stay green.
 
