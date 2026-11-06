@@ -33,3 +33,7 @@ updates:
     directory: /android
     open-pull-requests-limit: 5
     schedule: { interval: weekly }
+    ignore:
+      # androidx.core 1.19 needs compileSdk 37, which breaks the Robolectric tests; move SDK and tests together in one PR first.
+      - dependency-name: androidx.core:core-ktx
+        versions: [">=1.19.0"]

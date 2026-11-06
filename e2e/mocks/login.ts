@@ -64,7 +64,14 @@ export async function installLogin(ctx: BrowserContext, st: LoginMock): Promise<
     const p = u.pathname;
     const J = (r: MockReply) => route.fulfill({ status: r.status ?? 200, contentType: 'application/json', body: JSON.stringify(r.body) });
     if (p === '/auth/flow/config' && req.method() === 'GET') {
-      if ((st.config.status ?? 200) === 200) await ctx.addCookies([{ name: 'ff_flow_csrf', value: st.csrf, url: u.origin, sameSite: 'Strict' }]);
+      if ((st.config.status ?? 200) === 200) {
+        // a late config request can land after its test ended; the closed context then throws outside any test
+        try {
+          await ctx.addCookies([{ name: 'ff_flow_csrf', value: st.csrf, url: u.origin, sameSite: 'Strict' }]);
+        } catch {
+          return;
+        }
+      }
       return J(st.config);
     }
     if (req.method() !== 'POST') return J({ status: 404, body: { error: 'not_found' } });
