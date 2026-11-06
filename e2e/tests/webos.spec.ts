@@ -145,7 +145,7 @@ test.describe('LG app', () => {
     await thumb.focus();
     const href = await thumb.getAttribute('href');
     await page.keyboard.press('Enter'); // short: the title
-    await expect(page).toHaveURL(new RegExp(href!.replace(/[?]/g, '\\?') + '$'));
+    await expect.poll(() => { const u = new URL(page.url()); return u.pathname + u.search; }).toBe(href);
   });
 
   test('green key opens the audio and subtitle menu', async ({ page, api: _api }) => {
