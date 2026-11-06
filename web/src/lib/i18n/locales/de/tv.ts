@@ -3,4 +3,5 @@
 /** area 'tv': TV mode (side-bar rail); German source. */
 export default {
   rail: { label: 'Hauptmenü', profile: 'Profil wechseln, {name}' },
+  tile: { top10: 'Top 10 · Platz {n}' },
 } as const;

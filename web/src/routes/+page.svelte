@@ -1,7 +1,7 @@
 <!-- SPDX-FileCopyrightText: 2026 Manuel Weißböck -->
 <!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { onDestroy, onMount, tick } from 'svelte';
   import { api, ApiError, getActiveProfile, type Item } from '#lib/api';
   import BrandHubs from '#lib/BrandHubs.svelte';
   import Hero from '#lib/Hero.svelte';
@@ -13,6 +13,11 @@
   import type { Hub } from '#lib/hubs';
   import { loadFeatured, loadThemed, type FeaturedList, type ThemedList } from '#lib/lists';
   import { t, tr } from '#lib/i18n';
+  import { focusEl, usable } from '#lib/spatial';
+  import { tvFocus, tvRank } from '#lib/tv/focus';
+  import { rowScrollTarget } from '#lib/tv/rowScroll';
+  import TvCategoryRow from '#lib/tv/TvCategoryRow.svelte';
+  import TvFocusTile from '#lib/tv/TvFocusTile.svelte';
 
   let hero: Item | null = null, heroPlay = '';
   let resume: Item[] | null = null, next: Item[] | null = null, latest: Item[] | null = null, mine: Item[] | null = null;
@@ -151,12 +156,58 @@
   $: firstRow = firstNonEmptyTab(['resume', 'next', 'recs', 'friends'] as const, { resume, next: nextOnly, recs, friends: friendsRated });
   const viewLoader = (id: string) => () => items({ parentId: id, sort: 'DateCreated', desc: 'true', limit: '24' });
   const genreLoader = (g: string) => () => items({ types: 'Movie,Series', genre: g, sort: 'Random', limit: '24' });
+
+  // ---- TV: focus tile instead of the hero; the rows own the vertical scroll position (spatial.focusEl leaves it to us) ----
+  let tv = false, rowsEl: HTMLElement | undefined, frame = 0;
+  onMount(() => {
+    tvFocus.set(null); tvRank.set(null); // the tile starts on the hero, whatever the last visit left behind
+    const sync = () => { tv = document.documentElement.classList.contains('tv'); };
+    sync();
+    const mo = new MutationObserver(sync);
+    mo.observe(document.documentElement, { attributes: true, attributeFilter: ['class'] });
+    return () => mo.disconnect();
+  });
+  onDestroy(() => { if (frame) cancelAnimationFrame(frame); });
+  /** the focused row slides under the tile: its top goes to where the tile ends */
+  function onRowsFocus(e: FocusEvent) {
+    if (!tv) return;
+    const sec = (e.target as HTMLElement).closest<HTMLElement>('section.row, section.cr');
+    if (!sec) return;
+    if (frame) cancelAnimationFrame(frame);
+    frame = requestAnimationFrame(() => {
+      frame = 0;
+      const tile = document.querySelector<HTMLElement>('section.tile');
+      const tileBottom = tile ? tile.getBoundingClientRect().bottom + window.scrollY : window.innerHeight / 2;
+      const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
+      window.scrollTo({ top: rowScrollTarget(sec.getBoundingClientRect().top, window.scrollY, tileBottom), behavior: reduce ? 'auto' : 'smooth' });
+    });
+  }
+  const navAction = (n: HTMLElement) => { n.addEventListener('ff-nav', onRowsNav); return { destroy: () => n.removeEventListener('ff-nav', onRowsNav) }; };
+  /** Up from the topmost row goes back to the tile: it shows the hero again with its buttons */
+  async function onRowsNav(e: Event) {
+    const d = (e as CustomEvent<{ dir: string }>).detail;
+    const a = e.target as HTMLElement;
+    if (!tv || d?.dir !== 'up' || !rowsEl) return;
+    const top = a.getBoundingClientRect().top;
+    const above = [...rowsEl.querySelectorAll<HTMLElement>('a[href], button:not([disabled])')].some((el) => el !== a && usable(el) && el.getBoundingClientRect().top < top - 10);
+    if (above) return;
+    e.preventDefault(); // handled here
+    tvFocus.set(null); tvRank.set(null);
+    await tick();
+    const play = document.querySelector<HTMLElement>('section.tile [data-autofocus]');
+    if (play) focusEl(play);
+    window.scrollTo({ top: 0, behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
+  }
 </script>
 
 <svelte:head><title>{$t('common.appName')}</title></svelte:head>
-<Hero item={hero} rank={heroRank} portrait />
-<BrandHubs {hubs} />
-<div class="rows">
+{#if tv}
+  <TvFocusTile {hero} />
+{:else}
+  <Hero item={hero} rank={heroRank} portrait />
+  <BrandHubs {hubs} />
+{/if}
+<div class="rows" bind:this={rowsEl} data-own-scroll={tv ? '' : undefined} on:focusin={onRowsFocus} use:navAction>
   {#if error}<p class="err" style="margin:1rem var(--pad-x)">{error}</p>{/if}
   <Row title={$t('home.rows.resume')} items={resume} landscape removable priority={firstRow === 'resume'} on:remove={(e) => removeResume(e.detail.id)} />
   <Row title={$t('home.rows.nextUp')} items={nextOnly} landscape priority={firstRow === 'next'} />
@@ -164,6 +215,7 @@
   <ThemedListRows lists={themed} />
   {#if leaving?.length}<Row title={$t('fresh.row.leaving')} items={leaving} />{/if}
   <Row title={$t('home.rows.recs')} items={recs} priority={firstRow === 'recs'} />
+  {#if tv}<TvCategoryRow />{/if}
   {#if homeOrder}
     {#each ordered as r (r.key)}<Row title={r.title} items={r.items} reco={r.tag} />{/each}
     <Row title={$t('home.rows.latest')} items={latest} href="/new" />
@@ -194,4 +246,5 @@
 </div>
 
 <style>.rows { position: relative; z-index: 2; padding-bottom: 5rem; }
-  @media (max-width: 720px) { .rows { padding-top: .4rem; } }</style>
+  @media (max-width: 720px) { .rows { padding-top: .4rem; } }
+  :global(html.tv) .rows { padding-bottom: 40vh; } /* the last rows can still slide up under the tile */</style>

@@ -5,5 +5,6 @@ import type { Translation } from '../../types';
 
 const dict: Translation<typeof de> = {
   rail: { label: 'Menú principal', profile: 'Cambiar de perfil, {name}' },
+  tile: { top10: 'Top 10 · n.º {n}' },
 };
 export default dict;

@@ -6,7 +6,7 @@
 </script>
 
 <script lang="ts">
-  import { onDestroy, tick } from 'svelte';
+  import { onDestroy, onMount, tick } from 'svelte';
   import type { Item } from '#lib/api';
   import Card from '#lib/Card.svelte';
   import Icon from '#lib/Icon.svelte';
@@ -16,6 +16,7 @@
   import { t } from '#lib/i18n';
   import { recoTrack, type RecoTag } from '#lib/reco';
   import ReasonCaption from '#lib/ReasonCaption.svelte';
+  import { tvRank } from '#lib/tv/focus';
 
   export let title: string;
   /** null = loading (skeleton) */
@@ -106,11 +107,22 @@
     io = new IntersectionObserver((es) => { const e = es[es.length - 1]; if (e) near = e.isIntersecting; }, { rootMargin: '200px 0px' });
     io.observe(section);
   }
+  // TV: poster mode is ignored (every card is 16:9); the layout switches the class on <html> once /api/me answered
+  let tvOn = false;
+  onMount(() => {
+    const sync = () => { tvOn = document.documentElement.classList.contains('tv'); };
+    sync();
+    const mo = new MutationObserver(sync);
+    mo.observe(document.documentElement, { attributes: true, attributeFilter: ['class'] });
+    return () => mo.disconnect();
+  });
+  /** TV: the focus tile labels a card of a ranked row with its rank (the tile cannot know the row) */
+  const rankFocus = (id: string, n: number) => { if (tvOn) tvRank.set(ranked ? { id, n } : null); };
   onDestroy(() => { io?.disconnect(); if (raf) cancelAnimationFrame(raf); });
 </script>
 
 {#if items === null || items.length}
-  <section class="row" class:m={$mobile} class:land={landscape} class:near class:rk={ranked} bind:this={section} aria-label={title} aria-busy={items === null} on:pointerenter={() => !full && showAll()} on:focusin={() => !full && showAll()} use:recoTrack={reco}>
+  <section class="row" class:m={$mobile} class:land={landscape} class:near class:rk={ranked && !tvOn} bind:this={section} aria-label={title} aria-busy={items === null} on:pointerenter={() => !full && showAll()} on:focusin={() => !full && showAll()} use:recoTrack={reco}>
     <div class="hd">
       <h2>{#if href}<a {href}>{title}<span class="more"> {$t('home.row.showAll')}</span><Icon name="chevron-right" size={18} /></a>{:else}{title}{/if}</h2>
       {#if pages > 1 && !$mobile}<ol class="dots" aria-hidden="true">{#each Array(pages) as _, i}<li class:on={i === current}></li>{/each}</ol>{/if}
@@ -122,7 +134,7 @@
         {#if items === null}
           {#each Array(8) as _}<div class="slot"><div class="skeleton ph" class:poster={($mobile && !landscape) || ranked}></div></div>{/each}
         {:else}
-          {#each items as it, idx (it.id)}{#if idx < limit}<div class="slot" class:ranked role="listitem">{#if ranked}<span class="rank" aria-label={$t('home.row.rank', { n: idx + 1 })}>{idx + 1}</span>{/if}{#if $mobile}<PosterCard item={it} {landscape} {removable} {priority} on:remove />{:else}<Card item={it} {removable} poster={ranked} {priority} on:remove />{/if}</div>{/if}{/each}
+          {#each items as it, idx (it.id)}{#if idx < limit}<div class="slot" class:ranked role="listitem" on:focusin={() => rankFocus(it.id, idx + 1)}>{#if ranked}<span class="rank" aria-label={$t('home.row.rank', { n: idx + 1 })}>{idx + 1}</span>{/if}{#if $mobile}<PosterCard item={it} {landscape} {removable} {priority} on:remove />{:else}<Card item={it} {removable} poster={ranked && !tvOn} {priority} on:remove />{/if}</div>{/if}{/each}
         {/if}
       </div>
       <button class="arrow right" class:hide={!canRight} aria-label={$t('home.row.next')} on:click={() => go(1)}><Icon name="chevron-right" size={34} /></button>
@@ -181,6 +193,15 @@
   .row.m .slot { flex: 0 0 var(--pw); }
   .row.m .arrow { display: none; }
   :global(html.tv) .arrow { display: none; } /* TV: the D-pad scrolls the row; the edge strips only got in the way of the pointer */
+  /* ---- TV: 16:9 cards, 6.5 across the safe area, the focused card scales (app.css) ---- */
+  :global(html.tv) .row { --gap: .8rem; --cw: calc((100vw - 96px - 5vw) / 6.5); margin-top: 2.2rem; contain-intrinsic-size: auto calc(var(--cw) * .5625 + 5.5rem); }
+  :global(html.tv) .row:hover, :global(html.tv) .row:focus-within { z-index: 4; }
+  :global(html.tv) .hd { margin: 0 0 .6rem; }
+  :global(html.tv) h2 { font-size: 1.75rem; font-weight: 700; }
+  :global(html.tv) .dots { display: none; }
+  :global(html.tv) .track { padding: 1.4rem 5vw 1.4rem 1.4rem; margin: -1.4rem 0 -1.4rem -1.4rem; scroll-padding: 0 5vw 0 1.4rem; overscroll-behavior: contain; }
+  :global(html.tv) .slot { flex: 0 0 var(--cw); }
+  :global(html.tv) .rank { right: .5rem; top: .5rem; min-width: 2rem; height: 2rem; font-size: 1rem; }
   .row.m .rank { right: .3rem; top: .3rem; min-width: 1.5rem; height: 1.5rem; font-size: .78rem; }
   .row.m.land { --pw: calc((100vw - var(--pad-x)) / 2.15); }
 </style>

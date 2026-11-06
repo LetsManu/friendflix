@@ -8,7 +8,7 @@
   import Icon from '#lib/Icon.svelte';
   import { autoplayAllowed, playPreview, previewOwner, previewSound, stopPreview, toggleSound } from '#lib/preview';
   import { prefs } from '#lib/stores';
-  import { tvFocus } from './focus';
+  import { tvFocus, tvRank } from './focus';
   import { createSettle, tileInfo, TILE_DELAY_MS, TILE_TRAILER_MS, trailerAllowed } from './focusTile';
 
   /** the title shown (with Play / More info) until focus settles on a row card */
@@ -16,12 +16,14 @@
 
   let focused: Item | null = null; // the card the tile follows (settled)
   const settle = createSettle<Item | null>(TILE_DELAY_MS, (v) => (focused = v));
-  $: settle.push($tvFocus);
+  // null = back on the hero (e.g. focus returned to the tile buttons): no settle delay
+  $: if ($tvFocus === null) { settle.cancel(); focused = null; } else settle.push($tvFocus);
   const trailer = createSettle<Item | null>(TILE_TRAILER_MS, (v) => { if (v) void startTrailer(v); });
 
   $: item = focused ?? hero;
   $: if (item) wantBadge(item.type === 'Episode' ? item.seriesId : item.id);
   $: info = item ? tileInfo(item, $t, $badges[(item.type === 'Episode' ? item.seriesId : item.id) ?? ''], Date.now()) : null;
+  $: labels = [...(info?.labels ?? []), ...(focused && $tvRank?.id === focused.id && $tvRank.n <= 10 ? [$t('tv.tile.top10', { n: $tvRank.n })] : [])];
   $: showButtons = !focused && !!hero;
   $: eyebrow = item ? $t(item.type === 'Movie' ? 'home.meta.movie' : 'home.meta.series') : '';
 
@@ -78,7 +80,7 @@
           <h1 class="tv-title ttl">{info.title}</h1>
         {/if}
       {/key}
-      {#if info.labels.length}<p class="labels">{#each info.labels as l}<span>{l}</span>{/each}</p>{/if}
+      {#if labels.length}<p class="labels">{#each labels as l}<span>{l}</span>{/each}</p>{/if}
       {#if info.meta.length}<p class="meta">{info.meta.join(' · ')}</p>{/if}
       {#if info.resume}<p class="resume">{info.resume}</p>{/if}
       {#if info.synopsis}<p class="ov">{info.synopsis}</p>{/if}

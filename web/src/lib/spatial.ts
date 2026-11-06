@@ -56,6 +56,8 @@ const reduce = () => typeof matchMedia !== 'undefined' && matchMedia('(prefers-r
 
 export function focusEl(el: HTMLElement) {
   el.focus({ preventScroll: true });
+  // inside a container that owns the vertical position (TV home rows): only slide into view, the container's handler scrolls the page
+  if (el.closest('[data-own-scroll]')) { el.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: reduce() ? 'auto' : 'smooth' }); return; }
   el.scrollIntoView({ block: 'center', inline: 'center', behavior: reduce() ? 'auto' : 'smooth' });
 }
 

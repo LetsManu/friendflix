@@ -55,6 +55,7 @@ test.describe('TV layout', () => {
       await setTv(page, true);
       await page.goto('/');
       await expect(page.locator('nav.rail a.who')).toBeAttached();
+      await expect(page.locator('section.tile [data-autofocus]')).toBeFocused(); // the page's own first focus has landed
       const card = page.locator('main .card .thumb').first();
       await expect(card).toBeVisible();
       return card;
@@ -111,6 +112,48 @@ test.describe('TV layout', () => {
       await page.mouse.move(900, 20); // the top margin: nothing focusable
       await closed(page);
       await expect(card).toBeFocused();
+    });
+  });
+
+  test.describe('home', () => {
+    const rowLabels = (page: Page) => page.locator('main .rows section.row').evaluateAll((els) => els.map((e) => e.getAttribute('aria-label')));
+
+    test('focus tile with Play focused, Down reaches the first card, resting on it shows its title in the tile', async ({ page, api: _api }) => {
+      await setTv(page, true);
+      await page.goto('/');
+      const tile = page.locator('section.tile');
+      await expect(tile).toBeVisible();
+      const play = tile.locator('[data-autofocus]');
+      await expect(play).toBeFocused();
+      await page.keyboard.press('ArrowDown');
+      await expect(page.locator('main .rows .card .thumb:focus')).toHaveCount(1);
+      // resting on a card for 400 ms puts its title in the tile (instead of the hero and its buttons)
+      const target = page.locator('main .rows section.row[aria-label="Diese Woche bei uns"] .card .thumb').first();
+      await target.focus();
+      const name = (await target.getAttribute('aria-label'))!.split(',')[0]!;
+      await page.waitForTimeout(400);
+      await expect(tile).toHaveAttribute('aria-label', name);
+      await expect(tile.locator('[data-autofocus]')).toHaveCount(0); // the buttons give way to the card's info
+      // Up from the first row returns to the tile: the hero and its buttons are back
+      await page.locator('main .rows .card .thumb').first().focus();
+      await page.keyboard.press('ArrowUp');
+      await expect(play).toBeFocused();
+    });
+
+    test('the rows are the same list as on desktop', async ({ page, api: _api }) => {
+      await setTv(page, false);
+      await page.goto('/');
+      await page.waitForLoadState('networkidle');
+      const desktop = await rowLabels(page);
+      expect(desktop.length).toBeGreaterThan(3);
+      await page.unroute('**/api/me');
+      await setTv(page, true);
+      await page.goto('/');
+      await expect(page.locator('html.tv')).toHaveCount(1);
+      await expect(page.locator('section.tile')).toBeVisible();
+      await expect(page.locator('main .rows section.cr')).toBeAttached();
+      await page.waitForLoadState('networkidle');
+      await expect.poll(() => rowLabels(page)).toEqual(desktop);
     });
   });
 });
