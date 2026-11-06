@@ -2,8 +2,9 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // The server setup page of the webOS shells (app and probe; the probe gets build-time copies of this file, setup.css and
 // setup-core.js). setup-core.js is loaded before it, both as plain scripts. A stored server is checked with GET /api/version
-// and opened; if that fails an error card offers Retry and Change server. In the app (not the probe) the logo with "Blue key:
-// change server" shows for 1.5 s first; the blue key (406) in that window opens the form instead. Without a stored server (or on
+// and opened; if that fails an error card offers Retry and Change server. In the app (not the probe) the logo with "Press OK to
+// change server" shows for 3 s first; OK, Up or the blue key (406) in that window opens the form instead (the 2025 Magic Remote
+// has no colour keys). Without a stored server (or on
 // Change server / a back navigation, also a page restored from the back/forward cache) a TV-sized form asks for the address and
 // checks it before storing it.
 (function () {
@@ -18,8 +19,12 @@ const AUTH_KEY = 'ff.authOrigin';
 const HOME_KEY = 'ff.homeTest'; // sessionStorage: the probe left this page for the server and expects to come back
 const BACK_KEY_CODE = 461;
 const BLUE_KEY_CODE = 406;
-/** the blue-key window before a stored server is checked and opened (app only) */
-const BLUE_WINDOW_MS = 1500;
+const OK_KEY_CODE = 13;
+const UP_KEY_CODE = 38;
+/** keys that open the form while the logo shows: OK and Up (every remote), blue (older remotes, the 123 panel) */
+const CHANGE_KEYS = [OK_KEY_CODE, UP_KEY_CODE, BLUE_KEY_CODE];
+/** the change-server window before a stored server is checked and opened (app only) */
+const BLUE_WINDOW_MS = 3000;
 
 const probe = document.body.dataset.probe === '1';
 const $ = (id) => document.getElementById(id);
@@ -68,10 +73,10 @@ function endBlueWindow() {
   if (blueTimer !== null) clearTimeout(blueTimer);
   blueTimer = null;
 }
-/** app start with a stored server: the logo and the blue-key hint, then the check */
+/** app start with a stored server: the logo and the change-server hint, then the check */
 function showOpening(origin) {
   if (!sections.opening) { checkStored(origin); return; }
-  $('opening-text').textContent = 'Blue key: change server';
+  $('opening-text').textContent = 'Press OK to change server';
   show('opening');
   endBlueWindow();
   blueTimer = setTimeout(function () { blueTimer = null; checkStored(origin); }, BLUE_WINDOW_MS);
@@ -132,8 +137,8 @@ function exitApp() {
 }
 
 document.addEventListener('keydown', function (e) {
-  if (e.keyCode === BLUE_KEY_CODE && blueTimer !== null) {
-    // the blue key while the logo shows: change server instead of opening it
+  if (CHANGE_KEYS.includes(e.keyCode) && blueTimer !== null) {
+    // OK, Up or blue while the logo shows: change server instead of opening it
     e.preventDefault();
     showForm(stored.ok ? stored.origin : '');
     return;

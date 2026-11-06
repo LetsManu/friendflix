@@ -124,7 +124,7 @@ html.tv.idle-cursor, html.tv.idle-cursor * { cursor: none !important; }
 html.tv :focus-visible { outline: 4px solid #fff; outline-offset: 4px; box-shadow: 0 0 0 9px rgba(255, 79, 109, .6); border-radius: 8px; }
 html.tv .card:focus-within { transform: scale(1.1) !important; z-index: 6; transition-delay: 0s !important; }
 html.tv .card .thumb:focus-visible { box-shadow: 0 0 0 5px #fff, 0 12px 34px rgba(0, 0, 0, .7); outline: none; border-radius: var(--radius); }
-html.tv .pop, html.tv .arrow, html.tv .tabbar, html.tv .sheet { display: none !important; }
+html.tv .pop, html.tv .arrow, html.tv .tabbar, html.tv .sheet:not(.tvsheet) { display: none !important; }
 html.tv .track { scroll-snap-type: none; }
 html.tv main { padding-bottom: 0; }
 html.tv button, html.tv .btn { min-height: 56px; font-size: 1.05rem; padding-inline: 1.5rem; }

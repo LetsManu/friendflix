@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { describe, expect, it } from 'vitest';
-import { WheelAccumulator } from './wheel';
+import { TvWheelStepper, WheelAccumulator, WHEEL_TV_IDLE_MS } from './wheel';
 
 describe('WheelAccumulator', () => {
   it('one notch of 100 px = one step, direction kept', () => {
@@ -24,5 +24,22 @@ describe('WheelAccumulator', () => {
   it('line and page modes are normalised', () => {
     const w = new WheelAccumulator();
     expect(w.add(1, 1, 0)).toBe(0); expect(w.add(6, 1, 10)).toBe(1); expect(w.add(1, 2, 2000, 800)).toBe(8);
+  });
+});
+
+describe('TvWheelStepper (LG Magic Remote wheel)', () => {
+  it('a burst of events (one notch, as logged on webOS 25) counts once', () => {
+    const w = new TvWheelStepper();
+    expect(w.add(-3, 0)).toBe(-1); expect(w.add(-3, 38)).toBe(0); expect(w.add(-3, 102)).toBe(0);
+  });
+  it('the next notch after a pause steps again, in its own direction', () => {
+    const w = new TvWheelStepper();
+    expect(w.add(-3, 0)).toBe(-1);
+    expect(w.add(3, 435)).toBe(1); expect(w.add(3, 465)).toBe(0);
+    expect(w.add(-3, 465 + WHEEL_TV_IDLE_MS + 1)).toBe(-1);
+  });
+  it('wheel down = forward, a zero delta does nothing', () => {
+    const w = new TvWheelStepper();
+    expect(w.add(5, 0)).toBe(1); expect(new TvWheelStepper().add(0, 0)).toBe(0);
   });
 });

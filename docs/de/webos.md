@@ -111,7 +111,7 @@ Beim ersten Start fragt die App nach der Adresse deines Servers, zum Beispiel `f
 - Gib sie mit der Tastatur des Fernsehers oder der Magic Remote ein; die Pfeiltasten wechseln zwischen Feld und **Verbinden**.
 - Nur `https://` funktioniert; `https://` wird für dich ergänzt. Eine reine `http://`-Adresse wird abgelehnt (der Fernseher trägt ein Anmelde-Cookie).
 - Die App prüft, ob die Adresse wie ein FriendFlix-Server antwortet (`GET /api/version`). Wenn nicht, sagt sie warum.
-- Die Adresse wird gemerkt. Beim nächsten Start zeigt die App 1,5 Sekunden lang ihr Logo mit *Blue key: change server* (blaue Taste: Server wechseln) und öffnet dann den TV-Modus deines Servers (siehe [Server wechseln](#server-wechseln)). Ist der Fernseher noch nicht gekoppelt, zeigt er wie üblich den Kopplungscode: Koppeln wie in [tv-mode.md](../tv-mode.md) beschrieben. **Zurück** auf dem Kopplungsbildschirm führt zum ausgefüllten Adressformular; Zurück dort beendet die App.
+- Die Adresse wird gemerkt. Beim nächsten Start zeigt die App 3 Sekunden lang ihr Logo mit *Press OK to change server* (OK drücken: Server wechseln) und öffnet dann den TV-Modus deines Servers (siehe [Server wechseln](#server-wechseln)). Ist der Fernseher noch nicht gekoppelt, zeigt er wie üblich den Kopplungscode: Koppeln wie in [tv-mode.md](../tv-mode.md) beschrieben. **Zurück** auf dem Kopplungsbildschirm führt zum ausgefüllten Adressformular; Zurück dort beendet die App.
 - Ist der Server beim Start nicht erreichbar, bietet eine Fehlerkarte **Retry** (erneut versuchen) und **Change server** (Server wechseln) an; die Startseite ist nur englisch.
 
 ## Die 50-Stunden-Sitzung
@@ -120,10 +120,15 @@ Der Entwicklermodus läuft nach **50 Stunden** ab. Öffne vorher die App **Devel
 
 ## Die Fernbedienung
 
-Im Player (außerhalb des Players werden die Tasten ignoriert):
+Im Player (außerhalb des Players werden die Tasten ignoriert). Alles geht auch nur mit **OK, den Pfeiltasten und Zurück**, denn die Magic Remote von 2025 hat keine Play-, Pause-, Spul- oder Farbtasten; ihre Taste **123** öffnet ein Bildschirm-Feld mit den Farbtasten.
 
 | Taste | Code | Aktion |
 |---|---|---|
+| OK | 13 | bei ausgeblendeter Steuerleiste: abspielen oder pausieren; in der Leiste drückt es die gewählte Schaltfläche |
+| ◀ / ▶ | 37 / 39 | -10 s / +10 s; gedrückt halten spult schneller (nach 1 s in 30-s-Schritten, nach 3 s in 60-s-Schritten) |
+| ▲ / ▼ | 38 / 40 | ▲: Besetzung und Infos zur Szene; ▼: die Steuerleiste (Fokus auf Wiedergabe/Pause) |
+| Scrollrad | `wheel` | über dem Bild: eine Raste = +10 s (nach unten) / -10 s (nach oben); Menüs scrollen weiter |
+| Kanal ▲ | 33 | nächste Folge (Serien) |
 | Play | 415 | abspielen |
 | Pause | 19 | pausieren |
 | Play/Pause | 10252 | abspielen oder pausieren |
@@ -132,7 +137,7 @@ Im Player (außerhalb des Players werden die Tasten ignoriert):
 | Rot | 403 | Untertitel an oder aus (zuletzt benutzte Spur, sonst die erste) |
 | Grün | 404 | Audio-Menü öffnen |
 
-**Zurück** (461) funktioniert überall: eine Ebene zurück. **Zurück auf der Startseite des TV-Modus beendet die App.** Auch der Zeiger der **Magic Remote** funktioniert: Darüberfahren bewegt den Fokusrahmen, ein Klick öffnet. Die Pfeiltasten machen von dort weiter, wo der Zeiger war. Die allgemeinen Tasten stehen in [tv-mode.md](../tv-mode.md#bedienung-am-fernseher).
+**Zurück** (461) funktioniert überall: eine Ebene zurück; im Player blendet es zuerst die Steuerleiste aus und verlässt ihn danach. **Zurück auf der Startseite des TV-Modus beendet die App.** Die Steuerleiste bleibt sichtbar, solange du dich darin bewegst, und verschwindet 5 Sekunden nach der letzten Taste; dabei gibt sie die gewählte Schaltfläche frei, damit das nächste OK immer Wiedergabe/Pause bedeutet. Auch der Zeiger der **Magic Remote** funktioniert: Bewegen blendet die Steuerung ein, Darüberfahren bewegt den Fokusrahmen, ein Klick auf eine Schaltfläche drückt sie, ein Klick aufs Bild startet oder pausiert. Die Pfeiltasten machen von dort weiter, wo der Zeiger war. Die allgemeinen Tasten stehen in [tv-mode.md](../tv-mode.md#bedienung-am-fernseher).
 
 ## Was Direct Play abdeckt
 
@@ -151,8 +156,8 @@ Erscheint bei Direct Play innerhalb von **10 Sekunden** kein Bild, wechselt der 
 
 Zwei Wege führen zum Adressformular, ausgefüllt mit der aktuellen Adresse:
 
-- **Konto-Menü → Server wechseln.** Unter webOS 25 erreicht der Weg zurück über den Browserverlauf die Startseite der App nicht (die Probe auf einem LG 43QNED82A6B meldete `home=fail`), deshalb sagt der Eintrag: App neu starten und die blaue Taste nehmen.
-- **Blaue Taste beim Start.** Jeder Start mit gespeicherter Adresse zeigt 1,5 Sekunden lang das Logo mit *Blue key: change server*, bevor die App deinen Server öffnet. Drückst du in dieser Zeit die **blaue** Taste (406), erscheint stattdessen das Formular.
+- **Konto-Menü → Server wechseln.** Unter webOS 25 erreicht der Weg zurück über den Browserverlauf die Startseite der App nicht (die Probe auf einem LG 43QNED82A6B meldete `home=fail`), deshalb sagt der Eintrag: App neu starten und OK drücken, solange das Logo zu sehen ist.
+- **OK beim Start.** Jeder Start mit gespeicherter Adresse zeigt 3 Sekunden lang das Logo mit *Press OK to change server*, bevor die App deinen Server öffnet. Drückst du in dieser Zeit **OK** (13), **▲** (38) oder die **blaue** Taste (406), erscheint stattdessen das Formular.
 
 ## Die Probe und wie du ihre Zeile liest
 

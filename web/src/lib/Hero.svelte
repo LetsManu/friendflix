@@ -194,6 +194,12 @@
   .fadebox { overflow: hidden; max-height: 24rem; transition: max-height .9s var(--ease), opacity .6s ease; }
   .fadebox > :last-child { margin-bottom: 1.4rem; }
   .hero.quiet .fadebox { max-height: 0; opacity: 0; }
+  /* TV: a 720-px-tall CSS viewport (common on TV browsers) left no room above the content - the title logo ran under the
+     navigation. Lower and smaller: logo max 7rem, synopsis 2 lines, the block starts lower */
+  :global(html.tv) .content { bottom: 18%; }
+  :global(html.tv) .tlogo { max-height: min(7rem, 16vh); }
+  :global(html.tv) h1 { font-size: clamp(2rem, 4.4vw, 3.8rem); }
+  :global(html.tv) .ov { -webkit-line-clamp: 2; line-clamp: 2; }
   h1, .logoh { transform-origin: left bottom; transition: transform .9s var(--ease); }
   .hero.quiet h1, .hero.quiet .logoh { transform: scale(.72); }
   @media (prefers-reduced-motion: reduce) { .fadebox, h1, .logoh { transition: none; } }

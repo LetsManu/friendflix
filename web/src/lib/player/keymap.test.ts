@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { describe, expect, it } from 'vitest';
-import { isTypingTarget, nextSubtitle, resolveKey, toggleSubtitle, type KeyContext } from './keymap';
+import { holdSeekStep, isTypingTarget, nextSubtitle, resolveKey, toggleSubtitle, type KeyContext } from './keymap';
 
 const ctx: KeyContext = { tv: false, onBody: true, hasSkip: false, hasNext: true, overlayOpen: false };
 const r = (key: string, c: Partial<KeyContext> = {}, m: object = {}) => resolveKey({ key, ...m }, { ...ctx, ...c });
@@ -93,5 +93,19 @@ describe('isTypingTarget', () => {
     expect(isTypingTarget({ tagName: 'INPUT', type: 'range' } as never)).toBe(false);
     expect(isTypingTarget({ tagName: 'BUTTON' })).toBe(false);
     expect(isTypingTarget(null)).toBe(false);
+  });
+});
+
+describe('TV remotes without media keys', () => {
+  it('channel up (PageUp) is the next episode on the TV only, and only when one follows', () => {
+    expect(r('PageUp', { tv: true })).toEqual({ type: 'next' });
+    expect(r('PageUp', { tv: true, hasNext: false })).toBeNull();
+    expect(r('PageUp')).toBeNull();
+    expect(r('PageDown', { tv: true })).toBeNull();
+  });
+  it('holding left/right: 10 s for the first second, then 30 s, after 3 s 60 s', () => {
+    expect(holdSeekStep(0)).toBe(10); expect(holdSeekStep(999)).toBe(10);
+    expect(holdSeekStep(1000)).toBe(30); expect(holdSeekStep(2999)).toBe(30);
+    expect(holdSeekStep(3000)).toBe(60); expect(holdSeekStep(20000)).toBe(60);
   });
 });

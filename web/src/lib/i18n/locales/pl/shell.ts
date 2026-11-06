@@ -60,7 +60,7 @@ const pl: Translation<typeof de> = {
     manageProfiles: 'Edytuj profile',
     logout: 'Wyloguj z FriendFlix',
     changeServer: 'Zmień serwer',
-    changeServerBlue: 'Nie udało się wrócić do strony startowej. Uruchom aplikację ponownie i naciśnij niebieski przycisk, gdy widać logo.',
+    changeServerBlue: 'Nie udało się wrócić do strony startowej. Uruchom aplikację ponownie i naciśnij OK, gdy widać logo.',
   },
   menu: {
     me: 'Moja strefa',

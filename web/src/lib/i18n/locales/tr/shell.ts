@@ -55,7 +55,7 @@ const tr: Translation<typeof de> = {
     manageProfiles: 'Profilleri düzenle',
     logout: 'FriendFlix oturumunu kapat',
     changeServer: 'Sunucuyu değiştir',
-    changeServerBlue: 'Başlangıç sayfasına ulaşılamadı. Uygulamayı yeniden başlatın ve logo görünürken mavi tuşa basın.',
+    changeServerBlue: 'Başlangıç sayfasına ulaşılamadı. Uygulamayı yeniden başlatın ve logo görünürken OK tuşuna basın.',
   },
   menu: {
     me: 'Alanım',
