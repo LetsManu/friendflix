@@ -107,7 +107,10 @@ dependencies {
     androidTestImplementation(libs.androidx.test.espresso.intents)
 }
 
-// Full stack traces in the CI log: a failing unit test shows its cause without the HTML report.
 tasks.withType<Test>().configureEach {
+    // Robolectric 4.17 sets up Android 36's ApplicationSharedMemory through java.io.FileDescriptor internals,
+    // which Java 21 only allows when the package is opened to the test classpath.
+    jvmArgs("--add-opens=java.base/java.io=ALL-UNNAMED")
+    // Full stack traces in the CI log: a failing unit test shows its cause without the HTML report.
     testLogging { exceptionFormat = org.gradle.api.tasks.testing.logging.TestExceptionFormat.FULL }
 }
