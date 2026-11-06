@@ -14,19 +14,19 @@
     "compose:env": "UPDATE_COMPOSE_ENV=1 vitest run test/compose-env.test.ts"
   },
   "dependencies": {
-    "@fastify/cookie": "^11.0.1",
+    "@fastify/cookie": "^11.1.5",
     "@fastify/rate-limit": "^11.2.0",
-    "@fastify/websocket": "^11.3.3",
+    "@fastify/websocket": "^11.3.6",
     "fastify": "^5.12.8",
     "ioredis": "^6.0.0",
-    "openid-client": "^6.1.7",
+    "openid-client": "^6.8.9",
     "pg": "^8.13.1",
     "prom-client": "^15.1.3",
     "web-push": "^3.6.7",
     "zod": "^4.6.7"
   },
   "devDependencies": {
-    "@types/node": "^26.6.4",
+    "@types/node": "^26.6.6",
     "@types/pg": "^8.11.10",
     "@types/web-push": "^3.6.4",
     "tsx": "^4.19.2",
