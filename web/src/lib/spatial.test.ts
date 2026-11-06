@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { focusFirst, isBackKey, isEditable, move, startSpatial, usable } from './spatial';
+import { focusFirst, hasTarget, isBackKey, isEditable, move, startSpatial, usable } from './spatial';
 
 /**
  * A tiny DOM double, just enough for the geometric focus search: elements with a tag, attributes, a box and
@@ -186,6 +186,17 @@ describe('move', () => {
     move('up');
     expect(id()).toBe('s1');
     expect(move('up')).toBe(false); // row 2 of the grid is outside the scope
+  });
+
+  it('hasTarget answers like move without focusing anything', () => {
+    const g = grid();
+    g.a.focus();
+    const calls = g.a.focus.mock.calls.length;
+    expect(hasTarget('left')).toBe(false);
+    expect(hasTarget('right')).toBe(true);
+    expect(id()).toBe('a');
+    expect(g.b.focus).not.toHaveBeenCalled();
+    expect(g.a.focus.mock.calls.length).toBe(calls);
   });
 
   it('a widget can take over one step by cancelling the ff-nav event', () => {

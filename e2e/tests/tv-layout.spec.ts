@@ -15,7 +15,7 @@ test.describe('TV layout', () => {
     await setTv(page, true);
     await page.goto('/');
     await expect(page.locator('html.tv')).toHaveCount(1);
-    await expect(page.locator('button.avatar')).toBeEnabled();
+    await expect(page.locator('nav.rail a.who')).toBeVisible();
     expect(await page.evaluate(() => getComputedStyle(document.body).backgroundColor)).toBe('rgb(0, 0, 0)');
     await page.keyboard.press('Tab');
     const ring = await page.evaluate(() => {
@@ -31,7 +31,7 @@ test.describe('TV layout', () => {
   test('tokens: .tv-btn on a <button> keeps its own size', async ({ page, api: _api }) => {
     await setTv(page, true);
     await page.goto('/');
-    await expect(page.locator('button.avatar')).toBeEnabled();
+    await expect(page.locator('nav.rail a.who')).toBeVisible();
     const r = await page.evaluate(() => {
       const b = document.createElement('button'); b.className = 'tv-btn'; b.textContent = 'x'; document.body.append(b);
       return { fs: parseFloat(getComputedStyle(b).fontSize), root: parseFloat(getComputedStyle(document.documentElement).fontSize), h: b.getBoundingClientRect().height };

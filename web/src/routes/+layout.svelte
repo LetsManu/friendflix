@@ -30,6 +30,8 @@
   import { loadIntroSettings, markSessionSeen, readSessionSeen, shouldPlayIntro } from '#lib/intro';
   import { mobile } from '#lib/viewport';
   import { HEADER_TABS, isTabActive } from '#lib/menu';
+  import TvRail from '#lib/tv/TvRail.svelte';
+  import { railKey } from '#lib/tv/rail';
   import { categoryHref, kindFromPath, showsChips, type Kind } from '#lib/mobile';
   import { dialogKeys } from '#lib/actions';
   import { langLabel } from '#lib/langs';
@@ -67,6 +69,7 @@
   let lgApp = false;
   let pending = false, checking = false;
   let notes: Array<{ id: number; title: string; link?: string; read: boolean }> = [];
+  let railOpen = false;
   let scrolled = false, menu = false, bell = false, cats = false, help = false;
   let sentinel: HTMLElement;
   let online = true;
@@ -123,6 +126,9 @@
   // /api/me (a 401 there would loop back to /auth/login → /login)
   $: publicPage = path.startsWith('/invite/') || path === '/tv' || path === '/offline' || path === '/pending' || path === '/restore' || path === '/setup' || path === '/login' || path === '/reset' || path === '/confirm-email';
   $: watchPage = path.startsWith('/watch/') || /^\/party\/[^/]+/.test(path); // immersive player pages: no navigation
+  $: showRail = tv && !watchPage && !profilesPage && !kidsUi;
+  $: topLevel = path === '/' || path.startsWith('/browse/') || path === '/watchlist' || path === '/search';
+  $: if (!showRail) railOpen = false;
   $: profilesPage = path === '/profiles' || path === '/welcome'; // full-screen pages without navigation (picker, onboarding)
   $: heroPage = path === '/' || path.startsWith('/item/');
   $: kidsPage = path === '/kids' || path.startsWith('/kids/'); // full-bleed bright kids pages (own background and spacing)
@@ -244,6 +250,13 @@
     // TV: Back/Escape walks one step back (the detail popup closes itself on Escape; the player handles its own keys)
     if (tv && !watchPage && !(e.key === 'Escape' && $page.state.modalId) && !isEditable(e.target as Element)) {
       e.preventDefault();
+      // top-level pages: Back opens the side bar first; with the bar open it closes it (on home: leaves the LG app)
+      if (showRail && !$page.state.modalId && (railOpen || topLevel)) {
+        const r = railKey({ open: railOpen }, { key: 'back', atLeftEdge: false, inRail: railOpen, onHome: path === '/' });
+        railOpen = r.state.open;
+        if (r.action === 'exitPrompt' && isLgApp() && shouldExitOnBack({ path, modalId: $page.state.modalId, dropdownOpen: false, editable: false })) exitLgApp();
+        return;
+      }
       if (isLgApp() && shouldExitOnBack({ path, modalId: $page.state.modalId, dropdownOpen: false, editable: false })) exitLgApp(); // Back on home leaves the LG app
       else if (path !== '/' || $page.state.modalId) history.back();
     }
@@ -466,7 +479,9 @@
       </nav>
     </header>
   {:else if !watchPage && !profilesPage}
-    {#if $mobile}
+    {#if tv}
+      <TvRail {path} {who} {faceStyle} bind:open={railOpen} />
+    {:else if $mobile}
       <header class="nav m" class:solid={scrolled || !heroPage} class:chips>
         <div class="mrow">
           <a class="mlogo" href="/profiles" aria-label={who ? $t('shell.mobile.switchProfileCurrent', { name: who }) : $t('shell.mobile.switchProfile')}><Logo size={30} label="" /><span class="for">{who ? $t('shell.mobile.forName', { name: who }) : ''}</span></a>
@@ -584,7 +599,7 @@
   {#if !online}<div class="offbar" class:notab={kidsUi || profilesPage} role="status">{$t('shell.offline.bar')} <a href="/offline" data-sveltekit-reload>{$t('shell.offline.toDownloads')}</a></div>{/if}
   {#if replaced}<div class="panel" role="alert" style="position:fixed;z-index:90;top:calc(5rem + var(--safe-top));left:50%;transform:translateX(-50%)"><b>{$t('shell.tvReplaced.text')}</b> <button on:click={() => location.reload()}>{$t('shell.tvReplaced.reconnect')}</button></div>{/if}
   {#if modalId && Modal}<svelte:component this={Modal} id={modalId} />{/if}
-  <main id="main" class:page={!heroPage && !watchPage && !profilesPage && !kidsPage}>
+  <main id="main" class:page={!heroPage && !watchPage && !profilesPage && !kidsPage} class:tvrail={showRail}>
     {#if pending}
       <div class="page"><div class="panel pendp">
         <b class="warn">{$t('shell.pending.title')}</b>
@@ -632,6 +647,7 @@
 <ReauthHost />
 
 <style>
+  :global(html.tv) main.tvrail { padding-left: 96px; box-sizing: border-box; }
   .offbar { position: fixed; z-index: 80; left: 0; right: 0; bottom: calc(56px + var(--safe-bottom) + var(--castbar-h)); background: #242b33; padding: .6rem var(--pad-x); text-align: center; font-size: .9rem; }
   .offbar a { text-decoration: underline; font-weight: 600; }
   .offbar.notab { bottom: calc(var(--safe-bottom) + var(--castbar-h)); } /* no tab bar (kids profiles, profile picker) */

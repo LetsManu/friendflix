@@ -45,3 +45,8 @@ export const HEADER_TABS: Array<[href: string, label: TKey]> = [['/', 'shell.nav
 
 /** true when `href` is the current section (Start only on "/") */
 export const isTabActive = (href: string, path: string) => (href === '/' ? path === '/' : path === href || path.startsWith(href + '/') || path.startsWith(href + '?'));
+
+/** TV side-bar rail: search, home, series, movies, my list (the profile avatar is added by the rail itself) */
+export const TV_RAIL: Array<[href: string, label: TKey, icon: string]> = [
+  ['/search', 'shell.mobile.search', 'search'], ['/', 'shell.nav.home', 'home'], ['/browse/series', 'shell.nav.series', 'tv'], ['/browse/movies', 'shell.nav.movies', 'film'], ['/watchlist', 'shell.nav.myList', 'list'],
+];

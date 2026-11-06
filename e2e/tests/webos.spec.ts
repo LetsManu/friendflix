@@ -40,30 +40,32 @@ const subShowing = (page: Page) => page.evaluate(() => [...document.querySelecto
 test.describe('LG app', () => {
   test.beforeEach(async ({ page }) => { await pairedTv(page); });
 
-  test('Back on home leaves the app through PalmSystem, once', async ({ page, api: _api }) => {
+  test('Back on home opens the rail first, the second Back leaves the app through PalmSystem, once', async ({ page, api: _api }) => {
     const lg = await asLgApp(page);
     await playerWithInfo(page); // the TV home warms the playback info of its hero title
     await page.goto('/?ff_app=webos');
     await expect(page.locator('html.tv')).toHaveCount(1);
-    await expect(page.locator('button.avatar')).toBeEnabled(); // the profile is loaded: the shell listens
+    const rail = page.locator('nav.rail');
+    await expect(rail.locator('a.who')).toBeVisible(); // the profile is loaded: the shell listens
     await press(page, 461);
-    await expect.poll(lg.backCalls).toBe(1);
-  });
-
-  test('Back closes the open account dropdown first and does not leave', async ({ page, api: _api }) => {
-    const lg = await asLgApp(page);
-    await playerWithInfo(page); // the TV home warms the playback info of its hero title
-    await page.goto('/?ff_app=webos');
-    const avatar = page.locator('button.avatar');
-    await expect(avatar).toBeEnabled(); // the profile is loaded: the shell listens
-    await avatar.click();
-    await expect(avatar).toHaveAttribute('aria-expanded', 'true');
-    await press(page, 461);
-    await expect(avatar).toHaveAttribute('aria-expanded', 'false');
-    // the dropdown is closed and nothing left yet; a second Back (now nothing else wants it) leaves exactly once
+    await expect(rail).toHaveClass(/open/);
     expect(await lg.backCalls()).toBe(0);
     await press(page, 461);
     await expect.poll(lg.backCalls).toBe(1);
+    await expect(rail).not.toHaveClass(/open/);
+  });
+
+  test('Back with the rail open on a sub page closes it and does not leave', async ({ page, api: _api }) => {
+    const lg = await asLgApp(page);
+    await playerWithInfo(page);
+    await page.goto('/watchlist?ff_app=webos');
+    const rail = page.locator('nav.rail');
+    await expect(rail.locator('a.who')).toBeVisible();
+    await press(page, 461);
+    await expect(rail).toHaveClass(/open/);
+    await press(page, 461);
+    await expect(rail).not.toHaveClass(/open/);
+    expect(await lg.backCalls()).toBe(0);
   });
 
   test('remote keys control the player (key is Unidentified, keyCode decides)', async ({ page, api: _api }) => {
