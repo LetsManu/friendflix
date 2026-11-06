@@ -12,7 +12,9 @@
   import { noteInteraction } from '#lib/stillwatching';
   import { nowPlaying } from '#lib/remote';
   import { isBackKey } from '#lib/spatial';
-  import { isTypingTarget, nextSubtitle, resolveKey, SHORTCUTS, type KeyAction } from '#lib/player/keymap';
+  import { isLgApp } from '#lib/webos/detect';
+  import { normaliseLgKey } from '#lib/webos/keys';
+  import { isTypingTarget, nextSubtitle, resolveKey, SHORTCUTS, toggleSubtitle, type KeyAction } from '#lib/player/keymap';
   import { BRIGHTNESS_MIN, brightnessPct, classifyMove, levelFromDrag, registerTap, scrubTarget, TAP_WINDOW, volumeSettable, zoneOf, type Axis, type TapState, type Zone } from '#lib/player/gestures';
   import { creditsStart } from '#lib/player/nextup';
   import { postplayStart } from '#lib/postplay';
@@ -29,6 +31,8 @@
   import { BandwidthEstimator, loadStoredEstimate, storeEstimate } from '#lib/player/bandwidth';
   import QualityChip from '#lib/player/QualityChip.svelte';
   import { speedLabel, SPEEDS } from '#lib/player/bar';
+  import { lgCaps } from '#lib/webos/caps';
+  import { firstFrameMs, watchFirstFrame } from '#lib/player/firstframe';
   import { firstPlaybackRequest, playbackInfoBody, type InfoBody, type PlaybackDto } from '#lib/player/infobody';
   import { holdPrefetch, takePrefetched } from '#lib/player/prefetch';
   import { createTiming, deviceClass, effectiveType, sendTiming } from '#lib/player/timing';
@@ -232,7 +236,9 @@
     const i = x as Partial<Info> | null;
     return Boolean(i && typeof i.playSessionId === 'string' && typeof i.resumeTicks === 'number' && Array.isArray(i.audioTracks) && Array.isArray(i.subtitles) && (i.directUrl || i.hlsUrl));
   };
+  let cancelFirstFrame = () => {};
   async function load(startSec?: number) {
+    cancelFirstFrame();
     error = ''; errNote = '';
     // a retry / track reload continues the running session (its clock keeps going); a quality switch starts a new one, flagged
     if (!timing.active && !partyMode && !remote) timing.begin(switching);
@@ -246,7 +252,7 @@
     const audioLang = fr?.body.audioLang;
     if (first) reqHint = quality ? 'manual' : 'network'; // a saved quality is a pick, otherwise the network chooses
     const sentBps = wantBps();
-    const body: InfoBody = playbackInfoBody({ itemId, startSec, audioIndex, bps: sentBps, hint: reqHint, audioLang });
+    const body: InfoBody = playbackInfoBody({ itemId, startSec, audioIndex, bps: sentBps, hint: reqHint, audioLang, caps: lgCaps() });
     const ask = () => api<Info | null>('/api/playback/info', { method: 'POST', body });
     // hovered/focused play button: its request is (usually) already answered; a failed prefetch is simply asked again
     const pre = first ? takePrefetched(itemId, body) : null;
@@ -282,6 +288,7 @@
     const my = ++attachSeq, cur = info;
     sessionPlaying = false; resetStall(); // the first buffering of each stream is a start, not a stall
     hls?.destroy(); hls = null;
+    cancelFirstFrame();
     const useDirect = info.directUrl && audioIndex === undefined && !rec.forcedHls && video.canPlayType('video/mp4');
     mode = useDirect ? 'direct' : 'hls';
     timing.mode(useDirect ? 'direct' : 'hls');
@@ -295,6 +302,8 @@
     if (useDirect) {
       video.src = info.directUrl!;
       video.addEventListener('loadedmetadata', seek, { once: true });
+      // LG: an original the TV cannot decode may stay black without an error; no picture in time -> the converted stream, once
+      if (isLgApp() && !rec.forcedHls) cancelFirstFrame = watchFirstFrame(video, firstFrameMs(), () => { if (my === attachSeq && !rec.forcedHls && !error && !reconnecting && !handedOff && !remote && !airOn) forceHls(resumePos(), true); }, { running: wantAutoplay });
     } else if (H?.isSupported()) {
       const HC = H;
       hls = new HC(hlsConfig(startSec));
@@ -335,9 +344,12 @@
   const resumePos = () => Math.max(lastPos, video && video.currentTime > 0 ? video.currentTime : 0);
   const lowerStep = () => lowerQuality(QUALITIES.map(([, b]) => b).filter((b) => b < (info?.roleMaxBitrate ?? Infinity)), quality, info?.maxBitrate ?? 0);
   let retryViaLoad = false;
+  /** keepIntent: the first-frame watcher fires before `canplay` ever came (the element is still paused), so a pending play intent survives the switch */
+  function forceHls(pos: number, keepIntent = false) { rec.forcedHls = true; errPos = pos; flash(tr('player.switchingTranscode'), 2500); wantAutoplay = keepIntent ? wantAutoplay || !paused : !paused; void load(pos); }
   function recover(kind: ErrorKind, viaLoad = false) {
     if (handedOff || airOn || airInfo || airState.busy) return;
     retryViaLoad = viaLoad;
+    cancelFirstFrame();
     // the first retry already failed: the line is the problem, not a hiccup -> a lower rung (none = cooldown or 360p: the usual retries go on and end in giveUp)
     if (kind === 'network' && !viaLoad && abr && !switching && rec.networkTries >= 1) {
       const nd = abr.onNetworkError(), step = networkStep(nd);
@@ -354,11 +366,11 @@
       rec.networkTries = d.attempt; reconnecting = d.attempt; errPos = pos; waiting = true;
       clearTimeout(retryT); retryT = setTimeout(() => retryNow(pos), d.delay);
     } else if (d.do === 'recover-media') { rec.mediaRecovered = true; errPos = pos; hls?.recoverMediaError(); }
-    else if (d.do === 'force-hls') { rec.forcedHls = true; errPos = pos; flash(tr('player.switchingTranscode'), 2500); wantAutoplay = !paused; load(pos); }
+    else if (d.do === 'force-hls') forceHls(pos);
     else if (d.do === 'lower-quality') { rec.loweredQuality = true; errPos = pos; const q = lowerStep(); if (q) { wantAutoplay = !paused; abr = makeAbr(q, quality ? q : undefined); void changeQuality(q, 'abr', 3000, tr('player.quality.stepDown', { q: rungLabel(q) })); } else giveUp(); }
     else giveUp();
   }
-  function giveUp() { clearTimeout(retryT); reconnecting = 0; waiting = false; errTitle = tr('player.error.title'); error = errNote || tr('player.error.connection'); hls?.stopLoad(); reportFatal(); }
+  function giveUp() { cancelFirstFrame(); clearTimeout(retryT); reconnecting = 0; waiting = false; errTitle = tr('player.error.title'); error = errNote || tr('player.error.connection'); hls?.stopLoad(); reportFatal(); }
   // Block 22: a playback that ends in an error is reported once per play session (admin health page, grouped by title)
   let lastErrCode = '', reportedFor = '';
   function reportFatal() {
@@ -603,8 +615,11 @@
     await load(pos);
     video?.play().catch(() => undefined);
   }
+  /** the last subtitle track that was on (-1 = none yet): the LG red key turns this one back on */
+  let lastSubIndex = -1;
   function setSubtitle(i: number, remember = true) {
     subIndex = i;
+    if (i !== -1) lastSubIndex = i;
     if (remember) { const lang = i === -1 ? 'off' : subOpts.find((x) => x.index === i)?.language; if (lang && lang !== 'und') rememberLang({ subtitle: lang }); }
     if (remote) castEngine.setSubtitle(i);
     [...(video?.textTracks ?? [])].forEach((t) => (t.mode = t.id === `sub-${i}` ? 'showing' : 'disabled'));
@@ -871,6 +886,7 @@
       case 'mute': toggleMute(); flash(muted ? tr('player.mute') : tr('player.unmute'), 700); break;
       case 'fullscreen': toggleFullscreen(); break;
       case 'subtitles': cycleSubtitles(); break;
+      case 'subtitleToggle': toggleSubtitles(); break;
       case 'skip': if (skip && allowed()) doSkip(); break;
       case 'next': if (hasNext && allowed()) goNext(); else flash(tr('player.noNext')); break;
       case 'help': help = !help; break;
@@ -880,6 +896,8 @@
       case 'escape': menu = ''; subDlg = false; help = false; if (showXray) closeCastInfo(); peek = false; break;
       case 'peek': if (peek) openCastInfo(true); else openPeek(); break;
       case 'castInfo': openCastInfo(true); break;
+      case 'audioMenu': menu = 'tracks'; wake(); break;
+      case 'stop': dispatch('back'); break; // the watch page leaves like its Back key; onDestroy sends the stop report
     }
   }
   function cycleSubtitles() {
@@ -888,11 +906,19 @@
     setSubtitle(i);
     flash(i === -1 ? tr('player.subs.off') : tr('player.subs.on', { name: info.subtitles.find((x) => x.index === i)?.title ?? '' }), 1500);
   }
+  /** LG red key: subtitles on (the last used track, else the first) / off */
+  function toggleSubtitles() {
+    if (!info?.subtitles.length) { flash(tr('player.subs.none')); return; }
+    const i = toggleSubtitle(subIndex, lastSubIndex, info.subtitles.map((x) => x.index));
+    setSubtitle(i);
+    flash(i === -1 ? tr('player.subs.off') : tr('player.subs.on', { name: info.subtitles.find((x) => x.index === i)?.title ?? '' }), 1500);
+  }
   function onKey(e: KeyboardEvent) {
     const t = e.target as HTMLElement;
     if (!video || isTypingTarget(t)) return;
     if ((t.tagName === 'BUTTON' || t.tagName === 'A') && (e.key === ' ' || e.key === 'Enter')) return; // the focused control keeps Space/Enter
-    const a = resolveKey(e, { tv: tvMode(), onBody: t === document.body || t === stage, hasSkip: Boolean(skip), hasNext, overlayOpen: overlayOpen(), peekOpen: peek });
+    const lg = isLgApp();
+    const a = resolveKey(lg ? { key: normaliseLgKey(e), ctrlKey: e.ctrlKey, metaKey: e.metaKey, altKey: e.altKey, shiftKey: e.shiftKey } : e, { tv: tvMode(), onBody: t === document.body || t === stage, hasSkip: Boolean(skip), hasNext, overlayOpen: overlayOpen(), peekOpen: peek, lg });
     wake();
     if (!a) return;
     e.preventDefault();
@@ -1124,6 +1150,7 @@
     };
   });
   onDestroy(() => {
+    cancelFirstFrame();
     clearInterval(tvTick);
     clearTimeout(peekT); clearTimeout(posterT); fxEngine?.destroy();
     persistEstimate(); clearInterval(abrTimer); clearInterval(bwTimer); clearTimeout(stallT);

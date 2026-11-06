@@ -14,8 +14,8 @@
 # DAST: `dast` runs an OWASP ZAP baseline scan against the built web app (rules: .zap/rules.tsv).
 # workflow_dispatch: release.yml starts CI for the new vX.Y.Z tag (its own pushes use GITHUB_TOKEN and trigger nothing);
 # a dispatch behaves like a push of that ref, but only main and v* tags are ever published.
-# v* tags also get the signed Android app (android-release.yml) and the Windows app (desktop-release.yml) attached to their
-# GitHub Release.
+# v* tags also get the signed Android app (android-release.yml), the Windows app (desktop-release.yml) and the Samsung TV
+# app (tizen-release.yml) attached to their GitHub Release.
 # Images carry APP_VERSION / APP_CODENAME from version.json next to GIT_SHA.
 # Reproducible builds (docs/reproducible-builds.md): SOURCE_DATE_EPOCH = commit time, rewrite-timestamp=true, pinned
 # BuildKit (BUILDKIT_IMAGE), BUILD_TIME and the `created` label derived from the commit time; the published candidate is
@@ -171,6 +171,60 @@ jobs:
         with: { fetch-depth: 0 }
       - uses: gitleaks/gitleaks-action@e0c47f4f8be36e29cdc102c57e68cb5cbf0e8d1e # v3
         env: { GITHUB_TOKEN: "${{ secrets.GITHUB_TOKEN }}" }
+  # The Samsung TV (Tizen) shells: config.xml checks (ids, privileges, required version, icon), the setup-core and script
+  # tests, and a .wgt of app and probe built with the pinned Tizen CLI to catch packaging errors. That build is signed with
+  # a throwaway author certificate made here (no secrets on pull requests) and installs on no TV. Not a dependency of
+  # publish or android-release; the signed .wgt build is tizen-release.
+  tizen-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with: { persist-credentials: false }
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with: { node-version: 22 }
+      - run: node tizen/check-config.mjs
+      - run: npm run test:tizen
+      - run: npm run test:tvshared
+      - name: Install the pinned Tizen CLI
+        run: bash tizen/scripts/install-cli.sh "$RUNNER_TEMP/tizen-studio"
+      - name: Unsigned package (throwaway author certificate)
+        run: |
+          set -euo pipefail
+          pw=$(openssl rand -hex 16)
+          echo "::add-mask::$pw"
+          mkdir -p "$RUNNER_TEMP/ci-cert"
+          tizen certificate -a friendflix-ci -p "$pw" -f author -- "$RUNNER_TEMP/ci-cert" > /dev/null
+          AUTHOR_PW=$pw bash tizen/scripts/add-profile.sh friendflix-dev "$RUNNER_TEMP/ci-cert/author.p12"
+          bash tizen/scripts/package.sh app "$RUNNER_TEMP/wgt"
+          bash tizen/scripts/package.sh probe "$RUNNER_TEMP/wgt"
+          for f in "$RUNNER_TEMP"/wgt/*.wgt; do
+            listing=$(unzip -l "$f")
+            echo "$listing"
+            for need in config.xml index.html setup.js setup-core.js setup.css icon.png; do
+              grep -q " $need\$" <<< "$listing" || { echo "::error::$need missing in $(basename "$f")"; exit 1; }
+            done
+          done
+  # The LG webOS TV shells: appinfo.json checks, the setup-core and script tests, and an .ipk of app and probe built with the
+  # pinned LG ares CLI (webos/package.json, installed outside the root workspaces) to catch packaging errors. No secrets
+  # and no signing; developer-mode packages. Not a dependency of publish or android-release; the release build is webos-release.
+  webos-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with: { persist-credentials: false }
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with: { node-version: 22 }
+      - run: node webos/check-config.mjs
+      - run: npm run test:webos
+      - run: npm run test:tvshared
+      - name: Install the pinned ares CLI
+        run: npm ci --prefix webos --ignore-scripts --no-audit --no-fund
+      - name: Build app and probe
+        run: |
+          set -euo pipefail
+          node webos/build.mjs app "$RUNNER_TEMP/ipk"
+          node webos/build.mjs probe "$RUNNER_TEMP/ipk"
+          bash webos/scripts/check-ipk.sh "$RUNNER_TEMP/ipk"
   # The Windows app's platform-independent core (origin policy, bridge protocol); the Tauri app itself is built elsewhere.
   desktop-core:
     runs-on: ubuntu-latest
@@ -317,7 +371,7 @@ jobs:
       # ---- push (main / v* tags) or dispatch: build once, push candidate tag, scan that exact digest ----
       - name: Log in to GHCR
         if: env.PUBLISHABLE == 'true'
-        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4
+        uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4
         with: { registry: ghcr.io, username: "${{ github.actor }}", password: "${{ secrets.GITHUB_TOKEN }}" }
       - name: OCI labels
         id: meta
@@ -371,7 +425,7 @@ jobs:
           exit-code: "0"
       - name: Upload Trivy SARIF
         if: env.PUBLISHABLE == 'true'
-        uses: github/codeql-action/upload-sarif@24c54180a607b1449ed407dd24f251e4e9147c8d # v4.38.3
+        uses: github/codeql-action/upload-sarif@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
         with:
           sarif_file: trivy-${{ matrix.service }}.sarif
           category: trivy-${{ matrix.service }}
@@ -414,7 +468,7 @@ jobs:
         with: { persist-credentials: false }
       - name: Log in to GHCR
         if: env.PUBLISHABLE == 'true'
-        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4
+        uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4
         with: { registry: ghcr.io, username: "${{ github.actor }}", password: "${{ secrets.GITHUB_TOKEN }}" }
       - name: Rebuild and compare with the pushed candidate
         if: env.PUBLISHABLE == 'true'
@@ -459,6 +513,27 @@ jobs:
     secrets:
       TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
       TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+  # vX.Y.Z tags: the Samsung TV app (FriendFlix + Probe .wgt, signed with the owner's Samsung certificates) on the tag's
+  # GitHub Release when the four certificate secrets exist (otherwise a notice), and only after the tests, e2e, the secret
+  # scan and tizen-check passed. Not in the needs of publish or android-release. contents: write only here, for the upload.
+  tizen-release:
+    if: startsWith(github.ref, 'refs/tags/v') && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    needs: [test, e2e, secrets, tizen-check]
+    permissions: { contents: write }
+    uses: ./.github/workflows/tizen-release.yml
+    secrets:
+      TIZEN_AUTHOR_P12: ${{ secrets.TIZEN_AUTHOR_P12 }}
+      TIZEN_AUTHOR_PASSWORD: ${{ secrets.TIZEN_AUTHOR_PASSWORD }}
+      TIZEN_DISTRIBUTOR_P12: ${{ secrets.TIZEN_DISTRIBUTOR_P12 }}
+      TIZEN_DISTRIBUTOR_PASSWORD: ${{ secrets.TIZEN_DISTRIBUTOR_PASSWORD }}
+  # vX.Y.Z tags: the LG webOS TV app (FriendFlix + Test .ipk, developer mode, no signing and no secrets) on the tag's GitHub
+  # Release, only after the tests, e2e, the secret scan and webos-check passed. Not in the needs of publish or
+  # android-release. contents: write only here, for the upload.
+  webos-release:
+    if: startsWith(github.ref, 'refs/tags/v') && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    needs: [test, e2e, secrets, webos-check]
+    permissions: { contents: write }
+    uses: ./.github/workflows/webos-release.yml
   # images are only published after every check above passed (main -> nightly + sha, v* tags -> semver + latest for the highest)
   # signing/attesting (id-token, attestations) happens only here, i.e. only on push events
   publish:
