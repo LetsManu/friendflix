@@ -212,7 +212,7 @@ export default {
       updateLead: 'Update holen: diese Zeile in der .env des Stacks prüfen und dann den Befehl ausführen:',
       envLabel: 'Zeile in der .env',
       cmdLabel: 'Befehl',
-      note: 'Der Wechsel gilt erst nach diesem Befehl: FriendFlix greift nie selbst auf Docker zu.',
+      note: 'Der Wechsel gilt erst nach diesem Befehl: ohne Updater greift FriendFlix nie selbst auf Docker zu (compose.no-updater.yaml lässt ihn aus).',
       pinned: 'Feste Version',
       pinnedHint: 'Feste Version: bleibt genau auf diesem Release, bis du sie änderst.',
       versionLabel: 'Version (X.Y.Z)',
@@ -234,6 +234,7 @@ export default {
       advanced: 'Updater selbst',
       confirm: {
         update: 'Jetzt auf {tag} aktualisieren? FriendFlix startet kurz neu, laufende Streams brechen ab.',
+        updatePortainer: 'Den Stack jetzt über Portainer neu deployen? FriendFlix startet kurz neu, laufende Streams brechen ab.',
         rollback: 'Zurück zu {tag}? FriendFlix startet kurz neu.',
         'self-update': 'Den Updater-Container jetzt aktualisieren?',
       },
@@ -270,6 +271,9 @@ export default {
         channel_sync_failed: 'Der Updater hat den Kanal nicht übernommen.',
         tooSoon: 'Zu viele Starts. Bitte zwei Minuten warten.',
         generic: 'Der Updater hat den Auftrag abgelehnt.',
+        foreign_stack: 'Dieser Stack wird von Portainer (oder einem anderen Werkzeug) verwaltet, deshalb erstellt ihn der Updater nicht neu. Hinterlege den Portainer-Webhook unter Admin → Einstellungen → Updates oder aktualisiere den Stack in Portainer.',
+        portainer: 'Portainer hat das Neu-Deployen abgelehnt. Prüfe Webhook bzw. API unter Admin → Einstellungen → Updates.',
+        portainer_unreachable: 'Portainer ist nicht erreichbar.',
       },
       failReason: {
         verify_failed: 'Signaturprüfung fehlgeschlagen, nichts wurde neu gestartet',
@@ -280,13 +284,21 @@ export default {
         interrupted: 'durch einen Neustart unterbrochen',
         self_update_timeout: 'der Updater wurde nicht ersetzt',
         unexpected_image: 'unerwarteter Image-Name',
+        media_server_mismatch: 'die Compose-Dateien würden einen anderen Medienserver starten als jetzt läuft (UPDATER_COMPOSE_FILES ohne compose.plex.yaml?), nichts wurde neu gestartet',
         compose_config: 'Compose-Konfiguration nicht lesbar',
+        foreign_stack: 'der Stack wird von Portainer (oder einem anderen Werkzeug) verwaltet, der Updater erstellt ihn nicht neu; nichts wurde verändert',
+        config_mismatch: 'Compose-Dateien und .env würden andere Ports oder Netzwerke veröffentlichen als die laufenden Container (Variablen anderswo gesetzt, z. B. BIND_ADDR?), nichts wurde neu gestartet',
         unknown: 'unbekannter Fehler',
+      },
+      foreign: {
+        portainer: 'Dieser Stack wird von Portainer verwaltet. „Jetzt aktualisieren“ deployt ihn über Portainer neu (Webhook oder API aus Admin → Einstellungen → Updates). Der Updater erstellt einen Portainer-Stack nie selbst neu, deshalb geht „zurück zur vorherigen Version“ hier nicht.',
+        manual: 'Dieser Stack wird von Portainer (oder einem anderen Werkzeug) verwaltet, deshalb aktualisiert ihn der Updater nicht: Beim Neuerstellen von hier gingen die Variablen des Stacks verloren (z. B. BIND_ADDR). Hinterlege den Portainer-Webhook unter Admin → Einstellungen → Updates oder aktualisiere den Stack in Portainer.',
+        started: 'Portainer deployt den Stack neu. FriendFlix startet gleich neu.',
+        workdir: 'Dieser Stack wurde aus {dir} gestartet, der Updater sieht aber {projectDir}, deshalb erstellt er ihn nicht neu (ihm fehlte die .env aus diesem Verzeichnis). UPDATER_PROJECT_DIR={dir} in die .env in {dir} schreiben und dort einmal docker compose up -d ausführen.',
       },
       unauthorized: 'Ein Updater antwortet, lehnt aber die Signatur ab: INTERNAL_SECRET unterscheidet sich zwischen Backend und Updater.',
       invalid: 'Der Updater hat eine unlesbare Antwort geschickt.',
       log: 'Protokoll',
-      reauthBack: 'Erneut angemeldet. Bitte den Auftrag noch einmal starten.',
       auto: {
         title: 'Automatische Updates',
         label: 'Automatische Updates',
@@ -417,7 +429,7 @@ export default {
     digest: { settings: '{actor} hat den Wochenrückblick eingestellt' },
     settings: { language: '{actor} hat die Standardsprache geändert', update: '{actor} hat Einstellungen geändert', import_env: '{actor} hat Werte aus der Umgebung in die Einstellungen übernommen', generate: '{actor} hat einen Schlüssel neu erzeugt' },
     setup: { completed: '{actor} hat die Einrichtung abgeschlossen' },
-    system: { update: '{actor} hat ein Update gestartet', updater_start: '{actor} hat einen Updater-Auftrag gestartet', updater_result: 'Updater-Auftrag beendet' },
+    system: { update: '{actor} hat ein Update gestartet', updater_start: '{actor} hat einen Updater-Auftrag gestartet', updater_result: 'Updater-Auftrag beendet', update_result: 'Portainer hat auf das Neu-Deployen geantwortet' },
     session: { revoke_others: '{actor} hat sich auf anderen Geräten abgemeldet', revoke_device: '{actor} hat ein eigenes Gerät abgemeldet', reauth: '{actor} hat sich erneut angemeldet (für eine Kontoaktion)', reauth_mismatch: '{actor}: erneute Anmeldung mit einem anderen Konto abgelehnt' },
     account: { export: '{actor} hat die eigenen Daten heruntergeladen', profile: '{actor} hat Name oder Farbe des eigenen Kontos geändert', email: '{actor} hat die eigene E-Mail-Adresse geändert', email_requested: '{actor} hat eine Änderung der eigenen E-Mail-Adresse angefordert', mfa_removed: '{actor} hat einen zweiten Faktor entfernt' },
     tv: { pair: '{actor} hat einen Fernseher gekoppelt', claim: '{actor} hat einen Fernseher verbunden' },
@@ -459,6 +471,9 @@ export default {
     },
     approvals: {
       pending_approvals: { one: '{n} Anmeldung wartet auf Freigabe', other: '{n} Anmeldungen warten auf Freigabe' },
+    },
+    config: {
+      removed_env: { one: '{n} alter Variablenname in der .env wird seit 2.0 ignoriert: der Anfragen-Dienst nutzt jetzt REQUESTS_URL und REQUESTS_API_KEY', other: '{n} alte Variablennamen in der .env werden seit 2.0 ignoriert: der Anfragen-Dienst nutzt jetzt REQUESTS_URL und REQUESTS_API_KEY' },
     },
   },
 } as const;

@@ -28,7 +28,6 @@ const settings: Translation<typeof de> = {
     other: '{n} wartości pochodzi ze środowiska (.env). Przenieś je do ustawień, a potem możesz usunąć je z .env.',
   },
   moveHint: 'Także zapisane. Możesz teraz usunąć {keys} z .env i zrestartować. Do tego czasu obowiązuje wartość ze środowiska.',
-  moveHintOlder: '{keys} (i starsze nazwy tego ustawienia)',
   moved: { one: 'Przeniesiono {n} wartość.', few: 'Przeniesiono {n} wartości.', many: 'Przeniesiono {n} wartości.', other: 'Przeniesiono {n} wartości.' },
   movedNone: 'Nie ma czego przenosić.',
   moveFailed: 'Nie udało się przenieść.',
@@ -59,6 +58,7 @@ const settings: Translation<typeof de> = {
   },
   probeDetail: {
     redirect: 'Adres przekierowuje; wpisz adres docelowy.',
+    not_admin: 'Token działa, ale nie należy do właściciela serwera Plex, więc niektóre funkcje mogą być ograniczone.',
     not_found: 'Pod tym adresem nie ma tej usługi.',
     upstream_error: 'Usługa odpowiedziała błędem.',
     incomplete: 'Brakuje jeszcze danych.',
@@ -104,6 +104,10 @@ const settings: Translation<typeof de> = {
     failed: 'Generowanie nie powiodło się.',
     a11y: '{label}: {action}',
   },
+  // a key's own field error text (errorText(code, key)): PLEX_URL refuses ?…, #… and user:pass@ (a pasted ?X-Plex-Token=…)
+  keyErrors: {
+    PLEX_URL: { invalid_url: 'Wpisz tylko adres serwera: zaczynający się od http:// lub https://, bez nazwy użytkownika i hasła i bez niczego po ? lub #. Token wpisz w pole Token Plex.' },
+  },
   /** option labels of the enum settings (an unset LOGIN_UI is "Automatic") */
   options: { auto: 'Automatycznie', RECO_ENGINE: { v1: 'v1 (Jellyfin)', v2: 'v2 (własny model gustu)', shadow: 'Shadow (v2 obok v1)' }, UPDATE_CHANNEL: { stable: 'Stabilny', nightly: 'Nightly', pinned: 'Stała wersja' }, AUTO_UPDATE: { off: 'Wyłączone', 'nightly-window': 'Okno nocne' }, LOGIN_UI: { app: 'FriendFlix', authentik: 'Authentik' }, PASSKEYS_IN_APP: { auto: 'Automatycznie', off: 'Wyłączone' } },
   keys: {
@@ -130,6 +134,8 @@ const settings: Translation<typeof de> = {
     LOGIN_COVER_WALL: { label: 'Okładki za ekranem logowania', help: 'Pokazuje okładki z biblioteki (tylko oceny wiekowe do 12 lat, nic bez oceny) za ekranem logowania. Obrazy można pobrać bez logowania.' },
     JELLYFIN_URL: { label: 'Adres Jellyfin', help: 'Wewnętrzny adres serwera multimediów, np. http://jellyfin:8096.' },
     JELLYFIN_ADMIN_API_KEY: { label: 'Klucz API Jellyfin (admin)', help: 'Klucz API z uprawnieniami administratora (Jellyfin → Panel → Klucze API).' },
+    PLEX_URL: { label: 'Adres Plex', help: 'Wewnętrzny adres, pod którym backend i brama multimediów łączą się z serwerem Plex. Tylko adres: token wpisz w osobne pole, nigdy w adres.' },
+    PLEX_TOKEN: { label: 'Token Plex', help: 'Token konta Plex, którego używa FriendFlix; token właściciela serwera odblokowuje wszystkie funkcje. Jest zapisywany tylko w backendzie i nigdy nie jest pokazywany.' },
     REQUESTS_URL: { label: 'Adres usługi próśb', help: 'Opcjonalne. Bez adresu i klucza prośby są ukryte.' },
     REQUESTS_API_KEY: { label: 'Klucz API usługi próśb', help: 'Klucz API z ustawień usługi próśb.' },
     NTFY_URL: { label: 'Kanał ntfy z ogłoszeniami', help: 'Wspólny kanał ntfy dla nowych tytułów i komunikatów, np. https://ntfy.example.com/friendflix.' },
@@ -150,6 +156,7 @@ const settings: Translation<typeof de> = {
     DOWNLOAD_OFFLINE_GRACE_DAYS: { label: 'Ważne offline (dni)', help: 'Tak długo pobrany tytuł można odtwarzać bez połączenia.' },
     DOWNLOAD_CREATE_PER_HOUR: { label: 'Pobrania na godzinę', help: 'Maksymalna liczba nowych pobrań na godzinę i sesję.' },
     CAST_ENABLED: { label: 'Chromecast', help: 'Odtwarzanie na urządzeniach Chromecast. Wymaga adresu publicznego z ważnym certyfikatem https.' },
+    CAST_RECEIVER_APP_ID: { label: 'ID aplikacji odbiornika Cast', help: 'Puste: Chromecast używa domyślnego odbiornika Google. Z ID aplikacji własnego odbiornika FriendFlix (8 znaków, z Google Cast SDK Developer Console, adres odbiornika https://<twój adres>/cast-receiver/) telewizor pokazuje „Następny odcinek” z odliczaniem, „Nadal tu jesteś?” i „Pomiń intro” oraz zapisuje postęp także wtedy, gdy telefon śpi. Zobacz docs/cast-receiver.md.' },
     PREVIEW_WARM: { label: 'Przygotowuj podglądy', help: 'W czasie bezczynności tworzy brakujące klipy podglądu, jeden na minutę.' },
     HOME_NETWORKS: { label: 'Sieci domowe', help: 'Sieci uznawane za dom (bez limitu bitrate poza domem), oddzielone przecinkami, np. 192.168.0.0/16.' },
     GITHUB_TOKEN: { label: 'Token GitHub', help: 'Opcjonalne: wyższy limit zapytań przy szukaniu nowych wersji.' },

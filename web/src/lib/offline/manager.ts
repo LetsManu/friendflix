@@ -212,9 +212,20 @@ export async function requestDownload(req: DownloadRequest): Promise<DlView[]> {
   if (!(await getSupport()).ok) throw new Error('unsupported');
   await initManager();
   void persist();
+  const { licenses, me } = await createLicenses(req);
+  return adoptLicenses(licenses, me);
+}
+
+/** Step 1 of a download: the server creates the licence(s). Nothing is stored locally; whoever downloads the file adopts them. */
+export async function createLicenses(req: DownloadRequest): Promise<{ licenses: ServerLicense[]; me: any }> {
   const me = await getMe(true);
   const r: any = await api('/api/downloads', { method: 'POST', body: req });
-  const list: ServerLicense[] = r.licenses ?? [];
+  return { licenses: r.licenses ?? [], me };
+}
+
+/** Step 2 in the browser: the page's own downloader (OPFS) takes the licences and starts fetching. */
+export async function adoptLicenses(list: ServerLicense[], me: any): Promise<DlView[]> {
+  await initManager();
   const out: DlView[] = [];
   for (const l of list) {
     const v = recs.get(l.id) ?? recordFromLicense(l, me);
@@ -227,6 +238,11 @@ export async function requestDownload(req: DownloadRequest): Promise<DlView[]> {
   pollLoop();
   void poll();
   return out;
+}
+
+/** A licence that was created but will not be downloaded (the app declined and the browser cannot): give the quota slot back. */
+export async function discardLicense(id: string): Promise<void> {
+  await raw(`/api/downloads/${id}`, 'DELETE').catch(() => undefined);
 }
 
 // ---- running ----

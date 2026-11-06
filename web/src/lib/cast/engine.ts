@@ -22,10 +22,14 @@
  * (autoplay allowed for the expected end time); the receiver advances at the end and the engine follows (`advanced`).
  * AirPlay has no receiver queue: an `ended` while the page is hidden, or found on wake (`onWake`), starts the next one at once.
  * Intro / recap segments offer `skip` (seek past it).
+ * FriendFlix's own receiver (CAST_RECEIVER_APP_ID; `cast.castCustomReceiver()`): the engine also tells the TV what it needs for its own
+ * UI (`tvSync`: segments, the queued next episode, still-watching) and the TV runs the next-up countdown and moves on to the queued
+ * episode itself; "still watching?" no longer blocks the queue there (the queued item waits paused until it is answered on the TV,
+ * the remote or the phone's play button). With the Default Media Receiver none of this runs.
  */
 import { get, writable, type Readable, type Writable } from 'svelte/store';
 import { api, cachedItem, secToTicks, ticksToSec, type Item, type ItemDetail } from '#lib/api';
-import { castPlayPause, castQueueNext, castQueueRemove, castSeek, castSetSubtitle, castState, castStop, loadOnCast, onCastEvent, queueOnCast, type CastEvent, type CastInfo, type CastState } from '#lib/cast';
+import { castBody, castCustomReceiver, castPlayPause, castQueueNext, castQueueRemove, castSeek, castSendMessage, castSetSubtitle, castState, castStop, loadOnCast, onCastEvent, onReceiverMessage, queueOnCast, type CastEvent, type CastInfo, type CastState } from '#lib/cast';
 import { segmentShown, serverCaps } from '#lib/capabilities';
 import { tr } from '#lib/i18n';
 import { createAirPlay, type AirPlayController, type AirPlayDeps, type AirPlayState } from '#lib/player/airplay';
@@ -85,7 +89,9 @@ export interface CastEngine {
   pick(): void;
   readonly airState: Readable<AirPlayState | null>;
 }
-export type CastFns = Pick<typeof import('#lib/cast'), 'castState' | 'onCastEvent' | 'loadOnCast' | 'castPlayPause' | 'castSeek' | 'castStop' | 'castSetSubtitle' | 'queueOnCast' | 'castQueueRemove' | 'castQueueNext'>;
+export type CastFns = Pick<typeof import('#lib/cast'), 'castState' | 'onCastEvent' | 'loadOnCast' | 'castPlayPause' | 'castSeek' | 'castStop' | 'castSetSubtitle' | 'queueOnCast' | 'castQueueRemove' | 'castQueueNext'>
+  /** FriendFlix's own receiver (absent = Default Media Receiver behaviour) */
+  & Partial<Pick<typeof import('#lib/cast'), 'castCustomReceiver' | 'castBody' | 'castSendMessage' | 'onReceiverMessage'>>;
 export interface EngineDeps {
   api: typeof api; item(id: string): Promise<Item>; cast: CastFns; air: typeof createAirPlay;
   /** the title's skip / credits segments the server offers ([] = none or unknown) */
@@ -168,7 +174,7 @@ interface Live {
   /** the next episode whose countdown was cancelled: nothing autoplays into it */
   noAuto?: string;
   /** Chromecast: the next episode in the receiver's queue (its own token) and whether it was asked for this title */
-  queued?: { ci: CastInfo; it: Item; qid: number };
+  queued?: { ci: CastInfo; it: Item; qid: number; /** own receiver: it waits paused for a "still watching?" answer */ ask?: boolean };
   queueAsked: boolean;
   /** the countdown (not the receiver alone) moved on: the autoplay is already counted */
   going: boolean;
@@ -190,8 +196,48 @@ function castErr(e: unknown, kind: CastKind = 'chromecast'): string {
     : b?.error === 'transcoding_disabled' ? tr(`player.${k}.needsTranscode`) : tr(`player.${k}.failed`);
 }
 
+/** the texts FriendFlix's own receiver shows (in the sender's language; the TV has no language of its own) */
+export function receiverStrings() {
+  return {
+    next: tr('player.watch.next'), upNext: tr('player.castBar.next', { label: '{label}' }), watchCredits: tr('player.watch.watchCredits'),
+    startsIn: Array.from({ length: COUNTDOWN_SECONDS }, (_, i) => tr('player.watch.startsIn', { n: i + 1 })),
+    stillTitle: tr('player.watch.stillTitle'), stillText: tr('player.watch.stillText', { ep: '{ep}' }), keepWatching: tr('player.watch.keepWatching'),
+    skip: { intro: tr('player.skip.intro'), recap: tr('player.skip.recap') },
+  };
+}
+
 export function createCastEngine(deps: EngineDeps, out: Writable<CastSession | null> = writable(null)): CastEngine {
   const { api: call, cast, timers } = deps;
+  /** FriendFlix's own receiver is the Chromecast app (never AirPlay) */
+  const custom = (s: Live) => !s.air && Boolean(cast.castCustomReceiver?.());
+  /** a Chromecast token request body (the own receiver also gets its report token) */
+  const castReq = (b: Record<string, unknown>) => (cast.castBody ? cast.castBody(b) : b);
+  /** own receiver: what its TV UI needs for the playing token (segments, the queued next episode and how it may start) */
+  const tvSync = (s: Live) => {
+    if (cur !== s || !s.ci || !custom(s)) return;
+    const q = s.queued;
+    cast.castSendMessage?.({ t: 'item', castId: s.ci.castId, episode: s.view.isEpisode, segs: s.segs,
+      next: q ? { castId: q.ci.castId, label: nextLabel(q.it), auto: s.noAuto !== q.it.id, ask: Boolean(q.ask) } : null });
+  };
+  /** own receiver: texts, subtitle style and countdown length, once per session (and again after a new token load) */
+  const tvUi = (s: Live) => {
+    if (cur !== s || !custom(s)) return;
+    cast.castSendMessage?.({ t: 'ui', strings: receiverStrings(), sub: deps.prefs().subtitleStyle, countdown: COUNTDOWN_SECONDS });
+  };
+  /** own receiver: input on the TV (its remote) */
+  function fromTv(s: Live, m: Record<string, unknown>) {
+    if (cur !== s) return;
+    if (m.t === 'interaction') noteInteraction(); // a viewer is there: the unattended-autoplay chain starts over
+    else if (m.t === 'cancel' && s.queued) {
+      // the countdown was cancelled on the TV: like cancelNext from the phone
+      noteInteraction();
+      s.noAuto = s.queued.it.id;
+      if (s.hide !== undefined) { timers.clear(s.hide); s.hide = s.close ? timers.set(s.close, ENDED_IDLE_MS) : undefined; }
+      dequeue(s);
+      if (s.view.next) patch(s, { next: { ...s.view.next, startsAt: null } });
+      tvSync(s);
+    }
+  }
   const airState = writable<AirPlayState | null>(null);
   let cur: Live | null = null;
   /** bumped by every switch and by the end of a session: an older async step that sees another value gives up */
@@ -237,11 +283,12 @@ export function createCastEngine(deps: EngineDeps, out: Writable<CastSession | n
     s.queued = undefined;
     cast.castQueueRemove(q.qid);
     revoke(q.ci, keepalive);
+    tvSync(s);
   };
   /** the title's segments (intro / recap skip, credits) */
   const loadSegs = (s: Live) => {
     const id = s.view.itemId;
-    void deps.segments(id).then((x) => { if (cur === s && s.view.itemId === id) s.segs = x; }, () => undefined);
+    void deps.segments(id).then((x) => { if (cur === s && s.view.itemId === id) { s.segs = x; tvSync(s); } }, () => undefined);
   };
 
   function tick(s: Live, st: CastState) {
@@ -312,6 +359,7 @@ export function createCastEngine(deps: EngineDeps, out: Writable<CastSession | n
     noteAutoplay();
     consumeAutoplay(); // the chain counts; the watch page's one-shot flag is for its own countdown only
     const q = s.queued;
+    if (q && q.it.id === it.id && s.ci && !s.busy && custom(s)) { s.going = true; return; } // the TV's own countdown moves on (or the end)
     if (q && q.it.id === it.id && s.ci && !s.busy) {
       s.going = true;
       cast.castQueueNext();
@@ -329,18 +377,21 @@ export function createCastEngine(deps: EngineDeps, out: Writable<CastSession | n
   async function prequeue(s: Live) {
     const v = s.view, my = seq, p = deps.prefs();
     const endAt = timers.now() + Math.max(0, v.duration - v.position) * 1000;
-    if (!mayAutoplay({ kind: 'episode', autoplayNext: p.autoplayNext, sleepAfterEpisode: s.sleepAfterEpisode, askStill: shouldAsk(endAt, p) })) return;
+    // the own receiver asks "still watching?" itself (the queued episode waits paused for the answer): only that does not block it
+    const ask = shouldAsk(endAt, p), tv = custom(s);
+    if (!mayAutoplay({ kind: 'episode', autoplayNext: p.autoplayNext, sleepAfterEpisode: s.sleepAfterEpisode, askStill: ask && !tv })) return;
     const stale = () => cur !== s || my !== seq || s.busy || !s.ci;
     const it = await nextOf(v.itemId);
     if (!it || stale() || s.noAuto === it.id) return;
     let ci: CastInfo;
     try {
-      ci = await call<CastInfo>('/api/cast/session', { method: 'POST', body: { itemId: it.id, maxBitrate: s.maxBitrate ?? firstInfoBody(deps.prefs()).maxBitrate, next: true, after: s.ci!.castId } });
+      ci = await call<CastInfo>('/api/cast/session', { method: 'POST', body: castReq({ itemId: it.id, maxBitrate: s.maxBitrate ?? firstInfoBody(deps.prefs()).maxBitrate, next: true, after: s.ci!.castId }) });
     } catch { return; }
     if (stale() || s.noAuto === it.id) { revoke(ci); return; }
-    const qid = await cast.queueOnCast(ci);
+    const qid = tv ? await cast.queueOnCast(ci, !ask) : await cast.queueOnCast(ci);
     if (qid === null || stale() || s.noAuto === it.id) { if (qid !== null) cast.castQueueRemove(qid); revoke(ci); return; }
-    s.queued = { ci, it, qid };
+    s.queued = tv ? { ci, it, qid, ask } : { ci, it, qid };
+    tvSync(s);
   }
 
   /** the receiver plays the queued episode: the ended one's stop is reported (at its end) and its token revoked */
@@ -355,7 +406,8 @@ export function createCastEngine(deps: EngineDeps, out: Writable<CastSession | n
     void stopped.then(() => revoke(old));
     if (!s.going) { noteAutoplay(); consumeAutoplay(); } // the receiver moved on alone (no countdown here): an autoplay all the same
     seq++; // an older async step (credits, queue) of the ended title gives up
-    s.ci = q.ci; s.started = false; s.lastPaused = null; s.going = false; s.hold = false;
+    // a queued episode that waits for "still watching?" (own receiver) is loaded paused: that counts as its start
+    s.ci = q.ci; s.started = false; s.lastPaused = null; s.going = false; s.hold = Boolean(q.ask);
     s.audioIndex = undefined; s.subIndex = -1; s.sleepAfterEpisode = false; s.noAuto = undefined;
     s.segs = []; s.credits = false; s.queueAsked = false; s.offered = undefined;
     const { title, sub } = barTitles(q.it);
@@ -363,6 +415,7 @@ export function createCastEngine(deps: EngineDeps, out: Writable<CastSession | n
       position: q.ci.startTime, ...(q.ci.runtimeTicks ? { duration: ticksToSec(q.ci.runtimeTicks) } : {}), paused: false, buffering: true,
       next: undefined, skip: undefined, audioTracks: [], subtitles: subsOf(q.ci), audioIndex: undefined, subIndex: -1 });
     loadSegs(s);
+    tvSync(s);
   }
 
   function onEvent(s: Live, e: CastEvent) {
@@ -641,7 +694,7 @@ export function createCastEngine(deps: EngineDeps, out: Writable<CastSession | n
     try {
       ci = await call<CastInfo>('/api/cast/session', {
         method: 'POST',
-        body: { itemId, startTicks: startAt === undefined ? undefined : secToTicks(startAt), audioIndex: s.audioIndex, maxBitrate: s.maxBitrate ?? firstInfoBody(deps.prefs()).maxBitrate },
+        body: castReq({ itemId, startTicks: startAt === undefined ? undefined : secToTicks(startAt), audioIndex: s.audioIndex, maxBitrate: s.maxBitrate ?? firstInfoBody(deps.prefs()).maxBitrate }),
       });
     } catch (e) {
       if (my !== seq) return;
@@ -664,7 +717,7 @@ export function createCastEngine(deps: EngineDeps, out: Writable<CastSession | n
       revoke(ci);
       deps.toast('error', tr('player.castBar.failed', { title: s.view.title, device: s.view.device }));
       patch(s, { state: 'failed', buffering: false });
-    }
+    } else { tvUi(s); tvSync(s); }
     // the next receiver update (it reports the loaded media) sends `start`
   }
 
@@ -703,10 +756,15 @@ export function createCastEngine(deps: EngineDeps, out: Writable<CastSession | n
       if (h.video && h.air) {
         s.air = { video: h.video, ctl: h.air, probe: h.probe ?? null, want: null, op: Promise.resolve(), opSeq: null, resume: false, leaving: false, revoked: new Set() };
         adoptAir(s, s.air);
-      } else s.offs.push(cast.castState.subscribe((st) => tick(s, st)), cast.onCastEvent((e) => onEvent(s, e)));
+      } else {
+        s.offs.push(cast.castState.subscribe((st) => tick(s, st)), cast.onCastEvent((e) => onEvent(s, e)));
+        if (custom(s) && cast.onReceiverMessage) s.offs.push(cast.onReceiverMessage((m) => fromTv(s, m)));
+      }
       s.offs.push(deps.onPageHide(() => onPageHide(s)), deps.onWake(() => onWake(s)));
       loadSegs(s);
       arm(s);
+      tvUi(s);
+      tvSync(s);
     },
     playPause() {
       const s = cur;
@@ -738,6 +796,7 @@ export function createCastEngine(deps: EngineDeps, out: Writable<CastSession | n
       s.noAuto = s.view.next.itemId;
       dequeue(s); // the receiver must not move on by itself either
       patch(s, { next: { ...s.view.next, startsAt: null } });
+      if (s.ci) tvSync(s);
     },
     skipSegment() {
       const s = cur;
@@ -814,7 +873,7 @@ export const castSession: Readable<CastSession | null> = { subscribe: session.su
 const browserDeps: EngineDeps = {
   api,
   item: async (id) => cachedItem(id) ?? (await api<ItemDetail>(`/api/items/${id}`)).item,
-  cast: { castState, onCastEvent, loadOnCast, castPlayPause, castSeek, castStop, castSetSubtitle, queueOnCast, castQueueRemove, castQueueNext },
+  cast: { castState, onCastEvent, loadOnCast, castPlayPause, castSeek, castStop, castSetSubtitle, queueOnCast, castQueueRemove, castQueueNext, castCustomReceiver, castBody, castSendMessage, onReceiverMessage },
   async segments(id) {
     const caps = get(serverCaps);
     if (!caps.segments.length) return [];

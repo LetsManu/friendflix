@@ -4,11 +4,12 @@
   /**
    * /me/account, security (Block 23 phase 3): password, authenticator app, passkeys, recovery codes and the e-mail address, all changed
    * inside FriendFlix. Adding or changing something always goes through the in-app re-authentication (ReauthDialog with the follow-up
-   * flow); removing a device asks the backend first and opens the dialog on 401 `reauth_required`, then repeats the removal once.
+   * flow); removing a device or changing the username asks the backend first and, on 401 `reauth_required`, asks for the sign-in in
+   * place (lib/account/reauth.ts `reauthenticate`, the classic redirect only without the in-app sign-in), then repeats it once.
    */
   import { onMount, tick } from 'svelte';
   import { api, ApiError, type Account, type AccountSecurity, type Me } from '#lib/api';
-  import { isReauthError } from './reauth';
+  import { isReauthError, reauthenticate } from './reauth';
   import EmailChange from './EmailChange.svelte';
   import ReauthDialog from '#lib/auth/ReauthDialog.svelte';
   import type { ThenKind } from '#lib/auth/flow';
@@ -27,8 +28,8 @@
   let sec: AccountSecurity | null = null;
   let failed = false, isAdmin = false, err = '';
   let dialog: { then?: ThenKind; opener?: HTMLElement } | null = null;
-  /** a removal or rename waiting for the re-authentication */
-  let retry: (() => Promise<void>) | null = null;
+  /** where the classic re-authentication comes back to */
+  const NEXT = '/me/account';
   /** the username form (open while editing) */
   let naming = false, newName = '', nameErr = '', nameBusy = false;
   let nameInput: HTMLInputElement;
@@ -61,12 +62,12 @@
     dialog = { then, opener: e?.currentTarget instanceof HTMLElement ? e.currentTarget : undefined };
   }
   async function closed(ok: boolean) {
-    const d = dialog, again = retry;
-    dialog = null; retry = null;
+    const d = dialog;
+    dialog = null;
     d?.opener?.focus({ preventScroll: true });
     if (!ok) return;
-    if (again) await again();
-    else { await load(); dispatch('changed'); }
+    await load();
+    dispatch('changed');
   }
 
   async function editName() {
@@ -76,20 +77,25 @@
     await tick();
     nameInput?.focus();
   }
-  async function saveName(again = true) {
+  async function saveName(again = true): Promise<void> {
     const name = newName.trim();
     if (!name || nameBusy) return;
     nameBusy = true; nameErr = '';
+    let signIn = false;
     try {
       const r = await api<{ username: string }>('/api/account/security/username', { method: 'PUT', body: { username: name } });
       naming = false;
       toast.success(tr('login.sec.username.done', { name: r.username }));
       await load();
     } catch (e) {
-      if (isReauthError(e) && again) { retry = () => saveName(false); dialog = {}; return; }
-      const code = e instanceof ApiError ? (e.body as { error?: string } | null)?.error ?? '' : '';
-      nameErr = NAME_ERRORS[code] ? tr(NAME_ERRORS[code]!) : errorText(e);
+      if (isReauthError(e)) {
+        if (again) signIn = true; else nameErr = tr('account.account.reauthFailed'); // still refused right after the sign-in
+      } else {
+        const code = e instanceof ApiError ? (e.body as { error?: string } | null)?.error ?? '' : '';
+        nameErr = NAME_ERRORS[code] ? tr(NAME_ERRORS[code]!) : errorText(e);
+      }
     } finally { nameBusy = false; }
+    if (signIn && (await reauthenticate(NEXT))) await saveName(false);
   }
 
   async function remove(d: Device) {
@@ -97,7 +103,7 @@
     if (!(await confirm({ title: tr('login.sec.remove.confirm', { name }), body: tr('login.sec.remove.body'), danger: true, confirmLabel: tr('login.sec.remove.action') }))) return;
     await doRemove(d, name, true);
   }
-  async function doRemove(d: Device, name: string, again: boolean) {
+  async function doRemove(d: Device, name: string, again: boolean): Promise<void> {
     err = '';
     try {
       await api(`/api/account/security/devices/${d.type}/${d.id}`, { method: 'DELETE' });
@@ -105,7 +111,11 @@
       await load();
       dispatch('changed');
     } catch (e) {
-      if (isReauthError(e) && again) { retry = () => doRemove(d, name, false); dialog = {}; return; }
+      if (isReauthError(e)) {
+        if (!again) { err = tr('account.account.reauthFailed'); return; }
+        if (await reauthenticate(NEXT)) await doRemove(d, name, false);
+        return;
+      }
       err = e instanceof ApiError && (e.body as { error?: string } | null)?.error === 'last_factor' ? tr('login.sec.remove.lastFactor') : errorText(e);
     }
   }

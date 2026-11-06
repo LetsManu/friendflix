@@ -33,11 +33,12 @@ export function issueText(i: HealthIssue): string {
   else if (fam === 'disk') { key = `admin.banner.disk.${i.reason}`; params.name = nameOf(`admin.banner.name.${sub}`, sub); }
   else if (fam === 'errors') key = `admin.banner.errors.${i.reason}`;
   else if (fam === 'approvals') key = `admin.banner.approvals.${i.reason}`;
+  else if (fam === 'config') key = `admin.banner.config.${i.reason}`;
   return hasKey(key) ? tr(key as TKey, params) : tr('admin.banner.generic');
 }
 
-/** where "Ansehen" leads: the approval queue for open sign-in requests, the status page for everything else */
-export const issueHref = (i: HealthIssue | null): string => (i?.id === 'approvals:pending' ? '/admin/users?tab=approvals' : '/admin/status');
+/** where "Ansehen" leads: the approval queue for open sign-in requests, the settings for old .env names, the status page otherwise */
+export const issueHref = (i: HealthIssue | null): string => (i?.id === 'approvals:pending' ? '/admin/users?tab=approvals' : i?.id === 'config:env' ? '/admin/settings' : '/admin/status');
 
 const store = writable<BannerState | null>(null);
 export const banner: Readable<BannerState | null> = { subscribe: store.subscribe };

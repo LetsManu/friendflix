@@ -4,6 +4,7 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import { pathToFileURL } from 'node:url';
 import { loadConfig } from './config.js';
 import { Docker, execRunner, type ImageInfo, type ServiceState } from './docker.js';
+import type { StackInfo } from './stack.js';
 import { Updater, type Ops } from './job.js';
 import { FF_SERVICES, HEALTH_SERVICES, SELF_SERVICE, channelTag, parseChannelBody, shaTag } from './policy.js';
 import { ReplayCache, deriveKey, verify, type Verifier } from './protocol.js';
@@ -27,6 +28,8 @@ export interface AppDeps {
   /** what runs now, per service (cached by the caller) */
   services: () => Promise<ServiceView[]>;
   self: { version: string | null; sha: string | null };
+  /** own / foreign and why (stack.ts; null = could not tell), cached by the caller; absent in tests = null */
+  stack?: () => Promise<StackInfo | null>;
   /** auth refusals etc. (codes only) */
   warn?: (msg: string) => void;
 }
@@ -53,12 +56,17 @@ function readBody(req: IncomingMessage): Promise<string | null> {
 
 export async function status(d: AppDeps) {
   const s = d.updater.snapshot();
+  const [services, stack] = await Promise.all([d.services().catch(() => []), d.stack ? d.stack().catch(() => null) : Promise.resolve(null)]);
   return {
     updater: d.self,
     channel: s.channel, version: s.version, targetTag: channelTag(s.channel, s.version),
-    current: s.current, previous: s.previous, busy: d.updater.busy,
+    // before the first job of this updater: the build the backend runs now (its sha-<7> tag)
+    current: s.current ?? services.find((v) => v.service === 'backend')?.sha ?? null, previous: s.previous, busy: d.updater.busy,
     job: s.lastJob, log: d.updater.log.tail(30),
-    services: await d.services().catch(() => []),
+    services,
+    // foreign: started by another tool (Portainer) or from another directory; the updater refuses to recreate it, the backend
+    // redeploys through Portainer when it is set up. stackDir / projectDir (host paths, no secret) let the page name the fix.
+    stack: stack?.stack ?? null, stackReason: stack?.reason ?? null, stackDir: stack?.workingDir ?? null, projectDir: stack?.projectDir ?? null,
   };
 }
 
@@ -126,23 +134,34 @@ export function servicesView(docker: Pick<Docker, 'ps' | 'containerImage' | 'ima
   };
 }
 
+/** own / foreign and why, cached like the service view (each probe costs a compose ps and an inspect) */
+export function stackView(docker: Pick<Docker, 'stackInfo'>, ttlMs = 10_000, now: () => number = Date.now): () => Promise<StackInfo | null> {
+  let cache: { at: number; v: StackInfo | null } | null = null;
+  return async () => {
+    if (cache && now() - cache.at < ttlMs) return cache.v;
+    const v = await docker.stackInfo().catch(() => null);
+    cache = { at: now(), v };
+    return v;
+  };
+}
+
 export function start(env: NodeJS.ProcessEnv = process.env): Server {
   const cfg = loadConfig(env);
-  const docker = new Docker({ projectDir: cfg.projectDir, files: cfg.composeFiles, projectName: cfg.projectName, repo: cfg.repo, dockerHost: cfg.dockerHost }, execRunner);
+  const docker = new Docker({ projectDir: cfg.projectDir, files: cfg.composeFiles, autoFiles: cfg.composeFilesAuto, projectName: cfg.projectName, repo: cfg.repo, dockerHost: cfg.dockerHost }, execRunner);
   const ops: Ops = {
     images: (t, s) => docker.images(t, s), pull: (t, s) => docker.pull(t, s), verify: (i) => docker.verify(i), up: (t, s) => docker.up(t, s),
     imageInfo: (r) => docker.imageInfo(r), running: (s) => docker.running(s), spawnSelfUpdate: (t) => docker.spawnSelfUpdate(t),
-    healthy: healthProbe(docker, cfg.backendHealthUrl),
+    healthy: healthProbe(docker, cfg.backendHealthUrl), composeFiles: () => docker.files,
   };
   const updater = new Updater(ops, fileStore(cfg.stateDir));
   const verifier: Verifier = { key: deriveKey(cfg.secret), cache: new ReplayCache(), notBefore: Date.now() };
   const services = servicesView(docker);
   const log = (msg: string) => console.log(`${new Date().toISOString()} updater: ${msg}`);
-  const app = handler({ updater, verifier, services, self: { version: cfg.version, sha: cfg.gitSha }, warn: log });
+  const app = handler({ updater, verifier, services, stack: stackView(docker), self: { version: cfg.version, sha: cfg.gitSha }, warn: log });
   const server = createServer((req, res) => { void app(req, res).catch(() => { if (!res.headersSent) send(res, 500, { error: 'internal' }); }); });
   server.requestTimeout = 10_000;
   server.headersTimeout = 5_000;
-  server.listen(cfg.port, '0.0.0.0', () => log(`listening on :${cfg.port} (project ${cfg.projectDir}, files ${cfg.composeFiles.join(',')}, repo ${cfg.repo})`));
+  server.listen(cfg.port, '0.0.0.0', () => log(`listening on :${cfg.port} (project ${cfg.projectDir}, files ${cfg.composeFilesAuto ? `as started (fallback ${cfg.composeFiles.join(',')})` : cfg.composeFiles.join(',')}, repo ${cfg.repo})`));
   for (const sig of ['SIGTERM', 'SIGINT'] as const) process.on(sig, () => { server.close(); process.exit(0); });
   return server;
 }

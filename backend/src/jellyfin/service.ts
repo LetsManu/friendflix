@@ -14,6 +14,7 @@ import { toChapters, toCredits, toItemAbout, toProviderIds } from './dto.js'; //
 import { toHygieneFacts, toServerSession } from './dto.js'; // Block 22
 import { toItemFeatures } from './dto.js'; // R1
 import { MediaError } from '../media/types.js';
+import type { ClientCaps } from '../media/clientCaps.js';
 import type { ChapterDto, ItemAboutDto, ItemCreditsDto, MediaCollection } from '../media/types.js'; // Block 17 P1, Block 21
 import type { HygieneFacts, ServerSession } from '../media/types.js'; // Block 22
 import type { ItemFeatures } from '../media/types.js'; // R1
@@ -54,6 +55,15 @@ const REPORT_KIND = { start: 'Playing', progress: 'Playing/Progress', stop: 'Pla
  * stored (encrypted) password, caches the user token (encrypted, in Redis) and re-authenticates
  * on 401. The token never leaves the backend/gateway.
  */
+/** The one direct-play entry of the Web profile; with an Android capability block its non-empty lists replace the browser's. */
+function directPlayProfile(caps: ClientCaps | null) {
+  const list = (own: string[] | undefined, dflt: string) => (own?.length ? own.join(',') : dflt);
+  return {
+    Container: list(caps?.containers, 'mp4,m4v,webm'), Type: 'Video',
+    VideoCodec: list(caps?.video.map((v) => v.codec), 'h264,vp9,av1'), AudioCodec: list(caps?.audio, 'aac,mp3,opus,flac'),
+  };
+}
+
 export class JellyfinService implements MediaServer {
   readonly kind = 'jellyfin';
   readonly capabilities = JELLYFIN_CAPABILITIES;
@@ -531,7 +541,7 @@ export class JellyfinService implements MediaServer {
     await this.mutate(user, () => this.compat(user, 'played' + on, [`/UserPlayedItems/${id}?userId=${uid}`, `/Users/${uid}/PlayedItems/${id}`], { method: on ? 'POST' : 'DELETE' }));
   }
 
-  async playbackInfo(user: JfUser, itemId: string, opts: { maxBitrate: number; maxHeight?: number | null; startTicks?: number; audioIndex?: number; audioLang?: string; cast?: boolean; noDirect?: boolean; capReason?: 'remoteCap' | 'roleCap' | 'manual' | 'network' }): Promise<PlaybackDto> {
+  async playbackInfo(user: JfUser, itemId: string, opts: { maxBitrate: number; maxHeight?: number | null; startTicks?: number; audioIndex?: number; audioLang?: string; cast?: boolean; noDirect?: boolean; capReason?: 'remoteCap' | 'roleCap' | 'manual' | 'network'; clientCaps?: ClientCaps | null }): Promise<PlaybackDto> {
     const p = new URLSearchParams({ UserId: user.jellyfin_user_id, MaxStreamingBitrate: String(opts.maxBitrate), AutoOpenLiveStream: 'false' });
     if (opts.startTicks) p.set('StartTimeTicks', String(opts.startTicks));
     if (opts.audioIndex !== undefined) p.set('AudioStreamIndex', String(opts.audioIndex));
@@ -550,12 +560,22 @@ export class JellyfinService implements MediaServer {
       p.set('EnableDirectPlay', 'false');
       p.set('EnableDirectStream', 'false');
     }
+    // The Android app's own capabilities (never for cast): they replace the browser lists for direct play and may only narrow further per
+    // codec; the role's height cap above stays a separate, always applying CodecProfile and a role that must transcode keeps direct play off.
+    const caps = opts.cast ? null : opts.clientCaps ?? null;
+    const capCodecProfiles = caps ? caps.video.filter((v) => v.maxHeight || v.profiles?.length).map((v) => ({
+      Type: 'Video', Codec: v.codec,
+      Conditions: [
+        ...(v.maxHeight ? [{ Condition: 'LessThanEqual', Property: 'Height', Value: String(v.maxHeight), IsRequired: true }] : []),
+        ...(v.profiles?.length ? [{ Condition: 'EqualsAny', Property: 'VideoProfile', Value: v.profiles.join('|'), IsRequired: false }] : []),
+      ],
+    })) : [];
     const profile = {
-      Name: opts.cast ? 'FriendFlix Cast' : 'FriendFlix Web',
+      Name: opts.cast ? 'FriendFlix Cast' : caps ? 'FriendFlix Android' : 'FriendFlix Web',
       MaxStreamingBitrate: opts.maxBitrate,
-      CodecProfiles: heightCond.length || castCond.length ? [{ Type: 'Video', Codec: opts.cast ? 'h264' : undefined, Conditions: [...heightCond, ...castCond] }] : [],
+      CodecProfiles: [...(heightCond.length || castCond.length ? [{ Type: 'Video', Codec: opts.cast ? 'h264' : undefined, Conditions: [...heightCond, ...castCond] }] : []), ...capCodecProfiles],
       // Chromecast: never direct play; always HLS/TS with H.264 + stereo AAC
-      DirectPlayProfiles: opts.cast || opts.noDirect ? [] : [{ Container: 'mp4,m4v,webm', Type: 'Video', VideoCodec: 'h264,vp9,av1', AudioCodec: 'aac,mp3,opus,flac' }],
+      DirectPlayProfiles: opts.cast || opts.noDirect ? [] : [directPlayProfile(caps)],
       TranscodingProfiles: [
         { Container: 'ts', Type: 'Video', AudioCodec: opts.cast ? 'aac' : 'aac,mp3', VideoCodec: 'h264', Protocol: 'hls', Context: 'Streaming', MaxAudioChannels: '2', MinSegments: 1, BreakOnNonKeyFrames: true },
       ],
@@ -563,6 +583,7 @@ export class JellyfinService implements MediaServer {
         { Format: 'vtt', Method: 'External' },
         { Format: 'srt', Method: 'External' },
         { Format: 'ass', Method: 'External' },
+        ...(caps ? caps.subtitles.filter((f) => !['vtt', 'srt', 'ass'].includes(f)).map((Format) => ({ Format, Method: 'External' })) : []),
       ],
     };
     const info = await this.json<Record<string, any>>(user, `/Items/${itemId}/PlaybackInfo?${p}`, {
@@ -577,7 +598,7 @@ export class JellyfinService implements MediaServer {
       const want = streams.find((s) => s.Type === 'Audio' && s.Language === opts.audioLang);
       if (want && !want.IsDefault && typeof want.Index === 'number') audioIndex = want.Index;
     }
-    return toPlaybackDto({ itemId, info, deviceId: this.deviceId(user), maxBitrate: opts.maxBitrate, resumeTicks: opts.startTicks ?? 0, audioIndex, maxHeight: opts.maxHeight, cast: opts.cast, noDirect: opts.noDirect, capReason: opts.capReason });
+    return toPlaybackDto({ itemId, info, deviceId: this.deviceId(user), maxBitrate: opts.maxBitrate, resumeTicks: opts.startTicks ?? 0, audioIndex, maxHeight: opts.maxHeight, cast: opts.cast, noDirect: opts.noDirect, capReason: opts.capReason, directContainers: caps?.containers });
   }
 
   /** PlaybackInfo with the "FriendFlix Download" profile: source details + (unless 'original') the fMP4 HLS master the preparer pulls. */

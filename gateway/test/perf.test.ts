@@ -34,7 +34,7 @@ const fakeFetch = (async (input: RequestInfo | URL) => {
 const get = (path: string, sid = SID) => fetch(`${base}${path}`, { headers: { cookie: `ff_sid=${sid}` } });
 
 beforeAll(async () => {
-  gw = createGateway({ jellyfinUrl: 'http://jf.invalid:8096', backendUrl: 'http://be.invalid:3000', internalSecret: 's3cret-s3cret-s3cret', fetchImpl: fakeFetch }).server;
+  gw = createGateway({ upstreamUrl: 'http://jf.invalid:8096', backendUrl: 'http://be.invalid:3000', internalSecret: 's3cret-s3cret-s3cret', fetchImpl: fakeFetch }).server;
   await new Promise<void>((r) => gw.listen(0, '127.0.0.1', () => r()));
   base = `http://127.0.0.1:${(gw.address() as AddressInfo).port}`;
 });

@@ -37,7 +37,7 @@ Internet --TLS--> reverse proxy (yours, :443)
 backend --> postgres, redis    (db network, internal: no egress, no host access)
 backend, gateway --> media server (media network, internal)
 backend --> OIDC provider, notification services (egress)
-backend --> updater (updater network, internal; optional profile)  --> docker-proxy (internal) --> Docker socket (read-only)
+backend --> updater (updater network, internal; default, off with compose.no-updater.yaml)  --> docker-proxy (internal) --> Docker socket (read-only)
 ```
 
 Networks and ports are defined in [compose.yaml](../compose.yaml); the diagram and the "press play" flow are in [architecture.md](architecture.md).
@@ -53,7 +53,7 @@ Networks and ports are defined in [compose.yaml](../compose.yaml); the diagram a
 | FriendFlix to identity provider | OIDC discovery and code exchange | Authorization code flow with PKCE (S256), `state` and `nonce`, and a cookie binding the flow to the browser. The IdP is trusted to authenticate users and enforce MFA. |
 | Cast and AirPlay receivers | TV or speaker on the viewer's network to the gateway | The receiver cannot send cookies, so it gets a short-lived, revocable cast token in the URL path. See [cast.md](cast.md). A receiver is untrusted: it only ever holds that token. |
 | Web Push and notification services | Backend to push services, ntfy, Discord | Outbound only; keys and webhook URLs are admin-configured secrets. |
-| Backend to updater (optional) | App to the only component that can change containers | Five fixed actions, HMAC-signed (timestamp + nonce, replays refused); only the updater reaches the socket proxy ([Updater](#updater)). |
+| Backend to updater (default since 2.0; off with `compose.no-updater.yaml`) | App to the only component that can change containers | Five fixed actions, HMAC-signed (timestamp + nonce, replays refused); only the updater reaches the socket proxy ([Updater](#updater)). |
 
 ## Threat model
 
@@ -63,10 +63,11 @@ Networks and ports are defined in [compose.yaml](../compose.yaml); the diagram a
 | Invited user (friend, family, guest) | See more than their role allows (hidden titles, higher bitrate, other people's data), stay signed in on stolen devices | Role and profile checks in the backend, bitrate and stream caps enforced by backend and gateway, device approval, session idle and absolute timeouts, per-user data scoping. |
 | Kid with access to a family device | Leave a kids profile | Profile PIN (scrypt, attempt-limited). Limited by design, see above. |
 | Holder of a leaked URL or cast token | Replay a stream URL | Cast tokens are random, hashed at rest, bound to the first client address, expire, are revocable and limited to two per account. |
+| Device on the TV's network (another Cast sender), or anyone holding a cast receiver report token | Read the receiver's report token, report as the user, stream more than allowed | The report token goes only over the sender's private Cast channel, never into media metadata; it is signed, bound to one cast token's account, profile, device, item and play session, valid only from the address that streams that token and while that token lives; it can only report, never fetch media or mint tokens ([Cast receiver](#cast-receiver)). |
 | Malicious web page or injected script | Act as the user (CSRF/XSS), read tokens | CSRF token, `SameSite=Lax`, `HttpOnly` cookies, strict CSP, `nosniff`, `X-Frame-Options: DENY`. No media token reaches the browser. |
 | Attacker with a stolen database or Redis dump | Read credentials | Media-server passwords and API keys are AES-256-GCM encrypted; PINs are scrypt hashes; Redis holds only SHA-256 hashes of cast tokens; sessions are not persisted. |
 | Compromised dependency or CI | Ship malicious images | Pinned actions and base images, lockfile with `npm ci`, dependency audit, Trivy gate, signed and attested images; the optional updater refuses any image whose cosign signature is not this repository's publish workflow. |
-| Attacker with code execution in the backend | Take over the Docker host | The backend never gets the Docker socket; with the optional updater it can only send five fixed, signed actions that install signed images of this repository ([Updater](#updater)). |
+| Attacker with code execution in the backend | Take over the Docker host | The backend never gets the Docker socket; with the updater (on by default since 2.0) it can only send five fixed, signed actions that install signed images of this repository ([Updater](#updater)). |
 | Malicious or buggy receiver or media server | Abuse the gateway, SSRF-style fetches | Gateway only forwards allowlisted, server-relative paths; absolute and protocol-relative URLs are refused. |
 
 Out of scope for the model: physical access to the host, a malicious admin, and attacks on the media server or IdP themselves.
@@ -105,7 +106,7 @@ How the OWASP Top 10 classes are addressed. This is a design summary, not a proo
 | Insecure design | This page; separate gateway; internal networks; limits per role. |
 | Security misconfiguration | Secure defaults in compose, read-only root file systems, readiness check, the [operations](operations.md) and [setup](setup.md) checklists, a ZAP baseline in CI. |
 | Vulnerable components | Lockfile, `npm audit --omit=dev --audit-level=high` in CI, Trivy image scan, Dependabot for npm, Docker and Actions. |
-| Identification and authentication failures | OIDC with PKCE, `state` and `nonce`; MFA at the IdP; sliding idle timeout (`SESSION_IDLE_SECONDS`, default 2 h) and absolute lifetime (`SESSION_TTL_SECONDS`, default 8 h); device approval; PIN attempt limits. |
+| Identification and authentication failures | OIDC with PKCE, `state` and `nonce`; MFA at the IdP; sliding idle timeout (`SESSION_IDLE_SECONDS`) and absolute lifetime (`SESSION_TTL_SECONDS`), both 90 days by default and editable under *Admin → Settings → Sessions*; sessions end at once on sign-out, device revoke, *sign out everywhere*, when an account is disabled in FriendFlix, and on a password change (the other sessions) or reset (all of them); paired TVs keep their own 90-day lifetime whatever the setting; device approval; PIN attempt limits. |
 | Software and data integrity failures | Pinned base-image digests and action SHAs, signed images with attestations, `npm ci`. |
 | Logging and monitoring failures | Admin audit log, `/metrics` (bearer token when `METRICS_TOKEN` is set; also block it at the proxy), slow-request logs, scrubbed client error reports ([monitoring.md](monitoring.md)). |
 | Server-side request forgery | The gateway forwards only allowlisted server-relative paths; `mediaFetch` refuses absolute and protocol-relative URLs. External lookups use fixed provider hosts. |
@@ -138,13 +139,23 @@ The account page also tells the person what admins can see: **"Admins can see wh
 
 ### Re-authentication
 
-Sensitive actions need a sign-in that is at most **10 minutes** old (`REAUTH_WINDOW_S`, 600 s). The window guards:
+Sessions last long (90 days by default), so the password is asked for again only where it protects the account or a secret. These actions need a sign-in that is at most **10 minutes** old (`REAUTH_WINDOW_S`, 600 s):
 - deleting the account;
+- changing the username;
 - removing an authenticator app, passkey or recovery codes (*Security → Remove*);
 - the *Security* setup actions (authenticator app, new recovery codes, passkey, password change) and **the e-mail change**: these always start with a re-authentication and then run their Authentik flow in the same dialog;
-- sensitive changes under *Admin → Settings* ([Settings and generated secrets](#settings-and-generated-secrets)).
+- secret-bearing changes under *Admin → Settings*, generating a secret there or in the setup wizard's extras ([Settings and generated secrets](#settings-and-generated-secrets));
+- *Admin → Sign-in → Repair* (Authentik).
 
-There are two producers of the stamp, and one guard. **In the app**, a dialog on the account page runs Authentik's login flow through the flow executor (`start {kind: 'reauth'}`, which needs the session and its CSRF token): the identification is answered with the session owner's Authentik username, so only the password and second factor are asked. At the end the backend runs a silent authorize in the same Authentik session and checks the result like the callback does. **Classic**, `GET /auth/reauth` is an OIDC login with `prompt=login` and `max_age=0`, so the identity provider asks for the password and MFA even when its session is still valid (account deletion, *Admin → Settings* and the dialog's *Confirm with a passkey instead* use it). Either way the identity provider's `auth_time` must be at most 2 minutes old and the `sub` must be the session's own (a different person gets nothing and an audit entry `session.reauth_mismatch`). Then the portal session is stamped with the time (`markReauthenticated`, `reauthAt`, audit `session.reauth`). Sensitive routes check the stamp with one guard, `requireRecentAuth`, and answer `401 reauth_required` without it; the account page then opens the dialog and repeats the action once.
+Everything else needs only the session, admin actions an admin session: *Admin → Update* (starting an update, a rollback or the updater's self-update, and the automatic-update switch) and *Admin → Data sources* (replacing or removing a key). These stay rate limited and audited (`system.updater_start`, `source.set`, `source.remove`).
+
+**The re-sign-in happens in place.** A refused action (`401 reauth_required`) opens the sign-in dialog on the page itself (`web/src/lib/account/reauth.ts` `reauthenticate()`, one dialog for the whole app: account deletion, username change, removing a sign-in method, *Admin → Settings*, the setup wizard's extras, the Authentik repair); after it the page repeats exactly that action once, with everything still typed, and a second refusal is shown as an error. The *Security* setup actions and the e-mail change open the same dialog with their follow-up flow. Only when the in-app sign-in is not available (`LOGIN_UI` is the classic redirect, or the backend cannot say) the browser goes through the classic forced sign-in (`/auth/reauth`) instead and comes back to the page; the dialog's *Confirm with a passkey instead* and its fallback link for a flow it cannot show take the same way back to the page (never the plain sign-in page, which would not count as a re-authentication). Some identity provider setups ignore `prompt=login` and answer with the old login at once, which the classic path then refuses as too old; the dialog does not depend on it.
+
+There are two producers of the stamp, and one guard. **In the app**, the dialog runs Authentik's login flow through the flow executor (`start {kind: 'reauth'}`, which needs the session and its CSRF token): the identification is answered with the session owner's Authentik username, so only the password and second factor are asked. At the end the backend runs a silent authorize in the same Authentik session and checks the result like the callback does. **Classic**, `GET /auth/reauth` is an OIDC login with `prompt=login` and `max_age=0`, so the identity provider asks for the password and MFA even when its session is still valid (the fallback without the in-app sign-in, and the dialog's *Confirm with a passkey instead*). Either way the identity provider's `auth_time` must be at most 2 minutes old and the `sub` must be the session's own (a different person gets nothing and an audit entry `session.reauth_mismatch`). Then the portal session is stamped with the time (`markReauthenticated`, `reauthAt`, audit `session.reauth`). Sensitive routes check the stamp with one guard, `requireRecentAuth`, and answer `401 reauth_required` without it; the page then opens the dialog and repeats the action once.
+
+**A password change or reset ends sessions.** Sessions last long, so a stolen session cookie must not outlive the old password: a password change finished in FriendFlix (*Security → Change password*) signs out every other session of the account and keeps the one it ran in; a finished reset (*Forgot password*, by the e-mail link) signs out all of them. The account is found by the Authentik username the link names (or the typed name or e-mail address). Both are audited as `session.revoke_others` with `reason: password_change` / `password_reset`. A password changed on Authentik's own pages is not seen by FriendFlix: use *Sign out on all other devices* on the account page (or, as an admin, *Admin → Users → Sign out everywhere*) afterwards.
+
+**Disabling someone in Authentik alone is not enough.** It stops new sign-ins, but a running FriendFlix session lives on until it expires: up to 90 days with the defaults. To lock someone out at once, disable them under *Admin → Users* (that revokes their sessions too) or use *Sign out everywhere* there.
 
 Removing a device is refused with `409 last_factor` when it is the person's last confirmed second factor and the login flow denies people without one ([authentik.md §10a](authentik.md#10a-in-app-sign-in)). FriendFlix deletes only a device it found in the person's own device list just before; the audit entry `account.mfa_removed` records the device type only.
 
@@ -231,7 +242,7 @@ Settings live in the database and are changed by admins in *Admin → Settings*;
 - **Gateway-only volume.** The gateway mounts `bootstrap-gateway`, which holds a copy of `INTERNAL_SECRET` and nothing else: it never sees the database password or the encryption key, and it is still not on the `db` network. It gets its media server URL from the backend (`GET /internal/gateway-config`, behind `INTERNAL_SECRET`) and logs only the URL's origin.
 - **Environment wins.** A value from the environment or a `_FILE` secret cannot be changed from the web UI; the page shows it locked. Saved values are validated against the same schema as environment values.
 - **Write-only secrets.** Secret settings are encrypted with `APP_ENC_KEY` (see [Cryptography](#cryptography)) in the `settings` table. `GET /api/admin/settings` never returns them: only *set* / *not set*, the change date and, for data-source API keys, the last four characters. Credentials inside a non-secret URL (user info, ntfy's `auth` query) are shown redacted, and a submitted URL that still holds the redaction is refused. A generated webhook secret is returned once, with `Cache-Control: no-store`; the VAPID private key never leaves the server.
-- **Fresh sign-in for sensitive changes.** Saving a secret, `PUBLIC_URL`, `HOME_NETWORKS`, `ADMIN_GROUP`, `NTFY_URL` / `NTFY_BASE_URL`, any `OIDC_*` or `AUTHENTIK_*` value or a URL a stored credential is sent to, generating a secret, and any save or test that would send a stored credential to a changed host need a sign-in at most 10 minutes old ([Re-authentication](#re-authentication)). So does replacing or removing a data-source key in *Admin → Data sources*. **Move** / **Move all** (`settings.import_env`) needs no fresh sign-in: it copies a value that is already in effect from the environment into the database and returns nothing; changing it later follows the rules above.
+- **Fresh sign-in for sensitive changes.** Saving a secret, `PUBLIC_URL`, `HOME_NETWORKS`, `ADMIN_GROUP`, `NTFY_URL` / `NTFY_BASE_URL`, any `OIDC_*` or `AUTHENTIK_*` value or a URL a stored credential is sent to, generating a secret, and any save or test that would send a stored credential to a changed host need a sign-in at most 10 minutes old ([Re-authentication](#re-authentication)). Replacing or removing a data-source key in *Admin → Data sources* needs an admin session only (audited). **Move** / **Move all** (`settings.import_env`) needs no fresh sign-in: it copies a value that is already in effect from the environment into the database and returns nothing; changing it later follows the rules above.
 - **Checks and logs carry codes, not data.** Each save probes the affected service with the candidate values; probe results and validation errors are codes, never an upstream body. The audit log records `settings.update`, `settings.import_env` and `settings.generate` with key names only.
 - **Revision-only broadcast.** After a save the backend publishes only the new revision number on the Redis channel `ff:settings:rev`; every instance then reloads from the database (and polls the revision every 30 s in case a message is lost). Values never travel over Redis. A stored value that cannot be decrypted or fails validation is ignored, flagged in the UI and logged by key name only.
 - **No Docker socket.** No FriendFlix container gets `/var/run/docker.sock`; the web app cannot control Docker.
@@ -266,7 +277,7 @@ A new install has no admin and no sign-in yet, so the first run is protected by 
 
 ## Updater
 
-The optional updater (compose profile `updater`, [setup.md](setup.md#updater-optional)) is the only part of FriendFlix that can change what runs. It is built so that the services an attacker can reach from the internet still cannot.
+The updater (on by default since 2.0, off with `compose.no-updater.yaml`; [setup.md](setup.md#updater)) is the only part of FriendFlix that can change what runs. A job also refuses compose files that would start another media server than the running backend and gateway (a Plex stack is never recreated as Jellyfin), and without `UPDATER_COMPOSE_FILES` it takes the stack's own files from the compose labels of the backend container, accepting only plain file names directly in the stack directory. It is built so that the services an attacker can reach from the internet still cannot.
 
 ```
 backend --signed request--> updater --(internal net)--> docker-proxy --ro--> /var/run/docker.sock
@@ -281,7 +292,7 @@ backend --signed request--> updater --(internal net)--> docker-proxy --ro--> /va
 - **Constants and regexes:** the service list is a constant (`bootstrap`, `backend`, `gateway`, `web`; `updater` only for the explicit self-update). Tags match `latest | nightly | X.Y.Z | sha-<7 hex>` only; the state file is re-validated field by field on every load. Every image compose resolves must be exactly `ghcr.io/<owner>/<repo>-<service>:<tag>` of `UPDATE_REPO`. Commands run with `execFile` (no shell) and a minimal environment (never the updater's own, which holds the secret).
 - **Signature before restart:** each pulled digest is verified with `cosign verify` (identity `https://github.com/<UPDATE_REPO>/.github/workflows/publish.yml@refs/heads/main` or `@refs/tags/vX.Y.Z`, issuer `https://token.actions.githubusercontent.com`). Any failure aborts before anything restarts, and `up` runs with `--pull never`, so only the verified local images start.
 - **Container:** non-root (uid 1000), read-only root file system, `cap_drop: ALL`, `no-new-privileges`, no published port. It reads only `internal_secret` (from the `bootstrap-gateway` volume) and the stack directory, read-only.
-- **Backend side:** admin only, a re-authentication within 10 minutes, three starts per two minutes for the whole portal (counted after the admin check), audit entries for start (who, from, to) and result. Status answers are parsed field by field before they reach the browser. Logs carry fixed messages, tags and error codes, never command output or secrets.
+- **Backend side:** admin only (an admin session, no re-authentication), three starts per two minutes for the whole portal (counted after the admin check), audit entries for start (who, from, to) and result. Status answers are parsed field by field before they reach the browser. Logs carry fixed messages, tags and error codes, never command output or secrets.
 
 **What an attacker with code execution in the backend can do.** Everything the backend could already do (data, sessions, media tokens), plus: send the five signed requests. That means starting an update to `latest` / `nightly` / any published `X.Y.Z` of this repository, a rollback to the recorded previous build, or a self-update, and reading the status (tags, job log). Every image that can start is a CI-built, cosign-signed release or nightly of this repository: the attacker can force an old, still-signed version with known bugs (a downgrade), restart the portal repeatedly (rate limited to three per two minutes, audited), or change the channel. They cannot run a chosen image, mount host paths, start a container with other options, exec into containers or reach the Docker API: the backend has no socket, is not on the proxy's network, and the updater accepts nothing but the fixed actions. Residual risk: downgrade to an older signed build, and denial of service through restarts.
 
@@ -289,7 +300,125 @@ backend --signed request--> updater --(internal net)--> docker-proxy --ro--> /va
 
 **What the proxy blocks.** Requests to `/exec` (so an exec created under `/containers/<id>/exec` can never be started), `/build`, `/commit`, `/swarm`, `/services`, `/tasks`, `/nodes`, `/secrets`, `/configs`, `/plugins`, `/system` (`df`, prune of everything), `/session`, `/distribution`, `/auth` and `/grpc`, and `/containers/<id>/archive`, `/export`, `/logs`, `/top` and `/changes` answer 403; every path outside the allowlist does too. The socket is mounted read-only into the proxy and the proxy has no published port. What it does **not** block: inside the allowed sections it filters by path and method only, never by body, so `POST /containers/create` with a dangerous body (privileged, host binds), kill / restart / pause of any container, image removal and volume or network changes all pass. That is why the proxy is reachable from the updater alone.
 
-**Disable** by stopping and removing `updater` and `docker-proxy` and starting without the profile; nothing else depends on them.
+**Disable** by adding `compose.no-updater.yaml` to the compose command (or `COMPOSE_FILE`) and removing the running `updater` and `docker-proxy` containers once ([setup.md, Turn it off](setup.md#updater)); nothing else depends on them.
+
+## Cast receiver
+
+FriendFlix's own Cast Web Receiver ([cast-receiver.md](cast-receiver.md), opt-in with `CAST_RECEIVER_APP_ID`) runs on a TV that has
+no FriendFlix session and must never get one. It is a static page (`/cast-receiver/`) plus Google's receiver framework.
+
+**What the TV holds.** The cast token URLs the sender loads or queues (as with the Default Media Receiver), and for each of them a
+**report token** that lets it report the play session of that one token. No session cookie, no CSRF token, no profile token, no
+media-server credential. The receiver never asks the server for a title on its own: the sender's queue and the `next: true` token
+gate (`castPredecessor`, the `povl:` overlap window, `DRAIN_MS`) stay the only way a next episode reaches the TV.
+
+**Report token design** (`backend/src/cast.ts`, `castReportToken` / `verifyCastReport`).
+- `base64url(claims) "." base64url(HMAC-SHA256(k, claims))`, `k = HMAC(APP_ENC_KEY, "friendflix cast report v1")` (a key of its own;
+  the subtitle URLs use another derivation). Claims: account, profile, sender device, castId, item, media source, play session,
+  `exp` = the cast token's absolute cap (1 to 6 hours). Compared in constant time.
+- Valid only while the cast token it was minted with exists and still names the same account, profile, device, item, media source
+  and play session. Everything that ends a cast token ends it: revoke (stop, switch, cancel), logout and session revocation, device
+  revocation, the 45-minute idle expiry, the two-tokens-per-account cap. AirPlay tokens never get one.
+- Bound to the receiver: the request must come from the client address the cast token is pinned to (the TV's first media fetch).
+  A token that was never streamed has no pin and reports nothing; a copied report token is useless from any other address.
+- Re-checked on every use like the media itself: account enabled, role known, profile of the account, sender device approved.
+- Only `start`, `progress` and `stop` of that play session (`POST /api/cast/report`, no cookie, 60 per minute per address). The
+  backend runs the same report code as `/api/playback/*` (`playbackReport` in `routes/media.ts`): a `start` without a live record
+  still needs a free stream slot (429 `max_streams`), the item is resolved with the profile's own media-server user (kids rules and
+  the age cap apply), statistics count a play session once.
+- The next-token gate holds: a queued episode's report token is refused (409) while the play session it follows still plays, so a
+  preloaded episode cannot report itself into a stream of its own.
+- Handed out only when the sender asks with `receiver: true` and `CAST_RECEIVER_APP_ID` is set; the sender sends it only on the
+  private channel `urn:x-cast:com.friendflix.cast`, which other senders cannot read. Media metadata (visible to every sender on the
+  network) carries only the public castId. The raw token is never logged, never in a URL, never in metrics; the receiver keeps it in
+  memory only.
+
+**What someone with a report token can do.** From the TV's address, while that cast token lives: set the resume position and the
+watched state of that one item for that profile, and mark that play session as playing, paused or stopped (affecting "Now playing"
+and the stream count for up to the live record's 45 s, never beyond the limit). They cannot stream, fetch other items, mint tokens,
+change settings or act as the user anywhere else.
+
+**The page.** Served by the web app with its own CSP: scripts only from the own origin and Google's Cast library paths
+(`https://www.gstatic.com/cast/sdk/libs/`, Shaka's path on `ajax.googleapis.com`), media and requests only to the own origin (plus
+`blob:` for the player), no frames, objects or forms, `frame-ancestors 'none'`. The app pages' CSP is unchanged. Sender messages are
+validated field by field (sizes, enums, castId / token shapes) before use; texts are set with `textContent`, never as HTML.
+
+## Android app
+
+The Android app ([android.md](android.md)) is a WebView shell around the web UI with a native player, downloader, Cast sender and
+notification poller. It adds no new account, token or server endpoint: the server treats it as one more device with the normal
+session cookie, so device approval, device revoke, account disable and sign-out work unchanged.
+
+**Threat model.** What the app guards: the session cookie, the downloaded files, and the native functions the page can reach.
+From whom: other web origins (links, embedded frames, a compromised third-party page), other apps on the phone, someone who gets
+hold of the SD card or a copied file, and a network attacker. Out of scope: an attacker with root on the phone, and the configured
+server itself (it is your server and controls the web UI the app shows).
+
+**One origin.** At the first start the user enters one HTTPS address; the app checks `GET /api/version` before saving it. The
+WebView loads only that origin (scheme, host and port must match, no subdomains). Every other navigation opens in the system
+browser, plain WebView downloads are dropped, and `/watch` links are only handed to the native player from the app origin.
+The one other origin the WebView may show is the server's identity provider (`authOrigin` in `/api/version`, the OIDC issuer's
+origin, exact scheme + host + port, https only, main frame only) so that sign-in, re-authentication and the forgotten-PIN reset finish
+in the app; it never gets the bridge or the native cookie jar.
+
+**WebView hardening.** JavaScript and DOM storage on (the web UI needs them); file and content access off; mixed content never
+allowed; Safe Browsing on; remote debugging only in debug builds. The network security config allows no cleartext and trusts only
+the system CAs (no user-installed CAs, also in debug builds). `allowBackup` is off and the backup and data-transfer rules exclude
+everything, so cookies, settings and keys never go into a cloud or device-to-device backup.
+
+**The bridge.** `window.FriendFlixNative` is registered with `WebViewCompat.addWebMessageListener` for the app origin only (no
+`addJavascriptInterface`, so other origins and frames get no object at all). Every message is checked again: the sender's origin
+must be the app origin and the sender must be the main frame, otherwise the answer is `forbidden` and the frame is never used as a
+reply target. Messages are size-capped JSON with a fixed method list (`capabilities`, `play`, `download`, `downloads`,
+`deleteDownload`, `openSettings`); ids, numbers and fields are validated and unknown fields refused. Nothing in it reads files,
+cookies or other origins: `play` and `download` take ids that the server checks again on every request.
+
+**Cookie reuse, origin only.** The player, the downloader, the notification poller and the Cast sender call the server with the
+WebView's session cookie. Their HTTP client has a cookie jar that hands the cookie out only for the exact app origin (scheme, host,
+port), follows no redirects, and sends state-changing requests with the session's CSRF token. The cookie never goes to the media
+server, the TV, the Cast SDK or any other host, and it is never logged.
+
+**Other apps.** Exported are only the launcher screen and the settings screen (for Android's "app settings" entry); every
+destructive setting asks for a confirmation first. The launcher entry ignores the shell's internal extras (page to open, web-player
+hand-back, reload): the app's own hand-overs use a non-exported entry (`ShellInternal`). Services, the media session and the
+WorkManager jobs are not exported. A notification tap carries only a path, which the shell validates again as a path of the app
+origin; pending intents are immutable.
+Downloads live in the app-specific folders (no storage permission), which other apps cannot read on current Android versions.
+
+**Encryption at rest and its limits.** Every downloaded file is encrypted (AES-256-CTR with a random IV per file, HMAC-SHA256 per
+1 MiB chunk over IV, index and an end marker, so changed, reordered, cut or appended chunks are refused). The data and MAC keys are
+random, wrapped by an Android Keystore key (StrongBox when available) and stored in `noBackupFilesDir`. A file copied off the phone
+or the SD card is unreadable. It is **not DRM**: while the app runs the unwrapped keys are in process memory, and anyone with root
+or a debugger on an unlocked phone can reach them. File sizes reveal the approximate length. Licence expiry, the offline grace
+period and revocation are enforced by the server and checked by the app (with a guard against turning the clock back), which stops
+honest misuse, not a determined owner of a rooted phone.
+
+**Leaving a device.** *Sign out of this device*, in this order: closes any open player (its stop report still goes out); cancels
+the background jobs (downloads, storage moves, licence returns, the notification poll), remembering licence returns that had not
+run yet; deletes the download rows and every download file; while the session cookie still exists, returns the licences (also the
+remembered ones) and then ends the session on the server (`POST /auth/logout`, when reachable); clears the queued offline positions,
+the offline state and the notification poller's last seen id; deletes the Keystore key; and finally clears the WebView's cookies
+and web storage (which also ends the WebView's sign-in at the identity provider) and plans the notification poll again. Changing the server address does the same for the old server but keeps the Keystore key (it
+belongs to the device). Uninstalling or clearing the app's data removes everything as well.
+
+**Notifications and logs.** The poller reads `GET /api/notifications` in the background with the session cookie, about every
+10–20 minutes (Android may delay it further), and stops after a 401 until the app is opened. The server's notification text can contain titles and is shown as
+Android shows notifications (the lock screen setting decides). The app's own download notices and logs carry no titles, cookies or
+URLs with tokens; the app's logs name only error codes and exception classes. Media3's internal error logs can include the server's
+host in a stack trace.
+
+**Release signing.** Release AABs and APKs are signed in CI with the upload key from three repository secrets, decoded to the
+runner's temp folder for the build only and deleted right after it (`.github/workflows/android-release.yml`); pull requests build
+unsigned. Google Play re-signs the app it delivers with the Play App Signing key, which never leaves Google.
+
+**Third-party SDKs.** FriendFlix itself sends no analytics, and the app contains no Firebase, crash-reporting or advertising SDK. The
+only Google Play services library is the Cast SDK (`play-services-cast-framework`, for Chromecast). It brings Google's own Cast
+telemetry (`com.google.android.datatransport`), which reports to Google in the same way as in every app that uses Google Cast.
+Without Google Play services there is no Cast button, and the rest of the app works the same.
+
+**Casting.** The app uses the same `/api/cast/*` token flow as the web sender. The receiver gets the server's token URLs
+unchanged, the own receiver's report token goes only over the private Cast channel, and the session cookie is sent only to the FriendFlix server, never to the TV or the Cast SDK. Downloads are
+never cast.
 
 ## Hardening
 

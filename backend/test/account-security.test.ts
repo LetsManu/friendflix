@@ -18,6 +18,8 @@ import {
 const TOTP_SETUP = 'default-authenticator-totp-setup';
 const STATIC_SETUP = 'default-authenticator-static-setup';
 const WEBAUTHN_SETUP = 'default-authenticator-webauthn-setup';
+const PASSWORD_CHANGE = 'default-password-change';
+const NEW_PW = 'New-Passw0rd-placeholder';
 const INVALIDATION = '/api/v3/flows/executor/default-invalidation-flow/';
 
 describe('re-authentication, security actions', () => {
@@ -46,6 +48,7 @@ describe('re-authentication, security actions', () => {
     [TOTP_SETUP]: [{ challenge: fixture('totp-setup'), answer: (b: { code?: string }) => (b.code === '123456' ? true : fixture('totp-setup-invalid')), hops: 2 }],
     [STATIC_SETUP]: [{ challenge: fixture('static-setup'), answer: () => true, hops: 2 }],
     [WEBAUTHN_SETUP]: [{ challenge: fixture('webauthn-setup'), answer: () => true, hops: 2 }],
+    [PASSWORD_CHANGE]: [{ challenge: fixture('prompt-password-change'), answer: () => true, hops: 2 }],
   });
   const world = () => {
     w = installWorld(env, setupFlows());
@@ -130,6 +133,36 @@ describe('re-authentication, security actions', () => {
     await setReauthAt(s, Date.now() - 11 * 60_000);
     const late = await del(s, 'totp/11');
     expect([late.statusCode, late.json()]).toEqual([401, { error: 'reauth_required' }]);
+  });
+
+  it('a finished password change signs out the account\'s other sessions (this one stays), audited', async () => {
+    const s = await env.login();
+    const other = await env.login(); // another browser of the same account
+    await env.pool.query("delete from audit_log where action = 'session.revoke_others'");
+    const b = browser(env, s);
+    const step = (await b.reauth('change-password')).json() as { stage: string; step: string; fields: Array<{ key: string }> };
+    expect(step.stage).toBe('prompt');
+    // nothing is revoked while the new password is only asked for
+    expect(await env.kv.get(`sess:${other.cookies.ff_sid}`)).toBeTruthy();
+    const body = Object.fromEntries(step.fields.map((f) => [f.key, NEW_PW]));
+    const done = await b.post('answer', { step: step.step, stage: 'prompt', ...body });
+    expect(done.json()).toEqual({ stage: 'done', next: '/me/account' });
+    expect(await env.kv.get(`sess:${other.cookies.ff_sid}`)).toBeNull();
+    expect(await env.kv.get(`sess:${s.cookies.ff_sid}`)).toBeTruthy();
+    expect((await env.app.inject({ url: '/api/me', cookies: other.cookies })).statusCode).toBe(401);
+    const userId = (await sessionOf(s)).userId;
+    expect((await env.pool.query("select actor, target, meta from audit_log where action = 'session.revoke_others'")).rows)
+      .toEqual([{ actor: userId, target: userId, meta: { sessions: expect.any(Number), reason: 'password_change' } }]); // earlier tests' sessions count too
+  });
+
+  it('a cancelled password change revokes nothing', async () => {
+    const s = await env.login();
+    const other = await env.login();
+    const b = browser(env, s);
+    const step = (await b.reauth('change-password')).json() as { stage: string };
+    expect(step.stage).toBe('prompt');
+    expect((await b.post('cancel', {})).statusCode).toBe(200);
+    expect(await env.kv.get(`sess:${other.cookies.ff_sid}`)).toBeTruthy();
   });
 
   it('reauth then setup-totp returns totp-setup and finishing ends the Authentik session', async () => {

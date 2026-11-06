@@ -273,7 +273,7 @@ const es: Translation<typeof de> = {
     linkWarn: 'Este código llegó a través de un enlace. Vincula solo si <b>{code}</b> aparece exactamente así ahora en tu tele; si no, otra persona podría acceder a tu cuenta.',
     codeLabel: 'Código de la tele',
     pairButton: 'Vincular',
-    pairNote: 'La tele permanece conectada 30 días (7 días sin uso) y aparece en «Dispositivos», donde puedes bloquearla en cualquier momento.',
+    pairNote: 'La tele permanece conectada 90 días y aparece en «Dispositivos», donde puedes bloquearla en cualquier momento.',
   },
   tv: {
     pageTitle: 'Conectar la tele',

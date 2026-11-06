@@ -2,6 +2,9 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 /**
  * Chromecast sender (Google Cast Web Sender SDK, Default Media Receiver).
+ * With CAST_RECEIVER_APP_ID set (Admin -> Settings, /api/cast/config `receiverAppId`) the sender starts FriendFlix's own receiver
+ * (/cast-receiver/) instead and talks to it on a private channel (CAST_NS): the receiver's report token and its TV UI data. Without it
+ * nothing below that differs from the Default Media Receiver flow runs.
  *
  * The SDK is lazy-loaded from gstatic only when it can be useful: Chromium browsers (not iOS), not in TV mode,
  * and only when the server offers casting (/api/cast/config). Nothing is loaded for everyone else.
@@ -36,6 +39,9 @@ interface CastSessionT {
   getCastDevice(): { friendlyName: string };
   loadMedia(r: unknown): Promise<string | undefined>;
   getMediaSession(): MediaT | null;
+  /** custom receiver channel (not used with the Default Media Receiver) */
+  sendMessage?(ns: string, msg: unknown): Promise<unknown>;
+  addMessageListener?(ns: string, fn: (ns: string, msg: string) => void): void;
 }
 /** chrome.cast.media.Media: the receiver's media session (updated in place by the SDK) */
 interface MediaT {
@@ -91,6 +97,8 @@ export interface CastInfo {
   seriesName?: string;
   imageUrl?: string;
   subtitles: Array<{ index: number; language?: string; title: string; url: string }>;
+  /** FriendFlix's own receiver only: the token it reports this play session with (sent to it on CAST_NS, never in media metadata) */
+  report?: string;
 }
 
 export interface CastState {
@@ -145,10 +153,49 @@ export function castCapableBrowser(): boolean {
 
 /** GET /api/cast/config once per page (Chromecast SDK and the AirPlay button share it); a failure is asked again next time. */
 let cfgP: Promise<boolean> | null = null;
+/** the app ID of FriendFlix's own receiver ('' = Default Media Receiver), from the same config answer */
+let receiverId = '';
 export function castConfigEnabled(): Promise<boolean> {
-  cfgP ??= api<{ enabled: boolean }>('/api/cast/config').then((c) => Boolean(c?.enabled)).catch((e) => { cfgP = null; throw e; });
+  cfgP ??= api<{ enabled: boolean; receiverAppId?: string }>('/api/cast/config').then((c) => {
+    receiverId = typeof c?.receiverAppId === 'string' && /^[0-9A-F]{8}$/.test(c.receiverAppId) ? c.receiverAppId : '';
+    return Boolean(c?.enabled);
+  }).catch((e) => { cfgP = null; throw e; });
   return cfgP;
 }
+
+/** the private message channel between this sender and FriendFlix's own receiver (cast-receiver/receiver.js uses the same name) */
+export const CAST_NS = 'urn:x-cast:com.friendflix.cast';
+/** the sender casts to FriendFlix's own receiver */
+export const castCustomReceiver = () => receiverId !== '';
+/** a POST /api/cast/session body for the Chromecast: with the own receiver it asks for the receiver's report token too */
+export function castBody<T extends Record<string, unknown>>(b: T): T {
+  return receiverId && b.via !== 'airplay' ? { ...b, receiver: true } : b;
+}
+const rxListeners = new Set<(m: Record<string, unknown>) => void>();
+/** messages from the own receiver (TV remote input, "still watching" answered on the TV); returns the unsubscribe function */
+export function onReceiverMessage(fn: (m: Record<string, unknown>) => void): () => void {
+  rxListeners.add(fn);
+  return () => rxListeners.delete(fn);
+}
+/** to the own receiver (no-op with the Default Media Receiver or without a session); never throws */
+export function castSendMessage(msg: Record<string, unknown>) {
+  if (!receiverId) return;
+  try { void ctxT?.getCurrentSession()?.sendMessage?.(CAST_NS, msg)?.catch?.(() => undefined); } catch { /* gone with its session */ }
+}
+/** listens on the receiver channel of a (new or resumed) session, once per session object */
+const listened = new WeakSet<object>();
+function listen() {
+  const sess = ctxT?.getCurrentSession();
+  if (!receiverId || !sess?.addMessageListener || listened.has(sess)) return;
+  listened.add(sess);
+  sess.addMessageListener(CAST_NS, (_ns, raw) => {
+    let m: unknown;
+    try { m = typeof raw === 'string' ? JSON.parse(raw) : raw; } catch { return; }
+    if (m && typeof m === 'object' && typeof (m as { t?: unknown }).t === 'string') rxListeners.forEach((fn) => fn(m as Record<string, unknown>));
+  });
+}
+/** the receiver's report token of a just loaded / queued token goes over the private channel */
+const sendReport = (info: CastInfo) => { if (info.report) castSendMessage({ t: 'tok', castId: info.castId, rt: info.report }); };
 
 /** Loads the SDK once if casting makes sense here. Safe to call repeatedly. Never throws. */
 export async function initCast(): Promise<void> {
@@ -198,7 +245,7 @@ function setup() {
   const fw = window.cast?.framework, ch = window.chrome?.cast;
   if (!fw || !ch) return;
   ctxT = fw.CastContext.getInstance();
-  ctxT.setOptions({ receiverApplicationId: ch.media.DEFAULT_MEDIA_RECEIVER_APP_ID, autoJoinPolicy: ch.AutoJoinPolicy.ORIGIN_SCOPED });
+  ctxT.setOptions({ receiverApplicationId: receiverId || ch.media.DEFAULT_MEDIA_RECEIVER_APP_ID, autoJoinPolicy: ch.AutoJoinPolicy.ORIGIN_SCOPED });
   player = new fw.RemotePlayer();
   controller = new fw.RemotePlayerController(player);
   controller.addEventListener(fw.RemotePlayerEventType.ANY_CHANGE, sync);
@@ -208,9 +255,11 @@ function setup() {
   ctxT.addEventListener(fw.CastContextEventType.SESSION_STATE_CHANGED, (e) => {
     if (e.sessionState === fw.SessionState.SESSION_STARTED) {
       sync();
+      listen();
       emit('session-start'); // the user just picked a device
     } else if (e.sessionState === fw.SessionState.SESSION_RESUMED) {
       sync(); // auto-joined an earlier session of this origin: no playback is started on its own
+      listen();
     } else if (e.sessionState === fw.SessionState.SESSION_ENDED) {
       lastLoaded = false;
       castState.update((s) => ({ ...s, connected: false, deviceName: '', state: 'idle', loaded: false }));
@@ -243,6 +292,8 @@ function mediaOf(info: CastInfo, ch: ChromeCast): Record<string, unknown> {
   if (info.seriesName) meta.seriesTitle = info.seriesName;
   if (info.imageUrl) meta.images = [new ch.Image(info.imageUrl)];
   media.metadata = meta;
+  // the own receiver matches its report token (CAST_NS) by the token's public handle; nothing secret goes into the metadata
+  if (receiverId) media.customData = { ff: { castId: info.castId } };
   const ids = new Map<number, number>();
   media.tracks = info.subtitles.map((s, i) => {
     const t = new m.Track(i + 1, m.TrackType.TEXT);
@@ -272,7 +323,9 @@ export async function loadOnCast(info: CastInfo, activeSubtitle = -1, autoplay =
   const active = trackIds.get(activeSubtitle);
   if (active) req.activeTrackIds = [active];
   try {
-    return (await sess.loadMedia(req)) === undefined;
+    const ok = (await sess.loadMedia(req)) === undefined;
+    if (ok) sendReport(info);
+    return ok;
   } catch {
     return false;
   }
@@ -284,7 +337,7 @@ export const QUEUE_PRELOAD_S = 30;
  * Puts the next title into the receiver's queue after the playing one (autoplay, its resume position): the receiver moves on
  * by itself at the end, even when the phone sleeps. Resolves the queue item id, or null (no media session, refused).
  */
-export async function queueOnCast(info: CastInfo): Promise<number | null> {
+export async function queueOnCast(info: CastInfo, autoplay = true): Promise<number | null> {
   const ms = ctxT?.getCurrentSession()?.getMediaSession(), ch = window.chrome?.cast;
   if (!ms || !ch) return null;
   const m = ch.media;
@@ -292,13 +345,14 @@ export async function queueOnCast(info: CastInfo): Promise<number | null> {
   const ok = await new Promise<boolean>((done) => {
     try {
       const item = new m.QueueItem(mediaOf(info, ch));
-      item.autoplay = true;
+      item.autoplay = autoplay; // false: the own receiver asks "still watching?" before it plays (engine prequeue)
       item.startTime = info.startTime;
       item.preloadTime = QUEUE_PRELOAD_S;
       ms.queueInsertItems(new m.QueueInsertItemsRequest([item]), () => done(true), () => done(false));
     } catch { done(false); }
   });
   if (!ok) return null;
+  sendReport(info);
   return ms.items?.find((q) => q.media?.contentId === info.contentUrl)?.itemId ?? null;
 }
 /** drops a queued title (its countdown was cancelled, another title plays) */

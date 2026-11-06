@@ -341,3 +341,65 @@ async function pinned(ctx: Ctx, hash: string, client: string, exp: number, slots
   }
   return false;
 }
+
+/**
+ * FriendFlix's own Cast Web Receiver (/cast-receiver/): the admin registered its app ID (CAST_RECEIVER_APP_ID) in the Google Cast
+ * console. '' = the Default Media Receiver (casting off, or no / an invalid app ID): nothing below is handed out then.
+ */
+export const CAST_APP_ID_RE = /^[0-9A-F]{8}$/;
+export const castReceiverAppId = (ctx: Ctx): string => (castEnabled(ctx) && CAST_APP_ID_RE.test(ctx.cfg.CAST_RECEIVER_APP_ID ?? '') ? ctx.cfg.CAST_RECEIVER_APP_ID : '');
+
+/**
+ * Receiver report token ("rt"): lets the receiver on the TV (no user session, no cookie) report start / progress / stop of ONE cast
+ * token's play session while the phone sleeps. It grants nothing else: no media, no new tokens, no other item or play session.
+ *   rt = base64url(JSON claims) "." base64url(HMAC-SHA256(key, claims part)), key derived from APP_ENC_KEY ("friendflix cast report v1")
+ * Valid only while ALL hold (checked on every use, verifyCastReport):
+ * - the signature matches and `exp` (= the cast token's absolute cap) is in the future;
+ * - the cast token it was minted with still exists (revoke, logout, device revocation, idle expiry and the token cap all end it) and
+ *   carries the same account, profile, device, item, media source and play session;
+ * - the caller is the address the cast token is pinned to (the receiver that streams it; a token never streamed has no pin: refused);
+ * - account enabled, role known, profile of the account, sender device approved (liveOwner, as for the media);
+ * - a queued next episode's token is refused while the play session it follows still plays (the next-token gate, nextOverlap).
+ * It is only sent to the receiver over the sender's private cast channel (never in media metadata other senders can read) and never logged.
+ */
+export interface CastReportClaims { v: 1; u: string; p: string; d: string; c: string; i: string; ps: string; ms: string; exp: number }
+export const CAST_REPORT_RE = /^[A-Za-z0-9_-]{16,1024}\.[A-Za-z0-9_-]{43}$/;
+const reportKey = (ctx: Pick<Ctx, 'encKey'>) => createHmac('sha256', ctx.encKey).update('friendflix cast report v1').digest();
+const reportSig = (ctx: Pick<Ctx, 'encKey'>, body: string) => createHmac('sha256', reportKey(ctx)).update(body).digest('base64url');
+
+/** Report token for a cast token just created (createCast's castId / expiresAt and the record it was created with). */
+export function castReportToken(ctx: Pick<Ctx, 'encKey'>, rec: Pick<CastRecord, 'userId' | 'profileId' | 'deviceId' | 'itemId' | 'mediaSourceId' | 'playSessionId'>, cast: { castId: string; expiresAt: number }): string {
+  const claims: CastReportClaims = { v: 1, u: rec.userId, p: rec.profileId, d: rec.deviceId, c: cast.castId, i: rec.itemId, ps: rec.playSessionId, ms: rec.mediaSourceId, exp: cast.expiresAt };
+  const body = Buffer.from(JSON.stringify(claims)).toString('base64url');
+  return `${body}.${reportSig(ctx, body)}`;
+}
+
+export type CastReportCheck =
+  | { ok: true; claims: CastReportClaims; user: UserRow; prof: ProfileRow; jfUser: JfUser }
+  | { ok: false; status: 401 | 409; error: 'invalid' | 'predecessor_live' };
+
+/** Verifies a report token for a request from `client` (see castReportToken). Never throws on bad input. */
+export async function verifyCastReport(ctx: Ctx, rt: string, client: string): Promise<CastReportCheck> {
+  const bad = { ok: false, status: 401, error: 'invalid' } as const;
+  if (!castReceiverAppId(ctx) || !CAST_REPORT_RE.test(rt)) return bad;
+  const [body, sig] = rt.split('.') as [string, string];
+  const want = Buffer.from(reportSig(ctx, body));
+  const got = Buffer.from(sig);
+  if (got.length !== want.length || !timingSafeEqual(got, want)) return bad;
+  let c: CastReportClaims;
+  try { c = JSON.parse(Buffer.from(body, 'base64url').toString('utf8')) as CastReportClaims; } catch { return bad; }
+  if (c?.v !== 1 || !Number.isFinite(c.exp) || c.exp <= Date.now() || typeof c.c !== 'string' || typeof c.u !== 'string') return bad;
+  const idx = await ctx.kv.get(idxKey(c.u, c.c)); // gone = revoked or expired
+  const hash = idx ? (JSON.parse(idx) as IdxEntry).hash : undefined;
+  const raw = hash ? await ctx.kv.get(dataKey(hash)) : null;
+  const rec = raw ? (JSON.parse(raw) as CastRecord) : null;
+  if (!hash || !rec || rec.exp <= Date.now() || (rec.kind ?? 'media') !== 'media' || rec.via === 'airplay') return bad;
+  if (rec.userId !== c.u || rec.profileId !== c.p || rec.deviceId !== c.d || rec.itemId !== c.i || rec.mediaSourceId !== c.ms || rec.playSessionId !== c.ps) return bad;
+  // the receiver that streams this token: the address its first media fetch pinned
+  if ((await ctx.kv.get(pinKey(hash))) !== client) return bad;
+  const owner = await liveOwner(ctx, rec);
+  if (!owner) return bad;
+  // a queued next episode reports nothing while the cast it follows still plays (its preload is not a stream of its own)
+  if (await predecessorPlays(ctx, rec)) return { ok: false, status: 409, error: 'predecessor_live' };
+  return { ok: true, claims: c, user: owner.user, prof: owner.prof, jfUser: jfUserFor(owner.user, owner.prof) };
+}

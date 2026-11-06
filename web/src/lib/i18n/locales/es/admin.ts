@@ -213,7 +213,7 @@ const es: Translation<typeof de> = {
       updateLead: 'Para obtener la actualización, revisa esta línea en el .env del stack y ejecuta el comando:',
       envLabel: 'Línea en el .env',
       cmdLabel: 'Comando',
-      note: 'El cambio solo se aplica tras este comando: FriendFlix nunca toca Docker por sí mismo.',
+      note: 'El cambio solo se aplica tras este comando: sin el actualizador, FriendFlix nunca toca Docker por sí mismo (compose.no-updater.yaml lo mantiene apagado).',
       pinned: 'Versión fija',
       pinnedHint: 'Versión fija: se queda exactamente en esta versión hasta que la cambies.',
       versionLabel: 'Versión (X.Y.Z)',
@@ -235,6 +235,7 @@ const es: Translation<typeof de> = {
       advanced: 'El propio actualizador',
       confirm: {
         update: '¿Actualizar ahora a {tag}? FriendFlix se reinicia un momento y las reproducciones en curso se interrumpen.',
+        updatePortainer: '¿Volver a desplegar la pila a través de Portainer ahora? FriendFlix se reinicia brevemente y las reproducciones en curso se interrumpen.',
         rollback: '¿Volver a {tag}? FriendFlix se reinicia un momento.',
         'self-update': '¿Actualizar ahora el contenedor actualizador?',
       },
@@ -271,6 +272,9 @@ const es: Translation<typeof de> = {
         channel_sync_failed: 'El actualizador no aceptó el canal.',
         tooSoon: 'Demasiados inicios. Espera dos minutos.',
         generic: 'El actualizador rechazó la tarea.',
+        foreign_stack: 'Esta pila la gestiona Portainer (u otra herramienta), por eso el actualizador no la vuelve a crear. Configura el webhook de Portainer en Admin → Ajustes → Actualizaciones o actualiza la pila en Portainer.',
+        portainer: 'Portainer rechazó el redespliegue. Revisa el webhook o la API en Admin → Ajustes → Actualizaciones.',
+        portainer_unreachable: 'No se puede acceder a Portainer.',
       },
       failReason: {
         verify_failed: 'falló la comprobación de firmas, no se reinició nada',
@@ -281,13 +285,21 @@ const es: Translation<typeof de> = {
         interrupted: 'interrumpida por un reinicio',
         self_update_timeout: 'el actualizador no fue reemplazado',
         unexpected_image: 'nombre de imagen inesperado',
+        media_server_mismatch: 'los archivos compose iniciarían otro servidor multimedia distinto del actual (¿UPDATER_COMPOSE_FILES sin compose.plex.yaml?), no se reinició nada',
         compose_config: 'configuración de compose ilegible',
+        foreign_stack: 'la pila la gestiona Portainer (u otra herramienta), el actualizador no la vuelve a crear; no se cambió nada',
+        config_mismatch: 'los archivos compose y el .env publicarían otros puertos o redes que los contenedores en ejecución (¿variables definidas en otro sitio, p. ej. BIND_ADDR?), no se reinició nada',
         unknown: 'error desconocido',
+      },
+      foreign: {
+        portainer: 'Esta pila la gestiona Portainer. «Actualizar ahora» la vuelve a desplegar a través de Portainer (webhook o API de Admin → Ajustes → Actualizaciones). El actualizador nunca vuelve a crear por sí mismo una pila de Portainer, así que volver a la versión anterior no está disponible aquí.',
+        manual: 'Esta pila la gestiona Portainer (u otra herramienta), por eso el actualizador no la actualiza: al volver a crearla desde aquí se perderían las variables propias de la pila (p. ej. BIND_ADDR). Configura el webhook de Portainer en Admin → Ajustes → Actualizaciones o actualiza la pila en Portainer.',
+        started: 'Portainer está volviendo a desplegar la pila. FriendFlix se reiniciará en un momento.',
+        workdir: 'Esta pila se inició desde {dir}, pero el actualizador ve {projectDir}, por eso no la vuelve a crear (le faltaría el .env de ese directorio). Pon UPDATER_PROJECT_DIR={dir} en el .env de {dir} y ejecuta allí docker compose up -d una vez.',
       },
       unauthorized: 'Un actualizador responde pero rechaza la firma: INTERNAL_SECRET es distinto en el backend y en el actualizador.',
       invalid: 'El actualizador envió una respuesta ilegible.',
       log: 'Registro',
-      reauthBack: 'Sesión iniciada de nuevo. Inicia la tarea otra vez.',
       auto: {
         title: 'Actualizaciones automáticas',
         label: 'Actualizaciones automáticas',
@@ -505,6 +517,7 @@ const es: Translation<typeof de> = {
       update: '{actor} inició una actualización',
       updater_start: '{actor} inició una tarea del actualizador',
       updater_result: 'Tarea del actualizador terminada',
+      update_result: 'Portainer respondió al redespliegue',
     },
     session: {
       revoke_others: '{actor} cerró sesión en otros dispositivos',
@@ -564,6 +577,9 @@ const es: Translation<typeof de> = {
     },
     approvals: {
       pending_approvals: { one: '{n} inicio de sesión espera aprobación', many: '{n} inicios de sesión esperan aprobación', other: '{n} inicios de sesión esperan aprobación' },
+    },
+    config: {
+      removed_env: { one: '{n} nombre de variable antiguo en .env se ignora desde la 2.0: el servicio de solicitudes usa ahora REQUESTS_URL y REQUESTS_API_KEY', many: '{n} nombres de variable antiguos en .env se ignoran desde la 2.0: el servicio de solicitudes usa ahora REQUESTS_URL y REQUESTS_API_KEY', other: '{n} nombres de variable antiguos en .env se ignoran desde la 2.0: el servicio de solicitudes usa ahora REQUESTS_URL y REQUESTS_API_KEY' },
     },
   },
 };

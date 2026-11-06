@@ -1146,3 +1146,94 @@ describe('cast engine: Netflix-like next episode (credits, receiver queue, skip)
     expect(get(env.out)?.skip).toBeUndefined();
   });
 });
+
+describe('cast engine: FriendFlix\'s own receiver (CAST_RECEIVER_APP_ID)', () => {
+  beforeEach(() => { noteInteraction(T0); consumeAutoplay(); });
+  const ep1 = { itemId: 'ep1', seriesId: 's1', title: 'Bright Valley', subtitle: 'S1:E1 First', isEpisode: true };
+  /** the custom receiver functions of #lib/cast (the default setup() has none: Default Media Receiver behaviour) */
+  function custom(env: Env) {
+    const sent: Array<Record<string, any>> = [];
+    let rx: ((m: Record<string, unknown>) => void) | null = null;
+    Object.assign(env.cast, {
+      castCustomReceiver: () => true,
+      castBody: (b: Record<string, unknown>) => (b.via === 'airplay' ? b : { ...b, receiver: true }),
+      castSendMessage: vi.fn((m: Record<string, any>) => { sent.push(m); }),
+      onReceiverMessage: vi.fn((fn: (m: Record<string, unknown>) => void) => { rx = fn; return () => { rx = null; }; }),
+    });
+    env.setQueue(() => 7);
+    return { sent, rx: (m: Record<string, unknown>) => rx?.(m), items: () => sent.filter((m) => m.t === 'item') };
+  }
+
+  it('tells the TV its texts, subtitle style, segments and the queued episode; token requests ask for the report token', async () => {
+    const env = setup({ prefs: { subtitleStyle: { size: 'l', color: 'yellow', background: 'solid', font: 'serif' } } });
+    const tv = custom(env);
+    env.segs.ep1 = [{ type: 'intro', start: 10, end: 80 }];
+    await playingSession(env, ep1);
+    await flush();
+    const ui = tv.sent.find((m) => m.t === 'ui')!;
+    expect(ui).toMatchObject({ sub: { size: 'l', color: 'yellow', background: 'solid', font: 'serif' }, countdown: COUNTDOWN_SECONDS });
+    expect(ui.strings.startsIn).toHaveLength(COUNTDOWN_SECONDS);
+    expect(ui.strings.upNext).toContain('{label}');
+    expect(env.queuePosts()[0]!.init.body).toEqual({ itemId: 'ep2', maxBitrate: 8_000_000, next: true, after: 'c1', receiver: true });
+    expect(tv.items().at(-1)).toEqual({ t: 'item', castId: 'c1', episode: true, segs: [{ type: 'intro', start: 10, end: 80 }],
+      next: { castId: 'q1', label: expect.stringContaining('Second'), auto: true, ask: false } });
+    await env.engine.playOnTv('film', 0);
+    expect(env.tokenPosts().at(-1)!.init.body).toMatchObject({ itemId: 'film', receiver: true });
+  });
+
+  it('the TV runs the countdown: the phone does not make the receiver jump as well', async () => {
+    const env = setup();
+    custom(env);
+    await playingSession(env, ep1);
+    env.state.set(playing({ currentTime: 1780 }));
+    await flush();
+    await env.advance(COUNTDOWN_SECONDS * 1000 + ADVANCE_WAIT_MS);
+    expect(env.cast.castQueueNext).not.toHaveBeenCalled();
+    expect(env.tokenPosts()).toHaveLength(0);
+    env.state.set(playing({ currentTime: 3, contentId: '/media/c/q1/master.m3u8' }));
+    await flush();
+    expect(get(env.out)).toMatchObject({ itemId: 'ep2', state: 'playing' });
+  });
+
+  it('still watching due: the episode is still queued, paused (autoplay false, ask), and counts once it is there paused', async () => {
+    noteInteraction(T0 - 80 * 60_000); // nobody touched anything for 80 min: by the end the ask is due
+    const env = setup();
+    const tv = custom(env);
+    await playingSession(env, ep1);
+    await flush();
+    expect(env.cast.queueOnCast).toHaveBeenCalledWith(expect.objectContaining({ castId: 'q1' }), false);
+    expect(tv.items().at(-1)!.next).toMatchObject({ castId: 'q1', auto: true, ask: true });
+    env.state.set(playing({ currentTime: 0, paused: true, state: 'paused', contentId: '/media/c/q1/master.m3u8' }));
+    await flush();
+    expect(env.reports()).toEqual(['stop', 'start']);
+    expect(get(env.out)).toMatchObject({ itemId: 'ep2', state: 'playing', paused: true });
+    // answered on the TV: the chain of unattended autoplays starts over
+    tv.rx({ t: 'interaction' });
+    expect(shouldAsk(T0, { stillWatching: true, stillWatchingEpisodes: 3 })).toBe(false);
+  });
+
+  it('cancel on the TV: like cancelNext (queue item dropped, token revoked, TV told)', async () => {
+    const env = setup();
+    const tv = custom(env);
+    await playingSession(env, ep1);
+    env.state.set(playing({ currentTime: 1780 }));
+    await flush();
+    tv.rx({ t: 'cancel' });
+    expect(env.cast.castQueueRemove).toHaveBeenCalledWith(7);
+    expect(env.deletes()).toEqual(['q1']);
+    expect(get(env.out)?.next?.startsAt).toBeNull();
+    expect(tv.items().at(-1)!.next).toBeNull();
+    await env.advance(COUNTDOWN_SECONDS * 1000);
+    expect(env.tokenPosts()).toHaveLength(0);
+  });
+
+  it('without the custom functions nothing is sent and still watching blocks the queue as before', async () => {
+    noteInteraction(T0 - 80 * 60_000);
+    const env = setup();
+    env.setQueue(() => 7);
+    await playingSession(env, ep1);
+    await flush();
+    expect(env.queuePosts()).toHaveLength(0);
+    expect(env.cast.queueOnCast).not.toHaveBeenCalled();
+  });
+});
