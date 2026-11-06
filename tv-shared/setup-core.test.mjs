@@ -1,13 +1,14 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { test } from 'node:test';
+import { test, mock } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
+import { setImmediate } from 'node:timers';
 
 // setup-core.js is a classic script that fills window.FFSetupCore; evaluate it here with a stand-in window
 const win = {};
 new Function('window', 'URL', readFileSync(new URL('./setup-core.js', import.meta.url), 'utf8'))(win, URL);
-const { normaliseServer, checkVersionAnswer, watchUrl } = win.FFSetupCore;
+const { normaliseServer, checkVersionAnswer, watchUrl, askVersion } = win.FFSetupCore;
 
 test('normalise_addresses', () => {
   assert.deepEqual(normaliseServer('  Friend.Example.com/ '), { ok: true, origin: 'https://friend.example.com' });
@@ -52,4 +53,55 @@ test('checkVersionAnswer: authOrigin must be https host only, else null', () => 
 test('watchUrl', () => {
   assert.equal(watchUrl('https://friend.example.com', false), 'https://friend.example.com/tv?ff_app=tizen');
   assert.equal(watchUrl('https://friend.example.com', true), 'https://friend.example.com/tv?ff_app=tizen&probe=1');
+});
+
+test('watchUrl: app marker defaults to tizen', () => {
+  assert.equal(win.FFSetupCore.watchUrl('https://friend.example.com', false), 'https://friend.example.com/tv?ff_app=tizen');
+});
+
+test('watchUrl: webos marker, probe flag', () => {
+  assert.equal(win.FFSetupCore.watchUrl('https://friend.example.com', true, 'webos'), 'https://friend.example.com/tv?ff_app=webos&probe=1');
+});
+
+const reply = (status, body) => ({ status, json: async () => { if (body instanceof Error) throw body; return body; } });
+
+test('askVersion: a 200 with a valid answer is ok', async () => {
+  const urls = [];
+  const fetch = async (url, opts) => { urls.push([url, opts.redirect, opts.credentials]); return reply(200, { ...answer, authOrigin: 'https://auth.example.com' }); };
+  assert.deepEqual(await askVersion('https://friend.example.com', { fetch }), { ok: true, authOrigin: 'https://auth.example.com' });
+  assert.deepEqual(urls, [['https://friend.example.com/api/version', 'error', 'omit']]);
+});
+
+test('askVersion: non-200, bad JSON and foreign JSON are notFriendflix', async () => {
+  const notFf = { ok: false, reason: 'notFriendflix' };
+  assert.deepEqual(await askVersion('https://x.example.com', { fetch: async () => reply(404, answer) }), notFf);
+  assert.deepEqual(await askVersion('https://x.example.com', { fetch: async () => reply(200, new Error('bad json')) }), notFf);
+  assert.deepEqual(await askVersion('https://x.example.com', { fetch: async () => reply(200, { hello: 1 }) }), notFf);
+});
+
+test('askVersion: a fetch error is unreachable', async () => {
+  assert.deepEqual(await askVersion('https://x.example.com', { fetch: async () => { throw new Error('network'); } }), { ok: false, reason: 'unreachable' });
+});
+
+test('askVersion: a fetch that never settles is unreachable after 15 s', async () => {
+  mock.timers.enable({ apis: ['setTimeout'] });
+  try {
+    let aborted = false;
+    const fetch = (url, opts) => { opts.signal.addEventListener('abort', () => { aborted = true; }); return new Promise(() => {}); };
+    const pending = askVersion('https://x.example.com', { fetch });
+    mock.timers.tick(14999);
+    let settled = false;
+    pending.then(() => { settled = true; });
+    await new Promise((r) => setImmediate(r));
+    assert.equal(settled, false);
+    mock.timers.tick(1);
+    assert.deepEqual(await pending, { ok: false, reason: 'unreachable' });
+    assert.equal(aborted, true);
+  } finally {
+    mock.timers.reset();
+  }
+});
+
+test('MESSAGES covers every reason', () => {
+  for (const k of ['empty', 'http', 'invalid', 'unreachable', 'notFriendflix']) assert.ok(win.FFSetupCore.MESSAGES[k]);
 });

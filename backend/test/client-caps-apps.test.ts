@@ -22,4 +22,11 @@ describe('parseClientCaps (apps)', () => {
   it('still ignores an unknown client', () => {
     expect(parseClientCaps(caps({ client: 'ios' }))).toBeNull();
   });
+  it('accepts the LG app', () => {
+    expect(parseClientCaps({ client: 'webos', appVersion: '2.3.0', containers: ['mkv'], video: [{ codec: 'hevc', maxHeight: 2160, profiles: ['main 10'] }], audio: ['eac3'], subtitles: [] }))
+      .toEqual({ client: 'webos', appVersion: '2.3.0', containers: ['mkv'], video: [{ codec: 'hevc', maxHeight: 2160, profiles: ['main 10'] }], audio: ['eac3'], subtitles: [] });
+  });
+  it('still rejects an unknown client', () => {
+    expect(parseClientCaps({ client: 'roku', appVersion: '2.3.0', containers: ['mp4'], video: [], audio: ['aac'], subtitles: [] })).toBeNull();
+  });
 });

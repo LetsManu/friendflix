@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # Packages one Samsung TV shell into a .wgt (spec §8).
 #   package.sh <app|probe> <outdir> [--sign]
-# Builds in a temp copy of tizen/<app> (the tracked dirs stay untouched): adds tizen/shared/setup-core.js (and, for the
+# Builds in a temp copy of tizen/<app> (the tracked dirs stay untouched): adds tv-shared/setup-core.js (and, for the
 # probe, tizen/app/setup.js), stamps version.json's version into config.xml, runs `tizen package -t wgt` and writes
 # <outdir>/FriendFlix-<version>.wgt or <outdir>/FriendFlix-probe-<version>.wgt.
 # --sign signs with the security profile `friendflix` (the owner's Samsung certificates, tizen-release.yml); without it
@@ -34,7 +34,7 @@ src="$build/$app"
 cp -R "$tizen_dir/$app" "$src"
 # leftovers of an earlier in-place build never go into the package
 rm -f "$src"/author-signature.xml "$src"/signature*.xml "$src"/.manifest.tmp "$src"/*.wgt
-cp "$tizen_dir/shared/setup-core.js" "$src/setup-core.js"
+cp "$tizen_dir/../tv-shared/setup-core.js" "$src/setup-core.js"
 [ "$app" = probe ] && cp "$tizen_dir/app/setup.js" "$src/setup.js"
 sed -i.bak "/<widget /s/ version=\"[^\"]*\"/ version=\"$version\"/" "$src/config.xml" && rm -f "$src/config.xml.bak"
 grep -q "<widget [^>]*version=\"$version\"" "$src/config.xml" || { echo "could not stamp the version into config.xml" >&2; exit 1; }
