@@ -17,6 +17,7 @@
   import { badges, wantBadge } from '#lib/fresh';
   import HoverPreview from '#lib/HoverPreview.svelte';
   import { hoverOwner, nextHoverUid } from '#lib/hover';
+  import { isBackKey } from '#lib/spatial';
 
   export let item: Item;
   /** shows a remove (X) button and emits `remove` (used for Weiterschauen) */
@@ -89,6 +90,20 @@
   // keyboard focus only: a mouse click on a button must not open (or pin) the preview
   function onFocusIn(e: FocusEvent) { if ((e.target as HTMLElement).matches(':focus-visible')) { focusCard = true; scheduleOpen(600); } }
   function onFocusOut(e: FocusEvent) { if (!(e.currentTarget as HTMLElement).contains(e.relatedTarget as Node | null)) { focusCard = false; clearTimeout(openT); } }
+  // TV: OK held on a card opens its actions sheet (the small remove / more buttons are hidden there); a short OK opens the title
+  const LONG_PRESS_MS = 600;
+  let pressT: ReturnType<typeof setTimeout> | null = null;
+  function thumbKeyDown(e: KeyboardEvent) {
+    if (e.key !== 'Enter' || !tvMode()) return;
+    e.preventDefault(); // the link would follow on keydown; a short press follows it on keyup instead
+    if (e.repeat || pressT) return;
+    pressT = setTimeout(() => { pressT = null; void openSheet(); }, LONG_PRESS_MS);
+  }
+  function thumbKeyUp(e: KeyboardEvent) {
+    if (e.key !== 'Enter' || !tvMode() || !pressT) return;
+    clearTimeout(pressT); pressT = null;
+    e.preventDefault(); thumbEl?.click();
+  }
   function onKey(e: KeyboardEvent) {
     // Tab from the thumbnail walks into the open pop-out (it lives in <body>, outside the tab order of the row)
     if (hp && e.key === 'Tab' && !e.shiftKey && e.target === thumbEl) { e.preventDefault(); hpComp?.focusFirst(); }
@@ -100,7 +115,7 @@
     closePreview();
     (next ?? thumbEl)?.focus();
   }
-  onDestroy(() => { clearTimeout(openT); clearTimeout(closeT); hoverOwner.update((o) => (o === uid ? '' : o)); });
+  onDestroy(() => { clearTimeout(openT); clearTimeout(closeT); if (pressT) clearTimeout(pressT); hoverOwner.update((o) => (o === uid ? '' : o)); });
 
   // ---- touch action sheet (the hover pop-up is not reachable without a pointer) ----
   let sheet = false, sheetEl: HTMLDivElement, moreBtn: HTMLButtonElement;
@@ -108,7 +123,7 @@
   async function openSheet() { sheet = true; await tick(); sheetEl?.querySelector<HTMLElement>('a[href],button')?.focus(); }
   function closeSheet(refocus = true) { sheet = false; if (refocus) moreBtn?.focus(); }
   function sheetKey(e: KeyboardEvent) {
-    if (e.key === 'Escape') { e.stopPropagation(); closeSheet(); return; }
+    if (e.key === 'Escape' || (tvMode() && isBackKey(e))) { e.preventDefault(); e.stopPropagation(); closeSheet(); return; }
     if (e.key !== 'Tab') return;
     const f = [...sheetEl.querySelectorAll<HTMLElement>('a[href],button:not([disabled]),input,select,textarea,[tabindex]:not([tabindex="-1"])')];
     if (!f.length) return;
@@ -139,7 +154,7 @@
 <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
 <article class="card" class:poster={!!posterSrc} on:mouseenter={cardEnter} on:mouseleave={cardLeave} on:focusin={onFocusIn} on:focusout={onFocusOut} on:keydown={onKey}>
   <div class="media">
-  <a class="thumb" {href} bind:this={thumbEl} aria-label={item.name + (sub ? ', ' + sub : '')}>
+  <a class="thumb" {href} bind:this={thumbEl} on:keydown={thumbKeyDown} on:keyup={thumbKeyUp} aria-label={item.name + (sub ? ', ' + sub : '')}>
     {#if posterOnly}<img class="blur" loading="lazy" decoding="async" {src} srcset={srcs} {sizes} alt="" aria-hidden="true" />{/if}
     {#if src}<img bind:this={imgEl} class:contain={posterOnly} class:spoil={isSpoiler(item, $prefs)} loading={priority ? 'eager' : 'lazy'} fetchpriority={priority ? 'high' : undefined} decoding="async" {src} srcset={srcs} {sizes} alt="" width={posterSrc ? 200 : 320} height={posterSrc ? 300 : 180} />{/if}
     {#if tag?.kind === 'leaving'}<span class="newep leave">{$t(tag.key, { n: tag.n })}</span>
@@ -168,7 +183,7 @@
 {#if sheet}
   <!-- svelte-ignore a11y_click_events_have_key_events -->
   <div class="scrim" use:portal on:click={() => closeSheet()} role="presentation"></div>
-  <div class="sheet" tabindex="-1" use:portal bind:this={sheetEl} role="dialog" aria-modal="true" aria-label={$t('home.card.actionsFor', { name: item.name })} on:keydown={sheetKey}>
+  <div class="sheet tvsheet" tabindex="-1" use:portal bind:this={sheetEl} role="dialog" aria-modal="true" aria-label={$t('home.card.actionsFor', { name: item.name })} on:keydown={sheetKey}>
     <p class="st">{item.name}</p>
     <a class="act" href={href} on:click={() => closeSheet(false)}><Icon name="play" size={20} />{$t('home.card.play')}</a>
     <button type="button" class="act" aria-haspopup="dialog" on:pointerenter={prefetchModal} on:click={(e) => { if (item.type !== 'Episode') primeItem(item); moreBtn?.focus(); openModal(e, detail); closeSheet(false); }}><Icon name="chevron-down" size={20} />{$t('home.card.moreInfo')}</button>
@@ -217,8 +232,14 @@
   .mb { display: none; position: absolute; right: 0; bottom: 0; z-index: 3; width: 44px; min-height: 44px; height: 44px; padding: 0; background: none; border: 0; color: #fff; place-items: center; }
   .mb span { display: grid; place-items: center; width: 26px; height: 26px; border-radius: 50%; background: rgba(16,20,24,.7); border: 1.5px solid rgba(255,255,255,.6); font-size: 1rem; line-height: 1; padding-bottom: .3rem; }
   @media (hover: none), (pointer: coarse) { .rm { display: grid; } .mb { display: grid; } .cap { right: 2.8rem; } }
+  /* TV: no small overlay buttons on the card (hard to reach with a remote); OK held opens the same actions */
+  :global(html.tv) .rm, :global(html.tv) .mb { display: none; }
+  :global(html.tv) .cap { right: .6rem; }
   .scrim { position: fixed; inset: 0; background: rgba(0,0,0,.6); z-index: 84; }
   .sheet { outline: none; position: fixed; z-index: 85; left: 0; right: 0; bottom: 0; max-width: 560px; margin: 0 auto; background: var(--surface); border-radius: 14px 14px 0 0; padding: .6rem .6rem calc(.6rem + var(--safe-bottom)); box-shadow: 0 -10px 40px rgba(0,0,0,.7); display: flex; flex-direction: column; gap: .1rem; }
+  /* TV: the card's actions (OK held) as a centred dialog instead of a bottom sheet */
+  :global(html.tv) .sheet { top: 50%; bottom: auto; left: 50%; right: auto; width: min(36rem, 80vw); transform: translate(-50%, -50%); border-radius: 14px; padding: 1rem; }
+  :global(html.tv) .act { min-height: 56px; font-size: 1.1rem; justify-content: flex-start; }
   .st { margin: .2rem 1rem .5rem; font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .act { display: flex; gap: .8rem; align-items: center; min-height: 48px; padding: 0 1rem; border: 0; border-radius: 8px; background: transparent; color: inherit; font: inherit; text-align: left; width: 100%; text-decoration: none; }
   .act:hover, .act:focus-visible { background: rgba(255,255,255,.08); }

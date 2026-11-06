@@ -180,6 +180,7 @@
   .row.m .track { padding: 0 var(--pad-x); margin: 0; scroll-snap-type: x proximity; -webkit-overflow-scrolling: touch; overscroll-behavior-x: contain; }
   .row.m .slot { flex: 0 0 var(--pw); }
   .row.m .arrow { display: none; }
+  :global(html.tv) .arrow { display: none; } /* TV: the D-pad scrolls the row; the edge strips only got in the way of the pointer */
   .row.m .rank { right: .3rem; top: .3rem; min-width: 1.5rem; height: 1.5rem; font-size: .78rem; }
   .row.m.land { --pw: calc((100vw - var(--pad-x)) / 2.15); }
 </style>

@@ -128,6 +128,26 @@ test.describe('LG app', () => {
     await expect(page).toHaveURL(new RegExp('/watch/' + MOVIE.id));
   });
 
+  test('cards on the TV: no small overlay buttons; OK held opens the actions, Back closes them, a short OK opens the title', async ({ page, api: _api }) => {
+    await asLgApp(page);
+    await playerWithInfo(page); // the TV home warms the playback info of its hero title
+    await page.goto('/?ff_app=webos');
+    const thumb = page.locator('.card .thumb').first();
+    await expect(thumb).toBeVisible();
+    await expect(page.locator('.card .rm, .card .mb').filter({ visible: true })).toHaveCount(0);
+    await thumb.focus();
+    await page.keyboard.down('Enter'); await page.waitForTimeout(800); await page.keyboard.up('Enter');
+    const sheet = page.locator('.sheet.tvsheet');
+    await expect(sheet).toBeVisible();
+    await expect(page).toHaveURL(/\/\?ff_app=webos$/); // held: nothing opened
+    await page.evaluate(() => { (document.activeElement ?? document.body).dispatchEvent(new KeyboardEvent('keydown', { keyCode: 461, key: 'Unidentified', bubbles: true, cancelable: true } as KeyboardEventInit)); }); // Back, at the focused action as on the TV
+    await expect(sheet).toHaveCount(0);
+    await thumb.focus();
+    const href = await thumb.getAttribute('href');
+    await page.keyboard.press('Enter'); // short: the title
+    await expect(page).toHaveURL(new RegExp(href!.replace(/[?]/g, '\\?') + '$'));
+  });
+
   test('green key opens the audio and subtitle menu', async ({ page, api: _api }) => {
     await asLgApp(page);
     await playerWithInfo(page);

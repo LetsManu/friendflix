@@ -9,6 +9,10 @@ All notable changes, grouped by what you notice. Each release has its own sectio
 - **OK no longer presses a hidden button.** The control bar lets go of its selected button when it hides, so OK after the bar disappeared pauses instead of, say, toggling subtitles again.
 - **The control bar stays while you use it.** Moving along it with the arrows keeps it shown; it hides 5 s after the last key on the TV (3 s elsewhere).
 
+### TV home
+- **No more tiny buttons on cards.** The small remove (×) and actions (⋯) buttons are gone on the TV; **hold OK** on a card for its actions (play, more info, watchlist, favourite, remove from Continue watching). Back closes them, a short OK still opens the title.
+- **The featured title fits on TV screens that report 1280×720.** Its logo no longer runs under the navigation; the synopsis shows two lines.
+
 ### LG TV app
 - **Change server with OK.** The start logo now says *Press OK to change server* for 3 s; OK, ▲ or the blue key open the address form.
 
