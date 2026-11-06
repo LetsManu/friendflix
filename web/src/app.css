@@ -121,9 +121,23 @@ html.tv { --nav-h: 76px; --pad-x: 3rem; }
 @media (min-width: 1700px) { html.tv { font-size: 125%; --nav-h: 84px; --pad-x: 4.2rem; } }
 /* the pointer (LG Magic Remote) stays usable; it hides itself after a few idle seconds */
 html.tv.idle-cursor, html.tv.idle-cursor * { cursor: none !important; }
-html.tv :focus-visible { outline: 4px solid #fff; outline-offset: 4px; box-shadow: 0 0 0 9px rgba(255, 79, 109, .6); border-radius: 8px; }
-html.tv .card:focus-within { transform: scale(1.1) !important; z-index: 6; transition-delay: 0s !important; }
-html.tv .card .thumb:focus-visible { box-shadow: 0 0 0 5px #fff, 0 12px 34px rgba(0, 0, 0, .7); outline: none; border-radius: var(--radius); }
+html.tv {
+  --bg: #000; --tv-ring: #fff; --tv-btn: #fff; --tv-btn-fg: #000; --tv-btn2: rgba(109, 109, 110, .7); --tv-btn2-fg: #fff;
+  --tv-radius: 4px; --tv-ease: cubic-bezier(.2, .8, .2, 1); --tv-t: 220ms; --tv-safe-x: 5vw; --tv-safe-y: 5vh;
+}
+html.tv :focus-visible { outline: 3px solid var(--tv-ring); outline-offset: 3px; box-shadow: none; }
+html.tv .card:focus-within { transform: scale(1.08) !important; z-index: 6; transition-delay: 0s !important; }
+html.tv .card .thumb:focus-visible { box-shadow: none; outline: 3px solid var(--tv-ring); outline-offset: 3px; border-radius: var(--radius); }
+.tv-btn, .tv-btn2 { display: inline-flex; align-items: center; justify-content: center; gap: .6rem; min-height: 56px; padding-inline: 1.8rem; border: 0; border-radius: var(--tv-radius); font: 700 1.4rem/1 'Inter Variable', Inter, system-ui, sans-serif; cursor: pointer; transition: transform var(--tv-t) var(--tv-ease); }
+.tv-btn { background: var(--tv-btn); color: var(--tv-btn-fg); }
+.tv-btn2 { background: var(--tv-btn2); color: var(--tv-btn2-fg); }
+.tv-btn:focus-visible, .tv-btn2:focus-visible { transform: scale(1.08); }
+.tv-eyebrow { text-transform: uppercase; letter-spacing: .3em; font-size: 1rem; color: var(--mut); }
+.tv-title { font-weight: 800; letter-spacing: -.02em; }
+/* TV: no backdrop-filter and no decorative blur (animate only transform/opacity). Spoiler blurs (.spoil, comment .blur) stay: they hide content. */
+html.tv *, html.tv *::before, html.tv *::after { backdrop-filter: none !important; -webkit-backdrop-filter: none !important; }
+html.tv .blurbg, html.tv .rbg, html.tv img.bl { filter: none !important; }
+html.tv .thumb .blur, html.tv .media .blur { filter: brightness(.55) !important; }
 html.tv .pop, html.tv .arrow, html.tv .tabbar, html.tv .sheet:not(.tvsheet) { display: none !important; }
 html.tv .track { scroll-snap-type: none; }
 html.tv main { padding-bottom: 0; }
