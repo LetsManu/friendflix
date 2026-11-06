@@ -34,6 +34,15 @@ class ServerAddressTest {
     }
 
     @Test
+    fun ipLiteralsBecomeHttpsOrigins() {
+        assertEquals("https://192.0.2.10", ok("192.0.2.10"))
+        assertEquals("https://192.0.2.10:8443", ok("192.0.2.10:8443/x"))
+        assertEquals("https://[2001:db8::1]", ok("[2001:db8::1]"))
+        assertEquals("https://[2001:db8::1]:8443", ok("https://[2001:DB8::1]:8443/home"))
+        assertEquals(ServerAddressError.INSECURE, failure("http://192.0.2.10"))
+    }
+
+    @Test
     fun httpIsInsecure() {
         assertEquals(ServerAddressError.INSECURE, failure("http://friend.example.com"))
         assertEquals(ServerAddressError.INSECURE, failure("HTTP://friend.example.com:8080/x"))

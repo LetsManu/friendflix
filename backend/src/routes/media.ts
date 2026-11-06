@@ -3,6 +3,7 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import type { Ctx } from '../ctx.js';
+import { parseClientCaps } from '../media/clientCaps.js';
 import { MediaError, type ItemDto, type TranscodeReason } from '../media/types.js';
 import type { JfUser, ProfileRow, UserRow } from '../types.js';
 import { methodOf } from '../playstats.js';
@@ -324,7 +325,10 @@ export function mediaRoutes(app: FastifyInstance, ctx: Ctx) {
       audioLang: z.string().max(16).optional(),
       /** why the viewer lowered maxBitrate (menu pick or auto-ABR); only used when that choice is the binding cap */
       reasonHint: z.enum(['network', 'manual']).optional(),
+      /** Android app: what the device can direct-play (parseClientCaps; anything invalid is ignored, never an error) */
+      caps: z.unknown().optional(),
     }).parse(req.body);
+    const clientCaps = parseClientCaps(b.caps);
     const role = (await effectiveLimits(ctx, req.user!))!;
     if ((await countLive(ctx, req.user!.id)) >= role.maxStreams) return reply.code(429).send({ error: 'max_streams', max: role.maxStreams });
     // outside the home networks the role's remote cap applies on top; the viewer may lower the quality, never raise it above the limit
@@ -333,7 +337,7 @@ export function mediaRoutes(app: FastifyInstance, ctx: Ctx) {
     const cap = Math.min(ceiling, b.maxBitrate ?? role.maxBitrate);
     const capReason: 'remoteCap' | 'roleCap' | 'manual' | 'network' = b.maxBitrate !== undefined && b.maxBitrate < ceiling ? (b.reasonHint ?? 'network') : remote && ceiling < role.maxBitrate ? 'remoteCap' : 'roleCap';
     // PlaybackInfo and the resume-position/trickplay lookup run in parallel (one Jellyfin /Items call instead of two sequential ones)
-    const opts = { maxBitrate: cap, capReason, maxHeight: role.maxHeight, startTicks: b.startTicks, audioIndex: b.audioIndex, audioLang: b.audioLang, noDirect: Boolean(role.maxHeight) || (!role.download && ctx.cfg.DIRECT_PLAY_REQUIRES_DOWNLOAD === 'true') };
+    const opts = { ...(clientCaps ? { clientCaps } : {}), maxBitrate: cap, capReason, maxHeight: role.maxHeight, startTicks: b.startTicks, audioIndex: b.audioIndex, audioLang: b.audioLang, noDirect: Boolean(role.maxHeight) || (!role.download && ctx.cfg.DIRECT_PLAY_REQUIRES_DOWNLOAD === 'true') };
     const [first, meta] = await Promise.all([ctx.jf.playbackInfo(req.jfUser!, b.itemId, opts), ctx.jf.playMeta(req.jfUser!, b.itemId)]);
     let info = first;
     // optional server step before the player loads the master playlist (decision call, audio/subtitle selection); Jellyfin has none

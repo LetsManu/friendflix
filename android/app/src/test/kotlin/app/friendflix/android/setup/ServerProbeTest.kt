@@ -44,6 +44,19 @@ class ServerProbeTest {
 
     @Test fun appEqualToMinAndroidIsFine() = assertTrue(run(json(extra = ""","minAndroid":"2.0.0"""")) is ProbeResult.Ok)
 
+    private fun auth(value: String) = (run(json(extra = ""","authOrigin":$value""")) as ProbeResult.Ok).authOrigin
+
+    @Test fun authOriginIsReadWhenItIsAnHttpsOrigin() {
+        assertEquals("https://auth.example.com/", auth("\"https://auth.example.com\"").toString())
+        assertEquals(8443, auth("\"https://auth.example.com:8443\"")?.port)
+        val bad = listOf(
+            "null", "\"\"", "\"http://auth.example.com\"", "\"https://auth.example.com/path\"", "\"https://u:p@auth.example.com\"",
+            "\"https://auth.example.com/?q=1\"", "\"javascript:alert(1)\"", "42",
+        )
+        for (b in bad) assertEquals(b, null, auth(b))
+        assertEquals(null, (run(json()) as ProbeResult.Ok).authOrigin)
+    }
+
     @Test fun serverOlderThanMinServer() = assertEquals(ProbeResult.ServerTooOld, run(json("1.9.9")))
 
     @Test fun versionsCompareNumerically() {

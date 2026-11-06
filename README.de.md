@@ -170,6 +170,14 @@ App-artige Oberfläche mit Tab-Leiste unten, einer Vorschau beim Antippen eines 
 
 **Downloads für Zug und Flugzeug:** Filme und Folgen herunterladen (bei Serien auch gleich die nächsten Folgen) und offline im Browser ansehen. Der Fortschritt wird beim nächsten Online-Sein abgeglichen. Lizenzen pro Gerät mit Ablaufdatum; funktioniert in Chrome, Edge, Firefox, Safari 17+ und als Home-Bildschirm-App auf iOS 17+. Auf Android (Chrome, Edge) laden Downloads auch im Hintergrund und bei geschlossener App weiter; auf dem iPhone pausieren sie, solange die App im Hintergrund ist, und laufen beim Öffnen sofort weiter.
 
+**Android-App:** FriendFlix als App für Android ab 8.0, geteilt über einen geschlossenen Test bei Google Play (oder als APK an jedem Release). Sie zeigt dieselbe Weboberfläche und bringt einen nativen Player (Direktwiedergabe, Bild-im-Bild, Ton im Hintergrund), Downloads im Hintergrund aufs Telefon oder eine SD-Karte, verschlüsselt gespeichert und offline abspielbar, Chromecast und Benachrichtigungen, die die App selbst bei deinem Server abholt – ohne Push-Dienst von Google, ohne Analyse. Installation, Einstellungen, Sicherheit und die Signatur-Schritte für den Betreiber: [docs/de/android.md](docs/de/android.md).
+
+**Windows-App:** FriendFlix als Programm für Windows 10 und 11, installiert aus dem GitHub-Release. Es zeigt dieselbe Weboberfläche und bringt einen nativen mpv-Player, der fast jede Datei direkt abspielt (AC3, DTS, TrueHD, HEVC, Bild-Untertitel), mit FriendFlix' eigener Bedienung, Fortsetzen und Fortschritt im Gleichklang mit Web, Android und TV, Tray-Symbol und automatischen Updates. Keine Downloads, kein Chromecast. Installation, Player-Tasten, Fehlersuche und die Update-Signatur-Schritte für den Betreiber: [docs/de/windows.md](docs/de/windows.md).
+
+**Samsung-TV-App:** FriendFlix für Samsung-Smart-TVs (Tizen 6.5 und neuer), vom PC aus über den Entwicklermodus mit einem Samsung-Zertifikat installiert. Diese erste Version ist ein Probe-Build plus die App-Hülle (Serveradresse, dann dein TV-Modus); der Player folgt, sobald die Probe zeigt, was der Fernseher abspielen kann. Einrichtung, Zertifikat und Probe: [docs/de/tizen.md](docs/de/tizen.md).
+
+**LG-TV-App:** FriendFlix für LG-Smart-TVs (webOS 22 und neuer), vom PC aus über den Entwicklermodus mit einem Installationsskript installiert, ohne Zertifikat. Sie öffnet deinen TV-Modus im Vollbild und sagt dem Server, was der Fernseher abspielen kann, damit Dateien, die der Fernseher selbst kann, nicht umgewandelt werden. Einrichtung, Fernbedienungstasten und Test-App: [docs/de/webos.md](docs/de/webos.md).
+
 <p align="center"><img src="docs/images/de/downloads.jpg" alt="Downloads-Seite mit fertigen, pausierten und vorbereiteten Downloads" width="700"></p>
 
 **Sieben Sprachen:** Die Oberfläche spricht **Deutsch, Englisch, Französisch, Spanisch, Italienisch, Türkisch und Polnisch**. Jedes Profil wählt seine eigene Sprache; beim ersten Login fragt FriendFlix einmal nach und schlägt die Browsersprache vor. Der Admin legt die Standardsprache der ganzen Instanz fest.
@@ -239,7 +247,7 @@ Eine neue Installation braucht davon nichts: Einrichtungsassistent und *Admin �
 | `BIND_ADDR` | `127.0.0.1` | Host-Adresse für die drei Ports – nie eine öffentliche Schnittstelle |
 | `WEB_PORT`, `BACKEND_PORT`, `GATEWAY_PORT` | `3080`, `3081`, `3082` | Host-Ports für den Reverse Proxy |
 | `FF_REGISTRY`, `FF_TAG` | `ghcr.io/letsmanu`, `latest` | Herkunft und Tag der Images. **Nur ohne Updater** (`compose.no-updater.yaml`): `FF_TAG` ist dann der Release-Kanal: `latest` = stabile Releases, `nightly` = jeder grüne Commit auf main, `2` / `2.0` / `2.0.0` (oder `sha-<7>`) zum Festnageln ([Release-Kanäle](docs/de/setup.md#release-kanäle-ohne-updater)). Mit Updater weglassen: den Kanal wählt *Admin → Update* |
-| `SESSION_TTL_SECONDS`, `SESSION_IDLE_SECONDS` | `28800`, `7200` | Maximale Sitzungsdauer (8 h) und Ablauf bei Inaktivität (2 h) |
+| `SESSION_TTL_SECONDS`, `SESSION_IDLE_SECONDS` | `7776000`, `7776000` | Maximale Sitzungsdauer und Ablauf bei Inaktivität (beide 90 Tage) |
 | `TZ` | `Europe/Vienna` | Zeitzone für geplante Jobs (Rückblick, Wiedergabe-Check, Backups) |
 | `AUTHENTIK_URL`, `AUTHENTIK_API_TOKEN`, `AUTHENTIK_ENROLL_FLOW` | leer | Einladungen, die auch das Authentik-Konto anlegen (alle drei nötig); URL und Token liefern der Admin-Nutzerseite auch den Zwei-Faktor-Stand und *Passwort-Link senden* |
 | `AUTHENTIK_RECOVERY_FLOW`, `AUTHENTIK_TOTP_SETUP_FLOW` | `default-recovery-flow`, `default-authenticator-totp-setup` | Wiederherstellungs-Flow, dessen E-Mail-Stage den Passwort-Link sendet (Authentik 2024.4 oder neuer); der zweite ist reserviert. Siehe [docs/de/authentik.md](docs/de/authentik.md#10-passwort-wiederherstellung-per-e-mail) |
@@ -382,6 +390,10 @@ npm run e2e                                     # Playwright: baut die Web-App u
 | Offline-Downloads (Plattformen, Speicher, Grenzen) | [docs/downloads.md](docs/downloads.md) |
 | TV-Modus und Handy als Fernbedienung | [docs/tv-mode.md](docs/tv-mode.md) |
 | Chromecast und AirPlay | [docs/cast.md](docs/cast.md) |
+| Android-App: Installation, Einstellungen, Offline, Benachrichtigungen, Signatur und Google Play | [docs/de/android.md](docs/de/android.md) |
+| Windows-App: Installation, Player-Tasten, Updates, Fehlersuche, Update-Signatur | [docs/de/windows.md](docs/de/windows.md) |
+| Samsung-TV-App: Entwicklermodus, Zertifikat, Installationsskript, Probe | [docs/de/tizen.md](docs/de/tizen.md) |
+| LG-TV-App: Entwicklermodus, Installationsskript, Fernbedienungstasten, Test-App | [docs/de/webos.md](docs/de/webos.md) |
 | Such- und Entdecken-API, Labels, Bald weg, Qualität, Regeln für Kinderprofile | [docs/discovery.md](docs/discovery.md) |
 | Themenlisten, Ruhiger Modus, Klang im Player, Handy-Verknüpfungen und Badge | [docs/personal.md](docs/personal.md) |
 | UI-Kit und Admin-Rahmen | [docs/ui-kit.md](docs/ui-kit.md) |

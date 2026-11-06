@@ -22,7 +22,7 @@ import { fmp4Playlist, spawnFfmpeg, splitFmp4, TS_TO_FMP4_ARGS, VIRTUAL_RE, virt
 import { extractEmbedded, sidecarToVtt, TEXT_SUB_CODECS, VttCache } from './subtitles.js';
 import { BifLookup, trickplayDto } from './trickplay.js';
 import { KeyedMutex, plexHttpFromClient, resolutionFor, rungHeight, startTranscode, stopTranscode, waitForIndex, type PlexHttp, type TranscodePlatform } from './transcode.js';
-import { BROWSER_CONTAINER, DIRECT_AUDIO, DIRECT_VIDEO, plexTranscodeReason, type PlexDecision, type ReasonFacts } from './reason.js';
+import { audioDirect, containerDirect, directAllow, plexTranscodeReason, videoDirect, type PlexDecision, type ReasonFacts } from './reason.js';
 
 // ---------------------------------------------------------------- Plex shapes (lenient: numbers are sometimes strings)
 
@@ -182,18 +182,20 @@ export class PlexPlayback {
     const video = r.streams.find((s) => Number(s.streamType) === 1);
     const container = String(r.media.container ?? r.part.container ?? '');
     const bitDepth = num(video?.bitDepth) ?? 8;
-    const videoOk = DIRECT_VIDEO.has(lc(r.media.videoCodec)) && bitDepth <= 8;
+    const allow = directAllow(opts.clientCaps);
+    const videoOk = videoDirect(lc(r.media.videoCodec), bitDepth, allow);
     const directOk = !cast && !opts.noDirect && audioIndex === undefined && withinCap && srcBps > 0 && srcBps <= opts.maxBitrate &&
-      BROWSER_CONTAINER.test(container) && videoOk && DIRECT_AUDIO.has(lc(r.media.audioCodec));
+      containerDirect(container, allow) && videoOk && audioDirect(lc(r.media.audioCodec), allow);
     const playing = audioIndex !== undefined ? r.streams[audioIndex] : r.streams[(audioTracks.find((a) => a.isDefault) ?? audioTracks[0])?.index ?? -1];
     const why: ReasonFacts | undefined = directOk ? undefined : {
       container, videoCodec: lc(r.media.videoCodec || video?.codec), bitDepth, audioCodec: lc(playing?.codec || r.media.audioCodec),
-      srcBps, srcHeight: height, maxBitrate: opts.maxBitrate, maxHeight: opts.maxHeight, audioIndex, capReason: opts.capReason,
+      srcBps, srcHeight: height, maxBitrate: opts.maxBitrate, maxHeight: opts.maxHeight, audioIndex, capReason: opts.capReason, ...(allow ? { allow } : {}),
     };
     // The Web profile stream-copies compatible sources only without a bitrate limit: send one when the source exceeds the cap, its
     // bitrate is unknown, the video has to be converted anyway, or for cast. A converted stream also gets the rung's height (and the
     // role's height cap), so a 4K source comes out at the chosen quality instead of a size Plex picks itself.
-    const limit = cast || srcBps === 0 || srcBps > opts.maxBitrate || !videoOk;
+    // (the browser decision only: the app's caps decide direct play, never whether a converted stream is limited)
+    const limit = cast || srcBps === 0 || srcBps > opts.maxBitrate || !videoDirect(lc(r.media.videoCodec), bitDepth);
     const boxH = Math.min(limit ? rungHeight(opts.maxBitrate) : Infinity, opts.maxHeight || Infinity);
 
     // a queued next episode's cast gets a cast-only session (mediapaths.ts verifyQueuedSession)

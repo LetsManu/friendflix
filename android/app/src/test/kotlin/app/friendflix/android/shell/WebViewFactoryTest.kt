@@ -75,6 +75,33 @@ class WebViewFactoryTest {
         assertFalse(view.webViewClient.shouldOverrideUrlLoading(view, Req("https://other.evil.test/", main = false)))
     }
 
+    private val auth = OriginPolicy("https://auth.example.com".toHttpUrl())
+
+    @Test fun authOriginStaysInWebViewInTheMainFrame() {
+        val view = WebViewFactory.create(context, policy, "2.0.0", authOrigin = auth) { error("must not open externally") }
+        for (u in listOf("https://auth.example.com/application/o/authorize/?client_id=c", "https://AUTH.example.com:443/if/flow/x/")) {
+            assertFalse(u, view.webViewClient.shouldOverrideUrlLoading(view, Req(u)))
+        }
+    }
+
+    @Test fun authOriginLookalikesAndOtherPortsAreHandedOut() {
+        val opened = mutableListOf<String>()
+        val view = WebViewFactory.create(context, policy, "2.0.0", authOrigin = auth) { opened += it.toString() }
+        val foreign = listOf(
+            "https://auth.example.com:8443/x", "http://auth.example.com/x", "https://auth.example.com.evil.test/x",
+            "https://sub.auth.example.com/x", "https://authexample.com/x",
+        )
+        for (u in foreign) assertTrue(u, view.webViewClient.shouldOverrideUrlLoading(view, Req(u)))
+        assertEquals(foreign, opened)
+    }
+
+    @Test fun withoutAuthOriginTheIdentityProviderIsHandedOut() {
+        var opened: Uri? = null
+        val view = WebViewFactory.create(context, policy, "2.0.0") { opened = it }
+        assertTrue(view.webViewClient.shouldOverrideUrlLoading(view, Req("https://auth.example.com/application/o/authorize/")))
+        assertEquals("https://auth.example.com/application/o/authorize/", opened.toString())
+    }
+
     @Test fun chooserIntentWrapsViewIntent() {
         val i = ExternalLinks.chooser(Uri.parse("https://other.evil.test/x"), "Open with")
         assertEquals(Intent.ACTION_CHOOSER, i.action)
@@ -104,6 +131,23 @@ class PageStartedBackstopTest {
         assertEquals(1, view.stopped)
         assertEquals(listOf("https://other.evil.test/post"), opened.map { it.toString() })
         assertEquals("https://friend.example.com/", org.robolectric.Shadows.shadowOf(view).lastLoadedUrl)
+    }
+
+    @Test fun authOriginIsLetThroughOnlyWhenKnown() {
+        val view = RecordingWebView(context)
+        val client = ShellWebViewClient(policy) { error("must not open") }
+        client.authOrigin = OriginPolicy("https://auth.example.com".toHttpUrl())
+        client.onPageStarted(view, "https://auth.example.com/application/o/authorize/?x=1", null)
+        assertEquals(0, view.stopped)
+        val opened = mutableListOf<Uri>()
+        val other = ShellWebViewClient(policy) { opened += it }
+        other.authOrigin = OriginPolicy("https://auth.example.com".toHttpUrl())
+        other.onPageStarted(view, "https://auth.example.com:8443/x", null)
+        assertEquals(1, view.stopped)
+        other.authOrigin = null
+        other.onPageStarted(view, "https://auth.example.com/x", null)
+        assertEquals(2, view.stopped)
+        assertEquals(2, opened.size)
     }
 
     @Test fun appOriginAndBlankDoNothing() {

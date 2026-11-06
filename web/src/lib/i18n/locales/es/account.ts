@@ -82,6 +82,7 @@ const es: Translation<typeof de> = {
   },
   settings: {
     pageTitle: 'Ajustes',
+    app: { title: 'App en este dispositivo', hint: 'La ubicación de las descargas, solo con wifi, el sonido en segundo plano, las notificaciones y cerrar sesión en este dispositivo se configuran en la app.', open: 'Abrir ajustes de la app' },
     title: 'Ajustes de reproducción',
     lead: 'Se aplican en todos tus dispositivos y solo te afectan a ti.',
     autoplayNext: 'Reproducir automáticamente el siguiente episodio',

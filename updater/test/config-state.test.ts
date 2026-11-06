@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { loadConfig } from '../src/config.js';
+import { StepError } from '../src/docker.js';
 import { selfUpdate } from '../src/selfUpdate.js';
 import { DEFAULT_STATE, fileStore, sanitize } from '../src/state.js';
 
@@ -73,9 +74,14 @@ describe('self-update helper', () => {
     expect(await selfUpdate({ FF_TAG: 'nightly;id' }, d)).toBe(2);
     expect(await selfUpdate({}, d)).toBe(2);
     expect(await selfUpdate({ FF_TAG: 'latest' }, { up: async () => { throw new Error('x'); } })).toBe(1);
-    // the helper first settles on the stack's compose files (as the running updater does)
+    // the helper first runs the same checks as the running updater (the stack's compose files, own stack, unchanged ports and
+    // networks, the expected image) and recreates nothing when one fails
     const order: string[] = [];
-    expect(await selfUpdate({ FF_TAG: 'latest' }, { refreshFiles: async () => { order.push('files'); return []; }, up: async () => { order.push('up'); } })).toBe(0);
-    expect(order).toEqual(['files', 'up']);
+    const images = async (t: string, s: readonly string[]) => { order.push(`images ${t} ${s.join(',')}`); return {}; };
+    expect(await selfUpdate({ FF_TAG: 'latest' }, { images, up: async () => { order.push('up'); } })).toBe(0);
+    expect(order).toEqual(['images latest updater', 'up']);
+    order.length = 0;
+    expect(await selfUpdate({ FF_TAG: 'latest' }, { images: async () => { throw new StepError('foreign_stack'); }, up: async () => { order.push('up'); } })).toBe(1);
+    expect(order).toEqual([]);
   });
 });

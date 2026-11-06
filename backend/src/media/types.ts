@@ -8,6 +8,7 @@
  * 'SortName', 'DateCreated', 'PremiereDate', 'CommunityRating', 'PlayCount', 'DatePlayed', 'Random', comma-combinable).
  * See docs/architecture.md, "Media server seam".
  */
+import type { ClientCaps } from './clientCaps.js';
 import type { RoleTemplate } from '../roles.js';
 import type { JfUser } from '../types.js';
 
@@ -332,7 +333,7 @@ export interface MediaRuntime {
   dispatch(e: MediaEvent): Promise<void>;
   log: { warn(o: unknown, msg?: string): void; info(o: unknown, msg?: string): void };
 }
-export interface PlaybackOptions { maxBitrate: number; maxHeight?: number | null; startTicks?: number; audioIndex?: number; audioLang?: string; cast?: boolean; noDirect?: boolean; /** which cap is the lowest one, for PlaybackDto.transcodeReason */ capReason?: 'remoteCap' | 'roleCap' | 'manual' | 'network';
+export interface PlaybackOptions { maxBitrate: number; /** validated device capability block (Android app): says what the device itself can direct-play; the role caps above always win */ clientCaps?: ClientCaps | null; maxHeight?: number | null; startTicks?: number; audioIndex?: number; audioLang?: string; cast?: boolean; noDirect?: boolean; /** which cap is the lowest one, for PlaybackDto.transcodeReason */ capReason?: 'remoteCap' | 'roleCap' | 'manual' | 'network';
   /**
    * a queued next episode's cast (routes/cast.ts `next`): the play session of the running cast it follows, resolved
    * by castPredecessor() on the server (never taken from the client). A server that counts streams itself (Plex) lets the new
