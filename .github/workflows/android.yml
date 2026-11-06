@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: 2026 Manuel Weißböck
 # SPDX-License-Identifier: AGPL-3.0-or-later
-# Android app CI: lint, unit tests and an unsigned release build (APK uploaded as artifact) on every PR that touches the
+# Android app CI: lint, unit tests and an unsigned release build (APK uploaded as artifact) on every PR (and push to main) that touches the
 # app, the web bridge it talks to, or this workflow. The instrumented tests run on an API 34 emulator (GitHub only; there is
 # no emulator in the local sandbox). Signing keys live only in GitHub secrets and are used by android-release.yml (v* tags,
 # called from ci.yml), never here.
@@ -13,8 +13,16 @@ on:
       - "web/src/lib/native/**"
       - "version.json"
       - ".github/workflows/android.yml"
+  # Also on main: PRs pass one by one against an older main, so only a run on main sees merged updates together.
+  push:
+    branches: [main]
+    paths:
+      - "android/**"
+      - "web/src/lib/native/**"
+      - "version.json"
+      - ".github/workflows/android.yml"
 concurrency:
-  group: android-${{ github.event.pull_request.number }}
+  group: android-${{ github.event.pull_request.number || github.sha }}
   cancel-in-progress: true
 permissions: { contents: read }
 jobs:
