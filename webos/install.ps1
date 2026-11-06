@@ -6,7 +6,7 @@
 .DESCRIPTION
   Needs Node.js 20+. Installs the pinned ares CLI (@webos-tools/cli) into %LOCALAPPDATA%\friendflix-webos, downloads the
   .ipk and SHA256SUMS-webos.txt (latest release by default), checks the SHA-256, then registers the TV, fetches its key
-  with the Developer Mode passphrase (sent on stdin only, never on a command line) and installs and launches the app.
+  (ares asks for the Developer Mode passphrase itself; this script never sees it) and installs and launches the app.
   Works in Windows PowerShell 5.1 and pwsh 7.
 .EXAMPLE
   .\install.ps1 192.0.2.10
@@ -16,7 +16,7 @@
 [CmdletBinding()]
 param(
   [Parameter(Position = 0)] [string] $TvIp,
-  # the Developer Mode app's passphrase; better leave it out (it stays in the shell history) and be asked, hidden
+  # no longer used: ares asks for the Developer Mode passphrase itself (kept so old command lines still parse)
   [Parameter(Position = 1)] [string] $Passphrase,
   # install FriendFlix Test (the test app) instead of FriendFlix
   [switch] $Probe,
@@ -36,10 +36,9 @@ function Fail([string] $msg, [int] $code = 1) { [Console]::Error.WriteLine($msg)
 function Show-Usage([string] $why) {
   if ($why) { [Console]::Error.WriteLine($why) }
   [Console]::Error.WriteLine(@'
-Usage: .\install.ps1 <TvIp> [Passphrase] [-Probe] [-Ipk <file>] [-Version vX.Y.Z]
+Usage: .\install.ps1 <TvIp> [-Probe] [-Ipk <file>] [-Version vX.Y.Z]
   <TvIp>             the TV's IP address (TV: Settings > Network > your connection)
-  [Passphrase]       the Developer Mode app's passphrase. Better leave it out: it would stay in your shell history,
-                     and you are asked for it instead (hidden)
+                     LG's ares tool asks for the Developer Mode passphrase at "input passphrase:"
   -Probe             install FriendFlix Test (the test app) instead of FriendFlix
   -Ipk <file>        install this .ipk instead of downloading a release
   -Version vX.Y.Z    a specific release (default: the latest)
@@ -71,18 +70,14 @@ if ($Ipk -and -not (Test-Path -LiteralPath $Ipk -PathType Leaf)) { Fail "no such
 $BaseUrl = $BaseUrl.TrimEnd('/')
 
 $nodeMajor = $null
-try { $nodeMajor = [int]((& node -p 'process.versions.node.split(".")[0]' 2>$null) | Select-Object -First 1) } catch { $nodeMajor = $null }
+try { $nodeMajor = [int]((& node -p 'parseInt(process.versions.node, 10)' 2>$null) | Select-Object -First 1) } catch { $nodeMajor = $null }
 if ($null -eq $nodeMajor -or $nodeMajor -lt 20) { Fail 'Node.js 20 or newer is needed: https://nodejs.org/' }
 
-# the passphrase stays in memory: it goes to ares on stdin only, and is never printed or written anywhere
-if (-not $Passphrase) {
-  if (-not [Environment]::UserInteractive -or [Console]::IsInputRedirected) { Show-Usage 'no passphrase given and no terminal to ask on' }
-  $secure = Read-Host -AsSecureString "Developer Mode passphrase (shown in the TV's Developer Mode app)"
-  $bstr = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($secure)
-  try { $Passphrase = [Runtime.InteropServices.Marshal]::PtrToStringBSTR($bstr) }
-  finally { [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($bstr) }
-}
-if (-not $Passphrase) { Show-Usage 'the passphrase is empty' }
+# The passphrase is typed into ares' own prompt: piping it from PowerShell 5.1 into the .cmd shim reached ares changed,
+# so the TV refused the key (first run on a real TV). This script never reads, holds or passes it.
+if ($Passphrase) { [Console]::Error.WriteLine('The passphrase argument is no longer used: type it when ares asks "input passphrase:".') }
+$Passphrase = $null
+if (-not [Environment]::UserInteractive -or [Console]::IsInputRedirected) { Show-Usage 'ares asks for the passphrase: run this in a terminal' }
 
 if ($Probe) { $appId = 'com.friendflix.tv.probe'; $title = 'FriendFlix Test' } else { $appId = 'com.friendflix.tv'; $title = 'FriendFlix' }
 
@@ -90,7 +85,7 @@ $isWin = ($PSVersionTable.PSVersion.Major -lt 6) -or $IsWindows # 5.1 has no $Is
 if (-not $AresDir) {
   $cacheRoot = if ($env:LOCALAPPDATA) { $env:LOCALAPPDATA } elseif ($env:XDG_CACHE_HOME) { $env:XDG_CACHE_HOME } else { Join-Path $HOME '.cache' }
   $cache = Join-Path $cacheRoot 'friendflix-webos'
-  $want = (& node -p 'require(process.argv[1]).devDependencies["@webos-tools/cli"]' (Join-Path $PSScriptRoot 'package.json') | Select-Object -First 1)
+  $want = (& node -p 'require(process.argv[1]).devDependencies[process.argv[2]]' (Join-Path $PSScriptRoot 'package.json') '@webos-tools/cli' | Select-Object -First 1)
   $marker = Join-Path $cache ".ff-installed-$want"
   $npmCmd = if ($isWin) { 'npm.cmd' } else { 'npm' }
   if (-not (Test-Path -LiteralPath $marker)) {
@@ -171,9 +166,8 @@ try {
   & $setupDevice --remove friendflix-tv *> $null # an unknown device is fine
   & $setupDevice --add friendflix-tv -i "host=$TvIp" -i 'port=9922' -i 'username=prisoner'
   if ($LASTEXITCODE -ne 0) { Fail-Install 'could not register the TV' }
-  # the passphrase goes to ares on stdin only; no BOM, so the first character is not changed
-  $OutputEncoding = New-Object System.Text.UTF8Encoding($false)
-  $Passphrase | & $novacom --device friendflix-tv --getkey
+  Write-Host "Type the passphrase the Developer Mode app shows now, then press Enter:"
+  & $novacom --device friendflix-tv --getkey
   if ($LASTEXITCODE -ne 0) { Fail-Install "could not fetch the TV's key (wrong passphrase, or the key server is off)" }
   & $aresInstall --device friendflix-tv $ipkPath
   if ($LASTEXITCODE -ne 0) { Fail-Install 'the install failed' }

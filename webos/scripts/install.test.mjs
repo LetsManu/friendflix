@@ -211,13 +211,20 @@ test('install.ps1: the same install cases (pwsh)', { skip: !hasPwsh && 'pwsh not
   let r = await ps([]);
   assert.equal(r.code, 2);
   assert.deepEqual(r.calls, []);
-  r = await ps(['192.0.2.10', PASS]);
-  assert.equal(r.code, 0, r.out);
-  assert.equal(r.calls[0], 'ares-setup-device --remove friendflix-tv');
-  assert.equal(r.calls[3], `stdin: ${PASS}`);
-  assert.equal(r.calls.at(-1), 'ares-launch --device friendflix-tv com.friendflix.tv');
+  // ares asks for the passphrase itself; without a terminal the script stops before touching the TV, and a passphrase
+  // argument is ignored (never echoed, never passed on)
+  r = await ps(['192.0.2.10', PASS, '-Probe']);
+  assert.equal(r.code, 2, r.out);
+  assert.match(r.out, /run this in a terminal/);
+  assert.match(r.out, /no longer used/);
+  assert.deepEqual(r.calls, []);
   assert.ok(!r.out.includes(PASS));
-  r = await ps(['192.0.2.10', PASS, '-Probe', '-Version', 'v1.2.0']);
-  assert.equal(r.code, 0, r.out);
-  assert.equal(r.calls.at(-1), 'ares-launch --device friendflix-tv com.friendflix.tv.probe');
+});
+
+// Windows PowerShell 5.1 strips double quotes inside arguments to native programs, so a `node -p '..."x"...'` call
+// reaches Node as broken code (the Node 20+ check then failed with Node 26 installed). Native calls carry no `"`.
+test('install.ps1: no double quotes inside single-quoted arguments to node', () => {
+  const src = readFileSync(join(webosDir, 'install.ps1'), 'utf8');
+  const bad = src.split('\n').filter((l) => /&\s*node\b/.test(l) && /'[^']*"[^']*'/.test(l));
+  assert.deepEqual(bad, []);
 });

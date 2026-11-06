@@ -67,12 +67,12 @@ powershell -ExecutionPolicy Bypass -File .\webos\install.ps1 192.0.2.10 -Ipk .\F
 
 `-ExecutionPolicy Bypass` gilt nur für diesen einen Aufruf; ohne kann Windows das Skript verweigern.
 
-Die volle Form ist `webos/install.sh <tv-ip> [passphrase] [--probe] [--ipk <datei>] [--version vX.Y.Z]` beziehungsweise `webos/install.ps1 <TvIp> [Passphrase] [-Probe] [-Ipk <datei>] [-Version vX.Y.Z]`.
+Die volle Form ist `webos/install.sh <tv-ip> [passphrase] [--probe] [--ipk <datei>] [--version vX.Y.Z]` beziehungsweise `webos/install.ps1 <TvIp> [-Probe] [-Ipk <datei>] [-Version vX.Y.Z]`.
 
 | Argument | Bedeutung |
 |---|---|
 | `<tv-ip>` / `<TvIp>` | Die IPv4-Adresse des Fernsehers. Pflicht. |
-| `[passphrase]` / `[Passphrase]` | Die Passphrase des Entwicklermodus. **Lass sie weg**: Das Skript fragt dann danach, die Eingabe bleibt verdeckt. In der Kommandozeile bliebe sie in deinem Shell-Verlauf. |
+| `[passphrase]` (nur install.sh) | Die Passphrase des Entwicklermodus. **Lass sie weg**: Das Skript fragt dann danach, die Eingabe bleibt verdeckt. In der Kommandozeile bliebe sie in deinem Shell-Verlauf. `install.ps1` nimmt keine Passphrase: Das LG-Werkzeug fragt selbst bei `input passphrase:` danach (die Eingabe ist dort sichtbar). |
 | `--probe` / `-Probe` | **FriendFlix Test** (die Test-App) statt FriendFlix installieren. |
 | `--ipk <datei>` / `-Ipk <datei>` | Diese `.ipk` installieren, statt ein Release herunterzuladen. |
 | `--version vX.Y.Z` / `-Version vX.Y.Z` | Ein bestimmtes Release. Ohne: das neueste. |
@@ -88,7 +88,7 @@ Exit-Codes: `0` installiert; `1` fehlgeschlagen (das Skript gibt Hinweise aus); 
 
 ## Die Passphrase und wo sie gespeichert wird
 
-Die FriendFlix-Skripte schreiben deine Passphrase nirgends hin: Sie wird weder ausgegeben noch protokolliert noch von ihnen gespeichert. Sie geben sie nur über die Standardeingabe an das LG-Werkzeug weiter, nie in einer Kommandozeile.
+Die FriendFlix-Skripte schreiben deine Passphrase nirgends hin: Sie wird weder ausgegeben noch protokolliert noch von ihnen gespeichert. `install.sh` gibt sie nur über die Standardeingabe an das LG-Werkzeug weiter, nie in einer Kommandozeile; bei `install.ps1` tippst du sie direkt in das LG-Werkzeug, das Skript sieht sie nie.
 
 Das LG-Werkzeug selbst verhält sich anders. `ares-novacom`, das den SSH-Schlüssel des Fernsehers holt, **speichert die Passphrase in seiner Geräte-Datei** `novacom-devices.json` im ares-Konfigurationsordner deines Benutzerkontos, weil es sie bei jedem späteren Aufruf (Installieren, Starten) braucht, um den Schlüssel des Fernsehers zu entsperren. Nach einer Installation liegt die Passphrase also in dieser Datei auf dem PC. Sie nützt nur, solange der Entwicklermodus an ist und der Key Server läuft, und sie ändert sich, wenn du den Key Server aus- und einschaltest. Behandle die Datei trotzdem wie ein Passwort: Gib deinen Home-Ordner nicht weiter und entferne den Eintrag, wenn du ihn nicht mehr brauchst.
 
@@ -138,7 +138,7 @@ Im Player (außerhalb des Players werden die Tasten ignoriert):
 
 Die App sagt dem Server, was der Fernseher abspielen kann, und der Server schickt dann die Originaldatei, statt sie umzuwandeln. Die App schickt **nur Formate, die der Fernseher von sich aus bestätigt** (`canPlayType` / `MediaSource`); ein nicht bestätigtes Format wird einfach nicht angeboten, und der Server wandelt es um. Kandidaten:
 
-- Container: MKV, MP4, M4V, MOV, TS, WebM;
+- Container: MKV, MP4, M4V, MOV, TS, WebM. MKV wird immer angeboten, sobald der Fernseher irgendein anderes Format bestätigt: LGs Player spielt MKV von einer URL, die Browser-Engine antwortet auf die Frage aber mit „nein“ (Probe unter webOS 25). Zeigt ein MKV trotzdem kein Bild, wechselt der Player nach 10 s zum umgewandelten Stream;
 - Video: H.264, HEVC, AV1, VP9, MPEG-2 (bis 2160p), mit den Profilen, die der Fernseher bestätigt (zum Beispiel 10-Bit);
 - Audio: AAC, AC3, E-AC3, MP3, FLAC, Opus, Vorbis;
 - Untertitel: SRT, ASS, SSA, VTT (vom Player gezeichnet, wie überall).
@@ -151,7 +151,7 @@ Erscheint bei Direct Play innerhalb von **10 Sekunden** kein Bild, wechselt der 
 
 Zwei Wege führen zum Adressformular, ausgefüllt mit der aktuellen Adresse:
 
-- **Konto-Menü → Server wechseln.** Die App geht über den Browserverlauf zurück zu ihrer Startseite und zeigt das Formular. Der Fernseher behält nur die letzten 50 Seiten im Verlauf; nach langer Nutzung kann die Startseite daher fehlen (`home=fail` der Probe bedeutet dasselbe). Ist die App nach 1,5 Sekunden noch auf deinem Server, sagt sie das: App neu starten und die blaue Taste nehmen.
+- **Konto-Menü → Server wechseln.** Unter webOS 25 erreicht der Weg zurück über den Browserverlauf die Startseite der App nicht (die Probe auf einem LG 43QNED82A6B meldete `home=fail`), deshalb sagt der Eintrag: App neu starten und die blaue Taste nehmen.
 - **Blaue Taste beim Start.** Jeder Start mit gespeicherter Adresse zeigt 1,5 Sekunden lang das Logo mit *Blue key: change server*, bevor die App deinen Server öffnet. Drückst du in dieser Zeit die **blaue** Taste (406), erscheint stattdessen das Formular.
 
 ## Die Probe und wie du ihre Zeile liest
