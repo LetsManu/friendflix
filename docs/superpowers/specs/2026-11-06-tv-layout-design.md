@@ -98,6 +98,28 @@ Close to current TV streaming apps in layout, feel and motion; brand elements st
 - Motion: 200–250 ms ease-out; focus scale and crossfades only; no bounce.
 - Stays own: coral accent `#ff4f6d` (not another service's red), FriendFlix logo, no letter-mark above titles, Inter font, no intro sound, no other service's name.
 
+
+### 5.1 Polish tokens (owner: "more high quality, less AI-designed")
+
+Concrete values at 1080p (scale with the existing `html.tv` root size). These replace looser wording above where they differ.
+
+- **Gutter:** content starts 56 px right of the rail (rail 96 px + 56 px = 152 px from the screen edge). Text, row titles and the first card share this left edge. Vertical rhythm on an 8 px grid: row title → cards 16 px, row → row 48 px.
+- **Type scale (Inter):**
+  - Display (title when no logo): 64 px / 700 / −0.02 em / line-height 1.05; max 2 lines.
+  - Row title: 26 px / 600 / 0 / 88 % white. No all-caps.
+  - Meta line: 22 px / 500 / tabular numbers / `--mut` (#b3bac2); separators are thin middle dots in 40 % white with 10 px spacing. The age rating is a 1 px outlined box, not bold text.
+  - Synopsis: 24 px / 400 / line-height 1.45 / 78 % white / max 46 ch / 3 lines.
+  - Labels on cards and in the tile: 15 px / 600 / letter-spacing .02 em.
+  - Eyebrow: only when it says something (e.g. "New season", "Top 10 · #3", "Recently added"); 15 px / 600 / letter-spacing .12 em / uppercase / coral. No generic "FILM"/"SERIES" eyebrow.
+- **Title logos:** prefer the title logo image; max 520 × 160 px, left-aligned, bottom-aligned to the meta line.
+- **Buttons (TV):** unfocused = translucent `rgba(255,255,255,.14)` with white text and icon; focused = solid white with black text and `scale(1.05)`. Focus on buttons is shown by the fill change, not by a ring. Height 56 px, radius 6 px, 28 px horizontal padding, 22 px / 600 text, 12 px icon gap, 12 px between buttons.
+- **Cards:** radius 6 px; no border; image covers fully. Focus = `scale(1.08)` + `box-shadow: 0 0 0 3px #fff, 0 18px 40px rgba(0,0,0,.55)` (ring follows the radius, no outline offset). Burned-in title text under the image only when there is no image; otherwise rely on the artwork. Progress bar: 4 px, coral on `rgba(255,255,255,.22)`, inset 10 px from the card's bottom/left/right, radius 2 px.
+- **Backdrop:** 72 vw wide, anchored right/top. Left fade `linear-gradient(90deg, #000 0%, #000 18%, rgba(0,0,0,.82) 34%, rgba(0,0,0,.35) 58%, rgba(0,0,0,0) 78%)`; bottom fade `linear-gradient(0deg, #000 0%, rgba(0,0,0,.6) 22%, rgba(0,0,0,0) 48%)`; a soft top vignette `rgba(0,0,0,.35)` → 0 over the first 20 %. No hard edges anywhere.
+- **Rail:** icons 26 px, stroke 1.75, inactive 55 % white, active 100 % white + 6 px coral dot centred 14 px left of the icon. Expanded labels 22 px / 500. Avatar 40 px.
+- **Motion:** focus 180 ms `cubic-bezier(.2,.8,.2,1)`; tile crossfade 280 ms; row slide 320 ms ease-out; exits ~70 % of enter. One moving thing at a time; reduced motion = no scaling, instant swaps.
+- **Placeholders:** loading cards use a flat `#141414` block with a 1.2 s opacity pulse (no shimmer gradient); missing artwork shows the title in 20 px / 600 on `#1a1a1a`.
+- **What reads as "AI-designed" and is not allowed:** wide-tracked generic eyebrows, bold-everything text blocks, thick outlines on buttons, hard gradient seams, uniform heavy weights, emoji, gradient-text, glows.
+
 ## Testing
 
 - Recommendation engine: TV home shows the same row keys in the same order as desktop for the same `/api/home` response; reco impressions/clicks are still reported per row and engine; the focus tile shows the focused title's reason.
