@@ -20,6 +20,7 @@
   let saved: HTMLElement | null = null; // what had the focus when the rail opened
   let skipRestore = false;
   let wasOpen = false;
+  let lastOutside: HTMLElement | null = null; // the last focused element outside the rail
 
   function apply(key: RailInput['key'], extra: Partial<RailInput> = {}): RailAction {
     const r = railKey({ open }, { key, atLeftEdge: false, inRail: nav?.contains(document.activeElement) ?? false, onHome: path === '/', ...extra });
@@ -28,9 +29,9 @@
   }
 
   async function onOpened() {
-    const cur = document.activeElement;
-    saved = cur instanceof HTMLElement && !nav.contains(cur) && cur !== document.body ? cur : saved;
+    saved = lastOutside; // tracked continuously: pointer hover may already have moved the focus into the rail
     await tick();
+    if (nav.contains(document.activeElement)) return; // focus came in by itself (focusin): keep that item
     const target = nav.querySelector<HTMLElement>('a[aria-current="page"]') ?? nav.querySelector<HTMLElement>('a[href]');
     target?.focus({ preventScroll: true });
   }
@@ -43,6 +44,8 @@
   }
   $: if (open !== wasOpen) { wasOpen = open; if (nav) void (open ? onOpened() : onClosed()); }
 
+  /** the rail opens when it gets focus */
+  function onFocusin() { if (!open) open = true; }
   function onKeydown(e: KeyboardEvent) {
     if (e.key === 'ArrowRight' && open) { e.preventDefault(); apply('right'); }
   }
@@ -59,19 +62,21 @@
 
   // Left at the left edge of the content (nothing further left to focus) opens the rail
   onMount(() => {
+    const track = (e: FocusEvent) => { const el = e.target; if (el instanceof HTMLElement && !nav.contains(el) && el !== document.body) lastOutside = el; };
+    document.addEventListener('focusin', track);
     const onNav = (e: Event) => {
       const el = e.target as HTMLElement | null;
-      if ((e as CustomEvent).detail?.dir !== 'left' || open || !el?.closest('main') || document.querySelector('[aria-modal="true"]')) return;
+      if (e.defaultPrevented || (e as CustomEvent).detail?.dir !== 'left' || open || !el?.closest('main') || document.querySelector('[aria-modal="true"]')) return;
       if (!hasTarget('left')) apply('left', { atLeftEdge: true, inRail: false });
     };
     document.addEventListener('ff-nav', onNav);
-    return () => document.removeEventListener('ff-nav', onNav);
+    return () => { document.removeEventListener('ff-nav', onNav); document.removeEventListener('focusin', track); };
   });
 </script>
 
 <!-- svelte-ignore a11y-no-noninteractive-element-interactions -->
-<nav class="rail" class:open data-scope={open ? '' : undefined} bind:this={nav} aria-label={$t('tv.rail.label')}
-  on:keydown={onKeydown} on:click={onClick} on:pointerenter={(e) => onPointer(e, 'pointerenter')} on:pointerleave={(e) => onPointer(e, 'pointerleave')}>
+<nav class="rail" class:open data-scope={open ? '' : undefined} data-nav-skip={open ? undefined : ''} bind:this={nav} aria-label={$t('tv.rail.label')}
+  on:keydown={onKeydown} on:focusin={onFocusin} on:click={onClick} on:pointerenter={(e) => onPointer(e, 'pointerenter')} on:pointerleave={(e) => onPointer(e, 'pointerleave')}>
   <ul>
     {#each TV_RAIL as [href, label, icon] (href)}
       <li><a {href} aria-current={isTabActive(href, path) ? 'page' : undefined} aria-label={open ? undefined : $t(label)}><span class="ic"><Icon name={icon} size={30} /></span><span class="lb">{$t(label)}</span></a></li>
@@ -89,7 +94,7 @@
   .rail.open::before { opacity: 1; }
   ul { list-style: none; margin: auto 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
   li { display: block; }
-  a { position: relative; display: flex; align-items: center; height: 56px; width: 56px; overflow: hidden; border-radius: var(--tv-radius, 4px); color: #b3b3b3; text-decoration: none; transform-origin: left center; transition: transform var(--tv-t, 220ms) var(--tv-ease, ease), color var(--tv-t, 220ms); }
+  a { position: relative; display: flex; align-items: center; height: 56px; width: 56px; overflow: hidden; border-radius: var(--tv-radius, 4px); color: #b3b3b3; text-decoration: none; transform-origin: left center; transition: transform var(--tv-t, 220ms) var(--tv-ease, ease); }
   .rail.open a { width: 280px; }
   a:hover, a:focus-visible, a[aria-current='page'] { color: #fff; }
   a:focus-visible { transform: scale(1.08); }

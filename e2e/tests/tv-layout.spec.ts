@@ -8,6 +8,7 @@ import { expect, test } from '../fixtures.js';
 async function setTv(page: Page, tv: boolean) {
   await page.route('**/api/me', (r) => r.fulfill({ json: { ...ME, tv } }));
   await page.routeWebSocket(/\/ws\/remote/, () => {});
+  await page.route('**/api/playback/info', (r) => r.fulfill({ json: { directUrl: '/media/p1test.webm', hlsUrl: '/media/p1test.webm', resumeTicks: 0, mediaSourceId: 'ms1', playSessionId: 'ps1', maxBitrate: 60_000_000, roleMaxBitrate: 60_000_000, audioTracks: [], subtitles: [] } })); // the TV home warms its hero title
 }
 
 test.describe('TV layout', () => {
@@ -45,5 +46,71 @@ test.describe('TV layout', () => {
     await page.goto('/');
     await expect(page.locator('html.tv')).toHaveCount(0);
     expect(await page.evaluate(() => getComputedStyle(document.body).backgroundColor)).toBe('rgb(16, 20, 24)');
+  });
+
+  test.describe('rail', () => {
+    const open = (page: Page) => expect(page.locator('nav.rail')).toHaveClass(/open/);
+    const closed = (page: Page) => expect(page.locator('nav.rail')).not.toHaveClass(/open/);
+    async function home(page: Page) {
+      await setTv(page, true);
+      await page.goto('/');
+      await expect(page.locator('nav.rail a.who')).toBeAttached();
+      const card = page.locator('main .card .thumb').first();
+      await expect(card).toBeVisible();
+      return card;
+    }
+
+    test('Left from the first card opens the rail on the active item, Right closes it and restores the card', async ({ page, api: _api }) => {
+      const card = await home(page);
+      await card.focus();
+      await page.keyboard.press('ArrowLeft');
+      await open(page);
+      await expect(page.locator('nav.rail a[aria-current="page"]')).toBeFocused();
+      await page.keyboard.press('ArrowRight');
+      await closed(page);
+      await expect(card).toBeFocused();
+    });
+
+    test('Left from any element in the rail band (hero buttons) opens the rail instead of focusing a collapsed item', async ({ page, api: _api }) => {
+      await home(page);
+      const el = page.locator('main a[href], main button').filter({ visible: true });
+      const n = await el.count();
+      for (let i = 0; i < n; i++) {
+        const e = el.nth(i);
+        const box = await e.boundingBox();
+        if (!box || box.y < 300 || box.y > 700 || box.x > 400) continue;
+        await e.focus();
+        await page.keyboard.press('ArrowLeft');
+        const inRail = await page.evaluate(() => !!document.activeElement?.closest('nav.rail'));
+        if (inRail) await open(page);
+        else await closed(page); // a neighbour in the content took it
+        await page.keyboard.press('ArrowRight').catch(() => {});
+        await closed(page);
+      }
+      // collapsed items are never spatial targets
+      await expect(page.locator('nav.rail')).toHaveAttribute('data-nav-skip', '');
+    });
+
+    test('OK on Movies navigates', async ({ page, api: _api }) => {
+      const card = await home(page);
+      await card.focus();
+      await page.keyboard.press('ArrowLeft');
+      await open(page);
+      await page.locator('nav.rail a[href="/browse/movies"]').focus();
+      await page.keyboard.press('Enter');
+      await expect(page).toHaveURL(/\/browse\/movies/);
+      await closed(page);
+    });
+
+    test('pointer hover opens the rail, leaving it closes it and the card keeps the focus', async ({ page, api: _api }) => {
+      const card = await home(page);
+      await card.focus();
+      await page.mouse.move(10, 400);
+      await page.mouse.move(40, 420);
+      await open(page);
+      await page.mouse.move(900, 20); // the top margin: nothing focusable
+      await closed(page);
+      await expect(card).toBeFocused();
+    });
   });
 });
