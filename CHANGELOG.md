@@ -4,6 +4,8 @@ All notable changes, grouped by what you notice. Each release has its own sectio
 
 ## [Unreleased]
 
+## [2.4.1] – Brezel – 2026-11-06
+
 ### LG TV app
 - **Install script asks ares for the passphrase.** `install.ps1` no longer takes the Developer Mode passphrase as an argument; ares prompts for it in the terminal. On Windows PowerShell the piped passphrase was garbled, so the key download failed with "All configured authentication methods failed". A passphrase given the old way is ignored with a note.
 - **MKV plays directly.** The LG app always offers MKV, even when the TV's own check does not list it (the probe on a test TV played MKV natively), so these files are no longer converted.
