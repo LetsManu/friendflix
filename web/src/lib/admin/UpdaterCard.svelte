@@ -5,14 +5,14 @@
    * Admin → Update with the updater (lib/admin/updater.ts): installed / previous tag, "Update now", "Back to previous
    * version", "Update the updater" (inline confirmation, no dialog), the job's steps with live status, the result of the last
    * job and the automatic updates. A job restarts the backend: failed polls show "reconnecting" and the page picks the result up
-   * when it answers again (also after a reload: the updater keeps the last job). A start that needs a recent sign-in goes through
-   * /auth/reauth and comes back with ?reauth=1 (the person starts the job again; nothing restarts on its own).
+   * when it answers again (also after a reload: the updater keeps the last job). An admin session is enough to start a job or to
+   * change the automatic updates (no second sign-in). A Portainer stack
+   * (status.stack foreign) is never recreated by the updater: a note up front, "Update now" goes through Portainer when it is set up.
    */
   import { createEventDispatcher, onDestroy, onMount } from 'svelte';
   import { api } from '#lib/api';
   import Icon from '#lib/Icon.svelte';
   import { fmtDateTime, t, tr } from '#lib/i18n';
-  import { isReauthError, startReauth } from '#lib/account/reauth';
   import AdminCard from '#lib/adminContent/AdminCard.svelte';
   import { saveSettings } from '#lib/admin/settings/api';
   import Button from '#lib/ui/Button.svelte';
@@ -23,18 +23,20 @@
   import { busyKeys, errorText, runAction } from '#lib/ui/action';
   import { toast } from '#lib/ui/toast';
   import {
-    TIME_RE, WATCH_MAX_MS, canRollback, failReason, isRunning, nextPoll, startError, statusOf, visibleSteps,
+    TIME_RE, WATCH_MAX_MS, canRollback, failReason, foreignMode, foreignText, isRunning, nextPoll, startError, statusOf, visibleSteps,
     type StepState, type UpdaterAction, type UpdaterJob, type UpdaterView,
   } from './updater';
 
   export let view: UpdaterView;
-  /** shown once after coming back from the sign-in */
-  export let reauthBack = false;
   const dispatch = createEventDispatcher<{ finished: void }>();
 
   $: s = statusOf(view);
   $: job = s?.job ?? null;
   $: running = isRunning(job);
+  /** Portainer's stack: "portainer" = the update goes through Portainer, "manual" = nothing to start here */
+  $: foreign = foreignMode(view);
+  // $t: re-rendered on a language switch
+  $: foreignNote = foreign ? (void $t, foreignText(foreign, s)) : '';
   let confirming: UpdaterAction | null = null;
   let reconnecting = false, watchTimeout = false;
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -68,18 +70,26 @@
 
   async function start(action: UpdaterAction) {
     confirming = null;
-    const res = await runAction({ key: `updater:${action}`, run: () => api<{ job: UpdaterJob }>(`/api/admin/updater/${action}`, { method: 'POST' }), error: false });
-    if (res.ok && res.value) {
-      watchedId = res.value.job.id;
-      if (s) view = { ...view, present: true, status: { ...s, busy: true, job: res.value.job } } as UpdaterView;
+    const res = await runAction({ key: `updater:${action}`, run: () => api<{ job: UpdaterJob } | { portainer: { mode: string } }>(`/api/admin/updater/${action}`, { method: 'POST' }), error: false });
+    if (res.ok && res.value && 'portainer' in res.value) {
+      // a Portainer stack: Portainer redeploys it (no updater job to follow)
+      toast.success(tr('admin.update.updater.foreign.started'));
+      return;
+    }
+    if (res.ok && res.value && 'job' in res.value) {
+      const started = res.value.job;
+      watchedId = started.id;
+      if (s) view = { ...view, present: true, status: { ...s, busy: true, job: started } } as UpdaterView;
       t0 = Date.now();
       watch();
       return;
     }
-    if (isReauthError(res.error)) { startReauth('/admin/update?reauth=1'); return; }
     toast.error(startError(res.error));
   }
 
+  /** "update" through Portainer asks about a Portainer redeploy, not about the updater's tag */
+  const confirmKey = (a: UpdaterAction, f: typeof foreign) =>
+    (a === 'update' && f === 'portainer' ? 'admin.update.updater.confirm.updatePortainer' : `admin.update.updater.confirm.${a}`) as 'admin.update.updater.confirm.update';
   const confirmTag = (a: UpdaterAction) => (a === 'rollback' ? s?.previous : s?.targetTag) ?? '';
   const stepTone = (st: StepState) => (st === 'ok' ? 'ok' : st === 'failed' ? 'err' : st === 'running' ? 'warn' : 'muted');
   $: elapsed = t0 ? Math.max(0, Math.round((now - t0) / 1000)) : 0;
@@ -103,11 +113,15 @@
 
 <AdminCard title={$t('admin.update.updater.title')}>
   <p class="muted intro">{$t('admin.update.updater.intro')}</p>
-  {#if reauthBack}<p class="banner" role="status"><Icon name="check" size={18} />{$t('admin.update.updater.reauthBack')}</p>{/if}
 
   {#if view.present && 'error' in view}
     <p class="banner warn" role="alert"><Icon name="alert" size={18} />{view.error === 'unauthorized' ? $t('admin.update.updater.unauthorized') : $t('admin.update.updater.invalid')}</p>
   {:else if s}
+    {#if foreign}
+      <p class="banner" class:warn={foreign !== 'portainer'} role={foreign !== 'portainer' ? 'alert' : 'note'} data-foreign={foreign}>
+        <Icon name={foreign !== 'portainer' ? 'alert' : 'info'} size={18} />{foreignNote}
+      </p>
+    {/if}
     <dl class="ver" data-updater>
       <div><dt>{$t('admin.update.updater.installed')}</dt><dd><code>{s.current ?? $t('admin.update.updater.none')}</code></dd></div>
       <div><dt>{$t('admin.update.updater.previous')}</dt><dd><code>{s.previous ?? $t('admin.update.updater.none')}</code></dd></div>
@@ -115,8 +129,8 @@
     </dl>
 
     {#if confirming}
-      <div class="confirm" role="group" aria-label={$t(`admin.update.updater.confirm.${confirming}` as 'admin.update.updater.confirm.update', { tag: confirmTag(confirming) })}>
-        <p>{$t(`admin.update.updater.confirm.${confirming}` as 'admin.update.updater.confirm.update', { tag: confirmTag(confirming) })}</p>
+      <div class="confirm" role="group" aria-label={$t(confirmKey(confirming, foreign), { tag: confirmTag(confirming) })}>
+        <p>{$t(confirmKey(confirming, foreign), { tag: confirmTag(confirming) })}</p>
         <div class="row">
           <Button variant={confirming === 'self-update' ? 'primary' : 'danger'} icon="check" on:click={() => confirming && start(confirming)}>{$t('admin.update.updater.confirmGo')}</Button>
           <Button variant="secondary" on:click={() => (confirming = null)}>{$t('admin.update.updater.cancel')}</Button>
@@ -124,8 +138,8 @@
       </div>
     {:else}
       <div class="row actions">
-        <Button icon="download" pending={$busyKeys.has('updater:update')} disabled={running || s.busy || !s.targetTag} on:click={() => (confirming = 'update')}>{$t('admin.update.updater.updateNow')}</Button>
-        <Button variant="secondary" icon="arrow-left" pending={$busyKeys.has('updater:rollback')} disabled={!canRollback(s)} on:click={() => (confirming = 'rollback')}>{$t('admin.update.updater.rollback')}</Button>
+        <Button icon="download" pending={$busyKeys.has('updater:update')} disabled={running || s.busy || !s.targetTag || (foreign !== null && foreign !== 'portainer')} on:click={() => (confirming = 'update')}>{$t('admin.update.updater.updateNow')}</Button>
+        <Button variant="secondary" icon="arrow-left" pending={$busyKeys.has('updater:rollback')} disabled={!canRollback(s) || foreign !== null} on:click={() => (confirming = 'rollback')}>{$t('admin.update.updater.rollback')}</Button>
       </div>
     {/if}
 
@@ -170,7 +184,7 @@
     <details class="self">
       <summary>{$t('admin.update.updater.advanced')}</summary>
       <p class="muted small">{$t('admin.update.updater.selfHint', { version: s.updater.version ?? $t('admin.update.updater.none') })}</p>
-      <Button variant="secondary" icon="refresh" pending={$busyKeys.has('updater:self-update')} disabled={running || s.busy || confirming !== null} on:click={() => (confirming = 'self-update')}>{$t('admin.update.updater.selfUpdate')}</Button>
+      <Button variant="secondary" icon="refresh" pending={$busyKeys.has('updater:self-update')} disabled={running || s.busy || confirming !== null || foreign !== null} on:click={() => (confirming = 'self-update')}>{$t('admin.update.updater.selfUpdate')}</Button>
     </details>
   {/if}
 </AdminCard>

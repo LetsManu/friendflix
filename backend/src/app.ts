@@ -215,7 +215,9 @@ export async function buildApp(ctx: Ctx, extra: Extra = {}): Promise<FastifyInst
   // public and harmless (the web footer shows the same): release version, codename, build sha, and whether the build is the
   // release commit or a nightly one (label "1.1.0-nightly · abc1234"); the GitHub lookup is cached and waited for 2.5 s at most.
   // authOrigin: the sign-in page's origin (already visible in every login redirect); the Android app lets only it and the app into its WebView
-  app.get('/api/version', async () => {
+  // Access-Control-Allow-Origin: * (no credentials): the Samsung TV app's local setup page, another origin, checks the address with it
+  app.get('/api/version', async (_req, reply) => {
+    reply.header('access-control-allow-origin', '*');
     const { sha, version, codename, build, channel, label } = await buildInfo(ctx, { waitMs: 2500 });
     return { sha, version, codename, build, channel, label, minAndroid: MIN_ANDROID, authOrigin: authOrigin(ctx.cfg) };
   });

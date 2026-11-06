@@ -9,8 +9,8 @@ const steps = (page: import('@playwright/test').Page) => card(page).locator('ol.
 
 test.describe('admin update with the opt-in updater (desktop)', () => {
   test.beforeEach(({ api }) => { api.asAdmin = true; });
-  // the fake backend answers 502 while it "restarts" during a job, and 401 reauth_required before a sign-in
-  test.use({ allowedConsole: /status of (502 \(Bad Gateway\)|401 \(Unauthorized\))/ });
+  // the fake backend answers 502 while it "restarts" during a job
+  test.use({ allowedConsole: /status of 502 \(Bad Gateway\)/ });
 
   test('without an updater the page keeps the manual steps', async ({ page }) => {
     await page.goto('/admin/update');
@@ -72,21 +72,16 @@ test.describe('admin update with the opt-in updater (desktop)', () => {
     await expect(card(page).getByRole('button', { name: 'Zurück zur vorherigen Version' })).toBeDisabled();
   });
 
-  test('a start that needs a recent sign-in goes through /auth/reauth and says so on return', async ({ page, api }) => {
-    api.updater = { ...updaterState(true), reauthRequired: true };
-    let next: string | null = null;
-    await page.route('**/auth/reauth?**', (r) => {
-      next = new URL(r.request().url()).searchParams.get('next');
-      api.updater!.reauthRequired = false;
-      return r.fulfill({ status: 302, headers: { location: next ?? '/' } });
-    });
+  test('a start needs no second sign-in: the job starts right away, no dialog, no redirect', async ({ page, api }) => {
+    api.updater = updaterState(true);
+    let reauth = 0;
+    page.on('request', (r) => { const p = new URL(r.url()).pathname; if (p === '/auth/reauth' || p.startsWith('/auth/flow/')) reauth++; });
     await page.goto('/admin/update');
     await card(page).getByRole('button', { name: 'Jetzt aktualisieren' }).click();
     await card(page).getByRole('button', { name: 'Ja, starten' }).click();
-    await expect.poll(() => next).toBe('/admin/update?reauth=1');
-    await expect(card(page)).toContainText('Erneut angemeldet');
-    await expect(page).toHaveURL(/\/admin\/update$/);
-    expect(api.updater.posts).toEqual([]); // nothing restarted on its own
+    await expect.poll(() => api.updater!.posts).toEqual(['update']);
+    await expect(page.getByRole('dialog', { name: 'Erneut anmelden' })).toHaveCount(0);
+    expect(reauth).toBe(0);
   });
 
   test('a running job is picked up after a reload; the updater itself; automatic updates', async ({ page, api }) => {
@@ -126,6 +121,61 @@ test.describe('admin update with the opt-in updater (desktop)', () => {
     expect(api.settings.puts).toEqual([{ values: { UPDATE_CHANNEL: 'pinned', UPDATE_VERSION: '1.2.3' } }]);
     await expect(channel.getByRole('radio', { name: 'Feste Version' })).toHaveAttribute('aria-checked', 'true');
     await expect(card(page).locator('[data-updater]')).toContainText('1.2.3');
+  });
+
+  test('a Portainer stack without the webhook: the page says so up front, nothing can be started here', async ({ page, api }) => {
+    api.updater = { ...updaterState(true), stack: 'foreign' };
+    await page.goto('/admin/update');
+    const note = card(page).locator('[data-foreign="manual"]');
+    await expect(note).toHaveAttribute('role', 'alert');
+    await expect(note).toContainText('von Portainer (oder einem anderen Werkzeug) verwaltet');
+    await expect(note).toContainText('Admin → Einstellungen → Updates');
+    await expect(card(page).getByRole('button', { name: 'Jetzt aktualisieren' })).toBeDisabled();
+    await expect(card(page).getByRole('button', { name: 'Zurück zur vorherigen Version' })).toBeDisabled();
+    await card(page).getByText('Updater selbst').click();
+    await expect(card(page).getByRole('button', { name: 'Updater aktualisieren' })).toBeDisabled();
+    expect(api.updater.posts).toEqual([]);
+  });
+
+  test('a Portainer stack with the webhook: "update now" redeploys through Portainer', async ({ page, api }) => {
+    api.updater = { ...updaterState(true), stack: 'foreign', portainer: true };
+    await page.goto('/admin/update');
+    await expect(card(page).locator('[data-foreign="portainer"]')).toContainText('über Portainer neu');
+    await expect(card(page).getByRole('button', { name: 'Zurück zur vorherigen Version' })).toBeDisabled();
+    await card(page).getByRole('button', { name: 'Jetzt aktualisieren' }).click();
+    await expect(card(page).getByRole('group', { name: /über Portainer neu deployen/ })).toBeVisible();
+    await card(page).getByRole('button', { name: 'Ja, starten' }).click();
+    await expect(toasts(page).getByText('Portainer deployt den Stack neu.')).toBeVisible();
+    expect(api.updater.posts).toEqual(['update']);
+    await expect(card(page).locator('ol.steps')).toHaveCount(0); // no updater job to follow
+  });
+
+  test('our own stack started from another directory: the note names both directories and UPDATER_PROJECT_DIR, not Portainer', async ({ page, api }) => {
+    api.updater = { ...updaterState(true), stack: 'foreign', stackReason: 'working_dir', stackDir: '/volume1/docker/friendflix', projectDir: '/project' };
+    await page.goto('/admin/update');
+    const note = card(page).locator('[data-foreign="workdir"]');
+    await expect(note).toContainText('aus /volume1/docker/friendflix gestartet');
+    await expect(note).toContainText('/project');
+    await expect(note).toContainText('UPDATER_PROJECT_DIR=/volume1/docker/friendflix');
+    await expect(note).not.toContainText('Portainer');
+    await expect(card(page).getByRole('button', { name: 'Jetzt aktualisieren' })).toBeDisabled();
+  });
+
+  test('an updater without the stack field and the Portainer webhook set: the update goes through Portainer', async ({ page, api }) => {
+    api.updater = { ...updaterState(true), portainer: true };
+    await page.goto('/admin/update');
+    await expect(card(page).locator('[data-foreign="portainer"]')).toBeVisible();
+    await card(page).getByRole('button', { name: 'Jetzt aktualisieren' }).click();
+    await card(page).getByRole('button', { name: 'Ja, starten' }).click();
+    await expect(toasts(page).getByText('Portainer deployt den Stack neu.')).toBeVisible();
+  });
+
+  test('a job refused because the ports would change says so', async ({ page, api }) => {
+    api.updater = updaterState(true);
+    api.updater.job = { id: '0123456789abcdef', action: 'update', state: 'failed', step: 'pull', from: 'sha-c0be6c5', to: 'latest', startedAt: '2026-10-20T02:00:00.000Z',
+      finishedAt: '2026-10-20T02:00:05.000Z', error: 'config_mismatch', steps: { pull: 'failed', verify: 'skipped', restart: 'skipped', health: 'skipped', rollback: 'skipped' } };
+    await page.goto('/admin/update');
+    await expect(card(page).locator('[data-result="failed"]')).toContainText('andere Ports oder Netzwerke');
   });
 
   test('an updater that refuses the signature is reported', async ({ page, api }) => {

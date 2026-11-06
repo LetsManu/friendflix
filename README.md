@@ -166,6 +166,12 @@ An app-like layout with a bottom tab bar, a preview sheet when you tap a poster,
 
 **Android app:** FriendFlix as an app for Android 8.0 and newer, shared through a Google Play closed test (or as an APK on each release). It shows the same web UI and adds a native player (direct play, picture-in-picture, background audio), downloads in the background to the phone or an SD card, stored encrypted and playable offline, Chromecast, and notifications that the app fetches from your server itself – no Google push service, no analytics. Install, settings, security and the owner's signing steps: [docs/android.md](docs/android.md).
 
+**Windows app:** FriendFlix as a program for Windows 10 and 11, installed from the GitHub Release. It shows the same web UI and adds a native mpv player that plays almost every file directly (AC3, DTS, TrueHD, HEVC, image subtitles), with FriendFlix's own controls, resume and progress in sync with web, Android and TV, tray icon and automatic updates. No downloads, no Chromecast. Install, player keys, troubleshooting and the owner's update-signing steps: [docs/windows.md](docs/windows.md).
+
+**Samsung TV app:** FriendFlix for Samsung smart TVs (Tizen 6.5 and newer), installed from your PC over developer mode with a Samsung certificate. This first version is a probe build plus the app shell (server address, then your TV mode); the player follows once the probe shows what the TV can play. Setup, certificate and the probe: [docs/tizen.md](docs/tizen.md).
+
+**LG TV app:** FriendFlix for LG smart TVs (webOS 22 and newer), installed from your PC over Developer Mode with an install script, no certificate needed. It opens your TV mode full screen and tells the server what the TV can play, so files the TV handles itself are not converted. Setup, remote keys and the test app: [docs/webos.md](docs/webos.md).
+
 <p align="center"><img src="docs/images/en/downloads.jpg" alt="Downloads page with finished, paused and preparing downloads" width="700"></p>
 
 **Seven languages:** the interface speaks **English, German, French, Spanish, Italian, Turkish and Polish**. Every profile picks its own language; on first login FriendFlix asks once and suggests the browser language. The admin sets the default language for the whole instance.
@@ -235,7 +241,7 @@ A new install needs none of this: the setup wizard and *Admin → Settings* stor
 | `BIND_ADDR` | `127.0.0.1` | Host address the three ports are published on – never a public interface |
 | `WEB_PORT`, `BACKEND_PORT`, `GATEWAY_PORT` | `3080`, `3081`, `3082` | Host ports for the reverse proxy |
 | `FF_REGISTRY`, `FF_TAG` | `ghcr.io/letsmanu`, `latest` | Image source and tag. **Only without the updater** (`compose.no-updater.yaml`): `FF_TAG` is then the release channel: `latest` = stable releases, `nightly` = every green commit on main, `2` / `2.0` / `2.0.0` (or `sha-<7>`) to pin ([release channels](docs/setup.md#release-channels-without-the-updater)). With the updater leave it unset: the channel is chosen in *Admin → Update* |
-| `SESSION_TTL_SECONDS`, `SESSION_IDLE_SECONDS` | `28800`, `7200` | Absolute session length (8 h) and idle timeout (2 h) |
+| `SESSION_TTL_SECONDS`, `SESSION_IDLE_SECONDS` | `7776000`, `7776000` | Absolute session length and idle timeout (both 90 days) |
 | `TZ` | `Europe/Vienna` | Time zone for scheduled jobs (digest, playback check, backups) |
 | `AUTHENTIK_URL`, `AUTHENTIK_API_TOKEN`, `AUTHENTIK_ENROLL_FLOW` | empty | Invitations that also create the Authentik account (all three needed); URL and token also give the admin user page the two-factor state and *Send password link* |
 | `AUTHENTIK_RECOVERY_FLOW`, `AUTHENTIK_TOTP_SETUP_FLOW` | `default-recovery-flow`, `default-authenticator-totp-setup` | Recovery flow whose e-mail stage sends the password link (Authentik 2024.4 or newer); the second is reserved. See [docs/authentik.md](docs/authentik.md#10-password-recovery-by-e-mail) |
@@ -379,6 +385,9 @@ npm run e2e                                     # Playwright: builds the web app
 | TV mode and phone remote | [docs/tv-mode.md](docs/tv-mode.md) |
 | Chromecast and AirPlay | [docs/cast.md](docs/cast.md) |
 | Android app: install, settings, offline, notifications, signing and Google Play | [docs/android.md](docs/android.md) |
+| Windows app: install, player keys, updates, troubleshooting, update signing | [docs/windows.md](docs/windows.md) |
+| Samsung TV app: developer mode, certificate, install script, probe | [docs/tizen.md](docs/tizen.md) |
+| LG TV app: Developer Mode, install script, remote keys, test app | [docs/webos.md](docs/webos.md) |
 | Search and discovery API, labels, leaving soon, quality, kids rules | [docs/discovery.md](docs/discovery.md) |
 | Themed lists, calm mode, sound in the player, phone shortcuts and badge | [docs/personal.md](docs/personal.md) |
 | UI kit and admin shell | [docs/ui-kit.md](docs/ui-kit.md) |

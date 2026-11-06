@@ -81,8 +81,12 @@ describe('key classification', () => {
     expect([def('VAPID_PUBLIC_KEY').generate, def('VAPID_PRIVATE_KEY').generate]).toEqual(['vapidPair', 'vapidPair']);
     expect(def('HOME_NETWORKS')).toMatchObject({ kind: 'cidrList', group: 'playback' });
     expect(def('PLAYBACK_CHECK_HOUR')).toMatchObject({ kind: 'int', group: 'health', min: -1, max: 23, default: 4 });
-    expect(def('SESSION_TTL_SECONDS')).toMatchObject({ group: 'sessions', default: 28800, min: 1 });
+    expect(def('SESSION_TTL_SECONDS')).toMatchObject({ group: 'sessions', default: 7_776_000, min: 1 });
     expect(def('SESSION_TTL_SECONDS').max).toBeUndefined();
+    // 90 days, editable without an upper bound (the settings page accepts it)
+    expect(def('SESSION_IDLE_SECONDS')).toMatchObject({ group: 'sessions', default: 7_776_000, min: 1 });
+    expect(def('SESSION_IDLE_SECONDS').max).toBeUndefined();
+    expect(parseEnvValue(def('SESSION_IDLE_SECONDS'), '7776000')).toEqual({ ok: true, value: 7_776_000 });
     expect(def('DOWNLOAD_PREP_CONCURRENCY')).toMatchObject({ min: 1, max: 4 });
     expect(def('CAST_ENABLED')).toMatchObject({ kind: 'bool', group: 'playback', default: 'true' });
     expect(def('CAST_RECEIVER_APP_ID')).toMatchObject({ kind: 'string', group: 'playback', apply: 'live' });
@@ -147,7 +151,8 @@ describe('loadConfig with bootstrap env only', () => {
     const c = loadConfig(BOOT);
     expect(c.OIDC_ISSUER).toBe('');
     expect([c.OIDC_CLIENT_ID, c.OIDC_CLIENT_SECRET, c.PUBLIC_URL, c.REQUESTS_URL, c.REQUESTS_API_KEY, c.WEBHOOK_SECRET]).toEqual(['', '', '', '', '', '']);
-    expect(c.SESSION_TTL_SECONDS).toBe(28800);
+    expect(c.SESSION_TTL_SECONDS).toBe(7_776_000);
+    expect(c.SESSION_IDLE_SECONDS).toBe(7_776_000);
     expect(c.JELLYFIN_URL).toBeUndefined();
     expect(c.AUTHENTIK_LOGIN_FLOW).toBe('default-authentication-flow');
     expect(c.LOGIN_UI).toBeUndefined();

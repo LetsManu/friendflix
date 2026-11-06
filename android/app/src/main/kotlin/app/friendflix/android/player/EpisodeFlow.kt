@@ -76,7 +76,7 @@ class StillWatching(private val now: () -> Long) {
  * - at the credits an episode with a next one shows the next-up card; with autoplay on (and no "still there?") a [COUNTDOWN_MS]
  *   countdown runs only while the title plays (or has ended); seeking out of the credits hides the card and stops it
  * - "still there?" replaces the countdown when [StillWatching.shouldAsk]
- * Films get no card here (the web's "more like this" / post-play screen stay in the web UI).
+ * Films get no card here (the post-play card and screen and "More like this" are [PostPlayFlow]).
  */
 class EpisodeFlow(
     segments: List<Segment>,
@@ -87,6 +87,19 @@ class EpisodeFlow(
     val segments = segments.map { it.copy(type = it.type.lowercase()) }
     /** seconds; 0 while unknown */
     var duration = 0.0
+
+    /**
+     * Sleep timer "after this episode" (web `mayAutoplay` sleepAfterEpisode): the card shows without a countdown and without
+     * "still there?", so the title ends and stays there; a running countdown stops.
+     */
+    var holdAutoplay = false
+        set(v) {
+            val was = field
+            field = v
+            if (v) { stopCountdown(); askStill = false }
+            // switched off while the card shows: its countdown (or "still there?") as if the card had just come
+            else if (was && entered && !dismissed) enterCard()
+        }
     private val autoSkipped = mutableSetOf<Double>()
     private var dismissed = false
     private var entered = false
@@ -108,12 +121,7 @@ class EpisodeFlow(
     fun skipGoesNext(s: Segment, hasNext: Boolean): Boolean = s.type == "preview" && duration > 0 && s.endSec >= duration - 3 && hasNext
 
     /** Second the credits begin (Infinity while the duration is unknown). */
-    fun creditsStart(): Double {
-        if (duration <= 0) return Double.POSITIVE_INFINITY
-        val fallback = maxOf(0.0, duration - LAST_SECONDS)
-        val seg = segments.filter { (it.type == "outro" || it.type == "credits") && it.startSec > 0 && it.startSec < duration }.minByOrNull { it.startSec }
-        return if (seg != null && seg.startSec >= duration / 2) seg.startSec else fallback
-    }
+    fun creditsStart(): Double = creditsStartSec(duration, segments)
 
     /**
      * Called about every 100 ms - 1 s with the position, whether the title plays / has ended, and the ms since the last call.
@@ -145,8 +153,8 @@ class EpisodeFlow(
     private fun enterCard() {
         entered = true
         if (kind != NextKind.EPISODE) return
-        if (prefs.autoplayNext && still.shouldAsk(prefs)) { askStill = true; return }
-        if (prefs.autoplayNext && !askStill) startCountdown()
+        if (prefs.autoplayNext && !holdAutoplay && still.shouldAsk(prefs)) { askStill = true; return }
+        if (prefs.autoplayNext && !holdAutoplay && !askStill) startCountdown()
     }
 
     private fun leaveCard() { entered = false; stopCountdown(); askStill = false }

@@ -1,14 +1,18 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { expect, test } from '../fixtures.js';
+import { done, installLogin, loginState, password } from '../mocks/login.js';
 import { LEAK } from '../mocks/settings.js';
 
 // Admin → Einstellungen (/admin/settings): the settings store (Block 25, spec Part I). Secrets are write-only, env rows are locked,
-// a save sends only the fields that changed.
+// a save sends only the fields that changed. A re-authentication happens in place (the in-app dialog) when GET /auth/flow/config
+// says `app`; the tests without that mock (the config is not answered) cover the classic redirect through /auth/reauth.
 type Page = import('@playwright/test').Page;
 const toasts = (page: Page) => page.getByRole('region', { name: 'Hinweise' });
 const card = (page: Page, name: string) => page.locator('section', { has: page.getByRole('heading', { level: 2, name, exact: true }) });
 const setting = (page: Page, name: string) => page.getByRole('group', { name, exact: true });
+/** the classic sign-in mode: GET /auth/flow/config answers `authentik`, so a re-authentication goes through /auth/reauth */
+const classicSignIn = (page: import('@playwright/test').Page) => page.route('**/auth/flow/config', (r) => r.fulfill({ json: { mode: 'authentik', recovery: false, enroll: false } }));
 
 test.describe('admin: settings', () => {
   test.use({ allowedConsole: /status of (400|401)/ });
@@ -162,7 +166,102 @@ test.describe('admin: settings', () => {
     expect(api.settings.puts).toEqual([]);
   });
 
-  test('re-authentication: a non-secret change is restored and saved after the sign-in', async ({ page, api }) => {
+  test('re-authentication in place: the sign-in dialog, then exactly that save once more (a secret included), no redirect', async ({ page, api }) => {
+    api.settings.reauthRequired = true;
+    const st = loginState({ starts: [{ body: password('admin') }], answers: [() => { api.settings.reauthRequired = false; return { body: done('') }; }] });
+    await installLogin(page.context(), st);
+    let classic = 0;
+    page.on('request', (r) => { if (new URL(r.url()).pathname === '/auth/reauth') classic++; });
+    await page.goto('/admin/settings');
+    await setting(page, 'Authentik-API-Token').getByRole('button', { name: 'Authentik-API-Token ersetzen' }).click();
+    await setting(page, 'Authentik-API-Token').getByLabel('Neuer Wert').fill('very-secret-token-1234');
+    await setting(page, 'Admin-Gruppe').getByRole('textbox').fill('ff-admins');
+    await card(page, 'Anmeldung').getByRole('button', { name: 'Speichern' }).click();
+    const dlg = page.getByRole('dialog', { name: 'Erneut anmelden' });
+    await dlg.getByLabel('Passwort', { exact: true }).fill('hunter2-fixture');
+    await dlg.getByRole('button', { name: 'Anmelden' }).click();
+    await expect(toasts(page).getByText('Einstellungen gespeichert.')).toBeVisible();
+    await expect(dlg).toHaveCount(0);
+    expect(st.calls.filter((c) => c.path === '/auth/flow/start').map((c) => c.body)).toEqual([{ kind: 'reauth' }]);
+    expect(api.settings.puts).toHaveLength(2);
+    expect(api.settings.puts[1]).toEqual(api.settings.puts[0]);
+    expect(JSON.stringify(api.settings.puts[1])).toContain('very-secret-token-1234');
+    expect(classic).toBe(0);
+    await expect(page).toHaveURL(/\/admin\/settings$/);
+    expect(await page.evaluate(() => sessionStorage.getItem('ff_settings_pending'))).toBeNull();
+  });
+
+  test('re-authentication in place: closing the dialog saves nothing more and keeps what was typed', async ({ page, api }) => {
+    api.settings.reauthRequired = true;
+    await installLogin(page.context(), loginState({ starts: [{ body: password('admin') }] }));
+    await page.goto('/admin/settings');
+    await setting(page, 'Admin-Gruppe').getByRole('textbox').fill('ff-admins');
+    await card(page, 'Anmeldung').getByRole('button', { name: 'Speichern' }).click();
+    const dlg = page.getByRole('dialog', { name: 'Erneut anmelden' });
+    await expect(dlg).toBeVisible();
+    await page.keyboard.press('Escape');
+    await expect(dlg).toHaveCount(0);
+    expect(api.settings.puts).toHaveLength(1);
+    await expect(setting(page, 'Admin-Gruppe').getByRole('textbox')).toHaveValue('ff-admins');
+    expect(await page.evaluate(() => sessionStorage.getItem('ff_settings_pending'))).toBeNull();
+  });
+
+  test('re-authentication in place for "Generate": confirmed once, signed in, generated once more (no second confirmation)', async ({ page, api }) => {
+    api.settings.reauthRequired = true;
+    await installLogin(page.context(), loginState({ starts: [{ body: password('admin') }], answers: [() => { api.settings.reauthRequired = false; return { body: done('') }; }] }));
+    let generates = 0, confirms = 0;
+    page.on('request', (r) => { if (new URL(r.url()).pathname === '/api/admin/settings/generate') generates++; });
+    await page.goto('/admin/settings');
+    const row = setting(page, 'Webhook-Geheimnis');
+    await row.getByRole('button', { name: 'Webhook-Geheimnis: Neu erzeugen' }).click();
+    const ask = page.getByRole('alertdialog');
+    await ask.getByRole('button', { name: 'Neu erzeugen' }).click();
+    confirms++;
+    const dlg = page.getByRole('dialog', { name: 'Erneut anmelden' });
+    await dlg.getByLabel('Passwort', { exact: true }).fill('hunter2-fixture');
+    await dlg.getByRole('button', { name: 'Anmelden' }).click();
+    await expect(row.getByLabel('Neues Webhook-Geheimnis')).toHaveValue(/^0f1e2d3c/);
+    await expect(ask).toHaveCount(0);
+    expect([generates, confirms]).toEqual([2, 1]);
+  });
+
+  test('the dialog\'s "confirm with a passkey instead" goes through /auth/reauth back to this page, the change kept for it', async ({ page, api }) => {
+    api.settings.reauthRequired = true;
+    await installLogin(page.context(), loginState({ starts: [{ body: password('admin') }] }));
+    let next: string | null = null;
+    await page.route('**/auth/reauth?**', (r) => {
+      next = new URL(r.request().url()).searchParams.get('next');
+      return r.fulfill({ status: 200, contentType: 'text/html', body: '<p>sign in</p>' });
+    });
+    await page.goto('/admin/settings');
+    await setting(page, 'Admin-Gruppe').getByRole('textbox').fill('ff-admins');
+    await card(page, 'Anmeldung').getByRole('button', { name: 'Speichern' }).click();
+    const stash = page.evaluate(() => sessionStorage.getItem('ff_settings_pending'));
+    expect(await stash).toContain('ff-admins');
+    await page.getByRole('dialog', { name: 'Erneut anmelden' }).getByRole('button', { name: 'Stattdessen mit Passkey bestätigen' }).click();
+    await expect.poll(() => next).toBe('/admin/settings?resume=1');
+  });
+
+  test('each request opens a fresh dialog: closed once, the next save starts a new sign-in', async ({ page, api }) => {
+    api.settings.reauthRequired = true;
+    const st = loginState({ starts: [() => ({ body: password('admin') })] });
+    await installLogin(page.context(), st);
+    await page.goto('/admin/settings');
+    await setting(page, 'Admin-Gruppe').getByRole('textbox').fill('ff-admins');
+    const dlg = page.getByRole('dialog', { name: 'Erneut anmelden' });
+    for (let i = 1; i <= 2; i++) {
+      await card(page, 'Anmeldung').getByRole('button', { name: 'Speichern' }).click();
+      await expect(dlg.getByLabel('Passwort', { exact: true })).toHaveValue('');
+      await dlg.getByLabel('Passwort', { exact: true }).fill(`typed-${i}`);
+      await page.keyboard.press('Escape');
+      await expect(dlg).toHaveCount(0);
+    }
+    expect(st.calls.filter((c) => c.path === '/auth/flow/start')).toHaveLength(2);
+    expect(api.settings.puts).toHaveLength(2);
+  });
+
+  test('re-authentication (classic): a non-secret change is restored and saved after the sign-in', async ({ page, api }) => {
+    await classicSignIn(page);
     api.settings.reauthRequired = true;
     let next: string | null = null;
     await page.route('**/auth/reauth?**', (r) => {
@@ -180,7 +279,8 @@ test.describe('admin: settings', () => {
     await expect(setting(page, 'Admin-Gruppe').getByRole('textbox')).toHaveValue('ff-admins');
   });
 
-  test('re-authentication: a secret is never kept; the person enters it again', async ({ page, api }) => {
+  test('re-authentication (classic): a secret is never kept; the person enters it again', async ({ page, api }) => {
+    await classicSignIn(page);
     api.settings.reauthRequired = true;
     const stored: string[] = [];
     page.on('console', (m) => { if (m.text().startsWith('ss:')) stored.push(m.text()); });
@@ -238,7 +338,8 @@ test.describe('admin: settings', () => {
     expect(api.settings.puts).toEqual([{ values: { NTFY_URL: 'https://ntfy.example.com/other-topic?auth=tk_new' } }]);
   });
 
-  test('re-authentication for a Test repeats the test, never a save', async ({ page, api }) => {
+  test('re-authentication (classic) for a Test repeats the test, never a save', async ({ page, api }) => {
+    await classicSignIn(page);
     api.settings.reauthRequired = true;
     let next: string | null = null;
     await page.route('**/auth/reauth?**', (r) => {
@@ -257,7 +358,8 @@ test.describe('admin: settings', () => {
     await expect(setting(page, 'Jellyfin-Adresse').getByRole('textbox')).toHaveValue('http://jellyfin.lan:8096');
   });
 
-  test('"Save anyway" keeps force across a re-authentication', async ({ page, api }) => {
+  test('"Save anyway" keeps force across a re-authentication (classic)', async ({ page, api }) => {
+    await classicSignIn(page);
     api.settings.probeFail = { ok: false, code: 'timeout' };
     await page.route('**/auth/reauth?**', (r) => {
       api.settings.reauthRequired = false;
@@ -278,7 +380,8 @@ test.describe('admin: settings', () => {
     ]);
   });
 
-  test('a resumed action that still needs a sign-in shows an error instead of another round trip', async ({ page, api }) => {
+  test('(classic) a resumed action that still needs a sign-in shows an error instead of another round trip', async ({ page, api }) => {
+    await classicSignIn(page);
     api.settings.reauthRequired = true;
     let reauths = 0;
     await page.route('**/auth/reauth?**', (r) => {

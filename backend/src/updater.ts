@@ -3,6 +3,7 @@
 import { createHash, createHmac, randomBytes } from 'node:crypto';
 import { audit } from './audit.js';
 import type { Ctx } from './ctx.js';
+import { portainerMode, redeployViaPortainer, updateInfo, type UpdateInfo } from './updates.js';
 
 /**
  * Client of the updater container (updater/, on by default since 2.0, off with compose.no-updater.yaml; docs/security.md "Updater"). The backend never
@@ -37,6 +38,16 @@ export interface UpdaterStatus {
   channel: 'stable' | 'nightly' | 'pinned'; version: string | null; targetTag: string | null;
   current: string | null; previous: string | null; busy: boolean; job: UpdaterJob | null; log: string[];
   services: Array<{ service: string; state: string; health: string; sha: string | null; version: string | null }>;
+  /**
+   * whose stack it is (updater/src/stack.ts): own = started from the updater's project directory; foreign = another tool started
+   * it (Portainer): the updater refuses to recreate it, an update goes through Portainer. null = unknown / an older updater.
+   */
+  stack: 'own' | 'foreign' | null;
+  /** why: own, working_dir (started from another directory), portainer, no_labels; null = unknown */
+  stackReason: 'own' | 'working_dir' | 'portainer' | 'no_labels' | null;
+  /** the directory compose recorded on the backend container, and the one the updater looks at (host paths, admin only) */
+  stackDir: string | null;
+  projectDir: string | null;
 }
 export type UpdaterView = { present: false } | { present: true; error: 'unauthorized' | 'invalid_answer' } | { present: true; status: UpdaterStatus };
 
@@ -44,6 +55,7 @@ const pick = <T extends string>(v: unknown, list: readonly T[]): T | null => (ty
 const tagOrNull = (v: unknown): string | null => (typeof v === 'string' && TAG_RE.test(v) ? v : null);
 const short = (v: unknown, re: RegExp): string | null => (typeof v === 'string' && re.test(v) ? v : null);
 const ISO = /^\d{4}-\d{2}-\d{2}T[\d:.]+Z$/;
+const PATH_RE = /^\/[A-Za-z0-9._/ -]{0,250}$/;
 
 function parseJob(raw: unknown): UpdaterJob | null {
   if (!raw || typeof raw !== 'object') return null;
@@ -74,6 +86,9 @@ export function parseStatus(raw: unknown): UpdaterStatus | null {
       const service = short(x.service, /^[a-z-]{1,20}$/);
       return service ? [{ service, state: short(x.state, /^[a-z]{1,20}$/) ?? 'unknown', health: short(x.health, /^[a-z]{0,20}$/) ?? '', sha: tagOrNull(x.sha), version: short(x.version, /^\d+\.\d+\.\d+$/) }] : [];
     }) : [],
+    stack: pick(o.stack, ['own', 'foreign'] as const),
+    stackReason: pick(o.stackReason, ['own', 'working_dir', 'portainer', 'no_labels'] as const),
+    stackDir: short(o.stackDir, PATH_RE), projectDir: short(o.projectDir, PATH_RE),
   };
 }
 
@@ -119,14 +134,35 @@ export async function syncChannel(ctx: Ctx): Promise<boolean> {
   return r?.status === 200;
 }
 
-export type StartResult = { ok: true; job: UpdaterJob } | { ok: false; status: number; error: string };
+/** `portainer`: the stack is Portainer's, the update was handed to Portainer (webhook / API redeploy) instead of the updater */
+export type StartResult = { ok: true; job: UpdaterJob } | { ok: true; portainer: 'webhook' | 'api' }
+  | { ok: false; status: number; error: string; portainer?: { status: number | null; step: string; code?: string } };
 const PENDING = 'updater:pending:';
 
 /**
  * Starts a job and audits it (who, from -> to); the result is audited once the job is finished (reconcileAudit, from the next
  * status read: the job usually restarts this very backend). `actor` null = the automatic update.
  */
+/**
+ * Whether the updater must not run jobs on this stack: it says the stack is foreign, or Portainer is set up and the updater does
+ * not confirm the stack as its own (an updater from before the stack field cannot refuse itself: on a Portainer stack it would
+ * recreate the services without Portainer's variables). Plain compose installs without Portainer keep the updater as before.
+ */
+function portainerStack(ctx: Ctx, s: UpdaterStatus): boolean {
+  return s.stack === 'foreign' || (portainerMode(ctx) !== null && s.stack !== 'own');
+}
+
 export async function startJob(ctx: Ctx, action: UpdaterAction, actor: string | null): Promise<StartResult> {
+  // A stack another tool started (Portainer) is never recreated by the updater (it would lose that tool's variables, e.g.
+  // BIND_ADDR): an update goes through Portainer when it is set up, anything else is refused up front.
+  const pre = await updaterView(ctx);
+  if ('status' in pre && portainerStack(ctx, pre.status)) {
+    const mode = action === 'update' ? portainerMode(ctx) : null;
+    if (!mode) return { ok: false, status: 409, error: 'foreign_stack' };
+    const r = await redeployViaPortainer(ctx, actor, mode);
+    if (!r.ok) return { ok: false, status: 502, error: r.error, portainer: { status: r.status, step: r.step, ...(r.code ? { code: r.code } : {}) } };
+    return { ok: true, portainer: mode };
+  }
   if (action !== 'rollback' && !(await syncChannel(ctx))) {
     // an updater that is there but refuses the channel would install the wrong tag: stop here
     const v = await updaterView(ctx);
@@ -165,9 +201,16 @@ const WINDOW_MIN = 30;
 
 /**
  * AUTO_UPDATE=nightly-window: once a day in the 30 minutes from AUTO_UPDATE_TIME, the same update job as the button (actor
- * null). One start per day across all backend instances (kv lock). Also finishes the result audit of earlier jobs.
+ * null). One start per day across all backend instances (kv lock). Also finishes the result audit of earlier jobs. A foreign
+ * (Portainer) stack is never handed to the updater: with Portainer set up, a newer version is redeployed through it once.
  */
-export async function autoUpdateTick(ctx: Ctx, now = new Date()): Promise<'off' | 'outside' | 'done' | 'absent' | 'busy' | 'started' | 'failed'> {
+/** what a Portainer redeploy would bring on the selected channel (one automatic attempt per target) */
+function portainerTarget(i: UpdateInfo): string | null {
+  const t = i.channel.selected === 'nightly' ? i.latest?.sha : i.channel.selected === 'pinned' ? i.channel.version : i.release?.version;
+  return t ? `${i.channel.selected}:${t}` : null;
+}
+
+export async function autoUpdateTick(ctx: Ctx, now = new Date(), log?: { warn(o: object, m: string): void }): Promise<'off' | 'outside' | 'done' | 'absent' | 'busy' | 'started' | 'failed' | 'foreign' | 'current'> {
   if ((await ctx.kv.keys(PENDING).catch(() => [])).length) await updaterView(ctx).catch(() => undefined);
   if (ctx.cfg.AUTO_UPDATE !== 'nightly-window' || !ctx.cfg.UPDATER_URL) return 'off';
   const diff = (minutes(hhmm(now)) - minutes(ctx.cfg.AUTO_UPDATE_TIME) + 1440) % 1440;
@@ -178,6 +221,25 @@ export async function autoUpdateTick(ctx: Ctx, now = new Date()): Promise<'off' 
   if (!v.present || !('status' in v)) return 'absent';
   if (v.status.busy) return 'busy';
   if (!(await ctx.kv.setnx(`updater:auto:${day}`, '1', 2 * 86_400))) return 'done';
+  if (portainerStack(ctx, v.status)) {
+    // Portainer's stack: without Portainer set up there is nothing to do (Admin -> Update says so); with it, a newer version on
+    // the selected channel is redeployed through Portainer (one attempt per night through the day lock above; a version that
+    // was redeployed is not redeployed again, a failed attempt is logged, audited and tried again the next night)
+    const mode = portainerMode(ctx);
+    if (!mode) return 'foreign';
+    const info = await updateInfo(ctx, true);
+    const target = info.updateAvailable === true ? portainerTarget(info) : null;
+    if (!target) return 'current';
+    const doneKey = `updater:portainer:${target}`;
+    if (await ctx.kv.get(doneKey)) return 'done';
+    const r = await redeployViaPortainer(ctx, null, mode, info);
+    if (!r.ok) {
+      log?.warn({ mode, step: r.step, status: r.status, ...(r.code ? { code: r.code } : {}) }, 'automatic update through Portainer failed');
+      return 'failed';
+    }
+    await ctx.kv.set(doneKey, '1', 90 * 86_400);
+    return 'started';
+  }
   const r = await startJob(ctx, 'update', null);
   return r.ok ? 'started' : 'failed';
 }

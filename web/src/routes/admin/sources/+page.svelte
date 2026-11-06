@@ -3,7 +3,6 @@
 <script lang="ts">
   /** Admin → Datenquellen: optional TMDB/OMDb keys. The API only ever returns last4; a typed key lives in the input until saved, then it is cleared. */
   import { onMount } from 'svelte';
-  import { isReauthError, startReauth } from '#lib/account/reauth';
   import { api, ApiError } from '#lib/api';
   import Icon from '#lib/Icon.svelte';
   import { t, tr } from '#lib/i18n';
@@ -35,11 +34,10 @@
     if (e instanceof ApiError && e.status === 409) return tr('admin.sources.fromFile');
     return tr('admin.sources.saveFailed');
   }
-  /** replacing or removing a key needs a sign-in at most 10 minutes old: go through it and come back here (the typed key is not kept) */
+  /** replacing or removing a key needs an admin session only (no second sign-in) */
   function failed(res: { ok: boolean; skipped?: boolean; error?: unknown }) {
     if (res.ok || res.skipped) return;
-    if (isReauthError(res.error)) startReauth('/admin/sources');
-    else toast.error(saveError(res.error));
+    toast.error(saveError(res.error));
   }
   async function save(s: Source) {
     const key = keys[s.name].trim();

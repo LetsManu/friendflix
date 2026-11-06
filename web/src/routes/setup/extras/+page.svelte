@@ -3,14 +3,14 @@
 <script lang="ts">
   /**
    * Step 6 of the setup wizard (spec Part F): optional extras for the first admin, signed in (completeSetup stamped a fresh sign-in, so
-   * secrets save without another one). Every card has Skip; Finish goes to /. The cards are Admin → Settings rows (SettingRow, the same
-   * API), a card saves only its own changed keys. Push keys are generated on the server (only "set" is shown, the private key never
+   * secrets save without another one; once that ran out, the sign-in is asked for in place and the action runs once more). Every card
+   * has Skip; Finish goes to /. The cards are Admin → Settings rows (SettingRow, the same API), a card saves only its own changed keys. Push keys are generated on the server (only "set" is shown, the private key never
    * reaches the browser); the webhook secret is shown once, in memory only, with the header line to paste.
    */
   import { onMount } from 'svelte';
   import { goto } from '$app/navigation';
   import { ApiError } from '#lib/api';
-  import { isReauthError, startReauth } from '#lib/account/reauth';
+  import { isReauthError, reauthenticate } from '#lib/account/reauth';
   import AdminCard from '#lib/adminContent/AdminCard.svelte';
   import SettingRow from '#lib/admin/settings/SettingRow.svelte';
   import { fieldErrors, generate, importEnv, loadSettings, probeFailure, saveSettings, type SettingsView, type SettingView } from '#lib/admin/settings/api';
@@ -70,7 +70,13 @@
     if (errors[key]) { delete errors[key]; errors = errors; }
   }
 
-  async function save(card: CardId, keys: readonly string[]) {
+  /** a refused action that needs a recent sign-in: sign in again in place, then the action once more (a second refusal is an error) */
+  async function signInAgain(again: boolean, retry: () => Promise<void>): Promise<void> {
+    if (!again) { toast.error(tr('account.account.reauthFailed')); return; }
+    if (await reauthenticate(SELF)) await retry();
+  }
+
+  async function save(card: CardId, keys: readonly string[], again = true): Promise<void> {
     const values = changedValues(rows(keys), edits);
     if (!Object.keys(values).length) return;
     notes = { ...notes, [card]: undefined };
@@ -82,7 +88,7 @@
       await load();
       return;
     }
-    if (isReauthError(res.error)) return startReauth(SELF);
+    if (isReauthError(res.error)) return signInAgain(again, () => save(card, keys, false));
     const fe = fieldErrors(res.error), pf = probeFailure(res.error);
     if (fe) errors = { ...errors, ...fe };
     if (pf) notes = { ...notes, [card]: tr('settings.probeFailed', { reason: probeText(pf) }) };
@@ -99,10 +105,14 @@
       const ok = await confirm({ title: tr('settings.generate.vapidConfirm'), body: tr('settings.generate.vapidBody'), danger: true, confirmLabel: tr('setup.extras.cards.push.generate') });
       if (!ok) return;
     }
+    await runGenPush();
+  }
+  async function runGenPush(again = true): Promise<void> {
     // only the public key comes back; it is not shown either: "set" says enough
-    const res = await runAction({ key: 'extras:push', run: () => generate('vapidPair'), success: tr('setup.extras.cards.push.done'), error: tr('setup.extras.cards.push.failed') });
+    const res = await runAction({ key: 'extras:push', run: () => generate('vapidPair'), success: tr('setup.extras.cards.push.done'), error: false });
     if (res.ok) await load();
-    else if (isReauthError(res.error)) startReauth(SELF);
+    else if (isReauthError(res.error)) await signInAgain(again, () => runGenPush(false));
+    else if (!res.skipped) toast.error(tr('setup.extras.cards.push.failed'));
   }
 
   async function genWebhook() {
@@ -110,10 +120,13 @@
       const ok = await confirm({ title: tr('settings.generate.webhookConfirm'), body: tr('settings.generate.webhookBody'), danger: true, confirmLabel: tr('setup.extras.cards.webhooks.generate') });
       if (!ok) return;
     }
+    await runGenWebhook();
+  }
+  async function runGenWebhook(again = true): Promise<void> {
     const res = await runAction({ key: 'extras:webhook', run: () => generate('webhookSecret'), error: false });
     if (res.ok && res.value) { secret = res.value.secret; await load(); return; }
-    if (isReauthError(res.error)) return startReauth(SELF);
-    toast.error(tr('setup.extras.cards.webhooks.failed'));
+    if (isReauthError(res.error)) return signInAgain(again, () => runGenWebhook(false));
+    if (!res.skipped) toast.error(tr('setup.extras.cards.webhooks.failed'));
   }
 
   const skip = (card: CardId) => { status = { ...status, [card]: 'skipped' }; };

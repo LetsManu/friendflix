@@ -1,10 +1,11 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
 /**
- * The web side of the FriendFlix Android app's narrow native bridge (android/.../bridge/NativeBridge.kt has the other end).
+ * The web side of the narrow native bridge of the FriendFlix apps: the Android app (android/.../bridge/NativeBridge.kt has that end)
+ * and the Windows app (desktop shell).
  *
- * In the app the shell injects `window.FriendFlixNative` (a WebMessageListener object: `postMessage(string)` + `message` events) and
- * appends ` FriendFlixAndroid/<version>` to the user agent. Everywhere else `native.available` is false and nothing here runs: the
+ * In an app the shell injects `window.FriendFlixNative` (`postMessage(string)` + `message` events) and appends
+ * ` FriendFlixAndroid/<version>` (Android) or ` FriendFlixDesktop/<version>` (Windows) to the user agent. Everywhere else `native.available` is false and nothing here runs: the
  * browser keeps using the web player and the OPFS downloader.
  *
  * Protocol (JSON strings, both directions):
@@ -19,6 +20,8 @@ import { writable } from 'svelte/store';
 
 export const REQUEST_TIMEOUT_MS = 5000;
 export const UA_MARKER = ' FriendFlixAndroid/';
+/** every user agent marker that opts a shell into the bridge (the Android app first, then the Windows app) */
+export const UA_MARKERS = [UA_MARKER, ' FriendFlixDesktop/'] as const;
 export const EVENT_NAME = 'friendflix-native';
 
 export interface NativeCapabilities { api: number; play: boolean; download: boolean; cast: boolean }
@@ -43,7 +46,10 @@ const port = (): Port | undefined => {
   const p = (globalThis as { window?: { FriendFlixNative?: Port } }).window?.FriendFlixNative;
   return p && typeof p.postMessage === 'function' ? p : undefined;
 };
-const hasMarker = () => (typeof navigator !== 'undefined' ? String(navigator.userAgent ?? '') : '').includes(UA_MARKER);
+const hasMarker = () => {
+  const ua = typeof navigator !== 'undefined' ? String(navigator.userAgent ?? '') : '';
+  return UA_MARKERS.some((m) => ua.includes(m));
+};
 
 const NO_CAPS: NativeCapabilities = { api: 0, play: false, download: false, cast: false };
 const STATES = new Set<string>(['queued', 'preparing', 'downloading', 'paused', 'done', 'error', 'expired']);

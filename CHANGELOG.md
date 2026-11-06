@@ -4,6 +4,57 @@ All notable changes, grouped by what you notice. Each release has its own sectio
 
 ## [Unreleased]
 
+## [2.4.0] – Brezel – 2026-11-06
+
+### Samsung TV app
+- **Probe build for Samsung TVs.** A small test app (FriendFlix Probe) for Samsung smart TVs from 2022 on (Tizen 6.5 and newer) that checks whether the TV's own video player can play your server's streams and shows one line with the result. It comes with the FriendFlix app shell, which asks for your server's address and opens its TV mode. The player follows in a later release, after the probe. Both are installed from a PC with an install script (the TV in developer mode, signed with the owner's Samsung certificate); they do not update themselves. Setup and how to read the probe: [docs/tizen.md](docs/tizen.md).
+
+### LG TV app
+- **New: FriendFlix for LG TVs** (webOS 22 and newer). An app shell that asks for your server's address once and opens its TV mode, installed from a PC over Developer Mode with an install script (no certificate; the app does not update itself and Developer Mode needs **Extend** every 50 hours). It tells the server what the TV can play, so files the TV handles itself are played directly; DTS and TrueHD are still converted. Remote keys for play, pause, stop, ±30 s, subtitles (red) and audio (green), Magic Remote pointer, and **Change server** in the account menu. A test app prints one line about what the TV can do. Setup and troubleshooting: [docs/webos.md](docs/webos.md); the later store submission: [docs/webos-store.md](docs/webos-store.md).
+
+## [2.3.0] – Brezel – 2026-10-22
+
+### Windows app
+- **New: FriendFlix for Windows** (Windows 10 22H2 and 11). The app shows your server's web UI in a locked-down window and plays titles in a native player (mpv) with FriendFlix's own controls: audio and subtitle choices that are remembered per series, chapters, preview pictures on the seek bar, skip intro and recap, next episode with a countdown, and keyboard and media keys. It plays almost every file as it is (AC3, DTS, TrueHD, HEVC, image subtitles), resumes where you stopped and keeps *Continue watching* in sync with web, Android and TV. No downloads and no Chromecast in this version.
+- **Installer from the GitHub Release** (`.exe`, or `.msi` for managed PCs). Windows SmartScreen warns because there is no paid signing certificate: *More info → Run anyway*.
+- **Tray icon, `friendflix://watch/<id>` links and one window** per PC; settings for the server address, hardware decoding, fullscreen start and starting with Windows.
+- **Updates by themselves** once the owner has added an update key (off until then). Setup, troubleshooting and a checklist for the first test on a PC: [docs/windows.md](docs/windows.md).
+
+### Media server
+- **The server accepts the Windows app's list of playable formats**, so it converts less for it. AVI, M2TS, PCM audio, VC-1 video and DVD/Blu-ray image subtitles are still converted.
+
+## [2.2.1] – Brezel – 2026-10-21
+
+### Android app
+- **The header no longer sits under the status bar.** The page now starts below the clock and battery icons, on the page's own background, with light icons.
+- **Resume where you stopped, on any device.** A title started in the app now continues at the position the server knows, also when you watched further on the web or a TV meanwhile (the app used the position the page had loaded earlier).
+
+### Home
+- **Continue watching is up to date when you come back.** Returning to the home page (closing the app's player, switching back to the tab) re-reads *Continue watching* and *Next episode*.
+
+## [2.2.0] – Brezel – 2026-10-21
+
+### Sign-in
+- **Stay signed in up to 90 days.** Sessions now last 90 days, also without use (were 8 hours, and 2 hours without activity); paired TVs 90 days too (were 30, and 7 without use). Signing out, *sign out everywhere*, revoking a device and disabling an account still end sessions at once. Both limits stay editable under *Admin → Settings → Sessions*; paired TVs keep their own 90 days whatever the setting. **Upgrade note:** a stored value that is exactly the old default (8 h / 2 h, e.g. moved from the environment with *Move to settings*) switches to 90 days; any other value you set stays. A value still passed through the environment (an own compose file or `.env` with `SESSION_TTL_SECONDS` / `SESSION_IDLE_SECONDS`) keeps winning: remove it to get the new default. Disabling someone only in Authentik no longer ends their FriendFlix session soon: it can run for up to 90 days, so disable them under *Admin → Users* (or use *Sign out everywhere* there) to lock them out at once.
+- **A password change signs out your other devices.** Changing your password in FriendFlix ends your sessions on all other devices (this one stays signed in); resetting a forgotten password ends all of them.
+- **Fewer password prompts.** FriendFlix asks for your password again only where it protects your account or a secret: deleting the account, changing the username, e-mail or sign-in methods, secret settings and *Repair* under *Admin → Sign-in*. Starting an update, the automatic-update switch and the keys under *Admin → Data sources* need an admin session only (still audited).
+- **The re-sign-in happens in FriendFlix.** When an action needs it, a sign-in dialog opens on the page and the action runs right after, with what you typed still filled in (account deletion, username change, removing a sign-in method, *Admin → Settings*, the setup wizard's extras, the Authentik repair). The sign-in page of the identity provider is used only when the in-app sign-in is off; that also fixes re-sign-ins that failed with "too much time has elapsed since the last End-User authentication" on identity providers that ignore a forced login.
+
+### Android app
+- **The native player has the web player's controls.** *Episodes* switches episodes in the player; *Scenes* lists the chapters, and chapters and bookmarks are marked on the seek bar, with a preview picture while you drag it. *Cast & info* shows the cast and crew and opens a person's other titles. *Audio and subtitles* adds *Find subtitles …*, *Clear voices* and *Night mode* (Android 9+). *More* has playback speed, bookmarks with *Share scene*, quality, a sleep timer (also *After this episode*), *Lock controls*, picture-in-picture and *Play on TV*. A quality chip says *Original* or *Converted · 1080p* and why. At the end of a title the post-play screen or *More like this* opens, as in the web; your subtitle style and the anime default apply. Downloads hide what needs the server; while casting, *Episodes*, *Scenes*, bookmarks, the sleep timer and *Cast & info* act on the TV. Guide: [docs/android.md, Player](docs/android.md#player).
+- **The player stays fullscreen.** The navigation bar no longer stays on screen in the player; the status and navigation bars hide again after a swipe, a menu, picture-in-picture or another app.
+- **The Chromecast button is always there when you can cast** (online, Google Play services, casting enabled on the server), also before a TV has been found; a tap with no TV around says that no device was found.
+- **Releases can go to Google Play by themselves.** With a Play Console service account (secret `PLAY_SERVICE_ACCOUNT_JSON`), each release uploads its app to the closed testing track and rolls it out to the testers, with release notes from this changelog. Setup: [docs/android.md, step 4a](docs/android.md#4a-automatic-upload-to-google-play-optional).
+
+## [2.1.1] – Brezel – 2026-10-20
+
+### Android app
+- **App id is now `com.friendflix`** (was `app.friendflix.android`), matching the app in Google Play. No APK with the old id was ever attached to a release, so nobody has to reinstall.
+- **Account deletion page** for the Play Console's deletion link: [docs/account-deletion.md](docs/account-deletion.md) ([Deutsch](docs/de/account-deletion.md)).
+- **Privacy policy** for the app, linked from the Play Console listing: [docs/privacy.md](docs/privacy.md) ([Deutsch](docs/de/privacy.md)).
+
+## [2.1.0] – Brezel – 2026-10-20
+
 ### Android app
 - **New: FriendFlix for Android** (Android 8.0+, package `app.friendflix.android`, version = server version). The app shows your server's web UI in a locked-down WebView (one HTTPS origin, every other link in the browser, no cleartext, no user CAs) and does four things natively: the player, downloads, Chromecast and notifications. First start asks for the address and checks `GET /api/version`; sign-in, device approval and revoke work as for any browser. Shared through a Google Play closed test; every release also carries a signed APK. Guide: [docs/android.md](docs/android.md) ([Deutsch](docs/de/android.md)).
 - **Native player (Media3):** direct play when the phone can decode the file, otherwise the server's transcode; audio, subtitle and quality menus; skip intro, next-up card, autoplay and "Still there?" like the web player; picture-in-picture, lock screen and Bluetooth controls, optional background audio. Play buttons and `/watch` links in the web UI hand over to it; when it cannot play, the web player takes over.
@@ -16,6 +67,8 @@ All notable changes, grouped by what you notice. Each release has its own sectio
 
 ### Fixes
 - **New device: approval now reaches the waiting screen.** A device approved in Admin (or from another device) stayed on "waiting for approval" until the person signed in again, most visibly in the installed Android app, which keeps its session. The waiting screen now switches to the app within seconds, and at once when the app comes back to the foreground.
+- **Updater: automatic updates no longer break Portainer stacks.** On a stack deployed in Portainer, the nightly update recreated web, backend and gateway with only the stack directory's `.env`, so Portainer's stack variables were lost: with `BIND_ADDR` gone the ports came back on `127.0.0.1` and the reverse proxy answered 502. The updater now never recreates a stack another tool started (backend container started from another working directory, Portainer's `/data/compose/<id>`, or no compose labels): it refuses with *managed by Portainer (or another tool)* before pulling anything. With the Portainer webhook or API set in *Admin → Settings → Updates*, *Update now* and the automatic update redeploy through Portainer instead (automatically once per new version); without it *Admin → Update* says so up front. New safety net for every stack: when the compose files plus `.env` would publish other ports or attach other networks than the running containers (`config_mismatch`), nothing is pulled or restarted. As long as the Portainer webhook or API is set, FriendFlix also sends updates through Portainer when the updater does not confirm the stack as its own (an older updater container), so the old updater can no longer recreate a Portainer stack. A failed automatic Portainer redeploy is logged, audited (`system.update_result`) and tried again the next night. **Portainer stacks: redeploy the stack once in Portainer after updating, so that the updater container is current, and set the Portainer webhook in *Admin → Settings → Updates*.**
+- **Updater: a stack started without `PWD` is no longer called a Portainer stack.** An own install started with `sudo docker compose`, Dockge or a NAS GUI records its host directory, while the updater looks at `/project`; the updater does not recreate it (it would miss that directory's `.env`), and *Admin → Update* now names both directories and the fix: `UPDATER_PROJECT_DIR=<that directory>` in its `.env`, then `docker compose up -d` there once.
 - **Updater: "Update the updater" on the image it already runs no longer fails after three minutes.** When the running updater has the same registry digest as the pulled and verified one, the job ends as succeeded without a restart (compose would leave the container as it is, so no new process could finish the job). Admin -> Update shows the build the backend runs as *Installed* before the updater's first job, instead of "none".
 
 ## [2.0.0] – Brezel – 2026-10-19

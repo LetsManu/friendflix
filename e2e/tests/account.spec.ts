@@ -3,6 +3,10 @@
 import { expect, test } from '../fixtures.js';
 import { noHorizontalOverflow } from '../helpers.js';
 import { ME } from '../mocks/fixtures.js';
+import { done, installLogin, loginState, password } from '../mocks/login.js';
+
+/** the classic sign-in mode: GET /auth/flow/config answers `authentik`, so a re-authentication goes through /auth/reauth */
+const classicSignIn = (page: import('@playwright/test').Page) => page.route('**/auth/flow/config', (r) => r.fulfill({ json: { mode: 'authentik', recovery: false, enroll: false } }));
 
 /** Block 23 self-service: /me/account (profile, security, sessions & devices) */
 test.describe('account page (/me/account)', () => {
@@ -210,7 +214,40 @@ test.describe('your data and account deletion', () => {
     await expect(data.getByText(/nur deine eigenen Daten/)).toBeVisible();
   });
 
-  test('delete asks for re-authentication, then confirms with the date', async ({ page, api }) => {
+  test('delete asks for the sign-in in place (in-app dialog), then deletes; no redirect', async ({ page, api }) => {
+    const st = loginState({ starts: [{ body: password('tester') }], answers: [() => { api.account = { ...api.account, reauthUntil: REAUTH() }; return { body: done('') }; }] });
+    await installLogin(page.context(), st);
+    let classic = 0;
+    page.on('request', (r) => { if (new URL(r.url()).pathname === '/auth/reauth') classic++; });
+    await page.goto('/me/account');
+    await page.getByRole('region', { name: 'Konto löschen' }).getByRole('button', { name: 'Konto löschen …' }).click();
+    await page.getByRole('dialog', { name: 'Konto löschen?' }).getByRole('button', { name: 'Mein Konto löschen' }).click();
+    const sign = page.getByRole('dialog', { name: 'Erneut anmelden' });
+    await sign.getByLabel('Passwort', { exact: true }).fill('hunter2-fixture');
+    await sign.getByRole('button', { name: 'Anmelden' }).click();
+    await expect(page.getByRole('dialog', { name: 'Konto wird gelöscht' })).toContainText('Dein Konto wird am 21. Oktober 2026 gelöscht.');
+    expect(api.log.filter((l) => l.startsWith('POST /api/account/delete'))).toEqual(['POST /api/account/delete {"confirm":true} -> 401', 'POST /api/account/delete {"confirm":true} -> 200']);
+    expect(classic).toBe(0);
+  });
+
+  test('in place: still refused after the sign-in shows an error, no second round', async ({ page, api }) => {
+    api.reauthLapsed = true;
+    const st = loginState({ starts: [{ body: password('tester') }], answers: [{ body: done('') }] });
+    await installLogin(page.context(), st);
+    await page.goto('/me/account');
+    await page.getByRole('button', { name: 'Konto löschen …' }).click();
+    const dlg = page.getByRole('dialog', { name: 'Konto löschen?' });
+    await dlg.getByRole('button', { name: 'Mein Konto löschen' }).click();
+    const sign = page.getByRole('dialog', { name: 'Erneut anmelden' });
+    await sign.getByLabel('Passwort', { exact: true }).fill('hunter2-fixture');
+    await sign.getByRole('button', { name: 'Anmelden' }).click();
+    await expect(dlg.getByRole('alert')).toHaveText('Die Anmeldung konnte nicht bestätigt werden. Bitte versuch es noch einmal.');
+    expect(st.calls.filter((c) => c.path === '/auth/flow/start')).toHaveLength(1);
+    expect(api.log.filter((l) => l.startsWith('POST /api/account/delete'))).toHaveLength(2);
+  });
+
+  test('delete asks for re-authentication (classic, no in-app sign-in), then confirms with the date', async ({ page, api }) => {
+    await classicSignIn(page);
     let next: string | null = null;
     // the forced sign-in (backend /auth/reauth) comes straight back to `next`, now recently authenticated
     await page.route('**/auth/reauth?**', (r) => {
@@ -256,7 +293,8 @@ test.describe('your data and account deletion', () => {
 
 test.describe('account deletion refused', () => {
   test.use({ allowedConsole: /status of (400|401)/ });
-  test('a lapsed re-authentication answer sends the person to sign in again', async ({ page, api }) => {
+  test('(classic) a lapsed re-authentication answer sends the person to sign in again', async ({ page, api }) => {
+    await classicSignIn(page);
     api.account = { ...api.account, reauthUntil: Date.now() + 600_000 };
     api.reauthLapsed = true; // the window ran out between loading the page and confirming
     let next: string | null = null;
