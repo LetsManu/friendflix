@@ -67,12 +67,12 @@ powershell -ExecutionPolicy Bypass -File .\webos\install.ps1 192.0.2.10 -Ipk .\F
 
 `-ExecutionPolicy Bypass` only applies to this one call; without it Windows may refuse to run the script.
 
-The full forms are `webos/install.sh <tv-ip> [passphrase] [--probe] [--ipk <file>] [--version vX.Y.Z]` and `webos/install.ps1 <TvIp> [Passphrase] [-Probe] [-Ipk <file>] [-Version vX.Y.Z]`.
+The full forms are `webos/install.sh <tv-ip> [passphrase] [--probe] [--ipk <file>] [--version vX.Y.Z]` and `webos/install.ps1 <TvIp> [-Probe] [-Ipk <file>] [-Version vX.Y.Z]`.
 
 | Argument | Meaning |
 |---|---|
 | `<tv-ip>` / `<TvIp>` | The TV's IPv4 address. Required. |
-| `[passphrase]` / `[Passphrase]` | The Developer Mode passphrase. **Leave it out**: the script then asks for it, hidden. On the command line it would stay in your shell history. |
+| `[passphrase]` (install.sh only) | The Developer Mode passphrase. **Leave it out**: the script then asks for it, hidden. On the command line it would stay in your shell history. `install.ps1` takes no passphrase: LG's tool asks for it itself at `input passphrase:` (the typed characters are visible there). |
 | `--probe` / `-Probe` | Install **FriendFlix Test** (the test app) instead of FriendFlix. |
 | `--ipk <file>` / `-Ipk <file>` | Install this `.ipk` instead of downloading a release. |
 | `--version vX.Y.Z` / `-Version vX.Y.Z` | A specific release. Without it, the latest. |
@@ -88,7 +88,7 @@ Exit codes: `0` installed; `1` it failed (the script prints hints); `2` the argu
 
 ## The passphrase and where it is stored
 
-The FriendFlix scripts never write your passphrase anywhere: it is not printed, not logged and not saved by them. They hand it to LG's tool on standard input only, never on a command line.
+The FriendFlix scripts never write your passphrase anywhere: it is not printed, not logged and not saved by them. `install.sh` hands it to LG's tool on standard input only, never on a command line; with `install.ps1` you type it straight into LG's tool, so the script never sees it.
 
 LG's own tool is different. `ares-novacom`, which fetches the TV's SSH key, **stores the passphrase in its device file** `novacom-devices.json` in your user's ares config folder, because it needs the passphrase to unlock the TV's key on every later call (install, launch). So after an install, the passphrase sits in that file on the PC. It is only useful while Developer Mode is on and the key server is running, and it changes when you switch the key server off and on, but treat the file like a password: do not share your home folder, and remove the entry when you no longer need it.
 
