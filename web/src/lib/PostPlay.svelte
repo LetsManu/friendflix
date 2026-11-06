@@ -271,4 +271,7 @@
   :global(html.tv) .pp .prow h2, :global(html.tv) .pp .hbody h2 { font-size: 1.7rem; }
   :global(html.tv) .pp .tiles li { width: 180px; } :global(html.tv) .pp .tiles li.ep { width: 300px; } :global(html.tv) .pp .nm { font-size: 1.1rem; }
   :global(html.tv) .pp a:focus-visible, :global(html.tv) .pp button:focus-visible { outline: 4px solid #fff; outline-offset: 3px; }
+  /* TV page next to the side-bar rail: the page (main.page) already pads the right and the rail column the left, so only the 56 px
+     gutter remains (content starts at --tv-left like every TV page); without it the hero's buttons lose their shared line */
+  :global(html.tv main.tvrail) .pp.page { padding-left: var(--tv-gutter, 56px); padding-right: 0; }
 </style>

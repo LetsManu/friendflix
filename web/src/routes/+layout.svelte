@@ -292,9 +292,14 @@
   });
   /** waits for the page content (lazy rows, fetched lists), then focuses the remembered link, [data-autofocus] or the first element */
   async function settleFocus(want?: { href: string; nth: number }) {
+    const start = document.activeElement;
     for (let i = 0; i < 16; i++) {
       await new Promise((r) => setTimeout(r, i ? 150 : 30));
       const main = document.querySelector('main');
+      // the focus was placed in the content meanwhile (a key, the pointer, the page itself): it stays there, a late
+      // [data-autofocus] (e.g. the home focus tile's Play once the hero has loaded) must not pull it away
+      const now = document.activeElement;
+      if (now instanceof HTMLElement && now !== start && now !== document.body && main?.contains(now)) return;
       if (want) {
         const el = main?.querySelectorAll<HTMLElement>(`a[href="${CSS.escape(want.href)}"]`)[want.nth];
         if (el) return focusEl(el);

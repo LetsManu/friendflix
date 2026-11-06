@@ -55,9 +55,18 @@
     if (!a || !open) return;
     if (apply('ok', { inRail: true }) === 'navigate') skipRestore = new URL(a.href, location.href).pathname !== path;
   }
-  function onPointer(e: PointerEvent, key: 'pointerenter' | 'pointerleave') {
+  /**
+   * Opens on a real pointer move over the rail, not on pointerenter: Chromium also sends boundary events (no movement) when the
+   * page under a resting pointer changes, e.g. a pointer parked at the screen's left edge while a page loads. Those must not open
+   * the rail over the content (it would cover the page's buttons and stay open until the pointer leaves).
+   */
+  function onPointerMove(e: PointerEvent) {
+    if (open || e.pointerType === 'touch' || (!e.movementX && !e.movementY)) return;
+    apply('pointerenter');
+  }
+  function onPointerLeave(e: PointerEvent) {
     if (e.pointerType === 'touch') return;
-    apply(key);
+    apply('pointerleave');
   }
 
   // Left at the left edge of the content (nothing further left to focus) opens the rail
@@ -76,7 +85,7 @@
 
 <!-- svelte-ignore a11y-no-noninteractive-element-interactions -->
 <nav class="rail" class:open data-scope={open ? '' : undefined} data-nav-skip={open ? undefined : ''} bind:this={nav} aria-label={$t('tv.rail.label')}
-  on:keydown={onKeydown} on:focusin={onFocusin} on:click={onClick} on:pointerenter={(e) => onPointer(e, 'pointerenter')} on:pointerleave={(e) => onPointer(e, 'pointerleave')}>
+  on:keydown={onKeydown} on:focusin={onFocusin} on:click={onClick} on:pointermove={onPointerMove} on:pointerleave={onPointerLeave}>
   <ul>
     {#each TV_RAIL as [href, label, icon] (href)}
       <li class:cur={isTabActive(href, path)}><a {href} aria-current={isTabActive(href, path) ? 'page' : undefined} aria-label={open ? undefined : $t(label)}><span class="ic"><Icon name={icon} size={26} /></span><span class="lb">{$t(label)}</span></a></li>
