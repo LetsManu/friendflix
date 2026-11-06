@@ -37,7 +37,7 @@ Make FriendFlix comfortable on a TV with a D-pad remote (LG Magic Remote 2025, S
   - On open it shows the hero title with **Play** and **More info** buttons (focused: Play).
   - When a row card has focus, the tile shows that card's title after 300 ms without focus change, with a 200 ms crossfade. No buttons then; it never takes focus.
   - Continue Watching cards add "S2E4 · 23 min left" to the tile.
-  - No trailer autoplay.
+  - Trailer autoplay: the existing preview feature (`hoverTrailers` pref, muted, respects calm mode, reduced motion, Save-Data and hidden tabs) is turned on for TV. It starts in the focus tile after 1.5 s of rest on one title, replaces the backdrop, and stops as soon as focus moves. The sound toggle stays.
 - **Rows** below the tile: same data and order as today's home rows. Cards are 16:9, sized so about 6.5 fit in the content width (the 7th peeks). Continue Watching cards show the progress bar.
 - **Categories row**: large tiles from the existing category list, after the first three rows.
 - **Movement**: ◀/▶ along a row (focused card scrolls into view with `scrollIntoView({inline:'nearest'})` semantics, smooth). ▼/▲ change row; the focused row sits directly under the focus tile and the rows scroll vertically under it. ▲ from the first row goes to the tile's buttons.
@@ -47,7 +47,7 @@ Make FriendFlix comfortable on a TV with a D-pad remote (LG Magic Remote 2025, S
 ## 3. Detail page
 
 - `DetailView` gets a third variant `tv` (next to `page` and `modal`), chosen by the item route in TV mode. Same loads.
-- No scrolling. Full-screen backdrop fading to the left. Left column (~40% wide): title logo, meta line + quality chip, tagline, 3-line synopsis, one "With: A, B, C" line, resume line.
+- No scrolling. Full-screen backdrop fading to the left. The existing trailer preview plays in the backdrop on TV too (same rules as on the focus tile). The "preview starts the title" countdown stays off on TV. Left column (~40% wide): title logo, meta line + quality chip, tagline, 3-line synopsis, one "With: A, B, C" line, resume line.
 - **Vertical button list** (each ≥ 56 px, first focused on open):
   1. Play / Resume
   2. Restart (only with progress)
@@ -86,6 +86,7 @@ Make FriendFlix comfortable on a TV with a D-pad remote (LG Magic Remote 2025, S
 
 ## Out of scope
 
-- Mood/AI discovery tab, vertical video feed, trailer autoplay on TV.
+- Vertical video feed (phone-only pattern).
 - Tizen/Android-TV-specific shells beyond inheriting `html.tv`.
-- Plex fork port (separate follow-up after merge).
+
+Both media servers (Jellyfin and Plex) live in this one codebase, so the redesign covers both; nothing is ported separately.
