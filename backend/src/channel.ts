@@ -6,7 +6,7 @@ import { appVersion } from './version.js';
 /**
  * Update channels (docs/operations.md "Release-Kanäle"). The images decide what runs: `FF_TAG=latest` follows the releases
  * (stable), `FF_TAG=nightly` every green commit on main, `FF_TAG=X.Y.Z` a fixed version (pinned). The backend never gets the
- * Docker socket: without the opt-in updater (updater.ts) the UPDATE_CHANNEL setting only chooses what Admin -> Update compares
+ * Docker socket: without the updater (updater.ts, compose.no-updater.yaml) the UPDATE_CHANNEL setting only chooses what Admin -> Update compares
  * against and which `.env` line it suggests; with it, the updater installs that channel's tag. The channel a build actually runs is derived from its commit: a release build is exactly the commit of
  * the tag v<version> (the image is re-tagged, never rebuilt, so the sha is the same); any other CI build is a nightly one.
  */

@@ -3,12 +3,11 @@
 <script lang="ts">
   /**
    * Admin → Update: version card, update channel (stable / nightly / fixed version, the .env line to switch), check, update with
-   * confirm + progress steps (Portainer redeploy), changelog. Without the opt-in updater the channel switch only saves
+   * confirm + progress steps (Portainer redeploy), changelog. Without the updater (compose.no-updater.yaml) the channel switch only saves
    * UPDATE_CHANNEL (the images follow FF_TAG); with it (GET /api/admin/updater answers present) the updater card replaces the
    * Portainer card and installs the selected channel itself (UpdaterCard.svelte). The backend never touches Docker.
    */
   import { onDestroy, onMount } from 'svelte';
-  import { goto } from '$app/navigation';
   import { api } from '#lib/api';
   import Icon from '#lib/Icon.svelte';
   import { fmtDateTime, fmtRelative, hasKey, t, tr, trDynamic } from '#lib/i18n';
@@ -16,7 +15,7 @@
   import AdminCard from '#lib/adminContent/AdminCard.svelte';
   import { busyKeys, errorText, runAction } from '#lib/ui/action';
   import { saveSettings } from '#lib/admin/settings/api';
-  import { CHANNELS, PULL_COMMAND, VERSION_RE, envLineFor, isUpToDate, showSnippet, snippetReason, stepChannel, type ChannelInfo, type SelectedChannel } from '#lib/admin/updateChannel';
+  import { CHANNELS, VERSION_RE, pullCommand, envLineFor, isUpToDate, showSnippet, snippetReason, stepChannel, type ChannelInfo, type SelectedChannel } from '#lib/admin/updateChannel';
   import { statusOf, type UpdaterView } from '#lib/admin/updater';
   import UpdaterCard from '#lib/admin/UpdaterCard.svelte';
   import Field from '#lib/ui/Field.svelte';
@@ -32,6 +31,7 @@
   import type { Column } from '#lib/ui/table';
   import VersionEgg from '#lib/version/VersionEgg.svelte';
   import { parseNotes } from '#lib/version/notes';
+  import { serverKind } from '#lib/capabilities';
 
   interface Commit { sha: string; url: string; message: string; author: string; date: string }
   interface Release { version: string; codename: string | null; tag: string; name: string; url: string; publishedAt: string | null; notes: string }
@@ -77,8 +77,8 @@
   $: sel = u?.channel?.selected ?? 'stable';
   $: nightly = sel === 'nightly';
   $: notes = u?.release?.notes && !nightly ? parseNotes(u.release.notes) : [];
-  /** the opt-in updater answers: it installs the channel itself, no .env line needed */
-  let up: UpdaterView | null = null, reauthBack = false;
+  /** the updater answers: it installs the channel itself, no .env line needed */
+  let up: UpdaterView | null = null;
   $: updater = statusOf(up) !== null;
   $: snippet = u && !updater ? showSnippet(u) : false;
   /** the fixed-version form: open while "Fixed version" is selected, or picked without a saved version yet */
@@ -177,13 +177,6 @@
   }
   function stop() { clearInterval(timer); timer = undefined; }
   onMount(() => {
-    // back from the sign-in a start needed (UpdaterCard): say so once; the job is started again by the person, never on its own
-    const url = new URL(location.href);
-    if (url.searchParams.get('reauth') === '1') {
-      reauthBack = true;
-      url.searchParams.delete('reauth');
-      void goto(url.pathname + url.search + url.hash, { shallow: true, replace: true });
-    }
     void load();
   });
   onDestroy(stop);
@@ -274,7 +267,7 @@
         <div class="snippet" data-snippet>
           <p class="lead">{snippetReason(u) === 'switch' ? $t('admin.update.channel.switchLead', { channel: channelName(sel) }) : $t('admin.update.channel.updateLead')}</p>
           <CopyField label={$t('admin.update.channel.envLabel')} value={u.channel.envLine} />
-          <CopyField label={$t('admin.update.channel.cmdLabel')} value={PULL_COMMAND} />
+          <CopyField label={$t('admin.update.channel.cmdLabel')} value={pullCommand($serverKind)} />
           <p class="muted small">{$t('admin.update.channel.note')}</p>
         </div>
       {/if}
@@ -282,7 +275,7 @@
   {/if}
 
   {#if up?.present}
-    <UpdaterCard view={up} {reauthBack} on:finished={() => { void load(); }} />
+    <UpdaterCard view={up} on:finished={() => { void load(); }} />
   {:else}
   <AdminCard title={$t('adminContent.update.applyTitle')}>
     {#if !u.portainer.configured}

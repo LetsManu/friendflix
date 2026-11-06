@@ -147,7 +147,7 @@ sequenceDiagram
 
 ## Media server seam
 
-FriendFlix talks to its media server through one neutral interface. Today the only implementation is Jellyfin; the seam exists so that another server (a fork adds Plex, for example) can be added mostly by **adding** files instead of editing shared ones.
+FriendFlix talks to its media server through one neutral interface. There are two implementations, **Jellyfin** (`backend/src/jellyfin`, `gateway/src/upstream/jellyfin.ts`, the default) and **Plex** (`backend/src/plex`, `gateway/src/upstream/plex.ts`, [plex.md](plex.md)); the same images carry both and `MEDIA_SERVER` picks one at start. Nothing outside an adapter folder imports it except the seam index (`backend/src/media/index.ts`, `backend/src/media/setup.ts`, `gateway/src/upstream/index.ts`); `backend/test/media-seam.test.ts` and `gateway/test/upstream.test.ts` enforce that. A further server is added mostly by **adding** files instead of editing shared ones.
 
 How the pieces line up: backend routes and jobs only know the `MediaServer` interface, the gateway core only the `Upstream` adapter; each media server kind provides one of each, and `MEDIA_SERVER` picks them.
 
@@ -284,21 +284,24 @@ Every event, whatever its source, goes through `media/events.ts` `dispatchMediaE
 - `authorize(ctx)` – per-request access check after the allowlist / session / direct-stream checks, for servers the gateway reaches with one server-wide token. `ctx.checkItem(itemId, kind)` asks the backend `POST /internal/authz/item {sid, itemId, kind}` (internal secret; answers `{allow}` from the active profile's visibility via `ctx.jf.item`, 401 without a usable session; memoised 5 s on both sides, dropped on a profile switch). On the Chromecast route it compares with the token's item scope. `false` → 403, a throw → 503.
 - `rewrite(path, query)` – maps the public `/media/…` shape (what the web and the DTOs use) to the upstream request; the result must stay server-relative (else 502). The shared `test-vectors/media-paths.json` results are unchanged for the Jellyfin adapter.
 - `validateConfig(env)` – startup check of the gateway environment (`server.ts` → `checkUpstreamConfig()`); a non-empty list stops the gateway with `MEDIA_SERVER=<kind>: invalid gateway configuration: …`, like the backend's config validation.
+- `gatewayKeys`, `bind(runtime)`, `wrapFetch(fetch)` – for servers the gateway reaches with one server-wide credential (Plex: `PLEX_TOKEN`). `gatewayKeys` names settings besides the URL: one the gateway env does not pin comes from the backend's `/internal/gateway-config` (`upstreamAuth`, behind the internal secret, never logged; `/media` answers 503 until it is there; backend side: `MediaSetupProvider.gatewayKeys`). `bind()` hands the adapter the resolved internal secret and those values; `wrapFetch()` lets it make upstream error answers opaque. The backend's `PlaybackOptions.after` (the server-resolved predecessor of a queued cast episode) lets a server that counts streams itself allow exactly that one overlap.
 - `playlist(body, ctx)` – rewrites HLS playlist bodies (`*.m3u8`, status 200) on the cookie path and the cast path (`ctx`: `path`, `query`, `requestPath`, `cast`), e.g. to drop a credential the server writes into segment URIs. On the cast path the gateway's own sanitising runs afterwards. With the hook those playlists are buffered (no Range / conditional requests, no upstream `etag`); a throw answers 502. Without it (Jellyfin) cookie playlists stream through untouched.
 
-### Adding an implementation (fork)
+### Adding an implementation
 
 New files only:
 
 1. `backend/src/<kind>/…` with a class implementing `MediaServer` (and its errors extending `MediaError`), reporting honest `capabilities`, plus whichever hooks it needs.
 2. `gateway/src/upstream/<kind>.ts` with an `Upstream` adapter (and `urlEnv` for its base URL).
-3. Tests (the shared seam tests only assume `jellyfin` is registered and the default) and a compose override (e.g. `compose.<kind>.yaml`) that sets `MEDIA_SERVER=<kind>`.
+3. Tests (the seam tests list the registered kinds and check the folder boundary) and a compose override (e.g. `compose.<kind>.yaml`, like `compose.plex.yaml`) that sets `MEDIA_SERVER=<kind>`.
 
 Shared lines to touch:
 
 - `backend/src/media/index.ts`: add the kind to `MEDIA_SERVERS` and one line to `factories` (plus its import; the factory gets `cfg`, `kv`, the shared `db` pool and `encKey`); refuse unsupported settings in `mediaConfigProblems()` if needed.
 - `backend/src/media/index.ts` again: the kind's fields in `MEDIA_FIELDS` (`config.ts` spreads them into its schema) and its entries in `mediaSettings()` (`runRequired` for its kind).
 - `gateway/src/upstream/index.ts`: one entry in `UPSTREAMS` (plus its import).
+- Database tables of the implementation: own prefix and, like Plex (`backend/src/plex/migrations.ts`, `plex_schema_migrations`), its own version table run by the implementation itself, so other kinds never run them.
+- Texts that name the server: `web/src/lib/i18n/locales/<lang>/serverText.ts` (`serverText.<kind>.<key>` wins over `<key>` while `/api/me` reports that kind).
 
 Everything else (routes, jobs, the web, the gateway core) works through the interface.
 

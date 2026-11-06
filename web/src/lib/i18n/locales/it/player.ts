@@ -273,7 +273,7 @@ const it: Translation<typeof de> = {
     linkWarn: 'Questo codice è arrivato tramite un link. Associa solo se <b>{code}</b> è esattamente quello mostrato ora sulla tua TV – altrimenti qualcun altro potrebbe accedere al tuo account.',
     codeLabel: 'Codice mostrato sulla TV',
     pairButton: 'Associa',
-    pairNote: 'La TV resta connessa per 30 giorni (7 giorni senza utilizzo) e compare in “Dispositivi”, dove puoi bloccarla in qualsiasi momento.',
+    pairNote: 'La TV resta connessa per 90 giorni e compare in “Dispositivi”, dove puoi bloccarla in qualsiasi momento.',
   },
   tv: {
     pageTitle: 'Collega la TV',

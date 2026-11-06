@@ -220,7 +220,7 @@
   $: playBase = item ? (item.type === 'Series' ? (next ? `/watch/${next.id}` : episodes?.[0] ? `/watch/${episodes[0].id}` : '') : `/watch/${item.id}`) : '';
   $: playHref = playBase ? (qs ? `${playBase}?${qs}` : playBase) : item ? `/item/${item.id}` : '';
   /** while casting, Play sends the title (the next episode for a series) to the TV; a series without an episode keeps its /item link */
-  function castPlay(e: MouseEvent) { if (playBase) playOrCast(e, { id: playTarget, positionTicks: resumeFrom?.positionTicks }); }
+  function castPlay(e: MouseEvent) { if (playBase) playOrCast(e, { id: playTarget, positionTicks: resumeFrom?.positionTicks }, { audio: lgA || undefined, subtitle: lgS || undefined }); }
   $: playTarget = playBase.split('/').pop() ?? '';
   $: resumeFrom = item ? (item.type === 'Series' ? next : item) : null;
   $: remaining = resumeFrom ? remainingLabel(resumeFrom.positionTicks, resumeFrom.runtimeTicks) : '';

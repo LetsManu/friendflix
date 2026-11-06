@@ -111,8 +111,10 @@ export function toPlaybackDto(args: {
   noDirect?: boolean;
   /** which of our caps is the lowest one (bitrate reasons from the server are attributed to it) */
   capReason?: 'remoteCap' | 'roleCap' | 'manual' | 'network';
+  /** containers the device itself direct-plays (Android capability block); replaces the browser list when non-empty */
+  directContainers?: string[];
 }): PlaybackDto {
-  const { itemId, info, deviceId, maxBitrate, resumeTicks, audioIndex, maxHeight, cast, noDirect, capReason } = args;
+  const { itemId, info, deviceId, maxBitrate, resumeTicks, audioIndex, maxHeight, cast, noDirect, capReason, directContainers } = args;
   const src = (info.MediaSources ?? [])[0];
   if (!src) throw new Error('no media source');
   const streams: Array<Record<string, any>> = src.MediaStreams ?? [];
@@ -147,7 +149,9 @@ export function toPlaybackDto(args: {
   const srcHeight = Number(streams.find((s) => s.Type === 'Video')?.Height ?? 0);
   const withinCap = !maxHeight || (srcHeight > 0 && srcHeight <= maxHeight); // direct play must not bypass the cap (unknown height = no direct)
 
-  const browserContainer = /(^|,)(mp4|m4v|webm|mov)(,|$)/i.test(String(src.Container ?? ''));
+  const browserContainer = directContainers?.length
+    ? String(src.Container ?? '').toLowerCase().split(',').some((c) => directContainers.includes(c.trim() === 'matroska' ? 'mkv' : c.trim()))
+    : /(^|,)(mp4|m4v|webm|mov)(,|$)/i.test(String(src.Container ?? ''));
   const directOk = !cast && !noDirect && Boolean(src.SupportsDirectPlay) && browserContainer && Number(src.Bitrate ?? 0) <= maxBitrate && audioIndex === undefined && withinCap;
   const direct = new URLSearchParams(common);
   direct.set('static', 'true');

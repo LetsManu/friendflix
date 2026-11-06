@@ -24,6 +24,8 @@
   export let next: Item | null = null;
   /** query string (audio/sub choice) appended to the player links */
   export let qs = '';
+  /** the audio / subtitle choice carried in the link's query, for the native player */
+  const trackOpts = (q: string) => { const p = new URLSearchParams(q); return { audio: p.get('audio') ?? undefined, subtitle: p.get('sub') ?? undefined }; };
 
   let revealed = new Set<string>();
   const reveal = (e: MouseEvent, id: string) => { e.preventDefault(); e.stopPropagation(); revealed = new Set([...revealed, id]); };
@@ -55,7 +57,7 @@
         {@const pct = e.positionTicks && e.runtimeTicks ? Math.min(100, (e.positionTicks / e.runtimeTicks) * 100) : 0}
         <li class="eprow" class:cur={current(e)}>
           <div class="epmain">
-          <a class="ep" href="/watch/{e.id}{qs ? '?' + qs : ''}" aria-current={current(e) ? 'true' : undefined} data-play-scope use:playPrefetch on:click={(ev) => playOrCast(ev, e)}>
+          <a class="ep" href="/watch/{e.id}{qs ? '?' + qs : ''}" aria-current={current(e) ? 'true' : undefined} data-play-scope use:playPrefetch on:click={(ev) => playOrCast(ev, e, trackOpts(qs))}>
             <span class="n" aria-hidden="true">{e.indexNumber ?? ''}</span>
             <span class="th" data-play-art>
               {#if e.image}<img class:spoil={hidden(e, revealed)} loading="lazy" src={img(e.id, 320)} alt="" />{/if}

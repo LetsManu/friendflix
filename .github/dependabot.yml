@@ -29,3 +29,7 @@ updates:
     directory: /
     open-pull-requests-limit: 5
     schedule: { interval: weekly }
+  - package-ecosystem: gradle
+    directory: /android
+    open-pull-requests-limit: 5
+    schedule: { interval: weekly }

@@ -199,6 +199,7 @@ export default {
       client_errors: 'Viele Browserfehler',
       failed_playbacks: 'Wiedergaben fehlgeschlagen',
       pending_approvals: 'Anmeldungen warten auf Freigabe',
+      removed_env: 'Alte Variablennamen in der .env',
     },
     disks: {
       title: 'Speicher',

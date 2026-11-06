@@ -331,8 +331,9 @@ describe('devices', () => {
     const pending = list.find((d: any) => !d.approved);
     const ap = await env.app.inject({ method: 'POST', url: `/api/devices/${pending.id}/approve`, cookies: c1, headers: { 'x-csrf-token': me1.csrfToken } });
     expect(ap.statusCode).toBe(200);
-    expect((await env.app.inject({ url: '/api/library/views', cookies: c2 })).statusCode).not.toBe(403);
+    // the waiting screen only polls /api/me: it must see the approval without any other request first
     expect((await env.app.inject({ url: '/api/me', cookies: c2 })).json().deviceApproved).toBe(true);
+    expect((await env.app.inject({ url: '/api/library/views', cookies: c2 })).statusCode).not.toBe(403);
   });
 });
 

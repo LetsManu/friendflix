@@ -5,11 +5,14 @@
  * ff_setup + ff_setup_csrf), saves mark the steps done. Every write must carry x-ff-setup-csrf equal to the cookie, like the backend.
  * While `complete` is false, /api/me answers 503 setup_required (mocks/api.ts).
  */
+import { plexUrlErrors } from './settings.js';
 
 type Step = 'todo' | 'done' | 'env';
 export interface ProbeMock { ok: boolean; code: string; detail?: string }
 export interface AkStepMock { id: string; state: string; detail?: string }
 export interface SetupMock {
+  /** 'jellyfin' | 'plex' (GET /api/setup/state mediaKind) */
+  mediaKind: 'jellyfin' | 'plex';
   complete: boolean;
   unlocked: boolean;
   /** the code from the log (any case, dashes optional) */
@@ -57,10 +60,12 @@ export const AK_APPLIED: AkStepMock[] = [
   { id: 'adminMember', state: 'ok' }, { id: 'extraFlows', state: 'skip' },
 ];
 
-export function setupState(): SetupMock {
+export function setupState(kind: 'jellyfin' | 'plex' = 'jellyfin'): SetupMock {
   return {
+    mediaKind: kind,
     complete: false, unlocked: false, code: SETUP_CODE, unlockError: null,
-    media: { keys: ['JELLYFIN_URL', 'JELLYFIN_ADMIN_API_KEY'], auto: ['url', 'username', 'password'] },
+    // Plex is manual only (no automatic key): the keys are the address and the token
+    media: kind === 'plex' ? { keys: ['PLEX_URL', 'PLEX_TOKEN'], auto: null } : { keys: ['JELLYFIN_URL', 'JELLYFIN_ADMIN_API_KEY'], auto: ['url', 'username', 'password'] },
     steps: { publicUrl: 'todo', media: 'todo', signin: 'todo', admin: 'todo' },
     prefill: { publicUrl: 'https://tv.example.com' }, signinVia: null,
     testResults: {}, saveProbeFail: null, saveError: null, autoResult: { ok: true },
@@ -78,7 +83,7 @@ type Reply = (b: unknown, status?: number, headers?: Record<string, string>) => 
 export function setupRoute(st: SetupMock, m: string, p: string, body: any, headers: Record<string, string>, J: Reply): Promise<void> | null {
   if (p === '/api/setup/state' && m === 'GET') {
     if (st.complete) return J({ complete: true }); // nothing else once complete (backend: routes/setup.ts)
-    return J({ complete: false, unlocked: st.unlocked, mediaKind: 'jellyfin', media: st.media, steps: st.steps, prefill: st.prefill, signinVia: st.signinVia });
+    return J({ complete: false, unlocked: st.unlocked, mediaKind: st.mediaKind, media: st.media, steps: st.steps, prefill: st.prefill, signinVia: st.signinVia });
   }
   if (p === '/api/setup/unlock' && m === 'POST') {
     st.unlocks.push(String(body.code ?? ''));
@@ -97,6 +102,8 @@ export function setupRoute(st: SetupMock, m: string, p: string, body: any, heade
     const values: Record<string, unknown> = body.values ?? {};
     st.puts.push(body.force === undefined ? { values } : { values, force: body.force });
     if (st.saveError) { const e = st.saveError; st.saveError = null; return J(e.body, e.status); }
+    const badUrl = plexUrlErrors(values);
+    if (Object.keys(badUrl).length) return J({ error: 'invalid_settings', errors: badUrl }, 400);
     if (st.saveProbeFail && !body.force) { const probe = st.saveProbeFail; st.saveProbeFail = null; return J({ error: 'probe_failed', group: 'media', probe }, 400); }
     const keys = Object.keys(values);
     if (keys.includes('PUBLIC_URL')) st.steps.publicUrl = 'done';
@@ -106,6 +113,8 @@ export function setupRoute(st: SetupMock, m: string, p: string, body: any, heade
   }
   if (p === '/api/setup/test' && m === 'POST') {
     st.tests.push(body);
+    const badUrl = plexUrlErrors(body.values ?? {});
+    if (Object.keys(badUrl).length) return J({ error: 'invalid_settings', errors: badUrl }, 400);
     return J(st.testResults[body.group] ?? { ok: true, code: 'ok' });
   }
   if (p === '/api/setup/media/auto' && m === 'POST') {

@@ -213,7 +213,7 @@ const fr: Translation<typeof de> = {
       updateLead: 'Pour obtenir la mise à jour, vérifiez cette ligne dans le .env de la stack, puis lancez la commande :',
       envLabel: 'Ligne du .env',
       cmdLabel: 'Commande',
-      note: 'Le changement ne prend effet qu’après cette commande : FriendFlix ne touche jamais Docker lui-même.',
+      note: 'Le changement ne prend effet qu’après cette commande : sans le programme de mise à jour, FriendFlix ne touche jamais Docker lui-même (compose.no-updater.yaml le laisse désactivé).',
       pinned: 'Version fixe',
       pinnedHint: 'Version fixe : reste exactement sur cette version jusqu’à ce que tu la changes.',
       versionLabel: 'Version (X.Y.Z)',
@@ -235,6 +235,7 @@ const fr: Translation<typeof de> = {
       advanced: 'Le programme de mise à jour lui-même',
       confirm: {
         update: 'Mettre à jour vers {tag} maintenant ? FriendFlix redémarre brièvement, les lectures en cours sont interrompues.',
+        updatePortainer: 'Redéployer la stack via Portainer maintenant ? FriendFlix redémarre brièvement, les lectures en cours sont interrompues.',
         rollback: 'Revenir à {tag} ? FriendFlix redémarre brièvement.',
         'self-update': 'Mettre à jour le conteneur de mise à jour maintenant ?',
       },
@@ -271,6 +272,9 @@ const fr: Translation<typeof de> = {
         channel_sync_failed: 'Le programme de mise à jour n’a pas accepté le canal.',
         tooSoon: 'Trop de lancements. Attends deux minutes.',
         generic: 'Le programme de mise à jour a refusé la tâche.',
+        foreign_stack: 'Cette stack est gérée par Portainer (ou un autre outil), le programme de mise à jour ne la recrée donc pas. Configure le webhook Portainer dans Admin → Paramètres → Mises à jour, ou mets à jour la stack dans Portainer.',
+        portainer: 'Portainer a refusé le redéploiement. Vérifie le webhook ou l’API dans Admin → Paramètres → Mises à jour.',
+        portainer_unreachable: 'Portainer est injoignable.',
       },
       failReason: {
         verify_failed: 'échec de la vérification des signatures, rien n’a été redémarré',
@@ -281,13 +285,21 @@ const fr: Translation<typeof de> = {
         interrupted: 'interrompue par un redémarrage',
         self_update_timeout: 'le programme de mise à jour n’a pas été remplacé',
         unexpected_image: 'nom d’image inattendu',
+        media_server_mismatch: 'les fichiers compose démarreraient un autre serveur multimédia que celui en cours (UPDATER_COMPOSE_FILES sans compose.plex.yaml ?), rien n’a été redémarré',
         compose_config: 'configuration compose illisible',
+        foreign_stack: 'la stack est gérée par Portainer (ou un autre outil), le programme de mise à jour ne la recrée pas ; rien n’a été modifié',
+        config_mismatch: 'les fichiers compose et le .env publieraient d’autres ports ou réseaux que les conteneurs en cours (variables définies ailleurs, p. ex. BIND_ADDR ?), rien n’a été redémarré',
         unknown: 'erreur inconnue',
+      },
+      foreign: {
+        portainer: 'Cette stack est gérée par Portainer. « Mettre à jour maintenant » la redéploie via Portainer (webhook ou API depuis Admin → Paramètres → Mises à jour). Le programme de mise à jour ne recrée jamais lui-même une stack Portainer, le retour à la version précédente n’est donc pas disponible ici.',
+        manual: 'Cette stack est gérée par Portainer (ou un autre outil), le programme de mise à jour ne la met donc pas à jour : la recréer d’ici ferait perdre les variables propres à la stack (p. ex. BIND_ADDR). Configure le webhook Portainer dans Admin → Paramètres → Mises à jour, ou mets à jour la stack dans Portainer.',
+        started: 'Portainer redéploie la stack. FriendFlix redémarre dans un instant.',
+        workdir: 'Cette stack a été démarrée depuis {dir}, mais le programme de mise à jour voit {projectDir}, il ne la recrée donc pas (il lui manquerait le .env de ce répertoire). Ajoute UPDATER_PROJECT_DIR={dir} au .env de {dir} et lance une fois docker compose up -d à cet endroit.',
       },
       unauthorized: 'Un programme de mise à jour répond mais refuse la signature : INTERNAL_SECRET diffère entre le backend et le programme de mise à jour.',
       invalid: 'Le programme de mise à jour a envoyé une réponse illisible.',
       log: 'Journal',
-      reauthBack: 'Reconnecté. Relance la tâche.',
       auto: {
         title: 'Mises à jour automatiques',
         label: 'Mises à jour automatiques',
@@ -505,6 +517,7 @@ const fr: Translation<typeof de> = {
       update: '{actor} a lancé une mise à jour',
       updater_start: '{actor} a lancé une tâche de mise à jour',
       updater_result: 'Tâche de mise à jour terminée',
+      update_result: 'Portainer a répondu au redéploiement',
     },
     session: {
       revoke_others: '{actor} s’est déconnecté(e) des autres appareils',
@@ -564,6 +577,9 @@ const fr: Translation<typeof de> = {
     },
     approvals: {
       pending_approvals: { one: '{n} connexion en attente de validation', many: '{n} connexions en attente de validation', other: '{n} connexions en attente de validation' },
+    },
+    config: {
+      removed_env: { one: '{n} ancien nom de variable dans .env est ignoré depuis la 2.0 : le service de demandes utilise désormais REQUESTS_URL et REQUESTS_API_KEY', many: '{n} anciens noms de variable dans .env sont ignorés depuis la 2.0 : le service de demandes utilise désormais REQUESTS_URL et REQUESTS_API_KEY', other: '{n} anciens noms de variable dans .env sont ignorés depuis la 2.0 : le service de demandes utilise désormais REQUESTS_URL et REQUESTS_API_KEY' },
     },
   },
 };

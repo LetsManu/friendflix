@@ -21,14 +21,14 @@ const BASE = {
 };
 
 describe('MEDIA_SERVER config', () => {
-  // only what this repository guarantees: a fork registers further kinds without touching this test
-  it('defaults to jellyfin and accepts jellyfin', () => {
+  it('defaults to jellyfin and accepts jellyfin and plex', () => {
     expect(loadConfig(BASE).MEDIA_SERVER).toBe('jellyfin');
     expect(loadConfig({ ...BASE, MEDIA_SERVER: 'jellyfin' }).MEDIA_SERVER).toBe('jellyfin');
-    expect(MEDIA_SERVERS).toContain('jellyfin');
+    expect(loadConfig({ ...BASE, MEDIA_SERVER: 'plex' }).MEDIA_SERVER).toBe('plex');
+    expect(MEDIA_SERVERS).toEqual(['jellyfin', 'plex']);
   });
   it('rejects unknown kinds (no silent fallback on a typo)', () => {
-    for (const v of ['not-a-server', 'Jellyfin', ' jellyfin', '__proto__']) expect(() => loadConfig({ ...BASE, MEDIA_SERVER: v })).toThrow();
+    for (const v of ['not-a-server', 'Jellyfin', ' jellyfin', 'Plex', 'plex ', '__proto__']) expect(() => loadConfig({ ...BASE, MEDIA_SERVER: v })).toThrow();
   });
   it('jellyfin requires JELLYFIN_URL and the admin key once setup is complete (registry runRequired), not at config load', () => {
     // Block 25: a new install starts without them and the setup wizard fills them in, so loadConfig accepts them unset ('' = unset)
@@ -155,16 +155,36 @@ describe('repository hygiene', () => {
 });
 
 describe('seam boundary', () => {
+  const root = new URL('../src/', import.meta.url).pathname;
+  const files: string[] = [];
+  const walk = (d: string) => { for (const n of readdirSync(d)) { const p = join(d, n); if (statSync(p).isDirectory()) walk(p); else if (p.endsWith('.ts')) files.push(p); } };
+  walk(root);
+  const rel = files.map((f) => relative(root, f));
+  // the seam index (factory) and the media setup seam are the only files outside an adapter folder that may import one
+  const SEAM = ['media/index.ts', 'media/setup.ts'];
+  /** files outside `folder` that import from it (static or dynamic import, also `export … from`) */
+  const importersOf = (folder: string) => rel
+    .filter((f) => !f.startsWith(`${folder}/`) && !SEAM.includes(f))
+    .filter((f) => new RegExp(`(from|import\\()\\s*'(\\.{1,2}/)+${folder}/`).test(readFileSync(join(root, f), 'utf8')));
+
+  it('both adapter folders exist', () => {
+    for (const k of MEDIA_SERVERS) expect(rel.some((f) => f.startsWith(`${k}/`)), k).toBe(true);
+    expect([...MEDIA_SERVERS].sort()).toEqual(['jellyfin', 'plex']);
+  });
   it('only jellyfin/*, the media factory and the media setup seam import the Jellyfin implementation', () => {
-    const root = new URL('../src/', import.meta.url).pathname;
-    const files: string[] = [];
-    const walk = (d: string) => { for (const n of readdirSync(d)) { const p = join(d, n); if (statSync(p).isDirectory()) walk(p); else if (p.endsWith('.ts')) files.push(p); } };
-    walk(root);
-    const offenders = files
-      .map((f) => relative(root, f))
-      .filter((f) => !f.startsWith('jellyfin/') && f !== 'media/index.ts' && f !== 'media/setup.ts')
-      .filter((f) => /from '[./]*\/?jellyfin\//.test(readFileSync(join(root, f), 'utf8')));
-    expect(offenders).toEqual([]);
+    expect(importersOf('jellyfin')).toEqual([]);
+  });
+  it('only plex/*, the media factory and the media setup seam import the Plex implementation', () => {
+    expect(importersOf('plex')).toEqual([]);
+  });
+  it('the two adapters never import each other', () => {
+    expect(rel.filter((f) => f.startsWith('plex/') && /(from|import\()\s*'(\.{1,2}\/)+jellyfin\//.test(readFileSync(join(root, f), 'utf8')))).toEqual([]);
+    expect(rel.filter((f) => f.startsWith('jellyfin/') && /(from|import\()\s*'(\.{1,2}\/)+plex\//.test(readFileSync(join(root, f), 'utf8')))).toEqual([]);
+  });
+  it('the seam check sees an offender (self-test of the pattern)', () => {
+    expect(new RegExp(`(from|import\\()\\s*'(\\.{1,2}/)+plex/`).test("import { x } from '../plex/service.js';")).toBe(true);
+    expect(new RegExp(`(from|import\\()\\s*'(\\.{1,2}/)+plex/`).test("const m = await import('../../plex/ids.js');")).toBe(true);
+    expect(new RegExp(`(from|import\\()\\s*'(\\.{1,2}/)+plex/`).test("import { x } from './plexish.js';")).toBe(false);
   });
 });
 

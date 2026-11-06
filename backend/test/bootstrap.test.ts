@@ -245,7 +245,7 @@ describe('bootConfigEnv', () => {
     expect(() => loadConfig({ ...b, HEALTH_DISK_CRIT_PCT: '' })).toThrow();
     const c = loadConfig(bootConfigEnv({ HEALTH_DISK_CRIT_PCT: '', SESSION_TTL_SECONDS: '', ADMIN_GROUP: '', TZ: 'UTC' }, b));
     expect(c.HEALTH_DISK_CRIT_PCT).toBe(95);
-    expect(c.SESSION_TTL_SECONDS).toBe(8 * 3600);
+    expect(c.SESSION_TTL_SECONDS).toBe(90 * 86400);
     expect(c.ADMIN_GROUP).toBe('friendflix-admins');
     expect(c.DATABASE_URL).toBe(b.DATABASE_URL);
   });
