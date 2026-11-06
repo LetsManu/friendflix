@@ -11,6 +11,8 @@
 # Google Play (optional): with PLAY_SERVICE_ACCOUNT_JSON (a Play Console service account's JSON key) the AAB is also uploaded to
 # the closed testing track (repository variable PLAY_TRACK, default alpha) and rolled out to its testers, with the version's
 # "Android app" CHANGELOG lines as release notes (en-US, max 500 characters). Without the secret this part only leaves a notice.
+# While the app is still a draft in the Play Console, Google accepts only draft releases: set the repository variable
+# PLAY_RELEASE_STATUS=draft until the app's first review is through (default completed = rolled out to the testers).
 # Without all three the job only leaves a notice (forks, a repo before the owner set them up). The keystore is decoded to
 # $RUNNER_TEMP (mode 600) for the Gradle run and deleted right after it; nothing prints a secret. Gradle reads the signing
 # config from environment variables only (android/app/build.gradle.kts), so PR builds and local builds stay unsigned.
@@ -157,9 +159,9 @@ jobs:
           releaseFiles: ${{ runner.temp }}/dist/friendflix-android-${{ steps.version.outputs.version }}.aab
           releaseName: ${{ steps.version.outputs.version }}
           track: ${{ vars.PLAY_TRACK || 'alpha' }}
-          status: completed
+          status: ${{ vars.PLAY_RELEASE_STATUS || 'completed' }}
           whatsNewDirectory: ${{ runner.temp }}/whatsnew
           mappingFile: android/app/build/outputs/mapping/release/mapping.txt
       - name: Google Play summary
         if: env.HAS_KEY == 'true' && env.HAS_PLAY == 'true'
-        run: echo "Uploaded to Google Play, track ${{ vars.PLAY_TRACK || 'alpha' }}, rolled out to its testers." >> "$GITHUB_STEP_SUMMARY"
+        run: echo "Uploaded to Google Play, track ${{ vars.PLAY_TRACK || 'alpha' }}, status ${{ vars.PLAY_RELEASE_STATUS || 'completed' }}." >> "$GITHUB_STEP_SUMMARY"
