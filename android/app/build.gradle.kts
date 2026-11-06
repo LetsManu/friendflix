@@ -14,7 +14,7 @@ val appVersion: String = versionFromJson(providers.fileContents(layout.file(prov
 
 android {
     namespace = "app.friendflix.android"
-    compileSdk = 37
+    compileSdk = 36
 
     defaultConfig {
         // the Play Console app id (fixed for good there); the Kotlin package and namespace stay app.friendflix.android
