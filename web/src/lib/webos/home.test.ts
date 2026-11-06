@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { changeServerViaHome, goToAppHome, HIST_BASE_KEY, HOME_LEAVE_MS, recordHistoryBase, stepsToAppHome } from './home';
+import { changeServerViaHome, goToAppHome, HIST_BASE_KEY, HOME_LEAVE_MS, HOME_ROUTE, recordHistoryBase, stepsToAppHome } from './home';
 
 function store(init: Record<string, string> = {}) {
   const m = new Map(Object.entries(init));
@@ -64,14 +64,14 @@ describe('changeServerViaHome', () => {
   it('is 1.5 s', () => expect(HOME_LEAVE_MS).toBe(1500));
   it('the way is unknown: the hint at once, no navigation', () => {
     const w = mkWin({ length: 4 }), stuck = vi.fn();
-    changeServerViaHome(stuck, w);
+    changeServerViaHome(stuck, w, 'history');
     expect(stuck).toHaveBeenCalledOnce();
     expect(w.history.go).not.toHaveBeenCalled();
   });
   it('goes back and stays quiet when the page is left (pagehide)', () => {
     vi.useFakeTimers();
     const w = mkWin({ length: 5, base: '2' }), stuck = vi.fn();
-    changeServerViaHome(stuck, w);
+    changeServerViaHome(stuck, w, 'history');
     expect(w.history.go).toHaveBeenCalledWith(-4);
     w.fire('pagehide');
     vi.advanceTimersByTime(HOME_LEAVE_MS);
@@ -81,12 +81,23 @@ describe('changeServerViaHome', () => {
   it('the page is still there after 1.5 s (the start page was pruned from the history): the hint', () => {
     vi.useFakeTimers();
     const w = mkWin({ length: 50, base: '2' }), stuck = vi.fn();
-    changeServerViaHome(stuck, w);
+    changeServerViaHome(stuck, w, 'history');
     expect(w.history.go).toHaveBeenCalled();
     vi.advanceTimersByTime(HOME_LEAVE_MS - 1);
     expect(stuck).not.toHaveBeenCalled();
     vi.advanceTimersByTime(1);
     expect(stuck).toHaveBeenCalledOnce();
     expect(w.ls.has('pagehide')).toBe(false);
+  });
+});
+
+describe('HOME_ROUTE (owner probe: home=fail on webOS 25)', () => {
+  it('is blue: Change server shows the hint at once and leaves the history alone', () => {
+    expect(HOME_ROUTE).toBe('blue');
+    const go = vi.fn();
+    const stuck = vi.fn();
+    changeServerViaHome(stuck, { history: { length: 5, go }, sessionStorage: { getItem: () => '2', setItem: () => undefined }, addEventListener: () => undefined, removeEventListener: () => undefined });
+    expect(stuck).toHaveBeenCalledOnce();
+    expect(go).not.toHaveBeenCalled();
   });
 });

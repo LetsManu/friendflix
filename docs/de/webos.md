@@ -138,7 +138,7 @@ Im Player (außerhalb des Players werden die Tasten ignoriert):
 
 Die App sagt dem Server, was der Fernseher abspielen kann, und der Server schickt dann die Originaldatei, statt sie umzuwandeln. Die App schickt **nur Formate, die der Fernseher von sich aus bestätigt** (`canPlayType` / `MediaSource`); ein nicht bestätigtes Format wird einfach nicht angeboten, und der Server wandelt es um. Kandidaten:
 
-- Container: MKV, MP4, M4V, MOV, TS, WebM;
+- Container: MKV, MP4, M4V, MOV, TS, WebM. MKV wird immer angeboten, sobald der Fernseher irgendein anderes Format bestätigt: LGs Player spielt MKV von einer URL, die Browser-Engine antwortet auf die Frage aber mit „nein“ (Probe unter webOS 25). Zeigt ein MKV trotzdem kein Bild, wechselt der Player nach 10 s zum umgewandelten Stream;
 - Video: H.264, HEVC, AV1, VP9, MPEG-2 (bis 2160p), mit den Profilen, die der Fernseher bestätigt (zum Beispiel 10-Bit);
 - Audio: AAC, AC3, E-AC3, MP3, FLAC, Opus, Vorbis;
 - Untertitel: SRT, ASS, SSA, VTT (vom Player gezeichnet, wie überall).
@@ -151,7 +151,7 @@ Erscheint bei Direct Play innerhalb von **10 Sekunden** kein Bild, wechselt der 
 
 Zwei Wege führen zum Adressformular, ausgefüllt mit der aktuellen Adresse:
 
-- **Konto-Menü → Server wechseln.** Die App geht über den Browserverlauf zurück zu ihrer Startseite und zeigt das Formular. Der Fernseher behält nur die letzten 50 Seiten im Verlauf; nach langer Nutzung kann die Startseite daher fehlen (`home=fail` der Probe bedeutet dasselbe). Ist die App nach 1,5 Sekunden noch auf deinem Server, sagt sie das: App neu starten und die blaue Taste nehmen.
+- **Konto-Menü → Server wechseln.** Unter webOS 25 erreicht der Weg zurück über den Browserverlauf die Startseite der App nicht (die Probe auf einem LG 43QNED82A6B meldete `home=fail`), deshalb sagt der Eintrag: App neu starten und die blaue Taste nehmen.
 - **Blaue Taste beim Start.** Jeder Start mit gespeicherter Adresse zeigt 1,5 Sekunden lang das Logo mit *Blue key: change server*, bevor die App deinen Server öffnet. Drückst du in dieser Zeit die **blaue** Taste (406), erscheint stattdessen das Formular.
 
 ## Die Probe und wie du ihre Zeile liest

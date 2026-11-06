@@ -8,7 +8,7 @@
 export const HIST_BASE_KEY = 'ff.histBase';
 
 /** how the way home is taken; flipped to 'blue' only if the probe reports home=fail */
-export const HOME_ROUTE: 'history' | 'blue' = 'history';
+export const HOME_ROUTE: 'history' | 'blue' = 'blue'; // owner's probe (webOS 25): home=fail, history.go does not reach the file:// start page
 
 export interface HomeWin {
   history: { length: number; go?: (delta: number) => void };
@@ -53,8 +53,8 @@ export const HOME_LEAVE_MS = 1500;
  * keeps at most 50 history entries, so the start page may have been pruned and history.go() lands on a server page or nowhere),
  * `onStuck` shows the blue-key hint.
  */
-export function changeServerViaHome(onStuck: () => void, win: HomeWin & { addEventListener(type: 'pagehide', fn: () => void): void; removeEventListener(type: 'pagehide', fn: () => void): void } = window): void {
-  if (HOME_ROUTE !== 'history' || !goToAppHome(win)) { onStuck(); return; }
+export function changeServerViaHome(onStuck: () => void, win: HomeWin & { addEventListener(type: 'pagehide', fn: () => void): void; removeEventListener(type: 'pagehide', fn: () => void): void } = window, route: 'history' | 'blue' = HOME_ROUTE): void {
+  if (route !== 'history' || !goToAppHome(win)) { onStuck(); return; }
   let left = false;
   const hide = () => { left = true; };
   win.addEventListener('pagehide', hide);

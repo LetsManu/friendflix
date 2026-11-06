@@ -138,7 +138,7 @@ In the player (the keys are ignored elsewhere):
 
 The app tells the server what the TV can play, and the server then sends the original file instead of converting it. The app sends **only formats the TV confirms** about itself (`canPlayType` / `MediaSource`); a format the TV does not confirm is simply not offered, and the server converts it. Candidates:
 
-- containers: MKV, MP4, M4V, MOV, TS, WebM;
+- containers: MKV, MP4, M4V, MOV, TS, WebM. MKV is always offered once the TV confirms any other format: LG's player plays MKV from a URL, but the browser engine answers "no" when asked (probe on webOS 25). An MKV that still shows no picture switches to the converted stream after 10 s;
 - video: H.264, HEVC, AV1, VP9, MPEG-2 (up to 2160p), with the profiles the TV confirms (such as 10-bit);
 - audio: AAC, AC3, E-AC3, MP3, FLAC, Opus, Vorbis;
 - subtitles: SRT, ASS, SSA, VTT (drawn by the player, as everywhere).
@@ -151,7 +151,7 @@ If no picture appears within **10 seconds** on direct play, the player switches 
 
 Two ways lead to the address form, filled in with the current address:
 
-- **Account menu → Change server.** The app goes back to its start page through the browser history and shows the form. The TV keeps only the last 50 pages of history, so after long use the start page may be gone (the probe's `home=fail` means the same). If the app is still on your server after 1.5 seconds, it says so: restart the app and use the blue key.
+- **Account menu → Change server.** On webOS 25 the way back through the browser history does not reach the app's start page (the probe on an LG 43QNED82A6B reported `home=fail`), so the entry tells you to restart the app and use the blue key.
 - **Blue key at start.** Every start with a stored address shows the logo with *Blue key: change server* for 1.5 seconds before the app opens your server. Press the **blue** key (406) during that time to get the form instead.
 
 ## The probe and how to read its line
