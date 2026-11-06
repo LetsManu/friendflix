@@ -25,7 +25,7 @@ function makeEl(id) {
   };
 }
 
-/** manual timers for setup.js (the 1.5 s blue-key window): advance(ms) runs what is due */
+/** manual timers for setup.js (the 3 s change-server window): advance(ms) runs what is due */
 function fakeTimers() {
   let now = 0, seq = 0;
   const due = new Map();
@@ -74,8 +74,8 @@ function boot({ probe = false, local = {}, session = {}, search = '', navType = 
     return ev;
   };
   const fire = (t, ev) => { for (const f of winListeners[t] || []) f(ev); };
-  /** the blue-key window passes, then the check runs */
-  const pass = async () => { timers.advance(1500); await flush(); };
+  /** the change-server window passes, then the check runs */
+  const pass = async () => { timers.advance(3000); await flush(); };
   return { els, doc, win, location, calls, localStorage, sessionStorage, key, fire, timers, pass, setup: win.FFWebosSetup };
 }
 
@@ -246,13 +246,13 @@ test('the app page ignores the home flag and shows the form on back_forward', ()
   assert.equal(t.location.href, 'file:///start/index.html');
 });
 
-test('a stored server: the logo with "Blue key: change server" for 1.5 s, then the check', async () => {
+test('a stored server: the logo with "Press OK to change server" for 3 s, then the check', async () => {
   const t = boot({ local: { 'ff.server': SERVER }, fetchImpl: okFetch });
   assert.equal(t.els.opening.hidden, false);
   assert.equal(t.els.form.hidden, true);
   assert.equal(t.els.checking.hidden, true);
-  assert.equal(t.els['opening-text'].textContent, 'Blue key: change server');
-  t.timers.advance(1499);
+  assert.equal(t.els['opening-text'].textContent, 'Press OK to change server');
+  t.timers.advance(2999);
   await flush();
   assert.equal(t.calls.fetch.length, 0, 'nothing is checked during the window');
   t.timers.advance(1);
@@ -260,22 +260,24 @@ test('a stored server: the logo with "Blue key: change server" for 1.5 s, then t
   assert.deepEqual(t.calls.fetch, [SERVER + '/api/version']);
   assert.equal(t.location.href, SERVER + '/tv?ff_app=webos');
   const html = readFileSync(new URL('./app/index.html', import.meta.url), 'utf8');
-  assert.match(html, /<section id="opening"[^>]*hidden>[\s\S]*<img [^>]*src="icon-400.png"[\s\S]*Blue key: change server/);
+  assert.match(html, /<section id="opening"[^>]*hidden>[\s\S]*<img [^>]*src="icon-400.png"[\s\S]*Press OK to change server/);
 });
 
-test('the blue key (406) during the window opens the setup form, prefilled, and checks nothing', async () => {
-  const t = boot({ local: { 'ff.server': SERVER }, fetchImpl: okFetch });
-  const ev = t.key(406);
-  assert.equal(ev.prevented, true);
-  assert.equal(t.els.form.hidden, false);
-  assert.equal(t.els.opening.hidden, true);
-  assert.equal(t.els.server.value, SERVER);
-  assert.equal(t.doc.activeElement, t.els.server);
-  await t.pass();
-  assert.equal(t.calls.fetch.length, 0);
-  assert.equal(t.location.href, 'file:///start/index.html');
-  assert.equal(t.timers.pending(), 0);
-});
+for (const [name, code] of [['OK', 13], ['Up', 38], ['blue', 406]]) {
+  test(`${name} (${code}) during the window opens the setup form, prefilled, and checks nothing`, async () => {
+    const t = boot({ local: { 'ff.server': SERVER }, fetchImpl: okFetch });
+    const ev = t.key(code);
+    assert.equal(ev.prevented, true);
+    assert.equal(t.els.form.hidden, false);
+    assert.equal(t.els.opening.hidden, true);
+    assert.equal(t.els.server.value, SERVER);
+    assert.equal(t.doc.activeElement, t.els.server);
+    await t.pass();
+    assert.equal(t.calls.fetch.length, 0);
+    assert.equal(t.location.href, 'file:///start/index.html');
+    assert.equal(t.timers.pending(), 0);
+  });
+}
 
 test('the blue key after the window does nothing', async () => {
   const t = boot({ local: { 'ff.server': SERVER }, fetchImpl: failFetch });

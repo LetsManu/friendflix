@@ -111,7 +111,7 @@ On the first start the app asks for your server's address, for example `friend.e
 - Enter it with the TV's keyboard or the Magic Remote; the arrow keys move between the field and **Connect**.
 - Only `https://` works; `https://` is added for you. A plain `http://` address is refused (the TV carries a sign-in cookie).
 - The app checks that the address answers like a FriendFlix server (`GET /api/version`). If not, it says why.
-- The address is remembered. At the next start the app shows its logo with *Blue key: change server* for 1.5 seconds, then opens your server's TV mode (see [Change server](#change-server)). If the TV is not paired yet, it shows the pairing code as usual: pair it as described in [tv-mode.md](tv-mode.md). **Back** on the pairing screen returns to the address form, filled in; Back there exits the app.
+- The address is remembered. At the next start the app shows its logo with *Press OK to change server* for 3 seconds, then opens your server's TV mode (see [Change server](#change-server)). If the TV is not paired yet, it shows the pairing code as usual: pair it as described in [tv-mode.md](tv-mode.md). **Back** on the pairing screen returns to the address form, filled in; Back there exits the app.
 - If the server cannot be reached at start, an error card offers **Retry** and **Change server**.
 
 ## The 50-hour session
@@ -120,10 +120,15 @@ Developer Mode runs out after **50 hours**. Before that, open the **Developer Mo
 
 ## The remote
 
-In the player (the keys are ignored elsewhere):
+In the player (the keys are ignored elsewhere). Every function works with **OK, the arrows and Back** alone, because the 2025 Magic Remote has no play, pause, fast-forward or colour keys; its **123** button opens an on-screen panel with the colour keys.
 
 | Key | Code | Action |
 |---|---|---|
+| OK | 13 | play or pause while the control bar is hidden; on the bar it presses the selected button |
+| ◀ / ▶ | 37 / 39 | -10 s / +10 s; holding the key goes faster (30 s steps after 1 s, 60 s after 3 s) |
+| ▲ / ▼ | 38 / 40 | ▲: cast and info for the scene; ▼: the control bar (focus on play/pause) |
+| Wheel | `wheel` | over the picture: one notch = +10 s (down) / -10 s (up); menus keep scrolling |
+| Channel ▲ | 33 | next episode (series) |
 | Play | 415 | play |
 | Pause | 19 | pause |
 | Play/Pause | 10252 | play or pause |
@@ -132,7 +137,7 @@ In the player (the keys are ignored elsewhere):
 | Red | 403 | subtitles on or off (the last track used, else the first) |
 | Green | 404 | open the audio menu |
 
-**Back** (461) works everywhere: it goes one level back. **Back on the TV-mode home screen exits the app.** The **Magic Remote** pointer works too: hovering moves the focus ring, and a click opens. The arrow keys continue from where the pointer was. The general keys are in [tv-mode.md](tv-mode.md#bedienung-am-fernseher).
+**Back** (461) works everywhere: it goes one level back; in the player it first hides the control bar, then leaves. **Back on the TV-mode home screen exits the app.** The control bar stays shown while you move along it and hides 5 seconds after the last key; when it hides it lets go of the selected button, so the next OK always means play/pause. The **Magic Remote** pointer works too: moving it shows the controls, hovering moves the focus ring, a click on a button presses it and a click on the picture plays or pauses. The arrow keys continue from where the pointer was. The general keys are in [tv-mode.md](tv-mode.md#bedienung-am-fernseher).
 
 ## What direct play covers
 
@@ -151,8 +156,8 @@ If no picture appears within **10 seconds** on direct play, the player switches 
 
 Two ways lead to the address form, filled in with the current address:
 
-- **Account menu → Change server.** On webOS 25 the way back through the browser history does not reach the app's start page (the probe on an LG 43QNED82A6B reported `home=fail`), so the entry tells you to restart the app and use the blue key.
-- **Blue key at start.** Every start with a stored address shows the logo with *Blue key: change server* for 1.5 seconds before the app opens your server. Press the **blue** key (406) during that time to get the form instead.
+- **Account menu → Change server.** On webOS 25 the way back through the browser history does not reach the app's start page (the probe on an LG 43QNED82A6B reported `home=fail`), so the entry tells you to restart the app and press OK while the logo shows.
+- **OK at start.** Every start with a stored address shows the logo with *Press OK to change server* for 3 seconds before the app opens your server. Press **OK** (13), **▲** (38) or the **blue** key (406) during that time to get the form instead.
 
 ## The probe and how to read its line
 

@@ -59,7 +59,7 @@ const fr: Translation<typeof de> = {
     manageProfiles: 'Modifier les profils',
     logout: 'Se déconnecter de FriendFlix',
     changeServer: 'Changer de serveur',
-    changeServerBlue: 'Impossible de revenir à la page de démarrage. Redémarrez l\'application et appuyez sur la touche bleue pendant que le logo s\'affiche.',
+    changeServerBlue: 'Impossible de revenir à la page de démarrage. Redémarrez l\'application et appuyez sur OK pendant que le logo s\'affiche.',
   },
   menu: {
     me: 'Mon espace',

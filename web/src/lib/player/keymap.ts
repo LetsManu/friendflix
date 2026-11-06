@@ -50,6 +50,8 @@ export function resolveKey(e: KeyInput, c: KeyContext): KeyAction | null {
   if (c.lg && k === 'colorf0red') return { type: 'subtitleToggle' };
   if (c.lg && k === 'colorf1green') return { type: 'audioMenu' };
   if (k === 'mediatracknext') return c.hasNext ? { type: 'next' } : null;
+  // TV remotes without media keys (LG 2025 Magic Remote): channel up = next episode
+  if (k === 'pageup' && c.tv) return c.hasNext ? { type: 'next' } : null;
   if (k === 'arrowleft' || k === 'j') return { type: 'seek', by: -10 };
   if (k === 'arrowright' || k === 'l') return { type: 'seek', by: 10 };
   // TV: up (bar hidden, nothing focused) peeks at the cast without pausing; down brings the control bar
@@ -86,6 +88,11 @@ export function toggleSubtitle(current: number, last: number, indices: number[])
 }
 
 export const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v));
+
+/** TV: holding left/right seeks faster - 10 s steps for the first second, then 30 s, after 3 s 60 s */
+export function holdSeekStep(heldMs: number): number {
+  return heldMs < 1000 ? 10 : heldMs < 3000 ? 30 : 60;
+}
 
 /** shortcut list for the "?" overlay: key caption (`k`, or the message `kKey` when the caption is a word) and the message key of the description */
 export const SHORTCUTS: Array<{ k: string; kKey?: TKey; d: TKey }> = [

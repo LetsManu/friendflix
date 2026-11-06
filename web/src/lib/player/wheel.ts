@@ -16,3 +16,19 @@ export class WheelAccumulator {
     return n;
   }
 }
+
+/**
+ * TV Magic Remote wheel -> seek steps: one notch arrives as a burst of wheel events (seen on LG webOS 25: 2-3 events within
+ * ~100 ms), so a burst counts once - a step fires on the first event after WHEEL_TV_IDLE_MS of quiet.
+ */
+export const WHEEL_TV_IDLE_MS = 150;
+export class TvWheelStepper {
+  private last = -Infinity;
+  /** returns +1 (wheel down = forward), -1 (wheel up = back) or 0 (part of a burst already counted) */
+  add(deltaY: number, now: number): -1 | 0 | 1 {
+    const fresh = now - this.last > WHEEL_TV_IDLE_MS;
+    this.last = now;
+    if (!fresh || !deltaY) return 0;
+    return deltaY > 0 ? 1 : -1;
+  }
+}

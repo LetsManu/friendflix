@@ -54,7 +54,7 @@ const en: Translation<typeof de> = {
     manageProfiles: 'Edit profiles',
     logout: 'Sign out of FriendFlix',
     changeServer: 'Change server',
-    changeServerBlue: 'The start page could not be reached. Restart the app and press the blue button while the logo shows.',
+    changeServerBlue: 'The start page could not be reached. Restart the app and press OK while the logo shows.',
   },
   menu: {
     me: 'My space',

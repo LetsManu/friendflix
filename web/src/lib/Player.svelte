@@ -14,13 +14,13 @@
   import { isBackKey } from '#lib/spatial';
   import { isLgApp } from '#lib/webos/detect';
   import { normaliseLgKey } from '#lib/webos/keys';
-  import { isTypingTarget, nextSubtitle, resolveKey, SHORTCUTS, toggleSubtitle, type KeyAction } from '#lib/player/keymap';
+  import { holdSeekStep, isTypingTarget, nextSubtitle, resolveKey, SHORTCUTS, toggleSubtitle, type KeyAction } from '#lib/player/keymap';
   import { BRIGHTNESS_MIN, brightnessPct, classifyMove, levelFromDrag, registerTap, scrubTarget, TAP_WINDOW, volumeSettable, zoneOf, type Axis, type TapState, type Zone } from '#lib/player/gestures';
   import { creditsStart } from '#lib/player/nextup';
   import { postplayStart } from '#lib/postplay';
   import { reportPlayback } from '#lib/telemetry';
   import { COOLDOWN_RETRY_MS, decideRecovery, freshRecovery, kindOfMediaError, lowerQuality, MAX_NETWORK_TRIES, networkStep, type ErrorKind } from '#lib/player/retry';
-  import { WheelAccumulator } from '#lib/player/wheel';
+  import { TvWheelStepper, WheelAccumulator } from '#lib/player/wheel';
   import { parseVolume, stepVolume } from '#lib/player/volume';
   import { hlsConfig, loadHls } from '#lib/player/hls';
   import { airPlaySupported, createAirPlay, type AirPlayController, type AirPlayState } from '#lib/player/airplay';
@@ -168,7 +168,11 @@
   let hud: { icon: string; text: string; pct: number } | null = null, hudT: ReturnType<typeof setTimeout>;
   let ripple: { zone: Zone; total: number; n: number } | null = null, rippleT: ReturnType<typeof setTimeout>;
   let help = false, live = '', liveN = 0;
-  $: showUi = !locked && (paused || menu !== '' || scrubbing || tick - lastActive < 3000);
+  /** the bar hides after this long without input; the TV gets longer (moving along the bar with the D-pad takes time) */
+  let hideMs = 3000;
+  $: showUi = !locked && (paused || menu !== '' || scrubbing || tick - lastActive < hideMs);
+  // TV: a hidden bar keeps no focus - otherwise the next OK would press the last used button (subtitles ...) instead of play/pause
+  $: if (!showUi && typeof document !== 'undefined' && tvMode() && stage?.querySelector('.ctl')?.contains(document.activeElement)) (document.activeElement as HTMLElement).blur();
   $: creditsAt = creditsStart(segments, duration);
   $: postplayAt = postplayStart(segments, chapters, duration);
   $: skip = segments.find((x) => x.type !== 'recap' && current >= x.start && current < x.end - 1) ?? null;
@@ -918,12 +922,16 @@
     if (!video || isTypingTarget(t)) return;
     if ((t.tagName === 'BUTTON' || t.tagName === 'A') && (e.key === ' ' || e.key === 'Enter')) return; // the focused control keeps Space/Enter
     const lg = isLgApp();
+    if (!e.repeat) holdStart = Date.now();
     const a = resolveKey(lg ? { key: normaliseLgKey(e), ctrlKey: e.ctrlKey, metaKey: e.metaKey, altKey: e.altKey, shiftKey: e.shiftKey } : e, { tv: tvMode(), onBody: t === document.body || t === stage, hasSkip: Boolean(skip), hasNext, overlayOpen: overlayOpen(), peekOpen: peek, lg });
     wake();
     if (!a) return;
     e.preventDefault();
-    act(a);
+    // TV: holding left/right seeks faster (10 s, then 30 s, then 60 s steps)
+    if (a.type === 'seek' && e.repeat && tvMode() && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) act({ type: 'seek', by: Math.sign(a.by) * holdSeekStep(Date.now() - holdStart) });
+    else act(a);
   }
+  let holdStart = 0;
   /** Back / Escape (capture phase: the control bar swallows key events): close the shortcut overlay / open menu, then leave the control bar */
   function onBackCapture(e: KeyboardEvent) {
     if (!(e.key === 'Escape' || (tvMode() && isBackKey(e)))) return;
@@ -951,7 +959,7 @@
   const ctlKey = (e: KeyboardEvent) => {
     if (e.key === 'Escape') return;
     const t = e.target as HTMLElement;
-    if (tvMode()) { e.stopPropagation(); return; } // D-pad: the focus belongs to the control bar
+    if (tvMode()) { wake(); e.stopPropagation(); return; } // D-pad: the focus belongs to the control bar; moving along it keeps it shown
     const native = (t.tagName === 'BUTTON' && (e.key === ' ' || e.key === 'Enter')) || (t.tagName === 'INPUT' && (t as HTMLInputElement).type === 'range' && e.key.startsWith('Arrow'));
     if (native) e.stopPropagation();
   };
@@ -982,14 +990,24 @@
   }
   /** mouse wheel over the picture = volume (desktop; a menu open keeps its own scrolling) */
   const wheelAcc = new WheelAccumulator();
+  const tvWheel = new TvWheelStepper();
   function onWheel(e: WheelEvent) {
-    if (coarse || tvMode() || locked || menu || subDlg || help || !video || e.ctrlKey || !e.deltaY) return;
+    // TV (LG Magic Remote wheel): one notch = 10 s forward/back over the picture; menus and dialogs keep their own scrolling
+    if (tvMode()) {
+      if (locked || menu || subDlg || help || !video || !e.deltaY) return;
+      if (e.target !== video && e.target !== stage) return;
+      e.preventDefault(); wake();
+      const n = tvWheel.add(e.deltaY, e.timeStamp || Date.now());
+      if (n) seekBy(n * 10);
+      return;
+    }
+    if (coarse || locked || menu || subDlg || help || !video || e.ctrlKey || !e.deltaY) return;
     if (e.target !== video && e.target !== stage) return; // slot content (party chat), menus, dialogs keep their own scrolling
     e.preventDefault(); wake();
     const n = wheelAcc.add(e.deltaY, e.deltaMode, e.timeStamp || Date.now(), window.innerHeight);
     if (n) volumeBy(-n * 0.05);
   }
-  function toggleControls() { if (tick - lastActive < 3000 && !paused) lastActive = 0; else wake(); }
+  function toggleControls() { if (tick - lastActive < hideMs && !paused) lastActive = 0; else wake(); }
 
   // ---- touch gestures: double-tap thirds = seek, swipe = volume / brightness / scrub, lock ----
   type G = { id: number; x: number; y: number; t: number; w: number; h: number; left: number; axis: Axis; moved: boolean; startTime: number; startVol: number; startBri: number; target: number };
@@ -1084,6 +1102,7 @@
     // iOS / iPadOS ignore a volume set from script (only the hardware buttons change it): no volume swipe and no volume button there
     if (video) volOk = volumeSettable(video);
     coarse = matchMedia('(pointer: coarse)').matches;
+    if (tvMode()) hideMs = 5000; // the D-pad needs longer to reach a button than a mouse
     phone = coarse && !tvMode();
     const narrow = matchMedia('(max-width: 720px)'), setIcon = () => (ICON = narrow.matches ? 28 : 36);
     setIcon(); narrow.addEventListener?.('change', setIcon);

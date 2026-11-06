@@ -86,6 +86,48 @@ test.describe('LG app', () => {
     await expect.poll(() => subShowing(page)).toBe(!before);
   });
 
+  test('OK after the control bar hid plays/pauses instead of pressing the last focused button', async ({ page, api: _api }) => {
+    test.setTimeout(30_000);
+    await asLgApp(page);
+    await playerWithInfo(page);
+    await page.goto('/watch/' + MOVIE.id + '?ff_app=webos');
+    await videoReady(page);
+    await expect.poll(() => isPaused(page)).toBe(false);
+    await page.keyboard.press('ArrowDown'); // the bar, focus on play/pause
+    await expect(page.locator('.ctl .ic').first()).toBeFocused();
+    await page.keyboard.press('ArrowRight'); // move along the bar: to "10 s back"
+    const focusedLabel = () => page.evaluate(() => document.activeElement?.getAttribute('aria-label') ?? '');
+    await expect.poll(focusedLabel).toBe('10 Sekunden zurück');
+    // moving along the bar keeps it shown; idle, it hides after 5 s on the TV and drops the focus
+    await expect(page.locator('.ctl')).not.toHaveClass(/hide/);
+    await expect(page.locator('.ctl')).toHaveClass(/hide/, { timeout: 8000 });
+    await expect.poll(() => page.evaluate(() => document.activeElement === document.body)).toBe(true);
+    const t0 = await time(page);
+    await page.keyboard.press('Enter'); // OK: pause, not "10 s back"
+    await expect.poll(() => isPaused(page)).toBe(true);
+    expect(await time(page)).toBeGreaterThanOrEqual(t0);
+  });
+
+  test('Magic Remote wheel over the picture seeks 10 s per notch; channel up has no next episode on a movie', async ({ page, api: _api }) => {
+    await asLgApp(page);
+    await playerWithInfo(page);
+    await page.goto('/watch/' + MOVIE.id + '?ff_app=webos');
+    await videoReady(page);
+    await press(page, 19); // pause: the position stays put
+    await expect.poll(() => isPaused(page)).toBe(true);
+    const t0 = await time(page);
+    const box = (await page.locator('video').boundingBox())!;
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 3);
+    await page.mouse.wheel(0, 100); // one notch down = forward
+    await expect.poll(() => time(page)).toBeGreaterThan(t0 + 9);
+    const t1 = await time(page);
+    await page.waitForTimeout(250); // a new burst
+    await page.mouse.wheel(0, -100);
+    await expect.poll(() => time(page)).toBeLessThan(t1 - 9);
+    await page.keyboard.press('PageUp'); // a movie: nothing follows
+    await expect(page).toHaveURL(new RegExp('/watch/' + MOVIE.id));
+  });
+
   test('green key opens the audio and subtitle menu', async ({ page, api: _api }) => {
     await asLgApp(page);
     await playerWithInfo(page);

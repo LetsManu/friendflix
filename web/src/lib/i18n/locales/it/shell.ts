@@ -55,7 +55,7 @@ const it: Translation<typeof de> = {
     manageProfiles: 'Modifica profili',
     logout: 'Esci da FriendFlix',
     changeServer: 'Cambia server',
-    changeServerBlue: 'Impossibile tornare alla pagina iniziale. Riavvia l\'app e premi il tasto blu mentre è visibile il logo.',
+    changeServerBlue: 'Impossibile tornare alla pagina iniziale. Riavvia l\'app e premi OK mentre è visibile il logo.',
   },
   menu: {
     me: 'Il mio spazio',
