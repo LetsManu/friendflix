@@ -32,7 +32,8 @@ describe('media setup seam', () => {
 
   it('a kind without MEDIA_SETUP entry → state.media has keys from mediaSettings() and auto null', async () => {
     await withEntry(undefined, async () => {
-      const keys = mediaSettings().map((d) => d.key);
+      // mediaSettings() also holds the Plex keys; the fallback lists the keys of cfg's kind (those run-required for it)
+      const keys = mediaSettings().filter((d) => typeof d.runRequired === 'function' && d.runRequired(cfg)).map((d) => d.key);
       expect((await env.app.inject('/api/setup/state')).json().media).toEqual({ keys, auto: null });
       expect(mediaSetupKeys(cfg)).toEqual(keys);
       // the gateway upstream falls back to the first url setting
@@ -83,11 +84,22 @@ describe('media setup seam', () => {
 
   it('no import cycle: media/setup.ts and jellyfin/setup.ts import media/index.ts for types only', () => {
     const src = new URL('../src/', import.meta.url).pathname;
-    for (const f of ['media/setup.ts', 'jellyfin/setup.ts']) {
+    for (const f of ['media/setup.ts', 'jellyfin/setup.ts', 'plex/setup.ts']) { // plex/setup.ts
       const text = readFileSync(src + f, 'utf8');
       const runtime = [...text.matchAll(/^import (?!type )[^;]*from '([^']+)'/gm)].map((m) => m[1]);
       expect(runtime.filter((p) => /media\/index\.js$|^\.\/index\.js$/.test(p!)), f).toEqual([]);
     }
+  });
+
+  it('MEDIA_SETUP.plex is the manual provider (PLEX_URL, PLEX_TOKEN; no auto) and imports no probes.ts', () => {
+    expect(MEDIA_SETUP.plex).toMatchObject({ kind: 'plex', keys: ['PLEX_URL', 'PLEX_TOKEN'], urlKey: 'PLEX_URL' });
+    expect(MEDIA_SETUP.plex!.auto).toBeUndefined();
+    const plexCfg = { ...cfg, MEDIA_SERVER: 'plex' as const };
+    expect(mediaSetupKeys(plexCfg)).toEqual(['PLEX_URL', 'PLEX_TOKEN']);
+    expect(mediaUrlKey(plexCfg)).toBe('PLEX_URL');
+    const text = readFileSync(new URL('../src/plex/setup.ts', import.meta.url).pathname, 'utf8');
+    const runtime = [...text.matchAll(/^import (?!type )[^;]*from '([^']+)'/gm)].map((m) => m[1]);
+    expect(runtime.filter((p) => /probes\.js$|media\/index\.js$|^\.\/index\.js$|service\.js$/.test(p!))).toEqual([]);
   });
 });
 

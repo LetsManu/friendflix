@@ -201,6 +201,7 @@ const dict: Translation<typeof de> = {
       client_errors: 'Molti errori del browser',
       failed_playbacks: 'Riproduzioni non riuscite',
       pending_approvals: 'Accessi in attesa di approvazione',
+      removed_env: 'Vecchi nomi di variabile in .env',
     },
     disks: {
       title: 'Spazio',

@@ -7,6 +7,8 @@ const store = new Map<string, string>();
 vi.stubGlobal('window', globalThis);
 vi.stubGlobal('location', new URL('http://ff.test/'));
 vi.stubGlobal('localStorage', { getItem: (k: string) => store.get(k) ?? null, setItem: (k: string, v: string) => void store.set(k, v), removeItem: (k: string) => void store.delete(k) });
+const lgCapsMock = vi.fn(() => null as unknown);
+vi.mock('#lib/webos/caps', () => ({ lgCaps: () => lgCapsMock() }));
 const api = vi.fn();
 let profile: string | null = 'p1';
 vi.mock('#lib/api', () => ({ api: (...a: unknown[]) => api(...a), getActiveProfile: () => profile }));
@@ -175,8 +177,23 @@ describe('playPrefetch click', () => {
 });
 
 describe('infobody', () => {
+  it('player and prefetch bodies stay identical when lgCaps is set', () => {
+    const caps = { client: 'webos', appVersion: '1.0.0', containers: ['mp4'], video: [{ codec: 'h264', maxHeight: 2160 }], audio: ['aac'], subtitles: ['srt'] };
+    lgCapsMock.mockReturnValue(caps);
+    try {
+      api.mockResolvedValue({ playSessionId: 'x' });
+      prefetchPlayback('m1');
+      const sent = (api.mock.calls[0][1] as { body: object }).body;
+      const player = playbackInfoBody({ itemId: 'm1', bps: 4_000_000, hint: 'network', caps: lgCapsMock() as never });
+      expect(sent).toHaveProperty('caps', caps);
+      expect(bodyKey(sent)).toBe(bodyKey(player));
+    } finally { lgCapsMock.mockReturnValue(null); }
+  });
   it('drops undefined fields and asks for the original at Infinity', () => {
     expect(playbackInfoBody({ itemId: 'a', bps: Infinity, hint: 'network' })).toEqual({ itemId: 'a', reasonHint: 'network' });
+    expect(playbackInfoBody({ itemId: 'a', bps: Infinity, hint: 'network' })).not.toHaveProperty('caps');
+    const caps = { client: 'webos' as const, appVersion: '1.0.0', containers: ['mp4'], video: [{ codec: 'h264', maxHeight: 2160 }], audio: ['aac'], subtitles: ['srt'] };
+    expect(playbackInfoBody({ itemId: 'a', bps: Infinity, hint: 'network', caps })).toEqual({ itemId: 'a', reasonHint: 'network', caps });
     expect(bodyKey({ b: 1, a: undefined, c: 2 })).toBe(bodyKey({ c: 2, b: 1 }));
   });
   it('uses the remembered bandwidth estimate for the first rung', () => {

@@ -1,0 +1,7 @@
+{
+  "name": "friendflix-webos-tools",
+  "private": true,
+  "devDependencies": {
+    "@webos-tools/cli": "3.2.6"
+  }
+}

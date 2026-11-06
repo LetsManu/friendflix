@@ -201,6 +201,7 @@ const dict: Translation<typeof de> = {
       client_errors: 'Çok sayıda tarayıcı hatası',
       failed_playbacks: 'Başarısız oynatmalar',
       pending_approvals: 'Onay bekleyen girişler',
+      removed_env: '.env içinde eski değişken adları',
     },
     disks: {
       title: 'Depolama',

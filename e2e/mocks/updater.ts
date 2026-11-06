@@ -16,16 +16,22 @@ export interface UpdaterMock {
   log: string[];
   /** POSTed actions */
   posts: string[];
-  /** POST answers 401 reauth_required */
-  reauthRequired: boolean;
   outcome: 'succeeded' | 'rolled_back';
   downPolls: number;
   tick: number;
+  /** the updater's stack field (foreign = Portainer's stack); undefined = an updater from before it */
+  stack?: 'own' | 'foreign';
+  /** why foreign and the two directories (status fields stackReason / stackDir / projectDir) */
+  stackReason?: 'working_dir' | 'portainer' | 'no_labels';
+  stackDir?: string;
+  projectDir?: string;
+  /** the Portainer webhook / API is set up in Admin → Settings (GET answers portainer.configured) */
+  portainer?: boolean;
 }
 type Reply = (b: unknown, status?: number) => Promise<void>;
 
 export function updaterState(present: UpdaterMock['present'] = false): UpdaterMock {
-  return { present, current: 'latest', previous: 'sha-a1b2c3d', job: null, log: ['2026-10-17T04:00:00.000Z update succeeded'], posts: [], reauthRequired: false, outcome: 'succeeded', downPolls: 2, tick: 0 };
+  return { present, current: 'latest', previous: 'sha-a1b2c3d', job: null, log: ['2026-10-17T04:00:00.000Z update succeeded'], posts: [], outcome: 'succeeded', downPolls: 2, tick: 0 };
 }
 
 const value = (s: SettingsMock, key: string) => s.groups.flatMap((g) => g.items).find((i) => i.key === key);
@@ -59,11 +65,12 @@ export function updaterRoute(u: UpdaterMock | null, settings: SettingsMock, m: s
   const ver = value(settings, 'UPDATE_VERSION')?.value ?? null;
   const target = ch === 'nightly' ? 'nightly' : ch === 'pinned' ? ver : 'latest';
   if (p === '/api/admin/updater' && m === 'GET') {
-    if (!u || !u.present) return J({ present: false, autoUpdate: auto });
-    if (u.present === 'unauthorized') return J({ present: true, error: 'unauthorized', autoUpdate: auto });
+    const portainer = { configured: Boolean(u?.portainer), mode: u?.portainer ? 'webhook' : null };
+    if (!u || !u.present) return J({ present: false, autoUpdate: auto, portainer });
+    if (u.present === 'unauthorized') return J({ present: true, error: 'unauthorized', autoUpdate: auto, portainer });
     if (!advance(u)) return J({ error: 'bad_gateway' }, 502);
     const busy = u.job?.state === 'running';
-    return J({ present: true, autoUpdate: auto, status: {
+    return J({ present: true, autoUpdate: auto, portainer, status: { ...(u.stack ? { stack: u.stack } : {}), ...(u.stackReason ? { stackReason: u.stackReason, stackDir: u.stackDir, projectDir: u.projectDir } : {}),
       updater: { version: '1.1.0', sha: null }, channel: ch, version: ch === 'pinned' ? ver : null, targetTag: target, current: u.current, previous: u.previous, busy,
       job: u.job, log: u.log.slice(-30), services: [{ service: 'backend', state: 'running', health: 'healthy', sha: 'sha-c0be6c5', version: '1.0.0' }],
     } });
@@ -71,8 +78,9 @@ export function updaterRoute(u: UpdaterMock | null, settings: SettingsMock, m: s
   const mm = p.match(/^\/api\/admin\/updater\/(update|rollback|self-update)$/);
   if (mm && m === 'POST') {
     if (!u || !u.present) return J({ error: 'not_available' }, 409);
-    if (u.reauthRequired) return J({ error: 'reauth_required' }, 401);
     u.posts.push(mm[1]!);
+    // Portainer's stack: the backend hands an update to Portainer, refuses everything else (backend/src/updater.ts startJob)
+    if (u.stack === 'foreign' || (u.portainer && u.stack !== 'own')) return mm[1] === 'update' && u.portainer ? J({ portainer: { mode: 'webhook' } }, 202) : J({ error: 'foreign_stack' }, 409);
     if (u.job?.state === 'running') return J({ error: 'busy' }, 409);
     if (mm[1] === 'rollback' && !u.previous) return J({ error: 'no_previous' }, 409);
     const to = mm[1] === 'rollback' ? u.previous : target;

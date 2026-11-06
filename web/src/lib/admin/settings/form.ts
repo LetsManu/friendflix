@@ -144,16 +144,16 @@ export const keyHelp = (key: string): string => (hasKey(`settings.keys.${key}.he
 /** a group's note under its title (`settings.groupHelp.<group>`), '' when it has none */
 export const groupHelp = (group: string): string => (hasKey(`settings.groupHelp.${group}`) ? trDynamic(`settings.groupHelp.${group}`) : '');
 
-/** The env names to remove after a move; legacy names of an old product are summarised, not named. */
-export function moveHint(names: readonly string[]): string {
-  const own = names.filter((n) => !/seerr/i.test(n));
-  const list = fmtList(own);
-  return tr('settings.moveHint', { keys: own.length < names.length ? tr('settings.moveHintOlder', { keys: list }) : list });
-}
+/** The env names to remove after a move (KEY and KEY_FILE). */
+export const moveHint = (names: readonly string[]): string => tr('settings.moveHint', { keys: fmtList(names) });
 
-/** Text of a field error code (400 invalid_settings). */
-export const errorText = (code: string): string =>
-  (/^[a-z_]+$/.test(code) && hasKey(`settings.errors.${code}`) ? trDynamic(`settings.errors.${code}`) : tr('settings.errors.invalid'));
+/**
+ * Text of a field error code (400 invalid_settings).
+ * with the setting's key, a key's own text wins (settings.keyErrors.<KEY>.<code>, e.g. PLEX_URL's invalid_url: no ?X-Plex-Token=…).
+ */
+export const errorText = (code: string, key?: string): string =>
+  (key && /^[A-Z][A-Z0-9_]*$/.test(key) && /^[a-z_]+$/.test(code) && hasKey(`settings.keyErrors.${key}.${code}`) ? trDynamic(`settings.keyErrors.${key}.${code}`)
+    : /^[a-z_]+$/.test(code) && hasKey(`settings.errors.${code}`) ? trDynamic(`settings.errors.${code}`) : tr('settings.errors.invalid'));
 
 /** Text of a probe result: the code's sentence plus the detail's, when there is one. */
 export function probeText(r: ProbeResult): string {

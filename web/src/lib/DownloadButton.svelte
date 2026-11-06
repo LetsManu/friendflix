@@ -8,6 +8,9 @@
   import { SUPPORT_HINT, type Support } from '#lib/offline/opfs';
   import { fmtBytes, type QualityId } from '#lib/offline/size';
   import { t, tr } from '#lib/i18n';
+  import { native, nativeDownloads, refreshNativeDownloads } from '#lib/native/bridge';
+  import { nativeCaps } from '#lib/native/play';
+  import { startNativeDownload, viewForNative } from '#lib/native/downloads';
 
   /** movie or episode id */
   export let itemId: string;
@@ -26,10 +29,21 @@
 
   let support: Support = { ok: false };
   let allowed = false, ready = false;
+  /** inside the app with native downloads: the licence is created here, the app fetches the file and reports its state */
+  let nativeMode = false;
   let open = false, opts: DownloadOptions | null = null, loading = false, err = '', busy = false;
   let quality: QualityId = 'hd', audioLang = '', subs = new Set<string>(), count = 1;
 
   onMount(async () => {
+    if (native.available && (await nativeCaps()).download) {
+      nativeMode = true;
+      allowed = Boolean((await getMe())?.downloads?.allowed);
+      if (allowed) void refreshNativeDownloads();
+      // the browser downloader is only the fallback for what the app declines
+      void getSupport().then((s) => { support = s; });
+      ready = true;
+      return;
+    }
     support = await getSupport();
     if (support.ok) {
       const me = await getMe();
@@ -41,9 +55,9 @@
     ready = true;
   });
 
-  $: v = viewFor($downloads, itemId);
+  $: v = nativeMode ? viewForNative($nativeDownloads, itemId) : viewFor($downloads, itemId);
   $: pctNow = v ? progressPct(v) : 0;
-  $: available = ready && support.ok && allowed;
+  $: available = ready && (nativeMode || support.ok) && allowed;
   $: stateText = v ? stateLabel(v) : '';
   /** headless use: a new download opens the options sheet, an existing one leads to the downloads page */
   export function activate() { if (v) void goto('/downloads'); else void openSheet(); }
@@ -72,9 +86,10 @@
     busy = true; err = '';
     try { localStorage.setItem('ff_dl_quality', quality); } catch { /* ignore */ }
     try {
-      await requestDownload(count > 1 && seriesId
+      const req = count > 1 && seriesId
         ? { seriesId, fromEpisodeId: itemId, count, quality, audioLang: audioLang || undefined, subLangs: [...subs] }
-        : { itemId, quality, audioLang: audioLang || undefined, subLangs: [...subs] });
+        : { itemId, quality, audioLang: audioLang || undefined, subLangs: [...subs] };
+      if (nativeMode) await startNativeDownload(req, support.ok); else await requestDownload(req);
       open = false;
     } catch (e: any) {
       const code = e?.body?.error;
@@ -97,7 +112,7 @@
 <svelte:window on:keydown={key} />
 {#if headless}
   <!-- trigger lives elsewhere -->
-{:else if ready && support.ok && allowed}
+{:else if ready && (nativeMode || support.ok) && allowed}
   <span class="dl" class:compact class:block>
     <button type="button" class="dlb" class:sec={!compact} class:on={v?.state === 'done'} aria-haspopup="dialog" aria-label={v ? $t('detail.download.state', { state: stateLabel(v) }) : $t('detail.download.title')} title={v ? stateLabel(v) : $t('detail.download.title')} on:click={main}>
       <Icon name={v?.state === 'done' ? 'check' : 'download'} size={compact ? 20 : 20} />
@@ -106,10 +121,10 @@
     {#if v && menu}
       <span class="menu" role="menu">
         <span class="st">{stateLabel(v)}{#if v.state === 'downloading'}{' · '}{$t('detail.download.progress', { have: fmtBytes(v.bytesHave), total: fmtBytes(v.bytesTotal) })}{/if}</span>
-        {#if v.state === 'downloading'}<button type="button" role="menuitem" on:click={() => { pause(v.id); menu = false; }}><Icon name="pause" size={16} />{$t('detail.download.pause')}</button>{/if}
-        {#if v.state === 'paused' || v.state === 'error'}<button type="button" role="menuitem" on:click={() => { resume(v.id); menu = false; }}><Icon name="play" size={16} />{$t('detail.download.resume')}</button>{/if}
+        {#if v.state === 'downloading' && !nativeMode}<button type="button" role="menuitem" on:click={() => { pause(v.id); menu = false; }}><Icon name="pause" size={16} />{$t('detail.download.pause')}</button>{/if}
+        {#if (v.state === 'paused' || v.state === 'error') && !nativeMode}<button type="button" role="menuitem" on:click={() => { resume(v.id); menu = false; }}><Icon name="play" size={16} />{$t('detail.download.resume')}</button>{/if}
         {#if v.state === 'done'}<a role="menuitem" href="/downloads">{$t('detail.download.toDownloads')}</a>{/if}
-        <button type="button" role="menuitem" on:click={() => { void removeDownload(v.id); menu = false; }}><Icon name="x" size={16} />{v.state === 'done' ? $t('detail.download.delete') : $t('detail.download.cancel')}</button>
+        <button type="button" role="menuitem" on:click={() => { void (nativeMode ? native.deleteDownload(v.id).then(refreshNativeDownloads) : removeDownload(v.id)); menu = false; }}><Icon name="x" size={16} />{v.state === 'done' ? $t('detail.download.delete') : $t('detail.download.cancel')}</button>
       </span>
     {/if}
     {#if v && v.msg && !compact && v.state !== 'paused'}<span class="muted msg" role="status">{v.msg}</span>{/if}

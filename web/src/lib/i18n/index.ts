@@ -63,9 +63,13 @@ const LOADERS: Record<Exclude<Locale, 'de'>, () => Promise<{ default: AnyDict }>
 };
 const dicts: Partial<Record<Locale, AnyDict>> = { de };
 
-interface State { locale: Locale; dict: AnyDict }
-const state = writable<State>({ locale: DEFAULT_LOCALE, dict: de });
-let current: State = { locale: DEFAULT_LOCALE, dict: de };
+/**
+ * `server`: the media server kind of this instance (/api/me server.kind; 'jellyfin' until known). A kind other than Jellyfin may
+ * override single texts that name the media server: `serverText.<kind>.<key>` (locales/<lang>/serverText.ts) wins over `<key>`.
+ */
+interface State { locale: Locale; dict: AnyDict; server: string }
+const state = writable<State>({ locale: DEFAULT_LOCALE, dict: de, server: 'jellyfin' });
+let current: State = { locale: DEFAULT_LOCALE, dict: de, server: 'jellyfin' };
 state.subscribe((s) => (current = s));
 const loadingStore = writable(false);
 
@@ -103,7 +107,7 @@ export async function setLocale(code: string | null | undefined): Promise<Locale
     return current.locale; // chunk not reachable: stay in the current language
   }
   if (my !== seq) return current.locale;
-  state.set({ locale: l, dict });
+  state.set({ locale: l, dict, server: current.server });
   loadingStore.set(false);
   if (typeof document !== 'undefined') document.documentElement.lang = l;
   try { localStorage.setItem(LOCALE_KEY, l); } catch { /* private mode */ }
@@ -169,9 +173,11 @@ function pluralRules(tag: string): Intl.PluralRules {
 
 /** Translate with an explicit state (used by `t`, `tr` and tests). */
 function translate(s: State, key: string, params?: TParams): string {
-  let msg = lookup(s.dict, key);
+  // a media-server specific text (serverText.<kind>.<key>) first; Jellyfin uses the plain keys
+  const variant = s.server !== 'jellyfin' && /^[a-z]{2,16}$/.test(s.server) && !key.startsWith('serverText.') ? `serverText.${s.server}.${key}` : null;
+  let msg = variant ? lookup(s.dict, variant) ?? lookup(s.dict, key) : lookup(s.dict, key);
   let tag = tagOf(s.locale);
-  if (msg === undefined && s.locale !== DEFAULT_LOCALE) { msg = lookup(de, key); tag = tagOf(DEFAULT_LOCALE); }
+  if (msg === undefined && s.locale !== DEFAULT_LOCALE) { msg = (variant ? lookup(de, variant) : undefined) ?? lookup(de, key); tag = tagOf(DEFAULT_LOCALE); }
   if (msg === undefined) {
     if (DEV && !warned.has(key)) { warned.add(key); console.warn(`[i18n] missing key "${key}"`); }
     return key;
@@ -198,7 +204,12 @@ export const tr: TFn = (key, params) => translate(current, key, params);
 /** Like `tr` but for keys built at runtime (e.g. `shell.menu.${id}`); unknown keys return the key and warn in dev. */
 export const trDynamic = (key: string, params?: TParams): string => translate(current, key, params);
 /** Translate in a specific language (falls back to German when that language is not loaded yet, see loadLocale). Used by the language pickers to preview. */
-export const trIn = (l: Locale, key: TKey, params?: TParams): string => translate({ locale: dicts[l] ? l : DEFAULT_LOCALE, dict: dicts[l] ?? de }, key, params);
+export const trIn = (l: Locale, key: TKey, params?: TParams): string => translate({ locale: dicts[l] ? l : DEFAULT_LOCALE, dict: dicts[l] ?? de, server: current.server }, key, params);
+/** The media server kind of this instance (root layout, from /api/me server.kind): texts that name the server follow it. */
+export function setMediaServer(kind: string | null | undefined): void {
+  const k = typeof kind === 'string' && /^[a-z]{2,16}$/.test(kind) ? kind : 'jellyfin';
+  if (k !== current.server) state.update((s) => ({ ...s, server: k }));
+}
 /** true when the key exists in German (useful for optional texts built from data) */
 export const hasKey = (key: string): boolean => lookup(de, key) !== undefined;
 

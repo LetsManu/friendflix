@@ -38,6 +38,8 @@ describe('device unapprove / remove', () => {
     expect((await as(dora, 'GET', '/api/prefs')).json().error).toBe('device_pending');
     // approve → the next request refreshes the session (deviceApproved=true cached in the session)
     expect((await as(admin, 'POST', '/api/admin/devices/approve', { userId, deviceId })).statusCode).toBe(200);
+    // the waiting screen only polls /api/me: it sees the admin approval without another request first
+    expect((await as(dora, 'GET', '/api/me')).json().deviceApproved).toBe(true);
     expect((await as(dora, 'GET', '/api/prefs')).statusCode).toBe(200);
     expect(JSON.parse((await env.kv.get(`sess:${dora.cookies.ff_sid}`))!).deviceApproved).toBe(true);
     // Undo of the approval

@@ -82,6 +82,7 @@ const it: Translation<typeof de> = {
   },
   settings: {
     pageTitle: 'Impostazioni',
+    app: { title: 'App su questo dispositivo', hint: 'Posizione dei download, solo Wi-Fi, audio in background, notifiche e disconnessione da questo dispositivo si impostano nell’app.', open: 'Apri le impostazioni dell’app' },
     title: 'Impostazioni di riproduzione',
     lead: 'Valgono su tutti i tuoi dispositivi e riguardano solo te.',
     autoplayNext: 'Avvia automaticamente l’episodio successivo',

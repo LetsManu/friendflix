@@ -11,6 +11,9 @@ export const CODENAMES = [
   'Nachos', 'Onionring', 'Popcorn', 'Quarkbällchen', 'Reiswaffel', 'Softeis', 'Toffee', 'Ube', 'Vanilleeis', 'Waffel', 'Xocolatl', 'Yuzu', 'Zimtschnecke',
 ] as const;
 
+/** The oldest Android app version (x.y.z) this server accepts; /api/version sends it as `minAndroid` and the app asks its user to update below it. */
+export const MIN_ANDROID = '2.0.0';
+
 export interface AppVersion { version: string; codename: string }
 
 /** "1.2.3" or "v1.2.3" → [1, 2, 3]; null for anything else (pre-releases are not used here) */

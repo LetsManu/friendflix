@@ -46,7 +46,7 @@ Optional. Without `REQUESTS_URL` and `REQUESTS_API_KEY` (in `.env` or *Admin →
   - Authorization Header: `<WEBHOOK_SECRET>` (the portal accepts `Authorization` or `X-Webhook-Secret`; see [Webhook secret](#webhook-secret))
   - Notification types: Request Pending Approval, Approved, Declined, Available
   - JSON payload: default template (`notification_type`, `subject`, `media.media_type`, `media.tmdbId`, `request.request_id`).
-- API key: Settings → General → `REQUESTS_API_KEY` (URL: `REQUESTS_URL`, default `http://requests:5055`). The previous variable names still work and log a deprecation warning at startup.
+- API key: Settings → General → `REQUESTS_API_KEY` (URL: `REQUESTS_URL`, default `http://requests:5055`). Since 2.0 only these names are read; the 1.x names are ignored (the backend logs it and the admin banner names the replacement, see [setup.md, Upgrade to 2.0](setup.md#16-upgrade-to-20)).
 - Paths used (`/api/v1`): `/search`, `/movie/{id}`, `/tv/{id}`, `/request`, `/request/{id}/approve|decline`, `/user`, `/user/import-from-jellyfin` (Jellyfin); `GET|PUT|DELETE /user/{id}`, `POST /user` (local users, other servers).
   Verify against your instance's `/api-docs`: the user import path differs between versions of the request service.
 

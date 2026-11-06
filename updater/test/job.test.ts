@@ -8,11 +8,11 @@ import { DEFAULT_STATE, memoryStore, type State } from '../src/state.js';
 const OLD = 'a'.repeat(40), NEW = 'b'.repeat(40);
 
 /** a fake Docker world: which tag each service runs, which images verify, whether the new build gets healthy */
-function world(o: { verifyFails?: string; healthyTags?: string[]; pullFails?: boolean; upFails?: string; running?: string | null; spawnFails?: boolean } = {}) {
+function world(o: { verifyFails?: string; healthyTags?: string[]; pullFails?: boolean; upFails?: string; running?: string | null; spawnFails?: boolean; digest?: string } = {}) {
   const calls: string[] = [];
   let runningTag = 'old';
   const shaOf = (tag: string) => (tag === 'old' || tag === 'sha-aaaaaaa' ? OLD : NEW);
-  const info = (sha: string): ImageInfo => ({ repoDigests: [], gitSha: sha, version: '1.0.0' });
+  const info = (sha: string): ImageInfo => ({ repoDigests: o.digest ? [o.digest] : [], gitSha: sha, version: '1.0.0' });
   const ops: Ops = {
     images: async (tag, services) => { calls.push(`images ${tag} ${services.join(',')}`); return Object.fromEntries(services.map((s) => [s, `ghcr.io/letsmanu/friendflix-${s === 'bootstrap' ? 'backend' : s}:${tag}`])); },
     pull: async (tag) => { calls.push(`pull ${tag}`); if (o.pullFails) throw new StepError('pull_failed'); },
@@ -52,6 +52,39 @@ describe('update job', () => {
     expect(s.previous).toBe('sha-aaaaaaa');
     expect(u.busy).toBe(false);
     expect(u.log.tail().some((l) => l.endsWith('update succeeded'))).toBe(true);
+  });
+
+  it('logs the compose files the job uses; a media server mismatch fails the job before anything is pulled', async () => {
+    const w = world();
+    const { u } = make({ ...w, ops: { ...w.ops, composeFiles: () => ['compose.prod.yaml', 'compose.plex.yaml'] } });
+    u.start('update');
+    await u.idle();
+    expect(u.log.tail().some((l) => l.endsWith('compose files: compose.prod.yaml, compose.plex.yaml'))).toBe(true);
+    const m = world();
+    const { u: u2, store } = make({ ...m, ops: { ...m.ops, images: async () => { throw new StepError('media_server_mismatch'); } } });
+    u2.start('update');
+    await u2.idle();
+    expect(store.state.lastJob).toMatchObject({ state: 'failed', error: 'media_server_mismatch', steps: { pull: 'failed', restart: 'skipped' } });
+    expect(m.calls.filter((c) => c.startsWith('pull') || c.startsWith('up'))).toEqual([]);
+  });
+
+  it('a foreign stack or changed ports / networks fail the job before anything is pulled; the log says why', async () => {
+    for (const [code, detail] of [['foreign_stack', 'portainer'], ['config_mismatch', 'web ports']] as const) {
+      const m = world();
+      const { u, store } = make({ ...m, ops: { ...m.ops, images: async () => { throw new StepError(code, detail); } } });
+      u.start('update');
+      await u.idle();
+      expect(store.state.lastJob).toMatchObject({ state: 'failed', error: code, steps: { pull: 'failed', verify: 'skipped', restart: 'skipped', health: 'skipped', rollback: 'skipped' } });
+      expect(m.calls.filter((c) => c.startsWith('pull') || c.startsWith('up'))).toEqual([]);
+      expect(u.log.tail().some((l) => l.endsWith(`step pull: ${code} (${detail})`))).toBe(true);
+      // the self-update too: no helper is spawned
+      const s = world();
+      const { u: u2, store: st2 } = make({ ...s, ops: { ...s.ops, images: async () => { throw new StepError(code); } } });
+      u2.start('self-update');
+      await u2.idle();
+      expect(st2.state.lastJob).toMatchObject({ action: 'self-update', state: 'failed', error: code });
+      expect(s.calls.filter((c) => c.startsWith('spawn') || c.startsWith('pull'))).toEqual([]);
+    }
   });
 
   it('a cosign failure aborts before anything is restarted', async () => {
@@ -174,6 +207,15 @@ describe('update job', () => {
     const s2 = memoryStore({ ...DEFAULT_STATE, lastJob: { ...store.state.lastJob!, state: 'running', step: 'restart', error: null, finishedAt: null } });
     const u2 = new Updater(w.ops, s2, { log: new JobLog() });
     expect(u2.snapshot().lastJob).toMatchObject({ state: 'succeeded', steps: { restart: 'ok' } });
+  });
+
+  it('self-update when the updater already runs that image: succeeds without a restart', async () => {
+    const w = world({ digest: 'ghcr.io/letsmanu/friendflix-updater@sha256:' + 'a'.repeat(64) });
+    const { u, store } = make(w);
+    u.start('self-update');
+    await u.idle();
+    expect(w.calls.some((c) => c.startsWith('spawn'))).toBe(false);
+    expect(store.state.lastJob).toMatchObject({ action: 'self-update', state: 'succeeded', error: null, steps: { pull: 'ok', verify: 'ok', restart: 'skipped' } });
   });
 
   it('self-update with a failing verify or helper never spawns / reports the failure', async () => {

@@ -277,7 +277,7 @@ const fr: Translation<typeof de> = {
     linkWarn: 'Ce code provient d’un lien. N’associez que si <b>{code}</b> s’affiche exactement ainsi en ce moment sur votre télévision – sinon quelqu’un d’autre pourrait accéder à votre compte.',
     codeLabel: 'Code affiché sur la télévision',
     pairButton: 'Associer',
-    pairNote: 'La télévision reste connectée 30 jours (7 jours sans utilisation) et apparaît sous « Appareils » – vous pouvez l’y bloquer à tout moment.',
+    pairNote: 'La télévision reste connectée 90 jours et apparaît sous « Appareils » – vous pouvez l’y bloquer à tout moment.',
   },
   tv: {
     pageTitle: 'Connecter la télévision',

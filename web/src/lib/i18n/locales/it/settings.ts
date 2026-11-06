@@ -27,7 +27,6 @@ const settings: Translation<typeof de> = {
     other: '{n} valori vengono dall’ambiente (.env). Spostali nelle impostazioni, poi potrai toglierli dal .env.',
   },
   moveHint: 'Anche salvato. Ora puoi togliere {keys} dal .env e riavviare. Fino ad allora vale ancora il valore dell’ambiente.',
-  moveHintOlder: '{keys} (e i nomi precedenti di questa impostazione)',
   moved: { one: '{n} valore spostato.', many: '{n} valori spostati.', other: '{n} valori spostati.' },
   movedNone: 'Niente da spostare.',
   moveFailed: 'Spostamento non riuscito.',
@@ -58,6 +57,7 @@ const settings: Translation<typeof de> = {
   },
   probeDetail: {
     redirect: 'L’indirizzo reindirizza; inserisci l’indirizzo di destinazione.',
+    not_admin: 'Il token funziona, ma non è quello del proprietario del server Plex, quindi alcune funzioni potrebbero essere limitate.',
     not_found: 'Il servizio non esiste a questo indirizzo.',
     upstream_error: 'Il servizio ha risposto con un errore.',
     incomplete: 'Mancano ancora dei dati.',
@@ -103,6 +103,10 @@ const settings: Translation<typeof de> = {
     failed: 'Generazione non riuscita.',
     a11y: '{label}: {action}',
   },
+  // a key's own field error text (errorText(code, key)): PLEX_URL refuses ?…, #… and user:pass@ (a pasted ?X-Plex-Token=…)
+  keyErrors: {
+    PLEX_URL: { invalid_url: 'Inserisci solo l’indirizzo del server: che inizi con http:// o https://, senza nome utente e password e senza nulla dopo ? o #. Il token va nel campo Token Plex.' },
+  },
   /** option labels of the enum settings (an unset LOGIN_UI is "Automatic") */
   options: { auto: 'Automatico', RECO_ENGINE: { v1: 'v1 (Jellyfin)', v2: 'v2 (modello dei gusti proprio)', shadow: 'Shadow (v2 accanto a v1)' }, UPDATE_CHANNEL: { stable: 'Stabile', nightly: 'Nightly', pinned: 'Versione fissa' }, AUTO_UPDATE: { off: 'Disattivati', 'nightly-window': 'Finestra notturna' }, LOGIN_UI: { app: 'FriendFlix', authentik: 'Authentik' }, PASSKEYS_IN_APP: { auto: 'Automatico', off: 'Disattivato' } },
   keys: {
@@ -129,6 +133,8 @@ const settings: Translation<typeof de> = {
     LOGIN_COVER_WALL: { label: 'Copertine dietro l’accesso', help: 'Mostra copertine della libreria (solo classificazioni fino a 12 anni, niente senza classificazione) dietro l’accesso. Le immagini sono raggiungibili senza accedere.' },
     JELLYFIN_URL: { label: 'Indirizzo di Jellyfin', help: 'Indirizzo interno del media server, ad es. http://jellyfin:8096.' },
     JELLYFIN_ADMIN_API_KEY: { label: 'Chiave API di Jellyfin (admin)', help: 'Chiave API con diritti di amministratore (Jellyfin → Dashboard → Chiavi API).' },
+    PLEX_URL: { label: 'Indirizzo di Plex', help: 'Indirizzo interno con cui il backend e il gateway multimediale raggiungono il server Plex. Solo l’indirizzo: il token va nel suo campo, mai nell’indirizzo.' },
+    PLEX_TOKEN: { label: 'Token Plex', help: 'Token dell’account Plex usato da FriendFlix; il token del proprietario del server sblocca tutte le funzioni. Viene salvato solo nel backend e non è mai mostrato.' },
     REQUESTS_URL: { label: 'Indirizzo del servizio richieste', help: 'Facoltativo. Senza indirizzo e chiave le richieste sono nascoste.' },
     REQUESTS_API_KEY: { label: 'Chiave API del servizio richieste', help: 'Chiave API dalle impostazioni del servizio richieste.' },
     NTFY_URL: { label: 'Canale ntfy per gli annunci', help: 'Canale ntfy condiviso per nuovi titoli e avvisi, ad es. https://ntfy.example.com/friendflix.' },
@@ -149,6 +155,7 @@ const settings: Translation<typeof de> = {
     DOWNLOAD_OFFLINE_GRACE_DAYS: { label: 'Valido offline (giorni)', help: 'Per quanto tempo un download si può riprodurre senza connessione.' },
     DOWNLOAD_CREATE_PER_HOUR: { label: 'Download all’ora', help: 'Numero massimo di nuovi download all’ora per sessione.' },
     CAST_ENABLED: { label: 'Chromecast', help: 'Riproduzione sui dispositivi Chromecast. Richiede un indirizzo pubblico con un certificato https valido.' },
+    CAST_RECEIVER_APP_ID: { label: 'ID app del ricevitore Cast', help: 'Vuoto: Chromecast usa il ricevitore predefinito di Google. Con l’ID app del ricevitore di FriendFlix (8 caratteri, dalla Google Cast SDK Developer Console, indirizzo del ricevitore https://<tuo indirizzo>/cast-receiver/) la TV mostra «Episodio successivo» con conto alla rovescia, «Ci sei ancora?» e «Salta intro», e salva i progressi anche quando il telefono è in standby. Vedi docs/cast-receiver.md.' },
     PREVIEW_WARM: { label: 'Prepara le anteprime', help: 'Crea a riposo le clip di anteprima mancanti, una al minuto.' },
     HOME_NETWORKS: { label: 'Reti di casa', help: 'Reti considerate casa (nessun limite di bitrate fuori casa), separate da virgole, ad es. 192.168.0.0/16.' },
     GITHUB_TOKEN: { label: 'Token GitHub', help: 'Facoltativo: limite di richieste più alto nella ricerca di nuove versioni.' },

@@ -29,6 +29,8 @@ describe('issueText', () => {
     expect(issueText(issue('svc:playbackCheck', 'err', 'empty_media', { n: 86 }))).toBe('Medienserver liefert leere Videostücke – Jellyfin neu starten; hilft das nicht, Hardware-Beschleunigung prüfen');
     expect(issueText(issue('approvals:pending', 'warn', 'pending_approvals', { n: 1 }))).toBe('1 Anmeldung wartet auf Freigabe');
     expect(issueText(issue('approvals:pending', 'warn', 'pending_approvals', { n: 3 }))).toBe('3 Anmeldungen warten auf Freigabe');
+    expect(issueText(issue('config:env', 'warn', 'removed_env', { n: 2 }))).toBe('2 alte Variablennamen in der .env werden seit 2.0 ignoriert: der Anfragen-Dienst nutzt jetzt REQUESTS_URL und REQUESTS_API_KEY');
+    expect(issueText(issue('config:env', 'warn', 'removed_env', { n: 2 }))).not.toMatch(/seerr/i);
     expect(issueText(issue('weird:thing', 'warn', 'slow'))).toBe('Etwas braucht deine Aufmerksamkeit');
   });
 });
@@ -37,6 +39,7 @@ describe('issueHref', () => {
   it('open approvals lead to the approval queue, everything else to the status page', () => {
     expect(issueHref(issue('approvals:pending', 'warn', 'pending_approvals', { n: 2 }))).toBe('/admin/users?tab=approvals');
     expect(issueHref(issue('svc:media', 'err', 'down'))).toBe('/admin/status');
+    expect(issueHref(issue('config:env', 'warn', 'removed_env', { n: 1 }))).toBe('/admin/settings');
     expect(issueHref(null)).toBe('/admin/status');
   });
 });
