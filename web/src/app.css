@@ -128,12 +128,6 @@ html.tv {
 html.tv :focus-visible { outline: 3px solid var(--tv-ring); outline-offset: 3px; box-shadow: none; }
 html.tv .card:focus-within { transform: scale(1.08) !important; z-index: 6; transition-delay: 0s !important; }
 html.tv .card .thumb:focus-visible { box-shadow: none; outline: 3px solid var(--tv-ring); outline-offset: 3px; border-radius: var(--radius); }
-.tv-btn, .tv-btn2 { display: inline-flex; align-items: center; justify-content: center; gap: .6rem; min-height: 56px; padding-inline: 1.8rem; border: 0; border-radius: var(--tv-radius); font: 700 1.4rem/1 'Inter Variable', Inter, system-ui, sans-serif; cursor: pointer; transition: transform var(--tv-t) var(--tv-ease); }
-.tv-btn { background: var(--tv-btn); color: var(--tv-btn-fg); }
-.tv-btn2 { background: var(--tv-btn2); color: var(--tv-btn2-fg); }
-.tv-btn:focus-visible, .tv-btn2:focus-visible { transform: scale(1.08); }
-.tv-eyebrow { text-transform: uppercase; letter-spacing: .3em; font-size: 1rem; color: var(--mut); }
-.tv-title { font-weight: 800; letter-spacing: -.02em; }
 /* TV: no backdrop-filter and no decorative blur (animate only transform/opacity). Spoiler blurs (.spoil, comment .blur) stay: they hide content. */
 html.tv *, html.tv *::before, html.tv *::after { backdrop-filter: none !important; -webkit-backdrop-filter: none !important; }
 html.tv .blurbg, html.tv .rbg, html.tv img.bl { filter: none !important; }
@@ -149,6 +143,13 @@ html.tv .nav .links { display: flex !important; } /* TV viewports can be narrow 
 html.tv input, html.tv select { min-height: 56px; font-size: 1.05rem; }
 html.tv .ring { width: 60px; min-height: 60px; height: 60px; }
 html.tv .drop a, html.tv .drop .plain { min-height: 56px; font-size: 1.05rem; }
+/* TV utilities (after the generic html.tv button rules so they win on <button>) */
+html.tv .tv-btn, html.tv .tv-btn2 { display: inline-flex; align-items: center; justify-content: center; gap: .6rem; min-height: 56px; padding-inline: 1.8rem; border: 0; border-radius: var(--tv-radius); font: 700 1.4rem/1 'Inter Variable', Inter, system-ui, sans-serif; cursor: pointer; transition: transform var(--tv-t) var(--tv-ease); }
+html.tv .tv-btn { background: var(--tv-btn); color: var(--tv-btn-fg); }
+html.tv .tv-btn2 { background: var(--tv-btn2); color: var(--tv-btn2-fg); }
+html.tv .tv-btn:focus-visible, html.tv .tv-btn2:focus-visible { transform: scale(1.08); }
+html.tv .tv-eyebrow { text-transform: uppercase; letter-spacing: .3em; font-size: 1rem; color: var(--mut); }
+html.tv .tv-title { font-weight: 800; letter-spacing: -.02em; }
 
 /* ---- Page transitions (View Transitions API, started from +layout.svelte; skipped for reduced motion, TV and /party) ---- */
 @media (prefers-reduced-motion: no-preference) {

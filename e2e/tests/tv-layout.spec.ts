@@ -25,6 +25,19 @@ test.describe('TV layout', () => {
     });
     expect(ring.color).toBe('rgb(255, 255, 255)');
     expect(ring.width).toBe('3px');
+    expect(ring.shadow).toBe('none');
+  });
+
+  test('tokens: .tv-btn on a <button> keeps its own size', async ({ page, api: _api }) => {
+    await setTv(page, true);
+    await page.goto('/');
+    await expect(page.locator('button.avatar')).toBeEnabled();
+    const r = await page.evaluate(() => {
+      const b = document.createElement('button'); b.className = 'tv-btn'; b.textContent = 'x'; document.body.append(b);
+      return { fs: parseFloat(getComputedStyle(b).fontSize), root: parseFloat(getComputedStyle(document.documentElement).fontSize), h: b.getBoundingClientRect().height };
+    });
+    expect(r.fs).toBeCloseTo(r.root * 1.4, 1);
+    expect(r.h).toBeGreaterThanOrEqual(56);
   });
 
   test('tokens: desktop keeps the dark grey background', async ({ page, api: _api }) => {
