@@ -18,6 +18,7 @@
   import HoverPreview from '#lib/HoverPreview.svelte';
   import { hoverOwner, nextHoverUid } from '#lib/hover';
   import { isBackKey } from '#lib/spatial';
+  import { tvFocus } from '#lib/tv/focus';
 
   export let item: Item;
   /** shows a remove (X) button and emits `remove` (used for Weiterschauen) */
@@ -88,7 +89,7 @@
   function cardEnter() { overCard = true; scheduleOpen(450); }
   function cardLeave() { overCard = false; clearTimeout(openT); }
   // keyboard focus only: a mouse click on a button must not open (or pin) the preview
-  function onFocusIn(e: FocusEvent) { if ((e.target as HTMLElement).matches(':focus-visible')) { focusCard = true; scheduleOpen(600); } }
+  function onFocusIn(e: FocusEvent) { if (tvMode()) tvFocus.set(item); if ((e.target as HTMLElement).matches(':focus-visible')) { focusCard = true; scheduleOpen(600); } }
   function onFocusOut(e: FocusEvent) { if (!(e.currentTarget as HTMLElement).contains(e.relatedTarget as Node | null)) { focusCard = false; clearTimeout(openT); } }
   // TV: OK held on a card opens its actions sheet (the small remove / more buttons are hidden there); a short OK opens the title
   const LONG_PRESS_MS = 600;
