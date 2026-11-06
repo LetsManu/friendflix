@@ -221,3 +221,11 @@ test('install.ps1: the same install cases (pwsh)', { skip: !hasPwsh && 'pwsh not
   assert.equal(r.code, 0, r.out);
   assert.equal(r.calls.at(-1), 'ares-launch --device friendflix-tv com.friendflix.tv.probe');
 });
+
+// Windows PowerShell 5.1 strips double quotes inside arguments to native programs, so a `node -p '..."x"...'` call
+// reaches Node as broken code (the Node 20+ check then failed with Node 26 installed). Native calls carry no `"`.
+test('install.ps1: no double quotes inside single-quoted arguments to node', () => {
+  const src = readFileSync(join(webosDir, 'install.ps1'), 'utf8');
+  const bad = src.split('\n').filter((l) => /&\s*node\b/.test(l) && /'[^']*"[^']*'/.test(l));
+  assert.deepEqual(bad, []);
+});

@@ -71,7 +71,7 @@ if ($Ipk -and -not (Test-Path -LiteralPath $Ipk -PathType Leaf)) { Fail "no such
 $BaseUrl = $BaseUrl.TrimEnd('/')
 
 $nodeMajor = $null
-try { $nodeMajor = [int]((& node -p 'process.versions.node.split(".")[0]' 2>$null) | Select-Object -First 1) } catch { $nodeMajor = $null }
+try { $nodeMajor = [int]((& node -p 'parseInt(process.versions.node, 10)' 2>$null) | Select-Object -First 1) } catch { $nodeMajor = $null }
 if ($null -eq $nodeMajor -or $nodeMajor -lt 20) { Fail 'Node.js 20 or newer is needed: https://nodejs.org/' }
 
 # the passphrase stays in memory: it goes to ares on stdin only, and is never printed or written anywhere
@@ -90,7 +90,7 @@ $isWin = ($PSVersionTable.PSVersion.Major -lt 6) -or $IsWindows # 5.1 has no $Is
 if (-not $AresDir) {
   $cacheRoot = if ($env:LOCALAPPDATA) { $env:LOCALAPPDATA } elseif ($env:XDG_CACHE_HOME) { $env:XDG_CACHE_HOME } else { Join-Path $HOME '.cache' }
   $cache = Join-Path $cacheRoot 'friendflix-webos'
-  $want = (& node -p 'require(process.argv[1]).devDependencies["@webos-tools/cli"]' (Join-Path $PSScriptRoot 'package.json') | Select-Object -First 1)
+  $want = (& node -p 'require(process.argv[1]).devDependencies[process.argv[2]]' (Join-Path $PSScriptRoot 'package.json') '@webos-tools/cli' | Select-Object -First 1)
   $marker = Join-Path $cache ".ff-installed-$want"
   $npmCmd = if ($isWin) { 'npm.cmd' } else { 'npm' }
   if (-not (Test-Path -LiteralPath $marker)) {
