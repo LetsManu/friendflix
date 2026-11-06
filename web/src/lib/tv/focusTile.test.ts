@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Item } from '#lib/api';
 import { setLocale, tr } from '#lib/i18n';
 import { reasonText } from '#lib/reason';
-import { createSettle, tileInfo, TILE_DELAY_MS, TILE_TRAILER_MS } from './focusTile';
+import { createSettle, tileInfo, trailerAllowed, TILE_DELAY_MS, TILE_TRAILER_MS } from './focusTile';
 
 const mk = (o: Partial<Item>) => ({ id: '1', name: 'X', type: 'Movie', genres: [], image: false, backdrop: false, logo: false, played: false, favorite: false, positionTicks: 0, ...o }) as Item;
 
@@ -62,5 +62,16 @@ describe('tileInfo', () => {
   it('fresh badge becomes a label', async () => {
     await setLocale('en');
     expect(tileInfo(mk({}), tr, { fresh: 'new' }).labels).toEqual([tr('fresh.label.new')]);
+  });
+});
+
+describe('trailerAllowed', () => {
+  const ok = { hoverTrailers: true, autoplay: true, hidden: false, saveData: false };
+  it('allows when everything permits', () => expect(trailerAllowed(ok)).toBe(true));
+  it('hidden tab, save-data, pref off and calm/reduced motion block it', () => {
+    expect(trailerAllowed({ ...ok, hidden: true })).toBe(false);
+    expect(trailerAllowed({ ...ok, saveData: true })).toBe(false);
+    expect(trailerAllowed({ ...ok, hoverTrailers: false })).toBe(false);
+    expect(trailerAllowed({ ...ok, autoplay: false })).toBe(false);
   });
 });

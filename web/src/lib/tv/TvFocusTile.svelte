@@ -9,7 +9,7 @@
   import { autoplayAllowed, playPreview, previewOwner, previewSound, stopPreview, toggleSound } from '#lib/preview';
   import { prefs } from '#lib/stores';
   import { tvFocus } from './focus';
-  import { createSettle, tileInfo, TILE_DELAY_MS, TILE_TRAILER_MS } from './focusTile';
+  import { createSettle, tileInfo, TILE_DELAY_MS, TILE_TRAILER_MS, trailerAllowed } from './focusTile';
 
   /** the title shown (with Play / More info) until focus settles on a row card */
   export let hero: Item | null = null;
@@ -23,7 +23,7 @@
   $: if (item) wantBadge(item.type === 'Episode' ? item.seriesId : item.id);
   $: info = item ? tileInfo(item, $t, $badges[(item.type === 'Episode' ? item.seriesId : item.id) ?? ''], Date.now()) : null;
   $: showButtons = !focused && !!hero;
-  $: eyebrow = item ? $t(item.type === 'Series' ? 'home.meta.series' : 'home.meta.movie') : '';
+  $: eyebrow = item ? $t(item.type === 'Movie' ? 'home.meta.movie' : 'home.meta.series') : '';
 
   // two stacked layers crossfade (opacity only): `layers[top]` shows the current item, the other fades out
   let layers: [Item | null, Item | null] = [null, null];
@@ -42,18 +42,21 @@
     stop();
     if (i) trailer.push(i);
   }
-  function stop() { trailer.cancel(); if (owner) stopPreview(owner); owner = ''; playing = false; }
+  function clearVideo() { if (!video) return; video.pause(); video.removeAttribute('src'); video.load(); }
+  function stop() { trailer.cancel(); if (owner) stopPreview(owner); owner = ''; playing = false; clearVideo(); }
   async function startTrailer(i: Item) {
     const nav = navigator as Navigator & { connection?: { saveData?: boolean } };
-    if (!$prefs.hoverTrailers || !autoplayAllowed() || document.hidden || nav.connection?.saveData || $previewOwner) return;
-    owner = 'tile:' + i.id;
+    if (!trailerAllowed({ hoverTrailers: $prefs.hoverTrailers, autoplay: autoplayAllowed(), hidden: document.hidden, saveData: !!nav.connection?.saveData }) || $previewOwner) return;
+    const id = i.type === 'Episode' && i.seriesId ? i.seriesId : i.id;
+    const mine = 'tile:' + i.id;
+    owner = mine;
     playing = true;
-    const ok = await playPreview(i.id, () => video, owner);
-    if (owner !== 'tile:' + i.id) return; // focus moved on meanwhile
-    if (!ok) { owner = ''; playing = false; }
+    const ok = await playPreview(id, () => video, mine);
+    if (owner !== mine) { clearVideo(); return; } // focus moved on meanwhile
+    if (!ok) { owner = ''; playing = false; clearVideo(); }
   }
-  $: if (playing && owner && $previewOwner !== owner) { playing = false; owner = ''; } // something else took over or it failed
-  onDestroy(stop);
+  $: if (playing && owner && $previewOwner !== owner) { playing = false; owner = ''; clearVideo(); } // something else took over or it failed
+  onDestroy(() => { settle.cancel(); stop(); });
 </script>
 
 <section class="tile" aria-label={info?.title ?? ''}>
@@ -68,8 +71,9 @@
     <div class="body">
       <p class="tv-eyebrow">{eyebrow}</p>
       {#key item.id}
-        {#if info.logoId && !logoFailed[item.id]}
-          <img class="logo" src={logoUrl(info.logoId)} alt={info.title} on:error={() => (logoFailed[item.id] = true)} />
+        {@const lid = item.id}
+        {#if info.logoId && !logoFailed[lid]}
+          <img class="logo" src={logoUrl(info.logoId)} alt={info.title} on:error={() => (logoFailed[lid] = true)} />
         {:else}
           <h1 class="tv-title ttl">{info.title}</h1>
         {/if}

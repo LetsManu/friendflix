@@ -52,3 +52,8 @@ export function tileInfo(item: Item, t: TFn, badge?: Badge | null, now = Date.no
     resume: [code, left].filter(Boolean).join(' · '),
   };
 }
+
+/** May the tile start a trailer by itself? Pure so the guard can be tested. */
+export function trailerAllowed(o: { hoverTrailers: boolean; autoplay: boolean; hidden: boolean; saveData: boolean }): boolean {
+  return !!o.hoverTrailers && !!o.autoplay && !o.hidden && !o.saveData;
+}
