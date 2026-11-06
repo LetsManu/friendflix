@@ -155,7 +155,7 @@
 <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
 <article class="card" class:poster={!!posterSrc} on:mouseenter={cardEnter} on:mouseleave={cardLeave} on:focusin={onFocusIn} on:focusout={onFocusOut} on:keydown={onKey}>
   <div class="media">
-  <a class="thumb" {href} bind:this={thumbEl} on:keydown={thumbKeyDown} on:keyup={thumbKeyUp} aria-label={item.name + (sub ? ', ' + sub : '')}>
+  <a class="thumb" class:art={!!src} {href} bind:this={thumbEl} on:keydown={thumbKeyDown} on:keyup={thumbKeyUp} aria-label={item.name + (sub ? ', ' + sub : '')}>
     {#if posterOnly}<img class="blur" loading="lazy" decoding="async" {src} srcset={srcs} {sizes} alt="" aria-hidden="true" />{/if}
     {#if src}<img bind:this={imgEl} class:contain={posterOnly} class:spoil={isSpoiler(item, $prefs)} loading={priority ? 'eager' : 'lazy'} fetchpriority={priority ? 'high' : undefined} decoding="async" {src} srcset={srcs} {sizes} alt="" width={posterSrc ? 200 : 320} height={posterSrc ? 300 : 180} />{/if}
     {#if tag?.kind === 'leaving'}<span class="newep leave">{$t(tag.key, { n: tag.n })}</span>
@@ -236,6 +236,17 @@
   /* TV: no small overlay buttons on the card (hard to reach with a remote); OK held opens the same actions */
   :global(html.tv) .rm, :global(html.tv) .mb { display: none; }
   :global(html.tv) .cap { right: .6rem; }
+  /* TV card treatment (spec 5.1): 6 px radius, no border, the artwork speaks for itself; the title is burned in only when there is no image */
+  :global(html.tv) .card { transition: transform var(--tv-t) var(--tv-ease) 0s; }
+  :global(html.tv) .thumb { border-radius: var(--tv-radius); background: #1a1a1a; }
+  :global(html.tv) .thumb.art .cap, :global(html.tv) .thumb.art::after { display: none; }
+  :global(html.tv) .cap.big { font-size: 1.25rem; font-weight: 600; line-height: 1.25; text-shadow: none; color: var(--tv-white-88); padding: 1rem; }
+  :global(html.tv) .cap.big .l2 { font-size: .9375rem; font-weight: 500; color: var(--mut); }
+  :global(html.tv) .progress { left: .625rem; right: .625rem; bottom: .625rem; height: 4px; border-radius: 2px; overflow: hidden; background: rgba(255, 255, 255, .22); }
+  :global(html.tv) .progress i { border-radius: 2px; }
+  :global(html.tv) .newep, :global(html.tv) .neu { padding: .15rem .5rem; border-radius: 4px; font-size: .9375rem; font-weight: 600; letter-spacing: .02em; text-transform: none; }
+  :global(html.tv) .newep { left: .625rem; top: .625rem; }
+  :global(html.tv) .brand { left: .625rem; top: .625rem; }
   .scrim { position: fixed; inset: 0; background: rgba(0,0,0,.6); z-index: 84; }
   .sheet { outline: none; position: fixed; z-index: 85; left: 0; right: 0; bottom: 0; max-width: 560px; margin: 0 auto; background: var(--surface); border-radius: 14px 14px 0 0; padding: .6rem .6rem calc(.6rem + var(--safe-bottom)); box-shadow: 0 -10px 40px rgba(0,0,0,.7); display: flex; flex-direction: column; gap: .1rem; }
   /* TV: the card's actions (OK held) as a centred dialog instead of a bottom sheet */

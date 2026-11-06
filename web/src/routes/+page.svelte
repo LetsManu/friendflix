@@ -247,4 +247,6 @@
 
 <style>.rows { position: relative; z-index: 2; padding-bottom: 5rem; }
   @media (max-width: 720px) { .rows { padding-top: .4rem; } }
-  :global(html.tv) .rows { padding-bottom: 40vh; } /* the last rows can still slide up under the tile */</style>
+  :global(html.tv) .rows { padding-bottom: 40vh; --pad-x: var(--tv-gutter); } /* the last rows can still slide up under the tile; row titles and first cards sit on the 56 px gutter */
+  :global(html.tv) .rows :global(section.up h2) { font-size: 1.625rem; font-weight: 600; line-height: 1.2; color: var(--tv-white-88); margin-bottom: 1rem; }
+  :global(html.tv) .rows :global(.why) { font-size: 1.375rem; font-weight: 500; margin-top: -.5rem; margin-bottom: 1rem; }</style>

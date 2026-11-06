@@ -79,7 +79,7 @@
   on:keydown={onKeydown} on:focusin={onFocusin} on:click={onClick} on:pointerenter={(e) => onPointer(e, 'pointerenter')} on:pointerleave={(e) => onPointer(e, 'pointerleave')}>
   <ul>
     {#each TV_RAIL as [href, label, icon] (href)}
-      <li><a {href} aria-current={isTabActive(href, path) ? 'page' : undefined} aria-label={open ? undefined : $t(label)}><span class="ic"><Icon name={icon} size={30} /></span><span class="lb">{$t(label)}</span></a></li>
+      <li class:cur={isTabActive(href, path)}><a {href} aria-current={isTabActive(href, path) ? 'page' : undefined} aria-label={open ? undefined : $t(label)}><span class="ic"><Icon name={icon} size={26} /></span><span class="lb">{$t(label)}</span></a></li>
     {/each}
   </ul>
   <a class="who" href="/profiles" aria-label={$t('tv.rail.profile', { name: who })}><span class="ic"><span class="face" style={faceStyle}>{initial(who)}</span></span><span class="lb">{who}</span></a>
@@ -88,20 +88,21 @@
 <style>
   .rail { position: fixed; top: 0; bottom: 0; left: 0; width: 96px; z-index: 60; display: flex; flex-direction: column; align-items: flex-start; padding: 5vh 0 5vh 20px; box-sizing: border-box; }
   .rail.open { width: 340px; }
-  /* black gradient over the content: collapsed only a faint edge for legibility, expanded much wider (opacity only) */
-  .rail::before { content: ''; position: absolute; inset: 0; width: 460px; background: linear-gradient(to right, rgba(0, 0, 0, .96) 0, rgba(0, 0, 0, .9) 55%, transparent); opacity: 0; transition: opacity var(--tv-t, 220ms) var(--tv-ease, ease); pointer-events: none; z-index: -1; }
+  /* black gradient over the content: collapsed only a faint edge for legibility, expanded much wider (opacity only); no hard stop */
+  .rail::before { content: ''; position: absolute; inset: 0; width: 460px; background: linear-gradient(to right, rgba(0, 0, 0, .96) 0, rgba(0, 0, 0, .88) 50%, rgba(0, 0, 0, .5) 75%, rgba(0, 0, 0, 0)); opacity: 0; transition: opacity var(--tv-fade, 280ms) var(--tv-ease, ease); pointer-events: none; z-index: -1; }
   .rail:not(.open)::before { width: 96px; opacity: .65; }
   .rail.open::before { opacity: 1; }
   ul { list-style: none; margin: auto 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
-  li { display: block; }
-  a { position: relative; display: flex; align-items: center; height: 56px; width: 56px; overflow: hidden; border-radius: var(--tv-radius, 4px); color: #b3b3b3; text-decoration: none; transform-origin: left center; transition: transform var(--tv-t, 220ms) var(--tv-ease, ease); }
+  li { display: block; position: relative; }
+  a { position: relative; display: flex; align-items: center; height: 56px; width: 56px; overflow: hidden; border-radius: var(--tv-radius, 6px); color: rgba(255, 255, 255, .55); text-decoration: none; transform-origin: left center; transition: transform var(--tv-t, 180ms) var(--tv-ease, ease); }
   .rail.open a { width: 280px; }
   a:hover, a:focus-visible, a[aria-current='page'] { color: #fff; }
   a:focus-visible { transform: scale(1.08); }
   .ic { flex: none; width: 56px; height: 56px; display: grid; place-items: center; }
-  .lb { white-space: nowrap; font-weight: 700; font-size: 1.4rem; opacity: 0; transform: translateX(-12px); transition: opacity var(--tv-t, 220ms) var(--tv-ease, ease), transform var(--tv-t, 220ms) var(--tv-ease, ease); }
+  .ic :global(svg) { stroke-width: 1.75; }
+  .lb { white-space: nowrap; font-weight: 500; font-size: 1.375rem; opacity: 0; transform: translateX(-12px); transition: opacity var(--tv-t, 180ms) var(--tv-ease, ease), transform var(--tv-t, 180ms) var(--tv-ease, ease); }
   .rail.open .lb { opacity: 1; transform: none; }
-  /* active page: coral dot */
-  a[aria-current='page']::after { content: ''; position: absolute; left: 3px; top: 50%; width: 7px; height: 7px; margin-top: -3.5px; border-radius: 50%; background: var(--acc, #ff6a4d); }
-  .face { width: 40px; height: 40px; border-radius: 50%; display: grid; place-items: center; font-weight: 800; font-size: 1.2rem; color: #fff; background: #444; }
+  /* active page: 6 px coral dot, centred 14 px left of the 26 px icon (the icon starts 15 px into its 56 px cell); on the li so the link's clipping does not cut it */
+  li.cur::before { content: ''; position: absolute; left: -2px; top: 50%; width: 6px; height: 6px; margin-top: -3px; border-radius: 50%; background: var(--acc, #ff4f6d); pointer-events: none; }
+  .face { width: 40px; height: 40px; border-radius: 50%; display: grid; place-items: center; font-weight: 600; font-size: 1.125rem; color: #fff; background: #444; }
 </style>

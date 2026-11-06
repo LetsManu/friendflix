@@ -123,11 +123,15 @@ html.tv { --nav-h: 76px; --pad-x: 3rem; }
 html.tv.idle-cursor, html.tv.idle-cursor * { cursor: none !important; }
 html.tv {
   --bg: #000; --tv-ring: #fff; --tv-btn: #fff; --tv-btn-fg: #000; --tv-btn2: rgba(109, 109, 110, .7); --tv-btn2-fg: #fff;
-  --tv-radius: 4px; --tv-ease: cubic-bezier(.2, .8, .2, 1); --tv-t: 220ms; --tv-safe-x: 5vw; --tv-safe-y: 5vh;
+  --tv-radius: 6px; --tv-ease: cubic-bezier(.2, .8, .2, 1); --tv-t: 180ms; --tv-fade: 280ms; --tv-safe-x: 5vw; --tv-safe-y: 5vh;
+  /* spec 5.1: content starts 56 px right of the 96 px rail; text, row titles and the first card share this edge */
+  --tv-gutter: 56px; --tv-left: calc(96px + var(--tv-gutter));
+  --tv-white-88: rgba(255, 255, 255, .88); --tv-white-78: rgba(255, 255, 255, .78); --tv-sep: rgba(255, 255, 255, .4);
+  --tv-btn-rest: rgba(255, 255, 255, .14); --tv-card-ring: 0 0 0 3px #fff, 0 18px 40px rgba(0, 0, 0, .55);
 }
 html.tv :focus-visible { outline: 3px solid var(--tv-ring); outline-offset: 3px; box-shadow: none; }
 html.tv .card:focus-within { transform: scale(1.08) !important; z-index: 6; transition-delay: 0s !important; }
-html.tv .card .thumb:focus-visible { box-shadow: none; outline: 3px solid var(--tv-ring); outline-offset: 3px; border-radius: var(--radius); }
+html.tv .card .thumb:focus-visible { outline: none; box-shadow: var(--tv-card-ring); border-radius: var(--tv-radius); } /* the ring follows the radius */
 /* TV: no backdrop-filter and no decorative blur (animate only transform/opacity). Spoiler blurs (.spoil, comment .blur) stay: they hide content. */
 html.tv *, html.tv *::before, html.tv *::after { backdrop-filter: none !important; -webkit-backdrop-filter: none !important; }
 html.tv .blurbg, html.tv .rbg, html.tv img.bl { filter: none !important; }
@@ -143,13 +147,29 @@ html.tv .nav .links { display: flex !important; } /* TV viewports can be narrow 
 html.tv input, html.tv select { min-height: 56px; font-size: 1.05rem; }
 html.tv .ring { width: 60px; min-height: 60px; height: 60px; }
 html.tv .drop a, html.tv .drop .plain { min-height: 56px; font-size: 1.05rem; }
-/* TV utilities (after the generic html.tv button rules so they win on <button>) */
-html.tv .tv-btn, html.tv .tv-btn2 { display: inline-flex; align-items: center; justify-content: center; gap: .6rem; min-height: 56px; padding-inline: 1.8rem; border: 0; border-radius: var(--tv-radius); font: 700 1.4rem/1 'Inter Variable', Inter, system-ui, sans-serif; cursor: pointer; transition: transform var(--tv-t) var(--tv-ease); }
-html.tv .tv-btn { background: var(--tv-btn); color: var(--tv-btn-fg); }
-html.tv .tv-btn2 { background: var(--tv-btn2); color: var(--tv-btn2-fg); }
-html.tv .tv-btn:focus-visible, html.tv .tv-btn2:focus-visible { transform: scale(1.08); }
-html.tv .tv-eyebrow { text-transform: uppercase; letter-spacing: .3em; font-size: 1rem; color: var(--mut); }
-html.tv .tv-title { font-weight: 800; letter-spacing: -.02em; }
+/* TV utilities (after the generic html.tv button rules so they win on <button>). Spec 5.1: sizes are 1080p px / 16 in rem, so they follow the html.tv root size. */
+/* buttons: translucent at rest; focus is the white fill + a slight scale, never a ring. .tv-btn2 is an alias of the same look. */
+html.tv .tv-btn, html.tv .tv-btn2 { display: inline-flex; align-items: center; justify-content: center; gap: .75rem; min-height: 3.5rem; padding: 0 1.75rem; border: 0; border-radius: var(--tv-radius); background: var(--tv-btn-rest); color: #fff; font: 600 1.375rem/1 'Inter Variable', Inter, system-ui, sans-serif; text-decoration: none; cursor: pointer; transition: transform var(--tv-t) var(--tv-ease); }
+html.tv .tv-btn:hover, html.tv .tv-btn2:hover { background: rgba(255, 255, 255, .22); }
+html.tv .tv-btn:focus-visible, html.tv .tv-btn2:focus-visible { outline: none; background: #fff; color: #000; transform: scale(1.05); }
+/* type scale */
+html.tv .tv-display { margin: 0; font-size: 4rem; font-weight: 700; letter-spacing: -.02em; line-height: 1.05; display: -webkit-box; -webkit-line-clamp: 2; line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+html.tv .tv-title { font-weight: 700; letter-spacing: -.02em; }
+html.tv .tv-row-title { font-size: 1.625rem; font-weight: 600; letter-spacing: 0; line-height: 1.2; color: var(--tv-white-88); }
+html.tv .tv-meta { font-size: 1.375rem; font-weight: 500; font-variant-numeric: tabular-nums; color: var(--mut); }
+html.tv .tv-body { font-size: 1.5rem; font-weight: 400; line-height: 1.45; color: var(--tv-white-78); max-width: 46ch; }
+html.tv .tv-label { font-size: .9375rem; font-weight: 600; letter-spacing: .02em; }
+/* eyebrow: only rendered when it says something (new season, Top 10, recently added) */
+html.tv .tv-eyebrow { font-size: .9375rem; font-weight: 600; letter-spacing: .12em; text-transform: uppercase; color: var(--acc); }
+/* loading cards: a flat block with an opacity pulse, no shimmer sweep */
+html.tv .skeleton { background: #141414; border-radius: var(--tv-radius); animation: tv-pulse 1.2s ease-in-out infinite alternate; }
+html.tv .skeleton::after { display: none; }
+@keyframes tv-pulse { from { opacity: 1; } to { opacity: .55; } }
+@media (prefers-reduced-motion: reduce) {
+  /* no scaling, instant swaps */
+  html.tv .tv-btn:focus-visible, html.tv .tv-btn2:focus-visible, html.tv .card:focus-within, html.tv .rail a:focus-visible, html.tv .cr .cat:focus-visible { transform: none !important; }
+  html.tv .skeleton { animation: none; }
+}
 
 /* ---- Page transitions (View Transitions API, started from +layout.svelte; skipped for reduced motion, TV and /party) ---- */
 @media (prefers-reduced-motion: no-preference) {

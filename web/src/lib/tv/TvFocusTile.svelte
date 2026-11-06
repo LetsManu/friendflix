@@ -27,7 +27,8 @@
   $: info = item ? tileInfo(item, $t, $badges[(item.type === 'Episode' ? item.seriesId : item.id) ?? ''], Date.now()) : null;
   $: labels = [...(info?.labels ?? []), ...(focused ? ($tvRank?.id === focused.id && $tvRank.n <= 10 ? [$t('tv.tile.top10', { n: $tvRank.n })] : []) : (heroRank >= 1 && heroRank <= 10 ? [$t('tv.tile.top10', { n: heroRank })] : []))];
   $: showButtons = !focused && !!hero;
-  $: eyebrow = item ? $t(item.type === 'Movie' ? 'home.meta.movie' : 'home.meta.series') : '';
+  // the eyebrow only says something meaningful (new season, recently added, Top 10); no generic film/series line
+  $: eyebrow = labels.join(' · ');
 
   // two stacked layers crossfade (opacity only): `layers[top]` shows the current item, the other fades out
   let layers: [Item | null, Item | null] = [null, null];
@@ -64,29 +65,30 @@
 </script>
 
 <section class="tile" aria-label={info?.title ?? ''}>
-  {#each layers as l, i (i)}
-    <div class="layer" class:on={i === top && !!l} aria-hidden={i !== top}>
-      {#if l?.backdrop}<img class="bg" src={backdrop(l.id, 1280)} alt="" decoding="async" />{/if}
-    </div>
-  {/each}
-  <video class="vid" class:on={playing} bind:this={video} muted={!$previewSound} playsinline loop aria-hidden="true" tabindex="-1"></video>
-  <div class="shade"></div>
+  <div class="art">
+    {#each layers as l, i (i)}
+      <div class="layer" class:on={i === top && !!l} aria-hidden={i !== top}>
+        {#if l?.backdrop}<img class="bg" src={backdrop(l.id, 1280)} alt="" decoding="async" />{/if}
+      </div>
+    {/each}
+    <video class="vid" class:on={playing} bind:this={video} muted={!$previewSound} playsinline loop aria-hidden="true" tabindex="-1"></video>
+    <div class="shade"></div>
+  </div>
   {#if item && info}
     <div class="body">
-      <p class="tv-eyebrow">{eyebrow}</p>
+      {#if eyebrow}<p class="tv-eyebrow">{eyebrow}</p>{/if}
       {#key item.id}
         {@const lid = item.id}
         {#if info.logoId && !logoFailed[lid]}
           <img class="logo" src={logoUrl(info.logoId)} alt={info.title} on:error={() => (logoFailed[lid] = true)} />
         {:else}
-          <h1 class="tv-title ttl">{info.title}</h1>
+          <h1 class="tv-display">{info.title}</h1>
         {/if}
       {/key}
-      {#if labels.length}<p class="labels">{#each labels as l}<span>{l}</span>{/each}</p>{/if}
-      {#if info.meta.length}<p class="meta">{info.meta.join(' · ')}</p>{/if}
-      {#if info.resume}<p class="resume">{info.resume}</p>{/if}
-      {#if info.synopsis}<p class="ov">{info.synopsis}</p>{/if}
-      {#if info.reason}<p class="why">{info.reason}</p>{/if}
+      {#if info.meta.length}<p class="tv-meta meta">{#each info.meta as m, i}{#if i}<span class="sep" aria-hidden="true">·</span>{/if}<span class:age={!!item.rating && m === item.rating}>{m}</span>{/each}</p>{/if}
+      {#if info.resume}<p class="tv-meta resume">{info.resume}</p>{/if}
+      {#if info.synopsis}<p class="tv-body ov">{info.synopsis}</p>{/if}
+      {#if info.reason}<p class="tv-meta why">{info.reason}</p>{/if}
       {#if showButtons}
         <div class="btns">
           <a class="tv-btn" data-autofocus href="/watch/{item.id}"><Icon name="play" size={28} />{$t('home.card.play')}</a>
@@ -101,26 +103,27 @@
 </section>
 
 <style>
-  /* sticky + above the rows (z-index 2): the rows slide up underneath it; it is opaque, so nothing shows through. Clipping lives on the layers so the focused button's ring is not cut. */
+  /* sticky + above the rows (z-index 3): the rows slide up underneath it; it is opaque, so nothing shows through. Clipping lives on the art box so the focused button is not cut. */
   .tile { position: sticky; top: 0; z-index: 3; height: 50vh; background: var(--bg); }
-  .layer, .vid { position: absolute; inset: 0; overflow: hidden; opacity: 0; transition: opacity 200ms ease-out; }
-  .layer.on { opacity: 1; }
-  .bg, .vid { position: absolute; top: 0; right: 0; width: 70%; height: 100%; object-fit: cover; object-position: center 20%; background: transparent; }
-  .vid { pointer-events: none; }
-  .vid.on { opacity: 1; }
-  .shade { position: absolute; inset: 0; pointer-events: none; background:
-    linear-gradient(to top, var(--bg) 0%, transparent 35%),
-    linear-gradient(to right, var(--bg) 0%, var(--bg) 28%, transparent 70%); }
-  .body { position: absolute; left: 0; bottom: 6vh; width: min(46%, 60rem); display: flex; flex-direction: column; gap: .6rem; }
-  .tv-eyebrow { margin: 0; }
-  .logo { max-width: 24rem; max-height: 9rem; object-fit: contain; object-position: left bottom; align-self: flex-start; }
-  .ttl { margin: 0; font-size: 3rem; line-height: 1.05; }
-  .labels { margin: 0; display: flex; gap: .5rem; }
-  .labels span { padding: .1rem .6rem; border-radius: 3px; background: var(--acc-fill); color: #fff; font-size: 1.1rem; font-weight: 800; text-transform: uppercase; letter-spacing: .03em; }
-  .meta, .resume { margin: 0; font-size: 1.75rem; font-weight: 600; }
-  .resume { color: var(--acc); }
-  .ov { margin: 0; font-size: 1.75rem; line-height: 1.35; display: -webkit-box; -webkit-line-clamp: 3; line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
-  .why { margin: 0; font-size: 1.75rem; color: var(--mut); }
-  .btns { display: flex; gap: 1rem; margin-top: .6rem; }
-  .snd { position: absolute; right: 5vw; bottom: 6vh; width: 56px; padding: 0; }
+  /* backdrop: 72 vw, anchored right/top; the fades live on the same box, so they start exactly at the image edge (no seam) */
+  .art { position: absolute; top: 0; right: 0; width: 72vw; height: 100%; overflow: hidden; pointer-events: none; }
+  .layer, .vid { position: absolute; inset: 0; opacity: 0; transition: opacity calc(var(--tv-fade) * .7) ease-in; }
+  .layer.on, .vid.on { opacity: 1; transition: opacity var(--tv-fade) ease-out; }
+  .bg, .vid { width: 100%; height: 100%; object-fit: cover; object-position: center 20%; background: transparent; }
+  .bg { display: block; }
+  .shade { position: absolute; inset: 0; background:
+    linear-gradient(180deg, rgba(0, 0, 0, .35) 0%, rgba(0, 0, 0, 0) 20%),
+    linear-gradient(0deg, #000 0%, rgba(0, 0, 0, .6) 22%, rgba(0, 0, 0, 0) 48%),
+    linear-gradient(90deg, #000 0%, #000 18%, rgba(0, 0, 0, .82) 34%, rgba(0, 0, 0, .35) 58%, rgba(0, 0, 0, 0) 78%); }
+  .body { position: absolute; left: var(--tv-gutter); bottom: 6vh; width: min(52%, 60rem); display: flex; flex-direction: column; align-items: flex-start; }
+  .tv-eyebrow { margin: 0 0 .75rem; }
+  .logo { display: block; max-width: 32.5rem; max-height: 10rem; object-fit: contain; object-position: left bottom; }
+  .meta { margin: 1rem 0 0; display: flex; flex-wrap: wrap; align-items: center; }
+  .sep { margin: 0 .625rem; color: var(--tv-sep); }
+  .age { padding: .05rem .4rem; border: 1px solid rgba(255, 255, 255, .45); border-radius: 3px; font-size: .9em; line-height: 1.2; }
+  .resume { margin: .5rem 0 0; color: var(--acc); }
+  .ov { margin: .75rem 0 0; display: -webkit-box; -webkit-line-clamp: 3; line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+  .why { margin: .75rem 0 0; }
+  .btns { display: flex; gap: .75rem; margin-top: 1.75rem; }
+  :global(html.tv) .snd { position: absolute; right: 5vw; bottom: 6vh; width: 3.5rem; padding: 0; }
 </style>

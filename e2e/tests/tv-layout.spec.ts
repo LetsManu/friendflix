@@ -18,7 +18,9 @@ test.describe('TV layout', () => {
     await expect(page.locator('html.tv')).toHaveCount(1);
     await expect(page.locator('nav.rail a.who')).toBeVisible();
     expect(await page.evaluate(() => getComputedStyle(document.body).backgroundColor)).toBe('rgb(0, 0, 0)');
-    await page.keyboard.press('Tab');
+    // a plain focusable (not a .tv-btn: buttons show focus by their white fill, spec 5.1) keeps the white ring
+    await expect(page.locator('section.tile [data-autofocus]')).toBeFocused();
+    await page.locator('nav.rail a.who').focus();
     const ring = await page.evaluate(() => {
       const el = document.activeElement as HTMLElement;
       const s = getComputedStyle(el);
@@ -37,7 +39,7 @@ test.describe('TV layout', () => {
       const b = document.createElement('button'); b.className = 'tv-btn'; b.textContent = 'x'; document.body.append(b);
       return { fs: parseFloat(getComputedStyle(b).fontSize), root: parseFloat(getComputedStyle(document.documentElement).fontSize), h: b.getBoundingClientRect().height };
     });
-    expect(r.fs).toBeCloseTo(r.root * 1.4, 1);
+    expect(r.fs).toBeCloseTo(r.root * 1.375, 1); // spec 5.1: 22 px at 1080p (22 / 16 rem)
     expect(r.h).toBeGreaterThanOrEqual(56);
   });
 
@@ -112,6 +114,74 @@ test.describe('TV layout', () => {
       await page.mouse.move(900, 20); // the top margin: nothing focusable
       await closed(page);
       await expect(card).toBeFocused();
+    });
+  });
+
+  test.describe('polish (spec 5.1)', () => {
+    const alpha = (c: string) => { const m = /rgba?\(([^)]+)\)/.exec(c); const p = m ? m[1]!.split(',').map((v) => parseFloat(v)) : []; return p.length === 4 ? p[3]! : 1; };
+    async function home(page: Page) {
+      await page.setViewportSize({ width: 1920, height: 1080 });
+      await setTv(page, true);
+      await page.goto('/');
+      await expect(page.locator('section.tile [data-autofocus]')).toBeFocused();
+      await expect(page.locator('main .rows section.row .card .thumb').first()).toBeVisible();
+    }
+
+    test('tile title, first row title and first card share the 152 px left edge at 1920x1080', async ({ page, api: _api }) => {
+      await home(page);
+      const x = await page.evaluate(() => {
+        const left = (sel: string) => document.querySelector(sel)!.getBoundingClientRect().left;
+        return { title: left('section.tile .body :is(h1, img.logo)'), row: left('main .rows section.row h2'), card: left('main .rows section.row .card .thumb') };
+      });
+      expect(Math.abs(x.title - 152)).toBeLessThanOrEqual(2);
+      expect(Math.abs(x.row - x.title)).toBeLessThanOrEqual(2);
+      expect(Math.abs(x.card - x.title)).toBeLessThanOrEqual(2);
+    });
+
+    test('buttons: focus is a white fill without a ring, the other button is translucent', async ({ page, api: _api }) => {
+      await home(page);
+      const s = await page.evaluate(() => {
+        const st = (el: Element) => { const c = getComputedStyle(el); return { outline: c.outlineStyle, bg: c.backgroundColor, color: c.color }; };
+        return { play: st(document.querySelector('section.tile [data-autofocus]')!), info: st(document.querySelector('section.tile .btns > :not([data-autofocus])')!) };
+      });
+      expect(s.play.outline).toBe('none');
+      expect(s.play.bg).toBe('rgb(255, 255, 255)');
+      expect(s.play.color).toBe('rgb(0, 0, 0)');
+      expect(alpha(s.info.bg)).toBeLessThan(0.3);
+      expect(s.info.color).toBe('rgb(255, 255, 255)');
+    });
+
+    test('row titles are 26 px x root scale, weight 600', async ({ page, api: _api }) => {
+      await home(page);
+      const r = await page.evaluate(() => {
+        const h = getComputedStyle(document.querySelector('main .rows section.row h2')!);
+        return { fs: parseFloat(h.fontSize), fw: h.fontWeight, root: parseFloat(getComputedStyle(document.documentElement).fontSize) };
+      });
+      expect(r.fs).toBeCloseTo((26 * r.root) / 16, 1);
+      expect(r.fw).toBe('600');
+    });
+
+    test('no generic type eyebrow: only a meaningful label is shown, in coral', async ({ page, api: _api }) => {
+      await home(page);
+      const tile = page.locator('section.tile');
+      // the hero is ranked: its eyebrow says so
+      await expect(tile.locator('.tv-eyebrow')).toContainText('Top 10');
+      expect(await tile.locator('.tv-eyebrow').evaluate((e) => getComputedStyle(e).color)).toBe('rgb(255, 79, 109)');
+      // a title without a label has no eyebrow at all (no "FILM" / "SERIE")
+      const card = page.locator('main .rows section.row[aria-label="Weiterschauen"] .card .thumb[aria-label^="The Dawn Keeper"]');
+      await card.focus();
+      await expect(tile).toHaveAttribute('aria-label', 'The Dawn Keeper');
+      await expect(tile.locator('.tv-eyebrow')).toHaveCount(0);
+    });
+
+    test('cards: focus ring is a box-shadow that follows the 6 px radius, no outline', async ({ page, api: _api }) => {
+      await home(page);
+      const thumb = page.locator('main .rows section.row .card .thumb').first();
+      await thumb.focus();
+      const s = await thumb.evaluate((e) => { const c = getComputedStyle(e); return { outline: c.outlineStyle, shadow: c.boxShadow, radius: c.borderTopLeftRadius }; });
+      expect(s.outline).toBe('none');
+      expect(s.shadow).toContain('rgb(255, 255, 255) 0px 0px 0px 3px');
+      expect(s.radius).toBe('6px');
     });
   });
 

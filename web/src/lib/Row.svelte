@@ -194,14 +194,18 @@
   .row.m .arrow { display: none; }
   :global(html.tv) .arrow { display: none; } /* TV: the D-pad scrolls the row; the edge strips only got in the way of the pointer */
   /* ---- TV: 16:9 cards, 6.5 across the safe area, the focused card scales (app.css) ---- */
-  :global(html.tv) .row { --gap: .8rem; --cw: calc((100vw - 96px - 5vw) / 6.5); margin-top: 2.2rem; contain-intrinsic-size: auto calc(var(--cw) * .5625 + 5.5rem); }
+  /* TV (spec 5.1): --pad-x is the 56 px gutter (set on the home rows); ~6.5 cards between the gutter and the right safe area */
+  /* row -> row 48 px: 1.6rem margin + 1.4rem bottom padding; the padding keeps the focused card's ring inside the row (content-visibility clips paint to the row box) */
+  :global(html.tv) .row { --gap: .8rem; --cw: calc((100vw - var(--tv-left) - 5vw) / 6.5); margin-top: 1.6rem; padding-bottom: 1.4rem; contain-intrinsic-size: auto calc(var(--cw) * .5625 + 6.9rem); }
   :global(html.tv) .row:hover, :global(html.tv) .row:focus-within { z-index: 4; }
-  :global(html.tv) .hd { margin: 0 0 .6rem; }
-  :global(html.tv) h2 { font-size: 1.75rem; font-weight: 700; }
+  :global(html.tv) .hd { margin: 0 var(--pad-x) 1rem; }
+  :global(html.tv) h2 { font-size: 1.625rem; font-weight: 600; letter-spacing: 0; line-height: 1.2; color: var(--tv-white-88); }
+  :global(html.tv) h2 a { color: inherit; }
   :global(html.tv) .dots { display: none; }
-  :global(html.tv) .track { padding: 1.4rem 5vw 1.4rem 1.4rem; margin: -1.4rem 0 -1.4rem -1.4rem; scroll-padding: 0 5vw 0 1.4rem; overscroll-behavior: contain; }
+  /* the track runs from the rail edge, so cards slide out under the rail; the padding puts the first card on the gutter and leaves room for the focus scale */
+  :global(html.tv) .track { padding: 1.4rem 5vw 1.4rem var(--pad-x); margin: -1.4rem 0; scroll-padding: 0 5vw 0 var(--pad-x); overscroll-behavior: contain; }
   :global(html.tv) .slot { flex: 0 0 var(--cw); }
-  :global(html.tv) .rank { right: .5rem; top: .5rem; min-width: 2rem; height: 2rem; font-size: 1rem; }
+  :global(html.tv) .rank { right: .625rem; top: .625rem; min-width: 2rem; height: 2rem; border-radius: 4px; box-shadow: none; font-size: .9375rem; font-weight: 600; letter-spacing: .02em; font-variant-numeric: tabular-nums; }
   .row.m .rank { right: .3rem; top: .3rem; min-width: 1.5rem; height: 1.5rem; font-size: .78rem; }
   .row.m.land { --pw: calc((100vw - var(--pad-x)) / 2.15); }
 </style>
