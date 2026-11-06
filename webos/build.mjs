@@ -7,7 +7,7 @@
 // version, adds tv-shared/setup-core.js (and, for the probe, webos/app/setup.js and setup.css), runs `ares-package` and
 // writes <outDir>/FriendFlix-<version>.ipk or <outDir>/FriendFlix-probe-<version>.ipk. Prints that path; exit 1 on any problem.
 // Without --ares, ares-package comes from webos/node_modules/.bin (npm ci --prefix webos) or PATH.
-import { cpSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import console from 'node:console';
 import process from 'node:process';
 import { tmpdir } from 'node:os';
@@ -64,8 +64,12 @@ function main(argv) {
     const dir = stage(app, work);
     const out = join(work, 'out');
     mkdirSync(out);
+    // the pinned CLI's own script runs through this node: no .cmd shim, so it also works on Windows (Node refuses to spawn
+    // a .cmd without a shell); --ares (tests) and a global install are found on PATH
+    const localCli = join(webosDir, 'node_modules/@webos-tools/cli/bin/ares-package.js');
     const path = [aresDir ?? join(webosDir, 'node_modules/.bin'), process.env.PATH].join(delimiter);
-    const r = spawnSync('ares-package', [dir, '-o', out], { encoding: 'utf8', env: { ...process.env, PATH: path } });
+    const [cmd, pre] = !aresDir && existsSync(localCli) ? [process.execPath, [localCli]] : ['ares-package', []];
+    const r = spawnSync(cmd, [...pre, dir, '-o', out], { encoding: 'utf8', env: { ...process.env, PATH: path } });
     if (r.error) throw new Error(`could not run ares-package: ${r.error.message}`);
     if (r.status !== 0) throw new Error(`ares-package failed (exit ${r.status}): ${(r.stderr || r.stdout).trim()}`);
     const ipks = readdirSync(out).filter((f) => f.endsWith('.ipk'));
