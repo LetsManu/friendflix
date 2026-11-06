@@ -17,7 +17,8 @@ android {
     compileSdk = 36
 
     defaultConfig {
-        applicationId = "app.friendflix.android"
+        // the Play Console app id (fixed for good there); the Kotlin package and namespace stay app.friendflix.android
+        applicationId = "com.friendflix"
         minSdk = 26
         targetSdk = 36
         versionName = appVersion

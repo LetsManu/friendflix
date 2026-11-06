@@ -42,9 +42,18 @@
   import ToastHost from '#lib/ui/ToastHost.svelte';
   import { flushDeferred } from '#lib/ui/action';
   import ConfirmHost from '#lib/ui/ConfirmHost.svelte';
+  import ReauthHost from '#lib/auth/ReauthHost.svelte';
   import HealthBanner from '#lib/admin/HealthBanner.svelte';
   import { startBanner } from '#lib/admin/banner';
   import { saveLanguage } from '#lib/stores';
+  import ProbeOverlay from '#lib/tizen/ProbeOverlay.svelte';
+  import LgProbeOverlay from '#lib/webos/ProbeOverlay.svelte';
+  import { isTizenApp } from '#lib/tizen/detect';
+  import { installNavLock } from '#lib/tizen/navlock';
+  import { exitLgApp, isLgApp, shouldExitOnBack } from '#lib/webos/detect';
+  import { changeServerViaHome, recordHistoryBase } from '#lib/webos/home';
+  import { rememberLgProbeHome } from '#lib/webos/probehome';
+  import { toast } from '#lib/ui/toast';
   import { PLAY_ART_NAME, playTransition, takePlayArt } from '#lib/player/transition';
 
   let me: Me | null = null;
@@ -54,6 +63,8 @@
   if (early) setActiveProfile(bootProfile); // early requests carry the profile this tab ran with (a switch elsewhere answers 409 → reload without early render)
   /** TV mode: big UI, D-pad navigation. On for paired televisions; `?tv=1` previews it in any browser (`?tv=0` ends the preview). */
   let tv = false, replaced = false;
+  /** inside the LG app; set on mount (the server render has no window) */
+  let lgApp = false;
   let pending = false, checking = false;
   let notes: Array<{ id: number; title: string; link?: string; read: boolean }> = [];
   let scrolled = false, menu = false, bell = false, cats = false, help = false;
@@ -152,6 +163,10 @@
     if (bell && unread) { await api('/api/notifications/read', { method: 'POST' }); setTimeout(loadNotes, 1500); }
   }
   const logout = () => doLogout(me?.tv);
+  const changeServer = () => {
+    menu = false;
+    changeServerViaHome(() => toast.info($t('shell.account.changeServerBlue'))); // the hint when the start page cannot be reached
+  };
   async function surprise() {
     menu = false;
     try { goto(`/item/${(await api('/api/library/random?type=Movie')).item.id}`); } catch { goto('/browse/movies'); }
@@ -221,13 +236,16 @@
       const typing = el && (isEditable(el) || el.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName));
       if (!typing || e.key !== '/') { e.preventDefault(); openSearch(); return; }
     }
+    // LG app, unpaired pairing page (not yet TV mode): Back returns to the app's start page, which shows the setup form
+    if (!tv && path === '/tv' && isBackKey(e) && isLgApp()) { e.preventDefault(); history.back(); return; }
     const back = e.key === 'Escape' || (tv && isBackKey(e));
     if (!back) return;
     if (menu || bell || cats) { menu = bell = cats = false; if (tv) e.preventDefault(); return; } // dropdowns close first
     // TV: Back/Escape walks one step back (the detail popup closes itself on Escape; the player handles its own keys)
     if (tv && !watchPage && !(e.key === 'Escape' && $page.state.modalId) && !isEditable(e.target as Element)) {
       e.preventDefault();
-      if (path !== '/' || $page.state.modalId) history.back();
+      if (isLgApp() && shouldExitOnBack({ path, modalId: $page.state.modalId, dropdownOpen: false, editable: false })) exitLgApp(); // Back on home leaves the LG app
+      else if (path !== '/' || $page.state.modalId) history.back();
     }
   }
 
@@ -347,6 +365,9 @@
     const unwarm = () => evs.forEach((t) => document.removeEventListener(t, warm));
     evs.forEach((t) => document.addEventListener(t, warm, { passive: true }));
     stops.push(unwarm);
+    lgApp = isLgApp();
+    if (lgApp) { recordHistoryBase(); rememberLgProbeHome(); }
+    if (isTizenApp() || isLgApp()) stops.push(installNavLock()); // the TV app never leaves for a foreign site (lib/tizen/navlock.ts)
     const flag = new URLSearchParams(location.search).get('tv');
     if (flag === '1') sessionStorage.setItem('ff_tv', '1'); else if (flag === '0') sessionStorage.removeItem('ff_tv');
     online = navigator.onLine;
@@ -527,6 +548,7 @@
             <button class="plain" role="menuitem" on:click={openHelp}><Icon name="info" size={18} />{$t('shell.menu.help')}</button>
             {#if admin}<a href="/admin" role="menuitem"><Icon name="shield" size={18} />{$t('shell.menu.admin')}</a>{/if}
             <hr />
+            {#if lgApp}<button class="plain" role="menuitem" on:click={changeServer}>{$t('shell.account.changeServer')}</button>{/if}
             <button class="plain out" role="menuitem" on:click={logout}>{$t('shell.account.logout')}</button>
           </div>
         {/if}
@@ -601,9 +623,13 @@
 {:else}
   <main id="main" class="boot"><span class="logo"><Logo wordmark size={44} /></span><div class="spin" aria-label={$t('shell.booting')} role="status"></div></main>
 {/if}
-<!-- app-wide toasts + confirm dialog (lib/ui); mounted once, outside the page so they survive navigation -->
+<!-- Samsung TV app: the phase-0 probe screen (only with probe=1 inside the app; a strip on the pairing page, full screen after pairing) -->
+<ProbeOverlay compact={path === '/tv'} />
+{#if lgApp}<LgProbeOverlay compact={path === '/tv'} />{/if}
+<!-- app-wide toasts + confirm dialog (lib/ui) + the in-app re-authentication (lib/account/reauth.ts); mounted once, outside the page so they survive navigation -->
 <ToastHost />
 <ConfirmHost />
+<ReauthHost />
 
 <style>
   .offbar { position: fixed; z-index: 80; left: 0; right: 0; bottom: calc(56px + var(--safe-bottom) + var(--castbar-h)); background: #242b33; padding: .6rem var(--pad-x); text-align: center; font-size: .9rem; }

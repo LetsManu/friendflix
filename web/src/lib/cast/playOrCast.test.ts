@@ -66,7 +66,7 @@ describe('playOrCast', () => {
       const e = tap();
       expect(playOrCast(e, { id: 'e1', positionTicks: 10_000 }, { audio: 'ger' })).toBe(true);
       expect(e.preventDefault).toHaveBeenCalled();
-      expect(nat.tryPlay).toHaveBeenCalledWith({ id: 'e1', positionTicks: 10_000 }, { audio: 'ger' });
+      expect(nat.tryPlay).toHaveBeenCalledWith({ id: 'e1' }, { audio: 'ger' }); // the card's position is not passed on: the server's resume point wins
       await settled();
       expect(nat.goto).not.toHaveBeenCalled();
     });

@@ -8,7 +8,7 @@ Das ist auch die Lösung für Fernseher ohne AirPlay und ohne Chromecast; wer Ai
 ## Einrichten (einmalig pro Fernseher)
 1. Auf dem Fernseher im Browser `https://portal.<domain>/tv` öffnen (als Lesezeichen/Startseite speichern). Es erscheinen ein **Code** (`ABCD-EFGH`) und ein QR-Code.
 2. Auf dem Handy (eingeloggt): **Menü → Fernbedienung**, Code eingeben, **Koppeln** (oder QR-Code scannen – der Code ist dann schon eingetragen; bestätigt wird trotzdem von Hand).
-3. Der Fernseher meldet sich selbst an und öffnet die Startseite im TV-Modus. Er bleibt 30 Tage angemeldet (7 Tage ohne Nutzung) und erscheint unter **Geräte** als „Fernseher (TV-Modus)“.
+3. Der Fernseher meldet sich selbst an und öffnet die Startseite im TV-Modus. Er bleibt 90 Tage angemeldet und erscheint unter **Geräte** als „Fernseher (TV-Modus)“.
 
 Abmelden am Fernseher: Profil-Menü → Abmelden (danach wieder Kopplungs-Bildschirm) oder am Handy unter *Geräte* entfernen – das beendet die Sitzung **und** trennt die Verbindung sofort.
 
@@ -20,6 +20,20 @@ Abmelden am Fernseher: Profil-Menü → Abmelden (danach wieder Kopplungs-Bildsc
 | Zurück (Back, Esc, Backspace) | eine Ebene zurück; der Fokus springt wieder auf die Kachel, die du verlassen hast |
 | Im Player | OK = Pause/Play · ←/→ = ∓/+10 s · ↑/↓ = Steuerleiste öffnen (dann mit den Pfeilen wählen) · Zurück schließt Menü → Leiste → Player |
 | Medientasten | Play/Pause, ±30 s (Vor/Zurück-Spulen), nächste Folge |
+
+### LG-App (webOS)
+Die [LG-TV-App](webos.md) versteht im Player zusätzlich diese Tasten (außerhalb des Players werden sie ignoriert):
+
+| Taste (Code) | Aktion |
+|---|---|
+| Play (415) · Pause (19) · Play/Pause (10252) | abspielen · pausieren · umschalten |
+| Stop (413) | Player verlassen (der Fortschritt wird gespeichert, wie bei Zurück) |
+| Vorspulen (417) · Zurückspulen (412) | +30 s · −30 s |
+| Rot (403) | Untertitel an/aus (zuletzt benutzte Spur, sonst die erste) |
+| Grün (404) | Audio-Menü öffnen |
+| Zurück (461) | überall eine Ebene zurück; **auf der Startseite des TV-Modus beendet es die App** |
+
+Der Zeiger der Magic Remote bewegt den Fokus: Fährst du über eine Kachel, springt der Fokusrahmen dorthin, die Pfeiltasten machen von da aus weiter. Im Konto-Menü der App gibt es **Server wechseln**; beim Start öffnet die blaue Taste, solange das Logo zu sehen ist, das Adressformular.
 
 Startet der Browser die Wiedergabe ohne vorherigen Tastendruck (z. B. wenn das Handy etwas schickt), beginnt sie **stumm** mit Hinweis; die erste Taste schaltet den Ton ein.
 

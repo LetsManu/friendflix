@@ -1,0 +1,16 @@
+# SPDX-FileCopyrightText: 2026 Manuel Weißböck
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# The Tizen CLI that packages and signs the Samsung TV app (spec §8). tizen/scripts/install-cli.sh downloads `url`, refuses
+# it unless its SHA-256 equals `sha256`, and installs it non-interactively (`--accept-license <dir>`).
+#
+# Build:   Tizen Studio 6.1 "web-cli" installer for Ubuntu 64-bit (14-Apr-2025, 280379318 bytes, the size the directory
+#          listing on download.tizen.org shows). Contains Tizen CLI 2.5.25, sdb 4.2.25, the certificate generator (with the
+#          SDK's public distributor certificate) and a bundled JDK; it needs no further download at install time.
+# Signing: the plain CLI signs with existing p12 files (`tizen security-profiles add` + `tizen package -t wgt -s <profile>`).
+#          Creating a Samsung certificate needs the Samsung Certificate Extension, which only the owner's PC needs (docs).
+# Notes:   the installer refuses to run as root, and it needs the `zip` package (both true on GitHub's ubuntu runners).
+# Re-pin:  pick the newest tizen-studio_<ver>/ in https://download.tizen.org/sdk/Installer/, set url to its
+#          web-cli_Tizen_Studio_<ver>_ubuntu-64.bin, sha256 to the sha256sum of the downloaded file, and update the lines
+#          above (`tizen version`, `sdb version`).
+url=https://download.tizen.org/sdk/Installer/tizen-studio_6.1/web-cli_Tizen_Studio_6.1_ubuntu-64.bin
+sha256=7f33fe09eda4eb5d50463cf997e8f676d455060720470070ae1932994413aaf4

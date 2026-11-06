@@ -215,6 +215,62 @@
         </LinearLayout>
     </LinearLayout>
 
+    <!-- post-play hint (web watch page .next.pp): from the credits of a title nothing follows; the screen opens at the end -->
+    <LinearLayout
+        android:id="@+id/player_postplay"
+        android:layout_width="320dp"
+        android:layout_height="wrap_content"
+        android:layout_gravity="bottom|end"
+        android:layout_marginEnd="24dp"
+        android:layout_marginBottom="168dp"
+        android:accessibilityLiveRegion="polite"
+        android:background="@drawable/player_card"
+        android:orientation="vertical"
+        android:padding="16dp"
+        android:visibility="gone">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:gravity="center_vertical"
+            android:orientation="horizontal">
+
+            <TextView
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="@string/player_postplay_card"
+                android:textColor="@android:color/white"
+                android:textStyle="bold" />
+
+            <ImageButton
+                android:id="@+id/player_postplay_close"
+                android:layout_width="40dp"
+                android:layout_height="40dp"
+                android:layout_marginStart="8dp"
+                android:background="?android:attr/selectableItemBackgroundBorderless"
+                android:contentDescription="@string/player_postplay_card_close"
+                android:src="@drawable/ic_player_close" />
+        </LinearLayout>
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="12dp"
+            style="?android:attr/buttonBarStyle"
+            android:orientation="horizontal">
+
+            <Button
+                android:id="@+id/player_postplay_open"
+                style="?android:attr/buttonBarButtonStyle"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="@string/player_postplay_title"
+                android:textAllCaps="false" />
+        </LinearLayout>
+    </LinearLayout>
+
     <!-- error: why it cannot play, retry / back -->
     <LinearLayout
         android:id="@+id/player_error"
@@ -286,4 +342,28 @@
         android:paddingBottom="8dp"
         android:textColor="@android:color/white"
         android:visibility="gone" />
+
+    <!-- the panels (Tracks, More, …): a bottom sheet over the playing video, see PlayerPanel -->
+    <FrameLayout
+        android:id="@+id/player_panel_host"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent" />
+
+    <!-- locked controls: takes every touch; only the lock (held 0.6 s) unlocks -->
+    <FrameLayout
+        android:id="@+id/player_lock"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:visibility="gone">
+
+        <ImageButton
+            android:id="@+id/player_lock_icon"
+            android:layout_width="56dp"
+            android:layout_height="56dp"
+            android:layout_gravity="top|center_horizontal"
+            android:layout_marginTop="24dp"
+            android:background="@drawable/player_card"
+            android:contentDescription="@string/player_lock_unlock"
+            android:src="@drawable/ic_player_lock" />
+    </FrameLayout>
 </FrameLayout>

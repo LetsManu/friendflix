@@ -67,8 +67,11 @@ interface CastHost {
     fun onTitle(item: ItemInfo)
     /** a token request was refused ([answer]) or the receiver did not load it (null) */
     fun onFailed(answer: TokenAnswer?)
-    /** casting is over: local playback goes on at [positionMs] ([play] = it was playing; [ended] = the title finished on the TV) */
-    fun onReturn(itemId: String, positionMs: Long, play: Boolean, ended: Boolean)
+    /**
+     * casting is over: local playback goes on at [positionMs] (null = unknown, a title picked for the TV that never played there:
+     * the server's resume point); [play] = it was playing; [ended] = the title finished on the TV
+     */
+    fun onReturn(itemId: String, positionMs: Long?, play: Boolean, ended: Boolean)
     /** the own receiver's TV texts in the app's language (engine.ts `receiverStrings`) */
     fun receiverStrings(): JSONObject
 }
@@ -147,6 +150,10 @@ class CastController(
         /** no token of this session was loaded yet (a refused first request plays on locally) */
         var firstStart = true
         val subtitleStyle = start.subtitleStyle
+        /** a title picked for the TV ([playOnTv]) whose token was not loaded yet: no position of it is known */
+        var fresh = false
+        /** the position to hand back */
+        val returnAt: Long? get() = if (fresh) null else positionMs
     }
 
     private var cur: Live? = null
@@ -160,6 +167,20 @@ class CastController(
 
     /** the item the receiver plays */
     val itemId: String? get() = cur?.itemId
+
+    /**
+     * Sleep timer "after this episode" (engine.ts `mayAutoplay` sleepAfterEpisode): nothing is queued after the playing title, an
+     * episode already queued is taken off again, so the TV stops at the end. Switched off, the next episode is queued again.
+     */
+    var sleepAfterEpisode = false
+        set(v) {
+            if (field == v) return
+            field = v
+            val s = cur ?: return
+            if (v) dequeue(s)
+            s.queueAsked = false
+            if (!v) atPosition(s)
+        }
 
     /**
      * Local playback → receiver. False when nothing can be cast (a download, or already casting); true once the hand-over started
@@ -180,6 +201,34 @@ class CastController(
         return true
     }
 
+    /**
+     * Another title on the TV while casting (the Episodes panel; engine.ts `playOnTv` → `swap` fresh): the queue is cleared, the
+     * playing token's `stop` reported and the token revoked, then a token for [item] at the server's resume point with the default
+     * audio and no subtitle is loaded. False when no cast runs.
+     */
+    fun playOnTv(item: ItemInfo): Boolean {
+        val s = cur ?: return false
+        val my = ++seq
+        s.cancel?.invoke(); s.cancel = null
+        dequeue(s)
+        stopReport(s)
+        val old = s.ci
+        s.ci = null; s.busy = true; s.started = false; s.lastPaused = null; s.hold = false
+        s.queueAsked = false; s.noAuto = null
+        s.itemId = item.id; s.isEpisode = item.type == "Episode"
+        s.audioIndex = null; s.subIndex = null; s.segs = emptyList()
+        s.positionMs = 0; s.durationMs = 0; s.paused = false; s.fresh = true
+        host.onTitle(item)
+        val body = CastBodies.token(item.id, null, null, s.maxBitrate ?: s.prefsBitrate, receiver.custom)
+        io.execute {
+            if (old != null) server.revoke(old.castId) // after the stop report (same ordered thread)
+            val a = server.session(body)
+            main.execute { loaded(s, my, a) }
+        }
+        loadSegs(s)
+        return true
+    }
+
     private fun loaded(s: Live, my: Int, a: TokenAnswer) {
         if (cur !== s || my != seq) { if (a is TokenAnswer.Ok) revoke(a.info); return }
         s.busy = false
@@ -189,11 +238,12 @@ class CastController(
             close(s)
             receiver.end()
             host.onFailed(a)
-            host.onReturn(s.itemId, s.positionMs, play = first || !s.paused, ended = false)
+            host.onReturn(s.itemId, s.returnAt, play = first || !s.paused, ended = false)
             return
         }
         val ci = a.info
         s.ci = ci
+        s.fresh = false
         s.firstStart = false
         s.started = false
         s.lastPaused = null
@@ -303,7 +353,7 @@ class CastController(
         if (ci != null) revoke(ci)
         s.ci = null
         close(s)
-        host.onReturn(s.itemId, s.positionMs, play = !s.paused, ended = false)
+        host.onReturn(s.itemId, s.returnAt, play = !s.paused, ended = false)
     }
 
     /** A message from the own receiver (its remote): input on the TV, a cancelled countdown. */
@@ -353,11 +403,11 @@ class CastController(
         val ask = still.shouldAsk(s.prefs, endAt)
         val tv = receiver.custom
         // the own receiver asks "still watching?" itself (the queued episode waits paused): only that does not block it
-        if (!s.prefs.autoplayNext || (ask && !tv)) return
+        if (sleepAfterEpisode || !s.prefs.autoplayNext || (ask && !tv)) return
         val my = seq
         val itemId = s.itemId
         val bitrate = s.maxBitrate ?: s.prefsBitrate
-        val stale = { cur !== s || my != seq || s.busy || s.ci == null }
+        val stale = { cur !== s || my != seq || s.busy || s.ci == null || sleepAfterEpisode }
         io.execute {
             val next = server.next(itemId) ?: return@execute
             main.execute {
@@ -504,7 +554,10 @@ class CastController(
         private const val TICKS_PER_MS = 10_000L
 
 
-        /** The cast button is offered: a stream (never a download), casting enabled on the server, a Cast device on the network. */
-        fun castable(offline: Boolean, enabled: Boolean, devices: Boolean) = !offline && enabled && devices
+        /**
+         * The cast button is offered: a stream (never a download) and casting enabled on the server, whether or not a TV has been
+         * discovered yet (the route chooser says when none is found).
+         */
+        fun castable(offline: Boolean, enabled: Boolean) = !offline && enabled
     }
 }

@@ -22,8 +22,6 @@ import com.google.android.gms.cast.MediaStatus
 import com.google.android.gms.cast.MediaTrack
 import com.google.android.gms.cast.framework.CastContext
 import com.google.android.gms.cast.framework.CastSession
-import com.google.android.gms.cast.framework.CastState
-import com.google.android.gms.cast.framework.CastStateListener
 import com.google.android.gms.cast.framework.SessionManagerListener
 import com.google.android.gms.cast.framework.media.RemoteMediaClient
 import com.google.android.gms.common.images.WebImage
@@ -120,7 +118,6 @@ class MediaThreeReceiver(
     private val events: Events,
 ) : CastReceiver {
     interface Events {
-        fun onDevices(available: Boolean)
         /** the viewer picked a Cast device (a new session) */
         fun onSessionStarted()
         fun onSessionEnded()
@@ -165,8 +162,6 @@ class MediaThreeReceiver(
         }
     }
 
-    private val stateListener = CastStateListener { state -> events.onDevices(state != CastState.NO_DEVICES_AVAILABLE) }
-
     private val sessions = object : SessionManagerListener<CastSession> {
         override fun onSessionStarted(session: CastSession, sessionId: String) { attach(session); events.onSessionStarted() }
         override fun onSessionResumed(session: CastSession, wasSuspended: Boolean) { attach(session) }
@@ -181,10 +176,8 @@ class MediaThreeReceiver(
 
     init {
         player.addListener(playerListener)
-        castContext.addCastStateListener(stateListener)
         castContext.sessionManager.addSessionManagerListener(sessions, CastSession::class.java)
         castContext.sessionManager.currentCastSession?.let(::attach)
-        events.onDevices(castContext.castState != CastState.NO_DEVICES_AVAILABLE)
     }
 
     /** a Cast session is connected */
@@ -230,7 +223,6 @@ class MediaThreeReceiver(
         if (released) return
         released = true
         player.removeListener(playerListener)
-        castContext.removeCastStateListener(stateListener)
         castContext.sessionManager.removeSessionManagerListener(sessions, CastSession::class.java)
         castContext.sessionManager.currentCastSession?.let(::detach)
         player.release()

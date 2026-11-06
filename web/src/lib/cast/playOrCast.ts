@@ -42,7 +42,8 @@ function playNatively(e: MouseEvent, item: { id: string; positionTicks?: number 
   noteInteraction();
   pendingPlay = true;
   const where = location.href;
-  void tryNativePlay(item, opts)
+  // no start position: the native player asks the server for the resume point, which a card's copy may predate (watched elsewhere since)
+  void tryNativePlay({ id: item.id }, opts)
     .then((ok) => {
       // the viewer went elsewhere while the app was thinking: do not drag them to the player now
       if (!ok && location.href === where) { allowWebWatchOnce(href); void goto(href); }

@@ -68,6 +68,25 @@ describe('update job', () => {
     expect(m.calls.filter((c) => c.startsWith('pull') || c.startsWith('up'))).toEqual([]);
   });
 
+  it('a foreign stack or changed ports / networks fail the job before anything is pulled; the log says why', async () => {
+    for (const [code, detail] of [['foreign_stack', 'portainer'], ['config_mismatch', 'web ports']] as const) {
+      const m = world();
+      const { u, store } = make({ ...m, ops: { ...m.ops, images: async () => { throw new StepError(code, detail); } } });
+      u.start('update');
+      await u.idle();
+      expect(store.state.lastJob).toMatchObject({ state: 'failed', error: code, steps: { pull: 'failed', verify: 'skipped', restart: 'skipped', health: 'skipped', rollback: 'skipped' } });
+      expect(m.calls.filter((c) => c.startsWith('pull') || c.startsWith('up'))).toEqual([]);
+      expect(u.log.tail().some((l) => l.endsWith(`step pull: ${code} (${detail})`))).toBe(true);
+      // the self-update too: no helper is spawned
+      const s = world();
+      const { u: u2, store: st2 } = make({ ...s, ops: { ...s.ops, images: async () => { throw new StepError(code); } } });
+      u2.start('self-update');
+      await u2.idle();
+      expect(st2.state.lastJob).toMatchObject({ action: 'self-update', state: 'failed', error: code });
+      expect(s.calls.filter((c) => c.startsWith('spawn') || c.startsWith('pull'))).toEqual([]);
+    }
+  });
+
   it('a cosign failure aborts before anything is restarted', async () => {
     const w = world({ verifyFails: 'ghcr.io/letsmanu/friendflix-gateway:latest' });
     const { u, store } = make(w);
