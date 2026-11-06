@@ -8,7 +8,6 @@
 // classic script (no module loading from file://); setup-core.js is loaded before it and sets window.FFSetupCore
 var core = window.FFSetupCore;
 var normaliseServer = core.normaliseServer;
-var checkVersionAnswer = core.checkVersionAnswer;
 var watchUrl = core.watchUrl;
 
 const SERVER_KEY = 'ff.server';
@@ -17,7 +16,6 @@ const RED_KEY_CODE = 403; // ColorF0Red
 const RETURN_KEY_CODE = 10009;
 const RED_HOLD_MS = 1000;
 const OPEN_DELAY_MS = 3000; // time to hold red (RED_HOLD_MS) before the stored server is opened; must stay well above it
-const PROBE_TIMEOUT_MS = 15000;
 
 const probe = document.body.dataset.probe === '1';
 const $ = (id) => document.getElementById(id);
@@ -32,13 +30,7 @@ const store = {
   set(k, v) { try { if (v === null) localStorage.removeItem(k); else localStorage.setItem(k, v); } catch { /* storage unavailable */ } },
 };
 
-const MESSAGES = {
-  empty: 'Enter the address of your FriendFlix server.',
-  http: 'Plain http:// addresses are not allowed. Use an https:// address.',
-  invalid: 'That does not look like a server address. Try something like friend.example.com.',
-  unreachable: 'Cannot reach that server. Check the address, the TV network and that the server is running.',
-  notFriendflix: 'That address answered, but it is not a FriendFlix server.',
-};
+const MESSAGES = core.MESSAGES;
 
 function clearServer() {
   store.set(SERVER_KEY, null);
@@ -49,22 +41,7 @@ function open(origin) {
   window.location.href = watchUrl(origin, probe);
 }
 
-async function askVersion(origin) {
-  const ctl = typeof AbortController === 'function' ? new AbortController() : null;
-  const timer = setTimeout(() => ctl && ctl.abort(), PROBE_TIMEOUT_MS);
-  try {
-    const r = await fetch(origin + '/api/version', { cache: 'no-store', credentials: 'omit', redirect: 'error', signal: ctl ? ctl.signal : undefined });
-    if (r.status !== 200) return { ok: false, reason: 'notFriendflix' };
-    let json;
-    try { json = await r.json(); } catch { return { ok: false, reason: 'notFriendflix' }; }
-    const answer = checkVersionAnswer(json);
-    return answer.ok ? answer : { ok: false, reason: 'notFriendflix' };
-  } catch {
-    return { ok: false, reason: 'unreachable' };
-  } finally {
-    clearTimeout(timer);
-  }
-}
+const askVersion = core.askVersion;
 
 function showError(text) {
   errorBox.textContent = text;

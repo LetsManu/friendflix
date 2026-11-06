@@ -9,7 +9,9 @@ export type KeyAction =
   | { type: 'subtitles' } | { type: 'skip' } | { type: 'next' } | { type: 'help' } | { type: 'escape' }
   | { type: 'tvControls' } | { type: 'pip' } | { type: 'speed'; delta: 1 | -1 }
   /** "Besetzung & Infos": quick peek while playing (I, TV: up, remote Info) / the full panel from an open peek (OK, I) */
-  | { type: 'peek' } | { type: 'castInfo' };
+  | { type: 'peek' } | { type: 'castInfo' }
+  /** LG remote: red = subtitles on/off, green = audio/subtitle tracks menu, stop = leave the player like Back */
+  | { type: 'subtitleToggle' } | { type: 'audioMenu' } | { type: 'stop' };
 
 export interface KeyInput { key: string; ctrlKey?: boolean; metaKey?: boolean; altKey?: boolean; shiftKey?: boolean }
 export interface KeyContext {
@@ -25,6 +27,8 @@ export interface KeyContext {
   overlayOpen: boolean;
   /** the cast quick peek is showing (OK / I then open the full "Besetzung & Infos" panel) */
   peekOpen?: boolean;
+  /** the LG webOS app (isLgApp()): its remote's stop and colour keys act; elsewhere (Tizen, browsers) they stay unmapped */
+  lg?: boolean;
 }
 
 /** keys typed into these belong to the field */
@@ -42,6 +46,9 @@ export function resolveKey(e: KeyInput, c: KeyContext): KeyAction | null {
   if (k === 'mediapause') return { type: 'pause' };
   if (k === 'mediafastforward') return { type: 'seek', by: 30 };
   if (k === 'mediarewind') return { type: 'seek', by: -30 };
+  if (c.lg && k === 'mediastop') return { type: 'stop' };
+  if (c.lg && k === 'colorf0red') return { type: 'subtitleToggle' };
+  if (c.lg && k === 'colorf1green') return { type: 'audioMenu' };
   if (k === 'mediatracknext') return c.hasNext ? { type: 'next' } : null;
   if (k === 'arrowleft' || k === 'j') return { type: 'seek', by: -10 };
   if (k === 'arrowright' || k === 'l') return { type: 'seek', by: 10 };
@@ -70,6 +77,12 @@ export function nextSubtitle(current: number, indices: number[]): number {
   if (current === -1) return indices[0];
   const i = indices.indexOf(current);
   return i < 0 || i === indices.length - 1 ? -1 : indices[i + 1];
+}
+
+/** LG red key: on -> off; off -> the last used track (`last`, -1 = none) while it still exists, else the first track. */
+export function toggleSubtitle(current: number, last: number, indices: number[]): number {
+  if (current !== -1 || !indices.length) return -1;
+  return indices.includes(last) ? last : indices[0];
 }
 
 export const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v));

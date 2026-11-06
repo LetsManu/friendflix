@@ -60,10 +60,53 @@ function checkVersionAnswer(json) {
   return { ok: true, authOrigin: authOriginOf(o.authOrigin) };
 }
 
-/** The page the shell opens: the TV mode, marked as the Tizen app (and as the probe run for the probe app). */
-function watchUrl(origin, probe) {
-  return origin + '/tv?ff_app=tizen' + (probe ? '&probe=1' : '');
+/** The page the shell opens: the TV mode, marked with the app ('webos' or, by default, 'tizen'), plus the probe flag for a probe run. */
+function watchUrl(origin, probe, app) {
+  return origin + '/tv?ff_app=' + (app === 'webos' ? 'webos' : 'tizen') + (probe ? '&probe=1' : '');
 }
 
-root.FFSetupCore = { normaliseServer: normaliseServer, checkVersionAnswer: checkVersionAnswer, watchUrl: watchUrl };
+const PROBE_TIMEOUT_MS = 15000;
+
+/** the texts the setup pages show for a failed address or a failed check */
+const MESSAGES = {
+  empty: 'Enter the address of your FriendFlix server.',
+  http: 'Plain http:// addresses are not allowed. Use an https:// address.',
+  invalid: 'That does not look like a server address. Try something like friend.example.com.',
+  unreachable: 'Cannot reach that server. Check the address, the TV network and that the server is running.',
+  notFriendflix: 'That address answered, but it is not a FriendFlix server.',
+};
+
+/**
+ * GET <origin>/api/version and judge the answer. `deps.fetch` / `deps.AbortController` default to the globals (tests stub them).
+ * @returns {Promise<{ ok: true, authOrigin: string | null } | { ok: false, reason: 'unreachable' | 'notFriendflix' }>}
+ */
+async function askVersion(origin, deps) {
+  const doFetch = deps && deps.fetch ? deps.fetch : fetch;
+  const Ctl = deps && deps.AbortController ? deps.AbortController : (typeof AbortController === 'function' ? AbortController : null);
+  const ctl = Ctl ? new Ctl() : null;
+  let timer;
+  // the timeout also settles a fetch that never answers or ignores the abort
+  const timeout = new Promise(function (resolve) {
+    timer = setTimeout(function () { if (ctl) ctl.abort(); resolve({ ok: false, reason: 'unreachable' }); }, PROBE_TIMEOUT_MS);
+  });
+  const ask = (async function () {
+    try {
+      const r = await doFetch(origin + '/api/version', { cache: 'no-store', credentials: 'omit', redirect: 'error', signal: ctl ? ctl.signal : undefined });
+      if (r.status !== 200) return { ok: false, reason: 'notFriendflix' };
+      let json;
+      try { json = await r.json(); } catch { return { ok: false, reason: 'notFriendflix' }; }
+      const answer = checkVersionAnswer(json);
+      return answer.ok ? answer : { ok: false, reason: 'notFriendflix' };
+    } catch {
+      return { ok: false, reason: 'unreachable' };
+    }
+  })();
+  try {
+    return await Promise.race([ask, timeout]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+root.FFSetupCore = { normaliseServer: normaliseServer, checkVersionAnswer: checkVersionAnswer, watchUrl: watchUrl, askVersion: askVersion, MESSAGES: MESSAGES };
 })(window);
