@@ -505,7 +505,8 @@ describe('re-authentication, security actions', () => {
     const b = browser(env, s);
     const step = (await b.reauth('setup-totp')).json() as { step: string };
     await b.post('answer', { step: step.step, stage: 'totp-setup', code: '987654' });
-    const all = logs.join('\n');
+    // responseTime is a float with many digits (0.21114399999987654) and can contain the code by chance
+    const all = logs.join('\n').replace(/"responseTime":[\d.e-]+/g, '"responseTime":0');
     for (const secret of [RIGHT, '987654', 'FAKESECRET', 'authentik_session', 'api-token-placeholder']) expect(all).not.toContain(secret);
   });
 });
