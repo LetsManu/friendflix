@@ -159,3 +159,16 @@ describe('native bridge', () => {
     expect(get(nativeDownloads).has('L')).toBe(false);
   });
 });
+
+describe('desktop marker', () => {
+  it('is available with the Windows app marker and the injected object', () => {
+    installFake(() => ({ ok: true, result: true }));
+    ua('Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/130.0.0.0 FriendFlixDesktop/2.3.0');
+    expect(native.available).toBe(true);
+  });
+  it('is unavailable with a near-miss marker', () => {
+    installFake(() => ({ ok: true, result: true }));
+    ua('Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/130.0.0.0 FriendFlixDesk/2.3.0');
+    expect(native.available).toBe(false);
+  });
+});

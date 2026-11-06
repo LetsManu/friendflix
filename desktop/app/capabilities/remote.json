@@ -1,0 +1,10 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "remote",
+  "description": "Template for the server origin: only bridge_message. Not enabled from tauri.conf.json; the app adds it at runtime with remote.urls set to the configured server origin and windows set to the main window.",
+  "local": false,
+  "remote": { "urls": ["https://friend.example.com"] },
+  "windows": [],
+  "platforms": ["windows", "linux", "macOS"],
+  "permissions": ["allow-bridge-message"]
+}

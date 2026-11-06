@@ -1,0 +1,46 @@
+# SPDX-FileCopyrightText: 2026 Manuel Weißböck
+# SPDX-License-Identifier: AGPL-3.0-or-later
+[package]
+name = "friendflix-app"
+version = "0.1.0"
+edition = "2021"
+license = "AGPL-3.0-or-later"
+publish = false
+description = "FriendFlix for Windows"
+
+[[bin]]
+name = "friendflix"
+path = "src/main.rs"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+friendflix-core = { path = "../core" }
+tauri = { version = "2", features = ["tray-icon"] }
+tauri-plugin-single-instance = "2"
+tauri-plugin-deep-link = "2"
+tauri-plugin-autostart = "2"
+tauri-plugin-opener = "2"
+tauri-plugin-updater = "2"
+base64 = "0.22"
+minisign-verify = "0.3"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+log = { version = "0.4", features = ["std"] }
+url = "2"
+getrandom = "0.3"
+
+[target.'cfg(windows)'.dependencies]
+tokio = { version = "1", features = ["net", "io-util", "rt", "sync", "time"] }
+windows-sys = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_Globalization",
+    "Win32_Security",
+    "Win32_System_Pipes",
+    "Win32_System_Threading",
+    "Win32_UI_WindowsAndMessaging",
+] }
+
+[dev-dependencies]
+tempfile = "3"

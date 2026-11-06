@@ -14,7 +14,7 @@ import { plexSessionReasons, plexHygieneSource, toPlexHygieneFacts, toPlexServer
 import { sessionIdentities } from '../../src/plex/limits.js';
 import { MemoryKV } from '../../src/kv.js';
 import { ADMIN, makeEnv, type TestEnv } from '../helpers.js';
-import { fixture, PLEX_TOKEN, PlexFake } from '../plexfake.js';
+import { fixture, PLEX_TOKEN, PlexFake, TIME_SHIFT } from '../plexfake.js';
 import { item, plexEnv, type PlexEnv } from './setup.js';
 
 const FF_SESSION = '0123456789abcdef-0123456789abcdef01234567';
@@ -189,10 +189,11 @@ describe('PlexMediaServer Block 22', () => {
 
   it('libraryHygiene: savedSince -> updatedAt>>= (only items changed at or after it)', async () => {
     e = await plexEnv();
-    const since = new Date(1791799952 * 1000).toISOString(); // movie 1: 1791799951, movie 2: 1791799952
+    const at = 1791799952 + TIME_SHIFT; // the recorded times, moved like every fixture time (test/plexfake.ts)
+    const since = new Date(at * 1000).toISOString(); // movie 1: recorded 1791799951, movie 2: 1791799952
     const r = await e.ms.libraryHygiene('Movie', { start: 0, limit: 200, savedSince: since });
     expect(r.map((m) => m.name)).toEqual(['Test Movie Two']);
-    expect(e.fake.calls.at(-1)!.search).toContain('updatedAt%3E%3E=1791799952');
+    expect(e.fake.calls.at(-1)!.search).toContain(`updatedAt%3E%3E=${at}`);
   });
 
   it('libraryHygiene: a listing without totalSize is an error, not a silent empty page', async () => {
