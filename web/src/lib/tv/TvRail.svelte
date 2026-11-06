@@ -90,7 +90,7 @@
   .rail.open { width: 340px; }
   /* black gradient over the content: collapsed only a faint edge for legibility, expanded much wider (opacity only) */
   .rail::before { content: ''; position: absolute; inset: 0; width: 460px; background: linear-gradient(to right, rgba(0, 0, 0, .96) 0, rgba(0, 0, 0, .9) 55%, transparent); opacity: 0; transition: opacity var(--tv-t, 220ms) var(--tv-ease, ease); pointer-events: none; z-index: -1; }
-  .rail:not(.open)::before { width: 140px; opacity: .65; }
+  .rail:not(.open)::before { width: 96px; opacity: .65; }
   .rail.open::before { opacity: 1; }
   ul { list-style: none; margin: auto 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
   li { display: block; }

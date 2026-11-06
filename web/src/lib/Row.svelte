@@ -132,7 +132,7 @@
       <button class="arrow left" class:hide={!canLeft} aria-label={$t('home.row.prev')} on:click={() => go(-1)}><Icon name="chevron-left" size={34} /></button>
       <div class="track" use:trackAction on:scroll={onScroll} role="list">
         {#if items === null}
-          {#each Array(8) as _}<div class="slot"><div class="skeleton ph" class:poster={($mobile && !landscape) || ranked}></div></div>{/each}
+          {#each Array(8) as _}<div class="slot"><div class="skeleton ph" class:poster={(($mobile && !landscape) || ranked) && !tvOn}></div></div>{/each}
         {:else}
           {#each items as it, idx (it.id)}{#if idx < limit}<div class="slot" class:ranked role="listitem" on:focusin={() => rankFocus(it.id, idx + 1)}>{#if ranked}<span class="rank" aria-label={$t('home.row.rank', { n: idx + 1 })}>{idx + 1}</span>{/if}{#if $mobile}<PosterCard item={it} {landscape} {removable} {priority} on:remove />{:else}<Card item={it} {removable} poster={ranked && !tvOn} {priority} on:remove />{/if}</div>{/if}{/each}
         {/if}

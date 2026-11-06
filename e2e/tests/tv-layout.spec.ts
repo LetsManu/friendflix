@@ -134,6 +134,10 @@ test.describe('TV layout', () => {
       await page.waitForTimeout(400);
       await expect(tile).toHaveAttribute('aria-label', name);
       await expect(tile.locator('[data-autofocus]')).toHaveCount(0); // the buttons give way to the card's info
+      // the tile stays on screen while the rows slide up under it; the focused row's top sits at the tile bottom
+      await page.locator('main .rows .card .thumb').first().focus();
+      for (let i = 0; i < 3; i++) await page.keyboard.press('ArrowDown');
+      await expect.poll(async () => page.evaluate(() => { const t = document.querySelector('section.tile')!.getBoundingClientRect(); const r = document.activeElement!.closest('section')!.getBoundingClientRect(); return { top: t.top, d: Math.abs(r.top - t.bottom) < 8 || window.scrollY + innerHeight >= document.documentElement.scrollHeight - 2, inView: t.bottom > 0 && t.top < innerHeight }; })).toEqual({ top: 0, d: true, inView: true });
       // Up from the first row returns to the tile: the hero and its buttons are back
       await page.locator('main .rows .card .thumb').first().focus();
       await page.keyboard.press('ArrowUp');

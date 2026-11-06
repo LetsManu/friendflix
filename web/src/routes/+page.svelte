@@ -13,7 +13,7 @@
   import type { Hub } from '#lib/hubs';
   import { loadFeatured, loadThemed, type FeaturedList, type ThemedList } from '#lib/lists';
   import { t, tr } from '#lib/i18n';
-  import { focusEl, usable } from '#lib/spatial';
+  import { usable } from '#lib/spatial';
   import { tvFocus, tvRank } from '#lib/tv/focus';
   import { rowScrollTarget } from '#lib/tv/rowScroll';
   import TvCategoryRow from '#lib/tv/TvCategoryRow.svelte';
@@ -177,7 +177,7 @@
     frame = requestAnimationFrame(() => {
       frame = 0;
       const tile = document.querySelector<HTMLElement>('section.tile');
-      const tileBottom = tile ? tile.getBoundingClientRect().bottom + window.scrollY : window.innerHeight / 2;
+      const tileBottom = tile ? tile.getBoundingClientRect().bottom : window.innerHeight / 2;
       const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
       window.scrollTo({ top: rowScrollTarget(sec.getBoundingClientRect().top, window.scrollY, tileBottom), behavior: reduce ? 'auto' : 'smooth' });
     });
@@ -195,14 +195,14 @@
     tvFocus.set(null); tvRank.set(null);
     await tick();
     const play = document.querySelector<HTMLElement>('section.tile [data-autofocus]');
-    if (play) focusEl(play);
+    play?.focus({ preventScroll: true });
     window.scrollTo({ top: 0, behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
   }
 </script>
 
 <svelte:head><title>{$t('common.appName')}</title></svelte:head>
 {#if tv}
-  <TvFocusTile {hero} />
+  <TvFocusTile {hero} {heroRank} />
 {:else}
   <Hero item={hero} rank={heroRank} portrait />
   <BrandHubs {hubs} />

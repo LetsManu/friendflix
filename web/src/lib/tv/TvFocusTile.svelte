@@ -13,6 +13,8 @@
 
   /** the title shown (with Play / More info) until focus settles on a row card */
   export let hero: Item | null = null;
+  /** 1-based place of the hero in the Top 10 (0 = not ranked) */
+  export let heroRank = 0;
 
   let focused: Item | null = null; // the card the tile follows (settled)
   const settle = createSettle<Item | null>(TILE_DELAY_MS, (v) => (focused = v));
@@ -23,7 +25,7 @@
   $: item = focused ?? hero;
   $: if (item) wantBadge(item.type === 'Episode' ? item.seriesId : item.id);
   $: info = item ? tileInfo(item, $t, $badges[(item.type === 'Episode' ? item.seriesId : item.id) ?? ''], Date.now()) : null;
-  $: labels = [...(info?.labels ?? []), ...(focused && $tvRank?.id === focused.id && $tvRank.n <= 10 ? [$t('tv.tile.top10', { n: $tvRank.n })] : [])];
+  $: labels = [...(info?.labels ?? []), ...(focused ? ($tvRank?.id === focused.id && $tvRank.n <= 10 ? [$t('tv.tile.top10', { n: $tvRank.n })] : []) : (heroRank >= 1 && heroRank <= 10 ? [$t('tv.tile.top10', { n: heroRank })] : []))];
   $: showButtons = !focused && !!hero;
   $: eyebrow = item ? $t(item.type === 'Movie' ? 'home.meta.movie' : 'home.meta.series') : '';
 
@@ -99,8 +101,9 @@
 </section>
 
 <style>
-  .tile { position: relative; height: 50vh; overflow: hidden; background: var(--bg); }
-  .layer, .vid { position: absolute; inset: 0; opacity: 0; transition: opacity 200ms ease-out; }
+  /* sticky + above the rows (z-index 2): the rows slide up underneath it; it is opaque, so nothing shows through. Clipping lives on the layers so the focused button's ring is not cut. */
+  .tile { position: sticky; top: 0; z-index: 3; height: 50vh; background: var(--bg); }
+  .layer, .vid { position: absolute; inset: 0; overflow: hidden; opacity: 0; transition: opacity 200ms ease-out; }
   .layer.on { opacity: 1; }
   .bg, .vid { position: absolute; top: 0; right: 0; width: 70%; height: 100%; object-fit: cover; object-position: center 20%; background: transparent; }
   .vid { pointer-events: none; }
