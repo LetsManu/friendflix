@@ -120,6 +120,24 @@ Concrete values at 1080p (scale with the existing `html.tv` root size). These re
 - **Placeholders:** loading cards use a flat `#141414` block with a 1.2 s opacity pulse (no shimmer gradient); missing artwork shows the title in 20 px / 600 on `#1a1a1a`.
 - **What reads as "AI-designed" and is not allowed:** wide-tracked generic eyebrows, bold-everything text blocks, thick outlines on buttons, hard gradient seams, uniform heavy weights, emoji, gradient-text, glows.
 
+
+### 5.2 Motion system (owner: "really nice and modern animations, state of the art")
+
+Everything runs on the compositor (transform, opacity, View Transitions snapshots). No layout animation, no filters. Calm mode and `prefers-reduced-motion` turn all of it into instant swaps or plain 150 ms fades.
+
+- **Curves and tokens** (under `html.tv`): `--tv-spring` = a CSS `linear()` spring (slight overshoot, settles in ~420 ms) with `cubic-bezier(.2,.9,.25,1.15)` as fallback where `linear()` is unsupported; `--tv-emph-out` = `cubic-bezier(.05,.7,.1,1)` (entering), `--tv-emph-in` = `cubic-bezier(.3,0,.8,.15)` (leaving); durations `--tv-d-xs 120ms`, `--tv-d-s 200ms`, `--tv-d-m 320ms`, `--tv-d-l 480ms`. Exits ≈ 70 % of entries.
+- **Focus:** card and button scale use `--tv-spring` (fast in, tiny overshoot, settles). The focus ring/shadow fades in over 120 ms after the scale starts, so the ring never "pops". Moving focus quickly interrupts cleanly (no queued animations).
+- **Row movement:** horizontal steps glide the row with a JS-driven, interruptible spring on the track (`transform: translate3d`), not `scrollLeft`, for 320 ms; vertical row changes glide the page the same way. Holding an arrow key accelerates (shorter steps, no stacking). Native scroll stays as the fallback when JS animation is unavailable.
+- **Focus tile change:** backdrop crossfades (280 ms) with a 2 % scale-down settle on the incoming image; text block re-enters in a stagger — eyebrow, title, meta, synopsis, each `opacity 0→1` + `translateY(8px→0)`, 40 ms apart, `--tv-emph-out`, 280 ms each. Outgoing text fades in 120 ms (no slide).
+- **Ambient backdrop:** a very slow drift on the resting backdrop (`scale 1.0 → 1.04` + 1 % pan over 18 s, alternate, ease-in-out); paused while a key was pressed in the last 2 s and while a trailer plays.
+- **Trailer start:** the still image fades out over 600 ms only after the video reports its first frame; sound toggle fades in.
+- **Rail:** expand = gradient fades in 200 ms while labels slide in from `translateX(-12px)` with a 30 ms stagger; collapse is the reverse at 70 % duration; the coral dot moves between items with the spring when the page changes.
+- **Page transitions (View Transitions API, same-document, feature-detected):** card/tile → detail page morphs the focused card's image into the detail backdrop (`view-transition-name` on both), the rest crossfades; Back plays it in reverse. Rail page changes crossfade with a 16 px horizontal slide in the direction of travel. Detail → player: backdrop scales up and fades to black (existing play transition, now enabled on TV when the API exists). Without the API: 200 ms opacity crossfade.
+- **Detail page:** backdrop settles in (scale 1.04 → 1, 480 ms), text and button list stagger in (30 ms apart). Sub-screens slide in from the right 24 px + fade, Back reverses.
+- **Player:** controls rise 24 px + fade with `--tv-emph-out` (320 ms) and leave with `--tv-emph-in` (200 ms); the seek-preview thumbnail scales from 0.92 with the spring; overlays (episodes, tracks) slide up from the bottom; the pause screen dims over 600 ms and its text staggers in.
+- **Loading → content:** placeholders cross-fade to artwork (200 ms) once the image is decoded (`img.decode()`), never a pop-in.
+- **Budget:** at most two animated layers at once besides the focused element; `will-change` set only while animating; target 60 fps on the 2025 LG panel; if a frame budget check (rAF deltas > 32 ms on three consecutive frames) trips, the session drops to the reduced set (no drift, no stagger, crossfades only).
+
 ## Testing
 
 - Recommendation engine: TV home shows the same row keys in the same order as desktop for the same `/api/home` response; reco impressions/clicks are still reported per row and engine; the focus tile shows the focused title's reason.
