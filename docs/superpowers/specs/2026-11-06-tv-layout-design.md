@@ -38,6 +38,9 @@ Make FriendFlix comfortable on a TV with a D-pad remote (LG Magic Remote 2025, S
   - When a row card has focus, the tile shows that card's title after 300 ms without focus change, with a 200 ms crossfade. No buttons then; it never takes focus.
   - Continue Watching cards add "S2E4 · 23 min left" to the tile.
   - Trailer autoplay: the existing preview feature (`hoverTrailers` pref, muted, respects calm mode, reduced motion, Save-Data and hidden tabs) is turned on for TV. It starts in the focus tile after 1.5 s of rest on one title, replaces the backdrop, and stops as soon as focus moves. The sound toggle stays.
+- **Recommendation engine (v2) stays in charge of the rows.** TV home does not build its own row list: it keeps the existing composition in `routes/+page.svelte` (server-chosen `homeOrder`, friends / because / more:<n> rows, the "never repeat what the first rows show" filter, themed lists, Top 10, genres) and only swaps how it is shown. `Row`'s `reco` tag keeps reporting impressions and clicks per row and engine (`recoTrack`).
+  - Each recommended title's reason ("Because you watched X · same director", `reasonText`) is shown in the focus tile under the synopsis when that title has focus.
+  - The row's `ReasonCaption` stays above the row; on TV it is focusable with ▲ from the row and OK opens the inline "Why am I seeing this?" list.
 - **Rows** below the tile: same data and order as today's home rows. Cards are 16:9, sized so about 6.5 fit in the content width (the 7th peeks). Continue Watching cards show the progress bar.
 - **Categories row**: large tiles from the existing category list, after the first three rows.
 - **Movement**: ◀/▶ along a row (focused card scrolls into view with `scrollIntoView({inline:'nearest'})` semantics, smooth). ▼/▲ change row; the focused row sits directly under the focus tile and the rows scroll vertically under it. ▲ from the first row goes to the tile's buttons.
@@ -61,7 +64,7 @@ Make FriendFlix comfortable on a TV with a D-pad remote (LG Magic Remote 2025, S
   10. More info
 - Sub-screens are routes so Back and history work: `/item/[id]/episodes`, `/item/[id]/more`, `/item/[id]/info`, `/item/[id]/extras`, `/item/[id]/collection`, `/item/[id]/story`. Trailer plays in the player. Back returns to the detail page with focus on the button that opened it.
   - Episodes: seasons list left, episode list right (16:9 still, name, length, 2-line synopsis, progress). ◀/▶ switch column. Next-up episode focused on open.
-  - More like this / Collection / Extras: card grid.
+  - More like this / Collection / Extras: card grid. More like this uses the same recommendation data as today's detail page, with each card's reason in the focus area when focused.
   - More info: full cast, details tab content, ratings line.
 - Hidden on TV: friends strip, comments, download, share. Back on the detail page goes to the previous page (not the rail).
 
@@ -79,6 +82,7 @@ Make FriendFlix comfortable on a TV with a D-pad remote (LG Magic Remote 2025, S
 
 ## Testing
 
+- Recommendation engine: TV home shows the same row keys in the same order as desktop for the same `/api/home` response; reco impressions/clicks are still reported per row and engine; the focus tile shows the focused title's reason.
 - Unit tests for the pure parts: rail open/close state machine, focus-tile debounce, row focus position, detail button list builder (which buttons for which item), player panel tab/back order.
 - Playwright `webos.spec.ts` (TV mode via the LG marker) and a `?tv=1` desktop run: rail open/close with ◀/Back, OK on a rail item navigates, focus tile changes after resting on a card, ▼ moves rows, detail button list order and sub-screen Back, player ▼ opens the panel and Back order.
 - Visual check screenshots at 1920×1080 for home, detail, episodes, player panel.
