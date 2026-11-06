@@ -87,6 +87,7 @@ const pl: Translation<typeof de> = {
   },
   settings: {
     pageTitle: 'Ustawienia',
+    app: { title: 'Aplikacja na tym urządzeniu', hint: 'Miejsce pobrań, pobieranie tylko przez Wi-Fi, dźwięk w tle, powiadomienia i wylogowanie z tego urządzenia ustawiasz w aplikacji.', open: 'Otwórz ustawienia aplikacji' },
     title: 'Ustawienia odtwarzania',
     lead: 'Obowiązują na wszystkich Twoich urządzeniach. Dotyczą tylko Ciebie.',
     autoplayNext: 'Automatycznie włączaj następny odcinek',

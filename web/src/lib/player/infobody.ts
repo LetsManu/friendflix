@@ -7,6 +7,7 @@
 import { autoBps } from './abr';
 import { loadStoredEstimate } from './bandwidth';
 import { firstInfoBody } from './bar';
+import { lgCaps, type ClientCapsBody } from '#lib/webos/caps';
 
 /** /api/playback/info answer (backend PlaybackDto) as far as the web player uses it */
 export interface PlaybackDto {
@@ -22,18 +23,19 @@ export interface PlaybackDto {
 }
 
 export type ReasonHint = 'network' | 'manual';
-export interface InfoBody { itemId: string; startTicks?: number; audioIndex?: number; maxBitrate?: number; reasonHint: ReasonHint; audioLang?: string }
+export interface InfoBody { itemId: string; startTicks?: number; audioIndex?: number; maxBitrate?: number; reasonHint: ReasonHint; audioLang?: string; caps?: ClientCapsBody }
 
 /** seconds -> Jellyfin ticks (same rounding as secToTicks in lib/api) */
 const ticks = (sec: number) => Math.floor(sec * 10_000_000);
 
 /** bps = Infinity asks for the original (no maxBitrate); undefined fields are left out, like JSON.stringify does */
-export function playbackInfoBody(o: { itemId: string; startSec?: number; audioIndex?: number; bps: number; hint: ReasonHint; audioLang?: string }): InfoBody {
+export function playbackInfoBody(o: { itemId: string; startSec?: number; audioIndex?: number; bps: number; hint: ReasonHint; audioLang?: string; caps?: ClientCapsBody | null }): InfoBody {
   const b: InfoBody = { itemId: o.itemId, reasonHint: o.hint };
   if (o.startSec !== undefined) b.startTicks = ticks(o.startSec);
   if (o.audioIndex !== undefined) b.audioIndex = o.audioIndex;
   if (Number.isFinite(o.bps)) b.maxBitrate = o.bps;
   if (o.audioLang) b.audioLang = o.audioLang;
+  if (o.caps) b.caps = o.caps;
   return b;
 }
 
@@ -46,7 +48,7 @@ export function firstPlaybackRequest(itemId: string, pf: { quality?: number; aud
   const quality = fb.maxBitrate ?? 0;
   const hint: ReasonHint = quality ? 'manual' : 'network';
   const bps = quality || autoBps(loadStoredEstimate());
-  return { body: playbackInfoBody({ itemId, startSec, bps, hint, audioLang: fb.audioLang }), quality, hint, bps };
+  return { body: playbackInfoBody({ itemId, startSec, bps, hint, audioLang: fb.audioLang, caps: lgCaps() }), quality, hint, bps };
 }
 
 /** order-independent comparison key of a body (undefined fields do not count) */

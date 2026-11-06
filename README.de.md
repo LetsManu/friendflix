@@ -21,6 +21,8 @@
 
 FriendFlix ist ein privates Streaming-Portal vor **Jellyfin** (deine Medien) und einem optionalen Wunsch-Dienst. Deine Freunde bekommen ein schickes, vertrautes Streaming-Erlebnis auf Laptop, Handy und Fernseher – mit Profilen, Downloads, Watch-Partys und Empfehlungen untereinander. Jellyfin und den Wunsch-Dienst sehen sie nie direkt, und du bestimmst, wer hineinkommt.
 
+**Jellyfin oder Plex.** Dieselben Images funktionieren auch mit **Plex Media Server**: mit `compose.plex.yaml` starten (setzt `MEDIA_SERVER=plex`) und im Einrichtungsassistenten Plex-Adresse und Token eintragen – ein Token für den ganzen Server, der nie einen Browser erreicht; deine Freunde brauchen kein plex.tv-Konto ([docs/de/plex.md](docs/de/plex.md)). Umstieg von den bisherigen friendflix-plex-Images: [Umstiegsanleitung](docs/de/plex.md#umstieg-von-friendflix-plex-auf-friendflix-20).
+
 > Alle Titel und Bilder in diesen Screenshots sind erfunden und für die Demo generiert.
 
 ## Inhalt
@@ -38,7 +40,7 @@ FriendFlix ist ein privates Streaming-Portal vor **Jellyfin** (deine Medien) und
 - Einen Linux-Server oder ein NAS mit **Docker** und dem **Compose-v2**-Plugin.
 - Eine Domain mit HTTPS und einen Reverse Proxy, z. B. **Nginx Proxy Manager**: ein Proxy-Host `friend.example.com` → `127.0.0.1:3080`, Websockets an, dazu [deploy/npm/portal.advanced.conf](deploy/npm/portal.advanced.conf) im Reiter *Advanced*.
 - **Authentik** für die Anmeldung, installiert mit Admin-Konto, z. B. unter `auth.example.com` ([docs/de/authentik.md §2](docs/de/authentik.md#2-authentik-installieren)).
-- **Jellyfin** (deine Bibliothek) mit abgeschlossenem eigenem Einrichtungsassistenten, am Docker-Netz `friendflix_media` erreichbar oder mit `--profile bundled` gestartet. Ein Wunsch-Dienst ist optional.
+- **Jellyfin** (deine Bibliothek) mit abgeschlossenem eigenem Einrichtungsassistenten, am Docker-Netz `friendflix_media` erreichbar oder mit `--profile bundled` gestartet – oder ein vorhandener **Plex Media Server** ([docs/de/plex.md](docs/de/plex.md)). Ein Wunsch-Dienst ist optional.
 
 **Schnellstart.** Eine neue Installation braucht keine `.env`; der Produktions-Stack zieht fertige Images.
 
@@ -48,6 +50,8 @@ FriendFlix ist ein privates Streaming-Portal vor **Jellyfin** (deine Medien) und
    git clone https://github.com/LetsManu/friendflix.git && cd friendflix
    docker compose -f compose.prod.yaml up -d
    ```
+
+   Das startet auch den **Updater**: Ab dann installiert *Admin → Update* neue Versionen selbst (standardmäßig Kanal *Stabil* = Image-Tag `latest`, kein `FF_TAG` nötig; nur der separate Socket-Proxy sieht Docker, nie Backend oder Web-App). Ohne ihn: `-f compose.no-updater.yaml` dazunehmen ([docs/de/setup.md, Updater](docs/de/setup.md#updater)).
 
 2. **Den einmaligen Einrichtungscode** aus dem Backend-Log lesen (die Zeile erscheint, sobald das Backend läuft; bei leerer Ausgabe nach ein paar Sekunden wiederholen):
 
@@ -63,7 +67,7 @@ FriendFlix ist ein privates Streaming-Portal vor **Jellyfin** (deine Medien) und
 
 Danach in Authentik den einmaligen Token widerrufen und MFA zur Pflicht machen ([docs/de/setup.md, Authentik absichern](docs/de/setup.md#authentik-absichern)). Ab dann melden sich alle auf der eigenen Anmeldeseite von FriendFlix an, über einer Wand aus Covern deiner Bibliothek (`LOGIN_UI`, automatisch, sobald Authentik verbunden ist); Authentik prüft dahinter weiter jedes Passwort und jeden zweiten Faktor, und *Admin → Status → Anmeldung* sagt dir, wenn ein Ablauf eine Korrektur braucht. Jede Einstellung lässt sich später unter *Admin → Einstellungen* ändern, und jede Änderung wird vor dem Speichern getestet. Außerdem sinnvoll: `./scripts/backup-bootstrap.sh` sichert die erzeugten Secrets (siehe [docs/de/setup.md](docs/de/setup.md#7-stack-starten)). Die ganze Anleitung vom leeren Server aus, mit den typischen Fehlern jedes Assistenten-Schritts: **[docs/de/setup.md](docs/de/setup.md)**.
 
-Bestehende Installation? Deine `.env` bleibt erhalten; sie sieht den Assistenten nie ([docs/de/setup.md §14](docs/de/setup.md#14-umstieg-auf-einstellungen-in-der-datenbank)). `.env` und Docker-Secrets bleiben außerdem eine fortgeschrittene Option, um Werte festzunageln ([unten](#fortgeschritten-konfiguration-über-die-umgebung)).
+Bestehende Installation? Deine `.env` bleibt erhalten; sie sieht den Assistenten nie ([docs/de/setup.md §14](docs/de/setup.md#14-umstieg-auf-einstellungen-in-der-datenbank)). Von 1.x kommend: umbenannte Variablen, Updater und `FF_TAG` in [docs/de/setup.md §16, Upgrade auf 2.0](docs/de/setup.md#16-upgrade-auf-20). `.env` und Docker-Secrets bleiben außerdem eine fortgeschrittene Option, um Werte festzunageln ([unten](#fortgeschritten-konfiguration-über-die-umgebung)).
 
 *Die Screenshots zeigen die deutsche Oberfläche mit erfundenen Beispieldaten und Platzhalter-Hosts.*
 
@@ -166,6 +170,14 @@ App-artige Oberfläche mit Tab-Leiste unten, einer Vorschau beim Antippen eines 
 
 **Downloads für Zug und Flugzeug:** Filme und Folgen herunterladen (bei Serien auch gleich die nächsten Folgen) und offline im Browser ansehen. Der Fortschritt wird beim nächsten Online-Sein abgeglichen. Lizenzen pro Gerät mit Ablaufdatum; funktioniert in Chrome, Edge, Firefox, Safari 17+ und als Home-Bildschirm-App auf iOS 17+. Auf Android (Chrome, Edge) laden Downloads auch im Hintergrund und bei geschlossener App weiter; auf dem iPhone pausieren sie, solange die App im Hintergrund ist, und laufen beim Öffnen sofort weiter.
 
+**Android-App:** FriendFlix als App für Android ab 8.0, geteilt über einen geschlossenen Test bei Google Play (oder als APK an jedem Release). Sie zeigt dieselbe Weboberfläche und bringt einen nativen Player (Direktwiedergabe, Bild-im-Bild, Ton im Hintergrund), Downloads im Hintergrund aufs Telefon oder eine SD-Karte, verschlüsselt gespeichert und offline abspielbar, Chromecast und Benachrichtigungen, die die App selbst bei deinem Server abholt – ohne Push-Dienst von Google, ohne Analyse. Installation, Einstellungen, Sicherheit und die Signatur-Schritte für den Betreiber: [docs/de/android.md](docs/de/android.md).
+
+**Windows-App:** FriendFlix als Programm für Windows 10 und 11, installiert aus dem GitHub-Release. Es zeigt dieselbe Weboberfläche und bringt einen nativen mpv-Player, der fast jede Datei direkt abspielt (AC3, DTS, TrueHD, HEVC, Bild-Untertitel), mit FriendFlix' eigener Bedienung, Fortsetzen und Fortschritt im Gleichklang mit Web, Android und TV, Tray-Symbol und automatischen Updates. Keine Downloads, kein Chromecast. Installation, Player-Tasten, Fehlersuche und die Update-Signatur-Schritte für den Betreiber: [docs/de/windows.md](docs/de/windows.md).
+
+**Samsung-TV-App:** FriendFlix für Samsung-Smart-TVs (Tizen 6.5 und neuer), vom PC aus über den Entwicklermodus mit einem Samsung-Zertifikat installiert. Diese erste Version ist ein Probe-Build plus die App-Hülle (Serveradresse, dann dein TV-Modus); der Player folgt, sobald die Probe zeigt, was der Fernseher abspielen kann. Einrichtung, Zertifikat und Probe: [docs/de/tizen.md](docs/de/tizen.md).
+
+**LG-TV-App:** FriendFlix für LG-Smart-TVs (webOS 22 und neuer), vom PC aus über den Entwicklermodus mit einem Installationsskript installiert, ohne Zertifikat. Sie öffnet deinen TV-Modus im Vollbild und sagt dem Server, was der Fernseher abspielen kann, damit Dateien, die der Fernseher selbst kann, nicht umgewandelt werden. Einrichtung, Fernbedienungstasten und Test-App: [docs/de/webos.md](docs/de/webos.md).
+
 <p align="center"><img src="docs/images/de/downloads.jpg" alt="Downloads-Seite mit fertigen, pausierten und vorbereiteten Downloads" width="700"></p>
 
 **Sieben Sprachen:** Die Oberfläche spricht **Deutsch, Englisch, Französisch, Spanisch, Italienisch, Türkisch und Polnisch**. Jedes Profil wählt seine eigene Sprache; beim ersten Login fragt FriendFlix einmal nach und schlägt die Browsersprache vor. Der Admin legt die Standardsprache der ganzen Instanz fest.
@@ -213,7 +225,7 @@ Ab hier wird es technisch. Die Installation steht unter [Loslegen](#loslegen); d
 
 ### Fortgeschritten: Konfiguration über die Umgebung
 
-Eine neue Installation braucht davon nichts: Einrichtungsassistent und *Admin → Einstellungen* speichern die Einstellungen in der Datenbank. `.env` und Docker-Secrets sind dazu da, Werte festzunageln: Was sie setzen, hat Vorrang und ist im Assistenten und unter *Admin → Einstellungen* gesperrt ([docs/de/setup.md §15](docs/de/setup.md#15-fortgeschritten-konfiguration-über-die-umgebung), [docs/de/setup.md, Einstellungen in der Datenbank](docs/de/setup.md#einstellungen-in-der-datenbank)). Vorlage: [.env.example](.env.example). Jede Variable kann mit der Endung `_FILE` auch aus einer Datei gelesen werden (Docker Secrets, siehe [compose.secrets.yaml](compose.secrets.yaml)). Die Standardwerte stammen aus [compose.prod.yaml](compose.prod.yaml).
+Eine neue Installation braucht davon nichts: Einrichtungsassistent und *Admin → Einstellungen* speichern die Einstellungen in der Datenbank. `.env` und Docker-Secrets sind dazu da, Werte festzunageln: Was sie setzen, hat Vorrang und ist im Assistenten und unter *Admin → Einstellungen* gesperrt ([docs/de/setup.md §15](docs/de/setup.md#15-fortgeschritten-konfiguration-über-die-umgebung), [docs/de/setup.md, Einstellungen in der Datenbank](docs/de/setup.md#einstellungen-in-der-datenbank)). Jede Einstellung lässt sich so setzen: Compose reicht jeden Schlüssel aus *Admin → Einstellungen* an das Backend durch (ein generierter Block in `compose.prod.yaml`; eine nicht gesetzte Zeile ändert nichts). Vorlage: [.env.example](.env.example). Jede Variable kann mit der Endung `_FILE` auch aus einer Datei gelesen werden (Docker Secrets, siehe [compose.secrets.yaml](compose.secrets.yaml)). Die Standardwerte stammen aus [compose.prod.yaml](compose.prod.yaml).
 
 <details>
 <summary>Alle Variablen</summary>
@@ -227,14 +239,15 @@ Eine neue Installation braucht davon nichts: Einrichtungsassistent und *Admin �
 | `WEBHOOK_SECRET` | – | Jellyfin-/Wunsch-Dienst-Webhooks (≥ 16 Zeichen); *Admin → Einstellungen → Allgemein → Neu erzeugen*. Ohne: Die Webhooks antworten mit 403 |
 | `OIDC_ISSUER`, `OIDC_CLIENT_ID`, `OIDC_CLIENT_SECRET` | – (Einrichtungsassistent) | Authentik-OIDC-Provider |
 | `TMDB_API_KEY`, `OMDB_API_KEY` (oder `…_FILE`) | leer | Optionale Zusatzdaten für die Detailseite (Links, Bewertungen); oder unter *Admin → Datenquellen* setzen. Siehe [docs/integrations.md](docs/integrations.md#tmdb--omdb-optional) |
-| `MEDIA_SERVER` | `jellyfin` | Art des Medienservers; in diesem Repository gibt es nur Jellyfin (ein Fork kann weitere ergänzen, siehe [docs/architecture.md](docs/architecture.md)) |
-| `JELLYFIN_URL`, `JELLYFIN_ADMIN_API_KEY` | – (Einrichtungsassistent) | Interne Jellyfin-URL, z. B. `http://jellyfin:8096`, und Admin-API-Key |
-| `REQUESTS_URL`, `REQUESTS_API_KEY` | – (Pflicht) | Interne URL (mitgeliefert: `http://requests:5055`) und API-Key des Wunsch-Dienstes (ältere Variablennamen funktionieren weiter, mit Hinweis im Log) |
+| `MEDIA_SERVER` | `jellyfin` | Art des Medienservers: `jellyfin` oder `plex` (nur Umgebung; `compose.plex.yaml` setzt `plex`, siehe [docs/de/plex.md](docs/de/plex.md) und [docs/architecture.md](docs/architecture.md)) |
+| `JELLYFIN_URL`, `JELLYFIN_ADMIN_API_KEY` | – (Einrichtungsassistent) | Interne Jellyfin-URL, z. B. `http://jellyfin:8096`, und Admin-API-Key (nur mit `MEDIA_SERVER=jellyfin`) |
+| `PLEX_URL`, `PLEX_TOKEN` | – (Einrichtungsassistent) | Nur mit `MEDIA_SERVER=plex`: die Plex-Adresse, unter der Backend und Gateway Plex erreichen, z. B. `http://plex.example.com:32400` (nur die Adresse: kein `?…`, `#…` oder `benutzer:passwort@`), und der Token des Plex-Kontos, das FriendFlix nutzt (verschlüsselt in der Datenbank, nur schreibbar; `PLEX_TOKEN_FILE` als Docker-Secret). *Admin → Einstellungen* zeigt sie nur auf einer Plex-Instanz; ein Wert hier gewinnt und sperrt das Feld |
+| `REQUESTS_URL`, `REQUESTS_API_KEY` | – (Pflicht) | Interne URL (mitgeliefert: `http://requests:5055`) und API-Key des Wunsch-Dienstes (seit 2.0 nur diese Namen; die Namen aus 1.x werden ignoriert, siehe [Upgrade auf 2.0](docs/de/setup.md#16-upgrade-auf-20)) |
 | `ADMIN_GROUP` | `friendflix-admins` | Authentik-Gruppe, deren Mitglieder Portal-Admins werden |
 | `BIND_ADDR` | `127.0.0.1` | Host-Adresse für die drei Ports – nie eine öffentliche Schnittstelle |
 | `WEB_PORT`, `BACKEND_PORT`, `GATEWAY_PORT` | `3080`, `3081`, `3082` | Host-Ports für den Reverse Proxy |
-| `FF_REGISTRY`, `FF_TAG` | `ghcr.io/letsmanu`, `latest` | Herkunft und Release-Kanal der Images: `latest` = stabile Releases, `nightly` = jeder grüne Commit auf main, `1` / `1.1` / `1.1.0` (oder Commit-SHA) zum Festnageln ([Release-Kanäle](docs/operations.md#release-kanäle)) |
-| `SESSION_TTL_SECONDS`, `SESSION_IDLE_SECONDS` | `28800`, `7200` | Maximale Sitzungsdauer (8 h) und Ablauf bei Inaktivität (2 h) |
+| `FF_REGISTRY`, `FF_TAG` | `ghcr.io/letsmanu`, `latest` | Herkunft und Tag der Images. **Nur ohne Updater** (`compose.no-updater.yaml`): `FF_TAG` ist dann der Release-Kanal: `latest` = stabile Releases, `nightly` = jeder grüne Commit auf main, `2` / `2.0` / `2.0.0` (oder `sha-<7>`) zum Festnageln ([Release-Kanäle](docs/de/setup.md#release-kanäle-ohne-updater)). Mit Updater weglassen: den Kanal wählt *Admin → Update* |
+| `SESSION_TTL_SECONDS`, `SESSION_IDLE_SECONDS` | `7776000`, `7776000` | Maximale Sitzungsdauer und Ablauf bei Inaktivität (beide 90 Tage) |
 | `TZ` | `Europe/Vienna` | Zeitzone für geplante Jobs (Rückblick, Wiedergabe-Check, Backups) |
 | `AUTHENTIK_URL`, `AUTHENTIK_API_TOKEN`, `AUTHENTIK_ENROLL_FLOW` | leer | Einladungen, die auch das Authentik-Konto anlegen (alle drei nötig); URL und Token liefern der Admin-Nutzerseite auch den Zwei-Faktor-Stand und *Passwort-Link senden* |
 | `AUTHENTIK_RECOVERY_FLOW`, `AUTHENTIK_TOTP_SETUP_FLOW` | `default-recovery-flow`, `default-authenticator-totp-setup` | Wiederherstellungs-Flow, dessen E-Mail-Stage den Passwort-Link sendet (Authentik 2024.4 oder neuer); der zweite ist reserviert. Siehe [docs/de/authentik.md](docs/de/authentik.md#10-passwort-wiederherstellung-per-e-mail) |
@@ -242,6 +255,7 @@ Eine neue Installation braucht davon nichts: Einrichtungsassistent und *Admin �
 | `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`, `VAPID_SUBJECT` | leer, leer, `PUBLIC_URL` | Web-Push; nur aktiv, wenn beide Schlüssel gesetzt sind |
 | `DIGEST_DAY`, `DIGEST_HOUR` | `0` (Sonntag), `18` | Zeitplan des Wochenrückblicks; `-1` = aus; im Admin-Bereich änderbar |
 | `CAST_ENABLED` | `true` | Chromecast und AirPlay (braucht eine https-`PUBLIC_URL`); bei Plan B `false` |
+| `CAST_RECEIVER_APP_ID` | – | App-ID des eigenen FriendFlix-Cast-Empfängers (`/cast-receiver/`, in der Google Cast SDK Developer Console registriert): „Nächste Folge“ mit Countdown, „Noch da?“ und Fortschritt auf dem Fernseher; leer = Googles Standard-Empfänger ([docs/de/cast-receiver.md](docs/de/cast-receiver.md)) |
 | `POSTPLAY_ENABLED` | `true` | Der Bildschirm nach einem Film oder der letzten Folge („Du bist auf dem neuesten Stand“, Vorschläge); `false` schaltet ihn für alle ab. Siehe [docs/discovery.md](docs/discovery.md). Auch unter *Admin → Einstellungen → Empfehlungen* änderbar (gilt sofort, ohne Neustart); ein Wert aus der `.env` hat Vorrang und sperrt das Feld dort |
 | `DOWNLOADS_ENABLED` | `true` | Offline-Downloads; bei Plan B `false` |
 | `DOWNLOADS_PATH`, `PREVIEWS_PATH` | Volumes `downloads`, `previews` | Host-Ordner (absoluter Pfad, beschreibbar für uid 1000) für vorbereitete Downloads und Vorschau-Clips |
@@ -264,8 +278,8 @@ Eine neue Installation braucht davon nichts: Einrichtungsassistent und *Admin �
 | `METRICS_TOKEN` | leer | Bearer-Token für `/metrics` |
 | `PORTAINER_WEBHOOK_URL` oder `PORTAINER_URL` + `PORTAINER_API_KEY` + `PORTAINER_STACK_ID` | leer | Updates per Knopfdruck unter *Admin → Update* (`PORTAINER_ENDPOINT_ID` Standard `1`) |
 | `UPDATE_REPO`, `GITHUB_TOKEN` | `LetsManu/friendflix`, leer | Versionsprüfung; das Token hebt nur das GitHub-Limit an |
-| `UPDATE_CHANNEL`, `UPDATE_VERSION` | `stable`, leer | Wird mit dem Schalter *Stabil / Nightly / Feste Version* unter *Admin → Update* gesetzt (in der Datenbank, keine `.env` nötig): womit die Update-Prüfung vergleicht und, mit dem Updater, was er installiert. Ohne Updater wechselt es nie Images, das macht `FF_TAG` |
-| `UPDATER_URL`, `UPDATER_COMPOSE_FILES` | `http://updater:7070`, `compose.prod.yaml` | Opt-in-Updater (Profil `updater`, [Installationsanleitung](docs/de/setup.md#updater-optional)): seine interne Adresse (nur Umgebung) und die Compose-Dateien des Stacks |
+| `UPDATE_CHANNEL`, `UPDATE_VERSION` | `stable`, leer | Wird mit dem Schalter *Stabil / Nightly / Feste Version* unter *Admin → Update* gesetzt (in der Datenbank, keine `.env` nötig): womit die Update-Prüfung vergleicht und, mit dem Updater, was er installiert. Ohne Updater (`compose.no-updater.yaml`) wechselt es nie Images, das macht `FF_TAG` |
+| `UPDATER_URL`, `UPDATER_COMPOSE_FILES`, `UPDATER_PROJECT_DIR` | `http://updater:7070`, leer (automatisch), das aktuelle Verzeichnis | Der Updater (seit 2.0 standardmäßig an, [Installationsanleitung](docs/de/setup.md#updater)): seine interne Adresse (nur Umgebung); die Compose-Dateien, mit denen er den Stack neu erstellt (leer = die Dateien, mit denen der Stack zuletzt gestartet wurde, `compose.plex.yaml` und andere Overrides bleiben also drin; nur setzen, um eine Liste zu erzwingen, die dann jede Datei nennen muss); der absolute Pfad des Stack-Verzeichnisses, nur wenn Compose ohne `PWD` läuft (z. B. `sudo`) |
 | `AUTO_UPDATE`, `AUTO_UPDATE_TIME` | `off`, `04:00` | Automatische Updates über den Updater: `nightly-window` startet den Update-Auftrag einmal pro Nacht ab dieser Uhrzeit (Zeitzone des Servers); unter *Admin → Update* einstellbar |
 | `GRAFANA_ADMIN_PASSWORD`, `GRAFANA_PORT`, `PROMETHEUS_RETENTION` | – (Pflicht für den Monitoring-Stack), `3083`, `30d` | Optionales Prometheus + Grafana (`compose.monitoring.yaml`); kein Standardpasswort |
 | `BACKUP_PATH`, `BACKUP_HOUR`, `BACKUP_KEEP_DAYS`, `BACKUP_RUN_ON_START` | `./backups`, `3`, `14`, `false` | Backup-Sidecar (Profil `backup`) |
@@ -328,7 +342,7 @@ flowchart TB
 - Öffentlich ist nur der Proxy. `web`, `backend` und `gateway` sind nur auf `127.0.0.1` veröffentlicht; Jellyfin und der Wunsch-Dienst haben gar keine Ports und hängen im internen Netz `media`, Postgres und Redis im internen Netz `db`.
 - Alle Videodaten (Playlists, Segmente, Direct Play, Bilder, Untertitel, Downloads, Chromecast) laufen durch das Gateway: ohne Pufferung, mit HTTP-Range, Jellyfin-Tokens nur serverseitig, Pfad-Allowlist, fester Upstream, Bitrate-Grenze pro Rolle.
 - Container laufen ohne Root, mit schreibgeschütztem Dateisystem, `cap_drop: ALL` und `no-new-privileges`. Strikte CSP, CSRF-Tokens, Rate-Limits, Audit-Log.
-- Der Medienserver hängt hinter einer neutralen Schnittstelle (`MediaServer` im Backend, ein `Upstream`-Adapter im Gateway, gewählt über `MEDIA_SERVER`). Jellyfin ist hier die einzige Implementierung; ein weiterer Server kommt überwiegend über neue Dateien dazu – Container, Netze, der Ablauf von „Play drücken“ und die Schnittstelle stehen in [docs/architecture.md](docs/architecture.md).
+- Der Medienserver hängt hinter einer neutralen Schnittstelle (`MediaServer` im Backend, ein `Upstream`-Adapter im Gateway, gewählt über `MEDIA_SERVER`). Jellyfin (`backend/src/jellyfin`, `gateway/src/upstream/jellyfin.ts`) und Plex (`backend/src/plex`, `gateway/src/upstream/plex.ts`) sind die beiden Implementierungen, zur Laufzeit aus denselben Images gewählt; außer dem Schnittstellen-Index importiert sie nichts außerhalb ihrer Ordner – Container, Netze, der Ablauf von „Play drücken“ und die Schnittstelle stehen in [docs/architecture.md](docs/architecture.md), die Plex-Details in [docs/de/plex.md](docs/de/plex.md).
 - Alternative „Plan B“: nginx liefert `/media/` selbst über `auth_request` aus – [docs/operations.md](docs/operations.md).
 
 ### Betrieb
@@ -370,11 +384,16 @@ npm run e2e                                     # Playwright: baut die Web-App u
 | Architektur: Container und Netze, Play drücken, Medienserver-Schnittstelle | [docs/architecture.md](docs/architecture.md) |
 | Authentik: Installation, Provider, Flows, Einladungen | [docs/de/authentik.md](docs/de/authentik.md) |
 | Jellyfin, Wunsch-Dienst, ntfy/Discord, Web-Push | [docs/integrations.md](docs/integrations.md) |
+| Plex Media Server statt Jellyfin, Umstieg von friendflix-plex | [docs/de/plex.md](docs/de/plex.md) |
 | Backups, Wiederherstellung, Firewall, Updates, Image-Prüfung, Branch-Schutz, Plan B | [docs/operations.md](docs/operations.md) |
 | Monitoring, Metriken, Grafana-Dashboard, Server-Timing, Browser-Fehler | [docs/monitoring.md](docs/monitoring.md) |
 | Offline-Downloads (Plattformen, Speicher, Grenzen) | [docs/downloads.md](docs/downloads.md) |
 | TV-Modus und Handy als Fernbedienung | [docs/tv-mode.md](docs/tv-mode.md) |
 | Chromecast und AirPlay | [docs/cast.md](docs/cast.md) |
+| Android-App: Installation, Einstellungen, Offline, Benachrichtigungen, Signatur und Google Play | [docs/de/android.md](docs/de/android.md) |
+| Windows-App: Installation, Player-Tasten, Updates, Fehlersuche, Update-Signatur | [docs/de/windows.md](docs/de/windows.md) |
+| Samsung-TV-App: Entwicklermodus, Zertifikat, Installationsskript, Probe | [docs/de/tizen.md](docs/de/tizen.md) |
+| LG-TV-App: Entwicklermodus, Installationsskript, Fernbedienungstasten, Test-App | [docs/de/webos.md](docs/de/webos.md) |
 | Such- und Entdecken-API, Labels, Bald weg, Qualität, Regeln für Kinderprofile | [docs/discovery.md](docs/discovery.md) |
 | Themenlisten, Ruhiger Modus, Klang im Player, Handy-Verknüpfungen und Badge | [docs/personal.md](docs/personal.md) |
 | UI-Kit und Admin-Rahmen | [docs/ui-kit.md](docs/ui-kit.md) |
@@ -388,7 +407,7 @@ npm run e2e                                     # Playwright: baut die Web-App u
 - Intro überspringen braucht Jellyfin ≥ 10.10 mit Media Segments (z. B. vom Intro-Skipper-Plugin).
 - Die APIs von Jellyfin, Wunsch-Dienst und Authentik unterscheiden sich je Version – nach Upgrades siehe [docs/operations.md](docs/operations.md) und [docs/integrations.md](docs/integrations.md).
 - Optional: ein Wunsch-Dienst für Wünsche (mitgeliefert als Container `requests`; Upstream-Projekt: siehe seine `image:`-Zeile in [compose.prod.yaml](compose.prod.yaml)) – siehe [docs/integrations.md](docs/integrations.md). Mit Jellyfin sind Profile versteckte Jellyfin-Nutzer: den automatischen Jellyfin-Nutzerimport im Wunsch-Dienst ausschalten, damit sie nicht auftauchen. Ein Medienserver ohne Jellyfin-Konten bekommt stattdessen je FriendFlix-Konto einen lokalen Nutzer im Wunsch-Dienst.
-- In diesem Repository ist nur Jellyfin umgesetzt. Besetzung & Infos, Szenen und die Bild-/Ton-Chips brauchen vom Medienserver Besetzungslisten, Kapitel und Stream-Details; kann er sie nicht liefern, blendet die Oberfläche die Funktion aus (`capabilities` in `/api/me`).
+- Jellyfin und Plex sind umgesetzt (Plex: Funktionstabelle in [docs/de/plex.md](docs/de/plex.md)). Besetzung & Infos, Szenen und die Bild-/Ton-Chips brauchen vom Medienserver Besetzungslisten, Kapitel und Stream-Details; kann er sie nicht liefern, blendet die Oberfläche die Funktion aus (`capabilities` in `/api/me`).
 - „Bald nicht mehr verfügbar“ ist eine Ankündigung eines Admins; FriendFlix löscht nie Medien. Das Label „Staffelfinale“ ist eine Heuristik (letzte Folge der neuesten Staffel ist neu, die Serie läuft nicht mehr weiter). Der Bildqualitäts-Filter liest einen Hintergrund-Index (`BACKGROUND_JOBS=true`), der sich nach dem ersten Start erst nach und nach füllt.
 - Klare Stimmen und Nachtmodus nutzen die Audioverarbeitung des Browsers: nicht auf jedem Gerät verfügbar und nicht beim Streamen auf ein anderes Gerät. PWA-Widgets für den Home-Bildschirm gibt es nur unter Windows 11; Verknüpfungen und das Symbol-Badge (nicht auf jeder iOS-Version) sind der Ersatz auf dem Handy.
 - Mit Intel QSV/VAAPI in Jellyfin „VPP Tone mapping“ ausschalten, wenn der Treiber kein HDR kann; sonst scheitern 4K-HDR-Titel.

@@ -1,0 +1,176 @@
+// SPDX-FileCopyrightText: 2026 Manuel Weißböck
+// SPDX-License-Identifier: AGPL-3.0-or-later
+package app.friendflix.android.offline
+
+import android.view.View
+import android.widget.Button
+import android.widget.LinearLayout
+import android.widget.TextView
+import androidx.test.core.app.ActivityScenario
+import app.friendflix.android.R
+import app.friendflix.android.crypto.KeysUnavailableException
+import app.friendflix.android.downloads.DownloadState
+import app.friendflix.android.downloads.KeySource
+import app.friendflix.android.downloads.LIC
+import app.friendflix.android.downloads.LIC2
+import app.friendflix.android.downloads.TestEnv
+import kotlinx.coroutines.runBlocking
+import org.junit.After
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
+import org.junit.Before
+import org.junit.Rule
+import org.junit.Test
+import org.junit.rules.TemporaryFolder
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
+import org.robolectric.shadows.ShadowLooper
+
+@RunWith(RobolectricTestRunner::class)
+class OfflineScreenTest {
+    @get:Rule val tmp = TemporaryFolder()
+    private lateinit var env: TestEnv
+    private lateinit var offline: Offline
+    private val launcher = FakeLauncher()
+    private val now = System.currentTimeMillis()
+
+    @Before fun setUp() {
+        env = TestEnv(tmp.newFolder("env"))
+        offline = Offline(env.deps, tmp.newFolder("state")) { now }
+        offline.launcher = launcher
+        Offline.install(offline)
+        env.complete(LIC)
+        env.add(env.record(LIC, DownloadState.DONE).copy(title = "Alpha", total = 1000, expiresAt = now + 3 * DAY, lastCheck = now - DAY, validUntil = now + 6 * DAY, positionMs = 5_000))
+        env.complete(LIC2)
+        env.add(env.record(LIC2, DownloadState.DONE).copy(title = "Beta", total = 1000, expiresAt = now + 3 * DAY, lastCheck = now - 8 * DAY, validUntil = now - DAY))
+    }
+
+    @After fun tearDown() {
+        Offline.install(null)
+        env.close()
+    }
+
+    private fun <T> withScreen(block: (OfflineActivity) -> T): T {
+        ActivityScenario.launch(OfflineActivity::class.java).use { s ->
+            ShadowLooper.idleMainLooper()
+            var out: T? = null
+            s.onActivity { settle(it); out = block(it) }
+            return out!!
+        }
+    }
+
+    /** the rows are worked out off the main thread: wait until the list shows them */
+    private fun settle(a: OfflineActivity) {
+        val until = System.currentTimeMillis() + 5_000
+        do { ShadowLooper.idleMainLooper(); Thread.sleep(5) } while (!a.renderIdle && System.currentTimeMillis() < until)
+        ShadowLooper.idleMainLooper()
+        assertTrue(a.renderIdle)
+    }
+
+    private fun confirm() {
+        val d = org.robolectric.shadows.ShadowAlertDialog.getLatestAlertDialog() as android.app.AlertDialog
+        assertTrue(d.isShowing)
+        d.getButton(android.content.DialogInterface.BUTTON_POSITIVE).performClick()
+        ShadowLooper.idleMainLooper()
+    }
+
+    private fun rows(a: OfflineActivity): List<View> = a.findViewById<LinearLayout>(R.id.offline_list).let { l -> (0 until l.childCount).map { l.getChildAt(it) } }
+
+    @Test fun listsTheDownloadsWithReasonsAndPlaysTheLocalFile() = withScreen { a ->
+        val rows = rows(a)
+        assertEquals(listOf(LIC, LIC2), rows.map { it.tag })
+        assertEquals("Alpha", rows[0].findViewById<TextView>(R.id.offline_item_title).text.toString())
+        assertTrue(rows[0].findViewById<TextView>(R.id.offline_item_meta).text.contains("3 days left"))
+        val blocked = rows[1].findViewById<TextView>(R.id.offline_item_reason)
+        assertEquals(View.VISIBLE, blocked.visibility)
+        assertEquals(a.getString(R.string.offline_reason_checkin), blocked.text.toString())
+        assertFalse(rows[1].findViewById<Button>(R.id.offline_item_play).isEnabled)
+        rows[0].findViewById<Button>(R.id.offline_item_play).performClick()
+        // play opens the keys first (off the main thread) when the screen's own open has not finished yet
+        val until = System.currentTimeMillis() + 5_000
+        while (launcher.requests.isEmpty() && System.currentTimeMillis() < until) { ShadowLooper.idleMainLooper(); Thread.sleep(10) }
+        val req = launcher.requests.single()
+        assertEquals(LIC, req.offline!!.licenseId)
+        assertEquals(5_000L, req.startMs)
+    }
+
+    @Test fun daysLeftIsTheOfflineWindowNotOnlyTheExpiry() {
+        // expires in 3 days, but the offline grace ends in 2: the list says 2
+        env.store.update(LIC) { it.copy(validUntil = now + 2 * DAY - 60_000) }
+        withScreen { a ->
+            assertTrue(rows(a)[0].findViewById<TextView>(R.id.offline_item_meta).text.contains("2 days left"))
+        }
+    }
+
+    @Test fun theSettingsEntryOpensTheSettings() = withScreen { a ->
+        a.findViewById<Button>(R.id.offline_settings).performClick()
+        val next = org.robolectric.Shadows.shadowOf(a).nextStartedActivity
+        assertEquals(app.friendflix.android.settings.SettingsActivity::class.java.name, next.component?.className)
+    }
+
+    @Test fun keysUnavailableShowsTheNoticeAndKeepsTheList() {
+        env.keySource = KeySource { throw KeysUnavailableException("busy") }
+        runBlocking { offline.checker.openKeys() }
+        withScreen { a ->
+            assertEquals(a.getString(R.string.offline_keys_unavailable), a.findViewById<TextView>(R.id.offline_status).text.toString())
+            assertEquals(2, rows(a).size)
+            assertTrue(rows(a).none { it.findViewById<Button>(R.id.offline_item_play).isEnabled })
+        }
+    }
+
+    @Test fun emptyListSaysSo() {
+        env.deps.queue.delete(LIC)
+        env.deps.queue.delete(LIC2)
+        withScreen { a ->
+            assertEquals(a.getString(R.string.offline_none), a.findViewById<TextView>(R.id.offline_status).text.toString())
+            assertTrue(rows(a).isEmpty())
+        }
+    }
+
+    @Test fun aRowIsRemovedAfterAConfirmationAndItsLicenceGoesBack() = withScreen { a ->
+        rows(a)[0].findViewById<Button>(R.id.offline_item_remove).performClick()
+        assertTrue(env.store.get(LIC) != null) // nothing happens before the confirmation
+        confirm()
+        settle(a)
+        assertEquals(null, env.store.get(LIC))
+        assertEquals(listOf(LIC2), rows(a).map { it.tag })
+        val returns = env.workManager.getWorkInfosByTag(app.friendflix.android.downloads.LicenceDeleteWorker.TAG).get()
+        assertEquals(1, returns.size)
+    }
+
+    @Test fun anExpiredRowCanBeRemovedToo() {
+        env.store.update(LIC2) { it.copy(state = DownloadState.EXPIRED) }
+        withScreen { a ->
+            val row = rows(a).single { it.tag == LIC2 }
+            assertTrue(row.findViewById<Button>(R.id.offline_item_remove).isEnabled)
+            row.findViewById<Button>(R.id.offline_item_remove).performClick()
+            confirm()
+            settle(a)
+            assertEquals(null, env.store.get(LIC2))
+            assertEquals(listOf(LIC), rows(a).map { it.tag })
+            // an expired licence is not handed back (the server has let it go already)
+            assertTrue(env.workManager.getWorkInfosByTag(app.friendflix.android.downloads.LicenceDeleteWorker.TAG).get().isEmpty())
+        }
+    }
+
+    @Test fun aDownloadOnAnUnmountedCardSaysTheStorageIsNotAvailable() {
+        env.store.update(LIC) { it.copy(location = app.friendflix.android.settings.StorageLocation.SD) }
+        env.volumes.sdMounted = false
+        env.deps.queue.refreshAvailability()
+        withScreen { a ->
+            val row = rows(a).single { it.tag == LIC }
+            val reason = row.findViewById<TextView>(R.id.offline_item_reason)
+            assertEquals(View.VISIBLE, reason.visibility)
+            assertEquals(a.getString(R.string.offline_reason_storage), reason.text.toString())
+            assertFalse(row.findViewById<Button>(R.id.offline_item_play).isEnabled)
+        }
+    }
+
+    @Test fun aKidsProfileDoesNotGetTheSettingsEntry() {
+        offline.state.setProfile(app.friendflix.android.downloads.PROFILE, isKids = true)
+        withScreen { a -> assertEquals(View.GONE, a.findViewById<Button>(R.id.offline_settings).visibility) }
+        offline.state.setProfile(app.friendflix.android.downloads.PROFILE, isKids = false)
+        withScreen { a -> assertEquals(View.VISIBLE, a.findViewById<Button>(R.id.offline_settings).visibility) }
+    }
+}

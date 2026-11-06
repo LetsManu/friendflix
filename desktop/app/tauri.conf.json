@@ -1,0 +1,50 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "FriendFlix",
+  "mainBinaryName": "friendflix",
+  "version": "../../version.json",
+  "identifier": "app.friendflix.desktop",
+  "build": {
+    "frontendDist": "ui"
+  },
+  "app": {
+    "withGlobalTauri": false,
+    "windows": [],
+    "security": {
+      "capabilities": ["local"],
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src ipc: http://ipc.localhost; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["nsis", "msi"],
+    "createUpdaterArtifacts": false,
+    "publisher": "FriendFlix",
+    "resources": {
+      "../player/friendflix.lua": "friendflix.lua",
+      "../player/layout.lua": "layout.lua",
+      "mpv/": "mpv/"
+    },
+    "shortDescription": "FriendFlix for Windows",
+    "icon": [
+      "icons/32x32.png",
+      "icons/64x64.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.png",
+      "icons/icon.ico"
+    ]
+  },
+  "plugins": {
+    "deep-link": {
+      "desktop": {
+        "schemes": ["friendflix"]
+      }
+    },
+    "updater": {
+      "endpoints": ["https://github.com/LetsManu/friendflix/releases/latest/download/latest.json"],
+      "pubkey": "REPLACE_WITH_PUBLIC_KEY",
+      "windows": { "installMode": "passive" }
+    }
+  }
+}

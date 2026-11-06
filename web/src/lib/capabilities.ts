@@ -43,6 +43,9 @@ export function capsFrom(raw: unknown): ServerCaps {
 }
 
 export const serverCaps = writable<ServerCaps>(capsFrom(undefined));
+/** media server kind of this instance (/api/me server.kind): 'jellyfin' until known and for anything that is not a plain kind name */
+export const serverKind = writable<string>('jellyfin');
+export const kindFrom = (v: unknown): string => (typeof v === 'string' && /^[a-z]{2,16}$/.test(v) ? v : 'jellyfin');
 
 /** a skip button / timeline mark for this segment type may show */
 export const segmentShown = (c: ServerCaps, type: string) => c.segments.includes(type.toLowerCase());

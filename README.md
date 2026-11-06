@@ -21,6 +21,8 @@
 
 FriendFlix is a private streaming portal that sits in front of **Jellyfin** (your media) and an optional request service. Your friends get a polished, familiar streaming experience on their laptop, phone and TV – with profiles, downloads, watch parties and recommendations from each other. They never see Jellyfin or the request service directly, and you stay in control of who gets in.
 
+**Jellyfin or Plex.** The same images work with **Plex Media Server** too: start with `compose.plex.yaml` (it sets `MEDIA_SERVER=plex`) and enter the Plex address and token in the setup wizard – one server-wide token that never reaches a browser, your friends need no plex.tv account ([docs/plex.md](docs/plex.md)). Coming from the former friendflix-plex images: [migration guide](docs/plex.md#migrating-from-friendflix-plex-to-friendflix-20).
+
 > All titles and artwork in these screenshots are invented and generated for the demo.
 
 ## Contents
@@ -38,7 +40,7 @@ FriendFlix is a private streaming portal that sits in front of **Jellyfin** (you
 - A Linux server or NAS with **Docker** and the **Compose v2** plugin.
 - A domain with HTTPS and a reverse proxy, e.g. **Nginx Proxy Manager**: one proxy host `friend.example.com` → `127.0.0.1:3080`, WebSockets on, plus [deploy/npm/portal.advanced.conf](deploy/npm/portal.advanced.conf) in its *Advanced* tab.
 - **Authentik** for sign-in, installed with its admin account at e.g. `auth.example.com` ([docs/authentik.md §2](docs/authentik.md#2-install-authentik)).
-- **Jellyfin** (your library) with its own setup finished, reachable on the Docker network `friendflix_media` or started with `--profile bundled`. A request service is optional.
+- **Jellyfin** (your library) with its own setup finished, reachable on the Docker network `friendflix_media` or started with `--profile bundled` – or an existing **Plex Media Server** ([docs/plex.md](docs/plex.md)). A request service is optional.
 
 **Quick start.** A new install needs no `.env`; the production stack pulls prebuilt images.
 
@@ -48,6 +50,8 @@ FriendFlix is a private streaming portal that sits in front of **Jellyfin** (you
    git clone https://github.com/LetsManu/friendflix.git && cd friendflix
    docker compose -f compose.prod.yaml up -d
    ```
+
+   This also starts the **updater**: from then on *Admin → Update* installs new versions itself (channel *Stable* = image tag `latest` by default, no `FF_TAG` needed; only the separate socket proxy sees Docker, never the backend or the web app). Without it: add `-f compose.no-updater.yaml` ([docs/setup.md, Updater](docs/setup.md#updater)).
 
 2. **Read the one-time setup code** from the backend log (the line appears once the backend is up, so repeat after a few seconds if it is empty):
 
@@ -59,7 +63,7 @@ FriendFlix is a private streaming portal that sits in front of **Jellyfin** (you
 
 Afterwards revoke the one-time token in Authentik and make MFA mandatory there ([docs/setup.md, Harden Authentik](docs/setup.md#harden-authentik)). From then on people sign in on FriendFlix's own sign-in page over a wall of covers from your library (`LOGIN_UI`, automatic once Authentik is connected); Authentik still checks every password and second factor behind it, and *Admin → Status → Sign-in* tells you if a flow needs a fix. Every setting can be changed later in *Admin → Settings*, and each change is tested before it is saved. Also worth doing: `./scripts/backup-bootstrap.sh` backs up the generated secrets (see [docs/setup.md](docs/setup.md#7-start-the-stack)). The full walkthrough from an empty server, with the typical errors of every wizard step: **[docs/setup.md](docs/setup.md)**.
 
-Upgrading an existing install? Keep your `.env`; it never sees the wizard ([docs/setup.md §14](docs/setup.md#14-upgrading-to-settings-in-the-database)). `.env` and Docker secrets also remain an advanced option for pinning values ([below](#advanced-configure-by-environment)).
+Upgrading an existing install? Keep your `.env`; it never sees the wizard ([docs/setup.md §14](docs/setup.md#14-upgrading-to-settings-in-the-database)). Coming from 1.x: renamed variables, the updater and `FF_TAG` in [docs/setup.md §16, Upgrade to 2.0](docs/setup.md#16-upgrade-to-20). `.env` and Docker secrets also remain an advanced option for pinning values ([below](#advanced-configure-by-environment)).
 
 ## Invite your friends
 
@@ -160,6 +164,14 @@ An app-like layout with a bottom tab bar, a preview sheet when you tap a poster,
 
 **Downloads for the train and the plane:** download movies and episodes (or the next few episodes of a show in one go) and watch them offline in the browser. Progress syncs back the next time you are online. Per-device licences with expiry; works in Chrome, Edge, Firefox, Safari 17+ and as a home-screen app on iOS 17+. On Android (Chrome, Edge) downloads keep going in the background, even with the app closed; on iPhone they pause while the app is in the background and continue as soon as it is open again.
 
+**Android app:** FriendFlix as an app for Android 8.0 and newer, shared through a Google Play closed test (or as an APK on each release). It shows the same web UI and adds a native player (direct play, picture-in-picture, background audio), downloads in the background to the phone or an SD card, stored encrypted and playable offline, Chromecast, and notifications that the app fetches from your server itself – no Google push service, no analytics. Install, settings, security and the owner's signing steps: [docs/android.md](docs/android.md).
+
+**Windows app:** FriendFlix as a program for Windows 10 and 11, installed from the GitHub Release. It shows the same web UI and adds a native mpv player that plays almost every file directly (AC3, DTS, TrueHD, HEVC, image subtitles), with FriendFlix's own controls, resume and progress in sync with web, Android and TV, tray icon and automatic updates. No downloads, no Chromecast. Install, player keys, troubleshooting and the owner's update-signing steps: [docs/windows.md](docs/windows.md).
+
+**Samsung TV app:** FriendFlix for Samsung smart TVs (Tizen 6.5 and newer), installed from your PC over developer mode with a Samsung certificate. This first version is a probe build plus the app shell (server address, then your TV mode); the player follows once the probe shows what the TV can play. Setup, certificate and the probe: [docs/tizen.md](docs/tizen.md).
+
+**LG TV app:** FriendFlix for LG smart TVs (webOS 22 and newer), installed from your PC over Developer Mode with an install script, no certificate needed. It opens your TV mode full screen and tells the server what the TV can play, so files the TV handles itself are not converted. Setup, remote keys and the test app: [docs/webos.md](docs/webos.md).
+
 <p align="center"><img src="docs/images/en/downloads.jpg" alt="Downloads page with finished, paused and preparing downloads" width="700"></p>
 
 **Seven languages:** the interface speaks **English, German, French, Spanish, Italian, Turkish and Polish**. Every profile picks its own language; on first login FriendFlix asks once and suggests the browser language. The admin sets the default language for the whole instance.
@@ -207,7 +219,7 @@ Everything below is technical. Installation is covered in [Get started](#get-sta
 
 ### Advanced: configure by environment
 
-A new install needs none of this: the setup wizard and *Admin → Settings* store the settings in the database. `.env` and Docker secrets are for pinning values: what they set wins and shows locked in the wizard and in *Admin → Settings* ([docs/setup.md §15](docs/setup.md#15-advanced-configure-by-environment), [docs/setup.md, settings in the database](docs/setup.md#settings-in-the-database)). Template: [.env.example](.env.example). Every variable can also be read from a file with the `_FILE` suffix (Docker secrets, see [compose.secrets.yaml](compose.secrets.yaml)). Defaults are the ones in [compose.prod.yaml](compose.prod.yaml).
+A new install needs none of this: the setup wizard and *Admin → Settings* store the settings in the database. `.env` and Docker secrets are for pinning values: what they set wins and shows locked in the wizard and in *Admin → Settings* ([docs/setup.md §15](docs/setup.md#15-advanced-configure-by-environment), [docs/setup.md, settings in the database](docs/setup.md#settings-in-the-database)). Any setting can be set this way: compose passes every *Admin → Settings* key through to the backend (one generated block in `compose.prod.yaml`; an unset line changes nothing). Template: [.env.example](.env.example). Every variable can also be read from a file with the `_FILE` suffix (Docker secrets, see [compose.secrets.yaml](compose.secrets.yaml)). Defaults are the ones in [compose.prod.yaml](compose.prod.yaml).
 
 <details>
 <summary>All variables</summary>
@@ -221,14 +233,15 @@ A new install needs none of this: the setup wizard and *Admin → Settings* stor
 | `WEBHOOK_SECRET` | – | Jellyfin/request-service webhooks (≥ 16 chars); *Admin → Settings → General → Generate new*. Unset: the webhooks answer 403 |
 | `OIDC_ISSUER`, `OIDC_CLIENT_ID`, `OIDC_CLIENT_SECRET` | – (setup wizard) | Authentik OIDC provider |
 | `TMDB_API_KEY`, `OMDB_API_KEY` (or `…_FILE`) | empty | Optional extra data for the detail page (links, ratings); or set in *Admin → Data sources*. See [docs/integrations.md](docs/integrations.md#tmdb--omdb-optional) |
-| `MEDIA_SERVER` | `jellyfin` | Media server kind; Jellyfin is the only one in this repository (a fork can add others, see [docs/architecture.md](docs/architecture.md)) |
-| `JELLYFIN_URL`, `JELLYFIN_ADMIN_API_KEY` | – (setup wizard) | Internal Jellyfin URL, e.g. `http://jellyfin:8096`, and admin API key |
-| `REQUESTS_URL`, `REQUESTS_API_KEY` | – (optional) | Internal URL (bundled: `http://requests:5055`) and API key of the request service; without both, wishes and requests are hidden (older variable names still work, with a deprecation warning) |
+| `MEDIA_SERVER` | `jellyfin` | Media server kind: `jellyfin` or `plex` (env only; `compose.plex.yaml` sets `plex`, see [docs/plex.md](docs/plex.md) and [docs/architecture.md](docs/architecture.md)) |
+| `JELLYFIN_URL`, `JELLYFIN_ADMIN_API_KEY` | – (setup wizard) | Internal Jellyfin URL, e.g. `http://jellyfin:8096`, and admin API key (only with `MEDIA_SERVER=jellyfin`) |
+| `PLEX_URL`, `PLEX_TOKEN` | – (setup wizard) | Only with `MEDIA_SERVER=plex`: the Plex address as backend and gateway reach it, e.g. `http://plex.example.com:32400` (address only: no `?…`, `#…` or `user:password@`), and the token of the Plex account FriendFlix uses (encrypted in the database, write-only; `PLEX_TOKEN_FILE` as a Docker secret). Admin → Settings shows them only on a Plex instance; a value here wins and locks the field |
+| `REQUESTS_URL`, `REQUESTS_API_KEY` | – (optional) | Internal URL (bundled: `http://requests:5055`) and API key of the request service; without both, wishes and requests are hidden (since 2.0 only these names; the 1.x names are ignored, see [Upgrade to 2.0](docs/setup.md#16-upgrade-to-20)) |
 | `ADMIN_GROUP` | `friendflix-admins` | Authentik group whose members become portal admins |
 | `BIND_ADDR` | `127.0.0.1` | Host address the three ports are published on – never a public interface |
 | `WEB_PORT`, `BACKEND_PORT`, `GATEWAY_PORT` | `3080`, `3081`, `3082` | Host ports for the reverse proxy |
-| `FF_REGISTRY`, `FF_TAG` | `ghcr.io/letsmanu`, `latest` | Image source and release channel: `latest` = stable releases, `nightly` = every green commit on main, `1` / `1.1` / `1.1.0` (or a commit SHA) to pin ([release channels](docs/operations.md#release-kanäle)) |
-| `SESSION_TTL_SECONDS`, `SESSION_IDLE_SECONDS` | `28800`, `7200` | Absolute session length (8 h) and idle timeout (2 h) |
+| `FF_REGISTRY`, `FF_TAG` | `ghcr.io/letsmanu`, `latest` | Image source and tag. **Only without the updater** (`compose.no-updater.yaml`): `FF_TAG` is then the release channel: `latest` = stable releases, `nightly` = every green commit on main, `2` / `2.0` / `2.0.0` (or `sha-<7>`) to pin ([release channels](docs/setup.md#release-channels-without-the-updater)). With the updater leave it unset: the channel is chosen in *Admin → Update* |
+| `SESSION_TTL_SECONDS`, `SESSION_IDLE_SECONDS` | `7776000`, `7776000` | Absolute session length and idle timeout (both 90 days) |
 | `TZ` | `Europe/Vienna` | Time zone for scheduled jobs (digest, playback check, backups) |
 | `AUTHENTIK_URL`, `AUTHENTIK_API_TOKEN`, `AUTHENTIK_ENROLL_FLOW` | empty | Invitations that also create the Authentik account (all three needed); URL and token also give the admin user page the two-factor state and *Send password link* |
 | `AUTHENTIK_RECOVERY_FLOW`, `AUTHENTIK_TOTP_SETUP_FLOW` | `default-recovery-flow`, `default-authenticator-totp-setup` | Recovery flow whose e-mail stage sends the password link (Authentik 2024.4 or newer); the second is reserved. See [docs/authentik.md](docs/authentik.md#10-password-recovery-by-e-mail) |
@@ -236,6 +249,7 @@ A new install needs none of this: the setup wizard and *Admin → Settings* stor
 | `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`, `VAPID_SUBJECT` | empty, empty, `PUBLIC_URL` | Web push; active only when both keys are set |
 | `DIGEST_DAY`, `DIGEST_HOUR` | `0` (Sunday), `18` | Weekly digest schedule; `-1` = off; can be changed in the admin area |
 | `CAST_ENABLED` | `true` | Chromecast and AirPlay (needs an https `PUBLIC_URL`); `false` with Plan B |
+| `CAST_RECEIVER_APP_ID` | – | App ID of FriendFlix's own Cast receiver (`/cast-receiver/`, registered in the Google Cast SDK Developer Console): next-up countdown, "Still there?" and progress on the TV; empty = Google's Default Media Receiver ([docs/cast-receiver.md](docs/cast-receiver.md)) |
 | `POSTPLAY_ENABLED` | `true` | The post-play screen after a film or the last episode ("You're caught up", suggestions); `false` turns it off for everyone. See [docs/discovery.md](docs/discovery.md). Also editable in *Admin → Settings → Recommendations* (applies at once, no restart); a value set in `.env` wins and locks the field there |
 | `DOWNLOADS_ENABLED` | `true` | Offline downloads; `false` with Plan B |
 | `DOWNLOADS_PATH`, `PREVIEWS_PATH` | named volumes `downloads`, `previews` | Host folder (absolute path, writable by uid 1000) for prepared downloads and preview clips |
@@ -258,8 +272,8 @@ A new install needs none of this: the setup wizard and *Admin → Settings* stor
 | `METRICS_TOKEN` | empty | Bearer token for `/metrics` |
 | `PORTAINER_WEBHOOK_URL` or `PORTAINER_URL` + `PORTAINER_API_KEY` + `PORTAINER_STACK_ID` | empty | One-click updates from *Admin → Update* (`PORTAINER_ENDPOINT_ID` default `1`) |
 | `UPDATE_REPO`, `GITHUB_TOKEN` | `LetsManu/friendflix`, empty | Version check; the token only raises the GitHub rate limit |
-| `UPDATE_CHANNEL`, `UPDATE_VERSION` | `stable`, empty | Set with the *Stable / Nightly / Fixed version* switch under *Admin → Update* (stored in the database, no `.env` needed): what the update check compares with and, with the updater, what it installs. Without the updater it never switches images; `FF_TAG` does |
-| `UPDATER_URL`, `UPDATER_COMPOSE_FILES` | `http://updater:7070`, `compose.prod.yaml` | Opt-in updater (profile `updater`, [setup guide](docs/setup.md#updater-optional)): its internal address (env only) and the stack's compose files |
+| `UPDATE_CHANNEL`, `UPDATE_VERSION` | `stable`, empty | Set with the *Stable / Nightly / Fixed version* switch under *Admin → Update* (stored in the database, no `.env` needed): what the update check compares with and, with the updater, what it installs. Without the updater (`compose.no-updater.yaml`) it never switches images; `FF_TAG` does |
+| `UPDATER_URL`, `UPDATER_COMPOSE_FILES`, `UPDATER_PROJECT_DIR` | `http://updater:7070`, empty (automatic), the current directory | The updater (on by default since 2.0, [setup guide](docs/setup.md#updater)): its internal address (env only); the compose files it recreates the stack with (empty = the files the stack was last started with, so `compose.plex.yaml` and other overrides stay in; set it only to force a list, which must then name every file); the stack directory's absolute path, only when compose runs without `PWD` (e.g. `sudo`) |
 | `AUTO_UPDATE`, `AUTO_UPDATE_TIME` | `off`, `04:00` | Automatic updates through the updater: `nightly-window` runs the update job once a night from this time (server time zone); set in *Admin → Update* |
 | `GRAFANA_ADMIN_PASSWORD`, `GRAFANA_PORT`, `PROMETHEUS_RETENTION` | – (required for the monitoring stack), `3083`, `30d` | Optional Prometheus + Grafana (`compose.monitoring.yaml`); no default password |
 | `BACKUP_PATH`, `BACKUP_HOUR`, `BACKUP_KEEP_DAYS`, `BACKUP_RUN_ON_START` | `./backups`, `3`, `14`, `false` | Backup sidecar (profile `backup`) |
@@ -322,7 +336,7 @@ flowchart TB
 - Only the proxy is public. `web`, `backend` and `gateway` are published on `127.0.0.1` only; Jellyfin and the request service have no ports at all and live on the internal `media` network, Postgres and Redis on the internal `db` network.
 - All video data (playlists, segments, direct play, images, subtitles, downloads, Chromecast) flows through the gateway: no buffering, HTTP range, Jellyfin tokens only server-side, path allowlist, fixed upstream, bitrate cap per role.
 - Containers run non-root with a read-only root filesystem, `cap_drop: ALL` and `no-new-privileges`. Strict CSP, CSRF tokens, rate limits, audit log.
-- The media server sits behind a neutral interface (`MediaServer` in the backend, an `Upstream` adapter in the gateway, chosen with `MEDIA_SERVER`). Jellyfin is the only implementation here; another server is added mostly with new files – containers, networks, the "press play" walk-through and the seam are in [docs/architecture.md](docs/architecture.md).
+- The media server sits behind a neutral interface (`MediaServer` in the backend, an `Upstream` adapter in the gateway, chosen with `MEDIA_SERVER`). Jellyfin (`backend/src/jellyfin`, `gateway/src/upstream/jellyfin.ts`) and Plex (`backend/src/plex`, `gateway/src/upstream/plex.ts`) are the two implementations, picked at runtime from the same images; nothing outside their folders imports them except the seam index – containers, networks, the "press play" walk-through and the seam are in [docs/architecture.md](docs/architecture.md), the Plex specifics in [docs/plex.md](docs/plex.md).
 - Alternative "Plan B": nginx serves `/media/` itself via `auth_request` – [docs/operations.md](docs/operations.md).
 
 ### Operations
@@ -364,11 +378,16 @@ npm run e2e                                     # Playwright: builds the web app
 | Architecture: containers and networks, press play, media server seam | [docs/architecture.md](docs/architecture.md) |
 | Authentik: installation, provider, flows, invitations | [docs/authentik.md](docs/authentik.md) |
 | Jellyfin, request service, ntfy/Discord, web push | [docs/integrations.md](docs/integrations.md) |
+| Plex Media Server instead of Jellyfin, migration from friendflix-plex | [docs/plex.md](docs/plex.md) |
 | Backups, restore, firewall, updates, image verification, branch protection, Plan B | [docs/operations.md](docs/operations.md) |
 | Monitoring, metrics, Grafana dashboard, Server-Timing, browser errors | [docs/monitoring.md](docs/monitoring.md) |
 | Offline downloads (platforms, storage, limits) | [docs/downloads.md](docs/downloads.md) |
 | TV mode and phone remote | [docs/tv-mode.md](docs/tv-mode.md) |
 | Chromecast and AirPlay | [docs/cast.md](docs/cast.md) |
+| Android app: install, settings, offline, notifications, signing and Google Play | [docs/android.md](docs/android.md) |
+| Windows app: install, player keys, updates, troubleshooting, update signing | [docs/windows.md](docs/windows.md) |
+| Samsung TV app: developer mode, certificate, install script, probe | [docs/tizen.md](docs/tizen.md) |
+| LG TV app: Developer Mode, install script, remote keys, test app | [docs/webos.md](docs/webos.md) |
 | Search and discovery API, labels, leaving soon, quality, kids rules | [docs/discovery.md](docs/discovery.md) |
 | Themed lists, calm mode, sound in the player, phone shortcuts and badge | [docs/personal.md](docs/personal.md) |
 | UI kit and admin shell | [docs/ui-kit.md](docs/ui-kit.md) |
@@ -382,7 +401,7 @@ npm run e2e                                     # Playwright: builds the web app
 - Skip intro needs Jellyfin ≥ 10.10 with media segments (e.g. from the Intro Skipper plugin).
 - Jellyfin, request service and Authentik APIs differ between versions – after upgrades see [docs/operations.md](docs/operations.md) and [docs/integrations.md](docs/integrations.md).
 - Optional: a request service for wishes (bundled as the `requests` container; upstream project: see its `image:` line in [compose.prod.yaml](compose.prod.yaml)) – see [docs/integrations.md](docs/integrations.md). With Jellyfin, profiles are hidden Jellyfin users: turn off the automatic Jellyfin user import in the request service so they do not show up. A media server without Jellyfin accounts gets one local request-service user per FriendFlix account instead.
-- Only Jellyfin is implemented in this repository. Cast & info, scenes and the picture-quality chips need the media server to report credits, chapters and stream details; where it cannot, the UI hides the feature (`capabilities` in `/api/me`).
+- Jellyfin and Plex are implemented (Plex: feature parity table in [docs/plex.md](docs/plex.md)). Cast & info, scenes and the picture-quality chips need the media server to report credits, chapters and stream details; where it cannot, the UI hides the feature (`capabilities` in `/api/me`).
 - "Leaving soon" is an announcement set by an admin; FriendFlix never deletes media. The "Season finale" label is a heuristic (last episode of the newest season is new, the series is no longer continuing). The picture-quality filter reads a background index (`BACKGROUND_JOBS=true`) that fills a little after the first start.
 - Clear voices and Night mode use the browser's audio processing: not available on every device and not while casting. PWA home-screen widgets exist only on Windows 11; shortcuts and the icon badge (not on every iOS version) are what the phone gets instead.
 - With Intel QSV/VAAPI, switch off "VPP Tone mapping" in Jellyfin if the driver has no HDR support; otherwise 4K HDR titles fail.

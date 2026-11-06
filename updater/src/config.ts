@@ -8,7 +8,10 @@ export interface UpdaterConfig {
   port: number;
   secret: string;
   projectDir: string;
+  /** UPDATER_COMPOSE_FILES, or compose.prod.yaml when it is unset */
   composeFiles: string[];
+  /** UPDATER_COMPOSE_FILES unset: use the files the stack was last started with (docker.ts refreshFiles), composeFiles as the fallback */
+  composeFilesAuto: boolean;
   projectName?: string;
   repo: string;
   dockerHost: string;
@@ -18,7 +21,8 @@ export interface UpdaterConfig {
   gitSha: string | null;
 }
 
-const FILE_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,99}\.ya?ml$/;
+/** a compose file name inside the project directory (no path) */
+export const FILE_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,99}\.ya?ml$/;
 const PROJECT_RE = /^[a-z0-9][a-z0-9_-]{0,62}$/;
 const DOCKER_HOST_RE = /^tcp:\/\/[a-z0-9][a-z0-9.-]{0,62}:[0-9]{2,5}$/;
 
@@ -42,7 +46,8 @@ export function loadConfig(env: NodeJS.ProcessEnv): UpdaterConfig {
   const rawDir = env.UPDATER_PROJECT_DIR || '/project';
   const projectDir = normalize(rawDir).replace(/(.)\/$/, '$1');
   if (!isAbsolute(rawDir) || !/^\/[A-Za-z0-9._/ -]{0,250}$/.test(rawDir) || rawDir.split('/').includes('..')) throw new Error('UPDATER_PROJECT_DIR must be an absolute path');
-  const composeFiles = (env.UPDATER_COMPOSE_FILES || 'compose.prod.yaml').split(',').map((s) => s.trim()).filter(Boolean);
+  const composeFilesAuto = !env.UPDATER_COMPOSE_FILES?.trim();
+  const composeFiles = (env.UPDATER_COMPOSE_FILES?.trim() || 'compose.prod.yaml').split(',').map((s) => s.trim()).filter(Boolean);
   if (!composeFiles.length || composeFiles.length > 8 || !composeFiles.every((f) => FILE_RE.test(f))) throw new Error('UPDATER_COMPOSE_FILES: comma-separated file names in the project directory');
   const projectName = env.COMPOSE_PROJECT_NAME || undefined;
   if (projectName && !PROJECT_RE.test(projectName)) throw new Error('COMPOSE_PROJECT_NAME is not a valid project name');
@@ -56,7 +61,7 @@ export function loadConfig(env: NodeJS.ProcessEnv): UpdaterConfig {
   if (!/^http:\/\/[a-z0-9][a-z0-9.-]{0,62}(:[0-9]{2,5})?\/[a-z]{0,20}$/.test(backendHealthUrl)) throw new Error('UPDATER_BACKEND_HEALTH_URL must be an internal http URL');
   const sha = env.GIT_SHA && /^[0-9a-f]{40}$/.test(env.GIT_SHA) ? env.GIT_SHA : null;
   return {
-    port, secret: secret(env), projectDir, composeFiles, projectName, repo, dockerHost,
+    port, secret: secret(env), projectDir, composeFiles, composeFilesAuto, projectName, repo, dockerHost,
     stateDir: env.UPDATER_STATE_DIR || '/state', backendHealthUrl,
     version: env.APP_VERSION && /^[0-9]+\.[0-9]+\.[0-9]+$/.test(env.APP_VERSION) ? env.APP_VERSION : null, gitSha: sha,
   };

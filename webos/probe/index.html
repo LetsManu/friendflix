@@ -1,0 +1,37 @@
+<!doctype html>
+<!-- SPDX-FileCopyrightText: 2026 Manuel Weißböck -->
+<!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=1920, height=1080, initial-scale=1">
+  <title>FriendFlix Test</title>
+  <link rel="stylesheet" href="setup.css">
+</head>
+<body data-probe="1">
+  <main>
+    <h1>FriendFlix Test</h1>
+    <section id="checking" hidden>
+      <p id="checking-text">Opening your server</p>
+    </section>
+    <section id="failure" class="card" hidden>
+      <p id="failure-text" role="alert" class="error"></p>
+      <div class="actions">
+        <button id="retry" type="button" tabindex="0">Retry</button>
+        <button id="change" type="button" tabindex="0">Change server</button>
+      </div>
+    </section>
+    <form id="form" novalidate autocomplete="off" hidden>
+      <label for="server">Server address</label>
+      <input id="server" name="server" type="url" inputmode="url" autocapitalize="off" autocorrect="off" spellcheck="false"
+             placeholder="friend.example.com" tabindex="0">
+      <p id="error" role="alert" class="error"></p>
+      <button id="connect" type="submit" tabindex="0">Connect</button>
+      <p class="hint">Press OK on the field to type with the TV keyboard. Up and Down move between the field and Connect.</p>
+    </form>
+  </main>
+  <noscript><p class="error">FriendFlix needs JavaScript.</p></noscript>
+  <script src="setup-core.js"></script>
+  <script src="setup.js"></script>
+</body>
+</html>

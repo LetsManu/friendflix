@@ -233,7 +233,7 @@ const pl: Translation<typeof de> = {
       updateLead: 'Aby pobrać aktualizację, sprawdź tę linię w pliku .env stosu i uruchom polecenie:',
       envLabel: 'Linia w .env',
       cmdLabel: 'Polecenie',
-      note: 'Zmiana działa dopiero po tym poleceniu: FriendFlix nigdy sam nie dotyka Dockera.',
+      note: 'Zmiana działa dopiero po tym poleceniu: bez aktualizatora FriendFlix nigdy sam nie dotyka Dockera (compose.no-updater.yaml pozostawia go wyłączonym).',
       pinned: 'Stała wersja',
       pinnedHint: 'Stała wersja: zostaje dokładnie na tym wydaniu, dopóki jej nie zmienisz.',
       versionLabel: 'Wersja (X.Y.Z)',
@@ -255,6 +255,7 @@ const pl: Translation<typeof de> = {
       advanced: 'Sam aktualizator',
       confirm: {
         update: 'Zaktualizować teraz do {tag}? FriendFlix na chwilę się zrestartuje, trwające odtwarzania zostaną przerwane.',
+        updatePortainer: 'Wdrożyć teraz stos ponownie przez Portainer? FriendFlix na chwilę się zrestartuje, trwające odtwarzania zostaną przerwane.',
         rollback: 'Wrócić do {tag}? FriendFlix na chwilę się zrestartuje.',
         'self-update': 'Zaktualizować teraz kontener aktualizatora?',
       },
@@ -291,6 +292,9 @@ const pl: Translation<typeof de> = {
         channel_sync_failed: 'Aktualizator nie przyjął kanału.',
         tooSoon: 'Za dużo uruchomień. Odczekaj dwie minuty.',
         generic: 'Aktualizator odrzucił zadanie.',
+        foreign_stack: 'Tym stosem zarządza Portainer (lub inne narzędzie), dlatego aktualizator go nie odtwarza. Ustaw webhook Portainera w Admin → Ustawienia → Aktualizacje albo zaktualizuj stos w Portainerze.',
+        portainer: 'Portainer odrzucił ponowne wdrożenie. Sprawdź webhook lub API w Admin → Ustawienia → Aktualizacje.',
+        portainer_unreachable: 'Portainer jest nieosiągalny.',
       },
       failReason: {
         verify_failed: 'sprawdzanie podpisów nie powiodło się, nic nie zrestartowano',
@@ -301,13 +305,21 @@ const pl: Translation<typeof de> = {
         interrupted: 'przerwane przez restart',
         self_update_timeout: 'aktualizator nie został zastąpiony',
         unexpected_image: 'nieoczekiwana nazwa obrazu',
+        media_server_mismatch: 'pliki compose uruchomiłyby inny serwer multimediów niż obecnie działający (UPDATER_COMPOSE_FILES bez compose.plex.yaml?), nic nie zostało zrestartowane',
         compose_config: 'nieczytelna konfiguracja compose',
+        foreign_stack: 'stosem zarządza Portainer (lub inne narzędzie), aktualizator go nie odtwarza; nic nie zostało zmienione',
+        config_mismatch: 'pliki compose i .env opublikowałyby inne porty lub sieci niż działające kontenery (zmienne ustawione gdzie indziej, np. BIND_ADDR?), nic nie zostało zrestartowane',
         unknown: 'nieznany błąd',
+      },
+      foreign: {
+        portainer: 'Tym stosem zarządza Portainer. „Aktualizuj teraz” wdraża go ponownie przez Portainer (webhook lub API z Admin → Ustawienia → Aktualizacje). Aktualizator nigdy sam nie odtwarza stosu Portainera, dlatego powrót do poprzedniej wersji nie jest tu dostępny.',
+        manual: 'Tym stosem zarządza Portainer (lub inne narzędzie), dlatego aktualizator go nie aktualizuje: odtworzenie go stąd usunęłoby własne zmienne stosu (np. BIND_ADDR). Ustaw webhook Portainera w Admin → Ustawienia → Aktualizacje albo zaktualizuj stos w Portainerze.',
+        started: 'Portainer ponownie wdraża stos. FriendFlix za chwilę uruchomi się ponownie.',
+        workdir: 'Ten stos uruchomiono z {dir}, ale aktualizator widzi {projectDir}, dlatego go nie odtwarza (brakowałoby mu pliku .env z tego katalogu). Wpisz UPDATER_PROJECT_DIR={dir} do .env w {dir} i uruchom tam raz docker compose up -d.',
       },
       unauthorized: 'Aktualizator odpowiada, ale odrzuca podpis: INTERNAL_SECRET różni się między backendem a aktualizatorem.',
       invalid: 'Aktualizator wysłał nieczytelną odpowiedź.',
       log: 'Dziennik',
-      reauthBack: 'Zalogowano ponownie. Uruchom zadanie jeszcze raz.',
       auto: {
         title: 'Automatyczne aktualizacje',
         label: 'Automatyczne aktualizacje',
@@ -534,6 +546,7 @@ const pl: Translation<typeof de> = {
       update: '{actor} uruchomił(a) aktualizację',
       updater_start: '{actor} uruchomił(a) zadanie aktualizatora',
       updater_result: 'Zadanie aktualizatora zakończone',
+      update_result: 'Portainer odpowiedział na ponowne wdrożenie',
     },
     session: {
       revoke_others: '{actor} wylogował(a) się na innych urządzeniach',
@@ -593,6 +606,9 @@ const pl: Translation<typeof de> = {
     },
     approvals: {
       pending_approvals: { one: '{n} logowanie czeka na zatwierdzenie', few: '{n} logowania czekają na zatwierdzenie', many: '{n} logowań czeka na zatwierdzenie', other: '{n} logowania czeka na zatwierdzenie' },
+    },
+    config: {
+      removed_env: { one: '{n} stara nazwa zmiennej w .env jest od wersji 2.0 ignorowana: usługa próśb używa teraz REQUESTS_URL i REQUESTS_API_KEY', few: '{n} stare nazwy zmiennych w .env są od wersji 2.0 ignorowane: usługa próśb używa teraz REQUESTS_URL i REQUESTS_API_KEY', many: '{n} starych nazw zmiennych w .env jest od wersji 2.0 ignorowanych: usługa próśb używa teraz REQUESTS_URL i REQUESTS_API_KEY', other: '{n} starej nazwy zmiennej w .env jest od wersji 2.0 ignorowane: usługa próśb używa teraz REQUESTS_URL i REQUESTS_API_KEY' },
     },
   },
 };

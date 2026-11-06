@@ -89,27 +89,33 @@ describe('source keys', () => {
     }
   });
 
-  it('PUT and DELETE need a recent re-authentication: 401 reauth_required, nothing changes', async () => {
+  it('PUT and DELETE need an admin session only (no re-authentication); both stay audited', async () => {
     const stale = await env.login();
     await reauth(env, stale, Date.now() - 601_000);
-    await call(env, admin, 'PUT', '/api/admin/sources/tmdb', { key: KEY });
     await env.pool.query('delete from audit_log');
     try {
       const put = await call(env, stale, 'PUT', '/api/admin/sources/tmdb', { key: 'another-key-0000' });
-      expect(put.statusCode).toBe(401);
-      expect(put.json()).toEqual({ error: 'reauth_required' });
+      expect(put.statusCode).toBe(200);
+      expect(await getSourceKey(env.ctx, 'tmdb')).toEqual({ key: 'another-key-0000', from: 'db' });
       const del = await call(env, stale, 'DELETE', '/api/admin/sources/tmdb');
-      expect(del.statusCode).toBe(401);
-      expect(del.json()).toEqual({ error: 'reauth_required' });
-      expect(await getSourceKey(env.ctx, 'tmdb')).toEqual({ key: KEY, from: 'db' });
-      expect((await env.pool.query("select 1 from audit_log where action like 'source.%'")).rowCount).toBe(0);
-      // reading and testing need no fresh sign-in
+      expect(del.statusCode).toBe(200);
+      expect(await getSourceKey(env.ctx, 'tmdb')).toBeNull();
+      expect((await env.pool.query("select action from audit_log where action like 'source.%' order by at, id")).rows.map((r) => r.action)).toEqual(['source.set', 'source.remove']);
       expect((await call(env, stale, 'GET', '/api/admin/sources/tmdb')).statusCode).toBe(200);
       expect((await call(env, stale, 'POST', '/api/admin/sources/tmdb/test', {})).statusCode).toBe(200);
-      await reauth(env, stale);
-      expect((await call(env, stale, 'DELETE', '/api/admin/sources/tmdb')).statusCode).toBe(200);
     } finally {
       await call(env, admin, 'DELETE', '/api/admin/sources/tmdb');
+    }
+  });
+
+  it('a non-admin is still refused', async () => {
+    await env.pool.query("insert into users(id, authentik_sub, email, name, role, jellyfin_user_id, jellyfin_username, jellyfin_pw_enc) values (gen_random_uuid(), 'sub-src-friend', 'f@example.com', 'F', 'friend', $1, 'F', 'x') on conflict do nothing", ['f'.repeat(32)]);
+    const friend = await env.login({ sub: 'sub-src-friend', email: 'f@example.com', name: 'F', groups: [] });
+    try {
+      expect((await call(env, friend, 'PUT', '/api/admin/sources/tmdb', { key: 'another-key-0000' })).statusCode).toBe(403);
+      expect((await call(env, friend, 'DELETE', '/api/admin/sources/tmdb')).statusCode).toBe(403);
+    } finally {
+      env.claims.current = { sub: 'sub-admin', email: 'admin@example.com', name: 'Admin', groups: ['friendflix-admins'] };
     }
   });
 

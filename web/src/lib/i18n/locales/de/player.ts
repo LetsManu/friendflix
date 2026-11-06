@@ -278,7 +278,7 @@ export default {
     linkWarn: 'Dieser Code kam über einen Link. Koppel nur, wenn <b>{code}</b> genau so jetzt auf deinem Fernseher steht – sonst könnte jemand anderes Zugriff auf dein Konto bekommen.',
     codeLabel: 'Code vom Fernseher',
     pairButton: 'Koppeln',
-    pairNote: 'Der Fernseher bleibt 30 Tage angemeldet (7 Tage ohne Nutzung) und erscheint unter „Geräte“ – dort kannst du ihn jederzeit sperren.',
+    pairNote: 'Der Fernseher bleibt 90 Tage angemeldet und erscheint unter „Geräte“ – dort kannst du ihn jederzeit sperren.',
   },
   /** TV pairing screen (/tv) */
   tv: {
