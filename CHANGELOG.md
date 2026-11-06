@@ -4,6 +4,8 @@ All notable changes, grouped by what you notice. Each release has its own sectio
 
 ## [Unreleased]
 
+## [2.4.2] – Brezel – 2026-11-06
+
 ### TV player
 - **Works with remotes that have no media or colour keys** (the LG Magic Remote of 2025): OK plays and pauses while the control bar is hidden, ◀/▶ jump 10 s and go faster when held, ▼ opens the bar, the scroll wheel over the picture jumps 10 s per notch and Channel ▲ starts the next episode.
 - **OK no longer presses a hidden button.** The control bar lets go of its selected button when it hides, so OK after the bar disappeared pauses instead of, say, toggling subtitles again.
