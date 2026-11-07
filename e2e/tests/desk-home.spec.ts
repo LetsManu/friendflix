@@ -154,3 +154,134 @@ test.describe('desktop billboard', () => {
     });
   });
 });
+
+/** Desktop rows (spec desktop browse §2): paged with arrows and a spring, page dots, rank numerals, today's order. */
+test.describe('desktop rows', () => {
+  /** "Weil du „Inkwell“ gesehen hast": 11 titles, 5 per page at 1280 px -> 3 pages */
+  const because = (page: Page) => page.locator('section.row', { has: page.getByRole('heading', { name: /Weil du/ }) });
+
+  test.describe('motion', () => {
+    test.use({ reducedMotion: 'no-preference' });
+
+    test('row hover shows arrows; next moves one page with a transform, dots follow; prev hidden on the first page', async ({ page }) => {
+      await page.goto('/');
+      const row = because(page);
+      await row.scrollIntoViewIfNeeded();
+      const prev = row.locator('button.pg.prev'), next = row.locator('button.pg.next');
+      await expect(next).toHaveAttribute('aria-label', 'Nächste Seite');
+      await expect(prev).toHaveAttribute('aria-label', 'Vorherige Seite');
+      // first page: no way back; both arrows wait for the pointer
+      await expect(prev).toBeHidden();
+      expect(await next.evaluate((e) => getComputedStyle(e).opacity)).toBe('0');
+      await row.locator('.track').hover();
+      await expect.poll(() => next.evaluate((e) => getComputedStyle(e).opacity)).toBe('1');
+      // 56 px edge areas with a gradient, on the row's right edge
+      const nb = (await next.boundingBox())!;
+      expect(Math.round(nb.width)).toBe(56);
+      expect(Math.round(nb.x + nb.width)).toBe(1280);
+      expect(await next.evaluate((e) => getComputedStyle(e).backgroundImage)).toContain('linear-gradient');
+      // dots: 3 pages, the first one current
+      const dots = row.locator('.pgdots li');
+      await expect(dots).toHaveCount(3);
+      await expect(dots.nth(0)).toHaveAttribute('aria-current', 'true');
+      // the scroll jumps one page at once; the strip springs back from where it was seen (transform, not scroll animation)
+      const track = row.locator('.track');
+      const w = await track.evaluate((e) => e.clientWidth);
+      const moved = await row.evaluate((sec) => {
+        const strip = sec.querySelector<HTMLElement>('.strip')!;
+        sec.querySelector<HTMLButtonElement>('button.pg.next')!.click();
+        return getComputedStyle(strip).transform;
+      });
+      expect(moved).not.toBe('none');
+      const x = await track.evaluate((e) => e.scrollLeft);
+      const pad = parseFloat(await track.evaluate((e) => getComputedStyle(e).paddingLeft));
+      expect(Math.abs(x - (w - 2 * pad) - parseFloat(await track.evaluate((e) => getComputedStyle(e.querySelector('.strip')!).columnGap)))).toBeLessThanOrEqual(1);
+      await expect(dots.nth(1)).toHaveAttribute('aria-current', 'true');
+      await expect(dots.nth(0)).not.toHaveAttribute('aria-current', 'true');
+      await expect(prev).toBeVisible();
+      // the spring settles back to no transform
+      await expect.poll(() => row.locator('.strip').evaluate((e) => getComputedStyle(e).transform)).toBe('none');
+      // last page: next hides, the last dot is current
+      await next.click();
+      await expect(dots.nth(2)).toHaveAttribute('aria-current', 'true');
+      await expect(next).toBeHidden();
+      // the pressed arrow went away: the keyboard focus moved to the other one; Enter goes back one viewport
+      await expect(prev).toBeFocused();
+      const end = await track.evaluate((e) => e.scrollLeft);
+      await page.keyboard.press('Enter');
+      await expect.poll(() => track.evaluate((e) => e.scrollLeft)).toBeCloseTo(end - (w - 2 * pad) - 8, 0);
+      await expect(next).toBeVisible();
+      await expect(prev).toBeVisible();
+    });
+  });
+
+  test('arrows are reachable with Tab and show on focus; reduced motion jumps without a transform', async ({ page }) => {
+    await page.goto('/');
+    const row = because(page);
+    await row.scrollIntoViewIfNeeded();
+    const next = row.locator('button.pg.next');
+    // the arrows are in the Tab order: Shift+Tab from the next row's title link lands on this row's next arrow
+    // (tabbing forwards through the cards scrolls the row to its end, where the next arrow is gone)
+    await page.getByRole('link', { name: /Neu hinzugefügt/ }).focus();
+    await page.keyboard.press('Shift+Tab');
+    await expect(next).toBeFocused();
+    await page.mouse.move(640, 5);
+    await expect.poll(() => next.evaluate((e) => getComputedStyle(e).opacity)).toBe('1');
+    const moved = await row.evaluate((sec) => {
+      sec.querySelector<HTMLButtonElement>('button.pg.next')!.click();
+      return getComputedStyle(sec.querySelector('.strip')!).transform;
+    });
+    expect(moved).toBe('none');
+    await expect(row.locator('.pgdots li').nth(1)).toHaveAttribute('aria-current', 'true');
+  });
+
+  test('rows start at the logo: title and first card share its left edge, nothing covers the first row title', async ({ page }) => {
+    await page.goto('/');
+    const logo = (await page.locator('header a.logo, a.logo').first().boundingBox())!;
+    const row = page.locator('.rows section.row').first();
+    await expect(row.locator('article.card').first()).toBeVisible();
+    const h2 = (await row.locator('h2').boundingBox())!;
+    const card = (await row.locator('.slot').first().boundingBox())!;
+    expect(Math.abs(h2.x - logo.x)).toBeLessThanOrEqual(1);
+    expect(Math.abs(card.x - logo.x)).toBeLessThanOrEqual(1);
+    // the element at the title's centre is the title itself (the billboard overlap stays underneath)
+    const top = await page.evaluate(([x, y]) => { const e = document.elementFromPoint(x!, y!); return !!e?.closest('.rows section.row h2'); }, [h2.x + 10, h2.y + h2.height / 2]);
+    expect(top).toBe(true);
+    // 20 px / 700 row titles
+    expect(await row.locator('h2').evaluate((e) => [getComputedStyle(e).fontSize, getComputedStyle(e).fontWeight])).toEqual(['20px', '700']);
+  });
+
+  test('ranked rows show large outlined rank numbers on desktop', async ({ page }) => {
+    await page.goto('/');
+    const row = page.locator('section.row.rk').first();
+    await row.scrollIntoViewIfNeeded();
+    const rank = row.locator('.rank').first();
+    await expect(rank).toHaveText('1');
+    await expect(rank).toHaveAttribute('aria-label', 'Platz 1');
+    const st = await rank.evaluate((e) => { const c = getComputedStyle(e); return { size: parseFloat(c.fontSize), stroke: parseFloat(c.webkitTextStroke || c.getPropertyValue('-webkit-text-stroke-width')), fill: c.webkitTextFillColor || c.color }; });
+    expect(st.size).toBeGreaterThanOrEqual(120);
+    expect(st.stroke).toBeGreaterThan(0);
+    expect(st.fill).toBe('rgb(16, 20, 24)'); // the page colour inside the outline
+    // the numeral sits beside the poster (left of it), not on top of it as a chip
+    const r = (await rank.boundingBox())!, c = (await row.locator('article.card').first().boundingBox())!;
+    expect(r.x).toBeLessThan(c.x);
+    expect(r.height).toBeGreaterThan(c.height * .6);
+  });
+
+  test('rows keep today\'s order and reco captions', async ({ page }) => {
+    // engine v2: the top pick carries its reason (the row caption)
+    await page.route('**/api/library/because', (r) => r.fulfill({ json: { because: { name: 'Inkwell' }, items: items.slice(1, 12).map((i, n) => (n ? i : { ...i, reason: { seed: { id: MOVIE.id, name: MOVIE.name }, traits: [] } })) } }));
+    await page.goto('/');
+    await expect(page.locator('.rows section.row article.card').first()).toBeVisible();
+    await expect.poll(() => page.locator('.rows > section.row h2').allTextContents()).toEqual(ORDER);
+    // the reco row keeps its caption (ReasonCaption) and its titles in the engine's order
+    const row = because(page);
+    await expect(row.locator('.slot article.card').first()).toBeVisible();
+    await expect(row.getByTestId('reason-caption')).toContainText('Inkwell');
+    await row.hover();
+    await expect(row.locator('.slot')).toHaveCount(11);
+    expect(await row.locator('.slot').evaluateAll((s) => s.map((e) => e.querySelector('a[href^="/item/"]')?.getAttribute('href')))).toEqual(items.slice(1, 12).map((i) => `/item/${i.id}`));
+  });
+});
+/** today's home rows with the default mocks (linked titles carry the "show all" hint) */
+const ORDER = ['Weiterschauen', 'Nächste Folge', 'Von Freunden empfohlen', 'Freunde haben bewertet', 'Weil du „Inkwell“ gesehen hast', 'Neu hinzugefügtAlle anzeigen', 'Diese Woche bei uns', 'MerklisteAlle anzeigen', 'Top 10 nach Bewertung'];
