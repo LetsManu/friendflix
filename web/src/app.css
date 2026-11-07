@@ -121,9 +121,28 @@ html.tv { --nav-h: 76px; --pad-x: 3rem; }
 @media (min-width: 1700px) { html.tv { font-size: 125%; --nav-h: 84px; --pad-x: 4.2rem; } }
 /* the pointer (LG Magic Remote) stays usable; it hides itself after a few idle seconds */
 html.tv.idle-cursor, html.tv.idle-cursor * { cursor: none !important; }
-html.tv :focus-visible { outline: 4px solid #fff; outline-offset: 4px; box-shadow: 0 0 0 9px rgba(255, 79, 109, .6); border-radius: 8px; }
-html.tv .card:focus-within { transform: scale(1.1) !important; z-index: 6; transition-delay: 0s !important; }
-html.tv .card .thumb:focus-visible { box-shadow: 0 0 0 5px #fff, 0 12px 34px rgba(0, 0, 0, .7); outline: none; border-radius: var(--radius); }
+html.tv {
+  --bg: #000; --tv-ring: #fff;
+  --tv-radius: 6px; --tv-ease: cubic-bezier(.2, .8, .2, 1); --tv-t: 180ms; --tv-fade: 280ms; --tv-safe-x: 5vw; --tv-safe-y: 5vh;
+  /* spec 5.1: content starts 56 px right of the 96 px rail; text, row titles and the first card share this edge */
+  --tv-gutter: 56px; --tv-left: calc(96px + var(--tv-gutter));
+  --tv-white-88: rgba(255, 255, 255, .88); --tv-white-78: rgba(255, 255, 255, .78); --tv-sep: rgba(255, 255, 255, .4);
+  --tv-btn-rest: rgba(255, 255, 255, .14); --tv-card-ring: 0 0 0 3px #fff, 0 18px 40px rgba(0, 0, 0, .55);
+  /* spec 5.2 motion tokens: a spring (slight overshoot, settles in ~420 ms; use with --tv-d-spring), emphasised in/out curves, durations (exits ~70 %) */
+  --tv-spring: cubic-bezier(.2, .9, .25, 1.15); --tv-d-spring: 420ms;
+  --tv-emph-out: cubic-bezier(.05, .7, .1, 1); --tv-emph-in: cubic-bezier(.3, 0, .8, .15);
+  --tv-d-xs: 120ms; --tv-d-s: 200ms; --tv-d-m: 320ms; --tv-d-l: 480ms;
+}
+@supports (transition-timing-function: linear(0, 1)) {
+  html.tv { --tv-spring: linear(0, .037, .13, .255, .392, .529, .656, .767, .859, .932, .987, 1.025, 1.05, 1.063, 1.068, 1.066, 1.061, 1.053, 1.043, 1.034, 1.025, 1.017, 1.011, 1.006, 1.002, .999, .997, .996, 1); }
+}
+html.tv :focus-visible { outline: 3px solid var(--tv-ring); outline-offset: 3px; box-shadow: none; }
+html.tv .card:focus-within { transform: scale(1.08) !important; z-index: 6; transition-delay: 0s !important; }
+html.tv .card .thumb:focus-visible { outline: none; border-radius: var(--tv-radius); } /* the ring is a layer of its own (Card.svelte) */
+/* TV: no backdrop-filter and no decorative blur (animate only transform/opacity). Spoiler blurs (.spoil, comment .blur) stay: they hide content. */
+html.tv *, html.tv *::before, html.tv *::after { backdrop-filter: none !important; -webkit-backdrop-filter: none !important; }
+html.tv .blurbg, html.tv .rbg, html.tv img.bl { filter: none !important; }
+html.tv .thumb .blur, html.tv .media .blur { filter: brightness(.55) !important; }
 html.tv .pop, html.tv .arrow, html.tv .tabbar, html.tv .sheet:not(.tvsheet) { display: none !important; }
 html.tv .track { scroll-snap-type: none; }
 html.tv main { padding-bottom: 0; }
@@ -135,6 +154,34 @@ html.tv .nav .links { display: flex !important; } /* TV viewports can be narrow 
 html.tv input, html.tv select { min-height: 56px; font-size: 1.05rem; }
 html.tv .ring { width: 60px; min-height: 60px; height: 60px; }
 html.tv .drop a, html.tv .drop .plain { min-height: 56px; font-size: 1.05rem; }
+/* TV utilities (after the generic html.tv button rules so they win on <button>). Spec 5.1: sizes are 1080p px / 16 in rem, so they follow the html.tv root size. */
+/* buttons: translucent at rest; focus is the white fill + a slight scale, never a ring. .tv-btn2 is an alias of the same look. */
+html.tv .tv-btn, html.tv .tv-btn2 { display: inline-flex; align-items: center; justify-content: center; gap: .75rem; min-height: 3.5rem; padding: 0 1.75rem; border: 0; border-radius: var(--tv-radius); background: var(--tv-btn-rest); color: #fff; font: 600 1.375rem/1 'Inter Variable', Inter, system-ui, sans-serif; text-decoration: none; cursor: pointer; transition: transform var(--tv-d-s) var(--tv-emph-out); }
+html.tv .tv-btn:hover, html.tv .tv-btn2:hover { background: rgba(255, 255, 255, .22); }
+html.tv .tv-btn:focus-visible, html.tv .tv-btn2:focus-visible { outline: none; background: #fff; color: #000; transform: scale(1.05); transition: transform var(--tv-d-spring) var(--tv-spring); }
+/* type scale */
+html.tv .tv-display { margin: 0; font-size: 4rem; font-weight: 700; letter-spacing: -.02em; line-height: 1.05; display: -webkit-box; -webkit-line-clamp: 2; line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+html.tv .tv-title { font-weight: 700; letter-spacing: -.02em; }
+html.tv .tv-row-title { font-size: 1.625rem; font-weight: 600; letter-spacing: 0; line-height: 1.2; color: var(--tv-white-88); }
+html.tv .tv-meta { font-size: 1.375rem; font-weight: 500; font-variant-numeric: tabular-nums; color: var(--mut); }
+html.tv .tv-body { font-size: 1.5rem; font-weight: 400; line-height: 1.45; color: var(--tv-white-78); max-width: 46ch; }
+html.tv .tv-label { font-size: .9375rem; font-weight: 600; letter-spacing: .02em; }
+/* eyebrow: only rendered when it says something (new season, Top 10, recently added) */
+html.tv .tv-eyebrow { font-size: .9375rem; font-weight: 600; letter-spacing: .12em; text-transform: uppercase; color: var(--acc); }
+/* loading cards: a flat block with an opacity pulse, no shimmer sweep */
+html.tv .skeleton { background: #141414; border-radius: var(--tv-radius); animation: tv-pulse 1.2s ease-in-out infinite alternate; }
+html.tv .skeleton::after { display: none; }
+@keyframes tv-pulse { from { opacity: 1; } to { opacity: .55; } }
+@media (prefers-reduced-motion: reduce) {
+  /* no scaling, instant swaps */
+  html.tv .tv-btn:focus-visible, html.tv .tv-btn2:focus-visible, html.tv .card:focus-within, html.tv .rail a:focus-visible, html.tv .cr .cat:focus-visible { transform: none !important; }
+  html.tv .skeleton { animation: none; }
+}
+/* loading -> content (spec 5.2): artwork fades in once decoded (lib/tv/motion.ts decodeFade), never a pop-in */
+html.tv img.fade { opacity: 0; transition: opacity var(--tv-d-s) ease-out; }
+html.tv img.fade.in { opacity: 1; }
+/* the frame-budget guard tripped (lib/tv/motion.ts): no drift, no stagger, no spring overshoot; crossfades stay */
+html.tv.tv-motion-reduced { --tv-spring: var(--tv-emph-out); --tv-d-spring: var(--tv-d-s); }
 
 /* ---- Page transitions (View Transitions API, started from +layout.svelte; skipped for reduced motion, TV and /party) ---- */
 @media (prefers-reduced-motion: no-preference) {
@@ -151,9 +198,39 @@ html.tv .drop a, html.tv .drop .plain { min-height: 56px; font-size: 1.05rem; }
   html.ff-vt-play::view-transition-group(root) { animation-duration: 200ms; }
   html.ff-vt-play::view-transition-old(root), html.ff-vt-play::view-transition-new(root) { animation-duration: 200ms; animation-timing-function: ease; }
   html.ff-vt-in .ff-poster { view-transition-name: ff-play-art; }
+  html.ff-vt-plain .ff-poster { view-transition-name: none; } /* TV reduced set: a plain crossfade into the player, no morph */
   html.ff-vt-in header.nav, html.ff-vt-in nav.tabbar { visibility: hidden; }
   ::view-transition-group(ff-play-art) { animation-duration: 320ms; animation-timing-function: var(--ease); }
   ::view-transition-old(ff-play-art), ::view-transition-new(ff-play-art) { animation-duration: 320ms; height: 100%; object-fit: cover; overflow: clip; }
 }
 /* the player page fades itself in where no view transition runs (no API: 200 ms; reduced motion: instant cut plus 120 ms) */
 @keyframes ff-fade-in { from { opacity: 0; } }
+
+/* ---- TV page transitions (spec 5.2; +layout.svelte tvTransition, names in lib/tv/motion.ts). Calm / reduced motion never start one. ---- */
+@media (prefers-reduced-motion: no-preference) {
+  /* the rest of the screen crossfades in 200 ms */
+  html.ff-vt-tv::view-transition-group(root) { animation-duration: var(--tv-d-s); }
+  html.ff-vt-tv::view-transition-old(root) { animation-duration: calc(var(--tv-d-s) * .7); animation-timing-function: var(--tv-emph-in); }
+  html.ff-vt-tv::view-transition-new(root) { animation-duration: var(--tv-d-s); animation-timing-function: ease-out; }
+  /* card / tile artwork <-> detail backdrop (ff-tv-art, the detail hero box with its fades): a container morph over 480 ms, the
+     two pictures crossfade inside it, cover-fitted (no stretching) */
+  html.ff-vt-art [data-vt-art] { view-transition-name: ff-tv-art; }
+  html.ff-vt-tv::view-transition-group(ff-tv-art) { animation-duration: var(--tv-d-l); animation-timing-function: var(--tv-emph-out); }
+  html.ff-vt-tv::view-transition-old(ff-tv-art), html.ff-vt-tv::view-transition-new(ff-tv-art) { animation-duration: var(--tv-d-m); height: 100%; object-fit: cover; overflow: clip; }
+  /* rail page changes: the content crossfades with a 16 px slide in the direction of travel (--ff-vt-dx = +-16px) */
+  html.ff-vt-slide main { view-transition-name: ff-main; }
+  html.ff-vt-slide::view-transition-group(ff-main) { animation-duration: var(--tv-d-m); }
+  html.ff-vt-slide::view-transition-old(ff-main) { animation: ff-tv-slide-out calc(var(--tv-d-m) * .7) var(--tv-emph-in) both; }
+  html.ff-vt-slide::view-transition-new(ff-main) { animation: ff-tv-slide-in var(--tv-d-m) var(--tv-emph-out) both; }
+  /* detail page <-> sub-screen: the same slide, 24 px from the right (Back reverses: --ff-vt-dx = -24px); the backdrop box
+     ([data-vt-bd], the same 72 vw box on both pages) is a group of its own, so it stays put and only darkens / brightens */
+  html.ff-vt-sub main { view-transition-name: ff-main; }
+  html.ff-vt-sub main [data-vt-bd] { view-transition-name: ff-tv-bd; }
+  html.ff-vt-sub::view-transition-group(ff-main) { animation-duration: var(--tv-d-m); }
+  html.ff-vt-sub::view-transition-old(ff-main) { animation: ff-tv-slide-out calc(var(--tv-d-m) * .7) var(--tv-emph-in) both; }
+  html.ff-vt-sub::view-transition-new(ff-main) { animation: ff-tv-slide-in var(--tv-d-m) var(--tv-emph-out) both; }
+  html.ff-vt-sub::view-transition-group(ff-tv-bd) { animation-duration: var(--tv-d-m); animation-timing-function: var(--tv-emph-out); }
+  html.ff-vt-sub::view-transition-old(ff-tv-bd), html.ff-vt-sub::view-transition-new(ff-tv-bd) { animation-duration: var(--tv-d-m); height: 100%; object-fit: cover; overflow: clip; }
+  @keyframes ff-tv-slide-out { to { opacity: 0; transform: translate3d(calc(var(--ff-vt-dx, 16px) * -1), 0, 0); } }
+  @keyframes ff-tv-slide-in { from { opacity: 0; transform: translate3d(var(--ff-vt-dx, 16px), 0, 0); } }
+}

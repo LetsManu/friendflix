@@ -29,7 +29,11 @@
   import Intro from '#lib/Intro.svelte';
   import { loadIntroSettings, markSessionSeen, readSessionSeen, shouldPlayIntro } from '#lib/intro';
   import { mobile } from '#lib/viewport';
-  import { HEADER_TABS, isTabActive } from '#lib/menu';
+  import { HEADER_TABS, isRailTop, isTabActive, TV_RAIL } from '#lib/menu';
+  import { frameGuard, motionLevel, tvPagePlan, VT_ART, watchFrames } from '#lib/tv/motion';
+  import { motionAllowed } from '#lib/preview';
+  import TvRail from '#lib/tv/TvRail.svelte';
+  import { railKey } from '#lib/tv/rail';
   import { categoryHref, kindFromPath, showsChips, type Kind } from '#lib/mobile';
   import { dialogKeys } from '#lib/actions';
   import { langLabel } from '#lib/langs';
@@ -67,6 +71,7 @@
   let lgApp = false;
   let pending = false, checking = false;
   let notes: Array<{ id: number; title: string; link?: string; read: boolean }> = [];
+  let railOpen = false;
   let scrolled = false, menu = false, bell = false, cats = false, help = false;
   let sentinel: HTMLElement;
   let online = true;
@@ -123,6 +128,10 @@
   // /api/me (a 401 there would loop back to /auth/login → /login)
   $: publicPage = path.startsWith('/invite/') || path === '/tv' || path === '/offline' || path === '/pending' || path === '/restore' || path === '/setup' || path === '/login' || path === '/reset' || path === '/confirm-email';
   $: watchPage = path.startsWith('/watch/') || /^\/party\/[^/]+/.test(path); // immersive player pages: no navigation
+  $: showRail = tv && !watchPage && !profilesPage && !kidsUi;
+  // only the rail's own destinations, without a filter (a genre page from the home categories row is a drill-down: Back goes back)
+  $: topLevel = !publicPage && isRailTop(path, $page.url.search); // (the prerendered /offline page has no search params)
+  $: if (!showRail) railOpen = false;
   $: profilesPage = path === '/profiles' || path === '/welcome'; // full-screen pages without navigation (picker, onboarding)
   $: heroPage = path === '/' || path.startsWith('/item/');
   $: kidsPage = path === '/kids' || path.startsWith('/kids/'); // full-bleed bright kids pages (own background and spacing)
@@ -244,6 +253,13 @@
     // TV: Back/Escape walks one step back (the detail popup closes itself on Escape; the player handles its own keys)
     if (tv && !watchPage && !(e.key === 'Escape' && $page.state.modalId) && !isEditable(e.target as Element)) {
       e.preventDefault();
+      // top-level pages: Back opens the side bar first; with the bar open it closes it (on home: leaves the LG app)
+      if (showRail && !$page.state.modalId && (railOpen || topLevel)) {
+        const r = railKey({ open: railOpen }, { key: 'back', atLeftEdge: false, inRail: railOpen, onHome: path === '/' });
+        railOpen = r.state.open;
+        if (r.action === 'exitPrompt' && isLgApp() && shouldExitOnBack({ path, modalId: $page.state.modalId, dropdownOpen: false, editable: false })) exitLgApp();
+        return;
+      }
       if (isLgApp() && shouldExitOnBack({ path, modalId: $page.state.modalId, dropdownOpen: false, editable: false })) exitLgApp(); // Back on home leaves the LG app
       else if (path !== '/' || $page.state.modalId) history.back();
     }
@@ -278,10 +294,18 @@
     if (nth >= 0) memo.set(from.url.pathname + from.url.search, { href, nth });
   });
   /** waits for the page content (lazy rows, fetched lists), then focuses the remembered link, [data-autofocus] or the first element */
+  let settleSeq = 0;
   async function settleFocus(want?: { href: string; nth: number }) {
+    const start = document.activeElement, my = ++settleSeq;
     for (let i = 0; i < 16; i++) {
       await new Promise((r) => setTimeout(r, i ? 150 : 30));
+      // a newer navigation settles its own page: this one must not put a focus there (e.g. Back right after a page opened)
+      if (my !== settleSeq) return;
       const main = document.querySelector('main');
+      // the focus was placed in the content meanwhile (a key, the pointer, the page itself): it stays there, a late
+      // [data-autofocus] (e.g. the home focus tile's Play once the hero has loaded) must not pull it away
+      const now = document.activeElement;
+      if (now instanceof HTMLElement && now !== start && now !== document.body && main?.contains(now)) return;
       if (want) {
         const el = main?.querySelectorAll<HTMLElement>(`a[href="${CSS.escape(want.href)}"]`)[want.nth];
         if (el) return focusEl(el);
@@ -289,6 +313,7 @@
     }
   }
   afterNavigate(({ to, type }) => {
+    settleSeq++; // every navigation ends an older settle (also into the player, which places its own focus)
     if (!tv || !to || /^\/(watch|party)\//.test(to.url.pathname)) return;
     void settleFocus(type === 'popstate' ? memo.get(to.url.pathname + to.url.search) : undefined);
   });
@@ -296,6 +321,24 @@
   // ---- page transitions: View Transitions API where available (180 ms crossfade, main content rises 8 px; see app.css) ----
   const immersive = (p: string) => /^\/(watch|party)\//.test(p);
   const isWatch = (p: string) => p.startsWith('/watch/');
+  // A transition started while another runs skips the first one, whose `finished` then settles: only the latest transition may
+  // clean up the shared root classes, and each one only takes the shared name off the elements it named (unless the latest named them too).
+  const VT_CLASSES = ['ff-vt', 'ff-vt-play', 'ff-vt-in', 'ff-vt-plain', 'ff-vt-tv', 'ff-vt-slide', 'ff-vt-art', 'ff-vt-sub'];
+  let vtSeq = 0, vtNamed = new Set<HTMLElement>();
+  const vtClear = () => { const root = document.documentElement; root.classList.remove(...VT_CLASSES); root.style.removeProperty('--ff-vt-dx'); };
+  /** a new transition begins: whatever an earlier one left on the root goes, and its token is the only one that may clean up */
+  function vtBegin(): number {
+    vtClear();
+    for (const el of vtNamed) el.style.removeProperty('view-transition-name');
+    vtNamed = new Set();
+    return ++vtSeq;
+  }
+  function vtName(el: HTMLElement | null, name: string, mine: HTMLElement[]) { if (!el) return; el.style.setProperty('view-transition-name', name); mine.push(el); vtNamed.add(el); }
+  function vtEnd(my: number, mine: HTMLElement[]) {
+    const latest = my === vtSeq;
+    for (const el of mine) if (latest || !vtNamed.has(el)) el.style.removeProperty('view-transition-name');
+    if (latest) { vtClear(); vtNamed = new Set(); }
+  }
   onNavigate((nav) => {
     const start = (document as Document & { startViewTransition?: (cb: () => Promise<void>) => { finished: Promise<unknown> } }).startViewTransition;
     const from = nav.from?.url.pathname ?? '', to = nav.to?.url.pathname ?? '';
@@ -303,25 +346,90 @@
     // lib/player/transition.ts). Without the API or with reduced motion the player page fades itself in; TV has no transition.
     if (nav.to && isWatch(to) !== isWatch(from) && !immersive(isWatch(to) ? from : to) && !intro) {
       const into = isWatch(to);
-      if (playTransition({ tv, reduced: matchMedia('(prefers-reduced-motion: reduce)').matches, hasApi: typeof start === 'function' }) !== 'view') { if (into) takePlayArt(); return; }
-      const root = document.documentElement, art = into ? takePlayArt() : null;
+      // TV: the reduced set (frame guard tripped) keeps a plain crossfade without the artwork morph
+      const mode = playTransition({ tv, reduced: tv ? !motionAllowed() : matchMedia('(prefers-reduced-motion: reduce)').matches, hasApi: typeof start === 'function', level: tv ? motionLevel() : 'full' });
+      if (mode !== 'view' && mode !== 'crossfade') { if (into) takePlayArt(); return; }
+      const root = document.documentElement, taken = into ? takePlayArt() : null, art = mode === 'view' ? taken : null;
+      const my = vtBegin(), mine: HTMLElement[] = [];
+      if (tv) watchFrames();
       return new Promise<void>((resolve) => {
         root.classList.add('ff-vt-play');
         if (into) root.classList.add('ff-vt-in');
-        if (art) art.style.setProperty('view-transition-name', PLAY_ART_NAME); // this one element only, just for the transition
+        if (mode === 'crossfade') root.classList.add('ff-vt-plain'); // the player poster carries no shared name either
+        vtName(art, PLAY_ART_NAME, mine); // this one element only, just for the transition
         const t = start!.call(document, async () => { resolve(); await nav.complete; });
-        void t.finished.catch(() => undefined).finally(() => { root.classList.remove('ff-vt-play', 'ff-vt-in'); art?.style.removeProperty('view-transition-name'); });
+        void t.finished.catch(() => undefined).finally(() => vtEnd(my, mine));
       });
     }
-    if (typeof start !== 'function' || tv || matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+    if (tv) return tvTransition(nav, start);
+    if (typeof start !== 'function' || matchMedia('(prefers-reduced-motion: reduce)').matches) return;
     // typing in the header search must not freeze the screen for a crossfade
     if (!nav.to || from === to || to === '/search' || immersive(from) || immersive(to) || intro) return;
-    const root = document.documentElement;
+    const root = document.documentElement, my = vtBegin();
     return new Promise<void>((resolve) => {
       root.classList.add('ff-vt'); // names <main> only for the duration of the transition
       const t = start.call(document, async () => { resolve(); await nav.complete; });
-      void t.finished.catch(() => undefined).finally(() => root.classList.remove('ff-vt'));
+      void t.finished.catch(() => undefined).finally(() => vtEnd(my, []));
     });
+  });
+
+  // ---- TV page transitions (spec 5.2; plan in lib/tv/motion.ts): artwork -> detail backdrop morph, rail pages slide, else crossfade ----
+  let tvFadeIn = false; // no View Transitions API: the new page fades in (afterNavigate)
+  const railAt = (p: string) => TV_RAIL.findIndex(([href]) => isTabActive(href, p));
+  const onScreen = (el: Element | null | undefined): el is HTMLElement => {
+    const r = el?.getBoundingClientRect();
+    return !!r && r.width > 0 && r.height > 0 && r.bottom > 0 && r.right > 0 && r.top < innerHeight && r.left < innerWidth;
+  };
+  /** the artwork of a focused card or of the focus tile (the element that morphs into / out of the detail backdrop) */
+  const artOf = (el: Element | null | undefined): HTMLElement | null => {
+    if (!(el instanceof HTMLElement) || !el.closest('main')) return null;
+    const img = el.closest('section.tile') ? document.querySelector('section.tile .layer.on img.bg') : el.closest('.card')?.querySelector('.thumb img:not(.blur)');
+    return onScreen(img) ? img : null;
+  };
+  type Nav = Parameters<Parameters<typeof onNavigate>[0]>[0];
+  type StartVT = (cb: () => Promise<void>) => { finished: Promise<unknown> };
+  function tvTransition(nav: Nav, start: StartVT | undefined): Promise<void> | undefined {
+    const from = nav.from?.url.pathname ?? '', to = nav.to?.url.pathname ?? '';
+    if (!nav.to || intro || immersive(from) || immersive(to) || to === '/search') return;
+    const plan = tvPagePlan({ from, to, back: nav.type === 'popstate', motion: motionAllowed(), level: motionLevel(), hasApi: typeof start === 'function', rail: [railAt(from), railAt(to)] });
+    if (plan.kind === 'fade') tvFadeIn = true;
+    if (plan.kind !== 'view' || !start) return;
+    const root = document.documentElement, my = vtBegin();
+    const named: HTMLElement[] = [];
+    const name = (el: HTMLElement | null) => vtName(el, VT_ART, named);
+    watchFrames();
+    root.classList.add('ff-vt-tv');
+    if (plan.slide) { root.classList.add('ff-vt-slide'); root.style.setProperty('--ff-vt-dx', `${plan.slide * 16}px`); }
+    // a detail sub-screen: the content slides in from the right 24 px (Back: the other way) while the backdrop crossfades in place
+    if (plan.sub) { root.classList.add('ff-vt-sub'); root.style.setProperty('--ff-vt-dx', `${plan.sub * 24}px`); }
+    if (plan.morph) root.classList.add('ff-vt-art'); // names the detail backdrop ([data-vt-art]) on whichever side it is
+    if (plan.morph === 'in') name(artOf(document.activeElement));
+    const want = plan.morph === 'back' && nav.to ? memo.get(nav.to.url.pathname + nav.to.url.search) : undefined;
+    return new Promise<void>((resolve) => {
+      const t = start.call(document, async () => {
+        resolve();
+        // the screen holds still until the new page is there: never longer than 800 ms (a slow detail load must not freeze the TV)
+        const until = performance.now() + 800;
+        await Promise.race([nav.complete.catch(() => undefined), new Promise((r) => setTimeout(r, 800))]);
+        // into the detail page: its title loads after the route did; wait (within the budget) until the hero is there, so the
+        // backdrop exists when the new state is captured (the new state is live: the image may still finish loading during the morph)
+        // (timers, not rAF: rendering is paused while the update callback runs)
+        if (plan.morph === 'in') while (performance.now() < until && !document.querySelector('main .dv :is(.hero img.bg, h1)')) await new Promise((r) => setTimeout(r, 16));
+        if (plan.morph === 'back' && my === vtSeq) { // (a newer transition took over meanwhile: name nothing for this one)
+          await tick();
+          const main = document.querySelector('main');
+          const el = want ? main?.querySelectorAll(`a[href="${CSS.escape(want.href)}"]`)[want.nth] : null;
+          name(artOf(el));
+        }
+      });
+      void t.finished.catch(() => undefined).finally(() => vtEnd(my, named));
+    });
+  }
+  afterNavigate(() => {
+    if (!tvFadeIn) return;
+    tvFadeIn = false;
+    const main = document.querySelector('main');
+    if (main && typeof main.animate === 'function') main.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 200, easing: 'ease-out' });
   });
 
   /** First load in this browser session: the brand intro without sound (no user gesture yet). Honours the per-profile setting. */
@@ -437,6 +545,7 @@
         if (tv) {
           { let t: ReturnType<typeof setTimeout>; const wake = () => { document.documentElement.classList.remove('idle-cursor'); clearTimeout(t); t = setTimeout(() => document.documentElement.classList.add('idle-cursor'), 4000); }; wake(); window.addEventListener('mousemove', wake); stops.push(() => { window.removeEventListener('mousemove', wake); clearTimeout(t); }); }
           stops.push(startSpatial(() => !watchPage || Boolean(document.activeElement?.closest('[data-nav]'))));
+          stops.push(frameGuard()); // spec 5.2: a TV that cannot keep up drops to the reduced motion set for the session
           if (!watchPage) void settleFocus();
         }
         if (m.tv && !pending) stops.push(startTvLink(onTvCommand, (code) => { if (code === 4401) location.href = '/tv'; else if (code === 4000) replaced = true; }));
@@ -466,7 +575,9 @@
       </nav>
     </header>
   {:else if !watchPage && !profilesPage}
-    {#if $mobile}
+    {#if tv}
+      <TvRail {path} {who} {faceStyle} bind:open={railOpen} />
+    {:else if $mobile}
       <header class="nav m" class:solid={scrolled || !heroPage} class:chips>
         <div class="mrow">
           <a class="mlogo" href="/profiles" aria-label={who ? $t('shell.mobile.switchProfileCurrent', { name: who }) : $t('shell.mobile.switchProfile')}><Logo size={30} label="" /><span class="for">{who ? $t('shell.mobile.forName', { name: who }) : ''}</span></a>
@@ -584,7 +695,7 @@
   {#if !online}<div class="offbar" class:notab={kidsUi || profilesPage} role="status">{$t('shell.offline.bar')} <a href="/offline" data-sveltekit-reload>{$t('shell.offline.toDownloads')}</a></div>{/if}
   {#if replaced}<div class="panel" role="alert" style="position:fixed;z-index:90;top:calc(5rem + var(--safe-top));left:50%;transform:translateX(-50%)"><b>{$t('shell.tvReplaced.text')}</b> <button on:click={() => location.reload()}>{$t('shell.tvReplaced.reconnect')}</button></div>{/if}
   {#if modalId && Modal}<svelte:component this={Modal} id={modalId} />{/if}
-  <main id="main" class:page={!heroPage && !watchPage && !profilesPage && !kidsPage}>
+  <main id="main" class:page={!heroPage && !watchPage && !profilesPage && !kidsPage} class:tvrail={showRail}>
     {#if pending}
       <div class="page"><div class="panel pendp">
         <b class="warn">{$t('shell.pending.title')}</b>
@@ -632,6 +743,7 @@
 <ReauthHost />
 
 <style>
+  :global(html.tv) main.tvrail { padding-left: 96px; box-sizing: border-box; }
   .offbar { position: fixed; z-index: 80; left: 0; right: 0; bottom: calc(56px + var(--safe-bottom) + var(--castbar-h)); background: #242b33; padding: .6rem var(--pad-x); text-align: center; font-size: .9rem; }
   .offbar a { text-decoration: underline; font-weight: 600; }
   .offbar.notab { bottom: calc(var(--safe-bottom) + var(--castbar-h)); } /* no tab bar (kids profiles, profile picker) */

@@ -17,9 +17,8 @@ describe('resolveKey', () => {
     expect(r('ArrowUp', { tv: true, onBody: false })).toEqual({ type: 'tvControls' });
     expect(r('ArrowDown', { tv: true })).toEqual({ type: 'tvControls' });
   });
-  it('cast peek: I on desktop, up on the TV (bar hidden), the remote Info key; OK / I then open the full panel', () => {
+  it('cast peek: I on desktop, the remote Info key; OK / I then open the full panel', () => {
     expect(r('i')).toEqual({ type: 'peek' }); expect(r('I')).toEqual({ type: 'peek' });
-    expect(r('ArrowUp', { tv: true })).toEqual({ type: 'peek' });
     expect(r('ArrowUp', { tv: true, overlayOpen: true })).toEqual({ type: 'tvControls' });
     expect(r('Info', { tv: true, onBody: false })).toEqual({ type: 'peek' });
     expect(r('i', { overlayOpen: true })).toBeNull();
@@ -109,3 +108,31 @@ describe('TV remotes without media keys', () => {
     expect(holdSeekStep(3000)).toBe(60); expect(holdSeekStep(20000)).toBe(60);
   });
 });
+
+describe('TV player (spec 4)', () => {
+  const tv = (key: string, c: Partial<KeyContext> = {}) => r(key, { tv: true, ...c });
+  it('any arrow with the bar hidden shows the controls (focus goes to the progress bar)', () => {
+    for (const k of ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown']) expect(tv(k)).toEqual({ type: 'tvControls' });
+  });
+  it('left / right on the progress bar move the seek preview instead of seeking', () => {
+    expect(tv('ArrowLeft', { onBody: false, onTrack: true })).toEqual({ type: 'seekPreview', dir: -1 });
+    expect(tv('ArrowRight', { onBody: false, onTrack: true })).toEqual({ type: 'seekPreview', dir: 1 });
+  });
+  it('OK on the progress bar commits an active preview, else plays / pauses', () => {
+    expect(tv('Enter', { onBody: false, onTrack: true, previewActive: true })).toEqual({ type: 'seekCommit' });
+    expect(tv('Enter', { onBody: false, onTrack: true })).toEqual({ type: 'toggle' });
+  });
+  it('the desktop keeps its direct seek and volume', () => {
+    expect(r('ArrowLeft', { onTrack: true })).toEqual({ type: 'seek', by: -10 });
+    expect(r('ArrowUp')).toEqual({ type: 'volume', delta: 0.1 });
+  });
+  it('LG blue key opens the cast info (X-ray)', () => {
+    expect(tv('ColorF3Blue', { lg: true })).toEqual({ type: 'castInfo' });
+    expect(tv('ColorF3Blue')).toBeNull();
+  });
+  it('media keys, wheel-free remotes and channel up stay direct', () => {
+    expect(tv('MediaRewind', { onTrack: true, onBody: false })).toEqual({ type: 'seek', by: -30 });
+    expect(tv('PageUp')).toEqual({ type: 'next' });
+  });
+});
+

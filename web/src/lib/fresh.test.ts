@@ -6,10 +6,12 @@ import { get } from 'svelte/store';
 const calls: Array<{ path: string; body?: { ids: string[] } }> = [];
 let answer: (ids: string[]) => unknown = () => ({ badges: {} });
 let profile = 'p1';
+let storyAnswer: unknown = { story: null };
 vi.mock('#lib/api', () => ({
   getActiveProfile: () => profile,
   api: vi.fn(async (path: string, o?: { body?: { ids: string[] } }) => {
     calls.push({ path, body: o?.body });
+    if (path.endsWith('/story')) return storyAnswer;
     if (path.endsWith('/facts')) return { fresh: null, leaving: null, traits: null };
     return answer(o?.body?.ids ?? []);
   }),
@@ -71,5 +73,48 @@ describe('facts memo', () => {
     forgetFacts('z');
     await loadFacts('z', t0 + 2000);
     expect(calls.filter((c) => c.path === '/api/items/z/facts')).toHaveLength(2);
+  });
+});
+
+describe('story card', () => {
+  const story = { reason: 'newSeason' as const, episode: { id: 'e1', name: 'N', season: 1, index: 3, overview: '' }, next: { id: 'e2', season: 2, index: 1 } };
+  let store: Map<string, string>;
+  beforeEach(() => {
+    store = new Map();
+    vi.stubGlobal('localStorage', { getItem: (k: string) => store.get(k) ?? null, setItem: (k: string, v: string) => store.set(k, v) });
+    profile = 'p1'; storyAnswer = { story };
+  });
+
+  it('keys a dismissal per profile, series and next episode', async () => {
+    const { storyDismissKey } = await mod();
+    expect(storyDismissKey('s1', story)).toBe('ff-story:p1:s1:e2');
+    profile = '';
+    expect(storyDismissKey('s1', story)).toBe('ff-story:-:s1:e2');
+  });
+
+  it('loads the story until the viewer dismissed that very card', async () => {
+    const { loadStory, storyDismissKey, storyDismissed } = await mod();
+    expect(await loadStory('s1')).toEqual(story);
+    expect(calls.at(-1)!.path).toBe('/api/items/s1/story');
+    store.set(storyDismissKey('s1', story), '1');
+    expect(storyDismissed('s1', story)).toBe(true);
+    expect(await loadStory('s1')).toBeNull();
+    expect(await loadStory('s2')).toEqual(story); // other series
+    profile = 'p2';
+    expect(await loadStory('s1')).toEqual(story); // other profile
+  });
+
+  it('is null when there is no story or the request failed', async () => {
+    const { loadStory } = await mod();
+    storyAnswer = { story: null };
+    expect(await loadStory('s1')).toBeNull();
+    storyAnswer = null;
+    expect(await loadStory('s1')).toBeNull();
+  });
+
+  it('counts as not dismissed when storage is unavailable', async () => {
+    const { storyDismissed } = await mod();
+    vi.stubGlobal('localStorage', { getItem: () => { throw new Error('blocked'); } });
+    expect(storyDismissed('s1', story)).toBe(false);
   });
 });

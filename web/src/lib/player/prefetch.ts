@@ -87,8 +87,14 @@ export function watchTarget(href: string | null | undefined): { id: string; audi
   try { u = new URL(href, location.origin); } catch { return null; }
   const m = /^\/watch\/([^/]+)$/.exec(u.pathname);
   if (!m || u.origin !== location.origin) return null;
-  const t = Number(u.searchParams.get('t'));
-  return { id: decodeURIComponent(m[1]!), audio: u.searchParams.get('audio') ?? undefined, startSec: Number.isFinite(t) && t > 0 && t < 86_400 ? Math.floor(t) : undefined };
+  return { id: decodeURIComponent(m[1]!), audio: u.searchParams.get('audio') ?? undefined, startSec: startSecond(u.searchParams.get('t')) };
+}
+
+/** the `t` of a player link in whole seconds: 0 = from the start (Restart), undefined = none / invalid (the player resumes) */
+export function startSecond(raw: string | null): number | undefined {
+  if (raw === null || raw.trim() === '') return undefined;
+  const t = Number(raw);
+  return Number.isFinite(t) && t >= 0 && t < 86_400 ? Math.floor(t) : undefined;
 }
 
 /** the artwork that grows into the player poster: `[data-play-art]` inside the play control's `[data-play-scope]` */

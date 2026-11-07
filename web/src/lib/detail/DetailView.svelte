@@ -8,7 +8,8 @@
   import { listIds, toggleList, prefs } from '#lib/stores';
   import { kidsMode } from '#lib/kids';
   import { t, tr } from '#lib/i18n';
-  import { playPreview, previewFailed, previewOwner, stopPreview, toggleSound } from '#lib/preview';
+  import { autoplayAllowed, playPreview, previewFailed, previewOwner, stopPreview, toggleSound } from '#lib/preview';
+  import { trailerAllowed } from '#lib/tv/focusTile';
   import { isSpoiler } from '#lib/spoiler';
   import { langLine } from '#lib/langs';
   import { lengthLabel, ratingBadge } from '#lib/hover';
@@ -37,13 +38,17 @@
   import TitleFacts from '#lib/detail/TitleFacts.svelte';
   import StoryCard from '#lib/detail/StoryCard.svelte';
   import LeavingDialog from '#lib/detail/LeavingDialog.svelte';
+  import DetailTv from '#lib/detail/DetailTv.svelte';
+  import TvSub, { type TvSubId } from '#lib/detail/TvSub.svelte';
   import Safe from '#lib/detail/Safe.svelte';
   import { toPeople } from '#lib/detail/safe';
   import { forgetFacts, loadFacts, type Facts } from '#lib/fresh';
 
-  /** Unified detail view: used inside the popup (ItemModal) and as the full page (/item/[id]). */
+  /** Unified detail view: used inside the popup (ItemModal), as the full page (/item/[id]) and as the TV page (scroll-free, DetailTv). */
   export let id: string;
-  export let variant: 'modal' | 'page' = 'page';
+  export let variant: 'modal' | 'page' | 'tv' = 'page';
+  /** TV: one of the detail page's sub-screens (routes /item/[id]/<sub>) instead of the page itself; same loads */
+  export let sub: TvSubId | '' = '';
   /** loaded title (read-only for the parent: bind:item) */
   export let item: Item | null = null;
   /** id of the heading (the dialog is labelled by it) */
@@ -55,6 +60,8 @@
   let friends: Array<{ id: string; name: string }> = [], recOpen = false, recTo = new Set<string>(), recNote = '', recMsg = '', recEl: HTMLDivElement;
   let seasons: Item[] = [], episodes: Item[] | null = null, season = '', next: Item | null = null;
   let followed = false;
+  /** series: seasons + next-up have answered (the play target is known once the episode list is there too, when needed) */
+  let seriesKnown = false;
   let logoFailed = false, saveMsg = '', saveT: ReturnType<typeof setTimeout>, castMsg = '', castT: ReturnType<typeof setTimeout>;
   let lgA = '', lgS = '';
   let dl: DownloadButton | undefined, dlAvail = false, dlState = '';
@@ -72,7 +79,7 @@
   async function load(want: string) {
     const my = ++loadSeq;
     stopHero(); cancelAuto(); autoCancelled = false; heroByUser = false;
-    failed = false; episodes = null; next = null; seasons = []; followed = false; season = ''; epKey = '';
+    failed = false; episodes = null; next = null; seasons = []; followed = false; season = ''; epKey = ''; seriesKnown = false;
     about = undefined; synOpen = false;
     aboutSeq++; aboutFor = ''; cancelAnimationFrame(aboutRaf); // a late answer for the previous title must not land on this one
     facts = null; leavingDlg = false;
@@ -99,7 +106,7 @@
       const pNext = api(`/api/library/nextup?seriesId=${want}`).then((r) => ((r.items as Item[]) ?? []).find((e) => e.seriesId === want) ?? null).catch(() => null);
       void Promise.all([pSeasons, pNext]).then(([list, n]) => {
         if (my !== loadSeq) return;
-        seasons = list; next = n;
+        seasons = list; next = n; seriesKnown = true;
         season = n?.seasonId && list.some((x) => x.id === n.seasonId) ? n.seasonId : list[0]?.id ?? '';
       });
     };
@@ -222,6 +229,7 @@
   /** while casting, Play sends the title (the next episode for a series) to the TV; a series without an episode keeps its /item link */
   function castPlay(e: MouseEvent) { if (playBase) playOrCast(e, { id: playTarget, positionTicks: resumeFrom?.positionTicks }, { audio: lgA || undefined, subtitle: lgS || undefined }); }
   $: playTarget = playBase.split('/').pop() ?? '';
+  $: playKnown = !item || item.type !== 'Series' || (seriesKnown && (Boolean(next) || !season || episodes !== null));
   $: resumeFrom = item ? (item.type === 'Series' ? next : item) : null;
   $: remaining = resumeFrom ? remainingLabel(resumeFrom.positionTicks, resumeFrom.runtimeTicks) : '';
   $: playLabel = $t(item ? (item.type === 'Series' ? (next ? (next.positionTicks ? 'detail.view.resume' : 'detail.view.continue') : 'detail.view.play') : item.positionTicks ? 'detail.view.resume' : 'detail.view.play') : 'detail.view.play');
@@ -292,6 +300,9 @@
   $: canPreview = Boolean(item && !previewFailed(item.id) && (item.trailers || (item.type === 'Movie' || item.type === 'Series')));
   function eligible() {
     const nav = navigator as Navigator & { connection?: { saveData?: boolean } };
+    // TV page: the same rules as the focus tile (calm / reduced motion via autoplayAllowed, hover-trailer pref, hidden tab, data saver)
+    if (variant === 'tv' && sub) return false; // a sub-screen shows the backdrop as a dark layer, no trailer
+    if (variant === 'tv') return trailerAllowed({ hoverTrailers: $prefs.hoverTrailers, autoplay: autoplayAllowed(), hidden: document.hidden, saveData: !!nav.connection?.saveData }) && !(item?.trailers === 0 && !$prefs.hoverClip);
     return $prefs.hoverTrailers && !document.hidden && !reduced() && !tvMode() && !nav.connection?.saveData && !(item?.trailers === 0 && !$prefs.hoverClip);
   }
   function scheduleHero(itemId: string) {
@@ -307,6 +318,8 @@
   }
   function stopHero() { clearTimeout(heroT); if (heroOwner && $previewOwner === heroOwner) stopPreview(heroOwner); heroPlaying = false; }
   const tvMode = () => document.documentElement.classList.contains('tv');
+  /** TV "Trailer" without a local trailer file: the preview plays in the backdrop, with sound (the viewer asked for it) */
+  async function tvTrailer() { await startHero(true); if (heroPlaying && hv) hv.muted = false; }
 
   // ---- auto start: the preview ran long enough -> "Film/Folge startet in 5 …" -> /watch (desktop only, pref "Vorschau startet Titel automatisch") ----
   let touch = false, previewEnded = false, autoLeft = 0, autoT: ReturnType<typeof setInterval> | undefined, autoCancelled = false, heroByUser = false;
@@ -338,7 +351,10 @@
     if (autoCancelled) return;
     if (interactionCancels(e.type, Boolean(autoEl && e.target instanceof Node && autoEl.contains(e.target)), counting)) cancelAuto(true);
   }
-  function onHeroEnded() { previewEnded = true; if (autoOn && !busy()) maybeAuto(); else void hv?.play().catch(() => undefined); }
+  function onHeroEnded() {
+    // TV, the viewer pressed Trailer (ruling R17): it played once; the still comes back (DetailTv returns the focus to Trailer)
+    if (variant === 'tv' && heroByUser) { heroByUser = false; stopHero(); return; }
+    previewEnded = true; if (autoOn && !busy()) maybeAuto(); else void hv?.play().catch(() => undefined); }
   $: if (!autoOn && counting) cancelAuto();
 
   // ---- the hero only plays while it is (mostly) on screen: IntersectionObserver instead of a scroll listener (no forced layout) ----
@@ -379,10 +395,28 @@
 </script>
 
 <!-- svelte-ignore a11y_no_static_element_interactions -->
-<div class="dv" data-play-scope class:vm={variant === 'modal'} class:vp={variant === 'page'} class:phone bind:this={dvEl}
+<div class="dv" data-play-scope class:vm={variant === 'modal'} class:vp={variant === 'page'} class:vtv={variant === 'tv'} class:phone bind:this={dvEl}
   on:pointerdown|capture={onUse} on:keydown|capture={onUse} on:focusin={onUse} on:wheel|capture|passive={onUse}>
+  {#if variant === 'tv'}
+  <!-- ================= TV: one screen, a button list instead of the scrolling sections (friends, comments, download, share stay off) ================= -->
+  {#if item}
+    {#if sub}
+    <TvSub {sub} {item} {about} {facts} {people} {extras} {more} {seasons} bind:season {episodes} {next} {seriesKnown} {qs} {overview} {playHref} {playLabel} {titleId} />
+    {:else}
+    <DetailTv {item} {about} {facts} {people} {extras} {playTarget} {playBase} {playHref} ready={playKnown} {playLabel} {qs} {resumeFrom} {resumeLine} {tagline} {overview} {inList} {titleId}
+      bind:thumb bind:audio={lgA} bind:sub={lgS} playing={heroPlaying} loop={!autoOn && !heroByUser} userTrailer={heroByUser} bind:video={hv} bind:loaded={heroLoaded}
+      onMyList={toggleMine} onTrailer={tvTrailer} {onThumb} onEnded={onHeroEnded} />
+    {/if}
+    <div class="tvmsg" role="status">{#if saveMsg}<p class="err">{saveMsg}</p>{/if}</div>
+  {:else if failed}
+    <div class="hero"><p class="err pad" role="alert">{$t('detail.view.notFound')}</p><p class="pad"><a class="tv-btn" data-autofocus href="/">{$t('detail.view.toHome')}</a></p></div>
+  {:else}
+    <div class="hero tvsk" aria-hidden="true"></div>
+  {/if}
+  {:else}
   <!-- ================= hero ================= -->
-  <div class="hero" bind:this={heroEl}>
+  <!-- data-vt-art: TV card / tile artwork -> this backdrop morph (View Transition name set by html.ff-vt-art, see app.css); not in the modal -->
+  <div class="hero" bind:this={heroEl} data-vt-art={variant === 'modal' ? undefined : ''}>
     {#if item}
       {#if item.backdrop}<img class="bg" data-play-art class:loaded={heroLoaded} src={backdrop(item.id, variant === 'modal' ? 960 : 1280)} srcset={srcset('Backdrop', item.id, variant === 'modal' ? MODAL_WIDTHS : HERO_WIDTHS)} sizes={variant === 'modal' ? '(min-width: 890px) 850px, 100vw' : '100vw'} alt="" fetchpriority="high" on:load={() => (heroLoaded = true)} />{/if}
       <!-- svelte-ignore a11y_media_has_caption -->
@@ -533,6 +567,7 @@
       <div class="skeleton sl" style="height:90px"></div>
     </div>
   {/if}
+  {/if}
 </div>
 
 {#if leavingDlg && item}
@@ -642,6 +677,12 @@
   /* same 24px icon box for every entry of the icon row (the rating button's labelled variant uses its diameter as box) */
   .icons :global(.rb.lab .trig .ic) { height: 24px; }
   .icons :global(.ma.labelled) { min-width: 64px; }
+
+  /* ---- TV page (DetailTv draws the screen) ---- */
+  .vtv .tvsk { height: 100vh; background: var(--bg); }
+  .vtv .tvmsg { position: absolute; z-index: 3; left: var(--tv-gutter); bottom: var(--tv-safe-y); }
+  .vtv .tvmsg .err { margin: 0; font-size: 1.375rem; }
+  .vtv .hero { overflow: visible; }
 
   @media (pointer: coarse) { .lnk { display: inline-flex; align-items: center; min-height: 44px; } }
   @media (max-width: 640px) {

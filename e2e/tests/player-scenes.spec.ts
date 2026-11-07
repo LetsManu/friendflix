@@ -82,11 +82,16 @@ test.describe('player: scenes, cast & info, sound', () => {
     await expect(page.getByRole('complementary', { name: 'Besetzung & Infos' })).toHaveCount(0);
   });
 
-  test('TV: up peeks, OK opens the panel with the focus inside, Back closes it', async ({ page }) => {
+  // spec 4 (TV player): any arrow now brings the controls with the focus on the progress bar, so the quick peek moved to the
+  // remote's Info key (the LG blue key opens the full panel)
+  test('TV: Info peeks, OK opens the panel with the focus inside, Back closes it; up brings the controls', async ({ page }) => {
     await page.goto('/watch/' + MOVIE.id);
     await videoReady(page);
     await page.evaluate(() => { document.documentElement.classList.add('tv'); (document.activeElement as HTMLElement | null)?.blur(); });
     await page.keyboard.press('ArrowUp');
+    await expect(page.locator('.ctl [data-tvtrack]')).toBeFocused();
+    await expect(page.getByRole('complementary', { name: 'Besetzung auf einen Blick' })).toHaveCount(0);
+    await page.evaluate(() => { (document.activeElement as HTMLElement | null)?.blur(); document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'Info', bubbles: true, cancelable: true })); });
     await expect(page.getByRole('complementary', { name: 'Besetzung auf einen Blick' })).toBeVisible();
     await expect(page.getByText('Mehr: OK')).toBeVisible();
     await page.keyboard.press('Enter');

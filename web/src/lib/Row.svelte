@@ -6,7 +6,7 @@
 </script>
 
 <script lang="ts">
-  import { onDestroy, tick } from 'svelte';
+  import { onDestroy, onMount, tick } from 'svelte';
   import type { Item } from '#lib/api';
   import Card from '#lib/Card.svelte';
   import Icon from '#lib/Icon.svelte';
@@ -16,6 +16,7 @@
   import { t } from '#lib/i18n';
   import { recoTrack, type RecoTag } from '#lib/reco';
   import ReasonCaption from '#lib/ReasonCaption.svelte';
+  import { tvRank } from '#lib/tv/focus';
 
   export let title: string;
   /** null = loading (skeleton) */
@@ -106,11 +107,22 @@
     io = new IntersectionObserver((es) => { const e = es[es.length - 1]; if (e) near = e.isIntersecting; }, { rootMargin: '200px 0px' });
     io.observe(section);
   }
+  // TV: poster mode is ignored (every card is 16:9); the layout switches the class on <html> once /api/me answered
+  let tvOn = false;
+  onMount(() => {
+    const sync = () => { tvOn = document.documentElement.classList.contains('tv'); };
+    sync();
+    const mo = new MutationObserver(sync);
+    mo.observe(document.documentElement, { attributes: true, attributeFilter: ['class'] });
+    return () => mo.disconnect();
+  });
+  /** TV: the focus tile labels a card of a ranked row with its rank (the tile cannot know the row) */
+  const rankFocus = (id: string, n: number) => { if (tvOn) tvRank.set(ranked ? { id, n } : null); };
   onDestroy(() => { io?.disconnect(); if (raf) cancelAnimationFrame(raf); });
 </script>
 
 {#if items === null || items.length}
-  <section class="row" class:m={$mobile} class:land={landscape} class:near class:rk={ranked} bind:this={section} aria-label={title} aria-busy={items === null} on:pointerenter={() => !full && showAll()} on:focusin={() => !full && showAll()} use:recoTrack={reco}>
+  <section class="row" class:m={$mobile} class:land={landscape} class:near class:rk={ranked && !tvOn} bind:this={section} aria-label={title} aria-busy={items === null} on:pointerenter={() => !full && showAll()} on:focusin={() => !full && showAll()} use:recoTrack={reco}>
     <div class="hd">
       <h2>{#if href}<a {href}>{title}<span class="more"> {$t('home.row.showAll')}</span><Icon name="chevron-right" size={18} /></a>{:else}{title}{/if}</h2>
       {#if pages > 1 && !$mobile}<ol class="dots" aria-hidden="true">{#each Array(pages) as _, i}<li class:on={i === current}></li>{/each}</ol>{/if}
@@ -119,11 +131,14 @@
     <div class="wrap">
       <button class="arrow left" class:hide={!canLeft} aria-label={$t('home.row.prev')} on:click={() => go(-1)}><Icon name="chevron-left" size={34} /></button>
       <div class="track" use:trackAction on:scroll={onScroll} role="list">
+        <!-- the strip only exists as a box on TV (the row glide moves it, lib/tv/motion.ts); elsewhere it is display: contents -->
+        <div class="strip" data-glide={tvOn ? '' : undefined}>
         {#if items === null}
-          {#each Array(8) as _}<div class="slot"><div class="skeleton ph" class:poster={($mobile && !landscape) || ranked}></div></div>{/each}
+          {#each Array(8) as _}<div class="slot"><div class="skeleton ph" class:poster={(($mobile && !landscape) || ranked) && !tvOn}></div></div>{/each}
         {:else}
-          {#each items as it, idx (it.id)}{#if idx < limit}<div class="slot" class:ranked role="listitem">{#if ranked}<span class="rank" aria-label={$t('home.row.rank', { n: idx + 1 })}>{idx + 1}</span>{/if}{#if $mobile}<PosterCard item={it} {landscape} {removable} {priority} on:remove />{:else}<Card item={it} {removable} poster={ranked} {priority} on:remove />{/if}</div>{/if}{/each}
+          {#each items as it, idx (it.id)}{#if idx < limit}<div class="slot" class:ranked role="listitem" on:focusin={() => rankFocus(it.id, idx + 1)}>{#if ranked}<span class="rank" aria-label={$t('home.row.rank', { n: idx + 1 })}>{idx + 1}</span>{/if}{#if $mobile}<PosterCard item={it} {landscape} {removable} {priority} on:remove />{:else}<Card item={it} {removable} poster={ranked && !tvOn} {priority} on:remove />{/if}</div>{/if}{/each}
         {/if}
+        </div>
       </div>
       <button class="arrow right" class:hide={!canRight} aria-label={$t('home.row.next')} on:click={() => go(1)}><Icon name="chevron-right" size={34} /></button>
     </div>
@@ -156,6 +171,7 @@
   .wrap { position: relative; }
   .track { display: flex; gap: var(--gap); overflow-x: auto; overflow-y: hidden; scroll-snap-type: x proximity; scrollbar-width: none; padding: .4rem var(--pad-x) .6rem; margin: -.4rem 0 -.6rem; /* small room for focus rings; the hover pop-out lives in <body> */ scroll-padding: 0 var(--pad-x); }
   .track::-webkit-scrollbar { display: none; }
+  .strip { display: contents; }
   /* 100% = the track content box (inside the pad-x padding): exactly n cards per page, the neighbours peek in the padding */
   .slot { flex: 0 0 calc((100% - (var(--n) - 1) * var(--gap)) / var(--n)); scroll-snap-align: start; min-width: 0; }
   /* ranked row: normal portrait posters with a small filled rank chip on the top-right corner */
@@ -181,6 +197,21 @@
   .row.m .slot { flex: 0 0 var(--pw); }
   .row.m .arrow { display: none; }
   :global(html.tv) .arrow { display: none; } /* TV: the D-pad scrolls the row; the edge strips only got in the way of the pointer */
+  /* ---- TV: 16:9 cards, 6.5 across the safe area, the focused card scales (app.css) ---- */
+  /* TV (spec 5.1): --pad-x is the 56 px gutter (set on the home rows); ~6.5 cards between the gutter and the right safe area */
+  /* row -> row 48 px: 1.6rem margin + 1.4rem bottom padding; the padding keeps the focused card's ring inside the row (content-visibility clips paint to the row box) */
+  :global(html.tv) .row { --gap: .8rem; --cw: calc((100vw - var(--tv-left) - 5vw) / 6.5); margin-top: 1.6rem; padding-bottom: 1.4rem; contain-intrinsic-size: auto calc(var(--cw) * .5625 + 6.9rem); }
+  :global(html.tv) .row:hover, :global(html.tv) .row:focus-within { z-index: 4; }
+  :global(html.tv) .hd { margin: 0 var(--pad-x) 1rem; }
+  :global(html.tv) h2 { font-size: 1.625rem; font-weight: 600; letter-spacing: 0; line-height: 1.2; color: var(--tv-white-88); }
+  :global(html.tv) h2 a { color: inherit; }
+  :global(html.tv) .dots { display: none; }
+  /* the track runs from the rail edge, so cards slide out under the rail; the padding puts the first card on the gutter and leaves room for the focus scale */
+  :global(html.tv) .track { padding: 1.4rem 5vw 1.4rem var(--pad-x); margin: -1.4rem 0; scroll-padding: 0 5vw 0 var(--pad-x); overscroll-behavior: contain; }
+  /* the strip carries the row glide (FLIP: scrollLeft jumps, the strip's transform springs back; spec 5.2) */
+  :global(html.tv) .strip { display: flex; flex: none; gap: var(--gap); }
+  :global(html.tv) .slot { flex: 0 0 var(--cw); }
+  :global(html.tv) .rank { right: .625rem; top: .625rem; min-width: 2rem; height: 2rem; border-radius: 4px; box-shadow: none; font-size: .9375rem; font-weight: 600; letter-spacing: .02em; font-variant-numeric: tabular-nums; }
   .row.m .rank { right: .3rem; top: .3rem; min-width: 1.5rem; height: 1.5rem; font-size: .78rem; }
   .row.m.land { --pw: calc((100vw - var(--pad-x)) / 2.15); }
 </style>

@@ -7,7 +7,7 @@ describe('lgKeyName', () => {
   it('maps the LG remote key codes', () => {
     const table: Array<[number, string]> = [
       [415, 'MediaPlay'], [19, 'MediaPause'], [10252, 'MediaPlayPause'], [413, 'MediaStop'],
-      [417, 'MediaFastForward'], [412, 'MediaRewind'], [403, 'ColorF0Red'], [404, 'ColorF1Green'],
+      [417, 'MediaFastForward'], [412, 'MediaRewind'], [403, 'ColorF0Red'], [404, 'ColorF1Green'], [406, 'ColorF3Blue'],
     ];
     for (const [code, name] of table) expect(lgKeyName(code)).toBe(name);
   });

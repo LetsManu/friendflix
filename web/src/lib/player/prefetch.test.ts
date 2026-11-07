@@ -16,7 +16,7 @@ vi.mock('$app/navigation', () => ({ preloadCode: () => Promise.resolve() }));
 vi.mock('./hls', () => ({ loadHls: () => Promise.resolve() }));
 const markPlayArt = vi.fn();
 vi.mock('./transition', async (orig) => ({ ...(await orig<typeof import('./transition')>()), markPlayArt: (...a: unknown[]) => markPlayArt(...a) }));
-const { HOLD_TIMEOUT_MS, holdPrefetch, playPrefetch, prefetchPlayback, takePrefetched, watchTarget, _resetPrefetch, PREFETCH_TTL_MS } = await import('./prefetch');
+const { HOLD_TIMEOUT_MS, holdPrefetch, playPrefetch, prefetchPlayback, takePrefetched, watchTarget, startSecond, _resetPrefetch, PREFETCH_TTL_MS } = await import('./prefetch');
 const { firstPlaybackRequest, playbackInfoBody, bodyKey } = await import('./infobody');
 const { entryFadeMs, playTransition } = await import('./transition');
 const { prefs, DEFAULT_PREFS } = await import('#lib/stores');
@@ -223,17 +223,38 @@ describe('watchTarget', () => {
     expect(watchTarget('/item/abc')).toBeNull();
     expect(watchTarget(null)).toBeNull();
   });
+  it('t=0 means "from the start" (the TV detail page Restart), a missing or bad t means "resume"', () => {
+    expect(watchTarget('/watch/abc?t=0')).toEqual({ id: 'abc', audio: undefined, startSec: 0 });
+    expect(startSecond('0')).toBe(0);
+    expect(startSecond('42.7')).toBe(42);
+    expect(startSecond(null)).toBeUndefined();
+    expect(startSecond('')).toBeUndefined();
+    expect(startSecond('-3')).toBeUndefined();
+    expect(startSecond('abc')).toBeUndefined();
+    expect(startSecond('90000')).toBeUndefined();
+  });
 });
 
 describe('transition choice', () => {
   it('TV none, reduced motion or no API fade, else view transition', () => {
-    expect(playTransition({ tv: true, reduced: false, hasApi: true })).toBe('none');
+    // TV (spec 5.2): the same transition when the API exists, the fade without it, an instant swap with reduced motion
+    expect(playTransition({ tv: true, reduced: false, hasApi: true })).toBe('view');
+    expect(playTransition({ tv: true, reduced: false, hasApi: false })).toBe('fade');
+    expect(playTransition({ tv: true, reduced: true, hasApi: true })).toBe('none');
     expect(playTransition({ tv: false, reduced: true, hasApi: true })).toBe('fade');
     expect(playTransition({ tv: false, reduced: false, hasApi: false })).toBe('fade');
     expect(playTransition({ tv: false, reduced: false, hasApi: true })).toBe('view');
   });
-  it('entry fade: 0 on TV / during a view transition, 120 reduced, 200 otherwise', () => {
-    expect(entryFadeMs({ tv: true, reduced: false, viewTransition: false })).toBe(0);
+  it('TV in the reduced set (frame guard tripped): a plain crossfade, no artwork morph', () => {
+    expect(playTransition({ tv: true, reduced: false, hasApi: true, level: 'reduced' })).toBe('crossfade');
+    expect(playTransition({ tv: true, reduced: false, hasApi: true, level: 'full' })).toBe('view');
+    expect(playTransition({ tv: true, reduced: false, hasApi: false, level: 'reduced' })).toBe('fade');
+    expect(playTransition({ tv: true, reduced: true, hasApi: true, level: 'reduced' })).toBe('none');
+    expect(playTransition({ tv: false, reduced: false, hasApi: true, level: 'reduced' })).toBe('view'); // desktop has no frame guard
+  });
+  it('entry fade: 0 during a view transition / on TV with reduced motion, 120 reduced, 200 otherwise', () => {
+    expect(entryFadeMs({ tv: true, reduced: true, viewTransition: false })).toBe(0);
+    expect(entryFadeMs({ tv: true, reduced: false, viewTransition: false })).toBe(200);
     expect(entryFadeMs({ tv: false, reduced: false, viewTransition: true })).toBe(0);
     expect(entryFadeMs({ tv: false, reduced: true, viewTransition: false })).toBe(120);
     expect(entryFadeMs({ tv: false, reduced: false, viewTransition: false })).toBe(200);

@@ -18,6 +18,8 @@
   import HoverPreview from '#lib/HoverPreview.svelte';
   import { hoverOwner, nextHoverUid } from '#lib/hover';
   import { isBackKey } from '#lib/spatial';
+  import { tvFocus } from '#lib/tv/focus';
+  import { decodeFade } from '#lib/tv/motion';
 
   export let item: Item;
   /** shows a remove (X) button and emits `remove` (used for Weiterschauen) */
@@ -26,6 +28,8 @@
   export let poster = false;
   /** eager + high priority image (first visible row of the home page) */
   export let priority = false;
+  /** the link the card opens instead of the title's own page (TV extras grid: the clip plays) */
+  export let to = '';
   const dispatch = createEventDispatcher<{
     remove: Item;
     /** "Merkliste" was toggled for this card (after the server accepted it) */
@@ -37,7 +41,7 @@
   }>();
   let fav = item.favorite;
   $: fav = item.favorite; // follow the item when the list re-renders with fresh data
-  $: href = item.type === 'Episode' ? `/watch/${item.id}` : item.type === 'BoxSet' ? `/library/${item.id}` : `/item/${item.id}`;
+  $: href = to ? to : item.type === 'Episode' ? `/watch/${item.id}` : item.type === 'BoxSet' ? `/library/${item.id}` : `/item/${item.id}`;
   $: detail = item.type === 'Episode' && item.seriesId ? `/item/${item.seriesId}` : `/item/${item.id}`;
   $: posterId = item.type === 'Episode' && item.seriesId ? item.seriesId : item.id;
   $: posterSrc = poster && (item.image || item.type === 'Episode') ? img(posterId, 320) : '';
@@ -88,7 +92,7 @@
   function cardEnter() { overCard = true; scheduleOpen(450); }
   function cardLeave() { overCard = false; clearTimeout(openT); }
   // keyboard focus only: a mouse click on a button must not open (or pin) the preview
-  function onFocusIn(e: FocusEvent) { if ((e.target as HTMLElement).matches(':focus-visible')) { focusCard = true; scheduleOpen(600); } }
+  function onFocusIn(e: FocusEvent) { if (tvMode()) tvFocus.set(item); if ((e.target as HTMLElement).matches(':focus-visible')) { focusCard = true; scheduleOpen(600); } }
   function onFocusOut(e: FocusEvent) { if (!(e.currentTarget as HTMLElement).contains(e.relatedTarget as Node | null)) { focusCard = false; clearTimeout(openT); } }
   // TV: OK held on a card opens its actions sheet (the small remove / more buttons are hidden there); a short OK opens the title
   const LONG_PRESS_MS = 600;
@@ -154,9 +158,9 @@
 <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
 <article class="card" class:poster={!!posterSrc} on:mouseenter={cardEnter} on:mouseleave={cardLeave} on:focusin={onFocusIn} on:focusout={onFocusOut} on:keydown={onKey}>
   <div class="media">
-  <a class="thumb" {href} bind:this={thumbEl} on:keydown={thumbKeyDown} on:keyup={thumbKeyUp} aria-label={item.name + (sub ? ', ' + sub : '')}>
+  <a class="thumb" class:art={!!src} {href} bind:this={thumbEl} on:keydown={thumbKeyDown} on:keyup={thumbKeyUp} aria-label={item.name + (sub ? ', ' + sub : '')}>
     {#if posterOnly}<img class="blur" loading="lazy" decoding="async" {src} srcset={srcs} {sizes} alt="" aria-hidden="true" />{/if}
-    {#if src}<img bind:this={imgEl} class:contain={posterOnly} class:spoil={isSpoiler(item, $prefs)} loading={priority ? 'eager' : 'lazy'} fetchpriority={priority ? 'high' : undefined} decoding="async" {src} srcset={srcs} {sizes} alt="" width={posterSrc ? 200 : 320} height={posterSrc ? 300 : 180} />{/if}
+    {#if src}<img bind:this={imgEl} use:decodeFade class:contain={posterOnly} class:spoil={isSpoiler(item, $prefs)} loading={priority ? 'eager' : 'lazy'} fetchpriority={priority ? 'high' : undefined} decoding="async" {src} srcset={srcs} {sizes} alt="" width={posterSrc ? 200 : 320} height={posterSrc ? 300 : 180} />{/if}
     {#if tag?.kind === 'leaving'}<span class="newep leave">{$t(tag.key, { n: tag.n })}</span>
     {:else if tag && (tag.label === 'new' || tag.label === 'newSeries')}<span class="brand"><Logo size={16} label="" /><span class="neu">{$t(tag.key)}</span></span>
     {:else if tag}<span class="newep">{$t(tag.key)}</span>{/if}
@@ -235,6 +239,22 @@
   /* TV: no small overlay buttons on the card (hard to reach with a remote); OK held opens the same actions */
   :global(html.tv) .rm, :global(html.tv) .mb { display: none; }
   :global(html.tv) .cap { right: .6rem; }
+  /* TV card treatment (spec 5.1): 6 px radius, no border, the artwork speaks for itself; the title is burned in only when there is no image */
+  /* focus (spec 5.2): the scale springs in (fast, tiny overshoot) and leaves on the exit curve at ~70 % of that; the ring + soft
+     shadow is a layer of its own that fades in 120 ms, 60 ms after the scale started, so it never pops (opacity only) */
+  :global(html.tv) .card { transition: transform calc(var(--tv-d-spring) * .7) var(--tv-emph-out) 0s; }
+  :global(html.tv) .card:focus-within { transition: transform var(--tv-d-spring) var(--tv-spring) 0s; }
+  :global(html.tv) .media::after { content: ''; position: absolute; inset: 0; z-index: 4; border-radius: var(--tv-radius); box-shadow: var(--tv-card-ring); opacity: 0; pointer-events: none; transition: opacity calc(var(--tv-d-xs) * .7) ease-in; }
+  :global(html.tv) .card:focus-within .media::after { opacity: 1; transition: opacity var(--tv-d-xs) ease-out 60ms; }
+  :global(html.tv) .thumb { border-radius: var(--tv-radius); background: #1a1a1a; }
+  :global(html.tv) .thumb.art .cap, :global(html.tv) .thumb.art::after { display: none; }
+  :global(html.tv) .cap.big { font-size: 1.25rem; font-weight: 600; line-height: 1.25; text-shadow: none; color: var(--tv-white-88); padding: 1rem; }
+  :global(html.tv) .cap.big .l2 { font-size: .9375rem; font-weight: 500; color: var(--mut); }
+  :global(html.tv) .progress { left: .625rem; right: .625rem; bottom: .625rem; height: 4px; border-radius: 2px; overflow: hidden; background: rgba(255, 255, 255, .22); }
+  :global(html.tv) .progress i { border-radius: 2px; }
+  :global(html.tv) .newep, :global(html.tv) .neu { padding: .15rem .5rem; border-radius: 4px; font-size: .9375rem; font-weight: 600; letter-spacing: .02em; text-transform: none; }
+  :global(html.tv) .newep { left: .625rem; top: .625rem; }
+  :global(html.tv) .brand { left: .625rem; top: .625rem; }
   .scrim { position: fixed; inset: 0; background: rgba(0,0,0,.6); z-index: 84; }
   .sheet { outline: none; position: fixed; z-index: 85; left: 0; right: 0; bottom: 0; max-width: 560px; margin: 0 auto; background: var(--surface); border-radius: 14px 14px 0 0; padding: .6rem .6rem calc(.6rem + var(--safe-bottom)); box-shadow: 0 -10px 40px rgba(0,0,0,.7); display: flex; flex-direction: column; gap: .1rem; }
   /* TV: the card's actions (OK held) as a centred dialog instead of a bottom sheet */

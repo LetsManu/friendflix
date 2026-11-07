@@ -7,7 +7,7 @@
 const LG_KEYS: Record<number, string> = {
   415: 'MediaPlay', 19: 'MediaPause', 10252: 'MediaPlayPause', 413: 'MediaStop',
   417: 'MediaFastForward', 412: 'MediaRewind',
-  403: 'ColorF0Red', 404: 'ColorF1Green',
+  403: 'ColorF0Red', 404: 'ColorF1Green', 406: 'ColorF3Blue',
 };
 
 export function lgKeyName(keyCode: number): string | null {

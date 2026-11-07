@@ -16,6 +16,7 @@
   import { barTitles } from '#lib/player/bar';
   import { advanceCountdown, cardVisible, COUNTDOWN_SECONDS, mayAutoplay, nextKind, ringOffset, secondsLeft } from '#lib/player/nextup';
   import { entryFadeMs } from '#lib/player/transition';
+  import { startSecond } from '#lib/player/prefetch';
   import { castSession } from '#lib/cast/engine';
   import PostPlay from '#lib/PostPlay.svelte';
   import { features } from '#lib/capabilities';
@@ -33,7 +34,7 @@
   $: wantAudio = $page.url.searchParams.get('audio') ?? '';
   $: wantSub = $page.url.searchParams.get('sub') ?? '';
   $: langQ = [wantAudio && `audio=${encodeURIComponent(wantAudio)}`, wantSub && `sub=${encodeURIComponent(wantSub)}`].filter(Boolean).join('&');
-  $: startAt = (() => { const t = Number($page.url.searchParams.get('t')); return Number.isFinite(t) && t > 0 && t < 86_400 ? Math.floor(t) : undefined; })();
+  $: startAt = startSecond($page.url.searchParams.get('t')); // ?t=0: from the start (TV detail Restart); none: resume
   $: kind = nextKind(item?.type, Boolean(nextEp));
   /** the title plays on a TV (the cast engine owns it and shows its own "next" in the bar): no card, no countdown here */
   let remote = false;
@@ -96,6 +97,18 @@
     if (mayAutoplay({ kind, autoplayNext: $prefs.autoplayNext, sleepAfterEpisode, askStill })) startCountdown();
   }
   function leaveCard() { entered = false; stopCountdown(); askStill = false; }
+  // TV (spec 4): the next-episode card's button takes the focus once when it appears (OK plays it), unless the viewer is in a control
+  let nextFocused = '';
+  $: if (visible && nextEp && kind === 'episode' && nextFocused !== nextEp.id && tvMode()) { nextFocused = nextEp.id; focusNextOnce(); }
+  function focusNextOnce() {
+    void tick().then(() => {
+      const a = document.activeElement;
+      if (a && a !== document.body && !a.closest('.stage')) return;
+      if (a && a.closest('[data-scope], .skipbtn, .tvov, .ctl')) return; // in a control (also with the bar fading out)
+      if (document.querySelector('.ctl.seeking')) return; // a seek preview is running
+      document.querySelector<HTMLElement>('.next .go')?.focus({ preventScroll: true });
+    });
+  }
   function startCountdown() {
     stopCountdown(); counting = true; let last = Date.now();
     cd = setInterval(() => {
@@ -188,7 +201,7 @@
   <!-- the overlay covers the player: while it is open the player's controls are out of the tab order (inert, not a focus trap) -->
   <div class="stagewrap" inert={ppOpen}>
   {#key id}
-    <Player itemId={id} {poster} title={label(item)} barTitle={bt.title} barSub={bt.sub} seriesId={item?.seriesId ?? ''} isMovie={item?.type === 'Movie'} seasonId={item?.seasonId ?? ''} on:episode={playEpisode} {startAt} {wantAudio} {wantSub} bind:video bind:sleepAfterEpisode bind:creditsAt bind:postplayAt bind:remote hasNext={Boolean(nextEp)} on:next={() => nextEp && toEpisode(nextHref())} on:timeupdate={onTime} on:ended={onEnded} on:back={back}>
+    <Player itemId={id} {poster} item={item && item.id === id ? item : null} title={label(item)} barTitle={bt.title} barSub={bt.sub} seriesId={item?.seriesId ?? ''} isMovie={item?.type === 'Movie'} seasonId={item?.seasonId ?? ''} on:episode={playEpisode} {startAt} {wantAudio} {wantSub} bind:video bind:sleepAfterEpisode bind:creditsAt bind:postplayAt bind:remote hasNext={Boolean(nextEp)} on:next={() => nextEp && toEpisode(nextHref())} on:timeupdate={onTime} on:ended={onEnded} on:back={back}>
       <div slot="top" class="top">
         <button class="icon-btn" aria-label={$t('player.watch.back')} on:click={back}><Icon name="arrow-left" size={30} /></button>
         {#if item}<div class="ttl phone"><b>{item.seriesName ?? item.name}</b>{#if item.seriesName}<span>S{item.parentIndexNumber}:E{item.indexNumber} · {item.name}</span>{/if}</div>{/if}
@@ -267,5 +280,11 @@
   /* above the skip button, which sits above the control bar (--ctl-h: its measured height, set by the Player): the two never overlap */
   .next { bottom: calc(var(--ctl-h, 8rem) + 4.5rem); }
   @media (max-width: 720px) { .next { right: 1rem; } .nthumb { width: 104px; } }
+  /* TV (spec 4/5.1): the card sits bottom right inside the safe area, flat black (no frame), its button is a white .tv-btn on focus */
+  :global(html.tv) .next { right: var(--tv-safe-x, 5vw); bottom: calc(var(--ctl-h, 8rem) + var(--tv-safe-y, 5vh) + 5.5rem); background: rgba(0, 0, 0, .78); border: 0; border-radius: 8px; padding: 1.25rem 1.4rem; width: min(28rem, 40vw); box-shadow: 0 18px 50px rgba(0, 0, 0, .55); animation: tv-next-in var(--tv-d-m) var(--tv-emph-out) backwards; }
+  :global(html.tv) .next :global(.go), :global(html.tv) .next :global(.sec) { border-radius: var(--tv-radius); transition: transform var(--tv-d-s) var(--tv-emph-out); }
+  :global(html.tv) .next :global(.sec), :global(html.tv) .next :global(.go:not(:focus-visible)) { background: var(--tv-btn-rest); color: #fff; border: 0; }
+  :global(html.tv) .next :global(.go:focus-visible), :global(html.tv) .next :global(.sec:focus-visible) { outline: none; background: #fff; color: #000; transform: scale(1.05); transition: transform var(--tv-d-spring) var(--tv-spring); }
+  @keyframes tv-next-in { from { opacity: 0; transform: translate3d(0, 16px, 0); } to { opacity: 1; transform: translate3d(0, 0, 0); } }
   @media (max-height: 520px) { .nthumb { display: none; } }
 </style>

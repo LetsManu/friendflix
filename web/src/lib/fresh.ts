@@ -90,3 +90,12 @@ export interface Story {
   episode: { id: string; name: string; season: number; index: number; overview: string };
   next: { id: string; season: number; index: number };
 }
+
+/** localStorage key of a dismissed "Story so far" card: per profile, series and next episode (it comes back with the next season / break) */
+export const storyDismissKey = (seriesId: string, s: Story): string => `ff-story:${getActiveProfile() || '-'}:${seriesId}:${s.next.id}`;
+export function storyDismissed(seriesId: string, s: Story): boolean { try { return localStorage.getItem(storyDismissKey(seriesId, s)) === '1'; } catch { return false; } }
+/** the story of `seriesId` to show (null: none, or the viewer dismissed it) */
+export async function loadStory(seriesId: string): Promise<Story | null> {
+  const r = await api<{ story: Story | null }>(`/api/items/${seriesId}/story`);
+  return r?.story && !storyDismissed(seriesId, r.story) ? r.story : null;
+}

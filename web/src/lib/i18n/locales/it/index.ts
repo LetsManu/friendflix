@@ -29,6 +29,7 @@ import login from './login';
 import postplay from './postplay';
 import reco from './reco';
 import serverText from './serverText';
+import tv from './tv';
 
-const dict: Translation<typeof de> = { common, shell, home, detail, player, account, social, admin, hubs, anime, together, kids, scenes, fresh, mine, diagnose, version, settings, setup, login, postplay, reco, ui, adminPeople, adminContent, serverText };
+const dict: Translation<typeof de> = { common, shell, home, detail, player, account, social, admin, hubs, anime, together, kids, scenes, fresh, mine, diagnose, version, settings, setup, login, postplay, reco, ui, adminPeople, adminContent, serverText, tv };
 export default dict;

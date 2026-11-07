@@ -4,6 +4,8 @@
  * D-pad navigation for TV browsers: the arrow keys move the focus to the nearest focusable element in that
  * direction (geometric search, no hand-written focus maps), "Back" keys are recognised across TV platforms.
  */
+import { glideRow } from '#lib/tv/motion';
+
 type Dir = 'left' | 'right' | 'up' | 'down';
 
 const FOCUSABLE = 'a[href], button:not([disabled]), input:not([disabled]):not([type="hidden"]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
@@ -56,6 +58,9 @@ const reduce = () => typeof matchMedia !== 'undefined' && matchMedia('(prefers-r
 
 export function focusEl(el: HTMLElement) {
   el.focus({ preventScroll: true });
+  // inside a container that owns the vertical position (TV home rows): only slide into view, the container's handler scrolls the page
+  // TV rows glide with a spring (lib/tv/motion.ts) to the same nearest-in-view place; native scrolling is the fallback
+  if (el.closest('[data-own-scroll]')) { if (!glideRow(el)) el.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: reduce() ? 'auto' : 'smooth' }); return; }
   el.scrollIntoView({ block: 'center', inline: 'center', behavior: reduce() ? 'auto' : 'smooth' });
 }
 
@@ -73,13 +78,7 @@ function scopeOf(active: HTMLElement | null): ParentNode {
   return active?.closest('[data-scope]') ?? document.querySelector('[aria-modal="true"]') ?? document.body;
 }
 
-export function move(dir: Dir, retried = false): boolean {
-  const cur = document.activeElement;
-  const active = cur instanceof HTMLElement && cur !== document.body && cur !== document.documentElement ? cur : null;
-  const scope = scopeOf(active);
-  if (!active || !scope.contains(active) || !usable(active)) return focusFirst(document.querySelector('main') ?? scope);
-  // a widget can take over one step (e.g. the detail tabs: Down enters the active panel); it cancels the event to say so
-  if (!active.dispatchEvent(new CustomEvent('ff-nav', { detail: { dir }, bubbles: true, cancelable: true }))) return true;
+function findTarget(active: HTMLElement, scope: ParentNode, dir: Dir): HTMLElement | null {
   const from = active.getBoundingClientRect();
   let best: HTMLElement | null = null, bestScore = Infinity;
   for (const el of scope.querySelectorAll<HTMLElement>(FOCUSABLE)) {
@@ -87,6 +86,26 @@ export function move(dir: Dir, retried = false): boolean {
     const s = score(from, el.getBoundingClientRect(), dir);
     if (s < bestScore) { bestScore = s; best = el; }
   }
+  return best;
+}
+
+/** true when `move(dir)` would find an element (same search, nothing is focused or scrolled) */
+export function hasTarget(dir: Dir): boolean {
+  const cur = document.activeElement;
+  const active = cur instanceof HTMLElement && cur !== document.body && cur !== document.documentElement ? cur : null;
+  if (!active || !usable(active)) return false;
+  const scope = scopeOf(active);
+  return scope.contains(active) && findTarget(active, scope, dir) !== null;
+}
+
+export function move(dir: Dir, retried = false): boolean {
+  const cur = document.activeElement;
+  const active = cur instanceof HTMLElement && cur !== document.body && cur !== document.documentElement ? cur : null;
+  const scope = scopeOf(active);
+  if (!active || !scope.contains(active) || !usable(active)) return focusFirst(document.querySelector('main') ?? scope);
+  // a widget can take over one step (e.g. the detail tabs: Down enters the active panel); it cancels the event to say so
+  if (!active.dispatchEvent(new CustomEvent('ff-nav', { detail: { dir }, bubbles: true, cancelable: true }))) return true;
+  const best = findTarget(active, scope, dir);
   if (best) { focusEl(best); return true; }
   // nothing below yet: rows further down load lazily when scrolled into view -> scroll and look once more
   if (dir === 'down' && !retried && window.scrollY + window.innerHeight < document.documentElement.scrollHeight - 8) {

@@ -10,15 +10,15 @@ Das ist auch die Lösung für Fernseher ohne AirPlay und ohne Chromecast; wer Ai
 2. Auf dem Handy (eingeloggt): **Menü → Fernbedienung**, Code eingeben, **Koppeln** (oder QR-Code scannen – der Code ist dann schon eingetragen; bestätigt wird trotzdem von Hand).
 3. Der Fernseher meldet sich selbst an und öffnet die Startseite im TV-Modus. Er bleibt 90 Tage angemeldet und erscheint unter **Geräte** als „Fernseher (TV-Modus)“.
 
-Abmelden am Fernseher: Profil-Menü → Abmelden (danach wieder Kopplungs-Bildschirm) oder am Handy unter *Geräte* entfernen – das beendet die Sitzung **und** trennt die Verbindung sofort.
+Abmelden am Fernseher: Seitenmenü → **Konto** → **Abmelden** (danach wieder Kopplungs-Bildschirm) oder am Handy unter *Geräte* entfernen – das beendet die Sitzung **und** trennt die Verbindung sofort.
 
 ## Bedienung am Fernseher
 | Taste | Aktion |
 |---|---|
-| Pfeiltasten | Fokus zur nächsten Kachel/Schaltfläche in dieser Richtung (Reihen blättern automatisch) |
+| Pfeiltasten | Fokus zur nächsten Kachel/Schaltfläche in dieser Richtung (Reihen gleiten mit); ◀ am linken Rand öffnet das Seitenmenü, ▶ schließt es |
 | OK / Enter | öffnen / abspielen |
-| Zurück (Back, Esc, Backspace) | eine Ebene zurück; der Fokus springt wieder auf die Kachel, die du verlassen hast |
-| Im Player | OK = Pause/Play · ←/→ = ∓/+10 s · ↑/↓ = Steuerleiste öffnen (dann mit den Pfeilen wählen) · Zurück schließt Menü → Leiste → Player |
+| Zurück (Back, Esc, Backspace) | eine Ebene zurück; der Fokus springt wieder auf die Kachel, die du verlassen hast. Auf den Seiten des Seitenmenüs (Startseite, Serien, Filme, Meine Liste, Suche) öffnet Zurück zuerst das Seitenmenü |
+| Im Player | OK = Pause/Play · jede Pfeiltaste blendet die Steuerung mit fokussierter Fortschrittsleiste ein · ←/→ auf der Leiste = Sprung-Vorschau (OK oder 1 s ohne Taste springt hin, Zurück bricht ab) · ↓ = Knopfreihe (Folgen, Nächste Folge, Audio & Untertitel, Tempo, Qualität) · Zurück schließt Menü → Vorschau → Leiste → Player |
 | Medientasten | Play/Pause, ±30 s (Vor/Zurück-Spulen), nächste Folge |
 
 ### LG-App (webOS)
@@ -30,10 +30,11 @@ Die [LG-TV-App](webos.md) versteht im Player zusätzlich diese Tasten (außerhal
 | Stop (413) | Player verlassen (der Fortschritt wird gespeichert, wie bei Zurück) |
 | Vorspulen (417) · Zurückspulen (412) | +30 s · −30 s |
 | Rot (403) | Untertitel an/aus (zuletzt benutzte Spur, sonst die erste) |
-| Grün (404) | Audio-Menü öffnen |
-| Zurück (461) | überall eine Ebene zurück; **auf der Startseite des TV-Modus beendet es die App** |
+| Grün (404) | Audio & Untertitel öffnen |
+| Blau (406) | X-Ray (Besetzung und Musik der Szene) |
+| Zurück (461) | überall eine Ebene zurück; **auf der Startseite des TV-Modus öffnet es zuerst das Seitenmenü, ein zweites Zurück beendet die App** |
 
-Der Zeiger der Magic Remote bewegt den Fokus: Fährst du über eine Kachel, springt der Fokusrahmen dorthin, die Pfeiltasten machen von da aus weiter. Im Konto-Menü der App gibt es **Server wechseln**; beim Start öffnet die blaue Taste, solange das Logo zu sehen ist, das Adressformular.
+Der Zeiger der Magic Remote bewegt den Fokus: Fährst du über eine Kachel, springt der Fokusrahmen dorthin, die Pfeiltasten machen von da aus weiter. Im Seitenmenü unter **Konto** gibt es **Server wechseln**; beim Start öffnet die blaue Taste, solange das Logo zu sehen ist, das Adressformular.
 
 Startet der Browser die Wiedergabe ohne vorherigen Tastendruck (z. B. wenn das Handy etwas schickt), beginnt sie **stumm** mit Hinweis; die erste Taste schaltet den Ton ein.
 
