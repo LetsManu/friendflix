@@ -10,6 +10,13 @@ describe('rowPages', () => {
   it('reaches the end', () => {
     expect(rowPages({ scroll: 2500, viewport: 1000, content: 3500 })).toEqual({ page: 3, pages: 4, canPrev: true, canNext: false });
   });
+  it('reaches the last page at max scroll when content is not a whole number of viewports', () => {
+    expect(rowPages({ scroll: 2400, viewport: 1000, content: 3400 })).toEqual({ page: 3, pages: 4, canPrev: true, canNext: false });
+  });
+  it('ignores sub-pixel scroll for canPrev', () => {
+    expect(rowPages({ scroll: 0.5, viewport: 1000, content: 3500 }).canPrev).toBe(false);
+    expect(rowPages({ scroll: 2, viewport: 1000, content: 3500 }).canPrev).toBe(true);
+  });
   it('is one page when content fits, and survives a zero viewport', () => {
     expect(rowPages({ scroll: 0, viewport: 1000, content: 800 })).toEqual({ page: 0, pages: 1, canPrev: false, canNext: false });
     expect(rowPages({ scroll: 0, viewport: 0, content: 0 }).pages).toBe(1);

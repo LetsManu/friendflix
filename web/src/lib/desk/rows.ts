@@ -5,12 +5,11 @@ type RowMetrics = { scroll: number; viewport: number; content: number };
 
 export function rowPages(o: RowMetrics): { page: number; pages: number; canPrev: boolean; canNext: boolean } {
   const vp = Math.max(1, o.viewport);
-  return {
-    page: Math.round(o.scroll / vp),
-    pages: Math.max(1, Math.ceil(o.content / vp)),
-    canPrev: o.scroll > 0,
-    canNext: o.scroll < o.content - o.viewport - 1
-  };
+  const pages = Math.max(1, Math.ceil(o.content / vp));
+  const canNext = o.scroll < o.content - o.viewport - 1;
+  // At the end of the row the last page is always reached, even when content is not a whole number of viewports.
+  const page = canNext ? Math.min(pages - 1, Math.round(o.scroll / vp)) : pages - 1;
+  return { page, pages, canPrev: o.scroll > 1, canNext };
 }
 
 /** Scroll offset one viewport left or right, clamped to the scrollable range. */
