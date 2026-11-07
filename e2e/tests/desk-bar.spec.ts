@@ -147,8 +147,8 @@ test.describe('desktop pill bar', () => {
     await expect(pill).toHaveClass(/open/);
     const series = pill.getByRole('link', { name: 'Serien' });
     await expect(series).toBeVisible();
-    // focused: the field gets room (the tabs fade out of the way), still inside the pill
-    await input.click();
+    // focused (the magnifier: the narrowed field is magnifier-only here): the field gets room, the tabs fade out of the way
+    await pill.locator('button.mag').click();
     await expect(input).toBeFocused();
     await expect(series).toBeHidden();
     await expect.poll(async () => Math.round((await input.boundingBox())!.width)).toBeGreaterThan(200);

@@ -175,7 +175,9 @@
   function onFocusOut(e: FocusEvent) {
     if (inField(e.relatedTarget)) return;
     focused = false;
-    if (!q && path !== '/search' && e.relatedTarget !== magBtn) searchOpen = false; // clicking elsewhere closes an empty field
+    // clicking elsewhere off /search closes the field, also within the typing pause (the pending search is dropped, so a
+    // late navigation cannot reopen it); on /search it stays open, unfocused
+    if (path !== '/search' && e.relatedTarget !== magBtn) { clearTimeout(st); q = ''; searchOpen = false; }
     sync();
   }
 
@@ -355,7 +357,7 @@
   .solid .half i, .solid .round { background-color: var(--glass-solid); }
   .blur .half i, .blur .round { -webkit-backdrop-filter: blur(16px) saturate(140%); backdrop-filter: blur(16px) saturate(140%); }
   .solid.blur .half i, .solid.blur .round { -webkit-backdrop-filter: none; backdrop-filter: none; }
-  .pill.open:not(.compact):focus-within .half i { border-color: rgba(255, 255, 255, .3); }
+  .pill.open:not(.compact):focus-within .half i { border-color: rgba(255, 255, 255, .6); } /* the field's focus ring (the input has no outline) */
   .track { position: relative; display: flex; align-items: center; height: 36px; }
   .fill { position: absolute; left: 0; top: 0; width: 36px; height: 36px; opacity: 0; transition: opacity 160ms ease-out; pointer-events: none; }
   .pill.on .fill { opacity: .14; }
