@@ -1,8 +1,7 @@
 <!-- SPDX-FileCopyrightText: 2026 Manuel Weißböck -->
 <!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
 <script lang="ts">
-  import { api, getActiveProfile } from '#lib/api';
-  import type { Story } from '#lib/fresh';
+  import { loadStory, storyDismissKey, type Story } from '#lib/fresh';
   import { t } from '#lib/i18n';
   import Icon from '#lib/Icon.svelte';
 
@@ -14,20 +13,17 @@
   export let seriesId: string;
   let story: Story | null = null, gone = false, seq = 0;
 
-  const dismissKey = (s: Story) => `ff-story:${getActiveProfile() || '-'}:${seriesId}:${s.next.id}`;
-  function dismissed(s: Story): boolean { try { return localStorage.getItem(dismissKey(s)) === '1'; } catch { return false; } }
   function dismiss() {
     gone = true;
-    if (story) try { localStorage.setItem(dismissKey(story), '1'); } catch { /* storage blocked: hidden until the next visit */ }
+    if (story) try { localStorage.setItem(storyDismissKey(seriesId, story), '1'); } catch { /* storage blocked: hidden until the next visit */ }
   }
   async function load(id: string) {
     const my = ++seq;
     story = null; gone = false;
     try {
-      const r = await api<{ story: Story | null }>(`/api/items/${id}/story`);
-      if (my !== seq || !r.story) return;
-      if (dismissed(r.story)) return;
-      story = r.story;
+      const s = await loadStory(id);
+      if (my !== seq || !s) return;
+      story = s;
     } catch { /* optional card */ }
   }
   $: if (seriesId) void load(seriesId);

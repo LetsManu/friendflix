@@ -30,7 +30,7 @@
   import { loadIntroSettings, markSessionSeen, readSessionSeen, shouldPlayIntro } from '#lib/intro';
   import { mobile } from '#lib/viewport';
   import { HEADER_TABS, isTabActive, TV_RAIL } from '#lib/menu';
-  import { frameGuard, motionLevel, tvPagePlan, VT_ART } from '#lib/tv/motion';
+  import { frameGuard, motionLevel, tvPagePlan, VT_ART, watchFrames } from '#lib/tv/motion';
   import { motionAllowed } from '#lib/preview';
   import TvRail from '#lib/tv/TvRail.svelte';
   import { railKey } from '#lib/tv/rail';
@@ -316,6 +316,24 @@
   // ---- page transitions: View Transitions API where available (180 ms crossfade, main content rises 8 px; see app.css) ----
   const immersive = (p: string) => /^\/(watch|party)\//.test(p);
   const isWatch = (p: string) => p.startsWith('/watch/');
+  // A transition started while another runs skips the first one, whose `finished` then settles: only the latest transition may
+  // clean up the shared root classes, and each one only takes the shared name off the elements it named (unless the latest named them too).
+  const VT_CLASSES = ['ff-vt', 'ff-vt-play', 'ff-vt-in', 'ff-vt-plain', 'ff-vt-tv', 'ff-vt-slide', 'ff-vt-art'];
+  let vtSeq = 0, vtNamed = new Set<HTMLElement>();
+  const vtClear = () => { const root = document.documentElement; root.classList.remove(...VT_CLASSES); root.style.removeProperty('--ff-vt-dx'); };
+  /** a new transition begins: whatever an earlier one left on the root goes, and its token is the only one that may clean up */
+  function vtBegin(): number {
+    vtClear();
+    for (const el of vtNamed) el.style.removeProperty('view-transition-name');
+    vtNamed = new Set();
+    return ++vtSeq;
+  }
+  function vtName(el: HTMLElement | null, name: string, mine: HTMLElement[]) { if (!el) return; el.style.setProperty('view-transition-name', name); mine.push(el); vtNamed.add(el); }
+  function vtEnd(my: number, mine: HTMLElement[]) {
+    const latest = my === vtSeq;
+    for (const el of mine) if (latest || !vtNamed.has(el)) el.style.removeProperty('view-transition-name');
+    if (latest) { vtClear(); vtNamed = new Set(); }
+  }
   onNavigate((nav) => {
     const start = (document as Document & { startViewTransition?: (cb: () => Promise<void>) => { finished: Promise<unknown> } }).startViewTransition;
     const from = nav.from?.url.pathname ?? '', to = nav.to?.url.pathname ?? '';
@@ -323,25 +341,30 @@
     // lib/player/transition.ts). Without the API or with reduced motion the player page fades itself in; TV has no transition.
     if (nav.to && isWatch(to) !== isWatch(from) && !immersive(isWatch(to) ? from : to) && !intro) {
       const into = isWatch(to);
-      if (playTransition({ tv, reduced: tv ? !motionAllowed() : matchMedia('(prefers-reduced-motion: reduce)').matches, hasApi: typeof start === 'function' }) !== 'view') { if (into) takePlayArt(); return; }
-      const root = document.documentElement, art = into ? takePlayArt() : null;
+      // TV: the reduced set (frame guard tripped) keeps a plain crossfade without the artwork morph
+      const mode = playTransition({ tv, reduced: tv ? !motionAllowed() : matchMedia('(prefers-reduced-motion: reduce)').matches, hasApi: typeof start === 'function', level: tv ? motionLevel() : 'full' });
+      if (mode !== 'view' && mode !== 'crossfade') { if (into) takePlayArt(); return; }
+      const root = document.documentElement, taken = into ? takePlayArt() : null, art = mode === 'view' ? taken : null;
+      const my = vtBegin(), mine: HTMLElement[] = [];
+      if (tv) watchFrames();
       return new Promise<void>((resolve) => {
         root.classList.add('ff-vt-play');
         if (into) root.classList.add('ff-vt-in');
-        if (art) art.style.setProperty('view-transition-name', PLAY_ART_NAME); // this one element only, just for the transition
+        if (mode === 'crossfade') root.classList.add('ff-vt-plain'); // the player poster carries no shared name either
+        vtName(art, PLAY_ART_NAME, mine); // this one element only, just for the transition
         const t = start!.call(document, async () => { resolve(); await nav.complete; });
-        void t.finished.catch(() => undefined).finally(() => { root.classList.remove('ff-vt-play', 'ff-vt-in'); art?.style.removeProperty('view-transition-name'); });
+        void t.finished.catch(() => undefined).finally(() => vtEnd(my, mine));
       });
     }
     if (tv) return tvTransition(nav, start);
     if (typeof start !== 'function' || matchMedia('(prefers-reduced-motion: reduce)').matches) return;
     // typing in the header search must not freeze the screen for a crossfade
     if (!nav.to || from === to || to === '/search' || immersive(from) || immersive(to) || intro) return;
-    const root = document.documentElement;
+    const root = document.documentElement, my = vtBegin();
     return new Promise<void>((resolve) => {
       root.classList.add('ff-vt'); // names <main> only for the duration of the transition
       const t = start.call(document, async () => { resolve(); await nav.complete; });
-      void t.finished.catch(() => undefined).finally(() => root.classList.remove('ff-vt'));
+      void t.finished.catch(() => undefined).finally(() => vtEnd(my, []));
     });
   });
 
@@ -366,9 +389,10 @@
     const plan = tvPagePlan({ from, to, back: nav.type === 'popstate', motion: motionAllowed(), level: motionLevel(), hasApi: typeof start === 'function', rail: [railAt(from), railAt(to)] });
     if (plan.kind === 'fade') tvFadeIn = true;
     if (plan.kind !== 'view' || !start) return;
-    const root = document.documentElement;
+    const root = document.documentElement, my = vtBegin();
     const named: HTMLElement[] = [];
-    const name = (el: HTMLElement | null) => { if (el) { el.style.setProperty('view-transition-name', VT_ART); named.push(el); } };
+    const name = (el: HTMLElement | null) => vtName(el, VT_ART, named);
+    watchFrames();
     root.classList.add('ff-vt-tv');
     if (plan.slide) { root.classList.add('ff-vt-slide'); root.style.setProperty('--ff-vt-dx', `${plan.slide * 16}px`); }
     if (plan.morph) root.classList.add('ff-vt-art'); // names the detail backdrop ([data-vt-art]) on whichever side it is
@@ -383,19 +407,15 @@
         // into the detail page: its title loads after the route did; wait (within the budget) until the hero is there, so the
         // backdrop exists when the new state is captured (the new state is live: the image may still finish loading during the morph)
         // (timers, not rAF: rendering is paused while the update callback runs)
-        if (plan.morph === 'in') while (performance.now() < until && !document.querySelector('main .dv .hero :is(img.bg, h1)')) await new Promise((r) => setTimeout(r, 16));
-        if (plan.morph === 'back') {
+        if (plan.morph === 'in') while (performance.now() < until && !document.querySelector('main .dv :is(.hero img.bg, h1)')) await new Promise((r) => setTimeout(r, 16));
+        if (plan.morph === 'back' && my === vtSeq) { // (a newer transition took over meanwhile: name nothing for this one)
           await tick();
           const main = document.querySelector('main');
           const el = want ? main?.querySelectorAll(`a[href="${CSS.escape(want.href)}"]`)[want.nth] : null;
           name(artOf(el));
         }
       });
-      void t.finished.catch(() => undefined).finally(() => {
-        root.classList.remove('ff-vt-tv', 'ff-vt-slide', 'ff-vt-art');
-        root.style.removeProperty('--ff-vt-dx');
-        for (const el of named) el.style.removeProperty('view-transition-name');
-      });
+      void t.finished.catch(() => undefined).finally(() => vtEnd(my, named));
     });
   }
   afterNavigate(() => {

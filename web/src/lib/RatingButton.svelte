@@ -5,6 +5,7 @@
   import { api } from '#lib/api';
   import { focusIndex, nextThumb, RATING_OPTIONS, toThumb, type Thumb } from '#lib/rating';
   import { t } from '#lib/i18n';
+  import { isBackKey } from '#lib/spatial';
 
   /**
    * Rating: one round thumb button that expands (hover / click / keyboard focus / tap) into
@@ -22,6 +23,11 @@
   export let persist = true;
   /** open the option pill above the button instead of over it (e.g. labelled icon rows) */
   export let up = false;
+  /**
+   * TV detail page: a full-width labelled `.tv-btn` row; OK opens the three options in place over it (a row of the same buttons,
+   * the D-pad stays inside it), OK picks, Back closes. Focus alone never opens it (the D-pad walks past).
+   */
+  export let tv = false;
 
   const dispatch = createEventDispatcher<{ change: { value: Thumb; previous: Thumb }; error: { value: Thumb } }>();
   const fine = typeof matchMedia !== 'undefined' && matchMedia('(hover: hover) and (pointer: fine)').matches;
@@ -71,7 +77,7 @@
     void show(e.detail === 0); // keyboard "click" (Enter/Space) moves focus into the options
   }
   function onTriggerFocus(e: FocusEvent) {
-    if (skipFocusOpen) return;
+    if (skipFocusOpen || tv) return;
     if ((e.target as HTMLElement).matches(':focus-visible')) void show(true);
   }
   function onEnter() { if (!fine) return; clearTimeout(leaveT); clearTimeout(enterT); enterT = setTimeout(() => void show(false), 180); }
@@ -84,7 +90,7 @@
   function onFocusOut(e: FocusEvent) { if (open && e.relatedTarget && !root?.contains(e.relatedTarget as Node)) hide(); }
   function onKey(e: KeyboardEvent) {
     if (!open) return;
-    if (e.key === 'Escape') { e.stopPropagation(); e.preventDefault(); hide(true); return; }
+    if (e.key === 'Escape' || (tv && isBackKey(e))) { e.stopPropagation(); e.preventDefault(); hide(true); return; }
     const i = opts.indexOf(document.activeElement as HTMLButtonElement);
     if (i < 0) return;
     const n = RATING_OPTIONS.length;
@@ -104,27 +110,27 @@
 </script>
 
 <!-- svelte-ignore a11y_no_static_element_interactions -->
-<span class="rb" class:lab={showLabel} bind:this={root} style="--rb:{size}px" on:mouseenter={onEnter} on:mouseleave={onLeave} on:focusout={onFocusOut} on:keydown={onKey}>
+<span class="rb" class:lab={showLabel} class:tvm={tv} bind:this={root} style="--rb:{size}px" on:mouseenter={onEnter} on:mouseleave={onLeave} on:focusout={onFocusOut} on:keydown={onKey}>
   <button
-    bind:this={trigger} type="button" class="trig" class:on={v !== 0} class:hid={open}
+    bind:this={trigger} type="button" class="trig" class:tv-btn={tv} class:on={v !== 0} class:hid={open}
     tabindex={open ? -1 : 0} aria-label={current ? $t('common.rating.rated', { label: $t(current.key) }) : $t('common.rating.rate')} aria-haspopup="true" aria-expanded={open}
     title={current ? $t(current.key) : $t('common.rating.rate')} on:click={onTriggerClick} on:focus={onTriggerFocus}
   >
     <span class="ic">
       {#if v === -1}{@render down(iconSize, true)}{:else if v === 2}{@render double(iconSize, true)}{:else}{@render upIc(iconSize, v === 1)}{/if}
     </span>
-    {#if showLabel}<span class="tx">{current ? $t(current.key) : $t('common.rating.rate')}</span>{/if}
+    {#if showLabel || tv}<span class="tx">{current ? $t(current.key) : $t('common.rating.rate')}</span>{/if}
   </button>
   {#if open}
-    <span class="pill" class:up role="group" aria-label={$t('common.rating.rate')}>
+    <span class="pill" class:up role="group" aria-label={$t('common.rating.rate')} data-scope={tv ? '' : undefined}>
       {#each RATING_OPTIONS as o, i (o.value)}
         <button
-          bind:this={opts[i]} type="button" class="opt" class:on={v === o.value} aria-pressed={v === o.value}
+          bind:this={opts[i]} type="button" class="opt" class:tv-btn={tv} class:on={v === o.value} aria-pressed={v === o.value}
           aria-label={v === o.value ? $t('common.rating.remove', { label: $t(o.key) }) : $t(o.key)} disabled={busy}
           on:click|stopPropagation={(e) => pick(o.value, e)}
         >
           {#if o.icon === 'down'}{@render down(iconSize, v === o.value)}{:else if o.icon === 'up'}{@render upIc(iconSize, v === o.value)}{:else}{@render double(iconSize, v === o.value)}{/if}
-          <span class="tip" aria-hidden="true">{$t(o.key)}</span>
+          {#if tv}<span class="otx">{$t(o.key)}</span>{:else}<span class="tip" aria-hidden="true">{$t(o.key)}</span>{/if}
         </button>
       {/each}
     </span>
@@ -168,6 +174,24 @@
   .msg span { display: block; white-space: nowrap; padding: .2rem .55rem; border-radius: 6px; background: rgba(16,20,24,.94); border: 1px solid var(--err, #e5646e); color: #fff; font-size: .75rem; font-weight: 600; }
   @keyframes rb-in { from { opacity: 0; transform: translate(-50%, -50%) scale(.6); } }
   @keyframes rb-up { from { opacity: 0; transform: translateX(-50%) translateY(6px); } }
+  /* TV (detail page button list): the trigger is a labelled .tv-btn row (look from app.css); the options replace it in place */
+  .tvm { display: flex; flex-direction: column; align-items: stretch; width: 100%; }
+  .tvm .trig, .tvm .opt { width: auto; height: auto; min-height: 3.5rem; border-radius: var(--tv-radius); justify-content: flex-start; display: flex; padding: 0 1.75rem; }
+  .tvm .trig { width: 100%; }
+  .tvm .trig::after { display: none; }
+  .tvm .trig:focus-visible, .tvm .opt:focus-visible { outline: none; }
+  .tvm .trig .ic { display: grid; place-items: center; }
+  .tvm .tx { font: inherit; color: inherit; }
+  .tvm .trig.on .ic { color: var(--acc); }
+  .tvm .trig.on:focus-visible .ic { color: inherit; }
+  .tvm .pill { left: 0; top: 0; transform: none; gap: .75rem; padding: 0; border-radius: 0; background: none; box-shadow: none; animation: rb-tv-in var(--tv-d-s, 200ms) var(--tv-emph-out, ease-out) both; }
+  .tvm .opt { background: var(--tv-btn-rest); white-space: nowrap; transform-origin: center; }
+  .tvm .opt.on { background: rgba(255, 255, 255, .28); }
+  .tvm .opt:focus-visible { background: #fff; color: #000; }
+  .tvm .opt svg { transition: none; }
+  .tvm .opt:hover svg, .tvm .opt:focus-visible svg { transform: none; }
+  .tvm .msg { left: 0; transform: none; }
+  @keyframes rb-tv-in { from { opacity: 0; transform: translate3d(-8px, 0, 0); } }
   @media (pointer: coarse) {
     .opt { width: 44px; height: 44px; min-height: 44px; }
     .tip { display: none; }

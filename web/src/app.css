@@ -198,6 +198,7 @@ html.tv.tv-motion-reduced { --tv-spring: var(--tv-emph-out); --tv-d-spring: var(
   html.ff-vt-play::view-transition-group(root) { animation-duration: 200ms; }
   html.ff-vt-play::view-transition-old(root), html.ff-vt-play::view-transition-new(root) { animation-duration: 200ms; animation-timing-function: ease; }
   html.ff-vt-in .ff-poster { view-transition-name: ff-play-art; }
+  html.ff-vt-plain .ff-poster { view-transition-name: none; } /* TV reduced set: a plain crossfade into the player, no morph */
   html.ff-vt-in header.nav, html.ff-vt-in nav.tabbar { visibility: hidden; }
   ::view-transition-group(ff-play-art) { animation-duration: 320ms; animation-timing-function: var(--ease); }
   ::view-transition-old(ff-play-art), ::view-transition-new(ff-play-art) { animation-duration: 320ms; height: 100%; object-fit: cover; overflow: clip; }

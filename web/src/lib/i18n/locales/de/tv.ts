@@ -4,4 +4,6 @@
 export default {
   rail: { label: 'Hauptmenü', profile: 'Profil wechseln, {name}' },
   tile: { top10: 'Top 10 · Platz {n}' },
+  /** detail page (spec 3): the button list and the cast line */
+  detail: { restart: 'Von vorne', episodes: 'Folgen & Staffeln', collection: 'Filmreihe', with: 'Mit: {names}', actions: 'Aktionen' },
 } as const;

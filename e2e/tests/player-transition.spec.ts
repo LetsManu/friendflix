@@ -184,6 +184,7 @@ test.describe('into the player', () => {
       await mockPlayer(page);
       const info = await countInfo(page);
       await page.addInitScript(() => sessionStorage.setItem('ff_tv', '1'));
+      await page.route('**/api/items/*/trailer', (r) => r.fulfill({ json: {} })); // the TV detail backdrop would start a trailer clip
       await page.goto('/item/' + MOVIE.id);
       await expect(page.locator('html')).toHaveClass(/\btv\b/);
       await page.evaluate(() => {
@@ -192,7 +193,7 @@ test.describe('into the player', () => {
         new MutationObserver(() => { if (/ff-vt/.test(document.documentElement.className)) w.__vtSeen = true; })
           .observe(document.documentElement, { attributes: true, attributeFilter: ['class'] });
       });
-      await playButton(page).click();
+      await page.locator('.tvd .btns a.play').click(); // the TV detail page (DetailTv)
       await playing(page);
       expect(await page.evaluate(() => (window as unknown as { __vtSeen: boolean }).__vtSeen)).toBe(true);
       await expect(page.locator('html')).not.toHaveClass(/ff-vt-(in|play)/); // cleaned up after the transition

@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import type { Locator, Page, Route } from '@playwright/test';
+import type { Page, Route } from '@playwright/test';
 import { expect, test } from '../fixtures.js';
 import { ME, MOVIE, MOVIE2, SERIES, items } from '../mocks/fixtures.js';
 import { row, openPopout } from '../helpers.js';
@@ -289,68 +289,29 @@ test.describe('detail page: final review fixes', () => {
 });
 
 test.describe('detail page: TV', () => {
-  /** every async block is in (ratings line, cast row, tabs, social card) and the layout stopped moving before the first key */
-  async function settle(page: Page) {
-    await expect(page.locator('html.tv')).toHaveCount(1);
-    await expect(page.locator('.dv .cap a.play')).toBeVisible();
-    await expect(page.locator('section.cast a').first()).toBeVisible();
-    await expect(ratingsLine(page)).toContainText('Freunde');
-    await expect(tablist(page).getByRole('tab', { name: 'Details' })).toBeVisible();
-    await page.waitForLoadState('networkidle');
-  }
-  /** a key press that must land on `target`: press and assert again until it holds (focus handlers may still be wiring up) */
-  async function step(page: Page, key: string, target: Locator, from: Locator) {
-    await expect(async () => {
-      if (!(await target.evaluateAll((els) => els.some((el) => el === document.activeElement)))) {
-        await from.focus();
-        await page.keyboard.press(key);
-      }
-      await expect(target).toBeFocused({ timeout: 1000 });
-    }).toPass({ timeout: 10_000 });
-  }
-
-  test('focus moves from the play button down to the tabs, Right selects Mehr davon, Down enters its panel, Up returns to the tab', async ({ page }) => {
+  // TV mode renders the scroll-free page (DetailTv, spec section 3): the tabs, cast row and collection row of the scrolling
+  // page become sub-screens reached from the button list (tests/tv-detail.spec.ts covers the list itself)
+  test('no tabs or scrolling sections: Down from Play walks the button list to the sub-screen links', async ({ page }) => {
     await mockAbout(page, NO_KEYS);
     await page.route('**/api/playback/info', (r) => r.fulfill({ json: {} })); // the focused play button prefetches the playback info
     await page.goto('/item/' + MOVIE.id + '?tv=1');
-    await settle(page);
-    const play = page.locator('.dv .cap a.play');
-    const details = tablist(page).getByRole('tab', { name: 'Details' });
-    const more = tablist(page).getByRole('tab', { name: 'Mehr davon' });
-    const cast = page.locator('section.cast a').first();
-    // exactly two steps: play button -> first person of the cast row -> Details tab (the ratings line and the synopsis are not focus stops)
-    await step(page, 'ArrowDown', cast, play);
-    await step(page, 'ArrowDown', details, cast);
-    await expect(details).toHaveAttribute('tabindex', '0');
-    await expect(more).toHaveAttribute('tabindex', '0'); // every tab is focusable on TV
-    await step(page, 'ArrowRight', more, details);
-    await expect(more).toHaveAttribute('aria-selected', 'true');
-    const panel = page.getByRole('tabpanel', { name: 'Mehr davon' });
-    await expect(panel.locator('a[href], button').first()).toBeVisible();
-    await step(page, 'ArrowDown', panel.locator('a[href], button:not([disabled])').first(), more);
-    await step(page, 'ArrowUp', more, panel.locator('a[href], button:not([disabled])').first());
-    await expect(more).toHaveAttribute('aria-selected', 'true');
+    await expect(page.locator('html.tv')).toHaveCount(1);
+    const play = page.locator('.tvd .btns a.play');
+    await expect(play).toBeFocused();
+    await expect(page.locator('.dv .tabs, .dv section.cast, .dv .cap')).toHaveCount(0);
+    await page.keyboard.press('ArrowDown');
+    await expect(page.locator('.tvd .btns a[href="/item/' + MOVIE.id + '/more"]')).toBeFocused();
   });
 
-  test('with a collection: Down goes buttons -> collection row -> cast -> tabs, Right walks the row', async ({ page }) => {
+  test('with a collection: the list offers it as a sub-screen instead of the collection row', async ({ page }) => {
     const part = (o: object) => ({ image: true, played: false, current: false, inLibrary: true, from: 'jellyfin', ...o });
     const collection = { name: 'Matrix-Reihe', from: 'jellyfin', parts: [part({ id: SERIES.id, name: 'Teil Eins', played: true }), part({ id: MOVIE.id, name: MOVIE.name, current: true }), part({ id: items[4]!.id, name: 'Teil Drei' })] };
     await mockAbout(page, { ...NO_KEYS, collection });
     await page.route('**/api/playback/info', (r) => r.fulfill({ json: {} }));
     await page.goto('/item/' + MOVIE.id + '?tv=1');
-    await settle(page);
-    const rowEl = page.getByRole('region', { name: /Teil 2 von 3/ });
-    await expect(rowEl.locator('li')).toHaveCount(3);
-    const play = page.locator('.dv .cap a.play');
-    const posters = rowEl.locator('a.poster');
-    const first = posters.first();
-    const details = tablist(page).getByRole('tab', { name: 'Details' });
-    // the collection row sits between the buttons and the cast row
-    await step(page, 'ArrowDown', first, play);
-    await step(page, 'ArrowRight', posters.nth(1), first);
-    // spatial navigation picks the cast member below the poster, so any cast link counts
-    await step(page, 'ArrowDown', page.locator('section.cast a:focus'), posters.nth(1));
-    await step(page, 'ArrowDown', details, page.locator('section.cast a').first());
+    await expect(page.locator('.tvd .btns a.play')).toBeFocused();
+    await expect(page.locator('.tvd .btns a[href="/item/' + MOVIE.id + '/collection"]')).toHaveCount(1);
+    await expect(page.getByRole('region', { name: /Teil 2 von 3/ })).toHaveCount(0);
   });
 });
 

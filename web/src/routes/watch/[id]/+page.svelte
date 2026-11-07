@@ -16,6 +16,7 @@
   import { barTitles } from '#lib/player/bar';
   import { advanceCountdown, cardVisible, COUNTDOWN_SECONDS, mayAutoplay, nextKind, ringOffset, secondsLeft } from '#lib/player/nextup';
   import { entryFadeMs } from '#lib/player/transition';
+  import { startSecond } from '#lib/player/prefetch';
   import { castSession } from '#lib/cast/engine';
   import PostPlay from '#lib/PostPlay.svelte';
   import { features } from '#lib/capabilities';
@@ -33,7 +34,7 @@
   $: wantAudio = $page.url.searchParams.get('audio') ?? '';
   $: wantSub = $page.url.searchParams.get('sub') ?? '';
   $: langQ = [wantAudio && `audio=${encodeURIComponent(wantAudio)}`, wantSub && `sub=${encodeURIComponent(wantSub)}`].filter(Boolean).join('&');
-  $: startAt = (() => { const t = Number($page.url.searchParams.get('t')); return Number.isFinite(t) && t > 0 && t < 86_400 ? Math.floor(t) : undefined; })();
+  $: startAt = startSecond($page.url.searchParams.get('t')); // ?t=0: from the start (TV detail Restart); none: resume
   $: kind = nextKind(item?.type, Boolean(nextEp));
   /** the title plays on a TV (the cast engine owns it and shows its own "next" in the bar): no card, no countdown here */
   let remote = false;

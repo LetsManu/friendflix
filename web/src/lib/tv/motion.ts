@@ -88,6 +88,8 @@ function pulse() {
   watchUntil = now() + 1000;
   if (!guardRaf) { last = now(); slow = 0; guardRaf = requestAnimationFrame(guardFrame); }
 }
+/** a compositor animation the guard should watch starts elsewhere (a page / player view transition) */
+export function watchFrames(): void { pulse(); }
 /**
  * Starts the frame-budget guard (once, on TV boot): while things move it watches the rAF deltas, and three consecutive
  * frames over 32 ms drop the session to the reduced set (`html.tv-motion-reduced` in CSS). Returns a stop function.

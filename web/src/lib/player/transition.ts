@@ -22,12 +22,16 @@ export function takePlayArt(now = Date.now()): HTMLElement | null {
   return onScreen ? a.el : null;
 }
 
-export type PlayTransition = 'none' | 'view' | 'fade';
-/** how the layout enters/leaves /watch: 'view' = View Transition (morph when the artwork is there), 'fade' = the page fades itself in, 'none' = cut */
-export function playTransition(o: { tv: boolean; reduced: boolean; hasApi: boolean }): PlayTransition {
+export type PlayTransition = 'none' | 'view' | 'crossfade' | 'fade';
+/**
+ * How the layout enters/leaves /watch: 'view' = View Transition (morph when the artwork is there), 'crossfade' = View
+ * Transition without the morph (TV in the reduced set: the frame guard tripped), 'fade' = the page fades itself in, 'none' = cut.
+ * `level` is the TV motion level (lib/tv/motion.ts motionLevel); desktop has no frame guard.
+ */
+export function playTransition(o: { tv: boolean; reduced: boolean; hasApi: boolean; level?: 'full' | 'reduced' }): PlayTransition {
   if (o.tv && o.reduced) return 'none'; // TV calm / reduced motion: an instant swap (spec 5.2)
   if (o.reduced || !o.hasApi) return 'fade';
-  return 'view';
+  return o.tv && o.level === 'reduced' ? 'crossfade' : 'view';
 }
 
 /** fade-in of the player page in ms: 0 while a view transition does the work or on TV with reduced motion, 120 with reduced motion, else 200 */
