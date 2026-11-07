@@ -11,7 +11,9 @@ export type KeyAction =
   /** "Besetzung & Infos": quick peek while playing (I, TV: up, remote Info) / the full panel from an open peek (OK, I) */
   | { type: 'peek' } | { type: 'castInfo' }
   /** LG remote: red = subtitles on/off, green = audio/subtitle tracks menu, stop = leave the player like Back */
-  | { type: 'subtitleToggle' } | { type: 'audioMenu' } | { type: 'stop' };
+  | { type: 'subtitleToggle' } | { type: 'audioMenu' } | { type: 'stop' }
+  /** TV progress bar (spec 4): left / right move the seek preview, OK commits it (lib/player/tvSeek.ts) */
+  | { type: 'seekPreview'; dir: -1 | 1 } | { type: 'seekCommit' };
 
 export interface KeyInput { key: string; ctrlKey?: boolean; metaKey?: boolean; altKey?: boolean; shiftKey?: boolean }
 export interface KeyContext {
@@ -29,6 +31,10 @@ export interface KeyContext {
   peekOpen?: boolean;
   /** the LG webOS app (isLgApp()): its remote's stop and colour keys act; elsewhere (Tizen, browsers) they stay unmapped */
   lg?: boolean;
+  /** TV: the focus is on the progress bar (left / right preview a seek there) */
+  onTrack?: boolean;
+  /** TV: a seek preview is running (OK commits it) */
+  previewActive?: boolean;
 }
 
 /** keys typed into these belong to the field */
@@ -38,6 +44,10 @@ export const isTypingTarget = (el: { tagName?: string; isContentEditable?: boole
 export function resolveKey(e: KeyInput, c: KeyContext): KeyAction | null {
   if (e.ctrlKey || e.metaKey || e.altKey) return null;
   const k = e.key.length === 1 ? e.key.toLowerCase() : e.key.toLowerCase(); // 'Escape' -> 'escape'
+  if (c.tv && c.onTrack) {
+    if (k === 'arrowleft' || k === 'arrowright') return { type: 'seekPreview', dir: k === 'arrowleft' ? -1 : 1 };
+    if (k === 'enter') return c.previewActive ? { type: 'seekCommit' } : { type: 'toggle' };
+  }
   if (k === 'enter' && c.onBody && c.hasSkip && c.tv) return { type: 'skip' }; // TV: OK skips the intro while its button is showing
   if (c.peekOpen && !c.overlayOpen && ((k === 'enter' && c.onBody) || k === 'i' || k === 'info')) return { type: 'castInfo' };
   if (k === 'info') return c.overlayOpen ? null : { type: 'peek' }; // remote "Info" button
@@ -49,14 +59,15 @@ export function resolveKey(e: KeyInput, c: KeyContext): KeyAction | null {
   if (c.lg && k === 'mediastop') return { type: 'stop' };
   if (c.lg && k === 'colorf0red') return { type: 'subtitleToggle' };
   if (c.lg && k === 'colorf1green') return { type: 'audioMenu' };
+  if (c.lg && k === 'colorf3blue') return { type: 'castInfo' }; // X-ray: the full cast info panel
   if (k === 'mediatracknext') return c.hasNext ? { type: 'next' } : null;
   // TV remotes without media keys (LG 2025 Magic Remote): channel up = next episode
   if (k === 'pageup' && c.tv) return c.hasNext ? { type: 'next' } : null;
+  // TV (spec 4): any arrow shows the controls with the focus on the progress bar (seeking happens there, as a preview)
+  if (c.tv && k.startsWith('arrow')) return { type: 'tvControls' };
   if (k === 'arrowleft' || k === 'j') return { type: 'seek', by: -10 };
   if (k === 'arrowright' || k === 'l') return { type: 'seek', by: 10 };
-  // TV: up (bar hidden, nothing focused) peeks at the cast without pausing; down brings the control bar
-  if (k === 'arrowup' && c.tv && c.onBody && !c.overlayOpen) return { type: 'peek' };
-  if (k === 'arrowup' || k === 'arrowdown') return c.tv ? { type: 'tvControls' } : { type: 'volume', delta: k === 'arrowup' ? 0.1 : -0.1 };
+  if (k === 'arrowup' || k === 'arrowdown') return { type: 'volume', delta: k === 'arrowup' ? 0.1 : -0.1 };
   if (k === 'm') return { type: 'mute' };
   if (k === 'f') return { type: 'fullscreen' };
   if (k === 'escape') return c.overlayOpen ? { type: 'escape' } : null;

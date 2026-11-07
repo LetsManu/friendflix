@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import type { Page } from '@playwright/test';
-import { ME, MOVIE } from '../mocks/fixtures.js';
+import { episodes, ME, MOVIE } from '../mocks/fixtures.js';
 import { HLS_INIT, HLS_PLAYLIST, HLS_SEGMENTS } from '../mocks/hls.js';
 import { mockPlayer, videoReady } from '../mocks/scenes.js';
 import { asLgApp } from '../mocks/webos.js';
@@ -88,6 +88,8 @@ test.describe('LG app', () => {
     await expect.poll(() => subShowing(page)).toBe(!before);
   });
 
+  // spec 4: an arrow now brings the controls with the focus on the progress bar (not on play/pause); Down goes to the labelled
+  // button row. The rest is the old guarantee: once the bar hid (5 s) the focus is dropped and OK plays / pauses.
   test('OK after the control bar hid plays/pauses instead of pressing the last focused button', async ({ page, api: _api }) => {
     test.setTimeout(30_000);
     await asLgApp(page);
@@ -95,19 +97,171 @@ test.describe('LG app', () => {
     await page.goto('/watch/' + MOVIE.id + '?ff_app=webos');
     await videoReady(page);
     await expect.poll(() => isPaused(page)).toBe(false);
-    await page.keyboard.press('ArrowDown'); // the bar, focus on play/pause
-    await expect(page.locator('.ctl .ic').first()).toBeFocused();
-    await page.keyboard.press('ArrowRight'); // move along the bar: to "10 s back"
+    await page.keyboard.press('ArrowDown'); // the controls, focus on the progress bar
+    await expect(page.locator('.ctl [data-tvtrack]')).toBeFocused();
+    await page.keyboard.press('ArrowDown'); // the button row: "Audio und Untertitel" (a film: no episodes / next)
     const focusedLabel = () => page.evaluate(() => document.activeElement?.getAttribute('aria-label') ?? '');
-    await expect.poll(focusedLabel).toBe('10 Sekunden zurück');
-    // moving along the bar keeps it shown; idle, it hides after 5 s on the TV and drops the focus
+    await expect.poll(focusedLabel).toBe('Audio und Untertitel');
+    // moving along the controls keeps them shown; idle, they hide after 5 s on the TV and drop the focus
     await expect(page.locator('.ctl')).not.toHaveClass(/hide/);
     await expect(page.locator('.ctl')).toHaveClass(/hide/, { timeout: 8000 });
     await expect.poll(() => page.evaluate(() => document.activeElement === document.body)).toBe(true);
     const t0 = await time(page);
-    await page.keyboard.press('Enter'); // OK: pause, not "10 s back"
+    await page.keyboard.press('Enter'); // OK: pause, not the tracks overlay
     await expect.poll(() => isPaused(page)).toBe(true);
     expect(await time(page)).toBeGreaterThanOrEqual(t0);
+    await expect(page.locator('.tvov')).toHaveCount(0);
+  });
+
+  test('seek preview: left/right move a marker without seeking; Back cancels, OK commits', async ({ page, api: _api }) => {
+    await asLgApp(page);
+    await playerWithInfo(page);
+    await page.goto('/watch/' + MOVIE.id + '?ff_app=webos');
+    await videoReady(page);
+    await expect.poll(() => time(page)).toBeGreaterThan(0.5); // the start seek is over
+    await page.evaluate(() => new Promise<void>((res) => { const v = document.querySelector('video')!; v.addEventListener('seeked', () => res(), { once: true }); v.currentTime = 300; }));
+    const bar = page.locator('.ctl [data-tvtrack]'), marker = page.getByTestId('seek-preview');
+    await page.keyboard.press('ArrowLeft'); // hidden controls: they show, the bar has the focus, nothing seeks
+    await expect(page.locator('.ctl')).not.toHaveClass(/hide/);
+    await expect(bar).toBeFocused();
+    await expect(marker).toHaveCount(0);
+    await page.keyboard.press('ArrowLeft'); // the preview: marker + target time, the video keeps its position
+    await expect(marker).toBeVisible();
+    await expect(marker).toContainText('4:50');
+    expect(await time(page)).toBeGreaterThan(299);
+    await page.keyboard.press('Backspace'); // Back: the preview ends, the position stays, the controls stay
+    await expect(marker).toHaveCount(0);
+    await expect(bar).toBeFocused();
+    await page.waitForTimeout(1200); // the commit timer would have fired by now
+    expect(await time(page)).toBeGreaterThan(299);
+    await page.keyboard.press('ArrowLeft');
+    await expect(marker).toBeVisible();
+    await page.keyboard.press('Enter'); // OK: seek there
+    await expect(marker).toHaveCount(0);
+    await expect.poll(() => time(page)).toBeLessThan(295);
+    expect(await time(page)).toBeGreaterThan(288);
+  });
+
+  test('a preview commits by itself after 1 s without a key; held keys step faster', async ({ page, api: _api }) => {
+    await asLgApp(page);
+    await playerWithInfo(page);
+    await page.goto('/watch/' + MOVIE.id + '?ff_app=webos');
+    await videoReady(page);
+    await expect.poll(() => time(page)).toBeGreaterThan(0.5);
+    await page.keyboard.press('ArrowRight'); // controls
+    await page.keyboard.press('ArrowRight'); // +10 s marker
+    await expect(page.getByTestId('seek-preview')).toBeVisible();
+    await expect(page.getByTestId('seek-preview')).toHaveCount(0, { timeout: 3000 }); // committed
+    await expect.poll(() => time(page)).toBeGreaterThan(9);
+    // holding: repeats keep the preview alive and step 30 s after the first second (10 -> 30 -> 60 s, #229)
+    const bar = page.locator('.ctl [data-tvtrack]');
+    await expect(bar).toBeFocused();
+    const start = Number(await bar.getAttribute('aria-valuenow'));
+    await page.keyboard.down('ArrowRight');
+    for (let i = 0; i < 7; i++) { await page.waitForTimeout(200); await page.keyboard.down('ArrowRight'); } // repeat: true
+    await page.keyboard.up('ArrowRight');
+    const target = Number(await bar.getAttribute('aria-valuenow'));
+    expect(target - start).toBeGreaterThanOrEqual(10 * 5 + 30 * 2); // ~1.4 s held: 30 s steps after the first second
+  });
+
+  test('button row, tracks overlay and the Back order: overlay -> controls -> hidden -> leave', async ({ page, api: _api }) => {
+    await asLgApp(page);
+    await playerWithInfo(page);
+    await page.goto('/');
+    await page.goto('/watch/' + MOVIE.id + '?ff_app=webos');
+    await videoReady(page);
+    const back = () => press(page, 461);
+    await page.keyboard.press('ArrowUp');
+    await expect(page.locator('.ctl [data-tvtrack]')).toBeFocused();
+    await page.keyboard.press('ArrowDown');
+    const tracksBtn = page.locator('.ctl button[aria-label="Audio und Untertitel"]');
+    await expect(tracksBtn).toBeFocused();
+    await expect(page.locator('.ctl .btns button')).toHaveText(['Audio und Untertitel', 'Tempo', 'Qualität']);
+    await page.keyboard.press('Enter');
+    const overlay = page.getByRole('dialog', { name: 'Audio und Untertitel' });
+    await expect(overlay).toBeVisible();
+    await expect(overlay.getByRole('menuitemradio', { name: 'Aus' })).toBeFocused(); // subtitles off is the current choice
+    await page.keyboard.press('ArrowDown');
+    await page.keyboard.press('Enter'); // "Deutsch": on at once, the overlay stays
+    await expect.poll(() => subShowing(page)).toBe(true);
+    await expect(overlay).toBeVisible();
+    await back();
+    await expect(overlay).toHaveCount(0);
+    await expect(tracksBtn).toBeFocused(); // back on the button that opened it
+    await back();
+    await expect(page.locator('.ctl')).toHaveClass(/hide/);
+    await expect(page).toHaveURL(/\/watch\//);
+    await back();
+    await expect(page).not.toHaveURL(/\/watch\//);
+  });
+
+  test('an episode: Episodes · Next episode in the row; the episodes overlay opens on the playing one and OK plays another', async ({ page, api: _api }) => {
+    const EP = episodes[1]!, NEXT = episodes[2]!;
+    await asLgApp(page);
+    await playerWithInfo(page);
+    await page.route('**/api/items/*/next', (r) => r.fulfill({ json: { item: NEXT } }));
+    await page.goto('/watch/' + EP.id + '?ff_app=webos');
+    await videoReady(page);
+    await expect(page.locator('.ctl .head h2')).toHaveText(EP.seriesName!);
+    await expect(page.locator('.ctl .head .tv-meta')).toHaveText('S1 F2 · ' + EP.name);
+    await page.keyboard.press('ArrowDown');
+    await page.keyboard.press('ArrowDown');
+    await expect(page.locator('.ctl .btns button')).toHaveText(['Folgen', 'Nächste Folge', 'Audio und Untertitel', 'Tempo', 'Qualität']);
+    await expect(page.locator('.ctl button[aria-label="Folgen"]')).toBeFocused();
+    await page.keyboard.press('Enter');
+    const overlay = page.getByRole('dialog', { name: 'Folgen' });
+    await expect(overlay).toBeVisible();
+    await expect(overlay.locator(`[data-ep="${EP.id}"]`)).toBeFocused();
+    await page.keyboard.press('ArrowRight');
+    await expect(overlay.locator(`[data-ep="${NEXT.id}"]`)).toBeFocused();
+    await page.keyboard.press('Enter');
+    await expect(page).toHaveURL(new RegExp('/watch/' + NEXT.id));
+  });
+
+  test('Speed opens a small list above its button; a pick applies and returns to the button', async ({ page, api: _api }) => {
+    await asLgApp(page);
+    await playerWithInfo(page);
+    await page.goto('/watch/' + MOVIE.id + '?ff_app=webos');
+    await videoReady(page);
+    await page.keyboard.press('ArrowDown');
+    await page.keyboard.press('ArrowDown');
+    await page.keyboard.press('ArrowRight');
+    const speedBtn = page.locator('.ctl button[aria-label="Tempo"]');
+    await expect(speedBtn).toBeFocused();
+    await page.keyboard.press('Enter');
+    const list = page.getByRole('dialog', { name: 'Wiedergabetempo' });
+    await expect(list).toBeVisible();
+    await expect(list.getByRole('menuitemradio', { checked: true })).toBeFocused();
+    expect((await list.boundingBox())!.y + 2).toBeLessThan((await speedBtn.boundingBox())!.y);
+    await page.keyboard.press('ArrowDown');
+    await page.keyboard.press('Enter');
+    await expect(list).toHaveCount(0);
+    await expect(speedBtn).toBeFocused();
+    expect(await page.evaluate(() => document.querySelector('video')!.playbackRate)).toBe(1.25);
+  });
+
+  test('pause screen after 8 s paused without a key; a key brings the controls back', async ({ page, api: _api }) => {
+    await page.clock.install();
+    await asLgApp(page);
+    await playerWithInfo(page);
+    await page.goto('/watch/' + MOVIE.id + '?ff_app=webos');
+    await videoReady(page);
+    await expect.poll(() => isPaused(page)).toBe(false);
+    await press(page, 19); // pause
+    await expect.poll(() => isPaused(page)).toBe(true);
+    const screen = page.getByTestId('pause-screen');
+    await page.clock.fastForward(7000);
+    await expect(screen).toHaveCount(0);
+    await page.clock.fastForward(1500);
+    await expect(screen).toBeVisible();
+    await expect(screen).toContainText('Du schaust');
+    await expect(screen).toContainText(MOVIE.name);
+    await expect(page.locator('.ctl')).toHaveClass(/hide/); // the picture is free, the controls wait
+    await page.keyboard.press('ArrowLeft'); // any key: the screen goes, the controls come back (no seek)
+    await expect(screen).toHaveCount(0);
+    await expect(page.locator('.ctl [data-tvtrack]')).toBeFocused();
+    await expect(page.getByTestId('seek-preview')).toHaveCount(0);
+    expect(await isPaused(page)).toBe(true);
   });
 
   test('Magic Remote wheel over the picture seeks 10 s per notch; channel up has no next episode on a movie', async ({ page, api: _api }) => {
@@ -150,13 +304,18 @@ test.describe('LG app', () => {
     await expect.poll(() => { const u = new URL(page.url()); return u.pathname + u.search; }).toBe(href);
   });
 
-  test('green key opens the audio and subtitle menu', async ({ page, api: _api }) => {
+  // spec 4: on the TV the green key opens the Audio & subtitles overlay (two lists on a sheet), not the desktop popup
+  test('green key opens the audio and subtitle overlay', async ({ page, api: _api }) => {
     await asLgApp(page);
     await playerWithInfo(page);
     await page.goto('/watch/' + MOVIE.id + '?ff_app=webos');
     await videoReady(page);
     await press(page, 404);
-    await expect(page.getByRole('dialog', { name: 'Audio und Untertitel' })).toBeVisible();
+    const overlay = page.getByRole('dialog', { name: 'Audio und Untertitel' });
+    await expect(overlay).toBeVisible();
+    await expect(overlay).toHaveClass(/tvov/);
+    await expect(page.locator('.menu.tracks')).toHaveCount(0);
+    await expect(overlay.getByRole('menuitemradio', { name: 'Aus' })).toBeFocused();
   });
 
   test('a direct stream without a picture switches to the converted stream and keeps playing', async ({ page, api: _api }) => {

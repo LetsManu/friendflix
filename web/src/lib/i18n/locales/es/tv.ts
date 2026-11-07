@@ -10,5 +10,7 @@ const dict: Translation<typeof de> = {
   detail: { restart: 'Empezar de nuevo', episodes: 'Episodios y temporadas', collection: 'Colección', with: 'Con: {names}', actions: 'Acciones' },
   /** detail sub-screens (spec 3): the Back hint, the seasons column, an empty grid */
   sub: { back: 'Volver', seasons: 'Temporadas', none: 'Ahora mismo no hay nada aquí.' },
+  /** player (spec 4): the pause screen eyebrow, remaining time, the episode line under the title, the seek-preview label */
+  player: { watching: 'Estás viendo', remaining: '−{time}', episode: 'T{s} E{e} · {name}', preview: 'Vista previa' },
 };
 export default dict;

@@ -8,4 +8,6 @@ export default {
   detail: { restart: 'Von vorne', episodes: 'Folgen & Staffeln', collection: 'Filmreihe', with: 'Mit: {names}', actions: 'Aktionen' },
   /** detail sub-screens (spec 3): the Back hint, the seasons column, an empty grid */
   sub: { back: 'Zurück', seasons: 'Staffeln', none: 'Hier ist gerade nichts.' },
+  /** player (spec 4): the pause screen eyebrow, remaining time, the episode line under the title, the seek-preview label */
+  player: { watching: 'Du schaust', remaining: '−{time}', episode: 'S{s} F{e} · {name}', preview: 'Vorschau' },
 } as const;

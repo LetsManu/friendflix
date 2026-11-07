@@ -47,6 +47,13 @@
   import { animeAudio, animeDefaultApplies, animeSubtitle } from '#lib/player/anime';
   import { castBody, castConfigEnabled, castSetVolume, castState, castToggleMute, initCast, loadOnCast, onCastEvent, requestCastSession, type CastInfo } from '#lib/cast';
   import { CAST_VIDEO_ATTR, castEngine, castSession, type CastSession } from '#lib/cast/engine';
+  import type { Item } from '#lib/api';
+  import { SEEK_COMMIT_MS, seekCancel, seekCommit, seekStep, type SeekPreview } from '#lib/player/tvSeek';
+  import { pauseScreenDue, playerBack, tvPlayerButtons, type TvButton, type TvLayer } from '#lib/player/tvLayer';
+  import TvControls from '#lib/player/TvControls.svelte';
+  import TvTracks from '#lib/player/TvTracks.svelte';
+  import TvEpisodesOverlay from '#lib/player/TvEpisodesOverlay.svelte';
+  import TvPauseScreen from '#lib/player/TvPauseScreen.svelte';
 
   export let itemId: string;
   /** shown on the phone's remote while this plays */
@@ -90,6 +97,8 @@
   export let poster: { id: string; backdrop?: boolean; image?: boolean } | null = null;
   /** true while the cast engine owns this title's cast session (the Player is a remote for it) */
   export let remote = false;
+  /** the playing item (watch page): the TV pause screen's logo, episode line and synopsis */
+  export let item: Item | null = null;
   const dispatch = createEventDispatcher();
 
   type Info = PlaybackDto;
@@ -121,7 +130,7 @@
 
   // ---- UI state ----
   let paused = true, current = 0, duration = 0, buffered = 0, volume = 1, muted = false, rate = 1, waiting = true, fullscreen = false;
-  let menu: '' | 'tracks' | 'settings' | 'scenes' | 'more' | 'speed' | 'episodes' | 'chapters' = '', toast = '', toastTimer: ReturnType<typeof setTimeout>;
+  let menu: '' | 'tracks' | 'settings' | 'scenes' | 'more' | 'speed' | 'episodes' | 'chapters' | 'quality' = '', toast = '', toastTimer: ReturnType<typeof setTimeout>;
   let lastActive = Date.now(), tick = Date.now(), activityTimer: ReturnType<typeof setInterval>;
   type Bookmark = { id: string; position: number; note: string | null };
   let bookmarks: Bookmark[] = [], noteText = '', xray = false, pausedLong = false, pauseT: ReturnType<typeof setTimeout>;
@@ -170,7 +179,17 @@
   let help = false, live = '', liveN = 0;
   /** the bar hides after this long without input; the TV gets longer (moving along the bar with the D-pad takes time) */
   let hideMs = 3000;
-  $: showUi = !locked && (paused || menu !== '' || scrubbing || tick - lastActive < hideMs);
+  // ---- TV (spec 4): own control layer, seek preview, overlays, pause screen. `tvUi` follows html.tv (set once /api/me answered) ----
+  let tvUi = false, sp: SeekPreview = seekCancel(), spT: ReturnType<typeof setTimeout>, pausedAt = 0, wasPaused = true, skipFocused = -1;
+  $: hideMs = tvUi ? 5000 : 3000; // the D-pad needs longer to reach a button than a mouse
+  $: if (paused !== wasPaused) { wasPaused = paused; if (paused) pausedAt = Date.now(); }
+  /** after 8 s paused without a key (TV, not in calm mode): dimmed picture + "You're watching" */
+  $: pauseOn = tvUi && paused && started && !error && !remote && !locked && !reconnecting && menu === '' && !sp.active && !xray && !peek && !subDlg && !help
+    && pauseScreenDue(pausedAt, lastActive, tick, $prefs.calm === true);
+  $: tvButtons = tvPlayerButtons({ isEpisode: Boolean(seriesId), hasNext });
+  $: tvSub = item?.seriesName && item.indexNumber !== undefined && item.indexNumber !== null
+    ? $t('tv.player.episode', { s: item.parentIndexNumber ?? 1, e: item.indexNumber, name: item.name }) : barSub;
+  $: showUi = !locked && !pauseOn && (paused || menu !== '' || scrubbing || sp.active || tick - lastActive < hideMs);
   // TV: a hidden bar keeps no focus - otherwise the next OK would press the last used button (subtitles ...) instead of play/pause
   $: if (!showUi && typeof document !== 'undefined' && tvMode() && stage?.querySelector('.ctl')?.contains(document.activeElement)) (document.activeElement as HTMLElement).blur();
   $: creditsAt = creditsStart(segments, duration);
@@ -644,7 +663,45 @@
     e.stopPropagation(); e.preventDefault(); // this first key/tap only switches the sound on
   }
   const tvMode = () => document.documentElement.classList.contains('tv');
-  const focusControls = () => { wake(); tickDom().then(() => stage?.querySelector<HTMLElement>('.ctl .ic')?.focus()); };
+  /** TV: the controls with the focus on the progress bar (spec 4); elsewhere the first bar button */
+  const focusControls = () => { wake(); tickDom().then(() => stage?.querySelector<HTMLElement>(tvUi ? '.ctl [data-tvtrack]' : '.ctl .ic')?.focus()); };
+  // ---- TV seek preview: the marker moves, OK or 1 s without a key seeks, Back cancels; the video keeps playing ----
+  function previewStep(dir: -1 | 1, heldMs: number) {
+    if (!allowed() || !(duration > 0)) return;
+    sp = seekStep(sp, dir, remote ? current : video?.currentTime ?? current, duration, heldMs);
+    clearTimeout(spT); spT = setTimeout(commitPreview, SEEK_COMMIT_MS);
+    wake();
+  }
+  function commitPreview() {
+    clearTimeout(spT);
+    const r = seekCommit(sp);
+    sp = r.next;
+    if (r.seekTo !== null) { seekTo(r.seekTo); announce(tr('player.position', { t: fmtClock(r.seekTo) })); }
+    wake();
+  }
+  // Skip intro / recap (TV): the big button takes the focus once when it appears (not out of an open overlay or a preview)
+  $: if (tvUi && skip && !locked && skip.start !== skipFocused) { skipFocused = skip.start; focusSkip(); }
+  function focusSkip() {
+    void tickDom().then(() => {
+      const a = document.activeElement;
+      if (menu || sp.active || overlayOpen()) return;
+      if (a && a !== document.body && a !== stage && !stage?.querySelector('.ctl')?.contains(a)) return;
+      stage?.querySelector<HTMLElement>('.skipbtn')?.focus({ preventScroll: true });
+    });
+  }
+  function cancelPreview() { clearTimeout(spT); sp = seekCancel(); wake(); }
+  /** the TV button row */
+  function tvButton(b: TvButton) {
+    wake();
+    if (b === 'next') { if (hasNext && allowed()) goNext(); return; }
+    menu = menu === b ? '' : b;
+  }
+  /** what Back peels next (overlay -> seek preview -> controls -> leave) */
+  function tvLayer(): TvLayer {
+    if (menu) return 'overlay';
+    if (sp.active) return 'seek';
+    return stage?.querySelector('.ctl')?.contains(document.activeElement) ? 'controls' : 'none';
+  }
   /** commands from the phone remote (dispatched by the layout on a paired TV) */
   function onRemote(e: Event) {
     const m = (e as CustomEvent<{ action: string; value?: number }>).detail;
@@ -743,7 +800,7 @@
   }
   $: if (paused && started) { clearTimeout(pauseT); pauseT = setTimeout(() => { pausedLong = true; ensureInfo(); }, 1200); } else { clearTimeout(pauseT); pausedLong = false; infoDismissed = false; }
   // automatic (pause): only with something to show; explicit: also while loading / after an error
-  $: showXray = (xray || (pausedLong && !infoDismissed && Boolean(castData && (hasPeople(castData) || castData.studios.length || castData.genres.length)))) && menu === '' && !subDlg && !help && !error && !locked;
+  $: showXray = (xray || (pausedLong && !tvUi && !infoDismissed && Boolean(castData && (hasPeople(castData) || castData.studios.length || castData.genres.length)))) && menu === '' && !subDlg && !help && !error && !locked;
   $: if (showXray) peek = false;
   /** quick peek: does not pause, hides by itself after a few seconds */
   function openPeek() {
@@ -896,7 +953,9 @@
       case 'help': help = !help; break;
       case 'speed': speedBy(a.delta); break;
       case 'pip': if (pipOk && !remote) void pip(); break;
-      case 'tvControls': focusControls(); break;
+      case 'tvControls': if (!overlayOpen() && !peek) focusControls(); else wake(); break;
+      case 'seekPreview': previewStep(a.dir, 0); break;
+      case 'seekCommit': commitPreview(); break;
       case 'escape': menu = ''; subDlg = false; help = false; if (showXray) closeCastInfo(); peek = false; break;
       case 'peek': if (peek) openCastInfo(true); else openPeek(); break;
       case 'castInfo': openCastInfo(true); break;
@@ -934,7 +993,24 @@
   let holdStart = 0;
   /** Back / Escape (capture phase: the control bar swallows key events): close the shortcut overlay / open menu, then leave the control bar */
   function onBackCapture(e: KeyboardEvent) {
+    // TV pause screen: arrows, OK and Back only take it away and bring the controls (play / media keys still act)
+    if (pauseOn && (e.key.startsWith('Arrow') || e.key === 'Enter' || isBackKey(e) || e.key === 'Escape')) {
+      e.preventDefault(); e.stopImmediatePropagation(); focusControls(); return;
+    }
     if (!(e.key === 'Escape' || (tvMode() && isBackKey(e)))) return;
+    if (tvUi && !chipOpen && !subDlg && !help) {
+      const layer = tvLayer();
+      if (layer === 'overlay' || layer === 'seek') {
+        e.preventDefault(); e.stopImmediatePropagation();
+        const opener = stage?.querySelector<HTMLElement>('.ctl [aria-expanded="true"]');
+        if (playerBack(layer).next === 'controls') {
+          if (layer === 'seek') { cancelPreview(); return; }
+          menu = ''; wake();
+          tickDom().then(() => (opener ?? stage?.querySelector<HTMLElement>('.ctl [data-tvtrack]'))?.focus());
+        }
+        return;
+      }
+    }
     const opener = stage?.querySelector<HTMLElement>('.ctl [aria-expanded="true"]');
     if (chipOpen) { e.preventDefault(); e.stopImmediatePropagation(); chipOpen = false; return; } // the quality bubble closes alone
     if (menu || subDlg || help) {
@@ -959,7 +1035,20 @@
   const ctlKey = (e: KeyboardEvent) => {
     if (e.key === 'Escape') return;
     const t = e.target as HTMLElement;
-    if (tvMode()) { wake(); e.stopPropagation(); return; } // D-pad: the focus belongs to the control bar; moving along it keeps it shown
+    if (tvMode()) {
+      wake();
+      if (t.hasAttribute('data-tvtrack')) {
+        // the progress bar: left / right preview a seek (held keys step faster), OK commits it or plays / pauses
+        if (!e.repeat) holdStart = Date.now();
+        const a = resolveKey(e, { tv: true, onBody: false, onTrack: true, previewActive: sp.active, hasSkip: false, hasNext, overlayOpen: false });
+        if (a?.type === 'seekPreview') { e.preventDefault(); e.stopPropagation(); previewStep(a.dir, e.repeat ? Date.now() - holdStart : 0); return; }
+        if (a?.type === 'seekCommit') { e.preventDefault(); e.stopPropagation(); commitPreview(); return; }
+        if (a?.type === 'toggle') { e.preventDefault(); e.stopPropagation(); togglePlay(); return; }
+      }
+      // D-pad: the focus belongs to the controls (spatial navigation moved it); media, colour and channel keys still reach the player
+      if (e.key.startsWith('Arrow')) e.stopPropagation();
+      return;
+    }
     const native = (t.tagName === 'BUTTON' && (e.key === ' ' || e.key === 'Enter')) || (t.tagName === 'INPUT' && (t as HTMLInputElement).type === 'range' && e.key.startsWith('Arrow'));
     if (native) e.stopPropagation();
   };
@@ -982,7 +1071,7 @@
   function onOutsideClick(e: MouseEvent) {
     if (!menu || !stage) return;
     const t = e.target as HTMLElement | null;
-    if (!t || t.closest('.menu, [aria-expanded="true"]')) return;
+    if (!t || t.closest('.menu, .tvov, .ctl .list, [aria-expanded="true"]')) return;
     const opener = stage.querySelector<HTMLElement>('.ctl [aria-expanded="true"]');
     const onPicture = stage.contains(t) && !t.closest(NO_GESTURE);
     menu = '';
@@ -1102,7 +1191,9 @@
     // iOS / iPadOS ignore a volume set from script (only the hardware buttons change it): no volume swipe and no volume button there
     if (video) volOk = volumeSettable(video);
     coarse = matchMedia('(pointer: coarse)').matches;
-    if (tvMode()) hideMs = 5000; // the D-pad needs longer to reach a button than a mouse
+    tvUi = tvMode();
+    const tvObs = new MutationObserver(() => { tvUi = tvMode(); });
+    tvObs.observe(document.documentElement, { attributes: true, attributeFilter: ['class'] });
     phone = coarse && !tvMode();
     const narrow = matchMedia('(max-width: 720px)'), setIcon = () => (ICON = narrow.matches ? 28 : 36);
     setIcon(); narrow.addEventListener?.('change', setIcon);
@@ -1160,6 +1251,7 @@
     window.addEventListener('keydown', unmuteOnGesture, true);
     window.addEventListener('pointerdown', unmuteOnGesture, true);
     return () => {
+      tvObs.disconnect();
       window.removeEventListener('pointerdown', touched, true); window.removeEventListener('keydown', touched, true); window.removeEventListener('ff-remote', touched);
       window.removeEventListener('pagehide', bye); document.removeEventListener('fullscreenchange', fs); window.removeEventListener('click', onOutsideClick, true);
       window.removeEventListener('online', online); document.removeEventListener('visibilitychange', vis);
@@ -1171,7 +1263,7 @@
   onDestroy(() => {
     cancelFirstFrame();
     clearInterval(tvTick);
-    clearTimeout(peekT); clearTimeout(posterT); fxEngine?.destroy();
+    clearTimeout(peekT); clearTimeout(posterT); clearTimeout(spT); fxEngine?.destroy();
     persistEstimate(); clearInterval(abrTimer); clearInterval(bwTimer); clearTimeout(stallT);
     clearInterval(progressTimer); clearInterval(activityTimer); clearTimeout(toastTimer); clearTimeout(retryT); clearTimeout(spinT); clearTimeout(pendingTap); clearTimeout(hudT); clearTimeout(rippleT); clearTimeout(lockT); clearTimeout(unlockT); nowPlaying.set(null);
     if (!handedOff && started && !stopped) { stopped = true; send('stop'); }
@@ -1281,7 +1373,7 @@
       <button class="btn light ui" on:click|stopPropagation={() => air?.pick()}>{$t('player.airplay.choose')}</button>
     </div></div>
   {/if}
-  {#if !phone && paused && !waiting && !error && !remote && !locked && !reconnecting}
+  {#if !phone && !tvUi && paused && !waiting && !error && !remote && !locked && !reconnecting}
     <button class="bigplay ui" aria-label={$t('player.controls.play')} on:click|stopPropagation={togglePlay}><Icon name="play" size={44} /></button>
   {/if}
   {#if toast}<div class="toast" aria-hidden="true">{toast}</div>{/if}
@@ -1310,7 +1402,7 @@
 
   <!-- overlays from the page (back button, next episode card, party chat/reactions) -->
   <div class="ovl" class:hide={!showUi} class:withchip={phoneChip}>
-    <slot name="top" />
+    {#if !tvUi}<slot name="top" />{/if}
     {#if phoneChip && info}<div class="qtop"><QualityChip bind:open={chipOpen} compact direct={chipDirect} label={rungLabel(info.maxBitrate)} reason={info.transcodeReason ?? 'other'} /></div>{/if}
   </div>
   {#if phone && !locked && !error && !reconnecting}
@@ -1323,7 +1415,7 @@
   {/if}
   <slot />
 
-  {#if skip && !locked}<button class="skipbtn light" aria-keyshortcuts="S" on:click|stopPropagation={doSkip}>{segText($t, skip.type, 'skip')}{tvMode() ? $t('player.skipOk') : ''}</button>{/if}
+  {#if skip && !locked}<button class="skipbtn light" class:tv-btn={tvUi} aria-keyshortcuts="S" on:click|stopPropagation={doSkip}>{segText($t, skip.type, 'skip')}{tvMode() ? $t('player.skipOk') : ''}</button>{/if}
 
   {#if showXray}
     <div class="cihost" class:hide={!showUi && !xray}><CastInfoPanel data={castData} failed={castFailed} autofocus={infoFocus} on:close={closeCastInfo} /></div>
@@ -1339,6 +1431,20 @@
     </div>
   {/if}
 
+  {#if pauseOn}
+    <TvPauseScreen title={barTitle || title} sub={tvSub} overview={item?.overview ?? ''} logoId={item ? (item.seriesId ? item.seriesId : item.logo ? item.id : '') : ''} />
+  {/if}
+  {#if tvUi}
+    {#if menu === 'tracks' && (info || tvSession)}
+      <TvTracks audio={audioOpts} subs={subOpts} {audioIndex} {subIndex} {fx} fxDisabled={fxDisabled}
+        on:audio={(e) => { wake(); if (e.detail !== audioIndex) void changeAudio(e.detail); }} on:sub={(e) => { wake(); setSubtitle(e.detail); }} on:fx={(e) => { wake(); toggleFx(e.detail); }} />
+    {:else if menu === 'episodes' && seriesId}
+      <TvEpisodesOverlay {seriesId} {seasonId} currentId={itemId} seriesName={barTitle} on:pick={pickEpisode} on:close={() => { menu = ''; focusControls(); }} />
+    {/if}
+    <TvControls shown={showUi && !(posterOn && !posterOut) && menu !== 'tracks' && menu !== 'episodes'} title={barTitle || title} sub={tvSub} {paused} {current} {duration} {buffered} preview={sp} trickplay={info?.trickplay} {chapters}
+      buttons={tvButtons} airplay={air && (airState.available || airOn || airState.ready || airState.busy) ? { on: airOn, label: $t(airOn ? 'player.airplay.playing' : 'player.airplay.play') } : null} {menu} {rate} qualities={qualityOptions} quality={shownQ} {canControl} bind:height={ctlH}
+      on:keydown={ctlKey} on:back={() => dispatch('back')} on:button={(e) => tvButton(e.detail)} on:speed={(e) => setRate(e.detail)} on:quality={(e) => void changeQuality(e.detail)} on:airplay={() => air?.pick()} />
+  {:else}
   <div class="ui ctl" data-nav bind:offsetHeight={ctlH} class:hide={!showUi || (posterOn && !posterOut)} on:click|stopPropagation on:keydown={ctlKey} role="toolbar" tabindex="-1" aria-label={$t('player.controls.toolbar')}>
     <div class="timeline">
       {#if phone}<span class="cur" aria-hidden="true">{fmtClock(shown)}</span>{/if}
@@ -1478,6 +1584,7 @@
       </div>
     </div>
   </div>
+  {/if}
 </div>
 
 <style>
@@ -1679,6 +1786,9 @@
   :global(html.tv) .track:focus-visible { height: 12px; outline: none; box-shadow: 0 0 0 4px #fff; }
   :global(html.tv) .mi { min-height: 56px; font-size: 1.05rem; }
   :global(html.tv) .skipbtn { font-size: 1.15rem; }
+  /* TV (spec 4): Skip intro / recap is a large .tv-btn bottom right, inside the safe area, above the controls */
+  :global(html.tv) .skipbtn.tv-btn { right: var(--tv-safe-x, 5vw); bottom: calc(var(--ctl-h, 7rem) + var(--tv-safe-y, 5vh) + 1rem); border: 0; min-height: 3.5rem; padding: 0 2rem; font-size: 1.375rem; animation: tv-skip-in var(--tv-d-m) var(--tv-emph-out) backwards; }
+  @keyframes tv-skip-in { from { opacity: 0; transform: translate3d(0, 16px, 0); } to { opacity: 1; transform: translate3d(0, 0, 0); } }
   @media (max-width: 720px) {
     .clock, .vol .vslider, .mid { display: none; }
     .row { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 0; }
