@@ -10,6 +10,9 @@ const dict: Translation<typeof de> = {
     pages: 'Strony rzędu',
     page: 'Strona {n}',
   },
+  bar: {
+    close: 'Zamknij wyszukiwanie',
+  },
   detail: {
     back: 'Wstecz',
     extras: 'Zwiastuny i dodatki',

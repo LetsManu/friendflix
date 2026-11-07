@@ -8,6 +8,9 @@ export default {
     pages: 'Seiten der Reihe',
     page: 'Seite {n}',
   },
+  bar: {
+    close: 'Suche schließen',
+  },
   detail: {
     back: 'Zurück',
     extras: 'Trailer & Extras',

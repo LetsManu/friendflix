@@ -63,24 +63,42 @@ test.describe('desktop pill bar', () => {
     await expect(bar).toHaveClass(/solid/);
   });
 
-  test('search: icon expands the field and focuses it; "/" too; typing goes to /search?q=; Esc clears, then closes and refocuses the icon', async ({ page }) => {
+  test('search lives in the pill: the magnifier is its last item; click and "/" open the field inside it and the pill grows; Esc clears, then closes', async ({ page }) => {
     await page.goto('/watchlist');
     const bar = page.locator('[data-desk-bar]');
-    const icon = bar.getByRole('button', { name: 'Suche öffnen' });
+    const pill = bar.locator('.pill');
+    const mag = pill.locator('button.mag');
     const input = bar.locator('#hq');
-    await expect(bar.locator('form.search')).not.toHaveClass(/open/);
-    await icon.click();
-    await expect(bar.locator('form.search')).toHaveClass(/open/);
+    await expect(mag).toHaveAccessibleName('Suche öffnen');
+    // no separate search button beside the pill any more: bell and avatar only
+    await expect(bar.locator('.right').getByRole('button', { name: /Such/ })).toHaveCount(0);
+    // the last control in the pill
+    const lastRight = await pill.evaluate((p) => Math.max(...[...p.querySelectorAll('a, button')].filter((e) => (e as HTMLElement).offsetParent).map((e) => e.getBoundingClientRect().right)));
+    expect(Math.round(lastRight)).toBe(Math.round((await mag.boundingBox())!.x + (await mag.boundingBox())!.width));
+    const w0 = (await pill.boundingBox())!.width;
+    await mag.click();
     await expect(input).toBeFocused();
+    await expect(pill.locator('#hq')).toHaveCount(1); // the field is inside the pill
+    await expect.poll(async () => (await pill.boundingBox())!.width).toBeGreaterThan(w0 + 150);
     await expect.poll(async () => Math.round((await input.boundingBox())?.width ?? 0)).toBeGreaterThan(150);
-    // Esc on an empty field closes it, focus goes back to the icon
+    // the field sits at the pill's right end, inside it
+    const pb = (await pill.boundingBox())!, ib = (await input.boundingBox())!;
+    expect(ib.x + ib.width).toBeLessThanOrEqual(pb.x + pb.width);
+    expect(ib.x).toBeGreaterThan(pb.x + pb.width / 2);
+    // Esc on an empty field closes it: the pill shrinks back, focus on the magnifier
     await input.press('Escape');
-    await expect(bar.locator('form.search')).not.toHaveClass(/open/);
-    await expect(icon).toBeFocused();
-
+    await expect(pill).not.toHaveClass(/open/);
+    await expect(mag).toBeFocused();
+    await expect.poll(async () => Math.round((await pill.boundingBox())!.width)).toBe(Math.round(w0));
+    // clicking outside closes it too
+    await mag.click();
+    await expect(input).toBeFocused();
     await page.locator('main').click({ position: { x: 5, y: 300 } });
+    await expect(pill).not.toHaveClass(/open/);
+
     await page.keyboard.press('/');
     await expect(input).toBeFocused();
+    await expect(pill).toHaveClass(/open/);
     await page.keyboard.type('nolan', { delay: 30 });
     await expect(page).toHaveURL(/\/search\?q=nolan$/);
     await expect(input).toHaveValue('nolan');
@@ -88,31 +106,102 @@ test.describe('desktop pill bar', () => {
     await expect(input).toHaveValue('');
     await expect(page).toHaveURL(/\/search$/);
     await input.press('Escape');
-    await expect(icon).toBeFocused();
+    await expect(mag).toBeFocused();
     await page.keyboard.press('Control+K');
     await expect(input).toBeFocused();
+    // the close button shrinks it back as well (on /search the field stays open, the focus goes to the magnifier)
+    await pill.getByRole('button', { name: 'Suche schließen' }).click();
+    await expect(mag).toBeFocused();
   });
 
-  test('narrow window (1024px) on /search: the tabs stay visible and usable; the focused field covers them', async ({ page }) => {
+  for (const width of [1024, 1280, 1440]) {
+    test(`${width}px: the pill never overlaps the logo or the bell, closed or open`, async ({ page }) => {
+      await page.setViewportSize({ width, height: 800 });
+      await page.goto('/watchlist');
+      const bar = page.locator('[data-desk-bar]');
+      const check = async (state: string) => {
+        const logo = (await bar.locator('a.logo').boundingBox())!, pill = (await bar.locator('.pill').boundingBox())!, right = (await bar.locator('.right').boundingBox())!;
+        expect(pill.x, `${state}: pill clear of the logo`).toBeGreaterThanOrEqual(logo.x + logo.width);
+        expect(pill.x + pill.width, `${state}: pill clear of the bell`).toBeLessThanOrEqual(right.x);
+        expect(right.x + right.width, `${state}: buttons on screen`).toBeLessThanOrEqual(width);
+      };
+      await check('closed');
+      await page.keyboard.press('/');
+      await expect(bar.locator('#hq')).toBeFocused();
+      await check('open');
+      await page.keyboard.type('nolan', { delay: 20 });
+      await expect(page).toHaveURL(/q=nolan$/);
+      await check('typing');
+      await page.locator('main').click({ position: { x: 5, y: 400 } });
+      await check('on /search, unfocused');
+    });
+  }
+
+  test('narrow window (1024px) on /search: tabs are usable while the field is unfocused; focusing it makes room by collapsing them', async ({ page }) => {
     await page.setViewportSize({ width: 1024, height: 768 });
     await page.goto('/search?q=nolan');
     const bar = page.locator('[data-desk-bar]');
+    const pill = bar.locator('.pill');
     const input = bar.locator('#hq');
     await expect(input).toHaveValue('nolan');
-    await expect(bar.locator('form.search')).toHaveClass(/open/);
-    const series = bar.locator('.pill').getByRole('link', { name: 'Serien' });
+    await expect(pill).toHaveClass(/open/);
+    const series = pill.getByRole('link', { name: 'Serien' });
     await expect(series).toBeVisible();
-    // the field does not lie over any tab
-    const field = (await bar.locator('form.search .sbg').boundingBox())!, pill = (await bar.locator('.pill').boundingBox())!;
-    expect(field.x).toBeGreaterThanOrEqual(pill.x + pill.width);
-    // typing: the field gets its full width and may cover the pill; leaving it brings the tabs back
-    await bar.getByRole('button', { name: /Such/ }).click();
+    // focused: the field gets room (the tabs fade out of the way), still inside the pill
+    await input.click();
     await expect(input).toBeFocused();
-    await expect(bar.locator('.pill')).toHaveClass(/covered/);
+    await expect(series).toBeHidden();
+    await expect.poll(async () => Math.round((await input.boundingBox())!.width)).toBeGreaterThan(200);
+    // leaving it brings the tabs back and they work
     await page.locator('main').click({ position: { x: 5, y: 400 } });
-    await expect(bar.locator('.pill')).not.toHaveClass(/covered/);
+    await expect(series).toBeVisible();
+    await expect(input).toHaveValue('nolan');
     await series.click();
     await expect(page).toHaveURL(/\/browse\/series$/);
+  });
+
+  test.describe('search with motion', () => {
+    test.use({ reducedMotion: 'no-preference' });
+    test('the pill background springs open (transform only, text never scaled) and a close mid-flight reverses without a jump', async ({ page }) => {
+      await page.addInitScript(() => sessionStorage.setItem('ff-intro-seen', '1')); // no brand intro over the page
+      await page.goto('/watchlist');
+      const bar = page.locator('[data-desk-bar]');
+      const pill = bar.locator('.pill');
+      await expect(bar.locator('.pill [aria-current="page"]')).toHaveText('Merkliste');
+      await page.waitForTimeout(400); // the first fill placement settles
+      // open, then sample the same frame: the background layer animates a transform, nothing with text scales
+      const mid = await page.evaluate(() => {
+        const p = document.querySelector<HTMLElement>('[data-desk-bar] .pill')!;
+        p.querySelector<HTMLButtonElement>('button.mag')!.click();
+        const bg = p.querySelector<HTMLElement>('.pbg')!;
+        const anims = bg.getAnimations({ subtree: true }).filter((a) => a.playState === 'running');
+        const props = anims.flatMap((a) => (a.effect as KeyframeEffect).getKeyframes().flatMap((k) => Object.keys(k).filter((n) => !['offset', 'easing', 'composite', 'computedOffset'].includes(n))));
+        const scaled = [...p.querySelectorAll<HTMLElement>('a, button, input')].filter((e) => { const m = new DOMMatrix(getComputedStyle(e).transform === 'none' ? '' : getComputedStyle(e).transform); return Math.abs(m.a - 1) > 1e-3; }).length;
+        return { n: anims.length, props: [...new Set(props)], scaled };
+      });
+      expect(mid.n).toBeGreaterThan(0);
+      expect(mid.props).toEqual(['transform']);
+      expect(mid.scaled).toBe(0);
+      // close 100 ms in: the background's right edge carries on from where it is (no jump), then settles at the closed pill
+      await page.waitForTimeout(100);
+      const jump = await page.evaluate(() => {
+        const p = document.querySelector<HTMLElement>('[data-desk-bar] .pill')!;
+        const edge = () => p.querySelector<HTMLElement>('.pbg .r > i')!.getBoundingClientRect().right;
+        const before = edge();
+        p.querySelector<HTMLInputElement>('#hq')!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+        return Math.abs(edge() - before);
+      });
+      expect(jump).toBeLessThan(2);
+      await expect(pill).not.toHaveClass(/open/);
+      await expect.poll(() => pill.evaluate((p) => p.getAnimations({ subtree: true }).length), { timeout: 3000 }).toBe(0);
+      // at rest the background is exactly the pill
+      const edges = await pill.evaluate((p) => {
+        // (two halves, each clipped at the split: the left one carries the left edge, the right one the right edge)
+        const r = p.getBoundingClientRect(), l = p.querySelector('.pbg .l > i')!.getBoundingClientRect(), rr = p.querySelector('.pbg .r > i')!.getBoundingClientRect();
+        return { l: Math.round(l.left - r.left), r: Math.round(r.right - rr.right) };
+      });
+      expect(edges).toEqual({ l: 0, r: 0 });
+    });
   });
 
   test('categories, notifications and profile menus open from the bar and close with Esc', async ({ page }) => {
