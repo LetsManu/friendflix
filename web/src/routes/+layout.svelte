@@ -285,17 +285,22 @@
   });
 
   // ---- TV focus memory: coming back (Back key) puts the focus on the card you left, a new page focuses its first element ----
-  const memo = new Map<string, { href: string; nth: number }>();
+  type Spot = { href: string; nth: number; sec: string };
+  const memo = new Map<string, Spot>();
+  /** the links to a href, narrowed to those in the same kind of section: rows load lazily, so a link to the same href in a row
+   *  that was not there yet when the viewer left (e.g. a genre row's "See all" next to the categories row) must not shift the count */
+  const sameSpot = (href: string, sec: string) => [...document.querySelectorAll<HTMLElement>(`main a[href="${CSS.escape(href)}"]`)].filter((a) => (a.closest('section')?.className ?? '') === sec);
   beforeNavigate(({ from }) => {
     const el = document.activeElement as HTMLElement | null, href = el?.getAttribute?.('href');
     if (!tv || !from || !href) return;
     // the same title can appear in several rows: remember which occurrence it was
-    const nth = [...document.querySelectorAll(`main a[href="${CSS.escape(href)}"]`)].indexOf(el!);
-    if (nth >= 0) memo.set(from.url.pathname + from.url.search, { href, nth });
+    const sec = el!.closest('section')?.className ?? '';
+    const nth = sameSpot(href, sec).indexOf(el!);
+    if (nth >= 0) memo.set(from.url.pathname + from.url.search, { href, nth, sec });
   });
   /** waits for the page content (lazy rows, fetched lists), then focuses the remembered link, [data-autofocus] or the first element */
   let settleSeq = 0;
-  async function settleFocus(want?: { href: string; nth: number }) {
+  async function settleFocus(want?: Spot) {
     const start = document.activeElement, my = ++settleSeq;
     for (let i = 0; i < 16; i++) {
       await new Promise((r) => setTimeout(r, i ? 150 : 30));
@@ -307,7 +312,7 @@
       const now = document.activeElement;
       if (now instanceof HTMLElement && now !== start && now !== document.body && main?.contains(now)) return;
       if (want) {
-        const el = main?.querySelectorAll<HTMLElement>(`a[href="${CSS.escape(want.href)}"]`)[want.nth];
+        const el = sameSpot(want.href, want.sec)[want.nth];
         if (el) return focusEl(el);
       } else if (main?.querySelector('[data-autofocus]') ? focusFirst(main, false) : i >= 4 && focusFirst(main, false)) return;
     }
@@ -417,8 +422,7 @@
         if (plan.morph === 'in') while (performance.now() < until && !document.querySelector('main .dv :is(.hero img.bg, h1)')) await new Promise((r) => setTimeout(r, 16));
         if (plan.morph === 'back' && my === vtSeq) { // (a newer transition took over meanwhile: name nothing for this one)
           await tick();
-          const main = document.querySelector('main');
-          const el = want ? main?.querySelectorAll(`a[href="${CSS.escape(want.href)}"]`)[want.nth] : null;
+          const el = want ? sameSpot(want.href, want.sec)[want.nth] : null;
           name(artOf(el));
         }
       });
