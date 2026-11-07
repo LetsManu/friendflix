@@ -60,11 +60,13 @@
     if (!catGenres) { try { catGenres = ((await api('/api/library/genres')).genres as string[]) ?? []; } catch { catGenres = []; } }
     if (!catLangs) { try { catLangs = (((await api('/api/library/languages')).audio ?? []) as Array<{ code: string }>).map((l) => l.code).slice(0, 12); } catch { catLangs = []; } }
   }
+  let notesTimer: ReturnType<typeof setTimeout> | undefined;
   async function toggleBell() {
     bell = !bell; menu = false; cats = false;
     if (bell && unread) {
       await api('/api/notifications/read', { method: 'POST' });
-      setTimeout(() => window.dispatchEvent(new Event('ff-notes')), 1500); // the layout reloads the list (shared with the phone header)
+      clearTimeout(notesTimer);
+      notesTimer = setTimeout(() => window.dispatchEvent(new Event('ff-notes')), 1500); // the layout reloads the list (shared with the phone header)
     }
   }
   let others: Array<{ id: string; name: string; avatar: string; hasPin: boolean }> | null = null;
@@ -99,16 +101,23 @@
     if (!(e.target as HTMLElement | null)?.closest?.('.pop-anchor')) { menu = false; bell = false; cats = false; }
   }
 
-  // ---- the active tab's fill: one element, sprung to the active tab (instant under reduced motion) ----
-  let pill: HTMLElement, fill: HTMLElement;
+  // ---- the active tab's fill: sprung to the active tab, its width gliding along (instant under reduced motion) ----
+  // Transform only: the fill moves as a whole (translate); inside it the right cap springs to the new width and the middle
+  // part scales on X. The fill's opacity is on the group, so the overlapping white parts never add up.
+  let pill: HTMLElement, fill: HTMLElement, mid: HTMLElement, capR: HTMLElement;
   let fillOn = false;
+  const CAP = 36, MID = 100; // cap diameter (the tab height); the middle part's unscaled width
   async function placeFill(slide: boolean) {
     await tick();
     const a = pill?.querySelector<HTMLElement>(':scope > a[aria-current="page"]');
-    if (!a || !fill) { fillOn = false; return; }
-    fill.style.width = `${a.offsetWidth}px`;
+    if (!a || !fill || !mid || !capR) { fillOn = false; return; }
+    const instant = !slide || !fillOn || motionLevel() === 'reduced'; // first placement or back from a page without a tab: no slide
+    const w = Math.max(CAP, a.offsetWidth);
+    mid.style.transition = instant ? 'none' : '';
+    mid.style.transform = `scaleX(${+((w - CAP) / MID).toFixed(4)})`;
     animateTo(fill, 'x', a.offsetLeft);
-    if (!slide || !fillOn) fill.getAnimations?.().forEach((an) => an.finish()); // first placement / resize: no slide
+    animateTo(capR, 'x', w - CAP);
+    if (instant) fill.getAnimations?.({ subtree: true }).forEach((an) => an.finish());
     fillOn = true;
   }
   // (guarded on the path itself: bind:this re-binds on updates, so a statement on pill/fill would re-run without end)
@@ -140,43 +149,54 @@
   }
   /** opens the field and puts the cursor in it (the icon, "/" and Ctrl/Cmd+K via the layout) */
   export function openSearch() {
-    searchOpen = true;
+    searchOpen = true; menu = bell = cats = false;
     void tick().then(() => searchEl?.focus());
   }
   function onSearchBlur() { if (!q && path !== '/search') searchOpen = false; }
 
-  // ---- narrow windows: the pill steps aside for the open field; when there is no room for that it fades out under it ----
-  let form: HTMLElement, shift = 0, covered = false;
+  // ---- narrow windows: the pill steps aside for the open field. Without room for that, the focused field covers the pill
+  // (it fades out); an open field without the focus (e.g. on /search) narrows to the space left instead, so the tabs stay usable ----
+  let form: HTMLElement, shift = 0, covered = false, fieldW = 280, fieldFull = 280, focused = false;
   const GAP = 12;
   function measureShift() {
-    if (!searchOpen || !pill || !form) { shift = 0; covered = false; return; }
+    const full = (fieldFull = Math.min(280, innerWidth * 0.34)); // the field's width in CSS: min(280px, 34vw)
+    if (!searchOpen || !pill || !form) { shift = 0; covered = false; fieldW = full; return; }
     const p = pill.getBoundingClientRect(), f = form.getBoundingClientRect();
-    const fieldLeft = f.right - Math.min(280, innerWidth * 0.34); // the field's width in CSS: min(280px, 34vw)
     const right = p.right - shift, left = p.left - shift; // (p is measured with the current shift applied)
-    const over = right - (fieldLeft - GAP);
+    const over = right - (f.right - full - GAP);
     const logo = root.querySelector('.logo')?.getBoundingClientRect().right ?? 0;
     const room = Math.max(0, left - logo - GAP);
-    covered = over > room;
-    shift = over > 0 && !covered ? -over : 0;
+    if (over <= room) { covered = false; shift = over > 0 ? -over : 0; fieldW = full; }
+    else if (focused) { covered = true; shift = 0; fieldW = full; }
+    else { covered = false; shift = -room; fieldW = Math.max(44, f.right - (right - room) - GAP); }
   }
-  let shiftFor = false;
-  $: if (searchOpen !== shiftFor) { shiftFor = searchOpen; void tick().then(measureShift); }
+  let shiftFor = '';
+  $: if (`${searchOpen}${focused}` !== shiftFor) { shiftFor = `${searchOpen}${focused}`; void tick().then(measureShift); }
+  /** a narrowed field too small to type in shows only the icon */
+  $: compact = searchOpen && fieldW < 120;
+  /** closed or not focused (e.g. narrowed on /search): the icon puts the cursor in the field (which then grows); else it searches */
+  function onSearchIcon() {
+    if (!searchOpen || document.activeElement !== searchEl) openSearch(); // (mousedown on the icon keeps the focus where it was)
+    else commitSearch(q);
+  }
 
   onMount(() => {
-    const ro = typeof ResizeObserver === 'function' ? new ResizeObserver(() => { void placeFill(false); measureShift(); }) : null;
+    // a retarget, not a jump: a slide in flight keeps going
+    const ro = typeof ResizeObserver === 'function' ? new ResizeObserver(() => { void placeFill(true); measureShift(); }) : null;
     ro?.observe(pill);
     ro?.observe(root);
     return () => ro?.disconnect();
   });
-  onDestroy(() => clearTimeout(st));
+  onDestroy(() => { clearTimeout(st); clearTimeout(notesTimer); });
 </script>
 
 <svelte:window bind:scrollY on:keydown={onWindowKey} on:click={onWindowClick} />
 
 <header class="nav desk" class:solid class:blur data-desk-bar bind:this={root}>
+  <span class="scrim" aria-hidden="true"></span>
   <a class="logo" href="/" aria-label={$t('shell.nav.homeLink')}><Logo wordmark size={30} /></a>
   <nav class="pill" class:on={fillOn} class:covered aria-label={$t('shell.nav.main')} bind:this={pill} style:--shift="{shift}px">
-    <span class="fill" aria-hidden="true" bind:this={fill}></span>
+    <span class="fill" aria-hidden="true" bind:this={fill}><i class="cap"></i><i class="mid" bind:this={mid}></i><i class="cap" bind:this={capR}></i></span>
     {#each HEADER_TABS as [href, label] (href)}<a {href} class="tab" class:active={isTabActive(href, path)} aria-current={isTabActive(href, path) ? 'page' : undefined}>{$t(label)}</a>{/each}
     <div class="pop-anchor">
       <button type="button" class="tab cbtn" aria-haspopup="true" aria-expanded={cats} on:click={toggleCats}>{$t('shell.nav.categories')}<i class="caret" class:up={cats}></i></button>
@@ -205,11 +225,12 @@
     </div>
   </nav>
   <div class="right">
-    <form class="search" class:open={searchOpen} on:submit|preventDefault={() => commitSearch(q)} role="search" bind:this={form}>
+    <form class="search" class:open={searchOpen} class:compact on:submit|preventDefault={() => commitSearch(q)} role="search" bind:this={form}
+      style:--fs={+(fieldW / fieldFull).toFixed(4)} style:--fw="{fieldW}px" on:focusin={() => (focused = true)} on:focusout={() => (focused = false)}>
       <span class="sbg" aria-hidden="true"></span>
       <input id="hq" type="search" bind:this={searchEl} bind:value={q} autocomplete="off" enterkeyhint="search" placeholder={$t('shell.search.placeholder')} aria-label={$t('shell.search.label')} tabindex={searchOpen ? 0 : -1}
         on:input={onSearchInput} on:keydown={onSearchKey} on:blur={onSearchBlur} />
-      <button type="button" class="round" bind:this={searchBtn} aria-label={searchOpen ? $t('shell.search.submit') : $t('shell.search.open')} on:click={() => (searchOpen ? commitSearch(q) : openSearch())}><Icon name="search" size={20} /></button>
+      <button type="button" class="round" bind:this={searchBtn} aria-label={searchOpen ? $t('shell.search.submit') : $t('shell.search.open')} on:mousedown|preventDefault on:click={onSearchIcon}><Icon name="search" size={20} /></button>
     </form>
     <div class="pop-anchor">
       <button type="button" class="round" aria-label={unread ? $t('shell.bell.unread', { n: unread }) : $t('shell.bell.label')} aria-expanded={bell} on:click={toggleBell}>
@@ -255,6 +276,10 @@
     padding: var(--safe-top) max(var(--pad-x), var(--safe-right)) 0 max(var(--pad-x), var(--safe-left));
     background: transparent; pointer-events: none; }
   .desk > * { pointer-events: auto; }
+  /* once scrolled: a soft shade behind logo and buttons (fades out downwards, no edge); never over the billboard at the top */
+  .desk > .scrim { position: absolute; z-index: -1; top: 0; left: 0; right: 0; height: calc(112px + var(--safe-top)); pointer-events: none; opacity: 0; transition: opacity 240ms ease-out;
+    background: linear-gradient(to bottom, rgba(10, 12, 15, .82) 0%, rgba(10, 12, 15, .55) 40%, rgba(10, 12, 15, .2) 72%, rgba(10, 12, 15, 0) 100%); }
+  .solid > .scrim { opacity: 1; }
   .logo { justify-self: start; display: inline-flex; align-items: center; min-height: 44px; filter: drop-shadow(0 1px 6px rgba(0, 0, 0, .45)); }
 
   /* ---- the pill ---- */
@@ -264,8 +289,11 @@
   .solid .pill, .solid .round { background-color: var(--glass-solid); }
   .blur .pill, .blur .round { -webkit-backdrop-filter: blur(16px) saturate(140%); backdrop-filter: blur(16px) saturate(140%); }
   .solid.blur .pill, .solid.blur .round { -webkit-backdrop-filter: none; backdrop-filter: none; }
-  .fill { position: absolute; left: 0; top: 4px; bottom: 4px; border-radius: 999px; background: rgba(255, 255, 255, .14); opacity: 0; transition: opacity 160ms ease-out; pointer-events: none; }
-  .pill.on .fill { opacity: 1; }
+  .fill { position: absolute; left: 0; top: 4px; width: 36px; height: 36px; opacity: 0; transition: opacity 160ms ease-out; pointer-events: none; }
+  .pill.on .fill { opacity: .14; }
+  .fill i { position: absolute; top: 0; left: 0; height: 36px; background: #fff; }
+  .fill .cap { width: 36px; border-radius: 50%; }
+  .fill .mid { left: 18px; width: 100px; transform-origin: left center; transition: transform 340ms var(--ease); }
   .tab { position: relative; display: inline-flex; align-items: center; gap: 6px; min-height: 36px; padding: 0 16px; border-radius: 999px; font-size: .9rem; font-weight: 500; color: rgba(255, 255, 255, .78); white-space: nowrap; transition: color 160ms ease-out; }
   .tab:hover { color: #fff; }
   .tab.active { color: #fff; font-weight: 600; }
@@ -289,9 +317,10 @@
   .search input { position: absolute; right: 44px; top: 0; width: calc(min(280px, 34vw) - 56px); height: 44px; min-height: 44px; padding: 0 0 0 16px; box-sizing: border-box; border: 0; background: transparent; color: #fff; font: inherit; font-size: .92rem;
     opacity: 0; transform: translateX(16px); pointer-events: none; transition: opacity 120ms ease-out, transform 280ms var(--ease); }
   .search input:focus-visible { outline: none; }
-  .search.open .sbg { transform: none; opacity: 1; transition: transform 280ms var(--ease), opacity 80ms ease-out; }
-  .search.open input { opacity: 1; transform: none; pointer-events: auto; transition: opacity 160ms ease-out 80ms, transform 280ms var(--ease); }
+  .search.open .sbg { transform: scaleX(var(--fs, 1)); opacity: 1; transition: transform 280ms var(--ease), opacity 80ms ease-out; }
+  .search.open input { width: calc(var(--fw) - 56px); opacity: 1; transform: none; pointer-events: auto; transition: opacity 160ms ease-out 80ms, transform 280ms var(--ease); }
   .search.open .round { background: transparent; border-color: transparent; -webkit-backdrop-filter: none; backdrop-filter: none; }
+  .search.open.compact input { opacity: 0; pointer-events: none; }
   .search.open:focus-within .sbg { border-color: rgba(255, 255, 255, .55); }
 
   .avatar { display: grid; place-items: center; width: 44px; height: 44px; min-height: 44px; padding: 0; background: transparent; border-radius: 10px; }
@@ -334,7 +363,7 @@
   @media (max-width: 1100px) { .tab { padding: 0 12px; } }
   @media (max-width: 900px) { .pill { display: none; } }
   @media (prefers-reduced-motion: reduce) {
-    .pill, .fill, .sbg, .search input, .search.open .sbg, .search.open input, .round, .caret { transition: none; }
+    .pill, .fill, .fill .mid, .desk > .scrim, .sbg, .search input, .search.open .sbg, .search.open input, .round, .caret { transition: none; }
     .drop { animation: none; }
   }
 </style>
