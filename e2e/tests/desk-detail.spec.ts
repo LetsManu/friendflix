@@ -139,7 +139,7 @@ test.describe('desktop detail page', () => {
     expect(await play.evaluate((e) => getComputedStyle(e).backgroundColor)).toBe('rgb(255, 255, 255)');
     await expect(dd.locator('.acts').getByRole('button', { name: /Merkliste/ })).toBeVisible();
     // entrance parts in order (Task 7 staggers them)
-    const parts = await dd.locator('.col [data-st]').evaluateAll((els) => els.map((e) => e.className.split(' ').find((c) => ['eyebrow', 'title', 'facts', 'synbox', 'acts'].includes(c))));
+    const parts = await dd.locator('.col [data-st]').evaluateAll((els) => els.map((e) => e.className.split(' ').find((c: string) => ['eyebrow', 'title', 'facts', 'synbox', 'acts'].includes(c))));
     expect(parts).toEqual(['title', 'facts', 'synbox', 'acts']);
     // a fresh label becomes the coral eyebrow
     await page.route('**/api/discover/badges', (r) => r.fulfill({ json: { badges: { [SERIES.id]: { fresh: 'newSeason' } } } }));
