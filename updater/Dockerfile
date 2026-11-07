@@ -26,7 +26,7 @@ WORKDIR /app
 # Alpine packages: same ruling as the other images (no blanket `apk upgrade`, minimum versions only for fixes the base lacks;
 # docs/reproducible-builds.md). docker-cli + docker-cli-compose run `compose pull/up` against the proxy, cosign verifies
 # the signatures. Not version-pinned (pins vanish from the Alpine mirrors): reproducible while Alpine has not shipped newer ones.
-RUN apk add --no-cache 'zlib>=1.3.2-r1' docker-cli docker-cli-compose cosign \
+RUN apk add --no-cache 'zlib>=1.3.2-r1' 'musl>=1.2.6-r3' 'musl-utils>=1.2.6-r3' docker-cli docker-cli-compose cosign \
   && rm -rf /var/log/apk.log /usr/local/lib/node_modules/npm /usr/local/bin/npm /usr/local/bin/npx /opt/yarn-* /usr/local/bin/yarn /usr/local/bin/yarnpkg \
   && mkdir -p /state && chown node:node /state
 COPY --from=build --chown=node:node /app/updater/dist updater/dist
