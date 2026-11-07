@@ -24,6 +24,17 @@ async function fakeMedia(page: Page) {
   await page.route('**/media/trailer-test.mp4', (r) => r.fulfill({ status: 204 }));
 }
 
+/**
+ * A frozen page clock from before the first navigation: page timers (the 1.5 s trailer delay among them) only move with
+ * `clock.runFor`, so nothing can fire while the test waits for the page under load. (Pausing after the page loaded raced:
+ * the clock ran freely until then.)
+ */
+async function freezeClock(page: Page) {
+  const t0 = new Date('2026-11-07T18:00:00Z').getTime();
+  await page.clock.install({ time: t0 });
+  await page.clock.pauseAt(t0 + 1000);
+}
+
 test.describe('desktop billboard', () => {
   test('billboard: 80vh (min 520px), eyebrow only when a label exists, title logo or name, meta line, Play and More info', async ({ page }) => {
     await page.goto('/');
@@ -85,21 +96,21 @@ test.describe('desktop billboard', () => {
       await fakeMedia(page);
       let asked = 0;
       page.on('request', (r) => { if (/\/api\/items\/[^/]+\/trailer$/.test(r.url())) asked++; });
-      await page.clock.install();
+      await freezeClock(page);
       await page.goto('/');
       const bb = page.locator('section.billboard');
       await expect(bb.getByRole('heading', { level: 1 })).toHaveText(MOVIE.name);
       await expect(bb.locator('img.bg')).toHaveClass(/loaded/);
-      // the page clock (not the test runner's) decides: stop it right after the backdrop arrived
-      await page.clock.pauseAt(await page.evaluate(() => Date.now() + 20));
       await page.clock.runFor(1200);
       expect(asked).toBe(0); // not yet
       await expect(bb.locator('video.hv')).not.toHaveClass(/on/);
       await expect(bb.getByRole('button', { name: 'Ton einschalten' })).toHaveCount(0);
       await page.clock.runFor(400);
       await expect.poll(async () => { await page.clock.runFor(50); return asked; }).toBe(1);
-      await expect.poll(async () => { await page.clock.runFor(50); return bb.locator('video.hv.on').count(); }).toBe(1);
-      await expect.poll(async () => { await page.clock.runFor(100); return bb.evaluate((e) => e.classList.contains('quiet')); }).toBe(true);
+      await expect.poll(async () => { await page.clock.runFor(50); return bb.locator('video.hv').evaluate((v: HTMLVideoElement) => !v.paused); }).toBe(true);
+      await expect(bb.locator('video.hv')).toHaveClass(/on/);
+      await page.clock.runFor(700); // the beat between the picture and the text (QUIET_MS)
+      await expect.poll(async () => { await page.clock.runFor(50); return bb.evaluate((e) => e.classList.contains('quiet')); }).toBe(true);
       // synopsis: the full text fades away, one line stays (opacity + translate only)
       const full = bb.locator('.syn.full'), one = bb.locator('.syn.one');
       await expect.poll(() => full.evaluate((e) => getComputedStyle(e).opacity)).toBe('0');
@@ -122,13 +133,14 @@ test.describe('desktop billboard', () => {
 
     test('trailer pauses when the billboard scrolls out of view', async ({ page }) => {
       await fakeMedia(page);
-      await page.clock.install();
+      await freezeClock(page);
       await page.goto('/');
       const bb = page.locator('section.billboard');
       await expect(bb.locator('img.bg')).toHaveClass(/loaded/);
-      await page.clock.pauseAt(await page.evaluate(() => Date.now() + 20));
       const paused = () => bb.locator('video.hv').evaluate((v: HTMLVideoElement) => v.paused);
-      await expect.poll(async () => { await page.clock.runFor(200); return paused(); }).toBe(false);
+      // the whole 1.5 s delay in one step: how much page time passes must not depend on how often a poll gets to run under load
+      await page.clock.runFor(1600);
+      await expect.poll(async () => { await page.clock.runFor(50); return paused(); }).toBe(false);
       await expect(bb.locator('video.hv')).toHaveClass(/on/);
       await page.evaluate(() => window.scrollTo(0, 700));
       await expect.poll(paused).toBe(true);
@@ -140,16 +152,18 @@ test.describe('desktop billboard', () => {
       await fakeMedia(page);
       // a movie in the first row (just under the billboard): its hover card plays a clip
       await page.route('**/api/library/resume', (r) => r.fulfill({ json: { items: [{ ...items[2], positionTicks: 9_000_000_000, playedPercentage: 10 }] } }));
-      await page.clock.install();
+      await freezeClock(page);
       await page.goto('/');
       const bb = page.locator('section.billboard');
       await expect(bb.locator('img.bg')).toHaveClass(/loaded/);
-      await page.clock.pauseAt(await page.evaluate(() => Date.now() + 20));
       const paused = () => bb.locator('video.hv').evaluate((v: HTMLVideoElement) => v.paused);
-      await expect.poll(async () => { await page.clock.runFor(200); return paused(); }).toBe(false);
+      // the whole 1.5 s delay in one step: how much page time passes must not depend on how often a poll gets to run under load
+      await page.clock.runFor(1600);
+      await expect.poll(async () => { await page.clock.runFor(50); return paused(); }).toBe(false);
       // rest the pointer on the first card long enough for its preview
       await page.locator('article.card').first().hover();
-      await expect.poll(async () => { await page.clock.runFor(200); return paused(); }).toBe(true);
+      await page.clock.runFor(2000); // the card's open delay plus the hover preview's 1 s clip delay
+      await expect.poll(async () => { await page.clock.runFor(50); return paused(); }).toBe(true);
       await expect(bb.locator('video.hv')).not.toHaveClass(/on/);
     });
   });
@@ -164,6 +178,8 @@ test.describe('desktop rows', () => {
     test.use({ reducedMotion: 'no-preference' });
 
     test('row hover shows arrows; next moves one page with a transform, dots follow; prev hidden on the first page', async ({ page }) => {
+      // once the last page hides "next", the pointer rests on a card: a slow run may open its hover preview (no clip for it here)
+      await page.route('**/api/items/*/trailer', (r) => r.fulfill({ json: {} }));
       await page.goto('/');
       const row = because(page);
       await row.scrollIntoViewIfNeeded();
@@ -173,7 +189,8 @@ test.describe('desktop rows', () => {
       // first page: no way back; both arrows wait for the pointer
       await expect(prev).toBeHidden();
       expect(await next.evaluate((e) => getComputedStyle(e).opacity)).toBe('0');
-      await row.locator('.track').hover();
+      // the pointer rests on the row title, not on a card: a card would open its hover preview (and its trailer) under load
+      await row.getByRole('heading', { name: /Weil du/ }).hover();
       await expect.poll(() => next.evaluate((e) => getComputedStyle(e).opacity)).toBe('1');
       // 56 px edge areas with a gradient, on the row's right edge
       const nb = (await next.boundingBox())!;
