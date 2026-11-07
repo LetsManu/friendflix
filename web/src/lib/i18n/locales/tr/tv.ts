@@ -8,5 +8,7 @@ const dict: Translation<typeof de> = {
   tile: { top10: 'Top 10 · {n}. sıra' },
   /** detail page (spec 3): the button list and the cast line */
   detail: { restart: 'Baştan başlat', episodes: 'Bölümler ve sezonlar', collection: 'Koleksiyon', with: 'Oyuncular: {names}', actions: 'İşlemler' },
+  /** detail sub-screens (spec 3): the Back hint, the seasons column, an empty grid */
+  sub: { back: 'Geri', seasons: 'Sezonlar', none: 'Şu anda burada bir şey yok.' },
 };
 export default dict;

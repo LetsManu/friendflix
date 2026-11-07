@@ -39,6 +39,7 @@
   import StoryCard from '#lib/detail/StoryCard.svelte';
   import LeavingDialog from '#lib/detail/LeavingDialog.svelte';
   import DetailTv from '#lib/detail/DetailTv.svelte';
+  import TvSub, { type TvSubId } from '#lib/detail/TvSub.svelte';
   import Safe from '#lib/detail/Safe.svelte';
   import { toPeople } from '#lib/detail/safe';
   import { forgetFacts, loadFacts, type Facts } from '#lib/fresh';
@@ -46,6 +47,8 @@
   /** Unified detail view: used inside the popup (ItemModal), as the full page (/item/[id]) and as the TV page (scroll-free, DetailTv). */
   export let id: string;
   export let variant: 'modal' | 'page' | 'tv' = 'page';
+  /** TV: one of the detail page's sub-screens (routes /item/[id]/<sub>) instead of the page itself; same loads */
+  export let sub: TvSubId | '' = '';
   /** loaded title (read-only for the parent: bind:item) */
   export let item: Item | null = null;
   /** id of the heading (the dialog is labelled by it) */
@@ -298,6 +301,7 @@
   function eligible() {
     const nav = navigator as Navigator & { connection?: { saveData?: boolean } };
     // TV page: the same rules as the focus tile (calm / reduced motion via autoplayAllowed, hover-trailer pref, hidden tab, data saver)
+    if (variant === 'tv' && sub) return false; // a sub-screen shows the backdrop as a dark layer, no trailer
     if (variant === 'tv') return trailerAllowed({ hoverTrailers: $prefs.hoverTrailers, autoplay: autoplayAllowed(), hidden: document.hidden, saveData: !!nav.connection?.saveData }) && !(item?.trailers === 0 && !$prefs.hoverClip);
     return $prefs.hoverTrailers && !document.hidden && !reduced() && !tvMode() && !nav.connection?.saveData && !(item?.trailers === 0 && !$prefs.hoverClip);
   }
@@ -396,9 +400,13 @@
   {#if variant === 'tv'}
   <!-- ================= TV: one screen, a button list instead of the scrolling sections (friends, comments, download, share stay off) ================= -->
   {#if item}
+    {#if sub}
+    <TvSub {sub} {item} {about} {facts} {people} {extras} {more} {seasons} bind:season {episodes} {next} {seriesKnown} {qs} {overview} {playHref} {playLabel} {titleId} />
+    {:else}
     <DetailTv {item} {about} {facts} {people} {extras} {playTarget} {playBase} {playHref} ready={playKnown} {playLabel} {qs} {resumeFrom} {resumeLine} {tagline} {overview} {inList} {titleId}
       bind:thumb bind:audio={lgA} bind:sub={lgS} playing={heroPlaying} loop={!autoOn && !heroByUser} userTrailer={heroByUser} bind:video={hv} bind:loaded={heroLoaded}
       onMyList={toggleMine} onTrailer={tvTrailer} {onThumb} onEnded={onHeroEnded} />
+    {/if}
     <div class="tvmsg" role="status">{#if saveMsg}<p class="err">{saveMsg}</p>{/if}</div>
   {:else if failed}
     <div class="hero"><p class="err pad" role="alert">{$t('detail.view.notFound')}</p><p class="pad"><a class="tv-btn" data-autofocus href="/">{$t('detail.view.toHome')}</a></p></div>

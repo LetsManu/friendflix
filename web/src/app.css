@@ -222,6 +222,15 @@ html.tv.tv-motion-reduced { --tv-spring: var(--tv-emph-out); --tv-d-spring: var(
   html.ff-vt-slide::view-transition-group(ff-main) { animation-duration: var(--tv-d-m); }
   html.ff-vt-slide::view-transition-old(ff-main) { animation: ff-tv-slide-out calc(var(--tv-d-m) * .7) var(--tv-emph-in) both; }
   html.ff-vt-slide::view-transition-new(ff-main) { animation: ff-tv-slide-in var(--tv-d-m) var(--tv-emph-out) both; }
+  /* detail page <-> sub-screen: the same slide, 24 px from the right (Back reverses: --ff-vt-dx = -24px); the backdrop box
+     ([data-vt-bd], the same 72 vw box on both pages) is a group of its own, so it stays put and only darkens / brightens */
+  html.ff-vt-sub main { view-transition-name: ff-main; }
+  html.ff-vt-sub main [data-vt-bd] { view-transition-name: ff-tv-bd; }
+  html.ff-vt-sub::view-transition-group(ff-main) { animation-duration: var(--tv-d-m); }
+  html.ff-vt-sub::view-transition-old(ff-main) { animation: ff-tv-slide-out calc(var(--tv-d-m) * .7) var(--tv-emph-in) both; }
+  html.ff-vt-sub::view-transition-new(ff-main) { animation: ff-tv-slide-in var(--tv-d-m) var(--tv-emph-out) both; }
+  html.ff-vt-sub::view-transition-group(ff-tv-bd) { animation-duration: var(--tv-d-m); animation-timing-function: var(--tv-emph-out); }
+  html.ff-vt-sub::view-transition-old(ff-tv-bd), html.ff-vt-sub::view-transition-new(ff-tv-bd) { animation-duration: var(--tv-d-m); height: 100%; object-fit: cover; overflow: clip; }
   @keyframes ff-tv-slide-out { to { opacity: 0; transform: translate3d(calc(var(--ff-vt-dx, 16px) * -1), 0, 0); } }
   @keyframes ff-tv-slide-in { from { opacity: 0; transform: translate3d(var(--ff-vt-dx, 16px), 0, 0); } }
 }

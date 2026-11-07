@@ -329,19 +329,31 @@ describe('glideRow', () => {
 
 describe('tvPagePlan', () => {
   const base = { from: '/', to: '/item/1', back: false, motion: true, level: 'full' as const, hasApi: true, rail: [0, -1] as [number, number] };
-  it('card / tile -> detail: a view transition with the artwork morph', () => expect(tvPagePlan(base)).toEqual({ kind: 'view', slide: 0, morph: 'in' }));
+  it('card / tile -> detail: a view transition with the artwork morph', () => expect(tvPagePlan(base)).toEqual({ kind: 'view', slide: 0, morph: 'in', sub: 0 }));
   it('Back from the detail page morphs back; a forward move away from it only crossfades', () => {
     expect(tvPagePlan({ ...base, from: '/item/1', to: '/', back: true, rail: [-1, 0] }).morph).toBe('back');
     expect(tvPagePlan({ ...base, from: '/item/1', to: '/', back: false, rail: [-1, 0] }).morph).toBe(null);
     expect(tvPagePlan({ ...base, from: '/item/1', to: '/item/2' }).morph).toBe(null); // two backdrops would share the name
   });
   it('rail pages slide in the direction of travel', () => {
-    expect(tvPagePlan({ ...base, to: '/movies', rail: [0, 2] })).toEqual({ kind: 'view', slide: 1, morph: null });
+    expect(tvPagePlan({ ...base, to: '/movies', rail: [0, 2] })).toEqual({ kind: 'view', slide: 1, morph: null, sub: 0 });
     expect(tvPagePlan({ ...base, from: '/movies', to: '/', rail: [2, 0] }).slide).toBe(-1);
+  });
+  it('detail page <-> its sub-screen: slides in from the right, Back slides back; no morph, never for another title', () => {
+    const d = { ...base, from: '/item/1', to: '/item/1/episodes', rail: [-1, -1] as [number, number] };
+    expect(tvPagePlan(d)).toEqual({ kind: 'view', slide: 0, morph: null, sub: 1 });
+    expect(tvPagePlan({ ...d, from: '/item/1/episodes', to: '/item/1', back: true })).toEqual({ kind: 'view', slide: 0, morph: null, sub: -1 });
+    expect(tvPagePlan({ ...d, to: '/item/2/more' }).sub).toBe(0);
+    expect(tvPagePlan({ ...d, level: 'reduced' })).toEqual({ kind: 'view', slide: 0, morph: null, sub: 0 }); // reduced set: crossfade only
+    expect(tvPagePlan({ ...d, motion: false }).kind).toBe('none');
+  });
+  it('a card on a sub-screen opens another title with the artwork morph, Back morphs back to it', () => {
+    expect(tvPagePlan({ ...base, from: '/item/1/more', to: '/item/2', rail: [-1, -1] }).morph).toBe('in');
+    expect(tvPagePlan({ ...base, from: '/item/2', to: '/item/1/more', back: true, rail: [-1, -1] }).morph).toBe('back');
   });
   it('no API: a plain fade; reduced set: crossfade only; calm / reduced motion or the same page: nothing', () => {
     expect(tvPagePlan({ ...base, hasApi: false }).kind).toBe('fade');
-    expect(tvPagePlan({ ...base, level: 'reduced', rail: [0, 2] })).toEqual({ kind: 'view', slide: 0, morph: null });
+    expect(tvPagePlan({ ...base, level: 'reduced', rail: [0, 2] })).toEqual({ kind: 'view', slide: 0, morph: null, sub: 0 });
     expect(tvPagePlan({ ...base, motion: false }).kind).toBe('none');
     expect(tvPagePlan({ ...base, to: '/' }).kind).toBe('none');
   });

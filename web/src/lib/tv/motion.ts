@@ -243,22 +243,29 @@ export function decodeFade(img: HTMLImageElement): { destroy?: () => void } {
   return { destroy() { img.removeEventListener('load', go); img.removeEventListener('error', show); } };
 }
 
-export type TvPagePlan = { kind: 'none' | 'fade' | 'view'; slide: -1 | 0 | 1; morph: 'in' | 'back' | null };
+export type TvPagePlan = { kind: 'none' | 'fade' | 'view'; slide: -1 | 0 | 1; morph: 'in' | 'back' | null; sub: -1 | 0 | 1 };
+/** a detail page (`/item/<id>`), not one of its sub-screens */
+const isDetail = (p: string) => /^\/item\/[^/]+\/?$/.test(p);
+/** the detail page a sub-screen (`/item/<id>/<screen>`) belongs to, '' for any other path */
+export const subParent = (p: string): string => /^(\/item\/[^/]+)\/[^/]+\/?$/.exec(p)?.[1] ?? '';
 /**
  * How a TV page change animates (spec 5.2). `rail` = the pages' places in the rail (-1: not a rail page).
  * none: calm / reduced motion (instant swap). fade: no View Transitions API (the new page fades in, 200 ms).
  * view: a same-document View Transition; into a detail page the focused artwork morphs into the backdrop (`in`), Back from
- * it morphs back (`back`); between rail pages the content slides 16 px in the direction of travel. The reduced set (frame
+ * it morphs back (`back`); between rail pages the content slides 16 px in the direction of travel; a detail page's
+ * sub-screen slides in from the right (`sub` 1, 24 px) and leaves the same way back (`sub` -1). The reduced set (frame
  * guard) keeps only the crossfade.
  */
 export function tvPagePlan(o: { from: string; to: string; back: boolean; motion: boolean; level: 'full' | 'reduced'; hasApi: boolean; rail: [number, number] }): TvPagePlan {
-  const none: TvPagePlan = { kind: 'none', slide: 0, morph: null };
+  const none: TvPagePlan = { kind: 'none', slide: 0, morph: null, sub: 0 };
   if (!o.motion || o.from === o.to) return none;
   if (!o.hasApi) return { ...none, kind: 'fade' };
   if (o.level === 'reduced') return { ...none, kind: 'view' };
-  const detail = (p: string) => p.startsWith('/item/');
+  // detail page <-> one of its own sub-screens: a layer slides over it (no morph: the backdrop stays where it is)
+  const sub = subParent(o.to) && subParent(o.to) === o.from.replace(/\/$/, '') ? 1 : subParent(o.from) && subParent(o.from) === o.to.replace(/\/$/, '') ? -1 : 0;
+  if (sub) return { ...none, kind: 'view', sub };
   const [a, b] = o.rail;
   const slide = a >= 0 && b >= 0 && a !== b ? (b > a ? 1 : -1) : 0;
-  const morph = detail(o.to) && !detail(o.from) ? 'in' : detail(o.from) && !detail(o.to) && o.back ? 'back' : null;
-  return { kind: 'view', slide, morph };
+  const morph = isDetail(o.to) && !isDetail(o.from) ? 'in' : isDetail(o.from) && !isDetail(o.to) && o.back ? 'back' : null;
+  return { kind: 'view', slide, morph, sub: 0 };
 }

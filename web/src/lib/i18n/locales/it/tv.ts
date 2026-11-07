@@ -8,5 +8,7 @@ const dict: Translation<typeof de> = {
   tile: { top10: 'Top 10 · n. {n}' },
   /** detail page (spec 3): the button list and the cast line */
   detail: { restart: 'Dall’inizio', episodes: 'Episodi e stagioni', collection: 'Collezione', with: 'Con: {names}', actions: 'Azioni' },
+  /** detail sub-screens (spec 3): the Back hint, the seasons column, an empty grid */
+  sub: { back: 'Indietro', seasons: 'Stagioni', none: 'Al momento qui non c’è niente.' },
 };
 export default dict;

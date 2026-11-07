@@ -28,6 +28,8 @@
   export let poster = false;
   /** eager + high priority image (first visible row of the home page) */
   export let priority = false;
+  /** the link the card opens instead of the title's own page (TV extras grid: the clip plays) */
+  export let to = '';
   const dispatch = createEventDispatcher<{
     remove: Item;
     /** "Merkliste" was toggled for this card (after the server accepted it) */
@@ -39,7 +41,7 @@
   }>();
   let fav = item.favorite;
   $: fav = item.favorite; // follow the item when the list re-renders with fresh data
-  $: href = item.type === 'Episode' ? `/watch/${item.id}` : item.type === 'BoxSet' ? `/library/${item.id}` : `/item/${item.id}`;
+  $: href = to ? to : item.type === 'Episode' ? `/watch/${item.id}` : item.type === 'BoxSet' ? `/library/${item.id}` : `/item/${item.id}`;
   $: detail = item.type === 'Episode' && item.seriesId ? `/item/${item.seriesId}` : `/item/${item.id}`;
   $: posterId = item.type === 'Episode' && item.seriesId ? item.seriesId : item.id;
   $: posterSrc = poster && (item.image || item.type === 'Episode') ? img(posterId, 320) : '';

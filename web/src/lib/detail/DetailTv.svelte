@@ -181,8 +181,9 @@
 </script>
 
 <div class="tvd">
-  <!-- data-vt-art: the card / tile artwork morphs into this box (View Transition name set by html.ff-vt-art, see app.css) -->
-  <div class="hero" data-vt-art="">
+  <!-- data-vt-art: the card / tile artwork morphs into this box (View Transition name set by html.ff-vt-art, see app.css);
+       data-vt-bd: the same box stays put while a sub-screen slides over it (html.ff-vt-sub) -->
+  <div class="hero" data-vt-art="" data-vt-bd="">
     {#if item.backdrop}
       {#key item.id}
         <img class="bg" data-play-art src={backdrop(item.id, 1280)} srcset={srcset('Backdrop', item.id, HERO_WIDTHS)} sizes="72vw" alt="" fetchpriority="high"

@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import type { Page } from '@playwright/test';
-import { ME } from '../mocks/fixtures.js';
+import { episodes, hex, items, ME, MOVIE, SERIES } from '../mocks/fixtures.js';
 import { expect, test } from '../fixtures.js';
 
 /** TV layout: a paired television gets the 10-foot design (html.tv) */
@@ -347,6 +347,187 @@ test.describe('TV layout', () => {
         const dot = page.locator('nav.rail .dot');
         await expect(dot).toHaveClass(/on/);
         expect(await dot.evaluate((e) => getComputedStyle(e).transitionProperty)).toContain('transform');
+      });
+    });
+  });
+
+  test.describe('detail sub-screens (spec 3)', () => {
+    const ABOUT = { ratings: [{ key: 'community', value: 7.8, max: 10, from: 'jellyfin' }], countries: [], studios: ['Wardell Pictures'], tags: [], keywords: [], links: [], collection: null, canRequest: false, sources: ['jellyfin'] };
+    async function tv(page: Page) {
+      await page.setViewportSize({ width: 1920, height: 1080 });
+      await setTv(page, true);
+      await page.route(/\/api\/items\/[0-9a-f]{32}\/about$/, (r) => r.fulfill({ json: ABOUT }));
+    }
+    /** Back on a webOS remote, sent to the focused element (the layout listens on the window) */
+    const back = (page: Page) => page.evaluate(() => (document.activeElement ?? document.body).dispatchEvent(new KeyboardEvent('keydown', { key: 'Unidentified', keyCode: 461, bubbles: true })));
+    const focusedHref = (page: Page) => page.evaluate(() => document.activeElement?.getAttribute('href') ?? '');
+
+    test('Episodes opens as a route with the next-up episode focused; Back returns to the button that opened it', async ({ page, api: _api }) => {
+      await tv(page);
+      await page.goto(`/item/${SERIES.id}`);
+      await expect(page.locator('.tvd .btns a.play')).toBeFocused();
+      for (let i = 0; i < 3 && !(await focusedHref(page)).endsWith('/episodes'); i++) await page.keyboard.press('ArrowDown');
+      expect(await focusedHref(page)).toBe(`/item/${SERIES.id}/episodes`);
+      await page.keyboard.press('Enter');
+      await expect(page).toHaveURL(new RegExp(`/item/${SERIES.id}/episodes$`));
+      // the mocked next-up episode is "Folge 2"
+      await expect(page.locator(`main a[href="/watch/${episodes[1]!.id}"]`)).toBeFocused();
+      await back(page);
+      await expect(page).toHaveURL(new RegExp(`/item/${SERIES.id}$`));
+      await expect.poll(() => focusedHref(page)).toBe(`/item/${SERIES.id}/episodes`);
+    });
+
+    test('Episodes: Left goes to the seasons, moving there switches the season and keeps the focus, Right enters the list, OK plays', async ({ page, api: _api }) => {
+      await tv(page);
+      const s2 = hex(201);
+      const second = [0, 1].map((i) => ({ ...episodes[i + 2]!, name: `Zweite ${i + 1}`, seasonId: s2, parentIndexNumber: 2, positionTicks: 0, played: false }));
+      await page.route(/\/api\/items\/[0-9a-f]{32}\/seasons$/, (r) => r.fulfill({ json: { items: [
+        { id: hex(200), name: 'Staffel 1', type: 'Season', indexNumber: 1, genres: [], image: true, backdrop: false, logo: false, played: false, favorite: false, positionTicks: 0 },
+        { id: s2, name: 'Staffel 2', type: 'Season', indexNumber: 2, genres: [], image: true, backdrop: false, logo: false, played: false, favorite: false, positionTicks: 0 },
+      ] } }));
+      await page.route(/\/api\/items\/[0-9a-f]{32}\/episodes\?/, (r) => r.fulfill({ json: { items: new URL(r.request().url()).searchParams.get('seasonId') === s2 ? second : episodes } }));
+      await page.goto(`/item/${SERIES.id}/episodes`);
+      const nextUp = page.locator(`main a[href="/watch/${episodes[1]!.id}"]`);
+      await expect(nextUp).toBeFocused();
+      // a 16:9 still, the coral progress bar on the episode with progress, the watched check on a played one
+      await expect(page.locator(`main a[href="/watch/${episodes[0]!.id}"] .bar`)).toHaveCount(1);
+      await page.keyboard.press('ArrowLeft');
+      const seasons = page.locator('main .seasons a, main .seasons button');
+      await expect(seasons.nth(0)).toBeFocused();
+      await page.keyboard.press('ArrowDown');
+      await expect(seasons.nth(1)).toBeFocused();
+      await expect(page.locator('main .eplist')).toContainText('Zweite 1');
+      await expect(seasons.nth(1)).toBeFocused(); // the season changed under the focus
+      await page.keyboard.press('ArrowRight');
+      await expect(page.locator(`main a[href="/watch/${second[0]!.id}"]`)).toBeFocused();
+      await page.keyboard.press('ArrowLeft');
+      await expect(seasons.nth(1)).toBeFocused(); // back to the selected season, not the geometric neighbour
+      // OK plays it (the same player link as the desktop episode list)
+      await page.route('**/api/items/*/next', (r) => r.fulfill({ json: { item: null } }));
+      await page.route('**/api/bookmarks?*', (r) => r.fulfill({ json: { bookmarks: [] } }));
+      await page.route('**/api/items/*/segments', (r) => r.fulfill({ json: { segments: [] } }));
+      await page.keyboard.press('ArrowRight');
+      await page.keyboard.press('Enter');
+      await expect(page).toHaveURL(new RegExp(`/watch/${second[0]!.id}$`));
+    });
+
+    test('More like this: a card grid on the 152 px edge, five per row, the focused card\'s reason in the line above', async ({ page, api: _api }) => {
+      await tv(page);
+      const similar = items.slice(1, 9).map((i, n) => ({ ...i, reason: n === 1 ? { seed: { id: MOVIE.id, name: MOVIE.name }, traits: [] } : undefined }));
+      await page.route(/\/api\/items\/[0-9a-f]{32}\/similar$/, (r) => r.fulfill({ json: { items: similar } }));
+      await page.goto(`/item/${MOVIE.id}/more`);
+      const cards = page.locator('main .grid .card .thumb');
+      await expect(cards.first()).toBeFocused();
+      const geo = await cards.evaluateAll((els) => els.map((e) => e.getBoundingClientRect()).map((r) => ({ x: Math.round(r.left), y: Math.round(r.top) })));
+      expect(Math.abs(geo[0]!.x - 152)).toBeLessThanOrEqual(2);
+      expect(geo.filter((g) => Math.abs(g.y - geo[0]!.y) < 2)).toHaveLength(5);
+      const cap = page.locator('main .focusline');
+      await expect(cap).toContainText(similar[0]!.name);
+      await page.keyboard.press('ArrowRight');
+      await expect(cards.nth(1)).toBeFocused();
+      await expect(cap).toContainText(similar[1]!.name);
+      await expect(cap).toContainText(MOVIE.name); // "because you watched Inkwell"
+      await page.keyboard.press('ArrowDown');
+      await expect(cards.nth(6)).toBeFocused();
+    });
+
+    test('Collection: the parts as a card grid, the focused part named above it', async ({ page, api: _api }) => {
+      await tv(page);
+      const part = (o: object) => ({ image: true, played: false, current: false, inLibrary: true, from: 'jellyfin', ...o });
+      const collection = { name: 'Matrix-Reihe', from: 'jellyfin', parts: [part({ id: items[3]!.id, name: 'Teil Eins', year: 1999, played: true }), part({ id: MOVIE.id, name: MOVIE.name, current: true }), part({ name: 'Teil Drei', inLibrary: false, tmdbId: 7 })] };
+      await page.unroute(/\/api\/items\/[0-9a-f]{32}\/about$/);
+      await page.route(/\/api\/items\/[0-9a-f]{32}\/about$/, (r) => r.fulfill({ json: { ...ABOUT, collection } }));
+      await page.goto(`/item/${MOVIE.id}/collection`);
+      await expect(page.locator('main h1')).toContainText('Matrix-Reihe');
+      const cards = page.locator('main .grid .card .thumb');
+      await expect(cards).toHaveCount(2);
+      await expect(page.locator('main .focusline')).toContainText(/Teil Eins|Inkwell/);
+      await page.keyboard.press('ArrowRight');
+      await expect(page.locator('main .focusline')).toContainText(MOVIE.name);
+    });
+
+    test('Extras: the clips as a card grid that plays them; Story so far: the text and the way on', async ({ page, api: _api }) => {
+      await tv(page);
+      await page.route('**/api/items/*/extras/all', (r) => r.fulfill({ json: { items: [
+        { ...MOVIE, id: 'a'.repeat(32), name: 'Trailer 1', kind: 'trailer', runtimeTicks: 1_500_000_000 },
+        { ...MOVIE, id: 'b'.repeat(32), name: 'Making-of', kind: 'extra', runtimeTicks: 6_000_000_000 },
+      ] } }));
+      await page.goto(`/item/${MOVIE.id}/extras`);
+      const cards = page.locator('main .grid .card .thumb');
+      await expect(cards.first()).toBeFocused();
+      await expect(cards.first()).toHaveAttribute('href', `/watch/${'a'.repeat(32)}`);
+      await expect(page.locator('main .focusline')).toContainText('Trailer 1');
+      await expect(page.locator('main .focusline')).toContainText('3 Min.');
+      await page.route('**/api/items/*/story', (r) => r.fulfill({ json: { story: { reason: 'newSeason', season: { number: 1, name: 'Staffel 1', overview: 'Was in Staffel 1 geschah.' }, episode: { id: episodes[5]!.id, name: 'Folge 6', season: 1, index: 6, overview: 'Das Finale.' }, next: { id: episodes[1]!.id, season: 2, index: 1 } } } }));
+      await page.goto(`/item/${SERIES.id}/story`);
+      await expect(page.locator('main')).toContainText('Was in Staffel 1 geschah.');
+      await expect(page.locator(`main a.tv-btn[href="/watch/${episodes[1]!.id}"]`)).toBeFocused();
+    });
+
+    test('Info: ratings, details and the cast; every focusable is reachable with the arrows', async ({ page, api: _api }) => {
+      await tv(page);
+      await page.goto(`/item/${MOVIE.id}/info`);
+      await expect(page.locator('main').getByRole('list', { name: 'Bewertungen' })).toBeVisible();
+      await expect(page.locator('main a[href^="/person/"]').first()).toBeVisible();
+      await expect(page.locator('main')).toContainText('Wardell Pictures');
+      await expect.poll(() => page.evaluate(() => document.activeElement?.closest('main') !== null)).toBe(true);
+      // walk the arrow graph from the first focus; every focusable in the content must be visited
+      const all = await page.locator('main').evaluate((m) => [...m.querySelectorAll<HTMLElement>('a[href], button:not([disabled])')].filter((e) => e.getClientRects().length && !e.closest('[hidden], [inert]')).length);
+      const seen = new Set<string>();
+      const key = () => page.evaluate(() => { const a = document.activeElement as HTMLElement; const all = [...document.querySelectorAll('main a[href], main button:not([disabled])')]; return a.closest('main') ? String(all.indexOf(a)) : ''; });
+      const queue = [await key()];
+      seen.add(queue[0]!);
+      while (queue.length) {
+        const k = queue.shift()!;
+        for (const dir of ['ArrowDown', 'ArrowUp', 'ArrowRight', 'ArrowLeft']) {
+          await page.evaluate((i) => (document.querySelectorAll('main a[href], main button:not([disabled])')[Number(i)] as HTMLElement).focus(), k);
+          await page.keyboard.press(dir);
+          const n = await key();
+          if (n && !seen.has(n)) { seen.add(n); queue.push(n); }
+        }
+      }
+      expect(seen.size).toBe(all);
+      expect(await page.evaluate(() => window.scrollY)).toBe(0);
+    });
+
+    test('outside TV mode a sub-screen route replaces itself with the detail page', async ({ page, api: _api }) => {
+      await setTv(page, false);
+      await page.goto('/');
+      await page.goto(`/item/${MOVIE.id}/more`);
+      await expect(page).toHaveURL(new RegExp(`/item/${MOVIE.id}$`));
+      await expect(page.locator('html.tv')).toHaveCount(0);
+      await page.goBack();
+      await expect(page).toHaveURL(/\/$/); // replaced, not pushed: Back skips the sub-screen URL
+    });
+
+    test.describe('full motion', () => {
+      test.use({ reducedMotion: 'no-preference' });
+      test('detail -> sub-screen slides in from the right 24 px, Back slides the other way; the classes are cleaned up', async ({ page, api: _api }) => {
+        await page.addInitScript(() => {
+          const d = document as Document & { startViewTransition?: (cb: () => unknown) => unknown };
+          const orig = d.startViewTransition?.bind(d);
+          const w = window as unknown as { __vt: string[] };
+          w.__vt = [];
+          if (orig) d.startViewTransition = (cb: () => unknown) => { const r = document.documentElement; w.__vt.push(`${[...r.classList].filter((c) => c.startsWith('ff-vt')).sort().join(' ')}|${r.style.getPropertyValue('--ff-vt-dx')}`); return orig(cb); };
+        });
+        await tv(page);
+        await page.route('**/api/items/*/trailer', (r) => r.fulfill({ json: {} }));
+        await page.goto(`/item/${MOVIE.id}`);
+        await expect(page.locator('.tvd .btns a.play')).toBeFocused();
+        await page.locator(`.tvd .btns a[href="/item/${MOVIE.id}/more"]`).focus();
+        await page.keyboard.press('Enter');
+        await expect(page).toHaveURL(new RegExp(`/item/${MOVIE.id}/more$`));
+        await expect.poll(() => page.evaluate(() => (window as unknown as { __vt: string[] }).__vt)).toEqual(['ff-vt-sub ff-vt-tv|24px']);
+        await expect(page.locator('html')).not.toHaveClass(/ff-vt/);
+        await expect(page.locator('main .grid .card .thumb').first()).toBeFocused();
+        await back(page);
+        await expect(page).toHaveURL(new RegExp(`/item/${MOVIE.id}$`));
+        // Back reverses (the content slides in from the left); a session whose frame guard tripped keeps only the crossfade
+        const reduced = await page.evaluate(() => document.documentElement.classList.contains('tv-motion-reduced'));
+        await expect.poll(() => page.evaluate(() => (window as unknown as { __vt: string[] }).__vt[1])).toBe(reduced ? 'ff-vt-tv|' : 'ff-vt-sub ff-vt-tv|-24px');
+        await expect(page.locator('html')).not.toHaveClass(/ff-vt/);
+        expect(await page.evaluate(() => document.documentElement.style.getPropertyValue('--ff-vt-dx'))).toBe('');
+        await expect.poll(() => focusedHref(page)).toBe(`/item/${MOVIE.id}/more`);
       });
     });
   });

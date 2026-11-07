@@ -293,10 +293,13 @@
     if (nth >= 0) memo.set(from.url.pathname + from.url.search, { href, nth });
   });
   /** waits for the page content (lazy rows, fetched lists), then focuses the remembered link, [data-autofocus] or the first element */
+  let settleSeq = 0;
   async function settleFocus(want?: { href: string; nth: number }) {
-    const start = document.activeElement;
+    const start = document.activeElement, my = ++settleSeq;
     for (let i = 0; i < 16; i++) {
       await new Promise((r) => setTimeout(r, i ? 150 : 30));
+      // a newer navigation settles its own page: this one must not put a focus there (e.g. Back right after a page opened)
+      if (my !== settleSeq) return;
       const main = document.querySelector('main');
       // the focus was placed in the content meanwhile (a key, the pointer, the page itself): it stays there, a late
       // [data-autofocus] (e.g. the home focus tile's Play once the hero has loaded) must not pull it away
@@ -318,7 +321,7 @@
   const isWatch = (p: string) => p.startsWith('/watch/');
   // A transition started while another runs skips the first one, whose `finished` then settles: only the latest transition may
   // clean up the shared root classes, and each one only takes the shared name off the elements it named (unless the latest named them too).
-  const VT_CLASSES = ['ff-vt', 'ff-vt-play', 'ff-vt-in', 'ff-vt-plain', 'ff-vt-tv', 'ff-vt-slide', 'ff-vt-art'];
+  const VT_CLASSES = ['ff-vt', 'ff-vt-play', 'ff-vt-in', 'ff-vt-plain', 'ff-vt-tv', 'ff-vt-slide', 'ff-vt-art', 'ff-vt-sub'];
   let vtSeq = 0, vtNamed = new Set<HTMLElement>();
   const vtClear = () => { const root = document.documentElement; root.classList.remove(...VT_CLASSES); root.style.removeProperty('--ff-vt-dx'); };
   /** a new transition begins: whatever an earlier one left on the root goes, and its token is the only one that may clean up */
@@ -395,6 +398,8 @@
     watchFrames();
     root.classList.add('ff-vt-tv');
     if (plan.slide) { root.classList.add('ff-vt-slide'); root.style.setProperty('--ff-vt-dx', `${plan.slide * 16}px`); }
+    // a detail sub-screen: the content slides in from the right 24 px (Back: the other way) while the backdrop crossfades in place
+    if (plan.sub) { root.classList.add('ff-vt-sub'); root.style.setProperty('--ff-vt-dx', `${plan.sub * 24}px`); }
     if (plan.morph) root.classList.add('ff-vt-art'); // names the detail backdrop ([data-vt-art]) on whichever side it is
     if (plan.morph === 'in') name(artOf(document.activeElement));
     const want = plan.morph === 'back' && nav.to ? memo.get(nav.to.url.pathname + nav.to.url.search) : undefined;
