@@ -29,7 +29,9 @@
   import Intro from '#lib/Intro.svelte';
   import { loadIntroSettings, markSessionSeen, readSessionSeen, shouldPlayIntro } from '#lib/intro';
   import { mobile } from '#lib/viewport';
-  import { HEADER_TABS, isTabActive } from '#lib/menu';
+  import { HEADER_TABS, isTabActive, TV_RAIL } from '#lib/menu';
+  import { frameGuard, motionLevel, tvPagePlan, VT_ART } from '#lib/tv/motion';
+  import { motionAllowed } from '#lib/preview';
   import TvRail from '#lib/tv/TvRail.svelte';
   import { railKey } from '#lib/tv/rail';
   import { categoryHref, kindFromPath, showsChips, type Kind } from '#lib/mobile';
@@ -321,7 +323,7 @@
     // lib/player/transition.ts). Without the API or with reduced motion the player page fades itself in; TV has no transition.
     if (nav.to && isWatch(to) !== isWatch(from) && !immersive(isWatch(to) ? from : to) && !intro) {
       const into = isWatch(to);
-      if (playTransition({ tv, reduced: matchMedia('(prefers-reduced-motion: reduce)').matches, hasApi: typeof start === 'function' }) !== 'view') { if (into) takePlayArt(); return; }
+      if (playTransition({ tv, reduced: tv ? !motionAllowed() : matchMedia('(prefers-reduced-motion: reduce)').matches, hasApi: typeof start === 'function' }) !== 'view') { if (into) takePlayArt(); return; }
       const root = document.documentElement, art = into ? takePlayArt() : null;
       return new Promise<void>((resolve) => {
         root.classList.add('ff-vt-play');
@@ -331,7 +333,8 @@
         void t.finished.catch(() => undefined).finally(() => { root.classList.remove('ff-vt-play', 'ff-vt-in'); art?.style.removeProperty('view-transition-name'); });
       });
     }
-    if (typeof start !== 'function' || tv || matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+    if (tv) return tvTransition(nav, start);
+    if (typeof start !== 'function' || matchMedia('(prefers-reduced-motion: reduce)').matches) return;
     // typing in the header search must not freeze the screen for a crossfade
     if (!nav.to || from === to || to === '/search' || immersive(from) || immersive(to) || intro) return;
     const root = document.documentElement;
@@ -340,6 +343,66 @@
       const t = start.call(document, async () => { resolve(); await nav.complete; });
       void t.finished.catch(() => undefined).finally(() => root.classList.remove('ff-vt'));
     });
+  });
+
+  // ---- TV page transitions (spec 5.2; plan in lib/tv/motion.ts): artwork -> detail backdrop morph, rail pages slide, else crossfade ----
+  let tvFadeIn = false; // no View Transitions API: the new page fades in (afterNavigate)
+  const railAt = (p: string) => TV_RAIL.findIndex(([href]) => isTabActive(href, p));
+  const onScreen = (el: Element | null | undefined): el is HTMLElement => {
+    const r = el?.getBoundingClientRect();
+    return !!r && r.width > 0 && r.height > 0 && r.bottom > 0 && r.right > 0 && r.top < innerHeight && r.left < innerWidth;
+  };
+  /** the artwork of a focused card or of the focus tile (the element that morphs into / out of the detail backdrop) */
+  const artOf = (el: Element | null | undefined): HTMLElement | null => {
+    if (!(el instanceof HTMLElement) || !el.closest('main')) return null;
+    const img = el.closest('section.tile') ? document.querySelector('section.tile .layer.on img.bg') : el.closest('.card')?.querySelector('.thumb img:not(.blur)');
+    return onScreen(img) ? img : null;
+  };
+  type Nav = Parameters<Parameters<typeof onNavigate>[0]>[0];
+  type StartVT = (cb: () => Promise<void>) => { finished: Promise<unknown> };
+  function tvTransition(nav: Nav, start: StartVT | undefined): Promise<void> | undefined {
+    const from = nav.from?.url.pathname ?? '', to = nav.to?.url.pathname ?? '';
+    if (!nav.to || intro || immersive(from) || immersive(to) || to === '/search') return;
+    const plan = tvPagePlan({ from, to, back: nav.type === 'popstate', motion: motionAllowed(), level: motionLevel(), hasApi: typeof start === 'function', rail: [railAt(from), railAt(to)] });
+    if (plan.kind === 'fade') tvFadeIn = true;
+    if (plan.kind !== 'view' || !start) return;
+    const root = document.documentElement;
+    const named: HTMLElement[] = [];
+    const name = (el: HTMLElement | null) => { if (el) { el.style.setProperty('view-transition-name', VT_ART); named.push(el); } };
+    root.classList.add('ff-vt-tv');
+    if (plan.slide) { root.classList.add('ff-vt-slide'); root.style.setProperty('--ff-vt-dx', `${plan.slide * 16}px`); }
+    if (plan.morph) root.classList.add('ff-vt-art'); // names the detail backdrop ([data-vt-art]) on whichever side it is
+    if (plan.morph === 'in') name(artOf(document.activeElement));
+    const want = plan.morph === 'back' && nav.to ? memo.get(nav.to.url.pathname + nav.to.url.search) : undefined;
+    return new Promise<void>((resolve) => {
+      const t = start.call(document, async () => {
+        resolve();
+        // the screen holds still until the new page is there: never longer than 800 ms (a slow detail load must not freeze the TV)
+        const until = performance.now() + 800;
+        await Promise.race([nav.complete.catch(() => undefined), new Promise((r) => setTimeout(r, 800))]);
+        // into the detail page: its title loads after the route did; wait (within the budget) until the hero is there, so the
+        // backdrop exists when the new state is captured (the new state is live: the image may still finish loading during the morph)
+        // (timers, not rAF: rendering is paused while the update callback runs)
+        if (plan.morph === 'in') while (performance.now() < until && !document.querySelector('main .dv .hero :is(img.bg, h1)')) await new Promise((r) => setTimeout(r, 16));
+        if (plan.morph === 'back') {
+          await tick();
+          const main = document.querySelector('main');
+          const el = want ? main?.querySelectorAll(`a[href="${CSS.escape(want.href)}"]`)[want.nth] : null;
+          name(artOf(el));
+        }
+      });
+      void t.finished.catch(() => undefined).finally(() => {
+        root.classList.remove('ff-vt-tv', 'ff-vt-slide', 'ff-vt-art');
+        root.style.removeProperty('--ff-vt-dx');
+        for (const el of named) el.style.removeProperty('view-transition-name');
+      });
+    });
+  }
+  afterNavigate(() => {
+    if (!tvFadeIn) return;
+    tvFadeIn = false;
+    const main = document.querySelector('main');
+    if (main && typeof main.animate === 'function') main.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 200, easing: 'ease-out' });
   });
 
   /** First load in this browser session: the brand intro without sound (no user gesture yet). Honours the per-profile setting. */
@@ -455,6 +518,7 @@
         if (tv) {
           { let t: ReturnType<typeof setTimeout>; const wake = () => { document.documentElement.classList.remove('idle-cursor'); clearTimeout(t); t = setTimeout(() => document.documentElement.classList.add('idle-cursor'), 4000); }; wake(); window.addEventListener('mousemove', wake); stops.push(() => { window.removeEventListener('mousemove', wake); clearTimeout(t); }); }
           stops.push(startSpatial(() => !watchPage || Boolean(document.activeElement?.closest('[data-nav]'))));
+          stops.push(frameGuard()); // spec 5.2: a TV that cannot keep up drops to the reduced motion set for the session
           if (!watchPage) void settleFocus();
         }
         if (m.tv && !pending) stops.push(startTvLink(onTvCommand, (code) => { if (code === 4401) location.href = '/tv'; else if (code === 4000) replaced = true; }));

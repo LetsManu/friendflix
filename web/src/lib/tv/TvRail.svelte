@@ -16,6 +16,8 @@
   export let who = '';
   export let faceStyle: string | undefined = undefined;
 
+  $: cur = TV_RAIL.findIndex(([href]) => isTabActive(href, path));
+
   let nav: HTMLElement;
   let saved: HTMLElement | null = null; // what had the focus when the rail opened
   let skipRestore = false;
@@ -87,9 +89,11 @@
 <nav class="rail" class:open data-scope={open ? '' : undefined} data-nav-skip={open ? undefined : ''} bind:this={nav} aria-label={$t('tv.rail.label')}
   on:keydown={onKeydown} on:focusin={onFocusin} on:click={onClick} on:pointermove={onPointerMove} on:pointerleave={onPointerLeave}>
   <ul>
-    {#each TV_RAIL as [href, label, icon] (href)}
-      <li class:cur={isTabActive(href, path)}><a {href} aria-current={isTabActive(href, path) ? 'page' : undefined} aria-label={open ? undefined : $t(label)}><span class="ic"><Icon name={icon} size={26} /></span><span class="lb">{$t(label)}</span></a></li>
+    {#each TV_RAIL as [href, label, icon], i (href)}
+      <li class:cur={isTabActive(href, path)} style="--i:{i};--ri:{TV_RAIL.length - 1 - i}"><a {href} aria-current={isTabActive(href, path) ? 'page' : undefined} aria-label={open ? undefined : $t(label)}><span class="ic"><Icon name={icon} size={26} /></span><span class="lb">{$t(label)}</span></a></li>
     {/each}
+    <!-- the active page's coral dot: one element that springs to the current item when the page changes (transform only) -->
+    <li class="dot" class:on={cur >= 0} style="transform: translate3d(0, {Math.max(0, cur) * 66}px, 0)" aria-hidden="true"></li>
   </ul>
   <a class="who" href="/profiles" aria-label={$t('tv.rail.profile', { name: who })}><span class="ic"><span class="face" style={faceStyle}>{initial(who)}</span></span><span class="lb">{who}</span></a>
 </nav>
@@ -98,20 +102,26 @@
   .rail { position: fixed; top: 0; bottom: 0; left: 0; width: 96px; z-index: 60; display: flex; flex-direction: column; align-items: flex-start; padding: 5vh 0 5vh 20px; box-sizing: border-box; }
   .rail.open { width: 340px; }
   /* black gradient over the content: collapsed only a faint edge for legibility, expanded much wider (opacity only); no hard stop */
-  .rail::before { content: ''; position: absolute; inset: 0; width: 460px; background: linear-gradient(to right, rgba(0, 0, 0, .96) 0, rgba(0, 0, 0, .88) 50%, rgba(0, 0, 0, .5) 75%, rgba(0, 0, 0, 0)); opacity: 0; transition: opacity var(--tv-fade, 280ms) var(--tv-ease, ease); pointer-events: none; z-index: -1; }
+  /* expand (spec 5.2): the gradient fades in over 200 ms; collapse is the reverse at ~70 % (opacity only) */
+  .rail::before { content: ''; position: absolute; inset: 0; width: 460px; background: linear-gradient(to right, rgba(0, 0, 0, .96) 0, rgba(0, 0, 0, .88) 50%, rgba(0, 0, 0, .5) 75%, rgba(0, 0, 0, 0)); opacity: 0; transition: opacity calc(var(--tv-d-s, 200ms) * .7) var(--tv-emph-in, ease); pointer-events: none; z-index: -1; }
   .rail:not(.open)::before { width: 96px; opacity: .65; }
-  .rail.open::before { opacity: 1; }
+  .rail.open::before { opacity: 1; transition: opacity var(--tv-d-s, 200ms) var(--tv-emph-out, ease); }
   ul { list-style: none; margin: auto 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
   li { display: block; position: relative; }
-  a { position: relative; display: flex; align-items: center; height: 56px; width: 56px; overflow: hidden; border-radius: var(--tv-radius, 6px); color: rgba(255, 255, 255, .55); text-decoration: none; transform-origin: left center; transition: transform var(--tv-t, 180ms) var(--tv-ease, ease); }
+  a { position: relative; display: flex; align-items: center; height: 56px; width: 56px; overflow: hidden; border-radius: var(--tv-radius, 6px); color: rgba(255, 255, 255, .55); text-decoration: none; transform-origin: left center; transition: transform calc(var(--tv-d-spring, 420ms) * .7) var(--tv-emph-out, ease); }
   .rail.open a { width: 280px; }
   a:hover, a:focus-visible, a[aria-current='page'] { color: #fff; }
-  a:focus-visible { transform: scale(1.08); }
+  a:focus-visible { transform: scale(1.08); transition: transform var(--tv-d-spring, 420ms) var(--tv-spring, ease); }
   .ic { flex: none; width: 56px; height: 56px; display: grid; place-items: center; }
   .ic :global(svg) { stroke-width: 1.75; }
-  .lb { white-space: nowrap; font-weight: 500; font-size: 1.375rem; opacity: 0; transform: translateX(-12px); transition: opacity var(--tv-t, 180ms) var(--tv-ease, ease), transform var(--tv-t, 180ms) var(--tv-ease, ease); }
-  .rail.open .lb { opacity: 1; transform: none; }
+  /* labels slide in from -12 px with a 30 ms stagger top to bottom; they leave bottom to top, faster (70 %) */
+  .lb { white-space: nowrap; font-weight: 500; font-size: 1.375rem; opacity: 0; transform: translate3d(-12px, 0, 0); transition: opacity calc(var(--tv-d-s, 200ms) * .7) var(--tv-emph-in, ease) calc(var(--ri, 0) * 21ms), transform calc(var(--tv-d-s, 200ms) * .7) var(--tv-emph-in, ease) calc(var(--ri, 0) * 21ms); }
+  .rail.open .lb { opacity: 1; transform: none; transition: opacity var(--tv-d-m, 320ms) var(--tv-emph-out, ease) calc(var(--i, 0) * 30ms), transform var(--tv-d-m, 320ms) var(--tv-emph-out, ease) calc(var(--i, 0) * 30ms); }
+  .who .lb { --i: 6; --ri: 0; }
+  :global(html.tv-motion-reduced) .lb { transition-delay: 0s !important; transform: none; }
   /* active page: 6 px coral dot, centred 14 px left of the 26 px icon (the icon starts 15 px into its 56 px cell); on the li so the link's clipping does not cut it */
-  li.cur::before { content: ''; position: absolute; left: -2px; top: 50%; width: 6px; height: 6px; margin-top: -3px; border-radius: 50%; background: var(--acc, #ff4f6d); pointer-events: none; }
+  ul { position: relative; }
+  .dot { position: absolute; left: -2px; top: 25px; width: 6px; height: 6px; border-radius: 50%; background: var(--acc, #ff4f6d); pointer-events: none; opacity: 0; transition: transform var(--tv-d-spring, 420ms) var(--tv-spring, ease), opacity var(--tv-d-xs, 120ms) ease; }
+  .dot.on { opacity: 1; }
   .face { width: 40px; height: 40px; border-radius: 50%; display: grid; place-items: center; font-weight: 600; font-size: 1.125rem; color: #fff; background: #444; }
 </style>

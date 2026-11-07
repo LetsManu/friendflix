@@ -382,7 +382,8 @@
 <div class="dv" data-play-scope class:vm={variant === 'modal'} class:vp={variant === 'page'} class:phone bind:this={dvEl}
   on:pointerdown|capture={onUse} on:keydown|capture={onUse} on:focusin={onUse} on:wheel|capture|passive={onUse}>
   <!-- ================= hero ================= -->
-  <div class="hero" bind:this={heroEl}>
+  <!-- data-vt-art: TV card / tile artwork -> this backdrop morph (View Transition name set by html.ff-vt-art, see app.css); not in the modal -->
+  <div class="hero" bind:this={heroEl} data-vt-art={variant === 'modal' ? undefined : ''}>
     {#if item}
       {#if item.backdrop}<img class="bg" data-play-art class:loaded={heroLoaded} src={backdrop(item.id, variant === 'modal' ? 960 : 1280)} srcset={srcset('Backdrop', item.id, variant === 'modal' ? MODAL_WIDTHS : HERO_WIDTHS)} sizes={variant === 'modal' ? '(min-width: 890px) 850px, 100vw' : '100vw'} alt="" fetchpriority="high" on:load={() => (heroLoaded = true)} />{/if}
       <!-- svelte-ignore a11y_media_has_caption -->

@@ -15,6 +15,7 @@
   import { t, tr } from '#lib/i18n';
   import { usable } from '#lib/spatial';
   import { tvFocus, tvRank } from '#lib/tv/focus';
+  import { glide } from '#lib/tv/motion';
   import { rowScrollTarget } from '#lib/tv/rowScroll';
   import TvCategoryRow from '#lib/tv/TvCategoryRow.svelte';
   import TvFocusTile from '#lib/tv/TvFocusTile.svelte';
@@ -168,19 +169,34 @@
     return () => mo.disconnect();
   });
   onDestroy(() => { if (frame) cancelAnimationFrame(frame); });
-  /** the focused row slides under the tile: its top goes to where the tile ends */
+  /**
+   * The focused row slides under the tile: its top goes to where the tile ends. The page position jumps there at once and the
+   * rows glide the difference with a spring (lib/tv/motion.ts, FLIP), so scroll-based code always sees the resting position.
+   * `fromY` is the position the viewer saw before this focus change (focusEl may already have scrolled the window).
+   */
+  let fromY: number | null = null;
   function onRowsFocus(e: FocusEvent) {
     if (!tv) return;
     const sec = (e.target as HTMLElement).closest<HTMLElement>('section.row, section.cr');
     if (!sec) return;
+    fromY ??= window.scrollY;
     if (frame) cancelAnimationFrame(frame);
     frame = requestAnimationFrame(() => {
       frame = 0;
-      const tile = document.querySelector<HTMLElement>('section.tile');
-      const tileBottom = tile ? tile.getBoundingClientRect().bottom : window.innerHeight / 2;
-      const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
-      window.scrollTo({ top: rowScrollTarget(sec.getBoundingClientRect().top, window.scrollY, tileBottom), behavior: reduce ? 'auto' : 'smooth' });
+      const y0 = fromY ?? window.scrollY;
+      fromY = null;
+      if (!rowsEl || !sec.isConnected) return;
+      glidePage(y0, () => {
+        const tile = document.querySelector<HTMLElement>('section.tile');
+        const tileBottom = tile ? tile.getBoundingClientRect().bottom : window.innerHeight / 2;
+        return rowScrollTarget(sec.getBoundingClientRect().top, window.scrollY, tileBottom);
+      });
     });
+  }
+  /** scrolls the window to `target()` (measured with the rows untransformed) and glides the rows from where they were seen at `y0` */
+  function glidePage(y0: number, target: () => number) {
+    if (!rowsEl) return;
+    glide(rowsEl, 'y', () => { window.scrollTo({ top: target(), behavior: 'auto' }); return window.scrollY - y0; });
   }
   const navAction = (n: HTMLElement) => { n.addEventListener('ff-nav', onRowsNav); return { destroy: () => n.removeEventListener('ff-nav', onRowsNav) }; };
   /** Up from the topmost row goes back to the tile: it shows the hero again with its buttons */
@@ -196,7 +212,7 @@
     await tick();
     const play = document.querySelector<HTMLElement>('section.tile [data-autofocus]');
     play?.focus({ preventScroll: true });
-    window.scrollTo({ top: 0, behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
+    glidePage(window.scrollY, () => 0);
   }
 </script>
 

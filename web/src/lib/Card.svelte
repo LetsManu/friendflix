@@ -19,6 +19,7 @@
   import { hoverOwner, nextHoverUid } from '#lib/hover';
   import { isBackKey } from '#lib/spatial';
   import { tvFocus } from '#lib/tv/focus';
+  import { decodeFade } from '#lib/tv/motion';
 
   export let item: Item;
   /** shows a remove (X) button and emits `remove` (used for Weiterschauen) */
@@ -157,7 +158,7 @@
   <div class="media">
   <a class="thumb" class:art={!!src} {href} bind:this={thumbEl} on:keydown={thumbKeyDown} on:keyup={thumbKeyUp} aria-label={item.name + (sub ? ', ' + sub : '')}>
     {#if posterOnly}<img class="blur" loading="lazy" decoding="async" {src} srcset={srcs} {sizes} alt="" aria-hidden="true" />{/if}
-    {#if src}<img bind:this={imgEl} class:contain={posterOnly} class:spoil={isSpoiler(item, $prefs)} loading={priority ? 'eager' : 'lazy'} fetchpriority={priority ? 'high' : undefined} decoding="async" {src} srcset={srcs} {sizes} alt="" width={posterSrc ? 200 : 320} height={posterSrc ? 300 : 180} />{/if}
+    {#if src}<img bind:this={imgEl} use:decodeFade class:contain={posterOnly} class:spoil={isSpoiler(item, $prefs)} loading={priority ? 'eager' : 'lazy'} fetchpriority={priority ? 'high' : undefined} decoding="async" {src} srcset={srcs} {sizes} alt="" width={posterSrc ? 200 : 320} height={posterSrc ? 300 : 180} />{/if}
     {#if tag?.kind === 'leaving'}<span class="newep leave">{$t(tag.key, { n: tag.n })}</span>
     {:else if tag && (tag.label === 'new' || tag.label === 'newSeries')}<span class="brand"><Logo size={16} label="" /><span class="neu">{$t(tag.key)}</span></span>
     {:else if tag}<span class="newep">{$t(tag.key)}</span>{/if}
@@ -237,7 +238,12 @@
   :global(html.tv) .rm, :global(html.tv) .mb { display: none; }
   :global(html.tv) .cap { right: .6rem; }
   /* TV card treatment (spec 5.1): 6 px radius, no border, the artwork speaks for itself; the title is burned in only when there is no image */
-  :global(html.tv) .card { transition: transform var(--tv-t) var(--tv-ease) 0s; }
+  /* focus (spec 5.2): the scale springs in (fast, tiny overshoot) and leaves on the exit curve at ~70 % of that; the ring + soft
+     shadow is a layer of its own that fades in 120 ms, 60 ms after the scale started, so it never pops (opacity only) */
+  :global(html.tv) .card { transition: transform calc(var(--tv-d-spring) * .7) var(--tv-emph-out) 0s; }
+  :global(html.tv) .card:focus-within { transition: transform var(--tv-d-spring) var(--tv-spring) 0s; }
+  :global(html.tv) .media::after { content: ''; position: absolute; inset: 0; z-index: 4; border-radius: var(--tv-radius); box-shadow: var(--tv-card-ring); opacity: 0; pointer-events: none; transition: opacity calc(var(--tv-d-xs) * .7) ease-in; }
+  :global(html.tv) .card:focus-within .media::after { opacity: 1; transition: opacity var(--tv-d-xs) ease-out 60ms; }
   :global(html.tv) .thumb { border-radius: var(--tv-radius); background: #1a1a1a; }
   :global(html.tv) .thumb.art .cap, :global(html.tv) .thumb.art::after { display: none; }
   :global(html.tv) .cap.big { font-size: 1.25rem; font-weight: 600; line-height: 1.25; text-shadow: none; color: var(--tv-white-88); padding: 1rem; }

@@ -180,7 +180,7 @@ test.describe('into the player', () => {
 
   test.describe('TV', () => {
     test.use({ reducedMotion: 'no-preference' });
-    test('TV: no transition, the player still starts', async ({ page, api: _api }) => {
+    test('TV: the play transition runs where the API exists (spec 5.2), the player starts', async ({ page, api: _api }) => {
       await mockPlayer(page);
       const info = await countInfo(page);
       await page.addInitScript(() => sessionStorage.setItem('ff_tv', '1'));
@@ -194,8 +194,8 @@ test.describe('into the player', () => {
       });
       await playButton(page).click();
       await playing(page);
-      expect(await page.evaluate(() => (window as unknown as { __vtSeen: boolean }).__vtSeen)).toBe(false);
-      expect(await page.locator('.wrap').evaluate((el) => getComputedStyle(el).animationName)).toBe('none');
+      expect(await page.evaluate(() => (window as unknown as { __vtSeen: boolean }).__vtSeen)).toBe(true);
+      await expect(page.locator('html')).not.toHaveClass(/ff-vt-(in|play)/); // cleaned up after the transition
       expect(info.n).toBe(1);
     });
   });

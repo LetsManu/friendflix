@@ -131,11 +131,14 @@
     <div class="wrap">
       <button class="arrow left" class:hide={!canLeft} aria-label={$t('home.row.prev')} on:click={() => go(-1)}><Icon name="chevron-left" size={34} /></button>
       <div class="track" use:trackAction on:scroll={onScroll} role="list">
+        <!-- the strip only exists as a box on TV (the row glide moves it, lib/tv/motion.ts); elsewhere it is display: contents -->
+        <div class="strip" data-glide={tvOn ? '' : undefined}>
         {#if items === null}
           {#each Array(8) as _}<div class="slot"><div class="skeleton ph" class:poster={(($mobile && !landscape) || ranked) && !tvOn}></div></div>{/each}
         {:else}
           {#each items as it, idx (it.id)}{#if idx < limit}<div class="slot" class:ranked role="listitem" on:focusin={() => rankFocus(it.id, idx + 1)}>{#if ranked}<span class="rank" aria-label={$t('home.row.rank', { n: idx + 1 })}>{idx + 1}</span>{/if}{#if $mobile}<PosterCard item={it} {landscape} {removable} {priority} on:remove />{:else}<Card item={it} {removable} poster={ranked && !tvOn} {priority} on:remove />{/if}</div>{/if}{/each}
         {/if}
+        </div>
       </div>
       <button class="arrow right" class:hide={!canRight} aria-label={$t('home.row.next')} on:click={() => go(1)}><Icon name="chevron-right" size={34} /></button>
     </div>
@@ -168,6 +171,7 @@
   .wrap { position: relative; }
   .track { display: flex; gap: var(--gap); overflow-x: auto; overflow-y: hidden; scroll-snap-type: x proximity; scrollbar-width: none; padding: .4rem var(--pad-x) .6rem; margin: -.4rem 0 -.6rem; /* small room for focus rings; the hover pop-out lives in <body> */ scroll-padding: 0 var(--pad-x); }
   .track::-webkit-scrollbar { display: none; }
+  .strip { display: contents; }
   /* 100% = the track content box (inside the pad-x padding): exactly n cards per page, the neighbours peek in the padding */
   .slot { flex: 0 0 calc((100% - (var(--n) - 1) * var(--gap)) / var(--n)); scroll-snap-align: start; min-width: 0; }
   /* ranked row: normal portrait posters with a small filled rank chip on the top-right corner */
@@ -204,6 +208,8 @@
   :global(html.tv) .dots { display: none; }
   /* the track runs from the rail edge, so cards slide out under the rail; the padding puts the first card on the gutter and leaves room for the focus scale */
   :global(html.tv) .track { padding: 1.4rem 5vw 1.4rem var(--pad-x); margin: -1.4rem 0; scroll-padding: 0 5vw 0 var(--pad-x); overscroll-behavior: contain; }
+  /* the strip carries the row glide (FLIP: scrollLeft jumps, the strip's transform springs back; spec 5.2) */
+  :global(html.tv) .strip { display: flex; flex: none; gap: var(--gap); }
   :global(html.tv) .slot { flex: 0 0 var(--cw); }
   :global(html.tv) .rank { right: .625rem; top: .625rem; min-width: 2rem; height: 2rem; border-radius: 4px; box-shadow: none; font-size: .9375rem; font-weight: 600; letter-spacing: .02em; font-variant-numeric: tabular-nums; }
   .row.m .rank { right: .3rem; top: .3rem; min-width: 1.5rem; height: 1.5rem; font-size: .78rem; }

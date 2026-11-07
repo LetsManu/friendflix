@@ -178,10 +178,15 @@ test.describe('TV layout', () => {
       await home(page);
       const thumb = page.locator('main .rows section.row .card .thumb').first();
       await thumb.focus();
-      const s = await thumb.evaluate((e) => { const c = getComputedStyle(e); return { outline: c.outlineStyle, shadow: c.boxShadow, radius: c.borderTopLeftRadius }; });
+      const s = await thumb.evaluate((e) => { const c = getComputedStyle(e); return { outline: c.outlineStyle, radius: c.borderTopLeftRadius }; });
       expect(s.outline).toBe('none');
-      expect(s.shadow).toContain('rgb(255, 255, 255) 0px 0px 0px 3px');
       expect(s.radius).toBe('6px');
+      // spec 5.2: the ring + shadow is a layer of its own over the artwork that fades in (opacity) after the scale started
+      const ring = () => thumb.evaluate((e) => { const c = getComputedStyle(e.closest('.media')!, '::after'); return { shadow: c.boxShadow, radius: c.borderTopLeftRadius, opacity: c.opacity }; });
+      await expect.poll(async () => (await ring()).opacity).toBe('1');
+      const r = await ring();
+      expect(r.shadow).toContain('rgb(255, 255, 255) 0px 0px 0px 3px');
+      expect(r.radius).toBe('6px');
     });
   });
 
@@ -228,6 +233,121 @@ test.describe('TV layout', () => {
       await expect(page.locator('main .rows section.cr')).toBeAttached();
       await page.waitForLoadState('networkidle');
       await expect.poll(() => rowLabels(page)).toEqual(desktop);
+    });
+  });
+  test.describe('motion (spec 5.2)', () => {
+    async function home(page: Page) {
+      await page.setViewportSize({ width: 1920, height: 1080 });
+      await setTv(page, true);
+      await page.route('**/api/items/*/trailer', (r) => r.fulfill({ json: {} })); // motion allowed: no trailer for the tile
+      await page.goto('/');
+      await expect(page.locator('section.tile [data-autofocus]')).toBeFocused();
+      await expect(page.locator('main .rows section.row .card .thumb').first()).toBeVisible();
+    }
+    /** the row with the most cards (it has to scroll sideways) */
+    async function longRow(page: Page) {
+      const label = await page.locator('main .rows section.row').evaluateAll((els) => els.map((e) => [e.getAttribute('aria-label'), e.querySelectorAll('.card').length] as const).sort((a, b) => b[1] - a[1])[0]![0]);
+      return page.locator(`main .rows section.row[aria-label="${label}"]`);
+    }
+
+    test('reduced motion: focus changes apply at once, without a scale', async ({ page, api: _api }) => {
+      await home(page);
+      const thumb = page.locator('main .rows section.row .card .thumb').first();
+      await thumb.focus();
+      const s = await thumb.evaluate((e) => { const c = getComputedStyle(e.closest('.card')!); return { transform: c.transform, dur: Math.max(...c.transitionDuration.split(',').map((v) => parseFloat(v))) }; });
+      expect(s.transform === 'none' || s.dur <= 0.001).toBe(true);
+      expect(s.transform).toBe('none');
+    });
+
+    test.describe('full motion', () => {
+      test.use({ reducedMotion: 'no-preference' });
+
+      test('Right glides the row track (transform during the move, none at rest) and the focused card ends fully in view', async ({ page, api: _api }) => {
+        await home(page);
+        const row = await longRow(page);
+        await row.locator('.card .thumb').first().focus();
+        await page.waitForTimeout(400);
+        let moved = false;
+        for (let i = 0; i < 9 && !moved; i++) {
+          await page.keyboard.press('ArrowRight');
+          const t = await row.locator('.strip').evaluate((e) => getComputedStyle(e).transform);
+          moved = t !== 'none' && t !== 'matrix(1, 0, 0, 1, 0, 0)';
+        }
+        expect(moved).toBe(true);
+        await expect.poll(() => row.locator('.strip').evaluate((e) => getComputedStyle(e).transform)).toBe('none');
+        const r = await page.evaluate(() => {
+          const slot = document.activeElement!.closest('.slot')!.getBoundingClientRect(), tr = document.activeElement!.closest('.track')!.getBoundingClientRect();
+          return { l: slot.left, r: slot.right, tl: tr.left, tr: tr.right, vw: innerWidth };
+        });
+        expect(r.l).toBeGreaterThanOrEqual(r.tl);
+        expect(r.r).toBeLessThanOrEqual(Math.min(r.tr, r.vw));
+      });
+
+      test('Down glides the page: the rows move by transform, the focused row comes to rest under the tile', async ({ page, api: _api }) => {
+        await home(page);
+        await page.locator('main .rows .card .thumb').first().focus();
+        await page.waitForTimeout(400);
+        await page.keyboard.press('ArrowDown');
+        await page.keyboard.press('ArrowDown');
+        await page.waitForFunction(() => getComputedStyle(document.querySelector('main .rows')!).transform !== 'none', null, { polling: 'raf', timeout: 2000 });
+        await expect.poll(() => page.evaluate(() => getComputedStyle(document.querySelector('main .rows')!).transform)).toBe('none');
+        const d = await page.evaluate(() => { const t = document.querySelector('section.tile')!.getBoundingClientRect(); const r = document.activeElement!.closest('section')!.getBoundingClientRect(); return Math.abs(r.top - t.bottom); });
+        expect(d).toBeLessThan(8);
+      });
+
+      test('a settled focus change re-enters the tile text in a stagger (the title animates)', async ({ page, api: _api }) => {
+        await home(page);
+        const thumbs = page.locator('main .rows section.row').first().locator('.card .thumb');
+        await thumbs.nth(0).focus();
+        await page.waitForTimeout(500);
+        await thumbs.nth(1).focus();
+        await page.waitForFunction(() => {
+          const el = document.querySelector('section.tile .body:not(.ghost) :is(h1, img.logo)[data-st]');
+          return !!el && el.getAnimations().length > 0;
+        }, null, { polling: 'raf', timeout: 3000 });
+        // the outgoing text is a lifeless copy: nothing in it can take the focus
+        expect(await page.locator('section.tile .ghost a:not([tabindex="-1"]), section.tile .ghost [data-autofocus]').count()).toBe(0);
+      });
+
+      test('card -> detail starts a view transition (the artwork carries the shared name); Back returns', async ({ page, api: _api }) => {
+        await page.addInitScript(() => {
+          const d = document as Document & { startViewTransition?: (cb: () => unknown) => unknown };
+          const orig = d.startViewTransition?.bind(d);
+          const w = window as unknown as { __vt: string[] };
+          w.__vt = [];
+          if (orig) d.startViewTransition = (cb: () => unknown) => { w.__vt.push(String([...document.querySelectorAll<HTMLElement>('main .card img')].filter((i) => i.style.viewTransitionName === 'ff-tv-art').length)); return orig(cb); };
+        });
+        await home(page);
+        const thumb = page.locator('main .rows section.row .card a.thumb[href^="/item/"]').first();
+        await thumb.focus();
+        await page.waitForTimeout(300); // the row has glided to it
+        await page.keyboard.press('Enter');
+        await expect(page).toHaveURL(/\/item\//);
+        const vt = await page.evaluate(() => (window as unknown as { __vt: string[] }).__vt);
+        expect(vt[0]).toBe('1'); // the focused card's artwork carries the shared name when the old page is captured
+        await expect(page.locator('html')).not.toHaveClass(/ff-vt-(tv|art)/); // cleaned up
+        await page.keyboard.press('Escape');
+        await expect(page).toHaveURL(/\/$/);
+        await expect.poll(() => page.evaluate(() => (window as unknown as { __vt: string[] }).__vt.length)).toBe(2); // Back plays it in reverse
+      });
+
+      test('without the View Transitions API card -> detail still navigates', async ({ page, api: _api }) => {
+        await page.addInitScript(() => { delete (Document.prototype as unknown as { startViewTransition?: unknown }).startViewTransition; });
+        await home(page);
+        const thumb = page.locator('main .rows section.row .card a.thumb[href^="/item/"]').first();
+        await thumb.focus();
+        await page.waitForTimeout(300); // the row has glided to it
+        await page.keyboard.press('Enter');
+        await expect(page).toHaveURL(/\/item\//);
+        await expect(page.locator('main')).toBeVisible();
+      });
+
+      test('the rail dot springs to the new page (transform transition)', async ({ page, api: _api }) => {
+        await home(page);
+        const dot = page.locator('nav.rail .dot');
+        await expect(dot).toHaveClass(/on/);
+        expect(await dot.evaluate((e) => getComputedStyle(e).transitionProperty)).toContain('transform');
+      });
     });
   });
 });

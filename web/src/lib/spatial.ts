@@ -4,6 +4,8 @@
  * D-pad navigation for TV browsers: the arrow keys move the focus to the nearest focusable element in that
  * direction (geometric search, no hand-written focus maps), "Back" keys are recognised across TV platforms.
  */
+import { glideRow } from '#lib/tv/motion';
+
 type Dir = 'left' | 'right' | 'up' | 'down';
 
 const FOCUSABLE = 'a[href], button:not([disabled]), input:not([disabled]):not([type="hidden"]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
@@ -57,7 +59,8 @@ const reduce = () => typeof matchMedia !== 'undefined' && matchMedia('(prefers-r
 export function focusEl(el: HTMLElement) {
   el.focus({ preventScroll: true });
   // inside a container that owns the vertical position (TV home rows): only slide into view, the container's handler scrolls the page
-  if (el.closest('[data-own-scroll]')) { el.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: reduce() ? 'auto' : 'smooth' }); return; }
+  // TV rows glide with a spring (lib/tv/motion.ts) to the same nearest-in-view place; native scrolling is the fallback
+  if (el.closest('[data-own-scroll]')) { if (!glideRow(el)) el.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: reduce() ? 'auto' : 'smooth' }); return; }
   el.scrollIntoView({ block: 'center', inline: 'center', behavior: reduce() ? 'auto' : 'smooth' });
 }
 
