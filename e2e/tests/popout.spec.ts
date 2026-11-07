@@ -43,41 +43,38 @@ test.describe('hover pop-out (desktop)', () => {
   });
 });
 
-test.describe('quick-view modal (desktop)', () => {
-  test('opens from the pop-out, closes with Escape and restores the URL', async ({ page }) => {
+test.describe('detail from the pop-out (desktop: the full page, no popup)', () => {
+  test('⌄ opens the full page; browser Back returns home', async ({ page }) => {
     await page.goto('/');
     const card = row(page, 'Weil du „Inkwell“ gesehen hast').locator('article.card').first();
     const hp = await openPopout(page, card);
     await hp.getByRole('link', { name: /^Mehr Infos zu / }).click();
 
-    const modal = page.getByRole('dialog', { name: /Interlace/ });
-    await expect(modal).toBeVisible();
     await expect(page).toHaveURL(/\/item\/0{31}2$/);
-    await expect(modal.locator('#modal-title')).toHaveText('Interlace');
+    await expect(page.locator('.dd').getByRole('heading', { level: 1 })).toHaveText('Interlace');
+    await expect(page.getByRole('dialog')).toHaveCount(0);
     await expect(page.locator('.dpv')).toHaveCount(0);
 
-    await page.keyboard.press('Escape');
-    await expect(modal).toBeHidden();
+    await page.goBack();
     await expect(page).toHaveURL(/\/$/);
-    await expect(page.getByRole('navigation', { name: 'Hauptnavigation' })).not.toHaveAttribute('inert', /.*/);
+    await expect(page.locator('section.billboard')).toBeVisible();
   });
 
-  test('a click on the pop-out picture opens the detail popup; its buttons keep their own action', async ({ page, api }) => {
+  test('a click on the pop-out picture opens the detail page; its buttons keep their own action', async ({ page, api }) => {
     await page.goto('/');
     const card = row(page, 'Weil du „Inkwell“ gesehen hast').locator('article.card').nth(1);
     let hp = await openPopout(page, card);
-    // a button inside the pop-out still does its own thing and does not open the popup
+    // a button inside the pop-out still does its own thing and does not navigate
     await hp.getByRole('button', { name: 'Zur Merkliste hinzufügen' }).click();
-    await expect(page.locator('[role=dialog]:not(.dpv)')).toHaveCount(0); // the preview itself is a (non-modal) dialog
+    await expect(page).toHaveURL(/\/$/);
     expect(api.log.some((l) => l.includes('/watchlist'))).toBe(true);
 
     await page.mouse.move(2, 2);
     await expect(page.locator('.dpv')).toHaveCount(0);
     hp = await openPopout(page, card);
     await hp.locator('.dpv-art').click({ position: { x: 40, y: 30 } });
-    const modal = page.getByRole('dialog', { name: /The Dawn Keeper/ });
-    await expect(modal).toBeVisible();
     await expect(page).toHaveURL(/\/item\//);
+    await expect(page.locator('.dd').getByRole('heading', { level: 1 })).toHaveText('The Dawn Keeper');
     await expect(page.locator('.dpv')).toHaveCount(0);
   });
 });

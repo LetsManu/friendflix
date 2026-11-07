@@ -1,5 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
+import { writable } from 'svelte/store';
 
 /** Desktop UI shell: only when not TV, not phone and not kids. */
 export function deskUi(o: { tv: boolean; mobile: boolean; kids: boolean }): boolean {
@@ -12,3 +13,6 @@ export const PILL_SOLID_AT = 24;
 export function pillSolid(scrollY: number, heroPage: boolean): boolean {
   return !heroPage || scrollY > PILL_SOLID_AT;
 }
+
+/** The root layout's `deskUi` answer, for code outside components (openModal): desktop opens titles as the full page. */
+export const deskActive = writable(false);

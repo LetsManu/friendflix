@@ -8,4 +8,9 @@ export default {
     pages: 'Seiten der Reihe',
     page: 'Seite {n}',
   },
+  detail: {
+    back: 'Zurück',
+    extras: 'Trailer & Extras',
+    continueEp: 'Weiter S{s}·F{e}',
+  },
 } as const;

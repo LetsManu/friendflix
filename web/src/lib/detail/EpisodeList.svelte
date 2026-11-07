@@ -24,6 +24,8 @@
   export let next: Item | null = null;
   /** query string (audio/sub choice) appended to the player links */
   export let qs = '';
+  /** list: one row per episode (page, modal); row: a horizontal strip of 16:9 tiles (desktop detail page) */
+  export let layout: 'list' | 'row' = 'list';
   /** the audio / subtitle choice carried in the link's query, for the native player */
   const trackOpts = (q: string) => { const p = new URLSearchParams(q); return { audio: p.get('audio') ?? undefined, subtitle: p.get('sub') ?? undefined }; };
 
@@ -36,9 +38,9 @@
   $: current = (e: Item) => (next ? next.id === e.id : false);
 </script>
 
-<section class="eps" aria-labelledby="eps-h">
+<section class="eps" class:row={layout === 'row'} aria-labelledby="eps-h">
   <div class="seasonbar">
-    <h2 id="eps-h">{$t('detail.episodes.title')}</h2>
+    <h2 id="eps-h" class:sr-only={layout === 'row'}>{$t('detail.episodes.title')}</h2>
     {#if seasons.length}
       <span class="sel">
         <label class="sr-only" for="dv-season">{$t('detail.episodes.season')}</label>
@@ -126,6 +128,28 @@
   .cmbtn { display: inline-flex; align-items: center; gap: .25rem; min-height: 0; padding: .3rem .5rem; border-radius: 999px; background: rgba(255, 255, 255, .1); border: 0; color: var(--fg); cursor: pointer; font-size: .8rem; }
   .cmbtn:hover, .cmbtn.on { background: rgba(255, 255, 255, .22); }
   .n2 { font-variant-numeric: tabular-nums; }
+  /* ---- row: a horizontal strip of 16:9 tiles (title, length, progress line); next up wears the coral ring ---- */
+  .row { margin-top: 0; }
+  .row .seasonbar { justify-content: flex-start; margin-bottom: 16px; }
+  .row ol { display: flex; gap: 16px; overflow-x: auto; overscroll-behavior-x: contain; scroll-snap-type: x proximity; scroll-padding-inline: 4px; padding: 4px 4px 12px; margin: 0 -4px; scrollbar-width: thin; }
+  .row .eprow { flex: 0 0 clamp(240px, 21vw, 320px); border-bottom: 0; scroll-snap-align: start; }
+  .row .eprow.cur { background: none; box-shadow: none; }
+  .row .ep { display: flex; flex-direction: column; align-items: stretch; gap: 10px; padding: 0; border-radius: 6px; }
+  .row .ep:hover { background: none; }
+  .row .ep:focus-visible { outline: none; }
+  .row .ep:focus-visible .th { outline: 2px solid #fff; outline-offset: 2px; }
+  .row .n { display: none; }
+  .row .th { width: 100%; border-radius: 6px; }
+  .row .eprow.cur .th { box-shadow: 0 0 0 2px var(--acc); }
+  .row .ep:hover img { opacity: .86; }
+  .row .tx { gap: 4px; }
+  .row .t { font-size: 15px; line-height: 20px; }
+  .row .dur { font-size: 13px; font-variant-numeric: tabular-nums; }
+  .row .ov { font-size: 13px; line-height: 18px; }
+  .row .seen { position: absolute; top: 8px; right: 8px; display: grid; place-items: center; width: 28px; height: 28px; border-radius: 50%; background: rgba(16, 20, 24, .72); }
+  .row .epdl { position: static; margin-top: 8px; }
+  .row .sk { height: auto; aspect-ratio: 16 / 9; margin: 0; }
+  .row .none { padding: 0; }
   @media (max-width: 640px) {
     .ep { grid-template-columns: 110px 1fr; padding: .8rem .5rem; gap: .7rem; }
     .n, .seen { display: none; }

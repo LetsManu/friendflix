@@ -4,7 +4,7 @@ import { get } from 'svelte/store';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 // Small app-level modules: SvelteKit hooks and route options, the manifest endpoint, and tiny UI helpers.
-const nav = vi.hoisted(() => ({ pushState: vi.fn(), replaceState: vi.fn() }));
+const nav = vi.hoisted(() => ({ pushState: vi.fn(), replaceState: vi.fn(), goto: vi.fn(() => Promise.resolve()) }));
 const tel = vi.hoisted(() => ({ installTelemetry: vi.fn(), reportError: vi.fn() }));
 vi.mock('$app/navigation', () => nav);
 vi.mock('$app/env', () => ({ version: 'v42' }));
@@ -77,6 +77,24 @@ describe('detail popup routing', () => {
     expect(nav.pushState).toHaveBeenCalledTimes(1);
     swapModal('/title/def');
     expect(nav.replaceState).toHaveBeenCalledWith('/title/def', { modalId: 'def' });
+  });
+
+  it('the desktop layout has no popup: a plain click navigates to the full page', async () => {
+    const { openModal } = await import('./lib/modal');
+    const { deskActive } = await import('./lib/desk/bar');
+    nav.pushState.mockClear();
+    deskActive.set(true);
+    try {
+      const e = click();
+      openModal(e, '/item/abc');
+      expect(e.preventDefault).toHaveBeenCalled();
+      expect(nav.goto).toHaveBeenCalledWith('/item/abc');
+      expect(nav.pushState).not.toHaveBeenCalled();
+      const x = click({ ctrlKey: true });
+      openModal(x, '/item/zzz');
+      expect(x.preventDefault).not.toHaveBeenCalled();
+      expect(nav.goto).toHaveBeenCalledTimes(1);
+    } finally { deskActive.set(false); }
   });
 });
 

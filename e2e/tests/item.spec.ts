@@ -4,11 +4,16 @@ import { LOCKED_ID, UNLOCKED_ID, XSS_COMMENT } from '../mocks/api.js';
 import { SERIES } from '../mocks/fixtures.js';
 import { expect, test } from '../fixtures.js';
 import { noHorizontalOverflow } from '../helpers.js';
+import type { Page } from '@playwright/test';
+
+/** desktop page: cast, friends, languages and reactions live in the Details tab (spec desktop browse §3) */
+const details = (page: Page) => page.getByRole('tablist', { name: 'Weitere Inhalte' }).getByRole('tab', { name: 'Details' }).click();
 
 test.describe('item page', () => {
   test('shows cast, status picker, friends strip and language line', async ({ page, api }) => {
     await page.goto('/item/' + LOCKED_ID);
     await expect(page.getByRole('heading', { level: 1, name: 'Inkwell' })).toBeVisible();
+    await details(page);
 
     const cast = page.locator('section.cast');
     await expect(cast.getByRole('heading', { level: 2, name: 'Besetzung & Crew' })).toBeVisible();
@@ -37,6 +42,7 @@ test.describe('item page', () => {
 
   test('reactions are locked until the title was watched', async ({ page }) => {
     await page.goto('/item/' + LOCKED_ID);
+    await details(page);
     const rx = page.locator('section.reactions');
     await expect(rx.getByText(/sobald du das gesehen hast\s*\(3\)\./)).toBeVisible();
     await expect(rx.locator('textarea')).toHaveCount(0);
@@ -48,6 +54,7 @@ test.describe('item page', () => {
     let dialog = '';
     page.on('dialog', (d) => { dialog = d.message(); void d.dismiss(); });
     await page.goto('/item/' + UNLOCKED_ID);
+    await details(page);
     const rx = page.locator('section.reactions');
     await rx.scrollIntoViewIfNeeded();
     await expect(rx.locator('.chip')).toHaveCount(5);

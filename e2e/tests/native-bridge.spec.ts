@@ -83,6 +83,7 @@ test.describe('in the app', () => {
     await expect(page.getByRole('dialog', { name: 'Herunterladen' })).toBeHidden();
     // the licence was handed to the app only: nothing was started in the page
     expect(await storedDownloads(page)).toBe(0);
+    await page.getByRole('tab', { name: 'Details' }).click(); // desktop page: the visible download button sits in the Details tab
 
     const push = (state: string, progress: number) => page.evaluate(([id, st, pr]) => (window as any).__nativePush({ event: 'download', detail: { licenseId: 'lic-1', itemId: id, state: st, progress: pr, bytes: 1000 * (pr as number), expiresAt: Date.now() + 1e9 } }), [MOVIE.id, state, progress]);
     await push('downloading', 0.5);
@@ -216,6 +217,7 @@ test.describe('outside the app', () => {
 /** desktop: "⋯ Mehr" -> Herunterladen; phone: the block button on the detail page */
 async function openDownloadSheet(page: Page) {
   const more = page.getByRole('button', { name: 'Mehr', exact: true });
+  await expect(page.getByRole('heading', { level: 1 })).toBeVisible(); // the actions render with the title
   if (await more.isVisible()) await more.click();
   await page.getByRole('button', { name: 'Herunterladen', exact: true }).first().click();
   await expect(page.getByRole('dialog', { name: 'Herunterladen' })).toBeVisible();

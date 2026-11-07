@@ -9,7 +9,6 @@
   import { badges, wantBadge } from '#lib/fresh';
   import { fmtDuration, t } from '#lib/i18n';
   import Icon from '#lib/Icon.svelte';
-  import { prefetchModal } from '#lib/lazy';
   import { openModal } from '#lib/modal';
   import { pageStore } from '#lib/page';
   import { playPrefetch } from '#lib/player/prefetch';
@@ -109,6 +108,7 @@
   $: playHref = item ? (item.type === 'Series' ? `/item/${item.id}` : `/watch/${item.id}`) : '';
   /** a movie plays in the app's native player (or on a connected TV); a series link goes to its page */
   function play(e: MouseEvent) { if (native.available && item && item.type !== 'Series' && item.type !== 'BoxSet') playOrCast(e, item); }
+  /** the full detail page (openModal navigates on desktop; the page renders from the primed card data at once) */
   function more(e: MouseEvent) { if (!item) return; primeItem(item); openModal(e, `/item/${item.id}`); }
 </script>
 
@@ -142,7 +142,7 @@
       {/if}
       <div class="btns">
         <a class="b play" data-autofocus href={playHref} use:playPrefetch on:click={play}><Icon name="play" size={24} />{playText}</a>
-        <a class="b info" href="/item/{item.id}" aria-haspopup="dialog" on:pointerenter={prefetchModal} on:focus={prefetchModal} on:click={more}><Icon name="info" size={24} />{$t('home.hero.moreInfo')}</a>
+        <a class="b info" href="/item/{item.id}" on:click={more}><Icon name="info" size={24} />{$t('home.hero.moreInfo')}</a>
       </div>
     </div>
     <div class="side">

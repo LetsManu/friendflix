@@ -23,6 +23,7 @@ test.describe('home + detail in English', () => {
   test('detail page: labels, language line, cast and ratings', async ({ page }) => {
     await page.goto('/item/' + LOCKED_ID);
     await expect(page.getByRole('heading', { level: 1, name: 'Inkwell' })).toBeVisible();
+    await page.getByRole('tab', { name: 'Details' }).click(); // desktop page: cast, languages and ratings live in the Details tab
     await expect(page.getByRole('heading', { level: 2, name: 'Cast & Crew' })).toBeVisible();
     await expect(page.getByText('Audio: German, English · Subtitles: German')).toBeVisible();
     await expect(page.getByRole('heading', { level: 2, name: /^Ratings/ })).toBeVisible();

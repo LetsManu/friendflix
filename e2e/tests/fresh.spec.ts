@@ -78,9 +78,10 @@ test.describe('detail view (desktop)', () => {
     } } }));
     await page.goto('/item/' + breaking.id);
     await expect(page.getByRole('heading', { level: 1, name: 'Bright Valley' })).toBeVisible();
-    const facts = page.locator('.tf');
-    await expect(facts.getByText('Neue Staffel')).toBeVisible();
-    await expect(facts.getByText('Nur noch 6 Tage')).toBeVisible();
+    // desktop page: one coral eyebrow (leaving soon wins over the fresh label), the date and the chips in the meta line
+    const dd = page.locator('.dd');
+    await expect(dd.locator('.eyebrow')).toHaveText('Nur noch 6 Tage');
+    const facts = dd.locator('.col .meta');
     await expect(facts.getByText(/Verfügbar bis/)).toBeVisible();
     for (const c of ['4K', 'HDR', '5.1 Surround']) await expect(facts.getByRole('list', { name: 'Bild und Ton' }).getByText(c, { exact: true })).toBeVisible();
     const story = page.getByRole('region', { name: 'Die Geschichte bisher' });
@@ -129,7 +130,7 @@ test.describe('detail view (desktop)', () => {
     await dlg.getByRole('button', { name: 'Speichern' }).click();
     await expect(dlg).toHaveCount(0);
     expect(calls[0]).toBe(`PUT ${JSON.stringify({ leavesAt: day(4), note: 'Lizenz' })}`);
-    await expect(page.locator('.tf').getByText('Nur noch 4 Tage')).toBeVisible();
+    await expect(page.locator('.dd .eyebrow')).toHaveText('Nur noch 4 Tage');
     // clear again
     await page.getByRole('button', { name: 'Mehr', exact: true }).click();
     await page.getByRole('button', { name: /Entfernungsdatum setzen/ }).click();
@@ -138,7 +139,8 @@ test.describe('detail view (desktop)', () => {
     await dlg2.getByRole('button', { name: 'Datum entfernen' }).click();
     await expect(dlg2).toHaveCount(0);
     expect(calls[1]).toBe('DELETE ');
-    await expect(page.locator('.tf')).toHaveCount(0);
+    await expect(page.locator('.dd .eyebrow')).toHaveCount(0);
+    await expect(page.locator('.dd .until')).toHaveCount(0);
   });
 });
 

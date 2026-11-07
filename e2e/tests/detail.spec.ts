@@ -3,7 +3,6 @@
 import type { Page, Route } from '@playwright/test';
 import { expect, test } from '../fixtures.js';
 import { ME, MOVIE, MOVIE2, SERIES, items } from '../mocks/fixtures.js';
-import { row, openPopout } from '../helpers.js';
 
 /** Block 21: detail page restructure (ratings line, tagline, always-on tabs with Details, links, social card). */
 const ABOUT_EMPTY = { ratings: [], countries: [], studios: [], tags: [], keywords: [], links: [], collection: null, canRequest: false, sources: ['jellyfin'] };
@@ -44,9 +43,14 @@ async function mockAbout(page: Page, body: object | ((r: Route) => Promise<void>
 }
 const ratingsLine = (page: Page) => page.getByRole('list', { name: 'Bewertungen' });
 const tablist = (page: Page) => page.getByRole('tablist', { name: 'Weitere Inhalte' });
+/** desktop page: the Details tab comes last (spec desktop browse §3); select it and return its panel */
+async function details(page: Page) {
+  await tablist(page).getByRole('tab', { name: 'Details' }).click();
+  return page.getByRole('tabpanel', { name: 'Details' });
+}
 
 test.describe('detail page (desktop)', () => {
-  test('no keys: ratings line shows ★ and Freunde, tabs Details/Mehr davon, Details selected, studios + links visible', async ({ page }) => {
+  test('no keys: ratings line shows ★ and Freunde, tabs Mehr davon/Details, Mehr davon selected, studios + links in Details', async ({ page }) => {
     await mockAbout(page, NO_KEYS);
     await page.goto('/item/' + MOVIE.id);
     await expect(ratingsLine(page)).toContainText('★ 7,8');
@@ -54,19 +58,19 @@ test.describe('detail page (desktop)', () => {
     await expect(ratingsLine(page)).not.toContainText('IMDb');
     // the star rating is not repeated in the meta line
     await expect(page.locator('.top .meta')).not.toContainText('★');
-    await expect(tablist(page).getByRole('tab')).toHaveText(['Details', 'Mehr davon']);
-    await expect(tablist(page).getByRole('tab', { name: 'Details' })).toHaveAttribute('aria-selected', 'true');
-    const panel = page.getByRole('tabpanel', { name: 'Details' });
+    await expect(tablist(page).getByRole('tab')).toHaveText(['Mehr davon', 'Details']);
+    await expect(tablist(page).getByRole('tab', { name: 'Mehr davon' })).toHaveAttribute('aria-selected', 'true');
+    const panel = await details(page);
     await expect(panel.getByText('Wardell Pictures, Aster 9')).toBeVisible();
     await expect(panel.getByText('16. Juli 2010')).toBeVisible();
     await expect(panel.getByText('Ink Well')).toBeVisible();
     await expect(panel.getByText('Vereinigte Staaten, Großbritannien')).toBeVisible();
     await expect(panel.getByRole('link', { name: /^IMDb/ })).toBeVisible();
     await expect(panel.getByRole('link', { name: /^TMDB/ })).toBeVisible();
-    // the info block keeps director/genres/age but drops the cast line (the cast row sits above the tabs)
+    // the info block keeps director/genres/age but drops the cast line (the cast row with photos heads the Details tab)
     await expect(panel.getByText('Altersfreigabe:')).toBeVisible();
     await expect(panel.getByText('Besetzung:')).toHaveCount(0);
-    await expect(page.locator('section.cast')).toBeVisible();
+    await expect(panel.locator('section.cast')).toBeVisible();
     // the right-hand column is gone
     await expect(page.locator('dl.right')).toHaveCount(0);
     // social card (reactions + stars) lives in the Details tab
@@ -79,7 +83,7 @@ test.describe('detail page (desktop)', () => {
     await page.goto('/item/' + MOVIE.id);
     const line = ratingsLine(page);
     await expect(line.locator('li')).toHaveText(['★ 7,8Nutzerwertung 7,8 von 10', 'IMDb 8,1IMDb-Wertung 8,1 von 10', 'RT 92 %Rotten-Tomatoes-Wertung 92 %', 'MC 81Metacritic-Wertung 81 von 100', 'Freunde 4,5 ★Wertung deiner Freunde: 4,5 von 5 Sternen']);
-    const links = page.getByRole('tabpanel', { name: 'Details' }).locator('a[href^="http"]');
+    const links = (await details(page)).locator('a[href^="http"]');
     await expect(links).toHaveCount(3);
     for (const l of await links.all()) {
       await expect(l).toHaveAttribute('target', '_blank');
@@ -104,16 +108,16 @@ test.describe('detail page (desktop)', () => {
   test('series: Episodes tab selected by default; Details tab shows the info block', async ({ page }) => {
     await mockAbout(page, ABOUT_EMPTY);
     await page.goto('/item/' + SERIES.id);
-    await expect(tablist(page).getByRole('tab')).toHaveText(['Folgen', 'Details', 'Mehr davon']);
+    await expect(tablist(page).getByRole('tab')).toHaveText(['Folgen', 'Mehr davon', 'Details']);
     await expect(tablist(page).getByRole('tab', { name: 'Folgen' })).toHaveAttribute('aria-selected', 'true');
     await expect(page.getByRole('tabpanel', { name: 'Folgen' }).getByText('Folge 1', { exact: false }).first()).toBeVisible();
     await tablist(page).getByRole('tab', { name: 'Details' }).click();
     const panel = page.getByRole('tabpanel', { name: 'Details' });
     await expect(panel.getByRole('heading', { name: /Infos zu Bright Valley/ })).toBeVisible();
     await expect(page.getByRole('tabpanel', { name: 'Folgen' })).toHaveCount(0);
-    // empty about: no ratings line, the star stays in the meta line
+    // empty about: no ratings line; the meta line carries the match score
     await expect(ratingsLine(page)).toHaveCount(0);
-    await expect(page.locator('.top .meta')).toContainText('★');
+    await expect(page.locator('.top .meta')).toContainText('95 % für dich');
   });
 
   test('about request starts after the hero is painted and the ratings placeholder keeps its height (no layout shift)', async ({ page }) => {
@@ -140,51 +144,48 @@ test.describe('detail page (desktop)', () => {
 
   test.describe('ratings block settles without a jump', () => {
     test.use({ reducedMotion: 'no-preference' });
-    for (const [name, body, dir] of [
-      ['about with no ratings: the reserved line collapses smoothly', { ...NO_KEYS, ratings: [] }, -1],
-      ['about with a tagline: the block grows smoothly', WITH_KEYS, 1],
+    // the desktop column sits on the bottom of the first screen: a ratings block that grows or collapses moves the parts of
+    // the column (above it while the column is anchored to the bottom, below it once the column outgrows the screen); every
+    // part that moves glides there (FLIP, transform only) instead of jumping
+    for (const [name, body] of [
+      ['about with no ratings: the reserved line collapses smoothly', { ...NO_KEYS, ratings: [] }],
+      ['about with a tagline: the block grows smoothly', WITH_KEYS],
     ] as const) {
       test(name, async ({ page }) => {
         await page.route('**/api/prefs', (r) => r.fulfill({ json: { prefs: { hoverTrailers: false, autoStartPreview: false } } })); // no hero trailer
+        await page.addInitScript(noIntro);
         let release!: () => void;
         const held = new Promise<void>((r) => (release = r));
         await mockAbout(page, async (r) => { await held; await r.fulfill({ json: body }); });
         await page.goto('/item/' + MOVIE.id);
         await expect(page.locator('.top .rl.ph')).toHaveCount(1);
-        const syn = page.locator('.top .ov');
-        await expect(syn).toBeVisible();
-        const lead = page.locator('.top .lead');
-        await expect(lead).toHaveClass(/\bready\b/); // the height transition is armed (the first size is not animated)
-        // Catch the height transition the moment it is created and pause it, then seek it in tenths and record the synopsis
-        // position at each step. Sampling real frames instead measured the frame rate: under load Chromium paints only
-        // one or two frames in the 0.3 s, and a smooth transition looked like a jump. The app sets style.height when the
-        // block resizes; getAnimations() in the mutation callback (same task) creates the transition before time passes.
-        await lead.evaluate((el) => {
-          (window as unknown as { leadAnim: Promise<Animation> }).leadAnim = new Promise((done) => {
-            const mo = new MutationObserver(() => {
-              const a = el.getAnimations().find((x) => (x as CSSTransition).transitionProperty === 'height');
-              if (a) { a.pause(); mo.disconnect(); done(a); }
-            });
-            mo.observe(el, { attributes: true, attributeFilter: ['style'] });
-          });
+        await expect(page.locator('.top h1')).toBeVisible();
+        const tops = () => page.locator('.top > *').evaluateAll((els) => els.map((e) => Math.round(e.getBoundingClientRect().top)));
+        const before = await tops();
+        await page.evaluate(() => {
+          const w = window as unknown as { __glide: Array<[number, string]> };
+          w.__glide = [];
+          const orig = Element.prototype.animate;
+          Element.prototype.animate = function (this: Element, k: Keyframe[] | PropertyIndexedKeyframes | null, o?: number | KeyframeAnimationOptions) {
+            const col = document.querySelector('.top');
+            if (this.parentElement === col) w.__glide.push([[...col!.children].indexOf(this), JSON.stringify(k)]);
+            return orig.call(this, k, o);
+          };
         });
         release();
-        const ys = await syn.evaluate(async (el) => {
-          const none = new Promise<null>((r) => setTimeout(() => r(null), 7_500));
-          const a = await Promise.race([(window as unknown as { leadAnim: Promise<Animation> }).leadAnim, none]);
-          if (!a) throw new Error('no height transition on the ratings block: it jumped');
-          const dur = Number(a.effect!.getComputedTiming().duration);
-          const out: number[] = [];
-          for (let i = 0; i <= 10; i++) { a.currentTime = (dur * i) / 10; out.push(el.getBoundingClientRect().top); }
-          a.finish();
-          return out;
-        });
-        const total = ys[ys.length - 1]! - ys[0]!;
-        expect(Math.sign(total)).toBe(dir);
-        expect(Math.abs(total)).toBeGreaterThan(5);
-        let maxStep = 0;
-        for (let i = 1; i < ys.length; i++) maxStep = Math.max(maxStep, Math.abs(ys[i]! - ys[i - 1]!));
-        expect(maxStep, `largest move per tenth of the transition, of ${Math.abs(total)}px total`).toBeLessThan(Math.abs(total) * 0.6);
+        if (body.ratings.length) await expect(page.locator('.top .tagline')).toBeVisible();
+        else await expect(page.locator('.top .rl')).toHaveCount(0); // the placeholder is gone
+        await page.waitForTimeout(500); // the glide (320 ms) is over
+        const after = await tops();
+        const moved = before.map((y, i) => [i, after[i]! - y] as const).filter(([, d]) => Math.abs(d) > 5);
+        expect(moved.length, 'the ratings block changed the column').toBeGreaterThan(0);
+        const glides = await page.evaluate(() => (window as unknown as { __glide: Array<[number, string]> }).__glide);
+        for (const [i, d] of moved) {
+          const g = glides.find(([j]) => j === i);
+          expect(g, `part ${i} of the column glides to its new place`).toBeTruthy();
+          const from = Number(/translate3d\(0px, (-?[\d.]+)px/.exec(g![1])?.[1]);
+          expect(Math.abs(from + d)).toBeLessThan(2); // it starts where it was
+        }
       });
     }
   });
@@ -206,12 +207,12 @@ test.describe('detail page (desktop)', () => {
     await expect(sheet.getByText('HD')).toBeVisible();
   });
 
-  test('modal variant (open from a card): same tabs and ratings line', async ({ page }) => {
+  test('modal variant (phone: a title from "Mehr davon" opens in the popup): same tabs and ratings line', async ({ page }) => {
     await mockAbout(page, NO_KEYS);
-    await page.goto('/');
-    const card = row(page, 'Weil du „Inkwell“ gesehen hast').locator('article.card').first();
-    const hp = await openPopout(page, card);
-    await hp.getByRole('link', { name: /^Mehr Infos zu / }).click();
+    await page.setViewportSize({ width: 390, height: 844 }); // desktop has no popup (it navigates to the full page)
+    await page.goto('/item/' + MOVIE.id);
+    await tablist(page).getByRole('tab', { name: 'Mehr davon' }).click();
+    await page.getByRole('tabpanel', { name: 'Mehr davon' }).getByRole('link', { name: /Interlace/ }).first().click();
     const modal = page.getByRole('dialog', { name: /Interlace/ });
     await expect(modal).toBeVisible();
     await expect(modal.getByRole('list', { name: 'Bewertungen' })).toContainText('Freunde 4,5 ★');
@@ -229,12 +230,12 @@ test.describe('detail page: final review fixes', () => {
     let body: object = WITH_KEYS;
     await mockAbout(page, (r) => r.fulfill({ json: body }));
     await page.goto('/item/' + MOVIE.id);
-    const panel = page.getByRole('tabpanel', { name: 'Details' });
+    const panel = await details(page);
     await expect(panel.getByText(NOTICE)).toBeVisible();
     await expect(panel.locator('.attrib img, .attrib svg')).toHaveCount(0);
     body = NO_KEYS;
     await page.goto('/item/' + MOVIE2.id);
-    await expect(page.getByRole('tabpanel', { name: 'Details' }).getByText('Wardell Pictures, Aster 9')).toBeVisible();
+    await expect((await details(page)).getByText('Wardell Pictures, Aster 9')).toBeVisible();
     await expect(page.getByText(NOTICE)).toHaveCount(0);
   });
 
@@ -247,7 +248,7 @@ test.describe('detail page: final review fixes', () => {
       : { ratings: [{ userId: 'f1', name: 'Anna', stars: 5, review: 'Super!', mine: false }], average: 4.5 } }));
     await page.goto('/item/' + MOVIE.id);
     await expect(ratingsLine(page)).toContainText('Freunde 4,5 ★');
-    const panel = page.getByRole('tabpanel', { name: 'Details' });
+    const panel = await details(page);
     await panel.getByRole('button', { name: /1 Stern/ }).first().click();
     await panel.getByRole('button', { name: 'Speichern' }).click();
     await expect(ratingsLine(page)).toContainText('Freunde 3,0 ★');

@@ -22,7 +22,7 @@ async function holdVideo(page: Page): Promise<() => void> {
   await page.route('**/media/p1test.webm', async (r: Route) => { await gate; await r.fallback(); });
   return release;
 }
-const playButton = (page: Page) => page.locator('.dv .cap').getByRole('link', { name: 'Abspielen' });
+const playButton = (page: Page) => page.locator('.dv .acts').getByRole('link', { name: 'Abspielen' }); // desktop detail page's action row
 const playing = (page: Page) => page.waitForFunction(() => ((document.querySelector('.stage video') as HTMLVideoElement | null)?.readyState ?? 0) >= 2);
 
 /** decodes a PNG screenshot in the page and returns the share of near-black / near-white pixels and the luminance spread */

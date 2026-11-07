@@ -12,6 +12,8 @@ const [, B, C] = items as [unknown, (typeof items)[number], (typeof items)[numbe
 const part = (o: object) => ({ image: true, played: false, current: false, inLibrary: true, from: 'jellyfin', ...o });
 const ABOUT = { ratings: [], countries: [], studios: [], tags: [], keywords: [], links: [], collection: null, canRequest: false, sources: ['jellyfin'] };
 
+/** desktop page: the cast row lives in the Details tab (spec desktop browse §3) */
+const details = (page: Page) => page.getByRole('tablist', { name: 'Weitere Inhalte' }).getByRole('tab', { name: 'Details' }).click();
 const json = (page: Page, re: RegExp, body: unknown) => page.route(re, (r) => r.fulfill({ json: body }));
 async function expectPage(page: Page) {
   await page.goto('/item/' + MOVIE.id);
@@ -26,13 +28,14 @@ test.describe('detail page survives odd data of one movie', () => {
   test('cast member without a name (Jellyfin People entry with Name null)', async ({ page }) => {
     await json(page, /\/api\/items\/[0-9a-f]{32}\/people$/, { people: [{ id: 'p1', type: 'Actor', image: false }, { id: 'p2', name: 'Lena Doria', type: 'Actor', image: false }] });
     await expectPage(page);
+    await details(page);
     await expect(page.locator('section.cast').getByText('Lena Doria')).toBeVisible();
   });
 
   test('"more like this" with the same title twice', async ({ page }) => {
     await json(page, /\/api\/items\/[0-9a-f]{32}\/similar$/, { items: [B, C, B] });
     await expectPage(page);
-    await expect(page.locator('#dv-panel-more .mc')).toHaveCount(2);
+    await expect(page.getByRole('tabpanel', { name: 'Mehr davon' }).locator('.mc')).toHaveCount(2);
   });
 
   test('collection row naming the same library title twice', async ({ page }) => {
@@ -77,6 +80,7 @@ test.describe('detail page survives odd data of one movie', () => {
     test('a section that still throws is left out, the rest of the page stays (facts with a numeric removal date)', async ({ page }) => {
       await json(page, /\/api\/items\/[0-9a-f]{32}\/facts$/, { fresh: null, leaving: { leavesAt: 20261024, days: 3 }, traits: null });
       await expectPage(page);
+      await details(page);
       await expect(page.locator('section.cast').getByText('Lena Doria')).toBeVisible();
     });
   });

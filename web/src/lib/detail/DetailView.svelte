@@ -39,14 +39,18 @@
   import StoryCard from '#lib/detail/StoryCard.svelte';
   import LeavingDialog from '#lib/detail/LeavingDialog.svelte';
   import DetailTv from '#lib/detail/DetailTv.svelte';
+  import DetailDesk from '#lib/detail/DetailDesk.svelte';
   import TvSub, { type TvSubId } from '#lib/detail/TvSub.svelte';
   import Safe from '#lib/detail/Safe.svelte';
   import { toPeople } from '#lib/detail/safe';
   import { forgetFacts, loadFacts, type Facts } from '#lib/fresh';
 
-  /** Unified detail view: used inside the popup (ItemModal), as the full page (/item/[id]) and as the TV page (scroll-free, DetailTv). */
+  /**
+   * Unified detail view: used inside the popup (ItemModal), as the full page (/item/[id]; phone and kids desktop), as the
+   * desktop page (cinematic, DetailDesk) and as the TV page (scroll-free, DetailTv).
+   */
   export let id: string;
-  export let variant: 'modal' | 'page' | 'tv' = 'page';
+  export let variant: 'modal' | 'page' | 'desk' | 'tv' = 'page';
   /** TV: one of the detail page's sub-screens (routes /item/[id]/<sub>) instead of the page itself; same loads */
   export let sub: TvSubId | '' = '';
   /** loaded title (read-only for the parent: bind:item) */
@@ -303,6 +307,8 @@
     // TV page: the same rules as the focus tile (calm / reduced motion via autoplayAllowed, hover-trailer pref, hidden tab, data saver)
     if (variant === 'tv' && sub) return false; // a sub-screen shows the backdrop as a dark layer, no trailer
     if (variant === 'tv') return trailerAllowed({ hoverTrailers: $prefs.hoverTrailers, autoplay: autoplayAllowed(), hidden: document.hidden, saveData: !!nav.connection?.saveData }) && !(item?.trailers === 0 && !$prefs.hoverClip);
+    // desktop page: the same rules as every other desktop preview (calm mode and reduced motion via autoplayAllowed)
+    if (variant === 'desk') return $prefs.hoverTrailers && autoplayAllowed() && !document.hidden && !tvMode() && !nav.connection?.saveData && !(item?.trailers === 0 && !$prefs.hoverClip);
     return $prefs.hoverTrailers && !document.hidden && !reduced() && !tvMode() && !nav.connection?.saveData && !(item?.trailers === 0 && !$prefs.hoverClip);
   }
   function scheduleHero(itemId: string) {
@@ -395,7 +401,7 @@
 </script>
 
 <!-- svelte-ignore a11y_no_static_element_interactions -->
-<div class="dv" data-play-scope class:vm={variant === 'modal'} class:vp={variant === 'page'} class:vtv={variant === 'tv'} class:phone bind:this={dvEl}
+<div class="dv" data-play-scope class:vm={variant === 'modal'} class:vp={variant === 'page'} class:vdk={variant === 'desk'} class:vtv={variant === 'tv'} class:phone bind:this={dvEl}
   on:pointerdown|capture={onUse} on:keydown|capture={onUse} on:focusin={onUse} on:wheel|capture|passive={onUse}>
   {#if variant === 'tv'}
   <!-- ================= TV: one screen, a button list instead of the scrolling sections (friends, comments, download, share stay off) ================= -->
@@ -412,6 +418,32 @@
     <div class="hero"><p class="err pad" role="alert">{$t('detail.view.notFound')}</p><p class="pad"><a class="tv-btn" data-autofocus href="/">{$t('detail.view.toHome')}</a></p></div>
   {:else}
     <div class="hero tvsk" aria-hidden="true"></div>
+  {/if}
+  {:else if variant === 'desk'}
+  <!-- ================= desktop: cinematic full page (fixed backdrop, left column, tabs with content only) ================= -->
+  {#if item}
+    <DetailDesk {item} {about} {facts} {people} {extras} {more} {seasons} bind:season {episodes} {next} {qs} {playTarget} {playBase} {playHref} {playLabel}
+      {resumeFrom} {tagline} {overview} {langs} {inList} {titleId} bind:thumb bind:audio={lgA} bind:sub={lgS} {moreActions} {social}
+      canTrailer={canPreview && !heroPlaying} playing={heroPlaying} loop={!autoOn} bind:video={hv} bind:loaded={heroLoaded} bind:stage={heroEl}
+      {counting} {autoLeft} bind:autoEl onCancelAuto={() => cancelAuto(true)} onMyList={toggleMine} {onThumb} onTrailer={() => startHero(true)}
+      onEnded={onHeroEnded} onTimeUpdate={maybeAuto} onPlay={castPlay} onRated={(avg) => item && onRated(item.id, avg)}>
+      {#if castMsg}<p class="muted dmsg" role="status">{castMsg}</p>{/if}
+      <div role="status">{#if saveMsg}<p class="err dmsg">{saveMsg}</p>{/if}</div>
+      {#if recOpen && social}
+        <div class="panel rec" role="group" aria-label={$t('detail.recommend.label')} bind:this={recEl}>
+          <b>{$t('detail.recommend.to', { name: item.name })}</b>
+          <div class="flex">{#each friends as f (f.id)}<label class="chk"><input type="checkbox" checked={recTo.has(f.id)} on:change={() => toggleTo(f.id)} />{f.name}</label>{:else}<span class="muted">{$t('detail.recommend.noUsers')}</span>{/each}</div>
+          <div class="flex"><input bind:value={recNote} maxlength="140" placeholder={$t('detail.recommend.note')} aria-label={$t('detail.recommend.noteLabel')} style="flex:1;min-width:200px" /><button type="button" disabled={!recTo.size} on:click={sendRec}>{$t('detail.recommend.send')}</button><button type="button" class="sec" on:click={() => (recOpen = false)}>{$t('detail.view.cancel')}</button></div>
+          {#if recMsg}<span class="muted" role="status">{recMsg}</span>{/if}
+        </div>
+      {/if}
+    </DetailDesk>
+    <!-- the "⋯ More" download entry: a headless instance, so the sheet opens from any tab -->
+    {#if item.type !== 'Series'}<DownloadButton bind:this={dl} itemId={item.id} headless bind:available={dlAvail} bind:stateText={dlState} />{/if}
+  {:else if failed}
+    <div class="dkfail"><p class="err" role="alert">{$t('detail.view.notFound')}</p><p><a class="btn" href="/">{$t('detail.view.toHome')}</a></p></div>
+  {:else}
+    <div class="dksk" aria-hidden="true"><div class="skeleton sl" style="width:38%;height:4rem"></div><div class="skeleton sl" style="width:30%"></div><div class="skeleton sl" style="width:42%;height:4.5rem"></div></div>
   {/if}
   {:else}
   <!-- ================= hero ================= -->
@@ -677,6 +709,12 @@
   /* same 24px icon box for every entry of the icon row (the rating button's labelled variant uses its diameter as box) */
   .icons :global(.rb.lab .trig .ic) { height: 24px; }
   .icons :global(.ma.labelled) { min-width: 64px; }
+
+  /* ---- desktop page (DetailDesk draws it) ---- */
+  .dkfail, .dksk { min-height: 84vh; box-sizing: border-box; padding: 160px max(32px, 4vw) 40px; display: flex; flex-direction: column; justify-content: flex-end; }
+  .dksk .sl { height: 1.4rem; margin: 0 0 1rem; }
+  .vdk .dmsg { margin: 16px 0 0; }
+  .vdk .rec { margin-top: 16px; max-width: 36rem; }
 
   /* ---- TV page (DetailTv draws the screen) ---- */
   .vtv .tvsk { height: 100vh; background: var(--bg); }

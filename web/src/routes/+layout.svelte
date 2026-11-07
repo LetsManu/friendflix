@@ -33,7 +33,8 @@
   import { motionAllowed } from '#lib/preview';
   import TvRail from '#lib/tv/TvRail.svelte';
   import DeskBar from '#lib/desk/DeskBar.svelte';
-  import { deskUi } from '#lib/desk/bar';
+  import { deskActive, deskUi } from '#lib/desk/bar';
+  import { trackNav } from '#lib/desk/back';
   import { railKey } from '#lib/tv/rail';
   import { categoryHref, kindFromPath, showsChips, type Kind } from '#lib/mobile';
   import { dialogKeys } from '#lib/actions';
@@ -155,6 +156,7 @@
   $: if (!$mobile) { catOpen = false; closePreview(); }
   /** desktop shell (pill bar; later the desktop browse pieces): not on TV, phones or kids profiles */
   $: desk = deskUi({ tv, mobile: $mobile, kids: kidsUi });
+  $: deskActive.set(desk); // openModal and the detail route follow it (desktop: titles open as the full page)
   $: if (!publicPage) document.documentElement.classList.toggle('tv', tv);
 
   // ---- detail popup: loaded on first use (or prefetched on hover/focus/touch of a card), not part of the layout chunk ----
@@ -262,7 +264,9 @@
       } else if (main?.querySelector('[data-autofocus]') ? focusFirst(main, false) : i >= 4 && focusFirst(main, false)) return;
     }
   }
-  afterNavigate(({ to, type }) => {
+  afterNavigate((nav) => {
+    const { to, type } = nav;
+    trackNav({ type, delta: 'delta' in nav ? (nav.delta as number) : undefined }); // the desktop detail page's "‹ Back" (in-app history or home)
     settleSeq++; // every navigation ends an older settle (also into the player, which places its own focus)
     if (!tv || !to || /^\/(watch|party)\//.test(to.url.pathname)) return;
     void settleFocus(type === 'popstate' ? memo.get(to.url.pathname + to.url.search) : undefined);

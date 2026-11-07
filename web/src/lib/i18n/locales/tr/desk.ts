@@ -10,5 +10,10 @@ const dict: Translation<typeof de> = {
     pages: 'Satır sayfaları',
     page: 'Sayfa {n}',
   },
+  detail: {
+    back: 'Geri',
+    extras: 'Fragmanlar ve ekstralar',
+    continueEp: 'Devam S{s}·B{e}',
+  },
 };
 export default dict;

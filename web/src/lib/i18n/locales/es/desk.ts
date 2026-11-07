@@ -10,5 +10,10 @@ const dict: Translation<typeof de> = {
     pages: 'Páginas de la fila',
     page: 'Página {n}',
   },
+  detail: {
+    back: 'Atrás',
+    extras: 'Tráileres y extras',
+    continueEp: 'Continuar T{s}·E{e}',
+  },
 };
 export default dict;
