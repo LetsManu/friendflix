@@ -343,12 +343,12 @@ test.describe('TV layout', () => {
       await expect(page.locator('main section.cr a.cat').first()).toBeFocused();
     });
 
-    test('desktop untouched: with tv false the desktop header and the Hero render, no tile or rail', async ({ page, api: _api }) => {
+    test('desktop untouched: with tv false the desktop header and the billboard render, no tile or rail', async ({ page, api: _api }) => {
       await setTv(page, false);
       await page.goto('/');
       await expect(page.locator('html.tv')).toHaveCount(0);
       await expect(page.locator('header.nav')).toBeVisible();
-      await expect(page.locator('.hero').first()).toBeVisible();
+      await expect(page.locator('section.billboard')).toBeVisible(); // desktop browse: the trailer billboard
       await expect(page.locator('section.tile')).toHaveCount(0);
       await expect(page.locator('nav.rail')).toHaveCount(0);
     });
