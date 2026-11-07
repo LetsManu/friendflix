@@ -235,6 +235,51 @@ test.describe('TV layout', () => {
       await expect.poll(() => rowLabels(page)).toEqual(desktop);
     });
   });
+  test.describe('gaps (Task 8)', () => {
+    /** Back on a webOS remote, sent to the focused element (the layout listens on the window) */
+    const back = (page: Page) => page.evaluate(() => (document.activeElement ?? document.body).dispatchEvent(new KeyboardEvent('keydown', { key: 'Unidentified', keyCode: 461, bubbles: true })));
+
+    test('Back on the home page with the rail closed opens the rail', async ({ page, api: _api }) => {
+      await setTv(page, true);
+      await page.goto('/');
+      await expect(page.locator('section.tile [data-autofocus]')).toBeFocused();
+      await expect(page.locator('nav.rail')).not.toHaveClass(/open/);
+      await back(page);
+      await expect(page.locator('nav.rail')).toHaveClass(/open/);
+    });
+
+    test('a card of the Top 10 row shows its rank in the focus tile', async ({ page, api: _api }) => {
+      await setTv(page, true);
+      await page.goto('/');
+      const card = page.locator('main .rows section.row[aria-label="Top 10 nach Bewertung"] .card .thumb').nth(1);
+      await expect(card).toBeAttached();
+      await card.focus();
+      await expect(page.locator('section.tile')).toContainText('Top 10 · Platz 2');
+    });
+
+    test('empty home rows: the tile shows the hero with Play focused and Down reaches the first row that has cards', async ({ page, api: _api }) => {
+      await setTv(page, true);
+      await page.route('**/api/home', (r) => r.fulfill({ json: { parts: { hero: SERIES, resume: [], nextup: [], leaving: [], recs: { items: [], recIds: [], friends: [] }, because: { because: null, items: [], more: [] }, hubs: [], themed: [] }, failed: [] } }));
+      await page.goto('/');
+      const tile = page.locator('section.tile');
+      await expect(tile).toBeVisible();
+      await expect(tile.locator('[data-autofocus]')).toBeFocused();
+      await expect(tile).toContainText(SERIES.name);
+      await page.keyboard.press('ArrowDown');
+      await expect(page.locator('main .rows .card .thumb:focus, main .rows button:focus, main .rows a:focus')).toHaveCount(1);
+    });
+
+    test('desktop untouched: with tv false the desktop header and the Hero render, no tile or rail', async ({ page, api: _api }) => {
+      await setTv(page, false);
+      await page.goto('/');
+      await expect(page.locator('html.tv')).toHaveCount(0);
+      await expect(page.locator('header.nav')).toBeVisible();
+      await expect(page.locator('.hero').first()).toBeVisible();
+      await expect(page.locator('section.tile')).toHaveCount(0);
+      await expect(page.locator('nav.rail')).toHaveCount(0);
+    });
+  });
+
   test.describe('motion (spec 5.2)', () => {
     async function home(page: Page) {
       await page.setViewportSize({ width: 1920, height: 1080 });

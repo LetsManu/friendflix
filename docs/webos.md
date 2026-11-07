@@ -16,6 +16,7 @@ The LG TV app is FriendFlix as an app on an LG smart TV with webOS (webOS 22 or 
 - [The passphrase and where it is stored](#the-passphrase-and-where-it-is-stored)
 - [First start: the server address](#first-start-the-server-address)
 - [The 50-hour session](#the-50-hour-session)
+- [The TV interface](#the-tv-interface)
 - [The remote](#the-remote)
 - [What direct play covers](#what-direct-play-covers)
 - [Change server](#change-server)
@@ -118,6 +119,16 @@ On the first start the app asks for your server's address, for example `friend.e
 
 Developer Mode runs out after **50 hours**. Before that, open the **Developer Mode** app and press **Extend**. If you miss it, the TV removes the app: run the install script again. Switching Developer Mode off removes it too.
 
+## The TV interface
+
+The TV mode has its own layout for the couch: black background, large type, one focus ring that moves with the arrows. Everything works with the arrows, OK and Back.
+
+- **Side menu.** A slim menu sits on the left edge. **◀** from the leftmost card (or **Back** on a page) opens it; **▶** or **Back** closes it. Moving the Magic Remote pointer over the left edge opens it too, and leaving it closes it again without losing the focused card.
+- **Home.** The top shows a focus tile with the featured title and its Play button. Move down into the rows: after you rest on a card for a moment, the tile shows that title (rank in Top 10 rows, "why you see this" lines, progress). After a few more seconds the trailer plays muted inside the tile. This follows the trailer preference of the profile, calm mode, reduced motion and data saver: if any of them says no, the tile stays still. ▲ from the first row returns to the featured title.
+- **Detail page.** A list of large buttons (Play or Resume, Episodes, Audio & subtitles, Rate, My list, More like this, Info and so on, only those that apply). Episodes, More like this, Collection, Extras, Story so far and Info open as their own screens; **Back returns to the button that opened them**. Audio & subtitles and Rate open their options next to the button.
+- **Player.** Any arrow shows the controls with the progress bar focused. ◀/▶ move a preview (thumbnail and time) along the bar; OK, or 1 second without a key, jumps there; Back cancels the preview. **▼** goes to the button row: Episodes, Next episode, Audio & subtitles, Speed and Quality. The **green key** opens Audio & subtitles directly. The **Info key** peeks at the cast; the **blue key**, or Info then OK while paused, opens X-Ray. After 8 seconds of pause the pause screen shows the title and what is on screen.
+- **Motion.** Rows, pages and the detail page glide and fade; with calm mode or reduced motion switched on (profile or TV system setting) focus changes apply at once and only short fades remain.
+
 ## The remote
 
 In the player (the keys are ignored elsewhere). Every function works with **OK, the arrows and Back** alone, because the 2025 Magic Remote has no play, pause, fast-forward or colour keys; its **123** button opens an on-screen panel with the colour keys.
@@ -125,8 +136,8 @@ In the player (the keys are ignored elsewhere). Every function works with **OK, 
 | Key | Code | Action |
 |---|---|---|
 | OK | 13 | play or pause while the control bar is hidden; on the bar it presses the selected button |
-| ◀ / ▶ | 37 / 39 | -10 s / +10 s; holding the key goes faster (30 s steps after 1 s, 60 s after 3 s) |
-| ▲ / ▼ | 38 / 40 | ▲: cast and info for the scene; ▼: the control bar (focus on play/pause) |
+| ◀ / ▶ | 37 / 39 | preview along the bar; OK or 1 s without a key jumps there, Back cancels; holding the key goes faster (30 s steps after 1 s, 60 s after 3 s) |
+| ▲ / ▼ | 38 / 40 | any arrow shows the controls with the progress bar focused; ▼ moves on to the button row (Episodes, Next episode, Audio & subtitles, Speed, Quality), ▲ goes back to the bar |
 | Wheel | `wheel` | over the picture: one notch = +10 s (down) / -10 s (up); menus keep scrolling |
 | Channel ▲ | 33 | next episode (series) |
 | Play | 415 | play |
@@ -135,9 +146,11 @@ In the player (the keys are ignored elsewhere). Every function works with **OK, 
 | Stop | 413 | leaves the player (progress is saved, as with Back) |
 | Fast forward / Rewind | 417 / 412 | +30 s / -30 s |
 | Red | 403 | subtitles on or off (the last track used, else the first) |
-| Green | 404 | open the audio menu |
+| Green | 404 | open Audio & subtitles |
+| Blue | 406 | X-Ray (cast and music of the scene) |
+| Info | `Info` | cast peek; Info then OK while paused opens X-Ray |
 
-**Back** (461) works everywhere: it goes one level back; in the player it first hides the control bar, then leaves. **Back on the TV-mode home screen exits the app.** The control bar stays shown while you move along it and hides 5 seconds after the last key; when it hides it lets go of the selected button, so the next OK always means play/pause. The **Magic Remote** pointer works too: moving it shows the controls, hovering moves the focus ring, a click on a button presses it and a click on the picture plays or pauses. The arrow keys continue from where the pointer was. The general keys are in [tv-mode.md](tv-mode.md#bedienung-am-fernseher).
+**Back** (461) works everywhere: it goes one level back; in the player it first hides the control bar, then leaves. **On the TV-mode home screen Back opens the side menu first; Back again exits the app.** The control bar stays shown while you move along it and hides 5 seconds after the last key; when it hides it lets go of the selected button, so the next OK always means play/pause. The **Magic Remote** pointer works too: moving it shows the controls, hovering moves the focus ring, a click on a button presses it and a click on the picture plays or pauses. The arrow keys continue from where the pointer was. The general keys are in [tv-mode.md](tv-mode.md#bedienung-am-fernseher).
 
 ## What direct play covers
 

@@ -4,6 +4,11 @@ All notable changes, grouped by what you notice. Each release has its own sectio
 
 ## [Unreleased]
 
+### TV
+- **New TV layout.** A side menu (◀ or Back opens it, ▶ or Back closes it, the pointer works too), a focus tile on the home page that shows the title you rest on and plays its trailer after a moment (honours the trailer preference, calm mode, reduced motion and data saver), and a detail page that is a list of large buttons with sub-screens; Back returns to the button you came from.
+- **New TV player controls.** Any arrow shows the controls with the progress bar focused; ◀/▶ preview, OK or one second jumps. ▼ opens a button row (Episodes, Next episode, Audio & subtitles, Speed, Quality). Green opens Audio & subtitles, Info peeks at the cast, blue (or Info then OK while paused) opens X-Ray, and a pause screen appears after 8 s.
+- **Calmer motion.** Rows, pages and focus glide; with calm mode or reduced motion they apply at once.
+
 ### TV player
 - **Works with remotes that have no media or colour keys** (the LG Magic Remote of 2025): OK plays and pauses while the control bar is hidden, ◀/▶ jump 10 s and go faster when held, ▼ opens the bar, the scroll wheel over the picture jumps 10 s per notch and Channel ▲ starts the next episode.
 - **OK no longer presses a hidden button.** The control bar lets go of its selected button when it hides, so OK after the bar disappeared pauses instead of, say, toggling subtitles again.

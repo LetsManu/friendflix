@@ -16,6 +16,7 @@ Die LG-TV-App ist FriendFlix als App auf einem LG-Smart-TV mit webOS (webOS 22 o
 - [Die Passphrase und wo sie gespeichert wird](#die-passphrase-und-wo-sie-gespeichert-wird)
 - [Erster Start: die Serveradresse](#erster-start-die-serveradresse)
 - [Die 50-Stunden-Sitzung](#die-50-stunden-sitzung)
+- [Die TV-Oberfläche](#die-tv-oberfläche)
 - [Die Fernbedienung](#die-fernbedienung)
 - [Was Direct Play abdeckt](#was-direct-play-abdeckt)
 - [Server wechseln](#server-wechseln)
@@ -118,6 +119,16 @@ Beim ersten Start fragt die App nach der Adresse deines Servers, zum Beispiel `f
 
 Der Entwicklermodus läuft nach **50 Stunden** ab. Öffne vorher die App **Developer Mode** und drücke **Extend**. Verpasst du das, entfernt der Fernseher die App: Führe das Installationsskript erneut aus. Auch das Ausschalten des Entwicklermodus entfernt sie.
 
+## Die TV-Oberfläche
+
+Der TV-Modus hat ein eigenes Layout für das Sofa: schwarzer Hintergrund, große Schrift, ein Fokusrahmen, der mit den Pfeiltasten wandert. Alles geht mit Pfeiltasten, OK und Zurück.
+
+- **Seitenmenü.** Am linken Rand sitzt ein schmales Menü. **◀** von der ganz linken Karte (oder **Zurück** auf einer Seite) öffnet es; **▶** oder **Zurück** schließt es. Auch der Zeiger der Magic Remote öffnet es am linken Rand und schließt es beim Verlassen wieder, ohne die fokussierte Karte zu verlieren.
+- **Startseite.** Oben steht eine Fokus-Kachel mit dem hervorgehobenen Titel und seinem Abspielen-Knopf. Geh nach unten in die Reihen: Wenn du kurz auf einer Karte ruhst, zeigt die Kachel diesen Titel (Platz in Top-10-Reihen, „Warum du das siehst“, Fortschritt). Nach ein paar Sekunden läuft der Trailer stumm in der Kachel. Das folgt der Trailer-Einstellung des Profils, dem ruhigen Modus, reduzierter Bewegung und dem Datensparmodus: sagt eines davon Nein, bleibt die Kachel still. ▲ aus der ersten Reihe führt zurück zum hervorgehobenen Titel.
+- **Detailseite.** Eine Liste großer Knöpfe (Abspielen oder Fortsetzen, Folgen, Audio & Untertitel, Bewerten, Meine Liste, Ähnliche Titel, Info und so weiter, nur die passenden). Folgen, Ähnliche Titel, Sammlung, Extras, Bisher geschah und Info öffnen als eigene Bildschirme; **Zurück führt zum Knopf zurück, der sie geöffnet hat**. Audio & Untertitel und Bewerten zeigen ihre Auswahl neben dem Knopf.
+- **Player.** Jede Pfeiltaste blendet die Steuerung mit fokussierter Fortschrittsleiste ein. ◀/▶ bewegen eine Vorschau (Bild und Zeit) entlang der Leiste; OK oder 1 Sekunde ohne Taste springt dorthin, Zurück bricht die Vorschau ab. **▼** wechselt in die Knopfreihe: Folgen, Nächste Folge, Audio & Untertitel, Tempo und Qualität. Die **grüne Taste** öffnet Audio & Untertitel direkt. Die **Info-Taste** zeigt kurz die Besetzung; die **blaue Taste**, oder Info und dann OK während der Pause, öffnet X-Ray. Nach 8 Sekunden Pause zeigt der Pausenbildschirm den Titel und was im Bild zu sehen ist.
+- **Bewegung.** Reihen, Seiten und die Detailseite gleiten und blenden ein; mit ruhigem Modus oder reduzierter Bewegung (Profil oder TV-Systemeinstellung) wirken Fokuswechsel sofort und es bleiben nur kurze Überblendungen.
+
 ## Die Fernbedienung
 
 Im Player (außerhalb des Players werden die Tasten ignoriert). Alles geht auch nur mit **OK, den Pfeiltasten und Zurück**, denn die Magic Remote von 2025 hat keine Play-, Pause-, Spul- oder Farbtasten; ihre Taste **123** öffnet ein Bildschirm-Feld mit den Farbtasten.
@@ -125,8 +136,8 @@ Im Player (außerhalb des Players werden die Tasten ignoriert). Alles geht auch 
 | Taste | Code | Aktion |
 |---|---|---|
 | OK | 13 | bei ausgeblendeter Steuerleiste: abspielen oder pausieren; in der Leiste drückt es die gewählte Schaltfläche |
-| ◀ / ▶ | 37 / 39 | -10 s / +10 s; gedrückt halten spult schneller (nach 1 s in 30-s-Schritten, nach 3 s in 60-s-Schritten) |
-| ▲ / ▼ | 38 / 40 | ▲: Besetzung und Infos zur Szene; ▼: die Steuerleiste (Fokus auf Wiedergabe/Pause) |
+| ◀ / ▶ | 37 / 39 | Vorschau entlang der Leiste; OK oder 1 s ohne Taste springt dorthin, Zurück bricht ab; gedrückt halten spult schneller (nach 1 s in 30-s-Schritten, nach 3 s in 60-s-Schritten) |
+| ▲ / ▼ | 38 / 40 | jede Pfeiltaste blendet die Steuerung mit fokussierter Fortschrittsleiste ein; ▼ geht weiter in die Knopfreihe (Folgen, Nächste Folge, Audio & Untertitel, Tempo, Qualität), ▲ zurück zur Leiste |
 | Scrollrad | `wheel` | über dem Bild: eine Raste = +10 s (nach unten) / -10 s (nach oben); Menüs scrollen weiter |
 | Kanal ▲ | 33 | nächste Folge (Serien) |
 | Play | 415 | abspielen |
@@ -135,9 +146,11 @@ Im Player (außerhalb des Players werden die Tasten ignoriert). Alles geht auch 
 | Stop | 413 | verlässt den Player (der Fortschritt wird gespeichert, wie bei Zurück) |
 | Vorspulen / Zurückspulen | 417 / 412 | +30 s / −30 s |
 | Rot | 403 | Untertitel an oder aus (zuletzt benutzte Spur, sonst die erste) |
-| Grün | 404 | Audio-Menü öffnen |
+| Grün | 404 | Audio & Untertitel öffnen |
+| Blau | 406 | X-Ray (Besetzung und Musik der Szene) |
+| Info | `Info` | Besetzung kurz zeigen; Info und dann OK während der Pause öffnet X-Ray |
 
-**Zurück** (461) funktioniert überall: eine Ebene zurück; im Player blendet es zuerst die Steuerleiste aus und verlässt ihn danach. **Zurück auf der Startseite des TV-Modus beendet die App.** Die Steuerleiste bleibt sichtbar, solange du dich darin bewegst, und verschwindet 5 Sekunden nach der letzten Taste; dabei gibt sie die gewählte Schaltfläche frei, damit das nächste OK immer Wiedergabe/Pause bedeutet. Auch der Zeiger der **Magic Remote** funktioniert: Bewegen blendet die Steuerung ein, Darüberfahren bewegt den Fokusrahmen, ein Klick auf eine Schaltfläche drückt sie, ein Klick aufs Bild startet oder pausiert. Die Pfeiltasten machen von dort weiter, wo der Zeiger war. Die allgemeinen Tasten stehen in [tv-mode.md](../tv-mode.md#bedienung-am-fernseher).
+**Zurück** (461) funktioniert überall: eine Ebene zurück; im Player blendet es zuerst die Steuerleiste aus und verlässt ihn danach. **Zurück auf der Startseite des TV-Modus öffnet zuerst das Seitenmenü; ein weiteres Zurück beendet die App.** Die Steuerleiste bleibt sichtbar, solange du dich darin bewegst, und verschwindet 5 Sekunden nach der letzten Taste; dabei gibt sie die gewählte Schaltfläche frei, damit das nächste OK immer Wiedergabe/Pause bedeutet. Auch der Zeiger der **Magic Remote** funktioniert: Bewegen blendet die Steuerung ein, Darüberfahren bewegt den Fokusrahmen, ein Klick auf eine Schaltfläche drückt sie, ein Klick aufs Bild startet oder pausiert. Die Pfeiltasten machen von dort weiter, wo der Zeiger war. Die allgemeinen Tasten stehen in [tv-mode.md](../tv-mode.md#bedienung-am-fernseher).
 
 ## Was Direct Play abdeckt
 
