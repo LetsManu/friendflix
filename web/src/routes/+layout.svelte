@@ -22,21 +22,21 @@
   import type ItemModalType from '#lib/ItemModal.svelte';
   import { loadModal, prefetchModal } from '#lib/lazy';
   import { startTvLink, type ToTv } from '#lib/remote';
-  import { logout as doLogout } from '#lib/session';
   import { capsFrom, features, featuresFrom, kindFrom, serverCaps, serverKind } from '#lib/capabilities';
   import { setMeta } from '#lib/offline/db';
   import { focusEl, focusFirst, isBackKey, isEditable, startSpatial } from '#lib/spatial';
   import Intro from '#lib/Intro.svelte';
   import { loadIntroSettings, markSessionSeen, readSessionSeen, shouldPlayIntro } from '#lib/intro';
   import { mobile } from '#lib/viewport';
-  import { HEADER_TABS, isRailTop, isTabActive, TV_RAIL } from '#lib/menu';
+  import { isRailTop, isTabActive, TV_RAIL } from '#lib/menu';
   import { frameGuard, motionLevel, tvPagePlan, VT_ART, watchFrames } from '#lib/tv/motion';
   import { motionAllowed } from '#lib/preview';
   import TvRail from '#lib/tv/TvRail.svelte';
+  import DeskBar from '#lib/desk/DeskBar.svelte';
+  import { deskUi } from '#lib/desk/bar';
   import { railKey } from '#lib/tv/rail';
   import { categoryHref, kindFromPath, showsChips, type Kind } from '#lib/mobile';
   import { dialogKeys } from '#lib/actions';
-  import { langLabel } from '#lib/langs';
   import { canRenderEarly, clearReloadFlag, earlyProfile, gateHref, hintOf, kidsRedirect, needsProfileGate, needsWelcome, readActive, readHint, readPicked, readReloading, welcomeHref, writeActive, writeHint } from '#lib/gate';
   import MobilePreviewSheet from '#lib/MobilePreviewSheet.svelte';
   import { closePreview, previewSheet } from '#lib/previewSheet';
@@ -55,9 +55,8 @@
   import { isTizenApp } from '#lib/tizen/detect';
   import { installNavLock } from '#lib/tizen/navlock';
   import { exitLgApp, isLgApp, shouldExitOnBack } from '#lib/webos/detect';
-  import { changeServerViaHome, recordHistoryBase } from '#lib/webos/home';
+  import { recordHistoryBase } from '#lib/webos/home';
   import { rememberLgProbeHome } from '#lib/webos/probehome';
-  import { toast } from '#lib/ui/toast';
   import { PLAY_ART_NAME, playTransition, takePlayArt } from '#lib/player/transition';
 
   let me: Me | null = null;
@@ -72,7 +71,7 @@
   let pending = false, checking = false;
   let notes: Array<{ id: number; title: string; link?: string; read: boolean }> = [];
   let railOpen = false;
-  let scrolled = false, menu = false, bell = false, cats = false, help = false;
+  let scrolled = false, help = false;
   let sentinel: HTMLElement;
   let online = true;
   let intro = false;
@@ -118,9 +117,8 @@
    */
   $: if (typeof document !== 'undefined') { const st = document.documentElement.style; if (castBarOn) st.setProperty('--castbar-h', '64px'); else st.removeProperty('--castbar-h'); }
   $: kidsMode.set(kidsUi); // shared flag for components (no social UI on kids profiles)
-  // ---- phone: chip bar + "Kategorien" overlay; desktop: "Kategorien" dropdown (genres, languages, collections) ----
+  // ---- phone: chip bar + "Kategorien" overlay (the desktop dropdown lives in DeskBar) ----
   let catOpen = false, catGenres: string[] | null = null, catKind: Kind = 'movies', catBtn: HTMLElement | null = null;
-  let catLangs: string[] | null = null;
 
   $: path = $page.url.pathname;
   // /setup: the wizard of a new install (no account yet); /setup/extras is not public (the first admin is signed in there)
@@ -141,7 +139,7 @@
   $: if (showBanner && !stopBanner) stopBanner = startBanner();
   $: if (!showBanner && stopBanner) { stopBanner(); stopBanner = null; }
   $: unread = notes.filter((n) => !n.read).length;
-  $: if (path) { menu = false; bell = false; cats = false; catOpen = false; closePreview(); }
+  $: if (path) { catOpen = false; closePreview(); }
   $: chips = $mobile && showsChips(path) && !kidsUi;
   // kids profiles stay on kids routes, new profiles go through /welcome once (both also checked in boot() before the page mounts)
   $: if (me && !pending && !publicPage) {
@@ -155,7 +153,8 @@
   // the web app manifest (name, shortcuts) follows the UI language
   $: if (typeof document !== 'undefined') document.querySelector('link[rel="manifest"]')?.setAttribute('href', `/manifest.webmanifest?lang=${$locale}`);
   $: if (!$mobile) { catOpen = false; closePreview(); }
-  $: if ($mobile) cats = false;
+  /** desktop shell (pill bar; later the desktop browse pieces): not on TV, phones or kids profiles */
+  $: desk = deskUi({ tv, mobile: $mobile, kids: kidsUi });
   $: if (!publicPage) document.documentElement.classList.toggle('tv', tv);
 
   // ---- detail popup: loaded on first use (or prefetched on hover/focus/touch of a card), not part of the layout chunk ----
@@ -167,60 +166,14 @@
   }
 
   async function loadNotes() { if (me?.kids) return; try { notes = (await api('/api/notifications')).notifications; } catch { /* ignore */ } } // kids: 403 kids_profile
-  async function toggleBell() {
-    bell = !bell; menu = false; cats = false;
-    if (bell && unread) { await api('/api/notifications/read', { method: 'POST' }); setTimeout(loadNotes, 1500); }
-  }
-  const logout = () => doLogout(me?.tv);
-  const changeServer = () => {
-    menu = false;
-    changeServerViaHome(() => toast.info($t('shell.account.changeServerBlue'))); // the hint when the start page cannot be reached
-  };
-  async function surprise() {
-    menu = false;
-    try { goto(`/item/${(await api('/api/library/random?type=Movie')).item.id}`); } catch { goto('/browse/movies'); }
-  }
-
-  // ---- avatar menu: other profiles to switch to (loaded when the menu opens) ----
-  let others: Array<{ id: string; name: string; avatar: string; hasPin: boolean }> | null = null;
-  async function toggleMenu() {
-    menu = !menu; bell = false; cats = false;
-    if (menu && multi && others === null) {
-      try { others = ((await api('/api/profiles')).profiles as Array<{ id: string; name: string; avatar: string; hasPin: boolean; active: boolean }>).filter((p) => !p.active && p.id !== me?.profile?.id).slice(0, 4); }
-      catch { others = []; }
-    }
-  }
   $: here = publicPage ? path : path + $page.url.search; // (the prerendered /offline page has no search params)
-  const switchHref = (id: string) => `/profiles?pick=${encodeURIComponent(id)}&next=${encodeURIComponent(here)}`;
-  function openHelp() { menu = false; help = true; }
   const HELP = [['shell.help.searchT', 'shell.help.searchD'], ['shell.help.playerT', 'shell.help.playerD'], ['shell.help.deviceT', 'shell.help.deviceD'], ['shell.help.tvT', 'shell.help.tvD'], ['shell.help.languageT', 'shell.help.languageD'], ['shell.help.moreT', 'shell.help.moreD']] as const;
 
-  // ---- header search (desktop): the icon expands into the input; typing drives /search?q= (the page itself has no second input on desktop) ----
-  let searchOpen = false, q = '', searchEl: HTMLInputElement, st: ReturnType<typeof setTimeout>;
-  let hSeen: string | null = null, hPushed: string | null = null;
-  $: urlQ = path === '/search' ? ($page.url.searchParams.get('q') ?? '').trim() : null;
-  // same guard as routes/search: react to URL changes only, and never overwrite what is being typed with our own (older) URL
-  $: if (urlQ !== hSeen) {
-    hSeen = urlQ;
-    if (urlQ === null) { hPushed = null; clearTimeout(st); q = ''; if (document.activeElement !== searchEl) searchOpen = false; }
-    else { searchOpen = true; if (urlQ !== hPushed) { hPushed = urlQ; clearTimeout(st); q = urlQ; } }
-  }
-  function commitSearch(v: string) {
-    clearTimeout(st);
-    const t = v.trim();
-    const href = t ? `/search?q=${encodeURIComponent(t)}` : '/search';
-    if (path === '/search') { if (t === hPushed) return; hPushed = t; void goto(href, { replace: true, reset: false }); }
-    else if (t) { hPushed = t; void goto(href, { reset: false }).then(() => scrollTo({ top: 0, behavior: 'instant' })); } // keep the focus in the field
-  }
-  function onSearchInput() { clearTimeout(st); st = setTimeout(() => commitSearch(q), 220); }
-  function onSearchKey(e: KeyboardEvent) {
-    if (e.key !== 'Escape') return;
-    e.preventDefault(); e.stopPropagation();
-    if (q) { q = ''; commitSearch(''); } else { searchOpen = false; searchEl?.blur(); }
-  }
+  // ---- search hotkeys: the desktop bar opens its field, phones go to the search page ----
+  let deskBar: DeskBar | undefined;
   function openSearch() {
     if ($mobile) { void goto('/search'); return; }
-    searchOpen = true; void tick().then(() => searchEl?.focus());
+    deskBar?.openSearch();
   }
   async function openCats(e: Event) {
     catBtn = e.currentTarget as HTMLElement; catKind = kindFromPath(path); catOpen = true;
@@ -229,13 +182,6 @@
     void fetchGenres();
   }
   async function fetchGenres() { if (!catGenres) { try { catGenres = ((await api('/api/library/genres')).genres as string[]) ?? []; } catch { catGenres = []; } } }
-  async function toggleCats() {
-    cats = !cats; menu = false; bell = false;
-    if (!cats) return;
-    catKind = kindFromPath(path);
-    void fetchGenres();
-    if (!catLangs) { try { catLangs = (((await api('/api/library/languages')).audio ?? []) as Array<{ code: string }>).map((l) => l.code).slice(0, 12); } catch { catLangs = []; } }
-  }
   function closeCats(refocus = true) { catOpen = false; if (refocus) catBtn?.focus(); }
   function pickCat(href: string) { catOpen = false; void goto(href); }
   function onKey(e: KeyboardEvent) {
@@ -249,7 +195,6 @@
     if (!tv && path === '/tv' && isBackKey(e) && isLgApp()) { e.preventDefault(); history.back(); return; }
     const back = e.key === 'Escape' || (tv && isBackKey(e));
     if (!back) return;
-    if (menu || bell || cats) { menu = bell = cats = false; if (tv) e.preventDefault(); return; } // dropdowns close first
     // TV: Back/Escape walks one step back (the detail popup closes itself on Escape; the player handles its own keys)
     if (tv && !watchPage && !(e.key === 'Escape' && $page.state.modalId) && !isEditable(e.target as Element)) {
       e.preventDefault();
@@ -447,8 +392,6 @@
     if (ok) { markSessionSeen(); intro = true; }
   }
 
-  function outside(e: MouseEvent) { if (!(e.target as HTMLElement).closest('.pop-anchor')) { menu = false; bell = false; cats = false; } }
-
   let stops: Array<() => void> = [];
   // lock screen / Control Center / notification drive what plays on the TV
   onMount(() => bindCastMediaSession(castSession, castEngine));
@@ -493,7 +436,7 @@
       if (typeof link === 'string' && /^\/(?!\/)/.test(link)) void goto(link);
     };
     navigator.serviceWorker?.addEventListener('message', onSwMessage);
-    return () => { clearTimeout(st); navigator.serviceWorker?.removeEventListener('message', onSwMessage); stops.forEach((f) => f()); };
+    return () => { navigator.serviceWorker?.removeEventListener('message', onSwMessage); stops.forEach((f) => f()); };
   });
 
   /** A pending device checks every few seconds whether it was approved and then reloads into the real app. */
@@ -561,7 +504,7 @@
   }
 </script>
 
-<svelte:window on:keydown={onKey} on:click={outside} />
+<svelte:window on:keydown={onKey} />
 <div class="top-sentinel" aria-hidden="true" bind:this={sentinel}></div>
 <a class="skip" href="#main">{$t('shell.skipToContent')}</a>
 {#if intro}<Intro on:done={() => (intro = false)} />{/if}
@@ -598,77 +541,8 @@
           </nav>
         {/if}
       </header>
-    {:else}
-    <header class="nav" class:solid={scrolled || !heroPage}>
-      <a class="logo" href="/" aria-label={$t('shell.nav.homeLink')}><Logo wordmark size={34} /></a>
-      <nav class="links" aria-label={$t('shell.nav.main')}>
-        {#each HEADER_TABS as [href, label] (href)}<a {href} class:active={isTabActive(href, path)} aria-current={isTabActive(href, path) ? 'page' : undefined}>{$t(label)}</a>{/each}
-        <div class="pop-anchor">
-          <button type="button" class="linkbtn" aria-haspopup="true" aria-expanded={cats} on:click={toggleCats}>{$t('shell.nav.categories')}<i class="caret" class:up={cats}></i></button>
-          {#if cats}
-            <div class="drop catdrop" role="region" aria-label={$t('shell.cats.title')}>
-              <div class="cseg">
-                <div class="seg" role="group" aria-label={$t('shell.cats.kind')}>
-                  <button type="button" class:on={catKind === 'movies'} aria-pressed={catKind === 'movies'} on:click={() => (catKind = 'movies')}>{$t('common.movies')}</button>
-                  <button type="button" class:on={catKind === 'series'} aria-pressed={catKind === 'series'} on:click={() => (catKind = 'series')}>{$t('common.series')}</button>
-                </div>
-                <a class="coll" href="/collections">{$t('shell.cats.collections')}</a>
-              </div>
-              <div class="ccols">
-                <section aria-labelledby="cg-h"><h2 id="cg-h" class="ch">{$t('shell.cats.genres')}</h2>
-                  {#if catGenres === null}<p class="muted pad" role="status">{$t('common.loading')}</p>
-                  {:else}<ul class="glist">{#each catGenres as g (g)}<li><a href={categoryHref(catKind, g)}>{g}</a></li>{/each}</ul>{/if}
-                </section>
-                <section aria-labelledby="cl-h"><h2 id="cl-h" class="ch">{$t('shell.cats.byLanguage')}</h2>
-                  {#if catLangs === null}<p class="muted pad" role="status">{$t('common.loading')}</p>
-                  {:else if !catLangs.length}<p class="muted pad">{$t('shell.cats.none')}</p>
-                  {:else}<ul class="glist">{#each catLangs as c (c)}<li><a href="/browse/{catKind}?audio={encodeURIComponent(c)}">{langLabel(c)}</a></li>{/each}</ul>{/if}
-                </section>
-              </div>
-            </div>
-          {/if}
-        </div>
-      </nav>
-      <span class="sp"></span>
-      <form class="search" class:open={searchOpen} on:submit|preventDefault={() => commitSearch(q)} role="search">
-        <button type="button" class="icon-btn" aria-label={searchOpen ? $t('shell.search.submit') : $t('shell.search.open')} on:click={() => (searchOpen ? commitSearch(q) : openSearch())}><Icon name="search" size={22} /></button>
-        <input id="hq" type="search" bind:this={searchEl} bind:value={q} autocomplete="off" enterkeyhint="search" placeholder={$t('shell.search.placeholder')} aria-label={$t('shell.search.label')} tabindex={searchOpen ? 0 : -1}
-          on:input={onSearchInput} on:keydown={onSearchKey} on:blur={() => { if (!q && path !== '/search') searchOpen = false; }} />
-      </form>
-      <div class="pop-anchor">
-        <button class="icon-btn" aria-label={unread ? $t('shell.bell.unread', { n: unread }) : $t('shell.bell.label')} aria-expanded={bell} on:click={toggleBell}>
-          <Icon name="bell" size={22} />{#if unread}<span class="dot">{unread}</span>{/if}
-        </button>
-        {#if bell}
-          <div class="drop wide" role="menu">
-            {#each notes as n}{#if n.link}<a href={n.link} class:muted={n.read} role="menuitem">{n.title}</a>{:else}<span class="note" class:muted={n.read} role="none">{n.title}</span>{/if}{:else}<span class="muted pad">{$t('shell.bell.empty')}</span>{/each}
-          </div>
-        {/if}
-      </div>
-      <div class="pop-anchor">
-        <button class="avatar" aria-label={who ? $t('shell.account.labelWho', { name: who }) : $t('shell.account.label')} aria-haspopup="menu" aria-expanded={menu} disabled={!me} on:click={toggleMenu}><span class="face" style={faceStyle}>{initial(who)}</span><i class="caret" class:up={menu}></i></button>
-        {#if menu && me}
-          <div class="drop acct" role="menu" aria-label={$t('shell.account.label')}>
-            {#if multi}
-              {#if others === null}<span class="muted pad" role="status">{$t('shell.account.loadingProfiles')}</span>{/if}
-              {#each others ?? [] as p (p.id)}<a class="prof" href={switchHref(p.id)} role="menuitem" data-sveltekit-reload><span class="face xs" style="background:{avatarBg(p.avatar)}" aria-hidden="true">{initial(p.name)}</span>{p.name}{#if p.hasPin}<Icon name="lock" size={14} label={$t('shell.account.withPin')} />{/if}</a>{/each}
-            {/if}
-            <a href="/profiles?manage=1" role="menuitem"><Icon name="users" size={18} />{$t('shell.account.manageProfiles')}</a>
-            <hr />
-            <a href="/me" role="menuitem"><Icon name="user" size={18} />{$t('shell.menu.me')}</a>
-            <a href="/settings" role="menuitem"><Icon name="settings" size={18} />{$t('shell.menu.accountSettings')}</a>
-            <a href="/devices" role="menuitem"><Icon name="monitor" size={18} />{$t('shell.menu.devices')}</a>
-            {#if canDownload}<a href="/downloads" role="menuitem"><Icon name="download" size={18} />{$t('shell.menu.downloads')}</a>{/if}
-            <button class="plain" role="menuitem" on:click={surprise}><Icon name="shuffle" size={18} />{$t('shell.menu.surprise')}</button>
-            <button class="plain" role="menuitem" on:click={openHelp}><Icon name="info" size={18} />{$t('shell.menu.help')}</button>
-            {#if admin}<a href="/admin" role="menuitem"><Icon name="shield" size={18} />{$t('shell.menu.admin')}</a>{/if}
-            <hr />
-            {#if lgApp}<button class="plain" role="menuitem" on:click={changeServer}>{$t('shell.account.changeServer')}</button>{/if}
-            <button class="plain out" role="menuitem" on:click={logout}>{$t('shell.account.logout')}</button>
-          </div>
-        {/if}
-      </div>
-    </header>
+    {:else if desk}
+      <DeskBar bind:this={deskBar} {path} {heroPage} {me} {who} {faceStyle} {multi} {admin} {canDownload} {lgApp} {here} {notes} onHelp={() => (help = true)} />
     {/if}
     <nav class="tabbar" aria-label={$t('shell.mobile.tabbar')}>
       <a href="/" class:active={path === '/'} aria-current={path === '/' ? 'page' : undefined}><span class="ico"><Icon name="home" size={22} /></span><span>{$t('shell.tabs.home')}</span></a>
@@ -755,22 +629,11 @@
   .logo { display: inline-flex; align-items: center; }
   .nav { position: fixed; top: 0; left: 0; right: 0; height: var(--nav-total); z-index: 50; display: flex; align-items: center; gap: .5rem; padding: var(--safe-top) max(var(--pad-x), var(--safe-right)) 0 max(var(--pad-x), var(--safe-left)); background: linear-gradient(to bottom, rgba(0,0,0,.9), rgba(0,0,0,.55) 55%, transparent); transition: background var(--t-med); }
   .nav.solid { background: var(--bg); }
-  .links { display: flex; gap: 1.5rem; margin-left: 2.2rem; }
-  .links a { font-size: .95rem; font-weight: 500; color: #e5e5e5; transition: color var(--t-fast); white-space: nowrap; padding: .6rem 0; }
-  .links a:hover { color: #b3bac2; } .links a.active { color: #fff; font-weight: 700; }
   .sp { flex: 1; }
-  .search { display: flex; align-items: center; border: 1px solid transparent; transition: border-color var(--t-fast), background var(--t-fast); border-radius: 4px; }
-  .search.open { border-color: #fff; background: rgba(0,0,0,.75); }
-  .search input { width: 0; padding: 0; border: 0; background: transparent; transition: width var(--t-med) var(--ease), padding var(--t-med); min-height: 40px; }
-  .search.open input { width: clamp(120px, 24vw, 280px); padding: 0 .5rem 0 0; }
-  .search input:focus-visible { outline: none; }
-  .pop-anchor { position: relative; }
   .dot { position: absolute; top: 4px; right: 2px; background: var(--acc-fill); font-size: .65rem; min-width: 1.1rem; height: 1.1rem; border-radius: 99px; display: grid; place-items: center; font-weight: 700; }
   .avatar { width: auto; min-height: 44px; height: 44px; padding: 0 .1rem; background: transparent; gap: .45rem; border-radius: 4px; }
   .avatar:hover:not(:disabled) { background: transparent; }
   .face { width: 34px; height: 34px; border-radius: 24%; display: grid; place-items: center; background: linear-gradient(135deg, #ff6b81, #9a2440); font-weight: 800; box-shadow: 0 0 0 1px rgba(255,255,255,.12); }
-  .caret { width: 0; height: 0; border: 5px solid transparent; border-top-color: #fff; border-bottom: 0; transition: transform var(--t-fast); }
-  .caret.up { transform: rotate(180deg); }
   /* ---- kids header: bright, big touch targets, logo + "Kids" badge, search, avatar (switch profile) ---- */
   .kidsnav { background: linear-gradient(100deg, #4f6bed, #7b5cff); color: #fff; } /* always solid: the white wordmark stays readable */
   .kidsnav.solid { box-shadow: 0 2px 14px rgba(32,35,58,.25); }
@@ -782,27 +645,6 @@
   .kbtn:focus-visible, .kav:focus-visible, .klogo:focus-visible { outline: 4px solid #ffb703; outline-offset: 2px; }
   .kav .face { width: 46px; height: 46px; border-radius: 50%; font-size: 1.1rem; color: #fff; box-shadow: 0 0 0 3px rgba(255,255,255,.85); }
   .top-sentinel { position: absolute; top: 0; left: 0; width: 1px; height: 10px; pointer-events: none; visibility: hidden; }
-  .drop { position: absolute; right: 0; top: calc(100% + 6px); background: rgba(0,0,0,.94); border: 1px solid #2b333c; border-radius: 4px; min-width: 220px; padding: .4rem 0; display: flex; flex-direction: column; box-shadow: 0 12px 30px rgba(0,0,0,.7); max-height: calc(100vh - var(--nav-total) - 16px); max-height: calc(100dvh - var(--nav-total) - 16px); overflow-y: auto; overscroll-behavior: contain; animation: drop-in .16s var(--ease); }
-  @keyframes drop-in { from { opacity: 0; transform: translateY(-4px); } }
-  .drop hr { border: 0; border-top: 1px solid #2b333c; margin: .3rem 0; width: 100%; }
-  .acct { min-width: 240px; }
-  .acct .prof { font-weight: 500; }
-  .face.xs { width: 32px; height: 32px; font-size: .85rem; flex: none; }
-  .acct .out { justify-content: center; }
-  .linkbtn { background: transparent; padding: .6rem 0; min-height: 44px; font-size: .95rem; font-weight: 500; color: #e5e5e5; gap: .4rem; border-radius: 0; }
-  .linkbtn:hover:not(:disabled) { background: transparent; color: #b3bac2; }
-  .links .pop-anchor { display: flex; }
-  .catdrop { left: -1rem; right: auto; width: min(560px, 80vw); padding: 1rem 1.2rem 1.1rem; }
-  .cseg { display: flex; align-items: center; justify-content: space-between; gap: 1rem; margin-bottom: .6rem; }
-  .catdrop .seg button { min-height: 36px; }
-  .catdrop .coll { font-weight: 700; color: #fff; padding: .4rem 0; min-height: 44px; display: inline-flex; align-items: center; }
-  .catdrop .coll:hover { text-decoration: underline; }
-  .ccols { display: grid; grid-template-columns: 2fr 1fr; gap: 1.2rem; }
-  .ch { font-size: .75rem; text-transform: uppercase; letter-spacing: .08em; color: var(--mut); margin: 0 0 .3rem; font-weight: 600; }
-  .glist { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); column-gap: 1rem; }
-  .ccols section:last-child .glist { grid-template-columns: 1fr; }
-  .catdrop .glist a { display: flex; align-items: center; min-height: 44px; padding: 0; font-size: .9rem; color: #e5e5e5; }
-  .catdrop .glist a:hover { text-decoration: underline; background: transparent; }
   .hov { position: fixed; inset: 0; z-index: 96; background: rgba(0,0,0,.7); display: grid; place-items: center; padding: max(1rem, var(--safe-top)) 1rem max(1rem, var(--safe-bottom)); animation: fade .2s ease-out; }
   .hbox { background: #161b21; border: 1px solid #2b333c; border-radius: 8px; width: min(560px, 100%); max-height: 90dvh; overflow-y: auto; padding: 1.2rem 1.4rem 1.4rem; box-shadow: 0 20px 60px rgba(0,0,0,.8); }
   .hhead { display: flex; align-items: center; justify-content: space-between; }
@@ -812,20 +654,11 @@
   .hbox dd { margin: 0; color: #cfcfcf; font-size: .93rem; line-height: 1.5; }
   .hbox :global(a) { text-decoration: underline; }
   .hbox :global(kbd), .pendp :global(kbd) { display: inline-block; min-width: 1.4em; padding: 0 .35em; border: 1px solid #4a5560; border-bottom-width: 2px; border-radius: 4px; font: inherit; font-size: .82em; text-align: center; background: #1c2228; }
-  .drop.wide { width: min(340px, 90vw); }
-  .drop .note { display: block; padding: .55rem 1rem; font-size: .9rem; color: #e5e5e5; }
-  .drop .note.muted { color: var(--mut); }
-  .drop a, .drop .plain { display: flex; gap: .7rem; align-items: center; padding: .55rem 1rem; font-size: .9rem; color: #e5e5e5; min-height: 44px; }
-  .drop a:hover, .drop .plain:hover { text-decoration: underline; background: transparent; }
-  .plain { background: transparent; border-radius: 0; justify-content: flex-start; font-weight: 400; width: 100%; }
-  .pad { padding: .8rem 1rem; }
   .tabbar { display: none; }
   @media (min-width: 721px) { main:not(.boot) { min-height: 100vh; } } /* the footer starts below the fold on short pages */
   .boot { min-height: 100vh; display: grid; place-content: center; gap: 1.2rem; justify-items: center; }
   .spin { width: 34px; height: 34px; border: 3px solid #2b333c; border-top-color: var(--acc); border-radius: 50%; animation: sp .8s linear infinite; }
   @keyframes sp { to { transform: rotate(360deg); } }
-  @media (max-width: 900px) { .links { display: none; } }
-  @media (max-width: 1100px) { .links { gap: 1.1rem; margin-left: 1.4rem; } }
   @media (max-width: 720px) {
     .tabbar { display: flex; position: fixed; bottom: 0; left: 0; right: 0; z-index: 60; background: rgba(12,12,12,.97); border-top: 1px solid #20262d; padding-bottom: var(--safe-bottom); }
     .tabbar a { flex: 1 1 0; min-width: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: .15rem; min-height: 56px; padding: 0 2px; font-size: .68rem; color: var(--mut); font-weight: 500; }
@@ -877,5 +710,5 @@
   .clist a:active, .clist a:hover { color: #fff; }
   .clist .muted { padding: 1rem 0; }
   @keyframes fade { from { opacity: 0; } to { opacity: 1; } }
-  @media (prefers-reduced-motion: reduce) { .cats, .drop, .hov { animation: none; } }
+  @media (prefers-reduced-motion: reduce) { .cats, .hov { animation: none; } }
 </style>
