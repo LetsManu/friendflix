@@ -176,7 +176,7 @@
   @keyframes rb-up { from { opacity: 0; transform: translateX(-50%) translateY(6px); } }
   /* TV (detail page button list): the trigger is a labelled .tv-btn row (look from app.css); the options replace it in place */
   .tvm { display: flex; flex-direction: column; align-items: stretch; width: 100%; }
-  .tvm .trig, .tvm .opt { width: auto; height: auto; min-height: 3.5rem; border-radius: var(--tv-radius); justify-content: flex-start; display: flex; padding: 0 1.75rem; }
+  .tvm .trig, .tvm .opt { width: auto; height: auto; min-height: 2.8rem; border-radius: var(--tv-radius); justify-content: flex-start; display: flex; padding: 0 1.4rem; font-size: 1.1rem; } /* R16: literal 1080p list rows */
   .tvm .trig { width: 100%; }
   .tvm .trig::after { display: none; }
   .tvm .trig:focus-visible, .tvm .opt:focus-visible { outline: none; }
@@ -184,7 +184,7 @@
   .tvm .tx { font: inherit; color: inherit; }
   .tvm .trig.on .ic { color: var(--acc); }
   .tvm .trig.on:focus-visible .ic { color: inherit; }
-  .tvm .pill { left: 0; top: 0; transform: none; gap: .75rem; padding: 0; border-radius: 0; background: none; box-shadow: none; animation: rb-tv-in var(--tv-d-s, 200ms) var(--tv-emph-out, ease-out) both; }
+  .tvm .pill { left: 0; top: 0; transform: none; gap: .6rem; padding: 0; border-radius: 0; background: none; box-shadow: none; animation: rb-tv-in var(--tv-d-s, 200ms) var(--tv-emph-out, ease-out) both; }
   .tvm .opt { background: var(--tv-btn-rest); white-space: nowrap; transform-origin: center; }
   .tvm .opt.on { background: rgba(255, 255, 255, .28); }
   .tvm .opt:focus-visible { background: #fff; color: #000; }

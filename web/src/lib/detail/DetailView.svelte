@@ -347,7 +347,10 @@
     if (autoCancelled) return;
     if (interactionCancels(e.type, Boolean(autoEl && e.target instanceof Node && autoEl.contains(e.target)), counting)) cancelAuto(true);
   }
-  function onHeroEnded() { previewEnded = true; if (autoOn && !busy()) maybeAuto(); else void hv?.play().catch(() => undefined); }
+  function onHeroEnded() {
+    // TV, the viewer pressed Trailer (ruling R17): it played once; the still comes back (DetailTv returns the focus to Trailer)
+    if (variant === 'tv' && heroByUser) { heroByUser = false; stopHero(); return; }
+    previewEnded = true; if (autoOn && !busy()) maybeAuto(); else void hv?.play().catch(() => undefined); }
   $: if (!autoOn && counting) cancelAuto();
 
   // ---- the hero only plays while it is (mostly) on screen: IntersectionObserver instead of a scroll listener (no forced layout) ----
@@ -394,7 +397,7 @@
   <!-- ================= TV: one screen, a button list instead of the scrolling sections (friends, comments, download, share stay off) ================= -->
   {#if item}
     <DetailTv {item} {about} {facts} {people} {extras} {playTarget} {playBase} {playHref} ready={playKnown} {playLabel} {qs} {resumeFrom} {resumeLine} {tagline} {overview} {inList} {titleId}
-      bind:thumb bind:audio={lgA} bind:sub={lgS} playing={heroPlaying} loop={!autoOn} bind:video={hv} bind:loaded={heroLoaded}
+      bind:thumb bind:audio={lgA} bind:sub={lgS} playing={heroPlaying} loop={!autoOn && !heroByUser} userTrailer={heroByUser} bind:video={hv} bind:loaded={heroLoaded}
       onMyList={toggleMine} onTrailer={tvTrailer} {onThumb} onEnded={onHeroEnded} />
     <div class="tvmsg" role="status">{#if saveMsg}<p class="err">{saveMsg}</p>{/if}</div>
   {:else if failed}

@@ -54,6 +54,8 @@
   export let onTrailer: () => void = () => {};
   export let onThumb: (e: CustomEvent<{ value: Thumb }>) => void = () => {};
   export let onEnded: () => void = () => {};
+  /** the viewer pressed Trailer: it plays once with sound; at the end the still comes back and the Trailer button gets the focus */
+  export let userTrailer = false;
   /** false while the play target is still loading (a series: seasons + next-up); the list waits, so Play is the first focus */
   export let ready = true;
 
@@ -67,9 +69,10 @@
   let logoFailed: Record<string, boolean> = {};
 
   // ---- "story so far" (series): the button only when there is one to show ----
-  let story = false, storySeq = 0;
-  $: checkStory(item.id, item.type);
+  let story = false, storySeq = 0, storyFor = '';
+  $: if (item.id !== storyFor) checkStory(item.id, item.type); // only when the title changes, not on every refresh of `item`
   function checkStory(id: string, type: string) {
+    storyFor = id;
     const my = ++storySeq;
     story = false;
     if (type !== 'Series') return;
@@ -97,6 +100,9 @@
     episodes: $t('tv.detail.episodes'), more: $t('detail.more.title'), collection: $t('tv.detail.collection'), extras: $t('hubs.extras.tab'),
     story: $t('fresh.story.title'), info: $t('home.hero.moreInfo'),
   } as Partial<Record<TvButtonId, string>>)[id] ?? '';
+
+  /** LangPick says whether this title has anything to choose (more than one audio track, or subtitles) */
+  let langsOk = false;
 
   // ---- the list window: shows as many buttons as fit; a focus near its edge glides the list (spring, transform only) ----
   let win: HTMLDivElement | undefined, strip: HTMLDivElement | undefined, shift = 0, above = false, below = false;
@@ -161,8 +167,15 @@
     else if (playing) framed = true;
   }
   function clearVideo() { framed = false; if (!video || !video.getAttribute('src')) return; video.pause(); video.removeAttribute('src'); video.load(); }
-  $: if (!playing) clearVideo();
-  onDestroy(clearVideo);
+  // stopping: the video fades out over the still first (framed = false), then the source goes
+  let clearT: ReturnType<typeof setTimeout> | undefined;
+  $: if (!playing) { framed = false; clearTimeout(clearT); clearT = setTimeout(() => { if (!playing) clearVideo(); }, 450); }
+  function ended() {
+    const mine = userTrailer;
+    onEnded();
+    if (mine) strip?.querySelector<HTMLElement>('[data-trailer]')?.focus({ preventScroll: true });
+  }
+  onDestroy(() => { clearTimeout(clearT); clearVideo(); });
 
   onMount(() => edges());
 </script>
@@ -178,7 +191,7 @@
     {/if}
     <!-- svelte-ignore a11y_media_has_caption -->
     <video class="vid" class:on={playing && framed} bind:this={video} {loop} playsinline aria-hidden="true" tabindex="-1"
-      on:playing={onFrame} on:loadeddata={onFrame} on:ended={onEnded} on:volumechange={() => (muted = !!video?.muted)}></video>
+      on:playing={onFrame} on:loadeddata={onFrame} on:ended={ended} on:volumechange={() => (muted = !!video?.muted)}></video>
     <div class="shade"></div>
   </div>
 
@@ -210,26 +223,27 @@
     <div class="win" class:above class:below bind:this={win}>
       <div class="btns" role="group" aria-label={$t('tv.detail.actions')} bind:this={strip} on:focusin={follow}>
         {#each ids as id, i (id)}
-          <div class="it" data-st>
+          <div class="it" data-st hidden={id === 'langs' && !langsOk}>
             {#if id === 'play'}
-              <a class="tv-btn play" data-autofocus={i === 0 ? '' : undefined} href={playHref} use:playPrefetch><Icon name="play" size={28} />{playLabel}</a>
+              <a class="tv-btn play" data-autofocus={i === 0 ? '' : undefined} href={playHref} use:playPrefetch><Icon name="play" size={24} />{playLabel}</a>
             {:else if id === 'restart'}
-              <a class="tv-btn" href={restartHref} use:playPrefetch><Icon name="refresh" size={28} />{$t('tv.detail.restart')}</a>
+              <a class="tv-btn" href={restartHref} use:playPrefetch><Icon name="refresh" size={24} />{$t('tv.detail.restart')}</a>
             {:else if id === 'trailer'}
               {#if localTrailer}
-                <a class="tv-btn" href={withQs(`/watch/${localTrailer.id}`)}><Icon name="film" size={28} />{$t('home.trailer.button')}</a>
+                <a class="tv-btn" data-trailer href={withQs(`/watch/${localTrailer.id}`)}><Icon name="film" size={24} />{$t('home.trailer.button')}</a>
               {:else}
-                <button type="button" class="tv-btn" on:click={onTrailer}><Icon name="film" size={28} />{$t('home.trailer.button')}</button>
+                <button type="button" class="tv-btn" data-trailer on:click={onTrailer}><Icon name="film" size={24} />{$t('home.trailer.button')}</button>
               {/if}
             {:else if id === 'mylist'}
-              <button type="button" class="tv-btn" class:on={inList} aria-pressed={inList} on:click={onMyList}><Icon name={inList ? 'check' : 'plus'} size={28} />{$t('detail.view.myList')}</button>
+              <button type="button" class="tv-btn" class:on={inList} aria-pressed={inList} on:click={onMyList}><Icon name={inList ? 'check' : 'plus'} size={24} />{$t('detail.view.myList')}</button>
             {:else if id === 'rate'}
-              <RatingButton tv itemId={item.id} bind:value={thumb} size={56} on:change={onThumb} />
+              <RatingButton tv itemId={item.id} bind:value={thumb} size={48} on:change={onThumb} />
             {:else if id === 'langs'}
-              <LangPick tv targetId={playTarget} storeKey={item.id} bind:audio bind:sub />
+              <!-- (shown only when there is something to choose: more than one audio track or any subtitles) -->
+              <LangPick tv targetId={playTarget} storeKey={item.id} bind:audio bind:sub bind:available={langsOk} />
             {:else if LINKS[id]}
               {@const l = LINKS[id]!}
-              <a class="tv-btn" data-autofocus={i === 0 ? '' : undefined} href={sub_(l.sub)}><Icon name={l.icon} size={28} />{label(id)}</a>
+              <a class="tv-btn" data-autofocus={i === 0 ? '' : undefined} href={sub_(l.sub)}><Icon name={l.icon} size={24} />{label(id)}</a>
             {/if}
           </div>
         {/each}
@@ -252,7 +266,7 @@
   .hero { position: absolute; top: 0; right: 0; width: 72vw; height: 100%; overflow: hidden; pointer-events: none; }
   .bg, .vid { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; object-position: center 20%; }
   .bg { display: block; transform-origin: 60% 40%; }
-  .vid { opacity: 0; background: transparent; transition: opacity calc(var(--tv-fade) * .7) ease-in; }
+  .vid { opacity: 0; background: transparent; transition: opacity 420ms ease-in; } /* leaving: ~70 % of the 600 ms entry */
   .vid.on { opacity: 1; transition: opacity 600ms ease-out; }
   .shade { position: absolute; inset: 0; background:
     linear-gradient(180deg, rgba(0, 0, 0, .35) 0%, rgba(0, 0, 0, 0) 20%),
@@ -260,7 +274,7 @@
     linear-gradient(90deg, #000 0%, #000 18%, rgba(0, 0, 0, .82) 34%, rgba(0, 0, 0, .35) 58%, rgba(0, 0, 0, 0) 78%); }
 
   /* left column (~40 %): the title block on top, the button list fills the rest down to the 5 vh safe area */
-  .col { position: absolute; z-index: 1; top: 0; bottom: 0; left: var(--tv-gutter); width: 40vw; display: flex; flex-direction: column; padding: 9vh 0 5vh; box-sizing: border-box; }
+  .col { position: absolute; z-index: 1; top: 0; bottom: 0; left: var(--tv-gutter); width: 40vw; display: flex; flex-direction: column; padding: 7vh 0 5vh; box-sizing: border-box; }
   .info { flex: none; display: flex; flex-direction: column; align-items: flex-start; }
   .eb { margin: 0 0 .75rem; }
   .logo { display: block; max-width: min(32.5rem, 100%); max-height: 10rem; object-fit: contain; object-position: left bottom; }
@@ -271,7 +285,7 @@
   /* quality chips: the same quiet outlined boxes as the age rating */
   .meta :global(.qc) { margin: 0; gap: .4rem; }
   .meta :global(.qc li) { font-size: 1rem; font-weight: 600; line-height: 1.5; padding: 0 .45rem; color: var(--mut); border-color: rgba(255, 255, 255, .35); }
-  .tag { margin: .9rem 0 0; font-size: 1.375rem; font-weight: 500; line-height: 1.35; color: var(--tv-white-88); max-width: 46ch; }
+  .tag { margin: .9rem 0 0; font-size: 1.4rem; font-weight: 500; line-height: 1.35; color: var(--tv-white-88); max-width: 46ch; }
   .ov { margin: .75rem 0 0; display: -webkit-box; -webkit-line-clamp: 3; line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
   .with { margin: .75rem 0 0; max-width: 46ch; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   :global(html.tv) .resume { margin: .75rem 0 0; display: flex; align-items: center; gap: .9rem; color: var(--tv-white-88); }
@@ -279,20 +293,28 @@
   .bar span { position: absolute; inset: 0; background: var(--acc); transform-origin: left center; border-radius: 2px; }
 
   /* the button list window: clips vertically only (the focused button may grow sideways), soft fades where more buttons wait */
-  .win { flex: 1 1 auto; min-height: 0; margin: 2rem -1.5rem 0; padding: .75rem 1.5rem; overflow-x: visible; overflow-y: clip; }
+  .win { flex: 1 1 auto; min-height: 0; margin: 1.5rem -1.5rem 0; padding: .5rem 1.5rem; overflow-x: visible; overflow-y: clip; }
   .win.below { -webkit-mask-image: linear-gradient(180deg, #000 calc(100% - 4.5rem), transparent); mask-image: linear-gradient(180deg, #000 calc(100% - 4.5rem), transparent); }
   .win.above { -webkit-mask-image: linear-gradient(0deg, #000 calc(100% - 4.5rem), transparent); mask-image: linear-gradient(0deg, #000 calc(100% - 4.5rem), transparent); }
   .win.above.below { -webkit-mask-image: linear-gradient(180deg, transparent, #000 4.5rem, #000 calc(100% - 4.5rem), transparent); mask-image: linear-gradient(180deg, transparent, #000 4.5rem, #000 calc(100% - 4.5rem), transparent); }
   /* one column, as wide as the longest label (at least 22 rem); every row is a 56 px .tv-btn */
-  .btns { position: relative; display: flex; flex-direction: column; gap: .75rem; width: max-content; min-width: 22rem; max-width: 100%; }
+  .btns { position: relative; display: flex; flex-direction: column; gap: .6rem; width: max-content; min-width: 22rem; max-width: 100%; }
   .it { position: relative; display: flex; }
-  .ph { height: 3.5rem; }
+  .it[hidden] { display: none; }
+  .ph { height: 2.8rem; }
   .it > :global(*) { flex: 1 1 auto; }
-  .btns :global(.tv-btn) { justify-content: flex-start; transform-origin: left center; white-space: nowrap; }
+  /* ruling R16: the list uses literal 1080p values (56 px rows, 12 px gap, 22 px labels at the 20 px root), and it is a list, not a
+     stack of slabs: every row is transparent at rest (icon + label in 78 % white); only the focused row takes the white fill and the
+     spring scale. The global .tv-btn (home tile) keeps its own look. */
+  :global(html.tv) .btns :global(.tv-btn) { min-height: 2.8rem; padding: 0 1.4rem; gap: .7rem; font-size: 1.1rem; justify-content: flex-start; transform-origin: left center; white-space: nowrap; }
+  :global(html.tv) .btns :global(.tv-btn:not(:focus-visible)) { background: transparent; color: var(--tv-white-78); }
+  :global(html.tv) .btns :global(.tv-btn:focus-visible) { transform: scale(1.03); }
+  /* states that stay visible without focus: the chosen rating, the open Audio & subtitles row */
+  :global(html.tv) .btns :global(.tv-btn.on.opt:not(:focus-visible)), :global(html.tv) .btns :global(.tv-btn[aria-expanded='true']:not(:focus-visible)) { background: rgba(255, 255, 255, .14); color: #fff; }
   .btns > .it > :global(a.tv-btn), .btns > .it > :global(button.tv-btn) { width: 100%; }
-  /* the one primary action: a stronger rest fill and a heavier label; focus is the same white fill as every button */
-  :global(html.tv) .btns .play:not(:focus-visible) { background: rgba(255, 255, 255, .28); }
-  .play { font-weight: 700; }
+  /* the one primary action: still transparent, but its label is full white and semibold, so it reads first */
+  :global(html.tv) .btns .play:not(:focus-visible) { color: #fff; }
+  .play { font-weight: 600; }
   .btns .on :global(svg) { color: var(--acc); }
   .btns .on:focus-visible :global(svg) { color: inherit; }
 

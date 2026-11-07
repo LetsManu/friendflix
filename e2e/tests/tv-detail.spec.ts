@@ -11,7 +11,20 @@ async function setTv(page: Page) {
   await page.routeWebSocket(/\/ws\/remote/, () => {});
   await page.route('**/api/playback/info', (r) => r.fulfill({ json: { directUrl: '/media/p1test.webm', hlsUrl: '/media/p1test.webm', resumeTicks: 0, mediaSourceId: 'ms1', playSessionId: 'ps1', maxBitrate: 60_000_000, roleMaxBitrate: 60_000_000, audioTracks: [], subtitles: [] } }));
 }
-const labels = (page: Page) => page.locator('.tvd .btns > .it').evaluateAll((els) => els.map((e) => (e.querySelector('a, button') as HTMLElement).innerText.trim().split('\n')[0]));
+const labels = (page: Page) => page.locator('.tvd .btns > .it:not([hidden])').evaluateAll((els) => els.map((e) => (e.querySelector('a, button') as HTMLElement).innerText.trim().split('\n')[0]));
+/** counts Element.animate calls on the detail backdrop image, the button rows and the text parts (init script) */
+function countAnimations() {
+  const w = window as unknown as { __anim: { settle: number; items: number; text: number } };
+  w.__anim = { settle: 0, items: 0, text: 0 };
+  const orig = Element.prototype.animate;
+  Element.prototype.animate = function (this: Element, ...args: Parameters<Element['animate']>) {
+    if (this.matches('.tvd .hero img.bg')) w.__anim.settle++;
+    else if (this.matches('.tvd .btns > .it[data-st]')) w.__anim.items++;
+    else if (this.matches('.tvd .info [data-st]')) w.__anim.text++;
+    return orig.apply(this, args);
+  };
+}
+const animated = (page: Page) => page.evaluate(() => (window as unknown as { __anim: { settle: number; items: number; text: number } }).__anim);
 /** the series' next episode is the one with progress (S1:F1, 15 of 45 min) */
 const withProgress = (page: Page) => page.route('**/api/library/nextup*', (r) => r.fulfill({ json: { items: [episodes[0]] } }));
 
@@ -27,11 +40,19 @@ test.describe('TV detail page', () => {
     await expect(page.locator('.tvd .btns a', { hasText: 'Von vorne' })).toHaveAttribute('href', `/watch/${episodes[0]!.id}?t=0`);
     await expect(page.locator('.tvd .btns a', { hasText: 'Folgen & Staffeln' })).toHaveAttribute('href', `/item/${SERIES.id}/episodes`);
     await expect(page.locator('.tvd .resume')).toContainText('S1:F1');
-    // every row is a 56 px target (x root scale) and the column is one width
+    // ruling R16: every row is 56 px at 1080p (2.8rem at the 20 px root), one column width; at least 7 rows fit in the window
     const rows = await page.locator('.tvd .btns > .it').evaluateAll((els) => els.map((e) => e.getBoundingClientRect()).map((r) => ({ h: r.height, w: Math.round(r.width) })));
-    const root = await page.evaluate(() => parseFloat(getComputedStyle(document.documentElement).fontSize));
-    for (const r of rows) expect(r.h).toBeGreaterThanOrEqual(56 * root / 16 - 0.5);
+    for (const r of rows) expect(Math.round(r.h)).toBe(56);
     expect(new Set(rows.map((r) => r.w)).size).toBe(1);
+    const visible = await page.evaluate(() => {
+      const w = document.querySelector('.tvd .win')!.getBoundingClientRect();
+      return [...document.querySelectorAll('.tvd .btns > .it')].filter((e) => { const r = e.getBoundingClientRect(); return r.top >= w.top - 1 && r.bottom <= w.bottom + 1; }).length;
+    });
+    expect(visible).toBeGreaterThanOrEqual(7);
+    // R16: rows are transparent at rest; only the focused row is filled
+    const fills = await page.locator('.tvd .btns > .it :is(a, button).tv-btn').evaluateAll((els) => els.map((e) => getComputedStyle(e).backgroundColor));
+    expect(fills[0]).toBe('rgb(255, 255, 255)');
+    for (const f of fills.slice(1)) expect(f).toBe('rgba(0, 0, 0, 0)');
     // Down walks the list in order, without skipping (the list window glides along); the page itself never scrolls
     const order: string[] = [];
     for (let i = 0; i < 7; i++) {
@@ -64,6 +85,16 @@ test.describe('TV detail page', () => {
     await expect(page.locator('.tvd .btns a', { hasText: 'Trailer' })).toHaveAttribute('href', `/watch/${'a'.repeat(32)}`);
     await expect(page.locator('.tvd .tag')).toHaveText('Träume sind real.');
     await expect(page.locator('.tvd .with')).toHaveText('Mit: Lena Doria, Elsa Prell, Tomas Hart');
+  });
+
+  test('Audio & subtitles is left out when there is nothing to choose (one audio track, no subtitles)', async ({ page, api: _api }) => {
+    await setTv(page);
+    await page.route('**/api/items/*/tracks', (r) => r.fulfill({ json: { audio: [{ language: 'deu', title: 'Deutsch', isDefault: true }], subtitles: [], type: 'Movie' } }));
+    await page.goto(`/item/${MOVIE.id}`);
+    await expect(page.locator('.tvd .btns a.play')).toBeFocused();
+    await page.waitForLoadState('networkidle');
+    await expect.poll(() => labels(page)).toEqual(['Abspielen', 'Mehr davon', 'Merkliste', 'Bewerten', 'Weitere Infos']);
+    await expect(page.locator('.tvd .btns button.tvl')).toBeHidden();
   });
 
   test('Rate opens its options in place, Back closes them and stays on the page', async ({ page, api }) => {
@@ -119,6 +150,15 @@ test.describe('TV detail page', () => {
     await expect(page.locator(`main .rows a.thumb[href="${href}"]:focus`)).toHaveCount(1);
   });
 
+  test('reduced motion: no entry animations at all (no settle, no stagger)', async ({ page, api: _api }) => {
+    await page.addInitScript(countAnimations);
+    await setTv(page);
+    await page.goto(`/item/${MOVIE.id}`);
+    await expect(page.locator('.tvd .btns a.play')).toBeFocused();
+    await page.waitForTimeout(600);
+    expect(await animated(page)).toEqual({ settle: 0, items: 0, text: 0 });
+  });
+
   test.describe('full motion', () => {
     test.use({ reducedMotion: 'no-preference' });
 
@@ -144,11 +184,15 @@ test.describe('TV detail page', () => {
     });
 
     test('the detail page enters: the backdrop settles and the text and buttons stagger in', async ({ page, api: _api }) => {
+      await page.addInitScript(countAnimations);
       await setTv(page);
       await page.route('**/api/items/*/trailer', (r) => r.fulfill({ json: {} }));
       await page.goto(`/item/${MOVIE.id}`);
-      await page.waitForFunction(() => [...document.querySelectorAll('.tvd .btns > .it[data-st]')].some((e) => e.getAnimations().length > 0), null, { polling: 'raf', timeout: 3000 });
       await expect(page.locator('.tvd .btns a.play')).toBeFocused();
+      await expect.poll(() => animated(page)).toMatchObject({ settle: 1, items: expect.any(Number) });
+      const a = await animated(page);
+      expect(a.items).toBeGreaterThanOrEqual(5); // every button row
+      expect(a.text).toBeGreaterThanOrEqual(3); // title, meta, synopsis ...
     });
   });
 });

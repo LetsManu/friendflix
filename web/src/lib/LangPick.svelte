@@ -19,6 +19,9 @@
    * next to the button; the D-pad stays inside them, OK applies at once, Back closes and returns to the button.
    */
   export let tv = false;
+  /** (read-only, bind:available) there is something to choose: more than one audio track or any subtitles */
+  export let available = false;
+  $: available = !!tr && (tr.audio.length > 1 || tr.subtitles.length > 0);
   type Tr = { audio: Array<{ language: string; title: string }>; subtitles: Array<{ language: string; title: string }> };
   let tr: Tr | null = null, loadedFor = '';
   /** language name in the UI language; unknown codes keep the track title from Jellyfin */
@@ -63,7 +66,7 @@
 
 {#if tv}
   <button type="button" class="tv-btn tvl" bind:this={trig} aria-haspopup="true" aria-expanded={open} on:click={() => (open ? hide(true) : void show())}>
-    <Icon name="subtitles" size={28} /><span>{$t('player.controls.tracks')}</span>{#if chosen}<span class="val">{chosen}</span>{/if}
+    <Icon name="subtitles" size={24} /><span>{$t('player.controls.tracks')}</span>{#if chosen}<span class="val">{chosen}</span>{/if}
   </button>
   {#if open}
     <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
@@ -104,11 +107,12 @@
   .tvl:focus-visible .val { color: #3a3a3a; }
   /* the lists: a solid dark surface next to the button (no blur, no shadow-heavy card); they come in from the left */
   .tvlp { position: fixed; z-index: 40; display: flex; gap: 2.5rem; padding: 1.5rem 1.75rem; border-radius: var(--tv-radius); background: rgba(12, 12, 12, .94); animation: tvlp-in var(--tv-d-s) var(--tv-emph-out) both; }
-  .col { display: flex; flex-direction: column; gap: .5rem; min-width: 15rem; max-height: 62vh; overflow-y: auto; scrollbar-width: none; padding: .35rem .6rem; margin: -.35rem -.6rem; }
+  .col { display: flex; flex-direction: column; gap: .4rem; min-width: 15rem; max-height: 62vh; overflow-y: auto; scrollbar-width: none; padding: .35rem .6rem; margin: -.35rem -.6rem; }
   .col::-webkit-scrollbar { display: none; }
-  .hd { margin: 0 0 .5rem; font-size: 1.375rem; font-weight: 500; color: var(--mut); }
-  .tvlp .opt { justify-content: flex-start; flex: none; white-space: nowrap; background: transparent; }
-  .tvlp .opt:focus-visible { background: #fff; color: #000; }
+  .hd { margin: 0 0 .5rem; font-size: 1.1rem; font-weight: 500; color: var(--mut); }
+  .tvlp .opt { justify-content: flex-start; flex: none; white-space: nowrap; background: transparent; min-height: 2.8rem; padding: 0 1.4rem; gap: .7rem; font-size: 1.1rem; color: var(--tv-white-78); }
+  .tvlp .opt:focus-visible { background: #fff; color: #000; transform: scale(1.03); }
+  .tvlp .opt[aria-checked='true']:not(:focus-visible) { color: #fff; }
   .opt .ck { display: grid; place-items: center; width: 1.5rem; opacity: 0; }
   .opt[aria-checked='true'] .ck { opacity: 1; color: var(--acc); }
   .opt[aria-checked='true']:focus-visible .ck { color: inherit; }
