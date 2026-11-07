@@ -162,7 +162,12 @@
   let deskGuard: (() => void) | null = null;
   $: if (typeof window !== 'undefined') syncDeskGuard(desk);
   function syncDeskGuard(on: boolean) {
-    if (on && !deskGuard) deskGuard = frameGuard(DESK_GUARD); // a looser budget than the TV's: a steady 30 fps desktop keeps its motion
+    if (on && !deskGuard) {
+      deskGuard = frameGuard(DESK_GUARD); // a looser budget than the TV's: a steady 30 fps desktop keeps its motion
+      // armed idle: boot work (/api/me, hydrating the rows) is no animation; only real motion (page transitions, glides,
+      // stagger) opens a watch window. On a TV the TV boot's own frameGuard() call pulses as before.
+      framesIdle();
+    }
     // (on a TV the guard stays on: the TV boot starts its own, and stopping this one would stop that too; it is one switch)
     else if (!on && deskGuard) { if (!tv) deskGuard(); deskGuard = null; }
   }

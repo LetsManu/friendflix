@@ -5,7 +5,6 @@
   import { afterNavigate, beforeNavigate } from '$app/navigation';
   import { backdrop, img, logoUrl, primeItem, srcset, type Item } from '#lib/api';
   import { playPrefetch } from '#lib/player/prefetch';
-  import { prefetchModal } from '#lib/lazy';
   import { listIds, toggleList, prefs } from '#lib/stores';
   import { t, tr } from '#lib/i18n';
   import Icon from '#lib/Icon.svelte';
@@ -98,7 +97,6 @@
     });
     startT = setTimeout(startVideo, 1000);
     if (!ep) primeItem(item);
-    prefetchModal();
     void loadThumb();
   });
   onDestroy(() => { releaseBillboard?.(); clearTimeout(startT); clearTimeout(fbT); if (playing || $previewOwner === item.id) stopPreview(item.id); });
@@ -143,6 +141,7 @@
   // ---- closing: Escape, scroll, resize, navigation ----
   function onKey(e: KeyboardEvent) {
     if (e.key !== 'Escape' || document.querySelector('.lm-pop, .ma-pop')) return;
+    e.stopPropagation(); // one Esc closes the preview only (not also the search field or a bar menu behind it)
     dispatch('close', { refocus: Boolean(el?.contains(document.activeElement)) });
   }
   function onScroll(e: Event) {
@@ -190,7 +189,7 @@
         <MoreActions {actions} size={36} title={item.name} label={$t('home.card.moreActionsFor', { name: item.name })}>
           {#if item.type !== 'BoxSet' && !$kidsMode}<ListMenu itemId={listId} variant="row" on:changed={(e) => dispatch('listchanged', e.detail)} />{/if}
         </MoreActions>
-        <a class="round dpv-more" href={detail} aria-label={$t('home.card.moreInfoFor', { name: item.name })} title={$t('home.card.moreInfo')} on:pointerenter={prefetchModal} on:click={more}><Icon name="chevron-down" size={18} /></a>
+        <a class="round dpv-more" href={detail} aria-label={$t('home.card.moreInfoFor', { name: item.name })} title={$t('home.card.moreInfo')} on:click={more}><Icon name="chevron-down" size={18} /></a>
       </span>
     </div>
     <div class="fb" role="status">{#if fb}<span>{fb}</span>{/if}</div>
@@ -222,6 +221,7 @@
   .dpv-art img.spoil { filter: blur(14px); transform: scale(1.1); }
   .dpv-art img.hi { opacity: 0; transition: opacity .15s linear; }
   .dpv-art img.hi.on { opacity: 1; }
+  :global(html.calm) .dpv-art img.hi { transition: none; }
   .pv { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; background: #000; }
   /* the picture fades into the panel on the right and darkens under the title */
   .shade { position: absolute; inset: 0; pointer-events: none; background: linear-gradient(90deg, transparent 70%, var(--dpv-bg)), linear-gradient(transparent 45%, rgba(0, 0, 0, .7)); }

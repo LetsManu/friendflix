@@ -7,6 +7,7 @@
  * transform on the content plays the difference back to 0 with a spring. Where `Element.animate` exists the spring is
  * sampled into keyframes, so it runs on the compositor even while the main thread renders the focus tile.
  */
+import { writable, type Readable } from 'svelte/store';
 import { motionAllowed } from '#lib/preview';
 
 /** shared View Transition names (card / tile artwork -> detail backdrop; the page content) */
@@ -69,6 +70,9 @@ export const TV_GUARD = { slowMs: 32, frames: 3 } as const;
 export const DESK_GUARD = { slowMs: 50, frames: 8 } as const;
 let budget: { slowMs: number; frames: number } = TV_GUARD;
 const now = () => performance.now();
+const trippedStore = writable(false);
+/** true once the frame guard tripped this session (for markup that keys on motionLevel(), e.g. the desktop pill's blur) */
+export const motionTripped: Readable<boolean> = { subscribe: trippedStore.subscribe };
 
 /** 'reduced' with calm mode, prefers-reduced-motion, or once the frame guard tripped (no drift, no stagger, crossfades only) */
 export function motionLevel(): 'full' | 'reduced' {
@@ -87,6 +91,7 @@ function guardFrame() {
   if (slow >= budget.frames) {
     tripped = true;
     document.documentElement.classList.add('tv-motion-reduced');
+    trippedStore.set(true);
     return;
   }
   if (t < watchUntil) guardRaf = requestAnimationFrame(guardFrame);
@@ -126,7 +131,8 @@ export function frameGuard(o: { slowMs: number; frames: number } = TV_GUARD): ()
 }
 /** back to a fresh session (tests) */
 export function resetMotion(): void {
-  guardOn = false; tripped = false; slow = 0; budget = TV_GUARD;
+  guardOn = false; tripped = false; slow = 0; budget = TV_GUARD; watchUntil = 0;
+  trippedStore.set(false);
   if (guardRaf) cancelAnimationFrame(guardRaf);
   guardRaf = 0;
   if (typeof document !== 'undefined') document.documentElement?.classList.remove('tv-motion-reduced');
@@ -204,6 +210,15 @@ export function animateTo(el: HTMLElement, axis: Axis, target: number): () => vo
   const from = halt(el);
   if (motionLevel() === 'reduced') { put(el, axis, target); return () => {}; }
   return start(el, axis, from, target, false);
+}
+
+/**
+ * Puts `el` at `target` at once (whatever spring ran on it stops), remembered like an `animateTo` end value so a later
+ * `animateTo` springs on from here. Nothing moves, so the frame guard does not watch (a first placement, a layout fix-up).
+ */
+export function placeAt(el: HTMLElement, axis: Axis, target: number): void {
+  halt(el);
+  put(el, axis, target);
 }
 
 /**

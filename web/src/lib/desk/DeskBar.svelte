@@ -21,7 +21,7 @@
   import { toast } from '#lib/ui/toast';
   import { prefs } from '#lib/stores';
   import { t } from '#lib/i18n';
-  import { animateTo, glide, halt, motionLevel } from '#lib/tv/motion';
+  import { animateTo, glide, halt, motionLevel, motionTripped, placeAt } from '#lib/tv/motion';
   import { pillSolid } from './bar';
 
   export let path: string;
@@ -46,8 +46,8 @@
   let scrollY = 0;
   $: solid = pillSolid(scrollY, heroPage);
   /** backdrop blur only with the full motion set (calm mode, reduced motion or a slow device: none) */
-  const fullMotion = (_calm: unknown) => motionLevel() === 'full'; // re-read when the prefs (calm mode) arrive
-  $: blur = fullMotion($prefs);
+  const fullMotion = (_calm: unknown, _tripped: boolean) => motionLevel() === 'full'; // re-read when the prefs (calm mode) arrive or the frame guard trips
+  $: blur = fullMotion($prefs, $motionTripped);
   $: still = !blur; // calm mode / reduced motion: the field's fades are off too (the springs check motionLevel themselves)
 
   // ---- dropdowns: categories, notifications, account ----
@@ -111,14 +111,15 @@
   async function placeFill(slide: boolean) {
     await tick();
     const a = track?.querySelector<HTMLElement>(':scope > a[aria-current="page"]');
-    if (!a || !fill || !mid || !capR) { fillOn = false; return; }
+    // (no active tab, or the tab links are hidden in a narrow window: no fill)
+    if (!a || !a.offsetParent || !fill || !mid || !capR) { fillOn = false; return; }
     const instant = !slide || !fillOn || motionLevel() === 'reduced'; // first placement or back from a page without a tab: no slide
     const w = Math.max(CAP, a.offsetWidth);
     mid.style.transition = instant ? 'none' : '';
     mid.style.transform = `scaleX(${+((w - CAP) / MID).toFixed(4)})`;
-    animateTo(fill, 'x', a.offsetLeft);
-    animateTo(capR, 'x', w - CAP);
-    if (instant) fill.getAnimations?.({ subtree: true }).forEach((an) => an.finish());
+    // an instant placement moves nothing, so it must not open a frame-guard watch window (the first one runs during boot)
+    if (instant) { placeAt(fill, 'x', a.offsetLeft); placeAt(capR, 'x', w - CAP); }
+    else { animateTo(fill, 'x', a.offsetLeft); animateTo(capR, 'x', w - CAP); }
     fillOn = true;
   }
   // (guarded on the path itself: bind:this re-binds on updates, so a statement on pill/fill would re-run without end)
@@ -177,6 +178,7 @@
     if (e.relatedTarget) { leaveField(e.relatedTarget === magBtn); return; }
     // no new target: a click on something unfocusable, or the window itself lost the focus (alt-tab, another browser tab).
     // The latter keeps the field and its text as they are (the focus comes back to it with the window): look once it settled.
+    clearTimeout(blurT);
     blurT = setTimeout(() => { if (document.hasFocus() && !inField(document.activeElement)) leaveField(false); }, 0);
   }
   let blurT: ReturnType<typeof setTimeout> | undefined;
@@ -336,7 +338,7 @@
 
 <style>
   /* the bar itself never paints: no band across the page, only the pill and the round buttons carry a fill */
-  .desk { --glass: rgba(18, 20, 24, .58); --glass-solid: rgba(18, 20, 24, .96); --line: rgba(255, 255, 255, .09); --ease: cubic-bezier(.05, .7, .1, 1);
+  .desk { --glass: rgba(18, 20, 24, .58); --glass-solid: rgba(18, 20, 24, .96); --line: rgba(255, 255, 255, .09); --ease: var(--m-emph-out);
     position: fixed; top: 0; left: 0; right: 0; z-index: 50; height: var(--nav-total); box-sizing: border-box;
     display: grid; grid-template-columns: minmax(max-content, 1fr) auto minmax(max-content, 1fr); /* centred while it fits, else it moves aside */ align-items: center; column-gap: 16px;
     padding: var(--safe-top) max(var(--pad-x), var(--safe-right)) 0 max(var(--pad-x), var(--safe-left));
@@ -449,7 +451,8 @@
   .catdrop .glist a:hover { background: transparent; text-decoration: underline; }
 
   @media (max-width: 1100px) { .tab { padding: 0 12px; } }
-  @media (max-width: 900px) { .pill { display: none; } }
+  /* a narrow window: the tab links go, the pill keeps Categories and the search (magnifier + field) */
+  @media (max-width: 900px) { .track > a.tab { display: none; } }
   @media (prefers-reduced-motion: reduce) {
     .half i, .fill, .fill .mid, .desk > .scrim, .psearch input, .x, .track > *, .round, .caret { transition: none; }
     .drop { animation: none; }

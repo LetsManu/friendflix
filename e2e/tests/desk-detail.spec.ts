@@ -260,12 +260,15 @@ test.describe('desktop detail page', () => {
       await freezeClock(page);
       await page.goto('/item/' + MOVIE.id);
       await expect(desk(page).getByRole('heading', { level: 1 })).toHaveText(MOVIE.name);
+      // the 1.5 s trailer timer starts once the backdrop has loaded: let it load before the frozen clock moves
+      await expect(desk(page).locator('[data-vt-art] img.bg')).toHaveClass(/loaded/);
       await page.clock.runFor(1600);
       await expect.poll(async () => { await page.clock.runFor(50); return asked.includes(MOVIE.id); }).toBe(true);
       // Interlace is not cached: the page goes through its loading state and the first screen is a new element
       await page.getByRole('tabpanel', { name: 'Mehr davon' }).getByRole('link', { name: /Interlace/ }).first().click();
       await expect(page).toHaveURL(new RegExp(`/item/${INTERLACE.id}$`));
       await expect(desk(page).getByRole('heading', { level: 1 })).toHaveText(INTERLACE.name);
+      await expect(desk(page).locator('[data-vt-art] img.bg')).toHaveClass(/loaded/);
       await page.clock.runFor(1200);
       expect(asked).not.toContain(INTERLACE.id);
       await page.clock.runFor(400);
@@ -285,7 +288,14 @@ test.describe('desktop detail page', () => {
     // the big title now sits under the bar; between the logo and the pill (and above them) only the page colour shows
     const h1 = (await desk(page).getByRole('heading', { level: 1 }).boundingBox())!;
     expect(h1.y).toBeLessThan(20);
-    const png = await page.screenshot({ clip: { x: 230, y: 0, width: 180, height: 60 } });
+    // sample only where no bar chrome is drawn: from past the logo (and its soft shadow) to before the pill's 1 px border
+    // (fixed coordinates hit the pill border on CI, whose fonts make the tabs a little wider); the title must run under it
+    const logo = (await bar.locator('a.logo').boundingBox())!, pill = (await bar.locator('.pill').boundingBox())!;
+    const x0 = Math.ceil(logo.x + logo.width + 12), x1 = Math.floor(pill.x - 12);
+    expect(x1 - x0).toBeGreaterThan(40);
+    expect(h1.x).toBeLessThan(x1);
+    expect(h1.x + h1.width).toBeGreaterThan(x0);
+    const png = await page.screenshot({ clip: { x: x0, y: 0, width: x1 - x0, height: 60 } });
     const brightest = await page.evaluate(async (b64) => {
       const im = new Image();
       im.src = `data:image/png;base64,${b64}`;

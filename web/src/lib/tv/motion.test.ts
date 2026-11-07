@@ -3,7 +3,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { prefs } from '#lib/stores';
 import { get } from 'svelte/store';
-import { animateTo, decodeFade, DESK_GUARD, framesIdle, watchFrames, deskPagePlan, frameGuard, framesResume, isDetailPage, glide, glideRow, halt, tvPagePlan, motionLevel, nearestScroll, resetMotion, SPRING_C, SPRING_K, springSamples, springStep, stagger } from './motion';
+import { animateTo, decodeFade, DESK_GUARD, framesIdle, watchFrames, deskPagePlan, frameGuard, framesResume, isDetailPage, glide, motionTripped, placeAt, glideRow, halt, tvPagePlan, motionLevel, nearestScroll, resetMotion, SPRING_C, SPRING_K, springSamples, springStep, stagger } from './motion';
 
 /** simulates the spring at 16 ms frames; returns the positions */
 function run(from: { x: number; v: number }, target: number, ms: number, k?: number, c?: number) {
@@ -185,6 +185,41 @@ describe('motionLevel', () => {
     expect(motionLevel()).toBe('full');
     framesIdle(); // (nothing to cancel)
     stop();
+  });
+  it('the desktop guard started idle (framesIdle at layout init) does not watch boot work: slow frames before the first pulse never trip it', () => {
+    const stop = frameGuard(DESK_GUARD);
+    framesIdle();
+    tick(); // (flushes the cancelled first frame)
+    expect(frames.length).toBe(0); // no frame loop until something moves
+    for (let i = 0; i < 20; i++) { frames.push(() => {}); tick(200); } // boot: hydration, /api/me (other rAF users' frames)
+    expect(motionLevel()).toBe('full');
+    const fill = el();
+    placeAt(fill, 'x', 120); // an instant placement (the bar's first pill fill) moves nothing: still no watch window
+    expect(fill.style.transform).toContain('120px');
+    expect(frames.length).toBe(0);
+    for (let i = 0; i < 10; i++) { frames.push(() => {}); tick(200); }
+    expect(motionLevel()).toBe('full');
+    watchFrames(); // the first real animation opens the window: now slow frames count
+    for (let i = 0; i < 8; i++) tick(60);
+    expect(motionLevel()).toBe('reduced');
+    stop();
+  });
+  it('motionTripped follows the guard (markup keyed on motionLevel() re-reads it) and resets with the session', () => {
+    expect(get(motionTripped)).toBe(false);
+    const stop = frameGuard();
+    tick(40); tick(40); tick(40);
+    expect(get(motionTripped)).toBe(true);
+    stop();
+    resetMotion();
+    expect(get(motionTripped)).toBe(false);
+  });
+  it('placeAt is remembered like an animateTo end value: the next animateTo springs on from there', () => {
+    const e = el();
+    placeAt(e, 'x', 50);
+    animateTo(e, 'x', 100);
+    expect(tx(e.style.transform)).toBeGreaterThanOrEqual(50);
+    settle();
+    expect(tx(e.style.transform)).toBe(100);
   });
   it('the TV budget is unchanged: three 33 ms frames in a row trip it (also after a desktop guard ran)', () => {
     frameGuard(DESK_GUARD)();

@@ -119,6 +119,8 @@ test.describe('desktop pill bar', () => {
     const bar = page.locator('[data-desk-bar]');
     const pill = bar.locator('.pill');
     const input = bar.locator('#hq');
+    // the shell renders once /api/me answered: a "/" pressed before that has no bar to open (wait for the placed tab fill)
+    await expect(pill).toHaveClass(/\bon\b/);
     // typed, and the focus leaves for the page before the 220 ms pause ends (one task: deterministic)
     await page.keyboard.press('/');
     await expect(input).toBeFocused();
@@ -163,6 +165,30 @@ test.describe('desktop pill bar', () => {
       await check('on /search, unfocused');
     });
   }
+
+  test('800px (a half-screen window): only the tab links go; the pill keeps the magnifier ("/" opens the field in it) and Categories', async ({ page }) => {
+    await page.setViewportSize({ width: 800, height: 800 });
+    await page.goto('/');
+    const bar = page.locator('[data-desk-bar]');
+    const pill = bar.locator('.pill');
+    await expect(pill).toBeVisible();
+    await expect(pill.getByRole('link', { name: 'Serien' })).toBeHidden();
+    const mag = pill.locator('button.mag');
+    await expect(mag).toBeVisible();
+    const input = bar.locator('#hq');
+    await page.keyboard.press('/');
+    await expect(input).toBeFocused();
+    await expect(input).toBeVisible();
+    await expect(pill).toHaveClass(/open/);
+    // clear of the logo and the round buttons with the field open
+    const logo = (await bar.locator('a.logo').boundingBox())!, box = (await pill.boundingBox())!, right = (await bar.locator('.right').boundingBox())!;
+    expect(box.x).toBeGreaterThanOrEqual(logo.x + logo.width);
+    expect(box.x + box.width).toBeLessThanOrEqual(right.x);
+    await page.keyboard.press('Escape');
+    await expect(pill).not.toHaveClass(/open/);
+    await pill.getByRole('button', { name: 'Kategorien' }).click();
+    await expect(page.getByRole('region', { name: 'Kategorien' }).getByRole('link', { name: 'Drama' })).toBeVisible();
+  });
 
   test('narrow window (1024px) on /search: tabs are usable while the field is unfocused; focusing it makes room by collapsing them', async ({ page }) => {
     await page.setViewportSize({ width: 1024, height: 768 });
