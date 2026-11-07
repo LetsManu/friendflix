@@ -3,7 +3,7 @@
 <script lang="ts">
   import { createEventDispatcher, onDestroy, onMount, tick } from 'svelte';
   import { beforeNavigate } from '$app/navigation';
-  import { api, backdrop, cachedDetail, img, logoUrl, primeDetail, primeItem, setCachedThumb, srcset, type Item, type ItemDetail } from '#lib/api';
+  import { backdrop, img, logoUrl, primeItem, srcset, type Item } from '#lib/api';
   import { playPrefetch } from '#lib/player/prefetch';
   import { prefetchModal } from '#lib/lazy';
   import { listIds, toggleList, prefs } from '#lib/stores';
@@ -12,15 +12,16 @@
   import ListMenu from '#lib/ListMenu.svelte';
   import { kidsMode } from '#lib/kids';
   import RatingButton from '#lib/RatingButton.svelte';
-  import MoreActions, { type MoreAction } from '#lib/MoreActions.svelte';
-  import { toThumb, type Thumb } from '#lib/rating';
+  import MoreActions from '#lib/MoreActions.svelte';
+  import type { Thumb } from '#lib/rating';
   import { openModal } from '#lib/modal';
   import { isSpoiler } from '#lib/spoiler';
   import { loadFacts, type MediaTraits } from '#lib/fresh';
   import QualityChips from '#lib/QualityChips.svelte';
   import { lengthLabel } from '#lib/hover';
   import { reasonText } from '#lib/reason';
-  import { autoplayAllowed, previewFailed, previewOwner, stopPreview, playPreview, toggleSound } from '#lib/preview';
+  import { autoplayAllowed, holdBillboard, previewOwner, stopPreview, playPreview, toggleSound } from '#lib/preview';
+  import { artClick as openFromArt, clipEnv, hoverClipAllowed, portal, previewActions, ratingLoader, releaseClick as release, saveFavorite } from '#lib/hoverShared';
   import { EMPH_OUT, motionLevel } from '#lib/tv/motion';
   import { wideBox } from '#lib/desk/preview';
 
@@ -81,7 +82,10 @@
     return r;
   }
 
+  // the billboard trailer pauses while the preview is open (with or without a clip of its own) and comes back when it closes
+  let releaseBillboard: (() => void) | undefined;
   onMount(() => {
+    releaseBillboard = holdBillboard();
     const r = measure();
     void tick().then(() => {
       ready = true;
@@ -97,31 +101,19 @@
     prefetchModal();
     void loadThumb();
   });
-  onDestroy(() => { clearTimeout(startT); clearTimeout(fbT); if (playing || $previewOwner === item.id) stopPreview(item.id); });
+  onDestroy(() => { releaseBillboard?.(); clearTimeout(startT); clearTimeout(fbT); if (playing || $previewOwner === item.id) stopPreview(item.id); });
 
   /** muted trailer after 1 s, same rules as every other preview (#lib/preview) */
   async function startVideo() {
-    const nav = navigator as Navigator & { connection?: { saveData?: boolean } };
-    if (previewFailed(item.id) || !$prefs.hoverTrailers || !autoplayAllowed() || nav.connection?.saveData || document.hidden) return;
-    if (!(item.trailers || ($prefs.hoverClip && (item.type === 'Movie' || item.type === 'Series')))) return;
+    if (!hoverClipAllowed(item, $prefs, clipEnv(autoplayAllowed()))) return;
     playing = true;
     if (!(await playPreview(item.id, () => pv))) playing = false;
   }
 
-  let thumbTouched = false;
-  async function loadThumb() {
-    const hit = cachedDetail(listId);
-    if (hit) thumb = toThumb(hit.thumb);
-    try {
-      const r = await api<ItemDetail>(`/api/items/${listId}`);
-      if (!thumbTouched) thumb = toThumb(r?.thumb);
-      primeDetail(thumbTouched ? { ...r, thumb } : r);
-    } catch { /* optional */ }
-  }
-  function onThumb(e: CustomEvent<{ value: Thumb }>) { thumbTouched = true; setCachedThumb(listId, e.detail.value); }
+  const rating = ratingLoader(item.seriesId ?? item.id, (v) => (thumb = v));
+  const loadThumb = () => rating.load();
+  function onThumb(e: CustomEvent<{ value: Thumb }>) { rating.changed(e.detail.value); }
   function flash() { fb = tr('home.card.saveFailed'); clearTimeout(fbT); fbT = setTimeout(() => (fb = ''), 4500); }
-  // a mouse click must not leave focus in the tile (keyboard users keep it)
-  const release = (e: MouseEvent) => { if (e.detail > 0) (e.currentTarget as HTMLElement).blur(); };
   async function toggleInList(e: MouseEvent) {
     release(e);
     const was = inList;
@@ -132,22 +124,14 @@
     favBusy = true;
     const want = !fav;
     fav = want;
-    try { await api(`/api/items/${item.id}/favorite`, { method: want ? 'POST' : 'DELETE' }); dispatch('favchange', { item, favorite: want }); }
-    catch { fav = !want; flash(); }
+    if (await saveFavorite(item.id, want)) dispatch('favchange', { item, favorite: want });
+    else { fav = !want; flash(); }
     favBusy = false;
   }
-  let actions: MoreAction[] = [];
-  $: actions = [
-    { id: 'fav', label: fav ? $t('home.card.favRemove') : $t('home.card.favAdd'), icon: 'heart', pressed: fav, run: toggleFav },
-    ...(removable ? [{ id: 'remove', label: $t('home.card.removeResume'), icon: 'x', run: () => { dispatch('remove', item); } }] : []),
-  ];
+  $: actions = previewActions({ fav, removable, t: $t, toggleFav, remove: () => { dispatch('remove', item); } });
   function more(e: MouseEvent) { if (!ep) primeItem(item); dispatch('close', { refocus: false }); openModal(e, detail); }
-  /** a click on the picture (not on one of its buttons) opens the title like ⌄; ctrl/cmd/middle opens it in a new tab */
-  function artClick(e: MouseEvent) {
-    if ((e.target as HTMLElement).closest('button, a')) return;
-    if (e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) { window.open(detail, '_blank', 'noopener'); return; }
-    more(e);
-  }
+  /** a click on the picture (not on one of its buttons) opens the title like ⌄ */
+  const artClick = (e: MouseEvent) => openFromArt(e, detail, more);
 
   // ---- closing: Escape, scroll, resize, navigation ----
   function onKey(e: KeyboardEvent) {
@@ -160,7 +144,6 @@
     dispatch('close', { refocus: false });
   }
   beforeNavigate(() => dispatch('close', { refocus: false }));
-  function portal(node: HTMLElement) { document.body.appendChild(node); return { destroy() { node.remove(); } }; }
   function leaveFocus(e: FocusEvent) { if (!el?.contains(e.relatedTarget as Node | null)) focused = false; }
 </script>
 

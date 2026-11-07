@@ -112,7 +112,9 @@
     if (had && refocus) thumbEl?.focus();
     hoverOwner.update((o) => (o === uid ? '' : o));
   }
-  $: held = overCard || (!wide && focusCard) || overPrev || focusPrev;
+  // the wide desktop preview never holds on focus: a mouse click on its rating or "⋯" leaves focus inside, and it must still close
+  // HOVER_CLOSE_MS after the pointer left (open pickers keep it open through the .lm-pop/.ma-pop check below)
+  $: held = overCard || overPrev || (!wide && (focusCard || focusPrev));
   $: syncHold(hp, held);
   function syncHold(open: boolean, h: boolean) {
     clearTimeout(closeT);
@@ -268,10 +270,10 @@
   .poster .cap { font-size: .8rem; }
   .fb { position: absolute; left: .5rem; right: .5rem; top: 2.2rem; z-index: 4; pointer-events: none; }
   .fb span { display: inline-block; padding: .25rem .6rem; border-radius: 6px; background: rgba(16,20,24,.92); border: 1px solid var(--err, #e5646e); color: #fff; font-size: .78rem; font-weight: 600; }
-  .rm::after { content: ''; position: absolute; inset: -8px; }
+  .rm::after { content: ''; position: absolute; inset: -8px; } /* >=44px hit area, visual size unchanged */
   /* desktop rows: while a card's wide preview is open its neighbours dim to 55 % (a black veil, opacity only) */
   :global(section.row.dk) .media::before { content: ''; position: absolute; inset: 0; z-index: 4; border-radius: var(--radius); background: #000; opacity: 0; pointer-events: none; transition: opacity 200ms ease; }
-  :global(section.row.dk.dpv-dim) .card:not(.dpv-src) .media::before { opacity: .45; } /* >=44px hit area, visual size unchanged */
+  :global(section.row.dk.dpv-dim) .card:not(.dpv-src) .media::before { opacity: .45; }
   .brand { position: absolute; left: .45rem; top: .4rem; z-index: 2; pointer-events: none; display: flex; align-items: center; gap: .3rem; }
   .neu { padding: .05rem .4rem; border-radius: 3px; background: rgba(16,20,24,.78); color: #fff; font-size: .66rem; font-weight: 800; letter-spacing: .06em; text-transform: uppercase; }
   .newep { position: absolute; left: .45rem; top: .45rem; z-index: 2; pointer-events: none; padding: .1rem .45rem; border-radius: 3px; background: var(--acc-fill); color: #fff; font-size: .68rem; font-weight: 800; letter-spacing: .02em; text-transform: uppercase; }

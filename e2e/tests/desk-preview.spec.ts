@@ -33,6 +33,19 @@ async function openOn(page: Page, card: Locator): Promise<Locator> {
   return dpv;
 }
 
+/** media in the test browser: play() / pause() only flip a flag (no real decoding), `paused` reads it */
+async function fakeMedia(page: Page) {
+  await page.addInitScript(() => {
+    const on = new WeakMap<HTMLMediaElement, boolean>();
+    Object.defineProperty(HTMLMediaElement.prototype, 'paused', { configurable: true, get(this: HTMLMediaElement) { return !on.get(this); } });
+    HTMLMediaElement.prototype.play = function (this: HTMLMediaElement) { on.set(this, true); this.dispatchEvent(new Event('playing')); return Promise.resolve(); };
+    HTMLMediaElement.prototype.pause = function (this: HTMLMediaElement) { on.set(this, false); this.dispatchEvent(new Event('pause')); };
+    HTMLMediaElement.prototype.load = function () { /* nothing to fetch */ };
+  });
+  await page.route('**/api/items/*/trailer', (r) => r.fulfill({ json: { url: '/media/trailer-test.mp4' } }));
+  await page.route('**/media/trailer-test.mp4', (r) => r.fulfill({ status: 204 }));
+}
+
 const dimOf = (card: Locator) => card.locator('.media').evaluate((e) => getComputedStyle(e, '::before').opacity);
 
 test.describe('desktop wide hover preview', () => {
@@ -203,6 +216,44 @@ test.describe('desktop wide hover preview', () => {
     await cards.nth(1).locator('a.thumb').hover();
     await page.waitForTimeout(900);
     await expect(page.locator('.dpv')).toHaveCount(0);
+  });
+
+  test('a click on the rating keeps focus inside, yet the preview still closes when the pointer leaves', async ({ page }) => {
+    await page.goto('/');
+    const dpv = await openOn(page, row(page, BECAUSE).locator('article.card').first());
+    await dpv.getByRole('button', { name: 'Bewerten' }).click();
+    expect(await page.evaluate(() => Boolean(document.activeElement?.closest('.dpv')))).toBe(true);
+    await page.mouse.move(4, 400);
+    await expect(page.locator('.dpv')).toHaveCount(0);
+  });
+
+  test.describe('billboard', () => {
+    test.use({ reducedMotion: 'no-preference' });
+    test('a preview without a clip of its own still pauses the billboard trailer; it resumes when the preview closes', async ({ page }) => {
+      await fakeMedia(page);
+      await page.route('**/api/prefs', (r) => r.fulfill({ json: { prefs: { hoverClip: false } } })); // no clip for the hovered card (no trailers either)
+      // a movie in the first row, just under the billboard
+      await page.route('**/api/library/resume', (r) => r.fulfill({ json: { items: [{ ...items[2], positionTicks: 9_000_000_000, playedPercentage: 10 }] } }));
+      await freezeClock(page);
+      await page.goto('/');
+      const bb = page.locator('section.billboard');
+      await expect(bb.locator('img.bg')).toHaveClass(/loaded/);
+      const paused = () => bb.locator('video.hv').evaluate((v: HTMLVideoElement) => v.paused);
+      await page.clock.runFor(1600);
+      await expect.poll(async () => { await page.clock.runFor(50); return paused(); }).toBe(false);
+
+      await page.locator('article.card').first().locator('a.thumb').hover();
+      await page.clock.runFor(600);
+      await expect(page.locator('.dpv')).toHaveCount(1);
+      await expect.poll(async () => { await page.clock.runFor(50); return paused(); }).toBe(true);
+      await page.clock.runFor(1500); // the preview has no clip: still paused a while later
+      expect(await paused()).toBe(true);
+
+      await page.mouse.move(4, 200);
+      await page.clock.runFor(200);
+      await expect(page.locator('.dpv')).toHaveCount(0);
+      await expect.poll(async () => { await page.clock.runFor(50); return paused(); }).toBe(false);
+    });
   });
 
   test('My list toggles from the preview; ⌄ opens /item/[id]', async ({ page, api }) => {
