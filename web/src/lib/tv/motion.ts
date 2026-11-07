@@ -269,3 +269,20 @@ export function tvPagePlan(o: { from: string; to: string; back: boolean; motion:
   const morph = isDetail(o.to) && !isDetail(o.from) ? 'in' : isDetail(o.from) && !isDetail(o.to) && o.back ? 'back' : null;
   return { kind: 'view', slide, morph, sub: 0 };
 }
+
+export type DeskPagePlan = { kind: 'none' | 'fade' | 'view'; morph: 'in' | 'back' | null };
+/** a detail page path (`/item/<id>`), not one of the TV sub-screens below it */
+export const isDetailPage = (p: string): boolean => isDetail(p);
+/**
+ * How a desktop page change animates (spec desktop browse §3, the TV's pattern without rails and sub-screens).
+ * none: calm / reduced motion, or the same page (instant swap). fade: no View Transitions API or the reduced set (a plain
+ * crossfade, no morph). view: into a detail page (also detail -> detail from "More like this") the clicked artwork morphs
+ * into the backdrop (`in`); browser Back / "‹ Back" out of a detail page morphs the backdrop back into the card (`back`).
+ * A link out of a detail page (a deep link's "‹ Back" goes home) has no card to return to: no morph.
+ */
+export function deskPagePlan(o: { from: string; to: string; back: boolean; motion: boolean; level: 'full' | 'reduced'; hasApi: boolean }): DeskPagePlan {
+  if (!o.motion || o.from === o.to) return { kind: 'none', morph: null };
+  if (!o.hasApi || o.level === 'reduced') return { kind: 'fade', morph: null };
+  const morph = o.back && isDetail(o.from) ? 'back' : isDetail(o.to) ? 'in' : null;
+  return { kind: 'view', morph };
+}

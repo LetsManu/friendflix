@@ -2,7 +2,7 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
 <script lang="ts">
   import { createEventDispatcher, onDestroy, onMount, tick } from 'svelte';
-  import { beforeNavigate } from '$app/navigation';
+  import { afterNavigate, beforeNavigate } from '$app/navigation';
   import { backdrop, img, logoUrl, primeItem, srcset, type Item } from '#lib/api';
   import { playPrefetch } from '#lib/player/prefetch';
   import { prefetchModal } from '#lib/lazy';
@@ -129,7 +129,14 @@
     favBusy = false;
   }
   $: actions = previewActions({ fav, removable, t: $t, toggleFav, remove: () => { dispatch('remove', item); } });
-  function more(e: MouseEvent) { if (!ep) primeItem(item); dispatch('close', { refocus: false }); openModal(e, detail); }
+  /** ⌄ / the picture navigated to the detail page: the tile stays until the page swaps, its picture morphs into the backdrop */
+  let opening = false;
+  function more(e: MouseEvent) {
+    if (!ep) primeItem(item);
+    opening = !(e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0);
+    if (!opening) dispatch('close', { refocus: false });
+    openModal(e, detail);
+  }
   /** a click on the picture (not on one of its buttons) opens the title like ⌄ */
   const artClick = (e: MouseEvent) => openFromArt(e, detail, more);
 
@@ -143,7 +150,9 @@
     if (tg instanceof Element && (el?.contains(tg) || tg.closest('.lm-pop, .ma-pop'))) return;
     dispatch('close', { refocus: false });
   }
-  beforeNavigate(() => dispatch('close', { refocus: false }));
+  beforeNavigate(() => { if (!opening) dispatch('close', { refocus: false }); });
+  // (a page that keeps this card, e.g. a cancelled or same-page navigation, still closes the tile)
+  afterNavigate(() => { if (opening) { opening = false; dispatch('close', { refocus: false }); } });
   function leaveFocus(e: FocusEvent) { if (!el?.contains(e.relatedTarget as Node | null)) focused = false; }
 </script>
 

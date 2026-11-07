@@ -3,7 +3,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { prefs } from '#lib/stores';
 import { get } from 'svelte/store';
-import { animateTo, decodeFade, frameGuard, glide, glideRow, halt, tvPagePlan, motionLevel, nearestScroll, resetMotion, SPRING_C, SPRING_K, springSamples, springStep, stagger } from './motion';
+import { animateTo, decodeFade, deskPagePlan, frameGuard, isDetailPage, glide, glideRow, halt, tvPagePlan, motionLevel, nearestScroll, resetMotion, SPRING_C, SPRING_K, springSamples, springStep, stagger } from './motion';
 
 /** simulates the spring at 16 ms frames; returns the positions */
 function run(from: { x: number; v: number }, target: number, ms: number, k?: number, c?: number) {
@@ -389,5 +389,38 @@ describe('decodeFade', () => {
     a.destroy!();
     expect(i.on.load).toBeUndefined();
     html.classList.remove('tv');
+  });
+});
+
+describe('deskPagePlan', () => {
+  const base = { from: '/', to: '/item/1', back: false, motion: true, level: 'full' as const, hasApi: true };
+  it('home -> detail: a view transition with the artwork morph', () => expect(deskPagePlan(base)).toEqual({ kind: 'view', morph: 'in' }));
+  it('detail -> home with Back: the backdrop morphs back into the card', () => {
+    expect(deskPagePlan({ ...base, from: '/item/1', to: '/', back: true })).toEqual({ kind: 'view', morph: 'back' });
+    expect(deskPagePlan({ ...base, from: '/item/1/', to: '/movies', back: true })).toEqual({ kind: 'view', morph: 'back' });
+  });
+  it('detail -> home by a link (deep link + "‹ Back" goes home): no morph', () => expect(deskPagePlan({ ...base, from: '/item/1', to: '/' })).toEqual({ kind: 'view', morph: null }));
+  it('detail -> detail ("More like this"): the card morphs in; Back between two details morphs back', () => {
+    expect(deskPagePlan({ ...base, from: '/item/1', to: '/item/2' })).toEqual({ kind: 'view', morph: 'in' });
+    expect(deskPagePlan({ ...base, from: '/item/2', to: '/item/1', back: true })).toEqual({ kind: 'view', morph: 'back' });
+  });
+  it('pages without a detail page: no morph', () => {
+    expect(deskPagePlan({ ...base, to: '/movies' })).toEqual({ kind: 'view', morph: null });
+    expect(deskPagePlan({ ...base, to: '/item/1/more' })).toEqual({ kind: 'view', morph: null });
+  });
+  it('reduced set or no View Transitions API: a crossfade', () => {
+    expect(deskPagePlan({ ...base, level: 'reduced' })).toEqual({ kind: 'fade', morph: null });
+    expect(deskPagePlan({ ...base, hasApi: false })).toEqual({ kind: 'fade', morph: null });
+  });
+  it('isDetailPage: a detail page, not its sub-screens or other pages', () => {
+    expect(isDetailPage('/item/1')).toBe(true);
+    expect(isDetailPage('/item/1/')).toBe(true);
+    expect(isDetailPage('/item/1/more')).toBe(false);
+    expect(isDetailPage('/')).toBe(false);
+  });
+  it('motion off (calm / reduced motion) or the same page: nothing', () => {
+    expect(deskPagePlan({ ...base, motion: false })).toEqual({ kind: 'none', morph: null });
+    expect(deskPagePlan({ ...base, hasApi: false, motion: false })).toEqual({ kind: 'none', morph: null });
+    expect(deskPagePlan({ ...base, from: '/item/1' })).toEqual({ kind: 'none', morph: null });
   });
 });

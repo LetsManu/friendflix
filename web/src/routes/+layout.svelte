@@ -29,7 +29,7 @@
   import { loadIntroSettings, markSessionSeen, readSessionSeen, shouldPlayIntro } from '#lib/intro';
   import { mobile } from '#lib/viewport';
   import { isRailTop, isTabActive, TV_RAIL } from '#lib/menu';
-  import { frameGuard, motionLevel, tvPagePlan, VT_ART, watchFrames } from '#lib/tv/motion';
+  import { deskPagePlan, frameGuard, isDetailPage, motionLevel, stagger, tvPagePlan, VT_ART, watchFrames } from '#lib/tv/motion';
   import { motionAllowed } from '#lib/preview';
   import TvRail from '#lib/tv/TvRail.svelte';
   import DeskBar from '#lib/desk/DeskBar.svelte';
@@ -232,22 +232,41 @@
   });
 
   // ---- TV focus memory: coming back (Back key) puts the focus on the card you left, a new page focuses its first element ----
+  // Desktop: the same memory for the card (or preview / billboard) a title was opened from; Back focuses that card again.
   type Spot = { href: string; nth: number; sec: string };
   const memo = new Map<string, Spot>();
+  /** the kind of section a link sits in (TV: its classes; desktop: its label, the classes change with lazy rendering) */
+  const secOf = (a: Element) => { const s = a.closest('section'); return !s ? '' : tv ? s.className : s.getAttribute('aria-label') ?? s.className; };
   /** the links to a href, narrowed to those in the same kind of section: rows load lazily, so a link to the same href in a row
    *  that was not there yet when the viewer left (e.g. a genre row's "See all" next to the categories row) must not shift the count */
-  const sameSpot = (href: string, sec: string) => [...document.querySelectorAll<HTMLElement>(`main a[href="${CSS.escape(href)}"]`)].filter((a) => (a.closest('section')?.className ?? '') === sec);
+  const sameSpot = (href: string, sec: string) => [...document.querySelectorAll<HTMLElement>(`main a[href="${CSS.escape(href)}"]`)].filter((a) => secOf(a) === sec);
+  /** desktop: the element the last click / Enter landed on (a hover preview is not focusable, the focus says nothing there) */
+  let lastClick: { el: Element; at: number } | null = null;
+  /** desktop: what the page being left was opened from (morph source and focus memory), set when a navigation starts */
+  let deskFrom: Element | null = null;
+  /** desktop: the clicked element (recent click, else the focus); in the hover preview it stands for the card under it */
+  function deskOrigin(): { click: Element | null; link: HTMLElement | null } {
+    const recent = lastClick && performance.now() - lastClick.at < 1000 && lastClick.el.isConnected ? lastClick.el : null;
+    const c = recent ?? document.activeElement;
+    if (!(c instanceof Element) || c === document.body) return { click: null, link: null };
+    const link = c.closest('.dpv') ? document.querySelector<HTMLElement>('main .card.dpv-src a.thumb')
+      : c.closest('main .card')?.querySelector<HTMLElement>('a.thumb') ?? c.closest<HTMLElement>('main a[href]');
+    return { click: c, link };
+  }
   beforeNavigate(({ from }) => {
-    const el = document.activeElement as HTMLElement | null, href = el?.getAttribute?.('href');
-    if (!tv || !from || !href) return;
+    let el = document.activeElement as HTMLElement | null;
+    if (desk) { const o = deskOrigin(); deskFrom = o.click; el = o.link; }
+    const href = el?.getAttribute?.('href');
+    if (desk && from && !href) memo.delete(from.url.pathname + from.url.search); // left by the bar etc.: no card to come back to
+    if (!(tv || desk) || !from || !href) return;
     // the same title can appear in several rows: remember which occurrence it was
-    const sec = el!.closest('section')?.className ?? '';
+    const sec = secOf(el!);
     const nth = sameSpot(href, sec).indexOf(el!);
     if (nth >= 0) memo.set(from.url.pathname + from.url.search, { href, nth, sec });
   });
   /** waits for the page content (lazy rows, fetched lists), then focuses the remembered link, [data-autofocus] or the first element */
   let settleSeq = 0;
-  async function settleFocus(want?: Spot) {
+  async function settleFocus(want?: Spot, put: (el: HTMLElement) => void = focusEl) {
     const start = document.activeElement, my = ++settleSeq;
     for (let i = 0; i < 16; i++) {
       await new Promise((r) => setTimeout(r, i ? 150 : 30));
@@ -260,7 +279,7 @@
       if (now instanceof HTMLElement && now !== start && now !== document.body && main?.contains(now)) return;
       if (want) {
         const el = sameSpot(want.href, want.sec)[want.nth];
-        if (el) return focusEl(el);
+        if (el) return put(el);
       } else if (main?.querySelector('[data-autofocus]') ? focusFirst(main, false) : i >= 4 && focusFirst(main, false)) return;
     }
   }
@@ -268,8 +287,13 @@
     const { to, type } = nav;
     trackNav({ type, delta: 'delta' in nav ? (nav.delta as number) : undefined, index: historyIndex(history.state) }); // the desktop detail page's "‹ Back" (in-app history or home)
     settleSeq++; // every navigation ends an older settle (also into the player, which places its own focus)
-    if (!tv || !to || /^\/(watch|party)\//.test(to.url.pathname)) return;
-    void settleFocus(type === 'popstate' ? memo.get(to.url.pathname + to.url.search) : undefined);
+    if (!to || /^\/(watch|party)\//.test(to.url.pathname)) return;
+    if (tv) void settleFocus(type === 'popstate' ? memo.get(to.url.pathname + to.url.search) : undefined);
+    // desktop: only Back puts the focus somewhere (on the card the title was opened from; the row keeps its page: no scrolling)
+    else if (desk && type === 'popstate') {
+      const want = memo.get(to.url.pathname + to.url.search);
+      if (want) void settleFocus(want, (el) => el.focus({ preventScroll: true }));
+    }
   });
 
   // ---- page transitions: View Transitions API where available (180 ms crossfade, main content rises 8 px; see app.css) ----
@@ -277,7 +301,7 @@
   const isWatch = (p: string) => p.startsWith('/watch/');
   // A transition started while another runs skips the first one, whose `finished` then settles: only the latest transition may
   // clean up the shared root classes, and each one only takes the shared name off the elements it named (unless the latest named them too).
-  const VT_CLASSES = ['ff-vt', 'ff-vt-play', 'ff-vt-in', 'ff-vt-plain', 'ff-vt-tv', 'ff-vt-slide', 'ff-vt-art', 'ff-vt-sub'];
+  const VT_CLASSES = ['ff-vt', 'ff-vt-play', 'ff-vt-in', 'ff-vt-plain', 'ff-vt-tv', 'ff-vt-slide', 'ff-vt-art', 'ff-vt-sub', 'ff-vt-desk'];
   let vtSeq = 0, vtNamed = new Set<HTMLElement>();
   const vtClear = () => { const root = document.documentElement; root.classList.remove(...VT_CLASSES); root.style.removeProperty('--ff-vt-dx'); };
   /** a new transition begins: whatever an earlier one left on the root goes, and its token is the only one that may clean up */
@@ -316,6 +340,7 @@
       });
     }
     if (tv) return tvTransition(nav, start);
+    if (desk && (isDetailPage(from) || isDetailPage(to))) { const r = deskTransition(nav, start); if (r !== null) return r; }
     if (typeof start !== 'function' || matchMedia('(prefers-reduced-motion: reduce)').matches) return;
     // typing in the header search must not freeze the screen for a crossfade
     if (!nav.to || from === to || to === '/search' || immersive(from) || immersive(to) || intro) return;
@@ -328,7 +353,7 @@
   });
 
   // ---- TV page transitions (spec 5.2; plan in lib/tv/motion.ts): artwork -> detail backdrop morph, rail pages slide, else crossfade ----
-  let tvFadeIn = false; // no View Transitions API: the new page fades in (afterNavigate)
+  let pageFadeIn = false; // no View Transitions API (TV, desktop detail): the new page fades in (afterNavigate)
   const railAt = (p: string) => TV_RAIL.findIndex(([href]) => isTabActive(href, p));
   const onScreen = (el: Element | null | undefined): el is HTMLElement => {
     const r = el?.getBoundingClientRect();
@@ -346,7 +371,7 @@
     const from = nav.from?.url.pathname ?? '', to = nav.to?.url.pathname ?? '';
     if (!nav.to || intro || immersive(from) || immersive(to) || to === '/search') return;
     const plan = tvPagePlan({ from, to, back: nav.type === 'popstate', motion: motionAllowed(), level: motionLevel(), hasApi: typeof start === 'function', rail: [railAt(from), railAt(to)] });
-    if (plan.kind === 'fade') tvFadeIn = true;
+    if (plan.kind === 'fade') pageFadeIn = true;
     if (plan.kind !== 'view' || !start) return;
     const root = document.documentElement, my = vtBegin();
     const named: HTMLElement[] = [];
@@ -378,9 +403,65 @@
       void t.finished.catch(() => undefined).finally(() => vtEnd(my, named));
     });
   }
+  // ---- desktop page transitions (spec desktop browse §3; plan in lib/tv/motion.ts): card / preview / billboard artwork <->
+  // detail backdrop morph under the TV's shared name, then the detail text staggers in ----
+  /** the picture that morphs: the hover preview's art, a card's / "More like this" tile's artwork, or the billboard backdrop */
+  const deskArt = (el: Element | null | undefined): HTMLElement | null => {
+    if (!(el instanceof HTMLElement)) return null;
+    const pv = el.closest('.dpv');
+    const pic = pv ? pv.querySelector<HTMLElement>('.dpv-art img.hi.on') ?? pv.querySelector<HTMLElement>('.dpv-art img:not(.blur):not(.tlogo)')
+      : el.closest('main .card')?.querySelector<HTMLElement>('.thumb img:not(.blur)')
+        ?? el.closest('main .mc')?.querySelector<HTMLElement>('a.im img')
+        ?? el.closest('main section.billboard')?.querySelector<HTMLElement>('[data-vt-art]');
+    return onScreen(pic) ? pic : null;
+  };
+  const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+  /** `null`: not a page change this hook animates (the plain crossfade of the other pages takes it) */
+  function deskTransition(nav: Nav, start: StartVT | undefined): Promise<void> | undefined | null {
+    const from = nav.from?.url.pathname ?? '', to = nav.to?.url.pathname ?? '';
+    if (!nav.to || intro || immersive(from) || immersive(to) || to === '/search') return;
+    const plan = deskPagePlan({ from, to, back: nav.type === 'popstate', motion: motionAllowed(), level: motionLevel(), hasApi: typeof start === 'function' });
+    if (plan.kind === 'none') return;
+    if (plan.kind === 'fade' && !start) { pageFadeIn = true; return; }
+    if (plan.kind === 'view' && !plan.morph) return null; // e.g. a deep link's "‹ Back" home: no card to morph into
+    const root = document.documentElement, my = vtBegin(), named: HTMLElement[] = [];
+    const name = (el: HTMLElement | null) => vtName(el, VT_ART, named);
+    const bd = () => document.querySelector<HTMLElement>('main .dd [data-vt-art]');
+    root.classList.add('ff-vt-desk'); // the reduced set (fade): a plain root crossfade, nothing named
+    const src = plan.morph === 'in' ? deskArt(deskFrom) : null;
+    name(src);
+    if (plan.morph === 'back') name(bd());
+    const want = plan.morph === 'back' ? memo.get(nav.to.url.pathname + nav.to.url.search) : undefined;
+    return new Promise<void>((resolve) => {
+      const t = start!.call(document, async () => {
+        resolve();
+        // the screen holds still until the new page is there: never longer than 800 ms (same budget as the TV)
+        const until = performance.now() + 800;
+        await Promise.race([nav.complete.catch(() => undefined), sleep(800)]);
+        if (my !== vtSeq || !plan.morph) return; // a newer transition took over meanwhile: name nothing for this one
+        // the old side lets go of the name first: detail -> detail keeps the same backdrop element, a name must exist once
+        for (const el of named) el.style.removeProperty('view-transition-name');
+        if (plan.morph === 'in') {
+          // the detail page renders once its title is there (primed from the card: at once); wait for it within the budget
+          // (timers, not rAF: rendering is paused while the update callback runs)
+          while (performance.now() < until && !(bd() && document.querySelector('main .dd h1'))) await sleep(16);
+          if (src) name(bd());
+          // the text follows the morph: eyebrow, title, meta, synopsis, actions, 40 ms apart (the new page is live under the pseudo tree)
+          stagger([...document.querySelectorAll<HTMLElement>('main .dd [data-st]')], { delay: 160, gap: 40 });
+          return;
+        }
+        // Back: the card it came from, on the row page it was on (rows restore their scroll position as they mount)
+        await tick();
+        let el: HTMLElement | undefined;
+        while (want && !(el = sameSpot(want.href, want.sec)[want.nth]) && performance.now() < until) await sleep(16);
+        name(deskArt(el));
+      });
+      void t.finished.catch(() => undefined).finally(() => vtEnd(my, named));
+    });
+  }
   afterNavigate(() => {
-    if (!tvFadeIn) return;
-    tvFadeIn = false;
+    if (!pageFadeIn) return;
+    pageFadeIn = false;
     const main = document.querySelector('main');
     if (main && typeof main.animate === 'function') main.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 200, easing: 'ease-out' });
   });
@@ -400,6 +481,10 @@
   // lock screen / Control Center / notification drive what plays on the TV
   onMount(() => bindCastMediaSession(castSession, castEngine));
   onMount(() => {
+    // desktop page motion: which element a title was opened from (capture: before the router handles the click)
+    const onClick = (e: MouseEvent) => { if (e.target instanceof Element) lastClick = { el: e.target, at: performance.now() }; };
+    window.addEventListener('click', onClick, true);
+    stops.push(() => window.removeEventListener('click', onClick, true));
     const onNotes = () => void loadNotes();
     window.addEventListener('ff-notes', onNotes);
     const onHelp = () => (help = true); // "Hilfe" on /me

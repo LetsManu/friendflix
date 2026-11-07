@@ -234,3 +234,15 @@ html.tv.tv-motion-reduced { --tv-spring: var(--tv-emph-out); --tv-d-spring: var(
   @keyframes ff-tv-slide-out { to { opacity: 0; transform: translate3d(calc(var(--ff-vt-dx, 16px) * -1), 0, 0); } }
   @keyframes ff-tv-slide-in { from { opacity: 0; transform: translate3d(var(--ff-vt-dx, 16px), 0, 0); } }
 }
+
+/* ---- desktop detail transitions (spec desktop browse §3; +layout.svelte deskTransition, plan in lib/tv/motion.ts). The TV's
+   timing: the screen crossfades in 200 ms while the clicked artwork (card, hover preview or billboard; named ff-tv-art inline for
+   this one transition) grows into the detail backdrop over 480 ms, cover-fitted; Back plays it in reverse. ---- */
+@media (prefers-reduced-motion: no-preference) {
+  /* the TV's motion tokens (--tv-d-s 200, --tv-d-m 320, --tv-d-l 480 ms; --tv-emph-*) only exist under html.tv: the values here */
+  html.ff-vt-desk::view-transition-group(root) { animation-duration: 200ms; }
+  html.ff-vt-desk::view-transition-old(root) { animation-duration: 140ms; animation-timing-function: cubic-bezier(.3, 0, .8, .15); }
+  html.ff-vt-desk::view-transition-new(root) { animation-duration: 200ms; animation-timing-function: ease-out; }
+  html.ff-vt-desk::view-transition-group(ff-tv-art) { animation-duration: 480ms; animation-timing-function: cubic-bezier(.05, .7, .1, 1); }
+  html.ff-vt-desk::view-transition-old(ff-tv-art), html.ff-vt-desk::view-transition-new(ff-tv-art) { animation-duration: 320ms; height: 100%; object-fit: cover; overflow: clip; }
+}

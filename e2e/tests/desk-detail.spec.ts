@@ -349,3 +349,137 @@ test.describe('desktop detail page', () => {
     await expect(page).toHaveURL(/127\.0\.0\.1:\d+\/$/);
   });
 });
+
+/** Page motion (spec desktop browse §3 "Motion in" / "Motion back"; +layout.svelte deskTransition, lib/tv/motion.ts deskPagePlan). */
+test.describe('desktop page motion', () => {
+  test.use({ reducedMotion: 'no-preference' });
+  test.beforeEach(async ({ page }) => {
+    await page.addInitScript(() => localStorage.setItem('ff-intro:p1', JSON.stringify({ show: false, sound: false })));
+    await page.route('**/api/items/*/trailer', (r) => r.fulfill({ json: {} })); // no clips: nothing plays over the pictures
+    // every view transition: where the shared artwork name (ff-tv-art) sits when the old page is captured and in the new page
+    await page.addInitScript(() => {
+      type Rec = { old: string[]; new: string[] | null };
+      const w = window as unknown as { __vt: Rec[] };
+      w.__vt = [];
+      const proto = Document.prototype as unknown as { startViewTransition?: (this: Document, cb: () => unknown) => unknown };
+      const orig = proto.startViewTransition;
+      if (!orig) return;
+      const where = (e: Element) => (e.closest('.dd') ? 'detail' : e.closest('.dpv') ? 'preview' : e.closest('section.billboard') ? 'billboard' : e.closest('.card') ? 'card' : e.tagName.toLowerCase());
+      const named = () => [...document.querySelectorAll('body *')].filter((e) => getComputedStyle(e).viewTransitionName === 'ff-tv-art').map(where);
+      proto.startViewTransition = function (this: Document, cb: () => unknown) {
+        const rec: Rec = { old: named(), new: null };
+        w.__vt.push(rec);
+        return orig.call(this, async () => { await cb(); rec.new = named(); });
+      };
+    });
+  });
+  const vts = (page: Page) => page.evaluate(() => (window as unknown as { __vt: Array<{ old: string[]; new: string[] | null }> }).__vt);
+  const because = (page: Page) => page.locator('section.row', { has: page.getByRole('heading', { name: /Weil du/ }) });
+
+  test('clicking a card names the card art and the detail backdrop with the same view-transition-name', async ({ page }) => {
+    await page.goto('/');
+    const card = because(page).locator('article.card').first();
+    await card.scrollIntoViewIfNeeded();
+    await card.locator('a.thumb').click();
+    await expect(page).toHaveURL(new RegExp(`/item/${INTERLACE.id}$`));
+    await expect(desk(page).getByRole('heading', { level: 1 })).toHaveText(INTERLACE.name);
+    await expect.poll(async () => (await vts(page)).at(-1)?.new).toEqual(['detail']);
+    expect((await vts(page)).at(-1)!.old).toEqual(['card']);
+    await expect(page.locator('html')).not.toHaveClass(/ff-vt/); // cleaned up
+    await expect(page.locator('[style*="view-transition-name"]')).toHaveCount(0);
+
+    // from the hover preview's ⌄: the preview's picture morphs
+    await page.goto('/');
+    const hp = await openPopout(page, because(page).locator('article.card').nth(1).locator('a.thumb'));
+    await hp.getByRole('link', { name: /^Mehr Infos zu / }).click();
+    await expect(page).toHaveURL(/\/item\//);
+    await expect.poll(async () => (await vts(page)).at(-1)?.new).toEqual(['detail']);
+    expect((await vts(page)).at(-1)!.old).toEqual(['preview']);
+
+    // from the billboard's "More info": its backdrop morphs
+    await page.goto('/');
+    await page.locator('section.billboard').getByRole('link', { name: 'Weitere Infos' }).click();
+    await expect(page).toHaveURL(new RegExp(`/item/${MOVIE.id}$`));
+    await expect.poll(async () => (await vts(page)).at(-1)?.new).toEqual(['detail']);
+    expect((await vts(page)).at(-1)!.old).toEqual(['billboard']);
+  });
+
+  test('Back returns to the row, same row page, card focused', async ({ page }) => {
+    await page.goto('/');
+    const row = because(page);
+    await row.scrollIntoViewIfNeeded();
+    await row.getByRole('heading', { name: /Weil du/ }).hover();
+    await row.locator('button.pg.next').click();
+    await expect(row.locator('.pgdots li').nth(1)).toHaveAttribute('aria-current', 'true');
+    await expect.poll(() => row.locator('.strip').evaluate((e) => getComputedStyle(e).transform)).toBe('none');
+    const x = await row.locator('.track').evaluate((e) => e.scrollLeft);
+    const thumb = row.locator('article.card').nth(5).locator('a.thumb');
+    const href = await thumb.getAttribute('href');
+    await thumb.click();
+    await expect(page).toHaveURL(new RegExp(`${href}$`));
+    await expect(desk(page).getByRole('heading', { level: 1 })).toBeVisible();
+
+    await page.locator('a.dback').click(); // in-app history: history.back()
+    await expect(page).toHaveURL(/127\.0\.0\.1:\d+\/$/);
+    await expect(row.locator('article.card').nth(5).locator('a.thumb')).toBeFocused();
+    await expect(row.locator('.pgdots li').nth(1)).toHaveAttribute('aria-current', 'true');
+    expect(Math.abs((await row.locator('.track').evaluate((e) => e.scrollLeft)) - x)).toBeLessThanOrEqual(1);
+    // the backdrop morphed back into this card
+    await expect.poll(async () => (await vts(page)).at(-1)?.new).toEqual(['card']);
+    expect((await vts(page)).at(-1)!.old).toEqual(['detail']);
+    await expect(page.locator('[style*="view-transition-name"]')).toHaveCount(0);
+
+    // browser Back does the same
+    await thumb.click();
+    await expect(page).toHaveURL(new RegExp(`${href}$`));
+    await expect(desk(page).getByRole('heading', { level: 1 })).toBeVisible();
+    await page.goBack();
+    await expect(row.locator('article.card').nth(5).locator('a.thumb')).toBeFocused();
+    await expect.poll(async () => (await vts(page)).at(-1)?.new).toEqual(['card']);
+  });
+
+  test('deep link /item/x then Back link goes to / without a morph', async ({ page }) => {
+    await page.goto('/item/' + MOVIE.id);
+    await expect(desk(page).getByRole('heading', { level: 1 })).toHaveText(MOVIE.name);
+    expect(await vts(page)).toEqual([]); // a deep link renders without any transition
+    await page.locator('a.dback').click();
+    await expect(page).toHaveURL(/127\.0\.0\.1:\d+\/$/);
+    await expect(page.locator('section.billboard')).toBeVisible();
+    for (const r of await vts(page)) { expect(r.old).toEqual([]); expect(r.new ?? []).toEqual([]); }
+  });
+
+  test('after the morph, title/meta/synopsis/actions stagger in (data-st order)', async ({ page }) => {
+    await page.addInitScript(() => {
+      const w = window as unknown as { __st: Array<{ el: Element; delay: number; frames: string }> };
+      w.__st = [];
+      const orig = Element.prototype.animate;
+      Element.prototype.animate = function (this: Element, k: Keyframe[] | PropertyIndexedKeyframes | null, o?: number | KeyframeAnimationOptions) {
+        // the entrance only (the column's own FLIP on a height change moves the same parts by transform alone)
+        if (this.hasAttribute('data-st') && this.closest('.dd') && JSON.stringify(k).includes('"opacity":0')) w.__st.push({ el: this, delay: typeof o === 'object' ? Number(o.delay ?? 0) : 0, frames: JSON.stringify(k) });
+        return orig.call(this, k, o);
+      };
+    });
+    await page.goto('/');
+    const card = because(page).locator('article.card').first();
+    await card.scrollIntoViewIfNeeded();
+    await card.locator('a.thumb').click();
+    await expect(desk(page).getByRole('heading', { level: 1 })).toHaveText(INTERLACE.name);
+    await expect.poll(() => page.evaluate(() => (window as unknown as { __st: unknown[] }).__st.length)).toBeGreaterThanOrEqual(4);
+    const st = await page.evaluate(() => {
+      const w = window as unknown as { __st: Array<{ el: Element; delay: number; frames: string }> };
+      const order = [...document.querySelectorAll('.dd [data-st]')];
+      return { idx: w.__st.map((a) => order.indexOf(a.el)), delays: w.__st.map((a) => a.delay), frames: w.__st.map((a) => a.frames), n: order.length };
+    });
+    expect(st.idx).toEqual([...Array(st.n).keys()]); // every part once, in data-st order
+    for (let i = 1; i < st.delays.length; i++) expect(st.delays[i]! - st.delays[i - 1]!).toBe(40);
+    expect(st.delays[0]).toBeGreaterThan(0); // after the morph got going
+    expect(st.frames[0]).toContain('"opacity":0');
+
+    // a deep link renders without the stagger
+    await page.evaluate(() => { (window as unknown as { __st: unknown[] }).__st = []; });
+    await page.goto('/item/' + MOVIE.id);
+    await expect(desk(page).getByRole('heading', { level: 1 })).toHaveText(MOVIE.name);
+    await page.waitForTimeout(300);
+    expect(await page.evaluate(() => (window as unknown as { __st: unknown[] }).__st.length)).toBe(0);
+  });
+});
