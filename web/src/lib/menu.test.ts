@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { describe, expect, it } from 'vitest';
-import { FOOTER_COLUMNS, HEADER_TABS, MENU_LINKS, groupLinks, isTabActive, linksFor } from './menu';
+import { FOOTER_COLUMNS, HEADER_TABS, MENU_LINKS, groupLinks, isRailTop, isTabActive, linksFor } from './menu';
 
 describe('menu', () => {
   it('every account link stays reachable on /me (grouped)', () => {
@@ -20,5 +20,20 @@ describe('menu', () => {
     expect(isTabActive('/browse/series', '/browse/series')).toBe(true);
     expect(isTabActive('/new', '/newsletter')).toBe(false);
     expect(isTabActive('/watchlist', '/watchlist')).toBe(true);
+  });
+});
+
+describe('isRailTop (TV: Back opens the rail)', () => {
+  it('only the rail destinations themselves, without a filter', () => {
+    for (const p of ['/', '/search', '/browse/series', '/browse/movies', '/watchlist']) expect(isRailTop(p, '')).toBe(true);
+    expect(isRailTop('/browse/movies', '?genre=Drama')).toBe(false);
+    expect(isRailTop('/browse/series/x', '')).toBe(false);
+    expect(isRailTop('/me', '')).toBe(false);
+    expect(isRailTop('/search', '?q=dawn')).toBe(false);
+  });
+  it('app hints in the URL (LG app start, TV preview) do not count as a filter', () => {
+    expect(isRailTop('/', '?ff_app=webos')).toBe(true);
+    expect(isRailTop('/watchlist', '?tv=1')).toBe(true);
+    expect(isRailTop('/browse/movies', '?ff_app=webos&genre=Drama')).toBe(false);
   });
 });

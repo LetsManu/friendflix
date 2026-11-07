@@ -4,6 +4,7 @@
   import { backdrop, srcset, HERO_WIDTHS, type Item } from '#lib/api';
   import { t } from '#lib/i18n';
   import { decodeFade } from '#lib/tv/motion';
+  import { noScroll } from '#lib/tv/clip';
   import Icon from '#lib/Icon.svelte';
 
   /**
@@ -16,7 +17,7 @@
   export let titleId = 'detail-title';
 </script>
 
-<div class="tvs">
+<div class="tvs" use:noScroll>
   <!-- data-vt-bd: the backdrop box stays put while the content slides (html.ff-vt-sub, see app.css) -->
   <div class="hero" data-vt-bd="" aria-hidden="true">
     {#if item.backdrop}
@@ -38,6 +39,8 @@
 
 <style>
   .tvs { position: relative; height: 100vh; overflow: clip; background: var(--bg); color: #fff; display: flex; flex-direction: column; }
+  /* Chromium < 90 (webOS 22) has no overflow: clip: hidden instead (the window's scroll is held at 0, see tv/clip.ts) */
+  @supports not (overflow: clip) { .tvs { overflow: hidden; } }
 
   /* the detail page's backdrop box, much darker: the picture is a tint behind the content, never competing with it */
   .hero { position: absolute; top: 0; right: 0; width: 72vw; height: 100%; overflow: hidden; pointer-events: none; }

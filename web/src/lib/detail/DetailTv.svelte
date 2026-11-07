@@ -13,6 +13,7 @@
   import { tvDetailButtons, type TvButtonId } from '#lib/detail/tvButtons';
   import { tileInfo } from '#lib/tv/focusTile';
   import { animateTo, decodeFade, EMPH_OUT, motionLevel, stagger } from '#lib/tv/motion';
+  import { noScroll } from '#lib/tv/clip';
   import Icon from '#lib/Icon.svelte';
   import QualityChips from '#lib/QualityChips.svelte';
   import RatingButton from '#lib/RatingButton.svelte';
@@ -171,16 +172,18 @@
   let clearT: ReturnType<typeof setTimeout> | undefined;
   $: if (!playing) { framed = false; clearTimeout(clearT); clearT = setTimeout(() => { if (!playing) clearVideo(); }, 450); }
   function ended() {
-    const mine = userTrailer;
+    const mine = userTrailer, a = document.activeElement;
+    // back on the Trailer button only when the focus is still there (or was lost with it): a viewer who moved on keeps their place
+    const keep = !a || a === document.body || Boolean((a as HTMLElement).closest?.('[data-trailer]'));
     onEnded();
-    if (mine) strip?.querySelector<HTMLElement>('[data-trailer]')?.focus({ preventScroll: true });
+    if (mine && keep) strip?.querySelector<HTMLElement>('[data-trailer]')?.focus({ preventScroll: true });
   }
   onDestroy(() => { clearTimeout(clearT); clearVideo(); });
 
   onMount(() => edges());
 </script>
 
-<div class="tvd">
+<div class="tvd" use:noScroll>
   <!-- data-vt-art: the card / tile artwork morphs into this box (View Transition name set by html.ff-vt-art, see app.css);
        data-vt-bd: the same box stays put while a sub-screen slides over it (html.ff-vt-sub) -->
   <div class="hero" data-vt-art="" data-vt-bd="">
@@ -221,7 +224,7 @@
     {#if !ready}
       <div class="win" aria-hidden="true"><div class="btns">{#each [0, 1, 2] as k (k)}<div class="skeleton ph"></div>{/each}</div></div>
     {:else}
-    <div class="win" class:above class:below bind:this={win}>
+    <div class="win" class:above class:below bind:this={win} use:noScroll>
       <div class="btns" role="group" aria-label={$t('tv.detail.actions')} bind:this={strip} on:focusin={follow}>
         {#each ids as id, i (id)}
           <div class="it" data-st hidden={id === 'langs' && !langsOk}>
@@ -295,6 +298,8 @@
 
   /* the button list window: clips vertically only (the focused button may grow sideways), soft fades where more buttons wait */
   .win { flex: 1 1 auto; min-height: 0; margin: 1.5rem -1.5rem 0; padding: .5rem 1.5rem; overflow-x: visible; overflow-y: clip; }
+  /* Chromium < 90 (webOS 22) has no overflow: clip: hidden instead (the window's scroll is held at 0, see tv/clip.ts) */
+  @supports not (overflow: clip) { .tvd, .win { overflow: hidden; } }
   .win.below { -webkit-mask-image: linear-gradient(180deg, #000 calc(100% - 4.5rem), transparent); mask-image: linear-gradient(180deg, #000 calc(100% - 4.5rem), transparent); }
   .win.above { -webkit-mask-image: linear-gradient(0deg, #000 calc(100% - 4.5rem), transparent); mask-image: linear-gradient(0deg, #000 calc(100% - 4.5rem), transparent); }
   .win.above.below { -webkit-mask-image: linear-gradient(180deg, transparent, #000 4.5rem, #000 calc(100% - 4.5rem), transparent); mask-image: linear-gradient(180deg, transparent, #000 4.5rem, #000 calc(100% - 4.5rem), transparent); }

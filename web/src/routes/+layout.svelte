@@ -29,7 +29,7 @@
   import Intro from '#lib/Intro.svelte';
   import { loadIntroSettings, markSessionSeen, readSessionSeen, shouldPlayIntro } from '#lib/intro';
   import { mobile } from '#lib/viewport';
-  import { HEADER_TABS, isTabActive, TV_RAIL } from '#lib/menu';
+  import { HEADER_TABS, isRailTop, isTabActive, TV_RAIL } from '#lib/menu';
   import { frameGuard, motionLevel, tvPagePlan, VT_ART, watchFrames } from '#lib/tv/motion';
   import { motionAllowed } from '#lib/preview';
   import TvRail from '#lib/tv/TvRail.svelte';
@@ -129,7 +129,8 @@
   $: publicPage = path.startsWith('/invite/') || path === '/tv' || path === '/offline' || path === '/pending' || path === '/restore' || path === '/setup' || path === '/login' || path === '/reset' || path === '/confirm-email';
   $: watchPage = path.startsWith('/watch/') || /^\/party\/[^/]+/.test(path); // immersive player pages: no navigation
   $: showRail = tv && !watchPage && !profilesPage && !kidsUi;
-  $: topLevel = path === '/' || path.startsWith('/browse/') || path === '/watchlist' || path === '/search';
+  // only the rail's own destinations, without a filter (a genre page from the home categories row is a drill-down: Back goes back)
+  $: topLevel = !publicPage && isRailTop(path, $page.url.search); // (the prerendered /offline page has no search params)
   $: if (!showRail) railOpen = false;
   $: profilesPage = path === '/profiles' || path === '/welcome'; // full-screen pages without navigation (picker, onboarding)
   $: heroPage = path === '/' || path.startsWith('/item/');
@@ -312,6 +313,7 @@
     }
   }
   afterNavigate(({ to, type }) => {
+    settleSeq++; // every navigation ends an older settle (also into the player, which places its own focus)
     if (!tv || !to || /^\/(watch|party)\//.test(to.url.pathname)) return;
     void settleFocus(type === 'popstate' ? memo.get(to.url.pathname + to.url.search) : undefined);
   });

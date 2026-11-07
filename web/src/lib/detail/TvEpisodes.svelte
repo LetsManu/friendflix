@@ -121,6 +121,8 @@
 
   /* both columns are windows: they clip vertically and glide (lib/tv/follow.ts); the padding is room for the focus scale */
   .win { min-height: 0; margin: 0 -1.5rem; padding: .5rem 1.5rem 5vh; overflow-x: visible; overflow-y: clip; }
+  /* Chromium < 90 (webOS 22) has no overflow: clip: hidden instead (the window's scroll is held at 0, see tv/clip.ts) */
+  @supports not (overflow: clip) { .win { overflow: hidden; } }
   .win:global(.below) { -webkit-mask-image: linear-gradient(180deg, #000 calc(100% - 7rem), transparent calc(100% - 5vh)); mask-image: linear-gradient(180deg, #000 calc(100% - 7rem), transparent calc(100% - 5vh)); }
   .win:global(.above) { -webkit-mask-image: linear-gradient(0deg, #000 calc(100% - 4rem), transparent); mask-image: linear-gradient(0deg, #000 calc(100% - 4rem), transparent); }
   .win:global(.above.below) { -webkit-mask-image: linear-gradient(180deg, transparent, #000 4rem, #000 calc(100% - 7rem), transparent calc(100% - 5vh)); mask-image: linear-gradient(180deg, transparent, #000 4rem, #000 calc(100% - 7rem), transparent calc(100% - 5vh)); }

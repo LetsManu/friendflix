@@ -111,7 +111,7 @@
           <i class="played" style="transform:scaleX({played})"></i>
           {#each marks as m (m.i)}<i class="tick" style="left:{m.pct}%"></i>{/each}
         </div>
-        <i class="knob" style="transform:translate3d({played * trackW}px,0,0)" aria-hidden="true"></i>
+        <i class="knob" style="transform:translate3d({played * trackW}px,0,0)" aria-hidden="true"><i class="kd"></i></i>
         {#if preview.active}
           <i class="marker" style="transform:translate3d({frac(preview.target) * trackW}px,0,0)" aria-hidden="true"></i>
           <div class="pv" style="width:{cardW}px;transform:translate3d({cardX}px,0,0)" data-testid="seek-preview" aria-hidden="true">
@@ -199,10 +199,11 @@
   .played { background: var(--acc); }
   .tick { width: 3px; margin-left: -1.5px; background: rgba(0, 0, 0, .75); }
   .sbar:focus-visible .rl { transform: scaleY(1.5); }
-  .knob { position: absolute; left: -.5rem; top: 50%; width: 1rem; height: 1rem; margin-top: -.5rem; border-radius: 50%; background: #fff; box-shadow: 0 2px 8px rgba(0, 0, 0, .5); opacity: 0; transition: opacity var(--tv-d-xs) ease-out; }
-  .knob { scale: .6; transition: opacity var(--tv-d-xs) ease-out, scale var(--tv-d-spring) var(--tv-spring); }
-  .sbar:focus-visible .knob { opacity: 1; scale: 1; }
-  .seeking .knob { opacity: .5; scale: .6; }
+  /* the knob: the outer box follows the position (translate), the dot inside scales (transform, not the `scale` property: webOS 22/23) */
+  .knob { position: absolute; left: -.5rem; top: 50%; width: 1rem; height: 1rem; margin-top: -.5rem; }
+  .kd { position: absolute; inset: 0; border-radius: 50%; background: #fff; box-shadow: 0 2px 8px rgba(0, 0, 0, .5); opacity: 0; transform: scale(.6); transition: opacity var(--tv-d-xs) ease-out, transform var(--tv-d-spring) var(--tv-spring); }
+  .sbar:focus-visible .kd { opacity: 1; transform: scale(1); }
+  .seeking .kd { opacity: .5; transform: scale(.6); }
   .marker { position: absolute; left: -1.5px; top: 50%; width: 3px; height: 1.6rem; margin-top: -.8rem; border-radius: 2px; background: #fff; box-shadow: 0 0 0 1px rgba(0, 0, 0, .35); }
 
   /* the preview card: above the marker, kept inside the bar; it scales in from .92 with the spring */

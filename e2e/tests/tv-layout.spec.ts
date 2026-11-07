@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import type { Page } from '@playwright/test';
 import { episodes, hex, items, ME, MOVIE, SERIES } from '../mocks/fixtures.js';
+import { asLgApp } from '../mocks/webos.js';
 import { expect, test } from '../fixtures.js';
 
 /** TV layout: a paired television gets the 10-foot design (html.tv) */
@@ -92,6 +93,16 @@ test.describe('TV layout', () => {
       }
       // collapsed items are never spatial targets
       await expect(page.locator('nav.rail')).toHaveAttribute('data-nav-skip', '');
+    });
+
+    test('the open rail closes when the focus leaves it by other means (a page or command focusing the content)', async ({ page, api: _api }) => {
+      const card = await home(page);
+      await card.focus();
+      await page.keyboard.press('ArrowLeft');
+      await open(page);
+      await card.focus(); // not a rail key: e.g. a phone-remote command or a page that focuses itself
+      await closed(page);
+      await expect(card).toBeFocused();
     });
 
     test('OK on Movies navigates', async ({ page, api: _api }) => {
@@ -257,7 +268,7 @@ test.describe('TV layout', () => {
       await expect(page.locator('section.tile')).toContainText('Top 10 · Platz 2');
     });
 
-    test('empty home rows: the tile shows the hero with Play focused and Down reaches the first row that has cards', async ({ page, api: _api }) => {
+    test('empty home rows: the tile shows the hero with Play focused and Down moves into the rows below it', async ({ page, api: _api }) => {
       await setTv(page, true);
       await page.route('**/api/home', (r) => r.fulfill({ json: { parts: { hero: SERIES, resume: [], nextup: [], leaving: [], recs: { items: [], recIds: [], friends: [] }, because: { because: null, items: [], more: [] }, hubs: [], themed: [] }, failed: [] } }));
       await page.goto('/');
@@ -266,7 +277,70 @@ test.describe('TV layout', () => {
       await expect(tile.locator('[data-autofocus]')).toBeFocused();
       await expect(tile).toContainText(SERIES.name);
       await page.keyboard.press('ArrowDown');
-      await expect(page.locator('main .rows .card .thumb:focus, main .rows button:focus, main .rows a:focus')).toHaveCount(1);
+      // the first row below the tile: with the personal rows empty that is a row with cards or the categories row
+      await expect(page.locator('main .rows :is(section.row .card .thumb, section.cr a.cat):focus')).toHaveCount(1);
+    });
+
+    test('rail Account opens the account page; Sign out, settings and devices are reachable with the arrows', async ({ page, api: _api }) => {
+      await setTv(page, true);
+      await page.goto('/');
+      await expect(page.locator('section.tile [data-autofocus]')).toBeFocused();
+      await page.locator('main .card .thumb').first().focus();
+      await page.keyboard.press('ArrowLeft');
+      await expect(page.locator('nav.rail')).toHaveClass(/open/);
+      await page.locator('nav.rail a.acct').focus();
+      await page.keyboard.press('Enter');
+      await expect(page).toHaveURL(/\/me$/);
+      await expect(page.locator('nav.rail')).not.toHaveClass(/open/);
+      await expect(page.locator('nav.rail a.acct')).toHaveAttribute('aria-current', 'page');
+      const out = page.getByRole('button', { name: 'Abmelden' });
+      await expect(out).toBeVisible();
+      await expect(page.locator('main a[href="/settings"]')).toBeVisible();
+      await expect(page.locator('main a[href="/devices"]')).toBeVisible();
+      await expect(page.getByRole('button', { name: 'Server wechseln' })).toHaveCount(0); // only in the LG app
+      // D-pad: everything on the page is reachable with the arrows from its first element (walk every arrow from every reached element)
+      await page.locator('main .notes, main p.muted.pad').first().waitFor(); // the notifications have loaded
+      await page.evaluate(() => document.querySelectorAll<HTMLElement>('main a[href], main button').forEach((e, i) => (e.dataset.k = String(i))));
+      const key = () => page.evaluate(() => (document.activeElement as HTMLElement | null)?.dataset.k ?? '');
+      const seen = new Set<string>(['0']), todo = ['0'];
+      while (todo.length) {
+        const k = todo.shift()!;
+        for (const dir of ['ArrowDown', 'ArrowRight', 'ArrowUp', 'ArrowLeft']) {
+          await page.locator(`main [data-k="${k}"]`).focus();
+          await page.keyboard.press(dir);
+          const to = await key();
+          if (to && !seen.has(to)) { seen.add(to); todo.push(to); }
+        }
+        if (await page.locator('nav.rail.open').count()) await page.keyboard.press('ArrowRight'); // Left at the edge opened the rail
+      }
+      const reached = await page.evaluate((ks) => ks.map((k) => { const e = document.querySelector<HTMLElement>(`main [data-k="${k}"]`)!; return e.getAttribute('href') ?? e.textContent!.trim(); }), [...seen]);
+      for (const want of ['/settings', '/devices', 'Abmelden']) expect(reached).toContain(want);
+    });
+
+    test('LG app: the account page offers Change server', async ({ page, api: _api }) => {
+      await asLgApp(page);
+      await setTv(page, true);
+      await page.goto('/me?ff_app=webos');
+      await expect(page.getByRole('button', { name: 'Server wechseln' })).toBeVisible();
+      await expect(page.getByRole('button', { name: 'Abmelden' })).toBeVisible();
+    });
+
+    test('Back on a genre page opened from the home categories row returns home, to the tile', async ({ page, api: _api }) => {
+      await setTv(page, true);
+      await page.goto('/');
+      await expect(page.locator('section.tile [data-autofocus]')).toBeFocused();
+      const cat = page.locator('main section.cr a.cat').first();
+      await expect(cat).toBeAttached();
+      const href = (await cat.getAttribute('href'))!;
+      await cat.focus();
+      await page.keyboard.press('Enter');
+      await expect(page).toHaveURL((u) => u.pathname + u.search === href);
+      await expect(page.locator('main a, main button').first()).toBeAttached();
+      await page.waitForTimeout(300); // the page has settled its focus
+      await back(page);
+      await expect(page).toHaveURL(/\/$/);
+      await expect(page.locator('nav.rail')).not.toHaveClass(/open/);
+      await expect(page.locator('main section.cr a.cat').first()).toBeFocused();
     });
 
     test('desktop untouched: with tv false the desktop header and the Hero render, no tile or rail', async ({ page, api: _api }) => {

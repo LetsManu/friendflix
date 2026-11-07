@@ -9,7 +9,7 @@ Make FriendFlix comfortable on a TV with a D-pad remote (LG Magic Remote 2025, S
 ## Constraints
 
 - Applies only in TV mode (`html.tv`, set by `+layout.svelte`). Desktop, phone, kids UI and admin do not change.
-- Own look: FriendFlix colours, logo and type. No other service's names, logos or red-on-black branding. Never "Netflix" in user-facing text.
+- Own look: FriendFlix colours, logo and type. No other service's names, logos or red-on-black branding. Never another streaming service's name in user-facing text.
 - Safe area: 96 px left/right, 54 px top/bottom at 1080p (scale with `vw`/`vh`).
 - Text ≥ 28 px at 1080p for body copy on TV; focus targets ≥ 54 px tall.
 - Exactly one focused element. Focus = `scale(1.08)` + 3 px white ring. Nothing else changes on focus.

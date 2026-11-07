@@ -2,7 +2,10 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
 <script lang="ts" module>
   import type { Item } from '#lib/api';
-  /** seasons / episodes stay cached while the player hops from episode to episode */
+  /**
+   * seasons / episodes of the last open: shown at once while the player hops from episode to episode, but every open fetches
+   * them again (watched marks and progress change with each episode), the fresh answer replaces the cached one
+   */
   const seasonCache = new Map<string, Item[]>();
   const episodeCache = new Map<string, Item[]>();
 </script>
@@ -33,20 +36,18 @@
 
   let seasons: Item[] = seasonCache.get(seriesId) ?? [], season = seasonId, episodes: Item[] | null = null, failed = false, seq = 0;
   async function loadSeasons() {
-    if (!seasons.length) {
-      try { seasons = (await api(`/api/items/${seriesId}/seasons`)).items as Item[]; seasonCache.set(seriesId, seasons); } catch { seasons = []; }
-    }
+    try { seasons = (await api(`/api/items/${seriesId}/seasons`)).items as Item[]; seasonCache.set(seriesId, seasons); } catch { /* keep the cached list (or none) */ }
     if (!season) season = seasons[0]?.id ?? '';
     if (!season) void loadEpisodes(''); // no seasons (flat series): all episodes
   }
   async function loadEpisodes(sid: string) {
     const my = ++seq, key = `${seriesId}:${sid}`, hit = episodeCache.get(key);
-    if (hit) { episodes = hit; return; }
-    episodes = null; failed = false;
+    episodes = hit ?? null; failed = false; // the cached row shows at once, the fetch below refreshes it
     try {
       const r = (await api(`/api/items/${seriesId}/episodes${sid ? `?seasonId=${sid}` : ''}`)).items as Item[];
-      if (my === seq) { episodes = r; episodeCache.set(key, r); }
-    } catch { if (my === seq) { episodes = []; failed = true; } }
+      episodeCache.set(key, r);
+      if (my === seq) episodes = r;
+    } catch { if (my === seq && !hit) { episodes = []; failed = true; } }
   }
   $: if (season) void loadEpisodes(season);
 
@@ -141,6 +142,8 @@
   .body { display: grid; grid-template-columns: auto minmax(0, 1fr); column-gap: 3rem; align-items: end; min-height: 0; }
   .seasons { align-self: end; }
   .win { min-height: 0; max-height: 26rem; margin: 0 -1.5rem; padding: .5rem 1.5rem; overflow-x: visible; overflow-y: clip; }
+  /* Chromium < 90 (webOS 22) has no overflow: clip: hidden instead (the window's scroll is held at 0, see tv/clip.ts) */
+  @supports not (overflow: clip) { .win { overflow: hidden; } }
   .seasons .strip { display: flex; flex-direction: column; gap: .5rem; }
   .seasons [data-follow] { display: flex; }
   :global(html.tv) .srow { flex: 1 1 auto; min-height: 3.5rem; min-width: 12rem; padding: 0 1.4rem; font-size: 1.2rem; justify-content: flex-start; transform-origin: left center; white-space: nowrap; }

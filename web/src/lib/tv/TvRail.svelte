@@ -48,6 +48,16 @@
 
   /** the rail opens when it gets focus */
   function onFocusin() { if (!open) open = true; }
+  /**
+   * the focus left the open rail by other means than its keys (a phone-remote command, a page that focuses itself): close it.
+   * A null relatedTarget (focus going nowhere, e.g. a link being removed) or a move inside the rail keeps it open.
+   */
+  function onFocusout(e: FocusEvent) {
+    const to = e.relatedTarget;
+    if (!open || !(to instanceof Node) || nav.contains(to)) return;
+    skipRestore = true; // the focus is already where it should be
+    open = false;
+  }
   function onKeydown(e: KeyboardEvent) {
     if (e.key === 'ArrowRight' && open) { e.preventDefault(); apply('right'); }
   }
@@ -87,7 +97,7 @@
 
 <!-- svelte-ignore a11y-no-noninteractive-element-interactions -->
 <nav class="rail" class:open data-scope={open ? '' : undefined} data-nav-skip={open ? undefined : ''} bind:this={nav} aria-label={$t('tv.rail.label')}
-  on:keydown={onKeydown} on:focusin={onFocusin} on:click={onClick} on:pointermove={onPointerMove} on:pointerleave={onPointerLeave}>
+  on:keydown={onKeydown} on:focusin={onFocusin} on:focusout={onFocusout} on:click={onClick} on:pointermove={onPointerMove} on:pointerleave={onPointerLeave}>
   <ul>
     {#each TV_RAIL as [href, label, icon], i (href)}
       <li class:cur={isTabActive(href, path)} style="--i:{i};--ri:{TV_RAIL.length - 1 - i}"><a {href} aria-current={isTabActive(href, path) ? 'page' : undefined} aria-label={open ? undefined : $t(label)}><span class="ic"><Icon name={icon} size={26} /></span><span class="lb">{$t(label)}</span></a></li>
@@ -95,6 +105,7 @@
     <!-- the active page's coral dot: one element that springs to the current item when the page changes (transform only) -->
     <li class="dot" class:on={cur >= 0} style="transform: translate3d(0, {Math.max(0, cur) * 66}px, 0)" aria-hidden="true"></li>
   </ul>
+  <a class="acct" href="/me" aria-current={path === '/me' || path.startsWith('/me/') ? 'page' : undefined} aria-label={open ? undefined : $t('tv.rail.account')}><span class="ic"><Icon name="user" size={26} /></span><span class="lb">{$t('tv.rail.account')}</span></a>
   <a class="who" href="/profiles" aria-label={$t('tv.rail.profile', { name: who })}><span class="ic"><span class="face" style={faceStyle}>{initial(who)}</span></span><span class="lb">{who}</span></a>
 </nav>
 
@@ -117,6 +128,8 @@
   /* labels slide in from -12 px with a 30 ms stagger top to bottom; they leave bottom to top, faster (70 %) */
   .lb { white-space: nowrap; font-weight: 500; font-size: 1.375rem; opacity: 0; transform: translate3d(-12px, 0, 0); transition: opacity calc(var(--tv-d-s, 200ms) * .7) var(--tv-emph-in, ease) calc(var(--ri, 0) * 21ms), transform calc(var(--tv-d-s, 200ms) * .7) var(--tv-emph-in, ease) calc(var(--ri, 0) * 21ms); }
   .rail.open .lb { opacity: 1; transform: none; transition: opacity var(--tv-d-m, 320ms) var(--tv-emph-out, ease) calc(var(--i, 0) * 30ms), transform var(--tv-d-m, 320ms) var(--tv-emph-out, ease) calc(var(--i, 0) * 30ms); }
+  .acct { margin-bottom: 10px; }
+  .acct .lb { --i: 5; --ri: 1; }
   .who .lb { --i: 6; --ri: 0; }
   :global(html.tv-motion-reduced) .lb { transition-delay: 0s !important; transform: none; }
   /* active page: 6 px coral dot, centred 14 px left of the 26 px icon (the icon starts 15 px into its 56 px cell); on the li so the link's clipping does not cut it */

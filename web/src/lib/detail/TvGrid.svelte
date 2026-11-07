@@ -81,6 +81,8 @@
   :global(html.tv) .ln { margin: .3rem 0 0; font-size: 1.05rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-height: 1.3em; }
 
   .win { flex: 1 1 auto; min-height: 0; margin: 0 -2rem; padding: 1.4rem 2rem 5vh; overflow-x: visible; overflow-y: clip; }
+  /* Chromium < 90 (webOS 22) has no overflow: clip: hidden instead (the window's scroll is held at 0, see tv/clip.ts) */
+  @supports not (overflow: clip) { .win { overflow: hidden; } }
   .win:global(.below) { -webkit-mask-image: linear-gradient(180deg, #000 calc(100% - 9rem), transparent calc(100% - 5vh)); mask-image: linear-gradient(180deg, #000 calc(100% - 9rem), transparent calc(100% - 5vh)); }
   .win:global(.above) { -webkit-mask-image: linear-gradient(0deg, #000 calc(100% - 3rem), transparent); mask-image: linear-gradient(0deg, #000 calc(100% - 3rem), transparent); }
   .win:global(.above.below) { -webkit-mask-image: linear-gradient(180deg, transparent, #000 3rem, #000 calc(100% - 9rem), transparent calc(100% - 5vh)); mask-image: linear-gradient(180deg, transparent, #000 3rem, #000 calc(100% - 9rem), transparent calc(100% - 5vh)); }

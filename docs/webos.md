@@ -123,10 +123,10 @@ Developer Mode runs out after **50 hours**. Before that, open the **Developer Mo
 
 The TV mode has its own layout for the couch: black background, large type, one focus ring that moves with the arrows. Everything works with the arrows, OK and Back.
 
-- **Side menu.** A slim menu sits on the left edge. **◀** from the leftmost card (or **Back** on a page) opens it; **▶** or **Back** closes it. Moving the Magic Remote pointer over the left edge opens it too, and leaving it closes it again without losing the focused card.
-- **Home.** The top shows a focus tile with the featured title and its Play button. Move down into the rows: after you rest on a card for a moment, the tile shows that title (rank in Top 10 rows, "why you see this" lines, progress). After a few more seconds the trailer plays muted inside the tile. This follows the trailer preference of the profile, calm mode, reduced motion and data saver: if any of them says no, the tile stays still. ▲ from the first row returns to the featured title.
-- **Detail page.** A list of large buttons (Play or Resume, Episodes, Audio & subtitles, Rate, My list, More like this, Info and so on, only those that apply). Episodes, More like this, Collection, Extras, Story so far and Info open as their own screens; **Back returns to the button that opened them**. Audio & subtitles and Rate open their options next to the button.
-- **Player.** Any arrow shows the controls with the progress bar focused. ◀/▶ move a preview (thumbnail and time) along the bar; OK, or 1 second without a key, jumps there; Back cancels the preview. **▼** goes to the button row: Episodes, Next episode, Audio & subtitles, Speed and Quality. The **green key** opens Audio & subtitles directly. The **Info key** peeks at the cast; the **blue key**, or Info then OK while paused, opens X-Ray. After 8 seconds of pause the pause screen shows the title and what is on screen.
+- **Side menu.** A slim menu sits on the left edge. **◀** from the leftmost card (or **Back** on Home, Series, Movies, My List and Search; elsewhere Back goes one page back) opens it; **▶** or **Back** closes it. Moving the Magic Remote pointer over the left edge opens it too, and leaving it closes it again without losing the focused card. At the bottom, **Account** opens your page (notifications, settings, devices, admin for admins, **Change server** and **Sign out**) and your profile picture opens the profile picker.
+- **Home.** The top shows a focus tile with the featured title and its Play button. Move down into the rows: after you rest on a card for a moment, the tile shows that title (rank in Top 10 rows, "why you see this" lines, progress). A moment later the trailer plays muted inside the tile. This follows the trailer preference of the profile, calm mode, reduced motion and data saver: if any of them says no, the tile stays still. ▲ from the first row returns to the featured title.
+- **Detail page.** A list of large buttons (Play or Resume, Episodes, Audio & subtitles, Rate, My list, More like this, Info and so on, only those that apply). Episodes, More like this, Collection, Extras, Story so far and Info open as their own screens; **Back returns to the button that opened them**. Audio & subtitles opens its options next to the button; Rate opens in place over the button.
+- **Player.** Any arrow shows the controls with the progress bar focused. ◀/▶ move a preview (thumbnail and time) along the bar; OK, or 1 second without a key, jumps there; Back cancels the preview. **▼** goes to the button row: Episodes, Next episode, Audio & subtitles, Speed and Quality. The **green key** opens Audio & subtitles directly. The **Info key** peeks at the cast; the **blue key** opens X-Ray. After 8 seconds of pause the pause screen shows the title, episode and synopsis.
 - **Motion.** Rows, pages and the detail page glide and fade; with calm mode or reduced motion switched on (profile or TV system setting) focus changes apply at once and only short fades remain.
 
 ## The remote
@@ -148,7 +148,7 @@ In the player (the keys are ignored elsewhere). Every function works with **OK, 
 | Red | 403 | subtitles on or off (the last track used, else the first) |
 | Green | 404 | open Audio & subtitles |
 | Blue | 406 | X-Ray (cast and music of the scene) |
-| Info | `Info` | cast peek; Info then OK while paused opens X-Ray |
+| Info | `Info` | cast peek |
 
 **Back** (461) works everywhere: it goes one level back; in the player it first hides the control bar, then leaves. **On the TV-mode home screen Back opens the side menu first; Back again exits the app.** The control bar stays shown while you move along it and hides 5 seconds after the last key; when it hides it lets go of the selected button, so the next OK always means play/pause. The **Magic Remote** pointer works too: moving it shows the controls, hovering moves the focus ring, a click on a button presses it and a click on the picture plays or pauses. The arrow keys continue from where the pointer was. The general keys are in [tv-mode.md](tv-mode.md#bedienung-am-fernseher).
 
@@ -169,7 +169,7 @@ If no picture appears within **10 seconds** on direct play, the player switches 
 
 Two ways lead to the address form, filled in with the current address:
 
-- **Account menu → Change server.** On webOS 25 the way back through the browser history does not reach the app's start page (the probe on an LG 43QNED82A6B reported `home=fail`), so the entry tells you to restart the app and press OK while the logo shows.
+- **Account → Change server.** In TV mode **Account** sits at the bottom of the side menu (the page has **Change server** above **Sign out**); without TV mode it is in the account menu. On webOS 25 the way back through the browser history does not reach the app's start page (the probe on an LG 43QNED82A6B reported `home=fail`), so the entry tells you to restart the app and press OK while the logo shows.
 - **OK at start.** Every start with a stored address shows the logo with *Press OK to change server* for 3 seconds before the app opens your server. Press **OK** (13), **▲** (38) or the **blue** key (406) during that time to get the form instead.
 
 ## The probe and how to read its line

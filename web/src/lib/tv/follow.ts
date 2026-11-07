@@ -7,6 +7,7 @@
  * The window gets the classes `above` / `below` while there is more content on that side (for edge fades).
  */
 import { animateTo } from '#lib/tv/motion';
+import { noScroll } from '#lib/tv/clip';
 
 /** where the strip has to be (px it is moved up) so the item [top, top + h] is in view with a peek of its neighbours */
 export function followShift(o: { shift: number; view: number; total: number; top: number; h: number; peek: number }): number {
@@ -50,6 +51,7 @@ export function followFocus(win: HTMLElement, opts: Opts = {}) {
     to(followShift({ shift, view: inner(win), total: st.offsetHeight, top: r.top - sr.top, h, peek: h * (o.peek ?? 0.6) }));
   }
   win.addEventListener('focusin', onFocus);
+  const clip = noScroll(win); // old engines: `overflow: hidden` fallback must not scroll the window itself
   // the content grows while it loads (lists, cast, ratings): keep the edge fades honest
   const ro = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(() => edges()) : null;
   const watch = () => { ro?.disconnect(); ro?.observe(win); const st = strip(); if (st) ro?.observe(st); };
@@ -62,6 +64,6 @@ export function followFocus(win: HTMLElement, opts: Opts = {}) {
       watch();
       if (reset) { shift = 0; const st = strip(); if (st) animateTo(st, 'y', 0); edges(); }
     },
-    destroy() { win.removeEventListener('focusin', onFocus); ro?.disconnect(); },
+    destroy() { win.removeEventListener('focusin', onFocus); ro?.disconnect(); clip.destroy(); },
   };
 }

@@ -50,3 +50,12 @@ export const isTabActive = (href: string, path: string) => (href === '/' ? path 
 export const TV_RAIL: Array<[href: string, label: TKey, icon: string]> = [
   ['/search', 'shell.mobile.search', 'search'], ['/', 'shell.nav.home', 'home'], ['/browse/series', 'shell.nav.series', 'tv'], ['/browse/movies', 'shell.nav.movies', 'film'], ['/watchlist', 'shell.nav.myList', 'list'],
 ];
+
+/** app-level hints in the URL (LG app start, TV preview), not a filter: they do not make a page a drill-down */
+const APP_PARAMS = new Set(['ff_app', 'tv']);
+/**
+ * TV: the page is one of the rail's own destinations (Back opens the rail there). Only the exact path counts and without a
+ * filter in the query: a genre page from the home categories row (`/browse/movies?genre=…`) is a drill-down where Back goes back.
+ */
+export const isRailTop = (path: string, search: string): boolean =>
+  TV_RAIL.some(([h]) => h === path) && [...new URLSearchParams(search).keys()].every((k) => APP_PARAMS.has(k));

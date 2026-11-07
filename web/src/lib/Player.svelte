@@ -14,7 +14,7 @@
   import { isBackKey } from '#lib/spatial';
   import { isLgApp } from '#lib/webos/detect';
   import { normaliseLgKey } from '#lib/webos/keys';
-  import { holdSeekStep, isTypingTarget, nextSubtitle, resolveKey, SHORTCUTS, toggleSubtitle, type KeyAction } from '#lib/player/keymap';
+  import { isTypingTarget, nextSubtitle, resolveKey, SHORTCUTS, toggleSubtitle, type KeyAction } from '#lib/player/keymap';
   import { BRIGHTNESS_MIN, brightnessPct, classifyMove, levelFromDrag, registerTap, scrubTarget, TAP_WINDOW, volumeSettable, zoneOf, type Axis, type TapState, type Zone } from '#lib/player/gestures';
   import { creditsStart } from '#lib/player/nextup';
   import { postplayStart } from '#lib/postplay';
@@ -721,6 +721,7 @@
   function allowed(): boolean { if (canControl) return true; flash(denyHint, 1800); return false; }
   function togglePlay() { if (remote) { if (allowed()) castEngine.playPause(); return; } if (!video || !allowed()) return; if (video.paused) video.play().catch(() => undefined); else video.pause(); }
   function seekTo(t: number) {
+    if (sp.active) { clearTimeout(spT); sp = seekCancel(); } // a direct seek (±10 s, wheel, FF/REW, phone) replaces a pending preview
     if (remote) { if (!allowed()) return; castEngine.seek(t); return; } // the engine clamps, reports and mirrors the position
     if (!video || !allowed()) return; video.currentTime = Math.max(0, Math.min(duration || t, t)); }
   function seekBy(d: number, quiet = false) { if (!video || !allowed()) return; seekTo((remote ? current : video.currentTime) + d); if (quiet) announce(d > 0 ? tr('player.secondsForward', { n: d }) : tr('player.secondsBack', { n: -d })); else flash(d > 0 ? `+${d} s` : `−${-d} s`, 700); }
@@ -981,16 +982,13 @@
     if (!video || isTypingTarget(t)) return;
     if ((t.tagName === 'BUTTON' || t.tagName === 'A') && (e.key === ' ' || e.key === 'Enter')) return; // the focused control keeps Space/Enter
     const lg = isLgApp();
-    if (!e.repeat) holdStart = Date.now();
     const a = resolveKey(lg ? { key: normaliseLgKey(e), ctrlKey: e.ctrlKey, metaKey: e.metaKey, altKey: e.altKey, shiftKey: e.shiftKey } : e, { tv: tvMode(), onBody: t === document.body || t === stage, hasSkip: Boolean(skip), hasNext, overlayOpen: overlayOpen(), peekOpen: peek, lg });
     wake();
     if (!a) return;
     e.preventDefault();
-    // TV: holding left/right seeks faster (10 s, then 30 s, then 60 s steps)
-    if (a.type === 'seek' && e.repeat && tvMode() && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) act({ type: 'seek', by: Math.sign(a.by) * holdSeekStep(Date.now() - holdStart) });
-    else act(a);
+    act(a);
   }
-  let holdStart = 0;
+  let holdStart = 0; // TV progress bar: when the left / right key went down (held keys preview faster steps)
   /** Back / Escape (capture phase: the control bar swallows key events): close the shortcut overlay / open menu, then leave the control bar */
   function onBackCapture(e: KeyboardEvent) {
     // TV pause screen: arrows, OK and Back only take it away and bring the controls (play / media keys still act)

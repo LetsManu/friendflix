@@ -122,7 +122,7 @@ html.tv { --nav-h: 76px; --pad-x: 3rem; }
 /* the pointer (LG Magic Remote) stays usable; it hides itself after a few idle seconds */
 html.tv.idle-cursor, html.tv.idle-cursor * { cursor: none !important; }
 html.tv {
-  --bg: #000; --tv-ring: #fff; --tv-btn: #fff; --tv-btn-fg: #000; --tv-btn2: rgba(109, 109, 110, .7); --tv-btn2-fg: #fff;
+  --bg: #000; --tv-ring: #fff;
   --tv-radius: 6px; --tv-ease: cubic-bezier(.2, .8, .2, 1); --tv-t: 180ms; --tv-fade: 280ms; --tv-safe-x: 5vw; --tv-safe-y: 5vh;
   /* spec 5.1: content starts 56 px right of the 96 px rail; text, row titles and the first card share this edge */
   --tv-gutter: 56px; --tv-left: calc(96px + var(--tv-gutter));

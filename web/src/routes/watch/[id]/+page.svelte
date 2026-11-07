@@ -104,7 +104,8 @@
     void tick().then(() => {
       const a = document.activeElement;
       if (a && a !== document.body && !a.closest('.stage')) return;
-      if (a && a.closest('[data-scope], .skipbtn, .tvov')) return;
+      if (a && a.closest('[data-scope], .skipbtn, .tvov, .ctl')) return; // in a control (also with the bar fading out)
+      if (document.querySelector('.ctl.seeking')) return; // a seek preview is running
       document.querySelector<HTMLElement>('.next .go')?.focus({ preventScroll: true });
     });
   }

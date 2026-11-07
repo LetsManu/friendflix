@@ -5,18 +5,13 @@ All notable changes, grouped by what you notice. Each release has its own sectio
 ## [Unreleased]
 
 ### TV
-- **New TV layout.** A side menu (◀ or Back opens it, ▶ or Back closes it, the pointer works too), a focus tile on the home page that shows the title you rest on and plays its trailer after a moment (honours the trailer preference, calm mode, reduced motion and data saver), and a detail page that is a list of large buttons with sub-screens; Back returns to the button you came from.
-- **New TV player controls.** Any arrow shows the controls with the progress bar focused; ◀/▶ preview, OK or one second jumps. ▼ opens a button row (Episodes, Next episode, Audio & subtitles, Speed, Quality). Green opens Audio & subtitles, Info peeks at the cast, blue (or Info then OK while paused) opens X-Ray, and a pause screen appears after 8 s.
-- **Calmer motion.** Rows, pages and focus glide; with calm mode or reduced motion they apply at once.
-
-### TV player
-- **Works with remotes that have no media or colour keys** (the LG Magic Remote of 2025): OK plays and pauses while the control bar is hidden, ◀/▶ jump 10 s and go faster when held, ▼ opens the bar, the scroll wheel over the picture jumps 10 s per notch and Channel ▲ starts the next episode.
+- **New TV layout.** A side menu (◀ or Back opens it, ▶ or Back closes it, the pointer works too) with **Account** at the bottom for notifications, settings, devices, Change server (LG app) and Sign out; a focus tile on the home page that shows the title you rest on and plays its trailer after a moment (honours the trailer preference, calm mode, reduced motion and data saver); and a detail page that is a list of large buttons with sub-screens; Back returns to the button you came from.
+- **No more tiny buttons on cards.** The small remove (×) and actions (⋯) buttons are gone on the TV; **hold OK** on a card for its actions (play, more info, watchlist, favourite, remove from Continue watching). Back closes them, a short OK still opens the title.
+- **New TV player controls.** Any arrow shows the controls with the progress bar focused; ◀/▶ preview a jump (faster when held), OK or one second without a key jumps. ▼ opens a button row (Episodes, Next episode, Audio & subtitles, Speed, Quality). Green opens Audio & subtitles, Info peeks at the cast, blue opens X-Ray, and a pause screen appears after 8 s.
+- **Works with remotes that have no media or colour keys** (the LG Magic Remote of 2025): OK plays and pauses while the control bar is hidden, the arrows reach every control, the scroll wheel over the picture jumps 10 s per notch and Channel ▲ starts the next episode.
 - **OK no longer presses a hidden button.** The control bar lets go of its selected button when it hides, so OK after the bar disappeared pauses instead of, say, toggling subtitles again.
 - **The control bar stays while you use it.** Moving along it with the arrows keeps it shown; it hides 5 s after the last key on the TV (3 s elsewhere).
-
-### TV home
-- **No more tiny buttons on cards.** The small remove (×) and actions (⋯) buttons are gone on the TV; **hold OK** on a card for its actions (play, more info, watchlist, favourite, remove from Continue watching). Back closes them, a short OK still opens the title.
-- **The featured title fits on TV screens that report 1280×720.** Its logo no longer runs under the navigation; the synopsis shows two lines.
+- **Smooth motion.** Rows, pages and focus glide; with calm mode or reduced motion they apply at once.
 
 ### LG TV app
 - **Change server with OK.** The start logo now says *Press OK to change server* for 3 s; OK, ▲ or the blue key open the address form.
