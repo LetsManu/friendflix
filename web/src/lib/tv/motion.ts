@@ -59,6 +59,15 @@ export function nearestScroll(o: { start: number; end: number; padStart: number;
 
 // ---- motion level + frame-budget guard ----
 let guardOn = false, tripped = false, guardRaf = 0, watchUntil = 0, last = 0, slow = 0;
+/** the TV budget: three consecutive frames over 32 ms (under ~30 fps) trip the guard */
+export const TV_GUARD = { slowMs: 32, frames: 3 } as const;
+/**
+ * The desktop budget: a steady 30 fps (VMs, remote desktop, a throttled laptop) is fine; under 20 fps for a sustained stretch
+ * (eight frames in a row, ~0.4 s) is not. A page transition's full-viewport snapshots render a few frames around 50 ms even on
+ * a machine that otherwise holds 60 fps (software rendering); a handful of those must not cost the session its motion.
+ */
+export const DESK_GUARD = { slowMs: 50, frames: 8 } as const;
+let budget: { slowMs: number; frames: number } = TV_GUARD;
 const now = () => performance.now();
 
 /** 'reduced' with calm mode, prefers-reduced-motion, or once the frame guard tripped (no drift, no stagger, crossfades only) */
@@ -73,9 +82,9 @@ function guardFrame() {
   last = t;
   // a hidden page or a huge gap (the TV slept, a tab switch) says nothing about the animation budget
   if (document.hidden || d > 1000) slow = 0;
-  else if (d > 32) slow++;
+  else if (d > budget.slowMs) slow++;
   else slow = 0;
-  if (slow >= 3) {
+  if (slow >= budget.frames) {
     tripped = true;
     document.documentElement.classList.add('tv-motion-reduced');
     return;
@@ -96,17 +105,28 @@ export function watchFrames(): void { pulse(); }
  */
 export function framesResume(): void { last = now(); slow = 0; pulse(); }
 /**
- * Starts the frame-budget guard (once, on TV boot): while things move it watches the rAF deltas, and three consecutive
- * frames over 32 ms drop the session to the reduced set (`html.tv-motion-reduced` in CSS). Returns a stop function.
+ * A page change starts (desktop): until its transition animates, the main thread builds the new page; those long frames are
+ * no animation running slowly, so the current watch window ends here (the transition's `framesResume` opens the next one).
  */
-export function frameGuard(): () => void {
+export function framesIdle(): void {
+  watchUntil = 0; slow = 0;
+  if (guardRaf) cancelAnimationFrame(guardRaf);
+  guardRaf = 0;
+}
+/**
+ * Starts the frame-budget guard (once, on TV boot / while the desktop layout is on): while things move it watches the rAF
+ * deltas, and `frames` consecutive frames over `slowMs` (TV: 3 over 32 ms; desktop: DESK_GUARD) drop the session to the
+ * reduced set (`html.tv-motion-reduced` in CSS). Returns a stop function.
+ */
+export function frameGuard(o: { slowMs: number; frames: number } = TV_GUARD): () => void {
   guardOn = true;
+  budget = { slowMs: o.slowMs, frames: o.frames };
   pulse();
   return () => { guardOn = false; if (guardRaf) cancelAnimationFrame(guardRaf); guardRaf = 0; };
 }
 /** back to a fresh session (tests) */
 export function resetMotion(): void {
-  guardOn = false; tripped = false; slow = 0;
+  guardOn = false; tripped = false; slow = 0; budget = TV_GUARD;
   if (guardRaf) cancelAnimationFrame(guardRaf);
   guardRaf = 0;
   if (typeof document !== 'undefined') document.documentElement?.classList.remove('tv-motion-reduced');

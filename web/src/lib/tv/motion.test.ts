@@ -3,7 +3,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { prefs } from '#lib/stores';
 import { get } from 'svelte/store';
-import { animateTo, decodeFade, deskPagePlan, frameGuard, framesResume, isDetailPage, glide, glideRow, halt, tvPagePlan, motionLevel, nearestScroll, resetMotion, SPRING_C, SPRING_K, springSamples, springStep, stagger } from './motion';
+import { animateTo, decodeFade, DESK_GUARD, framesIdle, watchFrames, deskPagePlan, frameGuard, framesResume, isDetailPage, glide, glideRow, halt, tvPagePlan, motionLevel, nearestScroll, resetMotion, SPRING_C, SPRING_K, springSamples, springStep, stagger } from './motion';
 
 /** simulates the spring at 16 ms frames; returns the positions */
 function run(from: { x: number; v: number }, target: number, ms: number, k?: number, c?: number) {
@@ -159,6 +159,39 @@ describe('motionLevel', () => {
     tick(40); tick(40); tick(16);
     expect(motionLevel()).toBe('full');
     tick(40); tick(40); tick(40); // real slow frames still count
+    expect(motionLevel()).toBe('reduced');
+    stop();
+  });
+  it('the desktop budget: a steady 30 fps (33 ms frames) never trips it, frames under 20 fps (60 ms) do after eight in a row', () => {
+    expect(DESK_GUARD).toEqual({ slowMs: 50, frames: 8 });
+    const stop = frameGuard(DESK_GUARD);
+    for (let i = 0; i < 28; i++) tick(33); // (inside the one-second watch window)
+    expect(motionLevel()).toBe('full');
+    watchFrames();
+    for (let i = 0; i < 7; i++) tick(60);
+    tick(16); // seven slow frames, then a good one: not yet
+    expect(motionLevel()).toBe('full');
+    for (let i = 0; i < 7; i++) tick(60);
+    expect(motionLevel()).toBe('full');
+    tick(60);
+    expect(motionLevel()).toBe('reduced');
+    stop();
+  });
+  it('a page change ends the watch window (framesIdle): building the new page is no slow animation', () => {
+    const stop = frameGuard(DESK_GUARD);
+    for (let i = 0; i < 7; i++) tick(60);
+    framesIdle();
+    for (let i = 0; i < 4; i++) tick(200);
+    expect(motionLevel()).toBe('full');
+    framesIdle(); // (nothing to cancel)
+    stop();
+  });
+  it('the TV budget is unchanged: three 33 ms frames in a row trip it (also after a desktop guard ran)', () => {
+    frameGuard(DESK_GUARD)();
+    const stop = frameGuard();
+    tick(33); tick(33);
+    expect(motionLevel()).toBe('full');
+    tick(33);
     expect(motionLevel()).toBe('reduced');
     stop();
   });

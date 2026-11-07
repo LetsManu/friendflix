@@ -359,20 +359,18 @@ test.describe('desktop page motion', () => {
     // every view transition: where the shared artwork name (ff-tv-art) sits when the old page is captured and in the new page
     await page.addInitScript(() => {
       type Rec = { old: string[]; new: string[] | null };
-      const w = window as unknown as { __vt: Rec[]; __noVT?: boolean };
+      const w = window as unknown as { __vt: Rec[] };
       w.__vt = [];
       const proto = Document.prototype as unknown as { startViewTransition?: (this: Document, cb: () => unknown) => unknown };
       const orig = proto.startViewTransition;
       if (!orig) return;
       const where = (e: Element) => (e.closest('.dd') ? 'detail' : e.closest('.dpv') ? 'preview' : e.closest('section.billboard') ? 'billboard' : e.closest('.card') ? 'card' : e.tagName.toLowerCase());
       const named = () => [...document.querySelectorAll('body *')].filter((e) => getComputedStyle(e).viewTransitionName === 'ff-tv-art').map(where);
-      const wrapped = function (this: Document, cb: () => unknown) {
+      proto.startViewTransition = function (this: Document, cb: () => unknown) {
         const rec: Rec = { old: named(), new: null };
         w.__vt.push(rec);
         return orig.call(this, async () => { await cb(); rec.new = named(); });
       };
-      // window.__noVT: the API looks absent (the page then fades in without a transition)
-      Object.defineProperty(proto, 'startViewTransition', { configurable: true, get: () => (w.__noVT ? undefined : wrapped) });
     });
   });
   const vts = (page: Page) => page.evaluate(() => (window as unknown as { __vt: Array<{ old: string[]; new: string[] | null }> }).__vt);
@@ -417,15 +415,13 @@ test.describe('desktop page motion', () => {
     const x = await row.locator('.track').evaluate((e) => e.scrollLeft);
     const thumb = row.locator('article.card').nth(5).locator('a.thumb');
     const href = await thumb.getAttribute('href');
-    // the way in without the API: no transition the frame guard watches, so a slow test machine (software rendering at
-    // 30 fps) cannot trip it into the reduced set before the Back morph this test is about
-    await page.evaluate(() => { (window as unknown as { __noVT: boolean }).__noVT = true; });
     await thumb.click();
     await expect(page).toHaveURL(new RegExp(`${href}$`));
     await expect(desk(page).getByRole('heading', { level: 1 })).toBeVisible();
 
-    await page.evaluate(() => { (window as unknown as { __noVT: boolean }).__noVT = false; });
-    expect(await vts(page)).toEqual([]);
+    await expect.poll(async () => (await vts(page)).at(-1)?.new).toEqual(['detail']); // the way in morphed
+    // the desktop frame guard tolerates this software-rendered browser (its transitions run near 20 fps): full motion stays
+    await expect(page.locator('html')).not.toHaveClass(/tv-motion-reduced/);
     await page.locator('a.dback').click(); // in-app history: history.back()
     await expect(page).toHaveURL(/127\.0\.0\.1:\d+\/$/);
     await expect(row.locator('article.card').nth(5).locator('a.thumb')).toBeFocused();
@@ -436,14 +432,15 @@ test.describe('desktop page motion', () => {
     expect((await vts(page)).at(-1)!.old).toEqual(['detail']);
     await expect(page.locator('[style*="view-transition-name"]')).toHaveCount(0);
 
-    // browser Back does the same (a session whose frame guard tripped during the way in keeps only the crossfade, as on TV)
+    // browser Back does the same
     await thumb.click();
     await expect(page).toHaveURL(new RegExp(`${href}$`));
     await expect(desk(page).getByRole('heading', { level: 1 })).toBeVisible();
-    const reduced = await page.evaluate(() => document.documentElement.classList.contains('tv-motion-reduced'));
     await page.goBack();
     await expect(row.locator('article.card').nth(5).locator('a.thumb')).toBeFocused();
-    await expect.poll(async () => (await vts(page)).at(-1)?.new).toEqual(reduced ? [] : ['card']);
+    await expect.poll(async () => (await vts(page)).at(-1)?.new).toEqual(['card']);
+    expect((await vts(page)).at(-1)!.old).toEqual(['detail']);
+    await expect(page.locator('html')).not.toHaveClass(/tv-motion-reduced/);
   });
 
   test('deep link /item/x then Back link goes to / without a morph', async ({ page }) => {

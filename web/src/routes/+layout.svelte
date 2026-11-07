@@ -29,7 +29,7 @@
   import { loadIntroSettings, markSessionSeen, readSessionSeen, shouldPlayIntro } from '#lib/intro';
   import { mobile } from '#lib/viewport';
   import { isRailTop, isTabActive, TV_RAIL } from '#lib/menu';
-  import { deskPagePlan, frameGuard, framesResume, isDetailPage, motionLevel, stagger, tvPagePlan, VT_ART, watchFrames } from '#lib/tv/motion';
+  import { DESK_GUARD, deskPagePlan, frameGuard, framesIdle, framesResume, isDetailPage, motionLevel, stagger, tvPagePlan, VT_ART, watchFrames } from '#lib/tv/motion';
   import { motionAllowed } from '#lib/preview';
   import TvRail from '#lib/tv/TvRail.svelte';
   import DeskBar from '#lib/desk/DeskBar.svelte';
@@ -162,7 +162,7 @@
   let deskGuard: (() => void) | null = null;
   $: if (typeof window !== 'undefined') syncDeskGuard(desk);
   function syncDeskGuard(on: boolean) {
-    if (on && !deskGuard) deskGuard = frameGuard();
+    if (on && !deskGuard) deskGuard = frameGuard(DESK_GUARD); // a looser budget than the TV's: a steady 30 fps desktop keeps its motion
     // (on a TV the guard stays on: the TV boot starts its own, and stopping this one would stop that too; it is one switch)
     else if (!on && deskGuard) { if (!tv) deskGuard(); deskGuard = null; }
   }
@@ -265,7 +265,7 @@
   }
   beforeNavigate(({ from }) => {
     let el = document.activeElement as HTMLElement | null;
-    if (desk) { const o = deskOrigin(); deskFrom = o.click; el = o.link; }
+    if (desk) { const o = deskOrigin(); deskFrom = o.click; el = o.link; framesIdle(); } // (the frame guard: a page is being built)
     const href = el?.getAttribute?.('href');
     if (desk && from && !href) memo.delete(from.url.pathname + from.url.search); // left by the bar etc.: no card to come back to
     if (!(tv || desk) || !from || !href) return;
@@ -311,7 +311,7 @@
   const isWatch = (p: string) => p.startsWith('/watch/');
   // A transition started while another runs skips the first one, whose `finished` then settles: only the latest transition may
   // clean up the shared root classes, and each one only takes the shared name off the elements it named (unless the latest named them too).
-  const VT_CLASSES = ['ff-vt', 'ff-vt-play', 'ff-vt-in', 'ff-vt-plain', 'ff-vt-tv', 'ff-vt-slide', 'ff-vt-art', 'ff-vt-sub', 'ff-vt-desk'];
+  const VT_CLASSES = ['ff-vt', 'ff-vt-play', 'ff-vt-in', 'ff-vt-plain', 'ff-vt-tv', 'ff-vt-slide', 'ff-vt-art', 'ff-vt-sub', 'ff-vt-desk', 'ff-vt-desk-back'];
   let vtSeq = 0, vtNamed = new Set<HTMLElement>();
   const vtClear = () => { const root = document.documentElement; root.classList.remove(...VT_CLASSES); root.style.removeProperty('--ff-vt-dx'); };
   /** a new transition begins: whatever an earlier one left on the root goes, and its token is the only one that may clean up */
@@ -440,7 +440,12 @@
     root.classList.add('ff-vt-desk'); // the reduced set (fade): a plain root crossfade, nothing named
     const src = plan.morph === 'in' ? deskArt(deskFrom) : null;
     name(src);
-    if (plan.morph === 'back') name(bd());
+    if (plan.morph === 'back') {
+      name(bd());
+      // rows render in full while the page comes back: a skipped row (content-visibility) cannot take its remembered scroll
+      // position, and its catch-up would need a frame, which the transition holds until the card is captured
+      root.classList.add('ff-vt-desk-back');
+    }
     const want = plan.morph === 'back' ? memo.get(nav.to.url.pathname + nav.to.url.search) : undefined;
     return new Promise<void>((resolve) => {
       const t = start!.call(document, async () => {
@@ -462,9 +467,10 @@
         }
         // Back: the card it came from, on the row page it was on (rows restore their scroll position as they mount)
         await tick();
-        let el: HTMLElement | undefined;
-        while (want && !(el = sameSpot(want.href, want.sec)[want.nth]) && performance.now() < until) await sleep(16);
-        name(deskArt(el));
+        // (on screen: the row has taken its page position and the page its scroll position)
+        let art: HTMLElement | null = null;
+        while (want && !(art = deskArt(sameSpot(want.href, want.sec)[want.nth])) && performance.now() < until) await sleep(16);
+        name(art);
       });
       // the frame guard watches the transition (a desktop that cannot keep up drops to the reduced set), counting from the
       // moment it animates: the screen held for the new page on purpose before that

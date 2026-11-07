@@ -241,6 +241,9 @@ html.tv.tv-motion-reduced { --tv-spring: var(--tv-emph-out); --tv-d-spring: var(
   @keyframes ff-tv-slide-in { from { opacity: 0; transform: translate3d(var(--ff-vt-dx, 16px), 0, 0); } }
 }
 
+/* desktop Back from a detail page (+layout.svelte deskTransition): rows lay out in full while the home page comes back, so each
+   takes its remembered page position at once and the card the backdrop morphs into is where it was (no frame is needed) */
+html.ff-vt-desk-back main section.row { content-visibility: visible; }
 /* ---- desktop detail transitions (spec desktop browse §3; +layout.svelte deskTransition, plan in lib/tv/motion.ts). The TV's
    timing: the screen crossfades in 200 ms while the clicked artwork (card, hover preview or billboard; named ff-tv-art inline for
    this one transition) grows into the detail backdrop over 480 ms, cover-fitted; Back plays it in reverse. ---- */
