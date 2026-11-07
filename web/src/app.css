@@ -33,6 +33,11 @@
   --t-fast: 150ms;
   --t-med: 260ms;
   --ease: cubic-bezier(.2, .7, .2, 1);
+  /* shared motion tokens (TV spec 5.2, desktop browse §4): a spring (slight overshoot, settles in ~420 ms; use with --m-d-spring),
+     emphasised in / out curves (lib/tv/motion.ts EMPH_IN / EMPH_OUT), durations (exits ~70 %). TV reads them as --tv-*. */
+  --m-spring: cubic-bezier(.2, .9, .25, 1.15); --m-d-spring: 420ms;
+  --m-emph-out: cubic-bezier(.05, .7, .1, 1); --m-emph-in: cubic-bezier(.3, 0, .8, .15);
+  --m-d-xs: 120ms; --m-d-s: 200ms; --m-d-m: 320ms; --m-d-l: 480ms;
   color-scheme: dark;
 }
 * { box-sizing: border-box; }
@@ -129,9 +134,10 @@ html.tv {
   --tv-white-88: rgba(255, 255, 255, .88); --tv-white-78: rgba(255, 255, 255, .78); --tv-sep: rgba(255, 255, 255, .4);
   --tv-btn-rest: rgba(255, 255, 255, .14); --tv-card-ring: 0 0 0 3px #fff, 0 18px 40px rgba(0, 0, 0, .55);
   /* spec 5.2 motion tokens: a spring (slight overshoot, settles in ~420 ms; use with --tv-d-spring), emphasised in/out curves, durations (exits ~70 %) */
-  --tv-spring: cubic-bezier(.2, .9, .25, 1.15); --tv-d-spring: 420ms;
-  --tv-emph-out: cubic-bezier(.05, .7, .1, 1); --tv-emph-in: cubic-bezier(.3, 0, .8, .15);
-  --tv-d-xs: 120ms; --tv-d-s: 200ms; --tv-d-m: 320ms; --tv-d-l: 480ms;
+  /* (the values are the shared motion tokens --m-* on :root; the TV names stay, the reduced set below overrides them) */
+  --tv-spring: var(--m-spring); --tv-d-spring: var(--m-d-spring);
+  --tv-emph-out: var(--m-emph-out); --tv-emph-in: var(--m-emph-in);
+  --tv-d-xs: var(--m-d-xs); --tv-d-s: var(--m-d-s); --tv-d-m: var(--m-d-m); --tv-d-l: var(--m-d-l);
 }
 @supports (transition-timing-function: linear(0, 1)) {
   html.tv { --tv-spring: linear(0, .037, .13, .255, .392, .529, .656, .767, .859, .932, .987, 1.025, 1.05, 1.063, 1.068, 1.066, 1.061, 1.053, 1.043, 1.034, 1.025, 1.017, 1.011, 1.006, 1.002, .999, .997, .996, 1); }
@@ -239,10 +245,9 @@ html.tv.tv-motion-reduced { --tv-spring: var(--tv-emph-out); --tv-d-spring: var(
    timing: the screen crossfades in 200 ms while the clicked artwork (card, hover preview or billboard; named ff-tv-art inline for
    this one transition) grows into the detail backdrop over 480 ms, cover-fitted; Back plays it in reverse. ---- */
 @media (prefers-reduced-motion: no-preference) {
-  /* the TV's motion tokens (--tv-d-s 200, --tv-d-m 320, --tv-d-l 480 ms; --tv-emph-*) only exist under html.tv: the values here */
-  html.ff-vt-desk::view-transition-group(root) { animation-duration: 200ms; }
-  html.ff-vt-desk::view-transition-old(root) { animation-duration: 140ms; animation-timing-function: cubic-bezier(.3, 0, .8, .15); }
-  html.ff-vt-desk::view-transition-new(root) { animation-duration: 200ms; animation-timing-function: ease-out; }
-  html.ff-vt-desk::view-transition-group(ff-tv-art) { animation-duration: 480ms; animation-timing-function: cubic-bezier(.05, .7, .1, 1); }
-  html.ff-vt-desk::view-transition-old(ff-tv-art), html.ff-vt-desk::view-transition-new(ff-tv-art) { animation-duration: 320ms; height: 100%; object-fit: cover; overflow: clip; }
+  html.ff-vt-desk::view-transition-group(root) { animation-duration: var(--m-d-s); }
+  html.ff-vt-desk::view-transition-old(root) { animation-duration: calc(var(--m-d-s) * .7); animation-timing-function: var(--m-emph-in); }
+  html.ff-vt-desk::view-transition-new(root) { animation-duration: var(--m-d-s); animation-timing-function: ease-out; }
+  html.ff-vt-desk::view-transition-group(ff-tv-art) { animation-duration: var(--m-d-l); animation-timing-function: var(--m-emph-out); }
+  html.ff-vt-desk::view-transition-old(ff-tv-art), html.ff-vt-desk::view-transition-new(ff-tv-art) { animation-duration: var(--m-d-m); height: 100%; object-fit: cover; overflow: clip; }
 }

@@ -91,6 +91,11 @@ function pulse() {
 /** a compositor animation the guard should watch starts elsewhere (a page / player view transition) */
 export function watchFrames(): void { pulse(); }
 /**
+ * A view transition's animation starts now (its `ready`): the rendering it paused on purpose before (the update callback
+ * waiting for the new page, the capture) is no slow frame. Frame times count from here, and the guard watches what follows.
+ */
+export function framesResume(): void { last = now(); slow = 0; pulse(); }
+/**
  * Starts the frame-budget guard (once, on TV boot): while things move it watches the rAF deltas, and three consecutive
  * frames over 32 ms drop the session to the reduced set (`html.tv-motion-reduced` in CSS). Returns a stop function.
  */

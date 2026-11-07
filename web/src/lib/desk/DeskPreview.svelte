@@ -150,8 +150,12 @@
     if (tg instanceof Element && (el?.contains(tg) || tg.closest('.lm-pop, .ma-pop'))) return;
     dispatch('close', { refocus: false });
   }
-  beforeNavigate(() => { if (!opening) dispatch('close', { refocus: false }); });
-  // (a page that keeps this card, e.g. a cancelled or same-page navigation, still closes the tile)
+  beforeNavigate((nav) => {
+    if (!opening) { dispatch('close', { refocus: false }); return; }
+    // the detail navigation was cancelled or failed (it never swaps the page): the tile closes like for any other navigation
+    nav.complete?.catch(() => { if (!opening) return; opening = false; dispatch('close', { refocus: false }); });
+  });
+  // (a page that keeps this card, e.g. a same-page navigation, still closes the tile)
   afterNavigate(() => { if (opening) { opening = false; dispatch('close', { refocus: false }); } });
   function leaveFocus(e: FocusEvent) { if (!el?.contains(e.relatedTarget as Node | null)) focused = false; }
 </script>

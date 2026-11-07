@@ -3,7 +3,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { prefs } from '#lib/stores';
 import { get } from 'svelte/store';
-import { animateTo, decodeFade, deskPagePlan, frameGuard, isDetailPage, glide, glideRow, halt, tvPagePlan, motionLevel, nearestScroll, resetMotion, SPRING_C, SPRING_K, springSamples, springStep, stagger } from './motion';
+import { animateTo, decodeFade, deskPagePlan, frameGuard, framesResume, isDetailPage, glide, glideRow, halt, tvPagePlan, motionLevel, nearestScroll, resetMotion, SPRING_C, SPRING_K, springSamples, springStep, stagger } from './motion';
 
 /** simulates the spring at 16 ms frames; returns the positions */
 function run(from: { x: number; v: number }, target: number, ms: number, k?: number, c?: number) {
@@ -150,6 +150,17 @@ describe('motionLevel', () => {
     stop();
     tick(40); tick(40); tick(40); tick(40);
     expect(motionLevel()).toBe('full');
+  });
+  it('a view transition held the rendering on purpose: that gap is no slow frame once its animation starts (framesResume)', () => {
+    const stop = frameGuard();
+    tick(16);
+    now += 400; // the update callback waits for the new page: no frames meanwhile
+    framesResume();
+    tick(40); tick(40); tick(16);
+    expect(motionLevel()).toBe('full');
+    tick(40); tick(40); tick(40); // real slow frames still count
+    expect(motionLevel()).toBe('reduced');
+    stop();
   });
   it('the guard only watches while something moves (idle TV: no frame loop)', () => {
     const stop = frameGuard();

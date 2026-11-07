@@ -2,7 +2,7 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
 <script lang="ts">
   import '../app.css';
-  import { onMount, tick } from 'svelte';
+  import { onDestroy, onMount, tick } from 'svelte';
   import { get } from 'svelte/store';
   import { afterNavigate, beforeNavigate, goto, onNavigate } from '$app/navigation';
   import { pageStore } from '#lib/page';
@@ -29,7 +29,7 @@
   import { loadIntroSettings, markSessionSeen, readSessionSeen, shouldPlayIntro } from '#lib/intro';
   import { mobile } from '#lib/viewport';
   import { isRailTop, isTabActive, TV_RAIL } from '#lib/menu';
-  import { deskPagePlan, frameGuard, isDetailPage, motionLevel, stagger, tvPagePlan, VT_ART, watchFrames } from '#lib/tv/motion';
+  import { deskPagePlan, frameGuard, framesResume, isDetailPage, motionLevel, stagger, tvPagePlan, VT_ART, watchFrames } from '#lib/tv/motion';
   import { motionAllowed } from '#lib/preview';
   import TvRail from '#lib/tv/TvRail.svelte';
   import DeskBar from '#lib/desk/DeskBar.svelte';
@@ -157,6 +157,16 @@
   /** desktop shell (pill bar; later the desktop browse pieces): not on TV, phones or kids profiles */
   $: desk = deskUi({ tv, mobile: $mobile, kids: kidsUi });
   $: deskActive.set(desk); // openModal and the detail route follow it (desktop: titles open as the full page)
+  // desktop: the same frame-budget guard as the TV (spec 5.2) while the desktop layout is on; it only samples frames while
+  // something moves (page transitions, row glides, stagger) and drops the session to the reduced set when it cannot keep up
+  let deskGuard: (() => void) | null = null;
+  $: if (typeof window !== 'undefined') syncDeskGuard(desk);
+  function syncDeskGuard(on: boolean) {
+    if (on && !deskGuard) deskGuard = frameGuard();
+    // (on a TV the guard stays on: the TV boot starts its own, and stopping this one would stop that too; it is one switch)
+    else if (!on && deskGuard) { if (!tv) deskGuard(); deskGuard = null; }
+  }
+  onDestroy(() => { if (deskGuard && !tv) deskGuard(); deskGuard = null; });
   $: if (!publicPage) document.documentElement.classList.toggle('tv', tv);
 
   // ---- detail popup: loaded on first use (or prefetched on hover/focus/touch of a card), not part of the layout chunk ----
@@ -456,6 +466,9 @@
         while (want && !(el = sameSpot(want.href, want.sec)[want.nth]) && performance.now() < until) await sleep(16);
         name(deskArt(el));
       });
+      // the frame guard watches the transition (a desktop that cannot keep up drops to the reduced set), counting from the
+      // moment it animates: the screen held for the new page on purpose before that
+      void (t as { ready?: Promise<unknown> }).ready?.then(framesResume, () => undefined);
       void t.finished.catch(() => undefined).finally(() => vtEnd(my, named));
     });
   }
