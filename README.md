@@ -83,7 +83,7 @@ Watching · Discovering · Together · Family and kids · Phone and TV · Admin
 
 #### A home page that feels like a real streaming service
 
-A large billboard with the title logo, then rows such as *Continue Watching*, *Next Episode*, *Recommended by friends*, *Rated by friends*, *Popular this week*, *Because you watched …*, *Top 10* and *Watchlist*. Hover over a card and it pops out with the most important actions: play, add to your list, rate, more info.
+A large billboard with the title logo, then rows such as *Continue Watching*, *Next Episode*, *Recommended by friends*, *Rated by friends*, *Popular this week*, *Because you watched …*, *Top 10* and *Watchlist*. On desktop the billboard plays the trailer (unless calm mode, data saver or your trailer setting says otherwise), the top bar is a floating pill with the menu and a search that grows out of it, and each row pages with arrows and dots. Hover over a card and a wide preview opens with the most important actions: play, add to your list, rate, more info.
 
 Small **labels** on the cards tell you what is new – *New*, *New episode*, *New season*, *Season finale*, *New series*. When the admin knows that a title is about to leave the library, its card says "Only 6 days left" and a **Leaving soon** row collects those titles; everyone who has one on their list or in *Continue Watching* gets a reminder a week and a day before. Nothing is deleted – the date is only an announcement.
 
@@ -93,7 +93,7 @@ Small **labels** on the cards tell you what is new – *New*, *New episode*, *Ne
 
 #### Everything about a title in one place
 
-The detail view shows the description, audio and subtitle languages, cast, which friends recommended or watched it, and – for shows – every season and episode with progress bars. Pick up exactly where you left off. Small chips tell you the **picture and sound** before you press play (4K, HDR, Dolby Vision, Dolby Atmos, 5.1 surround). When a new season is about to start, or you have been away for a few weeks, **The story so far** gives a short recap and where you stopped – and you can hide the card. An **Extras** tab collects trailers and special features from Jellyfin, and every episode has its own **comments** from your friends: comments on an episode you have not seen yet stay blurred until you choose "Spoiler – show anyway".
+On desktop, the detail view is a full page with tabs (and the card glides into it); on phones it opens as a sheet. It shows the description, audio and subtitle languages, cast, which friends recommended or watched it, and – for shows – every season and episode with progress bars. Pick up exactly where you left off. Small chips tell you the **picture and sound** before you press play (4K, HDR, Dolby Vision, Dolby Atmos, 5.1 surround). When a new season is about to start, or you have been away for a few weeks, **The story so far** gives a short recap and where you stopped – and you can hide the card. An **Extras** tab collects trailers and special features from Jellyfin, and every episode has its own **comments** from your friends: comments on an episode you have not seen yet stay blurred until you choose "Spoiler – show anyway".
 
 <table>
   <tr>

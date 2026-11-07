@@ -4,6 +4,15 @@ All notable changes, grouped by what you notice. Each release has its own sectio
 
 ## [Unreleased]
 
+### Desktop
+Part of the desktop redesign that ships with v3.0.0.
+- **Pill top bar.** The header is a floating pill with logo, navigation and profile; search grows out of the pill (Esc closes it).
+- **Billboard with trailer.** The featured title plays its trailer, honouring the trailer preference, calm mode, reduced motion and data saver.
+- **Rows that page.** Rows scroll a page at a time with arrows and dots; Top 10 shows large rank numerals.
+- **Wide hover preview.** Resting on a card opens a wide preview with the main actions (off on narrow windows and touch screens).
+- **Full-page detail with tabs.** More info opens a page instead of a popup.
+- **Card-to-detail animation.** The card glides into the detail page and back, and the page content eases in; calm mode and reduced motion skip it.
+
 ## [2.5.0] – Brezel – 2026-11-07
 
 ### TV
