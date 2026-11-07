@@ -24,10 +24,10 @@ Owner choices (mockups reviewed 2026-11-07): floating pill top bar with search t
 ## 1. Top bar
 
 - New `DeskBar.svelte`, rendered by `+layout.svelte` for desktop instead of today's `<header class="nav">` (phone, TV and kids headers unchanged).
-- Left: logo (links Home). Centre: floating pill with Home, Series, Movies, New & popular, My list (`HEADER_TABS`) plus **Categories** (opens today's categories dropdown: genres, languages, collections). Right: search, notifications (unread badge), profile avatar.
+- Left: logo (links Home). Centre: floating pill with Home, Series, Movies, New & popular, My list (`HEADER_TABS`) plus **Categories** (opens today's categories dropdown: genres, languages, collections). Right: notifications (unread badge), profile avatar.
 - Pill: rounded, `rgba` dark fill, 1 px light border, light blur where allowed. The active tab has a light fill that slides to the newly chosen tab (FLIP via the motion system).
 - Over the billboard the bar has no background; after 24 px of scroll the pill becomes opaque. No full-width bar band at any time.
-- Search: a round icon button. Click or `/` stretches it leftwards into a field (~280 px) with the cursor in it; results show live in a panel under the bar (today's search logic); Enter opens `/search?q=`; Esc, ✕ or clicking outside shrinks it back. Focus returns to the icon.
+- Search lives inside the pill at its right end (magnifier as the last pill item, owner decision 2026-11-07). Click or `/` makes the pill itself grow wider with a spring and opens the search field inside it at the right end, cursor in it; the tabs stay visible where width allows. Typing drives `/search?q=` live (today's search page). Enter opens `/search?q=`; Esc, ✕ or clicking outside shrinks the pill back and focus returns to the magnifier.
 - Profile menu: profiles, account, settings, devices, notifications, admin (admins only), log out — today's account menu, restyled.
 
 ## 2. Home
