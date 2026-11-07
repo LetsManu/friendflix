@@ -114,6 +114,33 @@ test.describe('desktop pill bar', () => {
     await expect(mag).toBeFocused();
   });
 
+  test('off /search: a click elsewhere in the typing pause closes the field and drops the search; the window losing focus keeps it', async ({ page }) => {
+    await page.goto('/watchlist');
+    const bar = page.locator('[data-desk-bar]');
+    const pill = bar.locator('.pill');
+    const input = bar.locator('#hq');
+    // typed, and the focus leaves for the page before the 220 ms pause ends (one task: deterministic)
+    await page.keyboard.press('/');
+    await expect(input).toBeFocused();
+    await input.evaluate((el: HTMLInputElement) => { el.value = 'nol'; el.dispatchEvent(new Event('input', { bubbles: true })); el.blur(); });
+    await expect(pill).not.toHaveClass(/open/);
+    await expect(input).toHaveValue('');
+    await page.waitForTimeout(400); // the dropped search never navigates
+    await expect(page).toHaveURL(/\/watchlist$/);
+
+    // the window loses the focus (alt-tab): the field and its text stay
+    await page.keyboard.press('/');
+    await expect(input).toBeFocused();
+    await input.evaluate((el: HTMLInputElement) => {
+      el.value = 'nol'; el.dispatchEvent(new Event('input', { bubbles: true }));
+      document.hasFocus = () => false; // what a real window blur reports
+      el.blur();
+    });
+    await page.waitForTimeout(50);
+    await expect(pill).toHaveClass(/open/);
+    await expect(input).toHaveValue('nol');
+  });
+
   for (const width of [1024, 1280, 1440]) {
     test(`${width}px: the pill never overlaps the logo or the bell, closed or open`, async ({ page }) => {
       await page.setViewportSize({ width, height: 800 });

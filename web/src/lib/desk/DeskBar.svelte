@@ -174,10 +174,18 @@
   function onFocusIn(e: FocusEvent) { if (inField(e.target) && !focused) { focused = true; sync(); } }
   function onFocusOut(e: FocusEvent) {
     if (inField(e.relatedTarget)) return;
+    if (e.relatedTarget) { leaveField(e.relatedTarget === magBtn); return; }
+    // no new target: a click on something unfocusable, or the window itself lost the focus (alt-tab, another browser tab).
+    // The latter keeps the field and its text as they are (the focus comes back to it with the window): look once it settled.
+    blurT = setTimeout(() => { if (document.hasFocus() && !inField(document.activeElement)) leaveField(false); }, 0);
+  }
+  let blurT: ReturnType<typeof setTimeout> | undefined;
+  /** the focus left the field for somewhere else on the page */
+  function leaveField(toMag: boolean) {
     focused = false;
-    // clicking elsewhere off /search closes the field, also within the typing pause (the pending search is dropped, so a
-    // late navigation cannot reopen it); on /search it stays open, unfocused
-    if (path !== '/search' && e.relatedTarget !== magBtn) { clearTimeout(st); q = ''; searchOpen = false; }
+    // off /search that closes the field, also within the typing pause (the pending search is dropped, so a late navigation
+    // cannot reopen it); on /search it stays open, unfocused
+    if (path !== '/search' && !toMag) { clearTimeout(st); q = ''; searchOpen = false; }
     sync();
   }
 
@@ -242,7 +250,7 @@
     ro?.observe(root);
     return () => ro?.disconnect();
   });
-  onDestroy(() => { clearTimeout(st); clearTimeout(notesTimer); });
+  onDestroy(() => { clearTimeout(st); clearTimeout(notesTimer); clearTimeout(blurT); });
 </script>
 
 <svelte:window bind:scrollY on:keydown={onWindowKey} on:click={onWindowClick} />
