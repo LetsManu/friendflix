@@ -73,7 +73,7 @@ Owner choices (mockups reviewed 2026-11-07): floating pill top bar with search t
 
 ## Release
 
-- The redesign ships as **v3.0.0** (major bump, next codename), per the owner. Release timing (after block 1 or after all four blocks) is decided by the owner.
+- The redesign ships as **v3.0.0** (major bump, next codename), per the owner. It is released once all four blocks (desktop browse, desktop player, phone browse, phone player) are merged; each block merges to main on its own without a release.
 
 ## Out of scope
 
