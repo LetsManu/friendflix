@@ -3,7 +3,7 @@
 import { expect, test } from '../fixtures.js';
 import { boxInViewport, openPopout, row } from '../helpers.js';
 
-// Desktop hover pop-out (portal in <body>) and the quick-view modal opened from it.
+// Desktop wide hover preview (portal in <body>) and the quick-view modal opened from it.
 test.describe('hover pop-out (desktop)', () => {
   test('stays inside the viewport for the first and the last visible card of a row', async ({ page }) => {
     await page.goto('/');
@@ -29,7 +29,7 @@ test.describe('hover pop-out (desktop)', () => {
       // it is anchored to the card it belongs to
       await expect(hp).toHaveAccessibleName(/^Vorschau: /);
       await page.mouse.move(2, 2);
-      await expect(page.locator('.hp')).toHaveCount(0);
+      await expect(page.locator('.dpv')).toHaveCount(0);
     }
   });
 
@@ -54,7 +54,7 @@ test.describe('quick-view modal (desktop)', () => {
     await expect(modal).toBeVisible();
     await expect(page).toHaveURL(/\/item\/0{31}2$/);
     await expect(modal.locator('#modal-title')).toHaveText('Interlace');
-    await expect(page.locator('.hp')).toHaveCount(0);
+    await expect(page.locator('.dpv')).toHaveCount(0);
 
     await page.keyboard.press('Escape');
     await expect(modal).toBeHidden();
@@ -68,16 +68,16 @@ test.describe('quick-view modal (desktop)', () => {
     let hp = await openPopout(page, card);
     // a button inside the pop-out still does its own thing and does not open the popup
     await hp.getByRole('button', { name: 'Zur Merkliste hinzufügen' }).click();
-    await expect(page.getByRole('dialog')).toHaveCount(0);
+    await expect(page.locator('[role=dialog]:not(.dpv)')).toHaveCount(0); // the preview itself is a (non-modal) dialog
     expect(api.log.some((l) => l.includes('/watchlist'))).toBe(true);
 
     await page.mouse.move(2, 2);
-    await expect(page.locator('.hp')).toHaveCount(0);
+    await expect(page.locator('.dpv')).toHaveCount(0);
     hp = await openPopout(page, card);
-    await hp.locator('.media').click({ position: { x: 40, y: 30 } });
+    await hp.locator('.dpv-art').click({ position: { x: 40, y: 30 } });
     const modal = page.getByRole('dialog', { name: /The Dawn Keeper/ });
     await expect(modal).toBeVisible();
     await expect(page).toHaveURL(/\/item\//);
-    await expect(page.locator('.hp')).toHaveCount(0);
+    await expect(page.locator('.dpv')).toHaveCount(0);
   });
 });

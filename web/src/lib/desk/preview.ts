@@ -14,7 +14,7 @@ export function wideBox(
   card: { left: number; top: number; width: number; height: number },
   vp: { w: number; h: number },
   margin = 12
-): { left: number; top: number; width: number; origin: 'left' | 'right' | 'center' } {
+): { left: number; top: number; width: number; height: number; origin: 'left' | 'right' | 'center' } {
   const width = card.width * 2.5;
   const height = ((width * 9) / 16) * 0.62;
   let left = card.left;
@@ -32,5 +32,5 @@ export function wideBox(
   let top = card.top - 0.08 * height;
   top = Math.min(top, vp.h - margin - height);
   top = Math.max(top, margin);
-  return { left, top, width, origin };
+  return { left, top, width, height, origin };
 }

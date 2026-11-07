@@ -16,7 +16,7 @@ describe('wideBox', () => {
   const vp = { w: 1280, h: 800 };
   it('anchors on the card left edge', () => {
     const b = wideBox({ left: 100, top: 300, width: 240, height: 135 }, vp);
-    expect(b).toMatchObject({ left: 100, width: 600, origin: 'left' });
+    expect(b).toMatchObject({ left: 100, width: 600, height: 600 * 9 / 16 * 0.62, origin: 'left' });
     expect(b.top).toBeCloseTo(300 - 0.08 * 600 * 9 / 16 * 0.62);
   });
   it('flips to the card right edge near the viewport edge', () => {

@@ -60,7 +60,7 @@ test.describe('fresh labels and leaving soon (desktop)', () => {
     const card = row(page, 'Weil du „Inkwell“ gesehen hast').locator('article.card').first(); // Interlace
     await card.scrollIntoViewIfNeeded();
     await card.hover();
-    const hp = page.locator('.hp.ready');
+    const hp = page.locator('.dpv.ready');
     await expect(hp).toBeVisible();
     const chips = hp.getByRole('list', { name: 'Bild und Ton' });
     await expect(chips.getByText('4K', { exact: true })).toBeVisible();
