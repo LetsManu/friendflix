@@ -252,6 +252,67 @@ test.describe('desktop detail page', () => {
       await expect.poll(async () => { await page.clock.runFor(50); return dim(); }).toBeGreaterThan(d0 + 0.3);
       expect(Math.round((await art.boundingBox())!.y)).toBe(0);
     });
+
+    test('a title opened from "Mehr davon" starts its own trailer after 1.5s', async ({ page }) => {
+      await fakeMedia(page);
+      const asked: string[] = [];
+      page.on('request', (r) => { const m = /\/api\/items\/([^/]+)\/trailer$/.exec(r.url()); if (m) asked.push(m[1]!); });
+      await freezeClock(page);
+      await page.goto('/item/' + MOVIE.id);
+      await expect(desk(page).getByRole('heading', { level: 1 })).toHaveText(MOVIE.name);
+      await page.clock.runFor(1600);
+      await expect.poll(async () => { await page.clock.runFor(50); return asked.includes(MOVIE.id); }).toBe(true);
+      // Interlace is not cached: the page goes through its loading state and the first screen is a new element
+      await page.getByRole('tabpanel', { name: 'Mehr davon' }).getByRole('link', { name: /Interlace/ }).first().click();
+      await expect(page).toHaveURL(new RegExp(`/item/${INTERLACE.id}$`));
+      await expect(desk(page).getByRole('heading', { level: 1 })).toHaveText(INTERLACE.name);
+      await page.clock.runFor(1200);
+      expect(asked).not.toContain(INTERLACE.id);
+      await page.clock.runFor(400);
+      await expect.poll(async () => { await page.clock.runFor(50); return asked.includes(INTERLACE.id); }).toBe(true);
+      await expect(desk(page).locator('[data-vt-art] video')).toHaveClass(/on/);
+    });
+  });
+
+  test('the pill bar covers the page under it: a scrolled title never shows behind the logo', async ({ page }) => {
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.goto('/item/' + SERIES.id);
+    await expect(desk(page).getByRole('heading', { level: 1 })).toHaveText(SERIES.name);
+    await page.evaluate(() => scrollTo(0, 450));
+    const bar = page.locator('header[data-desk-bar]');
+    await expect(bar).toHaveClass(/\bsolid\b/);
+    await expect.poll(() => bar.locator('.scrim').evaluate((e) => getComputedStyle(e).opacity)).toBe('1');
+    // the big title now sits under the bar; between the logo and the pill (and above them) only the page colour shows
+    const h1 = (await desk(page).getByRole('heading', { level: 1 }).boundingBox())!;
+    expect(h1.y).toBeLessThan(20);
+    const png = await page.screenshot({ clip: { x: 230, y: 0, width: 180, height: 60 } });
+    const brightest = await page.evaluate(async (b64) => {
+      const im = new Image();
+      im.src = `data:image/png;base64,${b64}`;
+      await im.decode();
+      const c = document.createElement('canvas');
+      c.width = im.naturalWidth; c.height = im.naturalHeight;
+      const g = c.getContext('2d')!;
+      g.drawImage(im, 0, 0);
+      const d = g.getImageData(0, 0, c.width, c.height).data;
+      let max = 0;
+      for (let i = 0; i < d.length; i += 4) max = Math.max(max, (d[i]! + d[i + 1]! + d[i + 2]!) / 3);
+      return max;
+    }, png.toString('base64'));
+    expect(brightest).toBeLessThan(24); // the page colour is (16, 20, 24)
+  });
+
+  test('a movie\'s tab bar waits for "More like this" (no tab that comes and goes, no selection jump)', async ({ page }) => {
+    let release!: () => void;
+    const held = new Promise<void>((r) => (release = r));
+    await page.route('**/api/items/*/similar', async (r) => { await held; await r.fulfill({ json: { items: items.slice(1, 5) } }); });
+    await page.goto('/item/' + MOVIE.id);
+    await expect(desk(page).getByRole('heading', { level: 1 })).toHaveText(MOVIE.name);
+    await expect(tablist(page)).toHaveCount(0);
+    await expect(desk(page).locator('.tabsk')).toHaveCount(1);
+    release();
+    await expect(tablist(page).getByRole('tab')).toHaveText(['Mehr davon', 'Details']);
+    await expect(tablist(page).getByRole('tab', { name: 'Mehr davon' })).toHaveAttribute('aria-selected', 'true');
   });
 
   test('title without backdrop/logo renders name text and no broken image', async ({ page }) => {
@@ -278,6 +339,13 @@ test.describe('desktop detail page', () => {
     const back = page.locator('a.dback');
     await expect(back).toHaveText(/Zurück/);
     await back.click();
+    await expect(page).toHaveURL(/127\.0\.0\.1:\d+\/$/);
+
+    // a redirect that replaced the entry (the TV sub-screen route outside TV) adds no in-app history: Back still goes home
+    await page.goto('about:blank'); // a history.back() would land here, outside the app
+    await page.goto('/item/' + MOVIE.id + '/more');
+    await expect(page).toHaveURL(new RegExp(`/item/${MOVIE.id}$`));
+    await page.locator('a.dback').click();
     await expect(page).toHaveURL(/127\.0\.0\.1:\d+\/$/);
   });
 });

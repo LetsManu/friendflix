@@ -7,6 +7,7 @@
   import { prefetchModal } from '#lib/lazy';
   import Icon from '#lib/Icon.svelte';
   import { openModal } from '#lib/modal';
+  import { deskActive } from '#lib/desk/bar'; // desktop: "more info" navigates to the page (no popup)
   import { listIds, prefs, toggleList } from '#lib/stores';
   import { autoplayAllowed, billboardHeld, playPreview, previewOwner, stopPreview, toggleSound } from '#lib/preview';
   import { mobile } from '#lib/viewport';
@@ -147,7 +148,7 @@
       </div>
       <div class="btns">
         <a class="btn pill" data-autofocus href={playHref || (item.type === 'Series' ? `/item/${item.id}` : `/watch/${item.id}`)} use:playPrefetch on:click={heroPlay}><Icon name="play" size={26} />{playText}</a>
-        {#if more}<a class="btn glass" href="/item/{item.id}" aria-haspopup="dialog" on:pointerenter={prefetchModal} on:focus={prefetchModal} on:click={(e) => { if (item) primeItem(item); openModal(e, `/item/${item!.id}`); }}><Icon name="info" size={26} />{$t('home.hero.moreInfo')}</a>{/if}
+        {#if more}<a class="btn glass" href="/item/{item.id}" aria-haspopup={$deskActive ? undefined : 'dialog'} on:pointerenter={prefetchModal} on:focus={prefetchModal} on:click={(e) => { if (item) primeItem(item); openModal(e, `/item/${item!.id}`); }}><Icon name="info" size={26} />{$t('home.hero.moreInfo')}</a>{/if}
       </div>
     </div>
     <div class="side">

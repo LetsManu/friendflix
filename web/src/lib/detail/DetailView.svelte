@@ -364,13 +364,19 @@
   $: if (!autoOn && counting) cancelAuto();
 
   // ---- the hero only plays while it is (mostly) on screen: IntersectionObserver instead of a scroll listener (no forced layout) ----
-  let heroVisible = true, io: IntersectionObserver | undefined;
-  $: if (heroEl && typeof IntersectionObserver !== 'undefined' && !io) {
-    io = new IntersectionObserver(([en]) => {
-      heroVisible = Boolean(en?.isIntersecting && en.intersectionRatio >= 0.4);
-      if (!heroVisible && heroPlaying) { stopHero(); cancelAuto(); }
-    }, { threshold: [0, 0.4] });
+  // The watched element can be replaced: the desktop page's first screen lives inside DetailDesk, which remounts when the next
+  // title is not cached (item goes null in between). A detached element never intersects, so the observer follows the new one.
+  let heroVisible = true, io: IntersectionObserver | undefined, observed: HTMLElement | undefined;
+  $: if (heroEl && typeof IntersectionObserver !== 'undefined' && heroEl !== observed) {
+    if (!io) {
+      io = new IntersectionObserver(([en]) => {
+        heroVisible = Boolean(en?.isIntersecting && en.intersectionRatio >= 0.4);
+        if (!heroVisible && heroPlaying) { stopHero(); cancelAuto(); }
+      }, { threshold: [0, 0.4] });
+    } else io.disconnect();
     io.observe(heroEl);
+    observed = heroEl;
+    heroVisible = true; // the new element reports its own state with the observer's first callback
   }
   const onVisibility = () => { if (document.hidden) { stopHero(); cancelAuto(); } };
 

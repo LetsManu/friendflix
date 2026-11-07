@@ -29,7 +29,7 @@
   import { badges, wantBadge } from '#lib/fresh';
   import HoverPreview from '#lib/HoverPreview.svelte';
   import DeskPreview from '#lib/desk/DeskPreview.svelte';
-  import { deskUi } from '#lib/desk/bar';
+  import { deskActive, deskUi } from '#lib/desk/bar';
   import { HOVER_CLOSE_MS, HOVER_DELAY_MS, hoverAllowed } from '#lib/desk/preview';
   import { mobile } from '#lib/viewport';
   import { get } from 'svelte/store';
@@ -247,7 +247,7 @@
   <div class="sheet tvsheet" tabindex="-1" use:portal bind:this={sheetEl} role="dialog" aria-modal="true" aria-label={$t('home.card.actionsFor', { name: item.name })} on:keydown={sheetKey}>
     <p class="st">{item.name}</p>
     <a class="act" href={href} on:click={() => closeSheet(false)}><Icon name="play" size={20} />{$t('home.card.play')}</a>
-    <button type="button" class="act" aria-haspopup="dialog" on:pointerenter={prefetchModal} on:click={(e) => { if (item.type !== 'Episode') primeItem(item); moreBtn?.focus(); openModal(e, detail); closeSheet(false); }}><Icon name="chevron-down" size={20} />{$t('home.card.moreInfo')}</button>
+    <button type="button" class="act" aria-haspopup={$deskActive ? undefined : 'dialog'} on:pointerenter={prefetchModal} on:click={(e) => { if (item.type !== 'Episode') primeItem(item); moreBtn?.focus(); openModal(e, detail); closeSheet(false); }}><Icon name="chevron-down" size={20} />{$t('home.card.moreInfo')}</button>
     <button type="button" class="act" on:click={() => { void toggleInList(); closeSheet(); }}><Icon name={inList ? 'check' : 'plus'} size={20} />{inList ? $t('home.card.removeFromList') : $t('home.card.addToList')}</button>
     <button type="button" class="act" aria-pressed={fav} on:click={() => { toggleFav(); closeSheet(); }}><Icon name="heart" size={20} fill={fav} />{fav ? $t('home.card.favRemove') : $t('home.card.favAdd')}</button>
     {#if item.type !== 'BoxSet' && !$kidsMode}<ListMenu itemId={item.seriesId ?? item.id} variant="row" up on:changed={(e) => dispatch('listchanged', e.detail)} />{/if}

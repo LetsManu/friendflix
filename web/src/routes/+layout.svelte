@@ -34,7 +34,7 @@
   import TvRail from '#lib/tv/TvRail.svelte';
   import DeskBar from '#lib/desk/DeskBar.svelte';
   import { deskActive, deskUi } from '#lib/desk/bar';
-  import { trackNav } from '#lib/desk/back';
+  import { historyIndex, trackNav } from '#lib/desk/back';
   import { railKey } from '#lib/tv/rail';
   import { categoryHref, kindFromPath, showsChips, type Kind } from '#lib/mobile';
   import { dialogKeys } from '#lib/actions';
@@ -266,7 +266,7 @@
   }
   afterNavigate((nav) => {
     const { to, type } = nav;
-    trackNav({ type, delta: 'delta' in nav ? (nav.delta as number) : undefined }); // the desktop detail page's "‹ Back" (in-app history or home)
+    trackNav({ type, delta: 'delta' in nav ? (nav.delta as number) : undefined, index: historyIndex(history.state) }); // the desktop detail page's "‹ Back" (in-app history or home)
     settleSeq++; // every navigation ends an older settle (also into the player, which places its own focus)
     if (!tv || !to || /^\/(watch|party)\//.test(to.url.pathname)) return;
     void settleFocus(type === 'popstate' ? memo.get(to.url.pathname + to.url.search) : undefined);

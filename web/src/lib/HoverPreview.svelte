@@ -15,6 +15,7 @@
   import MoreActions, { type MoreAction } from '#lib/MoreActions.svelte';
   import type { Thumb } from '#lib/rating';
   import { openModal } from '#lib/modal';
+  import { deskActive } from '#lib/desk/bar'; // desktop: "more info" navigates to the page (no popup)
   import { isSpoiler } from '#lib/spoiler';
   import { cardTag } from '#lib/badges';
   import { badges, loadFacts, wantBadge, type MediaTraits } from '#lib/fresh';
@@ -183,7 +184,7 @@
         <MoreActions {actions} title={item.name} label={$t('home.card.moreActionsFor', { name: item.name })}>
           {#if item.type !== 'BoxSet' && !$kidsMode}<ListMenu itemId={listId} variant="row" on:changed={(e) => dispatch('listchanged', e.detail)} />{/if}
         </MoreActions>
-        <a class="round" href={detail} aria-label={$t('home.card.moreInfoFor', { name: item.name })} aria-haspopup="dialog" title={$t('home.card.moreInfo')} on:pointerenter={prefetchModal} on:focus={prefetchModal} on:click={more}><Icon name="chevron-down" size={18} /></a>
+        <a class="round" href={detail} aria-label={$t('home.card.moreInfoFor', { name: item.name })} aria-haspopup={$deskActive ? undefined : 'dialog'} title={$t('home.card.moreInfo')} on:pointerenter={prefetchModal} on:focus={prefetchModal} on:click={more}><Icon name="chevron-down" size={18} /></a>
       </span>
     </div>
     <div class="fb" role="status">{#if fb}<span>{fb}</span>{/if}</div>

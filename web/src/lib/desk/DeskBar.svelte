@@ -278,8 +278,9 @@
   .desk > * { pointer-events: auto; }
   /* once scrolled: a soft shade behind logo and buttons (fades out downwards, no edge); never over the billboard at the top */
   .desk > .scrim { position: absolute; z-index: -1; top: 0; left: 0; right: 0; height: calc(128px + var(--safe-top)); pointer-events: none; opacity: 0; transition: opacity 240ms ease-out;
-    /* the page colour (--bg #101418) nearly opaque (.97: a white button behind it stays a faint shape, not a box) under the bar's 64 px, then an eased fade to nothing by 128 px */
-    background: linear-gradient(to bottom, rgba(16, 20, 24, .97) 0, rgba(16, 20, 24, .97) calc(64px + var(--safe-top)), rgba(16, 20, 24, .74) calc(80px + var(--safe-top)),
+    /* the page colour (--bg #101418) fully opaque under the bar's 64 px (a big title or white button scrolling under the logo
+       must not show through), then an eased fade to nothing by 128 px (no edge) */
+    background: linear-gradient(to bottom, rgb(16, 20, 24) 0, rgb(16, 20, 24) calc(64px + var(--safe-top)), rgba(16, 20, 24, .74) calc(80px + var(--safe-top)),
       rgba(16, 20, 24, .38) calc(98px + var(--safe-top)), rgba(16, 20, 24, .12) calc(114px + var(--safe-top)), rgba(16, 20, 24, 0) 100%); }
   .solid > .scrim { opacity: 1; }
   .logo { justify-self: start; display: inline-flex; align-items: center; min-height: 44px; filter: drop-shadow(0 1px 6px rgba(0, 0, 0, .45)); }

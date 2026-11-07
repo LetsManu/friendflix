@@ -167,13 +167,17 @@
     else void goto('/');
   }
 
-  // ---- tabs: only those with content ("More like this" counts as there while it loads), the first one selected ----
-  $: tabs = detailTabs({ series: item.type === 'Series', similar: more === null ? 1 : more.length, extras: extras.length });
+  // ---- tabs: only those with content, the first one selected ----
+  // A movie's first tab depends on "More like this", so its tab bar waits for that answer (a placeholder keeps the height): no
+  // tab appears and vanishes again, no selection jumps. The selection is then pinned, so a later answer (extras) only adds a tab.
+  $: tabsReady = item.type === 'Series' || more !== null;
+  $: tabs = detailTabs({ series: item.type === 'Series', similar: more?.length ?? 0, extras: extras.length });
   let tab: DetailTab | '' = '';
+  $: if (tabsReady && !tab && tabs.length) tab = tabs[0]!;
   $: cur = (tab && tabs.includes(tab) ? tab : tabs[0]) as DetailTab;
   /** the panel on screen (trails `cur` by the 120 ms fade-out) */
   let shown: DetailTab | '' = '';
-  $: if (!shown || (!tabs.includes(shown) && !switching)) shown = cur;
+  $: if (tabsReady && (!shown || (!tabs.includes(shown) && !switching))) shown = cur;
   const tabLabel = (n: DetailTab): string => n === 'episodes' ? $t('detail.episodes.title') : n === 'details' ? $t('detail.about.tab') : n === 'extras' ? $t('desk.detail.extras') : $t('detail.more.title');
   let panelEl: HTMLDivElement | undefined, switchSeq = 0, switching = false, fadeOut: Animation | undefined;
   async function select(n: DetailTab) {
@@ -225,19 +229,23 @@
   $: if (tabsEl) placeLater(cur, tabs, $t);
 
   // ---- the backdrop darkens as the tabs climb to the top (opacity of one layer, rAF-throttled scroll) ----
-  let dim = 0, raf = 0, ro: ResizeObserver | undefined;
+  let dim = 0, raf = 0, ro: ResizeObserver | undefined, roOn: HTMLElement | undefined, lowerEl: HTMLDivElement | undefined;
   function shade() {
     raf = 0;
-    if (!tabsEl) return;
-    const top = tabsEl.getBoundingClientRect().top + scrollY;
+    if (!lowerEl) return;
+    const top = lowerEl.getBoundingClientRect().top + scrollY;
     const t = Math.min(1, Math.max(0, scrollY / Math.max(1, top - 96)));
     dim = +(0.82 * t).toFixed(3);
   }
   const onScroll = () => { if (!raf) raf = requestAnimationFrame(shade); };
+  // the tab bar may arrive after the first paint (a movie waits for "More like this"): the underline follows its size
+  $: if (tabsEl && tabsEl !== roOn && typeof ResizeObserver !== 'undefined') {
+    ro ??= new ResizeObserver(() => { placeInk(); onScroll(); });
+    ro.disconnect(); ro.observe(tabsEl); roOn = tabsEl;
+  }
   onMount(() => {
     addEventListener('scroll', onScroll, { passive: true });
     addEventListener('resize', onScroll);
-    if (typeof ResizeObserver !== 'undefined' && tabsEl) { ro = new ResizeObserver(() => { placeInk(); onScroll(); }); ro.observe(tabsEl); }
     shade();
   });
   onDestroy(() => {
@@ -327,7 +335,10 @@
     {/if}
   </div>
 
-  <div class="lower">
+  <div class="lower" bind:this={lowerEl}>
+    {#if !tabsReady}
+      <div class="tabbar" aria-hidden="true"><div class="tabsk"></div></div>
+    {:else}
     <div class="tabbar">
       <div class="tabs" role="tablist" aria-label={$t('hubs.extras.tabs')} tabindex="-1" bind:this={tabsEl} on:keydown={tabKeys}>
         {#each tabs as n (n)}
@@ -337,6 +348,7 @@
         <span class="ink" class:ready={inkReady} aria-hidden="true" style="transform:translateX({inkX}px) scaleX({inkW / 100})"></span>
       </div>
     </div>
+    {/if}
 
     {#if shown}
       <div class="tpanel" id="dd-panel-{shown}" role="tabpanel" aria-labelledby="dd-tab-{shown}" tabindex="-1" bind:this={panelEl}>
@@ -433,7 +445,8 @@
   .tab { position: relative; min-height: 48px; padding: 0 12px; background: transparent; border: 0; border-radius: 0; color: rgba(255, 255, 255, .62); font-size: 16px; font-weight: 600; white-space: nowrap; transition: color 160ms ease-out; }
   .tab:hover:not(:disabled) { background: transparent; color: #fff; }
   .tab.on { color: #fff; }
-  .ink { position: absolute; left: 0; bottom: 0; width: 100px; height: 3px; border-radius: 2px 2px 0 0; background: var(--acc); transform-origin: left center; pointer-events: none; }
+  .tabsk { height: 48px; }
+  .ink { position: absolute; left: 0; bottom: 0; width: 100px; height: 3px; background: var(--acc); transform-origin: left center; pointer-events: none; }
   .ink.ready { transition: transform 320ms cubic-bezier(.05, .7, .1, 1); }
   .tpanel { outline: none; }
   .langs { margin: 0; color: var(--mut); font-size: 14px; }
