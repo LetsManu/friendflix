@@ -20,6 +20,15 @@ test.describe('browse (desktop)', () => {
     await expect(chips.getByRole('button', { name: /^Filter ab 7 Sterne entfernen/ })).toBeVisible();
   });
 
+  test('switching from series to movies in the top bar reloads the rows for movies', async ({ page }) => {
+    await page.goto('/browse/series');
+    await expect(page.getByRole('heading', { level: 1, name: 'Serien' })).toBeVisible();
+    const movieRows = page.waitForRequest((r) => r.url().includes('/api/library/items?') && new URL(r.url()).searchParams.get('types') === 'Movie');
+    await page.locator('.pill a.tab', { hasText: 'Filme' }).click();
+    await expect(page.getByRole('heading', { level: 1, name: 'Filme' })).toBeVisible();
+    await movieRows;
+  });
+
   test('changing a select adds a chip', async ({ page }) => {
     await page.goto('/browse/movies');
     await expect(page.getByRole('list', { name: 'Aktive Filter' })).toHaveCount(0);

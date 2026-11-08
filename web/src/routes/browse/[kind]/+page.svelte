@@ -143,13 +143,14 @@
   </ul>
 {/if}
 {#if !showGrid}
-  <div class="rowsv">
+  <!-- /browse/series and /browse/movies share this component: the rows load once on mount, so a new kind needs new rows -->
+  {#key kind}<div class="rowsv">
     <LazyRow title={$t('home.browse.newRow')} cacheKey="browse:{kind}:new" load={rowsQ({ sort: 'DateCreated', desc: 'true' })} />
     <LazyRow title={$t('home.browse.popularRow')} cacheKey="browse:{kind}:top" load={rowsQ({ sort: 'CommunityRating', desc: 'true' })} />
     {#each genres.slice(0, 12) as g (g)}
       <LazyRow title={g} href="?genre={encodeURIComponent(g)}" cacheKey="browse:{kind}:g:{g}" load={rowsQ({ genre: g, sort: 'Random' })} />
     {/each}
-  </div>
+  </div>{/key}
 {:else}
 <div class="tiles" aria-busy={items === null}>
   {#if items === null}{#each Array(18) as _}<div class="skeleton" style="aspect-ratio:16/9"></div>{/each}
