@@ -169,7 +169,8 @@ describe('admin update', () => {
     const r = await post();
     expect(r.statusCode).toBe(202);
     expect(r.json()).toEqual({ ok: true, mode: 'webhook' });
-    const hook = seen.find((s) => s.url === HOOK)!;
+    // the selected channel rides along as a stack variable (stable = latest)
+    const hook = seen.find((s) => s.url === `${HOOK}?FF_TAG=latest`)!;
     expect(hook.method).toBe('POST');
     expect(hook.body).toBeUndefined();
     const a = await env.pool.query("select actor, meta from audit_log where action='system.update'");
@@ -216,7 +217,7 @@ describe('admin update', () => {
     const put = seen.find((s) => s.method === 'PUT')!;
     expect(put.url).toBe('https://portainer.example.com/api/stacks/7/git/redeploy?endpointId=3');
     expect(put.headers['x-api-key']).toBe(KEY);
-    expect(put.body).toMatchObject({ pullImage: true, prune: false, env: stack.Env, repositoryReferenceName: 'refs/heads/main' });
+    expect(put.body).toMatchObject({ pullImage: true, prune: false, env: [...stack.Env, { name: 'FF_TAG', value: 'latest' }], repositoryReferenceName: 'refs/heads/main' });
     expect(g.body + r.body).not.toContain(KEY);
   });
 
@@ -226,6 +227,38 @@ describe('admin update', () => {
     const put = seen.find((s) => s.method === 'PUT')!;
     expect(put.url).toBe('https://portainer.example.com/api/stacks/7?endpointId=3');
     expect(put.body).toMatchObject({ stackFileContent: 'services: {}', env: stack.Env, pullImage: true, prune: false });
+  });
+
+  it('nightly channel: webhook gets ?FF_TAG=nightly (existing query kept), the token never leaks', async () => {
+    const { post } = await setup({ PORTAINER_WEBHOOK_URL: `${HOOK}?pullimage=true`, UPDATE_CHANNEL: 'nightly' });
+    expect((await post()).statusCode).toBe(202);
+    const hook = seen.find((s) => host(s.url) === 'portainer.example.com')!;
+    const u = new URL(hook.url);
+    expect(u.searchParams.get('FF_TAG')).toBe('nightly');
+    expect(u.searchParams.get('pullimage')).toBe('true');
+    const a = await env.pool.query("select meta from audit_log where action='system.update'");
+    expect(a.rows[0].meta).toMatchObject({ tag: 'nightly', mode: 'webhook' });
+    expect(JSON.stringify(a.rows)).not.toContain('secret-token');
+  });
+
+  it('api mode replaces an existing FF_TAG in place and keeps every other variable', async () => {
+    stack.Env = [{ name: 'A', value: '1' }, { name: 'FF_TAG', value: 'latest' }, { name: 'B', value: 'x y' }];
+    const { post } = await setup({ ...api, UPDATE_CHANNEL: 'nightly' });
+    expect((await post()).statusCode).toBe(202);
+    const put = seen.find((s) => s.method === 'PUT')!;
+    expect(put.body.env).toEqual([{ name: 'A', value: '1' }, { name: 'FF_TAG', value: 'nightly' }, { name: 'B', value: 'x y' }]);
+  });
+
+  it('pinned channel sends the version; pinned without a version starts nothing', async () => {
+    const pinned = await setup({ ...api, UPDATE_CHANNEL: 'pinned', UPDATE_VERSION: '2.4.1' });
+    expect((await pinned.post()).statusCode).toBe(202);
+    expect(seen.find((s) => s.method === 'PUT')!.body.env).toContainEqual({ name: 'FF_TAG', value: '2.4.1' });
+    await env.close(); seen = [];
+    const bare = await setup({ ...api, UPDATE_CHANNEL: 'pinned' });
+    const r = await bare.post();
+    expect(r.statusCode).toBe(502);
+    expect(r.json()).toMatchObject({ error: 'no_target' });
+    expect(seen.filter((s) => host(s.url) === 'portainer.example.com')).toHaveLength(0);
   });
 
   it('rate limit: second POST within 2 minutes -> 429', async () => {

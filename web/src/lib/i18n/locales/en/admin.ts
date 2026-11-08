@@ -219,7 +219,8 @@ const en: Translation<typeof de> = {
       versionLabel: 'Version (X.Y.Z)',
       versionSave: 'Save version',
       versionInvalid: 'Enter a version like 1.2.3.',
-      updaterNote: 'The updater installs this channel: no .env change needed.',
+      updaterNote: '“Update now” installs this channel, on a Portainer stack too (FriendFlix sends Portainer FF_TAG={tag}): no .env change needed.',
+      pendingSwitch: 'Selected: {channel}. Still running: {running}. “Update now” switches.',
     },
     updater: {
       title: 'Updater',

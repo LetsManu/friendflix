@@ -13,6 +13,10 @@ Part of the desktop redesign that ships with v3.0.0.
 - **Full-page detail with tabs.** More info opens a page instead of a popup.
 - **Card-to-detail animation.** The card glides into the detail page and back, and the page content eases in; calm mode and reduced motion skip it.
 
+### Fixed
+- **Update channel on Portainer stacks.** *Update now* sends the chosen channel (Stable, Nightly, fixed version) to Portainer as `FF_TAG`, so switching to Nightly actually installs nightly; Admin → Update says which channel still runs until then.
+- **Series and Movies tabs.** Switching between them in the top bar reloads the rows instead of keeping the previous kind's titles.
+
 ## [2.5.0] – Brezel – 2026-11-07
 
 ### TV

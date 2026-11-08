@@ -239,7 +239,8 @@ const pl: Translation<typeof de> = {
       versionLabel: 'Wersja (X.Y.Z)',
       versionSave: 'Zapisz wersję',
       versionInvalid: 'Podaj wersję w formacie 1.2.3.',
-      updaterNote: 'Aktualizator instaluje ten kanał: zmiana w .env nie jest potrzebna.',
+      updaterNote: '„Aktualizuj teraz” instaluje ten kanał, także w stosie Portainer (FriendFlix wysyła do Portainera FF_TAG={tag}): zmiana w .env nie jest potrzebna.',
+      pendingSwitch: 'Wybrano: {channel}. Nadal działa: {running}. „Aktualizuj teraz” przełącza.',
     },
     updater: {
       title: 'Aktualizator',

@@ -15,7 +15,7 @@
   import AdminCard from '#lib/adminContent/AdminCard.svelte';
   import { busyKeys, errorText, runAction } from '#lib/ui/action';
   import { saveSettings } from '#lib/admin/settings/api';
-  import { CHANNELS, VERSION_RE, pullCommand, envLineFor, isUpToDate, showSnippet, snippetReason, stepChannel, type ChannelInfo, type SelectedChannel } from '#lib/admin/updateChannel';
+  import { CHANNELS, VERSION_RE, pullCommand, envLineFor, isUpToDate, showSnippet, snippetReason, stepChannel, switching, type ChannelInfo, type SelectedChannel } from '#lib/admin/updateChannel';
   import { statusOf, type UpdaterView } from '#lib/admin/updater';
   import UpdaterCard from '#lib/admin/UpdaterCard.svelte';
   import Field from '#lib/ui/Field.svelte';
@@ -262,7 +262,8 @@
         </form>
       {/if}
       {#if u.channel.locked}<p class="muted small" role="note">{$t('admin.update.channel.locked')}</p>{/if}
-      {#if updater}<p class="muted small" role="note" data-updater-note>{$t('admin.update.channel.updaterNote')}</p>{/if}
+      {#if updater}<p class="muted small" role="note" data-updater-note>{$t('admin.update.channel.updaterNote', { tag: u.channel.envLine.slice('FF_TAG='.length) })}</p>{/if}
+      {#if updater && u.channel.selected !== 'pinned' && u.channel.running && switching(u)}<p class="small pending" role="status" data-pending-switch>{$t('admin.update.channel.pendingSwitch', { channel: channelName(u.channel.selected), running: channelName(u.channel.running) })}</p>{/if}
       {#if snippet}
         <div class="snippet" data-snippet>
           <p class="lead">{snippetReason(u) === 'switch' ? $t('admin.update.channel.switchLead', { channel: channelName(sel) }) : $t('admin.update.channel.updateLead')}</p>
@@ -329,6 +330,7 @@
   code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; background: rgba(255,255,255,.07); padding: .05rem .4rem; border-radius: 4px; }
   dd a, :global(td) a { color: var(--info); } dd a:hover, :global(td) a:hover { text-decoration: underline; }
   .small { font-size: .88rem; margin: .8rem 0 0; }
+  .pending { color: var(--warn, #f5b942); }
   .apply { display: flex; align-items: center; gap: 1.2rem; flex-wrap: wrap; }
   .prog { margin-top: 1.2rem; display: grid; gap: 1rem; max-width: 36rem; }
   .steps { list-style: none; margin: 0; padding: 0; display: grid; gap: .6rem; }

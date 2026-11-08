@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { buildKind, channelUpdate, envLine, isCiSha, runningChannel, versionLabel } from '../src/channel.js';
+import { buildKind, channelTag, channelUpdate, envLine, hookWithTag, isCiSha, runningChannel, versionLabel, withTag } from '../src/channel.js';
 import type { Ctx } from '../src/ctx.js';
 import { makeEnv, type TestEnv } from './helpers.js';
 
@@ -161,5 +161,27 @@ describe('admin update + /api/version with channels', () => {
     expect(bad.statusCode).toBe(400);
     expect(bad.json().errors).toEqual({ UPDATE_CHANNEL: 'invalid_option' });
     void get;
+  });
+});
+
+describe('channel tag for Portainer redeploys', () => {
+  it('maps each channel to its image tag', () => {
+    expect(channelTag('stable')).toBe('latest');
+    expect(channelTag('nightly')).toBe('nightly');
+    expect(channelTag('pinned', '2.4.1')).toBe('2.4.1');
+    expect(channelTag('pinned', null)).toBe('latest');
+  });
+
+  it('withTag appends FF_TAG when missing and replaces it in place otherwise, leaving the rest untouched', () => {
+    const base = [{ name: 'A', value: '1' }, { name: 'B', value: '2' }];
+    expect(withTag(base, 'nightly')).toEqual([...base, { name: 'FF_TAG', value: 'nightly' }]);
+    expect(withTag([{ name: 'FF_TAG', value: 'latest' }, ...base], '2.4.1')).toEqual([{ name: 'FF_TAG', value: '2.4.1' }, ...base]);
+    expect(base).toEqual([{ name: 'A', value: '1' }, { name: 'B', value: '2' }]);
+    expect(withTag([], 'latest')).toEqual([{ name: 'FF_TAG', value: 'latest' }]);
+  });
+
+  it('hookWithTag sets the query parameter and keeps the rest of the URL', () => {
+    expect(hookWithTag('https://p.example.com/api/stacks/webhooks/abc', 'nightly')).toBe('https://p.example.com/api/stacks/webhooks/abc?FF_TAG=nightly');
+    expect(hookWithTag('https://p.example.com/api/stacks/webhooks/abc?FF_TAG=latest&x=1', 'nightly')).toBe('https://p.example.com/api/stacks/webhooks/abc?FF_TAG=nightly&x=1');
   });
 });
