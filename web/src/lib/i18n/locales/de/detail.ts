@@ -237,6 +237,8 @@ export default {
   },
   download: {
     title: 'Herunterladen',
+    /** phone detail page: the full-width button of a series downloads this episode */
+    episode: 'S{s}·F{e} herunterladen',
     state: 'Download: {state}',
     progress: '{have} von {total}',
     pause: 'Pausieren',

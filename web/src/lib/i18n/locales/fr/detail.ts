@@ -230,6 +230,8 @@ const fr: Translation<typeof de> = {
   },
   download: {
     title: 'Télécharger',
+    /** phone detail page: the full-width button of a series downloads this episode */
+    episode: 'Télécharger S{s}·É{e}',
     state: 'Téléchargement : {state}',
     progress: '{have} sur {total}',
     pause: 'Mettre en pause',

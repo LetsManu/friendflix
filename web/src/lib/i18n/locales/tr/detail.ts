@@ -230,6 +230,8 @@ const tr: Translation<typeof de> = {
   },
   download: {
     title: 'İndir',
+    /** phone detail page: the full-width button of a series downloads this episode */
+    episode: 'İndir S{s}·B{e}',
     state: 'İndirme: {state}',
     progress: '{have} / {total}',
     pause: 'Duraklat',

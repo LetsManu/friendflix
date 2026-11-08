@@ -240,6 +240,8 @@ const pl: Translation<typeof de> = {
   },
   download: {
     title: 'Pobierz',
+    /** phone detail page: the full-width button of a series downloads this episode */
+    episode: 'Pobierz S{s}·O{e}',
     state: 'Pobieranie: {state}',
     progress: '{have} z {total}',
     pause: 'Wstrzymaj',

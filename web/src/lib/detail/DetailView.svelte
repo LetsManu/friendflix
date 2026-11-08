@@ -7,14 +7,17 @@
   import { castToTv, refreshTvOnline, tvOnline } from '#lib/remote';
   import { listIds, toggleList, prefs } from '#lib/stores';
   import { kidsMode } from '#lib/kids';
-  import { t, tr } from '#lib/i18n';
-  import { autoplayAllowed, playPreview, previewFailed, previewOwner, stopPreview, toggleSound } from '#lib/preview';
+  import { fmtDate, t, tr } from '#lib/i18n';
+  import { autoplayAllowed, motionAllowed, playPreview, previewFailed, previewOwner, stopPreview, toggleSound } from '#lib/preview';
   import { trailerAllowed } from '#lib/tv/focusTile';
   import { isSpoiler } from '#lib/spoiler';
   import { langLine } from '#lib/langs';
   import { lengthLabel, ratingBadge } from '#lib/hover';
   import { toThumb, type Thumb } from '#lib/rating';
-  import { remainingLabel, type Person } from '#lib/detail/format';
+  import { byType, remainingLabel, type Person } from '#lib/detail/format';
+  import { FRESH_KEYS, LEAVING_BADGE_DAYS } from '#lib/badges';
+  import { canGoBack } from '#lib/desk/back';
+  import { getMe } from '#lib/offline/manager';
   import { defaultTab, detailTabs, loadAbout, refreshFriends, withFriends, type About, type DetailTab } from '#lib/detail/about';
   import { focusFirst, usable } from '#lib/spatial';
   import { autoStartAllowed, AUTOSTART_COUNTDOWN_S, countdownLabel, interactionCancels, isTextEntry, previewDone } from '#lib/detail/autostart';
@@ -36,6 +39,7 @@
   import RatingsLine from '#lib/detail/RatingsLine.svelte';
   import Extras from '#lib/detail/Extras.svelte';
   import TitleFacts from '#lib/detail/TitleFacts.svelte';
+  import QualityChips from '#lib/QualityChips.svelte';
   import StoryCard from '#lib/detail/StoryCard.svelte';
   import LeavingDialog from '#lib/detail/LeavingDialog.svelte';
   import DetailTv from '#lib/detail/DetailTv.svelte';
@@ -88,6 +92,7 @@
     aboutSeq++; aboutFor = ''; cancelAnimationFrame(aboutRaf); // a late answer for the previous title must not land on this one
     facts = null; leavingDlg = false;
     extras = []; more = null; people = []; logoFailed = false; heroLoaded = false; heroTried = ''; recOpen = false; castMsg = ''; saveMsg = ''; tab = '';
+    clearTimeout(fadeT); fading = false; fadeOut = false; fadeIn = false;
     savedLang(want);
     const cd: ItemDetail | undefined = cachedDetail(want);
     const early = cd?.item ?? cachedItem(want) ?? null;
@@ -183,7 +188,7 @@
     return { destroy: () => ro.disconnect() };
   }
 
-  // ---- synopsis: clamped to 4 lines on phones, "Mehr" only when the text overflows ----
+  // ---- synopsis: clamped to 3 lines on phones, "Mehr" only when the text overflows ----
   let synOpen = false, synClamped = false, synEl: HTMLParagraphElement | undefined;
   $: if (synEl && phone && !synOpen) measureLater(overview);
   /** after the text is rendered (`_text`: re-measure when it changes) */
@@ -200,9 +205,37 @@
     const j = e.key === 'Home' ? 0 : e.key === 'End' ? tabs.length - 1 : d ? (i + d + tabs.length) % tabs.length : -1;
     if (j < 0) return;
     e.preventDefault();
-    tab = tabs[j]!;
+    pick(tabs[j]!);
     void tick().then(() => dvEl?.querySelector<HTMLElement>('#dv-tab-' + tab)?.focus());
   }
+  /**
+   * Phone: the chosen tab's panel crossfades in (the old one fades out in 120 ms, the new one in over 200 ms); instant without
+   * motion (calm / reduced motion) and everywhere else. `shownTab` is the panel on screen, it follows `curTab` after the fade.
+   */
+  const FADE_OUT_MS = 120;
+  let shownTab: DetailTab | '' = '', fading = false, fadeOut = false, fadeIn = false, fadeT: ReturnType<typeof setTimeout> | undefined;
+  $: if (!fading && shownTab !== curTab) shownTab = curTab;
+  function pick(n: DetailTab) {
+    if (n === curTab) return;
+    if (p2 && motionAllowed() && !fading && shownTab) {
+      fading = true; fadeOut = true; fadeIn = false;
+      fadeT = setTimeout(() => { fadeOut = false; fading = false; shownTab = curTab; fadeIn = true; }, FADE_OUT_MS);
+    }
+    tab = n;
+  }
+  $: panelTab = p2 ? shownTab : curTab;
+  /** phone: the coral underline slides (transform only) under the selected tab; placed without a slide the first time */
+  let tabsEl: HTMLDivElement | undefined, ulX = 0, ulW = 0, ulReady = false, ulRo: ResizeObserver | undefined;
+  function placeUl() {
+    const on = tabsEl?.querySelector<HTMLElement>('[role="tab"][aria-selected="true"]');
+    if (!on) return;
+    ulX = on.offsetLeft; ulW = on.offsetWidth;
+    if (!ulReady) requestAnimationFrame(() => (ulReady = true));
+  }
+  /** `_tab`, `_n`: re-place when the selection or the set of tabs changes */
+  function ulSync(_tab: string, _n: number) { void tick().then(placeUl); }
+  $: if (p2 && tabsEl) ulSync(curTab, tabs.length);
+  $: if (p2 && tabsEl && !ulRo && typeof ResizeObserver !== 'undefined') { ulRo = new ResizeObserver(() => placeUl()); ulRo.observe(tabsEl); }
   /** TV: every tab is focusable and focusing one selects it (the D-pad moves the focus, not the arrow-key handler above) */
   let tvOn = false;
   function onTabFocus(n: DetailTab) { if (tvOn) tab = n; }
@@ -309,7 +342,8 @@
     if (variant === 'tv') return trailerAllowed({ hoverTrailers: $prefs.hoverTrailers, autoplay: autoplayAllowed(), hidden: document.hidden, saveData: !!nav.connection?.saveData }) && !(item?.trailers === 0 && !$prefs.hoverClip);
     // desktop page: the same rules as every other desktop preview (calm mode and reduced motion via autoplayAllowed)
     if (variant === 'desk') return $prefs.hoverTrailers && autoplayAllowed() && !document.hidden && !tvMode() && !nav.connection?.saveData && !(item?.trailers === 0 && !$prefs.hoverClip);
-    return $prefs.hoverTrailers && !document.hidden && !reduced() && !tvMode() && !nav.connection?.saveData && !(item?.trailers === 0 && !$prefs.hoverClip);
+    // phone: calm mode joins today's rules (autoplayAllowed = not calm, not reduced motion)
+    return (!p2 || autoplayAllowed()) && $prefs.hoverTrailers && !document.hidden && !reduced() && !tvMode() && !nav.connection?.saveData && !(item?.trailers === 0 && !$prefs.hoverClip);
   }
   function scheduleHero(itemId: string) {
     heroTried = itemId;
@@ -382,6 +416,8 @@
 
   // ---- phone layout (phone app layout): video on top, title + full-width buttons + labelled icon row below ----
   let phone = false;
+  /** the reworked phone page (spec 2026-11-08 §4); a kids profile keeps the phone layout it had */
+  $: p2 = phone && !$kidsMode;
   onMount(() => {
     void refreshTvOnline();
     document.addEventListener('visibilitychange', onVisibility);
@@ -401,13 +437,42 @@
     if (typeof window === 'undefined') return;
     document.removeEventListener('visibilitychange', onVisibility);
     io?.disconnect();
-    clearTimeout(saveT); clearTimeout(castT); stopHero(); cancelAuto(); cancelAnimationFrame(aboutRaf); aboutSeq++;
+    clearTimeout(saveT); clearTimeout(castT); clearTimeout(fadeT); ulRo?.disconnect(); stopHero(); cancelAuto(); cancelAnimationFrame(aboutRaf); aboutSeq++;
   });
   const heroTitleTag = () => (variant === 'modal' ? 'h2' : 'h1');
+
+  // ---- phone page (spec 2026-11-08 §4): eyebrow, match score, quality in the meta line, Continue/Download S·E, cast line ----
+  /** `me.downloads.allowed` (the layout's `canDownload`; same cached /api/me answer the download button reads) */
+  let canDownload = false;
+  $: if (p2 && variant !== 'tv' && variant !== 'desk') void getMe().then((me) => (canDownload = Boolean(me?.downloads?.allowed)));
+  $: freshKey = facts?.fresh && item && item.type !== 'Episode' ? FRESH_KEYS[facts.fresh] : undefined;
+  $: eyebrow = freshKey ? $t(freshKey) : '';
+  $: leaving = facts?.leaving ?? null;
+  $: leavingSoon = leaving !== null && leaving.days <= LEAVING_BADGE_DAYS;
+  /** "2026-10-24" as a local calendar day; odd data gives nothing */
+  function untilDate(iso: unknown): string {
+    if (typeof iso !== 'string') return '';
+    const [y, m, d] = iso.split('-').map(Number);
+    const day = new Date(y!, m! - 1, d);
+    return Number.isNaN(day.getTime()) ? '' : fmtDate(day, { day: 'numeric', month: 'long' });
+  }
+  $: untilText = leaving ? untilDate(leaving.leavesAt) : '';
+  $: match = item?.communityRating && item.communityRating > 0 ? $t('home.hero.match', { pct: Math.round(item.communityRating * 10) }) : '';
+  $: phonePlay = item?.type === 'Series' && next ? $t('desk.detail.continueEp', { s: String(next.parentIndexNumber ?? '?'), e: String(next.indexNumber ?? '?') }) : playLabel;
+  /** a series downloads the episode Play starts */
+  $: dlEp = item?.type === 'Series' ? (next ?? episodes?.[0] ?? null) : null;
+  $: dlLabel = dlEp ? $t('detail.download.episode', { s: String(dlEp.parentIndexNumber ?? '?'), e: String(dlEp.indexNumber ?? '?') }) : '';
+  $: castLine = byType(people, 'Actor').slice(0, 3).map((p) => p.name).join(', ');
+  function goBack(e: MouseEvent) {
+    if (e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return;
+    e.preventDefault();
+    if (canGoBack()) history.back();
+    else void goto('/');
+  }
 </script>
 
 <!-- svelte-ignore a11y_no_static_element_interactions -->
-<div class="dv" data-play-scope class:vm={variant === 'modal'} class:vp={variant === 'page'} class:vdk={variant === 'desk'} class:vtv={variant === 'tv'} class:phone bind:this={dvEl}
+<div class="dv" data-play-scope class:vm={variant === 'modal'} class:vp={variant === 'page'} class:vdk={variant === 'desk'} class:vtv={variant === 'tv'} class:phone class:p2 bind:this={dvEl}
   on:pointerdown|capture={onUse} on:keydown|capture={onUse} on:focusin={onUse} on:wheel|capture|passive={onUse}>
   {#if variant === 'tv'}
   <!-- ================= TV: one screen, a button list instead of the scrolling sections (friends, comments, download, share stay off) ================= -->
@@ -480,6 +545,13 @@
           {#if resumeLine}<p class="resume">{resumeLine}</p>{/if}
         </div>
       {/if}
+      {#if p2 && variant === 'page'}
+        <!-- phone: back and Cast on glass circles over the backdrop -->
+        <div class="dtop">
+          <a class="ib" href="/" aria-label={$t('desk.detail.back')} on:click={goBack}><Icon name="chevron-left" size={22} /></a>
+          {#if $tvOnline && playTarget}<button type="button" class="ib" aria-label={$t('detail.actions.tv')} on:click={castHere}><Icon name="cast" size={20} /></button>{/if}
+        </div>
+      {/if}
       {#if heroPlaying}<button type="button" class="snd" aria-label={hmuted ? $t('detail.view.soundOn') : $t('detail.view.soundOff')} aria-pressed={!hmuted} on:click={() => toggleSound(hv)}><Icon name={hmuted ? 'volume-off' : 'volume'} size={20} /></button>{/if}
       {#if counting}
         <div class="auto" role="status" bind:this={autoEl}>
@@ -496,8 +568,52 @@
     {/if}
   </div>
 
-  {#if item && phone}
-    <!-- ================= phone: title, meta, full-width buttons, synopsis, icon row ================= -->
+  {#if item && p2}
+    <!-- ================= phone (spec 2026-11-08 §4): eyebrow, title, meta, Play / Download, synopsis, cast line, icon row ================= -->
+    <div class="pcap dbody">
+      {#if eyebrow}<p class="eyebrow">{eyebrow}</p>{/if}
+      <svelte:element this={heroTitleTag()} id={titleId} class:sr-only={item.logo && !logoFailed} class="ttl">{item.name}</svelte:element>
+      {#if item.logo && !logoFailed}<img class="tlogo" src={logoUrl(item.id)} alt="" on:error={() => (logoFailed = true)} />{/if}
+      <div class="meta">
+        {#if match}<span class="match">{match}</span>{/if}
+        {#if item.year}<span>{item.year}</span>{/if}
+        {#if item.rating}<span class="age" title={$t('detail.view.ageRating')}>{item.rating}</span>{/if}
+        {#if len}<span>{len}</span>{/if}
+        <QualityChips traits={facts?.traits} />
+      </div>
+      {#if leaving && (leavingSoon || untilText)}
+        <p class="leave">
+          {#if leavingSoon}<span class="pill">{$t(leaving.days === 0 ? 'fresh.leaving.today' : 'fresh.leaving.days', { n: leaving.days })}</span>{/if}
+          {#if untilText}<span class="until">{$t('fresh.leaving.until', { date: untilText })}</span>{/if}
+        </p>
+      {/if}
+      <div class="lead" use:smoothHeight><div class="lead-in"><Safe name="ratings" key={item.id}><RatingsLine {about} /></Safe>{#if tagline}<p class="tagline">{tagline}</p>{/if}</div></div>
+      <a class="play wide" data-autofocus href={playHref} use:playPrefetch on:click={castPlay}><Icon name="play" size={22} />{phonePlay}</a>
+      {#if canDownload}
+        <div class="dlw">{#if item.type !== 'Series'}<DownloadButton itemId={item.id} block />{:else if playTarget}<DownloadButton itemId={playTarget} seriesId={item.id} block label={dlLabel} />{/if}</div>
+      {/if}
+      {#if remaining}<p class="resume">{remaining}</p>{/if}
+      <div class="syn">
+        <p class="ov" class:clamp={!synOpen} id="dv-syn" bind:this={synEl}>{overview || $t('detail.view.noOverview')}</p>
+        {#if synClamped}<button type="button" class="lnk more-syn" aria-expanded={synOpen} aria-controls="dv-syn" on:click={() => (synOpen = !synOpen)}>{synOpen ? $t('detail.about.less') : $t('detail.about.more')}</button>{/if}
+      </div>
+      {#if castLine}<p class="castl">{$t('tv.detail.with', { names: castLine })}</p>{/if}
+      {#if langs}<p class="muted small">{langs}</p>{/if}
+      <div class="icons dacts">
+        <button type="button" class="lab" class:on={inList} aria-pressed={inList} on:click={toggleMine}><Icon name={inList ? 'check' : 'plus'} size={24} /><span>{$t('detail.view.myList')}</span></button>
+        <RatingButton itemId={item.id} bind:value={thumb} size={48} showLabel up on:change={onThumb} />
+        {#if social}<button type="button" class="lab" on:click={share}><Icon name="share" size={24} /><span>{$t('detail.view.share')}</span></button>{/if}
+        <MoreActions actions={moreActions} variant="labelled" title={item.name}>
+          <div class="mslot">
+            {#if social}<ListMenu itemId={item.id} variant="row" />{/if}
+            <StatusPicker id={item.id} />
+            {#if playTarget}<LangPick targetId={playTarget} storeKey={item.id} bind:audio={lgA} bind:sub={lgS} />{/if}
+          </div>
+        </MoreActions>
+      </div>
+    </div>
+  {:else if item && phone}
+    <!-- ================= phone, kids profile (as before): title, meta, full-width buttons, synopsis, icon row ================= -->
     <div class="pcap">
       <svelte:element this={heroTitleTag()} id={titleId} class:sr-only={item.logo && !logoFailed} class="ttl">{item.name}</svelte:element>
       {#if item.logo && !logoFailed}<img class="tlogo" src={logoUrl(item.id)} alt="" on:error={() => (logoFailed = true)} />{/if}
@@ -568,33 +684,37 @@
       <Safe name="cast" key={item.id}><CastRow id={item.id} {people} /></Safe>
 
       <!-- ================= tabs (always shown); the panels stay mounted and switch with `hidden` ================= -->
-      <div class="tabs" role="tablist" aria-label={$t('hubs.extras.tabs')} tabindex="-1" on:keydown={tabKeys}>
+      <div class="tabs" role="tablist" aria-label={$t('hubs.extras.tabs')} tabindex="-1" on:keydown={tabKeys} bind:this={tabsEl}>
         {#each tabs as n (n)}
           <button type="button" role="tab" id="dv-tab-{n}" class="tab" class:on={curTab === n} aria-selected={curTab === n} aria-controls="dv-panel-{n}" tabindex={curTab === n || tvOn ? 0 : -1}
-            on:click={() => (tab = n)} on:focus={() => onTabFocus(n)}>{tabLabel(n)}</button>
+            on:click={() => pick(n)} on:focus={() => onTabFocus(n)}>{tabLabel(n)}</button>
         {/each}
+        {#if p2}<i class="ul" class:ready={ulReady} aria-hidden="true" style="transform: translateX({ulX}px) scaleX({ulW})"></i>{/if}
       </div>
 
+      <div class="panes" class:out={fadeOut} class:in={fadeIn} on:animationend={() => (fadeIn = false)}>
+
       {#if item.type === 'Series'}
-        <div class="tp" id="dv-panel-episodes" role="tabpanel" aria-labelledby="dv-tab-episodes" hidden={curTab !== 'episodes'}>
+        <div class="tp" id="dv-panel-episodes" role="tabpanel" aria-labelledby="dv-tab-episodes" hidden={panelTab !== 'episodes'}>
           <Safe name="episodes" key={item.id}><EpisodeList seriesId={item.id} {seasons} bind:season {episodes} {next} {qs} /></Safe>
         </div>
       {/if}
 
-      <div class="tp" id="dv-panel-details" role="tabpanel" aria-labelledby="dv-tab-details" hidden={curTab !== 'details'}>
+      <div class="tp" id="dv-panel-details" role="tabpanel" aria-labelledby="dv-tab-details" hidden={panelTab !== 'details'}>
         <Safe name="details" key={item.id}><DetailsTab {item} {people} {facts} {about} download={item.type !== 'Series' && !phone} on:rated={(e) => item && onRated(item.id, e.detail.average)} /></Safe>
       </div>
 
-      <div class="tp" id="dv-panel-more" role="tabpanel" aria-labelledby="dv-tab-more" hidden={curTab !== 'more'}>
+      <div class="tp" id="dv-panel-more" role="tabpanel" aria-labelledby="dv-tab-more" hidden={panelTab !== 'more'}>
         <Safe name="more" key={item.id}><MoreLikeThis items={more} {variant} /></Safe>
       </div>
 
       {#if extras.length}
-        <div class="tp extras" id="dv-panel-extras" role="tabpanel" aria-labelledby="dv-tab-extras" hidden={curTab !== 'extras'}>
+        <div class="tp extras" id="dv-panel-extras" role="tabpanel" aria-labelledby="dv-tab-extras" hidden={panelTab !== 'extras'}>
           <h2 class="sr-only">{$t('detail.view.extras')}</h2>
           <Safe name="extras" key={item.id}><Extras items={extras} {qs} /></Safe>
         </div>
       {/if}
+      </div>
       <!-- the "⋯ Mehr" download entry: its own headless instance outside the tab panels, so the sheet opens from any tab -->
       {#if item.type !== 'Series'}<DownloadButton bind:this={dl} itemId={item.id} headless bind:available={dlAvail} bind:stateText={dlState} />{/if}
     </div>
@@ -716,6 +836,47 @@
   .icons :global(.rb.lab .trig .ic) { height: 24px; }
   .icons :global(.ma.labelled) { min-width: 64px; }
 
+  /* ---- reworked phone page (p2, spec 2026-11-08 §4; not for kids): ~300 px backdrop, the body overlaps its fade ---- */
+  .p2 .hero { aspect-ratio: auto; height: clamp(220px, 77vw, 320px); }
+  .p2 .fade { background: linear-gradient(to top, var(--dv-bg) 0%, transparent 60%), linear-gradient(to bottom, rgba(0, 0, 0, .45), transparent 30%); }
+  .p2 .snd { bottom: calc(54px + .6rem); right: .9rem; }
+  .dtop { position: absolute; top: .7rem; left: .9rem; right: .9rem; z-index: 4; display: flex; justify-content: space-between; pointer-events: none; }
+  .dtop .ib { pointer-events: auto; display: grid; place-items: center; width: 44px; height: 44px; min-height: 44px; padding: 0; border: 0; border-radius: 50%; background: rgba(0, 0, 0, .55); color: #fff; }
+  .dtop .ib:only-child { margin-right: auto; }
+  .dtop .ib:hover:not(:disabled) { background: rgba(0, 0, 0, .7); }
+  :global(html.m-glass) .dtop .ib { background: rgba(0, 0, 0, .45); -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px); }
+  .dbody { position: relative; margin-top: -54px; gap: .6rem; padding: 0 1rem .2rem; background: none; }
+  .dbody .eyebrow { margin: 0; color: var(--acc); font-size: .72rem; font-weight: 800; letter-spacing: .14em; text-transform: uppercase; }
+  .dbody .tlogo { max-height: 4.5rem; }
+  .dbody .meta { gap: .3rem .6rem; font-size: .82rem; color: #d9d9df; }
+  .dbody .meta .match { color: var(--ok); }
+  .dbody .meta :global(.qc) { margin: 0; }
+  .dbody .age { font-size: .72rem; border-radius: 3px; padding: 0 .3rem; }
+  .leave { display: flex; flex-wrap: wrap; align-items: center; gap: .4rem .6rem; margin: 0; }
+  .leave .pill { padding: .1rem .5rem; border-radius: 3px; background: #b3261e; color: #fff; font-size: .72rem; font-weight: 800; letter-spacing: .02em; text-transform: uppercase; }
+  .leave .until { color: var(--mut); font-size: .85rem; }
+  .dbody .play.wide { display: inline-flex; align-items: center; justify-content: center; gap: .45rem; width: 100%; min-height: 44px; border-radius: 8px; background: #fff; color: #0b0b0d; font-weight: 700; font-size: 1rem; text-decoration: none; }
+  .dbody .play.wide:hover { background: rgba(255, 255, 255, .85); }
+  .dlw:not(:has(:global(.dlb))) { display: none; } /* unsupported browser: DownloadButton renders nothing */
+  .dlw :global(.dl.block .dlb) { min-height: 44px; border-radius: 8px; background: rgba(255, 255, 255, .17); font-size: 1rem; }
+  .dlw :global(.dl.block .dlb:hover:not(:disabled)) { background: rgba(255, 255, 255, .26); }
+  :global(html.m-glass) .dlw :global(.dlb) { -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px); }
+  .dbody .ov { font-size: .9rem; color: #d6d6dc; }
+  .dbody .ov.clamp { -webkit-line-clamp: 3; line-clamp: 3; }
+  .castl { margin: 0; font-size: .8rem; color: var(--mut); overflow-wrap: anywhere; }
+  .dacts { justify-content: space-around; }
+  /* tabs: the coral underline is one 1 px bar scaled to the selected tab's width and slid under it (transform only) */
+  .p2 .tabs { position: sticky; }
+  .p2 .tab.on { border-bottom-color: transparent; }
+  .p2 .tab { font-weight: 700; }
+  .ul { position: absolute; left: 0; bottom: 0; width: 1px; height: 3px; background: var(--acc); transform-origin: 0 50%; pointer-events: none; }
+  .ul.ready { transition: transform var(--m-d-spring) var(--m-spring); }
+  :global(html.m-still) .ul { transition: none; }
+  .panes.out { opacity: 0; transition: opacity 120ms var(--m-emph-in); }
+  .panes.in { animation: panes-in 200ms var(--m-emph-out); }
+  :global(html.m-still) .panes { transition: none; animation: none; }
+  @keyframes panes-in { from { opacity: 0; } to { opacity: 1; } }
+
   /* ---- desktop page (DetailDesk draws it) ---- */
   .dkfail, .dksk { min-height: 84vh; box-sizing: border-box; padding: 160px max(32px, 4vw) 40px; display: flex; flex-direction: column; justify-content: flex-end; }
   .dksk .sl { height: 1.4rem; margin: 0 0 1rem; }
@@ -733,5 +894,5 @@
     .body { padding: 0 1rem 5rem; }
     .vp .body { padding: 0 1rem 5rem; }
   }
-  @media (prefers-reduced-motion: reduce) { .bg, .hv { transition: none; } .auto .pr { transition: none; } .lead:global(.ready) { transition: none; } }
+  @media (prefers-reduced-motion: reduce) { .bg, .hv { transition: none; } .auto .pr { transition: none; } .lead:global(.ready) { transition: none; } .ul.ready { transition: none; } .panes { transition: none; animation: none; } }
 </style>
