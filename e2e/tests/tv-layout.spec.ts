@@ -386,13 +386,15 @@ test.describe('TV layout', () => {
         const row = await longRow(page);
         await row.locator('.card .thumb').first().focus();
         await page.waitForTimeout(400);
-        let moved = false;
-        for (let i = 0; i < 9 && !moved; i++) {
+        let moved = false, reduced = false;
+        for (let i = 0; i < 9 && !moved && !reduced; i++) {
           await page.keyboard.press('ArrowRight');
           const t = await row.locator('.strip').evaluate((e) => getComputedStyle(e).transform);
           moved = t !== 'none' && t !== 'matrix(1, 0, 0, 1, 0, 0)';
+          reduced = await page.evaluate(() => document.documentElement.classList.contains('tv-motion-reduced')); // tripped guard: no glide by design
         }
-        expect(moved).toBe(true);
+        expect(moved || reduced).toBe(true);
+        for (let i = 0; reduced && i < 9; i++) await page.keyboard.press('ArrowRight'); // still walk far enough to scroll the track
         await expect.poll(() => row.locator('.strip').evaluate((e) => getComputedStyle(e).transform)).toBe('none');
         const r = await page.evaluate(() => {
           const slot = document.activeElement!.closest('.slot')!.getBoundingClientRect(), tr = document.activeElement!.closest('.track')!.getBoundingClientRect();
@@ -408,7 +410,9 @@ test.describe('TV layout', () => {
         await page.waitForTimeout(400);
         await page.keyboard.press('ArrowDown');
         await page.keyboard.press('ArrowDown');
-        await page.waitForFunction(() => getComputedStyle(document.querySelector('main .rows')!).transform !== 'none', null, { polling: 'raf', timeout: 2000 });
+        // a glide (transform while moving), or a session whose frame guard tripped on a busy machine: that one moves without the
+        // glide by design (motionLevel 'reduced'), so only the resting place below can be checked
+        await page.waitForFunction(() => getComputedStyle(document.querySelector('main .rows')!).transform !== 'none' || document.documentElement.classList.contains('tv-motion-reduced'), null, { polling: 'raf', timeout: 2000 });
         await expect.poll(() => page.evaluate(() => getComputedStyle(document.querySelector('main .rows')!).transform)).toBe('none');
         const d = await page.evaluate(() => { const t = document.querySelector('section.tile')!.getBoundingClientRect(); const r = document.activeElement!.closest('section')!.getBoundingClientRect(); return Math.abs(r.top - t.bottom); });
         expect(d).toBeLessThan(8);
