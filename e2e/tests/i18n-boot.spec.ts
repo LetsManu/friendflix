@@ -105,6 +105,7 @@ test('a title containing markup is shown as text in the info block', async ({ pa
   const evil = '<a href="/x">Evil</a><b>B</b>';
   await page.route(`**/api/items/${MOVIE.id}`, (r) => r.fulfill({ json: { item: { ...MOVIE, name: evil }, inWatchlist: false, thumb: 0, langs: { audio: ['deu'], subs: [] } } }));
   await page.goto(`/item/${MOVIE.id}`);
+  await page.getByRole('tab', { name: 'Details' }).click(); // desktop page: the info block lives in the Details tab
   const h = page.locator('#info-h');
   await expect(h).toContainText(evil);
   await expect(h.locator('a')).toHaveCount(0);

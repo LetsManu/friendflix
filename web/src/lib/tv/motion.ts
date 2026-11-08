@@ -7,6 +7,7 @@
  * transform on the content plays the difference back to 0 with a spring. Where `Element.animate` exists the spring is
  * sampled into keyframes, so it runs on the compositor even while the main thread renders the focus tile.
  */
+import { writable, type Readable } from 'svelte/store';
 import { motionAllowed } from '#lib/preview';
 
 /** shared View Transition names (card / tile artwork -> detail backdrop; the page content) */
@@ -59,7 +60,19 @@ export function nearestScroll(o: { start: number; end: number; padStart: number;
 
 // ---- motion level + frame-budget guard ----
 let guardOn = false, tripped = false, guardRaf = 0, watchUntil = 0, last = 0, slow = 0;
+/** the TV budget: three consecutive frames over 32 ms (under ~30 fps) trip the guard */
+export const TV_GUARD = { slowMs: 32, frames: 3 } as const;
+/**
+ * The desktop budget: a steady 30 fps (VMs, remote desktop, a throttled laptop) is fine; under 20 fps for a sustained stretch
+ * (eight frames in a row, ~0.4 s) is not. A page transition's full-viewport snapshots render a few frames around 50 ms even on
+ * a machine that otherwise holds 60 fps (software rendering); a handful of those must not cost the session its motion.
+ */
+export const DESK_GUARD = { slowMs: 50, frames: 8 } as const;
+let budget: { slowMs: number; frames: number } = TV_GUARD;
 const now = () => performance.now();
+const trippedStore = writable(false);
+/** true once the frame guard tripped this session (for markup that keys on motionLevel(), e.g. the desktop pill's blur) */
+export const motionTripped: Readable<boolean> = { subscribe: trippedStore.subscribe };
 
 /** 'reduced' with calm mode, prefers-reduced-motion, or once the frame guard tripped (no drift, no stagger, crossfades only) */
 export function motionLevel(): 'full' | 'reduced' {
@@ -73,11 +86,12 @@ function guardFrame() {
   last = t;
   // a hidden page or a huge gap (the TV slept, a tab switch) says nothing about the animation budget
   if (document.hidden || d > 1000) slow = 0;
-  else if (d > 32) slow++;
+  else if (d > budget.slowMs) slow++;
   else slow = 0;
-  if (slow >= 3) {
+  if (slow >= budget.frames) {
     tripped = true;
     document.documentElement.classList.add('tv-motion-reduced');
+    trippedStore.set(true);
     return;
   }
   if (t < watchUntil) guardRaf = requestAnimationFrame(guardFrame);
@@ -91,17 +105,34 @@ function pulse() {
 /** a compositor animation the guard should watch starts elsewhere (a page / player view transition) */
 export function watchFrames(): void { pulse(); }
 /**
- * Starts the frame-budget guard (once, on TV boot): while things move it watches the rAF deltas, and three consecutive
- * frames over 32 ms drop the session to the reduced set (`html.tv-motion-reduced` in CSS). Returns a stop function.
+ * A view transition's animation starts now (its `ready`): the rendering it paused on purpose before (the update callback
+ * waiting for the new page, the capture) is no slow frame. Frame times count from here, and the guard watches what follows.
  */
-export function frameGuard(): () => void {
+export function framesResume(): void { last = now(); slow = 0; pulse(); }
+/**
+ * A page change starts (desktop): until its transition animates, the main thread builds the new page; those long frames are
+ * no animation running slowly, so the current watch window ends here (the transition's `framesResume` opens the next one).
+ */
+export function framesIdle(): void {
+  watchUntil = 0; slow = 0;
+  if (guardRaf) cancelAnimationFrame(guardRaf);
+  guardRaf = 0;
+}
+/**
+ * Starts the frame-budget guard (once, on TV boot / while the desktop layout is on): while things move it watches the rAF
+ * deltas, and `frames` consecutive frames over `slowMs` (TV: 3 over 32 ms; desktop: DESK_GUARD) drop the session to the
+ * reduced set (`html.tv-motion-reduced` in CSS). Returns a stop function.
+ */
+export function frameGuard(o: { slowMs: number; frames: number } = TV_GUARD): () => void {
   guardOn = true;
+  budget = { slowMs: o.slowMs, frames: o.frames };
   pulse();
   return () => { guardOn = false; if (guardRaf) cancelAnimationFrame(guardRaf); guardRaf = 0; };
 }
 /** back to a fresh session (tests) */
 export function resetMotion(): void {
-  guardOn = false; tripped = false; slow = 0;
+  guardOn = false; tripped = false; slow = 0; budget = TV_GUARD; watchUntil = 0;
+  trippedStore.set(false);
   if (guardRaf) cancelAnimationFrame(guardRaf);
   guardRaf = 0;
   if (typeof document !== 'undefined') document.documentElement?.classList.remove('tv-motion-reduced');
@@ -179,6 +210,15 @@ export function animateTo(el: HTMLElement, axis: Axis, target: number): () => vo
   const from = halt(el);
   if (motionLevel() === 'reduced') { put(el, axis, target); return () => {}; }
   return start(el, axis, from, target, false);
+}
+
+/**
+ * Puts `el` at `target` at once (whatever spring ran on it stops), remembered like an `animateTo` end value so a later
+ * `animateTo` springs on from here. Nothing moves, so the frame guard does not watch (a first placement, a layout fix-up).
+ */
+export function placeAt(el: HTMLElement, axis: Axis, target: number): void {
+  halt(el);
+  put(el, axis, target);
 }
 
 /**
@@ -268,4 +308,21 @@ export function tvPagePlan(o: { from: string; to: string; back: boolean; motion:
   const slide = a >= 0 && b >= 0 && a !== b ? (b > a ? 1 : -1) : 0;
   const morph = isDetail(o.to) && !isDetail(o.from) ? 'in' : isDetail(o.from) && !isDetail(o.to) && o.back ? 'back' : null;
   return { kind: 'view', slide, morph, sub: 0 };
+}
+
+export type DeskPagePlan = { kind: 'none' | 'fade' | 'view'; morph: 'in' | 'back' | null };
+/** a detail page path (`/item/<id>`), not one of the TV sub-screens below it */
+export const isDetailPage = (p: string): boolean => isDetail(p);
+/**
+ * How a desktop page change animates (spec desktop browse §3, the TV's pattern without rails and sub-screens).
+ * none: calm / reduced motion, or the same page (instant swap). fade: no View Transitions API or the reduced set (a plain
+ * crossfade, no morph). view: into a detail page (also detail -> detail from "More like this") the clicked artwork morphs
+ * into the backdrop (`in`); browser Back / "‹ Back" out of a detail page morphs the backdrop back into the card (`back`).
+ * A link out of a detail page (a deep link's "‹ Back" goes home) has no card to return to: no morph.
+ */
+export function deskPagePlan(o: { from: string; to: string; back: boolean; motion: boolean; level: 'full' | 'reduced'; hasApi: boolean }): DeskPagePlan {
+  if (!o.motion || o.from === o.to) return { kind: 'none', morph: null };
+  if (!o.hasApi || o.level === 'reduced') return { kind: 'fade', morph: null };
+  const morph = o.back && isDetail(o.from) ? 'back' : isDetail(o.to) ? 'in' : null;
+  return { kind: 'view', morph };
 }

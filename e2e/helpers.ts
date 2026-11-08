@@ -9,11 +9,11 @@ export const row = (page: Page, title: string | RegExp): Locator => page.locator
 export const noHorizontalOverflow = (page: Page): Promise<boolean> =>
   page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth + 1);
 
-/** Hovers a desktop card and waits for the portal pop-out (ready = positioned and visible). */
+/** Hovers a desktop card and waits for the wide hover preview (portal; ready = positioned and visible). */
 export async function openPopout(page: Page, card: Locator): Promise<Locator> {
   await card.scrollIntoViewIfNeeded();
   await card.hover();
-  const hp = page.locator('.hp.ready');
+  const hp = page.locator('.dpv.ready');
   await expect(hp).toBeVisible();
   return hp;
 }

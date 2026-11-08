@@ -17,6 +17,10 @@
   import { recoTrack, type RecoTag } from '#lib/reco';
   import ReasonCaption from '#lib/ReasonCaption.svelte';
   import { tvRank } from '#lib/tv/focus';
+  import { kidsMode } from '#lib/kids';
+  import { deskUi } from '#lib/desk/bar';
+  import { pageTarget, rowPages } from '#lib/desk/rows';
+  import { glide } from '#lib/tv/motion';
 
   export let title: string;
   /** null = loading (skeleton) */
@@ -32,7 +36,8 @@
   export let priority = false;
   /** recommendation row: reports one impression and its clicks as counts per row and engine (no titles) */
   export let reco: RecoTag | undefined = undefined;
-  let track: HTMLDivElement | undefined, section: HTMLElement | undefined;
+  let track: HTMLDivElement | undefined, section: HTMLElement | undefined, strip: HTMLDivElement | undefined;
+  let prevBtn: HTMLButtonElement | undefined, nextBtn: HTMLButtonElement | undefined;
   let canLeft = false, canRight = false, pages = 1, current = 0;
   // geometry cached by a ResizeObserver: the scroll handler only reads scrollLeft (in a rAF), never forces a layout
   let pageW = 1, maxScroll = 0, perPage = 5, raf = 0;
@@ -54,6 +59,12 @@
     if (!track) return;
     const x = track.scrollLeft;
     if (!pending) scrollMemo.set(memoKey, x);
+    if (desk) {
+      // desktop: whole pages of cards (pageW = the visible cards + one gap); the last page is the row's end
+      const p = rowPages({ scroll: x, viewport: pageW, content: maxScroll + pageW });
+      ({ pages, page: current, canPrev: canLeft, canNext: canRight } = p);
+      return;
+    }
     canLeft = x > 8;
     canRight = x < maxScroll - 8;
     pages = pageCount(maxScroll, pageW);
@@ -69,6 +80,23 @@
     if (!full) showAll();
     const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
     track.scrollBy({ left: dir * pageW, behavior: reduce ? 'auto' : 'smooth' });
+  }
+
+  /**
+   * Desktop arrows: one page left / right. The scroll position jumps to the target at once and the strip springs back
+   * from where it was seen (FLIP, lib/tv/motion.ts): interruptible, transform only, instant under reduced motion / calm mode.
+   */
+  async function turn(dir: -1 | 1) {
+    if (!track) return;
+    if (!full) { showAll(); await tick(); measure(); }
+    const t = track, to = pageTarget({ scroll: t.scrollLeft, viewport: pageW, content: maxScroll + pageW }, dir);
+    const jump = () => { const before = t.scrollLeft; t.scrollLeft = to; return t.scrollLeft - before; };
+    if (strip) glide(strip, 'x', jump); else jump();
+    read();
+    await tick();
+    // the pressed arrow hides at the row's end: keep the keyboard focus on the other one
+    const gone = dir > 0 ? !canRight && document.activeElement === nextBtn : !canLeft && document.activeElement === prevBtn;
+    if (gone) (dir > 0 ? prevBtn : nextBtn)?.focus({ preventScroll: true });
   }
 
   let ro: ResizeObserver | undefined;
@@ -116,31 +144,43 @@
     mo.observe(document.documentElement, { attributes: true, attributeFilter: ['class'] });
     return () => mo.disconnect();
   });
+  /** desktop browse layout (not phone, TV or the kids UI): paged rows, outlined rank numerals */
+  $: desk = deskUi({ tv: tvOn, mobile: $mobile, kids: $kidsMode });
   /** TV: the focus tile labels a card of a ranked row with its rank (the tile cannot know the row) */
   const rankFocus = (id: string, n: number) => { if (tvOn) tvRank.set(ranked ? { id, n } : null); };
   onDestroy(() => { io?.disconnect(); if (raf) cancelAnimationFrame(raf); });
 </script>
 
 {#if items === null || items.length}
-  <section class="row" class:m={$mobile} class:land={landscape} class:near class:rk={ranked && !tvOn} bind:this={section} aria-label={title} aria-busy={items === null} on:pointerenter={() => !full && showAll()} on:focusin={() => !full && showAll()} use:recoTrack={reco}>
+  <section class="row" class:m={$mobile} class:dk={desk} class:land={landscape} class:near class:rk={ranked && !tvOn} bind:this={section} aria-label={title} aria-busy={items === null} on:pointerenter={() => !full && showAll()} on:focusin={() => !full && showAll()} use:recoTrack={reco}>
     <div class="hd">
       <h2>{#if href}<a {href}>{title}<span class="more"> {$t('home.row.showAll')}</span><Icon name="chevron-right" size={18} /></a>{:else}{title}{/if}</h2>
-      {#if pages > 1 && !$mobile}<ol class="dots" aria-hidden="true">{#each Array(pages) as _, i}<li class:on={i === current}></li>{/each}</ol>{/if}
+      {#if desk}
+        {#if pages > 1}<ol class="pgdots" aria-label={$t('desk.row.pages')}>{#each Array(pages) as _, i}<li aria-current={i === current ? 'true' : undefined}><span class="sr-only">{$t('desk.row.page', { n: i + 1 })}</span></li>{/each}</ol>{/if}
+      {:else if pages > 1 && !$mobile}<ol class="dots" aria-hidden="true">{#each Array(pages) as _, i}<li class:on={i === current}></li>{/each}</ol>{/if}
     </div>
     {#if items && reco}<ReasonCaption {items} />{/if}
     <div class="wrap">
-      <button class="arrow left" class:hide={!canLeft} aria-label={$t('home.row.prev')} on:click={() => go(-1)}><Icon name="chevron-left" size={34} /></button>
+      {#if desk}
+        <button type="button" class="pg prev" class:on={canLeft} aria-label={$t('desk.row.prev')} bind:this={prevBtn} on:click={() => turn(-1)}><Icon name="chevron-left" size={32} /></button>
+      {:else}
+        <button class="arrow left" class:hide={!canLeft} aria-label={$t('home.row.prev')} on:click={() => go(-1)}><Icon name="chevron-left" size={34} /></button>
+      {/if}
       <div class="track" use:trackAction on:scroll={onScroll} role="list">
-        <!-- the strip only exists as a box on TV (the row glide moves it, lib/tv/motion.ts); elsewhere it is display: contents -->
-        <div class="strip" data-glide={tvOn ? '' : undefined}>
+        <!-- the strip only exists as a box on TV and the desktop layout (the row glide / page turn moves it, lib/tv/motion.ts); elsewhere it is display: contents -->
+        <div class="strip" data-glide={tvOn ? '' : undefined} bind:this={strip}>
         {#if items === null}
           {#each Array(8) as _}<div class="slot"><div class="skeleton ph" class:poster={(($mobile && !landscape) || ranked) && !tvOn}></div></div>{/each}
         {:else}
-          {#each items as it, idx (it.id)}{#if idx < limit}<div class="slot" class:ranked role="listitem" on:focusin={() => rankFocus(it.id, idx + 1)}>{#if ranked}<span class="rank" aria-label={$t('home.row.rank', { n: idx + 1 })}>{idx + 1}</span>{/if}{#if $mobile}<PosterCard item={it} {landscape} {removable} {priority} on:remove />{:else}<Card item={it} {removable} poster={ranked && !tvOn} {priority} on:remove />{/if}</div>{/if}{/each}
+          {#each items as it, idx (it.id)}{#if idx < limit}<div class="slot" class:ranked role="listitem" on:focusin={() => rankFocus(it.id, idx + 1)}>{#if ranked}<span class="rank" class:two={idx >= 9} aria-label={$t('home.row.rank', { n: idx + 1 })}>{idx + 1}</span>{/if}{#if $mobile}<PosterCard item={it} {landscape} {removable} {priority} on:remove />{:else}<Card item={it} {removable} poster={ranked && !tvOn} {priority} on:remove />{/if}</div>{/if}{/each}
         {/if}
         </div>
       </div>
-      <button class="arrow right" class:hide={!canRight} aria-label={$t('home.row.next')} on:click={() => go(1)}><Icon name="chevron-right" size={34} /></button>
+      {#if desk}
+        <button type="button" class="pg next" class:on={canRight} aria-label={$t('desk.row.next')} bind:this={nextBtn} on:click={() => turn(1)}><Icon name="chevron-right" size={32} /></button>
+      {:else}
+        <button class="arrow right" class:hide={!canRight} aria-label={$t('home.row.next')} on:click={() => go(1)}><Icon name="chevron-right" size={34} /></button>
+      {/if}
     </div>
   </section>
 {/if}
@@ -186,6 +226,44 @@
   .arrow.hide { display: none; }
   .row:hover .arrow, .arrow:focus-visible { opacity: 1; }
   @media (hover: none), (pointer: coarse) { .arrow { display: none; } }
+
+  /* ---- desktop browse (spec §2): paged rows from the logo's gutter, arrows on hover / focus, page dots, rank numerals ---- */
+  .row.dk { --gap: 8px; --emph: cubic-bezier(.05, .7, .1, 1); margin-top: 24px; }
+  .row.dk .hd { align-items: center; min-height: 28px; margin: 0 var(--pad-x) 8px; }
+  .row.dk h2 { font-size: 20px; font-weight: 700; line-height: 28px; letter-spacing: -.01em; }
+  /* the strip is a real box here: the page turn moves it (FLIP), the track keeps the scroll position */
+  /* no snapping: the page turn sets exact positions, and snap points measured mid-spring (transformed) would pull the row back */
+  .row.dk .track { container-type: inline-size; scroll-snap-type: none; }
+  .row.dk .strip { display: flex; flex: none; gap: var(--gap); }
+  /* 100cqw = the track's content box (inside the gutters): exactly n cards per page */
+  .row.dk .slot { --sw: calc((100cqw - (var(--n) - 1) * var(--gap)) / var(--n)); flex: 0 0 var(--sw); }
+  .pgdots { display: flex; gap: 4px; list-style: none; margin: 0; padding: 0; opacity: 0; transition: opacity 200ms var(--emph); }
+  .pgdots li { position: relative; width: 16px; height: 2px; background: rgba(255, 255, 255, .24); }
+  .pgdots li::after { content: ''; position: absolute; inset: 0; background: #fff; opacity: 0; transition: opacity 200ms var(--emph); }
+  .pgdots li[aria-current]::after { opacity: 1; }
+  .row.dk:hover .pgdots, .row.dk:focus-within .pgdots { opacity: 1; }
+  /* 56 px edge areas over the peeking neighbours; a fade into the page instead of a box */
+  .row .pg { position: absolute; top: .4rem; bottom: .6rem; z-index: 7; width: 56px; min-height: 0; padding: 0; border-radius: 0; color: #fff; opacity: 0; transition: opacity 200ms var(--emph); }
+  .row .pg.prev, .row .pg.prev:hover:not(:disabled) { left: 0; background: linear-gradient(to right, rgba(16, 20, 24, .9), rgba(16, 20, 24, .6) 55%, rgba(16, 20, 24, 0)); }
+  .row .pg.next, .row .pg.next:hover:not(:disabled) { right: 0; background: linear-gradient(to left, rgba(16, 20, 24, .9), rgba(16, 20, 24, .6) 55%, rgba(16, 20, 24, 0)); }
+  .row .pg:not(.on) { visibility: hidden; }
+  .row .pg :global(svg) { transition: transform 200ms var(--emph); }
+  .row .pg:hover :global(svg), .row .pg:focus-visible :global(svg) { transform: scale(1.2); }
+  .row .pg:active:not(:disabled) { transform: none; }
+  .row .pg:focus-visible { outline: 2px solid #fff; outline-offset: -6px; }
+  .row.dk:hover .pg, .row.dk:focus-within .pg { opacity: 1; }
+  @media (hover: none), (pointer: coarse) { .row.dk:hover .pg:not(:focus-visible) { opacity: 0; } }
+  /* ranked rows: a large outlined numeral, the poster overlapping its right edge */
+  .row.dk.rk { contain-intrinsic-size: auto calc(var(--sw) * .87 + 48px); }
+  .row.dk .slot.ranked { display: flex; align-items: flex-end; }
+  .row.dk.rk .ph.poster { width: 58%; margin-left: auto; } /* the skeleton takes the poster's place, no jump when it loads */
+  .row.dk .slot.ranked > :global(.card) { position: relative; z-index: 1; flex: 0 0 58%; min-width: 0; margin-left: -4%; }
+  /* z-index: a flex item stacks even when static; the poster (z 1) must stay above the numeral */
+  .row.dk .rank { position: static; z-index: 0; flex: 0 0 46%; display: block; min-width: 0; height: auto; padding: 0; border-radius: 0; background: none; box-shadow: none; text-align: right;
+    font-size: calc(var(--sw) * .9); font-weight: 800; line-height: .74; letter-spacing: -.06em; color: var(--bg);
+    /* outline only: the page colour fills the glyph over the inner half of the stroke, which also hides the overlapping contours of the variable font */
+    -webkit-text-fill-color: var(--bg); -webkit-text-stroke: 4px rgba(255, 255, 255, .5); paint-order: stroke fill; }
+  .row.dk .rank.two { font-size: calc(var(--sw) * .66); letter-spacing: -.1em; }
 
   /* ---- phone: swipeable poster rows (3.2 posters visible), no hover room needed ---- */
   .row.m { --gap: .4rem; --pw: calc((100vw - var(--pad-x) - 3 * var(--gap)) / 3.2); margin-top: 1.4rem; contain-intrinsic-size: auto calc(var(--pw) * 1.5 + 39px); }

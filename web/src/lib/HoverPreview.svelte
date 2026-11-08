@@ -3,7 +3,7 @@
 <script lang="ts">
   import { createEventDispatcher, onDestroy, onMount, tick } from 'svelte';
   import { beforeNavigate } from '$app/navigation';
-  import { api, backdrop, cachedDetail, img, primeDetail, primeItem, setCachedThumb, srcset, type Item, type ItemDetail } from '#lib/api';
+  import { backdrop, img, primeItem, srcset, type Item } from '#lib/api';
   import { playPrefetch } from '#lib/player/prefetch';
   import { prefetchModal } from '#lib/lazy';
   import { listIds, toggleList, prefs } from '#lib/stores';
@@ -13,14 +13,16 @@
   import { kidsMode } from '#lib/kids';
   import RatingButton from '#lib/RatingButton.svelte';
   import MoreActions, { type MoreAction } from '#lib/MoreActions.svelte';
-  import { toThumb, type Thumb } from '#lib/rating';
+  import type { Thumb } from '#lib/rating';
   import { openModal } from '#lib/modal';
+  import { deskActive } from '#lib/desk/bar'; // desktop: "more info" navigates to the page (no popup)
   import { isSpoiler } from '#lib/spoiler';
   import { cardTag } from '#lib/badges';
   import { badges, loadFacts, wantBadge, type MediaTraits } from '#lib/fresh';
   import QualityChips from '#lib/QualityChips.svelte';
   import { genreLine, lengthLabel, previewRect, ratingBadge, type PreviewBox } from '#lib/hover';
-  import { playPreview, previewFailed, previewOwner, stopPreview, toggleSound } from '#lib/preview';
+  import { playPreview, previewOwner, stopPreview, toggleSound } from '#lib/preview';
+  import { artClick, clipEnv, hoverClipAllowed, portal, previewActions, ratingLoader, releaseClick as release, saveFavorite } from '#lib/hoverShared';
 
   /** Desktop pop-out preview of a card: portal on <body>, grows out of the card, clamped to the viewport. */
   export let item: Item;
@@ -97,28 +99,16 @@
   onDestroy(() => { clearTimeout(startT); clearTimeout(fbT); if (playing || $previewOwner === item.id) stopPreview(item.id); });
 
   async function startVideo() {
-    const nav = navigator as Navigator & { connection?: { saveData?: boolean } };
-    if (previewFailed(item.id) || !$prefs.hoverTrailers || reduce || nav.connection?.saveData || document.hidden) return;
-    if (!(item.trailers || ($prefs.hoverClip && (item.type === 'Movie' || item.type === 'Series')))) return;
+    if (!hoverClipAllowed(item, $prefs, clipEnv(!reduce))) return;
     playing = true;
     if (!(await playPreview(item.id, () => pv))) playing = false;
   }
 
-  let thumbTouched = false;
-  async function loadThumb() {
-    // the same response feeds the detail popup (rendered from cache when the chevron is clicked)
-    const hit = cachedDetail(listId);
-    if (hit) thumb = toThumb(hit.thumb); // show at once, then revalidate: the rating may have changed on another device/tab
-    try {
-      const r = await api<ItemDetail>(`/api/items/${listId}`);
-      if (!thumbTouched) thumb = toThumb(r?.thumb); // never overwrite a rating the viewer set meanwhile
-      primeDetail(thumbTouched ? { ...r, thumb } : r);
-    } catch { /* optional */ }
-  }
-  function onThumb(e: CustomEvent<{ value: Thumb }>) { thumbTouched = true; setCachedThumb(listId, e.detail.value); }
+  // the same response feeds the detail popup (rendered from cache when the chevron is clicked)
+  const rating = ratingLoader(item.seriesId ?? item.id, (v) => (thumb = v));
+  const loadThumb = () => rating.load();
+  function onThumb(e: CustomEvent<{ value: Thumb }>) { rating.changed(e.detail.value); }
   function flash() { fb = tr('home.card.saveFailed'); clearTimeout(fbT); fbT = setTimeout(() => (fb = ''), 4500); }
-  // after a mouse click drop the focus again (keyboard users keep it)
-  const release = (e: MouseEvent) => { if (e.detail > 0) (e.currentTarget as HTMLElement).blur(); };
   async function toggleInList(e: MouseEvent) {
     release(e);
     const was = inList;
@@ -129,24 +119,16 @@
     favBusy = true;
     const want = !fav;
     fav = want;
-    try { await api(`/api/items/${item.id}/favorite`, { method: want ? 'POST' : 'DELETE' }); dispatch('favchange', { item, favorite: want }); }
-    catch { fav = !want; flash(); }
+    if (await saveFavorite(item.id, want)) dispatch('favchange', { item, favorite: want });
+    else { fav = !want; flash(); }
     favBusy = false;
   }
   // everything that is not Play / Merkliste / Bewerten / Details lives in "⋯ Mehr"
   let actions: MoreAction[] = [];
-  $: actions = [
-    { id: 'fav', label: fav ? $t('home.card.favRemove') : $t('home.card.favAdd'), icon: 'heart', pressed: fav, run: toggleFav },
-    ...(removable ? [{ id: 'remove', label: $t('home.card.removeResume'), icon: 'x', run: () => { dispatch('remove', item); } }] : []),
-    { id: 'details', label: $t('home.card.openDetail'), icon: 'info', href: detail },
-  ];
+  $: actions = previewActions({ fav, removable, t: $t, toggleFav, remove: () => { dispatch('remove', item); }, detail });
   function more(e: MouseEvent) { if (item.type !== 'Episode') primeItem(item); dispatch('close', { refocus: false }); openModal(e, detail); }
   /** a click on the picture (not on one of its buttons) opens the detail popup like "Mehr Infos"; ctrl/cmd/middle opens the page in a new tab */
-  function mediaClick(e: MouseEvent) {
-    if ((e.target as HTMLElement).closest('button, a')) return;
-    if (e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) { window.open(detail, '_blank', 'noopener'); return; }
-    more(e);
-  }
+  const mediaClick = (e: MouseEvent) => artClick(e, detail, more);
 
   // ---- closing: Escape, scroll, navigation ----
   function onKey(e: KeyboardEvent) {
@@ -169,7 +151,6 @@
     else if (!e.shiftKey && document.activeElement === f[f.length - 1]) { e.preventDefault(); dispatch('exit', { dir: 1 }); }
   }
   export function focusFirst() { controls()[0]?.focus(); }
-  function portal(node: HTMLElement) { document.body.appendChild(node); return { destroy() { node.remove(); } }; }
   function leaveFocus(e: FocusEvent) { if (!el?.contains(e.relatedTarget as Node | null)) focused = false; }
 </script>
 
@@ -203,7 +184,7 @@
         <MoreActions {actions} title={item.name} label={$t('home.card.moreActionsFor', { name: item.name })}>
           {#if item.type !== 'BoxSet' && !$kidsMode}<ListMenu itemId={listId} variant="row" on:changed={(e) => dispatch('listchanged', e.detail)} />{/if}
         </MoreActions>
-        <a class="round" href={detail} aria-label={$t('home.card.moreInfoFor', { name: item.name })} aria-haspopup="dialog" title={$t('home.card.moreInfo')} on:pointerenter={prefetchModal} on:focus={prefetchModal} on:click={more}><Icon name="chevron-down" size={18} /></a>
+        <a class="round" href={detail} aria-label={$t('home.card.moreInfoFor', { name: item.name })} aria-haspopup={$deskActive ? undefined : 'dialog'} title={$t('home.card.moreInfo')} on:pointerenter={prefetchModal} on:focus={prefetchModal} on:click={more}><Icon name="chevron-down" size={18} /></a>
       </span>
     </div>
     <div class="fb" role="status">{#if fb}<span>{fb}</span>{/if}</div>

@@ -4,6 +4,8 @@
   import { onDestroy, onMount, tick } from 'svelte';
   import { api, ApiError, getActiveProfile, type Item } from '#lib/api';
   import BrandHubs from '#lib/BrandHubs.svelte';
+  import { deskUi } from '#lib/desk/bar';
+  import DeskBillboard from '#lib/desk/DeskBillboard.svelte';
   import Hero from '#lib/Hero.svelte';
   import LazyRow from '#lib/LazyRow.svelte';
   import Row from '#lib/Row.svelte';
@@ -13,7 +15,9 @@
   import type { Hub } from '#lib/hubs';
   import { loadFeatured, loadThemed, type FeaturedList, type ThemedList } from '#lib/lists';
   import { t, tr } from '#lib/i18n';
+  import { kidsMode } from '#lib/kids';
   import { usable } from '#lib/spatial';
+  import { mobile } from '#lib/viewport';
   import { tvFocus, tvRank } from '#lib/tv/focus';
   import { glide } from '#lib/tv/motion';
   import { rowScrollTarget } from '#lib/tv/rowScroll';
@@ -169,6 +173,8 @@
     return () => mo.disconnect();
   });
   onDestroy(() => { if (frame) cancelAnimationFrame(frame); });
+  /** desktop browse: the trailer billboard instead of the hero (phones, TV and kids profiles keep theirs) */
+  $: desk = deskUi({ tv, mobile: $mobile, kids: $kidsMode });
   /**
    * The focused row slides under the tile: its top goes to where the tile ends. The page position jumps there at once and the
    * rows glide the difference with a spring (lib/tv/motion.ts, FLIP), so scroll-based code always sees the resting position.
@@ -219,6 +225,9 @@
 <svelte:head><title>{$t('common.appName')}</title></svelte:head>
 {#if tv}
   <TvFocusTile {hero} {heroRank} />
+{:else if desk}
+  <DeskBillboard item={hero} rank={heroRank} />
+  <BrandHubs {hubs} />
 {:else}
   <Hero item={hero} rank={heroRank} portrait />
   <BrandHubs {hubs} />

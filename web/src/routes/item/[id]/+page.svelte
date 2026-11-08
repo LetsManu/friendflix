@@ -6,11 +6,12 @@
   import type { Item } from '#lib/api';
   import DetailView from '#lib/detail/DetailView.svelte';
   import { t } from '#lib/i18n';
+  import { deskActive } from '#lib/desk/bar';
   const page = pageStore();
 
   let item: Item | null = null;
   $: id = $page.params.id ?? '';
-  // TV mode (html.tv, set by the layout once /api/me answered): the scroll-free TV detail page
+  // TV mode (html.tv, set by the layout once /api/me answered): the scroll-free TV detail page; desktop layout: the cinematic page
   let tv = typeof document !== 'undefined' && document.documentElement.classList.contains('tv');
   onMount(() => {
     const sync = () => { tv = document.documentElement.classList.contains('tv'); };
@@ -22,4 +23,4 @@
 </script>
 
 <svelte:head><title>{$t('common.pageTitle', { page: item?.name ?? $t('detail.view.pageTitle') })}</title></svelte:head>
-{#if id}<DetailView {id} variant={tv ? 'tv' : 'page'} bind:item />{/if}
+{#if id}<DetailView {id} variant={tv ? 'tv' : $deskActive ? 'desk' : 'page'} bind:item />{/if}

@@ -1,5 +1,17 @@
 <!-- SPDX-FileCopyrightText: 2026 Manuel Weißböck -->
 <!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
+<script context="module" lang="ts">
+  /** last wheel / scroll anywhere on the page (Date.now()): the desktop preview waits for the page to rest */
+  let lastScroll = 0, scrollTracked = false;
+  function trackScroll() {
+    if (scrollTracked || typeof window === 'undefined') return;
+    scrollTracked = true;
+    const on = () => { lastScroll = Date.now(); };
+    window.addEventListener('wheel', on, { passive: true, capture: true });
+    window.addEventListener('scroll', on, { passive: true, capture: true });
+  }
+</script>
+
 <script lang="ts">
   import { api, backdrop, img, primeItem, srcset, CARD_SIZES, CARD_WIDTHS, type Item } from '#lib/api';
   import { prefetchModal } from '#lib/lazy';
@@ -16,6 +28,11 @@
   import { cardTag } from '#lib/badges';
   import { badges, wantBadge } from '#lib/fresh';
   import HoverPreview from '#lib/HoverPreview.svelte';
+  import DeskPreview from '#lib/desk/DeskPreview.svelte';
+  import { deskActive, deskUi } from '#lib/desk/bar';
+  import { HOVER_CLOSE_MS, HOVER_DELAY_MS, hoverAllowed } from '#lib/desk/preview';
+  import { mobile } from '#lib/viewport';
+  import { get } from 'svelte/store';
   import { hoverOwner, nextHoverUid } from '#lib/hover';
   import { isBackKey } from '#lib/spatial';
   import { tvFocus } from '#lib/tv/focus';
@@ -60,17 +77,33 @@
   $: tag = cardTag(badgeId ? $badges[badgeId] : undefined, item, Date.now());
   let imgEl: HTMLImageElement | undefined;
 
-  // ---- desktop pop-out preview (HoverPreview, portal): opens after ~450 ms hover / 600 ms keyboard focus ----
+  // ---- pop-out preview (portal). Desktop browse layout: the wide DeskPreview after a 500 ms rest of the pointer (never on keyboard
+  // focus: Enter on the card opens the title). Elsewhere with a fine pointer (kids UI): HoverPreview after ~450 ms hover / 600 ms focus.
   const canHover = typeof matchMedia !== 'undefined' && matchMedia('(hover: hover) and (pointer: fine)').matches;
   const uid = nextHoverUid();
-  let hp = false, hpComp: HoverPreview | undefined, thumbEl: HTMLAnchorElement;
+  let hp = false, hpComp: HoverPreview | undefined, thumbEl: HTMLAnchorElement, cardEl: HTMLElement;
+  /** the open preview is the desktop one (decided when it opens) */
+  let wide = false;
   let overCard = false, focusCard = false, overPrev = false, focusPrev = false;
   let openT: ReturnType<typeof setTimeout>, closeT: ReturnType<typeof setTimeout>;
   const tvMode = () => document.documentElement.classList.contains('tv');
+  const deskNow = () => deskUi({ tv: tvMode(), mobile: get(mobile), kids: get(kidsMode) });
+  trackScroll();
   function scheduleOpen(delay: number) {
     clearTimeout(openT);
     if (hp || !canHover || tvMode()) return;
-    openT = setTimeout(() => { hp = true; hoverOwner.set(uid); }, delay);
+    openT = setTimeout(() => { wide = false; hp = true; hoverOwner.set(uid); }, delay);
+  }
+  /** desktop: open once the pointer rested HOVER_DELAY_MS on the card and the page did not scroll meanwhile */
+  function scheduleWide(delay = HOVER_DELAY_MS) {
+    clearTimeout(openT);
+    openT = setTimeout(() => {
+      if (hp || !overCard || !deskNow()) return;
+      const since = Date.now() - lastScroll;
+      const scrolling = since < HOVER_DELAY_MS;
+      if (!hoverAllowed({ width: window.innerWidth, coarse: !canHover, scrolling })) { if (scrolling) scheduleWide(HOVER_DELAY_MS - since); return; }
+      wide = true; hp = true; hoverOwner.set(uid);
+    }, delay);
   }
   function closePreview(refocus = false) {
     clearTimeout(openT); clearTimeout(closeT);
@@ -79,20 +112,34 @@
     if (had && refocus) thumbEl?.focus();
     hoverOwner.update((o) => (o === uid ? '' : o));
   }
-  $: held = overCard || focusCard || overPrev || focusPrev;
+  // the wide desktop preview never holds on focus: a mouse click on its rating or "⋯" leaves focus inside, and it must still close
+  // HOVER_CLOSE_MS after the pointer left (open pickers keep it open through the .lm-pop/.ma-pop check below)
+  $: held = overCard || overPrev || (!wide && (focusCard || focusPrev));
   $: syncHold(hp, held);
   function syncHold(open: boolean, h: boolean) {
     clearTimeout(closeT);
     if (!open || h) return;
     // grace period so the pointer can travel from the card onto the pop-out; stay open while a list picker is open
     const check = () => { if (held) return; if (document.querySelector('.lm-pop, .ma-pop')) { closeT = setTimeout(check, 400); return; } closePreview(); };
-    closeT = setTimeout(check, 120);
+    closeT = setTimeout(check, wide ? HOVER_CLOSE_MS : 120);
   }
   $: if ($hoverOwner !== uid && hp) { hp = false; overPrev = false; focusPrev = false; }
-  function cardEnter() { overCard = true; scheduleOpen(450); }
+  // desktop: the neighbours in the row dim while this card's wide preview is open
+  $: dimRow(hp && wide);
+  let dimmed: Element | null = null;
+  function dimRow(on: boolean) {
+    if (typeof document === 'undefined') return;
+    if (on && !dimmed) { dimmed = cardEl?.closest('section.row') ?? null; dimmed?.classList.add('dpv-dim'); }
+    else if (!on && dimmed) { dimmed.classList.remove('dpv-dim'); dimmed = null; }
+  }
+  function cardEnter() {
+    overCard = true;
+    if (canHover && !tvMode() && deskNow()) scheduleWide();
+    else scheduleOpen(450);
+  }
   function cardLeave() { overCard = false; clearTimeout(openT); }
-  // keyboard focus only: a mouse click on a button must not open (or pin) the preview
-  function onFocusIn(e: FocusEvent) { if (tvMode()) tvFocus.set(item); if ((e.target as HTMLElement).matches(':focus-visible')) { focusCard = true; scheduleOpen(600); } }
+  // keyboard focus only: a mouse click on a button must not open (or pin) the preview; the desktop preview never opens on focus
+  function onFocusIn(e: FocusEvent) { if (tvMode()) tvFocus.set(item); if ((e.target as HTMLElement).matches(':focus-visible')) { focusCard = true; if (!deskNow()) scheduleOpen(600); } }
   function onFocusOut(e: FocusEvent) { if (!(e.currentTarget as HTMLElement).contains(e.relatedTarget as Node | null)) { focusCard = false; clearTimeout(openT); } }
   // TV: OK held on a card opens its actions sheet (the small remove / more buttons are hidden there); a short OK opens the title
   const LONG_PRESS_MS = 600;
@@ -110,7 +157,7 @@
   }
   function onKey(e: KeyboardEvent) {
     // Tab from the thumbnail walks into the open pop-out (it lives in <body>, outside the tab order of the row)
-    if (hp && e.key === 'Tab' && !e.shiftKey && e.target === thumbEl) { e.preventDefault(); hpComp?.focusFirst(); }
+    if (hp && !wide && e.key === 'Tab' && !e.shiftKey && e.target === thumbEl) { e.preventDefault(); hpComp?.focusFirst(); }
   }
   function exitPreview(dir: 1 | -1) {
     if (dir === -1) { thumbEl?.focus(); return; }
@@ -119,7 +166,7 @@
     closePreview();
     (next ?? thumbEl)?.focus();
   }
-  onDestroy(() => { clearTimeout(openT); clearTimeout(closeT); if (pressT) clearTimeout(pressT); hoverOwner.update((o) => (o === uid ? '' : o)); });
+  onDestroy(() => { clearTimeout(openT); clearTimeout(closeT); if (pressT) clearTimeout(pressT); dimRow(false); hoverOwner.update((o) => (o === uid ? '' : o)); });
 
   // ---- touch action sheet (the hover pop-up is not reachable without a pointer) ----
   let sheet = false, sheetEl: HTMLDivElement, moreBtn: HTMLButtonElement;
@@ -156,7 +203,7 @@
 </script>
 
 <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
-<article class="card" class:poster={!!posterSrc} on:mouseenter={cardEnter} on:mouseleave={cardLeave} on:focusin={onFocusIn} on:focusout={onFocusOut} on:keydown={onKey}>
+<article class="card" class:poster={!!posterSrc} class:dpv-src={hp && wide} bind:this={cardEl} on:mouseenter={cardEnter} on:mouseleave={cardLeave} on:focusin={onFocusIn} on:focusout={onFocusOut} on:keydown={onKey}>
   <div class="media">
   <a class="thumb" class:art={!!src} {href} bind:this={thumbEl} on:keydown={thumbKeyDown} on:keyup={thumbKeyUp} aria-label={item.name + (sub ? ', ' + sub : '')}>
     {#if posterOnly}<img class="blur" loading="lazy" decoding="async" {src} srcset={srcs} {sizes} alt="" aria-hidden="true" />{/if}
@@ -172,7 +219,17 @@
   <button type="button" class="mb" bind:this={moreBtn} aria-label={$t('home.card.actionsFor', { name: item.name })} aria-haspopup="dialog" aria-expanded={sheet} on:click={openSheet}><span aria-hidden="true">⋯</span></button>
   </div>
 </article>
-{#if hp}
+{#if hp && wide}
+  <DeskPreview
+    {item} anchor={thumbEl} {href} {detail} {removable} {fav} startSrc={!posterSrc && imgEl?.complete ? imgEl.currentSrc : ''}
+    bind:over={overPrev} bind:focused={focusPrev}
+    on:close={(e) => closePreview(e.detail.refocus)}
+    on:remove={(e) => { closePreview(); dispatch('remove', e.detail); }}
+    on:listtoggle={(e) => dispatch('listtoggle', e.detail)}
+    on:favchange={(e) => { fav = e.detail.favorite; dispatch('favchange', e.detail); }}
+    on:listchanged={(e) => dispatch('listchanged', e.detail)}
+  />
+{:else if hp}
   <HoverPreview
     bind:this={hpComp} {item} anchor={thumbEl} {href} {detail} {removable} {fav} startSrc={!posterSrc && imgEl?.complete ? imgEl.currentSrc : ''}
     bind:over={overPrev} bind:focused={focusPrev}
@@ -190,7 +247,7 @@
   <div class="sheet tvsheet" tabindex="-1" use:portal bind:this={sheetEl} role="dialog" aria-modal="true" aria-label={$t('home.card.actionsFor', { name: item.name })} on:keydown={sheetKey}>
     <p class="st">{item.name}</p>
     <a class="act" href={href} on:click={() => closeSheet(false)}><Icon name="play" size={20} />{$t('home.card.play')}</a>
-    <button type="button" class="act" aria-haspopup="dialog" on:pointerenter={prefetchModal} on:click={(e) => { if (item.type !== 'Episode') primeItem(item); moreBtn?.focus(); openModal(e, detail); closeSheet(false); }}><Icon name="chevron-down" size={20} />{$t('home.card.moreInfo')}</button>
+    <button type="button" class="act" aria-haspopup={$deskActive ? undefined : 'dialog'} on:pointerenter={prefetchModal} on:click={(e) => { if (item.type !== 'Episode') primeItem(item); moreBtn?.focus(); openModal(e, detail); closeSheet(false); }}><Icon name="chevron-down" size={20} />{$t('home.card.moreInfo')}</button>
     <button type="button" class="act" on:click={() => { void toggleInList(); closeSheet(); }}><Icon name={inList ? 'check' : 'plus'} size={20} />{inList ? $t('home.card.removeFromList') : $t('home.card.addToList')}</button>
     <button type="button" class="act" aria-pressed={fav} on:click={() => { toggleFav(); closeSheet(); }}><Icon name="heart" size={20} fill={fav} />{fav ? $t('home.card.favRemove') : $t('home.card.favAdd')}</button>
     {#if item.type !== 'BoxSet' && !$kidsMode}<ListMenu itemId={item.seriesId ?? item.id} variant="row" up on:changed={(e) => dispatch('listchanged', e.detail)} />{/if}
@@ -214,6 +271,10 @@
   .fb { position: absolute; left: .5rem; right: .5rem; top: 2.2rem; z-index: 4; pointer-events: none; }
   .fb span { display: inline-block; padding: .25rem .6rem; border-radius: 6px; background: rgba(16,20,24,.92); border: 1px solid var(--err, #e5646e); color: #fff; font-size: .78rem; font-weight: 600; }
   .rm::after { content: ''; position: absolute; inset: -8px; } /* >=44px hit area, visual size unchanged */
+  /* desktop rows: while a card's wide preview is open its neighbours dim to 55 % (a black veil, opacity only) */
+  :global(section.row.dk) .media::before { content: ''; position: absolute; inset: 0; z-index: 4; border-radius: var(--radius); background: #000; opacity: 0; pointer-events: none; transition: opacity 200ms ease; }
+  :global(section.row.dk.dpv-dim) .card:not(.dpv-src) .media::before { opacity: .45; }
+  :global(html.calm section.row.dk) .media::before { transition: none; }
   .brand { position: absolute; left: .45rem; top: .4rem; z-index: 2; pointer-events: none; display: flex; align-items: center; gap: .3rem; }
   .neu { padding: .05rem .4rem; border-radius: 3px; background: rgba(16,20,24,.78); color: #fff; font-size: .66rem; font-weight: 800; letter-spacing: .06em; text-transform: uppercase; }
   .newep { position: absolute; left: .45rem; top: .45rem; z-index: 2; pointer-events: none; padding: .1rem .45rem; border-radius: 3px; background: var(--acc-fill); color: #fff; font-size: .68rem; font-weight: 800; letter-spacing: .02em; text-transform: uppercase; }

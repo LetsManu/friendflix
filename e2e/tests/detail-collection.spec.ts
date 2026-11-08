@@ -3,7 +3,6 @@
 import type { Page } from '@playwright/test';
 import { expect, test } from '../fixtures.js';
 import { items, MOVIE } from '../mocks/fixtures.js';
-import { row, openPopout } from '../helpers.js';
 
 /** Block 21 task 7: collection row on the detail page. */
 const [, , , A, B] = items as [unknown, unknown, unknown, (typeof items)[number], (typeof items)[number]];
@@ -23,19 +22,24 @@ async function mockAbout(page: Page, body: object) {
   await page.route(/\/api\/items\/[0-9a-f]{32}\/about$/, (r) => r.fulfill({ json: body }));
   await page.route('**/api/seerr/image**', (r) => r.fulfill({ status: 200, contentType: 'image/svg+xml', body: '<svg xmlns="http://www.w3.org/2000/svg" width="2" height="3"/>' }));
 }
+/** desktop page: the collection row lives in the Details tab (spec desktop browse §3) */
+async function openDetails(page: Page, id: string) {
+  await page.goto('/item/' + id);
+  await page.getByRole('tablist', { name: 'Weitere Inhalte' }).getByRole('tab', { name: 'Details' }).click();
+}
 const region = (page: Page) => page.getByRole('region', { name: /Teil 2 von 4/ });
 
 test.describe('collection row', () => {
   test('heading "Teil 2 von 4 · Matrix-Reihe" and "Weiter mit Teil 3" link', async ({ page }) => {
     await mockAbout(page, BASE);
-    await page.goto('/item/' + MOVIE.id);
+    await openDetails(page, MOVIE.id);
     await expect(page.getByRole('heading', { level: 2, name: 'Teil 2 von 4 · Matrix-Reihe' })).toBeVisible();
     await expect(page.getByRole('link', { name: 'Weiter mit Teil 3' })).toHaveAttribute('href', '/item/' + B.id);
   });
 
   test('posters in given order; watched tick on part 1; part 2 aria-current', async ({ page }) => {
     await mockAbout(page, BASE);
-    await page.goto('/item/' + MOVIE.id);
+    await openDetails(page, MOVIE.id);
     const reg = region(page);
     await expect(reg.locator('li')).toHaveCount(4);
     await expect(reg.locator('li .nm')).toHaveText(['Teil Eins', MOVIE.name, 'Teil Drei', 'Teil Vier']);
@@ -56,7 +60,7 @@ test.describe('collection row', () => {
       posts.push(r.request().postDataJSON());
       await r.fulfill({ status: 200, json: { ok: true } });
     });
-    await page.goto('/item/' + MOVIE.id);
+    await openDetails(page, MOVIE.id);
     const li = region(page).locator('li').nth(3);
     await expect(li.getByRole('link')).toHaveCount(0);
     await expect(li.locator('img')).toHaveCSS('opacity', '0.5');
@@ -75,7 +79,7 @@ test.describe('collection row', () => {
   test('request limit shows a message and keeps the button', async ({ page }) => {
     await mockAbout(page, BASE);
     await page.route('**/api/requests', (r) => r.request().method() === 'POST' ? r.fulfill({ status: 429, json: { error: 'request_limit' } }) : r.fallback());
-    await page.goto('/item/' + MOVIE.id);
+    await openDetails(page, MOVIE.id);
     const li = region(page).locator('li').nth(3);
     await li.getByRole('button', { name: 'Anfragen: Teil Vier' }).click();
     await expect(page.getByRole('status').filter({ hasText: 'Limit erreicht' })).toBeVisible();
@@ -85,7 +89,7 @@ test.describe('collection row', () => {
 
   test('canRequest false -> no Anfragen button', async ({ page }) => {
     await mockAbout(page, { ...BASE, canRequest: false });
-    await page.goto('/item/' + MOVIE.id);
+    await openDetails(page, MOVIE.id);
     await expect(region(page).locator('li')).toHaveCount(4);
     await expect(page.getByRole('button', { name: /^Anfragen/ })).toHaveCount(0);
   });
@@ -93,7 +97,7 @@ test.describe('collection row', () => {
   test('no current part: row shows with the name and count, no "Teil i von", no "Weiter mit"', async ({ page }) => {
     const parts = COLLECTION.parts.map((p) => ({ ...p, current: false }));
     await mockAbout(page, { ...BASE, collection: { ...COLLECTION, parts } });
-    await page.goto('/item/' + MOVIE.id);
+    await openDetails(page, MOVIE.id);
     await expect(page.getByRole('heading', { level: 2, name: 'Matrix-Reihe · 4 Teile' })).toBeVisible();
     await expect(page.getByRole('link', { name: /^Weiter mit/ })).toHaveCount(0);
     await expect(page.getByRole('region', { name: 'Matrix-Reihe · 4 Teile' }).locator('li')).toHaveCount(4);
@@ -101,21 +105,30 @@ test.describe('collection row', () => {
 
   test('no collection -> no row', async ({ page }) => {
     await mockAbout(page, { ...BASE, collection: null });
-    await page.goto('/item/' + MOVIE.id);
+    await openDetails(page, MOVIE.id);
     await expect(page.getByRole('heading', { level: 1, name: MOVIE.name })).toBeVisible();
     await expect(page.getByRole('heading', { level: 2, name: /Teil \d+ von/ })).toHaveCount(0);
   });
 
-  test('modal: Weiter mit Teil 3 swaps the dialog content', async ({ page }) => {
+  test('modal (phone): Weiter mit Teil 3 swaps the dialog content', async ({ page }) => {
     await mockAbout(page, BASE);
-    await page.goto('/');
-    const card = row(page, 'Weil du „Inkwell“ gesehen hast').locator('article.card').first();
-    const hp = await openPopout(page, card);
-    await hp.getByRole('link', { name: /^Mehr Infos zu / }).click();
+    await page.setViewportSize({ width: 390, height: 844 }); // desktop has no popup (titles open as the full page)
+    await page.goto('/item/' + MOVIE.id);
+    await page.getByRole('tab', { name: 'Mehr davon' }).click();
+    await page.getByRole('tabpanel', { name: 'Mehr davon' }).getByRole('link').nth(1).click();
     const modal = page.getByRole('dialog');
     await expect(modal.getByRole('link', { name: 'Weiter mit Teil 3' })).toBeVisible();
     await modal.getByRole('link', { name: 'Weiter mit Teil 3' }).click();
     await expect(page).toHaveURL(new RegExp('/item/' + B.id));
     await expect(page.getByRole('dialog', { name: new RegExp(B.name) })).toBeVisible();
+  });
+
+  test('desktop: Weiter mit Teil 3 opens the next part as the full page', async ({ page }) => {
+    await mockAbout(page, BASE);
+    await openDetails(page, MOVIE.id);
+    await page.getByRole('link', { name: 'Weiter mit Teil 3' }).click();
+    await expect(page).toHaveURL(new RegExp('/item/' + B.id));
+    await expect(page.getByRole('dialog')).toHaveCount(0);
+    await expect(page.locator('.dd').getByRole('heading', { level: 1 })).toHaveText(B.name);
   });
 });

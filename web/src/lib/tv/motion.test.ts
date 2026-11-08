@@ -3,7 +3,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { prefs } from '#lib/stores';
 import { get } from 'svelte/store';
-import { animateTo, decodeFade, frameGuard, glide, glideRow, halt, tvPagePlan, motionLevel, nearestScroll, resetMotion, SPRING_C, SPRING_K, springSamples, springStep, stagger } from './motion';
+import { animateTo, decodeFade, DESK_GUARD, framesIdle, watchFrames, deskPagePlan, frameGuard, framesResume, isDetailPage, glide, motionTripped, placeAt, glideRow, halt, tvPagePlan, motionLevel, nearestScroll, resetMotion, SPRING_C, SPRING_K, springSamples, springStep, stagger } from './motion';
 
 /** simulates the spring at 16 ms frames; returns the positions */
 function run(from: { x: number; v: number }, target: number, ms: number, k?: number, c?: number) {
@@ -150,6 +150,85 @@ describe('motionLevel', () => {
     stop();
     tick(40); tick(40); tick(40); tick(40);
     expect(motionLevel()).toBe('full');
+  });
+  it('a view transition held the rendering on purpose: that gap is no slow frame once its animation starts (framesResume)', () => {
+    const stop = frameGuard();
+    tick(16);
+    now += 400; // the update callback waits for the new page: no frames meanwhile
+    framesResume();
+    tick(40); tick(40); tick(16);
+    expect(motionLevel()).toBe('full');
+    tick(40); tick(40); tick(40); // real slow frames still count
+    expect(motionLevel()).toBe('reduced');
+    stop();
+  });
+  it('the desktop budget: a steady 30 fps (33 ms frames) never trips it, frames under 20 fps (60 ms) do after eight in a row', () => {
+    expect(DESK_GUARD).toEqual({ slowMs: 50, frames: 8 });
+    const stop = frameGuard(DESK_GUARD);
+    for (let i = 0; i < 28; i++) tick(33); // (inside the one-second watch window)
+    expect(motionLevel()).toBe('full');
+    watchFrames();
+    for (let i = 0; i < 7; i++) tick(60);
+    tick(16); // seven slow frames, then a good one: not yet
+    expect(motionLevel()).toBe('full');
+    for (let i = 0; i < 7; i++) tick(60);
+    expect(motionLevel()).toBe('full');
+    tick(60);
+    expect(motionLevel()).toBe('reduced');
+    stop();
+  });
+  it('a page change ends the watch window (framesIdle): building the new page is no slow animation', () => {
+    const stop = frameGuard(DESK_GUARD);
+    for (let i = 0; i < 7; i++) tick(60);
+    framesIdle();
+    for (let i = 0; i < 4; i++) tick(200);
+    expect(motionLevel()).toBe('full');
+    framesIdle(); // (nothing to cancel)
+    stop();
+  });
+  it('the desktop guard started idle (framesIdle at layout init) does not watch boot work: slow frames before the first pulse never trip it', () => {
+    const stop = frameGuard(DESK_GUARD);
+    framesIdle();
+    tick(); // (flushes the cancelled first frame)
+    expect(frames.length).toBe(0); // no frame loop until something moves
+    for (let i = 0; i < 20; i++) { frames.push(() => {}); tick(200); } // boot: hydration, /api/me (other rAF users' frames)
+    expect(motionLevel()).toBe('full');
+    const fill = el();
+    placeAt(fill, 'x', 120); // an instant placement (the bar's first pill fill) moves nothing: still no watch window
+    expect(fill.style.transform).toContain('120px');
+    expect(frames.length).toBe(0);
+    for (let i = 0; i < 10; i++) { frames.push(() => {}); tick(200); }
+    expect(motionLevel()).toBe('full');
+    watchFrames(); // the first real animation opens the window: now slow frames count
+    for (let i = 0; i < 8; i++) tick(60);
+    expect(motionLevel()).toBe('reduced');
+    stop();
+  });
+  it('motionTripped follows the guard (markup keyed on motionLevel() re-reads it) and resets with the session', () => {
+    expect(get(motionTripped)).toBe(false);
+    const stop = frameGuard();
+    tick(40); tick(40); tick(40);
+    expect(get(motionTripped)).toBe(true);
+    stop();
+    resetMotion();
+    expect(get(motionTripped)).toBe(false);
+  });
+  it('placeAt is remembered like an animateTo end value: the next animateTo springs on from there', () => {
+    const e = el();
+    placeAt(e, 'x', 50);
+    animateTo(e, 'x', 100);
+    expect(tx(e.style.transform)).toBeGreaterThanOrEqual(50);
+    settle();
+    expect(tx(e.style.transform)).toBe(100);
+  });
+  it('the TV budget is unchanged: three 33 ms frames in a row trip it (also after a desktop guard ran)', () => {
+    frameGuard(DESK_GUARD)();
+    const stop = frameGuard();
+    tick(33); tick(33);
+    expect(motionLevel()).toBe('full');
+    tick(33);
+    expect(motionLevel()).toBe('reduced');
+    stop();
   });
   it('the guard only watches while something moves (idle TV: no frame loop)', () => {
     const stop = frameGuard();
@@ -389,5 +468,38 @@ describe('decodeFade', () => {
     a.destroy!();
     expect(i.on.load).toBeUndefined();
     html.classList.remove('tv');
+  });
+});
+
+describe('deskPagePlan', () => {
+  const base = { from: '/', to: '/item/1', back: false, motion: true, level: 'full' as const, hasApi: true };
+  it('home -> detail: a view transition with the artwork morph', () => expect(deskPagePlan(base)).toEqual({ kind: 'view', morph: 'in' }));
+  it('detail -> home with Back: the backdrop morphs back into the card', () => {
+    expect(deskPagePlan({ ...base, from: '/item/1', to: '/', back: true })).toEqual({ kind: 'view', morph: 'back' });
+    expect(deskPagePlan({ ...base, from: '/item/1/', to: '/movies', back: true })).toEqual({ kind: 'view', morph: 'back' });
+  });
+  it('detail -> home by a link (deep link + "‹ Back" goes home): no morph', () => expect(deskPagePlan({ ...base, from: '/item/1', to: '/' })).toEqual({ kind: 'view', morph: null }));
+  it('detail -> detail ("More like this"): the card morphs in; Back between two details morphs back', () => {
+    expect(deskPagePlan({ ...base, from: '/item/1', to: '/item/2' })).toEqual({ kind: 'view', morph: 'in' });
+    expect(deskPagePlan({ ...base, from: '/item/2', to: '/item/1', back: true })).toEqual({ kind: 'view', morph: 'back' });
+  });
+  it('pages without a detail page: no morph', () => {
+    expect(deskPagePlan({ ...base, to: '/movies' })).toEqual({ kind: 'view', morph: null });
+    expect(deskPagePlan({ ...base, to: '/item/1/more' })).toEqual({ kind: 'view', morph: null });
+  });
+  it('reduced set or no View Transitions API: a crossfade', () => {
+    expect(deskPagePlan({ ...base, level: 'reduced' })).toEqual({ kind: 'fade', morph: null });
+    expect(deskPagePlan({ ...base, hasApi: false })).toEqual({ kind: 'fade', morph: null });
+  });
+  it('isDetailPage: a detail page, not its sub-screens or other pages', () => {
+    expect(isDetailPage('/item/1')).toBe(true);
+    expect(isDetailPage('/item/1/')).toBe(true);
+    expect(isDetailPage('/item/1/more')).toBe(false);
+    expect(isDetailPage('/')).toBe(false);
+  });
+  it('motion off (calm / reduced motion) or the same page: nothing', () => {
+    expect(deskPagePlan({ ...base, motion: false })).toEqual({ kind: 'none', morph: null });
+    expect(deskPagePlan({ ...base, hasApi: false, motion: false })).toEqual({ kind: 'none', morph: null });
+    expect(deskPagePlan({ ...base, from: '/item/1' })).toEqual({ kind: 'none', morph: null });
   });
 });

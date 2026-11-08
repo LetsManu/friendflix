@@ -89,7 +89,7 @@ Schauen · Entdecken · Gemeinsam · Familie und Kinder · Handy und TV · Admin
 
 #### Eine Startseite wie bei einem echten Streamingdienst
 
-Ein großes Billboard mit Titel-Logo, darunter Reihen wie *Weiterschauen*, *Nächste Folge*, *Von Freunden empfohlen*, *Freunde haben bewertet*, *Diese Woche bei uns*, *Weil du … gesehen hast*, *Top 10* und *Merkliste*. Fährst du mit der Maus über eine Karte, klappt sie mit den wichtigsten Aktionen auf: abspielen, auf die Liste, bewerten, mehr Infos.
+Ein großes Billboard mit Titel-Logo, darunter Reihen wie *Weiterschauen*, *Nächste Folge*, *Von Freunden empfohlen*, *Freunde haben bewertet*, *Diese Woche bei uns*, *Weil du … gesehen hast*, *Top 10* und *Merkliste*. Am Desktop spielt das Billboard den Trailer (außer bei ruhigem Modus, Datensparmodus oder abgeschaltetem Trailer), die Kopfzeile ist eine schwebende Pille mit Menü und einer Suche, die aus ihr herauswächst, und jede Reihe blättert mit Pfeilen und Punkten. Fährst du mit der Maus über eine Karte, öffnet sich eine breite Vorschau mit den wichtigsten Aktionen: abspielen, auf die Liste, bewerten, mehr Infos.
 
 Kleine **Labels** auf den Karten zeigen, was neu ist – *Neu*, *Neue Folge*, *Neue Staffel*, *Staffelfinale*, *Neue Serie*. Weiß der Admin, dass ein Titel bald die Bibliothek verlässt, steht auf seiner Karte „Nur noch 6 Tage“, und eine Reihe **Bald nicht mehr verfügbar** sammelt diese Titel; wer einen davon auf der Liste oder in *Weiterschauen* hat, bekommt eine Woche und einen Tag vorher eine Erinnerung. Gelöscht wird nichts – das Datum ist nur eine Ankündigung.
 
@@ -99,7 +99,7 @@ Kleine **Labels** auf den Karten zeigen, was neu ist – *Neu*, *Neue Folge*, *N
 
 #### Alles zu einem Titel an einem Ort
 
-Die Detailansicht zeigt Beschreibung, Ton- und Untertitelsprachen, Besetzung, welche Freunde den Titel empfohlen oder gesehen haben und – bei Serien – alle Staffeln und Folgen mit Fortschrittsbalken. Weiterschauen genau dort, wo du aufgehört hast. Kleine Chips verraten vor dem Start **Bild und Ton** (4K, HDR, Dolby Vision, Dolby Atmos, 5.1 Surround). Steht eine neue Staffel an oder warst du ein paar Wochen weg, fasst **Die Geschichte bisher** kurz zusammen, was passiert ist und wo du stehengeblieben bist – die Karte lässt sich ausblenden. Ein Tab **Extras** sammelt Trailer und Bonusmaterial aus Jellyfin, und jede Folge hat ihre eigenen **Kommentare** von Freunden: Kommentare zu einer Folge, die du noch nicht gesehen hast, bleiben verschwommen, bis du „Spoiler – trotzdem zeigen“ wählst.
+Am Desktop ist die Detailansicht eine eigene Seite mit Tabs (die Karte gleitet hinein), am Handy öffnet sie sich als Sheet. Sie zeigt Beschreibung, Ton- und Untertitelsprachen, Besetzung, welche Freunde den Titel empfohlen oder gesehen haben und – bei Serien – alle Staffeln und Folgen mit Fortschrittsbalken. Weiterschauen genau dort, wo du aufgehört hast. Kleine Chips verraten vor dem Start **Bild und Ton** (4K, HDR, Dolby Vision, Dolby Atmos, 5.1 Surround). Steht eine neue Staffel an oder warst du ein paar Wochen weg, fasst **Die Geschichte bisher** kurz zusammen, was passiert ist und wo du stehengeblieben bist – die Karte lässt sich ausblenden. Ein Tab **Extras** sammelt Trailer und Bonusmaterial aus Jellyfin, und jede Folge hat ihre eigenen **Kommentare** von Freunden: Kommentare zu einer Folge, die du noch nicht gesehen hast, bleiben verschwommen, bis du „Spoiler – trotzdem zeigen“ wählst.
 
 <table>
   <tr>
