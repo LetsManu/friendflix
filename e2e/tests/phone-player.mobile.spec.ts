@@ -525,25 +525,151 @@ test.describe('phone panels, portrait', () => {
   });
 });
 
-for (const vp of [{ width: 844, height: 390 }, { width: 568, height: 320 }]) {
-  test.describe(`cast & info panel ${vp.width}×${vp.height}`, () => {
-    test.use({ viewport: vp });
-    test('cast & info sits in the panel box: above the timeline, below the top bar, scrolling inside', async ({ page, api: _api }) => {
-      await forceSafeArea(page, LAND_L);
+const CI_LAYOUTS = [
+  { name: '844×390', viewport: { width: 844, height: 390 }, safe: LAND_L },
+  { name: '568×320', viewport: { width: 568, height: 320 }, safe: LAND_L },
+  { name: 'portrait 390×844', viewport: { width: 390, height: 844 }, safe: PORTRAIT },
+  { name: 'portrait 320×568', viewport: { width: 320, height: 568 }, safe: NONE },
+] as const;
+/** opens Cast & info the phone way: More → 'Besetzung & Infos' */
+async function openCastInfo(page: Page) {
+  await tool(page, 'Mehr').tap();
+  await page.getByRole('dialog', { name: 'Mehr' }).getByRole('button', { name: 'Besetzung & Infos' }).tap();
+  await expect(page.locator('.ci')).toBeVisible();
+}
+for (const L of CI_LAYOUTS) {
+  test.describe(`cast & info panel ${L.name}`, () => {
+    test.use({ viewport: L.viewport });
+    test('cast & info sits in the panel box: above the timeline, below the top bar, its side, scrolling inside', async ({ page, api: _api }) => {
+      await forceSafeArea(page, L.safe);
       await openPanelEpisode(page);
-      await tool(page, 'Mehr').tap();
-      await page.getByRole('dialog', { name: 'Mehr' }).getByRole('button', { name: 'Besetzung & Infos' }).tap();
-      const ci = page.locator('.ci');
-      await expect(ci).toBeVisible();
-      const [c, tl, top, back] = (await boxes(page, ['.ci', '.ctl .tlrow', '.ptop', '.top .icon-btn'])) as [Box, Box, Box, Box];
+      await openCastInfo(page);
+      const [c, tl, top, back, dock] = (await boxes(page, ['.ci', '.ctl .tlrow', '.ptop', '.top .icon-btn', '.ctl.dock'])) as [Box, Box, Box, Box, Box];
       expect(c.y + c.h).toBeLessThanOrEqual(tl.y - 7.5);
       expect(c.y).toBeGreaterThanOrEqual(Math.max(top.y + top.h, back.y + back.h));
-      expect(c.w).toBeLessThanOrEqual(380);
       expect(c.h).toBeGreaterThanOrEqual(100);
+      if (L.viewport.width > L.viewport.height) {
+        // the end side, like the other panels
+        expect(dock.x + dock.w - (c.x + c.w)).toBeGreaterThanOrEqual(-0.5);
+        expect(dock.x + dock.w - (c.x + c.w)).toBeLessThanOrEqual(16.5 + L.safe.right);
+        expect(c.w).toBeLessThanOrEqual(380);
+      } else {
+        expect(Math.abs(c.x - (dock.x + 16 + L.safe.left))).toBeLessThanOrEqual(0.5);
+        expect(Math.abs(dock.x + dock.w - 16 - L.safe.right - (c.x + c.w))).toBeLessThanOrEqual(0.5);
+      }
+      await expect.poll(() => ptxOpacity(page)).toBe('0');
       expect(await page.locator('.ci .body').evaluate((e) => getComputedStyle(e).overflowY)).toBe('auto');
     });
   });
 }
+
+/** regular panels on the smallest phones: inside the panel box, inside the screen, every item reachable by scrolling */
+for (const L of [{ viewport: { width: 568, height: 320 }, safe: LAND_L }, { viewport: { width: 320, height: 568 }, safe: NONE }] as const) {
+  test.describe(`phone panels ${L.viewport.width}×${L.viewport.height}`, () => {
+    test.use({ viewport: L.viewport });
+    test('panels stay between the top bar and the timeline, inside the screen', async ({ page, api: _api }) => {
+      await forceSafeArea(page, L.safe);
+      await openPanelEpisode(page);
+      const { width: vw, height: vh } = L.viewport;
+      for (const [btn, dialog] of [['Audio und Untertitel', 'Audio und Untertitel'], ['Folgen', 'Folgen'], ['Mehr', 'Mehr']] as const) {
+        await tool(page, btn).tap();
+        const m = await panelChecks(page, dialog);
+        expect(m.x).toBeGreaterThanOrEqual(L.safe.left - 0.5);
+        expect(m.x + m.width).toBeLessThanOrEqual(vw - L.safe.right + 0.5);
+        expect(m.height).toBeGreaterThanOrEqual(80);
+        expect(m.y + m.height).toBeLessThanOrEqual(vh);
+        await tool(page, btn).tap();
+        await expect(page.getByRole('dialog', { name: dialog })).toHaveCount(0);
+      }
+      // the last item of More is reachable inside the card
+      await tool(page, 'Mehr').tap();
+      const last = page.getByRole('dialog', { name: 'Mehr' }).getByRole('button', { name: 'Einstellungen' });
+      await last.scrollIntoViewIfNeeded();
+      const [l, d] = [(await last.boundingBox())!, (await page.getByRole('dialog', { name: 'Mehr' }).boundingBox())!];
+      expect(l.y).toBeGreaterThanOrEqual(d.y - 0.5);
+      expect(l.y + l.height).toBeLessThanOrEqual(d.y + d.height + 0.5);
+    });
+  });
+}
+
+test.describe('phone panels: Back and navigation', () => {
+  test.use({ viewport: { width: 390, height: 844 } });
+  test.beforeEach(async ({ page }) => { await forceSafeArea(page, PORTRAIT); });
+
+  test('Back closes Cast & info, the next Back leaves the player', async ({ page, api: _api }) => {
+    await openPanelEpisode(page, true);
+    const id = path(page);
+    await openCastInfo(page);
+    await page.goBack();
+    await expect(page.locator('.ci')).toHaveCount(0);
+    expect(path(page)).toBe(id);
+    await page.goBack();
+    await expect.poll(() => path(page)).toBe('/');
+  });
+});
+
+test.describe('phone panels: pill Next with a panel open', () => {
+  test.use({ viewport: { width: 844, height: 390 } });
+  test('panel open → the pill Next → one Back reaches /', async ({ page, api: _api }) => {
+    await forceSafeArea(page, LAND_L);
+    await openPanelEpisode(page, true);
+    await tool(page, 'Audio und Untertitel').tap();
+    await expect(page.getByRole('dialog', { name: 'Audio und Untertitel' })).toBeVisible();
+    await tool(page, 'Nächste Folge').tap();
+    await expect.poll(() => path(page)).toBe(`/watch/${NEXT.id}`);
+    await expect(page.locator('.ptitle')).toContainText(NEXT.name);
+    await page.goBack();
+    await expect.poll(() => path(page)).toBe('/');
+  });
+});
+
+/** a watch party on a phone, this viewer the host (its settings menu lives in the dock) */
+async function openParty(page: Page) {
+  await forceSafeArea(page, PORTRAIT);
+  await mockPlayer(page);
+  await page.routeWebSocket(/\/ws\/party\//, (ws) => {
+    ws.send(JSON.stringify({ t: 'welcome', you: 'u1', hostId: 'u1', mode: 'host', itemId: items[0]!.id, title: 'Testfilm', members: [{ id: 'u1', name: 'Mia', buffering: false }, { id: 'u2', name: 'Ben', buffering: false }], state: { playing: false, position: 0, at: Date.now(), hold: false }, serverNow: Date.now() }));
+    ws.onMessage((m) => { const msg = JSON.parse(String(m)); if (msg.t === 'ping') ws.send(JSON.stringify({ t: 'pong', c: msg.c, s: Date.now() })); });
+  });
+  await page.goto('/');
+  await page.goto('/party/room1');
+  await expect(page.locator('.stage.pui')).toHaveCount(1);
+  await videoReady(page);
+  await showControls(page);
+}
+
+test.describe('phone party panels', () => {
+  test.use({ viewport: { width: 390, height: 844 } });
+  test('the host settings menu is a panel: title hidden, above the timeline, 44 px items, Back closes it', async ({ page, api: _api }) => {
+    await openParty(page);
+    await page.locator('.pill.tp').getByRole('button', { name: 'Party-Einstellungen' }).tap();
+    const m = await panelChecks(page, 'Wer darf steuern?');
+    await expect.poll(() => ptxOpacity(page)).toBe('0');
+    expect(overlap({ name: 'menu', x: m.x, y: m.y, w: m.width, h: m.height }, (await boxes(page, ['.ctl .tlrow']))[0] as Box)).toBe(false);
+    for (const b of await page.getByRole('dialog', { name: 'Wer darf steuern?' }).locator('.mi').all()) expect((await b.boundingBox())!.height).toBeGreaterThanOrEqual(44);
+    await page.goBack();
+    await expect(page.getByRole('dialog', { name: 'Wer darf steuern?' })).toHaveCount(0);
+    await expect.poll(() => path(page)).toBe('/party/room1');
+    await expect.poll(() => ptxOpacity(page)).toBe('1');
+    await page.goBack();
+    await expect.poll(() => path(page)).toBe('/');
+  });
+
+  test('a double tap in the free middle of the party top strip seeks', async ({ page, api: _api }) => {
+    await openParty(page);
+    await page.evaluate(() => { const v = document.querySelector('video')!; v.pause(); v.currentTime = 60; });
+    await expect.poll(() => page.evaluate(() => Math.round(document.querySelector('video')!.currentTime))).toBe(60);
+    await showControls(page);
+    const back = (await page.locator('.ovl .top .icon-btn').first().boundingBox())!;
+    const x = 390 * 0.25, y = back.y + back.height / 2;
+    expect(x).toBeGreaterThan(back.x + back.width + 8);
+    const t0 = await page.evaluate(() => document.querySelector('video')!.currentTime);
+    await page.touchscreen.tap(x, y);
+    await page.touchscreen.tap(x, y);
+    await expect(page.locator('.riplbl.left')).toBeVisible();
+    await expect.poll(() => page.evaluate(() => document.querySelector('video')!.currentTime)).toBeLessThan(t0 - 9);
+  });
+});
 
 /** pause screen (spec §3): 5 s after the pause, unless something else is on screen; a tap brings the controls back */
 const pauseNow = (page: Page) => page.evaluate(() => document.querySelector('video')!.pause());

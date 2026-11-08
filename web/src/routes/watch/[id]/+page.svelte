@@ -26,6 +26,7 @@
   import { deskActive } from '#lib/desk/bar';
   import { kidsMode } from '#lib/kids';
   import { phonePlayer } from '#lib/player/phone/logic';
+  import { dropLayers } from '#lib/player/phone/backlayer';
 
   let video: HTMLVideoElement | null = null;
   let item: Item | null = null, nextEp: Item | null = null, similar: Item[] = [];
@@ -139,7 +140,8 @@
   const back = () => (history.length > 1 ? history.back() : goto('/'));
   const nextHref = () => `/watch/${nextEp!.id}${langQ ? '?' + langQ : ''}`;
   /** moving on to another episode inside the player replaces the history entry: one Back leaves the player, however many episodes ran */
-  const toEpisode = (href: string) => goto(href, { replaceState: true });
+  // an open phone panel's shallow entry comes off first (and any back of its own lands), so the replace hits the watch entry itself
+  const toEpisode = async (href: string) => { await dropLayers(); return goto(href, { replaceState: true }); };
   function stopCountdown() { clearInterval(cd); counting = false; elapsed = 0; }
   function enterCard() {
     entered = true;

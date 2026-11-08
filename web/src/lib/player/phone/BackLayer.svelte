@@ -7,10 +7,11 @@
    * `history.back()`, its popstate ignored). `drop()` pops the entry first and resolves once it is gone, so a navigation that
    * follows (another episode, replacing the watch entry) leaves exactly one Back to the page before the player.
    */
-  import { createEventDispatcher } from 'svelte';
+  import { createEventDispatcher, onDestroy, onMount } from 'svelte';
   import { get } from 'svelte/store';
   import { pushState } from '$app/navigation';
   import { pageStore } from '#lib/page';
+  import { registerLayer } from './backlayer';
 
   export let open = false;
   export let key: 'panel' = 'panel';
@@ -63,4 +64,8 @@
     if (!pushed) return popping ?? Promise.resolve();
     return popEntry();
   }
+  onMount(() => registerLayer(drop));
+  // unmounted with the entry still current (the page stays, the player goes): take it off, so Back is not spent on nothing.
+  // After a navigation the state no longer holds the token, so nothing is popped then.
+  onDestroy(() => { if (typeof window !== 'undefined' && current()) { token = ''; history.back(); } });
 </script>

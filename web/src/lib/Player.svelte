@@ -124,6 +124,8 @@
   export let orient: PhoneOrient = 'landscape';
   /** the page shows a card in the default slot (next up, "still watching?", post-play, more like this): the phone pause screen waits */
   export let cardOn = false;
+  /** a panel of the page's own in the dock is open (the party host's settings): the title fades, Back and an outside tap close it */
+  export let extPanel = false;
   const dispatch = createEventDispatcher();
 
   type Info = PlaybackDto;
@@ -262,11 +264,12 @@
     pnlObs.observe(st);
     void tickDom().then(() => { for (const el of st.querySelectorAll('.ctl.dock, .ctl.dock .row, .ovl')) pnlObs?.observe(el); measurePanel(); });
   }
-  $: if (phoneUi && (menu !== '' || showXray) && typeof window !== 'undefined') void tickDom().then(measurePanel);
+  $: if (phoneUi && (menu !== '' || showXray || extPanel) && typeof window !== 'undefined') void tickDom().then(measurePanel);
   $: if (phoneUi && winW && winH) void tickDom().then(measurePanel);
   /** the open panel's history entry (phone player): Back closes it */
   let menuLayer: BackLayer | undefined;
   /** closes the panel and takes its history entry off first (before a navigation that replaces this entry: one Back still leaves) */
+  function closePanels() { menu = ''; extPanel = false; if (xray) closeCastInfo(); }
   async function leaveMenu(): Promise<void> {
     await menuLayer?.drop();
     menu = '';
@@ -812,7 +815,7 @@
   /** the TV button row */
   function tvButton(b: TvButton) {
     wake();
-    if (b === 'next') { if (hasNext && allowed()) goNext(); return; }
+    if (b === 'next') { if (hasNext && allowed()) void goNext(); return; }
     menu = menu === b ? '' : b;
   }
   /** what Back peels next (overlay -> seek preview -> controls -> leave) */
@@ -830,7 +833,7 @@
     else if (m.action === 'toggle') { if (paused) { if (allowed()) playSafe(); } else if (allowed()) doPause(); }
     else if (m.action === 'audio' && typeof m.value === 'number') { if (info?.audioTracks.some((a) => a.index === m.value)) changeAudio(m.value); }
     else if (m.action === 'sub' && typeof m.value === 'number') { if (m.value === -1 || info?.subtitles.some((x) => x.index === m.value)) setSubtitle(m.value); }
-    else if (m.action === 'next') { if (hasNext && allowed()) goNext(); else flash(tr('player.noNext')); }
+    else if (m.action === 'next') { if (hasNext && allowed()) void goNext(); else flash(tr('player.noNext')); }
     else if (m.action === 'seekBy' && typeof m.value === 'number') seekBy(m.value);
   }
 
@@ -845,12 +848,13 @@
     if (!video || !allowed()) return; video.currentTime = Math.max(0, Math.min(duration || t, t)); }
   function seekBy(d: number, quiet = false) { if (!video || !allowed()) return; seekTo((remote ? current : video.currentTime) + d); if (quiet) announce(d > 0 ? tr('player.secondsForward', { n: d }) : tr('player.secondsBack', { n: -d })); else flash(d > 0 ? `+${d} s` : `−${-d} s`, 700); }
   /** next episode: as a remote the engine moves the TV on (its next(); the watch page follows the TV), else the page navigates */
-  function goNext() { if (remote) void castEngine.next(); else dispatch('next'); }
+  /** the panel's history entry comes off first: the page replaces this entry with the next episode (one Back still leaves) */
+  async function goNext() { await leaveMenu(); if (remote) void castEngine.next(); else dispatch('next'); }
   function doSkip() {
     if (!skip) return;
     const key = segKey(skip.type, 'skipped');
     // a preview at the very end is the teaser of the next episode: go there instead of seeking into nothing
-    if (skip.type === 'preview' && duration && skip.end >= duration - 3 && hasNext) { if (allowed()) goNext(); return; }
+    if (skip.type === 'preview' && duration && skip.end >= duration - 3 && hasNext) { if (allowed()) void goNext(); return; }
     seekTo(skip.end);
     if (key) announce(tr(key));
   }
@@ -1075,7 +1079,7 @@
       case 'subtitles': cycleSubtitles(); break;
       case 'subtitleToggle': toggleSubtitles(); break;
       case 'skip': if (skip && allowed()) doSkip(); break;
-      case 'next': if (hasNext && allowed()) goNext(); else flash(tr('player.noNext')); break;
+      case 'next': if (hasNext && allowed()) void goNext(); else flash(tr('player.noNext')); break;
       case 'help': help = !help; break;
       case 'speed': speedBy(a.delta); break;
       case 'pip': if (pipOk && !remote) void pip(); break;
@@ -1197,6 +1201,7 @@
   }
   /** a click outside the open menu (and not on its opener, which toggles itself) closes it; focus returns to the opener. A click on the picture only closes. */
   function onOutsideClick(e: MouseEvent) {
+    if (extPanel && !(e.target as HTMLElement | null)?.closest?.('.menu, [aria-expanded="true"]')) extPanel = false;
     if (!menu || !stage) return;
     const t = e.target as HTMLElement | null;
     if (!t || t.closest('.menu, .tvov, .ctl .list, [aria-expanded="true"]')) return;
@@ -1273,7 +1278,7 @@
   function gCancel(e: PointerEvent) { if (g && e.pointerId === g.id) { g = null; showHud(null); } }
   function handleTap(x: number, w: number) {
     if (locked) { showLockBtn(); return; }
-    if (menu || help) { menu = ''; help = false; return; }
+    if (menu || help || extPanel) { menu = ''; help = false; extPanel = false; return; }
     const zone = zoneOf(x, w), r = registerTap(tapState, Date.now(), zone);
     tapState = r.state;
     clearTimeout(pendingTap);
@@ -1599,7 +1604,7 @@
       </div>
     {:else if phoneUi}
       <!-- phone: chapter, title and episode line; the skip button at the row's end (landscape) or below (portrait) -->
-      <PhoneTitle chapter={nowChapter} title={barTitle || title} sub={phoneSub(item, $t)} {orient} hidden={menu !== '' || showXray}>
+      <PhoneTitle chapter={nowChapter} title={barTitle || title} sub={phoneSub(item, $t)} {orient} hidden={menu !== '' || showXray || extPanel}>
         <svelte:fragment slot="skip">
           {#if skip && !locked && credits !== 'corner'}<button class="skipbtn light" aria-keyshortcuts="S" on:click|stopPropagation={doSkip} in:fly={{ y: 12, duration: motionAllowed() ? 250 : 0, easing: springAt }} out:fade={{ duration: motionAllowed() ? 150 : 0 }}>{segText($t, skip.type, 'skip')}</button>{/if}
         </svelte:fragment>
@@ -1716,7 +1721,7 @@
           {#if menu === 'more'}
             <div class="menu more" data-nav data-scope role="dialog" aria-label={$t('player.controls.more')} in:cardIn={{ origin: 'bottom right' }} out:cardOut>
               {#if coarse && !partyMode && (!phoneUi || extras.includes('speed'))}<button class="mi" on:click={() => (menu = 'speed')}><Icon name="gauge" size={20} />{$t('player.speed.title')}{#if rate !== 1}<span class="muted"> · {$t('player.speed.rate', { r: rate })}</span>{/if}<span class="chev" aria-hidden="true">›</span></button>{/if}
-              {#if extras.includes('next')}<button class="mi" on:click={async () => { await leaveMenu(); goNext(); }}><Icon name="skip-next" size={20} />{$t('player.controls.next')}</button>{/if}
+              {#if extras.includes('next')}<button class="mi" on:click={goNext}><Icon name="skip-next" size={20} />{$t('player.controls.next')}</button>{/if}
               {#if coarse && showScenes}<button class="mi" on:click={() => (menu = 'chapters')}><Icon name="film" size={20} />{$t('scenes.chapters.open')}<span class="chev" aria-hidden="true">›</span></button>{/if}
               <button class="mi" on:click={() => (menu = 'scenes')}><Icon name="bookmark" size={20} />{$t('player.bookmark.menu')}<span class="chev" aria-hidden="true">›</span></button>
               <button class="mi" class:on={showXray} aria-pressed={showXray} on:click={() => { if (showXray) { menu = ''; closeCastInfo(); } else openCastInfo(tvMode()); }}><Icon name="users" size={20} />{$t('scenes.info.open')}</button>
@@ -1760,7 +1765,8 @@
     </div>
   </div>
   {#if phoneUi}<ProgressLine {pct} shown={!showUi && !locked && credits !== 'corner'} />{/if}
-  <BackLayer open={phoneUi && menu !== ''} key="panel" on:back={() => (menu = '')} bind:this={menuLayer} />
+  <!-- one entry for whatever panel is open (a menu, Cast & info opened by the viewer, the page's own): Back closes it -->
+  <BackLayer open={phoneUi && (menu !== '' || xray || extPanel)} key="panel" on:back={closePanels} bind:this={menuLayer} />
   {/if}
 </div>
 
@@ -2115,9 +2121,10 @@
     width: min(380px, var(--dock-w)); min-width: 0; max-width: none; }
   .stage.pui.port .ctl.dock :is(.menu, .menu.tracks, .menu.more, .menu.scenes, .menu.speed, .menu.bare) {
     left: calc(var(--safe-left) + 16px - var(--pill-l, 0px)); right: calc(var(--safe-right) + 16px - var(--pill-r, 0px)); width: auto; }
-  /* glass card like the desk menus (fill, hairline, 14 px radius; the blur rule is .ctl.blur's) */
-  .ctl.dock .menu:not(.bare) { background: rgba(20,20,24,.62); border: 1px solid rgba(255,255,255,.12); border-radius: 14px; box-shadow: 0 18px 40px rgba(0,0,0,.55); }
-  .ctl.dock .menu.tracks h3 { background: rgba(20,20,24,.92); }
+  /* glass card like the desk menus (hairline, 14 px radius; the blur rule is .ctl.blur's). Denser fill than the desk's .62: the
+     card sits inside the blurred pill (its backdrop root), so over sharp video the fill carries the contrast */
+  .ctl.dock .menu:not(.bare) { background: rgba(20,20,24,.78); border: 1px solid rgba(255,255,255,.12); border-radius: 14px; box-shadow: 0 18px 40px rgba(0,0,0,.55); }
+  .ctl.dock .menu.tracks h3 { background: rgba(20,20,24,.94); }
   /* audio & subtitles: two columns in landscape (the effects below them), sections in portrait; the card scrolls as one */
   .ctl.dock .menu.tracks { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: .4rem 1rem; }
   .stage.pui.port .ctl.dock .menu.tracks { grid-template-columns: 1fr; }
@@ -2129,6 +2136,12 @@
   .stage.pui .cihost :global(.ci) { top: auto; bottom: var(--pnl-b, 50%); max-height: var(--pnl-h, 50%); height: auto;
     left: auto; right: calc(var(--safe-right) + 16px + var(--inset, 0px)); width: min(380px, var(--dock-w)); border-radius: 14px; }
   .stage.pui.port .cihost :global(.ci) { left: calc(var(--safe-left) + 16px); right: calc(var(--safe-right) + 16px); width: auto; }
+  /* it enters from its own side: from the end side in landscape, rising in portrait; instant without motion (calm, reduced) */
+  .stage.pui .cihost :global(.ci) { animation-name: ff-pnl-ci-end; }
+  .stage.pui.port .cihost :global(.ci) { animation-name: ff-pnl-ci-up; }
+  .stage.pui:not(.pmo) .cihost :global(.ci) { animation: none; }
+  @keyframes -global-ff-pnl-ci-end { from { opacity: 0; transform: translateX(12px); } to { opacity: 1; transform: none; } }
+  @keyframes -global-ff-pnl-ci-up { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: none; } }
   /* the page's top slot spans the bar's free middle: only its own controls take taps, the rest goes to the picture (double-tap seek) */
   .stage.pui .ovl > :global(.top) { pointer-events: none; }
   .ctl.dock .speeds { flex-wrap: wrap; justify-content: center; } .ctl.dock .speeds::before { display: none; } .ctl.dock .sp-opt { min-width: 64px; }
