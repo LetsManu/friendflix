@@ -234,6 +234,10 @@ const tr: Translation<typeof de> = {
     startsIn: { one: 'Sonraki bölüm {n} saniye içinde başlıyor', other: 'Sonraki bölüm {n} saniye içinde başlıyor' },
     more: 'Benzerleri',
   },
+  /** credits sequence (desktop and TV): caption above the next episode */
+  credits: {
+    upNext: 'Sıradaki',
+  },
   remote: {
     title: 'Kumanda',
     paired: 'Eşleşti – televizyon birkaç saniye içinde bağlanacak.',

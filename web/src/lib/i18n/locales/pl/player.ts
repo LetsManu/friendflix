@@ -254,6 +254,10 @@ const pl: Translation<typeof de> = {
     },
     more: 'Podobne tytuły',
   },
+  /** credits sequence (desktop and TV): caption above the next episode */
+  credits: {
+    upNext: 'Następnie',
+  },
   remote: {
     title: 'Pilot',
     paired: 'Sparowano – telewizor zgłosi się za kilka sekund.',

@@ -238,6 +238,10 @@ const fr: Translation<typeof de> = {
     },
     more: 'Dans le même genre',
   },
+  /** credits sequence (desktop and TV): caption above the next episode */
+  credits: {
+    upNext: 'À suivre',
+  },
   remote: {
     title: 'Télécommande',
     paired: 'Associé – la télévision se connectera dans quelques secondes.',

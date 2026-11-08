@@ -106,6 +106,11 @@
   export let remote = false;
   /** the playing item (watch page): the TV pause screen's logo, episode line and synopsis */
   export let item: Item | null = null;
+  /**
+   * credits sequence beat (desktop and TV, spec 2026-11-08 §4; the watch page computes it): 'corner' glides the picture into
+   * the top-left corner (stage `.cred`) and hides the bar; a click on the small picture, Esc or TV Back dispatch `credits`
+   */
+  export let credits: 'off' | 'chip' | 'corner' = 'off';
   const dispatch = createEventDispatcher();
 
   type Info = PlaybackDto;
@@ -206,16 +211,18 @@
   $: hideMs = tvUi ? 5000 : 3000; // the D-pad needs longer to reach a button than a mouse
   $: if (paused !== wasPaused) { wasPaused = paused; if (paused) pausedAt = Date.now(); }
   /** after 8 s paused without a key (TV, not in calm mode): dimmed picture + "You're watching" */
-  $: pauseOn = tvUi && paused && started && !error && !remote && !locked && !reconnecting && menu === '' && !sp.active && !xray && !peek && !subDlg && !help
+  $: pauseOn = tvUi && paused && started && !error && !remote && !locked && !reconnecting && menu === '' && !sp.active && !xray && !peek && !subDlg && !help && credits === 'off'
     && pauseScreenDue(pausedAt, lastActive, tick, $prefs.calm === true);
   $: tvButtons = tvPlayerButtons({ isEpisode: Boolean(seriesId), hasNext });
   $: tvSub = item?.seriesName && item.indexNumber !== undefined && item.indexNumber !== null
     ? $t('tv.player.episode', { s: item.parentIndexNumber ?? 1, e: item.indexNumber, name: item.name }) : barSub;
   /** desktop pause screen (spec 2026-11-08 §3): 5 s after the pause or the last input, unless something else is on screen */
-  $: deskBlocked = menu !== '' || scrubbing || (partyMode && !canControl) || remote || Boolean(error) || reconnecting > 0 || locked || help || subDlg || showXray || peek;
+  $: deskBlocked = menu !== '' || scrubbing || (partyMode && !canControl) || remote || Boolean(error) || reconnecting > 0 || locked || help || subDlg || showXray || peek || credits !== 'off';
   $: deskPause = desk && paused && started && deskPauseDue({ pausedAt, lastActive, now: tick, blocked: deskBlocked });
   $: deskMotion = desk && motionAllowed();
-  $: showUi = !locked && !pauseOn && !deskPause && (paused || menu !== '' || scrubbing || sp.active || tick - lastActive < hideMs);
+  /** credits glide: spring transform (desk / TV with motion); a tripped frame guard (html.tv-motion-reduced) crossfades in CSS */
+  $: credMotion = (desk || tvUi) && motionAllowed();
+  $: showUi = !locked && !pauseOn && !deskPause && credits !== 'corner' && (paused || menu !== '' || scrubbing || sp.active || tick - lastActive < hideMs);
   // TV: a hidden bar keeps no focus - otherwise the next OK would press the last used button (subtitles ...) instead of play/pause
   $: if (!showUi && typeof document !== 'undefined' && tvMode() && stage?.querySelector('.ctl')?.contains(document.activeElement)) (document.activeElement as HTMLElement).blur();
   $: creditsAt = creditsStart(segments, duration);
@@ -1052,6 +1059,10 @@
     } else if (peek) {
       e.preventDefault(); e.stopImmediatePropagation();
       clearTimeout(peekT); peek = false;
+    } else if (credits !== 'off') {
+      // credits sequence: Esc / TV Back back out to full screen (the page's "Watch credits") instead of leaving the player
+      e.preventDefault(); e.stopImmediatePropagation();
+      dispatch('credits');
     } else if (tvMode() && stage?.querySelector('.ctl')?.contains(document.activeElement)) {
       e.preventDefault(); e.stopImmediatePropagation();
       (document.activeElement as HTMLElement).blur(); lastActive = 0; // hide the bar, the next Back leaves the player
@@ -1091,6 +1102,7 @@
     if (Date.now() - lastTouch < 800) return; // the click that follows a touch was already handled
     const now = Date.now();
     if (menu) { menu = ''; return; }
+    if (credits === 'corner') { if (e.target === video) dispatch('credits'); return; } // the small picture backs out to full screen
     if (now - lastTap < 280) { toggleFullscreen(); lastTap = 0; } else { lastTap = now; setTimeout(() => { if (lastTap === now) { togglePlay(); lastTap = 0; } }, 285); }
   }
   /** a click outside the open menu (and not on its opener, which toggles itself) closes it; focus returns to the opener. A click on the picture only closes. */
@@ -1305,7 +1317,7 @@
 </script>
 
 <svelte:window on:keydown={onKey} on:keydown|capture={onBackCapture} />
-<div class="stage {subClasses($prefs.subtitleStyle)}" class:idle={!showUi} class:locked class:pre={posterOn} class:phone class:desk class:dpause={deskPause} class:dmo={deskMotion} class:rmt={Boolean(tvSession)} style="--inset:{inset}px{barVar};--rcard-h:{rCardH}px" bind:this={stage} on:mousemove={(e) => { if (Date.now() - lastTouch > 800 && !(e.target as Element).closest?.('.dps')) wake(); }} on:click={onSurfaceClick} on:wheel|nonpassive={onWheel} on:keydown={() => {}}
+<div class="stage {subClasses($prefs.subtitleStyle)}" class:idle={!showUi && credits !== 'corner'} class:locked class:pre={posterOn} class:phone class:desk class:dpause={deskPause} class:dmo={deskMotion} class:cred={credits === 'corner'} class:cmo={credMotion} class:rmt={Boolean(tvSession)} style="--inset:{inset}px{barVar};--rcard-h:{rCardH}px" bind:this={stage} on:mousemove={(e) => { if (Date.now() - lastTouch > 800 && !(e.target as Element).closest?.('.dps')) wake(); }} on:click={onSurfaceClick} on:wheel|nonpassive={onWheel} on:keydown={() => {}}
   on:pointerdown={gDown} on:pointermove={gMove} on:pointerup={gUp} on:pointercancel={gCancel} role="presentation">
   <!-- svelte-ignore a11y_media_has_caption -->
   <video bind:this={video} playsinline crossorigin="use-credentials" style:filter={brightness < 1 ? `brightness(${brightness})` : null}
@@ -1399,7 +1411,7 @@
       <button class="btn light ui" on:click|stopPropagation={() => air?.pick()}>{$t('player.airplay.choose')}</button>
     </div></div>
   {/if}
-  {#if !phone && !tvUi && paused && !deskPause && !waiting && !error && !remote && !locked && !reconnecting}
+  {#if !phone && !tvUi && paused && !deskPause && credits !== 'corner' && !waiting && !error && !remote && !locked && !reconnecting}
     <button class="bigplay ui" aria-label={$t('player.controls.play')} on:click|stopPropagation={togglePlay}><Icon name="play" size={44} /></button>
   {/if}
   {#if toast}<div class="toast" aria-hidden="true">{toast}</div>{/if}
@@ -1441,7 +1453,7 @@
   {/if}
   <slot />
 
-  {#if skip && !locked}<button class="skipbtn light" class:tv-btn={tvUi} aria-keyshortcuts="S" on:click|stopPropagation={doSkip} in:fly={{ y: 12, duration: desk && motionAllowed() ? 250 : 0, easing: springAt }}>{segText($t, skip.type, 'skip')}{tvMode() ? $t('player.skipOk') : ''}</button>{/if}
+  {#if skip && !locked && credits !== 'corner'}<button class="skipbtn light" class:tv-btn={tvUi} aria-keyshortcuts="S" on:click|stopPropagation={doSkip} in:fly={{ y: 12, duration: desk && motionAllowed() ? 250 : 0, easing: springAt }}>{segText($t, skip.type, 'skip')}{tvMode() ? $t('player.skipOk') : ''}</button>{/if}
 
   {#if showXray}
     <div class="cihost" class:hide={!showUi && !xray}><CastInfoPanel data={castData} failed={castFailed} autofocus={infoFocus} on:close={closeCastInfo} /></div>
@@ -1940,6 +1952,13 @@
   /* desktop pause screen: the picture darkens and zooms a little (transform / filter only, no motion in calm mode) */
   .stage.dpause > video { filter: brightness(.35); transform: scale(1.03); }
   .stage.desk.dmo > video { transition: filter 500ms var(--m-emph-out, ease-out), transform 500ms var(--m-emph-out, ease-out); }
+  /* credits sequence (spec 2026-11-08 §4): the picture glides into the top-left corner on a spring and gains rounded corners and a
+     shadow; transform / opacity only. Calm mode / reduced motion: no transition; a tripped frame guard: an opacity crossfade instead */
+  .stage.cred > video { transform: translate(-27%, -24%) scale(.42); border-radius: 14px; box-shadow: 0 24px 64px rgba(0, 0, 0, .6); }
+  .stage.cmo > video, .stage.desk.cmo > video { transition: transform 750ms var(--m-spring), border-radius 750ms var(--m-emph-out, ease-out), box-shadow 750ms var(--m-emph-out, ease-out), filter 500ms var(--m-emph-out, ease-out); }
+  :global(html.tv-motion-reduced) .stage.cmo > video { transition: none; }
+  :global(html.tv-motion-reduced) .stage.cmo.cred > video { animation: ff-cred-fade 300ms ease-out both; }
+  @keyframes ff-cred-fade { from { opacity: 0; } to { opacity: 1; } }
   .stage.desk .ctl { display: grid; gap: .7rem; padding: 4.5rem max(clamp(1.5rem, 3vw, 3rem), var(--safe-right)) 1.4rem max(clamp(1.5rem, 3vw, 3rem), var(--safe-left));
     background: linear-gradient(transparent, rgba(0,0,0,.45) 35%, rgba(0,0,0,.82)); transition: opacity 250ms ease; }
   .ttlblock { display: grid; gap: .15rem; min-width: 0; max-width: min(60%, 46rem); text-shadow: 0 1px 10px rgba(0,0,0,.5); }

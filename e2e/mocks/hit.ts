@@ -33,6 +33,15 @@ async function wake(page: Page) {
   await page.mouse.move(20, vp.height * 0.3); await page.mouse.move(30, vp.height * 0.3);
   await expect(page.locator('.ctl.hide')).toHaveCount(0);
 }
+/**
+ * the "Next episode" card: phones and narrow windows keep the card (`.next`); desktop and TV show the credits sequence's chip
+ * (`.cs .chip`, spec 2026-11-08 §4), which gives way to the corner beat after 2 s - the page clock is frozen for the probe
+ */
+const NEXT_CARD = '.cs .chip, .next', NEXT_GO = '.cs .chip .go, .next .go', NEXT_SEC = '.cs .chip .sec, .next .sec';
+async function freezeClock(page: Page) {
+  const now = await page.evaluate(() => Date.now());
+  await page.clock.pauseAt(now + 50);
+}
 /** points on the button: the four corners (1 px inside), edge midpoints and the centre */
 async function probe(page: Page, sel: string) {
   const loc = page.locator(sel);
@@ -73,6 +82,7 @@ for (const v of viewports) {
     });
 
     test('skip button and next card shown together: both fully hittable', async ({ page, api: _api }) => {
+      await page.clock.install();
       await mockPlayer(page);
       await page.route('**/api/items/*/next', (r) => r.fulfill({ json: { item: NEXT } }));
       await page.route('**/api/items/*/segments', (r) => r.fulfill({ json: { segments: [{ type: 'Outro', start: 570, end: 600 }] } }));
@@ -80,13 +90,15 @@ for (const v of viewports) {
       await page.goto('/watch/' + EP.id);
       await videoReady(page);
       await seekTo(page, 575);
+      await expect(page.locator(NEXT_GO)).toBeVisible();
+      await freezeClock(page);
       await wake(page);
-      for (const sel of ['.skipbtn', '.next .go', '.next .sec']) {
+      for (const sel of ['.skipbtn', NEXT_GO, NEXT_SEC]) {
         const { bad } = await probe(page, sel);
         expect(bad, `${sel}: ${bad.join(' ')}`).toEqual([]);
       }
       // and the two do not overlap each other
-      const a = (await page.locator('.skipbtn').boundingBox())!, c = (await page.locator('.next').boundingBox())!;
+      const a = (await page.locator('.skipbtn').boundingBox())!, c = (await page.locator(NEXT_CARD).boundingBox())!;
       expect(a.y + a.height <= c.y + 1 || c.y + c.height <= a.y + 1 || a.x + a.width <= c.x + 1 || c.x + c.width <= a.x + 1).toBe(true);
     });
 
@@ -110,9 +122,12 @@ for (const v of viewports) {
     });
 
     test('next-episode card: every corner and edge of the button hits it and fires', async ({ page, api: _api }) => {
+      await page.clock.install();
       await open(page, false);
       await seekTo(page, 575);
-      const sel = '.next .go';
+      const sel = NEXT_GO;
+      await expect(page.locator(sel)).toBeVisible();
+      await freezeClock(page);
       await wake(page);
       const { b, bad } = await probe(page, sel);
       expect(bad, `points not on the button: ${bad.join(' ')}`).toEqual([]);

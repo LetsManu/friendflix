@@ -234,6 +234,10 @@ const es: Translation<typeof de> = {
     startsIn: { one: 'El siguiente episodio empieza en {n} segundo', many: 'El siguiente episodio empieza en {n} segundos', other: 'El siguiente episodio empieza en {n} segundos' },
     more: 'Más títulos como este',
   },
+  /** credits sequence (desktop and TV): caption above the next episode */
+  credits: {
+    upNext: 'A continuación',
+  },
   remote: {
     title: 'Mando a distancia',
     paired: 'Vinculado – la tele se conectará en unos segundos.',

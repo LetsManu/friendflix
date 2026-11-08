@@ -238,6 +238,10 @@ export default {
     startsIn: { one: 'Nächste Folge startet in {n} Sekunde', other: 'Nächste Folge startet in {n} Sekunden' },
     more: 'Mehr davon',
   },
+  /** credits sequence (desktop and TV): caption above the next episode */
+  credits: {
+    upNext: 'Als Nächstes',
+  },
   /** phone remote (/remote) */
   remote: {
     title: 'Fernbedienung',

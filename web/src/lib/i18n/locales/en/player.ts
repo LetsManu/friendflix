@@ -234,6 +234,10 @@ const en: Translation<typeof de> = {
     startsIn: { one: 'Next episode starts in {n} second', other: 'Next episode starts in {n} seconds' },
     more: 'More like this',
   },
+  /** credits sequence (desktop and TV): caption above the next episode */
+  credits: {
+    upNext: 'Up next',
+  },
   remote: {
     title: 'Remote control',
     paired: 'Paired – the TV will sign in within a few seconds.',
