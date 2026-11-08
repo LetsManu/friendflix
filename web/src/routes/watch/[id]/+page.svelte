@@ -48,6 +48,8 @@
   $: ppWanted = postplayWanted({ type: item?.type, hasNextEpisode: Boolean(nextEp), feature: $features.postplay, pref: $prefs.postplay, remote });
   $: ppCard = ppWanted && !ppCardClosed && !ppOpen && Number.isFinite(postplayAt) && curTime >= postplayAt;
   $: if (ppCard && !ppData && !ppLoading) prefetchPostplay(id);
+  /** one of the cards in the Player's slot is up (the branches below): the phone pause screen must not cover it */
+  $: cardOn = Boolean(visible && askStill && nextEp) || (!csOn && (Boolean(visible && kind === 'episode' && nextEp) || ppCard || Boolean(visible && kind === 'movie' && similar.length && !ppWanted)));
 
   // ---- credits sequence (spec 2026-11-08 §4): desktop and TV replace the next-up / "More like this" cards; phones keep them ----
   // `tvUi` / `coarse` follow html.tv and the pointer the same way the Player does
@@ -260,7 +262,7 @@
   <!-- the overlay covers the player: while it is open the player's controls are out of the tab order (inert, not a focus trap) -->
   <div class="stagewrap" inert={ppOpen}>
   {#key id}
-    <Player itemId={id} {poster} item={item && item.id === id ? item : null} title={label(item)} barTitle={bt.title} barSub={bt.sub} seriesId={item?.seriesId ?? ''} isMovie={item?.type === 'Movie'} seasonId={item?.seasonId ?? ''} on:episode={playEpisode} {startAt} {wantAudio} {wantSub} bind:video bind:sleepAfterEpisode bind:creditsAt bind:postplayAt bind:remote credits={beat} bind:credHold on:credits={watchCredits} hasNext={Boolean(nextEp)} on:next={() => nextEp && toEpisode(nextHref())} on:timeupdate={onTime} on:ended={onEnded} on:back={back}>
+    <Player itemId={id} {poster} item={item && item.id === id ? item : null} title={label(item)} barTitle={bt.title} barSub={bt.sub} seriesId={item?.seriesId ?? ''} isMovie={item?.type === 'Movie'} seasonId={item?.seasonId ?? ''} on:episode={playEpisode} {startAt} {wantAudio} {wantSub} bind:video bind:sleepAfterEpisode bind:creditsAt bind:postplayAt bind:remote credits={beat} {cardOn} bind:credHold on:credits={watchCredits} hasNext={Boolean(nextEp)} on:next={() => nextEp && toEpisode(nextHref())} on:timeupdate={onTime} on:ended={onEnded} on:back={back}>
       <div slot="top" class="top" class:pui={phoneUi}>
         <button class="icon-btn" aria-label={$t('player.watch.back')} on:click={back}><Icon name="arrow-left" size={phoneUi ? 24 : 30} /></button>
         {#if item && !phoneUi}<div class="ttl phone"><b>{item.seriesName ?? item.name}</b>{#if item.seriesName}<span>S{item.parentIndexNumber}:E{item.indexNumber} · {item.name}</span>{/if}</div>{/if}

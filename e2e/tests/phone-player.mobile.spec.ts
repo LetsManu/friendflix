@@ -544,3 +544,105 @@ for (const vp of [{ width: 844, height: 390 }, { width: 568, height: 320 }]) {
     });
   });
 }
+
+/** pause screen (spec §3): 5 s after the pause, unless something else is on screen; a tap brings the controls back */
+const pauseNow = (page: Page) => page.evaluate(() => document.querySelector('video')!.pause());
+/** a negative check right after `runFor` could pass before the Player re-renders: give it a moment (the clock runs on) */
+const settle = (page: Page) => page.waitForTimeout(400);
+for (const L of [LAYOUTS[2], LAYOUTS[1]]) {
+  test.describe(`phone pause screen, ${L.name}`, () => {
+    test.use({ viewport: L.viewport });
+    test.beforeEach(async ({ page }) => { await forceSafeArea(page, L.safe); });
+
+    test('after 5 s paused the pause screen shows; a tap brings the controls back', async ({ page, api: _api }) => {
+      await page.clock.install();
+      await openPhoneEpisode(page);
+      const title = (await page.locator('.ptitle .ptx b').textContent())!.trim();
+      await pauseNow(page);
+      await page.clock.runFor(5200);
+      const pps = page.locator('.pps');
+      await expect(pps).toBeVisible();
+      await expect(pps).toContainText('Du siehst gerade');
+      await expect(pps.locator('.ttl')).toHaveText(title);
+      await expect(pps).toContainText('Pausiert');
+      await expect(page.locator('.ctl.hide')).toHaveCount(1);
+      const { width: vw, height: vh } = page.viewportSize()!;
+      for (const sel of ['.pps .ov', '.pps .pz', '.pps .ff']) {
+        const b = (await page.locator(sel).boundingBox())!;
+        expect(b.x, `${sel} left`).toBeGreaterThanOrEqual(L.safe.left);
+        expect(b.x + b.width, `${sel} right`).toBeLessThanOrEqual(vw - L.safe.right);
+        expect(b.y, `${sel} top`).toBeGreaterThanOrEqual(L.safe.top);
+        expect(b.y + b.height, `${sel} bottom`).toBeLessThanOrEqual(vh - L.safe.bottom);
+      }
+      const [pz, ff] = (await boxes(page, ['.pps .pz', '.pps .ff'])) as [Box, Box];
+      expect(overlap(pz, ff)).toBe(false);
+      expect(await page.locator('.pps .ov').evaluate((e) => getComputedStyle(e).webkitLineClamp)).toBe(vw > vh ? '4' : '3');
+      await expect(pps.locator('button')).toHaveCount(0);
+      await page.locator('.stage').tap({ position: { x: 30, y: vh * 0.3 } });
+      await expect(page.locator('.pps')).toHaveCount(0);
+      await expect(page.locator('.ctl')).not.toHaveClass(/\bhide\b/);
+      await page.locator('.pill.lp').getByRole('button', { name: 'Abspielen', exact: true }).tap();
+      await expect.poll(() => page.evaluate(() => !document.querySelector('video')!.paused)).toBe(true);
+    });
+  });
+}
+
+test.describe('phone pause screen, portrait', () => {
+  test.use({ viewport: { width: 390, height: 844 } });
+  test.beforeEach(async ({ page }) => { await forceSafeArea(page, PORTRAIT); });
+
+  test('not before 5 s, and not while a panel is open', async ({ page, api: _api }) => {
+    await page.clock.install();
+    await openPhoneEpisode(page);
+    await pauseNow(page);
+    await page.clock.runFor(4800);
+    await expect(page.locator('.stage.ppause')).toHaveCount(0);
+    await expect(page.locator('.pps')).toHaveCount(0);
+    await showControls(page);
+    await page.locator('.pill.tp').getByRole('button', { name: 'Audio und Untertitel', exact: true }).tap();
+    await page.clock.runFor(8000);
+    await settle(page);
+    await expect(page.locator('.stage.ppause')).toHaveCount(0);
+    await expect(page.locator('.pps')).toHaveCount(0);
+  });
+
+  test('not while locked', async ({ page, api: _api }) => {
+    await page.clock.install();
+    await openPhoneEpisode(page);
+    await showControls(page);
+    await page.locator('.ptop').getByRole('button', { name: 'Bedienung sperren' }).tap();
+    await expect(page.locator('.stage.locked')).toHaveCount(1);
+    await pauseNow(page);
+    await page.clock.runFor(8000);
+    await settle(page);
+    await expect(page.locator('.stage.ppause')).toHaveCount(0);
+    await expect(page.locator('.pps')).toHaveCount(0);
+  });
+
+  test('no automatic Cast & info panel on phones', async ({ page, api: _api }) => {
+    await page.clock.install();
+    await openPhoneEpisode(page);
+    await pauseNow(page);
+    await page.clock.runFor(8000);
+    await expect(page.locator('.pps')).toBeVisible();
+    await settle(page);
+    await expect(page.getByRole('complementary', { name: 'Besetzung & Infos' })).toHaveCount(0);
+  });
+
+  test('kids on a phone: no pause screen', async ({ page, api: _api }) => {
+    const KID = { ...ME, profileCount: 2, kids: true, onboarded: true, profile: { id: 'p3', name: 'Mia', avatar: 'pink', isOwner: false, kids: true, maxRating: 6 } };
+    await page.route('**/api/me', (r) => r.fulfill({ json: KID }));
+    await page.addInitScript(() => { localStorage.setItem('ff-intro:p3', JSON.stringify({ show: false, sound: false })); sessionStorage.setItem('ff-profile-picked', '1'); });
+    await page.clock.install();
+    await mockPlayer(page);
+    await page.goto('/watch/' + MOVIE.id);
+    await videoReady(page);
+    await expect(page.locator('.stage.phone')).toHaveCount(1);
+    await pauseNow(page);
+    await page.clock.runFor(8000);
+    await settle(page);
+    await expect(page.locator('.stage.ppause')).toHaveCount(0);
+    await expect(page.locator('.pps')).toHaveCount(0);
+    await expect(page.locator('.dps')).toHaveCount(0);
+  });
+});

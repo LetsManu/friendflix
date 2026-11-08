@@ -53,3 +53,17 @@ test.describe('screenshots', () => {
     await page.screenshot({ path: `${SHOTS}/mobile-nextup.png` });
   });
 });
+
+test('no pause screen while casting', async ({ page, api: _api }) => {
+  await page.clock.install();
+  await chromecastRemote(page);
+  await expect(page.locator('.stage.pui')).toHaveCount(1);
+  await showControls(page);
+  await page.locator('.pill.lp').getByRole('button', { name: 'Pause', exact: true }).click();
+  await expect(page.locator('.pill.lp').getByRole('button', { name: 'Abspielen', exact: true })).toBeVisible();
+  await page.clock.runFor(8000);
+  await page.waitForTimeout(400); // a negative check right after runFor could pass before the Player re-renders
+  await expect(page.locator('.stage.ppause')).toHaveCount(0);
+  await expect(page.locator('.pps')).toHaveCount(0);
+  await expect(page.locator('.ctl')).not.toHaveClass(/\bhide\b/);
+});

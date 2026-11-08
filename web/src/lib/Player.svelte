@@ -58,6 +58,7 @@
   import { deskActive } from '#lib/desk/bar';
   import { deskPauseDue, deskPlayer } from '#lib/player/desk/logic';
   import DeskPauseScreen from '#lib/player/desk/DeskPauseScreen.svelte';
+  import PhonePauseScreen from '#lib/player/phone/PhonePauseScreen.svelte';
   import { grow, springAt } from '#lib/player/desk/grow';
   import { motionAllowed } from '#lib/preview';
   import { motionLevel, motionTripped } from '#lib/tv/motion';
@@ -121,6 +122,8 @@
   export let credHold = false;
   /** bind: the phone's orientation (from the window size; 'landscape' elsewhere) */
   export let orient: PhoneOrient = 'landscape';
+  /** the page shows a card in the default slot (next up, "still watching?", post-play, more like this): the phone pause screen waits */
+  export let cardOn = false;
   const dispatch = createEventDispatcher();
 
   type Info = PlaybackDto;
@@ -284,9 +287,11 @@
   $: tvButtons = tvPlayerButtons({ isEpisode: Boolean(seriesId), hasNext });
   $: tvSub = item?.seriesName && item.indexNumber !== undefined && item.indexNumber !== null
     ? $t('tv.player.episode', { s: item.parentIndexNumber ?? 1, e: item.indexNumber, name: item.name }) : barSub;
-  /** desktop pause screen (spec 2026-11-08 §3): 5 s after the pause or the last input, unless something else is on screen */
-  $: deskBlocked = menu !== '' || scrubbing || partyMode || remote || Boolean(error) || reconnecting > 0 || locked || help || subDlg || showXray || peek || credits !== 'off';
-  $: deskPause = desk && paused && started && deskPauseDue({ pausedAt, lastActive, now: tick, blocked: deskBlocked });
+  /** desktop and phone pause screens (spec 2026-11-08 §3): 5 s after the pause or the last input, unless something else is on screen */
+  $: pauseBlocked = menu !== '' || scrubbing || partyMode || remote || Boolean(error) || reconnecting > 0 || locked || help || subDlg || showXray || peek || credits !== 'off';
+  $: deskPause = desk && paused && started && deskPauseDue({ pausedAt, lastActive, now: tick, blocked: pauseBlocked });
+  $: phonePause = phoneUi && paused && started && deskPauseDue({ pausedAt, lastActive, now: tick, blocked: pauseBlocked || cardOn });
+  $: phoneMotion = phoneUi && motionAllowed();
   $: deskMotion = desk && motionAllowed();
   /** credits glide: spring transform (desk / TV with motion); a tripped frame guard (html.tv-motion-reduced) crossfades in CSS */
   $: credMotion = (desk || tvUi) && motionAllowed();
@@ -303,7 +308,7 @@
     credOut = left;
     if (left) credOutT = setTimeout(() => (credOut = false), 300);
   }
-  $: showUi = !locked && !pauseOn && !deskPause && credits !== 'corner' && (paused || menu !== '' || scrubbing || sp.active || tick - lastActive < hideMs);
+  $: showUi = !locked && !pauseOn && !deskPause && !phonePause && credits !== 'corner' && (paused || menu !== '' || scrubbing || sp.active || tick - lastActive < hideMs);
   // TV: a hidden bar keeps no focus - otherwise the next OK would press the last used button (subtitles ...) instead of play/pause
   $: if (!showUi && typeof document !== 'undefined' && tvMode() && stage?.querySelector('.ctl')?.contains(document.activeElement)) (document.activeElement as HTMLElement).blur();
   $: creditsAt = creditsStart(segments, duration);
@@ -915,7 +920,7 @@
   }
   $: if (paused && started) { clearTimeout(pauseT); pauseT = setTimeout(() => { pausedLong = true; ensureInfo(); }, 1200); } else { clearTimeout(pauseT); pausedLong = false; infoDismissed = false; }
   // automatic (pause): only with something to show; explicit: also while loading / after an error
-  $: showXray = (xray || (pausedLong && !tvUi && !desk && !infoDismissed && Boolean(castData && (hasPeople(castData) || castData.studios.length || castData.genres.length)))) && menu === '' && !subDlg && !help && !error && !locked;
+  $: showXray = (xray || (pausedLong && !tvUi && !desk && !phoneUi && !infoDismissed && Boolean(castData && (hasPeople(castData) || castData.studios.length || castData.genres.length)))) && menu === '' && !subDlg && !help && !error && !locked;
   $: if (showXray) peek = false;
   /** quick peek: does not pause, hides by itself after a few seconds */
   function openPeek() {
@@ -1404,7 +1409,7 @@
 </script>
 
 <svelte:window bind:innerWidth={winW} bind:innerHeight={winH} on:keydown={onKey} on:keydown|capture={onBackCapture} />
-<div class="stage {subClasses($prefs.subtitleStyle)}" class:idle={!showUi && credits !== 'corner'} class:locked class:pre={posterOn} class:phone={phone && !phoneUi} class:pui={phoneUi} class:port={phoneUi && orient === 'portrait'} class:desk class:dpause={deskPause} class:dmo={deskMotion} class:cred={credits === 'corner'} class:credout={credOut} class:cmo={credMotion} class:rmt={Boolean(tvSession)} style="--inset:{inset}px{barVar}{pnlVar};--rcard-h:{rCardH}px" bind:this={stage} on:mousemove={(e) => { if (Date.now() - lastTouch > 800 && !(e.target as Element).closest?.('.dps')) wake(); }} on:click={onSurfaceClick} on:wheel|nonpassive={onWheel} on:keydown={() => {}}
+<div class="stage {subClasses($prefs.subtitleStyle)}" class:idle={!showUi && credits !== 'corner'} class:locked class:pre={posterOn} class:phone={phone && !phoneUi} class:pui={phoneUi} class:port={phoneUi && orient === 'portrait'} class:desk class:dpause={deskPause} class:dmo={deskMotion} class:ppause={phonePause} class:pmo={phoneMotion} class:cred={credits === 'corner'} class:credout={credOut} class:cmo={credMotion} class:rmt={Boolean(tvSession)} style="--inset:{inset}px{barVar}{pnlVar};--rcard-h:{rCardH}px" bind:this={stage} on:mousemove={(e) => { if (Date.now() - lastTouch > 800 && !(e.target as Element).closest?.('.dps')) wake(); }} on:click={onSurfaceClick} on:wheel|nonpassive={onWheel} on:keydown={() => {}}
   on:pointerdown={gDown} on:pointermove={gMove} on:pointerup={gUp} on:pointercancel={gCancel} role="presentation">
   <!-- svelte-ignore a11y_media_has_caption -->
   <video bind:this={video} playsinline crossorigin="use-credentials" style:filter={brightness < 1 ? `brightness(${brightness})` : null}
@@ -1569,6 +1574,9 @@
   {/if}
   {#if deskPause}
     <DeskPauseScreen title={barTitle || title} sub={tvSub} overview={item?.overview ?? ''} on:castinfo={() => openCastInfo(true)} />
+  {/if}
+  {#if phonePause}
+    <PhonePauseScreen title={barTitle || title} sub={phoneSub(item, $t)} overview={item?.overview ?? ''} {orient} />
   {/if}
   {#if tvUi}
     {#if menu === 'tracks' && (info || tvSession)}
@@ -2138,6 +2146,12 @@
   /* desktop pause screen: the picture darkens and zooms a little (transform / filter only, no motion in calm mode) */
   .stage.dpause > video { filter: brightness(.35); transform: scale(1.03); }
   .stage.desk.dmo > video { transition: filter 500ms var(--m-emph-out, ease-out), transform 500ms var(--m-emph-out, ease-out); }
+  /* phone pause screen: the zoom only; the dimming is the screen's own opacity layer (the brightness gesture owns the inline filter) */
+  .stage.ppause > video { transform: scale(1.03); }
+  .stage.pui.pmo:not(.cred):not(.credout) > video { transition: transform 500ms var(--m-emph-out, ease-out); }
+  /* the skip button that stays with hidden controls fades too: it would sit in the pause screen's text */
+  .stage.ppause .ctl.dock.hide > :global(.ptitle) { opacity: 0; }
+  .stage.ppause .ctl.dock.hide .skipbtn { pointer-events: none; }
   /* credits sequence (spec 2026-11-08 §4): the picture glides into the top-left corner on a spring and gains rounded corners and a
      shadow; transform / opacity only. Calm mode / reduced motion: no transition; a tripped frame guard: an opacity crossfade instead */
   .stage.cred > video { transform: translate(-27%, -24%) scale(.42); border-radius: 14px; box-shadow: 0 0 0 2.5px rgba(255, 255, 255, .2), 0 24px 64px rgba(0, 0, 0, .6); }
