@@ -45,3 +45,20 @@ export function creditsBeat(o: {
   if (o.enteredAt === null || o.now - o.enteredAt < CHIP_MS) return 'chip';
   return 'corner';
 }
+
+/**
+ * "More like this" in the credits sequence: the first post-play row that still has titles once the next episode, its series
+ * and the continuation row (the next episodes, already offered as "Up next") are left out; at most five. Empty: no row.
+ */
+export function creditPicks(
+  rows: readonly { kind: string; items: readonly { id: string; seriesId?: string }[] }[] | null,
+  next: { id: string; seriesId?: string } | null,
+): { id: string; seriesId?: string }[] {
+  const skip = new Set([next?.id, next?.seriesId].filter((v): v is string => Boolean(v)));
+  for (const r of rows ?? []) {
+    if (r.kind === 'continuation') continue;
+    const items = r.items.filter((i) => !skip.has(i.id) && !(i.seriesId && skip.has(i.seriesId)));
+    if (items.length) return items.slice(0, 5);
+  }
+  return [];
+}

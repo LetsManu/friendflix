@@ -31,6 +31,7 @@ Part of the redesign that ships with v3.0.0.
 - **Credits sequence.** After an episode, *Watch credits* and *Next episode* appear, then the picture moves into the corner and keeps playing with up next and *More like this*; OK plays the next episode, Back plays the sequence backwards, and a crossfade replaces the glide where animation would stutter.
 
 ### Fixed
+- **Credits sequence suggestions.** *More like this* no longer repeats the next episode or its series, and is left out when nothing else is left; the small picture in the corner has a light edge so it stays visible on dark credits.
 - **Update channel on Portainer stacks.** *Update now* sends the chosen channel (Stable, Nightly, fixed version) to Portainer as `FF_TAG`, so switching to Nightly actually installs nightly; Admin → Update says which channel still runs until then.
 - **Series and Movies tabs.** Switching between them in the top bar reloads the rows instead of keeping the previous kind's titles.
 

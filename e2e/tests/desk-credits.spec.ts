@@ -4,7 +4,7 @@ import { expect, test } from '../fixtures.js';
 import { items, MOVIE } from '../mocks/fixtures.js';
 import { endTitle } from '../mocks/postplay.js';
 import { mockPlayer } from '../mocks/scenes.js';
-import { CREDITS_AT, EP, NEXT, openEpisode, openMovie, toChip } from '../mocks/credits.js';
+import { CREDITS_AT, EP, EP_NEXT, NEXT, openEpisode, openMovie, toChip } from '../mocks/credits.js';
 
 /**
  * Desktop credits sequence (spec 2026-11-08 §4): beat 1 the chip ("Watch credits", "Next episode" filling over 2 s), beat 2 the
@@ -164,4 +164,12 @@ test.describe('watch party', () => {
     await expect(page.locator('.cs')).toHaveCount(0);
     await expect(page.locator('.stage.cred')).toHaveCount(0);
   });
+});
+
+test('"More like this" never repeats the next episode: only a continuation row shows no suggestions', async ({ page, api: _api }) => {
+  await openEpisode(page, { ...EP_NEXT, rows: [{ kind: 'continuation', title: 'x', reason: {}, items: [NEXT] }, { kind: 'because', title: 'y', reason: {}, items: [NEXT] }] });
+  await toChip(page);
+  await page.clock.runFor(2100);
+  await expect(page.locator('.cs .up')).toContainText(NEXT.name);
+  await expect(page.locator('.cs .sugg')).toHaveCount(0);
 });

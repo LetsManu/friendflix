@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { describe, expect, it } from 'vitest';
-import { CHIP_MS, DESK_PAUSE_MS, creditsBeat, deskPauseDue, deskPlayer } from './logic';
+import { CHIP_MS, DESK_PAUSE_MS, creditPicks, creditsBeat, deskPauseDue, deskPlayer } from './logic';
 
 describe('deskPlayer', () => {
   it('only desktop, never TV or phone', () => {
@@ -44,5 +44,28 @@ describe('creditsBeat', () => {
   });
   it('a film reaches the corner too (suggestions instead of a countdown)', () => {
     expect(creditsBeat({ ...base, kind: 'movie', now: 4000 })).toBe('corner');
+  });
+});
+
+describe('creditPicks', () => {
+  const next = { id: 'e5', seriesId: 's1' };
+  it('skips the continuation row, the next episode and its series', () => {
+    const rows = [
+      { kind: 'continuation', items: [{ id: 'e5', seriesId: 's1' }] },
+      { kind: 'because', items: [{ id: 'e5', seriesId: 's1' }, { id: 's1' }, { id: 'x' }, { id: 'y', seriesId: 's2' }] },
+    ];
+    expect(creditPicks(rows, next).map((i) => i.id)).toEqual(['x', 'y']);
+  });
+  it('moves on to the next row when a row has nothing left, caps at five', () => {
+    const rows = [
+      { kind: 'universe', items: [{ id: 's1' }] },
+      { kind: 'taste', items: ['a', 'b', 'c', 'd', 'e', 'f'].map((id) => ({ id })) },
+    ];
+    expect(creditPicks(rows, next).map((i) => i.id)).toEqual(['a', 'b', 'c', 'd', 'e']);
+  });
+  it('nothing left, no rows or no next: empty or unfiltered', () => {
+    expect(creditPicks([{ kind: 'because', items: [{ id: 'e5' }] }], next)).toEqual([]);
+    expect(creditPicks(null, next)).toEqual([]);
+    expect(creditPicks([{ kind: 'because', items: [{ id: 'm' }] }], null).map((i) => i.id)).toEqual(['m']);
   });
 });
