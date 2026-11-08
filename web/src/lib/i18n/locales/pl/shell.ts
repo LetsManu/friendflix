@@ -96,6 +96,8 @@ const pl: Translation<typeof de> = {
     me: 'Moja strefa',
     myList: 'Moja lista',
     downloads: 'Pobrane',
+    newShort: 'Nowe',
+    downloadsShort: 'Pobrane',
   },
   offline: {
     bar: 'Jesteś offline.',

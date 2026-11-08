@@ -29,6 +29,7 @@ test.describe('phone shell', () => {
     const tabs = page.locator('.tabbar').getByRole('link');
     await expect(tabs).toHaveCount(4);
     for (const [i, name] of ['Start', 'Neu & demnächst', 'Merkliste', 'Downloads'].entries()) await expect(tabs.nth(i)).toHaveAccessibleName(name);
+    await expect(page.locator('.tabbar a > span:last-child')).toHaveText(['Start', 'Neu', 'Merkliste', 'Downloads']);
     await expect(tabs.nth(3)).toBeVisible();
     await expect(page.locator('header.nav.m a.avatar')).toHaveAttribute('href', '/me'); // the profile moved from the tab bar to the avatar
     await expect(page.getByRole('list', { name: 'Schnellzugriff' }).getByRole('link', { name: 'Downloads' })).toBeVisible();

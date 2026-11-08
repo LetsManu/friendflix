@@ -95,6 +95,8 @@ const fr: Translation<typeof de> = {
     me: 'Mon espace',
     myList: 'Ma liste',
     downloads: 'Téléchargements',
+    newShort: 'Nouveau',
+    downloadsShort: 'Télécharg.',
   },
   offline: {
     bar: 'Vous êtes hors ligne.',

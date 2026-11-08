@@ -23,6 +23,8 @@ test.describe('phone shell', () => {
     const tabs = bar.getByRole('link');
     await expect(tabs).toHaveCount(4);
     for (const [i, name] of ['Start', 'Neu & demnächst', 'Merkliste', 'Downloads'].entries()) await expect(tabs.nth(i)).toHaveAccessibleName(name);
+    // short visible labels; the full name stays the accessible name
+    await expect(bar.locator('a > span:last-child')).toHaveText(['Start', 'Neu', 'Merkliste', 'Downloads']);
     await expect(tabs.nth(0)).toHaveAttribute('aria-current', 'page');
     await expect(bar.locator('[aria-current="page"]')).toHaveCount(1);
     for (const tab of await tabs.all()) expect((await tab.boundingBox())!.height).toBeGreaterThanOrEqual(44);
@@ -103,6 +105,28 @@ test.describe('phone shell', () => {
     await expect(page).toHaveURL(/genre=Drama/);
   });
 
+  test.describe('with motion', () => {
+    test.use({ reducedMotion: 'no-preference' });
+    test('the categories sheet slides out before it unmounts (Escape and close button)', async ({ page }) => {
+      await page.goto('/');
+      const btn = page.locator('header.nav.m').getByRole('button', { name: 'Kategorien' });
+      const sheet = page.locator('.cats');
+      for (const how of ['escape', 'button'] as const) {
+        await btn.tap();
+        await expect(page.getByRole('dialog', { name: 'Kategorien' })).toBeVisible();
+        await expect(sheet).not.toHaveClass(/\bout\b/);
+        if (how === 'escape') await page.keyboard.press('Escape');
+        else await sheet.getByRole('button', { name: 'Schließen' }).tap();
+        await expect(sheet).toHaveCount(1); // still there, leaving
+        await expect(sheet).toHaveClass(/\bout\b/);
+        await expect(page.locator('.catdim')).toHaveClass(/\bout\b/);
+        await expect(sheet).toHaveCount(0);
+        await expect(page.locator('.catdim')).toHaveCount(0);
+        await expect(btn).toBeFocused();
+      }
+    });
+  });
+
   for (const [w, h] of [[390, 844], [320, 640]] as const) {
     test(`no horizontal overflow at ${w}x${h}`, async ({ page }) => {
       await allowDownloads(page);
@@ -112,6 +136,9 @@ test.describe('phone shell', () => {
       await expect.poll(() => noHorizontalOverflow(page)).toBe(true);
       const box = (await tabbar(page).boundingBox())!;
       expect(box.x + box.width).toBeLessThanOrEqual(w);
+      // no tab label is cut off (ellipsis)
+      const cut = await tabbar(page).locator('a > span:last-child').evaluateAll((els) => els.filter((e) => e.scrollWidth > e.clientWidth).map((e) => e.textContent));
+      expect(cut).toEqual([]);
     });
   }
 });

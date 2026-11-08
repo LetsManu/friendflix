@@ -90,6 +90,8 @@ const en: Translation<typeof de> = {
     me: 'My space',
     myList: 'My list',
     downloads: 'Downloads',
+    newShort: 'New',
+    downloadsShort: 'Downloads',
   },
   offline: {
     bar: 'You are offline.',

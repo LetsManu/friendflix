@@ -91,6 +91,8 @@ const it: Translation<typeof de> = {
     me: 'Il mio spazio',
     myList: 'La mia lista',
     downloads: 'Download',
+    newShort: 'Novità',
+    downloadsShort: 'Download',
   },
   offline: {
     bar: 'Sei offline.',

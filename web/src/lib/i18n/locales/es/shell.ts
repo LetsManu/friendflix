@@ -91,6 +91,8 @@ const es: Translation<typeof de> = {
     me: 'Mi espacio',
     myList: 'Mi lista',
     downloads: 'Descargas',
+    newShort: 'Novedades',
+    downloadsShort: 'Descargas',
   },
   offline: {
     bar: 'Estás sin conexión.',

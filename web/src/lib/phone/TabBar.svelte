@@ -13,7 +13,13 @@
   export let path: string;
   export let canDownload: boolean;
 
-  const LABEL: Record<PhoneTab['key'], TKey> = { home: 'shell.tabs.home', new: 'shell.tabs.new', myList: 'shell.tabs.myList', downloads: 'shell.tabs.downloads' };
+  /** full name (accessible name) and the short visible label that fits a quarter of a 320 px pill */
+  const LABEL: Record<PhoneTab['key'], [TKey, TKey]> = {
+    home: ['shell.tabs.home', 'shell.tabs.home'],
+    new: ['shell.tabs.new', 'shell.tabs.newShort'],
+    myList: ['shell.tabs.myList', 'shell.tabs.myList'],
+    downloads: ['shell.tabs.downloads', 'shell.tabs.downloadsShort'],
+  };
   const isOn = (href: string, p: string) => (href === '/' ? p === '/' : p === href || p.startsWith(href + '/'));
 
   $: tabs = phoneTabs(canDownload);
@@ -23,7 +29,9 @@
 <nav class="tabbar" aria-label={$t('shell.mobile.tabbar')} style="--n:{tabs.length};--i:{Math.max(0, active)}">
   <span class="hl" class:off={active < 0} aria-hidden="true"></span>
   {#each tabs as tab, k (tab.key)}
-    <a href={tab.href} class:active={k === active} aria-current={k === active ? 'page' : undefined}><span class="ico"><Icon name={tab.icon} size={22} /></span><span>{$t(LABEL[tab.key])}</span></a>
+    {@const full = $t(LABEL[tab.key][0])}
+    {@const short = $t(LABEL[tab.key][1])}
+    <a href={tab.href} class:active={k === active} aria-current={k === active ? 'page' : undefined} aria-label={short !== full ? full : undefined}><span class="ico"><Icon name={tab.icon} size={22} /></span><span>{short}</span></a>
   {/each}
 </nav>
 

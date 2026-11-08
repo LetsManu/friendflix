@@ -123,6 +123,11 @@
   $: kidsMode.set(kidsUi); // shared flag for components (no social UI on kids profiles)
   // ---- phone: chip bar + "Kategorien" overlay (the desktop dropdown lives in DeskBar) ----
   let catOpen = false, catGenres: string[] | null = null, catKind: Kind = 'movies', catBtn: HTMLElement | null = null;
+  /** the categories sheet is sliding out (still mounted); it unmounts on its transitionend or after CAT_OUT_MS */
+  let catLeaving = false, catOutT: ReturnType<typeof setTimeout> | undefined;
+  const CAT_OUT_MS = 280;
+  function catGone() { clearTimeout(catOutT); catOutT = undefined; catLeaving = false; }
+  onDestroy(() => clearTimeout(catOutT));
   // ---- phone header: glass once scrolled past SOLID_AFTER, chips tuck while scrolling down (rAF-throttled scroll listener) ----
   let mSolid = false, mTucked = false, lastY = 0, scrollRaf = 0;
   function readScroll() {
@@ -133,7 +138,16 @@
     lastY = y;
   }
   const onScroll = () => { if (!scrollRaf) scrollRaf = requestAnimationFrame(readScroll); };
-  onDestroy(() => { if (scrollRaf && typeof cancelAnimationFrame === 'function') cancelAnimationFrame(scrollRaf); });
+  /** the listener runs only while the phone header shows (phones, not TV) */
+  let scrollOn = false;
+  function syncScroll(on: boolean) {
+    if (typeof window === 'undefined' || on === scrollOn) return;
+    scrollOn = on;
+    if (on) { window.addEventListener('scroll', onScroll, { passive: true }); readScroll(); }
+    else { window.removeEventListener('scroll', onScroll); if (scrollRaf) cancelAnimationFrame(scrollRaf); scrollRaf = 0; }
+  }
+  $: syncScroll($mobile && !tv);
+  onDestroy(() => syncScroll(false));
   /** `html.m-glass`: blur behind the phone bars only with the full motion level; `html.m-still`: instant changes (reduced motion / calm) */
   const motionClasses = (_p: unknown, _m: boolean) => {
     if (typeof document === 'undefined') return;
@@ -142,6 +156,13 @@
     c.toggle('m-still', !motionAllowed());
   };
   $: motionClasses($prefs, $mobile);
+  onMount(() => {
+    // a system-wide reduced-motion switch while the app is open
+    const mq = typeof matchMedia === 'function' ? matchMedia('(prefers-reduced-motion: reduce)') : null;
+    const onChange = () => motionClasses(null, false);
+    mq?.addEventListener?.('change', onChange);
+    return () => mq?.removeEventListener?.('change', onChange);
+  });
 
   $: path = $page.url.pathname;
   // /setup: the wizard of a new install (no account yet); /setup/extras is not public (the first admin is signed in there)
@@ -162,7 +183,7 @@
   $: if (showBanner && !stopBanner) stopBanner = startBanner();
   $: if (!showBanner && stopBanner) { stopBanner(); stopBanner = null; }
   $: unread = notes.filter((n) => !n.read).length;
-  $: if (path) { catOpen = false; closePreview(); }
+  $: if (path) { catOpen = false; catGone(); closePreview(); }
   $: chips = $mobile && showsChips(path) && !kidsUi;
   // kids profiles stay on kids routes, new profiles go through /welcome once (both also checked in boot() before the page mounts)
   $: if (me && !pending && !publicPage) {
@@ -175,7 +196,7 @@
   }
   // the web app manifest (name, shortcuts) follows the UI language
   $: if (typeof document !== 'undefined') document.querySelector('link[rel="manifest"]')?.setAttribute('href', `/manifest.webmanifest?lang=${$locale}`);
-  $: if (!$mobile) { catOpen = false; closePreview(); }
+  $: if (!$mobile) { catOpen = false; catGone(); closePreview(); }
   /** desktop shell (pill bar; later the desktop browse pieces): not on TV, phones or kids profiles */
   $: desk = deskUi({ tv, mobile: $mobile, kids: kidsUi });
   $: deskActive.set(desk); // openModal and the detail route follow it (desktop: titles open as the full page)
@@ -215,14 +236,21 @@
     deskBar?.openSearch();
   }
   async function openCats(e: Event) {
-    catBtn = e.currentTarget as HTMLElement; catKind = kindFromPath(path); catOpen = true;
+    catBtn = e.currentTarget as HTMLElement; catKind = kindFromPath(path); catGone(); catOpen = true;
     await tick();
     document.querySelector<HTMLElement>('.cats .close')?.focus();
     void fetchGenres();
   }
   async function fetchGenres() { if (!catGenres) { try { catGenres = ((await api('/api/library/genres')).genres as string[]) ?? []; } catch { catGenres = []; } } }
-  function closeCats(refocus = true) { catOpen = false; if (refocus) catBtn?.focus(); }
-  function pickCat(href: string) { catOpen = false; void goto(href); }
+  /** closing slides the sheet out and fades the dim (ease-in); instant with reduced motion / calm mode */
+  function closeCats(refocus = true) {
+    if (!catOpen) return;
+    catOpen = false;
+    if (motionAllowed()) { catLeaving = true; clearTimeout(catOutT); catOutT = setTimeout(catGone, CAT_OUT_MS + 80); }
+    if (refocus) catBtn?.focus();
+  }
+  function catOutEnd(e: TransitionEvent) { if (catLeaving && e.target === e.currentTarget && e.propertyName === 'transform') catGone(); }
+  function pickCat(href: string) { catOpen = false; catGone(); void goto(href); }
   function onKey(e: KeyboardEvent) {
     // "/" and Ctrl/Cmd+K jump to the search field (not while typing somewhere else)
     if (!watchPage && !tv && ((e.key === '/' && !e.ctrlKey && !e.metaKey && !e.altKey) || ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k'))) {
@@ -567,9 +595,6 @@
       io.observe(sentinel);
       stops.push(() => io.disconnect());
     }
-    window.addEventListener('scroll', onScroll, { passive: true });
-    stops.push(() => window.removeEventListener('scroll', onScroll));
-    readScroll();
     // the detail popup chunk loads as soon as the pointer/focus/finger gets near a card or an info button
     const warm = (e: Event) => {
       if (!(e.target as Element | null)?.closest?.('.card, .pc, a[href^="/item/"], [data-modal]')) return;
@@ -704,10 +729,10 @@
       <DeskBar bind:this={deskBar} {path} {heroPage} {me} {who} {faceStyle} {multi} {admin} {canDownload} {lgApp} {here} {notes} onHelp={() => (help = true)} />
     {/if}
     <TabBar {path} {canDownload} />
-    {#if catOpen && $mobile}
+    {#if (catOpen || catLeaving) && $mobile}
       <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
-      <div class="catdim" on:click={() => closeCats()}></div>
-      <div class="cats" role="dialog" aria-modal="true" aria-label={$t('shell.cats.title')} use:dialogKeys={{ close: () => closeCats() }} use:dragClose={{ close: () => closeCats() }}>
+      <div class="catdim" class:out={catLeaving} on:click={() => closeCats()}></div>
+      <div class="cats" class:out={catLeaving} inert={catLeaving || undefined} role="dialog" aria-modal="true" aria-label={$t('shell.cats.title')} use:dialogKeys={{ close: () => closeCats() }} use:dragClose={{ close: () => closeCats() }} on:transitionend={catOutEnd}>
         <div class="grab"><span class="handle" aria-hidden="true"></span></div>
         <div class="chead">
           <div class="seg" role="group" aria-label={$t('shell.cats.kind')}>
@@ -861,6 +886,8 @@
   .catdim { position: fixed; inset: 0; z-index: 94; background: rgba(0,0,0,.6); animation: fade 200ms ease-out; }
   .cats { position: fixed; left: 0; right: 0; bottom: 0; z-index: 95; max-height: min(82dvh, calc(100dvh - var(--safe-top) - 1rem)); overflow-y: auto; overscroll-behavior: contain; background: #18181c; border-radius: 22px 22px 0 0; box-shadow: 0 -10px 40px rgba(0,0,0,.5); padding: 0 max(var(--pad-x), var(--safe-right)) calc(1.5rem + var(--safe-bottom)) max(var(--pad-x), var(--safe-left)); animation: rise var(--m-d-spring) var(--m-spring); transition: transform var(--m-d-spring) var(--m-spring); }
   .cats:global(.dragging) { transition: none; }
+  .cats.out { transform: translateY(100%); transition: transform 280ms var(--m-emph-in); pointer-events: none; }
+  .catdim.out { opacity: 0; transition: opacity 280ms var(--m-emph-in); pointer-events: none; }
   .grab { position: sticky; top: 0; z-index: 2; touch-action: none; cursor: grab; padding: 8px 0 4px; background: #18181c; }
   .handle { display: block; width: 38px; height: 5px; border-radius: 3px; background: rgba(255,255,255,.3); margin: 0 auto; }
   .chead { position: sticky; top: 17px; display: flex; align-items: center; justify-content: space-between; padding: .4rem 0 .7rem; background: linear-gradient(#18181c 75%, transparent); z-index: 1; }

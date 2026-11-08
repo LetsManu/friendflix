@@ -91,6 +91,8 @@ const tr: Translation<typeof de> = {
     me: 'Alanım',
     myList: 'Listem',
     downloads: 'İndirilenler',
+    newShort: 'Yeni',
+    downloadsShort: 'İndirilen',
   },
   offline: {
     bar: 'Çevrimdışısın.',

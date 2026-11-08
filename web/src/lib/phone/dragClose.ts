@@ -4,8 +4,9 @@
  * Svelte action for a phone bottom sheet: drag it down to close. A mouse/pen drags on its `.grab` handle, a finger
  * anywhere on the sheet while it is scrolled to the top. The sheet follows only through `transform`; while it follows,
  * the node carries `.dragging` (the sheet's CSS drops its transition then). Released past `threshold` px it closes,
- * otherwise the inline transform is cleared and the sheet's own transition springs it back. A touch drag starts only
- * after 8 px of mostly downward movement, so taps and sideways moves still work; the click after a drag is swallowed.
+ * otherwise the inline transform is cleared and the sheet's own transition springs it back; past it the sheet's exit
+ * transition starts from the release point. A touch drag starts only after 8 px of mostly downward movement, so taps
+ * and sideways moves still work; the click after a drag is swallowed.
  */
 export function dragClose(node: HTMLElement, opts: { close: () => void; threshold?: number }) {
   let o = opts, y0 = 0, x0 = 0, dy = 0, mode: 'pointer' | 'touch' | null = null, armed = false, swallow = false;
@@ -15,8 +16,13 @@ export function dragClose(node: HTMLElement, opts: { close: () => void; threshol
   const begin = (m: 'pointer' | 'touch') => { mode = m; dy = 0; node.classList.add('dragging'); };
   function finish() {
     const far = dy > (o.threshold ?? 90);
-    mode = null; node.classList.remove('dragging'); follow(0);
-    if (far) o.close();
+    mode = null; node.classList.remove('dragging');
+    if (!far) { follow(0); return; } // springs back through the sheet's own transition
+    // closing: the sheet leaves from where the finger let go. The inline offset is dropped only after the closer's
+    // leaving state has rendered (Svelte flushes in a microtask queued during close()), so the exit transition starts at
+    // the release point instead of snapping back first; an instant closer has unmounted the node by then.
+    o.close();
+    queueMicrotask(() => { dy = 0; node.style.transform = ''; });
   }
 
   function pDown(e: PointerEvent) {

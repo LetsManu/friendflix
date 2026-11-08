@@ -92,6 +92,8 @@ export default {
     me: 'Mein Bereich',
     myList: 'Merkliste',
     downloads: 'Downloads',
+    newShort: 'Neu',
+    downloadsShort: 'Downloads',
   },
   offline: {
     bar: 'Du bist offline.',
