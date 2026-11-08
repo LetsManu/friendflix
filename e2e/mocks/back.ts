@@ -9,6 +9,7 @@ import { mockPlayer, videoReady } from './scenes.js';
 const [E1, E2, E3] = [episodes[1]!, episodes[2]!, episodes[3]!];
 
 async function setup(page: Page) {
+  await page.clock.install(); // real time keeps flowing; `clickNext` pauses it briefly
   await mockPlayer(page);
   // the episode after the current one
   await page.route('**/api/items/*/next', (r) => {
@@ -30,6 +31,19 @@ async function toCredits(page: Page, playing: boolean) {
   if (!playing) await page.evaluate(() => document.querySelector('video')!.pause());
 }
 
+/**
+ * "Nächste Folge" of the next-up card: phones keep the card (`.next`), desktop and TV show the credits sequence's chip
+ * (`.cs .chip`, spec 2026-11-08 §4), which gives way to the corner beat after 2 s - the page clock is paused for the click
+ */
+async function clickNext(page: Page) {
+  const go = page.locator('.cs .chip .go, .next .go');
+  await expect(go).toBeVisible();
+  const now = await page.evaluate(() => Date.now());
+  await page.clock.pauseAt(now + 50);
+  await go.click();
+  await page.clock.resume();
+}
+
 export function backTests() {
 test('Back after next-episode button and autoplay countdown leaves the player in one step', async ({ page, api: _api }) => {
   await setup(page);
@@ -41,7 +55,7 @@ test('Back after next-episode button and autoplay countdown leaves the player in
 
   // 1) the "Nächste Folge" button of the card
   await toCredits(page, false);
-  await page.locator('.next .go').click();
+  await clickNext(page);
   await watching(page, E2.id);
   await ready(page, E2);
 
@@ -78,7 +92,7 @@ test('Esc (and the TV back key) after two next episodes also leaves the player i
   await ready(page, E1);
   for (const next of [E2, E3]) {
     await toCredits(page, false);
-    await page.locator('.next .go').click();
+    await clickNext(page);
     await watching(page, next.id);
     await ready(page, next);
   }

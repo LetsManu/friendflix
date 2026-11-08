@@ -222,6 +222,17 @@
   $: deskMotion = desk && motionAllowed();
   /** credits glide: spring transform (desk / TV with motion); a tripped frame guard (html.tv-motion-reduced) crossfades in CSS */
   $: credMotion = (desk || tvUi) && motionAllowed();
+  /** leaving the corner: for 300 ms `.credout` lets a tripped frame guard crossfade the picture back to full screen (CSS) */
+  let credOut = false, credWas: typeof credits = 'off', credOutT: ReturnType<typeof setTimeout> | undefined;
+  $: onCreditsBeat(credits);
+  function onCreditsBeat(c: typeof credits) {
+    if (c === credWas) return;
+    const left = credWas === 'corner';
+    credWas = c;
+    clearTimeout(credOutT);
+    credOut = left;
+    if (left) credOutT = setTimeout(() => (credOut = false), 300);
+  }
   $: showUi = !locked && !pauseOn && !deskPause && credits !== 'corner' && (paused || menu !== '' || scrubbing || sp.active || tick - lastActive < hideMs);
   // TV: a hidden bar keeps no focus - otherwise the next OK would press the last used button (subtitles ...) instead of play/pause
   $: if (!showUi && typeof document !== 'undefined' && tvMode() && stage?.querySelector('.ctl')?.contains(document.activeElement)) (document.activeElement as HTMLElement).blur();
@@ -1308,6 +1319,7 @@
     reportTiming(); // also a start the viewer gave up on (no first frame yet)
     holdPrefetch(Promise.resolve(lastStop)); // no cached info survives the player; the next prefetch waits for this stop (resume position)
     destroyed = true;
+    clearTimeout(credOutT);
     // a handed-over cast keeps running (the engine owns token, element, controller and probe); otherwise AirPlay ends here
     if (!handedOff) { air?.destroy(); airProbe?.remove(); } // revokes a live AirPlay token
     airInfo = null;
@@ -1317,7 +1329,7 @@
 </script>
 
 <svelte:window on:keydown={onKey} on:keydown|capture={onBackCapture} />
-<div class="stage {subClasses($prefs.subtitleStyle)}" class:idle={!showUi && credits !== 'corner'} class:locked class:pre={posterOn} class:phone class:desk class:dpause={deskPause} class:dmo={deskMotion} class:cred={credits === 'corner'} class:cmo={credMotion} class:rmt={Boolean(tvSession)} style="--inset:{inset}px{barVar};--rcard-h:{rCardH}px" bind:this={stage} on:mousemove={(e) => { if (Date.now() - lastTouch > 800 && !(e.target as Element).closest?.('.dps')) wake(); }} on:click={onSurfaceClick} on:wheel|nonpassive={onWheel} on:keydown={() => {}}
+<div class="stage {subClasses($prefs.subtitleStyle)}" class:idle={!showUi && credits !== 'corner'} class:locked class:pre={posterOn} class:phone class:desk class:dpause={deskPause} class:dmo={deskMotion} class:cred={credits === 'corner'} class:credout={credOut} class:cmo={credMotion} class:rmt={Boolean(tvSession)} style="--inset:{inset}px{barVar};--rcard-h:{rCardH}px" bind:this={stage} on:mousemove={(e) => { if (Date.now() - lastTouch > 800 && !(e.target as Element).closest?.('.dps')) wake(); }} on:click={onSurfaceClick} on:wheel|nonpassive={onWheel} on:keydown={() => {}}
   on:pointerdown={gDown} on:pointermove={gMove} on:pointerup={gUp} on:pointercancel={gCancel} role="presentation">
   <!-- svelte-ignore a11y_media_has_caption -->
   <video bind:this={video} playsinline crossorigin="use-credentials" style:filter={brightness < 1 ? `brightness(${brightness})` : null}
@@ -1958,7 +1970,10 @@
   .stage.cmo > video, .stage.desk.cmo > video { transition: transform 750ms var(--m-spring), border-radius 750ms var(--m-emph-out, ease-out), box-shadow 750ms var(--m-emph-out, ease-out), filter 500ms var(--m-emph-out, ease-out); }
   :global(html.tv-motion-reduced) .stage.cmo > video { transition: none; }
   :global(html.tv-motion-reduced) .stage.cmo.cred > video { animation: ff-cred-fade 300ms ease-out both; }
+  :global(html.tv-motion-reduced) .stage.cmo.credout > video { animation: ff-cred-fade-out 300ms ease-out both; }
   @keyframes ff-cred-fade { from { opacity: 0; } to { opacity: 1; } }
+  /* same frames under another name: the class swap cred -> credout restarts the animation */
+  @keyframes ff-cred-fade-out { from { opacity: 0; } to { opacity: 1; } }
   .stage.desk .ctl { display: grid; gap: .7rem; padding: 4.5rem max(clamp(1.5rem, 3vw, 3rem), var(--safe-right)) 1.4rem max(clamp(1.5rem, 3vw, 3rem), var(--safe-left));
     background: linear-gradient(transparent, rgba(0,0,0,.45) 35%, rgba(0,0,0,.82)); transition: opacity 250ms ease; }
   .ttlblock { display: grid; gap: .15rem; min-width: 0; max-width: min(60%, 46rem); text-shadow: 0 1px 10px rgba(0,0,0,.5); }

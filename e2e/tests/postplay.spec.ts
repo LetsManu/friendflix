@@ -5,6 +5,7 @@ import { expect, test } from '../fixtures.js';
 import { ME, MOVIE, SERIES, episodes, items } from '../mocks/fixtures.js';
 import { CAUGHT_UP, FINISHED, LAST_EP, MOVIE_END, because, endTitle, mockPostplay, toCredits } from '../mocks/postplay.js';
 import { mockPlayer, videoReady } from '../mocks/scenes.js';
+import { freeze } from '../mocks/credits.js';
 
 // 1.1 A1+A2: the "caught-up" post-play screen (spec §3.2 / §3.5): movie end, ongoing series with a reminder, finished series with a
 // wish, calm mode, TV-mode arrow keys, all 7 languages. Nothing ever autoplays; Esc / Back stays on the title.
@@ -223,11 +224,21 @@ test.describe('post-play screen (desktop)', () => {
     api.features = { requests: true, postplay: false };
     let calls = 0;
     await page.route('**/api/items/*/postplay', (r) => { calls++; return r.fulfill({ json: MOVIE_END }); });
+    await page.clock.install();
     await mockPlayer(page, { chapters: [] });
     await page.goto('/watch/' + MOVIE.id);
     await videoReady(page);
     await page.evaluate(() => { const v = document.querySelector('video')!; v.pause(); v.currentTime = v.duration - 8; });
-    await expect(page.getByRole('dialog', { name: 'Mehr davon' })).toBeVisible();
+    // desktop (spec 2026-11-08 §4): the credits sequence carries the old "more like this" titles - the chip offers them, the
+    // corner beat shows them as cards (from /similar, the post-play rows are not fetched)
+    await expect(page.locator('.cs .chip').getByRole('button', { name: 'Mehr davon' })).toBeVisible();
+    await freeze(page);
+    await page.clock.runFor(2100);
+    await expect(page.locator('.stage.cred')).toHaveCount(1);
+    const sugg = page.locator('.cs .sugg');
+    await expect(sugg).toHaveAttribute('aria-label', 'Mehr davon');
+    await expect(sugg.locator('a').first()).toBeVisible();
+    await expect(sugg.locator('a').first()).toHaveAttribute('href', /^\/item\//);
     await endTitle(page);
     await page.waitForTimeout(500);
     await expect(page.getByTestId('postplay')).toHaveCount(0);

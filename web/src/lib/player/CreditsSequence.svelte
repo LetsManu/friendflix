@@ -21,6 +21,7 @@
    *   rises in at the right - for a film or the last episode the post-play headline instead, without a countdown - and below it
    *   "More like this" (the first post-play row, five titles), 40 ms apart once the picture has glided (250 ms).
    * TV: everything is a `data-nav` focusable; on entering 'corner' Play (a film: the first suggestion) takes the focus once.
+   * 'off': the page keeps this component mounted, so backing out plays the layer's outro (opacity / transform, 200 ms).
    */
   export let beat: CreditsBeat;
   export let kind: 'episode' | 'movie';
@@ -37,6 +38,8 @@
   const motion = motionAllowed();
   const rise = (el: Element) => fly(el, { y: 16, duration: motion ? 300 : 0, easing: springAt });
   const out = (el: Element) => fade(el, { duration: motion ? 150 : 0 });
+  /** back-out (beat -> 'off'): everything fades and sinks 8 px while the Player springs the picture back (never a cut) */
+  const leave = (_el: Element) => ({ duration: motion ? 200 : 0, css: (k: number) => `opacity: ${k}; transform: translate3d(0, ${(1 - k) * 8}px, 0)` });
 
   $: picks = (rows?.find((r) => r.items.length)?.items ?? []).slice(0, 5);
   $: episode = kind === 'episode' && next !== null;
@@ -45,6 +48,7 @@
   let up: HTMLElement | undefined, sugg: HTMLElement | undefined, wc: HTMLElement | undefined;
   let entered = false, focused = false;
   $: if (beat === 'corner' && !entered) { entered = true; void tick().then(enterCorner); } else if (beat !== 'corner') entered = false;
+  $: if (beat === 'off') focused = false; // a new entry into the credits (after seeking back) focuses once more
   /** the parts rise in after the picture's glide; TV: Play (a film: the first suggestion) takes the focus once */
   function enterCorner() {
     const parts = [...(up?.children ?? []), ...(sugg ? [sugg.querySelector('small'), ...sugg.querySelectorAll('li')] : []), wc]
@@ -68,7 +72,9 @@
   function pick(e: MouseEvent, item: Item) { e.preventDefault(); dispatch('pick', { item }); }
 </script>
 
-<div class="cs" class:tv data-beat={beat}>
+<!-- mounted by the watch page for the whole title (desktop / TV): beat 'off' takes the layer away with an outro, never a cut -->
+{#if beat !== 'off'}
+<div class="cs" class:tv data-beat={beat} out:leave>
   {#if beat === 'chip'}
     <div class="chip" data-nav role="group" aria-label={episode ? $t('player.watch.next') : $t('player.watch.more')} in:rise out:out>
       <button type="button" class="sec" on:click|stopPropagation={() => dispatch('credits')}>{$t('player.watch.watchCredits')}</button>
@@ -106,6 +112,7 @@
     {/if}
   {/if}
 </div>
+{/if}
 
 <style>
   /* above the picture, below the Player's menus; only the buttons and cards take the pointer (a click on the small picture backs out) */

@@ -51,8 +51,10 @@ Replaces the desktop "next episode" card and the TV next-up card; content and ti
 
 - **Beat 1** at `creditsStart`: "Watch credits" and "Next episode" rise in at the bottom right; "Next episode" fills over 2 s (a click plays it at once).
 - **Beat 2** after those 2 s: the picture glides on a spring into the top-left corner (scale .42), gaining rounded corners and a shadow; it keeps playing with sound. The bar hides.
+  The rounded corners (14 px) and the shadow transition together with the glide (750 ms); this is part of the approved look (mockup tab "D · Credits").
 - **Beat 3:** the next episode (title, synopsis) rises in at the right with a ring around Play counting down `COUNTDOWN_SECONDS`; below it, "More like this" from the post-play rows (first row, five titles) staggers in 40 ms apart.
 - **Film or last episode:** no countdown; the post-play state takes the next episode's place (`movie_end`, `series_finished`, `caught_up`, `gap` with today's headlines), the suggestions stay.
+- **Last episode only with post-play on:** the last episode of a series gets the sequence only while the post-play screen is enabled (server feature and profile pref); otherwise it keeps today's behaviour (no card, the post-play flow as configured).
 - **Back out:** "Watch credits", Esc, a click on the small picture, or Back on TV plays the sequence in reverse to full screen and stops the countdown; it does not return for this episode (today's `dismissed`).
 - **TV:** OK plays the next episode, arrows move between it and the suggestions (spatial navigation, TV focus ring), Back backs out. Under `TV_GUARD` a tripped frame guard turns the glide into a crossfade into the corner.
 - Not in a watch party and not while casting (as the card today).

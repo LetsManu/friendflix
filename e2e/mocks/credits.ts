@@ -38,6 +38,20 @@ export async function openMovie(page: Page) {
   await page.goto('/watch/' + MOVIE.id);
   await videoReady(page);
 }
+/**
+ * `clock.install()` keeps real time flowing: once the chip is up, the page clock is paused so the beats (and the countdown) only
+ * move with `page.clock.runFor` (resume it before a navigation is expected)
+ */
+export async function freeze(page: Page) {
+  const now = await page.evaluate(() => Date.now());
+  await page.clock.pauseAt(now + 50);
+}
+/** seeks into the credits and freezes the clock as soon as the chip is up (beat 1) */
+export async function toChip(page: Page) {
+  await seekPlaying(page, CREDITS_AT + 5);
+  await expect(page.locator('.cs .chip')).toBeVisible();
+  await freeze(page);
+}
 /** jumps to `t` while the video keeps playing (the countdown only runs while it plays); resolves once the seek is done */
 export async function seekPlaying(page: Page, t: number) {
   // playback has really started (the Player's own start seek is over), else it would undo this seek

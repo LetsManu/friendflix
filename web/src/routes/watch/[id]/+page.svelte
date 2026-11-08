@@ -68,7 +68,9 @@
     const was = lastBeat;
     if (b === was) return;
     lastBeat = b;
-    if (b !== 'off' && !ppData && !ppLoading) void prefetchPostplay(id);
+    // suggestions: the post-play rows (only while the feature is on: switched off, no post-play call), else "More like this"
+    if (b !== 'off' && $features.postplay && !ppData && !ppLoading) void prefetchPostplay(id);
+    else if (b !== 'off' && !$features.postplay && kind === 'episode' && !similar.length) void loadSimilar(id); // films: enterCard loads them
     if (b === 'corner' && csKind === 'episode' && nextEp && !counting && mayAutoplay({ kind, autoplayNext: $prefs.autoplayNext, sleepAfterEpisode, askStill })) startCountdown();
     else if (b !== 'corner' && was === 'corner') stopCountdown();
   }
@@ -219,7 +221,8 @@
   function onEnded() {
     if (ppWanted) { openPostplay(); return; }
     if (kind !== 'episode') return;
-    if (dismissed) { dismissed = false; entered = false; }
+    // phones: a dismissed card comes back at the end; desktop / TV: "Watch credits" holds for this episode (spec §4)
+    if (dismissed && !csOn) { dismissed = false; entered = false; }
     if (tvMode()) tick().then(() => document.querySelector<HTMLElement>('.cs .up .go, .next .go')?.focus()); // TV: after the end OK starts the next episode
   }
   const tvMode = () => document.documentElement.classList.contains('tv');
@@ -256,10 +259,9 @@
         </div>
       {:else if csOn}
         <!-- desktop / TV: the credits sequence replaces the next-up and "More like this" cards; the post-play card stays -->
-        {#if beat !== 'off'}
-          <CreditsSequence {beat} kind={csKind === 'episode' ? 'episode' : 'movie'} next={nextEp} rows={csRows} headline={csHead} seconds={secondsLeft(elapsed)} total={counting ? COUNTDOWN_SECONDS : 0} tv={tvUi}
-            on:play={go} on:credits={watchCredits} on:pick={csPick} on:more={csMore} />
-        {/if}
+        <!-- always mounted here: beat 'off' plays its outro (backing out reverses, never cuts) -->
+        <CreditsSequence {beat} kind={csKind === 'episode' ? 'episode' : 'movie'} next={nextEp} rows={csRows} headline={csHead} seconds={secondsLeft(elapsed)} total={counting ? COUNTDOWN_SECONDS : 0} tv={tvUi}
+          on:play={go} on:credits={watchCredits} on:pick={csPick} on:more={csMore} />
         {#if ppCard}
           <div class="next pp ui" class:aside={beat !== 'off'} data-nav role="region" aria-label={$t('postplay.card.title')} data-testid="postplay-card">
             <div class="mhead"><b>{$t('postplay.card.title')}</b><button class="icon-btn" aria-label={$t('postplay.card.close')} on:click={() => (ppCardClosed = true)}><Icon name="x" size={20} /></button></div>
