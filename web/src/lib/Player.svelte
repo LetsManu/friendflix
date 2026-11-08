@@ -62,7 +62,8 @@
   import { motionAllowed } from '#lib/preview';
   import { motionLevel, motionTripped } from '#lib/tv/motion';
   import { kidsMode } from '#lib/kids';
-  import { moreExtras, phoneOrient, phonePlayer, phoneSub, phoneTools, type PhoneOrient } from '#lib/player/phone/logic';
+  import { growOrigin, moreExtras, panelAnchor, panelBox, phoneOrient, phonePlayer, phoneSub, phoneTools, type PhoneOrient } from '#lib/player/phone/logic';
+  import BackLayer from '#lib/player/phone/BackLayer.svelte';
   import PhoneTitle from '#lib/player/phone/PhoneTitle.svelte';
   import PhoneTopBar from '#lib/player/phone/PhoneTopBar.svelte';
   import ProgressLine from '#lib/player/phone/ProgressLine.svelte';
@@ -222,7 +223,50 @@
   /** desktop and the phone player: cards grow in and fade out (never a cut); elsewhere they appear as before */
   $: cardMo = desk || phoneUi;
   function cardIn(node: Element, o: { origin: string }) {
-    return cardMo && menuFrom !== '' ? fade(node, { duration: motionAllowed() ? 200 : 0 }) : grow(node, { origin: o.origin, on: cardMo });
+    return cardMo && menuFrom !== '' ? fade(node, { duration: motionAllowed() ? 200 : 0 }) : grow(node, { origin: phoneUi ? panelOrigin(node) : o.origin, on: cardMo });
+  }
+  /** phone panels grow out of their button: the end corner (landscape) or the opener's x along the full-width card (portrait) */
+  function panelOrigin(node: Element): string {
+    const btn = stage?.querySelector<HTMLElement>('.ctl .pill [aria-expanded="true"]')?.getBoundingClientRect();
+    const card = node.getBoundingClientRect();
+    return growOrigin({ anchor: panelAnchor(orient, 'end'), btnX: btn ? btn.left + btn.width / 2 : card.right, left: card.left, width: card.width });
+  }
+  /**
+   * Phone panels (spec 2026-11-08 §2) sit directly above the timeline row and below the top bar (`panelBox`). Measured on the stage
+   * whenever the dock or the stage changes size (rotation, a wrapping pill row, the party's tools) and when a panel opens:
+   * --pnl-b / --pnl-h (stage-relative), --pill-b / --pill-l / --pill-r (the tools pill is the menus' containing block).
+   */
+  let pnlVar = '', pnlObs: ResizeObserver | null = null;
+  function measurePanel() {
+    if (!phoneUi || !stage) { pnlVar = ''; return; }
+    const s = stage.getBoundingClientRect();
+    const tl = stage.querySelector('.ctl.dock .tlrow')?.getBoundingClientRect();
+    if (!tl || !s.height) return;
+    const top = stage.querySelector('.ovl')?.getBoundingClientRect();
+    // the containing block is the pill's padding box (inside its 1 px border)
+    const pillEl = stage.querySelector<HTMLElement>('.ctl.dock .pill.tp'), pr = pillEl?.getBoundingClientRect();
+    const pill = pillEl && pr ? { left: pr.left + pillEl.clientLeft, right: pr.left + pillEl.clientLeft + pillEl.clientWidth, bottom: pr.top + pillEl.clientTop + pillEl.clientHeight } : null;
+    const box = panelBox({ stageH: s.height, tlTop: tl.top - s.top, topBottom: top ? Math.max(0, top.bottom - s.top) : 0 });
+    const r = (n: number) => Math.round(n * 10) / 10;
+    pnlVar = `;--pnl-b:${r(box.bottom)}px;--pnl-h:${r(box.maxH)}px`
+      + (pill ? `;--pill-b:${r(s.bottom - pill.bottom)}px;--pill-l:${r(pill.left - s.left)}px;--pill-r:${r(s.right - pill.right)}px` : '');
+  }
+  $: if (typeof window !== 'undefined') watchPanel(phoneUi, stage);
+  function watchPanel(on: boolean, st: HTMLElement | null) {
+    pnlObs?.disconnect(); pnlObs = null;
+    if (!on || !st || typeof ResizeObserver === 'undefined') { pnlVar = ''; return; }
+    pnlObs = new ResizeObserver(() => measurePanel());
+    pnlObs.observe(st);
+    void tickDom().then(() => { for (const el of st.querySelectorAll('.ctl.dock, .ctl.dock .row, .ovl')) pnlObs?.observe(el); measurePanel(); });
+  }
+  $: if (phoneUi && (menu !== '' || showXray) && typeof window !== 'undefined') void tickDom().then(measurePanel);
+  $: if (phoneUi && winW && winH) void tickDom().then(measurePanel);
+  /** the open panel's history entry (phone player): Back closes it */
+  let menuLayer: BackLayer | undefined;
+  /** closes the panel and takes its history entry off first (before a navigation that replaces this entry: one Back still leaves) */
+  async function leaveMenu(): Promise<void> {
+    await menuLayer?.drop();
+    menu = '';
   }
   const cardOut = (node: Element) => fade(node, { duration: cardMo && motionAllowed() ? 120 : 0 });
   let hud: { icon: string; text: string; pct: number } | null = null, hudT: ReturnType<typeof setTimeout>;
@@ -977,7 +1021,7 @@
   $: moreSub = coarse && ((menu === 'speed' && !speedBtn) || menu === 'chapters');
   /** Large control icons (~40px); smaller on phones */
   let ICON = 36;
-  function pickEpisode(e: CustomEvent<{ id: string }>) { menu = ''; dispatch('episode', e.detail); }
+  async function pickEpisode(e: CustomEvent<{ id: string }>) { await leaveMenu(); dispatch('episode', e.detail); }
   /** "Folgen" panel closed (✕ or the playing episode): focus goes back to its trigger */
   let epBtn: HTMLButtonElement | undefined, moreBtn: HTMLButtonElement | undefined;
   function closeEpisodes() { menu = ''; void tickDom().then(() => epBtn?.focus()); }
@@ -1340,6 +1384,7 @@
     };
   });
   onDestroy(() => {
+    pnlObs?.disconnect();
     cancelFirstFrame();
     clearInterval(tvTick);
     clearTimeout(peekT); clearTimeout(posterT); clearTimeout(spT); fxEngine?.destroy();
@@ -1359,7 +1404,7 @@
 </script>
 
 <svelte:window bind:innerWidth={winW} bind:innerHeight={winH} on:keydown={onKey} on:keydown|capture={onBackCapture} />
-<div class="stage {subClasses($prefs.subtitleStyle)}" class:idle={!showUi && credits !== 'corner'} class:locked class:pre={posterOn} class:phone={phone && !phoneUi} class:pui={phoneUi} class:port={phoneUi && orient === 'portrait'} class:desk class:dpause={deskPause} class:dmo={deskMotion} class:cred={credits === 'corner'} class:credout={credOut} class:cmo={credMotion} class:rmt={Boolean(tvSession)} style="--inset:{inset}px{barVar};--rcard-h:{rCardH}px" bind:this={stage} on:mousemove={(e) => { if (Date.now() - lastTouch > 800 && !(e.target as Element).closest?.('.dps')) wake(); }} on:click={onSurfaceClick} on:wheel|nonpassive={onWheel} on:keydown={() => {}}
+<div class="stage {subClasses($prefs.subtitleStyle)}" class:idle={!showUi && credits !== 'corner'} class:locked class:pre={posterOn} class:phone={phone && !phoneUi} class:pui={phoneUi} class:port={phoneUi && orient === 'portrait'} class:desk class:dpause={deskPause} class:dmo={deskMotion} class:cred={credits === 'corner'} class:credout={credOut} class:cmo={credMotion} class:rmt={Boolean(tvSession)} style="--inset:{inset}px{barVar}{pnlVar};--rcard-h:{rCardH}px" bind:this={stage} on:mousemove={(e) => { if (Date.now() - lastTouch > 800 && !(e.target as Element).closest?.('.dps')) wake(); }} on:click={onSurfaceClick} on:wheel|nonpassive={onWheel} on:keydown={() => {}}
   on:pointerdown={gDown} on:pointermove={gMove} on:pointerup={gUp} on:pointercancel={gCancel} role="presentation">
   <!-- svelte-ignore a11y_media_has_caption -->
   <video bind:this={video} playsinline crossorigin="use-credentials" style:filter={brightness < 1 ? `brightness(${brightness})` : null}
@@ -1506,7 +1551,7 @@
   {#if skip && !locked && credits !== 'corner' && !phoneUi}<button class="skipbtn light" class:tv-btn={tvUi} aria-keyshortcuts="S" on:click|stopPropagation={doSkip} in:fly={{ y: 12, duration: desk && motionAllowed() ? 250 : 0, easing: springAt }}>{segText($t, skip.type, 'skip')}{tvMode() ? $t('player.skipOk') : ''}</button>{/if}
 
   {#if showXray}
-    <div class="cihost" class:hide={!showUi && !xray}><CastInfoPanel data={castData} failed={castFailed} autofocus={infoFocus} on:close={closeCastInfo} /></div>
+    <div class="cihost" class:hide={!showUi && !xray} out:fade={{ duration: phoneUi && motionAllowed() ? 120 : 0 }}><CastInfoPanel data={castData} failed={castFailed} autofocus={infoFocus} on:close={closeCastInfo} /></div>
   {:else if peek && !locked && menu === '' && !remote}
     <CastPeek data={castData} hint={tvMode() ? 'tv' : coarse ? 'none' : 'key'} on:more={() => openCastInfo(false)} />
   {/if}
@@ -1546,7 +1591,7 @@
       </div>
     {:else if phoneUi}
       <!-- phone: chapter, title and episode line; the skip button at the row's end (landscape) or below (portrait) -->
-      <PhoneTitle chapter={nowChapter} title={barTitle || title} sub={phoneSub(item, $t)} {orient} hidden={menu !== ''}>
+      <PhoneTitle chapter={nowChapter} title={barTitle || title} sub={phoneSub(item, $t)} {orient} hidden={menu !== '' || showXray}>
         <svelte:fragment slot="skip">
           {#if skip && !locked && credits !== 'corner'}<button class="skipbtn light" aria-keyshortcuts="S" on:click|stopPropagation={doSkip} in:fly={{ y: 12, duration: motionAllowed() ? 250 : 0, easing: springAt }} out:fade={{ duration: motionAllowed() ? 150 : 0 }}>{segText($t, skip.type, 'skip')}</button>{/if}
         </svelte:fragment>
@@ -1607,7 +1652,7 @@
         {#if seriesId}
           <div class="mwrap">
             <button class="ic" bind:this={epBtn} aria-label={$t('player.controls.episodes')} data-label={desk ? $t('player.controls.episodes') : undefined} title={$t('player.controls.episodes')} aria-expanded={menu === 'episodes'} on:click={() => toggleMenu('episodes')}><Icon name="list" size={ICON} /></button>
-            {#if menu === 'episodes'}<div class="menu bare" in:cardIn={{ origin: 'bottom right' }} out:cardOut><EpisodesPanel {seriesId} {seasonId} currentId={itemId} on:pick={pickEpisode} on:close={closeEpisodes} /></div>{/if}
+            {#if menu === 'episodes'}<div class="menu bare" in:cardIn={{ origin: 'bottom right' }} out:cardOut><EpisodesPanel {seriesId} {seasonId} currentId={itemId} synopsis={phoneUi} on:pick={pickEpisode} on:close={closeEpisodes} /></div>{/if}
           </div>
         {/if}
         {#if showScenes}
@@ -1663,7 +1708,7 @@
           {#if menu === 'more'}
             <div class="menu more" data-nav data-scope role="dialog" aria-label={$t('player.controls.more')} in:cardIn={{ origin: 'bottom right' }} out:cardOut>
               {#if coarse && !partyMode && (!phoneUi || extras.includes('speed'))}<button class="mi" on:click={() => (menu = 'speed')}><Icon name="gauge" size={20} />{$t('player.speed.title')}{#if rate !== 1}<span class="muted"> · {$t('player.speed.rate', { r: rate })}</span>{/if}<span class="chev" aria-hidden="true">›</span></button>{/if}
-              {#if extras.includes('next')}<button class="mi" on:click={() => { menu = ''; goNext(); }}><Icon name="skip-next" size={20} />{$t('player.controls.next')}</button>{/if}
+              {#if extras.includes('next')}<button class="mi" on:click={async () => { await leaveMenu(); goNext(); }}><Icon name="skip-next" size={20} />{$t('player.controls.next')}</button>{/if}
               {#if coarse && showScenes}<button class="mi" on:click={() => (menu = 'chapters')}><Icon name="film" size={20} />{$t('scenes.chapters.open')}<span class="chev" aria-hidden="true">›</span></button>{/if}
               <button class="mi" on:click={() => (menu = 'scenes')}><Icon name="bookmark" size={20} />{$t('player.bookmark.menu')}<span class="chev" aria-hidden="true">›</span></button>
               <button class="mi" class:on={showXray} aria-pressed={showXray} on:click={() => { if (showXray) { menu = ''; closeCastInfo(); } else openCastInfo(tvMode()); }}><Icon name="users" size={20} />{$t('scenes.info.open')}</button>
@@ -1707,6 +1752,7 @@
     </div>
   </div>
   {#if phoneUi}<ProgressLine {pct} shown={!showUi && !locked && credits !== 'corner'} />{/if}
+  <BackLayer open={phoneUi && menu !== ''} key="panel" on:back={() => (menu = '')} bind:this={menuLayer} />
   {/if}
 </div>
 
@@ -2051,16 +2097,32 @@
   .ctl.dock .pill .ic.big { flex: 0 1 56px; width: 56px; min-width: 48px; min-height: 56px; }
   .ctl.dock .ic:hover:not(:disabled) { transform: none; }
   .ctl.dock .pill button.ic::after { display: none; } /* no hover label chips on touch */
-  /* panels (until their own cards): above the timeline row (its top + 8 px), never over the top bar; end side, full width in portrait */
+  /* panels (spec §2): one glass card directly above the timeline row (its top − 8 px) and below the top bar, scrolling inside
+     (--pnl-b / --pnl-h from panelBox, measured on the stage). The tools pill is the cards' containing block (it is positioned, and
+     its blur would make it one anyway), so its distance from the stage edges (--pill-*) is taken off. Landscape: the end side,
+     at most 380 px wide; portrait: full width minus the side insets. */
   .ctl.dock .menu, .ctl.dock .menu.tracks, .ctl.dock .menu.more, .ctl.dock .menu.scenes, .ctl.dock .menu.speed, .ctl.dock .menu.bare {
-    position: absolute; left: auto; right: 0; bottom: calc(var(--row-h, 66px) + 18px + var(--tl-h, 31px)); /* the pill's bottom is the row's */
-    width: min(380px, var(--dock-w)); min-width: 0; max-width: none; overflow-y: auto;
-    max-height: calc(100dvh - var(--safe-top) - var(--safe-bottom) - 90px - var(--row-h, 66px) - var(--tl-h, 31px)); }
-  .stage.pui.port .ctl.dock :is(.menu, .menu.tracks, .menu.more, .menu.scenes, .menu.speed, .menu.bare) { width: var(--dock-w); }
-  .ctl.dock .menu.tracks { flex-direction: column; }
-  .ctl.dock .menu.tracks > div { max-height: none; overflow: visible; }
+    position: absolute; bottom: calc(var(--pnl-b, 0px) - var(--pill-b, 0px)); max-height: var(--pnl-h, 50vh); overflow-y: auto; overscroll-behavior: contain;
+    left: auto; right: calc(var(--safe-right) + 16px + var(--inset, 0px) - var(--pill-r, 0px));
+    width: min(380px, var(--dock-w)); min-width: 0; max-width: none; }
+  .stage.pui.port .ctl.dock :is(.menu, .menu.tracks, .menu.more, .menu.scenes, .menu.speed, .menu.bare) {
+    left: calc(var(--safe-left) + 16px - var(--pill-l, 0px)); right: calc(var(--safe-right) + 16px - var(--pill-r, 0px)); width: auto; }
+  /* glass card like the desk menus (fill, hairline, 14 px radius; the blur rule is .ctl.blur's) */
+  .ctl.dock .menu:not(.bare) { background: rgba(20,20,24,.62); border: 1px solid rgba(255,255,255,.12); border-radius: 14px; box-shadow: 0 18px 40px rgba(0,0,0,.55); }
+  .ctl.dock .menu.tracks h3 { background: rgba(20,20,24,.92); }
+  /* audio & subtitles: two columns in landscape (the effects below them), sections in portrait; the card scrolls as one */
+  .ctl.dock .menu.tracks { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: .4rem 1rem; }
+  .stage.pui.port .ctl.dock .menu.tracks { grid-template-columns: 1fr; }
+  .ctl.dock .menu.tracks > div { min-width: 0; max-height: none; overflow: visible; }
+  .ctl.dock .menu.tracks .mi { white-space: normal; overflow-wrap: anywhere; }
   .ctl.dock .menu.bare { overflow: visible; }
-  .ctl.dock .menu.bare :global(.eps), .ctl.dock .menu.bare :global(.scn) { width: 100%; max-height: calc(100dvh - var(--safe-top) - var(--safe-bottom) - 90px - var(--row-h, 66px) - var(--tl-h, 31px)); }
+  .ctl.dock .menu.bare :global(.eps), .ctl.dock .menu.bare :global(.scn) { width: 100%; max-height: var(--pnl-h, 50vh); border-radius: 14px; border-color: rgba(255,255,255,.12); }
+  /* Cast & info (opened from More, or by itself after a pause): the same panel box, never over the top bar, scrolling inside */
+  .stage.pui .cihost :global(.ci) { top: auto; bottom: var(--pnl-b, 50%); max-height: var(--pnl-h, 50%); height: auto;
+    left: auto; right: calc(var(--safe-right) + 16px + var(--inset, 0px)); width: min(380px, var(--dock-w)); border-radius: 14px; }
+  .stage.pui.port .cihost :global(.ci) { left: calc(var(--safe-left) + 16px); right: calc(var(--safe-right) + 16px); width: auto; }
+  /* the page's top slot spans the bar's free middle: only its own controls take taps, the rest goes to the picture (double-tap seek) */
+  .stage.pui .ovl > :global(.top) { pointer-events: none; }
   .ctl.dock .speeds { flex-wrap: wrap; justify-content: center; } .ctl.dock .speeds::before { display: none; } .ctl.dock .sp-opt { min-width: 64px; }
   /* narrow phones (320 px): three tools and the playback pill still fit side by side, every target stays ≥ 44 px */
   @media (max-width: 359px) {

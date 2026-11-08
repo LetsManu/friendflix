@@ -104,8 +104,8 @@ test.describe('phone player, portrait', () => {
     await page.getByRole('button', { name: 'Mehr', exact: true }).tap();
     const menu = page.getByRole('dialog', { name: 'Mehr' });
     await expect(menu).toBeVisible();
-    const m = (await menu.boundingBox())!, track = (await page.locator('.ctl .timeline').boundingBox())!;
-    expect(m.y + m.height).toBeLessThanOrEqual(track.y);
+    const m = (await menu.boundingBox())!, track = (await page.locator('.ctl .tlrow').boundingBox())!;
+    expect(m.y + m.height).toBeLessThanOrEqual(track.y - 7.5);
     expect(m.y).toBeGreaterThanOrEqual(59);
   });
 });

@@ -6,6 +6,8 @@ declare global {
       modalId?: string;
       /** the post-play overlay is open over the watch page (one shallow history entry; browser / phone Back closes it) */
       postplay?: string;
+      /** a phone player panel is open (one shallow history entry; browser / phone Back closes it) */
+      panel?: string;
     }
   }
 }
