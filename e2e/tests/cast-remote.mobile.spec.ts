@@ -17,6 +17,9 @@ test.describe('320 px', () => {
     await rowFits(page);
     expect(await noHorizontalOverflow(page)).toBe(true);
     await showControls(page);
+    await page.getByRole('button', { name: 'Mehr', exact: true }).click();
+    const more = page.getByRole('dialog', { name: 'Mehr' });
+    await expect(more).toBeVisible();
     await expect(page.getByRole('button', { name: 'Vollbild' })).toHaveCount(0);
     await expect(page.getByRole('button', { name: 'Stumm' })).toHaveCount(0);
   });
@@ -27,8 +30,10 @@ test.describe('320 px', () => {
     await rowFits(page);
     expect(await noHorizontalOverflow(page)).toBe(true);
     await showControls(page);
+    await page.getByRole('button', { name: 'Mehr', exact: true }).click();
+    const more = page.getByRole('dialog', { name: 'Mehr' });
     await expect(page.getByRole('button', { name: 'Vollbild' })).toHaveCount(0);
-    await expect(page.getByRole('button', { name: 'Stumm' })).toBeVisible();
+    await expect(more.getByRole('button', { name: 'Stumm' })).toBeVisible();
   });
 });
 

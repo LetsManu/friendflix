@@ -25,6 +25,7 @@
   import { CHIP_MS, creditsBeat, deskPlayer } from '#lib/player/desk/logic';
   import { deskActive } from '#lib/desk/bar';
   import { kidsMode } from '#lib/kids';
+  import { phonePlayer } from '#lib/player/phone/logic';
 
   let video: HTMLVideoElement | null = null;
   let item: Item | null = null, nextEp: Item | null = null, similar: Item[] = [];
@@ -53,6 +54,8 @@
   let tvUi = false, coarse = false;
   // kids profiles keep today's next-up card (also on a TV)
   $: csOn = !$kidsMode && (tvUi || deskPlayer({ desk: $deskActive, tv: tvUi, phone: coarse && !tvUi }));
+  /** the phone player (spec 2026-11-08, block 4): the top bar keeps only the back button (title and episode line sit in its dock) */
+  $: phoneUi = phonePlayer({ coarse, tv: tvUi, kids: $kidsMode });
   /** a film, or the last episode with the post-play screen on: suggestions (and the post-play headline) take the next episode's place */
   $: csKind = (kind === 'episode' ? 'episode' : kind === 'movie' || (item?.type === 'Episode' && ppWanted) ? 'movie' : 'none') as 'episode' | 'movie' | 'none';
   /** when the credits were reached (null = before them); `now` ticks every 250 ms only while in the credits */
@@ -258,9 +261,9 @@
   <div class="stagewrap" inert={ppOpen}>
   {#key id}
     <Player itemId={id} {poster} item={item && item.id === id ? item : null} title={label(item)} barTitle={bt.title} barSub={bt.sub} seriesId={item?.seriesId ?? ''} isMovie={item?.type === 'Movie'} seasonId={item?.seasonId ?? ''} on:episode={playEpisode} {startAt} {wantAudio} {wantSub} bind:video bind:sleepAfterEpisode bind:creditsAt bind:postplayAt bind:remote credits={beat} bind:credHold on:credits={watchCredits} hasNext={Boolean(nextEp)} on:next={() => nextEp && toEpisode(nextHref())} on:timeupdate={onTime} on:ended={onEnded} on:back={back}>
-      <div slot="top" class="top">
-        <button class="icon-btn" aria-label={$t('player.watch.back')} on:click={back}><Icon name="arrow-left" size={30} /></button>
-        {#if item}<div class="ttl phone"><b>{item.seriesName ?? item.name}</b>{#if item.seriesName}<span>S{item.parentIndexNumber}:E{item.indexNumber} · {item.name}</span>{/if}</div>{/if}
+      <div slot="top" class="top" class:pui={phoneUi}>
+        <button class="icon-btn" aria-label={$t('player.watch.back')} on:click={back}><Icon name="arrow-left" size={phoneUi ? 24 : 30} /></button>
+        {#if item && !phoneUi}<div class="ttl phone"><b>{item.seriesName ?? item.name}</b>{#if item.seriesName}<span>S{item.parentIndexNumber}:E{item.indexNumber} · {item.name}</span>{/if}</div>{/if}
       </div>
       {#if visible && askStill && nextEp}
         <div class="next still ui" data-nav role="dialog" aria-label={$t('player.watch.stillTitle')}>
@@ -319,6 +322,13 @@
   /* below the status bar / Dynamic Island (portrait) and clear of the notch (landscape); the gradient still covers the status bar */
   .top { padding: calc(.8rem + var(--safe-top)) max(1rem, var(--safe-right)) .8rem max(1rem, var(--safe-left)); display: flex; align-items: center; gap: .6rem; background: linear-gradient(rgba(0,0,0,.8), transparent); }
   .ttl { display: flex; flex-direction: column; line-height: 1.2; } .ttl span { color: var(--mut); font-size: .9rem; }
+  /* phone player: the Player's top bar holds the padding and the scrim; the back button is a 44 px glass circle */
+  .top.pui { padding: 0; background: none; flex: none; }
+  .top.pui .icon-btn { display: grid; place-items: center; width: 44px; height: 44px; min-height: 44px; background: rgba(20,20,24,.62); border: 1px solid rgba(255,255,255,.12); }
+  .top.pui .icon-btn:hover:not(:disabled) { background: rgba(40,40,46,.72); }
+  :global(.ovl.blur) .top.pui .icon-btn { -webkit-backdrop-filter: blur(16px); backdrop-filter: blur(16px); }
+  /* the skip button sits inside the dock: the next-up card only clears the dock */
+  :global(.stage.pui) .next { bottom: calc(var(--ctl-h, 8rem) + .5rem); }
   /* desktop: the title sits centred in the control bar; phones keep it at the top */
   @media (min-width: 721px) { .ttl.phone { display: none; } }
   /* touch (phones, also in landscape): series · S1:E3 · episode on one line, ellipsis at the end, the whole top bar wide */

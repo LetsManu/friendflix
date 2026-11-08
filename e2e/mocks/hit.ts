@@ -138,7 +138,13 @@ for (const v of viewports) {
     test('control-bar next button: edges hit it', async ({ page, api: _api }) => {
       await open(page, false);
       await wake(page);
-      const sel = '.ctl button[aria-label^="Nächste"]';
+      let sel = '.ctl button[aria-label^="Nächste"]';
+      // phones in portrait (spec 2026-11-08 block 4): the next episode is an entry of More - that entry must be fully hittable
+      if (!(await page.locator(sel).count())) {
+        await page.getByRole('button', { name: 'Mehr', exact: true }).click();
+        await page.getByRole('dialog', { name: 'Mehr' }).getByRole('button', { name: 'Nächste Folge', exact: true }).evaluate((el) => el.setAttribute('data-probe', 'next'));
+        sel = '[data-probe="next"]';
+      }
       const { bad } = await probe(page, sel);
       expect(bad).toEqual([]);
     });

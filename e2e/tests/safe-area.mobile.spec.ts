@@ -151,10 +151,12 @@ test.describe('safe area top = 0 (browsers, Android, TV): layout unchanged', () 
     expect(pad).toBe(navH + 24); // .page: calc(var(--nav-total) + 1.5rem)
   });
 
-  test('player top bar keeps its .8rem padding', async ({ page }) => {
+  test('player top bar keeps its 8 px padding', async ({ page }) => {
     await mockPlayer(page);
     await page.goto('/watch/' + MOVIE.id);
     await videoReady(page);
-    expect(await page.locator('.top').first().evaluate((e) => getComputedStyle(e).paddingTop)).toBe('12.8px');
+    // the phone player's top bar (spec 2026-11-08 block 4): the Player's .ovl holds the padding, the page's .top only the back button
+    expect(await page.locator('.ovl').first().evaluate((e) => getComputedStyle(e).paddingTop)).toBe('8px');
+    expect(await top(page.locator('.top .icon-btn').first())).toBe(8);
   });
 });

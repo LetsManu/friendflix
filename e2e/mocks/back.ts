@@ -22,7 +22,7 @@ async function setup(page: Page) {
 const path = (page: Page) => new URL(page.url()).pathname;
 const watching = (page: Page, id: string) => expect.poll(() => path(page), { timeout: 30_000 }).toBe(`/watch/${id}`);
 /** the (new) episode is loaded: the player of the previous one is gone, its video has the duration */
-const ready = async (page: Page, ep: { name: string }) => { await expect(page.locator('.top')).toContainText(ep.name); await expect(page.locator('.stage video')).toHaveCount(1); await videoReady(page); await expect(page.locator('.stage.pre')).toHaveCount(0); };
+const ready = async (page: Page, ep: { name: string }) => { await expect(page.locator('.stage')).toContainText(ep.name); await expect(page.locator('.stage video')).toHaveCount(1); await videoReady(page); await expect(page.locator('.stage.pre')).toHaveCount(0); };
 /** jumps into the credits (the card shows from 575 s); the Player may still be settling its own start seek, so retry until it sticks */
 async function toCredits(page: Page, playing: boolean, frozen = false) {
   await expect.poll(() => page.evaluate(() => document.querySelector('video')!.currentTime)).toBeGreaterThan(0.5); // playback has really started
@@ -77,7 +77,9 @@ test('the control-bar next button and the episode "still watching" card replace 
   await ready(page, E1);
   if (await page.locator('.ctl.hide').count()) await page.locator('.stage').tap({ position: { x: 30, y: 200 } }).catch(() => page.mouse.move(30, 210));
   await expect(page.locator('.ctl.hide')).toHaveCount(0);
-  await page.locator('.ctl button[aria-label^="Nächste"]').click();
+  // phones in portrait: the next episode lives in More (spec 2026-11-08 block 4)
+  if (await page.locator('.ctl button[aria-label^="Nächste"]').count()) await page.locator('.ctl button[aria-label^="Nächste"]').click();
+  else { await page.getByRole('button', { name: 'Mehr', exact: true }).click(); await page.getByRole('dialog', { name: 'Mehr' }).getByRole('button', { name: 'Nächste Folge', exact: true }).click(); }
   await watching(page, E2.id);
   await ready(page, E2);
   await page.goBack();
