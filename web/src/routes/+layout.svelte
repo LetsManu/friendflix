@@ -749,7 +749,7 @@
         </ul>
       </div>
     {/if}
-    {#if $mobile && $previewSheet}<MobilePreviewSheet />{/if}
+    {#if $mobile}<MobilePreviewSheet {canDownload} />{/if}
   {/if}
 
   {#if castBarOn}<CastBar tabbar={!kidsUi && !profilesPage} />{/if}

@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { dragClose } from './dragClose';
+import { dragClose, UP_DAMP } from './dragClose';
 
 type Handler = (e: any) => void;
 
@@ -11,6 +11,8 @@ function fakeNode() {
   const classes = new Set<string>();
   const node = {
     scrollTop: 0,
+    clientHeight: 0,
+    scrollHeight: 0,
     style: { transform: '' },
     classList: { add: (c: string) => classes.add(c), remove: (c: string) => classes.delete(c), contains: (c: string) => classes.has(c) },
     setPointerCapture: vi.fn(),
@@ -195,6 +197,61 @@ describe('dragClose', () => {
       node.fire('touchend');
       expect(close).not.toHaveBeenCalled();
       expect(node.fire('click').preventDefault).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('pulling up with `open`', () => {
+    let open: ReturnType<typeof vi.fn<() => void>>;
+    beforeEach(() => {
+      open = vi.fn<() => void>();
+      act.update({ close, open });
+      Object.assign(node, { clientHeight: 400, scrollHeight: 400 });
+    });
+
+    it('the handle pulled up past the threshold opens and keeps its damped lift', () => {
+      node.fire('pointerdown', { pointerType: 'mouse', target: grab, clientY: 300, pointerId: 1 });
+      node.fire('pointermove', { clientY: 150 });
+      expect(node.style.transform).toBe(`translateY(${-150 * UP_DAMP}px)`);
+      node.fire('pointerup');
+      expect(open).toHaveBeenCalledOnce();
+      expect(close).not.toHaveBeenCalled();
+      expect(node.dragging()).toBe(false);
+      expect(node.style.transform).toBe(`translateY(${-150 * UP_DAMP}px)`);
+    });
+
+    it('a short pull up springs back; down still closes', () => {
+      node.fire('pointerdown', { pointerType: 'mouse', target: grab, clientY: 300, pointerId: 1 });
+      node.fire('pointermove', { clientY: 250 });
+      node.fire('pointerup');
+      expect(open).not.toHaveBeenCalled();
+      expect(node.style.transform).toBe('');
+      node.fire('pointerdown', { pointerType: 'mouse', target: grab, clientY: 0, pointerId: 1 });
+      node.fire('pointermove', { clientY: 120 });
+      node.fire('pointerup');
+      expect(close).toHaveBeenCalledOnce();
+    });
+
+    it('a finger pulls up only when the sheet has nothing more to scroll', () => {
+      vi.useFakeTimers();
+      node.fire('touchstart', touch(0, 300));
+      const mv = node.fire('touchmove', touch(0, 150));
+      expect(mv.preventDefault).toHaveBeenCalled();
+      node.fire('touchend');
+      expect(open).toHaveBeenCalledOnce();
+      expect(node.fire('click').preventDefault).toHaveBeenCalled();
+
+      node.scrollHeight = 900; // more content below: the browser scrolls
+      node.fire('touchstart', touch(0, 300));
+      expect(node.fire('touchmove', touch(0, 150)).preventDefault).not.toHaveBeenCalled();
+      node.fire('touchend');
+      expect(open).toHaveBeenCalledOnce();
+    });
+
+    it('scrolled down to the end, a downward swipe scrolls instead of dragging', () => {
+      Object.assign(node, { scrollTop: 500, scrollHeight: 900 });
+      node.fire('touchstart', touch(0, 100));
+      expect(node.fire('touchmove', touch(0, 200)).preventDefault).not.toHaveBeenCalled();
+      expect(node.dragging()).toBe(false);
     });
   });
 
