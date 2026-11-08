@@ -3,7 +3,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { prefs } from '#lib/stores';
 import { get } from 'svelte/store';
-import { animateTo, decodeFade, DESK_GUARD, deskGuardBudget, framesIdle, watchFrames, deskPagePlan, frameGuard, framesResume, isDetailPage, glide, motionTripped, placeAt, glideRow, halt, tvPagePlan, motionLevel, nearestScroll, resetMotion, SPRING_C, SPRING_K, springSamples, springStep, stagger } from './motion';
+import { animateTo, decodeFade, DESK_GUARD, deskGuardBudget, tvGuardBudget, TV_GUARD, framesIdle, watchFrames, deskPagePlan, frameGuard, framesResume, isDetailPage, glide, motionTripped, placeAt, glideRow, halt, tvPagePlan, motionLevel, nearestScroll, resetMotion, SPRING_C, SPRING_K, springSamples, springStep, stagger } from './motion';
 
 /** simulates the spring at 16 ms frames; returns the positions */
 function run(from: { x: number; v: number }, target: number, ms: number, k?: number, c?: number) {
@@ -167,6 +167,13 @@ describe('motionLevel', () => {
     expect(deskGuardBudget(undefined)).toBe(DESK_GUARD);
     expect(deskGuardBudget({ __ffDeskGuard: { slowMs: 1000, frames: 8 } })).toEqual({ slowMs: 1000, frames: 8 });
     for (const bad of [null, 5, { slowMs: 0, frames: 8 }, { slowMs: 50 }, { slowMs: '1000', frames: 8 }, { slowMs: Infinity, frames: 8 }]) expect(deskGuardBudget({ __ffDeskGuard: bad })).toBe(DESK_GUARD);
+  });
+  it('the TV budget in use: TV_GUARD unless the page set a positive __ffTvGuard (end-to-end tests)', () => {
+    expect(tvGuardBudget({})).toBe(TV_GUARD);
+    expect(tvGuardBudget(undefined)).toBe(TV_GUARD);
+    expect(tvGuardBudget({ __ffTvGuard: { slowMs: 1000, frames: 3 } })).toEqual({ slowMs: 1000, frames: 3 });
+    expect(tvGuardBudget({ __ffDeskGuard: { slowMs: 1000, frames: 8 } })).toBe(TV_GUARD); // the desktop hook does not leak into the TV
+    for (const bad of [null, 5, { slowMs: 0, frames: 3 }, { slowMs: 32 }, { slowMs: '1000', frames: 3 }, { slowMs: Infinity, frames: 3 }]) expect(tvGuardBudget({ __ffTvGuard: bad })).toBe(TV_GUARD);
   });
   it('the desktop budget: a steady 30 fps (33 ms frames) never trips it, frames under 20 fps (60 ms) do after eight in a row', () => {
     expect(DESK_GUARD).toEqual({ slowMs: 50, frames: 8 });

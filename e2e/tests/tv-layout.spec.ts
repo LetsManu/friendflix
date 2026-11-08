@@ -380,6 +380,9 @@ test.describe('TV layout', () => {
 
     test.describe('full motion', () => {
       test.use({ reducedMotion: 'no-preference' });
+      // the TV frame guard with a budget no test host misses: this software-rendered browser draws at 40-110 ms per frame, so on the
+      // shared runner the guard (3 frames over 32 ms) would trip into the reduced set (no view transition, by design). Unit-tested in lib/tv/motion.test.ts.
+      test.beforeEach(({ page }) => page.addInitScript(() => { (window as unknown as { __ffTvGuard: { slowMs: number; frames: number } }).__ffTvGuard = { slowMs: 1000, frames: 3 }; }));
 
       test('Right glides the row track (transform during the move, none at rest) and the focused card ends fully in view', async ({ page, api: _api }) => {
         await home(page);
@@ -625,6 +628,9 @@ test.describe('TV layout', () => {
 
     test.describe('full motion', () => {
       test.use({ reducedMotion: 'no-preference' });
+      // the TV frame guard with a budget no test host misses: this software-rendered browser draws at 40-110 ms per frame, so on the
+      // shared runner the guard (3 frames over 32 ms) would trip into the reduced set (no view transition, by design). Unit-tested in lib/tv/motion.test.ts.
+      test.beforeEach(({ page }) => page.addInitScript(() => { (window as unknown as { __ffTvGuard: { slowMs: number; frames: number } }).__ffTvGuard = { slowMs: 1000, frames: 3 }; }));
       test('detail -> sub-screen slides in from the right 24 px, Back slides the other way; the classes are cleaned up', async ({ page, api: _api }) => {
         await page.addInitScript(() => {
           const d = document as Document & { startViewTransition?: (cb: () => unknown) => unknown };
