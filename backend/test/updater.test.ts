@@ -186,7 +186,7 @@ describe('settings and automatic updates', () => {
     expect(fake.portainer).toEqual([]);
     fake.release = 'v99.0.0';
     expect(await tick(at(2, 1, 23))).toBe('started');
-    expect(fake.portainer).toEqual([{ method: 'POST', url: HOOK }]);
+    expect(fake.portainer).toEqual([{ method: 'POST', url: `${HOOK}?FF_TAG=latest` }]); // the stable channel rides along
     expect(fake.calls.filter((c) => c.method === 'POST')).toEqual([]); // the updater never runs a job on a foreign stack
     // audited before the call and with its outcome after it
     expect((await audits('system.update')).at(-1)).toMatchObject({ actor: null, meta: { mode: 'webhook', toVersion: '99.0.0', auto: true } });
@@ -214,7 +214,7 @@ describe('settings and automatic updates', () => {
     fake.stack = undefined;
     fake.release = 'v98.0.0';
     expect(await autoUpdateTick(env.ctx, at(2, 1, 28))).toBe('started');
-    expect(fake.portainer).toEqual([{ method: 'POST', url: HOOK }]);
+    expect(fake.portainer).toEqual([{ method: 'POST', url: `${HOOK}?FF_TAG=latest` }]); // the stable channel rides along
     expect(fake.calls.filter((c) => c.method === 'POST')).toEqual([]);
   });
 });
@@ -333,7 +333,7 @@ describe('POST /api/admin/updater/:action', () => {
     e2.ctx.cfg = { ...e2.ctx.cfg, PORTAINER_WEBHOOK_URL: HOOK };
     const r = await post('update');
     expect([r.statusCode, r.json()]).toEqual([202, { portainer: { mode: 'webhook' } }]);
-    expect(fake.portainer).toEqual([{ method: 'POST', url: HOOK }]);
+    expect(fake.portainer).toEqual([{ method: 'POST', url: `${HOOK}?FF_TAG=latest` }]); // the stable channel rides along
     expect(fake.calls.map((c) => [c.method, c.path])).toEqual([['GET', '/v1/status']]); // no channel sync, no /v1/update
     const userId = (await e2.pool.query("select id from users where authentik_sub='sub-admin'")).rows[0].id;
     expect((await e2.pool.query('select actor, meta from audit_log where action=$1', ['system.update'])).rows).toEqual([{ actor: userId, meta: expect.objectContaining({ mode: 'webhook' }) }]);

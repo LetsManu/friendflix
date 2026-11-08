@@ -226,7 +226,7 @@ describe('admin update', () => {
     expect((await post()).statusCode).toBe(202);
     const put = seen.find((s) => s.method === 'PUT')!;
     expect(put.url).toBe('https://portainer.example.com/api/stacks/7?endpointId=3');
-    expect(put.body).toMatchObject({ stackFileContent: 'services: {}', env: stack.Env, pullImage: true, prune: false });
+    expect(put.body).toMatchObject({ stackFileContent: 'services: {}', env: [...stack.Env, { name: 'FF_TAG', value: 'latest' }], pullImage: true, prune: false });
   });
 
   it('nightly channel: webhook gets ?FF_TAG=nightly (existing query kept), the token never leaks', async () => {
