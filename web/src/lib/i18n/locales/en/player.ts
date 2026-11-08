@@ -191,6 +191,7 @@ const en: Translation<typeof de> = {
   },
   controls: {
     toolbar: 'Playback controls',
+    remaining: '{time} remaining',
     play: 'Play',
     pause: 'Pause',
     back10: '10 seconds back',

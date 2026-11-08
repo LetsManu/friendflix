@@ -191,6 +191,7 @@ const fr: Translation<typeof de> = {
   },
   controls: {
     toolbar: 'Commandes de lecture',
+    remaining: 'reste {time}',
     play: 'Lecture',
     pause: 'Pause',
     back10: 'Reculer de 10 secondes',

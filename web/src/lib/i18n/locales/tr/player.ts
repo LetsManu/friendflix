@@ -191,6 +191,7 @@ const tr: Translation<typeof de> = {
   },
   controls: {
     toolbar: 'Oynatma kontrolleri',
+    remaining: '{time} kaldı',
     play: 'Oynat',
     pause: 'Duraklat',
     back10: '10 saniye geri',

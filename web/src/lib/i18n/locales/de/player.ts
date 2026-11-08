@@ -193,6 +193,7 @@ export default {
   },
   controls: {
     toolbar: 'Wiedergabesteuerung',
+    remaining: 'noch {time}',
     play: 'Abspielen',
     pause: 'Pause',
     back10: '10 Sekunden zurück',

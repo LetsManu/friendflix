@@ -206,6 +206,7 @@ const pl: Translation<typeof de> = {
   },
   controls: {
     toolbar: 'Sterowanie odtwarzaniem',
+    remaining: 'pozostało {time}',
     play: 'Odtwórz',
     pause: 'Pauza',
     back10: '10 sekund wstecz',
