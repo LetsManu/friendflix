@@ -24,7 +24,8 @@
    * `touch-action: pan-y`); on release `swipeTarget` picks the card and a spring (lib/tv/motion springStep) settles there.
    * Slides only move through transform / opacity; side cards darken through a black overlay's opacity. Behind it a glow in the centred poster's colour crossfades
    * (two layers, opacity only). Play / Continue and My list act on the centred card; a tap on it opens the preview sheet,
-   * a tap on a side card centres it. No auto-advance, no trailer.
+   * a tap on a side card centres it. No auto-advance, no trailer. Without items (the picks are still loading) it shows
+   * placeholders of the same height, so the rows below never move when the cards arrive.
    */
   export let items: Item[];
 
@@ -208,7 +209,7 @@
 </script>
 
 <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
-<section class="mc" data-play-scope aria-roledescription="carousel" aria-label={$t('home.carousel.label')} on:keydown={keys}>
+<section class="mc" data-play-scope aria-roledescription="carousel" aria-label={$t('home.carousel.label')} aria-busy={items.length ? undefined : 'true'} on:keydown={keys}>
   <div class="glow" aria-hidden="true">
     <i class:on={front === 0} style:background={layers[0]}></i>
     <i class:on={front === 1} style:background={layers[1]}></i>
@@ -230,10 +231,13 @@
         </a>
         <span class="dim" aria-hidden="true" style={dimStyle(i, x, step)}></span>
       </div>
+    {:else}
+      <div class="slide skeleton" aria-hidden="true"></div>
     {/each}
   </div>
   <p class="sr-only" aria-live="polite" aria-atomic="true">{centred ? `${$t('home.carousel.slide', { n: cur + 1, m: items.length })}, ${centred.name}` : ''}</p>
-  {#if items.length > 1}
+  <!-- while loading: an empty dots row keeps the height (a single card has no dots, its buttons take the same space) -->
+  {#if items.length !== 1}
     <div class="dots" aria-hidden="true">{#each items as it, i (it.id)}<i class:on={i === cur}></i>{/each}</div>
   {/if}
   {#if centred}
@@ -241,6 +245,8 @@
       <a class="btn w" href={heroPlayHref(centred)} use:playPrefetch on:click={play}><Icon name="play" size={20} />{centred.positionTicks ? $t('home.card.resume') : $t('home.card.play')}</a>
       <button type="button" class="btn g" aria-pressed={inList} on:click={() => toggleList(listId, inList)}><Icon name={inList ? 'check' : 'plus'} size={20} />{$t('home.card.myList')}</button>
     </div>
+  {:else}
+    <div class="acts" aria-hidden="true"><div class="btn skeleton"></div><div class="btn skeleton"></div></div>
   {/if}
 </section>
 
@@ -270,12 +276,15 @@
   .title { font-size: 1.4rem; font-weight: 800; line-height: 1.1; letter-spacing: -.02em; text-shadow: 0 2px 12px rgba(0, 0, 0, .7); overflow-wrap: anywhere; }
   .genres { font-size: .8rem; font-weight: 600; color: #e6e6e6; text-shadow: 0 1px 6px rgba(0, 0, 0, .8); }
   /* each dot is a fixed 20 px pill shown at 30 % width; the current one grows to full width (transform only) */
-  .dots { position: relative; z-index: 1; display: flex; justify-content: center; margin: 14px 0 12px; }
+  .dots { position: relative; z-index: 1; display: flex; justify-content: center; height: 6px; margin: 14px 0 12px; }
   .dots i { flex: none; width: 20px; height: 6px; margin: 0 -2px; border-radius: 99px; background: rgba(255, 255, 255, .3); transform: scaleX(.3); transition: transform .35s var(--m-spring), background-color .3s; }
   .dots i.on { transform: none; background: #fff; }
   @media (prefers-reduced-motion: reduce) { .dots i, .btn { transition: none; } }
   .acts { position: relative; z-index: 1; display: flex; gap: 8px; padding: 0 22px; }
-  .acts.solo { margin-top: 14px; }
+  /* the same space as the dots row (14 + 6 + 12 px): one card, several or the placeholders, the carousel keeps its height */
+  .acts.solo { margin-top: 32px; }
+  .slide.skeleton { box-shadow: none; }
+  :global(html.m-still) .mc .skeleton::after, :global(html.tv-motion-reduced) .mc .skeleton::after { animation: none; display: none; }
   .btn { flex: 1; min-width: 0; display: inline-flex; align-items: center; justify-content: center; gap: 7px; min-height: 44px; padding: 0 1rem; border-radius: 8px; font-weight: 700; font-size: 15px; white-space: nowrap; transition: transform .15s var(--m-emph-out); }
   .btn:active { transform: scale(.97); }
   .btn.w { background: #fff; color: #0b0b0d; }

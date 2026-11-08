@@ -195,6 +195,44 @@ test.describe('phone home carousel', () => {
     await expect.poll(() => noHorizontalOverflow(page)).toBe(true);
   });
 
+  test('picks that arrive after the reader scrolled do not move the page', async ({ page }) => {
+    // no intro over the page; the billboard title has no poster and there are no recommendations: the carousel's cards come
+    // only with the newest titles (an idle request), held back here until the page has been scrolled
+    await page.addInitScript(() => sessionStorage.setItem('ff-intro-seen', '1'));
+    let release!: () => void;
+    const held = new Promise<void>((r) => (release = r));
+    await mockHome(page, { hero: { ...HERO, image: false }, recs: [], latest: RECS });
+    await page.route((u) => u.pathname === '/api/library/items', async (r) => {
+      if (new URL(r.request().url()).searchParams.get('sort') !== 'DateCreated') return r.fallback();
+      await held;
+      return r.fallback();
+    });
+    await page.goto('/');
+    await expect(page.locator('section.row').first()).toBeVisible();
+    // the carousel's place is kept while its cards load
+    const c = carousel(page);
+    await expect(c).toHaveAttribute('aria-busy', 'true');
+    await expect(c.locator('[aria-roledescription="slide"]')).toHaveCount(0);
+    await expect(page.locator('.mh')).toHaveCount(0);
+    await expect(async () => {
+      await page.evaluate(() => window.scrollTo(0, 300));
+      expect(await page.evaluate(() => Math.round(window.scrollY))).toBe(300);
+    }).toPass();
+    const rowsTop = () => page.evaluate(() => Math.round(document.querySelector('.rows')!.getBoundingClientRect().top));
+    const before = await rowsTop();
+    // every scroll position from here on
+    await page.evaluate(() => { const w = window as Window & { ys?: number[] }; w.ys = []; addEventListener('scroll', () => w.ys!.push(Math.round(scrollY))); });
+    release();
+    await expect(c.locator('[aria-roledescription="slide"]')).toHaveCount(5);
+    await expect(c).not.toHaveAttribute('aria-busy', 'true');
+    // the cards have been rendered and laid out (two frames)
+    await page.evaluate(() => new Promise<void>((r) => requestAnimationFrame(() => requestAnimationFrame(() => r()))));
+    const ys = await page.evaluate(() => (window as Window & { ys?: number[] }).ys ?? []);
+    expect(Math.min(300, ...ys), `scroll positions after the cards came: ${ys.join(', ')}`).toBeGreaterThanOrEqual(300);
+    expect(await page.evaluate(() => Math.round(window.scrollY))).toBeGreaterThanOrEqual(300);
+    expect(await rowsTop()).toBe(before); // the rows did not move under the reader
+  });
+
   test('no candidate with a poster: today\'s hero', async ({ page }) => {
     await mockHome(page, { hero: { ...HERO, image: false }, recs: [] });
     // the newest titles (the carousel's second candidate list) arrive with the idle rows
