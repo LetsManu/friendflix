@@ -44,6 +44,17 @@ test.describe('admin update with the opt-in updater (desktop)', () => {
     expect(api.updater.posts).toEqual(['update']);
   });
 
+  test('picking another channel says what still runs until the update', async ({ page, api }) => {
+    api.updater = updaterState(true);
+    await page.goto('/admin/update');
+    const channel = page.getByRole('region', { name: 'Update-Kanal' });
+    await expect(channel.locator('[data-updater-note]')).toContainText('FF_TAG=latest');
+    await expect(channel.locator('[data-pending-switch]')).toHaveCount(0);
+    await channel.getByRole('radio', { name: 'Nightly' }).click();
+    await expect(channel.locator('[data-pending-switch]')).toContainText('Es läuft noch: Stabil');
+    await expect(channel.locator('[data-updater-note]')).toContainText('FF_TAG=nightly');
+  });
+
   test('an unhealthy new version: the rollback step shows and the result says rolled back', async ({ page, api }) => {
     api.updater = { ...updaterState(true), outcome: 'rolled_back', downPolls: 0 };
     await page.goto('/admin/update');

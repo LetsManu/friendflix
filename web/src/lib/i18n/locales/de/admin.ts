@@ -218,7 +218,8 @@ export default {
       versionLabel: 'Version (X.Y.Z)',
       versionSave: 'Version speichern',
       versionInvalid: 'Bitte eine Version wie 1.2.3 eingeben.',
-      updaterNote: 'Der Updater installiert diesen Kanal: keine Änderung an der .env nötig.',
+      updaterNote: '„Jetzt aktualisieren“ installiert diesen Kanal, auch bei einem Portainer-Stack (FriendFlix schickt Portainer FF_TAG={tag}): keine Änderung an der .env nötig.',
+      pendingSwitch: 'Gewählt: {channel}. Es läuft noch: {running}. „Jetzt aktualisieren“ wechselt.',
     },
     updater: {
       title: 'Updater',

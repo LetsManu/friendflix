@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { audit } from './audit.js';
-import { buildInfo, channelUpdate, envLine, type BuildKind, type Channel, type RunningChannel } from './channel.js';
+import { buildInfo, channelTag, channelUpdate, envLine, hookWithTag, withTag, type BuildKind, type Channel, type RunningChannel } from './channel.js';
 import type { Ctx } from './ctx.js';
 import { appVersion, codenameFor, compareSemver, parseSemver } from './version.js';
 
@@ -134,6 +134,9 @@ export type TriggerResult = { ok: true; mode: 'webhook' | 'api' } | { ok: false;
  * container while still answering, so a call that is merely slow counts as started; only a fast failure is reported.
  */
 export async function triggerUpdate(ctx: Ctx, mode: 'webhook' | 'api'): Promise<TriggerResult> {
+  // the selected channel goes with the redeploy as FF_TAG: Portainer, not the updater, decides which images a Portainer stack runs
+  if (ctx.cfg.UPDATE_CHANNEL === 'pinned' && !ctx.cfg.UPDATE_VERSION) return { ok: false, status: null, error: 'no_target', step: mode === 'webhook' ? 'webhook' : 'stack' };
+  const tag = channelTag(ctx.cfg.UPDATE_CHANNEL, ctx.cfg.UPDATE_VERSION);
   const timeout = () => AbortSignal.timeout(30_000);
   const send = async (url: string, init: RequestInit): Promise<Response | 'pending'> => {
     const p = ctx.fetchImpl(url, { ...init, signal: timeout() });
@@ -144,7 +147,7 @@ export async function triggerUpdate(ctx: Ctx, mode: 'webhook' | 'api'): Promise<
   let step: 'webhook' | 'stack' | 'stack_file' | 'redeploy' = mode === 'webhook' ? 'webhook' : 'stack';
   try {
     if (mode === 'webhook') {
-      const r = await send(ctx.cfg.PORTAINER_WEBHOOK_URL!, { method: 'POST' });
+      const r = await send(hookWithTag(ctx.cfg.PORTAINER_WEBHOOK_URL!, tag), { method: 'POST' });
       return r !== 'pending' && !r.ok ? fail(r.status, 'portainer', step) : { ok: true, mode };
     }
     const base = ctx.cfg.PORTAINER_URL!.replace(/\/+$/, '');
@@ -157,7 +160,7 @@ export async function triggerUpdate(ctx: Ctx, mode: 'webhook' | 'api'): Promise<
     };
     const stack = await getJson<{ Env?: unknown[] | null; GitConfig?: { ReferenceName?: string } | null }>(`/api/stacks/${id}`);
     if (typeof stack === 'number') return fail(stack, 'portainer', step);
-    const env = stack.Env ?? []; // passed back unchanged: Portainer replaces the stack env with what we send
+    const env = withTag(stack.Env ?? [], tag); // Portainer replaces the stack env with what we send: all of it back, FF_TAG set
     let r: Response | 'pending';
     step = 'redeploy';
     if (stack.GitConfig) {
@@ -194,7 +197,7 @@ export async function redeployViaPortainer(ctx: Ctx, actor: string | null, mode:
   const i = info ?? await updateInfo(ctx);
   const auto = actor ? {} : { auto: true };
   await audit(ctx, actor, 'system.update', undefined, {
-    from: i.current.sha, to: i.latest?.sha ?? null, fromVersion: i.current.version, toVersion: i.release?.version ?? null, mode, ...auto,
+    from: i.current.sha, to: i.latest?.sha ?? null, fromVersion: i.current.version, toVersion: i.release?.version ?? null, mode, tag: channelTag(ctx.cfg.UPDATE_CHANNEL, ctx.cfg.UPDATE_VERSION), ...auto,
   });
   const r = await triggerUpdate(ctx, mode);
   await audit(ctx, actor, 'system.update_result', undefined, {

@@ -49,9 +49,32 @@ export function channelUpdate(channel: Channel, s: { releaseNewer: boolean | nul
   return s.behind === null ? null : s.behind > 0;
 }
 
-/** the `.env` line that selects a channel (compose.prod.yaml: image tag ${FF_TAG:-latest}); pinned without a version: the stable line */
-export const envLine = (channel: Channel, version?: string | null): string =>
-  `FF_TAG=${channel === 'nightly' ? 'nightly' : channel === 'pinned' && version ? version : 'latest'}`;
+/** the image tag of a channel (compose.prod.yaml: image tag ${FF_TAG:-latest}); pinned without a version: the stable tag */
+export const channelTag = (channel: Channel, version?: string | null): string =>
+  channel === 'nightly' ? 'nightly' : channel === 'pinned' && version ? version : 'latest';
+
+/** the `.env` line that selects a channel */
+export const envLine = (channel: Channel, version?: string | null): string => `FF_TAG=${channelTag(channel, version)}`;
+
+/**
+ * The Portainer stack env with FF_TAG set to `tag` (replaced in place, appended when missing; every other variable unchanged).
+ * Portainer replaces the whole stack env with what a redeploy sends, so this is how the selected channel reaches the images.
+ */
+export function withTag(env: unknown[], tag: string): unknown[] {
+  let found = false;
+  const out = env.map((e) => {
+    if (e && typeof e === 'object' && (e as { name?: unknown }).name === 'FF_TAG') { found = true; return { ...(e as object), value: tag }; }
+    return e;
+  });
+  return found ? out : [...out, { name: 'FF_TAG', value: tag }];
+}
+
+/** the webhook URL with ?FF_TAG=<tag> (Portainer stack webhooks take stack variables as query parameters) */
+export function hookWithTag(url: string, tag: string): string {
+  const u = new URL(url);
+  u.searchParams.set('FF_TAG', tag);
+  return u.toString();
+}
 
 async function ghJson<T>(ctx: Ctx, path: string): Promise<T | null> {
   const headers: Record<string, string> = { accept: 'application/vnd.github+json', 'user-agent': 'friendflix' };

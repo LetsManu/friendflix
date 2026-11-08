@@ -234,6 +234,9 @@ test.describe('desktop wide hover preview', () => {
       await page.route('**/api/prefs', (r) => r.fulfill({ json: { prefs: { hoverClip: false } } })); // no clip for the hovered card (no trailers either)
       // a movie in the first row, just under the billboard
       await page.route('**/api/library/resume', (r) => r.fulfill({ json: { items: [{ ...items[2], positionTicks: 9_000_000_000, playedPercentage: 10 }] } }));
+      // with motion allowed the cold-start brand intro covers the page, and the frozen clock would keep it there: hover() then
+      // scrolls looking for a free spot, and a billboard scrolled out of view rightly stays paused. Start as a warm session.
+      await page.addInitScript(() => sessionStorage.setItem('ff-intro-seen', '1'));
       await freezeClock(page);
       await page.goto('/');
       const bb = page.locator('section.billboard');
@@ -245,6 +248,7 @@ test.describe('desktop wide hover preview', () => {
       await page.locator('article.card').first().locator('a.thumb').hover();
       await page.clock.runFor(600);
       await expect(page.locator('.dpv')).toHaveCount(1);
+      expect(await page.evaluate(() => scrollY)).toBe(0);
       await expect.poll(async () => { await page.clock.runFor(50); return paused(); }).toBe(true);
       await page.clock.runFor(1500); // the preview has no clip: still paused a while later
       expect(await paused()).toBe(true);

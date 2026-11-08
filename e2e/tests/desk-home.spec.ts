@@ -91,6 +91,7 @@ test.describe('desktop billboard', () => {
 
   test.describe('trailer', () => {
     test.use({ reducedMotion: 'no-preference' });
+    test.beforeEach(({ page }) => page.addInitScript(() => sessionStorage.setItem('ff-intro-seen', '1'))); // no brand intro over the page (frozen clocks keep it there)
 
     test('trailer fades in after 1.5s and the synopsis collapses to one line; mute toggle and age badge at the right edge', async ({ page }) => {
       await fakeMedia(page);

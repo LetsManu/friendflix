@@ -33,6 +33,7 @@ test.describe('desktop pill bar', () => {
 
   test.describe('with motion', () => {
     test.use({ reducedMotion: 'no-preference' });
+    test.beforeEach(({ page }) => page.addInitScript(() => sessionStorage.setItem('ff-intro-seen', '1'))); // no brand intro over the page (frozen clocks keep it there)
     test('the fill slides and its width glides (springs running right after the click)', async ({ page }) => {
       await page.goto('/watchlist');
       const bar = page.locator('[data-desk-bar]');

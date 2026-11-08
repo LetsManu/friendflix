@@ -219,7 +219,8 @@ const fr: Translation<typeof de> = {
       versionLabel: 'Version (X.Y.Z)',
       versionSave: 'Enregistrer la version',
       versionInvalid: 'Saisis une version comme 1.2.3.',
-      updaterNote: 'Le programme de mise à jour installe ce canal : aucune modification du .env nécessaire.',
+      updaterNote: '« Mettre à jour » installe ce canal, aussi sur une stack Portainer (FriendFlix envoie FF_TAG={tag} à Portainer) : aucune modification du .env nécessaire.',
+      pendingSwitch: 'Sélectionné : {channel}. Encore en cours : {running}. « Mettre à jour » bascule.',
     },
     updater: {
       title: 'Programme de mise à jour',

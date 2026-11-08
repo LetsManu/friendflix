@@ -30,7 +30,7 @@ export const envLineFor = (c: SelectedChannel, version?: string | null): string 
   `FF_TAG=${c === 'nightly' ? 'nightly' : c === 'pinned' && version ? version : 'latest'}`;
 
 /** the selection differs from what runs: another running channel, or a fixed version other than the installed one */
-function switching(s: ChannelState): boolean {
+export function switching(s: ChannelState): boolean {
   const ch = s.channel;
   if (!ch) return false;
   if (ch.selected === 'pinned') return s.updateAvailable === true;

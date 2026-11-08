@@ -219,7 +219,8 @@ const tr: Translation<typeof de> = {
       versionLabel: 'Sürüm (X.Y.Z)',
       versionSave: 'Sürümü kaydet',
       versionInvalid: '1.2.3 gibi bir sürüm girin.',
-      updaterNote: 'Güncelleyici bu kanalı kurar: .env’de değişiklik gerekmez.',
+      updaterNote: '“Şimdi güncelle” bu kanalı kurar, Portainer yığınında da (FriendFlix Portainer’a FF_TAG={tag} gönderir): .env’de değişiklik gerekmez.',
+      pendingSwitch: 'Seçilen: {channel}. Hâlâ çalışan: {running}. “Şimdi güncelle” geçiş yapar.',
     },
     updater: {
       title: 'Güncelleyici',
