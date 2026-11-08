@@ -39,24 +39,25 @@ export async function openMovie(page: Page) {
   await videoReady(page);
 }
 /**
- * `clock.install()` keeps real time flowing: once the chip is up, the page clock is paused so the beats (and the countdown) only
- * move with `page.clock.runFor` (resume it before a navigation is expected)
+ * `clock.install()` keeps real time flowing: the page clock is paused before the seek into the credits, so the chip's 2 s can
+ * never run out on a slow machine; the beats (and the countdown) only move with `page.clock.runFor` (resume it before a
+ * navigation is expected). `seeked` / `timeupdate` are media events and need no page clock.
  */
 export async function freeze(page: Page) {
   const now = await page.evaluate(() => Date.now());
   await page.clock.pauseAt(now + 50);
 }
-/** seeks into the credits and freezes the clock as soon as the chip is up (beat 1) */
+/** freezes the clock, then seeks into the credits: the chip (beat 1) is up and stays until `runFor` */
 export async function toChip(page: Page) {
-  await seekPlaying(page, CREDITS_AT + 5);
+  await seekPlaying(page, CREDITS_AT + 5, true);
   await expect(page.locator('.cs .chip')).toBeVisible();
-  await freeze(page);
 }
 /** jumps to `t` while the video keeps playing (the countdown only runs while it plays); resolves once the seek is done */
-export async function seekPlaying(page: Page, t: number) {
+export async function seekPlaying(page: Page, t: number, frozen = false) {
   // playback has really started (the Player's own start seek is over), else it would undo this seek
   await page.evaluate(() => document.querySelector('video')!.play().catch(() => undefined));
   await expect.poll(() => page.evaluate(() => document.querySelector('video')!.currentTime)).toBeGreaterThan(0.5);
+  if (frozen) await freeze(page); // before the credits are reached: no real time can pass the chip
   await page.evaluate((to) => new Promise<void>((res) => {
     const v = document.querySelector('video')!;
     v.addEventListener('seeked', () => res(), { once: true }); v.currentTime = to;

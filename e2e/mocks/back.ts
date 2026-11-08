@@ -24,8 +24,9 @@ const watching = (page: Page, id: string) => expect.poll(() => path(page), { tim
 /** the (new) episode is loaded: the player of the previous one is gone, its video has the duration */
 const ready = async (page: Page, ep: { name: string }) => { await expect(page.locator('.top')).toContainText(ep.name); await expect(page.locator('.stage video')).toHaveCount(1); await videoReady(page); await expect(page.locator('.stage.pre')).toHaveCount(0); };
 /** jumps into the credits (the card shows from 575 s); the Player may still be settling its own start seek, so retry until it sticks */
-async function toCredits(page: Page, playing: boolean) {
+async function toCredits(page: Page, playing: boolean, frozen = false) {
   await expect.poll(() => page.evaluate(() => document.querySelector('video')!.currentTime)).toBeGreaterThan(0.5); // playback has really started
+  if (frozen) await page.clock.pauseAt(await page.evaluate(() => Date.now()) + 50); // the chip's 2 s cannot run out before the click
   await expect.poll(() => page.evaluate(() => { const v = document.querySelector('video')!; if (v.currentTime < 575) v.currentTime = 580; return !v.seeking && v.currentTime > 575; })).toBe(true);
   // the mock clip has a frame every 20 s: from here it plays to its end at once (the countdown runs on an ended video); never play() it again, that restarts it
   if (!playing) await page.evaluate(() => document.querySelector('video')!.pause());
@@ -33,13 +34,12 @@ async function toCredits(page: Page, playing: boolean) {
 
 /**
  * "Nächste Folge" of the next-up card: phones keep the card (`.next`), desktop and TV show the credits sequence's chip
- * (`.cs .chip`, spec 2026-11-08 §4), which gives way to the corner beat after 2 s - the page clock is paused for the click
+ * (`.cs .chip`, spec 2026-11-08 §4), which gives way to the corner beat after 2 s - `toCredits(page, false, true)` paused the
+ * page clock before the seek; it runs again after the click
  */
 async function clickNext(page: Page) {
   const go = page.locator('.cs .chip .go, .next .go');
   await expect(go).toBeVisible();
-  const now = await page.evaluate(() => Date.now());
-  await page.clock.pauseAt(now + 50);
   await go.click();
   await page.clock.resume();
 }
@@ -54,7 +54,7 @@ test('Back after next-episode button and autoplay countdown leaves the player in
   const historyBefore = await page.evaluate(() => history.length);
 
   // 1) the "Nächste Folge" button of the card
-  await toCredits(page, false);
+  await toCredits(page, false, true);
   await clickNext(page);
   await watching(page, E2.id);
   await ready(page, E2);
@@ -91,7 +91,7 @@ test('Esc (and the TV back key) after two next episodes also leaves the player i
   await watching(page, E1.id);
   await ready(page, E1);
   for (const next of [E2, E3]) {
-    await toCredits(page, false);
+    await toCredits(page, false, true);
     await clickNext(page);
     await watching(page, next.id);
     await ready(page, next);

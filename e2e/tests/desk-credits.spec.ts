@@ -66,10 +66,21 @@ test.describe('with motion', () => {
     await page.clock.runFor(2100);
     await expect(page.locator('.cs .up')).toBeVisible();
     expect(await page.locator('.stage.cred > video').evaluate((v) => getComputedStyle(v).transitionProperty)).toContain('transform');
-    await page.locator('.cs .wc').click();
-    // right after the click the layer is still there, running its outro, while the picture glides back
-    const fading = await page.evaluate(() => { const cs = document.querySelector('.cs'); return Boolean(cs && cs.getAnimations().length); });
-    expect(fading).toBe(true);
+    await expect.poll(() => page.locator('.cs .wc').evaluate((el) => el.getAnimations().length)).toBe(0); // its stagger is over
+    // click and look in one evaluate: the outro (real-time WAAPI, 200 ms) cannot finish during a Playwright round trip. Svelte
+    // flushes on microtasks (rAF / timers are paused with the page clock), so the outro has started after a few of them
+    const seen = await page.evaluate(async () => {
+      document.querySelector<HTMLButtonElement>('.cs .wc')!.click();
+      for (let i = 0; i < 10; i++) {
+        await Promise.resolve();
+        const cs = document.querySelector('.cs');
+        if (!cs) return { present: false, anims: false, cred: Boolean(document.querySelector('.stage.cred')) };
+        if (cs.getAnimations().length) return { present: true, anims: true, cred: Boolean(document.querySelector('.stage.cred')) };
+      }
+      return { present: Boolean(document.querySelector('.cs')), anims: false, cred: Boolean(document.querySelector('.stage.cred')) };
+    });
+    // the layer is still there, running its outro, while the picture (no longer .cred) glides back
+    expect(seen).toEqual({ present: true, anims: true, cred: false });
     await expect(page.locator('.stage.cred')).toHaveCount(0);
     await expect(page.locator('.cs')).toHaveCount(0);
   });

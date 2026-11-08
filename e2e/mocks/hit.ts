@@ -19,9 +19,10 @@ async function open(page: Page, skipSeg: boolean) {
   await videoReady(page);
 }
 /** pauses and seeks, resolves once the seek is done (a seek still pending would swallow the skip's own seek) */
-async function seekTo(page: Page, t: number) {
+async function seekTo(page: Page, t: number, frozen = false) {
   // playback has really started (the Player's own start seek is over), else it would undo this seek
   await expect.poll(() => page.evaluate(() => document.querySelector('video')!.currentTime)).toBeGreaterThan(0.5);
+  if (frozen) await freezeClock(page); // before the credits: the chip's 2 s cannot run out (media events need no page clock)
   await seekNow(page, t);
 }
 const seekNow = (page: Page, t: number) => page.evaluate((to) => new Promise<void>((res) => {
@@ -89,9 +90,8 @@ for (const v of viewports) {
       await page.route(`**/api/items/${EP.id}`, (r) => r.fulfill({ json: { item: EP } }));
       await page.goto('/watch/' + EP.id);
       await videoReady(page);
-      await seekTo(page, 575);
+      await seekTo(page, 575, true);
       await expect(page.locator(NEXT_GO)).toBeVisible();
-      await freezeClock(page);
       await wake(page);
       for (const sel of ['.skipbtn', NEXT_GO, NEXT_SEC]) {
         const { bad } = await probe(page, sel);
@@ -124,14 +124,14 @@ for (const v of viewports) {
     test('next-episode card: every corner and edge of the button hits it and fires', async ({ page, api: _api }) => {
       await page.clock.install();
       await open(page, false);
-      await seekTo(page, 575);
+      await seekTo(page, 575, true);
       const sel = NEXT_GO;
       await expect(page.locator(sel)).toBeVisible();
-      await freezeClock(page);
       await wake(page);
       const { b, bad } = await probe(page, sel);
       expect(bad, `points not on the button: ${bad.join(' ')}`).toEqual([]);
       await page.mouse.click(b.x + b.width - 6, b.y + b.height - 6);
+      await page.clock.resume(); // the navigation runs on a moving clock
       await expect(page).toHaveURL(new RegExp(`/watch/${NEXT.id}`));
     });
 
