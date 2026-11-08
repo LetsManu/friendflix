@@ -31,6 +31,7 @@ const pl: Translation<typeof de> = {
       other: 'Moja strefa, {n} nowego powiadomienia',
     },
     tabbar: 'Nawigacja mobilna',
+    home: 'Strona główna',
   },
   cats: {
     title: 'Kategorie',
@@ -93,6 +94,8 @@ const pl: Translation<typeof de> = {
     home: 'Start',
     new: 'Nowe i nadchodzące',
     me: 'Moja strefa',
+    myList: 'Moja lista',
+    downloads: 'Pobrane',
   },
   offline: {
     bar: 'Jesteś offline.',

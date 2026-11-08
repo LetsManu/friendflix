@@ -25,6 +25,7 @@ const en: Translation<typeof de> = {
     me: 'My space',
     meUnread: { one: 'My space, {n} new notification', other: 'My space, {n} new notifications' },
     tabbar: 'Mobile navigation',
+    home: 'Home',
   },
   cats: {
     title: 'Categories',
@@ -87,6 +88,8 @@ const en: Translation<typeof de> = {
     home: 'Home',
     new: 'New & Upcoming',
     me: 'My space',
+    myList: 'My list',
+    downloads: 'Downloads',
   },
   offline: {
     bar: 'You are offline.',

@@ -26,6 +26,7 @@ const tr: Translation<typeof de> = {
     me: 'Alanım',
     meUnread: { one: 'Alanım, {n} yeni bildirim', other: 'Alanım, {n} yeni bildirim' },
     tabbar: 'Mobil gezinme',
+    home: 'Ana sayfa',
   },
   cats: {
     title: 'Kategoriler',
@@ -88,6 +89,8 @@ const tr: Translation<typeof de> = {
     home: 'Ana Sayfa',
     new: 'Yeni ve Yakında',
     me: 'Alanım',
+    myList: 'Listem',
+    downloads: 'İndirilenler',
   },
   offline: {
     bar: 'Çevrimdışısın.',

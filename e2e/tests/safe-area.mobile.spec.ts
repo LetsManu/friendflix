@@ -118,13 +118,15 @@ test.describe('safe area top (iPhone home-screen app)', () => {
     expect(await controlsUnder(page, TOP)).toEqual([]);
   });
 
-  test('the bottom tab bar keeps its safe-area padding', async ({ page }) => {
+  test('the floating tab bar sits above the home indicator', async ({ page }) => {
     await page.goto('/me');
     const bar = page.locator('nav.tabbar');
     await expect(bar).toBeVisible();
-    expect(await bar.evaluate((e) => getComputedStyle(e).paddingBottom)).toBe(`${BOTTOM}px`);
     const box = (await bar.boundingBox())!;
-    expect(Math.round(box.y + box.height)).toBe(844);
+    expect(Math.round(box.y + box.height)).toBe(844 - BOTTOM - 10);
+    // the page content still clears the bar and the home indicator
+    const pad = await page.locator('main').evaluate((e) => parseFloat(getComputedStyle(e).paddingBottom));
+    expect(pad).toBeGreaterThanOrEqual(844 - box.y);
   });
 });
 

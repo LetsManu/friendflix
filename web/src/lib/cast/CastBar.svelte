@@ -119,7 +119,7 @@
 {/if}
 
 <style>
-  .castbar { position: fixed; z-index: 81; left: 0; right: 0; bottom: calc(56px + var(--safe-bottom)); height: 64px; animation: up .22s ease-out; }
+  .castbar { position: fixed; z-index: 81; left: 0; right: 0; bottom: calc(var(--tabbar-h) + var(--safe-bottom)); height: 64px; animation: up .22s ease-out; }
   .castbar.notab { bottom: var(--safe-bottom); }
   .box { position: relative; height: 100%; display: flex; align-items: center; gap: .25rem; padding: 0 .5rem 0 0; background: var(--card); overflow: hidden; }
   .line { position: absolute; left: 0; right: 0; top: 0; height: 2px; }

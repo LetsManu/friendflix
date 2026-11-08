@@ -26,6 +26,7 @@ const it: Translation<typeof de> = {
     me: 'Il mio spazio',
     meUnread: { one: 'Il mio spazio, {n} nuova notifica', many: 'Il mio spazio, {n} nuove notifiche', other: 'Il mio spazio, {n} nuove notifiche' },
     tabbar: 'Navigazione mobile',
+    home: 'Home',
   },
   cats: {
     title: 'Categorie',
@@ -88,6 +89,8 @@ const it: Translation<typeof de> = {
     home: 'Home',
     new: 'Nuovi e in arrivo',
     me: 'Il mio spazio',
+    myList: 'La mia lista',
+    downloads: 'Download',
   },
   offline: {
     bar: 'Sei offline.',

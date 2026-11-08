@@ -74,5 +74,5 @@
   .sel.on .pickbtn { background: var(--acc); border-color: var(--acc); }
   .bar2 { position: fixed; left: 50%; bottom: calc(1.2rem + var(--castbar-h, 0px)); transform: translateX(-50%); background: rgba(16,20,24,.97); border: 1px solid #3b444e; border-radius: 99px; padding: .5rem .8rem .5rem 1.4rem; display: flex; gap: 1rem; align-items: center; z-index: 30; }
   /* phones: sit above the fixed tab bar (56px + safe area); above the cast bar while it shows */
-  @media (max-width: 720px) { .bar2 { bottom: calc(56px + var(--safe-bottom) + .6rem + var(--castbar-h, 0px)); z-index: 61; max-width: calc(100vw - 1.5rem); gap: .6rem; padding-left: 1rem; } .bar2 span, .bar2 button { white-space: nowrap; } }
+  @media (max-width: 720px) { .bar2 { bottom: calc(var(--tabbar-h) + var(--safe-bottom) + .6rem + var(--castbar-h, 0px)); z-index: 61; max-width: calc(100vw - 1.5rem); gap: .6rem; padding-left: 1rem; } .bar2 span, .bar2 button { white-space: nowrap; } }
 </style>

@@ -23,13 +23,14 @@ test.describe('account and news pages (phone)', () => {
 });
 
 test.describe('phone shell', () => {
-  test('three tabs; downloads stay in the header and on /me', async ({ page }) => {
+  test('four tabs; downloads are a tab and stay on /me', async ({ page }) => {
     await page.route('**/api/me', (r) => r.fulfill({ json: { ...ME, downloads: { allowed: true, max: 5 } } }));
     await page.goto('/me');
     const tabs = page.locator('.tabbar').getByRole('link');
-    await expect(tabs).toHaveCount(3);
-    for (const [i, name] of ['Start', 'Neu & demnächst', 'Mein Bereich'].entries()) await expect(tabs.nth(i)).toHaveAccessibleName(name);
-    await expect(page.getByRole('link', { name: 'Downloads' }).first()).toBeVisible();
+    await expect(tabs).toHaveCount(4);
+    for (const [i, name] of ['Start', 'Neu & demnächst', 'Merkliste', 'Downloads'].entries()) await expect(tabs.nth(i)).toHaveAccessibleName(name);
+    await expect(tabs.nth(3)).toBeVisible();
+    await expect(page.locator('header.nav.m a.avatar')).toHaveAttribute('href', '/me'); // the profile moved from the tab bar to the avatar
     await expect(page.getByRole('list', { name: 'Schnellzugriff' }).getByRole('link', { name: 'Downloads' })).toBeVisible();
     // tile labels stay on one line
     const tall = await page.locator('.tiles2 .tl').evaluateAll((els) => els.filter((e) => e.getBoundingClientRect().height > 24).length);
