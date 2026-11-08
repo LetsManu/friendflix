@@ -36,6 +36,18 @@ test.describe('phone search', () => {
     await noHorizontalOverflow(page);
   });
 
+  test('without genres the last popular row still clears the floating tab bar', async ({ page }) => {
+    await page.route('**/api/library/genres', (r) => r.fulfill({ json: { genres: [] } }));
+    await page.goto('/search');
+    const last = page.locator('.top li').last();
+    await expect(last).toBeVisible();
+    await expect(page.locator('.gt')).toHaveCount(0);
+    await page.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight));
+    const bar = page.locator('nav.tabbar');
+    await expect(bar).toBeVisible();
+    await expect.poll(async () => (await last.boundingBox())!.y + (await last.boundingBox())!.height).toBeLessThanOrEqual((await bar.boundingBox())!.y);
+  });
+
   test('typing shows results as before and hides the browse sections', async ({ page }) => {
     await page.goto('/search');
     await page.locator('#q').fill('nolan');

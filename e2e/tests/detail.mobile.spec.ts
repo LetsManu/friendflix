@@ -84,6 +84,13 @@ test.describe('detail page (phone)', () => {
     await expect(tabs).toHaveText(['Details', 'Mehr davon']);
     for (const t of await tabs.all()) expect((await t.boundingBox())!.height).toBeGreaterThanOrEqual(44);
   });
+
+  test('no similar titles: no empty "Mehr davon" tab', async ({ page }) => {
+    await page.route(new RegExp(`/api/items/${MOVIE.id}/similar$`), (r) => r.fulfill({ json: { items: [] } }));
+    await page.route((u) => u.pathname === '/api/library/items' && u.searchParams.has('genre'), (r) => r.fulfill({ json: { items: [], total: 0 } }));
+    await open(page);
+    await expect(tablist(page).getByRole('tab')).toHaveText(['Details']);
+  });
 });
 
 /** media in the test browser: play() / pause() only flip a flag (no real decoding), `paused` reads it; every trailer request counted */

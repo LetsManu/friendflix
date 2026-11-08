@@ -117,9 +117,12 @@ export function ratingParts(a: About | null): Array<{ key: RatingKey; text: stri
 
 export type DetailTab = 'episodes' | 'details' | 'more' | 'extras';
 
-/** Episodes (series only) · Details · More like this · Extras (only with extras) */
-export function detailTabs(type: string, hasExtras: boolean): DetailTab[] {
-  return [...(type === 'Series' ? ['episodes' as const] : []), 'details', 'more', ...(hasExtras ? ['extras' as const] : [])];
+/**
+ * Episodes (series only) · Details · More like this · Extras (only with extras). `hasMore` false: the similar titles came back
+ * empty, so the tab would be empty and is left out (the phone layout, spec 2026-11-08 §4: tabs only with content).
+ */
+export function detailTabs(type: string, hasExtras: boolean, hasMore = true): DetailTab[] {
+  return [...(type === 'Series' ? ['episodes' as const] : []), 'details', ...(hasMore ? ['more' as const] : []), ...(hasExtras ? ['extras' as const] : [])];
 }
 
 export const defaultTab = (type: string): DetailTab => (type === 'Series' ? 'episodes' : 'details');

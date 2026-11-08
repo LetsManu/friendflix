@@ -146,6 +146,8 @@ test.describe('preview sheet (phone)', () => {
 
   test.describe('with motion', () => {
     test.use({ reducedMotion: 'no-preference' });
+    // the brand intro plays with motion on a first visit and would cover the page: this session has seen it
+    test.beforeEach(({ page }) => page.addInitScript(() => sessionStorage.setItem('ff-intro-seen', '1')));
     test('the sheet springs in and leaves with an exit before it unmounts; focus returns to the opener', async ({ page }) => {
       await page.goto('/');
       const poster = row(page, 'Weil du „Inkwell“ gesehen hast').locator('.pc a').first();
@@ -166,6 +168,33 @@ test.describe('preview sheet (phone)', () => {
       expect(state).toEqual({ count: 1, out: true, dimOut: true, focusOnOpener: true });
       await expect(sheet).toHaveCount(0);
       await expect(poster).toBeFocused();
+    });
+
+    test('Details morphs the sheet poster into the detail backdrop (View Transition, shared name on each side in turn)', async ({ page }) => {
+      // record every element that carries the shared name while the transition runs
+      await page.addInitScript(() => {
+        const seen: string[] = ((window as unknown as { __vt: string[] }).__vt = []);
+        new MutationObserver((ms) => {
+          for (const m of ms) {
+            const el = m.target as HTMLElement;
+            if (el.style?.getPropertyValue('view-transition-name') === 'ff-tv-art') seen.push(el.matches('.sheet img.poster') ? 'poster' : el.matches('main .dv [data-vt-art]') ? 'backdrop' : el.className);
+          }
+        }).observe(document, { attributes: true, attributeFilter: ['style'], subtree: true });
+      });
+      await page.goto('/');
+      const poster = row(page, 'Weil du „Inkwell“ gesehen hast').locator('.pc a').first();
+      await poster.scrollIntoViewIfNeeded();
+      await poster.tap();
+      const sheet = page.getByRole('dialog', { name: /^Vorschau: / });
+      await expect(sheet).toBeVisible();
+      await expect(sheet).not.toHaveClass(/\bdragging\b/);
+      await sheet.getByRole('link', { name: 'Details' }).tap();
+      await expect(page).toHaveURL(/\/item\/[0-9a-f]+$/);
+      await expect(page.getByRole('heading', { level: 1 })).toBeVisible();
+      await expect.poll(() => page.evaluate(() => [...new Set((window as unknown as { __vt: string[] }).__vt)])).toEqual(['poster', 'backdrop']);
+      // the names are gone once it has finished
+      await expect.poll(() => page.evaluate(() => document.querySelectorAll('[style*="view-transition-name"]').length)).toBe(0);
+      await expect(sheet).toHaveCount(0);
     });
   });
 });

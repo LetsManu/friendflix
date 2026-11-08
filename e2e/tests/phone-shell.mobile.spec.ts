@@ -8,12 +8,20 @@ import { ME } from '../mocks/fixtures.js';
 /** Phone browse block 3, shell: glass top bar, tucking chips, floating glass tab bar, categories bottom sheet. */
 const allowDownloads = (page: Page) => page.route('**/api/me', (r) => r.fulfill({ json: { ...ME, downloads: { allowed: true, max: 5 } } }));
 const tabbar = (page: Page) => page.getByRole('navigation', { name: 'Mobile Navigation' });
+/**
+ * Scrolls and waits until the page is there. The scroll is re-issued on each try: while the home page is still building
+ * (the carousel replacing the hero puts the page back at the top) a single call can be swallowed.
+ */
 const scrollTo = async (page: Page, y: number) => {
-  await page.evaluate((to) => window.scrollTo(0, to), y);
-  await expect.poll(() => page.evaluate(() => Math.round(window.scrollY))).toBe(y);
+  await expect(async () => {
+    await page.evaluate((to) => window.scrollTo(0, to), y);
+    expect(await page.evaluate(() => Math.round(window.scrollY))).toBe(y);
+  }).toPass();
 };
 
 test.describe('phone shell', () => {
+  // no brand intro over the page (a first visit with motion would play it)
+  test.beforeEach(({ page }) => page.addInitScript(() => sessionStorage.setItem('ff-intro-seen', '1')));
   test('tab bar: Start, Neu, Merkliste, Downloads; aria-current follows the page', async ({ page }) => {
     await allowDownloads(page);
     await page.goto('/');
@@ -66,6 +74,9 @@ test.describe('phone shell', () => {
     const chips = header.locator('nav.chipbar');
     await expect(chips).toBeVisible();
     await expect(page.locator('section.row').first()).toBeVisible();
+    // the carousel takes the hero's place once the newest titles (an idle request) are in: the swap puts the page back at the
+    // top, so the scrolling below starts after it
+    await expect(page.getByRole('region', { name: 'Top-Tipps für dich' })).toBeVisible();
     await expect(header).not.toHaveClass(/\bsolid\b/); // transparent over the hero
     await scrollTo(page, 40);
     await expect(header).toHaveClass(/\bsolid\b/);
@@ -107,6 +118,7 @@ test.describe('phone shell', () => {
 
   test.describe('with motion', () => {
     test.use({ reducedMotion: 'no-preference' });
+    // (the outer beforeEach marks the brand intro as seen: with motion it would otherwise cover the page)
     test('the categories sheet slides out before it unmounts (Escape and close button)', async ({ page }) => {
       await page.goto('/');
       const btn = page.locator('header.nav.m').getByRole('button', { name: 'Kategorien' });

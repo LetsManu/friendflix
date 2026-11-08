@@ -216,7 +216,6 @@
   </section>
 {/if}
 
-{#if $mobile}<div class="tb" aria-hidden="true"></div>{/if}
 
 <style>
   .gap { height: .5rem; }
@@ -228,7 +227,6 @@
   .tt { flex: 1; min-width: 0; font-weight: 600; font-size: .95rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .pl { flex: none; display: grid; place-items: center; width: 44px; height: 44px; border-radius: 50%; border: 2px solid #fff; padding-left: 2px; margin-left: .5rem; }
   .pl:active { opacity: .7; }
-  .tb { height: calc(var(--tabbar-h, 70px) + 1.5rem + env(safe-area-inset-bottom, 0px)); }
   .gt { display: grid; grid-template-columns: 1fr 1fr; gap: .6rem; }
   .gt a { display: flex; align-items: flex-end; height: 74px; padding: .6rem .8rem; border-radius: 12px; background: linear-gradient(135deg, var(--gc), #12161b 135%); color: #fff; font-weight: 700; overflow: hidden; }
   .gt a span { overflow-wrap: anywhere; line-height: 1.15; }

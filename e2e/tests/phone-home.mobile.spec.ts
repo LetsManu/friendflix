@@ -33,6 +33,8 @@ const carousel = (page: Page) => page.getByRole('region', { name: 'Top-Tipps fü
 /** a slide by its label; slides two or more places away are hidden (out of the a11y tree), so a CSS locator */
 const slide = (c: Locator, n: number, m = 5) => c.locator(`[aria-roledescription="slide"][aria-label="${n} von ${m}"]`);
 const live = (c: Locator) => c.locator('[aria-live="polite"]');
+/** what the live region announces for the centred card: its position, then its title */
+const said = (n: number, it: MockItem, m = 5) => `${n} von ${m}, ${it.name}`;
 const centreX = async (l: Locator) => { const b = (await l.boundingBox())!; return b.x + b.width / 2; };
 
 /** a mouse drag on the track, `dx` px sideways; `slow` pauses before letting go (no flick) */
@@ -72,7 +74,7 @@ test.describe('phone home carousel', () => {
     // the badge answer moves the labelled title up to second place
     await expect(slide(c, 2).locator('.eyebrow')).toHaveText('Neue Staffel');
     for (const [i, it] of ORDER.entries()) await expect(slide(c, i + 1).locator('a.card')).toHaveAttribute('aria-label', `${it.name}, Vorschau öffnen`);
-    await expect(live(c)).toHaveText(HERO.name);
+    await expect(live(c)).toHaveText(said(1, HERO));
     const dots = c.locator('.dots i');
     await expect(dots).toHaveCount(5);
     await expect(dots.nth(0)).toHaveClass(/\bon\b/);
@@ -85,7 +87,7 @@ test.describe('phone home carousel', () => {
 
     // drag left 120 px: the second card comes to the middle
     await drag(page, c.locator('.track'), -120);
-    await expect(live(c)).toHaveText(FRESH.name);
+    await expect(live(c)).toHaveText(said(2, FRESH));
     await expect(dots.nth(1)).toHaveClass(/\bon\b/);
     await expect(dots.nth(0)).not.toHaveClass(/\bon\b/);
     await expect.poll(async () => Math.round(await centreX(slide(c, 2)))).toBe(195);
@@ -95,13 +97,13 @@ test.describe('phone home carousel', () => {
 
     // a short drag springs back to the same card
     await drag(page, c.locator('.track'), -20, true);
-    await expect(live(c)).toHaveText(FRESH.name);
+    await expect(live(c)).toHaveText(said(2, FRESH));
     await expect.poll(async () => Math.round(await centreX(slide(c, 2)))).toBe(195);
     await expect(dots.nth(1)).toHaveClass(/\bon\b/);
 
     // drag right: back to the first card
     await drag(page, c.locator('.track'), 120);
-    await expect(live(c)).toHaveText(HERO.name);
+    await expect(live(c)).toHaveText(said(1, HERO));
     await expect(play).toHaveAttribute('href', `/watch/${HERO.id}`);
     await expect.poll(() => noHorizontalOverflow(page)).toBe(true);
   });
@@ -114,7 +116,7 @@ test.describe('phone home carousel', () => {
     const b = (await c.locator('.track').boundingBox())!;
     await touchSwipe(page, 195, b.y + b.height - 20, b.y + b.height - 320);
     await expect.poll(() => page.evaluate(() => window.scrollY)).toBeGreaterThan(100);
-    await expect(live(c)).toHaveText(HERO.name);
+    await expect(live(c)).toHaveText(said(1, HERO));
     await expect(c.locator('.dots i').nth(0)).toHaveClass(/\bon\b/);
   });
 
@@ -129,7 +131,7 @@ test.describe('phone home carousel', () => {
     await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: 300, y }] });
     for (let i = 1; i <= 10; i++) await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x: 300 - i * 18, y }] });
     await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
-    await expect(live(c)).toHaveText(FRESH.name);
+    await expect(live(c)).toHaveText(said(2, FRESH));
     expect(await page.evaluate(() => window.scrollY)).toBe(0);
   });
 
@@ -141,7 +143,7 @@ test.describe('phone home carousel', () => {
 
     // the side card peeks at the right edge: a tap centres it, no sheet
     await slide(c, 2).getByRole('link').tap({ position: { x: 20, y: 120 } });
-    await expect(live(c)).toHaveText(FRESH.name);
+    await expect(live(c)).toHaveText(said(2, FRESH));
     await expect(page.getByRole('dialog')).toHaveCount(0);
     await expect.poll(async () => Math.round(await centreX(slide(c, 2)))).toBe(195);
 
@@ -158,11 +160,11 @@ test.describe('phone home carousel', () => {
     await expect(slide(c, 1).getByRole('link')).toHaveAttribute('tabindex', '-1');
     await slide(c, 2).getByRole('link').focus();
     await page.keyboard.press('ArrowRight');
-    await expect(live(c)).toHaveText(items[1]!.name);
+    await expect(live(c)).toHaveText(said(3, items[1]!));
     await expect(slide(c, 3).getByRole('link')).toBeFocused();
     await page.keyboard.press('ArrowLeft');
     await page.keyboard.press('ArrowLeft');
-    await expect(live(c)).toHaveText(HERO.name);
+    await expect(live(c)).toHaveText(said(1, HERO));
     await expect(slide(c, 1).getByRole('link')).toBeFocused();
   });
 
@@ -172,7 +174,7 @@ test.describe('phone home carousel', () => {
     const c = carousel(page);
     await expect(slide(c, 2).locator('.eyebrow')).toHaveText('Neue Staffel');
     await drag(page, c.locator('.track'), -120);
-    await expect(live(c)).toHaveText(FRESH.name);
+    await expect(live(c)).toHaveText(said(2, FRESH));
     const list = c.getByRole('button', { name: 'Merkliste' });
     // FRESH is on the default mock watchlist: the button starts pressed, a tap removes it
     await expect(list).toHaveAttribute('aria-pressed', 'true');
@@ -195,11 +197,15 @@ test.describe('phone home carousel', () => {
 
   test('no candidate with a poster: today\'s hero', async ({ page }) => {
     await mockHome(page, { hero: { ...HERO, image: false }, recs: [] });
+    // the newest titles (the carousel's second candidate list) arrive with the idle rows
+    const latest = page.waitForResponse((r) => { const u = new URL(r.url()); return u.pathname === '/api/library/items' && u.searchParams.get('sort') === 'DateCreated'; });
     await page.goto('/');
     const hero = page.locator('.mh');
     await expect(hero).toBeVisible();
     await expect(hero.locator('.pcard')).toHaveAccessibleName(`${HERO.name}, Vorschau öffnen`);
-    await page.waitForTimeout(500); // the idle rows have landed: still no carousel
+    await latest;
+    // the answer has been applied and rendered (two frames): still no carousel
+    await page.evaluate(() => new Promise<void>((r) => requestAnimationFrame(() => requestAnimationFrame(() => r()))));
     await expect(carousel(page)).toHaveCount(0);
     await expect.poll(() => noHorizontalOverflow(page)).toBe(true);
   });

@@ -196,7 +196,8 @@
 
   // ---- tabs (always shown): Episodes (series) · Details · More like this · Extras (only with extras); panels stay mounted ----
   let tab: DetailTab | '' = '';
-  $: tabs = item ? detailTabs(item.type, extras.length > 0) : [];
+  // phone (not kids): More like this only once it has titles (an empty answer drops the tab; while loading it shows its skeleton)
+  $: tabs = item ? detailTabs(item.type, extras.length > 0, !(p2 && more !== null && more.length === 0)) : [];
   $: curTab = (tab && tabs.includes(tab) ? tab : item ? defaultTab(item.type) : '') as DetailTab | '';
   const tabLabel = (n: DetailTab): string => n === 'episodes' ? $t('detail.episodes.title') : n === 'details' ? $t('detail.about.tab') : n === 'extras' ? $t('hubs.extras.tab') : $t('detail.more.title');
   function tabKeys(e: KeyboardEvent) {

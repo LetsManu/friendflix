@@ -22,7 +22,7 @@
    * Phone home (not kids, not TV): a swipe carousel of up to five poster cards. The centred card is ~70 % of the width, its
    * neighbours peek smaller (scale .86) and dimmer. A horizontal drag follows the finger (vertical moves stay page scrolls,
    * `touch-action: pan-y`); on release `swipeTarget` picks the card and a spring (lib/tv/motion springStep) settles there.
-   * Slides only move through transform / opacity / filter. Behind it a glow in the centred poster's colour crossfades
+   * Slides only move through transform / opacity; side cards darken through a black overlay's opacity. Behind it a glow in the centred poster's colour crossfades
    * (two layers, opacity only). Play / Continue and My list act on the centred card; a tap on it opens the preview sheet,
    * a tap on a side card centres it. No auto-advance, no trailer.
    */
@@ -40,7 +40,6 @@
   /** visual position in px (cur * step at rest) */
   let x = 0;
   let raf = 0, springV = 0;
-  let calm = false;
   let links: HTMLAnchorElement[] = [];
   let posters: HTMLImageElement[] = [];
   let logoFailed = new Set<string>();
@@ -74,11 +73,16 @@
   }
   const posterId = (it: Item) => (it.type === 'Episode' && it.seriesId ? it.seriesId : it.id);
 
-  /** transform / opacity / brightness of slide i for the track position x */
+  /** transform / opacity of slide i for the track position x (no filter: a large image would repaint on every frame) */
   function slideStyle(i: number, pos: number, s: number): string {
     const off = i * s - pos, d = s ? Math.abs(off) / s : 0, a = Math.min(d, 1);
     const op = d <= 1 ? 1 - a * 0.45 : Math.max(0, 0.55 * (2 - d));
-    return `transform:translate3d(${off.toFixed(1)}px,0,0) scale(${(1 - a * 0.14).toFixed(4)});opacity:${op.toFixed(3)};filter:brightness(${(1 - a * 0.35).toFixed(3)});z-index:${10 - Math.round(d)};visibility:${op > 0 ? 'visible' : 'hidden'}`;
+    return `transform:translate3d(${off.toFixed(1)}px,0,0) scale(${(1 - a * 0.14).toFixed(4)});opacity:${op.toFixed(3)};z-index:${10 - Math.round(d)};visibility:${op > 0 ? 'visible' : 'hidden'}`;
+  }
+  /** the side cards' dimming: a black overlay whose opacity grows to .35 one card away from the centre (opacity only) */
+  function dimStyle(i: number, pos: number, s: number): string {
+    const d = s ? Math.abs(i * s - pos) / s : 0;
+    return `opacity:${(Math.min(d, 1) * 0.35).toFixed(3)}`;
   }
 
   // ---- spring ----
@@ -87,8 +91,7 @@
   function settle(target: number, v = 0) {
     stopSpring();
     const to = target * step;
-    calm = motionLevel() === 'reduced';
-    if (calm) { x = to; return; }
+    if (motionLevel() === 'reduced') { x = to; return; }
     let s: Spring = { x, v }, t0 = performance.now();
     watchFrames();
     const frame = (t: number) => {
@@ -193,7 +196,6 @@
     }
     const css = glowCss(c);
     if (css === layers[front]) return;
-    calm = motionLevel() === 'reduced';
     const back = front ? 0 : 1;
     layers[back] = css;
     layers = layers;
@@ -201,12 +203,12 @@
   }
   function posterLoaded(i: number) { if (i === cur) glowFor(items[i]); }
 
-  onMount(() => { calm = motionLevel() === 'reduced'; glowFor(centred); });
+  onMount(() => glowFor(centred));
   onDestroy(() => { stopSpring(); clearTimeout(swallowT); });
 </script>
 
 <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
-<section class="mc" class:calm data-play-scope aria-roledescription="carousel" aria-label={$t('home.carousel.label')} on:keydown={keys}>
+<section class="mc" data-play-scope aria-roledescription="carousel" aria-label={$t('home.carousel.label')} on:keydown={keys}>
   <div class="glow" aria-hidden="true">
     <i class:on={front === 0} style:background={layers[0]}></i>
     <i class:on={front === 1} style:background={layers[1]}></i>
@@ -226,10 +228,11 @@
             {#if genreLine(it.genres)}<span class="genres">{genreLine(it.genres)}</span>{/if}
           </span>
         </a>
+        <span class="dim" aria-hidden="true" style={dimStyle(i, x, step)}></span>
       </div>
     {/each}
   </div>
-  <p class="sr-only" aria-live="polite" aria-atomic="true">{centred?.name ?? ''}</p>
+  <p class="sr-only" aria-live="polite" aria-atomic="true">{centred ? `${$t('home.carousel.slide', { n: cur + 1, m: items.length })}, ${centred.name}` : ''}</p>
   {#if items.length > 1}
     <div class="dots" aria-hidden="true">{#each items as it, i (it.id)}<i class:on={i === cur}></i>{/each}</div>
   {/if}
@@ -247,15 +250,19 @@
   .glow { position: absolute; inset: 0; pointer-events: none; }
   .glow i { position: absolute; inset: 0; opacity: 0; transition: opacity .6s var(--m-emph-out); }
   .glow i.on { opacity: 1; }
-  .mc.calm .glow i, .mc.calm .dots i, .mc.calm .btn { transition: none; }
+  /* calm mode / reduced motion (html.m-still, kept live by the layout) and a tripped frame guard: instant changes */
+  :global(html.m-still) .mc .glow i, :global(html.m-still) .mc .dots i, :global(html.m-still) .mc .btn,
+  :global(html.tv-motion-reduced) .mc .glow i, :global(html.tv-motion-reduced) .mc .dots i, :global(html.tv-motion-reduced) .mc .btn { transition: none; }
   @media (prefers-reduced-motion: reduce) { .glow i { transition: none; } }
-  /* all slides share one grid cell; JS moves them (transform / opacity / filter) */
+  /* all slides share one grid cell; JS moves them (transform / opacity) */
   .track { position: relative; z-index: 1; display: grid; touch-action: pan-y; user-select: none; -webkit-user-select: none; -webkit-tap-highlight-color: transparent; }
-  .slide { grid-area: 1 / 1; justify-self: center; width: min(70%, 340px); aspect-ratio: 2 / 3; border-radius: 18px; overflow: hidden; background: #1c2228; box-shadow: 0 22px 46px rgba(0, 0, 0, .55), 0 0 0 1px rgba(255, 255, 255, .1); will-change: transform; transform-origin: 50% 50%; }
+  .slide { position: relative; grid-area: 1 / 1; justify-self: center; width: min(70%, 340px); aspect-ratio: 2 / 3; border-radius: 18px; overflow: hidden; background: #1c2228; box-shadow: 0 22px 46px rgba(0, 0, 0, .55), 0 0 0 1px rgba(255, 255, 255, .1); will-change: transform; transform-origin: 50% 50%; }
   .track.single .slide { will-change: auto; }
   .card { position: relative; display: block; width: 100%; height: 100%; color: #fff; -webkit-touch-callout: none; }
   .card:focus-visible { outline: 2px solid #fff; outline-offset: -4px; border-radius: 18px; }
   .poster { width: 100%; height: 100%; object-fit: cover; display: block; pointer-events: none; }
+  /* over the whole card (art and text); JS sets its opacity from the distance to the centre */
+  .dim { position: absolute; inset: 0; background: #000; opacity: 0; pointer-events: none; border-radius: inherit; }
   .fade { position: absolute; inset: 0; background: linear-gradient(0deg, rgba(0, 0, 0, .85) 0%, rgba(0, 0, 0, .55) 22%, transparent 48%); pointer-events: none; }
   .over { position: absolute; left: 0; right: 0; bottom: 0; padding: 3.6rem .9rem .9rem; display: grid; gap: .4rem; justify-items: center; text-align: center; pointer-events: none; }
   .eyebrow { font-size: .7rem; font-weight: 800; color: var(--acc); letter-spacing: .14em; text-transform: uppercase; text-shadow: 0 1px 6px rgba(0, 0, 0, .7); }
@@ -273,6 +280,8 @@
   .btn:active { transform: scale(.97); }
   .btn.w { background: #fff; color: #0b0b0d; }
   .btn.w:hover { background: rgba(255, 255, 255, .86); }
-  .btn.g { background: rgba(255, 255, 255, .17); color: #fff; -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px); }
+  .btn.g { background: rgba(255, 255, 255, .17); color: #fff; }
+  /* blur only with the full motion level (html.m-glass), like the tab bar and the header */
+  :global(html.m-glass) .btn.g { -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px); }
   .btn.g:hover:not(:disabled) { background: rgba(255, 255, 255, .24); }
 </style>

@@ -29,7 +29,7 @@
   import { loadIntroSettings, markSessionSeen, readSessionSeen, shouldPlayIntro } from '#lib/intro';
   import { mobile } from '#lib/viewport';
   import { isRailTop, isTabActive, TV_RAIL } from '#lib/menu';
-  import { DESK_GUARD, deskPagePlan, frameGuard, framesIdle, framesResume, isDetailPage, motionLevel, stagger, tvPagePlan, VT_ART, watchFrames } from '#lib/tv/motion';
+  import { DESK_GUARD, deskPagePlan, frameGuard, framesIdle, framesResume, isDetailPage, motionLevel, motionTripped, stagger, tvPagePlan, VT_ART, watchFrames } from '#lib/tv/motion';
   import { motionAllowed } from '#lib/preview';
   import TvRail from '#lib/tv/TvRail.svelte';
   import DeskBar from '#lib/desk/DeskBar.svelte';
@@ -149,13 +149,13 @@
   $: syncScroll($mobile && !tv);
   onDestroy(() => syncScroll(false));
   /** `html.m-glass`: blur behind the phone bars only with the full motion level; `html.m-still`: instant changes (reduced motion / calm) */
-  const motionClasses = (_p: unknown, _m: boolean) => {
+  const motionClasses = (_p: unknown, _m: boolean, _tripped = false) => {
     if (typeof document === 'undefined') return;
     const c = document.documentElement.classList;
     c.toggle('m-glass', motionLevel() === 'full');
     c.toggle('m-still', !motionAllowed());
   };
-  $: motionClasses($prefs, $mobile);
+  $: motionClasses($prefs, $mobile, $motionTripped); // (the frame guard tripping drops the blur too)
   onMount(() => {
     // a system-wide reduced-motion switch while the app is open
     const mq = typeof matchMedia === 'function' ? matchMedia('(prefers-reduced-motion: reduce)') : null;
@@ -200,10 +200,13 @@
   /** desktop shell (pill bar; later the desktop browse pieces): not on TV, phones or kids profiles */
   $: desk = deskUi({ tv, mobile: $mobile, kids: kidsUi });
   $: deskActive.set(desk); // openModal and the detail route follow it (desktop: titles open as the full page)
-  // desktop: the same frame-budget guard as the TV (spec 5.2) while the desktop layout is on; it only samples frames while
-  // something moves (page transitions, row glides, stagger) and drops the session to the reduced set when it cannot keep up
+  /** the phone shell (tab bar, carousel, preview sheet): phones, not TV, not kids profiles */
+  $: phoneShell = $mobile && !tv && !kidsUi;
+  // desktop and the phone shell: the same frame-budget guard as the TV (spec 5.2; phones with the desktop budget, spec 2026-11-08
+  // Motion); it only samples frames while something moves (page transitions, row glides, stagger, the carousel spring) and
+  // drops the session to the reduced set when it cannot keep up
   let deskGuard: (() => void) | null = null;
-  $: if (typeof window !== 'undefined') syncDeskGuard(desk);
+  $: if (typeof window !== 'undefined') syncDeskGuard(desk || phoneShell);
   function syncDeskGuard(on: boolean) {
     if (on && !deskGuard) {
       deskGuard = frameGuard(DESK_GUARD); // a looser budget than the TV's: a steady 30 fps desktop keeps its motion
@@ -321,6 +324,7 @@
   beforeNavigate(({ from }) => {
     let el = document.activeElement as HTMLElement | null;
     if (desk) { const o = deskOrigin(); deskFrom = o.click; el = o.link; framesIdle(); } // (the frame guard: a page is being built)
+    else if (phoneShell) framesIdle();
     const href = el?.getAttribute?.('href');
     if (desk && from && !href) memo.delete(from.url.pathname + from.url.search); // left by the bar etc.: no card to come back to
     if (!(tv || desk) || !from || !href) return;
@@ -407,6 +411,7 @@
     }
     if (tv) return tvTransition(nav, start);
     if (desk && (isDetailPage(from) || isDetailPage(to))) { const r = deskTransition(nav, start); if (r !== null) return r; }
+    if (phoneShell && isDetailPage(to)) { const r = sheetTransition(nav, start); if (r !== null) return r; }
     if (typeof start !== 'function' || matchMedia('(prefers-reduced-motion: reduce)').matches) return;
     // typing in the header search must not freeze the screen for a crossfade
     if (!nav.to || from === to || to === '/search' || immersive(from) || immersive(to) || intro) return;
@@ -550,6 +555,34 @@
       });
       // the frame guard watches the transition (a desktop that cannot keep up drops to the reduced set), counting from the
       // moment it animates: the screen held for the new page on purpose before that
+      void (t as { ready?: Promise<unknown> }).ready?.then(framesResume, () => undefined);
+      void t.finished.catch(() => undefined).finally(() => vtEnd(my, named));
+    });
+  }
+  // ---- phone: the preview sheet's poster -> the detail backdrop (spec 2026-11-08 §3; Details and drag up). The desktop's
+  // shared name (VT_ART) and timing, set inline for this one navigation; without the API, with reduced motion / calm mode or
+  // without a poster in the sheet, the plain crossfade below takes it. ----
+  /** `null`: no sheet poster to morph from (the generic crossfade runs) */
+  function sheetTransition(nav: Nav, start: StartVT | undefined): Promise<void> | null {
+    const from = nav.from?.url.pathname ?? '';
+    if (!nav.to || intro || immersive(from) || typeof start !== 'function' || !motionAllowed() || motionLevel() !== 'full') return null;
+    const poster = document.querySelector<HTMLElement>('.sheet[role="dialog"]:not(.out) img.poster');
+    if (!get(previewSheet) || !onScreen(poster)) return null;
+    const root = document.documentElement, my = vtBegin(), named: HTMLElement[] = [];
+    const bd = () => document.querySelector<HTMLElement>('main .dv [data-vt-art]');
+    root.classList.add('ff-vt-desk');
+    vtName(poster, VT_ART, named);
+    return new Promise<void>((resolve) => {
+      const t = start.call(document, async () => {
+        resolve();
+        // the screen holds still until the detail page is there: never longer than 800 ms (the desktop's budget)
+        const until = performance.now() + 800;
+        await Promise.race([nav.complete.catch(() => undefined), sleep(800)]);
+        if (my !== vtSeq) return; // a newer transition took over meanwhile
+        for (const el of named) el.style.removeProperty('view-transition-name'); // the sheet lets go first: a name must exist once
+        while (performance.now() < until && !(bd() && document.querySelector('main .dv h1'))) await sleep(16);
+        vtName(bd(), VT_ART, named);
+      });
       void (t as { ready?: Promise<unknown> }).ready?.then(framesResume, () => undefined);
       void t.finished.catch(() => undefined).finally(() => vtEnd(my, named));
     });

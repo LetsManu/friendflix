@@ -41,7 +41,7 @@ test.describe('phone shell', () => {
   test('search screen keeps its own field and shows popular titles', async ({ page }) => {
     await page.goto('/search');
     await expect(page.locator('#q')).toBeVisible();
-    await expect(page.getByRole('heading', { level: 2, name: 'Beliebte Suchen' })).toBeVisible();
+    await expect(page.getByRole('heading', { level: 2, name: 'Beliebt hier' })).toBeVisible();
     await page.locator('#q').pressSequentially('nolan', { delay: 40 });
     await expect(page).toHaveURL(/\/search\?q=nolan$/);
     await expect(page.locator('#q')).toHaveValue('nolan');
