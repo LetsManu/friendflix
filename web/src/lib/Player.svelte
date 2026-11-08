@@ -1980,6 +1980,9 @@
   @keyframes ff-cred-fade { from { opacity: 0; } to { opacity: 1; } }
   /* same frames under another name: the class swap cred -> credout restarts the animation */
   @keyframes ff-cred-fade-out { from { opacity: 0; } to { opacity: 1; } }
+  /* casting: the remote screen's card sits above the taller desk bar (its measured height, gradient padding included); otherwise the
+     bar's box covers the card's buttons */
+  .stage.desk .remote { padding-bottom: calc(var(--ctl-h, 7.5rem) + 1rem + var(--safe-bottom)); }
   .stage.desk .ctl { display: grid; gap: .7rem; padding: 4.5rem max(clamp(1.5rem, 3vw, 3rem), var(--safe-right)) 1.4rem max(clamp(1.5rem, 3vw, 3rem), var(--safe-left));
     background: linear-gradient(transparent, rgba(0,0,0,.45) 35%, rgba(0,0,0,.82)); transition: opacity 250ms ease; }
   .ttlblock { display: grid; gap: .15rem; min-width: 0; max-width: min(60%, 46rem); text-shadow: 0 1px 10px rgba(0,0,0,.5); }

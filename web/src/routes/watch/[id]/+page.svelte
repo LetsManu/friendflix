@@ -68,8 +68,9 @@
     if (inCredits && enteredAt === null) { enteredAt = now = Date.now(); clearInterval(credT); credT = setInterval(tickCredits, 250); }
     else if (!inCredits && enteredAt !== null) { enteredAt = null; clearInterval(credT); credT = undefined; } // seeking back: the picture grows back
   }
-  // casting, "still watching?" and phones: no sequence (a watch party plays on its own route without these cards)
-  $: beat = creditsBeat({ current: curTime, start: creditsAt, enteredAt, now, dismissed, kind: csKind, blocked: remote || askStill || !csOn });
+  // casting, "still watching?" and phones: no sequence (a watch party plays on its own route without these cards); the post-play
+  // screen takes its place once open (otherwise the player's Esc would back out of the hidden sequence instead of closing the screen)
+  $: beat = creditsBeat({ current: curTime, start: creditsAt, enteredAt, now, dismissed, kind: csKind, blocked: remote || askStill || !csOn || ppOpen });
   let lastBeat: typeof beat = 'off';
   $: onBeat(beat);
   function onBeat(b: typeof beat) {
@@ -203,6 +204,7 @@
   }
   function hidePostplay() {
     ppOpen = false; ppCardClosed = true;
+    if (csOn) dismissed = true; // the viewer stays on the title: the credits sequence does not come back over it
     tick().then(() => document.querySelector<HTMLElement>('.stage')?.focus?.());
   }
   /** Esc / TV Back / "Back to the title": the screen goes away and the viewer stays on this title (its history entry is popped) */

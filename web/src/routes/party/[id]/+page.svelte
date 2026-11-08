@@ -218,6 +218,10 @@
   @media (prefers-reduced-motion: reduce) { .fl { animation: fade 2.5s linear forwards !important; } /* fade only; beats the global reduced-motion kill switch */ @keyframes fade { from { opacity: 1; } 70% { opacity: 1; } to { opacity: 0; } } }
   .rbar { position: absolute; right: .8rem; bottom: 9.5rem; z-index: 8; display: flex; gap: .1rem; background: rgba(16,20,24,.82); border: 1px solid #323a43; border-radius: 99px; padding: .15rem .3rem; }
   .rbar.shift { right: calc(340px + .8rem); }
+  /* desktop player (taller bar: title block, timeline row, pills): reactions and chat bubbles sit above its measured box, which
+     would otherwise cover them (--ctl-h is set on the stage by the Player) */
+  :global(.stage.desk) .rbar { bottom: calc(var(--ctl-h, 9rem) + .5rem); }
+  :global(.stage.desk) .bubbles { bottom: calc(var(--ctl-h, 9rem) + 4rem); }
   .rbar .em { width: 40px; min-height: 40px; font-size: 1.35rem; border-radius: 50%; }
   .sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
   .bubbles { position: absolute; left: clamp(.8rem, 2.4vw, 2.4rem); bottom: 9.5rem; list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: .35rem; max-width: min(420px, 70vw); z-index: 6; pointer-events: none; }

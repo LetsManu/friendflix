@@ -219,6 +219,8 @@ test.describe('into the player', () => {
 
     test('calm mode: Back from the player records no desk morph class', async ({ page, api: _api }) => {
       await page.addInitScript(() => { sessionStorage.setItem('ff-intro-seen', '1'); localStorage.setItem('ff_calm:p1', '1'); });
+      // the server pref is authoritative (the localStorage flag is only the cold-start copy, which /api/prefs overwrites)
+      await page.route('**/api/prefs', (r) => r.fulfill({ json: { prefs: { calm: true } } }));
       await mockPlayer(page);
       await page.route('**/api/items/*/trailer', (r) => r.fulfill({ json: {} }));
       await countInfo(page);
@@ -226,6 +228,7 @@ test.describe('into the player', () => {
       await playButton(page).click();
       await playing(page);
       await record(page);
+      await expect(page.locator('html')).toHaveClass(/\bcalm\b/); // calm mode really is on while going back
       await page.goBack();
       await expect(page.locator('main .dd [data-vt-art]')).toBeVisible();
       expect((await seen(page)).some((c) => /ff-vt-desk/.test(c))).toBe(false);
@@ -236,11 +239,12 @@ test.describe('into the player', () => {
       await mockPlayer(page);
       await countInfo(page);
       await holdVideo(page);
+      // an init script runs before <html> exists (document.documentElement is null): watch the document's subtree instead
       await page.addInitScript(() => {
         const w = window as unknown as { __vtSeen: boolean };
         w.__vtSeen = false;
-        new MutationObserver(() => { if (/ff-vt-play/.test(document.documentElement.className)) w.__vtSeen = true; })
-          .observe(document.documentElement, { attributes: true, attributeFilter: ['class'] });
+        new MutationObserver(() => { if (/ff-vt-play/.test(document.documentElement?.className ?? '')) w.__vtSeen = true; })
+          .observe(document, { attributes: true, attributeFilter: ['class'], subtree: true });
       });
       await page.goto('/watch/' + MOVIE.id);
       await expect(page.locator('.stage .ff-poster')).toBeVisible();
