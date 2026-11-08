@@ -7,6 +7,9 @@
   import { deskUi } from '#lib/desk/bar';
   import DeskBillboard from '#lib/desk/DeskBillboard.svelte';
   import Hero from '#lib/Hero.svelte';
+  import Carousel from '#lib/phone/Carousel.svelte';
+  import { carouselPicks } from '#lib/phone/logic';
+  import { badges, wantBadge, type Badge } from '#lib/fresh';
   import LazyRow from '#lib/LazyRow.svelte';
   import Row from '#lib/Row.svelte';
   import ThemedListRows from '#lib/ThemedListRows.svelte';
@@ -25,6 +28,8 @@
   import TvFocusTile from '#lib/tv/TvFocusTile.svelte';
 
   let hero: Item | null = null, heroPlay = '';
+  /** the billboard title has been answered (it may be null): with recs and latest, what the phone carousel waits for */
+  let heroSettled = false;
   let resume: Item[] | null = null, next: Item[] | null = null, latest: Item[] | null = null, mine: Item[] | null = null;
   let trending: Item[] | null = null, recs: Item[] | null = null, friendsRated: Item[] | null = null;
   let top: Item[] | null = null, because: { name: string } | null = null, becauseItems: Item[] | null = null;
@@ -65,7 +70,7 @@
   // The old per-row loaders: the fallback for every part GET /api/home could not deliver (named in `failed`, or the whole call failed).
   const loaders: Record<HomePart, () => void> = {
     // billboard: a random pick stays the same while it is cached
-    hero: () => void cached('hero', async () => { const pool = await items({ types: 'Movie,Series', sort: 'Random', limit: '15' }); return pool.find((i) => i.backdrop) ?? pool[0] ?? null; }, (v) => (hero = v), () => (hero = null)),
+    hero: () => void cached('hero', async () => { const pool = await items({ types: 'Movie,Series', sort: 'Random', limit: '15' }); return pool.find((i) => i.backdrop) ?? pool[0] ?? null; }, (v) => { hero = v; heroSettled = true; }, () => { hero = null; heroSettled = true; }),
     resume: () => void cached('resume', () => load('/api/library/resume').then((r) => r.items as Item[]), (v) => (resume = v), () => (resume = []), ALWAYS),
     nextup: () => void cached('nextup', () => load('/api/library/nextup').then((r) => r.items as Item[]), (v) => (next = v), () => (next = []), ALWAYS),
     leaving: () => void cached('leaving', () => load('/api/library/leaving').then((r) => r.items as Item[]), (v) => (leaving = v), () => (leaving = []), ALWAYS),
@@ -85,7 +90,7 @@
   function applyHome(r: HomeResponse<Item>) {
     const bad = failedParts(r);
     const p = r.parts;
-    if (!bad.has('hero')) hero = p.hero ? (p.hero as Item) : null;
+    if (!bad.has('hero')) { hero = p.hero ? (p.hero as Item) : null; heroSettled = true; }
     if (!bad.has('resume')) resume = p.resume;
     if (!bad.has('nextup')) next = p.nextup;
     if (!bad.has('leaving')) leaving = p.leaving;
@@ -176,6 +181,26 @@
   /** desktop browse: the trailer billboard instead of the hero (phones, TV and kids profiles keep theirs) */
   $: desk = deskUi({ tv, mobile: $mobile, kids: $kidsMode });
   /**
+   * phone (not kids, not TV): the swipe carousel instead of the poster hero. Its cards come from lists the page already
+   * loads (the billboard title, the recommendation row, the newest titles); fresh-labelled titles go first. No picks: the hero.
+   */
+  $: phone = $mobile && !$kidsMode && !tv;
+  $: candidates = phone ? [...(recs ?? []), ...(latest ?? [])] : [];
+  // the rows ask for the same badges; asks of one frame share one request
+  $: for (const c of candidates) wantBadge(c.type === 'Episode' ? c.seriesId : c.id);
+  $: picks = phone ? phonePicks(hero, candidates, $badges) : [];
+  /**
+   * The carousel holds its place (cards as placeholders) until every list its cards come from has answered; only then may
+   * zero picks fall back to the hero. Swapping the taller hero for the carousel under a reader who already scrolled changed
+   * the height above the rows, and the browser's scroll anchoring moved the page (to the top when scrolled less than the difference).
+   */
+  $: picksPending = phone && !(heroSettled && recs !== null && latest !== null);
+  function phonePicks(h: Item | null, list: Item[], b: Record<string, Badge | null>): Item[] {
+    // badges are kept per series for episodes
+    const key = new Map([...(h ? [h] : []), ...list].map((c) => [c.id, c.seriesId ?? c.id]));
+    return carouselPicks({ hero: h, candidates: list, fresh: (id) => b[key.get(id) ?? id]?.fresh ?? null });
+  }
+  /**
    * The focused row slides under the tile: its top goes to where the tile ends. The page position jumps there at once and the
    * rows glide the difference with a spring (lib/tv/motion.ts, FLIP), so scroll-based code always sees the resting position.
    * `fromY` is the position the viewer saw before this focus change (focusEl may already have scrolled the window).
@@ -227,6 +252,9 @@
   <TvFocusTile {hero} {heroRank} />
 {:else if desk}
   <DeskBillboard item={hero} rank={heroRank} />
+  <BrandHubs {hubs} />
+{:else if phone && (picks.length || picksPending)}
+  <Carousel items={picks} />
   <BrandHubs {hubs} />
 {:else}
   <Hero item={hero} rank={heroRank} portrait />

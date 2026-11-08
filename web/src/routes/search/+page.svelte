@@ -8,7 +8,8 @@
   import { replaceState } from '$app/navigation';
   import { api, ApiError, backdrop, getActiveProfile, img, type Item } from '#lib/api';
   import Icon from '#lib/Icon.svelte';
-  import { itemPath } from '#lib/mobile';
+  import { categoryHref, itemPath, playPath } from '#lib/mobile';
+  import { genreColor } from '#lib/genreTint';
   import Card from '#lib/Card.svelte';
   import { kidsMode } from '#lib/kids';
   import { features } from '#lib/capabilities';
@@ -99,7 +100,7 @@
   const initials = (n: string) => n.split(/\s+/).filter(Boolean).slice(0, 2).map((w) => w[0]!.toUpperCase()).join('');
 
   // empty state: what friends watch this week ("Beliebte Suchen")
-  let popular: Item[] | null = null;
+  let popular: Item[] | null = null, genreList: string[] = [];
   onMount(() => {
     recent = loadRecent(getActiveProfile());
     // the layout may render this page before /api/me answered: re-read the recent searches of the real profile then
@@ -108,6 +109,7 @@
     // kids profiles: "what friends watch" is social (403 kids_profile): the section stays out
     if ($kidsMode) popular = [];
     else api('/api/library/trending').then((r) => (popular = (r.items as Item[]).slice(0, 12))).catch(() => (popular = []));
+    if ($mobile && !$kidsMode) api('/api/library/genres').then((r) => (genreList = (r.genres as string[]) ?? [])).catch(() => {});
     if ($mobile && !input) inputEl?.focus();
     return () => window.removeEventListener('ff-me', onMe);
   });
@@ -143,15 +145,26 @@
     {#if !$mobile && !recent.length}<p class="muted hint">{$t('home.search.hint')}</p>{/if}
     {#if !$kidsMode}
     <section aria-labelledby="pop">
-      <h2 id="pop" class="sh">{$t('home.search.popular')}</h2>
+      <h2 id="pop" class="sh">{$t($mobile ? 'home.search.popularHere' : 'home.search.popular')}</h2>
       {#if popular === null}<div class="tiles" aria-busy="true">{#each Array(6) as _}<div class="skeleton" style="aspect-ratio:16/9"></div>{/each}</div>
       {:else if popular.length && $mobile}
         <ul class="top">{#each popular as i (i.id)}
-          <li><a href={itemPath(i)}><img src={i.backdrop ? backdrop(i.id, 400) : img(i.id, 300)} alt="" loading="lazy" width="146" height="82" /><span class="tt">{i.name}</span><span class="pl" aria-hidden="true"><Icon name="play" size={18} /></span></a></li>
+          <li>
+            <a class="row" href={itemPath(i)}><img src={i.backdrop ? backdrop(i.id, 400) : img(i.id, 300)} alt="" loading="lazy" width="146" height="82" /><span class="tt">{i.name}</span></a>
+            <a class="pl" href={playPath(i)} aria-label={$t('home.card.playName', { name: i.name })} data-play={i.id}><Icon name="play" size={18} /></a>
+          </li>
         {/each}</ul>
       {:else if popular.length}<div class="tiles">{#each popular as i (i.id)}<div class="slot"><Card item={i} /></div>{/each}</div>
       {:else}<p class="muted">{$t('home.search.minChars')}</p>{/if}
     </section>
+    {#if $mobile && genreList.length}
+    <section aria-labelledby="bg" class="genres">
+      <h2 id="bg" class="sh">{$t('home.search.byGenre')}</h2>
+      <ul class="gt">{#each genreList as g (g)}
+        <li><a href={categoryHref('movies', g)} style="--gc:{genreColor(g)}"><span>{g}</span></a></li>
+      {/each}</ul>
+    </section>
+    {/if}
     {/if}
   {/if}
 {:else if status === 'loading'}
@@ -203,16 +216,24 @@
   </section>
 {/if}
 
+
 <style>
   .gap { height: .5rem; }
   .top { display: grid; gap: .25rem; margin: 0 calc(var(--pad-x) * -1); }
-  .top a { display: flex; align-items: center; gap: .9rem; min-height: 72px; padding: 0 var(--pad-x) 0 0; background: #161b21; }
-  .top a:active { background: #20262d; }
+  .top li { display: flex; align-items: center; background: #161b21; padding-right: var(--pad-x); }
+  .row { flex: 1; min-width: 0; display: flex; align-items: center; gap: .9rem; min-height: 72px; }
+  .row:active { background: #20262d; }
   .top img { width: 146px; height: 82px; flex: none; object-fit: cover; background: #242b33; }
   .tt { flex: 1; min-width: 0; font-weight: 600; font-size: .95rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .pl { flex: none; display: grid; place-items: center; width: 36px; height: 36px; border-radius: 50%; border: 2px solid #fff; padding-left: 2px; }
+  .pl { flex: none; display: grid; place-items: center; width: 44px; height: 44px; border-radius: 50%; border: 2px solid #fff; padding-left: 2px; margin-left: .5rem; }
+  .pl:active { opacity: .7; }
+  .gt { display: grid; grid-template-columns: 1fr 1fr; gap: .6rem; }
+  .gt a { display: flex; align-items: flex-end; height: 74px; padding: .6rem .8rem; border-radius: 12px; background: linear-gradient(135deg, var(--gc), #12161b 135%); color: #fff; font-weight: 700; overflow: hidden; }
+  .gt a span { overflow-wrap: anywhere; line-height: 1.15; }
+  .gt a:active { opacity: .8; transform: scale(.98); }
   .hint { margin: 0 0 .5rem; }
   .big { width: 100%; max-width: 640px; font-size: 1.2rem; min-height: 54px; margin-bottom: 1.5rem; }
+  @media (max-width: 720px) { .big { min-height: 44px; border-radius: 12px; margin-bottom: 1rem; } }
   .empty { text-align: center; padding: 4rem 0; }
   .wishmsg { min-height: 1.4em; margin: 0 0 .5rem; color: var(--mut); }
   .wl { display: grid; gap: .6rem; max-width: 640px; }

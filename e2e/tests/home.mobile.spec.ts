@@ -19,10 +19,12 @@ test.describe('home (phone 390x844)', () => {
     await expect.poll(() => noHorizontalOverflow(page)).toBe(true);
   });
 
-  test('tab bar is pinned to the bottom edge', async ({ page }) => {
+  test('tab bar floats 10 px above the bottom edge, 14 px from the sides', async ({ page }) => {
     await page.goto('/');
     await expect(page.locator('.tabbar')).toBeVisible();
-    const { tab, vh } = await page.evaluate(() => ({ tab: document.querySelector('.tabbar')!.getBoundingClientRect(), vh: window.innerHeight }));
-    expect(Math.round(tab.bottom)).toBe(vh);
+    const { tab, vw, vh } = await page.evaluate(() => ({ tab: document.querySelector('.tabbar')!.getBoundingClientRect(), vw: window.innerWidth, vh: window.innerHeight }));
+    expect(Math.round(tab.bottom)).toBe(vh - 10);
+    expect(Math.round(tab.left)).toBe(14);
+    expect(Math.round(tab.right)).toBe(vw - 14);
   });
 });

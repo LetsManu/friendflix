@@ -57,6 +57,11 @@ export default {
     replay: 'Vorschau erneut abspielen',
     replayTitle: 'Erneut abspielen',
   },
+  /** phone home: the swipe carousel at the top */
+  carousel: {
+    label: 'Top-Tipps für dich',
+    slide: '{n} von {m}',
+  },
   row: {
     showAll: 'Alle anzeigen',
     prev: 'Zurückblättern',
@@ -197,6 +202,8 @@ export default {
     clearRecent: 'Verlauf löschen',
     hint: 'Suche oben nach Titeln, Personen, Genres oder einem Jahr.',
     popular: 'Beliebte Suchen',
+    popularHere: 'Beliebt hier',
+    byGenre: 'Nach Genre stöbern',
     running: 'Suche läuft …',
     errorTitle: 'Suche gerade nicht möglich',
     errorText: 'Bitte versuche es in einem Moment noch einmal.',

@@ -18,6 +18,15 @@ Part of the desktop redesign that ships with v3.0.0.
 - **Credits sequence.** *Watch credits* and *Next episode* come first, then the picture glides into the corner and keeps playing, with up next, a 10 s countdown and *More like this*; films and last episodes show suggestions without a countdown.
 - **Back to the detail page morphs.** Leaving the player turns the picture back into the backdrop; calm mode and reduced motion switch at once.
 
+### Phone
+Part of the redesign that ships with v3.0.0.
+- **Floating tab bar.** Home, New, My list and Downloads (only where downloads are allowed) sit in a glass bar above the home indicator; your profile is the avatar at the top right.
+- **Glass top bar and chips.** The top bar turns to glass once you scroll; the Series, Movies and Categories chips slide away while you scroll down and come back on the way up. Categories opens as a bottom sheet.
+- **Swipe carousel.** Up to five recommended titles as large posters with a soft glow in the poster's colours; swipe to move one card, tap the centred card for a preview. It never moves on its own.
+- **Preview sheet.** Tapping a poster springs up a sheet with the reason it was picked, Play, Download, My list, Rate, Share and Details; drag it down to close or up to open the detail page.
+- **Phone detail page.** A large backdrop, a full-width Play button with the episode, Download for that episode, a short synopsis that expands, and tabs whose underline slides between them.
+- **Search.** A rounded search field, *Popular here* with play buttons and genre tiles before you type.
+
 ### TV
 - **Credits sequence.** After an episode, *Watch credits* and *Next episode* appear, then the picture moves into the corner and keeps playing with up next and *More like this*; OK plays the next episode, Back plays the sequence backwards, and a crossfade replaces the glide where animation would stutter.
 

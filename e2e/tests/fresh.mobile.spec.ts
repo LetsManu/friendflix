@@ -21,6 +21,9 @@ test.describe('discovery (phone)', () => {
     const because = row(page, 'Weil du „Inkwell“ gesehen hast');
     await because.scrollIntoViewIfNeeded();
     await expect(because.locator('.pc .newep').first()).toBeVisible();
+    // the home carousel carries the fresh label as the card's eyebrow (the labelled series moves up to second place)
+    const carousel = page.getByRole('region', { name: 'Top-Tipps für dich' });
+    await expect(carousel.getByRole('group', { name: /^2 von / }).locator('.eyebrow')).toHaveText('Staffelfinale');
     await expect.poll(() => noHorizontalOverflow(page)).toBe(true);
     await page.screenshot({ path: `${SHOTS}/home-phone.png` });
   });
@@ -30,9 +33,10 @@ test.describe('discovery (phone)', () => {
     await page.route(`**/api/items/${breaking.id}/story`, (r) => r.fulfill({ json: { story: { reason: 'longBreak', weeks: 8, episode: { id: 'e'.repeat(32), name: 'Das Ende', season: 1, index: 7, overview: 'Walter trifft eine folgenschwere Entscheidung.' }, next: { id: 'f'.repeat(32), season: 1, index: 8 } } } }));
     await page.goto('/item/' + breaking.id);
     await expect(page.getByRole('heading', { level: 1, name: 'Bright Valley' })).toBeVisible();
-    await expect(page.locator('.tf').getByText('Staffelfinale')).toBeVisible();
-    await expect(page.locator('.tf').getByText('Nur noch 5 Tage')).toBeVisible();
-    await expect(page.locator('.tf').getByRole('list', { name: 'Bild und Ton' }).getByText('Dolby Atmos')).toBeVisible();
+    // phone browse §4: the fresh label is the eyebrow, the quality chips sit in the meta line, the removal date below it
+    await expect(page.locator('.dbody .eyebrow')).toHaveText('Staffelfinale');
+    await expect(page.locator('.dbody .leave').getByText('Nur noch 5 Tage')).toBeVisible();
+    await expect(page.locator('.dbody .meta').getByRole('list', { name: 'Bild und Ton' }).getByText('Dolby Atmos')).toBeVisible();
     const story = page.getByRole('region', { name: 'Die Geschichte bisher' });
     await expect(story).toContainText('Du hast seit 8 Wochen nicht weitergeschaut');
     await expect(story.getByRole('button', { name: 'Karte ausblenden' })).toBeVisible();

@@ -55,6 +55,10 @@ const en: Translation<typeof de> = {
     replay: 'Play preview again',
     replayTitle: 'Play again',
   },
+  carousel: {
+    label: 'Top picks for you',
+    slide: '{n} of {m}',
+  },
   row: {
     showAll: 'Show all',
     prev: 'Scroll back',
@@ -186,6 +190,8 @@ const en: Translation<typeof de> = {
     clearRecent: 'Clear history',
     hint: 'Search above for titles, people, genres or a year.',
     popular: 'Popular searches',
+    popularHere: 'Popular here',
+    byGenre: 'Browse by genre',
     running: 'Searching …',
     errorTitle: 'Search is not available right now',
     errorText: 'Please try again in a moment.',

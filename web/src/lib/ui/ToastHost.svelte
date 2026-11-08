@@ -53,7 +53,7 @@
   .x:hover:not(:disabled) { background: rgba(255,255,255,.08); color: var(--fg); }
   @media (max-width: 720px) {
     /* above the phone tab bar (and the cast bar on it) */
-    .toasts { left: 50%; right: auto; transform: translateX(-50%); bottom: calc(56px + var(--safe-bottom) + .6rem + var(--castbar-h, 0px)); }
+    .toasts { left: 50%; right: auto; transform: translateX(-50%); bottom: calc(var(--tabbar-h) + var(--safe-bottom) + .6rem + var(--castbar-h, 0px)); }
   }
   :global(html.tv) .toasts { bottom: 2rem; right: 2rem; }
 </style>

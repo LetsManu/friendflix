@@ -30,6 +30,7 @@ const fr: Translation<typeof de> = {
       other: 'Mon espace, {n} nouvelles notifications',
     },
     tabbar: 'Navigation mobile',
+    home: 'Accueil',
   },
   cats: {
     title: 'Catégories',
@@ -92,6 +93,10 @@ const fr: Translation<typeof de> = {
     home: 'Accueil',
     new: 'Nouveautés et à venir',
     me: 'Mon espace',
+    myList: 'Ma liste',
+    downloads: 'Téléchargements',
+    newShort: 'Nouveau',
+    downloadsShort: 'Télécharg.',
   },
   offline: {
     bar: 'Vous êtes hors ligne.',

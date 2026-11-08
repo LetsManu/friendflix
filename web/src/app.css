@@ -29,6 +29,9 @@
   --safe-left: env(safe-area-inset-left, 0px);
   /* space taken by the fixed header incl. the status bar above it (--nav-h is the header's own height) */
   --nav-total: calc(var(--nav-h) + var(--safe-top));
+  /* phone: room the floating tab bar takes above the home indicator (60 px pill + 10 px gap, lib/phone/TabBar.svelte);
+     cast bar, toasts and the offline banner sit on it. Kids profiles have no tab bar and keep the old 56 px offset. */
+  --tabbar-h: 70px;
   --radius: 4px;
   --t-fast: 150ms;
   --t-med: 260ms;
@@ -118,6 +121,8 @@ video { width: 100%; background: #000; }
   .skeleton::after { animation: none; display: none; }
   *, *::before, *::after { animation-duration: .001ms !important; animation-iteration-count: 1 !important; transition-duration: .001ms !important; transition-delay: 0ms !important; }
 }
+
+html.kids { --tabbar-h: 56px; } /* no tab bar on kids profiles */
 
 /* ---- TV mode (paired televisions, or ?tv=1 preview): 10-foot UI, D-pad focus, no pointer ---- */
 html.tv { --nav-h: 76px; --pad-x: 3rem; }

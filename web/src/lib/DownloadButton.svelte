@@ -20,6 +20,8 @@
   export let compact = false;
   /** full-width grey button (phone detail view, phone style) */
   export let block = false;
+  /** text of the trigger before a download exists (default "Herunterladen"; the phone detail page names the episode) */
+  export let label = '';
   /** no trigger of its own: the parent opens it with `activate()` (e.g. from the "⋯ Mehr" menu) */
   export let headless = false;
   /** read-only (bind): downloads are possible for this viewer/browser */
@@ -114,9 +116,9 @@
   <!-- trigger lives elsewhere -->
 {:else if ready && (nativeMode || support.ok) && allowed}
   <span class="dl" class:compact class:block>
-    <button type="button" class="dlb" class:sec={!compact} class:on={v?.state === 'done'} aria-haspopup="dialog" aria-label={v ? $t('detail.download.state', { state: stateLabel(v) }) : $t('detail.download.title')} title={v ? stateLabel(v) : $t('detail.download.title')} on:click={main}>
+    <button type="button" class="dlb" class:sec={!compact} class:on={v?.state === 'done'} aria-haspopup="dialog" aria-label={v ? $t('detail.download.state', { state: stateLabel(v) }) : label || $t('detail.download.title')} title={v ? stateLabel(v) : label || $t('detail.download.title')} on:click={main}>
       <Icon name={v?.state === 'done' ? 'check' : 'download'} size={compact ? 20 : 20} />
-      {#if !compact}{v ? stateLabel(v) : $t('detail.download.title')}{:else if v && v.state !== 'done'}<span class="mini">{v.state === 'preparing' ? v.prep ?? 0 : v.state === 'downloading' ? pctNow : ''}</span>{/if}
+      {#if !compact}{v ? stateLabel(v) : label || $t('detail.download.title')}{:else if v && v.state !== 'done'}<span class="mini">{v.state === 'preparing' ? v.prep ?? 0 : v.state === 'downloading' ? pctNow : ''}</span>{/if}
     </button>
     {#if v && menu}
       <span class="menu" role="menu">

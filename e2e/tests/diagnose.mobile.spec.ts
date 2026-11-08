@@ -40,7 +40,7 @@ test.describe('/diagnose link (phone)', () => {
 });
 
 test.describe('tab bar (phone)', () => {
-  test('labels share one baseline although the avatar is taller than the icons', async ({ page }) => {
+  test('labels share one baseline and the icons one size', async ({ page }) => {
     await page.goto('/me');
     const labels = page.locator('.tabbar a > span:last-child');
     await expect(labels).toHaveCount(3);

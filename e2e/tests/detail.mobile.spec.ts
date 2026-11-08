@@ -2,10 +2,10 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import type { Page } from '@playwright/test';
 import { expect, test } from '../fixtures.js';
-import { MOVIE } from '../mocks/fixtures.js';
+import { ME, MOVIE, SERIES } from '../mocks/fixtures.js';
 import { noHorizontalOverflow } from '../helpers.js';
 
-/** Block 21 on phones: clamped synopsis, sticky tab bar, horizontally scrolling ratings line, 44 px tabs. */
+/** Block 21 on phones: clamped synopsis, sticky tab bar, horizontally scrolling ratings line, 44 px tabs; phone browse §4: the reworked page. */
 const LONG = 'Ein Dieb, der Geheimnisse aus Träumen stiehlt, bekommt einen letzten Auftrag. '.repeat(8);
 const ABOUT = {
   ratings: [
@@ -26,7 +26,7 @@ async function open(page: Page) {
 const tablist = (page: Page) => page.getByRole('tablist', { name: 'Weitere Inhalte' });
 
 test.describe('detail page (phone)', () => {
-  test('synopsis clamped to 4 lines with Mehr; Mehr expands, aria-expanded true', async ({ page }) => {
+  test('synopsis clamped to 3 lines with Mehr; Mehr expands, aria-expanded true', async ({ page }) => {
     await open(page);
     const syn = page.locator('#dv-syn');
     const btn = page.getByRole('button', { name: 'Mehr lesen', exact: true });
@@ -34,23 +34,23 @@ test.describe('detail page (phone)', () => {
     await expect(btn).toBeVisible();
     await expect(btn).toHaveAttribute('aria-expanded', 'false');
     const lines = () => syn.evaluate((e) => Math.round(e.getBoundingClientRect().height / parseFloat(getComputedStyle(e).lineHeight)));
-    expect(await lines()).toBe(4);
+    expect(await lines()).toBe(3);
     await btn.click();
     const less = page.getByRole('button', { name: 'Weniger anzeigen', exact: true });
     await expect(less).toHaveAttribute('aria-expanded', 'true');
-    expect(await lines()).toBeGreaterThan(4);
+    expect(await lines()).toBeGreaterThan(3);
     await less.click();
     await expect(btn).toHaveAttribute('aria-expanded', 'false');
   });
 
   test('ratings line and tagline sit together right under the meta line, above the buttons', async ({ page }) => {
     await open(page);
-    const meta = (await page.locator('.pcap .meta').boundingBox())!;
+    const meta = (await page.locator('.dbody .meta').boundingBox())!;
     const line = (await page.getByRole('list', { name: 'Bewertungen' }).boundingBox())!;
-    const tag = page.locator('.pcap .tagline');
+    const tag = page.locator('.dbody .tagline');
     await expect(tag).toHaveText('Dein Traum ist der Tatort.');
     const tagBox = (await tag.boundingBox())!;
-    const play = (await page.locator('.pcap a.play').boundingBox())!;
+    const play = (await page.locator('.dbody a.play').boundingBox())!;
     expect(line.y).toBeGreaterThanOrEqual(meta.y + meta.height - 1);
     expect(tagBox.y).toBeGreaterThanOrEqual(line.y + line.height - 1);
     expect(tagBox.y + tagBox.height).toBeLessThanOrEqual(play.y + 1);
@@ -83,5 +83,159 @@ test.describe('detail page (phone)', () => {
     const tabs = tablist(page).getByRole('tab');
     await expect(tabs).toHaveText(['Details', 'Mehr davon']);
     for (const t of await tabs.all()) expect((await t.boundingBox())!.height).toBeGreaterThanOrEqual(44);
+  });
+
+  test('no similar titles: no empty "Mehr davon" tab', async ({ page }) => {
+    await page.route(new RegExp(`/api/items/${MOVIE.id}/similar$`), (r) => r.fulfill({ json: { items: [] } }));
+    await page.route((u) => u.pathname === '/api/library/items' && u.searchParams.has('genre'), (r) => r.fulfill({ json: { items: [], total: 0 } }));
+    await open(page);
+    await expect(tablist(page).getByRole('tab')).toHaveText(['Details']);
+  });
+});
+
+/** media in the test browser: play() / pause() only flip a flag (no real decoding), `paused` reads it; every trailer request counted */
+async function fakeTrailer(page: Page) {
+  const asked: string[] = [];
+  await page.addInitScript(() => {
+    const on = new WeakMap<HTMLMediaElement, boolean>();
+    Object.defineProperty(HTMLMediaElement.prototype, 'paused', { configurable: true, get(this: HTMLMediaElement) { return !on.get(this); } });
+    HTMLMediaElement.prototype.play = function (this: HTMLMediaElement) { on.set(this, true); this.dispatchEvent(new Event('playing')); return Promise.resolve(); };
+    HTMLMediaElement.prototype.pause = function (this: HTMLMediaElement) { on.set(this, false); this.dispatchEvent(new Event('pause')); };
+    HTMLMediaElement.prototype.load = function () { /* nothing to fetch */ };
+  });
+  await page.route('**/api/items/*/trailer', (r) => { asked.push(r.request().url()); return r.fulfill({ json: { url: '/media/trailer-test.mp4' } }); });
+  await page.route('**/media/trailer-test.mp4', (r) => r.fulfill({ status: 204 }));
+  return asked;
+}
+/** a frozen page clock from before the first navigation: page timers only move with `clock.runFor` */
+async function freezeClock(page: Page) {
+  const t0 = new Date('2026-11-08T18:00:00Z').getTime();
+  await page.clock.install({ time: t0 });
+  await page.clock.pauseAt(t0 + 1000);
+}
+const allowDownloads = (page: Page) => Promise.all([
+  page.route('**/api/me', (r) => r.fulfill({ json: { ...ME, downloads: { allowed: true, max: 5 } } })),
+  page.route('**/api/downloads', (r) => r.fulfill({ json: { downloads: [] } })),
+]);
+const width = async (l: import('@playwright/test').Locator) => (await l.boundingBox())!.width;
+
+test.describe('phone detail page (phone browse §4)', () => {
+  test('backdrop with the glass back button on top; Play and Download fill the width; back leads home after a deep link', async ({ page }) => {
+    await allowDownloads(page);
+    await open(page);
+    const hero = page.locator('.dv .hero');
+    const hb = (await hero.boundingBox())!;
+    expect(hb.height).toBeGreaterThanOrEqual(280);
+    expect(hb.height).toBeLessThanOrEqual(320);
+    const back = hero.getByRole('link', { name: 'Zurück' });
+    await expect(back).toBeVisible();
+    const bb = (await back.boundingBox())!;
+    expect(bb.width).toBeGreaterThanOrEqual(44);
+    expect(bb.y).toBeGreaterThanOrEqual(hb.y);
+    expect(bb.y + bb.height).toBeLessThanOrEqual(hb.y + hb.height / 2);
+    const body = page.locator('.dbody');
+    const inner = await body.evaluate((e) => e.clientWidth - parseFloat(getComputedStyle(e).paddingLeft) - parseFloat(getComputedStyle(e).paddingRight));
+    const play = body.getByRole('link', { name: 'Abspielen' });
+    const dl = body.getByRole('button', { name: 'Herunterladen', exact: true });
+    await expect(play).toBeVisible();
+    await expect(dl).toBeVisible();
+    expect(Math.abs((await width(play)) - inner)).toBeLessThan(1.5);
+    expect(Math.abs((await width(dl)) - inner)).toBeLessThan(1.5);
+    expect((await dl.boundingBox())!.y).toBeGreaterThan((await play.boundingBox())!.y);
+    // Play is white, Download a glass button
+    expect(await play.evaluate((e) => getComputedStyle(e).backgroundColor)).toBe('rgb(255, 255, 255)');
+    // My list / Rate / Share under the synopsis
+    await expect(body.getByRole('button', { name: 'Merkliste' })).toBeVisible();
+    await expect(body.getByRole('button', { name: 'Teilen' })).toBeVisible();
+    await back.click();
+    await expect(page).toHaveURL(/\/$/);
+  });
+
+  test('Download is not shown when downloads are not allowed', async ({ page }) => {
+    let me = 0;
+    page.on('response', (r) => { if (new URL(r.url()).pathname === '/api/me') me++; });
+    await open(page); // the mock profile: downloads.allowed false
+    await expect(page.locator('.dbody').getByRole('link', { name: 'Abspielen' })).toBeVisible();
+    await expect.poll(() => me).toBeGreaterThanOrEqual(2); // the layout's and the detail page's (download permission) answers are in
+    await expect(page.getByRole('button', { name: /Herunterladen/ })).toHaveCount(0);
+  });
+
+  test('series: Download names the next episode (S·E)', async ({ page }) => {
+    await allowDownloads(page);
+    await page.goto('/item/' + SERIES.id);
+    await expect(page.getByRole('heading', { level: 1, name: SERIES.name })).toBeVisible();
+    await expect(page.locator('.dbody').getByRole('button', { name: /^S1·F\d+ herunterladen$/ })).toBeVisible();
+  });
+
+  test.describe('with motion', () => {
+    test.use({ reducedMotion: 'no-preference' });
+
+    test('the coral underline slides (transform) to the chosen tab, the panel crossfades (120 ms out, then 200 ms in)', async ({ page }) => {
+      await page.addInitScript(() => sessionStorage.setItem('ff-intro-seen', '1'));
+      await freezeClock(page);
+      await open(page);
+      const list = tablist(page);
+      const ul = list.locator('.ul');
+      const details = list.getByRole('tab', { name: 'Details' });
+      const more = list.getByRole('tab', { name: 'Mehr davon' });
+      await expect(details).toHaveAttribute('aria-selected', 'true');
+      const underTab = async (tab: typeof details) => {
+        await page.clock.runFor(50);
+        const [u, t] = [(await ul.boundingBox())!, (await tab.boundingBox())!];
+        return Math.abs(u.x - t.x) < 1.5 && Math.abs(u.width - t.width) < 1.5;
+      };
+      await expect.poll(() => underTab(details)).toBe(true);
+      const before = await ul.evaluate((e) => getComputedStyle(e).transform);
+      expect(await ul.evaluate((e) => getComputedStyle(e).transitionProperty)).toBe('transform');
+      await more.click();
+      await expect(more).toHaveAttribute('aria-selected', 'true');
+      // the old panel fades out first (the frozen clock holds it there), the new one is still hidden
+      await expect(page.locator('.panes')).toHaveClass(/\bout\b/);
+      await expect(page.locator('#dv-panel-details')).toBeVisible();
+      await expect(page.locator('#dv-panel-more')).toBeHidden();
+      await page.clock.runFor(130);
+      await expect(page.locator('#dv-panel-more')).toBeVisible();
+      await expect(page.locator('#dv-panel-details')).toBeHidden();
+      await expect(page.locator('.panes')).toHaveClass(/\bin\b/);
+      await expect.poll(() => underTab(more)).toBe(true);
+      expect(await ul.evaluate((e) => getComputedStyle(e).transform)).not.toBe(before);
+    });
+
+    test('calm mode: no trailer starts in the backdrop', async ({ page }) => {
+      await page.addInitScript(() => sessionStorage.setItem('ff-intro-seen', '1'));
+      const asked = await fakeTrailer(page);
+      await page.route('**/api/prefs', (r) => r.fulfill({ json: { prefs: { calm: true, hoverTrailers: true } } }));
+      await freezeClock(page);
+      await open(page);
+      await expect(page.locator('html')).toHaveClass(/\bcalm\b/);
+      await expect(page.locator('.dv .hero img.bg')).toHaveClass(/loaded/);
+      await page.clock.runFor(3000);
+      expect(asked).toEqual([]);
+      await expect(page.locator('.dv .hero video.hv')).not.toHaveClass(/\bon\b/);
+    });
+
+    test('control: without calm the muted trailer starts after 1.5 s', async ({ page }) => {
+      await page.addInitScript(() => sessionStorage.setItem('ff-intro-seen', '1'));
+      const asked = await fakeTrailer(page);
+      await page.route('**/api/prefs', (r) => r.fulfill({ json: { prefs: { calm: false, hoverTrailers: true } } }));
+      await freezeClock(page);
+      await open(page);
+      await expect(page.locator('.dv .hero img.bg')).toHaveClass(/loaded/);
+      await expect.poll(async () => { await page.clock.runFor(200); return asked.length; }).toBe(1);
+      await expect(page.locator('.dv .hero video.hv')).toHaveClass(/\bon\b/);
+    });
+  });
+
+  test('reduced motion: the tab panel switches at once and the underline does not slide', async ({ page }) => {
+    await open(page);
+    const list = tablist(page);
+    const ul = list.locator('.ul');
+    await expect(ul).toBeAttached();
+    expect(await ul.evaluate((e) => parseFloat(getComputedStyle(e).transitionDuration))).toBeLessThan(0.001); // none (or the app's global ~0)
+    await list.getByRole('tab', { name: 'Mehr davon' }).click();
+    await expect(page.locator('#dv-panel-more')).toBeVisible();
+    await expect(page.locator('.panes')).not.toHaveClass(/\bout\b/);
+    const [u, t] = [(await ul.boundingBox())!, (await list.getByRole('tab', { name: 'Mehr davon' }).boundingBox())!];
+    expect(Math.abs(u.x - t.x)).toBeLessThan(1.5);
   });
 });

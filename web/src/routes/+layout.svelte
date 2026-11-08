@@ -29,7 +29,7 @@
   import { loadIntroSettings, markSessionSeen, readSessionSeen, shouldPlayIntro } from '#lib/intro';
   import { mobile } from '#lib/viewport';
   import { isRailTop, isTabActive, TV_RAIL } from '#lib/menu';
-  import { DESK_GUARD, deskPagePlan, frameGuard, framesIdle, framesResume, isDetailPage, motionLevel, stagger, tvPagePlan, VT_ART, watchFrames } from '#lib/tv/motion';
+  import { DESK_GUARD, deskPagePlan, frameGuard, framesIdle, framesResume, isDetailPage, motionLevel, motionTripped, stagger, tvPagePlan, VT_ART, watchFrames } from '#lib/tv/motion';
   import { motionAllowed } from '#lib/preview';
   import TvRail from '#lib/tv/TvRail.svelte';
   import DeskBar from '#lib/desk/DeskBar.svelte';
@@ -40,6 +40,9 @@
   import { dialogKeys } from '#lib/actions';
   import { canRenderEarly, clearReloadFlag, earlyProfile, gateHref, hintOf, kidsRedirect, needsProfileGate, needsWelcome, readActive, readHint, readPicked, readReloading, welcomeHref, writeActive, writeHint } from '#lib/gate';
   import MobilePreviewSheet from '#lib/MobilePreviewSheet.svelte';
+  import TabBar from '#lib/phone/TabBar.svelte';
+  import { dragClose } from '#lib/phone/dragClose';
+  import { chipsTucked, SOLID_AFTER } from '#lib/phone/logic';
   import { closePreview, previewSheet } from '#lib/previewSheet';
   import { isLocale, locale, pageEpoch, pickLocale, ready, setLocale, setMediaServer, t, type Locale } from '#lib/i18n';
   import Rich from '#lib/i18n/Rich.svelte';
@@ -120,6 +123,46 @@
   $: kidsMode.set(kidsUi); // shared flag for components (no social UI on kids profiles)
   // ---- phone: chip bar + "Kategorien" overlay (the desktop dropdown lives in DeskBar) ----
   let catOpen = false, catGenres: string[] | null = null, catKind: Kind = 'movies', catBtn: HTMLElement | null = null;
+  /** the categories sheet is sliding out (still mounted); it unmounts on its transitionend or after CAT_OUT_MS */
+  let catLeaving = false, catOutT: ReturnType<typeof setTimeout> | undefined;
+  const CAT_OUT_MS = 280;
+  function catGone() { clearTimeout(catOutT); catOutT = undefined; catLeaving = false; }
+  onDestroy(() => clearTimeout(catOutT));
+  // ---- phone header: glass once scrolled past SOLID_AFTER, chips tuck while scrolling down (rAF-throttled scroll listener) ----
+  let mSolid = false, mTucked = false, lastY = 0, scrollRaf = 0;
+  function readScroll() {
+    scrollRaf = 0;
+    const y = Math.max(0, window.scrollY);
+    mSolid = y > SOLID_AFTER;
+    mTucked = chipsTucked({ y, lastY, tucked: mTucked });
+    lastY = y;
+  }
+  const onScroll = () => { if (!scrollRaf) scrollRaf = requestAnimationFrame(readScroll); };
+  /** the listener runs only while the phone header shows (phones, not TV) */
+  let scrollOn = false;
+  function syncScroll(on: boolean) {
+    if (typeof window === 'undefined' || on === scrollOn) return;
+    scrollOn = on;
+    if (on) { window.addEventListener('scroll', onScroll, { passive: true }); readScroll(); }
+    else { window.removeEventListener('scroll', onScroll); if (scrollRaf) cancelAnimationFrame(scrollRaf); scrollRaf = 0; }
+  }
+  $: syncScroll($mobile && !tv);
+  onDestroy(() => syncScroll(false));
+  /** `html.m-glass`: blur behind the phone bars only with the full motion level; `html.m-still`: instant changes (reduced motion / calm) */
+  const motionClasses = (_p: unknown, _m: boolean, _tripped = false) => {
+    if (typeof document === 'undefined') return;
+    const c = document.documentElement.classList;
+    c.toggle('m-glass', motionLevel() === 'full');
+    c.toggle('m-still', !motionAllowed());
+  };
+  $: motionClasses($prefs, $mobile, $motionTripped); // (the frame guard tripping drops the blur too)
+  onMount(() => {
+    // a system-wide reduced-motion switch while the app is open
+    const mq = typeof matchMedia === 'function' ? matchMedia('(prefers-reduced-motion: reduce)') : null;
+    const onChange = () => motionClasses(null, false);
+    mq?.addEventListener?.('change', onChange);
+    return () => mq?.removeEventListener?.('change', onChange);
+  });
 
   $: path = $page.url.pathname;
   // /setup: the wizard of a new install (no account yet); /setup/extras is not public (the first admin is signed in there)
@@ -140,7 +183,7 @@
   $: if (showBanner && !stopBanner) stopBanner = startBanner();
   $: if (!showBanner && stopBanner) { stopBanner(); stopBanner = null; }
   $: unread = notes.filter((n) => !n.read).length;
-  $: if (path) { catOpen = false; closePreview(); }
+  $: if (path) { catOpen = false; catGone(); closePreview(); }
   $: chips = $mobile && showsChips(path) && !kidsUi;
   // kids profiles stay on kids routes, new profiles go through /welcome once (both also checked in boot() before the page mounts)
   $: if (me && !pending && !publicPage) {
@@ -153,14 +196,17 @@
   }
   // the web app manifest (name, shortcuts) follows the UI language
   $: if (typeof document !== 'undefined') document.querySelector('link[rel="manifest"]')?.setAttribute('href', `/manifest.webmanifest?lang=${$locale}`);
-  $: if (!$mobile) { catOpen = false; closePreview(); }
+  $: if (!$mobile) { catOpen = false; catGone(); closePreview(); }
   /** desktop shell (pill bar; later the desktop browse pieces): not on TV, phones or kids profiles */
   $: desk = deskUi({ tv, mobile: $mobile, kids: kidsUi });
   $: deskActive.set(desk); // openModal and the detail route follow it (desktop: titles open as the full page)
-  // desktop: the same frame-budget guard as the TV (spec 5.2) while the desktop layout is on; it only samples frames while
-  // something moves (page transitions, row glides, stagger) and drops the session to the reduced set when it cannot keep up
+  /** the phone shell (tab bar, carousel, preview sheet): phones, not TV, not kids profiles */
+  $: phoneShell = $mobile && !tv && !kidsUi;
+  // desktop and the phone shell: the same frame-budget guard as the TV (spec 5.2; phones with the desktop budget, spec 2026-11-08
+  // Motion); it only samples frames while something moves (page transitions, row glides, stagger, the carousel spring) and
+  // drops the session to the reduced set when it cannot keep up
   let deskGuard: (() => void) | null = null;
-  $: if (typeof window !== 'undefined') syncDeskGuard(desk);
+  $: if (typeof window !== 'undefined') syncDeskGuard(desk || phoneShell);
   function syncDeskGuard(on: boolean) {
     if (on && !deskGuard) {
       deskGuard = frameGuard(DESK_GUARD); // a looser budget than the TV's: a steady 30 fps desktop keeps its motion
@@ -193,14 +239,21 @@
     deskBar?.openSearch();
   }
   async function openCats(e: Event) {
-    catBtn = e.currentTarget as HTMLElement; catKind = kindFromPath(path); catOpen = true;
+    catBtn = e.currentTarget as HTMLElement; catKind = kindFromPath(path); catGone(); catOpen = true;
     await tick();
     document.querySelector<HTMLElement>('.cats .close')?.focus();
     void fetchGenres();
   }
   async function fetchGenres() { if (!catGenres) { try { catGenres = ((await api('/api/library/genres')).genres as string[]) ?? []; } catch { catGenres = []; } } }
-  function closeCats(refocus = true) { catOpen = false; if (refocus) catBtn?.focus(); }
-  function pickCat(href: string) { catOpen = false; void goto(href); }
+  /** closing slides the sheet out and fades the dim (ease-in); instant with reduced motion / calm mode */
+  function closeCats(refocus = true) {
+    if (!catOpen) return;
+    catOpen = false;
+    if (motionAllowed()) { catLeaving = true; clearTimeout(catOutT); catOutT = setTimeout(catGone, CAT_OUT_MS + 80); }
+    if (refocus) catBtn?.focus();
+  }
+  function catOutEnd(e: TransitionEvent) { if (catLeaving && e.target === e.currentTarget && e.propertyName === 'transform') catGone(); }
+  function pickCat(href: string) { catOpen = false; catGone(); void goto(href); }
   function onKey(e: KeyboardEvent) {
     // "/" and Ctrl/Cmd+K jump to the search field (not while typing somewhere else)
     if (!watchPage && !tv && ((e.key === '/' && !e.ctrlKey && !e.metaKey && !e.altKey) || ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k'))) {
@@ -271,6 +324,7 @@
   beforeNavigate(({ from }) => {
     let el = document.activeElement as HTMLElement | null;
     if (desk) { const o = deskOrigin(); deskFrom = o.click; el = o.link; framesIdle(); } // (the frame guard: a page is being built)
+    else if (phoneShell) framesIdle();
     const href = el?.getAttribute?.('href');
     if (desk && from && !href) memo.delete(from.url.pathname + from.url.search); // left by the bar etc.: no card to come back to
     if (!(tv || desk) || !from || !href) return;
@@ -357,6 +411,7 @@
     }
     if (tv) return tvTransition(nav, start);
     if (desk && (isDetailPage(from) || isDetailPage(to))) { const r = deskTransition(nav, start); if (r !== null) return r; }
+    if (phoneShell && isDetailPage(to)) { const r = sheetTransition(nav, start); if (r !== null) return r; }
     if (typeof start !== 'function' || matchMedia('(prefers-reduced-motion: reduce)').matches) return;
     // typing in the header search must not freeze the screen for a crossfade
     if (!nav.to || from === to || to === '/search' || immersive(from) || immersive(to) || intro) return;
@@ -500,6 +555,34 @@
       });
       // the frame guard watches the transition (a desktop that cannot keep up drops to the reduced set), counting from the
       // moment it animates: the screen held for the new page on purpose before that
+      void (t as { ready?: Promise<unknown> }).ready?.then(framesResume, () => undefined);
+      void t.finished.catch(() => undefined).finally(() => vtEnd(my, named));
+    });
+  }
+  // ---- phone: the preview sheet's poster -> the detail backdrop (spec 2026-11-08 §3; Details and drag up). The desktop's
+  // shared name (VT_ART) and timing, set inline for this one navigation; without the API, with reduced motion / calm mode or
+  // without a poster in the sheet, the plain crossfade below takes it. ----
+  /** `null`: no sheet poster to morph from (the generic crossfade runs) */
+  function sheetTransition(nav: Nav, start: StartVT | undefined): Promise<void> | null {
+    const from = nav.from?.url.pathname ?? '';
+    if (!nav.to || intro || immersive(from) || typeof start !== 'function' || !motionAllowed() || motionLevel() !== 'full') return null;
+    const poster = document.querySelector<HTMLElement>('.sheet[role="dialog"]:not(.out) img.poster');
+    if (!get(previewSheet) || !onScreen(poster)) return null;
+    const root = document.documentElement, my = vtBegin(), named: HTMLElement[] = [];
+    const bd = () => document.querySelector<HTMLElement>('main .dv [data-vt-art]');
+    root.classList.add('ff-vt-desk');
+    vtName(poster, VT_ART, named);
+    return new Promise<void>((resolve) => {
+      const t = start.call(document, async () => {
+        resolve();
+        // the screen holds still until the detail page is there: never longer than 800 ms (the desktop's budget)
+        const until = performance.now() + 800;
+        await Promise.race([nav.complete.catch(() => undefined), sleep(800)]);
+        if (my !== vtSeq) return; // a newer transition took over meanwhile
+        for (const el of named) el.style.removeProperty('view-transition-name'); // the sheet lets go first: a name must exist once
+        while (performance.now() < until && !(bd() && document.querySelector('main .dv h1'))) await sleep(16);
+        vtName(bd(), VT_ART, named);
+      });
       void (t as { ready?: Promise<unknown> }).ready?.then(framesResume, () => undefined);
       void t.finished.catch(() => undefined).finally(() => vtEnd(my, named));
     });
@@ -659,16 +742,16 @@
     {#if tv}
       <TvRail {path} {who} {faceStyle} bind:open={railOpen} />
     {:else if $mobile}
-      <header class="nav m" class:solid={scrolled || !heroPage} class:chips>
+      <header class="nav m" class:solid={mSolid || !heroPage} class:chips class:tuck={chips && mTucked}>
+        <span class="mbg" aria-hidden="true"></span>
         <div class="mrow">
-          <a class="mlogo" href="/profiles" aria-label={who ? $t('shell.mobile.switchProfileCurrent', { name: who }) : $t('shell.mobile.switchProfile')}><Logo size={30} label="" /><span class="for">{who ? $t('shell.mobile.forName', { name: who }) : ''}</span></a>
+          <a class="mlogo" href="/" aria-label={$t('shell.mobile.home')} aria-current={path === '/' ? 'page' : undefined}><Logo size={28} label="" /><span class="wm" aria-hidden="true">FriendFlix</span></a>
           <span class="sp"></span>
           <a class="icon-btn" href="/search" aria-label={$t('shell.mobile.search')} aria-current={path.startsWith('/search') ? 'page' : undefined}><Icon name="search" size={24} /></a>
-          <a class="icon-btn" href="/downloads" aria-label={$t('shell.mobile.downloads')} aria-current={path.startsWith('/downloads') ? 'page' : undefined}><Icon name="download" size={24} /></a>
           <a class="avatar" href="/me" aria-label={unread ? $t('shell.mobile.meUnread', { n: unread }) : $t('shell.mobile.me')}><span class="face" style={faceStyle}>{initial(who)}</span>{#if unread}<span class="dot" aria-hidden="true">{unread}</span>{/if}</a>
         </div>
         {#if chips}
-          <nav class="chipbar" aria-label={$t('shell.cats.title')}>
+          <nav class="chipbar" class:tucked={mTucked} aria-label={$t('shell.cats.title')} inert={mTucked || undefined}>
             <a class="chip" href="/browse/series" class:on={path.startsWith('/browse/series')} aria-current={path.startsWith('/browse/series') ? 'page' : undefined}>{$t('shell.nav.series')}</a>
             <a class="chip" href="/browse/movies" class:on={path.startsWith('/browse/movies')} aria-current={path.startsWith('/browse/movies') ? 'page' : undefined}>{$t('shell.nav.movies')}</a>
             <button type="button" class="chip" aria-haspopup="dialog" aria-expanded={catOpen} on:click={openCats}>{$t('shell.nav.categories')}<Icon name="chevron-down" size={16} /></button>
@@ -678,13 +761,12 @@
     {:else if desk}
       <DeskBar bind:this={deskBar} {path} {heroPage} {me} {who} {faceStyle} {multi} {admin} {canDownload} {lgApp} {here} {notes} onHelp={() => (help = true)} />
     {/if}
-    <nav class="tabbar" aria-label={$t('shell.mobile.tabbar')}>
-      <a href="/" class:active={path === '/'} aria-current={path === '/' ? 'page' : undefined}><span class="ico"><Icon name="home" size={22} /></span><span>{$t('shell.tabs.home')}</span></a>
-      <a href="/new" class:active={path.startsWith('/new')} aria-current={path.startsWith('/new') ? 'page' : undefined}><span class="ico"><Icon name="star" size={22} /></span><span>{$t('shell.tabs.new')}</span></a>
-      <a href="/me" class:active={path.startsWith('/me')} aria-current={path.startsWith('/me') ? 'page' : undefined}><span class="ico"><span class="face sm" aria-hidden="true" style={faceStyle}>{initial(who)}</span></span><span>{$t('shell.tabs.me')}</span></a>
-    </nav>
-    {#if catOpen && $mobile}
-      <div class="cats" role="dialog" aria-modal="true" aria-label={$t('shell.cats.title')} use:dialogKeys={{ close: () => closeCats() }}>
+    <TabBar {path} {canDownload} />
+    {#if (catOpen || catLeaving) && $mobile}
+      <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
+      <div class="catdim" class:out={catLeaving} on:click={() => closeCats()}></div>
+      <div class="cats" class:out={catLeaving} inert={catLeaving || undefined} role="dialog" aria-modal="true" aria-label={$t('shell.cats.title')} use:dialogKeys={{ close: () => closeCats() }} use:dragClose={{ close: () => closeCats() }} on:transitionend={catOutEnd}>
+        <div class="grab"><span class="handle" aria-hidden="true"></span></div>
         <div class="chead">
           <div class="seg" role="group" aria-label={$t('shell.cats.kind')}>
             <button type="button" class:on={catKind === 'movies'} aria-pressed={catKind === 'movies'} on:click={() => (catKind = 'movies')}>{$t('common.movies')}</button>
@@ -700,7 +782,7 @@
         </ul>
       </div>
     {/if}
-    {#if $mobile && $previewSheet}<MobilePreviewSheet />{/if}
+    {#if $mobile}<MobilePreviewSheet {canDownload} />{/if}
   {/if}
 
   {#if castBarOn}<CastBar tabbar={!kidsUi && !profilesPage} />{/if}
@@ -756,7 +838,7 @@
 
 <style>
   :global(html.tv) main.tvrail { padding-left: 96px; box-sizing: border-box; }
-  .offbar { position: fixed; z-index: 80; left: 0; right: 0; bottom: calc(56px + var(--safe-bottom) + var(--castbar-h)); background: #242b33; padding: .6rem var(--pad-x); text-align: center; font-size: .9rem; }
+  .offbar { position: fixed; z-index: 80; left: 0; right: 0; bottom: calc(var(--tabbar-h) + var(--safe-bottom) + var(--castbar-h)); background: #242b33; padding: .6rem var(--pad-x); text-align: center; font-size: .9rem; }
   .offbar a { text-decoration: underline; font-weight: 600; }
   .offbar.notab { bottom: calc(var(--safe-bottom) + var(--castbar-h)); } /* no tab bar (kids profiles, profile picker) */
   @media (min-width: 721px) { .offbar, .offbar.notab { bottom: var(--castbar-h); } }
@@ -788,38 +870,44 @@
   .hbox dd { margin: 0; color: #cfcfcf; font-size: .93rem; line-height: 1.5; }
   .hbox :global(a) { text-decoration: underline; }
   .hbox :global(kbd), .pendp :global(kbd) { display: inline-block; min-width: 1.4em; padding: 0 .35em; border: 1px solid #4a5560; border-bottom-width: 2px; border-radius: 4px; font: inherit; font-size: .82em; text-align: center; background: #1c2228; }
-  .tabbar { display: none; }
   @media (min-width: 721px) { main:not(.boot) { min-height: 100vh; } } /* the footer starts below the fold on short pages */
   .boot { min-height: 100vh; display: grid; place-content: center; gap: 1.2rem; justify-items: center; }
   .spin { width: 34px; height: 34px; border: 3px solid #2b333c; border-top-color: var(--acc); border-radius: 50%; animation: sp .8s linear infinite; }
   @keyframes sp { to { transform: rotate(360deg); } }
   @media (max-width: 720px) {
-    .tabbar { display: flex; position: fixed; bottom: 0; left: 0; right: 0; z-index: 60; background: rgba(12,12,12,.97); border-top: 1px solid #20262d; padding-bottom: var(--safe-bottom); }
-    .tabbar a { flex: 1 1 0; min-width: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: .15rem; min-height: 56px; padding: 0 2px; font-size: .68rem; color: var(--mut); font-weight: 500; }
-    .tabbar .ico { flex: none; width: 24px; height: 24px; display: grid; place-items: center; }
-    .tabbar span:not(.face):not(.ico) { max-width: 100%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-    .tabbar a.active { color: #fff; font-weight: 700; }
-    .tabbar .face.sm { width: 24px; height: 24px; font-size: .72rem; border-radius: 4px; }
-    .tabbar a.active .face.sm { box-shadow: 0 0 0 2px #fff; }
-    /* with the cast bar also the home indicator's inset (the bar sits on the tab bar, which is 56 px + that inset high) */
+    /* kids profiles (no tab bar) keep their spacing; elsewhere the page clears the floating tab bar (lib/phone/TabBar.svelte),
+       the home indicator below it and the cast bar on it */
     main { padding-bottom: calc(70px + var(--castbar-h) + min(var(--castbar-h), var(--safe-bottom))); }
+    :global(html:not(.kids)) main { padding-bottom: calc(var(--tabbar-h) + 1rem + var(--safe-bottom) + var(--castbar-h)); }
   }
   :global(html) { --castbar-h: 0px; } /* 64px while the cast bar shows (set on <html> above) */
   @media (min-width: 721px) { :global(body) { padding-bottom: var(--castbar-h); } }
 
-  /* ---- phone header: transparent over the hero, solid + blurred once scrolled; sticky chip bar below ---- */
-  /* padding-top keeps the rows below the status bar / Dynamic Island; the background (solid once scrolled) covers that strip too */
-  .nav.m { height: auto; flex-direction: column; align-items: stretch; gap: 0; padding: var(--safe-top) var(--safe-right) 0 var(--safe-left); background: linear-gradient(to bottom, rgba(0,0,0,.7), transparent); transition: background var(--t-med), backdrop-filter var(--t-med); }
-  .nav.m.solid { background: rgba(16,20,24,.95); -webkit-backdrop-filter: blur(14px); backdrop-filter: blur(14px); }
+  /* ---- phone header: transparent over the hero, glass once scrolled (SOLID_AFTER); chip bar below tucks while scrolling down ---- */
+  /* padding-top keeps the rows below the status bar / Dynamic Island; the background layer covers that strip too. Only
+     transform and opacity move: the two background layers crossfade, the layer slides up by the chip bar when it tucks. */
+  .nav.m, .nav.m.solid { height: auto; flex-direction: column; align-items: stretch; gap: 0; padding: var(--safe-top) var(--safe-right) 0 var(--safe-left); background: none; transition: none; pointer-events: none; }
+  .nav.m > :not(.mbg) { pointer-events: auto; }
+  .mbg { position: absolute; inset: 0; z-index: -1; pointer-events: none; transition: transform 300ms var(--m-emph-out); }
+  .mbg::before, .mbg::after { content: ''; position: absolute; inset: 0; transition: opacity 250ms ease-out; }
+  .mbg::before { background: linear-gradient(to bottom, rgba(0,0,0,.7), transparent); }
+  .mbg::after { background: rgba(10,10,12,.94); opacity: 0; }
+  :global(html.m-glass) .mbg::after { background: rgba(10,10,12,.78); -webkit-backdrop-filter: blur(18px) saturate(1.4); backdrop-filter: blur(18px) saturate(1.4); }
+  .nav.m.solid .mbg::before { opacity: 0; }
+  .nav.m.solid .mbg::after { opacity: 1; }
+  .nav.m.tuck .mbg { transform: translateY(-48px); } /* the chip bar's height: the glass ends under the top row */
   .mrow { display: flex; align-items: center; gap: .1rem; height: 56px; padding: 0 calc(var(--pad-x) - 8px) 0 var(--pad-x); }
-  .mlogo { display: inline-flex; align-items: center; gap: .6rem; min-height: 44px; min-width: 0; }
-  .for { font-size: 1.1rem; font-weight: 800; letter-spacing: -.01em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 46vw; text-shadow: 0 1px 8px rgba(0,0,0,.6); }
+  .mlogo { display: inline-flex; align-items: center; gap: .5rem; min-height: 44px; min-width: 0; }
+  .wm { font-size: 1.06rem; font-weight: 800; letter-spacing: -.02em; white-space: nowrap; text-shadow: 0 1px 8px rgba(0,0,0,.6); }
   .nav.m .icon-btn { display: inline-flex; align-items: center; justify-content: center; }
   .nav.m .avatar { position: relative; display: inline-flex; align-items: center; justify-content: center; width: 44px; height: 44px; border-radius: 4px; }
   .nav.m .face { width: 30px; height: 30px; font-size: .9rem; }
   .nav.m .dot { top: 2px; right: 0; }
-  .chipbar { display: flex; gap: .5rem; align-items: center; height: 48px; padding: 0 var(--pad-x); overflow-x: auto; scrollbar-width: none; }
+  .chipbar { display: flex; gap: .5rem; align-items: center; height: 48px; padding: 0 var(--pad-x); overflow-x: auto; scrollbar-width: none; transition: transform 300ms var(--m-emph-out), opacity 200ms ease-out, visibility 0s; }
   .chipbar::-webkit-scrollbar { display: none; }
+  .nav.m > .chipbar.tucked { pointer-events: none; }
+  .chipbar.tucked { transform: translateY(-12px); opacity: 0; visibility: hidden; pointer-events: none; transition: transform 300ms var(--m-emph-out), opacity 200ms ease-out, visibility 0s 300ms; }
+  :global(html.m-still) .mbg, :global(html.m-still) .mbg::before, :global(html.m-still) .mbg::after, :global(html.m-still) .chipbar { transition: none; }
   .chip::after, .seg button::after { content: ''; position: absolute; inset: -4px 0; }
   .chip { position: relative; flex: none; display: inline-flex; align-items: center; gap: .3rem; min-height: 36px; padding: 0 .95rem; border-radius: 99px; border: 1px solid rgba(255,255,255,.5); background: rgba(0,0,0,.25); color: #fff; font: inherit; font-size: .9rem; font-weight: 500; }
   .chip:hover:not(:disabled) { background: rgba(255,255,255,.12); }
@@ -827,10 +915,15 @@
   :global(html.m-chips) { --nav-h: 104px; }
   @media (max-width: 720px) { :global(html:not(.m-chips)) { --nav-h: 56px; } }
 
-  /* ---- categories overlay ---- */
-  .cats { position: fixed; inset: 0; z-index: 95; background: rgba(10,10,10,.97); -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px); overflow-y: auto; overscroll-behavior: contain; padding: 0 max(var(--pad-x), var(--safe-right)) calc(2rem + var(--safe-bottom)) max(var(--pad-x), var(--safe-left)); animation: fade .2s ease-out; }
-  /* the sticky head carries the status-bar inset itself, so its opaque background also covers that strip while scrolling */
-  .chead { position: sticky; top: 0; display: flex; align-items: center; justify-content: space-between; padding: calc(.7rem + var(--safe-top)) 0 .7rem; background: linear-gradient(rgba(10,10,10,1) 70%, transparent); z-index: 1; }
+  /* ---- categories: bottom sheet (springs up, drag down or tap the dim to close; lib/phone/dragClose.ts) ---- */
+  .catdim { position: fixed; inset: 0; z-index: 94; background: rgba(0,0,0,.6); animation: fade 200ms ease-out; }
+  .cats { position: fixed; left: 0; right: 0; bottom: 0; z-index: 95; max-height: min(82dvh, calc(100dvh - var(--safe-top) - 1rem)); overflow-y: auto; overscroll-behavior: contain; background: #18181c; border-radius: 22px 22px 0 0; box-shadow: 0 -10px 40px rgba(0,0,0,.5); padding: 0 max(var(--pad-x), var(--safe-right)) calc(1.5rem + var(--safe-bottom)) max(var(--pad-x), var(--safe-left)); animation: rise var(--m-d-spring) var(--m-spring); transition: transform var(--m-d-spring) var(--m-spring); }
+  .cats:global(.dragging) { transition: none; }
+  .cats.out { transform: translateY(100%); transition: transform 280ms var(--m-emph-in); pointer-events: none; }
+  .catdim.out { opacity: 0; transition: opacity 280ms var(--m-emph-in); pointer-events: none; }
+  .grab { position: sticky; top: 0; z-index: 2; touch-action: none; cursor: grab; padding: 8px 0 4px; background: #18181c; }
+  .handle { display: block; width: 38px; height: 5px; border-radius: 3px; background: rgba(255,255,255,.3); margin: 0 auto; }
+  .chead { position: sticky; top: 17px; display: flex; align-items: center; justify-content: space-between; padding: .4rem 0 .7rem; background: linear-gradient(#18181c 75%, transparent); z-index: 1; }
   .seg { display: inline-flex; border: 1px solid #4a5560; border-radius: 99px; overflow: hidden; }
   .seg button { position: relative; background: transparent; border-radius: 0; min-height: 40px; padding: 0 1.1rem; color: #ddd; font-weight: 600; }
   .seg button:hover:not(:disabled) { background: rgba(255,255,255,.1); }
@@ -844,5 +937,7 @@
   .clist a:active, .clist a:hover { color: #fff; }
   .clist .muted { padding: 1rem 0; }
   @keyframes fade { from { opacity: 0; } to { opacity: 1; } }
-  @media (prefers-reduced-motion: reduce) { .cats, .hov { animation: none; } }
+  @keyframes rise { from { transform: translateY(100%); } to { transform: none; } }
+  @media (prefers-reduced-motion: reduce) { .cats, .catdim, .hov { animation: none; } }
+  :global(html.m-still) .cats, :global(html.m-still) .catdim { animation: none; transition: none; }
 </style>

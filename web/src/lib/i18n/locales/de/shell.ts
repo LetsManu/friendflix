@@ -26,6 +26,7 @@ export default {
     me: 'Mein Bereich',
     meUnread: { one: 'Mein Bereich, {n} neue Benachrichtigung', other: 'Mein Bereich, {n} neue Benachrichtigungen' },
     tabbar: 'Mobile Navigation',
+    home: 'Startseite',
   },
   cats: {
     title: 'Kategorien',
@@ -89,6 +90,10 @@ export default {
     home: 'Start',
     new: 'Neu & demnächst',
     me: 'Mein Bereich',
+    myList: 'Merkliste',
+    downloads: 'Downloads',
+    newShort: 'Neu',
+    downloadsShort: 'Downloads',
   },
   offline: {
     bar: 'Du bist offline.',

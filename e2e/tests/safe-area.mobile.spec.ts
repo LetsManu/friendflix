@@ -59,10 +59,12 @@ test.describe('safe area top (iPhone home-screen app)', () => {
     const box = (await header.boundingBox())!;
     expect(box.y).toBe(0); // the header itself still starts at the top edge: its background fills the status bar area
     expect(box.height).toBeGreaterThanOrEqual(TOP + 56);
-    // the hero starts below the full header (incl. chip bar) + status bar
+    // the carousel's cards start below the full header (incl. chip bar) + status bar; its glow fills the strip behind the header
     const nav = await page.evaluate(() => parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--nav-h')));
-    const pad = await page.locator('.mh').first().evaluate((e) => parseFloat(getComputedStyle(e).paddingTop));
+    const carousel = page.getByRole('region', { name: 'Top-Tipps für dich' });
+    const pad = await carousel.evaluate((e) => parseFloat(getComputedStyle(e).paddingTop));
     expect(pad).toBeGreaterThanOrEqual(TOP + nav);
+    expect(await top(carousel.getByRole('group').first())).toBeGreaterThanOrEqual(box.y + box.height - 0.5);
   });
 
   test('detail page: video and sticky tabs stop under header + status bar', async ({ page }) => {
@@ -118,13 +120,15 @@ test.describe('safe area top (iPhone home-screen app)', () => {
     expect(await controlsUnder(page, TOP)).toEqual([]);
   });
 
-  test('the bottom tab bar keeps its safe-area padding', async ({ page }) => {
+  test('the floating tab bar sits above the home indicator', async ({ page }) => {
     await page.goto('/me');
     const bar = page.locator('nav.tabbar');
     await expect(bar).toBeVisible();
-    expect(await bar.evaluate((e) => getComputedStyle(e).paddingBottom)).toBe(`${BOTTOM}px`);
     const box = (await bar.boundingBox())!;
-    expect(Math.round(box.y + box.height)).toBe(844);
+    expect(Math.round(box.y + box.height)).toBe(844 - BOTTOM - 10);
+    // the page content still clears the bar and the home indicator
+    const pad = await page.locator('main').evaluate((e) => parseFloat(getComputedStyle(e).paddingBottom));
+    expect(pad).toBeGreaterThanOrEqual(844 - box.y);
   });
 });
 

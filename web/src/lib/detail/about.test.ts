@@ -62,6 +62,10 @@ describe('tabs', () => {
     expect(detailTabs('Movie', true)).toEqual(['details', 'more', 'extras']);
     expect(detailTabs('Movie', false)).toEqual(['details', 'more']);
     expect(detailTabs('Series', true)).toEqual(['episodes', 'details', 'more', 'extras']);
+    // no similar titles: no empty More like this tab
+    expect(detailTabs('Movie', false, false)).toEqual(['details']);
+    expect(detailTabs('Series', true, false)).toEqual(['episodes', 'details', 'extras']);
+    expect(detailTabs('Movie', true, true)).toEqual(['details', 'more', 'extras']);
   });
   it('defaultTab', () => {
     expect(defaultTab('Series')).toBe('episodes');

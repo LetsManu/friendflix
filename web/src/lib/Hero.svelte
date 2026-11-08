@@ -17,6 +17,7 @@
   import { t } from '#lib/i18n';
   import { playOrCast } from '#lib/cast/playOrCast';
   import { native } from '#lib/native/bridge';
+  import { heroPlayHref, heroPlaysNative, listIdOf } from '#lib/heroPlay';
 
   /** Billboard at the top of the home page. */
   export let item: Item | null;
@@ -91,12 +92,12 @@
   onMount(() => { document.addEventListener('visibilitychange', onVisibility); });
   onDestroy(() => { if (typeof window === 'undefined') return; io?.disconnect(); document.removeEventListener('visibilitychange', onVisibility); stopHero(); });
   $: item, (logoFailed = false);
-  $: listId = item ? (item.seriesId ?? item.id) : '';
+  $: listId = item ? listIdOf(item) : '';
   $: inList = listId ? $listIds.has(listId) : false;
   $: kind = $t(item?.type === 'Series' ? 'home.meta.series' : item?.type === 'Episode' ? 'home.meta.episode' : 'home.meta.movie');
   $: playText = playLabel || $t('home.card.play');
   /** a movie / episode billboard plays in the app's native player (or on a connected TV); a series link goes to its page as before */
-  function heroPlay(e: MouseEvent) { if (native.available && item && item.type !== 'Series' && item.type !== 'BoxSet' && (!playHref || playHref.startsWith(`/watch/${item.id}`))) playOrCast(e, item); }
+  function heroPlay(e: MouseEvent) { if (item && heroPlaysNative(item, playHref, native.available)) playOrCast(e, item); }
   $: tagline = item ? item.genres.slice(0, 3).join(' · ') : '';
 </script>
 
@@ -114,7 +115,7 @@
         </span>
       </a>
       <div class="pbtns">
-        <a class="pplay" data-autofocus href={playHref || (item.type === 'Series' ? `/item/${item.id}` : `/watch/${item.id}`)} use:playPrefetch on:click={heroPlay}><Icon name="play" size={22} />{playText}</a>
+        <a class="pplay" data-autofocus href={heroPlayHref(item, playHref)} use:playPrefetch on:click={heroPlay}><Icon name="play" size={22} />{playText}</a>
         <button type="button" class="plist" aria-pressed={inList} on:click={() => toggleList(listId, inList)}><Icon name={inList ? 'check' : 'plus'} size={22} />{$t('home.card.myList')}</button>
       </div>
     {:else}
@@ -147,7 +148,7 @@
         {#if item.overview}<p class="ov">{item.overview}</p>{/if}
       </div>
       <div class="btns">
-        <a class="btn pill" data-autofocus href={playHref || (item.type === 'Series' ? `/item/${item.id}` : `/watch/${item.id}`)} use:playPrefetch on:click={heroPlay}><Icon name="play" size={26} />{playText}</a>
+        <a class="btn pill" data-autofocus href={heroPlayHref(item, playHref)} use:playPrefetch on:click={heroPlay}><Icon name="play" size={26} />{playText}</a>
         {#if more}<a class="btn glass" href="/item/{item.id}" aria-haspopup={$deskActive ? undefined : 'dialog'} on:pointerenter={prefetchModal} on:focus={prefetchModal} on:click={(e) => { if (item) primeItem(item); openModal(e, `/item/${item!.id}`); }}><Icon name="info" size={26} />{$t('home.hero.moreInfo')}</a>{/if}
       </div>
     </div>

@@ -55,6 +55,10 @@ const it: Translation<typeof de> = {
     replay: 'Riproduci di nuovo l’anteprima',
     replayTitle: 'Riproduci di nuovo',
   },
+  carousel: {
+    label: 'I migliori per te',
+    slide: '{n} di {m}',
+  },
   row: {
     showAll: 'Mostra tutto',
     prev: 'Indietro',
@@ -186,6 +190,8 @@ const it: Translation<typeof de> = {
     clearRecent: 'Cancella cronologia',
     hint: 'Cerca qui sopra titoli, persone, generi o un anno.',
     popular: 'Ricerche popolari',
+    popularHere: 'Popolari qui',
+    byGenre: 'Sfoglia per genere',
     running: 'Ricerca in corso…',
     errorTitle: 'Ricerca al momento non disponibile',
     errorText: 'Riprova tra un attimo.',
