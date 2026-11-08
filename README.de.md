@@ -99,7 +99,7 @@ Kleine **Labels** auf den Karten zeigen, was neu ist – *Neu*, *Neue Folge*, *N
 
 #### Alles zu einem Titel an einem Ort
 
-Am Desktop ist die Detailansicht eine eigene Seite mit Tabs (die Karte gleitet hinein), am Handy öffnet sie sich als Sheet. Sie zeigt Beschreibung, Ton- und Untertitelsprachen, Besetzung, welche Freunde den Titel empfohlen oder gesehen haben und – bei Serien – alle Staffeln und Folgen mit Fortschrittsbalken. Weiterschauen genau dort, wo du aufgehört hast. Kleine Chips verraten vor dem Start **Bild und Ton** (4K, HDR, Dolby Vision, Dolby Atmos, 5.1 Surround). Steht eine neue Staffel an oder warst du ein paar Wochen weg, fasst **Die Geschichte bisher** kurz zusammen, was passiert ist und wo du stehengeblieben bist – die Karte lässt sich ausblenden. Ein Tab **Extras** sammelt Trailer und Bonusmaterial aus Jellyfin, und jede Folge hat ihre eigenen **Kommentare** von Freunden: Kommentare zu einer Folge, die du noch nicht gesehen hast, bleiben verschwommen, bis du „Spoiler – trotzdem zeigen“ wählst.
+Am Desktop ist die Detailansicht eine eigene Seite mit Tabs (die Karte gleitet hinein), am Handy öffnet ein Tippen erst eine Vorschau, die ganze Seite mit Tabs liegt einen Wisch nach oben entfernt. Sie zeigt Beschreibung, Ton- und Untertitelsprachen, Besetzung, welche Freunde den Titel empfohlen oder gesehen haben und – bei Serien – alle Staffeln und Folgen mit Fortschrittsbalken. Weiterschauen genau dort, wo du aufgehört hast. Kleine Chips verraten vor dem Start **Bild und Ton** (4K, HDR, Dolby Vision, Dolby Atmos, 5.1 Surround). Steht eine neue Staffel an oder warst du ein paar Wochen weg, fasst **Die Geschichte bisher** kurz zusammen, was passiert ist und wo du stehengeblieben bist – die Karte lässt sich ausblenden. Ein Tab **Extras** sammelt Trailer und Bonusmaterial aus Jellyfin, und jede Folge hat ihre eigenen **Kommentare** von Freunden: Kommentare zu einer Folge, die du noch nicht gesehen hast, bleiben verschwommen, bis du „Spoiler – trotzdem zeigen“ wählst.
 
 <table>
   <tr>
@@ -158,7 +158,7 @@ Der **Ruhige Modus** (pro Profil, auch für Kinder) hält alles still: kein Trai
 
 ### Handy und TV
 
-App-artige Oberfläche mit Tab-Leiste unten, einer Vorschau beim Antippen eines Posters und allen Details nur einen Wisch entfernt. FriendFlix lässt sich auf dem Home-Bildschirm installieren (PWA) – mit **Verknüpfungen** per langem Druck (Weiterschauen, Merkliste, Suche, Downloads), einem **Badge** mit deinen ungelesenen Benachrichtigungen auf dem Symbol und Name und Beschreibung der App in deiner Sprache.
+App-artige Oberfläche mit schwebender Tab-Leiste (Start, Neu, Meine Liste, Downloads), einem Wisch-Karussell mit Empfehlungen auf der Startseite, einer Vorschau beim Antippen eines Posters, einer Detailseite mit Tabs nur einen Wisch entfernt und einer Suche mit beliebten Titeln und Genre-Kacheln. FriendFlix lässt sich auf dem Home-Bildschirm installieren (PWA) – mit **Verknüpfungen** per langem Druck (Weiterschauen, Merkliste, Suche, Downloads), einem **Badge** mit deinen ungelesenen Benachrichtigungen auf dem Symbol und Name und Beschreibung der App in deiner Sprache.
 
 <table>
   <tr>

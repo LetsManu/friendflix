@@ -93,7 +93,7 @@ Small **labels** on the cards tell you what is new – *New*, *New episode*, *Ne
 
 #### Everything about a title in one place
 
-On desktop, the detail view is a full page with tabs (and the card glides into it); on phones it opens as a sheet. It shows the description, audio and subtitle languages, cast, which friends recommended or watched it, and – for shows – every season and episode with progress bars. Pick up exactly where you left off. Small chips tell you the **picture and sound** before you press play (4K, HDR, Dolby Vision, Dolby Atmos, 5.1 surround). When a new season is about to start, or you have been away for a few weeks, **The story so far** gives a short recap and where you stopped – and you can hide the card. An **Extras** tab collects trailers and special features from Jellyfin, and every episode has its own **comments** from your friends: comments on an episode you have not seen yet stay blurred until you choose "Spoiler – show anyway".
+On desktop, the detail view is a full page with tabs (and the card glides into it); on phones a tap opens a preview sheet and the full page with tabs is one swipe up. It shows the description, audio and subtitle languages, cast, which friends recommended or watched it, and – for shows – every season and episode with progress bars. Pick up exactly where you left off. Small chips tell you the **picture and sound** before you press play (4K, HDR, Dolby Vision, Dolby Atmos, 5.1 surround). When a new season is about to start, or you have been away for a few weeks, **The story so far** gives a short recap and where you stopped – and you can hide the card. An **Extras** tab collects trailers and special features from Jellyfin, and every episode has its own **comments** from your friends: comments on an episode you have not seen yet stay blurred until you choose "Spoiler – show anyway".
 
 <table>
   <tr>
@@ -152,7 +152,7 @@ Up to five profiles per account, each with its own history, list, favourites, la
 
 ### Phone and TV
 
-An app-like layout with a bottom tab bar, a preview sheet when you tap a poster, and full details one swipe away. FriendFlix can be installed to the home screen (PWA) – with long-press **shortcuts** (Continue Watching, Watchlist, Search, Downloads), an icon **badge** with your unread notifications and the app name and description in your language.
+An app-like layout with a floating tab bar (Home, New, My list, Downloads), a swipe carousel of recommended titles on the home page, a preview sheet when you tap a poster, a detail page with tabs one swipe away, and a search page with popular titles and genre tiles. FriendFlix can be installed to the home screen (PWA) – with long-press **shortcuts** (Continue Watching, Watchlist, Search, Downloads), an icon **badge** with your unread notifications and the app name and description in your language.
 
 <table>
   <tr>
