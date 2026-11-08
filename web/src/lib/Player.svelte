@@ -2016,6 +2016,12 @@
      (title, timeline, two glass pills) laid out with flex column + gap, so nothing can overlap whatever the title, language or
      rotation. Every side follows its safe-area inset; hiding fades opacity (250 ms), never a cut. ---- */
   .stage.pui { --dock-w: calc(100vw - var(--safe-left) - var(--safe-right) - 32px - var(--inset, 0px)); }
+  /* the cast screen: no centre play button on the phone player, the card alone is centred */
+  .stage.pui.rmt { --r-grp: var(--rcard-h, 0px); }
+  /* the page's top slot (watch, party): .ovl already holds the safe-area padding and the scrim, so the slot brings neither */
+  .stage.pui .ovl > :global(.top) { padding: 0; background: none; flex: 1 1 auto; min-width: 0; }
+  /* scrubbing on touch: the 3 px rail keeps a hit area of at least 44 px (3 + 2 × 21) */
+  .stage.pui .track::before { top: -21px; bottom: -21px; }
   .stage.pui .ovl { right: 0; display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; transition: opacity 250ms ease;
     padding: calc(var(--safe-top) + 8px) calc(var(--safe-right) + 16px + var(--inset, 0px)) 0 calc(var(--safe-left) + 16px); }
   .stage.pui .ovl::before { content: ''; position: absolute; left: 0; right: 0; top: 0; height: calc(100% + 72px); z-index: -1; pointer-events: none; background: linear-gradient(rgba(0,0,0,.62), rgba(0,0,0,.25) 60%, transparent); }
@@ -2033,18 +2039,21 @@
   .ctl.dock .tlrow { gap: 12px; }
   .ctl.dock .tlrow .el, .ctl.dock .tlrow .rem { min-width: 2.9rem; font-size: 12px; font-weight: 600; color: rgba(255,255,255,.85); }
   .stage.pui .knob { transform: scale(1); }
-  .ctl.dock .row { display: flex; flex-wrap: nowrap; align-items: center; justify-content: space-between; gap: 8px; }
-  .ctl.dock .grp { gap: .15rem; flex-wrap: nowrap; }
+  /* both pills share the row's height (stretch); with many tools (a party adds its own) the buttons give up to 4 px each and,
+     when even that does not fit (320 px), the tools pill moves to its own line, end-aligned: never off screen */
+  .ctl.dock .row { display: flex; flex-wrap: wrap; align-items: stretch; justify-content: space-between; gap: 8px; }
+  .ctl.dock .grp { gap: .15rem; flex-wrap: nowrap; flex: 0 1 auto; min-width: 0; }
+  .ctl.dock .pill.tp { margin-left: auto; }
   /* menus hang off the tools pill (position: relative; a blurred pill is their containing block either way) */
   .ctl.dock .pill { position: relative; }
-  .ctl.dock .mwrap { position: static; }
-  .ctl.dock .pill .ic { width: 48px; min-width: 48px; min-height: 48px; }
-  .ctl.dock .pill .ic.big { width: 56px; min-width: 56px; min-height: 56px; }
+  .ctl.dock .mwrap { display: contents; } /* its button is a flex item of the pill (shrinks with the others) */
+  .ctl.dock .pill .ic { flex: 0 1 48px; width: 48px; min-width: 44px; min-height: 48px; }
+  .ctl.dock .pill .ic.big { flex: 0 1 56px; width: 56px; min-width: 48px; min-height: 56px; }
   .ctl.dock .ic:hover:not(:disabled) { transform: none; }
   .ctl.dock .pill button.ic::after { display: none; } /* no hover label chips on touch */
   /* panels (until their own cards): above the timeline row (its top + 8 px), never over the top bar; end side, full width in portrait */
   .ctl.dock .menu, .ctl.dock .menu.tracks, .ctl.dock .menu.more, .ctl.dock .menu.scenes, .ctl.dock .menu.speed, .ctl.dock .menu.bare {
-    position: absolute; left: auto; right: 0; bottom: calc((100% + var(--row-h, 66px)) / 2 + 18px + var(--tl-h, 31px));
+    position: absolute; left: auto; right: 0; bottom: calc(var(--row-h, 66px) + 18px + var(--tl-h, 31px)); /* the pill's bottom is the row's */
     width: min(380px, var(--dock-w)); min-width: 0; max-width: none; overflow-y: auto;
     max-height: calc(100dvh - var(--safe-top) - var(--safe-bottom) - 90px - var(--row-h, 66px) - var(--tl-h, 31px)); }
   .stage.pui.port .ctl.dock :is(.menu, .menu.tracks, .menu.more, .menu.scenes, .menu.speed, .menu.bare) { width: var(--dock-w); }
@@ -2056,8 +2065,8 @@
   /* narrow phones (320 px): three tools and the playback pill still fit side by side, every target stays ≥ 44 px */
   @media (max-width: 359px) {
     .ctl.dock .pill { padding: .2rem .1rem; gap: 0; }
-    .ctl.dock .pill .ic { width: 44px; min-width: 44px; min-height: 44px; }
-    .ctl.dock .pill .ic.big { width: 48px; min-width: 48px; min-height: 48px; }
+    .ctl.dock .pill .ic { flex-basis: 44px; width: 44px; min-width: 44px; min-height: 44px; }
+    .ctl.dock .pill .ic.big { flex-basis: 48px; width: 48px; min-width: 48px; min-height: 48px; }
   }
   @media (prefers-reduced-motion: reduce) { .stage.pui .ovl, .ctl.dock::before, .ctl.dock > :global(*) { transition: none; } }
 

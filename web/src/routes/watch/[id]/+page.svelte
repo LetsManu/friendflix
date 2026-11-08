@@ -327,8 +327,18 @@
   .top.pui .icon-btn { display: grid; place-items: center; width: 44px; height: 44px; min-height: 44px; background: rgba(20,20,24,.62); border: 1px solid rgba(255,255,255,.12); }
   .top.pui .icon-btn:hover:not(:disabled) { background: rgba(40,40,46,.72); }
   :global(.ovl.blur) .top.pui .icon-btn { -webkit-backdrop-filter: blur(16px); backdrop-filter: blur(16px); }
-  /* the skip button sits inside the dock: the next-up card only clears the dock */
-  :global(.stage.pui) .next { bottom: calc(var(--ctl-h, 8rem) + .5rem); }
+  /* phone player: the skip button sits inside the dock, so the next-up / "still watching" card sits 8 px above the dock and
+     never reaches the top bar (its bottom: safe-top + 8 + 44 px, + 8 px gap); a card taller than that space scrolls inside */
+  :global(.stage.pui) .next { bottom: calc(var(--ctl-h, 8rem) + 8px); right: calc(var(--safe-right) + 16px + var(--inset, 0px));
+    max-height: max(0px, calc(100% - var(--ctl-h, 8rem) - 16px - var(--safe-top) - 52px)); overflow-y: auto; overscroll-behavior: contain; }
+  /* landscape: a flat card, the text beside the buttons on one row, so it fits between the top bar and the dock */
+  @media (orientation: landscape) {
+    :global(.stage.pui) .next { padding: .6rem .8rem; gap: .5rem; }
+    :global(.stage.pui) .next:not(.more) { flex-direction: row; align-items: center; gap: .9rem; width: auto; max-width: calc(100vw - var(--safe-left) - var(--safe-right) - 32px - var(--inset, 0px)); }
+    :global(.stage.pui) .next:not(.more) > :first-child { flex: 1 1 auto; min-width: 0; }
+    :global(.stage.pui) .next:not(.more) > .flex { flex: none; flex-wrap: nowrap; }
+    :global(.stage.pui) .next .nthumb { display: none; }
+  }
   /* desktop: the title sits centred in the control bar; phones keep it at the top */
   @media (min-width: 721px) { .ttl.phone { display: none; } }
   /* touch (phones, also in landscape): series · S1:E3 · episode on one line, ellipsis at the end, the whole top bar wide */

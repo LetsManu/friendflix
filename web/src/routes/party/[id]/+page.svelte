@@ -236,6 +236,11 @@
   .ic { background: transparent; padding: 0; width: 48px; min-height: 48px; border-radius: 50%; color: #fff; position: relative; } .ic:hover:not(:disabled) { background: rgba(255,255,255,.14); }
   .roleinfo { display: grid; place-items: center; width: 40px; color: var(--mut); }
   .mwrap { position: relative; }
+  /* the phone player's dock: the host's settings button shrinks with the tools pill and its menu opens above the timeline row
+     (from the pill's bottom: the pill row, 10 px gap, the timeline row, 8 px), never over it */
+  :global(.ctl.dock) .mwrap { display: contents; }
+  :global(.ctl.dock) .ic { flex: 0 1 48px; min-width: 44px; }
+  :global(.ctl.dock) .menu { bottom: calc(var(--row-h, 66px) + 18px + var(--tl-h, 31px)); }
   .em { background: transparent; font-size: 1.6rem; width: 48px; padding: 0; } .em:hover:not(:disabled) { background: rgba(255,255,255,.12); transform: scale(1.15); }
   .menu { position: absolute; right: 0; bottom: 58px; background: rgba(16,20,24,.97); border: 1px solid #323a43; border-radius: 6px; padding: .6rem .3rem; min-width: 210px; z-index: 20; }
   .menu h3 { font-size: 1rem; margin: 0 .6rem .4rem; }

@@ -6,6 +6,8 @@
    * at most 58 % of the row and the skip button (slot `skip`) sits at its end; portrait: the text spans the row and the skip
    * button gets its own row below it, end-aligned. A long title wraps upward (two lines, then an ellipsis), never over the timeline.
    */
+  import { onMount } from 'svelte';
+  import { motionAllowed } from '#lib/preview';
   import type { PhoneOrient } from './logic';
 
   export let chapter = '';
@@ -14,10 +16,35 @@
   export let orient: PhoneOrient = 'landscape';
   /** a panel is open: the text fades out (opacity, then visibility), the skip button stays */
   export let hidden = false;
+
+  /**
+   * The dock is anchored at the bottom: when the skip button's own row (portrait) comes or goes, the text would jump by that row.
+   * FLIP instead: the text is put back where it was (translateY) and glides to its new place (transform only, 250 ms). Not on a
+   * rotation (everything re-lays out anyway) and not with reduced motion / calm mode (instant).
+   */
+  let row: HTMLDivElement, ptx: HTMLDivElement;
+  onMount(() => {
+    if (typeof ResizeObserver === 'undefined') return;
+    const natural = () => {
+      const m = new DOMMatrixReadOnly(getComputedStyle(ptx).transform === 'none' ? undefined : getComputedStyle(ptx).transform);
+      return ptx.getBoundingClientRect().top - m.m42;
+    };
+    let top = natural(), win = `${innerWidth}x${innerHeight}`;
+    const ro = new ResizeObserver(() => {
+      const now = natural(), w = `${innerWidth}x${innerHeight}`, d = top - now;
+      const glide = w === win && Math.abs(d) > 1 && motionAllowed() && typeof ptx.animate === 'function';
+      top = now; win = w;
+      if (!glide) return;
+      // Web Animations: starts from where the text was, independent of the style before this frame
+      ptx.animate([{ transform: `translateY(${d}px)` }, { transform: 'translateY(0)' }], { duration: 250, easing: 'cubic-bezier(.2, .8, .2, 1)' });
+    });
+    ro.observe(row);
+    return () => ro.disconnect();
+  });
 </script>
 
-<div class="ptitle" class:port={orient === 'portrait'}>
-  <div class="ptx" class:off={hidden}>
+<div class="ptitle" class:port={orient === 'portrait'} bind:this={row}>
+  <div class="ptx" class:off={hidden} bind:this={ptx}>
     {#if chapter}<em>{chapter}</em>{/if}
     {#if title}<b {title}>{title}</b>{/if}
     {#if sub}<span>{sub}</span>{/if}

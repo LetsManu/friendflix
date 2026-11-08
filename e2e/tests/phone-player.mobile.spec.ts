@@ -3,7 +3,7 @@
 import type { Page } from '@playwright/test';
 import { expect, test } from '../fixtures.js';
 import { noHorizontalOverflow } from '../helpers.js';
-import { episodes, ME, MOVIE } from '../mocks/fixtures.js';
+import { episodes, items, ME, MOVIE } from '../mocks/fixtures.js';
 import { mockPlayer, videoReady } from '../mocks/scenes.js';
 import { boxes, forceIosVolume, forceSafeArea, LAND_L, LAND_R, openPhoneEpisode, overlap, PORTRAIT, setSafeArea, showControls, type Box, type Insets } from '../mocks/phone.js';
 
@@ -205,6 +205,8 @@ test.describe('phone player, portrait', () => {
     await showControls(page);
     const track = (await page.locator('.ctl .track').boundingBox())!;
     const cy = track.y + track.height / 2;
+    // the touch target is at least 44 px tall (the rail itself is 3 px)
+    for (const dy of [-22, 22]) expect(await page.evaluate(([x, y]) => Boolean(document.elementFromPoint(x!, y!)?.closest('.track')), [track.x + track.width / 2, cy + dy])).toBe(true);
     const tipOk = async () => {
       const tip = page.locator('.ctl .tip');
       await expect(tip).toBeVisible();
@@ -278,3 +280,90 @@ for (const vp of [{ width: 320, height: 568 }, { width: 568, height: 320 }]) {
     });
   });
 }
+
+for (const vp of [{ width: 390, height: 844 }, { width: 320, height: 568 }]) test.describe(`phone player, party ${vp.width}×${vp.height}`, () => {
+  test.use({ viewport: vp });
+  test('watch party: the top inset applies once, one scrim; the party tools fit the dock', async ({ page, api: _api }) => {
+    await forceSafeArea(page, PORTRAIT);
+    await mockPlayer(page);
+    await page.routeWebSocket(/\/ws\/party\//, (ws) => {
+      ws.send(JSON.stringify({ t: 'welcome', you: 'u2', hostId: 'u1', mode: 'host', itemId: items[0]!.id, title: 'Testfilm', members: [{ id: 'u1', name: 'Mia', buffering: false }, { id: 'u2', name: 'Ben', buffering: false }], state: { playing: false, position: 0, at: Date.now(), hold: false }, serverNow: Date.now() }));
+      ws.onMessage((m) => { const msg = JSON.parse(String(m)); if (msg.t === 'ping') ws.send(JSON.stringify({ t: 'pong', c: msg.c, s: Date.now() })); });
+    });
+    await page.goto('/party/room1');
+    await expect(page.locator('.stage.pui')).toHaveCount(1);
+    await showControls(page);
+    const back = (await page.locator('.ovl .top .icon-btn').first().boundingBox())!;
+    expect(back.y).toBeGreaterThanOrEqual(PORTRAIT.top);
+    expect(back.y).toBeLessThanOrEqual(PORTRAIT.top + 16);
+    const top = page.locator('.ovl .top');
+    expect(await top.evaluate((e) => getComputedStyle(e).paddingTop)).toBe('0px');
+    expect(await top.evaluate((e) => getComputedStyle(e).backgroundImage)).toBe('none');
+    // the party's own buttons, title and avatars never run into the top bar's end
+    const bar = (await boxes(page, ['.ptop']))[0] as Box;
+    for (const el of await page.locator('.ovl .top :is(button, .ttl, .avatars)').all()) {
+      const r = await el.boundingBox();
+      if (!r) continue; // not rendered (e.g. no avatars yet)
+      const name = (await el.getAttribute('aria-label')) ?? (await el.getAttribute('class')) ?? '';
+      expect.soft(overlap({ name, x: r.x, y: r.y, w: r.width, h: r.height }, bar), `${name} overlaps the top bar`).toBe(false);
+      expect.soft(r.x + r.width, `${name} right`).toBeLessThanOrEqual(vp.width - 16 + 0.5);
+    }
+    // the party adds its own tools (chat, who controls): both pills stay on screen, apart and below the timeline
+    const [lp, tp, tl] = (await boxes(page, ['.pill.lp', '.pill.tp', '.ctl .tlrow'])) as [Box, Box, Box];
+    for (const b of [lp, tp]) { expect(b.x).toBeGreaterThanOrEqual(16 - 0.5); expect(b.x + b.w).toBeLessThanOrEqual(vp.width - 16 + 0.5); expect(b.y).toBeGreaterThanOrEqual(tl.y + tl.h); }
+    expect(overlap(lp, tp)).toBe(false);
+    for (const b of await page.locator('.pill button').all()) { const r = (await b.boundingBox())!; expect.soft(r.width).toBeGreaterThanOrEqual(44); expect.soft(r.height).toBeGreaterThanOrEqual(44); }
+    if (process.env.PHONE_SHOTS) await page.screenshot({ path: `${process.env.PHONE_SHOTS}/party-${vp.width}.png` });
+  });
+});
+
+/** "still watching": nobody touched anything for over 90 minutes (the page clock jumps ahead before the credits) */
+for (const vp of [{ width: 844, height: 390 }, { width: 568, height: 320 }]) {
+  test.describe(`still watching card ${vp.width}×${vp.height}`, () => {
+    test.use({ viewport: vp });
+    test('the still-watching card stays between the top bar and the dock', async ({ page, api: _api }) => {
+      await forceSafeArea(page, LAND_L);
+      await page.clock.install();
+      await openPhoneEpisode(page, undefined, { next: episodes[3] });
+      await page.evaluate(() => document.querySelector('video')!.pause());
+      await page.clock.fastForward(91 * 60_000);
+      await expect.poll(() => page.evaluate(() => { const v = document.querySelector('video')!; if (v.currentTime < 575) v.currentTime = 580; return !v.seeking && v.currentTime > 575; })).toBe(true);
+      await page.evaluate(() => document.querySelector('video')!.pause());
+      const card = page.locator('.next.still');
+      await expect(card).toBeVisible();
+      await expect(page.locator('.ctl.hide')).toHaveCount(0);
+      const [c, back, bar, dock] = (await boxes(page, ['.next.still', '.top .icon-btn', '.ptop', '.ctl .ptitle'])) as [Box, Box, Box, Box];
+      for (const o of [back, bar, dock]) expect(overlap(c, o), `card overlaps ${o.name}`).toBe(false);
+      expect(c.y).toBeGreaterThanOrEqual(Math.max(back.y + back.h, bar.y + bar.h));
+      expect(c.y + c.h).toBeLessThanOrEqual(dock.y);
+      // its buttons stay reachable (scrolled into view inside the card when it is short)
+      const go = card.getByRole('button', { name: 'Weiter ansehen' });
+      await go.scrollIntoViewIfNeeded();
+      await expect(go).toBeVisible();
+      if (process.env.PHONE_SHOTS) await page.screenshot({ path: `${process.env.PHONE_SHOTS}/still-${vp.width}.png` });
+    });
+  });
+}
+
+test.describe('phone player, skip leaving (motion on)', () => {
+  test.use({ viewport: { width: 390, height: 844 }, reducedMotion: 'no-preference' });
+  test('the title glides down when the skip row goes, never jumps', async ({ page, api: _api }) => {
+    await forceSafeArea(page, PORTRAIT);
+    await openLong(page);
+    const r = await page.evaluate(() => new Promise<{ tops: number[] }>((res) => {
+      const ptx = document.querySelector('.ptx')!, tops: number[] = [];
+      const t0 = performance.now();
+      // read after each frame's layout + resize observers (a task after the frame), i.e. what was painted
+      const tick = () => setTimeout(() => { tops.push(ptx.getBoundingClientRect().top); if (performance.now() - t0 < 1400) requestAnimationFrame(tick); else res({ tops }); }, 0);
+      requestAnimationFrame(tick);
+      (document.querySelector('.ptitle .skipbtn') as HTMLButtonElement).click();
+    }));
+    await expect(page.locator('.ptitle .skipbtn')).toHaveCount(0);
+    const first = r.tops[0]!, last = r.tops.at(-1)!;
+    expect(last - first).toBeGreaterThan(40); // the row (44 px + 10 px gap) is gone: the text sits lower
+    // a glide: painted frames in between the two places (one jump would have none), and never past the end
+    const between = r.tops.filter((y) => y > first + 5 && y < last - 5);
+    expect(between.length).toBeGreaterThanOrEqual(2);
+    expect(Math.max(...r.tops)).toBeLessThanOrEqual(last + 1);
+  });
+});

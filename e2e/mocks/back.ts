@@ -22,7 +22,8 @@ async function setup(page: Page) {
 const path = (page: Page) => new URL(page.url()).pathname;
 const watching = (page: Page, id: string) => expect.poll(() => path(page), { timeout: 30_000 }).toBe(`/watch/${id}`);
 /** the (new) episode is loaded: the player of the previous one is gone, its video has the duration */
-const ready = async (page: Page, ep: { name: string }) => { await expect(page.locator('.stage')).toContainText(ep.name); await expect(page.locator('.stage video')).toHaveCount(1); await videoReady(page); await expect(page.locator('.stage.pre')).toHaveCount(0); };
+/** the new player's own title block names the episode (desktop `.ttlblock`, phone `.ptitle`): never the previous player's next-up card */
+const ready = async (page: Page, ep: { name: string }) => { await expect(page.locator('.stage :is(.ttlblock, .ptitle)')).toContainText(ep.name); await expect(page.locator('.stage video')).toHaveCount(1); await videoReady(page); await expect(page.locator('.stage.pre')).toHaveCount(0); };
 /** jumps into the credits (the card shows from 575 s); the Player may still be settling its own start seek, so retry until it sticks */
 async function toCredits(page: Page, playing: boolean, frozen = false) {
   await expect.poll(() => page.evaluate(() => document.querySelector('video')!.currentTime)).toBeGreaterThan(0.5); // playback has really started
