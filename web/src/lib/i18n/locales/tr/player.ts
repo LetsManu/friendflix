@@ -156,6 +156,7 @@ const tr: Translation<typeof de> = {
     hls: 'HLS (dönüştürme)',
   },
   volume: { label: 'Ses düzeyi', level: 'Ses düzeyi %{n}' },
+  pause: { watching: 'Şu an izliyorsun', paused: 'Duraklatıldı', castInfo: 'Oyuncular ve bilgi' },
   brightness: 'Parlaklık %{n}',
   percent: '%{n}',
   mute: 'Sessiz',

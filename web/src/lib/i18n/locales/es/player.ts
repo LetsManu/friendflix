@@ -156,6 +156,7 @@ const es: Translation<typeof de> = {
     hls: 'HLS (transcodificación)',
   },
   volume: { label: 'Volumen', level: 'Volumen {n} %' },
+  pause: { watching: 'Estás viendo', paused: 'En pausa', castInfo: 'Reparto e información' },
   brightness: 'Brillo {n} %',
   percent: '{n} %',
   mute: 'Silenciar',

@@ -158,6 +158,7 @@ export default {
     hls: 'HLS (Transcoding)',
   },
   volume: { label: 'Lautstärke', level: 'Lautstärke {n} %' },
+  pause: { watching: 'Du siehst gerade', paused: 'Pausiert', castInfo: 'Besetzung & Infos' },
   brightness: 'Helligkeit {n} %',
   percent: '{n} %',
   mute: 'Stumm',

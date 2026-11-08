@@ -110,3 +110,57 @@ test('phone and TV keep their bars', async ({ page, api: _api }) => {
   await expect(page.locator('.stage.desk')).toHaveCount(0);
   await expect(page.locator('.stage .pill')).toHaveCount(0);
 });
+
+/** §3 pause screen: pause with the clock installed, so 5 s can pass without waiting */
+async function pauseFor(page: Page) {
+  await page.evaluate(() => { (document.activeElement as HTMLElement | null)?.blur(); document.querySelector('video')!.pause(); });
+  await expect.poll(() => page.evaluate(() => document.querySelector('video')!.paused)).toBe(true);
+}
+
+test('after 5 s paused the pause screen shows; movement brings the bar back', async ({ page, api: _api }) => {
+  await page.clock.install();
+  await open(page);
+  await pauseFor(page);
+  await page.clock.runFor(5200);
+  await expect(page.locator('.dps')).toBeVisible();
+  await expect(page.locator('.dps')).toContainText(MOVIE.name);
+  await expect(page.locator('.dps')).toContainText('Du siehst gerade');
+  await expect(page.locator('.ctl')).toHaveClass(/\bhide\b/);
+  const box = (await page.locator('.stage').boundingBox())!;
+  await page.mouse.move(box.x + box.width * 0.75, box.y + box.height / 3);
+  await expect(page.locator('.dps')).toHaveCount(0);
+  await expect(page.locator('.ctl')).not.toHaveClass(/\bhide\b/);
+});
+
+test('no pause screen while a panel is open', async ({ page, api: _api }) => {
+  await page.clock.install();
+  await open(page);
+  await pauseFor(page);
+  await page.locator('.stage').hover();
+  await page.getByRole('button', { name: 'Audio und Untertitel' }).click();
+  await expect(page.locator('.menu.tracks')).toBeVisible();
+  await page.clock.runFor(8000);
+  await expect(page.locator('.dps')).toHaveCount(0);
+});
+
+test('no automatic cast & info panel on desktop', async ({ page, api: _api }) => {
+  await page.clock.install();
+  await open(page);
+  await pauseFor(page);
+  await page.clock.runFor(8000);
+  await expect(page.getByRole('complementary', { name: 'Besetzung & Infos' })).toHaveCount(0);
+  await expect(page.locator('.dps')).toBeVisible();
+  await page.locator('.dps').getByRole('button', { name: 'Besetzung & Infos', exact: true }).click();
+  await expect(page.getByRole('complementary', { name: 'Besetzung & Infos' })).toBeVisible();
+  await expect(page.locator('.dps')).toHaveCount(0);
+});
+
+test('Space resumes from the pause screen', async ({ page, api: _api }) => {
+  await page.clock.install();
+  await open(page);
+  await pauseFor(page);
+  await page.clock.runFor(5200);
+  await expect(page.locator('.dps')).toBeVisible();
+  await page.keyboard.press(' ');
+  await expect.poll(() => page.evaluate(() => document.querySelector('video')!.paused)).toBe(false);
+});

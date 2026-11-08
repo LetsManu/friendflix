@@ -56,7 +56,8 @@
   import TvPauseScreen from '#lib/player/TvPauseScreen.svelte';
   import { fade, fly } from 'svelte/transition';
   import { deskActive } from '#lib/desk/bar';
-  import { deskPlayer } from '#lib/player/desk/logic';
+  import { deskPauseDue, deskPlayer } from '#lib/player/desk/logic';
+  import DeskPauseScreen from '#lib/player/desk/DeskPauseScreen.svelte';
   import { grow, springAt } from '#lib/player/desk/grow';
   import { motionAllowed } from '#lib/preview';
   import { motionLevel, motionTripped } from '#lib/tv/motion';
@@ -210,7 +211,11 @@
   $: tvButtons = tvPlayerButtons({ isEpisode: Boolean(seriesId), hasNext });
   $: tvSub = item?.seriesName && item.indexNumber !== undefined && item.indexNumber !== null
     ? $t('tv.player.episode', { s: item.parentIndexNumber ?? 1, e: item.indexNumber, name: item.name }) : barSub;
-  $: showUi = !locked && !pauseOn && (paused || menu !== '' || scrubbing || sp.active || tick - lastActive < hideMs);
+  /** desktop pause screen (spec 2026-11-08 §3): 5 s after the pause or the last input, unless something else is on screen */
+  $: deskBlocked = menu !== '' || scrubbing || (partyMode && !canControl) || remote || Boolean(error) || reconnecting > 0 || locked || help || subDlg || showXray || peek;
+  $: deskPause = desk && paused && started && deskPauseDue({ pausedAt, lastActive, now: tick, blocked: deskBlocked });
+  $: deskMotion = desk && motionAllowed();
+  $: showUi = !locked && !pauseOn && !deskPause && (paused || menu !== '' || scrubbing || sp.active || tick - lastActive < hideMs);
   // TV: a hidden bar keeps no focus - otherwise the next OK would press the last used button (subtitles ...) instead of play/pause
   $: if (!showUi && typeof document !== 'undefined' && tvMode() && stage?.querySelector('.ctl')?.contains(document.activeElement)) (document.activeElement as HTMLElement).blur();
   $: creditsAt = creditsStart(segments, duration);
@@ -822,7 +827,7 @@
   }
   $: if (paused && started) { clearTimeout(pauseT); pauseT = setTimeout(() => { pausedLong = true; ensureInfo(); }, 1200); } else { clearTimeout(pauseT); pausedLong = false; infoDismissed = false; }
   // automatic (pause): only with something to show; explicit: also while loading / after an error
-  $: showXray = (xray || (pausedLong && !tvUi && !infoDismissed && Boolean(castData && (hasPeople(castData) || castData.studios.length || castData.genres.length)))) && menu === '' && !subDlg && !help && !error && !locked;
+  $: showXray = (xray || (pausedLong && !tvUi && !desk && !infoDismissed && Boolean(castData && (hasPeople(castData) || castData.studios.length || castData.genres.length)))) && menu === '' && !subDlg && !help && !error && !locked;
   $: if (showXray) peek = false;
   /** quick peek: does not pause, hides by itself after a few seconds */
   function openPeek() {
@@ -1300,7 +1305,7 @@
 </script>
 
 <svelte:window on:keydown={onKey} on:keydown|capture={onBackCapture} />
-<div class="stage {subClasses($prefs.subtitleStyle)}" class:idle={!showUi} class:locked class:pre={posterOn} class:phone class:desk class:rmt={Boolean(tvSession)} style="--inset:{inset}px{barVar};--rcard-h:{rCardH}px" bind:this={stage} on:mousemove={() => { if (Date.now() - lastTouch > 800) wake(); }} on:click={onSurfaceClick} on:wheel|nonpassive={onWheel} on:keydown={() => {}}
+<div class="stage {subClasses($prefs.subtitleStyle)}" class:idle={!showUi} class:locked class:pre={posterOn} class:phone class:desk class:dpause={deskPause} class:dmo={deskMotion} class:rmt={Boolean(tvSession)} style="--inset:{inset}px{barVar};--rcard-h:{rCardH}px" bind:this={stage} on:mousemove={(e) => { if (Date.now() - lastTouch > 800 && !(e.target as Element).closest?.('.dps')) wake(); }} on:click={onSurfaceClick} on:wheel|nonpassive={onWheel} on:keydown={() => {}}
   on:pointerdown={gDown} on:pointermove={gMove} on:pointerup={gUp} on:pointercancel={gCancel} role="presentation">
   <!-- svelte-ignore a11y_media_has_caption -->
   <video bind:this={video} playsinline crossorigin="use-credentials" style:filter={brightness < 1 ? `brightness(${brightness})` : null}
@@ -1394,7 +1399,7 @@
       <button class="btn light ui" on:click|stopPropagation={() => air?.pick()}>{$t('player.airplay.choose')}</button>
     </div></div>
   {/if}
-  {#if !phone && !tvUi && paused && !waiting && !error && !remote && !locked && !reconnecting}
+  {#if !phone && !tvUi && paused && !deskPause && !waiting && !error && !remote && !locked && !reconnecting}
     <button class="bigplay ui" aria-label={$t('player.controls.play')} on:click|stopPropagation={togglePlay}><Icon name="play" size={44} /></button>
   {/if}
   {#if toast}<div class="toast" aria-hidden="true">{toast}</div>{/if}
@@ -1454,6 +1459,9 @@
 
   {#if pauseOn}
     <TvPauseScreen title={barTitle || title} sub={tvSub} overview={item?.overview ?? ''} logoId={item ? (item.seriesId ? item.seriesId : item.logo ? item.id : '') : ''} />
+  {/if}
+  {#if deskPause}
+    <DeskPauseScreen title={barTitle || title} sub={tvSub} overview={item?.overview ?? ''} on:castinfo={() => openCastInfo(true)} />
   {/if}
   {#if tvUi}
     {#if menu === 'tracks' && (info || tvSession)}
@@ -1929,6 +1937,9 @@
   /* ---- desktop layout (desk: desktop width, not TV / phone / kids; spec 2026-11-08 §1–2) ----
      title block bottom left, the timeline row with both times, then two glass pills (playback left, tools right).
      Motion is transform / opacity only; blur only with full motion (.ctl.blur). */
+  /* desktop pause screen: the picture darkens and zooms a little (transform / filter only, no motion in calm mode) */
+  .stage.dpause > video { filter: brightness(.35); transform: scale(1.03); }
+  .stage.desk.dmo > video { transition: filter 500ms var(--m-emph-out, ease-out), transform 500ms var(--m-emph-out, ease-out); }
   .stage.desk .ctl { display: grid; gap: .7rem; padding: 4.5rem max(clamp(1.5rem, 3vw, 3rem), var(--safe-right)) 1.4rem max(clamp(1.5rem, 3vw, 3rem), var(--safe-left));
     background: linear-gradient(transparent, rgba(0,0,0,.45) 35%, rgba(0,0,0,.82)); transition: opacity 250ms ease; }
   .ttlblock { display: grid; gap: .15rem; min-width: 0; max-width: min(60%, 46rem); text-shadow: 0 1px 10px rgba(0,0,0,.5); }
