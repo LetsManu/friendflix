@@ -151,7 +151,7 @@
         <ul class="top">{#each popular as i (i.id)}
           <li>
             <a class="row" href={itemPath(i)}><img src={i.backdrop ? backdrop(i.id, 400) : img(i.id, 300)} alt="" loading="lazy" width="146" height="82" /><span class="tt">{i.name}</span></a>
-            <a class="pl" href={playPath(i)} aria-label={$t('home.card.play')} data-play={i.id}><Icon name="play" size={18} /></a>
+            <a class="pl" href={playPath(i)} aria-label={$t('home.card.playName', { name: i.name })} data-play={i.id}><Icon name="play" size={18} /></a>
           </li>
         {/each}</ul>
       {:else if popular.length}<div class="tiles">{#each popular as i (i.id)}<div class="slot"><Card item={i} /></div>{/each}</div>
@@ -216,6 +216,8 @@
   </section>
 {/if}
 
+{#if $mobile}<div class="tb" aria-hidden="true"></div>{/if}
+
 <style>
   .gap { height: .5rem; }
   .top { display: grid; gap: .25rem; margin: 0 calc(var(--pad-x) * -1); }
@@ -226,7 +228,7 @@
   .tt { flex: 1; min-width: 0; font-weight: 600; font-size: .95rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .pl { flex: none; display: grid; place-items: center; width: 44px; height: 44px; border-radius: 50%; border: 2px solid #fff; padding-left: 2px; margin-left: .5rem; }
   .pl:active { opacity: .7; }
-  .genres { padding-bottom: calc(var(--tabbar-h, 70px) + 1.5rem + env(safe-area-inset-bottom, 0px)); }
+  .tb { height: calc(var(--tabbar-h, 70px) + 1.5rem + env(safe-area-inset-bottom, 0px)); }
   .gt { display: grid; grid-template-columns: 1fr 1fr; gap: .6rem; }
   .gt a { display: flex; align-items: flex-end; height: 74px; padding: .6rem .8rem; border-radius: 12px; background: linear-gradient(135deg, var(--gc), #12161b 135%); color: #fff; font-weight: 700; overflow: hidden; }
   .gt a span { overflow-wrap: anywhere; line-height: 1.15; }

@@ -22,7 +22,7 @@ test.describe('phone search', () => {
     await expect(page.getByRole('heading', { name: 'Beliebt hier' })).toBeVisible();
     const rows = page.locator('.top li');
     await expect(rows.first()).toBeVisible();
-    const play = rows.first().getByRole('link', { name: 'Abspielen' });
+    const play = rows.first().getByRole('link', { name: / abspielen$/ });
     await expect(play).toHaveAttribute('href', /^\/watch\//);
     const pb = (await play.boundingBox())!;
     expect(pb.width).toBeGreaterThanOrEqual(44);
