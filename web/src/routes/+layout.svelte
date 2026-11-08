@@ -342,6 +342,7 @@
       // TV: the reduced set (frame guard tripped) keeps a plain crossfade without the artwork morph
       const mode = playTransition({ tv, reduced: tv ? !motionAllowed() : matchMedia('(prefers-reduced-motion: reduce)').matches, hasApi: typeof start === 'function', level: tv ? motionLevel() : 'full' });
       if (mode !== 'view' && mode !== 'crossfade') { if (into) takePlayArt(); return; }
+      if (!into && desk && mode === 'view' && motionAllowed() && isDetailPage(to)) return deskFromPlayer(nav, start!);
       const root = document.documentElement, taken = into ? takePlayArt() : null, art = mode === 'view' ? taken : null;
       const my = vtBegin(), mine: HTMLElement[] = [];
       if (tv) watchFrames();
@@ -431,6 +432,26 @@
     return onScreen(pic) ? pic : null;
   };
   const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+  /** desktop, Back from the player to its detail page: the poster / video frame morphs into the detail backdrop, the text rises back in */
+  function deskFromPlayer(nav: Nav, start: StartVT): Promise<void> {
+    const root = document.documentElement, my = vtBegin(), named: HTMLElement[] = [];
+    const bd = () => document.querySelector<HTMLElement>('main .dd [data-vt-art]');
+    root.classList.add('ff-vt-desk');
+    vtName(document.querySelector<HTMLElement>('.stage .ff-poster') ?? document.querySelector<HTMLElement>('.stage video'), VT_ART, named);
+    return new Promise<void>((resolve) => {
+      const t = start.call(document, async () => {
+        resolve();
+        const until = performance.now() + 800;
+        await Promise.race([nav.complete.catch(() => undefined), sleep(800)]);
+        if (my !== vtSeq) return;
+        for (const el of named) el.style.removeProperty('view-transition-name'); // the old side lets go first: a name must exist once
+        while (performance.now() < until && !(bd() && document.querySelector('main .dd h1'))) await sleep(16);
+        vtName(bd(), VT_ART, named);
+        stagger([...document.querySelectorAll<HTMLElement>('main .dd [data-st]')], { delay: 160, gap: 40 });
+      });
+      void t.finished.catch(() => undefined).finally(() => vtEnd(my, named));
+    });
+  }
   /** `null`: not a page change this hook animates (the plain crossfade of the other pages takes it) */
   function deskTransition(nav: Nav, start: StartVT | undefined): Promise<void> | undefined | null {
     const from = nav.from?.url.pathname ?? '', to = nav.to?.url.pathname ?? '';

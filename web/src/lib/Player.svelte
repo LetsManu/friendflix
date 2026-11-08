@@ -54,6 +54,13 @@
   import TvTracks from '#lib/player/TvTracks.svelte';
   import TvEpisodesOverlay from '#lib/player/TvEpisodesOverlay.svelte';
   import TvPauseScreen from '#lib/player/TvPauseScreen.svelte';
+  import { fade, fly } from 'svelte/transition';
+  import { deskActive } from '#lib/desk/bar';
+  import { deskPauseDue, deskPlayer } from '#lib/player/desk/logic';
+  import DeskPauseScreen from '#lib/player/desk/DeskPauseScreen.svelte';
+  import { grow, springAt } from '#lib/player/desk/grow';
+  import { motionAllowed } from '#lib/preview';
+  import { motionLevel, motionTripped } from '#lib/tv/motion';
 
   export let itemId: string;
   /** shown on the phone's remote while this plays */
@@ -99,6 +106,13 @@
   export let remote = false;
   /** the playing item (watch page): the TV pause screen's logo, episode line and synopsis */
   export let item: Item | null = null;
+  /**
+   * credits sequence beat (desktop and TV, spec 2026-11-08 §4; the watch page computes it): 'corner' glides the picture into
+   * the top-left corner (stage `.cred`) and hides the bar; a click on the small picture, Esc or TV Back dispatch `credits`
+   */
+  export let credits: 'off' | 'chip' | 'corner' = 'off';
+  /** bind: the viewer is busy in the player (menu, scrubbing, a dialog, cast & info, paused before the end): the page holds the chip */
+  export let credHold = false;
   const dispatch = createEventDispatcher();
 
   type Info = PlaybackDto;
@@ -170,10 +184,25 @@
    * (time · seek bar · time, then a row of icons), everything inside the safe areas (--safe-* tokens). Desktop and TV keep their bar.
    */
   let phone = false, ctlH = 0;
+  /** desktop: heights of the timeline row and the pill row (the skip button sits just above the timeline, not above the title) */
+  let tlH = 0, rowH = 0;
   $: ccOn = phone && showUi && !locked && !error && !reconnecting && !(posterOn && !posterOut);
   $: phoneChip = phone && Boolean(info && mode && !remote);
   /** height of the bottom bar: panels, the skip button and the page's cards sit above it (phones only; elsewhere the old fixed offsets apply) */
-  $: barVar = (phone && ctlH ? `;--bar-h:${ctlH}px` : '') + (ctlH ? `;--ctl-h:${ctlH}px` : '');
+  $: barVar = (phone && ctlH ? `;--bar-h:${ctlH}px` : '') + (ctlH ? `;--ctl-h:${ctlH}px` : '')
+    + (desk && tlH && rowH ? `;--tl-h:${tlH}px;--row-h:${rowH}px` : '');
+  // ---- desktop layout (spec 2026-11-08 §1–2): title block, timeline row with both times, two glass pills; never TV, phone or kids ----
+  $: desk = deskPlayer({ desk: $deskActive, tv: tvUi, phone });
+  /** glass blur only with full motion (calm mode, reduced motion or a tripped frame guard: plain fill) */
+  const fullMotion = (_calm: unknown, _tripped: boolean) => motionLevel() === 'full'; // re-read when the prefs (calm mode) arrive or the frame guard trips
+  $: blur = desk && fullMotion($prefs, $motionTripped);
+  /** the card shown before the current one ('' = none was open): opening grows out of the button, switching crossfades */
+  let menuWas = '', menuFrom = '';
+  $: if (menu !== menuWas) { menuFrom = menuWas; menuWas = menu; }
+  function cardIn(node: Element, o: { origin: string }) {
+    return desk && menuFrom !== '' ? fade(node, { duration: motionAllowed() ? 200 : 0 }) : grow(node, { origin: o.origin, on: desk });
+  }
+  const cardOut = (node: Element) => fade(node, { duration: desk && motionAllowed() ? 120 : 0 });
   let hud: { icon: string; text: string; pct: number } | null = null, hudT: ReturnType<typeof setTimeout>;
   let ripple: { zone: Zone; total: number; n: number } | null = null, rippleT: ReturnType<typeof setTimeout>;
   let help = false, live = '', liveN = 0;
@@ -184,12 +213,31 @@
   $: hideMs = tvUi ? 5000 : 3000; // the D-pad needs longer to reach a button than a mouse
   $: if (paused !== wasPaused) { wasPaused = paused; if (paused) pausedAt = Date.now(); }
   /** after 8 s paused without a key (TV, not in calm mode): dimmed picture + "You're watching" */
-  $: pauseOn = tvUi && paused && started && !error && !remote && !locked && !reconnecting && menu === '' && !sp.active && !xray && !peek && !subDlg && !help
+  $: pauseOn = tvUi && paused && started && !error && !remote && !locked && !reconnecting && menu === '' && !sp.active && !xray && !peek && !subDlg && !help && credits === 'off'
     && pauseScreenDue(pausedAt, lastActive, tick, $prefs.calm === true);
   $: tvButtons = tvPlayerButtons({ isEpisode: Boolean(seriesId), hasNext });
   $: tvSub = item?.seriesName && item.indexNumber !== undefined && item.indexNumber !== null
     ? $t('tv.player.episode', { s: item.parentIndexNumber ?? 1, e: item.indexNumber, name: item.name }) : barSub;
-  $: showUi = !locked && !pauseOn && (paused || menu !== '' || scrubbing || sp.active || tick - lastActive < hideMs);
+  /** desktop pause screen (spec 2026-11-08 §3): 5 s after the pause or the last input, unless something else is on screen */
+  $: deskBlocked = menu !== '' || scrubbing || partyMode || remote || Boolean(error) || reconnecting > 0 || locked || help || subDlg || showXray || peek || credits !== 'off';
+  $: deskPause = desk && paused && started && deskPauseDue({ pausedAt, lastActive, now: tick, blocked: deskBlocked });
+  $: deskMotion = desk && motionAllowed();
+  /** credits glide: spring transform (desk / TV with motion); a tripped frame guard (html.tv-motion-reduced) crossfades in CSS */
+  $: credMotion = (desk || tvUi) && motionAllowed();
+  /** leaving the corner: for 300 ms `.credout` lets a tripped frame guard crossfade the picture back to full screen (CSS) */
+  let credOut = false, credWas: typeof credits = 'off', credOutT: ReturnType<typeof setTimeout> | undefined;
+  $: credHold = menu !== '' || scrubbing || sp.active || subDlg || help || showXray || (paused && !stopped);
+  $: onCreditsBeat(credits);
+  function onCreditsBeat(c: typeof credits) {
+    if (c === credWas) return;
+    if (c === 'corner' && menu) menu = ''; // the bar hides: a menu still open (it held the chip until a moment ago) closes
+    const left = credWas === 'corner';
+    credWas = c;
+    clearTimeout(credOutT);
+    credOut = left;
+    if (left) credOutT = setTimeout(() => (credOut = false), 300);
+  }
+  $: showUi = !locked && !pauseOn && !deskPause && credits !== 'corner' && (paused || menu !== '' || scrubbing || sp.active || tick - lastActive < hideMs);
   // TV: a hidden bar keeps no focus - otherwise the next OK would press the last used button (subtitles ...) instead of play/pause
   $: if (!showUi && typeof document !== 'undefined' && tvMode() && stage?.querySelector('.ctl')?.contains(document.activeElement)) (document.activeElement as HTMLElement).blur();
   $: creditsAt = creditsStart(segments, duration);
@@ -684,7 +732,7 @@
   function focusSkip() {
     void tickDom().then(() => {
       const a = document.activeElement;
-      if (menu || sp.active || overlayOpen()) return;
+      if (menu || sp.active || overlayOpen() || credits !== 'off') return; // the credits sequence focuses its own buttons (TV)
       if (a && a !== document.body && a !== stage && !stage?.querySelector('.ctl')?.contains(a)) return;
       stage?.querySelector<HTMLElement>('.skipbtn')?.focus({ preventScroll: true });
     });
@@ -801,7 +849,7 @@
   }
   $: if (paused && started) { clearTimeout(pauseT); pauseT = setTimeout(() => { pausedLong = true; ensureInfo(); }, 1200); } else { clearTimeout(pauseT); pausedLong = false; infoDismissed = false; }
   // automatic (pause): only with something to show; explicit: also while loading / after an error
-  $: showXray = (xray || (pausedLong && !tvUi && !infoDismissed && Boolean(castData && (hasPeople(castData) || castData.studios.length || castData.genres.length)))) && menu === '' && !subDlg && !help && !error && !locked;
+  $: showXray = (xray || (pausedLong && !tvUi && !desk && !infoDismissed && Boolean(castData && (hasPeople(castData) || castData.studios.length || castData.genres.length)))) && menu === '' && !subDlg && !help && !error && !locked;
   $: if (showXray) peek = false;
   /** quick peek: does not pause, hides by itself after a few seconds */
   function openPeek() {
@@ -813,7 +861,7 @@
   function openCastInfo(focus: boolean) { clearTimeout(peekT); peek = false; menu = ''; ensureInfo(); infoFocus = focus; xray = true; wake(); }
   function closeCastInfo() {
     const had = stage?.querySelector('.ci')?.contains(document.activeElement);
-    xray = false; infoDismissed = true; infoFocus = false;
+    xray = false; infoDismissed = true; infoFocus = false; wake(); // the pause-screen timer starts over (Esc's capture handler skips onKey's wake)
     if (had) tickDom().then(() => castBtn?.focus());
   }
   /** the cast button in the bar: panel open -> close; paused -> panel; playing -> peek (a second press opens the panel) */
@@ -825,6 +873,8 @@
   $: marks = chapterMarks(chapters, duration);
   $: showScenes = usefulChapters(chapters, duration);
   const chapterAt = (sec: number) => { const i = chapterIndexAt(chapters, sec); return chapters.length > 1 && i >= 0 ? chapterLabel(chapters[i]!, i) : ''; };
+  /** the chapter playing now (desktop title block eyebrow; '' without chapters) */
+  $: nowChapter = chapterAt(shown);
   function closeScenes() { menu = ''; void tickDom().then(() => (scBtn ?? moreBtn)?.focus()); }
 
   // ---- sound: "Klare Stimmen" / "Nachtmodus" (Web Audio on the local <video>; the profile's server pref `audioFx`, with a
@@ -938,6 +988,8 @@
   function wake() { lastActive = Date.now(); tick = lastActive; }
   const overlayOpen = () => Boolean(menu || subDlg || help || (xray && showXray));
   function act(a: KeyAction) {
+    // credits corner (TV): the bar is hidden and inert; a key that would bring it (an arrow at the edge of the sequence) only wakes
+    if (credits === 'corner' && a.type === 'tvControls') { wake(); return; }
     switch (a.type) {
       case 'toggle': togglePlay(); break;
       case 'play': if (allowed()) playSafe(); break;
@@ -1024,6 +1076,10 @@
     } else if (peek) {
       e.preventDefault(); e.stopImmediatePropagation();
       clearTimeout(peekT); peek = false;
+    } else if (credits !== 'off') {
+      // credits sequence: Esc / TV Back back out to full screen (the page's "Watch credits") instead of leaving the player
+      e.preventDefault(); e.stopImmediatePropagation();
+      wake(); dispatch('credits');
     } else if (tvMode() && stage?.querySelector('.ctl')?.contains(document.activeElement)) {
       e.preventDefault(); e.stopImmediatePropagation();
       (document.activeElement as HTMLElement).blur(); lastActive = 0; // hide the bar, the next Back leaves the player
@@ -1063,6 +1119,7 @@
     if (Date.now() - lastTouch < 800) return; // the click that follows a touch was already handled
     const now = Date.now();
     if (menu) { menu = ''; return; }
+    if (credits === 'corner') { if (e.target === video) dispatch('credits'); return; } // the small picture backs out to full screen
     if (now - lastTap < 280) { toggleFullscreen(); lastTap = 0; } else { lastTap = now; setTimeout(() => { if (lastTap === now) { togglePlay(); lastTap = 0; } }, 285); }
   }
   /** a click outside the open menu (and not on its opener, which toggles itself) closes it; focus returns to the opener. A click on the picture only closes. */
@@ -1268,6 +1325,7 @@
     reportTiming(); // also a start the viewer gave up on (no first frame yet)
     holdPrefetch(Promise.resolve(lastStop)); // no cached info survives the player; the next prefetch waits for this stop (resume position)
     destroyed = true;
+    clearTimeout(credOutT);
     // a handed-over cast keeps running (the engine owns token, element, controller and probe); otherwise AirPlay ends here
     if (!handedOff) { air?.destroy(); airProbe?.remove(); } // revokes a live AirPlay token
     airInfo = null;
@@ -1277,7 +1335,7 @@
 </script>
 
 <svelte:window on:keydown={onKey} on:keydown|capture={onBackCapture} />
-<div class="stage {subClasses($prefs.subtitleStyle)}" class:idle={!showUi} class:locked class:pre={posterOn} class:phone class:rmt={Boolean(tvSession)} style="--inset:{inset}px{barVar};--rcard-h:{rCardH}px" bind:this={stage} on:mousemove={() => { if (Date.now() - lastTouch > 800) wake(); }} on:click={onSurfaceClick} on:wheel|nonpassive={onWheel} on:keydown={() => {}}
+<div class="stage {subClasses($prefs.subtitleStyle)}" class:idle={!showUi && credits !== 'corner'} class:locked class:pre={posterOn} class:phone class:desk class:dpause={deskPause} class:dmo={deskMotion} class:cred={credits === 'corner'} class:credout={credOut} class:cmo={credMotion} class:rmt={Boolean(tvSession)} style="--inset:{inset}px{barVar};--rcard-h:{rCardH}px" bind:this={stage} on:mousemove={(e) => { if (Date.now() - lastTouch > 800 && !(e.target as Element).closest?.('.dps')) wake(); }} on:click={onSurfaceClick} on:wheel|nonpassive={onWheel} on:keydown={() => {}}
   on:pointerdown={gDown} on:pointermove={gMove} on:pointerup={gUp} on:pointercancel={gCancel} role="presentation">
   <!-- svelte-ignore a11y_media_has_caption -->
   <video bind:this={video} playsinline crossorigin="use-credentials" style:filter={brightness < 1 ? `brightness(${brightness})` : null}
@@ -1371,7 +1429,7 @@
       <button class="btn light ui" on:click|stopPropagation={() => air?.pick()}>{$t('player.airplay.choose')}</button>
     </div></div>
   {/if}
-  {#if !phone && !tvUi && paused && !waiting && !error && !remote && !locked && !reconnecting}
+  {#if !phone && !tvUi && paused && !deskPause && credits !== 'corner' && !waiting && !error && !remote && !locked && !reconnecting}
     <button class="bigplay ui" aria-label={$t('player.controls.play')} on:click|stopPropagation={togglePlay}><Icon name="play" size={44} /></button>
   {/if}
   {#if toast}<div class="toast" aria-hidden="true">{toast}</div>{/if}
@@ -1413,7 +1471,7 @@
   {/if}
   <slot />
 
-  {#if skip && !locked}<button class="skipbtn light" class:tv-btn={tvUi} aria-keyshortcuts="S" on:click|stopPropagation={doSkip}>{segText($t, skip.type, 'skip')}{tvMode() ? $t('player.skipOk') : ''}</button>{/if}
+  {#if skip && !locked && credits !== 'corner'}<button class="skipbtn light" class:tv-btn={tvUi} aria-keyshortcuts="S" on:click|stopPropagation={doSkip} in:fly={{ y: 12, duration: desk && motionAllowed() ? 250 : 0, easing: springAt }}>{segText($t, skip.type, 'skip')}{tvMode() ? $t('player.skipOk') : ''}</button>{/if}
 
   {#if showXray}
     <div class="cihost" class:hide={!showUi && !xray}><CastInfoPanel data={castData} failed={castFailed} autofocus={infoFocus} on:close={closeCastInfo} /></div>
@@ -1432,6 +1490,9 @@
   {#if pauseOn}
     <TvPauseScreen title={barTitle || title} sub={tvSub} overview={item?.overview ?? ''} logoId={item ? (item.seriesId ? item.seriesId : item.logo ? item.id : '') : ''} />
   {/if}
+  {#if deskPause}
+    <DeskPauseScreen title={barTitle || title} sub={tvSub} overview={item?.overview ?? ''} on:castinfo={() => openCastInfo(true)} />
+  {/if}
   {#if tvUi}
     {#if menu === 'tracks' && (info || tvSession)}
       <TvTracks audio={audioOpts} subs={subOpts} {audioIndex} {subIndex} {fx} fxDisabled={fxDisabled}
@@ -1440,15 +1501,26 @@
       <TvEpisodesOverlay {seriesId} {seasonId} currentId={itemId} seriesName={barTitle} on:pick={pickEpisode} on:close={() => { menu = ''; focusControls(); }} />
     {/if}
     <TvControls shown={showUi && !(posterOn && !posterOut) && menu !== 'tracks' && menu !== 'episodes'} title={barTitle || title} sub={tvSub} {paused} {current} {duration} {buffered} preview={sp} trickplay={info?.trickplay} {chapters}
-      buttons={tvButtons} airplay={air && (airState.available || airOn || airState.ready || airState.busy) ? { on: airOn, label: $t(airOn ? 'player.airplay.playing' : 'player.airplay.play') } : null} {menu} {rate} qualities={qualityOptions} quality={shownQ} {canControl} bind:height={ctlH}
+      buttons={tvButtons} airplay={air && (airState.available || airOn || airState.ready || airState.busy) ? { on: airOn, label: $t(airOn ? 'player.airplay.playing' : 'player.airplay.play') } : null} {menu} {rate} qualities={qualityOptions} quality={shownQ} {canControl} inert={credits === 'corner'} bind:height={ctlH}
       on:keydown={ctlKey} on:back={() => dispatch('back')} on:button={(e) => tvButton(e.detail)} on:speed={(e) => setRate(e.detail)} on:quality={(e) => void changeQuality(e.detail)} on:airplay={() => air?.pick()} />
   {:else}
-  <div class="ui ctl" data-nav bind:offsetHeight={ctlH} class:hide={!showUi || (posterOn && !posterOut)} on:click|stopPropagation on:keydown={ctlKey} role="toolbar" tabindex="-1" aria-label={$t('player.controls.toolbar')}>
-    <div class="timeline">
+  <div class="ui ctl" data-nav inert={credits === 'corner'} bind:offsetHeight={ctlH} class:hide={!showUi || (posterOn && !posterOut)} class:blur on:click|stopPropagation on:keydown={ctlKey} role="toolbar" tabindex="-1" aria-label={$t('player.controls.toolbar')}>
+    {#if desk}
+      <!-- desktop: chapter eyebrow, title, episode line above the timeline -->
+      <div class="ttlblock">
+        {#if nowChapter}<em>{nowChapter}</em>{/if}
+        <b title={barTitle || title}>{barTitle || title}</b>
+        {#if barSub}<span>{barSub}</span>{/if}
+      </div>
+    {/if}
+    <div class="timeline" class:tlrow={desk} bind:offsetHeight={tlH}>
       {#if phone}<span class="cur" aria-hidden="true">{fmtClock(shown)}</span>{/if}
-      <div class="track" bind:this={trackEl} class:locked={!canControl} role="slider" tabindex="0" aria-label={$t('player.positionLabel')} aria-valuemin="0" aria-valuemax={Math.round(duration)} aria-valuenow={Math.round(shown)}
+      {#if desk}<span class="el" aria-hidden="true">{fmtClock(shown)}</span>{/if}
+      <div class="track" bind:this={trackEl} class:locked={!canControl} class:scrub={scrubbing} role="slider" tabindex="0" aria-label={$t('player.positionLabel')} aria-valuemin="0" aria-valuemax={Math.round(duration)} aria-valuenow={Math.round(shown)}
         aria-valuetext={$t('player.valueText', { a: fmtClock(shown), b: fmtClock(duration) })}
         on:pointermove={onTrackMove} on:pointerleave={() => (hoverX = -1)} on:pointerdown={onTrackDown} on:pointerup={onTrackUp} on:pointercancel={onTrackUp} on:keydown={onTrackKey}>
+        <!-- desktop: .bars is the rail; it and the bars on it grow 3 → 6 px by scaleY (transform only), knob, bookmarks and tip stay unscaled -->
+        {#if desk}<div class="bars"></div>{/if}
         <div class="buf" style="width:{bufPct}%"></div>
         {#each segments as sg}{#if duration && sg.end > sg.start}<span class="seg {sg.type}" style="left:{(sg.start / duration) * 100}%;width:{((sg.end - sg.start) / duration) * 100}%" title={segText($t, sg.type, 'segment')} aria-hidden="true"></span>{/if}{/each}
         <div class="played" style="width:{pct}%"></div>
@@ -1463,45 +1535,50 @@
           </div>
         {/if}
       </div>
-      <span class="rem" aria-hidden="true">{duration ? `${phone ? '−' : ''}${fmtClock(Math.max(0, duration - shown))}` : '–'}</span>
+      {#if desk}
+        <span class="rem" role="timer" aria-label={duration ? $t('player.controls.remaining', { time: fmtClock(Math.max(0, duration - shown)) }) : undefined}>{duration ? `−${fmtClock(Math.max(0, duration - shown))}` : '–'}</span>
+      {:else}
+        <span class="rem" aria-hidden="true">{duration ? `${phone ? '−' : ''}${fmtClock(Math.max(0, duration - shown))}` : '–'}</span>
+      {/if}
     </div>
-    <div class="row">
-      <div class="grp">
+    <div class="row" bind:offsetHeight={rowH}>
+      <div class="grp" class:pill={desk}>
         {#if !phone}
-          <button class="ic" class:locked={!canControl} aria-label={paused ? $t('player.controls.play') : $t('player.controls.pause')} on:click={togglePlay}><Icon name={paused ? 'play' : 'pause'} size={ICON} /></button>
-          <button class="ic" class:locked={!canControl} aria-label={$t('player.controls.back10')} on:click={() => seekBy(-10)}><Icon name="rewind10" size={ICON} /></button>
-          <button class="ic" class:locked={!canControl} aria-label={$t('player.controls.forward10')} on:click={() => seekBy(10)}><Icon name="forward10" size={ICON} /></button>
+          <button class="ic" class:big={desk} class:locked={!canControl} aria-label={paused ? $t('player.controls.play') : $t('player.controls.pause')} data-label={desk ? (paused ? $t('player.controls.play') : $t('player.controls.pause')) : undefined} on:click={togglePlay}><Icon name={paused ? 'play' : 'pause'} size={ICON} /></button>
+          <button class="ic" class:locked={!canControl} aria-label={$t('player.controls.back10')} data-label={desk ? $t('player.controls.back10') : undefined} on:click={() => seekBy(-10)}><Icon name="rewind10" size={ICON} /></button>
+          <button class="ic" class:locked={!canControl} aria-label={$t('player.controls.forward10')} data-label={desk ? $t('player.controls.forward10') : undefined} on:click={() => seekBy(10)}><Icon name="forward10" size={ICON} /></button>
         {/if}
+        {#if desk && info && mode && !remote}<QualityChip bind:open={chipOpen} direct={chipDirect} label={rungLabel(info.maxBitrate)} reason={info.transcodeReason ?? 'other'} />{/if}
         {#if (!phone || volOk) && tvSession?.kind !== 'airplay'}<div class="vol">
-          <button class="ic" aria-label={muted ? $t('player.unmute') : $t('player.mute')} on:click={toggleMute}><Icon name={muted || volume === 0 ? 'volume-off' : volume < 0.5 ? 'volume-low' : 'volume'} size={ICON} /></button>
+          <button class="ic" aria-label={muted ? $t('player.unmute') : $t('player.mute')} data-label={desk ? (muted ? $t('player.unmute') : $t('player.mute')) : undefined} on:click={toggleMute}><Icon name={muted || volume === 0 ? 'volume-off' : volume < 0.5 ? 'volume-low' : 'volume'} size={ICON} /></button>
           {#if !phone}<input class="vslider" type="range" min="0" max="1" step="0.05" value={muted ? 0 : volume} aria-label={$t('player.volume.label')} on:input={(e) => setVolume(Number(e.currentTarget.value))} />{/if}
         </div>{/if}
-        {#if !phone}<span class="clock">{fmtClock(shown)} / {fmtClock(duration)}</span>{/if}
-        {#if info && mode && !remote && !phone}<QualityChip bind:open={chipOpen} direct={chipDirect} label={rungLabel(info.maxBitrate)} reason={info.transcodeReason ?? 'other'} />{/if}
+        {#if !phone && !desk}<span class="clock">{fmtClock(shown)} / {fmtClock(duration)}</span>{/if}
+        {#if info && mode && !remote && !phone && !desk}<QualityChip bind:open={chipOpen} direct={chipDirect} label={rungLabel(info.maxBitrate)} reason={info.transcodeReason ?? 'other'} />{/if}
       </div>
-      {#if !phone}<div class="mid" title={barSub ? `${barTitle} · ${barSub}` : barTitle}>{#if barTitle}<b>{barTitle}</b>{#if barSub}<span>{barSub}</span>{/if}{/if}</div>{/if}
-      <div class="grp right">
+      {#if !phone && !desk}<div class="mid" title={barSub ? `${barTitle} · ${barSub}` : barTitle}>{#if barTitle}<b>{barTitle}</b>{#if barSub}<span>{barSub}</span>{/if}{/if}</div>{/if}
+      <div class="grp right" class:pill={desk}>
         <slot name="extra" />
-        {#if hasNext}<button class="ic" aria-label={$t('player.controls.next')} title={$t('player.controls.nextKey')} on:click={goNext}><Icon name="skip-next" size={ICON} /></button>{/if}
+        {#if hasNext}<button class="ic" aria-label={$t('player.controls.next')} data-label={desk ? $t('player.controls.next') : undefined} title={$t('player.controls.nextKey')} on:click={goNext}><Icon name="skip-next" size={ICON} /></button>{/if}
         {#if seriesId}
           <div class="mwrap">
-            <button class="ic" bind:this={epBtn} aria-label={$t('player.controls.episodes')} title={$t('player.controls.episodes')} aria-expanded={menu === 'episodes'} on:click={() => toggleMenu('episodes')}><Icon name="list" size={ICON} /></button>
-            {#if menu === 'episodes'}<div class="menu bare"><EpisodesPanel {seriesId} {seasonId} currentId={itemId} on:pick={pickEpisode} on:close={closeEpisodes} /></div>{/if}
+            <button class="ic" bind:this={epBtn} aria-label={$t('player.controls.episodes')} data-label={desk ? $t('player.controls.episodes') : undefined} title={$t('player.controls.episodes')} aria-expanded={menu === 'episodes'} on:click={() => toggleMenu('episodes')}><Icon name="list" size={ICON} /></button>
+            {#if menu === 'episodes'}<div class="menu bare" in:cardIn={{ origin: 'bottom right' }} out:cardOut><EpisodesPanel {seriesId} {seasonId} currentId={itemId} on:pick={pickEpisode} on:close={closeEpisodes} /></div>{/if}
           </div>
         {/if}
         {#if showScenes}
           <div class="mwrap">
-            {#if !coarse}<button class="ic" bind:this={scBtn} aria-label={$t('scenes.chapters.open')} title={$t('scenes.chapters.open')} aria-expanded={menu === 'chapters'} on:click={() => toggleMenu('chapters')}><Icon name="film" size={ICON} /></button>{/if}
-            {#if menu === 'chapters'}<div class="menu bare"><ScenesPanel {chapters} current={shown} {duration} trickplay={info?.trickplay} on:seek={(e) => { seekTo(e.detail.time); closeScenes(); }} on:close={closeScenes} /></div>{/if}
+            {#if !coarse}<button class="ic" bind:this={scBtn} aria-label={$t('scenes.chapters.open')} data-label={desk ? $t('scenes.chapters.open') : undefined} title={$t('scenes.chapters.open')} aria-expanded={menu === 'chapters'} on:click={() => toggleMenu('chapters')}><Icon name="film" size={ICON} /></button>{/if}
+            {#if menu === 'chapters'}<div class="menu bare" in:cardIn={{ origin: 'bottom right' }} out:cardOut><ScenesPanel {chapters} current={shown} {duration} trickplay={info?.trickplay} on:seek={(e) => { seekTo(e.detail.time); closeScenes(); }} on:close={closeScenes} /></div>{/if}
           </div>
         {/if}
-        {#if air && (airState.available || airOn || airState.ready || airState.busy)}<button class="ic" class:on={airOn} class:airbusy={airState.busy} aria-pressed={airOn} aria-busy={airState.busy} data-testid="airplay" aria-label={$t(airOn ? 'player.airplay.playing' : 'player.airplay.play')} title={$t(airOn ? 'player.airplay.playing' : 'player.airplay.play')} on:click={() => air?.pick()}><Icon name="airplay" size={ICON} /></button>{/if}
-        <button class="ic" class:on={showXray || peek} bind:this={castBtn} aria-label={$t('scenes.info.open')} title={$t(coarse ? 'scenes.info.open' : 'scenes.info.openKey')} aria-pressed={showXray} on:click={castButton}><Icon name="users" size={ICON} /></button>
+        {#if air && (airState.available || airOn || airState.ready || airState.busy)}<button class="ic" class:on={airOn} class:airbusy={airState.busy} aria-pressed={airOn} aria-busy={airState.busy} data-testid="airplay" aria-label={$t(airOn ? 'player.airplay.playing' : 'player.airplay.play')} data-label={desk ? $t(airOn ? 'player.airplay.playing' : 'player.airplay.play') : undefined} title={$t(airOn ? 'player.airplay.playing' : 'player.airplay.play')} on:click={() => air?.pick()}><Icon name="airplay" size={ICON} /></button>{/if}
+        <button class="ic" class:on={showXray || peek} bind:this={castBtn} aria-label={$t('scenes.info.open')} data-label={desk ? $t('scenes.info.open') : undefined} title={$t(coarse ? 'scenes.info.open' : 'scenes.info.openKey')} aria-pressed={showXray} on:click={castButton}><Icon name="users" size={ICON} /></button>
         {#if info || tvSession}
           <div class="mwrap">
-            <button class="ic" aria-label={$t('player.controls.tracks')} title={$t('player.controls.tracksKey')} aria-expanded={menu === 'tracks'} on:click={() => toggleMenu('tracks')}><Icon name="subtitles" size={ICON} /></button>
+            <button class="ic" aria-label={$t('player.controls.tracks')} data-label={desk ? $t('player.controls.tracks') : undefined} title={$t('player.controls.tracksKey')} aria-expanded={menu === 'tracks'} on:click={() => toggleMenu('tracks')}><Icon name="subtitles" size={ICON} /></button>
             {#if menu === 'tracks'}
-              <div class="menu tracks" data-nav data-scope role="dialog" aria-label={$t('player.controls.tracks')}>
+              <div class="menu tracks" data-nav data-scope role="dialog" aria-label={$t('player.controls.tracks')} in:cardIn={{ origin: 'bottom right' }} out:cardOut>
                 {#if audioOpts.length > 1}
                   <div><h3>{$t('player.controls.audio')}</h3>
                     {#each audioOpts as a}<button class="mi" class:on={audioIndex === a.index || (audioIndex === undefined && a.isDefault)} on:click={() => { menu = ''; changeAudio(a.index); }}>{#if audioIndex === a.index || (audioIndex === undefined && a.isDefault)}<Icon name="check" size={16} />{:else}<span class="sp"></span>{/if}{a.title}</button>{/each}
@@ -1523,9 +1600,9 @@
         {/if}
         {#if !partyMode}
           <div class="mwrap">
-            {#if !coarse}<button class="ic" aria-label={$t('player.speed.aria', { r: speedLabel(rate, $t) })} title={$t('player.speed.short')} aria-expanded={menu === 'speed'} on:click={() => toggleMenu('speed')}><Icon name="gauge" size={ICON} />{#if rate !== 1}<span class="ratebadge" aria-hidden="true">{$t('player.speed.rate', { r: rate })}</span>{/if}</button>{/if}
+            {#if !coarse}<button class="ic" aria-label={$t('player.speed.aria', { r: speedLabel(rate, $t) })} data-label={desk ? $t('player.speed.aria', { r: speedLabel(rate, $t) }) : undefined} title={$t('player.speed.short')} aria-expanded={menu === 'speed'} on:click={() => toggleMenu('speed')}><Icon name="gauge" size={ICON} />{#if rate !== 1}<span class="ratebadge" aria-hidden="true">{$t('player.speed.rate', { r: rate })}</span>{/if}</button>{/if}
             {#if menu === 'speed'}
-              <div class="menu speed" data-nav data-scope role="dialog" aria-label={$t('player.speed.title')}>
+              <div class="menu speed" data-nav data-scope role="dialog" aria-label={$t('player.speed.title')} in:cardIn={{ origin: 'bottom right' }} out:cardOut>
                 <h3>{#if coarse}<button class="back" aria-label={$t('player.controls.backToMore')} on:click={() => (menu = 'more')}>‹</button>{/if}{$t('player.speed.title')}</h3>
                 <div class="speeds" role="group" aria-label={$t('player.speed.short')}>
                   {#each SPEEDS as r}<button class="sp-opt" class:on={rate === r} aria-pressed={rate === r} on:click={() => setRate(r)}><span class="dot" aria-hidden="true"></span>{speedLabel(r, $t)}</button>{/each}
@@ -1535,12 +1612,12 @@
           </div>
         {/if}
         <div class="mwrap">
-          <button class="ic" aria-label={$t('player.controls.more')} title={$t('player.controls.more')} bind:this={moreBtn} aria-expanded={menu === 'more' || menu === 'scenes' || menu === 'settings' || (coarse && (menu === 'speed' || menu === 'chapters'))} on:click={() => (menu = menu === '' || (menu !== 'more' && menu !== 'scenes' && menu !== 'settings' && !(coarse && (menu === 'speed' || menu === 'chapters'))) ? 'more' : '')}>
+          <button class="ic" aria-label={$t('player.controls.more')} data-label={desk ? $t('player.controls.more') : undefined} title={$t('player.controls.more')} bind:this={moreBtn} aria-expanded={menu === 'more' || menu === 'scenes' || menu === 'settings' || (coarse && (menu === 'speed' || menu === 'chapters'))} on:click={() => (menu = menu === '' || (menu !== 'more' && menu !== 'scenes' && menu !== 'settings' && !(coarse && (menu === 'speed' || menu === 'chapters'))) ? 'more' : '')}>
             <svg width={ICON} height={ICON} viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" focusable="false"><circle cx="5" cy="12" r="2" /><circle cx="12" cy="12" r="2" /><circle cx="19" cy="12" r="2" /></svg>
             {#if sleepAt}<span class="sleepdot" title={$t('player.sleep.left', { t: sleepLeft })}></span>{/if}
           </button>
           {#if menu === 'more'}
-            <div class="menu more" data-nav data-scope role="dialog" aria-label={$t('player.controls.more')}>
+            <div class="menu more" data-nav data-scope role="dialog" aria-label={$t('player.controls.more')} in:cardIn={{ origin: 'bottom right' }} out:cardOut>
               {#if coarse && !partyMode}<button class="mi" on:click={() => (menu = 'speed')}><Icon name="gauge" size={20} />{$t('player.speed.title')}{#if rate !== 1}<span class="muted"> · {$t('player.speed.rate', { r: rate })}</span>{/if}<span class="chev" aria-hidden="true">›</span></button>{/if}
               {#if coarse && showScenes}<button class="mi" on:click={() => (menu = 'chapters')}><Icon name="film" size={20} />{$t('scenes.chapters.open')}<span class="chev" aria-hidden="true">›</span></button>{/if}
               <button class="mi" on:click={() => (menu = 'scenes')}><Icon name="bookmark" size={20} />{$t('player.bookmark.menu')}<span class="chev" aria-hidden="true">›</span></button>
@@ -1553,7 +1630,7 @@
               {#if modeLabel}<p class="modeinfo"><Icon name="info" size={16} /><span>{$t('player.mode.label', { mode: modeLabel })}</span></p>{/if}
             </div>
           {:else if menu === 'scenes'}
-            <div class="menu scenes" data-nav data-scope role="dialog" aria-label={$t('player.bookmark.scenesAria')}>
+            <div class="menu scenes" data-nav data-scope role="dialog" aria-label={$t('player.bookmark.scenesAria')} in:cardIn={{ origin: 'bottom right' }} out:cardOut>
               <h3><button class="back" aria-label={$t('player.controls.backToMore')} on:click={() => (menu = 'more')}>‹</button>{$t('player.bookmark.scenes')}</h3>
               <button class="mi" on:click={shareScene}><Icon name="share" size={18} />{$t('player.bookmark.share', { t: fmtClock(shown) })}</button>
               <form class="addnote" on:submit|preventDefault={addBookmark}><input bind:value={noteText} maxlength="140" placeholder={$t('player.bookmark.note')} aria-label={$t('player.bookmark.noteAria')} /><button aria-label={$t('player.bookmark.add')}><Icon name="bookmark" size={18} /></button></form>
@@ -1562,7 +1639,7 @@
               {:else}<p class="muted pad">{$t('player.bookmark.none')}</p>{/each}
             </div>
           {:else if menu === 'settings'}
-            <div class="menu tracks" data-nav data-scope role="dialog" aria-label={$t('player.controls.settings')}>
+            <div class="menu tracks" data-nav data-scope role="dialog" aria-label={$t('player.controls.settings')} in:cardIn={{ origin: 'bottom right' }} out:cardOut>
               <div><h3><button class="back" aria-label={$t('player.controls.backToMore')} on:click={() => (menu = 'more')}>‹</button>{$t('player.quality.title')}</h3>
                 <button class="mi" class:on={shownQ === 0} on:click={() => changeQuality(0)}>{#if shownQ === 0}<Icon name="check" size={16} />{:else}<span class="sp"></span>{/if}{$t('player.quality.auto')}</button>
                 {#each qualityOptions as [label, bps]}<button class="mi" class:on={shownQ === bps} on:click={() => changeQuality(bps)}>{#if shownQ === bps}<Icon name="check" size={16} />{:else}<span class="sp"></span>{/if}{label}</button>{/each}
@@ -1578,7 +1655,7 @@
             </div>
           {/if}
         </div>
-        {#if !tvSession}<button class="ic" aria-label={fullscreen ? $t('player.controls.exitFullscreen') : $t('player.controls.fullscreen')} title={$t('player.controls.fullscreenKey')} on:click={toggleFullscreen}><Icon name={fullscreen ? 'fullscreen-exit' : 'fullscreen'} size={ICON} /></button>{/if}
+        {#if !tvSession}<button class="ic" aria-label={fullscreen ? $t('player.controls.exitFullscreen') : $t('player.controls.fullscreen')} data-label={desk ? (fullscreen ? $t('player.controls.exitFullscreen') : $t('player.controls.fullscreen')) : undefined} title={$t('player.controls.fullscreenKey')} on:click={toggleFullscreen}><Icon name={fullscreen ? 'fullscreen-exit' : 'fullscreen'} size={ICON} /></button>{/if}
       </div>
     </div>
   </div>
@@ -1886,4 +1963,77 @@
     .stage.phone .cc .ccs { width: 56px; min-width: 56px; min-height: 56px; }
     .stage.phone .cc .ccp { width: 68px; min-width: 68px; min-height: 68px; }
   }
+
+  /* ---- desktop layout (desk: desktop width, not TV / phone / kids; spec 2026-11-08 §1–2) ----
+     title block bottom left, the timeline row with both times, then two glass pills (playback left, tools right).
+     Motion is transform / opacity only; blur only with full motion (.ctl.blur). */
+  /* desktop pause screen: the picture darkens and zooms a little (transform / filter only, no motion in calm mode) */
+  .stage.dpause > video { filter: brightness(.35); transform: scale(1.03); }
+  .stage.desk.dmo > video { transition: filter 500ms var(--m-emph-out, ease-out), transform 500ms var(--m-emph-out, ease-out); }
+  /* credits sequence (spec 2026-11-08 §4): the picture glides into the top-left corner on a spring and gains rounded corners and a
+     shadow; transform / opacity only. Calm mode / reduced motion: no transition; a tripped frame guard: an opacity crossfade instead */
+  .stage.cred > video { transform: translate(-27%, -24%) scale(.42); border-radius: 14px; box-shadow: 0 24px 64px rgba(0, 0, 0, .6); }
+  .stage.cmo > video, .stage.desk.cmo > video { transition: transform 750ms var(--m-spring), border-radius 750ms var(--m-emph-out, ease-out), box-shadow 750ms var(--m-emph-out, ease-out), filter 500ms var(--m-emph-out, ease-out); }
+  :global(html.tv-motion-reduced) .stage.cmo > video { transition: none; }
+  :global(html.tv-motion-reduced) .stage.cmo.cred > video { animation: ff-cred-fade 300ms ease-out both; }
+  :global(html.tv-motion-reduced) .stage.cmo.credout > video { animation: ff-cred-fade-out 300ms ease-out both; }
+  @keyframes ff-cred-fade { from { opacity: 0; } to { opacity: 1; } }
+  /* same frames under another name: the class swap cred -> credout restarts the animation */
+  @keyframes ff-cred-fade-out { from { opacity: 0; } to { opacity: 1; } }
+  /* casting: the remote screen's card sits above the taller desk bar (its measured height, gradient padding included); otherwise the
+     bar's box covers the card's buttons */
+  .stage.desk .remote { padding-bottom: calc(var(--ctl-h, 7.5rem) + 1rem + var(--safe-bottom)); }
+  .stage.desk .ctl { display: grid; gap: .7rem; padding: 4.5rem max(clamp(1.5rem, 3vw, 3rem), var(--safe-right)) 1.4rem max(clamp(1.5rem, 3vw, 3rem), var(--safe-left));
+    background: linear-gradient(transparent, rgba(0,0,0,.45) 35%, rgba(0,0,0,.82)); transition: opacity 250ms ease; }
+  .ttlblock { display: grid; gap: .15rem; min-width: 0; max-width: min(60%, 46rem); text-shadow: 0 1px 10px rgba(0,0,0,.5); }
+  .ttlblock em { font-style: normal; color: var(--acc, #ff4f6d); font-weight: 700; font-size: .8rem; letter-spacing: .08em; text-transform: uppercase; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .ttlblock b { font-size: 2.1em; font-weight: 800; line-height: 1.05; letter-spacing: -.01em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .ttlblock span { color: #d4d4da; font-size: 1rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .tlrow { gap: .9rem; }
+  .tlrow .el, .tlrow .rem { min-width: 3.4rem; font-size: .9rem; color: #e8e8ec; font-variant-numeric: tabular-nums; }
+  .tlrow .el { text-align: left; }
+  .stage.desk .track, .stage.desk .track:hover, .stage.desk .track:focus-visible { height: 3px; margin: 14px 0; background: transparent; transition: none; }
+  .bars { position: absolute; inset: 0; border-radius: 99px; background: rgba(255,255,255,.22); transform-origin: center; transition: transform 150ms var(--m-emph-out, ease-out); }
+  .stage.desk .track :is(.buf, .seg, .played, .chap) { transition: transform 150ms var(--m-emph-out, ease-out); }
+  .stage.desk .track:is(:hover, :focus-visible, .scrub) :is(.bars, .buf, .seg, .played, .chap) { transform: scaleY(2); }
+  .stage.desk .mark { top: -4px; }
+  .stage.desk .knob { width: 14px; height: 14px; margin: -7px 0 0 -7px; background: #fff; box-shadow: 0 0 0 3px rgba(255,79,109,.35); }
+  .stage.desk .row { display: flex; align-items: center; justify-content: space-between; gap: .8rem; }
+  .pill { flex-wrap: nowrap; gap: .15rem; padding: .25rem .4rem; border-radius: 99px; background: rgba(20,20,24,.62); border: 1px solid rgba(255,255,255,.12); }
+  .ctl.blur .pill, .ctl.blur .menu:not(.bare) { -webkit-backdrop-filter: blur(16px); backdrop-filter: blur(16px); }
+  .pill .ic { width: 48px; min-height: 48px; }
+  .pill .ic.big { width: 56px; min-height: 56px; }
+  .pill :global(.chipwrap) { margin: 0 .3rem; }
+  /* label chip: rises 4 px above the icon on hover / keyboard focus (white, 150 ms) */
+  .pill button.ic::after { content: attr(data-label); position: absolute; left: 50%; bottom: calc(100% + 10px); transform: translate(-50%, 4px); padding: .15rem .5rem; border-radius: 5px;
+    background: #fff; color: #111; font-size: .75rem; font-weight: 600; line-height: 1.35; white-space: nowrap; pointer-events: none; opacity: 0; transition: opacity 150ms ease, transform 150ms var(--m-emph-out, ease-out); }
+  .pill button.ic:hover::after, .pill button.ic:focus-visible::after { opacity: 1; transform: translate(-50%, 0); }
+  .pill:not(.right) > button.ic:first-child::after { left: 0; transform: translate(0, 4px); }
+  .pill:not(.right) > button.ic:first-child:hover::after, .pill:not(.right) > button.ic:first-child:focus-visible::after { transform: translate(0, 0); }
+  /* the last tool's chip right-aligns: fullscreen, or without it (casting) the last wrapped tool ('Mehr') */
+  .pill.right > button.ic:last-child::after, .pill.right > :last-child button.ic::after { left: auto; right: 0; transform: translate(0, 4px); }
+  .pill.right > button.ic:last-child:is(:hover, :focus-visible)::after, .pill.right > :last-child button.ic:is(:hover, :focus-visible)::after { transform: translate(0, 0); }
+  /* hover: the icon grows, not the button (its label chip would scale with it) */
+  .pill .ic:hover:not(:disabled) { transform: none; }
+  .pill .ic > :global(svg) { transition: transform var(--t-fast); }
+  .pill .ic:hover:not(:disabled) > :global(svg) { transform: scale(1.08); }
+  /* volume: the slider slides out of the pill (transform / opacity), on hover or keyboard focus */
+  .pill .vol { position: relative; }
+  .pill .vslider, .pill .vol:hover .vslider, .pill .vol:focus-within .vslider { position: absolute; left: calc(100% + .9rem); top: 50%; width: 104px; height: 36px; margin: 0; padding: 0 .7rem;
+    border-radius: 99px; background: rgba(20,20,24,.62); border: 1px solid rgba(255,255,255,.12); transition: opacity 150ms ease, transform 200ms var(--m-emph-out, ease-out); }
+  .pill .vslider { opacity: 0; transform: translate(-10px, -50%); pointer-events: none; }
+  .pill .vol:hover .vslider, .pill .vol:focus-within .vslider { opacity: 1; transform: translate(0, -50%); pointer-events: auto; }
+  .pill .vol:hover::after { content: ''; position: absolute; left: 100%; top: 0; bottom: 0; width: 1.2rem; } /* hover bridge to the slider */
+  /* panels: glass cards above their button */
+  .stage.desk .menu:not(.bare) { background: rgba(20,20,24,.62); border: 1px solid rgba(255,255,255,.12); border-radius: 14px; box-shadow: 0 18px 40px rgba(0,0,0,.55); }
+  .stage.desk .menu.tracks h3 { background: rgba(20,20,24,.92); }
+  .stage.desk .skipbtn { right: max(clamp(1.5rem, 3vw, 3rem), var(--safe-right)); bottom: calc(var(--row-h, 3.5rem) + var(--tl-h, 2rem) + .7rem + 1.4rem + 12px); } /* bottom padding + row + gap + timeline + 12 px */
+  /* narrow desktop windows (721–960 px): smaller tools, and the tools pill wraps onto its own line (right-aligned) instead of being clipped */
+  @media (max-width: 960px) {
+    .stage.desk .row { flex-wrap: wrap; row-gap: .5rem; }
+    .stage.desk .pill.right { margin-left: auto; }
+    .stage.desk .pill .ic { width: 40px; min-width: 40px; min-height: 40px; }
+    .stage.desk .pill .ic.big { width: 48px; min-width: 48px; min-height: 48px; }
+  }
+  @media (prefers-reduced-motion: reduce) { .stage.desk .ctl, .bars, .stage.desk .track :is(.buf, .seg, .played, .chap), .pill button.ic::after, .pill .vslider { transition: none; } }
 </style>

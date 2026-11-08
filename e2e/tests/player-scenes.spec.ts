@@ -73,12 +73,16 @@ test.describe('player: scenes, cast & info, sound', () => {
     await expect(ci).toHaveCount(0);
   });
 
-  test('pausing still shows the panel after a moment (as before), without moving the focus', async ({ page }) => {
+  // desktop (spec 2026-11-08 §3): no automatic panel while paused any more (the pause screen took its place); the bar's button opens it
+  test('paused, the bar\'s cast button shows the panel without moving the focus', async ({ page }) => {
     await page.goto('/watch/' + MOVIE.id);
     await videoReady(page);
     await page.evaluate(async () => { const v = document.querySelector('video')!; await v.play().catch(() => undefined); v.pause(); });
+    const btn = page.locator('.ctl').getByRole('button', { name: 'Besetzung & Infos', exact: true });
+    await btn.click();
     await expect(page.getByRole('complementary', { name: 'Besetzung & Infos' }).getByText('Josef Gordan')).toBeVisible();
-    await page.evaluate(() => document.querySelector('video')!.play().catch(() => undefined));
+    await expect(btn).toBeFocused(); // the focus stays on the button (not moved into the panel)
+    await btn.click();
     await expect(page.getByRole('complementary', { name: 'Besetzung & Infos' })).toHaveCount(0);
   });
 

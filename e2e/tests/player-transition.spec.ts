@@ -178,6 +178,80 @@ test.describe('into the player', () => {
     await expect(page.locator('.stage .ff-poster')).toHaveCount(0);
   });
 
+  test.describe('desktop detail <-> player morph', () => {
+    test.use({ reducedMotion: 'no-preference' });
+    /** records every html class list that contains a view-transition class */
+    const record = (page: Page) => page.evaluate(() => {
+      const w = window as unknown as { __cls: string[] };
+      w.__cls = [];
+      new MutationObserver(() => { const c = document.documentElement.className; if (/ff-vt/.test(c)) w.__cls.push(c); }).observe(document.documentElement, { attributes: true, attributeFilter: ['class'] });
+    });
+    const seen = (page: Page) => page.evaluate(() => (window as unknown as { __cls: string[] }).__cls);
+
+    test('desk detail Play morphs into the player', async ({ page, api: _api }) => {
+      await page.addInitScript(() => sessionStorage.setItem('ff-intro-seen', '1'));
+      await mockPlayer(page);
+      await page.route('**/api/items/*/trailer', (r) => r.fulfill({ json: {} }));
+      await countInfo(page);
+      await page.goto('/item/' + MOVIE.id);
+      await expect(page.locator('main .dd [data-play-art]')).toBeVisible();
+      await record(page);
+      await playButton(page).click();
+      await playing(page);
+      expect((await seen(page)).some((c) => /ff-vt-play/.test(c) && /ff-vt-in/.test(c))).toBe(true);
+    });
+
+    test('Back from the player morphs into the desk detail backdrop', async ({ page, api: _api }) => {
+      await page.addInitScript(() => sessionStorage.setItem('ff-intro-seen', '1'));
+      await mockPlayer(page);
+      await page.route('**/api/items/*/trailer', (r) => r.fulfill({ json: {} }));
+      await countInfo(page);
+      await page.goto('/item/' + MOVIE.id);
+      await playButton(page).click();
+      await playing(page);
+      await record(page);
+      await page.goBack();
+      await expect(page.locator('main .dd [data-vt-art]')).toBeVisible();
+      expect((await seen(page)).some((c) => /ff-vt-desk/.test(c))).toBe(true);
+      await expect(page.locator('html')).not.toHaveClass(/ff-vt-desk/); // cleaned up after the transition
+      await expect(page.locator('main .dd [data-st]').first()).toBeVisible();
+    });
+
+    test('calm mode: Back from the player records no desk morph class', async ({ page, api: _api }) => {
+      await page.addInitScript(() => { sessionStorage.setItem('ff-intro-seen', '1'); localStorage.setItem('ff_calm:p1', '1'); });
+      // the server pref is authoritative (the localStorage flag is only the cold-start copy, which /api/prefs overwrites)
+      await page.route('**/api/prefs', (r) => r.fulfill({ json: { prefs: { calm: true } } }));
+      await mockPlayer(page);
+      await page.route('**/api/items/*/trailer', (r) => r.fulfill({ json: {} }));
+      await countInfo(page);
+      await page.goto('/item/' + MOVIE.id);
+      await playButton(page).click();
+      await playing(page);
+      await record(page);
+      await expect(page.locator('html')).toHaveClass(/\bcalm\b/); // calm mode really is on while going back
+      await page.goBack();
+      await expect(page.locator('main .dd [data-vt-art]')).toBeVisible();
+      expect((await seen(page)).some((c) => /ff-vt-desk/.test(c))).toBe(false);
+    });
+
+    test('a reload of /watch shows the poster without a morph', async ({ page, api: _api }) => {
+      await page.addInitScript(() => sessionStorage.setItem('ff-intro-seen', '1'));
+      await mockPlayer(page);
+      await countInfo(page);
+      await holdVideo(page);
+      // an init script runs before <html> exists (document.documentElement is null): watch the document's subtree instead
+      await page.addInitScript(() => {
+        const w = window as unknown as { __vtSeen: boolean };
+        w.__vtSeen = false;
+        new MutationObserver(() => { if (/ff-vt-play/.test(document.documentElement?.className ?? '')) w.__vtSeen = true; })
+          .observe(document, { attributes: true, attributeFilter: ['class'], subtree: true });
+      });
+      await page.goto('/watch/' + MOVIE.id);
+      await expect(page.locator('.stage .ff-poster')).toBeVisible();
+      expect(await page.evaluate(() => (window as unknown as { __vtSeen: boolean }).__vtSeen)).toBe(false);
+    });
+  });
+
   test.describe('TV', () => {
     test.use({ reducedMotion: 'no-preference' });
     test('TV: the play transition runs where the API exists (spec 5.2), the player starts', async ({ page, api: _api }) => {

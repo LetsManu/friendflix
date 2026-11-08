@@ -156,6 +156,7 @@ const en: Translation<typeof de> = {
     hls: 'HLS (transcoding)',
   },
   volume: { label: 'Volume', level: 'Volume {n} %' },
+  pause: { watching: "You're watching", paused: 'Paused', castInfo: 'Cast & info' },
   brightness: 'Brightness {n} %',
   percent: '{n} %',
   mute: 'Mute',
@@ -191,6 +192,7 @@ const en: Translation<typeof de> = {
   },
   controls: {
     toolbar: 'Playback controls',
+    remaining: '{time} remaining',
     play: 'Play',
     pause: 'Pause',
     back10: '10 seconds back',
@@ -231,6 +233,10 @@ const en: Translation<typeof de> = {
     watchCredits: 'Watch credits',
     startsIn: { one: 'Next episode starts in {n} second', other: 'Next episode starts in {n} seconds' },
     more: 'More like this',
+  },
+  /** credits sequence (desktop and TV): caption above the next episode */
+  credits: {
+    upNext: 'Up next',
   },
   remote: {
     title: 'Remote control',

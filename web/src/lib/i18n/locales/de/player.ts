@@ -158,6 +158,7 @@ export default {
     hls: 'HLS (Transcoding)',
   },
   volume: { label: 'Lautstärke', level: 'Lautstärke {n} %' },
+  pause: { watching: 'Du siehst gerade', paused: 'Pausiert', castInfo: 'Besetzung & Infos' },
   brightness: 'Helligkeit {n} %',
   percent: '{n} %',
   mute: 'Stumm',
@@ -193,6 +194,7 @@ export default {
   },
   controls: {
     toolbar: 'Wiedergabesteuerung',
+    remaining: 'noch {time}',
     play: 'Abspielen',
     pause: 'Pause',
     back10: '10 Sekunden zurück',
@@ -235,6 +237,10 @@ export default {
     watchCredits: 'Abspann ansehen',
     startsIn: { one: 'Nächste Folge startet in {n} Sekunde', other: 'Nächste Folge startet in {n} Sekunden' },
     more: 'Mehr davon',
+  },
+  /** credits sequence (desktop and TV): caption above the next episode */
+  credits: {
+    upNext: 'Als Nächstes',
   },
   /** phone remote (/remote) */
   remote: {

@@ -121,6 +121,10 @@ test.describe('player: adaptive quality', () => {
     await expect(page.locator('.toast', { hasText: 'Leitung langsam – 720p' })).toBeVisible({ timeout: 25_000 });
     expect(calls[2]).toMatchObject({ maxBitrate: 4_000_000 });
     expect(calls.every((c) => (c.maxBitrate ?? 0) <= 8_000_000)).toBe(true); // never above the pick
+    // the 30 s clip is in its end credits by now (no outro segment: the last 25 s): on desktop the credits sequence takes the
+    // screen and hides the bar (spec 2026-11-08 §4); "Watch credits" backs out of it and the bar is usable again
+    await page.locator('.cs').getByRole('button', { name: 'Abspann ansehen' }).click();
+    await expect(page.locator('.cs')).toHaveCount(0);
     await openQuality(page);
     await expect(page.getByRole('button', { name: '720p', exact: true })).toHaveClass(/on/); // the check follows the real rung
     await page.getByRole('button', { name: '1080p' }).click();

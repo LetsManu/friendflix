@@ -171,6 +171,7 @@ const pl: Translation<typeof de> = {
     hls: 'HLS (transkodowanie)',
   },
   volume: { label: 'Głośność', level: 'Głośność {n}%' },
+  pause: { watching: 'Oglądasz', paused: 'Wstrzymano', castInfo: 'Obsada i informacje' },
   brightness: 'Jasność {n}%',
   percent: '{n}%',
   mute: 'Wycisz',
@@ -206,6 +207,7 @@ const pl: Translation<typeof de> = {
   },
   controls: {
     toolbar: 'Sterowanie odtwarzaniem',
+    remaining: 'pozostało {time}',
     play: 'Odtwórz',
     pause: 'Pauza',
     back10: '10 sekund wstecz',
@@ -251,6 +253,10 @@ const pl: Translation<typeof de> = {
       other: 'Następny odcinek rozpocznie się za {n} sekundy',
     },
     more: 'Podobne tytuły',
+  },
+  /** credits sequence (desktop and TV): caption above the next episode */
+  credits: {
+    upNext: 'Następnie',
   },
   remote: {
     title: 'Pilot',

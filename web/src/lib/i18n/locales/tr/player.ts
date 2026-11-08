@@ -156,6 +156,7 @@ const tr: Translation<typeof de> = {
     hls: 'HLS (dönüştürme)',
   },
   volume: { label: 'Ses düzeyi', level: 'Ses düzeyi %{n}' },
+  pause: { watching: 'Şu an izliyorsun', paused: 'Duraklatıldı', castInfo: 'Oyuncular ve bilgi' },
   brightness: 'Parlaklık %{n}',
   percent: '%{n}',
   mute: 'Sessiz',
@@ -191,6 +192,7 @@ const tr: Translation<typeof de> = {
   },
   controls: {
     toolbar: 'Oynatma kontrolleri',
+    remaining: '{time} kaldı',
     play: 'Oynat',
     pause: 'Duraklat',
     back10: '10 saniye geri',
@@ -231,6 +233,10 @@ const tr: Translation<typeof de> = {
     watchCredits: 'Jeneriği izle',
     startsIn: { one: 'Sonraki bölüm {n} saniye içinde başlıyor', other: 'Sonraki bölüm {n} saniye içinde başlıyor' },
     more: 'Benzerleri',
+  },
+  /** credits sequence (desktop and TV): caption above the next episode */
+  credits: {
+    upNext: 'Sıradaki',
   },
   remote: {
     title: 'Kumanda',

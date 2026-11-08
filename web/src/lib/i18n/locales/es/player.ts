@@ -156,6 +156,7 @@ const es: Translation<typeof de> = {
     hls: 'HLS (transcodificación)',
   },
   volume: { label: 'Volumen', level: 'Volumen {n} %' },
+  pause: { watching: 'Estás viendo', paused: 'En pausa', castInfo: 'Reparto e información' },
   brightness: 'Brillo {n} %',
   percent: '{n} %',
   mute: 'Silenciar',
@@ -191,6 +192,7 @@ const es: Translation<typeof de> = {
   },
   controls: {
     toolbar: 'Controles de reproducción',
+    remaining: 'quedan {time}',
     play: 'Reproducir',
     pause: 'Pausa',
     back10: 'Retroceder 10 segundos',
@@ -231,6 +233,10 @@ const es: Translation<typeof de> = {
     watchCredits: 'Ver créditos',
     startsIn: { one: 'El siguiente episodio empieza en {n} segundo', many: 'El siguiente episodio empieza en {n} segundos', other: 'El siguiente episodio empieza en {n} segundos' },
     more: 'Más títulos como este',
+  },
+  /** credits sequence (desktop and TV): caption above the next episode */
+  credits: {
+    upNext: 'A continuación',
   },
   remote: {
     title: 'Mando a distancia',
