@@ -190,6 +190,8 @@ const tr: Translation<typeof de> = {
     clearRecent: 'Geçmişi temizle',
     hint: 'Yukarıdan başlık, kişi, tür veya yıl ara.',
     popular: 'Popüler aramalar',
+    popularHere: 'Burada popüler',
+    byGenre: 'Türe göre göz at',
     running: 'Aranıyor …',
     errorTitle: 'Arama şu an yapılamıyor',
     errorText: 'Lütfen biraz sonra yeniden dene.',

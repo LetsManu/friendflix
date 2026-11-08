@@ -190,6 +190,8 @@ const fr: Translation<typeof de> = {
     clearRecent: 'Effacer l’historique',
     hint: 'Recherchez ci-dessus des titres, des personnes, des genres ou une année.',
     popular: 'Recherches populaires',
+    popularHere: 'Populaire ici',
+    byGenre: 'Parcourir par genre',
     running: 'Recherche en cours …',
     errorTitle: 'Recherche momentanément impossible',
     errorText: 'Veuillez réessayer dans un instant.',

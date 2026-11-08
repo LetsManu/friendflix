@@ -190,6 +190,8 @@ const en: Translation<typeof de> = {
     clearRecent: 'Clear history',
     hint: 'Search above for titles, people, genres or a year.',
     popular: 'Popular searches',
+    popularHere: 'Popular here',
+    byGenre: 'Browse by genre',
     running: 'Searching …',
     errorTitle: 'Search is not available right now',
     errorText: 'Please try again in a moment.',

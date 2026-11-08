@@ -202,6 +202,8 @@ export default {
     clearRecent: 'Verlauf löschen',
     hint: 'Suche oben nach Titeln, Personen, Genres oder einem Jahr.',
     popular: 'Beliebte Suchen',
+    popularHere: 'Beliebt hier',
+    byGenre: 'Nach Genre stöbern',
     running: 'Suche läuft …',
     errorTitle: 'Suche gerade nicht möglich',
     errorText: 'Bitte versuche es in einem Moment noch einmal.',

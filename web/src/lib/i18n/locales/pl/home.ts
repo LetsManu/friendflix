@@ -210,6 +210,8 @@ const pl: Translation<typeof de> = {
     clearRecent: 'Wyczyść historię',
     hint: 'Wyszukaj powyżej tytuły, osoby, gatunki lub rok.',
     popular: 'Popularne wyszukiwania',
+    popularHere: 'Popularne tutaj',
+    byGenre: 'Przeglądaj według gatunku',
     running: 'Wyszukiwanie …',
     errorTitle: 'Wyszukiwanie chwilowo niedostępne',
     errorText: 'Spróbuj ponownie za chwilę.',
