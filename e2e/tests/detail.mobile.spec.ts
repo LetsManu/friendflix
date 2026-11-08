@@ -145,9 +145,11 @@ test.describe('phone detail page (phone browse §4)', () => {
   });
 
   test('Download is not shown when downloads are not allowed', async ({ page }) => {
+    let me = 0;
+    page.on('response', (r) => { if (new URL(r.url()).pathname === '/api/me') me++; });
     await open(page); // the mock profile: downloads.allowed false
     await expect(page.locator('.dbody').getByRole('link', { name: 'Abspielen' })).toBeVisible();
-    await page.waitForTimeout(300); // /api/me has answered
+    await expect.poll(() => me).toBeGreaterThanOrEqual(2); // the layout's and the detail page's (download permission) answers are in
     await expect(page.getByRole('button', { name: /Herunterladen/ })).toHaveCount(0);
   });
 

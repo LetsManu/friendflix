@@ -92,7 +92,7 @@
     aboutSeq++; aboutFor = ''; cancelAnimationFrame(aboutRaf); // a late answer for the previous title must not land on this one
     facts = null; leavingDlg = false;
     extras = []; more = null; people = []; logoFailed = false; heroLoaded = false; heroTried = ''; recOpen = false; castMsg = ''; saveMsg = ''; tab = '';
-    clearTimeout(fadeT); fading = false; fadeOut = false; fadeIn = false;
+    clearTimeout(fadeT); fading = false; fadeOut = false; fadeIn = false; ulReady = false; // a new title: the underline is placed, not slid
     savedLang(want);
     const cd: ItemDetail | undefined = cachedDetail(want);
     const early = cd?.item ?? cachedItem(want) ?? null;
@@ -225,7 +225,7 @@
   }
   $: panelTab = p2 ? shownTab : curTab;
   /** phone: the coral underline slides (transform only) under the selected tab; placed without a slide the first time */
-  let tabsEl: HTMLDivElement | undefined, ulX = 0, ulW = 0, ulReady = false, ulRo: ResizeObserver | undefined;
+  let tabsEl: HTMLDivElement | undefined, ulX = 0, ulW = 0, ulReady = false;
   function placeUl() {
     const on = tabsEl?.querySelector<HTMLElement>('[role="tab"][aria-selected="true"]');
     if (!on) return;
@@ -235,7 +235,13 @@
   /** `_tab`, `_n`: re-place when the selection or the set of tabs changes */
   function ulSync(_tab: string, _n: number) { void tick().then(placeUl); }
   $: if (p2 && tabsEl) ulSync(curTab, tabs.length);
-  $: if (p2 && tabsEl && !ulRo && typeof ResizeObserver !== 'undefined') { ulRo = new ResizeObserver(() => placeUl()); ulRo.observe(tabsEl); }
+  /** the tablist re-places the underline whenever its size changes (fonts, rotation, tabs added); bound to the element itself */
+  function ulResize(node: HTMLElement) {
+    if (typeof ResizeObserver === 'undefined') return {};
+    const ro = new ResizeObserver(() => { if (p2) placeUl(); });
+    ro.observe(node);
+    return { destroy: () => ro.disconnect() };
+  }
   /** TV: every tab is focusable and focusing one selects it (the D-pad moves the focus, not the arrow-key handler above) */
   let tvOn = false;
   function onTabFocus(n: DetailTab) { if (tvOn) tab = n; }
@@ -437,7 +443,7 @@
     if (typeof window === 'undefined') return;
     document.removeEventListener('visibilitychange', onVisibility);
     io?.disconnect();
-    clearTimeout(saveT); clearTimeout(castT); clearTimeout(fadeT); ulRo?.disconnect(); stopHero(); cancelAuto(); cancelAnimationFrame(aboutRaf); aboutSeq++;
+    clearTimeout(saveT); clearTimeout(castT); clearTimeout(fadeT); stopHero(); cancelAuto(); cancelAnimationFrame(aboutRaf); aboutSeq++;
   });
   const heroTitleTag = () => (variant === 'modal' ? 'h2' : 'h1');
 
@@ -684,7 +690,7 @@
       <Safe name="cast" key={item.id}><CastRow id={item.id} {people} /></Safe>
 
       <!-- ================= tabs (always shown); the panels stay mounted and switch with `hidden` ================= -->
-      <div class="tabs" role="tablist" aria-label={$t('hubs.extras.tabs')} tabindex="-1" on:keydown={tabKeys} bind:this={tabsEl}>
+      <div class="tabs" role="tablist" aria-label={$t('hubs.extras.tabs')} tabindex="-1" on:keydown={tabKeys} bind:this={tabsEl} use:ulResize>
         {#each tabs as n (n)}
           <button type="button" role="tab" id="dv-tab-{n}" class="tab" class:on={curTab === n} aria-selected={curTab === n} aria-controls="dv-panel-{n}" tabindex={curTab === n || tvOn ? 0 : -1}
             on:click={() => pick(n)} on:focus={() => onTabFocus(n)}>{tabLabel(n)}</button>
@@ -692,7 +698,7 @@
         {#if p2}<i class="ul" class:ready={ulReady} aria-hidden="true" style="transform: translateX({ulX}px) scaleX({ulW})"></i>{/if}
       </div>
 
-      <div class="panes" class:out={fadeOut} class:in={fadeIn} on:animationend={() => (fadeIn = false)}>
+      <div class="panes" class:out={fadeOut} class:in={fadeIn} on:animationend={(e) => { if (e.target === e.currentTarget) fadeIn = false; }}>
 
       {#if item.type === 'Series'}
         <div class="tp" id="dv-panel-episodes" role="tabpanel" aria-labelledby="dv-tab-episodes" hidden={panelTab !== 'episodes'}>
@@ -866,7 +872,6 @@
   .castl { margin: 0; font-size: .8rem; color: var(--mut); overflow-wrap: anywhere; }
   .dacts { justify-content: space-around; }
   /* tabs: the coral underline is one 1 px bar scaled to the selected tab's width and slid under it (transform only) */
-  .p2 .tabs { position: sticky; }
   .p2 .tab.on { border-bottom-color: transparent; }
   .p2 .tab { font-weight: 700; }
   .ul { position: absolute; left: 0; bottom: 0; width: 1px; height: 3px; background: var(--acc); transform-origin: 0 50%; pointer-events: none; }
