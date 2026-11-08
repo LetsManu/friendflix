@@ -12,6 +12,14 @@ Part of the desktop redesign that ships with v3.0.0.
 - **Wide hover preview.** Resting on a card opens a wide preview with the main actions (off on narrow windows and touch screens).
 - **Full-page detail with tabs.** More info opens a page instead of a popup.
 - **Card-to-detail animation.** The card glides into the detail page and back, and the page content eases in; calm mode and reduced motion skip it.
+- **Cinema player bar.** The large title sits bottom left with the current chapter above it; the timeline grows on hover with a thumbnail, and the playback and tools controls sit in two glass pills with labels on hover.
+- **Panels that grow out of their button.** Episodes, audio & subtitles, speed, scenes and more open as one glass card; Esc or a click outside closes it and playback continues.
+- **Pause screen.** After 5 s paused the picture dims and shows *You're watching* with the title, episode and synopsis, and a *Cast & info* button.
+- **Credits sequence.** *Watch credits* and *Next episode* come first, then the picture glides into the corner and keeps playing, with up next, a 10 s countdown and *More like this*; films and last episodes show suggestions without a countdown.
+- **Back to the detail page morphs.** Leaving the player turns the picture back into the backdrop; calm mode and reduced motion switch at once.
+
+### TV
+- **Credits sequence.** After an episode, *Watch credits* and *Next episode* appear, then the picture moves into the corner and keeps playing with up next and *More like this*; OK plays the next episode, Back plays the sequence backwards, and a crossfade replaces the glide where animation would stutter.
 
 ### Fixed
 - **Update channel on Portainer stacks.** *Update now* sends the chosen channel (Stable, Nightly, fixed version) to Portainer as `FF_TAG`, so switching to Nightly actually installs nightly; Admin → Update says which channel still runs until then.
