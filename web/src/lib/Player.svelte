@@ -176,10 +176,13 @@
    * (time · seek bar · time, then a row of icons), everything inside the safe areas (--safe-* tokens). Desktop and TV keep their bar.
    */
   let phone = false, ctlH = 0;
+  /** desktop: heights of the timeline row and the pill row (the skip button sits just above the timeline, not above the title) */
+  let tlH = 0, rowH = 0;
   $: ccOn = phone && showUi && !locked && !error && !reconnecting && !(posterOn && !posterOut);
   $: phoneChip = phone && Boolean(info && mode && !remote);
   /** height of the bottom bar: panels, the skip button and the page's cards sit above it (phones only; elsewhere the old fixed offsets apply) */
-  $: barVar = (phone && ctlH ? `;--bar-h:${ctlH}px` : '') + (ctlH ? `;--ctl-h:${ctlH}px` : '');
+  $: barVar = (phone && ctlH ? `;--bar-h:${ctlH}px` : '') + (ctlH ? `;--ctl-h:${ctlH}px` : '')
+    + (desk && tlH && rowH ? `;--tl-h:${tlH}px;--row-h:${rowH}px` : '');
   // ---- desktop layout (spec 2026-11-08 §1–2): title block, timeline row with both times, two glass pills; never TV, phone or kids ----
   $: desk = deskPlayer({ desk: $deskActive, tv: tvUi, phone });
   /** glass blur only with full motion (calm mode, reduced motion or a tripped frame guard: plain fill) */
@@ -1468,11 +1471,11 @@
       <!-- desktop: chapter eyebrow, title, episode line above the timeline -->
       <div class="ttlblock">
         {#if nowChapter}<em>{nowChapter}</em>{/if}
-        <b>{barTitle || title}</b>
+        <b title={barTitle || title}>{barTitle || title}</b>
         {#if barSub}<span>{barSub}</span>{/if}
       </div>
     {/if}
-    <div class="timeline" class:tlrow={desk}>
+    <div class="timeline" class:tlrow={desk} bind:offsetHeight={tlH}>
       {#if phone}<span class="cur" aria-hidden="true">{fmtClock(shown)}</span>{/if}
       {#if desk}<span class="el" aria-hidden="true">{fmtClock(shown)}</span>{/if}
       <div class="track" bind:this={trackEl} class:locked={!canControl} class:scrub={scrubbing} role="slider" tabindex="0" aria-label={$t('player.positionLabel')} aria-valuemin="0" aria-valuemax={Math.round(duration)} aria-valuenow={Math.round(shown)}
@@ -1500,7 +1503,7 @@
         <span class="rem" aria-hidden="true">{duration ? `${phone ? '−' : ''}${fmtClock(Math.max(0, duration - shown))}` : '–'}</span>
       {/if}
     </div>
-    <div class="row">
+    <div class="row" bind:offsetHeight={rowH}>
       <div class="grp" class:pill={desk}>
         {#if !phone}
           <button class="ic" class:big={desk} class:locked={!canControl} aria-label={paused ? $t('player.controls.play') : $t('player.controls.pause')} data-label={desk ? (paused ? $t('player.controls.play') : $t('player.controls.pause')) : undefined} on:click={togglePlay}><Icon name={paused ? 'play' : 'pause'} size={ICON} /></button>
@@ -1953,8 +1956,13 @@
   .pill button.ic:hover::after, .pill button.ic:focus-visible::after { opacity: 1; transform: translate(-50%, 0); }
   .pill:not(.right) > button.ic:first-child::after { left: 0; transform: translate(0, 4px); }
   .pill:not(.right) > button.ic:first-child:hover::after, .pill:not(.right) > button.ic:first-child:focus-visible::after { transform: translate(0, 0); }
-  .pill.right > button.ic:last-child::after { left: auto; right: 0; transform: translate(0, 4px); }
-  .pill.right > button.ic:last-child:hover::after, .pill.right > button.ic:last-child:focus-visible::after { transform: translate(0, 0); }
+  /* the last tool's chip right-aligns: fullscreen, or without it (casting) the last wrapped tool ('Mehr') */
+  .pill.right > button.ic:last-child::after, .pill.right > :last-child button.ic::after { left: auto; right: 0; transform: translate(0, 4px); }
+  .pill.right > button.ic:last-child:is(:hover, :focus-visible)::after, .pill.right > :last-child button.ic:is(:hover, :focus-visible)::after { transform: translate(0, 0); }
+  /* hover: the icon grows, not the button (its label chip would scale with it) */
+  .pill .ic:hover:not(:disabled) { transform: none; }
+  .pill .ic > :global(svg) { transition: transform var(--t-fast); }
+  .pill .ic:hover:not(:disabled) > :global(svg) { transform: scale(1.08); }
   /* volume: the slider slides out of the pill (transform / opacity), on hover or keyboard focus */
   .pill .vol { position: relative; }
   .pill .vslider, .pill .vol:hover .vslider, .pill .vol:focus-within .vslider { position: absolute; left: calc(100% + .9rem); top: 50%; width: 104px; height: 36px; margin: 0; padding: 0 .7rem;
@@ -1965,6 +1973,13 @@
   /* panels: glass cards above their button */
   .stage.desk .menu:not(.bare) { background: rgba(20,20,24,.62); border: 1px solid rgba(255,255,255,.12); border-radius: 14px; box-shadow: 0 18px 40px rgba(0,0,0,.55); }
   .stage.desk .menu.tracks h3 { background: rgba(20,20,24,.92); }
-  .stage.desk .skipbtn { right: max(clamp(1.5rem, 3vw, 3rem), var(--safe-right)); bottom: calc(var(--ctl-h, 7rem) + 12px); }
+  .stage.desk .skipbtn { right: max(clamp(1.5rem, 3vw, 3rem), var(--safe-right)); bottom: calc(var(--row-h, 3.5rem) + var(--tl-h, 2rem) + .7rem + 1.4rem + 12px); } /* bottom padding + row + gap + timeline + 12 px */
+  /* narrow desktop windows (721–960 px): smaller tools, and the tools pill wraps onto its own line (right-aligned) instead of being clipped */
+  @media (max-width: 960px) {
+    .stage.desk .row { flex-wrap: wrap; row-gap: .5rem; }
+    .stage.desk .pill.right { margin-left: auto; }
+    .stage.desk .pill .ic { width: 40px; min-width: 40px; min-height: 40px; }
+    .stage.desk .pill .ic.big { width: 48px; min-width: 48px; min-height: 48px; }
+  }
   @media (prefers-reduced-motion: reduce) { .stage.desk .ctl, .bars, .stage.desk .track :is(.buf, .seg, .played, .chap), .pill button.ic::after, .pill .vslider { transition: none; } }
 </style>

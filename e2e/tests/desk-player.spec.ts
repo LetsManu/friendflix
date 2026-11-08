@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import type { Page } from '@playwright/test';
-import { ME, MOVIE } from '../mocks/fixtures.js';
+import { episodes, ME, MOVIE } from '../mocks/fixtures.js';
 import { mockPlayer, videoReady } from '../mocks/scenes.js';
 import { expect, test } from '../fixtures.js';
 import { noHorizontalOverflow } from '../helpers.js';
@@ -29,6 +29,30 @@ test('desktop bar: title block, both pills, times on the timeline row', async ({
     await expect(page.locator('.stage.desk .tlrow .rem')).toHaveText(/^−(\d+:)?\d+:\d\d$/);
     await expect(page.locator('.ctl .mid')).toHaveCount(0);
     expect(await noHorizontalOverflow(page)).toBe(true);
+  }
+});
+
+test('narrow desktop window: every tool stays inside the stage (series episode, all tools)', async ({ page, api: _api }) => {
+  await page.setViewportSize({ width: 760, height: 700 });
+  await mockPlayer(page);
+  await page.route('**/api/items/*/next', (r) => r.fulfill({ json: { item: episodes[1] } })); // "next episode" button shown
+  await page.goto('/watch/' + episodes[0]!.id);
+  await videoReady(page);
+  await page.locator('.stage').hover();
+  await expect(page.locator('.stage.desk')).toBeVisible();
+  await expect(page.locator('.stage.desk .pill').getByRole('button', { name: 'Nächste Folge', exact: true })).toBeVisible();
+  await expect(page.locator('.stage.desk .pill').getByRole('button', { name: 'Folgen', exact: true })).toBeVisible();
+  expect(await noHorizontalOverflow(page)).toBe(true);
+  const stage = (await page.locator('.stage.desk').boundingBox())!;
+  const boxes = await page.locator('.stage.desk .pill button.ic').evaluateAll((els) => els
+    .filter((e) => (e as HTMLElement).offsetParent !== null)
+    .map((e) => { const r = e.getBoundingClientRect(); return { l: r.left, r: r.right, t: r.top, b: r.bottom, n: e.getAttribute('aria-label') }; }));
+  expect(boxes.length).toBeGreaterThanOrEqual(9);
+  for (const b of boxes) {
+    expect(b.l, `${b.n} left`).toBeGreaterThanOrEqual(stage.x - 0.5);
+    expect(b.r, `${b.n} right`).toBeLessThanOrEqual(stage.x + stage.width + 0.5);
+    expect(b.t, `${b.n} top`).toBeGreaterThanOrEqual(stage.y - 0.5);
+    expect(b.b, `${b.n} bottom`).toBeLessThanOrEqual(stage.y + stage.height + 0.5);
   }
 });
 
