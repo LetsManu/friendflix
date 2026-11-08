@@ -115,11 +115,20 @@ test.describe('phone shell', () => {
         await btn.tap();
         await expect(page.getByRole('dialog', { name: 'Kategorien' })).toBeVisible();
         await expect(sheet).not.toHaveClass(/\bout\b/);
-        if (how === 'escape') await page.keyboard.press('Escape');
-        else await sheet.getByRole('button', { name: 'Schließen' }).tap();
-        await expect(sheet).toHaveCount(1); // still there, leaving
-        await expect(sheet).toHaveClass(/\bout\b/);
-        await expect(page.locator('.catdim')).toHaveClass(/\bout\b/);
+        // close and read the leaving state in one round-trip: the exit lasts ~280 ms of real time
+        const state = await page.evaluate(async (h) => {
+          const el = document.querySelector<HTMLElement>('.cats')!;
+          if (h === 'escape') el.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })); // dialogKeys listens on the sheet
+          else el.querySelector<HTMLButtonElement>('button.close')!.click();
+          await Promise.resolve(); // Svelte flushes in a microtask
+          await new Promise((r) => requestAnimationFrame(r));
+          return {
+            count: document.querySelectorAll('.cats').length,
+            sheetOut: Boolean(document.querySelector('.cats')?.classList.contains('out')),
+            dimOut: Boolean(document.querySelector('.catdim')?.classList.contains('out')),
+          };
+        }, how);
+        expect(state).toEqual({ count: 1, sheetOut: true, dimOut: true }); // still there, leaving
         await expect(sheet).toHaveCount(0);
         await expect(page.locator('.catdim')).toHaveCount(0);
         await expect(btn).toBeFocused();
