@@ -196,6 +196,7 @@ test.describe('desktop detail page', () => {
 
   test.describe('motion', () => {
     test.use({ reducedMotion: 'no-preference' });
+    test.beforeEach(({ page }) => page.addInitScript(() => sessionStorage.setItem('ff-intro-seen', '1'))); // no brand intro over the page (frozen clocks keep it there)
     // the profile intro (it plays with motion on) stays off: it would cover the page
     test.beforeEach(async ({ page }) => { await page.addInitScript(() => localStorage.setItem('ff-intro:p1', JSON.stringify({ show: false, sound: false }))); });
 
@@ -363,6 +364,7 @@ test.describe('desktop detail page', () => {
 /** Page motion (spec desktop browse §3 "Motion in" / "Motion back"; +layout.svelte deskTransition, lib/tv/motion.ts deskPagePlan). */
 test.describe('desktop page motion', () => {
   test.use({ reducedMotion: 'no-preference' });
+  test.beforeEach(({ page }) => page.addInitScript(() => sessionStorage.setItem('ff-intro-seen', '1'))); // no brand intro over the page (frozen clocks keep it there)
   test.beforeEach(async ({ page }) => {
     await page.addInitScript(() => localStorage.setItem('ff-intro:p1', JSON.stringify({ show: false, sound: false })));
     await page.route('**/api/items/*/trailer', (r) => r.fulfill({ json: {} })); // no clips: nothing plays over the pictures
