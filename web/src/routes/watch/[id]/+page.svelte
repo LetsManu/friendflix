@@ -24,6 +24,7 @@
   import CreditsSequence from '#lib/player/CreditsSequence.svelte';
   import { CHIP_MS, creditsBeat, deskPlayer } from '#lib/player/desk/logic';
   import { deskActive } from '#lib/desk/bar';
+  import { kidsMode } from '#lib/kids';
 
   let video: HTMLVideoElement | null = null;
   let item: Item | null = null, nextEp: Item | null = null, similar: Item[] = [];
@@ -50,14 +51,21 @@
   // ---- credits sequence (spec 2026-11-08 §4): desktop and TV replace the next-up / "More like this" cards; phones keep them ----
   // `tvUi` / `coarse` follow html.tv and the pointer the same way the Player does
   let tvUi = false, coarse = false;
-  $: csOn = tvUi || deskPlayer({ desk: $deskActive, tv: tvUi, phone: coarse && !tvUi });
+  // kids profiles keep today's next-up card (also on a TV)
+  $: csOn = !$kidsMode && (tvUi || deskPlayer({ desk: $deskActive, tv: tvUi, phone: coarse && !tvUi }));
   /** a film, or the last episode with the post-play screen on: suggestions (and the post-play headline) take the next episode's place */
   $: csKind = (kind === 'episode' ? 'episode' : kind === 'movie' || (item?.type === 'Episode' && ppWanted) ? 'movie' : 'none') as 'episode' | 'movie' | 'none';
   /** when the credits were reached (null = before them); `now` ticks every 250 ms only while in the credits */
   let enteredAt: number | null = null, now = Date.now(), credT: ReturnType<typeof setInterval> | undefined;
+  /** bound from the Player: the viewer is busy there (menu, scrubbing, dialog, cast & info, paused) - the chip holds */
+  let credHold = false;
+  function tickCredits() {
+    now = Date.now();
+    if (credHold && enteredAt !== null && beat === 'chip') enteredAt = now; // the 2 s start over once the viewer is done
+  }
   $: onCredits(Number.isFinite(creditsAt) && curTime >= creditsAt);
   function onCredits(inCredits: boolean) {
-    if (inCredits && enteredAt === null) { enteredAt = now = Date.now(); clearInterval(credT); credT = setInterval(() => (now = Date.now()), 250); }
+    if (inCredits && enteredAt === null) { enteredAt = now = Date.now(); clearInterval(credT); credT = setInterval(tickCredits, 250); }
     else if (!inCredits && enteredAt !== null) { enteredAt = null; clearInterval(credT); credT = undefined; } // seeking back: the picture grows back
   }
   // casting, "still watching?" and phones: no sequence (a watch party plays on its own route without these cards)
@@ -247,7 +255,7 @@
   <!-- the overlay covers the player: while it is open the player's controls are out of the tab order (inert, not a focus trap) -->
   <div class="stagewrap" inert={ppOpen}>
   {#key id}
-    <Player itemId={id} {poster} item={item && item.id === id ? item : null} title={label(item)} barTitle={bt.title} barSub={bt.sub} seriesId={item?.seriesId ?? ''} isMovie={item?.type === 'Movie'} seasonId={item?.seasonId ?? ''} on:episode={playEpisode} {startAt} {wantAudio} {wantSub} bind:video bind:sleepAfterEpisode bind:creditsAt bind:postplayAt bind:remote credits={beat} on:credits={watchCredits} hasNext={Boolean(nextEp)} on:next={() => nextEp && toEpisode(nextHref())} on:timeupdate={onTime} on:ended={onEnded} on:back={back}>
+    <Player itemId={id} {poster} item={item && item.id === id ? item : null} title={label(item)} barTitle={bt.title} barSub={bt.sub} seriesId={item?.seriesId ?? ''} isMovie={item?.type === 'Movie'} seasonId={item?.seasonId ?? ''} on:episode={playEpisode} {startAt} {wantAudio} {wantSub} bind:video bind:sleepAfterEpisode bind:creditsAt bind:postplayAt bind:remote credits={beat} bind:credHold on:credits={watchCredits} hasNext={Boolean(nextEp)} on:next={() => nextEp && toEpisode(nextHref())} on:timeupdate={onTime} on:ended={onEnded} on:back={back}>
       <div slot="top" class="top">
         <button class="icon-btn" aria-label={$t('player.watch.back')} on:click={back}><Icon name="arrow-left" size={30} /></button>
         {#if item}<div class="ttl phone"><b>{item.seriesName ?? item.name}</b>{#if item.seriesName}<span>S{item.parentIndexNumber}:E{item.indexNumber} · {item.name}</span>{/if}</div>{/if}

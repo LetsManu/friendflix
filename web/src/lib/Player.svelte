@@ -111,6 +111,8 @@
    * the top-left corner (stage `.cred`) and hides the bar; a click on the small picture, Esc or TV Back dispatch `credits`
    */
   export let credits: 'off' | 'chip' | 'corner' = 'off';
+  /** bind: the viewer is busy in the player (menu, scrubbing, a dialog, cast & info, paused before the end): the page holds the chip */
+  export let credHold = false;
   const dispatch = createEventDispatcher();
 
   type Info = PlaybackDto;
@@ -217,16 +219,18 @@
   $: tvSub = item?.seriesName && item.indexNumber !== undefined && item.indexNumber !== null
     ? $t('tv.player.episode', { s: item.parentIndexNumber ?? 1, e: item.indexNumber, name: item.name }) : barSub;
   /** desktop pause screen (spec 2026-11-08 §3): 5 s after the pause or the last input, unless something else is on screen */
-  $: deskBlocked = menu !== '' || scrubbing || (partyMode && !canControl) || remote || Boolean(error) || reconnecting > 0 || locked || help || subDlg || showXray || peek || credits !== 'off';
+  $: deskBlocked = menu !== '' || scrubbing || partyMode || remote || Boolean(error) || reconnecting > 0 || locked || help || subDlg || showXray || peek || credits !== 'off';
   $: deskPause = desk && paused && started && deskPauseDue({ pausedAt, lastActive, now: tick, blocked: deskBlocked });
   $: deskMotion = desk && motionAllowed();
   /** credits glide: spring transform (desk / TV with motion); a tripped frame guard (html.tv-motion-reduced) crossfades in CSS */
   $: credMotion = (desk || tvUi) && motionAllowed();
   /** leaving the corner: for 300 ms `.credout` lets a tripped frame guard crossfade the picture back to full screen (CSS) */
   let credOut = false, credWas: typeof credits = 'off', credOutT: ReturnType<typeof setTimeout> | undefined;
+  $: credHold = menu !== '' || scrubbing || sp.active || subDlg || help || showXray || (paused && !stopped);
   $: onCreditsBeat(credits);
   function onCreditsBeat(c: typeof credits) {
     if (c === credWas) return;
+    if (c === 'corner' && menu) menu = ''; // the bar hides: a menu still open (it held the chip until a moment ago) closes
     const left = credWas === 'corner';
     credWas = c;
     clearTimeout(credOutT);
@@ -728,7 +732,7 @@
   function focusSkip() {
     void tickDom().then(() => {
       const a = document.activeElement;
-      if (menu || sp.active || overlayOpen()) return;
+      if (menu || sp.active || overlayOpen() || credits !== 'off') return; // the credits sequence focuses its own buttons (TV)
       if (a && a !== document.body && a !== stage && !stage?.querySelector('.ctl')?.contains(a)) return;
       stage?.querySelector<HTMLElement>('.skipbtn')?.focus({ preventScroll: true });
     });
@@ -857,7 +861,7 @@
   function openCastInfo(focus: boolean) { clearTimeout(peekT); peek = false; menu = ''; ensureInfo(); infoFocus = focus; xray = true; wake(); }
   function closeCastInfo() {
     const had = stage?.querySelector('.ci')?.contains(document.activeElement);
-    xray = false; infoDismissed = true; infoFocus = false;
+    xray = false; infoDismissed = true; infoFocus = false; wake(); // the pause-screen timer starts over (Esc's capture handler skips onKey's wake)
     if (had) tickDom().then(() => castBtn?.focus());
   }
   /** the cast button in the bar: panel open -> close; paused -> panel; playing -> peek (a second press opens the panel) */
@@ -984,6 +988,8 @@
   function wake() { lastActive = Date.now(); tick = lastActive; }
   const overlayOpen = () => Boolean(menu || subDlg || help || (xray && showXray));
   function act(a: KeyAction) {
+    // credits corner (TV): the bar is hidden and inert; a key that would bring it (an arrow at the edge of the sequence) only wakes
+    if (credits === 'corner' && a.type === 'tvControls') { wake(); return; }
     switch (a.type) {
       case 'toggle': togglePlay(); break;
       case 'play': if (allowed()) playSafe(); break;
@@ -1073,7 +1079,7 @@
     } else if (credits !== 'off') {
       // credits sequence: Esc / TV Back back out to full screen (the page's "Watch credits") instead of leaving the player
       e.preventDefault(); e.stopImmediatePropagation();
-      dispatch('credits');
+      wake(); dispatch('credits');
     } else if (tvMode() && stage?.querySelector('.ctl')?.contains(document.activeElement)) {
       e.preventDefault(); e.stopImmediatePropagation();
       (document.activeElement as HTMLElement).blur(); lastActive = 0; // hide the bar, the next Back leaves the player
@@ -1495,10 +1501,10 @@
       <TvEpisodesOverlay {seriesId} {seasonId} currentId={itemId} seriesName={barTitle} on:pick={pickEpisode} on:close={() => { menu = ''; focusControls(); }} />
     {/if}
     <TvControls shown={showUi && !(posterOn && !posterOut) && menu !== 'tracks' && menu !== 'episodes'} title={barTitle || title} sub={tvSub} {paused} {current} {duration} {buffered} preview={sp} trickplay={info?.trickplay} {chapters}
-      buttons={tvButtons} airplay={air && (airState.available || airOn || airState.ready || airState.busy) ? { on: airOn, label: $t(airOn ? 'player.airplay.playing' : 'player.airplay.play') } : null} {menu} {rate} qualities={qualityOptions} quality={shownQ} {canControl} bind:height={ctlH}
+      buttons={tvButtons} airplay={air && (airState.available || airOn || airState.ready || airState.busy) ? { on: airOn, label: $t(airOn ? 'player.airplay.playing' : 'player.airplay.play') } : null} {menu} {rate} qualities={qualityOptions} quality={shownQ} {canControl} inert={credits === 'corner'} bind:height={ctlH}
       on:keydown={ctlKey} on:back={() => dispatch('back')} on:button={(e) => tvButton(e.detail)} on:speed={(e) => setRate(e.detail)} on:quality={(e) => void changeQuality(e.detail)} on:airplay={() => air?.pick()} />
   {:else}
-  <div class="ui ctl" data-nav bind:offsetHeight={ctlH} class:hide={!showUi || (posterOn && !posterOut)} class:blur on:click|stopPropagation on:keydown={ctlKey} role="toolbar" tabindex="-1" aria-label={$t('player.controls.toolbar')}>
+  <div class="ui ctl" data-nav inert={credits === 'corner'} bind:offsetHeight={ctlH} class:hide={!showUi || (posterOn && !posterOut)} class:blur on:click|stopPropagation on:keydown={ctlKey} role="toolbar" tabindex="-1" aria-label={$t('player.controls.toolbar')}>
     {#if desk}
       <!-- desktop: chapter eyebrow, title, episode line above the timeline -->
       <div class="ttlblock">

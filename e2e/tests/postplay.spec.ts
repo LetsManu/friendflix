@@ -229,7 +229,8 @@ test.describe('post-play screen (desktop)', () => {
     await page.goto('/watch/' + MOVIE.id);
     await videoReady(page);
     await freeze(page); // before the credits are reached: the chip's 2 s only pass with `runFor`
-    await page.evaluate(() => { const v = document.querySelector('video')!; v.pause(); v.currentTime = v.duration - 8; });
+    // playing (a paused player holds the chip: the viewer is busy there); the clip has no frames left here, so it soon ends
+    await page.evaluate(() => { const v = document.querySelector('video')!; v.currentTime = v.duration - 8; return v.play().catch(() => undefined); });
     // desktop (spec 2026-11-08 §4): the credits sequence carries the old "more like this" titles - the chip offers them, the
     // corner beat shows them as cards (from /similar, the post-play rows are not fetched)
     await expect(page.locator('.cs .chip').getByRole('button', { name: 'Mehr davon' })).toBeVisible();

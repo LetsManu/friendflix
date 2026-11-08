@@ -32,6 +32,8 @@
   export let qualities: Array<[string, number]> = [];
   export let quality = 0;
   export let canControl = true;
+  /** the credits sequence's corner beat: the hidden bar takes no focus and no keys (nothing behind the sequence is reachable) */
+  export let inert = false;
   /** AirPlay (Safari only, so the TV-mode preview in a Mac browser): a trailing button that opens the system picker; null = none */
   export let airplay: { on: boolean; label: string } | null = null;
   /** height of the bottom block (the skip button and the page's cards sit above it) */
@@ -85,7 +87,7 @@
   });
 </script>
 
-<div class="tvc ui ctl" class:hide={!shown} class:seeking={preview.active} data-nav role="toolbar" tabindex="-1" aria-label={$t('player.controls.toolbar')} on:click|stopPropagation on:keydown>
+<div class="tvc ui ctl" {inert} class:hide={!shown} class:seeking={preview.active} data-nav role="toolbar" tabindex="-1" aria-label={$t('player.controls.toolbar')} on:click|stopPropagation on:keydown>
   <div class="scrim top" aria-hidden="true"></div>
   <div class="scrim bot" aria-hidden="true"></div>
 

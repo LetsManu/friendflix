@@ -65,6 +65,16 @@
     focused = true;
     el.focus({ preventScroll: true });
   }
+  // TV chip: "Next episode" (a film: "More like this") takes the focus once, so OK plays it rather than the outro's skip button
+  let chipFocused = false, chipEl: HTMLElement | undefined;
+  $: if (tv && beat === 'chip' && !chipFocused) { chipFocused = true; void tick().then(focusChip); }
+  $: if (beat === 'off') chipFocused = false;
+  function focusChip() {
+    const a = document.activeElement;
+    if (a && a.closest('[data-scope], .tvov, .dlg, .help')) return;
+    if (document.querySelector('.ctl.seeking')) return;
+    chipEl?.querySelector<HTMLElement>('.go')?.focus({ preventScroll: true });
+  }
   // a film's suggestions can arrive after the corner beat: they still take the focus once (TV)
   $: if (tv && beat === 'corner' && entered && !focused && picks.length) void tick().then(focusOnce);
 
@@ -76,7 +86,7 @@
 {#if beat !== 'off'}
 <div class="cs" class:tv data-beat={beat} out:leave>
   {#if beat === 'chip'}
-    <div class="chip" data-nav role="group" aria-label={episode ? $t('player.watch.next') : $t('player.watch.more')} in:rise out:out>
+    <div class="chip" bind:this={chipEl} data-nav role="group" aria-label={episode ? $t('player.watch.next') : $t('player.watch.more')} in:rise out:out>
       <button type="button" class="sec" on:click|stopPropagation={() => dispatch('credits')}>{$t('player.watch.watchCredits')}</button>
       {#if episode}
         <button type="button" class="go" on:click|stopPropagation={() => dispatch('play')}><i class="fill" class:run={motion} style:animation-duration="{CHIP_MS}ms" aria-hidden="true"></i><span>{$t('player.watch.next')}</span><Icon name="play" size={18} /></button>

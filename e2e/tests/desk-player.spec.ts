@@ -155,6 +155,20 @@ test('no automatic cast & info panel on desktop', async ({ page, api: _api }) =>
   await expect(page.locator('.dps')).toHaveCount(0);
 });
 
+test('Esc closing cast & info opened from the pause screen counts as input: the bar, not the pause screen', async ({ page, api: _api }) => {
+  await page.clock.install();
+  await open(page);
+  await pauseFor(page);
+  await page.clock.runFor(5200);
+  await page.locator('.dps').getByRole('button', { name: 'Besetzung & Infos', exact: true }).click();
+  await expect(page.getByRole('complementary', { name: 'Besetzung & Infos' })).toBeVisible();
+  await page.clock.runFor(8000); // longer than the pause-screen delay
+  await page.keyboard.press('Escape');
+  await expect(page.getByRole('complementary', { name: 'Besetzung & Infos' })).toHaveCount(0);
+  await expect(page.locator('.dps')).toHaveCount(0);
+  await expect(page.locator('.ctl')).not.toHaveClass(/\bhide\b/);
+});
+
 test('Space resumes from the pause screen', async ({ page, api: _api }) => {
   await page.clock.install();
   await open(page);

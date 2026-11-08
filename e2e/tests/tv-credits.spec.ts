@@ -33,6 +33,36 @@ test.describe('TV credits sequence', () => {
     await expect(page).toHaveURL(new RegExp(`/watch/${NEXT.id}$`));
   });
 
+  test('OK during the chip plays the next episode (not the outro skip)', async ({ page, api: _api }) => {
+    await setTv(page);
+    await openEpisode(page);
+    await expect(page.locator('html.tv')).toHaveCount(1);
+    await toChip(page);
+    await expect(page.locator('.cs .chip .go')).toBeFocused();
+    await page.clock.resume();
+    await page.keyboard.press('Enter');
+    await expect(page).toHaveURL(new RegExp(`/watch/${NEXT.id}$`));
+  });
+
+  test('arrows stay inside the sequence in the corner: the hidden bar takes no focus', async ({ page, api: _api }) => {
+    await toCorner(page);
+    const play = page.locator('.cs .up .go');
+    await expect(play).toBeFocused();
+    await expect(page.locator('.ctl[inert]')).toHaveCount(1);
+    const inCs = () => page.evaluate(() => Boolean(document.activeElement?.closest('.cs')));
+    for (const key of ['ArrowRight', 'ArrowRight', 'ArrowDown', 'ArrowDown', 'ArrowDown', 'ArrowRight', 'ArrowRight']) {
+      await page.keyboard.press(key);
+      expect(await inCs(), `focus after ${key}`).toBe(true);
+    }
+    await expect(page.locator('.stage.cred')).toHaveCount(1); // still the corner, nothing picked
+    await expect(page).toHaveURL(new RegExp(`/watch/${EP.id}$`));
+    // back on Play (the arrows may have moved to a suggestion), OK plays the next episode
+    await play.focus();
+    await page.clock.resume();
+    await page.keyboard.press('Enter');
+    await expect(page).toHaveURL(new RegExp(`/watch/${NEXT.id}$`));
+  });
+
   test('Back shows the credits instead of leaving', async ({ page, api: _api }) => {
     await toCorner(page);
     await expect(page.locator('.cs .up .go')).toBeFocused();

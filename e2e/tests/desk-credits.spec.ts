@@ -30,6 +30,23 @@ test('credits: chip, then the picture glides into the corner, then up next with 
   await expect(page.locator('.ctl')).toHaveClass(/\bhide\b/); // the bar hides in the corner beat
 });
 
+test('the chip holds while the viewer is busy in the player (a panel open), then the corner follows', async ({ page, api: _api }) => {
+  await openEpisode(page);
+  await toChip(page);
+  await page.locator('.stage').hover();
+  await page.getByRole('button', { name: 'Audio und Untertitel', exact: true }).click();
+  await expect(page.locator('.menu.tracks')).toBeVisible();
+  await page.clock.runFor(5000);
+  await expect(page.locator('.cs .chip')).toBeVisible();
+  await expect(page.locator('.stage.cred')).toHaveCount(0);
+  await page.keyboard.press('Escape'); // closes the panel only
+  await expect(page.locator('.menu.tracks')).toHaveCount(0);
+  await expect(page.locator('.cs .chip')).toBeVisible();
+  await page.clock.runFor(2100);
+  await expect(page.locator('.stage.cred')).toHaveCount(1);
+  await expect(page.locator('.cs .up')).toBeVisible();
+});
+
 test('the countdown plays the next episode', async ({ page, api: _api }) => {
   await openEpisode(page);
   await toChip(page);
