@@ -290,6 +290,12 @@
   :global(html.tv) .strip { display: flex; flex: none; gap: var(--gap); }
   :global(html.tv) .slot { flex: 0 0 var(--cw); }
   :global(html.tv) .rank { right: .625rem; top: .625rem; min-width: 2rem; height: 2rem; border-radius: 4px; box-shadow: none; font-size: .9375rem; font-weight: 600; letter-spacing: .02em; font-variant-numeric: tabular-nums; }
-  .row.m .rank { right: .3rem; top: .3rem; min-width: 1.5rem; height: 1.5rem; font-size: .78rem; }
+  /* phone Top 10: a large outlined numeral, the poster overlapping its right edge (the slot widens to hold both) */
+  .row.m .slot.ranked { flex-basis: calc(var(--pw) * 1.42); display: flex; align-items: flex-end; }
+  .row.m .slot.ranked > :global(.pc) { position: relative; z-index: 1; flex: 0 0 var(--pw); }
+  .row.m .rank { position: static; z-index: 0; flex: 1 1 auto; min-width: 0; height: auto; padding: 0; margin-right: calc(var(--pw) * -.13); border-radius: 0; background: none; box-shadow: none; text-align: right;
+    font-size: calc(var(--pw) * .95); font-weight: 900; line-height: .78; letter-spacing: -.08em; color: var(--bg);
+    -webkit-text-fill-color: var(--bg); -webkit-text-stroke: 2.5px rgba(255, 255, 255, .45); paint-order: stroke fill; }
+  .row.m .rank.two { font-size: calc(var(--pw) * .7); letter-spacing: -.1em; }
   .row.m.land { --pw: calc((100vw - var(--pad-x)) / 2.15); }
 </style>

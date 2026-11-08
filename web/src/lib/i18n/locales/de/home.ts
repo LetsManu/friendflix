@@ -57,6 +57,11 @@ export default {
     replay: 'Vorschau erneut abspielen',
     replayTitle: 'Erneut abspielen',
   },
+  /** phone home: the swipe carousel at the top */
+  carousel: {
+    label: 'Top-Tipps für dich',
+    slide: '{n} von {m}',
+  },
   row: {
     showAll: 'Alle anzeigen',
     prev: 'Zurückblättern',

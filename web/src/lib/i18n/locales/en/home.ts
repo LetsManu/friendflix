@@ -55,6 +55,10 @@ const en: Translation<typeof de> = {
     replay: 'Play preview again',
     replayTitle: 'Play again',
   },
+  carousel: {
+    label: 'Top picks for you',
+    slide: '{n} of {m}',
+  },
   row: {
     showAll: 'Show all',
     prev: 'Scroll back',

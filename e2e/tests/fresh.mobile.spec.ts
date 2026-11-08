@@ -21,6 +21,9 @@ test.describe('discovery (phone)', () => {
     const because = row(page, 'Weil du „Inkwell“ gesehen hast');
     await because.scrollIntoViewIfNeeded();
     await expect(because.locator('.pc .newep').first()).toBeVisible();
+    // the home carousel carries the fresh label as the card's eyebrow (the labelled series moves up to second place)
+    const carousel = page.getByRole('region', { name: 'Top-Tipps für dich' });
+    await expect(carousel.getByRole('group', { name: /^2 von / }).locator('.eyebrow')).toHaveText('Staffelfinale');
     await expect.poll(() => noHorizontalOverflow(page)).toBe(true);
     await page.screenshot({ path: `${SHOTS}/home-phone.png` });
   });

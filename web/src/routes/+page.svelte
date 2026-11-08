@@ -7,6 +7,9 @@
   import { deskUi } from '#lib/desk/bar';
   import DeskBillboard from '#lib/desk/DeskBillboard.svelte';
   import Hero from '#lib/Hero.svelte';
+  import Carousel from '#lib/phone/Carousel.svelte';
+  import { carouselPicks } from '#lib/phone/logic';
+  import { badges, wantBadge, type Badge } from '#lib/fresh';
   import LazyRow from '#lib/LazyRow.svelte';
   import Row from '#lib/Row.svelte';
   import ThemedListRows from '#lib/ThemedListRows.svelte';
@@ -176,6 +179,18 @@
   /** desktop browse: the trailer billboard instead of the hero (phones, TV and kids profiles keep theirs) */
   $: desk = deskUi({ tv, mobile: $mobile, kids: $kidsMode });
   /**
+   * phone (not kids, not TV): the swipe carousel instead of the poster hero. Its cards come from lists the page already
+   * loads (the billboard title, the recommendation row, the newest titles); fresh-labelled titles go first. No picks: the hero.
+   */
+  $: phone = $mobile && !$kidsMode && !tv;
+  $: candidates = phone ? [...(recs ?? []), ...(latest ?? [])] : [];
+  // the rows ask for the same badges; asks of one frame share one request
+  $: for (const c of candidates) wantBadge(c.type === 'Episode' ? c.seriesId : c.id);
+  $: picks = phone ? phonePicks(hero, candidates, $badges) : [];
+  function phonePicks(h: Item | null, list: Item[], b: Record<string, Badge | null>): Item[] {
+    return carouselPicks({ hero: h, candidates: list, fresh: (id) => b[id]?.fresh ?? null });
+  }
+  /**
    * The focused row slides under the tile: its top goes to where the tile ends. The page position jumps there at once and the
    * rows glide the difference with a spring (lib/tv/motion.ts, FLIP), so scroll-based code always sees the resting position.
    * `fromY` is the position the viewer saw before this focus change (focusEl may already have scrolled the window).
@@ -227,6 +242,9 @@
   <TvFocusTile {hero} {heroRank} />
 {:else if desk}
   <DeskBillboard item={hero} rank={heroRank} />
+  <BrandHubs {hubs} />
+{:else if phone && picks.length}
+  <Carousel items={picks} />
   <BrandHubs {hubs} />
 {:else}
   <Hero item={hero} rank={heroRank} portrait />

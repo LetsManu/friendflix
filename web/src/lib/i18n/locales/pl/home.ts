@@ -70,6 +70,10 @@ const pl: Translation<typeof de> = {
     replay: 'Odtwórz podgląd ponownie',
     replayTitle: 'Odtwórz ponownie',
   },
+  carousel: {
+    label: 'Najlepsze propozycje dla ciebie',
+    slide: '{n} z {m}',
+  },
   row: {
     showAll: 'Pokaż wszystko',
     prev: 'Wstecz',

@@ -55,6 +55,10 @@ const tr: Translation<typeof de> = {
     replay: 'Önizlemeyi yeniden oynat',
     replayTitle: 'Yeniden oynat',
   },
+  carousel: {
+    label: 'Senin için en iyiler',
+    slide: '{m} içinde {n}',
+  },
   row: {
     showAll: 'Tümünü göster',
     prev: 'Geri kaydır',
