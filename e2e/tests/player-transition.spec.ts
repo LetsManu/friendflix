@@ -217,6 +217,20 @@ test.describe('into the player', () => {
       await expect(page.locator('main .dd [data-st]').first()).toBeVisible();
     });
 
+    test('calm mode: Back from the player records no desk morph class', async ({ page, api: _api }) => {
+      await page.addInitScript(() => { sessionStorage.setItem('ff-intro-seen', '1'); localStorage.setItem('ff_calm:p1', '1'); });
+      await mockPlayer(page);
+      await page.route('**/api/items/*/trailer', (r) => r.fulfill({ json: {} }));
+      await countInfo(page);
+      await page.goto('/item/' + MOVIE.id);
+      await playButton(page).click();
+      await playing(page);
+      await record(page);
+      await page.goBack();
+      await expect(page.locator('main .dd [data-vt-art]')).toBeVisible();
+      expect((await seen(page)).some((c) => /ff-vt-desk/.test(c))).toBe(false);
+    });
+
     test('a reload of /watch shows the poster without a morph', async ({ page, api: _api }) => {
       await page.addInitScript(() => sessionStorage.setItem('ff-intro-seen', '1'));
       await mockPlayer(page);

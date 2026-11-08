@@ -342,7 +342,7 @@
       // TV: the reduced set (frame guard tripped) keeps a plain crossfade without the artwork morph
       const mode = playTransition({ tv, reduced: tv ? !motionAllowed() : matchMedia('(prefers-reduced-motion: reduce)').matches, hasApi: typeof start === 'function', level: tv ? motionLevel() : 'full' });
       if (mode !== 'view' && mode !== 'crossfade') { if (into) takePlayArt(); return; }
-      if (!into && desk && mode === 'view' && isDetailPage(to)) return deskFromPlayer(nav, start!);
+      if (!into && desk && mode === 'view' && motionAllowed() && isDetailPage(to)) return deskFromPlayer(nav, start!);
       const root = document.documentElement, taken = into ? takePlayArt() : null, art = mode === 'view' ? taken : null;
       const my = vtBegin(), mine: HTMLElement[] = [];
       if (tv) watchFrames();
