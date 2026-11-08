@@ -188,7 +188,9 @@
   $: for (const c of candidates) wantBadge(c.type === 'Episode' ? c.seriesId : c.id);
   $: picks = phone ? phonePicks(hero, candidates, $badges) : [];
   function phonePicks(h: Item | null, list: Item[], b: Record<string, Badge | null>): Item[] {
-    return carouselPicks({ hero: h, candidates: list, fresh: (id) => b[id]?.fresh ?? null });
+    // badges are kept per series for episodes
+    const key = new Map([...(h ? [h] : []), ...list].map((c) => [c.id, c.seriesId ?? c.id]));
+    return carouselPicks({ hero: h, candidates: list, fresh: (id) => b[key.get(id) ?? id]?.fresh ?? null });
   }
   /**
    * The focused row slides under the tile: its top goes to where the tile ends. The page position jumps there at once and the

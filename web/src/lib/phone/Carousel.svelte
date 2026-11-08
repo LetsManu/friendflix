@@ -39,7 +39,7 @@
   $: step = Math.min(tw * 0.7, 340) * 0.9;
   /** visual position in px (cur * step at rest) */
   let x = 0;
-  let raf = 0;
+  let raf = 0, springV = 0;
   let calm = false;
   let links: HTMLAnchorElement[] = [];
   let posters: HTMLImageElement[] = [];
@@ -51,7 +51,13 @@
     const k = list.findIndex((i) => i.id === centredId);
     const next = k >= 0 ? k : Math.max(0, Math.min(cur, list.length - 1));
     centredId = list[next]?.id ?? '';
-    if (next !== cur || (!drag && !raf)) { stopSpring(); cur = next; x = cur * step; }
+    if (next === cur) { if (!drag && !raf) x = cur * step; return; }
+    // the centred title moved to another index: shift the track with it, so nothing under the finger jumps
+    const shift = (next - cur) * step;
+    cur = next;
+    if (drag) { drag.base += shift; x += shift; }
+    else if (raf) { x += shift; settle(next, springV); }
+    else x = cur * step;
   }
   // a resize while at rest keeps the centred card in the middle
   $: if (step && !drag && !raf) x = cur * step;
@@ -88,8 +94,8 @@
     const frame = (t: number) => {
       s = springStep(s, to, Math.min(64, Math.max(0, t - t0)));
       t0 = t;
-      if (Math.abs(s.x - to) < 0.5 && Math.abs(s.v) < 20) { x = to; raf = 0; return; }
-      x = s.x;
+      if (Math.abs(s.x - to) < 0.5 && Math.abs(s.v) < 20) { x = to; raf = 0; springV = 0; return; }
+      x = s.x; springV = s.v;
       raf = requestAnimationFrame(frame);
     };
     raf = requestAnimationFrame(frame);
@@ -200,8 +206,8 @@
 </script>
 
 <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
-<section class="mc" data-play-scope aria-roledescription="carousel" aria-label={$t('home.carousel.label')} on:keydown={keys}>
-  <div class="glow" class:calm aria-hidden="true">
+<section class="mc" class:calm data-play-scope aria-roledescription="carousel" aria-label={$t('home.carousel.label')} on:keydown={keys}>
+  <div class="glow" aria-hidden="true">
     <i class:on={front === 0} style:background={layers[0]}></i>
     <i class:on={front === 1} style:background={layers[1]}></i>
   </div>
@@ -241,7 +247,7 @@
   .glow { position: absolute; inset: 0; pointer-events: none; }
   .glow i { position: absolute; inset: 0; opacity: 0; transition: opacity .6s var(--m-emph-out); }
   .glow i.on { opacity: 1; }
-  .glow.calm i { transition: none; }
+  .mc.calm .glow i, .mc.calm .dots i, .mc.calm .btn { transition: none; }
   @media (prefers-reduced-motion: reduce) { .glow i { transition: none; } }
   /* all slides share one grid cell; JS moves them (transform / opacity / filter) */
   .track { position: relative; z-index: 1; display: grid; touch-action: pan-y; user-select: none; -webkit-user-select: none; -webkit-tap-highlight-color: transparent; }
@@ -256,10 +262,11 @@
   .logo { max-width: 78%; max-height: 3.4rem; object-fit: contain; filter: drop-shadow(0 3px 10px rgba(0, 0, 0, .7)); }
   .title { font-size: 1.4rem; font-weight: 800; line-height: 1.1; letter-spacing: -.02em; text-shadow: 0 2px 12px rgba(0, 0, 0, .7); overflow-wrap: anywhere; }
   .genres { font-size: .8rem; font-weight: 600; color: #e6e6e6; text-shadow: 0 1px 6px rgba(0, 0, 0, .8); }
-  .dots { position: relative; z-index: 1; display: flex; justify-content: center; gap: 5px; margin: 14px 0 12px; }
-  .dots i { width: 6px; height: 6px; border-radius: 99px; background: rgba(255, 255, 255, .3); transition: width .35s var(--m-spring), background .3s; }
-  .dots i.on { width: 20px; background: #fff; }
-  @media (prefers-reduced-motion: reduce) { .dots i { transition: none; } }
+  /* each dot is a fixed 20 px pill shown at 30 % width; the current one grows to full width (transform only) */
+  .dots { position: relative; z-index: 1; display: flex; justify-content: center; margin: 14px 0 12px; }
+  .dots i { flex: none; width: 20px; height: 6px; margin: 0 -2px; border-radius: 99px; background: rgba(255, 255, 255, .3); transform: scaleX(.3); transition: transform .35s var(--m-spring), background-color .3s; }
+  .dots i.on { transform: none; background: #fff; }
+  @media (prefers-reduced-motion: reduce) { .dots i, .btn { transition: none; } }
   .acts { position: relative; z-index: 1; display: flex; gap: 8px; padding: 0 22px; }
   .acts.solo { margin-top: 14px; }
   .btn { flex: 1; min-width: 0; display: inline-flex; align-items: center; justify-content: center; gap: 7px; min-height: 44px; padding: 0 1rem; border-radius: 8px; font-weight: 700; font-size: 15px; white-space: nowrap; transition: transform .15s var(--m-emph-out); }

@@ -30,7 +30,8 @@ async function mockHome(page: Page, o: { hero: MockItem | null; recs: MockItem[]
 }
 
 const carousel = (page: Page) => page.getByRole('region', { name: 'Top-Tipps für dich' });
-const slide = (c: Locator, n: number, m = 5) => c.getByRole('group', { name: `${n} von ${m}` });
+/** a slide by its label; slides two or more places away are hidden (out of the a11y tree), so a CSS locator */
+const slide = (c: Locator, n: number, m = 5) => c.locator(`[aria-roledescription="slide"][aria-label="${n} von ${m}"]`);
 const live = (c: Locator) => c.locator('[aria-live="polite"]');
 const centreX = async (l: Locator) => { const b = (await l.boundingBox())!; return b.x + b.width / 2; };
 
@@ -64,12 +65,13 @@ test.describe('phone home carousel', () => {
     const c = carousel(page);
     await expect(c).toBeVisible();
     await expect(c).toHaveAttribute('aria-roledescription', 'carousel');
-    const slides = c.getByRole('group');
+    const slides = c.locator('[aria-roledescription="slide"]');
     await expect(slides).toHaveCount(5);
+    await expect(slides.first()).toHaveAttribute('role', 'group');
     await expect(slides.first()).toHaveAttribute('aria-roledescription', 'slide');
     // the badge answer moves the labelled title up to second place
     await expect(slide(c, 2).locator('.eyebrow')).toHaveText('Neue Staffel');
-    for (const [i, it] of ORDER.entries()) await expect(slide(c, i + 1).getByRole('link')).toHaveAccessibleName(`${it.name}, Vorschau öffnen`);
+    for (const [i, it] of ORDER.entries()) await expect(slide(c, i + 1).locator('a.card')).toHaveAttribute('aria-label', `${it.name}, Vorschau öffnen`);
     await expect(live(c)).toHaveText(HERO.name);
     const dots = c.locator('.dots i');
     await expect(dots).toHaveCount(5);
@@ -172,10 +174,11 @@ test.describe('phone home carousel', () => {
     await drag(page, c.locator('.track'), -120);
     await expect(live(c)).toHaveText(FRESH.name);
     const list = c.getByRole('button', { name: 'Merkliste' });
-    await expect(list).toHaveAttribute('aria-pressed', 'false');
-    await list.tap();
+    // FRESH is on the default mock watchlist: the button starts pressed, a tap removes it
     await expect(list).toHaveAttribute('aria-pressed', 'true');
-    await expect.poll(() => api.log.some((l) => l.includes(FRESH.id))).toBe(true);
+    await list.tap();
+    await expect(list).toHaveAttribute('aria-pressed', 'false');
+    await expect.poll(() => api.log.some((l) => l.startsWith('DELETE') && l.includes(FRESH.id))).toBe(true);
   });
 
   test('one candidate: a single card without dots', async ({ page }) => {
