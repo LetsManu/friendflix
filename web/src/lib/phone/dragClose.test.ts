@@ -39,11 +39,11 @@ const touch = (x: number, y: number) => ({ touches: [{ clientX: x, clientY: y }]
 
 describe('dragClose', () => {
   let node: ReturnType<typeof fakeNode>;
-  let close: ReturnType<typeof vi.fn>;
+  let close: ReturnType<typeof vi.fn<() => void>>;
   let act: ReturnType<typeof dragClose>;
   beforeEach(() => {
     node = fakeNode();
-    close = vi.fn();
+    close = vi.fn<() => void>();
     act = dragClose(node as unknown as HTMLElement, { close });
   });
   afterEach(() => vi.useRealTimers());
@@ -103,7 +103,7 @@ describe('dragClose', () => {
     });
 
     it('a custom threshold and update() are honoured', () => {
-      const close2 = vi.fn();
+      const close2 = vi.fn<() => void>();
       act.update({ close: close2, threshold: 20 });
       node.fire('pointerdown', { pointerType: 'mouse', target: grab, clientY: 0, pointerId: 1 });
       node.fire('pointermove', { clientY: 30 });
