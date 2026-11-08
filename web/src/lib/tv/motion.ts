@@ -68,6 +68,16 @@ export const TV_GUARD = { slowMs: 32, frames: 3 } as const;
  * a machine that otherwise holds 60 fps (software rendering); a handful of those must not cost the session its motion.
  */
 export const DESK_GUARD = { slowMs: 50, frames: 8 } as const;
+/**
+ * The desktop budget in use: DESK_GUARD, unless the page set `__ffDeskGuard` to another positive budget. End-to-end tests do:
+ * their software-rendered browser on a shared runner draws the morphs right at the 20 fps line, so whether the guard trips
+ * there depends on the host's load, not on the app (the budget itself is unit-tested here).
+ */
+export function deskGuardBudget(g: unknown = typeof globalThis === 'undefined' ? undefined : globalThis): { slowMs: number; frames: number } {
+  const v = (g as { __ffDeskGuard?: { slowMs?: unknown; frames?: unknown } } | undefined)?.__ffDeskGuard;
+  const ok = (n: unknown): n is number => typeof n === 'number' && Number.isFinite(n) && n > 0;
+  return v && ok(v.slowMs) && ok(v.frames) ? { slowMs: v.slowMs, frames: v.frames } : DESK_GUARD;
+}
 let budget: { slowMs: number; frames: number } = TV_GUARD;
 const now = () => performance.now();
 const trippedStore = writable(false);

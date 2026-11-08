@@ -197,6 +197,10 @@ test.describe('desktop detail page', () => {
   test.describe('motion', () => {
     test.use({ reducedMotion: 'no-preference' });
     test.beforeEach(({ page }) => page.addInitScript(() => sessionStorage.setItem('ff-intro-seen', '1'))); // no brand intro over the page (frozen clocks keep it there)
+  // the frame guard with a budget no test host misses: this software-rendered browser draws the morphs right at the guard's 20 fps
+  // line (40-65 ms frames when idle, 70-110 ms with the other workers busy), so on the shared runner a trip into the reduced set
+  // (no morph, by design) would be up to the host's load. The budget itself is unit-tested (lib/tv/motion.test.ts).
+  test.beforeEach(({ page }) => page.addInitScript(() => { (window as unknown as { __ffDeskGuard: { slowMs: number; frames: number } }).__ffDeskGuard = { slowMs: 1000, frames: 8 }; }));
     // the profile intro (it plays with motion on) stays off: it would cover the page
     test.beforeEach(async ({ page }) => { await page.addInitScript(() => localStorage.setItem('ff-intro:p1', JSON.stringify({ show: false, sound: false }))); });
 
@@ -365,6 +369,10 @@ test.describe('desktop detail page', () => {
 test.describe('desktop page motion', () => {
   test.use({ reducedMotion: 'no-preference' });
   test.beforeEach(({ page }) => page.addInitScript(() => sessionStorage.setItem('ff-intro-seen', '1'))); // no brand intro over the page (frozen clocks keep it there)
+  // the frame guard with a budget no test host misses: this software-rendered browser draws the morphs right at the guard's 20 fps
+  // line (40-65 ms frames when idle, 70-110 ms with the other workers busy), so on the shared runner a trip into the reduced set
+  // (no morph, by design) would be up to the host's load. The budget itself is unit-tested (lib/tv/motion.test.ts).
+  test.beforeEach(({ page }) => page.addInitScript(() => { (window as unknown as { __ffDeskGuard: { slowMs: number; frames: number } }).__ffDeskGuard = { slowMs: 1000, frames: 8 }; }));
   test.beforeEach(async ({ page }) => {
     await page.addInitScript(() => localStorage.setItem('ff-intro:p1', JSON.stringify({ show: false, sound: false })));
     await page.route('**/api/items/*/trailer', (r) => r.fulfill({ json: {} })); // no clips: nothing plays over the pictures
@@ -432,7 +440,7 @@ test.describe('desktop page motion', () => {
     await expect(desk(page).getByRole('heading', { level: 1 })).toBeVisible();
 
     await expect.poll(async () => (await vts(page)).at(-1)?.new).toEqual(['detail']); // the way in morphed
-    // the desktop frame guard tolerates this software-rendered browser (its transitions run near 20 fps): full motion stays
+    // full motion stays (the frame guard's budget is pinned above: nothing else drops the session to the reduced set)
     await expect(page.locator('html')).not.toHaveClass(/tv-motion-reduced/);
     await page.locator('a.dback').click(); // in-app history: history.back()
     await expect(page).toHaveURL(/127\.0\.0\.1:\d+\/$/);

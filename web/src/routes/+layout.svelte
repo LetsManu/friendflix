@@ -29,7 +29,7 @@
   import { loadIntroSettings, markSessionSeen, readSessionSeen, shouldPlayIntro } from '#lib/intro';
   import { mobile } from '#lib/viewport';
   import { isRailTop, isTabActive, TV_RAIL } from '#lib/menu';
-  import { DESK_GUARD, deskPagePlan, frameGuard, framesIdle, framesResume, isDetailPage, motionLevel, motionTripped, stagger, tvPagePlan, VT_ART, watchFrames } from '#lib/tv/motion';
+  import { deskGuardBudget, deskPagePlan, frameGuard, framesIdle, framesResume, isDetailPage, motionLevel, motionTripped, stagger, tvPagePlan, VT_ART, watchFrames } from '#lib/tv/motion';
   import { motionAllowed } from '#lib/preview';
   import TvRail from '#lib/tv/TvRail.svelte';
   import DeskBar from '#lib/desk/DeskBar.svelte';
@@ -209,7 +209,7 @@
   $: if (typeof window !== 'undefined') syncDeskGuard(desk || phoneShell);
   function syncDeskGuard(on: boolean) {
     if (on && !deskGuard) {
-      deskGuard = frameGuard(DESK_GUARD); // a looser budget than the TV's: a steady 30 fps desktop keeps its motion
+      deskGuard = frameGuard(deskGuardBudget()); // (DESK_GUARD) a looser budget than the TV's: a steady 30 fps desktop keeps its motion
       // armed idle: boot work (/api/me, hydrating the rows) is no animation; only real motion (page transitions, glides,
       // stagger) opens a watch window. On a TV the TV boot's own frameGuard() call pulses as before.
       framesIdle();
