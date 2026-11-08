@@ -1972,7 +1972,7 @@
   .stage.desk.dmo > video { transition: filter 500ms var(--m-emph-out, ease-out), transform 500ms var(--m-emph-out, ease-out); }
   /* credits sequence (spec 2026-11-08 §4): the picture glides into the top-left corner on a spring and gains rounded corners and a
      shadow; transform / opacity only. Calm mode / reduced motion: no transition; a tripped frame guard: an opacity crossfade instead */
-  .stage.cred > video { transform: translate(-27%, -24%) scale(.42); border-radius: 14px; box-shadow: 0 24px 64px rgba(0, 0, 0, .6); }
+  .stage.cred > video { transform: translate(-27%, -24%) scale(.42); border-radius: 14px; box-shadow: 0 0 0 2.5px rgba(255, 255, 255, .2), 0 24px 64px rgba(0, 0, 0, .6); }
   .stage.cmo > video, .stage.desk.cmo > video { transition: transform 750ms var(--m-spring), border-radius 750ms var(--m-emph-out, ease-out), box-shadow 750ms var(--m-emph-out, ease-out), filter 500ms var(--m-emph-out, ease-out); }
   :global(html.tv-motion-reduced) .stage.cmo > video { transition: none; }
   :global(html.tv-motion-reduced) .stage.cmo.cred > video { animation: ff-cred-fade 300ms ease-out both; }

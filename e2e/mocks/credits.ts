@@ -21,12 +21,12 @@ async function mockCredits(page: Page) {
   await page.route('**/api/items/*/segments', (r) => r.fulfill({ json: { segments: [{ type: 'Outro', start: CREDITS_AT, end: 600 }] } }));
 }
 /** an episode with a next episode; the clock is installed first so the beats only move on with `page.clock.runFor` */
-export async function openEpisode(page: Page) {
+export async function openEpisode(page: Page, postplay: object = EP_NEXT) {
   await page.clock.install();
   await mockCredits(page);
   await page.route('**/api/items/*/next', (r) => r.fulfill({ json: { item: NEXT } }));
   await page.route(`**/api/items/${EP.id}`, (r) => r.fulfill({ json: { item: EP } }));
-  await page.route(`**/api/items/${EP.id}/postplay`, (r) => r.fulfill({ json: EP_NEXT }));
+  await page.route(`**/api/items/${EP.id}/postplay`, (r) => r.fulfill({ json: postplay }));
   await page.goto('/watch/' + EP.id);
   await videoReady(page);
 }

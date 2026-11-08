@@ -9,7 +9,7 @@
   import { motionAllowed } from '#lib/preview';
   import { stagger } from '#lib/tv/motion';
   import { springAt } from '#lib/player/desk/grow';
-  import { CHIP_MS, type CreditsBeat } from '#lib/player/desk/logic';
+  import { CHIP_MS, creditPicks, type CreditsBeat } from '#lib/player/desk/logic';
   import { ringOffset } from '#lib/player/nextup';
   import type { PostplayRow } from '#lib/postplay';
 
@@ -41,7 +41,7 @@
   /** back-out (beat -> 'off'): everything fades and sinks 8 px while the Player springs the picture back (never a cut) */
   const leave = (_el: Element) => ({ duration: motion ? 200 : 0, css: (k: number) => `opacity: ${k}; transform: translate3d(0, ${(1 - k) * 8}px, 0)` });
 
-  $: picks = (rows?.find((r) => r.items.length)?.items ?? []).slice(0, 5);
+  $: picks = creditPicks(rows, next) as Item[];
   $: episode = kind === 'episode' && next !== null;
   $: elapsed = total > 0 ? (total - seconds) * 1000 : 0;
 
