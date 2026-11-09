@@ -26,6 +26,12 @@ Part of the redesign that ships with v3.0.0.
 - **Preview sheet.** Tapping a poster springs up a sheet with the reason it was picked, Play, Download, My list, Rate, Share and Details; drag it down to close or up to open the detail page.
 - **Phone detail page.** A large backdrop, a full-width Play button with the episode, Download for that episode, a short synopsis that expands, and tabs whose underline slides between them.
 - **Search.** A rounded search field, *Popular here* with play buttons and genre tiles before you type.
+- **Cinema player.** The title sits bottom left with the current chapter above it, the timeline shows both times, play and ±10 s share one glass pill and the tools the other. It works held sideways either way round and upright; title, skip button, timeline and pills never overlap and stay clear of the camera cut-out and the home indicator.
+- **Glass top bar in the player.** Back, quality, Cast/AirPlay and the lock sit in glass circles at the top; double tap and the swipes for brightness and volume work as before.
+- **Panels above the timeline.** Episodes, audio & subtitles, speed, scenes, more and Cast & info open as one card above the timeline, growing out of their button; a tap outside, the button again or Back closes it, and the next Back leaves the player.
+- **Pause screen.** After 5 s paused the picture dims and shows *You're watching* with the title, episode and synopsis; a tap brings the controls back.
+- **Credits sequence.** As on desktop: *Watch credits* and *Next episode* first, then the picture glides into the corner (at the top when the phone is upright) and keeps playing, with up next, the countdown and *More like this*.
+- Calm mode and reduced motion switch all of this at once.
 
 ### TV
 - **Credits sequence.** After an episode, *Watch credits* and *Next episode* appear, then the picture moves into the corner and keeps playing with up next and *More like this*; OK plays the next episode, Back plays the sequence backwards, and a crossfade replaces the glide where animation would stutter.
