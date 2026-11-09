@@ -74,3 +74,17 @@ export const boxes = (page: Page, selectors: string[]) => page.evaluate((sels) =
 }), selectors);
 
 export const overlap = (a: Box, b: Box) => Math.min(a.x + a.w, b.x + b.w) - Math.max(a.x, b.x) > 0.5 && Math.min(a.y + a.h, b.y + b.h) - Math.max(a.y, b.y) > 0.5;
+
+/**
+ * runs the page clock `ms` on and resolves once the Player has rendered what its timers changed: a marker timer due at the very
+ * end queues a microtask, which runs after Svelte's flush (queued earlier by the timers before it). A negative check after this
+ * cannot pass merely because the Player has not re-rendered yet.
+ */
+export async function runSettled(page: Page, ms: number) {
+  await page.evaluate((t) => {
+    delete document.body.dataset.settled;
+    setTimeout(() => { void Promise.resolve().then(() => { document.body.dataset.settled = '1'; }); }, t);
+  }, ms);
+  await page.clock.runFor(ms);
+  await expect(page.locator('body[data-settled]')).toHaveCount(1);
+}

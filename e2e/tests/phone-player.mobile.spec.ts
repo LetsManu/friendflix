@@ -5,7 +5,7 @@ import { expect, test } from '../fixtures.js';
 import { noHorizontalOverflow } from '../helpers.js';
 import { episodes, items, ME, MOVIE } from '../mocks/fixtures.js';
 import { mockPlayer, videoReady } from '../mocks/scenes.js';
-import { boxes, forceIosVolume, forceSafeArea, LAND_L, LAND_R, openPhoneEpisode, overlap, PORTRAIT, setSafeArea, showControls, type Box, type Insets } from '../mocks/phone.js';
+import { boxes, forceIosVolume, forceSafeArea, LAND_L, LAND_R, openPhoneEpisode, overlap, PORTRAIT, runSettled, setSafeArea, showControls, type Box, type Insets } from '../mocks/phone.js';
 
 /**
  * Phone player (spec 2026-11-08, block 4): top bar of glass circles, one bottom dock (title + skip, timeline, two glass pills),
@@ -673,8 +673,6 @@ test.describe('phone party panels', () => {
 
 /** pause screen (spec §3): 5 s after the pause, unless something else is on screen; a tap brings the controls back */
 const pauseNow = (page: Page) => page.evaluate(() => document.querySelector('video')!.pause());
-/** a negative check right after `runFor` could pass before the Player re-renders: give it a moment (the clock runs on) */
-const settle = (page: Page) => page.waitForTimeout(400);
 for (const L of [LAYOUTS[2], LAYOUTS[1]]) {
   test.describe(`phone pause screen, ${L.name}`, () => {
     test.use({ viewport: L.viewport });
@@ -703,6 +701,7 @@ for (const L of [LAYOUTS[2], LAYOUTS[1]]) {
       const [pz, ff] = (await boxes(page, ['.pps .pz', '.pps .ff'])) as [Box, Box];
       expect(overlap(pz, ff)).toBe(false);
       expect(await page.locator('.pps .ov').evaluate((e) => getComputedStyle(e).webkitLineClamp)).toBe(vw > vh ? '4' : '3');
+      expect(await page.locator('.pps .ttl').evaluate((e) => getComputedStyle(e).webkitLineClamp)).toBe(vw > vh ? '2' : '3');
       await expect(pps.locator('button')).toHaveCount(0);
       await page.locator('.stage').tap({ position: { x: 30, y: vh * 0.3 } });
       await expect(page.locator('.pps')).toHaveCount(0);
@@ -721,15 +720,19 @@ test.describe('phone pause screen, portrait', () => {
     await page.clock.install();
     await openPhoneEpisode(page);
     await pauseNow(page);
-    await page.clock.runFor(4800);
+    await runSettled(page, 4800);
     await expect(page.locator('.stage.ppause')).toHaveCount(0);
     await expect(page.locator('.pps')).toHaveCount(0);
     await showControls(page);
     await page.locator('.pill.tp').getByRole('button', { name: 'Audio und Untertitel', exact: true }).tap();
-    await page.clock.runFor(8000);
-    await settle(page);
+    await runSettled(page, 8000);
     await expect(page.locator('.stage.ppause')).toHaveCount(0);
     await expect(page.locator('.pps')).toHaveCount(0);
+    // positive control: with the panel closed the same pause brings the screen
+    await page.goBack();
+    await expect(page.getByRole('dialog', { name: 'Audio und Untertitel' })).toHaveCount(0);
+    await runSettled(page, 8000);
+    await expect(page.locator('.pps')).toBeVisible();
   });
 
   test('not while locked', async ({ page, api: _api }) => {
@@ -739,8 +742,7 @@ test.describe('phone pause screen, portrait', () => {
     await page.locator('.ptop').getByRole('button', { name: 'Bedienung sperren' }).tap();
     await expect(page.locator('.stage.locked')).toHaveCount(1);
     await pauseNow(page);
-    await page.clock.runFor(8000);
-    await settle(page);
+    await runSettled(page, 8000);
     await expect(page.locator('.stage.ppause')).toHaveCount(0);
     await expect(page.locator('.pps')).toHaveCount(0);
   });
@@ -749,9 +751,8 @@ test.describe('phone pause screen, portrait', () => {
     await page.clock.install();
     await openPhoneEpisode(page);
     await pauseNow(page);
-    await page.clock.runFor(8000);
+    await runSettled(page, 8000);
     await expect(page.locator('.pps')).toBeVisible();
-    await settle(page);
     await expect(page.getByRole('complementary', { name: 'Besetzung & Infos' })).toHaveCount(0);
   });
 
@@ -765,8 +766,7 @@ test.describe('phone pause screen, portrait', () => {
     await videoReady(page);
     await expect(page.locator('.stage.phone')).toHaveCount(1);
     await pauseNow(page);
-    await page.clock.runFor(8000);
-    await settle(page);
+    await runSettled(page, 8000);
     await expect(page.locator('.stage.ppause')).toHaveCount(0);
     await expect(page.locator('.pps')).toHaveCount(0);
     await expect(page.locator('.dps')).toHaveCount(0);

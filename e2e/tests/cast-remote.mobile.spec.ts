@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { noHorizontalOverflow } from '../helpers.js';
 import { expect, test } from '../fixtures.js';
+import { runSettled } from '../mocks/phone.js';
 import { airplayRemote, chromecastRemote, rowFits, SHOTS, showControls } from './cast-remote-setup.js';
 
 /** The watch page as the TV's remote on a phone: artwork, one device row, the card; no fullscreen, no volume on AirPlay. */
@@ -61,8 +62,7 @@ test('no pause screen while casting', async ({ page, api: _api }) => {
   await showControls(page);
   await page.locator('.pill.lp').getByRole('button', { name: 'Pause', exact: true }).click();
   await expect(page.locator('.pill.lp').getByRole('button', { name: 'Abspielen', exact: true })).toBeVisible();
-  await page.clock.runFor(8000);
-  await page.waitForTimeout(400); // a negative check right after runFor could pass before the Player re-renders
+  await runSettled(page, 8000); // resolves once the Player has rendered what the 8 s changed
   await expect(page.locator('.stage.ppause')).toHaveCount(0);
   await expect(page.locator('.pps')).toHaveCount(0);
   await expect(page.locator('.ctl')).not.toHaveClass(/\bhide\b/);

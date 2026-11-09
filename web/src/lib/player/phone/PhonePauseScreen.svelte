@@ -12,9 +12,10 @@
   /**
    * Phone pause screen (spec 2026-11-08 §3): 5 s after pausing the Player zooms the picture to 103 % (stage `.ppause`) and this
    * layer dims it (a black layer at .62, the same as brightness .38 without animating `filter` or fighting the brightness
-   * gesture's inline filter). On the start side, inside the safe area: "You're watching", the title, the episode line and the
-   * synopsis (3 lines portrait, 4 landscape), rising 40 ms apart; the logo with "Paused" at the end-side bottom. Nothing here
-   * takes the pointer: a tap reaches the stage and brings the controls back (Player `wake()`). No Cast & info button on phones.
+   * gesture's inline filter). On the start side, inside the safe area: "You're watching", the title (3 lines portrait, 2
+   * landscape), the episode line and the synopsis (3 lines portrait, 4 landscape), rising 40 ms apart; the logo with "Paused" at
+   * the end-side bottom. Nothing here takes the pointer: a tap reaches the stage and brings the controls back (Player `wake()`).
+   * No Cast & info button on phones.
    */
   export let title = '';
   export let sub = '';
@@ -56,7 +57,7 @@
   .se { font-size: 14px; font-weight: 700; flex: none; }
   .ov { margin: 2px 0 0; font-size: 14px; color: #d6d6dc; line-height: 1.45; flex: none;
     display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 4; line-clamp: 4; overflow: hidden; }
-  .port .ttl { font-size: 24px; }
+  .port .ttl { font-size: 24px; -webkit-line-clamp: 3; line-clamp: 3; }
   .port .ov { -webkit-line-clamp: 3; line-clamp: 3; }
   .ff { position: absolute; right: calc(var(--safe-right, 0px) + 16px + var(--inset, 0px)); bottom: calc(var(--safe-bottom, 0px) + 12px);
     display: flex; align-items: center; gap: 8px; font-size: 14px; font-weight: 800; }
