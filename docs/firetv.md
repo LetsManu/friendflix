@@ -33,7 +33,7 @@ It is the same web UI your server serves in [TV mode](tv-mode.md), inside a smal
 
 **From the GitHub release.** Every release (`vX.Y.Z`) has a signed `friendflix-firetv-<version>.apk` next to its notes, with a `friendflix-firetv-<version>.sha256` file to check it. Either way below needs the setting that lets your Fire TV install apps from outside the Appstore.
 
-*Allow unknown sources.* On the Fire TV open **Settings → My Fire TV → Developer options**. If you do not see Developer options, open **About**, select the device name quickly seven times, and go back. Switch **ADB debugging** on and **Apps from Unknown Sources** on (newer Fire OS versions ask per app instead: allow it for the app you use in the next step). *(The menu names change between Fire OS versions; this could not be checked offline.)*
+*Allow unknown sources.* On the Fire TV open **Settings → My Fire TV → Developer options**. If you do not see Developer options, open **About**, select the device name quickly seven times, and go back. Switch **Apps from Unknown Sources** on (newer Fire OS versions ask per app instead: allow it for the app you use in the next step). *(The menu names change between Fire OS versions; this could not be checked offline.)*
 
 *Option A: Downloader app (no computer needed).*
 
@@ -42,7 +42,7 @@ It is the same web UI your server serves in [TV mode](tv-mode.md), inside a smal
 3. In Downloader, type the address of the APK on the GitHub release page of this project, or use a short link of your own that points to it, and download it.
 4. Choose **Install**, then **Open**.
 
-*Option B: ADB from a computer.* The computer and the Fire TV must be on the same network.
+*Option B: ADB from a computer.* The computer and the Fire TV must be on the same network, and **ADB debugging** must be on in the Developer options.
 
 1. Find the Fire TV's address under **Settings → My Fire TV → About → Network** (for example `192.0.2.20`).
 2. Download the APK on the computer. To check it, compare its SHA-256 with the `.sha256` file (`sha256sum -c friendflix-firetv-<version>.sha256` on Linux and macOS, `Get-FileHash` in PowerShell).

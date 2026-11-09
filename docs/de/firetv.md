@@ -33,7 +33,7 @@ Es ist dieselbe Weboberfläche, die dein Server im [TV-Modus](../tv-mode.md) aus
 
 **Aus dem GitHub-Release.** Jedes Release (`vX.Y.Z`) hat neben den Notizen eine signierte `friendflix-firetv-<Version>.apk` mit einer Datei `friendflix-firetv-<Version>.sha256` zum Prüfen. Beide Wege unten brauchen die Einstellung, die dein Fire TV Apps von außerhalb des Appstores installieren lässt.
 
-*Unbekannte Quellen erlauben.* Öffne am Fire TV **Einstellungen → Mein Fire TV → Entwickleroptionen**. Siehst du keine Entwickleroptionen, öffne **Info**, wähle siebenmal schnell hintereinander den Gerätenamen und geh zurück. Schalte **ADB-Debugging** und **Apps unbekannter Herkunft** ein (neuere Fire-OS-Versionen fragen stattdessen pro App: erlaube es für die App, die du im nächsten Schritt benutzt). *(Die Menünamen ändern sich zwischen Fire-OS-Versionen; das ließ sich offline nicht prüfen.)*
+*Unbekannte Quellen erlauben.* Öffne am Fire TV **Einstellungen → Mein Fire TV → Entwickleroptionen**. Siehst du keine Entwickleroptionen, öffne **Info**, wähle siebenmal schnell hintereinander den Gerätenamen und geh zurück. Schalte **Apps unbekannter Herkunft** ein (neuere Fire-OS-Versionen fragen stattdessen pro App: erlaube es für die App, die du im nächsten Schritt benutzt). *(Die Menünamen ändern sich zwischen Fire-OS-Versionen; das ließ sich offline nicht prüfen.)*
 
 *Weg A: Downloader-App (ohne Computer).*
 
@@ -42,7 +42,7 @@ Es ist dieselbe Weboberfläche, die dein Server im [TV-Modus](../tv-mode.md) aus
 3. Gib in Downloader die Adresse der APK auf der GitHub-Release-Seite dieses Projekts ein, oder einen eigenen Kurzlink dorthin, und lade sie herunter.
 4. Wähle **Installieren**, dann **Öffnen**.
 
-*Weg B: ADB vom Computer.* Computer und Fire TV müssen im selben Netzwerk sein.
+*Weg B: ADB vom Computer.* Computer und Fire TV müssen im selben Netzwerk sein, und **ADB-Debugging** muss in den Entwickleroptionen eingeschaltet sein.
 
 1. Die Adresse des Fire TV findest du unter **Einstellungen → Mein Fire TV → Info → Netzwerk** (zum Beispiel `192.0.2.20`).
 2. Lade die APK auf den Computer. Zum Prüfen vergleichst du ihre SHA-256 mit der `.sha256`-Datei (`sha256sum -c friendflix-firetv-<Version>.sha256` unter Linux und macOS, `Get-FileHash` in PowerShell).
