@@ -90,7 +90,7 @@
 {#if error}
   <div class="state err" role="alert"><p>{error}</p><Button variant="secondary" icon="refresh" on:click={() => { error = null; rows = null; void load(); }}>{$t('ui.retry')}</Button></div>
 {:else if rows === null}
-  <div class="list" aria-busy="true">{#each Array(2) as _, i (i)}<div class="req"><Skeleton w="40%" h="1.1rem" /><Skeleton w="60%" h=".9rem" /></div>{/each}</div>
+  <div class="list" aria-busy="true">{#each Array(2) as _, i (i)}<div class="req panel"><Skeleton w="40%" h="1.1rem" /><Skeleton w="60%" h=".9rem" /></div>{/each}</div>
 {:else if !rows.length}
   <p class="state">{$t('adminPeople.approvals.empty')}</p>
 {:else}
@@ -98,7 +98,7 @@
     {#each rows as r (r.id)}
       {@const d = drafts[r.id]}
       {#if d}
-        <section class="req" aria-labelledby="apr-{r.id}">
+        <section class="req panel" aria-labelledby="apr-{r.id}">
           <div class="who">
             <h3 id="apr-{r.id}">{r.name}</h3>
             <p class="sub">{r.email ?? $t('adminPeople.approvals.noEmail')} · <time datetime={r.requested_at} title={fmtDateTime(r.requested_at)}>{$t('adminPeople.approvals.requested', { time: fmtRelative(r.requested_at) })}</time></p>
@@ -130,7 +130,7 @@
 <style>
   .intro { margin: 0 0 .9rem; color: var(--mut); font-size: .9rem; }
   .list { display: flex; flex-direction: column; gap: .7rem; }
-  .req { display: flex; flex-direction: column; gap: .8rem; background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: .9rem 1rem; min-width: 0; }
+  .req { margin-bottom: 0; display: flex; flex-direction: column; gap: .8rem; min-width: 0; }
   h3 { margin: 0; font-size: 1.02rem; overflow-wrap: anywhere; }
   .sub { margin: .15rem 0 0; color: var(--mut); font-size: .88rem; overflow-wrap: anywhere; }
   .choose { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 12rem), 1fr)); gap: .7rem; max-width: 40rem; }

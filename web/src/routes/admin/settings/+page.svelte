@@ -11,7 +11,7 @@
    * another round. An edited URL that still carries the backend's redaction
    * marker is refused before anything is sent (it would replace the real token).
    */
-  import { onMount, tick } from 'svelte';
+  import { onDestroy, onMount, tick } from 'svelte';
   import { goto } from '$app/navigation';
   import Icon from '#lib/Icon.svelte';
   import { isReauthError, reauthenticate } from '#lib/account/reauth';
@@ -118,6 +118,15 @@
     return true;
   }
 
+  /** the group whose save just went through: its button draws the checkmark for 2.2 s (glass spec §8.8) */
+  let savedGroup: SettingGroup | null = null, savedTimer: ReturnType<typeof setTimeout> | undefined;
+  function markSaved(group: SettingGroup) {
+    clearTimeout(savedTimer);
+    savedGroup = group;
+    savedTimer = setTimeout(() => (savedGroup = null), 2200);
+  }
+  onDestroy(() => clearTimeout(savedTimer));
+
   async function save(group: SettingGroup, force = false): Promise<void> {
     const values = changesOf(group);
     if (!Object.keys(values).length || refuseRedacted(group)) return;
@@ -130,6 +139,7 @@
     }
     const res = await runAction({ key: `set:save:${group}`, run: () => saveSettings(values, force), success: tr('settings.saved'), error: false });
     if (res.ok) {
+      markSaved(group);
       for (const k of Object.keys(values)) delete edits[k];
       edits = edits;
       resumeNotice = null;
@@ -250,7 +260,7 @@
           {/if}
           <div class="foot">
             {#if dirty}<StatusPill tone="warn" icon="clock" label={$t('settings.unsaved')} />{/if}
-            <Button type="submit" icon="check" pending={$busyKeys.has(`set:save:${g.id}`)} disabled={!dirty}>{$t('settings.save')}</Button>
+            <Button type="submit" icon="check" pending={$busyKeys.has(`set:save:${g.id}`)} disabled={!dirty && savedGroup !== g.id} done={savedGroup === g.id && !dirty}>{$t('settings.save')}</Button>
           </div>
         </form>
       </AdminCard>

@@ -201,13 +201,15 @@ html.m-still .frost-sheen, html.m-still .frost-tint, html.tv .frost-sheen, html.
 /* text on the light glass over the ambient background (.panel and the .frost-text surfaces: settings, /me, phone search):
    the mockup's hierarchy, AA on the light card over the brightest glow, on the raw ambient and on the solid fallback
    (lib/glass/pages.test.ts): dim text white .72, hints white .66, the status colours a step lighter, links and coral text lighter */
-.panel, .frost-text { --mut: rgba(255, 255, 255, .72); --hint: rgba(255, 255, 255, .66); --ok: #4ade80; --warn: #f7b344; --err: #ffa8a8; --link: #80cbd4; --acc-text: #ffa7b6; }
+.panel, .frost-text { --mut: rgba(255, 255, 255, .72); --hint: rgba(255, 255, 255, .66); --ok: #4ade80; --warn: #f7b344; --err: #ffa8a8; --link: #80cbd4; --info: #80cbd4; --acc-text: #ffa7b6; }
 /* pages on the ambient background (html.amb, +layout.svelte): the usual greys and status colours pass straight on it; coral
    text needs the lighter coral */
 html.amb { --acc-text: #ff8aa0; }
 /* glass never nests: a .panel inside a glass surface (the recommend form in the detail panel) is part of it, not a second
-   layer of scrim and milk (that would drop the outer surface's text under AA) */
-html:root :is(.frost, .frost-flat, .panel) .panel { background: none; border-color: transparent; box-shadow: none; -webkit-backdrop-filter: none; backdrop-filter: none; }
+   layer of scrim and milk (that would drop the outer surface's text under AA), and it keeps the surface's text levels (the
+   block above would reset them to the light card's .72 / .66, which the desk detail column's .9 contract cannot afford) */
+html:root :is(.frost, .frost-flat, .panel) .panel { background: none; border-color: transparent; box-shadow: none; -webkit-backdrop-filter: none; backdrop-filter: none;
+  --mut: inherit; --hint: inherit; --ok: inherit; --warn: inherit; --err: inherit; --link: inherit; --info: inherit; --acc-text: inherit; }
 html:root :is(.frost, .frost-flat, .panel) .panel::before { display: none; }
 /* §8.9 phone press feedback (lib/glass/press.ts): squeeze in 80 ms, spring back in 350 ms; a ripple from the touch point
    (twice the larger side, clipped by the node). .pressed is set with full motion only. */

@@ -43,7 +43,7 @@ describe('glass pages: text contrast (B′)', () => {
   it('the light glass cards carry the mockup\'s levels', () => {
     expect(glass).toEqual({
       '--mut': 'rgba(255, 255, 255, .72)', '--hint': 'rgba(255, 255, 255, .66)',
-      '--ok': '#4ade80', '--warn': '#f7b344', '--err': '#ffa8a8', '--link': '#80cbd4', '--acc-text': '#ffa7b6',
+      '--ok': '#4ade80', '--warn': '#f7b344', '--err': '#ffa8a8', '--link': '#80cbd4', '--info': '#80cbd4', '--acc-text': '#ffa7b6',
     });
   });
 
@@ -75,6 +75,19 @@ describe('glass pages: text contrast (B′)', () => {
     expect(textContrast(outer, TEXT_DIM)).toBeGreaterThanOrEqual(AA);
     expect(textContrast(inner, TEXT_DIM)).toBeLessThan(AA);
     expect(css).toMatch(/html:root :is\(\.frost, \.frost-flat, \.panel\) \.panel \{ background: none;[^}]*box-shadow: none;/);
+  });
+
+  it('a nested panel keeps its surface\'s text levels: the light card\'s .72 / .66 would fail in the desk detail column', () => {
+    // the recommend form (.panel.rec) inside DetailDesk's column, whose contract is white .9 over unsampled artwork
+    const col = frostComposite(WHITE, SCRIM_SAFE_DIM);
+    expect(textContrast(col, TEXT_DIM)).toBeGreaterThanOrEqual(AA);
+    expect(textContrast(col, 0.72)).toBeLessThan(AA);
+    expect(textContrast(col, 0.66)).toBeLessThan(AA);
+    // so every token the glass block sets is inherited again on a nested panel (more specific than the block)
+    const nested = vars('html:root :is(.frost, .frost-flat, .panel) .panel');
+    const block = vars('.panel, .frost-text');
+    expect(Object.keys(nested).sort()).toEqual(Object.keys(block).sort());
+    for (const v of Object.values(nested)) expect(v).toBe('inherit');
   });
 
   it('a darker row hover and the darker field fill only add contrast', () => {

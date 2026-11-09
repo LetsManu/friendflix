@@ -114,7 +114,7 @@
 {:else if cards === null}
   <div class="grid" aria-busy="true">
     {#each [0, 1, 2] as i (i)}
-      <div class="card" aria-hidden="true"><Skeleton w="40%" h="1.2rem" /><Skeleton lines={5} /></div>
+      <div class="card panel" aria-hidden="true"><Skeleton w="40%" h="1.2rem" /><Skeleton lines={5} /></div>
     {/each}
   </div>
 {:else if !cards.length}
@@ -125,7 +125,7 @@
       {@const errs = errorsOf(c.form)}
       {@const isDirty = dirty(c)}
       {@const busy = $busyKeys.has(`role:${c.role}`)}
-      <form class="card" class:dirty={isDirty} aria-labelledby="role-{c.role}" on:submit|preventDefault={() => save(c)}>
+      <form class="card panel" class:dirty={isDirty} aria-labelledby="role-{c.role}" on:submit|preventDefault={() => save(c)}>
         <header>
           <h2 id="role-{c.role}">{name(c)}</h2>
           {#if isDirty}<StatusPill tone="warn" label={$t('adminPeople.roles.unsaved')} icon="clock" />{/if}
@@ -171,7 +171,7 @@
 <style>
   .intro { color: var(--mut); margin: 0 0 1rem; max-width: 60ch; }
   .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 22rem), 1fr)); gap: 1rem; align-items: start; }
-  .card { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 1rem 1.1rem; display: flex; flex-direction: column; gap: 1rem; min-width: 0; transition: border-color var(--t-fast); }
+  .card { margin-bottom: 0; display: flex; flex-direction: column; gap: 1rem; min-width: 0; transition: border-color var(--t-fast); }
   .card.dirty { border-color: var(--warn); }
   header { display: flex; align-items: center; justify-content: space-between; gap: .6rem; flex-wrap: wrap; }
   h2 { margin: 0; font-size: 1.15rem; }

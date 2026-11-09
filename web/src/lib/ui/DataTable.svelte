@@ -108,7 +108,7 @@
       <Button variant="secondary" icon="refresh" on:click={() => dispatch('retry')}>{$t('ui.retry')}</Button>
     </div>
   {:else}
-    <table id="{id}-t" aria-busy={rows === null ? 'true' : undefined} aria-rowcount={rows === null ? undefined : count}>
+    <table id="{id}-t" class="glass frost-flat frost-text" aria-busy={rows === null ? 'true' : undefined} aria-rowcount={rows === null ? undefined : count}>
       <caption class:sr-only={!showCaption}>{caption}</caption>
       <thead>
         <tr>
@@ -177,15 +177,23 @@
   .bar { height: auto; background: none; overflow: visible; display: flex; flex-wrap: wrap; gap: .6rem; align-items: center; margin-bottom: .8rem; }
   .search { position: relative; display: flex; align-items: center; flex: 1 1 240px; max-width: 420px; color: var(--mut); }
   .search :global(svg) { position: absolute; left: .75rem; pointer-events: none; }
-  .search input { width: 100%; padding-left: 2.4rem; }
-  table { width: 100%; border-collapse: separate; border-spacing: 0; background: var(--surface); border: 1px solid var(--line); border-radius: 8px; }
+  .search input { width: 100%; padding-left: 2.4rem; border-radius: 12px; background: rgba(var(--fr-scrim-rgb), .35); border: 1px solid var(--fr-line); color: #fff; }
+  /* a glass card (frost-flat, 16 px corners; glass spec §7). The sticky header is solid (rows scroll under it) and the row
+     hover a darker fill: both only add contrast (lib/admin/glass.test.ts). Dense rows: at least 40 px, 44 px for touch. */
+  table.glass { width: 100%; border-collapse: separate; border-spacing: 0; border-radius: 16px; }
+  /* glass never nests: inside a glass card the table is part of it */
+  :global(:is(.frost, .frost-flat, .panel)) table.glass { background: none; border-color: transparent; box-shadow: none; }
+  :global(:is(.frost, .frost-flat, .panel)) table.glass::before { display: none; }
   caption.sr-only { position: absolute; }
-  th { position: sticky; top: var(--nav-total); z-index: 2; background: #181e24; text-align: left; padding: .55rem .8rem; font-size: .8rem; font-weight: 600; text-transform: uppercase; letter-spacing: .04em; color: var(--mut); border-bottom: 1px solid var(--line); white-space: nowrap; }
-  th:first-child { border-top-left-radius: 8px; } th:last-child { border-top-right-radius: 8px; }
-  td { padding: .6rem .8rem; border-bottom: 1px solid var(--line); vertical-align: middle; overflow-wrap: anywhere; }
+  th { position: sticky; top: var(--nav-total); z-index: 2; background: var(--fr-solid); text-align: left; padding: .55rem .9rem; font-size: .78rem; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; color: var(--mut); border-bottom: 1px solid var(--fr-line); white-space: nowrap; }
+  th:first-child { border-top-left-radius: 15px; } th:last-child { border-top-right-radius: 15px; }
+  td { padding: .5rem .9rem; border-bottom: 1px solid rgba(255, 255, 255, .07); vertical-align: middle; overflow-wrap: anywhere; }
+  tbody tr { height: 40px; }
+  @media (pointer: coarse) { tbody tr { height: 44px; } }
   tbody tr:last-child td { border-bottom: 0; }
-  tbody tr { transition: background var(--t-fast), opacity var(--t-fast); }
-  tbody tr:not(.sk):hover { background: rgba(255,255,255,.03); }
+  tbody tr:last-child td:first-child { border-bottom-left-radius: 15px; } tbody tr:last-child td:last-child { border-bottom-right-radius: 15px; }
+  tbody tr { transition: background-color var(--t-fast), opacity var(--t-fast); }
+  tbody tr:not(.sk):hover td { background: rgba(var(--fr-scrim-rgb), .3); }
   tr.busy { opacity: .6; }
   td.primary { font-weight: 600; }
   .al-end { text-align: right; } .al-center { text-align: center; }
@@ -193,9 +201,9 @@
   .sorter { background: transparent; color: inherit; font: inherit; text-transform: inherit; letter-spacing: inherit; padding: 0 .2rem; min-height: 32px; gap: .3rem; margin-left: -.2rem; border-radius: 4px; }
   .sorter:hover:not(:disabled) { background: rgba(255,255,255,.06); color: var(--fg); }
   .sorter.on { color: var(--fg); }
-  .state { display: flex; flex-direction: column; align-items: center; gap: .6rem; text-align: center; padding: 2rem 1rem; color: var(--mut); background: var(--surface); border: 1px solid var(--line); border-top: 0; border-radius: 0 0 8px 8px; }
+  .state { display: flex; flex-direction: column; align-items: center; gap: .6rem; text-align: center; padding: 2rem 1rem; color: var(--mut); background: var(--fr-solid); border: 1px solid var(--fr-line); border-top: 0; border-radius: 0 0 16px 16px; }
   .state p { margin: 0; }
-  .state.err { border-top: 1px solid var(--line); border-radius: 8px; color: var(--fg); }
+  .state.err { border-top: 1px solid var(--fr-line); border-radius: 16px; color: var(--fg); }
   .state.err :global(svg) { color: var(--err); }
   .pager { display: flex; align-items: center; justify-content: flex-end; gap: .4rem; margin-top: .6rem; }
   .range { color: var(--mut); font-size: .88rem; margin-right: .4rem; font-variant-numeric: tabular-nums; }
@@ -205,17 +213,20 @@
   /* phone: every row is a card (label: value); the primary column is the title, actions sit top-right */
   @media (max-width: 720px) {
     table, tbody, tr, td { display: block; width: 100%; }
-    table { background: transparent; border: 0; }
+    table.glass, :global(:is(.frost, .frost-flat, .panel)) table.glass { background: none; border: 0; box-shadow: none; }
+    table.glass::before { display: none; }
     thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
     tbody { display: flex; flex-direction: column; gap: .6rem; }
-    tbody tr { position: relative; background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: .7rem .9rem; }
+    /* each row a card: a darker fill over the glass or the ambient (only adds contrast), 16 px corners, ≥ 44 px */
+    tbody tr { position: relative; height: auto; min-height: 44px; background: rgba(var(--fr-scrim-rgb), .3); border: 1px solid var(--fr-line); border-radius: 16px; padding: .7rem .9rem; }
+    tbody tr:not(.sk):hover td { background: none; }
     td { display: flex; gap: .8rem; justify-content: space-between; align-items: center; padding: .3rem 0; border: 0; text-align: right; min-height: 0; }
     td::before { content: attr(data-label); color: var(--mut); font-size: .85rem; text-align: left; flex: none; max-width: 45%; }
     td.primary { display: block; text-align: left; font-size: 1.02rem; padding-right: 3.2rem; }
     td.primary::before, td.act::before, tr.sk td::before { content: none; }
     td.nocard { display: none; }
     td.act { position: absolute; top: .35rem; right: .4rem; width: auto; padding: 0; }
-    .state { border-top: 1px solid var(--line); border-radius: 8px; }
+    .state { border-top: 1px solid var(--fr-line); border-radius: 16px; }
     .pager { justify-content: center; }
   }
 </style>

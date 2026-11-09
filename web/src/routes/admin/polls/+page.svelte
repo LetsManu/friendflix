@@ -60,7 +60,7 @@
 
 {#if polls === null}
   <div class="list" aria-hidden="true">
-    {#each [0, 1] as i (i)}<div class="poll"><Skeleton w="50%" h="1.2rem" /><div class="opts"><Skeleton h="2.6rem" /><Skeleton h="2.6rem" /></div><Skeleton w="12rem" h="2.5rem" /></div>{/each}
+    {#each [0, 1] as i (i)}<div class="poll panel"><Skeleton w="50%" h="1.2rem" /><div class="opts"><Skeleton h="2.6rem" /><Skeleton h="2.6rem" /></div><Skeleton w="12rem" h="2.5rem" /></div>{/each}
   </div>
   <p class="sr-only" role="status">{$t('ui.table.loading')}</p>
 {:else if failed}
@@ -72,7 +72,7 @@
     {#each polls as p (p.id)}
       {@const busy = $busyKeys.has(`poll:${p.id}`)}
       {@const sum = total(p)}
-      <li class="poll" aria-busy={busy ? 'true' : undefined}>
+      <li class="poll panel" aria-busy={busy ? 'true' : undefined}>
         <header>
           <h2>{p.title}</h2>
           <p class="meta muted">{[$t('adminContent.polls.by', { name: p.creator }), p.closesAt ? $t('adminContent.polls.closed', { date: fmtDateTime(p.closesAt) }) : ''].filter(Boolean).join(' · ')}</p>
@@ -102,7 +102,7 @@
 <style>
   .intro { margin: 0 0 1rem; max-width: 70ch; }
   .list { list-style: none; margin: 0; padding: 0; display: grid; gap: 1rem; grid-template-columns: repeat(auto-fill, minmax(min(100%, 420px), 1fr)); }
-  .poll { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 1rem 1.1rem; display: flex; flex-direction: column; gap: .9rem; min-width: 0; transition: opacity var(--t-fast); }
+  .poll { margin-bottom: 0; display: flex; flex-direction: column; gap: .9rem; min-width: 0; transition: opacity var(--t-fast); }
   .poll[aria-busy='true'] { opacity: .6; }
   h2 { margin: 0; font-size: 1.1rem; overflow-wrap: anywhere; }
   .meta { margin: .15rem 0 0; font-size: .88rem; }

@@ -287,7 +287,7 @@
   .pills { display: flex; flex-wrap: wrap; gap: .35rem; }
   .meta { display: flex; flex-wrap: wrap; gap: .2rem 1rem; color: var(--mut); font-size: .85rem; }
   .acts { flex: none; }
-  .panel { display: flex; flex-wrap: wrap; align-items: flex-end; gap: .6rem; padding: .8rem; margin-bottom: 1rem; background: var(--surface); border: 1px solid var(--line); border-radius: 8px; }
+  .panel { display: flex; flex-wrap: wrap; align-items: flex-end; gap: .6rem; margin-bottom: 1rem; } /* a glass card (dense in the admin frame) */
   .panel :global(.field) { min-width: 12rem; }
   .tabs { display: flex; gap: .4rem; overflow-x: auto; scrollbar-width: none; margin-bottom: 1rem; border-bottom: 1px solid var(--line); }
   .tabs::-webkit-scrollbar { display: none; }

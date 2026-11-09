@@ -160,14 +160,18 @@ test.describe('glass settings (desktop)', () => {
     const inner = await page.evaluate(() => {
       const host = document.createElement('div');
       host.className = 'frost frost-panel';
-      host.innerHTML = '<div class="panel" id="nested">x</div>';
+      // the desk detail column's contract (DetailDesk .col: --mut .9 over artwork); the recommend form (.panel.rec) sits in it
+      host.style.setProperty('--mut', 'rgba(255, 255, 255, .9)');
+      host.innerHTML = '<div class="panel" id="nested"><span class="muted">x</span></div>';
       document.body.append(host);
       const cs = getComputedStyle(document.getElementById('nested')!), before = getComputedStyle(document.getElementById('nested')!, '::before');
-      const r = { bg: cs.backgroundImage, color: cs.backgroundColor, shadow: cs.boxShadow, grain: before.display };
+      const muted = getComputedStyle(host.querySelector('.muted')!).color;
+      const r = { bg: cs.backgroundImage, color: cs.backgroundColor, shadow: cs.boxShadow, grain: before.display, muted };
       host.remove();
       return r;
     });
-    expect(inner).toEqual({ bg: 'none', color: 'rgba(0, 0, 0, 0)', shadow: 'none', grain: 'none' });
+    // …and its dim text keeps the surface's level instead of the light card's .72
+    expect(inner).toEqual({ bg: 'none', color: 'rgba(0, 0, 0, 0)', shadow: 'none', grain: 'none', muted: 'rgba(255, 255, 255, 0.9)' });
     // a top-level panel keeps its glass
     expect(await css(page.locator('#language'), 'background-image')).toContain('linear-gradient');
   });

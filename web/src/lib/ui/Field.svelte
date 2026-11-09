@@ -53,4 +53,10 @@
   .hint { font-size: .82rem; color: var(--hint, var(--mut)); overflow-wrap: anywhere; } /* long example URLs wrap at 320 px */
   .error { font-size: .85rem; color: var(--err); font-weight: 600; }
   .has-err :global(input), .has-err :global(select), .has-err :global(textarea) { border-color: var(--err); }
+  /* the dense glass admin (glass spec §7, as the settings page): 12 px corners on a darker glass fill (darker keeps the white
+     text over AA, lib/admin/glass.test.ts) */
+  :global(.adm) .field :global(input:not([type='checkbox']):not([type='radio'])), :global(.adm) .field :global(select), :global(.adm) .field :global(textarea) { border-radius: 12px; background: rgba(var(--fr-scrim-rgb), .35); border: 1px solid var(--fr-line); color: #fff; }
+  :global(.adm) .field :global(input:hover), :global(.adm) .field :global(select:hover), :global(.adm) .field :global(textarea:hover) { border-color: rgba(255, 255, 255, .42); }
+  :global(.adm) .field :global(select option) { background: var(--fr-solid); color: #fff; }
+  :global(.adm) .has-err :global(input), :global(.adm) .has-err :global(select), :global(.adm) .has-err :global(textarea) { border-color: var(--err); }
 </style>
