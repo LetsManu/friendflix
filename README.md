@@ -176,6 +176,8 @@ An app-like layout with a floating tab bar (Home, New, My list, Downloads), a sw
 
 **LG TV app:** FriendFlix for LG smart TVs (webOS 22 and newer), installed from your PC over Developer Mode with an install script, no certificate needed. It opens your TV mode full screen and tells the server what the TV can play, so files the TV handles itself are not converted. Setup, remote keys and the test app: [docs/webos.md](docs/webos.md).
 
+**Fire TV app:** FriendFlix for Amazon Fire TV sticks, cubes and TVs (Fire OS 7 and newer), from the Amazon Appstore or as an APK on each release. It opens your TV mode full screen, works with the Fire TV remote and your phone as the remote, and tells the server what the device can play, so files it handles itself are not converted. No Google services, no downloads. Install, remote keys and the owner's Appstore steps: [docs/firetv.md](docs/firetv.md).
+
 <p align="center"><img src="docs/images/en/downloads.jpg" alt="Downloads page with finished, paused and preparing downloads" width="700"></p>
 
 **Seven languages:** the interface speaks **English, German, French, Spanish, Italian, Turkish and Polish**. Every profile picks its own language; on first login FriendFlix asks once and suggests the browser language. The admin sets the default language for the whole instance.
@@ -392,6 +394,7 @@ npm run e2e                                     # Playwright: builds the web app
 | Windows app: install, player keys, updates, troubleshooting, update signing | [docs/windows.md](docs/windows.md) |
 | Samsung TV app: developer mode, certificate, install script, probe | [docs/tizen.md](docs/tizen.md) |
 | LG TV app: Developer Mode, install script, remote keys, test app | [docs/webos.md](docs/webos.md) |
+| Fire TV app: install, remote keys, probe, Amazon Appstore steps | [docs/firetv.md](docs/firetv.md) |
 | Search and discovery API, labels, leaving soon, quality, kids rules | [docs/discovery.md](docs/discovery.md) |
 | Themed lists, calm mode, sound in the player, phone shortcuts and badge | [docs/personal.md](docs/personal.md) |
 | UI kit and admin shell | [docs/ui-kit.md](docs/ui-kit.md) |

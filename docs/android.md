@@ -360,7 +360,7 @@ Unit tests and the emulator in CI cover the logic; these points need a real phon
 
 ## Building it yourself
 
-The app lives in `android/` (Kotlin, Gradle, minSdk 26, targetSdk 36). With JDK 21 and the Android SDK (platform 36):
+The app lives in `android/` (Kotlin, Gradle, minSdk 26, targetSdk 36). The Fire TV module (`:firetv`) builds with the same commands; see [firetv.md](firetv.md#building-it-yourself). With JDK 21 and the Android SDK (platform 36):
 
 ```sh
 cd android
