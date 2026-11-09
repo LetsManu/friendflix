@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 package app.friendflix.android.player
 
+import android.annotation.SuppressLint
 import android.content.Context
 import android.media.audiofx.DynamicsProcessing
 import android.os.Build
@@ -66,6 +67,8 @@ class AudioFxAttach(
         private const val NOISE_GATE_DB = -90f
         /** processing frame: short frames = little added audio delay (the frequency-resolution variant buffers far longer) */
         internal const val FRAME_MS = 10f
+        // an int constant inlined at compile time; read only inside the API 28 config builder below
+        @SuppressLint("InlinedApi")
         internal const val VARIANT = DynamicsProcessing.VARIANT_FAVOR_TIME_RESOLUTION
 
         /** the [DynamicsProcessing] configuration of [mode], or null for no processing */
