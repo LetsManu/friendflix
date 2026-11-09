@@ -13,6 +13,11 @@ const dict: Translation<typeof de> = {
   bar: {
     close: 'Chiudi ricerca',
   },
+  search: {
+    top: 'Risultati migliori',
+    all: 'Tutti i risultati',
+    sheet: 'Risultati della ricerca',
+  },
   detail: {
     back: 'Indietro',
     extras: 'Trailer ed extra',

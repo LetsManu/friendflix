@@ -16,6 +16,11 @@ export const VT_MAIN = 'ff-main';
 /** entering / leaving curves (the same values as the CSS tokens --tv-emph-out / --tv-emph-in) */
 export const EMPH_OUT = 'cubic-bezier(.05,.7,.1,1)';
 export const EMPH_IN = 'cubic-bezier(.3,0,.8,.15)';
+/** glass curves (glass spec §1.1; CSS --fr-spring / --fr-out / --fr-in): a spring with overshoot for things that open, a soft
+ * ease-out for fades and glides, an ease-in for things that close */
+export const GLASS_SPRING = 'cubic-bezier(.34,1.56,.64,1)';
+export const GLASS_OUT = 'cubic-bezier(.22,1,.36,1)';
+export const GLASS_IN = 'cubic-bezier(.4,0,1,1)';
 
 /** spring stiffness / damping (per s²): damping ratio ~0.76, settles in ~300 ms with < 2 % overshoot */
 export const SPRING_K = 760;

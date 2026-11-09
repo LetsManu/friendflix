@@ -23,7 +23,7 @@
   const SETTINGS_HREF = '/admin/settings#settings-recommendations';
 </script>
 
-<section class="card" aria-labelledby="dash-reco" data-testid="reco-card">
+<section class="card panel" aria-labelledby="dash-reco" data-testid="reco-card">
   <div class="ch">
     <h2 id="dash-reco">{$t('reco.admin.title')}</h2>
     {#if stats}<span class="muted small">{$t('reco.admin.active', { engine: $t(`reco.admin.engine.${stats.engine}`) })}</span>{/if}
@@ -62,7 +62,7 @@
 </section>
 
 <style>
-  .card { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 1rem 1.1rem; min-width: 0; margin-bottom: 1rem; }
+  .card { min-width: 0; margin-bottom: 1rem; } /* a glass card (.panel) */
   .card h2 { font-size: 1.05rem; font-weight: 700; margin: 0; }
   .ch { display: flex; align-items: baseline; justify-content: space-between; gap: .6rem; margin-bottom: .8rem; flex-wrap: wrap; }
   .small { font-size: .85rem; }
@@ -76,6 +76,6 @@
   .engine { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: .4rem 1rem; padding-top: .7rem; margin-top: .4rem; border-top: 1px solid var(--line); }
   .engine p { margin: 0; flex: 1 1 14rem; min-width: 0; overflow-wrap: anywhere; display: flex; align-items: center; gap: .35rem; flex-wrap: wrap; }
   .engine :global(svg) { flex: none; }
-  .change { display: inline-flex; align-items: center; gap: .2rem; font-size: .9rem; font-weight: 600; color: var(--acc); min-height: 44px; }
+  .change { display: inline-flex; align-items: center; gap: .2rem; font-size: .9rem; font-weight: 600; color: var(--acc-text); min-height: 44px; } /* coral text: the lighter coral on glass and on the ambient */
   .change:hover, .change:focus-visible { text-decoration: underline; }
 </style>

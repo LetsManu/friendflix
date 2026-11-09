@@ -20,9 +20,12 @@
 <style>
   .pill { display: inline-flex; align-items: center; gap: .3rem; padding: .15rem .6rem .15rem .45rem; border-radius: 99px; font-size: .8rem; font-weight: 600; line-height: 1.4; white-space: nowrap; max-width: 100%; }
   .pill > span { overflow: hidden; text-overflow: ellipsis; }
-  .ok { background: var(--tone-ok); color: var(--ok); }
-  .warn { background: var(--tone-warn); color: var(--warn); }
-  .err { background: var(--tone-err); color: var(--err); }
-  .info { background: var(--tone-info); color: var(--info); }
-  .muted { background: var(--tone-muted); color: var(--mut); }
+  /* the tone over a dark scrim fill (glass spec §7): on the light glass cards over the brightest glow the plain tone washes
+     left the status text under AA; with the scrim under them every pill passes (lib/admin/glass.test.ts). The text and the
+     icon say the state, the colour only repeats it. */
+  .ok { background: var(--wash-ok); color: var(--ok); }
+  .warn { background: var(--wash-warn); color: var(--warn); }
+  .err { background: var(--wash-err); color: var(--err); }
+  .info { background: var(--wash-info); color: var(--info); }
+  .muted { background: var(--wash-muted); color: var(--mut); }
 </style>

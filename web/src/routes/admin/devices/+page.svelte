@@ -147,7 +147,7 @@
 </DataTable>
 
 <style>
-  .waiting { display: flex; align-items: center; gap: .5rem; margin: 0 0 .9rem; padding: .65rem .9rem; border-radius: 8px; background: var(--tone-warn); color: var(--warn); font-weight: 600; }
+  .waiting { display: flex; align-items: center; gap: .5rem; margin: 0 0 .9rem; padding: .65rem .9rem; border-radius: 8px; background: var(--wash-warn); color: var(--warn); font-weight: 600; }
   .dev { display: inline-flex; align-items: center; gap: .5rem; min-width: 0; color: var(--fg); }
   .dev :global(svg) { color: var(--mut); flex: none; }
   .sub { color: var(--mut); }

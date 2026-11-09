@@ -4,7 +4,7 @@
   /**
    * Desktop top bar (spec desktop browse §1): logo left, a floating pill with the tabs, Categories and search (the magnifier at
    * its right end; the pill grows for the field) in the middle, bell / avatar on the right. No full-width band: over the
-   * billboard nothing sits behind it, once scrolled the pill and the round buttons turn opaque. The active tab's fill slides to a newly chosen tab (springs from lib/tv/motion).
+   * billboard nothing sits behind it (the glass takes the safe scrim there), once scrolled the bar's opaque shade sits behind the glass. The active tab's fill slides to a newly chosen tab (springs from lib/tv/motion).
    */
   import { flushSync, onDestroy, onMount, tick } from 'svelte';
   import { goto } from '$app/navigation';
@@ -22,7 +22,14 @@
   import { prefs } from '#lib/stores';
   import { t } from '#lib/i18n';
   import { animateTo, glide, halt, motionLevel, motionTripped, placeAt } from '#lib/tv/motion';
-  import { pillSolid } from './bar';
+  import { alphaOf, pillSolid, SHADE_MS } from './bar';
+  import { sheen } from '#lib/glass/pointer';
+  import { growBoth } from '#lib/glass/fx';
+  import { SCRIM_MENU } from '#lib/glass/tone';
+  import { getActiveProfile } from '#lib/api';
+  import { pushRecent } from '#lib/discovery';
+  import SearchSheet from './SearchSheet.svelte';
+  import { nextId } from './searchSheet';
 
   export let path: string;
   /** a page that starts with a billboard: the pill stays see-through at the very top */
@@ -45,18 +52,33 @@
   // ---- solid pill once scrolled (24 px) or on pages without a billboard ----
   let scrollY = 0;
   $: solid = pillSolid(scrollY, heroPage);
-  /** backdrop blur only with the full motion set (calm mode, reduced motion or a slow device: none) */
+  // the glass over the billboard takes the safe scrim; turning solid, it keeps it until the bar's shade has faded in behind it
+  let safe = !solid, safeT: ReturnType<typeof setTimeout> | undefined;
+  $: setSafe(solid);
+  function setSafe(s: boolean) {
+    clearTimeout(safeT);
+    if (!s) safe = true;
+    else if (safe) safeT = setTimeout(() => (safe = false), SHADE_MS);
+  }
+  /** the full motion set (the glass blur itself comes from html.m-glass; calm mode, reduced motion or a slow device: none) */
   const fullMotion = (_calm: unknown, _tripped: boolean) => motionLevel() === 'full'; // re-read when the prefs (calm mode) arrive or the frame guard trips
-  $: blur = fullMotion($prefs, $motionTripped);
-  $: still = !blur; // calm mode / reduced motion: the field's fades are off too (the springs check motionLevel themselves)
+  $: still = !fullMotion($prefs, $motionTripped); // calm mode / reduced motion: the field's fades are off too (the springs check motionLevel themselves)
 
   // ---- dropdowns: categories, notifications, account ----
   let menu = false, bell = false, cats = false;
+  let catBtn: HTMLButtonElement, bellBtn: HTMLButtonElement, acctBtn: HTMLButtonElement;
+  /** an opened dropdown takes the focus (its first link or button, else itself); Esc gives it back to its button */
+  async function focusInto(sel: string) {
+    await tick();
+    const d = root?.querySelector<HTMLElement>(sel);
+    (d?.querySelector<HTMLElement>('a[href], button:not([disabled])') ?? d)?.focus({ preventScroll: true });
+  }
   $: if (path) { menu = false; bell = false; cats = false; }
   let catKind: Kind = 'movies', catGenres: string[] | null = null, catLangs: string[] | null = null;
   async function toggleCats() {
     cats = !cats; menu = false; bell = false;
     if (!cats) return;
+    void focusInto('.catdrop');
     catKind = kindFromPath(path);
     if (!catGenres) { try { catGenres = ((await api('/api/library/genres')).genres as string[]) ?? []; } catch { catGenres = []; } }
     if (!catLangs) { try { catLangs = (((await api('/api/library/languages')).audio ?? []) as Array<{ code: string }>).map((l) => l.code).slice(0, 12); } catch { catLangs = []; } }
@@ -64,6 +86,7 @@
   let notesTimer: ReturnType<typeof setTimeout> | undefined;
   async function toggleBell() {
     bell = !bell; menu = false; cats = false;
+    if (bell) void focusInto('.drop.wide');
     if (bell && unread) {
       await api('/api/notifications/read', { method: 'POST' });
       clearTimeout(notesTimer);
@@ -73,6 +96,7 @@
   let others: Array<{ id: string; name: string; avatar: string; hasPin: boolean }> | null = null;
   async function toggleMenu() {
     menu = !menu; bell = false; cats = false;
+    if (menu) void focusInto('.drop.acct');
     if (menu && multi && others === null) {
       try { others = ((await api('/api/profiles')).profiles as Array<{ id: string; name: string; avatar: string; hasPin: boolean; active: boolean }>).filter((p) => !p.active && p.id !== me?.profile?.id).slice(0, 4); }
       catch { others = []; }
@@ -99,7 +123,19 @@
     if (anchor && root?.contains(anchor)) anchor.querySelector<HTMLElement>(':scope > button')?.focus();
   }
   function onWindowClick(e: MouseEvent) {
-    if (!(e.target as HTMLElement | null)?.closest?.('.pop-anchor')) { menu = false; bell = false; cats = false; }
+    const el = e.target as HTMLElement | null;
+    if (!el?.closest?.('.pop-anchor')) { menu = false; bell = false; cats = false; }
+    // the search sheet: a click outside the pill and the sheet closes it (and the field)
+    if (sheetOpen && el?.isConnected && !inSearch(el)) leaveField(false);
+  }
+  /** a sheen (lib/glass/pointer.ts) moved into the host's `.sclip` layer, which clips it to the host's shape: the hosts here
+   * must not clip themselves (the pill's menu hangs below it and its background halves reach past it while they slide; the
+   * bell's unread count sits over its edge) */
+  function clipSheen(node: HTMLElement) {
+    const a = sheen(node);
+    const s = node.querySelector<HTMLElement>(':scope > .frost-sheen');
+    if (s) node.querySelector(':scope > .sclip')?.appendChild(s);
+    return a;
   }
 
   // ---- the active tab's fill (inside the tab track): sprung to the active tab, its width gliding along (instant under reduced motion) ----
@@ -127,7 +163,8 @@
   $: if (path !== placedFor && pill && fill) { placedFor = path; void placeFill(true); }
 
   // ---- search inside the pill (spec §1): the magnifier is the pill's last item; opening it makes the pill itself grow with a
-  // spring and the field appears at its right end. Typing drives /search?q= (no second input on that page). ----
+  // spring and the field appears at its right end. On /search typing drives /search?q= (no second input on that page);
+  // anywhere else the field is the combobox of the search sheet (glass spec §2) and Enter goes to /search?q=. ----
   let searchOpen = false, q = '', searchEl: HTMLInputElement, magBtn: HTMLButtonElement, xBtn: HTMLButtonElement, st: ReturnType<typeof setTimeout>;
   let hSeen: string | null = null, hPushed: string | null = null;
   $: urlQ = path === '/search' ? ($page.url.searchParams.get('q') ?? '').trim() : null;
@@ -145,7 +182,16 @@
     if (path === '/search') { if (s === hPushed) return; hPushed = s; void goto(href, { replace: true, reset: false }); }
     else if (s) { hPushed = s; void goto(href, { reset: false }).then(() => scrollTo({ top: 0, behavior: 'instant' })); } // keep the focus in the field
   }
-  function onSearchInput() { clearTimeout(st); st = setTimeout(() => commitSearch(q), 220); }
+  function onSearchInput() {
+    activeId = null;
+    if (path === '/search') { clearTimeout(st); st = setTimeout(() => commitSearch(q), 220); }
+  }
+  /** Enter (and the magnifier with the cursor in the field): the active hit, else /search?q= */
+  function submitSearch() {
+    if (sheetOpen && activeId) { document.getElementById(activeId)?.click(); return; }
+    if (path !== '/search') pushRecent(getActiveProfile(), q);
+    commitSearch(q);
+  }
   /** shrinks the pill back (on /search the field stays open, narrowed) and puts the focus on the magnifier */
   function closeSearch() {
     searchOpen = path === '/search'; focused = false;
@@ -153,8 +199,16 @@
     magBtn?.focus();
   }
   function onSearchKey(e: KeyboardEvent) {
+    // Tab off the field's last control (✕) moves into the sheet's controls (it closes when the focus leaves the sheet)
+    if (e.key === 'Tab' && !e.shiftKey && sheetOpen && e.target === xBtn && sheetCmp?.focusFirst()) { e.preventDefault(); return; }
+    if ((e.key === 'ArrowDown' || e.key === 'ArrowUp') && sheetOpen && e.target === searchEl) {
+      e.preventDefault();
+      activeId = nextId(sheetIds, activeId, e.key === 'ArrowDown' ? 1 : -1);
+      return;
+    }
     if (e.key !== 'Escape') return;
     e.preventDefault(); e.stopPropagation();
+    activeId = null;
     if (q) { q = ''; commitSearch(''); } else closeSearch();
   }
   function onClose() { if (q) { q = ''; commitSearch(''); } closeSearch(); }
@@ -167,24 +221,57 @@
   /** closed, narrowed or not focused: the magnifier puts the cursor in the field; with the cursor in it, it searches */
   function onMag() {
     if (!open || compact || document.activeElement !== searchEl) openSearch(); // (mousedown on it keeps the focus where it was)
-    else commitSearch(q);
+    else submitSearch();
   }
+  // ---- the search sheet (glass spec §2): open with the field, off /search; the field's arrows move its active hit ----
+  $: sheetOpen = searchOpen && path !== '/search';
+  let activeId: string | null = null, sheetIds: string[] = [];
+  $: if (!sheetOpen) activeId = null;
+  function onSheetItems(e: CustomEvent<{ ids: string[] }>) {
+    sheetIds = e.detail.ids;
+    if (activeId && !sheetIds.includes(activeId)) activeId = null;
+  }
+  /** a hit, poster, person, genre or All results was chosen: remember the query, close (the link navigates) */
+  function onSheetPick() {
+    pushRecent(getActiveProfile(), q);
+    leaveField(false);
+  }
+  /** Esc inside the sheet: the focus goes back to the field; the dim: close */
+  function onSheetClose(e: CustomEvent<{ focus: 'field' | 'after' | null }>) {
+    if (e.detail.focus === 'field') { searchEl?.focus(); return; }
+    // Tab off the sheet's last control: close, and the focus goes on to what follows the field (the bell)
+    leaveField(false);
+    if (e.detail.focus === 'after') root?.querySelector<HTMLElement>('.right button')?.focus();
+  }
+  /** a recent search chip: into the field */
+  function onSheetFill(e: CustomEvent<{ q: string }>) {
+    q = e.detail.q; activeId = null;
+    searchEl?.focus();
+  }
+  /** the focus moved somewhere outside the pill and the sheet (e.g. Tab out of the sheet): close */
+  function onWindowFocusIn(e: FocusEvent) {
+    if (sheetOpen && e.target instanceof Node && e.target !== document.body && !inSearch(e.target)) leaveField(false);
+  }
+
   // the focus inside the field (input or ✕): a narrow window may fold the tabs away for it
   let focused = false;
   const inField = (n: EventTarget | null) => !!n && (n === searchEl || n === xBtn);
+  /** inside the field or the search sheet (the focus moving between them keeps both open) */
+  const inSheet = (n: EventTarget | null) => n instanceof Node && !!document.getElementById('ds-sheet')?.contains(n);
+  const inSearch = (n: EventTarget | null) => inField(n) || inSheet(n) || (n instanceof Node && !!pill?.contains(n));
   function onFocusIn(e: FocusEvent) { if (inField(e.target) && !focused) { focused = true; sync(); } }
   function onFocusOut(e: FocusEvent) {
-    if (inField(e.relatedTarget)) return;
+    if (inField(e.relatedTarget) || inSheet(e.relatedTarget)) return;
     if (e.relatedTarget) { leaveField(e.relatedTarget === magBtn); return; }
     // no new target: a click on something unfocusable, or the window itself lost the focus (alt-tab, another browser tab).
     // The latter keeps the field and its text as they are (the focus comes back to it with the window): look once it settled.
     clearTimeout(blurT);
-    blurT = setTimeout(() => { if (document.hasFocus() && !inField(document.activeElement)) leaveField(false); }, 0);
+    blurT = setTimeout(() => { if (document.hasFocus() && !inField(document.activeElement) && !inSheet(document.activeElement)) leaveField(false); }, 0);
   }
   let blurT: ReturnType<typeof setTimeout> | undefined;
   /** the focus left the field for somewhere else on the page */
   function leaveField(toMag: boolean) {
-    focused = false;
+    focused = false; activeId = null;
     // off /search that closes the field, also within the typing pause (the pending search is dropped, so a late navigation
     // cannot reopen it); on /search it stays open, unfocused
     if (path !== '/search' && !toMag) { clearTimeout(st); q = ''; searchOpen = false; }
@@ -244,7 +331,10 @@
     void placeFill(true);
   }
 
+  let sheetCmp: SearchSheet | undefined, selA: number | null = null;
   onMount(() => {
+    // the tab fill's light is the --fr-sel token: drawn opaque, the token's alpha as the group opacity (overlaps never add up)
+    selA = alphaOf(getComputedStyle(pill).getPropertyValue('--fr-sel'));
     // a retarget, not a jump: a slide in flight keeps going
     sync(false);
     const ro = typeof ResizeObserver === 'function' ? new ResizeObserver(() => { void placeFill(true); sync(false); }) : null;
@@ -252,24 +342,26 @@
     ro?.observe(root);
     return () => ro?.disconnect();
   });
-  onDestroy(() => { clearTimeout(st); clearTimeout(notesTimer); clearTimeout(blurT); });
+  onDestroy(() => { clearTimeout(st); clearTimeout(notesTimer); clearTimeout(blurT); clearTimeout(safeT); });
 </script>
 
-<svelte:window bind:scrollY on:keydown={onWindowKey} on:click={onWindowClick} />
+<svelte:window bind:scrollY on:keydown={onWindowKey} on:click={onWindowClick} on:focusin={onWindowFocusIn} />
 
-<header class="nav desk" class:solid class:blur class:still data-desk-bar bind:this={root}>
+<header class="nav desk" class:solid class:still data-desk-bar bind:this={root}>
   <span class="scrim" aria-hidden="true"></span>
   <a class="logo" href="/" aria-label={$t('shell.nav.homeLink')}><Logo wordmark size={30} /></a>
-  <nav class="pill" class:on={fillOn} class:open class:compact class:collapse aria-label={$t('shell.nav.main')} bind:this={pill} style:--fw="{fw}px" style:--fwc="{open ? fw : lastFw}px">
-    <!-- the background: two halves, each clipped at the middle, that slide (never scale) when the pill changes size -->
-    <span class="pbg" aria-hidden="true"><span class="half l"><i bind:this={bgL}></i></span><span class="half r"><i bind:this={bgR}></i></span></span>
+  <nav class="pill" class:on={fillOn} class:open class:compact class:collapse aria-label={$t('shell.nav.main')} bind:this={pill} style:--fw="{fw}px" style:--fwc="{open ? fw : lastFw}px" style:--sel-a={selA ?? undefined} use:clipSheen>
+    <!-- the background: two glass halves, each clipped at the middle, that slide (never scale) when the pill changes size;
+         over the billboard (not yet scrolled) with the safe scrim -->
+    <span class="pbg" aria-hidden="true"><span class="half l"><i class="frost" class:frost-safe={safe} bind:this={bgL}></i></span><span class="half r"><i class="frost" class:frost-safe={safe} bind:this={bgR}></i></span></span>
+    <span class="sclip" aria-hidden="true"></span>
     <div class="track" bind:this={track}>
       <span class="fill" aria-hidden="true" bind:this={fill}><i class="cap"></i><i class="mid" bind:this={mid}></i><i class="cap" bind:this={capR}></i></span>
       {#each HEADER_TABS as [href, label] (href)}<a {href} class="tab" class:active={isTabActive(href, path)} class:gone={collapse && !isTabActive(href, path)} aria-current={isTabActive(href, path) ? 'page' : undefined}>{$t(label)}</a>{/each}
       <div class="pop-anchor" class:gone={collapse}>
-        <button type="button" class="tab cbtn" aria-haspopup="true" aria-expanded={cats} on:click={toggleCats}>{$t('shell.nav.categories')}<i class="caret" class:up={cats}></i></button>
+        <button type="button" class="tab cbtn" aria-haspopup="true" aria-expanded={cats} bind:this={catBtn} on:click={toggleCats}>{$t('shell.nav.categories')}<i class="caret" class:up={cats}></i></button>
         {#if cats}
-          <div class="drop catdrop" role="region" aria-label={$t('shell.cats.title')}>
+          <div class="drop catdrop frost frost-menu frost-safe" role="region" aria-label={$t('shell.cats.title')} tabindex="-1" style="--fr-scrim-safe:{SCRIM_MENU}" transition:growBoth={{ trigger: catBtn }}>
             <div class="cseg">
               <div class="seg" role="group" aria-label={$t('shell.cats.kind')}>
                 <button type="button" class:on={catKind === 'movies'} aria-pressed={catKind === 'movies'} on:click={() => (catKind = 'movies')}>{$t('common.movies')}</button>
@@ -292,28 +384,29 @@
         {/if}
       </div>
     </div>
-    <form class="psearch" role="search" bind:this={form} on:submit|preventDefault={() => commitSearch(q)} on:focusin={onFocusIn} on:focusout={onFocusOut}>
+    <form class="psearch" role="search" bind:this={form} on:submit|preventDefault={submitSearch} on:focusin={onFocusIn} on:focusout={onFocusOut}>
       <button type="button" class="mag" bind:this={magBtn} aria-label={open && !compact ? $t('shell.search.submit') : $t('shell.search.open')} on:mousedown|preventDefault on:click={onMag}><Icon name="search" size={18} /></button>
       <input id="hq" type="search" bind:this={searchEl} bind:value={q} autocomplete="off" enterkeyhint="search" placeholder={$t('shell.search.placeholder')} aria-label={$t('shell.search.label')} tabindex={open && !compact ? 0 : -1}
+        role="combobox" aria-expanded={sheetOpen} aria-controls={sheetIds.length ? 'ds-list' : 'ds-sheet'} aria-autocomplete="list" aria-activedescendant={sheetOpen && activeId ? activeId : undefined}
         on:input={onSearchInput} on:keydown={onSearchKey} />
       <button type="button" class="x" bind:this={xBtn} aria-label={$t('desk.bar.close')} tabindex={open && !compact ? 0 : -1} on:mousedown|preventDefault on:click={onClose} on:keydown={onSearchKey}><Icon name="x" size={16} /></button>
     </form>
   </nav>
   <div class="right">
     <div class="pop-anchor">
-      <button type="button" class="round" aria-label={unread ? $t('shell.bell.unread', { n: unread }) : $t('shell.bell.label')} aria-expanded={bell} on:click={toggleBell}>
-        <Icon name="bell" size={20} />{#if unread}<span class="dot">{unread}</span>{/if}
+      <button type="button" class="round frost" class:frost-safe={safe} aria-label={unread ? $t('shell.bell.unread', { n: unread }) : $t('shell.bell.label')} aria-expanded={bell} bind:this={bellBtn} on:click={toggleBell} use:clipSheen>
+        <span class="sclip" aria-hidden="true"></span><Icon name="bell" size={20} />{#if unread}<span class="dot">{unread}</span>{/if}
       </button>
       {#if bell}
-        <div class="drop wide" role="menu">
+        <div class="drop wide frost frost-menu frost-safe" role="menu" tabindex="-1" style="--fr-scrim-safe:{SCRIM_MENU}" transition:growBoth={{ trigger: bellBtn }}>
           {#each notes as n}{#if n.link}<a href={n.link} class:muted={n.read} role="menuitem">{n.title}</a>{:else}<span class="note" class:muted={n.read} role="none">{n.title}</span>{/if}{:else}<span class="muted pad">{$t('shell.bell.empty')}</span>{/each}
         </div>
       {/if}
     </div>
     <div class="pop-anchor">
-      <button type="button" class="avatar" aria-label={who ? $t('shell.account.labelWho', { name: who }) : $t('shell.account.label')} aria-haspopup="menu" aria-expanded={menu} disabled={!me} on:click={toggleMenu}><span class="face" style={faceStyle}>{initial(who)}</span></button>
+      <button type="button" class="avatar" aria-label={who ? $t('shell.account.labelWho', { name: who }) : $t('shell.account.label')} aria-haspopup="menu" aria-expanded={menu} disabled={!me} bind:this={acctBtn} on:click={toggleMenu}><span class="face" style={faceStyle}>{initial(who)}</span></button>
       {#if menu && me}
-        <div class="drop acct" role="menu" aria-label={$t('shell.account.label')}>
+        <div class="drop acct frost frost-menu frost-safe" role="menu" aria-label={$t('shell.account.label')} tabindex="-1" style="--fr-scrim-safe:{SCRIM_MENU}" transition:growBoth={{ trigger: acctBtn }}>
           {#if multi}
             {#if others === null}<span class="muted pad" role="status">{$t('shell.account.loadingProfiles')}</span>{/if}
             {#each others ?? [] as p (p.id)}<a class="prof" href={switchHref(p.id)} role="menuitem" data-sveltekit-reload><span class="face xs" style="background:{avatarBg(p.avatar)}" aria-hidden="true">{initial(p.name)}</span>{p.name}{#if p.hasPin}<Icon name="lock" size={14} label={$t('shell.account.withPin')} />{/if}</a>{/each}
@@ -336,9 +429,11 @@
   </div>
 </header>
 
+<SearchSheet bind:this={sheetCmp} {q} open={sheetOpen} anchor={pill} {activeId} on:items={onSheetItems} on:pick={onSheetPick} on:close={onSheetClose} on:fill={onSheetFill} />
+
 <style>
   /* the bar itself never paints: no band across the page, only the pill and the round buttons carry a fill */
-  .desk { --glass: rgba(18, 20, 24, .58); --glass-solid: rgba(18, 20, 24, .96); --line: rgba(255, 255, 255, .09); --ease: var(--m-emph-out);
+  .desk { --ease: var(--m-emph-out);
     position: fixed; top: 0; left: 0; right: 0; z-index: 50; height: var(--nav-total); box-sizing: border-box;
     display: grid; grid-template-columns: minmax(max-content, 1fr) auto minmax(max-content, 1fr); /* centred while it fits, else it moves aside */ align-items: center; column-gap: 16px;
     padding: var(--safe-top) max(var(--pad-x), var(--safe-right)) 0 max(var(--pad-x), var(--safe-left));
@@ -358,19 +453,22 @@
   .pill { position: relative; display: flex; align-items: center; gap: 0; padding: 4px; border-radius: 999px; border: 1px solid transparent; }
   .pbg { position: absolute; inset: -1px; pointer-events: none; }
   /* each half is a clip window from the pill's middle outwards (far past the edge, so a larger shape mid-flight is not cut) */
-  .half { position: absolute; top: 0; bottom: 0; overflow: hidden; }
+  /* (each window reaches above and below the pill, so the glass's drop shadow is not clipped away) */
+  .half { position: absolute; top: -50px; bottom: -70px; overflow: hidden; }
   .half.l { left: -100vw; right: 50%; }
   .half.r { left: 50%; right: -100vw; }
-  .half i { position: absolute; top: 0; bottom: 0; width: 100vw; box-sizing: border-box; background: var(--glass); border: 1px solid var(--line); transition: background-color 240ms ease-out; }
+  /* each half is glass (.frost: milk, grain via ::before, the light edge; the blur from the html.m-glass rule; solid without it) */
+  .half i { position: absolute; top: 50px; bottom: 70px; width: 100vw; box-sizing: border-box; }
   .half.l i { left: 100vw; border-radius: 999px 0 0 999px; border-right: 0; }
   .half.r i { right: 100vw; border-radius: 0 999px 999px 0; border-left: 0; }
-  .solid .half i, .solid .round { background-color: var(--glass-solid); }
-  .blur .half i, .blur .round { -webkit-backdrop-filter: blur(16px) saturate(140%); backdrop-filter: blur(16px) saturate(140%); }
-  .solid.blur .half i, .solid.blur .round { -webkit-backdrop-filter: none; backdrop-filter: none; }
+  /* the pill's sheen (lib/glass/pointer.ts), clipped to the pill's shape here (the pill itself does not clip) */
+  .sclip { position: absolute; inset: -1px; border-radius: 999px; overflow: hidden; pointer-events: none; }
   .pill.open:not(.compact):focus-within .half i { border-color: rgba(255, 255, 255, .6); } /* the field's focus ring (the input has no outline) */
   .track { position: relative; display: flex; align-items: center; height: 36px; }
   .fill { position: absolute; left: 0; top: 0; width: 36px; height: 36px; opacity: 0; transition: opacity 160ms ease-out; pointer-events: none; }
-  .pill.on .fill { opacity: .14; }
+  /* the selection light (--fr-sel): drawn opaque and faded as a group to the token's alpha (--sel-a, read from --fr-sel on
+     mount), so the overlapping parts never add up */
+  .pill.on .fill { opacity: var(--sel-a, 0); }
   .fill i { position: absolute; top: 0; left: 0; height: 36px; background: #fff; }
   .fill .cap { width: 36px; border-radius: 50%; }
   .fill .mid { left: 18px; width: 100px; transform-origin: left center; transition: transform 340ms var(--ease); }
@@ -389,7 +487,7 @@
   /* the field: the magnifier stays where it is (the pill's last item), input and ✕ fade and slide in to its right while the
      pill's right end springs out; closing, they fade first (they keep their width, --fwc, while the pill shrinks under them) */
   .psearch { position: relative; flex: none; display: flex; align-items: center; width: calc(36px + var(--fw, 0px)); height: 36px; }
-  .mag, .x { display: grid; place-items: center; flex: none; width: 36px; height: 36px; min-height: 36px; padding: 0; border-radius: 50%; background: transparent; color: rgba(255, 255, 255, .78); transition: color 160ms ease-out; }
+  .mag, .x { display: grid; place-items: center; flex: none; width: 36px; height: 36px; min-height: 36px; padding: 0; border-radius: 50%; background: transparent; color: rgba(255, 255, 255, .78); transition: none; }
   .mag:hover:not(:disabled), .x:hover:not(:disabled) { background: transparent; color: #fff; }
   .mag:active:not(:disabled), .x:active:not(:disabled) { transform: none; }
   .pill.open:not(.compact) .mag { color: #fff; }
@@ -408,27 +506,34 @@
 
   /* ---- right side: bell, avatar ---- */
   .right { justify-self: end; display: flex; align-items: center; gap: 8px; }
-  .round { position: relative; z-index: 1; display: grid; place-items: center; width: 44px; height: 44px; min-height: 44px; padding: 0; border-radius: 50%; color: #fff; background: var(--glass); border: 1px solid var(--line); transition: background-color 240ms ease-out; }
-  .round:hover:not(:disabled) { background-color: rgba(48, 52, 60, .9); }
+  /* glass round buttons (.frost: the look; the blur from html.m-glass, solid without it); hover: the milk a little brighter */
+  .round { position: relative; z-index: 1; display: grid; place-items: center; width: 44px; height: 44px; min-height: 44px; padding: 0; border-radius: 50%; color: #fff; box-shadow: inset 0 1px 0 var(--fr-hi), var(--fr-shadow-card); }
+  /* hover lights the edge (never more milk over the same scrim, glass spec §1.3; as .frost-btn:hover) */
+  .round:hover:not(:disabled) { background: linear-gradient(180deg, rgba(var(--fr-milk-top), var(--fr-milk-a2)), rgba(var(--fr-milk), var(--fr-milk-a1))), rgba(var(--fr-scrim-rgb), var(--fr-scrim));
+    border-color: rgba(255, 255, 255, .42); box-shadow: inset 0 1px 0 var(--fr-hi), inset 0 0 0 1px rgba(255, 255, 255, .14), var(--fr-shadow-card); }
+  :global(html:not(.m-glass)) .round:hover:not(:disabled) { background: var(--fr-solid-hover); }
+  .round .sclip { border-radius: 50%; }
   .round:focus-visible, .avatar:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
-  .dot { position: absolute; top: -3px; right: -3px; min-width: 18px; height: 18px; padding: 0 4px; box-sizing: border-box; border-radius: 99px; display: grid; place-items: center; background: var(--acc-fill); color: #fff; font-size: .68rem; font-weight: 700; font-variant-numeric: tabular-nums; box-shadow: 0 0 0 2px rgba(18, 20, 24, .9); }
+  .dot { position: absolute; z-index: 2; top: -3px; right: -3px; min-width: 18px; height: 18px; padding: 0 4px; box-sizing: border-box; border-radius: 99px; display: grid; place-items: center; background: var(--acc-fill); color: #fff; font-size: .68rem; font-weight: 700; font-variant-numeric: tabular-nums; box-shadow: 0 0 0 2px rgba(18, 20, 24, .9); }
 
   .avatar { display: grid; place-items: center; width: 44px; height: 44px; min-height: 44px; padding: 0; background: transparent; border-radius: 10px; }
   .avatar:hover:not(:disabled) { background: transparent; }
   .face { width: 36px; height: 36px; border-radius: 10px; display: grid; place-items: center; background: linear-gradient(135deg, #ff6b81, #9a2440); font-weight: 800; color: #fff; box-shadow: 0 0 0 1px rgba(255, 255, 255, .14); }
   .avatar[aria-expanded='true'] .face { box-shadow: 0 0 0 2px #fff; }
 
-  /* ---- dropdowns (today's menus, restyled to match the pill) ---- */
+  /* ---- dropdowns: glass cards (glass spec §5: .frost .frost-menu, 8 px padding, 44 px rows with 12 px corners, hover = the light
+     pill, 1 px separators) that grow out of their button (growBoth); the safe scrim for white rows on the light pill and .9 notes
+     (SCRIM_MENU), as the billboard can sit behind them ---- */
   .pop-anchor { position: relative; }
-  .drop { position: absolute; right: 0; top: calc(100% + 10px); background: rgba(18, 20, 24, .97); border: 1px solid rgba(255, 255, 255, .1); border-radius: 16px; min-width: 220px; padding: 8px 0; display: flex; flex-direction: column;
-    box-shadow: 0 16px 40px rgba(0, 0, 0, .55); max-height: calc(100vh - var(--nav-total) - 16px); max-height: calc(100dvh - var(--nav-total) - 16px); overflow-y: auto; overscroll-behavior: contain; animation: drop-in 180ms var(--ease); }
-  @keyframes drop-in { from { opacity: 0; transform: translateY(-4px); } }
-  .drop hr { border: 0; border-top: 1px solid rgba(255, 255, 255, .08); margin: 4px 0; width: 100%; }
+  .drop { position: absolute; right: 0; top: calc(100% + 10px); min-width: 220px; padding: 8px; box-sizing: border-box; display: flex; flex-direction: column; outline: none;
+    max-height: calc(100vh - var(--nav-total) - 16px); max-height: calc(100dvh - var(--nav-total) - 16px); overflow-y: auto; overscroll-behavior: contain; }
+  .drop hr { border: 0; border-top: 1px solid rgba(255, 255, 255, .1); margin: 6px 8px; width: auto; align-self: stretch; }
   .drop.wide { width: min(340px, 90vw); }
-  .drop .note { display: block; padding: 8px 16px; font-size: .9rem; color: #e5e5e5; }
-  .drop .note.muted { color: var(--mut); }
-  .drop a, .drop .plain { display: flex; gap: 12px; align-items: center; padding: 8px 16px; font-size: .9rem; color: #e5e5e5; min-height: 44px; box-sizing: border-box; }
-  .drop a:hover, .drop .plain:hover { background: rgba(255, 255, 255, .06); text-decoration: none; }
+  .drop .note { display: block; padding: 8px 14px; font-size: .9rem; color: #fff; }
+  .drop .muted, .drop .note.muted { color: rgba(255, 255, 255, .9); }
+  .drop a, .drop .plain { display: flex; gap: 12px; align-items: center; padding: 8px 14px; border-radius: 12px; font-size: .9rem; font-weight: 600; color: #fff; min-height: 44px; box-sizing: border-box; }
+  .drop a.muted { color: rgba(255, 255, 255, .9); font-weight: 500; } /* a read notification */
+  .drop a:hover, .drop .plain:hover:not(:disabled) { background: var(--fr-sel); color: #fff; text-decoration: none; }
   .drop a:focus-visible, .drop .plain:focus-visible { outline: 2px solid #fff; outline-offset: -2px; }
   .plain { background: transparent; border-radius: 0; justify-content: flex-start; font-weight: 400; width: 100%; }
   .pad { padding: 12px 16px; }
@@ -436,15 +541,16 @@
   .acct .prof { font-weight: 500; }
   .face.xs { width: 28px; height: 28px; border-radius: 8px; font-size: .8rem; flex: none; }
   .acct .out { justify-content: center; }
-  .catdrop { left: 50%; right: auto; margin-left: calc(min(560px, 80vw) / -2); width: min(560px, 80vw); padding: 16px 20px; box-sizing: border-box; }
+  .catdrop { left: 50%; right: auto; margin-left: calc(min(560px, 80vw) / -2); width: min(560px, 80vw); }
+  .catdrop > .cseg, .catdrop > .ccols { padding: 8px 12px; }
   .cseg { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 8px; }
   .seg { display: inline-flex; border: 1px solid rgba(255, 255, 255, .18); border-radius: 99px; overflow: hidden; }
-  .seg button { background: transparent; border-radius: 0; min-height: 36px; padding: 0 16px; color: #ddd; font-weight: 600; }
-  .seg button:hover:not(:disabled) { background: rgba(255, 255, 255, .1); }
+  .seg button { background: transparent; border-radius: 0; min-height: 36px; padding: 0 16px; color: rgba(255, 255, 255, .9); font-weight: 600; }
+  .seg button:hover:not(:disabled) { background: var(--fr-sel); color: #fff; }
   .seg button.on, .seg button.on:hover:not(:disabled) { background: #fff; color: #000; }
   .catdrop .coll { font-weight: 600; color: #fff; padding: 0 12px; min-height: 44px; display: inline-flex; align-items: center; border-radius: 999px; }
   .ccols { display: grid; grid-template-columns: 2fr 1fr; gap: 20px; }
-  .ch { font-size: .75rem; text-transform: uppercase; letter-spacing: .08em; color: var(--mut); margin: 0 0 4px; font-weight: 600; }
+  .ch { font-size: .75rem; text-transform: uppercase; letter-spacing: .08em; color: rgba(255, 255, 255, .9); margin: 0 0 4px; font-weight: 600; }
   .glist { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); column-gap: 16px; }
   .ccols section:last-child .glist { grid-template-columns: 1fr; }
   .catdrop .glist a { min-height: 40px; padding: 0; font-size: .9rem; }
@@ -454,7 +560,6 @@
   /* a narrow window: the tab links go, the pill keeps Categories and the search (magnifier + field) */
   @media (max-width: 900px) { .track > a.tab { display: none; } }
   @media (prefers-reduced-motion: reduce) {
-    .half i, .fill, .fill .mid, .desk > .scrim, .psearch input, .x, .track > *, .round, .caret { transition: none; }
-    .drop { animation: none; }
+    .fill, .fill .mid, .desk > .scrim, .psearch input, .x, .track > *, .caret { transition: none; }
   }
 </style>

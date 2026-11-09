@@ -124,6 +124,8 @@ describe('playback', () => {
     const p = r.json();
     expect(p.hlsUrl).toMatch(/^\/media\/Videos\/a{32}\/master\.m3u8\?/);
     expect(p.hlsUrl).toContain('MaxStreamingBitrate=60000000');
+    // segments start on a keyframe so a restarted transcode with copied video keeps audio and picture together
+    expect(p.hlsUrl).toContain('BreakOnNonKeyFrames=false');
     expect(p.directUrl).toMatch(/^\/media\/Videos\/a{32}\/stream\?/);
     expect(JSON.stringify(p)).not.toMatch(/jellyfin|tok-|adminkey/i);
     expect(p.audioTracks).toHaveLength(2);

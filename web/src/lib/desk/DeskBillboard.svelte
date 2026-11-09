@@ -200,7 +200,7 @@
 
   /* ---- buttons ---- */
   .btns { display: flex; gap: 12px; align-items: center; }
-  .b { display: inline-flex; align-items: center; gap: 10px; height: var(--btn-h); padding: 0 28px 0 22px; border-radius: 6px; font-size: 18px; font-weight: 600; text-decoration: none; transition: background-color 160ms ease-out; }
+  .b { display: inline-flex; align-items: center; gap: 10px; height: var(--btn-h); padding: 0 28px 0 22px; border-radius: 6px; font-size: 18px; font-weight: 600; text-decoration: none; }
   .play { background: #fff; color: #000; }
   .play:hover { background: rgba(255, 255, 255, .78); }
   .info { background: rgba(110, 110, 112, .62); color: #fff; }

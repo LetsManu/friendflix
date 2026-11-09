@@ -13,6 +13,7 @@
   import { GROUPS, OVERVIEW, activeItem, badgeCount, badgeTone, groupOf } from './nav';
   import { refreshSummary, summary } from './summary';
   import { features, linkShown, serverCaps } from '#lib/capabilities';
+  import SlidePill from '#lib/glass/SlidePill.svelte';
 
   const page = pageStore();
   $: item = activeItem($page.url.pathname);
@@ -21,6 +22,8 @@
   $: title = item && !overview ? $t(item.label) : $t('admin.title');
   // entries of a service this instance has not set up (e.g. requests) are left out
   $: groups = GROUPS.map((g) => ({ ...g, items: g.items.filter((i) => linkShown($serverCaps, i.href, $features)) }));
+
+  let sideEl: HTMLElement | undefined;
 
   onMount(() => {
     void refreshSummary();
@@ -32,16 +35,18 @@
 <svelte:head><title>{$t('common.pageTitle', { page: overview ? $t('admin.title') : `${title} · ${$t('admin.title')}` })}</title></svelte:head>
 
 <div class="adm" class:overview>
-  <aside class="side">
+  <aside class="side frost-flat frost-panel frost-text" bind:this={sideEl}>
+    <!-- the light pill glides to the current page (glass spec §7); entries sit above it -->
+    <SlidePill host={sideEl} selector={'.ni[aria-current="page"]'} tone="light" />
     <nav aria-label={$t('admin.nav.label')}>
-      <a class="ni" href={OVERVIEW.href} aria-current={overview ? 'page' : undefined}><Icon name={OVERVIEW.icon} size={20} /><span class="nl">{$t(OVERVIEW.label)}</span></a>
+      <a class="ni fill-hover" href={OVERVIEW.href} aria-current={overview ? 'page' : undefined}><Icon name={OVERVIEW.icon} size={20} /><span class="nl">{$t(OVERVIEW.label)}</span></a>
       {#each groups as g (g.id)}
         <h2 class="gh" id="adm-g-{g.id}">{$t(g.label)}</h2>
         <ul aria-labelledby="adm-g-{g.id}">
           {#each g.items as it (it.href)}
             {@const n = badgeCount($summary, it.badge)}
             <li>
-              <a class="ni" href={it.href} aria-current={item === it ? 'page' : undefined}>
+              <a class="ni fill-hover" href={it.href} aria-current={item === it ? 'page' : undefined}>
                 <Icon name={it.icon} size={20} /><span class="nl">{$t(it.label)}</span>
                 {#if n && it.badge}<span class="cnt {badgeTone(it.badge)}" aria-hidden="true">{n}</span><span class="sr-only">({badgeTone(it.badge) === 'err' ? $t('admin.nav.failing', { n }) : $t('admin.nav.pending', { n })})</span>{/if}
               </a>
@@ -67,10 +72,10 @@
         {#each groups as g (g.id)}
           <section aria-labelledby="adm-p-{g.id}">
             <h2 class="pgh" id="adm-p-{g.id}">{$t(g.label)}</h2>
-            <ul class="lst">
+            <ul class="lst frost-flat frost-text">
               {#each g.items as it (it.href)}
                 {@const n = badgeCount($summary, it.badge)}
-                <li><a href={it.href}><Icon name={it.icon} size={20} /><span class="nl">{$t(it.label)}</span>
+                <li><a class="fill-hover" href={it.href}><Icon name={it.icon} size={20} /><span class="nl">{$t(it.label)}</span>
                   {#if n && it.badge}<span class="cnt {badgeTone(it.badge)}" aria-hidden="true">{n}</span><span class="sr-only">({badgeTone(it.badge) === 'err' ? $t('admin.nav.failing', { n }) : $t('admin.nav.pending', { n })})</span>{/if}
                   <Icon name="chevron-right" size={18} /></a></li>
               {/each}
@@ -85,7 +90,9 @@
 </div>
 
 <style>
-  .adm { display: grid; grid-template-columns: minmax(0, 1fr); gap: 0; max-width: 1400px; margin: 0 auto; }
+  /* the remaining plain surfaces (empty / error states, the sticky bulk bar) take the glass's solid colour, separators the
+     glass hairline */
+  .adm { --surface: var(--fr-solid); --line: rgba(255, 255, 255, .1); display: grid; grid-template-columns: minmax(0, 1fr); gap: 0; max-width: 1400px; margin: 0 auto; }
   .side { display: none; }
   .body { min-width: 0; }
   .content { min-width: 0; }
@@ -99,31 +106,36 @@
   .back { display: grid; place-items: center; width: 44px; height: 44px; flex: none; margin-left: -.5rem; border-radius: 50%; color: var(--fg); }
   .back:hover { background: rgba(255,255,255,.08); }
 
-  /* sidebar */
-  .gh { margin: 1.2rem 0 .3rem .75rem; font-size: .72rem; font-weight: 700; text-transform: uppercase; letter-spacing: .08em; color: var(--mut); }
+  /* sidebar: a glass panel (frost-flat, no blur: a static card) with the sliding light pill on the current page. Links are
+     white .75 (the mockup's nav level), the current one white on the pill; hover fades in a darker fill (.fill-hover: only
+     adds contrast, lib/admin/glass.test.ts). The entries' offsetParent is .side itself (nothing between them is positioned),
+     the box SlidePill draws in. One weight for every entry: the label does not change width under the gliding pill. */
+  .gh { margin: 1.1rem 0 .3rem .9rem; font-size: .72rem; font-weight: 700; text-transform: uppercase; letter-spacing: .08em; color: var(--mut); }
   .side ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
-  .ni { position: relative; display: flex; align-items: center; gap: .75rem; min-height: 44px; padding: .45rem .75rem; border-radius: 6px; color: var(--mut); font-weight: 500; font-size: .95rem; transition: background var(--t-fast), color var(--t-fast); }
-  .ni:hover { background: rgba(255,255,255,.06); color: var(--fg); }
-  .ni[aria-current='page'] { background: rgba(255,255,255,.1); color: #fff; font-weight: 700; }
-  .ni[aria-current='page']::before { content: ''; position: absolute; left: 0; top: 9px; bottom: 9px; width: 3px; border-radius: 2px; background: var(--acc); }
+  .ni { position: relative; z-index: 1; display: flex; align-items: center; gap: .75rem; min-height: 44px; padding: .45rem .9rem; border-radius: 14px; color: rgba(255, 255, 255, .75); font-weight: 600; font-size: .92rem; }
+  .ni:hover { color: #fff; }
+  .ni[aria-current='page'] { color: #fff; }
+  .ni[aria-current='page']::after { opacity: 0; }
   .nl { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .cnt { flex: none; min-width: 1.5rem; height: 1.5rem; padding: 0 .4rem; border-radius: 99px; display: inline-grid; place-items: center; font-size: .75rem; font-weight: 800; font-variant-numeric: tabular-nums; }
   .cnt.warn { background: var(--warn); color: #1a1200; }
   .cnt.err { background: var(--err); color: #200; }
 
-  /* phone list (like /me) */
+  /* phone list (like /me): one glass card per group, rows 12 px corners with a darker hover (.fill-hover) */
   .plist { margin-bottom: 1.6rem; }
   .plist section { margin-bottom: 1.2rem; }
   .pgh { font-size: .75rem; text-transform: uppercase; letter-spacing: .08em; color: var(--mut); margin: 0 0 .3rem .2rem; font-weight: 700; }
-  .lst { list-style: none; margin: 0; padding: 0; background: var(--surface); border-radius: 8px; border: 1px solid var(--line); overflow: hidden; }
-  .lst li + li { border-top: 1px solid var(--line); }
-  .lst a { display: flex; align-items: center; gap: .8rem; min-height: 48px; padding: .5rem 1rem; }
-  .lst a:hover { background: rgba(255,255,255,.05); }
+  .lst { list-style: none; margin: 0; padding: 6px; display: grid; gap: 2px; }
+  .lst a { display: flex; align-items: center; gap: .8rem; min-height: 48px; padding: .5rem 1rem; border-radius: 12px; }
   .lst a > :global(svg:last-child) { color: var(--mut); }
 
+  /* the dense admin look (glass spec §7): cards, tiles and lists 16 px corners, 16 px 18 px padding */
+  .adm :global(.panel), .adm :global(.tile.frost-flat), .adm :global(.lst) { border-radius: 16px; }
+  .adm :global(.panel), .adm :global(.tile.frost-flat) { padding: 16px 18px; }
+
   @media (min-width: 900px) {
-    .adm { grid-template-columns: 232px minmax(0, 1fr); gap: 2.4rem; }
-    .side { display: block; position: sticky; top: calc(var(--nav-total) + 1rem); align-self: start; max-height: calc(100vh - var(--nav-total) - 2rem); overflow-y: auto; overscroll-behavior: contain; padding: .2rem .2rem 1rem; margin-left: -.2rem; }
+    .adm { grid-template-columns: 248px minmax(0, 1fr); gap: 2rem; }
+    .side { display: block; position: sticky; top: calc(var(--nav-total) + 1rem); align-self: start; max-height: calc(100vh - var(--nav-total) - 2rem); overflow-y: auto; overscroll-behavior: contain; padding: 10px; border-radius: var(--fr-r-panel); }
     .plist, .back { display: none; }
     .crumb { display: flex; }
   }

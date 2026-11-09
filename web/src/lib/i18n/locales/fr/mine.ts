@@ -11,7 +11,7 @@ const dict: Translation<typeof de> = {
   },
   calm: {
     title: 'Mode calme',
-    hint: 'Rien ne démarre tout seul : pas de bande-annonce dans la bannière, pas d\'aperçu au survol, pas d\'aperçu automatique sur la fiche, pas de son – et moins d\'animations dans toute l\'application. S\'applique à ce profil.',
+    hint: 'Rien ne démarre tout seul : pas de bande-annonce dans la bannière, pas d\'aperçu au survol, pas d\'aperçu automatique sur la fiche, pas de son – et moins d\'animations dans toute l\'application. Les panneaux sont opaques au lieu d’être en verre. S\'applique à ce profil.',
   },
   themed: {
     eyebrow: 'Liste thématique',

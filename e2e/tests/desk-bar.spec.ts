@@ -17,7 +17,7 @@ test.describe('desktop pill bar', () => {
     await expect(active).toHaveText('Start');
     const fill = bar.locator('.pill .fill');
     await expect(fill).toHaveCount(1);
-    await expect.poll(() => fill.evaluate((e) => getComputedStyle(e).opacity)).toBe('0.14'); // a light fill (group opacity)
+    await expect.poll(() => fill.evaluate((e) => getComputedStyle(e).opacity)).toBe('0.13'); // a light fill (group opacity)
     const before = await fill.evaluate((e) => e.style.transform);
     await bar.locator('.pill').getByRole('link', { name: 'Serien' }).click();
     await expect(page).toHaveURL(/\/browse\/series$/);
@@ -38,9 +38,18 @@ test.describe('desktop pill bar', () => {
       await page.goto('/watchlist');
       const bar = page.locator('[data-desk-bar]');
       await expect(bar.locator('.pill [aria-current="page"]')).toHaveText('Merkliste');
-      await expect.poll(() => bar.locator('.pill .fill').evaluate((e) => getComputedStyle(e).opacity)).toBe('0.14');
+      await expect.poll(() => bar.locator('.pill .fill').evaluate((e) => getComputedStyle(e).opacity)).toBe('0.13');
+      // a per-frame watcher started before the click (the spring lasts ~350 ms: a poll's growing intervals can miss it)
+      // (installed and running in the page before the click is sent; awaited after it)
+      await bar.locator('.pill .fill').evaluate((e) => {
+        (window as unknown as { __sawSpring: Promise<boolean> }).__sawSpring = new Promise<boolean>((res) => {
+          const t0 = performance.now();
+          const f = () => (e.getAnimations({ subtree: true }).length ? res(true) : performance.now() - t0 > 4000 ? res(false) : requestAnimationFrame(f));
+          f();
+        });
+      });
       await bar.locator('.pill').getByRole('link', { name: 'Serien' }).click();
-      await expect.poll(() => bar.locator('.pill .fill').evaluate((e) => e.getAnimations({ subtree: true }).length)).toBeGreaterThan(0);
+      expect(await page.evaluate(() => (window as unknown as { __sawSpring: Promise<boolean> }).__sawSpring)).toBe(true);
     });
   });
 
@@ -91,16 +100,20 @@ test.describe('desktop pill bar', () => {
     await expect(pill).not.toHaveClass(/open/);
     await expect(mag).toBeFocused();
     await expect.poll(async () => Math.round((await pill.boundingBox())!.width)).toBe(Math.round(w0));
-    // clicking outside closes it too
+    // clicking outside closes it too (off /search the open field shows the search sheet over a dimmed page: the click lands on the dim)
     await mag.click();
     await expect(input).toBeFocused();
-    await page.locator('main').click({ position: { x: 5, y: 300 } });
+    await expect(page.locator('#ds-sheet')).toBeVisible();
+    await page.mouse.click(5, 300);
     await expect(pill).not.toHaveClass(/open/);
+    await expect(page.locator('#ds-sheet')).toHaveCount(0);
 
     await page.keyboard.press('/');
     await expect(input).toBeFocused();
     await expect(pill).toHaveClass(/open/);
     await page.keyboard.type('nolan', { delay: 30 });
+    await expect(page).toHaveURL(/\/watchlist$/); // typing opens the sheet, Enter goes to /search
+    await page.keyboard.press('Enter');
     await expect(page).toHaveURL(/\/search\?q=nolan$/);
     await expect(input).toHaveValue('nolan');
     await input.press('Escape');
@@ -128,8 +141,10 @@ test.describe('desktop pill bar', () => {
     await input.evaluate((el: HTMLInputElement) => { el.value = 'nol'; el.dispatchEvent(new Event('input', { bubbles: true })); el.blur(); });
     await expect(pill).not.toHaveClass(/open/);
     await expect(input).toHaveValue('');
-    await page.waitForTimeout(400); // the dropped search never navigates
+    await expect(page.locator('#ds-sheet')).toHaveCount(0);
+    await page.waitForTimeout(400); // the dropped search never navigates nor reopens the sheet
     await expect(page).toHaveURL(/\/watchlist$/);
+    await expect(page.locator('#ds-sheet')).toHaveCount(0);
 
     // the window loses the focus (alt-tab): the field and its text stay
     await page.keyboard.press('/');
@@ -142,6 +157,7 @@ test.describe('desktop pill bar', () => {
     await page.waitForTimeout(50);
     await expect(pill).toHaveClass(/open/);
     await expect(input).toHaveValue('nol');
+    await expect(page.locator('#ds-sheet')).toBeVisible();
   });
 
   for (const width of [1024, 1280, 1440]) {
@@ -160,6 +176,7 @@ test.describe('desktop pill bar', () => {
       await expect(bar.locator('#hq')).toBeFocused();
       await check('open');
       await page.keyboard.type('nolan', { delay: 20 });
+      await page.keyboard.press('Enter');
       await expect(page).toHaveURL(/q=nolan$/);
       await check('typing');
       await page.locator('main').click({ position: { x: 5, y: 400 } });

@@ -37,6 +37,9 @@
   import { isBackKey } from '#lib/spatial';
   import { tvFocus } from '#lib/tv/focus';
   import { decodeFade } from '#lib/tv/motion';
+  import { tilt } from '#lib/glass/pointer';
+  import { SCRIM_MENU, toneFor } from '#lib/glass/tone';
+  import { scrimFade, sheetSlide, twoWay } from '#lib/glass/fx';
 
   export let item: Item;
   /** shows a remove (X) button and emits `remove` (used for Weiterschauen) */
@@ -81,7 +84,9 @@
   // focus: Enter on the card opens the title). Elsewhere with a fine pointer (kids UI): HoverPreview after ~450 ms hover / 600 ms focus.
   const canHover = typeof matchMedia !== 'undefined' && matchMedia('(hover: hover) and (pointer: fine)').matches;
   const uid = nextHoverUid();
-  let hp = false, hpComp: HoverPreview | undefined, thumbEl: HTMLAnchorElement, cardEl: HTMLElement;
+  let hp = false, hpComp: HoverPreview | undefined, thumbEl: HTMLAnchorElement, cardEl: HTMLElement, twEl: HTMLElement;
+  /** the desktop hover card: kept mounted while it shrinks back (`closing`); every open mounts a fresh one (`openSeq`) */
+  let dpvComp: DeskPreview | undefined, closing = false, openSeq = 0;
   /** the open preview is the desktop one (decided when it opens) */
   let wide = false;
   let overCard = false, focusCard = false, overPrev = false, focusPrev = false;
@@ -97,18 +102,34 @@
   /** desktop: open once the pointer rested HOVER_DELAY_MS on the card and the page did not scroll meanwhile */
   function scheduleWide(delay = HOVER_DELAY_MS) {
     clearTimeout(openT);
+    // the hover card's tone (glass spec §1.3) is sampled from this card's artwork while the pointer rests
+    const art = imgEl?.currentSrc || src;
+    if (art) void toneFor(item.seriesId ?? item.id, art);
     openT = setTimeout(() => {
       if (hp || !overCard || !deskNow()) return;
       const since = Date.now() - lastScroll;
       const scrolling = since < HOVER_DELAY_MS;
-      if (!hoverAllowed({ width: window.innerWidth, coarse: !canHover, scrolling })) { if (scrolling) scheduleWide(HOVER_DELAY_MS - since); return; }
+      if (!hoverAllowed({ width: window.innerWidth, height: window.innerHeight, coarse: !canHover, scrolling })) { if (scrolling) scheduleWide(HOVER_DELAY_MS - since); return; }
+      if (closing) { dpvComp?.finish(); closing = false; } // a new open finishes the running close at once
+      untilt();
+      openSeq++;
       wide = true; hp = true; hoverOwner.set(uid);
     }, delay);
+  }
+  /** the poster tilt settles back when the hover card opens (its leave logic); `.dpv-dim` takes over the row */
+  function untilt() { if (typeof PointerEvent !== 'undefined') twEl?.dispatchEvent(new PointerEvent('pointerleave')); }
+  /** the desktop hover card shrinks back into the card before it unmounts (glass spec §3) */
+  function shutWide() {
+    if (!dpvComp) return;
+    closing = true;
+    const seq = openSeq;
+    void dpvComp.leave().then(() => { if (seq === openSeq) closing = false; });
   }
   function closePreview(refocus = false) {
     clearTimeout(openT); clearTimeout(closeT);
     const had = hp;
     hp = false; overPrev = false; focusPrev = false;
+    if (had && wide) shutWide();
     if (had && refocus) thumbEl?.focus();
     hoverOwner.update((o) => (o === uid ? '' : o));
   }
@@ -120,10 +141,10 @@
     clearTimeout(closeT);
     if (!open || h) return;
     // grace period so the pointer can travel from the card onto the pop-out; stay open while a list picker is open
-    const check = () => { if (held) return; if (document.querySelector('.lm-pop, .ma-pop')) { closeT = setTimeout(check, 400); return; } closePreview(); };
+    const check = () => { if (held) return; if (document.querySelector('.lm-pop:not([inert]), .ma-pop:not([inert])')) { closeT = setTimeout(check, 400); return; } closePreview(); };
     closeT = setTimeout(check, wide ? HOVER_CLOSE_MS : 120);
   }
-  $: if ($hoverOwner !== uid && hp) { hp = false; overPrev = false; focusPrev = false; }
+  $: if ($hoverOwner !== uid && hp) { hp = false; overPrev = false; focusPrev = false; if (wide) shutWide(); }
   // desktop: the neighbours in the row dim while this card's wide preview is open
   $: dimRow(hp && wide);
   let dimmed: Element | null = null;
@@ -168,11 +189,23 @@
   }
   onDestroy(() => { clearTimeout(openT); clearTimeout(closeT); if (pressT) clearTimeout(pressT); dimRow(false); hoverOwner.update((o) => (o === uid ? '' : o)); });
 
+  // ---- poster tilt (glass spec §8.7): desktop rows only, never while this card's hover card is open or closing; `tilt` itself
+  // stays still in calm mode / reduced motion / a tripped guard, on TV, on kids profiles and without a fine pointer
+  function rowTilt(node: HTMLElement) {
+    const gate = (e: Event) => { if (hp || closing || !node.closest('section.row.dk')) e.stopImmediatePropagation(); };
+    node.addEventListener('pointerenter', gate); // added first: it runs before the tilt's own enter
+    const t = tilt(node, { card: '.thumb', glare: '.tw-glare', band: '.tw-band', shadow: '.tw-shadow', row: 'section.row.dk' });
+    return { destroy() { node.removeEventListener('pointerenter', gate); t.destroy(); } };
+  }
+
   // ---- touch action sheet (the hover pop-up is not reachable without a pointer) ----
   let sheet = false, sheetEl: HTMLDivElement, moreBtn: HTMLButtonElement;
   function portal(node: HTMLElement) { document.body.appendChild(node); return { destroy() { node.remove(); } }; }
   async function openSheet() { sheet = true; await tick(); sheetEl?.querySelector<HTMLElement>('a[href],button')?.focus(); }
   function closeSheet(refocus = true) { sheet = false; if (refocus) moreBtn?.focus(); }
+  /** the glass sheet slides up and back down (glass spec §5); on TV (a centred dialog) it appears at once, as before */
+  const sheetT = (node: Element) => twoWay((dir) => sheetSlide(node, { dir, mode: tvMode() ? 'still' : undefined })); // reverses mid-flight
+  const scrimT = (node: Element) => scrimFade(node, { mode: tvMode() ? 'still' : undefined });
   function sheetKey(e: KeyboardEvent) {
     if (e.key === 'Escape' || (tvMode() && isBackKey(e))) { e.preventDefault(); e.stopPropagation(); closeSheet(); return; }
     if (e.key !== 'Tab') return;
@@ -204,6 +237,8 @@
 
 <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
 <article class="card" class:poster={!!posterSrc} class:dpv-src={hp && wide} bind:this={cardEl} on:mouseenter={cardEnter} on:mouseleave={cardLeave} on:focusin={onFocusIn} on:focusout={onFocusOut} on:keydown={onKey}>
+  <div class="tw" bind:this={twEl} use:rowTilt>
+  <span class="tw-shadow" aria-hidden="true"></span>
   <div class="media">
   <a class="thumb" class:art={!!src} {href} bind:this={thumbEl} on:keydown={thumbKeyDown} on:keyup={thumbKeyUp} aria-label={item.name + (sub ? ', ' + sub : '')}>
     {#if posterOnly}<img class="blur" loading="lazy" decoding="async" {src} srcset={srcs} {sizes} alt="" aria-hidden="true" />{/if}
@@ -213,22 +248,24 @@
     {:else if tag}<span class="newep">{$t(tag.key)}</span>{/if}
     <span class="cap" class:big={!src}>{#if epSub}<span class="l1">{item.seriesName}</span><span class="l2">{epSub}</span>{:else}{item.name}{/if}</span>
     {#if pct}<span class="progress"><i style="width:{pct}%"></i></span>{/if}
+    <span class="tw-band" aria-hidden="true"></span><span class="tw-glare" aria-hidden="true"></span>
   </a>
   {#if removable}<button class="rm" aria-label={$t('home.card.removeResume')} on:click={() => dispatch('remove', item)}><Icon name="x" size={14} /></button>{/if}
   <div class="fb" role="status">{#if fb}<span>{fb}</span>{/if}</div>
   <button type="button" class="mb" bind:this={moreBtn} aria-label={$t('home.card.actionsFor', { name: item.name })} aria-haspopup="dialog" aria-expanded={sheet} on:click={openSheet}><span aria-hidden="true">⋯</span></button>
   </div>
+  </div>
 </article>
-{#if hp && wide}
-  <DeskPreview
-    {item} anchor={thumbEl} {href} {detail} {removable} {fav} startSrc={!posterSrc && imgEl?.complete ? imgEl.currentSrc : ''}
+{#if (hp && wide) || closing}
+  {#key openSeq}<DeskPreview
+    bind:this={dpvComp} {item} anchor={thumbEl} {href} {detail} {removable} {fav} startSrc={!posterSrc && imgEl?.complete ? imgEl.currentSrc : ''}
     bind:over={overPrev} bind:focused={focusPrev}
     on:close={(e) => closePreview(e.detail.refocus)}
     on:remove={(e) => { closePreview(); dispatch('remove', e.detail); }}
     on:listtoggle={(e) => dispatch('listtoggle', e.detail)}
     on:favchange={(e) => { fav = e.detail.favorite; dispatch('favchange', e.detail); }}
     on:listchanged={(e) => dispatch('listchanged', e.detail)}
-  />
+  />{/key}
 {:else if hp}
   <HoverPreview
     bind:this={hpComp} {item} anchor={thumbEl} {href} {detail} {removable} {fav} startSrc={!posterSrc && imgEl?.complete ? imgEl.currentSrc : ''}
@@ -243,8 +280,8 @@
 
 {#if sheet}
   <!-- svelte-ignore a11y_click_events_have_key_events -->
-  <div class="scrim" use:portal on:click={() => closeSheet()} role="presentation"></div>
-  <div class="sheet tvsheet" tabindex="-1" use:portal bind:this={sheetEl} role="dialog" aria-modal="true" aria-label={$t('home.card.actionsFor', { name: item.name })} on:keydown={sheetKey}>
+  <div class="scrim" use:portal on:click={() => closeSheet()} role="presentation" transition:scrimT></div>
+  <div class="sheet tvsheet frost frost-sheet frost-safe" tabindex="-1" use:portal bind:this={sheetEl} transition:sheetT style="--fr-scrim-safe:{SCRIM_MENU}" role="dialog" aria-modal="true" aria-label={$t('home.card.actionsFor', { name: item.name })} on:keydown={sheetKey}>
     <p class="st">{item.name}</p>
     <a class="act" href={href} on:click={() => closeSheet(false)}><Icon name="play" size={20} />{$t('home.card.play')}</a>
     <button type="button" class="act" aria-haspopup={$deskActive ? undefined : 'dialog'} on:pointerenter={prefetchModal} on:click={(e) => { if (item.type !== 'Episode') primeItem(item); moreBtn?.focus(); openModal(e, detail); closeSheet(false); }}><Icon name="chevron-down" size={20} />{$t('home.card.moreInfo')}</button>
@@ -275,6 +312,24 @@
   :global(section.row.dk) .media::before { content: ''; position: absolute; inset: 0; z-index: 4; border-radius: var(--radius); background: #000; opacity: 0; pointer-events: none; transition: opacity 200ms ease; }
   :global(section.row.dk.dpv-dim) .card:not(.dpv-src) .media::before { opacity: .45; }
   :global(html.calm section.row.dk) .media::before { transition: none; }
+  /* desktop rows (glass spec §8.7): glass-era cards (12 px radius, soft shadow) that lean toward the pointer. The tilt action moves
+     the thumb, the glare, the band and the shadow by transform; the row's other cards step back while one tilts. */
+  :global(section.row.dk) .media::before, :global(section.row.dk) .thumb, :global(section.row.dk) .thumb:focus-visible { border-radius: var(--fr-r-card); }
+  :global(section.row.dk) .thumb { box-shadow: var(--fr-shadow-card); transform-style: preserve-3d; transition: none; }
+  /* the caption floats above the art only while the card tilts (a 3D layer per caption on the whole page would cost memory) */
+  :global(section.row.dk .tw.tilt-on) .cap { transform: translateZ(28px); }
+  :global(section.row.dk) .tw { position: relative; perspective: 650px; }
+  .tw-shadow, .tw-band, .tw-glare { display: none; }
+  :global(section.row.dk) .tw-shadow { display: block; position: absolute; left: 10%; right: 10%; bottom: -8px; height: 28px; border-radius: 50%; background: rgba(0, 0, 0, .65); filter: blur(14px); opacity: .55; transform: scale(.9); pointer-events: none; }
+  :global(section.row.dk) .tw-glare { display: block; position: absolute; left: 0; top: 0; z-index: 2; width: 220px; height: 220px; margin: -110px 0 0 -110px; border-radius: 50%; background: radial-gradient(closest-side, rgba(255, 255, 255, .42), rgba(255, 255, 255, .1) 55%, transparent); mix-blend-mode: soft-light; opacity: 0; transition: opacity .3s; pointer-events: none; }
+  :global(section.row.dk) .tw-band { display: block; position: absolute; inset: -40% -60%; z-index: 2; background: linear-gradient(105deg, transparent 42%, rgba(255, 255, 255, .22) 50%, transparent 58%); opacity: 0; transition: opacity .3s; pointer-events: none; }
+  :global(section.row.dk .tw.tilt-on) .tw-glare, :global(section.row.dk .tw.tilt-on) .tw-band { opacity: 1; }
+  :global(html.m-still) .tw-shadow, :global(html.m-still) .tw-band, :global(html.m-still) .tw-glare,
+  :global(html.tv) .tw-shadow, :global(html.tv) .tw-band, :global(html.tv) .tw-glare,
+  :global(html.kids) .tw-shadow, :global(html.kids) .tw-band, :global(html.kids) .tw-glare { display: none; }
+  :global(section.row.dk) .card { transition: transform 350ms var(--fr-out), opacity 350ms var(--fr-out); }
+  :global(section.row.dk.tilt-row .card:not(:has(.tilt-on))) { opacity: .62; transform: scale(.97); }
+  :global(html.m-still section.row.dk) .card { transition: none; }
   .brand { position: absolute; left: .45rem; top: .4rem; z-index: 2; pointer-events: none; display: flex; align-items: center; gap: .3rem; }
   .neu { padding: .05rem .4rem; border-radius: 3px; background: rgba(16,20,24,.78); color: #fff; font-size: .66rem; font-weight: 800; letter-spacing: .06em; text-transform: uppercase; }
   .newep { position: absolute; left: .45rem; top: .45rem; z-index: 2; pointer-events: none; padding: .1rem .45rem; border-radius: 3px; background: var(--acc-fill); color: #fff; font-size: .68rem; font-weight: 800; letter-spacing: .02em; text-transform: uppercase; }
@@ -289,9 +344,10 @@
   .progress { position: absolute; left: 0; right: 0; bottom: 0; height: 3px; background: rgba(255,255,255,.3); z-index: 2; }
   .progress i { display: block; height: 100%; background: var(--acc); }
   .rm { display: none; position: absolute; right: .4rem; top: .4rem; z-index: 3; width: 28px; min-height: 28px; height: 28px; padding: 0; border-radius: 50%; background: rgba(16,20,24,.7); border: 1.5px solid rgba(255,255,255,.6); color: #fff; place-items: center; }
-  /* desktop: the card stays static; the pop-out (HoverPreview) is rendered in <body>. Subtle brightness only. */
+  /* desktop: the card stays static; the pop-out (HoverPreview) is rendered in <body>. Subtle brightness only (switched at once:
+     only transform / opacity animate) */
   @media (hover: hover) and (pointer: fine) {
-    .thumb { transition: transform var(--t-fast) var(--ease), filter var(--t-fast); }
+    .thumb { transition: transform var(--t-fast) var(--ease); }
     .card:hover .thumb { filter: brightness(1.12); }
   }
   .mb { display: none; position: absolute; right: 0; bottom: 0; z-index: 3; width: 44px; min-height: 44px; height: 44px; padding: 0; background: none; border: 0; color: #fff; place-items: center; }
@@ -317,12 +373,14 @@
   :global(html.tv) .newep { left: .625rem; top: .625rem; }
   :global(html.tv) .brand { left: .625rem; top: .625rem; }
   .scrim { position: fixed; inset: 0; background: rgba(0,0,0,.6); z-index: 84; }
-  .sheet { outline: none; position: fixed; z-index: 85; left: 0; right: 0; bottom: 0; max-width: 560px; margin: 0 auto; background: var(--surface); border-radius: 14px 14px 0 0; padding: .6rem .6rem calc(.6rem + var(--safe-bottom)); box-shadow: 0 -10px 40px rgba(0,0,0,.7); display: flex; flex-direction: column; gap: .1rem; }
+  /* a glass bottom sheet (glass spec §5: .frost .frost-sheet, top corners 26 px) */
+  .sheet { outline: none; position: fixed; z-index: 85; left: 0; right: 0; bottom: 0; max-width: 560px; margin: 0 auto; border-bottom: 0; border-radius: var(--fr-r-sheet) var(--fr-r-sheet) 0 0; padding: .6rem .6rem calc(.6rem + var(--safe-bottom)); display: flex; flex-direction: column; gap: .1rem; }
   /* TV: the card's actions (OK held) as a centred dialog instead of a bottom sheet */
-  :global(html.tv) .sheet { top: 50%; bottom: auto; left: 50%; right: auto; width: min(36rem, 80vw); transform: translate(-50%, -50%); border-radius: 14px; padding: 1rem; }
+  :global(html.tv) .sheet { top: 50%; bottom: auto; left: 50%; right: auto; width: min(36rem, 80vw); transform: translate(-50%, -50%); border-radius: 14px; border-bottom: 1px solid var(--fr-line); padding: 1rem; }
   :global(html.tv) .act { min-height: 56px; font-size: 1.1rem; justify-content: flex-start; }
   .st { margin: .2rem 1rem .5rem; font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .act { display: flex; gap: .8rem; align-items: center; min-height: 48px; padding: 0 1rem; border: 0; border-radius: 8px; background: transparent; color: inherit; font: inherit; text-align: left; width: 100%; text-decoration: none; }
-  .act:hover, .act:focus-visible { background: rgba(255,255,255,.08); }
-  .cancel { justify-content: center; color: var(--mut); margin-top: .2rem; }
+  .act { display: flex; gap: .8rem; align-items: center; min-height: 48px; padding: 0 1rem; border: 0; border-radius: 12px; background: transparent; color: inherit; font: inherit; text-align: left; width: 100%; text-decoration: none; }
+  .act:hover, .act:focus-visible { background: var(--fr-sel); }
+  .cancel { justify-content: center; color: rgba(255,255,255,.9); margin-top: .2rem; }
+  .cancel:hover, .cancel:focus-visible { color: #fff; } /* on the light pill: white */
 </style>

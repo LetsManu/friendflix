@@ -80,6 +80,8 @@ const en: Translation<typeof de> = {
     savedTo: 'Language saved.',
   },
   settings: {
+    /** the settings page's side navigation (wide screens) */
+    sections: 'Settings sections',
     pageTitle: 'Settings',
     app: { title: 'App on this device', hint: 'Download storage, Wi-Fi only, background audio, notifications and signing out of this device are set in the app.', open: 'Open app settings' },
     title: 'Playback settings',

@@ -135,7 +135,7 @@
 
 <p class="intro muted">{$t('fresh.admin.intro')}</p>
 
-<section class="form" bind:this={formEl} aria-labelledby="lv-form-title">
+<section class="form panel" bind:this={formEl} aria-labelledby="lv-form-title">
   <h2 id="lv-form-title">{target?.editing ? $t('adminContent.leaving.editTitle', { name: target.name }) : $t('fresh.admin.addTitle')}</h2>
   {#if target}
     <form on:submit|preventDefault={save} novalidate>
@@ -190,7 +190,7 @@
 
 <style>
   .intro { margin: 0 0 1rem; max-width: 70ch; }
-  .form { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 1rem 1.1rem; margin-bottom: 1.2rem; max-width: 760px; scroll-margin-top: calc(var(--nav-total) + 1rem); }
+  .form { margin-bottom: 1.2rem; max-width: 760px; scroll-margin-top: calc(var(--nav-total) + 1rem); }
   .form h2 { margin: 0 0 .8rem; font-size: 1.1rem; overflow-wrap: anywhere; }
   .fields { display: grid; gap: .9rem; grid-template-columns: repeat(auto-fit, minmax(min(100%, 14rem), 1fr)); }
   .picked { margin: 0 0 .8rem; font-weight: 600; overflow-wrap: anywhere; }

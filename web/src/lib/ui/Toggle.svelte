@@ -35,12 +35,15 @@
 <style>
   .tgl { display: flex; align-items: flex-start; gap: .75rem; min-width: 0; }
   .sw { flex: none; width: 52px; min-height: 44px; padding: 0; background: transparent; position: relative; border-radius: 99px; }
-  .sw::before { content: ''; position: absolute; left: 2px; right: 2px; top: 50%; height: 28px; transform: translateY(-50%); border-radius: 99px; background: #46505a; transition: background var(--t-fast); }
+  /* the settings page's switch (glass spec §6): a 46×28 track, white .18 with the glass line when off, coral when on; the
+     knob travels 18 px (settings/+page.svelte .sw-tr) */
+  .sw::before { content: ''; position: absolute; left: 3px; right: 3px; top: 50%; height: 28px; transform: translateY(-50%); border-radius: 99px; background: rgba(255, 255, 255, .18); box-shadow: inset 0 0 0 1px var(--fr-line); }
   .sw:hover:not(:disabled) { background: transparent; }
-  .sw.on::before { background: var(--ok); }
-  .knob { position: absolute; top: 50%; left: 5px; width: 22px; height: 22px; margin-top: -11px; border-radius: 50%; background: #fff; display: grid; place-items: center; color: #2b333c; font-size: .7rem; transition: transform var(--t-fast) var(--ease); }
-  .on .knob { transform: translateX(20px); }
+  .sw.on::before { background: var(--acc); box-shadow: none; }
+  .knob { position: absolute; top: 50%; left: 6px; width: 22px; height: 22px; margin-top: -11px; border-radius: 50%; background: #fff; box-shadow: 0 1px 3px rgba(0, 0, 0, .35); display: grid; place-items: center; color: #2b333c; font-size: .7rem; transition: transform 300ms var(--fr-spring); }
+  .on .knob { transform: translateX(18px); }
+  :global(html.m-still) .knob { transition: none; }
   .txt { display: flex; flex-direction: column; padding-top: .55rem; min-width: 0; }
   label { color: var(--fg); font-size: .95rem; cursor: pointer; }
-  .hint { font-size: .82rem; color: var(--mut); overflow-wrap: anywhere; } /* long example URLs wrap at 320 px */
+  .hint { font-size: .82rem; color: var(--hint, var(--mut)); overflow-wrap: anywhere; } /* long example URLs wrap at 320 px */
 </style>

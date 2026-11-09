@@ -13,6 +13,7 @@
   import { playOrCast } from '#lib/cast/playOrCast';
   import { playPrefetch } from '#lib/player/prefetch';
   import { openPreview } from '#lib/previewSheet';
+  import { press } from '#lib/glass/press';
   import { listIds, toggleList } from '#lib/stores';
   import { motionLevel, springStep, watchFrames, type Spring } from '#lib/tv/motion';
   import { swipeTarget } from '#lib/phone/logic';
@@ -242,8 +243,8 @@
   {/if}
   {#if centred}
     <div class="acts" class:solo={items.length < 2}>
-      <a class="btn w" href={heroPlayHref(centred)} use:playPrefetch on:click={play}><Icon name="play" size={20} />{centred.positionTicks ? $t('home.card.resume') : $t('home.card.play')}</a>
-      <button type="button" class="btn g" aria-pressed={inList} on:click={() => toggleList(listId, inList)}><Icon name={inList ? 'check' : 'plus'} size={20} />{$t('home.card.myList')}</button>
+      <a class="btn w" href={heroPlayHref(centred)} use:playPrefetch use:press on:click={play}><Icon name="play" size={20} />{centred.positionTicks ? $t('home.card.resume') : $t('home.card.play')}</a>
+      <button type="button" class="btn g frost frost-btn frost-safe" use:press aria-pressed={inList} on:click={() => toggleList(listId, inList)}><Icon name={inList ? 'check' : 'plus'} size={20} />{$t('home.card.myList')}</button>
     </div>
   {:else}
     <div class="acts" aria-hidden="true"><div class="btn skeleton"></div><div class="btn skeleton"></div></div>
@@ -277,20 +278,18 @@
   .genres { font-size: .8rem; font-weight: 600; color: #e6e6e6; text-shadow: 0 1px 6px rgba(0, 0, 0, .8); }
   /* each dot is a fixed 20 px pill shown at 30 % width; the current one grows to full width (transform only) */
   .dots { position: relative; z-index: 1; display: flex; justify-content: center; height: 6px; margin: 14px 0 12px; }
-  .dots i { flex: none; width: 20px; height: 6px; margin: 0 -2px; border-radius: 99px; background: rgba(255, 255, 255, .3); transform: scaleX(.3); transition: transform .35s var(--m-spring), background-color .3s; }
-  .dots i.on { transform: none; background: #fff; }
+  .dots i { flex: none; width: 20px; height: 6px; margin: 0 -2px; border-radius: 99px; background: #fff; opacity: .3; transform: scaleX(.3); transition: transform .35s var(--m-spring), opacity .3s; }
+  .dots i.on { transform: none; opacity: 1; }
   @media (prefers-reduced-motion: reduce) { .dots i, .btn { transition: none; } }
   .acts { position: relative; z-index: 1; display: flex; gap: 8px; padding: 0 22px; }
   /* the same space as the dots row (14 + 6 + 12 px): one card, several or the placeholders, the carousel keeps its height */
   .acts.solo { margin-top: 32px; }
   .slide.skeleton { box-shadow: none; }
   :global(html.m-still) .mc .skeleton::after, :global(html.tv-motion-reduced) .mc .skeleton::after { animation: none; display: none; }
-  .btn { flex: 1; min-width: 0; display: inline-flex; align-items: center; justify-content: center; gap: 7px; min-height: 44px; padding: 0 1rem; border-radius: 8px; font-weight: 700; font-size: 15px; white-space: nowrap; transition: transform .15s var(--m-emph-out); }
+  .btn { flex: 1; min-width: 0; display: inline-flex; align-items: center; justify-content: center; gap: 7px; min-height: 44px; padding: 0 1rem; border-radius: 999px; font-weight: 700; font-size: 15px; white-space: nowrap; transition: transform .15s var(--m-emph-out); }
   .btn:active { transform: scale(.97); }
   .btn.w { background: #fff; color: #0b0b0d; }
   .btn.w:hover { background: rgba(255, 255, 255, .86); }
-  .btn.g { background: rgba(255, 255, 255, .17); color: #fff; }
-  /* blur only with the full motion level (html.m-glass), like the tab bar and the header */
-  :global(html.m-glass) .btn.g { -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px); }
-  .btn.g:hover:not(:disabled) { background: rgba(255, 255, 255, .24); }
+  /* .btn.g is the glass pill (.frost .frost-safe: the glow and artwork sit behind it; solid without full motion); its hover
+     never adds milk (contrast), the press feedback (lib/glass/press.ts) answers a touch */
 </style>

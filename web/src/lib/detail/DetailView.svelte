@@ -46,6 +46,8 @@
   import DetailDesk from '#lib/detail/DetailDesk.svelte';
   import TvSub, { type TvSubId } from '#lib/detail/TvSub.svelte';
   import Safe from '#lib/detail/Safe.svelte';
+  import SlidePill from '#lib/glass/SlidePill.svelte';
+  import { SCRIM_SAFE_DIM } from '#lib/glass/tone';
   import { toPeople } from '#lib/detail/safe';
   import { forgetFacts, loadFacts, type Facts } from '#lib/fresh';
 
@@ -92,7 +94,7 @@
     aboutSeq++; aboutFor = ''; cancelAnimationFrame(aboutRaf); // a late answer for the previous title must not land on this one
     facts = null; leavingDlg = false;
     extras = []; more = null; people = []; logoFailed = false; heroLoaded = false; heroTried = ''; recOpen = false; castMsg = ''; saveMsg = ''; tab = '';
-    clearTimeout(fadeT); fading = false; fadeOut = false; fadeIn = false; ulReady = false; // a new title: the underline is placed, not slid
+    clearTimeout(fadeT); fading = false; fadeOut = false; fadeIn = false;
     savedLang(want);
     const cd: ItemDetail | undefined = cachedDetail(want);
     const early = cd?.item ?? cachedItem(want) ?? null;
@@ -225,24 +227,8 @@
     tab = n;
   }
   $: panelTab = p2 ? shownTab : curTab;
-  /** phone: the coral underline slides (transform only) under the selected tab; placed without a slide the first time */
-  let tabsEl: HTMLDivElement | undefined, ulX = 0, ulW = 0, ulReady = false;
-  function placeUl() {
-    const on = tabsEl?.querySelector<HTMLElement>('[role="tab"][aria-selected="true"]');
-    if (!on) return;
-    ulX = on.offsetLeft; ulW = on.offsetWidth;
-    if (!ulReady) requestAnimationFrame(() => (ulReady = true));
-  }
-  /** `_tab`, `_n`: re-place when the selection or the set of tabs changes */
-  function ulSync(_tab: string, _n: number) { void tick().then(placeUl); }
-  $: if (p2 && tabsEl) ulSync(curTab, tabs.length);
-  /** the tablist re-places the underline whenever its size changes (fonts, rotation, tabs added); bound to the element itself */
-  function ulResize(node: HTMLElement) {
-    if (typeof ResizeObserver === 'undefined') return {};
-    const ro = new ResizeObserver(() => { if (p2) placeUl(); });
-    ro.observe(node);
-    return { destroy: () => ro.disconnect() };
-  }
+  /** the tab bar: a glass segment bar whose white pill (SlidePill) slides to the selected tab */
+  let tabsEl: HTMLDivElement | undefined;
   /** TV: every tab is focusable and focusing one selects it (the D-pad moves the focus, not the arrow-key handler above) */
   let tvOn = false;
   function onTabFocus(n: DetailTab) { if (tvOn) tab = n; }
@@ -691,12 +677,13 @@
       <Safe name="cast" key={item.id}><CastRow id={item.id} {people} /></Safe>
 
       <!-- ================= tabs (always shown); the panels stay mounted and switch with `hidden` ================= -->
-      <div class="tabs" role="tablist" aria-label={$t('hubs.extras.tabs')} tabindex="-1" on:keydown={tabKeys} bind:this={tabsEl} use:ulResize>
+      <div class="tabs frost frost-pill frost-safe" style="--fr-scrim-safe:{SCRIM_SAFE_DIM}" role="tablist" aria-label={$t('hubs.extras.tabs')} tabindex="-1" on:keydown={tabKeys} bind:this={tabsEl}>
         {#each tabs as n (n)}
           <button type="button" role="tab" id="dv-tab-{n}" class="tab" class:on={curTab === n} aria-selected={curTab === n} aria-controls="dv-panel-{n}" tabindex={curTab === n || tvOn ? 0 : -1}
             on:click={() => pick(n)} on:focus={() => onTabFocus(n)}>{tabLabel(n)}</button>
         {/each}
-        {#if p2}<i class="ul" class:ready={ulReady} aria-hidden="true" style="transform: translateX({ulX}px) scaleX({ulW})"></i>{/if}
+        <!-- a new title: the pill is placed, not slid -->
+        {#if tabsEl}{#key item.id}<SlidePill host={tabsEl} selector={'[role="tab"][aria-selected="true"]'} tone="white" />{/key}{/if}
       </div>
 
       <div class="panes" class:out={fadeOut} class:in={fadeIn} on:animationend={(e) => { if (e.target === e.currentTarget) fadeIn = false; }}>
@@ -806,11 +793,15 @@
   .sl { height: 1.1rem; margin: .8rem 0; }
 
   .extras { padding-top: 1.4rem; }
-  .tabs { display: flex; gap: .4rem; margin-top: 2.2rem; border-bottom: 1px solid var(--line); overflow-x: auto; scrollbar-width: none; background: var(--dv-bg); }
+  /* tabs: a glass segment bar (glass spec §4), the selected tab on a sliding white pill (SlidePill); .frost-safe: titles scroll
+     under it, with the safe scrim for its dimmest label (white .9, lib/glass/tone.ts TEXT_DIM / SCRIM_SAFE_DIM) */
+  .tabs { display: flex; width: max-content; max-width: 100%; box-sizing: border-box; gap: 4px; margin-top: 2.2rem; padding: 6px; overflow-x: auto; scrollbar-width: none; }
   .tabs::-webkit-scrollbar { display: none; }
-  .tab { background: transparent; color: var(--mut); border-radius: 0; border-bottom: 3px solid transparent; padding: .5rem 1rem; margin-bottom: -1px; white-space: nowrap; }
-  .tab:hover:not(:disabled) { background: transparent; color: var(--fg); }
-  .tab.on { color: var(--fg); border-bottom-color: var(--acc); }
+  .tab { position: relative; z-index: 1; flex: none; min-height: 40px; padding: 0 1.1rem; background: transparent; color: rgba(255, 255, 255, .9); border: 0; border-radius: 999px; font-weight: 700; white-space: nowrap; }
+  .tab:hover:not(:disabled) { background: transparent; color: #fff; }
+  .tab.on, .tab.on:hover:not(:disabled) { color: #111; }
+  /* the label colour follows the pill in 250 ms (the named exception), with full motion only */
+  :global(html.m-glass:not(.tv):not(.kids)) .tab { transition: color 250ms var(--fr-out); }
   .dv :global(.cast) { margin-top: 2rem; }
 
   /* ---- phone: 16:9 media on top, everything else below it ---- */
@@ -830,7 +821,7 @@
   .ov.clamp { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 4; line-clamp: 4; overflow: hidden; }
   .more-syn { min-height: 44px; padding: 0 .2rem; font-weight: 600; text-decoration: none; }
   /* phone: the tab bar sticks under the app bar (in the popup: at the top of its scroll box) */
-  .phone .tabs { position: sticky; top: var(--nav-total); z-index: 5; margin-left: -1rem; margin-right: -1rem; padding: 0 1rem; }
+  .phone .tabs { position: sticky; top: var(--nav-total); z-index: 5; }
   .phone.vm .tabs { top: 0; }
   .phone .tab { min-height: 44px; }
   .pcap .small { margin: 0; }
@@ -872,12 +863,6 @@
   .dbody .ov.clamp { -webkit-line-clamp: 3; line-clamp: 3; }
   .castl { margin: 0; font-size: .8rem; color: var(--mut); overflow-wrap: anywhere; }
   .dacts { justify-content: space-around; }
-  /* tabs: the coral underline is one 1 px bar scaled to the selected tab's width and slid under it (transform only) */
-  .p2 .tab.on { border-bottom-color: transparent; }
-  .p2 .tab { font-weight: 700; }
-  .ul { position: absolute; left: 0; bottom: 0; width: 1px; height: 3px; background: var(--acc); transform-origin: 0 50%; pointer-events: none; }
-  .ul.ready { transition: transform var(--m-d-spring) var(--m-spring); }
-  :global(html.m-still) .ul { transition: none; }
   .panes.out { opacity: 0; transition: opacity 120ms var(--m-emph-in); }
   .panes.in { animation: panes-in 200ms var(--m-emph-out); }
   :global(html.m-still) .panes { transition: none; animation: none; }
@@ -900,5 +885,5 @@
     .body { padding: 0 1rem 5rem; }
     .vp .body { padding: 0 1rem 5rem; }
   }
-  @media (prefers-reduced-motion: reduce) { .bg, .hv { transition: none; } .auto .pr { transition: none; } .lead:global(.ready) { transition: none; } .ul.ready { transition: none; } .panes { transition: none; animation: none; } }
+  @media (prefers-reduced-motion: reduce) { .bg, .hv { transition: none; } .auto .pr { transition: none; } .lead:global(.ready) { transition: none; } .panes { transition: none; animation: none; } }
 </style>

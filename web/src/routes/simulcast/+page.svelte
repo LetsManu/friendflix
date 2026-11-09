@@ -83,7 +83,7 @@
   .day h2 { font-size: 1.2rem; margin: 0 0 .5rem; }
   .tag { font-size: .75rem; font-weight: 600; background: var(--acc-fill); color: #fff; border-radius: 999px; padding: .1rem .55rem; vertical-align: middle; }
   ul { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: .6rem; }
-  .row { display: grid; grid-template-columns: 112px 1fr; gap: .8rem; align-items: center; padding: .5rem; border-radius: 6px; background: #1b2127; color: inherit; text-decoration: none; transition: background var(--t-fast); }
+  .row { display: grid; grid-template-columns: 112px 1fr; gap: .8rem; align-items: center; padding: .5rem; border-radius: 6px; background: #1b2127; color: inherit; text-decoration: none; }
   .row:hover, .row:focus-visible { background: #242b33; }
   .th { aspect-ratio: 16 / 9; background: #1c2228; border-radius: 4px; overflow: hidden; display: block; }
   .th img { width: 100%; height: 100%; object-fit: cover; display: block; }

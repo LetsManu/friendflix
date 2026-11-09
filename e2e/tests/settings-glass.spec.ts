@@ -1,0 +1,275 @@
+// SPDX-FileCopyrightText: 2026 Manuel Weißböck
+// SPDX-License-Identifier: AGPL-3.0-or-later
+import type { Locator, Page } from '@playwright/test';
+import { expect, test } from '../fixtures.js';
+import { APP_UA, fakeNativeApp } from '../mocks/native.js';
+
+/**
+ * Glass settings, /me and secondary pages (glass spec §6): the sections are glass cards over the still ambient background, a
+ * sticky side navigation marks the section in view with the sliding light pill, the checkbox rows are coral switches, Save
+ * draws its checkmark, and calm mode turns the glass solid at once.
+ */
+
+const css = (loc: Locator, prop: string, pseudo: string | null = null) =>
+  loc.evaluate((e, [p, ps]) => getComputedStyle(e, ps).getPropertyValue(p!), [prop, pseudo] as const);
+
+async function fullMotion(page: Page) {
+  await page.emulateMedia({ reducedMotion: 'no-preference' });
+  await page.route('**/api/items/*/trailer', (r) => r.fulfill({ json: {} }));
+  await page.addInitScript(() => {
+    sessionStorage.setItem('ff-intro-seen', '1');
+    sessionStorage.setItem('ff-profile-picked', '1');
+    localStorage.setItem('ff-intro:p1', JSON.stringify({ show: false, sound: false }));
+    (window as unknown as { __ffDeskGuard: unknown }).__ffDeskGuard = { slowMs: 1000, frames: 8 };
+  });
+}
+/** PUT /api/prefs answers with what was sent; the last body is kept */
+async function echoPrefs(page: Page) {
+  const sent: { body: Record<string, unknown> | null } = { body: null };
+  await page.route('**/api/prefs', (r) => {
+    if (r.request().method() !== 'PUT') return r.fallback();
+    sent.body = JSON.parse(r.request().postData() ?? '{}');
+    return r.fulfill({ json: { prefs: sent.body } });
+  });
+  return sent;
+}
+
+test.describe('glass settings side navigation (desktop, in the app)', () => {
+  test.use({ userAgent: APP_UA }); // inside the Android app the app section is rendered too: all six sections
+  test.beforeEach(({ page }) => fullMotion(page));
+
+  test('sections are glass cards on an ambient background; side nav marks the section in view', async ({ page }) => {
+    await fakeNativeApp(page);
+    await page.goto('/settings');
+    await expect(page.locator('html')).toHaveClass(/(^|\s)m-glass(\s|$)/);
+    await expect(page.locator('.frost-amb')).toBeAttached();
+    const lang = page.locator('#language.panel');
+    expect(await css(lang, 'border-top-left-radius')).toBe('24px');
+    expect(await css(lang, 'background-image')).toContain('linear-gradient');
+    expect(await css(lang, 'padding')).toBe('22px 24px');
+
+    const nav = page.getByRole('navigation', { name: 'Einstellungsbereiche' });
+    await expect(nav).toHaveClass(/(^|\s)snav(\s|$)/);
+    await expect(nav).toHaveClass(/frost-flat/);
+    expect(await css(nav, 'backdrop-filter')).toBe('none'); // a static card: the glass look without blur
+    expect(await css(nav, 'position')).toBe('sticky');
+    const links = nav.getByRole('link');
+    await expect(links).toHaveText(['Sprache', 'App auf diesem Gerät', 'Wiedergabe-Einstellungen', 'Empfehlungen', 'Intro', 'Benachrichtigungen']);
+    expect(await links.evaluateAll((as) => as.map((a) => a.getAttribute('href')))).toEqual(['#language', '#app', '#prefs', '#reco', '#intro', '#push']);
+    for (const box of await links.evaluateAll((as) => as.map((a) => a.getBoundingClientRect().height))) expect(box).toBeGreaterThanOrEqual(44);
+    await expect(links.first()).toHaveAttribute('aria-current', 'location');
+
+    const mid = nav.locator('.sp .m');
+    await expect(nav.locator('.sp')).toHaveClass(/ready/);
+    const y0 = (await mid.boundingBox())!.y;
+    await page.locator('#push').evaluate((e) => e.scrollIntoView({ block: 'start' }));
+    const push = nav.getByRole('link', { name: 'Benachrichtigungen' });
+    await expect(push).toHaveAttribute('aria-current', 'location');
+    await expect(nav.locator('[aria-current]')).toHaveCount(1);
+    // the pill glides there (a transform; the nav is sticky, so its box stays put)
+    await expect.poll(async () => (await mid.boundingBox())!.y).toBeGreaterThan(y0 + 150);
+    await expect.poll(async () => Math.abs((await mid.boundingBox())!.y - (await push.boundingBox())!.y)).toBeLessThan(1.5);
+
+    // a click scrolls to the section (smoothly) and marks it
+    await nav.getByRole('link', { name: 'Empfehlungen' }).click();
+    await expect(nav.getByRole('link', { name: 'Empfehlungen' })).toHaveAttribute('aria-current', 'location');
+    await expect.poll(() => page.locator('#reco').evaluate((e) => Math.round(e.getBoundingClientRect().top))).toBeLessThan(140);
+    // the mockup's levels: links white .75, the current one white
+    expect(await css(nav.getByRole('link', { name: 'Intro' }), 'color')).toBe('rgba(255, 255, 255, 0.75)');
+    expect(await css(nav.getByRole('link', { name: 'Empfehlungen' }), 'color')).toBe('rgb(255, 255, 255)');
+
+    // a short section near the end: the page bottoms out before it reaches the spy's line, it stays marked all the same
+    await nav.getByRole('link', { name: 'Intro' }).click();
+    await expect(nav.getByRole('link', { name: 'Intro' })).toHaveAttribute('aria-current', 'location');
+    await expect.poll(() => page.evaluate(() => { const y = scrollY; return new Promise((r) => setTimeout(() => r(scrollY === y), 300)); })).toBe(true); // settled
+    await expect(nav.getByRole('link', { name: 'Intro' })).toHaveAttribute('aria-current', 'location');
+    await expect(nav.locator('[aria-current]')).toHaveCount(1);
+  });
+
+  test('keyboard: Enter on a side-nav link moves the focus into that section', async ({ page }) => {
+    await fakeNativeApp(page);
+    await page.goto('/settings');
+    const nav = page.getByRole('navigation', { name: 'Einstellungsbereiche' });
+    await nav.getByRole('link', { name: 'Intro' }).focus();
+    await page.keyboard.press('Enter');
+    await expect.poll(() => page.evaluate(() => document.activeElement?.id)).toBe('intro');
+    expect(await page.evaluate(() => document.activeElement?.getAttribute('tabindex'))).toBe('-1');
+    await expect(nav.getByRole('link', { name: 'Intro' })).toHaveAttribute('aria-current', 'location');
+    // the next Tab goes on inside the section (its first switch), not to the next nav link
+    await page.keyboard.press('Tab');
+    expect(await page.evaluate(() => Boolean(document.activeElement?.closest('#intro')))).toBe(true);
+    expect(await page.evaluate(() => document.activeElement?.getAttribute('role'))).toBe('switch');
+    await nav.getByRole('link', { name: 'Sprache' }).focus();
+    await page.keyboard.press('Enter');
+    await expect.poll(() => page.evaluate(() => document.activeElement?.id)).toBe('language');
+  });
+});
+
+test.describe('glass settings below 1100 px', () => {
+  test.use({ viewport: { width: 1099, height: 800 } });
+  test.beforeEach(({ page }) => fullMotion(page));
+
+  test('no side navigation: the sections take the whole width', async ({ page }) => {
+    await page.goto('/settings');
+    await expect(page.locator('#language')).toBeVisible();
+    await expect(page.locator('.snav')).toBeHidden();
+    expect(await css(page.locator('.snav'), 'display')).toBe('none');
+    await page.setViewportSize({ width: 1100, height: 800 });
+    await expect(page.locator('.snav')).toBeVisible();
+  });
+});
+
+test.describe('glass settings (desktop)', () => {
+  test.beforeEach(({ page }) => fullMotion(page));
+
+  test('switches: real checkboxes styled as coral switches', async ({ page }) => {
+    await page.goto('/settings');
+    await expect(page.getByRole('switch')).not.toHaveCount(0);
+    expect(await page.getByRole('switch').count()).toBeGreaterThanOrEqual(10);
+    const auto = page.getByLabel('Nächste Folge automatisch starten');
+    await expect(auto).toHaveAttribute('type', 'checkbox');
+    const track = page.locator('.sw-row', { has: auto }).locator('.sw-tr');
+    const knob = track.locator('i');
+    const was = await auto.isChecked();
+    await auto.click();
+    await expect(auto).toBeChecked({ checked: !was });
+    if (was) await auto.click();
+    await expect(auto).toBeChecked();
+    expect(await css(track, 'background-color')).toBe('rgb(255, 79, 109)');
+    expect(await css(track, 'width')).toBe('46px');
+    expect(await css(track, 'height')).toBe('28px');
+    await expect.poll(() => css(knob, 'transform')).toBe('matrix(1, 0, 0, 1, 18, 0)');
+    expect(await css(knob, 'transition-timing-function')).toBe('cubic-bezier(0.34, 1.56, 0.64, 1)');
+    await auto.click();
+    await expect(auto).not.toBeChecked();
+    expect(await css(track, 'background-color')).not.toBe('rgb(255, 79, 109)');
+    // keyboard: Space toggles, the focus ring is on the track
+    await auto.focus();
+    await page.keyboard.press('Space');
+    await expect(auto).toBeChecked();
+    expect(await css(track, 'outline-style')).toBe('solid');
+    // the mockup's hierarchy on the glass card: hints white .66 under the white label
+    const row = page.locator('.sw-row', { has: auto });
+    expect(await css(row.locator('small.muted'), 'color')).toBe('rgba(255, 255, 255, 0.66)');
+    expect(await css(row.locator('b'), 'color')).toBe('rgb(245, 245, 245)');
+  });
+
+  test('glass never nests: a .panel inside a glass surface draws no second layer', async ({ page }) => {
+    await page.goto('/settings');
+    await expect(page.locator('#language')).toBeVisible();
+    const inner = await page.evaluate(() => {
+      const host = document.createElement('div');
+      host.className = 'frost frost-panel';
+      // the desk detail column's contract (DetailDesk .col: --mut .9 over artwork); the recommend form (.panel.rec) sits in it
+      host.style.setProperty('--mut', 'rgba(255, 255, 255, .9)');
+      host.innerHTML = '<div class="panel" id="nested"><span class="muted">x</span></div>';
+      document.body.append(host);
+      const cs = getComputedStyle(document.getElementById('nested')!), before = getComputedStyle(document.getElementById('nested')!, '::before');
+      const muted = getComputedStyle(host.querySelector('.muted')!).color;
+      const r = { bg: cs.backgroundImage, color: cs.backgroundColor, shadow: cs.boxShadow, grain: before.display, muted };
+      host.remove();
+      return r;
+    });
+    // …and its dim text keeps the surface's level instead of the light card's .72
+    expect(inner).toEqual({ bg: 'none', color: 'rgba(0, 0, 0, 0)', shadow: 'none', grain: 'none', muted: 'rgba(255, 255, 255, 0.9)' });
+    // a top-level panel keeps its glass
+    expect(await css(page.locator('#language'), 'background-image')).toContain('linear-gradient');
+  });
+
+  test('save draws the checkmark, then returns', async ({ page }) => {
+    // record the animations the checkmark asks for as they start (the 420 ms draw may be over before a later read)
+    await page.addInitScript(() => {
+      const w = window as unknown as { __chk: number[] };
+      w.__chk = [];
+      const orig = Element.prototype.animate;
+      Element.prototype.animate = function (this: Element, k: Keyframe[] | PropertyIndexedKeyframes | null, o?: number | KeyframeAnimationOptions) {
+        if (this.closest?.('svg.chk')) w.__chk.push(typeof o === 'number' ? o : Number(o?.duration));
+        return orig.call(this, k, o);
+      };
+    });
+    const sent = await echoPrefs(page);
+    await page.goto('/settings');
+    const save = page.locator('#prefs').getByRole('button', { name: 'Speichern', exact: true });
+    await save.click();
+    await expect.poll(() => sent.body).not.toBeNull();
+    const done = page.locator('#prefs button[type="submit"]');
+    await expect(done).toContainText('Gespeichert');
+    const path = done.locator('svg.chk path');
+    await expect(path).toHaveAttribute('d', 'M5 12.5l4.5 4.5L19 7.5');
+    expect(await page.evaluate(() => (window as unknown as { __chk: number[] }).__chk)).toEqual([420]);
+    await expect(page.locator('#prefs [role="status"]')).toHaveText('Gespeichert');
+    await page.waitForTimeout(2300);
+    await expect(done).toHaveText('Speichern');
+    await expect(done.locator('svg.chk')).toHaveCount(0);
+  });
+
+  test('turning calm mode on makes glass solid at once', async ({ page }) => {
+    await echoPrefs(page);
+    await page.goto('/settings');
+    await expect(page.locator('html')).toHaveClass(/(^|\s)m-glass(\s|$)/);
+    await page.evaluate(() => { (window as unknown as { __ff: number }).__ff = 1; });
+    const nav = page.locator('.snav');
+    expect(await css(nav, 'background-image')).toContain('linear-gradient');
+    await page.getByLabel('Ruhiger Modus').check();
+    await page.locator('#prefs').getByRole('button', { name: 'Speichern', exact: true }).click();
+    await expect(page.locator('html')).not.toHaveClass(/(^|\s)m-glass(\s|$)/);
+    expect(await css(nav, 'backdrop-filter')).toBe('none');
+    expect(await css(nav, 'background-image')).toBe('none');
+    expect(await css(nav, 'background-color')).toBe('rgb(28, 26, 33)');
+    expect(await css(page.locator('#language'), 'background-color')).toBe('rgb(28, 26, 33)');
+    expect(await page.evaluate(() => (window as unknown as { __ff?: number }).__ff)).toBe(1); // no reload
+  });
+});
+
+test.describe('glass /me and secondary pages (desktop)', () => {
+  test.beforeEach(({ page }) => fullMotion(page));
+
+  test('/me: tiles and lists are glass', async ({ page }) => {
+    await page.goto('/me');
+    await expect(page.locator('.frost-amb')).toBeAttached();
+    const tiles = page.getByRole('list', { name: 'Schnellzugriff' }).getByRole('link');
+    await expect(tiles.first()).toBeVisible();
+    for (const tile of await tiles.all()) {
+      await expect(tile).toHaveClass(/frost-flat/);
+      expect(await css(tile, 'border-top-left-radius')).toBe('18px');
+      expect(await css(tile, 'background-image')).toContain('linear-gradient');
+    }
+    const lists = page.locator('.groups ul.lst');
+    await expect(lists.first()).toBeVisible();
+    for (const l of await lists.all()) await expect(l).toHaveClass(/frost-flat/);
+    // a row on hover: 12 px corners, a darker fill that fades in as a layer (.fill-hover, opacity only; as in the admin)
+    const row = lists.first().getByRole('link').first();
+    expect(await css(row, 'border-top-left-radius')).toBe('12px');
+    const after = (l: typeof row, p: string) => l.evaluate((e, q) => getComputedStyle(e, '::after').getPropertyValue(q), p);
+    expect(await after(row, 'background-color')).toBe('rgba(18, 16, 24, 0.3)');
+    expect(await after(row, 'opacity')).toBe('0');
+    await row.hover();
+    await expect.poll(() => after(row, 'opacity')).toBe('1');
+    expect(await css(row, 'background-color')).toBe('rgba(0, 0, 0, 0)');
+    // a tile's hover lights its edge the same way (.edge-hover); no colour transition anywhere on it
+    const tile = tiles.first();
+    expect(await css(tile, 'transition-property')).not.toMatch(/color|background|border/);
+    await tile.hover();
+    await expect.poll(() => after(tile, 'opacity')).toBe('1');
+    expect(await after(tile, 'border-top-color')).toBe('rgba(255, 255, 255, 0.42)');
+    // dim text on glass is the mockup's white .72 (AA over the brightest, dimmed glow), links the lighter teal
+    expect(await css(page.locator('.gh').first(), 'color')).toBe('rgba(255, 255, 255, 0.72)');
+    expect(await css(page.locator('.swap').first(), 'color')).toBe('rgb(128, 203, 212)');
+  });
+
+  test('admin-free secondary page (/devices) has the ambient layer; the home page does not', async ({ page }) => {
+    await page.goto('/devices');
+    await expect(page.locator('.frost-amb')).toBeAttached();
+    await expect(page.locator('html')).toHaveClass(/(^|\s)amb(\s|$)/);
+    expect(await css(page.locator('.frost-amb'), 'position')).toBe('fixed');
+    expect(await css(page.locator('.frost-amb'), 'z-index')).toBe('-1');
+    // the glows at 0.6 of the demo's alphas (lib/glass/tone.ts AMB_*), and no grey override on these pages
+    const amb = await css(page.locator('.frost-amb'), 'background-image');
+    for (const g of ['rgba(214, 92, 64, 0.33)', 'rgba(78, 64, 190, 0.25)', 'rgba(255, 79, 109, 0.13)']) expect(amb).toContain(g);
+    expect((await css(page.locator('html'), '--mut')).trim()).toBe('#b3bac2');
+    await page.goto('/');
+    await expect(page.getByRole('heading', { name: 'Weiterschauen' })).toBeVisible();
+    await expect(page.locator('.frost-amb')).toHaveCount(0);
+    await expect(page.locator('html')).not.toHaveClass(/(^|\s)amb(\s|$)/);
+  });
+});

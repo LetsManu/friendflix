@@ -132,7 +132,7 @@
 
   // ---- closing: Escape, scroll, navigation ----
   function onKey(e: KeyboardEvent) {
-    if (e.key === 'Escape' && !document.querySelector('.lm-pop, .ma-pop')) { dispatch('close', { refocus: true }); }
+    if (e.key === 'Escape' && !document.querySelector('.lm-pop:not([inert]), .ma-pop:not([inert])')) { dispatch('close', { refocus: true }); }
   }
   function onScroll(e: Event) {
     const t = e.target as Node | null;

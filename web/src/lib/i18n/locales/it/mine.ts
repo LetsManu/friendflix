@@ -11,7 +11,7 @@ const dict: Translation<typeof de> = {
   },
   calm: {
     title: 'Modalità tranquilla',
-    hint: 'Niente parte da solo: nessun trailer nel banner, nessuna anteprima al passaggio del mouse, nessuna anteprima automatica nella scheda, nessun audio – e meno movimento in tutta l\'app. Vale per questo profilo.',
+    hint: 'Niente parte da solo: nessun trailer nel banner, nessuna anteprima al passaggio del mouse, nessuna anteprima automatica nella scheda, nessun audio – e meno movimento in tutta l\'app. I pannelli sono pieni invece che di vetro. Vale per questo profilo.',
   },
   themed: {
     eyebrow: 'Lista a tema',

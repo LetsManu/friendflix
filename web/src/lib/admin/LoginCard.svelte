@@ -185,7 +185,7 @@
   .fn { flex: 1 1 10rem; font-weight: 600; font-size: .92rem; }
   .slug { color: var(--mut); font-size: .78rem; overflow-wrap: anywhere; }
   .warns { list-style: none; margin: 0; padding: 0; display: grid; gap: .4rem; }
-  .warns li { display: flex; gap: .5rem; align-items: flex-start; padding: .55rem .7rem; border-radius: 8px; background: var(--tone-warn); font-size: .88rem; overflow-wrap: anywhere; }
+  .warns li { display: flex; gap: .5rem; align-items: flex-start; padding: .55rem .7rem; border-radius: 8px; background: var(--wash-warn); font-size: .88rem; overflow-wrap: anywhere; }
   .warns :global(svg) { flex: none; margin-top: .15rem; }
   .allok { margin: 0; display: flex; gap: .4rem; align-items: center; color: var(--ok); font-size: .9rem; }
   .state { display: flex; flex-direction: column; align-items: center; gap: .7rem; text-align: center; padding: 1.4rem 1rem; background: var(--surface); border: 1px solid var(--line); border-radius: 8px; }

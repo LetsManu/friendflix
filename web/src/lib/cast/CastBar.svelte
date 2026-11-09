@@ -133,7 +133,7 @@
   .t1, .t2 { display: block; max-width: 100%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .t1 { font-weight: 600; }
   .t2 { font-size: .85rem; color: var(--mut); }
-  .t2.hint { color: var(--acc); }
+  .t2.hint { color: var(--acc-text); } /* coral text: the lighter coral on the ambient (html.amb) */
   .act { flex: none; width: 48px; height: 48px; display: grid; place-items: center; border-radius: var(--radius); }
   .pp { background: var(--acc-fill, var(--acc)); color: #fff; }
   .pp[aria-disabled='true'] { opacity: .5; cursor: default; }

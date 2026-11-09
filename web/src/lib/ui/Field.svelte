@@ -50,7 +50,8 @@
   .field { display: flex; flex-direction: column; gap: .3rem; min-width: 0; }
   .field :global(input:not([type='checkbox']):not([type='radio'])), .field :global(select), .field :global(textarea) { width: 100%; max-width: 100%; }
   .req { color: var(--err); }
-  .hint { font-size: .82rem; color: var(--mut); overflow-wrap: anywhere; } /* long example URLs wrap at 320 px */
+  .hint { font-size: .82rem; color: var(--hint, var(--mut)); overflow-wrap: anywhere; } /* long example URLs wrap at 320 px */
   .error { font-size: .85rem; color: var(--err); font-weight: 600; }
   .has-err :global(input), .has-err :global(select), .has-err :global(textarea) { border-color: var(--err); }
+  /* the dense glass admin's look for this field: app.css (.adm .field), shared with Select */
 </style>

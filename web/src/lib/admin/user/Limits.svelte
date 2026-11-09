@@ -56,7 +56,7 @@
 {#if error}
   <div class="state" role="alert"><p>{error}</p><Button variant="secondary" icon="refresh" on:click={() => { error = null; void load(); }}>{$t('ui.retry')}</Button></div>
 {:else}
-  <form class="card" novalidate aria-label={$t('adminPeople.detail.tabs.limits')} aria-busy={saved === null || busy ? 'true' : undefined} on:submit|preventDefault={save}>
+  <form class="card panel" novalidate aria-label={$t('adminPeople.detail.tabs.limits')} aria-busy={saved === null || busy ? 'true' : undefined} on:submit|preventDefault={save}>
     <p class="intro">{$t('adminPeople.detail.limits.intro')}</p>
     <div class="grid">
       {#each LIMIT_FIELDS as f (f.key)}
@@ -70,7 +70,7 @@
 {/if}
 
 <style>
-  .card { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 1rem; display: flex; flex-direction: column; align-items: flex-start; gap: 1rem; }
+  .card { display: flex; flex-direction: column; align-items: flex-start; gap: 1rem; }
   .intro { margin: 0; color: var(--mut); }
   .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr)); gap: 1rem; width: 100%; }
   .state { display: flex; flex-direction: column; align-items: center; gap: .6rem; padding: 2rem 1rem; background: var(--surface); border: 1px solid var(--line); border-radius: 8px; }

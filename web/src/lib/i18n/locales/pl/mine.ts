@@ -11,7 +11,7 @@ const dict: Translation<typeof de> = {
   },
   calm: {
     title: 'Tryb spokojny',
-    hint: 'Nic nie uruchamia się samo: bez zwiastuna w głównym banerze, bez podglądu po najechaniu, bez automatycznego podglądu na stronie tytułu, bez dźwięku – i mniej ruchu w całej aplikacji. Dotyczy tego profilu.',
+    hint: 'Nic nie uruchamia się samo: bez zwiastuna w głównym banerze, bez podglądu po najechaniu, bez automatycznego podglądu na stronie tytułu, bez dźwięku – i mniej ruchu w całej aplikacji. Panele są jednolite zamiast szklanych. Dotyczy tego profilu.',
   },
   themed: {
     eyebrow: 'Lista tematyczna',

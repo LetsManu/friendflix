@@ -22,7 +22,7 @@
   $: describedby = [hint ? `${id}-h` : '', error ? `${id}-e` : ''].filter(Boolean).join(' ') || undefined;
 </script>
 
-<div class="field" class:inline={hideLabel}>
+<div class="field" class:inline={hideLabel} class:has-err={!!error}>
   <label for={id} class:sr-only={hideLabel}>{label}</label>
   <span class="wrap">
     <select {id} bind:value {disabled} aria-describedby={describedby} aria-invalid={error ? 'true' : undefined} on:change>
@@ -39,6 +39,7 @@
   .wrap { position: relative; display: block; }
   select { width: 100%; appearance: none; -webkit-appearance: none; padding-right: 2.2rem; cursor: pointer; }
   .chev { position: absolute; right: .7rem; top: 50%; transform: translateY(-50%); pointer-events: none; color: var(--mut); }
-  .hint { font-size: .82rem; color: var(--mut); overflow-wrap: anywhere; } /* long example URLs wrap at 320 px */
+  .hint { font-size: .82rem; color: var(--hint, var(--mut)); overflow-wrap: anywhere; } /* long example URLs wrap at 320 px */
   .error { font-size: .85rem; color: var(--err); font-weight: 600; }
+  /* the dense glass admin's look for this field: app.css (.adm .field), shared with Field */
 </style>

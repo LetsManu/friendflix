@@ -34,7 +34,7 @@
   }
 </script>
 
-<section class="card" aria-labelledby="udo-totals">
+<section class="card panel" aria-labelledby="udo-totals">
   <h3 id="udo-totals">{$t('adminPeople.detail.overview.totals')}</h3>
   <dl class="totals">
     {#each periods as [k, v] (k)}
@@ -45,7 +45,7 @@
   </dl>
 </section>
 
-<section class="card" aria-labelledby="udo-linked">
+<section class="card panel" aria-labelledby="udo-linked">
   <h3 id="udo-linked">{$t('adminPeople.detail.overview.linked')}</h3>
   <ul class="links">
     {#each links as l (l.id)}
@@ -63,7 +63,7 @@
 </section>
 
 <style>
-  .card { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 1rem; margin-bottom: 1rem; }
+  .card { margin-bottom: 1rem; }
   h3 { margin: 0 0 .8rem; font-size: 1rem; font-weight: 700; }
   .totals { display: grid; grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr)); gap: .8rem; margin: 0; }
   .totals div { min-width: 0; }

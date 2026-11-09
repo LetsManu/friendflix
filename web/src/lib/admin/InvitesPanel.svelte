@@ -152,7 +152,7 @@
   const AUTH: Record<string, TKey> = { ok: 'adminPeople.invites.authOk', failed: 'adminPeople.invites.authFailed', off: 'adminPeople.invites.authOff' };
 </script>
 
-<section class="card" aria-labelledby="inv-new">
+<section class="card panel" aria-labelledby="inv-new">
   <h2 id="inv-new">{$t('adminPeople.invites.newTitle')}</h2>
   <p class="hint">{$t('adminPeople.invites.intro')}</p>
   <form class="form" on:submit|preventDefault={create} novalidate>
@@ -167,7 +167,7 @@
 </section>
 
 {#if created}
-  <section class="card result" aria-labelledby="inv-link">
+  <section class="card panel result" aria-labelledby="inv-link">
     <div class="rh"><h2 id="inv-link">{$t('adminPeople.invites.linkTitle')}</h2><Button variant="ghost" size="sm" icon="x" on:click={() => (created = null)}>{$t('adminPeople.invites.closeLink')}</Button></div>
     <CopyField label={$t('adminPeople.invites.link')} value={created.link} qr hint={$t('adminPeople.invites.linkHint')} />
     {#if created.authentik && AUTH[created.authentik]}
@@ -215,7 +215,7 @@
 </DataTable>
 
 <style>
-  .card { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 1rem 1.1rem; margin-bottom: 1rem; }
+  .card { margin-bottom: 1rem; }
   h2 { margin: 0 0 .3rem; font-size: 1.05rem; }
   .hint { margin: 0 0 .9rem; color: var(--mut); font-size: .9rem; }
   .form { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 14rem), 1fr)); gap: .9rem; max-width: 46rem; }

@@ -110,15 +110,15 @@
     {#each health as h, i (i)}
       <li>
         {#if h}
-          <a href={h.href}><span class="hi" aria-hidden="true"><Icon name={h.icon} size={18} /></span><span class="hl">{h.label}</span><StatusPill tone={h.tone} label={h.text} /></a>
-        {:else}<span class="hsk" aria-hidden="true"><Skeleton w="60%" h=".9rem" /><Skeleton w="5rem" h="1.3rem" radius="99px" /></span>{/if}
+          <a class="frost-flat frost-text edge-hover" href={h.href}><span class="hi" aria-hidden="true"><Icon name={h.icon} size={18} /></span><span class="hl">{h.label}</span><StatusPill tone={h.tone} label={h.text} /></a>
+        {:else}<span class="hsk frost-flat" aria-hidden="true"><Skeleton w="60%" h=".9rem" /><Skeleton w="5rem" h="1.3rem" radius="99px" /></span>{/if}
       </li>
     {/each}
   </ul>
 </section>
 
 <div class="cols">
-  <section class="card" aria-labelledby="dash-attn">
+  <section class="card panel" aria-labelledby="dash-attn">
     <div class="ch"><h2 id="dash-attn">{$t('admin.dash.attention')}</h2></div>
     {#if attnLoading}
       <div class="sk-list" aria-hidden="true">{#each [0, 1, 2] as i (i)}<div class="sk-row"><Skeleton w="55%" h="1rem" /><Skeleton w="7rem" h="2.2rem" /></div>{/each}</div>
@@ -170,7 +170,7 @@
     {/if}
   </section>
 
-  <section class="card" aria-labelledby="dash-act">
+  <section class="card panel" aria-labelledby="dash-act">
     <div class="ch"><h2 id="dash-act">{$t('admin.dash.activity')}</h2><a class="all" href="/admin/audit">{$t('admin.dash.toAudit')}</a></div>
     {#if audit === null}
       <div class="sk-list" aria-hidden="true">{#each [0, 1, 2, 3, 4] as i (i)}<div class="sk-row"><Skeleton w="30px" h="30px" radius="50%" /><Skeleton w="80%" h=".95rem" /></div>{/each}</div>
@@ -198,7 +198,7 @@
 </div>
 
 <div class="cols">
-  <section class="card" aria-labelledby="dash-req">
+  <section class="card panel" aria-labelledby="dash-req">
     <div class="ch"><h2 id="dash-req">{$t('admin.dash.requests')}</h2>{#if s?.requests}<span class="muted small">{$t('admin.dash.reqTotal', { n: s.requests.total })}</span>{/if}</div>
     {#if !s}<Skeleton lines={4} h="1.1rem" />
     {:else if !s.requests}<p class="muted">{$t('admin.dash.reqUnavailable')}</p>
@@ -209,7 +209,7 @@
     {/if}
   </section>
 
-  <section class="card" aria-labelledby="dash-sto">
+  <section class="card panel" aria-labelledby="dash-sto">
     <div class="ch"><h2 id="dash-sto">{$t('admin.dash.storage')}</h2></div>
     {#if !s}<Skeleton lines={3} h="1.1rem" />
     {:else}
@@ -238,15 +238,15 @@
 
   .health { margin-bottom: 1.4rem; }
   .health ul { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 190px), 1fr)); gap: .6rem; }
-  .health a, .hsk { display: flex; flex-wrap: wrap; align-items: center; gap: .4rem .6rem; min-height: 64px; padding: .7rem .9rem; background: var(--surface); border: 1px solid var(--line); border-radius: 8px; transition: background var(--t-fast); }
+  /* glass tiles (frost-flat): hover fades in a lit edge (.edge-hover), never more fill */
+  .health a, .hsk { display: flex; flex-wrap: wrap; align-items: center; gap: .4rem .6rem; min-height: 64px; padding: .7rem .9rem; border-radius: 16px; }
   .hsk { flex-direction: column; align-items: flex-start; justify-content: center; }
-  .health a:hover { background: #1b2127; }
   .hi { display: grid; place-items: center; width: 32px; height: 32px; border-radius: 50%; background: rgba(255,255,255,.08); flex: none; }
   .hl { flex: 1; min-width: 6rem; font-weight: 600; font-size: .92rem; }
 
   .cols { display: grid; grid-template-columns: minmax(0, 1fr); gap: 1rem; margin-bottom: 1rem; }
   @media (min-width: 1100px) { .cols { grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); } }
-  .card { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 1rem 1.1rem; min-width: 0; }
+  .card { min-width: 0; margin-bottom: 0; } /* glass cards (.panel), dense in the admin frame */
   .ch { display: flex; align-items: baseline; justify-content: space-between; gap: .6rem; margin-bottom: .8rem; flex-wrap: wrap; }
   .all { color: var(--info); font-weight: 600; font-size: .88rem; min-height: 44px; display: inline-flex; align-items: center; }
   .all:hover { text-decoration: underline; }

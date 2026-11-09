@@ -18,6 +18,12 @@
   --ok: #4ade80;
   --warn: #f5a623;
   --err: #ff6b6b;
+  --link: #54b9c5;      /* links in running text (light glass surfaces use a lighter one, below) */
+  --acc-text: #ff4f6d;  /* coral text (lighter straight on the ambient background and on light glass, below) */
+  /* the light corals and reds of the glass (one place for the next contrast re-tune): coral text straight on the ambient
+     background and on a glass surface's dark underlay (AA); coral lines (underlines, the toast ring) and light-red marks
+     (danger icons, error dots) on glass (3:1 over a white backdrop); the info dot */
+  --acc-light: #ff8aa0; --acc-line: #ff9cad; --err-mark: #ff9d9d; --info-mark: #73c6cf;
   --line: #2a323b;
   --pad-x: clamp(1rem, 4vw, 3.6rem);
   --nav-h: 68px;
@@ -41,6 +47,22 @@
   --m-spring: cubic-bezier(.2, .9, .25, 1.15); --m-d-spring: 420ms;
   --m-emph-out: cubic-bezier(.05, .7, .1, 1); --m-emph-in: cubic-bezier(.3, 0, .8, .15);
   --m-d-xs: 120ms; --m-d-s: 200ms; --m-d-m: 320ms; --m-d-l: 480ms;
+  /* glass material (glass spec §1.1, the owner-approved mockup): milky matte frost over a scrim, grain, a light edge, deep soft
+     shadows. --fr-scrim is the light scrim for surfaces over the dark ambient app background (white text passes AA there with
+     room to spare, lib/glass/tone.ts DARK_BASE / AMB_PEAK); .frost-safe raises it to --fr-scrim-safe where bright content
+     nobody sampled can sit behind (artwork, video); over sampled artwork toneVars() sets the computed scrim inline. */
+  --fr-milk: 236, 232, 244; --fr-milk-top: 240, 236, 248; --fr-milk-a1: .13; --fr-milk-a2: .19;
+  --fr-line: rgba(255, 255, 255, .2); --fr-hi: rgba(255, 255, 255, .28);
+  --fr-blur: blur(38px) saturate(115%) brightness(1.05);
+  --fr-scrim-rgb: 18, 16, 24; --fr-scrim-light: .2; --fr-scrim-safe: .7; --fr-scrim: var(--fr-scrim-light);
+  --fr-tint: 0, 0, 0;
+  --fr-grain: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='160' height='160'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 1  0 0 0 0 1  0 0 0 0 1  0 0 0 .55 0'/></filter><rect width='100%' height='100%' filter='url(%23n)'/></svg>");
+  --fr-grain-a: .22;
+  --fr-shadow: 0 18px 50px rgba(0, 0, 0, .35); --fr-shadow-card: 0 10px 30px rgba(0, 0, 0, .35);
+  --fr-solid: #1c1a21; --fr-solid-hover: #2a2731; --fr-sel: rgba(255, 255, 255, .13);
+  --fr-r-card: 12px; --fr-r-tile: 18px; --fr-r-menu: 20px; --fr-r-hover: 22px; --fr-r-panel: 24px; --fr-r-sheet: 26px; --fr-r-pill: 999px;
+  /* glass curves (lib/tv/motion.ts GLASS_SPRING / GLASS_OUT / GLASS_IN) */
+  --fr-spring: cubic-bezier(.34, 1.56, .64, 1); --fr-out: cubic-bezier(.22, 1, .36, 1); --fr-in: cubic-bezier(.4, 0, 1, 1);
   color-scheme: dark;
 }
 * { box-sizing: border-box; }
@@ -54,8 +76,9 @@ img { max-width: 100%; }
 .skip { position: fixed; left: 1rem; top: -4rem; background: #fff; color: #000; padding: .6rem 1rem; border-radius: 4px; z-index: 100; transition: top var(--t-fast); }
 .skip:focus { top: calc(1rem + var(--safe-top)); }
 
-/* ---- Buttons (min 44px touch target) ---- */
-button, .btn { font: inherit; font-weight: 600; background: var(--acc-fill); color: #fff; border: 0; border-radius: 4px; padding: .6rem 1.2rem; min-height: 44px; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; gap: .5rem; transition: background var(--t-fast), transform var(--t-fast), opacity var(--t-fast); }
+/* ---- Buttons (min 44px touch target). Only transform / opacity animate (owner rule): fills and colours switch at once;
+   a glass control that wants a fading fill or edge uses .fill-hover / .edge-hover (below) ---- */
+button, .btn { font: inherit; font-weight: 600; background: var(--acc-fill); color: #fff; border: 0; border-radius: 4px; padding: .6rem 1.2rem; min-height: 44px; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; gap: .5rem; transition: transform var(--t-fast), opacity var(--t-fast); }
 button:hover:not(:disabled), .btn:hover { background: var(--acc-fill-hover); }
 button:active:not(:disabled), .btn:active { transform: scale(.97); }
 button.sec, .btn.sec { background: rgba(112, 124, 138, .55); }
@@ -69,14 +92,23 @@ button.light:hover:not(:disabled), .btn.light:hover { background: rgba(255, 255,
 button:disabled { opacity: .5; cursor: default; }
 .icon-btn { background: transparent; padding: 0; width: 44px; min-height: 44px; border-radius: 50%; color: #fff; }
 .icon-btn:hover:not(:disabled) { background: rgba(255, 255, 255, .12); }
-input, select, textarea { background: #2b333c; color: var(--fg); border: 1px solid transparent; border-radius: 4px; padding: .6rem .8rem; min-height: 44px; font: inherit; transition: border-color var(--t-fast); }
+input, select, textarea { background: #2b333c; color: var(--fg); border: 1px solid transparent; border-radius: 4px; padding: .6rem .8rem; min-height: 44px; font: inherit; }
 input:hover, select:hover { border-color: #6a7480; }
 input[type='checkbox'] { min-height: 0; width: 1.1rem; height: 1.1rem; accent-color: var(--acc); }
 label { color: var(--mut); font-size: .9rem; }
 
+/* the dense glass admin's fields (glass spec §7, as the settings page; ui/Field and ui/Select): 12 px corners on a darker glass
+   fill (darker keeps the white text over AA, lib/admin/glass.test.ts); the hover lights the border, an error colours it (both at
+   once: only transform / opacity animate) */
+.adm .field :is(input:not([type='checkbox']):not([type='radio']), select, textarea) { border-radius: 12px; background: rgba(var(--fr-scrim-rgb), .35); border: 1px solid var(--fr-line); color: #fff; }
+.adm .field :is(input:not([type='checkbox']):not([type='radio']), select, textarea):hover { border-color: rgba(255, 255, 255, .42); }
+.adm .field select option { background: var(--fr-solid); color: #fff; }
+.adm .field.has-err :is(input:not([type='checkbox']):not([type='radio']), select, textarea),
+.adm .field.has-err :is(input:not([type='checkbox']):not([type='radio']), select, textarea):hover { border-color: var(--err); }
+
 /* ---- Generic content blocks (admin & secondary pages) ---- */
 .page { padding: calc(var(--nav-total) + 1.5rem) var(--pad-x) 4rem; max-width: 1500px; margin: 0 auto; }
-.panel { background: var(--surface); border-radius: 8px; padding: 1.1rem 1.3rem; margin-bottom: 1rem; border: 1px solid var(--line); }
+.panel { border-radius: var(--fr-r-panel); padding: 22px 24px; margin-bottom: 1rem; } /* the glass .frost-flat look (glass rules below) */
 .muted { color: var(--mut); } .ok { color: var(--ok); } .warn { color: var(--warn); } .err { color: var(--err); }
 .flex { display: flex; gap: .7rem; align-items: center; flex-wrap: wrap; }
 .badge { background: var(--surface-2); border-radius: 99px; padding: .1rem .7rem; font-size: .8rem; color: var(--fg); }
@@ -102,6 +134,13 @@ table { width: 100%; border-collapse: collapse; } td, th { text-align: left; pad
   --tone-err: rgba(255, 107, 107, .15);
   --tone-info: rgba(84, 185, 197, .15);
   --tone-muted: rgba(255, 255, 255, .08);
+  /* a tone wash over a dark scrim fill: what status text sits on over glass (the plain wash alone leaves it under AA on the
+     light card over the brightest glow; lib/admin/glass.test.ts) */
+  --wash-ok: linear-gradient(var(--tone-ok), var(--tone-ok)), rgba(var(--fr-scrim-rgb), .35);
+  --wash-warn: linear-gradient(var(--tone-warn), var(--tone-warn)), rgba(var(--fr-scrim-rgb), .35);
+  --wash-err: linear-gradient(var(--tone-err), var(--tone-err)), rgba(var(--fr-scrim-rgb), .35);
+  --wash-info: linear-gradient(var(--tone-info), var(--tone-info)), rgba(var(--fr-scrim-rgb), .35);
+  --wash-muted: linear-gradient(var(--tone-muted), var(--tone-muted)), rgba(var(--fr-scrim-rgb), .35);
   --danger: #c4202f;
   --shadow-pop: 0 14px 44px rgba(0, 0, 0, .6);
 }
@@ -114,6 +153,95 @@ button.danger.solid:hover:not(:disabled), .btn.danger.solid:hover { background: 
 button[aria-busy='true'] { cursor: progress; }
 .spinner { display: inline-block; flex: none; width: 1em; height: 1em; border: 2px solid currentColor; border-right-color: transparent; border-radius: 50%; animation: ff-spin .7s linear infinite; }
 @keyframes ff-spin { to { transform: rotate(360deg); } }
+
+/* ---- Glass (glass spec §1.2, lib/glass): one material for the web app. Blur only with full motion (html.m-glass, off TV and
+   kids); without it (calm mode, reduced motion, a tripped frame guard), on TV and on kids profiles every surface is a solid
+   panel with the same shape, border, highlight and shadow. ---- */
+.frost, .frost-flat, .frost-btn, .panel {
+  position: relative; isolation: isolate; color: #fff;
+  /* milk gradient over the scrim (spelled out here, not as a :root token, so a surface's own --fr-scrim takes effect) */
+  background: linear-gradient(180deg, rgba(var(--fr-milk-top), var(--fr-milk-a2)), rgba(var(--fr-milk), var(--fr-milk-a1))), rgba(var(--fr-scrim-rgb), var(--fr-scrim));
+  border: 1px solid var(--fr-line);
+  box-shadow: inset 0 1px 0 var(--fr-hi), var(--fr-shadow);
+}
+.frost-btn { box-shadow: inset 0 1px 0 var(--fr-hi); }
+/* matte grain (under the content, over the tint) */
+.frost::before, .frost-flat::before, .frost-btn::before, .panel::before {
+  content: ''; position: absolute; inset: 0; border-radius: inherit; pointer-events: none; z-index: -1;
+  background-image: var(--fr-grain); opacity: var(--fr-grain-a); mix-blend-mode: overlay;
+}
+/* where bright content nobody sampled can sit behind (artwork, video): the safe scrim (an inline toneVars() still wins) */
+.frost-safe { --fr-scrim: var(--fr-scrim-safe); }
+.frost-pill { border-radius: var(--fr-r-pill); }
+.frost-tile { border-radius: var(--fr-r-tile); }
+.frost-menu { border-radius: var(--fr-r-menu); }
+.frost-panel { border-radius: var(--fr-r-panel); }
+.frost-sheet { border-radius: var(--fr-r-sheet); }
+/* a glass pill button (44 px), .round: a 44 px circle; it clips its sheen */
+.frost-btn { display: inline-flex; align-items: center; justify-content: center; gap: .5rem; min-height: 44px; padding: 0 20px; border-radius: var(--fr-r-pill); font-weight: 800; overflow: hidden; transition: transform var(--t-fast), opacity var(--t-fast); }
+.frost-btn.round { width: 44px; height: 44px; padding: 0; border-radius: 50%; }
+/* hover lights the edge, not the fill: more milk over the same scrim would drop white text under AA (lib/glass/tone.test.ts);
+   the fill is restated so the global coral button:hover does not win */
+.frost-btn:hover:not(:disabled) { background: linear-gradient(180deg, rgba(var(--fr-milk-top), var(--fr-milk-a2)), rgba(var(--fr-milk), var(--fr-milk-a1))), rgba(var(--fr-scrim-rgb), var(--fr-scrim)); border-color: rgba(255, 255, 255, .42); box-shadow: inset 0 1px 0 var(--fr-hi), inset 0 0 0 1px rgba(255, 255, 255, .14); }
+/* the page dim behind a sheet (faded by opacity) */
+.frost-dim { position: fixed; inset: 0; background: rgba(8, 7, 11, .45); transition: opacity 200ms var(--fr-out); }
+html.m-still .frost-dim { transition: none; } /* calm mode / reduced motion: at once */
+/* the still ambient background for pages without artwork (never animated). The glow alphas are the demo's at 0.6 (owner
+   ruling B′; lib/glass/tone.ts AMB_* mirrors them and tone.test.ts checks both agree) */
+.frost-amb { position: fixed; inset: 0; z-index: -1; pointer-events: none; background:
+  radial-gradient(60% 55% at 78% 22%, rgba(214, 92, 64, .33), transparent 70%),
+  radial-gradient(45% 50% at 20% 85%, rgba(78, 64, 190, .25), transparent 70%),
+  radial-gradient(40% 40% at 55% 60%, rgba(255, 79, 109, .13), transparent 70%), #0a090d; }
+/* §8.1 light sheen (lib/glass/pointer.ts sheen): follows the pointer, fades in / out */
+.frost-sheen { position: absolute; left: 0; top: 0; width: 240px; height: 240px; margin: -120px 0 0 -120px; border-radius: 50%; pointer-events: none; z-index: 1;
+  background: radial-gradient(closest-side, rgba(255, 255, 255, .35), rgba(255, 255, 255, .08) 55%, transparent);
+  mix-blend-mode: soft-light; opacity: 0; transition: opacity 300ms; }
+.frost-sheen.on { opacity: 1; }
+/* §8.2 artwork tint (painted above the milk and scrim, under the grain): two stacked layers (each sets --t, an rgb triple); the new one fades to .5 while the old one fades out */
+.frost-tint { position: absolute; inset: 0; border-radius: inherit; overflow: hidden; pointer-events: none; z-index: -2; }
+.frost-tint i { position: absolute; inset: 0; opacity: 0; transition: opacity 600ms var(--fr-out);
+  background: radial-gradient(120% 120% at 0% 100%, rgb(var(--t, var(--fr-tint))), transparent 70%); }
+.frost-tint i.on { opacity: .5; }
+/* blur only with full motion, off TV and kids */
+html.m-glass:not(.tv):not(.kids) .frost { -webkit-backdrop-filter: var(--fr-blur); backdrop-filter: var(--fr-blur); }
+/* solid fallback: calm mode / reduced motion / a tripped frame guard (no html.m-glass), TV, kids */
+html:not(.m-glass) .frost, html.tv .frost, html.kids .frost,
+html:not(.m-glass) .frost-flat, html.tv .frost-flat, html.kids .frost-flat,
+html:not(.m-glass) .panel, html.tv .panel, html.kids .panel,
+html:not(.m-glass) .frost-btn, html.tv .frost-btn, html.kids .frost-btn { background: var(--fr-solid); -webkit-backdrop-filter: none; backdrop-filter: none; }
+html:not(.m-glass) .frost-btn:hover:not(:disabled), html.tv .frost-btn:hover:not(:disabled), html.kids .frost-btn:hover:not(:disabled) { background: var(--fr-solid-hover); }
+html:not(.m-glass) .frost::before, html.tv .frost::before, html.kids .frost::before,
+html:not(.m-glass) .frost-flat::before, html.tv .frost-flat::before, html.kids .frost-flat::before,
+html:not(.m-glass) .panel::before, html.tv .panel::before, html.kids .panel::before,
+html:not(.m-glass) .frost-btn::before, html.tv .frost-btn::before, html.kids .frost-btn::before { display: none; }
+html.m-still .frost-sheen, html.m-still .frost-tint, html.tv .frost-sheen, html.kids .frost-sheen { display: none; }
+/* text on the light glass over the ambient background (.panel and the .frost-text surfaces: settings, /me, phone search):
+   the mockup's hierarchy, AA on the light card over the brightest glow, on the raw ambient and on the solid fallback
+   (lib/glass/pages.test.ts): dim text white .72, hints white .66, the status colours a step lighter, links and coral text lighter */
+.panel, .frost-text { --mut: rgba(255, 255, 255, .72); --hint: rgba(255, 255, 255, .66); --ok: #4ade80; --warn: #f7b344; --err: #ffa8a8; --link: #80cbd4; --info: #80cbd4; --acc-text: #ffa7b6; }
+/* pages on the ambient background (html.amb, +layout.svelte): the usual greys and status colours pass straight on it; coral
+   text needs the lighter coral */
+html.amb { --acc-text: var(--acc-light); }
+/* glass never nests: a .panel inside a glass surface (the recommend form in the detail panel) is part of it, not a second
+   layer of scrim and milk (that would drop the outer surface's text under AA), and it keeps the surface's text levels (the
+   block above would reset them to the light card's .72 / .66, which the desk detail column's .9 contract cannot afford) */
+html:root :is(.frost, .frost-flat, .panel) .panel { background: none; border-color: transparent; box-shadow: none; -webkit-backdrop-filter: none; backdrop-filter: none;
+  --mut: inherit; --hint: inherit; --ok: inherit; --warn: inherit; --err: inherit; --link: inherit; --info: inherit; --acc-text: inherit; }
+html:root :is(.frost, .frost-flat, .panel) .panel::before { display: none; }
+/* hover feedback on glass that moves only opacity (owner rule): .fill-hover fades in a darker fill under the content (only adds
+   contrast), .edge-hover lights the edge; the element must be positioned (the glass classes are). Calm mode and reduced
+   motion flatten the fade. */
+.fill-hover { position: relative; isolation: isolate; }
+.fill-hover::after { content: ''; position: absolute; inset: 0; z-index: -1; border-radius: inherit; background: rgba(var(--fr-scrim-rgb), .3); opacity: 0; pointer-events: none; transition: opacity var(--t-fast); }
+.fill-hover:hover::after { opacity: 1; }
+.edge-hover::after { content: ''; position: absolute; inset: -1px; border-radius: inherit; border: 1px solid rgba(255, 255, 255, .42); opacity: 0; pointer-events: none; transition: opacity var(--t-fast); }
+.edge-hover:hover::after { opacity: 1; }
+html.m-still :is(.fill-hover, .edge-hover)::after { transition: none; } /* calm mode / reduced motion: at once */
+/* §8.9 phone press feedback (lib/glass/press.ts): squeeze in 80 ms, spring back in 350 ms; a ripple from the touch point
+   (twice the larger side, clipped by the node). .pressed is set with full motion only. */
+html:root .ff-press { position: relative; overflow: hidden; -webkit-tap-highlight-color: transparent; transition: transform 350ms var(--fr-spring), opacity 150ms; }
+html:root .ff-press.pressed { transform: scale(.92); transition: transform 80ms var(--fr-spring), opacity 150ms; }
+.ripple { position: absolute; border-radius: 50%; background: rgba(255, 255, 255, .35); transform: scale(0); opacity: 0; pointer-events: none; }
 
 video { width: 100%; background: #000; }
 

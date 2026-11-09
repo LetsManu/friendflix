@@ -30,7 +30,7 @@
 
 <style>
   /* same look as the player's control-bar icon buttons (scoped styles of the Player do not reach child components) */
-  .ic { display: inline-flex; align-items: center; justify-content: center; background: transparent; border: 0; padding: 0; width: 48px; min-height: 48px; border-radius: 50%; color: #fff; cursor: pointer; transition: transform .12s, background .12s; }
+  .ic { display: inline-flex; align-items: center; justify-content: center; background: transparent; border: 0; padding: 0; width: 48px; min-height: 48px; border-radius: 50%; color: #fff; cursor: pointer; transition: transform .12s; }
   .ic:hover { background: rgba(255,255,255,.14); transform: scale(1.08); }
   .ic.on { color: var(--acc); }
   :global(html.tv) .ic { width: 64px; min-height: 64px; }

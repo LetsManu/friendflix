@@ -45,7 +45,7 @@
   dl > div { display: grid; grid-template-columns: minmax(8.5rem, 11rem) 1fr; gap: .8rem; }
   dt { color: var(--mut); }
   dd { margin: 0; }
-  dd a { text-decoration: underline; text-decoration-color: transparent; transition: text-decoration-color var(--t-fast); }
+  dd a { text-decoration: underline; text-decoration-color: transparent; }
   dd a:hover, dd a:focus-visible { text-decoration-color: currentColor; }
   @media (pointer: coarse) { dd a { display: inline-flex; align-items: center; min-height: 44px; } }
   .qd :global(.qc) { margin: 0; }

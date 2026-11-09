@@ -4,6 +4,18 @@ All notable changes, grouped by what you notice. Each release has its own sectio
 
 ## [Unreleased]
 
+### Glass
+- **Frosted glass everywhere.** Desktop, phone and the admin panel share one frosted-glass look; calm mode, reduced motion and TV get solid panels with the same shapes.
+- **Hover card always fits.** The preview is the same size on every card and nothing is cut off.
+- **Search opens a results sheet** under the top bar.
+- **Detail info on one glass panel** with sliding tabs.
+- **Menus grow from their button.**
+- **Undo toasts with a countdown ring** that shows how long Undo stays.
+- **Settings side navigation and switches** in the new look.
+- **Poster tilt and light sheen** on desktop.
+- **Press feedback on phones.** Buttons and cards squeeze and ripple under your finger.
+- **Admin numbers count up**, and Save shows a checkmark.
+
 ### Fire TV
 - **FriendFlix on Fire TV.** A new app for Fire TV sticks, cubes and TVs (Fire OS 7 and newer) opens your server's TV mode: side menu, big tiles, detail pages and the TV player with the credits sequence, paired with a code or QR code like the LG app.
 - **Server address on first start.** The app asks for your server's address and checks it; *Change server* sits under Account in the side menu.

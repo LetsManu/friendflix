@@ -24,6 +24,11 @@ async function open(page: Page) {
   await expect(page.getByRole('heading', { level: 1, name: 'Inkwell' })).toBeVisible();
 }
 const tablist = (page: Page) => page.getByRole('tablist', { name: 'Weitere Inhalte' });
+/** the sliding pill's box: from its left cap's left edge to its right cap's right edge */
+const pillBox = (page: Page) => tablist(page).locator('.sp').evaluate((sp) => {
+  const l = sp.querySelector('.l')!.getBoundingClientRect(), r = sp.querySelector('.r')!.getBoundingClientRect();
+  return { x: l.left, width: r.right - l.left };
+});
 
 test.describe('detail page (phone)', () => {
   test('synopsis clamped to 3 lines with Mehr; Mehr expands, aria-expanded true', async ({ page }) => {
@@ -170,23 +175,24 @@ test.describe('phone detail page (phone browse §4)', () => {
   test.describe('with motion', () => {
     test.use({ reducedMotion: 'no-preference' });
 
-    test('the coral underline slides (transform) to the chosen tab, the panel crossfades (120 ms out, then 200 ms in)', async ({ page }) => {
+    test('the white pill slides (transform) to the chosen tab, the panel crossfades (120 ms out, then 200 ms in)', async ({ page }) => {
       await page.addInitScript(() => sessionStorage.setItem('ff-intro-seen', '1'));
       await freezeClock(page);
       await open(page);
       const list = tablist(page);
-      const ul = list.locator('.ul');
+      const ul = list.locator('.sp .m');
       const details = list.getByRole('tab', { name: 'Details' });
       const more = list.getByRole('tab', { name: 'Mehr davon' });
       await expect(details).toHaveAttribute('aria-selected', 'true');
       const underTab = async (tab: typeof details) => {
         await page.clock.runFor(50);
-        const [u, t] = [(await ul.boundingBox())!, (await tab.boundingBox())!];
+        const [u, t] = [await pillBox(page), (await tab.boundingBox())!];
         return Math.abs(u.x - t.x) < 1.5 && Math.abs(u.width - t.width) < 1.5;
       };
       await expect.poll(() => underTab(details)).toBe(true);
       const before = await ul.evaluate((e) => getComputedStyle(e).transform);
-      expect(await ul.evaluate((e) => getComputedStyle(e).transitionProperty)).toBe('transform');
+      // the glide is a CSS transition with full motion (the frame guard may have dropped this host to the reduced set: then none)
+      if (await page.locator('html.m-glass').count()) expect(await ul.evaluate((e) => getComputedStyle(e).transitionProperty)).toBe('transform');
       await more.click();
       await expect(more).toHaveAttribute('aria-selected', 'true');
       // the old panel fades out first (the frozen clock holds it there), the new one is still hidden
@@ -226,16 +232,49 @@ test.describe('phone detail page (phone browse §4)', () => {
     });
   });
 
-  test('reduced motion: the tab panel switches at once and the underline does not slide', async ({ page }) => {
+  test('reduced motion: the tab panel switches at once and the pill does not slide', async ({ page }) => {
     await open(page);
     const list = tablist(page);
-    const ul = list.locator('.ul');
+    const ul = list.locator('.sp .m');
     await expect(ul).toBeAttached();
     expect(await ul.evaluate((e) => parseFloat(getComputedStyle(e).transitionDuration))).toBeLessThan(0.001); // none (or the app's global ~0)
     await list.getByRole('tab', { name: 'Mehr davon' }).click();
     await expect(page.locator('#dv-panel-more')).toBeVisible();
     await expect(page.locator('.panes')).not.toHaveClass(/\bout\b/);
-    const [u, t] = [(await ul.boundingBox())!, (await list.getByRole('tab', { name: 'Mehr davon' }).boundingBox())!];
+    const [u, t] = [await pillBox(page), (await list.getByRole('tab', { name: 'Mehr davon' }).boundingBox())!];
     expect(Math.abs(u.x - t.x)).toBeLessThan(1.5);
+    expect(Math.abs(u.width - t.width)).toBeLessThan(1.5);
+  });
+
+  test.describe('glass', () => {
+    test.use({ reducedMotion: 'no-preference' });
+
+    test('phone detail tabs: glass segment bar with the sliding pill', async ({ page }) => {
+      await page.addInitScript(() => sessionStorage.setItem('ff-intro-seen', '1'));
+      await page.route('**/api/items/*/trailer', (r) => r.fulfill({ json: {} }));
+      await open(page);
+      const list = tablist(page);
+      await expect(list).toHaveClass(/(^|\s)frost(\s|$)/);
+      expect(await list.evaluate((e) => getComputedStyle(e).borderTopLeftRadius)).toBe('999px');
+      expect(await list.evaluate((e) => getComputedStyle(e).position)).toBe('sticky'); // still sticks under the app bar
+      const more = list.getByRole('tab', { name: 'Mehr davon' });
+      const details = list.getByRole('tab', { name: 'Details' });
+      await expect(details).toHaveAttribute('aria-selected', 'true');
+      const mid = list.locator('.sp .m');
+      expect(await mid.evaluate((e) => getComputedStyle(e).backgroundColor)).toBe('rgb(255, 255, 255)');
+      await expect(list.locator('.sp')).toHaveClass(/ready/);
+      const at = async (tab: typeof details) => { const [u, t] = [await pillBox(page), (await tab.boundingBox())!]; return Math.abs(u.x - t.x) < 1.5 && Math.abs(u.width - t.width) < 1.5; };
+      await expect.poll(() => at(details)).toBe(true);
+      const before = await mid.evaluate((e) => getComputedStyle(e).transform);
+      await more.click();
+      await expect(more).toHaveAttribute('aria-selected', 'true');
+      // the glide: with full motion a running transform transition (a tripped frame guard on a slow host: the pill jumps)
+      if (await page.locator('html.m-glass').count()) await expect.poll(() => mid.evaluate((e) => e.getAnimations().length), { timeout: 400, intervals: [10] }).toBeGreaterThan(0);
+      await expect.poll(() => at(more)).toBe(true);
+      expect(await mid.evaluate((e) => getComputedStyle(e).transform)).not.toBe(before);
+      await expect.poll(() => more.evaluate((e) => getComputedStyle(e).color)).toBe('rgb(17, 17, 17)');
+      // tabs keep their 44 px touch height
+      for (const t of await list.getByRole('tab').all()) expect((await t.boundingBox())!.height).toBeGreaterThanOrEqual(44);
+    });
   });
 });

@@ -1,9 +1,10 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import type { Page } from '@playwright/test';
+import type { Locator, Page } from '@playwright/test';
 import { episodes, items, MOVIE, SERIES } from '../mocks/fixtures.js';
 import { expect, test } from '../fixtures.js';
 import { openPopout, row } from '../helpers.js';
+import { png } from '../mocks/png.js';
 
 /** Desktop full-page detail (spec desktop browse §3): cinematic backdrop, left column, tabs only with content. */
 
@@ -146,7 +147,8 @@ test.describe('desktop detail page', () => {
     await page.goto('/item/' + SERIES.id);
     const eb = desk(page).locator('.eyebrow');
     await expect(eb).toHaveText('Neue Staffel');
-    expect(await eb.evaluate((e) => getComputedStyle(e).color)).toBe('rgb(255, 79, 109)');
+    // the light coral (on its dark underlay: AA on the glass panel, see the contrast test below)
+    expect(await eb.evaluate((e) => getComputedStyle(e).color)).toBe('rgb(255, 138, 160)');
     await expect(desk(page).locator('.col [data-st]').first()).toHaveClass(/eyebrow/);
   });
 
@@ -164,21 +166,24 @@ test.describe('desktop detail page', () => {
     expect((await syn.boundingBox())!.height).toBeGreaterThan(h0 + 20);
   });
 
-  test('tab change: coral underline moves, panel crossfades, arrow keys move between tabs', async ({ page }) => {
+  test('tab change: the white pill moves under the tab, panel crossfades, arrow keys move between tabs', async ({ page }) => {
     await page.goto('/item/' + SERIES.id);
     const tabs = tablist(page);
     await expect(tabs.getByRole('tab')).toHaveText(['Folgen', 'Mehr davon', 'Details']);
-    const ink = tabs.locator('.ink');
-    expect(await ink.evaluate((e) => getComputedStyle(e).backgroundColor)).toBe('rgb(255, 79, 109)');
-    const inkX = () => ink.evaluate((e) => Math.round(e.getBoundingClientRect().left));
-    const tabX = (name: string) => tabs.getByRole('tab', { name }).evaluate((e) => Math.round(e.getBoundingClientRect().left));
-    await expect.poll(inkX).toBe(await tabX('Folgen'));
+    const pill = tabs.locator('.sp');
+    expect(await pill.locator('.m').evaluate((e) => getComputedStyle(e).backgroundColor)).toBe('rgb(255, 255, 255)');
+    const pillBox = () => pill.evaluate((sp) => {
+      const l = sp.querySelector('.l')!.getBoundingClientRect(), r = sp.querySelector('.r')!.getBoundingClientRect();
+      return [Math.round(l.left), Math.round(r.right)];
+    });
+    const tabBox = (name: string) => tabs.getByRole('tab', { name }).evaluate((e) => { const b = e.getBoundingClientRect(); return [Math.round(b.left), Math.round(b.right)]; });
+    await expect.poll(pillBox).toEqual(await tabBox('Folgen'));
     await tabs.getByRole('tab', { name: 'Details' }).click();
-    await expect.poll(inkX).toBe(await tabX('Details'));
+    await expect.poll(pillBox).toEqual(await tabBox('Details'));
     await expect(page.getByRole('tabpanel', { name: 'Details' })).toBeVisible();
     await expect(page.getByRole('tabpanel', { name: 'Folgen' })).toHaveCount(0);
-    // the underline moves by transform only
-    expect(await ink.evaluate((e) => getComputedStyle(e).transform)).not.toBe('none');
+    // the pill moves by transform only
+    expect(await pill.locator('.m').evaluate((e) => getComputedStyle(e).transform)).not.toBe('none');
 
     // roving tabindex: only the selected tab is in the tab order; arrows move and select
     await expect(tabs.getByRole('tab', { name: 'Details' })).toHaveAttribute('tabindex', '0');
@@ -506,5 +511,231 @@ test.describe('desktop page motion', () => {
     await expect(desk(page).getByRole('heading', { level: 1 })).toHaveText(MOVIE.name);
     await page.waitForTimeout(300);
     expect(await page.evaluate(() => (window as unknown as { __st: unknown[] }).__st.length)).toBe(0);
+  });
+});
+
+/** Glass detail page (glass spec §4): one glass info panel, a glass segment bar with a sliding white pill, glass episode tiles. */
+test.describe('desktop detail glass', () => {
+  test.use({ reducedMotion: 'no-preference' });
+  // full motion without the brand / profile intro over the page; the frame guard with a budget no test host misses (see above)
+  test.beforeEach(async ({ page }) => {
+    await page.addInitScript(() => {
+      sessionStorage.setItem('ff-intro-seen', '1');
+      localStorage.setItem('ff-intro:p1', JSON.stringify({ show: false, sound: false }));
+      (window as unknown as { __ffDeskGuard: { slowMs: number; frames: number } }).__ffDeskGuard = { slowMs: 1000, frames: 8 };
+    });
+    await page.route('**/api/items/*/trailer', (r) => r.fulfill({ json: {} })); // no clips over the backdrop
+  });
+  const panel = (page: Page) => desk(page).locator('.col.frost');
+  const glassOn = (page: Page) => expect(page.locator('html')).toHaveClass(/(^|\s)m-glass(\s|$)/);
+
+  test('one glass info panel holds title, facts, synopsis and actions; Play stays white', async ({ page }) => {
+    await page.goto('/item/' + MOVIE.id);
+    await glassOn(page);
+    const col = panel(page);
+    await expect(col).toHaveCount(1);
+    for (const part of ['h1', '.meta', '.syn', '.acts']) await expect(col.locator(part)).toHaveCount(1);
+    expect(await col.evaluate((e) => getComputedStyle(e).borderRadius)).toBe('26px');
+    expect(await col.evaluate((e) => getComputedStyle(e).backdropFilter)).toContain('blur(38px)');
+    const play = col.locator('.acts a.play');
+    expect(await play.evaluate((e) => getComputedStyle(e).backgroundColor)).toBe('rgb(255, 255, 255)');
+    expect(parseFloat(await play.evaluate((e) => getComputedStyle(e).borderTopLeftRadius))).toBeGreaterThanOrEqual(22);
+    const rbs = col.locator('.acts > a.rb, .acts > button.rb');
+    expect(await rbs.count()).toBeGreaterThan(0);
+    for (const b of await rbs.all()) {
+      await expect(b).toHaveClass(/(^|\s)frost-btn(\s|$)/);
+      const box = (await b.boundingBox())!;
+      expect(box.width).toBeGreaterThanOrEqual(44);
+      expect(box.height).toBeGreaterThanOrEqual(44);
+    }
+  });
+
+  test('tabs: a glass segment bar with a sliding white pill', async ({ page }) => {
+    await page.goto('/item/' + SERIES.id);
+    await glassOn(page);
+    const tabs = tablist(page);
+    await expect(tabs).toHaveClass(/(^|\s)frost(\s|$)/);
+    await expect(tabs.getByRole('tab')).toHaveText(['Folgen', 'Mehr davon', 'Details']);
+    const mid = tabs.locator('.sp .m');
+    await expect(tabs.locator('.sp')).toHaveClass(/ready/); // placed (the first placement does not glide)
+    const before = await mid.evaluate((e) => getComputedStyle(e).transform);
+    // within 100 ms of the click the part glides (a running CSS transition on transform); timed in the page, so a busy test
+    // host's round trips do not count
+    await page.evaluate(() => {
+      const tab = document.querySelector<HTMLElement>('#dd-tab-more')!, m = document.querySelector('.dd .tabs .sp .m')!;
+      (window as unknown as { __glide: Promise<number> }).__glide = new Promise((done) => tab.addEventListener('click', () => {
+        const t0 = performance.now();
+        const look = () => { const t = performance.now() - t0; if (m.getAnimations().length || t > 1000) done(m.getAnimations().length ? t : Infinity); else setTimeout(look, 5); };
+        setTimeout(look, 0);
+      }, { once: true }));
+    });
+    await tabs.getByRole('tab', { name: 'Mehr davon' }).click();
+    expect(await page.evaluate(() => (window as unknown as { __glide: Promise<number> }).__glide)).toBeLessThan(100);
+    await expect.poll(() => tabs.getByRole('tab', { name: 'Mehr davon' }).evaluate((e) => getComputedStyle(e).color)).toBe('rgb(17, 17, 17)');
+    await expect.poll(() => mid.evaluate((e) => getComputedStyle(e).transform)).not.toBe(before);
+    await expect.poll(() => mid.evaluate((e) => e.getAnimations().length)).toBe(0);
+  });
+
+  test('episodes are glass tiles with progress', async ({ page }) => {
+    await page.goto('/item/' + SERIES.id);
+    const eps = desk(page).locator('.tpanel .eps.row .ep');
+    await expect(eps).toHaveCount(episodes.length);
+    for (const ep of await eps.all()) {
+      await expect(ep).toHaveClass(/(^|\s)frost-tile(\s|$)/);
+      expect(await ep.evaluate((e) => getComputedStyle(e).borderTopLeftRadius)).toBe('18px');
+    }
+    expect(await eps.first().locator('.th').evaluate((e) => getComputedStyle(e).borderTopLeftRadius)).toBe('10px');
+    await expect(eps.first().locator('.bar i')).toHaveCount(1); // the coral progress line
+    expect(await eps.first().locator('.bar i').evaluate((e) => getComputedStyle(e).backgroundColor)).toBe('rgb(255, 79, 109)');
+  });
+
+  // ---- contrast (glass spec §1.3): the maths of lib/glass/tone.ts frostComposite, copied (e2e cannot import web code) ----
+  const over = (back: number[], top: number[], a: number) => back.map((v, i) => v * (1 - a) + top[i]! * a);
+  const lin = (v: number) => { const x = v / 255; return x <= 0.03928 ? x / 12.92 : ((x + 0.055) / 1.055) ** 2.4; };
+  const lum = (c: number[]) => 0.2126 * lin(c[0]!) + 0.7152 * lin(c[1]!) + 0.0722 * lin(c[2]!);
+  const ratio = (a: number[], b: number[]) => { const [x, y] = [lum(a), lum(b)]; return (Math.max(x, y) + 0.05) / (Math.min(x, y) + 0.05); };
+  const rgba = (s: string) => [...s.matchAll(/rgba?\(([^)]+)\)/g)].map((m) => m[1]!.split(',').map(Number)).map(([r, g, b, a]) => ({ c: [r!, g!, b!], a: a ?? 1 }));
+  /** the alphas of the white text inside a surface (each element with text of its own, `skip` excepted), dimmest first */
+  const whiteTexts = (surface: Locator, skip = '') => surface.evaluate((root, skipSel) => {
+    const out = new Set<number>();
+    for (const e of [root, ...root.querySelectorAll('*')]) {
+      if (skipSel && e.closest(skipSel)) continue;
+      if (![...e.childNodes].some((n) => n.nodeType === 3 && n.textContent!.trim())) continue;
+      const r = getComputedStyle(e);
+      if (r.visibility === 'hidden' || Number(r.opacity) === 0) continue;
+      const m = /rgba?\((\d+), (\d+), (\d+)(?:, ([\d.]+))?\)/.exec(r.color);
+      if (m && m[1] === '255' && m[2] === '255' && m[3] === '255') out.add(m[4] === undefined ? 1 : Number(m[4]));
+    }
+    return [...out].sort();
+  }, skip);
+  /** white at each alpha over a surface's composite on a pure white backdrop (brightened by the blur), its scrim and both milk stops */
+  async function passesOverWhite(surface: Locator, alphas: number[]) {
+    const bg = await surface.evaluate((e) => ({ image: getComputedStyle(e).backgroundImage, color: getComputedStyle(e).backgroundColor }));
+    const [scrim] = rgba(bg.color);
+    const milks = rgba(bg.image);
+    expect(milks.length).toBe(2);
+    expect(alphas.length).toBeGreaterThan(0);
+    for (const milk of milks) {
+      const c = over(over([255, 255, 255].map((v) => Math.min(255, v * 1.05)), scrim!.c, scrim!.a), milk.c, milk.a).map(Math.round);
+      for (const a of alphas) expect(ratio(over(c, [255, 255, 255], a), c), `white at ${a} on ${c.join(',')} (scrim ${scrim!.a})`).toBeGreaterThanOrEqual(4.5);
+    }
+    return scrim!.a;
+  }
+  /** a pure white picture for every image of an item */
+  const whiteArt = (page: Page, id: string) => page.route(`**/media/Items/${id}/Images/**`, (r) => r.fulfill({ status: 200, contentType: 'image/png', body: png(64, 36, [255, 255, 255]) }));
+  /** home → rest on the "Weil du" row's first card (its tone gets sampled and cached, glass spec §1.3) → its detail page */
+  async function fromCard(page: Page) {
+    await page.goto('/');
+    await glassOn(page);
+    const card = row(page, 'Weil du „Inkwell“ gesehen hast').locator('article.card').first();
+    await card.scrollIntoViewIfNeeded();
+    await card.locator('a.thumb').hover();
+    await page.waitForTimeout(300);
+    await card.locator('a.thumb').click();
+    await expect(page).toHaveURL(new RegExp(`/item/${INTERLACE.id}$`));
+    await expect(desk(page).locator('img.bg')).toHaveClass(/loaded/);
+  }
+  const scrimOf = (l: Locator) => l.evaluate((e) => Number(getComputedStyle(e).getPropertyValue('--fr-scrim')));
+
+  test('contrast fallback: a pure white backdrop', async ({ page }) => {
+    await whiteArt(page, INTERLACE.id);
+    await page.route('**/api/discover/badges', (r) => r.fulfill({ json: { badges: { [INTERLACE.id]: { fresh: 'newSeason' } } } }));
+    await page.route('**/api/items/*/facts', (r) => r.fulfill({ json: { fresh: null, leaving: { days: 5, leavesAt: '2026-11-14', note: '' }, traits: null } }));
+    await fromCard(page);
+    const col = panel(page);
+    await expect.poll(() => scrimOf(col)).toBeGreaterThanOrEqual(0.66);
+    await expect(col.locator('.until')).toHaveCount(1);
+    // every white text on the panel (secondary lines at .9 included) and every tab label not on the white pill
+    const panelInks = await whiteTexts(col, '.acts');
+    expect(panelInks[0]).toBeLessThan(1); // the secondary lines are part of it
+    await passesOverWhite(col, panelInks);
+    const tabs = tablist(page);
+    const tabInks = await whiteTexts(tabs, '[aria-selected="true"]');
+    expect(tabInks).toEqual([0.9]);
+    await passesOverWhite(tabs, tabInks);
+
+    // the coloured inks (the light coral eyebrow, the green match score) on screen, where the panel really sits over the white
+    // backdrop: with the ink hidden, the brightest pixel under it (the shade, the blur, scrim, milk, grain and tint all drawn)
+    const eb = col.locator('.eyebrow');
+    await expect(eb).toBeVisible();
+    expect(await eb.evaluate((e) => getComputedStyle(e).color)).toBe('rgb(255, 138, 160)');
+    await page.mouse.move(1, 1);
+    await page.waitForTimeout(400); // the sheen fades out, the tint has crossfaded
+    for (const [sel, ink] of [['.eyebrow', [255, 138, 160]], ['.match', [74, 222, 128]]] as const) {
+      const el = col.locator(sel);
+      await el.evaluate((e) => { (e as HTMLElement).style.color = 'transparent'; (e as HTMLElement).style.transition = 'none'; });
+      // the text's box (inside the eyebrow's rounded underlay: its padding, past the round ends)
+      const b = await el.evaluate((e) => {
+        const r = e.getBoundingClientRect(), cs = getComputedStyle(e), pl = parseFloat(cs.paddingLeft), pr = parseFloat(cs.paddingRight);
+        const end = Math.min(r.height / 2, parseFloat(cs.borderTopLeftRadius) || 0);
+        const x0 = r.left + Math.max(pl, end), x1 = r.right - Math.max(pr, end);
+        return { x: x0, y: r.top + parseFloat(cs.paddingTop), width: x1 - x0, height: r.height - parseFloat(cs.paddingTop) - parseFloat(cs.paddingBottom) };
+      });
+      const shot = await page.screenshot({ clip: b });
+      const brightest = await page.evaluate(async (b64) => {
+        const im = new Image();
+        im.src = `data:image/png;base64,${b64}`;
+        await im.decode();
+        const c = document.createElement('canvas');
+        c.width = im.naturalWidth; c.height = im.naturalHeight;
+        const g = c.getContext('2d')!;
+        g.drawImage(im, 0, 0);
+        const d = g.getImageData(0, 0, c.width, c.height).data;
+        let best = [0, 0, 0], bl = -1;
+        for (let i = 0; i < d.length; i += 4) { const l = d[i]! * 0.2126 + d[i + 1]! * 0.7152 + d[i + 2]! * 0.0722; if (l > bl) { bl = l; best = [d[i]!, d[i + 1]!, d[i + 2]!]; } }
+        return best;
+      }, shot.toString('base64'));
+      expect(ratio([...ink], brightest), `${sel} on ${brightest.join(',')}`).toBeGreaterThanOrEqual(4.5);
+      await el.evaluate((e) => { (e as HTMLElement).style.color = ''; });
+    }
+  });
+
+  test('no tone yet (deep link): the panel keeps its safe scrim for the dim text; the late tone only crossfades the tint', async ({ page }) => {
+    await whiteArt(page, MOVIE.id);
+    await page.goto('/item/' + MOVIE.id);
+    await glassOn(page);
+    const col = panel(page);
+    await expect(desk(page).locator('img.bg')).toHaveClass(/loaded/);
+    await expect(col).toHaveClass(/(^|\s)frost-safe(\s|$)/);
+    // the backdrop's tone lands after the panel was painted: the tint crossfades in, the scrim stays the safe one
+    await expect(col.locator('.frost-tint i.on')).toHaveCount(1);
+    expect(await col.evaluate((e) => e.style.getPropertyValue('--fr-tint'))).toMatch(/^\d+, \d+, \d+$/);
+    expect(await col.evaluate((e) => e.style.getPropertyValue('--fr-scrim'))).toBe('');
+    const safe = await col.evaluate((e) => Number(getComputedStyle(e).getPropertyValue('--fr-scrim-safe')));
+    expect(safe).toBeGreaterThan(0.7); // above the plain-white safe scrim: solved for white at .9
+    expect(await scrimOf(col)).toBe(safe);
+    await passesOverWhite(col, await whiteTexts(col, '.acts'));
+  });
+
+  test('the trailer lifts a light scrim to the safe one while it plays', async ({ page }) => {
+    await fakeMedia(page);
+    await itemIs(page, { ...INTERLACE, trailers: 1 });
+    await page.route(`**/media/Items/${INTERLACE.id}/Images/**`, (r) => r.fulfill({ status: 200, contentType: 'image/png', body: png(64, 36, [20, 18, 26]) }));
+    await fromCard(page);
+    const col = panel(page);
+    // a dark picture: the light scrim
+    await expect.poll(() => scrimOf(col)).toBeLessThan(0.5);
+    const safe = await col.evaluate((e) => Number(getComputedStyle(e).getPropertyValue('--fr-scrim-safe')));
+    await expect(desk(page).locator('[data-vt-art] video')).toHaveClass(/on/, { timeout: 10_000 });
+    await expect.poll(() => scrimOf(col)).toBe(safe);
+  });
+
+  test('calm: the panel and tabs are solid, the pill jumps', async ({ page }) => {
+    await page.route('**/api/prefs', (r) => r.fulfill({ json: { prefs: { calm: true } } }));
+    await page.addInitScript(() => localStorage.setItem('ff_calm:p1', '1'));
+    await page.goto('/item/' + SERIES.id);
+    await expect(page.locator('html')).toHaveClass(/m-still/);
+    await expect(page.locator('html')).not.toHaveClass(/(^|\s)m-glass(\s|$)/);
+    expect(await panel(page).evaluate((e) => getComputedStyle(e).backdropFilter)).toBe('none');
+    const tabs = tablist(page);
+    expect(await tabs.evaluate((e) => getComputedStyle(e).backdropFilter)).toBe('none');
+    expect(await tabs.evaluate((e) => getComputedStyle(e).backgroundColor)).toBe('rgb(28, 26, 33)'); // --fr-solid
+    const mid = tabs.locator('.sp .m');
+    await expect(tabs.locator('.sp')).toHaveClass(/ready/);
+    // no transition at all (calm mode's injected rule flattens every duration to .001 ms, so the duration reads ~0, not '0s')
+    expect(await mid.evaluate((e) => getComputedStyle(e).transitionProperty)).toBe('none');
+    expect(await mid.evaluate((e) => parseFloat(getComputedStyle(e).transitionDuration))).toBeLessThan(0.001);
+    await tabs.getByRole('tab', { name: 'Details' }).click();
+    expect(await mid.evaluate((e) => e.getAnimations().length)).toBe(0);
   });
 });

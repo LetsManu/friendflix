@@ -86,6 +86,83 @@ await runAction({
 | `CopyField` | `label`, `value`, `qr`, `hint` | Copy → toast; optional QR (`lib/qr.ts`) |
 | `fmtBytes` (`ui/format.ts`) | bytes | localised "1,2 GB" |
 
+## Glass
+
+One material for the web app (`web/src/app.css`, helpers in `web/src/lib/glass/`): milky matte frost over a dark scrim, grain, a light edge and a deep soft shadow. It is used on desktop, phone and the admin panel. Rules for new surfaces:
+
+- Use the classes, never a hand-written `background` and `backdrop-filter` pair.
+- Animate only `transform` and `opacity` (the two named exceptions are below). No `color`, `background`, `border-color` or `filter` in any `transition`, anywhere in the app (`admin/glass.test.ts` scans every stylesheet): colours and fills switch at once, and a fill or edge that should fade is an opacity layer (`.fill-hover`, `.edge-hover`). The global `button` rule moves only `transform` and `opacity`.
+- Glass never nests: a `.panel` inside a glass surface is part of it (its background is removed); a glass control inside a glass surface (the rating pill in the hover card or the detail panel) keeps its look and scrim but drops the second blur.
+
+### Tokens (`--fr-*`)
+
+| Token | Value | Use |
+|---|---|---|
+| `--fr-milk`, `--fr-milk-top` | `236, 232, 244` / `240, 236, 248` | milk colour (rgb triples); alphas `--fr-milk-a1` .13 (bottom) and `--fr-milk-a2` .19 (top) |
+| `--fr-scrim-rgb` | `18, 16, 24` | scrim colour |
+| `--fr-scrim` | `--fr-scrim-light` (.2) | scrim alpha of the surface; `.frost-safe` sets `--fr-scrim-safe` (.7); `toneVars()` sets it inline over sampled artwork |
+| `--fr-line`, `--fr-hi` | white .2 / .28 | border / inner top highlight |
+| `--fr-blur` | `blur(38px) saturate(115%) brightness(1.05)` | the backdrop filter |
+| `--fr-grain`, `--fr-grain-a` | SVG noise, .22 | matte grain (`::before`, overlay) |
+| `--fr-shadow`, `--fr-shadow-card` | deep soft shadows | panels / cards |
+| `--fr-solid`, `--fr-solid-hover` | `#1c1a21` / `#2a2731` | the solid fallback fill |
+| `--fr-sel` | white .13 | the light pill of a hovered, focused or selected menu row, tab or entry (`SEL_A` in `tone.ts`) |
+| `--fr-tint` | `0, 0, 0` | artwork tint colour (`.frost-tint`) |
+| `--fr-r-card` ... `--fr-r-pill` | 12 / 18 / 20 / 22 / 24 / 26 px / 999px | card, tile, menu, hover card, panel, sheet, pill |
+| `--fr-spring`, `--fr-out`, `--fr-in` | cubic-beziers | glass motion curves (as functions: `lib/glass/fx.ts`) |
+| `--acc-light`, `--acc-line` | `#ff8aa0` / `#ff9cad` | light coral: text straight on the ambient or on a glass surface's dark underlay (AA) / lines on glass, such as underlines and the toast ring (3:1 over a white backdrop) |
+| `--err-mark`, `--info-mark` | `#ff9d9d` / `#73c6cf` | light red danger icons and error dots / the toast's info dot |
+
+### Classes
+
+- `.frost`: the glass surface with blur. `.frost-flat`: the same look without blur (long pages, big panels, anything with many children where blur costs frames); `.panel` is the same look for settings and `/me`. Choose `.frost` for floating things (top bar, menus, sheets, hover card, toasts) and `.frost-flat` for large static areas.
+- Shapes: `.frost-pill`, `.frost-tile`, `.frost-menu`, `.frost-panel`, `.frost-sheet`.
+- `.frost-btn` (44 px glass pill button, `.round` for a 44 px circle; its hover lights the edge), `.frost-dim` (page dim behind a sheet), `.frost-amb` (the still ambient background for pages without artwork), `.frost-sheen` (light sheen layer), `.frost-tint` (artwork tint layers), `.frost-text` (text levels below on a surface that is not a `.panel`).
+- `.fill-hover`: the hover fades in a darker fill under the content (scrim at .3; it only adds contrast), for rows and text buttons on glass. `.edge-hover`: the hover lights the edge (white .42), for tiles and chips. Both fade by opacity; the element must be positioned (the glass classes are; `.fill-hover` sets it).
+- Write `-webkit-backdrop-filter` before `backdrop-filter` when the value is a `var()`.
+
+### Fallbacks
+
+Blur exists only with full motion: `html.m-glass`, never on TV or kids. Without it every surface is a solid panel (`--fr-solid`) with the same shape, border, highlight and shadow, no grain:
+
+- calm mode and reduced motion (`html.m-still`): solid, no effects, state changes at once;
+- the frame guard tripped: `html.m-glass` drops for the session, solid; open and close then use a 160 ms opacity fade;
+- TV (`html.tv`): solid, no pointer effects;
+- kids profiles (`html.kids`): keep their look; shared parts (toasts, menus) use the solid fallback.
+
+### Contrast (`lib/glass/tone.ts`)
+
+Text over glass must reach AA (4.5:1) against the ambient's brightest point. `tone.ts` computes the composite (backdrop, scrim, milk, tint) and `scrimFor()` picks the lightest scrim that passes over a sampled picture; `tone.test.ts` and `pages.test.ts` guard the numbers. Over artwork or video nobody sampled, add `.frost-safe` (heavy scrim). On a `.panel` or `.frost-text` surface the text levels are: dim text white .72 (`--mut`), hints white .66 (`--hint`), navigation .75. Status colours there: ok `#4ade80`, warn `#f7b344`, err `#ffa8a8`, link/info `#80cbd4`; coral text `#ffa7b6` (`--acc-text`). On the bare ambient (`html.amb`) coral text is `--acc-text` = `--acc-light` (`#ff8aa0`). Hover lights the edge of `.frost-btn`, it does not add milk (that would drop white text below AA).
+
+| Helper (`tone.ts`) | Use |
+|---|---|
+| `toneFor(key, src)`, `cachedTone(key)` | sample a picture's tone once per key (tint, bright end, scrim); `cachedTone` reads it without loading |
+| `toneVars(tone, text?)` | the inline `--fr-tint` and `--fr-scrim` for a surface over that picture; pass the dimmest text alpha (`TEXT_DIM`) when the surface has dim text |
+| `menuScrim(bright)`, `SCRIM_MENU` | the scrim a menu, sheet or toast needs: white on the light pill and `TEXT_DIM` text both pass over pure white. Set it as the surface's `--fr-scrim-safe` (with `.frost-safe`) on every menu or sheet that can open over artwork |
+| `TEXT_DIM`, `SCRIM_SAFE_DIM` | the dimmest text on glass over artwork (white .9) and the safe scrim for a surface with such text |
+
+### Helpers (`lib/glass/`)
+
+| Helper | What it does |
+|---|---|
+| `SlidePill` (`host`, `selector`, `tone` light/white) | the sliding selection pill for tabs, segmented controls and side navigation: three parts moved by transforms, 450 ms spring, jumps without `html.m-glass` |
+| `grow` / `growFrom` / `growBoth` (`fx.ts`) | menus and sheets grow out of their button: scale .4 to 1 with the spring (380 ms), back in 200 ms; reduced set: 160 ms fade; calm: instant. `growFrom({ trigger })` measures the origin from the button once per open and keeps it |
+| `twoWay(make)`, `growBoth` | the reversal contract: use them with Svelte's bidirectional `transition:` (never `in:`/`out:`), so a close mid-open or a reopen mid-close turns around from where it is. `transition:growBoth={{ trigger }}` for a menu; `twoWay((dir) => …)` to build your own |
+| `sheetSlide` | a phone bottom sheet (the card sheet, MoreActions on phones) slides up from below the window (380 ms in, 200 ms out) |
+| `toastRise` | a toast rises in (420 ms spring) and slides out (260 ms) |
+| `scrimFade` | a sheet's scrim fades (200 ms) |
+| `countAt` | the count-up value (1.1 s ease-out) for admin numbers; `admin/glass.ts` `countable()` decides which values count (plain numbers only) |
+| `sheen` (`pointer.ts`) | action: a light sheen follows the pointer inside a glass surface (host clips it) |
+| `tilt` (`pointer.ts`) | action: poster and card tilt toward the pointer (up to 9 degrees), glare, light band, shadow; siblings step back |
+| `press` (`press.ts`) | action: touch press feedback, scale .92 in 80 ms, spring back in 350 ms, ripple from the touch point (the action adds `.ff-press` itself) |
+| `Button` `done` | after a save the label becomes "Saved" with a drawn checkmark; the caller resets it after about 2 s |
+
+`sheen`, `tilt` and `press` run only with full motion (`fxLive()`): `sheen` and `tilt` need a fine pointer off TV and kids, `press` needs touch or pen. `grow`, `sheetSlide`, `toastRise` and `tilt` pulse the frame guard when they start with full motion, so slow glass motion can trip it.
+
+### Named animation exceptions
+
+Everything else moves `transform` and `opacity` only. Two paint-only exceptions are allowed: the `stroke-dashoffset` of the toast countdown ring and of the drawn save checkmark, and the text colour of a selected tab or segment label (250 ms). The sliding pill's width is never animated.
+
 ## Admin shell
 
 `routes/admin/+layout.svelte` renders `AdminShell`: sidebar groups (People, Content, Operations; `lib/admin/nav.ts`)

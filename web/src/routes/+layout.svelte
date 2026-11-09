@@ -180,6 +180,9 @@
   $: profilesPage = path === '/profiles' || path === '/welcome'; // full-screen pages without navigation (picker, onboarding)
   $: heroPage = path === '/' || path.startsWith('/item/');
   $: kidsPage = path === '/kids' || path.startsWith('/kids/'); // full-bleed bright kids pages (own background and spacing)
+  /** pages without artwork that are not the player, TV, kids or full-screen pages: the still ambient background (glass spec §6) */
+  $: ambPage = !heroPage && !watchPage && !kidsUi && !tv && !profilesPage && !publicPage && !kidsPage;
+  $: if (typeof document !== 'undefined') document.documentElement.classList.toggle('amb', pageReady && ambPage);
   // Block 22: warning banner for an admin on the owner profile; never in TV mode, on player/party/profile/public pages or kids profiles
   $: showBanner = admin && !tv && !watchPage && !profilesPage && !publicPage && !kidsUi && !pending;
   let stopBanner: (() => void) | null = null;
@@ -484,7 +487,7 @@
   // detail backdrop morph under the TV's shared name, then the detail text staggers in ----
   /** the picture that morphs: the hover preview's art, a card's / "More like this" tile's artwork, or the billboard backdrop */
   const deskArt = (el: Element | null | undefined): HTMLElement | null => {
-    if (!(el instanceof HTMLElement)) return null;
+    if (!(el instanceof Element)) return null; // any element: a click on an icon's <svg> still finds its card / preview
     const pv = el.closest('.dpv');
     const pic = pv ? pv.querySelector<HTMLElement>('.dpv-art img.hi.on') ?? pv.querySelector<HTMLElement>('.dpv-art img:not(.blur):not(.tlogo)')
       : el.closest('main .card')?.querySelector<HTMLElement>('.thumb img:not(.blur)')
@@ -737,6 +740,7 @@
 {#if publicPage}
   <slot />
 {:else if pageReady}
+  {#if ambPage}<div class="frost-amb" aria-hidden="true"></div>{/if}
   {#if !watchPage && !profilesPage && kidsUi}
     <header class="nav kidsnav" class:solid={scrolled || !path.startsWith('/kids')}>
       <a class="klogo" href="/kids" aria-label={$t('kids.nav.home')}><Logo wordmark={!$mobile} size={$mobile ? 30 : 32} label="" /><span class="kbadge">{$t('kids.badge')}</span></a>
@@ -851,8 +855,11 @@
   .offbar.notab { bottom: calc(var(--safe-bottom) + var(--castbar-h)); } /* no tab bar (kids profiles, profile picker) */
   @media (min-width: 721px) { .offbar, .offbar.notab { bottom: var(--castbar-h); } }
   .logo { display: inline-flex; align-items: center; }
-  .nav { position: fixed; top: 0; left: 0; right: 0; height: var(--nav-total); z-index: 50; display: flex; align-items: center; gap: .5rem; padding: var(--safe-top) max(var(--pad-x), var(--safe-right)) 0 max(var(--pad-x), var(--safe-left)); background: linear-gradient(to bottom, rgba(0,0,0,.9), rgba(0,0,0,.55) 55%, transparent); transition: background var(--t-med); }
-  .nav.solid { background: var(--bg); }
+  .nav { position: fixed; top: 0; left: 0; right: 0; height: var(--nav-total); z-index: 50; display: flex; align-items: center; gap: .5rem; padding: var(--safe-top) max(var(--pad-x), var(--safe-right)) 0 max(var(--pad-x), var(--safe-left)); background: linear-gradient(to bottom, rgba(0,0,0,.9), rgba(0,0,0,.55) 55%, transparent); }
+  /* solid: the page colour fades in over the bar's own background as a layer (opacity only; no background transition) */
+  .nav::before { content: ''; position: absolute; inset: 0; z-index: -1; background: var(--bg); opacity: 0; pointer-events: none; transition: opacity var(--t-med); }
+  :global(html.m-still) .nav::before { transition: none; }
+  .nav.solid::before { opacity: 1; }
   .sp { flex: 1; }
   .dot { position: absolute; top: 4px; right: 2px; background: var(--acc-fill); font-size: .65rem; min-width: 1.1rem; height: 1.1rem; border-radius: 99px; display: grid; place-items: center; font-weight: 700; }
   .avatar { width: auto; min-height: 44px; height: 44px; padding: 0 .1rem; background: transparent; gap: .45rem; border-radius: 4px; }
@@ -895,12 +902,18 @@
   /* padding-top keeps the rows below the status bar / Dynamic Island; the background layer covers that strip too. Only
      transform and opacity move: the two background layers crossfade, the layer slides up by the chip bar when it tucks. */
   .nav.m, .nav.m.solid { height: auto; flex-direction: column; align-items: stretch; gap: 0; padding: var(--safe-top) var(--safe-right) 0 var(--safe-left); background: none; transition: none; pointer-events: none; }
+  .nav.m::before { content: none; }
   .nav.m > :not(.mbg) { pointer-events: auto; }
   .mbg { position: absolute; inset: 0; z-index: -1; pointer-events: none; transition: transform 300ms var(--m-emph-out); }
   .mbg::before, .mbg::after { content: ''; position: absolute; inset: 0; transition: opacity 250ms ease-out; }
   .mbg::before { background: linear-gradient(to bottom, rgba(0,0,0,.7), transparent); }
-  .mbg::after { background: rgba(10,10,12,.94); opacity: 0; }
-  :global(html.m-glass) .mbg::after { background: rgba(10,10,12,.78); -webkit-backdrop-filter: blur(18px) saturate(1.4); backdrop-filter: blur(18px) saturate(1.4); }
+  /* scrolled: the glass material (glass spec §6) with the safe scrim (titles and artwork scroll under it); solid without
+     full motion, as every surface */
+  .mbg::after { background: var(--fr-solid); border-bottom: 1px solid var(--fr-line); box-shadow: var(--fr-shadow); opacity: 0; }
+  :global(html.m-glass:not(.tv):not(.kids)) .mbg::after {
+    background: linear-gradient(180deg, rgba(var(--fr-milk-top), var(--fr-milk-a2)), rgba(var(--fr-milk), var(--fr-milk-a1))), rgba(var(--fr-scrim-rgb), var(--fr-scrim-safe));
+    -webkit-backdrop-filter: var(--fr-blur); backdrop-filter: var(--fr-blur);
+  }
   .nav.m.solid .mbg::before { opacity: 0; }
   .nav.m.solid .mbg::after { opacity: 1; }
   .nav.m.tuck .mbg { transform: translateY(-48px); } /* the chip bar's height: the glass ends under the top row */

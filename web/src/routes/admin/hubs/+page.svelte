@@ -140,7 +140,7 @@
 </div>
 
 {#if editing !== null}
-  <section class="form" bind:this={formEl} aria-labelledby="hub-form-title">
+  <section class="form panel" bind:this={formEl} aria-labelledby="hub-form-title">
     <form on:submit|preventDefault={save}>
       <h2 id="hub-form-title">{editing ? $t('hubs.admin.editTitle') : $t('hubs.admin.newTitle')}</h2>
       <div class="fgrid">
@@ -237,7 +237,7 @@
   .intro { flex: 1 1 24rem; margin: 0; max-width: 70ch; }
   .cap { flex: 0 1 16rem; min-width: 10rem; }
   .small { font-size: .85rem; margin: 0; }
-  .form { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 1rem 1.1rem; margin-bottom: 1rem; scroll-margin-top: calc(var(--nav-total) + 1rem); }
+  .form { margin-bottom: 1rem; scroll-margin-top: calc(var(--nav-total) + 1rem); }
   .form h2 { margin: 0 0 .9rem; font-size: 1.1rem; }
   .fgrid { display: grid; gap: 1.2rem; grid-template-columns: minmax(0, 1fr); }
   @media (min-width: 900px) { .fgrid { grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); } }
@@ -271,6 +271,6 @@
   .state[role='alert'] { color: var(--fg); } .state[role='alert'] :global(svg) { color: var(--err); }
   .chips { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: .5rem; }
   .chip { border-radius: 99px; padding: .3rem .9rem; gap: .5rem; }
-  .tag { font-size: .75rem; color: var(--mut); background: var(--tone-muted); border-radius: 99px; padding: 0 .5rem; }
+  .tag { font-size: .75rem; color: var(--mut); background: var(--wash-muted); border-radius: 99px; padding: 0 .5rem; }
   @media (max-width: 560px) { .row { padding: .6rem; } .acts { width: 100%; justify-content: space-between; } }
 </style>
