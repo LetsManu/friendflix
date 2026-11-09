@@ -13,11 +13,17 @@ import { setLive } from '../src/live.js';
 import { previews } from '../src/previews.js';
 import { toDownloadSource } from '../src/jellyfin/dto.js';
 import { makeEnv, type TestEnv } from './helpers.js';
+import { fragment, initSegment } from './fmp4build.js';
+import { discontinuities, scanFmp4 } from '../src/fmp4scan.js';
 
 const MOVIE = 'a'.repeat(32);
 const SEGS = 6;
-const INIT = Buffer.from('INIT-SEGMENT');
-const seg = (n: number) => Buffer.from(`<seg${n}>`);
+// real (tiny) fMP4: the preparer checks the timestamps where a restarted transcode was appended
+const INIT = initSegment();
+/** segment n as the current transcode delivers it: every stopped transcode (DELETE ActiveEncodings) starts a new one, shifted by restartGap */
+let transcode = 0;
+let restartGap = 0;
+const seg = (n: number, t = 0) => fragment(n, { restartGapSec: t * restartGap });
 const sha = (b: Buffer) => createHash('sha256').update(b).digest('hex');
 
 let env: TestEnv;
@@ -26,6 +32,7 @@ let requested: string[] = [];
 let badSeg = -99;
 let emptySeg = -99;
 let initBytes = INIT;
+let onSeg: (n: number) => void = () => undefined;
 const remuxed: Buffer[] = [];
 const runner: FfmpegRunner = { remux: async (input, output) => { remuxed.push(readFileSync(input)); await copyFile(input, output); } };
 
@@ -82,9 +89,10 @@ beforeAll(async () => {
       requested.push(`seg${n}`);
       if (n === badSeg) return { status: 500, raw: 'boom' };
       if (n === emptySeg) return { raw: '' };
-      return { raw: n < 0 ? initBytes : seg(n) };
+      onSeg(n);
+      return { raw: n < 0 ? initBytes : seg(n, transcode) };
     },
-    'DELETE /Videos/ActiveEncodings': () => ({ status: 204 }),
+    'DELETE /Videos/ActiveEncodings': () => { transcode++; return { status: 204 }; },
   }, { ctxPatch: (c) => { c.cfg = { ...c.cfg, DOWNLOAD_DIR: dir, DOWNLOAD_PAUSE_STREAMS: 2 }; } });
   await env.login(); // creates the admin service user
   const p = preparer(env.ctx);
@@ -98,6 +106,9 @@ beforeEach(async () => {
   badSeg = -99;
   emptySeg = -99;
   initBytes = INIT;
+  transcode = 0;
+  restartGap = 0;
+  onSeg = () => undefined;
   remuxed.length = 0;
   env.jfCalls.length = 0;
   await env.pool.query('delete from notifications');
@@ -158,6 +169,55 @@ describe('preparer', () => {
     expect(segRequests()).toEqual(['seg-1', 'seg3', 'seg4', 'seg5']);
     expect(remuxed[0]!.toString()).toBe(INIT.toString() + [0, 1, 2, 3, 4, 5].map((n) => seg(n).toString()).join(''));
     expect((await jobs.get(id)).status).toBe('ready');
+    expect(requested.filter((x) => x.startsWith('master'))).toHaveLength(1); // the seam lines up: no second pass
+  });
+
+  it('a resume whose new transcode does not line up is prepared again from the first segment in a fresh session', async () => {
+    restartGap = 0.045; // the resumed transcode's audio starts 45 ms late
+    transcode = 1; // the segments in the part file came from an earlier transcode (0)
+    const id = await jobs.create({ status: 'preparing', seg_done: 3, seg_total: SEGS, init_sha: sha(INIT) });
+    const head = Buffer.concat([INIT, seg(0), seg(1), seg(2)]);
+    writeFileSync(join(dir, `${id}.part`), head);
+    await env.pool.query('update download_jobs set bytes = $2 where id = $1', [id, head.length]);
+    const logs: string[] = [];
+    const p = preparer(env.ctx);
+    const log = p.log;
+    p.log = (m) => logs.push(m);
+    try { await enqueueJob(env.ctx, id); } finally { p.log = log; }
+    expect(segRequests()).toEqual(['seg-1', 'seg3', 'seg4', 'seg5', 'seg-1', ...Array.from({ length: SEGS }, (_, i) => `seg${i}`)]);
+    expect(requested.filter((x) => x.startsWith('master'))).toHaveLength(2); // a new PlaybackInfo session for the second pass
+    expect(logs.join('\n')).toMatch(/timestamps jump .*track 2 by 45 ms at fragment 3.*from the first segment/);
+    expect(remuxed).toHaveLength(1);
+    expect(discontinuities(await scanFmp4(async (a, n) => remuxed[0]!.subarray(a, a + n), remuxed[0]!.length), 0.01)).toEqual([]); // one transcode
+    expect(await jobs.get(id)).toMatchObject({ status: 'ready', seg_done: SEGS });
+    expect(env.jfCalls.filter((c) => c.method === 'DELETE' && c.path === '/Videos/ActiveEncodings').length).toBeGreaterThanOrEqual(2); // both sessions stopped
+  });
+
+  it('a pause in the middle that leaves a jumping seam restarts, and after two tries the last pass does not pause', async () => {
+    restartGap = 0.03;
+    const pv = previews(env.ctx);
+    // every time segment 2 was fetched the nightly check starts and ends again shortly after: the next segment comes from a new transcode
+    onSeg = (n) => { if (n === 2) { pv.paused = true; setTimeout(() => { pv.paused = false; }, 15); } };
+    const id = await jobs.create();
+    await jobs.holder(id);
+    const logs: string[] = [];
+    const p = preparer(env.ctx);
+    const log = p.log;
+    p.log = (m) => logs.push(m);
+    try { await enqueueJob(env.ctx, id); } finally { p.log = log; pv.paused = false; }
+    expect(requested.filter((x) => x.startsWith('master'))).toHaveLength(3);
+    expect(logs.filter((l) => l.includes('timestamps jump'))).toHaveLength(2);
+    expect(await jobs.get(id)).toMatchObject({ status: 'ready' });
+    expect(discontinuities(await scanFmp4(async (a, n) => remuxed[0]!.subarray(a, a + n), remuxed[0]!.length), 0.01)).toEqual([]);
+  });
+
+  it('a seam it cannot read counts as a jump (never stitched blindly)', async () => {
+    expect(await preparer(env.ctx).seamGaps(join(dir, 'missing.part'))).toMatch(/not readable/);
+    const p = join(dir, 'fake.part');
+    writeFileSync(p, Buffer.from('INIT-SEGMENT<seg0><seg1>'));
+    expect(await preparer(env.ctx).seamGaps(p)).toMatch(/not readable/);
+    writeFileSync(p, Buffer.concat([INIT, seg(0), seg(1), seg(2)]));
+    expect(await preparer(env.ctx).seamGaps(p)).toBeNull();
   });
 
   it('restarts from 0 when the init segment differs', async () => {
@@ -167,7 +227,7 @@ describe('preparer', () => {
     await env.pool.query('update download_jobs set bytes = $2 where id = $1', [id, head.length]);
     await enqueueJob(env.ctx, id);
     expect(segRequests()).toEqual(['seg-1', ...Array.from({ length: SEGS }, (_, i) => `seg${i}`)]);
-    expect(remuxed[0]!.toString().startsWith('INIT-SEGMENT<seg0>')).toBe(true);
+    expect(remuxed[0]!.subarray(0, INIT.length + seg(0).length).equals(Buffer.concat([INIT, seg(0)]))).toBe(true);
     expect((await jobs.get(id)).init_sha).toBe(sha(INIT));
   });
 
