@@ -97,7 +97,7 @@ test.describe('phone glass', () => {
     const rip = play.locator('.ripple');
     await expect(rip).toHaveCount(1);
     // its centre (in the button's own, unscaled box) is the touch point
-    const c = await rip.evaluate((e) => ({ x: e.offsetLeft + e.offsetWidth / 2, y: e.offsetTop + e.offsetHeight / 2, w: e.offsetWidth }));
+    const c = await rip.evaluate((e: HTMLElement) => ({ x: e.offsetLeft + e.offsetWidth / 2, y: e.offsetTop + e.offsetHeight / 2, w: e.offsetWidth }));
     expect(Math.abs(c.x - (at.x - box0.x))).toBeLessThanOrEqual(2);
     expect(Math.abs(c.y - (at.y - box0.y))).toBeLessThanOrEqual(2);
     expect(Math.abs(c.w - 2 * Math.max(box0.width, box0.height))).toBeLessThanOrEqual(2);
