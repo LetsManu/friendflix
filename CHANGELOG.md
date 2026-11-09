@@ -4,6 +4,9 @@ All notable changes, grouped by what you notice. Each release has its own sectio
 
 ## [Unreleased]
 
+### Security
+- **Dependency updates.** The file-pattern matching library used by the development tooling (minimatch) is updated to a release that fixes a denial-of-service weakness. It only runs while building and linting, not in the running app.
+
 ### Fixed
 - **Top bar glass evenly frosted.** The top bar now has one continuous frost: no darker band or seam over bright pictures, and the frost no longer disappears after the light follows the mouse across the bar.
 
