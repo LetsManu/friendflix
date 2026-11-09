@@ -4,11 +4,13 @@ import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import type { Ctx } from './ctx.js';
 import { isHomeRequest } from './netaddr.js';
+import { serverSessions } from './playstats.js';
 import { requireAdmin, requireUser } from './session.js';
 
 /**
  * Start-time measurements of the web player (web/src/lib/player/timing.ts): one row per playback session with the ms from
- * "load" to playback info, playlist, first fragment and first frame, plus seeks and stalls. Anonymous on purpose: no user,
+ * "load" to playback info, playlist, first fragment and first frame, plus seeks and stalls, and the A/V-sync facts (delivery,
+ * video copied, sound mode / Web Audio routing, dropped / total frames, A/V-affecting events). Anonymous on purpose: no user,
  * profile, item, address or user agent is stored, only `home` (the same home-network check as the remote bitrate cap).
  * Rows live 14 days (pruned by healthTick).
  */
@@ -37,18 +39,33 @@ export const timingBody = z.object({
   stallMs: num(86_400_000),
   /** Network Information API; anything else is dropped (never a 400) */
   effectiveType: z.enum(['slow-2g', '2g', '3g', '4g']).nullish().catch(null),
+  // A/V-sync facts (optional: older players do not send them; an unknown value is dropped, never a 400)
+  delivery: z.enum(['direct', 'remux', 'transcode']).nullish().catch(null),
+  videoCopy: z.boolean().nullish().catch(null),
+  soundMode: z.enum(['off', 'voices', 'night', 'both']).nullish().catch(null),
+  audioRouted: z.boolean().nullish().catch(null),
+  droppedFrames: num(100_000_000),
+  totalFrames: num(100_000_000),
+  /** the session started for an audio track switch */
+  trackSwitch: z.boolean().default(false),
+  reconnects: num(10_000),
+  avEvents: num(100_000),
 });
 export type TimingBody = z.infer<typeof timingBody>;
 
 const HOURLY_LIMIT = 120;
 
 export async function recordTiming(ctx: Pick<Ctx, 'db'>, b: TimingBody, home: boolean): Promise<void> {
+  // dropped frames above the total are a broken reading: both dropped
+  const frames = b.droppedFrames != null && b.totalFrames != null && b.droppedFrames > b.totalFrames ? { d: null, t: null } : { d: b.droppedFrames ?? null, t: b.totalFrames ?? null };
   await ctx.db.query(
     `insert into playback_timings(home, device, mode, quality_switch, bitrate, target_duration, info_ms, manifest_ms, first_frag_ms, first_frag_bytes,
-       first_frag_dl_ms, first_frame_ms, seeks, seek_median_ms, seek_max_ms, stalls, stall_ms, effective_type)
-     values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)`,
+       first_frag_dl_ms, first_frame_ms, seeks, seek_median_ms, seek_max_ms, stalls, stall_ms, effective_type,
+       delivery, video_copy, sound_mode, audio_routed, dropped_frames, total_frames, track_switch, reconnects, av_events)
+     values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27)`,
     [home, b.device, b.mode ?? null, b.qualitySwitch, b.bitrate ?? null, b.targetDuration ?? null, b.infoMs ?? null, b.manifestMs ?? null, b.firstFragMs ?? null,
-      b.firstFragBytes ?? null, b.firstFragDlMs ?? null, b.firstFrameMs ?? null, b.seeks ?? 0, b.seekMedianMs ?? null, b.seekMaxMs ?? null, b.stalls ?? 0, b.stallMs ?? 0, b.effectiveType ?? null],
+      b.firstFragBytes ?? null, b.firstFragDlMs ?? null, b.firstFrameMs ?? null, b.seeks ?? 0, b.seekMedianMs ?? null, b.seekMaxMs ?? null, b.stalls ?? 0, b.stallMs ?? 0, b.effectiveType ?? null,
+      b.delivery ?? null, b.videoCopy ?? null, b.soundMode ?? null, b.audioRouted ?? null, frames.d, frames.t, b.trackSwitch, b.reconnects ?? 0, b.avEvents ?? 0],
   );
 }
 
@@ -81,6 +98,8 @@ export interface TimingRow {
   at: string; home: boolean; device: string; mode: string | null; qualitySwitch: boolean; bitrate: number | null; targetDuration: number | null;
   infoMs: number | null; manifestMs: number | null; firstFragMs: number | null; firstFragBytes: number | null; firstFragDlMs: number | null; firstFrameMs: number | null;
   seeks: number; seekMedianMs: number | null; seekMaxMs: number | null; stalls: number; stallMs: number; effectiveType: string | null;
+  delivery: 'direct' | 'remux' | 'transcode' | null; videoCopy: boolean | null; soundMode: 'off' | 'voices' | 'night' | 'both' | null; audioRouted: boolean | null;
+  droppedFrames: number | null; totalFrames: number | null; trackSwitch: boolean; reconnects: number; avEvents: number;
 }
 export interface TimingView { day: TimingGroup[]; week: TimingGroup[]; recent: TimingRow[] }
 
@@ -126,8 +145,21 @@ export async function timingView(ctx: Pick<Ctx, 'db'>): Promise<TimingView> {
       targetDuration: x.target_duration, infoMs: x.info_ms, manifestMs: x.manifest_ms, firstFragMs: x.first_frag_ms, firstFragBytes: x.first_frag_bytes,
       firstFragDlMs: x.first_frag_dl_ms, firstFrameMs: x.first_frame_ms, seeks: x.seeks, seekMedianMs: x.seek_median_ms, seekMaxMs: x.seek_max_ms,
       stalls: x.stalls, stallMs: x.stall_ms, effectiveType: x.effective_type,
+      delivery: x.delivery ?? null, videoCopy: x.video_copy ?? null, soundMode: x.sound_mode ?? null, audioRouted: x.audio_routed ?? null,
+      droppedFrames: x.dropped_frames ?? null, totalFrames: x.total_frames ?? null, trackSwitch: Boolean(x.track_switch), reconnects: x.reconnects ?? 0, avEvents: x.av_events ?? 0,
     })),
   };
+}
+
+/**
+ * Whether the server copies the video of the caller's own play session (Jellyfin TranscodingInfo.IsVideoDirect). The player asks once,
+ * a few seconds into an HLS session, and puts the answer into its anonymous timing report: the play session id is only used for this
+ * lookup and never stored. Only a session of the caller's own media-server user is answered; anything else is `null`.
+ */
+export async function streamFacts(ctx: Ctx, serverUserId: string, playSessionId: string): Promise<{ videoDirect: boolean | null }> {
+  const nid = (s: string) => s.replace(/-/g, '').toLowerCase();
+  const s = (await serverSessions(ctx))?.find((x) => x.playSessionId === playSessionId && nid(x.serverUserId) === nid(serverUserId));
+  return { videoDirect: typeof s?.videoDirect === 'boolean' ? s.videoDirect : null };
 }
 
 /**
@@ -143,4 +175,10 @@ export function playbackTimingRoutes(app: FastifyInstance, ctx: Ctx) {
     return reply.code(204).send();
   });
   app.get('/api/admin/playback/timing', { preHandler: requireAdmin(ctx) }, async () => timingView(ctx));
+  app.get('/api/playback/stream', { preHandler: requireUser(ctx), config: { rateLimit: { max: 30, timeWindow: '1 minute' } } }, async (req, reply) => {
+    const q = z.object({ ps: z.string().regex(/^[\w-]{1,100}$/) }).safeParse(req.query);
+    if (!q.success) return reply.code(400).send({ error: 'bad_request' });
+    const who = req.jfUser?.jellyfin_user_id;
+    return who ? streamFacts(ctx, who, q.data.ps) : { videoDirect: null };
+  });
 }

@@ -260,7 +260,7 @@
   .row .pg :global(svg) { transition: transform 200ms var(--emph); }
   .row .pg:hover :global(svg), .row .pg:focus-visible :global(svg) { transform: scale(1.2); }
   .row .pg:active:not(:disabled) { transform: none; }
-  .row .pg:focus-visible { outline: 2px solid #fff; outline-offset: -6px; }
+  .row .pg:focus-visible { outline: 2px solid #fff; outline-offset: -6px; box-shadow: inset 0 0 0 8px var(--ring-dark); }
   .row.dk:hover .pg, .row.dk:focus-within .pg { opacity: 1; }
   @media (hover: none), (pointer: coarse) { .row.dk:hover .pg:not(:focus-visible) { opacity: 0; } }
   /* ranked rows: a large outlined numeral, the poster overlapping its right edge */

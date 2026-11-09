@@ -118,6 +118,12 @@ export default {
     modes: { direct: 'Direkt', hls: 'HLS' },
     segment: 'Stücklänge',
     fragSize: 'Erstes Stück: Größe / Ladezeit',
+    sync: 'Bild & Ton',
+    delivery: { direct: 'Original', remux: 'Bild kopiert, Ton umgewandelt', transcode: 'Umgewandelt', unknown: 'Art unbekannt' },
+    webAudio: 'über Web Audio',
+    dropped: '{pct} % Bilder verworfen',
+    avEvents: '{n} A/V-Ereignisse',
+    trackTag: 'Tonspurwechsel',
   },
   digest: {
     settings: 'Einstellungen',

@@ -121,6 +121,12 @@ const dict: Translation<typeof de> = {
     modes: { direct: 'Doğrudan', hls: 'HLS' },
     segment: 'Parça uzunluğu',
     fragSize: 'İlk parça: boyut / yükleme süresi',
+    sync: 'Görüntü ve ses',
+    delivery: { direct: 'Orijinal', remux: 'Görüntü kopyalandı, ses dönüştürüldü', transcode: 'Dönüştürüldü', unknown: 'Yöntem bilinmiyor' },
+    webAudio: 'Web Audio üzerinden',
+    dropped: 'Karelerin %{pct} kadarı atlandı',
+    avEvents: '{n} A/V olayı',
+    trackTag: 'Ses parçası değişikliği',
   },
   digest: {
     settings: 'Ayarlar',

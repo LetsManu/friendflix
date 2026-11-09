@@ -105,7 +105,7 @@ test.describe('desktop billboard', () => {
       await page.clock.runFor(1200);
       expect(asked).toBe(0); // not yet
       await expect(bb.locator('video.hv')).not.toHaveClass(/on/);
-      await expect(bb.getByRole('button', { name: 'Ton einschalten' })).toHaveCount(0);
+      await expect(bb.getByRole('button', { name: 'Ton', exact: true })).toHaveCount(0);
       await page.clock.runFor(400);
       await expect.poll(async () => { await page.clock.runFor(50); return asked; }).toBe(1);
       await expect.poll(async () => { await page.clock.runFor(50); return bb.locator('video.hv').evaluate((v: HTMLVideoElement) => !v.paused); }).toBe(true);
@@ -118,7 +118,8 @@ test.describe('desktop billboard', () => {
       await expect.poll(() => one.evaluate((e) => getComputedStyle(e).opacity)).toBe('1');
       expect(await one.evaluate((e) => getComputedStyle(e).webkitLineClamp)).toBe('1');
       // the mute toggle and the age badge, on the right edge, level with the buttons
-      const mute = bb.getByRole('button', { name: 'Ton einschalten' });
+      // (a fixed name, the state is aria-pressed only: no "Ton aus, gedrückt")
+      const mute = bb.getByRole('button', { name: 'Ton', exact: true });
       await expect(mute).toBeVisible();
       await expect(mute).toHaveAttribute('aria-pressed', 'false');
       const playBox = (await bb.getByRole('link', { name: 'Abspielen' }).boundingBox())!;
@@ -128,8 +129,18 @@ test.describe('desktop billboard', () => {
       const ageBox = (await bb.locator('.side .agebadge').boundingBox())!;
       expect(Math.round(ageBox.x + ageBox.width)).toBe(1280);
       await mute.click();
-      await expect(bb.getByRole('button', { name: 'Ton ausschalten' })).toHaveAttribute('aria-pressed', 'true');
+      await expect(mute).toHaveAttribute('aria-pressed', 'true');
       expect(await bb.locator('video.hv').evaluate((v: HTMLVideoElement) => v.muted)).toBe(false);
+      // the trailer moves by itself: a pause button stops it, and only that button starts it again (WCAG 2.2.2)
+      const paused = () => bb.locator('video.hv').evaluate((v: HTMLVideoElement) => v.paused);
+      await bb.getByRole('button', { name: 'Vorschau anhalten' }).click();
+      await expect.poll(paused).toBe(true);
+      await page.evaluate(() => window.scrollTo(0, 700));
+      await page.evaluate(() => window.scrollTo(0, 0));
+      await page.clock.runFor(800);
+      expect(await paused()).toBe(true); // back in view: still paused
+      await bb.getByRole('button', { name: 'Vorschau fortsetzen' }).click();
+      await expect.poll(paused).toBe(false);
     });
 
     test('trailer pauses when the billboard scrolls out of view', async ({ page }) => {

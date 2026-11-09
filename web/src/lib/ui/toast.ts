@@ -10,6 +10,10 @@
  * At most MAX_VISIBLE toasts are shown; a new one pushes the oldest out (its onClose runs with reason 'replaced').
  * Timers pause while the pointer or focus is on a toast (host calls pause/resume). A toast with an action shows a countdown ring
  * (glass spec §8.5) drawn from timeLeft().
+ *
+ * Keyboard use (WCAG 2.2.1): while the last input was a key (the host calls setKeyboardUse), a toast with an action stays until
+ * it is dismissed - a keyboard user may be dozens of Tab stops away from its button. ACTION_SHORTCUT runs the newest toast's
+ * action from anywhere (runLatestAction). A pointer press brings the countdown back (at least 1.5 s left).
  */
 import { writable, type Readable } from 'svelte/store';
 
@@ -47,6 +51,8 @@ export interface Toast {
 export const MAX_VISIBLE = 3;
 export const DURATION: Record<ToastKind, number> = { success: 5000, info: 5000, error: 8000 };
 export const ACTION_DURATION = 5000;
+/** runs the newest toast's action (Alt+Z: no app or browser shortcut uses it; matched by e.code, so it works on every layout) */
+export const ACTION_SHORTCUT = 'Alt+Z';
 /** the countdown ring's circumference (r 11) */
 export const RING_LEN = 69.1;
 
@@ -57,10 +63,16 @@ let entries: Entry[] = [];
 let seq = 0;
 /** pointer or focus on the toasts: timers hold, also for toasts that arrive meanwhile (resume() starts them) */
 let paused = false;
+/** the last input was a key: action toasts hold (no countdown) */
+let kbd = false;
+const kbdStore = writable(false);
+/** true while action toasts hold for keyboard use (the host hides their countdown ring) */
+export const keyboardHold: Readable<boolean> = { subscribe: kbdStore.subscribe };
 const publish = () => list.set(entries.map(({ id, kind, message, action, duration, key, started, left }) => ({ id, kind, message, action, duration, key, started, left })));
 
+const held = (e: Entry) => kbd && Boolean(e.action);
 function arm(e: Entry) {
-  if (!e.duration || e.left <= 0) return;
+  if (!e.duration || e.left <= 0 || held(e)) return;
   e.started = Date.now();
   e.timer = setTimeout(() => close(e.id, 'timeout'), e.left);
 }
@@ -98,6 +110,37 @@ export function runToastAction(id: number): void {
   void Promise.resolve().then(run).catch(() => undefined);
 }
 
+/** Runs the newest toast's action (ACTION_SHORTCUT); false when no toast has one. */
+export function runLatestAction(): boolean {
+  const e = [...entries].reverse().find((x) => x.action);
+  if (!e) return false;
+  runToastAction(e.id);
+  return true;
+}
+
+/** the id of the newest toast with an action (the one ACTION_SHORTCUT runs), or null */
+export function latestActionId(list: readonly Toast[]): number | null {
+  for (let i = list.length - 1; i >= 0; i--) if (list[i]!.action) return list[i]!.id;
+  return null;
+}
+
+/**
+ * The input mode (the host listens to keydown / pointerdown): keyboard use holds every toast with an action (its timer stops,
+ * the time left is kept); pointer use starts them again (at least 1.5 s left, unless the region is paused anyway).
+ */
+export function setKeyboardUse(on: boolean): void {
+  if (kbd === on) return;
+  kbd = on;
+  kbdStore.set(on);
+  let changed = false;
+  for (const e of entries) {
+    if (!e.action || !e.duration) continue;
+    if (on && e.timer) { clearTimeout(e.timer); e.timer = null; e.left = Math.max(0, e.left - (Date.now() - e.started)); changed = true; }
+    else if (!on && !e.timer && !paused) { e.left = Math.max(e.left, 1500); arm(e); changed = true; }
+  }
+  if (changed) publish();
+}
+
 /** Pauses all timers (pointer/focus inside the toast region). */
 export function pause(): void {
   paused = true;
@@ -120,7 +163,7 @@ export function timeLeft(id: number, now = Date.now()): number {
 }
 export function dismissAll(): void { for (const e of [...entries]) close(e.id, 'replaced'); }
 /** test hook: back to the initial state (not paused) */
-export function resetToasts(): void { dismissAll(); paused = false; }
+export function resetToasts(): void { dismissAll(); paused = false; kbd = false; kbdStore.set(false); }
 
 /** visible toasts, oldest first */
 export const toasts: Readable<Toast[]> = { subscribe: list.subscribe };

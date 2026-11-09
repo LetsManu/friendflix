@@ -107,6 +107,22 @@ test.describe('player: adaptive quality', () => {
     await expect(page.getByRole('button', { name: /Umgewandelt · 480p/ })).toBeVisible();
   });
 
+  test('the chosen speed survives a quality switch (new stream attach) and the speed button still matches', async ({ page, api: _api }) => {
+    const calls = await mockAbr(page);
+    await page.goto('/watch/' + MOVIE.id);
+    await playing(page);
+    await page.keyboard.press('>');
+    await expect.poll(() => page.evaluate(() => document.querySelector('video')!.playbackRate)).toBe(1.25);
+    const src0 = await page.evaluate(() => document.querySelector('video')!.src);
+    await openQuality(page);
+    await page.getByRole('button', { name: '1080p' }).click();
+    await expect.poll(() => calls.length).toBe(2);
+    // the new stream is attached (a new MediaSource) and has its metadata: the load reset happened
+    await page.waitForFunction((s) => { const v = document.querySelector('video')!; return v.src !== s && v.readyState >= 1; }, src0);
+    await expect.poll(() => page.evaluate(() => document.querySelector('video')!.playbackRate)).toBe(1.25);
+    expect(await page.evaluate(() => document.querySelector('video')!.defaultPlaybackRate)).toBe(1.25);
+  });
+
   test('manual 1080p: a stall steps down with a toast, never above the pick, and the same rung can be picked again', async ({ page, api: _api }) => {
     test.setTimeout(60_000); // a real stall (7 s) plus the switches
     const calls = await mockAbr(page, { stallAt: [8_000_000] });

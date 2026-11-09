@@ -33,7 +33,7 @@
   const dispatch = createEventDispatcher<{ change: { value: Thumb; previous: Thumb }; error: { value: Thumb } }>();
   const fine = typeof matchMedia !== 'undefined' && matchMedia('(hover: hover) and (pointer: fine)').matches;
 
-  let open = false, busy = false, msg = '', skipFocusOpen = false;
+  let open = false, busy = false, msg = '';
   let root: HTMLElement, trigger: HTMLButtonElement, opts: HTMLButtonElement[] = [];
   let enterT: ReturnType<typeof setTimeout>, leaveT: ReturnType<typeof setTimeout>, msgT: ReturnType<typeof setTimeout>;
   $: v = toThumb(value);
@@ -49,7 +49,7 @@
     clearTimeout(enterT); clearTimeout(leaveT);
     if (!open) return;
     open = false;
-    if (refocus) { skipFocusOpen = true; trigger?.focus(); skipFocusOpen = false; }
+    if (refocus) trigger?.focus();
   }
 
   async function pick(o: Exclude<Thumb, 0>, e: MouseEvent | KeyboardEvent) {
@@ -77,10 +77,7 @@
     if (open && !fine) { hide(); return; }
     void show(e.detail === 0); // keyboard "click" (Enter/Space) moves focus into the options
   }
-  function onTriggerFocus(e: FocusEvent) {
-    if (skipFocusOpen || tv) return;
-    if ((e.target as HTMLElement).matches(':focus-visible')) void show(true);
-  }
+  // (keyboard focus alone no longer opens the options: the open pill covered the next button, WCAG 2.4.11. Enter / Space opens them.)
   function onEnter() { if (!fine) return; clearTimeout(leaveT); clearTimeout(enterT); enterT = setTimeout(() => void show(false), 180); }
   function onLeave() {
     if (!fine) return;
@@ -115,7 +112,7 @@
   <button
     bind:this={trigger} type="button" class="trig" class:tv-btn={tv} class:on={v !== 0} class:hid={open}
     tabindex={open ? -1 : 0} aria-label={current ? $t('common.rating.rated', { label: $t(current.key) }) : $t('common.rating.rate')} aria-haspopup="true" aria-expanded={open}
-    title={current ? $t(current.key) : $t('common.rating.rate')} on:click={onTriggerClick} on:focus={onTriggerFocus}
+    title={current ? $t(current.key) : $t('common.rating.rate')} on:click={onTriggerClick}
   >
     <span class="ic">
       {#if v === -1}{@render down(iconSize, true)}{:else if v === 2}{@render double(iconSize, true)}{:else}{@render upIc(iconSize, v === 1)}{/if}
@@ -158,7 +155,8 @@
   .trig, .opt { width: var(--rb); height: var(--rb); min-height: var(--rb); padding: 0; border-radius: 50%; background: rgba(42,42,42,.6); border: 2px solid rgba(255,255,255,.5); color: #fff; display: grid; place-items: center; position: relative; }
   .trig::after { content: ''; position: absolute; inset: -5px; border-radius: 50%; } /* >=44px hit area at 34px */
   .trig:hover:not(:disabled) { border-color: #fff; background: rgba(42,42,42,.9); }
-  .trig:focus-visible, .opt:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
+  .trig:focus-visible, .opt:focus-visible { outline: 2px solid #fff; outline-offset: 2px; --ring-o: 2px; }
+  :global(html:not(.tv)) .trig:focus-visible, :global(html:not(.tv)) .opt:focus-visible { box-shadow: 0 0 0 6px var(--ring-dark); } /* the two-tone ring (app.css) over the glass pill's own edge */
   .trig.hid { opacity: 0; pointer-events: none; } /* stays focusable while the pill covers it (visibility would drop focus) */
   .lab .trig { width: auto; height: auto; min-height: 44px; border: 0; background: none; border-radius: 6px; display: flex; flex-direction: column; gap: .3rem; padding: .2rem .4rem; }
   .lab .trig .ic { display: grid; place-items: center; width: var(--rb); height: var(--rb); }

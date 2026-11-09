@@ -1,18 +1,19 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { AudioFxEngine, fxBlocked, fxFromPref, fxPlan, fxToPref, loadFx, saveFx } from './audiofx';
+import { AudioFxEngine, fxBlocked, fxFromPref, fxPlan, fxToPref, loadFx, plainPathDue, saveFx } from './audiofx';
 
 /** minimal fake of the Web Audio API: records connections */
 function fakeAC(opts: { startState?: AudioContextState; resumeWorks?: boolean; sourceThrows?: boolean; secondSourceThrows?: boolean } = {}) {
   const log: string[] = [];
   let made = 0, sources = 0;
+  const options: unknown[] = [];
   class Node { constructor(public name: string) {} connect(n: Node) { log.push(`${this.name}->${n.name}`); return n; } disconnect() { log.push(`x ${this.name}`); } }
   const param = () => ({ value: 0 });
   class Ctx {
     state: AudioContextState = opts.startState ?? 'running';
     destination = new Node('out');
-    constructor() { made++; }
+    constructor(o?: unknown) { made++; options.push(o); }
     async resume() { if (opts.resumeWorks !== false) this.state = 'running'; }
     async close() { this.state = 'closed'; }
     createMediaElementSource() { sources++; if (opts.sourceThrows || (opts.secondSourceThrows && sources > 1)) throw new Error('InvalidStateError'); return new Node('src'); }
@@ -20,7 +21,7 @@ function fakeAC(opts: { startState?: AudioContextState; resumeWorks?: boolean; s
     createDynamicsCompressor() { return Object.assign(new Node('comp'), { threshold: param(), knee: param(), ratio: param(), attack: param(), release: param() }); }
     createGain() { return Object.assign(new Node('gain'), { gain: param() }); }
   }
-  return { AC: Ctx as unknown as new () => AudioContext, log, made: () => made, sources: () => sources };
+  return { AC: Ctx as unknown as new () => AudioContext, log, made: () => made, sources: () => sources, options };
 }
 const video = {} as HTMLMediaElement;
 
@@ -50,6 +51,20 @@ describe('fxBlocked', () => {
     expect(fxBlocked({ ...base, hasWebAudio: false })).toBe('unsupported');
     expect(fxBlocked({ ...base, src: 'https://cdn.other/x.mp4', crossOrigin: null })).toBe('unsupported');
     expect(fxBlocked({ ...base, src: 'https://cdn.other/x.mp4' })).toBeNull(); // CORS requested
+  });
+});
+
+describe('A/V sync of the sound modes', () => {
+  it('the context asks for the smallest output latency (never the power-saving larger buffer)', async () => {
+    const f = fakeAC();
+    await new AudioFxEngine(video, f.AC).apply({ voice: true, night: false });
+    expect(f.options).toEqual([{ latencyHint: 'interactive' }]);
+  });
+  it('plainPathDue: only a routed element with both modes off needs a fresh element', () => {
+    expect(plainPathDue(true, { voice: false, night: false })).toBe(true);
+    expect(plainPathDue(true, { voice: true, night: false })).toBe(false);
+    expect(plainPathDue(true, { voice: false, night: true })).toBe(false);
+    expect(plainPathDue(false, { voice: false, night: false })).toBe(false);
   });
 });
 

@@ -78,6 +78,12 @@
   onDestroy(() => { clearTimeout(timer); ctl?.abort(); });
 
   $: model = sheetModel(q, res, { recent, popular: $kidsMode ? [] : popular, genres });
+  /**
+   * the result count for screen readers (WCAG 4.1.3), in a status region that always exists (a live region added together with
+   * its text is often not read): set when an answer arrives (the fetch already waits 250 ms after the last keystroke)
+   */
+  $: hitCount = res ? res.titles.length + res.episodes.length + res.people.length + res.genres.length : 0;
+  $: status = open && res && q.trim().length >= MIN_Q ? (hitCount ? $t('home.search.hits', { n: hitCount }) : $t('home.search.noHits', { term: q.trim() })) : '';
   $: ids = hitIds(model);
   $: dispatch('items', { ids });
   $: term = q.trim();
@@ -171,6 +177,7 @@
 </script>
 
 <svelte:window on:resize={() => open && place()} />
+<p class="sr-only" role="status" data-ds-status>{status}</p>
 
 {#if open}
   <!-- one root node (portalled to <body>): the dim and the sheet -->
@@ -289,6 +296,6 @@
   .clr, .clr:hover:not(:disabled) { min-height: 32px; padding: 0 10px; border-radius: 999px; background: transparent; color: rgba(255, 255, 255, .9); font-size: 12px; font-weight: 700; }
   .all { align-self: flex-start; display: inline-flex; align-items: center; min-height: 40px; margin-top: 4px; padding: 0 16px; border-radius: 999px; font-weight: 800; font-size: 14px; color: #fff; text-decoration: none; }
   .all:hover, .all.on { background: var(--fr-sel); text-decoration: none; }
-  .ds a:focus-visible, .ds button:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
-  .hit:focus-visible { outline-offset: -2px; }
+  .ds a:focus-visible, .ds button:focus-visible { outline: 2px solid #fff; outline-offset: 2px; --ring-o: 2px; }
+  .hit:focus-visible { outline-offset: -2px; box-shadow: inset 0 0 0 4px var(--ring-dark), 0 0 0 2px var(--ring-dark); }
 </style>

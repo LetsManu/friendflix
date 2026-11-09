@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { describe, expect, it } from 'vitest';
-import { biggestPhase, fmtMbit, fmtMs, fmtPct, groupBiggest, longRemoteSegments, orderGroups, rowSteps, type TimingGroup, type TimingRow } from './timing';
+import { biggestPhase, fmtMbit, fmtMs, fmtPct, groupBiggest, longRemoteSegments, orderGroups, rowSteps, syncFacts, type TimingGroup, type TimingRow } from './timing';
 
 const pct = (p50: number | null, p90: number | null = p50) => ({ p50, p90 });
 const group = (over: Partial<TimingGroup> = {}): TimingGroup => ({
@@ -14,6 +14,14 @@ const row = (over: Partial<TimingRow> = {}): TimingRow => ({
 });
 
 describe('admin start-time helpers', () => {
+  it('syncFacts: delivery, sound modes, Web Audio, dropped frames in %, A/V events; older rows read as unknown / none', () => {
+    expect(syncFacts(row({ delivery: 'remux', videoCopy: true, soundMode: 'both', audioRouted: true, droppedFrames: 12, totalFrames: 14_400, avEvents: 3, trackSwitch: true })))
+      .toEqual({ delivery: 'remux', sound: ['voice', 'night'], webAudio: true, droppedPct: 0.1, avEvents: 3, trackSwitch: true });
+    expect(syncFacts(row({ soundMode: 'night', droppedFrames: 0, totalFrames: 0 }))).toMatchObject({ sound: ['night'], droppedPct: null });
+    expect(syncFacts(row({ soundMode: 'voices', droppedFrames: 1, totalFrames: 3 }))).toMatchObject({ sound: ['voice'], droppedPct: 33.3 });
+    expect(syncFacts(row())).toEqual({ delivery: 'unknown', sound: [], webAudio: false, droppedPct: null, avEvents: 0, trackSwitch: false });
+  });
+
   it('biggestPhase / groupBiggest pick the largest median', () => {
     expect(groupBiggest(group())).toBe('firstFrag');
     expect(biggestPhase({ info: 900, manifest: null, firstFrame: 100 })).toBe('info');

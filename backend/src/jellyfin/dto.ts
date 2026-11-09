@@ -415,6 +415,7 @@ export function toServerSession(raw: Record<string, any>): ServerSession | null 
     reasons: method === 'Transcode' ? mapTranscodeReasons(reasonsRaw) : [],
     videoCodec: str(ti?.VideoCodec, 40)?.toLowerCase(), audioCodec: str(ti?.AudioCodec, 40)?.toLowerCase(),
     hardware: ti ? Boolean(hw && hw.toLowerCase() !== 'none') : undefined,
+    videoDirect: ti ? Boolean(ti.IsVideoDirect) : method === 'DirectPlay' ? true : undefined,
     bitrate: num(ti?.Bitrate),
     // playback position (not the transcode's CompletionPercentage, which says how far ahead the encoder is)
     progressPct: runtime && pos !== undefined ? Math.min(100, Math.round((pos / runtime) * 100)) : undefined,

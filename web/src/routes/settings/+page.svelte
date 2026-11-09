@@ -264,7 +264,7 @@
   .sw-tr i { position: absolute; top: 3px; left: 3px; width: 22px; height: 22px; border-radius: 50%; background: #fff; box-shadow: 0 1px 3px rgba(0,0,0,.35); transition: transform 300ms var(--fr-spring); }
   .sw-in:checked + .sw-tr { background: var(--acc); box-shadow: none; }
   .sw-in:checked + .sw-tr i { transform: translateX(18px); }
-  .sw-in:focus-visible + .sw-tr { outline: 2px solid #fff; outline-offset: 3px; }
+  .sw-in:focus-visible + .sw-tr { outline: 2px solid #fff; outline-offset: 3px; box-shadow: 0 0 0 7px var(--ring-dark); }
   .sw-in:disabled, .sw-in:disabled + .sw-tr { cursor: default; } .sw-in:disabled + .sw-tr { opacity: .5; }
   :global(html.m-still) .sw-tr i { transition: none; }
   /* selects and fields: 12 px corners on a darker glass fill (darker keeps the white text over AA) */
@@ -272,9 +272,10 @@
   .form select option { background: var(--fr-solid); color: #fff; }
   .langsec { margin-bottom: 1.5rem; } .langsec h2 { margin: 0; font-size: 1.15rem; } .langsec .flex { align-items: center; }
   .push { margin-top: 1.5rem; } .push h2 { margin: 0; font-size: 1.15rem; }
-  .form { max-width: 640px; display: grid; gap: 1.2rem; }
-  .row { display: flex; gap: .9rem; align-items: flex-start; color: var(--fg); font-size: 1rem; } .row span { display: grid; gap: .1rem; }
-  .field { display: grid; gap: .35rem; } .field select, .field input { max-width: 360px; }
+  /* reflow at 320 px (WCAG 1.4.10): the track may shrink below a select's natural width, the switch rows wrap their text */
+  .form { max-width: 640px; display: grid; grid-template-columns: minmax(0, 1fr); gap: 1.2rem; }
+  .row { display: flex; gap: .9rem; align-items: flex-start; color: var(--fg); font-size: 1rem; } .row span { display: grid; gap: .1rem; min-width: 0; overflow-wrap: anywhere; }
+  .field { display: grid; grid-template-columns: minmax(0, 1fr); gap: .35rem; } .field select, .field input { max-width: min(360px, 100%); }
   small { font-size: .82rem; } small.muted { color: var(--hint, var(--mut)); } /* hints: a level under the dim text */
   .sub { border: 0; padding: 0; margin: 0; } .sub legend { padding: 0; margin-bottom: .35rem; font-weight: 600; }
   .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: .8rem; } .grid label { display: grid; gap: .3rem; font-size: .9rem; }

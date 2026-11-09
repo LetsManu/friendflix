@@ -6,6 +6,7 @@ import { appendFile, mkdir, readdir, rename, rm, stat, statfs, truncate, writeFi
 import { join } from 'node:path';
 import type { Ctx } from './ctx.js';
 import { DOWNLOAD_PRESETS, type DownloadQuality } from './media/types.js';
+import { discontinuities, scanFmp4File } from './fmp4scan.js';
 import { listLive } from './live.js';
 import { m, type Text } from './i18n.js';
 import { notify } from './notify.js';
@@ -87,6 +88,11 @@ export const EMPTY_SEGMENT = 'empty segment from media server';
 const errMsg = (e: unknown) => (e instanceof Error ? e.message : String(e)).slice(0, 300);
 
 const cfgNum = (v: unknown, d: number) => (Number.isFinite(Number(v)) ? Number(v) : d);
+
+/** A seam may move a track by at most this much (well below one AAC frame of encoder priming, ~21 ms, and far below lip-sync limits). */
+export const SEAM_TOLERANCE_S = 0.01;
+/** Full restarts after a jumping seam; the pass after them does not pause (one transcode from start to end). */
+export const SEAM_RESTARTS = 2;
 
 class Preparer {
   runner: FfmpegRunner = ffmpegRunner;
@@ -293,7 +299,6 @@ class Preparer {
     // the caps the user was shown (role clamp); 0 = preset default
     const maxHeight = job.max_height || preset.height;
     const maxBitrate = job.max_bitrate || preset.videoBps + preset.audioBps;
-    const part = partFile(ctx, job.id);
 
     // audio track by language (empty = the file's default)
     let audioIndex: number | undefined;
@@ -301,70 +306,113 @@ class Preparer {
       const probe = await ctx.jf.downloadSource(user, job.item_id, { quality: job.quality, maxHeight, maxBitrate });
       audioIndex = probe.audio.find((a) => a.lang.toLowerCase() === job.audio_lang.toLowerCase())?.index;
     }
-    const src = await ctx.jf.downloadSource(user, job.item_id, { quality: job.quality, audioIndex, maxHeight, maxBitrate });
-    if (!src.masterPath) throw new Error('no master playlist');
-    const playSessionId = src.playSessionId; // the session the master playlist belongs to (stopEncoding / resume bookkeeping)
-    try {
-      const variant = lines(await (await this.fetchOk(user, src.masterPath)).text()).find((l) => l && !l.startsWith('#'));
-      if (!variant) throw new Error('no variant');
-      const mediaPath = resolveUri(src.masterPath, variant);
-      const media = lines(await (await this.fetchOk(user, mediaPath)).text());
-      const map = media.find((l) => l.startsWith('#EXT-X-MAP:'))?.match(/URI="([^"]+)"/)?.[1];
-      const segs = media.filter((l) => l && !l.startsWith('#'));
-      if (!map || !segs.length) throw new Error('empty playlist');
-
-      // resume only if the init segment is byte-identical and our partial file is intact
-      const init = await this.fetchBytes(user, resolveUri(mediaPath, map));
-      const sha = createHash('sha256').update(init).digest('hex');
-      let done = job.seg_done;
-      const have = await stat(part).then((s) => s.size, () => -1);
-      const expected = Number(job.bytes ?? 0);
-      if (done > 0 && (job.init_sha !== sha || job.seg_total !== segs.length || have < expected || expected <= 0 || done > segs.length)) done = 0;
-      if (done === 0) {
-        await writeFile(part, init);
-      } else {
-        await truncate(part, expected); // drop a segment that was half written when we died
-      }
-      let bytes = done === 0 ? init.length : expected;
-      await ctx.db.query('update download_jobs set init_sha = $2, seg_total = $3, seg_done = $4, bytes = $5, media_source_id = $6, play_session_id = $7, updated_at = now() where id = $1', [job.id, sha, segs.length, done, bytes, src.mediaSourceId, playSessionId]);
-
-      let stopped = false;
-      for (let n = done; n < segs.length; n++) {
-        while (await this.shouldPause()) {
-          if (!stopped) {
-            stopped = true;
-            this.pausedJobs.add(job.id);
-            await ctx.jf.stopEncoding(user, playSessionId);
-          }
-          await this.sleep(this.pollMs);
-          if (!(await this.alive(job.id))) throw new Cancelled();
-        }
-        stopped = false;
-        this.pausedJobs.delete(job.id);
-        const seg = await this.fetchBytes(user, resolveUri(mediaPath, segs[n]!));
-        await appendFile(part, seg);
-        bytes += seg.length;
-        const upd = await ctx.db.query("update download_jobs set seg_done = $2, bytes = $3, updated_at = now() where id = $1 and status in ('queued','preparing')", [job.id, n + 1, bytes]);
-        if (!upd.rowCount) throw new Cancelled(); // license holders cancelled / GC removed the job
-      }
-
-      const file = downloadFile(ctx, job.id);
-      const tmp = `${file}.${process.pid}.tmp`;
+    // A file must come out of ONE transcode. A pause (or a backend restart) stops Jellyfin's ffmpeg and the next segment comes from a
+    // new one; its timestamps rarely line up with the old one's, and copied into one MP4 that seam is a lasting A/V offset. So a file
+    // with a seam is checked (seamGaps) and, when it jumps, prepared again from the first segment in a fresh session. After
+    // SEAM_RESTARTS such tries the last pass runs without pausing: one transcode from start to end.
+    let resume = true;
+    for (let attempt = 0; ; attempt++) {
+      const src = await ctx.jf.downloadSource(user, job.item_id, { quality: job.quality, audioIndex, maxHeight, maxBitrate });
+      if (!src.masterPath) throw new Error('no master playlist');
+      const playSessionId = src.playSessionId; // the session the master playlist belongs to (stopEncoding / resume bookkeeping)
       try {
-        await this.runner.remux(part, tmp);
-        const size = (await stat(tmp)).size;
-        if (!size) throw new Error('empty remux output');
-        await rename(tmp, file);
-        await rm(part, { force: true });
-        const ok = await ctx.db.query("update download_jobs set status = 'ready', bytes = $2, error = null, updated_at = now(), last_used_at = now() where id = $1 and status = 'preparing'", [job.id, size]);
-        if (!ok.rowCount) { await rm(file, { force: true }); throw new Cancelled(); }
+        const jump = await this.pass(user, job, src.masterPath, src.mediaSourceId, playSessionId, { resume, pause: attempt < SEAM_RESTARTS });
+        if (jump === null) break;
+        this.log(`download job ${job.id}: timestamps jump where a restarted transcode was appended (${jump}); preparing again from the first segment`);
+        resume = false;
       } finally {
-        await rm(tmp, { force: true }).catch(() => undefined);
+        this.pausedJobs.delete(job.id);
+        await ctx.jf.stopEncoding(user, playSessionId); // always: Jellyfin keeps the transcode (and its temp files) alive otherwise
       }
-      await this.notifyReady(user, job);
-    } finally {
+    }
+    await this.finish(job);
+    await this.notifyReady(user, job);
+  }
+
+  /**
+   * One pass over the playlist into the part file: resumes from seg_done when `resume` allows it and the partial file is intact.
+   * Returns null when the part file is good to remux (one transcode, or seams that line up), else a description of the jump.
+   */
+  private async pass(user: JfUser, job: JobRow, masterPath: string, mediaSourceId: string, playSessionId: string, o: { resume: boolean; pause: boolean }): Promise<string | null> {
+    const { ctx } = this;
+    const part = partFile(ctx, job.id);
+    const variant = lines(await (await this.fetchOk(user, masterPath)).text()).find((l) => l && !l.startsWith('#'));
+    if (!variant) throw new Error('no variant');
+    const mediaPath = resolveUri(masterPath, variant);
+    const media = lines(await (await this.fetchOk(user, mediaPath)).text());
+    const map = media.find((l) => l.startsWith('#EXT-X-MAP:'))?.match(/URI="([^"]+)"/)?.[1];
+    const segs = media.filter((l) => l && !l.startsWith('#'));
+    if (!map || !segs.length) throw new Error('empty playlist');
+
+    // resume only if the init segment is byte-identical and our partial file is intact
+    const init = await this.fetchBytes(user, resolveUri(mediaPath, map));
+    const sha = createHash('sha256').update(init).digest('hex');
+    const row = (await ctx.db.query<JobRow>('select * from download_jobs where id = $1', [job.id])).rows[0] ?? job;
+    let done = o.resume ? row.seg_done : 0;
+    const have = await stat(part).then((s) => s.size, () => -1);
+    const expected = Number(row.bytes ?? 0);
+    if (done > 0 && (row.init_sha !== sha || row.seg_total !== segs.length || have < expected || expected <= 0 || done > segs.length)) done = 0;
+    if (done === 0) {
+      await writeFile(part, init);
+    } else {
+      await truncate(part, expected); // drop a segment that was half written when we died
+    }
+    let bytes = done === 0 ? init.length : expected;
+    await ctx.db.query('update download_jobs set init_sha = $2, seg_total = $3, seg_done = $4, bytes = $5, media_source_id = $6, play_session_id = $7, updated_at = now() where id = $1', [job.id, sha, segs.length, done, bytes, mediaSourceId, playSessionId]);
+
+    // a seam: media segments of an earlier transcode are already in the part file and this transcode continues after them
+    let seam = done > 0;
+    let stopped = false;
+    for (let n = done; n < segs.length; n++) {
+      while (o.pause && await this.shouldPause()) {
+        if (!stopped) {
+          stopped = true;
+          if (n > 0) seam = true; // the next segment comes from a new transcode
+          this.pausedJobs.add(job.id);
+          await ctx.jf.stopEncoding(user, playSessionId);
+        }
+        await this.sleep(this.pollMs);
+        if (!(await this.alive(job.id))) throw new Cancelled();
+      }
+      stopped = false;
       this.pausedJobs.delete(job.id);
-      await ctx.jf.stopEncoding(user, playSessionId); // always: Jellyfin keeps the transcode (and its temp files) alive otherwise
+      const seg = await this.fetchBytes(user, resolveUri(mediaPath, segs[n]!));
+      await appendFile(part, seg);
+      bytes += seg.length;
+      const upd = await ctx.db.query("update download_jobs set seg_done = $2, bytes = $3, updated_at = now() where id = $1 and status in ('queued','preparing')", [job.id, n + 1, bytes]);
+      if (!upd.rowCount) throw new Cancelled(); // license holders cancelled / GC removed the job
+    }
+    return seam ? this.seamGaps(part) : null;
+  }
+
+  /** null when every track runs on without a jump (within SEAM_TOLERANCE_S); else what jumped. A file it cannot read counts as a jump. */
+  async seamGaps(part: string): Promise<string | null> {
+    try {
+      const d = discontinuities(await scanFmp4File(part), SEAM_TOLERANCE_S);
+      if (!d.length) return null;
+      const worst = d.reduce((a, b) => (Math.abs(b.gapSec) > Math.abs(a.gapSec) ? b : a));
+      return `${d.length} jump(s), track ${worst.track} by ${Math.round(worst.gapSec * 1000)} ms at fragment ${worst.fragment}`;
+    } catch (e) {
+      return `timestamps not readable: ${errMsg(e)}`;
+    }
+  }
+
+  /** remux the part file into the final MP4 and mark the job ready */
+  private async finish(job: JobRow): Promise<void> {
+    const { ctx } = this;
+    const part = partFile(ctx, job.id);
+    const file = downloadFile(ctx, job.id);
+    const tmp = `${file}.${process.pid}.tmp`;
+    try {
+      await this.runner.remux(part, tmp);
+      const size = (await stat(tmp)).size;
+      if (!size) throw new Error('empty remux output');
+      await rename(tmp, file);
+      await rm(part, { force: true });
+      const ok = await ctx.db.query("update download_jobs set status = 'ready', bytes = $2, error = null, updated_at = now(), last_used_at = now() where id = $1 and status = 'preparing'", [job.id, size]);
+      if (!ok.rowCount) { await rm(file, { force: true }); throw new Cancelled(); }
+    } finally {
+      await rm(tmp, { force: true }).catch(() => undefined);
     }
   }
 

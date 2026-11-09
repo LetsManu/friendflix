@@ -814,6 +814,21 @@ export const MIGRATIONS: string[] = [
     select null, 'settings.update', null, jsonb_build_object('keys', jsonb_agg(key order by key), 'reason', 'session_defaults')
     from m42_removed having count(*) > 0;
   `,
+  // 43: A/V-sync facts of the anonymous playback timing (playtiming.ts): how the stream was delivered, whether the server copied the
+  // video, the sound mode and Web Audio routing, dropped / total frames and the A/V-affecting events. Still no user, profile or title.
+  // Rerunnable (if not exists): tests rewind schema_migrations past 42 and migrate again.
+  `
+  alter table playback_timings
+    add column if not exists delivery text check (delivery in ('direct','remux','transcode')),
+    add column if not exists video_copy boolean,
+    add column if not exists sound_mode text check (sound_mode in ('off','voices','night','both')),
+    add column if not exists audio_routed boolean,
+    add column if not exists dropped_frames int,
+    add column if not exists total_frames int,
+    add column if not exists track_switch boolean not null default false,
+    add column if not exists reconnects int not null default 0,
+    add column if not exists av_events int not null default 0;
+  `,
 ];
 
 export async function migrate(pool: pg.Pool): Promise<void> {

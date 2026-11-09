@@ -5,9 +5,16 @@
  * the (variant) playlist, the first media fragment and the first frame, plus seeks (seeking -> playing) and stalls (waiting
  * after the first frame). Sent once per session on stop / pagehide / end (POST /api/playback/timing, keepalive fetch with
  * the csrf header) and kept on this device (last TIMING_LOCAL_MAX, shown on /diagnose). Never throws, never blocks playback.
+ *
+ * Sync facts of the same session (for A/V-sync reports): how the stream was delivered (direct file, remux = video copied with the
+ * audio converted, transcode), the sound mode and whether the sound ran through Web Audio, dropped / total video frames
+ * (getVideoPlaybackQuality) and the A/V-affecting events (seeks, a track / quality switch that started the session, reconnects).
+ * Like the timings: no user, profile, title or address.
  */
 export type Device = 'phone' | 'pc' | 'tv';
 export type Mode = 'direct' | 'hls';
+export type Delivery = 'direct' | 'remux' | 'transcode';
+export type SoundMode = 'off' | 'voices' | 'night' | 'both';
 
 export interface TimingReport {
   device: Device;
@@ -28,6 +35,22 @@ export interface TimingReport {
   stalls: number;
   stallMs: number;
   effectiveType: string | null;
+  /** direct play, remux (video copied, audio converted) or transcode; null = not known */
+  delivery: Delivery | null;
+  /** the server copied the video stream (its transcode info); null = not known */
+  videoCopy: boolean | null;
+  /** sound mode at the end of the session */
+  soundMode: SoundMode;
+  /** the sound ran through Web Audio during this session (sound modes: extra audio latency) */
+  audioRouted: boolean;
+  droppedFrames: number | null;
+  totalFrames: number | null;
+  /** this session only exists because of an audio track switch */
+  trackSwitch: boolean;
+  /** stream errors this session recovered from (retry, media recovery, switch to the converted stream) */
+  reconnects: number;
+  /** seeks + reconnects + the track / quality switch that started this session */
+  avEvents: number;
 }
 export interface StoredTiming extends TimingReport { at: number }
 
@@ -42,25 +65,79 @@ const median = (xs: number[]): number | null => {
 };
 const ms = (x: number) => Math.max(0, Math.round(x));
 
+/** transcode reasons that make the server convert the picture itself (a bitrate / height cap below the source, a codec the device lacks) */
+const VIDEO_REASONS = new Set(['videoCodec', 'height', 'network', 'remoteCap', 'roleCap', 'manual']);
+/** reasons where the picture is usually copied and only the audio or the container changes */
+const REMUX_REASONS = new Set(['audioCodec', 'audioTrack', 'container']);
+/**
+ * How the stream reaches the player: the server's own answer (`videoCopy`, from its transcode info) wins; without it the transcode
+ * reason gives a best guess; null when neither says it.
+ */
+export function deliveryOf(mode: Mode | null, reason: string | null | undefined, videoCopy: boolean | null): Delivery | null {
+  if (mode === 'direct') return 'direct';
+  if (mode !== 'hls') return null;
+  if (videoCopy !== null) return videoCopy ? 'remux' : 'transcode';
+  if (reason && VIDEO_REASONS.has(reason)) return 'transcode';
+  if (reason && REMUX_REASONS.has(reason)) return 'remux';
+  return null;
+}
+
+/**
+ * Dropped / total frames over a session: the element's counters restart at every load (a new src, an MSE attach, a fresh element),
+ * so a reading below the previous one means a restart and the previous reading is kept as a base.
+ */
+function frameCounter() {
+  let baseD = 0, baseT = 0, lastD = 0, lastT = 0, seen = false;
+  return {
+    reset() { baseD = baseT = lastD = lastT = 0; seen = false; },
+    sample(dropped: number, total: number) {
+      if (!Number.isFinite(dropped) || !Number.isFinite(total) || dropped < 0 || total < 0) return;
+      if (total < lastT || dropped < lastD) { baseD += lastD; baseT += lastT; }
+      lastD = dropped; lastT = total; seen = true;
+    },
+    get value(): { dropped: number | null; total: number | null } {
+      return seen ? { dropped: Math.round(baseD + lastD), total: Math.round(baseT + lastT) } : { dropped: null, total: null };
+    },
+  };
+}
+
 export function createTiming(now: () => number = () => performance.now()) {
   let t0 = 0, on = false, qualitySwitch = false, mode: Mode | null = null, bitrate: number | null = null, targetDuration: number | null = null;
   let infoAt: number | null = null, manifestAt: number | null = null, fragAt: number | null = null, frameAt: number | null = null;
   let fragBytes: number | null = null, fragDl: number | null = null;
   let seekAt: number | null = null, seeks: number[] = [], seekCount = 0, stallAt: number | null = null, stalls = 0, stallMs = 0;
+  let trackSwitch = false, delivery: Delivery | null = null, videoCopy: boolean | null = null, soundMode: SoundMode = 'off', audioRouted = false, reconnects = 0;
+  const frames = frameCounter();
   const rel = () => ms(now() - t0);
   const closeStall = () => { if (stallAt !== null) { stallMs += ms(now() - stallAt); stallAt = null; } };
   const frame = () => { if (on && frameAt === null) frameAt = rel(); };
 
   return {
-    /** start of loading: a new session (`qualitySwitch` = a re-start for a quality change, never counted as a start) */
-    begin(isSwitch = false) {
+    /**
+     * start of loading: a new session (`qualitySwitch` = a re-start for a quality change, never counted as a start; `isTrack` = a
+     * re-start for an audio track change)
+     */
+    begin(isSwitch = false, isTrack = false) {
       t0 = now(); on = true; qualitySwitch = isSwitch; mode = null; bitrate = null; targetDuration = null;
       infoAt = manifestAt = fragAt = frameAt = fragBytes = fragDl = seekAt = stallAt = null; seeks = []; seekCount = 0; stalls = 0; stallMs = 0;
+      trackSwitch = isTrack && !isSwitch; delivery = null; videoCopy = null; soundMode = 'off'; audioRouted = false; reconnects = 0; frames.reset();
     },
     get active() { return on; },
     /** playback info received with the requested bitrate (first answer of the session only: a retry keeps the clock) */
     info(bps?: number) { if (on && infoAt === null) { infoAt = rel(); bitrate = bps && bps > 0 ? Math.round(bps) : null; } },
     mode(m: Mode) { if (on && mode === null) mode = m; },
+    /** how the stream is delivered: the transcode reason's guess first, the server's transcode info (videoCopy) when it answers */
+    stream(o: { reason?: string | null; videoCopy?: boolean | null }) {
+      if (!on) return;
+      if (typeof o.videoCopy === 'boolean') videoCopy = o.videoCopy;
+      delivery = deliveryOf(mode, o.reason, videoCopy) ?? delivery;
+    },
+    /** the current sound mode; `routed` = the element's sound runs through Web Audio (sticky for the session) */
+    sound(m: SoundMode, routed: boolean) { if (on) { soundMode = m; audioRouted ||= routed; } },
+    /** getVideoPlaybackQuality(): dropped and total frames of the element right now */
+    frames(dropped: number, total: number) { if (on) frames.sample(dropped, total); },
+    /** the stream failed and is being recovered (retry, media recovery, the converted stream) */
+    reconnect() { if (on) reconnects++; },
     /** playlist loaded (hls.js LEVEL_LOADED, native: loadedmetadata); `target` = EXT-X-TARGETDURATION */
     manifest(target?: number) {
       if (!on || manifestAt !== null) return;
@@ -102,6 +179,8 @@ export function createTiming(now: () => number = () => performance.now()) {
         device: env.device, mode, qualitySwitch, bitrate, targetDuration, infoMs: infoAt, manifestMs: manifestAt, firstFragMs: fragAt,
         firstFragBytes: fragBytes, firstFragDlMs: fragDl, firstFrameMs: frameAt, seeks: seekCount, seekMedianMs: med === null ? null : ms(med),
         seekMaxMs: seeks.length ? Math.max(...seeks) : null, stalls, stallMs, effectiveType: env.effectiveType ?? null,
+        delivery: delivery ?? deliveryOf(mode, null, videoCopy), videoCopy, soundMode, audioRouted, droppedFrames: frames.value.dropped, totalFrames: frames.value.total,
+        trackSwitch, reconnects, avEvents: seekCount + reconnects + (qualitySwitch || trackSwitch ? 1 : 0),
       };
     },
     /** party / cast / AirPlay: this session is not reported */
@@ -161,5 +240,14 @@ export function formatTiming(s: StoredTiming): string {
     `${new Date(s.at).toISOString().slice(0, 19).replace('T', ' ')} ${s.device} ${s.mode ?? '?'}${s.qualitySwitch ? ' (switch)' : ''}${s.bitrate ? ` ${Math.round(s.bitrate / 100_000) / 10} Mbit/s` : ''}${s.effectiveType ? ` ${s.effectiveType}` : ''}`,
     `  info ${v(s.infoMs)} · playlist ${v(s.manifestMs)} · 1st frag ${v(s.firstFragMs)} (${kb} in ${v(s.firstFragDlMs)}) · 1st frame ${v(s.firstFrameMs)}${s.targetDuration ? ` · segment ${s.targetDuration} s` : ''}`,
     `  seeks ${s.seeks} (median ${v(s.seekMedianMs)}, max ${v(s.seekMaxMs)}) · stalls ${s.stalls} (${v(s.stallMs)})`,
+    ...(s.avEvents === undefined ? [] : [syncLine(s)]), // reports stored before the sync facts existed have none
   ].join('\n');
+}
+
+/** "sync: remux (video copied) · sound night, Web Audio · dropped 12/14400 frames · A/V events 3 (1 reconnect, track switch)" */
+function syncLine(s: StoredTiming): string {
+  const how = s.delivery ? `${s.delivery}${s.videoCopy === null ? '' : s.videoCopy ? ' (video copied)' : ' (video converted)'}` : '?';
+  const frames = s.totalFrames === null ? '–' : `${s.droppedFrames ?? 0}/${s.totalFrames}`;
+  const why = [s.reconnects ? `${s.reconnects} reconnect${s.reconnects === 1 ? '' : 's'}` : '', s.trackSwitch ? 'track switch' : ''].filter(Boolean).join(', ');
+  return `  sync: ${how} · sound ${s.soundMode}${s.audioRouted ? ', Web Audio' : ''} · dropped ${frames} frames · A/V events ${s.avEvents}${why ? ` (${why})` : ''}`;
 }

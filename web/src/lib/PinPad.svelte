@@ -43,9 +43,11 @@
 <div class="pad" bind:this={box} role="group" aria-label={title || $t('account.pin.enter')}>
   <h2>{title || $t('account.pin.enter')}</h2>
   {#if hint}<p class="hint">{hint}</p>{/if}
-  <div class="boxes" aria-live="polite" aria-label={$t('account.pin.progress', { n: pin.length })}>
+  <!-- the dots are for the eye; screen readers hear "2 of 4 digits" from the live text (WCAG 4.1.3) -->
+  <div class="boxes" aria-hidden="true">
     {#each [0, 1, 2, 3] as i}<span class="b" class:on={i < pin.length} class:cur={i === pin.length}>{i < pin.length ? '●' : ''}</span>{/each}
   </div>
+  <p class="sr-only" aria-live="polite" data-pin-progress>{$t('account.pin.progress', { n: pin.length })}</p>
   <p class="err msg" role="alert">{error}</p>
   <div class="keys" data-nav>
     {#each ['1', '2', '3', '4', '5', '6', '7', '8', '9'] as d, i}

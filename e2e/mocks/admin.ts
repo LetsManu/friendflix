@@ -739,6 +739,9 @@ export function adminRoute(st: AdminState, m: string, p: string, sp: URLSearchPa
     const row = (i: number, home: boolean, device: string, frame: number) => ({
       at: ago(i * 10), home, device, mode: 'hls', qualitySwitch: i === 2, bitrate: 8e6, targetDuration: home ? 3 : 6, infoMs: 400, manifestMs: 700, firstFragMs: frame - 200,
       firstFragBytes: 4_200_000, firstFragDlMs: frame - 1000, firstFrameMs: frame, seeks: 1, seekMedianMs: 800, seekMaxMs: 800, stalls: home ? 0 : 1, stallMs: home ? 0 : 2400, effectiveType: null,
+      // A/V-sync facts: the newest row has them, the oldest is from a player before they existed
+      ...(i === 1 ? { delivery: 'remux', videoCopy: true, soundMode: 'night', audioRouted: true, droppedFrames: 12, totalFrames: 14_400, trackSwitch: true, reconnects: 1, avEvents: 3 } : {}),
+      ...(i === 2 ? { delivery: 'transcode', videoCopy: false, soundMode: 'off', audioRouted: false, droppedFrames: 0, totalFrames: 9000, trackSwitch: false, reconnects: 0, avEvents: 2 } : {}),
     });
     return J({ day, week: day, recent: [row(1, false, 'phone', 5600), row(2, false, 'phone', 3100), row(3, true, 'pc', 1500)] });
   }

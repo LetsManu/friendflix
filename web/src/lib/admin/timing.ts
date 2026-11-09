@@ -15,6 +15,9 @@ export interface TimingRow {
   at: string; home: boolean; device: Device; mode: 'direct' | 'hls' | null; qualitySwitch: boolean; bitrate: number | null; targetDuration: number | null;
   infoMs: number | null; manifestMs: number | null; firstFragMs: number | null; firstFragBytes: number | null; firstFragDlMs: number | null; firstFrameMs: number | null;
   seeks: number; seekMedianMs: number | null; seekMaxMs: number | null; stalls: number; stallMs: number; effectiveType: string | null;
+  /** A/V-sync facts (null / 0 for rows of older players) */
+  delivery?: 'direct' | 'remux' | 'transcode' | null; videoCopy?: boolean | null; soundMode?: 'off' | 'voices' | 'night' | 'both' | null; audioRouted?: boolean | null;
+  droppedFrames?: number | null; totalFrames?: number | null; trackSwitch?: boolean; reconnects?: number; avEvents?: number;
 }
 export interface TimingView { day: TimingGroup[]; week: TimingGroup[]; recent: TimingRow[] }
 
@@ -59,3 +62,29 @@ export function fmtMs(ms: number | null | undefined): string {
 }
 export const fmtPct = (p: Pct): string => (p.p50 === null ? '–' : `${fmtMs(p.p50)} / ${fmtMs(p.p90)}`);
 export const fmtMbit = (bps: number | null): string => (bps ? `${fmtNumber(bps / 1e6, { maximumFractionDigits: 1 })} Mbit/s` : '–');
+
+export interface SyncFacts {
+  delivery: 'direct' | 'remux' | 'transcode' | 'unknown';
+  /** the sound modes that were on at the end (empty = off) */
+  sound: Array<'voice' | 'night'>;
+  /** the sound ran through Web Audio during the session (extra audio latency) */
+  webAudio: boolean;
+  /** dropped frames in % of all frames (one decimal), null = not measured */
+  droppedPct: number | null;
+  avEvents: number;
+  trackSwitch: boolean;
+}
+
+/** the A/V-sync facts of one row, ready for the "Picture & sound" column */
+export function syncFacts(r: TimingRow): SyncFacts {
+  const total = r.totalFrames ?? null, dropped = r.droppedFrames ?? null;
+  const m = r.soundMode ?? 'off';
+  return {
+    delivery: r.delivery ?? 'unknown',
+    sound: [...(m === 'voices' || m === 'both' ? ['voice' as const] : []), ...(m === 'night' || m === 'both' ? ['night' as const] : [])],
+    webAudio: r.audioRouted === true,
+    droppedPct: total && dropped !== null ? Math.round((dropped / total) * 1000) / 10 : null,
+    avEvents: r.avEvents ?? 0,
+    trackSwitch: r.trackSwitch === true,
+  };
+}

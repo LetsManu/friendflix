@@ -8,6 +8,8 @@ const dict: Translation<typeof de> = {
   nav: {
     label: 'Navigation Kids',
     home: 'Accueil Kids',
+    /** the logo link: starts with its visible text (the wordmark and badge) for voice control */
+    homeLink: 'FriendFlix Kids – accueil',
     search: 'Rechercher',
     switchProfile: 'Changer de profil (actuel : {name})',
   },

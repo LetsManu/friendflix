@@ -34,6 +34,8 @@
   let section: HTMLElement | undefined, hv: HTMLVideoElement;
   let loaded = false, bgFailed = false, logoFailed = false;
   let playing = false, vmuted = true, ended = false, quiet = false, inView = true, paused = false, interrupted = false;
+  /** the viewer paused the trailer with its button (WCAG 2.2.2): nothing restarts it but the button */
+  let userPaused = false;
   let timer: ReturnType<typeof setTimeout> | undefined, quietT: ReturnType<typeof setTimeout> | undefined, scheduledFor = '';
   let fullH = 0, oneH = 0;
 
@@ -80,11 +82,16 @@
       if (playing && hv && !hv.paused) { hv.pause(); paused = true; }
     } else if (paused) {
       paused = false;
-      if (playing && hv) void hv.play().catch(() => undefined);
+      if (playing && hv && !userPaused) void hv.play().catch(() => undefined);
       else if (item && !ended && !playing) { const id = item.id; clearTimeout(timer); timer = setTimeout(() => void start(id), 600); }
     }
   }
-  function stop() { clearTimeout(timer); clearTimeout(quietT); if (owner) stopPreview(owner); playing = false; quiet = false; paused = false; }
+  function stop() { clearTimeout(timer); clearTimeout(quietT); if (owner) stopPreview(owner); playing = false; quiet = false; paused = false; userPaused = false; }
+  function togglePause() {
+    if (!hv) return;
+    userPaused = !userPaused;
+    if (userPaused) hv.pause(); else if (!hold) void hv.play().catch(() => undefined);
+  }
   function onEnded() { stop(); ended = true; } // trailer over: back to the still, replay button
   function replay() { if (!item) return; ended = false; scheduledFor = item.id; void start(item.id); }
   function onVisibility() { if (document.hidden) { if (playing && hv && !hv.paused) { hv.pause(); paused = true; } } else syncHold(hold); }
@@ -147,7 +154,10 @@
     </div>
     <div class="side">
       {#if playing}
-        <button type="button" class="snd" aria-label={vmuted ? $t('home.card.soundOn') : $t('home.card.soundOff')} aria-pressed={!vmuted} on:click={() => toggleSound(hv)}><Icon name={vmuted ? 'volume-off' : 'volume'} size={20} /></button>
+        <!-- the trailer moves by itself: a pause button (WCAG 2.2.2); its name says what it does, no pressed state -->
+        <button type="button" class="snd" aria-label={userPaused ? $t('home.hero.resumePreview') : $t('home.hero.pausePreview')} title={userPaused ? $t('home.hero.resumePreview') : $t('home.hero.pausePreview')} on:click={togglePause}><Icon name={userPaused ? 'play' : 'pause'} size={20} /></button>
+        <!-- a fixed name with aria-pressed (the name no longer flips with the state: "Sound, pressed" means it is on) -->
+        <button type="button" class="snd" aria-label={$t('home.hero.sound')} title={vmuted ? $t('home.card.soundOn') : $t('home.card.soundOff')} aria-pressed={!vmuted} on:click={() => toggleSound(hv)}><Icon name={vmuted ? 'volume-off' : 'volume'} size={20} /></button>
       {:else if ended}
         <button type="button" class="snd" aria-label={$t('home.hero.replay')} title={$t('home.hero.replayTitle')} on:click={replay}><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M3.5 12a8.5 8.5 0 102.6-6.1M3.5 4v4.5H8" /></svg></button>
       {/if}
@@ -170,10 +180,12 @@
   .bg.loaded { opacity: 1; }
   .hv { opacity: 0; transition: opacity 900ms ease-out; pointer-events: none; background: transparent; }
   .hv.on { opacity: 1; }
-  /* left fade (0 → 62 %), bottom fade into the page colour, and a light top shade so the transparent bar stays readable */
+  /* left fade, bottom fade into the page colour, and a light top shade so the transparent bar stays readable. The left fade
+     holds .72 out to 46 % (the text column ends by 45 % at every width, min 420 px from the gutter): the synopsis keeps AA over
+     a bright backdrop (WCAG 1.4.3), then it fades out by 68 % */
   .shade { position: absolute; inset: 0; z-index: -1; pointer-events: none; background:
       linear-gradient(to top, var(--bg) 0, rgba(var(--ink), .78) 12%, rgba(var(--ink), 0) 38%),
-      linear-gradient(to right, rgba(var(--ink), .94) 0, rgba(var(--ink), .72) 24%, rgba(var(--ink), .28) 46%, rgba(var(--ink), 0) 62%),
+      linear-gradient(to right, rgba(var(--ink), .94) 0, rgba(var(--ink), .78) 24%, rgba(var(--ink), .72) 46%, rgba(var(--ink), .3) 57%, rgba(var(--ink), 0) 68%),
       linear-gradient(to bottom, rgba(var(--ink), .6) 0, rgba(var(--ink), 0) 160px); }
 
   /* ---- text block ---- */

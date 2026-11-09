@@ -2,7 +2,7 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
 <svelte:head><title>{$t('common.pageTitle', { page: $t('account.profiles.pageTitle') })}</title></svelte:head>
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { onMount, tick } from 'svelte';
   import { api, ApiError } from '#lib/api';
   import { AVATARS, avatarBg, initial } from '#lib/avatars';
   import Icon from '#lib/Icon.svelte';
@@ -29,6 +29,13 @@
   /** /auth/login?resetPin=1 was refused: 'kids' = this device is locked to a kids profile, 'stale' = the IdP did not ask for the login again */
   let resetNote: 'kids' | 'stale' | null = null;
   let pinFor: Profile | null = null, pinErr = '', pinBusy = false, pinOwner = false;
+  /** the PIN pad closed without a choice: the focus goes back to the profile it was opened for (never to the page's top) */
+  async function cancelPin() {
+    const id = pinFor?.id;
+    pinFor = null;
+    await tick();
+    if (id) document.querySelector<HTMLElement>(`.prof[data-pid="${CSS.escape(id)}"]`)?.focus();
+  }
   const KIDS_RATINGS = [0, 6, 12] as const;
   const ratingKey = (n: number) => `kids.profiles.rating${n}` as TKey;
   // editor: null = closed, {} without id = new profile
@@ -166,8 +173,8 @@
     <div class="grid2" data-nav>
       {#each profiles as p (p.id)}
         {@const label = p.kids ? $t('kids.profiles.ariaKids', { name: p.name }) : p.name}
-        <button class="prof" class:cur={p.id === activeId} class:kid={p.kids} data-autofocus={p === profiles[0] ? '' : undefined} aria-label={p.hasPin ? (manage ? $t('account.profiles.ariaPinEdit', { name: label }) : $t('account.profiles.ariaPin', { name: label })) : manage ? $t('account.profiles.ariaEdit', { name: label }) : label} disabled={pinBusy} on:click={() => choose(p)}>
-          <span class="face" style="background:{avatarBg(p.avatar)}">{initial(p.name)}
+        <button class="prof" data-pid={p.id} class:cur={p.id === activeId} class:kid={p.kids} data-autofocus={p === profiles[0] ? '' : undefined} aria-label={p.hasPin ? (manage ? $t('account.profiles.ariaPinEdit', { name: label }) : $t('account.profiles.ariaPin', { name: label })) : manage ? $t('account.profiles.ariaEdit', { name: label }) : label === p.name ? undefined : label} disabled={pinBusy} on:click={() => choose(p)}>
+          <span class="face" style="background:{avatarBg(p.avatar)}" aria-hidden="true">{initial(p.name)}
             {#if p.kids}<span class="kb" aria-hidden="true">{$t('kids.badge')}</span>{/if}
             {#if p.hasPin || p.unlock === 'owner'}<span class="lock"><Icon name="lock" size={18} /></span>{/if}
             {#if manage && canEdit(p)}<span class="edit">{$t('account.profiles.edit')}</span>{/if}
@@ -195,7 +202,7 @@
   <div class="ov" role="dialog" aria-modal="true" aria-label={$t('account.profiles.pinFor', { name: pinFor.name })}>
     <div class="box">
       <span class="face sm" style="background:{avatarBg(pinFor.avatar)}">{initial(pinFor.name)}</span>
-      <PinPad title={pinOwner ? $t('kids.profiles.ownerPinTitle', { name: owner?.name ?? '' }) : $t('account.profiles.pinFor', { name: pinFor.name })} hint={pinOwner ? $t('kids.profiles.ownerPinHint') : ''} error={pinErr} busy={pinBusy} on:submit={(e) => pinFor && choose(pinFor, e.detail)} on:cancel={() => (pinFor = null)} />
+      <PinPad title={pinOwner ? $t('kids.profiles.ownerPinTitle', { name: owner?.name ?? '' }) : $t('account.profiles.pinFor', { name: pinFor.name })} hint={pinOwner ? $t('kids.profiles.ownerPinHint') : ''} error={pinErr} busy={pinBusy} on:submit={(e) => pinFor && choose(pinFor, e.detail)} on:cancel={cancelPin} />
       <!-- never offered while leaving a kids profile (the server refuses the reset on a kid-locked device anyway) -->
       {#if pinFor.isOwner && !pinOwner && !kidsLock}<button type="button" class="sec forgot" on:click={() => (location.href = '/auth/login?resetPin=1')}>{$t('account.profiles.forgotPin')}</button>{/if}
     </div>

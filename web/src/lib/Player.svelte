@@ -44,7 +44,9 @@
   import ScenesPanel from '#lib/player/ScenesPanel.svelte';
   import { hasPeople, loadCastInfo, type CastInfoData } from '#lib/player/castinfo';
   import { chapterIndexAt, chapterLabel, chapterMarks, normalizeChapters, trickFrame, usefulChapters, type Chapter } from '#lib/player/chapters';
-  import { AudioFxEngine, fxActive, fxBlocked, fxFromPref, fxToPref, loadFx, saveFx, type AudioFx } from '#lib/player/audiofx';
+  import { applyRate, reapplyRate } from '#lib/player/rate';
+  import { AudioFxEngine, fxActive, fxBlocked, fxFromPref, fxToPref, loadFx, plainPathDue, saveFx, type AudioFx } from '#lib/player/audiofx';
+  import { frameShown, snapshotFrame, swapAllowed } from '#lib/player/freshvideo';
   import { fmtDuration, getLocale, t, tr, type TFn, type TKey } from '#lib/i18n';
   import { animeAudio, animeDefaultApplies, animeSubtitle } from '#lib/player/anime';
   import { castBody, castConfigEnabled, castSetVolume, castState, castToggleMute, initCast, loadOnCast, onCastEvent, requestCastSession, type CastInfo } from '#lib/cast';
@@ -300,7 +302,7 @@
   $: tvSub = item?.seriesName && item.indexNumber !== undefined && item.indexNumber !== null
     ? $t('tv.player.episode', { s: item.parentIndexNumber ?? 1, e: item.indexNumber, name: item.name }) : barSub;
   /** desktop and phone pause screens (spec 2026-11-08 §3): 5 s after the pause or the last input, unless something else is on screen */
-  $: pauseBlocked = menu !== '' || scrubbing || partyMode || remote || Boolean(error) || reconnecting > 0 || locked || help || subDlg || showXray || peek || credits !== 'off';
+  $: pauseBlocked = ctlFocus || menu !== '' || scrubbing || partyMode || remote || Boolean(error) || reconnecting > 0 || locked || help || subDlg || showXray || peek || credits !== 'off';
   $: deskPause = desk && paused && started && deskPauseDue({ pausedAt, lastActive, now: tick, blocked: pauseBlocked });
   $: phonePause = phoneUi && paused && started && deskPauseDue({ pausedAt, lastActive, now: tick, blocked: pauseBlocked || cardOn });
   $: phoneMotion = phoneUi && motionAllowed();
@@ -338,7 +340,7 @@
     if (left) credOutT = setTimeout(() => (credOut = false), phoneUi ? 800 : 300);
   }
   // phones: an open panel (a menu, Cast & info, the party host's settings) keeps the controls up (spec 2026-11-08 §1)
-  $: showUi = !locked && !pauseOn && !deskPause && !phonePause && credits !== 'corner' && (paused || menu !== '' || (phoneUi && (showXray || extPanel)) || scrubbing || sp.active || tick - lastActive < hideMs);
+  $: showUi = !locked && !pauseOn && !deskPause && !phonePause && credits !== 'corner' && (paused || ctlFocus || menu !== '' || (phoneUi && (showXray || extPanel)) || scrubbing || sp.active || tick - lastActive < hideMs);
   // TV: a hidden bar keeps no focus - otherwise the next OK would press the last used button (subtitles ...) instead of play/pause
   $: if (!showUi && typeof document !== 'undefined' && tvMode() && stage?.querySelector('.ctl')?.contains(document.activeElement)) (document.activeElement as HTMLElement).blur();
   $: creditsAt = creditsStart(segments, duration);
@@ -358,7 +360,7 @@
     ? { itemId, playSessionId: airInfo.playSessionId, mediaSourceId: airInfo.mediaSourceId, positionTicks: secToTicks(video?.currentTime ?? 0), isPaused: video?.paused ?? false, audioIndex, playMethod: 'Transcode' }
     : {
       itemId, playSessionId: info!.playSessionId, mediaSourceId: info!.mediaSourceId,
-      positionTicks: secToTicks(video?.currentTime ?? 0), isPaused: video?.paused ?? false, audioIndex, playMethod: mode === 'direct' ? 'DirectPlay' : 'Transcode',
+      positionTicks: secToTicks(swapping ? lastPos : video?.currentTime ?? 0), isPaused: video?.paused ?? false, audioIndex, playMethod: mode === 'direct' ? 'DirectPlay' : 'Transcode',
     };
   let lastSent = 0;
   /** the latest stop report (also one sent earlier, e.g. at the end of the film): leaving the player holds prefetches on it */
@@ -366,6 +368,7 @@
   const send = (kind: 'start' | 'progress' | 'stop', keepalive = false) => {
     if (kind === 'stop') reportTiming();
     if (handedOff) return undefined; // the cast engine reports for the handed-over session
+    if (swapping && kind === 'progress') return undefined; // the fresh element is still on its way to the position
     lastSent = Date.now();
     const r = report && info && api(`/api/playback/${kind}`, { method: 'POST', body: body(), keepalive }).catch(() => undefined);
     if (kind === 'stop') lastStop = r;
@@ -375,11 +378,36 @@
   // ---- start-time measurement per playback session (lib/player/timing.ts): sent once on stop / pagehide / end; never in a
   //      watch party, while casting / AirPlay or for a stream handed to the cast engine (offline playback has its own player) ----
   const timing = createTiming();
+  /** dropped / total frames of the element right now (the timing keeps them across element / stream restarts) */
+  function sampleFrames() {
+    try { const q = video?.getVideoPlaybackQuality?.(); if (q) timing.frames(q.droppedVideoFrames, q.totalVideoFrames); } catch { /* not supported */ }
+  }
   function reportTiming() {
     try {
+      sampleFrames();
+      timing.sound(fxToPref(fx), Boolean(fxEngine?.routed));
       const r = timing.finish({ device: deviceClass({ coarse, tv: tvMode() }), effectiveType: effectiveType(navigator) });
       if (r && !partyMode && !remote && !handedOff && !airInfo && !airOn) sendTiming(r, { csrf: getCsrf(), profile: getActiveProfile() });
     } catch { /* measuring must never break playback */ }
+  }
+
+  /**
+   * A/V-sync telemetry: a few seconds into an HLS session, ask the server once whether it copies the video of this play session
+   * (remux) or converts it; the answer only goes into this session's anonymous timing report.
+   */
+  const STREAM_PROBE_MS = 4000;
+  let probeT: ReturnType<typeof setTimeout> | undefined, probedPs = '', trackSwitching = false;
+  function probeStream() {
+    const ps = info?.playSessionId;
+    if (!ps || probedPs === ps || mode !== 'hls' || !timing.active || partyMode || remote || airOn || airInfo || handedOff) return;
+    probedPs = ps;
+    clearTimeout(probeT);
+    probeT = setTimeout(() => {
+      if (info?.playSessionId !== ps || !timing.active) return;
+      api<{ videoDirect?: boolean | null } | null>(`/api/playback/stream?ps=${encodeURIComponent(ps)}`)
+        .then((r) => { if (info?.playSessionId === ps && typeof r?.videoDirect === 'boolean') timing.stream({ videoCopy: r.videoDirect }); })
+        .catch(() => undefined);
+    }, STREAM_PROBE_MS);
   }
 
   // ---- per-series audio / subtitle choice ("anime pack"): remembered per profile, applied before the global defaults ----
@@ -413,7 +441,7 @@
     cancelFirstFrame();
     error = ''; errNote = '';
     // a retry / track reload continues the running session (its clock keeps going); a quality switch starts a new one, flagged
-    if (!timing.active && !partyMode && !remote) timing.begin(switching);
+    if (!timing.active && !partyMode && !remote) timing.begin(switching, trackSwitching);
     if (startSec !== undefined) { lastPos = startSec; posKnown = true; }
     // first start: the saved quality + audio language go into this same request (no second round trip)
     const first = !prefsApplied && !partyMode;
@@ -455,15 +483,25 @@
   }
 
   let attachSeq = 0;
-  async function attach(startSec: number) {
+  /** `swap`: the same stream again on a fresh element (restorePlain): no new start, no reports, the viewer's tracks stay */
+  async function attach(startSec: number, swap = false) {
     if (!video || !info || airInfo || handedOff) return; // AirPlay plays its own token stream
     const my = ++attachSeq, cur = info;
-    sessionPlaying = false; resetStall(); // the first buffering of each stream is a start, not a stall
+    sampleFrames(); // the counters restart with the new stream
+    if (!swap) { sessionPlaying = false; resetStall(); } // the first buffering of each stream is a start, not a stall
     hls?.destroy(); hls = null;
     cancelFirstFrame();
+    // sound modes off but the sound still runs through Web Audio (extra latency): the new stream starts on a fresh element
+    if (plainPathDue(Boolean(fxEngine?.routed), fx) && !air) {
+      await freshVideo();
+      if (my !== attachSeq || info !== cur || !video) return;
+    }
     const useDirect = info.directUrl && audioIndex === undefined && !rec.forcedHls && video.canPlayType('video/mp4');
     mode = useDirect ? 'direct' : 'hls';
-    timing.mode(useDirect ? 'direct' : 'hls');
+    if (!swap) {
+      timing.mode(useDirect ? 'direct' : 'hls');
+      timing.stream({ reason: info.transcodeReason ?? null });
+    }
     const seek = () => { if (startSec > 1) video!.currentTime = startSec; };
     // hls.js is loaded lazily, only on this path (and usually already prefetched by the play button)
     let H: typeof Hls | null = null;
@@ -475,7 +513,7 @@
       video.src = info.directUrl!;
       video.addEventListener('loadedmetadata', seek, { once: true });
       // LG: an original the TV cannot decode may stay black without an error; no picture in time -> the converted stream, once
-      if (isTvApp() && !rec.forcedHls) cancelFirstFrame = watchFirstFrame(video, firstFrameMs(), () => { if (my === attachSeq && !rec.forcedHls && !error && !reconnecting && !handedOff && !remote && !airOn) forceHls(resumePos(), true); }, { running: wantAutoplay });
+      if (isTvApp() && !rec.forcedHls && !swap) cancelFirstFrame = watchFirstFrame(video, firstFrameMs(), () => { if (my === attachSeq && !rec.forcedHls && !error && !reconnecting && !handedOff && !remote && !airOn) forceHls(resumePos(), true); }, { running: wantAutoplay });
     } else if (H?.isSupported()) {
       const HC = H;
       hls = new HC(hlsConfig(startSec));
@@ -501,6 +539,7 @@
       video.addEventListener('loadedmetadata', seek, { once: true });
       video.addEventListener('loadedmetadata', () => timing.manifest(), { once: true }); // native: no playlist events, the metadata is the closest
     }
+    if (swap) { const keep = subIndex; tickDom().then(() => { if (my === attachSeq) setSubtitle(keep, false); }); return; }
     stopped = false; started = false;
     dispatch('ready', { info });
     // detail-page pick > this series' saved choice (when the episode has that language) > my global default
@@ -520,6 +559,7 @@
   function forceHls(pos: number, keepIntent = false) { rec.forcedHls = true; errPos = pos; flash(tr('player.switchingTranscode'), 2500); wantAutoplay = keepIntent ? wantAutoplay || !paused : !paused; void load(pos); }
   function recover(kind: ErrorKind, viaLoad = false) {
     if (handedOff || airOn || airInfo || airState.busy) return;
+    timing.reconnect();
     retryViaLoad = viaLoad;
     cancelFirstFrame();
     // the first retry already failed: the line is the problem, not a hiccup -> a lower rung (none = cooldown or 360p: the usual retries go on and end in giveUp)
@@ -573,7 +613,7 @@
   }
   /** waiting -> start timing; playing -> the stall is over. Seeks and the first buffering after a (re)start are no stalls. */
   function onWaiting() {
-    if (handedOff) return;
+    if (handedOff || swapping) return;
     waiting = true;
     timing.waiting(video?.seeking ?? false);
     if (!video || airOn || !started || stopped || !sessionPlaying || video.seeking || waitSince) return;
@@ -592,7 +632,7 @@
   function onPlaying() {
     if (handedOff) return;
     postFireTv('keepAwake:1'); // the Fire TV app keeps the screen on while a picture plays (no-op elsewhere)
-    waiting = false; sessionPlaying = true; firstFrame(); timing.playing();
+    waiting = false; sessionPlaying = true; firstFrame(); timing.playing(); probeStream();
     if (waitSince) { const ms = performance.now() - waitSince, done = stallHandled; resetStall(); if (!done && ms > 0) onStall(ms); }
     if (reconnecting) { reconnecting = 0; flash(tr('player.reconnected'), 1500); }
   }
@@ -790,7 +830,8 @@
     const pos = video?.currentTime ?? 0;
     await send('stop');
     audioIndex = i;
-    await load(pos);
+    trackSwitching = true; // the next timing session exists because of this switch
+    try { await load(pos); } finally { trackSwitching = false; }
     video?.play().catch(() => undefined);
   }
   /** the last subtitle track that was on (-1 = none yet): the LG red key turns this one back on */
@@ -1000,6 +1041,7 @@
     fxEngine ??= new AudioFxEngine(video);
     const r = await fxEngine.apply(fx);
     fxNote = r === 'unsupported' ? 'unsupported' : r === 'suspended' ? 'suspended' : '';
+    timing.sound(fxToPref(fx), Boolean(fxEngine?.routed));
     if (r === 'unsupported' && !quiet) flash(tr('scenes.audio.unsupported'), 2500);
   }
   const FX_OPTS = [
@@ -1023,10 +1065,53 @@
     saveAudioFx(fxToPref(fx)).catch(() => undefined); // offline / failed: still remembered in this browser
     const name = tr(k === 'voice' ? 'scenes.audio.voice' : 'scenes.audio.night');
     flash(tr(fx[k] ? 'scenes.audio.on' : 'scenes.audio.off', { name }), 1400);
-    void applyFx();
+    void applyFx().then(() => { if (paused) restorePlainSoon(); });
   }
   /** a remembered mode needs a running AudioContext: the first key / tap after an autoplayed start switches it on */
   function fxGesture() { if (fxNote === 'suspended' && fxActive(fx)) void applyFx(true); }
+
+  // ---- the plain sound path back (lib/player/freshvideo.ts): Web Audio cannot be taken off an element, so with both modes off
+  //      the film moves to a fresh <video>: while paused (seamless: the current frame is its poster) or at the next stream start ----
+  let videoGen = 0, swapShot = '', swapping = false, swapT: ReturnType<typeof setTimeout> | undefined;
+  /** replaces the element (the caller already detached the stream); volume, mute and speed carry over */
+  async function freshVideo() {
+    const old = video;
+    if (!old) return;
+    sampleFrames();
+    fxEngine?.destroy(); fxEngine = null;
+    // emptied BEFORE it leaves the page: the load algorithm pauses it silently (removing a playing element would fire `pause`)
+    try { old.removeAttribute('src'); old.load(); } catch { /* already empty */ }
+    videoGen++;
+    await tickDom();
+    if (!video || video === old) return;
+    if (volOk) video.volume = volume;
+    video.muted = muted;
+    if (!partyMode) applyRate(video, rate);
+    if (video) pipOk = Boolean(document.pictureInPictureEnabled) && !video.disablePictureInPicture;
+  }
+  /** while paused: the same position on a fresh element, the current frame held as its poster until the new one is there */
+  async function restorePlain() {
+    clearTimeout(swapT);
+    if (!video || !info || !plainPathDue(Boolean(fxEngine?.routed), fx)) return;
+    if (!swapAllowed({ paused: video.paused, party: partyMode, remote: remote || casting || airOn || Boolean(airInfo) || handedOff, airplay: Boolean(air), busy: swapping || switching || Boolean(reconnecting) || Boolean(error) || waiting || !started, creditsCorner: credits === 'corner' || credOut })) return;
+    const shot = snapshotFrame(video);
+    if (!shot) return; // no picture to hold: the next stream start brings the plain path back
+    const pos = video.currentTime;
+    swapping = true;
+    try {
+      // decoded before the swap, so the new element paints the poster at once (never a black frame in between)
+      try { const img = new Image(); img.src = shot; await img.decode(); } catch { /* shown when ready */ }
+      if (!video?.paused || !plainPathDue(Boolean(fxEngine?.routed), fx)) return; // played on / modes back on meanwhile
+      swapShot = shot;
+      await attach(pos, true);
+      if (video) await frameShown(video, pos);
+    } finally {
+      swapping = false; swapShot = '';
+      syncTime();
+    }
+  }
+  /** after a pause: swap once the pause has settled (a quick pause / play does not reload anything) */
+  function restorePlainSoon() { clearTimeout(swapT); if (plainPathDue(Boolean(fxEngine?.routed), fx)) swapT = setTimeout(() => void restorePlain(), 800); }
 
   // ---- find subtitles (Jellyfin remote providers) ----
   async function searchSubs() {
@@ -1046,7 +1131,7 @@
     } catch { subMsg = tr('player.subs.downloadFailed'); }
     subBusy = false;
   }
-  function setRate(r: number, keepMenu = false) { if (!video) return; rate = r; video.playbackRate = r; if (!keepMenu) menu = ''; flash(r === 1 ? tr('player.speed.normalToast') : tr('player.speed.rate', { r })); }
+  function setRate(r: number, keepMenu = false) { if (!video) return; rate = r; applyRate(video, r); if (!keepMenu) menu = ''; flash(r === 1 ? tr('player.speed.normalToast') : tr('player.speed.rate', { r })); }
   /** < / > : one step along the speed list, clamped at both ends (no wrap); not in a watch party (the drift correction owns the rate) */
   function speedBy(delta: 1 | -1) {
     if (partyMode || !video) return;
@@ -1096,6 +1181,34 @@
 
   // ---- activity / keyboard / touch ----
   function wake() { lastActive = Date.now(); tick = lastActive; }
+  /**
+   * desktop: keyboard focus (focus-visible) inside the controls keeps them up (WCAG 2.4.7 / 2.4.11) - the bar never fades
+   * from under the focused button. A mouse click focuses without focus-visible, so pointer users keep the idle hide; phones
+   * and TV keep their own rules (TV drops the focus when the bar hides).
+   */
+  let ctlFocus = false;
+  function syncCtlFocus() {
+    if (tvUi || phoneUi || tvMode() || typeof document === 'undefined') { ctlFocus = false; return; }
+    const a = document.activeElement;
+    ctlFocus = Boolean(a && stage?.querySelector('.ctl')?.contains(a) && a.matches(':focus-visible'));
+  }
+  const onStageFocus = (e: FocusEvent) => {
+    if (e.type === 'focusout') popFocusOut(e);
+    setTimeout(syncCtlFocus, 0);
+  };
+  /**
+   * desktop popovers (audio & subtitles, speed, more, scenes; role=dialog): the keyboard leaving one (Tab past its last item or
+   * onto another control) closes it, it never stays open behind the focus (WCAG 2.4.3). A pointer press elsewhere (no new focus
+   * target) has its own close.
+   */
+  function popFocusOut(e: FocusEvent) {
+    const to = e.relatedTarget as Node | null;
+    if (!to || !menu || tvUi || phoneUi || tvMode()) return;
+    const pop = stage?.querySelector('.menu[role="dialog"]');
+    const opener = stage?.querySelector('.ctl [aria-expanded="true"]');
+    if (!pop || pop.contains(to) || opener?.contains(to)) return;
+    menu = '';
+  }
   const overlayOpen = () => Boolean(menu || subDlg || help || (xray && showXray));
   function act(a: KeyAction) {
     // credits corner (TV): the bar is hidden and inert; a key that would bring it (an arrow at the edge of the sequence) only wakes
@@ -1213,11 +1326,18 @@
       if (e.key.startsWith('Arrow')) e.stopPropagation();
       return;
     }
+    wake(); // any key brings the controls back (the bar may swallow the event before the window handler sees it)
     const native = (t.tagName === 'BUTTON' && (e.key === ' ' || e.key === 'Enter')) || (t.tagName === 'INPUT' && (t as HTMLInputElement).type === 'range' && e.key.startsWith('Arrow'));
     if (native) e.stopPropagation();
   };
   $: if (help || error) tickDom().then(() => stage?.querySelector<HTMLElement>('.help [data-autofocus], .errbox [data-autofocus]')?.focus());
-  $: if (menu && typeof document !== 'undefined' && tvMode()) tickDom().then(() => stage?.querySelector<HTMLElement>('.menu .mi.on, .menu .mi')?.focus());
+  // an opened popover takes the focus (its chosen item, else the first): on TV always, on desktop when the keyboard opened it
+  // (the button had focus-visible; a mouse click leaves the focus where it was, WCAG 2.4.3)
+  $: if (menu && typeof document !== 'undefined' && (tvMode() || keyOpened())) tickDom().then(() => stage?.querySelector<HTMLElement>('.menu .mi.on, .menu .mi')?.focus());
+  function keyOpened() {
+    const a = document.activeElement;
+    return !phoneUi && Boolean(a && stage?.querySelector('.ctl')?.contains(a) && a.matches(':focus-visible'));
+  }
   // long lists scroll inside the menu: open each column at the current choice, not at the top
   $: if (menu && typeof document !== 'undefined') tickDom().then(() => stage?.querySelectorAll<HTMLElement>('.menu .mi.on').forEach((el) => el.scrollIntoView?.({ block: 'nearest' })));
 
@@ -1339,7 +1459,7 @@
   function lockKey(e: KeyboardEvent) { if (locked && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); e.stopPropagation(); locked = false; lockHint = false; unlockedAt = Date.now(); wake(); flash(tr('player.lock.unlocked'), 900); } }
 
   const syncTime = () => {
-    if (!video || handedOff) return; // remote: the position comes from the engine's session
+    if (!video || handedOff || swapping) return; // remote: the position comes from the engine's session; a swap holds the old position
     current = video.currentTime; duration = Number.isFinite(video.duration) ? video.duration : duration;
     if (current > 0 && !reconnecting && !error) lastPos = current;
     if ((rec.networkTries || rec.mediaRecovered) && current > errPos + 8) rec = freshRecovery(); // stable again: new error budget
@@ -1390,6 +1510,7 @@
     // every 5 s: direct-play bandwidth sample + step-up check; every 30 s the estimate is remembered
     abrTimer = setInterval(() => {
       sampleDirect();
+      sampleFrames();
       if (!abr || handedOff || airOn || airInfo || switching || !started || stopped || paused || waiting || reconnecting || error) return;
       applyAbr(abr.onTick({ estimate: est.estimate, bufferSec: Math.max(0, buffered - current) }));
     }, 5000);
@@ -1446,7 +1567,7 @@
     pnlObs?.disconnect();
     cancelFirstFrame();
     clearInterval(tvTick);
-    clearTimeout(peekT); clearTimeout(posterT); clearTimeout(spT); fxEngine?.destroy();
+    clearTimeout(peekT); clearTimeout(posterT); clearTimeout(spT); clearTimeout(probeT); clearTimeout(swapT); fxEngine?.destroy();
     persistEstimate(); clearInterval(abrTimer); clearInterval(bwTimer); clearTimeout(stallT);
     clearInterval(progressTimer); clearInterval(activityTimer); clearTimeout(toastTimer); clearTimeout(retryT); clearTimeout(spinT); clearTimeout(pendingTap); clearTimeout(hudT); clearTimeout(rippleT); clearTimeout(lockT); clearTimeout(unlockT); nowPlaying.set(null);
     if (!handedOff && started && !stopped) { stopped = true; send('stop'); }
@@ -1463,19 +1584,23 @@
 </script>
 
 <svelte:window bind:innerWidth={winW} bind:innerHeight={winH} on:keydown={onKey} on:keydown|capture={onBackCapture} />
-<div class="stage {subClasses($prefs.subtitleStyle)}" class:idle={!showUi && credits !== 'corner'} class:locked class:pre={posterOn} class:phone={phone && !phoneUi} class:pui={phoneUi} class:port={phoneUi && orient === 'portrait'} class:desk class:dpause={deskPause} class:dmo={deskMotion} class:ppause={phonePause} class:pmo={phoneMotion} class:cred={credits === 'corner'} class:credout={credOut} class:cmo={credMotion} class:rmt={Boolean(tvSession)} style="--inset:{inset}px{barVar}{pnlVar}{picVar};--rcard-h:{rCardH}px" bind:this={stage} bind:clientWidth={stW} bind:clientHeight={stH} on:mousemove={(e) => { if (Date.now() - lastTouch > 800 && !(e.target as Element).closest?.('.dps')) wake(); }} on:click={onSurfaceClick} on:wheel|nonpassive={onWheel} on:keydown={() => {}}
+<div class="stage {subClasses($prefs.subtitleStyle)}" class:idle={!showUi && credits !== 'corner'} class:locked class:pre={posterOn} class:phone={phone && !phoneUi} class:pui={phoneUi} class:port={phoneUi && orient === 'portrait'} class:desk class:dpause={deskPause} class:dmo={deskMotion} class:ppause={phonePause} class:pmo={phoneMotion} class:cred={credits === 'corner'} class:credout={credOut} class:cmo={credMotion} class:rmt={Boolean(tvSession)} style="--inset:{inset}px{barVar}{pnlVar}{picVar};--rcard-h:{rCardH}px" bind:this={stage} bind:clientWidth={stW} bind:clientHeight={stH} on:mousemove={(e) => { if (Date.now() - lastTouch > 800 && !(e.target as Element).closest?.('.dps')) wake(); }} on:click={onSurfaceClick} on:wheel|nonpassive={onWheel} on:focusin={onStageFocus} on:focusout={onStageFocus} on:keydown={() => {}}
   on:pointerdown={gDown} on:pointermove={gMove} on:pointerup={gUp} on:pointercancel={gCancel} role="presentation">
+  <!-- the page heading (WCAG 1.3.1 / 2.4.6): the title, for heading navigation; the visible title block is styled text -->
+  <h1 class="sr-only">{barTitle || title}</h1>
   <!-- svelte-ignore a11y_media_has_caption -->
-  <video bind:this={video} playsinline crossorigin="use-credentials" style:filter={brightness < 1 ? `brightness(${brightness})` : null}
+  {#key videoGen}
+  <video bind:this={video} playsinline crossorigin="use-credentials" poster={swapShot || undefined} style:filter={brightness < 1 ? `brightness(${brightness})` : null}
     on:error={onVideoError}
-    on:play={onPlay} on:pause={() => { postFireTv('keepAwake:0'); if (handedOff) return; paused = true; resetStall(); const quiet = hiddenPause; hiddenPause = false; if (!castBusy && !stopped && !quiet) send('progress'); }} on:seeked={() => { timing.seeked(video?.paused ?? true); if (!handedOff && started) send('progress'); }}
+    on:play={onPlay} on:pause={() => { postFireTv('keepAwake:0'); if (handedOff || swapping) return; paused = true; resetStall(); restorePlainSoon(); const quiet = hiddenPause; hiddenPause = false; if (!castBusy && !stopped && !quiet) send('progress'); }} on:seeked={() => { if (swapping) return; timing.seeked(video?.paused ?? true); if (!handedOff && started) send('progress'); }}
     on:ended={() => { postFireTv('keepAwake:0'); if (handedOff) return; stopped = true; paused = true; send('stop'); }}
-    on:timeupdate={() => { syncTime(); reportTick(); }} on:progress={syncTime} on:loadedmetadata={syncTime}
-    on:waiting={onWaiting} on:seeking={() => { resetStall(); timing.seeking(); }} on:playing={onPlaying} on:loadeddata={firstFrame} on:canplay={() => { if (handedOff) return; waiting = false; if (wantAutoplay) { wantAutoplay = false; playSafe(); } }}
+    on:timeupdate={() => { syncTime(); reportTick(); }} on:progress={syncTime} on:loadedmetadata={() => { reapplyRate(video, rate, partyMode); syncTime(); }}
+    on:waiting={onWaiting} on:seeking={() => { if (swapping) return; resetStall(); timing.seeking(); }} on:playing={onPlaying} on:loadeddata={firstFrame} on:canplay={() => { if (handedOff) return; waiting = false; if (wantAutoplay) { wantAutoplay = false; playSafe(); } }}
     on:volumechange={() => { if (video) { muted = video.muted; } }}
     on:play on:pause on:seeked on:seeking on:waiting on:playing on:canplay on:timeupdate on:ended>
     {#if info}{#each info.subtitles as s}<track id="sub-{s.index}" kind="subtitles" src={s.url} srclang={s.language?.slice(0, 2) ?? 'xx'} label={s.title} />{/each}{/if}
   </video>
+  {/key}
   {#if posterOn && poster}
     <!-- pointer-events: none -> clicks, double clicks, wheel and gestures reach the stage as over the video -->
     <div class="poster ff-poster" class:out={posterOut} aria-hidden="true">
@@ -1840,7 +1965,7 @@
     .pbar i { animation: ff-pbar-calm 1.6s ease-in-out infinite alternate; transform: none; width: 100%; }
     @keyframes ff-pbar-calm { from { opacity: .25; } to { opacity: .7; } }
   }
-  .stage :global(button:focus-visible), .stage :global(a:focus-visible), .stage :global([role=slider]:focus-visible) { outline: 3px solid #fff; outline-offset: 2px; }
+  .stage :global(button:focus-visible), .stage :global(a:focus-visible), .stage :global([role=slider]:focus-visible) { outline: 3px solid #fff; outline-offset: 2px; --ring-o: 2px; }
   .stage.idle { cursor: none; }
   .stage :global(video) { display: block; width: 100%; height: 100%; max-height: 100%; object-fit: contain; background: #000; }
   /* AirPlay availability probe: rendered (WebKit may skip hidden elements) but invisible and inert */
@@ -2139,7 +2264,7 @@
   .ctl.dock { right: 0; display: flex; flex-direction: column; gap: 10px; background: none; transition: none;
     padding: 0 calc(var(--safe-right) + 16px + var(--inset, 0px)) calc(var(--safe-bottom) + 12px) calc(var(--safe-left) + 16px); }
   .ctl.dock::before { content: ''; position: absolute; left: 0; right: 0; bottom: 0; height: calc(100% + 72px); z-index: -1; pointer-events: none;
-    background: linear-gradient(transparent, rgba(0,0,0,.5) 40%, rgba(0,0,0,.85)); transition: opacity 250ms ease; }
+    background: linear-gradient(transparent, rgba(0,0,0,.62) 64px, rgba(0,0,0,.72) 60%, rgba(0,0,0,.88)); transition: opacity 250ms ease; }
   /* hidden: the dock box stays (pointer-events off), its parts fade; the skip button stays visible and tappable */
   .ctl.dock.hide { opacity: 1; }
   .ctl.dock > :global(*) { transition: opacity 250ms ease; }
@@ -2243,11 +2368,12 @@
      bar's box covers the card's buttons */
   .stage.desk .remote { padding-bottom: calc(var(--ctl-h, 7.5rem) + 1rem + var(--safe-bottom)); }
   .stage.desk .ctl { display: grid; gap: .7rem; padding: 4.5rem max(clamp(1.5rem, 3vw, 3rem), var(--safe-right)) 1.4rem max(clamp(1.5rem, 3vw, 3rem), var(--safe-left));
-    background: linear-gradient(transparent, rgba(0,0,0,.45) 35%, rgba(0,0,0,.82)); transition: opacity 250ms ease; }
+    background: linear-gradient(transparent, rgba(0,0,0,.62) 4.5rem, rgba(0,0,0,.72) 60%, rgba(0,0,0,.88)); transition: opacity 250ms ease; }
   .ttlblock { display: grid; gap: .15rem; min-width: 0; max-width: min(60%, 46rem); text-shadow: 0 1px 10px rgba(0,0,0,.5); }
-  .ttlblock em { font-style: normal; color: var(--acc, #ff4f6d); font-weight: 700; font-size: .8rem; letter-spacing: .08em; text-transform: uppercase; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  /* white with a coral bar: coral text sank to 1:1 over a bright frame (WCAG 1.4.3) */
+  .ttlblock em { font-style: normal; color: #fff; border-left: 3px solid var(--acc, #ff4f6d); padding-left: .45rem; justify-self: start; font-weight: 700; font-size: .8rem; letter-spacing: .08em; text-transform: uppercase; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .ttlblock b { font-size: 2.1em; font-weight: 800; line-height: 1.05; letter-spacing: -.01em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .ttlblock span { color: #d4d4da; font-size: 1rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .ttlblock span { color: #e8e8ec; font-size: 1rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .tlrow { gap: .9rem; }
   .tlrow .el, .tlrow .rem { min-width: 3.4rem; font-size: .9rem; color: #e8e8ec; font-variant-numeric: tabular-nums; }
   .tlrow .el { text-align: left; }

@@ -364,6 +364,8 @@ export interface ServerSession {
   playMethod: 'DirectPlay' | 'DirectStream' | 'Transcode';
   reasons: TranscodeReason[]; videoCodec?: string; audioCodec?: string; hardware?: boolean;
   bitrate?: number; progressPct?: number; paused: boolean;
+  /** the picture reaches the client unconverted (direct play, or a remux that copies the video stream); undefined = not reported */
+  videoDirect?: boolean;
 }
 /** Facts of one media stream for the hygiene rules (codec lower case, language as the server reports it). */
 export interface HygieneStream { codec?: string; lang?: string; forced?: boolean; text?: boolean; channels?: number; bitDepth?: number; height?: number; hdr?: boolean }

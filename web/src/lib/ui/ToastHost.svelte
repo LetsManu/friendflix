@@ -11,7 +11,7 @@
   import { t } from '#lib/i18n';
   import { fxMode, toastRise } from '#lib/glass/fx';
   import { SCRIM_MENU } from '#lib/glass/tone';
-  import { close, pause, resume, RING_LEN, runToastAction, timeLeft, toasts, type Toast } from './toast';
+  import { ACTION_SHORTCUT, close, keyboardHold, latestActionId, pause, resume, RING_LEN, runLatestAction, runToastAction, setKeyboardUse, timeLeft, toasts, type Toast } from './toast';
   let inside = false;
   let region: HTMLElement | undefined;
   /** a removed toast that held focus fires no focusout: after every change, lift the pause when neither pointer nor focus is still inside */
@@ -25,6 +25,16 @@
     if (e && to && (e.currentTarget as HTMLElement).contains(to)) return;
     if (inside) { inside = false; resume(); }
   }
+  /**
+   * Keyboard use holds action toasts (toast.ts setKeyboardUse; not on TV, where a held toast could not be reached) and
+   * Alt+Z (ACTION_SHORTCUT, by key position) runs the newest one's action from anywhere; a pointer press brings the countdown back.
+   */
+  const isTv = () => typeof document !== 'undefined' && document.documentElement.classList.contains('tv');
+  function onWinKey(e: KeyboardEvent) {
+    if (e.altKey && !e.ctrlKey && !e.metaKey && !e.shiftKey && e.code === 'KeyZ' && runLatestAction()) { e.preventDefault(); return; }
+    if (!isTv()) setKeyboardUse(true);
+  }
+  $: latest = latestActionId($toasts);
   /** Escape closes the toast that has focus */
   function onKey(e: KeyboardEvent) {
     if (e.key !== 'Escape') return;
@@ -57,6 +67,8 @@
   const flipMs = () => (fxMode() === 'full' ? 180 : 0);
 </script>
 
+<svelte:window on:keydown|capture={onWinKey} on:pointerdown|capture={() => setKeyboardUse(false)} />
+
 <!-- svelte-ignore a11y_no_noninteractive_element_interactions (hover/focus pause the timers; Escape closes the focused toast) -->
 <section bind:this={region} class="toasts" aria-label={$t('ui.notifications')} on:mouseenter={enter} on:mouseleave={() => leave()} on:focusin={enter} on:focusout={leave} on:keydown={onKey}>
   <ol aria-live="polite" aria-relevant="additions text">
@@ -64,9 +76,11 @@
       <li class="toast frost frost-pill frost-safe {m.kind}" animate:flip={{ duration: flipMs() }} in:toastRise={{ dir: 'in' }} out:toastRise={{ dir: 'out' }} style="--fr-scrim-safe:{SCRIM_MENU}" data-toast={m.id}>
         <span class="dot {m.kind}" aria-hidden="true"></span>
         <p class="msg">{#if m.kind === 'error'}<span class="sr-only">{$t('ui.errorPrefix')} </span>{/if}{m.message}</p>
-        {#if m.action}<button type="button" class="act" on:click={() => runToastAction(m.id)}>{m.action.label}</button>{/if}
+        {#if m.action}<button type="button" class="act" aria-keyshortcuts={m.id === latest ? ACTION_SHORTCUT : undefined} aria-describedby={m.id === latest ? `toast-k-${m.id}` : undefined} on:click={() => runToastAction(m.id)}>{m.action.label}</button>{/if}
+        {#if m.id === latest}<span class="sr-only" id="toast-k-{m.id}">{$t('ui.actionShortcut', { key: ACTION_SHORTCUT })}</span>{/if}
         {#if m.action && m.duration}
-          <svg class="ring" viewBox="0 0 28 28" width="28" height="28" aria-hidden="true" focusable="false"><circle class="bg" cx="14" cy="14" r="11" /><circle class="fg" cx="14" cy="14" r="11" stroke-dasharray={RING_LEN} stroke-dashoffset="0" use:ring={{ m, paused: inside }} /></svg>
+          <!-- held for keyboard use: the ring fades out (it keeps its place, nothing jumps) and stops counting -->
+          <svg class="ring" class:held={$keyboardHold} viewBox="0 0 28 28" width="28" height="28" aria-hidden="true" focusable="false"><circle class="bg" cx="14" cy="14" r="11" /><circle class="fg" cx="14" cy="14" r="11" stroke-dasharray={RING_LEN} stroke-dashoffset="0" use:ring={{ m, paused: inside || $keyboardHold }} /></svg>
         {/if}
         <button type="button" class="x" aria-label={$t('ui.dismiss')} on:click={() => close(m.id)}><Icon name="x" size={18} /></button>
       </li>
@@ -88,7 +102,9 @@
   /* the action is white text (AA on glass over any backdrop); its colour is the coral countdown ring beside it */
   .act { flex: none; min-height: 44px; background: transparent; color: #fff; padding: 0 8px; font-weight: 800; border-radius: var(--fr-r-pill); text-decoration: underline; text-decoration-color: var(--acc-line); text-decoration-thickness: 2px; text-underline-offset: 4px; }
   .act:hover:not(:disabled) { background: var(--fr-sel); }
-  .ring { flex: none; width: 28px; height: 28px; transform: rotate(-90deg); }
+  .ring { flex: none; width: 28px; height: 28px; transform: rotate(-90deg); transition: opacity var(--t-fast); }
+  .ring.held { opacity: 0; }
+  :global(html.m-still) .ring { transition: none; }
   .ring circle { fill: none; stroke-width: 3; }
   .ring .bg { stroke: rgba(255, 255, 255, .2); }
   .ring .fg { stroke: var(--acc-line); stroke-linecap: round; } /* light coral: 3:1 on the glass over a white backdrop */

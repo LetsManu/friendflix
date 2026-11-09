@@ -21,7 +21,7 @@
   import DataTable from '#lib/ui/DataTable.svelte';
   import Progress from '#lib/ui/Progress.svelte';
   import Select from '#lib/ui/Select.svelte';
-  import { fmtMbit, fmtMs, fmtPct, groupBiggest, longRemoteSegments, orderGroups, PHASES, rowSteps, biggestPhase, type TimingGroup, type TimingRow, type TimingView } from '#lib/admin/timing';
+  import { fmtMbit, fmtMs, fmtPct, groupBiggest, longRemoteSegments, orderGroups, PHASES, rowSteps, biggestPhase, syncFacts, type TimingGroup, type TimingRow, type TimingView } from '#lib/admin/timing';
   import Skeleton from '#lib/ui/Skeleton.svelte';
   import StatusPill, { type Tone } from '#lib/ui/StatusPill.svelte';
   import { fmtBytes } from '#lib/ui/format';
@@ -84,6 +84,7 @@
     { key: 'steps', label: $t('adminContent.timing.phase.firstFrame'), sortable: false, filter: false },
     { key: 'frag', label: $t('adminContent.timing.fragSize'), value: (r) => (r.firstFragBytes === null ? '–' : `${fmtBytes(r.firstFragBytes)} / ${fmtMs(r.firstFragDlMs)}`), sortable: false },
     { key: 'stalls', label: $t('adminContent.timing.stalls'), value: (r) => (r.stalls ? `${r.stalls} · ${fmtMs(r.stallMs)}` : '0'), sortable: false, align: 'end' },
+    { key: 'sync', label: $t('adminContent.timing.sync'), sortable: false, filter: false },
   ] as Column<TimingRow>[];
 
   // ---------------------------------------------------------------- offline downloads
@@ -248,6 +249,12 @@
         {:else if col.key === 'mode'}
           <span class="st">{row.mode ? $t(`adminContent.timing.modes.${row.mode}`) : '–'} · {fmtMbit(row.bitrate)}{#if row.targetDuration}{' · '}{fmtNumber(row.targetDuration)} s{/if}
             {#if row.qualitySwitch}<StatusPill tone="muted" label={$t('adminContent.timing.switchTag')} />{/if}</span>
+        {:else if col.key === 'sync'}
+          {@const f = syncFacts(row)}
+          {@const sound = [f.sound.map((k) => $t(`scenes.audio.${k}`)).join(' + '), f.webAudio ? $t('adminContent.timing.webAudio') : ''].filter(Boolean).join(' ')}
+          <span class="steps" data-testid="timing-sync"><span>{$t(`adminContent.timing.delivery.${f.delivery}`)}</span>
+            <span class="muted small">{[sound, f.droppedPct === null ? '–' : $t('adminContent.timing.dropped', { pct: fmtNumber(f.droppedPct) }), $t('adminContent.timing.avEvents', { n: f.avEvents })].filter(Boolean).join(' · ')}</span>
+            {#if f.trackSwitch}<StatusPill tone="muted" label={$t('adminContent.timing.trackTag')} />{/if}</span>
         {:else if col.key === 'steps'}
           {@const st = rowSteps(row)}
           {@const big = biggestPhase(st)}

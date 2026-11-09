@@ -10,7 +10,8 @@
   const uid = 'ffl' + Math.random().toString(36).slice(2, 7);
 </script>
 
-<span class="logo" class:wm={wordmark} class:shadow role={wordmark ? undefined : 'img'} aria-label={wordmark ? undefined : label}>
+<!-- an empty label means decorative (next to its own text): hidden from assistive tech, never an unnamed image -->
+<span class="logo" class:wm={wordmark} class:shadow role={wordmark || !label ? undefined : 'img'} aria-label={wordmark || !label ? undefined : label} aria-hidden={label ? undefined : 'true'}>
   <svg width={size} height={size} viewBox="0 0 64 64" aria-hidden="true" focusable="false">
     <defs>
       <linearGradient id="{uid}g" x1="8" y1="2" x2="56" y2="62" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#ff6b81" /><stop offset="1" stop-color="#e23c5b" /></linearGradient>

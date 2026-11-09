@@ -2,7 +2,7 @@
 
 *English: [../privacy.md](../privacy.md)*
 
-Stand: 20. Oktober 2026. App: FriendFlix (`com.friendflix`), veröffentlicht von Manuel Weißböck.
+Stand: 9. November 2026. App: FriendFlix (`com.friendflix`), veröffentlicht von Manuel Weißböck.
 
 ## Kurz gesagt
 
@@ -11,6 +11,7 @@ FriendFlix verbindet sich nur mit einem FriendFlix-Server, den **du** beim erste
 ## Was die App sendet, und an wen
 
 - **An deinen FriendFlix-Server:** alles, was du in der App tust: Anmelden, Stöbern, Abspielen, Herunterladen, Wiedergabestand, Anfragen und die Abfrage neuer Benachrichtigungen im Hintergrund (etwa alle 10 bis 20 Minuten, solange du angemeldet bist). Verantwortlich für diese Daten ist, wer den Server betreibt. Es gelten dessen Datenschutzbestimmungen, nicht diese Erklärung.
+  - Läuft ein Titel im Web-Player der App, gehört dazu eine anonyme Messung pro Wiedergabe (wie lange der Start dauerte, Hänger, wie der Stream ausgeliefert wurde und ob das Bild kopiert oder umgewandelt wurde, der Klangmodus, verworfene Videobilder und die Zahl von Sprüngen, Spur- oder Qualitätswechseln und Wiederverbindungen). Der Server speichert sie ohne dein Konto, Profil, Titel, IP-Adresse oder Gerätenamen und löscht sie nach 14 Tagen.
 - **An die Anmeldeseite, die dein Server nennt** (sein Identity Provider), wenn du dich anmeldest.
 - **An Google, nur für Chromecast:** Die App nutzt Googles Cast SDK. Wenn du den Player öffnest, sucht er im WLAN nach Cast-Geräten, und Google erhält seine üblichen Cast-Nutzungsdaten, wie in jeder App mit Cast-Knopf. Auf einem Handy ohne Google-Play-Dienste werden keine Cast-Daten gesendet.
 - **Google Play** installiert und aktualisiert die App nach Googles eigener Datenschutzerklärung.

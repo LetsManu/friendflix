@@ -54,6 +54,11 @@ const en: Translation<typeof de> = {
     moreInfo: 'More info',
     replay: 'Play preview again',
     replayTitle: 'Play again',
+    /** the billboard trailer's pause / resume button (WCAG 2.2.2) */
+    pausePreview: 'Pause preview',
+    resumePreview: 'Resume preview',
+    /** the billboard sound toggle: a fixed name, its state is aria-pressed */
+    sound: 'Sound',
   },
   carousel: {
     label: 'Top picks for you',

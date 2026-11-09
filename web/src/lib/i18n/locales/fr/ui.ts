@@ -12,6 +12,8 @@ const dict: Translation<typeof de> = {
   dismiss: 'Fermer la notification',
   notifications: 'Notifications',
   errorPrefix: 'Erreur :',
+  /** the toast action's keyboard shortcut (its accessible description) */
+  actionShortcut: 'Raccourci clavier : {key}',
   percent: '{n} %',
   confirm: {
     ok: 'Confirmer',

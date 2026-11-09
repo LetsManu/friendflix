@@ -4,6 +4,30 @@ All notable changes, grouped by what you notice. Each release has its own sectio
 
 ## [Unreleased]
 
+### Security
+- **Dependency updates.** The file-pattern matching library used by the development tooling (minimatch) is updated to a release that fixes a denial-of-service weakness. It only runs while building and linting, not in the running app.
+- **Android and Fire TV apps:** the Guava library is updated to a release that fixes a known high-severity weakness.
+
+### Accessibility
+- **Focus you can always see.** The keyboard focus ring now has a dark edge around the white line, so it stays visible on bright posters and light glass. It looks the same as before on dark backgrounds.
+- **Player controls stay while you use the keyboard.** The control bar no longer fades away while a button in it has keyboard focus, and any key brings it back. Menus opened from the keyboard (audio and subtitles, speed, more, scenes) move the focus into the menu and close when you Tab out.
+- **Time to undo.** When you use the keyboard, a notice with an action (such as *Undo*) stays until you close it. Press **Alt+Z** to run the newest notice's action from anywhere; screen readers announce the shortcut. With mouse or touch the notice still closes after a few seconds.
+- **Menus in the top bar work like menus.** The profile menu now follows the usual menu keys: arrow keys, Home and End move through it, Esc returns to the profile button, and Tab closes it. Notifications and Categories are announced as the panels they are and close when the focus leaves them. The download menu says it is a menu.
+- **Readable text over bright pictures.** Titles on cards, the chapter name and details in the player, the quality label, the billboard's description, the footer and the Kids badge have stronger contrast. The picture itself stays bright.
+- **Nothing hides under the bars.** On phones, items you move to with the keyboard or a screen reader scroll clear of the tab bar at the bottom, and on all screens clear of the top bar.
+- **Settings on narrow screens.** At 320 pixels wide (or 400 % zoom) the settings page no longer scrolls sideways, and the switch labels wrap.
+- **Clearer for screen readers and voice control.** The phone home page and the player have a page heading, the search panel says how many results it found, the PIN pad reads "2 of 4 digits" instead of dots and returns focus to the profile when cancelled, the logo links start with their visible name, decorative logos are hidden, and a wrong setup code puts the focus back in the code field.
+- **Billboard trailer can be paused.** A pause button sits next to the sound button, and the sound button keeps one name and says whether it is on.
+- **More you can reach by keyboard.** The friends strip on a title's page and the recommendation table in the admin overview can be scrolled with the keyboard, and the rating buttons open with Enter or Space instead of covering the next button as soon as they get focus.
+- **TV:** the open side menu has a darker backing, so its labels no longer run over the page's text.
+
+### Fixed
+- **Sound modes no longer delay the sound.** *Clear voices* and *Night mode* only take over the sound while one of them is on. After you switch both off, the sound is back in step with the picture at the next pause (nothing visibly changes) or the next start of the stream. Before, the sound could lag behind the picture until the page was reloaded, most with Bluetooth headphones. On Android the sound modes add less delay.
+- **Downloads stay in sync to the end.** A download whose preparation paused while others were watching could have its sound shifted from that point on. The server now checks where the parts meet and prepares the file again if they do not line up.
+- **Playback speed stays as chosen** after an audio track or quality switch. Before, the film fell back to normal speed while the speed button still showed the old one.
+- **Watch parties correct less often.** The shared clock no longer jumps with every message from the room, so playback speeds up, slows down or skips less.
+- **Admins see more about sync problems.** The start-time measurements under *Admin → Playback* now also show how each stream was delivered, the sound mode, dropped frames and how many seeks, switches and reconnects happened. They stay anonymous and are deleted after 14 days.
+
 ## [3.0.3] – Churros – 2026-11-09
 
 ### Fixed

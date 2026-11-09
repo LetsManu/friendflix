@@ -266,7 +266,9 @@
   .slide { position: relative; grid-area: 1 / 1; justify-self: center; width: min(70%, 340px); aspect-ratio: 2 / 3; border-radius: 18px; overflow: hidden; background: #1c2228; box-shadow: 0 22px 46px rgba(0, 0, 0, .55), 0 0 0 1px rgba(255, 255, 255, .1); will-change: transform; transform-origin: 50% 50%; }
   .track.single .slide { will-change: auto; }
   .card { position: relative; display: block; width: 100%; height: 100%; color: #fff; -webkit-touch-callout: none; }
-  .card:focus-visible { outline: 2px solid #fff; outline-offset: -4px; border-radius: 18px; }
+  .card:focus-visible { outline: 2px solid #fff; outline-offset: -4px; border-radius: 18px; box-shadow: none; }
+  /* the dark companion of the two-tone ring sits over the poster (an inset shadow on the link itself would be under the image) */
+  .card:focus-visible::after { content: ''; position: absolute; inset: 0; border-radius: inherit; box-shadow: inset 0 0 0 7px var(--ring-dark); pointer-events: none; }
   .poster { width: 100%; height: 100%; object-fit: cover; display: block; pointer-events: none; }
   /* over the whole card (art and text); JS sets its opacity from the distance to the centre */
   .dim { position: absolute; inset: 0; background: #000; opacity: 0; pointer-events: none; border-radius: inherit; }

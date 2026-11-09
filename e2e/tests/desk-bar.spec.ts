@@ -392,15 +392,66 @@ test.describe('desktop pill bar', () => {
     const bell = bar.getByRole('button', { name: /Benachrichtigungen/ });
     await expect(bell.locator('.dot')).toHaveText('1');
     await bell.click();
-    await expect(page.getByRole('menuitem', { name: /Annas Klassiker/ })).toBeVisible();
+    // the notifications are a disclosure (a named region of links), not a menu
+    const notes = page.getByRole('region', { name: 'Benachrichtigungen' });
+    await expect(notes.getByRole('link', { name: /Annas Klassiker/ })).toBeVisible();
+    await expect(page.getByRole('menu')).toHaveCount(0);
     await page.keyboard.press('Escape');
-    await expect(page.getByRole('menuitem', { name: /Annas Klassiker/ })).toHaveCount(0);
+    await expect(notes).toHaveCount(0);
 
     await bar.getByRole('button', { name: /Profilmenü/ }).click();
     const menu = page.getByRole('menu', { name: 'Profilmenü' });
     await expect(menu.getByRole('menuitem', { name: 'Konto & Einstellungen' })).toBeVisible();
     await page.keyboard.press('Escape');
     await expect(menu).toHaveCount(0);
+  });
+
+  test('profile menu: the menu keys (arrows wrap, Home / End), Esc back to the button, Tab closes it (WAI-ARIA menu button)', async ({ page }) => {
+    await page.goto('/watchlist'); // (no billboard: the Tab out of the menu lands on page content that prefetches nothing)
+    const bar = page.locator('[data-desk-bar]');
+    const btn = bar.getByRole('button', { name: /Profilmenü/ });
+    await expect(btn).toHaveAttribute('aria-haspopup', 'menu');
+    await btn.focus();
+    await page.keyboard.press('Enter');
+    const menu = page.getByRole('menu', { name: 'Profilmenü' });
+    const items = menu.getByRole('menuitem');
+    await expect(items.first()).toBeFocused();
+    const n = await items.count();
+    await page.keyboard.press('ArrowDown');
+    await expect(items.nth(1)).toBeFocused();
+    await page.keyboard.press('ArrowUp');
+    await page.keyboard.press('ArrowUp'); // wraps to the last
+    await expect(items.nth(n - 1)).toBeFocused();
+    await page.keyboard.press('Home');
+    await expect(items.first()).toBeFocused();
+    await page.keyboard.press('End');
+    await expect(items.nth(n - 1)).toBeFocused();
+    await page.keyboard.press('ArrowDown'); // wraps to the first
+    await expect(items.first()).toBeFocused();
+    // the items are not Tab stops of their own (roving focus): one Tab leaves the menu, which closes
+    expect(await items.evaluateAll((els) => els.every((e) => e.getAttribute('tabindex') === '-1'))).toBe(true);
+    await page.keyboard.press('Escape');
+    await expect(menu).toHaveCount(0);
+    await expect(btn).toBeFocused();
+    await page.keyboard.press('Enter');
+    await expect(items.first()).toBeFocused();
+    await page.keyboard.press('Tab');
+    await expect(menu).toHaveCount(0);
+    expect(await page.evaluate(() => Boolean(document.activeElement?.closest('[role="menu"]')))).toBe(false);
+  });
+
+  test('categories: a disclosure (no aria-haspopup); Tab off its last link closes it', async ({ page }) => {
+    await page.goto('/');
+    const btn = page.locator('[data-desk-bar] .pill').getByRole('button', { name: 'Kategorien' });
+    await expect(btn).not.toHaveAttribute('aria-haspopup', /.*/);
+    await btn.focus();
+    await page.keyboard.press('Enter');
+    const cats = page.getByRole('region', { name: 'Kategorien' });
+    await expect(cats.getByRole('link', { name: 'Drama' })).toBeVisible();
+    await expect(btn).toHaveAttribute('aria-controls', (await cats.getAttribute('id'))!);
+    await cats.getByRole('link').last().focus();
+    await page.keyboard.press('Tab');
+    await expect(cats).toHaveCount(0);
   });
 
   test('phone layout (390px) still renders header.nav.m; TV (?tv=1) still renders nav.rail', async ({ page }) => {

@@ -25,7 +25,9 @@
 {#if friends.length}
   <section class="fr" aria-labelledby="fr-h">
     <h2 id="fr-h">{$t('detail.friends.title')}</h2>
-    <ul>
+    <!-- it scrolls sideways: a Tab stop so the keyboard can scroll it too (WCAG 2.1.1) -->
+    <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
+    <ul tabindex="0" aria-labelledby="fr-h">
       {#each friends as f (f.id)}
         <li>
           <span class="av" aria-hidden="true">{initials(f.name)}</span>

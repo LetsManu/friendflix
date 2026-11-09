@@ -1,7 +1,7 @@
 <!-- SPDX-FileCopyrightText: 2026 Manuel Weißböck -->
 <!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { onMount, tick } from 'svelte';
   import { goto } from '$app/navigation';
   import Icon from '#lib/Icon.svelte';
   import { downloads, fetchOptions, getMe, getSupport, initManager, pause, progressPct, removeDownload, requestDownload, resume, stateLabel, viewFor, type DownloadOptions } from '#lib/offline/manager';
@@ -11,6 +11,7 @@
   import { native, nativeDownloads, refreshNativeDownloads } from '#lib/native/bridge';
   import { nativeCaps } from '#lib/native/play';
   import { startNativeDownload, viewForNative } from '#lib/native/downloads';
+  import { menuKeys, menuItems } from '#lib/ui/menuKeys';
 
   /** movie or episode id */
   export let itemId: string;
@@ -100,7 +101,9 @@
     busy = false;
   }
 
-  let menu = false;
+  let menu = false, dlBtn: HTMLButtonElement, menuEl: HTMLElement | undefined;
+  /** an opened menu takes the focus (its first item); Escape gives it back to the button (the menu pattern, lib/ui/menuKeys) */
+  $: if (menu) void tick().then(() => { if (menuEl) menuItems(menuEl)[0]?.focus({ preventScroll: true }); });
   function main() {
     if (!v) return void openSheet();
     if (v.state === 'downloading' || v.state === 'queued' || v.state === 'preparing') return void (menu = !menu);
@@ -108,7 +111,12 @@
     if (v.state === 'done') return void (menu = !menu);
     void openSheet();
   }
-  const key = (e: KeyboardEvent) => { if (e.key === 'Escape') { open = false; menu = false; } };
+  const key = (e: KeyboardEvent) => {
+    if (e.key !== 'Escape') return;
+    const back = menu && menuEl?.contains(document.activeElement);
+    open = false; menu = false;
+    if (back) dlBtn?.focus();
+  };
 </script>
 
 <svelte:window on:keydown={key} />
@@ -116,12 +124,12 @@
   <!-- trigger lives elsewhere -->
 {:else if ready && (nativeMode || support.ok) && allowed}
   <span class="dl" class:compact class:block>
-    <button type="button" class="dlb" class:sec={!compact} class:on={v?.state === 'done'} aria-haspopup="dialog" aria-label={v ? $t('detail.download.state', { state: stateLabel(v) }) : label || $t('detail.download.title')} title={v ? stateLabel(v) : label || $t('detail.download.title')} on:click={main}>
+    <button type="button" class="dlb" class:sec={!compact} class:on={v?.state === 'done'} aria-haspopup={v ? 'menu' : 'dialog'} aria-expanded={v ? menu : undefined} bind:this={dlBtn} aria-label={v ? $t('detail.download.state', { state: stateLabel(v) }) : label || $t('detail.download.title')} title={v ? stateLabel(v) : label || $t('detail.download.title')} on:click={main}>
       <Icon name={v?.state === 'done' ? 'check' : 'download'} size={compact ? 20 : 20} />
       {#if !compact}{v ? stateLabel(v) : label || $t('detail.download.title')}{:else if v && v.state !== 'done'}<span class="mini">{v.state === 'preparing' ? v.prep ?? 0 : v.state === 'downloading' ? pctNow : ''}</span>{/if}
     </button>
     {#if v && menu}
-      <span class="menu" role="menu">
+      <span class="menu" role="menu" bind:this={menuEl} use:menuKeys={{ close: () => (menu = false), trigger: dlBtn }}>
         <span class="st">{stateLabel(v)}{#if v.state === 'downloading'}{' · '}{$t('detail.download.progress', { have: fmtBytes(v.bytesHave), total: fmtBytes(v.bytesTotal) })}{/if}</span>
         {#if v.state === 'downloading' && !nativeMode}<button type="button" role="menuitem" on:click={() => { pause(v.id); menu = false; }}><Icon name="pause" size={16} />{$t('detail.download.pause')}</button>{/if}
         {#if (v.state === 'paused' || v.state === 'error') && !nativeMode}<button type="button" role="menuitem" on:click={() => { resume(v.id); menu = false; }}><Icon name="play" size={16} />{$t('detail.download.resume')}</button>{/if}

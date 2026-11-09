@@ -10,12 +10,27 @@
  * Caveats handled here: createMediaElementSource() can be called only once per element and from then on ALL its sound goes
  * through the AudioContext. So the graph is created only when the context really runs (a suspended context = silence), never for
  * cross-origin media without CORS (silence as well) and never for Safari's native HLS (WebKit delivers no samples there).
- * Switching both modes off keeps the routing but bypasses every node.
+ *
+ * A/V sync: sound that runs through Web Audio comes out later than the picture by the context's output latency (render quantum +
+ * output buffer, far more over Bluetooth), and browsers do not delay the picture for it. So nothing is routed while both modes are
+ * off: the source node is created only when a mode turns on. Switching both off again bypasses every node at once, but the element
+ * stays captured (a MediaElementSource cannot be released); the player then gives the film a fresh <video> at the next safe point
+ * (`plainPathDue`: while paused, or at the next stream start), which restores the browser's own, latency-compensated audio path.
+ *
+ * Latency hint: 'interactive' (the smallest buffer the device can run). 'playback' would pick a LARGER buffer to save power, i.e.
+ * more delay between picture and sound. The known latency (AudioContext.outputLatency + baseLatency) is not compensated: a
+ * <video> has no way to delay its picture, moving currentTime would make the picture jump (and a seek only re-aligns once), and
+ * outputLatency is an estimate that is missing or wrong for exactly the outputs where it matters (Bluetooth). The fresh element
+ * is the reliable fix.
  */
 
 export interface AudioFx { voice: boolean; night: boolean }
 export const FX_OFF: AudioFx = { voice: false, night: false };
 export const fxActive = (fx: AudioFx) => fx.voice || fx.night;
+/** both modes are off but the element's sound still runs through Web Audio: a fresh element would bring the plain path back */
+export const plainPathDue = (routed: boolean, fx: AudioFx) => routed && !fxActive(fx);
+/** the context options: as little output latency as the device allows (see the A/V-sync note above) */
+export const FX_CONTEXT_OPTIONS: AudioContextOptions = { latencyHint: 'interactive' };
 
 export type FxNode =
   | { kind: 'biquad'; type: BiquadFilterType; frequency: number; Q?: number; gain?: number }
@@ -74,7 +89,7 @@ export function saveFx(profile: string | null | undefined, fx: AudioFx): void {
   try { if (fxActive(fx)) localStorage.setItem(keyFor(profile), JSON.stringify(fx)); else localStorage.removeItem(keyFor(profile)); } catch { /* private mode: not remembered */ }
 }
 
-type Ctor = new () => AudioContext;
+type Ctor = new (options?: AudioContextOptions) => AudioContext;
 export type FxResult = 'ok' | 'off' | 'suspended' | 'unsupported';
 
 /** Owns the AudioContext + graph of one <video>. apply() is safe to call any number of times. */
@@ -85,7 +100,7 @@ export class AudioFxEngine {
   private dead = false;
   constructor(private readonly video: HTMLMediaElement, private readonly AC: Ctor | undefined = typeof window !== 'undefined' ? (window.AudioContext ?? (window as unknown as { webkitAudioContext?: Ctor }).webkitAudioContext) : undefined) {}
 
-  /** the element's sound already runs through Web Audio (it stays that way for the element's lifetime) */
+  /** the element's sound already runs through Web Audio (it stays that way for the element's lifetime: see plainPathDue) */
   get routed() { return Boolean(this.src); }
 
   /**
@@ -104,7 +119,7 @@ export class AudioFxEngine {
     if (!fxActive(fx) && !this.src) return 'off'; // nothing to do, and no reason to take the sound over
     if (!this.src) {
       if (!this.AC) return 'unsupported';
-      try { this.ctx ??= new this.AC(); } catch { return 'unsupported'; }
+      try { this.ctx ??= new this.AC(FX_CONTEXT_OPTIONS); } catch { return 'unsupported'; }
       if (this.ctx.state !== 'running') { try { await this.ctx.resume(); } catch { /* stays suspended */ } }
       if (this.dead || !this.ctx) return 'unsupported'; // destroyed while waiting
       if (this.ctx.state !== 'running') return 'suspended'; // no user gesture yet: routing now would mute the film

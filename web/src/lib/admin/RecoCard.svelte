@@ -31,7 +31,9 @@
   {#if failed}<p class="muted">{$t('reco.admin.loadFailed')}</p>
   {:else if !stats}<Skeleton lines={3} h="1.1rem" />
   {:else}
-    <div class="scroll">
+    <!-- it scrolls sideways on phones: a named Tab stop so the keyboard can scroll it too (WCAG 2.1.1) -->
+    <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
+    <div class="scroll" role="group" aria-labelledby="dash-reco" tabindex="0">
       <table>
         <thead><tr>
           <th scope="col">{$t('reco.admin.col.engine')}</th><th scope="col">{$t('reco.admin.col.shown')}</th><th scope="col">{$t('reco.admin.col.clicks')}</th>

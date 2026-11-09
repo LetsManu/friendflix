@@ -54,6 +54,11 @@ const tr: Translation<typeof de> = {
     moreInfo: 'Daha fazla bilgi',
     replay: 'Önizlemeyi yeniden oynat',
     replayTitle: 'Yeniden oynat',
+    /** the billboard trailer's pause / resume button (WCAG 2.2.2) */
+    pausePreview: 'Önizlemeyi duraklat',
+    resumePreview: 'Önizlemeyi sürdür',
+    /** the billboard sound toggle: a fixed name, its state is aria-pressed */
+    sound: 'Ses',
   },
   carousel: {
     label: 'Senin için en iyiler',
