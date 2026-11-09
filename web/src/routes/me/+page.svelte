@@ -11,16 +11,17 @@
   import { logout } from '#lib/session';
   import { goto } from '$app/navigation';
   import { locale, localeName, t, type TKey } from '#lib/i18n';
-  import { isLgApp } from '#lib/webos/detect';
+  import { isTvApp } from '#lib/tvapp';
+  import { isFireTvApp, postFireTv } from '#lib/firetv/detect';
   import { changeServerViaHome } from '#lib/webos/home';
   import { toast } from '#lib/ui/toast';
 
   type Note = { id: number; title: string; link?: string; read: boolean };
   let me: Me | null = null, notes: Note[] | null = null, resume: Item[] | null = null, allNotes = false;
-  let lgApp = false; // LG app: "Change server" (same as the header's account menu; the TV reaches it only here)
+  let tvApp = false; // TV app (LG, Fire TV): "Change server" (same as the header's account menu; the TV reaches it only here)
 
   onMount(() => {
-    lgApp = isLgApp();
+    tvApp = isTvApp();
     api<Me>('/api/me').then((m) => (me = m)).catch(() => undefined);
     api('/api/library/resume').then((r) => (resume = r.items)).catch(() => (resume = []));
     api('/api/notifications').then(async (r) => {
@@ -29,6 +30,11 @@
       if (notes!.some((n) => !n.read)) { await api('/api/notifications/read', { method: 'POST' }).catch(() => undefined); setTimeout(() => window.dispatchEvent(new Event('ff-notes')), 1200); }
     }).catch(() => (notes = []));
   });
+  /** Fire TV: the app opens its server screen; LG: back to the app's start page */
+  function changeServer() {
+    if (isFireTvApp()) postFireTv('changeServer');
+    else changeServerViaHome(() => toast.info($t('shell.account.changeServerBlue')));
+  }
   async function removeResume(id: string) {
     const prev = resume;
     resume = resume ? resume.filter((i) => i.id !== id) : resume;
@@ -97,7 +103,7 @@
     {/each}
   </div>
 
-  {#if lgApp}<button type="button" class="out srv" on:click={() => changeServerViaHome(() => toast.info($t('shell.account.changeServerBlue')))}><Icon name="tv" size={20} />{$t('shell.account.changeServer')}</button>{/if}
+  {#if tvApp}<button type="button" class="out srv" on:click={changeServer}><Icon name="tv" size={20} />{$t('shell.account.changeServer')}</button>{/if}
   <button type="button" class="out" on:click={() => logout(me?.tv)}><Icon name="log-out" size={20} />{$t('account.me.logout')}</button>
 </div>
 

@@ -7,7 +7,7 @@
 import { autoBps } from './abr';
 import { loadStoredEstimate } from './bandwidth';
 import { firstInfoBody } from './bar';
-import { lgCaps, type ClientCapsBody } from '#lib/webos/caps';
+import { appCaps, type ClientCapsBody } from '#lib/webos/caps';
 
 /** /api/playback/info answer (backend PlaybackDto) as far as the web player uses it */
 export interface PlaybackDto {
@@ -48,7 +48,7 @@ export function firstPlaybackRequest(itemId: string, pf: { quality?: number; aud
   const quality = fb.maxBitrate ?? 0;
   const hint: ReasonHint = quality ? 'manual' : 'network';
   const bps = quality || autoBps(loadStoredEstimate());
-  return { body: playbackInfoBody({ itemId, startSec, bps, hint, audioLang: fb.audioLang, caps: lgCaps() }), quality, hint, bps };
+  return { body: playbackInfoBody({ itemId, startSec, bps, hint, audioLang: fb.audioLang, caps: appCaps() }), quality, hint, bps };
 }
 
 /** order-independent comparison key of a body (undefined fields do not count) */

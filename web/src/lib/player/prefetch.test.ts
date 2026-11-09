@@ -8,7 +8,7 @@ vi.stubGlobal('window', globalThis);
 vi.stubGlobal('location', new URL('http://ff.test/'));
 vi.stubGlobal('localStorage', { getItem: (k: string) => store.get(k) ?? null, setItem: (k: string, v: string) => void store.set(k, v), removeItem: (k: string) => void store.delete(k) });
 const lgCapsMock = vi.fn(() => null as unknown);
-vi.mock('#lib/webos/caps', () => ({ lgCaps: () => lgCapsMock() }));
+vi.mock('#lib/webos/caps', () => ({ appCaps: () => lgCapsMock() }));
 const api = vi.fn();
 let profile: string | null = 'p1';
 vi.mock('#lib/api', () => ({ api: (...a: unknown[]) => api(...a), getActiveProfile: () => profile }));
@@ -177,7 +177,7 @@ describe('playPrefetch click', () => {
 });
 
 describe('infobody', () => {
-  it('player and prefetch bodies stay identical when lgCaps is set', () => {
+  it('player and prefetch bodies stay identical when appCaps is set', () => {
     const caps = { client: 'webos', appVersion: '1.0.0', containers: ['mp4'], video: [{ codec: 'h264', maxHeight: 2160 }], audio: ['aac'], subtitles: ['srt'] };
     lgCapsMock.mockReturnValue(caps);
     try {

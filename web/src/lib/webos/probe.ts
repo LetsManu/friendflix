@@ -1,12 +1,16 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
 /**
- * The probe of the LG (webOS) TV app (spec section 6): on `/tv?probe=1&ff_app=webos` inside the app it checks the formats the TV
+ * The probe of the TV apps (LG webOS, Fire TV; spec section 6): on `/tv?probe=1&ff_app=<webos|firetv>` inside the app it checks the formats the TV
  * confirms, three real playbacks of one title (direct, hls.js, the TV's own HLS), the remote keys and the way back to the app's
  * start page ("Change server"), and condenses the answer into ONE line the owner can read out or photograph:
  *
- *   FFPROBE v1 tv=webos os=<ver|?> direct=<ok:<ms>ms|error:<code>> hls=<ok|error:<code>> nativehls=<ok|error:<code>>
+ *   FFPROBE v1 tv=<webos|firetv> os=<ver|?> direct=<ok:<ms>ms|error:<code>> hls=<ok|error:<code>> nativehls=<ok|error:<code>>
  *     palm=<yes|no> home=<ok|fail|skipped> keys=<ok|missing:<names>|skipped> video=<codec[+10],…|-> audio=<codecs|-> containers=<list|->
+ *     [screen=<w>x<h>]   (Fire TV only: the page's CSS viewport)
+ *
+ * Fire TV: `os` is '<Android version>/<model>'; the probe stops after the playbacks (keys=skipped home=skipped: the shell maps
+ * the remote itself, and its Change server is a message, not a walk back through the history).
  *
  * `video=` lists codecs, `+10` when a 10-bit profile of it is confirmed. `direct=error:nodirect`: the server offered no direct URL.
  * A playback `error:<code>` is `timeout` (no picture within 15 s), `unpaired`, `profile`, `info` (the lookup failed), a media error
@@ -20,8 +24,10 @@
  */
 import { loadHls } from '#lib/player/hls';
 import { fetchProbeTarget, type ProbeTarget } from '#lib/tvprobe/target';
-import { confirmedTypes, lgCaps, type MediaProbe } from './caps';
-import { isLgApp, webosVersion, type LgWin } from './detect';
+import { isTvApp } from '#lib/tvapp';
+import { fireTvOs, isFireTvApp, type FireWin } from '#lib/firetv/detect';
+import { appCaps, confirmedTypes, type MediaProbe } from './caps';
+import { webosVersion, type LgWin } from './detect';
 import { goToAppHome } from './home';
 import { HOME_HINT_KEY, rememberLgProbeHome } from './probehome';
 
@@ -49,6 +55,10 @@ export interface ProbeVideo {
   load?(): void;
 }
 export interface LgProbeDeps {
+  /** which TV app runs the probe */
+  tv: 'webos' | 'firetv';
+  /** `${innerWidth}x${innerHeight}` of the page */
+  screen: string;
   /** canPlayType / isTypeSupported of this TV; null when there is no media element */
   media: MediaProbe | null;
   os: string | null;
@@ -70,13 +80,15 @@ export interface LgProbeDeps {
 /** `hls` covers both HLS checks (detail 'native' for the TV's own); `keys` carries 'playpause' or 'red'; `home` is the Change server check */
 export type LgProbeStage = 'formats' | 'direct' | 'hls' | 'keys' | 'home' | 'done';
 export interface LgProbeResult {
+  tv: 'webos' | 'firetv'; screen: string;
   os: string; direct: string; hls: string; nativehls: string; palm: 'yes' | 'no'; home: 'ok' | 'fail' | 'skipped'; keys: string;
   video: string[]; audio: string[]; containers: string[];
 }
 
 const list = (a: string[]) => (a.length ? a.join(',') : '-');
 export function formatLgProbe(r: LgProbeResult): string {
-  return `FFPROBE v1 tv=webos os=${r.os} direct=${r.direct} hls=${r.hls} nativehls=${r.nativehls} palm=${r.palm} home=${r.home} keys=${r.keys} video=${list(r.video)} audio=${list(r.audio)} containers=${list(r.containers)}`;
+  const line = `FFPROBE v1 tv=${r.tv} os=${r.os} direct=${r.direct} hls=${r.hls} nativehls=${r.nativehls} palm=${r.palm} home=${r.home} keys=${r.keys} video=${list(r.video)} audio=${list(r.audio)} containers=${list(r.containers)}`;
+  return r.tv === 'firetv' ? `${line} screen=${r.screen}` : line;
 }
 
 const token = (v: unknown, fallback: string) => String(v ?? '').trim().replace(/\s+/g, '_') || fallback;
@@ -153,6 +165,7 @@ function readStored(deps: LgProbeDeps): Stored | null {
     if (!o || typeof o !== 'object') return null;
     if (![o.os, o.direct, o.hls, o.nativehls, o.keys].every((x) => typeof x === 'string') || !strs(o.video) || !strs(o.audio) || !strs(o.containers)) return null;
     return {
+      tv: o.tv === 'firetv' ? 'firetv' : 'webos', screen: typeof o.screen === 'string' ? o.screen : '?',
       os: o.os!, direct: o.direct!, hls: o.hls!, nativehls: o.nativehls!, palm: o.palm === 'yes' ? 'yes' : 'no',
       home: o.home === 'ok' ? 'ok' : o.home === 'skipped' ? 'skipped' : 'fail', keys: o.keys!,
       video: o.video, audio: o.audio, containers: o.containers, stage: o.stage === 'done' ? 'done' : 'home',
@@ -188,6 +201,7 @@ export async function runLgProbe(deps: LgProbeDeps, onStage: (s: LgProbeStage, d
   onStage('formats');
   const t = confirmedTypes(deps.media);
   const r: LgProbeResult = {
+    tv: deps.tv, screen: token(deps.screen, '?'),
     os: token(deps.os, '?'), direct: 'skipped', hls: 'skipped', nativehls: 'skipped', palm: deps.palm ? 'yes' : 'no', home: 'skipped', keys: 'skipped',
     video: videoTokens(t.video), audio: t.audio, containers: t.containers,
   };
@@ -213,6 +227,8 @@ export async function runLgProbe(deps: LgProbeDeps, onStage: (s: LgProbeStage, d
   }
   // unpaired (the compact strip on the pairing page): no key test and no leaving the page; the probe runs again after pairing
   if (r.direct === 'error:unpaired') { onStage('done'); return r; }
+  // Fire TV: the shell maps the remote and changes the server by message, so there is nothing more to test on the page
+  if (deps.tv === 'firetv') { onStage('done'); return r; }
 
   onStage('keys', 'playpause');
   const pp = await deps.waitKey(PLAYPAUSE_CODES, KEY_TIMEOUT_MS);
@@ -239,9 +255,9 @@ export async function runLgProbe(deps: LgProbeDeps, onStage: (s: LgProbeStage, d
   return r;
 }
 
-/** the overlay runs only inside the LG app and only with probe=1 (remembered for the session, so it survives the pairing redirect) */
-export function shouldLgProbe(win: LgWin = window): boolean {
-  if (!isLgApp(win)) return false;
+/** the overlay runs only inside a TV app and only with probe=1 (remembered for the session, so it survives the pairing redirect) */
+export function shouldLgProbe(win: LgWin & FireWin = window): boolean {
+  if (!isTvApp(win)) return false;
   rememberLgProbeHome(win);
   try {
     if (new URLSearchParams(win.location?.search ?? '').get('probe') === '1') { win.sessionStorage?.setItem(PROBE_FLAG, '1'); return true; }
@@ -257,13 +273,16 @@ export function shouldEndLgProbe(compact: boolean, line: string): boolean {
   return !(compact && line.includes('direct=error:unpaired'));
 }
 /** the line when the probe itself crashed */
-export function failedLgProbeLine(win: LgWin = window): string {
+export function failedLgProbeLine(win: LgWin & FireWin = window): string {
+  const fire = isFireTvApp(win);
   return formatLgProbe({
-    os: token(webosVersion(win), '?'), direct: 'error:unknown', hls: 'skipped', nativehls: 'skipped', palm: typeof win.PalmSystem !== 'undefined' ? 'yes' : 'no',
+    tv: fire ? 'firetv' : 'webos', screen: screenOf(win),
+    os: token(fire ? fireTvOs(win) : webosVersion(win), '?'), direct: 'error:unknown', hls: 'skipped', nativehls: 'skipped', palm: !fire && typeof win.PalmSystem !== 'undefined' ? 'yes' : 'no',
     home: 'skipped', keys: 'skipped', video: [], audio: [], containers: [],
   });
 }
 
+const screenOf = (win: FireWin) => `${win.innerWidth ?? '?'}x${win.innerHeight ?? '?'}`;
 const coded = (code: string) => Object.assign(new Error(code), { code });
 
 /** the real dependencies: the shared probe target with this TV's caps block, one hidden <video> per playback */
@@ -277,11 +296,14 @@ export function realLgDeps(win: Window & typeof globalThis = window, fetchImpl: 
   } catch { /* no media element */ }
   let storage: LgProbeDeps['storage'];
   try { storage = win.sessionStorage; } catch { /* blocked */ }
+  const fire = isFireTvApp(win as unknown as FireWin);
   return {
+    tv: fire ? 'firetv' : 'webos',
+    screen: screenOf(win as unknown as FireWin),
     media,
-    os: webosVersion(win),
-    palm: typeof (win as unknown as LgWin).PalmSystem !== 'undefined',
-    fetchTarget: () => fetchProbeTarget(win, fetchImpl, { caps: lgCaps() ?? undefined }),
+    os: fire ? fireTvOs(win as unknown as FireWin) : webosVersion(win),
+    palm: !fire && typeof (win as unknown as LgWin).PalmSystem !== 'undefined',
+    fetchTarget: () => fetchProbeTarget(win, fetchImpl, { caps: appCaps() ?? undefined }),
     now: () => Date.now(),
     createVideo: () => {
       const v = doc.createElement('video');

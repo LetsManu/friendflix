@@ -58,7 +58,9 @@
   import LgProbeOverlay from '#lib/webos/ProbeOverlay.svelte';
   import { isTizenApp } from '#lib/tizen/detect';
   import { installNavLock } from '#lib/tizen/navlock';
-  import { exitLgApp, isLgApp, shouldExitOnBack } from '#lib/webos/detect';
+  import { isLgApp, shouldExitOnBack } from '#lib/webos/detect';
+  import { exitTvApp, isTvApp } from '#lib/tvapp';
+  import { applyFireTvViewport, isFireTvApp, postFireTv } from '#lib/firetv/detect';
   import { recordHistoryBase } from '#lib/webos/home';
   import { rememberLgProbeHome } from '#lib/webos/probehome';
   import { PLAY_ART_NAME, playTransition, takePlayArt } from '#lib/player/transition';
@@ -72,6 +74,7 @@
   let tv = false, replaced = false;
   /** inside the LG app; set on mount (the server render has no window) */
   let lgApp = false;
+  let tvApp = false; // a TV app (LG, Fire TV) runs this page as its whole UI
   let pending = false, checking = false;
   let notes: Array<{ id: number; title: string; link?: string; read: boolean }> = [];
   let railOpen = false;
@@ -261,8 +264,11 @@
       const typing = el && (isEditable(el) || el.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName));
       if (!typing || e.key !== '/') { e.preventDefault(); openSearch(); return; }
     }
-    // LG app, unpaired pairing page (not yet TV mode): Back returns to the app's start page, which shows the setup form
-    if (!tv && path === '/tv' && isBackKey(e) && isLgApp()) { e.preventDefault(); history.back(); return; }
+    // TV app, unpaired pairing page (not yet TV mode): Back returns to the app's server setup (LG: its start page; Fire TV: by message)
+    if (!tv && path === '/tv' && isBackKey(e)) {
+      if (isLgApp()) { e.preventDefault(); history.back(); return; }
+      if (isFireTvApp()) { e.preventDefault(); postFireTv('changeServer'); return; }
+    }
     const back = e.key === 'Escape' || (tv && isBackKey(e));
     if (!back) return;
     // TV: Back/Escape walks one step back (the detail popup closes itself on Escape; the player handles its own keys)
@@ -272,10 +278,10 @@
       if (showRail && !$page.state.modalId && (railOpen || topLevel)) {
         const r = railKey({ open: railOpen }, { key: 'back', atLeftEdge: false, inRail: railOpen, onHome: path === '/' });
         railOpen = r.state.open;
-        if (r.action === 'exitPrompt' && isLgApp() && shouldExitOnBack({ path, modalId: $page.state.modalId, dropdownOpen: false, editable: false })) exitLgApp();
+        if (r.action === 'exitPrompt' && isTvApp() && shouldExitOnBack({ path, modalId: $page.state.modalId, dropdownOpen: false, editable: false })) exitTvApp();
         return;
       }
-      if (isLgApp() && shouldExitOnBack({ path, modalId: $page.state.modalId, dropdownOpen: false, editable: false })) exitLgApp(); // Back on home leaves the LG app
+      if (isTvApp() && shouldExitOnBack({ path, modalId: $page.state.modalId, dropdownOpen: false, editable: false })) exitTvApp(); // Back on home leaves the TV app
       else if (path !== '/' || $page.state.modalId) history.back();
     }
   }
@@ -638,14 +644,16 @@
     evs.forEach((t) => document.addEventListener(t, warm, { passive: true }));
     stops.push(unwarm);
     lgApp = isLgApp();
+    tvApp = isTvApp();
     if (lgApp) { recordHistoryBase(); rememberLgProbeHome(); }
-    if (isTizenApp() || isLgApp()) stops.push(installNavLock()); // the TV app never leaves for a foreign site (lib/tizen/navlock.ts)
+    if (isTizenApp() || isTvApp()) stops.push(installNavLock()); // the TV app never leaves for a foreign site (lib/tizen/navlock.ts)
     const flag = new URLSearchParams(location.search).get('tv');
     if (flag === '1') sessionStorage.setItem('ff_tv', '1'); else if (flag === '0') sessionStorage.removeItem('ff_tv');
     online = navigator.onLine;
     const setOnline = () => (online = navigator.onLine);
     window.addEventListener('online', setOnline); window.addEventListener('offline', setOnline);
     stops.push(() => { window.removeEventListener('online', setOnline); window.removeEventListener('offline', setOnline); });
+    if (isFireTvApp()) applyFireTvViewport(); // the Fire TV app lays the TV UI out 1920 px wide, like the LG app
     void boot();
     // Notification clicks (service worker) ask an already open window to navigate in-app.
     const onSwMessage = (e: MessageEvent) => {
@@ -830,7 +838,7 @@
 {/if}
 <!-- Samsung TV app: the phase-0 probe screen (only with probe=1 inside the app; a strip on the pairing page, full screen after pairing) -->
 <ProbeOverlay compact={path === '/tv'} />
-{#if lgApp}<LgProbeOverlay compact={path === '/tv'} />{/if}
+{#if tvApp}<LgProbeOverlay compact={path === '/tv'} />{/if}
 <!-- app-wide toasts + confirm dialog (lib/ui) + the in-app re-authentication (lib/account/reauth.ts); mounted once, outside the page so they survive navigation -->
 <ToastHost />
 <ConfirmHost />
