@@ -84,8 +84,8 @@ test.describe('glass', () => {
   test('a tripped frame guard turns glass solid', async ({ page }) => {
     await quiet(page, { slowMs: 1, frames: 1 }); // every frame is "slow": the first motion trips it
     await page.goto('/');
-    await expect(page.locator('html')).toHaveClass(/(^|\s)m-glass(\s|$)/);
-    // start motion: a row card under the pointer, then the row glides a page
+    // (no m-glass precondition: the guard's own start-up pulse may already trip it at load; full motion is proven above)
+    // more motion in case it has not tripped yet: a row card under the pointer, then the row glides a page
     const row = page.locator('section.row', { has: page.getByRole('heading', { name: /Weil du/ }) });
     await row.scrollIntoViewIfNeeded();
     await row.locator('article.card').first().hover();

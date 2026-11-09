@@ -571,8 +571,7 @@ test.describe('desktop detail glass', () => {
     });
     await tabs.getByRole('tab', { name: 'Mehr davon' }).click();
     expect(await page.evaluate(() => (window as unknown as { __glide: Promise<number> }).__glide)).toBeLessThan(100);
-    await page.waitForTimeout(300);
-    expect(await tabs.getByRole('tab', { name: 'Mehr davon' }).evaluate((e) => getComputedStyle(e).color)).toBe('rgb(17, 17, 17)');
+    await expect.poll(() => tabs.getByRole('tab', { name: 'Mehr davon' }).evaluate((e) => getComputedStyle(e).color)).toBe('rgb(17, 17, 17)');
     await expect.poll(() => mid.evaluate((e) => getComputedStyle(e).transform)).not.toBe(before);
     await expect.poll(() => mid.evaluate((e) => e.getAnimations().length)).toBe(0);
   });

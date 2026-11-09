@@ -39,8 +39,17 @@ test.describe('desktop pill bar', () => {
       const bar = page.locator('[data-desk-bar]');
       await expect(bar.locator('.pill [aria-current="page"]')).toHaveText('Merkliste');
       await expect.poll(() => bar.locator('.pill .fill').evaluate((e) => getComputedStyle(e).opacity)).toBe('0.13');
+      // a per-frame watcher started before the click (the spring lasts ~350 ms: a poll's growing intervals can miss it)
+      // (installed and running in the page before the click is sent; awaited after it)
+      await bar.locator('.pill .fill').evaluate((e) => {
+        (window as unknown as { __sawSpring: Promise<boolean> }).__sawSpring = new Promise<boolean>((res) => {
+          const t0 = performance.now();
+          const f = () => (e.getAnimations({ subtree: true }).length ? res(true) : performance.now() - t0 > 4000 ? res(false) : requestAnimationFrame(f));
+          f();
+        });
+      });
       await bar.locator('.pill').getByRole('link', { name: 'Serien' }).click();
-      await expect.poll(() => bar.locator('.pill .fill').evaluate((e) => e.getAnimations({ subtree: true }).length)).toBeGreaterThan(0);
+      expect(await page.evaluate(() => (window as unknown as { __sawSpring: Promise<boolean> }).__sawSpring)).toBe(true);
     });
   });
 

@@ -541,13 +541,22 @@ test.describe('desktop wide hover preview', () => {
       await page.goto('/');
       const dpv = await openOn(page, row(page, BECAUSE).locator('article.card').first());
       await settled(dpv);
-      await page.keyboard.press('Escape');
-      const st = await page.evaluate(() => {
-        const e = document.querySelector('.dpv');
-        return { attached: Boolean(e), running: e ? e.getAnimations().some((a) => a.playState === 'running') : false };
+      // a per-frame watcher started before the Esc (the shrink lasts 180 ms; a read after the key's round trip can miss it):
+      // did a frame show the card still attached with its shrink running?
+      await page.evaluate(() => {
+        (window as unknown as { __shrank: Promise<boolean> }).__shrank = new Promise<boolean>((res) => {
+          const t0 = performance.now();
+          const f = () => {
+            const e = document.querySelector('.dpv');
+            if (e?.getAnimations().some((a) => a.playState === 'running')) return res(true);
+            if (!e || performance.now() - t0 > 4000) return res(false);
+            requestAnimationFrame(f);
+          };
+          requestAnimationFrame(f);
+        });
       });
-      expect(st).toEqual({ attached: true, running: true });
-      await page.waitForTimeout(250);
+      await page.keyboard.press('Escape');
+      expect(await page.evaluate(() => (window as unknown as { __shrank: Promise<boolean> }).__shrank)).toBe(true);
       await expect(page.locator('.dpv')).toHaveCount(0);
     });
 
