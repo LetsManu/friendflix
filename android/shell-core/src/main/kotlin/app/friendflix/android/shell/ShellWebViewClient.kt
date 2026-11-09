@@ -29,7 +29,7 @@ object ExternalLinks {
 
 // The androidx.webkit lint rule (pulled in with the bridge dependency) does not see the override below; it is there and returns true.
 @SuppressLint("MissingOnRenderProcessGone")
-class ShellWebViewClient(
+open class ShellWebViewClient(
     private val policy: OriginPolicy,
     private val onRenderGone: () -> Unit = {},
     /**

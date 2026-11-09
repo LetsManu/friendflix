@@ -14,7 +14,6 @@ import androidx.core.net.toUri
 import androidx.webkit.WebViewCompat
 import androidx.webkit.WebViewFeature
 import app.friendflix.android.shell.OriginPolicy
-import app.friendflix.android.shell.ShellWebViewClient
 
 object TvWebView {
     /** The WebView's own user agent plus the Fire TV marker (never `FriendFlixAndroid/`: no phone player, downloads or Cast). */
@@ -23,10 +22,11 @@ object TvWebView {
     /** The largest physical height among the display's modes (2160 on a 4K TV); 1080 when none is known. */
     fun displayHeight(physicalHeights: List<Int>): Int = physicalHeights.filter { it > 0 }.maxOrNull() ?: 1080
 
+    /** [onLoaded]: a main-frame page of the app origin finished loading without an error (see [TvWebViewClient]). */
     @SuppressLint("SetJavaScriptEnabled")
     fun create(
         context: Context, policy: OriginPolicy, versionName: String, displayHeight: Int, authOrigin: OriginPolicy?,
-        onRenderGone: () -> Unit, onMessage: (TvMessage) -> Unit,
+        onRenderGone: () -> Unit, onMessage: (TvMessage) -> Unit, onLoaded: (url: String) -> Unit = {},
     ): WebView {
         val view = WebView(context)
         view.settings.apply {
@@ -43,7 +43,7 @@ object TvWebView {
         }
         view.isFocusable = true
         // A TV app never leaves for a browser: links to other sites are dropped. No native watch page.
-        view.webViewClient = ShellWebViewClient(policy, onRenderGone, onWatch = null, openExternal = {}).also { it.authOrigin = authOrigin }
+        view.webViewClient = TvWebViewClient(policy, onRenderGone, onLoaded).also { it.authOrigin = authOrigin }
         view.webChromeClient = WebChromeClient()
         view.setDownloadListener { _, _, _, _, _ -> }
         installPort(view, policy, onMessage)

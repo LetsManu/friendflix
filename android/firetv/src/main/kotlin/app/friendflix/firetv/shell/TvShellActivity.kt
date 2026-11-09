@@ -11,6 +11,7 @@ import android.webkit.CookieManager
 import android.webkit.WebView
 import androidx.activity.ComponentActivity
 import androidx.core.content.ContextCompat
+import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
 import app.friendflix.android.shell.OriginPolicy
 import app.friendflix.android.shell.origin
@@ -25,11 +26,14 @@ import okhttp3.HttpUrl
 class TvShellActivity : ComponentActivity() {
     private var webView: WebView? = null
     private var origin: HttpUrl? = null
+    private lateinit var settings: TvSettings
+    /** the start page carries `probe=1`: the first-run check counts as done once a page of the server loaded without an error */
+    private var probePending = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        settings = TvSettings.from(applicationContext)
         lifecycleScope.launch {
-            val settings = TvSettings.from(applicationContext)
             val origin = settings.serverOrigin.first()
             if (origin == null) {
                 startActivity(Intent(this@TvShellActivity, TvSetupActivity::class.java))
@@ -40,7 +44,16 @@ class TvShellActivity : ComponentActivity() {
             val auth = settings.authOrigin.first()
             val probed = settings.probedOrigin.first()
             open(origin, auth, probed)
-            settings.setProbedOrigin(origin.origin())
+        }
+    }
+
+    /** singleTask: a new start of the running shell. If the saved server changed meanwhile, start over for it (never keep the old one). */
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        val shown = origin ?: return // still reading the settings: onCreate's read is current
+        lifecycleScope.launch {
+            if (settings.serverOrigin.first()?.origin() != shown.origin() && !isFinishing) recreate()
         }
     }
 
@@ -50,12 +63,23 @@ class TvShellActivity : ComponentActivity() {
         val display = ContextCompat.getDisplayOrDefault(this)
         val view = TvWebView.create(
             this, OriginPolicy(origin), BuildConfig.VERSION_NAME, TvWebView.displayHeight(display.supportedModes.map { it.physicalHeight }),
-            auth?.let(::OriginPolicy), ::onRenderGone, ::onMessage,
+            auth?.let(::OriginPolicy), ::onRenderGone, ::onMessage, { onLoaded() },
         )
         webView = view
         setContentView(view)
         view.requestFocus()
-        view.loadUrl(TvStart.url(origin, probedOrigin))
+        val start = TvStart.url(origin, probedOrigin)
+        probePending = start.endsWith("&probe=1")
+        view.loadUrl(start)
+        // pauseTimers is process-wide: a recreated shell (renderer gone) must undo the old instance's onStop
+        if (lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)) view.resumeTimers() else { view.onPause(); view.pauseTimers() }
+    }
+
+    private fun onLoaded() {
+        if (!probePending) return
+        probePending = false
+        val done = origin?.origin() ?: return
+        lifecycleScope.launch { settings.setProbedOrigin(done) }
     }
 
     // ComponentActivity (androidx.core) marks its dispatchKeyEvent restricted; this is Activity.dispatchKeyEvent, overridden as intended.
@@ -88,9 +112,12 @@ class TvShellActivity : ComponentActivity() {
                 startActivity(TvSetupActivity.changeIntent(this, current.origin()))
                 finish()
             }
-            is TvMessage.KeepAwake ->
-                if (message.on) window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+            is TvMessage.KeepAwake -> {
+                // a late keepAwake:1 after onStop must not put the flag back on a window in the background
+                val on = TvKeepAwake.screenOn(message.on, started = lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED))
+                if (on) window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
                 else window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+            }
         }
     }
 
@@ -99,7 +126,17 @@ class TvShellActivity : ComponentActivity() {
         if (renderRestarts++ < MAX_RENDER_RESTARTS) recreate() else finish()
     }
 
+    override fun onStart() {
+        super.onStart()
+        webView?.let { it.onResume(); it.resumeTimers() }
+    }
+
+    /**
+     * In the background (Home, another app) the page is paused: media stops, timers stop, and keep-awake is off. Paused in onStop rather
+     * than onPause, so a system overlay over the shell (which only pauses the activity) does not stop playback.
+     */
     override fun onStop() {
+        webView?.let { it.onPause(); it.pauseTimers() }
         window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         // the TV session survives a force stop
         CookieManager.getInstance().flush()

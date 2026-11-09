@@ -31,3 +31,11 @@ object TvMessages {
     /** Only the server's own page in the main frame may talk to the shell (never a frame, never the sign-in page). */
     fun accept(sourceOrigin: Uri, isMainFrame: Boolean, policy: OriginPolicy): Boolean = isMainFrame && policy.isAppOrigin(sourceOrigin)
 }
+
+object TvKeepAwake {
+    /**
+     * Whether the screen stays on after a `keepAwake` message: only while the shell is at least started. A page that is still running
+     * after onStop (a late `keepAwake:1`) must not put the flag back on a window in the background.
+     */
+    fun screenOn(on: Boolean, started: Boolean): Boolean = on && started
+}

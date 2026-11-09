@@ -29,4 +29,11 @@ class TvMessagesTest {
         assertFalse(TvMessages.accept("http://friend.example.com".toUri(), isMainFrame = true, p))
         assertFalse(TvMessages.accept("https://friend.example.com:8443".toUri(), isMainFrame = true, p))
     }
+
+    @Test fun keepAwakeOnlyWhileStarted() {
+        assertTrue(TvKeepAwake.screenOn(on = true, started = true))
+        assertFalse(TvKeepAwake.screenOn(on = true, started = false)) // a late keepAwake:1 after onStop
+        assertFalse(TvKeepAwake.screenOn(on = false, started = true))
+        assertFalse(TvKeepAwake.screenOn(on = false, started = false))
+    }
 }
