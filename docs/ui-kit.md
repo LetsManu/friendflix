@@ -2,7 +2,9 @@
 
 One set of building blocks for consumer and admin pages. Everything uses the tokens in `app.css` (`--surface`, `--line`,
 `--ok/--warn/--err/--info` and their `--tone-*` backgrounds, `--danger`), the `Icon` set, 44px touch targets, the global
-focus ring (TV: bigger ring) and respects `prefers-reduced-motion` (CSS rule in `app.css`; Svelte transitions use
+focus ring (two-tone: a white outline with a dark companion, `--ring-dark`, so it shows on bright artwork and light glass; a
+component that moves the ring sets `--ring-o`, one with its own shadow restates the companion; TV: its own bigger ring) and
+the menu keys of `ui/menuKeys.ts` on every `role="menu"` popup, and respects `prefers-reduced-motion` (CSS rule in `app.css`; Svelte transitions use
 `dur()` from `ui/motion.ts`). All texts come from the i18n area `ui` (7 languages).
 
 ## Colour tokens
@@ -44,6 +46,9 @@ toast.info(msg, { duration: 0, key: 'sync' });   // sticky; same key replaces in
 ```
 `ToastHost` (mounted once in `routes/+layout.svelte`) is a polite live region, max 3 toasts, timers pause on hover/focus,
 Escape closes the focused toast, sits above the phone tab bar. Defaults: 5 s, errors 8 s, with an action 6 s.
+While the last input was a key (not on TV), a toast with an action stays until it is dismissed and its ring fades out;
+`Alt+Z` (`ACTION_SHORTCUT`) runs the newest toast's action from anywhere and is the action's accessible description. A
+pointer press brings the countdown back.
 
 ```ts
 import { confirm } from '#lib/ui/confirm';

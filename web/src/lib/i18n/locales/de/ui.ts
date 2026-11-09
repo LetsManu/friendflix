@@ -9,6 +9,8 @@ export default {
   dismiss: 'Hinweis schließen',
   notifications: 'Hinweise',
   errorPrefix: 'Fehler:',
+  /** the toast action's keyboard shortcut (its accessible description) */
+  actionShortcut: 'Tastenkürzel: {key}',
   percent: '{n} %',
   confirm: {
     ok: 'Bestätigen',

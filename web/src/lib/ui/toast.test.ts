@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { get } from 'svelte/store';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { ACTION_DURATION, MAX_VISIBLE, RING_LEN, close, pause, resetToasts, resume, runToastAction, timeLeft, toast, toasts } from './toast';
+import { ACTION_DURATION, ACTION_SHORTCUT, MAX_VISIBLE, RING_LEN, close, keyboardHold, latestActionId, pause, resetToasts, resume, runLatestAction, runToastAction, setKeyboardUse, timeLeft, toast, toasts } from './toast';
 
 beforeEach(() => { vi.useFakeTimers(); });
 afterEach(() => { resetToasts(); vi.useRealTimers(); });
@@ -130,5 +130,58 @@ describe('toast store', () => {
     const id = toast.info('sticky', { duration: 0 });
     expect(timeLeft(id)).toBe(0);
     expect(timeLeft(9999)).toBe(0); // unknown
+  });
+});
+
+describe('keyboard use (WCAG 2.2.1)', () => {
+  const undo = () => ({ label: 'Undo', run: vi.fn() });
+  it('an action toast stays while the last input was a key; a plain toast still times out', () => {
+    setKeyboardUse(true);
+    expect(get(keyboardHold)).toBe(true);
+    toast.info('added', { action: undo() });
+    toast.success('saved');
+    vi.advanceTimersByTime(60_000);
+    expect(get(toasts).map((x) => x.message)).toEqual(['added']);
+  });
+  it('keyboard use holds a running action toast with the time it had left; a pointer press starts it again (at least 1.5 s)', () => {
+    const id = toast.info('added', { action: undo() });
+    vi.advanceTimersByTime(4000);
+    setKeyboardUse(true);
+    expect(timeLeft(id)).toBe(1000);
+    vi.advanceTimersByTime(30_000);
+    expect(get(toasts)).toHaveLength(1);
+    setKeyboardUse(false);
+    expect(get(keyboardHold)).toBe(false);
+    expect(timeLeft(id)).toBe(1500);
+    vi.advanceTimersByTime(1499);
+    expect(get(toasts)).toHaveLength(1);
+    vi.advanceTimersByTime(1);
+    expect(get(toasts)).toHaveLength(0);
+  });
+  it('a pointer press while the region is paused (pointer or focus on it) keeps the toast paused', () => {
+    setKeyboardUse(true);
+    toast.info('added', { action: undo() });
+    pause();
+    setKeyboardUse(false);
+    vi.advanceTimersByTime(30_000);
+    expect(get(toasts)).toHaveLength(1);
+    resume();
+    vi.advanceTimersByTime(ACTION_DURATION);
+    expect(get(toasts)).toHaveLength(0);
+  });
+  it(`${ACTION_SHORTCUT} runs the newest toast's action (and closes it); nothing to run gives false`, async () => {
+    expect(ACTION_SHORTCUT).toBe('Alt+Z');
+    expect(runLatestAction()).toBe(false);
+    const older = undo(), newer = undo();
+    toast.info('one', { action: older });
+    const id = toast.info('two', { action: newer });
+    toast.success('plain');
+    expect(latestActionId(get(toasts))).toBe(id);
+    expect(runLatestAction()).toBe(true);
+    await Promise.resolve();
+    expect(newer.run).toHaveBeenCalledTimes(1);
+    expect(older.run).not.toHaveBeenCalled();
+    expect(get(toasts).map((x) => x.message)).toEqual(['one', 'plain']);
+    expect(latestActionId([])).toBeNull();
   });
 });
