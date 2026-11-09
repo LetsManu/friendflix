@@ -3,6 +3,7 @@
 <script lang="ts">
   import { onDestroy } from 'svelte';
   import { pillParts } from '#lib/glass/fx';
+  import { alphaOf } from '#lib/desk/bar';
 
   /**
    * The sliding selection pill (glass spec §8.4): a left cap, a middle part scaled on X and a right cap, all placed by
@@ -19,9 +20,13 @@
   export let tone: 'light' | 'white' = 'light';
 
   let l = '', m = '', r = '', h = 0, y = 0, on = false, ready = false, raf = 0, sp: HTMLSpanElement | undefined;
+  /** the light fill's alpha (white at the `--fr-sel` token's alpha), read from the host: the parts are drawn opaque and the
+   * pill fades as a group, so where the caps overlap the middle part nothing adds up (no seam) */
+  let selA: number | null = null;
   function place() {
     const el = host?.querySelector<HTMLElement>(selector);
     if (!el || !el.offsetWidth) { on = false; return; }
+    if (selA === null && host) selA = alphaOf(getComputedStyle(host).getPropertyValue('--fr-sel'));
     h = el.offsetHeight; y = el.offsetTop;
     ({ l, mid: m, r } = pillParts({ x: el.offsetLeft, w: el.offsetWidth }, h));
     on = true;
@@ -50,17 +55,20 @@
 </script>
 
 <!-- the entry's top is a translateY on each part too, so a vertical list (the settings side navigation) glides as well -->
-<span class="sp" bind:this={sp} class:ready class:on class:white={tone === 'white'} aria-hidden="true" style="--sp-h:{h}px">
+<span class="sp" bind:this={sp} class:ready class:on class:white={tone === 'white'} aria-hidden="true" style="--sp-h:{h}px" style:--sp-a={tone === 'white' ? undefined : selA ?? undefined}>
   <i class="l" style="transform:translateY({y}px) {l}"></i><i class="m" style="transform:translateY({y}px) {m}"></i><i class="r" style="transform:translateY({y}px) {r}"></i>
 </span>
 
 <style>
   .sp { position: absolute; inset: 0; z-index: 0; pointer-events: none; opacity: 0; }
-  .sp.on { opacity: 1; }
-  .sp i { position: absolute; left: 0; top: 0; height: var(--sp-h); background: var(--fr-sel); transform-origin: 0 50%; }
-  .sp.white i { background: #fff; }
+  /* the light fill is the --fr-sel token (white at .13): the parts are drawn opaque white and the whole pill takes the token's
+     alpha as its opacity (--sp-a, read from the token on the first placement), so the 1 px where a cap overlaps the middle part
+     is not lit twice (a translucent fill per part drew a hard light seam there) */
+  .sp.on { opacity: var(--sp-a, .13); }
+  .sp i { position: absolute; left: 0; top: 0; height: var(--sp-h); background: #fff; transform-origin: 0 50%; }
+  .sp.white.on { opacity: 1; }
   /* the caps are circles cut in half, reaching 1 px over the middle part: the scaled middle part's edges are resampled (soft),
-     so the overlap hides the seam (a translucent fill shows a hairline there at most); the middle part is 100 px before scaling */
+     so the overlap hides the seam; the middle part is 100 px before scaling */
   .sp .l, .sp .r { width: var(--sp-h); border-radius: 50%; }
   .sp .l { clip-path: inset(0 calc(50% - 1px) 0 0); }
   .sp .r { clip-path: inset(0 0 0 calc(50% - 1px)); }

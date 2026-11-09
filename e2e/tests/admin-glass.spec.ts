@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import type { Locator, Page, Route } from '@playwright/test';
 import { expect, test } from '../fixtures.js';
+import { pixelCols } from '../helpers.js';
 
 /**
  * The dense glass admin (glass spec §7): the sidebar is a glass panel with the sliding light pill on the current page, the
@@ -63,6 +64,29 @@ test.describe('dense glass admin (desktop)', () => {
     // links white .75, the current one white
     expect(await css(users, 'color')).toBe('rgb(255, 255, 255)');
     expect(await css(nav.getByRole('link', { name: /Audit-Log/ }), 'color')).toBe('rgba(255, 255, 255, 0.75)');
+  });
+
+  // regression (v3.0.1): the pill's caps reach 1 px over its scaled middle part; with a translucent fill per part that pixel
+  // column was lit twice, a hard light seam near each end. The parts are drawn opaque and the pill fades as a group.
+  test('the sidebar pill is one even light: no seam where its caps meet the middle part', async ({ page }) => {
+    await page.setViewportSize({ width: 1440, height: 1000 });
+    await page.goto('/admin/playback');
+    const side = page.locator('.adm .side');
+    const sp = side.locator('.sp');
+    await expect(sp).toHaveClass(/ready/);
+    expect(await css(sp.locator('.m'), 'background-color')).toBe('rgb(255, 255, 255)');
+    expect(await css(sp, 'opacity')).toBe('0.13'); // the --fr-sel light, as the group's opacity
+    await page.mouse.move(700, 900); // no hover fill
+    const cur = side.locator('.ni[aria-current="page"]');
+    const b = (await cur.boundingBox())!;
+    expect(Math.abs((await sp.locator('.m').boundingBox())!.y - b.y)).toBeLessThan(1.5);
+    // a strip above the icon and the label, across each join: the join's columns match their neighbours
+    for (const join of [b.x + b.height / 2, b.x + b.width - b.height / 2]) {
+      const cols = await pixelCols(page, join - 8, b.y + 3, 16, 6);
+      const around = [...cols.slice(0, 5), ...cols.slice(11)];
+      const ref = around.reduce((a, v) => a + v, 0) / around.length;
+      expect(Math.max(...cols.slice(6, 10).map((v) => Math.abs(v - ref))), `join at ${Math.round(join)}`).toBeLessThan(4);
+    }
   });
 
   test('overview numbers count up on first view (1.1 s), instant in calm', async ({ page }) => {

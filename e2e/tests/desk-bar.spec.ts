@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { ME } from '../mocks/fixtures.js';
 import { expect, test } from '../fixtures.js';
+import { meanOf, pixelCols, redPixels } from '../helpers.js';
 
 /** Desktop top bar (spec desktop browse §1): logo, a floating pill with the tabs, search that stretches open, bell, avatar. */
 test.describe('desktop pill bar', () => {
@@ -50,6 +51,44 @@ test.describe('desktop pill bar', () => {
       });
       await bar.locator('.pill').getByRole('link', { name: 'Serien' }).click();
       expect(await page.evaluate(() => (window as unknown as { __sawSpring: Promise<boolean> }).__sawSpring)).toBe(true);
+    });
+
+    // regression (v3.0.1): each glass half of the pill blurred its own backdrop, and the later one's box (it reaches far over the
+    // other half, for the slide) took the other half's milk into its blur: a light band from the pill's middle to the right
+    test('scrolled: the shade holds the whole pill; the glass pill is even across its middle and has no light at rest', async ({ page }) => {
+      await page.addInitScript(() => { (window as unknown as { __ffDeskGuard: unknown }).__ffDeskGuard = { slowMs: 1000, frames: 8 }; });
+      await page.setViewportSize({ width: 1440, height: 900 });
+      await page.goto('/browse/movies');
+      await expect(page.locator('html')).toHaveClass(/(^|\s)m-glass(\s|$)/);
+      const bar = page.locator('[data-desk-bar]');
+      const pill = bar.locator('.pill');
+      await expect(pill).toBeVisible();
+      await page.mouse.move(720, 700); // the pointer away from the bar
+      await page.evaluate(() => window.scrollTo(0, 700));
+      await expect(bar).toHaveClass(/solid/);
+      await expect.poll(() => bar.locator('.scrim').evaluate((e) => getComputedStyle(e).opacity)).toBe('1');
+      // every painted bar-wide layer holds the pill's whole box (no band that ends across or above the pill)
+      const bands = await bar.evaluate((b) => {
+        const p = b.querySelector('.pill')!.getBoundingClientRect();
+        return [b, ...b.querySelectorAll<HTMLElement>('*')].filter((e) => {
+          const cs = getComputedStyle(e), r = e.getBoundingClientRect();
+          return r.width >= innerWidth * .9 && Number(cs.opacity) > 0 && (cs.backgroundImage !== 'none' || cs.backgroundColor !== 'rgba(0, 0, 0, 0)');
+        }).map((e) => { const r = e.getBoundingClientRect(); return { cls: String(e.className), holds: r.top <= p.top && r.bottom >= p.bottom && r.left <= p.left && r.right >= p.right }; });
+      });
+      expect(bands.length).toBeGreaterThan(0);
+      for (const band of bands) expect(band, band.cls).toMatchObject({ holds: true });
+      const pb = (await pill.boundingBox())!;
+      // the shade's opaque part reaches below the pill (the page colour on both sides of it, top to bottom)
+      for (const x of [pb.x - 40, pb.x + pb.width + 12]) {
+        const col = (await redPixels(page, x, 0, 1, Math.ceil(pb.y + pb.height + 2))).map((r) => r[0]!);
+        expect(Math.max(...col.map((v) => Math.abs(v - 16))), `column ${x}`).toBeLessThan(3); // --bg #101418
+      }
+      // at rest, with the pointer elsewhere, the sheen is out
+      await expect.poll(() => pill.locator('.frost-sheen').evaluate((e) => getComputedStyle(e).opacity)).toBe('0');
+      // the glass is even across the split of its two halves (a strip above the labels, averaged over 4 rows)
+      const mid = pb.x + pb.width / 2;
+      const strip = await pixelCols(page, mid - 24, pb.y + 4, 48, 4);
+      expect(Math.abs(meanOf(strip, 0, 20) - meanOf(strip, 28, 48))).toBeLessThan(4);
     });
   });
 
@@ -257,7 +296,7 @@ test.describe('desktop pill bar', () => {
       await page.waitForTimeout(100);
       const jump = await page.evaluate(() => {
         const p = document.querySelector<HTMLElement>('[data-desk-bar] .pill')!;
-        const edge = () => p.querySelector<HTMLElement>('.pbg .r > i')!.getBoundingClientRect().right;
+        const edge = () => p.querySelector<HTMLElement>('.pbg .r > i.frost')!.getBoundingClientRect().right;
         const before = edge();
         p.querySelector<HTMLInputElement>('#hq')!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
         return Math.abs(edge() - before);
@@ -268,7 +307,7 @@ test.describe('desktop pill bar', () => {
       // at rest the background is exactly the pill
       const edges = await pill.evaluate((p) => {
         // (two halves, each clipped at the split: the left one carries the left edge, the right one the right edge)
-        const r = p.getBoundingClientRect(), l = p.querySelector('.pbg .l > i')!.getBoundingClientRect(), rr = p.querySelector('.pbg .r > i')!.getBoundingClientRect();
+        const r = p.getBoundingClientRect(), l = p.querySelector('.pbg .l > i.frost')!.getBoundingClientRect(), rr = p.querySelector('.pbg .r > i.frost')!.getBoundingClientRect();
         return { l: Math.round(l.left - r.left), r: Math.round(r.right - rr.right) };
       });
       expect(edges).toEqual({ l: 0, r: 0 });
