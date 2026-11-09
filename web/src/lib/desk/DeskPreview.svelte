@@ -21,13 +21,17 @@
   import { reasonText } from '#lib/reason';
   import { autoplayAllowed, holdBillboard, previewOwner, stopPreview, playPreview, toggleSound } from '#lib/preview';
   import { artClick as openFromArt, clipEnv, hoverClipAllowed, portal, previewActions, ratingLoader, releaseClick as release, saveFavorite } from '#lib/hoverShared';
-  import { EMPH_OUT, motionLevel } from '#lib/tv/motion';
-  import { wideBox } from '#lib/desk/preview';
+  import { EMPH_OUT, GLASS_IN } from '#lib/tv/motion';
+  import { HOVER_MARGIN, hoverBox, hoverWidth, type HoverBox } from '#lib/desk/preview';
+  import { cachedTone, toneFor, toneVars, type Tone } from '#lib/glass/tone';
+  import { sheen } from '#lib/glass/pointer';
+  import { fxMode, REDUCED_MS } from '#lib/glass/fx';
 
   /**
-   * Desktop wide hover preview (spec desktop browse §2): a portal on <body> that grows sideways out of the card into a tile
-   * ~2.5 cards wide. Left: the trailer (or backdrop) with the title, mute and progress; right: Play, My list, rating, more,
-   * ⌄ (detail), the meta line with the match score, a two-line synopsis and the engine's reason. It never takes focus: keyboard
+   * Desktop hover card (glass spec §3): a portal on <body>, one frosted card of the same size on every card. On top a 16:9 picture
+   * (the trailer or backdrop with the title, mute and progress) centred on the card; below Play, My list, rating, more, ⌄ (detail),
+   * the meta line with the match score, the episode line, a three-line synopsis and the engine's reason. It is measured hidden,
+   * placed fully inside the window, grows out of the card and shrinks back into it (`leave`). It never takes focus: keyboard
    * users open the title with Enter on the card.
    */
   export let item: Item;
@@ -51,8 +55,8 @@
     listchanged: { listId: string; contains: boolean };
   }>();
 
-  let el: HTMLDivElement, pv: HTMLVideoElement | undefined;
-  let box: ReturnType<typeof wideBox> | null = null, ready = false, playing = false, vmuted = true, hiLoaded = false, logoFailed = false;
+  let el: HTMLDivElement, info: HTMLDivElement, pv: HTMLVideoElement | undefined;
+  let box: HoverBox | null = null, ready = false, closing = false, w = typeof window === 'undefined' ? 560 : hoverWidth(window.innerWidth), playing = false, vmuted = true, hiLoaded = false, logoFailed = false;
   let thumb: Thumb = 0, fb = '', fbT: ReturnType<typeof setTimeout>, favBusy = false;
   let startT: ReturnType<typeof setTimeout>;
 
@@ -75,31 +79,90 @@
   $: if (item.type !== 'BoxSet') void loadFacts(listId).then((f) => { if (f && listId === (item.seriesId ?? item.id)) traits = f.traits; });
   $: if ($previewOwner !== item.id && playing) playing = false; // somebody else took over / the preview failed
 
-  function measure() {
+  // ---- tone (glass spec §1.3, §8.2): the card sampled its artwork while the pointer rested; known before the card shows, the tint
+  // and the computed scrim apply at once. A tone that arrives later only crossfades the tint in; the scrim stays the safe one.
+  const toneKey = item.seriesId ?? item.id; // the key the card sampled under (and the detail page reuses)
+  let tone: Tone | null = cachedTone(toneKey) ?? null;
+  const rgb = (t: Tone) => `${t.tint[0]}, ${t.tint[1]}, ${t.tint[2]}`;
+  let tints: [string, string] = [tone ? rgb(tone) : '', ''], front = 0;
+  function toneArrived(t: Tone | null) {
+    if (!t || closing) return;
+    if (!ready) { tone = t; tints = [rgb(t), '']; front = 0; return; }
+    const back = 1 - front;
+    tints[back] = rgb(t);
+    front = back;
+  }
+
+  /** the card's centre inside the box, clamped to it: the grow and shrink origin */
+  let org = '50% 50%';
+  /** measured hidden at the hover width, then placed (glass spec §3); a width change (short window) is measured once more */
+  async function place(): Promise<DOMRect> {
     const r = anchor.getBoundingClientRect();
-    box = wideBox({ left: r.left, top: r.top, width: r.width, height: r.height }, { w: window.innerWidth, h: window.innerHeight });
+    const vp = { w: window.innerWidth, h: window.innerHeight };
+    let b = hoverBox(r, vp, info.offsetHeight);
+    if (b.width !== w) { w = b.width; await tick(); b = hoverBox(r, vp, info.offsetHeight); }
+    box = b;
+    org = `${Math.round(b.ox)}px ${Math.round(b.oy)}px`;
     return r;
+  }
+  /** the text grew after the card showed (quality chips, a failed save): move up so it stays inside the window */
+  function refit() {
+    if (!box || closing || !info) return;
+    const h = box.picH + info.offsetHeight;
+    const top = Math.max(HOVER_MARGIN, Math.min(box.top, window.innerHeight - HOVER_MARGIN - h));
+    if (top !== box.top || h !== box.height) box = { ...box, top, height: h };
   }
 
   // the billboard trailer pauses while the preview is open (with or without a clip of its own) and comes back when it closes
-  let releaseBillboard: (() => void) | undefined;
+  let releaseBillboard: (() => void) | undefined, ro: ResizeObserver | undefined;
   onMount(() => {
     releaseBillboard = holdBillboard();
-    const r = measure();
-    void tick().then(() => {
+    if (cachedTone(toneKey) === undefined && (startSrc || src)) void toneFor(toneKey, startSrc || src).then(toneArrived);
+    void tick().then(place).then((r) => {
+      if (closing) return;
       ready = true;
-      // grow out of the card: FLIP from its rect (transform + opacity only); instant under reduced motion / calm mode
-      if (!box || !el?.animate || motionLevel() !== 'full') return;
-      const s = r.width / box.width;
-      const ox = box.origin === 'left' ? box.left : box.origin === 'right' ? box.left + box.width : box.left + box.width / 2;
-      const cx = box.origin === 'left' ? r.left : box.origin === 'right' ? r.right : r.left + r.width / 2;
-      el.animate([{ transform: `translate(${cx - ox}px, ${r.top - box.top}px) scale(${s})`, opacity: 0.6 }, { transform: 'none', opacity: 1 }], { duration: 260, easing: EMPH_OUT });
+      if (typeof ResizeObserver !== 'undefined') { ro = new ResizeObserver(refit); ro.observe(info); }
+      // grow out of the card (transform + opacity only, origin = the card centre): full motion scales up from the card's width,
+      // the reduced set fades in 160 ms, calm mode / reduced motion show it at once
+      const mode = fxMode();
+      if (!box || !el?.animate || mode === 'still') return;
+      if (mode === 'reduced') el.animate([{ opacity: 0 }, { opacity: 1 }], { duration: REDUCED_MS, easing: 'linear' });
+      else el.animate([{ transform: `scale(${Math.max(0.1, r.width / box.width)})`, opacity: 0.6 }, { transform: 'none', opacity: 1 }], { duration: 260, easing: EMPH_OUT });
     });
     startT = setTimeout(startVideo, 1000);
     if (!ep) primeItem(item);
     void loadThumb();
   });
-  onDestroy(() => { releaseBillboard?.(); clearTimeout(startT); clearTimeout(fbT); if (playing || $previewOwner === item.id) stopPreview(item.id); });
+  onDestroy(() => { ro?.disconnect(); releaseBillboard?.(); clearTimeout(startT); clearTimeout(fbT); if (playing || $previewOwner === item.id) stopPreview(item.id); });
+
+  // ---- closing: the card keeps this mounted until `leave` resolves (glass spec §3) ----
+  let shrink: Animation | null = null;
+  /**
+   * Shrinks back into the card: 180 ms GLASS_IN toward the card's rect with opacity → 0 (the reduced set: a 160 ms fade; calm mode /
+   * reduced motion: at once). The trailer stops right away.
+   */
+  export async function leave(): Promise<void> {
+    closing = true;
+    over = false; focused = false;
+    clearTimeout(startT);
+    if (playing || $previewOwner === item.id) { stopPreview(item.id); playing = false; }
+    const mode = fxMode();
+    if (!ready || !box || !el?.animate || mode === 'still') return;
+    if (mode === 'reduced') shrink = el.animate([{ opacity: 1 }, { opacity: 0 }], { duration: REDUCED_MS, easing: 'linear', fill: 'forwards' });
+    else {
+      // toward where the card is now (it may have scrolled): scale about its centre clamped into the box, then move the rest
+      const r = anchor.getBoundingClientRect();
+      const cx = r.left + r.width / 2 - box.left, cy = r.top + r.height / 2 - box.top;
+      const ox = Math.min(box.width, Math.max(0, cx)), oy = Math.min(box.height, Math.max(0, cy));
+      org = `${Math.round(ox)}px ${Math.round(oy)}px`;
+      await tick();
+      const s = Math.max(0.1, (r.width || box.width * 0.2) / box.width);
+      shrink = el.animate([{ transform: 'none', opacity: 1 }, { transform: `translate(${Math.round(cx - ox)}px, ${Math.round(cy - oy)}px) scale(${s})`, opacity: 0 }], { duration: 180, easing: GLASS_IN, fill: 'forwards' });
+    }
+    try { await shrink.finished; } catch { /* cancelled: closed all the same */ }
+  }
+  /** a new open during the close: the close ends at once */
+  export function finish(): void { shrink?.finish(); }
 
   /** muted trailer after 1 s, same rules as every other preview (#lib/preview) */
   async function startVideo() {
@@ -163,33 +226,33 @@
 
 <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
 <div
-  class="dpv" class:ready data-play-scope use:portal bind:this={el} role="dialog" aria-label={$t('home.card.preview', { name: item.name })}
-  data-origin={box?.origin ?? 'left'}
-  style={box ? `left:${box.left}px;top:${box.top}px;width:${box.width}px;height:${box.height}px;border-radius:${Math.max(4, Math.round(box.width * 0.007))}px;transform-origin:${box.origin} top;` : 'left:0;top:0;width:0;height:0;'}
-  on:mouseenter={() => (over = true)} on:mouseleave={() => (over = false)}
-  on:focusin={() => (focused = true)} on:focusout={leaveFocus}
+  class="dpv frost" class:frost-safe={!tone} class:ready class:closing data-play-scope use:portal use:sheen bind:this={el} role="dialog" aria-label={$t('home.card.preview', { name: item.name })}
+  style="{box ? `left:${box.left}px;top:${box.top}px;` : 'left:0;top:0;'}width:{box?.width ?? w}px;transform-origin:{org};{toneVars(tone)}"
+  on:mouseenter={() => { if (!closing) over = true; }} on:mouseleave={() => (over = false)}
+  on:focusin={() => { if (!closing) focused = true; }} on:focusout={leaveFocus}
 >
+  <span class="frost-tint" aria-hidden="true">{#each tints as tn, i}<i class:on={front === i && !!tn} style={tn ? `--t:${tn}` : undefined}></i>{/each}</span>
   <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
   <div class="dpv-art" data-play-art on:click={artClick} on:auxclick={artClick}>
     {#if posterOnly}<img class="blur" src={startSrc || src} alt="" aria-hidden="true" />{/if}
     {#if startSrc}<img class:contain={posterOnly} class:spoil={isSpoiler(item, $prefs)} src={startSrc} alt="" />{/if}
-    {#if src}<img class="hi" class:on={hiLoaded || !startSrc} class:contain={posterOnly} class:spoil={isSpoiler(item, $prefs)} {src} srcset={srcs} sizes="{Math.round((box?.width ?? 600) * 0.55)}px" alt="" on:load={() => (hiLoaded = true)} />{/if}
+    {#if src}<img class="hi" class:on={hiLoaded || !startSrc} class:contain={posterOnly} class:spoil={isSpoiler(item, $prefs)} {src} srcset={srcs} sizes="{box?.width ?? w}px" alt="" on:load={() => (hiLoaded = true)} />{/if}
     {#if playing}<!-- svelte-ignore a11y_media_has_caption --><video bind:this={pv} class="pv" loop playsinline on:volumechange={() => pv && (vmuted = pv.muted)} on:playing={() => pv && (vmuted = pv.muted)}></video>{/if}
     <span class="shade"></span>
     <div class="dpv-title">{#if logo}<img class="tlogo" src={logoUrl(item.id)} alt={title} on:error={() => (logoFailed = true)} />{:else}{title}{/if}</div>
     {#if playing}<button type="button" class="snd" aria-label={vmuted ? $t('home.card.soundOn') : $t('home.card.soundOff')} aria-pressed={!vmuted} on:click={(e) => { release(e); toggleSound(pv); }}><Icon name={vmuted ? 'volume-off' : 'volume'} size={16} /></button>{/if}
     {#if pct}<span class="dpv-progress"><i style="transform:scaleX({pct / 100})"></i></span>{/if}
   </div>
-  <div class="dpv-info">
+  <div class="dpv-info" bind:this={info}>
     <div class="acts">
-      <a class="round play" href={playHref} use:playPrefetch aria-label={$t('home.card.playName', { name: item.name })} title={$t('home.card.play')}><Icon name="play" size={18} fill /></a>
-      <button type="button" class="round" aria-label={inList ? $t('home.card.removeFromList') : $t('home.card.addToListLong')} title={$t('home.card.myList')} on:click={toggleInList}><Icon name={inList ? 'check' : 'plus'} size={18} /></button>
-      {#if item.type !== 'BoxSet'}<RatingButton itemId={listId} size={36} bind:value={thumb} on:change={onThumb} on:error={flash} />{/if}
+      <a class="play" href={playHref} use:playPrefetch aria-label={$t('home.card.playName', { name: item.name })} title={$t('home.card.play')}><Icon name="play" size={18} fill /></a>
+      <button type="button" class="frost-btn round" aria-label={inList ? $t('home.card.removeFromList') : $t('home.card.addToListLong')} title={$t('home.card.myList')} on:click={toggleInList}><Icon name={inList ? 'check' : 'plus'} size={18} /></button>
+      {#if item.type !== 'BoxSet'}<RatingButton itemId={listId} size={44} bind:value={thumb} on:change={onThumb} on:error={flash} />{/if}
       <span class="right">
-        <MoreActions {actions} size={36} title={item.name} label={$t('home.card.moreActionsFor', { name: item.name })}>
+        <MoreActions {actions} size={44} title={item.name} label={$t('home.card.moreActionsFor', { name: item.name })}>
           {#if item.type !== 'BoxSet' && !$kidsMode}<ListMenu itemId={listId} variant="row" on:changed={(e) => dispatch('listchanged', e.detail)} />{/if}
         </MoreActions>
-        <a class="round dpv-more" href={detail} aria-label={$t('home.card.moreInfoFor', { name: item.name })} title={$t('home.card.moreInfo')} on:click={more}><Icon name="chevron-down" size={18} /></a>
+        <a class="frost-btn round dpv-more" href={detail} aria-label={$t('home.card.moreInfoFor', { name: item.name })} title={$t('home.card.moreInfo')} on:click={more}><Icon name="chevron-down" size={18} /></a>
       </span>
     </div>
     <div class="fb" role="status">{#if fb}<span>{fb}</span>{/if}</div>
@@ -206,15 +269,17 @@
 </div>
 
 <style>
+  /* the glass card (glass spec §3): .frost gives the milk, scrim, grain and blur; the 1 px edge is drawn on ::after so the picture
+     keeps the full width (the same 16:9 height on every card); overflow clips the picture's corners, the sheen and the tint */
   .dpv {
-    --dpv-bg: #18181c;
-    position: fixed; z-index: 65; display: grid; grid-template-columns: 1.15fr 1fr; overflow: hidden;
-    background: var(--dpv-bg); color: var(--fg); border-radius: 6px;
-    box-shadow: 0 24px 64px rgba(0, 0, 0, .6), 0 8px 20px rgba(0, 0, 0, .35), 0 0 0 1px rgba(255, 255, 255, .07);
+    position: fixed; z-index: 65; display: grid; grid-template-columns: minmax(0, 1fr); overflow: hidden;
+    border: 0; border-radius: var(--fr-r-hover); color: var(--fg);
     visibility: hidden;
   }
+  .dpv::after { content: ''; position: absolute; inset: 0; z-index: 2; border-radius: inherit; border: 1px solid var(--fr-line); box-shadow: inset 0 1px 0 var(--fr-hi); pointer-events: none; }
   .dpv.ready { visibility: visible; }
-  .dpv-art { position: relative; overflow: hidden; background: #0c0c0f; min-width: 0; cursor: pointer; }
+  .dpv.closing { pointer-events: none; }
+  .dpv-art { position: relative; overflow: hidden; aspect-ratio: 16 / 9; background: #0c0c0f; min-width: 0; cursor: pointer; }
   .dpv-art img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; display: block; }
   .dpv-art img.contain { object-fit: contain; }
   .blur { inset: -10%; width: 120%; height: 120%; filter: blur(18px) brightness(.55); }
@@ -223,35 +288,43 @@
   .dpv-art img.hi.on { opacity: 1; }
   :global(html.calm) .dpv-art img.hi { transition: none; }
   .pv { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; background: #000; }
-  /* the picture fades into the panel on the right and darkens under the title */
-  .shade { position: absolute; inset: 0; pointer-events: none; background: linear-gradient(90deg, transparent 70%, var(--dpv-bg)), linear-gradient(transparent 45%, rgba(0, 0, 0, .7)); }
-  .dpv-title { position: absolute; left: 16px; right: 56px; bottom: 16px; font-weight: 900; font-size: 1.25rem; letter-spacing: -.02em; line-height: 1.05; text-shadow: 0 1px 12px rgba(0, 0, 0, .6); display: -webkit-box; -webkit-line-clamp: 2; line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; pointer-events: none; }
-  .tlogo { position: static !important; width: auto !important; height: auto !important; max-width: 70%; max-height: 56px; object-fit: contain; object-position: left bottom; }
-  .snd { position: absolute; right: 16px; bottom: 14px; z-index: 2; width: 32px; min-height: 32px; height: 32px; padding: 0; border-radius: 50%; background: rgba(0, 0, 0, .35); border: 1.5px solid rgba(255, 255, 255, .7); color: #fff; display: grid; place-items: center; }
-  .snd::after { content: ''; position: absolute; inset: -6px; }
+  /* the picture darkens under the title */
+  .shade { position: absolute; inset: 0; pointer-events: none; background: linear-gradient(0deg, rgba(10, 9, 13, .75), transparent 55%); }
+  .dpv-title { position: absolute; left: 22px; right: 64px; bottom: 16px; font-weight: 900; font-size: 1.75rem; letter-spacing: -.02em; line-height: 1.05; text-shadow: 0 1px 12px rgba(0, 0, 0, .6); display: -webkit-box; -webkit-line-clamp: 2; line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; pointer-events: none; }
+  .tlogo { position: static !important; width: auto !important; height: auto !important; max-width: 60%; max-height: 72px; object-fit: contain; object-position: left bottom; }
+  .snd { position: absolute; right: 18px; bottom: 14px; z-index: 2; width: 36px; min-height: 36px; height: 36px; padding: 0; border-radius: 50%; background: rgba(0, 0, 0, .35); border: 1.5px solid rgba(255, 255, 255, .7); color: #fff; display: grid; place-items: center; }
+  .snd::after { content: ''; position: absolute; inset: -4px; }
   .snd:hover { border-color: #fff; }
-  .dpv-progress { position: absolute; left: 0; right: 0; bottom: 0; height: 2px; background: rgba(255, 255, 255, .22); }
+  .dpv-progress { position: absolute; left: 0; right: 0; bottom: 0; height: 3px; background: rgba(255, 255, 255, .22); }
   .dpv-progress i { display: block; height: 100%; background: var(--acc, #ff4f6d); transform-origin: left; }
-  .dpv-info { min-width: 0; padding: 16px 16px 16px 12px; display: flex; flex-direction: column; justify-content: center; gap: 8px; overflow: hidden; }
-  .acts { display: flex; gap: 8px; align-items: center; }
-  .round { width: 36px; min-height: 36px; height: 36px; padding: 0; border-radius: 50%; background: transparent; border: 1.5px solid rgba(255, 255, 255, .55); color: #fff; display: grid; place-items: center; position: relative; flex: none; }
-  .round::after { content: ''; position: absolute; inset: -4px; border-radius: 50%; }
-  .round:hover { border-color: #fff; background: rgba(255, 255, 255, .08); }
-  .round:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
-  .round.play { background: #fff; border-color: #fff; color: #111; }
-  .round.play:hover { background: rgba(255, 255, 255, .86); }
-  /* the shared round controls (rating, more) in the tile's 1.5 px outline style */
-  .acts :global(.rb .trig), .acts :global(.ma.round) { background: transparent; border: 1.5px solid rgba(255, 255, 255, .55); }
-  .acts :global(.rb .trig:hover:not(:disabled)), .acts :global(.ma.round:hover) { border-color: #fff; background: rgba(255, 255, 255, .08); }
-  .right { margin-left: auto; display: flex; gap: 8px; align-items: center; }
+  .dpv-info { min-width: 0; padding: 18px 22px 22px; display: flex; flex-direction: column; gap: 10px; }
+  .acts { display: flex; gap: 10px; align-items: center; }
+  .play { width: 44px; height: 44px; min-height: 44px; padding: 0; border-radius: 50%; background: #fff; color: #111; display: grid; place-items: center; position: relative; flex: none; transition: transform var(--t-fast), opacity var(--t-fast); }
+  .play:hover { background: #fff; opacity: .88; }
+  .play:focus-visible, .acts .frost-btn:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
+  .acts .frost-btn { color: #fff; flex: none; }
+  /* the icon never is the click target: the page motion reads the clicked element (an HTMLElement) to find the morph source */
+  .play :global(svg), .acts .frost-btn :global(svg) { pointer-events: none; }
+  /* the shared round controls (rating, more) as the same glass circles (.frost-btn's look and its solid fallback) */
+  .acts :global(.rb .trig), .acts :global(.ma.round) {
+    background: linear-gradient(180deg, rgba(var(--fr-milk-top), var(--fr-milk-a2)), rgba(var(--fr-milk), var(--fr-milk-a1))), rgba(var(--fr-scrim-rgb), var(--fr-scrim));
+    border: 1px solid var(--fr-line); box-shadow: inset 0 1px 0 var(--fr-hi);
+  }
+  .acts :global(.rb .trig:hover:not(:disabled)), .acts :global(.ma.round:hover), .acts :global(.ma.round.on) {
+    background: linear-gradient(180deg, rgba(var(--fr-milk-top), var(--fr-milk-a2)), rgba(var(--fr-milk), var(--fr-milk-a1))), rgba(var(--fr-scrim-rgb), var(--fr-scrim));
+    border-color: rgba(255, 255, 255, .42); box-shadow: inset 0 1px 0 var(--fr-hi), inset 0 0 0 1px rgba(255, 255, 255, .14);
+  }
+  :global(html:not(.m-glass)) .acts :global(.rb .trig), :global(html:not(.m-glass)) .acts :global(.ma.round) { background: var(--fr-solid); }
+  :global(html:not(.m-glass)) .acts :global(.rb .trig:hover:not(:disabled)), :global(html:not(.m-glass)) .acts :global(.ma.round:hover) { background: var(--fr-solid-hover); }
+  .right { margin-left: auto; display: flex; gap: 10px; align-items: center; }
   .fb:empty { display: none; }
   .fb span { display: inline-block; padding: .2rem .55rem; border-radius: 6px; background: rgba(16, 20, 24, .92); border: 1px solid var(--err, #e5646e); font-size: .78rem; font-weight: 600; }
-  .dpv-meta { display: flex; flex-wrap: wrap; gap: 4px 8px; align-items: center; font-size: .8rem; color: #d4d4d8; font-variant-numeric: tabular-nums; }
+  .dpv-meta { display: flex; flex-wrap: wrap; gap: 4px 10px; align-items: center; font-size: .85rem; color: rgba(255, 255, 255, .78); font-variant-numeric: tabular-nums; }
   .dpv-meta :global(.qc) { margin: 0; }
-  .dpv-match { color: var(--ok, #4ade80); font-weight: 700; }
-  .dpv-age { border: 1px solid rgba(255, 255, 255, .45); padding: 0 4px; line-height: 1.35; border-radius: 2px; }
-  .dpv-ep { margin: 0; font-size: .82rem; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .dpv-syn { margin: 0; font-size: .8rem; line-height: 1.4; color: #c4c4cc; display: -webkit-box; -webkit-line-clamp: 2; line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
-  .dpv-why { margin: 0; font-size: .78rem; line-height: 1.35; font-weight: 600; color: #ff4f6d; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .dpv-match { color: var(--ok, #4ade80); font-weight: 800; }
+  .dpv-age { border: 1px solid rgba(255, 255, 255, .45); padding: 0 5px; line-height: 1.4; border-radius: 6px; font-size: .75rem; font-weight: 700; }
+  .dpv-ep { margin: 0; font-size: .95rem; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .dpv-syn { margin: 0; font-size: .875rem; line-height: 1.45; color: rgba(255, 255, 255, .78); display: -webkit-box; -webkit-line-clamp: 3; line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+  .dpv-why { margin: 0; font-size: .8125rem; line-height: 1.35; font-weight: 700; color: #ff4f6d; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   :global(html.tv) .dpv { display: none; }
 </style>

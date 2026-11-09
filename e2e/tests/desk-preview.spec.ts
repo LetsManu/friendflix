@@ -4,8 +4,12 @@ import type { Locator, Page } from '@playwright/test';
 import { episodes, items, MOVIE, SERIES } from '../mocks/fixtures.js';
 import { expect, test } from '../fixtures.js';
 import { boxInViewport, row } from '../helpers.js';
+import { png } from '../mocks/png.js';
 
-/** Desktop wide hover preview (spec desktop browse §2): grows out of the card after a 500 ms rest, ~2.5 cards wide. */
+/**
+ * Desktop hover card (spec desktop browse §2, glass spec §3): grows out of the card after a 500 ms rest; one glass card of the same
+ * size on every card (16:9 picture on top, text below), always fully on screen; shrinks back on close. Poster tilt (§8.7).
+ */
 
 const BECAUSE = 'Weil du „Inkwell“ gesehen hast';
 const INTERLACE = items[1]!;
@@ -32,6 +36,40 @@ async function openOn(page: Page, card: Locator): Promise<Locator> {
   await expect(dpv).toBeVisible();
   return dpv;
 }
+
+/** full motion without the brand intro over the page, no trailers */
+async function fullMotion(page: Page) {
+  await page.emulateMedia({ reducedMotion: 'no-preference' });
+  await page.addInitScript(() => {
+    sessionStorage.setItem('ff-intro-seen', '1');
+    localStorage.setItem('ff-intro:p1', JSON.stringify({ show: false, sound: false }));
+    (window as unknown as { __ffDeskGuard: unknown }).__ffDeskGuard = { slowMs: 1000, frames: 8 }; // no test host trips it
+  });
+  await page.route('**/api/items/*/trailer', (r) => r.fulfill({ json: {} }));
+}
+async function calmMode(page: Page) {
+  await page.route('**/api/prefs', (r) => r.fulfill({ json: { prefs: { calm: true } } }));
+  await page.addInitScript(() => localStorage.setItem('ff_calm:p1', '1'));
+}
+/** the hover card has finished growing (no running animation) */
+const settled = (dpv: Locator) => expect.poll(() => dpv.evaluate((e) => e.getAnimations().length)).toBe(0);
+/** the index of the last card fully inside the window */
+const lastVisibleIn = (r: Locator) => r.evaluate((s) => {
+  let idx = 0;
+  [...s.querySelectorAll('article.card')].forEach((c, i) => { const b = c.getBoundingClientRect(); if (b.left >= 0 && b.right <= innerWidth) idx = i; });
+  return idx;
+});
+async function closeByLeaving(page: Page) {
+  await page.mouse.move(4, 400);
+  await expect(page.locator('.dpv')).toHaveCount(0);
+}
+/** at rest: no transform, or one within a hair of identity (the eased tilt is a few frames from its exact rest at 600 ms) */
+const isIdentity = (m: string) => {
+  if (m === 'none') return true;
+  const v = /matrix(?:3d)?\((.+)\)/.exec(m)?.[1]?.split(',').map(Number) ?? [];
+  const id = v.length === 6 ? [1, 0, 0, 1, 0, 0] : [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1];
+  return v.length === id.length && v.every((x, i) => Math.abs(x - id[i]!) < (i >= 12 || (v.length === 6 && i >= 4) ? 0.05 : 0.002));
+};
 
 /** media in the test browser: play() / pause() only flip a flag (no real decoding), `paused` reads it */
 async function fakeMedia(page: Page) {
@@ -75,7 +113,7 @@ test.describe('desktop wide hover preview', () => {
     await expect(page.locator('.dpv')).toHaveCount(1);
   });
 
-  test('wide tile: trailer left, Play / My list / rating / more right, match score, quality badges, synopsis, reco reason when present; neighbours dim', async ({ page }) => {
+  test('stacked card: trailer on top, Play / My list / rating / more below, match score, quality badges, synopsis, reco reason when present; neighbours dim', async ({ page }) => {
     await withReason(page);
     await page.route(`**/api/items/${INTERLACE.id}/facts`, (r) => r.fulfill({ json: { fresh: null, leaving: null, traits: { resolution: '4k', hdr: null, audio: null } } }));
     await page.goto('/');
@@ -83,14 +121,14 @@ test.describe('desktop wide hover preview', () => {
     const dpv = await openOn(page, cards.first());
     await expect(dpv).toHaveAccessibleName(`Vorschau: ${INTERLACE.name}`);
 
-    // ~2.5 cards wide, video column wider than the info column
-    const cardBox = (await cards.first().boundingBox())!;
+    // one column: the full-width 16:9 picture on top, the text below
     const box = (await dpv.boundingBox())!;
-    expect(box.width / cardBox.width).toBeCloseTo(2.5, 1);
     const art = (await dpv.locator('.dpv-art').boundingBox())!;
     const info = (await dpv.locator('.dpv-info').boundingBox())!;
-    expect(art.x).toBeLessThan(info.x);
-    expect(art.width).toBeGreaterThan(info.width);
+    expect(box.width).toBeCloseTo(560, 0);
+    expect(art.width).toBeCloseTo(box.width, 0);
+    expect(art.y + art.height).toBeLessThanOrEqual(info.y + 0.5);
+    expect(info.width).toBeCloseTo(box.width, 0);
     await expect(dpv.locator('.dpv-art .dpv-title')).toHaveText(INTERLACE.name);
 
     // actions in order: Play, My list, rating, ..., ⌄ (far right)
@@ -112,10 +150,10 @@ test.describe('desktop wide hover preview', () => {
     await expect(dpv.locator('.dpv-meta')).toContainText('2 Std. 28 Min.');
     await expect(dpv.getByRole('list', { name: 'Bild und Ton' }).getByText('4K', { exact: true })).toBeVisible();
 
-    // two-line synopsis, coral reco reason
+    // three-line synopsis, coral reco reason
     const syn = dpv.locator('.dpv-syn');
     await expect(syn).toContainText('packender Titel');
-    expect(await syn.evaluate((e) => getComputedStyle(e).webkitLineClamp)).toBe('2');
+    expect(await syn.evaluate((e) => getComputedStyle(e).webkitLineClamp)).toBe('3');
     const why = dpv.locator('.dpv-why');
     await expect(why).toHaveText(BECAUSE);
     expect(await why.evaluate((e) => getComputedStyle(e).color)).toBe('rgb(255, 79, 109)');
@@ -145,17 +183,13 @@ test.describe('desktop wide hover preview', () => {
     await r.scrollIntoViewIfNeeded();
     const cards = r.locator('article.card');
     await expect(cards.first()).toBeVisible();
-    const lastVisible = await r.evaluate((s) => {
-      let idx = 0;
-      [...s.querySelectorAll('article.card')].forEach((c, i) => { const b = c.getBoundingClientRect(); if (b.left >= 0 && b.right <= innerWidth) idx = i; });
-      return idx;
-    });
+    const lastVisible = await lastVisibleIn(r);
     expect(lastVisible).toBeGreaterThan(2);
     for (const idx of [0, lastVisible]) {
       const dpv = await openOn(page, cards.nth(idx));
       const { ok, box, vw, vh } = await boxInViewport(page, dpv);
       expect(ok, `preview of card ${idx} ${JSON.stringify(box)} must fit ${vw}x${vh}`).toBe(true);
-      if (idx === lastVisible) expect(await dpv.evaluate((e) => e.dataset.origin)).toBe('right');
+      if (idx === lastVisible) expect(box!.x + box!.width).toBeCloseTo(vw - 12, 0); // clamped to the right margin
       await page.mouse.move(4, 400);
       await expect(page.locator('.dpv')).toHaveCount(0);
     }
@@ -270,5 +304,216 @@ test.describe('desktop wide hover preview', () => {
     await dpv.locator('a.dpv-more').click();
     await expect(page).toHaveURL(new RegExp(`/item/${items[2]!.id}$`));
     await expect(page.locator('.dpv')).toHaveCount(0);
+  });
+
+  test('hover card: same size on 16:9, poster-only and Top 10 cards', async ({ page }) => {
+    // the second title of the "because" row has no backdrop: its card shows the poster contained in the 16:9 slot
+    await page.route('**/api/library/because', (r) => r.fulfill({ json: {
+      because: { name: MOVIE.name },
+      items: items.slice(1, 12).map((it, i) => (i === 1 ? { ...it, backdrop: false } : it)),
+    } }));
+    await page.goto('/');
+    const because = row(page, BECAUSE).locator('article.card');
+    await expect(because.nth(1).locator('img.contain')).toHaveCount(1);
+    const ranked = page.locator('section.row.rk').first().locator('article.card').first();
+    const sizes: { w: number; aw: number; ah: number }[] = [];
+    for (const card of [because.first(), because.nth(1), ranked]) {
+      const dpv = await openOn(page, card);
+      sizes.push(await dpv.evaluate((e) => {
+        const a = e.querySelector('.dpv-art')!.getBoundingClientRect();
+        return { w: e.getBoundingClientRect().width, aw: a.width, ah: a.height };
+      }));
+      await closeByLeaving(page);
+    }
+    expect(await ranked.locator('.thumb').evaluate((e) => e.getBoundingClientRect().height / e.getBoundingClientRect().width)).toBeCloseTo(1.5, 1);
+    for (const s of sizes) {
+      expect(Math.abs(s.w - 560)).toBeLessThanOrEqual(1);
+      expect(Math.abs(s.ah - 315)).toBeLessThanOrEqual(1);
+      expect(Math.abs(s.aw / s.ah - 16 / 9)).toBeLessThanOrEqual(0.01);
+      expect(Math.abs(s.w - sizes[0]!.w)).toBeLessThanOrEqual(0.5);
+      expect(Math.abs(s.ah - sizes[0]!.ah)).toBeLessThanOrEqual(0.5);
+    }
+  });
+
+  for (const vp of [{ width: 1280, height: 800 }, { width: 1100, height: 620 }]) {
+    test(`hover card: always fully on screen, nothing clipped (${vp.width}x${vp.height})`, async ({ page }) => {
+      await page.setViewportSize(vp);
+      const long = 'Ein langer Überblick. '.repeat(30).slice(0, 600);
+      await page.route('**/api/library/because', (r) => r.fulfill({ json: {
+        because: { name: MOVIE.name },
+        items: items.slice(1, 12).map((it) => ({ ...it, overview: long, reason: { seed: { id: MOVIE.id, name: MOVIE.name }, traits: [] } })),
+      } }));
+      await page.goto('/');
+      const r = row(page, BECAUSE);
+      await r.scrollIntoViewIfNeeded();
+      const cards = r.locator('article.card');
+      await expect(cards.first()).toBeVisible();
+      const check = async (what: string) => {
+        const dpv = page.locator('.dpv.ready');
+        const { ok, box, vw, vh } = await boxInViewport(page, dpv);
+        expect(ok, `${what} ${JSON.stringify(box)} must fit ${vw}x${vh}`).toBe(true);
+        const b = box!;
+        for (const m of [b.x, b.y, vw - b.x - b.width, vh - b.y - b.height]) expect(m, `${what} margins`).toBeGreaterThanOrEqual(11.5);
+        const t = await dpv.evaluate((e) => {
+          const syn = e.querySelector<HTMLElement>('.dpv-syn')!, why = e.querySelector<HTMLElement>('.dpv-why')!, info = e.querySelector<HTMLElement>('.dpv-info')!;
+          const lh = parseFloat(getComputedStyle(syn).lineHeight);
+          const ib = info.getBoundingClientRect(), db = e.getBoundingClientRect();
+          return { clamp: getComputedStyle(syn).webkitLineClamp, synH: syn.clientHeight, lh, why: [why.scrollHeight, why.clientHeight], info: [info.scrollHeight, info.clientHeight], infoBottom: ib.bottom, cardBottom: db.bottom, synBottom: syn.getBoundingClientRect().bottom };
+        });
+        expect(t.clamp).toBe('3');
+        expect(t.synH).toBeLessThanOrEqual(3 * t.lh + 1); // three lines, the rest ellipsised
+        expect(t.why[0]!).toBeLessThanOrEqual(t.why[1]! + 1);
+        expect(t.info[0]!).toBeLessThanOrEqual(t.info[1]! + 1);
+        expect(t.synBottom).toBeLessThanOrEqual(t.infoBottom + 0.5);
+        expect(t.infoBottom).toBeLessThanOrEqual(t.cardBottom + 0.5);
+      };
+      await openOn(page, cards.first());
+      await check('first card');
+      await closeByLeaving(page);
+      const last = await lastVisibleIn(r);
+      expect(last).toBeGreaterThan(1);
+      await openOn(page, cards.nth(last));
+      await check('last visible card');
+      await closeByLeaving(page);
+      // the row's cards at the very bottom of the window
+      await cards.first().evaluate((c) => { const b = c.getBoundingClientRect(); scrollBy(0, b.bottom - innerHeight + 4); });
+      await page.waitForTimeout(100);
+      await openOn(page, cards.first());
+      await check('bottom card');
+    });
+  }
+
+  test('no hover card under 600 px tall windows', async ({ page }) => {
+    await page.setViewportSize({ width: 1280, height: 560 });
+    await freezeClock(page);
+    await page.goto('/');
+    const card = row(page, BECAUSE).locator('article.card').first();
+    await card.scrollIntoViewIfNeeded();
+    await card.locator('a.thumb').hover();
+    await page.clock.runFor(600);
+    await expect(page.locator('.dpv')).toHaveCount(0);
+    await page.clock.runFor(600);
+    await expect(page.locator('.dpv')).toHaveCount(0);
+  });
+
+  test('bright artwork raises the scrim', async ({ page }) => {
+    const white = png(64, 36, [255, 255, 255]);
+    await page.route(`**/media/Items/${INTERLACE.id}/Images/**`, (r) => r.fulfill({ status: 200, contentType: 'image/png', body: white }));
+    await page.goto('/');
+    const dpv = await openOn(page, row(page, BECAUSE).locator('article.card').first());
+    await expect.poll(async () => Number(await dpv.evaluate((e) => getComputedStyle(e).getPropertyValue('--fr-scrim')))).toBeGreaterThanOrEqual(0.66);
+  });
+
+  test.describe('full motion', () => {
+    test.use({ reducedMotion: 'no-preference' });
+
+    test('the card is glass with tone and sheen; Play solid white', async ({ page }) => {
+      await fullMotion(page);
+      await page.goto('/');
+      await expect(page.locator('html')).toHaveClass(/(^|\s)m-glass(\s|$)/);
+      const dpv = await openOn(page, row(page, BECAUSE).locator('article.card').first());
+      await settled(dpv);
+      await expect(dpv).toHaveClass(/(^|\s)frost(\s|$)/);
+      expect(await dpv.evaluate((e) => getComputedStyle(e).backdropFilter)).toContain('blur(38px)');
+      expect(await dpv.evaluate((e) => getComputedStyle(e).borderRadius)).toBe('22px');
+      // the tone sampled from the card's artwork: tint triple and scrim set inline, the front tint layer on
+      expect(await dpv.evaluate((e) => e.style.getPropertyValue('--fr-tint'))).toMatch(/^\d+, \d+, \d+$/);
+      await expect(dpv.locator('.frost-tint i.on')).toHaveCount(1);
+      expect(await dpv.locator('.play').evaluate((e) => getComputedStyle(e).backgroundColor)).toBe('rgb(255, 255, 255)');
+      // 44 px glass circles
+      const add = dpv.getByRole('button', { name: /Merkliste/ });
+      await expect(add).toHaveClass(/frost-btn/);
+      expect((await add.boundingBox())!.width).toBeCloseTo(44, 0);
+      const b = (await dpv.boundingBox())!;
+      await page.mouse.move(b.x + b.width / 2, b.y + b.height / 2, { steps: 4 });
+      await page.mouse.move(b.x + b.width / 2 + 20, b.y + b.height / 2 + 10, { steps: 4 });
+      await expect(dpv.locator('.frost-sheen.on')).toHaveCount(1);
+    });
+
+    test('closing shrinks back (full) and is instant in calm', async ({ page }) => {
+      await fullMotion(page);
+      await page.goto('/');
+      const dpv = await openOn(page, row(page, BECAUSE).locator('article.card').first());
+      await settled(dpv);
+      await page.keyboard.press('Escape');
+      const st = await page.evaluate(() => {
+        const e = document.querySelector('.dpv');
+        return { attached: Boolean(e), running: e ? e.getAnimations().some((a) => a.playState === 'running') : false };
+      });
+      expect(st).toEqual({ attached: true, running: true });
+      await page.waitForTimeout(250);
+      await expect(page.locator('.dpv')).toHaveCount(0);
+    });
+
+    test('closing is instant in calm mode', async ({ page }) => {
+      await fullMotion(page);
+      await calmMode(page);
+      await page.goto('/');
+      await expect(page.locator('html')).toHaveClass(/m-still/);
+      await openOn(page, row(page, BECAUSE).locator('article.card').first());
+      await page.keyboard.press('Escape');
+      expect(await page.evaluate(() => document.querySelectorAll('.dpv').length)).toBe(0);
+    });
+
+    test('poster tilt: the hovered card leans and lifts; neighbours step back; calm: none', async ({ page }) => {
+      await fullMotion(page);
+      await freezeClock(page);
+      await page.goto('/');
+      const cards = row(page, BECAUSE).locator('article.card');
+      await cards.nth(1).scrollIntoViewIfNeeded();
+      const thumb = cards.nth(1).locator('a.thumb');
+      const tf = () => thumb.evaluate((e) => getComputedStyle(e).transform);
+      const b = (await thumb.boundingBox())!;
+      await page.mouse.move(b.x + b.width * 0.75, b.y + b.height * 0.25, { steps: 3 });
+      await page.clock.runFor(300);
+      const m = await tf();
+      expect(isIdentity(m), m).toBe(false);
+      const v = m.match(/matrix3d\((.+)\)/)![1]!.split(',').map(Number);
+      expect(v[13]!).toBeLessThan(0); // lifted: a negative y translation
+      await expect(page.locator('.dpv')).toHaveCount(0); // still resting: the hover card opens at 500 ms
+      await expect.poll(() => cards.nth(2).evaluate((e) => Number(getComputedStyle(e).opacity))).toBeCloseTo(0.62, 1);
+      expect(Math.abs(Number(await cards.nth(2).evaluate((e) => getComputedStyle(e).opacity)) - 0.62)).toBeLessThanOrEqual(0.02);
+      expect(Number(await cards.nth(1).evaluate((e) => getComputedStyle(e).opacity))).toBe(1);
+      // leave: everything eases back
+      await page.mouse.move(4, 400);
+      await page.clock.runFor(600);
+      expect(isIdentity(await tf())).toBe(true);
+      await expect.poll(() => cards.nth(2).evaluate((e) => getComputedStyle(e).opacity)).toBe('1');
+    });
+
+    test('poster tilt: none in calm mode', async ({ page }) => {
+      await fullMotion(page);
+      await calmMode(page);
+      await freezeClock(page);
+      await page.goto('/');
+      await expect(page.locator('html')).toHaveClass(/m-still/);
+      const cards = row(page, BECAUSE).locator('article.card');
+      await cards.nth(1).scrollIntoViewIfNeeded();
+      const thumb = cards.nth(1).locator('a.thumb');
+      const b = (await thumb.boundingBox())!;
+      for (const [fx, fy] of [[0.75, 0.25], [0.2, 0.8]] as const) {
+        await page.mouse.move(b.x + b.width * fx, b.y + b.height * fy, { steps: 3 });
+        await page.clock.runFor(150);
+        expect(isIdentity(await thumb.evaluate((e) => getComputedStyle(e).transform))).toBe(true);
+        expect(await cards.nth(2).evaluate((e) => getComputedStyle(e).opacity)).toBe('1');
+      }
+    });
+
+    test('poster tilt settles back when the hover card opens', async ({ page }) => {
+      await fullMotion(page);
+      await freezeClock(page);
+      await page.goto('/');
+      const cards = row(page, BECAUSE).locator('article.card');
+      await cards.nth(1).scrollIntoViewIfNeeded();
+      const thumb = cards.nth(1).locator('a.thumb');
+      const b = (await thumb.boundingBox())!;
+      await page.mouse.move(b.x + b.width * 0.75, b.y + b.height * 0.25, { steps: 3 });
+      await page.clock.runFor(600);
+      await expect(page.locator('.dpv')).toHaveCount(1);
+      await page.clock.runFor(600);
+      expect(isIdentity(await thumb.evaluate((e) => getComputedStyle(e).transform))).toBe(true);
+      await expect(row(page, BECAUSE)).not.toHaveClass(/tilt-row/);
+      await expect(row(page, BECAUSE)).toHaveClass(/dpv-dim/);
+    });
   });
 });

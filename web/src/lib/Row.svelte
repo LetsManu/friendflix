@@ -234,6 +234,11 @@
   /* the strip is a real box here: the page turn moves it (FLIP), the track keeps the scroll position */
   /* no snapping: the page turn sets exact positions, and snap points measured mid-spring (transformed) would pull the row back */
   .row.dk .track { container-type: inline-size; scroll-snap-type: none; }
+  /* room above the cards for the poster tilt's lift (glass spec §8.7): the track reaches into the gap under the title (layout
+     unchanged), the title stays on top */
+  .row.dk .hd { position: relative; z-index: 2; }
+  .row.dk .track { padding-top: 16px; margin-top: -16px; }
+  .row.dk .pg { top: 16px; } /* the edge areas still start at the cards */
   .row.dk .strip { display: flex; flex: none; gap: var(--gap); }
   /* 100cqw = the track's content box (inside the gutters): exactly n cards per page */
   .row.dk .slot { --sw: calc((100cqw - (var(--n) - 1) * var(--gap)) / var(--n)); flex: 0 0 var(--sw); }
