@@ -164,16 +164,17 @@ test.describe('dense glass admin (desktop)', () => {
     await page.goto('/admin/settings');
     const card = page.locator('.adm .panel').first();
     await expect(card).toBeVisible();
-    expect(await css(card, 'border-top-left-radius')).toBe('16px');
-    expect(await css(card, 'padding')).toBe('16px 18px');
-    expect(await css(card, 'background-image')).toContain('linear-gradient');
+    // the page swaps its loading card for the loaded one: re-read until the settled card answers
+    await expect.poll(() => css(card, 'border-top-left-radius')).toBe('16px');
+    await expect.poll(() => css(card, 'padding')).toBe('16px 18px');
+    await expect.poll(() => css(card, 'background-image')).toContain('linear-gradient');
     // fields: 12 px corners on the darker glass fill
     const input = card.locator('input:not([type="checkbox"]):not([disabled])').first();
-    if (await input.count()) expect(await css(input, 'border-top-left-radius')).toBe('12px');
+    if (await input.count()) await expect.poll(() => css(input, 'border-top-left-radius')).toBe('12px');
 
     await page.goto('/admin');
     const tile = page.locator('.stats .tile').first();
     await expect(tile).toHaveClass(/frost-flat/);
-    expect(await css(tile, 'border-top-left-radius')).toBe('16px');
+    await expect.poll(() => css(tile, 'border-top-left-radius')).toBe('16px');
   });
 });
