@@ -436,4 +436,4 @@ FriendFlix ist freie Software: Du darfst sie unter den Bedingungen der **GNU Aff
 
 ### Markenhinweis
 
-Netflix, Disney+, Prime Video, Crunchyroll, Plex, Jellyfin, TMDB, OMDb, IMDb, Rotten Tomatoes, Metacritic, TVDB, Trakt und weitere genannte Namen sind Marken ihrer jeweiligen Inhaber. FriendFlix ist ein unabhängiges Open-Source-Projekt und steht in keiner Verbindung zu diesen Anbietern; es wird von ihnen weder gesponsert noch empfohlen. This product uses the TMDB API but is not endorsed or certified by TMDB.
+Disney+, Prime Video, Crunchyroll, Plex, Jellyfin, TMDB, OMDb, IMDb, Rotten Tomatoes, Metacritic, TVDB, Trakt und weitere genannte Namen sind Marken ihrer jeweiligen Inhaber. FriendFlix ist ein unabhängiges Open-Source-Projekt und steht in keiner Verbindung zu diesen Anbietern; es wird von ihnen weder gesponsert noch empfohlen. This product uses the TMDB API but is not endorsed or certified by TMDB.
